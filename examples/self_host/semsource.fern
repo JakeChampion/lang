@@ -3317,7 +3317,29 @@ function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, state
   if (is_void(contract.result) && !statement) {
     return refused(s, "unsupported void call");
   }
-  return invoke(c.args, contract, s, destination_binding(contract, expected));
+  return invoke(c.args, contract, s, written_binding(c, contract, s), destination_binding(contract, expected));
+}
+
+// What a written instantiation (`pick[i32]()`) binds: each type argument binds
+// the declaration's type parameter at its position. It is the only source for
+// a variable no argument spells.
+function written_binding(c: ast.ExprCall, contract: ssasem.Contract, s: State): ssasem.Binding {
+  var b: ssasem.Binding = ssasem.unbound();
+  var tps: string[] = checker.func_type_params(s.scope, contract.name);
+  if (c.type_args.len() == 0 || tps.len() != c.type_args.len()) {
+    return b;
+  }
+  var i: i32 = 0;
+  while (i < tps.len()) {
+    if (c.type_args[i].len() > 0) {
+      var t: typeinfo.Type = settled(resolved(checker.spelled_type(s.scope, c.type_args[i]), s.template, s.binding, s.scope));
+      if (semtypes.concrete(t, false)) {
+        b = ssasem.bind_type(b, typeinfo.TypeErased { name: tps[i] }, t);
+      }
+    }
+    i = i + 1;
+  }
+  return b;
 }
 
 // What the call's destination says a template's variables are: `var m:
@@ -3469,11 +3491,14 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
 // what instantiates it: each argument binds the variables its parameter
 // spells, left to right, so a later parameter — a function value's own
 // variable slots among them — is produced and compared at the type already
-// bound. The instance is a body of its own, named by the types bound and
-// produced on this call's request, and the call names it rather than the
-// template.
-function invoke(args: ast.Expr[], contract: ssasem.Contract, s: State, seed: ssasem.Binding): Value {
-  return invoke_rest([], ssasem.unbound(), args, 0, contract, s, seed);
+// bound. A written instantiation binds before any argument does. The instance
+// is a body of its own, named by the types bound and produced on this call's
+// request, and the call names it rather than the template.
+function invoke(args: ast.Expr[], contract: ssasem.Contract, s: State, written: ssasem.Binding, seed: ssasem.Binding): Value {
+  if (!written.ok) {
+    return refused(s, written.why);
+  }
+  return invoke_rest([], written, args, 0, contract, s, seed);
 }
 
 // A method on a GENERIC RECEIVER is the free generic the registration pass
@@ -5203,7 +5228,8 @@ function coarse_fn_tag_without_contract(fd: parser.FuncDecl): boolean {
 // A declaration that spells no result type is void unless its body returns a
 // value: a hoisted lambda carries no annotation, and its result is the type
 // the checker gives the first value it returns, read in the scope the
-// statements before it built.
+// statements before it built, completed from the other exits when that leaves
+// part of it unknown.
 function inferred_result(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding, contracts: ssasem.Contract[]): typeinfo.Type {
   let (returned, at) = checker.first_returned(fd.body, scope);
   if (checker.bare_return(returned)) {
@@ -5222,7 +5248,16 @@ function inferred_result(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Bi
       return slot;
     }
   }
-  return resolved(checker.expr_type(returned, at), generic_decl(fd), b, at);
+  var first: typeinfo.Type = resolved(checker.expr_type(returned, at), generic_decl(fd), b, at);
+  if (semtypes.concrete(first, true)) {
+    return first;
+  }
+  // `return Ok(v)` leaves Result's error to another exit, such as a `?`.
+  var exits: typeinfo.Type = resolved(checker.exit_result(fd.body, scope), generic_decl(fd), b, scope);
+  if (semtypes.concrete(exits, true)) {
+    return exits;
+  }
+  return first;
 }
 
 // The type of a slot the lambda lift filled with a closure constructor:

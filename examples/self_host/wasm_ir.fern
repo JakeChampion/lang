@@ -133,7 +133,7 @@ pub function arr_push_shared_addr(): i32 {
 }
 
 // arr_push_copied_addr is the 8-byte slot holding the SAME cliff, weighted by
-// the bytes each crossing copied (len * 4 — wasm-IR arrays are 4-byte slots),
+// the bytes each crossing copied (len times the element stride),
 // accumulated by $__fern_arr_push's un-share path and read by
 // __arr_push_shared_bytes. i64 because the quantity is arena-scale.
 //
@@ -177,7 +177,7 @@ pub function sleep_scratch_bytes(): i32 {
 // ip_flat_addr is the 48-byte wasi:sockets ip-socket-address record
 // $__fern_ip_flat writes: the family discriminant and the eleven payload
 // words each bind, connect and stream pushes. ip_box_addr and ip_box2_addr
-// are two 24-byte `u8[]` boxes (len, cap, the four octets one per slot;
+// are two 16-byte packed `u8[]` boxes (len, cap, the four octets, padding;
 // no rc/bsz header below the pointer, since nothing counts or releases a
 // scratch box and only $__fern_ip_flat reads one) for the bodies that still
 // take a packed IPv4 address (tcp_connect, udp_send) and bind to 0.0.0.0.
@@ -194,7 +194,7 @@ pub function ip_box_addr(): i32 {
 }
 
 pub function ip_box2_addr(): i32 {
-  return ip_box_addr() + 24;
+  return ip_box_addr() + 16;
 }
 
 // str_region_base is where a unit's string-literal region starts: the low
@@ -204,7 +204,7 @@ pub function ip_box2_addr(): i32 {
 // every slot added below moves it, which every literal offset and both
 // derived bases (fl_base / heap_base) follow automatically.
 pub function str_region_base(): i32 {
-  return (ip_box2_addr() + 24 + 7) / 8 * 8;
+  return (ip_box2_addr() + 16 + 7) / 8 * 8;
 }
 
 // fn_table_base is where a unit's funcref-table region starts. The elem
@@ -306,7 +306,14 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   var ops: string[] = need_ops();
   var oi: i32 = 0;
   while (oi < ops.len()) {
-    if (module_emits_op_cached(cache, ops[oi])) {
+    if (ops[oi] == "arr_push" || ops[oi] == "arr_push_owned") {
+      if (module_emits_push(cache, ops[oi], false)) {
+        out = out.append(ops[oi]);
+      }
+      if (module_emits_push(cache, ops[oi], true)) {
+        out = out.append(ops[oi] + "_u8");
+      }
+    } else if (module_emits_op_cached(cache, ops[oi])) {
       out = out.append(ops[oi]);
     }
     oi = oi + 1;
@@ -361,6 +368,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   }
   if (module_uses_arr_slice8(cache)) {
     out = out.append("@uses_arr_slice8");
+  }
+  if (module_uses_arr_slice_u8(cache)) {
+    out = out.append("@uses_arr_slice_u8");
   }
   if (module_calls_arr_str_join(cache)) {
     out = out.append("@uses_arr_str_join");
@@ -649,8 +659,12 @@ pub function const_agg_block_bytes(packed: string): i32 {
   if (ir.const_struct_fn_body(packed).len() > 0) {
     return 24;
   }
-  // An array's elements are 4-byte slots after its length and capacity,
-  // padded to keep the next block aligned.
+  // An array's elements are 4-byte slots after its length and capacity, a
+  // u8 literal's (ir.op_const_bytes) single bytes, padded to keep the next
+  // block aligned.
+  if (ir.const_struct_is_bytes(packed)) {
+    return 16 + (ir.const_struct_values(packed).len() + 7) / 8 * 8;
+  }
   if (ir.const_struct_is_array(packed)) {
     return 16 + (ir.const_struct_values(packed).len() + 1) / 2 * 8;
   }
@@ -1573,6 +1587,26 @@ pub function module_emits_op_cached(cache: irtables.LowerResult[], kind: string)
   return any_op(cache, is_kind);
 }
 
+// module_emits_push reports whether a function emits push op `kind` over a
+// packed u8[] (ir.packed) or, with `packed` false, over any other array: the
+// two call different helpers.
+function module_emits_push(cache: irtables.LowerResult[], kind: string, packed: boolean): boolean {
+  var ktag: i32 = ir.kind_id(kind);
+  function is_push(o: ir.Op): boolean {
+    return o.kind_tag == ktag && ir.is_packed(o) == packed;
+  }
+  return any_op(cache, is_push);
+}
+
+// packed_suffix names the byte-stride twin of a helper a packed op
+// (ir.packed) calls.
+function packed_suffix(o: ir.Op): string {
+  if (ir.is_packed(o)) {
+    return "_u8";
+  }
+  return "";
+}
+
 // module_uses_map_iter reports whether a function makes, reads, advances or
 // releases a cursor. A module can hold a cursor it did not make, a consumed
 // `MapIter` parameter, so the op that makes one is not enough to gate on.
@@ -1781,9 +1815,18 @@ pub function module_uses_divrem(cache: irtables.LowerResult[]): boolean {
 // arr_slice op (width 32), so the $__fern_arr_slice helper needs emitting.
 pub function module_uses_arr_slice(cache: irtables.LowerResult[]): boolean {
   function is_arr_slice(o: ir.Op): boolean {  // arr_slice
-    return o.kind_tag == 96 && o.width != 64;
+    return o.kind_tag == 96 && o.width != 64 && !ir.is_packed(o);
   }
   return any_op(cache, is_arr_slice);
+}
+
+// module_uses_arr_slice_u8 is the same gate for a packed u8[] slice
+// (ir.packed), which copies through $__fern_arr_slice_u8.
+pub function module_uses_arr_slice_u8(cache: irtables.LowerResult[]): boolean {
+  function is_arr_slice_u8(o: ir.Op): boolean {  // arr_slice
+    return o.kind_tag == 96 && ir.is_packed(o);
+  }
+  return any_op(cache, is_arr_slice_u8);
 }
 
 // module_uses_arr_slice8 reports whether any function emits an 8-byte-element
@@ -2260,6 +2303,7 @@ pub function component_refused_need(needs: string[], io: boolean): string {
     }
     if (n == "arr_push" || n == "arr_push_owned" || n == "arr_push_i64"
       || n == "arr_push_f64" || n == "arr_push_owned_i64" || n == "arr_push_owned_f64"
+      || n == "arr_push_u8" || n == "arr_push_owned_u8"
       || n == "map_iter" || n == "str_split"
       || n == "buf_take_bytes" || n == "buf_push_bytes_range"
       || n == "buf_new" || n == "buf_push" || n == "buf_push_range"
@@ -2325,23 +2369,22 @@ pub function random_imports_p2(): string {
   return "  (import \"wasi:random/random@0.2.0\" \"get-random-u64\" (func $get_random_u64 (result i64)))\n";
 }
 
-// random_func_p2 is the preview2 $__fern_random_bytes: same i32[] array
-// block result ([len][cap][bytes-as-i32]), but the byte source is
-// get-random-u64 — one u64 (8 bytes) fetched per 8 output bytes, each byte
-// sliced out with a shift+mask. Matches random_bytes_ir_func's return shape
-// so every random_bytes call site is unchanged.
+// random_func_p2 is the preview2 $__fern_random_bytes: the same packed u8[]
+// random_bytes_ir_func returns, but the byte source is get-random-u64 — one
+// u64 (8 bytes) fetched per 8 output bytes, each byte sliced out with a
+// shift+mask.
 pub function random_func_p2(): string {
   var o: string = "";
   o = o + "  (func $__fern_random_bytes (param $n i32) (result i32)\n";
   o = o + "    (local $arr i32) (local $i i32) (local $r i64)\n";
-  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 4)))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
   o = o + "    (local.set $i (i32.const 0))\n";
   o = o + "    (block $d (loop $c\n";
   o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $n)))\n";
   o = o + "      (if (i32.eqz (i32.and (local.get $i) (i32.const 7))) (then (local.set $r (call $get_random_u64))))\n";
-  o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.and (i32.wrap_i64 (i64.shr_u (local.get $r) (i64.extend_i32_u (i32.mul (i32.and (local.get $i) (i32.const 7)) (i32.const 8))))) (i32.const 255)))\n";
+  o = o + "      (i32.store8 (i32.add (i32.add (local.get $arr) (i32.const 8)) (local.get $i)) (i32.wrap_i64 (i64.shr_u (local.get $r) (i64.extend_i32_u (i32.mul (i32.and (local.get $i) (i32.const 7)) (i32.const 8))))))\n";
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o = o + "      (br $c)))\n";
   o = o + "    (local.get $arr))\n";
@@ -2622,7 +2665,7 @@ function no_preopen_p2(): string {
 pub function readfile_func_p2(): string {
   var o: string = "";
   o = o + "  (func $__fern_read_file (param $np i32) (result i32)\n";
-  o = o + "    (local $ra i32) (local $fd i32) (local $strm i32) (local $buf i32) (local $off i32) (local $cp i32) (local $cl i32) (local $i i32) (local $tmp i32)\n";
+  o = o + "    (local $ra i32) (local $fd i32) (local $strm i32) (local $buf i32) (local $off i32) (local $cp i32) (local $cl i32) (local $tmp i32) (local $cap i32) (local $grown i32)\n";
   o = o + "    (local.set $ra (i32.and (i32.add (call $__fern_alloc (i32.const 32)) (i32.const 7)) (i32.const -8)))\n";
   // first preopen descriptor = load(load(retarea))
   o = o + "    (call $get_directories (local.get $ra))\n";
@@ -2644,7 +2687,8 @@ pub function readfile_func_p2(): string {
   o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2() + ")\n";
   o = o + "      (return (local.get $tmp))))\n";
   o = o + "    (local.set $strm (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
-  o = o + "    (local.set $buf (call $__fern_alloc (i32.add (i32.const 4) (i32.const 1048576))))\n";
+  o = o + "    (local.set $cap (i32.const 4096))\n";
+  o = o + "    (local.set $buf (call $__fern_str_box (i32.add (i32.const 4) (local.get $cap))))\n";
   o = o + "    (local.set $off (i32.const 0))\n";
   o = o + "    (block $rd (loop $rc\n";
   o = o + "      (call $blocking_read (local.get $strm) (i64.const 4096) (local.get $ra))\n";
@@ -2652,12 +2696,9 @@ pub function readfile_func_p2(): string {
   o = o + "      (local.set $cp (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
   o = o + "      (local.set $cl (i32.load (i32.add (local.get $ra) (i32.const 8))))\n";
   o = o + "      (br_if $rd (i32.eqz (local.get $cl)))\n";
-  o = o + "      (local.set $i (i32.const 0))\n";
-  o = o + "      (block $cd (loop $cc\n";
-  o = o + "        (br_if $cd (i32.ge_u (local.get $i) (local.get $cl)))\n";
-  o = o + "        (i32.store8 (i32.add (i32.add (local.get $buf) (i32.const 4)) (i32.add (local.get $off) (local.get $i))) (i32.load8_u (i32.add (local.get $cp) (local.get $i))))\n";
-  o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "        (br $cc)))\n";
+  o = o + read_room("$buf", false, "(local.get $cl)");
+  o = o + "      (memory.copy (i32.add (i32.add (local.get $buf) (i32.const 4)) (local.get $off)) (local.get $cp) (local.get $cl))\n";
+  o = o + "      (call $__fern_raw_free (local.get $cp) (local.get $cl))\n";
   o = o + "      (local.set $off (i32.add (local.get $off) (local.get $cl)))\n";
   o = o + "      (br $rc)))\n";
   // Everything is in the accumulator: release the stream, then the
@@ -2667,6 +2708,7 @@ pub function readfile_func_p2(): string {
   o = o + "    (i32.store (local.get $buf) (local.get $off))\n";
   // D9 gate (#5714): errno 25 (ilseq) is synthetic — no wasi call produces it.
   o = o + "    (if (i32.eqz (call $__fern_utf8_valid (i32.add (local.get $buf) (i32.const 4)) (local.get $off))) (then\n";
+  o = o + "      (drop (call $__fern_arr_dec (local.get $buf)))\n";
   o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
   o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 25) (call $__fern_rc_inc (local.get $np))))\n";
@@ -2680,12 +2722,12 @@ pub function readfile_func_p2(): string {
 
 // readfile_bytes_func_p2 is the preview2 $__fern_read_file_bytes: the same
 // open-at / blocking-read pipeline and error boxing as readfile_func_p2, but
-// the Ok payload is a [len][cap][elems] i32[] array block (one byte per
-// 4-byte slot) rather than a string block.
+// each chunk lands in a growing packed u8[] (read_room), the Ok
+// payload, and the host's chunk list is released once copied.
 pub function readfile_bytes_func_p2(): string {
   var o: string = "";
   o = o + "  (func $__fern_read_file_bytes (param $np i32) (result i32)\n";
-  o = o + "    (local $ra i32) (local $fd i32) (local $strm i32) (local $buf i32) (local $off i32) (local $cp i32) (local $cl i32) (local $i i32) (local $tmp i32) (local $arr i32)\n";
+  o = o + "    (local $ra i32) (local $fd i32) (local $strm i32) (local $off i32) (local $cp i32) (local $cl i32) (local $tmp i32) (local $arr i32) (local $cap i32) (local $grown i32)\n";
   o = o + "    (local.set $ra (i32.and (i32.add (call $__fern_alloc (i32.const 32)) (i32.const 7)) (i32.const -8)))\n";
   o = o + "    (call $get_directories (local.get $ra))\n";
   o = o + no_preopen_p2();
@@ -2705,7 +2747,8 @@ pub function readfile_bytes_func_p2(): string {
   o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2() + ")\n";
   o = o + "      (return (local.get $tmp))))\n";
   o = o + "    (local.set $strm (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
-  o = o + "    (local.set $buf (call $__fern_alloc (i32.add (i32.const 4) (i32.const 1048576))))\n";
+  o = o + "    (local.set $cap (i32.const 4096))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $cap) (i32.const 1)))\n";
   o = o + "    (local.set $off (i32.const 0))\n";
   o = o + "    (block $rd (loop $rc\n";
   o = o + "      (call $blocking_read (local.get $strm) (i64.const 4096) (local.get $ra))\n";
@@ -2713,29 +2756,42 @@ pub function readfile_bytes_func_p2(): string {
   o = o + "      (local.set $cp (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
   o = o + "      (local.set $cl (i32.load (i32.add (local.get $ra) (i32.const 8))))\n";
   o = o + "      (br_if $rd (i32.eqz (local.get $cl)))\n";
-  o = o + "      (local.set $i (i32.const 0))\n";
-  o = o + "      (block $cd (loop $cc\n";
-  o = o + "        (br_if $cd (i32.ge_u (local.get $i) (local.get $cl)))\n";
-  o = o + "        (i32.store8 (i32.add (i32.add (local.get $buf) (i32.const 4)) (i32.add (local.get $off) (local.get $i))) (i32.load8_u (i32.add (local.get $cp) (local.get $i))))\n";
-  o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "        (br $cc)))\n";
+  o = o + read_room("$arr", true, "(local.get $cl)");
+  o = o + "      (memory.copy (i32.add (i32.add (local.get $arr) (i32.const 8)) (local.get $off)) (local.get $cp) (local.get $cl))\n";
+  o = o + "      (call $__fern_raw_free (local.get $cp) (local.get $cl))\n";
   o = o + "      (local.set $off (i32.add (local.get $off) (local.get $cl)))\n";
   o = o + "      (br $rc)))\n";
   o = o + "    (call $in_strm_drop (local.get $strm))\n";
   o = o + "    (call $desc_drop (local.get $fd))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $off) (i32.const 4)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $off))\n";
-  o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $off))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $sd (loop $sc\n";
-  o = o + "      (br_if $sd (i32.ge_u (local.get $i) (local.get $off)))\n";
-  o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load8_u (i32.add (i32.add (local.get $buf) (i32.const 4)) (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $sc)))\n";
+  o = o + "    (i32.store offset=4 (local.get $arr) (local.get $cap))\n";
   o = o + "    (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $tmp) (i32.const 0))\n";
   o = o + "    (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $arr))\n";
   o = o + "    (local.get $tmp))\n";
+  return o;
+}
+
+// read_room makes room for `want` more bytes past $off in the buffer local
+// `buf` of $cap data bytes a whole-file read is filling, a packed u8[] or,
+// with `packed` false, a string block: when they do not fit, $cap doubles
+// until they do and the bytes so far move to a fresh block of the same kind.
+function read_room(buf: string, packed: boolean, want: string): string {
+  var at: string = "4";
+  var fresh: string = "(call $__fern_str_box (i32.add (i32.const 4) (local.get $cap)))";
+  if (packed) {
+    at = "8";
+    fresh = "(call $__fern_arr_elems (local.get $cap) (i32.const 1))";
+  }
+  var o: string = "";
+  o = o + "      (if (i32.gt_u (i32.add (local.get $off) " + want + ") (local.get $cap)) (then\n";
+  o = o + "        (loop $dbl\n";
+  o = o + "          (local.set $cap (i32.shl (local.get $cap) (i32.const 1)))\n";
+  o = o + "          (br_if $dbl (i32.gt_u (i32.add (local.get $off) " + want + ") (local.get $cap))))\n";
+  o = o + "        (local.set $grown " + fresh + ")\n";
+  o = o + "        (memory.copy (i32.add (local.get $grown) (i32.const " + at + ")) (i32.add (local.get " + buf + ") (i32.const " + at + ")) (local.get $off))\n";
+  o = o + "        (drop (call $__fern_arr_dec (local.get " + buf + ")))\n";
+  o = o + "        (local.set " + buf + " (local.get $grown))))\n";
   return o;
 }
 
@@ -3237,7 +3293,7 @@ pub function ip_flat_func(): string {
   o = o + "      (local.set $k (i32.const 0))\n";
   o = o + "      (block $a (loop $al (br_if $a (i32.ge_u (local.get $k) (i32.const 4)))\n";
   o = o + "        (i32.store (i32.add (i32.add (local.get $out) (i32.const 8)) (i32.mul (local.get $k) (i32.const 4)))\n";
-  o = o + "          (i32.load (i32.add (i32.add (local.get $addr) (i32.const 8)) (i32.mul (local.get $k) (i32.const 4)))))\n";
+  o = o + "          (i32.load8_u offset=8 (i32.add (local.get $addr) (local.get $k))))\n";
   o = o + "        (local.set $k (i32.add (local.get $k) (i32.const 1))) (br $al)))\n";
   o = o + "      (return (i32.const 0))))\n";
   o = o + "    (if (i32.eq (local.get $len) (i32.const 16)) (then\n";
@@ -3245,8 +3301,8 @@ pub function ip_flat_func(): string {
   o = o + "      (local.set $k (i32.const 0))\n";
   o = o + "      (block $b (loop $bl (br_if $b (i32.ge_u (local.get $k) (i32.const 8)))\n";
   o = o + "        (i32.store (i32.add (i32.add (local.get $out) (i32.const 12)) (i32.mul (local.get $k) (i32.const 4)))\n";
-  o = o + "          (i32.or (i32.shl (i32.load (i32.add (i32.add (local.get $addr) (i32.const 8)) (i32.mul (local.get $k) (i32.const 8)))) (i32.const 8))\n";
-  o = o + "                  (i32.load (i32.add (i32.add (local.get $addr) (i32.const 12)) (i32.mul (local.get $k) (i32.const 8))))))\n";
+  o = o + "          (i32.or (i32.shl (i32.load8_u offset=8 (i32.add (local.get $addr) (i32.mul (local.get $k) (i32.const 2)))) (i32.const 8))\n";
+  o = o + "                  (i32.load8_u offset=9 (i32.add (local.get $addr) (i32.mul (local.get $k) (i32.const 2))))))\n";
   o = o + "        (local.set $k (i32.add (local.get $k) (i32.const 1))) (br $bl)))\n";
   o = o + "      (return (i32.const 0))))\n";
   o = o + "    (i32.const -5))\n";
@@ -3267,19 +3323,17 @@ function ip_flat_words(): string {
   return "      (i32.load offset=0 (local.get $flat))\n      (i32.load offset=4 (local.get $flat))\n      (i32.load offset=8 (local.get $flat))\n      (i32.load offset=12 (local.get $flat))\n      (i32.load offset=16 (local.get $flat))\n      (i32.load offset=20 (local.get $flat))\n      (i32.load offset=24 (local.get $flat))\n      (i32.load offset=28 (local.get $flat))\n      (i32.load offset=32 (local.get $flat))\n      (i32.load offset=36 (local.get $flat))\n      (i32.load offset=40 (local.get $flat))\n      (i32.load offset=44 (local.get $flat))\n";
 }
 
-// $__fern_ip4_box(host_be, box) -> the u8[] box at `box` (ip_box_addr or
-// ip_box2_addr) filled with the four octets of the IPv4 address packed in
-// network order, for the callers that still take one (tcp_connect,
-// udp_send's parsed literal).
+// $__fern_ip4_box(host_be, box) -> the packed u8[] box at `box` (ip_box_addr
+// or ip_box2_addr) holding the four octets of the IPv4 address packed in
+// network order, first octet in the low byte, for the callers that still take
+// one (tcp_connect, udp_send's parsed literal). The little-endian store lays
+// the octets out in order.
 pub function ip4_box_func(): string {
   var o: string = "";
   o = o + "  (func $__fern_ip4_box (param $host i32) (param $a i32) (result i32)\n";
   o = o + "    (i32.store (local.get $a) (i32.const 4))\n";
   o = o + "    (i32.store offset=4 (local.get $a) (i32.const 4))\n";
-  o = o + "    (i32.store offset=8 (local.get $a) (i32.and (local.get $host) (i32.const 255)))\n";
-  o = o + "    (i32.store offset=12 (local.get $a) (i32.and (i32.shr_u (local.get $host) (i32.const 8)) (i32.const 255)))\n";
-  o = o + "    (i32.store offset=16 (local.get $a) (i32.and (i32.shr_u (local.get $host) (i32.const 16)) (i32.const 255)))\n";
-  o = o + "    (i32.store offset=20 (local.get $a) (i32.and (i32.shr_u (local.get $host) (i32.const 24)) (i32.const 255)))\n";
+  o = o + "    (i32.store offset=8 (local.get $a) (local.get $host))\n";
   o = o + "    (local.get $a))\n";
   return o;
 }
@@ -3908,14 +3962,14 @@ pub function reactor_wait_func(): string {
   return o;
 }
 
-// $__fern_tcp_recv_into(conn, buf) -> bytes read into the caller's array,
-// one byte per slot; 0 at EOF, -EAGAIN (6) while nothing is queued since a
+// $__fern_tcp_recv_into(conn, buf) -> bytes read into the caller's packed
+// u8[]; 0 at EOF, -EAGAIN (6) while nothing is queued since a
 // wasm socket never blocks a read, -EIO on a stream error with the error
 // dropped, -EBADF for a record that is not a connection.
 pub function tcp_recv_into_func(): string {
   var o: string = "";
   o = o + "  (func $__fern_tcp_recv_into (param $c i32) (param $buf i32) (result i32)\n";
-  o = o + "    (local $ret i32) (local $n i32) (local $src i32) (local $len i32) (local $i i32) (local $closed i32)\n";
+  o = o + "    (local $ret i32) (local $n i32) (local $src i32) (local $len i32) (local $closed i32)\n";
   o = o + "    (if (i32.ne (i32.load offset=12 (local.get $c)) (i32.const 1)) (then (return (i32.const -8))))\n";
   o = o + "    (local.set $n (i32.load (local.get $buf)))\n";
   o = o + "    (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))\n";
@@ -3931,12 +3985,7 @@ pub function tcp_recv_into_func(): string {
   o = o + "    (local.set $len (i32.load offset=8 (local.get $ret)))\n";
   o = o + "    (call $__fern_raw_free (local.get $ret) (i32.const 12))\n";
   o = o + "    (if (i32.eqz (local.get $len)) (then (return (i32.const -6))))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $copied (loop $more\n";
-  o = o + "      (br_if $copied (i32.ge_u (local.get $i) (local.get $len)))\n";
-  o = o + "      (i32.store (i32.add (i32.add (local.get $buf) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load8_u (i32.add (local.get $src) (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $more)))\n";
+  o = o + "    (memory.copy (i32.add (local.get $buf) (i32.const 8)) (local.get $src) (local.get $len))\n";
   o = o + "    (call $__fern_raw_free (local.get $src) (local.get $len))\n";
   o = o + "    (local.get $len))\n";
   return o;
@@ -4096,7 +4145,7 @@ pub function udp_sendto_func(raw: boolean): string {
   }
   var o: string = "";
   o = o + "  (func $" + name + " (param $c i32) (param $addr i32) (param $port i32) (param $data i32) (result i32)\n";
-  o = o + "    (local $ret i32) (local $out i32) (local $p i32) (local $dg i32) (local $sent i32) (local $flat i32) (local $tmp i32) (local $k i32) (local $buf i32) (local $len i32)\n";
+  o = o + "    (local $ret i32) (local $out i32) (local $p i32) (local $dg i32) (local $sent i32) (local $flat i32) (local $tmp i32) (local $k i32)\n";
   o = o + "    (local.set $flat (i32.const " + util.i32_to_string(ip_flat_addr()) + "))\n";
   o = o + "    (if (i32.load (local.get $addr)) (then\n";
   o = o + "      (local.set $tmp (call $__fern_ip_flat (local.get $addr) (local.get $port) (local.get $flat)))\n";
@@ -4104,19 +4153,13 @@ pub function udp_sendto_func(raw: boolean): string {
   o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
   o = o + "    (local.set $out (i32.load offset=8 (local.get $c)))\n";
   o = o + "    (local.set $dg (call $__fern_alloc (i32.const 44)))\n";
-  o = o + "    (local.set $len (i32.load (local.get $data)))\n";
+  // The datagram's bytes follow a string's length word, a packed u8[]'s
+  // length and capacity.
+  var data_at: string = "4";
   if (raw) {
-    // Pack the entire datagram. Splitting it would change message boundaries.
-    o = o + "    (if (local.get $len) (then\n";
-    o = o + "      (local.set $buf (call $__fern_alloc (local.get $len)))\n";
-    o = o + "      (block $packed (loop $pack\n";
-    o = o + "        (br_if $packed (i32.ge_u (local.get $k) (local.get $len)))\n";
-    o = o + "        (i32.store8 (i32.add (local.get $buf) (local.get $k)) (i32.load offset=8 (i32.add (local.get $data) (i32.mul (local.get $k) (i32.const 4)))))\n";
-    o = o + "        (local.set $k (i32.add (local.get $k) (i32.const 1))) (br $pack)))))\n";
-  } else {
-    o = o + "    (local.set $buf (i32.add (local.get $data) (i32.const 4)))\n";
+    data_at = "8";
   }
-  o = o + "    (i32.store (local.get $dg) (local.get $buf))\n";
+  o = o + "    (i32.store (local.get $dg) (i32.add (local.get $data) (i32.const " + data_at + ")))\n";
   o = o + "    (i32.store offset=4 (local.get $dg) (i32.load (local.get $data)))\n";
   o = o + "    (if (i32.load (local.get $addr))\n";
   o = o + "      (then\n";
@@ -4155,18 +4198,15 @@ pub function udp_sendto_func(raw: boolean): string {
   o = o + "        (br $done)))\n";
   o = o + "    (call $__fern_raw_free (local.get $dg) (i32.const 44))\n";
   o = o + "    (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
-  if (raw) {
-    o = o + "    (if (local.get $len) (then (call $__fern_raw_free (local.get $buf) (local.get $len))))\n";
-  }
   o = o + "    (local.get $sent))\n";
   return o;
 }
 
-// $__fern_udp_recvfrom(rec, buf, from) -> one datagram spread one byte per
-// slot into the u8[] box at buf, up to its length: the byte count, or
+// $__fern_udp_recvfrom(rec, buf, from) -> one datagram copied into the
+// packed u8[] at buf, up to its length: the byte count, or
 // -errno. receive answers an empty list while nothing is pending, so the
 // call subscribes and blocks on the incoming stream and asks again. When
-// the box at `from` holds nineteen slots or more it receives the sender:
+// the packed u8[] at `from` holds nineteen bytes or more it receives the sender:
 // the family at 0 (4 or 6), the address's network-order bytes from 1
 // (four or sixteen, the rest zero), and the port at 17, high byte first.
 // The list and the datagram's bytes were placed in this heap by
@@ -4191,37 +4231,24 @@ pub function udp_recvfrom_func(): string {
   o = o + "        (local.set $len (i32.load offset=4 (local.get $list)))\n";
   o = o + "        (local.set $n (i32.load (local.get $buf)))\n";
   o = o + "        (if (i32.lt_u (local.get $len) (local.get $n)) (then (local.set $n (local.get $len))))\n";
-  o = o + "        (local.set $i (i32.const 0))\n";
-  o = o + "        (block $copied\n";
-  o = o + "          (loop $more\n";
-  o = o + "            (br_if $copied (i32.ge_u (local.get $i) (local.get $n)))\n";
-  o = o + "            (i32.store (i32.add (i32.add (local.get $buf) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))\n";
-  o = o + "              (i32.load8_u (i32.add (local.get $src) (local.get $i))))\n";
-  o = o + "            (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "            (br $more)))\n";
+  o = o + "        (memory.copy (i32.add (local.get $buf) (i32.const 8)) (local.get $src) (local.get $n))\n";
   o = o + "        (if (i32.ge_u (i32.load (local.get $from)) (i32.const 19)) (then\n";
-  o = o + "          (local.set $i (i32.const 0))\n";
-  o = o + "          (block $zd (loop $zl (br_if $zd (i32.ge_u (local.get $i) (i32.const 19)))\n";
-  o = o + "            (i32.store (i32.add (i32.add (local.get $from) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.const 0))\n";
-  o = o + "            (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $zl)))\n";
+  o = o + "          (memory.fill (i32.add (local.get $from) (i32.const 8)) (i32.const 0) (i32.const 19))\n";
   o = o + "          (if (i32.load8_u offset=8 (local.get $list))\n";
   o = o + "            (then\n";
-  o = o + "              (i32.store offset=8 (local.get $from) (i32.const 6))\n";
+  o = o + "              (i32.store8 offset=8 (local.get $from) (i32.const 6))\n";
   o = o + "              (local.set $i (i32.const 0))\n";
   o = o + "              (block $sd (loop $sl (br_if $sd (i32.ge_u (local.get $i) (i32.const 8)))\n";
-  o = o + "                (i32.store (i32.add (i32.add (local.get $from) (i32.const 12)) (i32.mul (local.get $i) (i32.const 8)))\n";
-  o = o + "                  (i32.load8_u (i32.add (i32.add (local.get $list) (i32.const 21)) (i32.mul (local.get $i) (i32.const 2)))))\n";
-  o = o + "                (i32.store (i32.add (i32.add (local.get $from) (i32.const 16)) (i32.mul (local.get $i) (i32.const 8)))\n";
-  o = o + "                  (i32.load8_u (i32.add (i32.add (local.get $list) (i32.const 20)) (i32.mul (local.get $i) (i32.const 2)))))\n";
+  o = o + "                (i32.store8 offset=9 (i32.add (local.get $from) (i32.mul (local.get $i) (i32.const 2)))\n";
+  o = o + "                  (i32.load8_u offset=21 (i32.add (local.get $list) (i32.mul (local.get $i) (i32.const 2)))))\n";
+  o = o + "                (i32.store8 offset=10 (i32.add (local.get $from) (i32.mul (local.get $i) (i32.const 2)))\n";
+  o = o + "                  (i32.load8_u offset=20 (i32.add (local.get $list) (i32.mul (local.get $i) (i32.const 2)))))\n";
   o = o + "                (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $sl))))\n";
   o = o + "            (else\n";
-  o = o + "              (i32.store offset=8 (local.get $from) (i32.const 4))\n";
-  o = o + "              (i32.store offset=12 (local.get $from) (i32.load8_u offset=14 (local.get $list)))\n";
-  o = o + "              (i32.store offset=16 (local.get $from) (i32.load8_u offset=15 (local.get $list)))\n";
-  o = o + "              (i32.store offset=20 (local.get $from) (i32.load8_u offset=16 (local.get $list)))\n";
-  o = o + "              (i32.store offset=24 (local.get $from) (i32.load8_u offset=17 (local.get $list)))))\n";
-  o = o + "          (i32.store offset=76 (local.get $from) (i32.load8_u offset=13 (local.get $list)))\n";
-  o = o + "          (i32.store offset=80 (local.get $from) (i32.load8_u offset=12 (local.get $list)))))\n";
+  o = o + "              (i32.store8 offset=8 (local.get $from) (i32.const 4))\n";
+  o = o + "              (i32.store offset=9 (local.get $from) (i32.load offset=14 (local.get $list)))))\n";
+  o = o + "          (i32.store8 offset=25 (local.get $from) (i32.load8_u offset=13 (local.get $list)))\n";
+  o = o + "          (i32.store8 offset=26 (local.get $from) (i32.load8_u offset=12 (local.get $list)))))\n";
   o = o + "        (if (local.get $len) (then (call $__fern_raw_free (local.get $src) (local.get $len))))\n";
   o = o + "        (call $__fern_raw_free (local.get $list) (i32.const 40))))\n";
   o = o + "    (call $__fern_raw_free (local.get $ret) (i32.const 12))\n";
@@ -4302,55 +4329,43 @@ pub function tcp_send_func(): string {
   return o;
 }
 
-// Word-slot arrays are packed into bounded scratch for the host's list<u8>.
-// Report accepted progress after a later failure so callers do not resend it.
+// The packed u8[]'s bytes go to the host in place, at most 4096 per write as
+// tcp_send's do. Report accepted progress after a later failure so callers do
+// not resend it.
 pub function tcp_send_bytes_func(): string {
   var o: string = "  (func $__fern_tcp_send_bytes (param $c i32) (param $a i32) (result i32)\n";
-  o = o + "    (local $st i32) (local $ret i32) (local $len i32) (local $off i32) (local $n i32) (local $buf i32) (local $cap i32) (local $i i32)\n";
+  o = o + "    (local $st i32) (local $ret i32) (local $len i32) (local $off i32) (local $n i32)\n";
   o = o + "    (local.set $st (i32.load offset=8 (local.get $c)))\n";
   o = o + "    (local.set $len (i32.load (local.get $a)))\n";
   o = o + "    (if (i32.eqz (local.get $len)) (then (return (i32.const 0))))\n";
-  o = o + "    (local.set $cap (local.get $len))\n";
-  o = o + "    (if (i32.gt_u (local.get $cap) (i32.const 4096)) (then (local.set $cap (i32.const 4096))))\n";
-  o = o + "    (local.set $buf (call $__fern_alloc (local.get $cap)))\n";
   o = o + "    (local.set $ret (call $__fern_alloc (i32.const 12)))\n";
   o = o + "    (block $done (loop $more\n";
   o = o + "      (br_if $done (i32.ge_u (local.get $off) (local.get $len)))\n";
   o = o + "      (local.set $n (i32.sub (local.get $len) (local.get $off)))\n";
-  o = o + "      (if (i32.gt_u (local.get $n) (local.get $cap)) (then (local.set $n (local.get $cap))))\n";
-  o = o + "      (local.set $i (i32.const 0))\n";
-  o = o + "      (block $packed (loop $pack\n";
-  o = o + "        (br_if $packed (i32.ge_u (local.get $i) (local.get $n)))\n";
-  o = o + "        (i32.store8 (i32.add (local.get $buf) (local.get $i)) (i32.load offset=8 (i32.add (local.get $a) (i32.mul (i32.add (local.get $off) (local.get $i)) (i32.const 4)))))\n";
-  o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $pack)))\n";
-  o = o + "      (call $__fern_wasi_stream_write (local.get $st) (local.get $buf) (local.get $n) (local.get $ret))\n";
+  o = o + "      (if (i32.gt_u (local.get $n) (i32.const 4096)) (then (local.set $n (i32.const 4096))))\n";
+  o = o + "      (call $__fern_wasi_stream_write (local.get $st) (i32.add (i32.add (local.get $a) (i32.const 8)) (local.get $off)) (local.get $n) (local.get $ret))\n";
   o = o + "      (if (i32.load8_u (local.get $ret)) (then\n";
   o = o + "        (if (i32.eqz (i32.load8_u offset=4 (local.get $ret))) (then (call $__fern_wasi_io_error_drop (i32.load offset=8 (local.get $ret)))))\n";
   o = o + "        (call $__fern_raw_free (local.get $ret) (i32.const 12))\n";
-  o = o + "        (call $__fern_raw_free (local.get $buf) (local.get $cap))\n";
   o = o + "        (if (i32.gt_u (local.get $off) (i32.const 0)) (then (return (local.get $off))))\n";
   o = o + "        (return (i32.const -1))))\n";
   o = o + "      (local.set $off (i32.add (local.get $off) (local.get $n))) (br $more)))\n";
   o = o + "    (call $__fern_raw_free (local.get $ret) (i32.const 12))\n";
-  o = o + "    (call $__fern_raw_free (local.get $buf) (local.get $cap))\n";
   o = o + "    (local.get $len))\n";
   return o;
 }
 
-// $__fern_tcp_recv(conn, max) -> u8[]: up to `max` bytes as a fresh
-// `[len][cap][elems]` array block (one byte per 4-byte slot, like
-// random_bytes_ir_func), or the EMPTY array on a stream error / clean EOF.
+// $__fern_tcp_recv(conn, max) -> u8[]: up to `max` bytes as a fresh packed
+// `[len][cap][bytes]` array block, or the EMPTY array on a stream error /
+// clean EOF.
 //
 // The input-stream is mem[conn+4]. blocking-read's retptr is 12 bytes: disc@+0,
 // then the returned list as data-ptr@+4 and length@+8. The bytes are copied
 // into the array block, then the guest-owned canonical list is released.
-// The copy is a byte loop — the
-// self-host wasm backend does not emit bulk-memory (`memory.copy`), so using it
-// here would silently raise the module's required feature set.
 pub function tcp_recv_func(): string {
   var o: string = "";
   o = o + "  (func $__fern_tcp_recv (param $c i32) (param $max i32) (result i32)\n";
-  o = o + "    (local $st i32) (local $ret i32) (local $n i32) (local $src i32) (local $arr i32) (local $i i32)\n";
+  o = o + "    (local $st i32) (local $ret i32) (local $n i32) (local $src i32) (local $arr i32)\n";
   o = o + "    (if (i32.le_s (local.get $max) (i32.const 0)) (then\n";
   o = o + "      (local.set $arr (call $__fern_arr_box (i32.const 0)))\n";
   o = o + "      (i32.store (local.get $arr) (i32.const 0))\n";
@@ -4370,16 +4385,10 @@ pub function tcp_recv_func(): string {
   o = o + "      (return (local.get $arr))))\n";
   o = o + "    (local.set $src (i32.load offset=4 (local.get $ret)))\n";
   o = o + "    (local.set $n (i32.load offset=8 (local.get $ret)))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 4)))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
-  o = o + "    (block $done\n";
-  o = o + "      (loop $more\n";
-  o = o + "        (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n";
-  o = o + "        (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))\n";
-  o = o + "          (i32.load8_u (i32.add (local.get $src) (local.get $i))))\n";
-  o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "        (br $more)))\n";
+  o = o + "    (memory.copy (i32.add (local.get $arr) (i32.const 8)) (local.get $src) (local.get $n))\n";
   o = o + "    (if (local.get $n) (then (call $__fern_raw_free (local.get $src) (local.get $n))))\n";
   o = o + "    (call $__fern_raw_free (local.get $ret) (i32.const 12))\n";
   o = o + "    (local.get $arr))\n";
@@ -5042,8 +5051,8 @@ function emit_host_op_wat(o: ir.Op): string {
   }
   if (o.kind_tag == 233) {  // read_file_bytes
     // stack: path strblock ptr -> read the whole named file, push a
-    // Result[u8[], IoError] box ptr (Ok payload a [len][cap][elems]
-    // i32[] array block, one byte per 4-byte slot). Same imports and
+    // Result[u8[], IoError] box ptr (Ok payload a packed [len][cap][bytes]
+    // array block). Same imports and
     // caller-side emission gating as read_file.
     return "    call $__fern_read_file_bytes\n";
   }
@@ -5634,15 +5643,16 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     }
     // u32 / i32: no-op (value already a 32-bit i32).
   } else if (o.kind_tag == 92) {  // arr_push
-    // stack: arr, val -> $__fern_arr_push(arr, val) -> grown array.
-    parts = parts.append("    call $__fern_arr_push\n");
+    // stack: arr, val -> $__fern_arr_push(arr, val) -> grown array, or
+    // $__fern_arr_push_u8 for a packed u8[] (ir.packed).
+    parts = parts.append("    call $__fern_arr_push" + packed_suffix(o) + "\n");
   } else if (o.kind_tag == 93) {  // arr_push_owned
     // The sole-owner self-append (an !aliased `a = a.append(v)`):
     // reclaims the old buffer on a grow-realloc via $__fern_arr_push_owned
     // (arr_push_owned_helper — wraps $__fern_arr_push + frees the dead old
     // box through $__fern_arr_dec). Sound: the emit site proved the slot
-    // unaliased.
-    parts = parts.append("    call $__fern_arr_push_owned\n");
+    // unaliased. A packed u8[] (ir.packed) takes the byte-stride twin.
+    parts = parts.append("    call $__fern_arr_push_owned" + packed_suffix(o) + "\n");
   } else if (o.kind_tag == 94) {  // arr_push_i64
     // stack: arr, i64 val -> the 8-byte-stride push (wasm32 packs i32[] at
     // 4-byte but i64[]/u64[] at 8-byte, so this needs its own helper).
@@ -5810,16 +5820,19 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append(emit_str_op_wat(o));
   } else if (o.kind_tag == 96) {  // arr_slice
     // stack: arr, start, end -> fresh array block. An f64[] slice (width
-    // 64) copies 8-byte elements via $__fern_arr_slice8; i32[] / string[]
-    // copy 4-byte elements via $__fern_arr_slice. The chosen helper is
-    // emitted conditionally (module_uses_arr_slice / _arr_slice8).
+    // 64) copies 8-byte elements via $__fern_arr_slice8, a packed u8[]
+    // bytes via $__fern_arr_slice_u8; i32[] / string[] copy 4-byte
+    // elements via $__fern_arr_slice. The chosen helper is emitted
+    // conditionally (module_uses_arr_slice / _arr_slice8 / _arr_slice_u8).
     if (o.width == 64) {
       parts = parts.append("    call $__fern_arr_slice8\n");
+    } else if (ir.is_packed(o)) {
+      parts = parts.append("    call $__fern_arr_slice_u8\n");
     } else {
       parts = parts.append("    call $__fern_arr_slice\n");
     }
   } else if (o.kind_tag == 185) {  // random_bytes
-    // stack: n -> $__fern_random_bytes(n) -> fresh i32[] array block.
+    // stack: n -> $__fern_random_bytes(n) -> fresh packed u8[] block.
     parts = parts.append("    call $__fern_random_bytes\n");
   } else if (o.kind_tag == 186) {  // random_i32
     // -> $__fern_random_i32() -> i32.
@@ -6852,8 +6865,8 @@ pub function cos_func(): string {
 // so they live here in the IR emitter, not the AST emitter wasm.fern #3457 deletes.
 // random_get_import / random_bytes_ir_func / random_i32_func / str_bytes_func
 // are the IR-path byte-source helpers (issue #2747). random_bytes_ir_func
-// builds the `[len][cap][elems]` i32[] array block (random_bytes returns
-// u8[]), matching the register backends and the preview-2 random_func_p2.
+// builds the packed `[len][cap][bytes]` u8[] block random_bytes returns,
+// matching the register backends and the preview-2 random_func_p2.
 // The wasm_ir_run driver emits these gated by module_emits_op.
 pub function random_get_import(): string {
   return "  (import \"wasi_snapshot_preview1\" \"random_get\" (func $random_get (param i32 i32) (result i32)))\n";
@@ -6969,26 +6982,16 @@ pub function reader_fd_close_import(): string {
   return "  (import \"wasi_snapshot_preview1\" \"fd_close\" (func $fd_close (param i32) (result i32)))\n";
 }
 
-// $__fern_random_bytes(n) -> a fresh `[len][cap][elems]` i32[] array block of
-// n CSPRNG bytes, one byte per 4-byte slot. random_get writes packed bytes,
-// so fill a raw scratch first, then spread bytes one-per-slot — the same
-// shape str_bytes_func builds, and the same block random_func_p2 already
-// returns on the preview-2 path.
+// $__fern_random_bytes(n) -> a fresh packed u8[] (`[len][cap][bytes]`) of n
+// CSPRNG bytes, which random_get writes in place.
 pub function random_bytes_ir_func(): string {
   var o: string = "";
   o = o + "  (func $__fern_random_bytes (param $n i32) (result i32)\n";
-  o = o + "    (local $arr i32) (local $buf i32) (local $i i32)\n";
-  o = o + "    (local.set $buf (call $__fern_alloc (local.get $n)))\n";
-  o = o + "    (drop (call $random_get (local.get $buf) (local.get $n)))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 4)))\n";
+  o = o + "    (local $arr i32)\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $n)))\n";
-  o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load8_u (i32.add (local.get $buf) (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c)))\n";
+  o = o + "    (drop (call $random_get (i32.add (local.get $arr) (i32.const 8)) (local.get $n)))\n";
   o = o + "    (local.get $arr))\n";
   return o;
 }
@@ -7003,24 +7006,18 @@ pub function random_i32_func(): string {
   return o;
 }
 
-// $__fern_str_bytes(s) -> a fresh u8[] (`[len][cap][i32 elems]`) holding the
-// bytes of string block `s`. Backs both bytes() and as_bytes() (the slot-array
-// model has no zero-copy slice view). Reads bytes from s+4+i (the [len][bytes]
-// layout), stores each zero-extended into the array's 4-byte slot at arr+8+i*4.
+// $__fern_str_bytes(s) -> a fresh packed u8[] (`[len][cap][bytes]`) holding a
+// copy of the bytes of string block `s` ([len][bytes]). Backs both bytes() and
+// as_bytes(), which has no zero-copy view here.
 pub function str_bytes_func(): string {
   var o: string = "";
   o = o + "  (func $__fern_str_bytes (param $s i32) (result i32)\n";
-  o = o + "    (local $n i32) (local $arr i32) (local $i i32)\n";
+  o = o + "    (local $n i32) (local $arr i32)\n";
   o = o + "    (local.set $n (i32.load (local.get $s)))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 4)))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $n)))\n";
-  o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c)))\n";
+  o = o + "    (memory.copy (i32.add (local.get $arr) (i32.const 8)) (i32.add (local.get $s) (i32.const 4)) (local.get $n))\n";
   o = o + "    (local.get $arr))\n";
   return o;
 }
@@ -8225,7 +8222,7 @@ pub function bsd_sum_helper(): string {
 }
 
 // count_runs_helper emits $__fern_count_runs(s, inside, set) -> how many runs
-// of bytes whose set entry (the 4-byte slot at set + 8 + b*4) is nonzero
+// of bytes whose set entry (the byte at set + 8 + b of the packed u8[]) is nonzero
 // begin in s; `inside` nonzero means the byte before s was a member. A byte
 // past the set's length at [set] is not a member.
 pub function count_runs_helper(): string {
@@ -8240,7 +8237,7 @@ pub function count_runs_helper(): string {
   o = o + "      (local.set $b (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
   o = o + "      (local.set $cur (i32.const 0))\n";
   o = o + "      (if (i32.lt_u (local.get $b) (local.get $n)) (then\n";
-  o = o + "        (local.set $cur (i32.ne (i32.load (i32.add (i32.add (local.get $set) (i32.const 8)) (i32.mul (local.get $b) (i32.const 4)))) (i32.const 0)))))\n";
+  o = o + "        (local.set $cur (i32.ne (i32.load8_u (i32.add (i32.add (local.get $set) (i32.const 8)) (local.get $b))) (i32.const 0)))))\n";
   o = o + "      (local.set $runs (i32.add (local.get $runs) (i32.gt_u (local.get $cur) (local.get $prev))))\n";
   o = o + "      (local.set $prev (local.get $cur))\n";
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
@@ -8252,7 +8249,7 @@ pub function count_runs_helper(): string {
 // scan_set_helper emits $__fern_scan_set(s, from, set) -> the index of the
 // first byte at or after `from` whose entry in `set` is nonzero, or the
 // LENGTH. Scalar: the table read per byte is the kernel. The string block is
-// [len@0][bytes@4]; the set is a u8[] block, [len@0][cap@4][4-byte slots@8],
+// [len@0][bytes@4]; the set is a packed u8[] block, [len@0][cap@4][bytes@8],
 // and a byte past its length is not in it.
 pub function scan_set_helper(): string {
   var o: string = "";
@@ -8267,7 +8264,7 @@ pub function scan_set_helper(): string {
   o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
   o = o + "      (local.set $b (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
   o = o + "      (if (i32.lt_u (local.get $b) (local.get $n)) (then\n";
-  o = o + "        (if (i32.load (i32.add (i32.add (local.get $set) (i32.const 8)) (i32.mul (local.get $b) (i32.const 4)))) (then (return (local.get $i))))))\n";
+  o = o + "        (if (i32.load8_u (i32.add (i32.add (local.get $set) (i32.const 8)) (local.get $b))) (then (return (local.get $i))))))\n";
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o = o + "      (br $c)))\n";
   o = o + "    (local.get $len))\n";
@@ -8713,55 +8710,7 @@ pub function strcmp_helper(): string {
 // The full AST-path arr_helpers bundle is not on the IR path, so this narrow
 // helper stands alone there. Depends only on $__fern_arr_box (module_allocates).
 pub function arr_push_helper(): string {
-  var o: string = "";
-  o = o + "  (func $__fern_arr_push (param $a i32) (param $v i32) (result i32)\n";
-  o = o + "    (local $len i32) (local $cap i32) (local $na i32) (local $ncap i32) (local $i i32) (local $rc i32)\n";
-  o = o + "    (local.set $len (i32.load (local.get $a)))\n";
-  o = o + "    (local.set $cap (i32.load (i32.add (local.get $a) (i32.const 4))))\n";
-  // #4873/#5325 containment gate (the wasm mirror of asm_ir's
-  // .Larr_push_rc_ok): in-place append only for a SOLE-OWNER (rc == 1) or
-  // immortal (bit-31, rc < 0 signed) receiver with spare capacity. A shared
-  // (rc >= 2) receiver — the caller-side grow bracket inc'd it, or a counted
-  // alias exists — takes the copy path even when capacity fits, leaving the
-  // shared buffer untouched. Wasm-IR arrays are rc-headered via
-  // $__fern_arr_box ([rc@0][bsz@4][len@8][cap@12], data = base+8), so the
-  // rc word sits at [a-8]. An unheadered/garbage rc word fails the test and
-  // merely takes the copy path — safe, never an in-place mutation.
-  o = o + "    (local.set $rc (i32.load (i32.sub (local.get $a) (i32.const 8))))\n";
-  o = o + "    (if (i32.and (i32.or (i32.eq (local.get $rc) (i32.const 1)) (i32.lt_s (local.get $rc) (i32.const 0))) (i32.lt_s (local.get $len) (local.get $cap))) (then\n";
-  o = o + "      (i32.store (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $len) (i32.const 4))) (local.get $v))\n";
-  o = o + "      (i32.store (local.get $a) (i32.add (local.get $len) (i32.const 1)))\n";
-  o = o + "      (return (local.get $a))))\n";
-  // Copy path: a shared receiver with spare capacity (len < cap) is an
-  // UN-SHARE copy — keep the SAME cap instead of doubling (the #3425
-  // arena-footprint lesson from the register port). True growth
-  // (len >= cap) doubles (or starts at 4).
-  o = o + "    (local.set $ncap (local.get $cap))\n";
-  // Reaching the copy path with len < cap means the receiver was SHARED (the
-  // in-place branch above already took every sole-owner-with-room case), so
-  // this copy was bought by an extra reference rather than a full buffer:
-  // the rc==1 cliff. Count it at arr_push_shared_addr — off the fast path,
-  // one add on a run already about to copy the whole buffer.
-  o = o + "    (if (i32.lt_s (local.get $len) (local.get $cap)) (then\n";
-  o = o + "      (i32.store (i32.const " + util.i32_to_string(arr_push_shared_addr()) + ") (i32.add (i32.load (i32.const " + util.i32_to_string(arr_push_shared_addr()) + ")) (i32.const 1)))\n";
-  // Weight the crossing by the len * 4 bytes the copy below is about to
-  // move, accumulated as an i64 at arr_push_copied_addr.
-  o = o + "      (i64.store (i32.const " + util.i32_to_string(arr_push_copied_addr()) + ") (i64.add (i64.load (i32.const " + util.i32_to_string(arr_push_copied_addr()) + ")) (i64.extend_i32_u (i32.mul (local.get $len) (i32.const 4)))))))\n";
-  o = o + "    (if (i32.ge_s (local.get $len) (local.get $cap)) (then\n";
-  o = o + "      (local.set $ncap (i32.const 4))\n";
-  o = o + "      (if (i32.gt_s (local.get $cap) (i32.const 0)) (then (local.set $ncap (i32.mul (local.get $cap) (i32.const 2)))))))\n";
-  o = o + "    (local.set $na (call $__fern_arr_elems (local.get $ncap) (i32.const 4)))\n";
-  o = o + "    (i32.store (local.get $na) (i32.add (local.get $len) (i32.const 1)))\n";
-  o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $ncap))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
-  o = o + "      (i32.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c)))\n";
-  o = o + "    (i32.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $len) (i32.const 4))) (local.get $v))\n";
-  o = o + "    (local.get $na))\n";
-  return o;
+  return arr_push_strided("", "i32", "i32.store", 4);
 }
 
 // str_split_helper emits the IR-path string→string[] runtime: a private
@@ -9089,37 +9038,29 @@ pub function strbuf_helpers(): string {
   return o;
 }
 
-// The wasm array layout uses four-byte slots for u8 elements.
+// Appends a[lo:hi) of a packed u8[], the range clamped to the array.
 function buf_push_bytes_range_helper(): string {
   var o: string = "  (func $__fern_buf_push_bytes_range (param $h i32) (param $a i32) (param $lo i32) (param $hi i32)\n";
-  o = o + "    (local $n i32) (local $len i32) (local $dst i32) (local $src i32)\n";
+  o = o + "    (local $n i32) (local $len i32)\n";
   o = o + "    (if (i32.lt_s (local.get $lo) (i32.const 0)) (then (local.set $lo (i32.const 0))))\n";
   o = o + "    (if (i32.gt_s (local.get $hi) (i32.load (local.get $a))) (then (local.set $hi (i32.load (local.get $a)))))\n";
   o = o + "    (if (i32.le_s (local.get $hi) (local.get $lo)) (then (return)))\n";
   o = o + "    (local.set $n (i32.sub (local.get $hi) (local.get $lo)))\n";
   o = o + "    (local.set $len (i32.load offset=4 (local.get $h)))\n";
   o = o + "    (if (i32.gt_u (i32.add (local.get $len) (local.get $n)) (i32.load offset=8 (local.get $h))) (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (local.get $n)))))\n";
-  o = o + "    (local.set $dst (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
-  o = o + "    (local.set $src (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $lo) (i32.const 4))))\n";
-  o = o + "    (i32.store offset=4 (local.get $h) (i32.add (local.get $len) (local.get $n)))\n";
-  o = o + "    (loop $copy (i32.store8 (local.get $dst) (i32.load8_u (local.get $src)))\n";
-  o = o + "      (local.set $dst (i32.add (local.get $dst) (i32.const 1))) (local.set $src (i32.add (local.get $src) (i32.const 4)))\n";
-  return o + "      (local.set $n (i32.sub (local.get $n) (i32.const 1))) (br_if $copy (local.get $n))))\n";
+  o = o + "    (memory.copy (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)) (i32.add (i32.add (local.get $a) (i32.const 8)) (local.get $lo)) (local.get $n))\n";
+  return o + "    (i32.store offset=4 (local.get $h) (i32.add (local.get $len) (local.get $n))))\n";
 }
 
-// Byte extraction uses array headers, never a string box.
+// Byte extraction copies into a fresh packed u8[], never a string box.
 function buf_take_bytes_helper(): string {
-  // This emitter represents u8[] as four-byte slots, including typed IR.
   var o: string = "  (func $__fern_buf_take_bytes (param $h i32) (result i32)\n";
-  o = o + "    (local $n i32) (local $a i32) (local $src i32) (local $i i32)\n";
+  o = o + "    (local $n i32) (local $a i32)\n";
   o = o + "    (local.set $n (i32.load offset=4 (local.get $h)))\n";
-  o = o + "    (local.set $a (call $__fern_arr_elems (local.get $n) (i32.const 4)))\n";
+  o = o + "    (local.set $a (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n";
   o = o + "    (i32.store (local.get $a) (local.get $n))\n";
   o = o + "    (i32.store offset=4 (local.get $a) (local.get $n))\n";
-  o = o + "    (local.set $src (i32.add (i32.load (local.get $h)) (i32.const 4)))\n";
-  o = o + "    (block $done (loop $copy (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n";
-  o = o + "      (i32.store offset=8 (i32.add (local.get $a) (i32.mul (local.get $i) (i32.const 4))) (i32.load8_u (i32.add (local.get $src) (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $copy)))\n";
+  o = o + "    (memory.copy (i32.add (local.get $a) (i32.const 8)) (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $n))\n";
   o = o + "    (i32.store offset=4 (local.get $h) (i32.const 0))\n";
   return o + "    (local.get $a))\n";
 }
@@ -9213,8 +9154,8 @@ pub function buf_helpers(needs: string[]): string {
     o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $n))))\n";
   }
   // push_mapped(H, s, table): append table[c] for each byte c of s, or c
-  // itself when it is past the table's length at [table]. Entry i is the
-  // 4-byte slot at table + 8 + i*4.
+  // itself when it is past the table's length at [table]. The table is a
+  // packed u8[], entry i the byte at table + 8 + i.
   if (need(needs, "buf_push_mapped")) {
     o = o + "  (func $__fern_buf_push_mapped (param $h i32) (param $s i32) (param $t i32)\n";
     o = o + "    (local $n i32) (local $i i32) (local $d i32) (local $len i32) (local $m i32) (local $c i32)\n";
@@ -9228,13 +9169,13 @@ pub function buf_helpers(needs: string[]): string {
     o = o + "    (block $md (loop $ml (br_if $md (i32.ge_u (local.get $i) (local.get $n)))\n";
     o = o + "      (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
     o = o + "      (if (i32.lt_u (local.get $c) (local.get $m)) (then\n";
-    o = o + "        (local.set $c (i32.load (i32.add (i32.add (local.get $t) (i32.const 8)) (i32.mul (local.get $c) (i32.const 4)))))))\n";
+    o = o + "        (local.set $c (i32.load8_u (i32.add (i32.add (local.get $t) (i32.const 8)) (local.get $c))))))\n";
     o = o + "      (i32.store8 (i32.add (local.get $d) (local.get $i)) (local.get $c))\n";
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $ml)))\n";
     o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $n))))\n";
   }
   // push_filtered(H, s, drop): append each byte c of s whose drop entry
-  // (the 4-byte slot at drop + 8 + c*4) is zero, or that is past the
+  // (the byte at drop + 8 + c) is zero, or that is past the
   // table's length at [drop]. Room for the whole string is reserved.
   if (need(needs, "buf_push_filtered")) {
     o = o + "  (func $__fern_buf_push_filtered (param $h i32) (param $s i32) (param $t i32)\n";
@@ -9250,16 +9191,16 @@ pub function buf_helpers(needs: string[]): string {
     o = o + "      (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (if (i32.lt_u (local.get $c) (local.get $m)) (then\n";
-    o = o + "        (br_if $fl (i32.load (i32.add (i32.add (local.get $t) (i32.const 8)) (i32.mul (local.get $c) (i32.const 4)))))))\n";
+    o = o + "        (br_if $fl (i32.load8_u (i32.add (i32.add (local.get $t) (i32.const 8)) (local.get $c))))))\n";
     o = o + "      (i32.store8 (i32.add (local.get $d) (local.get $j)) (local.get $c))\n";
     o = o + "      (local.set $j (i32.add (local.get $j) (i32.const 1))) (br $fl)))\n";
     o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $j))))\n";
   }
   // push_expanded(H, s, table): append each byte c of s as the record at
   // table[c*8], a length (above 7 counts as 7) and then the bytes, or c
-  // itself when its record is not wholly inside the table. Entry i is the
-  // 4-byte slot at table + 8 + i*4, so byte c's record starts at
-  // table + 8 + c*32.
+  // itself when its record is not wholly inside the table. The table is a
+  // packed u8[], entry i the byte at table + 8 + i, so byte c's record
+  // starts at table + 8 + c*8.
   if (need(needs, "buf_push_expanded")) {
     o = o + "  (func $__fern_buf_push_expanded (param $h i32) (param $s i32) (param $t i32)\n";
     o = o + "    (local $n i32) (local $i i32) (local $d i32) (local $len i32) (local $m i32) (local $c i32) (local $j i32) (local $r i32) (local $l i32) (local $k i32)\n";
@@ -9275,12 +9216,12 @@ pub function buf_helpers(needs: string[]): string {
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (if (i32.lt_u (local.get $c) (local.get $m))\n";
     o = o + "        (then\n";
-    o = o + "          (local.set $r (i32.add (i32.add (local.get $t) (i32.const 8)) (i32.mul (local.get $c) (i32.const 32))))\n";
-    o = o + "          (local.set $l (i32.load (local.get $r)))\n";
+    o = o + "          (local.set $r (i32.add (i32.add (local.get $t) (i32.const 8)) (i32.mul (local.get $c) (i32.const 8))))\n";
+    o = o + "          (local.set $l (i32.load8_u (local.get $r)))\n";
     o = o + "          (if (i32.gt_u (local.get $l) (i32.const 7)) (then (local.set $l (i32.const 7))))\n";
     o = o + "          (local.set $k (i32.const 0))\n";
     o = o + "          (block $bd (loop $bl (br_if $bd (i32.ge_u (local.get $k) (local.get $l)))\n";
-    o = o + "            (i32.store8 (i32.add (local.get $d) (local.get $j)) (i32.load (i32.add (local.get $r) (i32.mul (i32.add (local.get $k) (i32.const 1)) (i32.const 4)))))\n";
+    o = o + "            (i32.store8 (i32.add (local.get $d) (local.get $j)) (i32.load8_u offset=1 (i32.add (local.get $r) (local.get $k))))\n";
     o = o + "            (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
     o = o + "            (local.set $k (i32.add (local.get $k) (i32.const 1))) (br $bl))))\n";
     o = o + "        (else\n";
@@ -9522,23 +9463,17 @@ pub function u64_to_string_helper(): string {
   return o;
 }
 
-// string_from_bytes_helper emits $__fern_string_from_bytes(arr): pack a u8[]
-// (an i32[] array block `[len][cap][bytes-as-i32]`) into a fresh `[len][bytes]`
-// string block, truncating each i32 element to its low byte via i32.store8.
-// Depends on $__fern_alloc from heap_alloc_helpers.
+// string_from_bytes_helper emits $__fern_string_from_bytes(arr): copy a packed
+// u8[] (`[len][cap][bytes]`) into a fresh `[len][bytes]` string block.
+// Depends on $__fern_str_box from heap_alloc_helpers.
 pub function string_from_bytes_helper(): string {
   var o: string = "";
   o = o + "  (func $__fern_string_from_bytes (param $arr i32) (result i32)\n";
-  o = o + "    (local $n i32) (local $s i32) (local $i i32)\n";
+  o = o + "    (local $n i32) (local $s i32)\n";
   o = o + "    (local.set $n (i32.load (local.get $arr)))\n";
   o = o + "    (local.set $s (call $__fern_str_box (i32.add (i32.const 4) (local.get $n))))\n";
   o = o + "    (i32.store (local.get $s) (local.get $n))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $n)))\n";
-  o = o + "      (i32.store8 (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i)) (i32.load (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c)))\n";
+  o = o + "    (memory.copy (i32.add (local.get $s) (i32.const 4)) (i32.add (local.get $arr) (i32.const 8)) (local.get $n))\n";
   o = o + "    (local.get $s))\n";
   return o;
 }
@@ -9844,12 +9779,10 @@ pub function utf8_valid_func(): string {
 // reads to EOF into a fresh string block, and returns Ok(block) (tag 0)
 // or Err(errno) (tag 1) on open failure. The rights args are i64 — written
 // directly in this hand-authored WAT, independent of the i32 value model.
-// Read cap is 64 KiB (enough for the compiler-test files; larger files
-// truncate — a follow-up can grow the block).
 pub function readfile_func(): string {
   var o: string = "";
   o = o + "  (func $__fern_read_file (param $np i32) (result i32)\n";
-  o = o + "    (local $err i32) (local $fd i32) (local $blk i32) (local $off i32) (local $n i32) (local $tmp i32) (local $cap i32)\n";
+  o = o + "    (local $err i32) (local $fd i32) (local $blk i32) (local $off i32) (local $n i32) (local $tmp i32) (local $cap i32) (local $grown i32)\n";
   // rights_base = FD_READ (2) | FD_SEEK (4) — a valid Rights mask
   // (all-ones is rejected: it sets bits outside the defined Rights set).
   o = o + "    (local.set $err (call $path_open (i32.const 3) (i32.const 1) (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (i32.const 0) (i64.const 6) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
@@ -9859,21 +9792,13 @@ pub function readfile_func(): string {
   o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $np))))\n";
   o = o + "      (return (local.get $tmp))))\n";
   o = o + "    (local.set $fd (i32.load (i32.const 16)))\n";
-  // Growable read buffer: a [len][bytes] block whose data capacity starts
-  // at 64 KiB and extends by 64 KiB whenever it fills. The bump allocator
-  // hands out contiguous bytes and nothing else allocates during the read
-  // loop, so each extension lands right after the current buffer. (The old
-  // code used a fixed 64 KiB buffer, silently truncating larger files: once
-  // off reached 64 KiB the iovec length went to 0, fd_read returned 0, and
-  // the loop mistook that for EOF.)
-  o = o + "    (local.set $cap (i32.const 65536))\n";
+  // A [len][bytes] block that read_room grows. Room comes before each
+  // read, so a full buffer is never mistaken for EOF.
+  o = o + "    (local.set $cap (i32.const 4096))\n";
   o = o + "    (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (local.get $cap))))\n";
   o = o + "    (local.set $off (i32.const 0))\n";
   o = o + "    (block $rd (loop $rc\n";
-  // Ensure room before reading, so a full buffer is never mistaken for EOF.
-  o = o + "      (if (i32.ge_u (local.get $off) (local.get $cap)) (then\n";
-  o = o + "        (drop (call $__fern_alloc (i32.const 65536)))\n";
-  o = o + "        (local.set $cap (i32.add (local.get $cap) (i32.const 65536)))))\n";
+  o = o + read_room("$blk", false, "(i32.const 1)");
   o = o + "      (i32.store (i32.const 0) (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $off)))\n";
   o = o + "      (i32.store (i32.const 4) (i32.sub (local.get $cap) (local.get $off)))\n";
   o = o + "      (if (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)) (then (i32.store (i32.const 8) (i32.const 0))))\n";
@@ -9885,6 +9810,7 @@ pub function readfile_func(): string {
   o = o + "    (i32.store (local.get $blk) (local.get $off))\n";
   // D9 gate (#5714): errno 25 (ilseq) is synthetic — no wasi call produces it.
   o = o + "    (if (i32.eqz (call $__fern_utf8_valid (i32.add (local.get $blk) (i32.const 4)) (local.get $off))) (then\n";
+  o = o + "      (drop (call $__fern_arr_dec (local.get $blk)))\n";
   o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
   o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 25) (call $__fern_rc_inc (local.get $np))))\n";
@@ -9898,13 +9824,12 @@ pub function readfile_func(): string {
 
 // readfile_bytes_func emits $__fern_read_file_bytes(path): Result[u8[], IoError]
 // — read_file's raw sibling: the same path_open / fd_read loop / fd_close
-// pipeline and error boxing as readfile_func, but the Ok payload is a
-// [len][cap][elems] i32[] array block (one byte per 4-byte slot — the
-// str_bytes_func spread) rather than a string block.
+// pipeline and error boxing as readfile_func, but fd_read fills a growing
+// packed u8[] (read_room), the Ok payload, rather than a string block.
 pub function readfile_bytes_func(): string {
   var o: string = "";
   o = o + "  (func $__fern_read_file_bytes (param $np i32) (result i32)\n";
-  o = o + "    (local $err i32) (local $fd i32) (local $blk i32) (local $off i32) (local $n i32) (local $tmp i32) (local $cap i32) (local $arr i32) (local $i i32)\n";
+  o = o + "    (local $err i32) (local $fd i32) (local $off i32) (local $n i32) (local $tmp i32) (local $cap i32) (local $arr i32) (local $grown i32)\n";
   o = o + "    (local.set $err (call $path_open (i32.const 3) (i32.const 1) (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (i32.const 0) (i64.const 6) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
   o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
@@ -9912,14 +9837,12 @@ pub function readfile_bytes_func(): string {
   o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $np))))\n";
   o = o + "      (return (local.get $tmp))))\n";
   o = o + "    (local.set $fd (i32.load (i32.const 16)))\n";
-  o = o + "    (local.set $cap (i32.const 65536))\n";
-  o = o + "    (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (local.get $cap))))\n";
+  o = o + "    (local.set $cap (i32.const 4096))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $cap) (i32.const 1)))\n";
   o = o + "    (local.set $off (i32.const 0))\n";
   o = o + "    (block $rd (loop $rc\n";
-  o = o + "      (if (i32.ge_u (local.get $off) (local.get $cap)) (then\n";
-  o = o + "        (drop (call $__fern_alloc (i32.const 65536)))\n";
-  o = o + "        (local.set $cap (i32.add (local.get $cap) (i32.const 65536)))))\n";
-  o = o + "      (i32.store (i32.const 0) (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $off)))\n";
+  o = o + read_room("$arr", true, "(i32.const 1)");
+  o = o + "      (i32.store (i32.const 0) (i32.add (i32.add (local.get $arr) (i32.const 8)) (local.get $off)))\n";
   o = o + "      (i32.store (i32.const 4) (i32.sub (local.get $cap) (local.get $off)))\n";
   o = o + "      (if (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)) (then (i32.store (i32.const 8) (i32.const 0))))\n";
   o = o + "      (local.set $n (i32.load (i32.const 8)))\n";
@@ -9927,15 +9850,8 @@ pub function readfile_bytes_func(): string {
   o = o + "      (local.set $off (i32.add (local.get $off) (local.get $n)))\n";
   o = o + "      (br $rc)))\n";
   o = o + "    (drop (call $fd_close (local.get $fd)))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $off) (i32.const 4)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $off))\n";
-  o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $off))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $sd (loop $sc\n";
-  o = o + "      (br_if $sd (i32.ge_u (local.get $i) (local.get $off)))\n";
-  o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load8_u (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $sc)))\n";
+  o = o + "    (i32.store offset=4 (local.get $arr) (local.get $cap))\n";
   o = o + "    (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $tmp) (i32.const 0))\n";
   o = o + "    (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $arr))\n";
@@ -9943,12 +9859,12 @@ pub function readfile_bytes_func(): string {
   return o;
 }
 
-// The file byte sink packs WASM's word-sized array slots into owned byte
-// scratch. Every exit releases that scratch and any opened host resources.
+// The file byte sink writes the packed u8[]'s bytes in place. Every exit
+// releases any opened host resources.
 pub function writefile_bytes_func(p2: boolean): string {
   var o: string = "";
   o = o + "(func $__fern_write_file_bytes (param $np i32) (param $bytes i32) (result i32)\n";
-  o = o + "    (local $err i32) (local $fd i32) (local $strm i32) (local $raw i32) (local $n i32) (local $i i32) (local $at i32) (local $count i32) (local $closed i32) (local $res i32) (local $path i32)\n";
+  o = o + "    (local $err i32) (local $fd i32) (local $strm i32) (local $n i32) (local $i i32) (local $at i32) (local $count i32) (local $closed i32) (local $res i32) (local $path i32)\n";
   o = o + "    (local $ra i32) (local $dirs i32) (local $ndirs i32) (local $entry i32)\n";
   o = o + "    (local.set $fd (i32.const -1)) (local.set $strm (i32.const -1))\n";
   o = o + "    (block $done\n";
@@ -9986,23 +9902,16 @@ pub function writefile_bytes_func(p2: boolean): string {
   }
   o = o + "(local.set $n (i32.load (local.get $bytes)))\n";
   o = o + "      (br_if $done (i32.eqz (local.get $n)))\n";
-  o = o + "      (local.set $raw (call $__fern_arr_box (local.get $n)))\n";
-  o = o + "      (i32.store (local.get $raw) (local.get $n)) (i32.store offset=4 (local.get $raw) (local.get $n))\n";
-  o = o + "      (local.set $i (i32.const 0))\n";
-  o = o + "      (block $packed (loop $pack\n";
-  o = o + "        (br_if $packed (i32.ge_u (local.get $i) (local.get $n)))\n";
-  o = o + "        (i32.store8 offset=8 (i32.add (local.get $raw) (local.get $i)) (i32.load offset=8 (i32.add (local.get $bytes) (i32.mul (local.get $i) (i32.const 4)))))\n";
-  o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $pack)))\n";
   o = o + "      (loop $write\n";
   if (p2) {
     o = o + "(local.set $count (i32.sub (local.get $n) (local.get $at)))\n";
     o = o + "        (if (i32.gt_u (local.get $count) (i32.const 4096)) (then (local.set $count (i32.const 4096))))\n";
-    o = o + "        (call $bwf (local.get $strm) (i32.add (i32.add (local.get $raw) (i32.const 8)) (local.get $at)) (local.get $count) (local.get $ra))\n";
+    o = o + "        (call $bwf (local.get $strm) (i32.add (i32.add (local.get $bytes) (i32.const 8)) (local.get $at)) (local.get $count) (local.get $ra))\n";
     o = o + "        (if (i32.load8_u (local.get $ra)) (then\n";
     o = o + "          (if (i32.eqz (i32.load8_u offset=4 (local.get $ra))) (then (call $io_error_drop (i32.load offset=8 (local.get $ra)))))\n";
     o = o + "          (local.set $err (i32.const 29)) (br $done)))\n";
   } else {
-    o = o + "(i32.store (i32.const 0) (i32.add (i32.add (local.get $raw) (i32.const 8)) (local.get $at)))\n";
+    o = o + "(i32.store (i32.const 0) (i32.add (i32.add (local.get $bytes) (i32.const 8)) (local.get $at)))\n";
     o = o + "        (i32.store (i32.const 4) (i32.sub (local.get $n) (local.get $at)))\n";
     o = o + "        (local.set $err (call $fd_write (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
     o = o + "        (br_if $write (i32.eq (local.get $err) (i32.const 27)))\n";
@@ -10012,7 +9921,6 @@ pub function writefile_bytes_func(p2: boolean): string {
   }
   o = o + "(local.set $at (i32.add (local.get $at) (local.get $count)))\n";
   o = o + "        (br_if $write (i32.lt_u (local.get $at) (local.get $n)))))\n";
-  o = o + "    (if (local.get $raw) (then (drop (call $__fern_arr_dec (local.get $raw)))))\n";
   if (p2) {
     o = o + "(if (i32.ge_s (local.get $strm) (i32.const 0)) (then (call $out_strm_drop (local.get $strm))))\n";
     o = o + "    (if (i32.ge_s (local.get $fd) (i32.const 0)) (then (call $desc_drop (local.get $fd))))\n";
@@ -10190,8 +10098,7 @@ pub function writer_write_func(): string {
 // scratch 8. Zero is a real answer rather than an error — a stream with no
 // room right now has written none of them — and the Ok payload is the i64 the
 // Result box carries, as reader_seek's offset is.
-// The primary wasm representation uses four-byte slots for u8. Pack into an
-// owned byte allocation for the host call and release it on every outcome.
+// The bytes go to fd_write straight from the packed u8[].
 pub function writer_bytes_func(all: boolean): string {
   var name: string = "write_some_bytes";
   var error_tag: string = "1";
@@ -10205,25 +10112,16 @@ pub function writer_bytes_func(all: boolean): string {
   }
   var o: string = "";
   o = o + "  (func $__fern_writer_" + name + " (param $fd i32) (param $bytes i32) (result i32)\n";
-  o = o + "    (local $n i32) (local $raw i32) (local $i i32) (local $at i32) (local $count i32) (local $err i32) (local $res i32) (local $path i32)\n";
+  o = o + "    (local $n i32) (local $at i32) (local $count i32) (local $err i32) (local $res i32) (local $path i32)\n";
   o = o + "    (local.set $n (i32.load (local.get $bytes)))\n";
-  o = o + "    (local.set $raw (call $__fern_arr_box (local.get $n)))\n";
-  o = o + "    (i32.store (local.get $raw) (local.get $n))\n";
-  o = o + "    (i32.store offset=4 (local.get $raw) (local.get $n))\n";
-  o = o + "    (block $packed (loop $pack\n";
-  o = o + "      (br_if $packed (i32.ge_u (local.get $i) (local.get $n)))\n";
-  o = o + "      (i32.store8 offset=8 (i32.add (local.get $raw) (local.get $i)) (i32.load offset=8 (i32.add (local.get $bytes) (i32.mul (local.get $i) (i32.const 4)))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $pack)))\n";
   o = o + "    (block $done (loop $write\n";
-  o = o + "      (i32.store (i32.const 0) (i32.add (i32.add (local.get $raw) (i32.const 8)) (local.get $at)))\n";
+  o = o + "      (i32.store (i32.const 0) (i32.add (i32.add (local.get $bytes) (i32.const 8)) (local.get $at)))\n";
   o = o + "      (i32.store (i32.const 4) (i32.sub (local.get $n) (local.get $at)))\n";
   o = o + "      (local.set $err (call $fd_write (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
   o = o + "      (br_if $done (local.get $err))\n";
   o = o + "      (local.set $count (i32.load (i32.const 8)))\n";
   o = o + more;
   o = o + "    ))\n";
-  o = o + "    (drop (call $__fern_arr_dec (local.get $raw)))\n";
   o = o + "    (if (local.get $err) (then\n";
   o = o + "      (local.set $path (call $__fern_str_box (i32.const 4))) (i32.store (local.get $path) (i32.const 0))\n";
   o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
@@ -10347,13 +10245,13 @@ pub function read_line_func(): string {
 // reader_close's error path builds one. Same string + box layout env_func
 // builds. Needs the heap runtime (str_box/alloc), and needs_io_error folds
 // "read_chunk" in so the classifier reaches a module that only reads (#8700).
-// Read into array storage and expand backwards into this backend's four-byte
-// u8 slots. No string contains the raw input at any point.
+// Read straight into a packed u8[]. No string contains the raw input at any
+// point.
 pub function reader_read_chunk_bytes_func(): string {
   var o: string = "  (func $__fern_reader_read_chunk_bytes (param $fd i32) (param $n i32) (result i32)\n";
-  o = o + "    (local $a i32) (local $source i32) (local $got i32) (local $box i32) (local $err i32) (local $path i32) (local $i i32)\n";
+  o = o + "    (local $a i32) (local $source i32) (local $got i32) (local $box i32) (local $err i32) (local $path i32)\n";
   o = o + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $err (i32.const 28))) (else\n";
-  o = o + "      (local.set $a (call $__fern_arr_elems (local.get $n) (i32.const 4)))\n";
+  o = o + "      (local.set $a (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n";
   o = o + "      (i32.store (local.get $a) (i32.const 0)) (i32.store offset=4 (local.get $a) (local.get $n))\n";
   o = o + "      (i32.store (i32.const 0) (i32.add (local.get $a) (i32.const 8)))\n";
   o = o + "      (i32.store (i32.const 4) (local.get $n))\n";
@@ -10367,18 +10265,14 @@ pub function reader_read_chunk_bytes_func(): string {
   // Interrupted and Unsupported carry no path, so they do not adopt it.
   o = o + "      (if (i32.or (i32.eq (local.get $err) (i32.const 27)) (i32.eq (local.get $err) (i32.const 58))) (then (drop (call $__fern_arr_dec (local.get $path)))))\n";
   o = o + "      (return (local.get $box))))\n";
-  // Full reads expand in place. Partial reads expand into compact storage,
-  // retaining the original allocation until every source byte is copied.
-  o = o + "    (local.set $source (local.get $a))\n";
+  // A partial read moves into compact storage, so the array does not keep
+  // the unread remainder of the request alive.
   o = o + "    (if (i32.lt_u (local.get $got) (local.get $n)) (then\n";
-  o = o + "      (local.set $a (call $__fern_arr_elems (local.get $got) (i32.const 4)))\n";
-  o = o + "      (i32.store offset=4 (local.get $a) (local.get $got))))\n";
-  o = o + "    (local.set $i (local.get $got))\n";
-  o = o + "    (block $done (loop $expand (br_if $done (i32.eqz (local.get $i)))\n";
-  o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
-  o = o + "      (i32.store offset=8 (i32.add (local.get $a) (i32.mul (local.get $i) (i32.const 4))) (i32.load8_u offset=8 (i32.add (local.get $source) (local.get $i))))\n";
-  o = o + "      (br $expand)))\n";
-  o = o + "    (if (i32.ne (local.get $source) (local.get $a)) (then (drop (call $__fern_arr_dec (local.get $source)))))\n";
+  o = o + "      (local.set $source (local.get $a))\n";
+  o = o + "      (local.set $a (call $__fern_arr_elems (local.get $got) (i32.const 1)))\n";
+  o = o + "      (i32.store offset=4 (local.get $a) (local.get $got))\n";
+  o = o + "      (memory.copy (i32.add (local.get $a) (i32.const 8)) (i32.add (local.get $source) (i32.const 8)) (local.get $got))\n";
+  o = o + "      (drop (call $__fern_arr_dec (local.get $source)))))\n";
   o = o + "    (i32.store (local.get $a) (local.get $got))\n";
   o = o + "    (local.set $box (call $__fern_str_box (i32.const 8))) (i32.store (local.get $box) (i32.const 0))\n";
   o = o + "    (i32.store offset=4 (local.get $box) (local.get $a))\n";
@@ -11625,6 +11519,24 @@ pub function arr_slice8_helper(): string {
   return o;
 }
 
+// arr_slice_u8_helper emits ONLY $__fern_arr_slice_u8, $__fern_arr_slice for a
+// packed u8[] (ir.packed): a fresh array holding a[start:end) a byte an
+// element.
+pub function arr_slice_u8_helper(): string {
+  var o: string = "";
+  o = o + "  (func $__fern_arr_slice_u8 (param $a i32) (param $start i32) (param $end i32) (result i32)\n";
+  o = o + "    (local $n i32) (local $na i32)\n";
+  o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $a))) (then (unreachable)))\n";
+  o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (unreachable)))\n";
+  o = o + "    (local.set $n (i32.sub (local.get $end) (local.get $start)))\n";
+  o = o + "    (local.set $na (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n";
+  o = o + "    (i32.store (local.get $na) (local.get $n))\n";
+  o = o + "    (i32.store offset=4 (local.get $na) (local.get $n))\n";
+  o = o + "    (memory.copy (i32.add (local.get $na) (i32.const 8)) (i32.add (i32.add (local.get $a) (i32.const 8)) (local.get $start)) (local.get $n))\n";
+  o = o + "    (local.get $na))\n";
+  return o;
+}
+
 // map_k64_helpers emits the wasm IR runtime for i64/u64-KEYED maps (#10005):
 // the key cell is four bytes, so a wide key is boxed into an 8-byte cell the
 // map owns (kis 3; $__fern_map_hk / $__fern_map_keq hash and compare through
@@ -11921,7 +11833,7 @@ pub function wat_escape(s: string): string {
     if (b >= 32 && b <= 126 && b != 34 && b != 92) {
       parts = parts.append(slice_unchecked(s, i, i + 1) + "");
     } else {
-      parts = parts.append("\\" + hex_digit(b / 16) + hex_digit(b % 16));
+      parts = parts.append(byte_escape(b));
     }
     i = i + 1;
   }
@@ -11937,11 +11849,15 @@ pub function le32_escape(n: i32): string {
   var parts: string[] = [];
   var b: i32 = 0;
   while (b < 4) {
-    var v: i32 = n >> b * 8 & 255;
-    parts = parts.append("\\" + hex_digit(v / 16) + hex_digit(v % 16));
+    parts = parts.append(byte_escape(n >> b * 8 & 255));
     b = b + 1;
   }
   return util.str_join_chunks(parts);
+}
+
+// byte_escape renders one byte, 0..255, in WAT `\HH` escape form.
+function byte_escape(v: i32): string {
+  return "\\" + hex_digit(v / 16) + hex_digit(v % 16);
 }
 
 // const_agg_data lays out the aggregate constants (#6149) as data segments, one
@@ -11972,6 +11888,16 @@ function const_agg_data(sv: string[], cv: string[], structs: irtables.StructTab,
       // add, and the merged table is in hand here.
       body = body + le32_escape(1) + le32_escape(1)
         + le32_escape(util.index_of_str(fn_table, fnbody)) + le32_escape(0);
+    } else if (ir.const_struct_is_bytes(cv[i])) {
+      body = body + le32_escape(vals.len()) + le32_escape(vals.len());
+      for v in vals {
+        body = body + byte_escape(util.lit_to_i32(v) & 255);
+      }
+      var pad: i32 = vals.len();
+      while (pad % 8 != 0) {
+        body = body + byte_escape(0);
+        pad = pad + 1;
+      }
     } else if (ir.const_struct_is_array(cv[i])) {
       body = body + le32_escape(vals.len()) + le32_escape(vals.len());
       for v in vals {
@@ -12000,27 +11926,24 @@ function const_agg_data(sv: string[], cv: string[], structs: irtables.StructTab,
   return util.str_join_chunks(parts);
 }
 
-// arr_push_wide emits a geometric-growth push for an 8-byte-slot array.
-// `vty` is the wasm value type of the appended element (i64 / f64);
-// `sop` its store op. Existing elements are copied with a raw i64 move
-// (8 bytes, element-type-agnostic).
 // arr_push_i64_helper emits $__fern_arr_push_i64 standalone for the IR path
 // (the AST path gets it bundled inside arr_helpers). 8-byte-slot geometric-
 // growth push — the i64[] / u64[] companion to arr_push_helper's 4-byte
 // $__fern_arr_push. Depends only on $__fern_arr_box (module_allocates).
 pub function arr_push_i64_helper(): string {
-  return arr_push_wide("i64", "i64");
+  return arr_push_strided("_i64", "i64", "i64.store", 8);
 }
 
-// arr_push_owned_wide_helper emits $__fern_arr_push_owned_<vty>, the sole-owner
-// form of the 8-byte push: the wide push, then the superseded buffer released
-// on the same rc == 1 gate arr_push_owned_helper applies.
-pub function arr_push_owned_wide_helper(vty: string, heap_base: i32): string {
+// arr_push_owned_wide_helper emits $__fern_arr_push_owned_<elem>, the
+// sole-owner form of the 8-byte or packed-byte push $__fern_arr_push_<elem>
+// taking a `vty` value: that push, then the superseded buffer released on
+// the same rc == 1 gate arr_push_owned_helper applies.
+pub function arr_push_owned_wide_helper(elem: string, vty: string, heap_base: i32): string {
   var hb: string = util.i32_to_string(heap_base);
   var o: string = "";
-  o = o + "  (func $__fern_arr_push_owned_" + vty + " (param $a i32) (param $v " + vty + ") (result i32)\n";
+  o = o + "  (func $__fern_arr_push_owned_" + elem + " (param $a i32) (param $v " + vty + ") (result i32)\n";
   o = o + "    (local $na i32)\n";
-  o = o + "    (local.set $na (call $__fern_arr_push_" + vty + " (local.get $a) (local.get $v)))\n";
+  o = o + "    (local.set $na (call $__fern_arr_push_" + elem + " (local.get $a) (local.get $v)))\n";
   o = o + "    (if (i32.and (i32.ne (local.get $na) (local.get $a)) (i32.and (i32.ge_u (local.get $a) (i32.const " + hb + ")) (i32.eqz (i32.and (local.get $a) (i32.const 1))))) (then\n";
   o = o + "      (if (i32.eq (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (then\n";
   o = o + "        (drop (call $__fern_arr_dec (local.get $a)))))))\n";
@@ -12034,45 +11957,53 @@ pub function arr_push_owned_wide_helper(vty: string, heap_base: i32): string {
 // i64.store, which is bit-preserving for the raw 8-byte slots). Lowered from
 // `a = a.append(v)` on an f64[].
 pub function arr_push_f64_helper(): string {
-  return arr_push_wide("f64", "f64");
+  return arr_push_strided("_f64", "f64", "f64.store", 8);
 }
 
-pub function arr_push_wide(vty: string, sop: string): string {
+// arr_push_u8_helper emits $__fern_arr_push_u8, the push for a packed u8[]
+// (ir.packed): a byte an element, the capacity counted in bytes.
+pub function arr_push_u8_helper(): string {
+  return arr_push_strided("_u8", "i32", "i32.store8", 1);
+}
+
+// arr_push_strided emits $__fern_arr_push<suffix>, a geometric-growth push
+// for an array of `stride`-byte elements: `vty` is the wasm type of the
+// appended value and `sop` its store. Existing elements move as raw bytes.
+pub function arr_push_strided(suffix: string, vty: string, sop: string, stride: i32): string {
+  var st: string = util.i32_to_string(stride);
   var o: string = "";
-  o = o + "  (func $__fern_arr_push_" + vty + " (param $a i32) (param $v " + vty + ") (result i32)\n";
-  o = o + "    (local $len i32) (local $cap i32) (local $na i32) (local $ncap i32) (local $i i32) (local $rc i32)\n";
+  o = o + "  (func $__fern_arr_push" + suffix + " (param $a i32) (param $v " + vty + ") (result i32)\n";
+  o = o + "    (local $len i32) (local $cap i32) (local $na i32) (local $ncap i32) (local $rc i32)\n";
   o = o + "    (local.set $len (i32.load (local.get $a)))\n";
   o = o + "    (local.set $cap (i32.load (i32.add (local.get $a) (i32.const 4))))\n";
-  // The rc gate arr_push_helper carries, on the 8-byte slot: in-place only
-  // for a sole-owner (rc == 1) or immortal (bit-31) receiver. Without it a
-  // bracketed receiver — the caller raised its rc precisely so this push
-  // would copy — was still appended into, so an i64[] / f64[] read after an
-  // expression-position `.append` saw the extra element (#6891).
+  // #4873/#5325 containment gate (the wasm mirror of asm_ir's
+  // .Larr_push_rc_ok): in-place append only for a SOLE-OWNER (rc == 1) or
+  // immortal (bit-31, rc < 0 signed) receiver with spare capacity. A shared
+  // (rc >= 2) receiver — the caller-side grow bracket inc'd it, or a counted
+  // alias exists — takes the copy path even when capacity fits, leaving the
+  // shared buffer untouched (#6891).
   o = o + "    (local.set $rc (i32.load (i32.sub (local.get $a) (i32.const 8))))\n";
   o = o + "    (if (i32.and (i32.or (i32.eq (local.get $rc) (i32.const 1)) (i32.lt_s (local.get $rc) (i32.const 0))) (i32.lt_s (local.get $len) (local.get $cap))) (then\n";
-  o = o + "      (" + sop + ".store (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $len) (i32.const 8))) (local.get $v))\n";
+  o = o + "      (" + sop + " (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $len) (i32.const " + st + "))) (local.get $v))\n";
   o = o + "      (i32.store (local.get $a) (i32.add (local.get $len) (i32.const 1)))\n";
   o = o + "      (return (local.get $a))))\n";
-  // A shared receiver with spare capacity is an UN-SHARE copy, not a growth:
-  // keep the same cap, and count the crossing weighted by the 8 bytes per
-  // element it copies (the rc==1 cliff counters).
+  // A shared receiver with spare capacity (len < cap) is an UN-SHARE copy:
+  // keep the same cap rather than doubling (the #3425 arena-footprint
+  // lesson), and count the crossing at arr_push_shared_addr, weighted at
+  // arr_push_copied_addr by the bytes the copy moves. True growth
+  // (len >= cap) doubles, or starts at 4.
   o = o + "    (local.set $ncap (local.get $cap))\n";
   o = o + "    (if (i32.lt_s (local.get $len) (local.get $cap)) (then\n";
   o = o + "      (i32.store (i32.const " + util.i32_to_string(arr_push_shared_addr()) + ") (i32.add (i32.load (i32.const " + util.i32_to_string(arr_push_shared_addr()) + ")) (i32.const 1)))\n";
-  o = o + "      (i64.store (i32.const " + util.i32_to_string(arr_push_copied_addr()) + ") (i64.add (i64.load (i32.const " + util.i32_to_string(arr_push_copied_addr()) + ")) (i64.extend_i32_u (i32.mul (local.get $len) (i32.const 8)))))))\n";
+  o = o + "      (i64.store (i32.const " + util.i32_to_string(arr_push_copied_addr()) + ") (i64.add (i64.load (i32.const " + util.i32_to_string(arr_push_copied_addr()) + ")) (i64.extend_i32_u (i32.mul (local.get $len) (i32.const " + st + ")))))))\n";
   o = o + "    (if (i32.ge_s (local.get $len) (local.get $cap)) (then\n";
   o = o + "      (local.set $ncap (i32.const 4))\n";
   o = o + "      (if (i32.gt_s (local.get $cap) (i32.const 0)) (then (local.set $ncap (i32.mul (local.get $cap) (i32.const 2)))))))\n";
-  o = o + "    (local.set $na (call $__fern_arr_elems (local.get $ncap) (i32.const 8)))\n";
+  o = o + "    (local.set $na (call $__fern_arr_elems (local.get $ncap) (i32.const " + st + ")))\n";
   o = o + "    (i32.store (local.get $na) (i32.add (local.get $len) (i32.const 1)))\n";
   o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $ncap))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
-  o = o + "      (i64.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8))) (i64.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8)))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c)))\n";
-  o = o + "    (" + sop + ".store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $len) (i32.const 8))) (local.get $v))\n";
+  o = o + "    (memory.copy (i32.add (local.get $na) (i32.const 8)) (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $len) (i32.const " + st + ")))\n";
+  o = o + "    (" + sop + " (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $len) (i32.const " + st + "))) (local.get $v))\n";
   o = o + "    (local.get $na))\n";
   return o;
 }
@@ -13119,6 +13050,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "@uses_arr_slice8")) {
     parts = parts.append(arr_slice8_helper());
   }
+  if (need(needs, "@uses_arr_slice_u8")) {
+    parts = parts.append(arr_slice_u8_helper());
+  }
   // `.append` (op_arr_push) emits a call to $__fern_arr_push; the IR path
   // needs the standalone push helper (the AST path's arr_helpers bundle —
   // which also defines arr_slice/slice8 — would double-define those, so use
@@ -13152,10 +13086,16 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(arr_push_f64_helper());
   }
   if (need(needs, "arr_push_owned_i64")) {
-    parts = parts.append(arr_push_owned_wide_helper("i64", heap_base_for_strs(sv, cv)));
+    parts = parts.append(arr_push_owned_wide_helper("i64", "i64", heap_base_for_strs(sv, cv)));
   }
   if (need(needs, "arr_push_owned_f64")) {
-    parts = parts.append(arr_push_owned_wide_helper("f64", heap_base_for_strs(sv, cv)));
+    parts = parts.append(arr_push_owned_wide_helper("f64", "f64", heap_base_for_strs(sv, cv)));
+  }
+  if (need(needs, "arr_push_u8") || need(needs, "arr_push_owned_u8")) {
+    parts = parts.append(arr_push_u8_helper());
+  }
+  if (need(needs, "arr_push_owned_u8")) {
+    parts = parts.append(arr_push_owned_wide_helper("u8", "i32", heap_base_for_strs(sv, cv)));
   }
   if (need(needs, "@uses_maps")) {
     parts = parts.append(map_helpers());
@@ -13896,8 +13836,7 @@ pub function is_extern_composite_ret(mod: parser.Module, t: string): boolean {
 // i64/u64/f64 slot 8). The wrapper copies the elements into a freshly 8-aligned
 // buffer and passes (buf, len): the self-host heap isn't aligned, but the
 // canonical list<T> (T wider than a byte) requires an aligned data pointer.
-// u8 (slot 4 != canonical 1) would also need repacking — see
-// extern_byte_array_param for that path.
+// The byte-element arrays take extern_byte_array_param's path.
 pub function extern_array_param_supported(t: string): boolean {
   if (t.len() <= 2 || slice_unchecked(t, t.len() - 2, t.len()) != "[]") {
     return false;
@@ -13906,15 +13845,19 @@ pub function extern_array_param_supported(t: string): boolean {
   return k == "i32" || k == "u32" || k == "i64" || k == "u64" || k == "f32" || k == "f64";
 }
 
-// extern_byte_array_param is true for an `@import` u8[] or boolean[] parameter.
-// The self-host stores both element kinds one-per-4-byte-slot (byte values
-// widened to i32; a bool is 0/1), but the canonical list<u8> / list<bool> wants
-// them packed one byte each. So unlike the wider arrays (whose self-host slot
-// already matches the canonical element size and only need an aligned copy), a
-// byte array needs a byte-repacking copy: the wrapper allocs `len` bytes and
-// writes each element's low byte. Alignment is moot for 1-byte elements.
+// extern_byte_array_param is true for an `@import` u8[] or boolean[] parameter,
+// a canonical list<u8> / list<bool> of one byte per element, where alignment
+// is moot. A packed u8[]'s bytes already are that list, so the wrapper passes
+// them in place. A boolean[] keeps a 4-byte slot per element (0/1), so it
+// needs extern_param_repacks' byte-repacking copy.
 pub function extern_byte_array_param(t: string): boolean {
   return t == "u8[]" || t == "boolean[]";
+}
+
+// extern_param_repacks is true for an `@import` array parameter the wrapper
+// copies into a buffer of the canonical layout before the call.
+function extern_param_repacks(t: string): boolean {
+  return extern_array_param_supported(t) || t == "boolean[]";
 }
 
 // extern_record_param_supported is true for an `@import` record (struct)
@@ -15752,7 +15695,7 @@ pub function module_needs_extern_wrappers(mod: parser.Module, slot: i32): boolea
 // canonical return area (data @+0, len @+4), calls the raw import
 // ($name__import) with the scalar params + the return-area pointer, then lifts
 // the host (data_ptr, len) bytes into a self-host string (`[len][bytes]`) or a
-// u8[] (`[len@0]` header, elements at +8 with 4-byte slots).
+// byte-element array (extern_copy_bytes).
 // extern_copy_string emits the WAT that builds a Fern string block in the local
 // `dst` from the host bytes at (local `ptr`, local `len`), with `ctr` as the
 // loop counter and `lbl` naming the block / loop labels.
@@ -15769,13 +15712,22 @@ pub function extern_copy_string(slot: i32, dst: string, ptr: string, len: string
   return o;
 }
 
-// extern_copy_bytes is extern_copy_string for a `u8[]`: the host's packed bytes
-// widen into the array's 4-byte slots ([len@0][cap@4], elements at +8).
-pub function extern_copy_bytes(dst: string, ptr: string, len: string, ctr: string, lbl: string): string {
+// extern_copy_bytes is extern_copy_string for a `ty` array, `u8[]` or
+// `boolean[]` ([len@0][cap@4], elements at +8), from the host's list of one
+// byte per element: a packed u8[] copies the bytes, a boolean[] widens each
+// into its 4-byte slot.
+pub function extern_copy_bytes(ty: string, dst: string, ptr: string, len: string, ctr: string, lbl: string): string {
+  var stride: string = "4";
+  if (ty == "u8[]") {
+    stride = "1";
+  }
   var o: string = "";
-  o = o + "    (local.set " + dst + " (call $__fern_arr_elems (local.get " + len + ") (i32.const 4)))\n";
+  o = o + "    (local.set " + dst + " (call $__fern_arr_elems (local.get " + len + ") (i32.const " + stride + ")))\n";
   o = o + "    (i32.store (local.get " + dst + ") (local.get " + len + "))\n";
   o = o + "    (i32.store offset=4 (local.get " + dst + ") (local.get " + len + "))\n";
+  if (ty == "u8[]") {
+    return o + "    (memory.copy (i32.add (local.get " + dst + ") (i32.const 8)) (local.get " + ptr + ") (local.get " + len + "))\n";
+  }
   o = o + "    (local.set " + ctr + " (i32.const 0))\n";
   o = o + "    (block $d" + lbl + " (loop $c" + lbl + "\n";
   o = o + "      (br_if $d" + lbl + " (i32.ge_u (local.get " + ctr + ") (local.get " + len + ")))\n";
@@ -15832,7 +15784,7 @@ function extern_sum_result_tail(fname: string, ret: string, slot: i32, callargs:
     if (heap == "string") {
       o = o + extern_copy_string(slot, "$hp", "$dp", "$ln", "$i", "h");
     } else {
-      o = o + extern_copy_bytes("$hp", "$dp", "$ln", "$i", "h");
+      o = o + extern_copy_bytes(heap, "$hp", "$dp", "$ln", "$i", "h");
     }
     o = o + "      (i32.store offset=4 (local.get $s) (local.get $hp)))\n";
     if (opt) {
@@ -15918,7 +15870,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       var na: i32 = 0;
       var qi: i32 = 0;
       while (qi < f.params.len()) {
-        if (extern_array_param_supported(f.params[qi].type_name) || extern_byte_array_param(f.params[qi].type_name)) {
+        if (extern_param_repacks(f.params[qi].type_name)) {
           parts = parts.append("    (local $ab" + util.i32_to_string(qi) + " i32)\n");
           na = na + 1;
         }
@@ -15951,11 +15903,10 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
           parts = parts.append("      " + extern_elem_to_canon(k, dst, src) + "\n");
           parts = parts.append("      (local.set $ai (i32.add (local.get $ai) (i32.const 1)))\n");
           parts = parts.append("      (br $c" + lbl + ")))\n");
-        } else if (extern_byte_array_param(f.params[ci].type_name)) {
-          // u8[] / boolean[]: repack one byte per element into a
-          // `len`-byte buffer. Source elements live in 4-byte slots at
-          // +8; write each low byte contiguously (the canonical
-          // list<u8> / list<bool> is byte-packed, alignment 1).
+        } else if (extern_param_repacks(f.params[ci].type_name)) {
+          // boolean[]: repack one byte per element into a `len`-byte
+          // buffer. Source elements live in 4-byte slots at +8; write
+          // each low byte contiguously.
           var ucppn: string = "$ep" + util.i32_to_string(ci);
           var ubn: string = "$ab" + util.i32_to_string(ci);
           var ulbl: string = util.i32_to_string(ci);
@@ -15977,8 +15928,10 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
         var fppn: string = "$ep" + util.i32_to_string(fi);
         if (f.params[fi].type_name == "string") {
           margs = margs + (" (i32.add (local.get " + fppn + ") (i32.const 4)) (i32.load (local.get " + fppn + "))");
-        } else if (extern_array_param_supported(f.params[fi].type_name) || extern_byte_array_param(f.params[fi].type_name)) {
+        } else if (extern_param_repacks(f.params[fi].type_name)) {
           margs = margs + (" (local.get $ab" + util.i32_to_string(fi) + ") (i32.load (local.get " + fppn + "))");
+        } else if (extern_byte_array_param(f.params[fi].type_name)) {
+          margs = margs + (" (i32.add (local.get " + fppn + ") (i32.const 8)) (i32.load (local.get " + fppn + "))");
         } else if (extern_record_param_supported(mod, f.params[fi].type_name)) {
           // record: push each leaf flattened to its canonical i32 (a
           // width+sign-aware load for sub-word fields), recursing into
@@ -16333,20 +16286,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       parts = parts.append("    (local.set $dp (i32.load (local.get $rb)))\n");
       parts = parts.append("    (local.set $ln (i32.load offset=4 (local.get $rb)))\n");
       if (f.ret_type == "u8[]" || f.ret_type == "boolean[]") {
-        // u8[] / boolean[]: `[len@0]` header, elements packed into 4-byte
-        // slots at +8 (the self-host array layout — see elem_slot_size).
-        // Both store one byte per element, so expand each host byte into
-        // its slot (a boolean[] element is the canonical list<bool> byte,
-        // 0/1, the same shape as a list<u8> byte).
-        parts = parts.append("    (local.set $s (call $__fern_arr_elems (local.get $ln) (i32.const 4)))\n");
-        parts = parts.append("    (i32.store (local.get $s) (local.get $ln))\n");
-        parts = parts.append("    (i32.store offset=4 (local.get $s) (local.get $ln))\n");
-        parts = parts.append("    (local.set $i (i32.const 0))\n");
-        parts = parts.append("    (block $d (loop $c\n");
-        parts = parts.append("      (br_if $d (i32.ge_u (local.get $i) (local.get $ln)))\n");
-        parts = parts.append("      (i32.store (i32.add (i32.add (local.get $s) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load8_u (i32.add (local.get $dp) (local.get $i))))\n");
-        parts = parts.append("      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
-        parts = parts.append("      (br $c)))\n");
+        parts = parts.append(extern_copy_bytes(f.ret_type, "$s", "$dp", "$ln", "$i", ""));
         parts = parts.append("    (local.get $s))\n");
       } else if (extern_array_param_supported(f.ret_type)) {
         // numeric array list<T>: copy each element into its slot at +8
@@ -17024,15 +16964,15 @@ function emit_wasm_heap_bump_bytes(cagg_vals: string[], str_vals: string[], part
 }
 
 function emit_wasm_alloc_u8(arrtmp: i32, eltmp: i32, parts: string[]): string[] {
-  // stack: n -> a fresh n-element array. wasm has no $__fern_alloc_u8;
-  // synthesize via $__fern_arr_elems(n, 4) + the [len@0, cap@4] header
-  // (matching arr_make), its slots cleared: a block off the free list
-  // keeps its last owner's bytes, and the builtin promises zeros.
+  // stack: n -> a fresh packed u8[] of n bytes (the typed lowering marks
+  // every alloc_u8 ir.packed): the [len@0, cap@4] header arr_make writes,
+  // its bytes cleared, since a block off the free list keeps its last
+  // owner's bytes and the builtin promises zeros.
   parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
-  parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    call $__fern_arr_elems\n    local.set " + util.i32_to_string(arrtmp) + "\n");
+  parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n    i32.const 1\n    call $__fern_arr_elems\n    local.set " + util.i32_to_string(arrtmp) + "\n");
   parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
   parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
-  parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n    i32.const 0\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.mul\n    memory.fill\n");
+  parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n    i32.const 0\n    local.get " + util.i32_to_string(eltmp) + "\n    memory.fill\n");
   parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
 
   return parts;
@@ -17058,11 +16998,14 @@ function emit_wasm_arr_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32, o
   // elements at a+8+i*esz (top-down, popping each into a scratch so the
   // store sees [addr, value]). $arrtmp holds a across the pops. An
   // f64-element array (width 64) uses an 8-byte stride and f64.store
-  // through $f64tmp; everything else is the 4-byte i32 path.
+  // through $f64tmp, a packed u8[] (ir.packed) a byte each through
+  // i32.store8; everything else is the 4-byte i32 path.
   var n: i32 = o.i32_imm;
   var esz: i32 = 4;
   if (o.width == 64) {
     esz = 8;
+  } else if (ir.is_packed(o)) {
+    esz = 1;
   }
   // An empty literal gets the capacity its first push would grow to, as
   // ssa_lift.lift_empty_arr gives it on the native ISAs. Its width does not
@@ -17085,6 +17028,9 @@ function emit_wasm_arr_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32, o
     } else if (o.width == 64) {
       parts = parts.append("    local.set " + util.i32_to_string(f64tmp) + "\n");
       parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
+    } else if (ir.is_packed(o)) {
+      parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
+      parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store8\n");
     } else {
       parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
       parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 4) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
@@ -17099,7 +17045,8 @@ function emit_wasm_arr_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32, o
 function emit_wasm_arr_get(arrtmp: i32, bctmp: i32, o: ir.Op, parts: string[]): string[] {
   // stack: base, idx -> load(base + 8 + idx*esz). 8-byte elements (width
   // 64) use an 8-byte stride: i64.load for an i64[] (unsigned flag),
-  // f64.load for an f64[]; i32 elements the 4-byte path. The index is
+  // f64.load for an f64[]; a packed u8[] (ir.packed) i32.load8_u a byte
+  // apart; i32 elements the 4-byte path. The index is
   // bounds-checked (len @ base+0) before the address is formed — an
   // out-of-range read traps (exit 134) instead of reading past the end.
   parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
@@ -17117,6 +17064,8 @@ function emit_wasm_arr_get(arrtmp: i32, bctmp: i32, o: ir.Op, parts: string[]): 
     parts = parts.append("    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i64.load\n");
   } else if (o.width == 64) {
     parts = parts.append("    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    f64.load\n");
+  } else if (ir.is_packed(o)) {
+    parts = parts.append("    i32.const 8\n    i32.add\n    i32.add\n    i32.load8_u\n");
   } else {
     parts = parts.append("    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i32.load\n");
   }
@@ -17145,7 +17094,8 @@ function emit_wasm_str_index(arrtmp: i32, bctmp: i32, parts: string[]): string[]
 function emit_wasm_arr_set(arrtmp: i32, bctmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32, o: ir.Op, parts: string[]): string[] {
   // stack: base, idx, val -> store val at base+8+idx*esz. 8-byte elements
   // stash through the matching scratch (i64tmp for i64[], f64tmp for
-  // f64[]) and i64.store / f64.store at 8-byte stride. The value is
+  // f64[]) and i64.store / f64.store at 8-byte stride; a packed u8[]
+  // (ir.packed) takes i32.store8 a byte apart. The value is
   // parked first, then the index is bounds-checked (len @ base+0) before
   // the address is formed — an out-of-range write traps (exit 134)
   // instead of clobbering memory past the end.
@@ -17159,6 +17109,11 @@ function emit_wasm_arr_set(arrtmp: i32, bctmp: i32, eltmp: i32, f64tmp: i32, i64
     parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
     parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp));
     parts = parts.append("    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
+  } else if (ir.is_packed(o)) {
+    parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
+    parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
+    parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp));
+    parts = parts.append("    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store8\n");
   } else {
     parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
     parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");

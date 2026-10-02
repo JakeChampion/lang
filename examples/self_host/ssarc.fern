@@ -54,9 +54,9 @@ function narrow_slot(t: typeinfo.Type): boolean {
 }
 
 // The slot width an array's element ops carry: eight bytes for a 64-bit
-// scalar, one byte for a u8, one i32-shaped word for everything else. The
-// register backends pack a u8 array a byte an element (ir.packed) and give
-// every other element eight bytes; wasm reads 8 as its narrow 4-byte slot.
+// scalar, one byte for a u8, one i32-shaped word for everything else. Every
+// backend packs a u8 array a byte an element (ir.packed); the register
+// backends give every other element eight bytes.
 // The `_i64` forms name the SLOT, not the sign, so an i64 and a u64 take the
 // same ones; a float shares the width and differs in the load and store wasm
 // selects, the f32 occupying the f64's slot.
@@ -3238,9 +3238,9 @@ function routed_value(t: typeinfo.Type): boolean {
 }
 
 // The boxes a routed value column can hold: any counted value but a string,
-// a function or a map, released through the type's own release helper. A
-// view's box is not counted, so core/map's retains would share it; a view
-// column stays on the runtime's map, whose reads take a fresh box.
+// released through the type's own release helper. A view's box is not
+// counted, so core/map's retains would share it; a view column stays on the
+// runtime's map, whose reads take a fresh box.
 function routed_box(t: typeinfo.Type): boolean {
   return ssasem.boxed_map_value(t) && !ssasem.is_view(t) || ssasem.is_string_array(t);
 }

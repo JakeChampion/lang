@@ -307,8 +307,8 @@ world-driven composer (P2) wires it.
      points to the elements, count at `ptr-4`), so `buildExternListU8ResultWrapper`
      allocates `4+n`, stores the count, and memory.copys the host bytes (u8 =
      1-byte stride) just past it; `isU8ArrayType` gates it. Self-host: the
-     array uses an 8-byte header (count @0) with 4-byte element slots at +8, so
-     `extern_wrappers` expands each host byte into its slot (the same shape
+     array uses an 8-byte header (count @0) with its bytes packed at +8, so
+     `extern_wrappers` memory.copys the host bytes there (the same shape
      `random_func_p2` builds). Gated by `TestExternU8ArrayResultRunsUnderWasmtime`
      / `TestSelfHostExternU8ArrayResultRunsUnderWasmtime` +
      `TestEmitExternU8ArrayResult`.
@@ -382,11 +382,11 @@ world-driven composer (P2) wires it.
      `TestExternBoolArrayResultCustomProvider` (both `ComposeFromWorldAuto` +
      custom provider, run under wasmtime), plus the wasmbin unit
      `TestEmitExternBoolArrayResult`. The self-host port of bool[] params is done
-     (see below); the self-host **bool[]-result port is done** too — the self-host
-     stores u8 and boolean array elements identically (one per 4-byte slot), so a
-     `boolean[]` result reuses the u8[]-result byte-expansion wrapper verbatim
-     (only the `is_extern_composite_ret` gate + the wrapper's ret-type check
-     accept `"boolean[]"`). Gated by `TestSelfHostExternBoolArrayResultCustomProvider`.
+     (see below); the self-host **bool[]-result port is done** too. The self-host
+     packs a `u8[]` a byte an element (#10987), so a `list<u8>` crosses in place,
+     while a `boolean[]` keeps one 4-byte slot per element: its result wrapper
+     expands each host byte into a slot (`extern_copy_bytes`) and its param
+     wrapper repacks them. Gated by `TestSelfHostExternBoolArrayResultCustomProvider`.
    - **Update (#4408):** `i8`/`i16`/`u16` were retired from the Fern
      language (zero-to-low real usage, full per-stride backend cost).
      The two "Sub-word integer fields" passages below describe the
@@ -761,15 +761,14 @@ world-driven composer (P2) wires it.
      `TestSelfHostExternSumTypeResultCustomProvider` (`div(a,b) ->
      result<s32,s32>`, `half(n) -> option<s32>`, matched and checked).
    - **Self-host port — u8[] / boolean[] params — ✅ done.** A self-host `u8[]`
-     stores each byte widened to a full 4-byte element slot, while the canonical
-     `list<u8>` wants the bytes packed one-per-byte. So — unlike the wider numeric
-     arrays, whose slot already matches the canonical element size and only need
-     an aligned copy — a u8[] param needs a *byte-repacking* copy: the wrapper
-     (`extern_byte_array_param` gate) allocs `len` bytes and writes each element's
-     low byte contiguously (`i32.store8`; alignment is moot for 1-byte
-     elements), then forwards `(buf, len)`. A `boolean[]` param is byte-identical
-     (the self-host stores bools as 0/1 in 4-byte slots too), so the same gate +
-     wrapper cover it — the self-host port of the Go-side bool[] param. Threaded
+     is packed a byte an element (#10987), so its bytes at +8 already are the
+     canonical `list<u8>` and the wrapper (`extern_byte_array_param` gate)
+     forwards `(arr+8, len)` with no copy. A `boolean[]` stores each bool as 0/1
+     in a 4-byte slot, so its param needs a *byte-repacking* copy
+     (`extern_param_repacks`): the wrapper allocs `len` bytes and writes each
+     element's low byte contiguously (`i32.store8`; alignment is moot for 1-byte
+     elements), then forwards `(buf, len)` — the self-host port of the Go-side
+     bool[] param. Threaded
      through `has_extern_mem_param`, the `extern_imports` `(param i32)(param i32)`
      lowering, and the wrapper's param-decl / buffer-locals / call-forward
      branches alongside `extern_array_param_supported`. Gated by

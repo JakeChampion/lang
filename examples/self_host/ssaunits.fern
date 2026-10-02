@@ -1406,8 +1406,7 @@ function takeable_root(kind: i32): boolean {
 
 // The element index a tuple read at (`bi`, `pos`) TAKES rather than borrows,
 // or -1. A projection borrows by default, so a consuming use of what it read
-// owes a retain — and a map box carries no count to retain, which is what made
-// a map read back out of a tuple impossible to use again (#9555).
+// owes a retain, which a take saves (#9555).
 //
 // It takes when the source is a unit of this frame's own, dies at this read,
 // and is reached after it only through reads of its OTHER elements. The
