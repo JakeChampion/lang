@@ -440,8 +440,8 @@ function g(xs: i32[]): i32 {
 // where `Wrap([1, 2])` above arrives as a Call. Both are fresh enum values, and
 // the guard admitted only the Call shape (#9517).
 func TestOwnGuardAllowsPayloadlessVariant(t *testing.T) {
-	wantOK(t, "payloadless-variant-arg", `enum Span { Empty, Wide(i32[]) }
-function eat(own sp: Span): i32 { return 0; }
+	wantOK(t, "payloadless-variant-arg", `enum Extent { Empty, Wide(i32[]) }
+function eat(own sp: Extent): i32 { return 0; }
 function f(): i32 {
     return eat(Empty);                 // fresh enum value → owned
 }`)
@@ -450,21 +450,21 @@ function f(): i32 {
 // The qualified spelling stays a FieldAccess rather than being rewritten to an
 // Ident, so it needs its own admission.
 func TestOwnGuardAllowsQualifiedPayloadlessVariant(t *testing.T) {
-	wantOK(t, "qualified-payloadless-variant-arg", `enum Span { Empty, Wide(i32[]) }
-function eat(own sp: Span): i32 { return 0; }
+	wantOK(t, "qualified-payloadless-variant-arg", `enum Extent { Empty, Wide(i32[]) }
+function eat(own sp: Extent): i32 { return 0; }
 function f(): i32 {
-    return eat(Span.Empty);            // fresh enum value → owned
+    return eat(Extent.Empty);            // fresh enum value → owned
 }`)
 }
 
 // The admission is for VARIANTS, not for any bare name that happens to match a
 // declaration: a local of enum type read after the call is still a borrow.
 func TestOwnGuardRejectsEnumLocal(t *testing.T) {
-	wantE051(t, "enum-local-arg", `enum Span { Empty, Wide(i32[]) }
-function eat(own sp: Span): i32 { return 0; }
-function peek(sp: Span): i32 { return 0; }
+	wantE051(t, "enum-local-arg", `enum Extent { Empty, Wide(i32[]) }
+function eat(own sp: Extent): i32 { return 0; }
+function peek(sp: Extent): i32 { return 0; }
 function f(): i32 {
-    var sp: Span = Empty;
+    var sp: Extent = Empty;
     var n: i32 = eat(sp);              // read again below, so not a move
     return n + peek(sp);
 }`)
@@ -473,10 +473,10 @@ function f(): i32 {
 // The positive side of the same contract: a local of enum type at its last use
 // is a move (#9541).
 func TestOwnGuardAllowsEnumLocalAtLastUse(t *testing.T) {
-	wantOK(t, "enum-local-last-use", `enum Span { Empty, Wide(i32[]) }
-function eat(own sp: Span): i32 { return 0; }
+	wantOK(t, "enum-local-last-use", `enum Extent { Empty, Wide(i32[]) }
+function eat(own sp: Extent): i32 { return 0; }
 function f(): i32 {
-    var sp: Span = Empty;
+    var sp: Extent = Empty;
     return eat(sp);                    // dead after the call → moved
 }`)
 }

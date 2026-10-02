@@ -15112,11 +15112,11 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       if (sdup) {
         out = out.append(dg_at("E006", "struct \"" + s2.name + "\" redeclared", s2.line, s2.col));
       }
-      // E010: a user struct shadowing a reserved built-in struct name. The
+      // E010: a user struct taking a reserved built-in name, struct or enum. The
       // line guard is native's `existing.P == ast.Position{}` check: a
       // synthetic re-entry carries no position and is the compiler's own
       // injection, not a user redeclaration.
-      if (s2.line > 0 && parser.is_reserved_struct_name(s2.name)) {
+      if (s2.line > 0 && (parser.is_reserved_struct_name(s2.name) || parser.is_reserved_enum_name(s2.name))) {
         out = out.append(dg_at("E010", "struct \"" + s2.name + "\" is a reserved built-in name and cannot be redeclared", s2.line, s2.col));
       }
     }
@@ -15139,8 +15139,8 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     if (edup) {
       out = out.append(dg_at("E006", "enum \"" + mod.enums[en].name + "\" redeclared", mod.enums[en].line, mod.enums[en].col));
     }
-    // E010: a user enum shadowing a reserved built-in enum name.
-    if (parser.is_reserved_enum_name(mod.enums[en].name)) {
+    // E010: a user enum taking a reserved built-in name, enum or struct.
+    if (parser.is_reserved_enum_name(mod.enums[en].name) || parser.is_reserved_struct_name(mod.enums[en].name)) {
       out = out.append(dg_at("E010", "enum \"" + mod.enums[en].name + "\" is a reserved built-in name and cannot be redeclared", mod.enums[en].line, mod.enums[en].col));
     }
     var vn: string[] = mod.enums[en].variant_names;

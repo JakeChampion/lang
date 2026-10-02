@@ -1903,6 +1903,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"shadow-result", "enum Result { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
 		{"shadow-ioerror", "enum IoError { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
 		{"shadow-jsonvalue", "enum JsonValue { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
+		// A reserved name is reserved whatever kind takes it (#10855).
+		{"enum-takes-builtin-struct-name", "import \"std/string\";\nenum Span { Empty, Wide(f64, string) }\nfunction f(s: Span): i32 {\n  match (s) { Wide(d, t) => { return (d * 4.0) as i32 + t.len(); }, Empty => { return 0; } }\n}\nfunction main(): i32 { return f(Wide(1.0, \"ab\")); }\n", []string{"E010"}},
+		{"struct-takes-builtin-enum-name", "struct Option { n: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
 		{"enum-non-reserved-ok", "enum Color { Red, Green }\nfunction main(): i32 { return 0; }\n", nil},
 		// Generic functions: a concrete argument must NOT be flagged against
 		// the opaque type parameter (E038 false-positive guard).
@@ -2629,9 +2632,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"union-generic-alias", "struct Leaf[T] { v: T }\nstruct Lit { v: i32 }\ntype Tree[T] = Leaf[T] | Lit;\nfunction main(): i32 { var t: Tree[i32] = Lit { v: 1 }; return 0; }\n", nil},
 		{"union-generic-alias-arity", "struct Leaf[T] { v: T }\nstruct Lit { v: i32 }\ntype Tree[T] = Leaf[T] | Lit;\nfunction main(): i32 { var t: Tree[i32, i32] = Lit { v: 1 }; return 0; }\n", []string{"E019"}},
 		{"enum-generic-arity", "struct Lit { v: i32 }\nenum Tree[T] { Leaf(T), Lit(Lit) }\nfunction f(t: Tree[i32, i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
-		// A user enum shadowing a built-in's name leaves the annotation meaning
-		// the built-in: `Cell[i32]` is not checked against the enum's arity.
-		{"enum-shadows-builtin-arity", "enum Cell { Text(string), Num(i32) }\nfunction f(c: Cell[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		// A user enum taking a built-in struct's name is E010, as a struct would
+		// be, so `Cell[i32]` never has to choose between them (#10855).
+		{"enum-shadows-builtin-arity", "enum Cell { Text(string), Num(i32) }\nfunction f(c: Cell[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
 		{"union-bare-cell-member", "struct B { w: i32 }\ntype X = Cell | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		{"union-bare-map-member", "struct B { w: i32 }\ntype X = Map | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		{"union-bare-mapiter-member", "struct B { w: i32 }\ntype X = MapIter | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
