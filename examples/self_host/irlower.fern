@@ -18108,7 +18108,7 @@ function struct_ret_key(fn: parser.FuncDecl): string {
 function prefixed_names_of(rows: string[], pfx: string): string[] {
   var out: string[] = [];
   for r in rows {
-    if (r.len() > pfx.len() && util.has_prefix(r, pfx)) {
+    if (r.len() > pfx.len() && util.str_has_prefix(r, pfx)) {
       out = out.append(slice_unchecked(r, pfx.len(), r.len()) + "");
     }
   }

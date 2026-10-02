@@ -154,22 +154,6 @@ pub function hash_bucket(s: string, n: i32): i32 {
 // first index in bucket b (-1 when empty) and next[i] chains to the next index
 // in the same bucket, ascending, so a walk meets a repeated name's first entry
 // first.
-// has_prefix: `s` starts with `prefix`, compared in place.
-pub function has_prefix(s: string, prefix: string): boolean {
-  var n: i32 = prefix.len();
-  if (s.len() < n) {
-    return false;
-  }
-  var i: i32 = 0;
-  while (i < n) {
-    if (s[i] != prefix[i]) {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
-}
-
 pub struct NameIndex { names: string[], head: i32[], next: i32[] }
 
 // name_index indexes `names`, built backward so each chain ends up ascending.

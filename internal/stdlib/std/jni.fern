@@ -118,12 +118,9 @@ pub function RELEASE_STRING_UTF_CHARS(): i32 {
 // the right trade for a CLI / edge handler.
 //
 // Bytes are read one at a time via `s[i]` (the SSO-aware index path) and
-// packed four per i32 store. The shorter `as_bytes` + `__memcpy` form is
-// deliberately avoided: `s.as_bytes() as usize` currently yields a bad
-// data pointer in the shared-library / PIE codegen path (the slice
-// data-pointer extraction works in a static exec but reads zeroes from a
-// dlopen'd .so — a separate backend bug), whereas `s[i]` is exercised and
-// correct on both. `+ 4` reserves a final word whose unused high bytes
+// packed four per i32 store: `s.as_bytes() as usize` is not a data pointer
+// (docs/RUNTIME-INTRINSICS.md, "Addresses of counted values"). `+ 4`
+// reserves a final word whose unused high bytes
 // stay zero, so the result is always NUL-terminated (including the empty
 // string and exact-multiple-of-4 lengths).
 pub function cstr(s: string): usize {

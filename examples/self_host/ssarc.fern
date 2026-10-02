@@ -415,7 +415,7 @@ function map_key_eq(t: typeinfo.Type): string {
   if (!ssasem.keyed_map_key(ssasem.map_key(t))) {
     return "";
   }
-  return ssasem.keyed_map_key_name(ssasem.map_key(t)) + ".eq";
+  return ssasem.keyed_map_key_fn(ssasem.map_key(t), "eq");
 }
 
 // The pair a keyed map's construction carries, `K.hash|K.eq`: wasm stores
@@ -424,8 +424,7 @@ function map_key_fns(t: typeinfo.Type): string {
   if (!ssasem.keyed_map_key(ssasem.map_key(t))) {
     return "";
   }
-  var k: string = ssasem.keyed_map_key_name(ssasem.map_key(t));
-  return k + ".hash|" + k + ".eq";
+  return ssasem.keyed_map_key_fn(ssasem.map_key(t), "hash") + "|" + ssasem.keyed_map_key_fn(ssasem.map_key(t), "eq");
 }
 
 // The map ops' widekind: 1 for an i64 or u64 value column and 2 for a float

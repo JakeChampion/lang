@@ -129,32 +129,6 @@ function zeroes(n: i32): boolean[] {
   return out;
 }
 
-// first_positions maps each non-negative block id to the position of the
-// first block carrying it, -1 for an id no block carries.
-function first_positions(f: ssa.SFunc): i32[] {
-  var top: i32 = 0 - 1;
-  for b in f.blocks {
-    if (b.id > top) {
-      top = b.id;
-    }
-  }
-  var out: i32[] = [];
-  var i: i32 = 0;
-  while (i <= top) {
-    out = out.append(0 - 1);
-    i = i + 1;
-  }
-  i = 0;
-  while (i < f.blocks.len()) {
-    var id: i32 = f.blocks[i].id;
-    if (id >= 0 && out[id] < 0) {
-      out = out.with(id, i);
-    }
-    i = i + 1;
-  }
-  return out;
-}
-
 function block_index(at: i32[], id: i32): i32 {
   if (id < 0 || id >= at.len()) {
     return 0 - 1;
@@ -192,7 +166,7 @@ pub function input_error(f: ssa.SFunc, dependencies: i32[][]): string {
   if (f.nvals < 0 || dependencies.len() != f.nvals) {
     return "dependency dimensions";
   }
-  var at: i32[] = first_positions(f);
+  var at: i32[] = ssa.block_positions(f);
   if (block_index(at, f.entry) < 0) {
     return "missing entry block";
   }

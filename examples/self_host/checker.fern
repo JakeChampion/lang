@@ -2591,15 +2591,18 @@ function conforms_to_dyn_trait(s: Scope, tyname: string, tr: string): boolean {
 }
 
 // map_key_type_error returns the E045 message describing why `kt` cannot be a
-// map key, or "" if it is usable. Usable keys are integers, strings, and
-// struct / enum types deriving both Eq and Hash — the same set native accepts
-// (#2671), which is what closes the accepts/rejects divergence in #7001. The
-// old wording ("use i32 or string") described a checker that rejected every
-// composite key; the lowering builds a kind-2 map from the key's derived
-// hash/eq now, so the restriction it named is gone.
+// map key, or "" if it is usable. Usable keys are integers, strings, struct /
+// enum types deriving both Eq and Hash (#2671), and tuples and arrays of
+// usable scalar keys (#10020) — the same set native accepts.
 function map_key_type_error(s: Scope, kt: typeinfo.Type): string {
   if (is_unknown(kt) || is_integer(kt) || type_eq(kt, t_string()) || type_eq(kt, t_str())) {
     return "";
+  }
+  if (is_tuple_or_array(kt)) {
+    if (structural_map_key(kt)) {
+      return "";
+    }
+    return "map key type " + type_label(kt) + " is not supported — a tuple or array used as a key may hold only integers, booleans, chars, strings, and such tuples and arrays";
   }
   if let typeinfo.TypeBool(_) = kt {
     return "";
@@ -2626,6 +2629,47 @@ function map_key_type_error(s: Scope, kt: typeinfo.Type): string {
     return "map key type " + type_label(kt) + " is not supported — " + kw + " used as a key must derive Eq and Hash: add `@derive(cmp.Eq, cmp.Hash)`, which requires `import \"core/cmp\";`";
   }
   return "map key type " + type_label(kt) + " is not yet supported — use i32, string, or a struct/enum with `@derive(cmp.Eq, cmp.Hash)`, which requires `import \"core/cmp\";`";
+}
+
+function is_tuple_or_array(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeTuple(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeArray(_) = t {
+    return true;
+  }
+  return false;
+}
+
+// A tuple or array key compared and hashed element by element: every element
+// an integer, a boolean, a char, a string, or another such tuple or array.
+// ssasem.structural_map_key is the lowering's copy of this rule.
+function structural_map_key(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeTuple(tup) = t {
+    for e in tup.elements {
+      if (!structural_key_element(e)) {
+        return false;
+      }
+    }
+    return tup.elements.len() > 0;
+  }
+  if let typeinfo.TypeArray(a) = t {
+    return structural_key_element(a.elem);
+  }
+  return false;
+}
+
+function structural_key_element(t: typeinfo.Type): boolean {
+  if (type_eq(t, t_string()) || structural_map_key(t)) {
+    return true;
+  }
+  if let typeinfo.TypeBool(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeI32(_) = t {
+    return true;
+  }
+  return false;
 }
 
 // mlit_entries_settle reports whether every entry of a desugared map literal
@@ -2696,26 +2740,7 @@ function e045_map_key_msgs(t: typeinfo.Type, s: Scope): string[] {
   var out: string[] = [];
   match (t) {
     typeinfo.TypeMap(mt) => {
-      // A key the interpreter compares BY VALUE and no compiled backend
-      // dispatches — a tuple, an array, a slice — is carved out. All three
-      // answers differ and none is obviously the bug: `Map { (1, 2): 5 }` is
-      // E045, the annotated spelling is accepted and answers correctly
-      // interpreted, and compiled it answers the DEFAULT, silently.
-      // TestInterpMapCompositeKeys gates the interpreter's answer, so
-      // applying the rule here would refuse a spelling the language
-      // supports. Filed as #10020; the fix that matters is on the compiled
-      // side, where the wrong answer is silent.
-      var by_value_key: boolean = false;
-      if let typeinfo.TypeTuple(_) = mt.key {
-        by_value_key = true;
-      }
-      if let typeinfo.TypeArray(_) = mt.key {
-        by_value_key = true;
-      }
-      var msg: string = "";
-      if (!by_value_key) {
-        msg = map_key_type_error(s, mt.key);
-      }
+      var msg: string = map_key_type_error(s, mt.key);
       if (msg != "") {
         out = out.append(msg);
       }
@@ -4447,7 +4472,7 @@ function builtin_sigs(): string[] {
 pub function builtin_sig(name: string): typeinfo.Type {
   var head: string = name + "(";
   for row in builtin_sigs() {
-    if (row.len() > head.len() && util.has_prefix(row, head)) {
+    if (row.len() > head.len() && util.str_has_prefix(row, head)) {
       var close: i32 = util.index_of_sub(row, "): ");
       var inner: string = slice_unchecked(row, head.len(), close) + "";
       var params: typeinfo.Type[] = [];
@@ -12030,7 +12055,7 @@ function tp_receiver(obj: ast.Expr, recv: typeinfo.Type, s: Scope): string {
   match (recv) {
     typeinfo.TypeUnknown(u) => {
       var prefix: string = "type parameter ";
-      if (u.reason.len() > prefix.len() && util.has_prefix(u.reason, prefix)) {
+      if (u.reason.len() > prefix.len() && util.str_has_prefix(u.reason, prefix)) {
         var tp: string = slice_unchecked(u.reason, prefix.len(), u.reason.len()) + "";
         if (util.index_of_str(s.tparams, tp) >= 0) {
           return tp;
