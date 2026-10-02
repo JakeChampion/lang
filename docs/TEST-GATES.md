@@ -121,6 +121,19 @@ response byte, every one of the six refusal classes must fire, and both must
 report a latency tail. `docs/FIP-HTTP-CODEC.md` holds the numbers the gate
 protects. It does not measure throughput: a slower build passes.
 
+### The key/value core as a `fip` plane
+
+`TestFipKVDisciplinesAgreeAndDoNotAllocate` in `internal/e2e` compiles
+`examples/fip/kv_baseline.fern`, `kv_pmap.fern` and `kv_fip.fern` for x86-64
+and runs them at the default load and at 150% of the table's capacity: the
+`fip` plane must report zero steady-state allocations in both runs, the two
+conventional variants must allocate, all four reports (the persistent map runs
+uniquely owned and with a live snapshot) must agree on the counters, the live
+count and the digest over every response byte, the over-capacity run must
+produce `full` responses, and every report must carry a latency tail.
+`docs/FIP-KV-CORE.md` holds the numbers the gate protects. It does not
+measure throughput: a slower build passes.
+
 ## std/net addresses and errors
 
 `TestNetAddrInterp`, `TestNetAddrX86_64`, `TestNetAddrWasm` and
