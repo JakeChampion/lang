@@ -123,31 +123,30 @@ function find_loops(f: ssa.SFunc, reachable: boolean[], dom: ssadeps.Dom): Loops
 
 // A region is one loop body (or the whole function). Inner loops collapse to
 // their headers while the region is ordered, then expand in place.
-function representative(l: Loops, outer: boolean[], x: i32): i32 {
-  var h: i32 = 0;
-  while (h < l.n) {
-    if (outer[h] && l.members[h * l.n + x]) {
-      return h;
-    }
-    h = h + 1;
-  }
-  return x;
-}
-
-// The representative of every position, once per region: the ordering below
-// asks for it once per edge per round.
+// representatives maps every position to the lowest outermost header whose loop
+// holds it, else to itself, once per region: the ordering below asks for it once
+// per edge per round.
 function representatives(l: Loops, region: boolean[], root: i32): i32[] {
-  var outer: boolean[] = [];
-  var h: i32 = 0;
-  while (h < l.n) {
-    outer = outer.append(h != root && region[h] && l.header[h] && outermost(l, region, root, h));
-    h = h + 1;
-  }
   var out: i32[] = [];
   var x: i32 = 0;
   while (x < l.n) {
-    out = out.append(representative(l, outer, x));
+    out = out.append(x);
     x = x + 1;
+  }
+  var taken: boolean[] = flags(l.n, false);
+  var h: i32 = 0;
+  while (h < l.n) {
+    if (h != root && region[h] && l.header[h] && outermost(l, region, root, h)) {
+      x = 0;
+      while (x < l.n) {
+        if (!taken[x] && l.members[h * l.n + x]) {
+          out = out.with(x, h);
+          taken = taken.with(x, true);
+        }
+        x = x + 1;
+      }
+    }
+    h = h + 1;
   }
   return out;
 }

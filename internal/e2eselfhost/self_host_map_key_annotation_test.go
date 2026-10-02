@@ -14,9 +14,7 @@ import (
 // destination — and only for a struct or enum key at that — so the annotated
 // spelling of a program the literal form rejects walked straight past both
 // (#10009). That is the spelling that reached codegen: a float key took the
-// self-host's string column and segfaulted (#9973), and a tuple key
-// type-checked and then answered the default instead of the value inserted
-// under it.
+// self-host's string column and segfaulted (#9973).
 //
 // What is compared is the whole DIAGNOSTIC, not the code set. The two sides
 // agreeing that a program draws E045 says nothing about whether they agree on
@@ -56,8 +54,7 @@ func TestSelfHostMapKeyAnnotationDifferentialX86_64(t *testing.T) {
 // mapKeyAnnotationRows covers each position a `Map[K, V]` annotation can
 // appear in. The rejecting rows come first and the ACCEPTING ones last, which
 // is the half that matters as much: refusing a key the language supports is
-// the same bug pointed the other way, and this PR shipped one (a tuple key —
-// see #10020) until the corpus was made to say so.
+// the same bug pointed the other way.
 var mapKeyAnnotationRows = []struct {
 	name     string
 	src      string
@@ -113,32 +110,33 @@ function main(): i32 {
     return 0;
 }
 `, true},
-	// A composite key WRITTEN AS A LITERAL is refused, unlike the bare
-	// annotation two rows below, and the difference is the whole shape of the
-	// rule: the annotation is carved out so the interpreter keeps a spelling
-	// it supports, while a literal has keys in it and the map-literal chain
-	// lowers without consulting the key column at all. These rows are what
-	// makes that the gated half rather than the assumed half — widening the
-	// carve-out to cover literals would land a composite key in the string
-	// column, which reads its VALUE as an address (#9973).
+	{"tuple-key-holding-a-struct", `import "core/map";
+struct S { a: i32 }
+function take(m: Map[(i32, S), i32]): i32 { return 0; }
+function main(): i32 { return 0; }
+`, true},
+	{"float-array-key", `import "core/map";
+function take(m: Map[f64[], i32]): i32 { return 0; }
+function main(): i32 { return 0; }
+`, true},
+	// A tuple or array of scalar keys is compared element by element, in a
+	// literal and an annotation alike (#10020).
 	{"tuple-key-literal", `import "core/map";
 function main(): i32 { var m: Map[(i32, i32), i32] = Map { (1, 2): 5 }; return 0; }
-`, true},
+`, false},
 	{"array-key-literal", `import "core/map";
 function main(): i32 { var m: Map[i32[], i32] = Map { [1, 2]: 5 }; return 0; }
-`, true},
-	// Accepted by both CHECKERS on purpose: the interpreter compares a tuple
-	// or array key by value and TestInterpMapCompositeKeys gates it, so
-	// refusing the annotation would take away a spelling the language
-	// supports. Lowering one is refused separately, which is where the
-	// compiled wrong answer used to be — see ast.MapKeyDispatchable, #10020,
-	// and the two literal rows above for the other half of the split.
+`, false},
 	{"tuple-key", `import "core/map";
 function take(m: Map[(i32, i32), i32]): i32 { return 0; }
 function main(): i32 { return 0; }
 `, false},
 	{"array-key", `import "core/map";
 function take(m: Map[i32[], i32]): i32 { return 0; }
+function main(): i32 { return 0; }
+`, false},
+	{"nested-tuple-and-array-key", `import "core/map";
+function take(m: Map[(boolean, string[], (u8, char)), i32]): i32 { return 0; }
 function main(): i32 { return 0; }
 `, false},
 	// Not carve-outs: boolean and str keys WORK, interpreted and compiled

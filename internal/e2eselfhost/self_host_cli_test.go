@@ -2670,27 +2670,34 @@ function main(): i32 {
 		}
 	})
 
-	t.Run("wasm-component-composes-multi-wasi", func(t *testing.T) {
-		// A program mixing WASI categories no fixed wrap frames (env + args)
-		// composes against the fern world (#11019); an extern to an interface
-		// the world does not declare is refused by naming it.
+	t.Run("wasm-component-multi-wasi-composes", func(t *testing.T) {
+		// A program mixing WASI categories (env + args) has no fixed
+		// wasi:cli/run framing; it composes against the fern world instead
+		// (#11019), and the component has to read both.
 		wasmtime, err := exec.LookPath("wasmtime")
 		if err != nil {
 			t.Skip("wasmtime not on PATH")
 		}
 		srcPath := filepath.Join(dir, "comp_multi.fern")
-		src := "function main(): i32 { if (args().len() == 2) { write(\"2\"); } match (env(\"X\")) { Some(v) => { write(v); }, None => { write(\"none\"); } } return 0; }\n"
+		src := "function main(): i32 { var n = args().len(); match (env(\"X\")) { Some(v) => { if (n == 3) { print(\"set3\"); } return 0; }, None => { if (n == 1) { print(\"unset1\"); } return 0; } } }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		comp := filepath.Join(dir, "comp_multi.wasm")
 		if out, code := runDriver(t, "-target", "wasm32-wasi", "-o", comp, srcPath); code != 0 {
-			t.Fatalf("wasm-component on a multi-WASI program exited %d\n%s", code, out)
+			t.Fatalf("wasm-component on a multi-WASI program exited %d:\n%s", code, out)
 		}
-		if out, err := exec.Command(wasmtime, "run", "--env", "X=hi", comp, "a").Output(); err != nil || string(out) != "2hi" {
-			t.Errorf("stdout = %q (err %v), want %q", out, err, "2hi")
+		if out, err := exec.Command(wasmtime, "run", "--env", "X=1", comp, "a", "b").Output(); err != nil || string(out) != "set3\n" {
+			t.Errorf("with X and two args: stdout = %q (%v), want %q", out, err, "set3\n")
 		}
+		if out, err := exec.Command(wasmtime, "run", comp).Output(); err != nil || string(out) != "unset1\n" {
+			t.Errorf("without X: stdout = %q (%v), want %q", out, err, "unset1\n")
+		}
+	})
 
+	t.Run("wasm-component-refuses-extern-outside-world", func(t *testing.T) {
+		// An extern to an interface the fern world does not declare cannot be
+		// composed; the CLI refuses it by naming the interface.
 		refused := filepath.Join(dir, "comp_refused.fern")
 		if err := os.WriteFile(refused, []byte("@import(\"local:test/sink@0.1.0\", \"pick\")\nfunction pick(c: i32): i32;\nfunction main(): i32 { return pick(1); }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -2698,7 +2705,7 @@ function main(): i32 {
 		cmd := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", filepath.Join(dir, "comp_refused.wasm"), refused)
 		out, _ := cmd.CombinedOutput()
 		if code := cmd.ProcessState.ExitCode(); code != 2 || !strings.Contains(string(out), "local:test/sink@0.1.0") {
-			t.Errorf("an extern outside the fern world: exit %d, output %q; want 2 naming the interface", cmd.ProcessState.ExitCode(), out)
+			t.Errorf("exit %d, output %q; want 2 naming the interface", code, out)
 		}
 	})
 

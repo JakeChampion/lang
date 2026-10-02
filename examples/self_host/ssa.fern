@@ -1466,24 +1466,27 @@ function phi_mates(f: SFunc, def_pos: i32[]): Mates {
   return Mates { hint: hint, carried: carried };
 }
 
-// block_positions maps a block id to its position in f.blocks, -1 for an id
-// no block carries.
-function block_positions(f: SFunc): i32[] {
-  var most: i32 = 0;
+// block_positions maps each non-negative block id to the position of the
+// first block carrying it, -1 for an id no block carries.
+pub function block_positions(f: SFunc): i32[] {
+  var top: i32 = 0 - 1;
   for blk in f.blocks {
-    if (blk.id > most) {
-      most = blk.id;
+    if (blk.id > top) {
+      top = blk.id;
     }
   }
   var out: i32[] = [];
   var i: i32 = 0;
-  while (i <= most) {
+  while (i <= top) {
     out = out.append(0 - 1);
     i = i + 1;
   }
   i = 0;
   while (i < f.blocks.len()) {
-    out = out.with(f.blocks[i].id, i);
+    var id: i32 = f.blocks[i].id;
+    if (id >= 0 && out[id] < 0) {
+      out = out.with(id, i);
+    }
     i = i + 1;
   }
   return out;
