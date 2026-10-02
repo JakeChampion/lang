@@ -294,6 +294,26 @@ func TestFormatKeepsOrPatterns(t *testing.T) {
 	}
 }
 
+// A union written across lines keeps its lines (#10853): members that shared
+// a source line share one, and each later line opens with `|`, wherever the
+// source put it. One written on one line stays there.
+func TestFormatKeepsUnionLines(t *testing.T) {
+	decls := "struct A { n: i32 }\n\nstruct B { n: i32 }\n\nstruct C { n: i32 }\n\n"
+	want := decls + "type U = A | B\n  | C;\n"
+	for _, src := range []string{
+		decls + "type U = A | B\n  | C;\n",
+		decls + "type U = A | B |\n    C;\n",
+	} {
+		if got := formatSrc(t, src); got != want {
+			t.Errorf("formatted\n%s\n--- got ---\n%s\n--- want ---\n%s", src, got, want)
+		}
+	}
+	flat := decls + "type U = A | B | C;\n"
+	if got := formatSrc(t, flat); got != flat {
+		t.Errorf("a one-line union moved\n--- got ---\n%s", got)
+	}
+}
+
 // The expression form takes the same path through MatchExpr.Sugar.
 func TestFormatKeepsOrPatternsInExpressionForm(t *testing.T) {
 	src := `enum Col { R, G, B }

@@ -32,6 +32,8 @@ var (
 	fernStringRE              = regexp.MustCompile(`"([A-Za-z_][A-Za-z0-9_]*)"`)
 	selfHostReservedTParamsRE = regexp.MustCompile(
 		`(?s)function reserved_struct_tparams\(name: string\): string\[\] \{(.*?)\n\}`)
+	selfHostReservedEnumTParamsRE = regexp.MustCompile(
+		`(?s)function reserved_enum_tparams\(name: string\): string\[\] \{(.*?)\n\}`)
 	fernTParamsArmRE = regexp.MustCompile(`if \(name == "(\w+)"\) \{\s*return \[(.*?)\];\s*\}`)
 )
 
@@ -83,26 +85,17 @@ func TestSelfHostReservedTypeNamesMatchBuiltins(t *testing.T) {
 				want[sd.Name] = strings.Join(sd.TypeParams, ",")
 			}
 		}
-		m := selfHostReservedTParamsRE.FindStringSubmatch(src)
-		if m == nil {
-			t.Fatal("cannot find the self-host reserved_struct_tparams arms — the pattern no longer matches, so this test proves nothing")
-		}
-		got := map[string]string{}
-		for _, arm := range fernTParamsArmRE.FindAllStringSubmatch(m[1], -1) {
-			var params []string
-			for _, q := range fernStringRE.FindAllStringSubmatch(arm[2], -1) {
-				params = append(params, q[1])
-			}
-			got[arm[1]] = strings.Join(params, ",")
-		}
-		if len(got) != len(want) {
-			t.Errorf("reserved_struct_tparams has %d generic built-ins, builtinStructDecls() %d\n self-host: %v\n    native: %v", len(got), len(want), got, want)
-		}
-		for name, params := range want {
-			if got[name] != params {
-				t.Errorf("reserved_struct_tparams(%q) = [%s], builtinStructDecls() has [%s]", name, got[name], params)
+		checkReservedTParams(t, src, selfHostReservedTParamsRE, "reserved_struct_tparams", "builtinStructDecls()", want)
+	})
+
+	t.Run("enum-type-params", func(t *testing.T) {
+		want := map[string]string{}
+		for _, ed := range builtinEnumDecls() {
+			if len(ed.TypeParams) > 0 {
+				want[ed.Name] = strings.Join(ed.TypeParams, ",")
 			}
 		}
+		checkReservedTParams(t, src, selfHostReservedEnumTParamsRE, "reserved_enum_tparams", "builtinEnumDecls()", want)
 	})
 
 	t.Run("enums", func(t *testing.T) {
@@ -116,4 +109,30 @@ func TestSelfHostReservedTypeNamesMatchBuiltins(t *testing.T) {
 			t.Errorf("is_reserved_enum_name disagrees with builtinEnumDecls()\n self-host: %v\n    native: %v", got, want)
 		}
 	})
+}
+
+// checkReservedTParams compares the arms of the self-host table `fn` against
+// the generic built-ins `native` declares.
+func checkReservedTParams(t *testing.T, src string, re *regexp.Regexp, fn, native string, want map[string]string) {
+	t.Helper()
+	m := re.FindStringSubmatch(src)
+	if m == nil {
+		t.Fatalf("cannot find the self-host %s arms — the pattern no longer matches, so this test proves nothing", fn)
+	}
+	got := map[string]string{}
+	for _, arm := range fernTParamsArmRE.FindAllStringSubmatch(m[1], -1) {
+		var params []string
+		for _, q := range fernStringRE.FindAllStringSubmatch(arm[2], -1) {
+			params = append(params, q[1])
+		}
+		got[arm[1]] = strings.Join(params, ",")
+	}
+	if len(got) != len(want) {
+		t.Errorf("%s has %d generic built-ins, %s %d\n self-host: %v\n    native: %v", fn, len(got), native, len(want), got, want)
+	}
+	for name, params := range want {
+		if got[name] != params {
+			t.Errorf("%s(%q) = [%s], %s has [%s]", fn, name, got[name], native, params)
+		}
+	}
 }

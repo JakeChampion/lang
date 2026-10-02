@@ -2,6 +2,7 @@ package e2eselfhost
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
@@ -129,13 +130,24 @@ func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 		t.Fatal(firstErr)
 	}
 
+	// A divergence names its first differing line and the driver it was
+	// measured against: one was once reported a single byte apart and never
+	// reproduced (#9737), and the sizes alone could not say where.
+	divergence := func(gotName string, got, want []byte) string {
+		bin, err := os.ReadFile(driver)
+		if err != nil {
+			return err.Error()
+		}
+		return fmt.Sprintf("(%d bytes against %d; driver %s, sha256 %x)\n%s", len(got), len(want), driver, sha256.Sum256(bin),
+			firstDiffLines("driver", string(want), gotName, string(got)))
+	}
 	for _, m := range modules {
 		if got, want := emitted[emitKey{"gen1", m}], emitted[emitKey{"driver", m}]; !bytes.Equal(got, want) {
-			t.Fatalf("gen1 compiles %s.fern differently from the driver (%d bytes against %d)", m, len(got), len(want))
+			t.Fatalf("gen1 compiles %s.fern differently from the driver %s", m, divergence("gen1", got, want))
 		}
 	}
 	if got, want := emitted[emitKey{"gen1", "tree"}], emitted[emitKey{"driver", "tree"}]; !bytes.Equal(got, want) {
-		t.Fatalf("gen1 compiles the whole tree differently from the driver (%d bytes against %d): the fixpoint does not hold", len(got), len(want))
+		t.Fatalf("gen1 compiles the whole tree differently from the driver, so the fixpoint does not hold %s", divergence("gen1", got, want))
 	}
 }
 

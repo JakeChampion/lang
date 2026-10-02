@@ -7099,6 +7099,71 @@ function main(): i32 {
 	// An erased generic forwarding its function parameter to one that builds
 	// `Slot[T]`: the call inside it is keyed at its own variable, `keep__0_U`,
 	// whose instances build Slot at each binding (#10827).
+	// A value if or match whose arms are literals settles every literal at the
+	// width the widest needs, element by element in a tuple (#10859).
+	{name: "a-value-if-widens-a-literal-arm", atLeast: 5, want: "0|1 -1 4 9 1\n", src: `
+import "std/i64";
+function pick(k: i32): i64 {
+    var p = match (k) { 0 => { (1, 4) }, 1 => { (2, -4611686018427387905) }, _ => { (3, 5) } };
+    return p.1 + 4611686018427387904;
+}
+function main(): i32 {
+    var r: i64 = 5;
+    var a = if (r > 0) { (2, 4611686018427387905) } else { (3, 4) };
+    var b = if (r < 0) { (3, 4) } else { (2, 4611686018427387905) };
+    var q = if (r > 0) { 4 } else { 4611686018427387905 };
+    print((a.1 - 4611686018427387904).to_string() + " " + pick(1).to_string() + " " + q.to_string()
+        + " " + (pick(2) - 4611686018427387900).to_string() + " " + (b.1 - 4611686018427387904).to_string());
+    return 0;
+}
+`},
+	// A literal-built local handed to an `own` parameter at its last use, in
+	// any position and in a nested function, frees each value once (#10864);
+	// a string local's move is two words on the two-word ABI (#10992).
+	{name: "a-literal-built-local-moves-at-its-last-use", atLeast: 57, want: "0|21\n", src: `
+import "std/i32";
+struct Box { xs: i64[], tag: string }
+@noinline function take(own xs: i64[]): i32 { return xs.len() as i32; }
+@noinline function takeb(own b: Box): i32 { return b.xs.len() as i32 + b.tag.len() as i32; }
+@noinline function takes(own s: string): i32 { return s.len() as i32; }
+@noinline function mk(): string { return "ab" + "cd"; }
+function one(): i32 {
+    var xs: i64[] = [];
+    xs = xs.append(1);
+    return take(xs) + 0;
+}
+function two(): i32 {
+    var xs: i64[] = [5, 6];
+    xs = xs.append(7);
+    var r: i32 = take(xs);
+    return r;
+}
+function three(): i32 {
+    var b: Box = Box { xs: [1, 2], tag: "t" };
+    b = Box { ...b, tag: b.tag + "u" };
+    var r: i32 = takeb(b);
+    return r;
+}
+function four(): i32 {
+    var s: string = "ab";
+    s = s + "cd";
+    var r: i32 = takes(s);
+    return r;
+}
+function five(): i32 {
+    var s: string = mk();
+    return takes(s);
+}
+function main(): i32 {
+    function nested(): i32 {
+        var b: Box = Box { xs: [], tag: "nest" };
+        var r: i32 = takeb(b);
+        return r + 1;
+    }
+    print((one() + two() + three() + four() + five() + nested()).to_string());
+    return 0;
+}
+`},
 	{name: "an-erased-generic-forwarding-its-function-parameter", atLeast: 51, want: "0|5 wx\n", src: `
 import "std/i32";
 struct Slot[T] { v: T }
