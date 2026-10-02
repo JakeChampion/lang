@@ -21,18 +21,18 @@ import "./ssa_lift";
 // base_type_name -> util.base_type_name (SH-020).
 
 pub function sanitize_label(name: string): string {
-  var out: string = "";
-  var i: i32 = 0;
-  while (i < name.len()) {
-    var b: i32 = name[i] as i32;
-    if (b == 46) {
-      out = out + "__";
-    } else {
-      out = out + slice_unchecked(name, i, i + 1);
-    }
-    i = i + 1;
+  var dot: i32 = __memchr(name, 46, 0);
+  if (dot < 0) {
+    return name;
   }
-  return out;
+  var out: string = "";
+  var start: i32 = 0;
+  while (dot >= 0) {
+    out = out + slice_unchecked(name, start, dot) + "__";
+    start = dot + 1;
+    dot = __memchr(name, 46, start);
+  }
+  return out + slice_unchecked(name, start, name.len());
 }
 
 // i32_to_string now lives in util.fern (imported as `util`). See SH-020.
@@ -5116,7 +5116,10 @@ pub struct TyCell { val: Ty }
 
 pub struct TyStructNamed { name: string }
 
-pub type Ty = TyI32 | TyU8 | TyU32 | TyU64 | TyI64 | TyUsize | TyBool | TyString | TyF64 | TyStruct | TyTuple | TyUnknown | TyArray | TyArrayI32 | TyArrayU32 | TyArrayU64 | TyArrayI64 | TyArrayString | TyFnAny | TyMapAny | TyOption | TyResult | TyFn | TyMapStr | TyMapI32 | TyMapIter | TyCell | TyStructNamed;
+pub type Ty = TyI32 | TyU8 | TyU32 | TyU64 | TyI64 | TyUsize | TyBool | TyString | TyF64 | TyStruct
+  | TyTuple | TyUnknown | TyArray | TyArrayI32 | TyArrayU32 | TyArrayU64 | TyArrayI64
+  | TyArrayString | TyFnAny | TyMapAny | TyOption | TyResult | TyFn | TyMapStr | TyMapI32
+  | TyMapIter | TyCell | TyStructNamed;
 
 pub function ty_named(name: string): Ty {
   return TyStructNamed { name: name };

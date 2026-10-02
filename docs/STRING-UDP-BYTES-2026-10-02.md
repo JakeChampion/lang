@@ -1,5 +1,13 @@
 # UDP byte sinks
 
+Current integration includes main through `0d7a8d321` and TCP byte-sink
+checkpoint `b8881841c`. The pinned bootstrap reaches identical stage-2 and
+stage-3 binaries of 12,131,025 bytes, SHA-256
+`8a969e1658775f91d7be1f17a5a621d5b8cedc1697c4e5cd6188204d2ab328c0`.
+Fresh stage-2 Darwin and WASI IPv4/IPv6 loopback probes pass, retaining the
+allocation counts and fixture sizes below. Refreshed Linux targets and
+`make lint-all` pass; the current full unit gate remains pending.
+
 `udp_send_bytes(host, port, data: u8[])` and
 `udp_sendto_bytes(fd, addr, port, data: u8[])` send one complete datagram.
 They preserve arbitrary bytes and send empty arrays as empty datagrams.
@@ -68,3 +76,10 @@ The text segment crosses a 16,384-byte boundary; link-edit data adds 288
 bytes. The data segment's file size is unchanged. The added code implements
 the two byte builtins and their target routing; the existing send bodies
 are shared between text and byte variants. No size baseline was changed.
+
+Repeating the compiler comparison on current main with the refreshed UDP
+stage-2 compiler gives 12,130,865 bytes for its TCP parent and 12,131,025
+for UDP, an increase of 160 bytes. Code grows by 9,064 bytes, unwind data
+by 344 and data by 2,304; all fit in the existing file segments. Link-edit
+data grows from 170,545 to 170,705 bytes. These measured layout differences
+explain why file growth differs from the earlier checkpoint.

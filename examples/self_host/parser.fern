@@ -109,7 +109,7 @@ pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: st
 // optional and currently consumed and discarded, since
 // the self-host pipeline doesn't yet distinguish exported
 // from private decls.
-pub struct TypeAlias { name: string, variants: string[], variant_args: string[], type_params: string[], line: i32, col: i32, is_pub: boolean, is_package: boolean, module: string }
+pub struct TypeAlias { name: string, variants: string[], variant_args: string[], variant_lines: i32[], type_params: string[], line: i32, col: i32, is_pub: boolean, is_package: boolean, module: string }
 
 // Top-level import: `import "./path";`. The path is captured
 // verbatim (including the quotes-stripped value). Resolution
@@ -9689,18 +9689,20 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
   p = p.advance();  // consume `type`
   var name: string = p.peek_ident();
   if (name.len() == 0) {
-    return (TypeAlias { name: "", variants: [], variant_args: [], type_params: [], line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
+    return (TypeAlias { name: "", variants: [], variant_args: [], variant_lines: [], type_params: [], line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
   }
   p = p.advance();
   let (tparams, tp_p) = parse_decl_tparams(p);
   p = tp_p;
   if (p.peek_punct() != "=") {
-    return (TypeAlias { name: name, variants: [], variant_args: [], type_params: tparams, line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
+    return (TypeAlias { name: name, variants: [], variant_args: [], variant_lines: [], type_params: tparams, line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
   }
   p = p.advance();  // consume `=`
   var variants: string[] = [];
   var vargs: string[] = [];
+  var vlines: i32[] = [];
   while (p.peek_ident().len() > 0) {
+    vlines = vlines.append(p.peek_line());
     // A member is a type spelling: its base names the struct, and its
     // arguments, if any, are kept as written.
     let (dt, dt_p) = parse_decl_type(p);
@@ -9717,7 +9719,7 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
   if (p.peek_punct() == ";") {
     p = p.advance();
   }
-  return (TypeAlias { name: name, variants: variants, variant_args: vargs, type_params: tparams, line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
+  return (TypeAlias { name: name, variants: variants, variant_args: vargs, variant_lines: vlines, type_params: tparams, line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
 }
 
 // type_ref_args_spelling is a type reference's argument list as one
@@ -19666,6 +19668,19 @@ function handle_resource_of(type_name: string, resources: ResourceDecl[]): strin
 // user `enum` declaration shadowing one of these is E010.
 pub function is_reserved_enum_name(name: string): boolean {
   return name == "Option" || name == "Result" || name == "IoError" || name == "JsonValue" || name == "Body";
+}
+
+// reserved_enum_tparams is the type parameters of the built-in enum `name`,
+// pinned against builtinEnumDecls by the parity test in internal/checker.
+pub function reserved_enum_tparams(name: string): string[] {
+  if (name == "Option") {
+    return ["T"];
+  }
+  if (name == "Result") {
+    return ["T", "E"];
+  }
+  var none: string[] = [];
+  return none;
 }
 
 // is_reserved_struct_name reports whether `name` is one of the structs the

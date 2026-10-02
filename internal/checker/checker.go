@@ -1126,19 +1126,37 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// zero-positioned entries are the previously-injected
 	// builtins and skipping re-injection is the right move
 	// (not a shadow).
+	//
+	// A name is reserved whatever kind declares it: a user `enum Span` takes
+	// the built-in struct's name as surely as a user `struct Span` does.
+	userEnums := map[string]*ast.EnumDecl{}
+	for _, ed := range prog.Enums {
+		userEnums[ed.Name] = ed
+	}
+	userStructs := map[string]*ast.StructDecl{}
+	for _, sd := range prog.Structs {
+		userStructs[sd.Name] = sd
+	}
 	var shadowedEnums []*ast.EnumDecl
-	{
-		userEnums := map[string]*ast.EnumDecl{}
-		for _, ed := range prog.Enums {
-			userEnums[ed.Name] = ed
+	var shadowedStructs []*ast.StructDecl
+	shadow := func(name string) bool {
+		if ed, ok := userEnums[name]; ok && ed.P != (ast.Position{}) {
+			shadowedEnums = append(shadowedEnums, ed)
+			return true
 		}
+		if sd, ok := userStructs[name]; ok && sd.P != (ast.Position{}) {
+			shadowedStructs = append(shadowedStructs, sd)
+			return true
+		}
+		return false
+	}
+	{
 		var inject []*ast.EnumDecl
 		for _, ed := range builtinEnumDecls() {
-			if existing, dup := userEnums[ed.Name]; dup {
-				if existing.P == (ast.Position{}) {
-					continue
-				}
-				shadowedEnums = append(shadowedEnums, existing)
+			if existing, dup := userEnums[ed.Name]; dup && existing.P == (ast.Position{}) {
+				continue
+			}
+			if shadow(ed.Name) {
 				continue
 			}
 			inject = append(inject, ed)
@@ -1153,19 +1171,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// Date / Time / DateTime / TimeZone / Zoned / Span /
 	// Duration, Map, MapIter, Url) — same shadow-is-an-error
 	// policy, same monomorph-re-entry handling.
-	var shadowedStructs []*ast.StructDecl
 	{
-		userStructs := map[string]*ast.StructDecl{}
-		for _, sd := range prog.Structs {
-			userStructs[sd.Name] = sd
-		}
 		var inject []*ast.StructDecl
 		for _, sd := range builtinStructDecls() {
-			if existing, dup := userStructs[sd.Name]; dup {
-				if existing.P == (ast.Position{}) {
-					continue
-				}
-				shadowedStructs = append(shadowedStructs, existing)
+			if existing, dup := userStructs[sd.Name]; dup && existing.P == (ast.Position{}) {
+				continue
+			}
+			if shadow(sd.Name) {
 				continue
 			}
 			inject = append(inject, sd)

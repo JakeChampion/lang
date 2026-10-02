@@ -2118,18 +2118,18 @@ func (p *parser) parseUnionDecl() (*ast.UnionDecl, error) {
 		return nil, err
 	}
 	var members []ast.StructType
-	first, err := p.parseUnionMember()
-	if err != nil {
-		return nil, err
-	}
-	members = append(members, first)
-	for p.match(lexer.Punct, "|") {
-		p.advance()
+	var lines []int
+	for {
+		lines = append(lines, p.peek().Pos.Line)
 		mem, err := p.parseUnionMember()
 		if err != nil {
 			return nil, err
 		}
 		members = append(members, mem)
+		if !p.match(lexer.Punct, "|") {
+			break
+		}
+		p.advance()
 	}
 	if _, err := p.expect(lexer.Punct, ";"); err != nil {
 		return nil, err
@@ -2137,7 +2137,7 @@ func (p *parser) parseUnionDecl() (*ast.UnionDecl, error) {
 	if len(members) < 2 {
 		return nil, p.errorf(name.Pos, "union %q must list at least two struct members (use a struct alias for a single type)", name.Text)
 	}
-	return &ast.UnionDecl{P: kw.Pos, Name: name.Text, TypeParams: typeParams, Members: members}, nil
+	return &ast.UnionDecl{P: kw.Pos, Name: name.Text, TypeParams: typeParams, Members: members, MemberLines: lines}, nil
 }
 
 // parseUnionMember parses one member of a union alias: a struct name

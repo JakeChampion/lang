@@ -1,5 +1,15 @@
 # TCP byte sink for D9
 
+Integration checkpoint, October 2: target tests and lint pass with main
+through `0d7a8d321`. The pinned bootstrap produces identical stage-2 and
+stage-3 binaries of 12,130,865 bytes, SHA-256
+`e5f410b9da8852a06b1a586c4551a9c79f92012db8fc2b79952ac760519c7fba`.
+Actual stage-2 Darwin loopback passes with ten allocations and ten frees;
+native descriptor and SIGPIPE probes use zero allocations. The WASI component
+loopback passes. The full unit suite passed on the earlier `d5fc77ab1`
+checkpoint; the current main integration still needs that full gate.
+Measurements below retain their original source provenance.
+
 `tcp_send_bytes(fd: i32, data: u8[]): i32` borrows an owned byte array and
 sends its bytes without constructing a string. Native code returns the
 underlying send count or negative errno, including short counts. It suppresses
@@ -50,7 +60,8 @@ After integrating the file-byte per-module fix and newer CI changes from
 `7052f1c0c`, the target matrix and lint pass again. Library-only file and TCP
 callers link and execute on both Linux targets; the TCP fixture checks an
 invalid descriptor and continued access to its borrowed array. The refreshed
-bootstrap reaches the same stage-2/stage-3 hash. The full unit suite is pending.
+bootstrap reaches the same stage-2/stage-3 hash. The full unit suite and
+`make lint-all` pass on the final `d5fc77ab1` source snapshot.
 
 ## Measured native allocation cost
 

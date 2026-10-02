@@ -157,6 +157,22 @@ function main(): i32 {
     var after: i32 = s.insts.len();
     return before * 10 + after + (t.insts.len() - 3);
 }`, 22},
+	// The cursor handed back INSIDE A TUPLE: `step` returns `(emit(s, x),
+	// true)`, so its `s` dies at the inner call and emit grows the buffer in
+	// place (#10679). The growable position has to reach this caller, whose
+	// `s` is still read after the second call; reads 12 without that.
+	{"tuple-return-rebind", `struct Blk { insts: i32[] }
+function emit(s: Blk, x: i32): Blk { return Blk { insts: s.insts.append(x) }; }
+function step(s: Blk, x: i32): (Blk, boolean) { return (emit(s, x), true); }
+function main(): i32 {
+    var s: Blk = Blk { insts: [] };
+    var r: (Blk, boolean) = step(s, 1);
+    s = r.0;
+    var before: i32 = s.insts.len();
+    var t: (Blk, boolean) = step(s, 3);
+    var after: i32 = s.insts.len();
+    return before * 10 + after + (t.0.insts.len() - 2);
+}`, 11},
 	// The two-statement rebind INSIDE A LOOP, in its `var` spelling. The store
 	// at the end of the body is what makes the death loop-safe — the next
 	// iteration reads the value this one produced — and the same growable

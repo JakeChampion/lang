@@ -4036,11 +4036,11 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				// as __alloc_u8 above: every argument is a scalar (byte
 				// count, fd), so the result cannot alias one.
 				return false
-			case "slice_unchecked":
+			case "slice_unchecked", "string_from_bytes_unchecked":
 				// Copies bytes OUT of its source into a fresh owned
-				// buffer (the __str_slice contract) — the string
-				// SliceExpr arm above, spelled as a builtin, so the
-				// source's taint says nothing about the result.
+				// buffer (the __str_slice contract, and copyingBuiltinArgs'
+				// note on string_from_bytes_unchecked), so the source's
+				// taint says nothing about the result.
 				return false
 			case "__method_string_as_bytes":
 				// A fresh rc=1 slice header viewing the receiver's bytes —
