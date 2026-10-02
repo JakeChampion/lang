@@ -49,7 +49,7 @@ func TestSelfHostTargetNameFoldsOnTheModloadDriverX86_64(t *testing.T) {
 	got := strings.TrimRight(string(out), "\n")
 	if want := "linux\nx86-64"; got != want {
 		t.Errorf("target name = %q, want %q\n"+
-			"arm64 for the ISA means the driver took irlower's pointer-width default "+
+			"arm64 for the ISA means the driver took the lowering's pointer-width default "+
 			"instead of folding its own -target", got, want)
 	}
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
