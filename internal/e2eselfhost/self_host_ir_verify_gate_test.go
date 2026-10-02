@@ -11,9 +11,8 @@ import (
 
 // #6639 slice 5: the IR verifiers now run on the COMPILE path.
 //
-// Slices 1-3 wrote the passes; nothing ran them outside a test driver.
-// irverify_run.fern builds op streams by hand and irlower_run.fern sweeps the
-// conformance corpus — neither is the compiler, so the module with the most
+// Slices 1-3 wrote the passes; nothing ran them outside a test driver, and a
+// test driver is not the compiler, so the module with the most
 // lowering in it, the self-host compiler's own ~1000 functions, went through
 // every build unchecked. examples/self_host/irverifygate.fern closes that: all
 // three backends call it once per function they are about to emit, so any
@@ -97,6 +96,24 @@ function main(): i32 {
     var q: P = shift(p, 5);
     var ps: P[] = [p, q];
     return ps[0].x + ps[1].x + q.y;
+}`},
+	// An `own` base superseded in an arm that returns, then again after it:
+	// the two reuse sites are exclusive through the return, not through an
+	// else, and the first replaces a heap field, which is the shape the
+	// rc verifier's reachability walk read as one box handed to two
+	// recipients (coreutils' ptx `put` and digest `check_one`).
+	{"own-spread-in-returning-arm", `struct Line { mode: i32, cursor: i32, buf: u8[] }
+function put(own l: Line, n: i32): Line {
+    if (l.mode == 2) {
+        return Line { ...l, buf: l.buf.append(32 as u8) };
+    }
+    return Line { ...l, cursor: n };
+}
+function main(): i32 {
+    var l: Line = Line { mode: 2, cursor: 0, buf: [] };
+    l = put(l, 3);
+    l = put(Line { ...l, mode: 1 }, 7);
+    return l.cursor + l.buf.len();
 }`},
 }
 

@@ -113,35 +113,6 @@ function main(): i32 { var o: O2 = O2.None; var r: Option[i32] = Option.Some(3);
     return t; }`},
 }
 
-// Bare-name construction of a shadowing payload-less variant — `var e: E = None`
-// where the user enum declares `None`.
-//
-// The ident lowering tested `id.name == "None"` BEFORE the declared-struct case,
-// the inverse of the call arm's order, so this built an Option box with tag 1
-// instead of the user's variant. It then matched no variant index at all and the
-// program silently returned the wildcard's value.
-//
-// These cannot be oracle-checked: native REJECTS a bare colliding name outright
-// (`E036: variant "None" is declared in multiple enums … qualify the reference`),
-// so there is no native answer to compare against. The self-host computes the
-// same E036, and since #8461 the COMPILER (fern.fern) refuses the program on
-// it, matching native. This driver is asm_run.fern, which is a raw
-// stdin-to-asm path that runs no checker gate at all, so the lowering is still
-// reachable here — and the value it produces should be the USER's variant.
-// That is what these pin: the lowering must be right underneath the
-// diagnostic, not merely unreachable behind it.
-// TestSelfHostFormerlyExemptCodesGateX86_64 is where the refusal is asserted.
-var selfHostBareShadowedConstructionCases = []struct {
-	name string
-	src  string
-	exit int
-}{
-	{"bare-user-none-idx-2", `enum E { Aa(i32), Bb(i32), None }
-function main(): i32 { var e: E = None; match (e) { E.None => { return 7; }, _ => { return 4; } } }`, 7},
-	{"bare-user-none-idx-0", `enum E { None, Aa(i32), Bb(i32) }
-function main(): i32 { var e: E = None; match (e) { E.None => { return 7; }, _ => { return 4; } } }`, 7},
-}
-
 func TestSelfHostShadowedBuiltinVariantIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -174,42 +145,6 @@ func TestSelfHostShadowedBuiltinVariantIRX86_64(t *testing.T) {
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != want {
 				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
-			}
-		})
-	}
-}
-
-func TestSelfHostBareShadowedConstructionIRX86_64(t *testing.T) {
-	// The checker refuses these programs (E036), so only the AST lowering reaches them.
-	t.Setenv("FERN_SEM_IR", "")
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile(filepath.Join("../../examples/self_host", "asm_run.fern"))
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-
-	for _, tc := range selfHostBareShadowedConstructionCases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src+"\n"))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
-				t.Errorf("%s exited %d, want %d (the USER enum's variant, not the builtin Option)", tc.name, code, tc.exit)
 			}
 		})
 	}

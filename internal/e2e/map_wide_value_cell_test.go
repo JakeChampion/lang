@@ -247,3 +247,54 @@ func TestMapWideValueReadAfterOverwriteWasm(t *testing.T) {
 		t.Fatalf("wasm got %d, want 42 (43 = over-release)", got)
 	}
 }
+
+// A wide KEY column boxes its keys into cells on wasm32 (keyKind 2), and a
+// delete frees the removed key's cell. A COW copy has to own its key cells
+// as it owns its value cells, or the delete in the copy frees a cell the
+// original still reads: wasm summed the original's keys 3000000021 short,
+// with the freed cell reading zero (#10968). The natives keep a wide key in
+// its slot, so they carry no cell and pin the answer.
+const mapWideKeyCopyDeleteProg = `
+import "core/map";
+
+function main(): i32 {
+    var m: Map[i64, i32] = map_new(8);
+    var i: i32 = 0;
+    while (i < 8) {
+        m = m.insert((i as i64) * 1000000007, i);
+        i = i + 1;
+    }
+    var m2 = m;
+    var (m3, gone) = m2.without(3000000021);
+    if (!gone || m3.len() != 7) { return 1; }
+    var junk: i64[] = [];
+    i = 0;
+    while (i < 64) {
+        junk = junk.append(77 as i64);
+        i = i + 1;
+    }
+    var sum: i64 = 0;
+    for k in m.keys() { sum = sum + k; }
+    if (sum != 28000000196) { return 2; }
+    if (m.get_or(3000000021, 0 - 1) != 3) { return 3; }
+    return 42 + __rc_underflow_count();
+}
+`
+
+func TestMapWideKeyCopyDeleteX86_64(t *testing.T) {
+	if _, got := compileAndRunX86_64(t, mapWideKeyCopyDeleteProg); got != 42 {
+		t.Fatalf("x86-64 got %d, want 42 (2 = the original read a key cell the copy freed)", got)
+	}
+}
+
+func TestMapWideKeyCopyDeleteArm64(t *testing.T) {
+	if _, got := compileAndRunArm64(t, mapWideKeyCopyDeleteProg); got != 42 {
+		t.Fatalf("arm64 got %d, want 42 (2 = the original read a key cell the copy freed)", got)
+	}
+}
+
+func TestMapWideKeyCopyDeleteWasm(t *testing.T) {
+	if got := compileAndRunWasmbinMain(t, mapWideKeyCopyDeleteProg); got != 42 {
+		t.Fatalf("wasm got %d, want 42 (2 = the original read a key cell the copy freed)", got)
+	}
+}

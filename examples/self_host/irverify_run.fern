@@ -1020,6 +1020,31 @@ function rc_checks(): i32 {
     return 217;
   }
 
+  // ---- returns separate claims only on the returning path ------------
+  // A function return on the first claim's path separates the sites.
+  // Each site must remain checked, and a conditional return must still
+  // expose the reachable double claim through its other arm.
+  var stopped: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_return()]);
+  stopped = concat_ops(stopped, selfhost_reuse(1, 1));
+  var sr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", stopped);
+  if (sr.checked != 2 || sr.problems.len() != 0) {
+    return 221;
+  }
+  var conditional: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_const_i32(1), ir.op_if(0), ir.op_return(), ir.op_end()]);
+  conditional = concat_ops(conditional, selfhost_reuse(1, 1));
+  var cr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", conditional);
+  if (cr.checked != 2 || cr.problems.len() != 1) {
+    return 222;
+  }
+  // An op of no known kind (its tag is KIND_INVALID) is not a return: the
+  // walk continues past it, the way native's switch matches no arm.
+  var unknown: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [raw_op("not_an_op_kind")]);
+  unknown = concat_ops(unknown, selfhost_reuse(1, 1));
+  var ur: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", unknown);
+  if (ur.checked != 2 || ur.problems.len() != 1) {
+    return 223;
+  }
+
   // ---- a kept-field reuse is modelled through its earlier select ------
   // ssarc.keep_token proves the donor unique and stores it, or null, into
   // the token slot; after the allocation keep_release branches on the token

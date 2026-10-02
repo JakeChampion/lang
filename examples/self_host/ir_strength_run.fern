@@ -777,6 +777,20 @@ function main(): i32 {
     mi = mi + 1;
   }
 
+  // const_i32_readable / const_i64_readable answer from the text alone, and
+  // have to agree with the rendering round trip they stand for.
+  var texts: string[] = ["0", "7", "-7", "007", "-0", "", "-", "0x10", "7u8", "+5", "2147483647", "2147483648", "-2147483648", "-2147483649", "4294967296", "9223372036854775807", "9223372036854775808", "-9223372036854775808", "-9223372036854775809", "99999999999999999999"];
+  var ti: i32 = 0;
+  while (ti < texts.len()) {
+    var t: string = texts[ti];
+    var r32: boolean = ir.const_i32_readable(ir.op_const_i32_text(t));
+    var r64: boolean = ir.const_i64_readable(ir.op_const_i64_text(t));
+    var a32: boolean = r32 == (util.i32_to_string(util.digits_to_i32(t)) == t);
+    var a64: boolean = r64 == (util.i64_to_string(util.digits_to_i64(t)) == t);
+    out = out + "readable " + t + ": i32=" + bool_word(r32) + " i64=" + bool_word(r64) + " agree=" + bool_word(a32 && a64) + "\n";
+    ti = ti + 1;
+  }
+
   write(out);
 
   // Exit code: 0 when the fixpoint held.

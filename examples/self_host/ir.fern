@@ -58,7 +58,7 @@ pub struct Op {
   // name give two decls, and a backend resolving `str` by name gets whichever
   // was declared first — reading the other enum's field types and widths. The
   // index is into the SAME decl array the lowering ran against; every consumer
-  // is handed that array (`all_structs` reaches lower_all_for_view and
+  // is handed that array (`all_structs` reaches the lowering and
   // emit_functions_view alike), so it means the same decl on both sides.
   decl: i32,
 }
@@ -267,7 +267,7 @@ pub function op_fbin(kind: string): Op {
 // on x86, fsqrt / frint* / fabs on arm64, f64.sqrt / floor / ceil / trunc / abs
 // on wasm). Round-half-away (__round_f64) and the libm transcendentals
 // log/exp/sin/cos are op_funary kinds too, but need multi-instruction emulation
-// (x86/wasm; arm64 has frinta) or a runtime call on some backends; wasm has neither, so wasm_eligible
+// (x86/wasm; arm64 has frinta) or a runtime call on some backends; wasm has neither, so the wasm routing gate
 // subtracts the transcendental kinds there.
 pub function op_funary(kind: string): Op {
   return Op { decl: 0 - 1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
@@ -1894,7 +1894,7 @@ pub function op_read_line(): Op {
 // fresh Result[string, IoError] box: Ok(contents) on success, Err(_) on any I/O
 // error (a VALUE op — one arg consumed, the box left on the stack). Lowers to
 // each backend's __fern_read_file helper. No wasm file I/O here, so a read_file
-// module is wasm-ineligible (wasm_eligible) and is refused there.
+// module is wasm-ineligible (wasm_ir.ir_route_ok) and is refused there.
 pub function op_read_file(): Op {
   return op0(169);
 }
@@ -1912,7 +1912,7 @@ pub function op_read_file_bytes(): Op {
 // Some(_) on any I/O error (a VALUE op — two args consumed, the box left on the
 // stack). Lowers to each backend's __fern_write_file helper (the same one the AST
 // path calls). No wasm file I/O here, so a write_file module is wasm-ineligible
-// (wasm_eligible) and is refused there.
+// (wasm_ir.ir_route_ok) and is refused there.
 pub function op_write_file(): Op {
   return op0(170);
 }
@@ -1929,7 +1929,7 @@ pub function op_write_file_exec(): Op {
 // ENOENT/ENOTDIR (a VALUE op — one arg consumed, the box left on the stack).
 // Lowers to each backend's __fern_remove_dir_all helper (the same one the AST
 // path calls). No wasm file I/O here, so a remove_dir_all module is wasm-
-// ineligible (wasm_eligible) and is refused there.
+// ineligible (wasm_ir.ir_route_ok) and is refused there.
 pub function op_remove_dir_all(): Op {
   return op0(172);
 }
@@ -1949,7 +1949,7 @@ pub function op_remove_file(): Op {
 // VALUE op — one arg consumed, the box left on the stack). Lowers to each
 // backend's __fern_temp_dir helper (the same one the AST path calls; it also
 // calls __fern_monotonic_ns). No wasm file I/O here, so a temp_dir module is
-// wasm-ineligible (wasm_eligible) and is refused there.
+// wasm-ineligible (wasm_ir.ir_route_ok) and is refused there.
 pub function op_temp_dir(): Op {
   return op0(174);
 }
@@ -1969,7 +1969,7 @@ pub function op_create_dir_all(): Op {
 // VALUE op — one arg consumed, the box left on the stack). Lowers to each
 // backend's __fern_read_dir helper (the same one the AST path calls; it boxes a
 // string[] via __fern_arr_box). No wasm file I/O here, so a read_dir module is
-// wasm-ineligible (wasm_eligible) and is refused there.
+// wasm-ineligible (wasm_ir.ir_route_ok) and is refused there.
 pub function op_read_dir(): Op {
   return op0(171);
 }
@@ -1987,7 +1987,7 @@ pub function op_read_dir_all(): Op {
 // VALUE op — one arg consumed, the box left on the stack). Lowers to each
 // backend's __fern_env helper (the same one the AST path calls; it boxes the
 // value into a fresh string block). No wasm env access here, so an env module
-// is wasm-ineligible (wasm_eligible) and is refused there.
+// is wasm-ineligible (wasm_ir.ir_route_ok) and is refused there.
 pub function op_env(): Op {
   return op0(176);
 }
@@ -1998,7 +1998,7 @@ pub function op_env(): Op {
 // left on the stack). Lowers to each backend's __fern_stat helper (the same one
 // the AST path calls; it boxes a FileStat struct whose shape pointer is the
 // interned "FileStat" name). No wasm file I/O here, so a stat module is wasm-
-// ineligible (wasm_eligible) and is refused there.
+// ineligible (wasm_ir.ir_route_ok) and is refused there.
 pub function op_stat(): Op {
   return op0(175);
 }
@@ -2040,7 +2040,7 @@ pub function op_statfs(): Op {
 // __fern_subprocess helper (the same one the AST path calls; it boxes a
 // ProcessResult whose shape pointer is the interned "ProcessResult" name). No
 // wasm process spawn here, so a subprocess module is wasm-ineligible
-// (wasm_eligible) and is refused there.
+// (wasm_ir.ir_route_ok) and is refused there.
 pub function op_subprocess(): Op {
   return op0(177);
 }
@@ -2050,10 +2050,23 @@ pub function op_subprocess(): Op {
 // and pushes a fresh Option[string]: Some(chunk) on a non-empty read, None at EOF
 // (a VALUE op — two args consumed, the box left on the stack). Lowers to each
 // backend's __fern_reader_read_chunk helper (the same one the AST path calls). No
-// wasm stdin here, so a read_chunk module is wasm-ineligible (wasm_eligible) and
+// wasm stdin here, so a read_chunk module is wasm-ineligible (wasm_ir.ir_route_ok) and
 // is refused there.
 pub function op_read_chunk(): Op {
   return op0(178);
+}
+
+// Raw input retains no text invariant. The packed bit chooses native u8 slots.
+pub function op_read_chunk_bytes(): Op {
+  return op0(348);
+}
+
+pub function op_write_bytes(): Op {
+  return op0(349);
+}
+
+pub function op_write_some_bytes(): Op {
+  return op0(350);
 }
 
 // `fd_stat` pops [fd] and pushes Result[FileStat, IoError]: fstat(2) of the
@@ -2137,7 +2150,7 @@ pub function op_reader_close(): Op {
 // (argv[0] first) — a VALUE op with no args, leaving the array box on the stack.
 // Lowers to each backend's __fern_args helper (which reads the __fern_argc /
 // __fern_argv globals the entry's _start saves from the initial stack). No wasm
-// argv in this runtime, so an args module is wasm-ineligible (wasm_eligible) and
+// argv in this runtime, so an args module is wasm-ineligible (wasm_ir.ir_route_ok) and
 // is refused there.
 pub function op_args(): Op {
   return op0(180);
@@ -2219,7 +2232,7 @@ pub function op_signal_default(): Op {
 //      length (a VALUE op — no args, leaves the box on the stack; allocates).
 // Lower to each register backend's __fern_strbuf_* helpers (byte-for-byte the
 // AST path's, so the IR + AST emitters agree). No wasm IR support yet, so a
-// strbuf module is wasm-ineligible (wasm_eligible) and is refused there.
+// strbuf module is wasm-ineligible (wasm_ir.ir_route_ok) and is refused there.
 pub function op_strbuf_reset(): Op {
   return op0(117);
 }
@@ -2288,6 +2301,15 @@ pub function op_buf_len(): Op {
 
 pub function op_buf_take(): Op {
   return op0(296);
+}
+
+// Extract owned bytes and reset the builder, without interpreting text.
+pub function op_buf_take_bytes(): Op {
+  return op0(347);
+}
+
+pub function op_buf_push_bytes_range(): Op {
+  return op0(351);
 }
 
 pub function op_buf_free(): Op {
@@ -3078,6 +3100,9 @@ pub function kind_id(name: string): i32 {
   }
   if (n == 19) {
     return kind_id_len19(name);
+  }
+  if (n == 20 && name == "buf_push_bytes_range") {
+    return 351;
   }
   if (n == 21) {
     return kind_id_len21(name);
@@ -3966,6 +3991,9 @@ function kind_id_len10_t(name: string): i32 {
 }
 
 function kind_id_len11(name: string): i32 {
+  if (name == "write_bytes") {
+    return 349;
+  }
   var c: u8 = name[0];
   if (c == b'c' && name == "call_direct") {
     return 149;
@@ -4204,6 +4232,9 @@ function kind_id_len13(name: string): i32 {
 }
 
 function kind_id_len14(name: string): i32 {
+  if (name == "buf_take_bytes") {
+    return 347;
+  }
   var c: u8 = name[0];
   if (c == b'a' && name == "arr_push_owned") {
     return 93;
@@ -4277,6 +4308,12 @@ function kind_id_len15(name: string): i32 {
 }
 
 function kind_id_len16(name: string): i32 {
+  if (name == "write_some_bytes") {
+    return 350;
+  }
+  if (name == "read_chunk_bytes") {
+    return 348;
+  }
   var c: u8 = name[0];
   if (c == b'h' && name == "heap_alloc_count") {
     return 315;
@@ -4915,6 +4952,15 @@ function kind_name_4(id: i32): string {
   if (id == 178) {
     return "read_chunk";
   }
+  if (id == 348) {
+    return "read_chunk_bytes";
+  }
+  if (id == 349) {
+    return "write_bytes";
+  }
+  if (id == 350) {
+    return "write_some_bytes";
+  }
   if (id == 179) {
     return "reader_close";
   }
@@ -5360,6 +5406,12 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 347) {
+    return "buf_take_bytes";
+  }
+  if (id == 351) {
+    return "buf_push_bytes_range";
+  }
   if (id <= 40) {
     return kind_name_0(id);
   }
@@ -5519,7 +5571,7 @@ function pops2_io(t: i32): boolean {
     || t == 285  // signal_send (pid, sig)
     || t == 284  // set_process_group (pid, pgid)
     || t == 311  // fd_dup_onto (fd, newfd)
-    || t == 178 || t == 187  // read_chunk, poll
+    || t == 178 || t == 348 || t == 349 || t == 350 || t == 187  // read_chunk, read_chunk_bytes, poll
     || t == 110 || t == 114 || t == 115 || t == 334 || t == 339  // tcp_connect, tcp_send, tcp_recv, udp_bind, unix_listen
     || t == 344  // tcp_recv_into (fd, buf)
     || t == 202 || t == 213 || t == 308  // writer_write, proc_exec, write_some
@@ -5557,6 +5609,12 @@ function pops3(t: i32): boolean {
 // answers in one place rather than scattering seven tags across the pops1_* /
 // pops2_* predicates.
 function pops_buf(t: i32): i32 {
+  if (t == 351) {
+    return 4;
+  }
+  if (t == 347) {
+    return 1;
+  }
   // buf_push_u64 arrived after the block had closed over 291-297, so it
   // carries the next free id instead of extending it.
   if (t == 306) {
@@ -5719,8 +5777,9 @@ pub function is_foldable_binary_kind(id: i32): boolean {
 // `const` inherits the width the binary was going to produce. Only i32-width
 // signed arithmetic folds — is_foldable_binary_kind excludes the float ops and
 // the unsigned compares, and const_i32_readable admits a source-text operand
-// only when its digits round-trip through i32, so the wide-literal path's text
-// (a hex or full-u32 immediate the fold would discard) is left alone.
+// only when its text is a decimal i32 (util.is_decimal_i32), so the
+// wide-literal path's text (a hex or full-u32 immediate the fold would
+// discard) is left alone.
 //
 // Division and remainder by zero are NOT folded, and deliberately: Fern's
 // division is total (`x / 0 == 0`, docs/INTEGER-SEMANTICS.md) but the fold
@@ -5813,15 +5872,23 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
   var changed: boolean = true;
   while (changed) {
     changed = false;
+    // `out` is written from the first fold on: the ops before it are copied
+    // then, and a pass that folds nothing leaves `cur` as it is.
     var out: Op[] = [];
+    var copying: boolean = false;
     var i: i32 = 0;
     while (i < cur.len()) {
       var folded: boolean = false;
+      var at: i32 = i;
+      // Decided once per position: six arms ask whether the op here is a
+      // readable 32-bit constant and two whether it is a 64-bit one.
+      var r32: boolean = const_i32_readable(cur[i]);
+      var r64: boolean = const_i64_readable(cur[i]);
       if (i + 2 < cur.len()) {
         var a: Op = cur[i];
         var b: Op = cur[i + 1];
         var o: Op = cur[i + 2];
-        if (const_i32_readable(a) && const_i32_readable(b)
+        if (r32 && const_i32_readable(b)
           && is_foldable_binary_kind(o.kind_tag) && o.width != 64 && !o.unsigned
           && !fold_would_divide_by_zero(o.kind_tag, const_i32_value(b))) {
           out = out.append(op_const_i32(fold_binary_i32(o.kind_tag, const_i32_value(a), const_i32_value(b))));
@@ -5832,7 +5899,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       }
       // The same at 64 bits (native foldBinary64): `const_i64 a ;
       // const_i64 b ; <bin> 64`. A comparison yields an i32.
-      if (!folded && i + 2 < cur.len() && const_i64_readable(cur[i]) && const_i64_readable(cur[i + 1])) {
+      if (!folded && i + 2 < cur.len() && r64 && const_i64_readable(cur[i + 1])) {
         var f64r: Fold64 = fold_binary_i64(cur[i + 2], const_i64_value(cur[i]), const_i64_value(cur[i + 1]));
         if (f64r.ok) {
           if (f64r.cmp) {
@@ -5851,7 +5918,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // whose top bit is set would not be, so that one is refused (the
       // u32 width fold's rule). The pointer-width forms are left alone:
       // what they do depends on the target.
-      if (!folded && i + 1 < cur.len() && const_i32_readable(cur[i])
+      if (!folded && i + 1 < cur.len() && r32
         && cur[i + 1].kind_tag == 7 && cur[i + 1].width == 64) {
         var xv: i64 = const_i32_value(cur[i]) as i64;
         if (cur[i + 1].unsigned) {
@@ -5862,7 +5929,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
         changed = true;
         folded = true;
       }
-      if (!folded && i + 1 < cur.len() && const_i64_readable(cur[i])
+      if (!folded && i + 1 < cur.len() && r64
         && cur[i + 1].kind_tag == 8 && cur[i + 1].width == 0
         && (!cur[i + 1].unsigned || const_i64_value(cur[i]) as i32 >= 0)) {
         out = out.append(op_const_i32(const_i64_value(cur[i]) as i32));
@@ -5875,7 +5942,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // bool_not — so the result is 1 for zero and 0 for anything else. There
       // is no bitwise complement anywhere in this IR to confuse it with.
       if (!folded && i + 1 < cur.len()
-        && const_i32_readable(cur[i]) && cur[i + 1].kind_tag == k_not) {
+        && r32 && cur[i + 1].kind_tag == k_not) {
         var nv: i32 = 0;
         if (const_i32_value(cur[i]) == 0) {
           nv = 1;
@@ -5905,7 +5972,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // every i32 arithmetic op. Folding through it is what lets a NESTED
       // constant expression collapse: the pass otherwise sees
       // `const 1 ; const 6 ; int_cast ; add` and stops one step short.
-      if (!folded && i + 1 < cur.len() && const_i32_readable(cur[i])) {
+      if (!folded && i + 1 < cur.len() && r32) {
         var wf: WidthFold = fold_width_op(cur[i + 1], const_i32_value(cur[i]));
         if (wf.ok) {
           out = out.append(op_const_i32(wf.v));
@@ -5918,7 +5985,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // the condition and the scope itself. Only a VOID if — every scope this
       // lowering opens is void, and a typed one would carry a value out of its
       // end that deleting the scope would strand.
-      if (!folded && i + 1 < cur.len() && const_i32_readable(cur[i])
+      if (!folded && i + 1 < cur.len() && r32
         && cur[i + 1].kind_tag == k_if && cur[i + 1].i32_imm == 0) {
         var span: IfSpan = scan_if_block(cur, i + 1);
         if (span.end_at >= 0) {
@@ -5958,7 +6025,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // are stack-neutral — brif pops the condition the const pushed, and `br`
       // touches neither.
       if (!folded && i + 1 < cur.len()
-        && const_i32_readable(cur[i]) && cur[i + 1].kind_tag == k_brif) {
+        && r32 && cur[i + 1].kind_tag == k_brif) {
         if (const_i32_value(cur[i]) != 0) {
           out = out.append(op_br(cur[i + 1].i32_imm));
         }
@@ -5967,13 +6034,36 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
         folded = true;
       }
       if (!folded) {
-        out = out.append(cur[i]);
+        if (copying) {
+          out = out.append(cur[i]);
+        }
         i = i + 1;
+      } else if (!copying) {
+        out = fold_prefixed(cur, at, out);
+        copying = true;
       }
     }
-    cur = out;
+    if (copying) {
+      cur = out;
+    }
   }
   return cur;
+}
+
+// fold_prefixed is ops[0, at) followed by tail.
+function fold_prefixed(ops: Op[], at: i32, tail: Op[]): Op[] {
+  var out: Op[] = [];
+  var j: i32 = 0;
+  while (j < at) {
+    out = out.append(ops[j]);
+    j = j + 1;
+  }
+  j = 0;
+  while (j < tail.len()) {
+    out = out.append(tail[j]);
+    j = j + 1;
+  }
+  return out;
 }
 
 // const_i32_readable reports whether `o` is an i32 constant a peephole may
@@ -5985,11 +6075,11 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
 // lowers to — it carries the literal's text so the wide / hex paths can splice
 // it verbatim — and only qualifies when that text is a plain decimal i32.
 //
-// The round-trip is the test: digits_to_i32 stops at the first non-digit and
-// accumulates without overflow checks, so it answers 0 for "0x10" and wraps
-// silently on anything too wide. Re-rendering and comparing rejects exactly the
-// cases where its answer is not the literal — hex, a suffix, a leading zero, an
-// overflow — without this pass having to know which forms exist.
+// The text has to be what i32_to_string renders (util.is_decimal_i32):
+// digits_to_i32 stops at the first non-digit and accumulates without overflow
+// checks, so it answers 0 for "0x10" and wraps silently on anything too wide,
+// and the rendering test is exactly where its answer is the literal — no hex,
+// no suffix, no leading zero, no overflow.
 pub function const_i32_readable(o: Op): boolean {
   if (o.kind_tag == 1) {
     return o.str.len() == 0;
@@ -5997,16 +6087,13 @@ pub function const_i32_readable(o: Op): boolean {
   if (o.kind_tag != 2) {
     return false;
   }
-  if (o.str.len() == 0) {
-    return false;
-  }
-  return util.i32_to_string(util.digits_to_i32(o.str)) == o.str;
+  return util.is_decimal_i32(o.str);
 }
 
 // const_i64_readable: an i64 constant whose text reads back as decimal (a
 // hex or past-i64 literal does not, and stays as written).
 pub function const_i64_readable(o: Op): boolean {
-  return o.kind_tag == 3 && o.str.len() > 0 && util.i64_to_string(util.digits_to_i64(o.str)) == o.str;
+  return o.kind_tag == 3 && util.is_decimal_i64(o.str);
 }
 
 pub function const_i64_value(o: Op): i64 {
@@ -6656,7 +6743,7 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
 // Where native scans for the `const.i32 0 ; store_local N` its prologue emits,
 // this needs no such evidence: body slots [n_params, n_locals) are zero at
 // entry by the BACKEND prologue (asm_ir's `rep stosq`, asm_arm64_ir's store
-// loop, wasm's spec-zeroed locals, irexec's zeroed frame), which is not an op
+// loop, wasm's spec-zeroed locals), which is not an op
 // in this list. Params are excluded — they arrive with the caller's values.
 
 // zg_mark records `at` as slot `sl`'s first non-zero write, when the slot is in
@@ -6922,27 +7009,34 @@ pub function optimize_ops(ops: Op[], n_params: i32, n_locals: i32): OptimizedOps
 pub function hoist_loop_invariants(ops: Op[], n_locals: i32): OptimizedOps {
   var k_loop: i32 = kind_id("loop");
   var cur: OptimizedOps = OptimizedOps { ops: ops, n_locals: n_locals };
+  // The slot bound is read once; a hoist's cache slots are past n_locals,
+  // so the bound follows the count.
+  var maxs: i32 = cp_max_slot(ops);
   // Later loops first: rewriting one shifts every index after it, and
   // walking backwards keeps the indices of the loops still to visit valid.
   var i: i32 = ops.len() - 1;
   while (i >= 0) {
     if (cur.ops[i].kind_tag == k_loop) {
-      cur = licm_hoist_from_loop(cur, i);
+      cur = licm_hoist_from_loop(cur, i, maxs);
+      if (cur.n_locals - 1 > maxs) {
+        maxs = cur.n_locals - 1;
+      }
     }
     i = i - 1;
   }
   return cur;
 }
 
-// licm_hoist_from_loop rewrites the one loop opening at loop_idx.
-function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32): OptimizedOps {
+// licm_hoist_from_loop rewrites the one loop opening at loop_idx; maxs is
+// the highest slot any op names.
+function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32): OptimizedOps {
   var ops: Op[] = cur.ops;
   var end: i32 = licm_scope_end(ops, loop_idx);
   if (end < 0) {
     return cur;
   }
   var hdr_end: i32 = licm_header_end(ops, loop_idx);
-  var stored: boolean[] = licm_stored_locals(ops, loop_idx + 1, end);
+  var stored: boolean[] = licm_stored_locals(ops, loop_idx + 1, end, maxs + 1);
   var order: i32[] = licm_candidates(ops, loop_idx, hdr_end, stored);
   if (order.len() == 0) {
     return cur;
@@ -7083,13 +7177,12 @@ function licm_scope_end(ops: Op[], open: i32): i32 {
 }
 
 // licm_stored_locals marks every slot ops[lo, hi) writes, indexed by slot over
-// the whole list's slot range. A slot written anywhere in the loop is not
-// invariant, wherever in the body the write sits.
-function licm_stored_locals(ops: Op[], lo: i32, hi: i32): boolean[] {
+// [0, n), the whole list's slot range. A slot written anywhere in the loop is
+// not invariant, wherever in the body the write sits.
+function licm_stored_locals(ops: Op[], lo: i32, hi: i32, n: i32): boolean[] {
   var k_store: i32 = kind_id("store_local");
   var k_tee: i32 = kind_id("tee_local");
   var stored: boolean[] = [];
-  var n: i32 = cp_max_slot(ops) + 1;
   var s: i32 = 0;
   while (s < n) {
     stored = stored.append(false);
@@ -7756,7 +7849,8 @@ pub function call_needs_heap(name: string): boolean {
   if (name == "__fern_arr_share_inc" || name == "__fern_arr_share_dec") {
     return true;
   }
-  if (name == "__fern_arr_inc_elems" || name == "__fern_arr_own_elems" || name == "__fern_str_own") {
+  if (name == "__fern_arr_inc_elems" || name == "__fern_arr_own_elems" || name == "__fern_str_own"
+    || name == "__fern_str_grow") {
     return true;
   }
   if (name == "__fern_rc_underflow_count" || name == "__fern_rc_underflow_get") {
@@ -7779,6 +7873,9 @@ pub function op_needs_heap(o: Op): boolean {
 }
 
 pub function op_allocates(tag: i32): boolean {
+  if (tag == 348 || tag == 349 || tag == 350) {  // byte array plus Result wrapper
+    return true;
+  }
   // const_struct (#6149) allocates NOTHING — its box is static data — but the
   // value still flows through the rc runtime: a dec at scope exit, an
   // is_unique + alloc_reuse on a record update whose base is the constant. It
@@ -8100,9 +8197,8 @@ pub function do_branch(ops: Op[], pc: i32, d: i32): i32 {
 // self-host has no such split — wasm_ir.fern carries a string as a single
 // block pointer, so every value is one slot on every target and
 // irverifystack.fern reads none of these lists (#6639 slice 2). What does
-// need them is any pass asking what a value IS: the wasm signature emit reads
-// i64_slots / f64_slots to type its params and locals, and irlower_run's
-// `-slots` dump prints all four.
+// need them is any pass asking what a value IS: the wasm signature emit
+// reads i64_slots / f64_slots to type its params and locals.
 //
 // Each list is one VALUE kind, params included — what the slot holds, not
 // whether the exit sweep owns it. The sweep answers that itself, from
@@ -8121,8 +8217,6 @@ pub struct LoweredFn {
   // ("i32", "string", "" for void) — the type the ops must leave on the
   // stack at the end of the function.
   ret_type: string,
-  // alias_incs: the var-bind alias retains lowering decided
-  // (`line:col=name`), read only by irlower_run's `-rc-plan` mode for the
-  // aliasBindIncs table (#4482). Nothing on the emit path reads it.
+  // alias_incs: the var-bind alias retains lowering decided (`line:col=name`).
   alias_incs: string[],
 }

@@ -64,9 +64,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The aarch64 leg was one shard of 9.9-12.2 minutes in two workers,
+          # the longest job outside the self-host lane (docs/CI-PERFORMANCE.md).
           - { runner: ubuntu-latest,    host: x86_64,  nshard: 2, shard: 0 }
           - { runner: ubuntu-latest,    host: x86_64,  nshard: 2, shard: 1 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 1, shard: 0 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 0 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 1 }
     name: test-e2e-other-${{ matrix.host }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
     steps:
@@ -141,3 +144,6 @@ jobs:
             -binary "$RUNNER_TEMP/e2e-other.test" \
             -output "$RUNNER_TEMP/other-test-results" \
             -workers 2 -timeout 25m -run "$PAT"
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$RUNNER_TEMP"/other-test-results/worker-*.jsonl

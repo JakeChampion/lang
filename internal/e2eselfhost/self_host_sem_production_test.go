@@ -10,10 +10,10 @@ import (
 )
 
 // TestSelfHostSemanticProduction drives the PRODUCTION consumer of the typed
-// semantic pipeline: `fern -target … ` with FERN_SEM_IR=1, where
-// semlower.lower_gated_sem produces every function semsource admits, lowers it
-// through ssaunits + ssarc, and substitutes the result into the cache the
-// backend emits from (docs/SELFHOST-SEMANTIC-SOURCE.md).
+// semantic pipeline: `fern -target … `, where semlower.substitution produces
+// every function semsource admits, lowers it through ssaunits + ssarc, and
+// substitutes the result into the cache the backend emits from
+// (docs/SELFHOST-SEMANTIC-SOURCE.md).
 //
 // Each program carries its own expectations, checked on every target:
 //
@@ -55,7 +55,7 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 					if target == "wasm32-wasi" && prog.wasm != "" {
 						want = prog.wasm
 					}
-					got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, prog.stdin)
+					got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, prog.stdin)
 					if got != want {
 						t.Fatalf("answered %q, want %q\nreport: %s", got, want, report)
 					}
@@ -99,12 +99,11 @@ func semProducedCount(t *testing.T, report string) int {
 	return n
 }
 
-// semCompileRun compiles src for target with the semantic path on or off, runs
-// the result, and returns "<exit>|<stdout>", the compiler's stderr, and the
+// semCompileRun compiles src for target, runs the result, and returns "<exit>|<stdout>", the compiler's stderr, and the
 // bytes the sanitizer reports unreleased (0 on the legs that do not sanitize).
 // wasmtime refuses an exit status of 126 or more, which reads as
 // "out-of-range|<stdout>".
-func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoot, src, target string, sem bool, stdin string) (string, string, int) {
+func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoot, src, target string, stdin string) (string, string, int) {
 	t.Helper()
 	dir := t.TempDir()
 	out := filepath.Join(dir, "prog")
@@ -125,15 +124,10 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 	if sanitize {
 		cmd.Env = append(cmd.Env, "FERN_SANITIZE=1")
 	}
-	if sem {
-		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1")
-	} else {
-		cmd.Env = append(cmd.Env, "FERN_SEM_IR=")
-	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("compile (sem=%v, %s): %v\n%s", sem, target, err, stderr.String())
+		t.Fatalf("compile (%s): %v\n%s", target, err, stderr.String())
 	}
 	var run *exec.Cmd
 	switch target {
@@ -207,6 +201,144 @@ var semProductionPrograms = []struct {
 	nativeOnly bool
 	src        string
 }{
+	// `s = s + piece` grows the left operand's buffer in place when the frame
+	// hands it the only unit and its block has room (#9077). Each shape here
+	// must still see the value it had: an alias taken mid-loop, a parameter
+	// the callee appends to, a view read across the append, `d + d`, a field
+	// rebuilt from itself, an element read out of an array, and an
+	// accumulator that crosses into the large tier.
+	{name: "string-append-grows-in-place", atLeast: 51, want: "0|700000 573879 605 307 264369 400 401 114 604 8192 692785 501 301 q\n", src: `
+import "std/i32";
+
+struct Box { s: string }
+
+function grown(n: i32, piece: string): string {
+    var s: string = "";
+    for i in 0..n { s = s + piece; }
+    return s;
+}
+
+function suffixed(a: string): string {
+    a = a + "!";
+    return a;
+}
+
+function sum(s: string): i32 {
+    var h: i32 = 0;
+    for i in 0..s.len() { h = (h * 31 + (s[i] as i32)) % 1000003; }
+    return h;
+}
+
+function main(): i32 {
+    var big: string = grown(70000, "abcdefghij");
+    var s: string = "start";
+    var kept: string = "";
+    for i in 0..300 {
+        s = s + "xy";
+        if (i == 150) { kept = s; }
+    }
+    var base: string = grown(400, "q");
+    var other: string = suffixed(base);
+    var acc: string = grown(300, "mn");
+    var vlen: i32 = 0;
+    match (acc[0:4]) {
+        Some(w) => {
+            acc = acc + "tail";
+            vlen = w.len() + (w[3] as i32);
+        },
+        None => {}
+    }
+    var d: string = "ab";
+    for i in 0..12 { d = d + d; }
+    var b = Box { s: "f" };
+    for i in 0..500 { b = Box { s: b.s + "g" }; }
+    var xs: string[] = ["p", "q"];
+    for i in 0..300 { xs = xs.with(0, xs[0] + "z"); }
+    print(f"{big.len()} {sum(big)} {s.len()} {kept.len()} {sum(kept)} {base.len()} {other.len()} {vlen} {acc.len()} {d.len()} {sum(d)} {b.s.len()} {xs[0].len()} {xs[1]}");
+    return 0;
+}
+`},
+	// A map with a wide column routes onto core/map (#9608): an i64 or u64
+	// key, an i64, u64, f32 or f64 value, each in an eight-byte cell, and a u8
+	// key or value held in its slot. Every operation runs, with a copy that
+	// must keep what a delete through its alias removes; the answers are
+	// native's.
+	{name: "a-map-with-a-wide-column-routes", atLeast: 178, want: "0|a 299 300 true 192629283898350 2093 7 -2 false true 7 -9 46938\nf 20 395 19.5 1.5 21.5 2 3.75 9\nu 40 0 14388460377493430 s7\nb 256 33410 3\nc 10 9 true 245\n", src: `
+import "core/map";
+import "std/i32";
+import "std/i64";
+import "std/u64";
+import "std/float";
+
+struct P { x: i32 }
+
+function f64s(xs: f64[]): f64 {
+  var t: f64 = 0.0;
+  for x in xs { t = t + x; }
+  return t;
+}
+
+function main(): i32 {
+  var a: Map[i64, i64] = Map {};
+  var i: i32 = 0;
+  while (i < 300) { a = a.insert((i as i64) * 4294967311, (i as i64) * 3); i = i + 1; }
+  while (i < 600) { a = a.insert(((i - 300) as i64) * 4294967311, 7); i = i + 1; }
+  var kept = a;
+  var (a2, gone) = a.without(4294967311 * 5);
+  a = a2;
+  var ks: i64 = 0;
+  for k in kept.keys() { ks = ks + k; }
+  var vs: i64 = 0;
+  for v in a.values() { vs = vs + v; }
+  var hit: i64 = 0;
+  match (a.get(4294967311 * 9)) { Some(v) => { hit = v; }, None => { hit = 0 - 1; } }
+  var miss: i64 = 0;
+  match (a.get(12345)) { Some(v) => { miss = v; }, None => { miss = 0 - 2; } }
+  var it: i64 = 0;
+  for (k, v) in a { it = it + k / 4294967311 + v; }
+  print(f"a {a.len()} {kept.len()} {gone} {ks} {vs} {hit} {miss} {a.has(4294967311 * 5)} {kept.has(4294967311 * 5)} {a.get_or(4294967311 * 8, 0 - 9)} {a.get_or(1, 0 - 9)} {it}");
+
+  var f: Map[i32, f64] = Map {};
+  i = 0;
+  while (i < 50) { f = f.insert(i % 20, (i as f64) * 0.5); i = i + 1; }
+  var g: Map[string, f32] = Map {};
+  g = g.insert("x", 1.25);
+  g = g.insert("y", 2.5);
+  g = g.insert("x", 3.75);
+  var fo: f64 = 0.0;
+  match (f.get(3)) { Some(v) => { fo = v; }, None => {} }
+  var gx: f32 = g.get_or("x", 0.0);
+  var gz: f32 = g.get_or("z", 9.0);
+  print(f"f {f.len()} {f64s(f.values())} {f.get_or(19, 0.0)} {f.get_or(99, 1.5)} {fo} {g.len()} {gx} {gz}");
+
+  var u: Map[u64, string] = Map {};
+  i = 0;
+  while (i < 40) { u = u.insert((i as u64) * 18446744073709551 as u64, f"s{i}"); i = i + 1; }
+  var u2 = u.cleared();
+  var uk: u64 = 0;
+  for k in u.keys() { uk = uk + k / (1000 as u64); }
+  var u7: string = u.get_or(18446744073709551 as u64 * 7, "none");
+  print(f"u {u.len()} {u2.len()} {uk} {u7}");
+
+  var b: Map[u8, u8] = Map {};
+  i = 0;
+  while (i < 300) { b = b.insert((i % 256) as u8, (i % 7) as u8); i = i + 1; }
+  var bs: i32 = 0;
+  for k in b.keys() { bs = bs + (k as i32); }
+  for v in b.values() { bs = bs + (v as i32); }
+  print(f"b {b.len()} {bs} {b.get_or(255 as u8, 0 as u8)}");
+
+  var c: Map[i64, P] = Map {};
+  i = 0;
+  while (i < 30) { c = c.insert((i % 10) as i64 - 5, P { x: i }); i = i + 1; }
+  var c2 = c;
+  var (c3, cg) = c2.without(0 - 5);
+  var px: i32 = 0;
+  for v in c.values() { px = px + v.x; }
+  print(f"c {c.len()} {c3.len()} {cg} {px}");
+  return 0;
+}
+`},
 	// An element read into a local that stays live across a `.with` on its
 	// array: the insertion sort's shape. The read takes a unit of its own, so
 	// the array moves into the write and is written in place rather than
@@ -7218,9 +7350,9 @@ func TestSelfHostSemanticAllocationCounts(t *testing.T) {
 		allocs int64
 		src    string
 	}{
-		{"element-read-outlives-the-array-write", 17, semHeldElementSource},
+		{"element-read-outlives-the-array-write", 6, semHeldElementSource},
 		// A view merged past a source that dominates the join stays a view.
-		{"a-view-of-a-dominating-source-is-not-copied", 36, semDominatingViewSource},
+		{"a-view-of-a-dominating-source-is-not-copied", 29, semDominatingViewSource},
 	} {
 		t.Run(prog.name, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "main.fern")
@@ -7240,7 +7372,7 @@ func semAllocations(t *testing.T, fernBin, stdlibRoot, src string) int64 {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "prog")
 	cmd := exec.Command(fernBin, "-target", "x86-64-linux", src, stdlibRoot, "-o", out)
-	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1", "FERN_SEM_IR=1")
+	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, output)
 	}

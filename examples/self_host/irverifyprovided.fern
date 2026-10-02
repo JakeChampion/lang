@@ -39,7 +39,7 @@
 // construction: a census over the 454 conformance fixtures found 255 distinct
 // unresolved names, ~200 of them stdlib methods reached through an import. So
 // the declared set has to come from the merged bundle — `asm_modload_run
-// -verifyprovided`, not the single-module `irlower_run`.
+// -verifyprovided`.
 //
 // It also has to come from the module's DECLARED functions, not its lowered
 // ones. `early` (conformance defer_block_form) is an ordinary top-level
@@ -69,6 +69,7 @@ pub function provided_names(): string[] {
     "__fern_arr_inc_elems",
     "__fern_arr_own_elems",
     "__fern_str_own",
+    "__fern_str_grow",
     "__fern_rc_underflow_get",
     "__fern_arr_share_inc",
     "__fern_arr_share_dec",

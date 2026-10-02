@@ -1,0 +1,172 @@
+// Owned arrays and views have separate method namespaces even when both
+// methods infer the same element type. Chained view results keep that type.
+function (xs: T[]) pick(): T {
+  return xs[0];
+}
+
+function (xs: [T]) pick(): T {
+  return xs[xs.len() - 1];
+}
+
+function (xs: [T]) tail(): [T] {
+  return xs[1:];
+}
+
+function view_head[T](xs: [T]): T {
+  return xs[0];
+}
+
+// Concrete receivers keep the same namespaces, regardless of declaration order.
+function (xs: [u8]) back(): u8 {
+  return xs[xs.len() - 1];
+}
+
+function (xs: u8[]) back(): u8 {
+  return xs[0];
+}
+
+function (xs: u8[]) edge(): u8 {
+  return xs[0];
+}
+
+function (xs: [u8]) edge(): u8 {
+  return xs[xs.len() - 1];
+}
+
+function (xs: [u8]) rest(): [u8] {
+  return xs[1:];
+}
+
+function (xs: [u8]) choose[T](value: T): u8 {
+  return xs[xs.len() - 1];
+}
+
+function (xs: u8[]) choose[T](value: T): u8 {
+  return xs[0];
+}
+
+trait ByteOffset {
+  function offset(self: Self): i32;
+}
+
+impl ByteOffset for u8 {
+  function offset(self: u8): i32 {
+    return self as i32;
+  }
+}
+
+function (xs: u8[]) marked[T: ByteOffset](value: T): u8 {
+  return xs[xs.len() - 1 - value.offset()];
+}
+
+function (xs: [u8]) marked[T: ByteOffset](value: T): u8 {
+  return xs[value.offset()];
+}
+
+function identity[T: ByteOffset](values: T[]): T[] {
+  return values;
+}
+
+function (xs: u8[]) select[T: ByteOffset](values: T[]): u8 {
+  return xs[values[0].offset()];
+}
+
+function (xs: [u8]) select[T: ByteOffset](values: T[]): u8 {
+  return xs[xs.len() - 1 - values[0].offset()];
+}
+
+function (xs: string[]) echo[T](value: T): T {
+  return value;
+}
+
+function (xs: [string]) echo[T](value: T): T {
+  return value;
+}
+
+function main(): i32 {
+  var a: i32[] = [3, 5, 7];
+  var v: [i32] = a[:];
+  var inferred = a[:];
+  if (a[:].pick() != 7 || inferred.pick() != 7) {
+    return 6;
+  }
+  if (a.pick() != 3 || v.pick() != 7) {
+    return 1;
+  }
+  if (view_head(v) != 3 || view_head(a) != 3) {
+    return 2;
+  }
+  if (v.tail().pick() != 7 || view_head(v.tail()) != 5) {
+    return 3;
+  }
+  var words: string[] = ["first", "last"];
+  var text: [string] = words[:];
+  if (words.pick() != "first" || text.pick() != "last") {
+    return 4;
+  }
+  if (view_head(text.tail()) != "last") {
+    return 5;
+  }
+  var source: string = "az";
+  var bytes = source.as_bytes();
+  if (bytes.pick() != 122 as u8 || source.as_bytes().pick() != 122 as u8) {
+    return 7;
+  }
+  var owned: u8[] = [97 as u8, 122 as u8];
+  if (bytes.back() != 122 as u8 || owned.back() != 97 as u8) {
+    return 12;
+  }
+  if (bytes.edge() != 122 as u8 || owned.edge() != 97 as u8) {
+    return 13;
+  }
+  if (source.as_bytes().back() != 122 as u8 || "hello".as_bytes().back() != 111 as u8 || bytes.rest().back() != 122 as u8) {
+    return 14;
+  }
+  if ((if (source.len() == 2) { bytes } else { source.as_bytes() }).back() != 122 as u8) {
+    return 15;
+  }
+  // A lambda's own parameters are receivers too.
+  var pick_last = (v: [i32]): i32 => v.pick();
+  var pick_first = (v: i32[]): i32 => v.pick();
+  if (pick_last(a[:]) != 7 || pick_first(a) != 3) {
+    return 16;
+  }
+  if (owned.choose(1) != 97 as u8 || bytes.choose(1) != 122 as u8) {
+    return 17;
+  }
+  if (owned.marked(0 as u8) != 122 as u8 || bytes.marked(0 as u8) != 97 as u8) {
+    return 18;
+  }
+  if (text.echo("one").len() != 3 || words.echo("four").len() != 4) {
+    return 19;
+  }
+  if (owned.select(identity([0 as u8])) != 97 as u8 || bytes.select(identity([0 as u8])) != 122 as u8) {
+    return 20;
+  }
+  var rows: i32[][] = [[9, 11], [13, 15]];
+  var row_view: [i32[]] = rows[:];
+  if (row_view[0].pick() != 9) {
+    return 8;
+  }
+  var pieces = [source[0:1]];
+  var piece: Option[str] = pieces.pick();
+  match (piece) {
+    Some(value) => {
+      if (value != "a") {
+        return 9;
+      }
+    },
+    None => {
+      return 10;
+    }
+  }
+  var invalid_pieces = ["é"[0:1]];
+  var invalid: Option[str] = invalid_pieces.pick();
+  match (invalid) {
+    Some(_) => {
+      return 11;
+    },
+    None => {}
+  }
+  return 0;
+}

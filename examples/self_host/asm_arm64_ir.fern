@@ -9,7 +9,7 @@
 // Op[] produces a compatible layout; only the instruction selection differs.
 //
 // Reuse: the backend-INDEPENDENT analysis (eligibility, array-return tracking,
-// the helper-name map) is ircore's (ircore.lower_gated / array_ret_fns /
+// the helper-name map) is ircore's (ircore.gate / array_ret_fns /
 // is_fern_helper / ir_helper_symbol), and the GAS text this backend emits
 // identically to x86 — the literal / shape labels, their `.data` blocks, the
 // runtime `.globl` list — is asmcore's. Nothing
@@ -1852,6 +1852,24 @@ function ssa_str_target(op: string): string {
   if (op == "read_chunk") {
     return "reader_read_chunk";
   }
+  if (op == "write_bytes") {
+    return "writer_write_bytes";
+  }
+  if (op == "write_bytes_u8") {
+    return "writer_write_bytes_u8";
+  }
+  if (op == "write_some_bytes") {
+    return "writer_write_some_bytes";
+  }
+  if (op == "write_some_bytes_u8") {
+    return "writer_write_some_bytes_u8";
+  }
+  if (op == "read_chunk_bytes") {
+    return "reader_read_chunk_bytes";
+  }
+  if (op == "read_chunk_bytes_u8") {
+    return "reader_read_chunk_bytes_u8";
+  }
   return op;
 }
 
@@ -1859,6 +1877,9 @@ function ssa_str_target(op: string): string {
 // the heap, "" for an op that is not one; the three that need no heap are
 // named by ssa_host_bare.
 function ssa_host_need(op: string): string {
+  if (op == "read_chunk_bytes" || op == "read_chunk_bytes_u8" || op == "write_bytes" || op == "write_bytes_u8" || op == "write_some_bytes" || op == "write_some_bytes_u8") {
+    return op;
+  }
   var fs: string[] = [
     "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_exec", "remove_dir_all", "remove_file",
     "create_dir_all", "read_dir", "read_dir_all", "env", "stat", "lstat", "subprocess", "writer_write",
@@ -2831,17 +2852,9 @@ function emit_ssa_function(r: irlower.LowerResult, label_name: string, s: asmcor
   return s;
 }
 
-// emit_function_via_ir lowers one function to the stack IR and emits it
-// through the register path, as arm64: x29 frame pointer, params read from
-// the caller's rt-stack at [x29, #16+i*16], the result in x0.
-pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg: irlower.FnSigs, vsigs: irverify.NameIndex): asmcore.EmitState {
-  var r: irlower.LowerResult = irlower.lower_func(fd, s.struct_decls, sg, false);
-  return emit_function_via_ir_pre(r, fd, s, vsigs);
-}
-
-// emit_function_via_ir_pre is the emit half of emit_function_via_ir, split at
-// the lower_func boundary (the x86 twin is asm_ir.emit_function_via_ir_pre) so
-// the fused gate+emit path emits from the LowerResult it already judged.
+// emit_function_via_ir_pre emits declaration `fd`'s lowered body `r` through
+// the register path, as arm64: x29 frame pointer, params read from the
+// caller's rt-stack at [x29, #16+i*16], the result in x0.
 pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
   // Methods get the receiver-type-qualified label `__fn_<Type>.<name>`.
   var label_name: string = fd.name;
@@ -3437,7 +3450,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
     s = s.need("writer_truncate");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_writer_truncate\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328) {  // the buf_* builder
+  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351) {  // the buf_* builder
     s = emit_arm64_op_buf(o, s);
   } else if (o.kind_tag == 181) {  // sleep_ms
     // [ms] -> nanosleep(ms). Push x0 for the drop.
@@ -3672,7 +3685,15 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
   s = ssa_x0_forget(s);
   s = s.mark_heap();
   s = s.need("buf");
-  if (util.str_has_suffix(sym, "_u8")) {
+  if (sym == "__fern_buf_take_bytes") {
+    s = s.need("buf_take_bytes");
+  } else if (sym == "__fern_buf_take_bytes_u8") {
+    s = s.need("buf_take_bytes_u8");
+  } else if (sym == "__fern_buf_push_bytes_range") {
+    s = s.need("buf_push_bytes_range");
+  } else if (sym == "__fern_buf_push_bytes_range_u8") {
+    s = s.need("buf_push_bytes_range_u8");
+  } else if (util.str_has_suffix(sym, "_u8")) {
     s = s.need("buf_u8");
   }
   var i: i32 = ins.args.len() - 1;
@@ -3799,6 +3820,12 @@ function emit_arm64_op_heap_release_to(o: ir.Op, s: asmcore.EmitState): asmcore.
 // statement-level drop takes for the rest. buf_new / buf_take allocate and
 // buf_free returns blocks to the freelists, so all seven pull the heap in.
 function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+  if (o.kind_tag == 347) {
+    s = s.need("buf_take_bytes" + asmcore.packed_suffix(ir.is_packed(o)));
+  }
+  if (o.kind_tag == 351) {
+    s = s.need("buf_push_bytes_range" + asmcore.packed_suffix(ir.is_packed(o)));
+  }
   s = s.mark_heap();
   s = s.need("buf");
   var k: i32 = asmcore.buf_arity(o.kind_tag);
@@ -3807,7 +3834,7 @@ function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldr x" + util.i32_to_string(k) + ", [sp], #16\n");
   }
   var sym: string = asmcore.buf_table_helper(o.kind_tag, ir.is_packed(o));
-  if (sym != asmcore.buf_helper(o.kind_tag)) {
+  if (o.kind_tag != 347 && o.kind_tag != 351 && sym != asmcore.buf_helper(o.kind_tag)) {
     s = s.need("buf_u8");
   }
   return s.write("    bl " + sym + "\n    str x0, [sp, #-16]!\n");
@@ -4117,6 +4144,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_str_own") {
     s = s.need("str_own");
   }
+  if (name == "__fern_str_grow") {
+    s = s.need("str_grow");
+  }
   // The VIEW-aware string[] element walk (#6544), gated the same way:
   // a binary that never reclaims a builtin string[] must not carry a
   // body whose inner `bl __fn___fern_str_view_free` the negative
@@ -4410,7 +4440,7 @@ function emit_arm64_op_dyn_downcast(o: ir.Op, i: i32, lp: string, s: asmcore.Emi
 // emit_runtime and materialises the output. Keeping the runtime on the caller
 // side is what lets asm_arm64 import this module (for the use_ir dispatch)
 // without a cycle: asm_arm64_ir never imports asm_arm64. Caller must have
-// judged the module eligible (ircore.lower_gated) and seeded `s`
+// judged the module eligible (ircore.gate) and seeded `s`
 // (struct_decls / funcs).
 // emit_ir_start writes the program entry: capture argc / argv / envp, push a
 // frame, call __fn_main, exit with its result. Both IR emitters use it — the
@@ -4595,28 +4625,23 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
   return s;
 }
 
-// emit_body emits the whole-program function bodies and `_start`. `mod` must
-// already carry inferred return types (the caller derived `base` over it).
-// `base` is the whole-program registry the caller derived once (wp_fn_sigs);
-// only this module's trait_reqs are folded in here. `cache`, when non-empty, is
-// the caller's per-function lowering — indexed by mod.funcs position — emitted
-// from directly instead of lowering each function a second time.
-pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean, cache: irlower.LowerResult[], base: irlower.FnSigs): asmcore.EmitState {
+// emit_body emits the whole-program function bodies and `_start`. `cache` is
+// the program's lowered bodies, indexed by mod.funcs position, with the
+// declaration-less bodies on its tail.
+pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean, cache: irlower.LowerResult[]): asmcore.EmitState {
   s = asmcore.EmitState { ...s, funcs: mod.funcs };
   s = s.write("    .globl _start\n");
   s = s.write("    .text\n");
-  var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(base, mod.trait_reqs);
   var vsigs: irverify.NameIndex = irlower.fn_sig_index(mod.funcs);
-  ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), cache, s.struct_decls, sg, false);
+  ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), cache);
   s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, 0, mod.funcs.len(), cache)), leaves: asmcore.unit_leaves(mod, 0, mod.funcs.len(), cache) };
   var fi: i32 = 0;
   while (fi < mod.funcs.len()) {
-    if (cache.len() == 0) {
-      s = emit_function_via_ir(mod.funcs[fi], s, sg, vsigs);
-    } else if (!cache[fi].superseded) {
-      // A template the substitution superseded has no body: its
-      // instances are on the cache tail.
-      s = emit_function_via_ir_pre(cache[fi], mod.funcs[fi], s, vsigs);
+    var r: irlower.LowerResult = ircore.produced(cache, fi, mod.funcs[fi]);
+    // A template the substitution superseded has no body: its instances
+    // are on the cache tail.
+    if (!r.superseded) {
+      s = emit_function_via_ir_pre(r, mod.funcs[fi], s, vsigs);
     }
     fi = fi + 1;
   }
@@ -4633,21 +4658,10 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
 
 // ---- moved verbatim from asm_arm64.fern (#3457 slice 4 untangle) ----
 // The per-type __field_reclaim_<T> / __struct_drop_<T> helper bodies are
-// IR-path-only (emitted by emit_module_ir_unit_arm64_flat + emit_module_ir_gated) and
+// IR-path-only (emitted by emit_module_ir_unit_arm64_flat + emit_module_ir_gated_sub) and
 // depend only on asmcore / irlower / util / asm_ir — so they live here in the
 // IR selector, mirroring the x86 asm_ir.emit_ir_struct_drop_one layout, not in
 // the AST emitter asm_arm64.fern that #3457 deletes.
-// emit_ir_runtime_fern_fn is the arm64 sibling of asm_ir.emit_ir_runtime_fern_fn:
-// a runtime helper written in Fern (an asmcore.rt_src_* body) is lowered through
-// the IR selector (emit_function_via_ir) rather than the AST emit_function that
-// asm_arm64.emit_runtime_fern_fn uses. This is what lets the arm64 IR path emit
-// its Fern runtime helpers WITHOUT the AST emitter (#3457 slice 4a) — the
-// remaining transitive coupling of emit_module_ir_unit_arm64_flat to asm_arm64.fern.
-// The helper bodies are self-contained (fully annotated, call no other helper),
-// so the per-helper side-tables computed over the helper's own funcs suffice.
-// Byte-equivalence with the AST path is NOT expected (emit_function and
-// emit_function_via_ir select different instructions for the same source) — the
-// arm64 differential + fixpoint gate this, not the byte-identity gate.
 // rt_arm64_str_eq is __fn___fern_str_eq: 1 when two string boxes hold equal
 // bytes, else 0. The x86-64 twin (asm_ir.rt_x86_str_eq) carries the measurement
 // that made both hand-written rather than the shared Fern body they replaced —
@@ -4706,26 +4720,6 @@ function rt_arm64_str_eq(): string {
   return s;
 }
 
-// runtime_ast_bodies is the AST lowering of a runtime helper's functions, with
-// side tables computed over the helper alone. They read its own functions as
-// the whole program, so a read-only string or array parameter is borrowed and
-// takes no release that would free the caller's value.
-function runtime_ast_bodies(fns: parser.FuncDecl[], all_structs: irlower.StructTab, s: asmcore.EmitState): irlower.LowerResult[] {
-  var bparams: string[] = irlower.borrowable_params_interproc(fns, all_structs);
-  var sg: irlower.FnSigs = irlower.FnSigs {
-    ...irlower.fn_sigs_for_borrow(fns, all_structs, ircore.array_ret_fns_of(fns), bparams),
-    consume_safe_params: irlower.consume_safe_params_interproc(fns, bparams),
-    // These two resolve against the EmitState's struct view, not all_structs.
-    opt_fresh_ret_fns: irlower.sig_reg_of(irlower.opt_fresh_ret_fns_of(fns, s.struct_decls, irlower.str_fresh_ret_fns_of(fns))),
-    strfld_ok_types: irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls, bparams),
-  };
-  var out: irlower.LowerResult[] = [];
-  for fd in fns {
-    out = out.append(irlower.lower_func(fd, s.struct_decls, sg, false));
-  }
-  return out;
-}
-
 // Bodies with no FuncDecl, each naming the symbol it defines; `.weak`, so a
 // sibling unit emitting the same one co-links, and once per file.
 function emit_named_bodies(cache: irlower.LowerResult[], from: i32, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
@@ -4739,7 +4733,10 @@ function emit_named_bodies(cache: irlower.LowerResult[], from: i32, s: asmcore.E
   return s;
 }
 
-pub function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s: asmcore.EmitState): asmcore.EmitState {
+// emit_ir_runtime_fern_fn emits a runtime helper written in Fern (an
+// asmcore.rt_src_* body) from its typed lowering (EmitState.rt_lower), the
+// arm64 sibling of asm_ir.emit_ir_runtime_fern_fn.
+pub function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.EmitState {
   var m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
   var fns: parser.FuncDecl[] = m.funcs;
   var vsigs: irverify.NameIndex = irlower.fn_sig_index(fns);
@@ -4747,9 +4744,6 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab
   var agg0: i32 = s.const_aggs.len();
   var sh0: i32 = s.shape_lits.len();
   var bodies: irlower.LowerResult[] = s.rt_lower(src);
-  if (bodies.len() < fns.len()) {
-    bodies = runtime_ast_bodies(fns, all_structs, s);
-  }
   var i: i32 = 0;
   while (i < fns.len()) {
     s = emit_function_via_ir_pre(bodies[i], fns[i], s, vsigs);
@@ -5435,22 +5429,22 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    .section .bss\n    .p2align 3\n__fern_splice_pipe: .quad 0, 0\n    .text\n");
   }
   if (s.has_need("str_read_line")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_line(ctgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_line(ctgt), s);
   }
   if (s.has_need("str_print")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_str(ctgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_str(ctgt), s);
   }
   if (s.has_need("putchar")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_putchar(ctgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_putchar(ctgt), s);
   }
   if (s.has_need("eprint")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_eprint_str(ctgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_eprint_str(ctgt), s);
   }
   if (s.has_need("now_unix_ms")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_unix_ms", ctgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_unix_ms", ctgt), s);
   }
   if (s.has_need("now_ns")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_ns", ctgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_ns", ctgt), s);
   }
   if (s.has_need("monotonic_ns")) {
     if (darwin) {
@@ -5481,7 +5475,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
       s = s.write("    ldp x29, x30, [sp], #16\n");
       s = s.write("    ret\n");
     } else {
-      s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("monotonic_ns", ctgt), s.struct_decls, s);
+      s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("monotonic_ns", ctgt), s);
     }
   }
   return s;
@@ -5732,7 +5726,7 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
   // intrinsics): see asmcore.rt_src_str_concat. The single shared body serves
   // both arm64 AST + IR; called via the __fn_ stack convention. heap-only dep.
   if (s.has_need("str_concat")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_concat(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_concat(), s);
   }
   // __fern_str_eq: hand-written, see rt_arm64_str_eq for why. One
   // __fn___fern_str_eq body serves both the arm64 AST and IR call sites
@@ -5747,24 +5741,24 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
   // fourth in Fern. Gated on `maps` rather than a need of its own, unlike
   // map_delete: all three hand-asm bodies in the maps bundle call it.
   if (s.has_need("maps")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_find(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_find(), s);
   }
   // __fern_map_delete (#2649): `m.without(k)` as a Fern helper rather than
   // hand-asm, the same single source the x86 backend emits. Gated on its own
   // need rather than on `maps` — see the x86 twin for why.
   if (s.has_need("map_delete_rel")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_delete_rel(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_delete_rel(), s);
   }
   // map_delete_rel's source carries it when that is needed too.
   if (s.has_need("map_delete") && !s.has_need("map_delete_rel")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_delete(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_delete(), s);
   }
   // __fern_str_cmp is now a Fern runtime function (#2649): see
   // asmcore.rt_src_str_cmp, lowered through asm_arm64's normal function
   // emitter. The single __fn___fern_str_cmp body serves BOTH the arm64 AST and
   // IR call sites (they share this emit_runtime).
   if (s.has_need("str_cmp")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_cmp(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_cmp(), s);
   }
   // __fern_read_line is a Fern runtime function (#2649): asmcore.rt_src_read_line,
   // emitted with the other stdin leaves. Its one-byte-per-syscall loop (#6052) and
@@ -5774,39 +5768,39 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
   // __fn___fern_i32_to_string body serves both arm64 AST + IR, replacing the old
   // register-ABI body + its stack-arg IR wrapper. heap-only dep.
   if (s.has_need("i32_to_string")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_i32_to_string(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_i32_to_string(), s);
   }
   // __fern_u32_to_string (#2649): the UNSIGNED sibling for `(u32).to_string()`.
   // Single shared body for arm64 AST + IR; heap-only dep. See
   // asmcore.rt_src_u32_to_string.
   if (s.has_need("u32_to_string")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_u32_to_string(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_u32_to_string(), s);
   }
   // __fern_i64_to_string / __fern_u64_to_string: width-correct siblings for
   // 64-bit `.to_string()` receivers; heap-only deps. See asmcore.rt_src_*.
   if (s.has_need("i64_to_string")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_i64_to_string(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_i64_to_string(), s);
   }
   if (s.has_need("u64_to_string")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_u64_to_string(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_u64_to_string(), s);
   }
   // __fern_chr is now a Fern runtime function (#2649): see asmcore.rt_src_chr,
   // emitted (need-gated on chr) in the migrated-helpers section below via the
   // raw-memory intrinsics. The single shared body serves both arm64 AST + IR.
   if (s.has_need("chr")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_chr(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_chr(), s);
   }
   // __fern_str_to_upper / __fern_str_to_lower — Fern runtime functions (#2649)
   // via the raw-memory intrinsics; both gated on the single str_case need (the
   // shared body serves arm64 AST + IR).
   if (s.has_need("str_case")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_to_upper(), s.struct_decls, s);
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_to_lower(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_to_upper(), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_to_lower(), s);
   }
   // __fern_str_repeat — Fern runtime function (#2649) via the raw-memory
   // intrinsics; single shared body for arm64 AST + IR. heap-only dep.
   if (s.has_need("str_repeat")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_repeat(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_repeat(), s);
   }
   // __fern_eprint_str is a Fern runtime function (#2649): asmcore.rt_src_eprint_str,
   // emitted with the clocks in emit_rt_clock_and_print. Its newline byte comes from
@@ -6269,19 +6263,25 @@ function alloc_count_bump(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function lc_bump_alloc(s: asmcore.EmitState): asmcore.EmitState {
+  return lc_bump_alloc_add(s, "x0", "x1", "x2");
+}
+
+// lc_bump_alloc_add: count one allocated block — count += 1, bytes +=
+// <addend>, in the operand forms lc_bump_free_add takes.
+function lc_bump_alloc_add(s: asmcore.EmitState, addend: string, t1: string, t2: string): asmcore.EmitState {
   if (!leak_check_on()) {
     return s;
   }
-  s = s.write("    adrp x1, __fern_lc_alloc_count\n");
-  s = s.write("    add x1, x1, :lo12:__fern_lc_alloc_count\n");
-  s = s.write("    ldr x2, [x1]\n");
-  s = s.write("    add x2, x2, #1\n");
-  s = s.write("    str x2, [x1]\n");
-  s = s.write("    adrp x1, __fern_lc_alloc_bytes\n");
-  s = s.write("    add x1, x1, :lo12:__fern_lc_alloc_bytes\n");
-  s = s.write("    ldr x2, [x1]\n");
-  s = s.write("    add x2, x2, x0\n");
-  s = s.write("    str x2, [x1]\n");
+  s = s.write("    adrp " + t1 + ", __fern_lc_alloc_count\n");
+  s = s.write("    add " + t1 + ", " + t1 + ", :lo12:__fern_lc_alloc_count\n");
+  s = s.write("    ldr " + t2 + ", [" + t1 + "]\n");
+  s = s.write("    add " + t2 + ", " + t2 + ", #1\n");
+  s = s.write("    str " + t2 + ", [" + t1 + "]\n");
+  s = s.write("    adrp " + t1 + ", __fern_lc_alloc_bytes\n");
+  s = s.write("    add " + t1 + ", " + t1 + ", :lo12:__fern_lc_alloc_bytes\n");
+  s = s.write("    ldr " + t2 + ", [" + t1 + "]\n");
+  s = s.write("    add " + t2 + ", " + t2 + ", " + addend + "\n");
+  s = s.write("    str " + t2 + ", [" + t1 + "]\n");
   return s;
 }
 
@@ -6314,15 +6314,6 @@ function lc_bump_free_words(s: asmcore.EmitState, words: string, t1: string, t2:
   return lc_bump_free_add(s, words + ", lsl #3", t1, t2);
 }
 
-// buf_block_free emits the inline release of one BARE byte block — the string
-// builder's buffer, or its control block — onto the size-class freelist
-// __fern_alloc pops from, `ptr` naming the block and `words` its class. The
-// same stores __fn___fern_str_free's data-buffer arm makes, with the fused
-// arm's large-tier branch; neither block carries an rc word, so there is no rc
-// to clear first — and none to poison, so declining the push is the whole
-// quarantine treatment for both. `ptr` and `words` must avoid x1..x4, which __fern_large_push
-// clobbers; x3 / x9 / x10 are this helper's own scratch. `lbl` distinguishes
-// one call site's labels from another's.
 // freelist_push emits the push of the block at `ptr` onto the small-tier
 // freelist. `words` holds the block's logical size and comes out as its class,
 // the capacity __fern_capw rounds it to, which is the size __fern_alloc bumped
@@ -6345,6 +6336,15 @@ function freelist_push(s: asmcore.EmitState, ptr: string, words: string, base: s
   return s;
 }
 
+// buf_block_free emits the inline release of one BARE byte block — the string
+// builder's buffer, or its control block — onto the size-class freelist
+// __fern_alloc pops from, `ptr` naming the block and `words` its class. The
+// same stores __fn___fern_str_free's data-buffer arm makes, with the fused
+// arm's large-tier branch; neither block carries an rc word, so there is no rc
+// to clear first — and none to poison, so declining the push is the whole
+// quarantine treatment for both. `ptr` and `words` must avoid x1..x4, which __fern_large_push
+// clobbers; x3 / x9 / x10 are this helper's own scratch. `lbl` distinguishes
+// one call site's labels from another's.
 function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: string): asmcore.EmitState {
   s = s.write("    mov x9, #0x10000\n");
   s = s.write("    cmp " + words + ", x9\n");
@@ -6359,6 +6359,55 @@ function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: s
   s = s.write("    lsl x2, " + words + ", #3\n");
   s = s.write("    bl __fern_large_push\n");
   s = s.write("." + lbl + "_done:\n");
+  return s;
+}
+
+// Borrow a byte range and reserve once, preserving the input array.
+function emit_buf_push_bytes_range(s: asmcore.EmitState, packed: boolean): asmcore.EmitState {
+  var suffix: string = asmcore.packed_suffix(packed);
+  var sym: string = "__fern_buf_push_bytes_range" + suffix;
+  var label: string = ".Lbufbyterange" + suffix;
+  s = s.write(".globl " + sym + "\n.type " + sym + ", %function\n" + sym + ":\n");
+  s = s.write("    stp x29, x30, [sp, #-48]!\n    mov x29, sp\n    stp x19, x20, [sp, #16]\n    stp x21, x22, [sp, #32]\n");
+  s = s.write("    mov x19, x0\n    mov x20, x1\n    sxtw x21, w2\n    sxtw x22, w3\n    cmp x21, #0\n    csel x21, x21, xzr, ge\n    ldr x9, [x20]\n    cmp x22, x9\n    csel x22, x22, x9, le\n");
+  s = s.write("    sub x22, x22, x21\n    cmp x22, #0\n    b.le " + label + "_done\n    ldr x1, [x19, #8]\n    add x1, x1, x22\n    ldr x9, [x19, #16]\n    cmp x1, x9\n    b.ls " + label + "_fits\n    bl __fern_buf_reserve\n" + label + "_fits:\n");
+  s = s.write("    ldr x3, [x19]\n    ldr x9, [x19, #8]\n    add x3, x3, x9\n    add x9, x9, x22\n    str x9, [x19, #8]\n    add x1, x20, #8\n    mov x2, x22\n");
+  if (packed) {
+    s = s.write("    add x1, x1, x21\n");
+    s = arm64_copy_bytes(s, CopyRegs { dst: "x3", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, label + "_words", label + "_tail", label + "_bytes", label + "_done");
+  } else {
+    s = s.write("    add x1, x1, x21, lsl #3\n" + label + "_copy:\n    ldrb w9, [x1], #8\n    strb w9, [x3], #1\n    subs x2, x2, #1\n    b.ne " + label + "_copy\n" + label + "_done:\n");
+  }
+  s = s.write("    mov x0, #0\n    ldp x21, x22, [sp, #32]\n    ldp x19, x20, [sp, #16]\n    ldp x29, x30, [sp], #48\n    ret\n.size " + sym + ", .-" + sym + "\n");
+  return s;
+}
+
+// Copy raw builder storage into a fresh array in the requested layout.
+function emit_buf_take_bytes(s: asmcore.EmitState, packed: boolean): asmcore.EmitState {
+  var suffix: string = asmcore.packed_suffix(packed);
+  var sym: string = "__fern_buf_take_bytes" + suffix;
+  var done: string = ".Lbufbytes_done" + suffix;
+  var copy_loop: string = ".Lbufbytes_loop" + suffix;
+  s = s.write(".globl " + sym + "\n.type " + sym + ", %function\n" + sym + ":\n");
+  s = s.write("    stp x29, x30, [sp, #-16]!\n");
+  s = s.write("    mov x29, sp\n");
+  s = s.write("    stp x19, x20, [sp, #-16]!\n");
+  s = s.write("    stp x21, x22, [sp, #-16]!\n");
+  s = s.write("    mov x19, x0\n");
+  s = s.write("    ldr x20, [x19, #8]\n");
+  s = s.write("    mov x0, x20\n");
+  if (packed) {
+    s = s.write("    add x0, x0, #7\n    lsr x0, x0, #3\n");
+  }
+  s = s.write("    bl __fern_arr_box\n    mov x21, x0\n    str x20, [x21]\n    ldr x1, [x19]\n");
+  if (packed) {
+    s = s.write("    add x3, x21, #8\n    mov x2, x20\n");
+    s = arm64_copy_bytes(s, CopyRegs { dst: "x3", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, copy_loop + "_w", copy_loop + "_t", copy_loop + "_b", done);
+  } else {
+    s = s.write("    mov x2, #0\n    add x3, x21, #8\n" + copy_loop + ":\n    cmp x2, x20\n    b.hs " + done + "\n");
+    s = s.write("    ldrb w9, [x1, x2]\n    str x9, [x3, x2, lsl #3]\n    add x2, x2, #1\n    b " + copy_loop + "\n" + done + ":\n");
+  }
+  s = s.write("    str xzr, [x19, #8]\n    mov x0, x21\n    ldp x21, x22, [sp], #16\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n.size " + sym + ", .-" + sym + "\n");
   return s;
 }
 
@@ -6688,10 +6737,9 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    .align 8\n");
   // Large-tier freelist (#3425): the 65536-word __fern_freelist above recycles
   // blocks <512 KiB exactly; blocks >=512 KiB previously LEAKED, exhausting the
-  // arena on a long emit. LINEAR 512-KiB classes: class = round_up(size,512KiB)
-  // >> 19 (1..2048), 2560 slots for headroom. The arm64 twin of asm_ir.fern's
-  // tier (bsr/variable-shift-free — built from 1<<19 to avoid arm64's tight
-  // immediate/wide-literal encoding, like the existing round-to-8 lsr/lsl).
+  // arena on a long emit. Native's 3-significant-bit capacities
+  // (arm64_large_class), 45 classes from 512 KiB to 1 GiB, 2560 slots kept.
+  // The arm64 twin of asm_ir.fern's tier.
   s = s.write("__fern_large_freelist: .skip 20480\n");
   // Shadows for the arena checkpoint (#6728) — the arm64 twin of asm_ir's.
   // .bss, so they cost image size nothing and are zero-filled.
@@ -6769,23 +6817,17 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    mov x0, x2\n");  // return head
   s = s.write("    ldp x29, x30, [sp], #16\n");
   s = s.write("    ret\n");
-  // Large tier (#3425): x0 = rounded-8 size (>=512 KiB), x3 = idx. Round the
-  // size up to a 512-KiB multiple (the class capacity — bump AT it so every
-  // block in a class has one size), class = cap>>19, pop the large freelist;
-  // empty falls through to the bump with x0 = cap. >1 GiB is bump-only. Only
-  // x0..x3 used (alloc's clobber contract). 512 KiB is built as 1<<19 to avoid
-  // wide immediates.
+  // Large tier (#3425): x0 = rounded-8 size (>=512 KiB). Round the size up to
+  // its class capacity (arm64_large_class) and bump AT it, so every block in a
+  // class has one size; pop the large freelist, and an empty class falls
+  // through to the bump with x0 = cap. >1 GiB is bump-only. Only x0..x3 used
+  // (alloc's clobber contract).
   s = s.write(".Lalloc_large:\n");
   s = s.write("    mov x1, #1\n");
   s = s.write("    lsl x1, x1, #30\n");  // x1 = 1 GiB
   s = s.write("    cmp x0, x1\n");
   s = s.write("    b.hi .Lalloc_nofl\n");  // > 1 GiB: bump exact, no freelist
-  s = s.write("    mov x1, #1\n");
-  s = s.write("    lsl x1, x1, #19\n");  // x1 = 512 KiB
-  s = s.write("    sub x1, x1, #1\n");  // x1 = 512 KiB - 1
-  s = s.write("    add x0, x0, x1\n");  // size + (512 KiB - 1)
-  s = s.write("    lsr x3, x0, #19\n");  // class = round_up(size,512KiB) >> 19  (1..2048)
-  s = s.write("    lsl x0, x3, #19\n");  // cap = class << 19 = bytes to bump
+  s = arm64_large_class(s, "x0", "x3", "x1");  // x0 = cap = bytes to bump
   s = s.write("    adrp x1, __fern_large_freelist\n");
   s = s.write("    add x1, x1, :lo12:__fern_large_freelist\n");
   s = s.write("    ldr x2, [x1, x3, lsl #3]\n");  // head
@@ -7218,6 +7260,18 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   // rather than left to the arena: a builder that doubles its way up from the
   // floor would otherwise strand every prefix it passed through.
   if (s.has_need("buf")) {
+    if (s.has_need("buf_push_bytes_range")) {
+      s = emit_buf_push_bytes_range(s, false);
+    }
+    if (s.has_need("buf_push_bytes_range_u8")) {
+      s = emit_buf_push_bytes_range(s, true);
+    }
+    if (s.has_need("buf_take_bytes")) {
+      s = emit_buf_take_bytes(s, false);
+    }
+    if (s.has_need("buf_take_bytes_u8")) {
+      s = emit_buf_take_bytes(s, true);
+    }
     // __fern_buf_new(x0 = cap) -> x0 = handle. The floor gives the doubling
     // something to double.
     s = s.write(".globl __fern_buf_new\n");
@@ -7655,6 +7709,71 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write(".Laie_ret:\n");
     s = s.write("    ret\n");
   }
+  // __fern_str_grow(a@[sp,#16], b@[sp]) -> 1 once b is appended to a in
+  // place, else 0 with nothing written: the arm64 sibling of the x86-64
+  // body, with the same fused, rc-1 and same-class tests. Under a leak-check
+  // build the growth counts as a free of the old size and an alloc of the new.
+  if (s.has_need("str_grow")) {
+    s = s.write("__fn___fern_str_grow:\n");
+    s = s.write("    ldr x0, [sp, #16]\n");  // a
+    s = s.write("    ldr x1, [sp]\n");  // b
+    s = s.write("    tbnz x0, #0, .Lsg_no\n");
+    s = s.write("    mov x9, #0x10000\n");
+    s = s.write("    cmp x0, x9\n");
+    s = s.write("    blo .Lsg_no\n");
+    s = s.write("    ldur w2, [x0, #-8]\n");  // rc
+    s = s.write(san_poison_check("w2", "w9", ".Lsg_live", s.rc_free_debug));
+    s = s.write("    cmp w2, #1\n");
+    s = s.write("    b.ne .Lsg_no\n");
+    s = s.write("    ldur w2, [x0, #-4]\n");
+    s = mov_fused_marker(s, "w3");
+    s = s.write("    cmp w2, w3\n");
+    s = s.write("    b.ne .Lsg_no\n");
+    s = s.write("    ldr x2, [x0, #8]\n");  // la
+    s = s.write("    ldr x3, [x1, #8]\n");  // lb
+    s = s.write("    add x4, x2, x3\n");  // grown length
+    s = s.write("    lsr x9, x4, #31\n");
+    s = s.write("    cbnz x9, .Lsg_no\n");
+    s = s.write("    add x5, x2, #31\n");
+    s = s.write("    lsr x5, x5, #3\n");  // words now
+    s = s.write("    add x6, x4, #31\n");
+    s = s.write("    lsr x6, x6, #3\n");  // words grown
+    s = s.write("    cmp x6, x5\n");
+    s = s.write("    b.eq .Lsg_copy\n");
+    s = s.write("    mov x9, #0x10000\n");
+    s = s.write("    cmp x5, x9\n");
+    s = s.write("    b.hs .Lsg_large\n");
+    s = s.write("    stp x5, x30, [sp, #-16]!\n");
+    s = s.write("    bl __fern_capw\n");
+    s = s.write("    ldp x7, x30, [sp], #16\n");  // capacity, in words
+    s = s.write("    cmp x6, x7\n");
+    s = s.write("    b.hi .Lsg_no\n");
+    s = s.write("    b .Lsg_fits\n");
+    s = s.write(".Lsg_large:\n");
+    s = s.write("    mov x9, #1\n");
+    s = s.write("    lsl x9, x9, #27\n");  // past 1 GiB the block is exact
+    s = s.write("    cmp x6, x9\n");
+    s = s.write("    b.hi .Lsg_no\n");
+    s = s.write("    lsl x7, x5, #3\n");
+    s = arm64_large_class(s, "x7", "x10", "x11");
+    s = s.write("    lsr x7, x7, #3\n");  // capacity, in words
+    s = s.write("    cmp x6, x7\n");
+    s = s.write("    b.hi .Lsg_no\n");
+    s = s.write(".Lsg_fits:\n");
+    s = lc_bump_free_words(s, "x5", "x9", "x10");
+    s = lc_bump_alloc_add(s, "x6, lsl #3", "x9", "x10");
+    s = s.write(".Lsg_copy:\n");
+    s = s.write("    str x4, [x0, #8]\n");  // len = grown length
+    s = s.write("    ldr x5, [x0]\n");
+    s = s.write("    add x5, x5, x2\n");  // dst = data + la
+    s = s.write("    ldr x6, [x1]\n");  // src = b's data
+    s = arm64_copy_bytes(s, CopyRegs { dst: "x5", src: "x6", n: "x3", tmp: "x7", src_end: "x9", dst_end: "x10" }, ".Lsg_w", ".Lsg_t", ".Lsg_b", ".Lsg_d");
+    s = s.write("    mov x0, #1\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lsg_no:\n");
+    s = s.write("    mov x0, #0\n");
+    s = s.write("    ret\n");
+  }
   // __fern_str_own(s@[sp]) -> a string its holder owns a unit of, the arm64
   // sibling of the x86-64 body: a counted string retained, a fresh box over
   // an arena view's bytes, and any other view as is.
@@ -7830,14 +7949,39 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   return s;
 }
 
+// arm64_large_class rounds the >=512 KiB byte count in `n` up to its
+// large-tier capacity in place, native's 3-significant-bit scheme, and leaves
+// its freelist class in `cls`: four classes per power of two, 0 for 512 KiB
+// through 44 for 1 GiB, as asm_ir's large_class. Alloc and free both derive the
+// class here, so a block returns to the class it was bumped at. Clobbers `t`.
+function arm64_large_class(s: asmcore.EmitState, n: string, cls: string, t: string): asmcore.EmitState {
+  s = s.write("    mov " + t + ", #1\n");
+  s = s.write("    lsl " + t + ", " + t + ", #19\n");
+  s = s.write("    cmp " + n + ", " + t + "\n");
+  s = s.write("    csel " + n + ", " + t + ", " + n + ", lo\n");  // at least 512 KiB
+  s = s.write("    clz " + t + ", " + n + "\n");
+  s = s.write("    mov " + cls + ", #61\n");
+  s = s.write("    sub " + cls + ", " + cls + ", " + t + "\n");  // msb - 2
+  s = s.write("    mov " + t + ", #1\n");
+  s = s.write("    lsl " + t + ", " + t + ", " + cls + "\n");  // granule
+  s = s.write("    sub " + t + ", " + t + ", #1\n");
+  s = s.write("    add " + n + ", " + n + ", " + t + "\n");
+  s = s.write("    bic " + n + ", " + n + ", " + t + "\n");  // capacity
+  s = s.write("    clz " + t + ", " + n + "\n");
+  s = s.write("    mov " + cls + ", #61\n");
+  s = s.write("    sub " + t + ", " + cls + ", " + t + "\n");  // msb - 2
+  s = s.write("    lsr " + cls + ", " + n + ", " + t + "\n");  // top three bits, 4..7
+  s = s.write("    add " + cls + ", " + cls + ", " + t + ", lsl #2\n");
+  return s.write("    sub " + cls + ", " + cls + ", #72\n");
+}
+
 // emit_rt_large_tier_and_rc emits the large-block tier (__fern_large_push and the >=512 KiB
 // recycling bins) and the reference-counting release helpers, including the
 // need-gated nested-array frees.
 function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   // __fern_large_push(base=x1, bytes=x2): return a freed >=512 KiB block to
   // the large tier (#3425), arm64 twin of asm_ir's helper. Bins by the same
-  // linear round-up __fern_alloc uses (class = round_up(bytes,512KiB)>>19) and
-  // pushes (successor in the block's first word). >1 GiB is dropped. Clobbers
+  // arm64_large_class __fern_alloc uses and pushes (successor in the block's first word). >1 GiB is dropped. Clobbers
   // x1..x4, PRESERVES x0 (so a caller mid-free — e.g. str_free with box in x0 —
   // survives). A caller that only ret's after can TAIL-BRANCH here (b, not bl),
   // so its ret-addr in x30 flows straight through.
@@ -7856,11 +8000,8 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   // tail-branch here. Callers with an rc word have already poisoned it at
   // their own rc store, and recycling the block would overwrite that poison.
   if (!s.rc_free_debug) {
-    s = s.write("    mov x3, #1\n");
-    s = s.write("    lsl x3, x3, #19\n");  // 512 KiB
-    s = s.write("    sub x3, x3, #1\n");  // 512 KiB - 1
-    s = s.write("    add x2, x2, x3\n");  // bytes + (512 KiB - 1)
-    s = s.write("    lsr x2, x2, #19\n");  // class = round_up(bytes,512KiB) >> 19
+    s = arm64_large_class(s, "x2", "x4", "x3");
+    s = s.write("    mov x2, x4\n");  // class
     s = s.write("    adrp x3, __fern_large_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_large_freelist\n");
     s = s.write("    ldr x4, [x3, x2, lsl #3]\n");  // old head
@@ -9018,7 +9159,7 @@ function emit_rt_heap(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
       if (darwin) {
         s = emit_rt_subprocess(s);
       } else {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_subprocess("arm64-linux"), s.struct_decls, s);
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_subprocess("arm64-linux"), s);
       }
     }
     s = emit_rt_net(s, darwin);
@@ -9641,38 +9782,38 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   // asmcore.rt_src_arr_str_join. It fills one exact-size block, so the heap
   // is its only dep and mark_arr_str_join declares it.
   if (s.has_need("arr_str_join")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), s);
   }
   // __fern_str_trim — Fern runtime function (#2649), Tier-1: returns the
   // zero-copy sub-slice s[start:end] after skipping leading/trailing
   // whitespace. The slice box allocates (heap dep via mark_str_trim).
   if (s.has_need("str_trim")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_trim(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_trim(), s);
   }
   // __fern_str_lines — Fern runtime function (#2649), Tier-1. Shared by
   // arm64 AST + IR. Deps pre-marked by mark_str_lines.
   if (s.has_need("str_lines")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_lines(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_lines(), s);
   }
   // __fern_str_bytes — Fern runtime function (#2649), Tier-1: builds the byte
   // i32[] by appending each byte (arr_push). Shared by arm64 AST + IR.
   if (s.has_need("str_bytes")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_bytes(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_bytes(), s);
   }
   // __fern_str_replace — Fern runtime function (#2649) via the raw-memory
   // intrinsics; single shared body for arm64 AST + IR. heap-only dep.
   if (s.has_need("str_replace")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_replace(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_replace(), s);
   }
   // __fern_string_from_bytes — Fern runtime function (#2649) via the raw-memory
   // intrinsics; single shared body for arm64 AST + IR. heap-only dep.
   if (s.has_need("str_from_bytes")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes(), s);
   }
   // __fern_str_split — Fern runtime function (#2649) via .append() + string
   // slices; single shared body for arm64 AST + IR. heap + arr_push dep.
   if (s.has_need("str_split")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_split(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_split(), s);
   }
   // The syscall leaves that are Fern on arm64 (#2649). Everything they need to
   // differ on between arm64-linux and arm64-darwin — syscall numbers, AT_FDCWD,
@@ -9688,31 +9829,31 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   // random_bytes: fill a scratch buffer through __syscall3, spread the bytes
   // into a fresh u8[] box (__raw_arr_box).
   if (s.has_need("random_bytes")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes(tgt), s);
   }
   // a[start:end] — takes `tgt`: its bounds trap is exit(134) through
   // __syscall3, and Darwin's exit is 1 where Linux's is 93.
   if (s.has_need("arr_slice")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice(tgt), s);
   }
   // The packed-byte twins (asmcore.packed_suffix), for a typed program's u8[].
   if (s.has_need("str_bytes_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_bytes_u8(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_bytes_u8(), s);
   }
   if (s.has_need("str_from_bytes_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes_u8(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes_u8(), s);
   }
   if (s.has_need("arr_slice_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice_u8(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice_u8(tgt), s);
   }
   if (s.has_need("random_bytes_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes_u8(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes_u8(tgt), s);
   }
   if (s.has_need("tcp_recv_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_u8(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_u8(tgt), s);
   }
   if (s.has_need("tcp_recv_into_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into_u8(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into_u8(tgt), s);
   }
   // The migrated fs leaves — read_file / write_file / remove_file / temp_dir —
   // share ONE errno→IoError classifier and are emitted as a single bundle
@@ -9867,6 +10008,24 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("reader")) {
       fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk(tgt) + " " + asmcore.rt_src_reader_close(tgt);
     }
+    if (s.has_need("write_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes(tgt, false, true);
+    }
+    if (s.has_need("write_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes(tgt, true, true);
+    }
+    if (s.has_need("write_some_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes(tgt, false, false);
+    }
+    if (s.has_need("write_some_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes(tgt, true, false);
+    }
+    if (s.has_need("read_chunk_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk_bytes(tgt, false);
+    }
+    if (s.has_need("read_chunk_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk_bytes(tgt, true);
+    }
     if (s.has_need("fd_stat")) {
       fs_src = fs_src + " " + asmcore.rt_src_fd_stat(tgt);
     }
@@ -9886,18 +10045,18 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("writer_truncate")) {
       fs_src = fs_src + " " + asmcore.rt_src_writer_truncate(tgt);
     }
-    s = emit_ir_runtime_fern_fn(fs_src, s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(fs_src, s);
   }
   // env is the odd one out: no syscall at all, so it needs none of `tgt` and
   // does not join the fs bundle — it calls no io_error (a missing variable is
   // None, not an error). It reads __fern_envp through the __raw_environ op.
   if (s.has_need("env")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_env(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_env(), s);
   }
   // environ is env's whole-list sibling and reads the same slot the same way,
   // so it is target-independent for the same reason.
   if (s.has_need("environ")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_environ(), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_environ(), s);
   }
   // __fern_str_bytes is now a Fern runtime function (#2649): see
   // asmcore.rt_src_str_bytes, emitted (need-gated) in the migrated-helpers
@@ -9909,7 +10068,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   // random_i32-only program still links it. Linux getrandom / Darwin
   // getentropy differ only in the number, which `tgt` supplies.
   if (s.has_need("random_i32")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_i32(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_i32(tgt), s);
   }
   // tcp_close / tcp_accept / tcp_local_port: the three socket leaves that take
   // only an fd (#2649). Need-gated HERE rather than in emit_rt_net, which runs
@@ -9917,195 +10076,195 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   // these allocates, so a program that closes a socket, or asks one its port,
   // without otherwise touching the heap must still get them.
   if (s.has_need("tcp_close")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_close(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_close(tgt), s);
   }
   if (s.has_need("tcp_accept")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_accept(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_accept(tgt), s);
   }
   if (s.has_need("tcp_local_port")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_local_port(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_local_port(tgt), s);
   }
   // sleep_ms: nanosleep on Linux, select on Darwin (XNU has no nanosleep) —
   // the first __syscall5 consumer. Writes its timespec/timeval into
   // __fern_scratch, so it joins that gate; allocation-free, so it is emitted
   // outside the heap block.
   if (s.has_need("sleep_ms")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ms(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ms(tgt), s);
   }
   // sleep_ns: the same two calls, split by 1e9 instead of 1e3 — and on Darwin
   // the leftover nanoseconds round UP into select's microsecond timeval.
   if (s.has_need("sleep_ns")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ns(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ns(tgt), s);
   }
   // poll: ppoll over a freshly built pollfd[] on Linux, a bare -1 on Darwin.
   // It allocates, so it is heap-dependent — but emitted here beside the other
   // migrated leaves rather than in emit_rt_readiness, which the hand-asm used.
   if (s.has_need("poll")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_poll(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_poll(tgt), s);
   }
   // proc_waitpid: wait4 into __fern_scratch plus the status decode. Same body
   // on every target — only the number moves — so no `darwin` fork here.
   if (s.has_need("proc_waitpid")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid(tgt), s);
   }
   if (s.has_need("proc_waitpid_nohang")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid_nohang(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid_nohang(tgt), s);
   }
   // timer_fd: timerfd_create + timerfd_settime over an itimerspec in
   // __fern_scratch. Darwin has no timerfd and answers -1, as its hand-asm did.
   if (s.has_need("timer_fd")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_timer_fd(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_timer_fd(tgt), s);
   }
   // isatty: one terminal-attribute ioctl, whose request number is the only
   // per-target difference (TCGETS vs TIOCGETA).
   if (s.has_need("geteuid")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid(tgt, "geteuid"), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid(tgt, "geteuid"), s);
   }
   if (s.has_need("getegid")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid(tgt, "getegid"), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid(tgt, "getegid"), s);
   }
   if (s.has_need("getuid")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid(tgt, "getuid"), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid(tgt, "getuid"), s);
   }
   if (s.has_need("getgid")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid(tgt, "getgid"), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid(tgt, "getgid"), s);
   }
   if (s.has_need("getgroups")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getgroups(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getgroups(tgt), s);
   }
   if (s.has_need("hostname")) {
     if (darwin) {
       s = emit_rt_hostname_darwin(s);
     } else {
-      s = emit_ir_runtime_fern_fn(asmcore.rt_src_hostname(tgt), s.struct_decls, s);
+      s = emit_ir_runtime_fern_fn(asmcore.rt_src_hostname(tgt), s);
     }
   }
   if (s.has_need("uname_field")) {
     if (darwin) {
       s = emit_rt_uname_field_darwin(s);
     } else {
-      s = emit_ir_runtime_fern_fn(asmcore.rt_src_uname_field(tgt), s.struct_decls, s);
+      s = emit_ir_runtime_fern_fn(asmcore.rt_src_uname_field(tgt), s);
     }
   }
   if (s.has_need("getcwd")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getcwd(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getcwd(tgt), s);
   }
   if (s.has_need("cpu_count")) {
     if (darwin) {
       s = emit_rt_cpu_count_darwin(s);
     } else {
-      s = emit_ir_runtime_fern_fn(asmcore.rt_src_cpu_count(tgt), s.struct_decls, s);
+      s = emit_ir_runtime_fern_fn(asmcore.rt_src_cpu_count(tgt), s);
     }
   }
   if (s.has_need("isatty")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_isatty(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_isatty(tgt), s);
   }
   if (s.has_need("process_alive")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_process_alive(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_process_alive(tgt), s);
   }
   if (s.has_need("rlimit_nofile")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_rlimit_nofile(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_rlimit_nofile(tgt), s);
   }
   if (s.has_need("signal_mask")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_mask(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_mask(tgt), s);
   }
   if (s.has_need("signal_disposition")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition_read(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition_read(tgt), s);
   }
   if (s.has_need("signal_ignore")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition(tgt, "signal_ignore", "1"), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition(tgt, "signal_ignore", "1"), s);
   }
   if (s.has_need("signal_default")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition(tgt, "signal_default", "0"), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition(tgt, "signal_default", "0"), s);
   }
   // tcp_listen: socket + bind + listen. The sockaddr_in's only per-target
   // difference is its first two bytes (XNU has sin_len), which sockaddr_head
   // supplies.
   if (s.has_need("tcp_listen")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen(tgt), s);
   }
   // tcp_connect: the same sockaddr_in as tcp_listen with the address filled in.
   if (s.has_need("udp_send")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_send(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_send(tgt), s);
   }
   if (s.has_need("tcp_listen_with")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with(tgt, false), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with(tgt, false), s);
   }
   if (s.has_need("tcp_listen_with_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with(tgt, true), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with(tgt, true), s);
   }
   if (s.has_need("tcp_socket_ctl")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_socket_ctl(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_socket_ctl(tgt), s);
   }
   if (s.has_need("tcp_sendfile")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_sendfile(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_sendfile(tgt), s);
   }
   if (s.has_need("udp_bind")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind(tgt, false), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind(tgt, false), s);
   }
   if (s.has_need("udp_bind_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind(tgt, true), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind(tgt, true), s);
   }
   if (s.has_need("udp_connect")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_connect(tgt, false), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_connect(tgt, false), s);
   }
   if (s.has_need("udp_connect_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_connect(tgt, true), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_connect(tgt, true), s);
   }
   if (s.has_need("udp_sendto")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto(tgt, false), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto(tgt, false), s);
   }
   if (s.has_need("udp_sendto_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto(tgt, true), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto(tgt, true), s);
   }
   if (s.has_need("udp_recvfrom")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom(tgt, false), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom(tgt, false), s);
   }
   if (s.has_need("udp_recvfrom_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom(tgt, true), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom(tgt, true), s);
   }
   if (s.has_need("tcp_connect_with")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with(tgt, false), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with(tgt, false), s);
   }
   if (s.has_need("tcp_connect_with_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with(tgt, true), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with(tgt, true), s);
   }
   if (s.has_need("unix_listen")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_unix_listen(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_unix_listen(tgt), s);
   }
   if (s.has_need("unix_connect")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_unix_connect(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_unix_connect(tgt), s);
   }
   if (s.has_need("reactor_new")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_new(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_new(tgt), s);
   }
   if (s.has_need("reactor_ctl")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_ctl(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_ctl(tgt), s);
   }
   if (s.has_need("reactor_wait")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_wait(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_wait(tgt), s);
   }
   if (s.has_need("tcp_recv_into")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into(tgt), s);
   }
   if (s.has_need("tcp_connect")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect(tgt), s);
   }
   // tcp_recv: read(2) into a scratch buffer, spread into a fresh u8[] box.
   if (s.has_need("tcp_recv")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv(tgt), s);
   }
   // tcp_send: sendto(2) with MSG_NOSIGNAL from the string's buffer, via __raw_data.
   if (s.has_need("tcp_send")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send(tgt), s);
   }
   // proc_exec: execve over an argv built from the args array.
   if (s.has_need("proc_exec")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec(tgt), s);
   }
   // proc_exec_as: the same execve with the caller's argv and envp.
   if (s.has_need("proc_exec_as")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec_as(tgt), s.struct_decls, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec_as(tgt), s);
   }
   // __fern_map_hash_seed() → core/map's per-process string-hash seed
   // (#6194), drawn once via the Fern __fn___fern_random_i32 and cached in the unit-local
@@ -10168,7 +10327,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
       s = s.write("    ret\n");
       s = s.write(".size __fn___fern_proc_fork, .-__fn___fern_proc_fork\n");
     } else {
-      s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_fork(tgt), s.struct_decls, s);
+      s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_fork(tgt), s);
     }
   }
   // __fern_str_lines is now a Fern runtime function (#2649): see
@@ -11044,7 +11203,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
     "temp_dir", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
-    "reader", "signal_send", "set_process_group", "set_priority",
+    "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority",
   ]);
 }
 
@@ -11081,33 +11240,22 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
 }
 
 // ===================== IR MODULE FRAMERS =====================
-// emit_module_ir_gated and emit_module_ir_unit_arm64_flat are the arm64 IR module
+// emit_module_ir_gated_sub and emit_module_ir_unit_arm64_flat are the arm64 IR module
 // orchestrators (moved from asm_arm64.fern, #3457 slice-5 prep): with the IR
 // runtime already here (emit_ir_runtime), the whole arm64 IR emit path now
 // lives in asm_arm64_ir.fern, so asm_arm64.fern holds only the AST emitter.
 
-// emit_module_or_error is the arm64 mirror of asm_ir.emit_module_or_error
-// (#3457 slice 5): the same parse-error / type-check / lambda-lift prologue as
-// asm_arm64.emit_module, then the eligibility gate — but a module the gate
-// declines is a hard ERROR here rather than a silent fall-through to the legacy
-// AST emitter.
-//
-// It exists so the arm64 drivers can stop importing `asm_arm64.fern` at all,
-// which is what makes that emitter deletable. Declines stay diagnosable:
-// FERN_STRICT_IR=1 makes the shared gate exit(3) naming the bail site, so a
-// regression says WHICH construct left the subset rather than merely that one
-// did. The gate is the fused emit_module_ir_gated (ircore.lower_gated) — the
-// SAME verdict the x86 path's gate gives — so a program's routing does not
-// differ between the backends; only the instruction selection does.
+// emit_module_or_error_sub is the arm64 mirror of
+// asm_ir.emit_module_or_error_sub: the parse-error / type-check / lambda-lift
+// prologue, then the eligibility gate, and a module the gate declines is a
+// hard ERROR. The gate is the fused emit_module_ir_gated_sub
+// (ircore.gate) — the SAME verdict the x86 path's gate gives — so a
+// program's routing does not differ between the backends; only the
+// instruction selection does.
 //
 // The prologue is ordered check-then-emit for the reason #4327 records: a gate
 // that returns ahead of the type check lets an ill-typed module miscompile
 // silently.
-pub function emit_module_or_error(mod: parser.Module, darwin: boolean): string {
-  return emit_module_or_error_sub(mod, darwin, ircore.no_sub());
-}
-
-// The `_sub` sibling of the above: see emit_module_ir_gated_sub.
 pub function emit_module_or_error_sub(mod: parser.Module, darwin: boolean, sub: ircore.Sub): string {
   var parse_errs: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
   if (parse_errs.len() > 0) {
@@ -11133,22 +11281,13 @@ pub function emit_module_or_error_sub(mod: parser.Module, darwin: boolean, sub: 
   return "";
 }
 
-// emit_module_ir_gated is the arm64 twin of asm_ir.emit_module_ir_gated: the
-// FUSED eligibility gate + whole-program emit (#4394 lever 3 / #8199). Every
-// function is lowered once, judged on that lowering, and emitted from it; the
-// whole-program registry set (both interprocedural fixpoints plus
-// fn_sigs_for_borrow) is derived once and threaded through the emit. "" is the
-// ineligible sentinel — an eligible module always emits at least
-// `.globl _start\n    .text`.
-pub function emit_module_ir_gated(mod: parser.Module, darwin: boolean): string {
-  return emit_module_ir_gated_sub(mod, darwin, ircore.no_sub());
-}
-
-// emit_module_ir_gated_sub is the same gate with a caller-supplied semantic
-// lowering substituted into it (ircore.Sub) — the arm64 twin of
-// asm_ir.emit_module_ir_gated_sub.
+// emit_module_ir_gated_sub is the arm64 twin of asm_ir.emit_module_ir_gated_sub:
+// the FUSED eligibility gate + whole-program emit (#4394 lever 3 / #8199) over
+// a semantic lowering (ircore.Sub). Every function is lowered once, judged on
+// that lowering, and emitted from it. "" is the ineligible sentinel — an
+// eligible module always emits at least `.globl _start\n    .text`.
 pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: ircore.Sub): string {
-  var g: ircore.Gated = ircore.gate_program(mod, [], sub);
+  var g: ircore.Gated = ircore.gate_program(mod, sub);
   if (!g.ok) {
     return "";
   }
@@ -11162,7 +11301,7 @@ function emit_module_ir_flat(mod: parser.Module, stab: irlower.StructTab, darwin
   // emit_body takes the runtime-dependency closure itself, ahead of the _start
   // it ends with. The seeds below are marker needs with no declared deps, so
   // they need no second pass.
-  s = emit_body(mod, s, darwin, cache, base);
+  s = emit_body(mod, s, darwin, cache);
   // #4355: replaced-STRING-field admission — this route is single-module
   // whole-program, so mod.funcs IS the full read scope. base.strfld_ok_types
   // is that verdict, and the one the LOWERING routed on (see the x86 twin,
@@ -11228,13 +11367,6 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
   if (is_entry && globl_defs) {
     s = asmcore.emit_runtime_globls(s);
   }
-  // `b` is the whole-program registry (all_funcs, #3454); only the two
-  // module-scoped registries are applied on top, and they are cheap.
-  var sg: irlower.FnSigs = irlower.FnSigs {
-    ...b,
-    closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs),
-    fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
-  };
   // [lo, hi) function-index window (function-sharding, #3425 — the arm64
   // mirror of asm_ir.emit_module_funcs' windowing). A full window (lo=0,
   // hi<0 "to the end") is byte-identical to the unsharded emit; a partial
@@ -11245,13 +11377,14 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
   if (hh < 0 || hh > mod.funcs.len()) {
     hh = mod.funcs.len();
   }
-  // `cache`, when non-empty, is the unit's lowering, indexed by mod.funcs
-  // position, with declaration-less bodies on its tail (asm_ir.emit_module_funcs).
-  ircore.check_fip_claims(mod.funcs, lo, hh, cache, all_structs, sg, false);
+  // `cache` is the unit's lowering, indexed by mod.funcs position, with
+  // declaration-less bodies on its tail (asm_ir.emit_module_funcs).
+  ircore.check_fip_claims(mod.funcs, lo, hh, cache);
   s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: asmcore.unit_leaves(mod, lo, hh, cache) };
   var fi: i32 = lo;
   while (fi < hh) {
-    if (cache.len() > 0 && cache[fi].superseded) {
+    var r: irlower.LowerResult = ircore.produced(cache, fi, mod.funcs[fi]);
+    if (r.superseded) {
       fi = fi + 1;
       continue;
     }
@@ -11262,23 +11395,19 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
       }
       s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
     }
-    if (cache.len() == 0) {
-      s = emit_function_via_ir(mod.funcs[fi], s, sg, vsigs);
-    } else {
-      s = emit_function_via_ir_pre(cache[fi], mod.funcs[fi], s, vsigs);
-    }
+    s = emit_function_via_ir_pre(r, mod.funcs[fi], s, vsigs);
     fi = fi + 1;
   }
   s = emit_named_bodies(cache, mod.funcs.len(), s, vsigs);
   // #4355: admit the replaced-STRING-field arm per type from the
-  // WHOLE-PROGRAM read scan (all_funcs — see asm_ir.emit_module_ir_unit's
+  // WHOLE-PROGRAM read scan (all_funcs — see asm_ir.emit_module_ir_unit_flat's
   // sibling seeding and irlower.strfld_reclaim_ok_types_of).
-  // sg.strfld_ok_types is that verdict over the same lists, already computed by
+  // b.strfld_ok_types is that verdict over the same lists, already computed by
   // the fn_sigs_for_borrow above — so it is the scan the LOWERING routed on,
   // keeping the construction retain and this arm's free paired, and the scan
   // (three whole-program passes, the most-repeated analysis in a compile at 7
   // runs against the nested-struct scan's 1) does not run twice here.
-  var sfok: string[] = sg.strfld_ok_types;
+  var sfok: string[] = b.strfld_ok_types;
   var sfoi: i32 = 0;
   while (sfoi < sfok.len()) {
     s = s.need("strfldok:" + sfok[sfoi]);

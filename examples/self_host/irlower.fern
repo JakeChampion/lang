@@ -1791,7 +1791,10 @@ pub function indexed_box_elem_escapes(e: ast.Expr, s: LowerState): boolean {
       if (decl_is_struct(s.frame.structs, expr_struct_type(e, s))) {
         return true;
       }
-      return expr_is_arr_src(e, s) || expr_is_strarr(e, s) || expr_is_f64arr(e, s) || expr_is_i64arr(e, s);
+      // A row borrowed from a nested-array field is still released by its
+      // source container. Use the indexed-array type query shared with
+      // return handoffs, including fields that have no local array slot.
+      return index_read_is_arr(e, s) || expr_is_arr_src(e, s) || expr_is_strarr(e, s) || expr_is_f64arr(e, s) || expr_is_i64arr(e, s);
     },
     _ => {
       return false;
@@ -11735,7 +11738,7 @@ function wraps_to_address(init: ast.Expr, s: LowerState): boolean {
 pub function ascription_rebind(v: ast.StmtVar): ast.Stmt {
   match (v.init) {
     ast.ExprUnary(au) => {
-      return ast.StmtVar { name: v.name, type_name: ascription_target(v.init), init: au.operand, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
+      return ast.StmtVar { name: v.name, type_name: ascription_target(v.init), init: au.operand, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
     },
     _ => {
       return v;
@@ -11903,7 +11906,7 @@ function foreach_reads_snapshot(fr: ast.StmtFor, iter_ident: boolean, var_comma:
 // functions miscompile on the native backend — cf. #2720).
 pub function lower_foreach_snapshot(var_name: string, iter: ast.Expr, body: ast.Stmt[], s: LowerState): LowerState {
   var itn: string = "$forit" + util.i32_to_string(s.locals.len());
-  var sv: ast.Stmt = ast.StmtVar { name: itn, type_name: stamped_expr_ty(iter), init: iter, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
+  var sv: ast.Stmt = ast.StmtVar { name: itn, type_name: stamped_expr_ty(iter), init: iter, line: 0, col: 0, fn_ret: "", fn_param_types: "" };
   var s2: LowerState = lower_stmt(sv, s.note_aliased_name(bare_ident_name(iter)));
   if (!s2.ok) {
     return s2;
@@ -11977,9 +11980,9 @@ function to_json_loop_stmt(on: string, inm: string, sn: string, kn: string, aref
   // var $s = aref[$i].to_json();
   var elem: ast.Expr = ast.ExprIndex { array: aref, index: iref, unchecked: false, ty: "", line: 0, col: 0 };
   var elemj: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: elem, field: "to_json", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
-  var dvs: ast.Stmt = ast.StmtVar { name: sn, type_name: "", init: elemj, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
+  var dvs: ast.Stmt = ast.StmtVar { name: sn, type_name: "", init: elemj, line: 0, col: 0, fn_ret: "", fn_param_types: "" };
   // var $k = 0;
-  var dk: ast.Stmt = ast.StmtVar { name: kn, type_name: "", init: zero, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
+  var dk: ast.Stmt = ast.StmtVar { name: kn, type_name: "", init: zero, line: 0, col: 0, fn_ret: "", fn_param_types: "" };
   var copyl: ast.Stmt = to_json_bytecopy_stmt(on, sn, kn);
   var inc: ast.Stmt = ast.StmtAssign { target: inm, value: ast.ExprBinary { op: "+", left: iref, right: one, line: 0, col: 0, ty: "" }, line: 0, col: 0, target_line: 0, target_col: 0 };
   var body: ast.Stmt[] = [ifc, dvs, dk, copyl, inc];
@@ -12005,7 +12008,7 @@ pub function lower_array_to_json(arr: ast.Expr, s: LowerState): LowerState {
   }
   if (!is_ident) {
     var an: string = "$tjarr" + util.i32_to_string(n);
-    var snap: ast.Stmt = ast.StmtVar { name: an, type_name: "", init: arr, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
+    var snap: ast.Stmt = ast.StmtVar { name: an, type_name: "", init: arr, line: 0, col: 0, fn_ret: "", fn_param_types: "" };
     s2 = lower_stmt(snap, s);
     if (!s2.ok) {
       return s2;
@@ -12013,7 +12016,7 @@ pub function lower_array_to_json(arr: ast.Expr, s: LowerState): LowerState {
     aref = ast.ExprIdent { name: an, line: 0, col: 0, ty: "" };
   }
   // var $tjout: u8[] = [];  — the growable output buffer (#4379)
-  var dout: ast.Stmt = ast.StmtVar { name: on, type_name: "u8[]", init: ast.ExprArray { elements: [], elem_ty: "u8", line: 0, col: 0 }, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
+  var dout: ast.Stmt = ast.StmtVar { name: on, type_name: "u8[]", init: ast.ExprArray { elements: [], elem_ty: "u8", line: 0, col: 0 }, line: 0, col: 0, fn_ret: "", fn_param_types: "" };
   s2 = lower_stmt(dout, s2);
   if (!s2.ok) {
     return s2;
@@ -12024,7 +12027,7 @@ pub function lower_array_to_json(arr: ast.Expr, s: LowerState): LowerState {
     return s2;
   }
   // var $tji = 0;
-  var di: ast.Stmt = ast.StmtVar { name: inm, type_name: "", init: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 }, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
+  var di: ast.Stmt = ast.StmtVar { name: inm, type_name: "", init: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 }, line: 0, col: 0, fn_ret: "", fn_param_types: "" };
   s2 = lower_stmt(di, s2);
   if (!s2.ok) {
     return s2;
@@ -12056,7 +12059,7 @@ function lower_string_foreach(var_name: string, iter: ast.Expr, body: ast.Stmt[]
   var n: i32 = s.locals.len();
   var sn: string = "$fostr" + util.i32_to_string(n);
   var idx: string = "$fosi" + util.i32_to_string(n);
-  var snv: ast.Stmt = ast.StmtVar { name: sn, type_name: "", init: iter, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
+  var snv: ast.Stmt = ast.StmtVar { name: sn, type_name: "", init: iter, line: 0, col: 0, fn_ret: "", fn_param_types: "" };
   var s2: LowerState = lower_stmt(snv, s);
   if (!s2.ok) {
     return s2;
@@ -12069,7 +12072,7 @@ function lower_string_foreach(var_name: string, iter: ast.Expr, body: ast.Stmt[]
   var range_iter: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__range", line: 0, col: 0, ty: "" }, args: rargs, line: 0, col: 0, type_args: [], ty: "" };
   // Both locals are hidden, so the index runs over [0, len) of a string
   // nothing rebinds: the byte read needs no bounds check.
-  var bind: ast.Stmt = ast.StmtVar { name: var_name, type_name: "", init: ast.ExprIndex { array: sref, index: iref, unchecked: true, ty: "", line: 0, col: 0 }, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
+  var bind: ast.Stmt = ast.StmtVar { name: var_name, type_name: "", init: ast.ExprIndex { array: sref, index: iref, unchecked: true, ty: "", line: 0, col: 0 }, line: 0, col: 0, fn_ret: "", fn_param_types: "" };
   var nbody: ast.Stmt[] = [bind];
   var bi: i32 = 0;
   while (bi < body.len()) {
@@ -14811,6 +14814,9 @@ function lower_target_name(name: string, s: LowerState): LowerState {
 // the name is not one of them; a mismatch therefore falls through to the
 // ordinary call path exactly as a wrong-arity `strbuf_append` does.
 function buf_builtin_arity(name: string): i32 {
+  if (name == "buf_take_bytes") {
+    return 1;
+  }
   if (name == "buf_new" || name == "buf_len" || name == "buf_take" || name == "buf_free") {
     return 1;
   }
@@ -14820,7 +14826,7 @@ function buf_builtin_arity(name: string): i32 {
   if (name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
     return 3;
   }
-  if (name == "buf_push_range") {
+  if (name == "buf_push_range" || name == "buf_push_bytes_range") {
     return 4;
   }
   return 0 - 1;
@@ -14836,6 +14842,9 @@ function buf_builtin_op(name: string): ir.Op {
   }
   if (name == "buf_push_range") {
     return ir.op_buf_push_range();
+  }
+  if (name == "buf_push_bytes_range") {
+    return ir.op_buf_push_bytes_range();
   }
   if (name == "buf_push_mapped") {
     return ir.op_buf_push_mapped();
@@ -14857,6 +14866,9 @@ function buf_builtin_op(name: string): ir.Op {
   }
   if (name == "buf_take") {
     return ir.op_buf_take();
+  }
+  if (name == "buf_take_bytes") {
+    return ir.op_buf_take_bytes();
   }
   return ir.op_buf_free();
 }
@@ -18888,9 +18900,9 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
   // struct still routes to struct-method dispatch below (the AST
   // backend intercepts unconditionally; this is strictly safer). No
   // wasm stdin, so wasm_eligible rejects read_chunk/reader_close.
-  if ((fa.field == "read_chunk" || fa.field == "close" || fa.field == "write" || fa.field == "read_line"
+  if ((fa.field == "read_chunk" || fa.field == "read_chunk_bytes" || fa.field == "close" || fa.field == "write" || fa.field == "read_line"
     || fa.field == "stat" || fa.field == "seek" || fa.field == "truncate"
-    || fa.field == "flags" || fa.field == "isatty" || fa.field == "write_some"
+    || fa.field == "flags" || fa.field == "isatty" || fa.field == "write_some" || fa.field == "write_bytes" || fa.field == "write_some_bytes"
     || fa.field == "dup_onto" || fa.field == "splice_to"
     || is_handle_tty_method(fa.field)
     || is_fd_sync_method(fa.field))
@@ -18908,7 +18920,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
       }
       return rls.emit(ir.op_read_line());
     }
-    if (fa.field == "read_chunk" && c.args.len() == 1) {
+    if ((fa.field == "read_chunk" || fa.field == "read_chunk_bytes") && c.args.len() == 1) {
       var rcs: LowerState = lower_expr(fa.obj, s);
       if (!rcs.ok) {
         return rcs;
@@ -18916,6 +18928,9 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
       rcs = lower_expr(c.args[0], rcs);
       if (!rcs.ok) {
         return rcs;
+      }
+      if (fa.field == "read_chunk_bytes") {
+        return rcs.emit(ir.op_read_chunk_bytes());
       }
       return rcs.emit(ir.op_read_chunk());
     }
@@ -19083,7 +19098,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     }
     // w.write_some(s) -> Result[i64, IoError]: the same two operands and
     // ONE write(2), handing back the count it returned (#9231).
-    if (fa.field == "write_some" && c.args.len() == 1) {
+    if ((fa.field == "write_some" || fa.field == "write_bytes" || fa.field == "write_some_bytes") && c.args.len() == 1) {
       var wsm: LowerState = lower_expr(fa.obj, s);
       if (!wsm.ok) {
         return wsm;
@@ -19091,6 +19106,12 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
       wsm = lower_expr(c.args[0], wsm);
       if (!wsm.ok) {
         return wsm;
+      }
+      if (fa.field == "write_bytes") {
+        return wsm.emit(ir.op_write_bytes());
+      }
+      if (fa.field == "write_some_bytes") {
+        return wsm.emit(ir.op_write_some_bytes());
       }
       return wsm.emit(ir.op_write_some());
     }
@@ -22739,7 +22760,7 @@ function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerStat
     || expr_is_str(obj, s) || expr_is_arr_src(obj, s)) {
     return "";
   }
-  if (field == "read_line" || field == "read_chunk" || field == "close" || field == "stat" || field == "seek"
+  if (field == "read_line" || field == "read_chunk" || field == "read_chunk_bytes" || field == "close" || field == "stat" || field == "seek"
     || field == "flags" || field == "isatty" || field == "dup_onto"
     || is_handle_tty_method(field)
     || is_fd_sync_method(field)) {
@@ -22747,8 +22768,8 @@ function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerStat
   }
   // Writer-only, so keyed under Writer: a "Reader." key names no method
   // and answers "", which bails the lowering rather than reading wrong.
-  if (field == "write_some") {
-    return s.opt_ret_type("Writer.write_some");
+  if (field == "write_some" || field == "write_bytes" || field == "write_some_bytes") {
+    return s.opt_ret_type("Writer." + field);
   }
   if (field == "splice_to") {
     return s.opt_ret_type("Reader.splice_to");
@@ -22802,11 +22823,14 @@ function owned_payload_builtin_ptype(e: ast.Expr, s: LowerState): string {
           return "";
         },
         ast.ExprFieldAccess(fa) => {
-          if (fa.field != "read_chunk" && fa.field != "read_line") {
+          if (fa.field != "read_chunk" && fa.field != "read_chunk_bytes" && fa.field != "read_line") {
             return "";
           }
           if (resource_method_opt_ret_type(fa.field, fa.obj, s) == "") {
             return "";
+          }
+          if (fa.field == "read_chunk_bytes") {
+            return "u8[]";
           }
           return "string";
         },
@@ -28003,7 +28027,7 @@ function lower_struct_destructure(v: ast.StmtVar, s: LowerState): LowerState {
   var i: i32 = 0;
   while (i < bindings.len()) {
     var fa: ast.Expr = ast.ExprFieldAccess { obj: ast.ExprIdent { name: tmp, line: 0, col: 0, ty: "" }, field: fields[i], line: 0, col: 0, ty: "" };
-    var sv: ast.Stmt = ast.StmtVar { name: bindings[i], type_name: "", init: fa, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
+    var sv: ast.Stmt = ast.StmtVar { name: bindings[i], type_name: "", init: fa, line: 0, col: 0, fn_ret: "", fn_param_types: "" };
     dt = lower_stmt(sv, dt);
     if (!dt.ok) {
       return dt;
@@ -31481,7 +31505,7 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
     // level lowers as an ordinary destructure of that temp — the same
     // recursion the source spelling describes.
     if (dnest.len() > 0) {
-      dt = lower_stmt_var(ast.StmtVar { name: dnest, type_name: "", init: ast.ExprIdent { name: dbind, line: v.line, col: v.col, ty: "" }, line: v.line, col: v.col, is_view: false, fn_ret: "", fn_param_types: "" }, dt);
+      dt = lower_stmt_var(ast.StmtVar { name: dnest, type_name: "", init: ast.ExprIdent { name: dbind, line: v.line, col: v.col, ty: "" }, line: v.line, col: v.col, fn_ret: "", fn_param_types: "" }, dt);
       if (!dt.ok) {
         return dt;
       }
@@ -32606,7 +32630,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
     var fdbind: ast.Stmt = ast.StmtVar {
       name: fr.var_name, type_name: "",
       init: ast.ExprIdent { name: fdelem, line: fr.line, col: 0, ty: "" },
-      line: fr.line, col: 0, is_view: false, fn_ret: "", fn_param_types: "",
+      line: fr.line, col: 0, fn_ret: "", fn_param_types: "",
     };
     var fdbody: ast.Stmt[] = [fdbind];
     var fdi: i32 = 0;
@@ -33056,7 +33080,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
         ast.StmtVar {
           name: vdes, type_name: "",
           init: ast.ExprIdent { name: vname, line: fr.line, col: 0, ty: "" },
-          line: fr.line, col: 0, is_view: false, fn_ret: "", fn_param_types: "",
+          line: fr.line, col: 0, fn_ret: "", fn_param_types: "",
         },
         fm,
       );
@@ -33354,7 +33378,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
       ast.PatVariant(pv_at) => {
         if (pv_at.at_binding.len() > 0) {
           var at_init: ast.Expr = ast.ExprIdent { name: scrut, line: 0, col: 0, ty: "" };
-          var at_body: ast.Stmt[] = [ast.StmtVar { name: pv_at.at_binding, type_name: "", init: at_init, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }];
+          var at_body: ast.Stmt[] = [ast.StmtVar { name: pv_at.at_binding, type_name: "", init: at_init, line: 0, col: 0, fn_ret: "", fn_param_types: "" }];
           var at_bi: i32 = 0;
           while (at_bi < arm.body.len()) {
             at_body = at_body.append(arm.body[at_bi]);
@@ -34854,18 +34878,18 @@ function lower_map_clone(mc: string, recv: ast.Expr, maptype: string, s: LowerSt
   var st: LowerState = s;
   // var $mc: <maptype> = map_new(0);  (key kind from the annotation)
   var newcall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "map_new", line: 0, col: 0, ty: "" }, args: [zero], line: 0, col: 0, type_args: [], ty: "" };
-  st = lower_stmt(ast.StmtVar { name: mc, type_name: maptype, init: newcall, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }, st);
+  st = lower_stmt(ast.StmtVar { name: mc, type_name: maptype, init: newcall, line: 0, col: 0, fn_ret: "", fn_param_types: "" }, st);
   if (!st.ok) {
     return st;
   }
   // var $mck = recv.keys();  var $mcv = recv.values();
   var keyscall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "keys", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
-  st = lower_stmt(ast.StmtVar { name: mck, type_name: "", init: keyscall, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }, st);
+  st = lower_stmt(ast.StmtVar { name: mck, type_name: "", init: keyscall, line: 0, col: 0, fn_ret: "", fn_param_types: "" }, st);
   if (!st.ok) {
     return st;
   }
   var valscall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "values", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
-  st = lower_stmt(ast.StmtVar { name: mcv, type_name: "", init: valscall, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }, st);
+  st = lower_stmt(ast.StmtVar { name: mcv, type_name: "", init: valscall, line: 0, col: 0, fn_ret: "", fn_param_types: "" }, st);
   if (!st.ok) {
     return st;
   }
@@ -41921,7 +41945,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
       // `make selfhost-cli`, then build gen1 the way
       // TestSelfHostPerModuleEmitAllFixpointX86_64 does and
       // run it under gdb —
-      //   ./gen1 asm_modload_run.fern -per-module-emit-all -assume-eligible \
+      //   ./gen1 asm_modload_run.fern -per-module-emit-all \
       //       -out-dir OUT -func-budget 100 -unit-range 0:8
       // The field drops run under __fern_rc_is_unique, the gate the holder
       // side (__struct_drop_<T>'s k_struct arm) already applies: this box may
@@ -82611,7 +82635,7 @@ function hoist_call_scrutinees(stmts: ast.Stmt[], sg: FnSigs, structs: StructTab
         continue;
       }
       var tn: string = "$mscrut_" + util.i32_to_string(m.line) + "_" + util.i32_to_string(m.col);
-      out = out.append(ast.StmtVar { name: tn, type_name: rt, init: m.scrutinee, line: m.line, col: m.col, is_view: false, fn_ret: "", fn_param_types: "" });
+      out = out.append(ast.StmtVar { name: tn, type_name: rt, init: m.scrutinee, line: m.line, col: m.col, fn_ret: "", fn_param_types: "" });
       out = out.append(ast.StmtMatch { ...m, scrutinee: ast.ExprIdent { name: tn, line: m.line, col: m.col, ty: "" }, arms: arms });
       continue;
     }
@@ -88207,7 +88231,7 @@ function borrow_reg_record(key: string, flags: string): string {
 // name: the escape walks see no receiver type, so the name alone must settle
 // it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-  var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_runs", "__bsd_sum", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
+  var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_runs", "__bsd_sum", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
   var has_write: boolean = false;
   var has_write_some: boolean = false;
   for fn in funcs {
@@ -88247,7 +88271,7 @@ function copying_builtin_flags(key: string): string {
   if (key == "buf_push_mapped" || key == "buf_push_filtered" || key == "buf_push_expanded") {
     return "011";
   }
-  if (key == "buf_push" || key == "buf_push_range" || key == "__crc32_cksum") {
+  if (key == "buf_push" || key == "buf_push_range" || key == "buf_push_bytes_range" || key == "__crc32_cksum") {
     return "01";
   }
   return "1";
@@ -96675,6 +96699,9 @@ function builtin_opt_ret_type(name: string): string {
   if (name == "Reader.read_chunk") {
     return "Result[string, IoError]";
   }
+  if (name == "Reader.read_chunk_bytes") {
+    return "Result[u8[], IoError]";
+  }
   if (name == "Reader.stat" || name == "Writer.stat") {
     return "Result[FileStat, IoError]";
   }
@@ -96687,14 +96714,14 @@ function builtin_opt_ret_type(name: string): string {
   if (name == "Reader.isatty" || name == "Writer.isatty") {
     return "boolean";
   }
-  if (name == "Writer.write_some") {
+  if (name == "Writer.write_some" || name == "Writer.write_some_bytes") {
     return "Result[i64, IoError]";
   }
   if (name == "Reader.splice_to") {
     return "Result[i64, IoError]";
   }
   if (name == "Reader.close" || name == "Writer.close" || name == "Writer.write"
-    || name == "Writer.truncate") {
+    || name == "Writer.truncate" || name == "Writer.write_bytes") {
     return "Option[IoError]";
   }
   if (name == "Reader.dup_onto" || name == "Writer.dup_onto") {
@@ -97384,7 +97411,7 @@ function lift_call_arg(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
       if (lambda_has_no_captures(lam, gfns)) {
         var nm: string = "__lam_" + util.i32_to_string(acc.counter);
         var tp: string[] = [];
-        var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "" };
+        var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "" };
         var nacc: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
         return LiftExpr { expr: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, acc: nacc };
       }
@@ -97444,7 +97471,7 @@ function lift_capturing_iife(c: ast.ExprCall, lam: ast.ExprLambda, acc: LiftAcc,
     capargs = capargs.append(ast.ExprIdent { name: cap.name, line: 0, col: 0, ty: "" });
   }
   var nm: string = "__lam_" + util.i32_to_string(acc.counter);
-  var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: [], params: params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "" };
+  var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: [], params: params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "" };
   var a: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
   var nargs: ast.Expr[] = [];
   for arg in c.args {
@@ -97655,7 +97682,7 @@ function lamret_slot(rn: string, value: ast.Expr, sig: RetSig, line: i32, col: i
       init = ast.ExprLambda { ...lm, ret_type: sig.fn_ret };
     }
   }
-  return ast.StmtVar { name: rn, type_name: sig.tag, init: init, line: line, col: col, is_view: false, fn_ret: sig.fn_ret, fn_param_types: sig.fn_ptys };
+  return ast.StmtVar { name: rn, type_name: sig.tag, init: init, line: line, col: col, fn_ret: sig.fn_ret, fn_param_types: sig.fn_ptys };
 }
 
 // contract_spelling is how returned_fn_contract names one type. It goes
@@ -97890,7 +97917,7 @@ function lift_stmt(st: ast.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
     },
     ast.StmtVar(v) => {
       var e: LiftExpr = lift_expr_walk(v.init, acc, gfns);
-      var ns: ast.Stmt = ast.StmtVar { name: v.name, type_name: v.type_name, init: e.expr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
+      var ns: ast.Stmt = ast.StmtVar { name: v.name, type_name: v.type_name, init: e.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
       return LiftStmts { stmts: [ns], acc: e.acc };
     },
     ast.StmtExpr(s) => {
@@ -98204,7 +98231,7 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
   if (lam.origin == ast.ORIGIN_NESTED_FN) {
     lbody = desugar_lambda_returns(lbody, 0, ret_sig_of(lam.ret_type, lam.ret_fn_ret, lam.ret_fn_param_types)).body;
   }
-  var newfn: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "" };
+  var newfn: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "" };
   var capargs: ast.Expr[] = [];
   var ca: i32 = 0;
   while (ca < caps.len()) {
@@ -98417,7 +98444,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     ci = ci + 1;
   }
   // params = __env first, then the lambda's declared params.
-  var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_view: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+  var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
   var pj: i32 = 0;
   while (pj < lam.params.len()) {
     ps = ps.append(lam.params[pj]);
@@ -98431,7 +98458,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
   var cj: i32 = 0;
   while (cj < caps.len()) {
     var idx: ast.Expr = ast.ExprIndex { array: ast.ExprIdent { name: "__env", line: 0, col: 0, ty: "" }, index: ast.ExprNumber { text: util.i32_to_string(1 + cj), suffix: "", raw: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
-    bd = bd.append(ast.StmtVar { name: caps[cj], type_name: ctys[cj], init: idx, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" });
+    bd = bd.append(ast.StmtVar { name: caps[cj], type_name: ctys[cj], init: idx, line: 0, col: 0, fn_ret: "", fn_param_types: "" });
     cj = cj + 1;
   }
   var bk: i32 = 0;
@@ -98440,7 +98467,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     bk = bk + 1;
   }
   var notp: string[] = [];
-  var clo: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: fd.module };
+  var clo: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: fd.module };
   return HoistResult { func: clo, ok: true };
 }
 
@@ -98530,14 +98557,14 @@ function try_inline_closure(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: par
 // (the lambda body inlined verbatim; __env is unused). Always succeeds — a
 // no-capture lambda needs no env reads.
 function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.FuncDecl {
-  var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_view: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+  var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
   var pj: i32 = 0;
   while (pj < lam.params.len()) {
     ps = ps.append(lam.params[pj]);
     pj = pj + 1;
   }
   var notp: string[] = [];
-  return parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "" };
+  return parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "" };
 }
 
 // make_wrap_named_func builds the env-taking trampoline for a BARE FN-NAME field
@@ -98547,12 +98574,12 @@ function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.Fu
 // up by name in `mfuncs`). Declines (ok:false) if no receiver-less function of
 // that name is found — the field then stays as-is and the module bails.
 function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs): HoistResult {
-  var none: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  var none: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
   var fi: i32 = 0;
   while (fi < mfuncs.decls.len()) {
     if (mfuncs.decls[fi].name == fnname && mfuncs.decls[fi].receiver_type.len() == 0) {
       var tgt: parser.FuncDecl = mfuncs.decls[fi];
-      var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_view: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+      var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
       var args: ast.Expr[] = [];
       var pj: i32 = 0;
       while (pj < tgt.params.len()) {
@@ -98577,7 +98604,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
       }
       var bd: ast.Stmt[] = [body];
       var notp: string[] = [];
-      return HoistResult { func: parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types, is_package: false, module: "" }, ok: true };
+      return HoistResult { func: parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types, is_package: false, module: "" }, ok: true };
     }
     fi = fi + 1;
   }
@@ -100474,7 +100501,7 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
     fnptys = armptys;
   }
   var dlr: DesugarRet = desugar_lambda_returns(lam.body, 0, ret_sig_of("fn", fnret, fnptys));
-  var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys, is_package: false, module: fd.module };
+  var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys, is_package: false, module: fd.module };
   var ncall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_args: [], ty: "" };
   return InlineCloRes { expr: ncall, funcs: funcs.append(nf), counter: counter + 1 };
 }
@@ -101216,7 +101243,7 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, gfns:
         _ => {}
       }
       var er: InlineCloRes = lift_inline_closures_expr(v.init, fd, fs, ct, gfns, structs, mfuncs);
-      return (ast.StmtVar { name: v.name, type_name: v.type_name, init: er.expr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, InlineCloAcc { funcs: er.funcs, counter: er.counter }, true);
+      return (ast.StmtVar { name: v.name, type_name: v.type_name, init: er.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, InlineCloAcc { funcs: er.funcs, counter: er.counter }, true);
     },
     ast.StmtReturn(r) => {
       // A callable result uses the same env-box ABI as callable
@@ -101636,14 +101663,14 @@ function wcaps_join(a: WCaps, b: WCaps): WCaps {
 // wcap_cell_decl builds `var $wc$c: T[] = [c];` — the snapshot cell.
 function wcap_cell_decl(c: string, ty: string): ast.Stmt {
   var src: ast.Expr = ast.ExprIdent { name: c, line: 0, col: 0, ty: "" };
-  return ast.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: ast.ExprArray { elements: [src], elem_ty: ty, line: 0, col: 0 }, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
+  return ast.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: ast.ExprArray { elements: [src], elem_ty: ty, line: 0, col: 0 }, line: 0, col: 0, fn_ret: "", fn_param_types: "" };
 }
 
 // wcap_cell_read builds `var c: T = $wc$c[0];` — the lambda-body re-bind.
 function wcap_cell_read(c: string, ty: string): ast.Stmt {
   var cell: ast.Expr = ast.ExprIdent { name: wcap_cell_name(c), line: 0, col: 0, ty: "" };
   var idx: ast.Expr = ast.ExprIndex { array: cell, index: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
-  return ast.StmtVar { name: c, type_name: ty, init: idx, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
+  return ast.StmtVar { name: c, type_name: ty, init: idx, line: 0, col: 0, fn_ret: "", fn_param_types: "" };
 }
 
 // wcap_expr walks one expression, rewriting every lambda in it (prepending the
@@ -101843,7 +101870,7 @@ function wcap_stmt(st: ast.Stmt, fd: parser.FuncDecl, gfns: string[], structs: S
   match (st) {
     ast.StmtVar(v) => {
       var r: WCapExpr = wcap_expr(v.init, fd, gfns, structs, mfuncs, acc, atargets);
-      return WCapStmt { stmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: r.expr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, caps: r.caps, changed: r.changed };
+      return WCapStmt { stmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: r.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, caps: r.caps, changed: r.changed };
     },
     ast.StmtAssign(a) => {
       var r: WCapExpr = wcap_expr(a.value, fd, gfns, structs, mfuncs, acc, atargets);
@@ -102614,7 +102641,7 @@ pub function prepare_lambda_parts(mods: parser.Module[]): parser.Module[] {
 // without it still sees `str`: irlower_run's default, -rc-plan, -str-own and
 // -verify* legs.
 pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
-  return parser.erase_str_module(lift_lambdas_view_typed(raw_mod, view));
+  return parser.erase_view_module(lift_lambdas_view_typed(raw_mod, view));
 }
 
 // lift_lambdas_typed is lift_lambdas for the typed lowering, which keeps each
@@ -103328,6 +103355,15 @@ pub function grow_param_flags_seeded(funcs: parser.FuncDecl[], seeds: string[]):
   var e_ck: i32[] = [];
   var e_argi: i32[] = [];
   var e_ppi: i32[] = [];
+  // The callee of every dying pass is found by name; a scan of all the
+  // functions per pass is quadratic in the whole program.
+  var fnames: string[] = [];
+  var fni: i32 = 0;
+  while (fni < funcs.len()) {
+    fnames = fnames.append(funcs[fni].name);
+    fni = fni + 1;
+  }
+  var by_name: util.NameIndex = util.name_index(fnames);
   var fk0: i32 = 0;
   while (fk0 < funcs.len()) {
     var fd0: parser.FuncDecl = funcs[fk0];
@@ -103368,28 +103404,30 @@ pub function grow_param_flags_seeded(funcs: parser.FuncDecl[], seeds: string[]):
         if (meth) {
           bare = slice_unchecked(cname, 1, cname.len()) + "";
         }
-        var ck0: i32 = 0;
-        while (ck0 < funcs.len()) {
+        // The bucket chain is ascending, so the edges land in declaration
+        // order, as a scan would place them.
+        var ck0: i32 = by_name.chain(bare);
+        while (ck0 >= 0) {
           var hit: boolean = false;
-          if (meth) {
-            hit = funcs[ck0].name == bare && funcs[ck0].receiver_type.len() > 0;
-          } else {
-            hit = funcs[ck0].name == cname && funcs[ck0].receiver_type.len() == 0;
+          if (by_name.names[ck0] == bare) {
+            if (meth) {
+              hit = funcs[ck0].receiver_type.len() > 0;
+            } else {
+              hit = funcs[ck0].receiver_type.len() == 0;
+            }
           }
           if (hit) {
             e_fk = e_fk.append(fk0);
             e_ck = e_ck.append(ck0);
             e_argi = e_argi.append(argi);
             e_ppi = e_ppi.append(ppi0);
-            // A free-function name is unique; a method name is not,
-            // so every method so spelled is an edge.
-            if (!meth) {
-              ck0 = funcs.len();
-            } else {
-              ck0 = ck0 + 1;
-            }
+          }
+          // A free-function name is unique; a method name is not, so
+          // every method so spelled is an edge.
+          if (hit && !meth) {
+            ck0 = 0 - 1;
           } else {
-            ck0 = ck0 + 1;
+            ck0 = by_name.next[ck0];
           }
         }
       }

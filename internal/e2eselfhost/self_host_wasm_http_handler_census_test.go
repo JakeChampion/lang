@@ -49,7 +49,7 @@ func checkSelfHostWasmHTTPHandlerCensus(t *testing.T, client func(*testing.T, st
 		t.Fatal(err)
 	}
 	cmd := exec.Command(driver, "-target", "wasm32-wasi", "-emit", "asm", "-o", wat, src, stdlib)
-	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SEM_IR=1", "FERN_SEM_IR_REPORT=1", "FERN_LEAKCHECK=1")
+	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SEM_IR_REPORT=1", "FERN_LEAKCHECK=1")
 	report, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("compile: %v\n%s", err, report)

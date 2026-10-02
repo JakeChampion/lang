@@ -40,7 +40,7 @@ func TestSelfHostSemanticHandleTty(t *testing.T) {
 	}
 	out := filepath.Join(t.TempDir(), "prog")
 	cmd := exec.Command(fernBin, "-target", "x86-64-linux", src, stdlibRoot, "-o", out)
-	cmd.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_REPORT=1")
+	cmd.Env = append(os.Environ(), "FERN_SEM_IR_REPORT=1")
 	var report strings.Builder
 	cmd.Stderr = &report
 	if err := cmd.Run(); err != nil {

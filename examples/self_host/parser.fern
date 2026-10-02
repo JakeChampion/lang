@@ -74,7 +74,7 @@ struct ParamDestr { names: string, marker: string, synth: string, line: i32, col
 // already carry, recorded through the same non-consuming lookahead and read
 // through the same fn_sig_of rules, so a call through a returned fn value and a
 // call through a parameter cannot disagree about the signature (#5986).
-pub struct FuncDecl { no_inline: boolean, name: string, receiver_name: string, receiver_type: string, type_params: string[], params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], line: i32, col: i32, import_iface: string, import_wit: string, all_type_params: string[], bound_traits: string[], fip: boolean, fbip: boolean, fip_allowance: i32, ret_slice: boolean, async: boolean, is_const: boolean, is_pub: boolean, is_package: boolean, ret_fn_ret: string, ret_fn_param_types: string, module: string }
+pub struct FuncDecl { no_inline: boolean, name: string, receiver_name: string, receiver_type: string, type_params: string[], params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], line: i32, col: i32, import_iface: string, import_wit: string, all_type_params: string[], bound_traits: string[], fip: boolean, fbip: boolean, fip_allowance: i32, async: boolean, is_const: boolean, is_pub: boolean, is_package: boolean, ret_fn_ret: string, ret_fn_param_types: string, module: string }
 
 // Top-level struct decl: `struct Name { field1: T1, field2: T2 }`.
 // Same simplifying assumption as FuncDecl: type names are
@@ -635,14 +635,14 @@ pub function e_unknown_at(kind: string, line: i32, col: i32): ast.Expr {
 }
 
 function s_var(name: string, type_name: string, init: ast.Expr): ast.Stmt {
-  return ast.StmtVar { name: name, type_name: type_name, init: init, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
+  return ast.StmtVar { name: name, type_name: type_name, init: init, line: 0, col: 0, fn_ret: "", fn_param_types: "" };
 }
 
 // s_var_at is s_var with an explicit source position (used at the parse
 // site so a `var` declaration's diagnostics — E003 / E013 / E020 — point
 // at the `var` keyword).
 function s_var_at(name: string, type_name: string, init: ast.Expr, line: i32, col: i32): ast.Stmt {
-  return ast.StmtVar { name: name, type_name: type_name, init: init, line: line, col: col, is_view: false, fn_ret: "", fn_param_types: "" };
+  return ast.StmtVar { name: name, type_name: type_name, init: init, line: line, col: col, fn_ret: "", fn_param_types: "" };
 }
 
 // parse_destructure_names consumes `(a, b, …)` with the cursor ON the opening
@@ -5491,7 +5491,7 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
       // `use` chains).
       let (rest_body, rest_p) = parse_block_body(p, false);
       p = rest_p;
-      var cbparam: ast.ParamDecl = ast.ParamDecl { name: uname, type_name: utype, is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
+      var cbparam: ast.ParamDecl = ast.ParamDecl { name: uname, type_name: utype, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
       var cbparams: ast.ParamDecl[] = [cbparam];
       // use_infer marks the synthesised callback when the user wrote
       // no `: TYPE` — the checker's E032 rule verifies the binding
@@ -7556,7 +7556,6 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     // / generics) is still a later milestone; for now just
     // the bare leading token.
     var type_name: string = "";
-    var v_is_view: boolean = false;
     // The declared fn type's RETURN spelling, kept past the annotation block
     // so a lambda init can be stamped with it below. "" when the binding has
     // no annotation or the annotation is not a fn type.
@@ -7568,7 +7567,6 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
       let (vtr, vtr_p) = parse_decl_type(p);
       p = vtr_p;
       type_name = vtr.name;
-      v_is_view = vtr.is_view;
       v_fn_ret = vtr.fn_ret;
       v_fn_ptys = vtr.fn_params;
     }
@@ -7636,7 +7634,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     // builtin surface. The annotation outranks the inference.
     init_expr = stamp_lambda_ret(init_expr, v_fn_ret);
     init_expr = stamp_value_block_ret(init_expr, type_name);
-    return (ast.StmtVar { name: discard_name(name, vline, vcol, 0), type_name: type_name, init: init_expr, line: vline, col: vcol, is_view: v_is_view, fn_ret: v_fn_ret, fn_param_types: v_fn_ptys }, p);
+    return (ast.StmtVar { name: discard_name(name, vline, vcol, 0), type_name: type_name, init: init_expr, line: vline, col: vcol, fn_ret: v_fn_ret, fn_param_types: v_fn_ptys }, p);
   }
   if (kw == "return") {
     var rline: i32 = p.peek_line();
@@ -7947,8 +7945,9 @@ function is_nominal_ret_name(n: string): boolean {
 }
 
 // ret_spelling_is_array reports whether a return-type spelling names an array.
+// A `[T]` view counts: it is indexed and iterated as the array it lowers to.
 function ret_spelling_is_array(name: string): boolean {
-  return name.len() >= 2 && slice_unchecked(name, name.len() - 2, name.len()) == "[]";
+  return type_ends_arr(name) || spelling_is_view(name);
 }
 
 // fn_ret_admitted is the single rule for which RESULT spellings a fn type keeps
@@ -8309,6 +8308,25 @@ function unwrap_grouping_parens(s: string): string {
   return t;
 }
 
+// matching_bracket returns the index of the `]` matching the `[` at `start`,
+// or -1 when unbalanced.
+function matching_bracket(s: string, start: i32): i32 {
+  var depth: i32 = 0;
+  var i: i32 = start;
+  while (i < s.len()) {
+    if (s[i] == b'[') {
+      depth = depth + 1;
+    } else if (s[i] == b']') {
+      depth = depth - 1;
+      if (depth == 0) {
+        return i;
+      }
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
 // matching_close returns the index of the `)` matching the `(` at `start`,
 // or -1 when unbalanced.
 function matching_close(s: string, start: i32): i32 {
@@ -8432,12 +8450,9 @@ function parse_type_punct_led(p: Par): (string, boolean, string, Par) {
   if (p.peek_punct() == "(") {
     return parse_type_paren(p);
   }
-  // Prefix-bracket type `[T]` (e.g. `var ab: [u8] = ...`).
-  // Without consuming it the surrounding decl loop spins on the
-  // `[` (OOMs the compiler). Reduce to the canonical postfix
-  // `T[]` form by parsing the inner type, swallowing the `]`,
-  // and returning `inner + "[]"` so ret_tag_of maps it through
-  // the existing array path.
+  // Prefix-bracket type `[T]`: a borrowed view, kept as written so the
+  // checker can tell it from an owned `T[]` anywhere inside a type. The
+  // lowering folds it to the array it lowers to (erase_view_spelling).
   if (p.peek_punct() == "[") {
     p = p.advance();  // consume `[`
     let (bracketed_name, bracketed_ret_arr, bracketed_fn_ret, bracketed_p) = parse_type_name(p);
@@ -8445,13 +8460,8 @@ function parse_type_punct_led(p: Par): (string, boolean, string, Par) {
     if (p.peek_punct() == "]") {
       p = p.advance();
     }
-    // `-fmt` opts out (Par.verbatim): `[T]` is a borrowed VIEW and `T[]`
-    // an owned array, so canonicalising on a reformat rewrites the
-    // program's ownership.
-    if (p.verbatim) {
-      return ("[" + bracketed_name + "]", false, "", p);
-    }
-    return (bracketed_name + "[]", false, "", p);
+    let (suffixed, sp) = parse_array_suffixes(p, "[" + bracketed_name + "]");
+    return (suffixed, false, "", sp);
   }
   return ("", false, "", p);
 }
@@ -8637,16 +8647,23 @@ function parse_type_ident_led(p: Par, base: string): (string, boolean, string, P
   // `[]` pair and append it. Without this the second `[]` is left on
   // the cursor and the surrounding decl misaligns (the `var` binding
   // gets dropped). The base case `T[]` already returned above.
+  let (suffixed, sp) = parse_array_suffixes(p, nm);
+  return (suffixed, false, "", sp);
+}
+
+// parse_array_suffixes folds the `[]` pairs after a complete type onto `nm`:
+// `i32[][]`, `Map[K, V][]`, `[u8][]`. After a complete type a `[` is only ever
+// an empty array suffix in this grammar.
+function parse_array_suffixes(p: Par, nm: string): (string, Par) {
+  var out: string = nm;
   while (p.peek_punct() == "[") {
-    p = p.advance();  // consume `[`
-    if (p.peek_punct() == "]") {
-      p = p.advance();  // consume `]`
-      nm = nm + "[]";
-    } else {
+    if (p.peek_punct_at(1) != "]") {
       break;
     }
+    p = p.advance().advance();
+    out = out + "[]";
   }
-  return (nm, false, "", p);
+  return (out, p);
 }
 
 // parse_type_name is the depth-guarded face of parse_type_name_nested: see MAX_NEST_DEPTH.
@@ -8658,14 +8675,12 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
   return (g0, g1, g2, gq.with_depth(p.depth));
 }
 
-struct DeclType { name: string, is_view: boolean, ret_arr: boolean, fn_ret: string, fn_params: string, fn_dyn: string }
+struct DeclType { name: string, ret_arr: boolean, fn_ret: string, fn_params: string, fn_dyn: string }
 
 // Keep the legacy declaration tag and its exact callable contract together.
 function parse_decl_type(p: Par): (DeclType, Par) {
   let (name, ret_arr, fn_ret, end) = parse_type_name(p);
-  // parse_type_name erases a `[T]` view to `T[]`; only the opening `[`
-  // tells the two apart.
-  var out: DeclType = DeclType { name: name, is_view: p.peek_punct() == "[", ret_arr: ret_arr, fn_ret: fn_ret, fn_params: "", fn_dyn: "" };
+  var out: DeclType = DeclType { name: name, ret_arr: ret_arr, fn_ret: fn_ret, fn_params: "", fn_dyn: "" };
   if (p.verbatim || name != "fn" && name != "fn[]") {
     return (out, end);
   }
@@ -8676,7 +8691,7 @@ function parse_decl_type(p: Par): (DeclType, Par) {
   }
   var result: string = render_type_ref(ref_fn_result(ref));
   return (DeclType {
-    name: name, is_view: false, ret_arr: ret_spelling_is_array(result), fn_ret: result,
+    name: name, ret_arr: ret_spelling_is_array(result), fn_ret: result,
     fn_params: ref_fn_param_spellings(ref), fn_dyn: ref_fn_param_dyn(ref),
   }, end);
 }
@@ -8870,7 +8885,7 @@ pub function is_destr_marker(type_name: string): boolean {
 function parse_pattern_param(p: Par): (ast.ParamDecl, ParamDestr, Par) {
   var tline: i32 = p.peek_line();
   var tcol: i32 = p.peek_col();
-  var bad_param: ast.ParamDecl = ast.ParamDecl { name: "", type_name: "", is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
+  var bad_param: ast.ParamDecl = ast.ParamDecl { name: "", type_name: "", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
   var bad: ParamDestr = ParamDestr { names: "", marker: "", synth: "", line: tline, col: tcol };
   // `w @ <pattern>` names the whole value; the binder becomes the holder, so
   // the body reads the argument under the name the source gave it.
@@ -8922,7 +8937,7 @@ function parse_pattern_param(p: Par): (ast.ParamDecl, ParamDestr, Par) {
   if (holder.len() == 0) {
     holder = "__ptuple_" + util.i32_to_string(tline) + "_" + util.i32_to_string(tcol);
   }
-  return (ast.ParamDecl { name: holder, type_name: tr.name, is_view: tr.is_view, own: false, has_default: false, default_value: e_unknown(""), ret_arr: tr.ret_arr, fn_ret: tr.fn_ret, fn_param_dyn: tr.fn_dyn, fn_param_types: tr.fn_params }, ParamDestr { names: names, marker: marker, synth: holder, line: tline, col: tcol }, p);
+  return (ast.ParamDecl { name: holder, type_name: tr.name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: tr.ret_arr, fn_ret: tr.fn_ret, fn_param_dyn: tr.fn_dyn, fn_param_types: tr.fn_params }, ParamDestr { names: names, marker: marker, synth: holder, line: tline, col: tcol }, p);
 }
 
 // prepend_param_destrs splices the desugared `let (a, b) = <holder>;` /
@@ -8952,7 +8967,7 @@ function prepend_param_destrs(body: ast.Stmt[], destrs: ParamDestr[]): ast.Stmt[
 function parse_param(p: Par, nth: i32): (ast.ParamDecl, Par) {
   var name: string = p.peek_ident();
   if (name.len() == 0) {
-    return (ast.ParamDecl { name: "", type_name: "", is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }, p);
+    return (ast.ParamDecl { name: "", type_name: "", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }, p);
   }
   // `own NAME: TYPE` — the affine-ownership modifier (move-checked by
   // the checker's E050/E051). `own` is a plain ident to the lexer, so it
@@ -8971,7 +8986,7 @@ function parse_param(p: Par, nth: i32): (ast.ParamDecl, Par) {
   name = discard_name(name, p.peek_line(), p.peek_col(), nth);
   p = p.advance();
   if (p.peek_punct() != ":") {
-    return (ast.ParamDecl { name: name, type_name: "", is_view: false, own: is_own, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }, p);
+    return (ast.ParamDecl { name: name, type_name: "", own: is_own, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }, p);
   }
   p = p.advance();
   let (tr, tr_p) = parse_decl_type(p);
@@ -8987,7 +9002,7 @@ function parse_param(p: Par, nth: i32): (ast.ParamDecl, Par) {
     has_def = true;
     def_val = de_expr;
   }
-  return (ast.ParamDecl { name: name, type_name: tr.name, is_view: tr.is_view, own: is_own, has_default: has_def, default_value: def_val, ret_arr: tr.ret_arr, fn_ret: tr.fn_ret, fn_param_dyn: tr.fn_dyn, fn_param_types: tr.fn_params }, p);
+  return (ast.ParamDecl { name: name, type_name: tr.name, own: is_own, has_default: has_def, default_value: def_val, ret_arr: tr.ret_arr, fn_ret: tr.fn_ret, fn_param_dyn: tr.fn_dyn, fn_param_types: tr.fn_params }, p);
 }
 
 // parse_func_decl consumes `function name(params): ret_type { body }`
@@ -9195,7 +9210,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
   }
   var name: string = p.peek_member_name();
   if (name.len() == 0) {
-    return (FuncDecl { no_inline: false, name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" }, p);
+    return (FuncDecl { no_inline: false, name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" }, p);
   }
   p = p.advance();
   // Generic type parameters written AFTER the name (`name[T: Bound, U]`).
@@ -9218,7 +9233,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     tpi0 = tpi0 + 1;
   }
   if (p.peek_punct() != "(") {
-    return (FuncDecl { no_inline: false, name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: all_tps, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" }, p);
+    return (FuncDecl { no_inline: false, name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: all_tps, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" }, p);
   }
   p = p.advance();
   var params: ast.ParamDecl[] = [];
@@ -9231,7 +9246,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         let (tpr_param, tpr_destr, tpr_p) = parse_pattern_param(p);
         p = tpr_p;
         if (tpr_destr.names.len() == 0) {
-          return (FuncDecl { no_inline: false, name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" }, p);
+          return (FuncDecl { no_inline: false, name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" }, p);
         }
         params = params.append(tpr_param);
         pd = pd.append(tpr_destr);
@@ -9263,19 +9278,11 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     p = p.advance();
   }
   var ret_type: string = "";
-  // parse_type_name erases `[T]` to `T[]` (a view and an owned array become
-  // one spelling), so E063's view-escape rule cannot tell them apart
-  // afterwards. A `[` here opens a slice return; nothing else can start a
-  // return type.
-  var fn_ret_slice: boolean = false;
   // The returned fn value's own signature, for the two FuncDecl sidecars.
   var fn_ret_fn_ret: string = "";
   var fn_ret_fn_ptys: string = "";
   if (p.peek_punct() == ":") {
     p = p.advance();
-    if (p.peek_punct() == "[") {
-      fn_ret_slice = true;
-    }
     let (fr, fr_tr_p) = parse_decl_type(p);
     p = fr_tr_p;
     ret_type = fr.name;
@@ -9487,9 +9494,9 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     // param has nothing to bind into, so degrade to the empty-name
     // FuncDecl the caller treats as a parse failure.
     if (pd.len() > 0) {
-      return (FuncDecl { no_inline: false, name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" }, p);
+      return (FuncDecl { no_inline: false, name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" }, p);
     }
-    return (FuncDecl { no_inline: false, name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: all_tps, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, ret_slice: fn_ret_slice, async: false, is_const: false, is_pub: false, ret_fn_ret: fn_ret_fn_ret, ret_fn_param_types: fn_ret_fn_ptys, is_package: false, module: "" }, p);
+    return (FuncDecl { no_inline: false, name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: all_tps, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: fn_ret_fn_ret, ret_fn_param_types: fn_ret_fn_ptys, is_package: false, module: "" }, p);
   }
   let (blk_body, blk_p) = parse_block(p);
   p = blk_p;
@@ -9554,7 +9561,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
       }
     }
   }
-  return (FuncDecl { no_inline: false, name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: fbody, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: all_tps, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, ret_slice: fn_ret_slice, async: false, is_const: false, is_pub: false, ret_fn_ret: fn_ret_fn_ret, ret_fn_param_types: fn_ret_fn_ptys, is_package: false, module: "" }, p);
+  return (FuncDecl { no_inline: false, name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: fbody, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: all_tps, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: fn_ret_fn_ret, ret_fn_param_types: fn_ret_fn_ptys, is_package: false, module: "" }, p);
 }
 
 function parse_struct_field(p: Par): (StructFieldDecl, Par) {
@@ -9977,7 +9984,7 @@ function parse_const_decl(p: Par): (FuncDecl, Par) {
   body = body.append(s_return(er_expr));
   var noparams: ast.ParamDecl[] = [];
   var notp: string[] = [];
-  return (FuncDecl { no_inline: false, name: name, receiver_name: "", receiver_type: "", type_params: notp, params: noparams, ret_type: ty, body: body, line: cline, col: ccol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: true, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" }, p);
+  return (FuncDecl { no_inline: false, name: name, receiver_name: "", receiver_type: "", type_params: notp, params: noparams, ret_type: ty, body: body, line: cline, col: ccol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: true, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" }, p);
 }
 
 // struct_declared reports whether `structs` already contains a struct
@@ -10128,7 +10135,7 @@ pub function builtin_function_names(): string[] {
     // the capacity-carrying string builder (#8773): a handle is the
     // address of its own control block, so any number are live at once.
     "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte", "buf_push_u64", "buf_len",
-    "buf_take", "buf_free",
+    "buf_take", "buf_take_bytes", "buf_push_bytes_range", "buf_free",
     // Cell[T] constructor (docs/CELL-TYPE-PLAN.md): cell_new(v) is a
     // front-end builtin (like map_new); get/set are method calls, not
     // bare names, so only the constructor needs the E001 suppression.
@@ -10542,6 +10549,8 @@ pub struct MFns {
   // The `__smm_<Base>_<field>` fold names. A handful per module, and the test
   // is a SUFFIX match rather than equality, so this one stays a scan.
   smm: string[],
+  // Concrete array/view folds, indexed separately from generic templates.
+  array_concrete: i32[],
   // The module's struct decls, so a struct-literal FIELD VALUE can be
   // rewritten against the field's declared type. It travels here for the same
   // reason the index does: built from one array, it cannot disagree with the
@@ -10582,6 +10591,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
   var gname: string[] = [];
   var gat: i32[] = [];
   var smm: string[] = [];
+  var array_concrete: i32[] = [];
   var i: i32 = 0;
   while (i < decls.len()) {
     if (decls[i].type_params.len() > 0 && decls[i].receiver_name.len() == 0) {
@@ -10590,6 +10600,9 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
     }
     if (decls[i].name.len() > 6 && slice_unchecked(decls[i].name, 0, 6) == "__smm_") {
       smm = smm.append(decls[i].name);
+    }
+    if (is_concrete_array_fold(decls[i])) {
+      array_concrete = array_concrete.append(i);
     }
     i = i + 1;
   }
@@ -10606,7 +10619,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
     ghead = ghead.with(bk, k);
     k = k - 1;
   }
-  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, structs: structs, enums: enums, impls: impls };
+  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, array_concrete: array_concrete, structs: structs, enums: enums, impls: impls };
 }
 
 // bg_find returns the position in `fns.decls` of the bounded-generic function
@@ -10786,6 +10799,7 @@ function strip_type_spaces(t: string): string {
 //                 outside base/args so "(a, b)[]" and "Map[i32][]" round-trip.
 //   is_tuple    — true for "(…)" tuples (base is "", args are the elements),
 //                 distinguishing them from a "Name[…]" generic at render time.
+//   is_view     — true for a "[T]" view (base is "", args is the one element).
 //
 // `dyn`/`own`/`borrow` handles are coarsed to opaque spellings ("dyn Shape",
 // "own R") by parse_type_name, so TypeRef treats them as opaque named bases (a
@@ -10795,7 +10809,7 @@ function strip_type_spaces(t: string): string {
 // exclusive shapes over the same `args` list: a tuple's args are its elements,
 // a function's are its parameters followed by its RESULT as the last entry (so
 // `() => P` carries one arg and `(A, B) => C` carries three).
-pub struct TypeRef { base: string, args: TypeRef[], array_depth: i32, is_tuple: boolean, is_fn: boolean }
+pub struct TypeRef { base: string, args: TypeRef[], array_depth: i32, is_tuple: boolean, is_fn: boolean, is_view: boolean }
 
 // elem_type_ref peels one array level off `t` — the element type of `T[]`.
 // Every consumer that recurses through an array suffix needs it, and each one
@@ -10859,7 +10873,7 @@ pub function parse_type_ref(sin: string): TypeRef {
         }
       }
       fargs = fargs.append(parse_type_ref(rhs));
-      return TypeRef { base: "", args: fargs, array_depth: 0, is_tuple: false, is_fn: true };
+      return TypeRef { base: "", args: fargs, array_depth: 0, is_tuple: false, is_fn: true, is_view: false };
     }
   }
   // Only peel array suffixes after ruling out an outer arrow. In
@@ -10868,6 +10882,10 @@ pub function parse_type_ref(sin: string): TypeRef {
   while (s.len() >= 2 && s[s.len() - 2] == b'[' && s[s.len() - 1] == b']') {
     depth = depth + 1;
     s = slice_unchecked(s, 0, s.len() - 2) + "";
+  }
+  // View "[T]": the prefix bracket closes at the end and wraps the element.
+  if (s.len() >= 2 && s[0] == b'[' && matching_bracket(s, 0) == s.len() - 1) {
+    return TypeRef { base: "", args: [parse_type_ref(slice_unchecked(s, 1, s.len() - 1) + "")], array_depth: depth, is_tuple: false, is_fn: false, is_view: true };
   }
   // Tuple "(…)": base "", args are the (recursively parsed) elements.
   if (s.len() >= 2 && s[0] == b'(' && s[s.len() - 1] == b')') {
@@ -10878,7 +10896,7 @@ pub function parse_type_ref(sin: string): TypeRef {
       targs = targs.append(parse_type_ref(tsegs[ti]));
       ti = ti + 1;
     }
-    return TypeRef { base: "", args: targs, array_depth: depth, is_tuple: true, is_fn: false };
+    return TypeRef { base: "", args: targs, array_depth: depth, is_tuple: true, is_fn: false, is_view: false };
   }
   // Generic "Name[…]": base is the head before the first top-level "[", args
   // are the bracketed, comma-split arguments. (After the array peel above the
@@ -10901,10 +10919,10 @@ pub function parse_type_ref(sin: string): TypeRef {
       gargs = gargs.append(parse_type_ref(gsegs[gi]));
       gi = gi + 1;
     }
-    return TypeRef { base: slice_unchecked(s, 0, lb) + "", args: gargs, array_depth: depth, is_tuple: false, is_fn: false };
+    return TypeRef { base: slice_unchecked(s, 0, lb) + "", args: gargs, array_depth: depth, is_tuple: false, is_fn: false, is_view: false };
   }
   // Plain scalar / named type (incl. opaque "dyn …" / "own …" spellings).
-  return TypeRef { base: s, args: [], array_depth: depth, is_tuple: false, is_fn: false };
+  return TypeRef { base: s, args: [], array_depth: depth, is_tuple: false, is_fn: false, is_view: false };
 }
 
 // Parameter names are syntax, not part of the callable type.
@@ -10949,6 +10967,13 @@ pub function ref_ungroup(r: TypeRef): TypeRef {
 pub function ref_is_fn_value(r: TypeRef): boolean {
   var f: TypeRef = ref_ungroup(r);
   return f.array_depth == 0 && f.is_fn;
+}
+
+// spelling_is_view reports whether a type spelling is itself a `[T]` view, as
+// opposed to an array of views or a view nested in another type.
+pub function spelling_is_view(spelling: string): boolean {
+  var r: TypeRef = parse_type_ref(spelling);
+  return r.is_view && r.array_depth == 0;
 }
 
 // A parameter spelling may carry the CONSUMING marker `own T`: the callee
@@ -11095,6 +11120,8 @@ pub function render_type_ref(t: TypeRef): string {
       i = i + 1;
     }
     inner = inner + ")";
+  } else if (t.is_view) {
+    inner = "[" + render_type_ref(t.args[0]) + "]";
   } else if (t.args.len() > 0) {
     inner = t.base + "[";
     var k: i32 = 0;
@@ -11196,6 +11223,12 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
   }
   if (type_ends_arr(pattern) && type_ends_arr(concrete)) {
     return bind_unify(slice_unchecked(pattern, 0, pattern.len() - 2), slice_unchecked(concrete, 0, concrete.len() - 2), tparams, binds);
+  }
+  if (spelling_is_view(pattern)) {
+    var elem: string = array_method_element(concrete);
+    if (elem.len() > 0) {
+      return bind_unify(array_method_element(pattern), elem, tparams, binds);
+    }
   }
   // Tuple pattern `(K, V)` vs `(i32, i32)` — destructure the parens and unify
   // pairwise, so a tuple (or tuple-array, via the array case above) parameter
@@ -11806,7 +11839,10 @@ function call_ret_type(funcs: MFns, name: string, args: ast.Expr[], env: MEnv): 
   if (fi < 0) {
     return "";
   }
-  var fd: FuncDecl = funcs.decls[fi];
+  return decl_call_ret_type(funcs, funcs.decls[fi], args, env);
+}
+
+function decl_call_ret_type(funcs: MFns, fd: FuncDecl, args: ast.Expr[], env: MEnv): string {
   // A generic whose type params were ALL erased — every one unbounded —
   // still carries them in its RETURN type: `pick2[T](keep: (T) => boolean):
   // T[]` reaches here with type_params empty and ret_type "T[]". Handing
@@ -12023,10 +12059,18 @@ pub function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
 // recv_method_ret_of is the declared return type of a receiver method call
 // `recv.m(args)` whose receiver type the walk knows. A generic receiver's
 // method returns its type variable, which names nothing concrete.
-function recv_method_ret_of(cfa: ast.ExprFieldAccess, env: MEnv, funcs: MFns): string {
+function recv_method_ret_of(cfa: ast.ExprFieldAccess, args: ast.Expr[], env: MEnv, funcs: MFns): string {
   var rvt: string = mono_infer(cfa.obj, env, funcs);
   if (rvt.len() == 0) {
     return "";
+  }
+  var concrete: i32 = concrete_array_method_at(funcs, rvt, cfa.field);
+  if (concrete >= 0) {
+    var call_args: ast.Expr[] = [cfa.obj];
+    for arg in args {
+      call_args = call_args.append(arg);
+    }
+    return decl_call_ret_type(funcs, funcs.decls[concrete], call_args, env);
   }
   var mrt: string = assoc_ret_of(funcs.decls, rvt, cfa.field);
   if (mrt.len() == 0) {
@@ -12136,6 +12180,17 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
     ast.ExprIdent(id) => {
       return env.elook(id.name);
     },
+    ast.ExprSlice(sl) => {
+      var source: string = mono_infer(sl.array, env, funcs);
+      if (source == "string" || source == "str") {
+        return "Option[str]";
+      }
+      var elem: string = array_method_element(source);
+      if (elem.len() > 0) {
+        return "[" + elem + "]";
+      }
+      return "";
+    },
     ast.ExprLambda(lm) => {
       // A local bound to a lambda carries the lambda's declared shape, so a
       // generic taking it as a fn argument can still read its parameters —
@@ -12219,6 +12274,11 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           if (crt.len() == 0) {
             crt = func_ret_of(funcs.decls, cid.name);
           }
+          // This builtin has no FuncDecl to read. Keep its declared
+          // owned byte-array result for generic receiver selection.
+          if (crt.len() == 0 && cid.name == "buf_take_bytes" && c.args.len() == 1) {
+            return "u8[]";
+          }
           // A bare type variable as the inferred call type — `A` from a
           // generic whose return type IS an UNBOUNDED type param
           // (`fold[T, A, I]: A`): `A` is erased from `type_params`, so
@@ -12249,6 +12309,14 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           if ((cfa.field == "to_string" || cfa.field == "to_debug") && c.args.len() == 0) {
             return "string";
           }
+          // The builtin has no function declaration for return-type lookup.
+          // Preserve its borrowed view when inferring a following method.
+          if (cfa.field == "as_bytes" && c.args.len() == 0) {
+            var source: string = mono_infer(cfa.obj, env, funcs);
+            if (source == "string" || source == "str") {
+              return "[u8]";
+            }
+          }
           // Generic array method `recv.m(args)` whose receiver is an
           // array — folded to `__arrm_m[T]` by
           // register_array_method_generics. Infer the receiver's element
@@ -12256,10 +12324,14 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           // CHAINED call (`a.concat(b).concat(c)`) recovers the inner
           // result type and the outer call rewrites onto the IR path too.
           var amgi: i32 = bg_find(funcs, "__arrm_" + cfa.field);
-          if (amgi >= 0) {
+          var vmgi: i32 = bg_find(funcs, "__viewm_" + cfa.field);
+          if (amgi >= 0 || vmgi >= 0) {
             var recvt: string = mono_infer(cfa.obj, env, funcs);
-            if (type_ends_arr(recvt)) {
-              var el: str = slice_unchecked(recvt, 0, recvt.len() - 2);
+            if (spelling_is_view(recvt)) {
+              amgi = vmgi;
+            }
+            var el: string = array_method_element(recvt);
+            if (amgi >= 0 && el.len() > 0) {
               var amrt: string = subst_ty(funcs.decls[amgi].ret_type, funcs.decls[amgi].type_params, [el + ""]);
               // `type_params` carries only the BOUNDED receiver var, so a
               // method with an unbounded param of its own — `map[U]`,
@@ -12309,7 +12381,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
               }
             }
           }
-          var mrt: string = recv_method_ret_of(cfa, env, funcs);
+          var mrt: string = recv_method_ret_of(cfa, c.args, env, funcs);
           if (mrt.len() > 0) {
             return mrt;
           }
@@ -12332,6 +12404,13 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           }
           return stamped_scalar(c.ty);
         },
+        ast.ExprLambda(lm) => {
+          // Value blocks carry the checker's result, including view receivers.
+          if (!mono_ty_mentions_var(lm.ret_type)) {
+            return lm.ret_type;
+          }
+          return "";
+        },
         _ => {
           return stamped_scalar(c.ty);
         }
@@ -12339,18 +12418,17 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       return "";
     },
     ast.ExprIndex(ix) => {
-      // `a[i]` where `a: T[]` — the element type is the array type minus its
-      // `[]` suffix. Without this arm mono_infer fell through to "" for an
+      // `a[i]` on an array or view has its container's element type.
+      // Without this arm mono_infer fell through to "" for an
       // array-element read, so a call like `f(a[i], a[j])` could not bind `f`'s
       // type parameter at all: the call stayed generic, the un-monomorphised
       // symbol survived to the IR eligibility gate, and the gate rejected the
       // CALLER as ineligible — a hard compile error since the AST emitters
       // were deleted (#6189).
       //
-      // Guarded on the `[]` suffix rather than blindly trimming two chars: a
-      // STRING index (`s[i]`) yields a char, not a "strin", and an unknown
-      // object type must stay unknown so the call is left generic rather than
-      // bound to a wrong instantiation.
+      // Read exactly one container layer, preserving nested views. String
+      // indices and unknown containers stay unknown here instead of binding
+      // a generic to a truncated type spelling.
       //
       // The element type is also rejected when it is itself a bare type
       // variable — indexing a `T[]` inside a generic yields `T`, which is not
@@ -12360,9 +12438,8 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       // fails to compile. Same reasoning as the `looks_type_var(crt)` guard on
       // an inferred call return above.
       var at: string = mono_infer(ix.array, env, funcs);
-      var n: i32 = at.len();
-      if (n > 2 && slice_unchecked(at, n - 2, n) == "[]") {
-        var el: string = slice_unchecked(at, 0, n - 2) + "";
+      var el: string = array_method_element(at);
+      if (el.len() > 0) {
         if (looks_type_var(el)) {
           return "";
         }
@@ -12475,6 +12552,44 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
             },
             _ => {}
           }
+          // Fold concrete receivers before erasure can merge their namespaces.
+          if (funcs.array_concrete.len() > 0) {
+            var concrete: i32 = concrete_array_method_at(funcs, mono_infer(fac.obj, env, funcs), fac.field);
+            if (concrete >= 0) {
+              var receiver: RExpr = mono_expr(fac.obj, env, funcs, cur);
+              var args: ast.Expr[] = [receiver.rexpr];
+              for arg in nargs {
+                args = args.append(arg);
+              }
+              var name: string = funcs.decls[concrete].name;
+              var instances: Insts = receiver.rins;
+              var bound: boolean = true;
+              if (funcs.decls[concrete].type_params.len() > 0) {
+                // Infer from the original arguments: a nested generic call
+                // already rewritten in nargs names a clone outside decls.
+                var raw: ast.Expr[] = [fac.obj];
+                for arg in c.args {
+                  raw = raw.append(arg);
+                }
+                var key: string = explicit_inst_key(funcs.decls[concrete], c.type_args);
+                if (key.len() == 0) {
+                  key = infer_inst(funcs.decls[concrete], raw, env, funcs);
+                }
+                if (key.len() > 0) {
+                  instances = instances.iadd(name, key);
+                  name = name + "__" + sanitize_key(key);
+                } else {
+                  // The bare template is dropped before lowering, so a call
+                  // naming it would have no target: the call stays on its
+                  // receiver for the dispatch to refuse by the written name.
+                  bound = false;
+                }
+              }
+              if (bound) {
+                return RExpr { rexpr: ast.ExprCall { ...c, callee: ast.ExprIdent { name: name, line: fac.line, col: fac.col, ty: "" }, args: args }, rins: instances };
+              }
+            }
+          }
           // Value-receiver generic array method `recv.m(args)` —
           // m was folded to a bounded free generic `__arrm_m[T]`
           // by register_array_method_generics. When recv is
@@ -12484,9 +12599,14 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
           // `mod.f(args)` still wins.
           var amn: string = "__arrm_" + fac.field;
           var amg: i32 = bg_find(funcs, amn);
-          if (amg >= 0) {
+          var vmg: i32 = bg_find(funcs, "__viewm_" + fac.field);
+          if (amg >= 0 || vmg >= 0) {
             var rty: string = mono_infer(fac.obj, env, funcs);
-            if (type_ends_arr(rty)) {
+            if (spelling_is_view(rty)) {
+              amn = "__viewm_" + fac.field;
+              amg = vmg;
+            }
+            if (amg >= 0 && array_method_element(rty).len() > 0) {
               var raw: ast.Expr[] = [fac.obj];
               var rk: i32 = 0;
               while (rk < c.args.len()) {
@@ -12655,7 +12775,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
       return RExpr { rexpr: ast.ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col, written: s.written }, rins: rb.rins };
     },
     ast.ExprLambda(lm) => {
-      var bodyr: RStmts = mono_stmts(lm.body, env, funcs, ins, "");
+      var bodyr: RStmts = mono_stmts(lm.body, bind_params(env, lm.params), funcs, ins, "");
       return RExpr { rexpr: ast.ExprLambda { ...lm, body: bodyr.rstmts }, rins: bodyr.rins3 };
     },
     _ => {
@@ -13042,7 +13162,7 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
       // binders comma-joined in the name; type each from the matching
       // element of the init's tuple type, so a later call taking one of
       // them (`map_stmts_acc(body, na, …)`) can still bind its instantiation.
-      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, renv: menv_bind_destructure(env.ebind(v.name, ty), v.name, ty), rins2: iv.rins };
+      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, renv: menv_bind_destructure(env.ebind(v.name, ty), v.name, ty), rins2: iv.rins };
     },
     ast.StmtReturn(r) => {
       // A `return mk()` binds a bounded-generic constructor's type params
@@ -13137,7 +13257,13 @@ function mono_stmts(stmts: ast.Stmt[], env: MEnv, funcs: MFns, ins: Insts, ret_t
 // callee's return-position type var from a fn PARAM passed on (`map_values(f)`
 // calling `__om_map_values(t, f)` with `f: (V) => W`).
 function env_from_params(params: ast.ParamDecl[]): MEnv {
-  var e: MEnv = MEnv { mnames: [], mtypes: [] };
+  return bind_params(MEnv { mnames: [], mtypes: [] }, params);
+}
+
+// bind_params is env_from_params on top of an enclosing env: a lambda's
+// parameters shadow what its body can otherwise see.
+function bind_params(env: MEnv, params: ast.ParamDecl[]): MEnv {
+  var e: MEnv = env;
   var i: i32 = 0;
   while (i < params.len()) {
     var pt: string = params[i].type_name;
@@ -13211,6 +13337,9 @@ pub function subst_ty(name: string, tparams: string[], cts: string[]): string {
   // the variable sits behind the mode.
   if (name.len() > 4 && slice_unchecked(name, 0, 4) == "own ") {
     return "own " + subst_ty(slice_unchecked(name, 4, name.len()) + "", tparams, cts);
+  }
+  if (spelling_is_view(name)) {
+    return "[" + subst_ty(slice_unchecked(name, 1, name.len() - 1) + "", tparams, cts) + "]";
   }
   if (type_ends_arr(name)) {
     return subst_ty(slice_unchecked(name, 0, name.len() - 2), tparams, cts) + "[]";
@@ -13418,7 +13547,7 @@ function subst_stmts(stmts: ast.Stmt[], tparams: string[], cts: string[]): ast.S
     var st: ast.Stmt = stmts[i];
     match (st) {
       ast.StmtVar(v) => {
-        out = out.append(ast.StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: subst_expr(v.init, tparams, cts), line: v.line, col: v.col, is_view: v.is_view, fn_ret: subst_ty(v.fn_ret, tparams, cts), fn_param_types: subst_ty_list(v.fn_param_types, tparams, cts) });
+        out = out.append(ast.StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: subst_expr(v.init, tparams, cts), line: v.line, col: v.col, fn_ret: subst_ty(v.fn_ret, tparams, cts), fn_param_types: subst_ty_list(v.fn_param_types, tparams, cts) });
       },
       ast.StmtReturn(r) => {
         out = out.append(ast.StmtReturn { value: subst_expr(r.value, tparams, cts), line: r.line, col: r.col });
@@ -13543,7 +13672,7 @@ function retarget_self_lit_stmts(stmts: ast.Stmt[], base: string, mang: string):
     var st: ast.Stmt = stmts[i];
     match (st) {
       ast.StmtVar(v) => {
-        out = out.append(ast.StmtVar { name: v.name, type_name: v.type_name, init: retarget_self_lit_expr(v.init, base, mang), line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types });
+        out = out.append(ast.StmtVar { name: v.name, type_name: v.type_name, init: retarget_self_lit_expr(v.init, base, mang), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types });
       },
       ast.StmtReturn(r) => {
         out = out.append(ast.StmtReturn { value: retarget_self_lit_expr(r.value, base, mang), line: r.line, col: r.col });
@@ -13732,7 +13861,7 @@ pub function instantiate_func(fd: FuncDecl, name: string, tparams: string[], cts
   var nparams: ast.ParamDecl[] = [];
   var i: i32 = 0;
   while (i < fd.params.len()) {
-    nparams = nparams.append(ast.ParamDecl { name: fd.params[i].name, type_name: resolve_proj_in_type(subst_ty(fd.params[i].type_name, tparams, cts), impls), is_view: fd.params[i].is_view, own: fd.params[i].own, has_default: fd.params[i].has_default, default_value: fd.params[i].default_value, ret_arr: fd.params[i].ret_arr, fn_ret: subst_ty(fd.params[i].fn_ret, tparams, cts), fn_param_dyn: fd.params[i].fn_param_dyn, fn_param_types: subst_ty_list(fd.params[i].fn_param_types, tparams, cts) });
+    nparams = nparams.append(ast.ParamDecl { name: fd.params[i].name, type_name: resolve_proj_in_type(subst_ty(fd.params[i].type_name, tparams, cts), impls), own: fd.params[i].own, has_default: fd.params[i].has_default, default_value: fd.params[i].default_value, ret_arr: fd.params[i].ret_arr, fn_ret: subst_ty(fd.params[i].fn_ret, tparams, cts), fn_param_dyn: fd.params[i].fn_param_dyn, fn_param_types: subst_ty_list(fd.params[i].fn_param_types, tparams, cts) });
     i = i + 1;
   }
   // The clone is an INSTANTIATION: every `T` has been replaced by the
@@ -13790,8 +13919,20 @@ pub function looks_type_var(s: string): boolean {
   return true;
 }
 
-// is_generic_array_method gates the array-method path: a method
-// (`receiver_name` set) whose receiver is `<var>[]` for a single type
+// array_method_element reads one array or view element without erasing
+// a view nested inside that element.
+pub function array_method_element(spelling: string): string {
+  if (type_ends_arr(spelling)) {
+    return slice_unchecked(spelling, 0, spelling.len() - 2) + "";
+  }
+  if (spelling_is_view(spelling)) {
+    return render_type_ref(parse_type_ref(spelling).args[0]);
+  }
+  return "";
+}
+
+// The generic array-method path accepts a method
+// (`receiver_name` set) whose receiver is `<var>[]` or `[<var>]` for one type
 // variable. Closure ("fn") params ARE allowed (`reduce` / `sort_by` /
 // `filter` / `any` / `all` / `find`) and so are the method's OWN
 // (unbounded) type params (`map[U]` / `flat_map[U]` / `fold[A]` /
@@ -13812,14 +13953,47 @@ pub function looks_type_var(s: string): boolean {
 // path the equivalent free generic `max[T: cmp.Ord](xs: T[])` already uses.
 // What stays excluded is a bounded EXTRA type param (a bounded `U` not
 // fixed by the receiver): `fd.type_params` may hold the receiver var alone.
+function is_concrete_array_method(fd: FuncDecl): boolean {
+  var elem: string = array_method_element(fd.receiver_type);
+  return fd.receiver_name.len() > 0 && elem.len() > 0
+    && type_str_vars(elem, []).len() == 0;
+}
+
+pub function concrete_array_method_name(receiver: string, method: string): string {
+  var elem: string = array_method_element(receiver);
+  if (elem.len() == 0) {
+    return "";
+  }
+  var prefix: string = "__carrm_";
+  if (spelling_is_view(receiver)) {
+    prefix = "__cviewm_";
+  }
+  return prefix + sanitize_key(elem) + "__" + method;
+}
+
+function is_concrete_array_fold(fd: FuncDecl): boolean {
+  return fd.receiver_name.len() == 0
+    && (util.str_has_prefix(fd.name, "__carrm_") || util.str_has_prefix(fd.name, "__cviewm_"));
+}
+
+function concrete_array_method_at(funcs: MFns, receiver: string, method: string): i32 {
+  if (funcs.array_concrete.len() == 0) {
+    return 0 - 1;
+  }
+  var name: string = concrete_array_method_name(receiver, method);
+  for at in funcs.array_concrete {
+    if (funcs.decls[at].name == name) {
+      return at;
+    }
+  }
+  return 0 - 1;
+}
+
 function is_generic_array_method(fd: FuncDecl): boolean {
   if (fd.receiver_name.len() == 0) {
     return false;
   }
-  if (!type_ends_arr(fd.receiver_type)) {
-    return false;
-  }
-  var elem: str = slice_unchecked(fd.receiver_type, 0, fd.receiver_type.len() - 2);
+  var elem: string = array_method_element(fd.receiver_type);
   if (!looks_type_var(elem)) {
     return false;
   }
@@ -13839,6 +14013,8 @@ function is_generic_array_method(fd: FuncDecl): boolean {
 // register_array_method_generics rewrites each generic array-receiver
 // method into a bounded free generic `__arrm_<name>[T]` with the
 // receiver folded to a leading param, and drops the original method. A
+// concrete receiver gets a free function keyed by its element and namespace.
+// View methods have separate names throughout both lowering paths. A
 // no-op when none is present (the compiler's own sources call the free
 // `concat(xs, ys)` form, never `xs.concat(ys)`, so the byte-identical
 // bootstrap fixpoint is preserved). Runs before monomorphize_module so
@@ -13847,7 +14023,7 @@ pub function register_array_method_generics(mod: Module): Module {
   var any_am: boolean = false;
   var ci: i32 = 0;
   while (ci < mod.funcs.len()) {
-    if (is_generic_array_method(mod.funcs[ci])) {
+    if (is_generic_array_method(mod.funcs[ci]) || is_concrete_array_method(mod.funcs[ci])) {
       any_am = true;
     }
     ci = ci + 1;
@@ -13860,12 +14036,22 @@ pub function register_array_method_generics(mod: Module): Module {
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
     var fd: FuncDecl = mod.funcs[i];
-    if (is_generic_array_method(fd)) {
-      var elem: str = slice_unchecked(fd.receiver_type, 0, fd.receiver_type.len() - 2);
+    if (is_concrete_array_method(fd)) {
+      var params: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+      for param in fd.params {
+        params = params.append(param);
+      }
+      out = out.append(FuncDecl { ...fd, name: concrete_array_method_name(fd.receiver_type, fd.name), receiver_name: "", receiver_type: "", params: params });
+    } else if (is_generic_array_method(fd)) {
+      var elem: string = array_method_element(fd.receiver_type);
       var tps: string[] = [elem + ""];
+      var prefix: string = "__arrm_";
+      if (spelling_is_view(fd.receiver_type)) {
+        prefix = "__viewm_";
+      }
       // Fold the receiver into a leading param named after the
       // receiver, so the body's references to it resolve normally.
-      var nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+      var nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
       var j: i32 = 0;
       while (j < fd.params.len()) {
         nparams = nparams.append(fd.params[j]);
@@ -13873,13 +14059,13 @@ pub function register_array_method_generics(mod: Module): Module {
       }
       out = out.append(FuncDecl {
         no_inline: false,
-        name: "__arrm_" + fd.name,
+        name: prefix + fd.name,
         receiver_name: "", receiver_type: "",
         type_params: tps,
         params: nparams,
         ret_type: fd.ret_type,
         body: fd.body, line: fd.line, col: fd.col,
-        import_iface: fd.import_iface, import_wit: fd.import_wit, all_type_params: tps, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false,
+        import_iface: fd.import_iface, import_wit: fd.import_wit, all_type_params: tps, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
         is_pub: true,
         is_const: false, ret_fn_ret: fd.ret_fn_ret, ret_fn_param_types: fd.ret_fn_param_types, is_package: false, module: fd.module,
       });
@@ -13985,7 +14171,7 @@ pub function register_map_method_generics(mod: Module): Module {
     var fd: FuncDecl = mod.funcs[i];
     if (is_generic_map_method(fd)) {
       var tps: string[] = map_receiver_typevars(fd.receiver_type);
-      var nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+      var nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
       var j: i32 = 0;
       while (j < fd.params.len()) {
         nparams = nparams.append(fd.params[j]);
@@ -13999,7 +14185,7 @@ pub function register_map_method_generics(mod: Module): Module {
         params: nparams,
         ret_type: fd.ret_type,
         body: fd.body, line: fd.line, col: fd.col,
-        import_iface: fd.import_iface, import_wit: fd.import_wit, all_type_params: tps, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false,
+        import_iface: fd.import_iface, import_wit: fd.import_wit, all_type_params: tps, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
         is_pub: true,
         is_const: false, ret_fn_ret: fd.ret_fn_ret, ret_fn_param_types: fd.ret_fn_param_types, is_package: false, module: fd.module,
       });
@@ -14243,7 +14429,7 @@ pub function register_struct_method_generics(mod: Module): Module {
         bnames = bnames.append("");
         oi = oi + 1;
       }
-      var nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+      var nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
       var j: i32 = 0;
       while (j < fd.params.len()) {
         nparams = nparams.append(fd.params[j]);
@@ -14257,7 +14443,7 @@ pub function register_struct_method_generics(mod: Module): Module {
         params: nparams,
         ret_type: fd.ret_type,
         body: fd.body, line: fd.line, col: fd.col,
-        import_iface: fd.import_iface, import_wit: fd.import_wit, all_type_params: tps, bound_traits: bnames, fip: false, fbip: false, fip_allowance: 0, ret_slice: fd.ret_slice, async: fd.async,
+        import_iface: fd.import_iface, import_wit: fd.import_wit, all_type_params: tps, bound_traits: bnames, fip: false, fbip: false, fip_allowance: 0, async: fd.async,
         is_pub: true,
         is_const: fd.is_const, ret_fn_ret: fd.ret_fn_ret, ret_fn_param_types: fd.ret_fn_param_types, is_package: false, module: fd.module,
       });
@@ -14517,11 +14703,11 @@ function erase_promotions(funcs: FuncDecl[], erased: string[]): FuncDecl[] {
 
 function monomorphize_module(mod: Module, erased: string[]): Module {
   var funcs: FuncDecl[] = erase_promotions(promote_erased_forwarders(mod.funcs), erased);
-  // Nothing to do if there are no bounded generics.
+  // Concrete array methods also need their receiver calls folded.
   var any_bg: boolean = false;
   var bi: i32 = 0;
   while (bi < funcs.len()) {
-    if (funcs[bi].receiver_name.len() == 0 && funcs[bi].type_params.len() > 0) {
+    if (funcs[bi].receiver_name.len() == 0 && funcs[bi].type_params.len() > 0 || is_concrete_array_fold(funcs[bi])) {
       any_bg = true;
     }
     bi = bi + 1;
@@ -15354,7 +15540,7 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
       var ninit: ast.Expr = retype_assoc_ctor(iv.rexpr, ta.ty, gstructs);
       var vr: TyIns = mg_ty(v.fn_ret, gstructs, iv.rins);
       var vl: TyIns = mg_ty_list(v.fn_param_types, gstructs, vr.mins);
-      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, is_view: v.is_view, fn_ret: vr.ty, fn_param_types: vl.ty }, renv: env.ebind(v.name, ms_var_ty(ta.ty, v.init, ninit, env, gstructs, funcs)), rins2: vl.mins };
+      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, fn_ret: vr.ty, fn_param_types: vl.ty }, renv: env.ebind(v.name, ms_var_ty(ta.ty, v.init, ninit, env, gstructs, funcs)), rins2: vl.mins };
     },
     ast.StmtReturn(r) => {
       var rv: RExpr = ms_expr_to(r.value, ret_ty, env, gstructs, funcs, ins);
@@ -16129,7 +16315,7 @@ function me_rewrite_ref(t: TypeRef, enums: EnumDecl[]): TypeRef {
     if (spelling_is_own(t.base)) {
       base = "own " + base;
     }
-    return TypeRef { base: base, args: [], array_depth: t.array_depth, is_tuple: false, is_fn: false };
+    return TypeRef { base: base, args: [], array_depth: t.array_depth, is_tuple: false, is_fn: false, is_view: false };
   }
   var args: TypeRef[] = [];
   for a in t.args {
@@ -16963,7 +17149,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
       if (vty.len() == 0) {
         vty = me_scrutinee_type(v.init, env, enums, structs, funcs);
       }
-      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nslot.ty, init: iv.rexpr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: nslot.fn_ret, fn_param_types: nslot.fn_params }, renv: env.ebind(v.name, vty), rins2: cins };
+      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nslot.ty, init: iv.rexpr, line: v.line, col: v.col, fn_ret: nslot.fn_ret, fn_param_types: nslot.fn_params }, renv: env.ebind(v.name, vty), rins2: cins };
     },
     ast.StmtReturn(r) => {
       var rv: RExpr = me_expr(r.value, ret_ty, env, enums, structs, funcs, ins);
@@ -18086,7 +18272,7 @@ function dl_expand_loop_edges(stmts: ast.Stmt[], actions: ast.Stmt[], flags: i32
       ast.StmtVar(v) => {
         var vve: DeferEdgeExpr = dl_edges_expr(v.init, actions, flags, start, armed, label, own_level);
         armed = vve.armed;
-        out = out.append(ast.StmtVar { name: v.name, type_name: v.type_name, init: vve.expr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types });
+        out = out.append(ast.StmtVar { name: v.name, type_name: v.type_name, init: vve.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types });
       },
       ast.StmtExpr(x) => {
         var xve: DeferEdgeExpr = dl_edges_expr(x.value, actions, flags, start, armed, label, own_level);
@@ -18281,7 +18467,7 @@ function dl_collect_stmt(st: ast.Stmt, actions: ast.Stmt[], flags: i32[]): Defer
     },
     ast.StmtVar(v) => {
       var ir: DeferExprAcc = dl_collect_expr(v.init, actions, flags);
-      var one: ast.Stmt[] = [ast.StmtVar { name: v.name, type_name: v.type_name, init: ir.expr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }];
+      var one: ast.Stmt[] = [ast.StmtVar { name: v.name, type_name: v.type_name, init: ir.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }];
       return DeferAcc { stmts: one, actions: ir.actions, flags: ir.flags };
     },
     ast.StmtReturn(r) => {
@@ -18496,7 +18682,7 @@ function dl_expand_return_stmt(st: ast.Stmt, cleanup_all: ast.Stmt[], cleanup_er
       return out;
     },
     ast.StmtVar(v) => {
-      var one: ast.Stmt[] = [ast.StmtVar { name: v.name, type_name: v.type_name, init: dl_return_expr(v.init, cleanup_all, cleanup_err), line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }];
+      var one: ast.Stmt[] = [ast.StmtVar { name: v.name, type_name: v.type_name, init: dl_return_expr(v.init, cleanup_all, cleanup_err), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }];
       return one;
     },
     ast.StmtExpr(x) => {
@@ -18790,7 +18976,7 @@ function hl_rewrite(stmts: ast.Stmt[], outer: HlScope, hoisted: FuncDecl[]): (as
               var new_params: ast.ParamDecl[] = lam.params;
               var ci: i32 = 0;
               while (ci < caps.len()) {
-                new_params = new_params.append(ast.ParamDecl { name: caps[ci], type_name: hl_cap_type(sc, caps[ci]), is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
+                new_params = new_params.append(ast.ParamDecl { name: caps[ci], type_name: hl_cap_type(sc, caps[ci]), own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
                 ci = ci + 1;
               }
               // Hoist nested recursive locals first; inside the
@@ -18812,7 +18998,7 @@ function hl_rewrite(stmts: ast.Stmt[], outer: HlScope, hoisted: FuncDecl[]): (as
                 name: v.name, receiver_name: "", receiver_type: "",
                 type_params: notp, params: new_params, ret_type: lam.ret_type,
                 body: lifted_body, line: v.line, col: v.col,
-                import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false,
+                import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
                 is_pub: true,
                 is_const: false, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "",
               });
@@ -19130,7 +19316,7 @@ function dl_defret_decl(ret: string, fn_ret: string, fn_param_types: string): as
   if (!dl_zeroable(ret)) {
     return s_var("__defret", "", e_number("0", "", false));
   }
-  return ast.StmtVar { name: "__defret", type_name: ret, init: dl_zero_of(ret), line: 0, col: 0, is_view: false, fn_ret: fn_ret, fn_param_types: fn_param_types };
+  return ast.StmtVar { name: "__defret", type_name: ret, init: dl_zero_of(ret), line: 0, col: 0, fn_ret: fn_ret, fn_param_types: fn_param_types };
 }
 
 function dl_param_names(params: ast.ParamDecl[]): string[] {
@@ -19944,7 +20130,7 @@ function collect_dropped_resources(stmts: ast.Stmt[], body: ast.Stmt[], resource
 // the interpreter expands defers at its own entry.
 pub function lower_defers_prepass_module(mod: Module): Module {
   // (1) Ret-type inference (was infer_ret_types_module, which keeps its
-  // standalone form for emit_module_ir_gated's idempotent re-run): stamp
+  // standalone form for emit_module_ir_gated_sub's idempotent re-run): stamp
   // inferred ret_types with a 3-pass fixpoint over the funcs list, so a
   // call to a later-inferred function resolves.
   var funcs: FuncDecl[] = mod.funcs;
@@ -19988,12 +20174,12 @@ pub function lower_defers_prepass_module(mod: Module): Module {
     var rn: string = needed[k];
     var iface2: string = resource_binding_iface(resources, rn);
     var wit2: string = resource_binding_wit(resources, rn);
-    var hp: ast.ParamDecl[] = [ast.ParamDecl { name: "h", type_name: "own " + rn, is_view: false, own: true, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+    var hp: ast.ParamDecl[] = [ast.ParamDecl { name: "h", type_name: "own " + rn, own: true, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
     out_funcs = out_funcs.append(lower_defers_func(FuncDecl {
       no_inline: false,
       name: resource_drop_fn_name(rn), receiver_name: "", receiver_type: "",
       type_params: no_tp, params: hp, ret_type: "void", body: no_body,
-      line: 0, col: 0, import_iface: iface2, import_wit: "[resource-drop]" + wit2, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false,
+      line: 0, col: 0, import_iface: iface2, import_wit: "[resource-drop]" + wit2, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
       is_pub: true,
       is_const: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "",
     }));
@@ -20003,15 +20189,13 @@ pub function lower_defers_prepass_module(mod: Module): Module {
 }
 
 // ---------------------------------------------------------------------------
-// Range-for desugaring for the NON-IR consumers.
+// Range-for desugaring.
 //
 // `for i in LOW..HIGH` parses to a StmtFor whose iter is the synthetic
-// `__range(LOW, HIGH)` call (see parse_stmt). The IR path lowers that directly
-// (irlower.lower_range_for); but the SSA backend and the tree-walking
-// interpreter don't know `__range` — left untouched, they emit a
-// `call __fn___range` (a link error) or mis-evaluate the iter. So for those
-// consumers we desugar the `__range` for-iter into a counting while-loop built
-// from existing nodes:
+// `__range(LOW, HIGH)` call (see parse_stmt). No consumer knows `__range` —
+// left untouched, it is a `call __fn___range` (a link error) or a
+// mis-evaluated iter. So we desugar the `__range` for-iter into a counting
+// while-loop built from existing nodes:
 //
 //     var i = LOW - 1;
 //     var $hi_<var> = HIGH;          // HIGH evaluated once (`0..f()` calls f once)
@@ -20044,10 +20228,7 @@ pub function lower_defers_prepass_module(mod: Module): Module {
 // This runs in desugar_prepass_module (inside module_with_builtins),
 // interp.eval_module and ssa.build_func. module_with_builtins feeds the IR
 // emit, and module_with_builtins_typed, which runs the same prepass, feeds the
-// semantic substitution, so EVERY consumer sees the
-// while-loop and `irlower.lower_range_for` is reached only by the
-// un-desugared modules `irlower_run.fern` reads directly. Its own lowering is
-// tighter than this one — reclaiming it would shrink both range forms (#9565).
+// semantic substitution, so EVERY consumer sees the while-loop.
 function iter_range_args(iter: ast.Expr): ast.Expr[] {
   if (range_call_name(iter) == "") {
     return [];
@@ -20483,7 +20664,7 @@ function rvf_expr(e: ast.Expr, structs: StructDecl[]): ast.Expr {
 function rvf_stmt(st: ast.Stmt, structs: StructDecl[]): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
-      return ast.StmtVar { name: v.name, type_name: v.type_name, init: rvf_expr(v.init, structs), line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
+      return ast.StmtVar { name: v.name, type_name: v.type_name, init: rvf_expr(v.init, structs), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
     },
     ast.StmtReturn(r) => {
       return ast.StmtReturn { value: rvf_expr(r.value, structs), line: r.line, col: r.col };
@@ -21883,7 +22064,7 @@ function irt_arm_bindings(stmts: ast.Stmt[], params: ast.ParamDecl[], funcs: Fun
           match (m.arms[a].pattern) {
             ast.PatVariant(pv) => {
               if (st.len() > 0 && pv.binding.len() > 0 && pv.binding != "_") {
-                out = out.append(ast.ParamDecl { name: pv.binding, type_name: st, is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
+                out = out.append(ast.ParamDecl { name: pv.binding, type_name: st, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
               }
             },
             _ => {}
@@ -22326,7 +22507,7 @@ function elb_mark_stmts(stmts: ast.Stmt[], idx: string, arr: string): ast.Stmt[]
 function elb_mark_stmt(st: ast.Stmt, idx: string, arr: string): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
-      return ast.StmtVar { name: v.name, type_name: v.type_name, init: elb_mark_expr(v.init, idx, arr), line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
+      return ast.StmtVar { name: v.name, type_name: v.type_name, init: elb_mark_expr(v.init, idx, arr), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
     },
     ast.StmtReturn(r) => {
       return ast.StmtReturn { value: elb_mark_expr(r.value, idx, arr), line: r.line, col: r.col };
@@ -22441,10 +22622,46 @@ function elb_mark_expr(e: ast.Expr, idx: string, arr: string): ast.Expr {
   return e;
 }
 
-// erase_str_spelling rewrites each bare `str` in a type spelling to `string`:
-// a view lowers to exactly the string box, so the lowering never sees `str`.
+// erase_view_spelling rewrites a type spelling to what the lowering sees: each
+// bare `str` becomes `string` and each `[T]` view becomes `T[]`, since a view
+// lowers to exactly the box it borrows from.
+pub function erase_view_spelling(ty: string): string {
+  return fold_view_spelling(erase_str_names(ty));
+}
+
+// A prefix `[` opens a view; after a name it opens generic arguments, and an
+// empty `[]` after a type is an array suffix.
+function view_opens_at(ty: string, i: i32): boolean {
+  if (i + 1 < ty.len() && ty[i + 1] == b']') {
+    return false;
+  }
+  if (i == 0) {
+    return true;
+  }
+  var prev: u8 = ty[i - 1];
+  return prev == b'(' || prev == b'[' || prev == b',' || prev == b' ';
+}
+
+// fold_view_spelling folds every `[T]` in a spelling to `T[]`, innermost
+// first: `[u8][]` is `u8[][]` and `([u8], i32)` is `(u8[], i32)`.
+function fold_view_spelling(ty: string): string {
+  var i: i32 = 0;
+  while (i < ty.len()) {
+    if (ty[i] == b'[' && view_opens_at(ty, i)) {
+      var close: i32 = matching_bracket(ty, i);
+      if (close < 0) {
+        return ty;
+      }
+      var inner: string = fold_view_spelling(slice_unchecked(ty, i + 1, close) + "");
+      return slice_unchecked(ty, 0, i) + inner + "[]" + fold_view_spelling(slice_unchecked(ty, close + 1, ty.len()) + "");
+    }
+    i = i + 1;
+  }
+  return ty;
+}
+
 // A qualified `str.Foo` or a projection `X::str` is a different name and stays.
-pub function erase_str_spelling(ty: string): string {
+function erase_str_names(ty: string): string {
   var out: string = "";
   var start: i32 = 0;
   var i: i32 = 0;
@@ -22473,64 +22690,78 @@ pub function erase_str_spelling(ty: string): string {
 // receiver_base is the name a method is keyed by on its receiver: the base
 // type, with `str` spelled `string` as the lowering spells it.
 pub function receiver_base(receiver: string): string {
-  return erase_str_spelling(util.base_type_name(receiver));
+  return util.base_type_name(erase_view_spelling(receiver));
 }
 
-function erase_str_list(tys: string[]): string[] {
+// receiver_namespace is the name a method declaration is keyed by against
+// the others: every owned-array receiver shares `Array` and every view
+// receiver `slice`, whatever the element, as native keys them.
+pub function receiver_namespace(receiver: string): string {
+  var r: TypeRef = parse_type_ref(receiver);
+  if (r.array_depth > 0) {
+    return "Array";
+  }
+  if (r.is_view) {
+    return "slice";
+  }
+  return receiver_base(receiver);
+}
+
+function erase_view_list(tys: string[]): string[] {
   var out: string[] = [];
   for t in tys {
-    out = out.append(erase_str_spelling(t));
+    out = out.append(erase_view_spelling(t));
   }
   return out;
 }
 
-function erase_str_params(ps: ast.ParamDecl[]): ast.ParamDecl[] {
+function erase_view_params(ps: ast.ParamDecl[]): ast.ParamDecl[] {
   var out: ast.ParamDecl[] = [];
   for p in ps {
-    out = out.append(ast.ParamDecl { ...p, type_name: erase_str_spelling(p.type_name), fn_ret: erase_str_spelling(p.fn_ret), fn_param_types: erase_str_spelling(p.fn_param_types) });
+    out = out.append(ast.ParamDecl { ...p, type_name: erase_view_spelling(p.type_name), fn_ret: erase_view_spelling(p.fn_ret), fn_param_types: erase_view_spelling(p.fn_param_types) });
   }
   return out;
 }
 
-function erase_str_expr(e: ast.Expr): ast.Expr {
+function erase_view_expr(e: ast.Expr): ast.Expr {
   match (e) {
     ast.ExprCall(c) => {
-      return ast.ExprCall { ...c, type_args: erase_str_list(c.type_args), ty: erase_str_spelling(c.ty) };
+      return ast.ExprCall { ...c, type_args: erase_view_list(c.type_args), ty: erase_view_spelling(c.ty) };
     },
     ast.ExprArray(a) => {
-      return ast.ExprArray { ...a, elem_ty: erase_str_spelling(a.elem_ty) };
+      return ast.ExprArray { ...a, elem_ty: erase_view_spelling(a.elem_ty) };
     },
     ast.ExprStructLit(sl) => {
-      return ast.ExprStructLit { ...sl, type_name: erase_str_spelling(sl.type_name), written: erase_str_spelling(sl.written) };
+      return ast.ExprStructLit { ...sl, type_name: erase_view_spelling(sl.type_name), written: erase_view_spelling(sl.written) };
     },
     ast.ExprZero(z) => {
-      return ast.ExprZero { ...z, type_name: erase_str_spelling(z.type_name) };
+      return ast.ExprZero { ...z, type_name: erase_view_spelling(z.type_name) };
     },
     ast.ExprUnary(u) => {
       // A cast carries its target in the operator: `as T`.
       var op: string = u.op;
       if (op.len() > 3 && slice_unchecked(op, 0, 3) == "as ") {
-        op = erase_str_spelling(op);
+        op = erase_view_spelling(op);
       }
-      return ast.ExprUnary { ...u, op: op, ty: erase_str_spelling(u.ty) };
+      return ast.ExprUnary { ...u, op: op, ty: erase_view_spelling(u.ty) };
     },
     ast.ExprLambda(lm) => {
-      return ast.ExprLambda { ...lm, params: erase_str_params(lm.params), ret_type: erase_str_spelling(lm.ret_type), ret_fn_ret: erase_str_spelling(lm.ret_fn_ret), ret_fn_param_types: erase_str_spelling(lm.ret_fn_param_types) };
+      return ast.ExprLambda { ...lm, params: erase_view_params(lm.params), ret_type: erase_view_spelling(lm.ret_type), ret_fn_ret: erase_view_spelling(lm.ret_fn_ret), ret_fn_param_types: erase_view_spelling(lm.ret_fn_param_types) };
     },
     ast.ExprIdent(id) => {
-      return ast.ExprIdent { ...id, ty: erase_str_spelling(id.ty) };
+      return ast.ExprIdent { ...id, ty: erase_view_spelling(id.ty) };
     },
     ast.ExprBinary(b) => {
-      return ast.ExprBinary { ...b, ty: erase_str_spelling(b.ty) };
+      return ast.ExprBinary { ...b, ty: erase_view_spelling(b.ty) };
     },
     ast.ExprIndex(ix) => {
-      return ast.ExprIndex { ...ix, ty: erase_str_spelling(ix.ty) };
+      return ast.ExprIndex { ...ix, ty: erase_view_spelling(ix.ty) };
     },
     ast.ExprSlice(sl2) => {
-      return ast.ExprSlice { ...sl2, ty: erase_str_spelling(sl2.ty) };
+      return ast.ExprSlice { ...sl2, ty: erase_view_spelling(sl2.ty) };
     },
     ast.ExprFieldAccess(fa) => {
-      return ast.ExprFieldAccess { ...fa, ty: erase_str_spelling(fa.ty) };
+      return ast.ExprFieldAccess { ...fa, ty: erase_view_spelling(fa.ty) };
     },
     _ => {
       return e;
@@ -22539,69 +22770,69 @@ function erase_str_expr(e: ast.Expr): ast.Expr {
   return e;
 }
 
-function erase_str_stmt(st: ast.Stmt): ast.Stmt[] {
+function erase_view_stmt(st: ast.Stmt): ast.Stmt[] {
   if let ast.StmtVar(v) = st {
-    return [ast.StmtVar { ...v, type_name: erase_str_spelling(v.type_name), fn_ret: erase_str_spelling(v.fn_ret), fn_param_types: erase_str_spelling(v.fn_param_types) }];
+    return [ast.StmtVar { ...v, type_name: erase_view_spelling(v.type_name), fn_ret: erase_view_spelling(v.fn_ret), fn_param_types: erase_view_spelling(v.fn_param_types) }];
   }
   return [st];
 }
 
-function erase_str_body(body: ast.Stmt[]): ast.Stmt[] {
-  return astwalk.splice_stmts(astwalk.map_stmts(body, erase_str_expr), erase_str_stmt);
+function erase_view_body(body: ast.Stmt[]): ast.Stmt[] {
+  return astwalk.splice_stmts(astwalk.map_stmts(body, erase_view_expr), erase_view_stmt);
 }
 
-function erase_str_funcs(fds: FuncDecl[]): FuncDecl[] {
+function erase_view_funcs(fds: FuncDecl[]): FuncDecl[] {
   var out: FuncDecl[] = [];
   for fd in fds {
-    out = out.append(FuncDecl { ...fd, receiver_type: erase_str_spelling(fd.receiver_type), params: erase_str_params(fd.params), ret_type: erase_str_spelling(fd.ret_type), ret_fn_ret: erase_str_spelling(fd.ret_fn_ret), ret_fn_param_types: erase_str_spelling(fd.ret_fn_param_types), body: erase_str_body(fd.body) });
+    out = out.append(FuncDecl { ...fd, receiver_type: erase_view_spelling(fd.receiver_type), params: erase_view_params(fd.params), ret_type: erase_view_spelling(fd.ret_type), ret_fn_ret: erase_view_spelling(fd.ret_fn_ret), ret_fn_param_types: erase_view_spelling(fd.ret_fn_param_types), body: erase_view_body(fd.body) });
   }
   return out;
 }
 
-pub function erase_str_structs(sds: StructDecl[]): StructDecl[] {
+pub function erase_view_structs(sds: StructDecl[]): StructDecl[] {
   var out: StructDecl[] = [];
   for sd in sds {
-    out = out.append(erase_str_struct(sd));
+    out = out.append(erase_view_struct(sd));
   }
   return out;
 }
 
-function erase_str_struct(sd: StructDecl): StructDecl {
+function erase_view_struct(sd: StructDecl): StructDecl {
   var fields: StructFieldDecl[] = [];
   for f in sd.fields {
-    fields = fields.append(StructFieldDecl { ...f, type_name: erase_str_spelling(f.type_name), fn_ret: erase_str_spelling(f.fn_ret), fn_param_types: erase_str_spelling(f.fn_param_types) });
+    fields = fields.append(StructFieldDecl { ...f, type_name: erase_view_spelling(f.type_name), fn_ret: erase_view_spelling(f.fn_ret), fn_param_types: erase_view_spelling(f.fn_param_types) });
   }
   return StructDecl { ...sd, fields: fields };
 }
 
-// erase_str_module is the self-host's `str` erasure, the mirror of native's
-// ir.eraseStr at LowerWith: the checker and the typed lowering see every
-// `str` as a view, and to the AST lowering it is the string box it lowers to.
-pub function erase_str_module(mod: Module): Module {
-  var structs: StructDecl[] = erase_str_structs(mod.structs);
+// erase_view_module is the self-host's view erasure, the mirror of native's
+// ir.eraseStr at LowerWith: the checker and the typed lowering see every `str`
+// and `[T]` as a view, and to the AST lowering each is the box it lowers to.
+pub function erase_view_module(mod: Module): Module {
+  var structs: StructDecl[] = erase_view_structs(mod.structs);
   var aliases: TypeAlias[] = [];
   for al in mod.aliases {
-    aliases = aliases.append(TypeAlias { ...al, variants: erase_str_list(al.variants), variant_args: erase_str_list(al.variant_args) });
+    aliases = aliases.append(TypeAlias { ...al, variants: erase_view_list(al.variants), variant_args: erase_view_list(al.variant_args) });
   }
   var impls: ImplInfo[] = [];
   for im in mod.impls {
-    impls = impls.append(ImplInfo { ...im, impl_type: erase_str_spelling(im.impl_type), trait_spelling: erase_str_spelling(im.trait_spelling), trait_ref: erase_str_spelling(im.trait_ref), assoc_values: erase_str_list(im.assoc_values) });
+    impls = impls.append(ImplInfo { ...im, impl_type: erase_view_spelling(im.impl_type), trait_spelling: erase_view_spelling(im.trait_spelling), trait_ref: erase_view_spelling(im.trait_ref), assoc_values: erase_view_list(im.assoc_values) });
   }
   var reqs: TraitReq[] = [];
   for tr in mod.trait_reqs {
-    reqs = reqs.append(TraitReq { ...tr, req_sigs: erase_str_funcs(tr.req_sigs), assoc_sigs: erase_str_funcs(tr.assoc_sigs) });
+    reqs = reqs.append(TraitReq { ...tr, req_sigs: erase_view_funcs(tr.req_sigs), assoc_sigs: erase_view_funcs(tr.assoc_sigs) });
   }
   var tdecls: TraitDecl[] = [];
   for td in mod.trait_decls {
-    tdecls = tdecls.append(TraitDecl { ...td, methods: erase_str_funcs(td.methods) });
+    tdecls = tdecls.append(TraitDecl { ...td, methods: erase_view_funcs(td.methods) });
   }
-  return Module { ...mod, funcs: erase_str_funcs(mod.funcs), structs: structs, aliases: aliases, top_stmts: erase_str_body(mod.top_stmts), impls: impls, trait_reqs: reqs, trait_decls: tdecls };
+  return Module { ...mod, funcs: erase_view_funcs(mod.funcs), structs: structs, aliases: aliases, top_stmts: erase_view_body(mod.top_stmts), impls: impls, trait_reqs: reqs, trait_decls: tdecls };
 }
 
 // module_with_builtins is the module the AST lowering reads: the typed one
 // below with every `str` erased.
 pub function module_with_builtins(mod: Module): Module {
-  return erase_str_module(module_with_builtins_typed(mod));
+  return erase_view_module(module_with_builtins_typed(mod));
 }
 
 // module_with_builtins_typed keeps each `str` as written, for the typed
@@ -23364,7 +23595,7 @@ function synth_struct_display(sd: StructDecl): FuncDecl {
   var body: ast.Stmt[] = [s_return(expr)];
   var notp: string[] = [];
   var noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "to_string", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "to_string", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
 // dv_debug_render builds the Debug rendering of a single value of static
@@ -23418,7 +23649,7 @@ function synth_struct_debug(sd: StructDecl): FuncDecl {
   var body: ast.Stmt[] = [s_return(expr)];
   var notp: string[] = [];
   var noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "to_debug", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "to_debug", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
 // synth_struct_eq: field-wise `<f-eq> && …` (true for an empty struct),
@@ -23438,8 +23669,8 @@ function synth_struct_eq(sd: StructDecl): FuncDecl {
   }
   var body: ast.Stmt[] = [s_return(expr)];
   var notp: string[] = [];
-  var params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: sd.name, is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
-  return FuncDecl { no_inline: false, name: "eq", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  var params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+  return FuncDecl { no_inline: false, name: "eq", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
 // synth_struct_ord: lexicographic `cmp` — first non-zero field cmp wins.
@@ -23462,8 +23693,8 @@ function synth_struct_ord(sd: StructDecl): FuncDecl {
   }
   stmts = stmts.append(s_return(e_number("0", "", false)));
   var notp: string[] = [];
-  var params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: sd.name, is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
-  return FuncDecl { no_inline: false, name: "cmp", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  var params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+  return FuncDecl { no_inline: false, name: "cmp", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
 // synth_struct_hash: field-wise `h = h * 31 + self.f.hash()` fold from a
@@ -23485,7 +23716,7 @@ function synth_struct_hash(sd: StructDecl): FuncDecl {
   stmts = stmts.append(s_return(e_ident("__h")));
   var notp: string[] = [];
   var noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "hash", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "hash", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
 // synth_struct_json: field-wise `to_json` rendering a struct as a JSON
@@ -23507,7 +23738,7 @@ function synth_struct_json(sd: StructDecl): FuncDecl {
   var body: ast.Stmt[] = [s_return(expr)];
   var notp: string[] = [];
   var noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "to_json", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "to_json", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
 // fromjson_container names the container a FromJson field's type is —
@@ -23587,9 +23818,9 @@ function synth_from_json_value(sd: StructDecl): FuncDecl {
     body = [s_match(e_call(e_field_access(e_ident("json"), getter), [e_ident("v"), e_string(fname)]), outer_arms)];
     fi = fi - 1;
   }
-  var params: ast.ParamDecl[] = [ast.ParamDecl { name: "v", type_name: "JsonValue", is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+  var params: ast.ParamDecl[] = [ast.ParamDecl { name: "v", type_name: "JsonValue", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
   var notp: string[] = [];
-  return FuncDecl { no_inline: false, name: "from_json_value", receiver_name: "", receiver_type: sd.name, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "from_json_value", receiver_name: "", receiver_type: sd.name, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
 // synth_from_json_text builds the derived `from_json(s: string):
@@ -23609,9 +23840,9 @@ function synth_from_json_text(sd: StructDecl): FuncDecl {
     self_ty = sd.name + "[" + tps + "]";
   }
   var call: ast.Expr = ast.ExprCall { callee: e_field_access(e_ident("json"), "decode"), args: [e_ident("s")], line: 0, col: 0, type_args: [self_ty], ty: "" };
-  var params: ast.ParamDecl[] = [ast.ParamDecl { name: "s", type_name: "string", is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+  var params: ast.ParamDecl[] = [ast.ParamDecl { name: "s", type_name: "string", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
   var notp: string[] = [];
-  return FuncDecl { no_inline: false, name: "from_json", receiver_name: "", receiver_type: sd.name, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: [s_return(call)], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "from_json", receiver_name: "", receiver_type: sd.name, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: [s_return(call)], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
 // synth_enum_display: variant-wise `to_string` rendering `Variant(p, …)`,
@@ -23654,7 +23885,7 @@ function synth_enum_display(ename: string, variants: StructDecl[]): FuncDecl {
   var body: ast.Stmt[] = [s_match(e_ident("self"), arms), s_return(e_string(""))];
   var notp: string[] = [];
   var noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "to_string", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "to_string", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
 // synth_enum_debug: `to_debug` rendering `Variant` / `Variant(<debug
@@ -23689,7 +23920,7 @@ function synth_enum_debug(ename: string, variants: StructDecl[]): FuncDecl {
   var body: ast.Stmt[] = [s_match(e_ident("self"), arms), s_return(e_string(""))];
   var notp: string[] = [];
   var noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "to_debug", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "to_debug", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
 // synth_enum_eq: match self, then match other — same variant compares
@@ -23722,8 +23953,8 @@ function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
   }
   var body: ast.Stmt[] = [s_match(e_ident("self"), arms), s_return(e_bool(false))];
   var notp: string[] = [];
-  var params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: ename, is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
-  return FuncDecl { no_inline: false, name: "eq", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  var params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+  return FuncDecl { no_inline: false, name: "eq", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
 // synth_enum_ord: variant-wise `cmp` — a variant declared earlier sorts
@@ -23780,8 +24011,8 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
   }
   var body: ast.Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
   var notp: string[] = [];
-  var params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: ename, is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
-  return FuncDecl { no_inline: false, name: "cmp", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  var params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+  return FuncDecl { no_inline: false, name: "cmp", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
 // synth_enum_hash: variant-wise `hash` — seed the accumulator with the
@@ -23813,7 +24044,7 @@ function synth_enum_hash(ename: string, variants: StructDecl[]): FuncDecl {
   var body: ast.Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
   var notp: string[] = [];
   var noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "hash", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "hash", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
 // synth_enum_json: variant-wise `to_json` — a unit variant renders as
@@ -23854,7 +24085,7 @@ function synth_enum_json(ename: string, variants: StructDecl[]): FuncDecl {
   var body: ast.Stmt[] = [s_match(e_ident("self"), arms), s_return(e_string(""))];
   var notp: string[] = [];
   var noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "to_json", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "to_json", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
 // enum_default_derivable reports whether an enum has a derivable default: it
@@ -23896,7 +24127,7 @@ function synth_enum_default(ename: string, variants: StructDecl[]): FuncDecl {
   var body: ast.Stmt[] = [s_return(value)];
   var notp: string[] = [];
   var noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "default", receiver_name: "", receiver_type: ename, type_params: notp, params: noparams, ret_type: ename, body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "default", receiver_name: "", receiver_type: ename, type_params: notp, params: noparams, ret_type: ename, body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
 // synth_enum_derives appends the derivable enum methods. Display, Eq,
@@ -23909,7 +24140,7 @@ function synth_enum_derives(ename: string, declared: StructDecl[], derives: stri
   // derives exactly as a `string` one.
   var variants: StructDecl[] = [];
   for vd in declared {
-    variants = variants.append(erase_str_struct(vd));
+    variants = variants.append(erase_view_struct(vd));
   }
   var di: i32 = 0;
   while (di < derives.len()) {
@@ -24155,7 +24386,7 @@ function synth_struct_default(sd: StructDecl): FuncDecl {
   // monomorphiser clones it per instantiation and substitutes `T` using the
   // STRUCT's type params (clone_struct_method) — so a generic body's
   // `T.default()` becomes `Concrete.default()`.
-  return FuncDecl { no_inline: false, name: "default", receiver_name: "", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: sd.name, body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "default", receiver_name: "", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: sd.name, body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
 // synth_derives appends the synthesised methods for each derivable trait
@@ -24167,7 +24398,7 @@ function synth_struct_default(sd: StructDecl): FuncDecl {
 function synth_derives(declared: StructDecl, derives: string[], funcs: FuncDecl[], has_json_import: boolean): FuncDecl[] {
   // A derive reads each field by the box it lowers to: a `str` field
   // derives exactly as a `string` one.
-  var sd: StructDecl = erase_str_struct(declared);
+  var sd: StructDecl = erase_view_struct(declared);
   var di: i32 = 0;
   while (di < derives.len()) {
     var kind: string = derive_simple_name(derives[di]);
@@ -24749,7 +24980,7 @@ function type_mentions_var(ty: string, name: string): boolean {
 function has_bare_array_param(params: ast.ParamDecl[], name: string): boolean {
   var i: i32 = 0;
   while (i < params.len()) {
-    if (params[i].type_name == name + "[]") {
+    if (params[i].type_name == name + "[]" || params[i].type_name == "[" + name + "]") {
       return true;
     }
     i = i + 1;
@@ -25214,7 +25445,7 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
     while (ai < m.params.len()) {
       var apt: string = m.params[ai].type_name;
       apt = subst_self(apt, impl_type);
-      aparams = aparams.append(ast.ParamDecl { name: m.params[ai].name, type_name: apt, is_view: m.params[ai].is_view, own: m.params[ai].own, has_default: m.params[ai].has_default, default_value: m.params[ai].default_value, ret_arr: m.params[ai].ret_arr, fn_ret: m.params[ai].fn_ret, fn_param_dyn: m.params[ai].fn_param_dyn, fn_param_types: m.params[ai].fn_param_types });
+      aparams = aparams.append(ast.ParamDecl { name: m.params[ai].name, type_name: apt, own: m.params[ai].own, has_default: m.params[ai].has_default, default_value: m.params[ai].default_value, ret_arr: m.params[ai].ret_arr, fn_ret: m.params[ai].fn_ret, fn_param_dyn: m.params[ai].fn_param_dyn, fn_param_types: m.params[ai].fn_param_types });
       ai = ai + 1;
     }
     return FuncDecl { ...m, receiver_name: "", receiver_type: impl_type, type_params: mtps, bound_traits: mtbs, params: aparams, ret_type: rt };
@@ -25230,7 +25461,7 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
     } else {
       var pt: string = m.params[i].type_name;
       pt = subst_self(pt, impl_type);
-      newparams = newparams.append(ast.ParamDecl { name: m.params[i].name, type_name: pt, is_view: m.params[i].is_view, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, ret_arr: m.params[i].ret_arr, fn_ret: m.params[i].fn_ret, fn_param_dyn: m.params[i].fn_param_dyn, fn_param_types: m.params[i].fn_param_types });
+      newparams = newparams.append(ast.ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, ret_arr: m.params[i].ret_arr, fn_ret: m.params[i].fn_ret, fn_param_dyn: m.params[i].fn_param_dyn, fn_param_types: m.params[i].fn_param_types });
     }
     i = i + 1;
   }
@@ -26042,7 +26273,7 @@ function settle_stmt(st: ast.Stmt, ret_type: string, names: string[], types: str
   match (st) {
     ast.StmtVar(v) => {
       var init: ast.Expr = settle_to_name(settle_expr(v.init, names, types, fns, structs), v.type_name);
-      return ast.StmtVar { name: v.name, type_name: v.type_name, init: init, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
+      return ast.StmtVar { name: v.name, type_name: v.type_name, init: init, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
     },
     ast.StmtReturn(r) => {
       return ast.StmtReturn { value: settle_to_name(settle_expr(r.value, names, types, fns, structs), ret_type), line: r.line, col: r.col };
@@ -26225,7 +26456,7 @@ function settle_const_types(funcs: FuncDecl[], structs: StructDecl[]): FuncDecl[
       }
     }
     if (f.is_const && f.ret_type.len() > 0) {
-      known = known.append(ast.ParamDecl { name: f.name, type_name: f.ret_type, is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
+      known = known.append(ast.ParamDecl { name: f.name, type_name: f.ret_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
     }
     out = out.append(f);
   }

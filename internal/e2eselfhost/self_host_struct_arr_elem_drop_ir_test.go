@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -37,15 +36,11 @@ func TestSelfHostStructArrElemDropIRX86_64(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
-	run := func(t *testing.T, prog, name string, want int, wantAsmSubstr string) {
+	run := func(t *testing.T, prog, name string, want int) {
 		t.Helper()
 		asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
-		}
-		// The drop helper named is the AST lowering's, so it is read from that lowering.
-		if wantAsmSubstr != "" && !strings.Contains(string(runCaptureAST(t, runner, driverBin, []byte(prog))), wantAsmSubstr) {
-			t.Fatalf("%s: emitted asm missing %q — the struct-array element did not deep-drop", name, wantAsmSubstr)
 		}
 		bin := buildBin(t, gcc, dir, name, string(asm))
 		var cmd *exec.Cmd
@@ -75,7 +70,7 @@ function main(): i32 {
     var acc: i32 = 0; var f: i32 = 0;
     while (f < 50000000) { acc = mk(); f = f + 1; }
     return acc - 20;
-}`, "struct_arr_elem_drop_churn", 0, "call __fn___struct_arr_elems_drop_Inner")
+}`, "struct_arr_elem_drop_churn", 0)
 
 	// VALUE-CORRECTNESS: every element's items are read back before the drop; a premature
 	// free of a live element buffer would corrupt the read. Two Inners: items sum
@@ -91,7 +86,7 @@ function main(): i32 {
         e = e + 1;
     }
     return sum + s.tag;
-}`, "struct_arr_elem_drop_value", 139, "")
+}`, "struct_arr_elem_drop_value", 139)
 
 	// MULTI-LEVEL x ARRAY-ELEMENT: the element struct is itself a nested chain
 	// (`Inner { mid: Mid }`, `Mid { items: i32[] }`), so the element helper calls
@@ -108,5 +103,5 @@ function main(): i32 {
     var acc: i32 = 0; var f: i32 = 0;
     while (f < 40000000) { acc = mk(); f = f + 1; }
     return acc - 8;
-}`, "struct_arr_elem_drop_multilevel", 0, "call __fn___struct_drop_Mid")
+}`, "struct_arr_elem_drop_multilevel", 0)
 }

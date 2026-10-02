@@ -15,9 +15,9 @@ function inst(kind: i32, value: i32, args: i32[], imm: i32): ssa.SInst {
     return ssa.SInst { kind_tag: kind, result: value, args: args, imm: imm, str: "" };
 }
 function ret(value: i32): ssa.STerm { return ssa.STerm { kind_tag: 1, value: value, cond: 0, target: 0, t: 0, f: 0 }; }
-// Explicit caller contract for ABI tests. The caller here is AST-lowered, so
-// its supplies are written out rather than taken from the AST's escape
-// inference, which would test a different contract than the callee's.
+// Explicit caller contract for ABI tests. The typed caller reads the
+// contract of the source's produce, so a hand-built callee with other modes
+// gets a caller whose supplies are written out to match them.
 function caller(template: irlower.LowerResult, mode: i32): irlower.LowerResult {
     var ops: ir.Op[] = [ir.op_const_i32(7), ir.op_arr_make(1, 32), ir.op_store_local(0),
         ir.op_const_i32(0), ir.op_store_local(2), ir.op_block(0), ir.op_loop(0),
@@ -109,29 +109,38 @@ function main(): i32 {
     }
     var src: string = "function produce(): i32[] { return [7]; } @noinline function exercise(): i32 { var j = 0; while (j < 32) { var xs = produce(); var churn = [91, 92, 93]; if (xs.len() != 1 || xs[0] != 7 || churn[0] != 91) { return 2; } j = j + 1; } return 0; } function main(): i32 { var result = exercise(); if (result != 0) { return result; } if (__rc_underflow_count() != 0) { return 99; } return 0; }";
     var mod = parser.parse_module(lexer.tokenize(src));
-    var tab = irlower.struct_tab(mod.structs);
-    var base = ircore.wp_fn_sigs(mod.funcs, tab);
-    var g = ircore.lower_gated(mod, tab, base, [], false, ircore.no_sub());
+    var av = args();
+    // The rest of the program is the typed lowering's, as the emit entries
+    // gate it; produce's body is the fixture's.
+    var d = semlower.driven(mod, av[1]);
+    var g: ircore.Gated = ircore.Gated { ok: false, im: d.full, stab: irlower.struct_tab_empty(), base: d.sub.sigs, cache: [] };
+    if (av[1] == "wasm32-wasi") {
+        var wm = ircore.with_records(wasm_ir.route_normalized(d.full), d.sub);
+        var l = ircore.gate(wm, d.sub);
+        g = ircore.Gated { ok: l.ok, im: wm, stab: irlower.struct_tab(wm.structs), base: d.sub.sigs, cache: l.cache };
+    } else { g = semlower.program(d); }
     if (!g.ok) { return 3; }
     var cache: irlower.LowerResult[] = [];
     var at: i32 = 0;
-    for fd in mod.funcs {
-        if (fd.name == "produce") { cache = cache.append(lowered); }
-        else if (fd.name == "exercise" && modes.len() > 0 && modes[0] != 1) { cache = cache.append(caller(g.cache[at], modes[0])); }
+    while (at < g.cache.len()) {
+        var name: string = "";
+        if (at < g.im.funcs.len()) { name = g.im.funcs[at].name; }
+        if (name == "produce") { cache = cache.append(lowered); }
+        else if (name == "exercise" && modes.len() > 0 && modes[0] != 1) { cache = cache.append(caller(g.cache[at], modes[0])); }
         else { cache = cache.append(g.cache[at]); }
         at = at + 1;
     }
-    var av = args();
     if (av[1] == "x86-64-linux") {
-        print(asm_ir.emit_module_ir_unit_flat(mod, true, false, "", [], mod.funcs, tab, 0, 0 - 1, cache, base, asmcore.no_rt_lower));
+        print(asm_ir.emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, cache, g.base, d.sub.rt_lower));
     } else if (av[1] == "arm64-linux") {
         strbuf_reset();
         var state = asmcore.new_state();
-        state = asmcore.EmitState { ...state, struct_decls: tab, funcs: mod.funcs };
-        state = asm_arm64_ir.emit_body(mod, state, false, cache, base);
+        state = asmcore.EmitState { ...state, struct_decls: g.stab, funcs: g.im.funcs, rt_lower: d.sub.rt_lower };
+        state = asm_arm64_ir.emit_body(g.im, state, false, cache);
+        state = asm_arm64_ir.emit_arm64_reclaim_drop_bodies(state);
         state = asm_arm64_ir.emit_ir_runtime(state, false);
         print(strbuf_take());
-    } else { print(wasm_ir.emit_ir_module_mode(mod, cache, 0, base)); }
+    } else { print(wasm_ir.emit_ir_module_mode(g.im, cache, 0, g.base)); }
     return 0;
 }
 `
@@ -164,6 +173,7 @@ func physicalRCSource(setup, modes string) string {
 	return `import "./ssarc"; import "./ssasem"; import "./ssaunits"; import "./ssa";
 import "./typeinfo"; import "./semrecords"; import "./parser"; import "./lexer"; import "./irlower"; import "./ir"; import "./util";
 import "./ircore"; import "./asmcore"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir"; import "./irverifyrc";
+import "./semlower";
 ` + source
 }
 

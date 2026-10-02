@@ -190,6 +190,45 @@ pool and gained nothing measurable at the default GOGC (its passes copy each
 op list per round, so it is allocation all the way down); it stays sequential
 until that copying goes.
 
+## Where a whole self-host emit spends its time
+
+callgrind over the self-host driver (`-g`, see below) emitting
+`examples/self_host/fern.fern` to x86-64 asm text, 2026-10-02: 271 G
+instructions for the driver the pinned stage0 builds, 263 G for the one a
+self-host-built compiler builds from the same source (its codegen borrows
+where stage0's releases), 57 s wall on the 4-core container under other load
+(73 s to a linked binary with symbols, 3.5 GB peak). Compare drivers built by
+the same compiler: the input tree moves the count by under 0.02%, the
+building compiler by 3%. Inclusive shares, one pass each:
+
+- The semantic lowering (`semlower.target_substitution`) is 60%: producing
+  the rows 40% (`ssarc.lower` of 13.5k bodies 17%, `semsource.build_module`
+  13%, the inference pass's second lowering 12%), `ircore.wp_fn_sigs` 10%
+  (of which `grow_param_flags` 3%, `strfld_reclaim_ok_types_of` 2%),
+  `regrow_sigs` 3%, lambda lifting 3%.
+- The backend (`asm_ir.emit_module_or_error_sub`) is 24%: the SSA emit of
+  each function 12%, `asmcore.check_module` 5.5%.
+- The checker is 9%.
+
+By self cost the top rows were whole-table scans, since replaced with the
+emitted asm byte-identical and the stage0-built driver's emit at 239 G
+instructions (271 G before, 11.6% fewer):
+the grow-flags edge resolution in `irlower.grow_param_flags_seeded` (4.8%,
+a scan of all 10.8k functions per dying pass) and `semsource.known_callee`
+(2.3%, 18 M calls of `method_is` scanning every known hander per
+field-access callee) now go through name indexes; the units planner's
+`outliving` and `anchored_after` (7% with the `used_after` tails they
+drove) walk a reverse anchoring index and the rest of the block instead of
+every value of the function. What remains is spread wide:
+`util.hash_bucket` plus `__fern_str_eq` 5% (the registries' probes),
+`ssa_lift.lift_impl` 3%, `asmcore.callgate_expr` 3%, `__fern_alloc` 2%.
+
+To re-measure: build the driver with `-g` through the pinned stage0, run
+`valgrind --tool=callgrind` on `-emit asm`, and resolve
+`callgrind_annotate`'s `???:0x…` rows against `nm -n` of that same binary
+(the pitfall below); `--tree=both` gives the call counts that tell a scan
+from real work.
+
 ## Suite timings and sharding
 
 The e2e suite is split (#4398 part 3) into `internal/e2eselfhost` (the

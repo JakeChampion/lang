@@ -29,19 +29,15 @@ function main(): i32 {
 }
 `
 
-// Both lowerings emit str_data. The typed one runs under the strict gate, so a
-// body it declined would fail the build rather than fall back to the AST one.
+// Every target emits str_data.
 func TestSelfHostStrBytesEveryTarget(t *testing.T) {
 	h := selfHostCLIForHost(t)
-	lowerings := []struct{ name, env string }{{"typed", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
-		for _, l := range lowerings {
-			t.Run(target+"/"+l.name, func(t *testing.T) {
-				got, _ := routedMapRun(t, h.cli, h.stdlib, strBytesProg, target, l.env)
-				if got != "104\n97\n115" {
-					t.Fatalf("%s %s: got %q, want 104, 97, 115", target, l.name, got)
-				}
-			})
-		}
+		t.Run(target, func(t *testing.T) {
+			got, _ := routedMapRun(t, h.cli, h.stdlib, strBytesProg, target)
+			if got != "104\n97\n115" {
+				t.Fatalf("%s: got %q, want 104, 97, 115", target, got)
+			}
+		})
 	}
 }

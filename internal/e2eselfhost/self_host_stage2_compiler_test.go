@@ -30,6 +30,7 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 	entry := "import \"./lexer\";\n" +
 		"import \"./parser\";\n" +
 		"import \"./asm_ir\";\n" +
+		"import \"./semlower\";\n" +
 		"function main(): i32 {\n" +
 		"    var src: string = \"\";\n" +
 		"    while (true) {\n" +
@@ -41,7 +42,8 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 		"            None => { break; },\n" +
 		"        }\n" +
 		"    }\n" +
-		"    print(asm_ir.emit_module_or_error(parser.parse_module(lexer.tokenize(src))));\n" +
+		"    var d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(src)), \"x86-64-linux\");\n" +
+		"    print(asm_ir.emit_module_or_error_sub(d.full, d.sub));\n" +
 		"    return 0;\n" +
 		"}\n"
 	files := map[string]string{"main.fern": entry}

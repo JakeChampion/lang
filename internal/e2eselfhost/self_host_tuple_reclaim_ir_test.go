@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,50 +18,45 @@ import (
 // reclaimable tuples, so its box is freed each iteration (a SHALLOW box release,
 // matching the leak-mode element contract).
 //
-// Two contracts per case:
-//   - exit code pins VALUE correctness (a double-free would corrupt / crash);
-//   - reclaimAssert pins the EMISSION: each program uses only tuples, so a
-//     `call __fn___fern_arr_dec` (the shallow box release) is the per-iteration
-//     tuple reclaim — required (>=1) or forbidden (0, escaping) as noted.
+// The exit code pins VALUE correctness: a double-free would corrupt or crash.
 var tupleReclaimIRCases = []struct {
-	name        string
-	src         string
-	expected    int
-	mustReclaim bool
+	name     string
+	src      string
+	expected int
 }{
 	// Loop-body scalar tuple with a variable element: reclaimed each iteration.
 	// sum over i in 0..3 of (i + 1) = 1+2+3+4 = 10.
 	{"loop-body-scalar-tuple",
 		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: (i32, i32) = (i, 1); sum = sum + a.0 + a.1; i = i + 1; } return sum; }`,
-		10, true},
+		10},
 	// Scalar tuple in a NESTED if inside a loop: reclaimed each time the arm runs.
 	// sum over i in 1..3 of (i + 1) = 2+3+4 = 9.
 	{"nested-if-scalar-tuple",
 		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { if (i > 0) { var a: (i32, i32) = (i, 1); sum = sum + a.0 + a.1; } i = i + 1; } return sum; }`,
-		9, true},
+		9},
 	// Mixed i64 / f64 scalar tuple: the wide (8-byte) elements are still by-value,
 	// so the box is reclaimed. sum over i in 0..3 of (5 + 2) = 28.
 	{"i64-f64-scalar-tuple",
 		`function main(): i32 { var sum: i64 = 0; var i: i32 = 0; while (i < 4) { var a: (i64, f64) = (5, 2.0); sum = sum + a.0 + (a.1 as i64); i = i + 1; } return sum as i32; }`,
-		28, true},
+		28},
 	// Memory-safety at scale: 5,000,000 iterations of a scalar-tuple loop. A leaked
 	// box per iteration would exhaust the heap; a double-free would crash. exit 0
 	// (sum kept mod 1000) with the reclaim present proves the balance.
 	{"scalar-tuple-churn-safe",
 		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var a: (i32, i32) = (i, 1); sum = (sum + a.0 + a.1) % 1000; i = i + 1; } return sum; }`,
-		0, true},
+		0},
 	// UN-ANNOTATED scalar tuple (`var a = (i, 1)`, inferred type): reclaimed too —
 	// the reclaimability check now accepts number / boolean / IDENT elements (a
 	// SHALLOW box free never touches them), not just all-literal tuples, so the
 	// annotation is no longer required. sum over i in 0..3 of (i + 1) = 10.
 	{"unannotated-scalar-tuple",
 		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a = (i, 1); sum = sum + a.0 + a.1; i = i + 1; } return sum; }`,
-		10, true},
+		10},
 	// Un-annotated churn at scale: the inferred `(i, 1)` reclaims per iteration
 	// (flat heap), exit 0.
 	{"unannotated-scalar-tuple-churn-safe",
 		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var a = (i, 1); sum = (sum + a.0 + a.1) % 1000; i = i + 1; } return sum; }`,
-		0, true},
+		0},
 }
 
 // TestSelfHostTupleReclaimIRX86_64 compiles each case through the self-hosted
@@ -85,15 +79,6 @@ func TestSelfHostTupleReclaimIRX86_64(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			// Tuple-only programs: a `call __fn___fern_arr_dec` (the shallow box
-			// release) is the per-iteration tuple reclaim. The bare label
-			// `__fn___fern_arr_dec:` (the helper definition) is not a call.
-			// The reclaim is the AST lowering's; the typed lowering allocates no box
-			// for these scalar tuples.
-			reclaims := bytes.Count(runCaptureAST(t, runner, driverBin, []byte(tc.src)), []byte("call __fn___fern_arr_dec"))
-			if tc.mustReclaim && reclaims == 0 {
-				t.Errorf("%s: expected a per-iteration tuple reclaim (call __fn___fern_arr_dec), found none — the tuple leaks", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd

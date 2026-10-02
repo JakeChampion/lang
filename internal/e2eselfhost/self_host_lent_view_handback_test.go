@@ -31,7 +31,7 @@ func TestSelfHostLentViewHandback(t *testing.T) {
 	if err := os.WriteFile(src, []byte(lentViewHandbackSrc), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bin := cli.x86Binary(t, src, "FERN_SEM_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+	bin := cli.x86Binary(t, src, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 	stderr, exit := runWithStdin(t, cli.runner, bin, nil)
 	if exit != 34 {
 		t.Fatalf("exit=%d, want 34 (stderr %q)", exit, stderr)

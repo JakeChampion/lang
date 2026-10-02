@@ -6,12 +6,12 @@ date-time / I/O depth) and `LANGUAGE-DIRECTION.md`. This one surveys the
 question, Unicode operations, and the related types that always ship
 alongside (byte views, scalar/char, paths, symbols, builders).
 
-## Completion audit, October 2026
+## Migration audit, October 2026
 
-Every decision below has landed; epic #5626 closes on this audit. D9's
-invariant — a `string` is well-formed UTF-8 — now holds for every value
-a program can observe, because every stdlib producer that turns bytes
-into a `string` was audited against it:
+Epic #5626 and prerequisite #5714 remain open. D9 requires every observable
+`string` to be well-formed UTF-8. The boundaries below have been migrated,
+but the remaining producers listed after the table still prevent that
+invariant from holding across the stdlib.
 
 | Producer | Bytes from | What it does with ill-formed bytes |
 |---|---|---|
@@ -30,12 +30,17 @@ The rule the table follows: where the API has an error channel the
 bytes are refused through it; where it has none they decode as U+FFFD,
 one per maximal subpart (`utf8.from_bytes_lossy`, the rule the string
 methods walk by); and the bytes themselves are always one sibling away.
-Everything else that calls the unchecked constructor is valid by
-construction — digits, ASCII an encoder just built, the bytes of a
-string it was handed — and the property test
-(`examples/tests/utf8_validity_property_test.fern`) stands guard over
-the string methods. The byte-level methods (`reverse_bytes`,
+The property test (`examples/tests/utf8_validity_property_test.fern`)
+covers the string methods. The byte-level methods (`reverse_bytes`,
 `shift_byte`, `replace_byte`, `without_byte`) return `u8[]`.
+
+The audit still finds observable invalid strings: replacing `.` in `é`
+can split its encoding, a `(.)` capture can expose its first byte, and
+`(255 as u8).to_ascii_string()` constructs an invalid one-byte string.
+`rng_bytes`, `Reader.read_chunk` and builder extraction also still have
+text-typed raw paths. `buf_take_bytes` adds the raw builder destination;
+the old text extraction and its binary consumers still need migration.
+These gaps require implementation and target coverage before closing D9.
 
 Two things sit outside the invariant on purpose, both recorded rather
 than pending:
@@ -445,7 +450,8 @@ amortised away rather than softened.
 
 ```
 buf_new(cap) / buf_push(b, s) / buf_push_range(b, s, lo, hi) /
-buf_push_byte(b, x) / buf_len(b) / buf_take(b) / buf_free(b)
+buf_push_bytes_range(b, bytes, lo, hi) /
+buf_push_byte(b, x) / buf_len(b) / buf_take(b) / buf_take_bytes(b) / buf_free(b)
 ```
 
 `buf_take` copies the accumulated bytes into a string of exactly their
@@ -458,6 +464,17 @@ flush against a write syscall. A builder is not
 refcounted and has no drop — a handle that is never freed leaks, exactly as
 an fd that is never closed does — so programs want `std/io_buffered`'s
 writers rather than these directly.
+
+`buf_take_bytes(b): u8[]` extracts arbitrary bytes into an independently
+owned array and resets the builder length while retaining its reserve.
+Later pushes or freeing the builder do not change the extracted array.
+`buf_push_bytes_range(b, bytes, lo, hi)` borrows a `u8[]` and appends its
+half-open byte range, clamping bounds to the array. Empty or inverted ranges
+append nothing. It reserves once and copies packed arrays in bulk; neither
+appending nor extracting requires an intermediate string.
+Use this path for binary output. It never constructs a string; text callers
+can validate the returned bytes with `std/utf8.from_bytes`. The older
+`buf_take` API still needs a separate validity-contract migration for D9.
 
 ---
 
@@ -767,7 +784,7 @@ it. An escaping view does not crash today, but that is the allocator not
 reusing the storage yet, not a guarantee. This is the same open question
 as `str`'s escape rule (#4814) and is tracked there, not solved here.
 
-### D9 — Guarantee UTF-8 validity on `string`. **LANDED** (#5634, #5714)
+### D9 - Guarantee UTF-8 validity on `string`. **IN PROGRESS** (#5634, #5714)
 
 The §2.8 invariant. `string` means *well-formed UTF-8*; arbitrary bytes
 live in `u8[]`/`[u8]` (which D8 makes ergonomic).
@@ -849,8 +866,42 @@ side, and the self-host's register lanes (`asmcore.rt_src_utf8_valid`,
 plain Fern) plus its wasm p1/p2 lanes, all return
 `Err(InvalidUtf8(path))` on malformed content — the case D9 predicted
 and nothing emitted is now real on every lane. `tcp_recv(fd, max)`
-returns `u8[]` (#7467), so no byte-carrying builtin is typed `string`
-any more.
+returns `u8[]` (#7467). The remaining builder and Reader raw paths are
+listed in the migration audit above.
+
+`Reader.read_chunk_bytes(n): Result[u8[], IoError]` provides owned raw input
+on the bootstrap interpreter and native/wasm backends, and on the self-hosted
+native and wasm command-module backends. It preserves NUL, malformed UTF-8
+and split scalar encodings. A short read returns the bytes actually read;
+EOF returns an empty array. Negative counts report an I/O error. A
+zero-length read does not advance the cursor and preserves host errors,
+including WASI Preview 1's possible `Interrupted` result. Closed handles
+report an error. Retained arrays remain valid after subsequent reads and
+closing the reader.
+
+The Fern interpreter also supports raw stdin reads; its file-handle opening
+remains unsupported. The existing `Reader.read_chunk` remains text-typed and
+unchecked pending migration of its binary consumers. The new method does not
+establish the string invariant by itself.
+
+`Writer.write_bytes(bytes): Option[IoError]` and
+`Writer.write_some_bytes(bytes): Result[i64, IoError]` borrow an owned `u8[]`
+without changing or retaining it. The former completes short writes and
+reports an I/O error on zero progress; the latter returns the count from one
+host write, which may be zero. Empty writes preserve host errors, and closed
+handles report an error. WASI Preview 2 host writes use blocking chunks of
+at most 4096 bytes. These methods have the same bootstrap
+and primary compiled target coverage as the raw reader. The primary
+interpreter bridges raw stdin reads and stdout/stderr writes through these
+host methods, preserving arrays, counts and I/O errors. It also supports text
+writes on those stdio handles. File-handle opening in that interpreter remains
+outside this bridge. They never construct an unchecked string. Borrowed views
+must be materialized before calling this owned-array signature.
+
+`BufWriter.flush()` extracts an owned byte array and consumes it after writing.
+Byte writes, mappings and ranges can therefore flush arbitrary bytes or partial
+scalar encodings without constructing a string. Direct string writes retain
+their fast path; sticky write errors and close-error precedence are unchanged.
 
 The socket TRANSPORT followed. `tcp_recv_deadline` returns
 `Option[u8[]]`, and `std/fetch` is byte-domain end to end —
@@ -1108,7 +1159,7 @@ Tracked as epic #5626; issue numbers below.
 | 5 | **D5** (#5631) — normalization + `eq_canonical` — **DONE** | 1 | Shipped `nfc`/`nfd`/`eq_canonical`/`is_nfc`/`is_nfd`. NFKC/NFKD declined — a second full table for a lossy transform. |
 | 6 | **D8** (#5632) — `[u8]` string view — **DONE** | — | Builtin already existed; #5632 added the migrated consumer, the four-backend differential, and the docs. Borrow rule still open (#4814). |
 | 7 | **D6** (#5633) — grapheme segmentation — **DONE**; word segmentation followed under #5552 | 1, 3 | Opt-in. NOT the largest table after all (~17 KB vs normalization's ~58 KB). Returns `str[]` views (was `string[]` until #5695 was fixed). Word_Break coalesces to 1085 ranges, ~13 KB; a program that does not segment words is byte-identical to one built before it existed. |
-| 8 | **D9** (#5634, #5714) — the UTF-8 validity invariant — **DONE** | 6 | Largest blast radius; done last, after `[u8]` made "raw bytes" ergonomic. `s[a:b]` is `Option[str]`, every byte-carrying builtin returns `u8[]`, `read_file` validates, and every stdlib byte-to-string producer refuses or replaces ill-formed bytes (the completion audit at the top). |
+| 8 | **D9** (#5634, #5714): the UTF-8 validity invariant, **IN PROGRESS** | 6 | `s[a:b]` is `Option[str]` and `read_file` validates. Regex, ASCII-byte conversion and remaining text-typed raw paths still need migration; see the audit at the top. |
 | 9 | **D10** (#5635) — document the path assumption — **DONE** | — | Doc-only. Stated in `std/path`, `std/io`, and `read_dir`'s builtin signature. |
 
 #5552 as filed maps onto slices 1, 4, 5, 6, 7. Its step 1 (document the

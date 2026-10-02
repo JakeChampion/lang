@@ -136,22 +136,16 @@ function main(): i32 { return mk(7) + mk("zz").len() + 4; }
 }
 
 // TestSelfHostTypeParamSpelling compiles each case with the self-host CLI for
-// every target, under both the default lowering and `FERN_SEM_IR=`.
+// every target.
 func TestSelfHostTypeParamSpelling(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	lowerings := []struct {
-		name string
-		env  []string
-	}{{"default", nil}, {"ast", []string{"FERN_SEM_IR="}}}
 	for _, target := range []string{"x86-64-linux", "wasm32-wasi", "arm64-linux"} {
-		for _, lw := range lowerings {
-			for _, tc := range typeParamSpellingCases {
-				t.Run(target+"/"+lw.name+"/"+tc.name, func(t *testing.T) {
-					if stderr, code := cli.exitOf(t, tc.src, target, lw.env...); code != tc.want {
-						t.Errorf("exited %d, want %d\n%s", code, tc.want, stderr)
-					}
-				})
-			}
+		for _, tc := range typeParamSpellingCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, tc.src, target); code != tc.want {
+					t.Errorf("exited %d, want %d\n%s", code, tc.want, stderr)
+				}
+			})
 		}
 	}
 }

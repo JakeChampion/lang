@@ -739,7 +739,8 @@ function add_use(own live: boolean[], value: i32, deps: i32[][]): boolean[] {
 // column is counted too. A delete takes one for the receiver it hands back
 // inside its tuple and only COMPARES the key, whose unit stays with the
 // caller. A hole fill takes the chain's and the stored value's, and reads the
-// hole's address.
+// hole's address. A string append takes one for its left operand, whose
+// buffer it may grow in place (`string_append`).
 function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
   var out: Supply[] = [];
   var counted: boolean[] = [];
@@ -759,6 +760,8 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     counted = [true, false, ssasem.reference(f.values[ins.args[2]])];
   } else if (ins.kind_tag == ssasem.hole_fill()) {
     counted = [true, false, true];
+  } else if (string_append(f, ins)) {
+    counted = [true, false];
   } else if (construction(ins.kind_tag)) {
     for arg in ins.args {
       counted = counted.append(taken(f.values[arg]));
@@ -772,6 +775,13 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     i = i + 1;
   }
   return out;
+}
+
+// A `+` on a counted string: the runtime appends onto the left operand's
+// buffer when the frame hands it the only unit and its block has room, so the
+// operand is taken rather than lent. A view has no unit to hand over.
+pub function string_append(f: ssasem.Func, ins: ssa.SInst): boolean {
+  return ins.kind_tag == 9 && ins.str == "+" && ssasem.is_string(f.values[ins.args[0]]);
 }
 
 // The operands a call lends rather than counts. The callee reads them for the
@@ -1557,14 +1567,68 @@ function retainable_element(f: ssasem.Func, defs: ssa.SInst[], w: i32): boolean 
   return ssasem.reference(t) && !ssasem.is_view(t);
 }
 
+// The dependency chains read backwards: the values anchored to `v` are
+// `at[start[v] .. start[v + 1])`, ascending. Built once per function, so a
+// query for one source walks its anchored values rather than every value.
+struct Anchored { start: i32[], at: i32[] }
+
+function anchored_to(a: ssasem.Analysis, nvals: i32): Anchored {
+  var count: i32[] = [];
+  while (count.len() <= nvals) {
+    count = count.append(0);
+  }
+  // The chains run to the values the analysis saw; a refused analysis has
+  // none.
+  var known: i32 = a.dependencies.len();
+  if (known > nvals) {
+    known = nvals;
+  }
+  var w: i32 = 0;
+  while (w < known) {
+    for dep in a.dependencies[w] {
+      if (dep >= 0 && dep < nvals) {
+        count = count.with(dep, count[dep] + 1);
+      }
+    }
+    w = w + 1;
+  }
+  var start: i32[] = [];
+  var total: i32 = 0;
+  var v: i32 = 0;
+  while (v <= nvals) {
+    start = start.append(total);
+    if (v < nvals) {
+      total = total + count[v];
+    }
+    v = v + 1;
+  }
+  var at: i32[] = [];
+  while (at.len() < total) {
+    at = at.append(0);
+  }
+  var fill: i32[] = start;
+  w = 0;
+  while (w < known) {
+    for dep in a.dependencies[w] {
+      if (dep >= 0 && dep < nvals) {
+        at = at.with(fill[dep], w);
+        fill = fill.with(dep, fill[dep] + 1);
+      }
+    }
+    w = w + 1;
+  }
+  return Anchored { start: start, at: at };
+}
+
 // The element reads anchored to `s` that are still in hand once `s` is
 // supplied: past the operation at (`bi`, `pos`), or into block `si` when `s`
 // goes out along an edge.
-function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], held: boolean[], s: i32, bi: i32, pos: i32, si: i32): boolean[] {
+function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchored: Anchored, held: boolean[], s: i32, bi: i32, pos: i32, si: i32): boolean[] {
   var out: boolean[] = held;
-  var w: i32 = 0;
-  while (w < f.graph.nvals) {
-    if (w != s && !out[w] && retainable_element(f, defs, w) && reads(a, w, s)) {
+  var k: i32 = anchored.start[s];
+  while (k < anchored.start[s + 1]) {
+    var w: i32 = anchored.at[k];
+    if (w != s && !out[w] && retainable_element(f, defs, w)) {
       var live: boolean = false;
       if (si >= 0) {
         live = ssalive.live_in_has(a.flow, si, w);
@@ -1575,7 +1639,7 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], held: 
         out = out.with(w, true);
       }
     }
-    w = w + 1;
+    k = k + 1;
   }
   return out;
 }
@@ -1588,6 +1652,7 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], held: 
 // and costs nothing.
 function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): boolean[] {
   var out: boolean[] = bits(f.graph.nvals);
+  var anchored: Anchored = anchored_to(a, f.graph.nvals);
   var bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
     var b: ssa.SBlock = f.graph.blocks[bi];
@@ -1598,7 +1663,7 @@ function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
         var supplies: Supply[] = operation_supplies(f, ins);
         for got in supplies {
           if (owned[got.value]) {
-            out = outliving(f, a, defs, out, got.value, bi, pos, 0 - 1);
+            out = outliving(f, a, defs, anchored, out, got.value, bi, pos, 0 - 1);
           }
         }
       }
@@ -1610,7 +1675,7 @@ function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
       var along: Supply[] = edge_supplies(f, b, si, owned);
       for got in along {
         if (owned[got.value]) {
-          out = outliving(f, a, defs, out, got.value, bi, 0, si);
+          out = outliving(f, a, defs, anchored, out, got.value, bi, 0, si);
         }
       }
     }
@@ -1706,20 +1771,60 @@ function read_later_in_block(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst
 }
 
 // A value used after pos in block bi reaches root other than through the read
-// at pos or a read of another of root's slots.
+// at pos or a read of another of root's slots. The values the rest of the
+// block reads are enumerated from its instructions, each with the chain it
+// reads through, rather than every value of the function asked whether the
+// block reads it; what leaves the block is read off the live-out set.
 function anchored_after(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, pos: i32, root: i32): boolean {
-  var ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
+  var b: ssa.SBlock = f.graph.blocks[bi];
+  var ins: ssa.SInst = b.insts[pos];
   var w: i32 = 0;
   while (w < f.graph.nvals) {
-    if (w != root && w != ins.result && reads(a, w, root) && used_after(f, a, bi, pos, w)) {
-      var hop: i32 = first_hop(a, w, root);
-      if (hop != ins.result && (hop < 0 || !other_slot_get(defs[hop], ins))) {
-        return true;
-      }
+    if (ssalive.live_out_has(a.flow, bi, w) && reaches_root(a, defs, ins, root, w)) {
+      return true;
     }
     w = w + 1;
   }
+  var i: i32 = pos + 1;
+  while (i < b.insts.len()) {
+    for arg in b.insts[i].args {
+      if (read_reaches_root(a, defs, ins, root, arg)) {
+        return true;
+      }
+    }
+    i = i + 1;
+  }
+  if (b.term.kind_tag == 1 && read_reaches_root(a, defs, ins, root, b.term.value)) {
+    return true;
+  }
+  return b.term.kind_tag == 3 && read_reaches_root(a, defs, ins, root, b.term.cond);
+}
+
+// Whether reading `arg` reads a value that reaches `root` other than through
+// the take `ins`: `arg` itself or one it is anchored to.
+function read_reaches_root(a: ssasem.Analysis, defs: ssa.SInst[], ins: ssa.SInst, root: i32, arg: i32): boolean {
+  if (arg < 0) {
+    return false;
+  }
+  if (reaches_root(a, defs, ins, root, arg)) {
+    return true;
+  }
+  for dep in a.dependencies[arg] {
+    if (reaches_root(a, defs, ins, root, dep)) {
+      return true;
+    }
+  }
   return false;
+}
+
+// Whether `w`, read after the take `ins`, reaches `root` other than through
+// the take or a read of another of root's slots.
+function reaches_root(a: ssasem.Analysis, defs: ssa.SInst[], ins: ssa.SInst, root: i32, w: i32): boolean {
+  if (w == root || w == ins.result || !reads(a, w, root)) {
+    return false;
+  }
+  var hop: i32 = first_hop(a, w, root);
+  return hop != ins.result && (hop < 0 || !other_slot_get(defs[hop], ins));
 }
 
 // Whether `root` is still needed after block `bi` other than through what the

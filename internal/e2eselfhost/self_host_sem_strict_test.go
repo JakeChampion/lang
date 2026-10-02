@@ -326,9 +326,7 @@ function main(): i32 {
 
 	// The records an instance builds at its binding, on every target: a wide
 	// binding a wasm field stores at 8 bytes, a record holding one, and one
-	// holding itself. The AST lowering leaks both on x86-64 and emits an
-	// invalid wasm module for the wide one, so the answer is pinned rather than
-	// compared with it.
+	// holding itself, each held to its pinned answer.
 	for _, c := range []struct{ name, src, want string }{
 		{"wide-and-nested", `import "std/i32";
 import "std/i64";
@@ -368,7 +366,7 @@ function main(): i32 {
 				t.Fatal(err)
 			}
 			for _, target := range []string{"x86-64-sanitize", "arm64-linux", "wasm32-wasi"} {
-				got, report, leak := semCompileRun(t, gcc, nil, fernBin, stdlibRoot, src, target, true, "")
+				got, report, leak := semCompileRun(t, gcc, nil, fernBin, stdlibRoot, src, target, "")
 				if got != c.want {
 					t.Fatalf("%s: answered %q, want %q\n%s", target, got, c.want, report)
 				}
@@ -382,8 +380,7 @@ function main(): i32 {
 // source the typed lowering refuses fails the compile with exit 3, naming the
 // helper, with no FERN_ variable set. No shipped helper is refused, so the
 // driver is built from a copy whose `chr` source holds its block in an i32,
-// which does not type-check. Under a bisect knob the helper keeps the AST
-// lowering instead.
+// which does not type-check.
 func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -404,7 +401,7 @@ func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
 	const prog = "function main(): i32 { var s: string = chr(65); return s.len(); }\n"
-	emit := func(env ...string) (string, string, int) {
+	emit := func() (string, int) {
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
 			cmd = exec.Command(driverBin)
@@ -412,20 +409,16 @@ func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 		}
 		cmd.Stdin = strings.NewReader(prog)
-		cmd.Env = childEnv(env...)
-		var stdout, stderr strings.Builder
-		cmd.Stdout = &stdout
+		cmd.Env = childEnv()
+		var stderr strings.Builder
 		cmd.Stderr = &stderr
 		_ = cmd.Run()
-		return stdout.String(), stderr.String(), cmd.ProcessState.ExitCode()
+		return stderr.String(), cmd.ProcessState.ExitCode()
 	}
 
-	_, stderr, code := emit()
+	stderr, code := emit()
 	if code != 3 || !strings.Contains(stderr, "FERN_SEM_IR: runtime __fern_chr: does not type-check") ||
 		!strings.Contains(stderr, "FERN_SEM_IR: the typed lowering refused runtime helper __fern_chr") {
 		t.Fatalf("exit %d, want 3 naming the refused helper\n%s", code, stderr)
-	}
-	if asm, stderr, code := emit("FERN_SEM_IR_SKIP=__fern_chr"); code != 0 || !strings.Contains(asm, "__fn___fern_chr:") {
-		t.Fatalf("under FERN_SEM_IR_SKIP: exit %d, want the AST lowering's helper\n%s", code, stderr)
 	}
 }

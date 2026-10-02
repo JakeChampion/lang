@@ -218,7 +218,7 @@ func runMapChurnTyped(t *testing.T, runner []string, target string, programs []m
 				args = []string{"-target", target, "-emit", "asm", src, stdlibRoot, "-o", bin}
 			}
 			cmd := exec.Command(fernBin, args...)
-			cmd.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_REPORT=1")
+			cmd.Env = append(os.Environ(), "FERN_SEM_IR_REPORT=1")
 			var cerr strings.Builder
 			cmd.Stderr = &cerr
 			if err := cmd.Run(); err != nil {

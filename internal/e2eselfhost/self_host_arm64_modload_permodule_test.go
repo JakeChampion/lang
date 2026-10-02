@@ -42,7 +42,7 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	// 1. Emit every unit of the whole compiler as arm64 asm, batched — the same
 	// route (and the same batch size) `emit_per_module_spawned` drives for arm64
 	// in step 5 below.
-	units := emitAllWholeCompiler(t, x86runner, driverBin, entry, dir, "wc_arm", "arm64-linux", pmEmitAllBatch(), pmGoBuiltEmitMemoryMB)
+	units := emitAllWholeCompiler(t, x86runner, driverBin, entry, dir, "wc_arm", "arm64-linux", pmEmitAllBatch, pmGoBuiltEmitMemoryMB)
 	objs := unitObjPaths(t, dir, "wc_arm", units)
 
 	// 2. Link all arm64 units into one compiler binary.

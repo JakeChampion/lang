@@ -72,10 +72,17 @@ func TestSelfHostTypeRef(t *testing.T) {
 		"ok   (((T) => U)[][])\n" +
 		"ok   (() => T, () => U)\n" +
 		"ok   () => (() => U[])[]\n" +
+		"ok   [u8]\n" +
+		"ok   [u8][]\n" +
+		"ok   ([u8], i32)\n" +
+		"ok   Option[[u8]]\n" +
+		"ok   [[u8]]\n" +
+		"ok   [(i32) => i32]\n" +
 		"struct Map base=Map args=2 depth=0 tuple=0\n" +
 		"struct Map.arg1 base=Option args=1\n" +
 		"struct tuparr base= args=2 depth=1 tuple=1\n" +
 		"struct arr3 base=Foo args=0 depth=3\n" +
+		"struct viewarr view=1 depth=1 elemview=1 elem=u8\n" +
 		"struct fn2 base= args=3 depth=0 tuple=0 fn=1 ret=i32\n" +
 		"struct fn0 args=1 fn=1 ret=P\n" +
 		"struct fnho args=2 fn=1 p0fn=1 ret=U\n" +

@@ -53,7 +53,7 @@ func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 	}
 	bin := filepath.Join(dir, "held")
 	compile := exec.Command(driver, "-target", "x86-64-linux", "-o", bin, src, stdlib)
-	compile.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SEM_IR=1", "FERN_SEM_IR_REPORT=1")
+	compile.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SEM_IR_REPORT=1")
 	report, err := compile.CombinedOutput()
 	if err != nil {
 		t.Fatalf("compile: %v\n%s", err, report)

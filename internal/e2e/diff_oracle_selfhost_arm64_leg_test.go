@@ -17,11 +17,6 @@ import (
 // a listed seed that starts passing fails too.
 const selfHostArm64DiffKnownFile = "selfhost-diff-arm64-known-divergences.txt"
 
-// selfHostSemArm64DiffKnownFile is the semantic leg's own list, the arm64
-// sibling of selfHostSemDiffKnownFile: a seed the AST lowering gets right on
-// this target and the semantic one does not belongs here and nowhere else.
-const selfHostSemArm64DiffKnownFile = "selfhost-diff-semantic-arm64-known-divergences.txt"
-
 // TestDifferential_SelfHostArm64 is the x86-64 oracle's sibling against the
 // self-host ARM64 backend (#7967).
 //
@@ -46,28 +41,6 @@ const selfHostSemArm64DiffKnownFile = "selfhost-diff-semantic-arm64-known-diverg
 // and it means an in-process-assembler gap arrives as a compile failure naming
 // the mnemonic rather than as a link error.
 func TestDifferential_SelfHostArm64(t *testing.T) {
-	testDifferentialSelfHostArm64(t, false)
-}
-
-// TestDifferential_SelfHostSemanticArm64 is the same corpus through the same
-// backend with the SEMANTIC lowering, the arm64 sibling of
-// TestDifferential_SelfHostSemanticX86_64.
-//
-// It exists because the semantic lowering emits target-specific runtime of its
-// own — a map column of boxes reaches __fern_map_free_vf through a register
-// here and a table slot on wasm — so "the semantic lowering is fuzzed" was
-// only ever true of one backend.
-//
-// Until this split the leg above pinned NEITHER path: it inherited the
-// environment, so when the semantic lowering became the default it silently
-// stopped testing the AST one, and its known-divergence list went on being
-// read as the AST leg's. Both legs now spell the flag, for the reason the
-// x86-64 pair's compile step gives.
-func TestDifferential_SelfHostSemanticArm64(t *testing.T) {
-	testDifferentialSelfHostArm64(t, true)
-}
-
-func testDifferentialSelfHostArm64(t *testing.T, semantic bool) {
 	requireSelfHostDiffLeg(t)
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -87,9 +60,6 @@ func testDifferentialSelfHostArm64(t *testing.T, semantic bool) {
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
 	knownFile := selfHostArm64DiffKnownFile
-	if semantic {
-		knownFile = selfHostSemArm64DiffKnownFile
-	}
 	known := loadKnownDivergences(t, knownFile)
 
 	var sampled, ran int64
@@ -113,9 +83,9 @@ func testDifferentialSelfHostArm64(t *testing.T, semantic bool) {
 				t.Errorf(format, args...)
 			}
 
-			r, gap := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src, semantic)
+			r, gap := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src)
 			if gap != "" {
-				if semantic && semRefused(gap) {
+				if semRefused(gap) {
 					t.Errorf("the typed lowering refused this seed:\n%s", gap)
 					return
 				}
@@ -162,7 +132,7 @@ func testDifferentialSelfHostArm64(t *testing.T, semantic bool) {
 // No link step and so no link failure to report: the self-host assembles and
 // links this target itself, which folds what would be the x86-64 leg's link
 // error into the compile failure, naming the unsupported mnemonic.
-func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string, semantic bool) (*selfHostRun, string) {
+func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string) (*selfHostRun, string) {
 	t.Helper()
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
@@ -171,14 +141,6 @@ func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string, s
 	}
 	binPath := filepath.Join(dir, "prog")
 	compile := exec.Command(fernBin, "-target", "arm64-linux", srcPath, stdlibRoot, "-o", binPath)
-	// Spelled EMPTY on the control leg rather than left unset, for the reason
-	// the x86-64 pair gives: empty is off, and writing it is what stops an
-	// ambient FERN_SEM_IR in the environment turning both legs into the
-	// semantic one.
-	compile.Env = append(os.Environ(), "FERN_SEM_IR=", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=")
-	if semantic {
-		compile.Env = append(compile.Env, "FERN_SEM_IR=1")
-	}
 	out, err := compile.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Sprintf("%v\n%s%s", err, out,

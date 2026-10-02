@@ -521,12 +521,19 @@ func TestChangesScriptIsSelfTested(t *testing.T) {
 	if _, err := os.Stat(filepath.Join("..", "..", "tools", "ci-changes-selftest.mjs")); err != nil {
 		t.Fatalf("tools/ci-changes-selftest.mjs is missing: %v", err)
 	}
-	if !strings.Contains(workflowSource(t, "lint.yml"), "make ci-selftest") {
-		t.Errorf("lint.yml no longer runs `make ci-selftest`, so nothing executes the `changes` script before it reaches a pull request")
-	}
 	mk, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
 	if err != nil {
 		t.Fatalf("read Makefile: %v", err)
+	}
+	// The lint lane runs the cheap gates as one `make lint-fast`; ci-selftest
+	// has to be one of them (or a step of its own) or nothing executes the
+	// `changes` script before it reaches a pull request.
+	lint := workflowSource(t, "lint.yml")
+	fast := regexp.MustCompile(`(?m)^lint-fast:(.*)$`).FindStringSubmatch(string(mk))
+	runsSelftest := strings.Contains(lint, "make ci-selftest") ||
+		(strings.Contains(lint, "lint-fast") && fast != nil && strings.Contains(" "+fast[1]+" ", " ci-selftest "))
+	if !runsSelftest {
+		t.Errorf("lint.yml no longer runs `make ci-selftest` (directly or through `make lint-fast`), so nothing executes the `changes` script before it reaches a pull request")
 	}
 	if !strings.Contains(string(mk), "node tools/ci-changes-selftest.mjs") {
 		t.Errorf("Makefile's ci-selftest target no longer runs tools/ci-changes-selftest.mjs")

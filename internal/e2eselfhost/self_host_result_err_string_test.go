@@ -28,18 +28,18 @@ func resultErrLoopSrc(body string) string {
 
 var resultErrStringRows = []leakRow{
 	{"string_ok", resultErrLoopSrc(`        var q: Result[string, string] = Err((i + 1000).to_string());
-        n = (n + q.unwrap_or("xyz").len()) % 101;`), true, [2]int64{}},
+        n = (n + q.unwrap_or("xyz").len()) % 101;`), true},
 	{"scalar_ok", resultErrLoopSrc(`        var q: Result[i32, string] = Err((i + 1000).to_string());
-        n = (n + q.unwrap_or(3)) % 101;`), true, [2]int64{}},
+        n = (n + q.unwrap_or(3)) % 101;`), true},
 	{"bool_ok", resultErrLoopSrc(`        var q: Result[boolean, string] = Err((i + 1000).to_string());
-        if (q.unwrap_or(true)) { n = n + 1; }`), true, [2]int64{}},
+        if (q.unwrap_or(true)) { n = n + 1; }`), true},
 	{"scalar_ok_built_ok", resultErrLoopSrc(`        var q: Result[i32, string] = Ok(i);
-        n = (n + q.unwrap_or(3)) % 101;`), true, [2]int64{}},
+        n = (n + q.unwrap_or(3)) % 101;`), true},
 	{"unused", `function main(): i32 {
     var q: Result[i32, string] = Err("a" + "b");
     return 7;
 }
-`, true, [2]int64{}},
+`, true},
 	{"lent", `import "std/i32";
 import "std/result";
 function pick(q: Result[i32, string]): i32 { return q.unwrap_or(3); }
@@ -53,7 +53,7 @@ function main(): i32 {
     }
     return n;
 }
-`, true, [2]int64{}},
+`, true},
 	// The callee leaks one block per `return Err(x.to_string())` (#10628).
 	{"producer", `import "std/i32";
 import "std/result";
@@ -71,7 +71,7 @@ function main(): i32 {
     }
     return n;
 }
-`, false, [2]int64{200, 150}},
+`, false},
 	// The result of `and` wraps r's Err string uncounted and outlives r, so r
 	// must not release it.
 	{"result_outlives", `import "std/i32";
@@ -87,7 +87,7 @@ function main(): i32 {
     match (s) { Ok(v) => { return v.len(); }, Err(e) => { return e.len() + 10; } }
     return 0;
 }
-`, false, [2]int64{12, 3}},
+`, false},
 	// `or` returns r's own Ok string uncounted, and s outlives r (#10439):
 	// on main r's release freed the string under s (wasm answered 20, not 23).
 	{"ok_result_outlives", `import "std/i32";
@@ -103,7 +103,7 @@ function main(): i32 {
     match (s) { Ok(v) => { return v.len() + 20; }, Err(e) => { return e.len(); } }
     return 0;
 }
-`, false, [2]int64{12, 3}},
+`, false},
 	// The Err payload is a live local's string, so only the box is released.
 	{"err_aliases_live", `import "std/i32";
 import "std/result";
@@ -118,7 +118,7 @@ function main(): i32 {
     }
     return n;
 }
-`, false, [2]int64{300, 200}},
+`, false},
 }
 
 func TestSelfHostResultErrStringX86_64(t *testing.T) {

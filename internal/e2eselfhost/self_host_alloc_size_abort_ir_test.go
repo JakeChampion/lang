@@ -30,9 +30,9 @@ function main(): i32 {
 
 const allocSizeCause = "fern: allocation size out of range"
 
-func assertX86SizeAbort(t *testing.T, cli *strictCLI, src string, env ...string) {
+func assertX86SizeAbort(t *testing.T, cli *strictCLI, src string) {
 	t.Helper()
-	bin := buildBin(t, cli.gcc, t.TempDir(), "prog", cli.emit(t, "x86-64-linux", src, env...))
+	bin := buildBin(t, cli.gcc, t.TempDir(), "prog", cli.emit(t, "x86-64-linux", src))
 	stderr, exit := runWithStdin(t, cli.runner, bin, nil)
 	if exit != 134 || !strings.Contains(stderr, allocSizeCause) {
 		t.Fatalf("exit %d, stderr %q; want 134 and %q", exit, stderr, allocSizeCause)
@@ -42,27 +42,18 @@ func assertX86SizeAbort(t *testing.T, cli *strictCLI, src string, env ...string)
 func TestSelfHostAllocSizeAbortIRX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	t.Run("alloc-u8-negative-length", func(t *testing.T) { assertX86SizeAbort(t, cli, allocNegativeLengthSrc) })
-	// The AST lowering emits the unpacked op, which reaches __fern_alloc_u8
-	// rather than __fern_alloc_bytes.
-	t.Run("alloc-u8-negative-length-ast-lowering", func(t *testing.T) {
-		assertX86SizeAbort(t, cli, allocNegativeLengthSrc, "FERN_SEM_IR=")
-	})
 	t.Run("repeat-wraps-to-zero", func(t *testing.T) { assertX86SizeAbort(t, cli, repeatWrapsToZeroSrc) })
 }
 
 func TestSelfHostAllocSizeAbortIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)
-	for name, c := range map[string]struct {
-		src string
-		env []string
-	}{
-		"alloc-u8-negative-length":              {allocNegativeLengthSrc, nil},
-		"alloc-u8-negative-length-ast-lowering": {allocNegativeLengthSrc, []string{"FERN_SEM_IR="}},
-		"repeat-wraps-to-zero":                  {repeatWrapsToZeroSrc, nil},
+	for name, src := range map[string]string{
+		"alloc-u8-negative-length": allocNegativeLengthSrc,
+		"repeat-wraps-to-zero":     repeatWrapsToZeroSrc,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if code, out := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", c.src, c.env...)); code != 134 || out != "" {
+			if code, out := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", src)); code != 134 || out != "" {
 				t.Fatalf("arm64: exit %d, stdout %q; want 134 and nothing printed", code, out)
 			}
 		})

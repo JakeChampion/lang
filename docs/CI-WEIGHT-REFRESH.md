@@ -14,6 +14,11 @@ rounded up to whole seconds, with a minimum of one:
 - Unobserved weights remain unchanged. Weight-one entries are omitted because
   the partitioner already defaults to one.
 - Missing, empty, repeated-directory and malformed input is rejected.
+- A test the tree no longer defines gets no row, whether a run measured it or
+  the old table declared it; each drop is reported on stderr. The runs always
+  predate the tree the table is written for, the file's lookup is exact, and
+  `tools/testname_gate.sh` fails on a name nothing answers to.
+  `FERN_WEIGHT_TREE` names the tree to scan (the repository by default).
 
 The command writes to stdout and does not edit the repository. The existing
 single-run `check` behavior and the live test-list partition are unchanged.
@@ -24,6 +29,14 @@ Choose at least two successful runs with comparable runner types, toolchains,
 cache warmth and source workload. Confirm their success from CI: timing rows
 alone do not prove it. Download each run's complete shard timing artifacts to
 its own directory, with the `*.timings` files directly inside that directory.
+When the artifacts are out of reach (they are kept for a day, and the blob
+store they live in is not reachable from every network), the self-host lane's
+`verify` job prints the same evidence into its log: the group "measured
+durations" holds `scripts/ci-test-weights merge` over that run's artifacts,
+the slowest observation of each test. Save the group's rows as the run
+directory's single `run.timings` file. The table is complete only when that
+`verify` job is green: a shard whose artifact is missing fails its first step,
+and the group still prints, short.
 
 ```sh
 scripts/ci-test-weights refresh .github/selfhost-test-weights.txt \

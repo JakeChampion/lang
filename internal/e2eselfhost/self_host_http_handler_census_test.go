@@ -77,7 +77,7 @@ func checkSelfHostHTTPHandlerCensus(t *testing.T, targets []string, client func(
 			}
 			bin := filepath.Join(t.TempDir(), "server")
 			cmd := exec.Command(driver, "-target", target, "-o", bin, src, stdlib)
-			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_LEAKCHECK=1", "FERN_SEM_IR=1", "FERN_SEM_IR_REPORT=1")
+			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_LEAKCHECK=1", "FERN_SEM_IR_REPORT=1")
 			report, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("build: %v\n%s", err, report)

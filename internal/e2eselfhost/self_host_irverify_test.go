@@ -22,9 +22,9 @@ import (
 // stream the pass must report, and a well-formed one it must stay silent on.
 // The silent half carries the weight. A verifier that reports a problem on
 // valid IR is worse than no verifier, because it fires on every real module
-// and there is nothing to fix; TestSelfHostIRVerifyCorpusClean below is the
-// same property measured against real lowered output rather than hand-built
-// streams.
+// and there is nothing to fix. The compile path runs the verifiers over every
+// body it emits (irverifygate.fern), which is the same property measured
+// against real lowered output.
 //
 // Exit 0 means every assertion held. A non-zero code identifies the case, so
 // a regression names itself without a stdout diff.
@@ -86,148 +86,6 @@ func TestSelfHostIRVerifyStack(t *testing.T) {
 	}
 }
 
-// TestSelfHostIRVerifyStackCorpusClean runs the operand-stack verifier over
-// every conformance fixture's lowered IR and requires zero problems AND full
-// coverage.
-//
-// Coverage is asserted alongside the problems because an empty problem list
-// means nothing without knowing how much was looked at: the pass abandons any
-// function holding an op it does not model, so a widened op vocabulary would
-// otherwise turn into silent unchecked functions rather than a failure. Every
-// function in the corpus is modelled today, so the floor is equality.
-func TestSelfHostIRVerifyStackCorpusClean(t *testing.T) {
-	if testing.Short() {
-		t.Skip("corpus sweep is slow; skipped under -short")
-	}
-	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("irlower_run driver runs natively; skipping under an exec runner")
-	}
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "irlower_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "irlower_run.fern", "irlower_run")
-
-	cases, err := filepath.Glob(filepath.Join(langSrcAbs(t, "conformance"), "cases", "*", "main.fern"))
-	if err != nil {
-		t.Fatalf("globbing conformance cases: %v", err)
-	}
-	if len(cases) < 400 {
-		t.Fatalf("found %d conformance cases, expected the full corpus — a silently shrunken sweep proves nothing", len(cases))
-	}
-
-	var dirty []string
-	modelled, funcs := 0, 0
-	for _, c := range cases {
-		src, err := os.ReadFile(c)
-		if err != nil {
-			t.Fatalf("reading %s: %v", c, err)
-		}
-		cmd := exec.Command(bin, "-verifystack")
-		cmd.Stdin = strings.NewReader(string(src))
-		out, _ := cmd.Output()
-		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-			t.Errorf("%s: driver did not exit normally", filepath.Base(filepath.Dir(c)))
-			continue
-		}
-		if cmd.ProcessState.ExitCode() != 0 {
-			dirty = append(dirty, filepath.Base(filepath.Dir(c))+": "+strings.TrimSpace(string(out)))
-		}
-		m, f := parseCoverage(string(out))
-		modelled += m
-		funcs += f
-	}
-	if len(dirty) > 0 {
-		max := 15
-		if len(dirty) < max {
-			max = len(dirty)
-		}
-		t.Errorf("IR stack verifier reported problems on %d of %d conformance fixtures:\n  %s",
-			len(dirty), len(cases), strings.Join(dirty[:max], "\n  "))
-	}
-	if funcs < 700 {
-		t.Errorf("stack pass saw %d lowered functions across the corpus, expected the full set — a shrunken sweep proves nothing", funcs)
-	}
-	if modelled != funcs {
-		t.Errorf("stack pass modelled %d of %d lowered functions; every one of them is modelled today, so a skip is a new op the table does not carry", modelled, funcs)
-	}
-}
-
-// parseCoverage reads the `modelled M/N` tally out of a `-verifystack` run.
-func parseCoverage(out string) (int, int) {
-	i := strings.Index(out, "modelled ")
-	if i < 0 {
-		return 0, 0
-	}
-	var m, f int
-	if _, err := fmt.Sscanf(out[i:], "modelled %d/%d", &m, &f); err != nil {
-		return 0, 0
-	}
-	return m, f
-}
-
-// TestSelfHostIRVerifyCorpusClean runs the verifier over every conformance
-// fixture's lowered IR and requires zero problems.
-//
-// This is the false-positive gate, and it is the one that decides whether the
-// pass is usable: the corpus is known-good code, so any report here is the
-// verifier being wrong about valid IR. It is also what would catch a real
-// structural regression in the lowerer — a local index past the frame or an
-// unbalanced scope becomes a named failure here instead of a SIGSEGV several
-// stages downstream, which docs/TEST-GATES.md notes the self-referential
-// fixpoint is structurally blind to.
-//
-// The driver lowers from a defaults-FILLED module, matching what the
-// production backends see: they reach the IR through lift_lambdas, which runs
-// fill_default_args_module first. Verifying lower_module's raw output instead
-// reports a 1-arg call to a 3-param callee for every defaulted call —
-// conformance/cases/default_args is the case that showed it.
-func TestSelfHostIRVerifyCorpusClean(t *testing.T) {
-	if testing.Short() {
-		t.Skip("corpus sweep is slow; skipped under -short")
-	}
-	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("irlower_run driver runs natively; skipping under an exec runner")
-	}
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "irlower_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "irlower_run.fern", "irlower_run")
-
-	cases, err := filepath.Glob(filepath.Join(langSrcAbs(t, "conformance"), "cases", "*", "main.fern"))
-	if err != nil {
-		t.Fatalf("globbing conformance cases: %v", err)
-	}
-	if len(cases) < 400 {
-		t.Fatalf("found %d conformance cases, expected the full corpus — a silently shrunken sweep proves nothing", len(cases))
-	}
-
-	var dirty []string
-	for _, c := range cases {
-		src, err := os.ReadFile(c)
-		if err != nil {
-			t.Fatalf("reading %s: %v", c, err)
-		}
-		cmd := exec.Command(bin, "-verify")
-		cmd.Stdin = strings.NewReader(string(src))
-		out, _ := cmd.Output()
-		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-			t.Errorf("%s: driver did not exit normally", filepath.Base(filepath.Dir(c)))
-			continue
-		}
-		if cmd.ProcessState.ExitCode() != 0 {
-			dirty = append(dirty, filepath.Base(filepath.Dir(c))+": "+strings.TrimSpace(string(out)))
-		}
-	}
-	if len(dirty) > 0 {
-		max := 15
-		if len(dirty) < max {
-			max = len(dirty)
-		}
-		t.Errorf("IR verifier reported problems on %d of %d conformance fixtures:\n  %s",
-			len(dirty), len(cases), strings.Join(dirty[:max], "\n  "))
-	}
-}
-
 // TestSelfHostIRVerifyFip exercises the `fip` / `fbip` allocation-budget
 // verifier (examples/self_host/irfipverify.fern, #6639 slice 3) — the port of
 // native's internal/ir/fip_verify.go.
@@ -259,266 +117,6 @@ func TestSelfHostIRVerifyFip(t *testing.T) {
 	}
 	if want := "irfipverify: all allocation-budget checks agree"; !strings.Contains(string(out), want) {
 		t.Errorf("irverify_run stdout = %q, want it to contain %q", out, want)
-	}
-}
-
-// TestSelfHostFipCensusOnNativesShapes runs the allocation-budget verifier over
-// the exact programs native's internal/ir/fip_verify_test.go uses, and pins the
-// self-host's per-function census against them.
-//
-// The point is not that the two agree — on two of these shapes they do not, and
-// that is the finding. Native pairs the R1 struct self-overwrite and the R4
-// consuming-match rebuild; the self-host's reuse layer pairs neither yet, so a
-// bare `fbip` that native accepts needs a grade here. The R3 general pairing
-// does match. Pinning the counts is what turns "the self-host is behind on two
-// reuse families" from a thing someone rediscovers into a number that moves
-// when the port lands — at which point this test fails and its expectations
-// are the thing to update.
-func TestSelfHostFipCensusOnNativesShapes(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("irlower_run driver runs natively; skipping under an exec runner")
-	}
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "irlower_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "irlower_run.fern", "irlower_run")
-
-	cases := []struct {
-		name string
-		src  string
-		// want is the census line the named function must produce.
-		want string
-		// exit is the driver's exit code: 1 when a claim overruns its budget.
-		exit int
-	}{
-		{
-			// R4 consuming-match rebuild. Native pairs it, so bare `fbip`
-			// verifies there; the self-host emits two fresh constructor sites.
-			name: "r4-consuming-match",
-			src: `enum List { Cons(i32, List), Nil }
-fbip function map_inc(own xs: List): List {
-    match (xs) {
-        Cons(h, t) => { return Cons(h + 1, map_inc(t)); },
-        Nil => { return Nil; },
-    }
-}
-function main(): i32 { return 0; }`,
-			want: "map_inc claim=fbip(0) fresh=2 paired=0 elided=0",
-			exit: 1,
-		},
-		{
-			// R1 struct self-overwrite on an `own` param. Native pairs it.
-			name: "r1-self-overwrite",
-			src: `struct P { x: i32, y: i32 }
-fbip function bump(own p: P): P {
-    p = P { x: p.x + 1, y: p.y };
-    return p;
-}
-function main(): i32 { var q: P = bump(P { x: 1, y: 2 }); return q.x; }`,
-			want: "bump claim=fbip(0) fresh=1 paired=0 elided=0",
-			exit: 1,
-		},
-		{
-			// R3 general pairing: the second construction takes over the first
-			// one's dead box. Self-host and native agree — one fresh site, one
-			// paired — so `fbip(1)` verifies clean on both.
-			name: "r3-general-pairing",
-			src: `struct P { x: i32, y: i32 }
-fbip(1) function churn(a0: i32): i32 {
-    var a: P = P { x: a0, y: a0 + 1 };
-    var s: i32 = a.x + a.y;
-    var b: P = P { x: s + 1, y: a0 };
-    return b.x + b.y;
-}
-function main(): i32 { return churn(3); }`,
-			want: "churn claim=fbip(1) fresh=1 paired=1 elided=0",
-			exit: 0,
-		},
-		{
-			// R1 self-overwrite on an `own` param with a STRING field (#5342):
-			// the return-position update pairs into the param's box.
-			name: "r1-own-string-return-update",
-			src: `struct P { s: string, n: i32 }
-fbip function bump(own p: P): P {
-    return P { ...p, n: p.n + 1 };
-}
-function main(): i32 { var q: P = bump(P { s: "abcdefghij-longer", n: 3 }); return q.n + q.s.len(); }`,
-			want: "bump claim=fbip(0) fresh=0 paired=1",
-			exit: 0,
-		},
-		{
-			// The same with an ENUM field, which the own-update family refused
-			// before #5342 (it read the missing bind literal as a missing proof).
-			name: "r1-own-enum-return-update",
-			src: `enum E { A(i32), B(i32) }
-struct Q { e: E, n: i32 }
-fbip function bumpq(own p: Q): Q {
-    return Q { ...p, n: p.n + 1 };
-}
-function main(): i32 { var q: Q = bumpq(Q { e: A(4), n: 3 }); return q.n; }`,
-			want: "bumpq claim=fbip(0) fresh=0 paired=1",
-			exit: 0,
-		},
-		{
-			// R3 pairing with an `own` STRING-fielded donor: the full
-			// construction takes over the dead param's box.
-			name: "r3-own-string-donor",
-			src: `struct P { s: string, n: i32 }
-fbip function f(own d: P): i32 {
-    var u: i32 = d.n + d.s.len();
-    var c: P = P { s: "fresh-literal-payload", n: u + 20 };
-    return c.n + c.s.len();
-}
-function main(): i32 { return f(P { s: "abcdefghij-longer", n: 3 }); }`,
-			want: "f claim=fbip(0) fresh=0 paired=1",
-			exit: 0,
-		},
-		{
-			// An un-paired construction under a bare claim: the shape native's
-			// TestFbipVerifyUnpairedConstructionRejected pins, and the one both
-			// compilers reject.
-			name: "unpaired-rejected",
-			src: `struct P { x: i32, y: i32 }
-fbip function mk(a: i32): P { return P { x: a, y: a + 1 }; }
-function main(): i32 { var p: P = mk(3); return p.x; }`,
-			want: "mk claim=fbip(0) fresh=1 paired=0 elided=0",
-			exit: 1,
-		},
-		{
-			// R1 functional update on a LOCAL: `p = P { ...p, x: … }` pairs
-			// through emit_self_overwrite_reuse, and the two fields the spread
-			// carries are never re-stored on the reuse arm. `elided` is the
-			// structural pin for that (#7909): it counts the fresh arm's
-			// carried-field copies, which exist exactly where the reuse arm
-			// elided a store. The initial literal is the one fresh site.
-			name: "r1-local-spread-carried",
-			src: `struct P { x: i32, y: i32, z: i32 }
-fbip(1) function bump(a: i32): i32 {
-    var p: P = P { x: a, y: a + 1, z: a + 2 };
-    p = P { ...p, x: p.x + 1 };
-    return p.x + p.y + p.z;
-}
-function main(): i32 { return bump(1); }`,
-			want: "bump claim=fbip(1) fresh=1 paired=1 elided=2",
-			exit: 0,
-		},
-		{
-			// The same update with every field overridden carries nothing, so
-			// the site pairs with nothing to elide — the axis reads 0 rather
-			// than counting the override stores.
-			name: "r1-local-spread-all-overridden",
-			src: `struct P { x: i32, y: i32, z: i32 }
-fbip(1) function bump(a: i32): i32 {
-    var p: P = P { x: a, y: a + 1, z: a + 2 };
-    p = P { ...p, x: p.y, y: p.x, z: p.z + 1 };
-    return p.x + p.y + p.z;
-}
-function main(): i32 { return bump(1); }`,
-			want: "bump claim=fbip(1) fresh=1 paired=1 elided=0",
-			exit: 0,
-		},
-		{
-			// A bare `fip` body that allocates nothing verifies clean, and its
-			// zeroed census is what says so.
-			name: "fip-clean",
-			src: `fip function add2(a: i32, b: i32): i32 { return a + b; }
-function main(): i32 { return add2(1, 2); }`,
-			want: "add2 claim=fip(0) fresh=0 paired=0 elided=0",
-			exit: 0,
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			cmd := exec.Command(bin, "-verifyfip")
-			cmd.Stdin = strings.NewReader(c.src)
-			out, _ := cmd.Output()
-			if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-				t.Fatalf("driver did not exit normally")
-			}
-			if got := cmd.ProcessState.ExitCode(); got != c.exit {
-				t.Errorf("exit code = %d, want %d\n%s", got, c.exit, out)
-			}
-			if !strings.Contains(string(out), c.want) {
-				t.Errorf("census missing %q, got:\n%s", c.want, out)
-			}
-		})
-	}
-}
-
-// TestSelfHostFipVerifyCorpusClean runs the allocation-budget verifier over
-// every conformance fixture and requires it to stay silent.
-//
-// This is the false-positive gate. Almost no fixture carries a fip/fbip
-// annotation, so the pass verifies each function vacuously — which is exactly
-// the property to pin: a claim-free function must never be charged, or the
-// pass would fire on the whole corpus the moment it is wired into a build.
-// The two fixtures that do report are skipped by name rather than silently
-// tolerated, and the skip list says which reason each one is on.
-func TestSelfHostFipVerifyCorpusClean(t *testing.T) {
-	if testing.Short() {
-		t.Skip("corpus sweep is slow; skipped under -short")
-	}
-	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("irlower_run driver runs natively; skipping under an exec runner")
-	}
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "irlower_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "irlower_run.fern", "irlower_run")
-
-	cases, err := filepath.Glob(filepath.Join(langSrcAbs(t, "conformance"), "cases", "*", "main.fern"))
-	if err != nil {
-		t.Fatalf("globbing conformance cases: %v", err)
-	}
-	if len(cases) < 400 {
-		t.Fatalf("found %d conformance cases, expected the full corpus — a silently shrunken sweep proves nothing", len(cases))
-	}
-
-	// The two fixtures a clean sweep must not include, each for its own
-	// reason. The driver runs no checker, so it lowers a body native would
-	// have rejected first — that is what makes diag_e053 a driver artifact
-	// rather than a verifier finding.
-	expectedDirty := map[string]bool{
-		// Exists to overrun a budget: an un-paired `fbip` construction.
-		"diag_e068": true,
-		// `scale`'s array literal is E053 at the front end, so native never
-		// lowers it; and its `map_inc` is the R4 consuming-match shape the
-		// self-host reuse layer does not pair yet
-		// (TestSelfHostFipCensusOnNativesShapes pins that count).
-		"diag_e053": true,
-	}
-
-	var dirty []string
-	seen := 0
-	for _, c := range cases {
-		name := filepath.Base(filepath.Dir(c))
-		src, err := os.ReadFile(c)
-		if err != nil {
-			t.Fatalf("reading %s: %v", c, err)
-		}
-		cmd := exec.Command(bin, "-verifyfip")
-		cmd.Stdin = strings.NewReader(string(src))
-		out, _ := cmd.Output()
-		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-			t.Errorf("%s: driver did not exit normally", name)
-			continue
-		}
-		seen += strings.Count(string(out), " fresh=")
-		if cmd.ProcessState.ExitCode() != 0 && !expectedDirty[name] {
-			dirty = append(dirty, name+": "+strings.TrimSpace(string(out)))
-		}
-	}
-	if len(dirty) > 0 {
-		max := 15
-		if len(dirty) < max {
-			max = len(dirty)
-		}
-		t.Errorf("fip verifier reported problems on %d of %d conformance fixtures:\n  %s",
-			len(dirty), len(cases), strings.Join(dirty[:max], "\n  "))
-	}
-	if seen < 700 {
-		t.Errorf("fip pass censused %d lowered functions across the corpus, expected the full set — a shrunken sweep proves nothing", seen)
 	}
 }
 
@@ -645,32 +243,10 @@ func parseProvidedTally(out string) (int, int) {
 	return checked, calls
 }
 
-// providedCorpusExpectedDirty are the conformance fixtures the resolution pass
-// reports, and is a list rather than a tolerance because each entry is the
-// pass being RIGHT about a program that is deliberately wrong.
-//
-// This driver runs the front end and the lowerer, not the checker — that is
-// what makes it a verifier of the lowering rather than a second compiler. So a
-// fixture whose whole point is a program the checker rejects reaches the
-// lowerer anyway, and a program that calls a function it never declares
-// genuinely does emit a call to a symbol nothing defines: diag_p004 calls
-// `add()`, which it never defines.
-//
-// An entry leaves this list when its fixture stops calling an undefined
-// function. diag_e065 was here until it gained the `name()` it had only ever
-// called (#9601): its E065 is about the lifetime of a `str` view, and the
-// missing declaration was incidental damage, not the thing under test.
-//
-// Every other fixture in the corpus resolves clean.
-var providedCorpusExpectedDirty = map[string]bool{
-	"diag_p004": true,
-}
-
 // TestSelfHostIRVerifyProvidedCorpusClean sweeps the conformance corpus.
 //
-// It runs the MODLOAD driver rather than irlower_run, and that is the whole
-// reason this slice arrives later than its siblings. A single module's
-// lowering leaves every imported `Type.method` unresolved by construction: a
+// It runs the MODLOAD driver, because a single module's lowering leaves every
+// imported `Type.method` unresolved by construction: a
 // census over this corpus found 255 distinct unresolved callee names, ~200 of
 // them stdlib methods reached through an import. At that ratio the noise is
 // not a floor to tolerate, it is most of the signal — so the declared set has
@@ -692,9 +268,16 @@ func TestSelfHostIRVerifyProvidedCorpusClean(t *testing.T) {
 func testProvidedCorpus(t *testing.T, bin string) {
 	t.Helper()
 	stdRoot := langSrcAbs(t, filepath.Join("internal", "stdlib"))
-	mains, err := filepath.Glob(filepath.Join(langSrcAbs(t, "conformance"), "cases", "*", "main.fern"))
+	all, err := filepath.Glob(filepath.Join(langSrcAbs(t, "conformance"), "cases", "*", "main.fern"))
 	if err != nil {
 		t.Fatalf("globbing conformance cases: %v", err)
+	}
+	// A fixture the checker rejects has no lowering to verify.
+	var mains []string
+	for _, main := range all {
+		if _, err := os.Stat(filepath.Join(filepath.Dir(main), "expected.error")); err != nil {
+			mains = append(mains, main)
+		}
 	}
 	if len(mains) < 400 {
 		t.Fatalf("found %d conformance cases, expected the full corpus: a silently shrunken sweep proves nothing", len(mains))
@@ -704,8 +287,8 @@ func testProvidedCorpus(t *testing.T, bin string) {
 	// parallel children before aggregation and keeps the top-level elapsed
 	// time useful to scripts/ci-test-weights.
 	type result struct {
-		ran   bool
-		calls int
+		ran                     bool
+		calls, modelled, bodies int
 	}
 	results := make([]result, len(mains))
 	t.Run("cases", func(t *testing.T) {
@@ -716,11 +299,6 @@ func testProvidedCorpus(t *testing.T, bin string) {
 				results[i].ran = true
 				stage := stageProvidedFixture(t, stdRoot, filepath.Dir(main))
 				cmd := exec.Command(bin, filepath.Join(stage, "main.fern"), "-verifyprovided")
-				// A fixture the checker rejects has no typed lowering; only the
-				// AST lowering lowers it.
-				if _, err := os.Stat(filepath.Join(filepath.Dir(main), "expected.error")); err == nil {
-					cmd.Env = append(os.Environ(), "FERN_SEM_IR=")
-				}
 				var out []byte
 				// The verifier lowers a whole imported program. Share the
 				// existing process-wide memory budget with driver builds.
@@ -732,19 +310,28 @@ func testProvidedCorpus(t *testing.T, bin string) {
 				if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 					t.Fatalf("resolution driver did not exit normally: %v\n%s", err, out)
 				}
-				results[i].calls, err = validateProvidedCorpusVerdict(providedCorpusExpectedDirty[name], cmd.ProcessState.ExitCode(), string(out))
+				results[i].calls, err = validateProvidedCorpusVerdict(cmd.ProcessState.ExitCode(), string(out))
 				if err != nil {
 					t.Errorf("invalid resolution verdict: %v\n%s", err, out)
 				}
+				results[i].modelled, results[i].bodies = parseStackCoverage(string(out))
 			})
 		}
 	})
-	swept, calls := 0, 0
+	swept, calls, modelled, bodies := 0, 0, 0, 0
 	for _, result := range results {
 		if result.ran {
 			swept++
 			calls += result.calls
+			modelled += result.modelled
+			bodies += result.bodies
 		}
+	}
+	// Every body the typed lowering produces for the corpus is one the stack
+	// pass models, so the floor is equality: a skip is a new op its arity
+	// table does not carry, which the compile-path gate passes over silently.
+	if modelled != bodies {
+		t.Errorf("stack pass modelled %d of %d lowered bodies; a skip is an op the pass's table does not carry", modelled, bodies)
 	}
 	// A focused -run selection still checks every selected verdict. The full
 	// corpus retains its aggregate coverage floor; applying that floor to a
@@ -752,14 +339,28 @@ func testProvidedCorpus(t *testing.T, bin string) {
 	if swept == len(mains) && calls < 2000 {
 		t.Errorf("pass resolved %d direct calls across the corpus, expected far more: a sweep that resolved nothing proves nothing", calls)
 	}
-	t.Logf("swept %d/%d fixtures, resolved %d direct calls", swept, len(mains), calls)
+	t.Logf("swept %d/%d fixtures, resolved %d direct calls, stack-modelled %d/%d bodies", swept, len(mains), calls, modelled, bodies)
+}
+
+// parseStackCoverage reads the `irverifystack: modelled M/N` line out of a
+// `-verifyprovided` run.
+func parseStackCoverage(out string) (int, int) {
+	i := strings.Index(out, "irverifystack: modelled ")
+	if i < 0 {
+		return 0, 0
+	}
+	var m, f int
+	if _, err := fmt.Sscanf(out[i:], "irverifystack: modelled %d/%d", &m, &f); err != nil {
+		return 0, 0
+	}
+	return m, f
 }
 
 var providedCorpusVerdict = regexp.MustCompile(`^irverifyprovided: (clean|[1-9][0-9]* problem\(s\)) \(checked ([0-9]+) functions, ([0-9]+) direct calls\)$`)
 
-func validateProvidedCorpusVerdict(expectedDirty bool, exitCode int, out string) (int, error) {
-	// An arena trap or another driver error must never satisfy an expected
-	// invalid fixture. Only the verifier's own exit 1 plus diagnostic counts.
+func validateProvidedCorpusVerdict(exitCode int, out string) (int, error) {
+	// An arena trap or another driver error is never a verdict. Only the
+	// verifier's own exit 1 plus diagnostic counts.
 	if exitCode != 0 && exitCode != 1 {
 		return 0, fmt.Errorf("driver exited %d, want verifier status 0 or 1", exitCode)
 	}
@@ -777,8 +378,8 @@ func validateProvidedCorpusVerdict(expectedDirty bool, exitCode int, out string)
 	if dirty != (exitCode == 1) {
 		return 0, fmt.Errorf("verifier header disagrees with exit %d", exitCode)
 	}
-	if dirty != expectedDirty {
-		return 0, fmt.Errorf("dirty=%t, expected dirty=%t", dirty, expectedDirty)
+	if dirty {
+		return 0, fmt.Errorf("the verifier reported unresolved callees")
 	}
 	return calls, nil
 }
@@ -910,82 +511,6 @@ func TestSelfHostIRVerifyRcSkipReasonsMatchNative(t *testing.T) {
 	if len(onlySelfHost) > 0 {
 		t.Errorf("irverifyrc.fern skips for %d reason(s) verifyrc.go does not: %s",
 			len(onlySelfHost), strings.Join(onlySelfHost, "; "))
-	}
-}
-
-// TestSelfHostIRVerifyRcCorpusClean runs the ownership verifier over every
-// conformance fixture's lowered IR and requires zero problems AND full
-// site coverage.
-//
-// This is the false-positive gate, and it is the one that decided whether the
-// pass was usable. The first draft passed every hand-built unit case and then
-// modelled 0 of the corpus's 9 real reuse sites, because irlower tees the
-// is_unique flag where the fixture stored and loaded it back, and its
-// struct-reuse family releases the donor before the gate rather than on the
-// decline arm. Four gate spellings and an optional decline release later, all
-// 9 are modelled — but nothing except this sweep would have said so, which is
-// exactly why coverage is asserted rather than just the problem count.
-//
-// The site total is small because reuse pairing is rare in the corpus. That
-// makes equality the right floor: with 9 sites, a single unmodelled one is an
-// 11% coverage drop and should fail loudly.
-func TestSelfHostIRVerifyRcCorpusClean(t *testing.T) {
-	if testing.Short() {
-		t.Skip("corpus sweep is slow; skipped under -short")
-	}
-	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("irlower_run driver runs natively; skipping under an exec runner")
-	}
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "irlower_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "irlower_run.fern", "irlower_run")
-
-	cases, err := filepath.Glob(filepath.Join(langSrcAbs(t, "conformance"), "cases", "*", "main.fern"))
-	if err != nil {
-		t.Fatalf("globbing conformance cases: %v", err)
-	}
-	if len(cases) < 400 {
-		t.Fatalf("found %d conformance cases, expected the full corpus — a silently shrunken sweep proves nothing", len(cases))
-	}
-
-	var dirty []string
-	checked, sites := 0, 0
-	for _, c := range cases {
-		src, err := os.ReadFile(c)
-		if err != nil {
-			t.Fatalf("reading %s: %v", c, err)
-		}
-		cmd := exec.Command(bin, "-verifyrc")
-		cmd.Stdin = strings.NewReader(string(src))
-		out, _ := cmd.Output()
-		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-			t.Errorf("%s: driver did not exit normally", filepath.Base(filepath.Dir(c)))
-			continue
-		}
-		if cmd.ProcessState.ExitCode() != 0 {
-			dirty = append(dirty, filepath.Base(filepath.Dir(c))+": "+strings.TrimSpace(string(out)))
-		}
-		m, f := parseCoverage(string(out))
-		checked += m
-		sites += f
-	}
-	if len(dirty) > 0 {
-		max := 15
-		if len(dirty) < max {
-			max = len(dirty)
-		}
-		t.Errorf("IR ownership verifier reported problems on %d of %d conformance fixtures — "+
-			"the corpus is known-good code, so a report here is the verifier being wrong about valid IR:\n  %s",
-			len(dirty), len(cases), strings.Join(dirty[:max], "\n  "))
-	}
-	if sites < 9 {
-		t.Errorf("ownership pass saw %d reuse sites across the corpus, expected at least 9 — "+
-			"a sweep that stopped finding reuse sites proves nothing about the pass", sites)
-	}
-	if checked != sites {
-		t.Errorf("ownership pass modelled %d of %d reuse sites; every one is modelled today, "+
-			"so a skip is a reuse emitter that has grown a shape the recogniser does not carry", checked, sites)
 	}
 }
 

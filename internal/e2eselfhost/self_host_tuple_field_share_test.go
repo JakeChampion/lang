@@ -20,10 +20,9 @@ struct Ints { n: i32, ys: i32[] }
 `
 
 var tupleFieldShareCases = []struct {
-	name     string
-	src      string
-	want     int
-	balanced bool
+	name string
+	src  string
+	want int
 }{
 	{"returned_strarr", `function pair(r: Rec): (i32, string[]) { return (r.n, r.xs); }
 function main(): i32 {
@@ -31,7 +30,7 @@ function main(): i32 {
     var p: (i32, string[]) = pair(r);
     return p.0 + p.1.len();
 }
-`, 4, true},
+`, 4},
 	{"returned_ints_outlives_record", `function pair(r: Ints): (i32, i32[]) { return (r.n, r.ys); }
 function main(): i32 {
     var r: Ints = Ints { n: 2, ys: [5, 6, 7] };
@@ -42,7 +41,7 @@ function main(): i32 {
     while (k < 8) { var junk: i32[] = [9, 9, 9]; acc = acc + junk[k % 3]; k = k + 1; }
     return p.1[0] + p.1.len() + r.n + acc - 72;
 }
-`, 9, true},
+`, 9},
 	{"local_ints_outlives_record", `function main(): i32 {
     var r: Ints = Ints { n: 2, ys: [5, 6, 7] };
     var p: (i32, i32[]) = (r.n, r.ys);
@@ -52,7 +51,7 @@ function main(): i32 {
     while (k < 8) { var junk: i32[] = [9, 9, 9]; acc = acc + junk[k % 3]; k = k + 1; }
     return p.1[0] + p.1.len() + r.n + acc - 72;
 }
-`, 9, true},
+`, 9},
 	{"local_strarr_outlives_record", `function main(): i32 {
     var r: Rec = Rec { n: 2, xs: ["e", "f", "g"] };
     var p: (i32, string[]) = (r.n, r.xs);
@@ -62,7 +61,7 @@ function main(): i32 {
     while (k < 8) { var junk: string[] = ["z", "z", "z"]; acc = acc + junk[k % 3].len(); k = k + 1; }
     return p.1[0].len() * 5 + p.1.len() + r.n + acc - 8;
 }
-`, 9, true},
+`, 9},
 	{"discarded", `function pair(r: Rec): (i32, string[]) { return (r.n, r.xs); }
 function main(): i32 {
     var r: Rec = Rec { n: 2, xs: ["ab", "cd"] };
@@ -70,7 +69,7 @@ function main(): i32 {
     pair(r);
     return r.xs.len();
 }
-`, 2, true},
+`, 2},
 	{"literal_or_field", `function pick(r: Ints, k: i32): (i32, i32[]) {
     if (k > 1) { return (k, [k, k, k]); }
     return (r.n, r.ys);
@@ -84,7 +83,7 @@ function main(): i32 {
     var junk: i32[] = [9, 9, 9];
     return a.1[0] + b.1.len() + r.n + junk[0] - 9;
 }
-`, 9, true},
+`, 9},
 	{"forwarded", `function pair(r: Rec): (i32, string[]) { return (r.n, r.xs); }
 function first(r: Rec): string[] {
     var p: (i32, string[]) = pair(r);
@@ -97,7 +96,7 @@ function main(): i32 {
     var junk: string[] = ["zzz", "zzz"];
     return ys[0].len() + ys.len() + r.n + junk.len();
 }
-`, 7, true},
+`, 7},
 	{"rebind_ident_or_field", `function main(): i32 {
     var r: Rec = Rec { n: 2, xs: ["ab", "cd"] };
     var ys: string[] = ["p", "q", "r"];
@@ -111,7 +110,7 @@ function main(): i32 {
     var junk: string[] = ["zzz", "zzz"];
     return p.0 + p.1.len() + r.n + ys.len() + junk.len() + p.1[0].len();
 }
-`, 14, true},
+`, 14},
 	// A callee-local record whose array field the returned tuple holds is swept
 	// at the return: the tuple's retain keeps the buffer for the caller (#10315).
 	{"callee_local_ints", `function mk(k: i32): (i32, i32[]) {
@@ -126,7 +125,7 @@ function main(): i32 {
     while (k < 8) { var junk: i32[] = [9, 9, 9]; acc = acc + junk[k % 3]; k = k + 1; }
     return t.0 + t.1[0] + t.1.len() + acc - 72;
 }
-`, 9, true},
+`, 9},
 	{"callee_local_strarr", `function mk(k: i32): (i32, string[]) {
     var r: Rec = Rec { n: k, xs: ["ab", "cd" + k.to_string()] };
     return (r.n, r.xs);
@@ -139,7 +138,7 @@ function main(): i32 {
     while (k < 8) { var junk: string[] = ["zzz", "zzz" + k.to_string()]; acc = acc + junk[1].len(); k = k + 1; }
     return t.0 + t.1[1].len() + t.1.len() + acc - 32;
 }
-`, 8, true},
+`, 8},
 	// The same shape with an array-of-structs and an array-of-enums field: the
 	// record's gated walk declines while the tuple holds the buffer, so the
 	// tuple's 'b' release walks the elements (#10326).
@@ -157,7 +156,7 @@ function main(): i32 {
     while (k < 8) { var junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
     return t.0 + t.1[0].x + t.1[0].tag[1] + t.1.len() + acc - 72;
 }
-`, 11, true},
+`, 11},
 	{"callee_local_enumarr", `enum Flag { On(i32[]), Off }
 struct Flags { n: i32, fs: Flag[] }
 function mk(k: i32): (i32, Flag[]) {
@@ -174,7 +173,7 @@ function main(): i32 {
     match (t.1[0]) { Flag.On(q) => { got = q[1]; }, Flag.Off => { got = 0; } }
     return t.0 + got + t.1.len() + acc - 72;
 }
-`, 10, true},
+`, 10},
 	{"local_structarr_outlives_record", `struct Pt { x: i32, tag: i32[] }
 struct Bag { n: i32, pts: Pt[] }
 function main(): i32 {
@@ -186,7 +185,7 @@ function main(): i32 {
     while (k < 8) { var junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
     return p.0 + p.1[0].x + p.1[0].tag[1] + p.1.len() + r.n + acc - 72;
 }
-`, 12, true},
+`, 12},
 	{"local_enumarr_outlives_record", `enum Flag { On(i32[]), Off }
 struct Flags { n: i32, fs: Flag[] }
 function main(): i32 {
@@ -200,7 +199,7 @@ function main(): i32 {
     match (p.1[0]) { Flag.On(q) => { got = q[1]; }, Flag.Off => { got = 0; } }
     return p.0 + got + p.1.len() + r.n + acc - 72;
 }
-`, 10, true},
+`, 10},
 	// An element the caller still holds: the record's array literal counts the
 	// borrowed parameter, so the tuple's element walk only decs it and the
 	// caller reads it back intact.
@@ -219,9 +218,9 @@ function main(): i32 {
     while (k < 8) { var junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
     return p0.tag[1] + t.0 + t.1[0].tag[0] + acc - 72;
 }
-`, 17, true},
+`, 17},
 	// An array field's length as a returned element, and a nested-array field
-	// as one, refused the callee on the AST leg (#10318).
+	// as one (#10318).
 	{"callee_local_arrlen", `struct Fs { n: i32, ws: f64[] }
 function mk(k: i32): (i32, i32, i32) {
     var r: Ints = Ints { n: k, ys: [k, 1] };
@@ -233,7 +232,7 @@ function main(): i32 {
     mk(4);
     return t.0 + t.1 + t.2;
 }
-`, 8, true},
+`, 8},
 	{"callee_local_nested", `struct Bag { n: i32, grid: i32[][] }
 function mk(k: i32): (i32, i32[][]) {
     var r: Bag = Bag { n: k, grid: [[k, 1], [2, 3]] };
@@ -244,7 +243,7 @@ function main(): i32 {
     mk(4);
     return t.0 + t.1[0][0] + t.1[1][1] + t.1.len();
 }
-`, 11, true},
+`, 11},
 	{"callee_local_nested_strarr", `struct Grid { n: i32, rows: string[][] }
 function mk(k: i32): (i32, string[][]) {
     var r: Grid = Grid { n: k, rows: [["ab", "c"], ["def"]] };
@@ -255,9 +254,8 @@ function main(): i32 {
     var last: string[] = rows[1];
     return n + rows[0][0].len() + last[0].len() + rows.len();
 }
-`, 10, false},
-	// Extracting the element to a new owner refuses the tuple's element release,
-	// so the AST leg keeps the tuple's reference: a leak, never a second free.
+`, 10},
+	// Extracting the element to a new owner: never a second free.
 	{"refused_elem_extracted", `function main(): i32 {
     var r: Rec = Rec { n: 2, xs: ["ab", "cd"] };
     var p: (i32, string[]) = (r.n, r.xs);
@@ -266,24 +264,7 @@ function main(): i32 {
     var junk: string[] = ["zzz", "zzz"];
     return u[0].len() + u.len() + junk.len();
 }
-`, 6, false},
-}
-
-var tupleFieldShareLowerings = []struct{ name, env string }{
-	{"semantic", "FERN_SEM_IR=1"},
-	{"ast", "FERN_SEM_IR="},
-	{"ast_main", "FERN_SEM_IR_SKIP=main"},
-	{"ast_callees", "FERN_SEM_IR_SKIP=pair,pick,first,mk"},
-}
-
-// tupleFieldShareBalanced: whether the census must balance for this row and
-// lowering. The refused row leaks wherever main is AST-lowered; a pinned
-// lowering leaks by its pin.
-func tupleFieldShareBalanced(row string, balanced bool, lowering string) bool {
-	if _, ok := tupleFieldSharePins[row][lowering]; ok {
-		return false
-	}
-	return balanced || lowering == "semantic" || lowering == "ast_callees"
+`, 6},
 }
 
 func writeTupleFieldShareSrc(t *testing.T, name, src string) string {
@@ -299,30 +280,23 @@ func TestSelfHostTupleFieldShareX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range tupleFieldShareCases {
 		src := writeTupleFieldShareSrc(t, tc.name, tc.src)
-		for _, lw := range tupleFieldShareLowerings {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1", lw.env), nil)
-				if exit != tc.want {
-					t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				if tupleFieldShareBalanced(tc.name, tc.balanced, lw.name) {
-					assertBalancedCensus(t, stderr)
-				} else if pin, ok := tupleFieldSharePins[tc.name][lw.name]; ok {
-					assertLeakPinned(t, stderr, pin, "#9556")
-				}
-				stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env), nil)
-				if exit != tc.want || forArrStructSanitizerFault(stderr, tupleFieldShareBalanced(tc.name, tc.balanced, lw.name)) {
-					t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, tc.want, stderr)
-				}
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1"), nil)
+			if exit != tc.want {
+				t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1"), nil)
+			if exit != tc.want || forArrStructSanitizerFault(stderr, true) {
+				t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, tc.want, stderr)
+			}
+		})
 	}
 }
 
 // TestSelfHostTupleFieldShareNative holds the native compiler to the same
-// rows: every one clean, with the answer the self-host legs expect. The
-// self-host legs are four paths through one compiler, so this is the check a
-// miscompile they share cannot pass.
+// rows: every one clean, with the answer the self-host legs expect, a check a
+// miscompile in the self-host compiler cannot pass.
 func TestSelfHostTupleFieldShareNative(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)
@@ -349,26 +323,20 @@ func TestSelfHostTupleFieldShareArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range tupleFieldShareCases {
 		src := writeTupleFieldShareSrc(t, tc.name, tc.src)
-		for _, lw := range tupleFieldShareLowerings {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1", lw.env))
-				if err != nil {
-					t.Fatal(err)
-				}
-				cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), tc.name, string(asm)))
-				var eb strings.Builder
-				cmd.Stderr = &eb
-				_ = cmd.Run()
-				if code := cmd.ProcessState.ExitCode(); code != tc.want {
-					t.Fatalf("exit = %d, want %d\n%s", code, tc.want, eb.String())
-				}
-				if tupleFieldShareBalanced(tc.name, tc.balanced, lw.name) {
-					assertBalancedCensus(t, eb.String())
-				} else if pin, ok := tupleFieldSharePins[tc.name][lw.name]; ok {
-					assertLeakPinned(t, eb.String(), pin, "#9556")
-				}
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), tc.name, string(asm)))
+			var eb strings.Builder
+			cmd.Stderr = &eb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+				t.Fatalf("exit = %d, want %d\n%s", code, tc.want, eb.String())
+			}
+			assertBalancedCensus(t, eb.String())
+		})
 	}
 }
 
@@ -379,41 +347,12 @@ func TestSelfHostTupleFieldShareWasm(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range tupleFieldShareCases {
 		src := writeTupleFieldShareSrc(t, tc.name, tc.src)
-		for _, lw := range tupleFieldShareLowerings {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1", lw.env))
-				if exit != tc.want {
-					t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				if tupleFieldShareBalanced(tc.name, tc.balanced, lw.name) {
-					assertBalancedCensus(t, stderr)
-				} else if pin, ok := tupleFieldSharePins[tc.name][lw.name]; ok {
-					assertLeakPinned(t, stderr, pin, "#9556")
-				}
-			})
-		}
-	}
-}
-
-// tupleFieldSharePins: rows that still leak on a leg, by row and lowering,
-// compared exactly. An AST main never releases a tuple it destructures out of a
-// call (#9556).
-var tupleFieldSharePins = map[string]map[string][2]int64{
-	"callee_local_nested_strarr": {"ast": {5, 1}, "ast_callees": {5, 1}, "ast_main": {5, 1}},
-}
-
-// assertLeakPinned: a row that still leaks on this leg (the leak `issue`
-// tracks) left exactly its pinned allocs and frees. Fewer frees is a
-// regression; more frees is a fix of the leak, which moves the pin.
-func assertLeakPinned(t *testing.T, stderr string, want [2]int64, issue string) {
-	t.Helper()
-	summary := leakSummaryLine(stderr)
-	var allocs, frees, live int64
-	if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
-		t.Fatalf("parse %q: %v", summary, err)
-	}
-	if got := [2]int64{allocs, frees}; got != want {
-		t.Errorf("%s, pinned allocs=%d frees=%d — fewer frees means the sweep lost a release; "+
-			"more frees means the leak (%s) closed, so move the pin", summary, want[0], want[1], issue)
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1"))
+			if exit != tc.want {
+				t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
 	}
 }
