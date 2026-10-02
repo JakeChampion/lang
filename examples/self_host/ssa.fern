@@ -1865,7 +1865,7 @@ function phi_sole_operand(ins: SInst, repl: i32[]): i32 {
 
 function resolve_repl(repl: i32[], v: i32): i32 {
   let seen: i32 = 0;
-  while (repl[v] != v && seen < 1000) {
+  while (v >= 0 && v < repl.len() && repl[v] != v && seen < 1000) {
     v = repl[v];
     seen = seen + 1;
   }
@@ -2390,15 +2390,15 @@ pub function drop_low_wraps(f: SFunc): SFunc {
       }
       let nargs: i32[] = [];
       for a in ins.args {
-        nargs = nargs.append(repl_root(repl, a));
+        nargs = nargs.append(resolve_repl(repl, a));
       }
       ninsts = ninsts.append(SInst { ...ins, args: nargs });
     }
     let t: STerm = blk.term;
     if (t.kind_tag == 1) {
-      t = STerm { ...t, value: repl_root(repl, t.value) };
+      t = STerm { ...t, value: resolve_repl(repl, t.value) };
     } else if (t.kind_tag == 3) {
-      t = STerm { ...t, cond: repl_root(repl, t.cond) };
+      t = STerm { ...t, cond: resolve_repl(repl, t.cond) };
     }
     nblocks = nblocks.append(SBlock { ...blk, insts: ninsts, term: t });
   }
@@ -2488,15 +2488,6 @@ function term_operand(t: STerm): i32 {
     return t.cond;
   }
   return 0 - 1;
-}
-
-// repl_root follows a replacement chain to the value it ends at.
-function repl_root(repl: i32[], v: i32): i32 {
-  let r: i32 = v;
-  while (r >= 0 && r < repl.len() && repl[r] != r) {
-    r = repl[r];
-  }
-  return r;
 }
 
 // fuse_rotates rewrites `(x >> n) | (x << (W - n))`, the only spelling Fern
