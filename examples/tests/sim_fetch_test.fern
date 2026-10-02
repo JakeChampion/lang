@@ -124,6 +124,43 @@ function test_addresses_raced(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 305 * MS);
 }
 
+// A refusal hands the race on at once: the address behind a refusing one
+// connects at its own 5 ms, not after the fallback delay.
+function test_refusal_hands_on(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN, "93.184.216.35"]).listen("93.184.216.35", 80, 5).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "second address")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(got) != "second address") {
+    return test.fail(__body(got));
+  }
+  return test.assert_eq(d.now_ns(), 5 * MS);
+}
+
+// A listener with no connect delay accepts at once rather than refusing.
+function test_listener_at_zero(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, 0).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "at once")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(got) != "at once") {
+    return test.fail(__body(got));
+  }
+  return test.assert_eq(d.now_ns(), 0 as i64);
+}
+
+// A connect bound of zero has passed before any attempt starts, so it
+// times out whether the address refuses or listens.
+function test_zero_connect_bound(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let zero: fetch.Timeouts = fetch.Timeouts { ...fetch.timeouts(), connect_ms: 0 };
+  let refusing: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(refusing, fetch.get("http://example.test/").with_timeouts(zero), __open());
+  if (__message(got) != "timed out connecting") {
+    return test.fail("refusing: " + __message(got));
+  }
+  let listening: Result[HttpResponse, fetch.FetchError] = fetch.send_on(__net(d), fetch.get("http://example.test/").with_timeouts(zero), __open());
+  return test.assert_eq(__message(listening), "timed out connecting");
+}
+
 // A name the network does not know fails to resolve.
 function test_unknown_name(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
@@ -275,9 +312,8 @@ function __gzip_stored(body: string): u8[] {
   return out;
 }
 
-// `status`, a gzip `Content-Encoding` and `body` as the coded payload.
-function __gzipped(body: string): sim_fetch.Answer {
-  let coded: u8[] = __gzip_stored(body);
+// A 200 with a gzip `Content-Encoding` and `coded` as its payload.
+function __gzip_answer(coded: u8[]): sim_fetch.Answer {
   let out: u8[] = ("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: " + coded.len().to_string() + "\r\n\r\n").bytes();
   for b in coded {
     out = out.append(b);
@@ -288,7 +324,7 @@ function __gzipped(body: string): sim_fetch.Answer {
 // A gzip answer to the client's own `Accept-Encoding` is decoded.
 function test_gzip_decoded(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [__gzipped("unzipped text")]);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [__gzip_answer(__gzip_stored("unzipped text"))]);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
   if (n.sent(0).index_of("accept-encoding: gzip") < 0) {
     return test.fail("the client did not ask for gzip");
@@ -305,12 +341,7 @@ function __gzip_thousand(): u8[] {
 // cap on the wire is refused once it decodes past it.
 function test_decoded_past_cap(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let coded: u8[] = __gzip_thousand();
-  let wire: u8[] = ("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: " + coded.len().to_string() + "\r\n\r\n").bytes();
-  for b in coded {
-    wire = wire.append(b);
-  }
-  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.raw_bytes(wire)]);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [__gzip_answer(__gzip_thousand())]);
   let big: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 2000 };
   let whole: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/").with_limits(big), __open());
   if (__body(whole).len() != 1000) {
@@ -337,6 +368,9 @@ function main(): i32 {
   r = r.it("times out connecting at the connect bound", test_connect_timeout);
   r = r.it("reports a refused connection", test_refused);
   r = r.it("races the addresses a name has", test_addresses_raced);
+  r = r.it("hands the race on at once after a refusal", test_refusal_hands_on);
+  r = r.it("accepts at once on a listener with no delay", test_listener_at_zero);
+  r = r.it("times out at once under a zero connect bound", test_zero_connect_bound);
   r = r.it("reports a name that does not resolve", test_unknown_name);
   r = r.it("times out waiting at the inactivity bound", test_inactivity_timeout);
   r = r.it("times out on a connection held open after its bytes", test_held_open_times_out);

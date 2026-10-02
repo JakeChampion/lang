@@ -23,7 +23,9 @@
 // fallback delay after the one before, or at once when that one was
 // refused, an address with no `listen`er on the port refusing at once;
 // the first to finish its connect time wins, and none finishing within
-// the client's bound is a timeout at the bound. The request
+// the client's bound is a timeout at the bound. A bound of zero has
+// passed before any attempt starts, so it times out even where every
+// address refuses. The request
 // written on a connection picks its route by address, port and request
 // target (`*` matches any target), and the n-th request a route takes is
 // answered with its n-th `Answer`, the last repeating; a request no route
@@ -198,6 +200,9 @@ impl fetch.Transport for Net {
         }
         start_ms = start_ms + fallback_ms;
       }
+    }
+    if (timeout_ms <= 0) {
+      return Err(net.TimedOut);
     }
     if (best_ms < 0) {
       return Err(net.ConnectionRefused);

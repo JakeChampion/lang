@@ -1992,7 +1992,9 @@ IP literal resolves to itself, anything else is `NoSuchName`);
 with no listener refuses at once. A name's addresses are raced as
 `dns.connect_race` races them, each attempt starting the fallback delay
 after the one before (at once after a refusal), the first to connect
-winning and none within the client's connect bound a timeout at it. `route(addr, port, path, answers)` answers the
+winning and none within the client's connect bound a timeout at it; a
+bound of zero times out before any attempt, refusing addresses included.
+`route(addr, port, path, answers)` answers the
 n-th request for `path` (`*` for any) with its n-th `Answer`, the last
 repeating; an unrouted request gets a 404. Answers: `reply(status, body)`,
 `redirect(status, location)`, `raw(text)` / `raw_bytes(bytes)` for
