@@ -1642,12 +1642,11 @@ smallest → largest:
     read offset reached 64 KiB the iovec length went to 0, `fd_read`
     returned 0, and the loop mistook a full buffer for EOF, silently
     truncating any larger file (a 140 KB / 300 KB file both read back as
-    64 KB). Fixed by growing the buffer in 64 KiB chunks (the bump
-    allocator hands out contiguous bytes and nothing else allocates during
-    the read loop, so each extension lands right after the buffer; room is
-    ensured *before* each read so a full buffer is never mistaken for EOF).
-    Now large files round-trip — `TestSelfHostWasmReadFileLarge` reads a
-    200 KB file and checks bytes past the boundary; the capstone assembler
+    64 KB). Fixed by growing the buffer (it now doubles into a fresh block,
+    `read_room`; room is ensured *before* each read so a full buffer is
+    never mistaken for EOF). Now large files round-trip —
+    `TestSelfHostWasmReadFileLarge` reads a 1.5 MB file in both wasm forms
+    and checks every byte; the capstone assembler
     reads multi-hundred-KB asm intact (ELF size scales with input). No
     regression across the wasm / CLI / capstone suites. (This is unrelated
     to the spurious "bugs" of 2x — it's an actual, reproduced defect.)
