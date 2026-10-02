@@ -3708,21 +3708,17 @@ input flag`, which is itself the divergence:
   #9237 is the flags-word bit that closes it, and it is why the corpus
   holds only the taken-name half of that case.
 
-**`expr`'s empty alternation branch inside a COUNTED repetition follows no
-branch order at all.** glibc demotes a branch that compiles to nothing — `expr
-aa : '\(\|a\)a*'` reports the empty string, not `a` — and `bre.fern` now does
-the same, which fixed 34 inputs. Inside `\{m,n\}` that rule stops applying and
-nothing replaces it. Measured: `a : \(\|a\)\{2\}` is empty (demoted),
-`\{2,3\}` is `a` (written order), `\{1,3\}` is empty, `\{1,2\}` is `a`; and
-`aa : \(\|a\)\{1,2\}a*` is `a` where the same pattern without the trailing
-`a*` is not. So it is not monotonic in the bound AND the rest of the pattern
-decides, which means no compile-time branch order can express it.
-`compile_rep` therefore compiles its body with the demotion off, leaving that
-family answering exactly as it did before — 27 inputs still disagree with GNU,
-all of them this shape, all pre-existing. #9092 §7 has the measurements.
-
-Applying the demotion uniformly was tried and rejected: it fixed 8 more inputs
-and broke 6, which is a worse trade than leaving a known shape alone.
+**`expr`'s capture registers follow glibc's own construction, not a branch
+order.** glibc prefers the non-empty branch of an alternation everywhere,
+`expr aa : '\(\|a\)a*'` reporting `a`. What looked like an exception inside
+`\{m,n\}` is how glibc builds the repetition: the optional copies nest as
+`((x?)x)?`, and only the FIRST optional copy of a repeated group is marked
+optional, because every later copy is duplicated through `create_token_tree`,
+which clears the mark. An empty pass through a marked group puts every
+register back as the last non-empty group end left it (`update_regs`), and an
+unbounded repetition makes one empty pass through its body before it leaves.
+So `a : \(\|a\)\{1,2\}` is `a` and `\{1,3\}` is empty. `bre.fern` builds the
+same shapes and applies the same register rule in both matchers.
 
 The other six shapes in #9092 are GNU behaving worse than Fern — a SIGSEGV on
 `expr "" : '\(\)\1\{2\}*'`, a non-terminating match on
