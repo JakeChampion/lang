@@ -119,11 +119,26 @@ merge() {
 # Lower a weight only after observations in at least two distinct runs; use
 # the slower observation. Keep unobserved weights and allow a single new slow
 # observation to raise one. Output is a replacement file, never an in-place edit.
+#
+# Only tests the tree still defines get a row. The runs predate the tree the
+# table is written for, so a measurement can name a test deleted since; the
+# weights file's lookup is exact and tools/testname_gate.sh fails on such a
+# row. FERN_WEIGHT_TREE names the tree to scan (the repository by default).
 refresh() {
   [ "$#" -ge 3 ] || usage
   local weights="$1"
   shift
   [ -f "$weights" ] || { echo "ci-test-weights: missing weights: $weights" >&2; return 1; }
+  local tree="${FERN_WEIGHT_TREE:-$(dirname "${BASH_SOURCE[0]}")/..}"
+  local names
+  names=$(mktemp)
+  trap 'rm -f "$names"' RETURN
+  grep -rhoE '^func (Test[A-Za-z0-9_]*)\(' --include='*_test.go' "$tree" |
+    sed -E 's/^func (Test[A-Za-z0-9_]*)\(/\1/' | LC_ALL=C sort -u >"$names" || true
+  if [ ! -s "$names" ]; then
+    echo "ci-test-weights: no test functions under $tree" >&2
+    return 1
+  fi
   local -a dirs=() files=()
   local dir canonical previous file found
   for dir in "$@"; do
@@ -146,7 +161,7 @@ refresh() {
       return 1
     fi
   done
-  awk -v W="$weights" -v expected_runs="${#dirs[@]}" -v name_re="$TIMING_NAME_RE" -v seconds_re="$TIMING_SECONDS_RE" '
+  awk -v W="$weights" -v N="$names" -v expected_runs="${#dirs[@]}" -v name_re="$TIMING_NAME_RE" -v seconds_re="$TIMING_SECONDS_RE" '
     function bad(message) {
       print "ci-test-weights: " message > "/dev/stderr"
       failed = 1
@@ -166,6 +181,8 @@ refresh() {
         declared[fields[1]] = fields[2]
       }
       close(W)
+      while ((getline line < N) > 0) in_tree[line] = 1
+      close(N)
     }
     FNR == 1 {
       count = split(FILENAME, path_parts, "/")
@@ -194,7 +211,11 @@ refresh() {
         old = name in declared ? declared[name] + 0 : 1
         if (samples[name] >= 2 || weight > old) declared[name] = sprintf("%.0f", weight)
       }
-      for (name in declared) if (declared[name] + 0 != 1) printf "%s %s\n", name, declared[name]
+      for (name in declared) {
+        if (declared[name] + 0 == 1) continue
+        if (name in in_tree) printf "%s %s\n", name, declared[name]
+        else print "ci-test-weights: dropped " name ": not a test function in the tree" | "LC_ALL=C sort >&2"
+      }
     }
   ' "${files[@]}" | LC_ALL=C sort
 }

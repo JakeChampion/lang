@@ -33,6 +33,7 @@ import "./irlower";
 import "./ir";
 import "./irverify";
 import "./irverifyprovided";
+import "./irverifystack";
 import "./modloader";
 import "./ircore";
 import "./constfold";
@@ -42,10 +43,13 @@ import "./semlower";
 // ---- callee resolution (#6639 slice 4) ---------------------------------
 
 // verify_provided_module runs the resolution pass over the whole merged
-// program and writes the verdict. Returns the process exit code.
+// program and writes the verdict, then how much of it the operand-stack pass
+// models (`irverifystack: modelled M/N`): the compile-path gate skips a body
+// the stack pass cannot model without a word, so the sweep is what notices a
+// new op the pass does not carry. Returns the process exit code.
 //
-// This is the driver the sweep has to use: `irlower_run` lowers ONE module, so
-// every imported `Type.method` is unresolved there by construction — a census
+// This is the driver the sweep has to use: a driver that lowers ONE module
+// leaves every imported `Type.method` unresolved by construction — a census
 // over the conformance corpus found ~200 of 255 distinct unresolved names were
 // stdlib methods reached through an import. The declared set is only complete
 // once the bundle is.
@@ -58,13 +62,11 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
   // emit_module_ir_gated_sub gates, and the instances and drop helpers
   // it defines beside the declarations.
   var im: parser.Module = ircore.with_records(parser.infer_ret_types_module(ircore.script_normalized(ircore.sub_lifted(d.sub, d.full))), d.sub);
-  var stab: irlower.StructTab = irlower.struct_tab(im.structs);
-  var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(ircore.sub_base(d.sub, im.funcs, stab), im.trait_reqs);
   var i: i32 = 0;
   while (i < im.funcs.len()) {
     declared = declared.append(irlower.grow_fn_key(im.funcs[i]));
-    var r: irlower.LowerResult = ircore.produced_or_lowered(d.sub, i, im.funcs[i], stab, sg, false);
-    if (r.ok && !r.superseded) {
+    var r: irlower.LowerResult = ircore.produced(d.sub.bodies, i, im.funcs[i]);
+    if (!r.superseded) {
       names = names.append(irlower.grow_fn_key(im.funcs[i]));
       bodies = bodies.append(r.ops);
     }
@@ -83,6 +85,7 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
   var ix: irverify.NameIndex = irverify.name_index(declared);
   var probs: irverify.Problem[] = [];
   var calls: i32 = 0;
+  var cov: irverifystack.Coverage = irverifystack.coverage_new();
   var k: i32 = 0;
   while (k < names.len()) {
     var r: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn(names[k], bodies[k], ix);
@@ -90,17 +93,19 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
     for p in r.problems {
       probs = probs.append(p);
     }
+    cov = irverifystack.coverage_add(cov, names[k], irverifystack.verify_stack_fn(names[k], bodies[k]).bail);
     k = k + 1;
   }
   var checked: i32 = names.len();
   var tally: string = "checked " + util.i32_to_string(checked) + " functions, "
     + util.i32_to_string(calls) + " direct calls";
+  var stack: string = "irverifystack: " + irverifystack.coverage_str(cov) + "\n";
   if (probs.len() == 0) {
-    write("irverifyprovided: clean (" + tally + ")\n");
+    write("irverifyprovided: clean (" + tally + ")\n" + stack);
     return 0;
   }
   write("irverifyprovided: " + util.i32_to_string(probs.len()) + " problem(s) (" + tally + ")"
-    + irverify.format_problems(probs, 20) + "\n");
+    + irverify.format_problems(probs, 20) + "\n" + stack);
   return 1;
 }
 

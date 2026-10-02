@@ -75,68 +75,31 @@ func TestSelfHostIRLICM(t *testing.T) {
 }
 
 // licmPrograms are the fixtures of internal/ir/licm_test.go with a main, so
-// the same source is lowered, emitted and run. `outside` / `inside` count the
+// the same source is emitted and run. `outside` / `inside` count the
 // string-length reads the pass leaves outside any loop and inside one; the
 // runtime value is what every backend must still compute.
 var licmPrograms = []struct {
-	name, fn, src   string
+	name, src       string
 	want            int
 	outside, inside int
 }{
-	{"while-cond", "scan",
+	{"while-cond",
 		`function scan(s: string): i32 { var i: i32 = 0; var n: i32 = 0; while (i < s.len()) { if (s[i] == b'#') { n = n + 1; } i = i + 1; } return n; } function main(): i32 { return scan("a#b##c"); }`,
 		3, 1, 0},
 	// The operand is reassigned in the body, so the length is re-read each
 	// iteration: the loop runs to the NEW string's length (3), not the old (2).
-	{"mutated-operand", "grow",
+	{"mutated-operand",
 		`function grow(a: string): i32 { var s: string = a; var i: i32 = 0; while (i < s.len()) { if (i == 0) { s = a + "x"; } i = i + 1; } return i; } function main(): i32 { return grow("ab"); }`,
 		3, 0, 1},
-	{"body-only", "total",
+	{"body-only",
 		`function total(s: string, k: i32): i32 { var i: i32 = 0; var n: i32 = 0; while (i < k) { n = n + s.len(); i = i + 1; } return n; } function main(): i32 { return total("abc", 4); }`,
 		12, 0, 1},
-	{"two-slots", "f",
+	{"two-slots",
 		`function f(s: string, t: string): i32 { var i: i32 = 0; while (i < s.len() + t.len()) { i = i + 1; } return i; } function main(): i32 { return f("abc", "de"); }`,
 		5, 2, 0},
-	{"short-circuit", "f",
+	{"short-circuit",
 		`function f(a: string, b: string): i32 { var i: i32 = 0; while (i < a.len() && i < b.len()) { i = i + 1; } return i; } function main(): i32 { return f("abcd", "de"); }`,
 		2, 1, 1},
-}
-
-// irLenShape counts the `str_len` ops of an irlower_run `-dump-fn` op stream
-// outside and inside its first loop.
-func irLenShape(t *testing.T, dump string) (outside, inside int) {
-	t.Helper()
-	lines := strings.Split(strings.TrimSpace(dump), "\n")
-	loopAt, loopEnd := -1, -1
-	depth := 0
-	for i, l := range lines {
-		switch {
-		case l == "loop" && loopAt < 0:
-			loopAt = i
-			depth = 1
-		case (l == "block" || l == "loop" || l == "if") && loopAt >= 0 && loopEnd < 0:
-			depth++
-		case l == "end" && loopAt >= 0 && loopEnd < 0:
-			depth--
-			if depth == 0 {
-				loopEnd = i
-			}
-		}
-	}
-	if loopAt < 0 || loopEnd < 0 {
-		t.Fatalf("no closed loop in the op stream:\n%s", dump)
-	}
-	for i, l := range lines {
-		if l != "str_len" {
-			continue
-		}
-		if i > loopAt && i < loopEnd {
-			inside++
-		} else {
-			outside++
-		}
-	}
-	return outside, inside
 }
 
 // asmLenShape counts string-length reads in the user functions of an x86-64
@@ -233,25 +196,19 @@ func nativeLenShape(asm string) (outside, inside int) {
 		func(l, n string) bool { return l == ".LloopEnd_"+n+":" })
 }
 
-// TestSelfHostLICMX86_64 is the source-level half: each fixture is lowered by
-// the self-host and the hoist read off the op stream, the emitted x86-64 is
-// checked for the same shape native emits for the same program, and the
-// binary runs to the value the unhoisted program computed.
+// TestSelfHostLICMX86_64 is the source-level half: the x86-64 the self-host
+// emits for each fixture is checked for the same shape native emits for the
+// same program, and the binary runs to the value the unhoisted program
+// computed.
 func TestSelfHostLICMX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "irlower_run.fern", "asm_ir_run.fern")
-	lowerBin := buildSelfHostBin(t, gcc, dir, "irlower_run.fern", "irlower_run")
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	asmBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "asm_ir_run")
 	nativeBin := buildFernCLIBin(t)
 
 	for _, tc := range licmPrograms {
 		t.Run(tc.name, func(t *testing.T) {
-			dump := runIRLower(t, lowerBin, "-dump-fn", tc.src, tc.fn)
-			if out, in := irLenShape(t, dump); out != tc.outside || in != tc.inside {
-				t.Errorf("IR: %d str_len outside the loop and %d inside, want %d / %d:\n%s", out, in, tc.outside, tc.inside, dump)
-			}
-
 			asm := runCapture(t, gcc, runner, asmBin, []byte(tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")

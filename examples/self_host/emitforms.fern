@@ -98,49 +98,49 @@ pub function wasm_component(full: parser.Module, sub: ircore.Sub): i32[] {
   }
   var core: i32[] = watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub));
   if (shape == 1) {
-    return watbin.component_full_io(core);
+    return watbin.component_full_io(core, true);
   }
   if (shape == 2) {
-    return watbin.component_full_io_fs(core);
+    return watbin.component_full_io_fs(core, true);
   }
   if (shape == 3) {
-    return watbin.component_full_io_fs_write(core);
+    return watbin.component_full_io_fs_write(core, true);
   }
   if (shape == 4) {
-    return watbin.component_full_io_fs_rw(core);
+    return watbin.component_full_io_fs_rw(core, true);
   }
   if (shape == 5) {
-    return watbin.component_full_io_random(core);
+    return watbin.component_full_io_random(core, true);
   }
   if (shape == 6) {
-    return watbin.component_full_io_env(core);
+    return watbin.component_full_io_env(core, true);
   }
   if (shape == 7) {
-    return watbin.component_full_io_args(core);
+    return watbin.component_full_io_args(core, true);
   }
   if (shape == 8) {
-    return watbin.component_full_io_clock(core);
+    return watbin.component_full_io_clock(core, true);
   }
   if (shape == 9) {
-    return watbin.component_full_io_clock_mono(core);
+    return watbin.component_full_io_clock_mono(core, true);
   }
   if (shape == 10) {
-    return watbin.component_full_io_fs_read_env(core);
+    return watbin.component_full_io_fs_read_env(core, true);
   }
   if (shape == 11) {
-    return watbin.component_full_io_fs_rw_env(core);
+    return watbin.component_full_io_fs_rw_env(core, true);
   }
   if (shape == 12) {
-    return watbin.component_full_io_random_write(core);
+    return watbin.component_full_io_random_write(core, true);
   }
   if (shape == 13) {
-    return watbin.component_full_io_eprint(core);
+    return watbin.component_full_io_eprint(core, true);
   }
   if (shape == 14) {
-    return watbin.component_full_io_exit(core);
+    return watbin.component_full_io_exit(core, true);
   }
   if (shape == 15) {
-    return watbin.component_full_io_fs_args_read(core);
+    return watbin.component_full_io_fs_args_read(core, true);
   }
-  return watbin.component_full_io_fs_rw_args(core);
+  return watbin.component_full_io_fs_rw_args(core, true);
 }

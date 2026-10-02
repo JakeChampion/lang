@@ -2056,6 +2056,19 @@ pub function op_read_chunk(): Op {
   return op0(178);
 }
 
+// Raw input retains no text invariant. The packed bit chooses native u8 slots.
+pub function op_read_chunk_bytes(): Op {
+  return op0(348);
+}
+
+pub function op_write_bytes(): Op {
+  return op0(349);
+}
+
+pub function op_write_some_bytes(): Op {
+  return op0(350);
+}
+
 // `fd_stat` pops [fd] and pushes Result[FileStat, IoError]: fstat(2) of the
 // handle, the same record `stat` builds. Backs `r.stat()` / `w.stat()`.
 pub function op_fd_stat(): Op {
@@ -2288,6 +2301,15 @@ pub function op_buf_len(): Op {
 
 pub function op_buf_take(): Op {
   return op0(296);
+}
+
+// Extract owned bytes and reset the builder, without interpreting text.
+pub function op_buf_take_bytes(): Op {
+  return op0(347);
+}
+
+pub function op_buf_push_bytes_range(): Op {
+  return op0(351);
 }
 
 pub function op_buf_free(): Op {
@@ -3078,6 +3100,9 @@ pub function kind_id(name: string): i32 {
   }
   if (n == 19) {
     return kind_id_len19(name);
+  }
+  if (n == 20 && name == "buf_push_bytes_range") {
+    return 351;
   }
   if (n == 21) {
     return kind_id_len21(name);
@@ -3966,6 +3991,9 @@ function kind_id_len10_t(name: string): i32 {
 }
 
 function kind_id_len11(name: string): i32 {
+  if (name == "write_bytes") {
+    return 349;
+  }
   var c: u8 = name[0];
   if (c == b'c' && name == "call_direct") {
     return 149;
@@ -4204,6 +4232,9 @@ function kind_id_len13(name: string): i32 {
 }
 
 function kind_id_len14(name: string): i32 {
+  if (name == "buf_take_bytes") {
+    return 347;
+  }
   var c: u8 = name[0];
   if (c == b'a' && name == "arr_push_owned") {
     return 93;
@@ -4277,6 +4308,12 @@ function kind_id_len15(name: string): i32 {
 }
 
 function kind_id_len16(name: string): i32 {
+  if (name == "write_some_bytes") {
+    return 350;
+  }
+  if (name == "read_chunk_bytes") {
+    return 348;
+  }
   var c: u8 = name[0];
   if (c == b'h' && name == "heap_alloc_count") {
     return 315;
@@ -4915,6 +4952,15 @@ function kind_name_4(id: i32): string {
   if (id == 178) {
     return "read_chunk";
   }
+  if (id == 348) {
+    return "read_chunk_bytes";
+  }
+  if (id == 349) {
+    return "write_bytes";
+  }
+  if (id == 350) {
+    return "write_some_bytes";
+  }
   if (id == 179) {
     return "reader_close";
   }
@@ -5360,6 +5406,12 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 347) {
+    return "buf_take_bytes";
+  }
+  if (id == 351) {
+    return "buf_push_bytes_range";
+  }
   if (id <= 40) {
     return kind_name_0(id);
   }
@@ -5519,7 +5571,7 @@ function pops2_io(t: i32): boolean {
     || t == 285  // signal_send (pid, sig)
     || t == 284  // set_process_group (pid, pgid)
     || t == 311  // fd_dup_onto (fd, newfd)
-    || t == 178 || t == 187  // read_chunk, poll
+    || t == 178 || t == 348 || t == 349 || t == 350 || t == 187  // read_chunk, read_chunk_bytes, poll
     || t == 110 || t == 114 || t == 115 || t == 334 || t == 339  // tcp_connect, tcp_send, tcp_recv, udp_bind, unix_listen
     || t == 344  // tcp_recv_into (fd, buf)
     || t == 202 || t == 213 || t == 308  // writer_write, proc_exec, write_some
@@ -5557,6 +5609,12 @@ function pops3(t: i32): boolean {
 // answers in one place rather than scattering seven tags across the pops1_* /
 // pops2_* predicates.
 function pops_buf(t: i32): i32 {
+  if (t == 351) {
+    return 4;
+  }
+  if (t == 347) {
+    return 1;
+  }
   // buf_push_u64 arrived after the block had closed over 291-297, so it
   // carries the next free id instead of extending it.
   if (t == 306) {
@@ -5822,11 +5880,15 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
     while (i < cur.len()) {
       var folded: boolean = false;
       var at: i32 = i;
+      // Decided once per position: six arms ask whether the op here is a
+      // readable 32-bit constant and two whether it is a 64-bit one.
+      var r32: boolean = const_i32_readable(cur[i]);
+      var r64: boolean = const_i64_readable(cur[i]);
       if (i + 2 < cur.len()) {
         var a: Op = cur[i];
         var b: Op = cur[i + 1];
         var o: Op = cur[i + 2];
-        if (const_i32_readable(a) && const_i32_readable(b)
+        if (r32 && const_i32_readable(b)
           && is_foldable_binary_kind(o.kind_tag) && o.width != 64 && !o.unsigned
           && !fold_would_divide_by_zero(o.kind_tag, const_i32_value(b))) {
           out = out.append(op_const_i32(fold_binary_i32(o.kind_tag, const_i32_value(a), const_i32_value(b))));
@@ -5837,7 +5899,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       }
       // The same at 64 bits (native foldBinary64): `const_i64 a ;
       // const_i64 b ; <bin> 64`. A comparison yields an i32.
-      if (!folded && i + 2 < cur.len() && const_i64_readable(cur[i]) && const_i64_readable(cur[i + 1])) {
+      if (!folded && i + 2 < cur.len() && r64 && const_i64_readable(cur[i + 1])) {
         var f64r: Fold64 = fold_binary_i64(cur[i + 2], const_i64_value(cur[i]), const_i64_value(cur[i + 1]));
         if (f64r.ok) {
           if (f64r.cmp) {
@@ -5856,7 +5918,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // whose top bit is set would not be, so that one is refused (the
       // u32 width fold's rule). The pointer-width forms are left alone:
       // what they do depends on the target.
-      if (!folded && i + 1 < cur.len() && const_i32_readable(cur[i])
+      if (!folded && i + 1 < cur.len() && r32
         && cur[i + 1].kind_tag == 7 && cur[i + 1].width == 64) {
         var xv: i64 = const_i32_value(cur[i]) as i64;
         if (cur[i + 1].unsigned) {
@@ -5867,7 +5929,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
         changed = true;
         folded = true;
       }
-      if (!folded && i + 1 < cur.len() && const_i64_readable(cur[i])
+      if (!folded && i + 1 < cur.len() && r64
         && cur[i + 1].kind_tag == 8 && cur[i + 1].width == 0
         && (!cur[i + 1].unsigned || const_i64_value(cur[i]) as i32 >= 0)) {
         out = out.append(op_const_i32(const_i64_value(cur[i]) as i32));
@@ -5880,7 +5942,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // bool_not — so the result is 1 for zero and 0 for anything else. There
       // is no bitwise complement anywhere in this IR to confuse it with.
       if (!folded && i + 1 < cur.len()
-        && const_i32_readable(cur[i]) && cur[i + 1].kind_tag == k_not) {
+        && r32 && cur[i + 1].kind_tag == k_not) {
         var nv: i32 = 0;
         if (const_i32_value(cur[i]) == 0) {
           nv = 1;
@@ -5910,7 +5972,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // every i32 arithmetic op. Folding through it is what lets a NESTED
       // constant expression collapse: the pass otherwise sees
       // `const 1 ; const 6 ; int_cast ; add` and stops one step short.
-      if (!folded && i + 1 < cur.len() && const_i32_readable(cur[i])) {
+      if (!folded && i + 1 < cur.len() && r32) {
         var wf: WidthFold = fold_width_op(cur[i + 1], const_i32_value(cur[i]));
         if (wf.ok) {
           out = out.append(op_const_i32(wf.v));
@@ -5923,7 +5985,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // the condition and the scope itself. Only a VOID if — every scope this
       // lowering opens is void, and a typed one would carry a value out of its
       // end that deleting the scope would strand.
-      if (!folded && i + 1 < cur.len() && const_i32_readable(cur[i])
+      if (!folded && i + 1 < cur.len() && r32
         && cur[i + 1].kind_tag == k_if && cur[i + 1].i32_imm == 0) {
         var span: IfSpan = scan_if_block(cur, i + 1);
         if (span.end_at >= 0) {
@@ -5963,7 +6025,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // are stack-neutral — brif pops the condition the const pushed, and `br`
       // touches neither.
       if (!folded && i + 1 < cur.len()
-        && const_i32_readable(cur[i]) && cur[i + 1].kind_tag == k_brif) {
+        && r32 && cur[i + 1].kind_tag == k_brif) {
         if (const_i32_value(cur[i]) != 0) {
           out = out.append(op_br(cur[i + 1].i32_imm));
         }
@@ -6681,7 +6743,7 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
 // Where native scans for the `const.i32 0 ; store_local N` its prologue emits,
 // this needs no such evidence: body slots [n_params, n_locals) are zero at
 // entry by the BACKEND prologue (asm_ir's `rep stosq`, asm_arm64_ir's store
-// loop, wasm's spec-zeroed locals, irexec's zeroed frame), which is not an op
+// loop, wasm's spec-zeroed locals), which is not an op
 // in this list. Params are excluded — they arrive with the caller's values.
 
 // zg_mark records `at` as slot `sl`'s first non-zero write, when the slot is in
@@ -7811,6 +7873,9 @@ pub function op_needs_heap(o: Op): boolean {
 }
 
 pub function op_allocates(tag: i32): boolean {
+  if (tag == 348 || tag == 349 || tag == 350) {  // byte array plus Result wrapper
+    return true;
+  }
   // const_struct (#6149) allocates NOTHING — its box is static data — but the
   // value still flows through the rc runtime: a dec at scope exit, an
   // is_unique + alloc_reuse on a record update whose base is the constant. It
@@ -8132,9 +8197,8 @@ pub function do_branch(ops: Op[], pc: i32, d: i32): i32 {
 // self-host has no such split — wasm_ir.fern carries a string as a single
 // block pointer, so every value is one slot on every target and
 // irverifystack.fern reads none of these lists (#6639 slice 2). What does
-// need them is any pass asking what a value IS: the wasm signature emit reads
-// i64_slots / f64_slots to type its params and locals, and irlower_run's
-// `-slots` dump prints all four.
+// need them is any pass asking what a value IS: the wasm signature emit
+// reads i64_slots / f64_slots to type its params and locals.
 //
 // Each list is one VALUE kind, params included — what the slot holds, not
 // whether the exit sweep owns it. The sweep answers that itself, from
@@ -8153,8 +8217,6 @@ pub struct LoweredFn {
   // ("i32", "string", "" for void) — the type the ops must leave on the
   // stack at the end of the function.
   ret_type: string,
-  // alias_incs: the var-bind alias retains lowering decided
-  // (`line:col=name`), read only by irlower_run's `-rc-plan` mode for the
-  // aliasBindIncs table (#4482). Nothing on the emit path reads it.
+  // alias_incs: the var-bind alias retains lowering decided (`line:col=name`).
   alias_incs: string[],
 }

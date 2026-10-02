@@ -6,7 +6,7 @@
 // between a push of their operands and a pop of the result (emit_stack_op).
 //
 // This is the only x86-64 emitter — the AST one it grew up beside was deleted
-// (#5972). A module the gate (ircore.lower_gated) refuses is a diagnostic
+// (#5972). A module the gate (ircore.gate) refuses is a diagnostic
 // naming the bail site under FERN_STRICT_IR=1, not a route to some other
 // emitter.
 //
@@ -2138,7 +2138,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
     "umask", "write_file", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
-    "reader", "signal_send", "set_process_group", "set_priority",
+    "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority",
   ]);
 }
 
@@ -2159,6 +2159,57 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "subprocess",
     "signal_send", "set_process_group", "set_priority",
   ]);
+}
+
+// Borrow a byte range and reserve once. Packed arrays copy in bulk; the legacy
+// array layout contributes the low byte of each eight-byte slot.
+function emit_buf_push_bytes_range(s: asmcore.EmitState, packed: boolean): asmcore.EmitState {
+  var suffix: string = asmcore.packed_suffix(packed);
+  var sym: string = "__fern_buf_push_bytes_range" + suffix;
+  var label: string = ".Lbufbyterange" + suffix;
+  s = s.write(".globl " + sym + "\n.type " + sym + ", @function\n" + sym + ":\n");
+  s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n");
+  s = s.write("    movq %rdi, %rbx\n    movq %rsi, %r14\n    movslq %edx, %r12\n    movslq %ecx, %r13\n");
+  s = s.write("    xorq %rax, %rax\n    testq %r12, %r12\n    cmovsq %rax, %r12\n    cmpq (%r14), %r13\n    cmovgq (%r14), %r13\n");
+  s = s.write("    subq %r12, %r13\n    jle " + label + "_done\n    movq 8(%rbx), %rsi\n    addq %r13, %rsi\n    cmpq 16(%rbx), %rsi\n    jbe " + label + "_fits\n    call __fern_buf_reserve\n" + label + "_fits:\n");
+  s = s.write("    movq (%rbx), %rdi\n    addq 8(%rbx), %rdi\n");
+  if (packed) {
+    s = s.write("    leaq 8(%r14,%r12), %rsi\n    movq %r13, %rdx\n    call __fern_memcpy\n");
+  } else {
+    s = s.write("    leaq 8(%r14,%r12,8), %rsi\n    movq %r13, %rcx\n" + label + "_copy:\n    movb (%rsi), %al\n    movb %al, (%rdi)\n    addq $8, %rsi\n    incq %rdi\n    decq %rcx\n    jne " + label + "_copy\n");
+  }
+  s = s.write("    addq %r13, 8(%rbx)\n" + label + "_done:\n    xorl %eax, %eax\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    popq %rbp\n    ret\n.size " + sym + ", .-" + sym + "\n");
+  return s;
+}
+
+// Copy raw builder storage into a fresh array in the requested layout.
+function emit_buf_take_bytes(s: asmcore.EmitState, packed: boolean): asmcore.EmitState {
+  var suffix: string = asmcore.packed_suffix(packed);
+  var sym: string = "__fern_buf_take_bytes" + suffix;
+  var done: string = ".Lbufbytes_done" + suffix;
+  var copy_loop: string = ".Lbufbytes_loop" + suffix;
+  s = s.write(".globl " + sym + "\n.type " + sym + ", @function\n" + sym + ":\n");
+  s = s.write("    pushq %rbp\n");
+  s = s.write("    movq %rsp, %rbp\n");
+  s = s.write("    pushq %rbx\n");
+  s = s.write("    pushq %r12\n");
+  s = s.write("    pushq %r13\n");
+  s = s.write("    pushq %r14\n");
+  s = s.write("    movq %rdi, %rbx\n");
+  s = s.write("    movq 8(%rbx), %r12\n");
+  s = s.write("    movq %r12, %rdi\n");
+  if (packed) {
+    s = s.write("    addq $7, %rdi\n    shrq $3, %rdi\n");
+  }
+  s = s.write("    call __fern_arr_box\n    movq %rax, %r13\n    movq %r12, (%r13)\n    movq (%rbx), %rsi\n");
+  if (packed) {
+    s = s.write("    leaq 8(%r13), %rdi\n    movq %r12, %rdx\n    call __fern_memcpy\n");
+  } else {
+    s = s.write("    xorq %rcx, %rcx\n" + copy_loop + ":\n    cmpq %r12, %rcx\n    jae " + done + "\n");
+    s = s.write("    movzbl (%rsi,%rcx), %eax\n    movq %rax, 8(%r13,%rcx,8)\n    incq %rcx\n    jmp " + copy_loop + "\n" + done + ":\n");
+  }
+  s = s.write("    movq $0, 8(%rbx)\n    movq %r13, %rax\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    popq %rbp\n    ret\n.size " + sym + ", .-" + sym + "\n");
+  return s;
 }
 
 // emit_buf_table_helpers emits the three buffer pushes that read a u8[]
@@ -3911,6 +3962,18 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // rather than left to the arena: a builder that doubles its way up from the
   // floor would otherwise strand every prefix it passed through.
   if (s.has_need("buf")) {
+    if (s.has_need("buf_push_bytes_range")) {
+      s = emit_buf_push_bytes_range(s, false);
+    }
+    if (s.has_need("buf_push_bytes_range_u8")) {
+      s = emit_buf_push_bytes_range(s, true);
+    }
+    if (s.has_need("buf_take_bytes")) {
+      s = emit_buf_take_bytes(s, false);
+    }
+    if (s.has_need("buf_take_bytes_u8")) {
+      s = emit_buf_take_bytes(s, true);
+    }
     // __fern_buf_new(%rdi = cap) -> %rax = handle. The floor gives the
     // doubling something to double.
     s = s.write("__fern_buf_new:\n");
@@ -6975,6 +7038,24 @@ function ssa_str_target(op: string): string {
   if (op == "read_chunk") {
     return "reader_read_chunk";
   }
+  if (op == "write_bytes") {
+    return "writer_write_bytes";
+  }
+  if (op == "write_bytes_u8") {
+    return "writer_write_bytes_u8";
+  }
+  if (op == "write_some_bytes") {
+    return "writer_write_some_bytes";
+  }
+  if (op == "write_some_bytes_u8") {
+    return "writer_write_some_bytes_u8";
+  }
+  if (op == "read_chunk_bytes") {
+    return "reader_read_chunk_bytes";
+  }
+  if (op == "read_chunk_bytes_u8") {
+    return "reader_read_chunk_bytes_u8";
+  }
   return op;
 }
 
@@ -6982,6 +7063,9 @@ function ssa_str_target(op: string): string {
 // the heap, "" for an op that is not one; the three that need no heap are
 // named by ssa_host_bare.
 function ssa_host_need(op: string): string {
+  if (op == "read_chunk_bytes" || op == "read_chunk_bytes_u8" || op == "write_bytes" || op == "write_bytes_u8" || op == "write_some_bytes" || op == "write_some_bytes_u8") {
+    return op;
+  }
   var fs: string[] = [
     "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_exec", "remove_dir_all", "remove_file",
     "create_dir_all", "read_dir", "read_dir_all", "env", "stat", "lstat", "subprocess", "writer_write",
@@ -7333,7 +7417,15 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
   s = s.write("    call " + sym + "\n");
   s = s.need("heap");
   s = s.need("buf");
-  if (util.str_has_suffix(sym, "_u8")) {
+  if (sym == "__fern_buf_take_bytes") {
+    s = s.need("buf_take_bytes");
+  } else if (sym == "__fern_buf_take_bytes_u8") {
+    s = s.need("buf_take_bytes_u8");
+  } else if (sym == "__fern_buf_push_bytes_range") {
+    s = s.need("buf_push_bytes_range");
+  } else if (sym == "__fern_buf_push_bytes_range_u8") {
+    s = s.need("buf_push_bytes_range_u8");
+  } else if (util.str_has_suffix(sym, "_u8")) {
     s = s.need("buf_u8");
   }
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
@@ -8245,23 +8337,8 @@ function emit_ssa_function(r: irlower.LowerResult, label_name: string, s: asmcor
   return s;
 }
 
-// emit_function_via_ir lowers one function to the stack IR and emits it
-// through the register path, writing through the global strbuf.
-function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg: irlower.FnSigs, vsigs: irverify.NameIndex): asmcore.EmitState {
-  var r: irlower.LowerResult = irlower.lower_func(fd, s.struct_decls, sg, false);
-  return emit_function_via_ir_pre(r, fd, s, vsigs);
-}
-
-// emit_function_via_ir_pre is the emit half of emit_function_via_ir, split out at
-// the lower_func boundary so a caller that has ALREADY lowered `fd` can emit from
-// that LowerResult without lowering it a second time (#4394 lever 3 — the fused
-// eligible-and-emit path, emit_module_ir_gated_sub, lowers each function once, checks
-// eligibility on that `r`, then emits from the same one, replacing the driver's
-// former lower-twice: all_eligible_known's gate pass re-lowered every function,
-// then emit_module_ir re-lowered every function again). Everything from the
-// runtime-need detection onward reads only r / fd / s (none of the eighteen
-// side-tables lower_func consumes), so this split is byte-identical to the
-// inlined body.
+// emit_function_via_ir_pre emits declaration `fd`'s lowered body `r` through
+// the register path, writing through the global strbuf.
 function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
   // Methods get the receiver-type-qualified label `__fn_<Type>.<name>` (matching
   // asm.fern + irlower's dispatch); free functions stay `__fn_<name>`.
@@ -8910,7 +8987,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("writer_truncate");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328) {  // the buf_* builder
+  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351) {  // the buf_* builder
     s = emit_ir_op_buf(o, s);
   } else if (o.kind_tag == 181) {  // sleep_ms
     // [ms] -> nanosleep(ms). Push the syscall return so the
@@ -8941,6 +9018,12 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
 // handle, the length or the string box for the value ops, and the helper's
 // return as the dummy a statement-level drop takes for the rest.
 function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+  if (o.kind_tag == 347) {
+    s = s.need("buf_take_bytes" + asmcore.packed_suffix(ir.is_packed(o)));
+  }
+  if (o.kind_tag == 351) {
+    s = s.need("buf_push_bytes_range" + asmcore.packed_suffix(ir.is_packed(o)));
+  }
   var k: i32 = asmcore.buf_arity(o.kind_tag);
   while (k > 0) {
     k = k - 1;
@@ -8949,7 +9032,7 @@ function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   var sym: string = asmcore.buf_table_helper(o.kind_tag, ir.is_packed(o));
   s = s.write("    call " + sym + "\n    pushq %rax\n");
   s = s.need("heap");
-  if (sym != asmcore.buf_helper(o.kind_tag)) {
+  if (o.kind_tag != 347 && o.kind_tag != 351 && sym != asmcore.buf_helper(o.kind_tag)) {
     s = s.need("buf_u8");
   }
   return s.need("buf");
@@ -9707,11 +9790,11 @@ function ir_i2f_rax(width: i32, unsigned: boolean, lb: string, d: string): strin
 // emit_module_ir emits a full all-i32-eligible module via the IR path. The
 // program is self-contained (pure i32 uses no runtime helpers): every
 // function via the IR, then a `_start` that calls __fn_main and exits with
-// its result. The caller has gated the module (ircore.lower_gated).
+// its result. The caller has gated the module (ircore.gate).
 // emit_module_funcs derives the per-module side-tables ONCE and emits every
 // function through the IR (asm into the strbuf), marking each function's runtime
 // needs (the maps/heap op-scan + the str_*/print mark_* calls all live inside
-// emit_function_via_ir). globl_defs marks each `__fn_<label>` `.globl` for
+// emit_function_via_ir_pre). globl_defs marks each `__fn_<label>` `.globl` for
 // per-module linking. Shared by emit_module_ir_unit (which then writes _start /
 // .rodata / the runtime) and module_runtime_needs (which discards the asm and
 // reads the accumulated `needed`). Factoring it out keeps the two callers from
@@ -10321,21 +10404,8 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
 // `check_claims` is false for module_runtime_needs, which runs this whole loop
 // only to read the need-set off the EmitState and discards the text. A probe
 // must answer, so it does not get to refuse the module (#9655).
-function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irlower.LowerResult[], base: irlower.FnSigs, check_claims: boolean): asmcore.EmitState {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
-  // #4394 lever 3: when `cache` is non-empty the caller (emit_module_ir_gated_sub)
-  // has ALREADY lowered every function — into cache[i], indexed by mod.funcs
-  // position — during its fused eligibility scan, so emit reuses that lowering
-  // (via emit_function_via_ir_pre) instead of lowering it a second time.
-  //
-  // `base` is the whole-program registry the caller derived once (wp_fn_sigs);
-  // only the per-module tails — this module's trait_reqs folded in, and the two
-  // module-scoped registries — are applied here, and they are cheap.
-  var sg: irlower.FnSigs = irlower.FnSigs {
-    ...irlower.fn_sigs_with_dyn(base, mod.trait_reqs),
-    closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs),
-    fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
-  };
+function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irlower.LowerResult[], check_claims: boolean): asmcore.EmitState {
+  // `cache` is the unit's lowered bodies, indexed by mod.funcs position.
   // The IR verify gate's callee-arity index, derived ONCE over the
   // whole-program all_funcs for the reason the registries above are: a
   // per-function rebuild would be O(n^2) on the compiler's own sources.
@@ -10347,20 +10417,21 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     hh = mod.funcs.len();
   }
   if (check_claims) {
-    ircore.check_fip_claims(mod.funcs, lo, hh, cache, s.struct_decls, sg, false);
+    ircore.check_fip_claims(mod.funcs, lo, hh, cache);
   }
   s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: asmcore.unit_leaves(mod, lo, hh, cache) };
   var fi: i32 = lo;
   while (fi < hh) {
+    var r: irlower.LowerResult = ircore.produced(cache, fi, mod.funcs[fi]);
     // A template the substitution superseded has no body: its instances
     // are on the cache tail (emit_named_bodies).
-    if (cache.len() > 0 && cache[fi].superseded) {
+    if (r.superseded) {
       fi = fi + 1;
       continue;
     }
     // Per-module: mark the definition `.globl` so a sibling module's
     // `call __fn_<label>` (an unresolved extern in that module) links
-    // against it. The label is computed exactly as emit_function_via_ir
+    // against it. The label is computed exactly as emit_function_via_ir_pre
     // writes it below (receiver-qualified for methods).
     if (globl_defs) {
       var gname: string = mod.funcs[fi].name;
@@ -10369,11 +10440,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
       }
       s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
     }
-    if (cache.len() == 0) {
-      s = emit_function_via_ir(mod.funcs[fi], s, sg, vsigs);
-    } else {
-      s = emit_function_via_ir_pre(cache[fi], mod.funcs[fi], s, vsigs);
-    }
+    s = emit_function_via_ir_pre(r, mod.funcs[fi], s, vsigs);
     fi = fi + 1;
   }
   // Cache entries past the declarations are bodies with no FuncDecl, each
@@ -10405,7 +10472,7 @@ pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl
   strbuf_reset();
   var s: asmcore.EmitState = asmcore.new_state();
   s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: all_funcs };
-  s = emit_module_funcs(mod, all_funcs, all_structs, s, false, 0, 0 - 1, cache, base, false);
+  s = emit_module_funcs(mod, all_funcs, s, false, 0, 0 - 1, cache, false);
   s = s.close_needs();
   strbuf_reset();
   return s.needed;
@@ -10438,7 +10505,7 @@ pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): stri
     return "";
   }
   var lm: parser.Module = ircore.sub_lifted(sub, tm);
-  var g: string = emit_module_ir_gated_sub(lm, [], sub);
+  var g: string = emit_module_ir_gated_sub(lm, sub);
   if (g != "") {
     return g;
   }
@@ -10452,10 +10519,10 @@ pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): stri
 // ir_const_numeric_run's rebuilt copy of it. "" is an unambiguous
 // "ineligible" sentinel: an eligible module always emits at least
 // `.globl _start\n    .text\n…`, never the empty string.
-pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: ircore.Sub): string {
+pub function emit_module_ir_gated_sub(mod: parser.Module, sub: ircore.Sub): string {
   // A main-less module is admitted: the unit's `_start` exits 0 instead of
   // calling a __fn_main that does not exist (see its has_main branch).
-  var g: ircore.Gated = ircore.gate_program(mod, known, sub);
+  var g: ircore.Gated = ircore.gate_program(mod, sub);
   if (!g.ok) {
     return "";
   }
@@ -10500,7 +10567,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // emit_module_funcs. The strfldok need seeding below recomputes its column
   // directly (all_funcs is in scope) rather than re-reading a base that was
   // just passed as an arg.
-  s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs, lo, hi, cache, b, true);
+  s = emit_module_funcs(mod, all_funcs, s, globl_defs, lo, hi, cache, true);
   // #4355: admit the replaced-STRING-field arm per type, from the
   // WHOLE-PROGRAM read scan (a unit-local func list would under-count the
   // reads and re-open the UAF the scan exists to prevent; see
@@ -11199,6 +11266,24 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("reader")) {
       fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk("x86_64") + " " + asmcore.rt_src_reader_close("x86_64");
+    }
+    if (s.has_need("write_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86_64", false, true);
+    }
+    if (s.has_need("write_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86_64", true, true);
+    }
+    if (s.has_need("write_some_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86_64", false, false);
+    }
+    if (s.has_need("write_some_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86_64", true, false);
+    }
+    if (s.has_need("read_chunk_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk_bytes("x86_64", false);
+    }
+    if (s.has_need("read_chunk_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk_bytes("x86_64", true);
     }
     if (s.has_need("fd_stat")) {
       fs_src = fs_src + " " + asmcore.rt_src_fd_stat("x86_64");

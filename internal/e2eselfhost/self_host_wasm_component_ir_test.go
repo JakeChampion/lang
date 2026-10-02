@@ -209,8 +209,14 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 			if gotIR != tc.wantIR {
 				t.Errorf("emitted via IR = %v, want %v", gotIR, tc.wantIR)
 			}
-			if got := watImports(wat); !equalStrs(got, tc.imports) {
-				t.Errorf("imports =\n  %v\nwant\n  %v", got, tc.imports)
+			wantImports := tc.imports
+			if tc.io {
+				// The write shim owns last-operation-failed handles and
+				// must release them before returning its I/O error.
+				wantImports = append([]string{"wasi:io/error@0.2.0 [resource-drop]error"}, wantImports...)
+			}
+			if got := watImports(wat); !equalStrs(got, wantImports) {
+				t.Errorf("imports =\n  %v\nwant\n  %v", got, wantImports)
 			}
 		})
 	}

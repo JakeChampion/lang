@@ -1562,8 +1562,7 @@ feeds `caller_sigs` to the remaining AST callers is below.
 `examples/self_host/semlower.fern` is where a whole-program emit path asks for
 this pipeline instead of a test driver. It is the only lowering a
 whole-program emit has: a module is produced whole or the compile fails
-(exit 3), and `ircore.lower_gated` reads the produced bodies in place of
-lowering them. `FERN_SEM_IR_REPORT=1` prints a per-module tally.
+(exit 3), and the emit reads the produced bodies (`ircore.gate`). `FERN_SEM_IR_REPORT=1` prints a per-module tally.
 
 All three whole-program paths take one: `asm_ir`, `asm_arm64_ir` and `wasm_ir`
 each thread an `ircore.Sub` through their gated entry. The registry set
@@ -2239,9 +2238,10 @@ function type nested in a function value's signature.
 The typed path is the only lowering a compile has, and a refusal is a compile
 error, for a program's module and for each runtime helper it appends: the
 refusals are printed as `FERN_SEM_IR_REPORT` would print them, and the compile
-exits 3. There is no off switch and no bisect knob. The AST lowering
-(`irlower`) still runs for the claim checks and in the drivers that never
-build a substitution (`irlower_run` and its dumps).
+exits 3. There is no off switch and no bisect knob. Nothing calls the AST
+lowering (`irlower`): every emit path and the FIP claim checks read the
+produced body of each declaration, and a declaration without one is an
+internal error that exits 3 naming it (`ircore.produced`).
 
 What the typed path produced whole, 2026-09-24:
 
@@ -2423,19 +2423,15 @@ passes. The rest is shared and stays, or moves into a module of its own:
 `regrow_sigs`, `consume_sigs` and `ssarc.caller_sigs` exist only so an
 AST-lowered caller can call a produced callee, and they go with the lowering.
 
-**Other sites that lower a body from the AST:**
-
-- `ircore.produced_or_lowered`, for a driver that emits with no
-  substitution (`ircore.no_sub()`);
-- `ircore.claim_lowering`, for the FIP and E068 claim checks;
-- `emit_function_via_ir` when the cache is empty.
-
-`interp.fern` and `irexec.fern` do not depend on the AST lowering.
-
-**Tests.** These go with the lowering, or change with it:
-
-- the `irlower_run` suites: IR round trip, IR verify, and the rc-plan and
-  ownership dumps.
+**The sites that lowered a body from the AST** read the produced body
+instead: `ircore.produced` for a driver's emit and for the FIP and E068 claim
+checks, and the backends' per-function emit, which no longer lowers when its
+cache is empty. `irlower_run`, the driver that ran the AST lowering on its own,
+is deleted with its suites (IR round trip, the IR verify, stack, FIP and
+ownership corpus sweeps over its output, the rc-plan, string-ownership,
+slot-kind, closure-census and move-on-construction dumps) and `irexec.fern`,
+the interpreter only it ran. The verifiers run on the compile path over every
+body a compile emits (`irverifygate.fern`).
 
 The probes' verdict was spelled `ast`, from when a bail routed to the AST
 emitter, and then `refused`. It is the typed lowering's now
