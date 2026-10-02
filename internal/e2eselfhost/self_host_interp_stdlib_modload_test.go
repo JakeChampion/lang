@@ -85,6 +85,9 @@ var interpStdlibModloadCases = []struct {
 	// Round-tripping a hand-built document through the encoder: construction on
 	// the way in, variant matching on the way out.
 	{"json-encode-roundtrip", "import \"std/json\";\nfunction main(): i32 {\n  var doc: JsonValue = JArray([JBool(true), JString(\"hi\"), JNull]);\n  if (json.json_encode(doc) != \"[true,\\\"hi\\\",null]\") { return 1; }\n  match (json.json_parse(json.json_encode(doc))) {\n    Some(JArray(items)) => { if (items.len() == 3) { return 7; } return 2; },\n    _ => { return 3; }\n  }\n}\n"},
+	// std/http declares `(b: Body) bytes()` on the front-end-injected `Body`,
+	// whose variants no parsed `enum` declares (#11042).
+	{"http-body-bytes-method", "import \"std/http\";\nfunction main(): i32 {\n  var b: Body = BodyBytes([3 as u8, 4 as u8]);\n  var t: Body = BodyText(\"abc\");\n  if (b.bytes().len() == 2 && (b.bytes()[1] as i32) == 4 && t.bytes().len() == 3) { return 7; }\n  return 1;\n}\n"},
 	// A user enum through the CLI's module loader, which merges every imported
 	// module's decls before the interpreter sees them.
 	{"user-enum-with-stdlib", "import \"std/string\";\nenum Tok { Word(string), Num(i32) }\nfunction render(t: Tok): string {\n  match (t) { Word(w) => { return w.to_ascii_upper(); }, Num(_) => { return \"#\"; } }\n}\nfunction main(): i32 {\n  if (render(Word(\"ok\")) == \"OK\" && render(Num(3)) == \"#\") { return 7; }\n  return 1;\n}\n"},
