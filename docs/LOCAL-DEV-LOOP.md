@@ -347,9 +347,9 @@ A new test only proves something if it fails without the fix. To check that,
 restore one file to its pre-fix state:
 
 ```sh
-git checkout <parent-sha> -- examples/self_host/irlower.fern
+git checkout <parent-sha> -- examples/self_host/ssarc.fern
 go test ./internal/e2eselfhost/ -run TestYourNewCase > run.log 2>&1; echo "EXIT=$?"
-git checkout HEAD -- examples/self_host/irlower.fern
+git checkout HEAD -- examples/self_host/ssarc.fern
 ```
 
 **Do not reach for `git stash push <file>`.** Once the fix is committed the file
