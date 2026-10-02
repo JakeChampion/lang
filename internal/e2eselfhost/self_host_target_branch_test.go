@@ -30,7 +30,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 const indexingHandlerSrc = `import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var bytes: u8[] = req.path.bytes();
+    let bytes: u8[] = req.path.bytes();
     return http.ok("byte " + (bytes[bytes.len() - 1] as i32).to_string());
 }
 `

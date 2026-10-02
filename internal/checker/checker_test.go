@@ -3140,7 +3140,7 @@ func TestMissingReturnAcceptsDivergentForms(t *testing.T) {
 			if (true) { return 1; }
 		}`,
 		`function dialled(): i32 {
-			if (false) { var z = 1; } else { return 2; }
+			if (false) { let z = 1; } else { return 2; }
 		}`,
 		// trailing return after a one-armed if
 		`function g(b: boolean): i32 {

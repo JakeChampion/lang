@@ -333,9 +333,9 @@ struct __Target { host: string, port: i32, target: string, host_field: string, p
 // to the origin.
 function __target_of(raw: string, policy: __Policy): Result[__Target, FetchError] {
   var u: Url = __http_url(raw)?;
-  var port: i32 = __effective_port(u);
-  var tls: boolean = u.scheme == "https";
-  var host_field: string = __host_field(u.host, port, tls);
+  let port: i32 = __effective_port(u);
+  let tls: boolean = u.scheme == "https";
+  let host_field: string = __host_field(u.host, port, tls);
   var target: string = __request_target(u)?;
   match (policy.proxies.proxy_for(raw)) {
     Some(spec) => {
@@ -462,7 +462,7 @@ function __host_field(host: string, port: i32, tls: boolean): string {
   if (h.index_of(":") >= 0) {
     h = "[" + h + "]";
   }
-  var default_port: i32 = 80;
+  let default_port: i32 = 80;
   if (tls) {
     default_port = 443;
   }
@@ -476,7 +476,7 @@ function __host_field(host: string, port: i32, tls: boolean): string {
 // caller's end-to-end fields, then what the client decides.
 function __head(req: Request, t: __Target, body_len: i32): string {
   var out: string = req.method + " " + t.target + " HTTP/1.1\r\n" + "Host: " + t.host_field + "\r\n";
-  var fields: HeaderMap = __sent_fields(req, t, body_len);
+  let fields: HeaderMap = __sent_fields(req, t, body_len);
   var i: i32 = 0;
   while (i < fields.names.len()) {
     out = out + fields.names[i] + ": " + fields.values[i] + "\r\n";
@@ -492,7 +492,7 @@ function __head(req: Request, t: __Target, body_len: i32): string {
 // one), the `Accept-Encoding: gzip` it undoes itself, and the proxy's
 // credentials when the caller wrote none.
 function __sent_fields(req: Request, t: __Target, body_len: i32): HeaderMap {
-  var out: HeaderMap = __without(http.http_end_to_end(req.headers), ["host", "content-length"]);
+  let out: HeaderMap = __without(http.http_end_to_end(req.headers), ["host", "content-length"]);
   if (body_len > 0 || req.method == "POST" || req.method == "PUT" || req.method == "PATCH") {
     out = out.append("content-length", int.int_to_string(body_len));
   }
@@ -741,7 +741,7 @@ function __reset(e: FetchError): boolean {
 // read, and closed.
 function __attempt(req: Request, t: __Target, started: i64, guard: boolean): Result[HttpResponse, FetchError] {
   var sock: i32 = __connect(t, req.timeouts, guard)?;
-  var body: u8[] = req.body.bytes();
+  let body: u8[] = req.body.bytes();
   var sent: Result[void, FetchError] = __send_all(sock, __head(req, t, body.len()) + string_from_bytes_unchecked(body));
   match (sent) {
     Ok(_) => {},
@@ -760,7 +760,7 @@ function __attempt(req: Request, t: __Target, started: i64, guard: boolean): Res
 // race when any address resolved is not a global one.
 function __connect(t: __Target, timeouts: Timeouts, guard: boolean): Result[i32, FetchError] {
   var addrs: net.IpAddr[] = __resolve(t.host, guard)?;
-  var opts: dns.DialOptions = dns.DialOptions { ...dns.dial_options(), timeout_ms: __connect_bound(timeouts) };
+  let opts: dns.DialOptions = dns.DialOptions { ...dns.dial_options(), timeout_ms: __connect_bound(timeouts) };
   match (dns.connect_race(addrs, t.port, opts)) {
     Ok(sock) => {
       return Ok(sock);
@@ -835,8 +835,8 @@ function __global_only(addrs: net.IpAddr[]): Result[void, FetchError] {
 // resolves names and owns the network, so its outbound policy is the
 // rule there, and this client's block list does not apply.
 function __send_hosted(req: Request, t: __Target): Result[HttpResponse, FetchError] {
-  var body: u8[] = req.body.bytes();
-  var o: wasi_http.Outgoing = wasi_http.Outgoing { method: req.method, authority: t.host_field, tls: t.tls, target: t.target, headers: __sent_fields(req, t, body.len()), body: body, connect_ms: __connect_bound(req.timeouts), inactivity_ms: req.timeouts.inactivity_ms, body_cap: req.limits.body };
+  let body: u8[] = req.body.bytes();
+  let o: wasi_http.Outgoing = wasi_http.Outgoing { method: req.method, authority: t.host_field, tls: t.tls, target: t.target, headers: __sent_fields(req, t, body.len()), body: body, connect_ms: __connect_bound(req.timeouts), inactivity_ms: req.timeouts.inactivity_ms, body_cap: req.limits.body };
   match (wasi_http.outgoing(o)) {
     Ok(resp) => {
       return __decoded(HttpResponse { ...resp, headers: http.http_end_to_end(resp.headers) }, req);

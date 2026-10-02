@@ -209,8 +209,8 @@ const READ_FAILED: i32 = 2;
 // The second value says how the read ended; what was read is handed back
 // either way.
 function drain(body: i32, cap: Option[i32]): (u8[], i32) {
-  var data: u8[] = [];
-  var how: i32 = READ_WHOLE;
+  let data: u8[] = [];
+  let how: i32 = READ_WHOLE;
   match (body_stream(body)) {
     Ok(stream) => {
       let (read, ended) = read_stream(stream, cap);
@@ -228,14 +228,14 @@ function drain(body: i32, cap: Option[i32]): (u8[], i32) {
 // 1), fails (`last-operation-failed`, case 0), or the bytes read would
 // pass `cap`.
 function read_stream(stream: i32, cap: Option[i32]): (u8[], i32) {
-  var data: u8[] = [];
+  let data: u8[] = [];
   while (true) {
     match (stream_read(stream, WRITE_CHUNK as i64)) {
       Ok(chunk) => {
         if (past(data.len() + chunk.len(), cap)) {
           return (data, READ_PAST_CAP);
         }
-        var i: i32 = 0;
+        let i: i32 = 0;
         while (i < chunk.len()) {
           data = data.append(chunk[i]);
           i = i + 1;
@@ -282,8 +282,8 @@ function headers_of(fields: i32): HeaderMap {
 // stream under backpressure. The output stream must still be dropped
 // before finishing its parent outgoing-body resource.
 function send(response_out: i32, resp: HttpResponse): void {
-  var fields: i32 = fields_new();
-  var i: i32 = 0;
+  let fields: i32 = fields_new();
+  let i: i32 = 0;
   while (i < resp.headers.names.len()) {
     match (fields_append(fields, resp.headers.names[i], resp.headers.values[i])) {
       Ok(v) => {},
@@ -455,8 +455,8 @@ pub enum OutgoingError { Code(i32), Field(string), BodyPastCap, CutShort, Lost }
 // `outgoing(o)` — `o` sent through the host, and its response read
 // whole.
 pub function outgoing(o: Outgoing): Result[HttpResponse, OutgoingError] {
-  var req: i32 = build_request(o)?;
-  var body: i32 = 0;
+  let req: i32 = build_request(o)?;
+  let body: i32 = 0;
   match (request_body(req)) {
     Ok(b) => {
       body = b;
@@ -466,7 +466,7 @@ pub function outgoing(o: Outgoing): Result[HttpResponse, OutgoingError] {
       return Err(Lost);
     }
   }
-  var fut: i32 = 0;
+  let fut: i32 = 0;
   match (outgoing_handle(req, 1, options_of(o))) {
     Ok(h) => {
       fut = h as i32;
@@ -477,15 +477,15 @@ pub function outgoing(o: Outgoing): Result[HttpResponse, OutgoingError] {
     }
   }
   write_body(body, o.body);
-  var resp: i32 = await_response(fut)?;
+  let resp: i32 = await_response(fut)?;
   return read_response(resp, o.body_cap);
 }
 
 // build_request is the host's request for `o`, less its body, or the
 // field the host refused.
 function build_request(o: Outgoing): Result[i32, OutgoingError] {
-  var fields: i32 = fields_new();
-  var i: i32 = 0;
+  let fields: i32 = fields_new();
+  let i: i32 = 0;
   while (i < o.headers.names.len()) {
     match (fields_append(fields, o.headers.names[i], o.headers.values[i])) {
       Ok(v) => {},
@@ -496,14 +496,14 @@ function build_request(o: Outgoing): Result[i32, OutgoingError] {
     }
     i = i + 1;
   }
-  var req: i32 = request_new(fields);
-  var method: i32 = method_index(o.method);
-  var other: string = "";
+  let req: i32 = request_new(fields);
+  let method: i32 = method_index(o.method);
+  let other: string = "";
   if (method == 9) {
     other = o.method;
   }
   request_set_method(req, method, other);
-  var scheme: i32 = 0;
+  let scheme: i32 = 0;
   if (o.tls) {
     scheme = 1;
   }
@@ -516,8 +516,8 @@ function build_request(o: Outgoing): Result[i32, OutgoingError] {
 // method_index is the WIT `method` case for a verb: its index among the
 // nine the variant names, or 9 for `other`.
 function method_index(method: string): i32 {
-  var names: string[] = ["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"];
-  var i: i32 = 0;
+  let names: string[] = ["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"];
+  let i: i32 = 0;
   while (i < names.len()) {
     if (names[i] == method) {
       return i;
@@ -530,7 +530,7 @@ function method_index(method: string): i32 {
 // options_of carries the request's bounds to the host: the connect bound,
 // and the inactivity bound on the first byte and between bytes.
 function options_of(o: Outgoing): i32 {
-  var opts: i32 = options_new();
+  let opts: i32 = options_new();
   options_set_connect_timeout(opts, 1, millis_ns(o.connect_ms));
   options_set_first_byte_timeout(opts, 1, millis_ns(o.inactivity_ms));
   options_set_between_bytes_timeout(opts, 1, millis_ns(o.inactivity_ms));
@@ -544,10 +544,10 @@ function millis_ns(ms: i32): i64 {
 // await_response blocks on the future until it settles, then reads it:
 // the response handle, or the host's error case.
 function await_response(fut: i32): Result[i32, OutgoingError] {
-  var ready: i32 = future_subscribe(fut);
+  let ready: i32 = future_subscribe(fut);
   pollable_block(ready);
   pollable_drop(ready);
-  var got: FutureGot = future_get(fut);
+  let got: FutureGot = future_get(fut);
   future_drop(fut);
   if ((got.w0 & 255) == 0 || (got.w2 & 255) != 0) {
     return Err(Lost);
@@ -561,10 +561,10 @@ function await_response(fut: i32): Result[i32, OutgoingError] {
 // read_response reads the status, the header snapshot and the body under
 // `cap`, and drops the response once its children are gone.
 function read_response(resp: i32, cap: i32): Result[HttpResponse, OutgoingError] {
-  var status: i32 = response_status(resp);
-  var headers: HeaderMap = headers_of(response_headers(resp));
-  var data: u8[] = [];
-  var how: i32 = READ_WHOLE;
+  let status: i32 = response_status(resp);
+  let headers: HeaderMap = headers_of(response_headers(resp));
+  let data: u8[] = [];
+  let how: i32 = READ_WHOLE;
   match (response_consume(resp)) {
     Ok(body) => {
       let (read, ended) = drain(body, Some(cap));

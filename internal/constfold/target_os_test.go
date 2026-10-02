@@ -139,7 +139,7 @@ func TestFoldWithPrunesTargetBranches(t *testing.T) {
 // rule off the closure the expression desugars to.
 func TestFoldWithKeepsIfExpressionArms(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 {
-    var n: i32 = if (target_os() == "linux") { 1 } else { 2 };
+    let n: i32 = if (target_os() == "linux") { 1 } else { 2 };
     return n;
 }`)
 	if err != nil {

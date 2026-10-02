@@ -128,7 +128,7 @@ function wat_is_space(c: i32): boolean {
 // wat_tokenize splits WAT source into its token stream.
 function wat_tokenize(src: string): WatTok[] {
   var toks: WatTok[] = [];
-  var i: i32 = 0;
+  let i: i32 = 0;
   var n: i32 = src.len();
   while (i < n) {
     var c: i32 = src[i] as i32;
@@ -240,7 +240,7 @@ function wat_parse(toks: WatTok[]): SExpr {
 
 // wcat appends every byte of `src` to `buf`.
 pub function wcat(buf: i32[], src: i32[]): i32[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < src.len()) {
     buf = buf.append(src[i]);
     i = i + 1;
@@ -251,7 +251,7 @@ pub function wcat(buf: i32[], src: i32[]): i32[] {
 // wstr_bytes appends the raw bytes of `s` (each char is one byte in the
 // self-host string representation).
 function wstr_bytes(buf: i32[], s: string): i32[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     buf = buf.append(s[i] as i32);
     i = i + 1;
@@ -363,7 +363,7 @@ function wmagic(): i32[] {
 // index_of_str returns the index of `n` in `xs`, or -1. (A local copy so
 // this module stays usable on its own / concatenated.)
 function index_of_str(xs: string[], n: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (xs[i] == n) {
       return i;
@@ -398,7 +398,7 @@ function node_head(n: SExpr): string {
 // Keep the historical names because decimal indices use the same helpers.
 function parse_dec(s: string): i32 {
   var neg: boolean = false;
-  var i: i32 = 0;
+  let i: i32 = 0;
   if (s.len() > 0 && s[0] == b'-') {
     neg = true;
     i = 1;
@@ -426,7 +426,7 @@ function parse_dec(s: string): i32 {
 // The i64 counterpart preserves the full immediate before LEB encoding.
 function parse_dec_i64(s: string): i64 {
   var neg: boolean = false;
-  var i: i32 = 0;
+  let i: i32 = 0;
   if (s.len() > 0 && s[0] == b'-') {
     neg = true;
     i = 1;
@@ -482,7 +482,7 @@ pub function parse_f64(s: string): f64 {
 function pf64_div2(b: i32[]): i32[] {
   var out: i32[] = [];
   var r: i32 = 0;
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < b.len()) {
     var cur: i32 = r * 10 + b[i];
     out = out.append(cur / 2);
@@ -502,7 +502,7 @@ function pf64_div2(b: i32[]): i32[] {
 // (0 or 1) and the caller splits it off.
 function pf64_mul2(b: i32[]): i32[] {
   var out: i32[] = [];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < b.len()) {
     out = out.append(0);
     i = i + 1;
@@ -538,7 +538,7 @@ function pf64_sub(b: i32[], from: i32, upto: i32): i32[] {
 
 // pf64_all_zero reports whether every digit in b is zero.
 function pf64_all_zero(b: i32[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < b.len()) {
     if (b[i] != 0) {
       return false;
@@ -549,7 +549,7 @@ function pf64_all_zero(b: i32[]): boolean {
 }
 
 function parse_f64_bits(s: string): i64 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   var neg: boolean = false;
   if (s.len() > 0 && s[0] == b'-') {
     neg = true;
@@ -758,7 +758,7 @@ function hexval(c: i32): i32 {
 // `\n`, `\t`) to raw bytes.
 function data_bytes(s: string): i32[] {
   var out: i32[] = [];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     var c: i32 = s[i] as i32;
     if (c == 92 && i + 1 < s.len()) {
@@ -810,7 +810,7 @@ function func_name(fnode: SExpr): string {
 // funcs first (in source order), then defined funcs.
 function collect_func_names(mod: SExpr): string[] {
   var names: string[] = [];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "import") {
       names = names.append(func_name(func_node(mod.items[i])));
@@ -1266,7 +1266,7 @@ function arith_opcode(op: string): i32 {
 // `br` depth into a wrong one).
 function labels_push(labels: string[], x: string): string[] {
   var out: string[] = [];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < labels.len()) {
     out = out.append(labels[i]);
     i = i + 1;
@@ -1778,7 +1778,7 @@ function flat_idx(text: string, names: string[]): i32 {
 // `end` (0x0b).
 function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnames: string[], tnames: string[]): i32[] {
   var out: i32[] = [];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < instrs.len()) {
     var op: string = instrs[i].text;
     if (op == "i32.const") {
@@ -1933,7 +1933,7 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
 function enc_locals_vec(types: string[]): i32[] {
   // count distinct runs
   var runs: i32 = 0;
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < types.len()) {
     if (i == 0 || types[i] != types[i - 1]) {
       runs = runs + 1;
@@ -1959,7 +1959,7 @@ function enc_functype(params: string[], results: string[]): i32[] {
   var o: i32[] = [];
   o = o.append(96);
   var pb: i32[] = [];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < params.len()) {
     pb = pb.append(valtype_byte(params[i]));
     i = i + 1;
@@ -2004,7 +2004,7 @@ function emit_binary(mod: SExpr): i32[] {
   // Func nodes in index order: imports first, then defined.
   var importNodes: SExpr[] = [];
   var definedNodes: SExpr[] = [];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "import") {
       importNodes = importNodes.append(mod.items[i]);
@@ -2252,7 +2252,7 @@ function emit_binary(mod: SExpr): i32[] {
 function func_sig(fn: SExpr): string {
   var o: string = "";
   var ps: string[] = func_param_types(fn);
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ps.len()) {
     o = o + ps[i] + ",";
     i = i + 1;
@@ -2281,7 +2281,7 @@ function rename_atoms(n: SExpr, from: string[], to: string[]): SExpr {
     return n;
   }
   var out: SExpr[] = [];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n.items.len()) {
     out = out.append(rename_atoms(n.items[i], from, to));
     i = i + 1;
@@ -2303,7 +2303,7 @@ function merge_duplicate_imports(mod: SExpr): SExpr {
   var seen_name: string[] = [];
   var from: string[] = [];
   var to: string[] = [];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < mod.items.len()) {
     var it: SExpr = mod.items[i];
     if (node_head(it) == "import" && it.items.len() == 4 && node_head(it.items[3]) == "func") {
@@ -2569,7 +2569,7 @@ function tb_fswrite_random_tail(): string {
 // blob_to_bytes unpacks an embedded byte-string into an i32[] buffer.
 pub function blob_to_bytes(s: string): i32[] {
   var o: i32[] = [];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     o = o.append(s[i] as i32);
     i = i + 1;
@@ -2807,7 +2807,7 @@ pub function component_full_io_eprint_exit(core: i32[], drop_io_errors: boolean 
   o = wcat(o, blob_to_bytes(tb_cli_stderr()));
   o = wcat(o, blob_to_bytes("\x07\x1d\x01B\x03\x01j\x00\x00\x01@\x01\x06status\x00\x01\x00\x04\x00\x04exit\x01\x01\n\x18\x01\x00\x13wasi:cli/exit@0.2.0\x05\x06"));
   o = wcat(o, wsection(1, core));
-  var none: i32[] = [];
+  let none: i32[] = [];
   return wcat(o, component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0", "wasi:cli/exit@0.2.0"],
     [blocking_write_name(), "get-stdout", "get-stderr", "exit"],
@@ -2954,7 +2954,7 @@ function comp_core_instance_instantiate_args(modidx: i32, names: string[], insts
   var b: i32[] = [1, 0];
   b = leb_u32(b, modidx);
   b = leb_u32(b, names.len());
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < names.len()) {
     b = wname(b, names[i]);
     b = b.append(18);
@@ -2968,7 +2968,7 @@ function comp_core_instance_instantiate_args(modidx: i32, names: string[], insts
 function comp_core_instance_from_exports(names: string[], sorts: i32[], idxs: i32[]): i32[] {
   var b: i32[] = [1, 1];
   b = leb_u32(b, names.len());
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < names.len()) {
     b = wname(b, names[i]);
     b = b.append(sorts[i]);
@@ -3107,7 +3107,7 @@ function comp_canon_lower_mem_realloc(funcidx: i32, memidx: i32, realloc: i32): 
 
 // suffix_group_find returns the index of `iface` in `order`, or -1.
 function suffix_group_find(order: string[], iface: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < order.len()) {
     if (order[i] == iface) {
       return i;
@@ -3143,14 +3143,14 @@ struct SuffixWired { o: i32[], n_cfunc: i32, n_corefunc: i32, n_inst: i32, user_
 function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_resourceT: i32[], n_inst0: i32, user_mod: i32): SuffixWired {
   var n: i32 = imp_iface.len();
   var o: i32[] = [];
-  var none: i32[] = [];
+  let none: i32[] = [];
   // per-import scratch (filled as the phases run).
   var tramp_mod: i32[] = [];
   var fixup_mod: i32[] = [];
   var tramp_inst: i32[] = [];
   var tbl: i32[] = [];
   var coref: i32[] = [];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     tramp_mod = tramp_mod.append(0);
     fixup_mod = fixup_mod.append(0);
@@ -3315,7 +3315,7 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
 // component_suffix wires the imports and lifts `core_export` (the user
 // module's `() -> i32` run entry) as wasi:cli/run.
 pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string): i32[] {
-  var w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_resourceT, n_inst0, user_mod);
+  let w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_resourceT, n_inst0, user_mod);
   var o: i32[] = w.o;
   var run_core_f: i32 = w.n_corefunc;
   o = wcat(o, comp_alias_core_func(w.user_inst, core_export));
@@ -3337,7 +3337,7 @@ pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind:
 // (comp_alias_inst_type); the own<> wrappers and the func type are types
 // n_type0 .. n_type0 + 2.
 pub function component_suffix_http(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, req_t: i32, out_t: i32): i32[] {
-  var w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_resourceT, n_inst0, user_mod);
+  let w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_resourceT, n_inst0, user_mod);
   var o: i32[] = w.o;
   var handle_core_f: i32 = w.n_corefunc;
   o = wcat(o, comp_alias_core_func(w.user_inst, "wasi:http/incoming-handler@0.2.0#handle"));
@@ -3357,9 +3357,9 @@ pub function component_suffix_http(imp_iface: string[], imp_name: string[], imp_
 // no_results is the result list of `n` imports that all return through a
 // return area: the framed shapes' WASI imports.
 function no_results(n: i32): i32[][] {
-  var out: i32[][] = [];
-  var none: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[][] = [];
+  let none: i32[] = [];
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(none);
     i = i + 1;
@@ -3371,7 +3371,7 @@ function component_suffix_io(imp_iface: string[], imp_name: string[], imp_kind: 
   if (!drop_io_errors) {
     return component_suffix(imp_iface, imp_name, imp_kind, imp_inst, imp_params, no_results(imp_params.len()), imp_resourceT, n_type0, n_inst0, user_mod, core_export);
   }
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix(imp_iface.append("wasi:io/error@0.2.0"), imp_name.append("[resource-drop]error"), imp_kind.append(3), imp_inst.append(0), imp_params.append(none), no_results(imp_params.len() + 1), imp_resourceT.append(1), n_type0, n_inst0, user_mod, core_export);
 }
 
@@ -3385,7 +3385,7 @@ function blocking_write_name(): string {
 // (mem, streams=1), get-stdout (no-opt, cli/stdout=2)]; Phase A leaves
 // component types=5, instances=3.
 function component_suffix_stdout(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
     [blocking_write_name(), "get-stdout"],
@@ -3400,7 +3400,7 @@ function component_suffix_stdout(drop_io_errors: boolean = false): i32[] {
 // component_suffix_eprint: stdout + an extra get-stderr no-opt import.
 // Phase A leaves component types=6, instances=4.
 function component_suffix_eprint(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0"],
     [blocking_write_name(), "get-stdout", "get-stderr"],
@@ -3415,7 +3415,7 @@ function component_suffix_eprint(drop_io_errors: boolean = false): i32[] {
 // component_suffix_exit: stdout + an extra exit no-opt import (cli/exit).
 // Phase A leaves component types=6, instances=4.
 function component_suffix_exit(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/exit@0.2.0"],
     [blocking_write_name(), "get-stdout", "exit"],
@@ -3439,7 +3439,7 @@ function component_suffix_exit(drop_io_errors: boolean = false): i32[] {
 // closes its interface's group, which is where the composer puts it. Phase A
 // leaves component types=9, instances=5.
 function component_suffix_fs_read(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
     ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "get-stdout"],
@@ -3452,7 +3452,7 @@ function component_suffix_fs_read(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_random(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:random/random@0.2.0"],
     [blocking_write_name(), "get-stdout", "get-random-u64"],
@@ -3465,7 +3465,7 @@ function component_suffix_random(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_env(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
     [blocking_write_name(), "get-stdout", "get-environment"],
@@ -3478,7 +3478,7 @@ function component_suffix_env(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_args(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
     [blocking_write_name(), "get-stdout", "get-arguments"],
@@ -3491,7 +3491,7 @@ function component_suffix_args(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_clock(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:clocks/wall-clock@0.2.0"],
     [blocking_write_name(), "get-stdout", "now"],
@@ -3504,7 +3504,7 @@ function component_suffix_clock(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_clock_mono(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:clocks/monotonic-clock@0.2.0"],
     [blocking_write_name(), "get-stdout", "now"],
@@ -3517,7 +3517,7 @@ function component_suffix_clock_mono(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_random_write(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:random/random@0.2.0"],
     ["get-directories", "[method]descriptor.open-at", "[method]descriptor.write-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[resource-drop]output-stream", "get-stdout", "get-random-u64"],
@@ -3530,7 +3530,7 @@ function component_suffix_random_write(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_fs_write(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
     ["get-directories", "[method]descriptor.open-at", "[method]descriptor.write-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[resource-drop]output-stream", "get-stdout"],
@@ -3543,7 +3543,7 @@ function component_suffix_fs_write(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_fs_rw(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
     ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[method]descriptor.write-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "[resource-drop]output-stream", "get-stdout"],
@@ -3556,7 +3556,7 @@ function component_suffix_fs_rw(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_fs_read_env(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
     ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "get-stdout", "get-environment"],
@@ -3569,7 +3569,7 @@ function component_suffix_fs_read_env(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_fs_rw_env(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
     ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[method]descriptor.write-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "[resource-drop]output-stream", "get-stdout", "get-environment"],
@@ -3582,7 +3582,7 @@ function component_suffix_fs_rw_env(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_fs_args_read(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
     ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "get-stdout", "get-arguments"],
@@ -3595,7 +3595,7 @@ function component_suffix_fs_args_read(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_fs_rw_args(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
     ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[method]descriptor.write-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "[resource-drop]output-stream", "get-stdout", "get-arguments"],

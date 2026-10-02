@@ -15,7 +15,7 @@ import (
 // a parameter.
 const selfHostClassifyDriver = `
 function main(): i32 {
-    var tbody: i32[] = wit_section_body(blob_to_bytes(proxy_world_payload()), 7);
+    let tbody: i32[] = wit_section_body(blob_to_bytes(proxy_world_payload()), 7);
     print_int(wit_classify(tbody, "wasi:http/outgoing-handler@0.2.0", "handle"));
     write("\n");
     print_int(wit_classify(tbody, "wasi:http/types@0.2.0", "[method]future-incoming-response.get"));

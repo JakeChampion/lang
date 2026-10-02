@@ -165,7 +165,7 @@ struct View {
 // thing a unit leaves out is what has no body on this native target, the
 // callers of an `@import` extern (treeshake.without_extern_callers).
 function per_module_view(entry: parser.Module, loaded: flatten.LoadedModule[], parts: flatten.PerModule[], target: string): View {
-  var d: semlower.Driven = semlower.driven(treeshake.without_extern_callers(merged_program(entry, loaded, target)), target);
+  let d: semlower.Driven = semlower.driven(treeshake.without_extern_callers(merged_program(entry, loaded, target)), target);
   var g: ircore.Gated = semlower.program(d);
   var raw: parser.Module[] = [];
   var entry_at: i32 = 0;
@@ -205,7 +205,7 @@ function merged_program(entry: parser.Module, loaded: flatten.LoadedModule[], ta
 // judges the program whole first, as the CLI's checker does: the emit
 // entry's own run of it sees only what the shake keeps.
 function merged_emitted(merged: parser.Module): parser.Module {
-  var errs: util.Diag[] = asmcore.check_undefined_calls(merged);
+  let errs: util.Diag[] = asmcore.check_undefined_calls(merged);
   if (errs.len() > 0) {
     eprint(util.format_diags(errs));
     exit(1);
@@ -1116,7 +1116,7 @@ function main(): i32 {
           }
         }
         // IR-or-error (#3457 slice 5) — see asm_load_run's arm64 leg.
-        var d64: semlower.Driven = semlower.driven(merged_emitted(merged), target);
+        let d64: semlower.Driven = semlower.driven(merged_emitted(merged), target);
         write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub));
         return 0;
       }
@@ -1163,7 +1163,7 @@ function main(): i32 {
       // whole-compiler merged bundle lands here, which is why the env-gated
       // merged fixpoints retire with this change — their own header says they
       // "go with" asm.fern.
-      var d: semlower.Driven = semlower.driven(merged_emitted(merged), target);
+      let d: semlower.Driven = semlower.driven(merged_emitted(merged), target);
       write(asm_ir.emit_module_or_error_sub(d.full, d.sub));
       return 0;
     },

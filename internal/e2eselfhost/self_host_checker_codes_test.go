@@ -1710,7 +1710,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// target leaves: `if (true)` exits when its then arm does, `if (false)`
 		// when its else arm does.
 		{"return-if-true-ok", "function f(): i32 { if (true) { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
-		{"return-if-false-else-ok", "function f(): i32 { if (false) { var z = 1; } else { return 2; } }\nfunction main(): i32 { return 0; }\n", nil},
+		{"return-if-false-else-ok", "function f(): i32 { if (false) { let z = 1; } else { return 2; } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"missing-return-if-false", "function f(): i32 { if (false) { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
 		// A bare `{ … }` statement exits when its body does; the self-host
 		// parses it as a scoping `if (true)` with no else.

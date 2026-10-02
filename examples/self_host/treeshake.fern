@@ -862,7 +862,7 @@ pub function treeshake(mod: parser.Module): parser.Module {
   var rs: RefSet = grown.rs;
 
   // Keep only the reachable functions.
-  var kept: parser.FuncDecl[] = [];
+  let kept: parser.FuncDecl[] = [];
   var ki: i32 = 0;
   while (ki < mod.funcs.len()) {
     if (ts_kept_name(mod.funcs[ki], rs)) {
@@ -882,7 +882,7 @@ pub function treeshake(mod: parser.Module): parser.Module {
 // whole-program emit never needs this: its shake from `main` drops such
 // callers with everything else nothing reaches.
 pub function without_extern_callers(mod: parser.Module): parser.Module {
-  var dropped: string[] = [];
+  let dropped: string[] = [];
   for f in mod.funcs {
     if (f.import_iface.len() > 0) {
       dropped = dropped.append(f.name);
@@ -891,7 +891,7 @@ pub function without_extern_callers(mod: parser.Module): parser.Module {
   if (dropped.len() == 0) {
     return mod;
   }
-  var grew: boolean = true;
+  let grew: boolean = true;
   while (grew) {
     grew = false;
     for f in mod.funcs {
@@ -901,7 +901,7 @@ pub function without_extern_callers(mod: parser.Module): parser.Module {
       }
     }
   }
-  var kept: parser.FuncDecl[] = [];
+  let kept: parser.FuncDecl[] = [];
   for f in mod.funcs {
     if (!util.has_str(dropped, f.name)) {
       kept = kept.append(f);
@@ -912,7 +912,7 @@ pub function without_extern_callers(mod: parser.Module): parser.Module {
 
 // calls_any reports whether `f`'s body names one of `names` as a callee.
 function calls_any(f: parser.FuncDecl, names: string[]): boolean {
-  var ids: string[] = [];
+  let ids: string[] = [];
   for st in f.body {
     ids = astwalk.collect_idents_stmt(st, ids);
   }

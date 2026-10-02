@@ -338,8 +338,8 @@ function fold_block(body: ast.Stmt[]): ast.Stmt[] {
 }
 
 pub function fold_module(mod: parser.Module): parser.Module {
-  var funcs: parser.FuncDecl[] = [];
-  var i: i32 = 0;
+  let funcs: parser.FuncDecl[] = [];
+  let i: i32 = 0;
   while (i < mod.funcs.len()) {
     funcs = funcs.append(parser.FuncDecl { ...mod.funcs[i], body: fold_block(mod.funcs[i].body) });
     i = i + 1;
@@ -357,7 +357,7 @@ pub function fold_module(mod: parser.Module): parser.Module {
 // module as built for this target: an arm that reaches what one target
 // lacks compiles for the other.
 pub function prune_literal_branches(mod: parser.Module): parser.Module {
-  var funcs: parser.FuncDecl[] = [];
+  let funcs: parser.FuncDecl[] = [];
   for fd in mod.funcs {
     funcs = funcs.append(parser.FuncDecl { ...fd, body: prune_block(fd.body) });
   }
@@ -395,14 +395,14 @@ function prune_arm(body: ast.Stmt[]): ast.Stmt[] {
   if (body.len() == 0) {
     return body;
   }
-  var leading: ast.Stmt[] = [];
-  var i: i32 = 0;
+  let leading: ast.Stmt[] = [];
+  let i: i32 = 0;
   while (i < body.len() - 1) {
     leading = leading.append(body[i]);
     i = i + 1;
   }
-  var out: ast.Stmt[] = prune_block(leading);
-  var last: ast.Stmt = body[body.len() - 1];
+  let out: ast.Stmt[] = prune_block(leading);
+  let last: ast.Stmt = body[body.len() - 1];
   match (last) {
     ast.StmtIf(f) => {
       return out.append(ast.StmtIf { ...f, cond: fold_expr(f.cond), then_body: prune_arm(f.then_body), else_body: prune_arm(f.else_body) });
@@ -432,9 +432,9 @@ function prune_stmt(s: ast.Stmt, a: i32): (ast.Stmt, i32, boolean) {
 }
 
 function pruned_if(f: ast.StmtIf): ast.Stmt {
-  var cond: ast.Expr = fold_expr(f.cond);
-  var lit: OptBool = as_bool_lit(cond);
-  var none: ast.Stmt[] = [];
+  let cond: ast.Expr = fold_expr(f.cond);
+  let lit: OptBool = as_bool_lit(cond);
+  let none: ast.Stmt[] = [];
   if (!lit.ok) {
     return ast.StmtIf { ...f, cond: cond, then_body: prune_block(f.then_body), else_body: prune_block(f.else_body) };
   }
@@ -471,7 +471,7 @@ pub function fold_target_name(mod: parser.Module, env: string, arch: string): pa
     return mod;
   }
   var acc: TargetAcc = TargetAcc { env: env, arch: arch };
-  var funcs: parser.FuncDecl[] = [];
+  let funcs: parser.FuncDecl[] = [];
   for fd in mod.funcs {
     let (body, a2) = astwalk.map_stmts_acc(fd.body, acc, to_keep_stmt, to_expr);
     acc = a2;
@@ -528,8 +528,8 @@ function to_expr(e: ast.Expr, a: TargetAcc): (ast.Expr, TargetAcc, boolean) {
 // every gate, the IR-eligibility one included: deleting a statement can only
 // widen what compiles (#7170).
 pub function elide_asserts(mod: parser.Module): parser.Module {
-  var funcs: parser.FuncDecl[] = [];
-  var i: i32 = 0;
+  let funcs: parser.FuncDecl[] = [];
+  let i: i32 = 0;
   while (i < mod.funcs.len()) {
     funcs = funcs.append(parser.FuncDecl { ...mod.funcs[i], body: astwalk.splice_stmts_with_lambda(mod.funcs[i].body, drop_assert, elided_lambda_captures) });
     i = i + 1;

@@ -102,7 +102,7 @@ function entry_index(parts: flatten.PerModule[]): i32 {
 // target's arm (std/fetch's hosted route, which calls std/wasi_http's
 // externs) is not emitted for this one.
 function targeted(merged: parser.Module, target: string): parser.Module {
-  var md: platforms.Descriptor = platforms.for_target(target);
+  let md: platforms.Descriptor = platforms.for_target(target);
   return constfold.prune_literal_branches(constfold.fold_target_name(merged, md.environment, md.isa));
 }
 
@@ -363,7 +363,7 @@ function main(): i32 {
     }
     // The typed lowering lowers the program the merged emit reads, whole,
     // and this unit is cut from it.
-    var pd: semlower.Driven = semlower.driven_annotated(checked_or_exit(flatten.bundle(entry_mod, loaded, target), prune, target), target);
+    let pd: semlower.Driven = semlower.driven_annotated(checked_or_exit(flatten.bundle(entry_mod, loaded, target), prune, target), target);
     var pg: ircore.Gated = semlower.program(pd);
     var pu: ircore.Units = ircore.split_units(pg, part_mods(parts), entry_index(parts));
     write(asm_ir.emit_module_ir_unit_flat(pu.mods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, pg.im.funcs, pg.stab, 0, 0 - 1, pu.caches[pm_index], pg.base, pd.sub.rt_lower));

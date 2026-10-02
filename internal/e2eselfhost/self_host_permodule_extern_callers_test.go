@@ -25,13 +25,13 @@ function ext(): i32;
 pub struct Named { ext: i32 }
 
 pub function via_lambda(): i32 {
-    var f: () => i32 = (): i32 => { return ext(); };
+    let f: () => i32 = (): i32 => { return ext(); };
     return f();
 }
 
 pub function keeps(): i32 {
-    var n: Named = Named { ext: 40 };
-    var ext: i32 = n.ext + 1;
+    let n: Named = Named { ext: 40 };
+    let ext: i32 = n.ext + 1;
     return ext + 1;
 }
 `

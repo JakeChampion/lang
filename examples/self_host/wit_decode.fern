@@ -49,7 +49,7 @@ pub function wit_component_header(): i32[] {
 // gate. Returns an empty buffer if the header is wrong.
 pub function wit_reencode_sections(payload: i32[]): i32[] {
   var hdr: i32[] = wit_component_header();
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < hdr.len()) {
     if (payload[i] != hdr[i]) {
       return [];
@@ -123,7 +123,7 @@ pub function wit_read_name(buf: i32[], pos: i32): NameR {
   var n: i32 = r.value;
   var p: i32 = r.next;
   var bytes: u8[] = [];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     bytes = bytes.append(buf[p + i] as u8);
     i = i + 1;
@@ -134,7 +134,7 @@ pub function wit_read_name(buf: i32[], pos: i32): NameR {
 // wit_append_name appends a uleb-length-prefixed name.
 pub function wit_append_name(out: i32[], s: string): i32[] {
   out = watbin.leb_u32(out, s.len());
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     out = out.append(s[i] as i32);
     i = i + 1;
@@ -381,7 +381,7 @@ pub function wit_decode_func(buf: i32[], pos: i32): WitFuncR {
   var rc: UlebRead = wit_read_uleb(buf, p);
   var n: i32 = rc.value;
   p = rc.next;
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     var nr: NameR = wit_read_name(buf, p);
     p = nr.next;
@@ -426,7 +426,7 @@ pub function wit_decode_func(buf: i32[], pos: i32): WitFuncR {
 pub function wit_encode_func(out: i32[], f: WitFunc): i32[] {
   out = out.append(64);
   out = watbin.leb_u32(out, f.p_names.len());
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < f.p_names.len()) {
     out = wit_append_name(out, f.p_names[i]);
     out = watbin.leb_i32(out, f.p_vals[i]);
@@ -585,8 +585,8 @@ pub function wit_transcode_type_section(buf: i32[]): i32[] {
   var out: i32[] = [];
   var rc: UlebRead = wit_read_uleb(buf, 0);
   out = watbin.leb_u32(out, rc.value);
-  var p: i32 = rc.next;
-  var i: i32 = 0;
+  let p: i32 = rc.next;
+  let i: i32 = 0;
   while (i < rc.value) {
     var t: TxR = wit_tx_typedef(buf, p, out);
     p = t.next;
@@ -601,8 +601,8 @@ pub function wit_transcode_export_section(buf: i32[]): i32[] {
   var out: i32[] = [];
   var rc: UlebRead = wit_read_uleb(buf, 0);
   out = watbin.leb_u32(out, rc.value);
-  var p: i32 = rc.next;
-  var i: i32 = 0;
+  let p: i32 = rc.next;
+  let i: i32 = 0;
   while (i < rc.value) {
     var ne: TxR = wit_tx_externname(buf, p, out);
     p = ne.next;
@@ -660,28 +660,28 @@ pub function wit_section_body(payload: i32[], want_id: i32): i32[] {
 
 pub function wit_world_import_names(tbody: i32[]): string[] {
   var names: string[] = [];
-  var none: i32[] = [];
-  var rc: UlebRead = wit_read_uleb(tbody, 0);
-  var p: i32 = rc.next;
+  let none: i32[] = [];
+  let rc: UlebRead = wit_read_uleb(tbody, 0);
+  let p: i32 = rc.next;
   // type 0: outer component (0x41) + decl vec.
   p = p + 1;
-  var oc: UlebRead = wit_read_uleb(tbody, p);
+  let oc: UlebRead = wit_read_uleb(tbody, p);
   p = oc.next;
   // outer decl 0: type decl (0x01) whose typedef is the world component (0x41).
   p = p + 1;
   p = p + 1;
-  var wc: UlebRead = wit_read_uleb(tbody, p);
-  var wcount: i32 = wc.value;
+  let wc: UlebRead = wit_read_uleb(tbody, p);
+  let wcount: i32 = wc.value;
   p = wc.next;
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < wcount) {
-    var kind: i32 = tbody[p];
+    let kind: i32 = tbody[p];
     if (kind == 3) {
       // import: externname is 0x00 + uleb-len + bytes.
-      var nr: NameR = wit_read_name(tbody, p + 2);
+      let nr: NameR = wit_read_name(tbody, p + 2);
       names = names.append(nr.s);
     }
-    var skip: TxR = wit_tx_decl(tbody, p, none);
+    let skip: TxR = wit_tx_decl(tbody, p, none);
     p = skip.next;
     i = i + 1;
   }
@@ -701,22 +701,22 @@ pub struct WitImportPlan { keep: boolean[], index: i32[], n_inst: i32 }
 // proxy world's wasi:config/store is served only under `-S config`.
 pub function wit_import_plan(tbody: i32[], used: string[]): WitImportPlan {
   var keep: boolean[] = [];
-  var none: i32[] = [];
-  var rc: UlebRead = wit_read_uleb(tbody, 0);
-  var p: i32 = rc.next;
+  let none: i32[] = [];
+  let rc: UlebRead = wit_read_uleb(tbody, 0);
+  let p: i32 = rc.next;
   p = p + 1;
-  var oc: UlebRead = wit_read_uleb(tbody, p);
+  let oc: UlebRead = wit_read_uleb(tbody, p);
   p = oc.next;
   p = p + 1;
   p = p + 1;
-  var wc: UlebRead = wit_read_uleb(tbody, p);
-  var wcount: i32 = wc.value;
+  let wc: UlebRead = wit_read_uleb(tbody, p);
+  let wcount: i32 = wc.value;
   p = wc.next;
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < wcount) {
-    var kind: i32 = tbody[p];
+    let kind: i32 = tbody[p];
     if (kind == 3) {
-      var nr: NameR = wit_read_name(tbody, p + 2);
+      let nr: NameR = wit_read_name(tbody, p + 2);
       keep = keep.append(wit_names_has(used, nr.s));
     } else if (kind == 2) {
       var target: i32 = wit_alias_target_pos(tbody, p + 1);
@@ -727,7 +727,7 @@ pub function wit_import_plan(tbody: i32[], used: string[]): WitImportPlan {
         }
       }
     }
-    var skip: TxR = wit_tx_decl(tbody, p, none);
+    let skip: TxR = wit_tx_decl(tbody, p, none);
     p = skip.next;
     i = i + 1;
   }
@@ -747,7 +747,7 @@ pub function wit_import_plan(tbody: i32[], used: string[]): WitImportPlan {
 }
 
 function wit_names_has(names: string[], s: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < names.len()) {
     if (names[i] == s) {
       return true;
@@ -806,22 +806,22 @@ pub function wit_emit_section(out: i32[], id: i32, body: i32[]): i32[] {
 
 pub function wit_emit_world_imports(tbody: i32[], plan: WitImportPlan): i32[] {
   var out: i32[] = [];
-  var none: i32[] = [];
-  var rc: UlebRead = wit_read_uleb(tbody, 0);
-  var p: i32 = rc.next;
+  let none: i32[] = [];
+  let rc: UlebRead = wit_read_uleb(tbody, 0);
+  let p: i32 = rc.next;
   p = p + 1;
-  var oc: UlebRead = wit_read_uleb(tbody, p);
+  let oc: UlebRead = wit_read_uleb(tbody, p);
   p = oc.next;
   p = p + 1;
   p = p + 1;
-  var wc: UlebRead = wit_read_uleb(tbody, p);
-  var wcount: i32 = wc.value;
+  let wc: UlebRead = wit_read_uleb(tbody, p);
+  let wcount: i32 = wc.value;
   p = wc.next;
   var imp: i32 = 0;
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < wcount) {
-    var kind: i32 = tbody[p];
-    var skip: TxR = wit_tx_decl(tbody, p, none);
+    let kind: i32 = tbody[p];
+    let skip: TxR = wit_tx_decl(tbody, p, none);
     var declEnd: i32 = skip.next;
     var sec: i32 = 0;
     if (kind == 1) {
@@ -865,23 +865,23 @@ pub function wit_emit_world_imports(tbody: i32[], plan: WitImportPlan): i32[] {
 // wit_iface_instance_offset returns the byte offset (in the type-section body)
 // of the instance type the world imports under `iface`, or -1.
 pub function wit_iface_instance_offset(tbody: i32[], iface: string): i32 {
-  var none: i32[] = [];
-  var rc: UlebRead = wit_read_uleb(tbody, 0);
-  var p: i32 = rc.next;
+  let none: i32[] = [];
+  let rc: UlebRead = wit_read_uleb(tbody, 0);
+  let p: i32 = rc.next;
   p = p + 1;
-  var oc: UlebRead = wit_read_uleb(tbody, p);
+  let oc: UlebRead = wit_read_uleb(tbody, p);
   p = oc.next;
   p = p + 1;
   p = p + 1;
-  var wc: UlebRead = wit_read_uleb(tbody, p);
-  var wcount: i32 = wc.value;
+  let wc: UlebRead = wit_read_uleb(tbody, p);
+  let wcount: i32 = wc.value;
   p = wc.next;
   var typeOffsets: i32[] = [];
   var result: i32 = 0 - 1;
   var found: boolean = false;
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < wcount && !found) {
-    var kind: i32 = tbody[p];
+    let kind: i32 = tbody[p];
     if (kind == 1) {
       typeOffsets = typeOffsets.append(p + 1);
     } else if (kind == 2) {
@@ -889,14 +889,14 @@ pub function wit_iface_instance_offset(tbody: i32[], iface: string): i32 {
         typeOffsets = typeOffsets.append(0 - 1);
       }
     } else if (kind == 3) {
-      var nr: NameR = wit_read_name(tbody, p + 2);
+      let nr: NameR = wit_read_name(tbody, p + 2);
       if (nr.s == iface) {
         var tr: UlebRead = wit_read_uleb(tbody, nr.next + 1);
         result = typeOffsets[tr.value];
         found = true;
       }
     }
-    var skip: TxR = wit_tx_decl(tbody, p, none);
+    let skip: TxR = wit_tx_decl(tbody, p, none);
     p = skip.next;
     i = i + 1;
   }
@@ -927,11 +927,11 @@ pub function wit_contains_heap(tbody: i32[], scope: WitScope, v: i32): boolean {
   if (v >= scope.offs.len()) {
     return false;
   }
-  var off: i32 = scope.offs[v];
+  let off: i32 = scope.offs[v];
   if (off < 0) {
     return false;
   }
-  var inner: WitScope = wit_inner_scope(tbody, scope, v);
+  let inner: WitScope = wit_inner_scope(tbody, scope, v);
   var d: WitDef = wit_decode_def(tbody, off).def;
   if (d.tag == 112) {
     return true;
@@ -987,11 +987,11 @@ pub function wit_flatten(tbody: i32[], scope: WitScope, v: i32): i32 {
   if (v >= scope.offs.len()) {
     return 1;
   }
-  var off: i32 = scope.offs[v];
+  let off: i32 = scope.offs[v];
   if (off < 0) {
     return 1;
   }
-  var inner: WitScope = wit_inner_scope(tbody, scope, v);
+  let inner: WitScope = wit_inner_scope(tbody, scope, v);
   var d: WitDef = wit_decode_def(tbody, off).def;
   if (d.tag == 112) {
     return 2;
@@ -1059,16 +1059,16 @@ pub function wit_flatten(tbody: i32[], scope: WitScope, v: i32): i32 {
 // interface that declares it, so a signature is read whole wherever its
 // types were declared.
 pub function wit_iface_scope(tbody: i32[], instOff: i32): WitScope {
-  var none: i32[] = [];
-  var p: i32 = instOff + 1;
-  var dc: UlebRead = wit_read_uleb(tbody, p);
-  var dcount: i32 = dc.value;
+  let none: i32[] = [];
+  let p: i32 = instOff + 1;
+  let dc: UlebRead = wit_read_uleb(tbody, p);
+  let dcount: i32 = dc.value;
   p = dc.next;
   var offs: i32[] = [];
-  var owners: i32[] = [];
-  var i: i32 = 0;
+  let owners: i32[] = [];
+  let i: i32 = 0;
   while (i < dcount) {
-    var kind: i32 = tbody[p];
+    let kind: i32 = tbody[p];
     if (kind == 1) {
       offs = offs.append(p + 1);
       owners = owners.append(0 - 1);
@@ -1079,7 +1079,7 @@ pub function wit_iface_scope(tbody: i32[], instOff: i32): WitScope {
         owners = owners.append(owner);
       }
     } else if (kind == 4) {
-      var nr: NameR = wit_read_name(tbody, p + 2);
+      let nr: NameR = wit_read_name(tbody, p + 2);
       if (tbody[nr.next] == 3) {
         if (tbody[nr.next + 1] == 0) {
           var er: UlebRead = wit_read_uleb(tbody, nr.next + 2);
@@ -1091,7 +1091,7 @@ pub function wit_iface_scope(tbody: i32[], instOff: i32): WitScope {
         }
       }
     }
-    var skip: TxR = wit_tx_decl(tbody, p, none);
+    let skip: TxR = wit_tx_decl(tbody, p, none);
     p = skip.next;
     i = i + 1;
   }
@@ -1101,12 +1101,12 @@ pub function wit_iface_scope(tbody: i32[], instOff: i32): WitScope {
 // wit_alias_slot resolves a type alias decl whose sort byte is at `sort_pos`:
 // an `alias outer 1 n` through the world's type slots, anything else opaque.
 function wit_alias_slot(tbody: i32[], sort_pos: i32): (i32, i32) {
-  var tp: i32 = wit_alias_target_pos(tbody, sort_pos);
+  let tp: i32 = wit_alias_target_pos(tbody, sort_pos);
   if (tbody[tp] != 2) {
     return (0 - 1, 0 - 1);
   }
-  var cr: UlebRead = wit_read_uleb(tbody, tp + 1);
-  var ir: UlebRead = wit_read_uleb(tbody, cr.next);
+  let cr: UlebRead = wit_read_uleb(tbody, tp + 1);
+  let ir: UlebRead = wit_read_uleb(tbody, cr.next);
   if (cr.value != 1) {
     return (0 - 1, 0 - 1);
   }
@@ -1118,22 +1118,22 @@ function wit_alias_slot(tbody: i32[], sort_pos: i32): (i32, i32) {
 // i-th imported instance, so the answer is that interface's export `name` in
 // its own scope. Any other slot is opaque.
 function wit_world_type_slot(tbody: i32[], n: i32): (i32, i32) {
-  var none: i32[] = [];
-  var rc: UlebRead = wit_read_uleb(tbody, 0);
-  var p: i32 = rc.next;
+  let none: i32[] = [];
+  let rc: UlebRead = wit_read_uleb(tbody, 0);
+  let p: i32 = rc.next;
   p = p + 1;
-  var oc: UlebRead = wit_read_uleb(tbody, p);
+  let oc: UlebRead = wit_read_uleb(tbody, p);
   p = oc.next;
   p = p + 1;
   p = p + 1;
-  var wc: UlebRead = wit_read_uleb(tbody, p);
-  var wcount: i32 = wc.value;
+  let wc: UlebRead = wit_read_uleb(tbody, p);
+  let wcount: i32 = wc.value;
   p = wc.next;
-  var slot: i32 = 0;
-  var instances: string[] = [];
-  var i: i32 = 0;
+  let slot: i32 = 0;
+  let instances: string[] = [];
+  let i: i32 = 0;
   while (i < wcount) {
-    var kind: i32 = tbody[p];
+    let kind: i32 = tbody[p];
     if (kind == 1) {
       slot = slot + 1;
     } else if (kind == 2) {
@@ -1144,12 +1144,12 @@ function wit_world_type_slot(tbody: i32[], n: i32): (i32, i32) {
         slot = slot + 1;
       }
     } else if (kind == 3) {
-      var nr: NameR = wit_read_name(tbody, p + 2);
+      let nr: NameR = wit_read_name(tbody, p + 2);
       if (tbody[nr.next] == 5) {
         instances = instances.append(nr.s);
       }
     }
-    var skip: TxR = wit_tx_decl(tbody, p, none);
+    let skip: TxR = wit_tx_decl(tbody, p, none);
     p = skip.next;
     i = i + 1;
   }
@@ -1160,25 +1160,25 @@ function wit_world_type_slot(tbody: i32[], n: i32): (i32, i32) {
 // byte at `sort_pos`) to the named type export of the i-th imported
 // instance, in that instance's scope.
 function wit_alias_export_slot(tbody: i32[], sort_pos: i32, instances: string[]): (i32, i32) {
-  var tp: i32 = wit_alias_target_pos(tbody, sort_pos);
+  let tp: i32 = wit_alias_target_pos(tbody, sort_pos);
   if (tbody[tp] != 0) {
     return (0 - 1, 0 - 1);
   }
-  var ir: UlebRead = wit_read_uleb(tbody, tp + 1);
-  var nr: NameR = wit_read_name(tbody, ir.next);
+  let ir: UlebRead = wit_read_uleb(tbody, tp + 1);
+  let nr: NameR = wit_read_name(tbody, ir.next);
   if (ir.value >= instances.len()) {
     return (0 - 1, 0 - 1);
   }
-  var instOff: i32 = wit_iface_instance_offset(tbody, instances[ir.value]);
+  let instOff: i32 = wit_iface_instance_offset(tbody, instances[ir.value]);
   if (instOff < 0) {
     return (0 - 1, 0 - 1);
   }
-  var slot: i32 = wit_iface_export_type_slot(tbody, instOff, nr.s);
+  let slot: i32 = wit_iface_export_type_slot(tbody, instOff, nr.s);
   if (slot < 0) {
     return (0 - 1, 0 - 1);
   }
-  var scope: WitScope = wit_iface_scope(tbody, instOff);
-  var owner: i32 = scope.owners[slot];
+  let scope: WitScope = wit_iface_scope(tbody, instOff);
+  let owner: i32 = scope.owners[slot];
   if (owner < 0) {
     owner = instOff;
   }
@@ -1188,15 +1188,15 @@ function wit_alias_export_slot(tbody: i32[], sort_pos: i32, instances: string[])
 // wit_iface_export_type_slot is the type-index slot the instance type at
 // `instOff` exports under `name`, or -1.
 function wit_iface_export_type_slot(tbody: i32[], instOff: i32, name: string): i32 {
-  var none: i32[] = [];
-  var p: i32 = instOff + 1;
-  var dc: UlebRead = wit_read_uleb(tbody, p);
-  var dcount: i32 = dc.value;
+  let none: i32[] = [];
+  let p: i32 = instOff + 1;
+  let dc: UlebRead = wit_read_uleb(tbody, p);
+  let dcount: i32 = dc.value;
   p = dc.next;
-  var slot: i32 = 0;
-  var i: i32 = 0;
+  let slot: i32 = 0;
+  let i: i32 = 0;
   while (i < dcount) {
-    var kind: i32 = tbody[p];
+    let kind: i32 = tbody[p];
     if (kind == 1) {
       slot = slot + 1;
     } else if (kind == 2) {
@@ -1204,7 +1204,7 @@ function wit_iface_export_type_slot(tbody: i32[], instOff: i32, name: string): i
         slot = slot + 1;
       }
     } else if (kind == 4) {
-      var nr: NameR = wit_read_name(tbody, p + 2);
+      let nr: NameR = wit_read_name(tbody, p + 2);
       if (tbody[nr.next] == 3) {
         if (nr.s == name) {
           return slot;
@@ -1212,7 +1212,7 @@ function wit_iface_export_type_slot(tbody: i32[], instOff: i32, name: string): i
         slot = slot + 1;
       }
     }
-    var skip: TxR = wit_tx_decl(tbody, p, none);
+    let skip: TxR = wit_tx_decl(tbody, p, none);
     p = skip.next;
     i = i + 1;
   }
@@ -1230,27 +1230,27 @@ pub struct WitFuncLookup { found: boolean, off: i32, scope: WitScope }
 // `fname`. Not found (or no such interface) is reported, not an error: the
 // composer refuses a core whose import the world does not declare.
 pub function wit_iface_func_lookup(tbody: i32[], iface: string, fname: string): WitFuncLookup {
-  var none: i32[] = [];
-  var instOff: i32 = wit_iface_instance_offset(tbody, iface);
+  let none: i32[] = [];
+  let instOff: i32 = wit_iface_instance_offset(tbody, iface);
   if (instOff < 0) {
     return WitFuncLookup { found: false, off: 0 - 1, scope: WitScope { offs: none, owners: none } };
   }
-  var scope: WitScope = wit_iface_scope(tbody, instOff);
-  var p: i32 = instOff + 1;
-  var dc: UlebRead = wit_read_uleb(tbody, p);
-  var dcount: i32 = dc.value;
+  let scope: WitScope = wit_iface_scope(tbody, instOff);
+  let p: i32 = instOff + 1;
+  let dc: UlebRead = wit_read_uleb(tbody, p);
+  let dcount: i32 = dc.value;
   p = dc.next;
-  var funcOff: i32 = 0 - 1;
-  var i: i32 = 0;
+  let funcOff: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < dcount) {
     if (tbody[p] == 4) {
-      var nr: NameR = wit_read_name(tbody, p + 2);
+      let nr: NameR = wit_read_name(tbody, p + 2);
       if (tbody[nr.next] == 1 && nr.s == fname) {
         var tr: UlebRead = wit_read_uleb(tbody, nr.next + 1);
         funcOff = scope.offs[tr.value];
       }
     }
-    var skip: TxR = wit_tx_decl(tbody, p, none);
+    let skip: TxR = wit_tx_decl(tbody, p, none);
     p = skip.next;
     i = i + 1;
   }
@@ -1264,24 +1264,24 @@ pub function wit_iface_func_lookup(tbody: i32[], iface: string, fname: string): 
 // (bound kind 1); a type export bound `eq` (kind 0) to an index is an alias,
 // not a resource.
 pub function wit_iface_has_resource(tbody: i32[], iface: string, res: string): boolean {
-  var none: i32[] = [];
-  var instOff: i32 = wit_iface_instance_offset(tbody, iface);
+  let none: i32[] = [];
+  let instOff: i32 = wit_iface_instance_offset(tbody, iface);
   if (instOff < 0) {
     return false;
   }
-  var p: i32 = instOff + 1;
-  var dc: UlebRead = wit_read_uleb(tbody, p);
-  var dcount: i32 = dc.value;
+  let p: i32 = instOff + 1;
+  let dc: UlebRead = wit_read_uleb(tbody, p);
+  let dcount: i32 = dc.value;
   p = dc.next;
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < dcount) {
     if (tbody[p] == 4) {
-      var nr: NameR = wit_read_name(tbody, p + 2);
+      let nr: NameR = wit_read_name(tbody, p + 2);
       if (tbody[nr.next] == 3 && tbody[nr.next + 1] == 1 && nr.s == res) {
         return true;
       }
     }
-    var skip: TxR = wit_tx_decl(tbody, p, none);
+    let skip: TxR = wit_tx_decl(tbody, p, none);
     p = skip.next;
     i = i + 1;
   }
@@ -1293,7 +1293,7 @@ pub function wit_classify(tbody: i32[], iface: string, fname: string): i32 {
   if (!lk.found) {
     return 0;
   }
-  var offs: WitScope = lk.scope;
+  let offs: WitScope = lk.scope;
   var f: WitFunc = wit_decode_func(tbody, lk.off).fn;
   var needR: boolean = false;
   if (f.named == 0) {
@@ -1347,22 +1347,22 @@ pub function wit_classify(tbody: i32[], iface: string, fname: string): i32 {
 pub struct WitPrefixLayout { types: i32, instances: i32 }
 
 pub function wit_prefix_layout(tbody: i32[]): WitPrefixLayout {
-  var none: i32[] = [];
-  var rc: UlebRead = wit_read_uleb(tbody, 0);
-  var p: i32 = rc.next;
+  let none: i32[] = [];
+  let rc: UlebRead = wit_read_uleb(tbody, 0);
+  let p: i32 = rc.next;
   p = p + 1;
-  var oc: UlebRead = wit_read_uleb(tbody, p);
+  let oc: UlebRead = wit_read_uleb(tbody, p);
   p = oc.next;
   p = p + 1;
   p = p + 1;
-  var wc: UlebRead = wit_read_uleb(tbody, p);
-  var wcount: i32 = wc.value;
+  let wc: UlebRead = wit_read_uleb(tbody, p);
+  let wcount: i32 = wc.value;
   p = wc.next;
   var types: i32 = 0;
   var instances: i32 = 0;
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < wcount) {
-    var kind: i32 = tbody[p];
+    let kind: i32 = tbody[p];
     if (kind == 1) {
       types = types + 1;
     } else if (kind == 2) {
@@ -1372,7 +1372,7 @@ pub function wit_prefix_layout(tbody: i32[]): WitPrefixLayout {
     } else if (kind == 3) {
       instances = instances + 1;
     }
-    var skip: TxR = wit_tx_decl(tbody, p, none);
+    let skip: TxR = wit_tx_decl(tbody, p, none);
     p = skip.next;
     i = i + 1;
   }
@@ -1383,23 +1383,23 @@ pub function wit_prefix_layout(tbody: i32[]): WitPrefixLayout {
 // the prefix the plan emits, or -1 when the world does not import it or the
 // plan drops it.
 pub function wit_import_instance_index(tbody: i32[], plan: WitImportPlan, iface: string): i32 {
-  var none: i32[] = [];
-  var rc: UlebRead = wit_read_uleb(tbody, 0);
-  var p: i32 = rc.next;
+  let none: i32[] = [];
+  let rc: UlebRead = wit_read_uleb(tbody, 0);
+  let p: i32 = rc.next;
   p = p + 1;
-  var oc: UlebRead = wit_read_uleb(tbody, p);
+  let oc: UlebRead = wit_read_uleb(tbody, p);
   p = oc.next;
   p = p + 1;
   p = p + 1;
-  var wc: UlebRead = wit_read_uleb(tbody, p);
-  var wcount: i32 = wc.value;
+  let wc: UlebRead = wit_read_uleb(tbody, p);
+  let wcount: i32 = wc.value;
   p = wc.next;
   var idx: i32 = 0;
   var result: i32 = 0 - 1;
   var found: boolean = false;
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < wcount) {
-    var kind: i32 = tbody[p];
+    let kind: i32 = tbody[p];
     if (kind == 3) {
       if (!found) {
         var nr: NameR = wit_read_name(tbody, p + 2);
@@ -1410,7 +1410,7 @@ pub function wit_import_instance_index(tbody: i32[], plan: WitImportPlan, iface:
         idx = idx + 1;
       }
     }
-    var skip: TxR = wit_tx_decl(tbody, p, none);
+    let skip: TxR = wit_tx_decl(tbody, p, none);
     p = skip.next;
     i = i + 1;
   }
@@ -1432,7 +1432,7 @@ pub struct WitCoreImports { ifaces: string[], names: string[], params: i32[][], 
 pub function wit_core_func_imports(bin: i32[]): WitCoreImports {
   // pass 1: functype params and results from the type section (id 1).
   var typeParams: i32[][] = [];
-  var typeResults: i32[][] = [];
+  let typeResults: i32[][] = [];
   var off: i32 = 8;
   var doneTypes: boolean = false;
   while (off < bin.len() && !doneTypes) {
@@ -1463,7 +1463,7 @@ pub function wit_core_func_imports(bin: i32[]): WitCoreImports {
         var rr: UlebRead = wit_read_uleb(bin, p);
         var rcount: i32 = rr.value;
         p = rr.next;
-        var results: i32[] = [];
+        let results: i32[] = [];
         var k: i32 = 0;
         while (k < rcount) {
           results = results.append(bin[p]);
@@ -1481,7 +1481,7 @@ pub function wit_core_func_imports(bin: i32[]): WitCoreImports {
   var ifaces: string[] = [];
   var names: string[] = [];
   var params2: i32[][] = [];
-  var results2: i32[][] = [];
+  let results2: i32[][] = [];
   off = 8;
   var doneImports: boolean = false;
   while (off < bin.len() && !doneImports) {
@@ -1509,7 +1509,7 @@ pub function wit_core_func_imports(bin: i32[]): WitCoreImports {
           p = tr.next;
           var none: i32[] = [];
           var pp: i32[] = none;
-          var rp: i32[] = none;
+          let rp: i32[] = none;
           if (tr.value < typeParams.len()) {
             pp = typeParams[tr.value];
             rp = typeResults[tr.value];

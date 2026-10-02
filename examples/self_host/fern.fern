@@ -2638,7 +2638,7 @@ function run(): i32 {
   // other: std/fetch dials on every target but wasi-http, where it sends
   // through the host. -check and -interp returned above with the calls
   // intact.
-  var desc: platforms.Descriptor = platforms.for_target(target);
+  let desc: platforms.Descriptor = platforms.for_target(target);
   merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
   merged = constfold.prune_literal_branches(merged);
 

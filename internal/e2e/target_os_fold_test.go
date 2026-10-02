@@ -141,13 +141,13 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 // self-host compiler too).
 func TestIfExpressionOnLiteralKeepsItsArms(t *testing.T) {
 	src := `function main(): i32 {
-    var n: i32 = if (false) { 1 } else if (true) {
-        var k: i32 = 0;
+    let n: i32 = if (false) { 1 } else if (true) {
+        let k: i32 = 0;
         if (true) { k = 7; } else { k = 8; }
-        var j: i32 = if (false) { k } else { k + 1 };
+        let j: i32 = if (false) { k } else { k + 1 };
         j
     } else { 4 };
-    var m: i64 = if (true) { 1000000 as i64 * 1234567 as i64 } else { 0 };
+    let m: i64 = if (true) { 1000000 as i64 * 1234567 as i64 } else { 0 };
     if (n == 8 && m == 1234567000000) { return 0; }
     return 1;
 }`
