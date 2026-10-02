@@ -5061,7 +5061,10 @@ pub struct TyCell { val: Ty }
 
 pub struct TyStructNamed { name: string }
 
-pub type Ty = TyI32 | TyU8 | TyU32 | TyU64 | TyI64 | TyUsize | TyBool | TyString | TyF64 | TyStruct | TyTuple | TyUnknown | TyArray | TyArrayI32 | TyArrayU32 | TyArrayU64 | TyArrayI64 | TyArrayString | TyFnAny | TyMapAny | TyOption | TyResult | TyFn | TyMapStr | TyMapI32 | TyMapIter | TyCell | TyStructNamed;
+pub type Ty = TyI32 | TyU8 | TyU32 | TyU64 | TyI64 | TyUsize | TyBool | TyString | TyF64 | TyStruct
+  | TyTuple | TyUnknown | TyArray | TyArrayI32 | TyArrayU32 | TyArrayU64 | TyArrayI64
+  | TyArrayString | TyFnAny | TyMapAny | TyOption | TyResult | TyFn | TyMapStr | TyMapI32
+  | TyMapIter | TyCell | TyStructNamed;
 
 pub function ty_named(name: string): Ty {
   return TyStructNamed { name: name };

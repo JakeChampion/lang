@@ -2,10 +2,10 @@
 // `own` parameter. A payload-less variant is spelled as a bare name rather
 // than a call, and both compilers' ownership guards admitted only the call
 // shape — so `eat(Wide(...))` compiled and `eat(Empty)` was E051 (#9517).
-// Both spellings of the bare form are covered: `Empty` and `Span.Empty`.
-enum Span { Empty, Wide(i32[]) }
+// Both spellings of the bare form are covered: `Empty` and `Extent.Empty`.
+enum Extent { Empty, Wide(i32[]) }
 
-@noinline function eat(own sp: Span): i32 {
+@noinline function eat(own sp: Extent): i32 {
     match (sp) {
         Wide(xs) => { return xs.len(); },
         Empty => { return 0; }
@@ -20,7 +20,7 @@ enum Span { Empty, Wide(i32[]) }
 // to `eat`, which is the enum-payload retention every enum fixture here
 // records (`enum_payload_aliases_container` pins 35). `Empty` allocates
 // nothing, so the admission this case exists for contributes none of it.
-@noinline function borrowed_len(sp: Span): i32 {
+@noinline function borrowed_len(sp: Extent): i32 {
     match (sp) {
         Wide(xs) => { return xs.len(); },
         Empty => { return 0; }
@@ -30,9 +30,9 @@ enum Span { Empty, Wide(i32[]) }
 function main(): i32 {
     var total: i32 = 0;
     total = total + eat(Empty);                  // 0
-    total = total + eat(Span.Empty);             // 0
+    total = total + eat(Extent.Empty);             // 0
     total = total + eat(Wide([1, 2, 3]));        // 3
-    var held: Span = Wide([4, 5]);
+    var held: Extent = Wide([4, 5]);
     total = total + borrowed_len(held);          // 2
     total = total + borrowed_len(held);          // 2 — still readable
     var i: i32 = 0;
