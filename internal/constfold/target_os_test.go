@@ -77,3 +77,58 @@ func TestFoldWithLeavesTargetOSWithArguments(t *testing.T) {
 		t.Fatalf("expected target_os(1) to survive, found %d calls", left)
 	}
 }
+
+// A branch on `target_os()` keeps only the arm the target takes once the
+// call is a literal: the dead arm's call is gone from the tree, so the
+// capability gates and the shake never see it. The live arm stays under
+// `if (true)`, which keeps its block's scope.
+func TestFoldWithPrunesTargetBranches(t *testing.T) {
+	const src = `function main(): i32 {
+    if (target_os() == "wasi-http") {
+        hosted();
+    } else {
+        dialled();
+    }
+    if (target_os() != "linux" && target_arch() == "wasm32") {
+        wasm_only();
+    }
+    return 0;
+}`
+	for _, tc := range []struct{ os, arch, kept, dropped string }{
+		{"wasi-http", "wasm32", "hosted", "dialled"},
+		{"linux", "x86-64", "dialled", "hosted"},
+	} {
+		prog, err := parser.Parse(src)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if err := FoldWith(prog, Inputs{TargetOS: tc.os, TargetArch: tc.arch}); err != nil {
+			t.Fatalf("fold: %v", err)
+		}
+		calls := map[string]bool{}
+		ifs := 0
+		ast.WalkProgram(prog, func(node ast.Node) bool {
+			switch n := node.(type) {
+			case *ast.Call:
+				if id, ok := n.Callee.(*ast.Ident); ok {
+					calls[id.Name] = true
+				}
+			case *ast.If:
+				ifs++
+				if b, ok := n.Cond.(*ast.BoolLit); !ok || !b.Value || n.Else != nil {
+					t.Errorf("%s: an if on the target survived as %T with else %v", tc.os, n.Cond, n.Else != nil)
+				}
+			}
+			return true
+		})
+		if !calls[tc.kept] || calls[tc.dropped] {
+			t.Errorf("%s: calls after the fold are %v, want %s and not %s", tc.os, calls, tc.kept, tc.dropped)
+		}
+		if wasm := tc.arch == "wasm32"; calls["wasm_only"] != wasm {
+			t.Errorf("%s/%s: wasm_only call present = %v", tc.os, tc.arch, calls["wasm_only"])
+		}
+		if ifs != 2 {
+			t.Errorf("%s: %d ifs after the fold, want 2", tc.os, ifs)
+		}
+	}
+}

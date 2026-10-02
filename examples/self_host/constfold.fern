@@ -347,6 +347,59 @@ pub function fold_module(mod: parser.Module): parser.Module {
   return parser.Module { ...mod, funcs: funcs, top_stmts: fold_block(mod.top_stmts) };
 }
 
+// =================== LITERAL BRANCHES ====================
+
+// prune_literal_branches drops the arm an `if` on a literal condition
+// never takes, the shape a branch on `target_os()` / `target_arch()` has
+// once the calls are the target's name: the live arm stays under
+// `if (true)`, which keeps its block's scope and is what ir drops at emit.
+// Run ahead of the capability gates and the shake, so both see the
+// module as built for this target: an arm that reaches what one target
+// lacks compiles for the other.
+pub function prune_literal_branches(mod: parser.Module): parser.Module {
+  var funcs: parser.FuncDecl[] = [];
+  for fd in mod.funcs {
+    funcs = funcs.append(parser.FuncDecl { ...fd, body: prune_block(fd.body) });
+  }
+  return parser.Module { ...mod, funcs: funcs, top_stmts: prune_block(mod.top_stmts) };
+}
+
+function prune_block(body: ast.Stmt[]): ast.Stmt[] {
+  let (out, a) = astwalk.map_stmts_acc(body, 0, prune_stmt, keep_expr);
+  return out;
+}
+
+function keep_expr(e: ast.Expr, a: i32): (ast.Expr, i32, boolean) {
+  return (e, a, false);
+}
+
+// prune_stmt claims every `if`: its condition folded, the arm not taken
+// dropped, and the arms it keeps pruned in turn.
+function prune_stmt(s: ast.Stmt, a: i32): (ast.Stmt, i32, boolean) {
+  match (s) {
+    ast.StmtIf(f) => {
+      return (pruned_if(f), a, true);
+    },
+    _ => {
+      return (s, a, false);
+    }
+  }
+  return (s, a, false);
+}
+
+function pruned_if(f: ast.StmtIf): ast.Stmt {
+  var cond: ast.Expr = fold_expr(f.cond);
+  var lit: OptBool = as_bool_lit(cond);
+  var none: ast.Stmt[] = [];
+  if (!lit.ok) {
+    return ast.StmtIf { ...f, cond: cond, then_body: prune_block(f.then_body), else_body: prune_block(f.else_body) };
+  }
+  if (lit.v) {
+    return ast.StmtIf { ...f, cond: cond, then_body: prune_block(f.then_body), else_body: none, else_chained: false };
+  }
+  return ast.StmtIf { ...f, cond: lit_bool(true), then_body: prune_block(f.else_body), else_body: none, else_chained: false };
+}
+
 // =================== TARGET NAME ====================
 
 // The two halves of the compile target's name as string literals:

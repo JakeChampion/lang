@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -99,4 +100,37 @@ func TestTargetOSBranchKeepsOnlyTheLiveArm(t *testing.T) {
 		}
 		onlyArm(t, "wasm32-wasi", string(core), "wasi arm")
 	})
+}
+
+// A branch on target_os() is judged for the target it is built for: the
+// dead arm's `read_file`, which the proxy world does not grant, reaches
+// neither the capability gate (E066) nor the shake, so a check and a build
+// for wasm32-wasi-http both pass. The self-host twin serves the handler
+// (TestSelfHostWasiHttpTargetBranchGate).
+func TestTargetOSBranchJudgedForTheTarget(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "handler.fern")
+	if err := os.WriteFile(src, []byte(`import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    if (target_os() == "wasi-http") {
+        return http.ok("hosted arm");
+    } else {
+        match (read_file("/etc/hostname")) {
+            Ok(text) => { return http.ok("dialled arm " + text); },
+            Err(e) => { return http.ok("dialled arm"); }
+        }
+    }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(bin, "-check", "-target", "wasm32-wasi-http", src).CombinedOutput(); err != nil {
+		t.Fatalf("-check -target wasm32-wasi-http: %v\n%s", err, out)
+	}
+	out := filepath.Join(dir, "handler.wasm")
+	if msg, err := exec.Command(bin, "-target", "wasm32-wasi-http", "-o", out, src).CombinedOutput(); err != nil {
+		t.Fatalf("-target wasm32-wasi-http: %v\n%s", err, msg)
+	}
 }

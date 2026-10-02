@@ -1364,7 +1364,13 @@ func runCheck(srcPath, target string) error {
 		prog = e.prog
 		formatErr = e.format
 	}
-	if err := constfold.Fold(prog, embeddedAssets); err != nil {
+	// A check against a target folds the target's name as a compile does,
+	// so the E066 pass below judges the arm the target takes.
+	targetOS, targetArch := "", ""
+	if d := platforms.ForTarget(target); d != nil {
+		targetOS, targetArch = d.Environment, d.ISA
+	}
+	if err := constfold.FoldWith(prog, constfold.Inputs{Assets: embeddedAssets, TargetOS: targetOS, TargetArch: targetArch}); err != nil {
 		return formatErr(err)
 	}
 	info, err := checker.CheckTarget(prog, target)
