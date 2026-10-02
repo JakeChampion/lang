@@ -2817,8 +2817,8 @@ function e021_bound_call_diag(pbound: string, at: typeinfo.Type, s: Scope, ln: i
 // signature. A view receiver (`[T]`) has a separate namespace; the caller
 // selects that namespace from the checked receiver type.
 //
-// Lowering folds concrete methods without method type parameters into free
-// functions keyed by the receiver element and namespace before view erasure.
+// Lowering folds concrete methods into free functions keyed by the receiver
+// element and namespace before view erasure, retaining their own type params.
 function array_receiver_matches(rt: string, view: boolean): boolean {
   if (view) {
     return parser.spelling_is_view(rt);

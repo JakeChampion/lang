@@ -7275,9 +7275,9 @@ func TestSelfHostSemanticAllocationCounts(t *testing.T) {
 		allocs int64
 		src    string
 	}{
-		{"element-read-outlives-the-array-write", 17, semHeldElementSource},
+		{"element-read-outlives-the-array-write", 6, semHeldElementSource},
 		// A view merged past a source that dominates the join stays a view.
-		{"a-view-of-a-dominating-source-is-not-copied", 36, semDominatingViewSource},
+		{"a-view-of-a-dominating-source-is-not-copied", 29, semDominatingViewSource},
 	} {
 		t.Run(prog.name, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "main.fern")

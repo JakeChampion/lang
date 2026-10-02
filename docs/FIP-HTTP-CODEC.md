@@ -112,16 +112,21 @@ comparisons, so this is the self-host SSA backend's code for exactly that
 path being better than the native stack backend's. `CLAUDE.md` says the
 self-host's output wins performance ties; here it is not a tie.
 
-The self-host build of the baseline also allocates 7 more times per request
-than the native build (93.4 against 86.4) for the same source and the same
-answers. `FERN_RC_TRACE` on both builds attributes it to
-`http_serialize_response`: its `hdr_block = hdr_block + name + ": " + value
-+ "\r\n"` chains are fifteen `+` per response, and native grows the
-uniquely-held accumulator in place through `__fern_str_append` (#5637),
-allocating about eight, while the self-host lowers every `+` to a fresh
-`__fern_str_concat` box. The `str_self_append_chain` row of
-`testdata/selfhost-alloc-count-matrix.txt` pins the pair (native 4 blocks
-per round, self-host 8); the port is #10532.
+When the table was taken, the self-host build of the baseline also
+allocated 7 more times per request than the native build (93.4 against
+86.4) for the same source and the same answers. `FERN_RC_TRACE` on both
+builds attributed it to `http_serialize_response`: its `hdr_block =
+hdr_block + name + ": " + value + "\r\n"` chains are fifteen `+` per
+response, and native grew the uniquely-held accumulator in place through
+`__fern_str_append` (#5637), allocating about eight, while the self-host
+lowered every `+` to a fresh `__fern_str_concat` box. #10960 closed that:
+the self-host grows the accumulator in place too (`__fern_str_grow`), and
+the `str_self_append_chain` row of `testdata/selfhost-alloc-count-matrix.txt`
+now pins native 4 blocks per round against self-host 6. Re-measured on
+2026-10-02 at the head carrying #10960, the same program allocates 112.9
+per request built by native and 113.8 built by the self-host, a gap of 0.9.
+Both are above the table's figures: the source is the same, `std/http`
+underneath it is not, and what moved there is not measured here.
 
 ### What this sets
 
