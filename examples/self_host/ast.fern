@@ -29,12 +29,12 @@ pub struct ExprNumber { text: string, suffix: string, raw: string, is_float: boo
 
 // `ty` is the typed-IR carrier (#5986, the ExprIdent sibling of ExprCall.ty
 // from #5531): the checker's inferred type for the value this name reads,
-// spelled in irlower's canonical tag vocabulary and stamped by
+// spelled in the lowering's canonical tag vocabulary and stamped by
 // checker.annotate_module. It is what lets lowering type a name whose type no
 // local SLOT carries — a module `const`, whose read is really a call to its
 // zero-argument accessor. Empty when unannotated (the asm_ir_run harness and
 // the native compiler never run annotate) or when the checker could not name
-// the type, in which case irlower's slot walk answers unchanged.
+// the type, in which case the lowering's slot walk answers unchanged.
 pub struct ExprIdent { name: string, line: i32, col: i32, ty: string }
 
 pub struct ExprString { value: string, line: i32, col: i32 }
@@ -42,12 +42,12 @@ pub struct ExprString { value: string, line: i32, col: i32 }
 pub struct ExprBool { value: boolean, line: i32, col: i32 }
 
 // `ty` is the typed-IR carrier (#5986, the ExprBinary sibling of ExprCall.ty
-// from #5531). Ordinary arithmetic needs no carrier — irlower's predicates
+// from #5531). Ordinary arithmetic needs no carrier — the lowering's predicates
 // compose a binary's type from its OPERANDS — but a composite operator
 // overload does: `a * b` on a struct evaluates to `a.mul(b)`'s declared
 // return, which no walk over the operands can reach. Stamped by
 // checker.annotate_module; "" when unannotated (the asm_ir_run harness and
-// the native compiler never run annotate), in which case irlower's operand
+// the native compiler never run annotate), in which case the lowering's operand
 // walk answers unchanged.
 pub struct ExprBinary { op: string, left: Expr, right: Expr, line: i32, col: i32, ty: string }
 
@@ -61,7 +61,7 @@ pub struct ExprUnary { op: string, operand: Expr, line: i32, col: i32, ty: strin
 // grammar could not read is kept as "", so the count stays what was written.
 // `ty` is the resolved result-type tag (typed-IR migration, #5531): the annotate
 // pass (annotate.fern) stamps it post-constfold with the checker's inferred type
-// in irlower's tag vocabulary ("f64" for a float value, etc.), and lowering READS
+// in the lowering's tag vocabulary ("f64" for a float value, etc.), and lowering READS
 // it instead of re-deriving the call's type structurally. "" = unannotated (the
 // asm_ir_run harness and native cmd/fern don't run annotate), in which case
 // lowering falls back to its structural walk — so the field is byte-identity-safe.
@@ -119,14 +119,14 @@ pub struct ExprTuple { elements: Expr[], line: i32, col: i32 }
 // runtime surfaces as VErr from the interp.
 // `unchecked` is #4380 lever 3: set by elide_len_bounded_body on a READ
 // `arr[i]` proven in-bounds by an enclosing `while (i < arr.len())` guard,
-// so irlower emits op_arr_get_nc (no per-iteration bounds check + len
+// so the lowering emits op_arr_get_nc (no per-iteration bounds check + len
 // reload). Defaults false; index WRITES are __set_index calls, never
 // ExprIndex, so only reads are ever marked.
 // `ty` is the typed-IR carrier (#5531's third): the checker's inferred type
 // for the ELEMENT this read yields, stamped by checker.annotate_module and
-// spelled in irlower's canonical tag vocabulary. Empty when unannotated (the
+// spelled in the lowering's canonical tag vocabulary. Empty when unannotated (the
 // asm_ir_run harness and the native compiler never run annotate) or when the
-// checker could not resolve it, in which case irlower's structural walk
+// checker could not resolve it, in which case the lowering's structural walk
 // answers unchanged.
 pub struct ExprIndex { array: Expr, index: Expr, unchecked: boolean, ty: string, line: i32, col: i32 }
 
@@ -135,12 +135,12 @@ pub struct ExprIndex { array: Expr, index: Expr, unchecked: boolean, ty: string,
 // TypeString). `start` is inclusive, `end` is exclusive — same
 // shape as Python / Go / Rust slicing.
 // `ty` is the typed-IR carrier naming the SOURCE array's type — "f64[]" /
-// "i64[]" / … — because the fact irlower's arr_slice needs is the source
+// "i64[]" / … — because the fact the lowering's arr_slice needs is the source
 // element width, which is what its structural walk (expr_is_f64arr /
 // expr_is_i64arr on slc.array) also asks. Stamped by checker.annotate_module
 // via type_to_arrtag. Empty when unannotated (the
 // asm_ir_run harness and the native compiler never run annotate) or when the
-// checker could not name the element type, in which case irlower's structural
+// checker could not name the element type, in which case the lowering's structural
 // walk answers unchanged. NOTE it carries through the monomorphisation
 // rebuilds: dropping it there miscompiles clones (#6181).
 // `open_end` marks `a[lo:]` / `a[:]`, where no upper bound was written.
@@ -175,7 +175,7 @@ pub struct ExprStructLit { type_name: string, field_names: string[], field_value
 // evaluates to a struct value. `ty` is the typed-IR carrier
 // (#5986, the ExprCall.ty sibling from #5531): checker's
 // annotate_module stamps the field read's inferred type tag so
-// irlower reads it instead of re-deriving the receiver's struct
+// the lowering reads it instead of re-deriving the receiver's struct
 // type structurally. "" when unannotated.
 pub struct ExprFieldAccess { obj: Expr, field: string, line: i32, col: i32, ty: string }
 

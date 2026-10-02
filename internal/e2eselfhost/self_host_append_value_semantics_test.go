@@ -70,7 +70,7 @@ func TestSelfHostAppendValueSemanticsX86_64(t *testing.T) {
 }
 
 // TestSelfHostAppendValueSemanticsArm64 — the same cases through the arm64
-// emit. The receiver bracket is shared irlower analysis, so this leg guards
+// emit. The receiver bracket is shared lowering analysis, so this leg guards
 // the register backends agreeing on the grow helper's uniqueness gate.
 func TestSelfHostAppendValueSemanticsArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)

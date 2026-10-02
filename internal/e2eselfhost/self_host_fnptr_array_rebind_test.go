@@ -79,7 +79,7 @@ func TestSelfHostFnptrArrayRebindIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostFnptrArrayRebindIRArm64 — CI-gated arm64 counterpart. The fix is
-// in the shared irlower.fern, so the arm64 IR backend picks it up; this pins it.
+// in the shared lowering, so the arm64 IR backend picks it up; this pins it.
 func TestSelfHostFnptrArrayRebindIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

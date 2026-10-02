@@ -69,7 +69,7 @@ struct ParamDestr { names: string, marker: string, synth: string, line: i32, col
 // ret_fn_ret / ret_fn_param_types describe a function that RETURNS a function
 // value (`function mk(): (f64) => f64`). parse_type_name coarsens that return
 // to the flat "fn" tag, so `mk()(4.5)` reaches the checker with an untyped
-// callee and irlower with no signature to dispatch on. The two sidecars are the
+// callee and the lowering with no signature to dispatch on. The two sidecars are the
 // FuncDecl-level members of the family ParamDecl, StructFieldDecl and StmtVar
 // already carry, recorded through the same non-consuming lookahead and read
 // through the same rules, so a call through a returned fn value and a call
@@ -761,8 +761,8 @@ function parse_struct_pattern_fields(p: Par): (string, string, boolean, boolean,
 // on the opening `{` (the struct-type name already consumed as `struct_name`).
 // It encodes the whole binding as ONE StmtVar the way tuple destructure does:
 // `name` carries the comma-joined BINDING names ("x,b"), and `type_name`
-// carries the marker "@sd:<StructName>:<comma-joined FIELD names>". irlower's
-// lower_struct_destructure decodes it into per-field `var bind = tmp.field;`
+// carries the marker "@sd:<StructName>:<comma-joined FIELD names>". semsource
+// decodes it into per-field `var bind = tmp.field;`
 // binds.
 function parse_struct_destructure(p: Par, struct_name: string, at: string, line: i32, col: i32): (ast.Stmt, Par) {
   let (bindings, fields, fields_rest, fields_ok, fields_p) = parse_struct_pattern_fields(p);
@@ -811,7 +811,7 @@ function s_if_origin(cond: ast.Expr, then_body: ast.Stmt[], else_body: ast.Stmt[
 pub const ORIGIN_ASSERT: string = "assert";
 
 // The value-block origins. Each names the source form whose desugar produced a
-// zero-arg call of a zero-param lambda — the shape irlower INLINES rather than
+// zero-arg call of a zero-param lambda — the shape the lowering INLINES rather than
 // calls. is_value_block tests membership of this set, because a hand-written
 // IIFE has the identical shape and must NOT be inlined: it is a call with a
 // scope of its own, so a `defer` inside it runs when IT returns (#7192).
@@ -828,7 +828,7 @@ pub const ORIGIN_MAP_COMP: string = "map_comp";
 
 // ORIGIN_IIFE_SCOPED marks a hand-written IIFE whose body the defer lowering
 // scoped as its own — i.e. one that actually contains a defer. It is NOT a
-// value-block origin: irlower must CALL it, because inlining would splice the
+// value-block origin: the lowering must CALL it, because inlining would splice the
 // defer machinery into the enclosing function and hoist the cleanup with it.
 //
 // A defer-free IIFE is left unmarked: the lambda lift hoists it to a direct
@@ -1496,7 +1496,7 @@ function resolve_labels_stmt(st: ast.Stmt, labels: string[]): ast.Stmt {
 // loop", so leaking the enclosing labels in would resolve a jump the language
 // forbids. A VALUE BLOCK is the opposite — it matches the same shape (a
 // zero-arg call of a zero-param lambda) but is an if-/match-expression or
-// comprehension desugar that irlower INLINES, so `t = t + { if (c) { break; } i }`
+// comprehension desugar that the lowering INLINES, so `t = t + { if (c) { break; } i }`
 // breaks the enclosing loop and must keep seeing its labels.
 function rl_expr(e: ast.Expr, labels: string[]): ast.Expr {
   match (e) {
@@ -2472,7 +2472,7 @@ function parse_map_lit(p: Par): (ast.Expr, Par) {
 // else (not a map, or a struct/enum key, which map_new/__map_new_i32 cannot
 // spell — those keep whatever the construction site chose). The "i32," /
 // "string," spelling is parse_type_name's canonical join (", " between
-// generic args, no space after `[`); irlower's annotated-`map_new` path
+// generic args, no space after `[`); the lowering's annotated-`map_new` path
 // matches the same two prefixes.
 function map_ann_key_kind(t: string): i32 {
   if (t.len() < 5 || slice_unchecked(t, 0, 4) != "Map[") {
@@ -2981,7 +2981,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
       // immediately followed by `?` is the fallible `dyn Trait`
       // downcast, NOT the numeric/ascription cast. Disambiguate by
       // peeking the `?` here and tagging the unary op `as?_<Type>`
-      // (vs the plain `as_<Type>`); irlower lowers it to a shape
+      // (vs the plain `as_<Type>`); the lowering lowers it to a shape
       // read + compare yielding Option[T]. Consume the `?` now so it
       // binds to `as` and isn't mis-read as the postfix `?` try op.
       var is_downcast: boolean = false;
@@ -4226,7 +4226,7 @@ function build_tuple_match(scrut: ast.Expr, arms: ast.TupArm[], mkline: i32, mkc
 // has one shape, so a struct-pattern arm is irrefutable — it binds the named
 // fields and (with a guard) the first arm whose guard passes runs. It
 // desugars at parse time, like build_tuple_match, into the `done`-flag chain
-// with per-field `var bind = tmp.field;` binds — no checker/irlower changes:
+// with per-field `var bind = tmp.field;` binds — no checker/lowering changes:
 // the field reads + ifs lower through the ordinary paths.
 // field_kinds / field_lits / field_pats run parallel to binds / fields and
 // carry a field SUB-PATTERN (`P { x: 0, y }`), using the same encoding TupArm
@@ -4716,7 +4716,7 @@ function branch_dead_tail(stmts: ast.Stmt[]): ast.Expr {
 //     byte-identical to the pre-block-expr behaviour so existing
 //     if/match expressions don't regress).
 //   - `{ s; …; tail }` → `[<leading stmts…>, s_return(tail)]`, which
-//     irlower's lower_value_tail already lowers (leading statements +
+//     the lowering already lowers (leading statements +
 //     a final value-producing statement).
 //
 // A keyword-led item (var/let/while/… or a nested `{`-block) parses as a
@@ -5895,7 +5895,7 @@ function arm_is_nested(arm: ast.MatchArm): boolean {
 //
 // Same shape build_tuple_match already uses for a tuple scrutinee, for the
 // same reason — which is why this stays inside the parser: the chain is
-// ordinary Fern statements, so the checker, irlower and interp need no
+// ordinary Fern statements, so the checker, the lowering and interp need no
 // notion of arm-position nesting at all.
 // arms_take_flag_chain reports whether this arm list wants the done-flag
 // chain: some arm carries a payload sub-pattern, and none carries a TUPLE
@@ -6723,8 +6723,8 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
   // A pattern-shaped header — `for Point { x, y } in ps`, `for w @ (a, b) in
   // xs` — takes the same grammar every other binding site does. It desugars
   // to the plain foreach plus a destructure of the element, which is the
-  // shape irlower already builds for the encoded `for (a, b) in xs` form
-  // (its `$fordes` element bind), so nothing below the parser learns a new
+  // shape the encoded `for (a, b) in xs` form already takes,
+  // so nothing below the parser learns a new
   // header. An `@` binding names the element itself, exactly as it names a
   // destructured parameter's holder. The bare tuple head stays on the
   // encoded path above: it is the only one that can also iterate a Map,
@@ -6790,11 +6790,11 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
   // `..` + HIGH and encode the half-open interval as a synthetic
   // `__range(LOW, HIGH)` call — the same parser-internal-builtin
   // idiom as `__set_index` / `__set_field`. The checker binds the
-  // loop var at its bounds' type and irlower lowers it to a counted
+  // loop var at its bounds' type and the lowering lowers it to a counted
   // loop; the call shape goes through constfold / substitution /
   // printing for free (LOW, HIGH are ordinary sub-expressions). The
   // inclusive form `LOW..=HIGH` emits `__range_incl(LOW, HIGH)`
-  // instead, which irlower lowers with a `<=` (closed-interval)
+  // instead, which the lowering lowers with a `<=` (closed-interval)
   // condition.
   var range_punct: string = p.peek_punct();
   if (range_punct == ".." || range_punct == "..=") {
@@ -7949,9 +7949,6 @@ function ret_spelling_is_array(name: string): boolean {
 // declared return instead of re-inferring it from the body. Tuple and array
 // results let the checker resolve a call through the fn value to a real type
 // (#5986).
-//
-// The irlower registry consumers all filter by prefix or is_struct_ret_name, so
-// none of the non-struct spellings adds a spurious struct-return entry.
 function fn_ret_admitted(rr_name: string, r_is_arr: boolean): string {
   if (r_is_arr) {
     return rr_name;
@@ -8250,10 +8247,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
     // return type: the variant desugar records it on the variant
     // struct field's fn_ret, and monomorphize's me_scrutinee_type
     // recovers it to rewrite a nested `match (cont(tok))`'s arms
-    // (#4722). The struct_ret_fns consumer in irlower excludes any
-    // bracketed (generic) fn_ret, so a non-struct enum return here
-    // adds no spurious struct-return entry — it is read only via the
-    // new StructFieldDecl.fn_ret field path.
+    // (#4722).
     var fn_ret_ty: string = fn_ret_admitted(rr_name, r_is_arr);
     // `-fmt` keeps the declared signature instead of the flat tag:
     // `fn` names neither what the callback takes nor what it
@@ -10681,8 +10675,8 @@ function first_bracket(s: string): i32 {
 // `string, Map[a, b]`) on top-level commas, tracking `[]`/`()` depth so a
 // comma nested inside `Map[...]` or a tuple doesn't split early. A comma's
 // single following space (the canonical `, ` spelling) is consumed when
-// present, but a BARE `,` splits too: irlower's compact tuple element tags
-// (`(clo,i32)`, elem_type_tag's nested-tuple arm) join without the space,
+// present, but a BARE `,` splits too: the lowering's compact tuple element tags
+// (`(clo,i32)`) join without the space,
 // and requiring it made parse_type_ref read `(clo,i32)` as a ONE-element
 // tuple — so tuple_type_elem_tag returned "clo,i32", the `t.K.N(args)` /
 // `arr[i].N(args)` closure-element dispatch missed its "clo" tag, and the
@@ -11973,7 +11967,7 @@ pub function magnitude_fits(text: string, start: i32, max: string): boolean {
 // literal's OWN base — "7fffffff" for a `0x` numeral with the prefix stripped,
 // "2147483647" for decimal — rather than by digit count, which read a wide hex
 // literal like `0xFFFFFFFF` (10 characters) as fitting i32. Negative literals
-// are unary minus over a positive literal. irlower reads the same rule through
+// are unary minus over a positive literal. semsource reads the same rule through
 // the module boundary (it imports parser), so the two sides stay in agreement.
 pub function literal_is_i64(text: string): boolean {
   var hex: boolean = is_hex_lit(text);
@@ -12740,7 +12734,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
       // `ty` PROPAGATES where `unchecked` is dropped, and the asymmetry is
       // deliberate: dropping the bounds-elide mark is conservative (the
       // clone keeps its bounds check), but dropping the typed-IR tag is
-      // NOT — irlower's ix_type_tag then falls back to a structural walk
+      // NOT — the lowering then falls back to a structural walk
       // that misses exactly the shapes the tag exists to cover, and the
       // clone lowers an f64 element as a 4-byte i32 read. The tag stays
       // valid across cloning because annotation runs on the ERASED form,
@@ -15150,7 +15144,7 @@ function ms_expr(e: ast.Expr, env: MEnv, gstructs: StructDecl[], funcs: MFns, in
       // `ty` PROPAGATES where `unchecked` is dropped, and the asymmetry is
       // deliberate: dropping the bounds-elide mark is conservative (the
       // clone keeps its bounds check), but dropping the typed-IR tag is
-      // NOT — irlower's ix_type_tag then falls back to a structural walk
+      // NOT — the lowering then falls back to a structural walk
       // that misses exactly the shapes the tag exists to cover, and the
       // clone lowers an f64 element as a 4-byte i32 read. The tag stays
       // valid across cloning because annotation runs on the ERASED form,
@@ -16133,8 +16127,8 @@ function fn_key_sanitize(s: string): string {
 
 // pk_is_fn_spelling reports whether `t` is a single-parameter-list function
 // type spelling — `(...) => R` with no depth-1 comma (a top-level comma is a
-// tuple, not a param list). The self-host sibling of irlower's
-// is_fn_payload_spelling; lets ge_targ_mangle admit a fn type arg as a
+// tuple, not a param list).
+// Lets ge_targ_mangle admit a fn type arg as a
 // (sanitised) monomorphisation key.
 function pk_is_fn_spelling(t: string): boolean {
   var n: i32 = t.len();
@@ -17774,7 +17768,7 @@ pub function is_value_local_name(name: string): boolean {
 
 // is_value_block reports whether `e` is a value-position `{ … }` block.
 // parse_primary builds one as an immediately-invoked zero-parameter lambda (the
-// general value-block form and the if- / match-expression desugars), and irlower
+// general value-block form and the if- / match-expression desugars), and the lowering
 // INLINES its statements into the enclosing function — so a `defer` inside one
 // is NOT in a scope of its own. That is also native's rule: a block expression
 // is neither a function nor a loop, so its defer belongs to the innermost
@@ -17783,7 +17777,7 @@ pub function is_value_local_name(name: string): boolean {
 // lowered after lambda lifting.
 // is_value_block reports the shape the parser emits desugaring an
 // if-/match-expression or a comprehension: a zero-arg call of a zero-param
-// lambda, which irlower INLINES rather than calling. Three passes and the
+// lambda, which the lowering INLINES rather than calling. Three passes and the
 // checker need to tell one from an ordinary lambda — an ordinary lambda is a
 // scope boundary, a value block is not — so the test lives in one place.
 pub function is_value_block(c: ast.ExprCall): boolean {
@@ -19388,8 +19382,8 @@ function dl_name_keep(e: ast.Expr, own acc: string[]): string[] {
 
 // The lift merges a block's binding with the scope's, so it is sound only for
 // a name the scope declares ONCE. Lexical resolution gives every declaration a
-// unique symbol and the compiled path runs it first (irlower resolves before
-// it lowers defers), but the interpreter evaluates the parse-time tree, where
+// unique symbol and the compiled path runs it first, but the interpreter
+// evaluates the parse-time tree, where
 // two blocks can each write `var items`. Lifting both would give them one slot.
 // The count reaches into value blocks and lambda bodies, so a name declared
 // there counts as well — over-approximating, which costs a lift that would
@@ -19457,13 +19451,13 @@ pub function lower_defers_func(fn: FuncDecl): FuncDecl {
 //
 // A VALUE BLOCK is excluded: despite matching the same shape (a zero-arg call
 // of a zero-param lambda) it is not a call at all but the desugar of an
-// if-/match-expression or comprehension, which irlower inlines. Lowering one as
-// a scope puts `__defret` locals inside it and irlower then refuses it outright
-// ("did not lower: immediately-invoked value block"). Its defers belong to the
+// if-/match-expression or comprehension, which the lowering inlines. Lowering one as
+// a scope would put `__defret` locals inside it.
+// Its defers belong to the
 // enclosing function, which is why dl_expr_has_defer looks through one.
 //
-// Doing this at parse time also puts the replayed actions in front of irlower's
-// capture rewrite. Lowering only after lambda lifting (irlower.fern:58608) left
+// Doing this at parse time also puts the replayed actions in front of the lift's
+// capture rewrite. Lowering only after lambda lifting left
 // an assignment inside a deferred action writing a stack local instead of the
 // captured env slot — the deferred code ran and its result was discarded
 // (#7174).
@@ -19499,9 +19493,9 @@ function lower_defers_body(body0: ast.Stmt[], params: string[], ret: string, fn_
     i = i + 1;
   }
   // `?`-edge cleanup markers (#4334): the try operator is lowered long after
-  // this parse-time pass (irlower's lower_try), so its implicit early return
+  // this parse-time pass (in semsource), so its implicit early return
   // can't be expanded here like a StmtReturn. Instead, embed both cleanup
-  // lists in the body behind never-true guards; lower_try recognises the
+  // lists in the body behind never-true guards; semsource recognises the
   // guard idents and replays the guarded statements at the `?` failure edge
   // (plain defers first, then errdefers — native's TryOp order). The guards
   // are ordinary always-false flags, so on any consumer that does NOT know
@@ -19600,7 +19594,7 @@ function dl_ll_expr(e: ast.Expr): ast.Expr {
         return dl_vb_rebuild(c, dl_lower_lambda_bodies(vb_body(c)));
       }
       // A hand-written IIFE carrying a defer becomes its own scope, and is
-      // stamped so irlower calls it instead of inlining it (#7192). The
+      // stamped so the lowering calls it instead of inlining it (#7192). The
       // ExprLambda arm below does the scoping either way; the stamp is
       // what tells the two apart afterwards.
       if (dl_is_source_iife(c)) {
@@ -22231,7 +22225,7 @@ pub function infer_ret_types_module(mod: Module): Module {
 //
 // A purely syntactic pass (mirroring internal/parser/bounds_elide.go) that
 // marks array-index READS `arr[i]` inside a `while (i < arr.len())` loop as
-// Unchecked, so irlower drops the per-iteration bounds check + the per-access
+// Unchecked, so the lowering drops the per-iteration bounds check + the per-access
 // `len` reload (op_arr_get_nc). No type info is
 // consulted: the IR honours the flag ONLY on the true array path, so marking a
 // string / map index is a harmless no-op there.
@@ -25784,7 +25778,7 @@ function settle_float_expr(e: ast.Expr): ast.Expr {
 // invoked closure — `((): RT => { … })()` — with RT read off the arms, so
 // the literal in `var x: f64 = if (c) { 1 } else { 2 }` sits one level below the
 // destination with nothing to settle against. Settling the BRANCHES is enough
-// for both readers: the checker types the arms, and irlower's expr_is_f64 reads
+// for both readers: the checker types the arms, and the lowering reads
 // the IIFE's float-ness off its first branch's returned value.
 //
 // The closure's own `ret_type` is deliberately left alone. Stamping it f64
@@ -25972,7 +25966,7 @@ function settle_match_arms(m: ast.StmtMatch): ast.Stmt {
 
 // settle_float_value_branches settles the desugared value if/match — a 0-arg
 // call of a 0-param lambda whose body is a single StmtIf / StmtMatch, the shape
-// the E031 pass and irlower's expr_is_f64 both key on. Anything else, and any
+// the E031 pass and the lowering both key on. Anything else, and any
 // branch set that is not wholly settleable, comes back untouched.
 function settle_float_value_branches(e: ast.Expr): ast.Expr {
   match (e) {

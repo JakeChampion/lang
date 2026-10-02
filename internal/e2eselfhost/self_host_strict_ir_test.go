@@ -193,7 +193,7 @@ function main(): i32 {
 	// A match whose scrutinee is a call through a capture-free / capturing
 	// closure LOCAL returning Option: the lambda must lift to a hoisted __lam_N
 	// so the call resolves and the scrutinee's Option type recovers. Before the
-	// StmtMatch arm in irlower's subst_fcall_stmts, the leftover `f` reference in
+	// StmtMatch arm in callsubst.subst_fcall_stmts, the leftover `f` reference in
 	// `match (f())` blocked the binding lift, so the lambda fell to the inline
 	// escaping-closure path (const_func(<fn>$clo)) and bailed the module to AST
 	// (#3457 slice 3). Under the flag these must route IR (no exit-3 bail).

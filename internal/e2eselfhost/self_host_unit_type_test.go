@@ -14,7 +14,7 @@ import (
 // The front end is what needs a runtime check. `()` used to type i32 — the
 // constant it lowers to — while the type `()` resolved to nothing at all, so
 // the two disagreed and no destination spelled void ever saw the value. Both
-// now say void, which is what the annotator stamps and irlower reads to size a
+// now say void, which is what the annotator stamps and the lowering reads to size a
 // slot. One backend is enough to say the slot survived: nothing in the change
 // is target-specific.
 //

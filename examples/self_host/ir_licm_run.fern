@@ -2,7 +2,7 @@
 // code motion (ir.fern's hoist_loop_invariants, the op-list twin of native's
 // internal/ir/licm.go, #8245) and for the slot growth it depends on (#8247).
 //
-// Each case builds the op list irlower emits for a small `while` and prints the
+// Each case builds the op list the lowering emits for a small `while` and prints the
 // pass's output — the ops AND the frame count — so the companion Go test
 // (internal/e2eselfhost/self_host_ir_licm_test.go) pins what every backend
 // receives. The refusals carry the weight: an operand the body stores to, a
@@ -69,7 +69,7 @@ function add(): ir.Op {
   return ir.op_bin("add", 0, false);
 }
 
-// while_loop is the canonical `while` shape irlower emits around a condition
+// while_loop is the canonical `while` shape the lowering emits around a condition
 // and a body:
 //   block ; loop ; <cond> ; not ; brif 1 ; <body> ; br 0 ; end ; end
 function while_loop(cond: ir.Op[], body: ir.Op[]): ir.Op[] {

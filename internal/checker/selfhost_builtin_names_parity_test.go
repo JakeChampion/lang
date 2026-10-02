@@ -18,7 +18,7 @@ import (
 // internal/caps and internal/platforms — plus the two self-host capability
 // MIRRORS, and each of those six has a completeness test. None of them covers
 // the self-hosted COMPILER, which is the expensive half: parser.fern's name
-// list, ircore, ir (op + extension kind id), irlower, asmcore and the three
+// list, ircore, ir (op + extension kind id), semsource, ssarc, asmcore and the three
 // emitters.
 //
 // That gap is not hypothetical. `sleep_ns` was classified in all six places

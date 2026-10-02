@@ -11,13 +11,13 @@ import (
 
 // TestSelfHostJoinWasmIR pins `xs.join(sep)` on a string[] receiver lowering
 // through the self-host WASM IR path (#5328 wasm slice; closes the
-// module_calls_arr_str_join deferral in wasm_ir_deferrals_ok). irlower emits a
+// module_calls_arr_str_join deferral in wasm_ir_deferrals_ok). The lowering emits a
 // call of the __fern_arr_str_join runtime helper; on wasm that call routes via
 // wasm_ir.wasm_helper_symbol to the hand-written $__fern_str_join WAT
 // (wasm.str_join_helper, gated on @uses_arr_str_join). Before this, a join module
 // fell back to the legacy AST wasm emitter. Each case pipes a single program to
 // the `wasm_ir_run -ir` driver (which resolves no stdlib, so `.join` is a builtin
-// irlower intercepts), asserts the emitted WAT reached the join helper, then runs
+// the lowering intercepts), asserts the emitted WAT reached the join helper, then runs
 // it under wasmtime and checks the joined string's length as the exit code.
 func TestSelfHostJoinWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

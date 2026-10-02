@@ -9579,7 +9579,7 @@ func TestNonBreakingLoopStillDiverges(t *testing.T) {
 }
 
 // A `break` inside a block-, `if`- or `match`-expression targets the
-// enclosing loop like any other — irlower inlines the block — but
+// enclosing loop like any other — the lowering inlines the block — but
 // loopCanBreak walked statements only, so it never saw one there (#8562).
 // The loop was still reported as diverging, E052 stayed silent, and an
 // `i32` function fell off the end returning garbage. Every case anchors

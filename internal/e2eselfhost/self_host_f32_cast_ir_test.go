@@ -13,7 +13,7 @@ import (
 // A bare no-op `as f32` therefore FAILED to round to single precision: a value
 // that is not f32-representable (e.g. 16777217.0 = 2^24+1, or a large int)
 // stayed at full f64 precision, diverging from native — which gives f32 a true
-// 4-byte slot and rounds at the cast (cvtsd2ss / fcvt s,d). irlower now emits
+// 4-byte slot and rounds at the cast (cvtsd2ss / fcvt s,d). The lowering now emits
 // the f32_bits/f32_from_bits round-trip (demote to f32, promote back) on an
 // `as f32` cast, applying single-precision rounding while keeping the value in
 // the f64 slot. These tests pin that behaviour against the native

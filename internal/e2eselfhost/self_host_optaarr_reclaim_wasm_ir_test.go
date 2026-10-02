@@ -6,7 +6,7 @@ import (
 
 // TestSelfHostOptAarrReclaimWasmIR is the wasm port of
 // TestSelfHostOptAarrReclaimIRX86_64: the "OPTAARR:" crediting lives in shared
-// irlower.fern; the wasm release is the dedicated $__fern_optarrarr_free WAT
+// lowering; the wasm release is the dedicated $__fern_optarrarr_free WAT
 // body (wasm.optarrarr_free_func — per element, a uniquely-owned [tag@0,
 // payload@4] option box decs its Some payload then itself, then the outer
 // buffer), emitted only when the module lowers the call

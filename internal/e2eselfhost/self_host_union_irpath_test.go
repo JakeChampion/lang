@@ -10,7 +10,7 @@ import (
 // unionIRPathCases are UNION-type (`type Node = A | B`) programs whose value/
 // statement `match` binds a variant payload (#3179). A union variant is a
 // pre-existing struct with its REAL fields and NO synthetic `__ev` payload
-// field, so irlower's match-arm bind discriminates it from a true enum variant
+// field, so the lowering's match-arm bind discriminates it from a true enum variant
 // (`enum E { V(T) }`, whose desugaring HAS `__ev`): for the union member it
 // binds the WHOLE scrutinee box pointer typed with the variant's struct name
 // (no offset-8 payload read), so a later field read (`Num(x) => x.value`)

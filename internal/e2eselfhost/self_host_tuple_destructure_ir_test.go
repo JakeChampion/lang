@@ -10,7 +10,7 @@ import (
 
 // tupleDestructureIRCases pin `var (a, b) = E` / `let (a, b) = E` tuple
 // destructuring on the IR path. The destructure already lowers fully through IR
-// (irlower.fern's StmtVar arm emits op_tuple_get reads into the freshly-bound
+// (the lowering emits op_tuple_get reads into the freshly-bound
 // locals — no bail), but the existing TestSelfHostTupleDestructure* assert only
 // exit codes, which the legacy AST emitter also satisfies. So a silent regression
 // that kicked destructuring off the IR path would pass undetected — and the

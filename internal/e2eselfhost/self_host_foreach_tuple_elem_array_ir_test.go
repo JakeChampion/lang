@@ -147,7 +147,7 @@ func TestSelfHostForeachTupleElemArrayIR(t *testing.T) {
 	}
 }
 
-// The wasm leg: the fix lives in shared irlower.fern, so the wasm IR backend walks
+// The wasm leg: the fix lives in the shared lowering, so the wasm IR backend walks
 // the tuple-element array borrow through the same 4-byte-slot arr_get counted loop.
 func TestSelfHostForeachTupleElemArrayWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

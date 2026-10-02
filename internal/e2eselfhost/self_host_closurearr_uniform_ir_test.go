@@ -110,7 +110,7 @@ func TestSelfHostClosureArrUniformIRArm64(t *testing.T) {
 }
 
 // TestSelfHostClosureArrUniformWasmIR — the wasm leg; the rule lives in
-// irlower.fern, which every backend shares.
+// the lowering, which every backend shares.
 func TestSelfHostClosureArrUniformWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host closure-array uniformity wasm IR e2e")

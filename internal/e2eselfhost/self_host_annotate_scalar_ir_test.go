@@ -29,7 +29,7 @@ function main(): i32 { return (bigu() >> 40) as i32; }`}, // 216
 }
 
 // TestSelfHostAnnotateScalarIR_X86_64 pins the checker-stamped result type feeding
-// irlower's expr_is_u32 / expr_is_u64 through the IR path (#5531).
+// the lowering through the IR path (#5531).
 func TestSelfHostAnnotateScalarIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 

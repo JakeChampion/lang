@@ -1453,8 +1453,8 @@ pub struct LowerResult {
   // for it in a module produced whole. No emit writes it and no gate judges
   // it: nothing calls it, since every produced caller calls an instance.
   superseded: boolean,
-  // arr_slots: the local slots holding arrays. Read only by irlower_run's
-  // `-slots` dump; entry-zeroing covers the whole body range regardless.
+  // arr_slots: the local slots holding arrays. Read only by
+  // ircore.lowered_digest; entry-zeroing covers the whole body range regardless.
   arr_slots: i32[],
   // i64_slots: the local slots holding i64 values — the wasm backend declares
   // these (local i64); the register backends ignore it (i64 shares the 64-bit

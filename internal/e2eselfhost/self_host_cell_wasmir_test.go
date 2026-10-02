@@ -9,7 +9,7 @@ import (
 // the AST driver; this runs the cases through the self-host CLI, the path
 // #5510 is about.
 //
-// irlower lowers a Cell as a one-element array — `cell_new(v)` → `[v]`,
+// The lowering lowers a Cell as a one-element array — `cell_new(v)` → `[v]`,
 // `c.get()` → `c[0]`, `c.set(x)` → `c[0] = x` — so it uses the array
 // machinery every backend already has rather than needing three dedicated
 // wasm ops. These cases exist to pin that, since the desugar is the only thing

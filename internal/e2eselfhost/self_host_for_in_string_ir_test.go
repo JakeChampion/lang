@@ -7,7 +7,7 @@ import "testing"
 // foreach assumed an array layout (length @0, elements @ base+idx*8+8), but a
 // string is { data_ptr @0, len @8 } with byte elements, so it read the data
 // pointer as the length and 8-byte-indexed the header (#2822 — the reproducer
-// `for b in "AB"` returned 2 instead of 131). irlower now desugars a string
+// `for b in "AB"` returned 2 instead of 131). The lowering now desugars a string
 // foreach to a counted loop over STR.len() with a byte-index bind, reusing the
 // range-for + string-index paths.
 //

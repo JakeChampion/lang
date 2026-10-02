@@ -3,8 +3,8 @@ package e2eselfhost
 import "testing"
 
 // matchGuardIRCases pin match-arm GUARDS (`Pattern when <cond> => …`) to the
-// self-host IR path on x86-64 + wasm. A guarded arm lowers through IR — irlower
-// emits `lower_expr(guard)` + a not/br_if skip and propagates `.ok`, so the
+// self-host IR path on x86-64 + wasm. A guarded arm lowers through IR — the lowering
+// emits the guard + a not/br_if skip, so the
 // module stays IR-eligible — for both the enum-payload-variant arm and the
 // literal-match arm. No other self-host test exercises a `when` guard at all;
 // these cases check each exit code against the interp oracle, mirroring

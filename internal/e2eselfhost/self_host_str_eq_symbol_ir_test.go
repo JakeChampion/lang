@@ -9,7 +9,7 @@ import (
 )
 
 // `__fern_str_eq(a, b)` is the RUNTIME SYMBOL accepted as surface syntax, the
-// same shape as the `__rc_dec` / `__fern_rc_dec` hooks next to it in irlower.
+// same shape as the `__rc_dec` / `__fern_rc_dec` hooks next to it in the lowering.
 //
 // It exists for helper sources written on the raw-memory floor (#2649). Those
 // hold a string as the usize address of its box — `keys[i]` read back through

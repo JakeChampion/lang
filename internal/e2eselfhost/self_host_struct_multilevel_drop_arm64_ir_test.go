@@ -6,7 +6,7 @@ import (
 
 // TestSelfHostStructMultiLevelDropIRArm64 is the arm64 port of the MULTI-LEVEL
 // deep-drop (the x86 sibling is TestSelfHostStructMultiLevelDropIRX86_64). The
-// reclaim decision lives in the shared irlower `nested_field_deep_drop_ok` (now an
+// reclaim decision lives in the shared `irtables.nested_field_deep_drop_ok` (now an
 // acyclic-closure gate, not leaf-only), so arm64 inherits multi-level deep-drop
 // through the same generic k_struct emission arm — `bl __fn___struct_drop_B` for a
 // non-leaf inner B, which the old leaf gate never emitted.

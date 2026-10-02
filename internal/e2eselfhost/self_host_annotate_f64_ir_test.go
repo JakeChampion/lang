@@ -9,7 +9,7 @@ import (
 
 // annotateF64Cases exercise the typed-IR annotation pass (#5531,
 // docs/TYPED-IR-REWRITE.md). Each program's float-ness flows through a CALL
-// whose result type irlower's expr_is_f64 must recognise. Before the annotate
+// whose result type the lowering must recognise. Before the annotate
 // pass irlower re-derived that structurally (is_f64_ret_fn / the f64-builtin
 // tables); now checker.annotate_module stamps ExprCall.ty with the checker's
 // inferred result type and expr_is_f64 READS c.ty (asm_load_run.fern runs the
@@ -61,7 +61,7 @@ func annotateF64ProjDir(t *testing.T) (dir, mmc, stdlibRoot string, gcc string, 
 }
 
 // TestSelfHostAnnotateF64IR_X86_64 pins the typed-IR annotation feeding
-// irlower's expr_is_f64 through the self-host x86-64 IR path (#5531 slice 2).
+// the lowering through the self-host x86-64 IR path (#5531 slice 2).
 func TestSelfHostAnnotateF64IR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 

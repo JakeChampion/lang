@@ -19,7 +19,7 @@ import (
 //
 // Two halves are asserted here because the fix has two. asm_modload_run folds
 // from its own -target, the way fern.fern does, so the ISA is the one asked
-// for rather than the pointer width's default; and irlower answers an unfolded
+// for rather than the pointer width's default; and the lowering answers an unfolded
 // call anyway, so a driver that names no target still lowers. Compiling for
 // x86-64 is what separates them: the ISA default is arm64, so a program that
 // prints target_arch() and says "x86-64" can only have been folded.

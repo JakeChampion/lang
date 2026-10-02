@@ -78,7 +78,7 @@ func TestSelfHostAppendBorrowedParamX86_64(t *testing.T) {
 }
 
 // TestSelfHostAppendBorrowedParamArm64 — CI-gated arm64 counterpart; the
-// containment is shared irlower analysis, so both register backends inherit.
+// containment is shared lowering analysis, so both register backends inherit.
 func TestSelfHostAppendBorrowedParamArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

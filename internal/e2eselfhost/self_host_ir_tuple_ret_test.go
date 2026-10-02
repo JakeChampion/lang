@@ -5,10 +5,7 @@ import (
 )
 
 // TestSelfHostIRTupleReturnEligible LOCKS IN the IR-coverage widening for
-// tuple-returning functions. The differential gate (TestSelfHostAsmIRPath) can't
-// prove a program actually takes the IR path, because irlower is built to emit
-// asm byte-identical to the AST backend for the overlapping subset — so AST==IR
-// holds whether or not the IR path was used. This test instead asserts
+// tuple-returning functions. It asserts
 // the path probe (semlower.verdict, via eligBits) on
 // tuple-returning programs and encodes the per-case results in the exit code.
 // Before tuple-returning functions were lowered, lower_func bailed every `(...)`

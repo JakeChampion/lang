@@ -13,8 +13,8 @@ import (
 // across a call whenever the caller's binding survives it, which puts the
 // callee's append on the copy path. When every surviving use of that binding
 // is a call that provably cannot reach the field, the bracket protects nothing
-// and costs one full-buffer copy per call — the shape that dominates the
-// self-host append-cliff baseline (`irlower.LowerState.emit`, reached through
+// and costs one full-buffer copy per call — the shape that dominated the
+// self-host append-cliff baseline (the AST lowering's `LowerState.emit`, reached through
 // `lower_view_borrowed_parked`'s `s`, whose only later uses are predicates
 // that read no `ops`).
 //
