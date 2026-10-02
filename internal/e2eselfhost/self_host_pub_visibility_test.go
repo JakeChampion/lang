@@ -59,6 +59,8 @@ pub function take_open(own g: GuardedOpen): i32 { return g.d; }
 pub function own_guarded(): i32 { return eat_guarded(Guarded { d: 6 }); }
 const HIDDEN_N: i32 = 8;
 pub const SHOWN_N: i32 = 9;
+pub(package) function pkg_helper(): i32 { return 7; }
+pub(package) struct PkgBox { v: i32 }
 `
 	if err := os.WriteFile(filepath.Join(dir, "lib.fern"), []byte(lib), 0o644); err != nil {
 		t.Fatalf("write lib.fern: %v", err)
@@ -81,7 +83,7 @@ pub const SHOWN_N: i32 = 9;
 		if wantMsg != "" && !strings.Contains(errBuf.String(), wantMsg) {
 			t.Errorf("%s: stderr missing %q\ngot: %s", name, wantMsg, errBuf.String())
 		}
-		if wantMsg == "" && strings.Contains(errBuf.String(), "is not exported") {
+		if wantMsg == "" && (strings.Contains(errBuf.String(), "is not exported") || strings.Contains(errBuf.String(), "pub(package)")) {
 			t.Errorf("%s: reported a visibility error on a legal program\ngot: %s", name, errBuf.String())
 		}
 	}
@@ -227,6 +229,51 @@ function hidden(): i32 { return 42; }
 	check(t, "own_private_must_consume_type",
 		"import \"./lib\";\nfunction main(): i32 { return lib.own_guarded() - 6; }\n",
 		0, "")
+
+	// --- `pub(package)`: visible to modules in the same directory only ------
+	//
+	// A package-scoped declaration is exported to its own package, so a
+	// sibling in lib's directory uses it and a module one directory down is
+	// refused with native's message. The entry is a module like any other: it
+	// is in lib's package here and outside it from pkgsub/.
+	if err := os.MkdirAll(filepath.Join(dir, "pkgsub"), 0o755); err != nil {
+		t.Fatalf("mkdir pkgsub: %v", err)
+	}
+	for name, src := range map[string]string{
+		"user.fern":      "import \"../lib\";\npub function call_pkg(): i32 { return lib.pkg_helper(); }\n",
+		"user_type.fern": "import \"../lib\";\npub function make(): i32 { let b: lib.PkgBox = lib.PkgBox { v: 1 }; return b.v; }\n",
+		"peer.fern":      "pub(package) function peer_helper(): i32 { return 3; }\n",
+		// `../pkgsub/peer` spells pkgsub/ the long way round: still one package.
+		"peer_user.fern": "import \"../pkgsub/peer\";\npub function via_dotdot(): i32 { return peer.peer_helper(); }\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, "pkgsub", name), []byte(src), 0o644); err != nil {
+			t.Fatalf("write pkgsub/%s: %v", name, err)
+		}
+	}
+
+	check(t, "pkg_same_dir",
+		"import \"./lib\";\nfunction main(): i32 { return lib.pkg_helper() - 7; }\n",
+		0, "")
+
+	check(t, "pkg_type_same_dir",
+		"import \"./lib\";\nfunction main(): i32 { let b: lib.PkgBox = lib.PkgBox { v: 2 }; return b.v - 2; }\n",
+		0, "")
+
+	check(t, "pkg_other_dir",
+		"import \"./pkgsub/user\";\nfunction main(): i32 { return user.call_pkg(); }\n",
+		1, "lib.pkg_helper is `pub(package)` — only modules in the same package as lib may use it")
+
+	check(t, "pkg_type_other_dir",
+		"import \"./pkgsub/user_type\";\nfunction main(): i32 { return user_type.make(); }\n",
+		1, "lib.PkgBox is `pub(package)` — only modules in the same package as lib may use it")
+
+	check(t, "pkg_dotdot_same_dir",
+		"import \"./pkgsub/peer_user\";\nfunction main(): i32 { return peer_user.via_dotdot() - 3; }\n",
+		0, "")
+
+	check(t, "pkgsub/pkg_entry_other_dir",
+		"import \"../lib\";\nfunction main(): i32 { return lib.pkg_helper(); }\n",
+		1, "lib.pkg_helper is `pub(package)` — only modules in the same package as lib may use it")
 
 	// REJECT on the COMPILE path too, not just `-check`: native refuses to
 	// BUILD such a program, and emitting a binary anyway is the divergence this
