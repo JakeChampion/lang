@@ -1482,7 +1482,7 @@ func buildWriteFileSpanBodyP2(idxs map[string]uint32, raw bool) []byte {
 			body = inst.InstCall(body, streamDrop)
 			body = inst.InstLocalGet(body, 10)
 			body = inst.InstCall(body, descDrop)
-			body = inst.InstI32Const(body, 0)
+			body = inst.InstI32Const(body, 29) // EIO
 			body = inst.InstLocalSet(body, 17)
 			body = buildWriteFileErr(body, buildIoErr, allocRc1, 17)
 		}

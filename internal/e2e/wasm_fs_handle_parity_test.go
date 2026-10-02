@@ -128,7 +128,8 @@ func (o parityOpts) runDir(t *testing.T) string {
 	return t.TempDir()
 }
 
-// The four legs run src as `o` says and require main to return 0.
+// The legs run src as `o` says and require main to return 0. The
+// self-host component reports main through its exit status alone.
 
 func runParityInterp(t *testing.T, src string, o parityOpts) {
 	t.Helper()
@@ -169,13 +170,34 @@ func runParityPreview1(t *testing.T, src string, o parityOpts) {
 
 func runParityPreview2(t *testing.T, src string, o parityOpts) {
 	t.Helper()
-	comp := buildComponent(t, src)
+	comp := buildNativeComponent(t, src, nativeMainResult)
 	stdout, stderr, ec := runComponent(t, comp, runOpts{workDir: o.runDir(t), stdinFile: o.stdin, maxResources: o.maxResources})
 	if ec != 0 {
 		t.Fatalf("wasm preview 2: wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
 	}
 	if got := parseMainResult(t, stdout); got != 0 {
 		t.Errorf("wasm preview 2: main = %d, want 0 (the code names the case)\nstdout:\n%s\nstderr:\n%s", got, stdout, stderr)
+	}
+}
+
+// runParitySelfHostCore runs src as the self-host's preview-1 core module.
+func runParitySelfHostCore(t *testing.T, src string, o parityOpts) {
+	t.Helper()
+	stdout, stderr, ec := runComponent(t, buildComponent(t, src), runOpts{workDir: o.runDir(t), stdinFile: o.stdin})
+	if ec != 0 {
+		t.Fatalf("self-host wasm core: wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
+	}
+	if got := parseMainResult(t, stdout); got != 0 {
+		t.Errorf("self-host wasm core: main = %d, want 0 (the code names the case)\nstdout:\n%s\nstderr:\n%s", got, stdout, stderr)
+	}
+}
+
+// runParitySelfHostComponent runs src as the self-host's preview-2 component.
+func runParitySelfHostComponent(t *testing.T, src string, o parityOpts) {
+	t.Helper()
+	stdout, stderr, ec := runCLIComponent(t, src, runOpts{workDir: o.runDir(t), stdinFile: o.stdin, maxResources: o.maxResources})
+	if ec != 0 {
+		t.Errorf("self-host wasm component: exit %d, want 0\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
 	}
 }
 
@@ -210,4 +232,23 @@ func TestWASMPreview1ReadChunkFailure(t *testing.T) {
 }
 func TestWASMReadChunkFailure(t *testing.T) {
 	runParityPreview2(t, failedReadSource, parityOpts{stdin: dirStdin(t)})
+}
+
+func TestSelfHostWasmCoreClosedHandle(t *testing.T) {
+	runParitySelfHostCore(t, closedHandleSource, parityOpts{})
+}
+func TestSelfHostWasmClosedHandle(t *testing.T) {
+	runParitySelfHostComponent(t, closedHandleSource, parityOpts{})
+}
+func TestSelfHostWasmCoreRemoveDirAllPlainFile(t *testing.T) {
+	runParitySelfHostCore(t, removeDirAllFileSource, parityOpts{})
+}
+func TestSelfHostWasmRemoveDirAllPlainFile(t *testing.T) {
+	runParitySelfHostComponent(t, removeDirAllFileSource, parityOpts{})
+}
+func TestSelfHostWasmCoreReadChunkFailure(t *testing.T) {
+	runParitySelfHostCore(t, failedReadSource, parityOpts{stdin: dirStdin(t)})
+}
+func TestSelfHostWasmReadChunkFailure(t *testing.T) {
+	runParitySelfHostComponent(t, failedReadSource, parityOpts{stdin: dirStdin(t)})
 }
