@@ -62,6 +62,7 @@ import "./util";
 // comparing like for like.
 pub function provided_names(): string[] {
   return [
+    "__fern_oob_abort",
     // reference counting, and the grow-bracket share pair
     "__fern_rc_inc",
     "__fern_rc_dec",

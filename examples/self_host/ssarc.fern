@@ -8,6 +8,7 @@ import "./ssadeps";
 import "./ssasem";
 import "./ssalayout";
 import "./ssaunits";
+import "./ssabytes";
 import "./semrecords";
 import "./semtypes";
 import "./typeinfo";
@@ -75,6 +76,47 @@ function elem_type(t: typeinfo.Type): typeinfo.Type {
     return a.elem;
   }
   return typeinfo.unchecked();
+}
+
+function byte_view(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = t {
+    return a.view && ssasem.is_u8(a.elem);
+  }
+  return false;
+}
+
+function contains_byte_view(t: typeinfo.Type): boolean {
+  if (byte_view(t)) {
+    return true;
+  }
+  if let typeinfo.TypeArray(a) = t {
+    return contains_byte_view(a.elem);
+  }
+  if let typeinfo.TypeTuple(tup) = t {
+    for elem in tup.elements {
+      if (contains_byte_view(elem)) {
+        return true;
+      }
+    }
+  }
+  if let typeinfo.TypeMap(m) = t {
+    return contains_byte_view(m.key) || contains_byte_view(m.value);
+  }
+  if let typeinfo.TypeStruct(st) = t {
+    for arg in st.args {
+      if (contains_byte_view(arg)) {
+        return true;
+      }
+    }
+  }
+  if let typeinfo.TypeUnion(u) = t {
+    for arg in u.args {
+      if (contains_byte_view(arg)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function arr_make_op(elem: typeinfo.Type, n: i32): ir.Op {
@@ -260,6 +302,9 @@ function walked(t: typeinfo.Type): boolean {
 // A map's helper releases one unit of a counted box: a decrement while the
 // box is shared, and the columns and the block for the last unit.
 function release_name(t: typeinfo.Type, f: ssasem.Func): string {
+  if (byte_view(t)) {
+    return ssabytes.release_name();
+  }
   if (ssasem.is_view(t)) {
     return "__fern_str_view_free";
   }
@@ -1025,12 +1070,19 @@ function outlined_release(t: typeinfo.Type, f: ssasem.Func): boolean {
 function drop_value_inline(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
   if (has_children(t, f)) {
     r = emit(r, ir.op_load_local(slot));
-    r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+    // A box with children cannot be a tagged byte view. Preserve this fact
+    // inside generated release helpers too, where slots are not SSA values.
+    r = emit(r, aligned_unique());
     r = emit(r, ir.op_if(0));
     r = drop_children(r, slot, t, scratch, f);
     r = emit(r, ir.op_end());
   }
   return release(r, slot, t, f);
+}
+
+function aligned_unique(): ir.Op {
+  let op: ir.Op = ir.op_call_direct("__fern_rc_is_unique", 1);
+  return ir.Op { ...op, i64_imm: 4 };
 }
 
 // A builtin union's box carries no shape pointer, so the walk selects its one
@@ -1163,7 +1215,8 @@ function drop_variant_chain(own r: irtables.LowerResult, t: typeinfo.Type, f: ss
   r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
   r = emit(r, ir.op_brif(1));
   r = emit(r, ir.op_load_local(next));
-  r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+  // The next link has the same nominal union type as the current node.
+  r = emit(r, aligned_unique());
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_else());
   r = release(r, next, t, f);
@@ -2357,7 +2410,7 @@ function one_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
 }
 
 function optimized_helper(h: irtables.LowerResult): irtables.LowerResult {
-  let optimized: ir.OptimizedOps = ir.optimize_ops(h.ops, 1, h.n_locals);
+  let optimized: ir.OptimizedOps = ir.optimize_ops(h.ops, h.n_params, h.n_locals);
   return irtables.LowerResult { ...h, ops: optimized.ops, n_locals: optimized.n_locals };
 }
 
@@ -2397,6 +2450,19 @@ pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
 // helpers_not_in is drop_helpers less the symbols `done` carries.
 function helpers_not_in(f: ssasem.Func, done: util.NameIndex): irtables.LowerResult[] {
   let out: irtables.LowerResult[] = [];
+  let bytes: boolean = false;
+  for t in schema_types(f) {
+    if (contains_byte_view(t)) {
+      bytes = true;
+    }
+  }
+  if (bytes) {
+    for h in ssabytes.helpers() {
+      if (!done.has(h.name)) {
+        out = out.append(h);
+      }
+    }
+  }
   for rec in f.records.list {
     if (has_children(rec.ty, f)) {
       out = append_helpers(out, rec.ty, f, done);
@@ -3120,16 +3186,26 @@ function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, 
     if (ssasem.is_text(f.values[ins.args[0]])) {
       return emit(r, ir.op_str_len());
     }
+    if (byte_view(f.values[ins.args[0]])) {
+      return emit(r, ssabytes.read(ins.args[0], false, false));
+    }
     return emit(r, ir.op_arr_len());
   }
   if (ins.kind_tag == ssasem.slice()) {
     return emit(r, ir.op_str_slice());
   }
   if (ins.kind_tag == ssasem.arr_slice()) {
+    if (byte_view(f.values[ins.args[0]])) {
+      return emit(r, ir.op_call_direct(ssabytes.slice_name(), 3));
+    }
     return arr_slice(r, f, elem_type(f.values[ins.result]));
   }
-  if (ins.kind_tag == ssasem.str_bytes() || ins.kind_tag == ssasem.str_byte_view()) {
-    // Transitional storage: preserve source anchors before changing the ABI.
+  if (ins.kind_tag == ssasem.str_byte_view()) {
+    r = emit(r, ir.op_call_direct("__fern_rc_inc", 1));
+    r = emit(r, ir.op_const_i32(2));
+    return emit(r, ir.op_raw_addr());
+  }
+  if (ins.kind_tag == ssasem.str_bytes()) {
     return emit(r, ir.packed(ir.op_str_bytes()));
   }
   if (ins.kind_tag == ssasem.str_index() && ins.imm == 1) {
@@ -3142,6 +3218,9 @@ function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, 
     return map_op(r, ins, f);
   }
   if (ins.kind_tag == ssasem.array_get()) {
+    if (byte_view(f.values[ins.args[0]])) {
+      return emit(r, ssabytes.read(ins.args[0], true, ins.imm == 1));
+    }
     return emit(r, arr_get_op(f.values[ins.result], ins.imm == 1));
   }
   if (ins.kind_tag == ssasem.tuple_get()) {
@@ -6653,7 +6732,33 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irta
   if (e.why != "") {
     return empty(e.why);
   }
+  e = Emit { ...e, r: aligned_rc(e.r, f) };
+  e = Emit { ...e, r: ssabytes.lower_reads(e.r) };
   e = Emit { ...e, r: place_views(e.r) };
   let optimized: ir.OptimizedOps = ir.optimize_ops(e.r.ops, e.r.n_params, e.r.n_locals);
   return irtables.LowerResult { ...e.r, ops: optimized.ops, n_locals: optimized.n_locals };
+}
+
+// A typed reference other than [u8] cannot carry its descriptor tag. Keep
+// that proof on direct value loads so native RC need not mask every ordinary
+// string, array and record. Raw pointers and scratch slots remain generic.
+// i64_imm == 4 on these two calls is an optional alignment proof; consumers
+// that do not use it retain the fully general runtime behavior.
+function aligned_rc(own r: irtables.LowerResult, f: ssasem.Func): irtables.LowerResult {
+  let ops: ir.Op[] = r.ops;
+  let i: i32 = 1;
+  while (i < ops.len()) {
+    let op: ir.Op = ops[i];
+    let before: ir.Op = ops[i - 1];
+    if (op.kind_tag == ir.kind_id("call_direct") && op.i32_imm == 1
+      && (op.str == "__fern_rc_inc" || op.str == "__fern_rc_is_unique")
+      && before.kind_tag == ir.kind_id("load_local") && before.i32_imm < f.values.len()) {
+      let t: typeinfo.Type = f.values[before.i32_imm];
+      if (ssasem.reference(t) && !byte_view(t)) {
+        ops = ops.with(i, ir.Op { ...op, i64_imm: 4 });
+      }
+    }
+    i = i + 1;
+  }
+  return irtables.LowerResult { ...r, ops: ops };
 }

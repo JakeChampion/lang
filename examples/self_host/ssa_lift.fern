@@ -2159,7 +2159,13 @@ function lift_call_direct(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SI
     }
     let pv: i32 = nvals;
     nvals = nvals + 1;
-    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 11, result: pv, args: cargs, imm: 0, str: op.str });
+    // The typed lowering may prove a reference has no byte-view tag.
+    // Preserve only that optional RC proof; other calls have no such flag.
+    let aligned: i32 = 0;
+    if (op.i64_imm == 4 && (op.str == "__fern_rc_inc" || op.str == "__fern_rc_is_unique")) {
+      aligned = 4;
+    }
+    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 11, result: pv, args: cargs, imm: aligned, str: op.str });
     stack = stack.append(pv);
   }
 

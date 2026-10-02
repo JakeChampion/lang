@@ -2899,6 +2899,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jnz .Lshrcinc_ret\n");
   s = s.write("    cmpq $0x10000, %rax\n");
   s = s.write("    jb .Lshrcinc_ret\n");
+  // Byte views retain the untagged descriptor but return their original value.
+  s = s.write("    andq $-3, %rax\n");
   s = s.write("    movl -8(%rax), %ecx\n");
   s = s.write(san_poison_check("%ecx"));
   s = s.write("    testl %ecx, %ecx\n");
@@ -2906,6 +2908,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    addl $1, %ecx\n");
   s = s.write("    movl %ecx, -8(%rax)\n");
   s = s.write(".Lshrcinc_ret:\n");
+  s = s.write("    movq 8(%rsp), %rax\n");
   s = s.write("    ret\n");
   s = s.write("__fn___fern_rc_underflow_count:\n");
   s = s.write("    movl __fern_rc_underflow(%rip), %eax\n");
@@ -3368,6 +3371,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jnz .Lshuniq_ret\n");
   s = s.write("    cmpq $0x10000, %rcx\n");
   s = s.write("    jb .Lshuniq_ret\n");
+  s = s.write("    andq $-3, %rcx\n");
   s = s.write("    movl -8(%rcx), %edx\n");
   s = s.write(san_poison_check("%edx"));
   s = s.write("    testl %edx, %edx\n");
@@ -6789,6 +6793,10 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
   let rc: string = "-8(" + p + ")";
   let guard: string = "    testb $1, " + ssa_r8(p) + "\n    jnz " + done + "\n"
     + "    cmpq $0x10000, " + p + "\n    jb " + done + "\n";
+  if (ins.imm != 4) {
+    guard = guard + "    movq " + p + ", %rdx\n    andq $-3, %rdx\n";
+    rc = "-8(%rdx)";
+  }
   if (ins.str == "__fern_rc_is_unique") {
     let d: string = ssa_dst(reg_of, ins.result);
     s = s.write("    xorl %ecx, %ecx\n" + guard);
@@ -7668,10 +7676,10 @@ struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave:
 // edge when it is. An inline uniqueness test of `a` fuses as `unique`: its
 // guards leave the flags an equality compare would. n is 0 when the block
 // ends some other way.
-struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean }
+struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean }
 
 function ssa_no_fuse(): SsaFuse {
-  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false };
+  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false, aligned: false };
 }
 
 // ssa_fuse finds the compare a block's brif can read as flags: the block's
@@ -7691,7 +7699,7 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
   let n: i32 = 1;
   let inverted: boolean = false;
   if (last.kind_tag == 10 && last.str == "!") {
-    let value_test: SsaFuse = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false };
+    let value_test: SsaFuse = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false };
     if (blk.insts.len() < 2) {
       return value_test;
     }
@@ -7706,15 +7714,15 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
     inverted = true;
   }
   if (ssa_unique_test(cmp)) {
-    return SsaFuse { n: n, tag: ir.kind_id("eq"), inverted: inverted, a: cmp.args[0], b: 0, unique: true };
+    return SsaFuse { n: n, tag: ir.kind_id("eq"), inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4 };
   }
   if (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) {
     return ssa_no_fuse();
   }
   if (fr.imm.is_imm[cmp.args[0]]) {
-    return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false };
+    return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false };
   }
-  return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false };
+  return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
 }
 
 // ssa_join is the label a block's fused test joins at; a rotated latch
@@ -8077,7 +8085,7 @@ function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, 
     return s;
   }
   if (fu.unique) {
-    return ssa_unique_flags(reg_of, fu.a, join, s);
+    return ssa_unique_flags(reg_of, fu.a, fu.aligned, join, s);
   }
   s = ssa_read(reg_of, fu.a, "%r11", s);
   s = ssa_read_rhs(fr, reg_of, fu.b, "%rcx", s);
@@ -8087,12 +8095,17 @@ function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, 
 // ssa_unique_flags is ssa_rc_prim's uniqueness test as flags: ZF is set only
 // when the count is exactly one. Each guard's early exit already leaves ZF
 // clear (a set tag bit; a pointer below, so unequal to, the floor).
-function ssa_unique_flags(reg_of: i32[], v: i32, join: string, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_unique_flags(reg_of: i32[], v: i32, aligned: boolean, join: string, s: asmcore.EmitState): asmcore.EmitState {
   s = helper_call_needs("__fern_rc_is_unique", s);
   s = ssa_read(reg_of, v, "%r11", s);
   let p: string = ssa_src(reg_of, v, "%r11");
   s = s.write("    testb $1, " + ssa_r8(p) + "\n    jnz " + join + "\n    cmpq $0x10000, " + p + "\n    jb " + join + "\n");
-  s = s.write(ssa_rc_is_one("-8(" + p + ")", s.rc_free_debug) + join + ":\n");
+  let rc: string = "-8(" + p + ")";
+  if (!aligned) {
+    s = s.write("    movq " + p + ", %rdx\n    andq $-3, %rdx\n");
+    rc = "-8(%rdx)";
+  }
+  s = s.write(ssa_rc_is_one(rc, s.rc_free_debug) + join + ":\n");
   return s;
 }
 
@@ -9452,6 +9465,9 @@ function emit_ir_op_map_keys(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState 
 // SSA backend's. A call_direct does not imply a need, so without these a
 // call site is emitted against a body the runtime never writes.
 function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (name == "__fern_oob_abort") {
+    s = s.need("heap");
+  }
   if (name == "__fern_i32_to_string") {
     s = s.need("heap");
     s = s.need("i32_to_string");

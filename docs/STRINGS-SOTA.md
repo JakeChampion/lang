@@ -777,20 +777,20 @@ without allocating, on both `string` and `str` receivers. Indexing is
 bounds-checked. `.bytes()` remains the copying constructor for an owned
 `u8[]`.
 
-Issue #5632 added a migrated consumer and differential coverage, but the
-primary compiler still lowers `as_bytes()` through the copying byte-array
-operation. The 2026-10-02 audit measured one allocation during each conversion
-in six cases on Darwin and core WebAssembly: a heap string, a long literal,
-a short literal, an empty string, a `str` parameter and a view returned from
-a string parameter. Each case verified every byte through an alias and
-finished with balanced allocations and zero live bytes. Source construction
-was outside the measured interval. The zero-allocation criterion remains open.
+Issue #5632 added migrated consumers and differential coverage. The primary
+compiler now gives string-backed byte views a tagged descriptor and preserves
+ordinary array lending. Actual stage-2 allocation tests verify zero-allocation
+conversion for both receivers, with balanced lifetimes through aliases,
+calls and containers. The existing CRC32 consumer also loses its hidden
+conversion allocation. Bounds and ownership tests pass on Linux x86-64,
+Linux ARM64 and WASM. See [the runtime report](STRING-BYTE-VIEWS-2026-10-02.md)
+for measurements and reproduction.
 
 The lifetime rule from #4814 is now established: escaping views must refer
-to parameter or static storage. The runtime change must preserve that rule
-through calls, returns and containers. Preserving array-versus-view identity
-and explicit lending in typed IR is the first prerequisite; it does not by
-itself remove the copy.
+to parameter or static storage. Typed array-versus-view identity, explicit
+lending and source anchors preserve it through calls, returns and containers.
+Production lowering rejects a returned byte view over local storage;
+frontend-only E063 diagnostic parity and merge validation remain outstanding.
 
 ### D9 - Guarantee UTF-8 validity on `string`. **IN PROGRESS** (#5634, #5714)
 
@@ -1177,7 +1177,7 @@ Tracked as epic #5626; issue numbers below.
 | 3 | **D2** (#5629) — the `char` type — **DONE** | — | Checker + `std/utf8` + `std/unicode` signatures. Big but mechanical; unblocks honest naming everywhere. |
 | 4 | **D3 + D4** (#5630) — flip the default, full case mapping — **DONE** | 1, 3 | Touches the self-host builtin (`irlower.fern` / `asmcore.fern`) **and** the native stdlib — see D3's implementation note. Differential coverage required. |
 | 5 | **D5** (#5631) — normalization + `eq_canonical` — **DONE** | 1 | Shipped `nfc`/`nfd`/`eq_canonical`/`is_nfc`/`is_nfd`. NFKC/NFKD declined — a second full table for a lossy transform. |
-| 6 | **D8** (#5632) - `[u8]` string view - **IN PROGRESS** | - | API and consumer exist; the primary compiler still allocates during `as_bytes()`. Preserve the established #4814 lifetime rule when replacing the runtime representation. |
+| 6 | **D8** (#5632) - `[u8]` string view - **IN PROGRESS** | - | Allocation-free primary runtime and consumer checks implemented. Finish frontend E063 diagnostic parity and merge validation. |
 | 7 | **D6** (#5633) — grapheme segmentation — **DONE**; word segmentation followed under #5552 | 1, 3 | Opt-in. NOT the largest table after all (~17 KB vs normalization's ~58 KB). Returns `str[]` views (was `string[]` until #5695 was fixed). Word_Break coalesces to 1085 ranges, ~13 KB; a program that does not segment words is byte-identical to one built before it existed. |
 | 8 | **D9** (#5634, #5714): the UTF-8 validity invariant, **IN PROGRESS** | 6 | `s[a:b]` is `Option[str]`; file reads and regex text results validate, ASCII-byte conversion refuses non-ASCII, and RNG output is bytes. Remaining text-typed raw paths still need migration; see the audit at the top. |
 | 9 | **D10** (#5635) — document the path assumption — **DONE** | — | Doc-only. Stated in `std/path`, `std/io`, and `read_dir`'s builtin signature. |
