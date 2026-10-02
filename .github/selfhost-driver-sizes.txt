@@ -429,14 +429,14 @@
 # 36888675074.
 # 2026-10-02 — irlower_run.fern removed: it drove only the AST lowering, which
 # nothing calls any more.
-fern.fern/stage2 13040616
-fern.fern 13040616
-asm_load_run.fern 10866392
-asm_modload_run.fern 9922264
-asm_ir_run.fern 9698632
-asm_run.fern 9123464
-wasm_ir_run.fern 9120048
-wasm_run.fern 9117408
-wasm_runio_run.fern 9116728
+fern.fern/stage2 10738872
+fern.fern 10737128
+asm_load_run.fern 8721320
+asm_modload_run.fern 7618432
+asm_ir_run.fern 7420200
+asm_run.fern 6813576
+wasm_ir_run.fern 6878120
+wasm_run.fern 6878824
+wasm_runio_run.fern 6878184
 asm_pathprobe_run.fern 3965592
 checker_modload_run.fern 2386128
