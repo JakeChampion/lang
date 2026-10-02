@@ -7303,6 +7303,41 @@ function main(): i32 {
     return 0;
 }
 `},
+	// A local handed to an `own` parameter and stored to again after
+	// straight-line statements that do not name it is moved at the call
+	// (#11093): ys is stored back only after xs, and gap's xs after an
+	// unrelated var. Each value is freed once.
+	{name: "a-local-stored-after-a-gap-moves-at-the-call", atLeast: 52, want: "0|15\n", src: `
+import "std/i32";
+struct Pair { a: i64[], b: i64[] }
+@noinline function step(own xs: i64[], own ys: i64[], k: i64): Pair {
+    return Pair { a: xs.append(k), b: ys.append(k * 2) };
+}
+@noinline function take(own xs: i64[]): i32 { return xs.len() as i32; }
+function threaded(n: i32): i32 {
+    var xs: i64[] = [];
+    var ys: i64[] = [1];
+    var i: i32 = 0;
+    while (i < n) {
+        var p: Pair = step(xs, ys, i as i64);
+        xs = p.a;
+        ys = p.b;
+        i = i + 1;
+    }
+    return xs.len() as i32 + ys.len() as i32;
+}
+function gap(): i32 {
+    var xs: i64[] = [1, 2];
+    var r: i32 = take(xs);
+    var m: i32 = r + 1;
+    xs = [3];
+    return m + xs.len() as i32;
+}
+function main(): i32 {
+    print((threaded(5) + gap()).to_string());
+    return 0;
+}
+`},
 	{name: "an-erased-generic-forwarding-its-function-parameter", atLeast: 51, want: "0|5 wx\n", src: `
 import "std/i32";
 struct Slot[T] { v: T }

@@ -16080,21 +16080,76 @@ function lu_rebind_site(site: LuSite, name: string): boolean {
       }
     },
     ast.StmtVar(v) => {
-      // `var y = f(.., x, ..); x = y;` — the store supersedes x before anything
-      // else runs.
+      // `var y = f(.., x, ..); …; x = y;` — the store supersedes x before
+      // anything reads it.
       if let ast.ExprCall(_) = v.init {
-        if (site.idx + 1 < site.stmts.len() && astwalk.count_ident_expr(v.init, name) == 1) {
-          if let ast.StmtAssign(nxt) = site.stmts[site.idx + 1] {
-            if (nxt.target == name && astwalk.count_ident_expr(nxt.value, name) == 0) {
-              return true;
-            }
-          }
+        if (astwalk.count_ident_expr(v.init, name) == 1) {
+          return lu_rebound_after(site, name);
         }
       }
     },
     _ => {}
   }
   return false;
+}
+
+// lu_rebound_after: a later statement of the list stores to `name` without
+// reading it, and every statement before that store is straight-line code that
+// does not name it (#11093).
+function lu_rebound_after(site: LuSite, name: string): boolean {
+  var j: i32 = site.idx + 1;
+  while (j < site.stmts.len()) {
+    if let ast.StmtAssign(a) = site.stmts[j] {
+      if (a.target == name) {
+        if (astwalk.count_ident_expr(a.value, name) != 0) {
+          return false;
+        }
+        var k: i32 = site.idx + 1;
+        while (k < j) {
+          if (!lu_straight(site.stmts[k]) || lu_mentions(site.stmts[k], name) != 0) {
+            return false;
+          }
+          k = k + 1;
+        }
+        return true;
+      }
+    }
+    j = j + 1;
+  }
+  return false;
+}
+
+// lu_straight: a statement that runs through to the next one, so it cannot
+// leave the list before the store does.
+function lu_straight(st: ast.Stmt): boolean {
+  match (st) {
+    ast.StmtVar(v) => {
+      return !lu_has_try(v.init);
+    },
+    ast.StmtAssign(a) => {
+      return !lu_has_try(a.value);
+    },
+    ast.StmtExpr(x) => {
+      return !lu_has_try(x.value);
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function lu_has_try(e: ast.Expr): boolean {
+  return astwalk.fold_expr_pruned(e, false, lu_try_at, astwalk.not_lambda);
+}
+
+function lu_try_at(x: ast.Expr, own found: boolean): boolean {
+  if let ast.ExprUnary(u) = x {
+    if (u.op == "try_") {
+      return true;
+    }
+  }
+  return found;
 }
 
 // lu_call collects the keys of `c`'s own-position arguments that die at it.
