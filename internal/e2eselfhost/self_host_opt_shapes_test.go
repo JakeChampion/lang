@@ -305,6 +305,30 @@ function main(): i32 { return roll("the quick brown fox jumps over the lazy dog"
 `,
 		want:   map[string][]string{"x86-64-linux": {`\bmovslq %\w+, %r\w+`}, "arm64-linux": {`\bsxtw x\d+, w\d+\b`}},
 		forbid: map[string][]string{"x86-64-linux": {`imulq \$1000003, %\w+, (%\w+)\n\s+movslq`}, "arm64-linux": {`\bmul (x\d+), x\d+, x\d+\n\s+sxtw`}}},
+	// A loop counter stepped by one under `i < n` cannot overflow, so its
+	// step keeps no sign extension even though the test reads it whole.
+	{name: "counter_step_unwrapped", fn: "count_odd", exit: 21, src: `
+@noinline function count_odd(xs: i32[]): i32 {
+    let n: i32 = 0;
+    let i: i32 = 0;
+    while (i < xs.len()) { if ((xs[i] & 1) == 1) { n = n + xs[i]; } i = i + 1; }
+    return n;
+}
+function main(): i32 { return count_odd([1, 2, 3, 4, 5, 6, 12]) + 12; }
+`,
+		forbid: map[string][]string{"x86-64-linux": {`addq \$1, %(\w+)\n\s+movslq`}, "arm64-linux": {`\badd (x\d+), x\d+, #1\n\s+sxtw`}}},
+	// Under `<=` the step can pass INT32_MAX, so it keeps its wrap, and the
+	// counter still turns negative where it overflows.
+	{name: "counter_le_keeps_wrap", fn: "climb", exit: 3, src: `
+@noinline function climb(start: i32): i32 {
+    let i: i32 = start;
+    let steps: i32 = 0;
+    while (i <= 2147483647) { i = i + 1; steps = steps + 1; if (i < 0) { return steps; } }
+    return 0;
+}
+function main(): i32 { return climb(2147483645); }
+`,
+		want: map[string][]string{"x86-64-linux": {`addq \$1, %(\w+)\n\s+movslq`}, "arm64-linux": {`\badd (x\d+), x\d+, #1\n\s+sxtw`}}},
 	// A multiply by a power of two is a shift.
 	{name: "strength_mul_pow2", fn: "times8", exit: 40, src: `
 @noinline function times8(x: i32): i32 { return x * 8; }

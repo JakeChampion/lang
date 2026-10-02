@@ -2277,15 +2277,16 @@ pub function register_form(f: SFunc): SFunc {
 // reads its own high half, as do a shift's count and the narrowing unaries, so
 // the wrap the lowering puts after each 32-bit op is needed only where the
 // value reaches a comparison, a division, a right shift, a call, a store, a
-// branch or a return. The register backends only: on wasm the wrap changes
-// the value's type.
+// branch or a return. A loop counter's step goes too, read or not: `v + 1`
+// for a v that is below a 32-bit value cannot overflow (counter_step). The
+// register backends only: on wasm the wrap changes the value's type.
 pub function drop_low_wraps(f: SFunc): SFunc {
   if (!has_signed_wrap(f)) {
     return f;
   }
   // prop[v] is how many leading operands of v's definition have their high
-  // half read once v's is (high_operands); def_b / def_k locate the
-  // definition for those.
+  // half read once v's is (high_operands); def_b / def_k locate v's
+  // definition, -1 for a value nothing defines.
   let prop: i32[] = [];
   let def_b: i32[] = [];
   let def_k: i32[] = [];
@@ -2293,8 +2294,8 @@ pub function drop_low_wraps(f: SFunc): SFunc {
   let i: i32 = 0;
   while (i < f.nvals) {
     prop = prop.append(0);
-    def_b = def_b.append(0);
-    def_k = def_k.append(0);
+    def_b = def_b.append(0 - 1);
+    def_k = def_k.append(0 - 1);
     high = high.append(false);
     i = i + 1;
   }
@@ -2312,9 +2313,9 @@ pub function drop_low_wraps(f: SFunc): SFunc {
         let n: i32 = high_operands(ins);
         if (n > 0) {
           prop = prop.with(r, n);
-          def_b = def_b.with(r, bi);
-          def_k = def_k.with(r, k);
         }
+        def_b = def_b.with(r, bi);
+        def_k = def_k.with(r, k);
         if (signed_wrap(ins)) {
           wraps = wraps.append(r);
           wrap_arg = wrap_arg.append(ins.args[0]);
@@ -2358,10 +2359,11 @@ pub function drop_low_wraps(f: SFunc): SFunc {
   }
   let repl: i32[] = [];
   let dropped: boolean = false;
+  let at: i32[] = block_positions(f);
   let wj: i32 = 0;
   while (wj < wraps.len()) {
     let w: i32 = wraps[wj];
-    if (!high[w]) {
+    if (!high[w] || counter_step(f, at, def_b, def_k, wrap_arg[wj])) {
       if (!dropped) {
         i = 0;
         while (i < f.nvals) {
@@ -2431,6 +2433,112 @@ function block_reads_replaced(blk: SBlock, repl: i32[]): boolean {
   }
   let tv: i32 = term_operand(blk.term);
   return tv >= 0 && tv < repl.len() && repl[tv] != tv;
+}
+
+// counter_step says `a` is `v + 1` at 32 bits computed where v is known to be
+// below a 32-bit value (tested_below): v + 1 cannot pass INT32_MAX, so a wrap
+// of it changes nothing whoever reads it.
+function counter_step(f: SFunc, at: i32[], def_b: i32[], def_k: i32[], a: i32): boolean {
+  let add: SInst = def_at(f, def_b, def_k, a);
+  if (add.kind_tag != 9 || add.str != "add" || add.imm == 64 || add.args.len() != 2) {
+    return false;
+  }
+  if (const_one(f, def_b, def_k, add.args[1])) {
+    return tested_below(f, at, def_b, def_k, add.args[0], def_b[a]);
+  }
+  return const_one(f, def_b, def_k, add.args[0]) && tested_below(f, at, def_b, def_k, add.args[1], def_b[a]);
+}
+
+// tested_below says block position `d` runs only after v tested below a 32-bit
+// value: v is a phi whose block branches on `v < n` (or out on `v >= n`) to a
+// successor entered from nowhere else, and that successor dominates d.
+function tested_below(f: SFunc, at: i32[], def_b: i32[], def_k: i32[], v: i32, d: i32): boolean {
+  if (def_at(f, def_b, def_k, v).kind_tag != 8) {
+    return false;
+  }
+  let h: SBlock = f.blocks[def_b[v]];
+  let t: STerm = h.term;
+  if (t.kind_tag != 3 || t.t == t.f) {
+    return false;
+  }
+  let c: SInst = def_at(f, def_b, def_k, t.cond);
+  let below: i32 = 0 - 1;
+  if (compares_below(c, v, "lt_s", "gt_s")) {
+    below = t.t;
+  } else if (compares_below(c, v, "ge_s", "le_s")) {
+    below = t.f;
+  }
+  let b: i32 = position_of(at, below);
+  if (b < 0 || f.blocks[b].preds.len() != 1 || f.blocks[b].preds[0] != h.id) {
+    return false;
+  }
+  return dominates_position(f, at, b, d);
+}
+
+// dominates_position says every path from the entry to position d passes
+// position b: walking predecessors back from d without stepping onto b never
+// reaches the entry. A dominated d keeps the walk inside the region b heads.
+function dominates_position(f: SFunc, at: i32[], b: i32, d: i32): boolean {
+  if (b == d) {
+    return true;
+  }
+  let entry: i32 = position_of(at, f.entry);
+  if (entry == b) {
+    return true;
+  }
+  if (entry < 0 || d < 0) {
+    return false;
+  }
+  let seen: boolean[] = [];
+  let i: i32 = 0;
+  while (i < f.blocks.len()) {
+    seen = seen.append(false);
+    i = i + 1;
+  }
+  seen = seen.with(d, true);
+  let stack: i32[] = [d];
+  let si: i32 = 0;
+  while (si < stack.len()) {
+    let cur: i32 = stack[si];
+    si = si + 1;
+    if (cur == entry) {
+      return false;
+    }
+    for pid in f.blocks[cur].preds {
+      let p: i32 = position_of(at, pid);
+      if (p < 0) {
+        return false;
+      }
+      if (p != b && !seen[p]) {
+        seen = seen.with(p, true);
+        stack = stack.append(p);
+      }
+    }
+  }
+  return true;
+}
+
+// compares_below says c is a 32-bit `o first n` or `n second o`; a binary's
+// imm is 64 at full width.
+function compares_below(c: SInst, o: i32, first: string, second: string): boolean {
+  if (c.kind_tag != 9 || c.imm == 64 || c.args.len() != 2) {
+    return false;
+  }
+  return c.str == first && c.args[0] == o || c.str == second && c.args[1] == o;
+}
+
+function const_one(f: SFunc, def_b: i32[], def_k: i32[], v: i32): boolean {
+  let d: SInst = def_at(f, def_b, def_k, v);
+  return d.kind_tag == 1 && d.imm == 1;
+}
+
+// def_at is v's defining instruction, or one of kind 0 for a value nothing
+// defines.
+function def_at(f: SFunc, def_b: i32[], def_k: i32[], v: i32): SInst {
+  if (v < 0 || v >= def_b.len() || def_b[v] < 0) {
+    return SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  }
+  return f.blocks[def_b[v]].insts[def_k[v]];
 }
 
 // signed_wrap is a signed 32-bit wrap, extend or cast, which the register

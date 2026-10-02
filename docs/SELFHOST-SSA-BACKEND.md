@@ -42,7 +42,9 @@ lowered function it:
    half of its result (`ssa.drop_low_wraps`: a sum, difference, product,
    bitwise op or left shift reads only its operands' low halves, so the wrap
    after each 32-bit op stays only where the value reaches a comparison, a
-   division, a right shift, a call, a store, a branch or a return), then
+   division, a right shift, a call, a store, a branch or a return; a loop
+   counter's `i + 1` loses its wrap even there, when it runs only after the
+   loop's own `i < n` test, since it cannot pass INT32_MAX), then
    drops what nothing reads (`ssa.prune_dead`), which is the rotate's shifts,
    most of the zeros the lift gives declared locals and the loop-header phis
    nothing reads (the lift gives a header a phi only for the slots the loop's
