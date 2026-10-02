@@ -2516,8 +2516,10 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: 
     return builtin_length(recv, s);
   }
   if ((fa.field == "bytes" || fa.field == "as_bytes") && c.args.len() == 0 && ssasem.is_text(s.values[recv.id])) {
-    let bytes: Value = define(s, ssasem.str_bytes(), [recv.id], 0, "", typeinfo.TypeArray { elem: t_u8(), view: false });
-    return widen(bytes, typeinfo.TypeArray { elem: t_u8(), view: fa.field == "as_bytes" });
+    if (fa.field == "as_bytes") {
+      return define(s, ssasem.str_byte_view(), [recv.id], 0, "", typeinfo.TypeArray { elem: t_u8(), view: true });
+    }
+    return define(s, ssasem.str_bytes(), [recv.id], 0, "", typeinfo.TypeArray { elem: t_u8(), view: false });
   }
   if (fa.field == "append" && c.args.len() == 1) {
     return builtin_append(c, recv, s);
@@ -5815,7 +5817,7 @@ function type_holds_view(t: typeinfo.Type, views: string[], impls: parser.ImplIn
     return st.tag == 1;
   }
   if let typeinfo.TypeArray(a) = t {
-    return type_holds_view(a.elem, views, impls);
+    return a.view || type_holds_view(a.elem, views, impls);
   }
   if let typeinfo.TypeTuple(tup) = t {
     return types_hold_view(tup.elements, views, impls);

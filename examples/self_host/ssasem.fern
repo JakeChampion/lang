@@ -295,7 +295,7 @@ pub function zero(): i32 {
   return 0 - 35;
 }
 
-// `s.bytes()` / `s.as_bytes()`: one text operand's bytes as a FRESH `u8[]`, a
+// `s.bytes()`: one text operand's bytes as a FRESH `u8[]`, a
 // slot per byte. Not a window — the slot-array model has no zero-copy view, so
 // the AST lowering allocates here too (ir.op_str_bytes) and the result is a
 // unit of this frame like any other fresh container.
@@ -388,6 +388,12 @@ pub function hole_fill(): i32 {
 // an explicit view type so physical lowering can preserve its representation.
 pub function array_lend(): i32 {
   return 0 - 50;
+}
+
+// A byte view reads the text operand's storage. Keep this distinct from the
+// owned copy even while physical lowering still uses the copying helper.
+pub function str_byte_view(): i32 {
+  return 0 - 51;
 }
 
 pub function is_hole_op(kind: i32): boolean {
@@ -1056,6 +1062,9 @@ function constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
 
 function array_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if let typeinfo.TypeArray(a) = result {
+    if (a.view) {
+      return "array construction must own storage";
+    }
     for arg in ins.args {
       if (!semtypes.equal(a.elem, f.values[arg])) {
         return "array element type";
@@ -1631,7 +1640,7 @@ function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
 // bytes, and the cell and map vocabularies.
 function is_builtin_op(kind: i32): boolean {
   return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index()
-    || kind == str_bytes() || kind == arr_slice() || is_arr_helper_op(kind) || is_cell_op(kind) || is_map_op(kind)
+    || kind == str_bytes() || kind == str_byte_view() || kind == arr_slice() || is_arr_helper_op(kind) || is_cell_op(kind) || is_map_op(kind)
     || is_map_iter_op(kind);
 }
 
@@ -1648,8 +1657,8 @@ pub function is_map_op(kind: i32): boolean {
     || kind == map_keys() || kind == map_values() || kind == map_delete() || kind == map_cleared();
 }
 
-// A view reaches the bytes the same way a string does, so either box is a legal
-// receiver; the result is the fresh byte array, never a window onto the source.
+// Both text types expose bytes. The copy operation produces owned storage;
+// the view operation preserves a dependency on the source's bytes.
 function str_bytes_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 1) {
     return "str bytes arity";
@@ -1658,7 +1667,7 @@ function str_bytes_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
     return "str bytes receiver";
   }
   if let typeinfo.TypeArray(a) = result {
-    if (!a.view && is_u8(a.elem)) {
+    if (a.view == (ins.kind_tag == str_byte_view()) && is_u8(a.elem)) {
       return "";
     }
   }
@@ -1701,7 +1710,7 @@ function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.kind_tag == str_index()) {
     return str_index_error(ins, f, result);
   }
-  if (ins.kind_tag == str_bytes()) {
+  if (ins.kind_tag == str_bytes() || ins.kind_tag == str_byte_view()) {
     return str_bytes_error(ins, f, result);
   }
   if (ins.kind_tag == with()) {
@@ -3152,6 +3161,11 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
     return out;
   }
   if (d.kind_tag != 8 && gathers_views(d.kind_tag)) {
+    // Reaching an owned construction through a projection reaches this
+    // frame's storage, even when none of its elements contain views.
+    if (!holds_view(f, f.values[v])) {
+      return ViewSources { ...out, escapes: true };
+    }
     for a in d.args {
       if (a >= 0 && holds_view(f, f.values[a])) {
         out = view_sources(f, defs, anchors, names, a, out);
@@ -3348,7 +3362,7 @@ function guard_error(f: Func): string {
 function projects(kind: i32): boolean {
   return kind == 7 || kind == array_get() || kind == tuple_get() || kind == record_get()
     || kind == variant_get() || kind == variant_up() || kind == variant_as()
-    || kind == slice() || kind == str_as() || kind == array_lend() || kind == dyn_up() || kind == dyn_as()
+    || kind == slice() || kind == arr_slice() || kind == str_as() || kind == array_lend() || kind == str_byte_view() || kind == dyn_up() || kind == dyn_as()
     || kind == map_iter() || kind == mapiter_key() || kind == mapiter_value();
 }
 
@@ -3863,7 +3877,7 @@ pub function holds_view(f: Func, t: typeinfo.Type): boolean {
     return st.tag == 1;
   }
   if let typeinfo.TypeArray(a) = t {
-    return holds_view(f, a.elem);
+    return a.view || holds_view(f, a.elem);
   }
   if let typeinfo.TypeTuple(tup) = t {
     for e in tup.elements {
@@ -4107,13 +4121,18 @@ function copy_tuple(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, elements: 
 
 // An empty array, then each element copied onto it in a loop.
 function copy_array(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, elem: typeinfo.Type): Copied {
+  let owned: typeinfo.Type = typeinfo.TypeArray { elem: elem, view: false };
   let n: Copied = sp_emit(s, length(), i32_type(), [v], 0, "");
-  let acc0: Copied = sp_emit(n.s, array_new(), t, [], 0, "");
-  let l: CopyLoop = loop_enter(acc0.s, n.value, acc0.value, t);
+  let acc0: Copied = sp_emit(n.s, array_new(), owned, [], 0, "");
+  let l: CopyLoop = loop_enter(acc0.s, n.value, acc0.value, owned);
   let e: Copied = sp_emit(l.s, array_get(), elem, [v, l.i], 0, "");
   let c: Copied = deep_copy(f, e.s, e.value);
-  let acc1: Copied = sp_emit(c.s, append(), t, [l.acc, c.value], 0, "");
-  return loop_leave(l, acc1.s, acc1.value);
+  let acc1: Copied = sp_emit(c.s, append(), owned, [l.acc, c.value], 0, "");
+  let copied: Copied = loop_leave(l, acc1.s, acc1.value);
+  if (semtypes.lends_array(owned, t)) {
+    return sp_emit(copied.s, array_lend(), t, [copied.value], 0, "");
+  }
+  return copied;
 }
 
 // An empty map, then each entry of the two column snapshots copied into it.

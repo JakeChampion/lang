@@ -2560,7 +2560,7 @@ function container_op(k: i32): boolean {
       ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(), ssasem.dyn_box(),
       ssasem.array_get(), ssasem.tuple_get(), ssasem.record_get(),
       ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index(),
-      ssasem.str_bytes(), ssasem.arr_join(), ssasem.arr_slice(),
+      ssasem.str_bytes(), ssasem.str_byte_view(), ssasem.arr_join(), ssasem.arr_slice(),
     ],
     k,
   ) || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_map_op(k) || ssasem.is_map_iter_op(k) || ssasem.is_hole_op(k);
@@ -3128,7 +3128,8 @@ function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, 
   if (ins.kind_tag == ssasem.arr_slice()) {
     return arr_slice(r, f, elem_type(f.values[ins.result]));
   }
-  if (ins.kind_tag == ssasem.str_bytes()) {
+  if (ins.kind_tag == ssasem.str_bytes() || ins.kind_tag == ssasem.str_byte_view()) {
+    // Transitional storage: preserve source anchors before changing the ABI.
     return emit(r, ir.packed(ir.op_str_bytes()));
   }
   if (ins.kind_tag == ssasem.str_index() && ins.imm == 1) {
