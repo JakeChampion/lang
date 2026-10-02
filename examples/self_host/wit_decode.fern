@@ -857,9 +857,10 @@ pub function wit_emit_world_imports(tbody: i32[], plan: WitImportPlan): i32[] {
 // function's lowering kind (0 no-opt, 1 mem, 2 mem+realloc) from its resolved
 // signature via the canonical-ABI flattening rules. Value-type indices are
 // resolved against a per-scope offset table (the byte offset of each type's
-// encoding), reusing wit_decode_def. A type export bound `eq` resolves to the
-// type it names; sentinel -1 entries (outer aliases / surfaced resources)
-// resolve as scalar handles, matching the Go ResolveDef==nil case.
+// encoding, wit_iface_scope), reusing wit_decode_def. A type export bound
+// `eq` resolves to the type it names, a `use` of another interface's type to
+// that interface's definition; sentinel -1 entries (surfaced resources) resolve
+// as scalar handles, matching the Go ResolveDef==nil case.
 
 // wit_iface_instance_offset returns the byte offset (in the type-section body)
 // of the instance type the world imports under `iface`, or -1.
@@ -902,28 +903,46 @@ pub function wit_iface_instance_offset(tbody: i32[], iface: string): i32 {
   return result;
 }
 
-pub function wit_contains_heap(tbody: i32[], offs: i32[], v: i32): boolean {
+// WitScope is an interface's type-index space: each slot's definition as a
+// byte offset in the world's type body (-1 for an opaque slot: a resource
+// handle, or an alias nothing resolves), and `owners[i]`, the byte offset of
+// the instance type whose own space the definition's inner indices read when
+// a WIT `use` brought the type in from another interface, else -1 for this
+// one. Mirror of componenttype's LocalTypes / LocalTypeOwners.
+pub struct WitScope { offs: i32[], owners: i32[] }
+
+// wit_inner_scope is the scope a slot's definition reads its inner indices
+// in: the owning interface's for a `use`d type, else `scope` itself.
+function wit_inner_scope(tbody: i32[], scope: WitScope, v: i32): WitScope {
+  if (scope.owners[v] >= 0) {
+    return wit_iface_scope(tbody, scope.owners[v]);
+  }
+  return scope;
+}
+
+pub function wit_contains_heap(tbody: i32[], scope: WitScope, v: i32): boolean {
   if (v < 0) {
     return v == 0 - 13;
   }
-  if (v >= offs.len()) {
+  if (v >= scope.offs.len()) {
     return false;
   }
-  let off: i32 = offs[v];
+  let off: i32 = scope.offs[v];
   if (off < 0) {
     return false;
   }
+  let inner: WitScope = wit_inner_scope(tbody, scope, v);
   let d: WitDef = wit_decode_def(tbody, off).def;
   if (d.tag == 112) {
     return true;
   }
   if (d.tag == 107) {
-    return wit_contains_heap(tbody, offs, d.elem);
+    return wit_contains_heap(tbody, inner, d.elem);
   }
   if (d.tag == 111) {
     let i: i32 = 0;
     while (i < d.tup_elems.len()) {
-      if (wit_contains_heap(tbody, offs, d.tup_elems[i])) {
+      if (wit_contains_heap(tbody, inner, d.tup_elems[i])) {
         return true;
       }
       i = i + 1;
@@ -932,7 +951,7 @@ pub function wit_contains_heap(tbody: i32[], offs: i32[], v: i32): boolean {
   if (d.tag == 114) {
     let j: i32 = 0;
     while (j < d.rec_vals.len()) {
-      if (wit_contains_heap(tbody, offs, d.rec_vals[j])) {
+      if (wit_contains_heap(tbody, inner, d.rec_vals[j])) {
         return true;
       }
       j = j + 1;
@@ -941,37 +960,38 @@ pub function wit_contains_heap(tbody: i32[], offs: i32[], v: i32): boolean {
   if (d.tag == 113) {
     let k: i32 = 0;
     while (k < d.var_ty.len()) {
-      if (d.var_has_ty[k] == 1 && wit_contains_heap(tbody, offs, d.var_ty[k])) {
+      if (d.var_has_ty[k] == 1 && wit_contains_heap(tbody, inner, d.var_ty[k])) {
         return true;
       }
       k = k + 1;
     }
   }
   if (d.tag == 106) {
-    if (d.has_ok == 1 && wit_contains_heap(tbody, offs, d.ok)) {
+    if (d.has_ok == 1 && wit_contains_heap(tbody, inner, d.ok)) {
       return true;
     }
-    if (d.has_err == 1 && wit_contains_heap(tbody, offs, d.err)) {
+    if (d.has_err == 1 && wit_contains_heap(tbody, inner, d.err)) {
       return true;
     }
   }
   return false;
 }
 
-pub function wit_flatten(tbody: i32[], offs: i32[], v: i32): i32 {
+pub function wit_flatten(tbody: i32[], scope: WitScope, v: i32): i32 {
   if (v < 0) {
     if (v == 0 - 13) {
       return 2;
     }
     return 1;
   }
-  if (v >= offs.len()) {
+  if (v >= scope.offs.len()) {
     return 1;
   }
-  let off: i32 = offs[v];
+  let off: i32 = scope.offs[v];
   if (off < 0) {
     return 1;
   }
+  let inner: WitScope = wit_inner_scope(tbody, scope, v);
   let d: WitDef = wit_decode_def(tbody, off).def;
   if (d.tag == 112) {
     return 2;
@@ -980,13 +1000,13 @@ pub function wit_flatten(tbody: i32[], offs: i32[], v: i32): i32 {
     return 1;
   }
   if (d.tag == 107) {
-    return 1 + wit_flatten(tbody, offs, d.elem);
+    return 1 + wit_flatten(tbody, inner, d.elem);
   }
   if (d.tag == 111) {
     let n: i32 = 0;
     let i: i32 = 0;
     while (i < d.tup_elems.len()) {
-      n = n + wit_flatten(tbody, offs, d.tup_elems[i]);
+      n = n + wit_flatten(tbody, inner, d.tup_elems[i]);
       i = i + 1;
     }
     return n;
@@ -995,7 +1015,7 @@ pub function wit_flatten(tbody: i32[], offs: i32[], v: i32): i32 {
     let n2: i32 = 0;
     let j: i32 = 0;
     while (j < d.rec_vals.len()) {
-      n2 = n2 + wit_flatten(tbody, offs, d.rec_vals[j]);
+      n2 = n2 + wit_flatten(tbody, inner, d.rec_vals[j]);
       j = j + 1;
     }
     return n2;
@@ -1006,7 +1026,7 @@ pub function wit_flatten(tbody: i32[], offs: i32[], v: i32): i32 {
     while (k < d.var_ty.len()) {
       let c: i32 = 0;
       if (d.var_has_ty[k] == 1) {
-        c = wit_flatten(tbody, offs, d.var_ty[k]);
+        c = wit_flatten(tbody, inner, d.var_ty[k]);
       }
       if (c > mx) {
         mx = c;
@@ -1019,10 +1039,10 @@ pub function wit_flatten(tbody: i32[], offs: i32[], v: i32): i32 {
     let ok: i32 = 0;
     let er: i32 = 0;
     if (d.has_ok == 1) {
-      ok = wit_flatten(tbody, offs, d.ok);
+      ok = wit_flatten(tbody, inner, d.ok);
     }
     if (d.has_err == 1) {
-      er = wit_flatten(tbody, offs, d.err);
+      er = wit_flatten(tbody, inner, d.err);
     }
     if (ok > er) {
       return 1 + ok;
@@ -1032,11 +1052,178 @@ pub function wit_flatten(tbody: i32[], offs: i32[], v: i32): i32 {
   return 1;
 }
 
+// wit_iface_scope builds the type-index space of the instance type at
+// `instOff`. A `type` decl is its own definition; a type export bound `eq i`
+// is slot i's; `sub resource` is opaque; an `alias outer 1 n` (a WIT `use`)
+// is the world's type slot n, resolved by wit_world_type_slot into the
+// interface that declares it, so a signature is read whole wherever its
+// types were declared.
+pub function wit_iface_scope(tbody: i32[], instOff: i32): WitScope {
+  let none: i32[] = [];
+  let p: i32 = instOff + 1;
+  let dc: UlebRead = wit_read_uleb(tbody, p);
+  let dcount: i32 = dc.value;
+  p = dc.next;
+  let offs: i32[] = [];
+  let owners: i32[] = [];
+  let i: i32 = 0;
+  while (i < dcount) {
+    let kind: i32 = tbody[p];
+    if (kind == 1) {
+      offs = offs.append(p + 1);
+      owners = owners.append(0 - 1);
+    } else if (kind == 2) {
+      if (tbody[p + 1] == 3) {
+        let (off, owner) = wit_alias_slot(tbody, p + 1);
+        offs = offs.append(off);
+        owners = owners.append(owner);
+      }
+    } else if (kind == 4) {
+      let nr: NameR = wit_read_name(tbody, p + 2);
+      if (tbody[nr.next] == 3) {
+        if (tbody[nr.next + 1] == 0) {
+          let er: UlebRead = wit_read_uleb(tbody, nr.next + 2);
+          offs = offs.append(offs[er.value]);
+          owners = owners.append(owners[er.value]);
+        } else {
+          offs = offs.append(0 - 1);
+          owners = owners.append(0 - 1);
+        }
+      }
+    }
+    let skip: TxR = wit_tx_decl(tbody, p, none);
+    p = skip.next;
+    i = i + 1;
+  }
+  return WitScope { offs: offs, owners: owners };
+}
+
+// wit_alias_slot resolves a type alias decl whose sort byte is at `sort_pos`:
+// an `alias outer 1 n` through the world's type slots, anything else opaque.
+function wit_alias_slot(tbody: i32[], sort_pos: i32): (i32, i32) {
+  let tp: i32 = wit_alias_target_pos(tbody, sort_pos);
+  if (tbody[tp] != 2) {
+    return (0 - 1, 0 - 1);
+  }
+  let cr: UlebRead = wit_read_uleb(tbody, tp + 1);
+  let ir: UlebRead = wit_read_uleb(tbody, cr.next);
+  if (cr.value != 1) {
+    return (0 - 1, 0 - 1);
+  }
+  return wit_world_type_slot(tbody, ir.value);
+}
+
+// wit_world_type_slot resolves the world's type slot `n` to a definition and
+// its owner: the slot a WIT `use` leaves is an `alias export i "name"` of the
+// i-th imported instance, so the answer is that interface's export `name` in
+// its own scope. Any other slot is opaque.
+function wit_world_type_slot(tbody: i32[], n: i32): (i32, i32) {
+  let none: i32[] = [];
+  let rc: UlebRead = wit_read_uleb(tbody, 0);
+  let p: i32 = rc.next;
+  p = p + 1;
+  let oc: UlebRead = wit_read_uleb(tbody, p);
+  p = oc.next;
+  p = p + 1;
+  p = p + 1;
+  let wc: UlebRead = wit_read_uleb(tbody, p);
+  let wcount: i32 = wc.value;
+  p = wc.next;
+  let slot: i32 = 0;
+  let instances: string[] = [];
+  let i: i32 = 0;
+  while (i < wcount) {
+    let kind: i32 = tbody[p];
+    if (kind == 1) {
+      slot = slot + 1;
+    } else if (kind == 2) {
+      if (tbody[p + 1] == 3) {
+        if (slot == n) {
+          return wit_alias_export_slot(tbody, p + 1, instances);
+        }
+        slot = slot + 1;
+      }
+    } else if (kind == 3) {
+      let nr: NameR = wit_read_name(tbody, p + 2);
+      if (tbody[nr.next] == 5) {
+        instances = instances.append(nr.s);
+      }
+    }
+    let skip: TxR = wit_tx_decl(tbody, p, none);
+    p = skip.next;
+    i = i + 1;
+  }
+  return (0 - 1, 0 - 1);
+}
+
+// wit_alias_export_slot resolves a world-level `alias export i "name"` (sort
+// byte at `sort_pos`) to the named type export of the i-th imported
+// instance, in that instance's scope.
+function wit_alias_export_slot(tbody: i32[], sort_pos: i32, instances: string[]): (i32, i32) {
+  let tp: i32 = wit_alias_target_pos(tbody, sort_pos);
+  if (tbody[tp] != 0) {
+    return (0 - 1, 0 - 1);
+  }
+  let ir: UlebRead = wit_read_uleb(tbody, tp + 1);
+  let nr: NameR = wit_read_name(tbody, ir.next);
+  if (ir.value >= instances.len()) {
+    return (0 - 1, 0 - 1);
+  }
+  let instOff: i32 = wit_iface_instance_offset(tbody, instances[ir.value]);
+  if (instOff < 0) {
+    return (0 - 1, 0 - 1);
+  }
+  let slot: i32 = wit_iface_export_type_slot(tbody, instOff, nr.s);
+  if (slot < 0) {
+    return (0 - 1, 0 - 1);
+  }
+  let scope: WitScope = wit_iface_scope(tbody, instOff);
+  let owner: i32 = scope.owners[slot];
+  if (owner < 0) {
+    owner = instOff;
+  }
+  return (scope.offs[slot], owner);
+}
+
+// wit_iface_export_type_slot is the type-index slot the instance type at
+// `instOff` exports under `name`, or -1.
+function wit_iface_export_type_slot(tbody: i32[], instOff: i32, name: string): i32 {
+  let none: i32[] = [];
+  let p: i32 = instOff + 1;
+  let dc: UlebRead = wit_read_uleb(tbody, p);
+  let dcount: i32 = dc.value;
+  p = dc.next;
+  let slot: i32 = 0;
+  let i: i32 = 0;
+  while (i < dcount) {
+    let kind: i32 = tbody[p];
+    if (kind == 1) {
+      slot = slot + 1;
+    } else if (kind == 2) {
+      if (tbody[p + 1] == 3) {
+        slot = slot + 1;
+      }
+    } else if (kind == 4) {
+      let nr: NameR = wit_read_name(tbody, p + 2);
+      if (tbody[nr.next] == 3) {
+        if (nr.s == name) {
+          return slot;
+        }
+        slot = slot + 1;
+      }
+    }
+    let skip: TxR = wit_tx_decl(tbody, p, none);
+    p = skip.next;
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
 // wit_classify returns the lowering kind (0/1/2) for (iface, fname) in the world.
 // WitFuncLookup is a function looked up in a world interface: whether it is
 // declared, the byte offset of its func type, and the interface's value-type
 // offset table the signature's type indices resolve against.
-pub struct WitFuncLookup { found: boolean, off: i32, offs: i32[] }
+pub struct WitFuncLookup { found: boolean, off: i32, scope: WitScope }
 
 // wit_iface_func_lookup walks the instance type the world imports under
 // `iface`, collecting its value-type offsets and finding the func export named
@@ -1046,46 +1233,28 @@ pub function wit_iface_func_lookup(tbody: i32[], iface: string, fname: string): 
   let none: i32[] = [];
   let instOff: i32 = wit_iface_instance_offset(tbody, iface);
   if (instOff < 0) {
-    return WitFuncLookup { found: false, off: 0 - 1, offs: none };
+    return WitFuncLookup { found: false, off: 0 - 1, scope: WitScope { offs: none, owners: none } };
   }
+  let scope: WitScope = wit_iface_scope(tbody, instOff);
   let p: i32 = instOff + 1;
   let dc: UlebRead = wit_read_uleb(tbody, p);
   let dcount: i32 = dc.value;
   p = dc.next;
-  let offs: i32[] = [];
   let funcOff: i32 = 0 - 1;
   let i: i32 = 0;
   while (i < dcount) {
-    let kind: i32 = tbody[p];
-    if (kind == 1) {
-      offs = offs.append(p + 1);
-    } else if (kind == 2) {
-      if (tbody[p + 1] == 3) {
-        offs = offs.append(0 - 1);
-      }
-    } else if (kind == 4) {
+    if (tbody[p] == 4) {
       let nr: NameR = wit_read_name(tbody, p + 2);
-      let edk: i32 = tbody[nr.next];
-      if (edk == 3) {
-        // A type export takes a type index: bound `eq i` (0) names the
-        // exported type, so it resolves to i's definition; `sub
-        // resource` (1) is a fresh resource, a scalar handle.
-        if (tbody[nr.next + 1] == 0) {
-          let er: UlebRead = wit_read_uleb(tbody, nr.next + 2);
-          offs = offs.append(offs[er.value]);
-        } else {
-          offs = offs.append(0 - 1);
-        }
-      } else if (edk == 1 && nr.s == fname) {
+      if (tbody[nr.next] == 1 && nr.s == fname) {
         let tr: UlebRead = wit_read_uleb(tbody, nr.next + 1);
-        funcOff = offs[tr.value];
+        funcOff = scope.offs[tr.value];
       }
     }
     let skip: TxR = wit_tx_decl(tbody, p, none);
     p = skip.next;
     i = i + 1;
   }
-  return WitFuncLookup { found: funcOff >= 0, off: funcOff, offs: offs };
+  return WitFuncLookup { found: funcOff >= 0, off: funcOff, scope: scope };
 }
 
 // wit_iface_has_resource reports whether the interface the world imports under
@@ -1124,7 +1293,7 @@ pub function wit_classify(tbody: i32[], iface: string, fname: string): i32 {
   if (!lk.found) {
     return 0;
   }
-  let offs: i32[] = lk.offs;
+  let offs: WitScope = lk.scope;
   let f: WitFunc = wit_decode_func(tbody, lk.off).fn;
   let needR: boolean = false;
   if (f.named == 0) {
@@ -1252,14 +1421,18 @@ pub function wit_import_instance_index(tbody: i32[], plan: WitImportPlan, iface:
 //
 // Self-host mirror of component.coreFuncImports: walk a core wasm module's
 // type + import sections and return each function import with its param
-// valtypes (the trampoline signature a memory lowering mirrors). Parallel
-// arrays: ifaces[i] / names[i] / params[i].
+// and result valtypes (the trampoline signature a memory lowering mirrors:
+// the result is empty for every WASI import, whose results go through a
+// return area, and the flat scalar of an extern such as
+// `set-method: func(...) -> result`). Parallel arrays: ifaces[i] /
+// names[i] / params[i] / results[i].
 
-pub struct WitCoreImports { ifaces: string[], names: string[], params: i32[][] }
+pub struct WitCoreImports { ifaces: string[], names: string[], params: i32[][], results: i32[][] }
 
 pub function wit_core_func_imports(bin: i32[]): WitCoreImports {
-  // pass 1: functype params from the type section (id 1).
+  // pass 1: functype params and results from the type section (id 1).
   let typeParams: i32[][] = [];
+  let typeResults: i32[][] = [];
   let off: i32 = 8;
   let doneTypes: boolean = false;
   while (off < bin.len() && !doneTypes) {
@@ -1290,12 +1463,15 @@ pub function wit_core_func_imports(bin: i32[]): WitCoreImports {
         let rr: UlebRead = wit_read_uleb(bin, p);
         let rcount: i32 = rr.value;
         p = rr.next;
+        let results: i32[] = [];
         let k: i32 = 0;
         while (k < rcount) {
+          results = results.append(bin[p]);
           p = p + 1;
           k = k + 1;
         }
         typeParams = typeParams.append(params);
+        typeResults = typeResults.append(results);
         i = i + 1;
       }
       doneTypes = true;
@@ -1305,6 +1481,7 @@ pub function wit_core_func_imports(bin: i32[]): WitCoreImports {
   let ifaces: string[] = [];
   let names: string[] = [];
   let params2: i32[][] = [];
+  let results2: i32[][] = [];
   off = 8;
   let doneImports: boolean = false;
   while (off < bin.len() && !doneImports) {
@@ -1332,12 +1509,15 @@ pub function wit_core_func_imports(bin: i32[]): WitCoreImports {
           p = tr.next;
           let none: i32[] = [];
           let pp: i32[] = none;
+          let rp: i32[] = none;
           if (tr.value < typeParams.len()) {
             pp = typeParams[tr.value];
+            rp = typeResults[tr.value];
           }
           ifaces = ifaces.append(mr.s);
           names = names.append(fr.s);
           params2 = params2.append(pp);
+          results2 = results2.append(rp);
         } else if (kind == 1) {
           p = p + 2;
           let lr: UlebRead = wit_read_uleb(bin, p);
@@ -1359,5 +1539,5 @@ pub function wit_core_func_imports(bin: i32[]): WitCoreImports {
       doneImports = true;
     }
   }
-  return WitCoreImports { ifaces: ifaces, names: names, params: params2 };
+  return WitCoreImports { ifaces: ifaces, names: names, params: params2, results: results2 };
 }

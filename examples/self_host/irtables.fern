@@ -1384,29 +1384,6 @@ function nddo_reach(structs: StructTab, sty: string, visiting: string[]): i32 {
   return 0;
 }
 
-// --- consume-safe (escape) analysis for consume-rebinds (#3457) ---------------
-//
-// `infer_param_escapes` port: a free-call CONSUME-REBIND `s = g(.., s, ..)` is a
-// safe move (the caller may reclaim the old box after) IFF g neither RETAINS nor
-// FREES s's box at that position — it may read / thread / return a value derived
-// from it, but never store it into a container / global / longer-lived struct.
-// This is the relaxation `body_unsafe_for_allow_ret` lacks (it flags any non-
-// borrowable call arg as an escape), and it admits the `s = lower_X(.., s)`
-// chains the snapshot-param / snapshot-local reclaim otherwise excludes.
-
-// --- cross-block reuse (FBIP): a block-top donor reused by a construction nested
-// --- in a LATER if-arm of that block ------------------------------------------
-//
-// The complement to same-block reuse: a `let d = T{…}` at block B's top level,
-// dead by the time control reaches a later statement k, whose box is reused by a
-// `let c = T{…}` at the TOP LEVEL of an IF-arm at statement k. Restricted to
-// IF-arms (then/else) so the recipient runs at most ONCE per run of B — a while /
-// for body would reuse the once-allocated donor repeatedly (2nd turn: donor slot
-// already zeroed → write to null). When B is itself a loop body, D is re-declared
-// each iteration, so the pattern "loop { let a = …; if (c) { let b = … /*reuse a*/ } }"
-// fires every iteration. Donor selection excludes any donor a
-// same-block site already consumed (so the two passes never double-free a box).
-
 // reuse_layer_disabled: the #4350 §6.5 differential switch. When the
 // FERN_SELFHOST_NO_REUSE env let is "1" in the COMPILER's environment, every
 // donor-based box-reuse pairing (self-overwrite / cross-struct / cross-tuple /
@@ -1416,8 +1393,8 @@ function nddo_reach(structs: StructTab, sty: string, visiting: string[]): i32 {
 // back to emit_enum_reclaim_store's free+alloc — mirroring native
 // ast.RcReuseEnabled=false. Reuse-on vs reuse-off must be OBSERVATIONALLY
 // IDENTICAL (the differential gate in self_host_reuse_differential_test.go
-// asserts it); OFF trades only alloc count / peak heap. Read once per function
-// by ssarc (an env scan — no allocation on the None path).
+// asserts it); OFF trades only alloc count / peak heap. Read per ssarc.lower
+// entry (an env scan — no allocation on the None path).
 pub function reuse_layer_disabled(): boolean {
   match (env("FERN_SELFHOST_NO_REUSE")) {
     Some(v) => {
@@ -1430,10 +1407,11 @@ pub function reuse_layer_disabled(): boolean {
   return false;
 }
 
-// LowerResult is one function's lowering: the lowered op stream, the local-slot
-// count (operand-frame size for the interpreter / a backend — the count
-// ir.optimize_ops returns, which a slot-allocating pass grows past the
-// lowering's own), and ok.
+// LowerResult is one function's lowered body (ssarc.lower, or the entry
+// semlower records for a declined or bodyless one): the lowered op stream,
+// the local-slot count (operand-frame size for the interpreter / a backend —
+// the count ir.optimize_ops returns, which a slot-allocating pass grows past
+// the lowering's own), and ok.
 pub struct LowerResult {
   ok: boolean,
   ops: ir.Op[],
@@ -1467,9 +1445,6 @@ pub struct LowerResult {
   // why: why this function did not lower. Empty when ok. Read only by
   // ircore.lower_failed_refuse, the backends' per-function backstop.
   why: string,
-  // alias_incs: never populated and never read; the `-rc-plan` aliasBindIncs
-  // table it was carried for is native's (#4482).
-  alias_incs: string[],
   // name: the symbol this body defines, for a lowering that has no
   // declaration to take one from. Empty for a body lowered from a
   // parser.FuncDecl, whose own name the emit path reads.

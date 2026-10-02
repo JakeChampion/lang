@@ -73,10 +73,9 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"clo-arr-forin", `function main(): i32 { let fs = [(x: i32): i32 => { return x + 1; }, (x: i32): i32 => { return x + 2; }]; let s = 0; for f in fs { s = s + f(10); } return s; }`, 23},
 		{"clo-arr-mixed", `function dbl(x: i32): i32 { return x * 2; } function main(): i32 { let fs = [dbl, (x: i32): i32 => { return x + 5; }]; return fs[0](10) + fs[1](10); }`, 35},
 		// flat_map shape: `for y in f(x)` where `f` is a closure PARAM whose type
-		// `(T) => U[]` returns an array, so `for y in f(x)` lowers like
-		// `for x in xs`. Was BAIL lower (the single bail across the functional
-		// core); now ir. The bare-fn-name arg `apply(dup)` uses the existing
-		// fn-value-arg path (callee_param_is_fn still sees type_name "fn").
+		// `(T) => U[]` returns an array, so `for y in f(x)` iterates an owned
+		// array as `for x in xs` does. The bare-fn-name arg `apply(dup)` is a
+		// fn-value arg (callee_param_is_fn sees type_name "fn").
 		{"fnval-ret-arr-forin", `function apply(xs: i32[], f: (i32) => i32[]): i32 { let out = 0; for x in xs { for y in f(x) { out = out + y; } } return out; } function dup(n: i32): i32[] { return [n, n]; } function main(): i32 { return apply([1, 2, 3], dup); }`, 12},
 		{"fnval-ret-arr-varlen", `function apply(xs: i32[], f: (i32) => i32[]): i32 { let c = 0; for x in xs { for y in f(x) { c = c + 1; } } return c; } function upto(n: i32): i32[] { let a: i32[] = []; let i = 0; while (i < n) { a = a.append(i); i = i + 1; } return a; } function main(): i32 { return apply([1, 2, 3], upto); }`, 6},
 		{"modulo", `function main(): i32 { return 23 % 5; }`, 3},

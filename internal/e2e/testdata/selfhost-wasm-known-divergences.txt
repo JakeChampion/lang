@@ -53,7 +53,7 @@
 # `regex_captures`, `regex_captures_all`, `regex_named_groups` and
 # `regex_replace_groups` were here and are now FIXED (#6008). All four trapped
 # on `?` over a CAPTURING group, and the fault was neither in the capture
-# machinery nor in the wasm backend: irlower bound `var pg = prog.append(v)` —
+# machinery nor in the wasm backend: irlower bound `let pg = prog.append(v)` —
 # std/regex's __rx_emit — straight to the buffer arr_push had appended into IN
 # PLACE, so a frame and its caller each held one buffer under two names and each
 # released it. The freed cell was recycled by the next `caps.with(slot, ti)`, so

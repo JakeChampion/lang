@@ -21,8 +21,12 @@
 // does. Every phase is bounded by `Timeouts`. A 3xx with a `Location` is
 // followed, ten hops by default, the credentials dropped when a hop
 // leaves the origin; an idempotent request the peer resets before
-// answering is sent once more. No TLS yet (`https` fails with `Tls`), no
-// pool: each request is one connection sent with `Connection: close`.
+// answering is sent once more. No TLS where the client dials (`https`
+// fails with `Tls`), no pool: each request is one connection sent with
+// `Connection: close`. A `wasm32-wasi-http` build dials nothing: the
+// request goes to the host's wasi:http/outgoing-handler (std/wasi_http),
+// which resolves the name, connects and speaks TLS, and everything above
+// the transport is the same.
 // The client asks for `gzip` unless the caller wrote an `Accept-Encoding`
 // of their own, and undoes the coding it asked for, so a caller sees the
 // bytes the origin meant: the body cap bounds what the decoder may
@@ -42,7 +46,9 @@
 // origin before handing a request to the proxy, so a deployment where
 // only the proxy can resolve names reaches it through `send`. Neither
 // route resolves an IPv4 address written as anything but four decimal
-// octets.
+// octets. On wasi-http the host owns the network: its outbound policy
+// is the rule for both routes, and the environment's proxy is the
+// host's own to go through.
 //
 // A single `send` is a blocking request; overlapping several upstreams is
 // `std/async`'s job — `fetch_future` returns an `async.Future[u8[]]` you
@@ -63,6 +69,9 @@ import "std/dns";
 import "std/net";
 import "std/base64";
 import "std/deflate";
+// std/wasi_http — the host's client a `wasm32-wasi-http` build sends
+// through, the one target with no sockets of its own.
+import "std/wasi_http";
 import "core/int";
 
 // ipv4(a, b, c, d) — pack a dotted-quad into the network-byte-order
@@ -107,13 +116,14 @@ pub enum FetchError {
   Dns(dns.DnsError),
   Connect(net.NetError),
   Blocked(string),
-  Tls,
+  Tls(string),
   Timeout(Phase),
   Protocol(string),
   Io(net.NetError),
   Redirect(string),
   BodyLimit,
   Decode(string),
+  Host(string),
   Cancelled,
 }
 
@@ -146,8 +156,8 @@ pub function (e: FetchError) message(): string {
     Connect(n) => {
       return "connect: " + n.message();
     },
-    Tls => {
-      return "TLS is not supported";
+    Tls(what) => {
+      return "TLS: " + what;
     },
     Timeout(p) => {
       return "timed out " + p.message();
@@ -178,6 +188,9 @@ function __later_message(e: FetchError): string {
     },
     Decode(what) => {
       return "decode: " + what;
+    },
+    Host(what) => {
+      return "host: " + what;
     },
     Cancelled => {
       return "cancelled";
@@ -312,7 +325,7 @@ pub function (r: HttpResponse) ok_or_status(): Result[HttpResponse, i32] {
 // for the request line, the `Host` value (the origin's, whichever is
 // dialled), the `Proxy-Authorization` to write (empty for none), whether
 // the origin itself is dialled, and the origin's host either way.
-struct __Target { host: string, port: i32, target: string, host_field: string, proxy_auth: string, direct: boolean, origin: string }
+struct __Target { host: string, port: i32, target: string, host_field: string, proxy_auth: string, direct: boolean, origin: string, tls: boolean }
 
 // `__target_of(url, policy)` — the URL split for the wire, or why it
 // cannot be: through the proxy the environment names for it, as the
@@ -320,20 +333,24 @@ struct __Target { host: string, port: i32, target: string, host_field: string, p
 // to the origin.
 function __target_of(raw: string, policy: __Policy): Result[__Target, FetchError] {
   let u: Url = __http_url(raw)?;
-  let port: i32 = u.port;
-  if (port == 0) {
-    port = 80;
-  }
-  let host_field: string = __host_field(u.host, port);
+  let port: i32 = __effective_port(u);
+  let tls: boolean = u.scheme == "https";
+  let host_field: string = __host_field(u.host, port, tls);
   let target: string = __request_target(u)?;
   match (policy.proxies.proxy_for(raw)) {
     Some(spec) => {
       let p: __Proxy = __proxy_of(spec)?;
-      return Ok(__Target { host: p.host, port: p.port, target: "http://" + host_field + target, host_field: host_field, proxy_auth: p.auth, direct: false, origin: u.host });
+      return Ok(__Target { host: p.host, port: p.port, target: "http://" + host_field + target, host_field: host_field, proxy_auth: p.auth, direct: false, origin: u.host, tls: tls });
     },
     None => {}
   }
-  return Ok(__Target { host: u.host, port: port, target: target, host_field: host_field, proxy_auth: "", direct: true, origin: u.host });
+  return Ok(__Target { host: u.host, port: port, target: target, host_field: host_field, proxy_auth: "", direct: true, origin: u.host, tls: tls });
+}
+
+// `__host_tls()` — whether a host speaks TLS for this client: the
+// wasi-http host does, and no other target has TLS yet.
+function __host_tls(): boolean {
+  return target_os() == "wasi-http";
 }
 
 // `__http_url(raw)` — `raw` parsed, when it is an `http` URL naming a
@@ -351,13 +368,13 @@ function __http_url(raw: string): Result[Url, FetchError] {
       return Err(InvalidUrl(raw));
     }
   }
-  if (u.scheme == "https") {
-    return Err(Tls);
+  if (u.scheme == "https" && !__host_tls()) {
+    return Err(Tls("https is not supported on this target"));
   }
   if (u.scheme.len() == 0) {
     return Err(InvalidUrl("no scheme in " + raw));
   }
-  if (u.scheme != "http") {
+  if (u.scheme != "http" && u.scheme != "https") {
     return Err(InvalidUrl("scheme " + u.scheme + " is not http"));
   }
   if (u.host.len() == 0) {
@@ -438,14 +455,18 @@ function __request_ok(req: Request): Result[void, FetchError] {
   return Ok(());
 }
 
-// `__host_field(host, port)` — the `Host` value: the host, bracketed when
+// `__host_field(host, port, tls)` — the `Host` value: the host, bracketed when
 // it is an IPv6 address, and the port when it is not the scheme's default.
-function __host_field(host: string, port: i32): string {
+function __host_field(host: string, port: i32, tls: boolean): string {
   let h: string = host;
   if (h.index_of(":") >= 0) {
     h = "[" + h + "]";
   }
-  if (port != 80) {
+  let default_port: i32 = 80;
+  if (tls) {
+    default_port = 443;
+  }
+  if (port != default_port) {
     return h + ":" + int.int_to_string(port);
   }
   return h;
@@ -455,31 +476,31 @@ function __host_field(host: string, port: i32): string {
 // caller's end-to-end fields, then what the client decides.
 function __head(req: Request, t: __Target, body_len: i32): string {
   let out: string = req.method + " " + t.target + " HTTP/1.1\r\n" + "Host: " + t.host_field + "\r\n";
-  let fields: HeaderMap = http.http_end_to_end(req.headers);
+  let fields: HeaderMap = __sent_fields(req, t, body_len);
   let i: i32 = 0;
   while (i < fields.names.len()) {
-    if (fields.names[i] != "host" && fields.names[i] != "content-length") {
-      out = out + fields.names[i] + ": " + fields.values[i] + "\r\n";
-    }
+    out = out + fields.names[i] + ": " + fields.values[i] + "\r\n";
     i = i + 1;
   }
-  return out + __client_fields(req, t, body_len) + "Connection: close\r\n\r\n";
+  return out + "Connection: close\r\n\r\n";
 }
 
-// `__client_fields(req, t, body_len)` — the fields the client decides:
-// the body's length (always for a method that usually carries one), the
-// `Accept-Encoding: gzip` it undoes itself, and the proxy's credentials
-// when the caller wrote none.
-function __client_fields(req: Request, t: __Target, body_len: i32): string {
-  let out: string = "";
+// `__sent_fields(req, t, body_len)` — the fields a request carries
+// beyond `Host`: the caller's end-to-end ones (`Host` and
+// `Content-Length` are the client's to write), then the ones the client
+// decides: the body's length (always for a method that usually carries
+// one), the `Accept-Encoding: gzip` it undoes itself, and the proxy's
+// credentials when the caller wrote none.
+function __sent_fields(req: Request, t: __Target, body_len: i32): HeaderMap {
+  let out: HeaderMap = __without(http.http_end_to_end(req.headers), ["host", "content-length"]);
   if (body_len > 0 || req.method == "POST" || req.method == "PUT" || req.method == "PATCH") {
-    out = out + "Content-Length: " + int.int_to_string(body_len) + "\r\n";
+    out = out.append("content-length", int.int_to_string(body_len));
   }
   if (__asks_gzip(req)) {
-    out = out + "Accept-Encoding: gzip\r\n";
+    out = out.append("accept-encoding", "gzip");
   }
   if (t.proxy_auth.len() > 0 && !__holds(req.headers.names, "proxy-authorization")) {
-    out = out + "Proxy-Authorization: " + t.proxy_auth + "\r\n";
+    out = out.append("proxy-authorization", t.proxy_auth);
   }
   return out;
 }
@@ -496,7 +517,19 @@ function __asks_gzip(req: Request): boolean {
 // `req.redirects` hops, all under the one total bound. Blocking: every
 // connection is closed before it answers.
 pub function send(req: Request): Result[HttpResponse, FetchError] {
-  return __send_as(req, __Policy { public_only: false, proxies: proxy_env() });
+  return __send_as(req, __Policy { public_only: false, proxies: __proxies() });
+}
+
+// `__proxies()` — the environment's proxy configuration where this
+// client dials: none on wasi-http, where the host dials and a proxy is
+// the host's own to go through. The `else` arm is what the fold drops,
+// so a wasi-http build imports no configuration store for it.
+function __proxies(): ProxyEnv {
+  if (target_os() == "wasi-http") {
+    return ProxyEnv { http_proxy: "", no_proxy: "" };
+  } else {
+    return proxy_env();
+  }
 }
 
 // `__Policy` — what a route may reach: `public_only` refuses a host that
@@ -631,12 +664,11 @@ function __effective_port(u: Url): i32 {
 }
 
 // `__send_once(req, started, policy)` — one hop: the request validated,
-// its origin resolved and checked when the route reaches global addresses
-// only and a proxy carries the request (the proxy's address is the
-// deployment's choice and goes unchecked), then sent
-// and its response read, and sent once more when the peer reset the
-// connection before any response byte and the method is idempotent
-// (RFC 9110 §9.2.2): a reset before an answer says nothing happened.
+// then sent by the transport the target has. A wasi-http build has no
+// sockets and hands the request to the host's client; every other
+// target dials the origin itself. The branch is on the target's name, a
+// literal by the time anything is emitted, so each build carries one
+// transport.
 function __send_once(req: Request, started: i64, policy: __Policy): Result[HttpResponse, FetchError] {
   let t: __Target = __target_of(req.url, policy)?;
   match (__request_ok(req)) {
@@ -645,6 +677,22 @@ function __send_once(req: Request, started: i64, policy: __Policy): Result[HttpR
       return Err(e);
     }
   }
+  if (target_os() == "wasi-http") {
+    return __send_hosted(req, t);
+  } else {
+    return __send_dialled(req, t, started, policy);
+  }
+}
+
+// `__send_dialled(req, t, started, policy)` — the request on a
+// connection this client opens: its origin resolved and checked when the
+// route reaches global addresses only and a proxy carries the request
+// (the proxy's address is the deployment's choice and goes unchecked),
+// then sent and its response read, and sent once more when the peer
+// reset the connection before any response byte and the method is
+// idempotent (RFC 9110 §9.2.2): a reset before an answer says nothing
+// happened.
+function __send_dialled(req: Request, t: __Target, started: i64, policy: __Policy): Result[HttpResponse, FetchError] {
   __origin_checked(t, policy)?;
   let guard: boolean = policy.public_only && t.direct;
   let first: Result[HttpResponse, FetchError] = __attempt(req, t, started, guard);
@@ -712,11 +760,7 @@ function __attempt(req: Request, t: __Target, started: i64, guard: boolean): Res
 // race when any address resolved is not a global one.
 function __connect(t: __Target, timeouts: Timeouts, guard: boolean): Result[i32, FetchError] {
   let addrs: net.IpAddr[] = __resolve(t.host, guard)?;
-  let connect_ms: i32 = timeouts.connect_ms;
-  if (timeouts.total_ms < connect_ms) {
-    connect_ms = timeouts.total_ms;
-  }
-  let opts: dns.DialOptions = dns.DialOptions { ...dns.dial_options(), timeout_ms: connect_ms };
+  let opts: dns.DialOptions = dns.DialOptions { ...dns.dial_options(), timeout_ms: __connect_bound(timeouts) };
   match (dns.connect_race(addrs, t.port, opts)) {
     Ok(sock) => {
       return Ok(sock);
@@ -729,6 +773,14 @@ function __connect(t: __Target, timeouts: Timeouts, guard: boolean): Result[i32,
     }
   }
   return Err(Timeout(Connecting));
+}
+
+// `__connect_bound(timeouts)` — the connect bound, never past the total.
+function __connect_bound(timeouts: Timeouts): i32 {
+  if (timeouts.total_ms < timeouts.connect_ms) {
+    return timeouts.total_ms;
+  }
+  return timeouts.connect_ms;
 }
 
 // `__resolve(host, guard)` — the addresses of `host` as this machine
@@ -774,6 +826,183 @@ function __global_only(addrs: net.IpAddr[]): Result[void, FetchError] {
     }
   }
   return Ok(());
+}
+
+// `__send_hosted(req, t)` — the request handed to the wasi-http host's
+// client (std/wasi_http): the host resolves the name, dials and speaks
+// TLS, under the connect and inactivity bounds (`request-options` has
+// no total bound). Both routes reach what the host lets them: the host
+// resolves names and owns the network, so its outbound policy is the
+// rule there, and this client's block list does not apply.
+function __send_hosted(req: Request, t: __Target): Result[HttpResponse, FetchError] {
+  let body: u8[] = req.body.bytes();
+  let o: wasi_http.Outgoing = wasi_http.Outgoing { method: req.method, authority: t.host_field, tls: t.tls, target: t.target, headers: __sent_fields(req, t, body.len()), body: body, connect_ms: __connect_bound(req.timeouts), inactivity_ms: req.timeouts.inactivity_ms, body_cap: req.limits.body };
+  match (wasi_http.outgoing(o)) {
+    Ok(resp) => {
+      return __decoded(HttpResponse { ...resp, headers: http.http_end_to_end(resp.headers) }, req);
+    },
+    Err(e) => {
+      return Err(__hosted_error(e));
+    }
+  }
+  return Err(Cancelled);
+}
+
+// `__hosted_error(e)` — the host's refusal as this client's error.
+function __hosted_error(e: wasi_http.OutgoingError): FetchError {
+  match (e) {
+    Code(code) => {
+      return __host_code(code);
+    },
+    Field(name) => {
+      return InvalidRequest("a field the host refuses to carry: " + name);
+    },
+    BodyPastCap => {
+      return BodyLimit;
+    },
+    CutShort => {
+      return Protocol("the response ended before it was complete");
+    },
+    Lost => {
+      return Protocol("the host gave no response");
+    }
+  }
+  return Cancelled;
+}
+
+// `__host_code(code)` — a wasi:http `error-code` case as the phase it
+// failed in, read by its position in the WIT's declaration order.
+function __host_code(code: i32): FetchError {
+  if (code < 3) {
+    return __host_dns_code(code);
+  }
+  if (code < 12) {
+    return __host_connect_code(code);
+  }
+  if (code < 15) {
+    return __host_tls_code(code);
+  }
+  if (code < 25) {
+    return __host_request_code(code);
+  }
+  if (code < 33) {
+    return __host_response_code(code);
+  }
+  return __host_late_code(code);
+}
+
+// `DNS-timeout`, `DNS-error`, `destination-not-found`.
+function __host_dns_code(code: i32): FetchError {
+  if (code == 0) {
+    return Dns(dns.NoReply);
+  }
+  if (code == 1) {
+    return Dns(dns.ServerFailure);
+  }
+  return Dns(dns.NoSuchName);
+}
+
+// `destination-unavailable` to `connection-limit-reached`.
+function __host_connect_code(code: i32): FetchError {
+  if (code == 3) {
+    return Connect(net.HostUnreachable);
+  }
+  if (code == 4) {
+    return Blocked("an address the host refuses to reach");
+  }
+  if (code == 5) {
+    return Connect(net.NetworkUnreachable);
+  }
+  if (code == 6) {
+    return Connect(net.ConnectionRefused);
+  }
+  if (code == 7) {
+    return Io(net.ConnectionReset);
+  }
+  if (code == 8) {
+    return Timeout(Connecting);
+  }
+  if (code < 11) {
+    return Timeout(Inactivity);
+  }
+  return Host("the connection limit was reached");
+}
+
+// `TLS-protocol-error`, `TLS-certificate-error`, `TLS-alert-received`.
+function __host_tls_code(code: i32): FetchError {
+  if (code == 12) {
+    return Tls("a protocol error");
+  }
+  if (code == 13) {
+    return Tls("the certificate was refused");
+  }
+  return Tls("an alert was received");
+}
+
+// `HTTP-request-denied` to `HTTP-request-trailer-size`: what the host
+// would not send.
+function __host_request_code(code: i32): FetchError {
+  if (code == 15) {
+    return Host("the request was denied");
+  }
+  if (code == 16) {
+    return InvalidRequest("the host requires a length");
+  }
+  if (code == 17) {
+    return InvalidRequest("the body is larger than the host sends");
+  }
+  if (code == 18) {
+    return InvalidRequest("the method is not one the host sends");
+  }
+  if (code < 21) {
+    return InvalidUrl("not one the host sends");
+  }
+  return InvalidRequest("the fields are larger than the host sends");
+}
+
+// `HTTP-response-incomplete` to `HTTP-response-content-coding`: what
+// the host could not read.
+function __host_response_code(code: i32): FetchError {
+  if (code == 25) {
+    return Protocol("the response ended before it was complete");
+  }
+  if (code == 28) {
+    return BodyLimit;
+  }
+  if (code == 31) {
+    return Protocol("a transfer coding the host could not read");
+  }
+  if (code == 32) {
+    return Decode("a content coding the host could not undo");
+  }
+  return Protocol("the response fields are larger than the host reads");
+}
+
+// `HTTP-response-timeout` to `internal-error`. The host's protocol error
+// covers a connection closed before any response byte as well (wasmtime
+// reports every failure of its HTTP client that is not a connect or TLS
+// failure as one), so the hosted route cannot tell a reset from a
+// malformed response and never sends a request again.
+function __host_late_code(code: i32): FetchError {
+  if (code == 33) {
+    return Timeout(Inactivity);
+  }
+  if (code == 34) {
+    return Protocol("the upgrade failed");
+  }
+  if (code == 35) {
+    return Protocol("the host read a malformed response");
+  }
+  if (code == 36) {
+    return Host("a loop was detected");
+  }
+  if (code == 37) {
+    return Host("the host is misconfigured");
+  }
+  if (code == 38) {
+    return Host("an internal error");
+  }
+  return Host("error code " + int.int_to_string(code));
 }
 
 // `__send_all(sock, payload)` — every byte of `payload` written, or the
@@ -1034,7 +1263,7 @@ function __rejected(code: i32): FetchError {
 // what a real request gives for a host that is not listening.
 pub function (plat: Platform) http(req: Request): Result[HttpResponse, FetchError] {
   if (!plat.is_mock()) {
-    return __send_as(req, __Policy { public_only: true, proxies: proxy_env() });
+    return __send_as(req, __Policy { public_only: true, proxies: __proxies() });
   }
   let summary: string = req.method + " " + req.url;
   plat.record("http", summary);

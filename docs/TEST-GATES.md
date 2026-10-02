@@ -121,6 +121,19 @@ response byte, every one of the six refusal classes must fire, and both must
 report a latency tail. `docs/FIP-HTTP-CODEC.md` holds the numbers the gate
 protects. It does not measure throughput: a slower build passes.
 
+### The key/value core as a `fip` plane
+
+`TestFipKVDisciplinesAgreeAndDoNotAllocate` in `internal/e2e` compiles
+`examples/fip/kv_baseline.fern`, `kv_pmap.fern` and `kv_fip.fern` for x86-64
+and runs them at the default load and at 150% of the table's capacity: the
+`fip` plane must report zero steady-state allocations in both runs, the two
+conventional variants must allocate, all four reports (the persistent map runs
+uniquely owned and with a live snapshot) must agree on the counters, the live
+count and the digest over every response byte, the over-capacity run must
+produce `full` responses, and every report must carry a latency tail.
+`docs/FIP-KV-CORE.md` holds the numbers the gate protects. It does not
+measure throughput: a slower build passes.
+
 ## std/net addresses and errors
 
 `TestNetAddrInterp`, `TestNetAddrX86_64`, `TestNetAddrWasm` and
@@ -1420,6 +1433,16 @@ compare it, since a refused rewrite also returns the right answer. Pair it with
 an off switch (`FERN_NO_ARRAY_FUSION=1` is the pattern) so "did the pass do
 this?" is one run rather than a rebuild, and so a suite failure can be
 attributed without bisecting.
+
+The self-host's fusion pass (`examples/self_host/semfuse.fern`, #11072) is
+gated the same way, on all three self-host targets:
+`TestSelfHostArrayFusionMatchesHandWrittenLoops` compares every chain shape
+against a loop inside the program, `TestSelfHostArrayFusionStopsAllocatingIntermediates`
+bounds `__heap_alloc_count()` per chain and requires a shared intermediate and
+an unresolved element function to keep allocating, and
+`TestSelfHostArrayFusionKeepsEffectOrder` reads the order of prints from
+element functions. Native's `Test*ArrayFusion*` legs in `internal/e2e` still
+build with the native backend and say nothing about this pass.
 
 ## Diagnostic modes
 

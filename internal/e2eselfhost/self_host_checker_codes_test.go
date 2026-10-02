@@ -1706,6 +1706,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"loop-inner-break-ok", "function f(): i32 { loop { while (true) { break; } } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"loop-lambda-break-ok", "function f(): i32 { loop { let g: () => i32 = (): i32 => { while (true) { break; } return 1; }; let x: i32 = g(); } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"return-if-else-ok", "function f(c: boolean): i32 { if (c) { return 1; } else { return 2; } }\nfunction main(): i32 { return 0; }\n", nil},
+		// An if on a literal takes one arm, the shape a pruned branch on the
+		// target leaves: `if (true)` exits when its then arm does, `if (false)`
+		// when its else arm does.
+		{"return-if-true-ok", "function f(): i32 { if (true) { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
+		{"return-if-false-else-ok", "function f(): i32 { if (false) { let z = 1; } else { return 2; } }\nfunction main(): i32 { return 0; }\n", nil},
+		{"missing-return-if-false", "function f(): i32 { if (false) { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
 		// A bare `{ … }` statement exits when its body does; the self-host
 		// parses it as a scoping `if (true)` with no else.
 		{"return-nested-block-ok", "function f(): i32 { { { return 1; } } }\nfunction main(): i32 { return 0; }\n", nil},
@@ -2365,6 +2371,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// param row is the precision control.
 		{"e063-callee-launder", "function idsl(x: [i32]): [i32] { return x; }\nfunction f(): [i32] { let a: i32[] = [1, 2, 3]; return idsl(a[0:2]); }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
 		{"e063-callee-two-hop", "function idsl(x: [i32]): [i32] { return x; }\nfunction hop(x: [i32]): [i32] { return idsl(x); }\nfunction f(): [i32] { let a: i32[] = [1, 2, 3]; return hop(a[0:2]); }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		// The caller is declared FIRST and the chain runs through METHODS, so
+		// the summary fixpoint needs a second round, reached only through the
+		// call names a method call contributes to the worklist.
+		{"e063-callee-method-chain-caller-first", "struct Box { n: i32 }\nfunction g(): [i32] { let a: i32[] = [1, 2, 3]; let b: Box = Box { n: 0 }; return b.pick(a[0:2]); }\nfunction (b: Box) pick(x: [i32]): [i32] { return b.launder(x); }\nfunction (b: Box) launder(x: [i32]): [i32] { return x; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
 		{"e063-callee-owned-array-arg", "function idarr(x: i32[]): i32[] { return x; }\nfunction f(): [i32] { let a: i32[] = [1, 2, 3]; return idarr(a)[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
 		{"e063-callee-other-arg-ok", "function second(a: [i32], b: [i32]): [i32] { return b; }\nfunction f(p: i32[]): [i32] { let a: i32[] = [1, 2, 3]; return second(a[0:2], p[0:1]); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e063-callee-param-ok", "function idsl(x: [i32]): [i32] { return x; }\nfunction f(p: i32[]): [i32] { return idsl(p[0:2]); }\nfunction main(): i32 { return 0; }\n", nil},

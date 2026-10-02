@@ -650,16 +650,8 @@ pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile | StmtAssig
 // Top-level function decl: `function name(p1: T1, p2: T2): RT { body }`.
 // type names are captured as bare strings — full type-syntax
 // parsing (arrays / generics / unions) is a later milestone.
-// fn_param_dyn: for a `fn`-typed param whose OWN parameter list contains
-// `dyn Trait` positions (`f: (dyn Speak) => i32`), a comma-separated list of the
-// dyn parameter indices ("0", "0,2"), else "". The flat "fn" type tag discards
-// the fn's per-parameter types, so this sidecar preserves which of a fn-value's
-// arguments must be dyn-boxed at an indirect call `f(7)` — without it a primitive
-// literal there is passed unboxed and op_dyn_dispatch reads it as a shape pointer
-// (SIGSEGV, #5276). Populated by peek_fn_param_dyn in parse_param.
-// fn_param_types: the same sidecar one level up — for a `fn`-typed param, the
-// comma-separated SPELLINGS of the fn's own parameter types ("i64", "i32,string").
-// `fn_ret` already preserves the return type for the same reason; together they
+// fn_param_types: for a `fn`-typed param, the comma-separated SPELLINGS of the
+// fn's own parameter types ("i64", "i32,string"). With `fn_ret` they
 // reconstruct the declared signature the flat "fn" tag threw away. wasm needs it
 // because a funcref type is structural: a `(i64) => boolean` value dispatched
 // through an all-i32 `(type $fn2)` is a module that will not load, and an
@@ -667,7 +659,7 @@ pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile | StmtAssig
 // spellings are kept RAW rather than mapped to widths here, because deciding
 // whether `T` is a type variable or a struct named T needs the enclosing
 // function's type_params, which parse_param does not have.
-pub struct ParamDecl { name: string, type_name: string, own: boolean, has_default: boolean, default_value: Expr, ret_arr: boolean, fn_ret: string, fn_param_dyn: string, fn_param_types: string }
+pub struct ParamDecl { name: string, type_name: string, own: boolean, has_default: boolean, default_value: Expr, fn_ret: string, fn_param_types: string }
 
 // LitArm is one arm of a match on a non-enum (i32 / string) scrutinee:
 // a literal to compare against (`lit`, dispatched via `==`) or the `_`

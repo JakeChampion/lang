@@ -1748,23 +1748,24 @@ function sig_buckets(): i32 {
 // sig_name_bucket hashes a signature name to a bucket. The accumulator is
 // masked to 23 bits each step and reduced once at the end: `h * 131` then
 // stays under 2^31, so the hash still needs no wrapping arithmetic, without
-// paying an integer division per character.
+// paying an integer division per character. The loop is the shape the
+// parser's bounds-check elision takes.
 function sig_name_bucket(name: string): i32 {
-  return sig_bucket_from(name, 0);
-}
-
-// sig_bucket_from is sig_name_bucket over the SUFFIX of `name` starting at
-// `from`. One hash body for both indexes, so a suffix key and the whole-string
-// key it must match can never drift apart.
-function sig_bucket_from(name: string, from: i32): i32 {
   let h: i32 = 0;
-  let i: i32 = from;
-  let n: i32 = name.len();
-  while (i < n) {
+  let i: i32 = 0;
+  while (i < name.len()) {
     h = h * 131 + name[i] as i32 & 8388607;
     i = i + 1;
   }
   return h % 4093;
+}
+
+// sig_bucket_from is sig_name_bucket over the SUFFIX of `name` starting at
+// `from`: the one hash body, over a copy of the suffix, so a suffix key and
+// the whole-string key it must match can never drift apart. It runs once per
+// signature when the table is built.
+function sig_bucket_from(name: string, from: i32): i32 {
+  return sig_name_bucket(slice_unchecked(name, from, name.len()) + "");
 }
 
 // sig_table indexes `sigs` by name. The chain is built by walking BACKWARD and
@@ -8751,6 +8752,48 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
   return SlcWalk { diags: out, viewed: viewed, owns: owns };
 }
 
+// slc_call_names is the last segment of every key a walk of `fn`'s body
+// reads under view_callee: the callee of a plain call, the method name of a
+// method call (view_callee keys that one `recv.field` and view_sum_key keys
+// its summary `Base.field`, so both end in the bare name), each as often as
+// it occurs. The changed set holds the bare `fn.name` the same way, so a
+// body naming none of it reads nothing that changed; a shared method name
+// only over-includes.
+function slc_call_names(fn: parser.FuncDecl): string[] {
+  let out: string[] = [];
+  for st in fn.body {
+    out = astwalk.fold_stmt(st, out, slc_call_name_at);
+  }
+  return out;
+}
+
+function slc_call_name_at(e: ast.Expr, own acc: string[]): string[] {
+  if let ast.ExprCall(c) = e {
+    match (c.callee) {
+      ast.ExprIdent(cid) => {
+        return acc.append(cid.name);
+      },
+      ast.ExprFieldAccess(cfa) => {
+        return acc.append(cfa.field);
+      },
+      _ => {
+        return acc;
+      }
+    }
+  }
+  return acc;
+}
+
+// slc_calls_any reports whether any of `calls` is in `marked`.
+function slc_calls_any(calls: util.NameIndex, marked: util.NameIndex): boolean {
+  for name in calls.names {
+    if (marked.has(name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // slice_escape_diags is the E063 entry point: seed empty name sets and
 // walk a function body. See slc_walk.
 function slice_escape_diags(fn: parser.FuncDecl, s: Scope, sums: ViewSum[], vix: ViewIndex): SlcWalk {
@@ -10434,10 +10477,6 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean): boolean {
       return true;
     },
     ast.StmtIf(f) => {
-      // A bare `{ … }` statement parses as `if (true)` with no else.
-      if (f.origin == "block") {
-        return block_leaves(f.then_body, jumps);
-      }
       // A tuple / struct / literal / nested-variant match is replaced at parse
       // time by a done-flag or if/else chain (build_tuple_match and friends),
       // which falls through by construction — so reading the chain says every
@@ -10460,6 +10499,18 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean): boolean {
           }
         }
         return true;
+      }
+      // An if on a literal takes one arm: `if (true)` leaves when its then
+      // arm does (a bare `{ … }` statement parses as one, and a pruned
+      // branch on the target is one), `if (false)` when its else arm does.
+      match (f.cond) {
+        ast.ExprBool(b) => {
+          if (b.value) {
+            return block_leaves(f.then_body, jumps);
+          }
+          return block_leaves(f.else_body, jumps);
+        },
+        _ => {}
       }
       return block_leaves(f.then_body, jumps) && block_leaves(f.else_body, jumps);
     },
@@ -21141,15 +21192,31 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
     slc_sums = slc_sums.append(ViewSum { key: view_sum_key(cfn), flags: slc_initial, fresh: false });
   }
   let slc_ix: ViewIndex = view_index(slc_sums);
-  let slc_changed: boolean = true;
-  while (slc_changed) {
-    slc_changed = false;
+  // A summary reads its callees' summaries (view_callee) and only ever
+  // gains a flag, so after the first round
+  // only a function calling a name whose summary changed in the last round
+  // can change its own: each round walks those, told apart by the call
+  // names collected off each body once.
+  let slc_calls: util.NameIndex[] = [];
+  for cfn in mod.funcs {
+    slc_calls = slc_calls.append(util.name_index(slc_call_names(cfn)));
+  }
+  let slc_no_names: string[] = [];
+  let slc_marked: util.NameIndex = util.name_index(slc_no_names);
+  let slc_first: boolean = true;
+  while (slc_first || slc_marked.names.len() > 0) {
+    let slc_now: string[] = [];
     let sj: i32 = 0;
     while (sj < slc_fns.len()) {
+      if (!slc_first && !slc_calls_any(slc_calls[sj], slc_marked)) {
+        sj = sj + 1;
+        continue;
+      }
       let sjw: SlcWalk = slice_escape_diags(slc_fns[sj], slc_scopes[sj], slc_sums, slc_ix);
       let slc_positions: string[] = view_positions(slc_fns[sj]);
       let slc_cur: ViewSum = slc_sums[sj];
       let slc_next: boolean[] = slc_cur.flags;
+      let slc_changed: boolean = false;
       let sp: i32 = 0;
       while (sp < slc_positions.len() && sp < slc_next.len()) {
         if (!slc_next[sp] && name_in(slc_positions[sp], sjw.viewed)) {
@@ -21167,9 +21234,14 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
         slc_fresh = true;
         slc_changed = true;
       }
+      if (slc_changed) {
+        slc_now = slc_now.append(slc_fns[sj].name);
+      }
       slc_sums = slc_sums.with(sj, ViewSum { key: slc_cur.key, flags: slc_next, fresh: slc_fresh });
       sj = sj + 1;
     }
+    slc_first = false;
+    slc_marked = util.name_index(slc_now);
   }
   let i: i32 = 0;
   while (i < mod.funcs.len()) {

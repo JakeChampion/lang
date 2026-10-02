@@ -29,6 +29,9 @@ Receiver methods on i32 / byte values.
   `is_ascii_upper`, `matches_any`,
   `hex_digit`, `digit_value`, `hex_value`, `to_ascii_lower`,
   `to_ascii_upper`, `to_ascii_string`
+  (`to_ascii_string` accepts a `u8`: 0..127 produces one ASCII byte,
+  including NUL; 128..255 produces the empty string. Keep arbitrary bytes
+  in `u8[]`, or validate a complete sequence with `utf8.from_bytes`.)
 - **Sign / classification:** `signum`, `is_positive`, `is_negative`,
   `is_zero`, `is_in_range`, `is_between`, `is_multiple_of`,
   `is_perfect_square`, `is_palindrome`, `is_even`, `is_odd`,
@@ -558,12 +561,15 @@ a key from it.
   bounded forms are unbiased (Lemire).
 - `rng_fill(state, h, n): i64` — push `n` pseudorandom bytes onto the
   capacity-carrying builder `h` and return the advanced state.
-  `rng_bytes(state, n): (i64, string)` is the same as a string. Eight
-  bytes leave per `buf_push_u64`, which is what makes this the fast way
-  to produce bulk randomness: 4 MiB costs 5.6 ms against `random_bytes`'
-  15.3 ms, because the kernel's generator is the slower of the two
-  (#9221). `shuffle_seeded` / `choice_seeded` / `sample_seeded` are the
-  array helpers over the same generator.
+  Eight bytes leave per `buf_push_u64`; the bulk builder measurements
+  are recorded in #9221.
+- `rng_bytes(state, n): (i64, u8[])` returns the same stream as owned
+  bytes. Each eight-byte word consumes two draws, low byte first; a
+  partial final word discards unused high bytes. For `n <= 0`, the array
+  is empty and the state is unchanged. Use a validating text constructor
+  if the bytes must become a string.
+- `shuffle_seeded` / `choice_seeded` / `sample_seeded` are the array
+  helpers over the same generator.
 
 ### `std/semver`
 
@@ -1672,8 +1678,14 @@ answer is `Result[HttpResponse, FetchError]`.
   CRLF in a URL or a field cannot split the request on the wire. It
   writes `Host`,
   `Content-Length` and `Connection: close` itself and strips hop-by-hop
-  fields from what it sends. No TLS yet (`https` fails with `Tls`), no
-  pool.
+  fields from what it sends. No TLS where the client dials (`https` fails
+  with `Tls`), no pool. On `wasm32-wasi-http` the client dials nothing:
+  the request goes to the host's wasi:http/outgoing-handler (`std/wasi_http`),
+  which resolves the name, connects, speaks TLS (so `https` works there)
+  and HTTP/2 where it can, under the connect and inactivity bounds as
+  `request-options`; the response comes back whole under the body cap,
+  and every rule above the transport (redirects, decoding, the request
+  checks, the retry) is the same.
 - **Redirects:** a 301, 302, 303, 307 or 308 with a `Location` is
   followed, `(req).with_redirects(hops)` bounding the hops (10 by
   default; 0 answers the 3xx as data), every hop under the one total
@@ -1705,7 +1717,10 @@ answer is `Result[HttpResponse, FetchError]`.
   read) is sent once more when its method is idempotent
   (`http.http_method_idempotent`: GET, HEAD, PUT, DELETE, OPTIONS,
   TRACE), on a fresh connection, under the same total bound. A POST is
-  never resent.
+  never resent. On `wasm32-wasi-http` nothing is: the host reports a
+  connection closed before any response byte as its protocol error, the
+  same as a malformed response, so the client cannot tell that nothing
+  happened.
 - **Sending:** `send(req)` from a program with a `main`;
   `(plat: Platform).http(req)` from a handler, the capability-scoped
   route (a recording bag answers what `MockPlatform.http_set` canned).
@@ -1716,7 +1731,11 @@ answer is `Result[HttpResponse, FetchError]`.
   dialled, so a rebinding record is caught too. The check reads the
   addresses as the network names them, before NAT64 synthesis, and an
   address under a NAT64 prefix the nameservers reveal is judged by the
-  address it carries (`dns.nat64_carried`). `send` has no such rule.
+  address it carries (`dns.nat64_carried`). `send` has no such rule. On
+  `wasm32-wasi-http` neither route has one: the host resolves names and
+  owns the network, so its outbound policy (Spin's
+  `allowed_outbound_hosts`, what `wasmtime serve` is run with) is the
+  rule there, and a loopback or private address is the host's to refuse.
 - **Proxies:** both routes go through the forward proxy the environment
   names, read through `config_get` as `ProxyEnv` (`proxy_env()`,
   `proxy_env_from(...)` for the pure form): the lowercase `http_proxy`
@@ -1731,7 +1750,9 @@ answer is `Result[HttpResponse, FetchError]`.
   credentials. On the handler's route the origin is still resolved and
   checked before the request goes to the proxy (the proxy's own address
   is the deployment's choice and goes unchecked), so a deployment where
-  only the proxy can resolve names reaches it through `send`.
+  only the proxy can resolve names reaches it through `send`. On
+  `wasm32-wasi-http` the environment's proxy is the host's own to go
+  through, and the client reads none.
 - **Responses:** the same `HttpResponse` the server side builds, with
   `BodyBytes`, headers case-folded and the hop-by-hop fields stripped, a
   chunked body decoded and its trailers in `trailers`, interim 1xx
@@ -1746,7 +1767,8 @@ answer is `Result[HttpResponse, FetchError]`.
   that cannot be written as one line, or a file body; `what` names the
   rule, never the value), `Dns(DnsError)`, `Connect(NetError)`,
   `Blocked(what)` (a host the handler's route may not reach, naming the
-  address), `Tls`,
+  address), `Tls(what)` (`https` where no host speaks TLS, or the
+  host's handshake failure),
   `Timeout(Phase)` with `Phase` one of `Connecting` / `Inactivity` /
   `Total`, `Protocol(what)` (a response the parser refuses, interim
   1xx responses past one `limits.header_bytes` between them, or a 101
@@ -1756,7 +1778,14 @@ answer is `Result[HttpResponse, FetchError]`.
   body past `limits.body`, decoded or not), `Decode(what)` (a content
   coding the client could not undo), `Redirect(what)` (more hops than
   `redirects`, a 3xx without a `Location`, or a `Location` that is not a
-  URL), and `Cancelled`, which no path produces yet. `(e).message()`.
+  URL), `Host(what)` (a wasi-http host refusing or failing the request
+  outside any phase this client owns: denied, a loop detected, its
+  configuration, an internal error), and `Cancelled`, which no path
+  produces yet. On `wasm32-wasi-http` the host's `error-code` is read
+  into these by its case: DNS cases to `Dns`, the connect and TLS
+  cases to `Connect`, `Timeout` and `Tls`, what the host would not send
+  to `InvalidRequest` / `InvalidUrl`, what it could not read to
+  `Protocol`, `BodyLimit` and `Decode`. `(e).message()`.
 - **Timeouts:** `Timeouts { connect_ms, inactivity_ms, total_ms }`,
   `timeouts()` gives 10 s / 30 s / 60 s. The connect bound covers the
   whole address race; inactivity is the longest wait for the next byte
