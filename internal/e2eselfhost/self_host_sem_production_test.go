@@ -119,7 +119,7 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 		out = filepath.Join(dir, "prog.wat")
 		args = []string{"-target", target, "-emit", "asm", src, stdlibRoot, "-o", out}
 	}
-	cmd := exec.Command(fernBin, args...)
+	cmd := runX86_64Bin(runner, fernBin, args...)
 	cmd.Env = append(os.Environ(), "FERN_SEM_IR_REPORT=1")
 	if sanitize {
 		cmd.Env = append(cmd.Env, "FERN_SANITIZE=1")
@@ -135,7 +135,7 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 		if err := os.Chmod(out, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		run = exec.Command(out)
+		run = runX86_64Bin(runner, out)
 	case "arm64-linux":
 		if err := os.Chmod(out, 0o755); err != nil {
 			t.Fatal(err)
