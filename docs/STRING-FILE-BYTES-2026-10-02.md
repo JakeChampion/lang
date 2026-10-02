@@ -42,6 +42,12 @@ closure. A separate Linux test performs 128 failed writes to `/dev/full`
 under a 64-descriptor limit, then successfully writes another file. It passed
 for both primary targets and both bootstrap native backends.
 
+A library-only caller exposed missing per-module runtime registrations:
+both Linux targets failed to link `__fn___fern_write_file_bytes_u8` before
+the fix. With both byte-array runtime forms registered, the same programs
+link and write the exact binary payload. The WASI fault matrix also passes
+through the primary compiler's direct core-binary emitter.
+
 After integration with main at `c987221a9`, the official pinned seed produces
 identical stage-2 and stage-3 Darwin compiler binaries of 12,097,665 bytes,
 SHA-256
@@ -53,9 +59,11 @@ and Preview 2. Native allocation counts were 34 allocated and 34 freed;
 core WASM reported 28 and 28. Preview 2 does not expose that census, so its
 successful execution is not evidence of whole-component allocation balance.
 
-The integrated Linux matrix, all fault cases and both IR-registry checks pass.
-`make lint-all` passes after the latest main integration. The full unit suite
-passed on the raw-pipeline parent; the refreshed full suite is pending.
+The integrated Linux matrix, all fault cases, per-module regression and both
+IR-registry checks pass. `make lint-all` passes. The full unit suite passed
+on the main-integrated revision `83df547b1`; the final run with the per-module
+registration fix is pending. The refreshed bootstrap has the same stage-2
+and stage-3 hash recorded above.
 The Darwin Go harness is blocked by
 host file-table exhaustion; the integrated Darwin coverage above uses the
 actual bootstrapped compiler directly.

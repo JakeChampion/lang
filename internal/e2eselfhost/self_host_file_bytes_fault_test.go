@@ -41,7 +41,7 @@ func TestSelfHostFileBytesFaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, compiler := range []struct{ name, cli, emit string }{
-		{"primary", cli, "asm"}, {"bootstrap", bootstrap, "command-module"},
+		{"primary", cli, "core-module"}, {"bootstrap", bootstrap, "command-module"},
 	} {
 		t.Run(compiler.name, func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "fault.wasm")
