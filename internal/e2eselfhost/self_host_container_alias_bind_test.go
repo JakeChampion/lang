@@ -778,12 +778,13 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 21, allocs: 200, frees: 200,
 		},
 		{
-			// A string-builder ACCUMULATOR aliased after its last rebind; each rebind
-			// frees the box it supersedes and the alias shares only the final one.
+			// A string-builder ACCUMULATOR aliased after its last rebind. The first
+			// append onto the empty literal allocates the box and the other two grow
+			// it in place (#10960), so the alias shares the one box the round made.
 			name: "string_accumulator_alias_refused",
 			src: `function round(i: i32): i32 { var s: string = ""; var k: i32 = 0; while (k < 3) { s = s + "x"; k = k + 1; } var v: string = s; return v.len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 21, allocs: 300, frees: 300,
+			want: 21, allocs: 100, frees: 100,
 		},
 		{
 			// A FOR-IN ELEMENT source, borrowed from the array rather than owned.

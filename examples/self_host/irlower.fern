@@ -1791,7 +1791,10 @@ pub function indexed_box_elem_escapes(e: ast.Expr, s: LowerState): boolean {
       if (decl_is_struct(s.frame.structs, expr_struct_type(e, s))) {
         return true;
       }
-      return expr_is_arr_src(e, s) || expr_is_strarr(e, s) || expr_is_f64arr(e, s) || expr_is_i64arr(e, s);
+      // A row borrowed from a nested-array field is still released by its
+      // source container. Use the indexed-array type query shared with
+      // return handoffs, including fields that have no local array slot.
+      return index_read_is_arr(e, s) || expr_is_arr_src(e, s) || expr_is_strarr(e, s) || expr_is_f64arr(e, s) || expr_is_i64arr(e, s);
     },
     _ => {
       return false;

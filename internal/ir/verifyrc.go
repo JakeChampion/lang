@@ -187,6 +187,13 @@ func (c *rcChecker) reaches(from, to int, donor int32) bool {
 	depth := 0
 	for i := from + 1; i < to; i++ {
 		switch ops[i].Kind {
+		case OpReturn, OpReturnVoid, OpReturnPair:
+			// A return on the claim's path prevents any later claim.
+			// A return inside a newly entered conditional scope does not:
+			// that scope's other path can still reach the second site.
+			if depth == 0 {
+				return false
+			}
 		case OpBlock, OpLoop, OpIf:
 			depth++
 		case OpEnd:

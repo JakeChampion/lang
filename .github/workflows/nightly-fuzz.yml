@@ -66,6 +66,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # gotestsum reads this as --jsonfile: the event stream the
+  # failure-annotation step names the failed tests from.
+  GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
   # How far the differential window advances per run. Matches
   # `diffOracleSeedCount`, so consecutive runs tile the seed space with
   # no gap and no overlap. The printable sweep is half that (1024), so
@@ -125,6 +128,9 @@ jobs:
         run: |
           gotestsum --format pkgname-and-test-fails -- -timeout=25m \
             -run '^TestDifferential_(LangsmithMain|PrintableStdout)$' ./internal/e2e/
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
       - name: Upload failing-seed artifacts
         if: failure()
@@ -184,6 +190,9 @@ jobs:
         run: |
           gotestsum --format pkgname-and-test-fails -- -timeout=43m \
             -run '^TestDifferential_SelfHostX86_64$' ./internal/e2e/
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
   # The moving window through the self-host ARM64 emitter (#7967).
   #
@@ -218,6 +227,9 @@ jobs:
         run: |
           gotestsum --format pkgname-and-test-fails -- -timeout=43m \
             -run '^TestDifferential_SelfHostArm64$' ./internal/e2e/
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
   # The moving window through the wasm emitter. Needs neither a cross
   # toolchain nor qemu.
@@ -238,6 +250,9 @@ jobs:
         run: |
           gotestsum --format pkgname-and-test-fails -- -timeout=43m \
             -run '^TestDifferential_SelfHostWasm$' ./internal/e2e/
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
   fuzz:
     if: github.repository == 'JakeChampion/lang'
@@ -298,6 +313,9 @@ jobs:
         run: |
           gotestsum --format testname -- -timeout=40m \
             -fuzz='^${{ matrix.target }}$' -fuzztime="$FUZZTIME" -run=^$ ${{ matrix.pkg }}
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
       # The minimised failing input Go writes into the package's
       # testdata/fuzz/. This is the durable artifact of the whole
@@ -378,6 +396,9 @@ jobs:
         run: |
           gotestsum --format testname -- -timeout=30m \
             -run '^TestSelfHostCoverageFeedbackBeatsBlindMutation$' ./internal/e2e/
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
       - name: Upload discovered corpus
         if: always()

@@ -2427,8 +2427,13 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s:
     return refused(s, "unsupported call target");
   }
   var prefix: string = "";
-  if let typeinfo.TypeArray(_) = s.values[recv.id] {
+  // Dispatch by the checked surface receiver, before physical view erasure.
+  var receiver_type: typeinfo.Type = checked(fa.obj, s);
+  if let typeinfo.TypeArray(a) = receiver_type {
     prefix = "__arrm_";
+    if (a.view) {
+      prefix = "__viewm_";
+    }
   }
   if (ssasem.is_map(s.values[recv.id])) {
     prefix = "__mapm_";
@@ -2442,7 +2447,10 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s:
   if (prefix == "") {
     return primitive_method(c, fa, recv, s, statement);
   }
-  var at: i32 = ssasem.find_contract(s.contracts, prefix + fa.field);
+  var at: i32 = ssasem.find_contract(s.contracts, parser.concrete_array_method_name(typeinfo.spelling(receiver_type), fa.field));
+  if (at < 0) {
+    at = ssasem.find_contract(s.contracts, prefix + fa.field);
+  }
   if (at < 0 && prefix == "__arrm_") {
     at = array_module_method(s.contracts, fa.field);
   }
@@ -2504,7 +2512,7 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: 
     return builtin_length(recv, s);
   }
   if ((fa.field == "bytes" || fa.field == "as_bytes") && c.args.len() == 0 && ssasem.is_text(s.values[recv.id])) {
-    return define(s, ssasem.str_bytes(), [recv.id], 0, "", typeinfo.TypeArray { elem: t_u8(), view: false });
+    return define(s, ssasem.str_bytes(), [recv.id], 0, "", typeinfo.TypeArray { elem: t_u8(), view: fa.field == "as_bytes" });
   }
   if (fa.field == "append" && c.args.len() == 1) {
     return builtin_append(c, recv, s);

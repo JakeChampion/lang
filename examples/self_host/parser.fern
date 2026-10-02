@@ -10549,6 +10549,8 @@ pub struct MFns {
   // The `__smm_<Base>_<field>` fold names. A handful per module, and the test
   // is a SUFFIX match rather than equality, so this one stays a scan.
   smm: string[],
+  // Concrete array/view folds, indexed separately from generic templates.
+  array_concrete: i32[],
   // The module's struct decls, so a struct-literal FIELD VALUE can be
   // rewritten against the field's declared type. It travels here for the same
   // reason the index does: built from one array, it cannot disagree with the
@@ -10589,6 +10591,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
   var gname: string[] = [];
   var gat: i32[] = [];
   var smm: string[] = [];
+  var array_concrete: i32[] = [];
   var i: i32 = 0;
   while (i < decls.len()) {
     if (decls[i].type_params.len() > 0 && decls[i].receiver_name.len() == 0) {
@@ -10597,6 +10600,9 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
     }
     if (decls[i].name.len() > 6 && slice_unchecked(decls[i].name, 0, 6) == "__smm_") {
       smm = smm.append(decls[i].name);
+    }
+    if (is_concrete_array_fold(decls[i])) {
+      array_concrete = array_concrete.append(i);
     }
     i = i + 1;
   }
@@ -10613,7 +10619,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
     ghead = ghead.with(bk, k);
     k = k - 1;
   }
-  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, structs: structs, enums: enums, impls: impls };
+  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, array_concrete: array_concrete, structs: structs, enums: enums, impls: impls };
 }
 
 // bg_find returns the position in `fns.decls` of the bounded-generic function
@@ -11217,6 +11223,12 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
   }
   if (type_ends_arr(pattern) && type_ends_arr(concrete)) {
     return bind_unify(slice_unchecked(pattern, 0, pattern.len() - 2), slice_unchecked(concrete, 0, concrete.len() - 2), tparams, binds);
+  }
+  if (spelling_is_view(pattern)) {
+    var elem: string = array_method_element(concrete);
+    if (elem.len() > 0) {
+      return bind_unify(array_method_element(pattern), elem, tparams, binds);
+    }
   }
   // Tuple pattern `(K, V)` vs `(i32, i32)` — destructure the parens and unify
   // pairwise, so a tuple (or tuple-array, via the array case above) parameter
@@ -12049,6 +12061,10 @@ function recv_method_ret_of(cfa: ast.ExprFieldAccess, env: MEnv, funcs: MFns): s
   if (rvt.len() == 0) {
     return "";
   }
+  var concrete: i32 = concrete_array_method_at(funcs, rvt, cfa.field);
+  if (concrete >= 0) {
+    return funcs.decls[concrete].ret_type;
+  }
   var mrt: string = assoc_ret_of(funcs.decls, rvt, cfa.field);
   if (mrt.len() == 0) {
     mrt = generic_recv_ret_of(funcs.decls, rvt, cfa.field);
@@ -12156,6 +12172,17 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
     },
     ast.ExprIdent(id) => {
       return env.elook(id.name);
+    },
+    ast.ExprSlice(sl) => {
+      var source: string = mono_infer(sl.array, env, funcs);
+      if (source == "string" || source == "str") {
+        return "Option[str]";
+      }
+      var elem: string = array_method_element(source);
+      if (elem.len() > 0) {
+        return "[" + elem + "]";
+      }
+      return "";
     },
     ast.ExprLambda(lm) => {
       // A local bound to a lambda carries the lambda's declared shape, so a
@@ -12270,6 +12297,14 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           if ((cfa.field == "to_string" || cfa.field == "to_debug") && c.args.len() == 0) {
             return "string";
           }
+          // The builtin has no function declaration for return-type lookup.
+          // Preserve its borrowed view when inferring a following method.
+          if (cfa.field == "as_bytes" && c.args.len() == 0) {
+            var source: string = mono_infer(cfa.obj, env, funcs);
+            if (source == "string" || source == "str") {
+              return "[u8]";
+            }
+          }
           // Generic array method `recv.m(args)` whose receiver is an
           // array — folded to `__arrm_m[T]` by
           // register_array_method_generics. Infer the receiver's element
@@ -12277,10 +12312,14 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           // CHAINED call (`a.concat(b).concat(c)`) recovers the inner
           // result type and the outer call rewrites onto the IR path too.
           var amgi: i32 = bg_find(funcs, "__arrm_" + cfa.field);
-          if (amgi >= 0) {
+          var vmgi: i32 = bg_find(funcs, "__viewm_" + cfa.field);
+          if (amgi >= 0 || vmgi >= 0) {
             var recvt: string = mono_infer(cfa.obj, env, funcs);
-            if (type_ends_arr(recvt)) {
-              var el: str = slice_unchecked(recvt, 0, recvt.len() - 2);
+            if (spelling_is_view(recvt)) {
+              amgi = vmgi;
+            }
+            var el: string = array_method_element(recvt);
+            if (amgi >= 0 && el.len() > 0) {
               var amrt: string = subst_ty(funcs.decls[amgi].ret_type, funcs.decls[amgi].type_params, [el + ""]);
               // `type_params` carries only the BOUNDED receiver var, so a
               // method with an unbounded param of its own — `map[U]`,
@@ -12353,6 +12392,13 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           }
           return stamped_scalar(c.ty);
         },
+        ast.ExprLambda(lm) => {
+          // Value blocks carry the checker's result, including view receivers.
+          if (!mono_ty_mentions_var(lm.ret_type)) {
+            return lm.ret_type;
+          }
+          return "";
+        },
         _ => {
           return stamped_scalar(c.ty);
         }
@@ -12360,18 +12406,17 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       return "";
     },
     ast.ExprIndex(ix) => {
-      // `a[i]` where `a: T[]` — the element type is the array type minus its
-      // `[]` suffix. Without this arm mono_infer fell through to "" for an
+      // `a[i]` on an array or view has its container's element type.
+      // Without this arm mono_infer fell through to "" for an
       // array-element read, so a call like `f(a[i], a[j])` could not bind `f`'s
       // type parameter at all: the call stayed generic, the un-monomorphised
       // symbol survived to the IR eligibility gate, and the gate rejected the
       // CALLER as ineligible — a hard compile error since the AST emitters
       // were deleted (#6189).
       //
-      // Guarded on the `[]` suffix rather than blindly trimming two chars: a
-      // STRING index (`s[i]`) yields a char, not a "strin", and an unknown
-      // object type must stay unknown so the call is left generic rather than
-      // bound to a wrong instantiation.
+      // Read exactly one container layer, preserving nested views. String
+      // indices and unknown containers stay unknown here instead of binding
+      // a generic to a truncated type spelling.
       //
       // The element type is also rejected when it is itself a bare type
       // variable — indexing a `T[]` inside a generic yields `T`, which is not
@@ -12381,9 +12426,8 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       // fails to compile. Same reasoning as the `looks_type_var(crt)` guard on
       // an inferred call return above.
       var at: string = mono_infer(ix.array, env, funcs);
-      var n: i32 = at.len();
-      if (n > 2 && slice_unchecked(at, n - 2, n) == "[]") {
-        var el: string = slice_unchecked(at, 0, n - 2) + "";
+      var el: string = array_method_element(at);
+      if (el.len() > 0) {
         if (looks_type_var(el)) {
           return "";
         }
@@ -12496,6 +12540,18 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
             },
             _ => {}
           }
+          // Fold concrete receivers before erasure can merge their namespaces.
+          if (funcs.array_concrete.len() > 0) {
+            var concrete: i32 = concrete_array_method_at(funcs, mono_infer(fac.obj, env, funcs), fac.field);
+            if (concrete >= 0) {
+              var receiver: RExpr = mono_expr(fac.obj, env, funcs, cur);
+              var args: ast.Expr[] = [receiver.rexpr];
+              for arg in nargs {
+                args = args.append(arg);
+              }
+              return RExpr { rexpr: ast.ExprCall { ...c, callee: ast.ExprIdent { name: funcs.decls[concrete].name, line: fac.line, col: fac.col, ty: "" }, args: args }, rins: receiver.rins };
+            }
+          }
           // Value-receiver generic array method `recv.m(args)` —
           // m was folded to a bounded free generic `__arrm_m[T]`
           // by register_array_method_generics. When recv is
@@ -12505,9 +12561,14 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
           // `mod.f(args)` still wins.
           var amn: string = "__arrm_" + fac.field;
           var amg: i32 = bg_find(funcs, amn);
-          if (amg >= 0) {
+          var vmg: i32 = bg_find(funcs, "__viewm_" + fac.field);
+          if (amg >= 0 || vmg >= 0) {
             var rty: string = mono_infer(fac.obj, env, funcs);
-            if (type_ends_arr(rty)) {
+            if (spelling_is_view(rty)) {
+              amn = "__viewm_" + fac.field;
+              amg = vmg;
+            }
+            if (amg >= 0 && array_method_element(rty).len() > 0) {
               var raw: ast.Expr[] = [fac.obj];
               var rk: i32 = 0;
               while (rk < c.args.len()) {
@@ -12676,7 +12737,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
       return RExpr { rexpr: ast.ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col, written: s.written }, rins: rb.rins };
     },
     ast.ExprLambda(lm) => {
-      var bodyr: RStmts = mono_stmts(lm.body, env, funcs, ins, "");
+      var bodyr: RStmts = mono_stmts(lm.body, bind_params(env, lm.params), funcs, ins, "");
       return RExpr { rexpr: ast.ExprLambda { ...lm, body: bodyr.rstmts }, rins: bodyr.rins3 };
     },
     _ => {
@@ -13158,7 +13219,13 @@ function mono_stmts(stmts: ast.Stmt[], env: MEnv, funcs: MFns, ins: Insts, ret_t
 // callee's return-position type var from a fn PARAM passed on (`map_values(f)`
 // calling `__om_map_values(t, f)` with `f: (V) => W`).
 function env_from_params(params: ast.ParamDecl[]): MEnv {
-  var e: MEnv = MEnv { mnames: [], mtypes: [] };
+  return bind_params(MEnv { mnames: [], mtypes: [] }, params);
+}
+
+// bind_params is env_from_params on top of an enclosing env: a lambda's
+// parameters shadow what its body can otherwise see.
+function bind_params(env: MEnv, params: ast.ParamDecl[]): MEnv {
+  var e: MEnv = env;
   var i: i32 = 0;
   while (i < params.len()) {
     var pt: string = params[i].type_name;
@@ -13814,8 +13881,20 @@ pub function looks_type_var(s: string): boolean {
   return true;
 }
 
-// is_generic_array_method gates the array-method path: a method
-// (`receiver_name` set) whose receiver is `<var>[]` for a single type
+// array_method_element reads one array or view element without erasing
+// a view nested inside that element.
+pub function array_method_element(spelling: string): string {
+  if (type_ends_arr(spelling)) {
+    return slice_unchecked(spelling, 0, spelling.len() - 2) + "";
+  }
+  if (spelling_is_view(spelling)) {
+    return render_type_ref(parse_type_ref(spelling).args[0]);
+  }
+  return "";
+}
+
+// The generic array-method path accepts a method
+// (`receiver_name` set) whose receiver is `<var>[]` or `[<var>]` for one type
 // variable. Closure ("fn") params ARE allowed (`reduce` / `sort_by` /
 // `filter` / `any` / `all` / `find`) and so are the method's OWN
 // (unbounded) type params (`map[U]` / `flat_map[U]` / `fold[A]` /
@@ -13836,14 +13915,47 @@ pub function looks_type_var(s: string): boolean {
 // path the equivalent free generic `max[T: cmp.Ord](xs: T[])` already uses.
 // What stays excluded is a bounded EXTRA type param (a bounded `U` not
 // fixed by the receiver): `fd.type_params` may hold the receiver var alone.
+function is_concrete_array_method(fd: FuncDecl): boolean {
+  var elem: string = array_method_element(fd.receiver_type);
+  return fd.receiver_name.len() > 0 && elem.len() > 0
+    && type_str_vars(elem, []).len() == 0 && fd.all_type_params.len() == 0;
+}
+
+pub function concrete_array_method_name(receiver: string, method: string): string {
+  var elem: string = array_method_element(receiver);
+  if (elem.len() == 0) {
+    return "";
+  }
+  var prefix: string = "__carrm_";
+  if (spelling_is_view(receiver)) {
+    prefix = "__cviewm_";
+  }
+  return prefix + sanitize_key(elem) + "__" + method;
+}
+
+function is_concrete_array_fold(fd: FuncDecl): boolean {
+  return fd.receiver_name.len() == 0
+    && (util.str_has_prefix(fd.name, "__carrm_") || util.str_has_prefix(fd.name, "__cviewm_"));
+}
+
+function concrete_array_method_at(funcs: MFns, receiver: string, method: string): i32 {
+  if (funcs.array_concrete.len() == 0) {
+    return 0 - 1;
+  }
+  var name: string = concrete_array_method_name(receiver, method);
+  for at in funcs.array_concrete {
+    if (funcs.decls[at].name == name) {
+      return at;
+    }
+  }
+  return 0 - 1;
+}
+
 function is_generic_array_method(fd: FuncDecl): boolean {
   if (fd.receiver_name.len() == 0) {
     return false;
   }
-  if (!type_ends_arr(fd.receiver_type)) {
-    return false;
-  }
-  var elem: str = slice_unchecked(fd.receiver_type, 0, fd.receiver_type.len() - 2);
+  var elem: string = array_method_element(fd.receiver_type);
   if (!looks_type_var(elem)) {
     return false;
   }
@@ -13863,6 +13975,8 @@ function is_generic_array_method(fd: FuncDecl): boolean {
 // register_array_method_generics rewrites each generic array-receiver
 // method into a bounded free generic `__arrm_<name>[T]` with the
 // receiver folded to a leading param, and drops the original method. A
+// concrete receiver gets a free function keyed by its element and namespace.
+// View methods have separate names throughout both lowering paths. A
 // no-op when none is present (the compiler's own sources call the free
 // `concat(xs, ys)` form, never `xs.concat(ys)`, so the byte-identical
 // bootstrap fixpoint is preserved). Runs before monomorphize_module so
@@ -13871,7 +13985,7 @@ pub function register_array_method_generics(mod: Module): Module {
   var any_am: boolean = false;
   var ci: i32 = 0;
   while (ci < mod.funcs.len()) {
-    if (is_generic_array_method(mod.funcs[ci])) {
+    if (is_generic_array_method(mod.funcs[ci]) || is_concrete_array_method(mod.funcs[ci])) {
       any_am = true;
     }
     ci = ci + 1;
@@ -13884,9 +13998,19 @@ pub function register_array_method_generics(mod: Module): Module {
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
     var fd: FuncDecl = mod.funcs[i];
-    if (is_generic_array_method(fd)) {
-      var elem: str = slice_unchecked(fd.receiver_type, 0, fd.receiver_type.len() - 2);
+    if (is_concrete_array_method(fd)) {
+      var params: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+      for param in fd.params {
+        params = params.append(param);
+      }
+      out = out.append(FuncDecl { ...fd, name: concrete_array_method_name(fd.receiver_type, fd.name), receiver_name: "", receiver_type: "", params: params });
+    } else if (is_generic_array_method(fd)) {
+      var elem: string = array_method_element(fd.receiver_type);
       var tps: string[] = [elem + ""];
+      var prefix: string = "__arrm_";
+      if (spelling_is_view(fd.receiver_type)) {
+        prefix = "__viewm_";
+      }
       // Fold the receiver into a leading param named after the
       // receiver, so the body's references to it resolve normally.
       var nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
@@ -13897,7 +14021,7 @@ pub function register_array_method_generics(mod: Module): Module {
       }
       out = out.append(FuncDecl {
         no_inline: false,
-        name: "__arrm_" + fd.name,
+        name: prefix + fd.name,
         receiver_name: "", receiver_type: "",
         type_params: tps,
         params: nparams,
@@ -14541,11 +14665,11 @@ function erase_promotions(funcs: FuncDecl[], erased: string[]): FuncDecl[] {
 
 function monomorphize_module(mod: Module, erased: string[]): Module {
   var funcs: FuncDecl[] = erase_promotions(promote_erased_forwarders(mod.funcs), erased);
-  // Nothing to do if there are no bounded generics.
+  // Concrete array methods also need their receiver calls folded.
   var any_bg: boolean = false;
   var bi: i32 = 0;
   while (bi < funcs.len()) {
-    if (funcs[bi].receiver_name.len() == 0 && funcs[bi].type_params.len() > 0) {
+    if (funcs[bi].receiver_name.len() == 0 && funcs[bi].type_params.len() > 0 || is_concrete_array_fold(funcs[bi])) {
       any_bg = true;
     }
     bi = bi + 1;
@@ -22533,7 +22657,21 @@ function erase_str_names(ty: string): string {
 // receiver_base is the name a method is keyed by on its receiver: the base
 // type, with `str` spelled `string` as the lowering spells it.
 pub function receiver_base(receiver: string): string {
-  return erase_view_spelling(util.base_type_name(receiver));
+  return util.base_type_name(erase_view_spelling(receiver));
+}
+
+// receiver_namespace is the name a method declaration is keyed by against
+// the others: every owned-array receiver shares `Array` and every view
+// receiver `slice`, whatever the element, as native keys them.
+pub function receiver_namespace(receiver: string): string {
+  var r: TypeRef = parse_type_ref(receiver);
+  if (r.array_depth > 0) {
+    return "Array";
+  }
+  if (r.is_view) {
+    return "slice";
+  }
+  return receiver_base(receiver);
 }
 
 function erase_view_list(tys: string[]): string[] {
