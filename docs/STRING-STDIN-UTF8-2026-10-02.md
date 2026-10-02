@@ -19,9 +19,9 @@ Existing malformed file bytes survive an append.
 
 `tsort` names are arbitrary bytes. Its input, name spans, equality, hashing,
 ordering and output now stay in the byte domain, including cycle diagnostics.
-The graph algorithm keeps GNU's seed and successor ordering. A cached hash
-speeds lookup; full span comparison resolves collisions. The map-key methods
-remain reachable through the compiler's generated indirect calls.
+The graph algorithm keeps GNU's seed and successor ordering. An integer
+hash-table index locates collision chains; full span comparison resolves
+collisions. Names retain spans of the input rather than copying each token.
 
 ## Validation
 
@@ -44,8 +44,14 @@ unsigned byte ordering and distinct names with the same FNV hash. Primary
 with balanced ownership. The compiler also rejects no extra target effects
 from an unused hash implementation. All lint gates pass after those changes.
 
-Refreshed bootstrap reproducibility and the full unit gate remain pending.
-Validation durations are not performance comparisons.
+The published-seed bootstrap completes in 25, 23 and 24 seconds. Stages two
+and three are identical: 12,114,209 bytes, SHA-256
+`5a58b562dec1e990b3ce84a066941f59b878a7b6834133751d1c37202459338c`.
+The final stage-2 compiler repeats all 96 text cases and 16 `tsort` cases on
+Darwin/core WASM with balanced ownership. The final integer-index `tsort`
+also passes the GNU parity and primary target suites, all lint gates, and
+16 actual stage-2 Darwin/core-WASM cases with balanced ownership. The full
+unit gate remains pending. Validation durations are not performance comparisons.
 
 Bootstrap Preview 2 tests pass. Primary Preview 2 stdin remains unsupported:
 the unchanged compiler refuses both the old `read_chunk` and the new
@@ -74,3 +80,33 @@ add 908, Result cleanup adds 700, and caller/integer-formatting changes add
 24. Replacing the old collector and join helpers saves 1,260 bytes. The
 native assembler's code-size delta is eight bytes larger than the object
 comparison. No size baseline changed, and no timing improvement is claimed.
+
+The final native `tsort` executable remains 149,329 bytes. Its code section
+decreases from 110,224 to 108,420 bytes; unwind data increases from 15,060
+to 15,452 bytes, and the data section remains 6,328 bytes.
+
+## Native tsort comparison
+
+Measured on arm64 macOS with the same final compiler for both Fern versions,
+GNU coreutils 9.12 and Rust uutils 0.0.29. The pipeline first checks 1,000
+pairs, then changes only the pair count to 100,000. Each workload has two
+warmup rounds and seven timed rounds with alternating command order; every
+output is checked. Sanitizers and other local compiler jobs are absent.
+
+| Workload | Previous Fern | Byte-based Fern | GNU | uutils |
+| --- | ---: | ---: | ---: | ---: |
+| Reversed chain, median | 26.094 ms | 25.456 ms | 49.352 ms | 146.139 ms |
+| Independent names, median | 29.599 ms | 27.245 ms | 46.421 ms | 136.790 ms |
+| Chain, peak RSS | 30,310,400 B | 34,357,248 B | 10,928,128 B | 28,442,624 B |
+| Independent names, peak RSS | 29,556,736 B | 33,554,432 B | 9,289,728 B | 22,069,248 B |
+
+The before/after timing ranges overlap, so these samples do not establish a
+Fern speed improvement. Chain timings range from 25.297 to 26.807 ms before
+and 24.876 to 26.671 ms after; independent-name timings range from 29.288
+to 30.026 ms before and 26.484 to 47.008 ms after.
+
+The raw representation retains the input and stores
+name spans and collision links; peak RSS increases by about 4 MB in these
+workloads. The initial record-key index used the native linear-map path and
+was rejected after its 1,000-pair pilot showed a slowdown. The final integer
+index uses the hash-table path on both native and WASM targets.

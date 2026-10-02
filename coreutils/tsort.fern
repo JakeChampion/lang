@@ -49,13 +49,7 @@ function is_separator(b: i32): boolean {
 
 // A name retains a span of the raw input. Equality, hashing and ordering
 // inspect bytes; neither invalid UTF-8 nor NUL suffixes become text.
-struct Name { data: u8[], lo: i32, hi: i32, id: i32, hash_code: i32 }
-
-impl cmp.Hash for Name {
-  function hash(self: Name): i32 {
-    return self.hash_code;
-  }
-}
+struct Name { data: u8[], lo: i32, hi: i32, id: i32 }
 
 impl cmp.Eq for Name {
   function eq(self: Name, other: Name): boolean {
@@ -99,12 +93,14 @@ impl cmp.Ord for Name {
   }
 }
 
-// Intern names in first-appearance order. Hash each token once while
-// scanning; map equality still compares the complete span on collisions.
+// Intern names in first-appearance order. The integer map indexes hash
+// buckets; a collision chain compares complete spans before reusing an ID.
+// This uses the native hash-table path as well as the WASM hash table.
 function intern(text: u8[]): (Name[], i32[]) {
   var names: Name[] = [];
   var ids: i32[] = [];
-  var index: Map[Name, i32] = map_new(1024);
+  var index: Map[i32, i32] = map_new(1024);
+  var next: i32[] = [];
   var i: i32 = 0;
   while (i < text.len()) {
     if (is_separator(text[i] as i32)) {
@@ -127,16 +123,19 @@ function intern(text: u8[]): (Name[], i32[]) {
     if (end < 0) {
       end = j;
     }
-    var name: Name = Name { data: text, lo: i, hi: end, id: names.len(), hash_code: hash as i32 };
-    match (index.get(name)) {
-      Some(id) => {
-        ids = ids.append(id);
-      },
-      None => {
-        index = index.insert(name, names.len());
-        ids = ids.append(names.len());
-        names = names.append(name);
-      }
+    var name: Name = Name { data: text, lo: i, hi: end, id: names.len() };
+    var first: i32 = index.get_or(hash as i32, -1);
+    var found: i32 = first;
+    while (found >= 0 && !names[found].eq(name)) {
+      found = next[found];
+    }
+    if (found >= 0) {
+      ids = ids.append(found);
+    } else {
+      index = index.insert(hash as i32, names.len());
+      next = next.append(first);
+      ids = ids.append(names.len());
+      names = names.append(name);
     }
     i = j;
   }
