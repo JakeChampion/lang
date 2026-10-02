@@ -328,6 +328,18 @@ function main(): i32 {
     // xmm parsing + float literal parsing (slice 2n):
     if (x86_gas_xmm("%xmm0") != 0 || x86_gas_xmm("%xmm12") != 12) { return 15; }
     if (!x86_gas_is_xmm("%xmm3") || x86_gas_is_xmm("%rax")) { return 16; }
+    // is_xmm is a prefix test: a symbol that carries xmm is not a register.
+    if (!x86_gas_is_xmm("xmm12") || x86_gas_is_xmm("foo_xmm(%rip)") || x86_gas_is_xmm("%xm")) { return 98; }
+    if (x86_gas_atoi("$-8") != (0 - 8) || x86_gas_atoi("$0x22") != 34 || x86_gas_atoi("$") != 0) { return 99; }
+    if (!x86_gas_has_paren("-8(%rbp)") || x86_gas_has_paren("%rax") || x86_gas_has_paren("$1")) { return 100; }
+    // split keeps empty fields, a trailing separator's empty tail, and a
+    // text with no separator; a two-byte separator matches whole.
+    var sp: string[] = x86_str_split("a\n\nbc\n", "\n");
+    if (sp.len() != 4 || sp[0] != "a" || sp[1] != "" || sp[2] != "bc" || sp[3] != "") { return 101; }
+    var sp2: string[] = x86_str_split("x, y,z", ", ");
+    if (sp2.len() != 2 || sp2[0] != "x" || sp2[1] != "y,z") { return 102; }
+    var sp3: string[] = x86_str_split("none", "\n");
+    if (sp3.len() != 1 || sp3[0] != "none") { return 103; }
     var fv: f64 = x86_gas_parse_f64("84.5");
     if (fv < 84.4 || fv > 84.6) { return 17; }
     var fz: f64 = x86_gas_parse_f64("2.0");
