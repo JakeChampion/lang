@@ -60,10 +60,10 @@ core WASM reported 28 and 28. Preview 2 does not expose that census, so its
 successful execution is not evidence of whole-component allocation balance.
 
 The integrated Linux matrix, all fault cases, per-module regression and both
-IR-registry checks pass. `make lint-all` passes. The full unit suite passed
-on the main-integrated revision `83df547b1`; the final run with the per-module
-registration fix is pending. The refreshed bootstrap has the same stage-2
-and stage-3 hash recorded above.
+IR-registry checks pass. The full unit suite and `make lint-all` pass on
+`7052f1c0c`, including the per-module registration fix and main's newer CI
+changes. The refreshed bootstrap has the same stage-2 and stage-3 hash
+recorded above.
 The Darwin Go harness is blocked by
 host file-table exhaustion; the integrated Darwin coverage above uses the
 actual bootstrapped compiler directly.
