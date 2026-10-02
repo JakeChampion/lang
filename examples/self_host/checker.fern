@@ -12648,17 +12648,33 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           } else {
             // E038: per-argument type mismatch (only when
             // the arity matches, so indices line up).
+            var cbn: string[] = [];
+            var cbt: typeinfo.Type[] = [];
+            if (sig.all_type_params.len() > 0) {
+              let (bn0, bt0) = call_type_bindings(sig, c, s);
+              cbn = bn0;
+              cbt = bt0;
+            }
             var ai: i32 = 0;
             while (ai < c.args.len()) {
               var at: typeinfo.Type = check_expr(c.args[ai], s);
               // E021 (#4842): generic-bound conformance. When
               // param ai is a bare bounded type param `x: T`
-              // (T: Tr), the argument's concrete type must
-              // provide `impl Tr`. Runs before the E038 skip
-              // because a bounded param's declared type is the
-              // erased-unknown T (E038 itself skips it).
-              if (ai < sig.param_bound.len() && sig.param_bound[ai].len() > 0 && !is_unknown(at)) {
-                out = util.append_diags(out, e021_bound_call_diag(sig.param_bound[ai], at, s, expr_line(c.args[ai]), expr_col(c.args[ai])));
+              // (T: Tr), the type T is bound to must provide
+              // `impl Tr` — the call's binding, not the argument's
+              // own type, which reads an untyped literal at its
+              // default width. Runs before the E038 skip because a
+              // bounded param's declared type is the erased-unknown
+              // T (E038 itself skips it).
+              if (ai < sig.param_bound.len() && sig.param_bound[ai].len() > 0) {
+                var tat: typeinfo.Type = at;
+                var tbi: i32 = util.index_of_str(cbn, sig.param_type_names[ai]);
+                if (tbi >= 0 && !type_contains_unknown(cbt[tbi])) {
+                  tat = cbt[tbi];
+                }
+                if (!is_unknown(tat)) {
+                  out = util.append_diags(out, e021_bound_call_diag(sig.param_bound[ai], tat, s, expr_line(c.args[ai]), expr_col(c.args[ai])));
+                }
               }
               out = util.append_diags(out, int_dest_range_diags(c.args[ai], sig.param_types[ai]));
               out = util.append_diags(out, ctor_payload_diags(c.args[ai], sig.param_types[ai], s));

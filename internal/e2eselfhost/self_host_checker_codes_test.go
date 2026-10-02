@@ -752,6 +752,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// design reference), so without it the derive is rejected by the
 		// E021 field-conformance pre-check below (#5392).
 		{"bound-derive-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nimpl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }\n@derive(Ord)\nstruct Foo { x: i32 }\nfunction pick[T: Ord](a: T): T { return a; }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; var r: Foo = pick(p); return r.x; }\n", nil},
+		// An untyped literal argument takes the type the call binds T to (i64
+		// from `xs`), not its default i32, which has no `impl Add`.
+		{"bound-literal-takes-binding-ok", "trait Add { function add(self: Self, o: Self): Self; }\nimpl Add for i64 { function add(self: Self, o: Self): Self { return self + o; } }\nfunction sum_with[T: Add](xs: T[], zero: T): T { var acc = zero; for x in xs { acc = acc.add(x); } return acc; }\nfunction main(): i32 { var xs: i64[] = [30, 11]; return sum_with(xs, 0) as i32; }\n", nil},
 		// E021 @derive field conformance (#5392): deriving Eq / Ord / Hash
 		// for a type whose field (or enum variant payload) type does not
 		// implement the trait — no impl, no derive of its own, no method
