@@ -122,10 +122,11 @@ pub function hash_key(s: string): string {
 }
 
 // hash_bucket maps a string to a bucket index in [0, n): the polynomial roll
-// `a = a * 31 + byte` over the bytes and then the length, taken four bytes
-// per step, wrapping as it goes and masked to 0x3FFFFFFF once at the end so
-// the `%` cannot return a negative index. util_hash_run pins the step against
-// the byte-at-a-time roll. Which bucket a name lands in reaches no emitted
+// `a = a * 31 + byte` over the bytes and then the length, wrapping as it goes
+// and masked to 0x3FFFFFFF once at the end so the `%` cannot return a
+// negative index. The loop is the shape the parser's bounds-check elision
+// takes (`while (i < s.len())` over `s[i]`), which is what makes a byte a
+// handful of instructions. Which bucket a name lands in reaches no emitted
 // byte: every index over it returns an equal entry whichever end of the chain
 // meets it first, and no table walks its buckets in order. It does reach the
 // per-module cache key (modloader.module_fact_hashes sums it as a checksum),
@@ -135,18 +136,12 @@ pub function hash_bucket(s: string, n: i32): i32 {
     return 0;
   }
   let a: i32 = 208357;
-  let len: i32 = s.len();
   let i: i32 = 0;
-  while (i + 4 <= len) {
-    // 31^4, 31^3, 31^2, 31, 1.
-    a = a * 923521 + s[i] as i32 * 29791 + s[i + 1] as i32 * 961 + s[i + 2] as i32 * 31 + s[i + 3] as i32;
-    i = i + 4;
-  }
-  while (i < len) {
+  while (i < s.len()) {
     a = a * 31 + s[i] as i32;
     i = i + 1;
   }
-  a = a * 31 + len;
+  a = a * 31 + s.len();
   return (a & 1073741823) % n;
 }
 
