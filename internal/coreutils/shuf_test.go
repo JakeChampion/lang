@@ -122,6 +122,11 @@ func shufCases(t *testing.T) []invocation {
 	nonl := shufFile(t, dir, "nonl", []byte("a\nb\nc"))
 	blanks := shufFile(t, dir, "blanks", []byte("\n\n\n"))
 	binary := shufFile(t, dir, "binary", []byte("a\xffb\nc\n\x80\n"))
+	binaryInput := "a\xff\x00\nb\xc0\x80\nc\xed\xa0\x80\nd\xf4\x90\x80\x80"
+	binaryZero := "a\xff\nb\x00c\xc0\x80\x00d\xed\xa0\x80"
+	binaryLong := strings.Repeat("\xff", 262145) + "\nlast\x80"
+	binaryLongFile := shufFile(t, dir, "binary-long", []byte(binaryLong))
+	allBytes := shufFile(t, dir, "all-bytes", countBytes[:256])
 	zsep := shufFile(t, dir, "zsep", []byte("a\x00b\x00c\x00"))
 	zsepNo := shufFile(t, dir, "zsepnonl", []byte("a\x00b\x00c"))
 	in100 := shufFile(t, dir, "in100", []byte(strings.Repeat("line\n", 100)))
@@ -234,6 +239,15 @@ func shufCases(t *testing.T) []invocation {
 		{name: "no trailing delimiter", args: []string{nonl, count}},
 		{name: "blank lines", args: []string{blanks, count}},
 		{name: "non utf8 content", args: []string{binary, count}},
+		{name: "all byte values", args: []string{allBytes, count}},
+		{name: "binary stdin", args: []string{count}, stdin: binaryInput},
+		{name: "binary reservoir", args: []string{"-n", "2", count}, stdin: binaryInput},
+		{name: "binary repeat", args: []string{"-r", "-n", "6", count}, stdin: binaryInput},
+		{name: "binary nul records", args: []string{"-z", count}, stdin: binaryZero},
+		{name: "binary nul reservoir", args: []string{"-z", "-n", "2", count}, stdin: binaryZero},
+		{name: "binary nul repeat", args: []string{"-z", "-r", "-n", "6", count}, stdin: binaryZero},
+		{name: "binary long records", args: []string{binaryLongFile, count}},
+		{name: "binary long reservoir", args: []string{"-n", "2", count}, stdin: binaryLong},
 		{name: "hundred lines", args: []string{in100, lcg}},
 		{name: "stdin from a regular file", args: []string{count}, stdinPath: in5},
 		{name: "quoted name", args: []string{spaced, count}},

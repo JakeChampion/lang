@@ -332,3 +332,4 @@ udp_send_bytes=354
 udp_sendto_bytes=355
 rename_noreplace=356
 rename_exchange=357
+memchr_bytes=358
