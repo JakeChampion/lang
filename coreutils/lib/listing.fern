@@ -53,9 +53,9 @@
 // NOT used — `indent` above is its own rule and a stop table cannot
 // express it; `lib/filetype.fern` for the mode string and the kinds.
 //
-// `-Z` asks `is_selinux_enabled()` first, as GNU does: with no SELinux
-// every file is `?` and no attribute is read. With it, each file's context
-// is `lib/selinux.fern`'s `file_context`, the reading `stat %C` shares.
+// `-Z`'s context is `lib/selinux.fern`'s `file_context`, the reading
+// `stat %C` shares. Like GNU there is no is_selinux_enabled() gate: the
+// attribute is the answer, and a file without one prints `?`.
 import "std/string";
 import "std/array";
 import "std/i64";
@@ -464,7 +464,7 @@ function six_months(): i64 {
 // `fsize` renders the SIZE column and `bsize` the `total` line and the
 // `-s` block counts, so `ls -lk` still prints a file size in bytes
 // while its total is in kibibytes. `--block-size` and `-h` set both.
-pub struct Cfg { format: i32, ignore_mode: i32, sort_key: i32, reverse: boolean, time_type: i32, deref: i32, immediate_dirs: boolean, recursive: boolean, inode: boolean, show_blocks: boolean, indicator: i32, qstyle: i32, qmark: boolean, qmark_newline: boolean, show_owner: boolean, show_group: boolean, show_author: boolean, numeric_ids: boolean, show_context: boolean, selinux: boolean, width: i64, tabsize: i64, ignores: string[], hides: string[], ignore_backups: boolean, dirs_first: boolean, dired: boolean, hyperlink: boolean, color: boolean, zero: boolean, fsize: blocks.Unit, bsize: blocks.Unit, nonrecent_fmt: timefmt.Format, recent_fmt: timefmt.Format, zone: tz.Zone, now: i64, colors: Palette }
+pub struct Cfg { format: i32, ignore_mode: i32, sort_key: i32, reverse: boolean, time_type: i32, deref: i32, immediate_dirs: boolean, recursive: boolean, inode: boolean, show_blocks: boolean, indicator: i32, qstyle: i32, qmark: boolean, qmark_newline: boolean, show_owner: boolean, show_group: boolean, show_author: boolean, numeric_ids: boolean, show_context: boolean, width: i64, tabsize: i64, ignores: string[], hides: string[], ignore_backups: boolean, dirs_first: boolean, dired: boolean, hyperlink: boolean, color: boolean, zero: boolean, fsize: blocks.Unit, bsize: blocks.Unit, nonrecent_fmt: timefmt.Format, recent_fmt: timefmt.Format, zone: tz.Zone, now: i64, colors: Palette }
 
 // `defaults(format, qstyle, qmark)` — the starting configuration the
 // three programs differ in and nothing else: off a terminal `ls` is
@@ -472,7 +472,7 @@ pub struct Cfg { format: i32, ignore_mode: i32, sort_key: i32, reverse: boolean,
 // vertical columns and escape, `vdir` is long and escape. On a terminal
 // `ls` starts from three different answers; see `ls()`.
 pub function defaults(format: i32, qstyle: i32, qmark: boolean): Cfg {
-  return Cfg { format: format, ignore_mode: ignore_default(), sort_key: sort_name(), reverse: false, time_type: time_mtime(), deref: deref_none(), immediate_dirs: false, recursive: false, inode: false, show_blocks: false, indicator: ind_none(), qstyle: qstyle, qmark: qmark, qmark_newline: false, show_owner: true, show_group: true, show_author: false, numeric_ids: false, show_context: false, selinux: false, width: 80 as i64, tabsize: 8 as i64, ignores: [], hides: [], ignore_backups: false, dirs_first: false, dired: false, hyperlink: false, color: false, zero: false, fsize: blocks.plain_unit(1 as u64), bsize: blocks.default_unit(), nonrecent_fmt: timefmt.compile("%b %e  %Y"), recent_fmt: timefmt.compile("%b %e %H:%M"), zone: tz.utc_zone(), now: 0 as i64, colors: palette_off() };
+  return Cfg { format: format, ignore_mode: ignore_default(), sort_key: sort_name(), reverse: false, time_type: time_mtime(), deref: deref_none(), immediate_dirs: false, recursive: false, inode: false, show_blocks: false, indicator: ind_none(), qstyle: qstyle, qmark: qmark, qmark_newline: false, show_owner: true, show_group: true, show_author: false, numeric_ids: false, show_context: false, width: 80 as i64, tabsize: 8 as i64, ignores: [], hides: [], ignore_backups: false, dirs_first: false, dired: false, hyperlink: false, color: false, zero: false, fsize: blocks.plain_unit(1 as u64), bsize: blocks.default_unit(), nonrecent_fmt: timefmt.compile("%b %e  %Y"), recent_fmt: timefmt.compile("%b %e %H:%M"), zone: tz.utc_zone(), now: 0 as i64, colors: palette_off() };
 }
 
 // ---- output -----------------------------------------------------------------
@@ -1005,7 +1005,7 @@ function needs_link_mode(c: Cfg): boolean {
 // under `-Z` its context.
 function stat_entry(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
   let r: (Ent, boolean, string) = stat_record(c, e, cmdline);
-  if (!r.1 || !c.show_context || !c.selinux) {
+  if (!r.1 || !c.show_context) {
     return r;
   }
   return (Ent { ...r.0, context: context_of(r.0) }, true, "");
@@ -1693,7 +1693,7 @@ function resolve_ids(c: Cfg, n: IdNames, e: Ent): (Ent, IdNames) {
 // was — getfilecon where it was stat'ed, lgetfilecon where lstat'ed. GNU
 // prints `?` for a file it cannot get one for, and only reports an errno
 // other than ENOTSUP and ENODATA; neither reaches a kernel whose files
-// carry labels. With no SELinux it never asks (`Cfg.selinux`).
+// carry labels.
 function context_of(e: Ent): string {
   match (selinux.file_context(e.path, e.followed)) {
     Ok(ctx) => {
@@ -3227,7 +3227,7 @@ function scan(argv: string[], start: Cfg): Scan {
         } else if (m.id == op_hyperlink()) {
           link_when = parse_when(m, "--hyperlink");
         } else if (m.id == op_context()) {
-          c = Cfg { ...c, show_context: true, selinux: selinux.enabled() };
+          c = Cfg { ...c, show_context: true };
         }
       },
       None => {
