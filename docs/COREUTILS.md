@@ -508,14 +508,15 @@ coreutils/
                     1, which is 384 bytes on x86-64, and uses a `long`
                     and a real struct timeval where it is 0, which is
                     400 on arm64
-  lib/tz.fern       the local zone as tzset(3) finds it — the TZif file
+  std/tz            the local zone as tzset(3) finds it, now a stdlib
+                    module (docs/STDLIB.md) — the TZif file
                     $TZ names (absolute, or under $TZDIR), the POSIX
                     rule in its footer past the transition table, and
                     the rule string itself when no file answers — with
                     the offset AND the abbreviation (`EST`, `+0545`) in
                     force at an instant
   lib/timefmt.fern  C-locale nstrftime over the broken-down LOCAL time
-                    lib/tz.fern resolves: gnulib's `-` `_` `0` `^` `#`
+                    std/tz resolves: gnulib's `-` `_` `0` `^` `#`
                     flags, an optional field width, the `E` / `O`
                     modifiers the C locale has no alternative for, and
                     the `:` repetitions of `%z`, with an unknown
@@ -3982,7 +3983,7 @@ applies that file's transition times with the TZ string's offsets
 substituted and a correction that moves the spring change by the
 difference between the two standard offsets, and past the file's own table
 (2037) it abandons the TZ string entirely — `TZ=ABC1DEF date -d @2147483647`
-prints `EST -0500`, not the `ABC` the string names. `lib/tz.fern` applies
+prints `EST -0500`, not the `ABC` the string names. `std/tz` applies
 the POSIX default dates instead, the United States rule in force since
 2007, which is what glibc itself uses on a system with no posixrules file.
 The two agree on every date between those dates and 2037 and differ
@@ -4349,7 +4350,7 @@ groups are the order of work. Each sub-issue names its group.
   family needed NO new primitive: utmp is `read_file_bytes`, who's
   message-status and idle columns are `stat`, and the local timestamp
   `who` and `pinky` print is `read_file` plus `env`, which is
-  `lib/tz.fern`), `printenv` (done) `env` (the whole
+  `std/tz`), `printenv` (done) `env` (the whole
   environ, exec), `ln`
   (link, symlink, readlink; `link`, `unlink`, `readlink` and `realpath`
   are done on `read_link()` from #8883, leaving `ln`),
@@ -4442,7 +4443,7 @@ groups are the order of work. Each sub-issue names its group.
   every diagnostic before the context change; the change itself has no
   primitive, see the divergence above), `stat` `ls` `dir` `vdir` `du` `df`
   (full stat, statfs, d_type), `dircolors` (done — it needed none of
-  those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (done — the grammar behind `-d`, `-f` and `touch -d` is `lib/datetime.fern`, a port of gnulib's parse_datetime with its mktime emulation and the `--debug` trace, over `lib/tz.fern`; the `-s` and `MMDDhhmm` forms parse as GNU does and then report `cannot set date`, because no builtin sets the system clock — see the divergence below), `nice` (done, on the
+  those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (done — the grammar behind `-d`, `-f` and `touch -d` is `lib/datetime.fern`, a port of gnulib's parse_datetime with its mktime emulation and the `--debug` trace, over `std/tz`; the `-s` and `MMDDhhmm` forms parse as GNU does and then report `cannot set date`, because no builtin sets the system clock — see the divergence below), `nice` (done, on the
   new `priority()` / `set_priority(n)` pair under the `sched` target
   capability — and on `gnu.exec_command`, which `env` moved its own
   execvp emulation into so the PATH search and the `/bin/sh` retry for a
@@ -4476,7 +4477,7 @@ groups are the order of work. Each sub-issue names its group.
   its own behaviour, and the glibc verdict layer its two failure messages come
   from, are in the divergences below), `uptime` (done — no new primitive: the boot time and the
   session count are the utmp database `read_file_bytes` already reads, the
-  clock is `lib/tz.fern` plus `lib/timefmt.fern`, and the load averages are
+  clock is `std/tz` plus `lib/timefmt.fern`, and the load averages are
   `read_file` of /proc/loadavg), `pathchk` (done — it needed no new primitive:
   `lstat` is the whole of the default mode and `statfs` from #9062 carries
   the per-directory `name_max` its component walk holds a name to, which is

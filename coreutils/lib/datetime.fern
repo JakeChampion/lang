@@ -31,7 +31,7 @@
 // on stderr, so the parse can keep one, line for line.
 import "std/string";
 import "std/array";
-import "./tz";
+import "std/tz";
 
 // `hint` is the offset the parse settled on, the next parse's first
 // guess; `dbg` is the `--debug` commentary, empty unless asked for.
