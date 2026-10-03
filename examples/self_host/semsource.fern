@@ -592,6 +592,13 @@ function settled_payload(t: typeinfo.Type): typeinfo.Type {
   return settled(t);
 }
 
+function is_none_only(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeUnion(u) = t {
+    return u.name == "Option" && u.args.len() == 1 && semtypes.equal(u.args[0], t_void());
+  }
+  return false;
+}
+
 // ---- expressions ------------------------------------------------------------
 
 function checked(e: ast.Expr, s: State): typeinfo.Type {
@@ -3640,6 +3647,11 @@ function widen(v: Value, expected: typeinfo.Type): Value {
   if (semtypes.equal(s.values[v.id], expected)) {
     return v;
   }
+  // An Option with a void payload is only ever None, so it reads as the None
+  // of any Option the destination names.
+  if (is_none_only(s.values[v.id]) && union_name(expected) == "Option" && semtypes.concrete(expected, false)) {
+    return define(s, ssasem.variant_new(), [], 0, "None", expected);
+  }
   if (semtypes.lends_array(s.values[v.id], expected)) {
     return define(s, ssasem.array_lend(), [v.id], 0, "", expected);
   }
@@ -3967,6 +3979,11 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
   // expectation and takes the value's type as the binding's.
   if (!semtypes.concrete(ty, false) && is_call(v.init)) {
     return declare_from_call(v, s, after);
+  }
+  // `let o = None;` names no payload either, so the binding settles as a
+  // bare None payload does.
+  if (!semtypes.concrete(ty, true)) {
+    ty = settled_payload(ty);
   }
   if (!semtypes.concrete(ty, true)) {
     return fail(s, "unresolved type of binding " + v.name + ": " + type_detail(ty));
