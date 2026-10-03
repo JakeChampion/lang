@@ -1,10 +1,13 @@
 package coreutils
 
 import (
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // splitSeed fills a case's own working directory with the inputs the
@@ -310,4 +313,63 @@ func TestSplitHelpVersion(t *testing.T) {
 	requireHelp(t, "split", []string{"--help", "ignored"}, 0)
 	requireVersion(t, "split", []string{"--version"}, 0)
 	requireVersion(t, "split", []string{"--vers"}, 0)
+}
+
+// `-n` on a pipe spools the input to `$TMPDIR`, and the spool never has a
+// name while it holds data (#8814): GNU's create_temp_file unlinks at
+// creation, so a signal mid-spool leaves nothing behind. The test holds
+// the pipe open past one read block, so split is mid-spool, and looks.
+func TestSplitSpoolHasNoName(t *testing.T) {
+	bin := fernBin(t, "split")
+	dir := t.TempDir()
+	tmp := t.TempDir()
+	cmd := exec.Command(bin, "-n", "2", "-", filepath.Join(dir, "x"))
+	cmd.Env = append(os.Environ(), "TMPDIR="+tmp)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	line := strings.Repeat("0123456789\n", 20000)
+	if _, err := io.WriteString(stdin, line); err != nil {
+		t.Fatal(err)
+	}
+	// The write returns once the pipe has taken the bytes; give split time
+	// to drain them into the spool, then look while it waits for more.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+		names, err := os.ReadDir(tmp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range names {
+			if info, err := e.Info(); err == nil && info.Size() > 0 {
+				t.Fatalf("spool %s is named in $TMPDIR holding %d bytes", e.Name(), info.Size())
+			}
+		}
+	}
+	if _, err := io.WriteString(stdin, line); err != nil {
+		t.Fatal(err)
+	}
+	stdin.Close()
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("split: %v", err)
+	}
+	if names, _ := os.ReadDir(tmp); len(names) != 0 {
+		t.Errorf("$TMPDIR holds %d entries after split exited", len(names))
+	}
+	var got []byte
+	for _, part := range []string{"xaa", "xab"} {
+		b, err := os.ReadFile(filepath.Join(dir, part))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, b...)
+	}
+	if string(got) != line+line {
+		t.Errorf("the two chunks hold %d bytes, want the %d written", len(got), 2*len(line))
+	}
 }
