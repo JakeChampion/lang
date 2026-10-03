@@ -32,6 +32,10 @@
 # a filesystem now and the rest are held to GNU, which also put 3186
 # comparisons back that had never run.
 #
+# Four more left together: whoami and chown print owner names, which come
+# from libSystem's getpwuid since #9815, and uniq and tail passed every
+# complete macOS round from 29a15546a on.
+#
 # One test function per line, so the granularity is a utility rather than a
 # case. The case counts behind these names, and the clusters they fall into,
 # are in #9714; the largest by far is the listing code behind vdir, ls and

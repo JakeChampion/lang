@@ -501,9 +501,11 @@ type Interp struct {
 	openFiles map[int64]*os.File
 	nextFd    int64
 	// closedStd records which of fd 0/1/2 the program has closed.
-	// The interpreter never closes the host's own stdio, but it has
-	// to answer a SECOND close the way the kernel does — see
-	// closeFile.
+	// The interpreter never closes the host's own stdio, but from then
+	// on it answers for the stream the way the kernel answers for a
+	// closed fd: handle methods and a second close fail with EBADF,
+	// print / write / eprint / putchar write nothing, and read_line()
+	// reads nothing.
 	closedStd map[int64]bool
 	// deferStack is a per-call list of expressions to evaluate at
 	// function exit, in LIFO order. callFunc / callClosure push
@@ -3323,6 +3325,9 @@ func streamFile(i *Interp, v Value) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	if i.closedStd[fd] {
+		return nil, errClosedHandle
+	}
 	var s any
 	switch fd {
 	case 0:
@@ -4677,13 +4682,16 @@ func readerStream(i *Interp, v Value) (io.Reader, error) {
 	if err != nil {
 		return nil, err
 	}
+	if i.closedStd[fd] {
+		return nil, errClosedHandle
+	}
 	switch fd {
 	case 0:
 		return i.Stdin, nil
 	}
 	f, ok := i.openFiles[fd]
 	if !ok {
-		return nil, fmt.Errorf("Reader with fd=%d not registered (closed already?)", fd)
+		return nil, errClosedHandle
 	}
 	return f, nil
 }
@@ -4693,6 +4701,9 @@ func writerStream(i *Interp, v Value) (io.Writer, error) {
 	if err != nil {
 		return nil, err
 	}
+	if i.closedStd[fd] {
+		return nil, errClosedHandle
+	}
 	switch fd {
 	case 1:
 		return i.Stdout, nil
@@ -4701,7 +4712,7 @@ func writerStream(i *Interp, v Value) (io.Writer, error) {
 	}
 	f, ok := i.openFiles[fd]
 	if !ok {
-		return nil, fmt.Errorf("Writer with fd=%d not registered (closed already?)", fd)
+		return nil, errClosedHandle
 	}
 	return f, nil
 }
@@ -4723,6 +4734,9 @@ func builtinReaderReadLine(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("Reader.read_line: expected 1 arg")
 	}
 	r, err := readerStream(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return optionNone(), nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -4754,6 +4768,9 @@ func builtinReadLine(i *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("read_line: expected 0 args")
 	}
+	if i.closedStd[0] {
+		return optionNone(), nil
+	}
 	var buf []byte
 	one := make([]byte, 1)
 	for {
@@ -4778,6 +4795,9 @@ func builtinReaderReadChunk(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("Reader.read_chunk: expected 2 args")
 	}
 	r, err := readerStream(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return resultErr(ioErrorOther("", syscall.EBADF)), nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -4806,14 +4826,10 @@ func builtinReaderReadChunkBytes(i *Interp, args []Value) (Value, error) {
 	if size < 0 {
 		return resultErr(classifyIoError("", syscall.EINVAL)), nil
 	}
-	fd, err := streamFd(args[0])
-	if err != nil {
-		return nil, err
-	}
-	if i.closedStd[fd] || (fd != 0 && i.openFiles[fd] == nil) {
+	r, err := readerStream(i, args[0])
+	if errors.Is(err, errClosedHandle) {
 		return resultErr(classifyIoError("", syscall.EBADF)), nil
 	}
-	r, err := readerStream(i, args[0])
 	if err != nil {
 		return nil, err
 	}
@@ -4881,6 +4897,9 @@ func builtinWriterWrite(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("Writer.write: expected 2 args")
 	}
 	w, err := writerStream(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return optionSome(ioErrorOther("", syscall.EBADF)), nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -5111,7 +5130,7 @@ func builtinWrite(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("write: expected string arg, got %T", args[0])
 	}
-	fmt.Fprint(i.Stdout, string(s))
+	fmt.Fprint(i.stdOut(1), string(s))
 	return Void{}, nil
 }
 
@@ -5123,7 +5142,7 @@ func builtinEprint(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("eprint: expected string arg, got %T", args[0])
 	}
-	fmt.Fprintln(i.Stderr, string(s))
+	fmt.Fprintln(i.stdOut(2), string(s))
 	return Void{}, nil
 }
 
@@ -5159,7 +5178,7 @@ func builtinPrint(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("print: expected string arg, got %T", args[0])
 	}
-	fmt.Fprintln(i.Stdout, string(s))
+	fmt.Fprintln(i.stdOut(1), string(s))
 	return Void{}, nil
 }
 
@@ -5177,8 +5196,21 @@ func builtinPutchar(i *Interp, args []Value) (Value, error) {
 	// anything above 127 came out as its multi-byte UTF-8 form — putchar(233)
 	// wrote c3 a9 where the backends write e9 — and a value outside a rune's
 	// range wrote U+FFFD rather than wrapping.
-	i.Stdout.Write([]byte{byte(int64(n))})
+	i.stdOut(1).Write([]byte{byte(int64(n))})
 	return Void{}, nil
+}
+
+// stdOut is where print / write / eprint / putchar send fd 1 or 2: the
+// stream, or nowhere once the program has closed it, as a write to a
+// closed fd lands nowhere.
+func (i *Interp) stdOut(fd int64) io.Writer {
+	if i.closedStd[fd] {
+		return io.Discard
+	}
+	if fd == 2 {
+		return i.Stderr
+	}
+	return i.Stdout
 }
 
 // builtinPoll is the interpreter's stub for the `poll(fds, timeout_ms)` readiness

@@ -25,7 +25,7 @@ func buildFdDupOntoBody(idxs map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstI32Const(body, errnoNoTsup)
 	body = inst.InstLocalSet(body, 2)
-	body = emitSomeIoError(body, buildIoErr, allocRc1, 2, 3, 4)
+	body = emitHandleOptionSome(body, buildIoErr, allocRc1, 2, 3, 4)
 
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)

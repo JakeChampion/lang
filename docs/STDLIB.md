@@ -1790,6 +1790,17 @@ answer is `Result[HttpResponse, FetchError]`.
   `timeouts()` gives 10 s / 30 s / 60 s. The connect bound covers the
   whole address race; inactivity is the longest wait for the next byte
   of the response; total runs from the start to the last byte read.
+- **Transport:** the dialled route reaches the network only through
+  `trait Transport` (`now_ns`, `lookup`, `connect`, `write`, `read` under
+  a wait, `close`), and `send_on(tr, req, policy)` is `send` over any
+  transport under a `Policy { public_only, proxies }`. `sockets()` is the
+  machine's (the system resolver, `dns.connect_race`, `tcp_recv_deadline`),
+  which `send` and `plat.http` use; `std/sim_fetch` scripts one in virtual
+  time. Every rule above (the block list, the bounds, the retry,
+  redirects, decoding) stays above the seam, so a scripted transport
+  exercises the same client a real one does. `lookup` answers a `Lookup`:
+  the addresses to dial and, when asked to be judged, the addresses the
+  network named with the ones they carry, which the block list reads.
 - **Awaitable:** `fetch_future(host_be, port, path):
   async.Future[u8[]]` resolves to the response body (empty on any
   failure, a `path` that `http_target_ok` refuses included, which never
@@ -1955,6 +1966,45 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
   (`random`).
 - `(plat).http(req)` lives in `std/fetch`, next to the sockets that
   implement it.
+
+### `std/sim_fetch`
+
+A scripted network for `std/fetch`'s client, in virtual time. A
+`sim_fetch.Net` is a `fetch.Transport`, so `fetch.send_on(n, req, policy)`
+runs the whole client against names, listeners and answers the test
+scripts, on a `sim.Sim`'s clock:
+
+```fern
+let d: sim.Sim = sim.new(1);
+let n: sim_fetch.Net = sim_fetch.net(d)
+    .host("example.test", ["93.184.216.34"])
+    .listen("93.184.216.34", 80, 5)
+    .route("93.184.216.34", 80, "/", [sim_fetch.reply(200, "hi").after(20)]);
+let got = fetch.send_on(n, fetch.get("http://example.test/"), policy);
+// d.now_ns() is 25 ms: 5 to connect, 20 to the first byte.
+```
+
+Nothing waits: a read that would block moves the clock to when the
+scripted bytes arrive, or by the whole wait when none do, so each bound
+passes at its exact virtual time. `host(name, addrs)` names addresses (an
+IP literal resolves to itself, anything else is `NoSuchName`);
+`listen(addr, port, connect_ms)` accepts after a delay, and an address
+with no listener refuses at once. A name's addresses are raced as
+`dns.connect_race` races them, each attempt starting the fallback delay
+after the one before (at once after a refusal), the first to connect
+winning and none within the client's connect bound a timeout at it; a
+bound of zero times out before any attempt, refusing addresses included.
+`route(addr, port, path, answers)` answers the
+n-th request for `path` (`*` for any) with its n-th `Answer`, the last
+repeating; an unrouted request gets a 404. Answers: `reply(status, body)`,
+`redirect(status, location)`, `raw(text)` / `raw_bytes(bytes)` for
+anything else on the wire, `reset()` (closed before a byte) and `silent()`
+(never answers), shaped by `.after(ms)`, `.in_chunks(size, every_ms)` and
+`.held()` (left open after the last byte). The net records what the client
+did: `connects()`, `open()`, `sent_count()` and `sent(i)`, the i-th request
+as written. A sibling of `std/sim` rather than part of it, so `std/sim`
+keeps the clock and randomness alone; `examples/tests/sim_fetch_test.fern`
+is the client's parity suite.
 
 ### `std/mock_platform`
 

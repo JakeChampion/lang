@@ -17,30 +17,6 @@ import (
 // errno table `__build_io_error` already carries, so the refusal is the
 // same `IoError::Unsupported` a host reports when it declines a call.
 
-// emitSomeIoError wraps the IoError built from `errnoLocal` in
-// `Some`, at Option[IoError]'s uniform 8-byte box, and returns it.
-// `errLocal` and `boxLocal` are scratch.
-func emitSomeIoError(body []byte, buildIoErr, allocRc1 uint32, errnoLocal, errLocal, boxLocal uint32) []byte {
-	body = inst.InstLocalGet(body, errnoLocal)
-	body = inst.InstI32Const(body, 0) // path_data = 0 (empty)
-	body = inst.InstI32Const(body, 0) // path_len  = 0
-	body = inst.InstCall(body, buildIoErr)
-	body = inst.InstLocalSet(body, errLocal)
-
-	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, allocRc1)
-	body = inst.InstLocalTee(body, boxLocal)
-	body = inst.InstI32Const(body, 0) // tag 0 = Some
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, boxLocal)
-	body = inst.InstI32Const(body, 4)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalGet(body, errLocal)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, boxLocal)
-	return inst.InstReturn(body)
-}
-
 // buildFdSyncBodyP1 builds `__fern_fd_fsync` / `__fern_fd_fdatasync` on
 // preview 1 from the import that backs it: one call against the
 // handle's fd, None on errno 0 and Some(IoError) otherwise. The shape
@@ -63,7 +39,7 @@ func buildFdSyncBodyP1(importName string) func(map[string]uint32) []byte {
 		body = inst.InstLocalTee(body, 1)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
-			body = emitSomeIoError(body, buildIoErr, allocRc1, 1, 2, 3)
+			body = emitHandleOptionSome(body, buildIoErr, allocRc1, 1, 2, 3)
 		}
 		body = inst.InstEnd(body)
 
@@ -85,7 +61,7 @@ func buildFdSyncBodyP2(methodIdx string) func(map[string]uint32) []byte {
 		buildIoErr := idxs["__build_io_error"]
 		call := idxs[methodIdx]
 
-		var body []byte
+		body := emitClosedSomeP2(nil, idxs, 0, 3, 4, 5)
 		body = inst.InstLocalGet(body, 0)
 		body = memory.InstI32Load(body, 2, 4)
 		body = inst.InstLocalTee(body, 1)
@@ -95,7 +71,7 @@ func buildFdSyncBodyP2(methodIdx string) func(map[string]uint32) []byte {
 		{
 			body = inst.InstI32Const(body, errnoNoTsup)
 			body = inst.InstLocalSet(body, 3)
-			body = emitSomeIoError(body, buildIoErr, allocRc1, 3, 4, 5)
+			body = emitHandleOptionSome(body, buildIoErr, allocRc1, 3, 4, 5)
 		}
 		body = inst.InstEnd(body)
 
@@ -111,7 +87,7 @@ func buildFdSyncBodyP2(methodIdx string) func(map[string]uint32) []byte {
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
 			body = appendErrnoFromErrorCodeAt(body, idxs, 2, 3, emptyOkErrorCodeOff)
-			body = emitSomeIoError(body, buildIoErr, allocRc1, 3, 4, 5)
+			body = emitHandleOptionSome(body, buildIoErr, allocRc1, 3, 4, 5)
 		}
 		body = inst.InstEnd(body)
 
@@ -133,7 +109,7 @@ func buildFdSyncfsBody(idxs map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstI32Const(body, errnoNoTsup)
 	body = inst.InstLocalSet(body, 1)
-	body = emitSomeIoError(body, buildIoErr, allocRc1, 1, 2, 3)
+	body = emitHandleOptionSome(body, buildIoErr, allocRc1, 1, 2, 3)
 
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)

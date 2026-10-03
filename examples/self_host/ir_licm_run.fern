@@ -92,7 +92,7 @@ function same(a: ir.OptimizedOps, b: ir.OptimizedOps): boolean {
 // finds nothing: the spliced prologue being stack-net-zero is what the whole
 // transform rests on.
 function stack_neutral(ops: ir.Op[]): i32 {
-  let r: irverifystack.StackResult = irverifystack.verify_stack_fn("f", ops);
+  let r: irverifystack.StackResult = irverifystack.verify_stack_fn("f", ops, ir.pops_by_kind());
   if (r.bail.len() > 0 || r.problems.len() > 0) {
     return 0;
   }

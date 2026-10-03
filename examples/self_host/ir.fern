@@ -34,7 +34,9 @@ import "./util";
 //              block / loop / if; the relative depth for br / brif; the
 //              arg count for call_direct / call_indirect / call_closure;
 //              the table index for const_func.
-//   i64      — the immediate for "const_i64".
+//   i64      — the immediate for "const_i64". On rc_inc/is_unique calls,
+//              4 is an optional typed proof that the input has no byte-view
+//              descriptor tag. Ignoring it preserves the generic RC behavior.
 //   f64      — the immediate for "const_f64" (f32 reuses this until the
 //              self-host grows a distinct f32 slot).
 //   width    — operand bit-width for ops that exist in multiple widths
@@ -1539,11 +1541,9 @@ pub function op_map_hash_seed(): Op {
   return op0(222);
 }
 
-// `str_bytes` pops [str] → a fresh u8[] (one slot per byte, or packed under
-// ir.packed). Backs both
-// `s.bytes()` (copying) and `s.as_bytes()` — the self-host's slot-array model
-// has no separate zero-copy slice view, so as_bytes returns the same fresh
-// array (correct, just not zero-copy; mirrors the AST path).
+// str_bytes pops [str] and returns a fresh u8[] (one slot per byte, or
+// packed under ir.packed). It backs the copying s.bytes() constructor.
+// Typed as_bytes() uses ssabytes's borrowed layout instead.
 pub function op_str_bytes(): Op {
   return op0(104);
 }
@@ -5518,13 +5518,6 @@ function pops3(t: i32): boolean {
     || t == 327;  // count_runs (str, inside, set)
 }
 
-// op_pops is how many operand slots `o` consumes, or -1 when the op is not
-// modelled at all — callers must treat that as "stop tracking", never as zero.
-//
-// `load` (67) and `store` (68) are deliberately unmodelled rather than given
-// native's arities: no self-host backend emits them and the lowering never
-// constructs one, so an occurrence is already a bug, and bailing says so
-// where a guessed arity would quietly proceed.
 // pops_buf is the operand count of one of the capacity-carrying string
 // builder's ops (#8773), or -1 when the tag is not one of them. The family sits
 // in its own contiguous block of ids and spans three different arities, so it
@@ -5557,8 +5550,62 @@ function pops_buf(t: i32): i32 {
   return 1;  // buf_new, buf_len, buf_take, buf_free
 }
 
+// op_pops is how many operand slots `o` consumes, or -1 when the op is not
+// modelled at all — callers must treat that as "stop tracking", never as zero.
+//
+// `load` (67) and `store` (68) are deliberately unmodelled rather than given
+// native's arities: no self-host backend emits them and the lowering never
+// constructs one, so an occurrence is already a bug, and bailing says so
+// where a guessed arity would quietly proceed.
 pub function op_pops(o: Op): i32 {
+  return pops_of(kind_pops(o.kind_tag), o);
+}
+
+// op_pops_by is op_pops reading the fixed counts from `by_kind`, a
+// pops_by_kind table, so a pass asking per op reads one entry.
+pub function op_pops_by(by_kind: i32[], o: Op): i32 {
   let t: i32 = o.kind_tag;
+  if (t < 0 || t >= by_kind.len()) {
+    return op_pops(o);
+  }
+  return pops_of(by_kind[t], o);
+}
+
+// pops_by_kind is kind_pops for every id below 1024, the range the kind
+// registry's census walks.
+pub function pops_by_kind(): i32[] {
+  let out: i32[] = [];
+  let t: i32 = 0;
+  while (t < 1024) {
+    out = out.append(kind_pops(t));
+    t = t + 1;
+  }
+  return out;
+}
+
+// pops_of is `fixed`, the kind's kind_pops, unless that is -1 and the kind
+// is variadic: arr_make / struct_make / tuple_make pop their elements and
+// call_direct its arguments, the count being the immediate.
+function pops_of(fixed: i32, o: Op): i32 {
+  if (fixed >= 0) {
+    return fixed;
+  }
+  let t: i32 = o.kind_tag;
+  if (t == 87 || t == 138 || t == 142 || t == 149) {
+    return o.i32_imm;
+  }
+  // call_indirect pops its arguments AND the funcref, which the lowering
+  // pushes last — `op_call_indirect(args.len() + 1)` at a closure call site
+  // already counts the environment among the arguments.
+  if (t == 150) {
+    return o.i32_imm + 1;
+  }
+  return 0 - 1;
+}
+
+// kind_pops is how many operand slots an op of kind `t` consumes when that
+// does not depend on the op, else -1.
+function kind_pops(t: i32): i32 {
   let bufn: i32 = pops_buf(t);
   if (bufn >= 0) {
     return bufn;
@@ -5610,17 +5657,6 @@ pub function op_pops(o: Op): i32 {
   }
   if (t == 321) {  // chmod_at: path + mode + follow
     return 3;
-  }
-  // Variadic: the immediate is the count. arr_make / struct_make /
-  // tuple_make pop their elements; call_direct pops its arguments.
-  if (t == 87 || t == 138 || t == 142 || t == 149) {
-    return o.i32_imm;
-  }
-  // call_indirect pops its arguments AND the funcref, which the lowering
-  // pushes last — `op_call_indirect(args.len() + 1)` at a closure call site
-  // already counts the environment among the arguments.
-  if (t == 150) {
-    return o.i32_imm + 1;
   }
   return 0 - 1;
 }

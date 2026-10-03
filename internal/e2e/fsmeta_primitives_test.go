@@ -264,7 +264,17 @@ func buildPreview1Module(t *testing.T, src string) string {
 // preopen and answers main's return value, which `--invoke` prints.
 func runPreview1Module(t *testing.T, modPath, workDir string) int {
 	t.Helper()
+	return runPreview1ModuleStdin(t, modPath, workDir, nil)
+}
+
+// runPreview1ModuleStdin is runPreview1Module with `stdin` as the module's
+// standard input; nil leaves it empty.
+func runPreview1ModuleStdin(t *testing.T, modPath, workDir string, stdin *os.File) int {
+	t.Helper()
 	cmd := exec.Command("wasmtime", "run", "--dir="+workDir+"::/", "--invoke", "main", modPath)
+	if stdin != nil {
+		cmd.Stdin = stdin
+	}
 	var so, se bytes.Buffer
 	cmd.Stdout = &so
 	cmd.Stderr = &se

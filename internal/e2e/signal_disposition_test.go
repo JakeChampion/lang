@@ -8,14 +8,6 @@ import (
 	"runtime"
 	"testing"
 	"time"
-
-	"github.com/jakechampion/lang/internal/ast"
-	"github.com/jakechampion/lang/internal/checker"
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/monomorph"
-	"github.com/jakechampion/lang/internal/parser"
 )
 
 // #8792: `signal_ignore(sig)` / `signal_default(sig)` set one signal's
@@ -45,7 +37,9 @@ const signalDispositionSrc = `function main(): i32 {
     return 7;
 }`
 
-// signalDispositionCases is the table every backend below is driven through.
+// signalDispositionCases is the table every leg below is driven through; the
+// self-host's x86-64 and arm64 legs are in internal/e2eselfhost's
+// self_host_signal_ir_test.go.
 var signalDispositionCases = []struct {
 	name string
 	argv []string
@@ -67,73 +61,6 @@ func runWithStdoutClosed(t *testing.T, argv ...string) int {
 	cmd.Stderr = os.Stderr
 	_ = cmd.Run()
 	return cmd.ProcessState.ExitCode()
-}
-
-// buildNativeSignalProg compiles signalDispositionSrc with `emit` and links it
-// with `gcc` plus `extra`, returning the binary's path.
-func buildNativeSignalProg(t *testing.T, gcc string, extra []string, emit func(*ast.Program, *checker.Info) (string, error)) string {
-	t.Helper()
-	prog, err := parser.Parse(signalDispositionSrc)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	args := append([]string{"-static", "-nostdlib"}, extra...)
-	args = append(args, asmPath, "-o", binPath)
-	if out, err := exec.Command(gcc, args...).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
-	return binPath
-}
-
-// TestX86_64SignalDisposition drives the three cases through the x86-64
-// emitter's rt_sigaction helpers.
-func TestX86_64SignalDisposition(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	bin := buildNativeSignalProg(t, gcc, []string{"-no-pie"}, x86_64.Emit)
-	for _, tc := range signalDispositionCases {
-		argv := append(append([]string{}, runner...), bin)
-		if got := runWithStdoutClosed(t, append(argv, tc.argv...)...); got != tc.want {
-			t.Errorf("%s: exit = %d, want %d (#8792)", tc.name, got, tc.want)
-		}
-	}
-}
-
-// TestArm64SignalDisposition drives the same three through the arm64 emitter,
-// whose helper shares one syscall row between Linux's 4-argument rt_sigaction
-// and Darwin's 3-argument sigaction.
-func TestArm64SignalDisposition(t *testing.T) {
-	gcc, qemu := arm64Tooling(t)
-	bin := buildNativeSignalProg(t, gcc, nil, arm64codegen.Emit)
-	for _, tc := range signalDispositionCases {
-		var argv []string
-		if qemu != "" {
-			argv = append(argv, qemu)
-		}
-		argv = append(argv, bin)
-		if got := runWithStdoutClosed(t, append(argv, tc.argv...)...); got != tc.want {
-			t.Errorf("%s: exit = %d, want %d (#8792)", tc.name, got, tc.want)
-		}
-	}
 }
 
 // TestInterpSignalDisposition drives the same three cases through the
@@ -191,9 +118,8 @@ func TestWASMSignalDispositionIsANoOp(t *testing.T) {
 	}
 }
 
-// TestArm64SSASignalDisposition drives the same three cases through the
-// SSA-direct arm64 backend, whose helper table is a separate emitter from the
-// stack-machine one above and so can regress on its own.
+// TestArm64SSASignalDisposition drives the same three cases through the Go
+// compiler's SSA-direct arm64 backend.
 func TestArm64SSASignalDisposition(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("arm64-ssa not exercised on windows")

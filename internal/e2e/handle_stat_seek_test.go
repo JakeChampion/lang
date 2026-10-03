@@ -250,10 +250,13 @@ func handleProbeTree(t *testing.T) (path, out, app string) {
 // runWithPipes runs cmd with stdin and stdout both pipes — the shape a
 // utility meets in a pipeline, and the one under which a seek on stdin
 // must fail. The test process's own stdin would otherwise be inherited,
-// and under `go test` that is /dev/null, which lseek accepts.
+// and under `go test` that is /dev/null, which lseek accepts. A stdin the
+// caller already set is kept.
 func runWithPipes(t *testing.T, cmd *exec.Cmd) (string, int) {
 	t.Helper()
-	cmd.Stdin = strings.NewReader("")
+	if cmd.Stdin == nil {
+		cmd.Stdin = strings.NewReader("")
+	}
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	_ = cmd.Run()

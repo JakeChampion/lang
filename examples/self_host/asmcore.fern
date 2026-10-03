@@ -232,7 +232,7 @@ pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
       }
       let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(kt, name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops);
       if (lifted.ok) {
-        let f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.fuse_rotates(ssa.prune_trivial_phis(lifted.func))));
+        let f: ssa.SFunc = ssa.register_form(lifted.func);
         for leaf in ssa.leaf_of(name, f) {
           out = out.append(leaf);
         }
@@ -4854,7 +4854,7 @@ pub function rt_src_tcp_recv_into_u8(t: string): string {
   return "function __fern_tcp_recv_into_u8(fd: i32, buf: i32[]): i32 { let max: i32 = buf.len(); if (max <= 0) { return 0; } return __syscall3(" + sysno(t, "read") + ", fd as i64, __raw_addr(__raw_arr_ptr(buf), 8) as i64, max as i64) as i32; }";
 }
 
-// rt_src_str_bytes backs `s.bytes()` / `s.as_bytes()` (#2649). Returns an i32[]
+// rt_src_str_bytes backs the unpacked copying str_bytes operation. Returns an i32[]
 // of the string's byte values (each zero-extended into the array's uniform 8-byte
 // slot; s[i] yields the zero-extended byte).
 //

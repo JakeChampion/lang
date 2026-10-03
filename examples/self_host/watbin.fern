@@ -2577,7 +2577,7 @@ pub function blob_to_bytes(s: string): i32[] {
   return o;
 }
 
-pub function component_full_io(core: i32[], drop_io_errors: boolean = false): i32[] {
+pub function component_full_io(core: i32[]): i32[] {
   // The stdout prefix, composed from the per-interface type blocks in
   // canonical order (preamble, io/error, io/streams, cli/stdout) rather than
   // one opaque blob — byte-identical to the old io_prefix, and the first step
@@ -2586,7 +2586,7 @@ pub function component_full_io(core: i32[], drop_io_errors: boolean = false): i3
   o = wcat(o, wsection(1, core));
   // The suffix (shim cores + lower/finish wiring) is now generated from the
   // import list rather than emitted as one opaque blob.
-  return wcat(o, component_suffix_stdout(drop_io_errors));
+  return wcat(o, component_suffix_stdout());
 }
 
 // ---- file-I/O (read_file + stdout) component framing --------------------
@@ -2599,10 +2599,10 @@ pub function component_full_io(core: i32[], drop_io_errors: boolean = false): i3
 // shim cores, canon-lift/instance/export) is constant for this fixed shape,
 // so it is embedded verbatim as \xNN blobs around the core.
 
-pub function component_full_io_fs(core: i32[], drop_io_errors: boolean = false): i32[] {
+pub function component_full_io_fs(core: i32[]): i32[] {
   let o: i32[] = io_fs_read_head();
   o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_fs_read(drop_io_errors));
+  return wcat(o, component_suffix_fs_read());
 }
 
 // ---- file-I/O (write_file + stdout) component framing -------------------
@@ -2615,10 +2615,10 @@ pub function component_full_io_fs(core: i32[], drop_io_errors: boolean = false):
 // read-via-stream + blocking-read), so it carries its own constant framing
 // blobs around the core.
 
-pub function component_full_io_fs_write(core: i32[], drop_io_errors: boolean = false): i32[] {
+pub function component_full_io_fs_write(core: i32[]): i32[] {
   let o: i32[] = io_fs_write_head();
   o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_fs_write(drop_io_errors));
+  return wcat(o, component_suffix_fs_write());
 }
 
 // ---- file-I/O (read_file + write_file + stdout) component framing -------
@@ -2632,10 +2632,10 @@ pub function component_full_io_fs_write(core: i32[], drop_io_errors: boolean = f
 // write-only shapes (it lowers all of read-via + blocking-read + write-via),
 // so it carries its own constant \xNN blobs.
 
-pub function component_full_io_fs_rw(core: i32[], drop_io_errors: boolean = false): i32[] {
+pub function component_full_io_fs_rw(core: i32[]): i32[] {
   let o: i32[] = io_fs_rw_head();
   o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_fs_rw(drop_io_errors));
+  return wcat(o, component_suffix_fs_rw());
 }
 
 // ---- random + stdout component framing ----------------------------------
@@ -2647,11 +2647,11 @@ pub function component_full_io_fs_rw(core: i32[], drop_io_errors: boolean = fals
 // the file shapes this framing needs no cabi_realloc. Constant for the shape,
 // so embedded as \xNN blobs around the core.
 
-pub function component_full_io_random(core: i32[], drop_io_errors: boolean = false): i32[] {
+pub function component_full_io_random(core: i32[]): i32[] {
   let o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_random()));
   o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_random(drop_io_errors));
+  return wcat(o, component_suffix_random());
 }
 
 // ---- env + stdout component framing -------------------------------------
@@ -2662,11 +2662,11 @@ pub function component_full_io_random(core: i32[], drop_io_errors: boolean = fal
 // `cabi_realloc` (get-environment returns a host-allocated list) into a
 // wasi:cli/run component. Constant for the shape, so embedded as \xNN blobs.
 
-pub function component_full_io_env(core: i32[], drop_io_errors: boolean = false): i32[] {
+pub function component_full_io_env(core: i32[]): i32[] {
   let o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_cli_environment_env()));
   o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_env(drop_io_errors));
+  return wcat(o, component_suffix_env());
 }
 
 // ---- args + stdout component framing ------------------------------------
@@ -2677,11 +2677,11 @@ pub function component_full_io_env(core: i32[], drop_io_errors: boolean = false)
 // `cabi_realloc` (get-arguments returns a host-allocated list) into a
 // wasi:cli/run component. Constant for the shape, embedded as \xNN blobs.
 
-pub function component_full_io_args(core: i32[], drop_io_errors: boolean = false): i32[] {
+pub function component_full_io_args(core: i32[]): i32[] {
   let o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_cli_environment_args()));
   o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_args(drop_io_errors));
+  return wcat(o, component_suffix_args());
 }
 
 // ---- clock (wall-clock) + stdout component framing ----------------------
@@ -2693,11 +2693,11 @@ pub function component_full_io_args(core: i32[], drop_io_errors: boolean = false
 // now_unix_ms / now_ns builtins. Constant for the shape, embedded as \xNN
 // blobs.
 
-pub function component_full_io_clock(core: i32[], drop_io_errors: boolean = false): i32[] {
+pub function component_full_io_clock(core: i32[]): i32[] {
   let o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_wall_clock()));
   o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_clock(drop_io_errors));
+  return wcat(o, component_suffix_clock());
 }
 
 // ---- monotonic-clock + stdout component framing -------------------------
@@ -2709,11 +2709,11 @@ pub function component_full_io_clock(core: i32[], drop_io_errors: boolean = fals
 // no list -> no cabi_realloc). Backs the monotonic_ns builtin. Constant for
 // the shape, embedded as \xNN blobs.
 
-pub function component_full_io_clock_mono(core: i32[], drop_io_errors: boolean = false): i32[] {
+pub function component_full_io_clock_mono(core: i32[]): i32[] {
   let o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_monotonic_clock()));
   o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_clock_mono(drop_io_errors));
+  return wcat(o, component_suffix_clock_mono());
 }
 
 // ---- read_file + env + stdout component framing -------------------------
@@ -2727,11 +2727,11 @@ pub function component_full_io_clock_mono(core: i32[], drop_io_errors: boolean =
 // the fs read chain), so this combined framing wires up byte-identically to
 // native. Exports `_lang_run` + `cabi_realloc` (env + fs lists).
 
-pub function component_full_io_fs_read_env(core: i32[], drop_io_errors: boolean = false): i32[] {
+pub function component_full_io_fs_read_env(core: i32[]): i32[] {
   let o: i32[] = io_fs_read_head();
   o = wcat(o, blob_to_bytes(tb_fsread_env_tail()));
   o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_fs_read_env(drop_io_errors));
+  return wcat(o, component_suffix_fs_read_env());
 }
 
 // ---- read_file + write_file + env + stdout component framing ------------
@@ -2744,11 +2744,11 @@ pub function component_full_io_fs_read_env(core: i32[], drop_io_errors: boolean 
 // the native compiler's canonical order, so this combined framing wires up
 // byte-identically to native. Exports `_lang_run` + `cabi_realloc`.
 
-pub function component_full_io_fs_rw_env(core: i32[], drop_io_errors: boolean = false): i32[] {
+pub function component_full_io_fs_rw_env(core: i32[]): i32[] {
   let o: i32[] = io_fs_rw_head();
   o = wcat(o, blob_to_bytes(tb_fsrw_env_tail()));
   o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_fs_rw_env(drop_io_errors));
+  return wcat(o, component_suffix_fs_rw_env());
 }
 
 // ---- random + write_file + stdout component framing ---------------------
@@ -2761,11 +2761,11 @@ pub function component_full_io_fs_rw_env(core: i32[], drop_io_errors: boolean = 
 // mixes both lowering kinds; canonical import order keeps it byte-identical
 // to native. Exports `_lang_run` + `cabi_realloc` (fs lists).
 
-pub function component_full_io_random_write(core: i32[], drop_io_errors: boolean = false): i32[] {
+pub function component_full_io_random_write(core: i32[]): i32[] {
   let o: i32[] = io_fs_write_head();
   o = wcat(o, blob_to_bytes(tb_fswrite_random_tail()));
   o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_random_write(drop_io_errors));
+  return wcat(o, component_suffix_random_write());
 }
 
 // ---- eprint (stderr) + stdout component framing -------------------------
@@ -2778,11 +2778,11 @@ pub function component_full_io_random_write(core: i32[], drop_io_errors: boolean
 // and eprint-only programs (the latter just leaves the stdout import unused).
 // Exports `_lang_run`; no list results, so no cabi_realloc.
 
-pub function component_full_io_eprint(core: i32[], drop_io_errors: boolean = false): i32[] {
+pub function component_full_io_eprint(core: i32[]): i32[] {
   let o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_cli_stderr()));
   o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_eprint(drop_io_errors));
+  return wcat(o, component_suffix_eprint());
 }
 
 // ---- exit + stdout component framing ------------------------------------
@@ -2793,16 +2793,16 @@ pub function component_full_io_eprint(core: i32[], drop_io_errors: boolean = fal
 // blocking-write-and-flush, exit). exit sits right after the stdout pair in
 // the native compiler's canonical order. No list results, so no cabi_realloc.
 
-pub function component_full_io_exit(core: i32[], drop_io_errors: boolean = false): i32[] {
+pub function component_full_io_exit(core: i32[]): i32[] {
   let o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_cli_exit()));
   o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_exit(drop_io_errors));
+  return wcat(o, component_suffix_exit());
 }
 
 // Assertions report on stderr before exiting. Import both interfaces over
 // the stdout prefix; the exit interface is type 6 after stderr's type 5.
-pub function component_full_io_eprint_exit(core: i32[], drop_io_errors: boolean = false): i32[] {
+pub function component_full_io_eprint_exit(core: i32[]): i32[] {
   let o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_cli_stderr()));
   o = wcat(o, blob_to_bytes("\x07\x1d\x01B\x03\x01j\x00\x00\x01@\x01\x06status\x00\x01\x00\x04\x00\x04exit\x01\x01\n\x18\x01\x00\x13wasi:cli/exit@0.2.0\x05\x06"));
@@ -2815,7 +2815,7 @@ pub function component_full_io_eprint_exit(core: i32[], drop_io_errors: boolean 
     [1, 2, 3, 4],
     [[127, 127, 127, 127], none, none, none],
     [0, 0, 0, 0],
-    7, 5, 0, "_lang_run", drop_io_errors,
+    7, 5, 0, "_lang_run",
   ));
 }
 
@@ -2828,11 +2828,11 @@ pub function component_full_io_eprint_exit(core: i32[], drop_io_errors: boolean 
 // `cat $1`). Canonical import order keeps it byte-identical to native.
 // Exports `_lang_run` + `cabi_realloc` (args + fs lists).
 
-pub function component_full_io_fs_args_read(core: i32[], drop_io_errors: boolean = false): i32[] {
+pub function component_full_io_fs_args_read(core: i32[]): i32[] {
   let o: i32[] = io_fs_read_head();
   o = wcat(o, blob_to_bytes(tb_fsread_args_tail()));
   o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_fs_args_read(drop_io_errors));
+  return wcat(o, component_suffix_fs_args_read());
 }
 
 // ---- args + read_file + write_file + stdout component framing -----------
@@ -2847,11 +2847,11 @@ function tb_fsrw_args_tail(): string {
   return "\x07\x1d\x01B\x03\x01ps\x01@\x00\x00\x00\x04\x00\rget-arguments\x01\x01\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\t";
 }
 
-pub function component_full_io_fs_rw_args(core: i32[], drop_io_errors: boolean = false): i32[] {
+pub function component_full_io_fs_rw_args(core: i32[]): i32[] {
   let o: i32[] = io_fs_rw_head();
   o = wcat(o, blob_to_bytes(tb_fsrw_args_tail()));
   o = wcat(o, wsection(1, core));
-  return wcat(o, component_suffix_fs_rw_args(drop_io_errors));
+  return wcat(o, component_suffix_fs_rw_args());
 }
 
 // ---- generative suffix builder: shim cores ------------------------------
@@ -3351,9 +3351,6 @@ pub function component_suffix_http(imp_iface: string[], imp_name: string[], imp_
   return wcat(o, comp_export_one_instance("wasi:http/incoming-handler@0.2.0", handler_inst));
 }
 
-// Fixed CLI prefixes surface wasi:io/error's error resource as type 1.
-// Add its drop only when the core requests checked output, preserving the
-// low-level framing API for cores with the original fixed import set.
 // no_results is the result list of `n` imports that all return through a
 // return area: the framed shapes' WASI imports.
 function no_results(n: i32): i32[][] {
@@ -3367,12 +3364,47 @@ function no_results(n: i32): i32[][] {
   return out;
 }
 
-function component_suffix_io(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string, drop_io_errors: boolean): i32[] {
-  if (!drop_io_errors) {
-    return component_suffix(imp_iface, imp_name, imp_kind, imp_inst, imp_params, no_results(imp_params.len()), imp_resourceT, n_type0, n_inst0, user_mod, core_export);
+// component_suffix_io is component_suffix for a CLI shape whose core can
+// drop a failed stream call's wasi:io/error (type 1 in the fixed prefixes).
+// The drop is lowered after the wasi:io/streams entries, where native's
+// composer puts it.
+function component_suffix_io(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string): i32[] {
+  let at: i32 = 0;
+  let i: i32 = 0;
+  while (i < imp_iface.len()) {
+    if (imp_iface[i] == "wasi:io/streams@0.2.0") {
+      at = i + 1;
+    }
+    i = i + 1;
   }
   let none: i32[] = [];
-  return component_suffix(imp_iface.append("wasi:io/error@0.2.0"), imp_name.append("[resource-drop]error"), imp_kind.append(3), imp_inst.append(0), imp_params.append(none), no_results(imp_params.len() + 1), imp_resourceT.append(1), n_type0, n_inst0, user_mod, core_export);
+  let iface: string[] = [];
+  let name: string[] = [];
+  let kind: i32[] = [];
+  let inst: i32[] = [];
+  let params: i32[][] = [];
+  let res: i32[] = [];
+  i = 0;
+  while (i <= imp_iface.len()) {
+    if (i == at) {
+      iface = iface.append("wasi:io/error@0.2.0");
+      name = name.append("[resource-drop]error");
+      kind = kind.append(3);
+      inst = inst.append(0);
+      params = params.append(none);
+      res = res.append(1);
+    }
+    if (i < imp_iface.len()) {
+      iface = iface.append(imp_iface[i]);
+      name = name.append(imp_name[i]);
+      kind = kind.append(imp_kind[i]);
+      inst = inst.append(imp_inst[i]);
+      params = params.append(imp_params[i]);
+      res = res.append(imp_resourceT[i]);
+    }
+    i = i + 1;
+  }
+  return component_suffix(iface, name, kind, inst, params, no_results(params.len()), res, n_type0, n_inst0, user_mod, core_export);
 }
 
 // blocking_write_name / write_sig: the one memory import every write-shape
@@ -3384,7 +3416,7 @@ function blocking_write_name(): string {
 // component_suffix_stdout: write-to-stdout. Imports [blocking-write-and-flush
 // (mem, streams=1), get-stdout (no-opt, cli/stdout=2)]; Phase A leaves
 // component types=5, instances=3.
-function component_suffix_stdout(drop_io_errors: boolean = false): i32[] {
+function component_suffix_stdout(): i32[] {
   let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
@@ -3393,13 +3425,13 @@ function component_suffix_stdout(drop_io_errors: boolean = false): i32[] {
     [1, 2],
     [[127, 127, 127, 127], none],
     [0, 0],
-    5, 3, 0, "_lang_run", drop_io_errors,
+    5, 3, 0, "_lang_run",
   );
 }
 
 // component_suffix_eprint: stdout + an extra get-stderr no-opt import.
 // Phase A leaves component types=6, instances=4.
-function component_suffix_eprint(drop_io_errors: boolean = false): i32[] {
+function component_suffix_eprint(): i32[] {
   let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0"],
@@ -3408,13 +3440,13 @@ function component_suffix_eprint(drop_io_errors: boolean = false): i32[] {
     [1, 2, 3],
     [[127, 127, 127, 127], none, none],
     [0, 0, 0],
-    6, 4, 0, "_lang_run", drop_io_errors,
+    6, 4, 0, "_lang_run",
   );
 }
 
 // component_suffix_exit: stdout + an extra exit no-opt import (cli/exit).
 // Phase A leaves component types=6, instances=4.
-function component_suffix_exit(drop_io_errors: boolean = false): i32[] {
+function component_suffix_exit(): i32[] {
   let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/exit@0.2.0"],
@@ -3423,7 +3455,7 @@ function component_suffix_exit(drop_io_errors: boolean = false): i32[] {
     [1, 2, 3],
     [[127, 127, 127, 127], none, none],
     [0, 0, 0],
-    6, 4, 0, "_lang_run", drop_io_errors,
+    6, 4, 0, "_lang_run",
   );
 }
 
@@ -3438,7 +3470,7 @@ function component_suffix_exit(drop_io_errors: boolean = false): i32[] {
 // streams each carry two methods and a drop) and the realloc path. A drop
 // closes its interface's group, which is where the composer puts it. Phase A
 // leaves component types=9, instances=5.
-function component_suffix_fs_read(drop_io_errors: boolean = false): i32[] {
+function component_suffix_fs_read(): i32[] {
   let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
@@ -3447,11 +3479,11 @@ function component_suffix_fs_read(drop_io_errors: boolean = false): i32[] {
     [3, 2, 2, 2, 1, 1, 1, 4],
     [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], none, [127, 127, 127, 127], [127, 126, 127], none, none],
     [0, 0, 0, 6, 0, 0, 4, 0],
-    9, 5, 0, "_lang_run", drop_io_errors,
+    9, 5, 0, "_lang_run",
   );
 }
 
-function component_suffix_random(drop_io_errors: boolean = false): i32[] {
+function component_suffix_random(): i32[] {
   let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:random/random@0.2.0"],
@@ -3460,11 +3492,11 @@ function component_suffix_random(drop_io_errors: boolean = false): i32[] {
     [1, 2, 3],
     [[127, 127, 127, 127], none, none],
     [0, 0, 0],
-    6, 4, 0, "_lang_run", drop_io_errors,
+    6, 4, 0, "_lang_run",
   );
 }
 
-function component_suffix_env(drop_io_errors: boolean = false): i32[] {
+function component_suffix_env(): i32[] {
   let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
@@ -3473,11 +3505,11 @@ function component_suffix_env(drop_io_errors: boolean = false): i32[] {
     [1, 2, 3],
     [[127, 127, 127, 127], none, [127]],
     [0, 0, 0],
-    6, 4, 0, "_lang_run", drop_io_errors,
+    6, 4, 0, "_lang_run",
   );
 }
 
-function component_suffix_args(drop_io_errors: boolean = false): i32[] {
+function component_suffix_args(): i32[] {
   let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
@@ -3486,11 +3518,11 @@ function component_suffix_args(drop_io_errors: boolean = false): i32[] {
     [1, 2, 3],
     [[127, 127, 127, 127], none, [127]],
     [0, 0, 0],
-    6, 4, 0, "_lang_run", drop_io_errors,
+    6, 4, 0, "_lang_run",
   );
 }
 
-function component_suffix_clock(drop_io_errors: boolean = false): i32[] {
+function component_suffix_clock(): i32[] {
   let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:clocks/wall-clock@0.2.0"],
@@ -3499,11 +3531,11 @@ function component_suffix_clock(drop_io_errors: boolean = false): i32[] {
     [1, 2, 3],
     [[127, 127, 127, 127], none, [127]],
     [0, 0, 0],
-    6, 4, 0, "_lang_run", drop_io_errors,
+    6, 4, 0, "_lang_run",
   );
 }
 
-function component_suffix_clock_mono(drop_io_errors: boolean = false): i32[] {
+function component_suffix_clock_mono(): i32[] {
   let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:clocks/monotonic-clock@0.2.0"],
@@ -3512,11 +3544,11 @@ function component_suffix_clock_mono(drop_io_errors: boolean = false): i32[] {
     [1, 2, 3],
     [[127, 127, 127, 127], none, none],
     [0, 0, 0],
-    6, 4, 0, "_lang_run", drop_io_errors,
+    6, 4, 0, "_lang_run",
   );
 }
 
-function component_suffix_random_write(drop_io_errors: boolean = false): i32[] {
+function component_suffix_random_write(): i32[] {
   let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:random/random@0.2.0"],
@@ -3525,11 +3557,11 @@ function component_suffix_random_write(drop_io_errors: boolean = false): i32[] {
     [3, 2, 2, 2, 1, 1, 4, 5],
     [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], none, [127, 127, 127, 127], none, none, none],
     [0, 0, 0, 5, 0, 3, 0, 0],
-    9, 6, 0, "_lang_run", drop_io_errors,
+    9, 6, 0, "_lang_run",
   );
 }
 
-function component_suffix_fs_write(drop_io_errors: boolean = false): i32[] {
+function component_suffix_fs_write(): i32[] {
   let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
@@ -3538,11 +3570,11 @@ function component_suffix_fs_write(drop_io_errors: boolean = false): i32[] {
     [3, 2, 2, 2, 1, 1, 4],
     [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], none, [127, 127, 127, 127], none, none],
     [0, 0, 0, 5, 0, 3, 0],
-    8, 5, 0, "_lang_run", drop_io_errors,
+    8, 5, 0, "_lang_run",
   );
 }
 
-function component_suffix_fs_rw(drop_io_errors: boolean = false): i32[] {
+function component_suffix_fs_rw(): i32[] {
   let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
@@ -3551,11 +3583,11 @@ function component_suffix_fs_rw(drop_io_errors: boolean = false): i32[] {
     [3, 2, 2, 2, 2, 1, 1, 1, 1, 4],
     [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 126, 127], none, [127, 127, 127, 127], [127, 126, 127], none, none, none],
     [0, 0, 0, 0, 6, 0, 0, 4, 3, 0],
-    9, 5, 0, "_lang_run", drop_io_errors,
+    9, 5, 0, "_lang_run",
   );
 }
 
-function component_suffix_fs_read_env(drop_io_errors: boolean = false): i32[] {
+function component_suffix_fs_read_env(): i32[] {
   let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
@@ -3564,11 +3596,11 @@ function component_suffix_fs_read_env(drop_io_errors: boolean = false): i32[] {
     [3, 2, 2, 2, 1, 1, 1, 4, 5],
     [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], none, [127, 127, 127, 127], [127, 126, 127], none, none, [127]],
     [0, 0, 0, 6, 0, 0, 4, 0, 0],
-    10, 6, 0, "_lang_run", drop_io_errors,
+    10, 6, 0, "_lang_run",
   );
 }
 
-function component_suffix_fs_rw_env(drop_io_errors: boolean = false): i32[] {
+function component_suffix_fs_rw_env(): i32[] {
   let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
@@ -3577,11 +3609,11 @@ function component_suffix_fs_rw_env(drop_io_errors: boolean = false): i32[] {
     [3, 2, 2, 2, 2, 1, 1, 1, 1, 4, 5],
     [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 126, 127], none, [127, 127, 127, 127], [127, 126, 127], none, none, none, [127]],
     [0, 0, 0, 0, 6, 0, 0, 4, 3, 0, 0],
-    10, 6, 0, "_lang_run", drop_io_errors,
+    10, 6, 0, "_lang_run",
   );
 }
 
-function component_suffix_fs_args_read(drop_io_errors: boolean = false): i32[] {
+function component_suffix_fs_args_read(): i32[] {
   let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
@@ -3590,11 +3622,11 @@ function component_suffix_fs_args_read(drop_io_errors: boolean = false): i32[] {
     [3, 2, 2, 2, 1, 1, 1, 4, 5],
     [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], none, [127, 127, 127, 127], [127, 126, 127], none, none, [127]],
     [0, 0, 0, 6, 0, 0, 4, 0, 0],
-    10, 6, 0, "_lang_run", drop_io_errors,
+    10, 6, 0, "_lang_run",
   );
 }
 
-function component_suffix_fs_rw_args(drop_io_errors: boolean = false): i32[] {
+function component_suffix_fs_rw_args(): i32[] {
   let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
@@ -3603,6 +3635,6 @@ function component_suffix_fs_rw_args(drop_io_errors: boolean = false): i32[] {
     [3, 2, 2, 2, 2, 1, 1, 1, 1, 4, 5],
     [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 126, 127], none, [127, 127, 127, 127], [127, 126, 127], none, none, none, [127]],
     [0, 0, 0, 0, 6, 0, 0, 4, 3, 0, 0],
-    10, 6, 0, "_lang_run", drop_io_errors,
+    10, 6, 0, "_lang_run",
   );
 }

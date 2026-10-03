@@ -650,7 +650,7 @@ function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
             let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io(core, true);
+            let comp: i32[] = component_full_io(core);
             let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
@@ -977,7 +977,7 @@ function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
             let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_fs(core, true);
+            let comp: i32[] = component_full_io_fs(core);
             let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
@@ -1236,7 +1236,7 @@ function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
             let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_fs_write(core, true);
+            let comp: i32[] = component_full_io_fs_write(core);
             let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
@@ -1483,7 +1483,7 @@ function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
             let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_fs_rw(core, true);
+            let comp: i32[] = component_full_io_fs_rw(core);
             let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
@@ -1710,7 +1710,7 @@ function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
             let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_random(core, true);
+            let comp: i32[] = component_full_io_random(core);
             let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
@@ -1938,7 +1938,7 @@ function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
             let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_env(core, true);
+            let comp: i32[] = component_full_io_env(core);
             let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
@@ -2157,7 +2157,7 @@ function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
             let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_args(core, true);
+            let comp: i32[] = component_full_io_args(core);
             let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
@@ -2377,7 +2377,7 @@ function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
             let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_clock(core, true);
+            let comp: i32[] = component_full_io_clock(core);
             let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
@@ -2587,7 +2587,7 @@ function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
             let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_clock_mono(core, true);
+            let comp: i32[] = component_full_io_clock_mono(core);
             let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
@@ -2813,7 +2813,7 @@ function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
             let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_fs_read_env(core, true);
+            let comp: i32[] = component_full_io_fs_read_env(core);
             let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
@@ -3040,7 +3040,7 @@ function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
             let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_fs_rw_env(core, true);
+            let comp: i32[] = component_full_io_fs_rw_env(core);
             let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
@@ -3262,7 +3262,7 @@ function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
             let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_random_write(core, true);
+            let comp: i32[] = component_full_io_random_write(core);
             let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
@@ -3497,7 +3497,7 @@ function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
             let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_eprint(core, true);
+            let comp: i32[] = component_full_io_eprint(core);
             let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
@@ -3727,7 +3727,7 @@ function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
             let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_exit(core, true);
+            let comp: i32[] = component_full_io_exit(core);
             let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
@@ -3952,7 +3952,7 @@ function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
             let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_fs_args_read(core, true);
+            let comp: i32[] = component_full_io_fs_args_read(core);
             let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
@@ -4179,7 +4179,7 @@ function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
             let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_fs_rw_args(core, true);
+            let comp: i32[] = component_full_io_fs_rw_args(core);
             let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;

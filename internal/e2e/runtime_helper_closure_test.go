@@ -6,13 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
 )
 
 // Runtime-helper symbol-closure check (issue #2649).
@@ -31,10 +24,8 @@ import (
 // assembling+linking the emitted asm with `-nostdlib`: an unmet helper
 // dependency surfaces as a linker "undefined reference", failing the test.
 //
-// Native (Go x86-64/arm64) backends propagate deps via their `recordUse` /
-// post-scan logic; the self-hosted IR backend uses asmcore's declarative
-// `runtime_need_deps` table + `close_needs` transitive closure. Both must keep
-// the runtime closed.
+// The compiler tracks them with asmcore's declarative `runtime_need_deps`
+// table and `close_needs` transitive closure.
 
 // allRuntimeNeedRoots mirrors asm_ir.all_runtime_need_roots() — the closed set
 // of runtime-need ROOT names the self-hosted codegen can mark. Keep in sync; a
@@ -66,83 +57,45 @@ func assertAsmLinks(t *testing.T, gcc, dir, name, asm string) {
 	}
 }
 
-// nativeMatrix is a spread of programs that, between them, exercise runtime
-// helper clusters with inter-helper dependencies the backend must keep closed:
+// closureMatrix is a spread of programs that, between them, exercise runtime
+// helper clusters with inter-helper dependencies the compiler must keep closed:
 // string concat (__fern_str_concat → __fern_alloc), string-keyed maps
 // (__fern_map_set → __fern_str_eq + __fern_arr_push — the exact edge whose
 // omission for i32-only maps motivated #2649), i32-keyed maps, and dynamic
-// arrays (push/grow → __fern_alloc). Map ops require `import "core/map"`.
-var nativeMatrix = map[string]string{
-	"str_concat": `function main(): i32 { let a: string = "ab"; let b: string = a + a; return b.len(); }`,
-	"map_str": `import "core/map";
-function main(): i32 { let m: Map[string, i32] = map_new(4); m = m.insert("a", 1); m = m.insert("b", 2); return m.get_or("a", 0) + m.get_or("b", 0); }`,
-	"map_i32": `import "core/map";
-function main(): i32 { let m: Map[i32, i32] = map_new(4); m = m.insert(1, 10); m = m.insert(2, 20); return m.get_or(1, 0) + m.get_or(2, 0); }`,
-	"array_grow": `function main(): i32 { let xs: i32[] = []; let i: i32 = 0; while (i < 8) { xs = xs.append(i); i = i + 1; } return xs.len(); }`,
+// arrays (push/grow → __fern_alloc). Each program's exit code is its answer,
+// so a link that succeeds against the wrong helper is caught as well.
+var closureMatrix = []struct {
+	name string
+	src  string
+	want int
+}{
+	{"str_concat", `function main(): i32 { let a: string = "ab"; let b: string = a + a; return b.len(); }`, 4},
+	{"map_str", `import "core/map";
+function main(): i32 { let m: Map[string, i32] = map_new(4); m = m.insert("a", 1); m = m.insert("b", 2); return m.get_or("a", 0) + m.get_or("b", 0); }`, 3},
+	{"map_i32", `import "core/map";
+function main(): i32 { let m: Map[i32, i32] = map_new(4); m = m.insert(1, 10); m = m.insert(2, 20); return m.get_or(1, 0) + m.get_or(2, 0); }`, 30},
+	{"array_grow", `function main(): i32 { let xs: i32[] = []; let i: i32 = 0; while (i < 8) { xs = xs.append(i); i = i + 1; } return xs.len(); }`, 8},
 }
 
-func TestNativeRuntimeHelperClosureX86_64(t *testing.T) {
-	gcc, _ := x86_64Tooling(t)
-	for name, src := range nativeMatrix {
-		name, src := name, src
-		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			srcPath := filepath.Join(dir, "main.fern")
-			if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-				t.Fatalf("write src: %v", err)
+// The whole-program path: the compiler links in-process and refuses an
+// undefined symbol, so a helper dependency it fails to emit is a compile
+// failure here.
+func TestRuntimeHelperClosureX86_64(t *testing.T) {
+	for _, tc := range closureMatrix {
+		t.Run(tc.name, func(t *testing.T) {
+			if out, code := compileAndRunX86_64(t, tc.src); code != tc.want {
+				t.Errorf("exit = %d, want %d\n%s", code, tc.want, out)
 			}
-			prog, _, err := modload.Load(srcPath)
-			if err != nil {
-				t.Fatalf("modload: %v", err)
-			}
-			if err := constfold.Fold(prog, nil); err != nil {
-				t.Fatalf("constfold: %v", err)
-			}
-			info, err := checker.Check(prog)
-			if err != nil {
-				t.Fatalf("check: %v", err)
-			}
-			if err := monomorph.Run(prog, info); err != nil {
-				t.Fatalf("monomorph: %v", err)
-			}
-			asm, err := x86_64.Emit(prog, info)
-			if err != nil {
-				t.Fatalf("emit: %v", err)
-			}
-			assertAsmLinks(t, gcc, dir, "nclos", asm)
 		})
 	}
 }
 
-func TestNativeRuntimeHelperClosureArm64(t *testing.T) {
-	gcc, _ := arm64Tooling(t)
-	for name, src := range nativeMatrix {
-		name, src := name, src
-		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			srcPath := filepath.Join(dir, "main.fern")
-			if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-				t.Fatalf("write src: %v", err)
+func TestRuntimeHelperClosureArm64(t *testing.T) {
+	for _, tc := range closureMatrix {
+		t.Run(tc.name, func(t *testing.T) {
+			if out, code := compileAndRunArm64(t, tc.src); code != tc.want {
+				t.Errorf("exit = %d, want %d\n%s", code, tc.want, out)
 			}
-			prog, _, err := modload.Load(srcPath)
-			if err != nil {
-				t.Fatalf("modload: %v", err)
-			}
-			if err := constfold.Fold(prog, nil); err != nil {
-				t.Fatalf("constfold: %v", err)
-			}
-			info, err := checker.Check(prog)
-			if err != nil {
-				t.Fatalf("check: %v", err)
-			}
-			if err := monomorph.Run(prog, info); err != nil {
-				t.Fatalf("monomorph: %v", err)
-			}
-			asm, err := arm64codegen.Emit(prog, info)
-			if err != nil {
-				t.Fatalf("emit: %v", err)
-			}
-			assertAsmLinks(t, gcc, dir, "nclos_arm64", asm)
 		})
 	}
 }

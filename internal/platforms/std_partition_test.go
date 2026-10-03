@@ -39,6 +39,9 @@ import (
 //     all; what it needs is a C calling convention to hand a JNIEnv
 //     method pointer to, which is a property of the target and not of
 //     anything above it.
+//   - `std/sim_fetch` reaches what `std/fetch` does, which it imports for
+//     the `Transport` trait it implements; it is std/sim's sibling rather
+//     than part of it so that `std/sim` keeps the clock and randomness alone.
 //   - `std/mock_platform` and `std/fetch` reach what `std/platform` reaches,
 //     because both import it for the recording seam — `.is_mock` / `.record`
 //     sit on the bag next to the capability methods. Neither CALLS a
@@ -99,6 +102,7 @@ var stdModuleReach = map[string]string{
 	"std/set":           "",
 	"std/signal":        "signal",
 	"std/sim":           "now,random,reactor",
+	"std/sim_fetch":     "config,env,fs,host,log,now,proc,random,reactor,sysinfo,tcp,unix",
 	"std/sort":          "",
 	"std/strdist":       "",
 	"std/stream":        "",

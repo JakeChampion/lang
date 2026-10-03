@@ -93,7 +93,7 @@ func buildWriterTruncateBodyP2(idxs map[string]uint32) []byte {
 	buildIoErr := idxs["__build_io_error"]
 	setSize := idxs["wasi_descriptor_set_size_p2"]
 
-	var body []byte
+	body := emitClosedSomeP2(nil, idxs, 0, 4, 5, 6)
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Load(body, 2, 4)
 	body = inst.InstLocalTee(body, 3)
