@@ -15183,6 +15183,18 @@ function const_grammar_diags(mod: parser.Module): util.Diag[] {
   return out;
 }
 
+// is_script: top-level statements with no `main`, which become the body of a
+// synthesized `function main(): i32` (asmcore.synth_script_main), so their
+// returns are checked against i32.
+function is_script(mod: parser.Module): boolean {
+  for fd in mod.funcs {
+    if (fd.name == "main" && fd.receiver_type.len() == 0) {
+      return false;
+    }
+  }
+  return mod.top_stmts.len() > 0;
+}
+
 // E075 belongs to the automatic init/handle wiring. A user-written main owns
 // that wiring instead. Match native's declaration lookup: methods named init
 // or handle are not lifecycle entries, and imported names remain qualified.
@@ -21447,6 +21459,9 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   body_diags = util.append_diags(body_diags, dupvar_diags(dtop));
   body_diags = util.append_diags(body_diags, suffix_range_stmts(dtop));
   body_diags = util.append_diags(body_diags, match_diags(dtop, structs, ut));
+  if (is_script(mod)) {
+    body_diags = util.append_diags(body_diags, ret_diags(dtop, tsc, t_i32(), unions));
+  }
   // E019: generic-struct type-argument arity in struct field types.
   for sd in mod.structs {
     for field in sd.fields {
