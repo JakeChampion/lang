@@ -64,9 +64,10 @@ pub struct Supply { value: i32, slot: i32, mode: i32 }
 // parameter's, whose every field the callee may grow is handed with it.
 pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops: i32[], hand_roots: i32[], hand_fields: i32[] }
 
-// `grows` names, at an append's or a with's result, the record value whose
-// field buffer the operation may grow or write IN PLACE (field_grow_root), or
-// -1; `grow_fields` holds that field's index at the same position.
+// `grows` names, at an append's, a with's or a string append's result, the
+// record value whose field buffer the operation may grow or write IN PLACE
+// (field_grow_root), or -1; `grow_fields` holds that field's index at the same
+// position.
 // `held` marks an element read that takes a unit of its own at the read
 // (held_elements); the physical lowering retains what it read.
 // `literal` marks the values that can only hold a string literal (`literals`).
@@ -308,23 +309,40 @@ function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32, own seen: boo
 }
 
 // Every produced body's rows, closed over the buffers handed on: a row only
-// ever gains, so the rounds converge.
+// ever gains, so the rounds converge. A plan reads the table only through the
+// rows filed under the callees its steps name, and each row is filed under the
+// key of the plan that produced it, so a plan is evaluated again only once a
+// callee of its has gained a row; until then it would hand back rows the
+// table already holds.
 pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): GrowTable {
   let table: GrowRow[] = [];
   let no_names: string[] = [];
   // tix indexes `table` by callee, one entry per row in order.
   let tix: util.NameIndex = util.name_index(no_names);
+  let kix: util.NameIndex = util.name_index(keys);
+  let callers: i32[][] = plan_callers(kix, funcs, plans);
+  let dirty: boolean[] = [];
+  while (dirty.len() < plans.len()) {
+    dirty = dirty.append(true);
+  }
   let changed: boolean = true;
   while (changed) {
     changed = false;
     let i: i32 = 0;
     while (i < plans.len()) {
-      if (plans[i].ok) {
+      if (plans[i].ok && dirty[i]) {
+        dirty = dirty.with(i, false);
         for row in grow_rows(keys[i], funcs[i], plans[i], table, tix) {
           if (!has_row_at(table, tix, row.callee, row.param, row.field)) {
             table = table.append(row);
             tix = tix.added(row.callee);
             changed = true;
+            let at: i32 = kix.find(row.callee);
+            if (at >= 0) {
+              for c in callers[at] {
+                dirty = dirty.with(c, true);
+              }
+            }
           }
         }
       }
@@ -332,6 +350,31 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
     }
   }
   return GrowTable { rows: table, by_callee: tix };
+}
+
+// plan_callers[j] lists the plans whose steps name the plan first keyed
+// keys[j] (kix), each once.
+function plan_callers(kix: util.NameIndex, funcs: ssasem.Func[], plans: Plan[]): i32[][] {
+  let out: i32[][] = [];
+  while (out.len() < plans.len()) {
+    out = out.append([]);
+  }
+  let i: i32 = 0;
+  while (i < plans.len()) {
+    if (plans[i].ok) {
+      let at: i32[] = ssa.block_positions(funcs[i].graph);
+      for s in plans[i].steps {
+        if (s.point >= 0) {
+          let j: i32 = kix.find(funcs[i].graph.blocks[at[s.block]].insts[s.point].str);
+          if (j >= 0 && (out[j].len() == 0 || out[j][out[j].len() - 1] != i)) {
+            out = out.with(j, out[j].append(i));
+          }
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return out;
 }
 
 function bad(why: string): Plan {
@@ -373,15 +416,6 @@ function successors(b: ssa.SBlock): i32[] {
   return [];
 }
 
-function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
-  for t in tup.elements {
-    if (!supported(t, f)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 // The types that carry no unit at all: the scalars, and a handle, which is
 // its descriptor.
 function unit_free(t: typeinfo.Type): boolean {
@@ -401,6 +435,26 @@ function unit_free(t: typeinfo.Type): boolean {
 }
 
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
+  return unit_shape(t, f, true);
+}
+
+pub function has_nominal(t: typeinfo.Type, f: ssasem.Func): boolean {
+  if let typeinfo.TypeStruct(_) = t {
+    return semrecords.find(f.records, t) >= 0;
+  }
+  return semrecords.find_enum(f.enums, t) >= 0;
+}
+
+// nominal admits a struct or union type: with `lookup`, when f's table holds
+// it. A schema entry's field is admitted without: the analysis a plan is
+// formed from refuses a table whose fields name a type it lacks
+// (semrecords.verify).
+pub function nominal(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
+  return !lookup || has_nominal(t, f);
+}
+
+// unit_shape: whether `t` is a value this pass plans.
+function unit_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
   if (unit_free(t)) {
     return true;
   }
@@ -413,19 +467,24 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
   if let typeinfo.TypeDyn(_) = t {
     return true;
   }
-  // A map cursor's unit is its own block; what it reads stays the map's.
+  // A map cursor holds a unit of its map.
   if (semtypes.is_map_iter(t)) {
-    return true;
+    return unit_shape(semtypes.map_iter_map(t), f, lookup);
   }
   if let typeinfo.TypeArray(a) = t {
-    return supported(a.elem, f);
+    return unit_shape(a.elem, f, lookup);
   }
   if let typeinfo.TypeTuple(tup) = t {
-    return supported_tuple(tup, f);
+    for e in tup.elements {
+      if (!unit_shape(e, f, lookup)) {
+        return false;
+      }
+    }
+    return true;
   }
   // A cell holds one unit of its own and one slot; no declaration names it.
   if (semtypes.is_cell(t)) {
-    return supported(semtypes.cell_elem(t), f);
+    return unit_shape(semtypes.cell_elem(t), f, lookup);
   }
   // A map holds one unit of its own and one of every key in its column, and
   // one of every value when that column is counted; only the shapes whose
@@ -435,16 +494,16 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if (!ssasem.is_supported_map(t)) {
       return false;
     }
-    if (ssasem.keyed_map_key(ssasem.map_key(t)) && !supported(ssasem.map_key(t), f)) {
+    if (ssasem.keyed_map_key(ssasem.map_key(t)) && !unit_shape(ssasem.map_key(t), f, lookup)) {
       return false;
     }
-    return !ssasem.boxed_map_value(ssasem.map_value(t)) || supported(ssasem.map_value(t), f);
+    return !ssasem.boxed_map_value(ssasem.map_value(t)) || unit_shape(ssasem.map_value(t), f, lookup);
   }
   if let typeinfo.TypeStruct(_) = t {
-    return semrecords.find(f.records, t) >= 0;
+    return nominal(t, f, lookup);
   }
   if let typeinfo.TypeUnion(_) = t {
-    return semrecords.find_enum(f.enums, t) >= 0;
+    return nominal(t, f, lookup);
   }
   return false;
 }
@@ -478,23 +537,71 @@ function call_contract_error(c: ssasem.Contract, f: ssasem.Func): string {
   return mode_error(c.params, c.modes);
 }
 
-// Check the finite schema tables, not recursive nominal field expansion.
-function schema_fields_error(f: ssasem.Func): string {
-  for record in f.records.list {
-    for field in record.fields {
-      if (!supported(field.ty, f)) {
-        return "unsupported counted record field";
+// A SchemaView is a function's schema tables already checked: per record,
+// then per enum, in table order, whether all its fields are admitted as a unit
+// (`*_unit`) and as a physical walk (`*_walk`).
+// ssarc.schema_views forms each distinct entry's once per module. An empty
+// view, which no_view is, leaves every entry to be checked here.
+pub struct SchemaView { rec_unit: boolean[], rec_walk: boolean[], enum_unit: boolean[], enum_walk: boolean[] }
+
+pub function no_view(): SchemaView {
+  let none: boolean[] = [];
+  return SchemaView { rec_unit: none, rec_walk: none, enum_unit: none, enum_walk: none };
+}
+
+// view_fits: `v` was formed for this very table.
+pub function view_fits(v: SchemaView, f: ssasem.Func): boolean {
+  return v.rec_unit.len() == f.records.list.len() && v.enum_unit.len() == f.enums.len();
+}
+
+pub function record_unit(r: semrecords.Record, f: ssasem.Func): boolean {
+  for field in r.fields {
+    if (!unit_shape(field.ty, f, false)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+pub function enum_unit(e: semrecords.Enum, f: ssasem.Func): boolean {
+  for vr in e.variants {
+    for field in vr.fields {
+      if (!unit_shape(field.ty, f, false)) {
+        return false;
       }
     }
   }
-  for e in f.enums {
-    for v in e.variants {
-      for field in v.fields {
-        if (!supported(field.ty, f)) {
-          return "unsupported counted variant field";
-        }
-      }
+  return true;
+}
+
+// Check the finite schema tables, not recursive nominal field expansion.
+function schema_fields_error(f: ssasem.Func, view: SchemaView): string {
+  let fits: boolean = view_fits(view, f);
+  let i: i32 = 0;
+  while (i < f.records.list.len()) {
+    let ok: boolean = false;
+    if (fits) {
+      ok = view.rec_unit[i];
+    } else {
+      ok = record_unit(f.records.list[i], f);
     }
+    if (!ok) {
+      return "unsupported counted record field";
+    }
+    i = i + 1;
+  }
+  i = 0;
+  while (i < f.enums.len()) {
+    let ok: boolean = false;
+    if (fits) {
+      ok = view.enum_unit[i];
+    } else {
+      ok = enum_unit(f.enums[i], f);
+    }
+    if (!ok) {
+      return "unsupported counted variant field";
+    }
+    i = i + 1;
   }
   return "";
 }
@@ -530,7 +637,7 @@ function function_ops_error(f: ssasem.Func): string {
   return "";
 }
 
-function contract_error(f: ssasem.Func, modes: i32[]): string {
+function contract_error(f: ssasem.Func, modes: i32[], view: SchemaView): string {
   if (modes.len() != f.params.len()) {
     return "parameter mode dimensions";
   }
@@ -542,7 +649,7 @@ function contract_error(f: ssasem.Func, modes: i32[]): string {
   if (!supported(f.result, f)) {
     return "unsupported counted-unit result";
   }
-  let why: string = schema_fields_error(f);
+  let why: string = schema_fields_error(f, view);
   if (why != "") {
     return why;
   }
@@ -828,6 +935,8 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     counted = [true, false, ssasem.reference(f.values[ins.args[2]])];
   } else if (ins.kind_tag == ssasem.hole_fill()) {
     counted = [true, false, true];
+  } else if (ins.kind_tag == ssasem.map_iter()) {
+    counted = [true];
   } else if (string_append(f, ins)) {
     counted = [true, false];
   } else if (construction(ins.kind_tag)) {
@@ -2129,10 +2238,19 @@ function payload_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
   return PayloadTakes { taken: out, crossing: crossing };
 }
 
-// The record whose field buffer the append or with at (`bi`, `pos`) may grow
-// or write in place, or -1: `projection_root` of its receiver.
+// The record whose field buffer the append, with or string append at (`bi`,
+// `pos`) may grow or write in place, or -1: `projection_root` of its receiver.
+// A string append needs a record the frame owns: no caller brackets a text
+// field it lends (grow_rows), so a borrowed record's string is never grown.
 function field_grow_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
   let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
+  if (string_append(f, ins)) {
+    let root: i32 = projection_root(f, a, owned, defs, bi, pos, ins.args[0]);
+    if (root >= 0 && owned[root]) {
+      return root;
+    }
+    return 0 - 1;
+  }
   if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) {
     return 0 - 1;
   }
@@ -2282,17 +2400,17 @@ function insert_sorted(own xs: i32[], v: i32): i32[] {
   return xs.with(i, v);
 }
 
-pub function plan(f: ssasem.Func, modes: i32[]): Plan {
-  return plan_analyzed(f, modes, ssasem.analyze(f));
+pub function plan(f: ssasem.Func, modes: i32[], view: SchemaView): Plan {
+  return plan_analyzed(f, modes, ssasem.analyze(f), view);
 }
 
 // plan over an analysis the caller already holds of this very `f`.
-pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis): Plan {
+pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, view: SchemaView): Plan {
   if (!semantic.ok) {
     return bad(semantic.why);
   }
   let analysis: ssasem.Analysis = semantic;
-  let why: string = contract_error(f, modes);
+  let why: string = contract_error(f, modes, view);
   if (why != "") {
     return bad(why);
   }
@@ -2863,7 +2981,7 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   let why: string = "";
   let defs: ssa.SInst[] = p.defs;
   if (whole) {
-    why = contract_error(f, modes);
+    why = contract_error(f, modes, no_view());
     defs = definitions(f);
   } else if (modes.len() != f.params.len()) {
     why = "parameter mode dimensions";

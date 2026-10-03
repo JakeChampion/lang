@@ -26,7 +26,7 @@
 # versions. oha holds N connections closed-loop for the duration and the
 # report keeps its throughput and its p50 / p99 latency per server and N,
 # plus, on x86-64, the bump-allocator growth one held idle connection
-# costs the Fern loop (the number TestHeldConnectionsHeapBoundX86_64
+# costs the Fern loop (the number TestSelfHostHeldConnectionsHeapBoundX86_64
 # bounds). Closed-loop, without `-q`, because these are throughput
 # ceilings: oha's latency correction only applies under a fixed rate, and
 # the p99 here says how the server queues at saturation, not what a
@@ -56,11 +56,7 @@ SECONDS_PER="${FERN_NET_BENCH_SECONDS:-10}"
 CONNECTIONS="${FERN_NET_BENCH_CONNECTIONS:-64 4096}"
 OHA="${FERN_OHA:-oha}"
 
-case "$(uname -m)" in
-  x86_64)          ARCH=x86_64;  TARGET=x86-64-linux ;;
-  aarch64 | arm64) ARCH=aarch64; TARGET=arm64-linux ;;
-  *) echo "net-bench: unsupported host $(uname -m)" >&2; exit 2 ;;
-esac
+. scripts/net-lib
 
 if ! command -v "$OHA" >/dev/null 2>&1; then
   echo "net-bench: $OHA not found; mise.toml pins it (mise install oha)" >&2
@@ -79,27 +75,6 @@ fi
 # soft limit is raised to the hard one where the hard one allows it.
 ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
 
-go build -o bin/fern ./cmd/fern
-
-work="$(mktemp -d)"
-server_pgid=""
-# The Fern server drains for its shutdown grace after SIGTERM, so the
-# group gets a few seconds before SIGKILL.
-stop_server() {
-  if [ -n "$server_pgid" ]; then
-    kill -TERM -- "-$server_pgid" 2>/dev/null || true
-    local waited=0
-    while kill -0 "$server_pgid" 2>/dev/null && [ "$waited" -lt 25 ]; do
-      sleep 0.2
-      waited=$((waited + 1))
-    done
-    kill -KILL -- "-$server_pgid" 2>/dev/null || true
-    wait "$server_pgid" 2>/dev/null || true
-    server_pgid=""
-  fi
-}
-trap 'stop_server; rm -rf "$work"' EXIT
-
 bin/fern -target "$TARGET" -o "$work/fern-hello" scripts/net-bench.d/hello.fern
 go build -o "$work/go-hello" ./scripts/net-bench.d/gohello
 cargo build --release --locked --quiet --manifest-path scripts/net-bench.d/hyperhello/Cargo.toml --target-dir "$work/hyper-target"
@@ -107,52 +82,15 @@ cp "$work/hyper-target/release/hyperhello" "$work/hyper-hello"
 hyper_version="$(sed -n '/^name = "hyper"$/{n;s/^version = "\(.*\)"/\1/p}' scripts/net-bench.d/hyperhello/Cargo.lock)"
 h2o_version="$(h2o --version | sed -n 's/^h2o version \(.*\)/\1/p')"
 
-# h2o answers the same body through an mruby handler; the config is
-# written per run since it carries the port and the thread count.
-h2o_config() {
-  cat > "$work/h2o.conf" <<EOF
-listen:
-  host: 127.0.0.1
-  port: $1
-num-threads: $(nproc)
-hosts:
-  default:
-    paths:
-      /:
-        mruby.handler: |
-          Proc.new do |env|
-            [200, {'content-type' => 'text/plain; charset=utf-8'}, ['hello']]
-          end
-EOF
-}
-
-free_port() {
-  python3 -c 'import socket
-s = socket.socket()
-s.bind(("127.0.0.1", 0))
-print(s.getsockname()[1])'
-}
-
-# start_server NAME PORT — the server in its own process group, so the
-# supervisor and every worker it forks go together.
-start_server() {
+# start NAME PORT — the hello server NAME answering on PORT.
+start() {
   if [ "$1" = h2o ]; then
     h2o_config "$2"
-    setsid h2o -c "$work/h2o.conf" > "$work/server.log" 2>&1 &
+    start_server "$work/server.log" h2o -c "$work/h2o.conf"
   else
-    PORT="$2" setsid "$work/$1-hello" > "$work/server.log" 2>&1 &
+    PORT="$2" start_server "$work/server.log" "$work/$1-hello"
   fi
-  server_pgid="$!"
-  local tries=0
-  until curl -s -m 1 -o /dev/null "http://127.0.0.1:$2/"; do
-    tries=$((tries + 1))
-    if [ "$tries" -ge 50 ]; then
-      echo "net-bench: $1 did not answer on port $2" >&2
-      cat "$work/server.log" >&2
-      exit 1
-    fi
-    sleep 0.2
-  done
+  await_server "$1" "$2" "$work/server.log"
 }
 
 # rows NAME N JSON — the report rows for one load, from oha's JSON.
@@ -177,7 +115,7 @@ PY
   echo "# ${SECONDS_PER}s per load, connections: $CONNECTIONS, $("$OHA" --version), $(go version | cut -d' ' -f3), hyper $hyper_version ($(rustc --version | cut -d' ' -f2)), h2o $h2o_version"
   for server in fern go hyper h2o; do
     port="$(free_port)"
-    start_server "$server" "$port"
+    start "$server" "$port"
     for n in $CONNECTIONS; do
       "$OHA" -z "${SECONDS_PER}s" -c "$n" --no-tui --output-format json "http://127.0.0.1:$port/" > "$work/$server-c$n.json"
       rows "$server" "$n" "$work/$server-c$n.json"
@@ -186,7 +124,7 @@ PY
   done
   if [ "$ARCH" = x86_64 ]; then
     # The per-connection heap cost, read off the test that bounds it.
-    go test ./internal/e2e -run 'TestHeldConnectionsHeapBoundX86_64$' -count=1 -v > "$work/held.log" 2>&1 || {
+    go test ./internal/e2eselfhost -run 'TestSelfHostHeldConnectionsHeapBoundX86_64$' -count=1 -v > "$work/held.log" 2>&1 || {
       echo "net-bench: the held-connections measurement failed:" >&2
       cat "$work/held.log" >&2
       exit 1

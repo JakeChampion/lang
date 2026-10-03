@@ -139,7 +139,7 @@ pub struct EmitState {
   // function uses, between the frame record and the slots.
   ssa_frame: i32,
   ssa_save: i32,
-  // ssa_x0 is the value id the result register (x0, %rax) holds, -1 when
+  // ssa_x0 is the value id the result register (x0, %r11) holds, -1 when
   // unknown; a load of that value into it is then nothing. A store from the
   // register asserts the value stored, because the store is what makes the
   // two equal. Forgotten at every label, and by every sequence that writes
@@ -232,7 +232,7 @@ pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
       }
       let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(kt, name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops);
       if (lifted.ok) {
-        let f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.fuse_rotates(ssa.prune_trivial_phis(lifted.func))));
+        let f: ssa.SFunc = ssa.register_form(lifted.func);
         for leaf in ssa.leaf_of(name, f) {
           out = out.append(leaf);
         }
@@ -3893,7 +3893,7 @@ pub function rt_src_write_file_bytes(t: string, packed: boolean): string {
 // Shared text writer, parameterised by symbol, decimal creation mode and
 // optional permission fixup. Plain write_file preserves existing modes.
 pub function rt_src_write_file_mode(t: string, fname: string, mode: string, fixup: string): string {
-  return "function " + fname + "(path: string, contents: string): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "wr_creat_trunc") + ", " + mode + ") as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } let clen: i32 = contents.len(); let cbuf: usize = __raw_alloc(clen + 1); let j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j] as i32); j = j + 1; } let cbuf_own: string = __raw_string(cbuf, clen + 1); let put: i32 = 0; while (put < clen) { let w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, __raw_addr(cbuf, put) as i64, (clen - put) as i64) as i32; if (w < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Err(__fern_io_error(0 - w, __fern_path_copy(pathz_own, plen))); } if (w == 0) { put = clen; } else { put = put + w; } } " + fixup + "__syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Ok(()); }";
+  return "function " + fname + "(path: string, contents: string): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "wr_creat_trunc") + ", " + mode + ") as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } let clen: i32 = contents.len(); let cbuf: usize = __str_bytes(contents, 0 as usize); let put: i32 = 0; while (put < clen) { let w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, __raw_addr(cbuf, put) as i64, (clen - put) as i64) as i32; if (w < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Err(__fern_io_error(0 - w, __fern_path_copy(pathz_own, plen))); } if (w == 0) { put = clen; } else { put = put + w; } } " + fixup + "__syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Ok(()); }";
 }
 
 // rt_src_env backs `env(name)` (#2649) → Option[string]. Walks the process envp
@@ -8217,7 +8217,7 @@ pub function synth_script_main(mod: parser.Module): parser.Module {
     import_iface: "", import_wit: "", all_type_params: [],
     bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
     is_pub: true,
-    is_const: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "",
+    is_const: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [],
   };
   return parser.Module { ...mod, funcs: mod.funcs.append(entry), top_stmts: [] };
 }

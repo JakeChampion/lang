@@ -19,7 +19,7 @@ func TestSelfHostExampleTeeBytes(t *testing.T) {
 		t.Run(target, func(t *testing.T) {
 			var bin string
 			var runner []string
-			env := []string{"FERN_SEM_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1"}
+			env := []string{"FERN_SANITIZE=1", "FERN_LEAKCHECK=1"}
 			switch target {
 			case "x86-64-linux":
 				bin = cli.x86Binary(t, src, env...)

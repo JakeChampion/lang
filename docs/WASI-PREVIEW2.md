@@ -195,7 +195,9 @@ Auto-injected struct shape:
   passed through. The wrapper fills `headers` from the request's
   fields and leaves `trailers` empty: the body's trailers are a future
   the host settles after the body is finished, and nothing reads it
-  yet.
+  yet. The body is read up to std/http's serve cap
+  (`http_limits().body`, 1 MiB); a longer one is answered 413 before
+  `handle` runs, as the socket server answers it.
 - `HttpResponse { status: number, body: string, headers: HeaderMap,
   trailers: HeaderMap }` — `status` is the i32 HTTP status code; `body`
   is written verbatim; `trailers` are not sent, the outgoing body being

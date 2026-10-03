@@ -72,40 +72,32 @@ function module_named(loaded: flatten.LoadedModule[], name: string): i32 {
   return 0 - 1;
 }
 
-// declares_private reports whether `mod` has a top-level function `name` that is
-// NOT `pub`. Receiver-bearing methods are excluded: they are reached through a
-// value (`x.m()`), never module-qualified, so `pub` does not gate them. A name
-// the module does not declare at all returns false — an unknown qualified name
-// is somebody else's diagnostic, and reporting it as "not exported" would send
-// the reader off to add `pub` to a declaration that does not exist.
 // private_keys builds `<mod>.<name>` for every private top-level FUNCTION and
-// TYPE across the loaded set, once per run. The lookups were a linear scan of
-// the target module's declarations PER REFERENCE, which is O(refs x decls) —
-// on the compiler's own sources that is tens of thousands of references against
-// thousands of declarations, and it measured 2.3% on a whole-compiler `-check`.
-// Keying on the private names only makes the scanned list a small fraction of
-// the declarations, since most are exported.
+// TYPE across the loaded set, once per run, so a reference is one lookup rather
+// than a scan of the target module's declarations. Receiver-bearing methods are
+// reached through a value, never module-qualified, so `pub` does not gate them.
+// A `pub(package)` declaration is exported, so it is not a key here.
 function private_keys(loaded: flatten.LoadedModule[]): string[] {
   let out: string[] = [];
   for lm in loaded {
     for f in lm.mod.funcs {
-      if (!f.is_pub && f.receiver_name.len() == 0 && f.name.len() > 0) {
+      if (!f.is_pub && !f.is_package && f.receiver_name.len() == 0 && f.name.len() > 0) {
         out = out.append(lm.name + "." + f.name);
       }
     }
     for sd in lm.mod.structs {
       // A variant defers to its enum, so it contributes no key of its own.
-      if (!sd.is_pub && sd.enum_owner.len() == 0 && sd.name.len() > 0) {
+      if (!sd.is_pub && !sd.is_package && sd.enum_owner.len() == 0 && sd.name.len() > 0) {
         out = out.append(lm.name + "." + sd.name);
       }
     }
     for en in lm.mod.enums {
-      if (!en.is_pub) {
+      if (!en.is_pub && !en.is_package) {
         out = out.append(lm.name + "." + en.name);
       }
     }
     for al in lm.mod.aliases {
-      if (!al.is_pub) {
+      if (!al.is_pub && !al.is_package) {
         out = out.append(lm.name + "." + al.name);
       }
     }
@@ -123,7 +115,7 @@ function private_const_keys(loaded: flatten.LoadedModule[]): string[] {
   let out: string[] = [];
   for lm in loaded {
     for f in lm.mod.funcs {
-      if (f.is_const && !f.is_pub && f.receiver_name.len() == 0 && f.name.len() > 0) {
+      if (f.is_const && !f.is_pub && !f.is_package && f.receiver_name.len() == 0 && f.name.len() > 0) {
         out = out.append(lm.name + "." + f.name);
       }
     }
@@ -131,117 +123,122 @@ function private_const_keys(loaded: flatten.LoadedModule[]): string[] {
   return out;
 }
 
-// package_of returns the PACKAGE a module belongs to: its directory. Two
-// modules are in the same package iff they sit in the same directory, and the
-// whole embedded stdlib (`std/…` + `core/…`) counts as one. See
-// docs/PUB-PACKAGE.md.
-function package_of(module_name: string): string {
-  if (module_name.len() >= 4 && slice_unchecked(module_name, 0, 4) == "std/") {
-    return "stdlib";
+// package_of returns the PACKAGE of the module whose resolved file is `ident`:
+// its directory, with the whole stdlib (`std/…` + `core/…` under `root`)
+// counting as one. See docs/PUB-PACKAGE.md.
+function package_of(ident: string, root: string): string {
+  if (root.len() > 0 && (util.str_has_prefix(ident, root + "/std/") || util.str_has_prefix(ident, root + "/core/"))) {
+    return "(stdlib)";
   }
-  if (module_name.len() >= 5 && slice_unchecked(module_name, 0, 5) == "core/") {
-    return "stdlib";
-  }
-  let cut: i32 = 0 - 1;
-  let i: i32 = 0;
-  while (i < module_name.len()) {
-    if (module_name[i] == b'/') {
-      cut = i;
-    }
-    i = i + 1;
-  }
-  if (cut < 0) {
-    return "";
-  }
-  return slice_unchecked(module_name, 0, cut) + "";
+  return util.clean_path(util.dir_of(ident));
 }
 
-// package_keys is private_keys' `pub(package)` sibling: declarations visible
-// within their own package and nowhere else. They are not in private_keys —
-// a package-scoped decl IS exported, just not to everyone — so the reference
-// check consults this list only when the referring module is in a DIFFERENT
-// package.
+// package_keys builds `<ident>.<name>` for every `pub(package)` top-level
+// function and type: declarations visible within their own package and nowhere
+// else. Keyed on the module's resolved file rather than its name, since the
+// rule turns on which directory that file is in.
 function package_keys(loaded: flatten.LoadedModule[]): string[] {
   let out: string[] = [];
   for lm in loaded {
     for f in lm.mod.funcs {
       if (f.is_package && f.receiver_name.len() == 0 && f.name.len() > 0) {
-        out = out.append(lm.name + "." + f.name);
+        out = out.append(lm.ident + "." + f.name);
       }
     }
     for sd in lm.mod.structs {
       if (sd.is_package && sd.enum_owner.len() == 0 && sd.name.len() > 0) {
-        out = out.append(lm.name + "." + sd.name);
+        out = out.append(lm.ident + "." + sd.name);
       }
     }
     for en in lm.mod.enums {
       if (en.is_package) {
-        out = out.append(lm.name + "." + en.name);
+        out = out.append(lm.ident + "." + en.name);
       }
     }
     for al in lm.mod.aliases {
       if (al.is_package) {
-        out = out.append(lm.name + "." + al.name);
+        out = out.append(lm.ident + "." + al.name);
       }
     }
   }
   return out;
 }
 
-// module_name_of returns the loaded module `qual` resolves to, or "" when the
-// qualifier names nothing loaded.
-function module_name_of(loaded: flatten.LoadedModule[], qual: string): string {
-  for lm in loaded {
-    if (lm.name == qual) {
-      return lm.name;
-    }
-  }
-  for lm in loaded {
-    if (package_of(lm.name).len() > 0 && lm.name.len() > qual.len()) {
-      let tail: string = slice_unchecked(lm.name, lm.name.len() - qual.len(), lm.name.len()) + "";
-      if (tail == qual) {
-        return lm.name;
-      }
+// VisCtx is what checking one module's references needs: its source, the
+// qualifiers that source may write, the loaded set, the private and
+// package-scoped keys, the module's own package, and the stdlib root.
+struct VisCtx {
+  src: parser.Module,
+  quals: string[],
+  loaded: flatten.LoadedModule[],
+  priv: util.NameIndex,
+  priv_consts: string[],
+  pkg: util.NameIndex,
+  src_pkg: string,
+  root: string,
+}
+
+function vis_ctx(src: parser.Module, src_ident: string, loaded: flatten.LoadedModule[], priv: util.NameIndex, priv_consts: string[], pkg: util.NameIndex, root: string): VisCtx {
+  return VisCtx { src: src, quals: import_quals(src), loaded: loaded, priv: priv, priv_consts: priv_consts, pkg: pkg, src_pkg: package_of(src_ident, root), root: root };
+}
+
+// owner_ident returns the resolved file of the module `qual` names in `src`,
+// or "" when no import of `src` is written that way.
+function owner_ident(src: parser.Module, qual: string): string {
+  for im in src.imports {
+    if (im.alias == qual || im.alias.len() == 0 && base_name_of(im.path) == qual) {
+      return im.resolved;
     }
   }
   return "";
 }
 
-// module_diags reports every `<qual>.<name>` in `src`'s own functions that names
-// a private top-level declaration of the module `qual` resolves to.
-function module_diags(src_name: string, src: parser.Module, loaded: flatten.LoadedModule[], priv: util.NameIndex, priv_consts: string[], pkg: string[]): util.Diag[] {
+// package_scope reports whether `qual.name` names a `pub(package)`
+// declaration, and whether the module being checked is outside its package.
+function package_scope(cx: VisCtx, qual: string, name: string): (boolean, boolean) {
+  let owner: string = owner_ident(cx.src, qual);
+  if (owner.len() == 0 || !cx.pkg.has(owner + "." + name)) {
+    return (false, false);
+  }
+  return (true, package_of(owner, cx.root) != cx.src_pkg);
+}
+
+// package_diag is native's message for a package-scoped declaration reached
+// from another package.
+function package_diag(cx: VisCtx, qual: string, name: string, line: i32, col: i32): util.Diag {
+  let m: string = base_name_of(owner_ident(cx.src, qual));
+  return util.Diag {
+    code: "",
+    message: m + "." + name + " is `pub(package)` — only modules in the same package as " + m + " may use it",
+    line: line,
+    col: col,
+  };
+}
+
+// module_diags reports every `<qual>.<name>` in the module's own functions that
+// names a private top-level declaration of another module, or a package-scoped
+// one from outside its package.
+function module_diags(cx: VisCtx): util.Diag[] {
   let out: util.Diag[] = [];
-  let quals: string[] = import_quals(src);
-  if (quals.len() == 0) {
+  if (cx.quals.len() == 0) {
     return out;
   }
   let refs: astwalk.QualRef[] = [];
-  for fd in src.funcs {
+  for fd in cx.src.funcs {
     for st in fd.body {
-      refs = astwalk.collect_qualrefs_stmt(st, quals, refs);
+      refs = astwalk.collect_qualrefs_stmt(st, cx.quals, refs);
     }
   }
   for r in refs {
     let key: string = r.qual + "." + r.name;
-    // A `pub(package)` declaration is out of reach only from OUTSIDE its
-    // package. An unknown referrer (src_name "") is left alone rather than
-    // guessed at: a false "not exported" on a legal sibling reference is
-    // worse than the missed diagnostic, and matches the checker's
-    // zero-false-positive stance elsewhere.
-    if (src_name.len() > 0 && util.has_str(pkg, key)) {
-      let owner: string = module_name_of(loaded, r.qual);
-      if (owner.len() > 0 && package_of(owner) != package_of(src_name)) {
-        out = out.append(util.Diag {
-          code: "",
-          message: key + " is package-scoped: it is visible only inside " + package_of(owner) + " (declare it as `pub " + r.name + " …` to export it)",
-          line: r.line,
-          col: r.col,
-        });
+    let (scoped, refused) = package_scope(cx, r.qual, r.name);
+    if (scoped) {
+      if (refused) {
+        out = out.append(package_diag(cx, r.qual, r.name, r.line, r.col));
       }
-    }
-    if (priv.has(key)) {
+    } else if (cx.priv.has(key)) {
       let kw: string = "function";
-      if (util.has_str(priv_consts, key)) {
+      if (util.has_str(cx.priv_consts, key)) {
         kw = "const";
       }
       out = out.append(util.Diag {
@@ -259,21 +256,23 @@ function module_diags(src_name: string, src: parser.Module, loaded: flatten.Load
 // rule. A module's references to its OWN declarations are bare idents, never
 // qualified, so they are structurally out of scope here rather than filtered —
 // which is what makes this formulation immune to the false positives the
-// bundle-level one produced.
-pub function export_diags(entry: parser.Module, loaded: flatten.LoadedModule[]): util.Diag[] {
+// bundle-level one produced. `entry` carries resolved imports, `entry_ident` is
+// its own resolved file, and `root` is the stdlib root.
+pub function export_diags(entry: parser.Module, entry_ident: string, loaded: flatten.LoadedModule[], root: string): util.Diag[] {
   let priv: util.NameIndex = util.name_index(private_keys(loaded));
   let priv_consts: string[] = private_const_keys(loaded);
-  let pkg: string[] = package_keys(loaded);
-  let out: util.Diag[] = module_diags("", entry, loaded, priv, priv_consts, pkg);
-  let td: util.Diag[] = type_diags(entry, loaded, priv);
-  for d in td {
+  let pkg: util.NameIndex = util.name_index(package_keys(loaded));
+  let ecx: VisCtx = vis_ctx(entry, entry_ident, loaded, priv, priv_consts, pkg, root);
+  let out: util.Diag[] = module_diags(ecx);
+  for d in type_diags(ecx) {
     out = out.append(d);
   }
   for lm in loaded {
-    for d in module_diags(lm.name, lm.mod, loaded, priv, priv_consts, pkg) {
+    let cx: VisCtx = vis_ctx(lm.mod, lm.ident, loaded, priv, priv_consts, pkg, root);
+    for d in module_diags(cx) {
       out = out.append(d);
     }
-    for d in type_diags(lm.mod, loaded, priv) {
+    for d in type_diags(cx) {
       out = out.append(d);
     }
   }
@@ -337,21 +336,21 @@ function declares_private_type(mod: parser.Module, name: string): boolean {
       if (owner.len() > 0) {
         return declares_private_type(mod, owner);
       }
-      return !mod.structs[i].is_pub;
+      return !mod.structs[i].is_pub && !mod.structs[i].is_package;
     }
     i = i + 1;
   }
   let e: i32 = 0;
   while (e < mod.enums.len()) {
     if (mod.enums[e].name == name) {
-      return !mod.enums[e].is_pub;
+      return !mod.enums[e].is_pub && !mod.enums[e].is_package;
     }
     e = e + 1;
   }
   let a: i32 = 0;
   while (a < mod.aliases.len()) {
     if (mod.aliases[a].name == name) {
-      return !mod.aliases[a].is_pub;
+      return !mod.aliases[a].is_pub && !mod.aliases[a].is_package;
     }
     a = a + 1;
   }
@@ -379,28 +378,36 @@ function type_kind_word(mod: parser.Module, name: string): string {
 }
 
 // check_type_name appends a diagnostic when `tn` is a qualified reference to a
-// private type of a loaded module.
-function check_type_name(tn: string, quals: string[], loaded: flatten.LoadedModule[], priv: util.NameIndex, line: i32, col: i32, acc: util.Diag[]): util.Diag[] {
+// private type of a loaded module, or to a package-scoped one from outside its
+// package.
+function check_type_name(tn: string, cx: VisCtx, line: i32, col: i32, acc: util.Diag[]): util.Diag[] {
   let (q, base) = qual_type_parts(tn);
   if (q.len() == 0 || base.len() == 0) {
     return acc;
   }
-  if (!util.has_str(quals, q)) {
+  if (!util.has_str(cx.quals, q)) {
     return acc;
   }
-  if (!priv.has(q + "." + base)) {
+  let (scoped, refused) = package_scope(cx, q, base);
+  if (scoped) {
+    if (refused) {
+      return acc.append(package_diag(cx, q, base, line, col));
+    }
     return acc;
   }
-  let mi: i32 = module_named(loaded, q);
+  if (!cx.priv.has(q + "." + base)) {
+    return acc;
+  }
+  let mi: i32 = module_named(cx.loaded, q);
   if (mi < 0) {
     return acc;
   }
   // Only reached for a name already known private, so the declaration scan
   // behind the kind word runs once per DIAGNOSTIC, not once per reference.
-  if (!declares_private_type(loaded[mi].mod, base)) {
+  if (!declares_private_type(cx.loaded[mi].mod, base)) {
     return acc;
   }
-  let kind: string = type_kind_word(loaded[mi].mod, base);
+  let kind: string = type_kind_word(cx.loaded[mi].mod, base);
   return acc.append(util.Diag {
     code: "",
     message: q + "." + base + " is not exported (declare it as `pub " + kind + " " + base + " …` to make it accessible from other modules)",
@@ -412,24 +419,24 @@ function check_type_name(tn: string, quals: string[], loaded: flatten.LoadedModu
 // type_diags scans every type-name position a module writes: each function's
 // params and return type, each local `let`'s declared type, and each struct
 // literal's type name. Struct FIELD types are covered through the decl walk.
-function type_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: util.NameIndex): util.Diag[] {
+function type_diags(cx: VisCtx): util.Diag[] {
   let out: util.Diag[] = [];
-  let quals: string[] = import_quals(src);
-  if (quals.len() == 0) {
+  if (cx.quals.len() == 0) {
     return out;
   }
+  let src: parser.Module = cx.src;
   let i: i32 = 0;
   while (i < src.funcs.len()) {
     let f: parser.FuncDecl = src.funcs[i];
     let pi: i32 = 0;
     while (pi < f.params.len()) {
-      out = check_type_name(f.params[pi].type_name, quals, loaded, priv, f.line, f.col, out);
+      out = check_type_name(f.params[pi].type_name, cx, f.line, f.col, out);
       pi = pi + 1;
     }
-    out = check_type_name(f.ret_type, quals, loaded, priv, f.line, f.col, out);
+    out = check_type_name(f.ret_type, cx, f.line, f.col, out);
     let bi: i32 = 0;
     while (bi < f.body.len()) {
-      out = stmt_type_diags(f.body[bi], quals, loaded, priv, out);
+      out = stmt_type_diags(f.body[bi], cx, out);
       bi = bi + 1;
     }
     i = i + 1;
@@ -439,7 +446,7 @@ function type_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: ut
     let sd: parser.StructDecl = src.structs[si];
     let fi: i32 = 0;
     while (fi < sd.fields.len()) {
-      out = check_type_name(sd.fields[fi].type_name, quals, loaded, priv, sd.line, sd.col, out);
+      out = check_type_name(sd.fields[fi].type_name, cx, sd.line, sd.col, out);
       fi = fi + 1;
     }
     si = si + 1;
@@ -451,63 +458,63 @@ function type_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: ut
 // type names. Deliberately shallow on expressions: a struct literal is the only
 // expression carrying a type NAME, and it is reached through the statement
 // positions that can hold one.
-function stmt_type_diags(st: ast.Stmt, quals: string[], loaded: flatten.LoadedModule[], priv: util.NameIndex, acc: util.Diag[]): util.Diag[] {
+function stmt_type_diags(st: ast.Stmt, cx: VisCtx, acc: util.Diag[]): util.Diag[] {
   match (st) {
     ast.StmtVar(v) => {
-      acc = check_type_name(v.type_name, quals, loaded, priv, v.line, v.col, acc);
-      return expr_type_diags(v.init, quals, loaded, priv, acc);
+      acc = check_type_name(v.type_name, cx, v.line, v.col, acc);
+      return expr_type_diags(v.init, cx, acc);
     },
     ast.StmtReturn(r) => {
-      return expr_type_diags(r.value, quals, loaded, priv, acc);
+      return expr_type_diags(r.value, cx, acc);
     },
     ast.StmtExpr(e) => {
-      return expr_type_diags(e.value, quals, loaded, priv, acc);
+      return expr_type_diags(e.value, cx, acc);
     },
     ast.StmtAssign(a) => {
-      return expr_type_diags(a.value, quals, loaded, priv, acc);
+      return expr_type_diags(a.value, cx, acc);
     },
     ast.StmtDefer(d) => {
-      return stmt_type_diags(d.action, quals, loaded, priv, acc);
+      return stmt_type_diags(d.action, cx, acc);
     },
     ast.StmtIf(i) => {
-      acc = expr_type_diags(i.cond, quals, loaded, priv, acc);
+      acc = expr_type_diags(i.cond, cx, acc);
       let ti: i32 = 0;
       while (ti < i.then_body.len()) {
-        acc = stmt_type_diags(i.then_body[ti], quals, loaded, priv, acc);
+        acc = stmt_type_diags(i.then_body[ti], cx, acc);
         ti = ti + 1;
       }
       let ei: i32 = 0;
       while (ei < i.else_body.len()) {
-        acc = stmt_type_diags(i.else_body[ei], quals, loaded, priv, acc);
+        acc = stmt_type_diags(i.else_body[ei], cx, acc);
         ei = ei + 1;
       }
       return acc;
     },
     ast.StmtWhile(w) => {
-      acc = expr_type_diags(w.cond, quals, loaded, priv, acc);
+      acc = expr_type_diags(w.cond, cx, acc);
       let wi: i32 = 0;
       while (wi < w.body.len()) {
-        acc = stmt_type_diags(w.body[wi], quals, loaded, priv, acc);
+        acc = stmt_type_diags(w.body[wi], cx, acc);
         wi = wi + 1;
       }
       return acc;
     },
     ast.StmtFor(f) => {
-      acc = expr_type_diags(f.iter, quals, loaded, priv, acc);
+      acc = expr_type_diags(f.iter, cx, acc);
       let fi: i32 = 0;
       while (fi < f.body.len()) {
-        acc = stmt_type_diags(f.body[fi], quals, loaded, priv, acc);
+        acc = stmt_type_diags(f.body[fi], cx, acc);
         fi = fi + 1;
       }
       return acc;
     },
     ast.StmtMatch(m) => {
-      acc = expr_type_diags(m.scrutinee, quals, loaded, priv, acc);
+      acc = expr_type_diags(m.scrutinee, cx, acc);
       let ai: i32 = 0;
       while (ai < m.arms.len()) {
         let bi: i32 = 0;
         while (bi < m.arms[ai].body.len()) {
-          acc = stmt_type_diags(m.arms[ai].body[bi], quals, loaded, priv, acc);
+          acc = stmt_type_diags(m.arms[ai].body[bi], cx, acc);
           bi = bi + 1;
         }
         ai = ai + 1;
@@ -528,31 +535,31 @@ function stmt_type_diags(st: ast.Stmt, quals: string[], loaded: flatten.LoadedMo
 }
 
 // expr_type_diags finds struct-literal type names inside an expression.
-function expr_type_diags(e: ast.Expr, quals: string[], loaded: flatten.LoadedModule[], priv: util.NameIndex, acc: util.Diag[]): util.Diag[] {
+function expr_type_diags(e: ast.Expr, cx: VisCtx, acc: util.Diag[]): util.Diag[] {
   match (e) {
     ast.ExprStructLit(sl) => {
-      acc = check_type_name(sl.type_name, quals, loaded, priv, sl.line, sl.col, acc);
+      acc = check_type_name(sl.type_name, cx, sl.line, sl.col, acc);
       if (sl.has_base) {
-        acc = expr_type_diags(sl.base, quals, loaded, priv, acc);
+        acc = expr_type_diags(sl.base, cx, acc);
       }
       let i: i32 = 0;
       while (i < sl.field_values.len()) {
-        acc = expr_type_diags(sl.field_values[i], quals, loaded, priv, acc);
+        acc = expr_type_diags(sl.field_values[i], cx, acc);
         i = i + 1;
       }
       return acc;
     },
     ast.ExprBinary(b) => {
-      acc = expr_type_diags(b.left, quals, loaded, priv, acc);
-      return expr_type_diags(b.right, quals, loaded, priv, acc);
+      acc = expr_type_diags(b.left, cx, acc);
+      return expr_type_diags(b.right, cx, acc);
     },
     ast.ExprUnary(u) => {
-      return expr_type_diags(u.operand, quals, loaded, priv, acc);
+      return expr_type_diags(u.operand, cx, acc);
     },
     ast.ExprCall(c) => {
       let i: i32 = 0;
       while (i < c.args.len()) {
-        acc = expr_type_diags(c.args[i], quals, loaded, priv, acc);
+        acc = expr_type_diags(c.args[i], cx, acc);
         i = i + 1;
       }
       return acc;
@@ -560,7 +567,7 @@ function expr_type_diags(e: ast.Expr, quals: string[], loaded: flatten.LoadedMod
     ast.ExprArray(a) => {
       let i: i32 = 0;
       while (i < a.elements.len()) {
-        acc = expr_type_diags(a.elements[i], quals, loaded, priv, acc);
+        acc = expr_type_diags(a.elements[i], cx, acc);
         i = i + 1;
       }
       return acc;
@@ -568,19 +575,19 @@ function expr_type_diags(e: ast.Expr, quals: string[], loaded: flatten.LoadedMod
     ast.ExprTuple(t) => {
       let i: i32 = 0;
       while (i < t.elements.len()) {
-        acc = expr_type_diags(t.elements[i], quals, loaded, priv, acc);
+        acc = expr_type_diags(t.elements[i], cx, acc);
         i = i + 1;
       }
       return acc;
     },
     ast.ExprIndex(x) => {
-      acc = expr_type_diags(x.array, quals, loaded, priv, acc);
-      return expr_type_diags(x.index, quals, loaded, priv, acc);
+      acc = expr_type_diags(x.array, cx, acc);
+      return expr_type_diags(x.index, cx, acc);
     },
     ast.ExprLambda(lm) => {
       let i: i32 = 0;
       while (i < lm.body.len()) {
-        acc = stmt_type_diags(lm.body[i], quals, loaded, priv, acc);
+        acc = stmt_type_diags(lm.body[i], cx, acc);
         i = i + 1;
       }
       return acc;

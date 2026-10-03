@@ -18,7 +18,7 @@ import (
 // __map_drop_values" build error (and native "undefined label").
 //
 // Fix: the enum drop skips the Map payload reclaim (a documented safe leak —
-// the enum is already excluded from EnumRcPayloads, ir.go ~9085), across both
+// the enum's Map payload is not reclaimed), across both
 // enum-drop paths (genEnumDropFn and emitEnumSlotDrop's inline variant plan).
 // The map's buffer + values leak; nothing dangles. These pin that the affected
 // shapes BUILD and run correctly on both the native x86-64 and wasm backends.

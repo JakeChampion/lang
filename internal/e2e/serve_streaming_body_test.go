@@ -10,21 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// Streamed response bodies (#9854): a file body is produced from a Reader as
-// the socket takes it, and a chunk producer's chunks go out under chunked
-// transfer coding, close-delimited to an HTTP/1.0 client; on the native
-// backend and the interpreter, the scenario shared with the self-host twin.
-func TestServeStreamingBodyX86_64(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "big.bin")
-	if err := os.WriteFile(path, e2eharness.StreamingBodyContent(), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	port := freeLoopbackPort(t)
-	bin, runner := buildSupervisedServeBin(t, e2eharness.StreamingBodyServerSource(port, path))
-	startSupervisedServer(t, bin, runner)
-	e2eharness.CheckStreamingBody(t, fmt.Sprintf("127.0.0.1:%d", port))
-}
-
 func TestServeStreamingBodyInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()

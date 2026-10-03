@@ -25,7 +25,6 @@ import "./util";
 import "./ir";
 import "./irtables";
 import "./fnsigs";
-import "./irverify";
 import "./irverifygate";
 import "./ircore";
 import "./ssa";
@@ -347,7 +346,9 @@ function rc_trace_deep_on(): boolean {
 //
 // The detector half of the pair above: this says a leak happened, the trace
 // says where. Both counters tick in the same __fern_hev_* helpers, off the
-// same rounded size, so the trace's own tallies reproduce this line exactly.
+// same rounded size, so the trace's own tallies reproduce this line, except
+// for an in-place string growth: the trace logs it as a free and an alloc,
+// and the census as one block whose bytes grew (str_grow_census).
 function leak_check_on(): boolean {
   if (asmcore.sanitize_on()) {
     return true;
@@ -421,6 +422,28 @@ function hev_on(): boolean {
     return true;
   }
   return leak_check_on();
+}
+
+// str_grow_census charges an in-place string growth to the leak census as
+// one block whose live bytes moved from %r9 words to %r10. Under the heap
+// trace the two event hooks have already counted a free of the old size and
+// an alloc of the new, so the old size and both counts come back out.
+// Clobbers %rax only.
+function str_grow_census(s: asmcore.EmitState): asmcore.EmitState {
+  if (rc_trace_on()) {
+    s = s.write("    movq %r9, %rax\n");
+    s = s.write("    shlq $3, %rax\n");
+    s = s.write("    subq %rax, __fern_lc_free_bytes(%rip)\n");
+    s = s.write("    subq %rax, __fern_lc_alloc_bytes(%rip)\n");
+    s = s.write("    subq $1, __fern_lc_free_count(%rip)\n");
+    s = s.write("    subq $1, __fern_lc_alloc_count(%rip)\n");
+    return s;
+  }
+  s = s.write("    movq %r10, %rax\n");
+  s = s.write("    subq %r9, %rax\n");
+  s = s.write("    shlq $3, %rax\n");
+  s = s.write("    addq %rax, __fern_lc_alloc_bytes(%rip)\n");
+  return s;
 }
 
 // hev_free emits one heap-FREE event hook: the block at `ptr` is `words`
@@ -1371,7 +1394,7 @@ function fc_horner(acc: string, x: string, scratch: string, lbl: string): string
 // scalar fneg.
 // rt_x86_str_eq is __fn___fern_str_eq: 1 when two string boxes hold equal
 // bytes, else 0. A string box is [data ptr, length]; the caller pushes b then
-// a, so 16(%rbp) is a and 24(%rbp) is b, and the result goes in %rax.
+// a, and the result goes in %rax.
 //
 // Hand-written rather than the Fern body it replaces because the cost here is
 // not per byte. Measured on a stage-2 compiler compiling lexer.fern: 5,296,736
@@ -1381,8 +1404,8 @@ function fc_horner(acc: string, x: string, scratch: string, lbl: string): string
 // frame the emitter builds around any Fern body, `rep stosq` to zero it and both
 // parameters spilled to it before the first compare. Rewriting the body to read
 // eight bytes at a time made it WORSE (47.6 instructions per call), because it
-// added setup to a function whose whole cost is setup. Only dropping the frame
-// removes it.
+// added setup to a function whose whole cost is setup. A leaf that never touches
+// %rbp needs no frame of its own, so it builds none.
 //
 // The comparison itself is then the native runtime's __fern_strcmp shape:
 // identical box or identical buffer answers immediately, unequal lengths answer
@@ -1390,47 +1413,42 @@ function fc_horner(acc: string, x: string, scratch: string, lbl: string): string
 // the END of each string, overlapping whatever the loop already read. No read
 // runs past either operand — the loop stops at data + len - 8 — and the 4..7 and
 // 1..3 classes only ever read inside their own length.
-//
-// rbp is kept even though nothing else needs a frame: __fern_report walks the
-// rbp chain to print a backtrace, and a leaf that skipped it would break the
-// walk for every frame below.
 function rt_x86_str_eq(): string {
   // The stack entry loads both boxes into %rax/%rsi, where the register
   // entry `.r` takes them; equality is symmetric, so their order is not.
+  // From there %rcx and %rsi walk the two buffers and %rdx holds the length.
   let s: string = "__fn___fern_str_eq:\n";
   s = s + "    movq 8(%rsp), %rax\n    movq 16(%rsp), %rsi\n";
   s = s + "__fn___fern_str_eq.r:\n";
-  s = s + "    pushq %rbp\n    movq %rsp, %rbp\n";
-  s = s + "    movq %rax, %rdx\n    movq %rsi, %rcx\n";
   // Same box: interned literals, which is most of what a compiler compares.
-  s = s + "    cmpq %rcx, %rdx\n    jz .Lseq_yes\n";
-  s = s + "    movq 8(%rdx), %rsi\n    cmpq 8(%rcx), %rsi\n    jnz .Lseq_no\n";
-  s = s + "    movq (%rdx), %rdx\n    movq (%rcx), %rcx\n";
+  s = s + "    cmpq %rsi, %rax\n    jz .Lseq_yes\n";
+  s = s + "    movq 8(%rax), %rdx\n    cmpq 8(%rsi), %rdx\n    jnz .Lseq_no\n";
+  s = s + "    movq (%rax), %rcx\n    movq (%rsi), %rsi\n";
   // Same buffer, equal length: a slice and its source compare equal here.
-  s = s + "    cmpq %rcx, %rdx\n    jz .Lseq_yes\n";
-  s = s + "    cmpq $8, %rsi\n    jb .Lseq_short\n";
-  s = s + "    leaq -8(%rdx,%rsi), %r8\n    leaq -8(%rcx,%rsi), %r9\n";
+  s = s + "    cmpq %rsi, %rcx\n    jz .Lseq_yes\n";
+  s = s + "    cmpq $8, %rdx\n    jb .Lseq_short\n";
+  s = s + "    leaq -8(%rcx,%rdx), %r8\n    leaq -8(%rsi,%rdx), %r9\n";
   s = s + ".Lseq_word:\n";
-  s = s + "    movq (%rdx), %rax\n    cmpq (%rcx), %rax\n    jnz .Lseq_no\n";
-  s = s + "    addq $8, %rdx\n    addq $8, %rcx\n";
-  s = s + "    cmpq %r8, %rdx\n    jb .Lseq_word\n";
+  s = s + "    movq (%rcx), %rax\n    cmpq (%rsi), %rax\n    jnz .Lseq_no\n";
+  s = s + "    addq $8, %rcx\n    addq $8, %rsi\n";
+  s = s + "    cmpq %r8, %rcx\n    jb .Lseq_word\n";
   s = s + "    movq (%r8), %rax\n    cmpq (%r9), %rax\n    jnz .Lseq_no\n";
   s = s + "    jmp .Lseq_yes\n";
   // 0..7 bytes. Four-byte pairs overlap the same way; under four, byte 0, the
   // last byte and (at length three) byte 1 are every byte there is.
   s = s + ".Lseq_short:\n";
-  s = s + "    testq %rsi, %rsi\n    jz .Lseq_yes\n";
-  s = s + "    cmpq $4, %rsi\n    jb .Lseq_byte\n";
-  s = s + "    movl (%rdx), %eax\n    cmpl (%rcx), %eax\n    jnz .Lseq_no\n";
-  s = s + "    movl -4(%rdx,%rsi), %eax\n    cmpl -4(%rcx,%rsi), %eax\n    jnz .Lseq_no\n";
+  s = s + "    testq %rdx, %rdx\n    jz .Lseq_yes\n";
+  s = s + "    cmpq $4, %rdx\n    jb .Lseq_byte\n";
+  s = s + "    movl (%rcx), %eax\n    cmpl (%rsi), %eax\n    jnz .Lseq_no\n";
+  s = s + "    movl -4(%rcx,%rdx), %eax\n    cmpl -4(%rsi,%rdx), %eax\n    jnz .Lseq_no\n";
   s = s + "    jmp .Lseq_yes\n";
   s = s + ".Lseq_byte:\n";
-  s = s + "    movzbl (%rdx), %eax\n    cmpb (%rcx), %al\n    jnz .Lseq_no\n";
-  s = s + "    movzbl -1(%rdx,%rsi), %eax\n    cmpb -1(%rcx,%rsi), %al\n    jnz .Lseq_no\n";
-  s = s + "    cmpq $3, %rsi\n    jb .Lseq_yes\n";
-  s = s + "    movzbl 1(%rdx), %eax\n    cmpb 1(%rcx), %al\n    jnz .Lseq_no\n";
-  s = s + ".Lseq_yes:\n    movq $1, %rax\n    leave\n    ret\n";
-  s = s + ".Lseq_no:\n    xorq %rax, %rax\n    leave\n    ret\n";
+  s = s + "    movzbl (%rcx), %eax\n    cmpb (%rsi), %al\n    jnz .Lseq_no\n";
+  s = s + "    movzbl -1(%rcx,%rdx), %eax\n    cmpb -1(%rsi,%rdx), %al\n    jnz .Lseq_no\n";
+  s = s + "    cmpq $3, %rdx\n    jb .Lseq_yes\n";
+  s = s + "    movzbl 1(%rcx), %eax\n    cmpb 1(%rsi), %al\n    jnz .Lseq_no\n";
+  s = s + ".Lseq_yes:\n    movl $1, %eax\n    ret\n";
+  s = s + ".Lseq_no:\n    xorl %eax, %eax\n    ret\n";
   s = s + ".size __fn___fern_str_eq, .-__fn___fern_str_eq\n";
   return s;
 }
@@ -2674,10 +2692,29 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
       s = s.write("    incq __fern_alloc_count(%rip)\n");
     }
   }
-  s = s.write("    pushq %rbp\n");
-  s = s.write("    movq %rsp, %rbp\n");
+  // A request of at most 256 words whose class has a freed block is served
+  // with %rax and %rdi alone, so it needs no frame and saves nothing: below
+  // 257 words a class is its word count, and the rounded byte count indexes
+  // the freelist directly. A miss restores the rounded size and takes the
+  // full path.
   s = s.write("    addq $7, %rdi\n");
   s = s.write("    andq $-8, %rdi\n");
+  s = s.write("    cmpq $2048, %rdi\n");
+  s = s.write("    ja .Lalloc_full\n");
+  s = s.write("    leaq __fern_freelist(%rip), %rax\n");
+  s = s.write("    addq %rax, %rdi\n");
+  s = s.write("    movq (%rdi), %rax\n");
+  s = s.write("    testq %rax, %rax\n");
+  s = s.write("    jz .Lalloc_fast_miss\n");
+  s = s.write("    pushq (%rax)\n");
+  s = s.write("    popq (%rdi)\n");
+  s = s.write("    ret\n");
+  s = s.write(".Lalloc_fast_miss:\n");
+  s = s.write("    leaq __fern_freelist(%rip), %rax\n");
+  s = s.write("    subq %rax, %rdi\n");
+  s = s.write(".Lalloc_full:\n");
+  s = s.write("    pushq %rbp\n");
+  s = s.write("    movq %rsp, %rbp\n");
   s = s.write("    pushq %rcx\n");
   s = s.write("    pushq %rdx\n");
   s = s.write("    movq %rdi, %rcx\n");
@@ -2997,6 +3034,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    andq $-8, %rsi\n");
   s = s.write("    cmpq $8, %rsi\n");
   s = s.write("    jb .Lrawfree_ret\n");
+  // Under the quarantine the block's first word takes the poison: it is the
+  // rc word of a box freed through __fern_box_free, which a second release
+  // then reads as a use-after-free.
+  if (s.rc_free_debug) {
+    s = s.write(quarantine_rc("(%rdi)"));
+  }
   s = s.write("    movq %rsi, %rcx\n");
   s = s.write("    shrq $3, %rcx\n");
   s = s.write("    cmpq $65536, %rcx\n");
@@ -3431,9 +3474,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // place, else 0 with nothing written. In place needs a FUSED box at rc 1,
   // whose block __fern_str_free will return to the class it came from: the
   // grown block's words, ceil(len/8) + 3, still fit the capacity __fern_capw
-  // or large_class gave the original, in the same tier. Under a heap-event
-  // build the growth reports as a free of the old size and an alloc of the
-  // new, so the two hooks still pair by size.
+  // or large_class gave the original, in the same tier. The heap trace sees
+  // the growth as a free of the old size and an alloc of the new, so its
+  // lines still pair by size; the leak census sees one block that grew, as
+  // native's does: its live bytes move and its counts do not.
   // __fern_getpwuid_name(uid) -> 0: Linux keeps every account in the files
   // the caller reads (#9815).
   if (s.has_need("pwname")) {
@@ -3489,7 +3533,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movl $0, %eax\n");
     s = s.write("    ja .Lsg_ret\n");
     s = s.write(".Lsg_fits:\n");
-    if (hev_on()) {
+    if (rc_trace_on()) {
       s = s.write("    leaq -8(%r8), %r11\n");  // base
       s = hev_free(s, "%r11", "%r9");
       s = s.write("    pushq %r10\n");
@@ -3497,6 +3541,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
       s = s.write("    pushq 16(%rsp)\n");  // site = our caller
       s = s.write("    call __fern_hev_a\n");
       s = s.write("    addq $24, %rsp\n");
+    }
+    if (leak_check_on()) {
+      s = str_grow_census(s);
     }
     s = s.write(".Lsg_copy:\n");
     s = s.write("    movq %rdi, 8(%r8)\n");  // len = grown length
@@ -4318,6 +4365,25 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_arr_push:\n");
     s = s.write(arr_push_fast(".Larr_push_slow"));
     s = s.write(".Larr_push_slow:\n");
+    // An empty receiver with no capacity, the common first append, grows to
+    // four slots with nothing to copy, so it needs no frame. A static
+    // literal can hold elements at cap 0, hence the length test too. The
+    // debug build keeps the frame path, whose rc read checks for poison, and
+    // so does a traced one, which names allocation sites by the frame chain.
+    if (!s.rc_free_debug && !hev_on()) {
+      s = s.write("    cmpq $0, (%rdi)\n");
+      s = s.write("    jne .Larr_push_frame\n");
+      s = s.write("    cmpq $0, -16(%rdi)\n");
+      s = s.write("    jne .Larr_push_frame\n");
+      s = s.write("    pushq %rsi\n");  // the value, and 16-byte alignment for the call
+      s = s.write("    movl $4, %edi\n");
+      s = s.write("    call __fern_arr_box\n");
+      s = s.write("    popq %rsi\n");
+      s = s.write("    movq $1, (%rax)\n");
+      s = s.write("    movq %rsi, 8(%rax)\n");
+      s = s.write("    ret\n");
+    }
+    s = s.write(".Larr_push_frame:\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     s = s.write("    pushq %r12\n");
@@ -6241,8 +6307,8 @@ function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asm
   return s.write("    movq " + home + ", " + reg + "\n");
 }
 
-// ssa_x0_forget marks %rax as holding no tracked value: at a label, and
-// before a sequence that writes %rax on its own.
+// ssa_x0_forget marks %r11 as holding no tracked value: at a label, and
+// before a sequence that writes %r11 on its own.
 function ssa_x0_forget(s: asmcore.EmitState): asmcore.EmitState {
   return asmcore.EmitState { ...s, ssa_x0: 0 - 1 };
 }
@@ -6265,7 +6331,7 @@ function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): as
 }
 
 // ssa_dst is where an instruction this emitter selects itself writes its
-// result: the value's register home, or %rax for a value in a frame slot,
+// result: the value's register home, or %r11 for a value in a frame slot,
 // which ssa_store then spills. ssa_src is where an operand is read from: its
 // register home, or `scratch` once ssa_load has filled it. An instruction's
 // result shares a register with an operand only when it is a phi or one of
@@ -6341,9 +6407,10 @@ function ssa_read_rhs(fr: SsaFrame, reg_of: i32[], v: i32, scratch: string, s: a
 }
 
 // ssa_bin_in_place emits a two-operand integer op into the result's home,
-// each operand read from its own: the left operand is moved into the
-// destination and the op reads the right one where it lives, or as an
-// immediate. A right operand that lives in the destination would be
+// each operand read from its own. A multiply by a constant reads its operand
+// where it lives, through imul's three-operand form; any other op moves the
+// left operand into the destination and reads the right one where it lives,
+// or as an immediate. A right operand that lives in the destination would be
 // overwritten by that move, so the operands swap for a commutative op or a
 // flipped comparison; a subtraction in that shape computes in the scratch
 // and is stored after. A constant on the left is only ever one the op can
@@ -6366,6 +6433,10 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
     let t: i32 = a;
     a = b;
     b = t;
+  }
+  if (tag == 23 && fr.imm.is_imm[b] && reg_of[a] >= 0) {
+    s = s.write("    imulq $" + util.i64_to_string(fr.imm.value[b]) + ", " + ssa_reg(reg_of[a]) + ", " + dh + "\n");
+    return ssa_store(reg_of, ins.result, dh, s);
   }
   s = ssa_read_rhs(fr, reg_of, b, "%rcx", s);
   s = ssa_load(reg_of, a, dh, s);
@@ -6547,6 +6618,40 @@ function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): 
       return "    movl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n";
     }
     return "    movslq " + ssa_r32(d) + ", " + d + "\n";
+  }
+  return "";
+}
+
+// ssa_unary_from selects a width op or bit count that reads its operand from
+// register `src` and writes `d`, so an operand outside `d` needs no copy into
+// it first; "" for an op whose only form works in place.
+function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string): string {
+  if (what == "load_i32") {
+    return "    movslq (" + src + "), " + d + "\n";
+  }
+  if (what == "int_cast:i32" || (what == "int_extend" || what == "int_wrap") && !unsigned) {
+    return "    movslq " + ssa_r32(src) + ", " + d + "\n";
+  }
+  if (what == "u32_wrap" || what == "int_cast:u32" || what == "int_extend" || what == "int_wrap") {
+    return "    movl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
+  }
+  if (what == "clz:64") {
+    return "    lzcntq " + src + ", " + d + "\n";
+  }
+  if (what == "clz:32") {
+    return "    lzcntl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
+  }
+  if (what == "ctz:64") {
+    return "    tzcntq " + src + ", " + d + "\n";
+  }
+  if (what == "ctz:32") {
+    return "    tzcntl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
+  }
+  if (what == "popcount:64") {
+    return "    popcntq " + src + ", " + d + "\n";
+  }
+  if (what == "popcount:32") {
+    return "    popcntl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
   }
   return "";
 }
@@ -7021,8 +7126,7 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 
 // ssa_str_eq answers unequal lengths inline, the answer to almost every
 // comparison a compiler makes, and calls the helper's register entry only for
-// equal ones. %rdx and %rcx are never homes, so the operands pass through them
-// on the way to %rax / %rsi whichever of those they already occupy.
+// equal ones.
 // The lengths are compared inline, and against a literal operand so is the
 // first byte: a chain of same-length literals (a mnemonic table, a keyword
 // list) then rejects most arms without the call.
@@ -7042,11 +7146,21 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
   } else if (lit_a >= 0) {
     s = s.write("    movq (" + b + "), %rdx\n    cmpb $" + util.i32_to_string(lit_a) + ", (%rdx)\n    jne " + lp + "streqn" + n + "\n");
   }
-  s = s.write("    movq " + a + ", %rdx\n");
-  if (b != "%rcx") {
-    s = s.write("    movq " + b + ", %rcx\n");
+  // Equality is symmetric, so the operands may land in %rax and %rsi either
+  // way round: whichever is already in one stays, and nothing is overwritten
+  // before it is read.
+  let x: string = a;
+  let y: string = b;
+  if (y == "%rax" || x == "%rsi") {
+    x = b;
+    y = a;
   }
-  s = s.write("    movq %rdx, %rax\n    movq %rcx, %rsi\n");
+  if (x != "%rax") {
+    s = s.write("    movq " + x + ", %rax\n");
+  }
+  if (y != "%rsi") {
+    s = s.write("    movq " + y + ", %rsi\n");
+  }
   s = s.write("    call __fn___fern_str_eq.r\n    jmp " + lp + "streqd" + n + "\n");
   s = s.write(lp + "streqn" + n + ":\n    xorl %eax, %eax\n" + lp + "streqd" + n + ":\n");
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
@@ -7896,15 +8010,25 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     s = ssa_load(reg_of, ins.args[0], d, s);
     s = ssa_binary(ins, fr, lp, d, s);
   } else {
-    s = ssa_load(reg_of, ins.args[0], d, s);
-    s = s.write(ssa_unary_asm(ins.str, ins.imm == 1, lp + "u" + util.i32_to_string(ins.result), d));
+    let from: string = "";
+    if (reg_of[ins.args[0]] >= 0 && ssa_reg(reg_of[ins.args[0]]) != d) {
+      from = ssa_unary_from(ins.str, ins.imm == 1, ssa_reg(reg_of[ins.args[0]]), d);
+    }
+    if (from != "") {
+      s = s.write(from);
+    } else {
+      s = ssa_load(reg_of, ins.args[0], d, s);
+      s = s.write(ssa_unary_asm(ins.str, ins.imm == 1, lp + "u" + util.i32_to_string(ins.result), d));
+    }
   }
   return ssa_store(reg_of, ins.result, d, s);
 }
 
 // ssa_phi_moves emits the copies of the edge from block `pred` into block
 // `succ`: each of succ's phis takes its operand for pred. A phi whose operand
-// already sits in its home, or which nothing reads, moves nothing.
+// already sits in its home, or which nothing reads, moves nothing. An
+// immediate operand has no location to copy, so it is loaded after the copies,
+// once nothing still reads the phi's home.
 function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, succ: i32, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   let ti: i32 = ssa_block_at(fr, succ);
@@ -7915,13 +8039,36 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
   let sl: i32 = ssa.pred_slot(tb, pred);
   let srcs: i32[] = [];
   let dsts: i32[] = [];
+  let imm_dsts: i32[] = [];
+  let imm_vals: i64[] = [];
   for ins in tb.insts {
-    if (ins.kind_tag == 8 && reg_of[ins.result] != 0 - 1 && reg_of[ins.args[sl]] != reg_of[ins.result]) {
+    if (ins.kind_tag != 8 || reg_of[ins.result] == 0 - 1) {
+      continue;
+    }
+    if (fr.imm.is_imm[ins.args[sl]]) {
+      imm_dsts = imm_dsts.append(reg_of[ins.result]);
+      imm_vals = imm_vals.append(fr.imm.value[ins.args[sl]]);
+    } else if (reg_of[ins.args[sl]] != reg_of[ins.result]) {
       srcs = srcs.append(reg_of[ins.args[sl]]);
       dsts = dsts.append(reg_of[ins.result]);
     }
   }
-  return ssa_parallel_moves(srcs, dsts, s);
+  s = ssa_parallel_moves(srcs, dsts, s);
+  let i: i32 = 0;
+  while (i < imm_dsts.len()) {
+    s = ssa_imm_to(imm_vals[i], imm_dsts[i], s);
+    i = i + 1;
+  }
+  return s;
+}
+
+// ssa_imm_to loads an immediate into a location: a register, or a frame slot,
+// which takes a sign-extended 32-bit immediate directly.
+function ssa_imm_to(c: i64, loc: i32, s: asmcore.EmitState): asmcore.EmitState {
+  if (loc >= 0) {
+    return ssa_const_reg(util.i64_to_string(c), false, ssa_reg(loc), s);
+  }
+  return s.write("    movq $" + util.i64_to_string(c) + ", " + ssa_loc(loc, s) + "\n");
 }
 
 // ssa_parallel_moves emits moves between locations (a register index or a
@@ -8145,7 +8292,11 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
 function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
   let t: ssa.STerm = blk.term;
   if (t.kind_tag == 1) {
-    s = ssa_load(reg_of, t.value, "%rax", s);
+    if (t.value >= 0 && fr.imm.is_imm[t.value]) {
+      s = ssa_const_reg(util.i64_to_string(fr.imm.value[t.value]), false, "%rax", s);
+    } else {
+      s = ssa_load(reg_of, t.value, "%rax", s);
+    }
     return s.write(fr.epilogue);
   }
   if (t.kind_tag == 2) {
@@ -8288,7 +8439,7 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
 // block behind its label. prune_dead first takes out the zeros the lift gives
 // every declared local and the loop phis nothing reads.
 function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
-  let f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.fuse_rotates(ssa.prune_trivial_phis(lifted))));
+  let f: ssa.SFunc = ssa.register_form(lifted);
   let imm: ssa.Imms = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left());
   let reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s));
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
@@ -8372,14 +8523,14 @@ function emit_ssa_function(r: irtables.LowerResult, label_name: string, s: asmco
 
 // emit_function_via_ir_pre emits declaration `fd`'s lowered body `r` through
 // the register path, writing through the global strbuf.
-function emit_function_via_ir_pre(r: irtables.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
+function emit_function_via_ir_pre(r: irtables.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   // Methods get the receiver-type-qualified label `__fn_<Type>.<name>` (matching
   // the lowering's dispatch); free functions stay `__fn_<name>`.
   let label_name: string = fd.name;
   if (fd.receiver_type.len() > 0) {
     label_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
   }
-  return emit_function_via_ir_named(r, label_name, false, s, vsigs);
+  return emit_function_via_ir_named(r, label_name, false, s, vgate);
 }
 
 // emit_function_via_ir_named is the body of emit_function_via_ir_pre with the
@@ -8388,7 +8539,7 @@ function emit_function_via_ir_pre(r: irtables.LowerResult, fd: parser.FuncDecl, 
 // emits through exactly the same path. `weak` marks the definition co-linkable,
 // the way the per-type __struct_drop_<T> bodies are: several per-module units may
 // each emit an identical copy and the linker keeps one.
-function emit_function_via_ir_named(r: irtables.LowerResult, label_name: string, weak: boolean, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
+function emit_function_via_ir_named(r: irtables.LowerResult, label_name: string, weak: boolean, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   if (weak) {
     s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n");
   }
@@ -8429,7 +8580,7 @@ function emit_function_via_ir_named(r: irtables.LowerResult, label_name: string,
     dop = dop + 1;
   }
 
-  irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vsigs);
+  irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vgate);
   return emit_ssa_function(r, label_name, s);
 }
 
@@ -9303,7 +9454,8 @@ function emit_ir_op_map_read(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState)
   } else if (o.kind_tag == 133) {  // map_iter
     // m.iter() -> a two-slot array box [map_ptr@8, cursor@16] off the data
     // pointer, so it carries an rc header and the typed lowering's release
-    // (__fern_arr_dec) frees it.
+    // (__fern_arr_dec) frees it. map_ptr is the unit of the map the cursor
+    // took, which that release drops first.
     s = s.write("    movq $2, %rdi\n    call __fern_arr_box\n");
     s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    movq $0, 16(%rax)\n    pushq %rax\n");
   } else if (o.kind_tag == 134) {  // mapiter_has_next
@@ -10392,18 +10544,18 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
   // their own .rodata block then return to .text. A literal-free helper (the
   // str_eq / str_cmp / str_trim bodies) adds none, so
   // this is a no-op for them.
-  let vsigs: irverify.NameIndex = irtables.fn_sig_index(fns);
+  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(fns), pops: s.kinds.pops };
   let lit0: i32 = s.string_lits.len();
   let agg0: i32 = s.const_aggs.len();
   let sh0: i32 = s.shape_lits.len();
   let bodies: irtables.LowerResult[] = s.rt_lower(src);
   let i: i32 = 0;
   while (i < fns.len()) {
-    s = emit_function_via_ir_pre(bodies[i], fns[i], s, vsigs);
+    s = emit_function_via_ir_pre(bodies[i], fns[i], s, vgate);
     i = i + 1;
   }
   // Past the declarations: the drop helpers the typed lowering defines.
-  s = emit_named_bodies(bodies, fns.len(), s, vsigs);
+  s = emit_named_bodies(bodies, fns.len(), s, vgate);
   if (s.shape_lits.len() > sh0) {
     s = asmcore.emit_shape_lits_from(s, sh0);
     s = s.write("    .text\n");
@@ -10447,7 +10599,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
   // The IR verify gate's callee-arity index, derived ONCE over the
   // whole-program all_funcs for the reason the registries above are: a
   // per-function rebuild would be O(n^2) on the compiler's own sources.
-  let vsigs: irverify.NameIndex = irtables.fn_sig_index(all_funcs);
+  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(all_funcs), pops: s.kinds.pops };
   // hi<0 is the "to the end" sentinel; an over-large hi is clamped so a shard
   // window that overshoots the module length can't index past mod.funcs.
   let hh: i32 = hi;
@@ -10478,20 +10630,20 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
       }
       s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
     }
-    s = emit_function_via_ir_pre(r, mod.funcs[fi], s, vsigs);
+    s = emit_function_via_ir_pre(r, mod.funcs[fi], s, vgate);
     fi = fi + 1;
   }
   // Cache entries past the declarations are bodies with no FuncDecl, each
   // naming the symbol it defines. `.weak`, so a shard window or a sibling
   // unit that emits the same body co-links to one definition.
-  return emit_named_bodies(cache, mod.funcs.len(), s, vsigs);
+  return emit_named_bodies(cache, mod.funcs.len(), s, vgate);
 }
 
-function emit_named_bodies(cache: irtables.LowerResult[], from: i32, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
+function emit_named_bodies(cache: irtables.LowerResult[], from: i32, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   let xi: i32 = from;
   while (xi < cache.len()) {
     if (!s.has_named(cache[xi].name)) {
-      s = emit_function_via_ir_named(cache[xi], cache[xi].name, true, s, vsigs).with_named(cache[xi].name);
+      s = emit_function_via_ir_named(cache[xi], cache[xi].name, true, s, vgate).with_named(cache[xi].name);
     }
     xi = xi + 1;
   }

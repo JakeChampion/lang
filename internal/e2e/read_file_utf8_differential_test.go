@@ -7,12 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/checker"
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // readFileUtf8Program pins read_file's UTF-8 validation (D9, #5714) against
@@ -22,9 +17,8 @@ import (
 // edge of their range, the truncation of each length, and a multibyte or
 // invalid byte at every offset across an eight-byte ASCII word.
 //
-// The runtime helper behind read_file, `__fern_utf8_valid`, is one Fern
-// source (internal/fernrt) lowered per target, so this is the same body on
-// every backend; what the test proves per backend is that body's lowering.
+// What the test proves per target is the lowering of the runtime helper
+// behind read_file.
 //
 // Prints read-file-utf8-agrees on success, or FAIL and the step that
 // disagreed; the exit code says the same for the harnesses that report it.
@@ -118,64 +112,28 @@ function main(): i32 {
 }
 `
 
-// compileNativeModloadInDir is compileX86_64InDir / compileArm64InDir with
-// the program loaded through modload, so its std/ imports resolve. Runs the
-// binary in a fresh temp dir and returns its output and exit code.
-func compileNativeModloadInDir(t *testing.T, target string, src string) (string, int) {
+// compileRunInDir compiles a program that imports from std/ for target
+// ("x86-64" or "arm64"), runs the binary in a fresh temp dir and returns its
+// output and exit code.
+func compileRunInDir(t *testing.T, target string, src string) (string, int) {
 	t.Helper()
-	return compileNativeModloadInDirAt(t, target, src, t.TempDir())
+	return compileRunInDirAt(t, target, src, t.TempDir())
 }
 
-func compileNativeModloadInDirAt(t *testing.T, target string, src string, dir string) (string, int) {
+func compileRunInDirAt(t *testing.T, target string, src string, dir string) (string, int) {
 	t.Helper()
-	prog, _, err := modload.LoadSource(src)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
+	srcPath := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
 	var cmd *exec.Cmd
 	switch target {
 	case "x86-64":
-		gcc, runner := x86_64Tooling(t)
-		asm, err := x86_64.Emit(prog, info)
-		if err != nil {
-			t.Fatalf("emit: %v", err)
-		}
-		if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-			t.Fatalf("write asm: %v", err)
-		}
-		if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-			t.Fatalf("gcc: %v\n%s", err, out)
-		}
-		if len(runner) == 0 {
-			cmd = exec.Command(binPath)
-		} else {
-			cmd = exec.Command(runner[0], append(runner[1:], binPath)...)
-		}
+		_, runner := x86_64Tooling(t)
+		cmd = e2eharness.RunX86_64Bin(runner, e2eharness.CompileSelfHostFile(t, e2eharness.TargetX86_64Linux, srcPath, nil))
 	case "arm64":
-		gcc, qemu := arm64Tooling(t)
-		asm, err := arm64codegen.Emit(prog, info)
-		if err != nil {
-			t.Fatalf("emit: %v", err)
-		}
-		if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-			t.Fatalf("write asm: %v", err)
-		}
-		if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-			t.Fatalf("gcc: %v\n%s", err, out)
-		}
-		cmd = runArm64Bin(qemu, binPath)
+		_, qemu := arm64Tooling(t)
+		cmd = runArm64Bin(qemu, e2eharness.CompileSelfHostFile(t, e2eharness.TargetArm64Linux, srcPath, nil))
 	default:
 		t.Fatalf("unknown target %q", target)
 	}
@@ -192,12 +150,12 @@ func checkReadFileUtf8Agrees(t *testing.T, out string, code int) {
 }
 
 func TestX86_64ReadFileUtf8AgreesWithStdUtf8(t *testing.T) {
-	out, code := compileNativeModloadInDir(t, "x86-64", readFileUtf8Program)
+	out, code := compileRunInDir(t, "x86-64", readFileUtf8Program)
 	checkReadFileUtf8Agrees(t, out, code)
 }
 
 func TestArm64ReadFileUtf8AgreesWithStdUtf8(t *testing.T) {
-	out, code := compileNativeModloadInDir(t, "arm64", readFileUtf8Program)
+	out, code := compileRunInDir(t, "arm64", readFileUtf8Program)
 	checkReadFileUtf8Agrees(t, out, code)
 }
 

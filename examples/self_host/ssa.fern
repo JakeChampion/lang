@@ -1073,8 +1073,8 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     }
     bi = bi + 1;
   }
-  // A value with no home has no interval; the extensions below leave it
-  // alone because it is never a phi operand and never live into a loop.
+  // A value with no home has no interval: the phi reads above are dropped
+  // with the rest, and the loop extension below leaves a value with none.
   i = 0;
   while (i < no_home.len() && i < f.nvals) {
     if (no_home[i]) {
@@ -1086,7 +1086,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
   hi = extend_loop_invariant_intervals(f, def_pos, hi);
   let cum: i32[] = calls_before(calls, total_pos);
   let cum_abi: i32[] = calls_before(abi_cl, total_pos);
-  let mates: Mates = phi_mates(f, def_pos);
+  let mates: Mates = phi_mates(f, def_pos, no_home);
   let weight: i32[] = spill_weights(f, at);
 
   let reg_of: i32[] = [];
@@ -1418,10 +1418,10 @@ function shares_operand_home(op: string): boolean {
 // parameter, which nothing defines, counts as one), `hint[a]` for an operand
 // a defined at or after its phi is the phi, and `carried[a]` marks that
 // second kind, whose interference with the phi is a question of paths rather
-// than positions.
+// than positions. An operand with no home pairs with nothing.
 struct Mates { hint: i32[], carried: boolean[] }
 
-function phi_mates(f: SFunc, def_pos: i32[]): Mates {
+function phi_mates(f: SFunc, def_pos: i32[], no_home: boolean[]): Mates {
   let hint: i32[] = [];
   let carried: boolean[] = [];
   let i: i32 = 0;
@@ -1435,7 +1435,7 @@ function phi_mates(f: SFunc, def_pos: i32[]): Mates {
     for ins in blk.insts {
       if (ins.kind_tag == 8 && ins.result >= 0 && ins.result < hint.len()) {
         for a in ins.args {
-          if (a < 0 || a >= hint.len()) {
+          if (a < 0 || a >= hint.len() || a < no_home.len() && no_home[a]) {
             continue;
           }
           if (def_pos[a] < pos) {
@@ -1704,7 +1704,9 @@ function free_slot(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32
 // qualifies when it lies in lo..hi and every use is a binary op reading it as
 // the right operand of an op named in `right`, or as the left operand of one
 // named in `left` (the commutative ops and the comparisons, which the emitter
-// turns round); a use anywhere else keeps it in a register. When both
+// turns round), a phi operand, which the edge's moves load into the phi's
+// home, or a returned value, loaded into the result register; a use anywhere
+// else keeps it in a register. When both
 // operands are constants (the optimiser's folds do not run here, so
 // `0i64 - 5i64` reaches the emitter) only the right one is an immediate, so
 // the op still has a register to compute in. `konst[v]` says v is an integer
@@ -1746,16 +1748,13 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
       let a: i32 = 0;
       while (a < ins.args.len()) {
         let v: i32 = ins.args[a];
-        if (v >= 0 && v < is_imm.len() && is_imm[v] && !imm_use(ins, a, konst, right, left)) {
+        if (v >= 0 && v < is_imm.len() && is_imm[v] && ins.kind_tag != 8 && !imm_use(ins, a, konst, right, left)) {
           is_imm = is_imm.with(v, false);
         }
         a = a + 1;
       }
     }
     let t: STerm = blk.term;
-    if (t.kind_tag == 1 && t.value >= 0 && t.value < is_imm.len()) {
-      is_imm = is_imm.with(t.value, false);
-    }
     if (t.kind_tag == 3 && t.cond >= 0 && t.cond < is_imm.len()) {
       is_imm = is_imm.with(t.cond, false);
     }
@@ -1865,7 +1864,7 @@ function phi_sole_operand(ins: SInst, repl: i32[]): i32 {
 
 function resolve_repl(repl: i32[], v: i32): i32 {
   let seen: i32 = 0;
-  while (repl[v] != v && seen < 1000) {
+  while (v >= 0 && v < repl.len() && repl[v] != v && seen < 1000) {
     v = repl[v];
     seen = seen + 1;
   }
@@ -2262,6 +2261,345 @@ function has_pred(ps: i32[], id: i32): boolean {
     }
   }
   return false;
+}
+
+// register_form is a lifted function as the register backends allocate it:
+// trivial phis folded, rotates fused, wraps nothing reads dropped, dead values
+// pruned and forwarding blocks threaded.
+pub function register_form(f: SFunc): SFunc {
+  return thread_forwarding(prune_dead(drop_low_wraps(fuse_rotates(prune_trivial_phis(f)))));
+}
+
+// drop_low_wraps replaces a signed 32-bit wrap, extend or cast by its operand where
+// nothing reads the high half of its result. A sum, difference, product,
+// bitwise op or left shift reads only its operands' low halves when nothing
+// reads its own high half, as do a shift's count and the narrowing unaries, so
+// the wrap the lowering puts after each 32-bit op is needed only where the
+// value reaches a comparison, a division, a right shift, a call, a store, a
+// branch or a return. A loop counter's step goes too, read or not: `v + 1`
+// for a v that is below a 32-bit value cannot overflow (counter_step). The
+// register backends only: on wasm the wrap changes the value's type.
+pub function drop_low_wraps(f: SFunc): SFunc {
+  if (!has_signed_wrap(f)) {
+    return f;
+  }
+  // prop[v] is how many leading operands of v's definition have their high
+  // half read once v's is (high_operands); def_b / def_k locate v's
+  // definition, -1 for a value nothing defines.
+  let prop: i32[] = [];
+  let def_b: i32[] = [];
+  let def_k: i32[] = [];
+  let high: boolean[] = [];
+  let i: i32 = 0;
+  while (i < f.nvals) {
+    prop = prop.append(0);
+    def_b = def_b.append(0 - 1);
+    def_k = def_k.append(0 - 1);
+    high = high.append(false);
+    i = i + 1;
+  }
+  let wraps: i32[] = [];
+  let wrap_arg: i32[] = [];
+  let work: i32[] = [];
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    let insts: SInst[] = f.blocks[bi].insts;
+    let k: i32 = 0;
+    while (k < insts.len()) {
+      let ins: SInst = insts[k];
+      let r: i32 = ins.result;
+      if (r >= 0 && r < f.nvals) {
+        let n: i32 = high_operands(ins);
+        if (n > 0) {
+          prop = prop.with(r, n);
+        }
+        def_b = def_b.with(r, bi);
+        def_k = def_k.with(r, k);
+        if (signed_wrap(ins)) {
+          wraps = wraps.append(r);
+          wrap_arg = wrap_arg.append(ins.args[0]);
+        }
+      }
+      let ai: i32 = 0;
+      while (ai < ins.args.len()) {
+        let a: i32 = ins.args[ai];
+        if (a >= 0 && a < f.nvals && !high[a] && !reads_low_half(ins, ai)) {
+          high = high.with(a, true);
+          work = work.append(a);
+        }
+        ai = ai + 1;
+      }
+      k = k + 1;
+    }
+    let tv: i32 = term_operand(f.blocks[bi].term);
+    if (tv >= 0 && tv < f.nvals && !high[tv]) {
+      high = high.with(tv, true);
+      work = work.append(tv);
+    }
+    bi = bi + 1;
+  }
+  let wi: i32 = 0;
+  while (wi < work.len()) {
+    let v: i32 = work[wi];
+    wi = wi + 1;
+    if (prop[v] == 0) {
+      continue;
+    }
+    let args: i32[] = f.blocks[def_b[v]].insts[def_k[v]].args;
+    let ai: i32 = 0;
+    while (ai < prop[v]) {
+      let a: i32 = args[ai];
+      if (a >= 0 && a < f.nvals && !high[a]) {
+        high = high.with(a, true);
+        work = work.append(a);
+      }
+      ai = ai + 1;
+    }
+  }
+  let repl: i32[] = [];
+  let dropped: boolean = false;
+  let at: i32[] = block_positions(f);
+  let wj: i32 = 0;
+  while (wj < wraps.len()) {
+    let w: i32 = wraps[wj];
+    if (!high[w] || counter_step(f, at, def_b, def_k, wrap_arg[wj])) {
+      if (!dropped) {
+        i = 0;
+        while (i < f.nvals) {
+          repl = repl.append(i);
+          i = i + 1;
+        }
+        dropped = true;
+      }
+      repl = repl.with(w, wrap_arg[wj]);
+    }
+    wj = wj + 1;
+  }
+  if (!dropped) {
+    return f;
+  }
+  let nblocks: SBlock[] = [];
+  for blk in f.blocks {
+    if (!block_reads_replaced(blk, repl)) {
+      nblocks = nblocks.append(blk);
+      continue;
+    }
+    let ninsts: SInst[] = [];
+    for ins in blk.insts {
+      if (ins.result >= 0 && ins.result < f.nvals && repl[ins.result] != ins.result) {
+        continue;
+      }
+      let nargs: i32[] = [];
+      for a in ins.args {
+        nargs = nargs.append(resolve_repl(repl, a));
+      }
+      ninsts = ninsts.append(SInst { ...ins, args: nargs });
+    }
+    let t: STerm = blk.term;
+    if (t.kind_tag == 1) {
+      t = STerm { ...t, value: resolve_repl(repl, t.value) };
+    } else if (t.kind_tag == 3) {
+      t = STerm { ...t, cond: resolve_repl(repl, t.cond) };
+    }
+    nblocks = nblocks.append(SBlock { ...blk, insts: ninsts, term: t });
+  }
+  return SFunc { ...f, blocks: nblocks };
+}
+
+function has_signed_wrap(f: SFunc): boolean {
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (signed_wrap(ins)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// block_reads_replaced says a block defines or reads a value `repl` maps
+// elsewhere, so drop_low_wraps has to rebuild it.
+function block_reads_replaced(blk: SBlock, repl: i32[]): boolean {
+  for ins in blk.insts {
+    if (ins.result >= 0 && ins.result < repl.len() && repl[ins.result] != ins.result) {
+      return true;
+    }
+    for a in ins.args {
+      if (a >= 0 && a < repl.len() && repl[a] != a) {
+        return true;
+      }
+    }
+  }
+  let tv: i32 = term_operand(blk.term);
+  return tv >= 0 && tv < repl.len() && repl[tv] != tv;
+}
+
+// counter_step says `a` is `v + 1` at 32 bits computed where v is known to be
+// below a 32-bit value (tested_below): v + 1 cannot pass INT32_MAX, so a wrap
+// of it changes nothing whoever reads it. A reader of the high half (a call,
+// `sarq`) still sees the sign extension because v's own register holds it:
+// the header's compare marks v high, and high_operands carries that through
+// the phi to the wrap that defines v.
+function counter_step(f: SFunc, at: i32[], def_b: i32[], def_k: i32[], a: i32): boolean {
+  let add: SInst = def_at(f, def_b, def_k, a);
+  if (add.kind_tag != 9 || add.str != "add" || add.imm == 64 || add.args.len() != 2) {
+    return false;
+  }
+  if (const_one(f, def_b, def_k, add.args[1])) {
+    return tested_below(f, at, def_b, def_k, add.args[0], def_b[a]);
+  }
+  return const_one(f, def_b, def_k, add.args[0]) && tested_below(f, at, def_b, def_k, add.args[1], def_b[a]);
+}
+
+// tested_below says block position `d` runs only after v tested below a 32-bit
+// value: v is a phi whose block branches on `v < n` (or out on `v >= n`) to a
+// successor that dominates d, which refuses a body another test also enters.
+// The successor must be entered from that test alone too: the lowering never
+// branches into a shared block today, but a lifted op_brif can.
+function tested_below(f: SFunc, at: i32[], def_b: i32[], def_k: i32[], v: i32, d: i32): boolean {
+  if (def_at(f, def_b, def_k, v).kind_tag != 8) {
+    return false;
+  }
+  let h: SBlock = f.blocks[def_b[v]];
+  let t: STerm = h.term;
+  if (t.kind_tag != 3 || t.t == t.f) {
+    return false;
+  }
+  let c: SInst = def_at(f, def_b, def_k, t.cond);
+  let below: i32 = 0 - 1;
+  if (compares_below(c, v, "lt_s", "gt_s")) {
+    below = t.t;
+  } else if (compares_below(c, v, "ge_s", "le_s")) {
+    below = t.f;
+  }
+  let b: i32 = position_of(at, below);
+  if (b < 0 || f.blocks[b].preds.len() != 1 || f.blocks[b].preds[0] != h.id) {
+    return false;
+  }
+  return dominates_position(f, at, b, d);
+}
+
+// dominates_position says every path from the entry to position d passes
+// position b: walking predecessors back from d without stepping onto b never
+// reaches the entry. A dominated d keeps the walk inside the region b heads.
+function dominates_position(f: SFunc, at: i32[], b: i32, d: i32): boolean {
+  if (b == d) {
+    return true;
+  }
+  let entry: i32 = position_of(at, f.entry);
+  if (entry == b) {
+    return true;
+  }
+  if (entry < 0 || d < 0) {
+    return false;
+  }
+  let seen: boolean[] = [];
+  let i: i32 = 0;
+  while (i < f.blocks.len()) {
+    seen = seen.append(false);
+    i = i + 1;
+  }
+  seen = seen.with(d, true);
+  let stack: i32[] = [d];
+  let si: i32 = 0;
+  while (si < stack.len()) {
+    let cur: i32 = stack[si];
+    si = si + 1;
+    if (cur == entry) {
+      return false;
+    }
+    for pid in f.blocks[cur].preds {
+      let p: i32 = position_of(at, pid);
+      if (p < 0) {
+        return false;
+      }
+      if (p != b && !seen[p]) {
+        seen = seen.with(p, true);
+        stack = stack.append(p);
+      }
+    }
+  }
+  return true;
+}
+
+// compares_below says c is a 32-bit `o first n` or `n second o`; a binary's
+// imm is 64 at full width.
+function compares_below(c: SInst, o: i32, first: string, second: string): boolean {
+  if (c.kind_tag != 9 || c.imm == 64 || c.args.len() != 2) {
+    return false;
+  }
+  return c.str == first && c.args[0] == o || c.str == second && c.args[1] == o;
+}
+
+function const_one(f: SFunc, def_b: i32[], def_k: i32[], v: i32): boolean {
+  let d: SInst = def_at(f, def_b, def_k, v);
+  return d.kind_tag == 1 && d.imm == 1;
+}
+
+// def_at is v's defining instruction, or one of kind 0 for a value nothing
+// defines.
+function def_at(f: SFunc, def_b: i32[], def_k: i32[], v: i32): SInst {
+  if (v < 0 || v >= def_b.len() || def_b[v] < 0) {
+    return SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  }
+  return f.blocks[def_b[v]].insts[def_k[v]];
+}
+
+// signed_wrap is a signed 32-bit wrap, extend or cast, which the register
+// backends render as a sign extension of the low half.
+function signed_wrap(ins: SInst): boolean {
+  if (ins.kind_tag != 10 || ins.args.len() != 1 || ins.imm != 0) {
+    return false;
+  }
+  return ins.str == "int_wrap" || ins.str == "int_extend" || ins.str == "int_cast:i32";
+}
+
+// low_half_binary is a binary whose result's low half depends on its
+// operands' low halves alone.
+function low_half_binary(op: string): boolean {
+  return op == "add" || op == "sub" || op == "mul" || op == "and" || op == "or" || op == "xor";
+}
+
+// reads_low_half says `ins` reads only the low half of its operand `k`, or
+// passes the question on to its own result (high_operands).
+function reads_low_half(ins: SInst, k: i32): boolean {
+  if (ins.kind_tag == 7 || ins.kind_tag == 8) {
+    return true;
+  }
+  if (ins.kind_tag == 9) {
+    if (low_half_binary(ins.str) || ins.str == "shl") {
+      return true;
+    }
+    return k == 1 && (ins.str == "shr_s" || ins.str == "shr_u");
+  }
+  if (ins.kind_tag == 10) {
+    return ins.str == "int_wrap" || ins.str == "int_extend" || ins.str == "u32_wrap" || ins.str == "int_cast:i32" || ins.str == "int_cast:u32" || ins.str == "int_cast:u8";
+  }
+  return false;
+}
+
+// high_operands is how many leading operands of `d` have their high half read
+// once d's own is: all of a copy's, a phi's and a low-half binary's, a left
+// shift's value but not its count.
+function high_operands(d: SInst): i32 {
+  if (d.kind_tag == 7 || d.kind_tag == 8 || d.kind_tag == 9 && low_half_binary(d.str)) {
+    return d.args.len();
+  }
+  if (d.kind_tag == 9 && d.str == "shl") {
+    return 1;
+  }
+  return 0;
+}
+
+// term_operand is the value a terminator reads, or -1.
+function term_operand(t: STerm): i32 {
+  if (t.kind_tag == 1) {
+    return t.value;
+  }
+  if (t.kind_tag == 3) {
+    return t.cond;
+  }
+  return 0 - 1;
 }
 
 // fuse_rotates rewrites `(x >> n) | (x << (W - n))`, the only spelling Fern

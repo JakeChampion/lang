@@ -261,7 +261,7 @@ analysis, which is independent, pure, and de-risks the design.
   pointer-payload enums before the new code runs, and layer (3) makes the
   scalar enums boxless. Reverted rather than land dead code.
 
-  **Slice 1b — DONE (`EnumRcPayloads`, default on).** Enum construction now
+  **Slice 1b — DONE.** Enum construction now
   rc-counts its pointer payloads exactly like `StructLit`: an aliased
   payload is inc'd (`emitEnumNew`), a moved last-use owned-local payload is
   move-marked (`markConstructionMoves`' enum case), and an own-param payload
@@ -272,18 +272,17 @@ analysis, which is independent, pure, and de-risks the design.
   and `preciseDroppableType` admits them. The consuming match (C1/C2) is
   unchanged — it transfers the box's payload reference to the binding the
   same way regardless of how the box acquired it — and the #2026
-  iterative-build reassignment skip is disabled under the flag (the inc
-  needs the overwrite dec to balance it). Enums transitively containing a
-  **Map** are excluded (their deep drop calls the not-everywhere-wired
-  `__map_drop_values`) and keep the move model — a documented safe leak,
-  losing nothing for the FBIP list/tree case.
+  iterative-build reassignment skip is gone for variant constructions (the
+  inc needs the overwrite dec to balance it).
 
-  Soundness: a byte-identical differential gate
-  (`Test{X86_64,Arm64,WASM}EnumRcPayloadsMatchesMove`) pins rc-on ==
-  move-model on the full corpus, the whole e2e suite is green with the flag
-  on (every backend + the self-host), and the FBIP shapes are
-  underflow-zero (`TestX86_64EnumRcPayloadsSound`). The win: enum locals
-  (lists/trees) now take precise drops and self-overwrite reuse.
+  Soundness: the FBIP shapes are underflow-zero
+  (`TestX86_64EnumRcPayloadsSound`), and the self-host fixture corpus runs
+  under the use-after-free quarantine (`TestFernFixturesSelfHostX86_64Quarantine`).
+  The move model this slice replaced, and the differential that graded the
+  production model against it, are deleted (#10700): the move model leaves an
+  aliased payload uncounted, so it was not an oracle for any program that
+  aliases one. The win: enum locals (lists/trees) now take precise drops and
+  self-overwrite reuse.
 
 - **Slice 2 — owned-by-default (`OwnedByDefault`).** Flip parameter
   ownership toward the Koka model: a parameter is OWNED by the callee (the

@@ -44,12 +44,12 @@
 # on purpose, update it in the same PR; the job summary prints the corrected
 # lines ready to paste. Keep the reason in the PR, not here.
 #
-# MEASURED AT c06834f plus this change. The file is one snapshot of one
+# MEASURED AT 97e52481. The file is one snapshot of one
 # commit, so regenerate it wholesale (`scripts/perf-bench-selfhost`) and move
 # this line with it — that makes a stale baseline a commit distance anyone can
 # read, rather than something to infer from the size of the drift.
 #
-# THIS REFRESH FOLDS TWO INDEPENDENT MOVEMENTS. Do not read either figure as one
+# THE c06834f REFRESH FOLDED TWO INDEPENDENT MOVEMENTS. Do not read either figure as one
 # effect:
 #
 #   1. The fourteen benchmarks that import a stdlib module fell 84.7-96.9% on
@@ -89,93 +89,109 @@
 # map_probe_chain and wasm closure_call were the ones past the comparator's 1%
 # threshold. Both lanes are advisory, which is how the file drifted this far.
 
-selfhost/arm64-linux/array_append.emit	987
-selfhost/arm64-linux/array_index.emit	967
-selfhost/arm64-linux/array_scale_f64.emit	3421
-selfhost/arm64-linux/array_with.emit	1169
-selfhost/arm64-linux/ascii_scan.emit	5522
-selfhost/arm64-linux/call_overhead.emit	241
-selfhost/arm64-linux/closure_call.emit	999
-selfhost/arm64-linux/enum_match.emit	1068
-selfhost/arm64-linux/http_hello.emit	19442
-selfhost/arm64-linux/int_loop.emit	113
-selfhost/arm64-linux/map_int.emit	1326
-selfhost/arm64-linux/map_probe_chain.emit	1385
-selfhost/arm64-linux/map_string.emit	15137
-selfhost/arm64-linux/ordmap_insert.emit	5763
-selfhost/arm64-linux/pmap_insert.emit	6800
-selfhost/arm64-linux/pvec_with.emit	3698
-selfhost/arm64-linux/record_update.emit	1353
-selfhost/arm64-linux/sort_inplace.emit	4946
-selfhost/arm64-linux/sort_ints.emit	6976
-selfhost/arm64-linux/sort_strings.emit	17555
-selfhost/arm64-linux/string_build.emit	14765
-selfhost/arm64-linux/string_count_byte.emit	4685
-selfhost/arm64-linux/string_find_byte.emit	6423
-selfhost/arm64-linux/string_rfind_byte.emit	6733
-selfhost/arm64-linux/string_scan.emit	16735
-selfhost/arm64-linux/string_slice.emit	904
-selfhost/arm64-linux/struct_drop.emit	15249
-selfhost/arm64-linux/tokenize.emit	1316
-selfhost/arm64-linux/utf8_ingest_unchecked.emit	10660
-selfhost/arm64-linux/utf8_ingest_validated.emit	11230
-selfhost/wasm32-wasi/array_append.emit	417
-selfhost/wasm32-wasi/array_index.emit	430
-selfhost/wasm32-wasi/array_scale_f64.emit	2724
-selfhost/wasm32-wasi/array_with.emit	507
-selfhost/wasm32-wasi/ascii_scan.emit	3486
-selfhost/wasm32-wasi/call_overhead.emit	180
-selfhost/wasm32-wasi/closure_call.emit	457
-selfhost/wasm32-wasi/enum_match.emit	536
-selfhost/wasm32-wasi/http_hello.emit	22706
-selfhost/wasm32-wasi/int_loop.emit	115
-selfhost/wasm32-wasi/map_int.emit	677
-selfhost/wasm32-wasi/map_probe_chain.emit	701
-selfhost/wasm32-wasi/map_string.emit	10076
-selfhost/wasm32-wasi/ordmap_insert.emit	3075
-selfhost/wasm32-wasi/pmap_insert.emit	4010
-selfhost/wasm32-wasi/pvec_with.emit	2892
-selfhost/wasm32-wasi/record_update.emit	684
-selfhost/wasm32-wasi/sort_inplace.emit	2993
-selfhost/wasm32-wasi/sort_ints.emit	4723
-selfhost/wasm32-wasi/sort_strings.emit	12194
-selfhost/wasm32-wasi/string_build.emit	9680
-selfhost/wasm32-wasi/string_count_byte.emit	2607
-selfhost/wasm32-wasi/string_find_byte.emit	3957
-selfhost/wasm32-wasi/string_rfind_byte.emit	4293
-selfhost/wasm32-wasi/string_scan.emit	11207
-selfhost/wasm32-wasi/string_slice.emit	400
-selfhost/wasm32-wasi/struct_drop.emit	10114
-selfhost/wasm32-wasi/tokenize.emit	764
-selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	8939
-selfhost/wasm32-wasi/utf8_ingest_validated.emit	9378
-selfhost/x86-64-linux/array_append.emit	800
-selfhost/x86-64-linux/array_index.emit	780
-selfhost/x86-64-linux/array_scale_f64.emit	3230
-selfhost/x86-64-linux/array_with.emit	972
-selfhost/x86-64-linux/ascii_scan.emit	4858
-selfhost/x86-64-linux/call_overhead.emit	200
-selfhost/x86-64-linux/closure_call.emit	783
-selfhost/x86-64-linux/enum_match.emit	866
-selfhost/x86-64-linux/http_hello.emit	19127
-selfhost/x86-64-linux/int_loop.emit	81
-selfhost/x86-64-linux/map_int.emit	1149
-selfhost/x86-64-linux/map_probe_chain.emit	1198
-selfhost/x86-64-linux/map_string.emit	13219
-selfhost/x86-64-linux/ordmap_insert.emit	5217
-selfhost/x86-64-linux/pmap_insert.emit	6197
-selfhost/x86-64-linux/pvec_with.emit	3162
-selfhost/x86-64-linux/record_update.emit	1134
-selfhost/x86-64-linux/sort_inplace.emit	4464
-selfhost/x86-64-linux/sort_ints.emit	5944
-selfhost/x86-64-linux/sort_strings.emit	14959
-selfhost/x86-64-linux/string_build.emit	12844
-selfhost/x86-64-linux/string_count_byte.emit	4193
-selfhost/x86-64-linux/string_find_byte.emit	5710
-selfhost/x86-64-linux/string_rfind_byte.emit	5977
-selfhost/x86-64-linux/string_scan.emit	14585
-selfhost/x86-64-linux/string_slice.emit	707
-selfhost/x86-64-linux/struct_drop.emit	13292
-selfhost/x86-64-linux/tokenize.emit	1087
-selfhost/x86-64-linux/utf8_ingest_unchecked.emit	9981
-selfhost/x86-64-linux/utf8_ingest_validated.emit	10536
+# 2026-10-03 — regenerated wholesale at 97e52481. Every row moved, none was
+# added or dropped, and no single change explains the file: it absorbs the
+# drift since 866088f4. Totals over the corpus: x86-64 167,252 -> 149,592
+# (-10.6%), arm64 187,568 -> 154,622 (-17.6%), wasm32-wasi 134,922 -> 161,548
+# (+19.7%). The largest movements, by cause:
+#
+#   - map_int and map_probe_chain grew 4-12x on every target when maps moved
+#     onto core/map's hash table (ec697675, fab0770e). The runtime keeps a
+#     column helper per value type behind a dispatch chosen at run time, so
+#     the prune cannot drop the ones an i32 map never uses.
+#   - utf8_ingest_* rose 71-150% and string_scan fell 72-74% across the
+#     string-library work of 2026-09-30 to 2026-10-02 (D9's ill-formed-UTF-8
+#     handling, 3f0e17d7, and the boundary-preserving string operations).
+#   - the rest moved with codegen changes on main, among them #11176, #11186
+#     and #11188.
+
+selfhost/arm64-linux/array_append.emit	1023
+selfhost/arm64-linux/array_index.emit	997
+selfhost/arm64-linux/array_scale_f64.emit	3481
+selfhost/arm64-linux/array_with.emit	1287
+selfhost/arm64-linux/ascii_scan.emit	3915
+selfhost/arm64-linux/call_overhead.emit	136
+selfhost/arm64-linux/closure_call.emit	920
+selfhost/arm64-linux/enum_match.emit	1042
+selfhost/arm64-linux/http_hello.emit	22533
+selfhost/arm64-linux/int_loop.emit	88
+selfhost/arm64-linux/map_int.emit	7031
+selfhost/arm64-linux/map_probe_chain.emit	7040
+selfhost/arm64-linux/map_string.emit	11157
+selfhost/arm64-linux/ordmap_insert.emit	5125
+selfhost/arm64-linux/pmap_insert.emit	6027
+selfhost/arm64-linux/pvec_with.emit	3297
+selfhost/arm64-linux/record_update.emit	1502
+selfhost/arm64-linux/sort_inplace.emit	3705
+selfhost/arm64-linux/sort_ints.emit	4904
+selfhost/arm64-linux/sort_strings.emit	5982
+selfhost/arm64-linux/string_build.emit	4253
+selfhost/arm64-linux/string_count_byte.emit	3574
+selfhost/arm64-linux/string_find_byte.emit	4361
+selfhost/arm64-linux/string_rfind_byte.emit	4429
+selfhost/arm64-linux/string_scan.emit	4408
+selfhost/arm64-linux/string_slice.emit	841
+selfhost/arm64-linux/struct_drop.emit	4626
+selfhost/arm64-linux/tokenize.emit	1179
+selfhost/arm64-linux/utf8_ingest_unchecked.emit	17673
+selfhost/arm64-linux/utf8_ingest_validated.emit	18086
+selfhost/wasm32-wasi/array_append.emit	481
+selfhost/wasm32-wasi/array_index.emit	486
+selfhost/wasm32-wasi/array_scale_f64.emit	2683
+selfhost/wasm32-wasi/array_with.emit	562
+selfhost/wasm32-wasi/ascii_scan.emit	3397
+selfhost/wasm32-wasi/call_overhead.emit	207
+selfhost/wasm32-wasi/closure_call.emit	517
+selfhost/wasm32-wasi/enum_match.emit	618
+selfhost/wasm32-wasi/http_hello.emit	26364
+selfhost/wasm32-wasi/int_loop.emit	124
+selfhost/wasm32-wasi/map_int.emit	8632
+selfhost/wasm32-wasi/map_probe_chain.emit	8663
+selfhost/wasm32-wasi/map_string.emit	12404
+selfhost/wasm32-wasi/ordmap_insert.emit	4513
+selfhost/wasm32-wasi/pmap_insert.emit	6183
+selfhost/wasm32-wasi/pvec_with.emit	3292
+selfhost/wasm32-wasi/record_update.emit	775
+selfhost/wasm32-wasi/sort_inplace.emit	2949
+selfhost/wasm32-wasi/sort_ints.emit	4718
+selfhost/wasm32-wasi/sort_strings.emit	5599
+selfhost/wasm32-wasi/string_build.emit	3355
+selfhost/wasm32-wasi/string_count_byte.emit	2564
+selfhost/wasm32-wasi/string_find_byte.emit	4060
+selfhost/wasm32-wasi/string_rfind_byte.emit	4138
+selfhost/wasm32-wasi/string_scan.emit	3548
+selfhost/wasm32-wasi/string_slice.emit	475
+selfhost/wasm32-wasi/struct_drop.emit	3718
+selfhost/wasm32-wasi/tokenize.emit	995
+selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	22358
+selfhost/wasm32-wasi/utf8_ingest_validated.emit	23170
+selfhost/x86-64-linux/array_append.emit	870
+selfhost/x86-64-linux/array_index.emit	844
+selfhost/x86-64-linux/array_scale_f64.emit	3341
+selfhost/x86-64-linux/array_with.emit	1126
+selfhost/x86-64-linux/ascii_scan.emit	3751
+selfhost/x86-64-linux/call_overhead.emit	95
+selfhost/x86-64-linux/closure_call.emit	736
+selfhost/x86-64-linux/enum_match.emit	865
+selfhost/x86-64-linux/http_hello.emit	22178
+selfhost/x86-64-linux/int_loop.emit	43
+selfhost/x86-64-linux/map_int.emit	6955
+selfhost/x86-64-linux/map_probe_chain.emit	6971
+selfhost/x86-64-linux/map_string.emit	10991
+selfhost/x86-64-linux/ordmap_insert.emit	4921
+selfhost/x86-64-linux/pmap_insert.emit	5785
+selfhost/x86-64-linux/pvec_with.emit	3105
+selfhost/x86-64-linux/record_update.emit	1338
+selfhost/x86-64-linux/sort_inplace.emit	3514
+selfhost/x86-64-linux/sort_ints.emit	4699
+selfhost/x86-64-linux/sort_strings.emit	5696
+selfhost/x86-64-linux/string_build.emit	3990
+selfhost/x86-64-linux/string_count_byte.emit	3407
+selfhost/x86-64-linux/string_find_byte.emit	4219
+selfhost/x86-64-linux/string_rfind_byte.emit	4296
+selfhost/x86-64-linux/string_scan.emit	4156
+selfhost/x86-64-linux/string_slice.emit	675
+selfhost/x86-64-linux/struct_drop.emit	4385
+selfhost/x86-64-linux/tokenize.emit	988
+selfhost/x86-64-linux/utf8_ingest_unchecked.emit	17598
+selfhost/x86-64-linux/utf8_ingest_validated.emit	18054

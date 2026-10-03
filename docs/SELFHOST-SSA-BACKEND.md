@@ -37,7 +37,14 @@ lowered function it:
    callee's, so the splice keeps every retain and release the call made;
 3. turns `(x >> n) | (x << (W - n))`, Fern's only spelling of a rotate, into
    one `rotr:W:n` unary on x at either width (`ssa.fuse_rotates`; a u32's
-   left half is recognised through the zero extension that follows it), then
+   left half is recognised through the zero extension that follows it),
+   replaces a signed 32-bit wrap by its operand where nothing reads the high
+   half of its result (`ssa.drop_low_wraps`: a sum, difference, product,
+   bitwise op or left shift reads only its operands' low halves, so the wrap
+   after each 32-bit op stays only where the value reaches a comparison, a
+   division, a right shift, a call, a store, a branch or a return; a loop
+   counter's `i + 1` loses its wrap even there, when it runs only after the
+   loop's own `i < n` test, since it cannot pass INT32_MAX), then
    drops what nothing reads (`ssa.prune_dead`), which is the rotate's shifts,
    most of the zeros the lift gives declared locals and the loop-header phis
    nothing reads (the lift gives a header a phi only for the slots the loop's
@@ -229,7 +236,9 @@ constant those ops alone read is an immediate operand and is never
 materialised (`ssa.imm_operands`: any i32 on x86-64, 0 to 4,095 on arm64
 for add, sub and the compares; a constant on the left swaps or flips the
 same way, and an op whose operands are both constants keeps them in
-registers). A value defined by a phi, one of those ops or a unary takes
+registers). A constant a phi merges or a block returns is an immediate
+too: the edge's moves load it into the phi's home after the copies, and a
+return loads it into the result register. A value defined by a phi, one of those ops or a unary takes
 the register of its phi mate or of an operand of its definition when that
 register is free or its holder dies at the definition, and a loop-carried
 operand takes its phi's register whenever no use of the phi is reachable

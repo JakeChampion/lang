@@ -337,8 +337,8 @@ pub function ir_helper_symbol(name: string): string {
   if (name == "__fern_rc_dec") {
     return "__fn___fern_arr_dec";
   }
-  // A map cursor is a two-slot array box that owns nothing; wasm's also owns
-  // its snapshots and has a release of its own.
+  // A map cursor is a two-slot array box whose map the typed lowering
+  // releases; wasm's also owns its snapshots and has a release of its own.
   if (name == "__fern_mapiter_free") {
     return "__fn___fern_arr_dec";
   }

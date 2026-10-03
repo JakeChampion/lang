@@ -14,7 +14,7 @@ func TestSelfHostIOText(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run("read error/"+target, func(t *testing.T) {
-			stderr, code := cli.exitOf(t, e2eharness.IOTextReadErrorProgram, target, "FERN_SEM_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			stderr, code := cli.exitOf(t, e2eharness.IOTextReadErrorProgram, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 			if code != 0 {
 				t.Fatalf("exit = %d\n%s", code, stderr)
 			}
@@ -30,7 +30,7 @@ func TestSelfHostIOText(t *testing.T) {
 			t.Run(call.name+"/"+target, func(t *testing.T) {
 				var bin string
 				var runner []string
-				env := []string{"FERN_SEM_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1"}
+				env := []string{"FERN_SANITIZE=1", "FERN_LEAKCHECK=1"}
 				switch target {
 				case "x86-64-linux":
 					bin = cli.x86Binary(t, src, env...)
@@ -53,6 +53,27 @@ func TestSelfHostIOText(t *testing.T) {
 				e2eharness.CheckIOText(t, func() *exec.Cmd { return exec.Command(argv[0], argv[1:]...) }, true, 65)
 			})
 		}
+	}
+}
+
+func TestSelfHostIOTextComponent(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("requires wasmtime")
+	}
+	cli := buildSelfHostCLI(t)
+	for _, call := range []struct{ name, expr string }{{"stdin", "io.read_all_stdin()"}, {"dash", `io.read_input("-")`}, {"empty", `io.read_input("")`}} {
+		t.Run(call.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src, bin := filepath.Join(dir, "reader.fern"), filepath.Join(dir, "reader.wasm")
+			if err := os.WriteFile(src, []byte(e2eharness.IOTextProgram(call.expr)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", src, cli.stdlib, "-o", bin)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("component build: %v\n%s", err, out)
+			}
+			e2eharness.CheckIOText(t, func() *exec.Cmd { return exec.Command("wasmtime", "run", bin) }, false, 1)
+		})
 	}
 }
 
@@ -79,7 +100,7 @@ func TestSelfHostArm64DarwinIOText(t *testing.T) {
 	}
 	bin := filepath.Join(t.TempDir(), "reader")
 	compile := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin)
-	compile.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+	compile.Env = append(os.Environ(), "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 	if out, err := compile.CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, out)
 	}

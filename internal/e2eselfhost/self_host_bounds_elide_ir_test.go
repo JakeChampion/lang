@@ -10,7 +10,7 @@ import (
 )
 
 // #4380 lever 3, self-host slice C: the parser's elide_len_bounded_body pass
-// marks `arr[i]` READS inside a `while (i < arr.len())` loop Unchecked when
+// marks `arr[i]` READS inside a loop guarded by `i < arr.len()` Unchecked when
 // `0 <= i < arr.len()` is syntactically provable, so the lowering emits op_arr_get_nc (no
 // per-iteration bounds check + len reload). The pass runs at the start of
 // each function's lowering (semsource.build), so it is shared by every IR
@@ -110,6 +110,52 @@ function main(): i32 {
     }
     return t;
 }`},
+	// A field path: 3+5+7 = 15.
+	{"field_path", `struct R { xs: i32[] }
+function main(): i32 {
+    let r: R = R { xs: [3, 5, 7] };
+    let s: i32 = 0;
+    let i: i32 = 0;
+    while (i < r.xs.len()) { s = s + r.xs[i]; i = i + 1; }
+    return s;
+}`},
+	// A length bound to a local, with the index's start two statements back:
+	// 3+5+7+11 = 26.
+	{"cached_len", `function main(): i32 {
+    let xs: i32[] = [3, 5, 7, 11];
+    let i: i32 = 0;
+    let n: i32 = xs.len();
+    let s: i32 = 0;
+    while (i < n) { s = s + xs[i]; i = i + 1; }
+    return s;
+}`},
+	// A cached string length: the bytes of "abc" sum to 294, 294 % 256 = 38.
+	{"cached_str_len", `function main(): i32 {
+    let t: string = "abc";
+    let n: i32 = t.len();
+    let s: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { s = s + (t[i] as i32); i = i + 1; }
+    return s % 256;
+}`},
+	// The guard is one conjunct, and the condition reads past it: stops at the
+	// first zero, index 3.
+	{"conjunct_guard", `function main(): i32 {
+    let xs: i32[] = [4, 9, 2, 0, 6];
+    let i: i32 = 0;
+    while (i < xs.len() && xs[i] != 0) { i = i + 1; }
+    return i;
+}`},
+	// The path's root reassigned in the body → NOT elided. The guard re-reads
+	// the shrunk length, so 3 is the only element read.
+	{"field_root_reassigned_not_elided", `struct R { xs: i32[] }
+function main(): i32 {
+    let r: R = R { xs: [3, 5, 7] };
+    let s: i32 = 0;
+    let i: i32 = 0;
+    while (i < r.xs.len()) { s = s + r.xs[i]; r = R { xs: [1] }; i = i + 1; }
+    return s;
+}`},
 }
 
 // TestSelfHostBoundsElideIRX86_64 asserts each case (1) lowers through the IR
@@ -165,23 +211,49 @@ func TestSelfHostBoundsElideIRX86_64(t *testing.T) {
 		})
 	}
 
-	// Elision-fired differential: the elidable guard drops exactly one bounds
-	// check (one fewer __fern_oob_abort) vs a twin whose bound is a separate `n`.
-	t.Run("elision_fired_differential", func(t *testing.T) {
-		elide := `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }`
-		noElide := `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let n: i32 = xs.len(); let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
-		got := strings.Count(emit(elide), "__fern_oob_abort")
-		base := strings.Count(emit(noElide), "__fern_oob_abort")
-		if got >= base {
-			t.Fatalf("elision did not fire: elidable emitted %d __fern_oob_abort, non-elidable %d (want fewer)", got, base)
-		}
-		// Both must still compute the right sum (39).
-		for name, prog := range map[string]string{"elide": elide, "noElide": noElide} {
-			if code := runExit(t, buildBin(t, gcc, dir, "beldiff_"+name, emit(prog))); code != 39 {
-				t.Errorf("%s exited %d, want 39", name, code)
+	// Elision-fired differential: each elidable guard shape drops its bounds
+	// check (fewer __fern_oob_abort) against a twin whose bound is a literal
+	// `n`, which proves nothing about the length. Every program answers 39.
+	noElide := `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let n: i32 = 5; let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
+	for _, d := range []struct{ name, src string }{
+		{"len_guard", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }`},
+		{"cached_len", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let n: i32 = xs.len(); let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`},
+		{"field_path", `struct R { xs: i32[] } function main(): i32 { let r: R = R { xs: [3, 5, 7, 11, 13] }; let s: i32 = 0; let i: i32 = 0; while (i < r.xs.len()) { s = s + r.xs[i]; i = i + 1; } return s; }`},
+		{"conjunct", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let s: i32 = 0; let i: i32 = 0; while (i < xs.len() && s < 100) { s = s + xs[i]; i = i + 1; } return s; }`},
+		{"cond_read_after_guard", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let i: i32 = 0; while (i < xs.len() && xs[i] > 0) { i = i + 1; } return i + 34; }`},
+	} {
+		t.Run("elision_fired_differential/"+d.name, func(t *testing.T) {
+			got := strings.Count(emit(d.src), "__fern_oob_abort")
+			base := strings.Count(emit(noElide), "__fern_oob_abort")
+			if got >= base {
+				t.Fatalf("elision did not fire: elidable emitted %d __fern_oob_abort, non-elidable %d (want fewer)", got, base)
 			}
-		}
-	})
+			for name, prog := range map[string]string{"elide": d.src, "noElide": noElide} {
+				if code := runExit(t, buildBin(t, gcc, dir, "beldiff_"+d.name+"_"+name, emit(prog))); code != 39 {
+					t.Errorf("%s exited %d, want 39", name, code)
+				}
+			}
+		})
+	}
+
+	// Safety: each shape whose length or binding can change under the loop
+	// keeps its check, so the out-of-range read traps (exit 134) instead of
+	// reading past the end.
+	for _, c := range []struct{ name, src string }{
+		{"cached_len_arr_reassigned", `function main(): i32 { let xs: i32[] = [1, 2, 3]; let n: i32 = xs.len(); let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; xs = [9]; i = i + 1; } return s; }`},
+		{"cached_len_arr_reassigned_before", `function main(): i32 { let xs: i32[] = [1, 2, 3]; let n: i32 = xs.len(); xs = [9]; let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`},
+		{"cached_len_reassigned", `function main(): i32 { let xs: i32[] = [1, 2, 3]; let n: i32 = xs.len(); n = 4; let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`},
+		{"field_root_reassigned_before_read", `struct R { xs: i32[] } function main(): i32 { let r: R = R { xs: [1, 2, 3] }; let s: i32 = 0; let i: i32 = 0; while (i < r.xs.len()) { r = R { xs: [] }; s = s + r.xs[i]; i = i + 1; } return s; }`},
+		{"index_reset_between", `function main(): i32 { let xs: i32[] = [1, 2, 3]; let i: i32 = 0; let n: i32 = xs.len(); i = 0 - 1; let s: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`},
+		{"cond_read_before_guard", `function main(): i32 { let xs: i32[] = [1, 2, 3]; let i: i32 = 0; while (xs[i] > 0 && i < xs.len()) { i = i + 1; } return i; }`},
+	} {
+		t.Run("stays_checked/"+c.name, func(t *testing.T) {
+			bin := buildBin(t, gcc, dir, "belide_"+c.name, emit(c.src))
+			if code := runExit(t, bin); code != 134 {
+				t.Errorf("%s exited %d, want 134 (bounds check must remain)", c.name, code)
+			}
+		})
+	}
 
 	// Safety: a read AFTER the increment is NOT marked (i can reach len), so the
 	// checked op still traps (exit 134) instead of reading past the end.

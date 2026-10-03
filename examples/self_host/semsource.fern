@@ -6576,14 +6576,6 @@ function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Cont
   if (!semtypes.concrete(s.result, true)) {
     return Made { p: refuse("unresolved result type: " + unresolved_result_spelling(fd, s)), memo: memo };
   }
-  // A cursor escapes the same way, and worse: it is anchored to a map this
-  // frame may own, so a returned one outlives the columns it reads. The
-  // anchor keeps the map live only within the frame that holds it, and a
-  // container carries the cursor exactly as far, so the whole result shape
-  // is what has to be clear of one.
-  if (semtypes.holds_map_iter(s.result)) {
-    return Made { p: refuse("cursor result escapes its map"), memo: memo };
-  }
   let body: ast.Stmt[] = parser.elide_len_bounded_body(fd.body);
   s = learn_body(fd, body, s);
   s = stmts(body, prebind(parameters(fd, s)));
@@ -8204,7 +8196,9 @@ function fusion_on(): boolean {
 // backends, whose dispatch chains run over exactly these arms.
 // A method is an arm only on a type that implements the whole trait set: a
 // type with a same-named method of its own is never inside the dyn. A
-// monomorphised clone `base__…` implements what its generic base does.
+// monomorphised clone `base__…` implements what its generic base does. The
+// receiver is keyed by parser.receiver_base, as implements_traits keys the
+// impl list and decl_key names the arm, so a `str` receiver is `string`.
 pub function dyn_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], method: string, traits: string[]): string[] {
   let out: string[] = [];
   for fd in funcs {
@@ -8212,10 +8206,10 @@ pub function dyn_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], method
     if (n == 0 || n >= 2 && slice_unchecked(fd.receiver_type, n - 2, n) == "[]") {
       continue;
     }
-    if (!arm_receiver_implements(impls, util.base_type_name(fd.receiver_type), traits)) {
+    if (!arm_receiver_implements(impls, parser.receiver_base(fd.receiver_type), traits)) {
       continue;
     }
-    if (parser.dyn_arm_matches(fd, traits, method, funcs)) {
+    if (parser.dyn_arm_matches(fd, traits, method)) {
       out = out.append(parser.decl_key(fd));
     }
   }

@@ -255,23 +255,23 @@ func unitSource(indices []int) (string, string) {
 		fmt.Fprintf(&source, "function unit_case_%d(): i32 {\n%s\nlet modes: i32[] = [3, 1];\n%s\n", i, semanticFixture, tc.setup)
 		source.WriteString(`
 let f = ssasem.Func { envs: [], anchors: anchors, dyns: [], shadows: [], finalizers: [], map_module: true, graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls };
-let p = ssaunits.plan(f, modes);
+let p = ssaunits.plan(f, modes, ssaunits.no_view());
 if (!p.ok) { print(p.why); return 1; }
 `)
 		if i == 0 {
 			source.WriteString(`
-let bad = ssaunits.plan(f, []);
+let bad = ssaunits.plan(f, [], ssaunits.no_view());
 if (bad.ok || bad.steps.len() != 0 || bad.why != "parameter mode dimensions") { return 31; }
-bad = ssaunits.plan(f, [1, 1]);
+bad = ssaunits.plan(f, [1, 1], ssaunits.no_view());
 if (bad.ok || bad.steps.len() != 0 || bad.why != "reference parameter mode") { return 32; }
-bad = ssaunits.plan(f, [3, 3]);
+bad = ssaunits.plan(f, [3, 3], ssaunits.no_view());
 if (bad.ok || bad.steps.len() != 0 || bad.why != "scalar parameter mode") { return 33; }
 let opaque_types: typeinfo.Type[] = [typeinfo.TypeStruct { name: "Box", args: [] }];
 for opaque in opaque_types {
     let g = ssa.SFunc { name: "opaque", nparams: 1, nvals: 1, entry: 7, takes_env: false, blocks: [
         ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }
     ] };
-    bad = ssaunits.plan(ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, graph: g, values: [opaque], params: [opaque], result: opaque, records: semrecords.no_records(), enums: [], calls: [] }, [3]);
+    bad = ssaunits.plan(ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, graph: g, values: [opaque], params: [opaque], result: opaque, records: semrecords.no_records(), enums: [], calls: [] }, [3], ssaunits.no_view());
     if (bad.ok || bad.steps.len() != 0 || bad.why != "unsupported counted-unit type") { return 34; }
 }
 `)

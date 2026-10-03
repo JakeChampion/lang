@@ -1,0 +1,689 @@
+import "std/test";
+import "std/sim";
+import "std/sim_fetch";
+import "std/fetch";
+import "std/http";
+import "std/hash";
+
+// examples/tests/sim_fetch_test.fern — std/fetch's client over the
+// scripted network in std/sim_fetch. Every behaviour of the dialled route
+// runs here unchanged (the client reaches its sockets and clock only
+// through `fetch.Transport`), so each bound is checked at its exact
+// virtual time and each policy against a request the test can read back.
+//
+// Run:  fern -interp examples/tests/sim_fetch_test.fern
+
+const ORIGIN: string = "93.184.216.34";
+
+const MS: i64 = 1000000;
+
+// A forward proxy on a private address, which only the deployment chose.
+const PROXY: string = "10.0.0.9";
+
+// The route `fetch.send` takes, with no proxy to consult.
+function __open(): fetch.Policy {
+  return fetch.Policy { public_only: false, proxies: fetch.ProxyEnv { http_proxy: "", no_proxy: "" } };
+}
+
+// The route `plat.http` takes: global addresses only.
+function __public(): fetch.Policy {
+  return fetch.Policy { public_only: true, proxies: fetch.ProxyEnv { http_proxy: "", no_proxy: "" } };
+}
+
+// A network where `example.test` is one origin listening on port 80
+// after 5 ms.
+function __net(d: sim.Sim): sim_fetch.Net {
+  return sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, 5);
+}
+
+function __message(got: Result[HttpResponse, fetch.FetchError]): string {
+  match (got) {
+    Ok(resp) => {
+      return "status " + resp.status.to_string();
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function __body(got: Result[HttpResponse, fetch.FetchError]): string {
+  match (got) {
+    Ok(resp) => {
+      match (resp.body_text()) {
+        Some(s) => {
+          return s;
+        },
+        None => {
+          return "<not utf-8>";
+        }
+      }
+    },
+    Err(e) => {
+      return "error " + e.message();
+    }
+  }
+  return "";
+}
+
+// The answer arrives 20 ms after the request on a connection that took
+// 5 ms, the request carries the fields the client writes, and the
+// connection is closed once the response is read.
+function test_answer_at_its_time(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "hello").after(20)]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(got) != "hello") {
+    return test.fail("body: " + __body(got));
+  }
+  if (n.open() != 0) {
+    return test.fail("the connection was left open");
+  }
+  let sent: string = n.sent(0);
+  if (!sent.starts_with("GET / HTTP/1.1\r\n") || sent.index_of("Host: example.test\r\n") < 0) {
+    return test.fail("request: " + sent);
+  }
+  return test.assert_eq(d.now_ns(), 25 * MS);
+}
+
+// A body that arrives a byte at a time is read whole.
+function test_chunked_arrival(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "abcdef").in_chunks(1, 2)]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  return test.assert_eq(__body(got), "abcdef");
+}
+
+// A connect slower than the connect bound (10 s) fails at the bound.
+function test_connect_timeout(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, 20000);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__message(got) != "timed out connecting") {
+    return test.fail(__message(got));
+  }
+  return test.assert_eq(d.now_ns(), 10000 * MS);
+}
+
+// An address nothing listens on refuses.
+function test_refused(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  return test.assert_eq(__message(got), "connect: Connection refused");
+}
+
+// A name with two addresses has them raced as `dns.connect_race` does:
+// the second attempt starts 300 ms after the first, and the one that
+// connects first is the one the request goes to.
+function test_addresses_raced(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN, "93.184.216.35"]).listen(ORIGIN, 80, 20000).listen("93.184.216.35", 80, 5).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "second address")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(got) != "second address") {
+    return test.fail(__body(got));
+  }
+  return test.assert_eq(d.now_ns(), 305 * MS);
+}
+
+// A refusal hands the race on at once: the address behind a refusing one
+// connects at its own 5 ms, not after the fallback delay.
+function test_refusal_hands_on(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN, "93.184.216.35"]).listen("93.184.216.35", 80, 5).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "second address")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(got) != "second address") {
+    return test.fail(__body(got));
+  }
+  return test.assert_eq(d.now_ns(), 5 * MS);
+}
+
+// A listener with no connect delay accepts at once rather than refusing.
+function test_listener_at_zero(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, 0).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "at once")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(got) != "at once") {
+    return test.fail(__body(got));
+  }
+  return test.assert_eq(d.now_ns(), 0 as i64);
+}
+
+// A connect bound of zero has passed before any attempt starts, so it
+// times out whether the address refuses or listens.
+function test_zero_connect_bound(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let zero: fetch.Timeouts = fetch.Timeouts { ...fetch.timeouts(), connect_ms: 0 };
+  let refusing: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(refusing, fetch.get("http://example.test/").with_timeouts(zero), __open());
+  if (__message(got) != "timed out connecting") {
+    return test.fail("refusing: " + __message(got));
+  }
+  let listening: Result[HttpResponse, fetch.FetchError] = fetch.send_on(__net(d), fetch.get("http://example.test/").with_timeouts(zero), __open());
+  return test.assert_eq(__message(listening), "timed out connecting");
+}
+
+// A name the network does not know fails to resolve.
+function test_unknown_name(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(__net(d), fetch.get("http://nowhere.test/"), __open());
+  return test.assert_eq(__message(got), "resolve: Name or service not known");
+}
+
+// An origin that never answers is given up on at the inactivity bound
+// (30 s) after the request.
+function test_inactivity_timeout(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.silent()]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__message(got) != "timed out waiting for the response") {
+    return test.fail(__message(got));
+  }
+  return test.assert_eq(d.now_ns(), 5 * MS + 30000 * MS);
+}
+
+// A body read to the close, from an origin that sends it and then holds
+// the connection open, is given up on at the inactivity bound after the
+// last byte.
+function test_held_open_times_out(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.raw("HTTP/1.1 200 OK\r\n\r\npartial").after(10).held()]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__message(got) != "timed out waiting for the response") {
+    return test.fail(__message(got));
+  }
+  return test.assert_eq(d.now_ns(), 15 * MS + 30000 * MS);
+}
+
+// An origin that keeps the inactivity bound but drips its answer is
+// given up on at the total bound (60 s) from the start.
+function test_total_timeout(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "slow").in_chunks(1, 20000)]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__message(got) != "timed out in all") {
+    return test.fail(__message(got));
+  }
+  return test.assert_eq(d.now_ns(), 60000 * MS);
+}
+
+// A redirect on the same origin is followed on a new connection, to the
+// path it names.
+function test_redirect_followed(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/a", [sim_fetch.redirect(302, "/b")]).route(ORIGIN, 80, "/b", [sim_fetch.reply(200, "at b")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/a"), __open());
+  if (__body(got) != "at b") {
+    return test.fail(__body(got));
+  }
+  if (!n.sent(1).starts_with("GET /b ")) {
+    return test.fail("second request: " + n.sent(1));
+  }
+  return test.assert_eq(n.connects(), 2);
+}
+
+// A redirect to another origin drops the credentials the first request
+// carried, and keeps the rest.
+function test_cross_origin_drops_credentials(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).host("other.test", ["93.184.216.35"]).listen("93.184.216.35", 80, 5).route(ORIGIN, 80, "/", [sim_fetch.redirect(302, "http://other.test/x")]).route("93.184.216.35", 80, "/x", [sim_fetch.reply(200, "there")]);
+  let req: fetch.Request = fetch.get("http://example.test/").with_header("Authorization", "Bearer t").with_header("X-Trace", "kept");
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, req, __open());
+  if (__body(got) != "there") {
+    return test.fail(__body(got));
+  }
+  if (n.sent(0).index_of("authorization: Bearer t") < 0) {
+    return test.fail("first request lost its credentials");
+  }
+  if (n.sent(1).index_of("authorization") >= 0) {
+    return test.fail("credentials crossed origins: " + n.sent(1));
+  }
+  return test.assert_contains(n.sent(1), "x-trace: kept");
+}
+
+// More redirects than the request allows is an error, after the allowed
+// number of hops.
+function test_redirect_cap(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "*", [sim_fetch.redirect(302, "/again")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/").with_redirects(2), __open());
+  if (__message(got) != "redirect: more than 2 redirects") {
+    return test.fail(__message(got));
+  }
+  return test.assert_eq(n.sent_count(), 3);
+}
+
+// A GET the origin resets before answering is sent once more.
+function test_reset_retried_when_idempotent(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reset(), sim_fetch.reply(200, "second")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(got) != "second") {
+    return test.fail(__body(got));
+  }
+  return test.assert_eq(n.sent_count(), 2);
+}
+
+// A POST the origin resets is not sent again.
+function test_reset_not_retried_when_not_idempotent(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reset(), sim_fetch.reply(200, "second")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.request("POST", "http://example.test/").with_text("once"), __open());
+  if (__message(got) != "i/o: Connection reset by peer") {
+    return test.fail(__message(got));
+  }
+  return test.assert_eq(n.sent_count(), 1);
+}
+
+// A name resolving to a private address is refused on the route that
+// reaches global addresses only, before any connection, and reached on
+// the open one.
+function test_block_list(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("inside.test", ["10.0.0.7"]).listen("10.0.0.7", 80, 1).route("10.0.0.7", 80, "/", [sim_fetch.reply(200, "inside")]);
+  let blocked: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://inside.test/"), __public());
+  if (__message(blocked) != "blocked: 10.0.0.7 is not a global address") {
+    return test.fail(__message(blocked));
+  }
+  if (n.connects() != 0) {
+    return test.fail("the blocked request connected");
+  }
+  return test.assert_eq(__body(fetch.send_on(n, fetch.get("http://inside.test/"), __open())), "inside");
+}
+
+// `body` in a stored (uncompressed) gzip member: the header, one final
+// stored deflate block, then the CRC-32 and length of `body`.
+function __gzip_stored(body: string): u8[] {
+  let out: u8[] = [31 as u8, 139 as u8, 8 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 255 as u8];
+  let len: i32 = body.len();
+  out = out.append(1 as u8).append((len & 255) as u8).append((len >> 8) as u8).append((len & 255 ^ 255) as u8).append((len >> 8 ^ 255) as u8);
+  for b in body.bytes() {
+    out = out.append(b);
+  }
+  let crc: u32 = hash.crc32_of(body);
+  let i: i32 = 0;
+  while (i < 4) {
+    out = out.append((crc >> (8 * i) as u32 & 255 as u32) as u8);
+    i = i + 1;
+  }
+  let j: i32 = 0;
+  while (j < 4) {
+    out = out.append((len >> 8 * j & 255) as u8);
+    j = j + 1;
+  }
+  return out;
+}
+
+// A 200 with a gzip `Content-Encoding` and `coded` as its payload.
+function __gzip_answer(coded: u8[]): sim_fetch.Answer {
+  let out: u8[] = ("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: " + coded.len().to_string() + "\r\n\r\n").bytes();
+  for b in coded {
+    out = out.append(b);
+  }
+  return sim_fetch.raw_bytes(out);
+}
+
+// A gzip answer to the client's own `Accept-Encoding` is decoded.
+function test_gzip_decoded(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [__gzip_answer(__gzip_stored("unzipped text"))]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (n.sent(0).index_of("accept-encoding: gzip") < 0) {
+    return test.fail("the client did not ask for gzip");
+  }
+  return test.assert_eq(__body(got), "unzipped text");
+}
+
+// A thousand `a`s gzipped: 29 bytes on the wire.
+function __gzip_thousand(): u8[] {
+  return [31 as u8, 139 as u8, 8 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 3 as u8, 75 as u8, 76 as u8, 28 as u8, 5 as u8, 163 as u8, 96 as u8, 20 as u8, 12 as u8, 119 as u8, 0 as u8, 0 as u8, 3 as u8, 218 as u8, 56 as u8, 154 as u8, 232 as u8, 3 as u8, 0 as u8, 0 as u8];
+}
+
+// The body cap bounds what decoding may produce: a member that fits the
+// cap on the wire is refused once it decodes past it.
+function test_decoded_past_cap(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [__gzip_answer(__gzip_thousand())]);
+  let big: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 2000 };
+  let whole: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/").with_limits(big), __open());
+  if (__body(whole).len() != 1000) {
+    return test.fail("decoded under a 2000-byte cap: " + __message(whole));
+  }
+  let small: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 100 };
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/").with_limits(small), __open());
+  return test.assert_eq(__message(got), "response body past its limit");
+}
+
+// A response body past the cap is refused before it is read whole.
+function test_body_past_cap(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "a body longer than eight bytes")]);
+  let small: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 8 };
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/").with_limits(small), __open());
+  return test.assert_eq(__message(got), "response body past its limit");
+}
+
+// A kept connection carries the next request to the same origin: one
+// connect for two requests, the second at no connect cost, and the
+// connection open in the pool until `close_idle`.
+function test_pool_reuses_kept(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reply(200, "two").kept()]);
+  let first: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  let second: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(first) != "one" || __body(second) != "two") {
+    return test.fail(__body(first) + " then " + __body(second));
+  }
+  if (n.connects() != 1 || d.now_ns() != 5 * MS) {
+    return test.fail("connects " + n.connects().to_string() + " at " + d.now_ns().to_string());
+  }
+  if (n.open() != 1) {
+    return test.fail("the kept connection is not in the pool");
+  }
+  fetch.close_idle(n);
+  return test.assert_eq(n.open(), 0);
+}
+
+// A response that announces `Connection: close` is never kept.
+function test_announced_close_not_kept(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one"), sim_fetch.reply(200, "two")]);
+  let first: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  let second: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(second) != "two" || n.open() != 0) {
+    return test.fail(__body(second) + ", open " + n.open().to_string());
+  }
+  return test.assert_eq(n.connects(), 2);
+}
+
+// A redirect back to the same origin is followed on the connection that
+// carried it.
+function test_redirect_reuses(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.redirect(302, "http://example.test/next").kept()]).route(ORIGIN, 80, "/next", [sim_fetch.reply(200, "there")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(got) != "there") {
+    return test.fail(__body(got));
+  }
+  return test.assert_eq(n.connects(), 1);
+}
+
+// A kept connection the origin has since closed answers the next request
+// with a close before any byte, and the request is sent again on a new
+// connection.
+function test_closed_kept_redialled(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reset(), sim_fetch.reply(200, "fresh")]);
+  let first: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  let second: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(second) != "fresh") {
+    return test.fail(__message(second));
+  }
+  return test.assert_eq(n.connects(), 2);
+}
+
+// A POST never takes a kept connection: one the origin had closed would
+// fail it after it may have been acted on, and it is not sent twice.
+function test_post_dials_fresh(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reply(200, "posted")]);
+  let first: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  let posted: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.request("POST", "http://example.test/").with_text("x"), __open());
+  if (__body(posted) != "posted") {
+    return test.fail(__message(posted));
+  }
+  return test.assert_eq(n.connects(), 2);
+}
+
+// A connection idle past the pool's bound (90 s) is closed rather than
+// reused.
+function test_idle_expired_closed(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reply(200, "two")]);
+  let first: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  d.clock_ns.set(d.now_ns() + 90001 * MS);
+  let second: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(second) != "two" || n.connects() != 2) {
+    return test.fail(__body(second) + ", connects " + n.connects().to_string());
+  }
+  return test.assert_eq(n.open(), 0);
+}
+
+// A connection idle for exactly the bound is still reused.
+function test_idle_at_bound_reused(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reply(200, "two")]);
+  let first: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  d.clock_ns.set(d.now_ns() + 90000 * MS);
+  let second: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(second) != "two") {
+    return test.fail(__message(second));
+  }
+  return test.assert_eq(n.connects(), 1);
+}
+
+// The one retry after a reset dials rather than drawing again: a second
+// kept connection to the same place (here the POST's) is as likely
+// closed as the first.
+function test_retry_dials_fresh(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "get").kept(), sim_fetch.reply(200, "post").kept(), sim_fetch.reset(), sim_fetch.reply(200, "fresh").kept()]);
+  let get: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  let post: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.request("POST", "http://example.test/").with_text("x"), __open());
+  let again: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(again) != "fresh") {
+    return test.fail(__message(again));
+  }
+  return test.assert_eq(n.connects(), 3);
+}
+
+// A connection with bytes past the response it carried is not kept: they
+// belong to no request the client sent.
+function test_trailing_bytes_not_kept(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.raw("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhiHTTP/1.1 200 OK\r\n\r\n").held()]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(got) != "hi") {
+    return test.fail(__message(got));
+  }
+  return test.assert_eq(n.open(), 0);
+}
+
+// A pool past its `max` closes the connection idle longest.
+function test_pool_cap(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let other: string = "93.184.216.35";
+  let n: sim_fetch.Net = __net(d).host("other.test", [other]).listen(other, 80, 5).pooling(fetch.idle_limited(1, 90000)).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "a").kept()]).route(other, 80, "/", [sim_fetch.reply(200, "b").kept()]);
+  let a: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  let b: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://other.test/"), __open());
+  if (n.open() != 1) {
+    return test.fail("open " + n.open().to_string());
+  }
+  let again: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  return test.assert_eq(n.connects(), 3);
+}
+
+// A connection the open route dialled is never handed to the public
+// route, whose block list judged none of its addresses.
+function test_routes_pool_apart(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reply(200, "two").kept()]);
+  let open: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  let guarded: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __public());
+  if (__body(guarded) != "two") {
+    return test.fail(__message(guarded));
+  }
+  return test.assert_eq(n.connects(), 2);
+}
+
+// A route through the proxy at `PROXY:3128` with a user and no password,
+// `no_proxy` as given and, when `cgi`, under a `REQUEST_METHOD`.
+function __via_proxy(public_only: boolean, no_proxy: string, cgi: boolean): fetch.Policy {
+  let method: Option[string] = None;
+  if (cgi) {
+    method = Some("GET");
+  }
+  let env: fetch.ProxyEnv = fetch.proxy_env_from(Some("http://u@" + PROXY + ":3128"), Some(no_proxy), None, method);
+  return fetch.Policy { public_only: public_only, proxies: env };
+}
+
+// The proxy listening, answering absolute-form requests for `example.test`.
+function __proxy_net(d: sim.Sim, answers: sim_fetch.Answer[]): sim_fetch.Net {
+  return sim_fetch.net(d).listen(PROXY, 3128, 5).route(PROXY, 3128, "http://example.test/", answers);
+}
+
+// A request the proxy takes is written to it in absolute form, with the
+// origin's `Host` and the proxy's credentials; the origin's name is the
+// proxy's to resolve.
+function test_proxied(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __proxy_net(d, [sim_fetch.reply(200, "via proxy")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __via_proxy(false, "", false));
+  if (__body(got) != "via proxy") {
+    return test.fail(__message(got));
+  }
+  let sent: string = n.sent(0);
+  if (!sent.starts_with("GET http://example.test/ HTTP/1.1\r\nHost: example.test\r\n")) {
+    return test.fail("request: " + sent);
+  }
+  if (sent.index_of("proxy-authorization: Basic dTo=\r\n") < 0) {
+    return test.fail("request: " + sent);
+  }
+  return test.pass();
+}
+
+// The route through the proxy `spec` names, as the environment gives it.
+function __proxy_spec(spec: string): fetch.Policy {
+  return fetch.Policy { public_only: false, proxies: fetch.proxy_env_from(Some(spec), None, None, None) };
+}
+
+// A proxy named with no scheme and no port is an http one on port 80.
+function test_proxy_bare_host(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = sim_fetch.net(d).listen(PROXY, 80, 5).route(PROXY, 80, "http://example.test/", [sim_fetch.reply(200, "via port 80")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __proxy_spec(PROXY));
+  return test.assert_eq(__body(got), "via port 80");
+}
+
+// A caller's own `Proxy-Authorization` is sent in place of the
+// environment's credentials.
+function test_caller_proxy_credentials(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __proxy_net(d, [sim_fetch.reply(200, "via proxy")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/").with_header("Proxy-Authorization", "Basic b3du"), __via_proxy(false, "", false));
+  let sent: string = n.sent(0);
+  if (__body(got) != "via proxy" || sent.index_of("Basic b3du\r\n") < 0 || sent.index_of("dTo=") >= 0) {
+    return test.fail("request: " + sent);
+  }
+  return test.pass();
+}
+
+// An `http_proxy` that is not an http URL with a host refuses the request
+// rather than dialling around it.
+function test_proxy_spec_refused(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let unparsed: Result[HttpResponse, fetch.FetchError] = fetch.send_on(sim_fetch.net(d), fetch.get("http://example.test/"), __proxy_spec("http://[::1"));
+  if (__message(unparsed) != "invalid URL: http_proxy is not a URL") {
+    return test.fail(__message(unparsed));
+  }
+  let other: Result[HttpResponse, fetch.FetchError] = fetch.send_on(sim_fetch.net(d), fetch.get("http://example.test/"), __proxy_spec("ftp://" + PROXY));
+  return test.assert_eq(__message(other), "invalid URL: http_proxy is not an http URL with a host");
+}
+
+// A host `no_proxy` names is dialled directly.
+function test_no_proxy_direct(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "direct")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __via_proxy(false, "example.test", false));
+  return test.assert_eq(__body(got), "direct");
+}
+
+// Under a `REQUEST_METHOD` no proxy is read, since a CGI host makes one of
+// the client's request headers into the environment.
+function test_cgi_no_proxy(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "direct")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __via_proxy(false, "", true));
+  return test.assert_eq(__body(got), "direct");
+}
+
+// A proxy that is not listening refuses the request.
+function test_proxy_refused(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(sim_fetch.net(d), fetch.get("http://example.test/"), __via_proxy(false, "", false));
+  return test.assert_eq(__message(got), "connect: Connection refused");
+}
+
+// The public route resolves and judges the origin a proxy would reach,
+// and refuses one on a private address; the proxy's own private address
+// is the deployment's choice and goes unjudged.
+function test_proxied_origin_judged(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __proxy_net(d, [sim_fetch.reply(200, "via proxy")]).host("example.test", [ORIGIN]).host("inside.test", ["10.0.0.7"]);
+  let blocked: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://inside.test/"), __via_proxy(true, "", false));
+  if (__message(blocked) != "blocked: 10.0.0.7 is not a global address") {
+    return test.fail(__message(blocked));
+  }
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __via_proxy(true, "", false));
+  return test.assert_eq(__body(got), "via proxy");
+}
+
+// The proxy's connection is kept by the proxy's address, so it carries
+// requests for every origin behind it.
+function test_proxy_connection_kept(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __proxy_net(d, [sim_fetch.reply(200, "one").kept()]).route(PROXY, 3128, "http://other.test/", [sim_fetch.reply(200, "two").kept()]);
+  let first: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __via_proxy(false, "", false));
+  let second: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://other.test/"), __via_proxy(false, "", false));
+  if (__body(first) != "one" || __body(second) != "two") {
+    return test.fail(__message(first) + " then " + __message(second));
+  }
+  return test.assert_eq(n.connects(), 1);
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/sim_fetch");
+  r = r.it("answers at its virtual time and closes", test_answer_at_its_time);
+  r = r.it("reads a body that arrives a byte at a time", test_chunked_arrival);
+  r = r.it("times out connecting at the connect bound", test_connect_timeout);
+  r = r.it("reports a refused connection", test_refused);
+  r = r.it("races the addresses a name has", test_addresses_raced);
+  r = r.it("hands the race on at once after a refusal", test_refusal_hands_on);
+  r = r.it("accepts at once on a listener with no delay", test_listener_at_zero);
+  r = r.it("times out at once under a zero connect bound", test_zero_connect_bound);
+  r = r.it("reports a name that does not resolve", test_unknown_name);
+  r = r.it("times out waiting at the inactivity bound", test_inactivity_timeout);
+  r = r.it("times out on a connection held open after its bytes", test_held_open_times_out);
+  r = r.it("times out in all at the total bound", test_total_timeout);
+  r = r.it("follows a redirect", test_redirect_followed);
+  r = r.it("drops credentials on a cross-origin redirect", test_cross_origin_drops_credentials);
+  r = r.it("stops at the redirect cap", test_redirect_cap);
+  r = r.it("retries an idempotent request the origin reset", test_reset_retried_when_idempotent);
+  r = r.it("does not retry a POST the origin reset", test_reset_not_retried_when_not_idempotent);
+  r = r.it("blocks a private address on the public route", test_block_list);
+  r = r.it("decodes the gzip it asked for", test_gzip_decoded);
+  r = r.it("caps what decoding produces", test_decoded_past_cap);
+  r = r.it("caps the response body", test_body_past_cap);
+  r = r.it("reuses a kept connection", test_pool_reuses_kept);
+  r = r.it("does not keep a connection the response closes", test_announced_close_not_kept);
+  r = r.it("follows a same-origin redirect on its connection", test_redirect_reuses);
+  r = r.it("redials when a kept connection was closed", test_closed_kept_redialled);
+  r = r.it("dials a POST fresh", test_post_dials_fresh);
+  r = r.it("closes a connection idle past the bound", test_idle_expired_closed);
+  r = r.it("reuses a connection idle for exactly the bound", test_idle_at_bound_reused);
+  r = r.it("dials the retry after a reset", test_retry_dials_fresh);
+  r = r.it("does not keep a connection with bytes past the response", test_trailing_bytes_not_kept);
+  r = r.it("closes the longest-idle connection past the cap", test_pool_cap);
+  r = r.it("keeps the routes' connections apart", test_routes_pool_apart);
+  r = r.it("sends a proxied request in absolute form", test_proxied);
+  r = r.it("dials a host no_proxy names directly", test_no_proxy_direct);
+  r = r.it("reads no proxy under REQUEST_METHOD", test_cgi_no_proxy);
+  r = r.it("reports a proxy that refuses", test_proxy_refused);
+  r = r.it("judges the origin a proxy reaches on the public route", test_proxied_origin_judged);
+  r = r.it("keeps the proxy's connection across origins", test_proxy_connection_kept);
+  r = r.it("dials a proxy named without a port on 80", test_proxy_bare_host);
+  r = r.it("sends a caller's own proxy credentials", test_caller_proxy_credentials);
+  r = r.it("refuses an http_proxy it cannot use", test_proxy_spec_refused);
+  return r.finish();
+}

@@ -901,6 +901,8 @@ input, so scalars split across reads remain valid. Malformed stdin returns
 `InvalidUtf8("stdin")`; I/O failures never become successful partial text.
 The example `tee` uses byte input and output, including true append opens
 that preserve an existing file's arbitrary bytes.
+Current target, bootstrap, allocation, size and native comparison evidence
+is recorded in [the stdin report](STRING-STDIN-UTF8-2026-10-02.md).
 
 The Fern interpreter also supports raw stdin reads; its file-handle opening
 remains unsupported. The existing `Reader.read_chunk` remains text-typed and

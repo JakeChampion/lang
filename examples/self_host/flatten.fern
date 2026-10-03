@@ -282,6 +282,60 @@ function import_graph(imports: LoadedModule[], ids: string[], pfxs: string[]): I
   return ImportGraph { starts: starts, edges: edges };
 }
 
+// import_cycle returns the index in `imports` of the first module the
+// entry's imports reach again while it is still being loaded — an import
+// cycle, which native refuses — or -1 when there is none. A cycle inside the
+// stdlib (under `root`) is allowed, as native allows it: std/string and
+// std/i32 import each other.
+pub function import_cycle(entry: parser.Module, imports: LoadedModule[], root: string): i32 {
+  let ids: string[] = module_ids(imports);
+  let pfxs: string[] = assign_prefixes(imports);
+  let g: ImportGraph = import_graph(imports, ids, pfxs);
+  let state: i32[] = [];
+  while (state.len() < imports.len()) {
+    state = state.append(0);
+  }
+  for p in import_prefixes(entry, ids, pfxs) {
+    let t: i32 = index_of_str(p, pfxs);
+    if (t >= 0 && state[t] == 0) {
+      let (found, st) = cycle_from(t, g, ids, root, state);
+      if (found >= 0) {
+        return found;
+      }
+      state = st;
+    }
+  }
+  return 0 - 1;
+}
+
+// cycle_from walks module k depth-first. `state` is 0 for a module not yet
+// reached, 1 for one on the walk's path, 2 for one finished.
+function cycle_from(k: i32, g: ImportGraph, ids: string[], root: string, state: i32[]): (i32, i32[]) {
+  let st: i32[] = state.with(k, 1);
+  let e: i32 = g.starts[k];
+  while (e < g.starts[k + 1]) {
+    let t: i32 = g.edges[e];
+    if (t >= 0 && st[t] == 1 && !under_root(ids[t], root)) {
+      return (t, st);
+    }
+    if (t >= 0 && st[t] == 0) {
+      let (found, st2) = cycle_from(t, g, ids, root, st);
+      if (found >= 0) {
+        return (found, st2);
+      }
+      st = st2;
+    }
+    e = e + 1;
+  }
+  return (0 - 1, st.with(k, 2));
+}
+
+// under_root reports whether the module identity `ident` lies under the
+// stdlib root `root`.
+pub function under_root(ident: string, root: string): boolean {
+  return root.len() > 0 && ident.len() > root.len() && slice_unchecked(ident, 0, root.len() + 1) == root + "/";
+}
+
 // variant_scope is the prefix of every module `mod` reaches through its
 // imports and theirs, `pub use` included: the modules whose enum variants it
 // may name bare. It is native's import closure (modload.importClosures), which
@@ -535,7 +589,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
     params: [], ret_type: "i32", body: body, line: 0, col: 0,
     import_iface: "", import_wit: "", all_type_params: [],
     bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
-    is_const: false, is_pub: true, is_package: false, ret_fn_ret: "", ret_fn_param_types: "", module: "",
+    is_const: false, is_pub: true, is_package: false, ret_fn_ret: "", ret_fn_param_types: "", module: "", impl_trait: "", dyn_traits: [],
   };
   return parser.Module { ...entry, funcs: entry.funcs.append(main) };
 }
@@ -1464,7 +1518,27 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
     });
     k = k + 1;
   }
-  return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: astwalk.collect_bound_stmts(mod.top_stmts, []), enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx) };
+  return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: astwalk.collect_bound_stmts(mod.top_stmts, []), enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx), trait_reqs: mangle_trait_reqs(mod.trait_reqs, ctx) };
+}
+
+// mangle_trait_reqs rewrites the types a trait's requirement signatures name,
+// as rewrite_module_bodies rewrites every function's, so the requirement and
+// an impl's method are compared (E021) and resolved (a `dyn` call's result) in
+// the one spelling the flattened program has.
+function mangle_trait_reqs(reqs: parser.TraitReq[], ctx: RewriteCtx): parser.TraitReq[] {
+  let out: parser.TraitReq[] = [];
+  for r in reqs {
+    out = out.append(parser.TraitReq { ...r, req_sigs: mangle_sigs(r.req_sigs, ctx), assoc_sigs: mangle_sigs(r.assoc_sigs, ctx) });
+  }
+  return out;
+}
+
+function mangle_sigs(sigs: parser.FuncDecl[], ctx: RewriteCtx): parser.FuncDecl[] {
+  let out: parser.FuncDecl[] = [];
+  for fd in sigs {
+    out = out.append(parser.FuncDecl { ...fd, params: rewrite_params(fd.params, ctx), ret_type: rewrite_type_name(fd.ret_type, ctx), ret_fn_ret: rewrite_type_name(fd.ret_fn_ret, ctx), ret_fn_param_types: rewrite_type_name_list(fd.ret_fn_param_types, ctx) });
+  }
+  return out;
 }
 
 // mangle_impls rewrites an impl block's TARGET type the same way every other
@@ -1633,8 +1707,13 @@ function unique_prefix(base: string, used: string[]): string {
 // `prefix__name` and rewrites every internal reference to match, plus
 // flattens any qualified refs it makes to other modules.
 pub function mangle_module(mod: parser.Module, prefix: string, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
+  return rewrite_module_bodies(mod, module_ctx(mod, prefix, ids, pfxs, scope, ivar_names, ivar_mangled, reexport_keys, reexport_targets));
+}
+
+// module_ctx is the context mangle_module renames `mod` under.
+function module_ctx(mod: parser.Module, prefix: string, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): RewriteCtx {
   let decls: string[] = collect_decl_names(mod);
-  let ctx: RewriteCtx = RewriteCtx {
+  return RewriteCtx {
     modnames: mod_names(mod),
     modprefixes: import_prefixes(mod, ids, pfxs),
     prefix: prefix,
@@ -1650,7 +1729,71 @@ pub function mangle_module(mod: parser.Module, prefix: string, ids: string[], pf
     reexport_keys: reexport_keys,
     reexport_targets: reexport_targets,
   };
-  return rewrite_module_bodies(mod, ctx);
+}
+
+// TraitDefaultIn is a trait's default method with its body already renamed
+// in the trait's own module, keyed `<prefix>.<Trait>` the way
+// parser.impl_trait_key spells the trait an impl implements.
+struct TraitDefaultIn { key: string, method: parser.FuncDecl }
+
+// module_trait_defaults renames every default method of `mod`'s traits under
+// the module's own context, so the body calls the functions its own module
+// named wherever an impl inherits it (#8484).
+function module_trait_defaults(mod: parser.Module, ctx: RewriteCtx, acc: TraitDefaultIn[]): TraitDefaultIn[] {
+  for td in mod.trait_decls {
+    for m in td.methods {
+      if (m.body.len() > 0) {
+        let bctx: RewriteCtx = RewriteCtx { ...ctx, locals: collect_local_names(m) };
+        let rm: parser.FuncDecl = parser.FuncDecl { ...m, params: rewrite_params(m.params, bctx), ret_type: rewrite_type_name(m.ret_type, ctx), ret_fn_ret: rewrite_type_name(m.ret_fn_ret, ctx), ret_fn_param_types: rewrite_type_name_list(m.ret_fn_param_types, ctx), body: rewrite_block(m.body, bctx), module: ctx.prefix };
+        acc = acc.append(TraitDefaultIn { key: ctx.prefix + "." + td.name, method: rm });
+      }
+    }
+  }
+  return acc;
+}
+
+// inherit_trait_defaults gives each impl in `mod` of a trait ANOTHER module
+// declares the defaults it does not write. The parser already did this for
+// the module's own traits, which `own` (the module's prefix) identifies.
+function inherit_trait_defaults(mod: parser.Module, own: string, defaults: TraitDefaultIn[]): parser.Module {
+  let funcs: parser.FuncDecl[] = mod.funcs;
+  for im in mod.impls {
+    if (im.trait_name.len() > 0 && im.trait_module != own) {
+      let key: string = parser.impl_trait_key(im);
+      for d in defaults {
+        if (d.key == key && index_of_str(d.method.name, im.method_names) < 0) {
+          funcs = funcs.append(parser.FuncDecl { ...parser.finalize_impl_method(d.method, im.impl_type, im.type_params, im.bounds), module: d.method.module, impl_trait: im.trait_name });
+        }
+      }
+    }
+  }
+  return parser.Module { ...mod, funcs: funcs };
+}
+
+// RenamedImports is every import renamed under its own context, with the
+// trait defaults it inherits from other modules, plus every module's renamed
+// defaults for the entry to inherit from.
+struct RenamedImports { mods: parser.Module[], defaults: TraitDefaultIn[] }
+
+// rename_imports is the import half bundle and bundle_per_module share, so
+// the merged and the per-module builds agree on every module's decls.
+function rename_imports(imports: LoadedModule[], ids: string[], pfxs: string[], graph: ImportGraph, ivar_names: string[], ivar_mangled: string[], rx: ReexportTable): RenamedImports {
+  let ctxs: RewriteCtx[] = [];
+  let defaults: TraitDefaultIn[] = [];
+  let i: i32 = 0;
+  while (i < imports.len()) {
+    let cx: RewriteCtx = module_ctx(imports[i].mod, pfxs[i], ids, pfxs, variant_scope(imports[i].mod, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets);
+    ctxs = ctxs.append(cx);
+    defaults = module_trait_defaults(imports[i].mod, cx, defaults);
+    i = i + 1;
+  }
+  let mods: parser.Module[] = [];
+  let j: i32 = 0;
+  while (j < imports.len()) {
+    mods = mods.append(inherit_trait_defaults(rewrite_module_bodies(imports[j].mod, ctxs[j]), pfxs[j], defaults));
+    j = j + 1;
+  }
+  return RenamedImports { mods: mods, defaults: defaults };
 }
 
 // =================== VALIDATION ====================
@@ -1678,8 +1821,9 @@ struct MethodDedup { mod: parser.Module, keys: string[] }
 // `<Type>.<name>` key keeps it — that is the definition every call site
 // resolves to — and a later module's method is interposed with its namespace
 // (`i32.num.add`). parse_module already made each module injective on its own,
-// so a claim never has to be attributed back to an ImplInfo here. `claimed` is
-// threaded across the whole bundle, entry included.
+// and a renamed method keeps the impl_trait it was claimed for, which is what
+// `dyn` dispatch reads instead of the name. `claimed` is threaded across the
+// whole bundle, entry included.
 //
 // Collisions are tested against EARLIER modules only (`claimed`), never against
 // keys this module itself contributes: two methods of ONE module that still
@@ -1781,11 +1925,12 @@ pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: stri
   let rx: ReexportTable = build_reexports(imports, ids, pfxs);
   let graph: ImportGraph = import_graph(imports, ids, pfxs);
   let inferred: string[] = mangled_inferred_consts(imports, pfxs, entry);
+  let renamed: RenamedImports = rename_imports(imports, ids, pfxs, graph, ivar_names, ivar_mangled, rx);
   let mclaims: string[] = [];
   let i: i32 = 0;
   while (i < imports.len()) {
     let pfx: string = pfxs[i];
-    let md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ids, pfxs, variant_scope(imports[i].mod, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
+    let md: MethodDedup = disambiguate_methods(renamed.mods[i], pfx, mclaims);
     mclaims = md.keys;
     let m: parser.Module = md.mod;
     funcs = util.append_all(funcs, m.funcs);
@@ -1820,7 +1965,7 @@ pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: stri
     i = i + 1;
   }
   let flat: parser.Module = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets), loaded_prefix(imports, pfxs, "std/error"), loaded_prefix(imports, pfxs, "std/http"));
-  let e: parser.Module = disambiguate_methods(flat, "__entry", mclaims).mod;
+  let e: parser.Module = disambiguate_methods(inherit_trait_defaults(flat, "", renamed.defaults), "__entry", mclaims).mod;
   funcs = util.append_all(funcs, e.funcs);
   structs = util.append_all(structs, e.structs);
   aliases = util.append_all(aliases, e.aliases);
@@ -1897,7 +2042,7 @@ pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: stri
     trait_decls: trait_decls,
     inferred_consts: inferred,
   };
-  return parser.settle_module(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred)));
+  return parser.resolve_dyn_traits(parser.settle_module(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred))));
 }
 
 // mangled_inferred_consts names every const written without a type, across
@@ -2018,18 +2163,19 @@ pub function bundle_per_module(entry0: parser.Module, imports: LoadedModule[], t
   // Same claim threading `bundle` does, in the same module order, so the
   // per-module units and the merged bundle agree on which definition owns a
   // `<Type>.<name>` symbol.
+  let renamed: RenamedImports = rename_imports(imports, ids, pfxs, graph, ivar_names, ivar_mangled, rx);
   let mclaims: string[] = [];
   let i: i32 = 0;
   while (i < imports.len()) {
     let pfx: string = pfxs[i];
-    let md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ids, pfxs, variant_scope(imports[i].mod, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
+    let md: MethodDedup = disambiguate_methods(renamed.mods[i], pfx, mclaims);
     mclaims = md.keys;
     mods = mods.append(md.mod);
     all_funcs = util.append_all(all_funcs, md.mod.funcs);
     i = i + 1;
   }
   let flat: parser.Module = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets), loaded_prefix(imports, pfxs, "std/error"), loaded_prefix(imports, pfxs, "std/http"));
-  let e: parser.Module = disambiguate_methods(flat, "__entry", mclaims).mod;
+  let e: parser.Module = disambiguate_methods(inherit_trait_defaults(flat, "", renamed.defaults), "__entry", mclaims).mod;
   all_funcs = util.append_all(all_funcs, e.funcs);
   // A unit reads a const another unit declares, so the table spans them all.
   let table: parser.ConstTable = merged_const_table(all_funcs, inferred);

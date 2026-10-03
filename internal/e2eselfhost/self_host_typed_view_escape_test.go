@@ -122,6 +122,8 @@ func TestSelfHostCLIByteViewEscape(t *testing.T) {
 		{"static", `function f(): [u8] { return "a".as_bytes(); } function main(): i32 { return f().len(); }`, false},
 		{"owned-copy", `function f(): u8[] { let s: string = "a" + args()[0]; return s.bytes(); } function main(): i32 { return f().len(); }`, false},
 		{"reassigned-parameter", `function f(p: string): [u8] { let s: string = "a" + args()[0]; s = p; return s.as_bytes(); } function main(): i32 { return f("a").len(); }`, false},
+		{"dyn-viewless-alternative", `trait Size { function size(self: Self): i32; } struct P { bytes: [u8] } struct Q { n: i32 } impl Size for P { function size(self: P): i32 { return self.bytes.len(); } } impl Size for Q { function size(self: Q): i32 { return self.n; } } function pick(s: string, flag: boolean): dyn Size { if (flag) { return P { bytes: s.as_bytes() }; } return Q { n: 1 }; } function main(): i32 { return pick("abc", true).size(); }`, false},
+		{"dyn-local-view-alternative", `trait Size { function size(self: Self): i32; } struct P { bytes: [u8] } struct Q { n: i32 } impl Size for P { function size(self: P): i32 { return self.bytes.len(); } } impl Size for Q { function size(self: Q): i32 { return self.n; } } function pick(flag: boolean): dyn Size { if (flag) { let s: string = "a" + args()[0]; return P { bytes: s.as_bytes() }; } return Q { n: 1 }; } function main(): i32 { return pick(true).size(); }`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "main.fern")

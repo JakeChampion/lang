@@ -3458,11 +3458,10 @@ function has_receiver_method(funcs: parser.FuncDecl[], recv_type: string, name: 
 }
 
 // dyn_method_name resolves the method a call NAMES to the definition the
-// receiver's declared type MEANS. Two traits providing one method for one type
-// leave only the first claimant holding the bare name, so a `dyn` receiver whose
-// trait lost that race dispatches by the interposed `<Trait>.<m>` spelling
-// instead (parser.claim_method_name). Receivers with no declared dyn type, and
-// dyn receivers with no collision, keep the written name.
+// receiver's declared type MEANS: for a `dyn` receiver, the receiver type's
+// method whose `dyn_traits` meets the dyn's trait set (parser.dyn_provider_name),
+// whatever spelling a claim or a cross-module rename gave it. Receivers with no
+// declared dyn type keep the written name.
 function dyn_method_name(name: string, decl_ty: string, recv: Value, funcs: parser.FuncDecl[]): string {
   let traits: string[] = parser.dyn_trait_set(decl_ty);
   if (traits.len() == 0) {

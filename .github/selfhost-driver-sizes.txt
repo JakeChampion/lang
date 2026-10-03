@@ -434,7 +434,12 @@
 # instructions where each record or union release was one call); fern.fern,
 # which the pin builds, stays inside 5%. Number pasted from driver-sizes' own
 # report on run 37063932061 (#11147, which adds 0.06% of its own).
-fern.fern/stage2 11565456
+# 2026-10-03 — fern.fern/stage2 11565456 -> 10946736 (-5.3%): main shrank
+# it 4.7% since that refresh (291a39cf's shared release guards), and a
+# constant a phi merges or a block returns now loads on its edge with no home
+# of its own, a further 0.7%. Measured with TestSelfHostWarmStockDriver, the
+# gate's own path; fern.fern, which the pin builds, stays inside 5%.
+fern.fern/stage2 10946736
 fern.fern 10737128
 asm_load_run.fern 8721320
 asm_modload_run.fern 7618432

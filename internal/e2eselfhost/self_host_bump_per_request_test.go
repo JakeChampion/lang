@@ -9,10 +9,10 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// The self-host twin of TestBumpPerRequestX86_64, built as production
-// builds it: through the self-host CLI with the semantic lowering
-// required, so a function the lowering refused would fail the build
-// rather than fall back to the AST lowering.
+// #9853's per-request gate, bump half: requests on one keep-alive connection
+// reuse what earlier ones freed, so the bump high-water mark stops moving.
+// Built through the self-host CLI with the semantic lowering required, so a
+// function the lowering refused fails the build.
 func TestSelfHostBumpPerRequest(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	port := selfHostFreePort(t)
