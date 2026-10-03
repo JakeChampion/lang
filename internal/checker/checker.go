@@ -17109,6 +17109,18 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			n.ElemType = eu
 			return ast.ArrayType{Elem: eu}
 		}
+		// A `str[]` destination types the literal: each element is read at
+		// `str`, so a string literal widens beside a view as it does at any
+		// other `str` destination (#10889).
+		if _, ok := elemExpected.(ast.StrType); ok {
+			for _, el := range n.Elems {
+				if t := checkElem(el); t != nil && !c.assignable(elemExpected, t) {
+					c.errfCode(el.Pos(), "E034", "array element type %s, expected %s", t, elemExpected)
+				}
+			}
+			n.ElemType = elemExpected
+			return ast.ArrayType{Elem: elemExpected}
+		}
 		elemT := checkElem(n.Elems[0])
 		for _, el := range n.Elems[1:] {
 			t := checkElem(el)

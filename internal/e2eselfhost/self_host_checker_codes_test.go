@@ -2007,6 +2007,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// An enum variant's name is no type (#10843).
 		{"variant-name-as-field-type", "enum X { P, Q }\nstruct H { f: P }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
 		{"variant-name-as-param-type", "enum X { P, Q }\nfunction g(p: P): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
+		// A str[] destination types its literal, so a string literal widens
+		// beside a view; with none the elements must still agree (#10889).
+		{"str-array-literal-mixed-ok", "function main(): i32 { let owned: string = \"ab\" + \"cd\"; let s: str = slice_unchecked(owned, 1, 3); let xs: str[] = [\"x\", s]; let ys: str[] = [s, \"y\"]; return xs.len() + ys.len(); }\n", nil},
+		{"str-array-literal-non-string", "function main(): i32 { let owned: string = \"ab\" + \"cd\"; let s: str = slice_unchecked(owned, 1, 3); let xs: str[] = [\"x\", 5]; return xs.len(); }\n", []string{"E034"}},
+		{"untyped-array-literal-mixed-str", "function main(): i32 { let owned: string = \"ab\" + \"cd\"; let s: str = slice_unchecked(owned, 1, 3); let xs = [\"x\", s]; return xs.len(); }\n", []string{"E034"}},
 		{"i32-min-literal-local-ok", "function main(): i32 { let k = -2147483648; return k + 2147483647 + 1; }\n", nil},
 		{"ctor-builtin-settles-ok", "function takes(o: Option[i64]): i32 { return 0; }\nfunction main(): i32 { return takes(Some(40)) + takes(Option.Some(1)); }\n", nil},
 		{"enum-non-reserved-ok", "enum Color { Red, Green }\nfunction main(): i32 { return 0; }\n", nil},
@@ -3411,6 +3416,15 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"e051-last-use-unpack", lastUsePrelude + "function f(): i32 { let p: Pair = mkp(1); let x: W = p.a; let r: i32 = eat(x); return r; }\n"},
 		{"e051-last-use-unpack-twice", lastUsePrelude + "function f(): i32 { let p: Pair = mkp(1); let x: W = p.a; let r: i32 = eat(x); return r + p.a.n; }\n"},
 		{"e051-last-use-rename-param", lastUsePrelude + "function f(w0: W): i32 { let w: W = w0; let r: i32 = eat(w); return r; }\n"},
+		// A destructured binding is fresh when the value it unpacks is (#11120).
+		{"e051-last-use-destructure", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(): i32 { let (x, k) = pw(1); let r: i32 = eat(x); return r + k; }\n"},
+		{"e051-last-use-destructure-ret", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(): i32 { let (x, k) = pw(1); return eat(x) + k; }\n"},
+		{"e051-last-use-destructure-read-again", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(): i32 { let (x, k) = pw(1); let r: i32 = eat(x); return r + k + x.n; }\n"},
+		{"e051-last-use-destructure-at", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(): i32 { let t @ (x, k) = pw(1); let r: i32 = eat(x); return r + t.1; }\n"},
+		{"e051-last-use-destructure-nested", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction pw2(n: i32): (i32, (W, i32)) { return (n, pw(n)); }\nfunction f(): i32 { let (k, (x, j)) = pw2(1); let r: i32 = eat(x); return r + k + j; }\n"},
+		{"e051-last-use-destructure-redeclared", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(c: boolean): i32 { let (x, k) = pw(1); if (c) { let x: W = mkw(2); return x.n; } let r: i32 = eat(x); return r + k; }\n"},
+		{"e051-last-use-struct-destructure", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(): i32 { let Pair { a, b } = mkp(1); let r: i32 = eat(a); return r + b.n; }\n"},
+		{"e051-last-use-struct-destructure-param", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(p: Pair): i32 { let Pair { a, b } = p; let r: i32 = eat(a); return r + b.n; }\n"},
 		{"e051-last-use-method-chain", lastUsePrelude + "function f(): i32 { let w: W = mkw(1); let v: W = w.bump(1); let u: W = v.bump(2); return eat(u); }\n"},
 		{"e051-last-use-field-arg-local", lastUsePrelude + "function f(): i32 { let w: W = mkw(1); return keep(w.d, 1); }\n"},
 		{"e051-last-use-if-expr", lastUsePrelude + "function f(c: boolean): i32 { let a: i32[] = mk(1); let r: i32 = if (c) { keep(a, 1) } else { 0 }; return r; }\n"},

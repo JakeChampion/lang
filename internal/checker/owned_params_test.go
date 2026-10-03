@@ -249,6 +249,19 @@ function f(c: boolean): i32 {
     }
     match (b) { Wrap(xs) => { return xs.len(); } }
 }`},
+		{"tuple-destructured-last-read", `
+function step(): (i32[], i32) { return ([1], 2); }
+function f(): i32 {
+    let (xs, k) = step();
+    let n: i32 = consume(xs);
+    return n + k;
+}`},
+		{"struct-destructured-last-read", `
+function mk(): Pair { return Pair { items: [1], n: 2 }; }
+function f(): i32 {
+    let Pair { items, n } = mk();
+    return consume(items) + n;
+}`},
 		{"two-statement-rebind", `
 function grow(own xs: i32[], v: i32): i32[] { return xs.append(v); }
 function f(): i32 {
@@ -286,6 +299,26 @@ function f(): i32 {
     let xs: i32[] = mk();
     defer { let k: i32 = xs.len(); }
     return consume(xs);
+}`},
+		{"destructured-read-again", `
+function step(): (i32[], i32) { return ([1], 2); }
+function f(): i32 {
+    let (xs, k) = step();
+    let n: i32 = consume(xs);
+    return n + xs.len() + k;
+}`},
+		{"destructured-whole-named", `
+function step(): (i32[], i32) { return ([1], 2); }
+function f(): i32 {
+    let t @ (xs, k) = step();
+    let n: i32 = consume(xs);
+    return n + t.1;
+}`},
+		{"destructured-borrowed-param", `
+function f(p: Pair): i32 {
+    let Pair { items, n } = p;
+    let r: i32 = consume(items);
+    return r + n;
 }`},
 		{"captured-by-a-lambda", `
 function mk(): i32[] { return [1, 2]; }
