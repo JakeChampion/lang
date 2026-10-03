@@ -7355,6 +7355,8 @@ pub function with_strerror_texts(sv: string[]): string[] {
 // [len][bytes] block pointer, and the builder consumes the path it is given: a
 // caller passing a borrowed path retains it first.
 pub function build_io_error_func(slot: i32, sv: string[]): string {
+  // Consumes one path owner. Payload variants keep it; payloadless
+  // variants release it. Borrowed callers retain before this call.
   let o: string = "";
   o = o + "  (func $__fern_build_io_error (param $errno i32) (param $path i32) (result i32)\n";
   o = o + "    (local $r i32) (local $e i32) (local $n i32) (local $t i32)\n";
@@ -7378,11 +7380,13 @@ pub function build_io_error_func(slot: i32, sv: string[]): string {
   o = o + "      (return (local.get $r))))\n";
   // EINTR(27) -> Interrupted (payloadless)
   o = o + "    (if (i32.eq (local.get $errno) (i32.const 27)) (then\n";
+  o = o + "      (drop (call $__fern_arr_dec (local.get $path)))\n";
   o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(0, slot) + ")))\n";
   o = o + "      (i32.store (local.get $r) (global.get " + tid_global("Interrupted") + "))\n";
   o = o + "      (return (local.get $r))))\n";
   // ENOTSUP(58) -> Unsupported (payloadless)
   o = o + "    (if (i32.eq (local.get $errno) (i32.const 58)) (then\n";
+  o = o + "      (drop (call $__fern_arr_dec (local.get $path)))\n";
   o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(0, slot) + ")))\n";
   o = o + "      (i32.store (local.get $r) (global.get " + tid_global("Unsupported") + "))\n";
   o = o + "      (return (local.get $r))))\n";
@@ -8423,6 +8427,8 @@ pub function read_link_func(): string {
   o = o + "    (if (i32.eqz (local.get $err)) (then\n";
   o = o + "      (if (i32.ge_u (i32.load (local.get $used)) (i32.const 4096)) (then (local.set $err (i32.const 37))))))\n";
   o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
+  o = o + "      (drop (call $__fern_arr_dec (local.get $used)))\n";
+  o = o + "      (drop (call $__fern_arr_dec (local.get $buf)))\n";
   o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
   o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $path))))\n";
@@ -8437,6 +8443,8 @@ pub function read_link_func(): string {
   o = o + "      (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (local.get $buf) (local.get $i))))\n";
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o = o + "      (br $rl)))\n";
+  o = o + "    (drop (call $__fern_arr_dec (local.get $used)))\n";
+  o = o + "    (drop (call $__fern_arr_dec (local.get $buf)))\n";
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
   o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (local.get $blk))\n";
