@@ -104,7 +104,6 @@ TestOd
 TestPinkyParity
 TestPrParity
 TestPrintfParity
-TestPtxParity
 TestPwdUnlinkedWorkingDirectory
 TestRealpathParity
 TestRmdirParity

@@ -961,6 +961,10 @@ BRE patterns can also be compiled directly from raw bytes, sharing the
 existing parser and matching engine. Target and parser-cost evidence is in
 [the raw-pattern report](STRING-BRE-BYTE-PATTERNS-2026-10-03.md).
 
+`ptx` keeps records, escaped patterns, references and output ranges as bytes.
+GNU parity, ownership and measured costs are recorded in
+[the ptx report](STRING-PTX-BYTES-2026-10-03.md).
+
 `head` and `tail` use raw byte input, delimiter scans and output. Their
 shared hold retains input blocks with a 64-bit byte count and releases
 consumed blocks without repeatedly copying long records. Target checks and

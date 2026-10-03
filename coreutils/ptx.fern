@@ -151,7 +151,7 @@ function help_text(): string {
 // digits and keeps the low byte, `\c` TRUNCATES the string, `\e` is not
 // an escape, and an unknown escape keeps its backslash. `\0` yields a
 // NUL, which makes a flag string empty.
-function unescape(s: string): string {
+function unescape(s: string): u8[] {
   let out: u8[] = [];
   let i: i32 = 0;
   while (i < s.len()) {
@@ -169,7 +169,7 @@ function unescape(s: string): string {
       out = out.append(8 as u8);
       i = i + 2;
     } else if (d == 99) {
-      return bytes_to_string(out);
+      return out;
     } else if (d == 102) {
       out = out.append(12 as u8);
       i = i + 2;
@@ -219,16 +219,16 @@ function unescape(s: string): string {
       i = i + 2;
     }
   }
-  return bytes_to_string(out);
+  return out;
 }
 
 // A flag string is a C string, so a NUL inside it ends it — `-F '\0'`
 // is `-F ''`.
-function cut_at_nul(s: string): string {
+function cut_at_nul(s: u8[]): u8[] {
   let i: i32 = 0;
   while (i < s.len()) {
     if (s[i] as i32 == 0) {
-      return slice_unchecked(s, 0, i) + "";
+      return copy_range(s, 0, i);
     }
     i = i + 1;
   }
@@ -248,8 +248,12 @@ function hex_digit(c: i32): i32 {
   return 0 - 1;
 }
 
-function bytes_to_string(b: u8[]): string {
-  return string_from_bytes_unchecked(b);
+function copy_range(bytes: u8[], lo: i32, hi: i32): u8[] {
+  let h: usize = buf_new(hi - lo);
+  buf_push_bytes_range(h, bytes, lo, hi);
+  let out: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return out;
 }
 
 // ---- character classes ------------------------------------------------------
@@ -277,12 +281,12 @@ struct Opts {
   fold: boolean,
   // 0 dumb (columns), 1 roff, 2 tex.
   format: i32,
-  trunc: string,
+  trunc: u8[],
   macro: string,
   width: i64,
   gap: i64,
-  word_pat: string,
-  sent_pat: string,
+  word_pat: u8[],
+  sent_pat: u8[],
   have_word: boolean,
   have_sent: boolean,
   no_sent: boolean,
@@ -318,7 +322,7 @@ struct Words { starts: i32[], ends: i32[] }
 
 struct Lines { starts: i32[], ends: i32[], ref_end: i32[], text: i32[], nums: i32[] }
 
-struct Occ { kw_start: i32, kw_end: i32, ctx_start: i32, ctx_end: i32, ref: string, wi: i32 }
+struct Occ { kw_start: i32, kw_end: i32, ctx_start: i32, ctx_end: i32, ref: u8[], wi: i32 }
 
 // `word_at(w, p)` — the word STRICTLY containing `p` (start < p < end),
 // or (-1, -1). A cut landing there is moved out of the word; a cut on a
@@ -360,7 +364,7 @@ function read_size(): i32 {
 
 // Every byte of `path`; "-" and "" are standard input. A failure is
 // GNU's `ptx: NAME: <strerror>`, exit 1, with nothing written yet.
-function slurp(path: string, w: io_buffered.BufWriter): string {
+function slurp(path: string, w: io_buffered.BufWriter): u8[] {
   let r: Reader = stdin();
   if (path != "-" && path != "") {
     match (open_reader(path)) {
@@ -372,16 +376,17 @@ function slurp(path: string, w: io_buffered.BufWriter): string {
       }
     }
   }
-  let chunks: string[] = [];
+  let h: usize = buf_new(read_size());
   while (true) {
-    match (r.read_chunk(read_size())) {
+    match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           break;
         }
-        chunks = chunks.append(chunk);
+        buf_push_bytes_range(h, chunk, 0, chunk.len());
       },
       Err(e) => {
+        buf_free(h);
         gnu.die(w, gnu.quotef(path) + ": " + gnu.io_error_text(e), 1);
       }
     }
@@ -389,54 +394,48 @@ function slurp(path: string, w: io_buffered.BufWriter): string {
   if (path != "-" && path != "") {
     r.close();
   }
-  if (chunks.len() == 1) {
-    return chunks[0];
-  }
-  return chunks.join("");
+  let out: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return out;
 }
 
 // A word list: one word per LINE, so a line holding two words is one
 // entry that can never match. Empty lines are dropped.
-function word_list(path: string, w: io_buffered.BufWriter): string[] {
-  let text: string = slurp(path, w);
-  let out: string[] = [];
+function word_list(path: string, w: io_buffered.BufWriter): u8[][] {
+  let text: u8[] = slurp(path, w);
+  let out: u8[][] = [];
   let pos: i32 = 0;
   while (pos < text.len()) {
-    let j: i32 = __memchr(text, 10, pos);
+    let j: i32 = __memchr_bytes(text, 10, pos);
     if (j < 0) {
       j = text.len();
     }
     if (j > pos) {
-      out = out.append(slice_unchecked(text, pos, j) + "");
+      out = out.append(copy_range(text, pos, j));
     }
     pos = j + 1;
   }
   return out;
 }
 
-function fold_case(s: string): string {
-  let out: u8[] = [];
-  let i: i32 = 0;
-  while (i < s.len()) {
-    out = out.append(upper(s[i] as i32) as u8);
-    i = i + 1;
-  }
-  return bytes_to_string(out);
-}
-
-function in_list(list: string[], word: string, fold: boolean): boolean {
-  let w: string = word;
-  if (fold) {
-    w = fold_case(w);
-  }
+function in_list(list: u8[][], buf: u8[], lo: i32, hi: i32, fold: boolean): boolean {
   let i: i32 = 0;
   while (i < list.len()) {
-    let e: string = list[i];
-    if (fold) {
-      e = fold_case(e);
-    }
-    if (e == w) {
-      return true;
+    let entry: u8[] = list[i];
+    if (entry.len() == hi - lo) {
+      if (!fold) {
+        if (__mismatch_bytes(entry, 0, buf, lo, entry.len()) == entry.len()) {
+          return true;
+        }
+      } else {
+        let j: i32 = 0;
+        while (j < entry.len() && upper(entry[j] as i32) == upper(buf[lo + j] as i32)) {
+          j = j + 1;
+        }
+        if (j == entry.len()) {
+          return true;
+        }
+      }
     }
     i = i + 1;
   }
@@ -444,8 +443,8 @@ function in_list(list: string[], word: string, fold: boolean): boolean {
 }
 
 // ---- numeric options --------------------------------------------------------
-// Numeric options accept decimal, leading-zero octal and 0x hexadecimal.
-// The value must be positive and fit intmax_t.
+// GNU's numeric options accept decimal, leading-zero octal and 0x hex.
+// The value must be positive and inside intmax_t; 0b is not a prefix.
 function parse_num(v: string, what: string): i64 {
   let i: i32 = 0;
   while (i < v.len() && gnu.is_blank(v[i] as i32)) {
@@ -520,26 +519,26 @@ function default_sentence(): string {
   return "[.?!][]\"')}]*\\($\\|\t\\|  \\)[ \t\n]*";
 }
 
-function compile(pat: string, w: io_buffered.BufWriter): bre.Bre {
-  let re: bre.Bre = bre.bre_compile_syntax(pat, bre.emacs_syntax());
+function compile(pat: u8[], w: io_buffered.BufWriter): bre.Bre {
+  let re: bre.Bre = bre.bre_compile_bytes_syntax(pat, bre.emacs_syntax());
   if (re.err.len() > 0) {
-    gnu.die(w, re.err + " (for regexp " + gnu.quote(pat) + ")", 1);
+    gnu.die(w, re.err + " (for regexp " + gnu.quote_bytes(pat) + ")", 1);
   }
   return re;
 }
 
 // ---- the run ----------------------------------------------------------------
-struct Run { buf: string, words: Words, lines: Lines, occs: Occ[], maxword: i32 }
+struct Run { buf: u8[], words: Words, lines: Lines, occs: Occ[], maxword: i32 }
 
 // `find_words` — the occurrences in `buf[lo, hi)`, either every run of
 // non-break bytes or every match of -W's regexp.
-function find_words(buf: string, lo: i32, hi: i32, brk: u8[], re: bre.Bre, have_re: boolean, w: Words): Words {
+function find_words(buf: u8[], lo: i32, hi: i32, brk: u8[], re: bre.Bre, have_re: boolean, w: Words): Words {
   let starts: i32[] = w.starts;
   let ends: i32[] = w.ends;
   if (have_re) {
     let pos: i32 = lo;
     while (pos < hi) {
-      let m: (i32, i32) = re.search_from(buf, pos, hi);
+      let m: (i32, i32) = re.search_from_bytes(buf, pos, hi);
       if (m.0 < 0) {
         break;
       }
@@ -574,7 +573,7 @@ function find_words(buf: string, lo: i32, hi: i32, brk: u8[], re: bre.Bre, have_
 // The line table of `buf[lo, hi)`: where each line starts, where its
 // reference ends, where its text begins after the blanks that follow
 // the reference, and its 1-based number inside its own file.
-function find_lines(buf: string, lo: i32, hi: i32, l: Lines): Lines {
+function find_lines(buf: u8[], lo: i32, hi: i32, l: Lines): Lines {
   let starts: i32[] = l.starts;
   let ends: i32[] = l.ends;
   let ref_end: i32[] = l.ref_end;
@@ -583,7 +582,7 @@ function find_lines(buf: string, lo: i32, hi: i32, l: Lines): Lines {
   let pos: i32 = lo;
   let n: i32 = 0;
   while (pos <= hi) {
-    let e: i32 = __memchr(buf, 10, pos);
+    let e: i32 = __memchr_bytes(buf, 10, pos);
     if (e < 0 || e > hi) {
       e = hi;
     }
@@ -641,14 +640,14 @@ function line_of(l: Lines, p: i32): i32 {
 // already folded when -f asked for it: the mismatch kernel finds the
 // first differing byte of the common span, and the shorter span wins a
 // tie.
-function key_less(kbuf: string, a_start: i32, a_end: i32, b_start: i32, b_end: i32): boolean {
+function key_less(kbuf: u8[], a_start: i32, a_end: i32, b_start: i32, b_end: i32): boolean {
   let an: i32 = a_end - a_start;
   let bn: i32 = b_end - b_start;
   let n: i32 = an;
   if (bn < n) {
     n = bn;
   }
-  let i: i32 = __mismatch(kbuf, a_start, kbuf, b_start, n);
+  let i: i32 = __mismatch_bytes(kbuf, a_start, kbuf, b_start, n);
   if (i < n) {
     return kbuf[a_start + i] as i32 < kbuf[b_start + i] as i32;
   }
@@ -657,7 +656,7 @@ function key_less(kbuf: string, a_start: i32, a_end: i32, b_start: i32, b_end: i
 
 // `buf` with every lowercase ASCII letter raised, so a folded comparison
 // is a plain one.
-function fold_buf(buf: string): string {
+function fold_buf(buf: u8[]): u8[] {
   let n: i32 = buf.len();
   let out: u8[] = __alloc_u8(n);
   let i: i32 = 0;
@@ -665,7 +664,7 @@ function fold_buf(buf: string): string {
     out = out.with(i, upper(buf[i] as i32) as u8);
     i = i + 1;
   }
-  return string_from_bytes_unchecked(out);
+  return out;
 }
 
 function scratch(n: i32): i32[] {
@@ -688,7 +687,7 @@ function scratch64(n: i32): i64[] {
   return out;
 }
 
-function sort_occs(buf: string, occs: Occ[], fold: boolean): i32[] {
+function sort_occs(buf: u8[], occs: Occ[], fold: boolean): i32[] {
   let n: i32 = occs.len();
   let ks: i32[] = scratch(n);
   let ke: i32[] = scratch(n);
@@ -698,7 +697,7 @@ function sort_occs(buf: string, occs: Occ[], fold: boolean): i32[] {
     ke = ke.with(i, occs[i].kw_end);
     i = i + 1;
   }
-  let kbuf: string = buf;
+  let kbuf: u8[] = buf;
   if (fold) {
     kbuf = fold_buf(buf);
   }
@@ -707,7 +706,7 @@ function sort_occs(buf: string, occs: Occ[], fold: boolean): i32[] {
   if (n >= radix.threshold()) {
     let k: i32 = 0;
     while (k < n) {
-      words = words.append(radix.bytes_word(kbuf, ks[k], ke[k]));
+      words = words.append(radix.bytes_word_bytes(kbuf, ks[k], ke[k]));
       k = k + 1;
     }
   }
@@ -813,7 +812,7 @@ function sort_occs(buf: string, occs: Occ[], fold: boolean): i32[] {
 // `buf` with every whitespace byte that is not a space made one, once,
 // so a field is a plain span of it: positions are unchanged, and the
 // space tests the cuts make answer the same on either buffer.
-function norm_all(buf: string): string {
+function norm_all(buf: u8[]): u8[] {
   let n: i32 = buf.len();
   let out: u8[] = __alloc_u8(n);
   let i: i32 = 0;
@@ -825,7 +824,7 @@ function norm_all(buf: string): string {
     out = out.with(i, c as u8);
     i = i + 1;
   }
-  return string_from_bytes_unchecked(out);
+  return out;
 }
 
 // A span as its start in the high word and its end in the low; a span
@@ -852,7 +851,7 @@ function span_len(sp: i64): i32 {
 }
 
 // `buf[a, b)` without its leading and trailing whitespace.
-function trim_span(buf: string, a: i32, b: i32): i64 {
+function trim_span(buf: u8[], a: i32, b: i32): i64 {
   let i: i32 = a;
   while (i < b && is_space(buf[i] as i32)) {
     i = i + 1;
@@ -867,7 +866,7 @@ function trim_span(buf: string, a: i32, b: i32): i64 {
 // The keyword begins the keyafter field, so only its tail is trimmed:
 // a -W that matches whitespace makes the keyword itself a blank, and
 // GNU prints it.
-function rtrim_span(buf: string, a: i32, b: i32): i64 {
+function rtrim_span(buf: u8[], a: i32, b: i32): i64 {
   let j: i32 = b;
   while (j > a && is_space(buf[j - 1] as i32)) {
     j = j - 1;
@@ -875,7 +874,7 @@ function rtrim_span(buf: string, a: i32, b: i32): i64 {
   return span(a, j);
 }
 
-function has_text(buf: string, a: i32, b: i32): boolean {
+function has_text(buf: u8[], a: i32, b: i32): boolean {
   let i: i32 = a;
   while (i < b) {
     if (!is_space(buf[i] as i32)) {
@@ -889,7 +888,7 @@ function has_text(buf: string, a: i32, b: i32): boolean {
 // `Fields` — one output line's five pieces and which of them lost text.
 struct Fields { tail: i64, before: i64, keyafter: i64, keyword: i64, after: i64, head: i64, tail_flag: boolean, before_flag: boolean, keyafter_flag: boolean, head_flag: boolean, blank_pad: i32 }
 
-function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Fields {
+function cut_fields(buf: u8[], o: Occ, w: Words, g: Geom, maxword: i32): Fields {
   let t: i32 = g.tlen;
   // keyafter: the keyword and what follows, cut at ka_max and moved
   // back out of a word. The keyword itself is never cut.
@@ -1022,11 +1021,12 @@ function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Field
 }
 
 // ---- output -----------------------------------------------------------------
-function flag_of(on: boolean, opts: Opts): string {
+function flag_of(on: boolean, opts: Opts): u8[] {
   if (on) {
     return opts.trunc;
   }
-  return "";
+  let empty: u8[] = [];
+  return empty;
 }
 
 // The truncation string bypasses the doubling the field text gets, so
@@ -1035,28 +1035,28 @@ function flag_of(on: boolean, opts: Opts): string {
 // doubled, `post`, `"` — pushed as the runs between the quotes, not a
 // byte at a time. The span sits inside the whole input, so the quote is
 // looked for byte by byte: `__memchr` would read on to the input's end.
-function roff_field(h: usize, text: string, a: i32, n: i32, pre: string, post: string): void {
+function roff_field(h: usize, text: u8[], a: i32, n: i32, pre: u8[], post: u8[]): void {
   buf_push_byte(h, 34);
-  buf_push(h, pre);
+  buf_push_bytes_range(h, pre, 0, pre.len());
   let run: i32 = a;
   let i: i32 = a;
   while (i < n) {
     if (text[i] as i32 == 34) {
-      buf_push_range(h, text, run, i + 1);
+      buf_push_bytes_range(h, text, run, i + 1);
       buf_push_byte(h, 34);
       run = i + 1;
     }
     i = i + 1;
   }
-  buf_push_range(h, text, run, n);
-  buf_push(h, post);
+  buf_push_bytes_range(h, text, run, n);
+  buf_push_bytes_range(h, post, 0, post.len());
   buf_push_byte(h, 34);
 }
 
 // TeX's own eight: the four money-and-comment characters, the
 // underscore, the backslash, and the two braces, which need maths mode.
 // `s[a, n)` with TeX's specials escaped, pushed as the runs between them.
-function tex_quote(h: usize, s: string, a: i32, n: i32): void {
+function tex_quote(h: usize, s: u8[], a: i32, n: i32): void {
   let i: i32 = a;
   let run: i32 = a;
   while (i < n) {
@@ -1072,7 +1072,7 @@ function tex_quote(h: usize, s: string, a: i32, n: i32): void {
       esc = "$\\}$";
     }
     if (esc.len() > 0) {
-      buf_push_range(h, s, run, i);
+      buf_push_bytes_range(h, s, run, i);
       buf_push(h, esc);
       if (c == 92 || c == 123 || c == 125) {
         run = i + 1;
@@ -1082,7 +1082,7 @@ function tex_quote(h: usize, s: string, a: i32, n: i32): void {
     }
     i = i + 1;
   }
-  buf_push_range(h, s, run, n);
+  buf_push_bytes_range(h, s, run, n);
 }
 
 function spaces(n: i32): string {
@@ -1121,7 +1121,7 @@ function push_spaces(h: usize, count: i32): void {
 }
 
 // `s[a, b)` at column `at`.
-function put(own l: Line, at: i32, s: string, a: i32, b: i32): Line {
+function put(own l: Line, at: i32, s: u8[], a: i32, b: i32): Line {
   let p: i32 = at;
   if (p < 0) {
     p = 0;
@@ -1144,7 +1144,7 @@ function put(own l: Line, at: i32, s: string, a: i32, b: i32): Line {
   let emitted: i32 = l.emitted;
   if (body > 0) {
     push_spaces(l.h, pending);
-    buf_push_range(l.h, s, a, a + body);
+    buf_push_bytes_range(l.h, s, a, a + body);
     emitted = emitted + pending + body;
     pending = n - body;
   } else {
@@ -1157,7 +1157,7 @@ function put(own l: Line, at: i32, s: string, a: i32, b: i32): Line {
 // keeps the order the format was defined with, field then marker over
 // it, because the two overlap once the marker's position clamps at 0;
 // the other modes take them in line order.
-function put_marked(own l: Line, at: i32, s: string, sp: i64, mark_at: i32, mark: string, flag: boolean): Line {
+function put_marked(own l: Line, at: i32, s: u8[], sp: i64, mark_at: i32, mark: u8[], flag: boolean): Line {
   if (l.mode == 2) {
     l = put(l, at, s, span_lo(sp), span_hi(sp));
     if (flag) {
@@ -1171,9 +1171,9 @@ function put_marked(own l: Line, at: i32, s: string, sp: i64, mark_at: i32, mark
   return put(l, at, s, span_lo(sp), span_hi(sp));
 }
 
-function layout(own l0: Line, text: string, f: Fields, ref: string, g: Geom, opts: Opts): Line {
+function layout(own l0: Line, text: u8[], f: Fields, ref: u8[], g: Geom, opts: Opts): Line {
   let t: i32 = g.tlen;
-  let tr: string = opts.trunc;
+  let tr: u8[] = opts.trunc;
   let l: Line = l0;
   let base: i32 = 0;
   if (g.refs_left) {
@@ -1193,8 +1193,14 @@ function layout(own l0: Line, text: string, f: Fields, ref: string, g: Geom, opt
     l = put_marked(l, e - bn, text, f.before, e - bn - t, tr, f.before_flag);
   } else {
     if (f.before_flag) {
-      l = put(l, e + 1 - t, tr, 0, t);
-      shift = 1;
+      // An oversized marker still follows the initial gap. The keyword
+      // follows the whole marker rather than overwriting its final bytes.
+      let marker_at: i32 = e + 1 - t;
+      if (marker_at < base + g.gap) {
+        marker_at = base + g.gap;
+      }
+      l = put(l, marker_at, tr, 0, t);
+      shift = marker_at + t - e;
     }
     shift = shift + f.blank_pad;
   }
@@ -1213,7 +1219,7 @@ function layout(own l0: Line, text: string, f: Fields, ref: string, g: Geom, opt
 
 // One output line, through `l0`, which carries only the writer from one
 // line to the next.
-function render_dumb(own l0: Line, text: string, f: Fields, ref: string, g: Geom, opts: Opts): Line {
+function render_dumb(own l0: Line, text: u8[], f: Fields, ref: u8[], g: Geom, opts: Opts): Line {
   let h: usize = l0.h;
   let t: i32 = g.tlen;
   let width: i32 = g.refw + 2 * g.col_half + 4 * g.gap + 4 * t + 8 + span_len(f.tail) + span_len(f.before) + span_len(f.keyafter) + span_len(f.head) + ref.len();
@@ -1222,22 +1228,22 @@ function render_dumb(own l0: Line, text: string, f: Fields, ref: string, g: Geom
     l = layout(Line { ...l, mode: 1, cursor: 0 }, text, f, ref, g, opts);
   } else {
     l = layout(Line { ...l, mode: 2, cursor: 0, buf: spaces(width).bytes() }, text, f, ref, g, opts);
-    let out: string = rtrim_bytes(l.buf);
-    buf_push(h, out);
-    l = Line { ...l, emitted: out.len() };
+    let end: i32 = rtrim_bytes(l.buf);
+    buf_push_bytes_range(h, l.buf, 0, end);
+    l = Line { ...l, emitted: end };
   }
   if (opts.right_ref && g.has_ref) {
     if (l.emitted < l.e2) {
       push_spaces(h, l.e2 - l.emitted);
     }
     push_spaces(h, g.gap);
-    buf_push(h, ref);
+    buf_push_bytes_range(h, ref, 0, ref.len());
   }
   buf_push_byte(h, 10);
   return l;
 }
 
-function put_at(own line: u8[], at: i32, s: string, a: i32, b: i32): u8[] {
+function put_at(own line: u8[], at: i32, s: u8[], a: i32, b: i32): u8[] {
   let p: i32 = at;
   if (p < 0) {
     p = 0;
@@ -1252,35 +1258,36 @@ function put_at(own line: u8[], at: i32, s: string, a: i32, b: i32): u8[] {
   return out;
 }
 
-function rtrim_bytes(line: u8[]): string {
+function rtrim_bytes(line: u8[]): i32 {
   let n: i32 = line.len();
   while (n > 0 && line[n - 1] as i32 == 32) {
     n = n - 1;
   }
-  return slice_unchecked(bytes_to_string(line), 0, n) + "";
+  return n;
 }
 
-function render_roff(h: usize, text: string, f: Fields, ref: string, g: Geom, opts: Opts): void {
+function render_roff(h: usize, text: u8[], f: Fields, ref: u8[], g: Geom, opts: Opts): void {
+  let empty: u8[] = [];
   buf_push_byte(h, 46);
   buf_push(h, opts.macro);
   buf_push_byte(h, 32);
-  roff_field(h, text, span_lo(f.tail), span_hi(f.tail), "", flag_of(f.tail_flag, opts));
+  roff_field(h, text, span_lo(f.tail), span_hi(f.tail), empty, flag_of(f.tail_flag, opts));
   buf_push_byte(h, 32);
-  roff_field(h, text, span_lo(f.before), span_hi(f.before), flag_of(f.before_flag, opts), "");
+  roff_field(h, text, span_lo(f.before), span_hi(f.before), flag_of(f.before_flag, opts), empty);
   buf_push_byte(h, 32);
-  roff_field(h, text, span_lo(f.keyafter), span_hi(f.keyafter), "", flag_of(f.keyafter_flag, opts));
+  roff_field(h, text, span_lo(f.keyafter), span_hi(f.keyafter), empty, flag_of(f.keyafter_flag, opts));
   buf_push_byte(h, 32);
-  roff_field(h, text, span_lo(f.head), span_hi(f.head), flag_of(f.head_flag, opts), "");
+  roff_field(h, text, span_lo(f.head), span_hi(f.head), flag_of(f.head_flag, opts), empty);
   if (g.has_ref) {
     buf_push_byte(h, 32);
-    roff_field(h, ref, 0, ref.len(), "", "");
+    roff_field(h, ref, 0, ref.len(), empty, empty);
   }
   buf_push_byte(h, 10);
 }
 
 // TeX splits the keyword from what follows it, and prints no
 // truncation flag at all.
-function render_tex(h: usize, text: string, f: Fields, ref: string, g: Geom, opts: Opts): void {
+function render_tex(h: usize, text: u8[], f: Fields, ref: u8[], g: Geom, opts: Opts): void {
   buf_push_byte(h, 92);
   buf_push(h, opts.macro);
   buf_push(h, " {");
@@ -1325,7 +1332,7 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("O", "", opt_roff()));
   opts = opts.append(gnu.flag("T", "", opt_tex()));
 
-  let o: Opts = Opts { gnu_ext: true, auto_ref: false, input_ref: false, right_ref: false, fold: false, format: 0 - 1, trunc: "/", macro: "xx", width: 72 as i64, gap: 3 as i64, word_pat: "", sent_pat: "", have_word: false, have_sent: false, no_sent: false, break_file: "", have_break: false, ignore_file: "", have_ignore: false, only_file: "", have_only: false };
+  let o: Opts = Opts { gnu_ext: true, auto_ref: false, input_ref: false, right_ref: false, fold: false, format: 0 - 1, trunc: "/".bytes(), macro: "xx", width: 72 as i64, gap: 3 as i64, word_pat: "".bytes(), sent_pat: "".bytes(), have_word: false, have_sent: false, no_sent: false, break_file: "", have_break: false, ignore_file: "", have_ignore: false, only_file: "", have_only: false };
 
   let g0: gnu.Getopt = gnu.getopt_new(argv, opts, "ptx", help_text(), 1);
   while (true) {
@@ -1393,11 +1400,11 @@ pub function main(): i32 {
   // The -G output file is created — and truncated — before every check
   // but the option-parse-time ones, so a run that goes on to report an
   // extra operand or a bad regexp still empties it.
-  let w: io_buffered.BufWriter = gnu.out_new();
+  let output: Writer = stdout();
   if (have_out) {
     match (open_writer(out_name)) {
       Ok(f) => {
-        w = io_buffered.buf_writer_new(f, gnu.block_bytes());
+        output = f;
       },
       Err(e) => {
         gnu.error(gnu.quotef(out_name) + ": " + gnu.io_error_text(e));
@@ -1405,6 +1412,7 @@ pub function main(): i32 {
       }
     }
   }
+  let w: io_buffered.BufWriter = io_buffered.buf_writer_new(output, gnu.block_bytes());
   if (!o.gnu_ext) {
     if (files.len() > 2) {
       gnu.die_usage("extra operand " + gnu.quote(files[2]), 1);
@@ -1422,11 +1430,11 @@ pub function main(): i32 {
   if (o.have_word) {
     word_re = compile(o.word_pat, w);
   }
-  let sent_src: string = default_sentence();
+  let sent_src: u8[] = default_sentence().bytes();
   if (o.have_sent) {
     sent_src = o.sent_pat;
   } else if (o.input_ref || !o.gnu_ext) {
-    sent_src = "\n";
+    sent_src = "\n".bytes();
   }
   let sent_re: bre.Bre = compile(sent_src, w);
 
@@ -1437,7 +1445,7 @@ pub function main(): i32 {
   if (!o.have_word) {
     let c: i32 = 0;
     if (o.have_break) {
-      let bytes: string = slurp(o.break_file, w);
+      let bytes: u8[] = slurp(o.break_file, w);
       while (c < 256) {
         brk = brk.with(c, 0 as u8);
         c = c + 1;
@@ -1472,29 +1480,38 @@ pub function main(): i32 {
     }
   }
 
-  let ignore: string[] = [];
+  let ignore: u8[][] = [];
   if (o.have_ignore) {
     ignore = word_list(o.ignore_file, w);
   }
-  let only: string[] = [];
+  let only: u8[][] = [];
   if (o.have_only) {
     only = word_list(o.only_file, w);
   }
 
   // Every operand is read whole, into one buffer; a context never spans
   // two of them, so each file keeps its own range inside it.
-  let buf: string = "";
+  let buf: u8[] = [];
   let fstart: i32[] = [];
   let fend: i32[] = [];
   let i: i32 = 0;
-  let parts: string[] = [];
-  while (i < files.len()) {
-    let text: string = slurp(files[i], w);
-    fstart = fstart.append(buf.len());
-    parts = parts.append(text);
-    buf = buf + text;
+  if (files.len() == 1) {
+    buf = slurp(files[0], w);
+    fstart = fstart.append(0);
     fend = fend.append(buf.len());
-    i = i + 1;
+  } else {
+    let input: usize = buf_new(read_size());
+    let len: i32 = 0;
+    while (i < files.len()) {
+      let text: u8[] = slurp(files[i], w);
+      fstart = fstart.append(len);
+      buf_push_bytes_range(input, text, 0, text.len());
+      len = len + text.len();
+      fend = fend.append(len);
+      i = i + 1;
+    }
+    buf = buf_take_bytes(input);
+    buf_free(input);
   }
 
   let words: Words = Words { starts: [], ends: [] };
@@ -1526,12 +1543,12 @@ pub function main(): i32 {
       let ce: i32 = fend[i];
       let m: (i32, i32) = (0 - 1, 0 - 1);
       if (!o.no_sent) {
-        m = sent_re.search_from(buf, pos, fend[i]);
+        m = sent_re.search_from_bytes(buf, pos, fend[i]);
       }
       if (m.0 >= 0) {
         if (m.0 == pos) {
-          let shown: string = sent_src;
-          gnu.die(w, "error: regular expression has a match of length zero: " + gnu.quote(shown), 1);
+          let shown: u8[] = sent_src;
+          gnu.die(w, "error: regular expression has a match of length zero: " + gnu.quote_bytes(shown), 1);
         }
         ce = m.1;
         pos = m.1;
@@ -1573,21 +1590,20 @@ pub function main(): i32 {
           }
         }
         if (o.have_ignore || o.have_only) {
-          let kw: string = slice_unchecked(buf, ws, we) + "";
-          if (o.have_ignore && in_list(ignore, kw, o.fold)) {
+          if (o.have_ignore && in_list(ignore, buf, ws, we, o.fold)) {
             keep = false;
           }
-          if (o.have_only && !in_list(only, kw, o.fold)) {
+          if (o.have_only && !in_list(only, buf, ws, we, o.fold)) {
             keep = false;
           }
         }
         if (keep) {
-          let refv: string = "";
+          let refv: u8[] = [];
           if (o.auto_ref) {
-            refv = show + ":" + lines.nums[line_of(lines, ws)].to_string();
+            refv = (show + ":" + lines.nums[line_of(lines, ws)].to_string()).bytes();
           } else if (o.input_ref) {
             let li: i32 = line_of(lines, ws);
-            refv = slice_unchecked(buf, lines.starts[li], lines.ref_end[li]) + "";
+            refv = copy_range(buf, lines.starts[li], lines.ref_end[li]);
           }
           if (refv.len() > maxref) {
             maxref = refv.len();
@@ -1626,16 +1642,16 @@ pub function main(): i32 {
   }
 
   let order: i32[] = sort_occs(buf, occs, o.fold);
-  let nbuf: string = norm_all(buf);
+  let nbuf: u8[] = norm_all(buf);
   let h: usize = w.handle();
   let ln: Line = Line { h: h, width: 0, mode: 0, cursor: 0, pending: 0, emitted: 0, e2: 0, ok: true, buf: [] };
   let j: i32 = 0;
   while (j < order.len()) {
     let oc: Occ = occs[order[j]];
     let f: Fields = cut_fields(nbuf, oc, words, geom, maxword);
-    let refv2: string = oc.ref;
+    let refv2: u8[] = oc.ref;
     if (o.auto_ref && refs_left) {
-      refv2 = refv2 + ":";
+      refv2 = refv2.append(58 as u8);
     }
     if (o.format == 1) {
       render_roff(h, nbuf, f, oc.ref, geom, o);
