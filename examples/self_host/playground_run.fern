@@ -318,7 +318,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   let sub: ircore.Sub = semlower.target_substitution(typed, target);
   let out: string = "";
   if (target == "x86-64-linux") {
-    out = asm_ir.emit_module_or_error_sub(full, sub);
+    out = asm_ir.emit_module_or_error_sub(full, sub, 0 as usize);
   } else if (target == "arm64-linux") {
     out = asm_arm64_ir.emit_module_or_error_sub(full, false, sub, 0 as usize);
   } else if (target == "arm64-darwin") {
