@@ -2082,6 +2082,9 @@ function sym_addr_need(sym: string): string {
   if (sym == "__fern_splice_pipe") {
     return "raw_splice_pipe";
   }
+  if (sym == "__fern_cov_counters") {
+    return "raw_cover";
+  }
   return "";
 }
 
@@ -5526,6 +5529,9 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
   }
   if (!darwin && s.any_need(["reader_splice", "raw_splice_pipe"])) {
     s = s.write("    .section .bss\n    .p2align 3\n__fern_splice_pipe: .quad 0, 0\n    .text\n");
+  }
+  if (s.has_need("raw_cover")) {
+    s = s.write("    .section .bss\n    .p2align 3\n__fern_cov_counters: .quad 0\n    .text\n");
   }
   if (s.has_need("str_read_line")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_line(ctgt), s);

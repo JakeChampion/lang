@@ -948,6 +948,7 @@ pub function raw_floor_sigs(): RawFloorSig[] {
     RawFloorSig { name: "__raw_scratch", params: [n], result: p },
     RawFloorSig { name: "__raw_environ", params: [], result: p },
     RawFloorSig { name: "__raw_splice_pipe", params: [], result: p },
+    RawFloorSig { name: "__raw_cover", params: [], result: p },
     RawFloorSig { name: "__raw_call1", params: [p, p], result: n },
     RawFloorSig { name: "__raw_call2", params: [p, p, p], result: n },
     RawFloorSig { name: "__fern_str_eq", params: [p, p], result: t_bool() },

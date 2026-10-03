@@ -267,7 +267,11 @@ loop does not copy either. A value read only by its phi mate, when the
 mate is already spilled, takes the mate's slot rather than a register it
 would only be stored from on the edge (`ssa.sole_readers`), so a value a
 loop changes on some iterations is not loaded and stored back on the others.
-A phi reads its operand
+A spilled phi, or a two-address result, whose mate's slot is taken shares
+the slot of one of its operands when no value in that slot is live where it
+is defined, nor it where they are (`ssa.path_slot`): the merges of an else-if
+chain inside a loop then keep each local in its loop header phi's slot,
+though that phi's interval covers the whole body. A phi reads its operand
 on the edge, at the predecessor's terminator, not inside the header, and
 a loop-carried operand's interval ends at that edge. Empty blocks holding
 only a branch are skipped by every edge into them and dropped, a phi loses
