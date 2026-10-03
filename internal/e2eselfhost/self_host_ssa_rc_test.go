@@ -292,17 +292,18 @@ function main(): i32 {
     let genericPlan = ssaunits.plan(genericFunc, [2], ssaunits.no_view());
     if (!genericPlan.ok) { eprint(genericPlan.why); return 7; }
     if (!ssarc.lower(genericFunc, [2], genericPlan, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index([]), ssaunits.no_view()).ok) { return 8; }
-    // The planner admits any map cursor, but the walk still needs the
-    // cursor's key and value to be ones it can walk: a key or a value record
-    // with no schema in the table refuses the cursor.
+    // A map cursor holds a unit of its map, so the planner admits it exactly
+    // when it admits the map: a key or a value record with no schema in the
+    // table refuses the cursor as it refuses the map.
     let cursorType: typeinfo.Type = typeinfo.TypeStruct { name: "MapIter", args: [typeinfo.TypeStruct { name: "Missing", args: [] }, typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }] };
     let cursorFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, graph: g, values: [cursorType], params: [cursorType], result: cursorType, records: semrecords.no_records(), enums: [], calls: [] };
+    let cursorMap: typeinfo.Type = typeinfo.TypeMap { key: typeinfo.TypeStruct { name: "Missing", args: [] }, value: typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false } };
+    let cursorMapPlan = ssaunits.plan(ssasem.Func { ...cursorFunc, values: [cursorMap], params: [cursorMap], result: cursorMap }, [2], ssaunits.no_view());
     let cursorPlan = ssaunits.plan(cursorFunc, [2], ssaunits.no_view());
-    if (!cursorPlan.ok) { eprint(cursorPlan.why); return 211; }
-    if (!refused(ssarc.lower(cursorFunc, [2], cursorPlan, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index([]), ssaunits.no_view()), "unsupported physical RC value type")) { return 212; }
+    if (cursorMapPlan.ok || cursorPlan.ok || cursorPlan.why != cursorMapPlan.why) { eprint(cursorPlan.why); return 211; }
     let valueCursorType: typeinfo.Type = typeinfo.TypeStruct { name: "MapIter", args: [typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }, typeinfo.TypeStruct { name: "Missing", args: [] }] };
     let valueCursorFunc = ssasem.Func { ...cursorFunc, values: [valueCursorType], params: [valueCursorType], result: valueCursorType };
-    if (!refused(ssarc.lower(valueCursorFunc, [2], ssaunits.plan(valueCursorFunc, [2], ssaunits.no_view()), irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index([]), ssaunits.no_view()), "unsupported physical RC value type")) { return 213; }
+    if (ssaunits.plan(valueCursorFunc, [2], ssaunits.no_view()).ok) { return 213; }
     // So does a wide array field. The walk visits only the REFERENCE
     // fields, and an array of scalars has no element to visit, so it needs its
     // own box released and nothing more.
