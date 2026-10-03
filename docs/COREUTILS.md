@@ -3853,22 +3853,24 @@ Darwin answers all three from `getfsstat(2)`, whose `struct statfs` carries
 `f_fstypename`. #9104 is that primitive, shaped as a list rather than a lookup
 because df deduplicates by device across the whole table.
 
-**`stat` cannot report a birth time, a file's SELinux context, or three of
-statfs's fields.** `stat` and `lstat` lower to `newfstatat(2)`, whose `struct
-stat` has no birth time (#9096); a file's context is an extended attribute and
-there is no `getxattr` (#9098); and `statfs` reads `f_type`, `f_fsid` and
-`f_frsize` and then drops them (#9097). That is `%w`, `%W`, `%C` and `-f`'s
-`%t`, `%T`, `%i`, `%S` — and the DEFAULT multi-line block, `--terse`, `-f` and
-`-t -f` all carry one of them, so all four are refused with a diagnostic naming
-the field and exit 1. The refusal comes only after the operand has been read,
+**`stat` cannot report a birth time, a file's SELinux context, or — on Darwin —
+a file system's type name.** `stat` and `lstat` lower to `newfstatat(2)`, whose
+`struct stat` has no birth time (#9096); a file's context is an extended
+attribute and there is no `getxattr` (#9098); and Darwin's `%T` is
+`f_fstypename`, a string `FsStat` does not carry (#11255). That is `%w`, `%W`,
+`%C` and Darwin's `-f %T` — and the DEFAULT multi-line block and `--terse` carry
+one of them, as does `-f` on Darwin, so those are refused with a diagnostic
+naming the field and exit 1. On Linux `%T` is GNU's name for the `f_type`
+magic, from `coreutils/lib/fstype.fern`, and `-f` and `-t -f` are answered. The refusal comes only after the operand has been read,
 so `stat nosuch` still reports `cannot statx` exactly as GNU does.
 
 Printing GNU's own "unknown" rendering instead — `-` and `0` for a birth time,
 a zeroed magic number — was the tempting shape and is the one thing that must
 not happen: ext4 on every machine the gate runs on DOES report a birth time,
 so those bytes would be an invention and the corpus would be measuring it. The
-corpus therefore holds 414 cases over the format engine and none over the four
-layouts; they arrive with the primitives, and #8366 stays open until they do.
+corpus covers the format engine and the two file-system layouts, which it
+measures on `/proc` because every count there is a fixed zero; the file layouts
+arrive with their primitives.
 
 `QUOTING_STYLE` reaches `%N` and nothing else, and only when the format as
 written holds the two bytes `%N`: `%-N`, an octal-escaped `%` and the default

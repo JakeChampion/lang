@@ -9,8 +9,8 @@
 // exists to show; and Darwin's u32 f_bsize loaded as 64 bits drags f_iosize
 // in beside it.
 //
-// The block size and the two limits are compared exactly, since none of them
-// moves under a mounted filesystem. The counts are compared for ORDER
+// The block size, the two limits and the type, ID and fundamental block size
+// are compared exactly, since none of them moves under a mounted filesystem. The counts are compared for ORDER
 // instead — blocks get used while the test runs — but the nesting
 // (available <= free <= total) breaks long before the bounds do when a record
 // is read at the wrong offset.
@@ -34,6 +34,7 @@ import (
 func statfsProbe(t *testing.T, dir string) string {
 	t.Helper()
 	blockSize, nameMax, pathMax := hostFsFacts(t, dir)
+	fsType, fsid, fragSize := hostFsIdentity(t, dir)
 	return fmt.Sprintf(`function main(): i32 {
     match (statfs(%[1]q)) {
         Ok(fs) => {
@@ -44,6 +45,9 @@ func statfsProbe(t *testing.T, dir string) string {
             if (fs.blocks_free > fs.blocks) { return 5; }
             if (fs.blocks_avail > fs.blocks_free) { return 6; }
             if (fs.files_free > fs.files) { return 7; }
+            if (fs.fs_type != %[6]di64) { return 10; }
+            if (fs.fsid != %[7]di64) { return 11; }
+            if (fs.frag_size != %[8]di64) { return 12; }
         },
         Err(_) => { return 8; }
     }
@@ -54,7 +58,7 @@ func statfsProbe(t *testing.T, dir string) string {
     }
     return 0;
 }
-`, dir, blockSize, nameMax, pathMax, dir+"/no-such-directory-here/x")
+`, dir, blockSize, nameMax, pathMax, dir+"/no-such-directory-here/x", fsType, fsid, fragSize)
 }
 
 func TestX86_64Statfs(t *testing.T) {

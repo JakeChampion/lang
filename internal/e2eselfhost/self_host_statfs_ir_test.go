@@ -38,13 +38,14 @@ type hostFs struct {
 	blockSize, blocks, blocksFree, blocksAvail int64
 	files, filesFree                           int64
 	nameMax, pathMax                           int64
+	fsType, fsid, fragSize                     int64
 }
 
 // selfHostStatfsSource is the probe. Each failing step returns its own code.
 //
-// The three limits and the two TOTALS are compared exactly: a block size, a
-// name length, a block count and an inode count are all fixed for a mounted
-// filesystem, and they are what a shifted offset lands on. The three FREE
+// The three limits, the two TOTALS and the type, ID and fundamental block
+// size are compared exactly: all are fixed for a mounted filesystem, and they
+// are what a shifted offset lands on. The three FREE
 // counts move while the test runs, so each is compared against the host's
 // reading with a slack window — wide enough for concurrent writes, and far
 // narrower than the gap between `f_bfree` and `f_bavail` on any filesystem
@@ -70,6 +71,9 @@ func selfHostStatfsSource(dir string, h hostFs, missing string) string {
             if (fs.blocks_avail > fs.blocks_free) { return 12; }
             if (fs.blocks_free > fs.blocks) { return 13; }
             if (fs.files_free > fs.files) { return 14; }
+            if (fs.fs_type != %[14]di64) { return 17; }
+            if (fs.fsid != %[15]di64) { return 18; }
+            if (fs.frag_size != %[16]di64) { return 19; }
         },
         Err(_) => { return 15; }
     }
@@ -84,7 +88,7 @@ func selfHostStatfsSource(dir string, h hostFs, missing string) string {
 		h.blocksFree-slackBlocks, h.blocksFree+slackBlocks,
 		h.blocksAvail-slackBlocks, h.blocksAvail+slackBlocks,
 		h.filesFree-slackFiles, h.filesFree+slackFiles,
-		missing)
+		missing, h.fsType, h.fsid, h.fragSize)
 }
 
 // statfsProbeSource builds the probe against a directory the host and the
@@ -212,12 +216,13 @@ func TestSelfHostStatfsLayoutMatchesTheHost(t *testing.T) {
 #include <stddef.h>
 #include <stdio.h>
 int main(void){
-  printf("size %zu word %zu bsize %zu blocks %zu bfree %zu bavail %zu files %zu ffree %zu namelen %zu\n",
+  printf("size %zu word %zu bsize %zu blocks %zu bfree %zu bavail %zu files %zu ffree %zu namelen %zu type %zu fsid %zu frsize %zu\n",
     sizeof(struct statfs), sizeof(((struct statfs*)0)->f_bsize),
     offsetof(struct statfs, f_bsize), offsetof(struct statfs, f_blocks),
     offsetof(struct statfs, f_bfree), offsetof(struct statfs, f_bavail),
     offsetof(struct statfs, f_files), offsetof(struct statfs, f_ffree),
-    offsetof(struct statfs, f_namelen));
+    offsetof(struct statfs, f_namelen), offsetof(struct statfs, f_type),
+    offsetof(struct statfs, f_fsid), offsetof(struct statfs, f_frsize));
   return 0;
 }
 `
@@ -251,6 +256,9 @@ int main(void){
 		{"files", "files"},
 		{"files_free", "ffree"},
 		{"name_max", "namelen"},
+		{"fs_type", "type"},
+		{"fsid", "fsid"},
+		{"frag_size", "frsize"},
 	} {
 		want, ok := host[c.member]
 		if !ok {
@@ -273,7 +281,7 @@ int main(void){
 		t.Fatalf("the host's __statfs_word is %d bytes, not 8 — the projection assumes a 64-bit word", w)
 	}
 	darwinArm, linuxArm := splitDarwinFork(fernFunctionBody(t, "statfs_field_i64"))
-	if strings.Contains(linuxArm, "__load_i32") {
+	if strings.Contains(linuxArm, "__load_i32") || strings.Contains(linuxArm, "statfs_u32(") {
 		t.Error("statfs_field_i64 loads a Linux field 32 bits wide; every member of that record is a 64-bit word")
 	}
 	// The inverse, for the record this host cannot measure: Darwin's f_bsize
@@ -281,7 +289,7 @@ int main(void){
 	// (f_iosize << 32 | f_bsize). Asserting the SHAPE is all a Linux host can
 	// do; the macOS runner measures it, via the block-size ceiling in the
 	// Mach-O suite's statfs case.
-	if !strings.Contains(darwinArm, "__load_i32") {
+	if !strings.Contains(darwinArm, "statfs_u32(") || !strings.Contains(fernFunctionBody(t, "statfs_u32"), "__load_i32") {
 		t.Error("statfs_field_i64 loads Darwin's u32 f_bsize 64 bits wide; f_iosize shares that word")
 	}
 }

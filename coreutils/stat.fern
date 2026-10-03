@@ -43,7 +43,7 @@
 //
 // ## What this build cannot answer
 //
-// Three of the record's fields have no primitive behind them, and the
+// Some of the record's fields have no primitive behind them, and the
 // directives that read them are REFUSED rather than answered with a
 // plausible-looking value:
 //
@@ -57,10 +57,11 @@
 //     puts `%C` in the default block and the terse line when
 //     `is_selinux_enabled()`, so on a kernel without SELinux this
 //     blocks the directive and not a mode.
-//   - `statfs` reports six counts and two limits and drops `f_type`,
-//     `f_fsid` and `f_frsize` (#9097), which are `-f`'s
-//     `%T` / `%t`, `%i` and `%S`. The default `-f` block and
-//     `-t -f` both carry them.
+//   - on Darwin, the file system's type NAME (`%T`), which GNU reads
+//     from `f_fstypename`; `statfs` reports the type number only, and
+//     Darwin's is an index into the running kernel's VFS list rather
+//     than a fixed magic (#11255). The default `-f` block carries it.
+//     On Linux the number IS the name, through `lib/fstype.fern`.
 //
 // Printing GNU's own "unknown" rendering for these — `-` and `0` for
 // a birth time, a zeroed magic number — would be a fiction on a
@@ -78,6 +79,7 @@ import "std/tz";
 import "./lib/pwdb";
 import "./lib/canon";
 import "./lib/filetype";
+import "./lib/fstype";
 
 function help_text(): string {
   let out: string = "";
@@ -143,17 +145,37 @@ function help_text(): string {
   out = out + "  %c   total file nodes in file system\n";
   out = out + "  %d   free file nodes in file system\n";
   out = out + "  %f   free blocks in file system\n";
+  out = out + "  %i   file system ID in hex\n";
   out = out + "  %l   maximum length of filenames\n";
   out = out + "  %n   file name\n";
   out = out + "  %Qn  quoted file name\n";
   out = out + "  %s   block size (for faster transfers)\n";
+  out = out + "  %S   fundamental block size (for block counts)\n";
+  out = out + "  %t   file system type in hex\n";
+  out = out + "  %T   file system type in human readable form\n";
   out = out + "\n";
-  out = out + "This build cannot report the file birth time (%w, %W), a file's\n";
-  out = out + "SELinux context (%C), or the file system's type, ID and fundamental\n";
-  out = out + "block size (%t, %T, %i, %S), so the default output, --terse and\n";
-  out = out + "--file-system without a --format are refused. See JakeChampion/lang\n";
-  out = out + "issues 9096, 9097 and 9098.\n";
+  out = out + "--terse --file-system is equivalent to the following FORMAT:\n";
+  out = out + "    " + fs_terse_format();
+  out = out + "\n";
+  out = out + "This build cannot report the file birth time (%w, %W) or a file's\n";
+  out = out + "SELinux context (%C), so the default output and --terse are refused,\n";
+  out = out + "nor, on Darwin, the file system's type name (%T), which refuses the\n";
+  out = out + "default --file-system output there. See JakeChampion/lang issues\n";
+  out = out + "9096, 9098 and 11255.\n";
   return out;
+}
+
+// GNU 9.12's two built-in `--file-system` layouts.
+function fs_terse_format(): string {
+  return "%Qn %i %l %t %s %S %b %f %a %c %d\n";
+}
+
+function fs_default_format(): string {
+  let f: string = "  File: %Qn\n";
+  f = f + "    ID: %-8i Namelen: %-7l Type: %T\n";
+  f = f + "Block size: %-10s Fundamental block size: %S\n";
+  f = f + "Blocks: Total: %-10b Free: %-10f Available: %a\n";
+  return f + "Inodes: Total: %-10c Free: %d\n";
 }
 
 // ---- options ----------------------------------------------------------------
@@ -768,7 +790,7 @@ function stat_zero(): FileStat {
 }
 
 function fsstat_zero(): FsStat {
-  return FsStat { block_size: 0 as i64, blocks: 0 as i64, blocks_free: 0 as i64, blocks_avail: 0 as i64, files: 0 as i64, files_free: 0 as i64, name_max: 0 as i64, path_max: 0 as i64 };
+  return FsStat { block_size: 0 as i64, blocks: 0 as i64, blocks_free: 0 as i64, blocks_avail: 0 as i64, files: 0 as i64, files_free: 0 as i64, name_max: 0 as i64, path_max: 0 as i64, fs_type: 0 as i64, fsid: 0 as i64, frag_size: 0 as i64 };
 }
 
 // ---- rendering one directive ------------------------------------------------
@@ -1013,7 +1035,35 @@ function render_fs(d: Directive, it: FsItem, qi: Quoting): (Rendered, Quoting) {
   if (c == 115) {
     return (ok_rendered(out_unsigned(d, fs.block_size as u64)), qi);
   }
+  if (c == 105) {
+    return (ok_rendered(out_hex(d, fs.fsid as u64)), qi);
+  }
+  if (c == 83) {
+    let frsize: i64 = fs.frag_size;
+    if (frsize == 0 as i64) {
+      frsize = fs.block_size;
+    }
+    return (ok_rendered(out_unsigned(d, frsize as u64)), qi);
+  }
+  if (c == 116) {
+    return (ok_rendered(out_hex(d, fs.fs_type as u64)), qi);
+  }
+  if (c == 84) {
+    return (ok_rendered(out_string(d, fstype_text(fs.fs_type))), qi);
+  }
   return (unknown_rendered(), qi);
+}
+
+// GNU's name for a Linux file system type, or `UNKNOWN (0x…)`.
+function fstype_text(magic: i64): string {
+  match (fstype.name(magic)) {
+    Some(n) => {
+      return n;
+    },
+    None => {
+      return "UNKNOWN (0x" + hex_digits(magic as u64) + ")";
+    }
+  }
 }
 
 // ---- the refusal --------------------------------------------------------------
@@ -1025,8 +1075,8 @@ function blocked(d: Directive, fs_mode: boolean): string {
     return "";
   }
   if (fs_mode) {
-    if (d.conv == 105 || d.conv == 83 || d.conv == 116 || d.conv == 84) {
-      return "%" + string_from_bytes_unchecked([d.conv as u8]);
+    if (d.conv == 84 && target_os() == "darwin") {
+      return "%T";
     }
     return "";
   }
@@ -1223,16 +1273,21 @@ pub function main(): i32 {
     gnu.die_usage("missing operand", 1);
   }
 
-  // Each of the four built-in layouts names a field no primitive
-  // reports, so there is nothing to render; the refusal waits until the
-  // operand has been read, because GNU reports an operand it cannot stat
-  // before it ever formats one. See the header.
+  // The two file layouts and Darwin's default file-system block name a
+  // field no primitive reports, so there is nothing to render; the
+  // refusal waits until the operand has been read, because GNU reports
+  // an operand it cannot stat before it ever formats one. See the header.
+  // A built-in layout carries its own newlines.
+  let newline: boolean = !escapes;
   let builtin: string = "";
   if (!have_format) {
+    newline = false;
     if (fs_mode && terse) {
-      builtin = "--terse --file-system requires %i, which is not supported on this system";
+      format = fs_terse_format();
+    } else if (fs_mode && target_os() == "darwin") {
+      builtin = "--file-system requires %T, which is not supported on this system";
     } else if (fs_mode) {
-      builtin = "--file-system requires %t, which is not supported on this system";
+      format = fs_default_format();
     } else if (terse) {
       builtin = "--terse requires %W, which is not supported on this system";
     } else {
@@ -1260,9 +1315,9 @@ pub function main(): i32 {
     }
     let res: (io_buffered.BufWriter, boolean, Quoting) = (o, true, quoting);
     if (fs_mode) {
-      res = do_fs(o, pieces, name, !escapes, quoting, builtin);
+      res = do_fs(o, pieces, name, newline, quoting, builtin);
     } else {
-      res = do_file(o, pieces, name, deref, !escapes, z, quoting, builtin);
+      res = do_file(o, pieces, name, deref, newline, z, quoting, builtin);
     }
     o = res.0;
     quoting = res.2;

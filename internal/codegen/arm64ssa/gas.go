@@ -9003,7 +9003,8 @@ func emitNulTermPathInline(w func(string, ...any), lp string) {
 //
 // `path_max` is not in the record. Linux has no pathconf syscall and PATH_MAX
 // is the kernel's own 4096 for every filesystem it mounts, so the helper
-// stores that constant.
+// stores that constant. f_fsid's two 32-bit words are joined into one, first
+// word high, as GNU `stat -f` prints it.
 var linuxStatfsFields = []struct{ box, src int32 }{
 	{ir.FsStat.BlockSize, 8},
 	{ir.FsStat.Blocks, 16},
@@ -9012,7 +9013,11 @@ var linuxStatfsFields = []struct{ box, src int32 }{
 	{ir.FsStat.Files, 40},
 	{ir.FsStat.FilesFree, 48},
 	{ir.FsStat.NameMax, 64},
+	{ir.FsStat.FsType, 0},
+	{ir.FsStat.FragSize, 72},
 }
+
+const linuxStatfsFsid = 56
 
 // emitStatfsHelper writes statfs(path) -> Result[FsStat, IoError]: the
 // geometry and the length limits of the filesystem the path resolves on.
@@ -9059,6 +9064,10 @@ func emitStatfsHelper(w func(string, ...any)) {
 	}
 	w("\tmov x9, #%d", pathMax)
 	w("\tstr x9, [x23, #%d]", ir.FsStat.PathMax)
+	w("\tldr w9, [sp, #%d]", 64+linuxStatfsFsid)
+	w("\tldr w10, [sp, #%d]", 64+linuxStatfsFsid+4)
+	w("\torr x9, x10, x9, lsl #32")
+	w("\tstr x9, [x23, #%d]", ir.FsStat.Fsid)
 	// Result.Ok(FsStat): box {rc=1, tag=0, fsstat@+8}.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)

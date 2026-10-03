@@ -907,6 +907,13 @@ func builtinStructDecls() []*ast.StructDecl {
 		// path resolves on — which is exactly what
 		// `pathconf(path, _PC_NAME_MAX)` means — and a caller that has
 		// paid for the lookup should not pay again for the other half.
+		//
+		// `fs_type` is the kernel's filesystem type number: Linux's
+		// magic (`0xef53` for ext4) or Darwin's VFS type index, which
+		// share no namespace. `fsid` is `f_fsid`'s two 32-bit words as
+		// one number, first word high, the way GNU `stat -f` prints it.
+		// `frag_size` is `f_frsize`; Darwin has none and reports
+		// `f_bsize`.
 		{
 			Name: "FsStat",
 			Fields: []ast.Param{
@@ -918,6 +925,9 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "files_free", Type: ast.NumberType{Width: 64, Signed: true}},
 				{Name: "name_max", Type: ast.NumberType{Width: 64, Signed: true}},
 				{Name: "path_max", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "fs_type", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "fsid", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "frag_size", Type: ast.NumberType{Width: 64, Signed: true}},
 			},
 		},
 		// WinSize — `window_size(fd)` shape: how large the terminal
