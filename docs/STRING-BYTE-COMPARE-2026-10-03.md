@@ -56,3 +56,15 @@ workstream runs during measurement.
 The before/after ranges overlap. This measurement establishes byte-correct
 operation without evidence of a material performance change for this case;
 it does not establish a general speedup.
+
+After integrating the string dispatch and view-analysis repairs from
+PR #11173, bootstrap again reaches identical stages 2 and 3 at 12,513,569
+bytes, SHA-256
+`8e8ba99d47e0f9c720ce5fd2a4b9b38353b58f87adea78269530015be51e176e`.
+The range fixture passes on Darwin, core WASM, Preview 2 and the interpreter;
+all six native install cases pass again with balanced allocations. The
+emitted text and raw install binaries are byte-identical to those measured
+above, so these timings still describe the current binaries. The repair adds
+144 bytes of compiler text and 8 bytes of unwind data within the same file
+size. Combined Linux semantic, range, CLI, primary install, full unit and
+lint validation passes on the frozen source snapshot.
