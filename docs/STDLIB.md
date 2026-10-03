@@ -1172,7 +1172,11 @@ serializer.
   titled with the status text. `json.JsonError` answers 400 titled
   "Malformed JSON" with where the text broke, and a `string` error
   answers 500 with the status text alone, since an internal message is
-  for the log rather than the peer (`examples/tests/http_respond_test.fern`).
+  for the log rather than the peer. std/fetch's `FetchError` answers 504
+  for a `Timeout`, 500 for an `InvalidUrl` or `InvalidRequest` (the
+  handler built the request wrong) and 502 for the rest, without its
+  message, which names upstream hosts and addresses
+  (`examples/tests/http_respond_test.fern`).
   A `Result[HttpResponse, dyn error.Error]` goes through
   `respond_error(result, plat)` instead: the error's `message()` is
   written to `plat.log` and the reply is the bare 500 problem
@@ -1785,7 +1789,9 @@ answer is `Result[HttpResponse, FetchError]`.
   into these by its case: DNS cases to `Dns`, the connect and TLS
   cases to `Connect`, `Timeout` and `Tls`, what the host would not send
   to `InvalidRequest` / `InvalidUrl`, what it could not read to
-  `Protocol`, `BodyLimit` and `Decode`. `(e).message()`.
+  `Protocol`, `BodyLimit` and `Decode`. `(e).message()`. It is
+  `http.ToResponse`, so a handler fetching upstream fails with `?`
+  (504 / 500 / 502, under "Errors a handler answers with" above).
 - **Timeouts:** `Timeouts { connect_ms, inactivity_ms, total_ms }`,
   `timeouts()` gives 10 s / 30 s / 60 s. The connect bound covers the
   whole address race; inactivity is the longest wait for the next byte

@@ -3969,8 +3969,8 @@ func TestRunnerMockPlatformCannedExample(t *testing.T) {
 // `examples/tests/http_respond_test.fern` pins the error side of a handler
 // (#9854): helpers that fail with `?` over `HttpError`, `http.respond`
 // answering the failure as an RFC 9457 problem, `http.problem`'s body,
-// the `ToResponse` impls for `JsonError` and `string`, and `respond_with`
-// keeping the state beside the answer.
+// the `ToResponse` impls for `JsonError`, `string` and `fetch.FetchError`,
+// and `respond_with` keeping the state beside the answer.
 func TestRunnerHttpRespondExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/http_respond_test.fern")
@@ -3978,7 +3978,7 @@ func TestRunnerHttpRespondExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: HTTP respond", "# pass 10", "# fail 0", "1..10"} {
+	for _, w := range []string{"# Suite: HTTP respond", "# pass 13", "# fail 0", "1..13"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

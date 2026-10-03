@@ -117,7 +117,7 @@ pub enum Phase { Connecting, Inactivity, Total }
 // past what `Decoding.ratio` allows, the message naming the allowance;
 // `Cancelled` for a request abandoned by its caller, part of the sum so a
 // match written today survives the client growing cancellation; this
-// client does not produce it yet.
+// client does not produce it yet. It is `http.ToResponse`, below.
 pub enum FetchError {
   InvalidUrl(string),
   InvalidRequest(string),
@@ -212,6 +212,29 @@ function __later_message(e: FetchError): string {
 
 pub function (e: FetchError) to_string(): string {
   return e.message();
+}
+
+// A handler that fetches upstream fails with `?`: a timeout answers 504, a
+// request the handler built wrong answers 500, and every other failure 502.
+// The message is not sent, since it names upstream hosts and addresses.
+impl http.ToResponse for FetchError {
+  function to_response(self: FetchError): HttpResponse {
+    match (self) {
+      Timeout(p) => {
+        return http.problem(504, "", "");
+      },
+      InvalidUrl(what) => {
+        return http.problem(500, "", "");
+      },
+      InvalidRequest(what) => {
+        return http.problem(500, "", "");
+      },
+      _ => {
+        return http.problem(502, "", "");
+      }
+    }
+    return http.problem(502, "", "");
+  }
 }
 
 // ---------------------------------------------------------------------------
