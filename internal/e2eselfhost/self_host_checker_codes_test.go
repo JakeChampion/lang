@@ -1976,6 +1976,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// A reserved name is reserved whatever kind takes it (#10855).
 		{"enum-takes-builtin-struct-name", "import \"std/string\";\nenum Span { Empty, Wide(f64, string) }\nfunction f(s: Span): i32 {\n  match (s) { Wide(d, t) => { return (d * 4.0) as i32 + t.len(); }, Empty => { return 0; } }\n}\nfunction main(): i32 { return f(Wide(1.0, \"ab\")); }\n", []string{"E010"}},
 		{"struct-takes-builtin-enum-name", "struct Option { n: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
+		// A binding or a top-level function named like a builtin constructor
+		// shadows it, so the call is a call of that and its result is judged
+		// against the destination like any other (#10394).
+		{"ctor-shadowed-by-function-arg", "function Some(n: i32): i32 { return n; }\nfunction takes(o: Option[i64]): i32 { return 0; }\nfunction main(): i32 { return takes(Some(5)); }\n", []string{"E038"}},
+		{"ctor-shadowed-by-local-arg", "function takes(r: Result[i64, i32]): i32 { return 0; }\nfunction main(): i32 { let Err: (i64) => i32 = (v: i64) => 1; return takes(Err(5)); }\n", []string{"E038"}},
+		{"ctor-shadowed-by-local-init", "function main(): i32 { let Some = (v: i64): i32 => 1; let o: Option[i64] = Some(1); return 0; }\n", []string{"E003"}},
+		{"ctor-shadowed-by-function-ok", "function Some(n: i32): i32 { return n + 1; }\nfunction main(): i32 { let x: i32 = Some(5); return x - 6; }\n", nil},
+		{"ctor-builtin-settles-ok", "function takes(o: Option[i64]): i32 { return 0; }\nfunction main(): i32 { return takes(Some(40)) + takes(Option.Some(1)); }\n", nil},
 		{"enum-non-reserved-ok", "enum Color { Red, Green }\nfunction main(): i32 { return 0; }\n", nil},
 		// Generic functions: a concrete argument must NOT be flagged against
 		// the opaque type parameter (E038 false-positive guard).

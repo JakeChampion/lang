@@ -3931,6 +3931,9 @@ function ctor_payload_diags(e: ast.Expr, to: typeinfo.Type, s: Scope): util.Diag
     return out;
   }
   if let ast.ExprCall(c) = e {
+    if (ctor_name_taken(c, s)) {
+      return out;
+    }
     let vname: string = ctor_variant_name(c);
     let k: i32 = 0;
     while (k < c.args.len()) {
@@ -3948,6 +3951,16 @@ function ctor_payload_diags(e: ast.Expr, to: typeinfo.Type, s: Scope): util.Diag
     }
   }
   return out;
+}
+
+// ctor_name_taken reports whether a bare constructor call's name is taken by a
+// binding or a top-level function, which makes the call a call of that rather
+// than a construction. A qualified `Option.Some(x)` is never shadowed.
+function ctor_name_taken(c: ast.ExprCall, s: Scope): boolean {
+  if let ast.ExprIdent(id) = c.callee {
+    return !is_unknown(s.lookup(id.name)) || s.has_sig(id.name);
+  }
+  return false;
 }
 
 // ctor_variant_name is the variant a constructor call names, bare (`Some(x)`)
@@ -5159,8 +5172,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // non-function), not a `W`. Without this the call typed to the enum and the
   // error surfaced somewhere else entirely, as an E002 return mismatch (a
   // TypeFunc binding is already dispatched as a closure call above; this is
-  // every other bound type). #6658.
-  let ctor_shadowed: boolean = !is_unknown(s.lookup(name));
+  // every other bound type). #6658. A top-level function of the name shadows
+  // it the same way, and the call types to that function's return.
+  let ctor_shadowed: boolean = ctor_name_taken(c, s);
   if (!ctor_shadowed && s.variant_ambiguous(name)) {
     return t_unknown("ambiguous variant `" + name + "`");
   }
@@ -11925,7 +11939,7 @@ function vb_settles(body: ast.Stmt[], want: typeinfo.Type, s: Scope): boolean {
 // literal payload read at the destination's payload type as a bare literal is.
 function ctor_payload_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
   if let ast.ExprCall(c) = e {
-    if (c.args.len() != 1) {
+    if (c.args.len() != 1 || ctor_name_taken(c, s)) {
       return false;
     }
     let wa: typeinfo.Type[] = nominal_args(want);

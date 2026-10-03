@@ -7022,6 +7022,14 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     }
     return ty_unknown();
   }
+  // A top-level function of a constructor's name shadows the constructor.
+  let ctor_fn: i32 = 0 - 1;
+  if (id.name == "Some" || id.name == "Ok" || id.name == "Err") {
+    ctor_fn = top_level_fn(id.name, s);
+  }
+  if (ctor_fn >= 0) {
+    return ty_from_name(s.funcs[ctor_fn].ret_type);
+  }
   if (id.name == "Some" && c.args.len() == 1) {
     return ty_option(infer_expr_type(c.args[0], s));
   }
@@ -7264,14 +7272,24 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "str_split") {
     return ty_array_string();
   }
-  let fi: i32 = s.funcs_ix.chain(id.name);
+  let fi: i32 = top_level_fn(id.name, s);
+  if (fi >= 0) {
+    return ty_from_name(s.funcs[fi].ret_type);
+  }
+  return ty_unknown();
+}
+
+// top_level_fn is the index of the receiver-less function `name` declares, or
+// -1 when there is none.
+function top_level_fn(name: string, s: EmitState): i32 {
+  let fi: i32 = s.funcs_ix.chain(name);
   while (fi >= 0) {
-    if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
-      return ty_from_name(s.funcs[fi].ret_type);
+    if (s.funcs[fi].name == name && s.funcs[fi].receiver_type.len() == 0) {
+      return fi;
     }
     fi = s.funcs_ix.next[fi];
   }
-  return ty_unknown();
+  return 0 - 1;
 }
 
 // infer_expr_call_type infers the result type of a call expression — the
