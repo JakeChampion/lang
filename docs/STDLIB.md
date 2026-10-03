@@ -1676,10 +1676,10 @@ answer is `Result[HttpResponse, FetchError]`.
   and every header against `std/http`'s `http_method_ok` /
   `http_target_ok` / `http_field_name_ok` / `http_field_value_ok`, so a
   CRLF in a URL or a field cannot split the request on the wire. It
-  writes `Host`,
-  `Content-Length` and `Connection: close` itself and strips hop-by-hop
-  fields from what it sends. No TLS where the client dials (`https` fails
-  with `Tls`), no pool. On `wasm32-wasi-http` the client dials nothing:
+  writes `Host` and
+  `Content-Length` itself and strips hop-by-hop fields from what it sends.
+  No TLS where the client dials (`https` fails with `Tls`). On
+  `wasm32-wasi-http` the client dials nothing:
   the request goes to the host's wasi:http/outgoing-handler (`std/wasi_http`),
   which resolves the name, connects, speaks TLS (so `https` works there)
   and HTTP/2 where it can, under the connect and inactivity bounds as
@@ -1792,11 +1792,25 @@ answer is `Result[HttpResponse, FetchError]`.
   of the response; total runs from the start to the last byte read.
 - **Transport:** the dialled route reaches the network only through
   `trait Transport` (`now_ns`, `lookup`, `connect`, `write`, `read` under
-  a wait, `close`), and `send_on(tr, req, policy)` is `send` over any
-  transport under a `Policy { public_only, proxies }`. `sockets()` is the
-  machine's (the system resolver, `dns.connect_race`, `tcp_recv_deadline`),
-  which `send` and `plat.http` use; `std/sim_fetch` scripts one in virtual
-  time. Every rule above (the block list, the bounds, the retry,
+  a wait, `close`, and `idle`, its pool), and `send_on(tr, req, policy)` is
+  `send` over any transport under a `Policy { public_only, proxies }`.
+  `sockets()` is the machine's (the system resolver, `dns.connect_race`,
+  `tcp_recv_deadline`), which `send` and `plat.http` use; `std/sim_fetch`
+  scripts one in virtual time.
+- **Pool:** a connection whose response was framed (a length or chunked,
+  not ended by the close), that the peer did not ask to close, and that
+  nothing followed is kept in the transport's `Idle` pool under its host,
+  port and route (the open route's connections are never handed to the
+  guarded one). The next idempotent request to the same place takes the
+  connection kept last; a POST always dials, since a kept connection the
+  peer has closed shows itself only after the request is written, and an
+  idempotent request that finds it closed is sent once more on a new one.
+  `idle()` keeps up to 64 connections for 90 s each, `idle_limited(max,
+  idle_ms)` sets both, and `sockets_with(pool)` dials with a given pool.
+  `send` and `plat.http` keep a pool for the one call (so a redirect back
+  to the same origin is followed on its connection) and close it after; a
+  caller that holds a `Sockets` across `send_on` calls reuses across them
+  and closes what is left with `close_idle(tr)`. Every rule above (the block list, the bounds, the retry,
   redirects, decoding) stays above the seam, so a scripted transport
   exercises the same client a real one does. `lookup` answers a `Lookup`:
   the addresses to dial and, when asked to be judged, the addresses the
@@ -1999,8 +2013,12 @@ n-th request for `path` (`*` for any) with its n-th `Answer`, the last
 repeating; an unrouted request gets a 404. Answers: `reply(status, body)`,
 `redirect(status, location)`, `raw(text)` / `raw_bytes(bytes)` for
 anything else on the wire, `reset()` (closed before a byte) and `silent()`
-(never answers), shaped by `.after(ms)`, `.in_chunks(size, every_ms)` and
-`.held()` (left open after the last byte). The net records what the client
+(never answers), shaped by `.after(ms)`, `.in_chunks(size, every_ms)`,
+`.held()` (left open after the last byte) and `.kept()` (no `Connection:
+close`, and the connection takes the next request). `reply` and
+`redirect` announce the close that follows them. The client's pool is the
+net's own, `fetch.idle()` unless `.pooling(pool)` gives another. The net
+records what the client
 did: `connects()`, `open()`, `sent_count()` and `sent(i)`, the i-th request
 as written. A sibling of `std/sim` rather than part of it, so `std/sim`
 keeps the clock and randomness alone; `examples/tests/sim_fetch_test.fern`

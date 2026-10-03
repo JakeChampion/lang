@@ -60,3 +60,42 @@ functions; the larger source's medians were 12.832792 and 23.229042
 milliseconds. All checks succeeded. These measurements use the completed
 analysis path before the final diagnostic wording change; they do not
 measure generated-program runtime.
+
+## CI integration repairs
+
+The broader semantic suite exposed two dynamic-dispatch cases. A dyn value
+can admit view-bearing types without its current concrete value holding a
+view. Source-anchor analysis now excludes that viewless construction, while
+still rejecting an alternative that returns a view of a local string.
+Dispatch also normalizes an `impl ... for str` receiver to `string`, matching
+the existing implementation lookup. Without this normalization, the sole
+string implementation was refused; a mixed string/record dyn compiled but
+trapped when dispatching a string. Both the previous and candidate compiler
+reproduced that failure before the correction.
+
+The module-linking test now declares its array slice as `[u8]`. Its exported
+helper, link and execution assertions remain. The reference-cast test checks
+the primary compiler's identity cast and lifetime anchor by reading an owned
+array header after its last typed use. It also checks a byte view's opaque
+slot across a call. The old fixture copied over box headers and assumed a
+tagged view was a raw data pointer. The semantic suite's obsolete ARM-host
+skip is removed now that its runner handles x86 binaries explicitly.
+
+The repaired compiler reaches identical stage 2 and stage 3 binaries of
+12,480,129 bytes, SHA-256
+`b5d466e7e5384c229fbaf684f269c89837568b32afc5e9adddaa088b1b1970fb`.
+Its actual stage-2 checking probes pass thirteen cases, imported generic
+locations and its own source. Four focused semantic programs pass on Darwin
+and core WASM with balanced allocation counts. The five byte-view runtime
+regressions and four identity/conformance programs also pass; the latter
+include component execution. The string-boxing regression releases all
+483 native allocations and all 484 core-WASM allocations.
+
+With this same generator, the preceding source emits the original compiler
+hash. The repair adds 104 bytes to the x86 image (11,124,528 to 11,124,632).
+The Darwin file remains 12,480,129 bytes; its text grows by 144 bytes and
+unwind data by 8, within the same segments. Data size is unchanged. No size
+baseline was changed. Full Linux revalidation passes: the four focused
+semantic regressions in 40.758 seconds, escape/CLI/module-linking tests in
+68.176 seconds, the complete semantic production suite in 872.130 seconds,
+the full unit suite and all lint gates.
