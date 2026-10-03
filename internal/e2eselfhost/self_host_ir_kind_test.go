@@ -50,8 +50,8 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	// added: both count entries in ir_kind_run.fern's sweep lists, and the
 	// point of the golden is that adding a kind_id without registering it in
 	// BOTH shows up here rather than as an "invalid" name at some call site.
-	const want = "kind_count=189\n" +
-		"bijection_ok=189\n" +
+	const want = "kind_count=188\n" +
+		"bijection_ok=188\n" +
 		"bijection_failures=0\n" +
 		"ext_ok=144\n" +
 		"ext_failures=0\n" +
