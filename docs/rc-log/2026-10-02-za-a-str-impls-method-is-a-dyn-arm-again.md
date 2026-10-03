@@ -11,8 +11,10 @@ receiver `string`. `dyn_arms` was a third site and kept
 method was never an arm.
 
 That was latent until #11122 made the backends dispatch over exactly the arms
-`dyn_arms` names, instead of every method with the same name. The arm search now
-keys the receiver with `receiver_base`, as `implements_traits` and `decl_key` do.
+`dyn_arms` names, instead of every method with the same name. cec5cefc (#11138)
+made the arm search key the receiver with `receiver_base`, as
+`implements_traits` and `decl_key` do. #11157 added the single-implementer case
+and this entry.
 
 ## The trap: the two shapes fail at different layers
 
