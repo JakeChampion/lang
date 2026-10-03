@@ -3674,8 +3674,9 @@ the four is stated precisely in the man page:
   siblings;
 - a piece that is a single `0` in front of an `x` is WARNED about rather
   than refused (`warning: '0x' is a zero multiplier; use '00x' if that is
-  intended`), once per piece, and the zero still wins — which for a block
-  size is then the invalid `bs=0`;
+  intended`), once per operand however many such pieces it has (9.4 said
+  it once per piece), and the zero still wins — which for a block size is
+  then the invalid `bs=0`;
 - a value past INTMAX_MAX is a different line from a value that is not a
   number: `invalid number: '1x': Value too large for defined data type`
   against a bare `invalid number: 'q'`.
@@ -3690,12 +3691,26 @@ saying it has no such call rather than a failure, so GNU promotes the
 request to a full `fsync` and reports THAT one's errno. /dev/null is where
 it shows.
 
+**The charsets** `conv=ascii`, `ebcdic` and `ibm` are 256-entry tables,
+measured from the GNU binary over every byte; `ascii` is exactly the
+inverse of `ebcdic`, and `ibm` differs from `ebcdic` in five entries and is
+not a permutation. Each implies a record conversion — `ascii` unblocks,
+the other two block — which a `cbs` turns on, so under `ebcdic` a line
+ends at the EBCDIC newline (0x25) and is padded with the EBCDIC space
+(0x40). The order the stages run in is fixed whatever order `conv=` names
+them: `sync` pads first (with a space only when a record conversion is
+on, which needs a `cbs`), then one combined table translates (`ascii`,
+then the case, then `ebcdic` / `ibm`), then `swab` pairs bytes, then the
+record conversion. Without a `cbs` the record flags are dropped before
+anything else looks at them, so `conv=block,unblock` alone is accepted.
+Conflicts are refused in a fixed order, the first group winning: two
+charsets, `block` and `unblock`, `lcase` and `ucase`, `excl` and
+`nocreat`.
+
 **What dd here does not do yet**, each an accepted-operand gap rather than a
 wrong answer — the name is refused as `invalid conversion` / `invalid
 input flag`, which is itself the divergence:
 
-- `conv=ascii`, `conv=ebcdic` and `conv=ibm` need the two EBCDIC tables
-  (#9240);
 - `conv=sparse` needs a write that punches a hole rather than writing NULs,
   which is `w.seek` past the gap — the primitive is here, the accounting is
   not (#9241);

@@ -36,6 +36,16 @@ func ddSeed(t *testing.T, dir string) {
 	// for the case conversions: in the C locale neither is a letter, so
 	// both have to reach the output untouched.
 	write("mixed", "caf\xc3\xa9 A\xffz Z\n")
+	// Every byte once, for the charset tables, and `ab  cd  ` in EBCDIC
+	// (0x81 0x82 are `ab`, 0x40 is the space) for the records `ascii`
+	// unblocks.
+	all := make([]byte, 256)
+	for i := range all {
+		all[i] = byte(i)
+	}
+	write("all256", string(all))
+	write("erecs", "\x81\x82\x40\x40\x83\x84\x40\x40")
+	write("in5", "abcde")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -75,6 +85,9 @@ func ddCases(t *testing.T) []invocation {
 	add("count-bytes", "if=in5000", "of=out", "bs=1024", "count=100", "iflag=count_bytes", "status=noxfer")
 	add("count-multiplied", "if=in10", "of=out", "bs=1", "count=2x3", "status=noxfer")
 	add("bs-multiplied", "if=in10", "of=out", "bs=1kx2", "count=1", "status=noxfer")
+	// `bs=` overrides `ibs=` and `obs=` wherever they appear.
+	add("bs-overrides-later-obs", "if=in10", "of=out", "bs=3", "obs=7", "status=noxfer")
+	add("bs-overrides-later-ibs", "if=lines", "of=out", "bs=3", "ibs=5", "status=noxfer")
 
 	// --- skip and seek -----------------------------------------------------
 	add("skip-and-seek", "if=in10", "of=out", "bs=1", "skip=3", "seek=2", "status=noxfer")
@@ -138,7 +151,7 @@ func ddCases(t *testing.T) []invocation {
 	add("number-overflow-product", "if=in10", "count=9223372036854775807x9223372036854775807")
 	add("number-at-intmax", "if=in10", "of=out", "count=9223372036854775807", "status=noxfer")
 	// `0x` is a warning rather than a refusal, since a reader may have
-	// meant hexadecimal — one per piece, and the zero still wins.
+	// meant hexadecimal — one per operand, and the zero still wins.
 	add("zero-multiplier", "if=in10", "of=out", "count=0x3", "status=noxfer")
 	add("zero-multiplier-twice", "if=in10", "of=out", "count=0x0x3", "status=noxfer")
 	add("zero-multiplier-spelled-out", "if=in10", "of=out", "count=00x3", "status=noxfer")
@@ -171,6 +184,46 @@ func ddCases(t *testing.T) []invocation {
 	add("conv-unblock", "if=recs", "of=out", "conv=unblock", "cbs=4", "status=noxfer")
 	add("conv-unblock-partial", "if=recs", "of=out", "conv=unblock", "cbs=5", "status=noxfer")
 	add("conv-block-and-unblock", "if=lines", "of=out", "conv=block,unblock", "cbs=4", "status=noxfer")
+	// Without a `cbs` the flags are dropped before the conflict check.
+	add("conv-block-and-unblock-no-cbs", "if=lines", "of=out", "conv=block,unblock", "status=noxfer")
+	// The sync pad is a space only when a record conversion is ON.
+	add("conv-block-sync-no-cbs", "if=in10", "of=out", "ibs=4", "conv=block,sync", "status=noxfer")
+	// A byte swab is holding at the end still goes through the record
+	// conversion, after the line it is holding.
+	add("conv-swab-unblock-held-byte", "if=in5", "of=out", "conv=swab,unblock", "cbs=3", "status=noxfer")
+	// sync pads BEFORE swab pairs, so the last byte pairs with a pad.
+	add("conv-swab-sync-order", "if=in5", "of=out", "ibs=4", "conv=swab,sync", "status=noxfer")
+
+	// --- the charsets ------------------------------------------------------
+	//
+	// Each is a 256-entry table, so a run over every byte pins all of it.
+	// `ascii` unblocks and `ebcdic` / `ibm` block, which a `cbs` turns on;
+	// a case conversion runs after `ascii` and before `ebcdic` / `ibm`,
+	// whichever order the names come in.
+	add("conv-ascii-all-bytes", "if=all256", "of=out", "conv=ascii", "status=noxfer")
+	add("conv-ebcdic-all-bytes", "if=all256", "of=out", "conv=ebcdic", "status=noxfer")
+	add("conv-ibm-all-bytes", "if=all256", "of=out", "conv=ibm", "status=noxfer")
+	add("conv-ascii-unblocks", "if=erecs", "of=out", "conv=ascii", "cbs=4", "status=noxfer")
+	add("conv-ebcdic-blocks", "if=lines", "of=out", "conv=ebcdic", "cbs=4", "status=noxfer")
+	add("conv-ibm-blocks-truncates", "if=lines", "of=out", "conv=ibm", "cbs=2", "status=noxfer")
+	add("conv-ucase-ascii", "if=all256", "of=out", "conv=ucase,ascii", "status=noxfer")
+	add("conv-ebcdic-lcase", "if=all256", "of=out", "conv=ebcdic,lcase", "status=noxfer")
+	add("conv-ibm-ucase-swab", "if=mixed", "of=out", "bs=3", "conv=ibm,ucase,swab", "status=noxfer")
+	add("conv-ebcdic-sync-pads-ebcdic-space", "if=in10", "of=out", "ibs=4", "conv=ebcdic,sync", "cbs=20", "status=noxfer")
+	add("conv-ebcdic-sync-no-cbs", "if=in10", "of=out", "ibs=4", "conv=ebcdic,sync", "status=noxfer")
+	add("conv-ascii-with-block-no-cbs", "if=in10", "of=out", "conv=ascii,block", "status=noxfer")
+
+	// --- conversions that cannot combine -----------------------------------
+	//
+	// Checked in a fixed order — charsets, records, case, opens — so a
+	// set with several conflicts reports the first group.
+	add("conv-ascii-and-ebcdic", "if=in10", "conv=ascii,ebcdic")
+	add("conv-ebcdic-and-ibm", "if=in10", "conv=ebcdic,ibm")
+	add("conv-ascii-and-block", "if=in10", "conv=ascii,block", "cbs=4")
+	add("conv-lcase-and-ucase", "if=in10", "conv=lcase,ucase")
+	add("conv-excl-and-nocreat", "if=in10", "conv=excl,nocreat")
+	add("conv-records-before-case", "if=in10", "conv=lcase,ucase,block,unblock", "cbs=4")
+	add("conv-charsets-first", "if=in10", "conv=ascii,ebcdic,lcase,ucase,block", "cbs=4")
 
 	// --- the opens ---------------------------------------------------------
 	add("no-such-input", "if=nosuch", "of=out", "status=noxfer")

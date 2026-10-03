@@ -2316,8 +2316,9 @@ pub function component_refused_need(needs: string[], io: boolean, proxy: boolean
       i = i + 1;
       continue;
     }
-    // The sockets' bodies are preview-2 on every framing.
-    if (io && util.has_str(socket_builtins(), n)) {
+    // The sockets' bodies are preview-2 on every framing, and poll waits on
+    // their wasi:io/poll pollables and drops them.
+    if (io && (util.has_str(socket_builtins(), n) || n == "poll" || n == "wasm_pollable_drop")) {
       i = i + 1;
       continue;
     }
