@@ -300,7 +300,7 @@ func emitOpenWithHelper(name, lbl string, access int) func(w func(string, ...any
 		for _, b := range ssaOpenWithWords {
 			w("\ttest r14d, %d", b.bit)
 			w("\tjz .Lssa_%s_%s", lbl, b.name)
-			w("\tor edx, %d // %s", b.word, b.flag)
+			w("\tor edx, %d", b.word) // b.flag
 			w(".Lssa_%s_%s:", lbl, b.name)
 		}
 		w("\tmov r10d, 438")

@@ -19475,7 +19475,7 @@ func (g *generator) emitReaderWriterRuntime() {
 			for _, b := range openWithWords {
 				g.emit(fmt.Sprintf("test eax, %d", b.bit))
 				g.emit(fmt.Sprintf("jz .Lorw_%s_%s", b.name, e.sym))
-				g.emit(fmt.Sprintf("or edx, %d // %s", b.word, b.flag))
+				g.emit(fmt.Sprintf("or edx, %d", b.word)) // b.flag
 				g.label(fmt.Sprintf(".Lorw_%s_%s", b.name, e.sym))
 			}
 		}
