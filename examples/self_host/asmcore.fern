@@ -4471,8 +4471,9 @@ pub function rt_src_writer_write_some(t: string): string {
   return "function __fern_writer_write_some(fd: i32, s: string): Result[i64, IoError] { let n: i32 = s.len(); let data: usize = __raw_data(s); let w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, __raw_addr(data, 0) as i64, n as i64) as i32; if (w < 0) { return Err(__fern_io_error(0 - w, \"\")); } return Ok(w as i64); }";
 }
 
-// Packed production arrays lend their bytes directly. The diagnostic word
-// layout packs into an owned scratch array, never into a string.
+// Production byte views lend either packed-array storage or a tagged string
+// descriptor. Decode once, keeping full-width addresses on native targets.
+// The diagnostic word layout still packs into an owned scratch array.
 pub function rt_src_writer_bytes(t: string, packed: boolean, all: boolean): string {
   let name: string = "write_some_bytes";
   let result: string = "Result[i64, IoError]";
@@ -4484,11 +4485,13 @@ pub function rt_src_writer_bytes(t: string, packed: boolean, all: boolean): stri
     failure = "Some";
     done = "at = at + w; if (at == n) { return None; } if (w == 0) { return Some(__fern_io_error(5, \"\")); }";
   }
-  let prep: string = "let p: usize = __raw_addr(__raw_arr_ptr(bytes), 8);";
+  let param: string = "usize";
+  let prep: string = "let n: i32 = 0; let p: usize = 0; if (((bytes as i32) & 2) != 0) { let base: usize = __raw_addr(bytes, 0 - 2); n = __load_i32(__raw_addr(base, 8)); p = __raw_load_ptr(base, 0); } else { n = __load_i32(bytes); p = __raw_addr(bytes, 8); }";
   if (!packed) {
-    prep = "let raw: usize = __raw_arr_box(n / 8 + 1); let scratch: i32[] = __raw_array(raw); let p: usize = __raw_addr(__raw_arr_ptr(scratch), 8); let j: i32 = 0; while (j < n) { __raw_store8(p, j, bytes[j]); j = j + 1; }";
+    param = "i32[]";
+    prep = "let n: i32 = bytes.len(); let raw: usize = __raw_arr_box(n / 8 + 1); let scratch: i32[] = __raw_array(raw); let p: usize = __raw_addr(__raw_arr_ptr(scratch), 8); let j: i32 = 0; while (j < n) { __raw_store8(p, j, bytes[j]); j = j + 1; }";
   }
-  return "function __fern_writer_" + name + packed_suffix(packed) + "(fd: i32, bytes: i32[]): " + result + " { let n: i32 = bytes.len(); " + prep + " let at: i32 = 0; while (true) { let w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, __raw_addr(p, at) as i64, (n - at) as i64) as i32; if (w < 0) { return " + failure + "(__fern_io_error(0 - w, \"\")); } " + done + " } }";
+  return "function __fern_writer_" + name + packed_suffix(packed) + "(fd: i32, bytes: " + param + "): " + result + " { " + prep + " let at: i32 = 0; while (true) { let w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, __raw_addr(p, at) as i64, (n - at) as i64) as i32; if (w < 0) { return " + failure + "(__fern_io_error(0 - w, \"\")); } " + done + " } }";
 }
 
 pub function rt_src_fd_flags(t: string): string {

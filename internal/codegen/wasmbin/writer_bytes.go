@@ -14,7 +14,7 @@ func buildWriterSomeBytesBodyP2(ids map[string]uint32) []byte {
 	return buildByteWrite(ids, false, true)
 }
 
-// Params: Writer, borrowed packed array. Locals: scratch, handle, cursor,
+// Params: Writer, borrowed byte view. Locals: scratch, handle, cursor,
 // remaining, count, errno, error, result. Even an empty write checks the host.
 func buildByteWrite(ids map[string]uint32, all, p2 bool) []byte {
 	var b []byte
@@ -31,11 +31,10 @@ func buildByteWrite(ids map[string]uint32, all, p2 bool) []byte {
 	b = memory.InstI32Load(b, 2, 0)
 	b = inst.InstLocalSet(b, 3)
 	b = inst.InstLocalGet(b, 1)
+	b = memory.InstI32Load(b, 2, 0)
 	b = inst.InstLocalSet(b, 4)
 	b = inst.InstLocalGet(b, 1)
-	b = inst.InstI32Const(b, 4)
-	b = numeric.InstI32Sub(b)
-	b = memory.InstI32Load(b, 2, 0)
+	b = memory.InstI32Load(b, 2, 4)
 	b = inst.InstLocalSet(b, 5)
 	b = inst.InstLoopStart(b, inst.BlocktypeEmpty)
 	b = inst.InstLocalGet(b, 5)

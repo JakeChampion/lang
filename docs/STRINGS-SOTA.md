@@ -8,7 +8,8 @@ alongside (byte views, scalar/char, paths, symbols, builders).
 
 ## Migration audit, October 2026
 
-Epic #5626 and prerequisite #5714 remain open. D9 requires every observable
+Epic #5626 is closed, but prerequisite #5714 remains open and its acceptance
+work is incomplete. D9 requires every observable
 `string` to be well-formed UTF-8. The boundaries below have been migrated,
 but the remaining producers listed after the table still prevent that
 invariant from holding across the stdlib.
@@ -952,7 +953,7 @@ unchecked pending migration of its binary consumers. The new method does not
 establish the string invariant by itself.
 
 `Writer.write_bytes(bytes): Option[IoError]` and
-`Writer.write_some_bytes(bytes): Result[i64, IoError]` borrow an owned `u8[]`
+`Writer.write_some_bytes(bytes): Result[i64, IoError]` borrow a byte view `[u8]`
 without changing or retaining it. The former completes short writes and
 reports an I/O error on zero progress; the latter returns the count from one
 host write, which may be zero. Empty writes preserve host errors, and closed
@@ -962,8 +963,10 @@ and primary compiled target coverage as the raw reader. The primary
 interpreter bridges raw stdin reads and stdout/stderr writes through these
 host methods, preserving arrays, counts and I/O errors. It also supports text
 writes on those stdio handles. File-handle opening in that interpreter remains
-outside this bridge. They never construct an unchecked string. Borrowed views
-must be materialized before calling this owned-array signature.
+outside this bridge. They never construct an unchecked string. Owned arrays
+lend automatically; string and `str` byte views are accepted directly.
+Primary byte-view slicing still copies, so this input contract alone does
+not remove the cost of constructing a partial byte range.
 
 `BufWriter.flush()` extracts an owned byte array and releases it after writing.
 Byte writes, mappings and ranges can therefore flush arbitrary bytes or partial
