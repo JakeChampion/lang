@@ -2358,7 +2358,8 @@ function routed_box_columns(maps: typeinfo.Type[], f: ssasem.Func): typeinfo.Typ
 }
 
 // The map types among this function's values and schema fields, in that
-// order, with whether any of them contains a byte view.
+// order, and whether any of those values and fields, map or not, contains a
+// byte view.
 struct SchemaScan { maps: typeinfo.Type[], bytes: boolean }
 
 function schema_scan(f: ssasem.Func): SchemaScan {
@@ -2591,14 +2592,10 @@ function helpers_not_in(f: ssasem.Func, done: util.NameIndex): irtables.LowerRes
     }
   }
   for rec in f.records.list {
-    if (has_children(rec.ty, f)) {
-      out = append_helpers(out, rec.ty, f, done);
-    }
+    out = append_helpers(out, rec.ty, f, done);
   }
   for e in f.enums {
-    if (has_children(e.ty, f)) {
-      out = append_helpers(out, e.ty, f, done);
-    }
+    out = append_helpers(out, e.ty, f, done);
   }
   for v in boxed_columns(sc.maps) {
     if (!outlined_release(v, f) && !done.has(release_helper_name(v))) {
@@ -2619,12 +2616,19 @@ function helpers_not_in(f: ssasem.Func, done: util.NameIndex): irtables.LowerRes
   return out;
 }
 
-// append_helpers adds t's drop and release helpers, each unless done has it.
+// append_helpers adds t's drop and release helpers when t has children, each
+// unless done has it. Most of a module's bodies find both done, so that is
+// asked first.
 function append_helpers(own out: irtables.LowerResult[], t: typeinfo.Type, f: ssasem.Func, done: util.NameIndex): irtables.LowerResult[] {
-  if (!done.has(drop_helper_name(t))) {
+  let need_drop: boolean = !done.has(drop_helper_name(t));
+  let need_release: boolean = !done.has(release_helper_name(t));
+  if (!need_drop && !need_release || !has_children(t, f)) {
+    return out;
+  }
+  if (need_drop) {
     out = out.append(one_helper(t, f));
   }
-  if (!done.has(release_helper_name(t))) {
+  if (need_release) {
     out = out.append(release_helper(t, f));
   }
   return out;

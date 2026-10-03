@@ -22,6 +22,10 @@ most functions have none. 2.43 G inclusive on the whole-compiler emit;
 types in the order the old list met them and whether any type holds a byte
 view. The three column walks take that map list.
 
+`append_helpers` asks whether both of a record's helpers are done before
+`has_children` walks its fields: a module's later bodies find almost every
+record's helpers already generated.
+
 ## Measured
 
 Whole-compiler emit under callgrind, 4-core x86-64 container: the driver
@@ -35,7 +39,8 @@ x86-64 asm text, against main with the previous entry's change.
 
 The compiler each of those drivers builds from its own tree (stage 2),
 emitting the fixed tree's `checker.fern`: 21.58 G before, 21.38 G after
-(−0.95%).
+(−0.95%). Asking `done` first takes the stage-2 compile from 20.88 G to
+20.84 G more (−0.21%), measured on main at 513cf0c7.
 
 ## Witnessed
 
