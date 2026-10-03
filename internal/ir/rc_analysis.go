@@ -7637,10 +7637,25 @@ func (b *builder) computeMapCowBindSites() map[ast.Node]bool {
 			if c, ok := s.Target.(*ast.Call); ok && isMapDeleteCall(c) {
 				out[c] = true
 			}
+		case *ast.TupleLit:
+			markMapMutatorElems(out, s.Elems)
+		case *ast.ArrayLit:
+			markMapMutatorElems(out, s.Elems)
 		}
 		return true
 	})
 	return out
+}
+
+// markMapMutatorElems marks each Map mutator stored straight into a tuple or
+// array literal: the container takes the result's count and its drop releases
+// it, so an in-place result owes the retain a binding does (#11121).
+func markMapMutatorElems(out map[ast.Node]bool, elems []ast.Expr) {
+	for _, e := range elems {
+		if c, ok := e.(*ast.Call); ok && isMapMutatorCall(c) {
+			out[c] = true
+		}
+	}
 }
 
 // computeMapCowForcedCopies decides, for each Map mutator (`insert` / `without`
