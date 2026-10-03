@@ -211,3 +211,41 @@ func TestSelfHostSanitizeOffEmitsNoSymbolsX86_64(t *testing.T) {
 		t.Error("FERN_SANITIZE=1 emitted the rctrace hook; it is a targeted probe, not part of the mode")
 	}
 }
+
+// A box freed through __fern_box_free (core/map's handle release) carries the
+// poison in its rc word like every other freed box, so dropping the handle a
+// second time is a use-after-free rather than a second free the census counts.
+// An over-release of the same handle is reported as one.
+const sanMapDoubleDropSrc = `import "core/map";
+function main(): i32 {
+    let h: usize = map_new_impl(4, 0, 0);
+    __map_drop_impl(h);
+    __map_drop_impl(h);
+    return 7;
+}`
+
+const sanMapOverReleaseSrc = `import "core/map";
+function main(): i32 {
+    let h: usize = map_new_impl(4, 0, 0);
+    __store_i32(h - 8, 0);
+    __map_drop_impl(h);
+    return __rc_underflow_count();
+}`
+
+func TestSelfHostSanitizeBoxFreeIsQuarantined(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	cases := []struct{ name, src, finding string }{
+		{"double-drop", sanMapDoubleDropSrc, "fern-sanitizer: use-after-free (touched a quarantined block)"},
+		{"over-release", sanMapOverReleaseSrc, "fern-sanitizer: rc over-release (double free)"},
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		for _, tc := range cases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				stderr, code := cli.exitOf(t, tc.src, target, "FERN_SANITIZE=1")
+				if code != sanExitStatus || !strings.Contains(stderr, tc.finding) {
+					t.Errorf("exit=%d stderr=%q, want exit %d naming %q", code, stderr, sanExitStatus, tc.finding)
+				}
+			})
+		}
+	}
+}

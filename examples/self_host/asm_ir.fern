@@ -3034,6 +3034,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    andq $-8, %rsi\n");
   s = s.write("    cmpq $8, %rsi\n");
   s = s.write("    jb .Lrawfree_ret\n");
+  // Under the quarantine the block's first word takes the poison: it is the
+  // rc word of a box freed through __fern_box_free, which a second release
+  // then reads as a use-after-free.
+  if (s.rc_free_debug) {
+    s = s.write(quarantine_rc("(%rdi)"));
+  }
   s = s.write("    movq %rsi, %rcx\n");
   s = s.write("    shrq $3, %rcx\n");
   s = s.write("    cmpq $65536, %rcx\n");

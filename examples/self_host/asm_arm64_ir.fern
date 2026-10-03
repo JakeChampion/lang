@@ -8177,6 +8177,12 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    add x1, x1, #7\n");
   s = s.write("    lsr x5, x1, #3\n");
   s = s.write("    cbz x5, .Lrawfree_done\n");
+  // Under the quarantine the block's first word takes the poison: it is the
+  // rc word of a box freed through __fern_box_free, which a second release
+  // then reads as a use-after-free.
+  if (s.rc_free_debug) {
+    s = s.write(quarantine_rc("[x0]", "w9"));
+  }
   s = buf_block_free(s, "x0", "x5", "Lrawfree_b");
   s = s.write(".Lrawfree_done:\n");
   s = s.write("    ldp x29, x30, [sp], #16\n");
