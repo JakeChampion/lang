@@ -2875,6 +2875,43 @@ function grow_or_concat(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SI
   return emit(r, ir.op_load_local(res));
 }
 
+// A string append onto a FIELD of a record this frame owns and reads no
+// further through that field (ssaunits.field_grow_root). A sole-owned record
+// lets the runtime grow the field's buffer in place, and the field is then
+// nulled so the record's release skips the buffer the result now owns; a
+// shared record, or a buffer that cannot grow, takes a plain concatenation and
+// leaves the field for the record's release.
+function grow_field_or_concat(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
+  let root: i32 = p.grows[ins.result];
+  let grown: i32 = scratch_base(f);
+  let res: i32 = grown + 1;
+  r = reserve(r, res + 1);
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(grown));
+  r = emit(r, ir.op_load_local(root));
+  r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_load_local(ins.args[1]));
+  r = emit(r, ir.op_call_direct("__fern_str_grow", 2));
+  r = emit(r, ir.op_store_local(grown));
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_load_local(grown));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_store_local(res));
+  r = emit(r, ir.op_load_local(root));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_struct_set(p.grow_fields[ins.result], 0));
+  r = emit(r, ir.op_else());
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_load_local(ins.args[1]));
+  r = emit(r, ir.op_str_concat());
+  r = emit(r, ir.op_store_local(res));
+  r = emit(r, ir.op_end());
+  return emit(r, ir.op_load_local(res));
+}
+
 // A string `+` is the runtime's concatenation, a fresh box; equality reads
 // both operands, and an ordering is `str_cmp` — which hands back a signed i32
 // under, at or over zero — against a zero constant. The verifier admits no
@@ -4228,6 +4265,10 @@ function instruction(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
   }
   if (ssaunits.string_append(f, ins) && !defer0 && !p.literal[ins.args[0]]) {
     r = grow_or_concat(r, f, ins);
+    return emit(r, ir.op_store_local(ins.result));
+  }
+  if (ssaunits.string_append(f, ins) && defer0 && p.grows[ins.result] >= 0) {
+    r = grow_field_or_concat(r, f, p, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
   if (literal_text_eq(f, p, ins) >= 0) {
