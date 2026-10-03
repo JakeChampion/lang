@@ -16257,25 +16257,46 @@ func (c *checker) retagIndexAsTypeArgs(n *ast.Call, s *scope) {
 	if !ok || !c.calleeIsGenericFunc(fn, s) {
 		return
 	}
-	arg, ok := ix.Idx.(*ast.Ident)
+	params := c.typeParamsInScope()
+	t, ok := c.indexAsType(ix.Idx, params, s)
 	if !ok {
 		return
 	}
-	if _, bound := c.identValueBinding(arg.Name, s); bound {
-		return
-	}
-	params := c.typeParamsInScope()
-	_, isStruct := c.info.Structs[arg.Name]
-	_, isEnum := c.info.Enums[arg.Name]
-	_, isResource := c.info.Resources[arg.Name]
-	if !params[arg.Name] && !isStruct && !isEnum && !isResource {
-		return
-	}
-	var t ast.Type = ast.StructType{Name: arg.Name}
-	c.resolveType(&t, params, arg.P)
+	c.resolveType(&t, params, ix.Idx.Pos())
 	n.Callee = fn
 	n.TypeArgs = []ast.Type{t}
 	n.TypeArgsWritten = true
+}
+
+// indexAsType reads an index operand as the type it spells: a type name, or a
+// generic one instantiated the same way (`W[Q]`), which the parser cannot tell
+// from indexing.
+func (c *checker) indexAsType(e ast.Expr, params map[string]bool, s *scope) (ast.Type, bool) {
+	switch x := e.(type) {
+	case *ast.Ident:
+		if _, bound := c.identValueBinding(x.Name, s); bound {
+			return nil, false
+		}
+		_, isStruct := c.info.Structs[x.Name]
+		_, isEnum := c.info.Enums[x.Name]
+		_, isResource := c.info.Resources[x.Name]
+		if !params[x.Name] && !isStruct && !isEnum && !isResource {
+			return nil, false
+		}
+		return ast.StructType{Name: x.Name}, true
+	case *ast.Index:
+		head, ok := c.indexAsType(x.Array, params, s)
+		if !ok {
+			return nil, false
+		}
+		arg, ok := c.indexAsType(x.Idx, params, s)
+		if !ok {
+			return nil, false
+		}
+		st := head.(ast.StructType)
+		return ast.StructType{Name: st.Name, Args: append(st.Args, arg)}, true
+	}
+	return nil, false
 }
 
 // errE040GenericFuncAsValue reports a generic function named where a value
