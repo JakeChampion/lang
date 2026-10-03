@@ -658,7 +658,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.mark_heap();
     return s;
   }
-  if (o.kind_tag == 329) {  // bsd_sum
+  if (o.kind_tag == 329 || o.kind_tag == 363) {  // bsd_sum / bsd_sum_bytes
     // operand stack [box, sum] (sum on top) -> the BSD checksum continued
     // over the string: per byte a 16-bit rotate right by one and an add.
     let blo: asmcore.LabelOut = asmcore.fresh_label(s);
@@ -667,11 +667,19 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let b_done: string = blo2.name;
     s = blo2.state;
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    if (o.kind_tag == 363) {
+      s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
+    } else {
+      s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    }
     s = s.write("    and x1, x1, #0xffff\n    mov x2, #0\n");
     s = s.write(b_loop + ":\n");
     s = s.write("    cmp x2, x3\n    b.ge " + b_done + "\n");
-    s = s.write("    add x5, x0, x2\n    ldrb w6, [x5]\n");
+    if (o.kind_tag == 363 && !ir.is_packed(o)) {
+      s = s.write("    add x5, x0, x2, lsl #3\n    ldrb w6, [x5]\n");
+    } else {
+      s = s.write("    add x5, x0, x2\n    ldrb w6, [x5]\n");
+    }
     s = s.write("    lsr x9, x1, #1\n    orr x1, x9, x1, lsl #15\n");
     s = s.write("    add x1, x1, x6\n    and x1, x1, #0xffff\n");
     s = s.write("    add x2, x2, #1\n    b " + b_loop + "\n");
@@ -793,14 +801,27 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(s_done + ":\n");
     return s;
   }
-  if (o.kind_tag == 253) {  // sum_bytes
+  if (o.kind_tag == 362 && !ir.is_packed(o)) {
+    let loop_label = asmcore.fresh_label(s);
+    let done_label = asmcore.fresh_label(loop_label.state);
+    s = done_label.state;
+    s = s.write("    ldr x0, [sp], #16\n    ldr x3, [x0]\n    add x0, x0, #8\n    mov x2, #0\n    mov w1, #0\n");
+    s = s.write(loop_label.name + ":\n    cmp x2, x3\n    b.ge " + done_label.name + "\n");
+    s = s.write("    add x5, x0, x2, lsl #3\n    ldrb w6, [x5]\n    add w1, w1, w6\n    add x2, x2, #1\n    b " + loop_label.name + "\n");
+    return s.write(done_label.name + ":\n    sxtw x1, w1\n    str x1, [sp, #-16]!\n");
+  }
+  if (o.kind_tag == 253 || o.kind_tag == 362) {  // sum_bytes / sum_bytes_array
     // operand stack [box] -> every byte of the string added into a
     // 32-bit accumulator that wraps. A call to the NEON helper, emitted
     // once under the "sum_bytes" need; the sum is sign-extended into the
     // slot, since a wrapped sum is a negative i32.
     s = s.need("sum_bytes");
     s = s.write("    ldr x0, [sp], #16\n");
-    s = s.write("    bl __fern_sum_bytes\n");
+    if (o.kind_tag == 362) {
+      s = s.write("    ldr x6, [x0]\n    add x8, x0, #8\n    bl __fern_sum_bytes_data\n");
+    } else {
+      s = s.write("    bl __fern_sum_bytes\n");
+    }
     s = s.write("    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
     return s;
   }
@@ -10502,6 +10523,7 @@ function emit_rt_sum_bytes(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_sum_bytes:\n");
   s = s.write("    ldr x6, [x0, #8]\n");
   s = s.write("    ldr x8, [x0]\n");
+  s = s.write("__fern_sum_bytes_data:\n");
   s = s.write("    add x9, x8, x6\n");
   s = s.write("    mov w0, #0\n");
   s = s.write("    movi v2.4s, #0\n");

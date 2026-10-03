@@ -876,6 +876,44 @@ func New() *Interp {
 		}
 		return Number(-1), nil
 	}}
+	for _, name := range []string{"__sum_bytes_array", "__bsd_sum_bytes"} {
+		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+			bsd := name == "__bsd_sum_bytes"
+			argc := 1
+			if bsd {
+				argc = 2
+			}
+			if len(args) != argc {
+				return nil, fmt.Errorf("%s: expected %d args, got %d", name, argc, len(args))
+			}
+			bytes, ok := args[0].(Array)
+			if !ok {
+				return nil, fmt.Errorf("%s: expected an array, got %T", name, args[0])
+			}
+			var sum uint32
+			if bsd {
+				seed, ok := args[1].(Number)
+				if !ok {
+					return nil, fmt.Errorf("%s: expected an integer checksum, got %T", name, args[1])
+				}
+				sum = uint32(seed) & 0xffff
+			}
+			for at, value := range bytes.E {
+				b, ok := value.(Number)
+				if !ok || b < 0 || b > 255 {
+					return nil, fmt.Errorf("%s: element %d is not u8", name, at)
+				}
+				if bsd {
+					sum = ((sum >> 1) | (sum << 15)) & 0xffff
+				}
+				sum += uint32(b)
+				if bsd {
+					sum &= 0xffff
+				}
+			}
+			return Number(int32(sum)), nil
+		}}
+	}
 	i.Builtins["__count_byte_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("__count_byte_bytes: expected 2 args, got %d", len(args))

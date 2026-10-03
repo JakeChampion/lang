@@ -7419,6 +7419,8 @@ function byte_scan_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__count_byte", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },
     ssasem.Contract { name: "__memchr", params: [t_string(), t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },
     ssasem.Contract { name: "__count_byte_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32()], modes: [lent, value], result: t_i32() },
+    ssasem.Contract { name: "__sum_bytes_array", params: [typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [lent], result: t_i32() },
+    ssasem.Contract { name: "__bsd_sum_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32()], modes: [lent, value], result: t_i32() },
     ssasem.Contract { name: "__memchr_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },
     ssasem.Contract { name: "__rmemchr_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },
     ssasem.Contract { name: "__mismatch_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32()], modes: [lent, value, lent, value, value], result: t_i32() },

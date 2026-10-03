@@ -1510,6 +1510,8 @@ var copyingBuiltinArgs = map[string][]int{
 	"string_from_bytes_unchecked":      {0},
 	"__memchr":                         {0},
 	"__count_byte_bytes":               {0},
+	"__sum_bytes_array":                {0},
+	"__bsd_sum_bytes":                  {0},
 	"__memchr_bytes":                   {0},
 	"__rmemchr_bytes":                  {0},
 	"__rmemchr":                        {0},

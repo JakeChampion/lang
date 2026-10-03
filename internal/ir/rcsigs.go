@@ -532,7 +532,7 @@ var rcInert = map[string]bool{
 	// scratch, neither of which touches a counted reference.
 	"__fern_lc_report": true, "__fern_lc_wrnum": true,
 	"__fern_log_f64":       true,
-	"__fern_map_hash_seed": true, "__fern_memchr": true, "__fern_count_byte_bytes": true, "__fern_memchr_bytes": true, "__fern_mismatch_bytes": true, "__fern_rmemchr_bytes": true,
+	"__fern_map_hash_seed": true, "__fern_memchr": true, "__fern_count_byte_bytes": true, "__fern_sum_bytes_array": true, "__fern_bsd_sum_bytes": true, "__fern_memchr_bytes": true, "__fern_mismatch_bytes": true, "__fern_rmemchr_bytes": true,
 	"__fern_mismatch":     true,
 	"__fern_monotonic_ns": true, "__fern_now_ns": true,
 	"__fern_now_unix_ms": true, "__fern_open_appender": true,

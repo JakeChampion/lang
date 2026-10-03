@@ -5094,6 +5094,13 @@ func (g *generator) emitScanSetRuntime() {
 // emitBsdSumRuntime emits `__fern_bsd_sum(s, sum) -> i32`: the BSD checksum
 // continued over s, each byte a 16-bit rotate right by one and an add.
 func (g *generator) emitBsdSumRuntime() {
+	if g.usesBsdSumBytes {
+		g.line(".global __fern_bsd_sum_bytes")
+		g.label("__fern_bsd_sum_bytes")
+		g.emit("mov w2, w1")
+		g.emit("ldur w1, [x0, #-4]")
+		g.emit("b __fern_bsd_sum")
+	}
 	g.line("")
 	g.line(".global __fern_bsd_sum")
 	g.typeDirective("__fern_bsd_sum")
@@ -5445,6 +5452,12 @@ func (g *generator) emitCrc32Step() {
 }
 
 func (g *generator) emitSumBytesRuntime() {
+	if g.usesSumBytesArray {
+		g.line(".global __fern_sum_bytes_array")
+		g.label("__fern_sum_bytes_array")
+		g.emit("ldur w1, [x0, #-4]")
+		g.emit("b __fern_sum_bytes")
+	}
 	g.line("")
 	g.line(".global __fern_sum_bytes")
 	g.typeDirective("__fern_sum_bytes")
@@ -15637,6 +15650,8 @@ type generator struct {
 	// usesMemchr gates the NEON byte-search kernel (__fern_memchr).
 	usesMemchr         bool
 	usesCountByteBytes bool
+	usesSumBytesArray  bool
+	usesBsdSumBytes    bool
 	usesMemchrBytes    bool
 	usesRmemchrBytes   bool
 	usesMismatchBytes  bool
@@ -20364,6 +20379,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRmemchr = true
 		case "__fern_crc32_cksum":
 			g.usesCrc32Cksum = true
+		case "__fern_sum_bytes_array":
+			g.usesSumBytesArray = true
+			g.usesSumBytes = true
+		case "__fern_bsd_sum_bytes":
+			g.usesBsdSumBytes = true
+			g.usesBsdSum = true
 		case "__fern_count_byte_bytes":
 			g.usesCountByteBytes = true
 			g.usesCountByte = true

@@ -1336,6 +1336,8 @@ type generator struct {
 	// usesMemchr gates the SSE2 byte-search kernel (__fern_memchr).
 	usesMemchr         bool
 	usesCountByteBytes bool
+	usesSumBytesArray  bool
+	usesBsdSumBytes    bool
 	usesMemchrBytes    bool
 	usesRmemchrBytes   bool
 	usesMismatchBytes  bool
@@ -2046,6 +2048,12 @@ func (g *generator) recordUse(target string) {
 		g.usesMismatch = true
 	case "__fern_rmemchr":
 		g.usesRmemchr = true
+	case "__fern_sum_bytes_array":
+		g.usesSumBytesArray = true
+		g.usesSumBytes = true
+	case "__fern_bsd_sum_bytes":
+		g.usesBsdSumBytes = true
+		g.usesBsdSum = true
 	case "__fern_count_byte_bytes":
 		g.usesCountByteBytes = true
 		g.usesCountByte = true
@@ -12081,6 +12089,11 @@ func (g *generator) emitScanSetRuntime() {
 // chain through the sum is the whole cost, and it is one `ror` and one `add`
 // on the 16-bit register a byte.
 func (g *generator) emitBsdSumRuntime() {
+	if g.usesBsdSumBytes {
+		g.line(".global __fern_bsd_sum_bytes")
+		g.label("__fern_bsd_sum_bytes")
+		g.emit("jmp __fern_bsd_sum")
+	}
 	g.line("")
 	g.line(".globl __fern_bsd_sum")
 	g.line(".type __fern_bsd_sum, @function")
@@ -12476,6 +12489,11 @@ func (g *generator) emitCrc32Step() {
 // rdi = string. Frame: 16 bytes of emitStrDataPtr scratch, since the operand
 // may be an inline SSO string that has to be spilled to get an address.
 func (g *generator) emitSumBytesRuntime() {
+	if g.usesSumBytesArray {
+		g.line(".global __fern_sum_bytes_array")
+		g.label("__fern_sum_bytes_array")
+		g.emit("jmp __fern_sum_bytes")
+	}
 	g.line("")
 	g.line(".globl __fern_sum_bytes")
 	g.line(".type __fern_sum_bytes, @function")

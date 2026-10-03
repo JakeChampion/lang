@@ -337,3 +337,5 @@ rmemchr_bytes=358
 mismatch_bytes=359
 scan_set_bytes=360
 count_runs_bytes=361
+sum_bytes_array=362
+bsd_sum_bytes=363

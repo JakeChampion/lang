@@ -1368,6 +1368,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_idx_nc":              emitArrIdxHelperNChecked("__str_idx_nc", 0, false),
 	"__fern_memchr":             emitMemchrHelper,
 	"__fern_count_byte_bytes":   emitCountByteBytesHelper,
+	"__fern_sum_bytes_array":    emitSumBytesArrayHelper,
+	"__fern_bsd_sum_bytes":      emitBsdSumBytesHelper,
 	"__fern_memchr_bytes":       emitMemchrBytesHelper,
 	"__fern_rmemchr_bytes":      emitRmemchrBytesHelper,
 	"__fern_mismatch_bytes":     emitMismatchBytesHelper,
@@ -4254,6 +4256,8 @@ var runtimeHelperDeps = map[string][]string{
 	"buf_push_range":                   {"__fern_buf_reserve"},
 	"buf_push_bytes_range":             {"buf_push_range"},
 	"__fern_count_byte_bytes":          {"__fern_count_byte"},
+	"__fern_sum_bytes_array":           {"__fern_sum_bytes"},
+	"__fern_bsd_sum_bytes":             {"__fern_bsd_sum"},
 	"__fern_memchr_bytes":              {"__fern_memchr"},
 	"__fern_scan_set_bytes":            {"__fern_scan_set"},
 	"__fern_count_runs_bytes":          {"__fern_count_runs"},
@@ -5605,6 +5609,16 @@ func emitMismatchHelper(w func(string, ...any)) {
 	w(".Lssa_mm_eq:")
 	w("\tmov w0, w4")
 	w("\tret")
+}
+
+func emitSumBytesArrayHelper(w func(string, ...any)) {
+	w("%s:", fnLabel("__fern_sum_bytes_array"))
+	w("\tb %s", fnLabel("__fern_sum_bytes"))
+}
+
+func emitBsdSumBytesHelper(w func(string, ...any)) {
+	w("%s:", fnLabel("__fern_bsd_sum_bytes"))
+	w("\tb %s", fnLabel("__fern_bsd_sum"))
 }
 
 func emitCountByteBytesHelper(w func(string, ...any)) {

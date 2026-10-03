@@ -265,6 +265,8 @@ var providedSigs = map[string]providedSig{
 	"__map_hash_seed":                  {-1, rWord},
 	"__memchr":                         {-1, rWord},
 	"__count_byte_bytes":               {-1, rWord},
+	"__sum_bytes_array":                {-1, rWord},
+	"__bsd_sum_bytes":                  {-1, rWord},
 	"__memchr_bytes":                   {-1, rWord},
 	"__rmemchr_bytes":                  {-1, rWord},
 	"__mismatch":                       {-1, rWord},

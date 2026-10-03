@@ -1500,6 +1500,7 @@ function emit_rt_sum_bytes(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_sum_bytes:\n");
   s = s.write("    movq 8(%rdi), %rcx\n");
   s = s.write("    movq (%rdi), %rdi\n");
+  s = s.write("__fern_sum_bytes_data:\n");
   s = s.write("    leaq (%rdi,%rcx), %r9\n");
   s = s.write("    pxor %xmm2, %xmm2\n");
   s = s.write("    pxor %xmm3, %xmm3\n");
@@ -5958,7 +5959,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(s_done + ":\n");
     return s;
   }
-  if (o.kind_tag == 329) {  // bsd_sum
+  if (o.kind_tag == 329 || o.kind_tag == 363) {  // bsd_sum / bsd_sum_bytes
     // operand stack [box, sum] (sum on top) -> the BSD checksum continued
     // over the string: per byte a 16-bit rotate right by one and an add.
     let blo: asmcore.LabelOut = asmcore.fresh_label(s);
@@ -5967,11 +5968,19 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let b_done: string = blo2.name;
     s = blo2.state;
     s = s.write("    popq %rcx\n    popq %rax\n");
-    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    if (o.kind_tag == 363) {
+      s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
+    } else {
+      s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    }
     s = s.write("    movzwq %cx, %rcx\n    xorq %rdx, %rdx\n");
     s = s.write(b_loop + ":\n");
     s = s.write("    cmpq %r8, %rdx\n    jae " + b_done + "\n");
-    s = s.write("    movzbq (%rax,%rdx), %r10\n");
+    if (o.kind_tag == 363 && !ir.is_packed(o)) {
+      s = s.write("    movzbq (%rax,%rdx,8), %r10\n");
+    } else {
+      s = s.write("    movzbq (%rax,%rdx), %r10\n");
+    }
     s = s.write("    rorw $1, %cx\n    addw %r10w, %cx\n");
     s = s.write("    addq $1, %rdx\n    jmp " + b_loop + "\n");
     s = s.write(b_done + ":\n    movzwq %cx, %rcx\n    pushq %rcx\n");
@@ -6015,13 +6024,26 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(c_done + ":\n    pushq %r11\n");
     return s;
   }
-  if (o.kind_tag == 253) {  // sum_bytes
+  if (o.kind_tag == 362 && !ir.is_packed(o)) {
+    let loop_label = asmcore.fresh_label(s);
+    let done_label = asmcore.fresh_label(loop_label.state);
+    s = done_label.state;
+    s = s.write("    popq %rdi\n    movq (%rdi), %rcx\n    addq $8, %rdi\n    xorq %rdx, %rdx\n    xorl %eax, %eax\n");
+    s = s.write(loop_label.name + ":\n    cmpq %rcx, %rdx\n    jae " + done_label.name + "\n");
+    s = s.write("    movzbl (%rdi,%rdx,8), %r8d\n    addl %r8d, %eax\n    addq $1, %rdx\n    jmp " + loop_label.name + "\n");
+    return s.write(done_label.name + ":\n    movslq %eax, %rax\n    pushq %rax\n");
+  }
+  if (o.kind_tag == 253 || o.kind_tag == 362) {  // sum_bytes / sum_bytes_array
     // operand stack [box] -> every byte of the string added into a
     // 32-bit accumulator that wraps. A call to the SSE2 helper, emitted
     // once under the "sum_bytes" need; the sum is sign-extended into the
     // slot, since a wrapped sum is a negative i32.
     s = s.need("sum_bytes");
-    s = s.write("    popq %rdi\n    call __fern_sum_bytes\n");
+    if (o.kind_tag == 362) {
+      s = s.write("    popq %rdi\n    movq (%rdi), %rcx\n    addq $8, %rdi\n    call __fern_sum_bytes_data\n");
+    } else {
+      s = s.write("    popq %rdi\n    call __fern_sum_bytes\n");
+    }
     s = s.write("    movslq %eax, %rax\n    pushq %rax\n");
     return s;
   }

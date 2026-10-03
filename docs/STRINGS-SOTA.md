@@ -911,6 +911,15 @@ consumed blocks without repeatedly copying long records. Target checks and
 allocation censuses pass; the remaining validation and measurement gates are
 recorded in [the byte-stream report](STRING-BYTE-STREAMS-2026-10-02.md).
 
+`__sum_bytes_array(bytes)` and `__bsd_sum_bytes(bytes, seed)` reduce borrowed
+byte arrays without converting them to text. The first wraps at 32 bits;
+the second continues the 16-bit BSD checksum. Packed native arrays reuse
+the existing kernels. `hash.BsdSum.update_array` and
+`hash.SysvSum.update_array` expose the path for owned reader buffers while
+preserving the existing view APIs. Target, ownership, bootstrap, size and
+native measurement evidence is recorded in
+[the reduction report](STRING-BYTE-REDUCTIONS-2026-10-03.md).
+
 `__mismatch_bytes(a, ao, b, bo, n)` compares two borrowed byte ranges without
 allocating or constructing strings. Each offset clamps to its array's bounds;
 the count clamps to zero and the smaller remaining length. It returns the

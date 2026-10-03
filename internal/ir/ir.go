@@ -15483,14 +15483,14 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
-	if id.Name == "__count_byte_bytes" && len(n.Args) == 2 {
+	if (id.Name == "__count_byte_bytes" || id.Name == "__bsd_sum_bytes") && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
 			for _, a := range n.Args {
 				if err := b.expr(a); err != nil {
 					return err
 				}
 			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_count_byte_bytes", Width: ResNarrow, I32: 2,
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_" + strings.TrimPrefix(id.Name, "__"), Width: ResNarrow, I32: 2,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}}}})
 			return nil
 		}
@@ -15555,13 +15555,17 @@ func (b *builder) callBody(n *ast.Call) error {
 	// and therefore the family's smallest ArgTypes, which is still
 	// essential: a `string` is TWO operand slots on arm64 and wasm and one
 	// on x86-64, so a backend popping I32=1 reads the length as the result.
-	if id.Name == "__sum_bytes" && len(n.Args) == 1 {
+	if (id.Name == "__sum_bytes" || id.Name == "__sum_bytes_array") && len(n.Args) == 1 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
 			if err := b.expr(n.Args[0]); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_sum_bytes", Width: ResNarrow, I32: 1,
-				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}}}})
+			var operand ast.Type = ast.StringType{}
+			if id.Name == "__sum_bytes_array" {
+				operand = ast.ArrayType{Elem: ast.NumberType{Width: 8}}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_" + strings.TrimPrefix(id.Name, "__"), Width: ResNarrow, I32: 1,
+				Ext: &OpExt{ArgTypes: []ast.Type{operand}}})
 			return nil
 		}
 	}

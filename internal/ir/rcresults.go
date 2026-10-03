@@ -552,7 +552,7 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_now_unix_ms": true, "__load_i64": true, "rlimit_nofile": true,
 
 	// i32 counts, indices, comparisons and booleans.
-	"__fern_str_len": true, "__fern_str_byte": true, "__fern_memchr": true, "__fern_count_byte_bytes": true, "__fern_memchr_bytes": true, "__fern_mismatch_bytes": true, "__fern_rmemchr_bytes": true,
+	"__fern_str_len": true, "__fern_str_byte": true, "__fern_memchr": true, "__fern_count_byte_bytes": true, "__fern_sum_bytes_array": true, "__fern_bsd_sum_bytes": true, "__fern_memchr_bytes": true, "__fern_mismatch_bytes": true, "__fern_rmemchr_bytes": true,
 	"__fern_ascii_run": true, "__fern_rmemchr": true,
 	"__fern_count_byte": true, "__fern_mismatch": true, "__fern_scan_set": true, "__fern_count_runs": true, "__fern_bsd_sum": true,
 	"__fern_scan_set_bytes": true, "__fern_count_runs_bytes": true,

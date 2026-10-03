@@ -3873,7 +3873,44 @@ function call_count_byte_bytes(args: Value[]): Value {
   return v_err("__count_byte_bytes: first arg must be a byte array");
 }
 
-// Search or count membership while borrowing both byte arrays.
+// Reduce a borrowed byte array with wrapping or seeded BSD arithmetic.
+function call_byte_reduction(name: string, args: Value[]): Value {
+  let bsd = name == "__bsd_sum_bytes";
+  let argc = 1;
+  if (bsd) {
+    argc = 2;
+  }
+  if (args.len() != argc) {
+    return v_err(name + ": wrong number of arguments");
+  }
+  if (bsd && !is_i32_arg(args[1])) {
+    return v_err(name + ": seed must be an integer");
+  }
+  match (args[0]) {
+    VArr(a) => {
+      let sum: u32 = 0;
+      if (bsd) {
+        sum = vint_bits(args[1]) as u32 & 0xffff;
+      }
+      let i = 0;
+      while (i < a.elements.len()) {
+        if (bsd) {
+          sum = (sum >> 1 | sum << 15) & 0xffff;
+        }
+        sum = sum + vint_bits(a.elements[i]) as u32;
+        if (bsd) {
+          sum = sum & 0xffff;
+        }
+        i = i + 1;
+      }
+      return v_int(sum as i32);
+    },
+    _ => {
+      return v_err(name + ": input must be an array");
+    }
+  }
+}
+
 function call_byte_set_scan(name: string, args: Value[]): Value {
   if (args.len() != 3) {
     return v_err(name + ": expected 3 args (bytes, flag, set)");
@@ -4415,6 +4452,9 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   }
   if (name == "__rmemchr_bytes") {
     return call_rmemchr_bytes(args);
+  }
+  if (name == "__sum_bytes_array" || name == "__bsd_sum_bytes") {
+    return call_byte_reduction(name, args);
   }
   if (name == "__scan_set_bytes" || name == "__count_runs_bytes") {
     return call_byte_set_scan(name, args);

@@ -751,6 +751,15 @@ pub function op_count_byte_bytes(): Op {
   return op0(357);
 }
 
+// Borrowed raw-array reductions; packed() selects native byte storage.
+pub function op_sum_bytes_array(): Op {
+  return op0(362);
+}
+
+pub function op_bsd_sum_bytes(): Op {
+  return op0(363);
+}
+
 // Borrowed byte-array scan; packed() selects packed native byte storage.
 pub function op_memchr_bytes(): Op {
   return op0(356);
@@ -4118,6 +4127,9 @@ function kind_id_len12_s(name: string): i32 {
 }
 
 function kind_id_len13(name: string): i32 {
+  if (name == "bsd_sum_bytes") {
+    return 363;
+  }
   if (name == "rmemchr_bytes") {
     return 358;
   }
@@ -4218,6 +4230,9 @@ function kind_id_len14(name: string): i32 {
 }
 
 function kind_id_len15(name: string): i32 {
+  if (name == "sum_bytes_array") {
+    return 362;
+  }
   let c: u8 = name[0];
   if (c == b'b' && name == "buf_push_mapped") {
     return 325;
@@ -5372,6 +5387,12 @@ pub function kind_name(id: i32): string {
   if (id == 353) {
     return "tcp_send_bytes";
   }
+  if (id == 362) {
+    return "sum_bytes_array";
+  }
+  if (id == 363) {
+    return "bsd_sum_bytes";
+  }
   if (id == 352) {
     return "write_file_bytes";
   }
@@ -5483,7 +5504,7 @@ function pops1_mem(t: i32): boolean {
     || t == 81 || t == 205 || t == 224  // raw_alloc, raw_scratch, raw_arr_box
     || t == 90 || t == 91  // arr_len, arr_rc
     || t == 97 || t == 103 || t == 104 || t == 345  // str_len, str_from_bytes, str_bytes, str_data
-    || t == 253  // sum_bytes
+    || t == 253 || t == 362  // sum_bytes / sum_bytes_array
     || t == 106 || t == 107 || t == 109  // str_to_upper/lower, str_trim
     || t == 113  // str_lines
     || t == 118  // strbuf_append
@@ -5541,7 +5562,7 @@ function pops2_mem(t: i32): boolean {
     || t == 105 || t == 108  // str_split, str_repeat
     || t == 227  // ascii_run
     || t == 235  // count_byte
-    || t == 329  // bsd_sum
+    || t == 329 || t == 363  // bsd_sum / bsd_sum_bytes
     || t == 309  // crc32_cksum
     || t == 322  // scale_f64
     || t == 127 || t == 128 || t == 130  // map_get, map_has, map_delete
@@ -8111,7 +8132,7 @@ pub function op_allocates(tag: i32): boolean {
 // than logic: every `||` is one row of a table, there is no path through it to
 // get wrong, and the only way to lower the number is to carry fewer string ops.
 pub function is_str_op_kind(tag: i32): boolean {
-  return tag == 360 || tag == 361 || tag == 359 || tag == 358 || tag == 357 || tag == 356 || tag == 97 || tag == 101 || tag == 102
+  return tag == 362 || tag == 363 || tag == 360 || tag == 361 || tag == 359 || tag == 358 || tag == 357 || tag == 356 || tag == 97 || tag == 101 || tag == 102
     || tag == 104 || tag == 105 || tag == 106
     || tag == 107 || tag == 108 || tag == 109
     || tag == 111 || tag == 113 || tag == 98

@@ -375,6 +375,15 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					if op.Str == "__fern_count_runs_bytes" {
 						needs.add("__fern_count_runs_bytes")
 					}
+				case "__fern_sum_bytes_array", "__fern_bsd_sum_bytes":
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add(op.Str)
+					if op.Str == "__fern_sum_bytes_array" {
+						needs.add("__fern_sum_bytes")
+					} else {
+						needs.add("__fern_bsd_sum")
+					}
 				case "__fern_sum_bytes":
 					// The byte-sum reduction. Scalar, and it reads
 					// every byte through str_byte for the same reason
@@ -1748,6 +1757,16 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildCountByteBytesBody,
+	},
+	"__fern_sum_bytes_array": {
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildSumBytesArrayBody,
+	},
+	"__fern_bsd_sum_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildBsdSumBytesBody,
 	},
 	"__fern_memchr_bytes": {
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
@@ -7013,6 +7032,30 @@ func buildMismatchBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, pN)
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+func buildSumBytesArrayBody(idxs map[string]uint32) []byte {
+	return buildByteReductionBody(idxs, false)
+}
+
+func buildBsdSumBytesBody(idxs map[string]uint32) []byte {
+	return buildByteReductionBody(idxs, true)
+}
+
+func buildByteReductionBody(idxs map[string]uint32, bsd bool) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	name := "__fern_sum_bytes"
+	if bsd {
+		body = inst.InstLocalGet(body, 1)
+		name = "__fern_bsd_sum"
+	}
+	body = inst.InstCall(body, idxs[name])
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
 func buildCountByteBytesBody(idxs map[string]uint32) []byte {

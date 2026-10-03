@@ -5296,6 +5296,12 @@ function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
   if (ins.str == "__count_byte_bytes") {
     return emit(r, ir.packed(ir.op_count_byte_bytes()));
   }
+  if (ins.str == "__sum_bytes_array") {
+    return emit(r, ir.packed(ir.op_sum_bytes_array()));
+  }
+  if (ins.str == "__bsd_sum_bytes") {
+    return emit(r, ir.packed(ir.op_bsd_sum_bytes()));
+  }
   if (ins.str == "__memchr_bytes") {
     return emit(r, ir.packed(ir.op_memchr_bytes()));
   }

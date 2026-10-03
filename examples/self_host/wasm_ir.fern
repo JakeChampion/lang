@@ -438,6 +438,12 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_emits_op_cached(cache, "count_byte_bytes")) {
     out = out.append("@uses_count_byte_bytes");
   }
+  if (module_emits_op_cached(cache, "sum_bytes_array")) {
+    out = out.append("@uses_sum_bytes_array");
+  }
+  if (module_emits_op_cached(cache, "bsd_sum_bytes")) {
+    out = out.append("@uses_bsd_sum_bytes");
+  }
   if (module_emits_op_cached(cache, "memchr_bytes")) {
     out = out.append("@uses_memchr_bytes");
   }
@@ -6885,6 +6891,12 @@ function emit_str_op_wat(o: ir.Op): string {
   if (o.kind_tag == 357) {
     return "    call $__fern_count_byte_bytes\n";
   }
+  if (o.kind_tag == 362) {
+    return "    call $__fern_sum_bytes_array\n";
+  }
+  if (o.kind_tag == 363) {
+    return "    call $__fern_bsd_sum_bytes\n";
+  }
   if (o.kind_tag == 356) {
     return "    call $__fern_memchr_bytes\n";
   }
@@ -9313,6 +9325,36 @@ pub function scan_set_bytes_helper(): string {
   o = o + "      (br $c)))\n";
   o = o + "    (local.get $len))\n";
   return o;
+}
+
+pub function byte_reduction_helper(bsd: boolean): string {
+  let name = "sum_bytes_array";
+  let params = "";
+  if (bsd) {
+    name = "bsd_sum_bytes";
+    params = " (param $sum i32)";
+  }
+  let o = "  (func $__fern_" + name + " (param $s i32)" + params + " (result i32)\n";
+  o = o + "    (local $len i32) (local $i i32)\n";
+  if (!bsd) {
+    o = o + "    (local $sum i32)\n";
+  }
+  if (bsd) {
+    o = o + "    (local.set $sum (i32.and (local.get $sum) (i32.const 65535)))\n";
+  }
+  o = o + "    (local.set $len (i32.load (local.get $s)))\n";
+  o = o + "    (block $d (loop $c\n";
+  o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
+  if (bsd) {
+    o = o + "      (local.set $sum (i32.and (i32.or (i32.shr_u (local.get $sum) (i32.const 1)) (i32.shl (local.get $sum) (i32.const 15))) (i32.const 65535)))\n";
+  }
+  o = o + "      (local.set $sum (i32.add (local.get $sum) (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 8)) (local.get $i)))))\n";
+  if (bsd) {
+    o = o + "      (local.set $sum (i32.and (local.get $sum) (i32.const 65535)))\n";
+  }
+  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+  o = o + "      (br $c)))\n";
+  return o + "    (local.get $sum))\n";
 }
 
 pub function sum_bytes_helper(): string {
@@ -14034,6 +14076,12 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "@uses_count_byte_bytes")) {
     parts = parts.append(count_byte_bytes_helper());
+  }
+  if (need(needs, "@uses_sum_bytes_array")) {
+    parts = parts.append(byte_reduction_helper(false));
+  }
+  if (need(needs, "@uses_bsd_sum_bytes")) {
+    parts = parts.append(byte_reduction_helper(true));
   }
   if (need(needs, "@uses_memchr_bytes")) {
     parts = parts.append(memchr_bytes_helper());
