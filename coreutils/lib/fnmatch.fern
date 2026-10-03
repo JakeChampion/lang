@@ -143,8 +143,10 @@ function fn_bracket[P: ByteInput](p: P, start: i32, ch: i32): i32 {
       break;
     }
     first = false;
-    // `[:class:]`, `[.symbol.]`, `[=equivalence=]`.
-    if (c == 91 && i + 1 < n && (p.byte_at(i + 1) as i32 == 58 || p.byte_at(i + 1) as i32 == 46 || p.byte_at(i + 1) as i32 == 61)) {
+    // GNU uses gnulib's non-glibc matcher on Darwin. Only character
+    // classes are special there: `[.x.]` and `[=x=]` remain ordinary
+    // bracket contents, including the first `]` ending that bracket.
+    if (c == 91 && i + 1 < n && (p.byte_at(i + 1) as i32 == 58 || target_os() != "darwin" && (p.byte_at(i + 1) as i32 == 46 || p.byte_at(i + 1) as i32 == 61))) {
       let kind: i32 = p.byte_at(i + 1) as i32;
       let body: i32 = i + 2;
       let j: i32 = body;
@@ -311,4 +313,10 @@ pub function fnmatch(pat: string, s: string): boolean {
 pub function fnmatch_bytes(pat: [u8], s: [u8]): boolean {
   let r: i32 = fn_match(BytesInput { data: pat }, 0, BytesInput { data: s }, 0);
   return r > 0;
+}
+
+// A raw configuration pattern can match an existing text value without
+// wrapping that value in a second byte-input record.
+pub function fnmatch_bytes_text(pat: [u8], s: string): boolean {
+  return fn_match(BytesInput { data: pat }, 0, s, 0) > 0;
 }

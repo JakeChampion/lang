@@ -14,6 +14,9 @@ import (
 
 func TestSelfHostWriterBytes(t *testing.T) {
 	cli := buildSelfHostCLI(t)
+	t.Run("interp", func(t *testing.T) {
+		testWriterBytesInterpreter(t, cli.bin, cli.runner, cli.stdlib)
+	})
 	// Keep stderr open for the ownership census. These executable entry points
 	// exit with main's result instead of printing it to the closed stdout.
 	source := strings.Replace(e2eharness.WriterBytesProgram, "let closed = stderr();", "let closed = stdout();", 1)
@@ -64,18 +67,40 @@ func TestSelfHostWriterBytes(t *testing.T) {
 	}
 }
 
+func writerBytesOpenProgram(t *testing.T) string {
+	t.Helper()
+	// Components and the primary interpreter provide stdio writes, but not
+	// descriptor closing. Keep all raw and view cases before that boundary.
+	source, _, ok := strings.Cut(e2eharness.WriterBytesProgram, " let closed = stderr();")
+	if !ok {
+		t.Fatal("missing boundary before closed-descriptor cases")
+	}
+	return source + " return 0;\n}\n"
+}
+
+func testWriterBytesInterpreter(t *testing.T, compiler string, runner []string, stdlib string) {
+	t.Helper()
+	src := filepath.Join(t.TempDir(), "writer.fern")
+	if err := os.WriteFile(src, []byte(writerBytesOpenProgram(t)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := runX86_64Bin(runner, compiler, "-interp", src, stdlib)
+	var out, diagnostic bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &diagnostic
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("interpreter: %v\n%s", err, &diagnostic)
+	}
+	if !bytes.Equal(out.Bytes(), e2eharness.WriterBytesOutput()) || diagnostic.Len() != 0 {
+		t.Fatalf("interpreter output differs: got %d bytes\n%s", out.Len(), &diagnostic)
+	}
+}
+
 func testWriterBytesComponents(t *testing.T, compiler string, runner []string, stdlib string) {
 	t.Helper()
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("requires wasmtime")
 	}
-	// Primary components already provide stdout and stderr writes, but not
-	// descriptor closing. Exercise the raw write contract on those streams.
-	source, _, ok := strings.Cut(e2eharness.WriterBytesProgram, " let closed = stderr();")
-	if !ok {
-		t.Fatal("missing boundary before closed-descriptor cases")
-	}
-	source += " return 0;\n}\n"
+	source := writerBytesOpenProgram(t)
 	for _, stream := range []string{"stdout", "stderr"} {
 		t.Run("component/"+stream, func(t *testing.T) {
 			dir := t.TempDir()
@@ -122,6 +147,9 @@ func TestSelfHostArm64DarwinWriterBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Run("interp", func(t *testing.T) {
+		testWriterBytesInterpreter(t, cli, nil, stdlib)
+	})
 	src := filepath.Join(dir, "writer.fern")
 	if err := os.WriteFile(src, []byte(strings.Replace(e2eharness.WriterBytesProgram, "let closed = stderr();", "let closed = stdout();", 1)), 0o644); err != nil {
 		t.Fatal(err)

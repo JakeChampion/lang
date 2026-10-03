@@ -30,13 +30,13 @@ import "./lib/fnmatch";
 import "./lib/gnu";
 
 // ---- the keyword table -----------------------------------------------------
-function eq_fold(a: string, b: string): boolean {
-  if (a.len() != b.len()) {
+function eq_fold(a: u8[], lo: i32, hi: i32, b: string): boolean {
+  if (hi - lo != b.len()) {
     return false;
   }
   let i: i32 = 0;
-  while (i < a.len()) {
-    let x: i32 = a[i] as i32;
+  while (i < hi - lo) {
+    let x: i32 = a[lo + i] as i32;
     let y: i32 = b[i] as i32;
     if (x >= 65 && x <= 90) {
       x = x + 32;
@@ -52,87 +52,87 @@ function eq_fold(a: string, b: string): boolean {
   return true;
 }
 
-// `lookup(kw)` — (kind, code): 0 the keyword is not one, 1 an entry
+// `lookup(raw, lo, hi)` returns (kind, code): 0 unknown, 1 an entry
 // under `code`, 2 recognised and contributing nothing.
 //
 // 37 names for 24 two-letter codes, plus the three the slackware
 // dircolors honoured that GNU accepts and does nothing with. The match
 // folds case; the EXTENSION keywords do not reach here, which is why
 // `.GZ` keeps its case and `dIr` does not.
-function lookup(kw: string): (i32, string) {
-  if (eq_fold(kw, "NORMAL") || eq_fold(kw, "NORM")) {
+function lookup(kw: u8[], lo: i32, hi: i32): (i32, string) {
+  if (eq_fold(kw, lo, hi, "NORMAL") || eq_fold(kw, lo, hi, "NORM")) {
     return (1, "no");
   }
-  if (eq_fold(kw, "FILE")) {
+  if (eq_fold(kw, lo, hi, "FILE")) {
     return (1, "fi");
   }
-  if (eq_fold(kw, "RESET")) {
+  if (eq_fold(kw, lo, hi, "RESET")) {
     return (1, "rs");
   }
-  if (eq_fold(kw, "DIR")) {
+  if (eq_fold(kw, lo, hi, "DIR")) {
     return (1, "di");
   }
-  if (eq_fold(kw, "LNK") || eq_fold(kw, "LINK") || eq_fold(kw, "SYMLINK")) {
+  if (eq_fold(kw, lo, hi, "LNK") || eq_fold(kw, lo, hi, "LINK") || eq_fold(kw, lo, hi, "SYMLINK")) {
     return (1, "ln");
   }
-  if (eq_fold(kw, "ORPHAN")) {
+  if (eq_fold(kw, lo, hi, "ORPHAN")) {
     return (1, "or");
   }
-  if (eq_fold(kw, "MISSING")) {
+  if (eq_fold(kw, lo, hi, "MISSING")) {
     return (1, "mi");
   }
-  if (eq_fold(kw, "FIFO") || eq_fold(kw, "PIPE")) {
+  if (eq_fold(kw, lo, hi, "FIFO") || eq_fold(kw, lo, hi, "PIPE")) {
     return (1, "pi");
   }
-  if (eq_fold(kw, "SOCK")) {
+  if (eq_fold(kw, lo, hi, "SOCK")) {
     return (1, "so");
   }
-  if (eq_fold(kw, "BLK") || eq_fold(kw, "BLOCK")) {
+  if (eq_fold(kw, lo, hi, "BLK") || eq_fold(kw, lo, hi, "BLOCK")) {
     return (1, "bd");
   }
-  if (eq_fold(kw, "CHR") || eq_fold(kw, "CHAR")) {
+  if (eq_fold(kw, lo, hi, "CHR") || eq_fold(kw, lo, hi, "CHAR")) {
     return (1, "cd");
   }
-  if (eq_fold(kw, "DOOR")) {
+  if (eq_fold(kw, lo, hi, "DOOR")) {
     return (1, "do");
   }
-  if (eq_fold(kw, "EXEC")) {
+  if (eq_fold(kw, lo, hi, "EXEC")) {
     return (1, "ex");
   }
-  if (eq_fold(kw, "LEFT") || eq_fold(kw, "LEFTCODE")) {
+  if (eq_fold(kw, lo, hi, "LEFT") || eq_fold(kw, lo, hi, "LEFTCODE")) {
     return (1, "lc");
   }
-  if (eq_fold(kw, "RIGHT") || eq_fold(kw, "RIGHTCODE")) {
+  if (eq_fold(kw, lo, hi, "RIGHT") || eq_fold(kw, lo, hi, "RIGHTCODE")) {
     return (1, "rc");
   }
-  if (eq_fold(kw, "END") || eq_fold(kw, "ENDCODE")) {
+  if (eq_fold(kw, lo, hi, "END") || eq_fold(kw, lo, hi, "ENDCODE")) {
     return (1, "ec");
   }
-  if (eq_fold(kw, "SUID") || eq_fold(kw, "SETUID")) {
+  if (eq_fold(kw, lo, hi, "SUID") || eq_fold(kw, lo, hi, "SETUID")) {
     return (1, "su");
   }
-  if (eq_fold(kw, "SGID") || eq_fold(kw, "SETGID")) {
+  if (eq_fold(kw, lo, hi, "SGID") || eq_fold(kw, lo, hi, "SETGID")) {
     return (1, "sg");
   }
-  if (eq_fold(kw, "STICKY")) {
+  if (eq_fold(kw, lo, hi, "STICKY")) {
     return (1, "st");
   }
-  if (eq_fold(kw, "OTHER_WRITABLE") || eq_fold(kw, "OWR")) {
+  if (eq_fold(kw, lo, hi, "OTHER_WRITABLE") || eq_fold(kw, lo, hi, "OWR")) {
     return (1, "ow");
   }
-  if (eq_fold(kw, "STICKY_OTHER_WRITABLE") || eq_fold(kw, "OWT")) {
+  if (eq_fold(kw, lo, hi, "STICKY_OTHER_WRITABLE") || eq_fold(kw, lo, hi, "OWT")) {
     return (1, "tw");
   }
-  if (eq_fold(kw, "CAPABILITY")) {
+  if (eq_fold(kw, lo, hi, "CAPABILITY")) {
     return (1, "ca");
   }
-  if (eq_fold(kw, "MULTIHARDLINK")) {
+  if (eq_fold(kw, lo, hi, "MULTIHARDLINK")) {
     return (1, "mh");
   }
-  if (eq_fold(kw, "CLRTOEOL")) {
+  if (eq_fold(kw, lo, hi, "CLRTOEOL")) {
     return (1, "cl");
   }
-  if (eq_fold(kw, "OPTIONS") || eq_fold(kw, "COLOR") || eq_fold(kw, "EIGHTBIT")) {
+  if (eq_fold(kw, lo, hi, "OPTIONS") || eq_fold(kw, lo, hi, "COLOR") || eq_fold(kw, lo, hi, "EIGHTBIT")) {
     return (2, "");
   }
   return (0, "");
@@ -154,50 +154,12 @@ function is_space(c: i32): boolean {
   return c == 32 || c == 9 || c == 11 || c == 12 || c == 13;
 }
 
-struct Line { kind: i32, ks: i32, ke: i32, as0: i32, ae: i32 }
-
-// kind 0 nothing here, 1 a keyword and its argument, 2 the argument is
-// missing. The line is `raw[lo, end)` rather than a string of its own,
-// and so are the keyword `[ks, ke)` and the argument `[as0, ae)`: a
-// config of any size arrives as one buffer, and cutting a copy out of
-// it per line costs more than the parse does. `end` is already cut at a
-// NUL by the caller.
-function scan_line(raw: string, lo: i32, end: i32): Line {
-  let i: i32 = lo;
-  while (i < end && is_space(raw[i] as i32)) {
-    i = i + 1;
-  }
-  if (i >= end || raw[i] as i32 == 35) {
-    return Line { kind: 0, ks: i, ke: i, as0: i, ae: i };
-  }
-  let ks: i32 = i;
-  while (i < end && !is_space(raw[i] as i32)) {
-    i = i + 1;
-  }
-  let ke: i32 = i;
-  while (i < end && is_space(raw[i] as i32)) {
-    i = i + 1;
-  }
-  if (i >= end || raw[i] as i32 == 35) {
-    return Line { kind: 2, ks: ks, ke: ke, as0: i, ae: i };
-  }
-  let as0: i32 = i;
-  while (i < end && raw[i] as i32 != 35) {
-    i = i + 1;
-  }
-  let ae: i32 = i;
-  while (ae > as0 && is_space(raw[ae - 1] as i32)) {
-    ae = ae - 1;
-  }
-  return Line { kind: 1, ks: ks, ke: ke, as0: as0, ae: ae };
-}
-
 // ---- the parse -------------------------------------------------------------
 //
 // The body is escaped straight out of the input buffer into one builder
 // as the lines are read, so the config is never cut into a string per
 // entry; a parse that fails hands back no body at all.
-struct Parse { body: string, ok: boolean }
+struct Parse { body: u8[], ok: boolean }
 
 // The four states of the TERM / COLORTERM filter.
 function st_global(): i32 {
@@ -221,10 +183,10 @@ function st_termyes(): i32 {
 // `*` in front when `star`, or the two-letter `code` when that is not
 // empty. `ls` picks the `--print-ls-colors` line over the LS_COLORS
 // piece.
-function entry_push(h: usize, text: string, item_lo: i32, item_hi: i32, star: boolean, code: string, arg_lo: i32, arg_hi: i32, ls: boolean): void {
+function entry_push(h: usize, text: u8[], item_lo: i32, item_hi: i32, star: boolean, code: string, arg_lo: i32, arg_hi: i32, ls: boolean): void {
   if (ls) {
     buf_push(h, "\x1b[");
-    buf_push_range(h, text, arg_lo, arg_hi);
+    buf_push_bytes_range(h, text, arg_lo, arg_hi);
     buf_push_byte(h, 109);
     if (code.len() > 0) {
       buf_push(h, code);
@@ -232,10 +194,10 @@ function entry_push(h: usize, text: string, item_lo: i32, item_hi: i32, star: bo
       if (star) {
         buf_push_byte(h, 42);
       }
-      buf_push_range(h, text, item_lo, item_hi);
+      buf_push_bytes_range(h, text, item_lo, item_hi);
     }
     buf_push_byte(h, 9);
-    buf_push_range(h, text, arg_lo, arg_hi);
+    buf_push_bytes_range(h, text, arg_lo, arg_hi);
     buf_push(h, "\x1b[0m\n");
     return;
   }
@@ -254,7 +216,18 @@ function entry_push(h: usize, text: string, item_lo: i32, item_hi: i32, star: bo
   buf_push_byte(h, 58);
 }
 
-function parse(text: string, name: string, term: string, colorterm: string, ls: boolean): Parse {
+// GNU prints an unknown keyword verbatim, even when it is not UTF-8.
+function unknown_keyword(name: string, lineno: i32, text: u8[], lo: i32, hi: i32): void {
+  let h: usize = buf_new(0);
+  buf_push(h, gnu.prog() + ": " + name + ":" + lineno.to_string() + ": unrecognized keyword ");
+  buf_push_bytes_range(h, text, lo, hi);
+  buf_push_byte(h, 10);
+  let message: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  stderr().write_bytes(message);
+}
+
+function parse(text: u8[], name: string, term: string, colorterm: string, ls: boolean): Parse {
   let h: usize = buf_new(text.len() + 16);
   let ok: boolean = true;
   let state: i32 = st_global();
@@ -263,27 +236,53 @@ function parse(text: string, name: string, term: string, colorterm: string, ls: 
   // The next NUL at or after the cursor, refreshed only once the cursor
   // has passed it: searching each line separately would rescan the rest
   // of the buffer per line.
-  let nul: i32 = __memchr(text, 0, 0);
+  let nul: i32 = __memchr_bytes(text, 0, 0);
   while (pos < text.len()) {
-    let nl: i32 = __memchr(text, 10, pos);
+    let nl: i32 = __memchr_bytes(text, 10, pos);
     let end: i32 = nl;
     if (nl < 0) {
       end = text.len();
     }
     lineno = lineno + 1;
     if (nul >= 0 && nul < pos) {
-      nul = __memchr(text, 0, pos);
+      nul = __memchr_bytes(text, 0, pos);
     }
     let cut: i32 = end;
     if (nul >= 0 && nul < end) {
       cut = nul;
     }
-    let line: Line = scan_line(text, pos, cut);
-    let kind: i32 = line.kind;
-    let ks: i32 = line.ks;
-    let ke: i32 = line.ke;
-    let as0: i32 = line.as0;
-    let ae: i32 = line.ae;
+    // Keep line and token bounds as scalars rather than allocating one
+    // record and one keyword slice per line. NUL has already cut the line.
+    let i: i32 = pos;
+    while (i < cut && is_space(text[i] as i32)) {
+      i = i + 1;
+    }
+    let kind: i32 = 0;
+    let ks: i32 = i;
+    let ke: i32 = i;
+    let as0: i32 = i;
+    let ae: i32 = i;
+    if (i < cut && text[i] as i32 != 35) {
+      while (i < cut && !is_space(text[i] as i32)) {
+        i = i + 1;
+      }
+      ke = i;
+      while (i < cut && is_space(text[i] as i32)) {
+        i = i + 1;
+      }
+      kind = 2;
+      if (i < cut && text[i] as i32 != 35) {
+        as0 = i;
+        while (i < cut && text[i] as i32 != 35) {
+          i = i + 1;
+        }
+        ae = i;
+        while (ae > as0 && is_space(text[ae - 1] as i32)) {
+          ae = ae - 1;
+        }
+        kind = 1;
+      }
+    }
     if (kind == 2) {
       gnu.error(name + ":" + lineno.to_string() + ": invalid line;  missing second token");
       ok = false;
@@ -298,16 +297,15 @@ function parse(text: string, name: string, term: string, colorterm: string, ls: 
           entry_push(h, text, ks, ke, lead == 46, "", as0, ae, ls);
         }
       } else {
-        let kw: string = slice_unchecked(text, ks, ke) + "";
-        if (eq_fold(kw, "TERM") || eq_fold(kw, "COLORTERM")) {
+        if (eq_fold(text, ks, ke, "TERM") || eq_fold(text, ks, ke, "COLORTERM")) {
           let value: string = colorterm;
-          if (eq_fold(kw, "TERM")) {
+          if (eq_fold(text, ks, ke, "TERM")) {
             value = term;
           }
           if (state != st_termsure()) {
             state = st_termno();
           }
-          if (fnmatch.fnmatch(slice_unchecked(text, as0, ae) + "", value)) {
+          if (fnmatch.fnmatch_bytes_text(text[as0:ae], value)) {
             state = st_termsure();
           }
         } else {
@@ -315,13 +313,13 @@ function parse(text: string, name: string, term: string, colorterm: string, ls: 
             state = st_termyes();
           }
           if (state != st_termno()) {
-            let hit: (i32, string) = lookup(kw);
+            let hit: (i32, string) = lookup(text, ks, ke);
             if (hit.0 == 1) {
               entry_push(h, text, ks, ke, false, hit.1, as0, ae, ls);
             } else if (hit.0 == 0 && state == st_termyes()) {
               // Outside a matching section an unknown keyword is passed
               // over in silence; inside one it is fatal.
-              gnu.error(name + ":" + lineno.to_string() + ": unrecognized keyword " + kw);
+              unknown_keyword(name, lineno, text, ks, ke);
               ok = false;
             }
           }
@@ -333,9 +331,9 @@ function parse(text: string, name: string, term: string, colorterm: string, ls: 
     }
     pos = nl + 1;
   }
-  let body: string = "";
+  let body: u8[] = [];
   if (ok) {
-    body = buf_take(h);
+    body = buf_take_bytes(h);
   }
   buf_free(h);
   return Parse { body: body, ok: ok };
@@ -349,7 +347,7 @@ function parse(text: string, name: string, term: string, colorterm: string, ls: 
 // flag is set; a `'` becomes `'\''`; every other byte sets the flag.
 // So `a\:b` comes back unchanged, `a^^:b` gains a backslash and
 // `a^:b` does not.
-function escape_push(h: usize, s: string, lo: i32, hi: i32): void {
+function escape_push(h: usize, s: u8[], lo: i32, hi: i32): void {
   let need: boolean = true;
   let i: i32 = lo;
   let run: i32 = lo;
@@ -357,7 +355,7 @@ function escape_push(h: usize, s: string, lo: i32, hi: i32): void {
     let c: i32 = s[i] as i32;
     if (c == 58 || c == 61 || c == 92 || c == 94 || c == 39) {
       if (i > run) {
-        buf_push_range(h, s, run, i);
+        buf_push_bytes_range(h, s, run, i);
         need = true;
       }
       if (c == 39) {
@@ -380,26 +378,26 @@ function escape_push(h: usize, s: string, lo: i32, hi: i32): void {
     }
   }
   if (i > run) {
-    buf_push_range(h, s, run, hi);
+    buf_push_bytes_range(h, s, run, hi);
   }
 }
 
 // ---- input -----------------------------------------------------------------
-struct Input { text: string, ok: boolean }
+struct Input { bytes: u8[], ok: boolean }
 
 // `name` is already rendered the way the diagnostics want it. A read
 // failure and a close failure are reported separately, which is how
 // `dircolors - <&-` says both.
 function read_stream(r: Reader, name: string): Input {
-  let chunks: string[] = [];
+  let h: usize = buf_new(0);
   let ok: boolean = true;
   while (true) {
-    match (r.read_chunk(65536)) {
+    match (r.read_chunk_bytes(65536)) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           break;
         }
-        chunks = chunks.append(chunk);
+        buf_push_bytes_range(h, chunk, 0, chunk.len());
       },
       Err(e) => {
         gnu.error(name + ": read error: " + gnu.io_error_text(e));
@@ -415,7 +413,9 @@ function read_stream(r: Reader, name: string): Input {
     },
     None => {}
   }
-  return Input { text: chunks.join(""), ok: ok };
+  let bytes: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return Input { bytes: bytes, ok: ok };
 }
 
 function read_input(path: string): Input {
@@ -435,7 +435,7 @@ function read_input(path: string): Input {
       exit(1);
     }
   }
-  return Input { text: "", ok: false };
+  return Input { bytes: [], ok: false };
 }
 
 // ---- options ---------------------------------------------------------------
@@ -596,15 +596,17 @@ pub function main(): i32 {
     }
   }
 
-  let text: string = colordb.text();
+  let text: u8[] = [];
   let name: string = "";
   if (operands.len() == 1) {
     let input: Input = read_input(operands[0]);
     if (!input.ok) {
       return 1;
     }
-    text = input.text;
+    text = input.bytes;
     name = gnu.quotef(operands[0]);
+  } else {
+    text = colordb.text().bytes();
   }
 
   // An unset or empty TERM is the literal string `none`; an unset
@@ -622,18 +624,18 @@ pub function main(): i32 {
   // pending, so the same failure is a bare `write error`.
   let o: gnu.Stdio = gnu.stdio_new();
   if (print_ls) {
-    o = o.fwrite(p.body);
+    o = o.fwrite_bytes(p.body);
     o.close_stdout();
     return 0;
   }
-  let body: string = p.body;
+  let body: u8[] = p.body;
   if (syntax == 2) {
     o = o.fwrite("setenv LS_COLORS '");
-    o = o.fwrite(body);
+    o = o.fwrite_bytes(body);
     o = o.fwrite("'\n");
   } else {
     o = o.fwrite("LS_COLORS='");
-    o = o.fwrite(body);
+    o = o.fwrite_bytes(body);
     o = o.fwrite("';\nexport LS_COLORS\n");
   }
   o.close_stdout();
