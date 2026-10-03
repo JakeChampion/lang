@@ -147,7 +147,7 @@ function run(): i32 {
   // are x86-64-only and ignored here.
   if (target == "arm64-linux") {
     let d64: semlower.Driven = semlower.driven(mod, target);
-    print(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub));
+    print(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub, 0 as usize));
     return 0;
   }
   // `-target arm64-darwin`: the arm64-apple-darwin GAS text (@PAGE/@PAGEOFF,
@@ -160,7 +160,7 @@ function run(): i32 {
   // which would make "build one" look like remaining #3457 work; it is not.)
   if (target == "arm64-darwin") {
     let dd: semlower.Driven = semlower.driven(mod, target);
-    print(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(dd.full, true, dd.sub)));
+    print(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(dd.full, true, dd.sub, 0 as usize)));
     return 0;
   }
   // `-ir-unit entry|lib`: emit a single per-module translation unit (defs
