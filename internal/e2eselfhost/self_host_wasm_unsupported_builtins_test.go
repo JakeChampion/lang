@@ -24,7 +24,7 @@ import (
 //     emitter, which emitted a call against an undefined $__c_call<n>.
 //   - the raw-memory / syscall floor (#6946) — __raw_alloc,
 //     __raw_string, __raw_scratch, __raw_environ,
-//     __raw_splice_pipe, __raw_addr,
+//     __raw_splice_pipe, __raw_cover, __raw_addr,
 //     __raw_arr_box, __syscall3, __syscall4, __syscall5. They exist so the
 //     register backends' runtime helpers can be written in Fern; wasm has
 //     neither a raw address space nor syscalls. Unclassified, they reached
@@ -121,6 +121,11 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 			name:    "raw_splice_pipe",
 			src:     `function main(): i32 { return __raw_splice_pipe(); }` + "\n",
 			mustSay: "__raw_splice_pipe",
+		},
+		{
+			name:    "raw_cover",
+			src:     `function main(): i32 { return __raw_cover(); }` + "\n",
+			mustSay: "__raw_cover",
 		},
 	}
 

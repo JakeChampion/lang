@@ -188,15 +188,15 @@ pub function fold_expr(e: ast.Expr): ast.Expr {
 
 // fold_node is this pass minus the walk: one node, whose children the
 // post-order map has already folded, collapsed to a literal when it can be.
-// Only the two arithmetic shapes contribute; every other node is its own
-// rebuilt form.
+// Only the two arithmetic shapes contribute; a node that does not collapse is
+// returned as it is, position included.
 function fold_node(e: ast.Expr): ast.Expr {
   match (e) {
     ast.ExprBinary(b) => {
-      return fold_binary(b.op, b.left, b.right);
+      return fold_binary(b.op, b.left, b.right, e);
     },
     ast.ExprUnary(u) => {
-      return fold_unary(u.op, u.operand);
+      return fold_unary(u.op, u.operand, e);
     },
     _ => {
       return e;
@@ -205,8 +205,7 @@ function fold_node(e: ast.Expr): ast.Expr {
   return e;
 }
 
-function fold_binary(op: string, lhs: ast.Expr, rhs: ast.Expr): ast.Expr {
-  let unfolded: ast.Expr = ast.ExprBinary { op: op, left: lhs, right: rhs, line: 0, col: 0, ty: "" };
+function fold_binary(op: string, lhs: ast.Expr, rhs: ast.Expr, unfolded: ast.Expr): ast.Expr {
   // Integer arithmetic + comparison + equality, evaluated in i64 so a u32
   // operand keeps its value. Both operands must name the SAME type: mixing
   // widths is the checker's business, and picking one of them here would
@@ -308,7 +307,7 @@ function fold_arith(v: i64, suffix: string, peak: i64, unfolded: ast.Expr): ast.
   return lit_int(v, suffix);
 }
 
-function fold_unary(op: string, operand: ast.Expr): ast.Expr {
+function fold_unary(op: string, operand: ast.Expr, unfolded: ast.Expr): ast.Expr {
   if (op == "-") {
     let oi: OptInt = as_int_lit(operand);
     // The operand of a unary minus is a MAGNITUDE, so it is the negated
@@ -324,7 +323,7 @@ function fold_unary(op: string, operand: ast.Expr): ast.Expr {
       return lit_bool(!ob.v);
     }
   }
-  return ast.ExprUnary { op: op, operand: operand, line: 0, col: 0, ty: "" };
+  return unfolded;
 }
 
 // =================== STMT / MODULE FOLDING ====================
@@ -1082,6 +1081,44 @@ function main(): i32 {
   }
   if (mod21.funcs[0].bound_traits[0] != "Ord") {
     return 201;
+  }
+
+  // A node that does not fold keeps its position: `-cover` and every
+  // diagnostic after this pass place a conditional by it.
+  let mod22: parser.Module = fold_source("let a = 1 + x; let b = !y; return 0;");
+  match (mod22.top_stmts[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprBinary(b) => {
+          if (b.line != 1 || b.col != 11) {
+            return 210;
+          }
+        },
+        _ => {
+          return 211;
+        }
+      }
+    },
+    _ => {
+      return 212;
+    }
+  }
+  match (mod22.top_stmts[1]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprUnary(u) => {
+          if (u.line != 1 || u.col != 24) {
+            return 213;
+          }
+        },
+        _ => {
+          return 214;
+        }
+      }
+    },
+    _ => {
+      return 215;
+    }
   }
 
   return 0;

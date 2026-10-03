@@ -20,7 +20,7 @@
 import "std/string";
 import "std/array";
 import "./lib/gnu";
-import "./lib/tz";
+import "std/tz";
 import "./lib/datetime";
 
 function opt_time(): i32 {

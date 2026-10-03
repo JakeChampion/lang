@@ -14,12 +14,8 @@ import (
 	"time"
 
 	"github.com/jakechampion/lang/internal/ast"
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/fernsmith"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
 )
 
 // --- Coverage-guided fuzzing of the self-host compiler (#5548 slice 4) ---
@@ -122,8 +118,8 @@ func popcount(x uint64) int {
 	return n
 }
 
-// buildInstrumentedSelfHost compiles the self-host CLI driver with -cover and
-// links it, returning the binary's path.
+// buildInstrumentedSelfHost compiles the self-host CLI driver with the
+// self-host's own -cover, returning the binary's path.
 //
 // Deliberately NOT routed through BuildSelfHostBin: that consults a build
 // cache keyed on the SOURCES, and an instrumented build has identical sources
@@ -132,41 +128,14 @@ func popcount(x uint64) int {
 // no new coverage and the fuzzer would silently degrade to a random walk. The
 // failure would be invisible, which is exactly the shape this whole feature
 // exists to refuse.
-func buildInstrumentedSelfHost(t *testing.T, gcc, dir string) string {
+func buildInstrumentedSelfHost(t *testing.T, dir string) string {
 	t.Helper()
-	entry := filepath.Join(dir, "fern.fern")
-	prog, _, err := modload.Load(entry)
-	if err != nil {
-		t.Fatalf("modload self-host driver: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold self-host driver: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check self-host driver: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph self-host driver: %v", err)
-	}
-	prev := ast.CoverEnabled
-	t.Cleanup(func() { ast.CoverEnabled = prev })
-	ast.CoverEnabled = true
-	asm, emitErr := x86_64.Emit(prog, info)
-	ast.CoverEnabled = prev
-	if emitErr != nil {
-		t.Fatalf("emit instrumented self-host driver: %v", emitErr)
-	}
-	asmPath := filepath.Join(dir, "fern_cover.s")
 	binPath := filepath.Join(dir, "fern_cover")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-cover", "-target", e2eharness.TargetX86_64Linux, "-o", binPath, filepath.Join(dir, "fern.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build instrumented self-host driver: %v\n%s", err, out)
 	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("link instrumented self-host driver: %v\n%s", err, out)
-	}
-	// The asm is tens of MB and nothing reads it again.
-	_ = os.Remove(asmPath)
 	return binPath
 }
 
@@ -318,7 +287,7 @@ func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
 	if os.Getenv(selfHostCoverFuzzEnv) == "" {
 		t.Skip("set " + selfHostCoverFuzzEnv + "=1 to run the coverage-guided self-host fuzzer")
 	}
-	gcc, runner := x86_64Tooling(t)
+	_, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
 		t.Skip("the self-host CLI driver runs only natively (argv paths)")
 	}
@@ -337,7 +306,7 @@ func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
 
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
-	bin := buildInstrumentedSelfHost(t, gcc, dir)
+	bin := buildInstrumentedSelfHost(t, dir)
 	work := t.TempDir()
 	srcPath := filepath.Join(work, "main.fern")
 
@@ -412,7 +381,7 @@ func TestSelfHostCoverageFeedbackBeatsBlindMutation(t *testing.T) {
 	if os.Getenv(selfHostCoverFuzzEnv) == "" {
 		t.Skip("set " + selfHostCoverFuzzEnv + "=1 to run the coverage-guided self-host fuzzer")
 	}
-	gcc, runner := x86_64Tooling(t)
+	_, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
 		t.Skip("the self-host CLI driver runs only natively (argv paths)")
 	}
@@ -422,7 +391,7 @@ func TestSelfHostCoverageFeedbackBeatsBlindMutation(t *testing.T) {
 	}
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
-	bin := buildInstrumentedSelfHost(t, gcc, dir)
+	bin := buildInstrumentedSelfHost(t, dir)
 
 	const iterations = 300
 	const streams = 5

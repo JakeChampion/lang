@@ -275,6 +275,12 @@ pub function compute(f: ssa.SFunc, dependencies: i32[][]): Flow {
   if (why != "") {
     return failed(why);
   }
+  return compute_checked(f, dependencies);
+}
+
+// compute_checked is compute over a graph and dependencies input_error has
+// already passed.
+pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
   let words: i32 = (f.nvals + 63) / 64;
   let nb: i32 = f.blocks.len();
   let at: i32[] = position_of(f);

@@ -27,5 +27,8 @@ func selfHostFsFacts(t *testing.T, dir string) hostFs {
 		filesFree:   int64(st.Ffree),
 		nameMax:     int64(st.Namelen),
 		pathMax:     4096,
+		fsType:      st.Type,
+		fsid:        int64(uint64(uint32(st.Fsid.X__val[0]))<<32 | uint64(uint32(st.Fsid.X__val[1]))),
+		fragSize:    st.Frsize,
 	}
 }
