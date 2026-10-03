@@ -364,6 +364,10 @@ func (b *builder) mapMutatorResultFresh(x *ast.Call) bool {
 	if b.rc.mapCowForced[x] {
 		return true
 	}
+	// A receiver this expression alone owns is the result's only holder.
+	if _, owned := b.ownedCallResultType(x.Args[0]); owned {
+		return true
+	}
 	inner, ok := x.Args[0].(*ast.Call)
 	return ok && b.mapMutatorResultFresh(inner)
 }
