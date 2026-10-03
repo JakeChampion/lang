@@ -767,6 +767,11 @@ pub function op_rmemchr_bytes(): Op {
   return op0(360);
 }
 
+// scan_set over a borrowed byte array: pops [bytes, from, set].
+pub function op_scan_set_bytes(): Op {
+  return op0(361);
+}
+
 // rmemchr (docs/ATLAS-PLATFORM-PLAN.md §3.3, memchr's nominated sibling):
 // pops [str, byte, from] → the i32 index of the LAST `byte` at or before
 // `from`, or -1. Allocates nothing and reads only the source bytes.
@@ -1084,11 +1089,11 @@ pub function op_rename(): Op {
 // IoError]: the attribute's value, following a final symlink or not.
 // Native only: neither WASI preview has extended attributes.
 pub function op_getxattr(): Op {
-  return op0(361);
+  return op0(362);
 }
 
 pub function op_lgetxattr(): Op {
-  return op0(362);
+  return op0(363);
 }
 
 pub function op_rename_noreplace(): Op {
@@ -3498,7 +3503,7 @@ function kind_id_len8(name: string): i32 {
     return 16;
   }
   if (c == b'g' && name == "getxattr") {
-    return 361;
+    return 362;
   }
   if (c == b'h' && name == "hostname") {
     return 240;
@@ -3681,7 +3686,7 @@ function kind_id_len9(name: string): i32 {
     return 229;
   }
   if (c == b'l' && name == "lgetxattr") {
-    return 362;
+    return 363;
   }
   if (c == b'o' && name == "open_file") {
     return 203;
@@ -4185,6 +4190,9 @@ function kind_id_len13(name: string): i32 {
 }
 
 function kind_id_len14(name: string): i32 {
+  if (name == "scan_set_bytes") {
+    return 361;
+  }
   if (name == "udp_send_bytes") {
     return 354;
   }
@@ -5414,9 +5422,12 @@ pub function kind_name(id: i32): string {
     return "rmemchr_bytes";
   }
   if (id == 361) {
-    return "getxattr";
+    return "scan_set_bytes";
   }
   if (id == 362) {
+    return "getxattr";
+  }
+  if (id == 363) {
     return "lgetxattr";
   }
   if (id <= 40) {
@@ -5574,7 +5585,7 @@ function pops2_io(t: i32): boolean {
     || t == 237  // access (path, mode)
     || t == 260 || t == 262 || t == 263 || t == 267 || t == 268  // create_dir, create_link, create_symlink, rename, chmod
     || t == 356 || t == 357  // rename_noreplace, rename_exchange
-    || t == 361 || t == 362  // getxattr, lgetxattr (path, name)
+    || t == 362 || t == 363  // getxattr, lgetxattr (path, name)
     || t == 273  // truncate (path, length)
     || t == 304 || t == 305  // open_reader_with, open_writer_with (path, flags)
     || t == 281  // writer_truncate (fd, length)
@@ -5589,7 +5600,7 @@ function pops2_io(t: i32): boolean {
 }
 
 function pops3(t: i32): boolean {
-  return t == 360 || t == 358 || t == 74 || t == 75  // rmemchr_bytes, memchr_bytes, memcpy, memset
+  return t == 361 || t == 360 || t == 358 || t == 74 || t == 75  // scan_set_bytes, rmemchr_bytes, memchr_bytes, memcpy, memset
     || t == 82 || t == 84  // raw_store8, raw_store_ptr
     || t == 89 || t == 96 || t == 102 || t == 111  // arr_set, arr_slice, str_slice, str_replace
     || t == 125 || t == 129  // map_set, map_get_or
@@ -8066,7 +8077,7 @@ pub function op_allocates(tag: i32): boolean {
   // The single-step directory and link primitives, rename, set_file_times
   // and truncate box a Result and heap-build the NUL-terminated paths they
   // pass to the kernel; read_link and the xattr reads box a string as well.
-  if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 || tag == 267 || tag == 269 || tag == 273 || tag == 356 || tag == 357 || tag == 361 || tag == 362) {
+  if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 || tag == 267 || tag == 269 || tag == 273 || tag == 356 || tag == 357 || tag == 362 || tag == 363) {
     return true;
   }
   // read_dir / read_dir_all box a fresh string[] (the arr box + a string
@@ -8172,7 +8183,7 @@ pub function op_allocates(tag: i32): boolean {
 // than logic: every `||` is one row of a table, there is no path through it to
 // get wrong, and the only way to lower the number is to carry fewer string ops.
 pub function is_str_op_kind(tag: i32): boolean {
-  return tag == 360 || tag == 359 || tag == 358 || tag == 97 || tag == 101 || tag == 102
+  return tag == 361 || tag == 360 || tag == 359 || tag == 358 || tag == 97 || tag == 101 || tag == 102
     || tag == 104 || tag == 105 || tag == 106
     || tag == 107 || tag == 108 || tag == 109
     || tag == 111 || tag == 113 || tag == 98

@@ -641,6 +641,27 @@ function third(): i32 {
   return 3;
 }
 `},
+	// The same gaps in the comments a statement, a field and the end of the
+	// file collect (#10885).
+	{"comment-gaps-below-top-level", `function f(): i32 {
+  // section
+
+  // doc of x
+  let x: i32 = 1;
+  return x;
+}
+
+struct S {
+  // group
+
+  // doc a
+  a: i32,
+}
+
+// trailing a
+
+// trailing b
+`},
 	// The modifiers and the shapes a formatter must not drop: `pub` on a
 	// function, type parameters, an aliased import, a cast, a void `return;`.
 	// The unexported struct pins the other half of the visibility rule that

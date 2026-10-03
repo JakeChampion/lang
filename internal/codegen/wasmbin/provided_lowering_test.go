@@ -62,14 +62,15 @@ var providedNeverReachesCodegen = map[string]bool{
 	// Byte search and counting — lowered to the `__fern_`-prefixed
 	// helpers, which this table does list and wasmbin does implement.
 	"__memchr": true, "__count_byte_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__count_byte": true,
-	"__scan_set":      true,
-	"__count_runs":    true,
-	"__bsd_sum":       true,
-	"__sum_bytes":     true,
-	"__scale_f64":     true,
-	"__crc32_cksum":   true,
-	"__mismatch":      true,
-	"__map_hash_seed": true, "__heap_bump_bytes": true, "__heap_alloc_count": true,
+	"__scan_set":       true,
+	"__scan_set_bytes": true,
+	"__count_runs":     true,
+	"__bsd_sum":        true,
+	"__sum_bytes":      true,
+	"__scale_f64":      true,
+	"__crc32_cksum":    true,
+	"__mismatch":       true,
+	"__map_hash_seed":  true, "__heap_bump_bytes": true, "__heap_alloc_count": true,
 	"__arr_push_shared_bytes": true, "__arr_push_shared_count": true,
 	"__rc_underflow_count": true,
 	// The rc trio — OpRcInc / OpRcDec (inline fast path, or the

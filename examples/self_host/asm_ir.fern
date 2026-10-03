@@ -5602,6 +5602,29 @@ function ir_f2u_sat_rax(width: i32, lb: string, d: string): string {
 
 // set_entry_test tests entry `idx` of the set on %rdx for zero: the low byte
 // of the 8-byte slot 8 + idx*8, or byte 8 + idx of a packed u8[] (ir.packed).
+// emit_scan_set_slots_x86 is scan_set_bytes over an unpacked array and set:
+// operand stack [arr, from, set] -> the index of the first element at or
+// after `from` whose set entry is nonzero, or the length; one element and
+// one set entry per 8-byte slot.
+function emit_scan_set_slots_x86(s0: asmcore.EmitState): asmcore.EmitState {
+  let l1: asmcore.LabelOut = asmcore.fresh_label(s0);
+  let l2: asmcore.LabelOut = asmcore.fresh_label(l1.state);
+  let l3: asmcore.LabelOut = asmcore.fresh_label(l2.state);
+  let l4: asmcore.LabelOut = asmcore.fresh_label(l3.state);
+  let l5: asmcore.LabelOut = asmcore.fresh_label(l4.state);
+  let s: asmcore.EmitState = l5.state;
+  s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
+  s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n    movq (%rdx), %r9\n");
+  s = s.write("    testq %rcx, %rcx\n    jns " + l1.name + "\n    xorq %rcx, %rcx\n");
+  s = s.write(l1.name + ":\n    cmpq %r8, %rcx\n    jge " + l4.name + "\n");
+  s = s.write("    movq (%rax,%rcx,8), %r10\n    cmpq %r9, %r10\n    jae " + l2.name + "\n");
+  s = s.write("    cmpq $0, 8(%rdx,%r10,8)\n    jne " + l3.name + "\n");
+  s = s.write(l2.name + ":\n    addq $1, %rcx\n    jmp " + l1.name + "\n");
+  s = s.write(l3.name + ":\n    pushq %rcx\n    jmp " + l5.name + "\n");
+  s = s.write(l4.name + ":\n    pushq %r8\n");
+  return s.write(l5.name + ":\n");
+}
+
 function set_entry_test(o: ir.Op, idx: string): string {
   if (ir.is_packed(o)) {
     return "cmpb $0, 8(%rdx," + idx + ")";
@@ -6031,7 +6054,10 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.need("heap");
     return s;
   }
-  if (o.kind_tag == 324) {  // scan_set
+  if (o.kind_tag == 361 && !ir.is_packed(o)) {  // scan_set_bytes over 8-byte slots
+    return emit_scan_set_slots_x86(s);
+  }
+  if (o.kind_tag == 324 || o.kind_tag == 361) {  // scan_set / scan_set_bytes
     // operand stack [box, from, set] (set on top) -> the index of the
     // first byte at or after `from` whose set entry is nonzero, or the
     // LENGTH. Scalar: the table read per byte is the kernel. The set's
@@ -6062,7 +6088,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
       s = hl.state;
     }
     s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
-    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    if (o.kind_tag == 361) {
+      s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
+    } else {
+      s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    }
     s = s.write("    testq %rcx, %rcx\n    jns " + s_from_ok + "\n    xorq %rcx, %rcx\n");
     s = s.write(s_from_ok + ":\n    movq (%rdx), %r9\n");
     s = s.write("    cmpq $256, %r9\n    jb " + s_short + "\n");
@@ -9326,7 +9356,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_rename\n    addq $16, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("rename");
-  } else if (o.kind_tag == 356 || o.kind_tag == 357 || o.kind_tag == 361 || o.kind_tag == 362) {  // rename_noreplace, rename_exchange, getxattr, lgetxattr
+  } else if (o.kind_tag == 356 || o.kind_tag == 357 || o.kind_tag == 362 || o.kind_tag == 363) {  // rename_noreplace, rename_exchange, getxattr, lgetxattr
     let op: string = ir.kind_name(o.kind_tag);
     s = s.write("    popq %rsi\n    popq %rdi\n");
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_" + op + "\n    addq $16, %rsp\n    pushq %rax\n");
