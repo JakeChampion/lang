@@ -34,8 +34,10 @@ once per function.
 - **A block's phis are defined together.** `live_at_def` answered that a
   value defined later in the other's block is not live at its definition.
   For two phis of one block that order means nothing; it now falls through
-  to the read sites. No caller reaches it today: a mate is never defined
-  after its value in the same block, and `path_slot` asks both directions.
+  to the read sites. Only `path_slot` can reach the change: elsewhere a mate
+  is never defined after its value in the same block. `path_slot` also asks
+  the other direction, which already answers that the two interfere unless
+  the earlier phi is never read, so the answer moves only for a dead phi.
 
 ## Measured
 

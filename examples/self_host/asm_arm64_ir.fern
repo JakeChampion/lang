@@ -3544,7 +3544,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    bl __fn___fern_umask\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 270) {  // statfs
     // [pathbox] IS param[0]; same stack ABI as stat, pushing a fresh
-    // Result[FsStat, IoError] whose shape label is pre-interned below.
+    // Result[FsStat, IoError].
     s = s.need("heap");
     s = s.need("statfs");
     s = s.write("    bl __fn___fern_statfs\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
@@ -8926,8 +8926,8 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   // __fern_stat is a Fern runtime function now (#2649): asmcore.rt_src_stat,
   // emitted in the fs bundle. It unifies on the 4-arg fstatat family and reads
   // st_mode / st_size at asmcore.statoff offsets, so Linux and Darwin share
-  // one body — no `darwin` fork, and no hand-interned FileStat shape (the
-  // pre-intern below still runs; the lowering dedups to it).
+  // one body — no `darwin` fork, and no hand-interned FileStat shape: the
+  // pool emit_ir_runtime ends with writes every shape the lowering interns.
   // __fern_read_dir and __fern_remove_dir_all are Fern runtime functions now
   // (#2649): asmcore.rt_src_read_dir / rt_src_remove_dir_all, emitted in the
   // fs bundle above rather than here. They were the last two entries on the
