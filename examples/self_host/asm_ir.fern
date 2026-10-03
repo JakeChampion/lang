@@ -2777,11 +2777,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
       s = s.write("    incq __fern_alloc_count(%rip)\n");
     }
   }
-  // A request of at most 256 words whose class has a freed block is served
-  // with %rax and %rdi alone, so it needs no frame and saves nothing: below
-  // 257 words a class is its word count, and the rounded byte count indexes
-  // the freelist directly. A miss restores the rounded size and takes the
-  // full path.
+  // A request of at most 256 words is served with %rax and %rdi alone, so it
+  // needs no frame and saves nothing: below 257 words a class is its word
+  // count, so the rounded byte count indexes the freelist directly and is
+  // also the size to bump on a miss. Only the first allocation, before the
+  // arena is mapped, takes the full path.
   s = s.write("    addq $7, %rdi\n");
   s = s.write("    andq $-8, %rdi\n");
   s = s.write("    cmpq $2048, %rdi\n");
@@ -2797,6 +2797,14 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lalloc_fast_miss:\n");
   s = s.write("    leaq __fern_freelist(%rip), %rax\n");
   s = s.write("    subq %rax, %rdi\n");
+  s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
+  s = s.write("    testq %rax, %rax\n");
+  s = s.write("    jz .Lalloc_full\n");
+  s = s.write("    addq %rax, %rdi\n");
+  s = s.write("    cmpq __fern_heap_end(%rip), %rdi\n");
+  s = s.write("    ja .Lalloc_oom\n");
+  s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n");
+  s = s.write("    ret\n");
   s = s.write(".Lalloc_full:\n");
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
