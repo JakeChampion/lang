@@ -9990,8 +9990,8 @@ pub function builtin_function_names(): string[] {
     "print", "write", "eprint", "putchar",
     "exit", "args", "env", "config_get", "subprocess",
     // Crash-only supervision (docs/CRASH-ONLY-SERVE.md D2'): fork the
-    // process / exec into another program / reap a child. std/tcp's
-    // tcp_serve_supervised is the stdlib caller of the first and last;
+    // process / exec into another program / reap a child. std/serve's
+    // supervise is the stdlib caller of the first and last;
     // asm_modload_run's batched per-module orchestrator uses all three.
     "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "proc_exec",
     // exec with BOTH vectors given verbatim: argv[0] as typed rather
@@ -10256,10 +10256,10 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   }
   // Platform — the capability bag threaded as every handler's second
   // parameter, and so a component of every `(HttpRequest, Platform) =>
-  // HttpResponse` signature in std/tcp. builtins.fern declares it for the
+  // HttpResponse` signature in std/serve. builtins.fern declares it for the
   // import-driven driver; this entry covers the paths that never read that
   // file (asm_load_run's stdlib-root loading), where its absence made
-  // std/tcp's __serve_loop bail — and the AST emitter it then fell to could
+  // std/serve's __serve_loop bail — and the AST emitter it then fell to could
   // not emit tcp_listen / poll, so the failure surfaced as a link error
   // (#5686).
   // Fields mirror internal/checker/checker.go: `version` is the bag's ABI
@@ -10671,36 +10671,45 @@ pub function split_top_commas(s: string): string[] {
   return out;
 }
 
-// is_serve_options_type reports whether the type text is std/tcp's
-// `ServeOptions`: bare (a flat load), qualified as the entry imports the
-// module (`tcp.ServeOptions`), or mangled once the bundle has run
-// (`tcp__ServeOptions`).
-pub function is_serve_options_type(t: string): boolean {
+// std_qualifier is the name `mod` refers to `std/<name>` by: the import's
+// alias, else `name`; "" when it does not import the module.
+pub function std_qualifier(mod: Module, name: string): string {
+  let want: string = "std/" + name;
+  for imp in mod.imports {
+    let p: string = imp.path;
+    if (p == want || p.len() > want.len() + 1 && slice_unchecked(p, p.len() - want.len() - 1, p.len()) + "" == "/" + want) {
+      if (imp.alias.len() > 0) {
+        return imp.alias;
+      }
+      return name;
+    }
+  }
+  return "";
+}
+
+// is_serve_config_type reports whether the type text is std/serve's
+// `Config`: qualified as the entry imports the module (`qual`, from
+// `std_qualifier`), or mangled once the bundle has run (`serve__Config`).
+pub function is_serve_config_type(t: string, qual: string): boolean {
   let s: string = strip_type_spaces(t);
-  if (s == "ServeOptions") {
-    return true;
-  }
-  let n: i32 = s.len();
-  if (n > 13 && slice_unchecked(s, n - 13, n) + "" == ".ServeOptions") {
-    return true;
-  }
-  return n > 14 && slice_unchecked(s, n - 14, n) + "" == "__ServeOptions";
+  return s == "serve__Config" || qual.len() > 0 && s == qual + ".Config";
 }
 
 // init_return_kind classifies what a handler program's `init` answers, by
 // its return type text: 0 nothing, 1 a state for the handler to carry, 2
-// the serve options, 3 the serve options beside a state (`(ServeOptions, S)`).
-pub function init_return_kind(rt: string): i32 {
+// the serve config, 3 the serve config beside a state (`(serve.Config, S)`).
+// `qual` is what the program imports std/serve as.
+pub function init_return_kind(rt: string, qual: string): i32 {
   let s: string = strip_type_spaces(rt);
   if (s.len() == 0 || s == "void") {
     return 0;
   }
-  if (is_serve_options_type(s)) {
+  if (is_serve_config_type(s, qual)) {
     return 2;
   }
   if (s.len() > 2 && s[0] == b'(' && s[s.len() - 1] == b')') {
     let parts: string[] = split_top_commas(slice_unchecked(s, 1, s.len() - 1) + "");
-    if (parts.len() == 2 && is_serve_options_type(parts[0])) {
+    if (parts.len() == 2 && is_serve_config_type(parts[0], qual)) {
       return 3;
     }
   }

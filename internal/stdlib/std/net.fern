@@ -1222,7 +1222,7 @@ pub function send_queue(sock: i32): Result[i32, NetError] {
 // (the first octet in the low byte), a v4-mapped IPv6 address its IPv4
 // one, any other IPv6 address the two words of its first eight bytes
 // XORed, so the peers of one /64 share a key. What a per-client
-// connection cap counts by (`ServeOptions.max_connections_per_ip`).
+// connection cap counts by (`serve.Config.max_connections_per_ip`).
 pub function peer_key(sock: i32): Option[i32] {
   let k: i32 = tcp_socket_ctl(sock, 7, 0);
   if (k == 0) {

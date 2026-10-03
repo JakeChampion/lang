@@ -137,7 +137,7 @@ function main(): i32 {
 		// poll(2) readiness — the kqueue port. Until it landed, __fern_poll
 		// on Darwin was `mov x0, #-1; ret`, and -1 is a LEGAL poll answer
 		// ("nothing ready"), so nothing failed: every std/async wait and
-		// tcp_serve_deadline just reported an instant timeout. Nothing in
+		// the serve loop's read deadline just reported an instant timeout. Nothing in
 		// this lane exercised poll at all, so the stub survived for as long
 		// as the Darwin target has existed.
 		//

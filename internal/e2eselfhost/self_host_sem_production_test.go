@@ -5503,7 +5503,7 @@ function main(): i32 {
 `},
 	// An unsuffixed literal beside an operand the checker gave no width is
 	// read at that operand's width, on either side: the i64 deadline
-	// arithmetic in std/tcp's request reader was refused as `i64 / i32`.
+	// arithmetic in std/serve's request reader was refused as `i64 / i32`.
 	{name: "a-literal-takes-its-operands-width", atLeast: 2, want: "0|", src: `
 function ms(recv_deadline_ms: i32): i32 {
     let read_start_ns: i64 = monotonic_ns();

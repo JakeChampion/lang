@@ -17,14 +17,14 @@ import (
 func ResponseFieldsServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/string";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path.starts_with("/echo")) { return http.ok("echoed").with_header("X-Echo", req.path); }
     if (req.path == "/badname") { return http.ok("named").with_header("Bad Name", "v"); }
     return http.ok("ok");
 }
 function main(): i32 {
-    return tcp.tcp_serve(%d, handle);
+    return serve.run(%d, serve.config(), handle);
 }
 `, port)
 }

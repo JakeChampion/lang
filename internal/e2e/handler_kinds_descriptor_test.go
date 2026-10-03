@@ -15,7 +15,7 @@ import (
 // synthesised main; `main` is the program writing its own.
 var handlerKindPrograms = map[string]string{
 	"handle": `import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("hi");
 }

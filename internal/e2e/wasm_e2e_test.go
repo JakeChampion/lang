@@ -9653,7 +9653,7 @@ func TestCmdLangComponentWrapCliTcpServerWithEnv(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "envecho.fern")
-	// port_from_env mirrors std/tcp's __port_from_env: read PORT via
+	// port_from_env mirrors std/serve's __port_from_env: read PORT via
 	// env() (→ get-environment), parse the digits, fall back to 8080.
 	// Sending the port through env (rather than hardcoding) is the whole
 	// point — it forces the get-environment import alongside sockets.

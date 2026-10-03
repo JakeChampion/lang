@@ -9690,7 +9690,7 @@ function main(): i32 {
 	},
 	{
 		// #8003: a match payload handed to a call through a closure PARAMETER,
-		// the shape of tcp_serve's `handler(req, plat)`. An indirect callee
+		// the shape of the serve loop's `handler(req, plat)`. An indirect callee
 		// that keeps its argument retains it, so the arm's release is
 		// balanced; the handler here reads it, hands it back, and stores it
 		// into what it returns.
@@ -9748,7 +9748,7 @@ function main(): i32 {
 	{
 		// #8003: what a call through a function value returns is the caller's
 		// once every address-taken function hands back a box of its own —
-		// bound in the arm (tcp_serve's `let resp = handler(req, plat)`) or
+		// bound in the arm (the serve loop's `let resp = handler(req, plat)`) or
 		// passed straight on.
 		name: "indirect_call_result_released",
 		src: `

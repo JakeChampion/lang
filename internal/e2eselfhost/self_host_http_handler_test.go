@@ -10,21 +10,21 @@ import (
 	"time"
 )
 
-// httpHandlerSrc is the full edge-handler program: std/http + std/tcp + a
+// httpHandlerSrc is the full edge-handler program: std/http + std/serve + a
 // `handle` function. Its merged stdlib closure is ~925 functions, so it is the
 // canonical over-budget program — the shape the per-module IR rescue exists for.
 //
 // (main is explicit because the self-host checker has no `handle`-only auto-main
 // synthesis; native's synthesiseHandleMain is checker-side and native-only.)
 const httpHandlerSrc = `import "std/http";
-import "std/tcp";
+import "std/serve";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("method=" + req.method + " path=" + req.path);
 }
 
 function main(): i32 {
-    return tcp.tcp_serve(8080, handle);
+    return serve.run(8080, serve.config(), handle);
 }
 `
 
@@ -203,7 +203,7 @@ function main(): i32 {
 // TestSelfHostHttpHandlerServesX86_64 is the final step for the edge-handler
 // program: compiled by the SELF-HOSTED compiler, it answers real HTTP.
 //
-// It is the whole edge-handler stack at once — std/tcp's accept/recv/deadline
+// It is the whole edge-handler stack at once — std/serve's accept/recv/deadline
 // loop, std/http's request parse and response serialise, the builtin
 // HttpRequest / HttpResponse / Platform layouts, and the handler itself reached
 // as a fn VALUE handed across a per-module unit boundary (#5698). Two requests
@@ -211,16 +211,16 @@ function main(): i32 {
 // first request's allocations were reclaimed rather than leaked or reused.
 func TestSelfHostHttpHandlerServesX86_64(t *testing.T) {
 	checkSelfHostHttpHandlerServes(t, func(port int) string {
-		return fmt.Sprintf("return tcp.tcp_serve(%d, handle);", port)
+		return fmt.Sprintf("return serve.run(%d, serve.config(), handle);", port)
 	})
 }
 
-// The same loop through tcp_serve_opts (#9853): a backlog of 4 and
+// The same loop through serve.run (#9853): a backlog of 4 and
 // SO_REUSEPORT on the listener, which reach tcp_listen_with through the
 // self-host's own lowering of the struct spread.
 func TestSelfHostHttpHandlerServesWithOptionsX86_64(t *testing.T) {
 	checkSelfHostHttpHandlerServes(t, func(port int) string {
-		return fmt.Sprintf("let opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), backlog: 4, reuse_port: true };\n    return tcp.tcp_serve_opts(%d, opts, handle);", port)
+		return fmt.Sprintf("let opts: serve.Config = serve.Config { ...serve.config(), backlog: 4, reuse_port: true };\n    return serve.run(%d, opts, handle);", port)
 	})
 }
 
@@ -236,7 +236,7 @@ func checkSelfHostHttpHandlerServes(t *testing.T, entry func(port int) string) {
 	probe.Close()
 
 	src := fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("method=" + req.method + " path=" + req.path);
@@ -286,7 +286,7 @@ function main(): i32 {
 			t.Errorf("GET %s response = %q, want it to contain %q", path, resp, want)
 		}
 	}
-	// The server must still be running: tcp_serve loops, and a crash mid-request
+	// The server must still be running: serve.run loops, and a crash mid-request
 	// is exactly the #5698 failure this pins.
 	if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
 		t.Errorf("server exited (code %d) instead of continuing to serve", cmd.ProcessState.ExitCode())

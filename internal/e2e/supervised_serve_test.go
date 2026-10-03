@@ -3,7 +3,7 @@
 // supervision is made of. The compiled serving scenarios are the self-host
 // twins in internal/e2eselfhost/self_host_serve_test.go.
 //
-// Under `-interp`, proc_fork answers -38 (ENOSYS), so tcp_serve_supervised
+// Under `-interp`, proc_fork answers -38 (ENOSYS), so serve.supervise
 // degrades to single-process serving: `/ok` still answers 200 and a one-line
 // degradation notice lands on stderr.
 package e2e
@@ -36,7 +36,7 @@ func freeLoopbackPort(t *testing.T) int {
 
 // Design-doc "interp parity": the interpreter cannot bare-fork
 // (Go's runtime is threaded), so proc_fork answers -38 (ENOSYS)
-// and tcp_serve_supervised degrades to plain single-process
+// and serve.supervise degrades to plain single-process
 // serving — /ok still answers 200 and the one-line degradation
 // notice lands on stderr. Drives the real `fern -interp` binary
 // over a real socket (runInterpByte-style in-process interp can't
@@ -121,7 +121,7 @@ func TestProcForkWaitpidArm64(t *testing.T) {
 
 // The interp constants: proc_fork = -38 (ENOSYS — the Go runtime
 // is threaded, bare fork is UB) and proc_waitpid = -10 (ECHILD —
-// no child can ever exist). These are what tcp_serve_supervised's
+// no child can ever exist). These are what serve.supervise's
 // fallback detection keys on, so they're pinned exactly.
 func TestProcForkWaitpidInterpENOSYS(t *testing.T) {
 	src := `function main(): i32 {

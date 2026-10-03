@@ -17,7 +17,7 @@ import (
 // prepared mirrors cmd/fern's pre-enforcement pipeline: load (stdlib
 // imports resolved), check, monomorphise, then tree-shake — so Enforce
 // sees exactly the call graph a backend would compile. httpDropMain
-// mirrors the wasi-http-only drop of the synthesised tcp_serve main.
+// mirrors the wasi-http-only drop of the synthesised serve main.
 func prepared(t *testing.T, src string, httpDropMain bool) *ast.Program {
 	t.Helper()
 	prog, _, err := modload.LoadSource(src)
@@ -165,12 +165,12 @@ func TestEnforceFsByTarget(t *testing.T) {
 
 // Importing a module whose OTHER functions use gated builtins is fine:
 // tree-shaking drops the unreached wrappers before Enforce runs. The
-// canonical case is a wasi-http handler importing std/tcp (whose
-// tcp_serve → tcp_listen chain is only reachable through the DROPPED
+// canonical case is a wasi-http handler importing std/serve (whose
+// serve.run → tcp_listen chain is only reachable through the DROPPED
 // synthesised main).
 func TestEnforceUnusedImportsDontTrip(t *testing.T) {
 	src := `import "std/http";
-import "std/tcp";
+import "std/serve";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");

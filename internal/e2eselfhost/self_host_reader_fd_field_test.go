@@ -9,7 +9,7 @@ import (
 // A Reader's or Writer's `fd` field reads on the IR path. The self-host
 // represents either handle as its bare descriptor, so the field read is the
 // value itself — through a parameter, a local and an enum payload binding
-// alike. std/tcp reads `r.fd` to hand a file body to tcp_sendfile. stdin is
+// alike. std/serve reads `r.fd` to hand a file body to tcp_sendfile. stdin is
 // fd 0 and stdout fd 1, so the program exits 1 * 10 + 0 + 5 = 15.
 func TestSelfHostReaderFdField(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)

@@ -11,7 +11,7 @@ import (
 //
 // A `-1` return means "nothing is ready", which is a LEGAL answer to poll —
 // so the stub did not fail, it made every readiness wait give up instantly.
-// `tcp_serve_deadline` fired its deadline at once and every std/async
+// the serve loop's read deadline fired its deadline at once and every std/async
 // combinator (gather / race / with_deadline) returned as though it had timed
 // out. Silent, and invisible to any test that only checks a program runs.
 //
@@ -59,7 +59,7 @@ func TestArm64DarwinPollUsesKqueue(t *testing.T) {
 	for _, want := range []string{"mov x16, #362", "mov x16, #363", "svc #0x80"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("arm64-darwin __fern_poll is missing %q — the readiness path is not "+
-				"reaching kqueue, so every std/async wait and tcp_serve_deadline will "+
+				"reaching kqueue, so every std/async wait and the serve loop's read deadline will "+
 				"report an instant timeout instead of blocking", want)
 		}
 	}

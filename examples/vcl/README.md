@@ -252,7 +252,7 @@ design rather than being incidental:
   bytes and will eventually contain whatever separator you picked. The cost
   is real and stated: encode/decode is O(total cached bytes) per request,
   so this is a demonstration store, not a storage engine.
-- **`tcp_serve` does not surface the peer address**, so `client.ip` comes
+- **`serve.run` does not surface the peer address**, so `client.ip` comes
   from `X-Forwarded-For` when present and is `127.0.0.1` otherwise. An ACL
   on `client.ip` is therefore only as trustworthy as whatever sets that
   header.

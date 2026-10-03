@@ -18,12 +18,12 @@ import (
 // default options, whose worker count is one per processing unit.
 func WorkersPerCPUServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return tcp.tcp_serve_supervised(%d, handle);
+    return serve.supervise(%d, serve.config(), handle);
 }
 `, port)
 }
@@ -66,13 +66,13 @@ func CheckWorkersPerCPU(t *testing.T, cmd *exec.Cmd, addr string) {
 // and a 100 ms accept grace, answering everything at once.
 func BurstServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 import "std/time";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return tcp.tcp_serve_supervised_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), workers: 4, shutdown_grace: time.duration_millis(100 as i64) }, handle);
+    return serve.supervise(%d, serve.Config { ...serve.config(), workers: 4, shutdown_grace: time.duration_millis(100 as i64) }, handle);
 }
 `, port)
 }
@@ -103,13 +103,13 @@ func CheckShutdownAfterBurst(t *testing.T, cmd *exec.Cmd, addr string) {
 // workers.
 func OrphanedWorkersServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 import "std/time";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return tcp.tcp_serve_supervised_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), workers: 2, shutdown_grace: time.duration_millis(100 as i64) }, handle);
+    return serve.supervise(%d, serve.Config { ...serve.config(), workers: 2, shutdown_grace: time.duration_millis(100 as i64) }, handle);
 }
 `, port)
 }

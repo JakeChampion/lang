@@ -981,7 +981,7 @@ function main(): i32 {
 }`,
   http: `
 import "std/http";
-import "std/tcp";
+import "std/serve";
 // An HTTP handler. Pick the "wasi:http/incoming-handler" world,
 // then hit "Run (wasm)" to send the request on the right through
 // the compiled handler — in-browser, no server. Routes on path +
@@ -1402,7 +1402,7 @@ runWasmBtn.addEventListener("click", runWasmOnce);
 
 // Show the request editor only for the wasi:http world, and disable
 // the interpreter "Run" there — a handler program transitively imports
-// std/tcp, which auto-injects a `main` that calls `tcp_serve`. That
+// std/serve, which auto-injects a `main` that calls `serve.run`. That
 // blocks forever in the interp (nothing wakes the listener in the
 // browser), so the only sensible run path for the wasi-http world is
 // "Run (wasm)" through web/wasi-http-shim.js. runtimeReady gates the
