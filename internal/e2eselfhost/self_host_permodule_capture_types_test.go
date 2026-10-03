@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 func TestSelfHostPerModuleCaptureTypes(t *testing.T) {
@@ -75,9 +77,7 @@ pub function run(): i32 { let node = types.make(); return apply((): i32 => node.
 					}
 					var run *exec.Cmd
 					if target == "wasm32-wasi" {
-						if _, err := exec.LookPath("wasmtime"); err != nil {
-							t.Fatal("wasmtime required for the per-module capture test")
-						}
+						e2eharness.Wasmtime(t)
 						cache := filepath.Join(proj, "cache")
 						if err := os.Mkdir(cache, 0o755); err != nil {
 							t.Fatal(err)

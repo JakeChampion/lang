@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // A map whose key is a string, a 32-bit integer, a boolean or a keyed type,
@@ -580,9 +582,7 @@ func routedMapRun(t *testing.T, fernBin, stdlibRoot, src, target string, env ...
 		_, qemu := arm64Tooling(t)
 		run = runArm64Bin(qemu, out)
 	default:
-		if _, err := exec.LookPath("wasmtime"); err != nil {
-			t.Fatal("wasmtime not on PATH")
-		}
+		e2eharness.Wasmtime(t)
 		run = exec.Command("wasmtime", "run", "--dir", dir+"::.", out)
 	}
 	var stdout, stderr strings.Builder
