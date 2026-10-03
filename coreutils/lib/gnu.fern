@@ -722,6 +722,36 @@ pub function quote(s: string): string {
   return c_quote(s, 39, false, "");
 }
 
+// The same diagnostic convention for raw input. Escaping every non-ASCII
+// byte makes the result valid text without decoding or changing the input.
+pub function quote_bytes(bytes: u8[]): string {
+  let out: usize = buf_new(bytes.len());
+  buf_push_byte(out, 39);
+  for byte in bytes {
+    let b: i32 = byte as i32;
+    if (b == 92 || b == 39) {
+      buf_push_byte(out, 92);
+      buf_push_byte(out, b);
+    } else if (b >= 32 && b < 127) {
+      buf_push_byte(out, b);
+    } else {
+      buf_push_byte(out, 92);
+      let named: i32 = c_escape_letter(b);
+      if (named > 0) {
+        buf_push_byte(out, named);
+      } else {
+        buf_push_byte(out, 48 + b / 64);
+        buf_push_byte(out, 48 + b / 8 % 8);
+        buf_push_byte(out, 48 + b % 8);
+      }
+    }
+  }
+  buf_push_byte(out, 39);
+  let text: string = buf_take(out);
+  buf_free(out);
+  return text;
+}
+
 // `quotea(name)` — gnulib's quoteaf: `quotef` with the bare form
 // quoted too, for the diagnostics that always show quotes
 // (`head: cannot open 'plain' for reading`) rather than only when
