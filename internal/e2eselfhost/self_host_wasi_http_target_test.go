@@ -57,6 +57,11 @@ var wasiHttpRequests = []wasiHttpRequest{
 	{method: "POST", path: "/echo", body: "echo me back", status: 200, want: "POST:echo me back"},
 	{method: "GET", path: "/headers", header: [2]string{"x-token", "s3cret"}, status: 200, want: "token=s3cret"},
 	{method: "GET", path: "/headers", status: 400, want: "no token"},
+	// The serve loop's body cap (std/http's http_limits().body, 1 MiB): a
+	// body exactly at it reaches the handler, one past it is refused with
+	// 413 before the handler runs, as the socket server refuses it (#11102).
+	{method: "POST", path: "/echo", body: strings.Repeat("a", 1<<20), status: 200, want: "POST:" + strings.Repeat("a", 1<<20)},
+	{method: "POST", path: "/echo", body: strings.Repeat("b", 2<<20), status: 413, want: ""},
 }
 
 // compileWasiHttp compiles src with the self-host CLI for wasm32-wasi-http
