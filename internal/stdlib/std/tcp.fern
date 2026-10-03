@@ -451,11 +451,12 @@ function __clock_tick(clk: __Clock): __Clock {
 // __serve_wire(method, version, answer, keep_alive, clk) — the response
 // as the loop writes it: the handler's `Date` when it set one, the
 // clock's otherwise, and no body where the request's method or the
-// status says none. A body held whole goes behind the head; a file is
-// opened here and streamed as the tail under its size, or answered 404
-// when it cannot be opened; a chunk producer is the tail under chunked
-// transfer coding for an HTTP/1.1 client and close-delimited, the
-// connection ending with it, for an HTTP/1.0 one.
+// status says none. A body held whole goes behind the head byte for byte,
+// under its byte length; a file is opened here and streamed as the tail
+// under its size, or answered 404 when it cannot be opened; a chunk
+// producer is the tail under chunked transfer coding for an HTTP/1.1
+// client and close-delimited, the connection ending with it, for an
+// HTTP/1.0 one.
 function __serve_wire(method: string, version: string, answer: HttpResponse, keep_alive: boolean, clk: __Clock): __Wire {
   let resp: HttpResponse = answer;
   if (resp.headers.get_all("date").len() == 0) {
@@ -503,8 +504,11 @@ function __serve_wire(method: string, version: string, answer: HttpResponse, kee
       }
       return __Wire { head: http.http_serialize_response_head(resp, keep_alive, framing), tail: ChunkTail(producer, 0, "0\r\n" + http.http_serialize_fields(resp.trailers) + "\r\n"), keep: keep_alive };
     },
-    _ => {
+    BodyText(s) => {
       return __Wire { head: http.http_serialize_response_to(method, resp, keep_alive), tail: NoTail, keep: keep_alive };
+    },
+    _ => {
+      return __Wire { head: string_from_bytes_unchecked(http.http_serialize_response_to_bytes(method, resp, keep_alive)), tail: NoTail, keep: keep_alive };
     }
   }
   return __Wire { head: "", tail: NoTail, keep: false };
