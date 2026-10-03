@@ -39,8 +39,11 @@ x86-64 asm text, against main with the previous entry's change.
 
 The compiler each of those drivers builds from its own tree (stage 2),
 emitting the fixed tree's `checker.fern`: 21.58 G before, 21.38 G after
-(−0.95%). Asking `done` first takes the stage-2 compile from 20.88 G to
-20.84 G more (−0.21%), measured on main at 513cf0c7.
+(−0.95%), both on main at 4a4e387c with the previous entry's change.
+Asking `done` first was measured later, on main at 513cf0c7, whose own
+merges had already moved the stage-2 compile: 20.88 G with the scan,
+20.84 G with both (−0.21%). The two pairs are separate baselines and do
+not subtract.
 
 ## Witnessed
 
