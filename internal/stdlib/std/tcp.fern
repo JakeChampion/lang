@@ -106,10 +106,11 @@ pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpRespon
 // across them; ignored on wasm, where a port is one socket's), the
 // per-request read deadline `tcp_serve_deadline` describes, the least
 // rate at which a request body must keep arriving once its header block
-// is in and a response must be drained at (bytes per second, judged
-// after the grace: the body may take as long as its bytes buy at that
-// rate, beyond the read deadline, and a response being drained as long
-// as the bytes the peer has taken buy), how
+// is in (bytes per second, judged after its grace: the body may take as
+// long as its bytes buy at that rate, beyond the read deadline), the
+// least rate at which a response must be drained (judged after its own
+// grace: a response being drained may take as long as the bytes the peer
+// has taken buy; 0 for no bound but the read deadline), how
 // long an idle persistent connection is kept waiting for its next
 // request, how many requests one connection may carry before its
 // response says `Connection: close`, how many connections the loop
@@ -135,6 +136,8 @@ pub struct ServeOptions {
   recv_deadline: Duration,
   min_data_rate: i32,
   data_rate_grace: Duration,
+  response_min_data_rate: i32,
+  response_data_rate_grace: Duration,
   keep_alive_idle: Duration,
   keep_alive_requests: i32,
   max_connections: i32,
@@ -152,7 +155,7 @@ pub struct ServeOptions {
 // 1000 requests per connection, 1024 connections open and 100 of them per
 // client, a worker per processing unit, and the parser's `http_limits()`.
 pub function serve_options(): ServeOptions {
-  return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false };
+  return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false };
 }
 
 // tcp_serve_opts(port, opts, handler) — `tcp_serve` with the listener and
@@ -1303,8 +1306,8 @@ function __drain_deadline(c: __Conns, at: i32, opts: ServeOptions, first: boolea
     base = outstanding;
   }
   let deadline: i64 = now + opts.recv_deadline.as_nanos();
-  if (opts.min_data_rate > 0) {
-    deadline = since + opts.data_rate_grace.as_nanos() + (base - outstanding) as i64 * (1000000000 as i64) / (opts.min_data_rate as i64);
+  if (opts.response_min_data_rate > 0) {
+    deadline = since + opts.response_data_rate_grace.as_nanos() + (base - outstanding) as i64 * (1000000000 as i64) / (opts.response_min_data_rate as i64);
   }
   return __Conns { ...c, deadlines: c.deadlines.with(at, deadline), send_since: c.send_since.with(at, since), send_base: c.send_base.with(at, base) };
 }

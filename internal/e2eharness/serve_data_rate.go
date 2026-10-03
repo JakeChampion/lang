@@ -12,8 +12,10 @@ import (
 )
 
 // The minimum data rate on the write side (#9854): a response the peer
-// drains below `min_data_rate` after `data_rate_grace` is cut off, and
-// one drained above it goes out whole however long that takes.
+// drains below `response_min_data_rate` after `response_data_rate_grace`
+// is cut off, and one drained above it goes out whole however long that
+// takes. The request body's rate is left at its default, so a drain judged
+// by it instead would get its 5 s grace and the stalled reader its body.
 
 // DataRateResponseBytes is the response body's length: larger than the
 // loopback socket buffers can hold between them, so the write is short
@@ -21,8 +23,8 @@ import (
 const DataRateResponseBytes = 8 << 20
 
 // DataRateServerSource is a server on `port` answering
-// DataRateResponseBytes of body under a 100 KB/s minimum data rate with
-// a 300 ms grace.
+// DataRateResponseBytes of body under a 100 KB/s minimum response data
+// rate with a 300 ms grace.
 func DataRateServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/string";
@@ -32,7 +34,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("x".repeat(%d));
 }
 function main(): i32 {
-    let opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), min_data_rate: 100000, data_rate_grace: time.duration_millis(300 as i64) };
+    let opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), response_min_data_rate: 100000, response_data_rate_grace: time.duration_millis(300 as i64) };
     return tcp.tcp_serve_opts(%d, opts, handle);
 }
 `, DataRateResponseBytes, port)
