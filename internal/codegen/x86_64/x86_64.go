@@ -1334,13 +1334,14 @@ type generator struct {
 	// usesAsciiRun gates the SSE2 high-bit scan kernel (__fern_ascii_run).
 	usesAsciiRun bool
 	// usesMemchr gates the SSE2 byte-search kernel (__fern_memchr).
-	usesMemchr         bool
-	usesCountByteBytes bool
-	usesSumBytesArray  bool
-	usesBsdSumBytes    bool
-	usesMemchrBytes    bool
-	usesRmemchrBytes   bool
-	usesMismatchBytes  bool
+	usesMemchr          bool
+	usesCountByteBytes  bool
+	usesSumBytesArray   bool
+	usesCrc32CksumArray bool
+	usesBsdSumBytes     bool
+	usesMemchrBytes     bool
+	usesRmemchrBytes    bool
+	usesMismatchBytes   bool
 	// usesMismatch gates the two-range comparison kernel
 	// (__fern_mismatch), which is __memchr's kernel over a pair of
 	// operands instead of a broadcast needle.
@@ -2076,6 +2077,9 @@ func (g *generator) recordUse(target string) {
 	case "__fern_scale_f64":
 		g.usesScaleF64 = true
 		g.usesAlloc = true // the result is a fresh buffer
+	case "__fern_crc32_cksum_array":
+		g.usesCrc32CksumArray = true
+		g.usesCrc32Cksum = true
 	case "__fern_crc32_cksum":
 		g.usesCrc32Cksum = true
 	case "__fern_heap_bump_bytes":
@@ -12349,6 +12353,12 @@ func (g *generator) emitCountByteRuntime() {
 // iterations once per call and needs no Barrett constants, no second reduction
 // path, and no table.
 func (g *generator) emitCrc32CksumRuntime() {
+	if g.usesCrc32CksumArray {
+		g.line(".text")
+		g.line(".global __fern_crc32_cksum_array")
+		g.label("__fern_crc32_cksum_array")
+		g.emit("jmp __fern_crc32_cksum")
+	}
 	g.line("")
 	g.line(".section .rodata")
 	g.line(".align 16")

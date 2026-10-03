@@ -86,7 +86,7 @@ function main(): i32 { return 0; }`
 }
 
 func TestByteReductionArgsAreCounted(t *testing.T) {
-	for _, call := range []string{"__sum_bytes_array(p)", "__bsd_sum_bytes(p, 123)"} {
+	for _, call := range []string{"__crc32_cksum_array(123, p)", "__sum_bytes_array(p)", "__bsd_sum_bytes(p, 123)"} {
 		t.Run(call, func(t *testing.T) {
 			src := "function scan(p: u8[]): i32 { return " + call + "; }\nfunction main(): i32 { return 0; }"
 			got := paramCountedFor(t, src, "scan")

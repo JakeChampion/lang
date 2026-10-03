@@ -395,13 +395,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// The f64 scaling kernel allocates its result.
 					needs.add("__fern_alloc")
 					needs.add("__fern_scale_f64")
-				case "__fern_crc32_cksum":
+				case "__fern_crc32_cksum", "__fern_crc32_cksum_array":
 					// The CRC fold. Bit-at-a-time here: wasm has no
 					// carry-less multiply, so there is nothing for the
 					// native kernels' pclmulqdq / pmull to lower to.
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_crc32_cksum")
+					needs.add(op.Str)
 				case "__fern_print":
 					// fd_write underneath; transitively
 					// pulls in the byte-copy + alloc helpers.
@@ -1858,6 +1859,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildCrc32CksumBody,
+	},
+	"__fern_crc32_cksum_array": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildCrc32CksumArrayBody,
 	},
 	"__fern_print": {
 		// (data, len) → ()
@@ -7067,6 +7073,18 @@ func buildMismatchBody(idxs map[string]uint32) []byte {
 
 func buildSumBytesArrayBody(idxs map[string]uint32) []byte {
 	return buildByteReductionBody(idxs, false)
+}
+
+func buildCrc32CksumArrayBody(idxs map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstCall(body, idxs["__fern_crc32_cksum"])
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
 func buildBsdSumBytesBody(idxs map[string]uint32) []byte {

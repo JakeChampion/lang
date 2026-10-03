@@ -1436,31 +1436,50 @@ func New() *Interp {
 	// says what those folds owe, so it spells the definition (poly 0x04C11DB7,
 	// MSB first, no reflection) rather than a table that would have to be
 	// trusted in its own right.
-	i.Builtins["__crc32_cksum"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
-		if len(args) != 2 {
-			return nil, fmt.Errorf("__crc32_cksum: expected 2 args, got %d", len(args))
-		}
-		n, ok := args[0].(Number)
-		if !ok {
-			return nil, fmt.Errorf("__crc32_cksum: expected a number crc, got %T", args[0])
-		}
-		s, ok := args[1].(String)
-		if !ok {
-			return nil, fmt.Errorf("__crc32_cksum: expected a string, got %T", args[1])
-		}
-		crc := uint32(int32(n))
-		for _, c := range []byte(string(s)) {
-			crc ^= uint32(c) << 24
-			for k := 0; k < 8; k++ {
-				if crc&0x80000000 != 0 {
-					crc = (crc << 1) ^ 0x04C11DB7
-				} else {
-					crc <<= 1
+	for _, name := range []string{"__crc32_cksum", "__crc32_cksum_array"} {
+		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+			if len(args) != 2 {
+				return nil, fmt.Errorf("%s: expected 2 args, got %d", name, len(args))
+			}
+			n, ok := args[0].(Number)
+			if !ok {
+				return nil, fmt.Errorf("%s: expected a number crc, got %T", name, args[0])
+			}
+			var data []byte
+			if name == "__crc32_cksum_array" {
+				a, ok := args[1].(Array)
+				if !ok {
+					return nil, fmt.Errorf("%s: expected an array, got %T", name, args[1])
+				}
+				data = make([]byte, len(a.E))
+				for at, value := range a.E {
+					b, ok := value.(Number)
+					if !ok || b < 0 || b > 255 {
+						return nil, fmt.Errorf("%s: element %d is not u8", name, at)
+					}
+					data[at] = byte(b)
+				}
+			} else {
+				s, ok := args[1].(String)
+				if !ok {
+					return nil, fmt.Errorf("%s: expected a string, got %T", name, args[1])
+				}
+				data = []byte(string(s))
+			}
+			crc := uint32(int32(n))
+			for _, c := range data {
+				crc ^= uint32(c) << 24
+				for k := 0; k < 8; k++ {
+					if crc&0x80000000 != 0 {
+						crc = (crc << 1) ^ 0x04C11DB7
+					} else {
+						crc <<= 1
+					}
 				}
 			}
-		}
-		return Number(int32(crc)), nil
-	}}
+			return Number(int32(crc)), nil
+		}}
+	}
 	// __arr_push_shared_count(): the rc==1 cliff counter on the compiled
 	// backends — appends that copied a buffer which still had room, so the
 	// copy was bought by an extra reference. The interpreter has no refcounts

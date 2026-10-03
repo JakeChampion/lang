@@ -760,6 +760,11 @@ pub function op_bsd_sum_bytes(): Op {
   return op0(363);
 }
 
+// Continue the CRC over a borrowed array. packed() selects byte storage.
+pub function op_crc32_cksum_array(): Op {
+  return op0(367);
+}
+
 // Borrowed byte-array scan; packed() selects packed native byte storage.
 pub function op_memchr_bytes(): Op {
   return op0(356);
@@ -4325,6 +4330,9 @@ function kind_id_len16(name: string): i32 {
 }
 
 function kind_id_len17(name: string): i32 {
+  if (name == "crc32_cksum_array") {
+    return 367;
+  }
   let c: u8 = name[0];
   if (c == b's' && name == "set_process_group") {
     return 284;
@@ -5407,6 +5415,9 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 367) {
+    return "crc32_cksum_array";
+  }
   if (id == 364) {
     return "buf_push_bytes_mapped";
   }
@@ -5601,7 +5612,7 @@ function pops2_mem(t: i32): boolean {
     || t == 227  // ascii_run
     || t == 235  // count_byte
     || t == 329 || t == 363  // bsd_sum / bsd_sum_bytes
-    || t == 309  // crc32_cksum
+    || t == 309 || t == 367  // crc32_cksum / crc32_cksum_array
     || t == 322  // scale_f64
     || t == 127 || t == 128 || t == 130  // map_get, map_has, map_delete
     || t == 140 || t == 144;  // struct_set, tuple_set
@@ -8170,7 +8181,7 @@ pub function op_allocates(tag: i32): boolean {
 // than logic: every `||` is one row of a table, there is no path through it to
 // get wrong, and the only way to lower the number is to carry fewer string ops.
 pub function is_str_op_kind(tag: i32): boolean {
-  return tag == 362 || tag == 363 || tag == 360 || tag == 361 || tag == 359 || tag == 358 || tag == 357 || tag == 356 || tag == 97 || tag == 101 || tag == 102
+  return tag == 367 || tag == 362 || tag == 363 || tag == 360 || tag == 361 || tag == 359 || tag == 358 || tag == 357 || tag == 356 || tag == 97 || tag == 101 || tag == 102
     || tag == 104 || tag == 105 || tag == 106
     || tag == 107 || tag == 108 || tag == 109
     || tag == 111 || tag == 113 || tag == 98

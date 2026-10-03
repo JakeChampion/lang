@@ -138,7 +138,7 @@ var intrinsicFamilies = []intrinsicFamily{
 	}},
 	{"byte scan", func(m map[string]*sigShape) []string {
 		return matching(m, func(n string, _ *sigShape) bool {
-			for _, s := range []string{"__sum_bytes", "__ascii_run", "__count_byte", "__count_byte_bytes", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr", "__mismatch_bytes", "__memchr_bytes", "__rmemchr_bytes", "__scan_set_bytes", "__count_runs_bytes", "__rmemchr", "__mismatch"} {
+			for _, s := range []string{"__sum_bytes", "__ascii_run", "__count_byte", "__count_byte_bytes", "__crc32_cksum_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr", "__mismatch_bytes", "__memchr_bytes", "__rmemchr_bytes", "__scan_set_bytes", "__count_runs_bytes", "__rmemchr", "__mismatch"} {
 				if n == s {
 					return true
 				}

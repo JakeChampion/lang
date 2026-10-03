@@ -556,7 +556,7 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_ascii_run": true, "__fern_rmemchr": true,
 	"__fern_count_byte": true, "__fern_mismatch": true, "__fern_scan_set": true, "__fern_count_runs": true, "__fern_bsd_sum": true,
 	"__fern_scan_set_bytes": true, "__fern_count_runs_bytes": true,
-	"__fern_sum_bytes": true, "__fern_crc32_cksum": true,
+	"__fern_sum_bytes": true, "__fern_crc32_cksum": true, "__fern_crc32_cksum_array": true,
 	"__str_eq":  true,
 	"__str_ord": true, "__fern_env_count": true, "__fern_arg_count": true,
 	"__fern_read_byte": true, "__fern_random_i32": true,

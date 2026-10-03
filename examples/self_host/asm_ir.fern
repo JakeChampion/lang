@@ -1572,13 +1572,15 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .quad 0x00000000e6228b11\n");
   s = s.write("    .section .text\n");
   s = s.write("    .globl __fern_crc32_cksum\n");
+  s = s.write("    .globl __fern_crc32_cksum_data\n");
   s = s.write("    .type __fern_crc32_cksum, @function\n");
   s = s.write("__fern_crc32_cksum:\n");
+  s = s.write("    movq 8(%rsi), %rdx\n");
+  s = s.write("    movq (%rsi), %rsi\n");
+  s = s.write("__fern_crc32_cksum_data:\n");
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
   s = s.write("    subq $32, %rsp\n");
-  s = s.write("    movq 8(%rsi), %rdx\n");
-  s = s.write("    movq (%rsi), %rsi\n");
   s = s.write("    movl %edi, %eax\n");
   s = s.write("    cmpl $16, %edx\n");
   s = s.write("    jb .Lcrc32_tail\n");
@@ -6069,7 +6071,22 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movslq %eax, %rax\n    pushq %rax\n");
     return s;
   }
-  if (o.kind_tag == 309) {  // crc32_cksum
+  if (o.kind_tag == 367 && !ir.is_packed(o)) {
+    let loop_label = asmcore.fresh_label(s);
+    let done_label = asmcore.fresh_label(loop_label.state);
+    s = done_label.state;
+    s = s.write("    popq %rsi\n    popq %rax\n    movq (%rsi), %r8\n    addq $8, %rsi\n    xorq %r9, %r9\n");
+    s = s.write(loop_label.name + ":\n    cmpq %r8, %r9\n    jae " + done_label.name + "\n");
+    s = s.write("    movzbl (%rsi,%r9,8), %r10d\n    shll $24, %r10d\n    xorl %r10d, %eax\n");
+    let k: i32 = 0;
+    while (k < 8) {
+      s = s.write("    movl %eax, %r11d\n    sarl $31, %r11d\n    shll $1, %eax\n    andl $0x04c11db7, %r11d\n    xorl %r11d, %eax\n");
+      k = k + 1;
+    }
+    s = s.write("    addq $1, %r9\n    jmp " + loop_label.name + "\n");
+    return s.write(done_label.name + ":\n    movslq %eax, %rax\n    pushq %rax\n");
+  }
+  if (o.kind_tag == 309 || o.kind_tag == 367) {  // crc32_cksum / crc32_cksum_array
     // operand stack [crc, box] (the box on top) -> the incoming CRC-32
     // with the string's bytes folded in.
     //
@@ -6083,7 +6100,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // string last, which is exactly the shape a port copies wrong.
     s = s.need("crc32_cksum");
     s = s.write("    popq %rsi\n    popq %rdi\n");
-    s = s.write("    call __fern_crc32_cksum\n");
+    if (o.kind_tag == 367) {
+      s = s.write("    movq (%rsi), %rdx\n    addq $8, %rsi\n    call __fern_crc32_cksum_data\n");
+    } else {
+      s = s.write("    call __fern_crc32_cksum\n");
+    }
     s = s.write("    movslq %eax, %rax\n    pushq %rax\n");
     return s;
   }

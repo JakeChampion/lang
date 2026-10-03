@@ -825,7 +825,23 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 309) {  // crc32_cksum
+  if (o.kind_tag == 367 && !ir.is_packed(o)) {
+    let loop_label = asmcore.fresh_label(s);
+    let done_label = asmcore.fresh_label(loop_label.state);
+    s = done_label.state;
+    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x6, [x1]\n    add x1, x1, #8\n    mov x2, #0\n");
+    s = s.write("    movz w5, #0x1db7\n    movk w5, #0x04c1, lsl #16\n");
+    s = s.write(loop_label.name + ":\n    cmp x2, x6\n    b.ge " + done_label.name + "\n");
+    s = s.write("    add x3, x1, x2, lsl #3\n    ldrb w3, [x3]\n    eor w0, w0, w3, lsl #24\n");
+    let k: i32 = 0;
+    while (k < 8) {
+      s = s.write("    asr w4, w0, #31\n    and w4, w4, w5\n    lsl w0, w0, #1\n    eor w0, w0, w4\n");
+      k = k + 1;
+    }
+    s = s.write("    add x2, x2, #1\n    b " + loop_label.name + "\n");
+    return s.write(done_label.name + ":\n    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
+  }
+  if (o.kind_tag == 309 || o.kind_tag == 367) {  // crc32_cksum / crc32_cksum_array
     // operand stack [crc, box] (the box on top) -> the incoming CRC-32
     // with the string's bytes folded in.
     //
@@ -839,7 +855,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // string last, which is exactly the shape a port copies wrong.
     s = s.need("crc32_cksum");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    s = s.write("    bl __fern_crc32_cksum\n");
+    if (o.kind_tag == 367) {
+      s = s.write("    ldr x6, [x1]\n    add x7, x1, #8\n    bl __fern_crc32_cksum_data\n");
+    } else {
+      s = s.write("    bl __fern_crc32_cksum\n");
+    }
     s = s.write("    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
     return s;
   }
@@ -10615,13 +10635,15 @@ function emit_rt_sum_bytes(s: asmcore.EmitState): asmcore.EmitState {
 function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .arch_extension aes\n");
   s = s.write("    .global __fern_crc32_cksum\n");
+  s = s.write("    .global __fern_crc32_cksum_data\n");
   s = s.write("    .type __fern_crc32_cksum, %function\n");
   s = s.write("__fern_crc32_cksum:\n");
+  s = s.write("    ldr x6, [x1, #8]\n");
+  s = s.write("    ldr x7, [x1]\n");
+  s = s.write("__fern_crc32_cksum_data:\n");
   s = s.write("    stp x29, x30, [sp, #-64]!\n");
   s = s.write("    mov x29, sp\n");
   s = s.write("    mov w10, w0\n");
-  s = s.write("    ldr x6, [x1, #8]\n");
-  s = s.write("    ldr x7, [x1]\n");
   s = s.write("    mov x8, x7\n");
   s = s.write("    add x9, x7, w6, uxtw\n");
   s = s.write("    mov w0, w10\n");

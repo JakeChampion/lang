@@ -486,6 +486,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_uses_crc32_cksum(cache)) {
     out = out.append("@uses_crc32_cksum");
   }
+  if (module_emits_op_cached(cache, "crc32_cksum_array")) {
+    out = out.append("@uses_crc32_cksum_array");
+  }
   if (module_uses_ascii_run(cache)) {
     out = out.append("@uses_ascii_run");
   }
@@ -6969,6 +6972,9 @@ function emit_str_op_wat(o: ir.Op): string {
     // by k. A call for memchr's reason.
     return "    call $__fern_scale_f64\n";
   }
+  if (o.kind_tag == 367) {
+    return "    call $__fern_crc32_cksum_array\n";
+  }
   if (o.kind_tag == 309) {  // crc32_cksum
     // stack: crc, s -> the incoming CRC-32 with s's bytes folded in.
     // The operands are already in that order, which is the helper's
@@ -9469,13 +9475,23 @@ pub function count_byte_helper(): string {
 // Reads only the source block ([len@0][bytes@4]) — no allocation, no calls.
 // An empty string returns $crc unchanged.
 pub function crc32_cksum_helper(): string {
+  return crc32_cksum_helper_for(false);
+}
+
+function crc32_cksum_helper_for(array: boolean): string {
   let o: string = "";
-  o = o + "  (func $__fern_crc32_cksum (param $crc i32) (param $s i32) (result i32)\n";
+  let name: string = "__fern_crc32_cksum";
+  let offset: string = "4";
+  if (array) {
+    name = "__fern_crc32_cksum_array";
+    offset = "8";
+  }
+  o = o + "  (func $" + name + " (param $crc i32) (param $s i32) (result i32)\n";
   o = o + "    (local $len i32) (local $i i32) (local $k i32) (local $m i32)\n";
   o = o + "    (local.set $len (i32.load (local.get $s)))\n";
   o = o + "    (block $d (loop $c\n";
   o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
-  o = o + "      (local.set $crc (i32.xor (local.get $crc) (i32.shl (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))) (i32.const 24))))\n";
+  o = o + "      (local.set $crc (i32.xor (local.get $crc) (i32.shl (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const " + offset + ")) (local.get $i))) (i32.const 24))))\n";
   o = o + "      (local.set $k (i32.const 8))\n";
   o = o + "      (block $bd (loop $bc\n";
   o = o + "        (br_if $bd (i32.eqz (local.get $k)))\n";
@@ -14150,6 +14166,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "@uses_crc32_cksum")) {
     parts = parts.append(crc32_cksum_helper());
+  }
+  if (need(needs, "@uses_crc32_cksum_array")) {
+    parts = parts.append(crc32_cksum_helper_for(true));
   }
   if (need(needs, "@uses_ascii_run")) {
     parts = parts.append(ascii_run_helper());

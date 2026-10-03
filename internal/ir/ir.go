@@ -15591,15 +15591,19 @@ func (b *builder) callBody(n *ast.Call) error {
 	// string's two-slot expansion on arm64 and wasm lands second; a backend
 	// that assumed the family's usual string-first order would read the
 	// incoming CRC as a pointer.
-	if id.Name == "__crc32_cksum" && len(n.Args) == 2 {
+	if (id.Name == "__crc32_cksum" || id.Name == "__crc32_cksum_array") && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
 			for _, a := range n.Args {
 				if err := b.expr(a); err != nil {
 					return err
 				}
 			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_crc32_cksum", Width: ResNarrow, I32: 2,
-				Ext: &OpExt{ArgTypes: []ast.Type{ast.NumberType{}, ast.StringType{}}}})
+			var operand ast.Type = ast.StringType{}
+			if id.Name == "__crc32_cksum_array" {
+				operand = ast.ArrayType{Elem: ast.NumberType{Width: 8}}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_" + strings.TrimPrefix(id.Name, "__"), Width: ResNarrow, I32: 2,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.NumberType{}, operand}}})
 			return nil
 		}
 	}

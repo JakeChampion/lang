@@ -5309,6 +5309,12 @@ func (g *generator) emitCountByteRuntime() {
 // FOUR accumulators, 64 bytes a step, for the reason the x86-64 twin has
 // them: one chain runs at the multiply's latency rather than its throughput.
 func (g *generator) emitCrc32CksumRuntime() {
+	if g.usesCrc32CksumArray {
+		g.line(".global __fern_crc32_cksum_array")
+		g.label("__fern_crc32_cksum_array")
+		g.emit("ldur w2, [x1, #-4]")
+		g.emit("b __fern_crc32_cksum")
+	}
 	g.line("")
 	g.line(".global __fern_crc32_cksum")
 	g.typeDirective("__fern_crc32_cksum")
@@ -15672,13 +15678,14 @@ type generator struct {
 	usesStrcmp   bool
 	usesStrord   bool
 	// usesMemchr gates the NEON byte-search kernel (__fern_memchr).
-	usesMemchr         bool
-	usesCountByteBytes bool
-	usesSumBytesArray  bool
-	usesBsdSumBytes    bool
-	usesMemchrBytes    bool
-	usesRmemchrBytes   bool
-	usesMismatchBytes  bool
+	usesMemchr          bool
+	usesCountByteBytes  bool
+	usesSumBytesArray   bool
+	usesCrc32CksumArray bool
+	usesBsdSumBytes     bool
+	usesMemchrBytes     bool
+	usesRmemchrBytes    bool
+	usesMismatchBytes   bool
 	// usesMismatch gates the two-range comparison kernel
 	// (__fern_mismatch), __memchr's kernel over a pair of operand
 	// streams instead of a broadcast needle.
@@ -20401,6 +20408,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesMismatch = true
 		case "__fern_rmemchr":
 			g.usesRmemchr = true
+		case "__fern_crc32_cksum_array":
+			g.usesCrc32CksumArray = true
+			g.usesCrc32Cksum = true
 		case "__fern_crc32_cksum":
 			g.usesCrc32Cksum = true
 		case "__fern_sum_bytes_array":
