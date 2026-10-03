@@ -965,6 +965,10 @@ existing parser and matching engine. Target and parser-cost evidence is in
 GNU parity, ownership and measured costs are recorded in
 [the ptx report](STRING-PTX-BYTES-2026-10-03.md).
 
+`stat` formats escaped output, byte precision and raw diagnostics through
+byte sinks. Evidence and platform limits are recorded in
+[the stat report](STRING-STAT-BYTES-2026-10-03.md).
+
 `head` and `tail` use raw byte input, delimiter scans and output. Their
 shared hold retains input blocks with a 64-bit byte count and releases
 consumed blocks without repeatedly copying long records. Target checks and

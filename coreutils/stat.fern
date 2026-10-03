@@ -221,7 +221,7 @@ function max_width(): i32 {
 // A piece of a scanned format: literal bytes, or a directive.
 // A literal piece keeps the format text as written; `escapes` says
 // `--printf` reads it, so its backslashes are resolved as it prints.
-struct Piece { literal: string, dir: Directive, is_dir: boolean, escapes: boolean }
+struct Piece { literal: u8[], dir: Directive, is_dir: boolean, escapes: boolean }
 
 function is_digit_byte(b: i32): boolean {
   return b >= 48 && b <= 57;
@@ -320,7 +320,7 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
       // directive, with no byte left to resume on.
       out = flush_literal(out, lit, escapes);
       lit = [];
-      out = out.append(Piece { literal: "", dir: Directive { ...d, conv: 0, mod: 0, text: slice_unchecked(fmt, start, i) + "" }, is_dir: true, escapes: false });
+      out = out.append(Piece { literal: [], dir: Directive { ...d, conv: 0, mod: 0, text: "" }, is_dir: true, escapes: false });
       continue;
     }
     let conv: i32 = fmt[i] as i32;
@@ -336,17 +336,21 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
       i = i - 1;
       out = flush_literal(out, lit, escapes);
       lit = [];
-      out = out.append(Piece { literal: "", dir: Directive { ...d, conv: 0, mod: 0, text: slice_unchecked(fmt, start, i) + "" }, is_dir: true, escapes: false });
+      out = out.append(Piece { literal: [], dir: Directive { ...d, conv: 0, mod: 0, text: "" }, is_dir: true, escapes: false });
       continue;
     }
-    d = Directive { ...d, conv: conv, text: slice_unchecked(fmt, start, i) + "" };
+    d = Directive { ...d, conv: conv, text: "" };
+    // Only a percent directive uses this diagnostic, and its spelling is ASCII.
+    if (conv == 37) {
+      d = Directive { ...d, text: slice_unchecked(fmt, start, i) + "" };
+    }
     if (conv == 37 && !d.raw) {
       lit = lit.append(37 as u8);
       continue;
     }
     out = flush_literal(out, lit, escapes);
     lit = [];
-    out = out.append(Piece { literal: "", dir: d, is_dir: true, escapes: false });
+    out = out.append(Piece { literal: [], dir: d, is_dir: true, escapes: false });
   }
   return flush_literal(out, lit, escapes);
 }
@@ -356,7 +360,7 @@ function flush_literal(out: Piece[], lit: u8[], escapes: boolean): Piece[] {
     return out;
   }
   let empty: Directive = Directive { minus: false, zero: false, hash: false, plus: false, space: false, width: 0, prec: 0, has_prec: false, raw: false, plain_flags: 0, mod: 0, conv: 0, text: "" };
-  return out.append(Piece { literal: string_from_bytes_unchecked(lit), dir: empty, is_dir: false, escapes: escapes });
+  return out.append(Piece { literal: lit, dir: empty, is_dir: false, escapes: escapes });
 }
 
 // ---- backslash escapes (--printf only) --------------------------------------
@@ -380,7 +384,7 @@ function hex_value(b: i32): i32 {
 // the end of the format is its own warning and stays. GNU resolves
 // the escapes as it prints each operand, so a warning repeats per
 // operand and lands after the text written before it.
-function put_unescaped(o: io_buffered.BufWriter, s: string): io_buffered.BufWriter {
+function put_unescaped(o: io_buffered.BufWriter, s: u8[]): io_buffered.BufWriter {
   let w: io_buffered.BufWriter = o;
   let out: u8[] = [];
   let i: i32 = 0;
@@ -392,7 +396,7 @@ function put_unescaped(o: io_buffered.BufWriter, s: string): io_buffered.BufWrit
       continue;
     }
     if (i + 1 >= s.len()) {
-      w = gnu.error_out(gnu.put(w, string_from_bytes_unchecked(out)), "warning: backslash at end of format");
+      w = gnu.error_out(gnu.check(w.write_bytes(out)), "warning: backslash at end of format");
       out = [];
       out = out.append(92 as u8);
       i = i + 1;
@@ -433,7 +437,7 @@ function put_unescaped(o: io_buffered.BufWriter, s: string): io_buffered.BufWrit
     } else if (c == 120) {
       // `\x` wants at least one hex digit and takes at most two.
       if (i >= s.len() || hex_value(s[i] as i32) < 0) {
-        w = gnu.error_out(gnu.put(w, string_from_bytes_unchecked(out)), "warning: unrecognized escape '\\x'");
+        w = gnu.error_out(gnu.check(w.write_bytes(out)), "warning: unrecognized escape '\\x'");
         out = [];
         out = out.append(120 as u8);
       } else {
@@ -446,12 +450,12 @@ function put_unescaped(o: io_buffered.BufWriter, s: string): io_buffered.BufWrit
         out = out.append(hv as u8);
       }
     } else {
-      w = gnu.error_out(gnu.put(w, string_from_bytes_unchecked(out)), "warning: unrecognized escape '\\" + string_from_bytes_unchecked([c as u8]) + "'");
+      w = gnu.error_out_bytes(gnu.check(w.write_bytes(out)), "warning: unrecognized escape '\\".bytes().append(c as u8).append(39 as u8));
       out = [];
       out = out.append(c as u8);
     }
   }
-  return gnu.put(w, string_from_bytes_unchecked(out));
+  return gnu.check(w.write_bytes(out));
 }
 
 // ---- padding ----------------------------------------------------------------
@@ -477,18 +481,23 @@ function zeros(n: i32): string {
 
 // A string conversion: precision truncates, width pads, `-` pads on
 // the right. `0` and `#` do nothing, as they do to a C `%s`.
-function out_string(d: Directive, s: string): string {
-  let v: string = s;
-  if (d.has_prec && d.prec < v.len()) {
-    v = slice_unchecked(v, 0, d.prec) + "";
+function out_string(d: Directive, s: string): u8[] {
+  let n: i32 = s.len();
+  if (d.has_prec && d.prec < n) {
+    n = d.prec;
   }
-  if (v.len() >= d.width) {
-    return v;
+  let h: usize = buf_new(n);
+  if (!d.minus && d.width > n) {
+    buf_push(h, spaces(d.width - n));
   }
-  if (d.minus) {
-    return v + spaces(d.width - v.len());
+  // printf precision is a byte limit and may stop inside a UTF-8 scalar.
+  buf_push_range(h, s, 0, n);
+  if (d.minus && d.width > n) {
+    buf_push(h, spaces(d.width - n));
   }
-  return spaces(d.width - v.len()) + v;
+  let out: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return out;
 }
 
 // A number already rendered in its base, with `sign` ("", "-", "+" or
@@ -775,17 +784,21 @@ function fsstat_zero(): FsStat {
 // What one directive contributes. `failed` is raised by the directives
 // that can fail on their own — `%m` is the only one — which print `?`,
 // say so on stderr, and cost the exit status without stopping the run.
-struct Rendered { text: string, failed: boolean }
+enum Rendered { RenderText(string, boolean), RenderBytes(u8[], boolean) }
 
 // The conversion was not one of this mode's. The scanner has already
 // decided which byte the scan resumes on, so nothing but the `?` is
 // left to write.
 function unknown_rendered(): Rendered {
-  return Rendered { text: "?", failed: false };
+  return RenderText("?", false);
+}
+
+function ok_rendered_bytes(s: u8[]): Rendered {
+  return RenderBytes(s, false);
 }
 
 function ok_rendered(s: string): Rendered {
-  return Rendered { text: s, failed: false };
+  return RenderText(s, false);
 }
 
 // The style `%N` and `%Qn` quote in. It is read from the environment the
@@ -826,7 +839,7 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
     return (ok_rendered(out_octal(d, (st.mode & 0xfff as u32) as u64)), qi);
   }
   if (c == 65) {
-    return (ok_rendered(out_string(d, filetype.mode_string(st.mode))), qi);
+    return (ok_rendered_bytes(out_string(d, filetype.mode_string(st.mode))), qi);
   }
   if (c == 98) {
     return (ok_rendered(out_unsigned(d, st.blocks as u64)), qi);
@@ -844,13 +857,13 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
     return (ok_rendered(out_hex(d, st.mode as u64)), qi);
   }
   if (c == 70) {
-    return (ok_rendered(out_string(d, filetype.type_name(st.mode, st.size))), qi);
+    return (ok_rendered_bytes(out_string(d, filetype.type_name(st.mode, st.size))), qi);
   }
   if (c == 103) {
     return (ok_rendered(out_unsigned(d, st.gid as u64)), qi);
   }
   if (c == 71) {
-    return (ok_rendered(out_string(d, group_text(st.gid as i64))), qi);
+    return (ok_rendered_bytes(out_string(d, group_text(st.gid as i64))), qi);
   }
   if (c == 104) {
     return (ok_rendered(out_unsigned(d, st.nlink as u64)), qi);
@@ -861,24 +874,24 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
   if (c == 109) {
     match (mount_point(it.name, st)) {
       Some(mp) => {
-        return (ok_rendered(out_string(d, mp)), qi);
+        return (ok_rendered_bytes(out_string(d, mp)), qi);
       },
       None => {
         gnu.error("failed to canonicalize " + gnu.quotea(it.name) + ": No such file or directory");
-        return (Rendered { text: "?", failed: true }, qi);
+        return (RenderText("?", true), qi);
       }
     }
   }
   if (c == 110) {
     if (d.mod == 81) {
       let qn: Quoting = quoting_ready(qi);
-      return (ok_rendered(out_string(d, gnu.quote_style(it.name, qn.style))), qn);
+      return (ok_rendered_bytes(out_string(d, gnu.quote_style(it.name, qn.style))), qn);
     }
-    return (ok_rendered(out_string(d, it.name)), qi);
+    return (ok_rendered_bytes(out_string(d, it.name)), qi);
   }
   if (c == 78) {
     let qq: Quoting = quoting_ready(qi);
-    return (ok_rendered(quoted_name(d, it, qq.style)), qq);
+    return (ok_rendered_bytes(quoted_name(d, it, qq.style)), qq);
   }
   if (c == 111) {
     return (ok_rendered(out_unsigned(d, st.blksize as u64)), qi);
@@ -902,22 +915,22 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
     return (ok_rendered(out_unsigned(d, st.uid as u64)), qi);
   }
   if (c == 85) {
-    return (ok_rendered(out_string(d, user_text(st.uid as i64))), qi);
+    return (ok_rendered_bytes(out_string(d, user_text(st.uid as i64))), qi);
   }
   if (c == 120) {
-    return (ok_rendered(out_string(d, human_time(z, st.atime, st.atime_nsec))), qi);
+    return (ok_rendered_bytes(out_string(d, human_time(z, st.atime, st.atime_nsec))), qi);
   }
   if (c == 88) {
     return (ok_rendered(epoch_time(d, st.atime, st.atime_nsec)), qi);
   }
   if (c == 121) {
-    return (ok_rendered(out_string(d, human_time(z, st.mtime, st.mtime_nsec))), qi);
+    return (ok_rendered_bytes(out_string(d, human_time(z, st.mtime, st.mtime_nsec))), qi);
   }
   if (c == 89) {
     return (ok_rendered(epoch_time(d, st.mtime, st.mtime_nsec)), qi);
   }
   if (c == 122) {
-    return (ok_rendered(out_string(d, human_time(z, st.ctime, st.ctime_nsec))), qi);
+    return (ok_rendered_bytes(out_string(d, human_time(z, st.ctime, st.ctime_nsec))), qi);
   }
   if (c == 90) {
     return (ok_rendered(epoch_time(d, st.ctime, st.ctime_nsec)), qi);
@@ -929,12 +942,20 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
 // width and precision then apply to THAT, so `%12N` pads the quotes
 // along with the name and `%.3N` can cut a quote off. A link's target
 // is quoted and padded the same way, separately.
-function quoted_name(d: Directive, it: Item, style: i32): string {
-  let name: string = out_string(d, gnu.quote_style(it.name, style));
+function quoted_name(d: Directive, it: Item, style: i32): u8[] {
+  let name: u8[] = out_string(d, gnu.quote_style(it.name, style));
   if (!it.is_link) {
     return name;
   }
-  return name + " -> " + out_string(d, gnu.quote_style(it.link, style)) + link_tail(d);
+  let target: u8[] = out_string(d, gnu.quote_style(it.link, style));
+  let h: usize = buf_new(name.len() + target.len() + 5);
+  buf_push_bytes_range(h, name, 0, name.len());
+  buf_push(h, " -> ");
+  buf_push_bytes_range(h, target, 0, target.len());
+  buf_push(h, link_tail(d));
+  let out: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return out;
 }
 
 // GNU writes a stray `s` after a symlink's target when `%N` carries
@@ -984,7 +1005,7 @@ function render_fs(d: Directive, it: FsItem, qi: Quoting): (Rendered, Quoting) {
   let c: i32 = d.conv;
   if (d.mod == 81 && c == 110) {
     let qn: Quoting = quoting_ready(qi);
-    return (ok_rendered(out_string(d, gnu.quote_style(it.name, qn.style))), qn);
+    return (ok_rendered_bytes(out_string(d, gnu.quote_style(it.name, qn.style))), qn);
   }
   if (d.mod != 0) {
     return (unknown_rendered(), qi);
@@ -1008,7 +1029,7 @@ function render_fs(d: Directive, it: FsItem, qi: Quoting): (Rendered, Quoting) {
     return (ok_rendered(out_unsigned(d, fs.name_max as u64)), qi);
   }
   if (c == 110) {
-    return (ok_rendered(out_string(d, it.name)), qi);
+    return (ok_rendered_bytes(out_string(d, it.name)), qi);
   }
   if (c == 115) {
     return (ok_rendered(out_unsigned(d, fs.block_size as u64)), qi);
@@ -1051,7 +1072,7 @@ function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boole
       if (pieces[i].escapes) {
         w = put_unescaped(w, pieces[i].literal);
       } else {
-        w = gnu.put(w, pieces[i].literal);
+        w = gnu.check(w.write_bytes(pieces[i].literal));
       }
       i = i + 1;
       continue;
@@ -1071,9 +1092,19 @@ function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boole
       rq = render_file(d, it, z, q);
     }
     q = rq.1;
-    w = gnu.put(w, rq.0.text);
-    if (rq.0.failed) {
-      failed = true;
+    match (rq.0) {
+      RenderText(text, bad) => {
+        w = gnu.put(w, text);
+        if (bad) {
+          failed = true;
+        }
+      },
+      RenderBytes(bytes, bad) => {
+        w = gnu.check(w.write_bytes(bytes));
+        if (bad) {
+          failed = true;
+        }
+      }
     }
     i = i + 1;
   }
