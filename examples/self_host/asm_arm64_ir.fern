@@ -4721,8 +4721,8 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
 // the cost is a per-call frame, not per byte, and no Fern body avoids one.
 //
 // The __fn_ stack convention on arm64 uses 16-byte operand slots and the caller
-// pushes b then a, so after `stp x29, x30` the arguments are at [x29, #16] and
-// [x29, #32]. A string box is [data ptr, length]; the result goes in x0.
+// pushes b then a, so on entry the arguments are at [sp] and [sp, #16]. A
+// string box is [data ptr, length]; the result goes in x0.
 //
 // A leaf that calls nothing and never touches x29 needs no frame of its own,
 // so it builds none.

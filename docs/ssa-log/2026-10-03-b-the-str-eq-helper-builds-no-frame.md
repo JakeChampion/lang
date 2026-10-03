@@ -9,9 +9,9 @@ needed.
 
 The frame had been kept so that `__fern_report` could walk the frame-pointer
 chain for a backtrace. The self-host backends emit no such walker
-(`asmcore.sanitize_on` lists the missing backtrace as a declared gap), and a
-leaf that never writes the frame pointer leaves the chain intact for any walk
-anyway. Now:
+(`asmcore.sanitize_on` lists the missing backtrace as a declared gap). A
+walker added later would attribute the frameless helper's time to its caller
+and miss its return address. Now:
 
 - On both targets the helper's register entry compares the boxes where they
   arrive (`%rax`/`%rsi`, `x0`/`x9`) and returns with no frame.
