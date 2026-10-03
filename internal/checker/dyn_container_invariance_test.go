@@ -94,3 +94,34 @@ function main(): i32 {
 		})
 	}
 }
+
+// A direct `dyn` destination is a coercion site, so a refusal there is about
+// the source, not about boxing inside a container, and the container hint
+// would send the reader to rebuild something that holds nothing.
+func TestDirectDynRefusalHasNoContainerHint(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"str-view", `impl Shape for str {
+    function area(self: Self): i32 { return self.len(); }
+    function sides(self: Self): i32 { return 0; }
+}
+function main(): i32 { let s: str = "ab"; let d: dyn Shape = s; return d.area(); }`},
+		{"no-impl", `function main(): i32 { let d: dyn Shape = 5; return d.area(); }`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, dynShapeDecls+c.src)
+			if err == nil {
+				t.Fatal("accepted")
+			}
+			if !strings.Contains(err.Error(), "cannot assign") {
+				t.Errorf("want the assignment refusal: %v", err)
+			}
+			if strings.Contains(err.Error(), "inside a container") {
+				t.Errorf("a direct coercion refusal carries the container hint: %v", err)
+			}
+		})
+	}
+}
