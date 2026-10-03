@@ -67,6 +67,24 @@ function main(): i32 { return 0; }`
 	}
 }
 
+func TestRmemchrBytesArgIsCounted(t *testing.T) {
+	src := `function scan(p: u8[]): i32 { return __rmemchr_bytes(p, 128, 0); }
+function main(): i32 { return 0; }`
+	got := paramCountedFor(t, src, "scan")
+	if len(got) != 1 || !got[0] {
+		t.Fatalf("paramCountedRetain[scan] = %v, want [true]: scanning borrows p", got)
+	}
+}
+
+func TestCountByteBytesArgIsCounted(t *testing.T) {
+	src := `function scan(p: u8[]): i32 { return __count_byte_bytes(p, 128); }
+function main(): i32 { return 0; }`
+	got := paramCountedFor(t, src, "scan")
+	if len(got) != 1 || !got[0] {
+		t.Fatalf("paramCountedRetain[scan] = %v, want [true]: counting borrows p", got)
+	}
+}
+
 func TestCopyingBuiltinByteRangeArgIsCounted(t *testing.T) {
 	src := `function eat(p: u8[]): i32 {
     let b: usize = buf_new(1);

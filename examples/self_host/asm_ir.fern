@@ -5776,7 +5776,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(l_done + ":\n    pushq %rdx\n");
     return s;
   }
-  if (o.kind_tag == 234) {  // rmemchr
+  if (o.kind_tag == 234 || o.kind_tag == 358) {  // rmemchr / rmemchr_bytes
     // operand stack [box, byte, from] (from on top) -> the index of the
     // LAST `byte` at or before `from`, or -1.
     //
@@ -5821,7 +5821,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let r_avx_done: string = rlo11.name;
     s = rlo11.state;
     s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
-    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    if (o.kind_tag == 358) {
+      s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
+    } else {
+      s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    }
     // A byte outside 0..255 can never match. One UNSIGNED compare covers
     // both ends, checked once so neither loop needs a per-iteration guard.
     s = s.write("    cmpq $255, %rcx\n    ja " + r_none + "\n");
@@ -5829,6 +5833,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    subq $1, %r8\n    cmpq $0, %r8\n    jl " + r_none + "\n");
     s = s.write("    cmpq %r8, %rdx\n    jle " + r_ok + "\n    movq %r8, %rdx\n");
     s = s.write(r_ok + ":\n");
+    if (o.kind_tag == 358 && !ir.is_packed(o)) {
+      s = s.write(r_tail + ":\n    cmpq $0, %rdx\n    jl " + r_none + "\n");
+      s = s.write("    movzbq (%rax,%rdx,8), %r9\n    cmpq %rcx, %r9\n    je " + r_done + "\n");
+      s = s.write("    subq $1, %rdx\n    jmp " + r_tail + "\n");
+      s = s.write(r_none + ":\n    movq $-1, %rdx\n");
+      return s.write(r_done + ":\n    pushq %rdx\n");
+    }
     // Broadcast the needle byte across xmm1, then ymm1.
     s = s.write("    movd %ecx, %xmm1\n    punpcklbw %xmm1, %xmm1\n");
     s = s.write("    punpcklwd %xmm1, %xmm1\n    pshufd $0, %xmm1, %xmm1\n");
@@ -5875,7 +5886,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(r_done + ":\n    pushq %rdx\n");
     return s;
   }
-  if (o.kind_tag == 235) {  // count_byte
+  if (o.kind_tag == 235 || o.kind_tag == 357) {  // count_byte
     // operand stack [box, byte] (byte on top) -> how many bytes of the
     // string equal it.
     //
@@ -5904,12 +5915,23 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let c_avx_done: string = clo6.name;
     s = clo6.state;
     s = s.write("    popq %rcx\n    popq %rax\n");
-    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    if (o.kind_tag == 357) {
+      s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
+    } else {
+      s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    }
     s = s.write("    xorq %rdx, %rdx\n    xorq %r10, %r10\n");
     // A byte outside 0..255 can never match. One UNSIGNED compare covers
     // both ends, checked once so neither loop needs a per-iteration guard,
     // and so the splat below is exact rather than truncating.
     s = s.write("    cmpq $255, %rcx\n    ja " + c_done + "\n");
+    if (o.kind_tag == 357 && !ir.is_packed(o)) {
+      s = s.write(c_tail + ":\n    cmpq %r8, %rdx\n    jge " + c_done + "\n");
+      s = s.write("    movzbq (%rax,%rdx,8), %r9\n    cmpq %rcx, %r9\n    jne " + c_next + "\n");
+      s = s.write("    addq $1, %r10\n");
+      s = s.write(c_next + ":\n    addq $1, %rdx\n    jmp " + c_tail + "\n");
+      return s.write(c_done + ":\n    pushq %r10\n");
+    }
     s = s.write("    movd %ecx, %xmm1\n    punpcklbw %xmm1, %xmm1\n");
     s = s.write("    punpcklwd %xmm1, %xmm1\n    pshufd $0, %xmm1, %xmm1\n");
     s = s.write("    vpbroadcastb %xmm1, %ymm1\n");

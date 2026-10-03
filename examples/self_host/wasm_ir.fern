@@ -434,8 +434,14 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_uses_memchr(cache)) {
     out = out.append("@uses_memchr");
   }
+  if (module_emits_op_cached(cache, "count_byte_bytes")) {
+    out = out.append("@uses_count_byte_bytes");
+  }
   if (module_emits_op_cached(cache, "memchr_bytes")) {
     out = out.append("@uses_memchr_bytes");
+  }
+  if (module_emits_op_cached(cache, "rmemchr_bytes")) {
+    out = out.append("@uses_rmemchr_bytes");
   }
   if (module_uses_rmemchr(cache)) {
     out = out.append("@uses_rmemchr");
@@ -6894,8 +6900,14 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
 // arm emits -- wrong code that looks plausible. asm_ir carries the same guard
 // for the same reason.
 function emit_str_op_wat(o: ir.Op): string {
+  if (o.kind_tag == 357) {
+    return "    call $__fern_count_byte_bytes\n";
+  }
   if (o.kind_tag == 356) {
     return "    call $__fern_memchr_bytes\n";
+  }
+  if (o.kind_tag == 358) {
+    return "    call $__fern_rmemchr_bytes\n";
   }
   if (o.kind_tag == 97) {  // str_len
     // stack: block ptr -> i32.load(ptr)  (len @ +0)
@@ -8941,6 +8953,19 @@ pub function substr_helper(): string {
 
 // Like the other byte builtins, scan the packed [len][cap][bytes] u8[]
 // representation. Typed lowering marks byte-array operations with width 8.
+pub function count_byte_bytes_helper(): string {
+  let o: string = "  (func $__fern_count_byte_bytes (param $a i32) (param $byte i32) (result i32)\n";
+  o = o + "    (local $len i32) (local $i i32) (local $count i32)\n";
+  o = o + "    (if (i32.gt_u (local.get $byte) (i32.const 255)) (then (return (i32.const 0))))\n";
+  o = o + "    (local.set $len (i32.load (local.get $a)))\n";
+  o = o + "    (block $done (loop $scan\n";
+  o = o + "      (br_if $done (i32.ge_s (local.get $i) (local.get $len)))\n";
+  o = o + "      (if (i32.eq (i32.load8_u (i32.add (local.get $a) (i32.add (i32.const 8) (local.get $i)))) (local.get $byte)) (then (local.set $count (i32.add (local.get $count) (i32.const 1)))))\n";
+  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+  o = o + "      (br $scan)))\n    (local.get $count))\n";
+  return o;
+}
+
 pub function memchr_bytes_helper(): string {
   let o: string = "  (func $__fern_memchr_bytes (param $a i32) (param $byte i32) (param $from i32) (result i32)\n";
   o = o + "    (local $len i32) (local $i i32)\n";
@@ -8952,6 +8977,21 @@ pub function memchr_bytes_helper(): string {
   o = o + "      (br_if $done (i32.ge_s (local.get $i) (local.get $len)))\n";
   o = o + "      (if (i32.eq (i32.load8_u (i32.add (local.get $a) (i32.add (i32.const 8) (local.get $i)))) (local.get $byte)) (then (return (local.get $i))))\n";
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+  o = o + "      (br $scan)))\n    (i32.const -1))\n";
+  return o;
+}
+
+pub function rmemchr_bytes_helper(): string {
+  let o: string = "  (func $__fern_rmemchr_bytes (param $a i32) (param $byte i32) (param $from i32) (result i32)\n";
+  o = o + "    (local $len i32) (local $i i32)\n";
+  o = o + "    (if (i32.gt_u (local.get $byte) (i32.const 255)) (then (return (i32.const -1))))\n";
+  o = o + "    (local.set $len (i32.load (local.get $a)))\n";
+  o = o + "    (local.set $i (local.get $from))\n";
+  o = o + "    (if (i32.ge_s (local.get $i) (local.get $len)) (then (local.set $i (i32.sub (local.get $len) (i32.const 1)))))\n";
+  o = o + "    (block $done (loop $scan\n";
+  o = o + "      (br_if $done (i32.lt_s (local.get $i) (i32.const 0)))\n";
+  o = o + "      (if (i32.eq (i32.load8_u (i32.add (local.get $a) (i32.add (i32.const 8) (local.get $i)))) (local.get $byte)) (then (return (local.get $i))))\n";
+  o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
   o = o + "      (br $scan)))\n    (i32.const -1))\n";
   return o;
 }
@@ -13939,8 +13979,14 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "@uses_memchr")) {
     parts = parts.append(memchr_helper());
   }
+  if (need(needs, "@uses_count_byte_bytes")) {
+    parts = parts.append(count_byte_bytes_helper());
+  }
   if (need(needs, "@uses_memchr_bytes")) {
     parts = parts.append(memchr_bytes_helper());
+  }
+  if (need(needs, "@uses_rmemchr_bytes")) {
+    parts = parts.append(rmemchr_bytes_helper());
   }
   if (need(needs, "@uses_rmemchr")) {
     parts = parts.append(rmemchr_helper());

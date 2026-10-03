@@ -43,6 +43,57 @@ func TestBufferedWriterBytesInterp(t *testing.T) {
 	runBufferedWriterBytesCommand(t, exec.Command(buildLangBinForInterp(t), "-interp", bufferedWriterBytesSource(t)))
 }
 
+const bufferedWriterFreshBytesProgram = `import "std/io_buffered" as io;
+function main(): i32 {
+  let seed = buf_new(3);
+  for capacity in [1, 64] {
+    let b = io.buf_writer_new(stdout(), capacity);
+    for iteration in 0..32 {
+      buf_push_byte(seed, 255); buf_push_byte(seed, 0); buf_push_byte(seed, 128);
+      b = b.write_bytes(buf_take_bytes(seed));
+      buf_push_byte(seed, 255); buf_push_byte(seed, 0); buf_push_byte(seed, 128);
+      b = b.write_bytes_range(buf_take_bytes(seed), 1, 2);
+      b = b.write_bytes(buf_take_bytes(seed));
+      b = b.flush();
+    }
+    buf_free(b.handle());
+  }
+  buf_free(seed);
+  return 0;
+}`
+
+func checkBufferedWriterBytesCensus(t *testing.T, out, diagnostic string, code int) {
+	t.Helper()
+	want := bytes.Repeat([]byte{255, 0, 128, 0}, 64)
+	if !bytes.Equal([]byte(out), want) && !bytes.Equal([]byte(out), append(want, []byte("0\n")...)) {
+		t.Fatalf("binary output differs: got %d bytes", len(out))
+	}
+	if code != 0 {
+		t.Fatalf("writer bytes: exit %d\n%s", code, diagnostic)
+	}
+	allocs, frees, _ := parseLeakCheckLine(t, diagnostic)
+	// stdout() returns a sentinel-headered handle on the bootstrap backends.
+	// All arrays and writer buffers must be reclaimed, including fresh args.
+	if allocs-frees > 2 {
+		t.Fatalf("allocs=%d frees=%d: more than the two stdout handles survive\n%s", allocs, frees, diagnostic)
+	}
+}
+
+func TestWasmBufferedWriterBytesCensus(t *testing.T) {
+	out, diagnostic, code := runLeakCheckWasm(t, bufferedWriterFreshBytesProgram, false)
+	checkBufferedWriterBytesCensus(t, out, diagnostic, code)
+}
+
+func TestArm64BufferedWriterBytesCensus(t *testing.T) {
+	out, diagnostic, code := runLeakCheckArm64(t, bufferedWriterFreshBytesProgram)
+	checkBufferedWriterBytesCensus(t, out, diagnostic, code)
+}
+
+func TestX86_64BufferedWriterBytesCensus(t *testing.T) {
+	out, diagnostic, code := runLeakCheckX86_64(t, bufferedWriterFreshBytesProgram)
+	checkBufferedWriterBytesCensus(t, out, diagnostic, code)
+}
+
 func TestArm64DarwinBufferedWriterBytes(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("requires Apple Silicon")

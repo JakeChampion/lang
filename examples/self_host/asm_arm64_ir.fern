@@ -434,7 +434,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 245) {  // mismatch
     return emit_mismatch_arm64(s);
   }
-  if (o.kind_tag == 234) {  // rmemchr
+  if (o.kind_tag == 234 || o.kind_tag == 358) {  // rmemchr / rmemchr_bytes
     // operand stack [box, byte, from] (from on top) -> the index of the
     // LAST `byte` at or before `from`, or -1.
     //
@@ -470,7 +470,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let r_done: string = rlo8.name;
     s = rlo8.state;
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    if (o.kind_tag == 358) {
+      s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
+    } else {
+      s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    }
     // Unsigned compare against 255 rejects a negative byte and one above
     // the range in a single test. Checked once, so neither loop below
     // needs a per-iteration guard.
@@ -479,6 +483,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    sub x3, x3, #1\n    cmp x3, #0\n    b.lt " + r_none + "\n");
     s = s.write("    cmp x2, x3\n    b.le " + r_ok + "\n    mov x2, x3\n");
     s = s.write(r_ok + ":\n");
+    if (o.kind_tag == 358 && !ir.is_packed(o)) {
+      s = s.write(r_tail + ":\n    cmp x2, #0\n    b.lt " + r_none + "\n");
+      s = s.write("    add x5, x0, x2, lsl #3\n    ldrb w4, [x5]\n    cmp x4, x1\n    b.eq " + r_done + "\n");
+      s = s.write("    sub x2, x2, #1\n    b " + r_tail + "\n");
+      s = s.write(r_none + ":\n    mov x2, #-1\n");
+      return s.write(r_done + ":\n    str x2, [sp, #-16]!\n");
+    }
     s = s.write("    dup v1.16b, w1\n");
     // Vector loop while a whole block still fits BELOW the cursor. That
     // bound keeps the load in bounds at the LOW end, where memchr's
@@ -514,7 +525,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(r_done + ":\n    str x2, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 235) {  // count_byte
+  if (o.kind_tag == 235 || o.kind_tag == 357) {  // count_byte
     // operand stack [box, byte] (byte on top) -> how many bytes of the
     // string equal it.
     //
@@ -540,12 +551,24 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let c_done: string = clo4.name;
     s = clo4.state;
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    if (o.kind_tag == 357) {
+      s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
+    } else {
+      s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    }
     s = s.write("    mov x7, #0\n");
     // Unsigned compare against 255 rejects a negative byte and one above
     // the range in a single test, checked once so neither loop needs a
     // per-iteration guard.
     s = s.write("    cmp x1, #255\n    b.hi " + c_done + "\n");
+    if (o.kind_tag == 357 && !ir.is_packed(o)) {
+      s = s.write("    mov x2, #0\n");
+      s = s.write(c_tail + ":\n    cmp x2, x3\n    b.ge " + c_done + "\n");
+      s = s.write("    add x5, x0, x2, lsl #3\n    ldrb w4, [x5]\n    cmp x4, x1\n    b.ne " + c_next + "\n");
+      s = s.write("    add x7, x7, #1\n");
+      s = s.write(c_next + ":\n    add x2, x2, #1\n    b " + c_tail + "\n");
+      return s.write(c_done + ":\n    str x7, [sp, #-16]!\n");
+    }
     s = s.write("    mov x5, x0\n    add x6, x0, x3\n");
     s = s.write("    dup v1.16b, w1\n");
     s = s.write(c_vec + ":\n");

@@ -3846,6 +3846,32 @@ function call_buf_new(args: Value[]): Value {
   return v_buf_handle(buf_new(reserve));
 }
 
+// Borrow the array and count matching bytes without constructing text.
+function call_count_byte_bytes(args: Value[]): Value {
+  if (args.len() != 2) {
+    return v_err("__count_byte_bytes: expected 2 args (bytes, byte)");
+  }
+  if (!is_i32_arg(args[1])) {
+    return v_err("__count_byte_bytes: byte must be an integer");
+  }
+  if let VArr(a) = args[0] {
+    let byte: i32 = vint_bits(args[1]);
+    let at: i32 = 0;
+    let count: i32 = 0;
+    if (byte < 0 || byte > 255) {
+      return v_int(0);
+    }
+    while (at < a.elements.len()) {
+      if (vint_bits(a.elements[at]) == byte) {
+        count = count + 1;
+      }
+      at = at + 1;
+    }
+    return v_int(count);
+  }
+  return v_err("__count_byte_bytes: first arg must be a byte array");
+}
+
 // Borrow the array and find the first matching byte at or after the start.
 function call_memchr_bytes(args: Value[]): Value {
   if (args.len() != 3) {
@@ -3872,6 +3898,33 @@ function call_memchr_bytes(args: Value[]): Value {
     return v_int(0 - 1);
   }
   return v_err("__memchr_bytes: first arg must be a byte array");
+}
+
+function call_rmemchr_bytes(args: Value[]): Value {
+  if (args.len() != 3) {
+    return v_err("__rmemchr_bytes: expected 3 args (bytes, byte, from)");
+  }
+  if (!is_i32_arg(args[1]) || !is_i32_arg(args[2])) {
+    return v_err("__rmemchr_bytes: byte and start must be integers");
+  }
+  if let VArr(a) = args[0] {
+    let byte: i32 = vint_bits(args[1]);
+    let at: i32 = vint_bits(args[2]);
+    if (byte < 0 || byte > 255) {
+      return v_int(0 - 1);
+    }
+    if (at >= a.elements.len()) {
+      at = a.elements.len() - 1;
+    }
+    while (at >= 0) {
+      if (vint_bits(a.elements[at]) == byte) {
+        return v_int(at);
+      }
+      at = at - 1;
+    }
+    return v_int(0 - 1);
+  }
+  return v_err("__rmemchr_bytes: first arg must be a byte array");
 }
 
 // Raw byte ranges use clamped bounds, including empty and inverted ranges.
@@ -4255,8 +4308,14 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   if (is_buf_builtin(name)) {
     return call_buf_builtin(name, args);
   }
+  if (name == "__count_byte_bytes") {
+    return call_count_byte_bytes(args);
+  }
   if (name == "__memchr_bytes") {
     return call_memchr_bytes(args);
+  }
+  if (name == "__rmemchr_bytes") {
+    return call_rmemchr_bytes(args);
   }
   // `__memchr(s, byte, from)` / `__ascii_run(s, from)` — the two scan
   // kernels the compiled backends vectorise, and the byte-search floor
