@@ -6177,6 +6177,13 @@ function main(): i32 {
     return 0;
 }
 `},
+	// With no other implementer, a missing str/string dispatch arm must fail
+	// compilation instead of being masked by an unrelated record's arm.
+	{name: "a-str-only-dyn-implementation-is-produced", atLeast: 2, want: "0|", src: `
+trait Size { function size(self: Self): i32; }
+impl Size for str { function size(self: str): i32 { return self.len(); } }
+function main(): i32 { let d: dyn Size = "abc"; return d.size() - 3; }
+`},
 	// An impl on `str` is the impl on `string`, so a counted string boxes into
 	// the dyn through it, owned by the box: returned from a local, and merged
 	// past a branch-local source (#10908). The dyn's concretes named nothing
