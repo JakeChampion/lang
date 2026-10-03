@@ -3661,6 +3661,15 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		if !ast.IsPointerType(x.Target) {
 			return false
 		}
+		// A raw address made into a reference (`cell as string`) borrows
+		// whatever it points at, which this frame does not own.
+		it := x.InnerType
+		if it == nil {
+			it = b.exprType(x.Inner)
+		}
+		if it != nil && !ast.IsPointerType(it) {
+			return true
+		}
 		return b.rhsTainted(x.Inner, tainted)
 	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.CharLit:
 		// A scalar literal aliases nothing, so a fresh owned result whose only
