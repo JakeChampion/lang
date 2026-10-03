@@ -254,9 +254,9 @@ func TestSelfHostOverReleaseReportArm64(t *testing.T) {
 		}
 	}
 	off := emitArm64Asm(t, h, dir, src, "df-off", nil)
-	for _, marker := range []string{"__fern_san_abort", ".Lsan_df"} {
+	for _, marker := range []string{"__fern_san_abort", ".Lsan_", "fern-sanitizer"} {
 		if strings.Contains(off, marker) {
-			t.Errorf("flag-off asm contains %q — the report is not fully gated", marker)
+			t.Errorf("flag-off asm contains %q — the mode is not fully gated", marker)
 		}
 	}
 }

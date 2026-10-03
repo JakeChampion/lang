@@ -514,12 +514,12 @@ func TestX86_64Transcendentals(t *testing.T) {
 // End-to-end x86-64 HTTP handler. Same shape as
 // `TestArm64HttpHandler` — compiles a tiny `handle` program
 // (no manual main; the checker synthesises one calling
-// `tcp_serve(__port_from_env("PORT", 8080), handle)`),
+// `serve.supervise(serve.__port_from_env("PORT", 8080), serve.config(), handle)`),
 // spawns the resulting binary on a Go-picked free port,
 // sends two requests on separate connections, asserts both
 // bodies round-trip. The second request validates that the
 // first request's allocations are reclaimed (by reference
-// counting) inside `tcp_serve` — a leak there would either
+// counting) inside `serve.run` — a leak there would either
 // OOM or scramble state between requests; both pass cleanly.
 //
 // Together with `TestArm64HttpHandler` this brings the two
@@ -535,7 +535,7 @@ func TestX86_64HttpHandler(t *testing.T) {
 
 	src := `
 import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("method=" + req.method + " path=" + req.path + " body-len=" + req.body_len().to_string());
 }`

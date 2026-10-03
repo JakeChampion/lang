@@ -41,6 +41,24 @@ func writerBytesSource(t *testing.T) string {
 	return p
 }
 
+func compileBootstrapWriterBytes(t *testing.T, target, source string, census bool) string {
+	t.Helper()
+	dir := t.TempDir()
+	src, bin := filepath.Join(dir, "writer.fern"), filepath.Join(dir, "writer")
+	if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(buildLangBinForInterp(t), "-target", target, "-backend", "flat", "-o", bin, src)
+	cmd.Env = e2eharness.ChildEnv()
+	if census {
+		cmd.Env = append(cmd.Env, "FERN_LEAKCHECK=1")
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("bootstrap compile: %v\n%s", err, out)
+	}
+	return bin
+}
+
 func TestWriterBytesInterp(t *testing.T) {
 	runWriterBytesCommand(t, exec.Command(buildLangBinForInterp(t), "-interp", writerBytesSource(t)))
 }
@@ -56,13 +74,13 @@ func TestWriterBytesCensus(t *testing.T) {
 		run  func(*testing.T, string) (string, string, int)
 	}{
 		{"x86_64", func(t *testing.T, source string) (string, string, int) {
-			gcc, runner := x86_64Tooling(t)
-			bin := e2eharness.BuildBin(t, gcc, t.TempDir(), "writer", emitLeakCheck(t, "x86_64", source, true))
+			runner := e2eharness.X86_64Runner(t)
+			bin := compileBootstrapWriterBytes(t, "x86-64-linux", source, true)
 			return runSplit(t, runX86_64Bin(runner, bin))
 		}},
 		{"arm64", func(t *testing.T, source string) (string, string, int) {
-			gcc, qemu := arm64Tooling(t)
-			bin := e2eharness.BuildBinArm64(t, gcc, t.TempDir(), "writer", emitLeakCheck(t, "arm64-linux", source, true))
+			qemu := e2eharness.Arm64Runner(t)
+			bin := compileBootstrapWriterBytes(t, "arm64-linux", source, true)
 			return runSplit(t, runArm64Bin(qemu, bin))
 		}},
 		{"wasm", func(t *testing.T, source string) (string, string, int) {
@@ -77,18 +95,18 @@ func TestWriterBytesCensus(t *testing.T) {
 				{"array_subview", "a[1:3]", "\xff\x80"},
 				{"view", "v", "0123456789abcdefghij"},
 				{"string_view", "s.as_bytes()", "0123456789abcdefghij"},
-				{"string_call", "fresh_text().as_bytes()", "0123456789abcdefghij"},
+				{"string_call", `fresh_text("0123456789", "abcdefghij").as_bytes()`, "0123456789abcdefghij"},
 			} {
 				t.Run(c.name, func(t *testing.T) {
 					var controlLive, controlBlocks int64
 					for _, writes := range []int{0, 24} {
 						source := fmt.Sprintf(`
 @noinline function fresh_array(): u8[] { return [0 as u8, 255 as u8, 128 as u8]; }
-@noinline function fresh_text(): string { return "0123456789" + "abcdefghij"; }
+@noinline function fresh_text(a: string, b: string): string { return a + b; }
 function main(): i32 {
  let w = stdout();
  let a: u8[] = fresh_array();
- let s = fresh_text();
+ let s = fresh_text("0123456789", "abcdefghij");
  let v: [u8] = s.as_bytes();
  let i = 0;
  while (i < %d) {
@@ -131,15 +149,15 @@ func TestArm64DarwinWriterBytes(t *testing.T) {
 
 func TestArm64WriterBytes(t *testing.T) {
 	// The shared fixture runners use the primary compiler. Exercise the Go
-	// emitter directly here; e2eselfhost owns the primary target matrix.
-	gcc, qemu := arm64Tooling(t)
-	bin := e2eharness.BuildBinArm64(t, gcc, t.TempDir(), "writer", emitLeakCheck(t, "arm64-linux", e2eharness.WriterBytesProgram, false))
+	// CLI explicitly here; e2eselfhost owns the primary target matrix.
+	qemu := e2eharness.Arm64Runner(t)
+	bin := compileBootstrapWriterBytes(t, "arm64-linux", e2eharness.WriterBytesProgram, false)
 	runWriterBytesCommand(t, runArm64Bin(qemu, bin))
 }
 
 func TestX86_64WriterBytes(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	bin := e2eharness.BuildBin(t, gcc, t.TempDir(), "writer", emitLeakCheck(t, "x86_64", e2eharness.WriterBytesProgram, false))
+	runner := e2eharness.X86_64Runner(t)
+	bin := compileBootstrapWriterBytes(t, "x86-64-linux", e2eharness.WriterBytesProgram, false)
 	runWriterBytesCommand(t, runX86_64Bin(runner, bin))
 }
 

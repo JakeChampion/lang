@@ -50,8 +50,8 @@ const PLATFORM_MODE_MOCK: i32 = 1;
 
 // `platform_new()` — the bag as the host serves it, for code that has
 // to build one: a test driving a handler directly, or a caller of
-// `tcp_serve` that wants to hand its own handler the same value the
-// accept loop would. (The serving paths — `std/tcp`'s accept loop and
+// `serve.run` that wants to hand its own handler the same value the
+// accept loop would. (The serving paths — `std/serve`'s accept loop and
 // the wasi-http entry wrapper — construct the bag themselves; reaching
 // here for it would put this module's capabilities in their reach.)
 //
@@ -60,7 +60,7 @@ const PLATFORM_MODE_MOCK: i32 = 1;
 // `version` is the bag's ABI version, bumped when a capability field is
 // added, so a handler compiled against an older bag can tell. Version 2
 // added `handle`, the worker-owned runtime handle: the reactor of the
-// serving worker that built the bag (`std/tcp`'s loops), 0 for a bag built
+// serving worker that built the bag (`std/serve`'s loops), 0 for a bag built
 // here or by the wasi-http wrapper, which serve no reactor. Struct fields
 // are frozen after construction and a cell holds only a scalar or a string
 // (E057), so the mutable per-worker state a capability needs — idle

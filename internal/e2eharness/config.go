@@ -16,7 +16,7 @@ import (
 // path a name nothing sets, "unset" for None.
 func ConfigHandlerSource() string {
 	return `import "std/http";
-import "std/tcp";
+import "std/serve";
 import "std/platform";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {

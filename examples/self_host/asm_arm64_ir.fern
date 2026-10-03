@@ -9297,7 +9297,7 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".size __fn___fern_subprocess, .-__fn___fern_subprocess\n");
 
   // ---- TCP sockets ------------------------------------------------
-  // The raw primitives std/tcp.fern's tcp_serve() composes into the
+  // The raw primitives std/serve's accept loop composes into the
   // HTTP edge-handler loop. Linux aarch64 syscalls: socket=198,
   // bind=200, listen=201, accept=202, read=63, write=64, close=57.
   // Darwin remaps the numbers via darwin_sysno (97/104/106/30 +
@@ -11804,7 +11804,7 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
 //     subprocess, and the TCP socket primitives (tcp_listen /
 //     tcp_accept / tcp_recv / tcp_send / tcp_close — socket 198→97 /
 //     bind 200→104 / listen 201→106 / accept 202→30, plus the Darwin
-//     sockaddr_in sin_len byte) that std/tcp.fern's HTTP edge-handler
+//     sockaddr_in sin_len byte) that std/serve's HTTP edge-handler
 //     loop is built on, and one-shot IPv4 UDP (udp_send — socket /
 //     sendto 206→133 / close, dotted-quad host parse).
 

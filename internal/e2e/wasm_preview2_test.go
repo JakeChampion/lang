@@ -1588,7 +1588,7 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 	srcPath := filepath.Join(dir, "router.fern")
 	src := `
 import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
         return http.ok("world");
@@ -1729,7 +1729,7 @@ func TestWasmPreview2HttpHandlerResponseHeaders(t *testing.T) {
 	srcPath := filepath.Join(dir, "router.fern")
 	src := `
 import "std/headers";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     let h: HeaderMap = headers.header_map_new();
     h = h.set("x-served-by", "fern");
@@ -1830,7 +1830,7 @@ func TestWasmPreview2HttpHandlerRequestHeaders(t *testing.T) {
 	srcPath := filepath.Join(dir, "router.fern")
 	src := `
 import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     match (req.headers.get("x-echo")) {
         Some(v) => { return http.ok(v); },
@@ -1935,7 +1935,7 @@ func TestWasmPreview2HttpHandlerLoggingAdapterFree(t *testing.T) {
 	src := `
 import "std/http";
 import "std/platform";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     plat.log(f"LOGLINE {req.method} {req.path}");
     return http.ok("logged");
@@ -2045,7 +2045,7 @@ func TestWasmPreview2HttpHandlerClockAdapterFree(t *testing.T) {
 	src := `
 import "std/http";
 import "std/platform";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     let t: i64 = plat.now_ms();
     let m: i64 = plat.elapsed_ns();
@@ -2118,7 +2118,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 	envSrc := `
 import "std/http";
 import "std/platform";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     match (plat.env("X")) { Some(_) => {}, None => {} }
     return http.ok("e");
@@ -2167,7 +2167,7 @@ func TestWasmPreview2HttpHandlerAdapterFree(t *testing.T) {
 	srcPath := filepath.Join(dir, "router.fern")
 	src := `
 import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
         return http.ok("world");
@@ -2301,7 +2301,7 @@ func TestWasmPreview2HttpHandlerPlatformCapabilities(t *testing.T) {
 	srcPath := filepath.Join(dir, "caps.fern")
 	src := `
 import "std/http";
-import "std/tcp";
+import "std/serve";
 import "std/platform" as platform;
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     plat.log("handled " + req.path);

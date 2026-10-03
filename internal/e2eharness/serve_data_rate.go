@@ -28,14 +28,14 @@ const DataRateResponseBytes = 8 << 20
 func DataRateServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/string";
-import "std/tcp";
+import "std/serve";
 import "std/time";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("x".repeat(%d));
 }
 function main(): i32 {
-    let opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), response_min_data_rate: 100000, response_data_rate_grace: time.duration_millis(300 as i64) };
-    return tcp.tcp_serve_opts(%d, opts, handle);
+    let opts: serve.Config = serve.Config { ...serve.config(), response_min_data_rate: 100000, response_data_rate_grace: time.duration_millis(300 as i64) };
+    return serve.run(%d, opts, handle);
 }
 `, DataRateResponseBytes, port)
 }

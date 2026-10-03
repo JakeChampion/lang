@@ -21,7 +21,7 @@ import "std/array";
 import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/timefmt";
-import "./lib/tz";
+import "std/tz";
 
 struct Scan { date_text: string, has_date: boolean, file: string, has_file: boolean, reference: string, has_reference: boolean, format: string, has_format: boolean, utc: boolean, debug: boolean }
 

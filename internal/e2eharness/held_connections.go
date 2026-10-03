@@ -33,15 +33,15 @@ const HeldConnectionsBatch = 64
 func HeldConnectionsServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/time";
-import "std/tcp";
+import "std/serve";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok(__heap_bump_bytes().to_string());
 }
 
 function main(): i32 {
-    let opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), recv_deadline: time.duration_seconds(120 as i64), max_connections_per_ip: 0 };
-    return tcp.tcp_serve_opts(%d, opts, handle);
+    let opts: serve.Config = serve.Config { ...serve.config(), recv_deadline: time.duration_seconds(120 as i64), max_connections_per_ip: 0 };
+    return serve.run(%d, opts, handle);
 }
 `, port)
 }
@@ -152,12 +152,12 @@ func heapBumpBytes(t *testing.T, addr string) int64 {
 // with room for 5000 requests on one connection.
 func BumpPerRequestServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok(__heap_bump_bytes().to_string());
 }
 function main(): i32 {
-    return tcp.tcp_serve_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), keep_alive_requests: 5000 }, handle);
+    return serve.run(%d, serve.Config { ...serve.config(), keep_alive_requests: 5000 }, handle);
 }
 `, port)
 }

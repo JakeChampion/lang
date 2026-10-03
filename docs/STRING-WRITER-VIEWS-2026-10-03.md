@@ -38,14 +38,75 @@ fixture, including short strings, fresh string sources, partial UTF-8 byte
 sequences and closed-handle errors. The output fixture also covers every byte
 value, nonzero-offset array views, `str` views, empty views and held aliases.
 
-## Validation status
+## Validation
 
-The Linux Go interpreter, native and SSA, WASM and primary target groups pass,
+At `ff029586b`, the Linux Go interpreter, native and SSA, WASM and primary
+target groups pass,
 as do the buffered-I/O and byte-view regression groups. The full unit suite
 and all lint gates pass. The native Go fixture and census group was rerun
 after making its emitter selection explicit; it passes in 1.669 seconds.
-Darwin, fresh bootstrap reproduction, actual-compiler probes, cache isolation
-and controlled measurements are pending at initial publication.
+Darwin Go and primary groups pass in 2.490 and 43.525 seconds. The fresh
+bootstrap takes 37, 29 and 14 seconds for stages 1, 2 and 3. Stages 2 and 3
+are byte-identical at 12,877,921 bytes, SHA-256
+`edb6ef84389dad801d421b58c4b4280439fced776e9ba248fe0670ff872ac094`.
+
+That reproduced compiler passes the 16,657-byte output fixture on Darwin,
+core WASM, components and the interpreter. Checked Darwin reports 46
+allocations and 46 frees; core WASM reports 55 and 55. Both finish with zero
+live bytes. Native and WASM per-module cache tests reject the old units,
+reuse newly cached units and produce the same output as clean compilation.
+
+## Upstream integration
+
+After integrating `main` at `09ffd368f`, native bootstrap tests explicitly
+invoke the Go CLI with `-backend flat`. This avoids depending on the retired
+`emitLeakCheck` helper or accidentally testing the primary compiler twice.
+The heap-string census source concatenates function parameters so constant
+folding cannot replace it with a literal.
+
+The integrated Go target/census group passes in 28.741 seconds, the primary
+Writer group in 36.987 seconds and related buffered-I/O/view tests in 87.933
+seconds. All lint gates pass. Darwin Go and primary groups pass in 2.376 and
+43.316 seconds. A fresh bootstrap takes 37, 28 and 14 seconds; stages 2 and 3
+match at 12,877,889 bytes, SHA-256
+`fc15892a54e9f5d5017cd0b3ad748b31b6eb30b012237d136d6e6ac2b6e7ec1a`.
+Actual Darwin, core WASM, component and interpreter probes pass again, with
+the same balanced native/core census counts above. Native and WASM cache
+isolation checks pass again. The earlier full unit
+pass belongs to `ff029586b`; full integrated CI remains a merge gate.
+
+## Controlled measurements before upstream integration
+
+Both benchmark variants use the reproduced `ff029586b` compiler above. They
+write the same 4096-byte string to `/dev/null`, using either `data.bytes()` or
+`data.as_bytes()`, and check the retained alias after the loop. The pilot
+uses 256 calls; the full run changes only the count to 32,768. Each variant
+has two warmups and seven alternating timed samples, including process
+startup. Census runs are separate from timing. Task-owned heavy jobs were
+idle; the rest of the desktop was not isolated.
+
+| Input | Median | Sample range | Allocations |
+| --- | ---: | ---: | ---: |
+| Owned copy | 18.391 ms | 18.129-19.859 ms | 65,542 |
+| Borrowed view | 12.931 ms | 12.837-13.891 ms | 32,774 |
+
+The ranges do not overlap. The view removes one array allocation per call;
+both runs free everything. Both native files are 49,985 bytes. The view
+program's code is 22,608 bytes versus 23,572 for the copy; unwind data is
+3,916 versus 4,060 bytes, and ordinary data is 3,864 bytes in both.
+
+A separate ABI comparison compiles the same owned-array program with both
+Writer methods using the parent and new compilers. The parent compiler is
+SHA-256 `44f78472a119fc30239f5d6babf96fc54cbfe2d83cb1d3836e7045dfc510fb89`.
+Both versions produce identical output on Darwin and core WASM. Native file
+size stays 33,473 bytes; code grows from 11,864 to 12,576 bytes and unwind
+data from 1,228 to 1,444 bytes for view decoding and its call lifetimes.
+Data stays 3,632 bytes. Core WASM grows from 6,802 to 7,354 bytes.
+
+The compiler itself grows from 12,861,377 to 12,877,921 bytes. Its code grows
+by 1,312 bytes, unwind data by 216 and data by 768. Mach-O load commands
+attribute the file growth to a 16,384-byte text-segment alignment step and
+160 bytes of link-edit data. No size baseline changes.
 
 ## Scope
 

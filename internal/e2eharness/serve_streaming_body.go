@@ -18,7 +18,7 @@ import (
 // chunks under chunked transfer coding.
 func StreamingBodyServerSource(port int, path string) string {
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 import "core/int";
 
 function chunk(i: i32): Option[u8[]] {
@@ -40,7 +40,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return tcp.tcp_serve(%d, handle);
+    return serve.run(%d, serve.config(), handle);
 }
 `, path, port)
 }
