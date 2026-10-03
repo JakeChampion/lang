@@ -41,8 +41,14 @@ function main(): i32 {
 `
 
 // copyThenArith is a copy into a register that the next instruction adds to
-// or subtracts a constant from: the pair a lea replaces.
-var copyThenArith = regexp.MustCompile(`movq (%r\w+), (%r\w+)\n\s+(?:addq (?:%r\w+|\$-?\d+)|subq \$-?\d+), (%r\w+)\n`)
+// or subtracts a constant from: the pair a lea replaces. leaPair and leaImm
+// are the two leas that replace it; a frame register as the base is the
+// frame's own lea, not one of them.
+var (
+	copyThenArith = regexp.MustCompile(`movq (%r\w+), (%r\w+)\n\s+(?:addq (?:%r\w+|\$-?\d+)|subq \$-?\d+), (%r\w+)\n`)
+	leaPair       = regexp.MustCompile(`leaq \((%r\w+),%r\w+\), %r\w+\n`)
+	leaImm        = regexp.MustCompile(`leaq -?\d+\((%r\w+)\), %r\w+\n`)
+)
 
 func leaAddExpected() (int64, int64) {
 	a := int64(208357)
@@ -74,37 +80,34 @@ func TestSelfHostLeaAdd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	asm := string(raw)
+	pairs, imms := 0, 0
 	for _, fn := range []string{"mix", "edges"} {
-		at := strings.Index(asm, "__fn_"+fn+".r:\n")
-		if at < 0 {
-			t.Fatalf("no register entry for %s in the listing", fn)
-		}
-		body := asm[at:]
-		body = body[:strings.Index(body, "    ret\n")]
+		body := selfHostFnBody(t, raw, fn)
 		for _, m := range copyThenArith.FindAllStringSubmatch(body, -1) {
 			// Subtracting the least immediate keeps the two-address form.
 			if m[2] == m[3] && !strings.Contains(m[0], "subq $-2147483648,") {
 				t.Errorf("%s copies and then adds where one lea would do:\n%s", fn, m[0])
 			}
 		}
-		if !strings.Contains(body, "leaq ") {
-			t.Errorf("%s computes no add as a lea:\n%s", fn, body)
+		for _, m := range leaPair.FindAllStringSubmatch(body, -1) {
+			if m[1] != "%rbp" && m[1] != "%rsp" {
+				pairs++
+			}
 		}
+		for _, m := range leaImm.FindAllStringSubmatch(body, -1) {
+			if m[1] != "%rbp" && m[1] != "%rsp" {
+				imms++
+			}
+		}
+	}
+	if pairs == 0 || imms == 0 {
+		t.Errorf("mix and edges compute %d adds as a register-pair lea and %d as an immediate lea, want both forms", pairs, imms)
 	}
 
 	for _, tg := range h.targets {
 		bin := filepath.Join(dir, tg.target+".bin")
-		cmd := exec.Command(h.cli, "-target", tg.target, "-o", bin, src, h.stdlib)
-		if combined, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%s: building: %v\n%s", tg.target, err, combined)
-		}
-		run := exec.Command(bin)
-		if len(tg.runner) > 0 {
-			run = exec.Command(tg.runner[0], append(tg.runner[1:], bin)...)
-		}
-		_ = run.Run()
-		if got := run.ProcessState.ExitCode(); got != 42 {
+		h.compileWith(t, tg, src, bin)
+		if _, got := h.runProduced(t, tg, bin); got != 42 {
 			t.Errorf("%s: exit %d, want 42", tg.target, got)
 		}
 	}
