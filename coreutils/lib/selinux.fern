@@ -1,10 +1,10 @@
 // coreutils/lib/selinux.fern — what libselinux answers for the utilities
 // here: whether the kernel has SELinux at all, what the calling process's
-// own security context is, what a FILE's is, and how a context is rebuilt
-// from replaced components.
+// own security context is, what a FILE's is and how it is set, and how a
+// context is rebuilt from replaced components.
 //
-// None needs libselinux: the first two are files, the third an extended
-// attribute, and the last is string work.
+// None needs libselinux: the first two are files, a file's context an
+// extended attribute, and the last is string work.
 //
 // No machine this corpus runs on has SELinux, so the only path the
 // oracle has ever compared is `enabled()` answering false and the
@@ -96,6 +96,38 @@ pub function file_context(path: string, follow: boolean): Result[string, IoError
       return Ok(ctx);
     },
     Err(e) => {
+      return Err(e);
+    }
+  }
+}
+
+// `set_file_context(path, ctx, follow)` — setfilecon(3), or lsetfilecon(3)
+// when `follow` is false: the context written NUL-terminated, as libselinux
+// stores it. A filesystem that answers ENOTSUP is still a success when the
+// file already carries exactly `ctx`, which is libselinux's own fallback.
+// Darwin has no `security.selinux` to set (see file_context).
+pub function set_file_context(path: string, ctx: string, follow: boolean): Result[void, IoError] {
+  if (target_os() == "darwin") {
+    return Err(Unsupported);
+  }
+  let value: string = ctx + "\x00";
+  let put: Result[void, IoError] = if (follow) { setxattr(path, "security.selinux", value) } else { lsetxattr(path, "security.selinux", value) };
+  match (put) {
+    Ok(_) => {
+      return Ok(());
+    },
+    Err(e) => {
+      // ENOTSUP arrives as its strerror text (#11296).
+      if (gnu.io_error_text(e) == "Operation not supported") {
+        match (file_context(path, follow)) {
+          Ok(cur) => {
+            if (cur == ctx) {
+              return Ok(());
+            }
+          },
+          Err(_) => {}
+        }
+      }
       return Err(e);
     }
   }

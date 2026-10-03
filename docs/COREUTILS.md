@@ -3765,33 +3765,18 @@ in a context. No machine the corpus runs on has SELinux, so the compared path is
 the one where GNU warns (`--context=CTX`, once per occurrence) or says nothing
 (`-Z`, a bare `--context`) and carries on.
 
-**`chcon` refuses the context change itself, and there is no answer that
-would not.** A security context is an extended attribute; Fern reads one
-(`getxattr`) but has no `setxattr` (#9154), so the one step it exists for
-cannot happen. The reads before it are real: `--reference` and the component
-options report ENODATA ("can't apply partial context to unlabeled file") as a
-libselinux build of GNU does. What makes this a divergence rather than a gap is that GNU
-does not refuse either: on a machine with no SELinux it calls
-`setfilecon(3)` and reports whatever the call failed with, and WHICH errno
-that is belongs to the build and to the caller rather than to chcon —
-`Operation not supported` from gnulib's stub where coreutils was configured
-without libselinux, `Operation not permitted` from the kernel where it was
-configured with it and the caller may not write `security.*`. No Fern binary
-can predict that byte. So GNU's frame is kept and our own sentence sits in
-the errno slot: `failed to change context of 'f' to 'ctx': setting a
-security context is not supported on this system`, exit 1, nothing changed
-— which is the same outcome in kind, since on such a machine GNU changes
-nothing either.
-
-The corpus is therefore the invocations that never reach the call: the
-read side, which on a kernel with no SELinux ends at an unlabeled file, the
-whole option grammar, the two `-R` traversal combinations GNU rejects
-outright, the operand counts, `cannot access`, `cannot read directory` —
-reachable with a real directory, because fts reports it INSTEAD of yielding
-the visit the change hangs off — and every spelling of the root failsafe.
-`conflicting security context specifiers given` is reached only once the
-reference file has been read, and on such a machine that read fails first.
-`chcon.fern` keeps that order rather than tidying it.
+**`chcon` on a kernel that HAS SELinux.** The change is real: `setxattr` /
+`lsetxattr` write `security.selinux` the way libselinux's `setfilecon(3)`
+does, NUL included, and a failure reports the kernel's errno in GNU's frame.
+Against Ubuntu's libselinux build the corpus compares the stored attribute
+as well as the output, and whichever answer the caller gets — `Operation not
+permitted` for one who may not write `security.*`, success for one who may —
+both sides get it from the same kernel. What is not done is GNU's
+`security_check_context` before a bare CONTEXT, which runs only when
+`is_selinux_enabled()`: there the policy rejects an invalid context as
+`invalid context: 'ctx'` before the walk, where this build reaches the
+kernel's EINVAL on each file instead. No machine the corpus runs on has
+SELinux to compare it against.
 
 **`mkdir`'s post-creation chmod failing is the one wording in the utility the
 reference binary has never been made to print.** A directory this process just
@@ -4448,9 +4433,8 @@ groups are the order of work. Each sub-issue names its group.
   the self-hosted COMPILER too — see the paragraph below, and #9085), `mktemp` (done — it needed none of them: `open_exclusive`,
   `create_dir`, `remove_dir`, `remove_file`, `lstat`, `random_bytes` and
   `env` were all already here, so its banner was stale), `chmod` (done),
-  `chown` `chgrp` `runcon`, `chcon` (done — the option grammar, the walk and
-  every diagnostic before the context change; the change itself has no
-  primitive, see the divergence above), `stat` `ls` `dir` `vdir` `du` `df`
+  `chown` `chgrp` `runcon`, `chcon` (done, on `getxattr` / `setxattr` —
+  #9098, #9154), `stat` `ls` `dir` `vdir` `du` `df`
   (full stat, statfs, d_type), `dircolors` (done — it needed none of
   those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (done — the grammar behind `-d`, `-f` and `touch -d` is `lib/datetime.fern`, a port of gnulib's parse_datetime with its mktime emulation and the `--debug` trace, over `std/tz`; the `-s` and `MMDDhhmm` forms parse as GNU does and then report `cannot set date`, because no builtin sets the system clock — see the divergence below), `nice` (done, on the
   new `priority()` / `set_priority(n)` pair under the `sched` target

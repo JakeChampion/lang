@@ -4489,6 +4489,8 @@ function builtin_sigs(): string[] {
     "rename_noreplace(string, string): Result[void, IoError]",
     "getxattr(string, string): Result[string, IoError]",
     "lgetxattr(string, string): Result[string, IoError]",
+    "setxattr(string, string, string): Result[void, IoError]",
+    "lsetxattr(string, string, string): Result[void, IoError]",
     "rename_exchange(string, string): Result[void, IoError]",
     "env(string): Option[string]",
     "config_get(string): Option[string]",

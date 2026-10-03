@@ -205,6 +205,54 @@ func emitGetxattrHelper(name, tag string, sysno int) func(func(string, ...any)) 
 	}
 }
 
+// emitSetxattrHelper returns the emitter for name(path, attr, value) ->
+// Result[(), IoError]: setxattr(2) (188) or lsetxattr(2) (189) with no flags,
+// so the attribute is created or replaced. The value is read in place. The
+// IoError names the path.
+//
+// rbx = path, r12 = pathz, r15 = attr, r14 = attrz; the value rides the frame
+// across the two copies.
+func emitSetxattrHelper(name, tag string, sysno int) func(func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tpush rbx")
+		w("\tpush r12")
+		w("\tpush r13")
+		w("\tpush r14")
+		w("\tpush r15")
+		// Five pushes leave rsp 16-aligned, and the spill keeps it so.
+		w("\tsub rsp, 16")
+		w("\tmov [rsp], rdx") // value
+		w("\tmov rbx, rdi")
+		w("\tmov r15, rsi")
+		ssaPathz(w, tag+"1")
+		ssaPathzInto(w, tag+"2", "r15", "r14", "r13")
+		w("\tmov rdi, r12")
+		w("\tmov rsi, r14")
+		w("\tmov rdx, [rsp]")
+		w("\tmov r10d, [rdx - 4]") // value length
+		w("\txor r8d, r8d")        // flags: create or replace
+		w("\tmov eax, %d", sysno)
+		w("\tsyscall")
+		w("\ttest rax, rax")
+		w("\tjs .Lssa_%s_err", tag)
+		ssaOptionBox(w, 0, "")
+		w("\tjmp .Lssa_%s_ret", tag)
+		w(".Lssa_%s_err:", tag)
+		w("\tneg rax")
+		ssaIoErr(w)
+		w(".Lssa_%s_ret:", tag)
+		w("\tadd rsp, 16")
+		w("\tpop r15")
+		w("\tpop r14")
+		w("\tpop r13")
+		w("\tpop r12")
+		w("\tpop rbx")
+		w("\tret")
+	}
+}
+
 // ssaPathOpHelper returns the emitter for the family of helpers that name one
 // or two paths, make a single syscall over them, and answer Result[(),
 // IoError]: the *at forms of mkdir, rmdir, link, symlink, rename, chmod,

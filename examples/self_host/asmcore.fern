@@ -893,551 +893,581 @@ pub function rt_src_chr(): string {
 // rejects with ENOSYS — NOT "0", which is a valid number on two of the three
 // targets (x86-64 `read`, Darwin's indirect-syscall trampoline) and would have
 // made a typo issue a real syscall instead of failing.
-// fern-lint: allow cyclomatic-complexity
-// One guard per syscall name per target: the number table itself, with
-// nothing in any arm but a `return`.
 pub function sysno(t: string, name: string): string {
   if (t == "x86_64") {
-    if (name == "read") {
-      return "0";
-    }
-    if (name == "write") {
-      return "1";
-    }
-    if (name == "close") {
-      return "3";
-    }
-    if (name == "lseek") {
-      return "8";
-    }
-    if (name == "fstat") {
-      return "5";
-    }
-    if (name == "openat") {
-      return "257";
-    }
-    if (name == "fcntl") {
-      return "72";
-    }
-    if (name == "fchmod") {
-      return "91";
-    }
-    if (name == "unlinkat") {
-      return "263";
-    }
-    if (name == "mkdirat") {
-      return "258";
-    }
-    if (name == "fstatat") {
-      return "262";
-    }
-    if (name == "getrandom") {
-      return "318";
-    }
-    if (name == "exit") {
-      return "60";
-    }
-    if (name == "clock_gettime") {
-      return "228";
-    }
-    if (name == "getdents") {
-      return "217";
-    }
-    if (name == "accept") {
-      return "43";
-    }
-    if (name == "nanosleep") {
-      return "35";
-    }
-    if (name == "poll") {
-      return "7";
-    }
-    if (name == "epoll_create1") {
-      return "291";
-    }
-    if (name == "epoll_ctl") {
-      return "233";
-    }
-    if (name == "epoll_pwait") {
-      return "281";
-    }
-    if (name == "signalfd4") {
-      return "289";
-    }
-    if (name == "rt_sigprocmask") {
-      return "14";
-    }
-    if (name == "wait4") {
-      return "61";
-    }
-    if (name == "socket") {
-      return "41";
-    }
-    if (name == "bind") {
-      return "49";
-    }
-    if (name == "listen") {
-      return "50";
-    }
-    if (name == "connect") {
-      return "42";
-    }
-    if (name == "setsockopt") {
-      return "54";
-    }
-    if (name == "shutdown") {
-      return "48";
-    }
-    if (name == "sendto") {
-      return "44";
-    }
-    if (name == "recvfrom") {
-      return "45";
-    }
-    if (name == "getsockname") {
-      return "51";
-    }
-    if (name == "getpeername") {
-      return "52";
-    }
-    if (name == "getsockopt") {
-      return "55";
-    }
-    if (name == "execve") {
-      return "59";
-    }
-    if (name == "fork") {
-      return "57";
-    }
-    if (name == "pipe2") {
-      return "293";
-    }
-    if (name == "dup3") {
-      return "292";
-    }
-    if (name == "splice") {
-      return "275";
-    }
-    if (name == "sendfile") {
-      return "40";
-    }
-    if (name == "timerfd_create") {
-      return "283";
-    }
-    if (name == "timerfd_settime") {
-      return "286";
-    }
-    if (name == "ioctl") {
-      return "16";
-    }
-    if (name == "faccessat") {
-      return "439";
-    }
-    if (name == "geteuid") {
-      return "107";
-    }
-    if (name == "getegid") {
-      return "108";
-    }
-    if (name == "getuid") {
-      return "102";
-    }
-    if (name == "getgid") {
-      return "104";
-    }
-    if (name == "getgroups") {
-      return "115";
-    }
-    if (name == "uname") {
-      return "63";
-    }
-    if (name == "getcwd") {
-      return "79";
-    }
-    if (name == "sched_getaffinity") {
-      return "204";
-    }
-    if (name == "sigaction") {
-      return "13";
-    }
-    if (name == "sigprocmask") {
-      return "14";
-    }
-    if (name == "chdir") {
-      return "80";
-    }
-    if (name == "chroot") {
-      return "161";
-    }
-    if (name == "setuid") {
-      return "105";
-    }
-    if (name == "setgid") {
-      return "106";
-    }
-    if (name == "setgroups") {
-      return "116";
-    }
-    if (name == "linkat") {
-      return "265";
-    }
-    if (name == "symlinkat") {
-      return "266";
-    }
-    if (name == "readlinkat") {
-      return "267";
-    }
-    if (name == "renameat") {
-      return "264";
-    }
-    if (name == "renameat2") {
-      return "316";
-    }
-    if (name == "getxattr") {
-      return "191";
-    }
-    if (name == "lgetxattr") {
-      return "192";
-    }
-    if (name == "fchmodat") {
-      return "268";
-    }
-    if (name == "fchmodat2") {
-      return "452";
-    }
-    if (name == "truncate") {
-      return "76";
-    }
-    if (name == "ftruncate") {
-      return "77";
-    }
-    if (name == "fsync") {
-      return "74";
-    }
-    if (name == "fdatasync") {
-      return "75";
-    }
-    if (name == "sync") {
-      return "162";
-    }
-    if (name == "syncfs") {
-      return "306";
-    }
-    if (name == "mknodat") {
-      return "259";
-    }
-    if (name == "fchownat") {
-      return "260";
-    }
-    if (name == "utimensat") {
-      return "280";
-    }
-    if (name == "umask") {
-      return "95";
-    }
-    if (name == "getpriority") {
-      return "140";
-    }
-    if (name == "setpriority") {
-      return "141";
-    }
-    if (name == "kill") {
-      return "62";
-    }
-    if (name == "prctl") {
-      return "157";
-    }
-    if (name == "getppid") {
-      return "110";
-    }
-    if (name == "setpgid") {
-      return "109";
-    }
-    if (name == "getrlimit") {
-      return "97";
-    }
-    if (name == "statfs") {
-      return "137";
-    }
-    return "-1";
+    return sysno_x86_64(name);
   }
   if (t == "arm64-darwin") {
-    if (name == "read") {
-      return "3";
-    }
-    if (name == "write") {
-      return "4";
-    }
-    if (name == "close") {
-      return "6";
-    }
-    if (name == "lseek") {
-      return "199";
-    }
-    if (name == "sendfile") {
-      return "337";
-    }
-    if (name == "fstat") {
-      return "339";
-    }
-    if (name == "openat") {
-      return "463";
-    }
-    if (name == "fcntl") {
-      return "92";
-    }
-    if (name == "fchmod") {
-      return "124";
-    }
-    if (name == "unlinkat") {
-      return "472";
-    }
-    if (name == "mkdirat") {
-      return "475";
-    }
-    if (name == "fstatat") {
-      return "470";
-    }
-    // Darwin has no getrandom; getentropy(buf, len) takes the same first
-    // two args and ignores a third, but caps each call at 256 bytes and
-    // returns 0 rather than a count — see rt_src_random_bytes.
-    if (name == "getrandom") {
-      return "500";
-    }
-    if (name == "exit") {
-      return "1";
-    }
-    // XNU has no clock_gettime syscall — gettimeofday(&tv, NULL) is the
-    // portable stand-in, and it fills a DIFFERENTLY SHAPED struct (see
-    // subsec_off / subsec_per_sec). clock_gettime has no row here on
-    // purpose: -1 would be issued as a real syscall number.
-    if (name == "gettimeofday") {
-      return "116";
-    }
-    // getdirentries64, not getdents64. Same first three arguments, plus a
-    // 4th out-param the kernel updates with the new directory position —
-    // see rt_src_read_dir for why the shared body issues __syscall4 on
-    // every target rather than branching on the arity.
-    if (name == "getdents") {
-      return "344";
-    }
-    if (name == "accept") {
-      return "30";
-    }
-    if (name == "select") {
-      return "93";
-    }
-    if (name == "kqueue") {
-      return "362";
-    }
-    if (name == "kevent") {
-      return "363";
-    }
-    if (name == "wait4") {
-      return "7";
-    }
-    if (name == "socket") {
-      return "97";
-    }
-    if (name == "bind") {
-      return "104";
-    }
-    if (name == "listen") {
-      return "106";
-    }
-    if (name == "connect") {
-      return "98";
-    }
-    if (name == "setsockopt") {
-      return "105";
-    }
-    if (name == "shutdown") {
-      return "134";
-    }
-    if (name == "sendto") {
-      return "133";
-    }
-    if (name == "recvfrom") {
-      return "29";
-    }
-    if (name == "getsockname") {
-      return "32";
-    }
-    if (name == "getpeername") {
-      return "31";
-    }
-    if (name == "getsockopt") {
-      return "118";
-    }
-    if (name == "execve") {
-      return "59";
-    }
-    if (name == "ioctl") {
-      return "54";
-    }
-    // faccessat here takes a flags word already; Linux's flagless
-    // faccessat cannot, so the Linux rows are faccessat2 instead. Same
-    // four-argument shape either way — see at_eaccess for the constant
-    // that does differ.
-    if (name == "faccessat") {
-      return "466";
-    }
-    if (name == "fchmodat") {
-      return "467";
-    }
-    if (name == "truncate") {
-      return "200";
-    }
-    if (name == "ftruncate") {
-      return "201";
-    }
-    if (name == "fsync") {
-      return "95";
-    }
-    if (name == "fdatasync") {
-      return "187";
-    }
-    if (name == "sync") {
-      return "36";
-    }
-    // The dup3 row carries XNU's dup2(2), BSD 90: there is no dup3 on
-    // Darwin, and dup3 with no flags IS dup2, so the third register
-    // rt_src_fd_dup_onto sets is one this call ignores. The row keeps the
-    // Linux spelling so the two tables pair up.
-    if (name == "dup3") {
-      return "90";
-    }
-    // No syncfs row: XNU has no per-filesystem flush, and rt_src_fd_syncfs
-    // branches on the target rather than issuing a number that is not one.
-    // XNU has no mknodat — this is mknod(2), which takes no directory
-    // descriptor. The row keeps the Linux spelling so the two tables
-    // pair up (selfhost_sysno_parity_test); rt_src_mknod branches on
-    // the target for the argument shape.
-    if (name == "mknodat") {
-      return "14";
-    }
-    // XNU DOES have fchownat, unlike mknodat: same five-argument shape as
-    // Linux's, so one body serves both — see at_symlink_nofollow for the
-    // one constant that differs.
-    if (name == "fchownat") {
-      return "468";
-    }
-    // No utimensat row: XNU has none, and libc builds the call out of
-    // setattrlist(2) instead — see rt_src_set_file_times.
-    if (name == "setattrlist") {
-      return "221";
-    }
-    if (name == "renameat") {
-      return "465";
-    }
-    // renameatx_np(2), under renameat2's spelling so the tables pair up: the
-    // same five arguments, with Darwin's own flag values (rename_flag).
-    if (name == "renameat2") {
-      return "488";
-    }
-    // One getxattr(2) serves both: its options word carries XATTR_NOFOLLOW.
-    if (name == "getxattr") {
-      return "234";
-    }
-    if (name == "lgetxattr") {
-      return "234";
-    }
-    if (name == "geteuid") {
-      return "25";
-    }
-    if (name == "getegid") {
-      return "43";
-    }
-    if (name == "getuid") {
-      return "24";
-    }
-    if (name == "getgid") {
-      return "47";
-    }
-    if (name == "getgroups") {
-      return "79";
-    }
-    // XNU's sigaction is 3-argument where Linux's rt_sigaction is 4; the
-    // extra `sigsetsize` is ignored here, so one body serves both (see
-    // rt_src_signal_disposition).
-    if (name == "sigaction") {
-      return "46";
-    }
-    // XNU's sigprocmask is 3-argument like its sigaction, and its
-    // `how` values are 1/2/3 where Linux spells the same three 0/1/2 —
-    // normalised by rt_src_signal_mask, not here.
-    if (name == "sigprocmask") {
-      return "48";
-    }
-    if (name == "chdir") {
-      return "12";
-    }
-    if (name == "chroot") {
-      return "61";
-    }
-    // 4.3BSD numbered getgroups 79 and setgroups 80 adjacently;
-    // setuid and setgid came from different eras of the ABI and
-    // are nowhere near either, so these four cannot be derived
-    // from the Linux row by an offset.
-    if (name == "setuid") {
-      return "23";
-    }
-    if (name == "setgid") {
-      return "181";
-    }
-    if (name == "setgroups") {
-      return "80";
-    }
-    if (name == "linkat") {
-      return "471";
-    }
-    if (name == "symlinkat") {
-      return "474";
-    }
-    if (name == "readlinkat") {
-      return "473";
-    }
-    if (name == "umask") {
-      return "60";
-    }
-    if (name == "getpriority") {
-      return "100";
-    }
-    if (name == "setpriority") {
-      return "101";
-    }
-    if (name == "kill") {
-      return "37";
-    }
-    if (name == "getppid") {
-      return "39";
-    }
-    if (name == "setpgid") {
-      return "82";
-    }
-    if (name == "getrlimit") {
-      return "194";
-    }
-    // 345 rather than 157: arm64 macOS ships only the 64-bit-inode
-    // variants, and that is the one libSystem's `statfs` resolves to.
-    // Its record has no name-length member, so a Darwin emit needs
-    // pathconf (BSD 191) for the two length limits as well.
-    if (name == "statfs") {
-      return "345";
-    }
-    // pathconf(2) — BSD 191. No Linux row: Linux has no pathconf syscall
-    // at all (glibc computes the answers from statfs plus constants), so a
-    // row there would be a number nothing could issue.
-    if (name == "pathconf") {
-      return "191";
-    }
-    // No pipe2 / dup3 rows: XNU has neither, and its pipe() reports the
-    // second fd in x1, which no __syscall* intrinsic can see. That is why
-    // subprocess keeps a hand-written body on this one target — the same
-    // limit that keeps proc_fork hand-written (see rt_src_subprocess).
-    return "-1";
+    return sysno_arm64_darwin(name);
   }
-  // arm64 (Linux).
+  return sysno_arm64_linux(name);
+}
+
+// fern-lint: allow cyclomatic-complexity
+// One guard per syscall name: the number table itself, with nothing in any
+// arm but a `return`.
+function sysno_x86_64(name: string): string {
+  if (name == "read") {
+    return "0";
+  }
+  if (name == "write") {
+    return "1";
+  }
+  if (name == "close") {
+    return "3";
+  }
+  if (name == "lseek") {
+    return "8";
+  }
+  if (name == "fstat") {
+    return "5";
+  }
+  if (name == "openat") {
+    return "257";
+  }
+  if (name == "fcntl") {
+    return "72";
+  }
+  if (name == "fchmod") {
+    return "91";
+  }
+  if (name == "unlinkat") {
+    return "263";
+  }
+  if (name == "mkdirat") {
+    return "258";
+  }
+  if (name == "fstatat") {
+    return "262";
+  }
+  if (name == "getrandom") {
+    return "318";
+  }
+  if (name == "exit") {
+    return "60";
+  }
+  if (name == "clock_gettime") {
+    return "228";
+  }
+  if (name == "getdents") {
+    return "217";
+  }
+  if (name == "accept") {
+    return "43";
+  }
+  if (name == "nanosleep") {
+    return "35";
+  }
+  if (name == "poll") {
+    return "7";
+  }
+  if (name == "epoll_create1") {
+    return "291";
+  }
+  if (name == "epoll_ctl") {
+    return "233";
+  }
+  if (name == "epoll_pwait") {
+    return "281";
+  }
+  if (name == "signalfd4") {
+    return "289";
+  }
+  if (name == "rt_sigprocmask") {
+    return "14";
+  }
+  if (name == "wait4") {
+    return "61";
+  }
+  if (name == "socket") {
+    return "41";
+  }
+  if (name == "bind") {
+    return "49";
+  }
+  if (name == "listen") {
+    return "50";
+  }
+  if (name == "connect") {
+    return "42";
+  }
+  if (name == "setsockopt") {
+    return "54";
+  }
+  if (name == "shutdown") {
+    return "48";
+  }
+  if (name == "sendto") {
+    return "44";
+  }
+  if (name == "recvfrom") {
+    return "45";
+  }
+  if (name == "getsockname") {
+    return "51";
+  }
+  if (name == "getpeername") {
+    return "52";
+  }
+  if (name == "getsockopt") {
+    return "55";
+  }
+  if (name == "execve") {
+    return "59";
+  }
+  if (name == "fork") {
+    return "57";
+  }
+  if (name == "pipe2") {
+    return "293";
+  }
+  if (name == "dup3") {
+    return "292";
+  }
+  if (name == "splice") {
+    return "275";
+  }
+  if (name == "sendfile") {
+    return "40";
+  }
+  if (name == "timerfd_create") {
+    return "283";
+  }
+  if (name == "timerfd_settime") {
+    return "286";
+  }
+  if (name == "ioctl") {
+    return "16";
+  }
+  if (name == "faccessat") {
+    return "439";
+  }
+  if (name == "geteuid") {
+    return "107";
+  }
+  if (name == "getegid") {
+    return "108";
+  }
+  if (name == "getuid") {
+    return "102";
+  }
+  if (name == "getgid") {
+    return "104";
+  }
+  if (name == "getgroups") {
+    return "115";
+  }
+  if (name == "uname") {
+    return "63";
+  }
+  if (name == "getcwd") {
+    return "79";
+  }
+  if (name == "sched_getaffinity") {
+    return "204";
+  }
+  if (name == "sigaction") {
+    return "13";
+  }
+  if (name == "sigprocmask") {
+    return "14";
+  }
+  if (name == "chdir") {
+    return "80";
+  }
+  if (name == "chroot") {
+    return "161";
+  }
+  if (name == "setuid") {
+    return "105";
+  }
+  if (name == "setgid") {
+    return "106";
+  }
+  if (name == "setgroups") {
+    return "116";
+  }
+  if (name == "linkat") {
+    return "265";
+  }
+  if (name == "symlinkat") {
+    return "266";
+  }
+  if (name == "readlinkat") {
+    return "267";
+  }
+  if (name == "renameat") {
+    return "264";
+  }
+  if (name == "renameat2") {
+    return "316";
+  }
+  if (name == "getxattr") {
+    return "191";
+  }
+  if (name == "lgetxattr") {
+    return "192";
+  }
+  if (name == "setxattr") {
+    return "188";
+  }
+  if (name == "lsetxattr") {
+    return "189";
+  }
+  if (name == "fchmodat") {
+    return "268";
+  }
+  if (name == "fchmodat2") {
+    return "452";
+  }
+  if (name == "truncate") {
+    return "76";
+  }
+  if (name == "ftruncate") {
+    return "77";
+  }
+  if (name == "fsync") {
+    return "74";
+  }
+  if (name == "fdatasync") {
+    return "75";
+  }
+  if (name == "sync") {
+    return "162";
+  }
+  if (name == "syncfs") {
+    return "306";
+  }
+  if (name == "mknodat") {
+    return "259";
+  }
+  if (name == "fchownat") {
+    return "260";
+  }
+  if (name == "utimensat") {
+    return "280";
+  }
+  if (name == "umask") {
+    return "95";
+  }
+  if (name == "getpriority") {
+    return "140";
+  }
+  if (name == "setpriority") {
+    return "141";
+  }
+  if (name == "kill") {
+    return "62";
+  }
+  if (name == "prctl") {
+    return "157";
+  }
+  if (name == "getppid") {
+    return "110";
+  }
+  if (name == "setpgid") {
+    return "109";
+  }
+  if (name == "getrlimit") {
+    return "97";
+  }
+  if (name == "statfs") {
+    return "137";
+  }
+  return "-1";
+}
+
+// fern-lint: allow cyclomatic-complexity
+// One guard per syscall name: the number table itself, with nothing in any
+// arm but a `return`.
+function sysno_arm64_darwin(name: string): string {
+  if (name == "read") {
+    return "3";
+  }
+  if (name == "write") {
+    return "4";
+  }
+  if (name == "close") {
+    return "6";
+  }
+  if (name == "lseek") {
+    return "199";
+  }
+  if (name == "sendfile") {
+    return "337";
+  }
+  if (name == "fstat") {
+    return "339";
+  }
+  if (name == "openat") {
+    return "463";
+  }
+  if (name == "fcntl") {
+    return "92";
+  }
+  if (name == "fchmod") {
+    return "124";
+  }
+  if (name == "unlinkat") {
+    return "472";
+  }
+  if (name == "mkdirat") {
+    return "475";
+  }
+  if (name == "fstatat") {
+    return "470";
+  }
+  // Darwin has no getrandom; getentropy(buf, len) takes the same first
+  // two args and ignores a third, but caps each call at 256 bytes and
+  // returns 0 rather than a count — see rt_src_random_bytes.
+  if (name == "getrandom") {
+    return "500";
+  }
+  if (name == "exit") {
+    return "1";
+  }
+  // XNU has no clock_gettime syscall — gettimeofday(&tv, NULL) is the
+  // portable stand-in, and it fills a DIFFERENTLY SHAPED struct (see
+  // subsec_off / subsec_per_sec). clock_gettime has no row here on
+  // purpose: -1 would be issued as a real syscall number.
+  if (name == "gettimeofday") {
+    return "116";
+  }
+  // getdirentries64, not getdents64. Same first three arguments, plus a
+  // 4th out-param the kernel updates with the new directory position —
+  // see rt_src_read_dir for why the shared body issues __syscall4 on
+  // every target rather than branching on the arity.
+  if (name == "getdents") {
+    return "344";
+  }
+  if (name == "accept") {
+    return "30";
+  }
+  if (name == "select") {
+    return "93";
+  }
+  if (name == "kqueue") {
+    return "362";
+  }
+  if (name == "kevent") {
+    return "363";
+  }
+  if (name == "wait4") {
+    return "7";
+  }
+  if (name == "socket") {
+    return "97";
+  }
+  if (name == "bind") {
+    return "104";
+  }
+  if (name == "listen") {
+    return "106";
+  }
+  if (name == "connect") {
+    return "98";
+  }
+  if (name == "setsockopt") {
+    return "105";
+  }
+  if (name == "shutdown") {
+    return "134";
+  }
+  if (name == "sendto") {
+    return "133";
+  }
+  if (name == "recvfrom") {
+    return "29";
+  }
+  if (name == "getsockname") {
+    return "32";
+  }
+  if (name == "getpeername") {
+    return "31";
+  }
+  if (name == "getsockopt") {
+    return "118";
+  }
+  if (name == "execve") {
+    return "59";
+  }
+  if (name == "ioctl") {
+    return "54";
+  }
+  // faccessat here takes a flags word already; Linux's flagless
+  // faccessat cannot, so the Linux rows are faccessat2 instead. Same
+  // four-argument shape either way — see at_eaccess for the constant
+  // that does differ.
+  if (name == "faccessat") {
+    return "466";
+  }
+  if (name == "fchmodat") {
+    return "467";
+  }
+  if (name == "truncate") {
+    return "200";
+  }
+  if (name == "ftruncate") {
+    return "201";
+  }
+  if (name == "fsync") {
+    return "95";
+  }
+  if (name == "fdatasync") {
+    return "187";
+  }
+  if (name == "sync") {
+    return "36";
+  }
+  // The dup3 row carries XNU's dup2(2), BSD 90: there is no dup3 on
+  // Darwin, and dup3 with no flags IS dup2, so the third register
+  // rt_src_fd_dup_onto sets is one this call ignores. The row keeps the
+  // Linux spelling so the two tables pair up.
+  if (name == "dup3") {
+    return "90";
+  }
+  // No syncfs row: XNU has no per-filesystem flush, and rt_src_fd_syncfs
+  // branches on the target rather than issuing a number that is not one.
+  // XNU has no mknodat — this is mknod(2), which takes no directory
+  // descriptor. The row keeps the Linux spelling so the two tables
+  // pair up (selfhost_sysno_parity_test); rt_src_mknod branches on
+  // the target for the argument shape.
+  if (name == "mknodat") {
+    return "14";
+  }
+  // XNU DOES have fchownat, unlike mknodat: same five-argument shape as
+  // Linux's, so one body serves both — see at_symlink_nofollow for the
+  // one constant that differs.
+  if (name == "fchownat") {
+    return "468";
+  }
+  // No utimensat row: XNU has none, and libc builds the call out of
+  // setattrlist(2) instead — see rt_src_set_file_times.
+  if (name == "setattrlist") {
+    return "221";
+  }
+  if (name == "renameat") {
+    return "465";
+  }
+  // renameatx_np(2), under renameat2's spelling so the tables pair up: the
+  // same five arguments, with Darwin's own flag values (rename_flag).
+  if (name == "renameat2") {
+    return "488";
+  }
+  // One getxattr(2) serves both: its options word carries XATTR_NOFOLLOW.
+  if (name == "getxattr") {
+    return "234";
+  }
+  if (name == "lgetxattr") {
+    return "234";
+  }
+  // setxattr(2) likewise serves lsetxattr.
+  if (name == "setxattr") {
+    return "236";
+  }
+  if (name == "lsetxattr") {
+    return "236";
+  }
+  if (name == "geteuid") {
+    return "25";
+  }
+  if (name == "getegid") {
+    return "43";
+  }
+  if (name == "getuid") {
+    return "24";
+  }
+  if (name == "getgid") {
+    return "47";
+  }
+  if (name == "getgroups") {
+    return "79";
+  }
+  // XNU's sigaction is 3-argument where Linux's rt_sigaction is 4; the
+  // extra `sigsetsize` is ignored here, so one body serves both (see
+  // rt_src_signal_disposition).
+  if (name == "sigaction") {
+    return "46";
+  }
+  // XNU's sigprocmask is 3-argument like its sigaction, and its
+  // `how` values are 1/2/3 where Linux spells the same three 0/1/2 —
+  // normalised by rt_src_signal_mask, not here.
+  if (name == "sigprocmask") {
+    return "48";
+  }
+  if (name == "chdir") {
+    return "12";
+  }
+  if (name == "chroot") {
+    return "61";
+  }
+  // 4.3BSD numbered getgroups 79 and setgroups 80 adjacently;
+  // setuid and setgid came from different eras of the ABI and
+  // are nowhere near either, so these four cannot be derived
+  // from the Linux row by an offset.
+  if (name == "setuid") {
+    return "23";
+  }
+  if (name == "setgid") {
+    return "181";
+  }
+  if (name == "setgroups") {
+    return "80";
+  }
+  if (name == "linkat") {
+    return "471";
+  }
+  if (name == "symlinkat") {
+    return "474";
+  }
+  if (name == "readlinkat") {
+    return "473";
+  }
+  if (name == "umask") {
+    return "60";
+  }
+  if (name == "getpriority") {
+    return "100";
+  }
+  if (name == "setpriority") {
+    return "101";
+  }
+  if (name == "kill") {
+    return "37";
+  }
+  if (name == "getppid") {
+    return "39";
+  }
+  if (name == "setpgid") {
+    return "82";
+  }
+  if (name == "getrlimit") {
+    return "194";
+  }
+  // 345 rather than 157: arm64 macOS ships only the 64-bit-inode
+  // variants, and that is the one libSystem's `statfs` resolves to.
+  // Its record has no name-length member, so a Darwin emit needs
+  // pathconf (BSD 191) for the two length limits as well.
+  if (name == "statfs") {
+    return "345";
+  }
+  // pathconf(2) — BSD 191. No Linux row: Linux has no pathconf syscall
+  // at all (glibc computes the answers from statfs plus constants), so a
+  // row there would be a number nothing could issue.
+  if (name == "pathconf") {
+    return "191";
+  }
+  // No pipe2 / dup3 rows: XNU has neither, and its pipe() reports the
+  // second fd in x1, which no __syscall* intrinsic can see. That is why
+  // subprocess keeps a hand-written body on this one target — the same
+  // limit that keeps proc_fork hand-written (see rt_src_subprocess).
+  return "-1";
+}
+
+// fern-lint: allow cyclomatic-complexity
+// One guard per syscall name: the number table itself, with nothing in any
+// arm but a `return`.
+function sysno_arm64_linux(name: string): string {
   if (name == "read") {
     return "63";
   }
@@ -1616,6 +1646,12 @@ pub function sysno(t: string, name: string): string {
   }
   if (name == "lgetxattr") {
     return "9";
+  }
+  if (name == "setxattr") {
+    return "5";
+  }
+  if (name == "lsetxattr") {
+    return "6";
   }
   // No Darwin row: XNU has no utimensat syscall at all — libc builds it out
   // of setattrlistat(2), which is what the native arm64 backend issues
@@ -3905,6 +3941,31 @@ pub function rt_src_getxattr(t: string, follow: boolean): string {
     sys = "__syscall6(" + sysno(t, call) + ", " + args + ", 0, " + options + ")";
   }
   return "function " + fname + "(path: string, name: string): Result[string, IoError] { let nlen: i32 = name.len(); let namez: usize = __raw_alloc(nlen + 1); let j: i32 = 0; while (j < nlen) { __raw_store8(namez, j, name[j] as i32); j = j + 1; } __raw_store8(namez, nlen, 0); let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let buf: usize = __raw_alloc(65536); let n: i32 = " + sys + " as i32; let namez_own: string = __raw_string(namez, nlen + 1); let pathz_own: string = __raw_string(pathz, plen + 1); let buf_own: string = __raw_string(buf, 65536); if (n < 0) { return Err(__fern_io_error(0 - n, __fern_path_copy(pathz_own, plen))); } return Ok(__fern_path_copy(buf_own, n)); }";
+}
+
+// rt_src_setxattr backs `setxattr(path, name, value)` and `lsetxattr(path,
+// name, value)` (#9154) → Result[void, IoError]: the attribute created or
+// replaced (flags 0), its value passed by pointer and length, NULs and all.
+// Darwin's setxattr(2) takes getxattr's position and options words, and
+// XATTR_NOFOLLOW (1) is its lsetxattr.
+pub function rt_src_setxattr(t: string, follow: boolean): string {
+  let fname: string = "__fern_setxattr";
+  let call: string = "lsetxattr";
+  if (follow) {
+    call = "setxattr";
+  } else {
+    fname = "__fern_lsetxattr";
+  }
+  let args: string = "pathz as i64, namez as i64, vp as i64, vlen as i64";
+  let sys: string = "__syscall5(" + sysno(t, call) + ", " + args + ", 0)";
+  if (t == "arm64-darwin") {
+    let options: string = "0";
+    if (!follow) {
+      options = "1";
+    }
+    sys = "__syscall6(" + sysno(t, call) + ", " + args + ", 0, " + options + ")";
+  }
+  return "function " + fname + "(path: string, name: string, value: string): Result[void, IoError] { let vlen: i32 = value.len(); let vp: usize = __raw_alloc(vlen + 1); let k: i32 = 0; while (k < vlen) { __raw_store8(vp, k, value[k] as i32); k = k + 1; } let nlen: i32 = name.len(); let namez: usize = __raw_alloc(nlen + 1); let j: i32 = 0; while (j < nlen) { __raw_store8(namez, j, name[j] as i32); j = j + 1; } __raw_store8(namez, nlen, 0); let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = " + sys + " as i32; let vp_own: string = __raw_string(vp, vlen + 1); let namez_own: string = __raw_string(namez, nlen + 1); let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
 }
 
 // rt_src_chmod backs `chmod(path, mode)` (#9059, syscall-leaf) →
@@ -7384,6 +7445,9 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "getxattr" || id.name == "lgetxattr") {
     return ty_result(ty_string());
   }
+  if (id.name == "setxattr" || id.name == "lsetxattr") {
+    return ty_option(ty_unknown());
+  }
   // window_size(fd) -> Result[WinSize, IoError]. "unknown" for the same
   // reason subprocess below is: the struct's fields resolve through the
   // shape-pointer dispatch path.
@@ -10181,7 +10245,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_create_dir", "__fn___fern_remove_dir",
     "__fn___fern_create_link", "__fn___fern_create_symlink",
     "__fn___fern_rename", "__fn___fern_rename_noreplace", "__fn___fern_rename_exchange",
-    "__fn___fern_read_link", "__fn___fern_getxattr", "__fn___fern_lgetxattr", "__fn___fern_umask",
+    "__fn___fern_read_link", "__fn___fern_getxattr", "__fn___fern_lgetxattr", "__fn___fern_setxattr", "__fn___fern_lsetxattr", "__fn___fern_umask",
     "__fn___fern_chmod", "__fn___fern_chmod_at", "__fn___fern_set_file_times", "__fn___fern_truncate",
     "__fn___fern_mknod", "__fn___fern_chown_at",
     "__fn___fern_window_size",
