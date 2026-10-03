@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,9 @@ import (
 // half; the native emitter's is internal/codegen/wasmbin's
 // TestAllocGrowResultIsChecked.
 
+// arenaExhaustedExit is the status every emitter's arena trap exits with.
+const arenaExhaustedExit = 125
+
 func TestArenaExhaustedExitCodeIsNot137(t *testing.T) {
 	// The whole point is that it cannot be confused with a signal death.
 	// 128+N for N in 1..31 is the shell's signal-status range.
@@ -45,6 +49,7 @@ func TestArenaExhaustedExitCodeIsNot137(t *testing.T) {
 		name string
 		got  int
 	}{
+		{"the shared status", arenaExhaustedExit},
 		{"x86_64", x86_64.ExitArenaExhausted},
 		{"arm64-linux", arm64.ExitArenaExhausted},
 	} {
@@ -64,20 +69,20 @@ func TestArenaExhaustedExitCodeIsNot137(t *testing.T) {
 			t.Errorf("%s: exit %d would read as success", c.name, c.got)
 		}
 	}
-	if x86_64.ExitArenaExhausted != arm64.ExitArenaExhausted {
-		t.Errorf("native backends disagree: x86-64 exits %d, arm64 exits %d",
-			x86_64.ExitArenaExhausted, arm64.ExitArenaExhausted)
+	if x86_64.ExitArenaExhausted != arenaExhaustedExit || arm64.ExitArenaExhausted != arenaExhaustedExit {
+		t.Errorf("native backends disagree with %d: x86-64 exits %d, arm64 exits %d",
+			arenaExhaustedExit, x86_64.ExitArenaExhausted, arm64.ExitArenaExhausted)
 	}
 }
 
 // TestArenaExhaustedExitCodeSelfHostLockstep reads the self-host emitters'
-// sources and checks the status they write into their trap sequences matches
-// the native constant. A source scan rather than a compile: building a
+// sources and checks the status they write into their trap sequences is
+// arenaExhaustedExit. A source scan rather than a compile: building a
 // self-host driver costs minutes, and the failure this guards against is
 // somebody editing one emitter's literal and not the others — which a scan
 // catches exactly as well.
 func TestArenaExhaustedExitCodeSelfHostLockstep(t *testing.T) {
-	want := x86_64.ExitArenaExhausted
+	want := arenaExhaustedExit
 	for _, c := range []struct {
 		file  string
 		trap  string // the register the exit status is moved into
@@ -106,9 +111,9 @@ func TestArenaExhaustedExitCodeSelfHostLockstep(t *testing.T) {
 		}
 		var marker string
 		if c.trap == "%rdi" {
-			marker = "movq $125, %rdi"
+			marker = fmt.Sprintf("movq $%d, %%rdi", want)
 		} else {
-			marker = "mov x0, #125"
+			marker = fmt.Sprintf("mov x0, #%d", want)
 		}
 		if n := strings.Count(text, marker); n != c.sites {
 			t.Errorf("%s has %d arena-trap exit sites emitting %q, want %d — "+

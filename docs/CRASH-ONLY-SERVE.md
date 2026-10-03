@@ -147,8 +147,8 @@ the native supervised path and the interp fallback.
   (`proc_waitpid(-1)`, the dead one found by a non-blocking probe of
   each) and forks its replacement under the same backoff and
   fast-death count. The accept distribution the one-listener shape
-  gives is measured (`TestServeAcceptDistributionX86_64` and its
-  self-host twin, `docs/benchmarks/net-hello-2026-09-29.md`): 4,096
+  gives is measured (`TestSelfHostServeAcceptDistribution`,
+  `docs/benchmarks/net-hello-2026-09-29.md`): 4,096
   connections dialled in a burst from one client over four workers land
   on every worker, but unevenly, the busiest taking 44 to 48 percent
   and the idlest 2 to 8 percent on the Go compiler's build, since the

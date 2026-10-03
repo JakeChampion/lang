@@ -7,18 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/ast"
-	"github.com/jakechampion/lang/internal/checker"
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // A branch on `target_os()` is a branch on a literal by the time codegen
-// runs, and the IR fold prunes the dead arm: the artifact for one target
+// runs, and the fold prunes the dead arm: the artifact for one target
 // holds only that target's arm — its string is in the emitted text, the
 // other arm's is not. `-target arm64-linux` compiled on a Mac still says
 // linux, because the value is the target's, so the darwin arm is the one
@@ -36,28 +29,13 @@ function main(): i32 {
 }
 `
 
-func targetOSFront(t *testing.T, targetOS string) (*checker.Info, *ast.Program) {
+func targetOSSource(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	src := filepath.Join(dir, "main.fern")
+	src := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(src, []byte(targetOSBranchSrc), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	prog, _, err := modload.Load(src)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: targetOS}); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	return info, prog
+	return src
 }
 
 // onlyArm fails unless the emitted artifact carries exactly the live arm's
@@ -76,27 +54,19 @@ func onlyArm(t *testing.T, target, emitted, live string) {
 }
 
 func TestTargetOSBranchKeepsOnlyTheLiveArm(t *testing.T) {
+	cli := e2eharness.SelfHostCLI(t)
 	t.Run("x86-64-linux", func(t *testing.T) {
-		info, prog := targetOSFront(t, "linux")
-		asm, err := x86_64.Emit(prog, info)
-		if err != nil {
-			t.Fatalf("x86_64 emit: %v", err)
-		}
+		asm := e2eharness.EmitAsmWithSelfHost(t, cli, e2eharness.TargetX86_64Linux, targetOSSource(t))
 		onlyArm(t, "x86-64-linux", asm, "hosted arm")
 	})
 	t.Run("arm64-darwin", func(t *testing.T) {
-		info, prog := targetOSFront(t, "darwin")
-		asm, err := arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: true})
-		if err != nil {
-			t.Fatalf("arm64 emit: %v", err)
-		}
+		asm := e2eharness.EmitAsmWithSelfHost(t, cli, e2eharness.TargetArm64Darwin, targetOSSource(t))
 		onlyArm(t, "arm64-darwin", asm, "darwin arm")
 	})
 	t.Run("wasm32-wasi", func(t *testing.T) {
-		info, prog := targetOSFront(t, "wasi")
-		core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{Preview2WASI: true, SynthCliRun: true})
+		core, err := os.ReadFile(e2eharness.CompileSelfHostFile(t, e2eharness.TargetWasm32Wasi, targetOSSource(t), nil))
 		if err != nil {
-			t.Fatalf("wasmbin.Build: %v", err)
+			t.Fatal(err)
 		}
 		onlyArm(t, "wasm32-wasi", string(core), "wasi arm")
 	})

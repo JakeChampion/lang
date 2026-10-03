@@ -25816,7 +25816,7 @@ pub function subst_self(ty: string, impl_type: string): string {
   return out;
 }
 
-function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[], impl_tbs: string[]): FuncDecl {
+pub function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[], impl_tbs: string[]): FuncDecl {
   let rt: string = subst_self(m.ret_type, impl_type);
   let mtps: string[] = m.type_params;
   // bound_traits is allowed to run short of type_params — a promoted unbounded
@@ -27364,7 +27364,8 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   // each impl, every default of its trait that the impl did not provide
   // becomes a receiver method on the impl type — the same desugaring a
   // written method gets. Self-host parity with the Go checker's
-  // synthesizeTraitDefaults (see docs/TRAITS.md); same-module only.
+  // synthesizeTraitDefaults (see docs/TRAITS.md). A trait from another module
+  // is flatten.inherit_trait_defaults' job, once that module is renamed.
   let iii: i32 = 0;
   while (iii < impl_infos.len() && !verbatim) {
     let info: ImplInfo = impl_infos[iii];

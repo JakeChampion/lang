@@ -22,11 +22,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // emitBackendBundle writes `files` into a temp dir and emits x86-64 asm
@@ -39,25 +35,7 @@ func emitBackendBundle(t *testing.T, files map[string]string) string {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	return asm
+	return e2eharness.EmitAsmWithSelfHost(t, e2eharness.SelfHostCLI(t), e2eharness.TargetX86_64Linux, filepath.Join(dir, "main.fern"))
 }
 
 // assertBackends checks that every marker for `present` is in the asm and
