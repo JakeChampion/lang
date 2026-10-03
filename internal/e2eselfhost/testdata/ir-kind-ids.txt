@@ -336,3 +336,5 @@ rename_exchange=357
 memchr_bytes=358
 count_byte_bytes=359
 rmemchr_bytes=360
+getxattr=361
+lgetxattr=362

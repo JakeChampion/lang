@@ -201,6 +201,8 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//     refuse an existing destination, or exchange the two names.
 	//     Both previews' renames always replace, and a check before the
 	//     call would reopen the race the condition exists to close.
+	//   - `xattr` — an entry's extended attributes. Neither preview
+	//     has them.
 	//   - `tty` — the geometry of the terminal a descriptor is connected
 	//     to. Neither preview has an ioctl, wasi:cli's terminal-output
 	//     resource reports no size, and the two constants that could
@@ -245,7 +247,7 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//     socket endpoints. wasi:sockets has IP sockets only.
 	//   - `reactor` — a readiness set the host keeps between waits:
 	//     epoll, kqueue, or on wasm a table of wasi:io pollables.
-	"hosted-native": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "syscall", "unix", "reactor"},
+	"hosted-native": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "xattr", "syscall", "unix", "reactor"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:
