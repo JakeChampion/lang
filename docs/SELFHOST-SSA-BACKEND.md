@@ -229,7 +229,9 @@ constant those ops alone read is an immediate operand and is never
 materialised (`ssa.imm_operands`: any i32 on x86-64, 0 to 4,095 on arm64
 for add, sub and the compares; a constant on the left swaps or flips the
 same way, and an op whose operands are both constants keeps them in
-registers). A value defined by a phi, one of those ops or a unary takes
+registers). A constant a phi merges or a block returns is an immediate
+too: the edge's moves load it into the phi's home after the copies, and a
+return loads it into the result register. A value defined by a phi, one of those ops or a unary takes
 the register of its phi mate or of an operand of its definition when that
 register is free or its holder dies at the definition, and a loop-carried
 operand takes its phi's register whenever no use of the phi is reachable
