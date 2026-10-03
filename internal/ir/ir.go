@@ -4489,6 +4489,15 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 			}
 		}
 		return true
+	case *ast.MapLit:
+		// A fresh map_new filled by one insert per entry.
+		for _, en := range x.Entries {
+			if !exprNoParamEscape(en.Key, x.KeyType, info, variantPayloads, q, freshLocals) ||
+				!exprNoParamEscape(en.Value, x.ValueType, info, variantPayloads, q, freshLocals) {
+				return false
+			}
+		}
+		return true
 	case *ast.ArrayLit:
 		for _, el := range x.Elems {
 			if !exprNoParamEscape(el, x.ElemType, info, variantPayloads, q, freshLocals) {
@@ -4577,6 +4586,23 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 			}
 			return exprNoParamEscape(x.Args[0], slot, info, variantPayloads, q, freshLocals) &&
 				exprNoParamEscape(x.Args[1], elem, info, variantPayloads, q, freshLocals)
+		}
+		// `m.insert(k, v)` / `m.cleared()` are push's map siblings: the
+		// receiver's own handle or a fresh copy of it, holding whatever key
+		// and value it was handed.
+		if (id.Name == "__method_Map_set" && len(x.Args) == 3) || (id.Name == "__method_Map_clear" && len(x.Args) == 1) {
+			if !exprNoParamEscape(x.Args[0], slot, info, variantPayloads, q, freshLocals) {
+				return false
+			}
+			if len(x.Args) == 1 {
+				return true
+			}
+			var kt, vt ast.Type
+			if len(x.TypeArgs) >= 2 {
+				kt, vt = x.TypeArgs[0], x.TypeArgs[1]
+			}
+			return exprNoParamEscape(x.Args[1], kt, info, variantPayloads, q, freshLocals) &&
+				exprNoParamEscape(x.Args[2], vt, info, variantPayloads, q, freshLocals)
 		}
 		// User function / method call: its result can't contain OUR args iff the
 		// callee itself never lets a param escape. Builtins / locals / unknowns
@@ -15252,6 +15278,9 @@ func (b *builder) callBody(n *ast.Call) error {
 	if !ok {
 		return fmt.Errorf("ir: indirect call from non-identifier expression")
 	}
+	if b.mapReadReleasesReceiver(id.Name, n) {
+		return b.withStashedMapReceiver(n)
+	}
 	// Variant constructor: lower to a heap-allocated tagged-union
 	// object [tag, payload0, payload1, ...]. The checker already
 	// type-checked the args; we just emit the storage.
@@ -17028,6 +17057,67 @@ func (b *builder) emitArgTempDrop(slot int32, t ast.Type) {
 		return
 	}
 	b.emitOwnedSlotDrop(slot, t)
+}
+
+// mapReadReleasesReceiver reports a map read whose receiver is a temp this
+// expression alone owns (`mk().get(k)`) and whose result cannot hold a
+// reference into the map uncounted, so the receiver dies with the call. `has`
+// answers a boolean, and `keys` / `values` snapshot a column that retains
+// each element it copies. `get` / `get_or` hand back a value, which is a copy
+// when it is a scalar; `get_or` on a counted value column retains it
+// (mapGetHandsCountedValue).
+func (b *builder) mapReadReleasesReceiver(name string, n *ast.Call) bool {
+	if !ast.RcFreeEnabled || len(n.Args) == 0 || len(n.TypeArgs) < 2 {
+		return false
+	}
+	vt := n.TypeArgs[1]
+	switch name {
+	case "__method_Map_has", "__method_Map_keys", "__method_Map_values":
+	case "__method_Map_get":
+		if !isDefinitelyScalar(vt) {
+			return false
+		}
+	case "__method_Map_get_or":
+		_, isStr := vt.(ast.StringType)
+		if !isDefinitelyScalar(vt) && (isStr || !b.mapGetHandsCountedValue(vt)) {
+			return false
+		}
+	default:
+		return false
+	}
+	if _, ok := b.freshOwnedRcTempType(n.Args[0]); ok {
+		return true
+	}
+	_, ok := b.ownedCallResultType(n.Args[0])
+	return ok
+}
+
+// withStashedMapReceiver lowers n with its receiver parked in a slot, then
+// releases the receiver. The receiver is swapped for a local naming that slot
+// for the call's own lowering, so every map path reads it like a binding, and
+// restored after: analyses keyed on the call node still see it unchanged.
+func (b *builder) withStashedMapReceiver(n *ast.Call) error {
+	recv := n.Args[0]
+	slot, t, ok, err := b.stashOwnedArgTemp(recv)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("ir: map receiver temp not stashable (compiler bug)")
+	}
+	b.emit(Op{Kind: OpDrop})
+	name := fmt.Sprintf("__maprecv_%d", slot)
+	b.locals[name] = slot
+	n.Args[0] = &ast.Ident{P: recv.Pos(), Name: name}
+	pop := b.pushPendingDrop(func() { b.emitArgTempDrop(slot, t) })
+	err = b.callBody(n)
+	n.Args[0] = recv
+	pop()
+	if err != nil {
+		return err
+	}
+	b.emitArgTempDrop(slot, t)
+	return nil
 }
 
 // emitArgTempDropsGuarded is emitArgTempDrops plus the identity guard a

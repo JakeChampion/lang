@@ -323,6 +323,8 @@ var rcOwnedPayloadBuiltins = map[string]bool{
 // is per-stream, not per-call, and keeps the static sentinel.
 var rcOwnedResultBuiltins = map[string]bool{
 	"buf_take_bytes":                   true, // independent array; an empty result may use the immortal sentinel
+	"__method_Map_keys":                true, // a fresh snapshot column (__map_keys_impl or the inline wide / byte / bool column)
+	"__method_Map_values":              true, // likewise, from __map_values_impl
 	"env":                              true, // __fern_env
 	"read_line":                        true, // __fern_read_line
 	"__method_Reader_read_line":        true, // __fern_reader_read_line
