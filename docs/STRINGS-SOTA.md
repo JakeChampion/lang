@@ -920,6 +920,10 @@ preserving the existing view APIs. Target, ownership, bootstrap, size and
 native measurement evidence is recorded in
 [the reduction report](STRING-BYTE-REDUCTIONS-2026-10-03.md).
 
+`sum` reads raw chunks and uses these array methods for both checksum
+algorithms. Target, ownership, size and native measurement evidence is
+recorded in [the sum report](STRING-SUM-BYTES-2026-10-03.md).
+
 `__mismatch_bytes(a, ao, b, bo, n)` compares two borrowed byte ranges without
 allocating or constructing strings. Each offset clamps to its array's bounds;
 the count clamps to zero and the smaller remaining length. It returns the

@@ -56,11 +56,11 @@ function ctx_new(sysv: boolean): Ctx {
   return Ctx { sysv: sysv, bsd: hash.bsd_sum_new(), sv: hash.sysv_sum_new() };
 }
 
-function ctx_update(c: Ctx, chunk: string): Ctx {
+function ctx_update(c: Ctx, chunk: u8[]): Ctx {
   if (c.sysv) {
-    return Ctx { ...c, sv: c.sv.update(chunk) };
+    return Ctx { ...c, sv: c.sv.update_array(chunk) };
   }
-  return Ctx { ...c, bsd: c.bsd.update(chunk) };
+  return Ctx { ...c, bsd: c.bsd.update_array(chunk) };
 }
 
 function ctx_checksum(c: Ctx): i64 {
@@ -93,7 +93,7 @@ function read_size(): i32 {
 function sum_reader(r: Reader, sysv: boolean, owned: boolean): Tally {
   let c: Ctx = ctx_new(sysv);
   while (true) {
-    match (r.read_chunk(read_size())) {
+    match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           break;
