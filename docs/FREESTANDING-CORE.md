@@ -265,12 +265,22 @@ rather than discovering:
     preopen. A kernel's `EXDEV` has no counterpart here; the failure is
     `ENOTCAPABLE` for the operand that left.
   - **`open_reader_with` / `open_writer_with` carry their flags word across
-    too**: the create and exclusive bits are preview 1's own CREATE and EXCL
-    oflags and preview 2's `create` and `exclusive` open-flags, and the
-    non-blocking bit is preview 1's NONBLOCK fdflag. Preview 2 has no spelling for it and the bit is not read there:
-    its streams do not block the way a preview-1 descriptor can, and the
-    FIFO the bit exists for cannot be created on either preview (`mknod`
-    is refused, above).
+    too**, each bit in the preview's own spelling: create, exclusive and
+    directory are preview 1's CREATE, EXCL and DIRECTORY oflags and preview
+    2's `create`, `exclusive` and `directory` open-flags; dsync and sync are
+    preview 1's DSYNC and SYNC fdflags and preview 2's `data-integrity-sync`
+    and `file-integrity-sync` descriptor-flags; nofollow clears preview 1's
+    `symlink-follow` lookupflag and preview 2's path-flag of the same name.
+    wasmtime (46) refuses either sync flag on an open with ENOTSUP, so on
+    that host dsync and sync come back `Unsupported` — the host's own
+    refusal, not a dropped bit. The non-blocking bit is preview 1's NONBLOCK fdflag. Preview 2 has no
+    spelling for it and the bit is not read there: its streams do not block
+    the way a preview-1 descriptor can, and the FIFO the bit exists for
+    cannot be created on either preview (`mknod` is refused, above). The
+    three bits neither preview can spell — direct, noatime, noctty — are
+    refused as `Unsupported` at the call, never dropped: a caller that asked
+    for `O_DIRECTORY` and got a regular file would be worse off than one
+    that got the error.
   - **The omit, now and nofollow flags are honoured**, each in the preview's
     own spelling: preview 1 clears an `fstflags` bit or sets its `*_NOW`
     sibling and passes `lookupflags` 0, preview 2 passes the `new-timestamp`

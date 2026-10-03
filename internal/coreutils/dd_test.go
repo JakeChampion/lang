@@ -49,6 +49,10 @@ func ddSeed(t *testing.T, dir string) {
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// A symlink to the ten bytes, for the `nofollow` flag.
+	if err := os.Symlink("in10", filepath.Join(dir, "lnk")); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // ddSparseSeed adds the `conv=sparse` inputs: NULs around a little data,
@@ -126,6 +130,25 @@ func ddCases(t *testing.T) []invocation {
 	add("seek-notrunc", "if=in10", "of=pre", "bs=1", "seek=2", "count=3", "conv=notrunc", "status=noxfer")
 	add("notrunc-shorter", "if=in10", "of=pre", "bs=1", "count=3", "conv=notrunc", "status=noxfer")
 	add("append", "if=in10", "of=pre", "oflag=append", "conv=notrunc", "status=noxfer")
+
+	// --- the open-time flags (#9242) ---------------------------------------
+	//
+	// Each is one bit of open_reader_with / open_writer_with's flags word,
+	// so both sides issue the same open(2) and the kernel's verdict is the
+	// comparable part: `directory` on a regular file, `nofollow` on a
+	// symlink. `direct` and `noatime` are not here because their answer is
+	// the filesystem's (O_DIRECT is EINVAL on an older tmpfs) and the mount
+	// option's; the e2e suites pin their words. `fullblock` is an input
+	// flag only, as GNU takes it.
+	add("iflag-directory-regular", "if=in10", "of=out", "iflag=directory", "status=noxfer")
+	add("iflag-directory-dir", "if=d", "of=out", "iflag=directory", "status=noxfer")
+	add("iflag-nofollow-symlink", "if=lnk", "of=out", "iflag=nofollow", "status=noxfer")
+	add("iflag-nofollow-regular", "if=in10", "of=out", "iflag=nofollow", "status=noxfer")
+	add("iflag-sync-flags", "if=in10", "of=out", "iflag=dsync,sync,noctty", "status=noxfer")
+	add("oflag-sync-flags", "if=in10", "of=out", "oflag=dsync,sync,noctty,nofollow", "status=noxfer")
+	add("oflag-directory-regular", "if=in10", "of=pre", "oflag=directory", "conv=notrunc", "status=noxfer")
+	add("oflag-nofollow-symlink", "if=in10", "of=lnk", "oflag=nofollow", "conv=notrunc", "status=noxfer")
+	add("oflag-fullblock-invalid", "if=in10", "oflag=fullblock")
 
 	// --- iseek and oseek ---------------------------------------------------
 	//

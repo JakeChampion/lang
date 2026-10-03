@@ -4732,9 +4732,12 @@ func builtinOpenExclusive(i *Interp, args []Value) (Value, error) {
 }
 
 // builtinOpenReaderWith / builtinOpenWriterWith open under Fern's own
-// flags word: bit 1 creates (0666 through the umask), bit 2 is
-// O_NONBLOCK, bit 4 is O_EXCL. The writer is O_WRONLY with neither O_TRUNC
-// nor O_APPEND.
+// flags word (the checker's open_reader_with comment has the table):
+// bit 1 creates (0666 through the umask), the rest are the kernel's
+// O_NONBLOCK, O_EXCL, O_DIRECT, O_DIRECTORY, O_DSYNC, O_SYNC, O_NOATIME,
+// O_NOCTTY and O_NOFOLLOW in the host's spelling. A bit the host has no
+// word for is refused as Unsupported. The writer is O_WRONLY with
+// neither O_TRUNC nor O_APPEND.
 func builtinOpenReaderWith(i *Interp, args []Value) (Value, error) {
 	return openWithHelper(i, args, "Reader", os.O_RDONLY)
 }
@@ -4755,11 +4758,22 @@ func openWithHelper(i *Interp, args []Value, structName string, access int) (Val
 	if int(flags)&1 != 0 {
 		flag |= os.O_CREATE
 	}
-	if int(flags)&2 != 0 {
-		flag |= oNonblock
-	}
 	if int(flags)&4 != 0 {
 		flag |= os.O_EXCL
+	}
+	for _, b := range []struct{ bit, word int }{
+		{2, oNonblock}, {8, oDirect}, {16, oDirectory}, {32, oDsync},
+		{64, oSync}, {128, oNoatime}, {256, oNoctty}, {512, oNofollow},
+	} {
+		if int(flags)&b.bit == 0 {
+			continue
+		}
+		// Non-blocking is the one bit a host without it may keep: the
+		// FIFO it exists for cannot be made there either.
+		if b.word == 0 && b.bit != 2 {
+			return resultErr(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
+		}
+		flag |= b.word
 	}
 	return openHelper(i, args[:1], structName, flag, 0o666)
 }

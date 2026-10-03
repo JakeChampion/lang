@@ -3713,10 +3713,14 @@ corpus compares block counts for these cases, the only place a hole shows.
 wrong answer — the name is refused as `invalid conversion` / `invalid
 input flag`, which is itself the divergence:
 
-- `iflag`/`oflag` `direct`, `directory`, `dsync`, `sync`, `noatime`,
-  `nocache`, `noctty` and `nofollow` are all open-time bits, and Fern's
-  `open_reader_with` / `open_writer_with` flags word carries three: create,
-  exclusive and non-blocking (#9242);
+- `iflag=nocache` / `oflag=nocache` is not an open-time bit at all but a
+  `posix_fadvise(POSIX_FADV_DONTNEED)` made against the open descriptor as
+  the copy proceeds, and Fern has no call for it (#9242 for the seven open
+  bits, which are done; the fadvise is its own item);
+- `oflag=append` together with another open-time flag (`oflag=append,sync`)
+  opens through `open_appender`, which takes no flags word, so the second
+  flag is dropped there — append is the one open-time bit the
+  `open_writer_with` word does not carry;
 - the SIGUSR1 report mid-copy needs a signal a program can OBSERVE, and
   Fern has only the three disposition calls (`signal_send`,
   `signal_ignore`, `signal_default`) — nothing that runs or records on

@@ -2980,18 +2980,24 @@ function fd_table_funcs(): string {
 // path_open_shim emits $path_open for open_reader / open_writer /
 // open_appender / open_exclusive and the _with pair: open-at under the
 // preopen with the oflags as preview2's open-flags (the two share their bit
-// layout), read or write access from the rights, then the stream the handle
-// reads or writes through — append-via-stream for an APPEND fdflag, as native
-// opens an appender. The new fd is the table slot both land in.
+// layout), the lookupflags' symlink-follow as the path-flags', read or write
+// access from the rights plus the DSYNC and SYNC fdflags as the
+// data-integrity-sync and file-integrity-sync descriptor-flags, then the
+// stream the handle reads or writes through — append-via-stream for an
+// APPEND fdflag, as native opens an appender. The new fd is the table slot
+// both land in.
 function path_open_shim(): string {
   let o: string = "  (func $path_open (param $dirfd i32) (param $dirflags i32) (param $p i32) (param $l i32) (param $oflags i32) (param $rights i64) (param $inh i64) (param $fdflags i32) (param $out i32) (result i32)\n";
   o = o + "    (local $pre i32) (local $ra i32) (local $err i32) (local $desc i32) (local $bits i32) (local $fd i32)\n";
   o = o + p2_preopen("16");
   // FD_READ (bit 1) and FD_WRITE (bit 6) of the rights are descriptor-flags'
-  // read (1) and write (2).
+  // read (1) and write (2); the fdflags' DSYNC (2) and SYNC (16) are its
+  // data-integrity-sync (8) and file-integrity-sync (4).
   o = o + "    (if (i32.wrap_i64 (i64.and (local.get $rights) (i64.const 2))) (then (local.set $bits (i32.const 1))))\n";
   o = o + "    (if (i32.wrap_i64 (i64.and (local.get $rights) (i64.const 64))) (then (local.set $bits (i32.or (local.get $bits) (i32.const 2)))))\n";
-  o = o + "    (call $open_at (local.get $pre) (i32.and (local.get $dirflags) (i32.const 1)) (local.get $p) (local.get $l) (i32.and (local.get $oflags) (i32.const 15)) (local.get $bits) (local.get $ra))\n";
+  o = o + "    (call $open_at (local.get $pre) (i32.and (local.get $dirflags) (i32.const 1)) (local.get $p) (local.get $l) (i32.and (local.get $oflags) (i32.const 15))";
+  o = o + " (i32.or (local.get $bits) (i32.or (i32.shl (i32.and (local.get $fdflags) (i32.const 2)) (i32.const 2)) (i32.shr_u (i32.and (local.get $fdflags) (i32.const 16)) (i32.const 2))))";
+  o = o + " (local.get $ra))\n";
   o = o + p2_fail_ret("4", "16");
   o = o + "    (local.set $desc (i32.load offset=4 (local.get $ra)))\n";
   o = o + "    (if (i32.and (local.get $fdflags) (i32.const 1)) (then (local.set $bits (i32.or (local.get $bits) (i32.const 4)))))\n";
@@ -10992,18 +10998,28 @@ pub function open_file_func(): string {
 
 // open_with_func emits $__fern_open_with(np, flags, write) → the same
 // Result[Reader|Writer, IoError] box as $__fern_open_file, under Fern's flags
-// word: bits 0 and 2 ARE preview 1's own CREATE and EXCL oflags, so
-// `flags & 5` is the oflags word (path_open_shim carries the same bits to
-// preview 2's open-flags), bit 1 shifted up is its NONBLOCK fdflag, and the
-// access word picks the rights (read+seek 6, write+seek 68). Never
-// TRUNCATE, never APPEND.
+// word spread over path_open's three words: create (1) and exclusive (4) ARE
+// preview 1's CREATE and EXCL oflags and directory (16) is their bit 1;
+// non-blocking (2), dsync (32) and sync (64) are the NONBLOCK, DSYNC and SYNC
+// fdflags; nofollow (512) clears the lookupflags' symlink-follow.
+// path_open_shim carries the same words to preview 2. The bits neither
+// preview can spell — direct (8), noatime (128), noctty (256) — are refused
+// as ENOTSUP, which $__fern_build_io_error makes Unsupported. The access
+// word picks the rights (read+seek 6, write+seek 68). Never TRUNCATE, never
+// APPEND.
 pub function open_with_func(): string {
   let o: string = "";
   o = o + "  (func $__fern_open_with (param $np i32) (param $flags i32) (param $write i32) (result i32)\n";
   o = o + "    (local $err i32) (local $rights i64) (local $res i32)\n";
   o = o + "    (local.set $rights (i64.const 6))\n";
   o = o + "    (if (local.get $write) (then (local.set $rights (i64.const 68))))\n";
-  o = o + "    (local.set $err (call $path_open (i32.const 3) (i32.const 1) (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (i32.and (local.get $flags) (i32.const 5)) (local.get $rights) (i64.const 0) (i32.shl (i32.and (local.get $flags) (i32.const 2)) (i32.const 1)) (i32.const 16)))\n";
+  o = o + "    (local.set $err (if (result i32) (i32.and (local.get $flags) (i32.const 392)) (then (i32.const 58)) (else (call $path_open (i32.const 3)";
+  o = o + " (i32.xor (i32.and (i32.shr_u (local.get $flags) (i32.const 9)) (i32.const 1)) (i32.const 1))";
+  o = o + " (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np))";
+  o = o + " (i32.or (i32.and (local.get $flags) (i32.const 5)) (i32.and (i32.shr_u (local.get $flags) (i32.const 3)) (i32.const 2)))";
+  o = o + " (local.get $rights) (i64.const 0)";
+  o = o + " (i32.or (i32.shl (i32.and (local.get $flags) (i32.const 2)) (i32.const 1)) (i32.or (i32.and (i32.shr_u (local.get $flags) (i32.const 4)) (i32.const 2)) (i32.and (i32.shr_u (local.get $flags) (i32.const 2)) (i32.const 16))))";
+  o = o + " (i32.const 16)))))\n";
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
