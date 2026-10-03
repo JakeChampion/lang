@@ -11116,7 +11116,8 @@ pub function writer_write_func(): string {
 // scratch 8. Zero is a real answer rather than an error — a stream with no
 // room right now has written none of them — and the Ok payload is the i64 the
 // Result box carries, as reader_seek's offset is.
-// The bytes go to fd_write straight from the packed u8[].
+// Decode the borrowed view once: packed array bytes begin at +8, while a
+// tagged string view names a length-prefixed string with bytes at +4.
 //
 // `p2` is the component core, whose writes go to a blocking-write-and-flush
 // that takes a whole chunk or fails: one write there moves at most 4096
@@ -11135,10 +11136,14 @@ pub function writer_bytes_func(all: boolean, p2: boolean): string {
   }
   let o: string = "";
   o = o + "  (func $__fern_writer_" + name + " (param $fd i32) (param $bytes i32) (result i32)\n";
-  o = o + "    (local $n i32) (local $at i32) (local $count i32) (local $err i32) (local $res i32) (local $path i32)\n";
+  o = o + "    (local $n i32) (local $data i32) (local $at i32) (local $count i32) (local $err i32) (local $res i32) (local $path i32)\n";
+  o = o + "    (if (i32.and (local.get $bytes) (i32.const 2)) (then\n";
+  o = o + "      (local.set $bytes (i32.sub (local.get $bytes) (i32.const 2)))\n";
+  o = o + "      (local.set $data (i32.add (local.get $bytes) (i32.const 4))))\n";
+  o = o + "    (else (local.set $data (i32.add (local.get $bytes) (i32.const 8)))))\n";
   o = o + "    (local.set $n (i32.load (local.get $bytes)))\n";
   o = o + "    (block $done (loop $write\n";
-  o = o + "      (i32.store (i32.const 0) (i32.add (i32.add (local.get $bytes) (i32.const 8)) (local.get $at)))\n";
+  o = o + "      (i32.store (i32.const 0) (i32.add (local.get $data) (local.get $at)))\n";
   o = o + "      (i32.store (i32.const 4) " + p2_chunk(p2, "(i32.sub (local.get $n) (local.get $at))") + ")\n";
   o = o + "      (local.set $err (call $fd_write (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
   o = o + "      (br_if $done (local.get $err))\n";
