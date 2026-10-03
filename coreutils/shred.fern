@@ -286,7 +286,7 @@ function shuffled_vocab(): i32[] {
 struct Rand { from_file: boolean, r: Reader, name: string, st: Cell[i64], block: usize }
 
 function rand_none(): Rand {
-  return Rand { from_file: false, r: stdin(), name: "", st: cell_new(rand.rng_seed_from_os()), block: buf_new(block_bytes()) };
+  return Rand { from_file: false, r: stdin(), name: "", st: cell_new(rand.rng_seed_from_os()), block: buf_new(block_bytes(random_pass())) };
 }
 
 function rand_open(s: Settings): (Rand, boolean) {
@@ -313,57 +313,87 @@ function rand_open(s: Settings): (Rand, boolean) {
 // file`, writes nothing of the block it could not fill, and abandons
 // the operands it had not reached. So a source is exhausted by exactly
 // the bytes written — there is no read-ahead to account for.
-function rand_block(rnd: Rand, n: i32): (string, boolean) {
+function rand_block(rnd: Rand, n: i32): (u8[], boolean) {
   if (!rnd.from_file) {
     rnd.st.set(rand.rng_fill(rnd.st.get(), rnd.block, n));
-    return (buf_take(rnd.block), true);
+    return (buf_take_bytes(rnd.block), true);
   }
-  let out: string = "";
-  while (out.len() < n) {
-    match (rnd.r.read_chunk(n - out.len())) {
-      Ok(s) => {
-        if (s.len() == 0) {
-          return (out, false);
+  let h: usize = 0 as usize;
+  let got: i32 = 0;
+  let full: boolean = true;
+  while (got < n) {
+    match (rnd.r.read_chunk_bytes(n - got)) {
+      Ok(bytes) => {
+        if (bytes.len() == 0) {
+          full = false;
+          break;
         }
-        out = out + s;
+        if (got == 0 && bytes.len() == n) {
+          return (bytes, true);
+        }
+        if (h == 0 as usize) {
+          h = buf_new(n);
+        }
+        buf_push_bytes_range(h, bytes, 0, bytes.len());
+        got = got + bytes.len();
       },
       Err(_) => {
-        return (out, false);
+        full = false;
+        break;
       }
     }
   }
-  return (out, true);
+  let out: u8[] = [];
+  if (h != 0 as usize) {
+    out = buf_take_bytes(h);
+    buf_free(h);
+  }
+  return (out, full);
 }
 
-// `pattern_block(p, n)` — `n` bytes of the three-byte cycle `p`, laid
-// down from the start of the file so the bytes a reader sees are the
-// six hex digits `-v` named. `repeat` lays the cycle down in the runtime
-// rather than a byte at a time, which is the difference between a pass
-// that costs what the write costs and one that costs six times it.
-function pattern_block(p: i32, n: i32): string {
-  let cycle: u8[] = [];
-  cycle = cycle.append((p / 65536 % 256) as u8);
-  cycle = cycle.append((p / 256 % 256) as u8);
-  cycle = cycle.append((p % 256) as u8);
-  let whole: string = string_from_bytes_unchecked(cycle).repeat(n / 3);
-  let rest: u8[] = [];
-  let i: i32 = 0;
-  while (i < n % 3) {
-    rest = rest.append(cycle[i]);
-    i = i + 1;
+function copy_bytes(bytes: u8[], lo: i32, hi: i32): u8[] {
+  let h: usize = buf_new(hi - lo);
+  buf_push_bytes_range(h, bytes, lo, hi);
+  let out: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return out;
+}
+
+// Build the three-byte pattern by doubling byte ranges. The total bytes
+// copied grow linearly, and each copy uses the runtime range operation.
+function pattern_block(p: i32, n: i32): u8[] {
+  let out: u8[] = [(p / 65536 % 256) as u8, (p / 256 % 256) as u8, (p % 256) as u8];
+  if (n <= 3) {
+    return copy_bytes(out, 0, n);
   }
-  return whole + string_from_bytes_unchecked(rest);
+  let h: usize = buf_new(6);
+  while (out.len() < n) {
+    let take: i32 = out.len();
+    if (take > n - out.len()) {
+      take = n - out.len();
+    }
+    buf_push_bytes_range(h, out, 0, out.len());
+    buf_push_bytes_range(h, out, 0, take);
+    out = buf_take_bytes(h);
+  }
+  buf_free(h);
+  return out;
 }
 
 // ---- one pass --------------------------------------------------------------
 //
 // A pass is one write per block, the last one short when the length does
-// not divide. The block size is a multiple of THREE so that every block
-// starts at the same point in a pattern's cycle: one block of pattern
-// bytes then serves the whole pass, and a short final block is its
-// prefix. It is a multiple of 4096 as well, so the writes stay aligned
-// to the page and to every file system's own block.
-function block_bytes(): i32 {
+// not divide. Three-byte patterns use 60 KiB so every block starts at the
+// same point in the cycle. Random and constant-byte passes use GNU's 64 KiB
+// boundary, which also determines what is written before source exhaustion.
+function block_bytes(code: i32): i32 {
+  if (code == random_pass()) {
+    return 65536;
+  }
+  let first: i32 = code / 65536 % 256;
+  if (first == code / 256 % 256 && first == code % 256) {
+    return 65536;
+  }
   return 61440;
 }
 
@@ -376,14 +406,14 @@ struct PassFail { msg: string, fatal: boolean }
 // whether the random source had them. `full` is the pattern's own block,
 // laid down once per pass and handed back untouched for every block but
 // a short last one.
-function pass_chunk(code: i32, n: i32, full: string, rnd: Rand): (string, boolean) {
+function pass_chunk(code: i32, n: i32, full: u8[], rnd: Rand): (u8[], boolean) {
   if (code == random_pass()) {
     return rand_block(rnd, n);
   }
   if (n == full.len()) {
     return (full, true);
   }
-  return (pattern_block(code, n), true);
+  return (copy_bytes(full, 0, n), true);
 }
 
 function write_pass(w: Writer, path: string, len: i64, code: i32, rnd: Rand): Option[PassFail] {
@@ -440,15 +470,15 @@ function sync_pass(w: Writer, path: string): Option[PassFail] {
 // A write that moves nothing without failing is a standstill, not an
 // error: the pass stops there, which is what the native `w.write` loop
 // does with the same answer.
-function write_block(w: Writer, path: string, block: string, at: i64): (i64, Option[PassFail]) {
+function write_block(w: Writer, path: string, block: u8[], at: i64): (i64, Option[PassFail]) {
   let n: i32 = block.len();
   let off: i32 = 0;
   while (off < n) {
-    let piece: string = block;
+    let piece: u8[] = block;
     if (off > 0) {
-      piece = slice_unchecked(block, off, n) + "";
+      piece = copy_bytes(block, off, n);
     }
-    match (w.write_some(piece)) {
+    match (w.write_some_bytes(piece)) {
       Err(e) => {
         let at_byte: string = ": error writing at offset " + (at + off as i64).to_string() + ": ";
         return (at + off as i64, Some(PassFail { msg: path + at_byte + gnu.io_error_text(e), fatal: false }));
@@ -466,17 +496,18 @@ function write_block(w: Writer, path: string, block: string, at: i64): (i64, Opt
 
 // The blocks of one pass, from wherever the handle stands.
 function write_blocks(w: Writer, path: string, len: i64, code: i32, rnd: Rand): Option[PassFail] {
-  let full: string = "";
+  let full: u8[] = [];
+  let block_size: i32 = block_bytes(code);
   if (code != random_pass()) {
-    full = pattern_block(code, block_bytes());
+    full = pattern_block(code, block_size);
   }
   let at: i64 = 0 as i64;
   while (at < len) {
-    let n: i32 = block_bytes();
-    if (len - at < block_bytes() as i64) {
+    let n: i32 = block_size;
+    if (len - at < block_size as i64) {
       n = (len - at) as i32;
     }
-    let got: (string, boolean) = pass_chunk(code, n, full, rnd);
+    let got: (u8[], boolean) = pass_chunk(code, n, full, rnd);
     if (!got.1) {
       return Some(PassFail { msg: gnu.quote(rnd.name) + ": end of file", fatal: true });
     }

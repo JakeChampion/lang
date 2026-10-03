@@ -978,6 +978,11 @@ bytes for `cp`, `install` and cross-device `mv`. Target checks, allocation
 and performance measurements are recorded in
 [the copy report](STRING-COPY-BYTES-2026-10-03.md).
 
+`shred` keeps overwrite buffers and partial writes in byte arrays, preserving
+GNU random-source exhaustion boundaries. Target checks, size measurements,
+native benchmarks and the existing Darwin terminal limitation are recorded in
+[the shred report](STRING-SHRED-BYTES-2026-10-03.md).
+
 `head` and `tail` use raw byte input, delimiter scans and output. Their
 shared hold retains input blocks with a 64-bit byte count and releases
 consumed blocks without repeatedly copying long records. Target checks and
