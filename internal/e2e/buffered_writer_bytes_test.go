@@ -56,7 +56,6 @@ function main(): i32 {
       b = b.write_bytes(buf_take_bytes(seed));
       b = b.flush();
     }
-    buf_free(b.handle());
   }
   buf_free(seed);
   return 0;
