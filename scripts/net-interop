@@ -1,0 +1,230 @@
+#!/usr/bin/env bash
+# net-interop — run Fern's HTTP client and server against other
+# implementations, the interop half of #9855's exit criteria.
+#
+# Usage: net-interop
+#
+# THE CLIENT. scripts/net-interop.d/client.fern sends one request per case
+# and prints a line for each; it runs against three origins that answer
+# the same four targets, and its output must match EXPECTED below for
+# every one of them:
+#
+#   /hello     a 200 with "hello"
+#   /redirect  a 302 to /hello
+#   /gzip      the text below, gzip-coded on the fly and so sent chunked
+#   /port      the client's source port, so two requests on one held
+#              `fetch.Sockets` show whether the connection was reused
+#
+# The origins are scripts/net-interop.d/goserver (Go's net/http with its
+# defaults), nginx and h2o, the host's packages, configured here.
+#
+# THE SERVER. scripts/net-interop.d/echo.fern answers every request with
+# the length and text of the body it read. curl checks one HTTP/1.1
+# connection carrying two requests, an upload behind `Expect:
+# 100-continue` answered with `100 Continue`, and a chunked upload;
+# h2load sends 2,000 requests over 16 kept connections, every one of
+# which must succeed.
+#
+# A server or tool that is missing fails the run rather than skipping a
+# case: net-nightly.yml installs every one of them.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+case "$(uname -m)" in
+  x86_64)          TARGET=x86-64-linux ;;
+  aarch64 | arm64) TARGET=arm64-linux ;;
+  *) echo "net-interop: unsupported host $(uname -m)" >&2; exit 2 ;;
+esac
+
+for tool in nginx h2o curl h2load go python3; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "net-interop: $tool not found; net-nightly.yml installs it" >&2
+    exit 2
+  fi
+done
+
+GZIP_TEXT="$(python3 -c 'print("hello gzip " * 30, end="")')"
+EXPECTED="hello: 200 hello
+redirect: 200 hello
+gzip: 200 decoded
+reuse: one connection"
+
+go build -o bin/fern ./cmd/fern
+
+work="$(mktemp -d)"
+chmod 755 "$work"
+server_pgid=""
+stop_server() {
+  if [ -n "$server_pgid" ]; then
+    kill -TERM -- "-$server_pgid" 2>/dev/null || true
+    local waited=0
+    while kill -0 "$server_pgid" 2>/dev/null && [ "$waited" -lt 25 ]; do
+      sleep 0.2
+      waited=$((waited + 1))
+    done
+    kill -KILL -- "-$server_pgid" 2>/dev/null || true
+    wait "$server_pgid" 2>/dev/null || true
+    server_pgid=""
+  fi
+}
+trap 'stop_server; rm -rf "$work"' EXIT
+
+bin/fern -target "$TARGET" -o "$work/client" scripts/net-interop.d/client.fern
+bin/fern -target "$TARGET" -o "$work/echo" scripts/net-interop.d/echo.fern
+go build -o "$work/goserver" ./scripts/net-interop.d/goserver
+mkdir -p "$work/www"
+printf '%s' "$GZIP_TEXT" > "$work/www/gzip.txt"
+
+free_port() {
+  python3 -c 'import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])'
+}
+
+nginx_config() {
+  cat > "$work/nginx.conf" <<EOF
+worker_processes 1;
+pid $work/nginx.pid;
+error_log $work/nginx-error.log;
+daemon off;
+events {}
+http {
+  access_log off;
+  client_body_temp_path $work/nginx-body;
+  proxy_temp_path $work/nginx-proxy;
+  fastcgi_temp_path $work/nginx-fastcgi;
+  uwsgi_temp_path $work/nginx-uwsgi;
+  scgi_temp_path $work/nginx-scgi;
+  default_type text/plain;
+  absolute_redirect off;
+  gzip on;
+  gzip_types text/plain;
+  gzip_min_length 1;
+  server {
+    listen 127.0.0.1:$1;
+    root $work/www;
+    location = /hello { return 200 "hello"; }
+    location = /redirect { return 302 /hello; }
+    location = /port { return 200 "\$remote_port"; }
+    location = /gzip { try_files /gzip.txt =404; }
+  }
+}
+EOF
+}
+
+h2o_config() {
+  cat > "$work/h2o.conf" <<EOF
+listen:
+  host: 127.0.0.1
+  port: $1
+hosts:
+  default:
+    paths:
+      /:
+        compress: ON
+        mruby.handler: |
+          Proc.new do |env|
+            case env["PATH_INFO"]
+            when "/hello"
+              [200, {"content-type" => "text/plain"}, ["hello"]]
+            when "/redirect"
+              [302, {"location" => "/hello"}, []]
+            when "/port"
+              [200, {"content-type" => "text/plain"}, [env["REMOTE_PORT"].to_s]]
+            when "/gzip"
+              [200, {"content-type" => "text/plain"}, ["$GZIP_TEXT"]]
+            else
+              [404, {}, []]
+            end
+          end
+EOF
+}
+
+# start_server NAME PORT — the server in its own process group, answering
+# before this returns.
+start_server() {
+  case "$1" in
+    go)    PORT="$2" setsid "$work/goserver" > "$work/server.log" 2>&1 & ;;
+    nginx) nginx_config "$2"; setsid nginx -c "$work/nginx.conf" -p "$work" > "$work/server.log" 2>&1 & ;;
+    h2o)   h2o_config "$2"; setsid h2o -c "$work/h2o.conf" > "$work/server.log" 2>&1 & ;;
+    fern)  PORT="$2" setsid "$work/echo" > "$work/server.log" 2>&1 & ;;
+  esac
+  server_pgid="$!"
+  local tries=0
+  until curl -s -m 1 -o /dev/null "http://127.0.0.1:$2/"; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge 50 ]; then
+      echo "net-interop: $1 did not answer on port $2" >&2
+      cat "$work/server.log" >&2
+      exit 1
+    fi
+    sleep 0.2
+  done
+}
+
+failed=0
+fail() {
+  echo "FAIL: $*" >&2
+  failed=1
+}
+
+for origin in go nginx h2o; do
+  port="$(free_port)"
+  start_server "$origin" "$port"
+  # The gzip case means something only if the origin really codes it, and
+  # chunked, which the client's line cannot show once it has decoded.
+  head="$(curl -s --http1.1 -H 'Accept-Encoding: gzip' -D - -o /dev/null "http://127.0.0.1:$port/gzip" | tr 'A-Z' 'a-z')"
+  if ! grep -q '^content-encoding: gzip' <<< "$head" || ! grep -q '^transfer-encoding: chunked' <<< "$head"; then
+    fail "$origin does not send /gzip coded and chunked"
+    echo "$head" >&2
+  fi
+  got="$(BASE="http://127.0.0.1:$port" "$work/client" 2>&1 || true)"
+  stop_server
+  if [ "$got" = "$EXPECTED" ]; then
+    echo "client against $origin: ok"
+  else
+    fail "client against $origin"
+    diff <(echo "$EXPECTED") <(echo "$got") >&2 || true
+  fi
+done
+
+port="$(free_port)"
+start_server fern "$port"
+url="http://127.0.0.1:$port"
+
+connects="$(curl -s --http1.1 -o /dev/null -o /dev/null -w '%{num_connects}\n' "$url/a" "$url/b" | tr '\n' ' ')"
+if [ "$connects" = "1 0 " ]; then
+  echo "server, curl keep-alive: ok"
+else
+  fail "curl keep-alive: connections per request '$connects', want '1 0 '"
+fi
+
+python3 -c 'print("x" * 2000, end="")' > "$work/upload"
+continued="$(curl -s -v --http1.1 -H 'Expect: 100-continue' --data-binary @"$work/upload" "$url/echo" 2> "$work/continue.err" | cut -c1-9)"
+if grep -q '^< HTTP/1.1 100 Continue' "$work/continue.err" && [ "$continued" = "len=2000 " ]; then
+  echo "server, Expect: 100-continue: ok"
+else
+  fail "Expect: 100-continue: body '$continued'"
+  cat "$work/continue.err" >&2
+fi
+
+chunked="$(curl -s --http1.1 -H 'Transfer-Encoding: chunked' --data-binary @"$work/upload" "$url/echo" | cut -c1-9)"
+if [ "$chunked" = "len=2000 " ]; then
+  echo "server, chunked upload: ok"
+else
+  fail "chunked upload: body '$chunked'"
+fi
+
+h2load --h1 -n 2000 -c 16 "$url/" > "$work/h2load.txt" 2>&1 || true
+if grep -q '^requests: 2000 total, 2000 started, 2000 done, 2000 succeeded, 0 failed, 0 errored' "$work/h2load.txt"; then
+  echo "server, h2load: ok"
+else
+  fail "h2load"
+  cat "$work/h2load.txt" >&2
+fi
+stop_server
+
+exit "$failed"
