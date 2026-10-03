@@ -1,8 +1,8 @@
 package e2eharness
 
-// SimNetProgram exercises the same SimNet contracts as the TAP
-// suite without std/test (whose fs assertion helpers keep every TAP
-// file interp/self-host-gated — #5372). Exit 42 iff every check holds.
+// SimNetProgram exercises the same SimNet contracts as the TAP suite
+// without std/test, so the wasm leg, still compiled by the Go CLI
+// (#4451), can run it. Exit 42 iff every check holds.
 const SimNetProgram = `import "std/async";
 import "std/time";
 import "std/sim";
@@ -62,10 +62,10 @@ function main(): i32 {
 }
 `
 
-// SimFaultProgram exercises the same fault contracts as the TAP
-// suite without std/test (whose fs assertion helpers keep every TAP
-// file interp/self-host-gated — #5372). Exit 42 iff every check holds.
-// The flaky(50) seed-1 pattern "SSSFFSSFSF" is the cross-backend
+// SimFaultProgram exercises the same fault contracts as the TAP suite
+// without std/test, so the wasm leg, still compiled by the Go CLI
+// (#4451), can run it. Exit 42 iff every check holds.
+// The flaky(50) seed-1 pattern "FFFFFSFFFS" is the cross-backend
 // determinism golden: pure integer arithmetic, so the identical
 // program must produce the identical run on interp / native / wasm.
 const SimFaultProgram = `import "std/async";

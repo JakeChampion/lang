@@ -14,10 +14,14 @@ import (
 // but consumers routinely truncated at — and the empty array is the
 // sole sentinel for EOF, error, and max <= 0 alike. The 5-byte payload
 // against max=4096 also pins the short-read contract: len is the
-// actual count, not the capacity. The arm64 and wasm helpers are covered
-// by their own tcp e2e suites.
+// actual count, not the capacity. x86-64 host-native, as this package's
+// other socket tests are; the arm64 and wasm helpers are covered by their
+// own tcp e2e suites.
 func TestSelfHostTcpRecvBytesX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
+	if len(cli.runner) != 0 {
+		t.Skip("tcp_recv byte test runs host-native only")
+	}
 
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
