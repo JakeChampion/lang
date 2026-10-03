@@ -2434,11 +2434,25 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// the same two handles opened under a flags word of Fern's own,
 	// translated by each backend into the kernel's:
 	//
-	//	1  create the file when it is missing, mode 0666 through the umask
-	//	2  do not wait on the open (O_NONBLOCK)
-	//	4  fail when the file already exists (O_EXCL), with 1: the exclusive
-	//	   create at the same 0666 — `open_exclusive` keeps its 0600 for the
-	//	   temporary file it was made for, this is the one `dd conv=excl` has
+	//	1    create the file when it is missing, mode 0666 through the umask
+	//	2    do not wait on the open (O_NONBLOCK)
+	//	4    fail when the file already exists (O_EXCL), with 1: the exclusive
+	//	     create at the same 0666 — `open_exclusive` keeps its 0600 for the
+	//	     temporary file it was made for, this is the one `dd conv=excl` has
+	//	8    bypass the page cache (O_DIRECT)
+	//	16   fail unless the path is a directory (O_DIRECTORY)
+	//	32   every write waits for the data to reach the device (O_DSYNC)
+	//	64   likewise, and for the metadata (O_SYNC)
+	//	128  do not update the access time (O_NOATIME)
+	//	256  never become the controlling terminal (O_NOCTTY)
+	//	512  fail when the last component is a symlink (O_NOFOLLOW)
+	//
+	// A bit the target has no spelling for is a REFUSAL, `Unsupported`,
+	// never a silent no-op: XNU has no O_DIRECT (its F_NOCACHE is a
+	// different request, made after the open) and no O_NOATIME, and WASI
+	// has neither of those nor O_NOCTTY. The caller asked for a guarantee
+	// the open cannot give, and `dd iflag=directory` that quietly opened a
+	// regular file would be worse than the error.
 	//
 	// The writer never truncates and never appends: it is the plain
 	// O_WRONLY open a `touch` or a `dd` wants, where open_writer's

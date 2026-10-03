@@ -5,7 +5,11 @@
 // wait for a writer, and the writer's is ENXIO where it would wait for a
 // reader. A backend that dropped the bit would hang the reader's open
 // here rather than fail it, which is why no step past it is reachable
-// without it.
+// without it. The seven open-time bits after exclusive (#9242) are
+// checked by the kernel's own verdict where it has one — directory on a
+// regular file, nofollow on a symlink — and by being accepted where it
+// does not; a bit the target has no word for must come back Unsupported,
+// which is what the direct and noatime steps pin on XNU.
 package e2e
 
 import (
@@ -45,9 +49,33 @@ func openWithSource(dir string) string {
     // 0666 through the umask (checked from Go), a taken one is AlreadyExists.
     match (open_writer_with(%[5]q, 5)) { Ok(w) => { w.write("x"); w.close(); }, Err(_) => { return 16; } }
     match (open_writer_with(%[5]q, 5)) { Ok(w) => { w.close(); return 17; }, Err(e) => { match (e) { AlreadyExists(_) => {}, _ => { return 18; } } } }
+    // Bit 4 asks for a directory: the kernel refuses a regular file
+    // (ENOTDIR, which is not Unsupported) and opens the directory itself.
+    match (open_reader_with(%[1]q, 16)) { Ok(r) => { r.close(); return 19; }, Err(e) => { match (e) { Unsupported => { return 20; }, _ => {} } } }
+    match (open_reader_with(%[6]q, 16)) { Ok(r) => { r.close(); }, Err(_) => { return 21; } }
+    // Bit 9 refuses a symlink at the last component (ELOOP); without it
+    // the same name opens.
+    match (create_symlink(%[1]q, %[7]q)) { Ok(_) => {}, Err(_) => { return 22; } }
+    match (open_reader_with(%[7]q, 512)) { Ok(r) => { r.close(); return 23; }, Err(e) => { match (e) { Unsupported => { return 24; }, _ => {} } } }
+    match (open_reader_with(%[7]q, 0)) { Ok(r) => { r.close(); }, Err(_) => { return 25; } }
+    // Bits 5, 6 and 8 (dsync, sync, noctty) are accepted on a regular
+    // file; the write still lands on the first byte.
+    match (open_writer_with(%[1]q, 32 | 64 | 256)) { Ok(w) => { w.write("Z"); w.close(); }, Err(_) => { return 26; } }
+    // Bits 3 and 7 (direct, noatime): Linux has both and answers with the
+    // filesystem's own verdict, never Unsupported — O_DIRECT may be
+    // refused by a tmpfs, O_NOATIME is the owner's to ask for. XNU has
+    // neither and must say so.
+    match (open_reader_with(%[1]q, 8)) {
+        Ok(r) => { r.close(); if (target_os() == "darwin") { return 27; } },
+        Err(e) => { match (e) { Unsupported => { if (target_os() != "darwin") { return 28; } }, _ => { if (target_os() == "darwin") { return 29; } } } }
+    }
+    match (open_reader_with(%[1]q, 128)) {
+        Ok(r) => { r.close(); if (target_os() == "darwin") { return 30; } },
+        Err(e) => { match (e) { Unsupported => { if (target_os() != "darwin") { return 31; } }, _ => { return 32; } } }
+    }
     return 0;
 }
-`, p("w.txt"), p("missing.txt"), p("fifo"), mknodFifo0666, p("excl.txt"))
+`, p("w.txt"), p("missing.txt"), p("fifo"), mknodFifo0666, p("excl.txt"), dir, p("lnk"))
 }
 
 // openWithCheckTree reads the tree back through Go: the bytes the two
@@ -139,7 +167,14 @@ func TestInterpOpenWith(t *testing.T) {
 // Neither WASI preview has a FIFO, so the wasm probe is the file half
 // only: create without truncation, NotFound without the bit, and the
 // non-blocking bit accepted on a regular file — a preview-1 fdflag,
-// nothing at all on preview 2.
+// nothing at all on preview 2. Of the seven open-time bits, directory
+// and nofollow are the host's verdict; dsync and sync are spelled (the
+// DSYNC and SYNC fdflags, the two integrity-sync descriptor-flags) and
+// then refused by wasmtime itself, which answers ENOTSUP for either sync
+// flag on an open — the host's refusal, carried as Unsupported, so a
+// wasmtime that starts honouring them flips step 19 and says so here;
+// direct, noatime and noctty — which neither preview can spell — are
+// Unsupported before the host is asked.
 const openWithWasmSrc = `function main(): i32 {
     match (open_writer_with("w.txt", 1)) { Ok(w) => { w.write("abc"); w.close(); }, Err(_) => { return 1; } }
     match (open_writer_with("w.txt", 1)) { Ok(w) => { w.write("Z"); w.close(); }, Err(_) => { return 2; } }
@@ -154,6 +189,14 @@ const openWithWasmSrc = `function main(): i32 {
     }
     match (open_writer_with("excl.txt", 5)) { Ok(w) => { w.write("x"); w.close(); }, Err(_) => { return 10; } }
     match (open_writer_with("excl.txt", 5)) { Ok(w) => { w.close(); return 11; }, Err(e) => { match (e) { AlreadyExists(_) => {}, _ => { return 12; } } } }
+    match (open_reader_with("w.txt", 16)) { Ok(r) => { r.close(); return 13; }, Err(e) => { match (e) { Unsupported => { return 14; }, _ => {} } } }
+    match (create_symlink("w.txt", "lnk")) { Ok(_) => {}, Err(_) => { return 15; } }
+    match (open_reader_with("lnk", 512)) { Ok(r) => { r.close(); return 16; }, Err(e) => { match (e) { Unsupported => { return 17; }, _ => {} } } }
+    match (open_reader_with("lnk", 0)) { Ok(r) => { r.close(); }, Err(_) => { return 18; } }
+    match (open_writer_with("w.txt", 32 | 64)) { Ok(w) => { w.close(); return 19; }, Err(e) => { match (e) { Unsupported => {}, _ => { return 26; } } } }
+    match (open_reader_with("w.txt", 8)) { Ok(r) => { r.close(); return 20; }, Err(e) => { match (e) { Unsupported => {}, _ => { return 21; } } } }
+    match (open_reader_with("w.txt", 128)) { Ok(r) => { r.close(); return 22; }, Err(e) => { match (e) { Unsupported => {}, _ => { return 23; } } } }
+    match (open_reader_with("w.txt", 256)) { Ok(r) => { r.close(); return 24; }, Err(e) => { match (e) { Unsupported => {}, _ => { return 25; } } } }
     return 0;
 }`
 
