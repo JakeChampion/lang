@@ -10576,6 +10576,8 @@ func storesArgument(name string, i int) bool {
 		return i == 2
 	case "__method_Map_set":
 		return i == 1 || i == 2
+	case "__method_Cell_set":
+		return i == 1
 	}
 	return false
 }
@@ -11245,15 +11247,20 @@ func elemDispatchable(elem ast.Type) bool {
 // list by the rewrite, so reporting it as "argument 1" describes a slot the
 // reader never wrote. It is an unresolved method on that receiver — the same
 // thing E043 reports when no method of the name exists at all — and the
-// declared receiver type is what says why, so name it.
+// declared receiver type is what says why, so name it. The written arguments
+// are numbered from the first one after the receiver.
 func (c *checker) errArgMismatch(n *ast.Call, i int, recvIsArg0 bool, expected, at ast.Type) {
 	if recvIsArg0 && i == 0 && n.Method != nil {
 		c.errfCode(n.Method.FieldPos, "E043", "no method %q on %s — %q is declared for %s",
 			n.Method.Field, at, n.Method.Field, expected)
 		return
 	}
+	num := i + 1
+	if recvIsArg0 {
+		num = i
+	}
 	c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s%s",
-		i+1, expected, at, assignHint(expected, at))
+		num, expected, at, assignHint(expected, at))
 }
 
 // moduleAlreadyImports reports whether the module being checked names `mod`
@@ -16276,25 +16283,46 @@ func (c *checker) retagIndexAsTypeArgs(n *ast.Call, s *scope) {
 	if !ok || !c.calleeIsGenericFunc(fn, s) {
 		return
 	}
-	arg, ok := ix.Idx.(*ast.Ident)
+	params := c.typeParamsInScope()
+	t, ok := c.indexAsType(ix.Idx, params, s)
 	if !ok {
 		return
 	}
-	if _, bound := c.identValueBinding(arg.Name, s); bound {
-		return
-	}
-	params := c.typeParamsInScope()
-	_, isStruct := c.info.Structs[arg.Name]
-	_, isEnum := c.info.Enums[arg.Name]
-	_, isResource := c.info.Resources[arg.Name]
-	if !params[arg.Name] && !isStruct && !isEnum && !isResource {
-		return
-	}
-	var t ast.Type = ast.StructType{Name: arg.Name}
-	c.resolveType(&t, params, arg.P)
+	c.resolveType(&t, params, ix.Idx.Pos())
 	n.Callee = fn
 	n.TypeArgs = []ast.Type{t}
 	n.TypeArgsWritten = true
+}
+
+// indexAsType reads an index operand as the type it spells: a type name, or a
+// generic one instantiated the same way (`W[Q]`), which the parser cannot tell
+// from indexing.
+func (c *checker) indexAsType(e ast.Expr, params map[string]bool, s *scope) (ast.Type, bool) {
+	switch x := e.(type) {
+	case *ast.Ident:
+		if _, bound := c.identValueBinding(x.Name, s); bound {
+			return nil, false
+		}
+		_, isStruct := c.info.Structs[x.Name]
+		_, isEnum := c.info.Enums[x.Name]
+		_, isResource := c.info.Resources[x.Name]
+		if !params[x.Name] && !isStruct && !isEnum && !isResource {
+			return nil, false
+		}
+		return ast.StructType{Name: x.Name}, true
+	case *ast.Index:
+		head, ok := c.indexAsType(x.Array, params, s)
+		if !ok {
+			return nil, false
+		}
+		arg, ok := c.indexAsType(x.Idx, params, s)
+		if !ok {
+			return nil, false
+		}
+		st := head.(ast.StructType)
+		return ast.StructType{Name: st.Name, Args: append(st.Args, arg)}, true
+	}
+	return nil, false
 }
 
 // errE040GenericFuncAsValue reports a generic function named where a value
@@ -19774,11 +19802,11 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				c.settleNumeric(to.Inner, wrapped)
 			}
 		}
-		// Stamp `to.Type` so postSettleType / IR sees the
-		// resolved payload width — `to.Type` was set by the
-		// original checkExpr from the source's pre-settle
-		// `srcEnum.Args[0]`.
-		to.Type = hint
+		// `to.Type` is the source's payload, which the IR lays the box out
+		// by: only a literal payload the hint just settled takes its width.
+		if to.Type == nil || isPolymorphicNumeric(to.Type) {
+			to.Type = hint
+		}
 	}
 	if fa, ok := e.(*ast.FieldAccess); ok {
 		if hn, ok := hint.(ast.NumberType); ok && !hn.Polymorphic {
@@ -19955,6 +19983,14 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 					}
 				}
 				sl.TypeArgs = append([]ast.Type{}, hn.Args...)
+			}
+		} else if call, ok := e.(*ast.Call); ok && isCellNew(call) {
+			// `let c: Cell[i64] = cell_new(1)` reaches T through the
+			// destination, as a generic call's result does.
+			if hn.Name == "Cell" && len(hn.Args) == 1 && len(call.Args) == 1 && len(call.TypeArgs) == 1 &&
+				isPolymorphicNumeric(call.TypeArgs[0]) && unsettledNumericShape(call.Args[0]) {
+				c.settleNumeric(call.Args[0], hn.Args[0])
+				call.TypeArgs[0] = c.postSettleType(call.Args[0], call.TypeArgs[0])
 			}
 		} else if call, ok := e.(*ast.Call); ok {
 			// `let b: Box[u64] = box(1)` reaches T through the return type.
@@ -20517,6 +20553,9 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 		// param of a multi-param generic (e.g. the `T` of
 		// `Result[T, E]` from `Ok(v)`) while preserving the
 		// other from the first-pass result.
+		if isCellNew(x) && len(x.TypeArgs) == 1 {
+			return ast.StructType{Name: "Cell", Args: []ast.Type{x.TypeArgs[0]}}
+		}
 		if et, ok := prior.(ast.EnumType); ok && len(et.Args) > 0 && isVariantCall(x) {
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				if vr, isVar, _ := c.resolveVariant(id.Name, id.EnumName); isVar {
@@ -20853,6 +20892,13 @@ func (c *checker) widenGenericCallByLiterals(call *ast.Call) ast.Type {
 // parameter type merely mentions it (`T[]`, `Option[T]`), is left to that
 // argument (#8722). A field read of the call's result — `both(1, 2).1` —
 // settles through the declared type of the field it reads (#10176).
+// isCellNew reports whether call is the `cell_new` constructor, which the
+// checker intercepts by name.
+func isCellNew(call *ast.Call) bool {
+	id, ok := call.Callee.(*ast.Ident)
+	return ok && id.Name == "cell_new"
+}
+
 func (c *checker) settleGenericCallByHint(e ast.Expr, hint ast.Type) {
 	call, fn, declared := c.genericCallProjection(e)
 	if call == nil {
@@ -20870,7 +20916,7 @@ func (c *checker) settleGenericCallByHint(e ast.Expr, hint ast.Type) {
 				break
 			}
 			if pt, ok := p.Type.(ast.ParamType); ok && pt.Name == tp {
-				if !unsettledNumericShape(call.Args[j]) {
+				if !unsettledNumericShape(call.Args[j]) && !c.openGenericCall(call.Args[j]) {
 					pinned = true
 				}
 				bound = append(bound, call.Args[j])
@@ -20886,6 +20932,22 @@ func (c *checker) settleGenericCallByHint(e ast.Expr, hint ast.Type) {
 		}
 		call.TypeArgs[i] = want
 	}
+}
+
+// openGenericCall reports whether e reads a generic call whose width is still
+// open — a type argument only an unsuffixed literal bound — so a hint on an
+// outer generic call reaches through it: `id(id(1))` at an i64.
+func (c *checker) openGenericCall(e ast.Expr) bool {
+	call, _, _ := c.genericCallProjection(e)
+	if call == nil {
+		return false
+	}
+	for _, ta := range call.TypeArgs {
+		if isPolymorphicNumeric(ta) {
+			return true
+		}
+	}
+	return false
 }
 
 // genericCallProjection resolves e — a generic call, or a chain of tuple or

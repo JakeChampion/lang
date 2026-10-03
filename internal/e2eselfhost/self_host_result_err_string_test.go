@@ -104,6 +104,22 @@ function main(): i32 {
     return 0;
 }
 `, false},
+	// The same escape through a call chain (#10660). The strings share a length
+	// so a freed buffer is reused, turning a use-after-free into a wrong answer.
+	{"ok_result_outlives_chained", `import "std/i32";
+import "std/result";
+function main(): i32 {
+    let s: string = "";
+    let i: i32 = 0;
+    while (i < 100) {
+        let q: Result[string, string] = Ok("A0" + (i + 100000).to_string() + "x".repeat(24));
+        if (i == 0) { s = q.or(Ok("y")).unwrap_or("y"); }
+        i = i + 1;
+    }
+    if (s.contains("100000")) { return 1; }
+    return 2;
+}
+`, true},
 	// The Err payload is a live local's string, so only the box is released.
 	{"err_aliases_live", `import "std/i32";
 import "std/result";

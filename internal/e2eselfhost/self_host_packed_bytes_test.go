@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // A u8[] the typed lowering builds is packed a byte an element on every
@@ -273,9 +275,7 @@ func TestSelfHostPackedBytes(t *testing.T) {
 		})
 	}
 	t.Run("component", func(t *testing.T) {
-		if _, err := exec.LookPath("wasmtime"); err != nil {
-			t.Fatal("wasmtime not on PATH")
-		}
+		e2eharness.Wasmtime(t)
 		dir := t.TempDir()
 		in := filepath.Join(dir, "main.fern")
 		if err := os.WriteFile(in, []byte(packedBytesComponentSrc), 0o644); err != nil {

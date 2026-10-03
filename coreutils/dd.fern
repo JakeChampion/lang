@@ -44,9 +44,10 @@ function op_names(): string[] {
 // ---- conv= ------------------------------------------------------------------
 //
 // The flags are a SET: `conv=ucase,swab` is both, and a name that is
-// not one is `invalid conversion: 'NAME'`. A charset name carries the record conversion it implies — `ascii` unblocks,
-// `ebcdic` and `ibm` block — so `conv=ascii,block` is the same refusal
-// as `conv=unblock,block`.
+// not one is `invalid conversion: 'NAME'`. A charset name carries the
+// record conversion it implies — `ascii` unblocks, `ebcdic` and `ibm`
+// block — so `conv=ascii,block` is the same refusal as
+// `conv=unblock,block`.
 function conv_names(): string[] {
   return ["block", "unblock", "lcase", "ucase", "swab", "sync", "excl", "nocreat", "notrunc", "noerror", "fdatasync", "fsync", "ascii", "ebcdic", "ibm", "sparse"];
 }
@@ -726,14 +727,7 @@ function sink_new(w: Writer, name: string, obs: i32, c: Counts, sparse: boolean)
 }
 
 function all_nul(data: string): boolean {
-  let i: i32 = 0;
-  while (i < data.len()) {
-    if (data[i] != 0 as u8) {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
+  return __count_byte(data, 0) == data.len();
 }
 
 function count_out(k: Sink, n: i32, partial: boolean): Sink {

@@ -1256,7 +1256,7 @@ pub function op_rlimit_nofile(): Op {
 // is -1 (no pollable; deadlines use poll(2)'s timeout arg); on wasm it is a
 // real wasi timer pollable. Portability shim for std/async's with_deadline.
 pub function op_wasm_timer_pollable(): Op {
-  return op0(189);
+  return op0(148);
 }
 
 // `wasm_pollable_drop` takes one operand [p] and pushes an i32 (0 on native — a
@@ -2905,7 +2905,7 @@ pub function op_return(): Op {
 // slot rather than leaving a gap; the moved op's membership in every id-keyed
 // classifier below has to move with it, or it lands in the wrong emitter.
 pub function kind_count(): i32 {
-  return 189;
+  return 188;
 }
 
 // kind_id maps an op-kind tag to its stable integer id (0 = KIND_INVALID for
@@ -2923,10 +2923,11 @@ pub function kind_count(): i32 {
 // tcp_pollable is 112, not 197: it took the slot str_chars freed (#7231), and
 // tcp_send / tcp_recv / tcp_close are 114..116, the slots the string search
 // predicates freed (#9848), tcp_connect is 110, the slot str_reverse freed,
-// and wasm_pollable_drop / wasm_block / wasm_poll are 161 / 162 / 167, the
-// slots print_int / print_i64 / read_int freed. The 1..kind_count() sweep
-// requires the id space to stay dense, and moving the last entry into the hole
-// beats renumbering every id above it.
+// wasm_pollable_drop / wasm_block / wasm_poll are 161 / 162 / 167, the
+// slots print_int / print_i64 / read_int freed, and wasm_timer_pollable is
+// 148, the slot dyn_downcast freed when the AST lowering that emitted it
+// retired. The 1..kind_count() sweep requires the id space to stay dense, and
+// moving the last entry into the hole beats renumbering every id above it.
 //
 // Extension tags beyond kind_count() (struct_copy=198 … buf_free=297): not
 // in the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately
@@ -4032,9 +4033,6 @@ function kind_id_len12(name: string): i32 {
   if (c == b'd' && name == "dyn_dispatch") {
     return 147;
   }
-  if (c == b'd' && name == "dyn_downcast") {
-    return 148;
-  }
   if (c == b'm' && name == "monotonic_ns") {
     return 182;
   }
@@ -4310,7 +4308,7 @@ function kind_id_len19(name: string): i32 {
     return 151;
   }
   if (c == b'w' && name == "wasm_timer_pollable") {
-    return 189;
+    return 148;
   }
   return 0;
 }
@@ -4781,7 +4779,7 @@ function kind_name_3(id: i32): string {
     return "dyn_dispatch";
   }
   if (id == 148) {
-    return "dyn_downcast";
+    return "wasm_timer_pollable";
   }
   if (id == 149) {
     return "call_direct";
@@ -4924,9 +4922,6 @@ function kind_name_4(id: i32): string {
   }
   if (id == 188) {
     return "timer_fd";
-  }
-  if (id == 189) {
-    return "wasm_timer_pollable";
   }
   if (id == 198) {
     return "struct_copy";
@@ -5460,7 +5455,7 @@ function pops1_mem(t: i32): boolean {
     || t == 126 || t == 131 || t == 132 || t == 133  // map_len, map_keys, map_values, map_iter
     || t == 134 || t == 135 || t == 136 || t == 137  // mapiter_*
     || t == 139 || t == 141 || t == 143 || t == 145  // struct_get, struct_set_shape, tuple_get, variant_is
-    || t == 146 || t == 148 || t == 198;  // dyn_box, dyn_downcast, struct_copy
+    || t == 146 || t == 198;  // dyn_box, struct_copy
 }
 
 function pops1_io(t: i32): boolean {
@@ -5486,7 +5481,7 @@ function pops1_io(t: i32): boolean {
     || t == 276 || t == 312  // window_size, termios_get
     || t == 185 || t == 212  // random_bytes, proc_waitpid
     || t == 286  // proc_waitpid_nohang
-    || t == 188 || t == 189 || t == 161 || t == 162 || t == 167  // timer_fd, wasm_*
+    || t == 188 || t == 148 || t == 161 || t == 162 || t == 167  // timer_fd, wasm_*
     || t == 116 || t == 112 || t == 200 || t == 201 || t == 203  // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
     || t == 320  // tcp_local_port
     || t == 230  // heap_release_to
@@ -8070,9 +8065,8 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 111 || tag == 113) {
     return true;
   }
-  // dyn_box allocates the 16-byte primitive `dyn` cell; dyn_downcast allocates
-  // the Some/None Option box (docs/DYN-TRAITS.md §4.2.3, §9).
-  if (tag == 146 || tag == 148) {
+  // dyn_box allocates the 16-byte primitive `dyn` cell (docs/DYN-TRAITS.md §4.2.3).
+  if (tag == 146) {
     return true;
   }
   // heap_bump_bytes does NOT allocate, but it reads the heap runtime's cursor

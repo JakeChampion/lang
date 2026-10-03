@@ -23,11 +23,11 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// buf_take_bytes, read_chunk_bytes, write_bytes, write_file_bytes and
 	// write_some_bytes. tcp_send_bytes, udp_send_bytes, udp_sendto_bytes
 	// and memchr_bytes add four registered and admitted kinds.
-	// rename_noreplace and rename_exchange add two more.
+	// rename_noreplace and rename_exchange add two more. dyn_downcast is retired.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=336 declined=3\n"
+		"registered=335 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()
