@@ -18667,7 +18667,10 @@ function annot_of_expr(e: ast.Expr, own acc: Annot[]): Annot[] {
 // unknown_type_hint suggests the right spelling for the handful of
 // cross-language slips native's checker names, appended to the E064 message.
 // The hint text is inside the differential, so the two must agree verbatim.
-function unknown_type_hint(name: string): string {
+function unknown_type_hint(name: string, traits: string[]): string {
+  if (util.has_str(traits, name)) {
+    return " (`" + name + "` is a trait: a parameter of trait type makes the function generic over it; anywhere else write `dyn " + name + "`)";
+  }
   if (name == "bool") {
     return " (did you mean `boolean`?)";
   }
@@ -18690,12 +18693,12 @@ function unknown_type_hint(name: string): string {
 // undefined. The caller restricts this to functions with no type parameters, so
 // a plain identifier that resolves to unknown is a genuine typo, never an
 // erased generic parameter.
-function e064_annot_diags(an: Annot[], tn: TypeNames, extra_known: string[]): util.Diag[] {
+function e064_annot_diags(an: Annot[], tn: TypeNames, extra_known: string[], traits: string[]): util.Diag[] {
   let out: util.Diag[] = [];
   for elem in an {
     let vu: string = e064_unknown_name(elem.type_name, tn, extra_known);
     if (vu.len() > 0) {
-      out = out.append(dg_at("E064", "unknown type \"" + vu + "\"" + unknown_type_hint(vu), elem.line, elem.col));
+      out = out.append(dg_at("E064", "unknown type \"" + vu + "\"" + unknown_type_hint(vu, traits), elem.line, elem.col));
     }
   }
   return out;
@@ -21635,8 +21638,16 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   // names. The Go checker's knownTypeName accepts any declared struct /
   // enum / trait / resource, so the base check must not flag these.
   let e064_extra: string[] = [];
+  // e064_traits spells each trait as a parameter type reaches here: bare for
+  // the entry's own, under the declaring module's prefix for an import's.
+  let e064_traits: string[] = [];
   for trait_req in mod.trait_reqs {
     e064_extra = e064_extra.append(trait_req.trait_name);
+    if (trait_req.module.len() == 0) {
+      e064_traits = e064_traits.append(trait_req.trait_name);
+    } else {
+      e064_traits = e064_traits.append(trait_req.module + "__" + trait_req.trait_name);
+    }
   }
   for imp in mod.impls {
     e064_extra = e064_extra.append(imp.trait_name);
@@ -21656,7 +21667,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
       for param in efn.params {
         let pu: string = e064_unknown_name(param.type_name, e064_tn, e064_extra);
         if (pu.len() > 0) {
-          body_diags = body_diags.append(dg_at("E064", "unknown type \"" + pu + "\"" + unknown_type_hint(pu), efn.line, efn.col));
+          body_diags = body_diags.append(dg_at("E064", "unknown type \"" + pu + "\"" + unknown_type_hint(pu, e064_traits), efn.line, efn.col));
         }
         // E057 annotation form: a `Cell[<composite>]` anywhere in a
         // parameter annotation (same conservative non-generic scope,
@@ -21665,12 +21676,12 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
       }
       let ru: string = e064_unknown_name(efn.ret_type, e064_tn, e064_extra);
       if (ru.len() > 0) {
-        body_diags = body_diags.append(dg_at("E064", "unknown type \"" + ru + "\"" + unknown_type_hint(ru), efn.line, efn.col));
+        body_diags = body_diags.append(dg_at("E064", "unknown type \"" + ru + "\"" + unknown_type_hint(ru, e064_traits), efn.line, efn.col));
       }
       body_diags = util.append_diags(body_diags, e057_annot_diags(efn.ret_type, efn.line, efn.col));
       // Body `let x: T` annotations (same non-generic scope).
       let efn_annots: Annot[] = collect_annots(efn.body);
-      body_diags = util.append_diags(body_diags, e064_annot_diags(efn_annots, e064_tn, e064_extra));
+      body_diags = util.append_diags(body_diags, e064_annot_diags(efn_annots, e064_tn, e064_extra, e064_traits));
       body_diags = util.append_diags(body_diags, e057_var_annot_diags(efn_annots));
     }
   }
@@ -21801,7 +21812,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
       for field in esd.fields {
         let fu: string = e064_unknown_name(field.type_name, e064_tn, e064_extra);
         if (fu.len() > 0) {
-          body_diags = body_diags.append(dg_at("E064", "unknown type \"" + fu + "\"" + unknown_type_hint(fu), esd.line, esd.col));
+          body_diags = body_diags.append(dg_at("E064", "unknown type \"" + fu + "\"" + unknown_type_hint(fu, e064_traits), esd.line, esd.col));
         }
         // E057 annotation form for a struct FIELD (`c: Cell[P]`),
         // same non-generic, non-enum-variant scope as E064.

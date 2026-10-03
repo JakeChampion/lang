@@ -1848,6 +1848,40 @@ function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[])
   return MethodDedup { mod: deduped, keys: keys };
 }
 
+// imported_trait_spellings is every `alias.Trait` with which `mod` can name a
+// trait one of its imports declares: the parameter types
+// parser.desugar_trait_params turns into anonymous type parameters. A module's
+// own traits are bare, and the parser has already desugared those.
+function imported_trait_spellings(mod: parser.Module, imports: LoadedModule[]): string[] {
+  let ids: string[] = module_ids(imports);
+  let quals: string[] = mod_names(mod);
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < mod.imports.len()) {
+    let k: i32 = 0 - 1;
+    if (mod.imports[i].resolved.len() > 0) {
+      k = index_of_str(mod.imports[i].resolved, ids);
+    }
+    if (k >= 0) {
+      for t in imports[k].mod.trait_decls {
+        out = out.append(quals[i] + "." + t.name);
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// desugar_imported_trait_params applies parser.desugar_trait_params to every
+// loaded module, against the traits its own imports declare.
+function desugar_imported_trait_params(imports: LoadedModule[]): LoadedModule[] {
+  let out: LoadedModule[] = [];
+  for lm in imports {
+    out = out.append(LoadedModule { ...lm, mod: parser.desugar_trait_params(lm.mod, imported_trait_spellings(lm.mod, imports), true) });
+  }
+  return out;
+}
+
 // bundle merges an entry module with its imported modules into one
 // flat Module the asm emitter can lower directly. Each import is
 // mangled (`name__*`, brick 2) — which also renames its own `main`
@@ -1858,8 +1892,9 @@ function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[])
 // the compiler's module layout). This is the final brick: after it,
 // a multi-module program — the compiler itself — lowers to a single
 // namespace and self-compiles.
-pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: string): parser.Module {
-  let entry: parser.Module = with_handler_main(entry0, target);
+pub function bundle(entry0: parser.Module, imports0: LoadedModule[], target: string): parser.Module {
+  let imports: LoadedModule[] = desugar_imported_trait_params(imports0);
+  let entry: parser.Module = parser.desugar_trait_params(with_handler_main(entry0, target), imported_trait_spellings(entry0, imports0), true);
   let funcs: parser.FuncDecl[] = [];
   let structs: parser.StructDecl[] = [];
   let aliases: parser.TypeAlias[] = [];
@@ -2109,8 +2144,9 @@ pub struct PerModule { ns: string, mod: parser.Module, is_entry: boolean }
 // emitted as its own translation unit (entry → `_start` + the shared runtime;
 // imports → library units exposing their `.globl __fn_*`), and the units link
 // into one binary. The entry is the LAST element.
-pub function bundle_per_module(entry0: parser.Module, imports: LoadedModule[], target: string): PerModule[] {
-  let entry: parser.Module = with_handler_main(entry0, target);
+pub function bundle_per_module(entry0: parser.Module, imports0: LoadedModule[], target: string): PerModule[] {
+  let imports: LoadedModule[] = desugar_imported_trait_params(imports0);
+  let entry: parser.Module = parser.desugar_trait_params(with_handler_main(entry0, target), imported_trait_spellings(entry0, imports0), true);
   // One prefix authority for the whole bundle. Everything below -- the
   // enum-variant map, the re-export table, each module's own decls, and
   // every importer's references -- reads these rather than deriving a
