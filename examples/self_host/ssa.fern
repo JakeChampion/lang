@@ -895,6 +895,16 @@ function chain_weight(v: i32, shared_with: i32[], weight: i32[], hi: i32[], now:
   return w;
 }
 
+// any_below says some entry of xs is below x.
+function any_below(xs: i32[], x: i32): boolean {
+  for e in xs {
+    if (e < x) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // still_holds says an eviction at `now` spills ev, an earlier holder of the
 // evicted value's register: one whose interval still reaches `now`, as a phi
 // does when its loop-carried operand took its register over. A holder whose
@@ -1149,27 +1159,29 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
       continue;
     }
     // Expire active intervals that end before v begins.
-    let nv: i32[] = [];
-    let nh: i32[] = [];
-    let nr: i32[] = [];
-    let ai: i32 = 0;
-    while (ai < act_val.len()) {
-      if (act_hi[ai] < lo[v]) {
-        if (act_reg[ai] >= nregs) {
-          free_s = free_s.append(act_reg[ai]);
+    if (any_below(act_hi, lo[v])) {
+      let nv: i32[] = [];
+      let nh: i32[] = [];
+      let nr: i32[] = [];
+      let ai: i32 = 0;
+      while (ai < act_val.len()) {
+        if (act_hi[ai] < lo[v]) {
+          if (act_reg[ai] >= nregs) {
+            free_s = free_s.append(act_reg[ai]);
+          } else {
+            free = free.append(act_reg[ai]);
+          }
         } else {
-          free = free.append(act_reg[ai]);
+          nv = nv.append(act_val[ai]);
+          nh = nh.append(act_hi[ai]);
+          nr = nr.append(act_reg[ai]);
         }
-      } else {
-        nv = nv.append(act_val[ai]);
-        nh = nh.append(act_hi[ai]);
-        nr = nr.append(act_reg[ai]);
+        ai = ai + 1;
       }
-      ai = ai + 1;
+      act_val = nv;
+      act_hi = nh;
+      act_reg = nr;
     }
-    act_val = nv;
-    act_hi = nh;
-    act_reg = nr;
 
     let abi_ok: boolean = !spans_call(cum_abi, lo[v], hi[v]);
     // A value takes the register of its phi mate, or of an operand of

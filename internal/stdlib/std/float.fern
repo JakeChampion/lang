@@ -1106,7 +1106,7 @@ pub function (x: f64) expm1(): f64 {
   }
   let twopk: f64 = _fd_words(0x3ff + k as i64 << 20, 0);
   if (k < 20) {
-    let tk: f64 = _fd_words(0x3ff00000 - (0x200000 >> k as i64), 0);
+    let tk: f64 = _fd_words(0x3ff00000 - (0x200000 as i64 >> k as i64), 0);
     return (tk - (e - v)) * twopk;
   }
   let tk: f64 = _fd_words(0x3ff - k as i64 << 20, 0);
