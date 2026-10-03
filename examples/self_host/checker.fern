@@ -4156,12 +4156,12 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
       return false;
     },
     typeinfo.TypeDyn(_) => {
-      // A direct coercion site accepts any value but a `str`, which assigns
-      // only to a `str`: a box would hold the view past its source. Whether
-      // the concrete implements the traits needs the impl table, which
-      // `coercible` asks. An `unknown` source (e.g. a not-yet-typed dyn
+      // A direct coercion site accepts any value but a view, `str` or `[T]`,
+      // which assigns only to a view: a box would hold it past its source.
+      // Whether the concrete implements the traits needs the impl table,
+      // which `coercible` asks. An `unknown` source (e.g. a not-yet-typed dyn
       // method call) is accepted so it can't false-positive.
-      return !is_str_view(from);
+      return !is_str_view(from) && !is_arr_view(from);
     },
     typeinfo.TypeFunc(_) => {
       // Callable assignment compatibility remains coarse in this partial
