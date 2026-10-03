@@ -1173,9 +1173,10 @@ serializer.
   "Malformed JSON" with where the text broke, and a `string` error
   answers 500 with the status text alone, since an internal message is
   for the log rather than the peer. std/fetch's `FetchError` answers 504
-  for a `Timeout`, 500 for an `InvalidUrl` or `InvalidRequest` (the
-  handler built the request wrong) and 502 for the rest, without its
-  message, which names upstream hosts and addresses
+  for a `Timeout`, 500 for an `InvalidRequest` (a method, header or body
+  the handler wrote that cannot go on the wire) and 502 for the rest, an
+  `InvalidUrl` among them since the URL may have come off the request,
+  without its message, which names upstream hosts and addresses
   (`examples/tests/http_respond_test.fern`).
   A `Result[HttpResponse, dyn error.Error]` goes through
   `respond_error(result, plat)` instead: the error's `message()` is

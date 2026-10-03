@@ -246,7 +246,11 @@ function test_fetch_failure_answers_502_without_the_message(): test.TestOutcome 
 }
 
 function test_fetch_bad_request_answers_500(): test.TestOutcome {
-  return test.assert_status(http.respond(proxied(fetch.InvalidUrl("no scheme"))), 500);
+  return test.assert_status(http.respond(proxied(fetch.InvalidRequest("method"))), 500);
+}
+
+function test_fetch_bad_url_answers_502(): test.TestOutcome {
+  return test.assert_status(http.respond(proxied(fetch.InvalidUrl("no scheme"))), 502);
 }
 
 function main(): i32 {
@@ -264,5 +268,6 @@ function main(): i32 {
   t = t.it("a fetch timeout answers 504", test_fetch_timeout_answers_504);
   t = t.it("a failed fetch answers 502 without the message", test_fetch_failure_answers_502_without_the_message);
   t = t.it("a fetch the handler built wrong answers 500", test_fetch_bad_request_answers_500);
+  t = t.it("a fetch of a URL that does not parse answers 502", test_fetch_bad_url_answers_502);
   return t.finish();
 }
