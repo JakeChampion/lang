@@ -22,8 +22,8 @@ Automatic lending exposed a bootstrap cleanup gap: a temporary array became
 a view, whose header was released, while the source array was left behind.
 The lowering now uses the existing owned-argument staging and copying-builtin
 contract to keep an immediate view's temporary source alive through the call
-and release it afterward. The checked expression and escape analysis are
-unchanged. Named sources keep their existing owner.
+and release it afterward. The checked expression is unchanged. Named sources
+keep their existing owner.
 
 The bootstrap deliberately uses immortal stream handles and error boxes. Its
 inline-string spill also has the existing #8408 leak. Bootstrap census tests
@@ -74,6 +74,31 @@ Actual Darwin, core WASM, component and interpreter probes pass again, with
 the same balanced native/core census counts above. Native and WASM cache
 isolation checks pass again. The earlier full unit
 pass belongs to `ff029586b`; full integrated CI remains a merge gate.
+
+CI on `68623a892` found two Go WASM buffered-writer census failures on both
+runner architectures. After 200 flushes, the first reports 605 allocations
+and 404 frees; the fresh-byte argument fixture reports 461 allocations,
+203 frees and 7,232 live bytes. These tests were absent from the targeted
+bootstrap selection above. The PR cannot merge until the regression is
+repaired and the full current-head checks pass.
+
+The cause was the same automatic array-to-view wrapper at a different
+boundary. A helper borrowing an array for Writer previously received the
+copying-builtin parameter credit. After the signature change, that credit
+stopped at the view wrapper. Callers such as `BufWriter.flush` then left their
+temporary arrays behind. The bootstrap now preserves the existing credit
+through an immediate array view at those synchronous-copy positions only.
+Returned views and views passed to retaining callees keep their refusal.
+Four focused positive cases fail before the repair and pass afterward;
+escaping-view controls pass in both versions. Both failing WASM census tests
+also pass locally after the repair. The frozen Linux regression pair passes
+in 0.255 seconds, the expanded Writer/BufWriter target group in 31.646 seconds,
+and the primary regression group in 95.372 seconds. Full unit tests and all
+lint gates pass. Darwin Go Writer/BufWriter tests pass in 2.658 seconds.
+All 5,920 Go/Fern files match the validated snapshot. The 211 primary compiler
+and standard-library files are unchanged from the reproduced `68623a892`
+snapshot, so its fixed-point and artifact evidence above still applies.
+Full current-head CI and required approval remain merge gates.
 
 ## Controlled measurements before upstream integration
 

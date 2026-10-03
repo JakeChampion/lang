@@ -51,8 +51,8 @@ closing D9. Regex keeps byte-oriented matching: replacing `.` in `é` can
 split its encoding, so the checked text result is `None` while the byte
 variant returns the exact output.
 
-Two things sit outside the invariant on purpose, both recorded rather
-than pending:
+The OS text contract remains a deliberate exception, while the sink migration
+is still incomplete:
 
 - **`args()`, `environ()`, `env(name)` and `read_line()` are assumed
   UTF-8, not validated** — the D10 position, extended from paths to the
@@ -61,11 +61,12 @@ than pending:
   end-of-file), and a CLI that trapped on a stray byte in its own
   arguments would be worse than one that passed it through. Their
   builtin signatures say so.
-- **The byte sinks take `string`** (#10948): `tcp_send`, `udp_sendto`,
-  `write_file` and wasi's `stream_write` have no `u8[]` form, so the
-  stdlib builds an unchecked string to feed them a byte-domain body or a
-  DNS packet. Those strings never reach a caller. The `u8[]` siblings are
-  the mirror of the source-side split and their own slice.
+- **Byte sinks now have raw forms, but some callers still construct text**
+  (#10948): `tcp_send_bytes`, `udp_sendto_bytes` and `write_file_bytes` are
+  available; wasi's `stream_write` takes `u8[]`, and Writer's byte methods
+  borrow `[u8]`. DNS uses the raw send path. The remaining unchecked
+  conversions in `std/tcp` and `std/fetch` still need migration. Having byte
+  entry points does not establish the invariant for their callers.
 
 Written because #5552 ("stdlib case ops are ASCII-only — add a Unicode
 `std/unicode`") asked a question the codebase can't answer from first
