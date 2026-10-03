@@ -6549,6 +6549,11 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
     s = s.write("    imulq $" + util.i64_to_string(fr.imm.value[b]) + ", " + ssa_reg(reg_of[a]) + ", " + dh + "\n");
     return ssa_store(reg_of, ins.result, dh, s);
   }
+  let lea: string = ssa_lea_operand(tag, a, b, dh, reg_of, fr);
+  if (lea != "") {
+    s = s.write("    leaq " + lea + ", " + dh + "\n");
+    return ssa_store(reg_of, ins.result, dh, s);
+  }
   s = ssa_read_rhs(fr, reg_of, b, "%rcx", s);
   s = ssa_load(reg_of, a, dh, s);
   if (ssa_shift_tag(tag)) {
@@ -6557,6 +6562,36 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
     s = s.write(ir_bin_asm(tag, ins.imm, dh, ssa_rhs(fr, reg_of, b, "%rcx")));
   }
   return ssa_store(reg_of, ins.result, dh, s);
+}
+
+// ssa_lea_operand is the address an add, or a subtract of a constant, computes
+// when its result lands in a register the left operand does not hold: one lea
+// in place of a copy and the two-address op. Nothing reads the flags an add
+// leaves. It is "" when the op takes the two-address form.
+function ssa_lea_operand(tag: i32, a: i32, b: i32, dh: string, reg_of: i32[], fr: SsaFrame): string {
+  if (tag != 21 && tag != 22 || reg_of[a] < 0) {
+    return "";
+  }
+  let ra: string = ssa_reg(reg_of[a]);
+  if (ra == dh) {
+    return "";
+  }
+  if (fr.imm.is_imm[b]) {
+    // An immediate is a signed 32-bit value, so only the least one has no
+    // negation for the displacement.
+    let v: i64 = fr.imm.value[b];
+    if (tag == 22 && v == -2147483648i64) {
+      return "";
+    }
+    if (tag == 22) {
+      v = 0i64 - v;
+    }
+    return util.i64_to_string(v) + "(" + ra + ")";
+  }
+  if (tag == 21 && reg_of[b] >= 0) {
+    return "(" + ra + "," + ssa_reg(reg_of[b]) + ")";
+  }
+  return "";
 }
 
 // ssa_r32 and ssa_r8 are the 32-bit and 8-bit names of a 64-bit register.
