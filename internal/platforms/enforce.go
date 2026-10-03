@@ -226,6 +226,11 @@ var gatedBuiltins = map[string]string{
 	// would reopen the window the call exists to close.
 	"rename_noreplace": "fsrename",
 	"rename_exchange":  "fsrename",
+	// An entry's extended attributes. Neither WASI preview has them, and
+	// an empty answer would claim an attribute is absent from a
+	// filesystem nobody asked.
+	"getxattr":  "xattr",
+	"lgetxattr": "xattr",
 	// Who OWNS an entry. A host can have files, directories and
 	// permission bits and still have no users to attach them to, which
 	// is what both WASI previews are: preview 1's `filestat` has no uid

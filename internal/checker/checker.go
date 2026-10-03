@@ -3263,6 +3263,28 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// getxattr(path, name): Result[string, IoError] — the value of the
+	// extended attribute `name` on `path`, `getxattr(2)`. The value is
+	// the attribute's bytes verbatim: an SELinux context keeps the NUL
+	// the kernel stores after it. An absent attribute is ENODATA
+	// (Darwin's ENOATTR), a filesystem without attributes EOPNOTSUPP,
+	// and the Err carries which. lgetxattr is the same question about
+	// a final symlink itself, the way `lstat` is. Native only: neither
+	// WASI preview has extended attributes (capability `xattr`).
+	c.info.FuncSigs["getxattr"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	c.info.FuncSigs["lgetxattr"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// rename(from, to): Result[void, IoError] — move the directory
 	// entry `from` to `to`, `renameat(AT_FDCWD, from, AT_FDCWD, to)`.
 	// Nothing is copied: the inode keeps its mode, its times and every

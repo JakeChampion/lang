@@ -1080,6 +1080,17 @@ pub function op_rename(): Op {
 // `rename_noreplace` and `rename_exchange` take [old, new] like `rename`:
 // renameat2 with RENAME_NOREPLACE (an existing `new` is EEXIST) or
 // RENAME_EXCHANGE (the two names swap), in the same kernel call.
+// `getxattr` / `lgetxattr` take [path, name] and push Result[string,
+// IoError]: the attribute's value, following a final symlink or not.
+// Native only: neither WASI preview has extended attributes.
+pub function op_getxattr(): Op {
+  return op0(361);
+}
+
+pub function op_lgetxattr(): Op {
+  return op0(362);
+}
+
 pub function op_rename_noreplace(): Op {
   return op0(356);
 }
@@ -3486,6 +3497,9 @@ function kind_id_len8(name: string): i32 {
   if (c == b'f' && name == "f64_bits") {
     return 16;
   }
+  if (c == b'g' && name == "getxattr") {
+    return 361;
+  }
   if (c == b'h' && name == "hostname") {
     return 240;
   }
@@ -3665,6 +3679,9 @@ function kind_id_len9(name: string): i32 {
   }
   if (c == b'h' && name == "heap_mark") {
     return 229;
+  }
+  if (c == b'l' && name == "lgetxattr") {
+    return 362;
   }
   if (c == b'o' && name == "open_file") {
     return 203;
@@ -5396,6 +5413,12 @@ pub function kind_name(id: i32): string {
   if (id == 360) {
     return "rmemchr_bytes";
   }
+  if (id == 361) {
+    return "getxattr";
+  }
+  if (id == 362) {
+    return "lgetxattr";
+  }
   if (id <= 40) {
     return kind_name_0(id);
   }
@@ -5551,6 +5574,7 @@ function pops2_io(t: i32): boolean {
     || t == 237  // access (path, mode)
     || t == 260 || t == 262 || t == 263 || t == 267 || t == 268  // create_dir, create_link, create_symlink, rename, chmod
     || t == 356 || t == 357  // rename_noreplace, rename_exchange
+    || t == 361 || t == 362  // getxattr, lgetxattr (path, name)
     || t == 273  // truncate (path, length)
     || t == 304 || t == 305  // open_reader_with, open_writer_with (path, flags)
     || t == 281  // writer_truncate (fd, length)
@@ -8041,8 +8065,8 @@ pub function op_allocates(tag: i32): boolean {
   }
   // The single-step directory and link primitives, rename, set_file_times
   // and truncate box a Result and heap-build the NUL-terminated paths they
-  // pass to the kernel; read_link boxes the target string as well.
-  if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 || tag == 267 || tag == 269 || tag == 273 || tag == 356 || tag == 357) {
+  // pass to the kernel; read_link and the xattr reads box a string as well.
+  if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 || tag == 267 || tag == 269 || tag == 273 || tag == 356 || tag == 357 || tag == 361 || tag == 362) {
     return true;
   }
   // read_dir / read_dir_all box a fresh string[] (the arr box + a string

@@ -27,7 +27,7 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=337 declined=3\n"
+		"registered=340 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()
