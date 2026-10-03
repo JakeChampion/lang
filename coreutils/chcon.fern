@@ -356,7 +356,7 @@ function change_one(st0: St, s: Settings, path: string, shown: string): St {
         // ENODATA is a file with no label, which GNU will not complete
         // from a partial context.
         let why: string = gnu.io_error_text(e);
-        if (why == "No data available") {
+        if (why == gnu.enodata_text()) {
           return fail(st, "can't apply partial context to unlabeled file " + gnu.quotea(shown));
         }
         return fail(st, "failed to get security context of " + gnu.quotea(shown) + ": " + why);
