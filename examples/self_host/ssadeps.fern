@@ -260,7 +260,7 @@ pub function analyze(f: ssa.SFunc, dependencies: i32[][]): ssalive.Flow {
   if (why != "") {
     return ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [], none: [] };
   }
-  return ssalive.compute(f, dependencies);
+  return ssalive.compute_checked(f, dependencies);
 }
 
 // Dependencies contain their full transitive closure and are keyed by values,
