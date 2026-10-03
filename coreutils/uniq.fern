@@ -301,15 +301,15 @@ function cap(v: u64, hi: i32): i32 {
 // Each run is one `__scan_set`: `cfg.ink` stops at the first byte that is
 // not a separator, `cfg.seps` at the first separator or the terminator. A
 // scan can pass the line's end, so its answer is clamped to the content.
-function field_offset(s: string, at: i32, len: i32, cfg: Cfg): i32 {
+function field_offset(s: u8[], at: i32, len: i32, cfg: Cfg): i32 {
   let size: i32 = len - 1;
   let i: i32 = 0;
   let n: i32 = cap(cfg.skip_fields, size);
   let c: i32 = 0;
   while (c < n && i < size) {
-    i = __scan_set(s, at + i, cfg.ink) - at;
+    i = __scan_set_bytes(s, at + i, cfg.ink) - at;
     if (i < size) {
-      i = __scan_set(s, at + i, cfg.seps) - at;
+      i = __scan_set_bytes(s, at + i, cfg.seps) - at;
     }
     if (i > size) {
       i = size;
@@ -347,7 +347,7 @@ function to_lower(c: i32): i32 {
 // gnulib's memcasecmp, over the C locale's case pairs only: a byte over
 // 0x7f folds to itself, so the two encodings of one accented letter
 // stay different.
-function eq_fold(a: string, ao: i32, b: string, bo: i32, n: i32): boolean {
+function eq_fold(a: u8[], ao: i32, b: u8[], bo: i32, n: i32): boolean {
   let i: i32 = 0;
   while (i < n) {
     if (to_lower(a[ao + i] as i32) != to_lower(b[bo + i] as i32)) {
@@ -358,28 +358,20 @@ function eq_fold(a: string, ao: i32, b: string, bo: i32, n: i32): boolean {
   return true;
 }
 
-// The compared field of a held line, cut out once when the line is
-// held. Incoming lines are compared in their read buffer, without
-// materialising another key for each line.
-function key_of(line: string, at: i32, len: i32, field: i32, cfg: Cfg): string {
-  let n: i32 = cap(cfg.check_chars, len - 1 - field);
-  return slice_unchecked(line, at + field, at + field + n).to_string();
-}
-
 // GNU's `!different()` between a line still sitting in the read buffer
 // — `a` from `at` for `len` bytes, its field `af` in — and the held
 // line's key. Both are truncated to `check_chars`, and they are equal
 // only if the truncated LENGTHS match too: `uniq -w5` finds `ab` and
 // `a` different.
-function same_key(a: string, at: i32, len: i32, af: i32, key: string, cfg: Cfg): boolean {
+function same_key(a: u8[], at: i32, len: i32, af: i32, key: u8[], key_at: i32, key_len: i32, cfg: Cfg): boolean {
   let an: i32 = cap(cfg.check_chars, len - 1 - af);
-  if (an != key.len()) {
+  if (an != key_len) {
     return false;
   }
   if (cfg.ignore_case) {
-    return eq_fold(a, at + af, key, 0, an);
+    return eq_fold(a, at + af, key, key_at, an);
   }
-  return __mismatch(a, at + af, key, 0, an) == an;
+  return __mismatch_bytes(a, at + af, key, key_at, an) == an;
 }
 
 // ---- input ------------------------------------------------------------------
@@ -400,15 +392,14 @@ function write_block(): i32 {
 
 // ---- the line loop ----------------------------------------------------------
 //
-// One read block at a time, scanned with __memchr, with every line left
+// One read block at a time, scanned with __memchr_bytes, with every line left
 // as a RANGE of its block: the line held for comparison against the
 // next one is a reference to the block it came from, never a copy. A
-// line that spans two blocks is joined into `carry` and read from there
+// line that spans blocks is accumulated in a byte builder and read from there
 // instead. Output is pushed range by range into the writer's builder.
 function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
   let out: io_buffered.BufWriter = io_buffered.buf_writer_new(w, write_block());
   let h: usize = out.handle();
-  let delim: string = string_from_bytes_unchecked([cfg.term as u8]);
   let block: i32 = write_block();
   // The three fields the per-line path reads every time, in locals: the
   // loop below runs once per input line and a struct field is a load.
@@ -416,19 +407,18 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
   let plain: boolean = cfg.plain;
   let grouped: boolean = cfg.grouping != gm_none();
 
-  let chunk: string = "";
+  let chunk: u8[] = [];
   let pos: i32 = 0;
   let eof: boolean = false;
-  let carry: string = "";
 
   // The held line is the range `[pat, pat + plen)` of `prev`: the block
   // it was read from, or the carry it was joined in, never a copy.
-  let prev: string = "";
+  let prev: u8[] = [];
   let pat: i32 = 0;
   let plen: i32 = 0;
-  // The held line's compared field, kept alongside it for every mode
-  // but the plain one, where the field IS the line.
-  let prev_key: string = "";
+  // The compared key is another range of the already retained block.
+  let prev_key_at: i32 = 0;
+  let prev_key_len: i32 = 0;
   let have_prev: boolean = false;
   let match_count: u64 = 0 as u64;
   let first_delimiter: boolean = true;
@@ -440,34 +430,37 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
     let len: i32 = 0;
     let spanned: boolean = false;
     let got: boolean = false;
-    carry = "";
+    let carry: usize = 0 as usize;
     while (true) {
-      let j: i32 = __memchr(chunk, term, pos);
+      let j: i32 = __memchr_bytes(chunk, term, pos);
       if (j >= 0) {
         at = pos;
         len = j + 1 - pos;
         pos = j + 1;
         if (spanned) {
-          carry = carry + slice_unchecked(chunk, at, at + len);
+          buf_push_bytes_range(carry, chunk, at, at + len);
         }
         got = true;
         break;
       }
       if (pos < chunk.len()) {
-        carry = carry + slice_unchecked(chunk, pos, chunk.len());
+        if (carry == 0 as usize) {
+          carry = buf_new(chunk.len() - pos);
+        }
+        buf_push_bytes_range(carry, chunk, pos, chunk.len());
         pos = chunk.len();
         spanned = true;
       }
       if (eof) {
         // gnulib's readlinebuffer_delim gives an unterminated last line
         // its delimiter, so it can still match the line before it.
-        if (carry.len() > 0) {
-          carry = carry + delim;
+        if (carry != 0 as usize && buf_len(carry) > 0) {
+          buf_push_byte(carry, term);
           got = true;
         }
         break;
       }
-      match (r.read_chunk(read_size())) {
+      match (r.read_chunk_bytes(read_size())) {
         Ok(c) => {
           if (c.len() == 0) {
             eof = true;
@@ -479,19 +472,26 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
         Err(e) => {
           // The line in hand is dropped, as GNU drops it: a read error
           // skips the final writeline and reports.
+          if (carry != 0 as usize) {
+            buf_free(carry);
+          }
           gnu.die(out, "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e), 1);
         }
       }
     }
     if (!got) {
+      if (carry != 0 as usize) {
+        buf_free(carry);
+      }
       break;
     }
     // The line is `src[at, at + len)`.
-    let src: string = chunk;
+    let src: u8[] = chunk;
     if (spanned) {
-      src = carry;
+      src = buf_take_bytes(carry);
+      buf_free(carry);
       at = 0;
-      len = carry.len();
+      len = src.len();
     }
 
     // ---- compare it with the line held --------------------------------
@@ -511,10 +511,10 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
         // their last digit, sorted paths
         // in their last component.
         if (len == plen && (len < 2 || src[at + len - 2] as i32 == prev[pat + len - 2] as i32)) {
-          matched = __mismatch(src, at, prev, pat, len) == len;
+          matched = __mismatch_bytes(src, at, prev, pat, len) == len;
         }
       } else {
-        matched = same_key(src, at, len, field, prev_key, cfg);
+        matched = same_key(src, at, len, field, prev, prev_key_at, prev_key_len, cfg);
       }
     }
 
@@ -524,7 +524,7 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
           buf_push_byte(h, term);
         }
       }
-      buf_push_range(h, src, at, at + len);
+      buf_push_bytes_range(h, src, at, at + len);
       first_group_printed = true;
     } else if (have_prev) {
       if (matched) {
@@ -561,7 +561,7 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
         if (cfg.count) {
           push_count(h, match_count + 1 as u64);
         }
-        buf_push_range(h, prev, pat, pat + plen);
+        buf_push_bytes_range(h, prev, pat, pat + plen);
       }
       if (!matched) {
         match_count = 0 as u64;
@@ -573,7 +573,8 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
     pat = at;
     plen = len;
     if (!plain) {
-      prev_key = key_of(prev, pat, plen, field, cfg);
+      prev_key_at = pat + field;
+      prev_key_len = cap(cfg.check_chars, plen - 1 - field);
     }
     have_prev = true;
     if (buf_len(h) >= block) {
@@ -590,7 +591,7 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
       if (cfg.count) {
         push_count(h, match_count + 1 as u64);
       }
-      buf_push_range(h, prev, pat, pat + plen);
+      buf_push_bytes_range(h, prev, pat, pat + plen);
     }
   }
   match (r.close()) {

@@ -117,7 +117,6 @@ TestSyncParity
 TestTailParity
 TestTestParity
 TestTtyParity
-TestUniqParity
 TestUptime
 TestUsersParity
 TestUtmpRecordLayoutMatchesTheHost

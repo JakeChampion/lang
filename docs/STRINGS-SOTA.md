@@ -983,6 +983,11 @@ GNU random-source exhaustion boundaries. Target checks, size measurements,
 native benchmarks and the existing Darwin terminal limitation are recorded in
 [the shred report](STRING-SHRED-BYTES-2026-10-03.md).
 
+`uniq` keeps records and comparison keys in raw byte ranges, using a builder
+for records that span reads. GNU parity, allocation checks, size and native
+measurements are recorded in
+[the uniq report](STRING-UNIQ-BYTES-2026-10-03.md).
+
 `head` and `tail` use raw byte input, delimiter scans and output. Their
 shared hold retains input blocks with a 64-bit byte count and releases
 consumed blocks without repeatedly copying long records. Target checks and
