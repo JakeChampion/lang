@@ -8850,7 +8850,7 @@ func (c *checker) checkTypeKnown(t ast.Type, params map[string]bool, pos ast.Pos
 	switch x := t.(type) {
 	case ast.StructType:
 		if !c.knownTypeName(x.Name, params) {
-			c.errfCode(pos, "E064", "unknown type %q%s", x.Name, c.unknownTypeHint(x.Name))
+			c.errfCode(pos, "E064", "unknown type %q%s", demangle(x.Name), c.unknownTypeHint(x.Name))
 			return
 		}
 		for _, a := range x.Args {
@@ -8858,7 +8858,7 @@ func (c *checker) checkTypeKnown(t ast.Type, params map[string]bool, pos ast.Pos
 		}
 	case ast.EnumType:
 		if !c.knownTypeName(x.Name, params) {
-			c.errfCode(pos, "E064", "unknown type %q%s", x.Name, c.unknownTypeHint(x.Name))
+			c.errfCode(pos, "E064", "unknown type %q%s", demangle(x.Name), c.unknownTypeHint(x.Name))
 			return
 		}
 		for _, a := range x.Args {
@@ -8909,7 +8909,7 @@ func (c *checker) knownTypeName(name string, params map[string]bool) bool {
 // cross-language slips, appended to the E064 message.
 func (c *checker) unknownTypeHint(name string) string {
 	if c.traitNames[name] {
-		return fmt.Sprintf(" (`%s` is a trait: a parameter of trait type makes the function generic over it; anywhere else write `dyn %s`)", name, name)
+		return fmt.Sprintf(" (`%s` is a trait: a parameter of trait type makes the function generic over it; anywhere else write `dyn %s`)", demangle(name), demangle(name))
 	}
 	switch name {
 	case "bool":
@@ -21694,9 +21694,25 @@ func desugarTraitParams(prog *ast.Program) map[string]bool {
 		traits[td.Name] = true
 	}
 	for _, fn := range prog.Funcs {
+		// A trait's methods are not generic, so an impl's method keeps a
+		// trait-typed parameter as written, and it is no type there (E064).
+		if fn.ImplTrait != "" {
+			continue
+		}
 		for i := range fn.Params {
-			st, ok := fn.Params[i].Type.(ast.StructType)
-			if !ok || !traits[st.Name] || slices.Contains(fn.TypeParams, st.Name) {
+			// The parser spells a bracketed nominal (`Sink[i32]`) as an
+			// EnumType; an array or any other shape is not a trait reference.
+			var name string
+			var args []ast.Type
+			switch t := fn.Params[i].Type.(type) {
+			case ast.StructType:
+				name, args = t.Name, t.Args
+			case ast.EnumType:
+				name, args = t.Name, t.Args
+			default:
+				continue
+			}
+			if !traits[name] || slices.Contains(fn.TypeParams, name) {
 				continue
 			}
 			tp := freshTraitParam("T_"+fn.Params[i].Name, fn.TypeParams)
@@ -21704,12 +21720,12 @@ func desugarTraitParams(prog *ast.Program) map[string]bool {
 			if fn.Bounds == nil {
 				fn.Bounds = map[string][]string{}
 			}
-			fn.Bounds[tp] = []string{st.Name}
-			if len(st.Args) > 0 {
+			fn.Bounds[tp] = []string{name}
+			if len(args) > 0 {
 				if fn.BoundArgs == nil {
 					fn.BoundArgs = map[string][][]ast.Type{}
 				}
-				fn.BoundArgs[tp] = [][]ast.Type{st.Args}
+				fn.BoundArgs[tp] = [][]ast.Type{args}
 			}
 			fn.Params[i].Type = ast.StructType{Name: tp}
 		}

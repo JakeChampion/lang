@@ -116,8 +116,11 @@ function main(): i32 {
 Each such parameter gets a type parameter of its own, so in
 `function pair(a: cmp.Display, b: cmp.Display)` the two arguments may be
 different types. Write the type parameter out when two parameters must share
-one, or when the return type names it. A trait means this only as a
-parameter type: in a return type, a field or a `let`, write
+one, or when the return type names it. The parameter's type is the trait
+itself, with its type arguments when it has them (`s: Sink[i32]`); an array
+of a trait is not it, and a trait's methods are not generic, so inside an
+`impl` the rule does not apply. A trait means this only as a parameter type:
+in a return type, a field or a `let`, write
 [`dyn Trait`](#runtime-dispatch--dyn-trait) for a value of any implementing
 type, or a type parameter.
 

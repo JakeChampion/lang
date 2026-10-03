@@ -23406,13 +23406,20 @@ pub function desugar_trait_params(mod: Module, traits: string[], spelled: boolea
 }
 
 function desugar_fn_trait_params(fd: FuncDecl, traits: string[], spelled: boolean): FuncDecl {
+  // A trait's methods are not generic, so an impl's method keeps a
+  // trait-typed parameter as written, and it is no type there (E064).
+  if (fd.impl_trait.len() > 0) {
+    return fd;
+  }
   let params: ast.ParamDecl[] = [];
   let type_params: string[] = fd.type_params;
   let bound_traits: string[] = fd.bound_traits;
   let all_type_params: string[] = fd.all_type_params;
   for p in fd.params {
-    let base: string = util.base_type_name(p.type_name);
-    if (!str_list_contains(traits, base) || str_list_contains(all_type_params, base)) {
+    // The trait itself, with or without type arguments: an array of it or
+    // any other shape is not a trait reference.
+    let tr: TypeRef = parse_type_ref(p.type_name);
+    if (tr.array_depth > 0 || tr.is_tuple || tr.is_fn || tr.is_view || !str_list_contains(traits, tr.base) || str_list_contains(all_type_params, tr.base)) {
       params = params.append(p);
       continue;
     }

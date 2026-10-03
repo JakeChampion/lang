@@ -1851,7 +1851,9 @@ function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[])
 // imported_trait_spellings is every `alias.Trait` with which `mod` can name a
 // trait one of its imports declares: the parameter types
 // parser.desugar_trait_params turns into anonymous type parameters. A module's
-// own traits are bare, and the parser has already desugared those.
+// own traits are bare, and the parser has already desugared those. An import
+// is matched as import_prefixes matches it: by `resolved` identity, else by
+// the basename a loader that records no identity named the module by.
 function imported_trait_spellings(mod: parser.Module, imports: LoadedModule[]): string[] {
   let ids: string[] = module_ids(imports);
   let quals: string[] = mod_names(mod);
@@ -1862,6 +1864,9 @@ function imported_trait_spellings(mod: parser.Module, imports: LoadedModule[]): 
     if (mod.imports[i].resolved.len() > 0) {
       k = index_of_str(mod.imports[i].resolved, ids);
     }
+    if (k < 0) {
+      k = loaded_index_by_name(imports, basename(mod.imports[i].path));
+    }
     if (k >= 0) {
       for t in imports[k].mod.trait_decls {
         out = out.append(quals[i] + "." + t.name);
@@ -1870,6 +1875,19 @@ function imported_trait_spellings(mod: parser.Module, imports: LoadedModule[]): 
     i = i + 1;
   }
   return out;
+}
+
+// loaded_index_by_name is the position of the loaded module named `name`,
+// or -1.
+function loaded_index_by_name(imports: LoadedModule[], name: string): i32 {
+  let i: i32 = 0;
+  while (i < imports.len()) {
+    if (imports[i].name == name) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 // desugar_imported_trait_params applies parser.desugar_trait_params to every
