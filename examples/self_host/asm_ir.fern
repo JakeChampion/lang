@@ -379,6 +379,12 @@ function fused_marker(): i32 {
   return 1934589965;  // 0x734F800D
 }
 
+// A counted descriptor over borrowed data. Its last release frees the box
+// alone; the semantic lifetime anchors keep the source bytes alive.
+function borrowed_marker(): i32 {
+  return 1112494674;  // 0x424F5252, BORR
+}
+
 // rc_poison is the decimal of ast.RcPoison (0x7EEDFACE), the marker a
 // quarantined block carries in its rc word. Never hand-write the literal at a
 // use site: the self-host cannot import the Go constant, so the quarantine
@@ -2911,6 +2917,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jnz .Lshrcinc_ret\n");
   s = s.write("    cmpq $0x10000, %rax\n");
   s = s.write("    jb .Lshrcinc_ret\n");
+  // Byte views retain the untagged descriptor but return their original value.
+  s = s.write("    andq $-3, %rax\n");
   s = s.write("    movl -8(%rax), %ecx\n");
   s = s.write(san_poison_check("%ecx"));
   s = s.write("    testl %ecx, %ecx\n");
@@ -2918,6 +2926,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    addl $1, %ecx\n");
   s = s.write("    movl %ecx, -8(%rax)\n");
   s = s.write(".Lshrcinc_ret:\n");
+  s = s.write("    movq 8(%rsp), %rax\n");
   s = s.write("    ret\n");
   s = s.write("__fn___fern_rc_underflow_count:\n");
   s = s.write("    movl __fern_rc_underflow(%rip), %eax\n");
@@ -3091,7 +3100,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // rc word @ box-8 (#2649 Option A rc-headered string box): a negative rc is the
   // immortal/sentinel marker (skip); rc>1 decrements without freeing (the box is
   // still shared — once inc-on-alias is wired in A2, an aliased string survives);
-  // rc==1 frees the data buffer + the box; rc==0 is a double-free, caught by the
+  // rc==1 frees the box and any owned data; rc==0 is a double-free, caught by the
   // underflow counter (matching __fn___fern_arr_dec) rather than corrupting the heap.
   s = s.write("    movl -8(%rax), %ecx\n");  // rc
   s = s.write(san_poison_check("%ecx"));
@@ -3105,6 +3114,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movl -4(%rax), %edx\n");  // fused marker @ box-4
   s = s.write("    cmpl $" + util.i32_to_string(fused_marker()) + ", %edx\n");
   s = s.write("    je .Lstrfree_fused\n");
+  s = s.write("    cmpl $" + util.i32_to_string(borrowed_marker()) + ", %edx\n");
+  s = s.write("    je .Lstrfree_box\n");
   // rc==1: sole owner -> free data buffer (heap-guarded) then the 24-byte box.
   s = s.write("    movq (%rax), %rcx\n");  // data = box[0]
   s = s.write("    movq 8(%rax), %rdx\n");  // len  = box[8]
@@ -3191,18 +3202,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(san_underflow_abort());
   s = s.write(".Lstrfree_ret:\n");
   s = s.write("    ret\n");
-  // __fern_str_view_free(box) — release a string result that may be a zero-copy
-  // VIEW (#6544). `s[a:b]` builds a 24-byte box over the SOURCE's bytes and
-  // stamps rc = -1, the immortal sentinel, precisely so no reclaim path frees
-  // the shared data. That leaves the box itself unreclaimable by any helper,
-  // and a borrowing string method (`(s: string) drop(n)`) allocates one per
-  // call.
-  //
-  // This helper is __fern_str_free with that one case added: an IMMORTAL rc
-  // frees the 24-byte box ALONE (class 3), data untouched; every other rc
-  // tail-jumps to __fern_str_free unchanged, so a fresh box still frees data +
-  // box. Only an emit site that has proved the view is dead may call it — the
-  // immortal rc means a second holder is uncounted and undetectable.
+  // __fern_str_view_free releases counted strings and borrowed-data boxes
+  // through str_free. It also accepts legacy immortal heap view descriptors:
+  // those release the box alone, once its sole holder has finished reading.
   //
   // The heap-range guard on the BOX BASE is what makes the sentinel an exact
   // test for a view: the other immortal producers are the frame form of this
@@ -3387,6 +3389,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jnz .Lshuniq_ret\n");
   s = s.write("    cmpq $0x10000, %rcx\n");
   s = s.write("    jb .Lshuniq_ret\n");
+  s = s.write("    andq $-3, %rcx\n");
   s = s.write("    movl -8(%rcx), %edx\n");
   s = s.write(san_poison_check("%edx"));
   s = s.write("    testl %edx, %edx\n");
@@ -3525,8 +3528,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ret\n");
   }
   // __fern_str_own(s@8(%rsp)) -> a string its holder owns a unit of. A
-  // counted string is retained and answered. An arena view box, whose
-  // immortal rc cannot count a second holder, is answered as a fresh box
+  // counted string or view descriptor is retained and answered. A legacy
+  // arena view box with an immortal rc is answered as a fresh counted box
   // over the same bytes. A view box outside the arena (a literal) is never
   // freed, so it is answered as is.
   if (s.has_need("str_own")) {
@@ -3554,7 +3557,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq $24, %rdi\n");
     s = s.write("    call __fern_alloc\n");
     s = s.write("    popq %rcx\n");  // the shared box
-    s = s.write("    movq $-1, (%rax)\n");
+    s = s.write("    movl $1, (%rax)\n");
+    s = s.write("    movl $" + util.i32_to_string(borrowed_marker()) + ", 4(%rax)\n");
     s = s.write("    movq (%rcx), %rdx\n");
     s = s.write("    movq %rdx, 8(%rax)\n");  // data
     s = s.write("    movq 8(%rcx), %rdx\n");
@@ -6814,6 +6818,10 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
   let rc: string = "-8(" + p + ")";
   let guard: string = "    testb $1, " + ssa_r8(p) + "\n    jnz " + done + "\n"
     + "    cmpq $0x10000, " + p + "\n    jb " + done + "\n";
+  if (ins.imm != 4) {
+    guard = guard + "    movq " + p + ", %rdx\n    andq $-3, %rdx\n";
+    rc = "-8(%rdx)";
+  }
   if (ins.str == "__fern_rc_is_unique") {
     let d: string = ssa_dst(reg_of, ins.result);
     s = s.write("    xorl %ecx, %ecx\n" + guard);
@@ -7642,8 +7650,8 @@ function ssa_view_count(views: i32[]): i32 {
 }
 
 // ssa_str_view is the string slice kernel of emit_ir_str_op with register
-// operands: the two bounds checks, then the {rc -1, data + lo, hi - lo} box
-// either in the frame words this site owns or freshly allocated. The operands
+// operands: the two bounds checks, then the {header, data + lo, hi - lo} box
+// either immortal in this frame or counted with borrowed data on the heap. The operands
 // are read before the allocation and carried across it on the machine stack,
 // since the call clobbers every register they could live in.
 function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.EmitState): asmcore.EmitState {
@@ -7656,10 +7664,13 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
   s = s.write("    subq %rcx, %rax\n    addq (%rdx), %rcx\n");
   if (ins.imm == 1) {
     s = s.write("    leaq " + util.i32_to_string(base_off) + "(%rbp), %rdx\n");
+    s = s.write("    movq $-1, (%rdx)\n");
   } else {
     s = s.write("    pushq %rcx\n    pushq %rax\n    movq $24, %rdi\n    call __fern_alloc\n    movq %rax, %rdx\n    popq %rax\n    popq %rcx\n");
+    s = s.write("    movl $1, (%rdx)\n");
+    s = s.write("    movl $" + util.i32_to_string(borrowed_marker()) + ", 4(%rdx)\n");
   }
-  s = s.write("    movq $-1, (%rdx)\n    movq %rcx, 8(%rdx)\n    movq %rax, 16(%rdx)\n    addq $8, %rdx\n");
+  s = s.write("    movq %rcx, 8(%rdx)\n    movq %rax, 16(%rdx)\n    addq $8, %rdx\n");
   // The result leaves in %rdx, so the store does not re-assert what %rax
   // holds, and the bound loaded into it above has been overwritten.
   return ssa_store(reg_of, ins.result, "%rdx", ssa_x0_forget(s));
@@ -7678,10 +7689,10 @@ struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave:
 // edge when it is. An inline uniqueness test of `a` fuses as `unique`: its
 // guards leave the flags an equality compare would. n is 0 when the block
 // ends some other way.
-struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean }
+struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean }
 
 function ssa_no_fuse(): SsaFuse {
-  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false };
+  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false, aligned: false };
 }
 
 // ssa_fuse finds the compare a block's brif can read as flags: the block's
@@ -7701,7 +7712,7 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
   let n: i32 = 1;
   let inverted: boolean = false;
   if (last.kind_tag == 10 && last.str == "!") {
-    let value_test: SsaFuse = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false };
+    let value_test: SsaFuse = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false };
     if (blk.insts.len() < 2) {
       return value_test;
     }
@@ -7716,15 +7727,15 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
     inverted = true;
   }
   if (ssa_unique_test(cmp)) {
-    return SsaFuse { n: n, tag: ir.kind_id("eq"), inverted: inverted, a: cmp.args[0], b: 0, unique: true };
+    return SsaFuse { n: n, tag: ir.kind_id("eq"), inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4 };
   }
   if (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) {
     return ssa_no_fuse();
   }
   if (fr.imm.is_imm[cmp.args[0]]) {
-    return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false };
+    return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false };
   }
-  return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false };
+  return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
 }
 
 // ssa_join is the label a block's fused test joins at; a rotated latch
@@ -8087,7 +8098,7 @@ function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, 
     return s;
   }
   if (fu.unique) {
-    return ssa_unique_flags(reg_of, fu.a, join, s);
+    return ssa_unique_flags(reg_of, fu.a, fu.aligned, join, s);
   }
   s = ssa_read(reg_of, fu.a, "%r11", s);
   s = ssa_read_rhs(fr, reg_of, fu.b, "%rcx", s);
@@ -8097,12 +8108,17 @@ function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, 
 // ssa_unique_flags is ssa_rc_prim's uniqueness test as flags: ZF is set only
 // when the count is exactly one. Each guard's early exit already leaves ZF
 // clear (a set tag bit; a pointer below, so unequal to, the floor).
-function ssa_unique_flags(reg_of: i32[], v: i32, join: string, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_unique_flags(reg_of: i32[], v: i32, aligned: boolean, join: string, s: asmcore.EmitState): asmcore.EmitState {
   s = helper_call_needs("__fern_rc_is_unique", s);
   s = ssa_read(reg_of, v, "%r11", s);
   let p: string = ssa_src(reg_of, v, "%r11");
   s = s.write("    testb $1, " + ssa_r8(p) + "\n    jnz " + join + "\n    cmpq $0x10000, " + p + "\n    jb " + join + "\n");
-  s = s.write(ssa_rc_is_one("-8(" + p + ")", s.rc_free_debug) + join + ":\n");
+  let rc: string = "-8(" + p + ")";
+  if (!aligned) {
+    s = s.write("    movq " + p + ", %rdx\n    andq $-3, %rdx\n");
+    rc = "-8(%rdx)";
+  }
+  s = s.write(ssa_rc_is_one(rc, s.rc_free_debug) + join + ":\n");
   return s;
 }
 
@@ -9463,6 +9479,9 @@ function emit_ir_op_map_keys(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState 
 // SSA backend's. A call_direct does not imply a need, so without these a
 // call site is emitted against a body the runtime never writes.
 function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (name == "__fern_oob_abort") {
+    s = s.need("heap");
+  }
   if (name == "__fern_i32_to_string") {
     s = s.need("heap");
     s = s.need("i32_to_string");

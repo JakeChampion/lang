@@ -182,6 +182,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"view-receiver-method", "function (xs: [T]) head(): T { return xs[0]; } function main(): i32 { let a = [3]; let v: [i32] = a[:]; return v.head(); }", nil},
 		{"view-method-on-owned-array", "function (xs: [T]) head(): T { return xs[0]; } function main(): i32 { let a = [3]; return a.head(); }", []string{"E043"}},
 		{"owned-method-on-view", "function (xs: T[]) first(): T { return xs[0]; } function main(): i32 { let a = [3]; let v: [i32] = a[:]; return v.first(); }", []string{"E043"}},
+		{"byte-view-has-no-append", "function main(): i32 { let v: [u8] = \"abc\".as_bytes(); v.append(100 as u8); return 0; }", []string{"E043"}},
+		{"array-view-has-no-with", "function main(): i32 { let a = [3]; let v: [i32] = a[:]; v.with(0, 7); return 0; }", []string{"E043"}},
+		{"view-append-is-not-a-builtin-arity-error", "function main(): i32 { let v: [u8] = \"abc\".as_bytes(); v.append(); return 0; }", []string{"E043"}},
+		{"view-custom-append-method", "function (xs: [u8]) append(): i32 { return xs.len(); } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); return v.append(); }", nil},
+		{"view-custom-with-method", "function (xs: [u8]) with(s: string): string { return s; } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); return v.with(\"x\").len(); }", nil},
+		{"view-custom-append-discard", "function (xs: [u8]) append(): i32 { return xs.len(); } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); v.append(); return 0; }", nil},
+		{"view-custom-with-discard", "function (xs: [u8]) with(): i32 { return xs.len(); } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); v.with(); return 0; }", nil},
 		// A literal local takes ONE integer type: its first width-fixing use
 		// decides it, i32 when none does (#10123). The self-host held it at i32
 		// from its binding and native let each use pick a width, so the same

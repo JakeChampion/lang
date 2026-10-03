@@ -34,7 +34,9 @@ import "./util";
 //              block / loop / if; the relative depth for br / brif; the
 //              arg count for call_direct / call_indirect / call_closure;
 //              the table index for const_func.
-//   i64      — the immediate for "const_i64".
+//   i64      — the immediate for "const_i64". On rc_inc/is_unique calls,
+//              4 is an optional typed proof that the input has no byte-view
+//              descriptor tag. Ignoring it preserves the generic RC behavior.
 //   f64      — the immediate for "const_f64" (f32 reuses this until the
 //              self-host grows a distinct f32 slot).
 //   width    — operand bit-width for ops that exist in multiple widths
@@ -1539,11 +1541,9 @@ pub function op_map_hash_seed(): Op {
   return op0(222);
 }
 
-// `str_bytes` pops [str] → a fresh u8[] (one slot per byte, or packed under
-// ir.packed). Backs both
-// `s.bytes()` (copying) and `s.as_bytes()` — the self-host's slot-array model
-// has no separate zero-copy slice view, so as_bytes returns the same fresh
-// array (correct, just not zero-copy; mirrors the AST path).
+// str_bytes pops [str] and returns a fresh u8[] (one slot per byte, or
+// packed under ir.packed). It backs the copying s.bytes() constructor.
+// Typed as_bytes() uses ssabytes's borrowed layout instead.
 pub function op_str_bytes(): Op {
   return op0(104);
 }

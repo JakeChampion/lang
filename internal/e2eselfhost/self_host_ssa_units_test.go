@@ -45,6 +45,18 @@ graph = ssa.SFunc { name: "duplicate", nparams: 1, nvals: 2, entry: 7, takes_env
 ] };
 `
 
+const unitByteViewHandback = `
+let byte: typeinfo.Type = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false };
+let bv: typeinfo.Type = typeinfo.TypeArray { elem: byte, view: true };
+types = [st, i32t, i32t, view, st, bv]; params = [st]; result = bv; modes = [2];
+calls = [contract("borrow_bytes", [st], [2], bv)];
+anchors = [ssasem.Anchor { name: "borrow_bytes", params: [0] }];
+graph = ssa.SFunc { name: "return_byte_view", nparams: 1, nvals: 6, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(1, 1, [], 0), inst(1, 2, [], 3),
+        inst(ssasem.slice(), 3, [0, 1, 2], 0), inst(ssasem.str_as(), 4, [3], 0), call_inst(5, "borrow_bytes", [4])], term: ret(5) }
+] };
+`
+
 const unitLoop = `
 params = [sa, bt]; types = [sa, bt, sa]; result = sa; modes = [3, 1];
 graph = ssa.SFunc { name: "loop", nparams: 2, nvals: 3, entry: 7, takes_env: false, blocks: [
@@ -167,6 +179,9 @@ if (!supply(find(p, 7, ssaunits.edge_point(), 17), 0, 1, 0, ssaunits.retain_unit
 if (!supply(find(p, 27, ssaunits.edge_point(), 17), 0, 4, 0, ssaunits.retain_unit())) { return 62; }
 `, "", ""},
 		{"unused-parameter", unitDuplicate + `result = typeinfo.TypeVoid { tag: 0 }; graph = ssa.SFunc { ...graph, nvals: 1, blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0 - 1) }] }; types = [sa];`, `if (!drops(find(p, 7, ssaunits.entry_point(), 0 - 1), [0])) { return 23; }`, "", ""},
+		{"byte-view-handback", unitByteViewHandback, `if (p.frame_views[3]) { return 63; }`, "", ""},
+		{"byte-view-static-handback", unitByteViewHandback + `anchors = [ssasem.Anchor { name: "borrow_bytes", params: [] }];`, `if (!p.frame_views[3]) { return 64; }`, "", ""},
+		{"byte-view-direct-handback", unitByteViewHandback + `graph = change(graph, 5, inst(ssasem.str_byte_view(), 5, [4], 0));`, `if (p.frame_views[3]) { return 65; }`, "", ""},
 		{"missing-supply", unitDuplicate, "", `let s = find(p, 7, 1, 0 - 1); p = replace(p, ssaunits.Step { ...s, supplies: [] });`, "unit supply arity"},
 		{"wrong-slot", unitDuplicate, "", `let s = find(p, 7, 1, 0 - 1); let a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, slot: 1 }, s.supplies[1]] });`, "unit supply identity or slot"},
 		{"double-move", unitDuplicate, "", `let s = find(p, 7, 1, 0 - 1); let a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 2 }, s.supplies[1]] });`, "move without counted unit"},
@@ -239,7 +254,7 @@ func unitSource(indices []int) (string, string) {
 		tc := unitCases()[i]
 		fmt.Fprintf(&source, "function unit_case_%d(): i32 {\n%s\nlet modes: i32[] = [3, 1];\n%s\n", i, semanticFixture, tc.setup)
 		source.WriteString(`
-let f = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls };
+let f = ssasem.Func { envs: [], anchors: anchors, dyns: [], shadows: [], finalizers: [], map_module: true, graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls };
 let p = ssaunits.plan(f, modes);
 if (!p.ok) { print(p.why); return 1; }
 `)

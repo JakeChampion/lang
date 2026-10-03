@@ -1601,13 +1601,18 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
   }
   let guard: string = "    tbnz " + p + ", #0, " + done + "\n"
     + "    cmp " + p + ", #16, lsl #12\n    blo " + done + "\n";
+  let base: string = p;
+  if (ins.imm != 4) {
+    guard = guard + "    and x7, " + p + ", #0xfffffffffffffffd\n";
+    base = "x7";
+  }
   if (ins.str == "__fern_rc_is_unique") {
     let d: string = ssa_dst(reg_of, ins.result);
     s = s.write("    mov x6, #0\n" + guard);
     // w7 rather than the arm's own x4/x5/x6: p, the count and the 0/1
     // answer hold all three across the compare, and x7 is not in the home
     // pool (x0, x9..x15, x19..x28), so the check can borrow it.
-    s = s.write("    ldur w5, [" + p + ", #-8]\n");
+    s = s.write("    ldur w5, [" + base + ", #-8]\n");
     s = s.write(san_poison_check("w5", "w7", done + "us", s.rc_free_debug));
     s = s.write("    cmp w5, #1\n    bne " + done + "\n");
     s = s.write("    mov x6, #1\n" + done + ":\n");
@@ -1615,10 +1620,10 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     return ssa_store(reg_of, ins.result, d, s);
   }
   s = s.write(guard);
-  s = s.write("    ldur w5, [" + p + ", #-8]\n");
+  s = s.write("    ldur w5, [" + base + ", #-8]\n");
   s = s.write(san_poison_check("w5", "w6", done + "sl", s.rc_free_debug));
   s = s.write("    tbnz w5, #31, " + done + "\n");
-  s = s.write("    add w5, w5, #1\n    stur w5, [" + p + ", #-8]\n");
+  s = s.write("    add w5, w5, #1\n    stur w5, [" + base + ", #-8]\n");
   s = s.write(done + ":\n");
   // rc_inc hands the pointer back; a result with no home stores nothing.
   return ssa_store(reg_of, ins.result, p, s);
@@ -2137,8 +2142,8 @@ function ssa_view_count(views: i32[]): i32 {
 }
 
 // ssa_str_view is the string slice kernel of emit_str_op with register
-// operands: the two bounds checks, then the {rc -1, data + lo, hi - lo} box
-// either in the frame words this site owns or freshly allocated. The operands
+// operands: the two bounds checks, then the {header, data + lo, hi - lo} box
+// either immortal in this frame or counted with borrowed data on the heap. The operands
 // are read before the allocation and carried across it on the machine stack,
 // since the call clobbers every register they could live in.
 function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.EmitState): asmcore.EmitState {
@@ -2149,10 +2154,14 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
   s = s.write("    sub x2, x2, x1\n    ldr x3, [x0]\n    add x1, x3, x1\n");
   if (ins.imm == 1) {
     s = fr_sub_imm(s, "x0", "x29", 0 - base_off);
+    s = s.write("    mov x3, #-1\n    str x3, [x0]\n");
   } else {
     s = s.write("    stp x1, x2, [sp, #-16]!\n    mov x0, #24\n    bl __fern_alloc\n    ldp x1, x2, [sp], #16\n");
+    s = s.write("    mov w3, #1\n    str w3, [x0]\n");
+    s = mov_borrowed_marker(s, "w3");
+    s = s.write("    str w3, [x0, #4]\n");
   }
-  s = s.write("    mov x3, #-1\n    str x3, [x0]\n    str x1, [x0, #8]\n    str x2, [x0, #16]\n    add x0, x0, #8\n");
+  s = s.write("    str x1, [x0, #8]\n    str x2, [x0, #16]\n    add x0, x0, #8\n");
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
@@ -2169,10 +2178,10 @@ struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave:
 // edge when it is. An inline uniqueness test of `a` fuses as `unique`: its
 // guards leave the flags an equality compare would. n is 0 when the block
 // ends some other way.
-struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean }
+struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean }
 
 function ssa_no_fuse(): SsaFuse {
-  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false };
+  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false, aligned: false };
 }
 
 // ssa_fuse finds the compare a block's brif can read as flags: the block's
@@ -2192,7 +2201,7 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
   let n: i32 = 1;
   let inverted: boolean = false;
   if (last.kind_tag == 10 && last.str == "!") {
-    let value_test: SsaFuse = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false };
+    let value_test: SsaFuse = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false };
     if (blk.insts.len() < 2) {
       return value_test;
     }
@@ -2207,15 +2216,15 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
     inverted = true;
   }
   if (ssa_unique_test(cmp)) {
-    return SsaFuse { n: n, tag: ir.kind_id("eq"), inverted: inverted, a: cmp.args[0], b: 0, unique: true };
+    return SsaFuse { n: n, tag: ir.kind_id("eq"), inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4 };
   }
   if (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) {
     return ssa_no_fuse();
   }
   if (fr.imm.is_imm[cmp.args[0]]) {
-    return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false };
+    return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false };
   }
-  return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false };
+  return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
 }
 
 // ssa_join is the label a block's fused test joins at; a rotated latch
@@ -2586,7 +2595,7 @@ function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, 
     return s;
   }
   if (fu.unique) {
-    return ssa_unique_flags(reg_of, fu.a, join, s);
+    return ssa_unique_flags(reg_of, fu.a, fu.aligned, join, s);
   }
   s = ssa_read(reg_of, fu.a, "x4", s);
   s = ssa_read_rhs(fr, reg_of, fu.b, "x5", s);
@@ -2597,12 +2606,17 @@ function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, 
 // when the count is exactly one. Each guard's early exit already leaves Z
 // clear (a set tag bit; a pointer below, so unequal to, the floor), which is
 // why the tag test is a tst rather than the tbnz that sets no flags.
-function ssa_unique_flags(reg_of: i32[], v: i32, join: string, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_unique_flags(reg_of: i32[], v: i32, aligned: boolean, join: string, s: asmcore.EmitState): asmcore.EmitState {
   s = helper_call_needs("__fern_rc_is_unique", s);
   s = ssa_read(reg_of, v, "x4", s);
   let p: string = ssa_src(reg_of, v, "x4");
   s = s.write("    tst " + p + ", #1\n    b.ne " + join + "\n    cmp " + p + ", #16, lsl #12\n    b.lo " + join + "\n");
-  s = s.write("    ldur w5, [" + p + ", #-8]\n" + san_poison_check("w5", "w7", join + "us", s.rc_free_debug) + "    cmp w5, #1\n" + join + ":\n");
+  let base: string = p;
+  if (!aligned) {
+    s = s.write("    and x7, " + p + ", #0xfffffffffffffffd\n");
+    base = "x7";
+  }
+  s = s.write("    ldur w5, [" + base + ", #-8]\n" + san_poison_check("w5", "w7", join + "us", s.rc_free_debug) + "    cmp w5, #1\n" + join + ":\n");
   return s;
 }
 
@@ -6667,6 +6681,12 @@ function mov_fused_marker(s: asmcore.EmitState, reg: string): asmcore.EmitState 
   return s.write("    movk " + reg + ", #29519, lsl #16\n");  // 0x734F -> 0x734F800D
 }
 
+// BORR identifies a counted descriptor whose data remains borrowed.
+function mov_borrowed_marker(s: asmcore.EmitState, reg: string): asmcore.EmitState {
+  s = s.write("    mov " + reg + ", #0x5252\n");
+  return s.write("    movk " + reg + ", #0x424F, lsl #16\n");
+}
+
 function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   // 16 GiB heap arena, lazily mmap'd at hint 0x10000000 on the first
   // allocation (mirrors the native arm64 emitAllocRuntime) rather than
@@ -7631,12 +7651,15 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    mov x9, #0x10000\n");
   s = s.write("    cmp x0, x9\n");
   s = s.write("    blo .Lshrcinc_ret\n");  // low-address guard
+  // Preserve the tag in the returned value, masking only the header address.
+  s = s.write("    and x0, x0, #0xfffffffffffffffd\n");
   s = s.write("    ldur w1, [x0, #-8]\n");  // rc
   s = s.write(san_poison_check("w1", "w9", ".Lshrcinc_live", s.rc_free_debug));
   s = s.write("    tbnz w1, #31, .Lshrcinc_ret\n");  // static sentinel
   s = s.write("    add w1, w1, #1\n");
   s = s.write("    stur w1, [x0, #-8]\n");
   s = s.write(".Lshrcinc_ret:\n");
+  s = s.write("    ldr x0, [sp]\n");
   s = s.write("    ret\n");
   s = s.write("__fn___fern_rc_dec:\n");
   s = s.write("    ldr x0, [sp]\n");  // ptr (also return)
@@ -7672,6 +7695,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    mov x9, #0x10000\n");
   s = s.write("    cmp x2, x9\n");
   s = s.write("    blo .Lshuniq_ret\n");
+  s = s.write("    and x2, x2, #0xfffffffffffffffd\n");
   s = s.write("    ldur w3, [x2, #-8]\n");  // rc
   s = s.write(san_poison_check("w3", "w9", ".Lshuniq_live", s.rc_free_debug));
   s = s.write("    tbnz w3, #31, .Lshuniq_ret\n");  // sentinel => immortal
@@ -7814,8 +7838,8 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ret\n");
   }
   // __fern_str_own(s@[sp]) -> a string its holder owns a unit of, the arm64
-  // sibling of the x86-64 body: a counted string retained, a fresh box over
-  // an arena view's bytes, and any other view as is.
+  // sibling of the x86-64 body: a counted string or view retained, a fresh
+  // counted box over a legacy immortal arena view's bytes, and other views as is.
   if (s.has_need("str_own")) {
     s = s.write("__fn___fern_str_own:\n");
     s = s.write("    ldr x0, [sp]\n");
@@ -7848,8 +7872,9 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    mov x0, #24\n");
     s = s.write("    bl __fern_alloc\n");
     s = s.write("    ldp x1, x30, [sp], #16\n");  // the shared box
-    s = s.write("    mov x3, #-1\n");
-    s = s.write("    str x3, [x0]\n");
+    s = s.write("    mov w3, #1\n    str w3, [x0]\n");
+    s = mov_borrowed_marker(s, "w3");
+    s = s.write("    str w3, [x0, #4]\n");
     s = s.write("    ldr x2, [x1]\n");
     s = s.write("    str x2, [x0, #8]\n");  // data
     s = s.write("    ldr x2, [x1, #8]\n");
@@ -8128,7 +8153,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmp x0, x9\n");
   s = s.write("    blo .Lstrfree_ret\n");  // low-addr guard
   // rc word @ box-8 (#2649 Option A A1b rc-headered box): negative = immortal
-  // sentinel (skip); rc>1 decrements without freeing; rc==1 frees data + box;
+  // sentinel (skip); rc>1 decrements; rc==1 frees the box and any owned data;
   // rc==0 is a double-free, caught by __fern_rc_underflow (matching arr_dec)
   // rather than corrupting the heap. w4 holds rc across the free (x1/x2 = data/len).
   s = s.write("    ldur w4, [x0, #-8]\n");  // rc
@@ -8144,6 +8169,8 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = mov_fused_marker(s, "w3");
   s = s.write("    cmp w2, w3\n");
   s = s.write("    beq .Lstrfree_fused\n");
+  s = mov_borrowed_marker(s, "w3");
+  s = s.write("    cmp w2, w3\n    beq .Lstrfree_box\n");
   // rc==1: sole owner -> free data buffer (heap-guarded) then the 24-byte box.
   s = s.write("    ldr x1, [x0]\n");  // data = box[0]
   s = s.write("    ldr x2, [x0, #8]\n");  // len  = box[8]
@@ -8233,10 +8260,8 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ret\n");
   // __fern_str_view_free(box) — release a string result that may be a zero-copy
   // VIEW (#6544), the arm64 sibling of the x86-64 body in
-  // asm_ir.emit_ir_runtime. `s[a:b]` builds a 24-byte box over the SOURCE's
-  // bytes and stamps rc = -1, the immortal sentinel, precisely so no reclaim
-  // path frees the shared data — which leaves the box itself unreclaimable,
-  // one per call of every borrowing string method.
+  // asm_ir.emit_ir_runtime. Counted strings and borrowed-data descriptors
+  // use str_free; legacy immortal heap descriptors release only their box.
   //
   // An IMMORTAL rc frees the 24-byte box ALONE (class 3), data untouched; any
   // other rc tail-branches to __fn___fern_str_free (x30 flows through, as at

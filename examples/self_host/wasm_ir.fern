@@ -585,11 +585,14 @@ pub function tid_globals_section(structs: irtables.StructTab): string {
   return util.str_join_chunks(parts);
 }
 
+// Every literal starts on a four-byte boundary. Applying the same padding
+// within each unit and in the linked region preserves relative offsets, and
+// leaves the low two pointer bits available to distinguish byte-view storage.
 pub function str_offset(vals: string[], idx: i32): i32 {
   let off: i32 = str_region_base();
   let i: i32 = 0;
   while (i < idx) {
-    off = off + 4 + vals[i].len();
+    off = (off + 4 + vals[i].len() + 3) / 4 * 4;
     i = i + 1;
   }
   return off;
@@ -1171,6 +1174,9 @@ function slot_in_list(list: i32[], x: i32): boolean {
 // $__fern_arr_dec (the array release that frees at rc==1 via the size-class
 // freelist), so the wasm IR path reclaims exactly as wasm.fern's AST path.
 function wasm_helper_symbol(name: string): string {
+  if (name == "__fern_oob_abort") {
+    return "$__fern_oob_abort";
+  }
   // A wasm view is a counted block of its own bytes, so its unit is a retain.
   if (name == "__fern_rc_inc" || name == "__fern_str_own") {
     return "$__fern_rc_inc";
@@ -6618,6 +6624,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == 345) {  // str_data
     // stack: block ptr -> its bytes, which follow the length at +0.
     parts = parts.append("    i32.const 4\n    i32.add\n");
+  } else if (o.kind_tag == 223) {  // raw_addr
+    // Physical byte-view lowering adjusts a linear-memory pointer. Both
+    // operands have the target's pointer width here, so this wraps at i32.
+    parts = parts.append("    i32.add\n");
   } else if (o.kind_tag == 18) {  // load_local
     parts = parts.append("    local.get " + util.i32_to_string(o.i32_imm) + "\n");
   } else if (o.kind_tag == 19) {  // store_local
@@ -12306,6 +12316,9 @@ pub function arr_dec_ptr2_func(heap_base: i32): string {
 pub function rc_runtime_helpers(heap_base: i32): string {
   let lo: string = util.i32_to_string(heap_base);
   let o: string = "";
+  // Match the native bounds abort without routing 134 through WASI's
+  // command-exit status, whose permitted range excludes it.
+  o = o + "  (func $__fern_oob_abort (result i32) (unreachable))\n";
   // ($__fern_rc_underflow is defined in heap_alloc_helpers, emitted first.)
   // __alloc(n) -> ptr: forward to the bump allocator.
   o = o + "  (func $__alloc (param $n i32) (result i32)\n";
@@ -12323,12 +12336,14 @@ pub function rc_runtime_helpers(heap_base: i32): string {
   // __fern_rc_inc(p) -> p: retain.
   o = o + "  (func $__fern_rc_inc (param $p i32) (result i32)\n";
   o = o + "    (local $rc i32)\n";
+  o = o + "    (local $base i32)\n";
   o = o + "    (if (i32.eqz (local.get $p)) (then (return (local.get $p))))\n";
   o = o + "    (if (i32.and (local.get $p) (i32.const 1)) (then (return (local.get $p))))\n";
   o = o + "    (if (i32.lt_u (local.get $p) (i32.const " + lo + ")) (then (return (local.get $p))))\n";
-  o = o + "    (local.set $rc (i32.load (i32.sub (local.get $p) (i32.const 8))))\n";
+  o = o + "    (local.set $base (i32.and (local.get $p) (i32.const -3)))\n";
+  o = o + "    (local.set $rc (i32.load (i32.sub (local.get $base) (i32.const 8))))\n";
   o = o + "    (if (i32.lt_s (local.get $rc) (i32.const 0)) (then (return (local.get $p))))\n";
-  o = o + "    (i32.store (i32.sub (local.get $p) (i32.const 8)) (i32.add (local.get $rc) (i32.const 1)))\n";
+  o = o + "    (i32.store (i32.sub (local.get $base) (i32.const 8)) (i32.add (local.get $rc) (i32.const 1)))\n";
   o = o + "    (local.get $p))\n";
   // __fern_rc_dec(p) -> p: release; over-release bumps the detector.
   o = o + "  (func $__fern_rc_dec (param $p i32) (result i32)\n";
@@ -12348,6 +12363,7 @@ pub function rc_runtime_helpers(heap_base: i32): string {
   o = o + "    (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))\n";
   o = o + "    (if (i32.and (local.get $p) (i32.const 1)) (then (return (i32.const 0))))\n";
   o = o + "    (if (i32.lt_u (local.get $p) (i32.const " + lo + ")) (then (return (i32.const 0))))\n";
+  o = o + "    (local.set $p (i32.and (local.get $p) (i32.const -3)))\n";
   o = o + "    (local.set $rc (i32.load (i32.sub (local.get $p) (i32.const 8))))\n";
   o = o + "    (if (i32.lt_s (local.get $rc) (i32.const 0)) (then (return (i32.const 0))))\n";
   o = o + "    (if (i32.eq (local.get $rc) (i32.const 1)) (then (return (i32.const 1))))\n";

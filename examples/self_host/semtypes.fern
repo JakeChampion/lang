@@ -4,7 +4,7 @@ import "./typeinfo";
 pub function equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(x) = a {
     if let typeinfo.TypeArray(y) = b {
-      return equal(x.elem, y.elem);
+      return x.view == y.view && equal(x.elem, y.elem);
     }
   }
   if let typeinfo.TypeTuple(x) = a {
@@ -18,6 +18,17 @@ pub function equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
     }
   }
   return named_equal(a, b) || numeric_equal(a, b) || atomic_equal(a, b);
+}
+
+// Lending an owned array changes its semantic type without changing its
+// elements. Keep this conversion distinct from exact type identity.
+pub function lends_array(from: typeinfo.Type, to: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = from {
+    if let typeinfo.TypeArray(b) = to {
+      return !a.view && b.view && equal(a.elem, b.elem);
+    }
+  }
+  return false;
 }
 
 function numeric_equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
