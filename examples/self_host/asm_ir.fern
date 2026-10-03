@@ -7149,7 +7149,21 @@ function ssa_release_entry(r: irtables.LowerResult, lp: string, s: asmcore.EmitS
   s = s.write("    cmpl $0, -8(%rax)\n    jns " + slow + "\n");
   s = s.write(kept + ":\n    xorl %eax, %eax\n    ret\n");
   s = s.write(dec + ":\n    subl $1, -8(%rax)\n    xorl %eax, %eax\n    ret\n");
-  return s.write(slow + ":\n");
+  s = s.write(slow + ":\n");
+  // A named type's sole owner runs its drop and frees the box with the box
+  // held on the stack, which also aligns both calls; a count of zero takes
+  // the body, whose helper reports the underflow.
+  let drop: string = ircore.nominal_release_drop(r);
+  if (drop == "" || !irtables.sig_reg_has_exact(s.reg_entries, asmcore.sanitize_label(drop))) {
+    return s;
+  }
+  let body: string = lp + "release_body";
+  s = helper_call_needs("__fern_rc_dec", s);
+  s = s.write("    cmpl $1, -8(%rax)\n    jne " + body + "\n");
+  s = s.write("    pushq %rax\n    call __fn_" + asmcore.sanitize_label(drop) + ".r\n");
+  s = s.write("    movq (%rsp), %rax\n    call " + ircore.ir_helper_symbol("__fern_rc_dec") + ".r\n");
+  s = s.write("    popq %rax\n    xorl %eax, %eax\n    ret\n");
+  return s.write(body + ":\n");
 }
 
 // ssa_mem_inst selects the production lift's memory kinds (ssa.fern 40..44)
