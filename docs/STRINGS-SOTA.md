@@ -905,6 +905,18 @@ consumed blocks without repeatedly copying long records. Target checks and
 allocation censuses pass; the remaining validation and measurement gates are
 recorded in [the byte-stream report](STRING-BYTE-STREAMS-2026-10-02.md).
 
+`__mismatch_bytes(a, ao, b, bo, n)` compares two borrowed byte ranges without
+allocating or constructing strings. Each offset clamps to its array's bounds;
+the count clamps to zero and the smaller remaining length. It returns the
+first differing offset within those ranges, or the clamped count. Packed
+native arrays share the string range-comparison vector kernels; unpacked
+arrays use bounded slot reads. Tests cover every mismatch position around
+vector boundaries, all byte values, extreme bounds, aliases and allocations.
+
+`install -C` uses raw byte comparison. Target, ownership, bootstrap and GNU
+parity checks pass. Current size and native measurements are recorded in
+[the comparison report](STRING-BYTE-COMPARE-2026-10-03.md).
+
 `Reader.read_chunk_bytes(n): Result[u8[], IoError]` provides owned raw input
 on the bootstrap interpreter and native/wasm backends, and on the self-hosted
 native and wasm command-module backends. It preserves NUL, malformed UTF-8

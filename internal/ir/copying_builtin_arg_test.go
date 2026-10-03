@@ -58,6 +58,15 @@ func TestCopyingBuiltinTableArgIsCounted(t *testing.T) {
 	}
 }
 
+func TestMismatchBytesArgsAreCounted(t *testing.T) {
+	src := `function scan(a: u8[], b: u8[]): i32 { return __mismatch_bytes(a, 0, b, 0, a.len()); }
+function main(): i32 { return 0; }`
+	got := paramCountedFor(t, src, "scan")
+	if len(got) != 2 || !got[0] || !got[1] {
+		t.Fatalf("paramCountedRetain[scan] = %v, want [true true]: comparing borrows both arrays", got)
+	}
+}
+
 func TestMemchrBytesArgIsCounted(t *testing.T) {
 	src := `function scan(p: u8[]): i32 { return __memchr_bytes(p, 128, 0); }
 function main(): i32 { return 0; }`

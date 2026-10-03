@@ -266,6 +266,8 @@ var providedSigs = map[string]providedSig{
 	"__memchr_bytes":                   {-1, rWord},
 	"__rmemchr_bytes":                  {-1, rWord},
 	"__mismatch":                       {-1, rWord},
+	"__mismatch_bytes":                 {-1, rWord},
+	"__fern_mismatch_bytes":            {5, rWord},
 	"__memcpy":                         {3, rVoid},
 	"__memset":                         {3, rVoid},
 	"__method_Array_len":               {-1, rWord},

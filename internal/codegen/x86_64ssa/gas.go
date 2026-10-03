@@ -2365,6 +2365,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_count_byte_bytes":          emitCountByteBytesHelper,
 	"__fern_memchr_bytes":              emitMemchrBytesHelper,
 	"__fern_rmemchr_bytes":             emitRmemchrBytesHelper,
+	"__fern_mismatch_bytes":            emitMismatchBytesHelper,
 	"__fern_mismatch":                  emitMismatchHelper,
 	"__fern_rmemchr":                   emitRmemchrHelper,
 	"__fern_ascii_run":                 emitAsciiRunHelper,
@@ -2765,6 +2766,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_count_byte_bytes":          {"__fern_count_byte"},
 	"__fern_memchr_bytes":              {"__fern_memchr"},
 	"__fern_rmemchr_bytes":             {"__fern_rmemchr"},
+	"__fern_mismatch_bytes":            {"__fern_mismatch"},
 	"buf_push_mapped":                  {"__fern_buf_reserve"},
 	"buf_push_filtered":                {"__fern_buf_reserve"},
 	"buf_push_expanded":                {"__fern_buf_reserve"},
@@ -3942,6 +3944,11 @@ func emitMismatchHelper(w func(string, ...any)) {
 func emitCountByteBytesHelper(w func(string, ...any)) {
 	w("%s:", fnLabel("__fern_count_byte_bytes"))
 	w("\tjmp %s", fnLabel("__fern_count_byte"))
+}
+
+func emitMismatchBytesHelper(w func(string, ...any)) {
+	w("%s:", fnLabel("__fern_mismatch_bytes"))
+	w("\tjmp %s", fnLabel("__fern_mismatch"))
 }
 
 func emitMemchrBytesHelper(w func(string, ...any)) {

@@ -15659,15 +15659,21 @@ func (b *builder) callBody(n *ast.Call) error {
 	// under the two-word ABI this call is seven operand slots, not five, and
 	// the two strings are not adjacent, so a backend popping I32=5 reads the
 	// second string's length as `n`.
-	if id.Name == "__mismatch" && len(n.Args) == 5 {
+	if (id.Name == "__mismatch" || id.Name == "__mismatch_bytes") && len(n.Args) == 5 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
 			for _, a := range n.Args {
 				if err := b.expr(a); err != nil {
 					return err
 				}
 			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_mismatch", Width: ResNarrow, I32: 5,
-				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
+			var operand ast.Type = ast.StringType{}
+			helper := "__fern_mismatch"
+			if id.Name == "__mismatch_bytes" {
+				operand = ast.ArrayType{Elem: ast.NumberType{Width: 8}}
+				helper = "__fern_mismatch_bytes"
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: helper, Width: ResNarrow, I32: 5,
+				Ext: &OpExt{ArgTypes: []ast.Type{operand, ast.NumberType{}, operand, ast.NumberType{}, ast.NumberType{}}}})
 			return nil
 		}
 	}

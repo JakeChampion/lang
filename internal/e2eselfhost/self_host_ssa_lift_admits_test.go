@@ -21,12 +21,12 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// registered and admitted kind, with seven inputs and one result; the raw
 	// byte pipeline (#10995, #11000) adds six more: buf_push_bytes_range,
 	// buf_take_bytes, read_chunk_bytes, write_bytes, write_file_bytes and
-	// write_some_bytes. TCP/UDP byte sends and the three byte scans add six
+	// write_some_bytes. TCP/UDP byte sends and the four byte scans add seven
 	// registered and admitted kinds.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=336 declined=3\n"
+		"registered=337 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()

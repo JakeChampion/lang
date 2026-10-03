@@ -1521,8 +1521,9 @@ var copyingBuiltinArgs = map[string][]int{
 	"__scale_f64": {0},
 	// The string is the SECOND operand of __crc32_cksum; the first is the
 	// carried CRC word, which owns nothing.
-	"__crc32_cksum": {1},
-	"__mismatch":    {0, 2},
+	"__crc32_cksum":    {1},
+	"__mismatch":       {0, 2},
+	"__mismatch_bytes": {0, 2},
 	// __scan_set and __count_runs read their string and their set and
 	// return a scalar.
 	"__scan_set":          {0, 2},

@@ -292,14 +292,19 @@ function set_entry_indexed(o: ir.Op): string {
 // x8 / x9 are the two cursors (ld1 has no indexed form), x12 remembers a's
 // range start so the answer is one subtraction and x13 its end; x4 keeps the
 // clamped n for the equal case. Leaf body — no call, so every register is free.
-function emit_mismatch_arm64(s: asmcore.EmitState): asmcore.EmitState {
+function emit_mismatch_arm64(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let mlo: asmcore.LabelOut = asmcore.fresh_label(s);
   let lb: string = mlo.name;
   s = mlo.state;
   s = s.write("    ldr x4, [sp], #16\n    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n");
   s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  s = s.write("    ldr x5, [x0, #8]\n    ldr x0, [x0]\n");
-  s = s.write("    ldr x6, [x2, #8]\n    ldr x2, [x2]\n");
+  if (o.kind_tag == 359) {
+    s = s.write("    ldr x5, [x0]\n    add x0, x0, #8\n");
+    s = s.write("    ldr x6, [x2]\n    add x2, x2, #8\n");
+  } else {
+    s = s.write("    ldr x5, [x0, #8]\n    ldr x0, [x0]\n");
+    s = s.write("    ldr x6, [x2, #8]\n    ldr x2, [x2]\n");
+  }
   // Each offset clamps into [0, len] of its own string.
   s = s.write("    cmp x1, #0\n    b.ge " + lb + "_aop\n    mov x1, #0\n");
   s = s.write(lb + "_aop:\n    cmp x1, x5\n    csel x1, x5, x1, gt\n");
@@ -310,7 +315,15 @@ function emit_mismatch_arm64(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmp x4, x5\n    csel x4, x5, x4, gt\n");
   s = s.write("    cmp x4, x6\n    csel x4, x6, x4, gt\n");
   s = s.write("    cmp x4, #0\n    b.ge " + lb + "_nok\n    mov x4, #0\n");
-  s = s.write(lb + "_nok:\n    add x8, x0, x1\n    add x9, x2, x3\n");
+  s = s.write(lb + "_nok:\n");
+  if (o.kind_tag == 359 && !ir.is_packed(o)) {
+    s = s.write("    add x8, x0, x1, lsl #3\n    add x9, x2, x3, lsl #3\n    mov x10, #0\n");
+    s = s.write(lb + "_slots:\n    cmp x10, x4\n    b.ge " + lb + "_slots_done\n");
+    s = s.write("    add x11, x8, x10, lsl #3\n    ldrb w11, [x11]\n    add x14, x9, x10, lsl #3\n    ldrb w14, [x14]\n");
+    s = s.write("    cmp w11, w14\n    b.ne " + lb + "_slots_done\n    add x10, x10, #1\n    b " + lb + "_slots\n");
+    return s.write(lb + "_slots_done:\n    str x10, [sp, #-16]!\n");
+  }
+  s = s.write("    add x8, x0, x1\n    add x9, x2, x3\n");
   s = s.write("    mov x12, x8\n    add x13, x8, x4\n");
   // NEON loop, 16 bytes of each operand an iteration. The load runs only
   // with a full block left in both ranges, so it never reads past either
@@ -432,8 +445,8 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(l_done + ":\n    str x2, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 245) {  // mismatch
-    return emit_mismatch_arm64(s);
+  if (o.kind_tag == 245 || o.kind_tag == 359) {  // mismatch / mismatch_bytes
+    return emit_mismatch_arm64(o, s);
   }
   if (o.kind_tag == 234 || o.kind_tag == 358) {  // rmemchr / rmemchr_bytes
     // operand stack [box, byte, from] (from on top) -> the index of the

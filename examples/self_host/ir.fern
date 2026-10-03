@@ -761,6 +761,11 @@ pub function op_rmemchr_bytes(): Op {
   return op0(358);
 }
 
+// Borrowed byte-range comparison, with the same clamps as mismatch.
+pub function op_mismatch_bytes(): Op {
+  return op0(359);
+}
+
 // rmemchr (docs/ATLAS-PLATFORM-PLAN.md §3.3, memchr's nominated sibling):
 // pops [str, byte, from] → the i32 index of the LAST `byte` at or before
 // `from`, or -1. Allocates nothing and reads only the source bytes.
@@ -4156,6 +4161,9 @@ function kind_id_len14(name: string): i32 {
   if (name == "tcp_send_bytes") {
     return 353;
   }
+  if (name == "mismatch_bytes") {
+    return 359;
+  }
   if (name == "buf_take_bytes") {
     return 347;
   }
@@ -5366,6 +5374,9 @@ pub function kind_name(id: i32): string {
   if (id == 358) {
     return "rmemchr_bytes";
   }
+  if (id == 359) {
+    return "mismatch_bytes";
+  }
   if (id <= 40) {
     return kind_name_0(id);
   }
@@ -5623,7 +5634,7 @@ pub function op_pops(o: Op): i32 {
   if (t == 206) {  // syscall4
     return 5;
   }
-  if (t == 245) {  // mismatch: a, ao, b, bo, n
+  if (t == 245 || t == 359) {  // mismatch: a, ao, b, bo, n
     return 5;
   }
   if (t == 228) {  // syscall5
@@ -8078,7 +8089,7 @@ pub function op_allocates(tag: i32): boolean {
 // than logic: every `||` is one row of a table, there is no path through it to
 // get wrong, and the only way to lower the number is to carry fewer string ops.
 pub function is_str_op_kind(tag: i32): boolean {
-  return tag == 358 || tag == 357 || tag == 356 || tag == 97 || tag == 101 || tag == 102
+  return tag == 359 || tag == 358 || tag == 357 || tag == 356 || tag == 97 || tag == 101 || tag == 102
     || tag == 104 || tag == 105 || tag == 106
     || tag == 107 || tag == 108 || tag == 109
     || tag == 111 || tag == 113 || tag == 98

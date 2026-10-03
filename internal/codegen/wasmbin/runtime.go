@@ -314,13 +314,16 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					if op.Str == "__fern_memchr_bytes" {
 						needs.add("__fern_memchr_bytes")
 					}
-				case "__fern_mismatch":
+				case "__fern_mismatch", "__fern_mismatch_bytes":
 					// The two-range comparison kernel. Scalar, so it
 					// reads every byte through str_byte and asks
 					// str_len for each operand's logical length.
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_mismatch")
+					if op.Str == "__fern_mismatch_bytes" {
+						needs.add("__fern_mismatch_bytes")
+					}
 				case "__fern_ascii_run":
 					// The v128 high-bit scan. Same two dependencies
 					// and for the same two reasons.
@@ -1756,6 +1759,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildMismatchBody,
+	},
+	"__fern_mismatch_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildMismatchBytesBody,
 	},
 	"__fern_ascii_run": {
 		// (data, len, from) → i32 index of the first high-bit byte, or len.
@@ -7000,6 +7008,21 @@ func buildCountByteBytesBody(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstCall(body, idxs["__fern_count_byte"])
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+func buildMismatchBytesBody(idxs map[string]uint32) []byte {
+	var body []byte
+	for _, at := range []uint32{0, 2} {
+		body = inst.InstLocalGet(body, at)
+		body = inst.InstLocalGet(body, at)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalGet(body, at+1)
+	}
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstCall(body, idxs["__fern_mismatch"])
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 

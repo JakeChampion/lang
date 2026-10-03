@@ -5472,13 +5472,18 @@ function set_entry_test(o: ir.Op, idx: string): string {
 // index, which keeps every memory operand on a low register; %r8 holds the
 // clamped n (also the answer on equality) and %rdi is the window offset.
 // This is a leaf body — no call, so every register it touches is free.
-function emit_mismatch_x86(s: asmcore.EmitState): asmcore.EmitState {
+function emit_mismatch_x86(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let mlo: asmcore.LabelOut = asmcore.fresh_label(s);
   let lb: string = mlo.name;
   s = mlo.state;
   s = s.write("    popq %r8\n    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rax\n");
-  s = s.write("    movq 8(%rax), %r9\n    movq (%rax), %rax\n");
-  s = s.write("    movq 8(%rdx), %r10\n    movq (%rdx), %rdx\n");
+  if (o.kind_tag == 359) {
+    s = s.write("    movq (%rax), %r9\n    addq $8, %rax\n");
+    s = s.write("    movq (%rdx), %r10\n    addq $8, %rdx\n");
+  } else {
+    s = s.write("    movq 8(%rax), %r9\n    movq (%rax), %rax\n");
+    s = s.write("    movq 8(%rdx), %r10\n    movq (%rdx), %rdx\n");
+  }
   // Each offset clamps into [0, len] of its own string.
   s = s.write("    cmpq $0, %rsi\n    jge " + lb + "_aop\n    xorq %rsi, %rsi\n");
   s = s.write(lb + "_aop:\n    cmpq %r9, %rsi\n    jle " + lb + "_aok\n    movq %r9, %rsi\n");
@@ -5489,7 +5494,15 @@ function emit_mismatch_x86(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmpq %r9, %r8\n    jle " + lb + "_na\n    movq %r9, %r8\n");
   s = s.write(lb + "_na:\n    cmpq %r10, %r8\n    jle " + lb + "_nb\n    movq %r10, %r8\n");
   s = s.write(lb + "_nb:\n    cmpq $0, %r8\n    jge " + lb + "_nok\n    xorq %r8, %r8\n");
-  s = s.write(lb + "_nok:\n    addq %rax, %rsi\n    addq %rdx, %rcx\n    xorq %rdx, %rdx\n");
+  s = s.write(lb + "_nok:\n");
+  if (o.kind_tag == 359 && !ir.is_packed(o)) {
+    s = s.write("    leaq (%rax,%rsi,8), %rsi\n    leaq (%rdx,%rcx,8), %rcx\n    xorq %rdx, %rdx\n");
+    s = s.write(lb + "_slots:\n    cmpq %r8, %rdx\n    jge " + lb + "_slots_done\n");
+    s = s.write("    movzbq (%rsi,%rdx,8), %rax\n    movzbq (%rcx,%rdx,8), %rdi\n    cmpq %rdi, %rax\n    jne " + lb + "_slots_done\n");
+    s = s.write("    addq $1, %rdx\n    jmp " + lb + "_slots\n");
+    return s.write(lb + "_slots_done:\n    pushq %rdx\n");
+  }
+  s = s.write("    addq %rax, %rsi\n    addq %rdx, %rcx\n    xorq %rdx, %rdx\n");
   // Length dispatch: the sub-16 band never reaches the vector loop, so it
   // gets its own windows rather than a byte walk.
   s = s.write("    cmpq $16, %r8\n    jge " + lb + "_vec\n");
@@ -6076,8 +6089,8 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(a_done + ":\n    pushq %rdx\n");
     return s;
   }
-  if (o.kind_tag == 245) {  // mismatch
-    return emit_mismatch_x86(s);
+  if (o.kind_tag == 245 || o.kind_tag == 359) {  // mismatch / mismatch_bytes
+    return emit_mismatch_x86(o, s);
   }
   if (o.kind_tag == 104) {  // str_bytes
     // operand stack [str box]; __fern_str_bytes is a Fern runtime function now

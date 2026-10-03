@@ -4647,6 +4647,20 @@ func (g *generator) coldAdrpAdd(reg, sym string) {
 // construction — including the inline SSO case, where a string holds at most 7
 // bytes so a clamped n reaches neither the vector loop nor the 8-byte window.
 func (g *generator) emitMismatchRuntime() {
+	if g.usesMismatchBytes {
+		g.line(".global __fern_mismatch_bytes")
+		g.label("__fern_mismatch_bytes")
+		g.emit("stp x29, x30, [sp, #-48]!")
+		g.emit("mov x29, sp")
+		g.emit("mov x9, x0")
+		g.emit("ldur w10, [x0, #-4]")
+		g.emit("mov x11, x2")
+		g.emit("ldur w12, [x2, #-4]")
+		g.emit("mov w2, w1")
+		g.emit("mov w5, w3")
+		g.emit("mov w6, w4")
+		g.emit("b .Lmm_ready")
+	}
 	g.line("")
 	g.line(".global __fern_mismatch")
 	g.typeDirective("__fern_mismatch")
@@ -4659,6 +4673,7 @@ func (g *generator) emitMismatchRuntime() {
 	g.emitStrLen2W("w10", "x1")               // w10 = len(a)
 	g.emitStrDataPtr2W("x11", "x3", "x4", 32) // x11 = b's bytes
 	g.emitStrLen2W("w12", "x4")               // w12 = len(b)
+	g.label(".Lmm_ready")
 	// Clamp each offset into [0, len].
 	g.emit("tbz w2, #31, .Lmm_ao_pos")
 	g.emit("mov w2, #0")
@@ -15608,6 +15623,7 @@ type generator struct {
 	usesCountByteBytes bool
 	usesMemchrBytes    bool
 	usesRmemchrBytes   bool
+	usesMismatchBytes  bool
 	// usesMismatch gates the two-range comparison kernel
 	// (__fern_mismatch), __memchr's kernel over a pair of operand
 	// streams instead of a broadcast needle.
@@ -20322,6 +20338,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__fern_memchr":
 			g.usesMemchr = true
 		case "__fern_mismatch":
+			g.usesMismatch = true
+		case "__fern_mismatch_bytes":
+			g.usesMismatchBytes = true
 			g.usesMismatch = true
 		case "__fern_rmemchr":
 			g.usesRmemchr = true

@@ -1338,6 +1338,7 @@ type generator struct {
 	usesCountByteBytes bool
 	usesMemchrBytes    bool
 	usesRmemchrBytes   bool
+	usesMismatchBytes  bool
 	// usesMismatch gates the two-range comparison kernel
 	// (__fern_mismatch), which is __memchr's kernel over a pair of
 	// operands instead of a broadcast needle.
@@ -2037,6 +2038,9 @@ func (g *generator) recordUse(target string) {
 	case "__fern_memchr":
 		g.usesMemchr = true
 	case "__fern_mismatch":
+		g.usesMismatch = true
+	case "__fern_mismatch_bytes":
+		g.usesMismatchBytes = true
 		g.usesMismatch = true
 	case "__fern_rmemchr":
 		g.usesRmemchr = true
@@ -11613,6 +11617,11 @@ func (g *generator) emitMemchrRuntime() {
 // reaches either vector loop and neither block is read out of the 8-byte
 // scratch the spill provides.
 func (g *generator) emitMismatchRuntime() {
+	if g.usesMismatchBytes {
+		g.line(".globl __fern_mismatch_bytes")
+		g.label("__fern_mismatch_bytes")
+		g.emit("jmp __fern_mismatch")
+	}
 	g.line("")
 	g.line(".globl __fern_mismatch")
 	g.line(".type __fern_mismatch, @function")

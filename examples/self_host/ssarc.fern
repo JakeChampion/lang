@@ -6154,6 +6154,9 @@ function byte_scan_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__mismatch") {
     return Lowered { found: true, r: emit(r, ir.op_mismatch()) };
   }
+  if (ins.str == "__mismatch_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_mismatch_bytes())) };
+  }
   return Lowered { found: false, r: r };
 }
 
