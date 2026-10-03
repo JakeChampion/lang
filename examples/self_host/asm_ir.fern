@@ -6390,7 +6390,16 @@ function ssa_reg(k: i32): string {
   if (k == 6) {
     return "%rbx";
   }
-  return "%r" + util.i32_to_string(12 + k - 7);
+  if (k == 7) {
+    return "%r12";
+  }
+  if (k == 8) {
+    return "%r13";
+  }
+  if (k == 9) {
+    return "%r14";
+  }
+  return "%r15";
 }
 
 function ssa_nregs(): i32 {

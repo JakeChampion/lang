@@ -1030,14 +1030,60 @@ function map_fn_address(s: asmcore.EmitState, reg: string, name: string): asmcor
 // call result allocated there needs no move at all. The arms that are calls
 // may write it, since the allocator never leaves a caller-saved value live
 // across one.
+// x0 and x9-x15 are the caller-saved registers, x19-x28 the callee-saved.
 function ssa_reg(k: i32): string {
-  if (k >= ssa_nregs()) {
-    return "x" + util.i32_to_string(19 + k - ssa_nregs());
-  }
   if (k == 0) {
     return "x0";
   }
-  return "x" + util.i32_to_string(8 + k);
+  if (k == 1) {
+    return "x9";
+  }
+  if (k == 2) {
+    return "x10";
+  }
+  if (k == 3) {
+    return "x11";
+  }
+  if (k == 4) {
+    return "x12";
+  }
+  if (k == 5) {
+    return "x13";
+  }
+  if (k == 6) {
+    return "x14";
+  }
+  if (k == 7) {
+    return "x15";
+  }
+  if (k == 8) {
+    return "x19";
+  }
+  if (k == 9) {
+    return "x20";
+  }
+  if (k == 10) {
+    return "x21";
+  }
+  if (k == 11) {
+    return "x22";
+  }
+  if (k == 12) {
+    return "x23";
+  }
+  if (k == 13) {
+    return "x24";
+  }
+  if (k == 14) {
+    return "x25";
+  }
+  if (k == 15) {
+    return "x26";
+  }
+  if (k == 16) {
+    return "x27";
+  }
+  return "x28";
 }
 
 function ssa_nregs(): i32 {
