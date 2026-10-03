@@ -196,7 +196,8 @@ function main(): i32 { let xs: i32[] = fill(10); return xs[9] + xs.len(); }
 		forbid: map[string][]string{"x86-64-linux": {`movq %r11, %rdi`, `movq %rcx, %rsi`}}},
 	// With the callee-saved registers full, the value a loop reads and writes
 	// every iteration keeps its register and a cold one spills, though the
-	// loop value lives longer.
+	// loop value lives longer. The x86 add reads both saved registers in one
+	// lea before the call, without reloading either loop value from the frame.
 	{name: "spill_the_cold_value", fn: "hot", exit: 56, src: `
 @noinline function g(x: i64): i64 { return x + 1i64; }
 @noinline function hot(n: i64): i64 {
@@ -212,7 +213,7 @@ function main(): i32 { let xs: i32[] = fill(10); return xs[9] + xs.len(); }
 function main(): i32 { return (hot(5i64) % 100i64) as i32; }
 `,
 		want: map[string][]string{
-			"x86-64-linux": {`movq %r(?:bx|1[2-5]), %rax\n\s+addq %r(?:bx|1[2-5]), %rax\n\s+call __fn_g\.r`},
+			"x86-64-linux": {`leaq \(%r(?:bx|1[2-5]),%r(?:bx|1[2-5])\), %rax\n\s+call __fn_g\.r`},
 			"arm64-linux":  {`add x0, x(?:19|2\d), x(?:19|2\d)\n\s+bl __fn_g\.r`}},
 		forbid: map[string][]string{
 			"x86-64-linux": {`movq %rax, -\d+\(%rbp\)\n\s+cmpq`},
