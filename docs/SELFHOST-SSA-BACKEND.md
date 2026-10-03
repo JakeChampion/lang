@@ -230,8 +230,10 @@ home and reads operands from theirs (`ssa_dst`, `ssa_src`): the integer
 add, subtract, multiply, and, or, xor and the compares compute into the
 home with only a spilled operand passing through a scratch
 (`ssa_bin_in_place`; on x86-64 the operands swap, or a comparison flips,
-when the right one lives in the destination), and a compare read only by
-its block's branch is consumed as flags straight from the homes. A
+when the right one lives in the destination, and a spilled right operand
+is read from its frame slot rather than a scratch), and a compare read only
+by its block's branch is consumed as flags straight from the homes, a
+spilled operand on x86-64 straight from its slot (`ssa_fused_test`). A
 constant those ops alone read is an immediate operand and is never
 materialised (`ssa.imm_operands`: any i32 on x86-64, 0 to 4,095 on arm64
 for add, sub and the compares; a constant on the left swaps or flips the
