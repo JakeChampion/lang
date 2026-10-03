@@ -1370,7 +1370,7 @@ function fc_horner(acc: string, x: string, scratch: string, lbl: string): string
 // scalar fneg.
 // rt_x86_str_eq is __fn___fern_str_eq: 1 when two string boxes hold equal
 // bytes, else 0. A string box is [data ptr, length]; the caller pushes b then
-// a, so 16(%rbp) is a and 24(%rbp) is b, and the result goes in %rax.
+// a, and the result goes in %rax.
 //
 // Hand-written rather than the Fern body it replaces because the cost here is
 // not per byte. Measured on a stage-2 compiler compiling lexer.fern: 5,296,736
@@ -1380,8 +1380,8 @@ function fc_horner(acc: string, x: string, scratch: string, lbl: string): string
 // frame the emitter builds around any Fern body, `rep stosq` to zero it and both
 // parameters spilled to it before the first compare. Rewriting the body to read
 // eight bytes at a time made it WORSE (47.6 instructions per call), because it
-// added setup to a function whose whole cost is setup. Only dropping the frame
-// removes it.
+// added setup to a function whose whole cost is setup. A leaf that never touches
+// %rbp needs no frame of its own, so it builds none.
 //
 // The comparison itself is then the native runtime's __fern_strcmp shape:
 // identical box or identical buffer answers immediately, unequal lengths answer
@@ -1389,47 +1389,42 @@ function fc_horner(acc: string, x: string, scratch: string, lbl: string): string
 // the END of each string, overlapping whatever the loop already read. No read
 // runs past either operand — the loop stops at data + len - 8 — and the 4..7 and
 // 1..3 classes only ever read inside their own length.
-//
-// rbp is kept even though nothing else needs a frame: __fern_report walks the
-// rbp chain to print a backtrace, and a leaf that skipped it would break the
-// walk for every frame below.
 function rt_x86_str_eq(): string {
   // The stack entry loads both boxes into %rax/%rsi, where the register
   // entry `.r` takes them; equality is symmetric, so their order is not.
+  // From there %rcx and %rsi walk the two buffers and %rdx holds the length.
   let s: string = "__fn___fern_str_eq:\n";
   s = s + "    movq 8(%rsp), %rax\n    movq 16(%rsp), %rsi\n";
   s = s + "__fn___fern_str_eq.r:\n";
-  s = s + "    pushq %rbp\n    movq %rsp, %rbp\n";
-  s = s + "    movq %rax, %rdx\n    movq %rsi, %rcx\n";
   // Same box: interned literals, which is most of what a compiler compares.
-  s = s + "    cmpq %rcx, %rdx\n    jz .Lseq_yes\n";
-  s = s + "    movq 8(%rdx), %rsi\n    cmpq 8(%rcx), %rsi\n    jnz .Lseq_no\n";
-  s = s + "    movq (%rdx), %rdx\n    movq (%rcx), %rcx\n";
+  s = s + "    cmpq %rsi, %rax\n    jz .Lseq_yes\n";
+  s = s + "    movq 8(%rax), %rdx\n    cmpq 8(%rsi), %rdx\n    jnz .Lseq_no\n";
+  s = s + "    movq (%rax), %rcx\n    movq (%rsi), %rsi\n";
   // Same buffer, equal length: a slice and its source compare equal here.
-  s = s + "    cmpq %rcx, %rdx\n    jz .Lseq_yes\n";
-  s = s + "    cmpq $8, %rsi\n    jb .Lseq_short\n";
-  s = s + "    leaq -8(%rdx,%rsi), %r8\n    leaq -8(%rcx,%rsi), %r9\n";
+  s = s + "    cmpq %rsi, %rcx\n    jz .Lseq_yes\n";
+  s = s + "    cmpq $8, %rdx\n    jb .Lseq_short\n";
+  s = s + "    leaq -8(%rcx,%rdx), %r8\n    leaq -8(%rsi,%rdx), %r9\n";
   s = s + ".Lseq_word:\n";
-  s = s + "    movq (%rdx), %rax\n    cmpq (%rcx), %rax\n    jnz .Lseq_no\n";
-  s = s + "    addq $8, %rdx\n    addq $8, %rcx\n";
-  s = s + "    cmpq %r8, %rdx\n    jb .Lseq_word\n";
+  s = s + "    movq (%rcx), %rax\n    cmpq (%rsi), %rax\n    jnz .Lseq_no\n";
+  s = s + "    addq $8, %rcx\n    addq $8, %rsi\n";
+  s = s + "    cmpq %r8, %rcx\n    jb .Lseq_word\n";
   s = s + "    movq (%r8), %rax\n    cmpq (%r9), %rax\n    jnz .Lseq_no\n";
   s = s + "    jmp .Lseq_yes\n";
   // 0..7 bytes. Four-byte pairs overlap the same way; under four, byte 0, the
   // last byte and (at length three) byte 1 are every byte there is.
   s = s + ".Lseq_short:\n";
-  s = s + "    testq %rsi, %rsi\n    jz .Lseq_yes\n";
-  s = s + "    cmpq $4, %rsi\n    jb .Lseq_byte\n";
-  s = s + "    movl (%rdx), %eax\n    cmpl (%rcx), %eax\n    jnz .Lseq_no\n";
-  s = s + "    movl -4(%rdx,%rsi), %eax\n    cmpl -4(%rcx,%rsi), %eax\n    jnz .Lseq_no\n";
+  s = s + "    testq %rdx, %rdx\n    jz .Lseq_yes\n";
+  s = s + "    cmpq $4, %rdx\n    jb .Lseq_byte\n";
+  s = s + "    movl (%rcx), %eax\n    cmpl (%rsi), %eax\n    jnz .Lseq_no\n";
+  s = s + "    movl -4(%rcx,%rdx), %eax\n    cmpl -4(%rsi,%rdx), %eax\n    jnz .Lseq_no\n";
   s = s + "    jmp .Lseq_yes\n";
   s = s + ".Lseq_byte:\n";
-  s = s + "    movzbl (%rdx), %eax\n    cmpb (%rcx), %al\n    jnz .Lseq_no\n";
-  s = s + "    movzbl -1(%rdx,%rsi), %eax\n    cmpb -1(%rcx,%rsi), %al\n    jnz .Lseq_no\n";
-  s = s + "    cmpq $3, %rsi\n    jb .Lseq_yes\n";
-  s = s + "    movzbl 1(%rdx), %eax\n    cmpb 1(%rcx), %al\n    jnz .Lseq_no\n";
-  s = s + ".Lseq_yes:\n    movq $1, %rax\n    leave\n    ret\n";
-  s = s + ".Lseq_no:\n    xorq %rax, %rax\n    leave\n    ret\n";
+  s = s + "    movzbl (%rcx), %eax\n    cmpb (%rsi), %al\n    jnz .Lseq_no\n";
+  s = s + "    movzbl -1(%rcx,%rdx), %eax\n    cmpb -1(%rsi,%rdx), %al\n    jnz .Lseq_no\n";
+  s = s + "    cmpq $3, %rdx\n    jb .Lseq_yes\n";
+  s = s + "    movzbl 1(%rcx), %eax\n    cmpb 1(%rsi), %al\n    jnz .Lseq_no\n";
+  s = s + ".Lseq_yes:\n    movl $1, %eax\n    ret\n";
+  s = s + ".Lseq_no:\n    xorl %eax, %eax\n    ret\n";
   s = s + ".size __fn___fern_str_eq, .-__fn___fern_str_eq\n";
   return s;
 }
@@ -7044,8 +7039,7 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 
 // ssa_str_eq answers unequal lengths inline, the answer to almost every
 // comparison a compiler makes, and calls the helper's register entry only for
-// equal ones. %rdx and %rcx are never homes, so the operands pass through them
-// on the way to %rax / %rsi whichever of those they already occupy.
+// equal ones.
 // The lengths are compared inline, and against a literal operand so is the
 // first byte: a chain of same-length literals (a mnemonic table, a keyword
 // list) then rejects most arms without the call.
@@ -7065,11 +7059,21 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
   } else if (lit_a >= 0) {
     s = s.write("    movq (" + b + "), %rdx\n    cmpb $" + util.i32_to_string(lit_a) + ", (%rdx)\n    jne " + lp + "streqn" + n + "\n");
   }
-  s = s.write("    movq " + a + ", %rdx\n");
-  if (b != "%rcx") {
-    s = s.write("    movq " + b + ", %rcx\n");
+  // Equality is symmetric, so the operands may land in %rax and %rsi either
+  // way round: whichever is already in one stays, and nothing is overwritten
+  // before it is read.
+  let x: string = a;
+  let y: string = b;
+  if (y == "%rax" || x == "%rsi") {
+    x = b;
+    y = a;
   }
-  s = s.write("    movq %rdx, %rax\n    movq %rcx, %rsi\n");
+  if (x != "%rax") {
+    s = s.write("    movq " + x + ", %rax\n");
+  }
+  if (y != "%rsi") {
+    s = s.write("    movq " + y + ", %rsi\n");
+  }
   s = s.write("    call __fn___fern_str_eq.r\n    jmp " + lp + "streqd" + n + "\n");
   s = s.write(lp + "streqn" + n + ":\n    xorl %eax, %eax\n" + lp + "streqd" + n + ":\n");
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));

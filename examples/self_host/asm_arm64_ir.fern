@@ -4724,20 +4724,18 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
 // pushes b then a, so after `stp x29, x30` the arguments are at [x29, #16] and
 // [x29, #32]. A string box is [data ptr, length]; the result goes in x0.
 //
-// x29/x30 are saved even though nothing else needs a frame: __fern_report walks
-// the frame chain to print a backtrace.
+// A leaf that calls nothing and never touches x29 needs no frame of its own,
+// so it builds none.
 function rt_arm64_str_eq(): string {
   // The stack entry loads both boxes into x0/x9, where the register entry
   // `.r` takes them; equality is symmetric, so their order is not.
   let s: string = "__fn___fern_str_eq:\n";
   s = s + "    ldr x0, [sp]\n    ldr x9, [sp, #16]\n";
   s = s + "__fn___fern_str_eq.r:\n";
-  s = s + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
-  s = s + "    mov x2, x0\n    mov x3, x9\n";
   // Same box: interned literals, which is most of what a compiler compares.
-  s = s + "    cmp x2, x3\n    b.eq .Lseq_yes\n";
-  s = s + "    ldr x4, [x2, #8]\n    ldr x5, [x3, #8]\n    cmp x4, x5\n    b.ne .Lseq_no\n";
-  s = s + "    ldr x2, [x2]\n    ldr x3, [x3]\n";
+  s = s + "    cmp x0, x9\n    b.eq .Lseq_yes\n";
+  s = s + "    ldr x4, [x0, #8]\n    ldr x5, [x9, #8]\n    cmp x4, x5\n    b.ne .Lseq_no\n";
+  s = s + "    ldr x2, [x0]\n    ldr x3, [x9]\n";
   // Same buffer, equal length: a slice and its source compare equal here.
   s = s + "    cmp x2, x3\n    b.eq .Lseq_yes\n";
   s = s + "    add x6, x2, x4\n    add x7, x3, x4\n";
@@ -4767,8 +4765,8 @@ function rt_arm64_str_eq(): string {
   s = s + "    ldrb w0, [x6]\n    ldrb w1, [x7]\n    cmp w0, w1\n    b.ne .Lseq_no\n";
   s = s + "    cmp x4, #3\n    b.lo .Lseq_yes\n";
   s = s + "    ldrb w0, [x2, #1]\n    ldrb w1, [x3, #1]\n    cmp w0, w1\n    b.ne .Lseq_no\n";
-  s = s + ".Lseq_yes:\n    mov x0, #1\n    ldp x29, x30, [sp], #16\n    ret\n";
-  s = s + ".Lseq_no:\n    mov x0, #0\n    ldp x29, x30, [sp], #16\n    ret\n";
+  s = s + ".Lseq_yes:\n    mov x0, #1\n    ret\n";
+  s = s + ".Lseq_no:\n    mov x0, #0\n    ret\n";
   s = s + ".size __fn___fern_str_eq, .-__fn___fern_str_eq\n";
   return s;
 }
