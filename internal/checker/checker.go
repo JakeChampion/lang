@@ -19753,11 +19753,11 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				c.settleNumeric(to.Inner, wrapped)
 			}
 		}
-		// Stamp `to.Type` so postSettleType / IR sees the
-		// resolved payload width — `to.Type` was set by the
-		// original checkExpr from the source's pre-settle
-		// `srcEnum.Args[0]`.
-		to.Type = hint
+		// `to.Type` is the source's payload, which the IR lays the box out
+		// by: only a literal payload the hint just settled takes its width.
+		if to.Type == nil || isPolymorphicNumeric(to.Type) {
+			to.Type = hint
+		}
 	}
 	if fa, ok := e.(*ast.FieldAccess); ok {
 		if hn, ok := hint.(ast.NumberType); ok && !hn.Polymorphic {

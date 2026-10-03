@@ -11738,6 +11738,13 @@ function int_range_diags(e: ast.Expr, ty: string, negated: boolean): util.Diag[]
 // does so an annotated `let xs: i32[] = [big]` judges its elements.
 function int_dest_range_diags(e: ast.Expr, want: typeinfo.Type): util.Diag[] {
   let out: util.Diag[] = [];
+  if let ast.ExprUnary(tu) = e {
+    if let ast.ExprCall(tc) = tu.operand {
+      if (tu.op == "try_" && ctor_variant_name(tc) == "Some" && tc.args.len() == 1) {
+        return int_dest_range_diags(tc.args[0], want);
+      }
+    }
+  }
   match (want) {
     typeinfo.TypeI32(wi) => {
       if (wi.is_char || !int_literal_tree(e)) {
@@ -11800,6 +11807,17 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
   if let ast.ExprCall(vc) = e {
     if (parser.is_value_block(vc)) {
       return vb_settles(parser.vb_body(vc), want, s);
+    }
+  }
+  // `Some(lit)?` yields the payload, so it settles where the payload does.
+  if let ast.ExprUnary(tu) = e {
+    if (tu.op == "try_") {
+      if let ast.ExprCall(tc) = tu.operand {
+        if (ctor_variant_name(tc) == "Some" && tc.args.len() == 1 && !ctor_name_taken(tc, s)) {
+          return settles_to(tc.args[0], want, s);
+        }
+      }
+      return false;
     }
   }
   match (want) {

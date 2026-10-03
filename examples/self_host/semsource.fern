@@ -1791,7 +1791,7 @@ function shift_count(op: string, count: Value, value: typeinfo.Type): Value {
 // operand through it; a cast names its own destination and passes none on.
 function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
   if (u.op == "try_") {
-    return try_expr(u, s);
+    return try_expr(u, s, expected);
   }
   if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
     return downcast(e, u, s);
@@ -1831,13 +1831,22 @@ function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type)
 // order the tag test relies on (docs/TRY.md). Native's E078 has already
 // enforced both the shape and the `@try` opt-in before any of this runs, so
 // this re-derives only what the lowering needs rather than re-policing them.
-function try_expr(u: ast.ExprUnary, s: State): Value {
+function try_expr(u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
   // The checker refuses this shape; a pipeline that lowers without checking
   // first (asm_modload_run) reaches it.
   if (s.replaying) {
     return refused(s, "`?` inside a defer action (E079)");
   }
-  let v: Value = expr(u.operand, s, typeinfo.unchecked());
+  // `Some(lit)?` reads its literal at the width the `?` is read at.
+  let want: typeinfo.Type = typeinfo.unchecked();
+  if let ast.ExprCall(c) = u.operand {
+    if let ast.ExprIdent(cn) = c.callee {
+      if (cn.name == "Some" && semtypes.concrete(expected, false)) {
+        want = typeinfo.TypeUnion { name: "Option", args: [expected] };
+      }
+    }
+  }
+  let v: Value = expr(u.operand, s, want);
   s = v.s;
   if (!s.ok) {
     return v;

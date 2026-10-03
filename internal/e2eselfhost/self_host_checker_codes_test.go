@@ -1995,6 +1995,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"wide-literal-local-block-tail-ok", "function wide(n: u64): u64 { return n / 1000000000u64; }\nfunction main(): i32 { let w: u64 = wide({ let k = 3; k * 3000000000 }); return w as i32; }\n", nil},
 		{"wide-literal-local-default-i64", "function main(): i32 { let k = 3; let x = k * 3000000000; let y: i32 = x; return 0; }\n", []string{"E003"}},
 		{"wide-literal-local-at-i32-param", "function f(n: i32): i32 { return n; }\nfunction main(): i32 { let k = 3; return f(k * 3000000000); }\n", []string{"E047"}},
+		// `Some(lit)?` reads its literal at the `?`'s destination, as native's
+		// settleNumeric TryOp arm does (#10614).
+		{"try-some-literal-settles-ok", "function h(): Option[i32] { let v: u8 = Some(200)?; let w: i64 = Some(5)?; let f: f32 = Some(3.5)?; return Some(v as i32 + w as i32 + f as i32); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"try-some-literal-out-of-range", "function h(): Option[i32] { let v: u8 = Some(300)?; return Some(v as i32); }\nfunction main(): i32 { return 0; }\n", []string{"E047"}},
+		{"try-some-typed-payload", "function h(): Option[i32] { let x: i32 = 4; let v: f32 = Some(x)?; return Some(1); }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
 		{"i32-min-literal-local-ok", "function main(): i32 { let k = -2147483648; return k + 2147483647 + 1; }\n", nil},
 		{"ctor-builtin-settles-ok", "function takes(o: Option[i64]): i32 { return 0; }\nfunction main(): i32 { return takes(Some(40)) + takes(Option.Some(1)); }\n", nil},
 		{"enum-non-reserved-ok", "enum Color { Red, Green }\nfunction main(): i32 { return 0; }\n", nil},
