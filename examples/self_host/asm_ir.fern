@@ -6447,17 +6447,20 @@ function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asm
   return ssa_mov_rr(s, reg, home);
 }
 
-// ssa_label writes the definition of the label `name`.
+// ssa_label and ssa_branch write a label definition and a jump, conditional
+// jump or call to one. Both take a name the emitter composed itself, from
+// its label prefix or through sanitize_label, with nothing in it the text
+// path reads as more than a name; as records they skip that path's memo
+// lookup and comment and label scans, and are assembled as it would have.
 function ssa_label(s: asmcore.EmitState, name: string): asmcore.EmitState {
-  if (s.records() && x86_native.x86_rec_label(name)) {
+  if (s.records()) {
     return s.mark("\x02", name);
   }
   return s.write(name + ":\n");
 }
 
-// ssa_branch writes the jump, conditional jump or call `mnem name`.
 function ssa_branch(s: asmcore.EmitState, mnem: string, name: string): asmcore.EmitState {
-  if (s.records() && x86_native.x86_rec_label(name)) {
+  if (s.records()) {
     return s.mark("\x03", mnem + " " + name);
   }
   return s.write("    " + mnem + " " + name + "\n");

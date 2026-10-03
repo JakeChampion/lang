@@ -3757,24 +3757,6 @@ pub function x86_rec_test_ir(size: i32, imm: i32, dst: i32): i32[] {
   return x86_test_imm_r([], size, dst, imm);
 }
 
-// x86_rec_label reports whether `name` can travel as a label record or a
-// branch record's target: a symbol with nothing in it the text path would
-// read as more than a name.
-pub function x86_rec_label(name: string): boolean {
-  if (name.len() == 0 || name[0] >= b'0' && name[0] <= b'9' || name[0] == b'*' || name[0] == b'.' && name.len() == 1) {
-    return false;
-  }
-  let i: i32 = 0;
-  while (i < name.len()) {
-    let c: u8 = name[i];
-    if (c <= b' ' || c == b':' || c == b'#' || c == b',' || c == b'(' || c == b')' || c == b'"' || c == b'%') {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
-}
-
 // x86_rec_mov is `mov` at `size` bits between general registers, or between
 // a register and a memory operand that is not rip-relative: the bytes
 // x86_gas_mov_rm lays down.

@@ -45,6 +45,13 @@ record path; the text path still renders exactly the text it did before.
 The assembler's own `mov`, group-1 and `test` arms call the same encoders,
 so a record is the bytes its text would have assembled to.
 
+A label or branch name is taken as the emitter composed it, from its label
+prefix or through `sanitize_label`, with no scan: the first version checked
+every byte of every name against what the text path reads as more than a
+name, and that scan alone was 203 M Ir on the stage-2 compile, 0.85% of the
+whole and more than the byte records saved. The arm64 check keeps only the
+numeric-local test (`1f`), which the text path resolves differently.
+
 ## Measured
 
 `checker.fern` built for x86-64-linux by the stage-2 compiler under
@@ -53,16 +60,19 @@ and from this change applied to it:
 
 | | main | this change |
 |---|--:|--:|
-| stage 2, total Ir | 23.939 G | 23.780 G (−0.66%) |
+| stage 2, x86-64 target, total Ir | 23.939 G | 23.576 G (−1.51%) |
+| stage 2, arm64 target, total Ir | 23.745 G | 23.656 G (−0.37%) |
 
-The steps on the way, against main at 8733fb53 (23.798 G):
+The arm64 row is the label scan alone: that target's records were in place
+before this change. The steps on the way, on the x86-64 target:
 
 | variant | total Ir |
 |---|--:|
-| mov, group-1 and test records from operand TEXT | 24.068 G (+1.1%) |
-| label and branch marks only, no byte records | 23.719 G (−0.33%) |
+| mov, group-1 and test records from operand TEXT (against 23.798 G) | 24.068 G (+1.1%) |
+| label and branch marks only, no byte records (against 23.798 G) | 23.719 G (−0.33%) |
+| records by register number, names scanned (against 23.939 G) | 23.780 G (−0.66%) |
 
-The x86 binary is byte-identical; `scripts/selfhost-emit-hashes` matches
+Both targets' binaries are byte-identical; `scripts/selfhost-emit-hashes` matches
 main for every (fixture, target) pair. `TestSelfHostWordsMatchText` now
 runs the one-process text-versus-records comparison for both native
 targets; its x86 leg puts 13,931 instructions of 210,323 code bytes through as records.
