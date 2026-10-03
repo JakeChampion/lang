@@ -48,7 +48,7 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{}
 var rcCorpusLeakBaselineArm64 = map[string]int64{}
 
 // The wasm table (#7912). This leg still compiles with the native wasm
-// backend, and its residuals are the closure and json paths.
+// backend, and its residuals are the closure drop paths and the json stdlib.
 //
 // Cases the correctness corpus skips on wasm (`skipWasm`) are skipped
 // here too — a case that cannot run cannot be weighed.

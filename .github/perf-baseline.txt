@@ -57,15 +57,15 @@ x86_64/closure_call.text	490
 x86_64/closure_call.ir	153330059
 x86_64/enum_match.text	510
 x86_64/enum_match.ir	127125059
-x86_64/http_hello.text	33097
+x86_64/http_hello.text	32857
 x86_64/http_hello.ir	115708403
 x86_64/int_loop.text	100
 x86_64/int_loop.ir	21000024
-x86_64/map_int.text	3241
+x86_64/map_int.text	3311
 x86_64/map_int.ir	48132153
-x86_64/map_probe_chain.text	3264
+x86_64/map_probe_chain.text	3334
 x86_64/map_probe_chain.ir	445666278
-x86_64/map_string.text	4265
+x86_64/map_string.text	4335
 x86_64/map_string.ir	101545968	2
 x86_64/ordmap_insert.text	2857
 x86_64/ordmap_insert.ir	448178959
@@ -97,9 +97,9 @@ x86_64/struct_drop.text	2058
 x86_64/struct_drop.ir	526740155
 x86_64/tokenize.text	811
 x86_64/tokenize.ir	75940075
-x86_64/utf8_ingest_unchecked.text	22388
+x86_64/utf8_ingest_unchecked.text	21554
 x86_64/utf8_ingest_unchecked.ir	11141483	3
-x86_64/utf8_ingest_validated.text	22850
+x86_64/utf8_ingest_validated.text	22016
 x86_64/utf8_ingest_validated.ir	15557675	3
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
@@ -164,11 +164,11 @@ aarch64/http_hello.text	42615
 aarch64/http_hello.ir	142664551
 aarch64/int_loop.text	103
 aarch64/int_loop.ir	42000017
-aarch64/map_int.text	3870
+aarch64/map_int.text	3945
 aarch64/map_int.ir	57747196
-aarch64/map_probe_chain.text	3896
+aarch64/map_probe_chain.text	3971
 aarch64/map_probe_chain.ir	564589917
-aarch64/map_string.text	5049
+aarch64/map_string.text	5124
 aarch64/map_string.ir	152913860	2
 aarch64/ordmap_insert.text	3020
 aarch64/ordmap_insert.ir	447019502
@@ -200,7 +200,7 @@ aarch64/struct_drop.text	2408
 aarch64/struct_drop.ir	533600202
 aarch64/tokenize.text	886
 aarch64/tokenize.ir	107050097
-aarch64/utf8_ingest_unchecked.text	29373
+aarch64/utf8_ingest_unchecked.text	28439
 aarch64/utf8_ingest_unchecked.ir	13016734	3
-aarch64/utf8_ingest_validated.text	29953
+aarch64/utf8_ingest_validated.text	29019
 aarch64/utf8_ingest_validated.ir	18577734	3
