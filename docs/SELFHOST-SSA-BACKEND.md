@@ -113,7 +113,9 @@ indirect and dyn-dispatch calls, and a call across per-module units — so a
 callee the registry does not name is still called correctly. The pool is the
 argument order because it is also where the allocator homes caller-saved
 values: `ssa_arg_prefs` asks for a parameter's arrival register and an
-argument's departure register, and a call's result may keep `%rax` when its
+argument's departure register, the allocator asks the result register for a
+returned value and for the values a returned phi merges (`ssa.return_prefs`),
+and a call's result may keep `%rax` when its
 dying first argument was there, so `s = f(s, …)` moves nothing when `s` does
 not live across another call.
 
