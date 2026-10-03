@@ -9477,6 +9477,8 @@ pub function str_repeat_helper(): string {
   o = o + "    (local.set $total (i32.wrap_i64 (local.get $t64)))\n";
   o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $total))))\n";
   o = o + "    (i32.store (local.get $p) (local.get $total))\n";
+  // Empty input must not walk a possibly enormous repeat count.
+  o = o + "    (if (i32.eqz (local.get $total)) (then (return (local.get $p))))\n";
   o = o + "    (local.set $k (i32.const 0))\n";
   o = o + "    (block $dk (loop $ck\n";
   o = o + "      (br_if $dk (i32.ge_s (local.get $k) (local.get $n)))\n";
@@ -9601,7 +9603,7 @@ pub function str_replace_helper(): string {
   o = o + "      (br $cd)))\n";
   o = o + "    (local.get $p))\n";
   o = o + "  (func $__fern_str_replace (param $h i32) (param $old i32) (param $new i32) (result i32)\n";
-  o = o + "    (local $lh i32) (local $lo i32) (local $ln i32) (local $cnt i32) (local $i i32) (local $j i32) (local $match i32) (local $total i32) (local $p i32) (local $w i32)\n";
+  o = o + "    (local $lh i32) (local $lo i32) (local $ln i32) (local $cnt i32) (local $i i32) (local $j i32) (local $match i32) (local $total i32) (local $p i32) (local $w i32) (local $t64 i64)\n";
   o = o + "    (local.set $lo (i32.load (local.get $old)))\n";
   o = o + "    (if (i32.eqz (local.get $lo)) (then (return (call $__fern_str_dup (local.get $h)))))\n";
   o = o + "    (local.set $lh (i32.load (local.get $h)))\n";
@@ -9620,7 +9622,11 @@ pub function str_replace_helper(): string {
   o = o + "      (if (local.get $match) (then (local.set $cnt (i32.add (local.get $cnt) (i32.const 1))) (local.set $i (i32.add (local.get $i) (local.get $lo)))) (else (local.set $i (i32.add (local.get $i) (i32.const 1)))))\n";
   o = o + "      (br $cc)))\n";
   o = o + "    (if (i32.eqz (local.get $cnt)) (then (return (call $__fern_str_dup (local.get $h)))))\n";
-  o = o + "    (local.set $total (i32.add (local.get $lh) (i32.mul (local.get $cnt) (i32.sub (local.get $ln) (local.get $lo)))))\n";
+  // Check the full result before narrowing or allocating, reserving the
+  // same string header and allocator headroom as str_repeat_helper.
+  o = o + "    (local.set $t64 (i64.add (i64.extend_i32_u (local.get $lh)) (i64.mul (i64.extend_i32_u (local.get $cnt)) (i64.sub (i64.extend_i32_u (local.get $ln)) (i64.extend_i32_u (local.get $lo))))))\n";
+  o = o + "    (if (i64.gt_u (local.get $t64) (i64.const 2147483639)) (then (unreachable)))\n";
+  o = o + "    (local.set $total (i32.wrap_i64 (local.get $t64)))\n";
   o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $total))))\n";
   o = o + "    (i32.store (local.get $p) (local.get $total))\n";
   o = o + "    (local.set $i (i32.const 0))\n";
