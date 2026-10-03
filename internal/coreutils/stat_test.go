@@ -166,6 +166,20 @@ func statTree(t *testing.T) string {
 	write(j("bs\\dq\""), 1)
 	link("quo'te@", j("link'to"))
 
+	// A symlink's first readlink moves its atime under relatime, and stat
+	// reads the target of every link it reports on. Read each one here, so
+	// the reference does not change what the second run sees.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Type()&os.ModeSymlink != 0 {
+			if _, err := os.Readlink(j(e.Name())); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	return dir
 }
 
@@ -179,11 +193,10 @@ func statTree(t *testing.T) string {
 // unknown conversion UNDER `H` or `L`, which prints `?` and gives the byte
 // back, against `%%` carrying a modifier, which is fatal.
 //
-// The blocked directives (%w, %W, %C, and -f's %T on Darwin) are absent and
-// so are the built-in layouts that carry them — the default block, --terse,
-// and -f on Darwin. Those are refusals in this build and the header of
-// coreutils/stat.fern says why; a case for one would be comparing our
-// diagnostic against GNU's answer.
+// -f's %T on Darwin is absent, and so is -f's default block there, which
+// carries it: a refusal in this build, as the header of coreutils/stat.fern
+// says. %C has its own test (stat_context_test.go), because the reference
+// the corpus runs is built without libselinux.
 // appendRawStatNames adds the two fixture names that are not valid UTF-8, on a
 // filesystem that holds them. Where it does not, the names were never created
 // (see statTree) and the cases quoting them would be stat'ing something absent
@@ -214,7 +227,7 @@ func statCases(t *testing.T) []invocation {
 	for _, spec := range []string{
 		"%a", "%A", "%b", "%B", "%d", "%D", "%f", "%F", "%g", "%G", "%h",
 		"%i", "%m", "%n", "%N", "%o", "%r", "%R", "%s", "%t", "%T", "%u",
-		"%U", "%x", "%X", "%y", "%Y", "%z", "%Z", "%Hd", "%Ld", "%Hr", "%Lr",
+		"%U", "%w", "%W", "%x", "%X", "%y", "%Y", "%z", "%Z", "%Hd", "%Ld", "%Hr", "%Lr",
 	} {
 		add("file-directive-"+spec, "-c", spec, "f")
 	}
@@ -230,6 +243,23 @@ func statCases(t *testing.T) []invocation {
 		add("kind-"+name, "-c", "%A|%a|%#a|%f|%F|%h|%s", name)
 	}
 	add("kind-chardev", "-c", "%A|%F|%f|%r|%R|%t|%T|%Hr|%Lr|%Hd|%Ld", "/dev/null")
+
+	// --- the birth time and the two built-in layouts that carry it --------
+	// A filesystem that records no birth time prints `-` for %w and 0 for
+	// %W; /proc is one on Linux.
+	add("birth-grid", "-c", "[%w][%W][%.3W][%.9W][%-12W][%30w][%-30w]", "f")
+	add("birth-link", "-c", "%w|%W", "sl")
+	add("birth-link-deref", "-L", "-c", "%w|%W", "sl")
+	for _, name := range []string{"f", "empty", "d", "sl", "dangle", "fifo", "hard", "setuid-setgid-sticky", "/dev/null"} {
+		add("default-"+name, name)
+		add("terse-"+name, "-t", name)
+	}
+	add("default-deref", "-L", "sl")
+	add("terse-deref", "-t", "-L", "sl")
+	add("default-two", "f", "d")
+	add("terse-two", "-t", "f", "/dev/null")
+	add("default-missing-between", "f", "nosuch", "d")
+	add("terse-missing", "-t", "nosuch")
 	add("kind-chardev-zero", "-c", "%F|%t|%T|%Hr|%Lr", "/dev/zero")
 	add("kind-dir-root", "-c", "%A|%F|%n|%m", "/")
 	add("kind-proc", "-c", "%F|%m", "/proc")
@@ -632,6 +662,9 @@ func statCases(t *testing.T) []invocation {
 		add("fs-terse", "-t", "-f", "/proc")
 		add("fs-terse-two", "-t", "-f", "/proc", "/proc")
 		add("fs-default-missing", "-f", "nosuch")
+		add("birth-none", "-c", "%w|%W|%.3W", "/proc")
+		add("default-none", "/proc/version")
+		add("terse-none", "-t", "/proc/version")
 	}
 
 	// --- write failures -----------------------------------------------------------

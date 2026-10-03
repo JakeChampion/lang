@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"syscall"
 	"testing"
@@ -344,8 +345,17 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("sort-dirs-first-time", "-t", "--group-directories-first")
 
 	// --- which timestamp, and how it renders --------------------------------
-	for _, word := range []string{"atime", "access", "use", "ctime", "status", "mtime", "modification"} {
+	for _, word := range []string{"atime", "access", "use", "ctime", "status", "mtime", "modification", "birth", "creation"} {
 		add("time-word-"+word, "-l", "--time="+word)
+	}
+	// The birth time, which a filesystem that records none prints as `?`
+	// and sorts before every real one.
+	add("time-birth-full", "-l", "--time=birth", "--full-time")
+	add("sort-time-word-birth", "-t", "--time=birth")
+	add("sort-time-word-birth-reverse", "-tr", "--time=birth")
+	if runtime.GOOS == "linux" {
+		add("time-birth-none", "-l", "--time=birth", "/proc/version", "a.c")
+		add("sort-time-birth-none", "-t", "--time=birth", "/proc/version", "a.c")
 	}
 	for _, style := range []string{
 		"full-iso", "long-iso", "iso", "locale", "posix-full-iso",

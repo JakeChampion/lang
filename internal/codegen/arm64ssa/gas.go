@@ -8775,42 +8775,13 @@ func emitArrPushGrowElemHelper(name, tag string, moveForm bool) func(w func(stri
 	}
 }
 
-// linuxStatFields projects Linux's asm-generic `struct stat` — the arm64
-// one, where mode / nlink / uid / gid are 32-bit up front and st_blksize
-// is a signed 32-bit word at 56 — onto FileStat. `narrow` loads a 32-bit
-// field into a 32-bit slot; `sext` sign-extends a signed 32-bit field
-// into a 64-bit slot; neither means a full 64-bit load.
-//
-// `size` is stored separately, before this table runs, because the kind
-// classification already has it in a register.
-var linuxStatFields = []struct {
-	box, src     int32
-	narrow, sext bool
-}{
-	{ir.FileStat.Mode, 16, true, false},
-	{ir.FileStat.Nlink, 20, true, false},
-	{ir.FileStat.UID, 24, true, false},
-	{ir.FileStat.GID, 28, true, false},
-	{ir.FileStat.Dev, 0, false, false},
-	{ir.FileStat.Rdev, 32, false, false},
-	{ir.FileStat.Ino, 8, false, false},
-	{ir.FileStat.Blksize, 56, false, true},
-	{ir.FileStat.Blocks, 64, false, false},
-	{ir.FileStat.Atime, 72, false, false},
-	{ir.FileStat.AtimeNsec, 80, false, false},
-	{ir.FileStat.Mtime, 88, false, false},
-	{ir.FileStat.MtimeNsec, 96, false, false},
-	{ir.FileStat.Ctime, 104, false, false},
-	{ir.FileStat.CtimeNsec, 112, false, false},
-}
-
-// emitStatHelper writes stat(path) -> Result[FileStat, IoError]: fstatat the
+// emitStatHelper writes stat(path) -> Result[FileStat, IoError]: statx the
 // path and report its kind and size. x0 = path (single-word string).
 //
 // Linux-only, like the rest of this emitter, so there are none of the flat
-// backend's darwin branches: fstatat is syscall 79, AT_FDCWD is -100, and the
-// 128-byte asm-generic struct stat is projected onto FileStat by
-// linuxStatFields.
+// backend's darwin branches: statx is syscall 291, AT_FDCWD is -100, and the
+// record is projected onto FileStat by the flat backend's
+// arm64.StatxProjection.
 //
 // Shape follows read_file exactly — the NUL-terminated path copy, the frame
 // statbuf, and the two boxed results — because they are the same contract:
@@ -8821,7 +8792,8 @@ func emitStatHelper(w func(string, ...any)) {
 }
 
 // emitFdStatHelper writes `__method_Reader_stat` / `__method_Writer_stat`
-// (handle) -> Result[FileStat, IoError]: fstat(2) of the fd at [handle+8],
+// (handle) -> Result[FileStat, IoError]: statx(fd, "", AT_EMPTY_PATH) of the
+// fd at [handle+8],
 // projected by the same body as stat(path). The errno is classified
 // against an empty path, as a failed read is.
 func emitFdStatHelper(name, lp string) func(w func(string, ...any)) {
@@ -9049,21 +9021,31 @@ func emitLstatHelper(w func(string, ...any)) {
 	emitStatLikeHelper(w, "lstat", 256, "lstat", false)
 }
 
-// emitStatLikeHelper is the shared body. `atFlags` is fstatat's flags word and
-// `lp` prefixes the local labels so both helpers can live in one object.
+// statFrame is emitStatLikeHelper's frame: 64 bytes of saved registers, the
+// statx record, and 16 more for the fd form's "".
+const statFrame = 64 + ir.StatxBytes + 16
+
+// emitStatLikeHelper is the shared body. `atFlags` is statx's flags word and
+// `lp` prefixes the local labels so both helpers can live in one object. The
+// frame is the saved registers, the statx record at sp+64 and, past it, the
+// "" the fd form names.
 func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp string, byFd bool) {
 	w("")
 	w("%s:", fnLabel(name))
-	w("\tstp x29, x30, [sp, #-256]!")
+	w("\tstp x29, x30, [sp, #-%d]!", statFrame)
 	w("\tmov x29, sp")
 	w("\tstp x19, x20, [sp, #16]")
 	w("\tstp x21, x22, [sp, #32]")
 	w("\tstp x23, x24, [sp, #48]")
 	if byFd {
-		// fstat(fd @ handle+8, statbuf@sp+64)
+		// statx(fd @ handle+8, "", AT_EMPTY_PATH, mask, statbuf@sp+64)
 		w("\tldr w0, [x0, #8]")
-		w("\tadd x1, sp, #64")
-		w("\tmov x8, #80") // fstat
+		w("\tstrb wzr, [sp, #%d]", 64+ir.StatxBytes)
+		w("\tadd x1, sp, #%d", 64+ir.StatxBytes)
+		w("\tmov x2, #4096") // AT_EMPTY_PATH
+		w("\tmov x3, #%d", ir.StatxMask)
+		w("\tadd x4, sp, #64")
+		w("\tmov x8, #291") // statx
 		w("\tsvc #0")
 		w("\ttbnz x0, #63, .Lssa%s_err", lp)
 		emitStatProjection(w, lp)
@@ -9078,19 +9060,20 @@ func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp str
 		w("\tldp x23, x24, [sp, #48]")
 		w("\tldp x21, x22, [sp, #32]")
 		w("\tldp x19, x20, [sp, #16]")
-		w("\tldp x29, x30, [sp], #256")
+		w("\tldp x29, x30, [sp], #%d", statFrame)
 		w("\tret")
 		return
 	}
 	w("\tmov x19, x0") // path
 	emitNulTermPathInline(w, lp)
-	// fstatat(AT_FDCWD, path_nul, statbuf@sp+64, 0).
+	// statx(AT_FDCWD, path_nul, atFlags, mask, statbuf@sp+64).
 	w("\tmov x0, #100")
 	w("\tneg x0, x0") // AT_FDCWD
 	w("\tmov x1, x24")
-	w("\tadd x2, sp, #64")
-	w("\tmov x3, #%d", atFlags)
-	w("\tmov x8, #79") // fstatat
+	w("\tmov x2, #%d", atFlags)
+	w("\tmov x3, #%d", ir.StatxMask)
+	w("\tadd x4, sp, #64")
+	w("\tmov x8, #291") // statx
 	w("\tsvc #0")
 	w("\ttbnz x0, #63, .Lssa%s_err", lp)
 	emitStatProjection(w, lp)
@@ -9103,7 +9086,7 @@ func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp str
 	w("\tldp x23, x24, [sp, #48]")
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")
-	w("\tldp x29, x30, [sp], #256")
+	w("\tldp x29, x30, [sp], #%d", statFrame)
 	w("\tret")
 }
 
@@ -9238,9 +9221,9 @@ func emitStatfsHelper(w func(string, ...any)) {
 // statbuf at sp+64 read into a fresh FileStat box, wrapped in Ok, with the
 // Result pointer left in x0.
 func emitStatProjection(w func(string, ...any), lp string) {
-	w("\tldr w9, [sp, #80]")   // st_mode (u32 @ statbuf+16)
-	w("\tldr x22, [sp, #112]") // st_size (i64 @ statbuf+48)
-	w("\tmov w11, #61440")     // S_IFMT
+	w("\tldrh w9, [sp, #%d]", 64+ir.StatxModeOff)
+	w("\tldr x22, [sp, #%d]", 64+ir.StatxSizeOff)
+	w("\tmov w11, #61440") // S_IFMT
 	w("\tand w9, w9, w11")
 	w("\tmov x20, #0")     // is_file
 	w("\tmov w10, #32768") // S_IFREG
@@ -9269,19 +9252,12 @@ func emitStatProjection(w func(string, ...any), lp string) {
 	w("\tstr w20, [x23]")
 	w("\tstr w21, [x23, #4]")
 	w("\tstr x22, [x23, #%d]", ir.FileStat.Size)
-	for _, f := range linuxStatFields {
-		if f.sext {
-			w("\tldrsw x9, [sp, #%d]", 64+f.src)
-			w("\tstr x9, [x23, #%d]", f.box)
+	for _, line := range arm64.StatxProjection("sp", 64, "x23", ".Lssa"+lp+"_bt") {
+		if strings.HasSuffix(line, ":") {
+			w("%s", line)
 			continue
 		}
-		if f.narrow {
-			w("\tldr w9, [sp, #%d]", 64+f.src)
-			w("\tstr w9, [x23, #%d]", f.box)
-			continue
-		}
-		w("\tldr x9, [sp, #%d]", 64+f.src)
-		w("\tstr x9, [x23, #%d]", f.box)
+		w("\t%s", line)
 	}
 	// Result.Ok(FileStat): box {rc=1, tag=0, filestat@+8}.
 	w("\tadrp x3, %s", heapPtrSym)

@@ -47,10 +47,6 @@
 // directives that read them are REFUSED rather than answered with a
 // plausible-looking value:
 //
-//   - the file birth time (`%w`, `%W`) needs `statx(2)`; `stat` and
-//     `lstat` lower to `newfstatat(2)`, whose `struct stat` has no
-//     such member (#9096). The default multi-line block and `--terse`
-//     both carry it, so both are refused too.
 //   - on Darwin, the file system's type NAME (`%T`), which GNU reads
 //     from `f_fstypename`; `statfs` reports the type number only, and
 //     Darwin's is an index into the running kernel's VFS list rather
@@ -62,12 +58,15 @@
 // answers ENODATA. A GNU built `--without-selinux` answers ENOTSUP from
 // gnulib's stub instead, whatever the attribute holds.
 //
-// Printing GNU's own "unknown" rendering for these — `-` and `0` for
-// a birth time, a zeroed magic number — would be a fiction on a
-// filesystem that does report them, and the oracle corpus would then
-// be measuring our invention. The refusal names the directive, comes
-// only once the operand has been read (GNU reports a file it cannot
-// stat before it formats anything), and exits 1.
+// Printing GNU's own "unknown" rendering for that — a zeroed magic
+// number — would be a fiction on a filesystem that does report one, and
+// the oracle corpus would then be measuring our invention. The refusal
+// names the directive, comes only once the operand has been read (GNU
+// reports a file it cannot stat before it formats anything), and exits 1.
+//
+// The birth time (`%w`, `%W`) is FileStat's own: statx(2) on Linux,
+// st_birthtimespec on Darwin, and zero where the filesystem records none,
+// which is when GNU prints `-` and 0.
 import "std/string";
 import "std/array";
 import "std/i64";
@@ -132,6 +131,8 @@ function help_text(): string {
   out = out + "  %T   minor device type in hex, for character/block device special files\n";
   out = out + "  %u   user ID of owner\n";
   out = out + "  %U   user name of owner\n";
+  out = out + "  %w   time of file birth, human-readable; - if unknown\n";
+  out = out + "  %W   time of file birth, seconds since Epoch; 0 if unknown\n";
   out = out + "  %x   time of last access, human-readable\n";
   out = out + "  %X   time of last access, seconds since Epoch\n";
   out = out + "  %y   time of last data modification, human-readable\n";
@@ -155,14 +156,40 @@ function help_text(): string {
   out = out + "  %t   file system type in hex\n";
   out = out + "  %T   file system type in human readable form\n";
   out = out + "\n";
+  out = out + "--terse is equivalent to the following FORMAT:\n";
+  out = out + "    " + file_terse_format(false);
   out = out + "--terse --file-system is equivalent to the following FORMAT:\n";
   out = out + "    " + fs_terse_format();
   out = out + "\n";
-  out = out + "This build cannot report the file birth time (%w, %W), so the default\n";
-  out = out + "output and --terse are refused, nor, on Darwin, the file system's type\n";
-  out = out + "name (%T), which refuses the default --file-system output there. See\n";
-  out = out + "JakeChampion/lang issues 9096 and 11255.\n";
+  out = out + "This build cannot report, on Darwin, the file system's type name (%T),\n";
+  out = out + "which refuses the default --file-system output there. See\n";
+  out = out + "JakeChampion/lang issue 11255.\n";
   return out;
+}
+
+// GNU 9.12's built-in file layouts. `--terse` adds `%C` where SELinux is
+// enabled, and the default block a `Context:` line; a character or block
+// device's `Device:` line also carries its `Device type:`.
+function file_terse_format(context: boolean): string {
+  if (context) {
+    return "%n %s %b %f %u %g %D %i %h %t %T %X %Y %Z %W %o %C\n";
+  }
+  return "%n %s %b %f %u %g %D %i %h %t %T %X %Y %Z %W %o\n";
+}
+
+function file_default_format(device: boolean, context: boolean): string {
+  let f: string = "  File: %N\n";
+  f = f + "  Size: %-10s\tBlocks: %-10b IO Block: %-6o %F\n";
+  if (device) {
+    f = f + "Device: %Hd,%Ld\tInode: %-10i  Links: %-5h Device type: %Hr,%Lr\n";
+  } else {
+    f = f + "Device: %Hd,%Ld\tInode: %-10i  Links: %h\n";
+  }
+  f = f + "Access: (%04a/%10.10A)  Uid: (%5u/%8U)   Gid: (%5g/%8G)\n";
+  if (context) {
+    f = f + "Context: %C\n";
+  }
+  return f + "Access: %x\nModify: %y\nChange: %z\n Birth: %w\n";
 }
 
 // GNU 9.12's two built-in `--file-system` layouts.
@@ -786,7 +813,7 @@ struct Item { name: string, st: FileStat, link: string, is_link: boolean, deref:
 struct FsItem { name: string, fs: FsStat }
 
 function stat_zero(): FileStat {
-  return FileStat { is_file: false, is_dir: false, size: 0 as i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64, atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, ctime: 0 as i64, ctime_nsec: 0 as i64 };
+  return FileStat { is_file: false, is_dir: false, size: 0 as i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64, atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, ctime: 0 as i64, ctime_nsec: 0 as i64, btime: 0 as i64, btime_nsec: 0 as i64 };
 }
 
 function fsstat_zero(): FsStat {
@@ -955,6 +982,17 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
   if (c == 90) {
     return (ok_rendered(epoch_time(d, st.ctime, st.ctime_nsec)), qi);
   }
+  // The birth time; zero is a filesystem that records none, which GNU
+  // prints as `-` and, through %W, as 0.
+  if (c == 119) {
+    if (st.btime == 0 as i64 && st.btime_nsec == 0 as i64) {
+      return (ok_rendered(out_string(d, "-")), qi);
+    }
+    return (ok_rendered(out_string(d, human_time(z, st.btime, st.btime_nsec))), qi);
+  }
+  if (c == 87) {
+    return (ok_rendered(epoch_time(d, st.btime, st.btime_nsec)), qi);
+  }
   return (unknown_rendered(), qi);
 }
 
@@ -1091,9 +1129,6 @@ function blocked(d: Directive, fs_mode: boolean): string {
     }
     return "";
   }
-  if (d.conv == 119 || d.conv == 87) {
-    return "%" + string_from_bytes_unchecked([d.conv as u8]);
-  }
   return "";
 }
 
@@ -1147,7 +1182,7 @@ function needs_zone(pieces: Piece[]): boolean {
   let i: i32 = 0;
   while (i < pieces.len()) {
     let c: i32 = pieces[i].dir.conv;
-    if (pieces[i].is_dir && (c == 120 || c == 121 || c == 122)) {
+    if (pieces[i].is_dir && (c == 119 || c == 120 || c == 121 || c == 122)) {
       return true;
     }
     i = i + 1;
@@ -1170,7 +1205,9 @@ function is_symlink(st: FileStat): boolean {
   return filetype.is_link(st.mode);
 }
 
-function do_file(o: io_buffered.BufWriter, pieces: Piece[], name: string, deref: boolean, newline: boolean, z: tz.Zone, qi: Quoting, builtin: string): (io_buffered.BufWriter, boolean, Quoting) {
+// `device_pieces` is the layout for a character or block device, which the
+// default block gives a `Device type:`; otherwise it is `pieces` itself.
+function do_file(o: io_buffered.BufWriter, pieces: Piece[], device_pieces: Piece[], name: string, deref: boolean, newline: boolean, z: tz.Zone, qi: Quoting): (io_buffered.BufWriter, boolean, Quoting) {
   let w: io_buffered.BufWriter = o;
   match (stat_of(name, deref)) {
     Ok(st) => {
@@ -1186,12 +1223,14 @@ function do_file(o: io_buffered.BufWriter, pieces: Piece[], name: string, deref:
           }
         }
       }
-      if (builtin != "") {
-        gnu.die(w, builtin, 1);
-      }
       let it: Item = Item { name: name, st: st, link: link, is_link: is_link, deref: deref };
       let empty_fs: FsItem = FsItem { name: name, fs: fsstat_zero() };
-      let rendered: (io_buffered.BufWriter, boolean, Quoting) = render_pieces(w, pieces, false, it, empty_fs, z, qi);
+      let fmt: u32 = st.mode & (61440 as u32);
+      let layout: Piece[] = pieces;
+      if (fmt == (8192 as u32) || fmt == (24576 as u32)) {
+        layout = device_pieces;
+      }
+      let rendered: (io_buffered.BufWriter, boolean, Quoting) = render_pieces(w, layout, false, it, empty_fs, z, qi);
       w = rendered.0;
       if (newline) {
         w = gnu.put(w, "\n");
@@ -1284,13 +1323,14 @@ pub function main(): i32 {
     gnu.die_usage("missing operand", 1);
   }
 
-  // The two file layouts and Darwin's default file-system block name a
-  // field no primitive reports, so there is nothing to render; the
-  // refusal waits until the operand has been read, because GNU reports
-  // an operand it cannot stat before it ever formats one. See the header.
-  // A built-in layout carries its own newlines.
+  // Darwin's default file-system block names a field no primitive reports,
+  // so there is nothing to render; the refusal waits until the operand has
+  // been read, because GNU reports an operand it cannot stat before it ever
+  // formats one. See the header. A built-in layout carries its own
+  // newlines, and the default file one has a second shape for a device.
   let newline: boolean = !escapes;
   let builtin: string = "";
+  let device_format: string = format;
   if (!have_format) {
     newline = false;
     if (fs_mode && terse) {
@@ -1300,14 +1340,21 @@ pub function main(): i32 {
     } else if (fs_mode) {
       format = fs_default_format();
     } else if (terse) {
-      builtin = "--terse requires %W, which is not supported on this system";
+      format = file_terse_format(selinux.enabled());
+      device_format = format;
     } else {
-      builtin = "the default output requires %w, which is not supported on this system";
+      let context: boolean = selinux.enabled();
+      format = file_default_format(false, context);
+      device_format = file_default_format(true, context);
     }
   }
 
   let quoting: Quoting = quoting_new();
   let pieces: Piece[] = scan(format, fs_mode, escapes);
+  let device_pieces: Piece[] = pieces;
+  if (device_format != format) {
+    device_pieces = scan(device_format, fs_mode, escapes);
+  }
 
   let z: tz.Zone = tz.utc_zone();
   if (needs_zone(pieces)) {
@@ -1328,7 +1375,7 @@ pub function main(): i32 {
     if (fs_mode) {
       res = do_fs(o, pieces, name, newline, quoting, builtin);
     } else {
-      res = do_file(o, pieces, name, deref, newline, z, quoting, builtin);
+      res = do_file(o, pieces, device_pieces, name, deref, newline, z, quoting);
     }
     o = res.0;
     quoting = res.2;

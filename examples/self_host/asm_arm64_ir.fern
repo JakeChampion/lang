@@ -8908,10 +8908,9 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   // __fern_temp_dir is a Fern runtime function now (#2649) too —
   // asmcore.rt_src_temp_dir, emitted in the fs bundle.
   // __fern_stat is a Fern runtime function now (#2649): asmcore.rt_src_stat,
-  // emitted in the fs bundle. It unifies on the 4-arg fstatat family and reads
-  // st_mode / st_size at asmcore.statoff offsets, so Linux and Darwin share
-  // one body — no `darwin` fork, and no hand-interned FileStat shape: the
-  // pool emit_ir_runtime ends with writes every shape the lowering interns.
+  // emitted in the fs bundle — statx on Linux, fstatat on Darwin — with no
+  // hand-interned FileStat shape: the pool emit_ir_runtime ends with writes
+  // every shape the lowering interns.
   // __fern_read_dir and __fern_remove_dir_all are Fern runtime functions now
   // (#2649): asmcore.rt_src_read_dir / rt_src_remove_dir_all, emitted in the
   // fs bundle above rather than here. They were the last two entries on the
