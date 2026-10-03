@@ -104,7 +104,7 @@ func TestSelfHostX86GasCarryChainRuns(t *testing.T) {
 // wrong: shld's ModRM.reg is the SOURCE (reversed against the ALU pattern),
 // and adc/sbb sit between or (/1) and and (/4) in one opcode family, where a
 // wrong extension digit is a different instruction that drops the carry.
-// TestSelfHostX86GasVexGroundTruth pins the five AVX2 forms the byte
+// TestSelfHostX86GasVexGroundTruth pins the AVX2 forms the runtime
 // kernels emit, in the register mixes that exercise both halves of the VEX
 // prefix, against as + objdump output for this exact text.
 func TestSelfHostX86GasVexGroundTruth(t *testing.T) {
@@ -113,10 +113,10 @@ func TestSelfHostX86GasVexGroundTruth(t *testing.T) {
 
 const x86GasVexGroundTruthMain = `
 function main(): i32 {
-    let src: string = "    .text\n_start:\n    vmovdqu (%rax,%rdx), %ymm0\n    vmovdqu (%r8,%r9), %ymm3\n    vmovdqu (%rdi), %ymm9\n    vmovdqu %ymm1, %ymm0\n    vpbroadcastb %xmm1, %ymm1\n    vpbroadcastb %xmm9, %ymm10\n    vpcmpeqb %ymm1, %ymm0, %ymm0\n    vpcmpeqb %ymm9, %ymm10, %ymm11\n    vpcmpeqb (%rax,%rdx), %ymm1, %ymm0\n    vpmovmskb %ymm0, %eax\n    vpmovmskb %ymm0, %r9d\n    vpmovmskb %ymm10, %r11d\n    vzeroupper\n";
+    let src: string = "    .text\n_start:\n    vmovdqu (%rax,%rdx), %ymm0\n    vmovdqu (%r8,%r9), %ymm3\n    vmovdqu (%rdi), %ymm9\n    vmovdqu %ymm1, %ymm0\n    vpbroadcastb %xmm1, %ymm1\n    vpbroadcastb %xmm9, %ymm10\n    vpcmpeqb %ymm1, %ymm0, %ymm0\n    vpcmpeqb %ymm9, %ymm10, %ymm11\n    vpcmpeqb (%rax,%rdx), %ymm1, %ymm0\n    vpmovmskb %ymm0, %eax\n    vpmovmskb %ymm0, %r9d\n    vpmovmskb %ymm10, %r11d\n    vmovdqu %ymm0, (%rdi)\n    vmovdqu %ymm1, 32(%rdi)\n    vmovdqu %ymm9, (%r8,%r9)\n    vmovdqu %ymm3, -64(%rax,%rdx)\n    vzeroupper\n";
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 95; }
-    let exp: i32[] = [197, 254, 111, 4, 16, 196, 129, 126, 111, 28, 8, 197, 126, 111, 15, 197, 254, 111, 193, 196, 226, 125, 120, 201, 196, 66, 125, 120, 209, 197, 253, 116, 193, 196, 65, 45, 116, 217, 197, 245, 116, 4, 16, 197, 253, 215, 192, 197, 125, 215, 200, 196, 65, 125, 215, 218, 197, 248, 119];
+    let exp: i32[] = [197, 254, 111, 4, 16, 196, 129, 126, 111, 28, 8, 197, 126, 111, 15, 197, 254, 111, 193, 196, 226, 125, 120, 201, 196, 66, 125, 120, 209, 197, 253, 116, 193, 196, 65, 45, 116, 217, 197, 245, 116, 4, 16, 197, 253, 215, 192, 197, 125, 215, 200, 196, 65, 125, 215, 218, 197, 254, 127, 7, 197, 254, 127, 79, 32, 196, 1, 126, 127, 12, 8, 197, 254, 127, 92, 16, 192, 197, 248, 119];
     if (a.code.len() != exp.len()) { return 96; }
     let i: i32 = 0;
     while (i < exp.len()) {

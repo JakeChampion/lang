@@ -4059,10 +4059,10 @@ function x86_gas_cc_code(cond: string): i32 {
 
 // END GENERATED CONDITION TABLE
 
-// ---- AVX2: the five VEX-encoded forms the byte kernels use ----
+// ---- AVX2: the VEX-encoded forms the runtime kernels use ----
 //
-// The same narrow vocabulary as native's avx.go — vmovdqu (load),
-// vpbroadcastb, vpcmpeqb, vpmovmskb and vzeroupper over a 256-bit ymm —
+// Native's avx.go vocabulary — vmovdqu (load), vpbroadcastb, vpcmpeqb,
+// vpmovmskb and vzeroupper over a 256-bit ymm — plus the vmovdqu store,
 // kept out of the shared x86tbl tables, which assume legacy encoding
 // throughout. AVX2 is inside the x86-64-v3 baseline, so nothing here is
 // guarded.
@@ -4137,11 +4137,19 @@ function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: 
 }
 
 // x86_gas_vex_two: the two-operand AVX2 forms, AT&T `src, dst` —
-// `vmovdqu ymm/m256, %ymm` (VEX.256.F3.0F 6F /r), `vpbroadcastb %xmm,
-// %ymm` (VEX.256.66.0F38 78 /r) and `vpmovmskb %ymm, %r32` (VEX.256.66.0F
-// D7 /r). The store direction of vmovdqu and a 64-bit vpmovmskb
-// destination are not forms the kernels use, so they are refused.
+// `vmovdqu ymm/m256, %ymm` (VEX.256.F3.0F 6F /r), its store `vmovdqu
+// %ymm, m256` (VEX.256.F3.0F 7F /r), `vpbroadcastb %xmm, %ymm`
+// (VEX.256.66.0F38 78 /r) and `vpmovmskb %ymm, %r32` (VEX.256.66.0F D7
+// /r). A 64-bit vpmovmskb destination is not a form the kernels use, so it
+// is refused.
 function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
+  if (mnem == "vmovdqu" && x86_gas_has_paren(dst)) {
+    let ys0: i32 = x86_gas_ymm(src);
+    if (ys0 < 0) {
+      return x86_gas_bad(a, mnem + " " + src + ", " + dst);
+    }
+    return x86_gas_vex_rm(a, mnem, 1, 2, 0, 127, ys0, dst);
+  }
   if (mnem == "vmovdqu") {
     let yd: i32 = x86_gas_ymm(dst);
     if (yd < 0) {

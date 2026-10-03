@@ -4572,16 +4572,30 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %r14, %rcx\n");
     s = s.write("    incq %rcx\n");
     s = s.write("    movq %rcx, (%rax)\n");  // new len = old+1 (overwrite helper's len)
-    // Copy old elements (slots 1..len) from old arr to new, four to the
-    // iteration through a pair of 16-byte SSE2 moves: 2.25 instructions per
-    // element against the six a one-element-per-branch loop costs. SSE2 is
-    // below the Haswell baseline, so the moves need no dispatch. %rsi / %rdi /
-    // %rcx / %rdx and xmm0-1 are the scratch; %rax (the new buffer, the return
-    // value), %r12, %r13 and %r14 all outlive this and are untouched.
+    // Copy old elements (slots 1..len) from old arr to new, eight to the
+    // round through a pair of 32-byte AVX2 moves (one instruction per
+    // element), then at most one round of four through 16-byte moves, then
+    // one at a time. AVX2 is inside the x86-64-v3 baseline, so the moves need
+    // no dispatch; vzeroupper follows the ymm loop. %rsi / %rdi / %rcx / %rdx
+    // and ymm0-1 are the scratch; %rax (the new buffer, the return value),
+    // %r12, %r13 and %r14 all outlive this and are untouched.
     s = s.write("    leaq 8(%r12), %rsi\n");  // src cursor
     s = s.write("    leaq 8(%rax), %rdi\n");  // dst cursor
-    s = s.write("    movq %r14, %rcx\n");  // elements remaining
-    s = s.write(".Larr_push_copy4:\n");
+    s = s.write("    movq %r14, %rcx\n");
+    s = s.write("    subq $8, %rcx\n");  // elements remaining, less one round
+    s = s.write("    jl .Larr_push_copy_lt8\n");
+    s = s.write(".Larr_push_copy8:\n");
+    s = s.write("    vmovdqu (%rsi), %ymm0\n");
+    s = s.write("    vmovdqu 32(%rsi), %ymm1\n");
+    s = s.write("    vmovdqu %ymm0, (%rdi)\n");
+    s = s.write("    vmovdqu %ymm1, 32(%rdi)\n");
+    s = s.write("    addq $64, %rsi\n");
+    s = s.write("    addq $64, %rdi\n");
+    s = s.write("    subq $8, %rcx\n");
+    s = s.write("    jge .Larr_push_copy8\n");
+    s = s.write("    vzeroupper\n");
+    s = s.write(".Larr_push_copy_lt8:\n");
+    s = s.write("    addq $8, %rcx\n");  // 0..7 left
     s = s.write("    cmpq $4, %rcx\n");
     s = s.write("    jl .Larr_push_copy1\n");
     s = s.write("    movdqu (%rsi), %xmm0\n");
@@ -4591,7 +4605,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    addq $32, %rsi\n");
     s = s.write("    addq $32, %rdi\n");
     s = s.write("    subq $4, %rcx\n");
-    s = s.write("    jmp .Larr_push_copy4\n");
     s = s.write(".Larr_push_copy1:\n");
     s = s.write("    testq %rcx, %rcx\n");
     s = s.write("    jz .Larr_push_copy_done\n");
