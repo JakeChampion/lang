@@ -434,6 +434,11 @@
 # constant a phi merges or a block returns now loads on its edge with no home
 # of its own, a further 0.7%. Measured with TestSelfHostWarmStockDriver, the
 # gate's own path; fern.fern, which the pin builds, stays inside 5%.
+# 2026-10-03 — asm_pathprobe_run 3965592 -> 4195192 (+5.8%): the generic
+# function named as a value (#11324) adds its monomorphisation to parser.fern
+# (mono_fn_value, promote_value_named and the callable bindings), which every
+# driver links; the other rows stay inside 5%. Number pasted from
+# driver-sizes' own report on run 37161423382.
 fern.fern/stage2 10946736
 fern.fern 10737128
 asm_load_run.fern 8721320
@@ -443,5 +448,5 @@ asm_run.fern 6813576
 wasm_ir_run.fern 6878120
 wasm_run.fern 6878824
 wasm_runio_run.fern 6878184
-asm_pathprobe_run.fern 3965592
+asm_pathprobe_run.fern 4195192
 checker_modload_run.fern 2386128
