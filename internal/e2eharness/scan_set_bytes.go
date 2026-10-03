@@ -4,8 +4,7 @@ import "strings"
 
 // ScanSetBytesSource checks __scan_set_bytes against a scalar reference over
 // full, short and empty sets, every start from below zero to past the end,
-// and a set held in a `const`. Allocation accounting runs only on compiled
-// targets: the primary interpreter does not implement __heap_alloc_count.
+// and a set held in a `const`, with an allocation probe when `allocations`.
 func ScanSetBytesSource(allocations bool) string {
 	probe := ""
 	if allocations {

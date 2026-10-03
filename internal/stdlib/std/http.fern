@@ -558,43 +558,51 @@ pub function http_request_bytes_cap(limits: HttpLimits): i32 {
   return limits.header_bytes + 4 + limits.body + limits.header_bytes;
 }
 
-// `__is_tchar(b)` — a byte of a token (RFC 9110 §5.6.2): a letter, a
-// digit, or one of `!#$%&'*+-.^_`|~`, split at `@` to keep each half's
-// branch count under the lint cap.
-function __is_tchar(b: u8): boolean {
-  return __is_tchar_below_at(b) || __is_tchar_above_at(b);
-}
+// NOT_TCHAR marks, by byte value, every byte that is not a tchar, the bytes
+// of a token (RFC 9110 §5.6.2): a letter, a digit, or one of
+// `!#$%&'*+-.^_`|~`. FIELD_CTL marks every control a field value may not
+// hold, all but HTAB below SP and DEL. A byte past FIELD_CTL's end is not in
+// it.
+const NOT_TCHAR: u8[] = [
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 1u8, 0u8, 0u8, 1u8, 0u8, 0u8, 1u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 1u8, 1u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 1u8, 0u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+];
 
-function __is_tchar_below_at(b: u8): boolean {
-  return b == 33 as u8 || b >= 35 as u8 && b <= 39 as u8 || b == 42 as u8 || b == 43 as u8
-    || b == 45 as u8 || b == 46 as u8 || b >= 48 as u8 && b <= 57 as u8;
-}
-
-function __is_tchar_above_at(b: u8): boolean {
-  return b >= 65 as u8 && b <= 90 as u8 || b >= 94 as u8 && b <= 96 as u8
-    || b >= 97 as u8 && b <= 122 as u8 || b == 124 as u8 || b == 126 as u8;
-}
+const FIELD_CTL: u8[] = [
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 0u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8,
+];
 
 // `__is_token(buf, from, end)` — whether buf[from, end) is a non-empty
 // token.
 function __is_token(buf: u8[], from: i32, end: i32): boolean {
-  if (end <= from) {
-    return false;
-  }
-  let i: i32 = from;
-  while (i < end) {
-    if (!__is_tchar(buf[i])) {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
+  return end > from && __token_end(buf, from, end) == end;
 }
 
 // `__token_is(s, want)` — whether `s`, less the SP and HTAB around it,
-// is the token `want` under ASCII case folding (RFC 9110 §5.6.2): every
-// byte a tchar, and each equal to `want`'s once an ASCII capital is
-// lowered. Byte-wise on purpose: a Unicode fold would let U+212A KELVIN
+// is the token `want` under ASCII case folding (RFC 9110 §5.6.2): each byte
+// equal to `want`'s once an ASCII capital is lowered, which makes it a tchar
+// because `want` is a token. Byte-wise on purpose: a Unicode fold would let U+212A KELVIN
 // SIGN match `k`, and a byte-oriented intermediary would frame the
 // message differently.
 function __token_is(s: string, want: string): boolean {
@@ -611,7 +619,7 @@ function __token_is(s: string, want: string): boolean {
   }
   let i: i32 = 0;
   while (i < want.len()) {
-    if (!__is_tchar(s[from + i]) || __ascii_lower(s[from + i]) != want[i] as i32) {
+    if (__ascii_lower(s[from + i]) != want[i] as i32) {
       return false;
     }
     i = i + 1;
@@ -645,12 +653,8 @@ function __field_value(buf: u8[], from: i32, end: i32): Option[string] {
   while (end > from && __is_ows(buf[end - 1])) {
     end = end - 1;
   }
-  let i: i32 = from;
-  while (i < end) {
-    if (buf[i] < 32 as u8 && buf[i] != 9 as u8 || buf[i] == 127 as u8) {
-      return None;
-    }
-    i = i + 1;
+  if (__scan_set_bytes(buf, from, FIELD_CTL) < end) {
+    return None;
   }
   return utf8.from_bytes(__bytes_range(buf, from, end));
 }
@@ -1072,9 +1076,9 @@ function __bws_end(buf: u8[], from: i32, end: i32): i32 {
 
 // `__token_end(buf, from, end)` — the offset past the tchars at `from`.
 function __token_end(buf: u8[], from: i32, end: i32): i32 {
-  let i: i32 = from;
-  while (i < end && __is_tchar(buf[i])) {
-    i = i + 1;
+  let i: i32 = __scan_set_bytes(buf, from, NOT_TCHAR);
+  if (i > end) {
+    return end;
   }
   return i;
 }

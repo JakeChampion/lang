@@ -4,31 +4,13 @@
 //   chcon [OPTION]... [-u USER] [-r ROLE] [-l RANGE] [-t TYPE] FILE...
 //   chcon [OPTION]... --reference=RFILE FILE...
 //
-// The SELinux security context of a file is an extended attribute, and
-// Fern can read one (`getxattr`) but has no primitive that writes one — no
-// `setxattr` (#9154). So the step this utility exists for is
-// REFUSED, and everything up to it is exact. What "up to it" covers is
-// most of chcon: the option grammar, the three mutually exclusive ways
-// of naming a context, the operand-count rules, the `-R` traversal with
-// its `-H` / `-L` / `-P` modes, the root failsafe, and every diagnostic
-// the walk itself raises.
-//
-// ---- the refusal, and why it is not a divergence that can be avoided ---
-//
-// GNU on a kernel WITHOUT SELinux does not refuse: it calls
-// `setfilecon(3)` and reports whatever the call failed with. Which errno
-// that is belongs to the machine, not to chcon — `Operation not
-// supported` where coreutils was built without libselinux, `Operation
-// not permitted` where it was built with it and the caller may not write
-// `security.*`. A build cannot predict it, so the errno slot carries our
-// own sentence instead:
-//
-//   chcon: failed to change context of 'f' to 'ctx': setting a security
-//   context is not supported on this system
-//
-// The frame around it is GNU's, so the day a primitive lands only that
-// clause changes. The cases the corpus can hold are exactly those that
-// never reach it; docs/COREUTILS.md records the rest.
+// The SELinux security context of a file is its `security.selinux`
+// extended attribute, read with `getxattr` and written with `setxattr`
+// the way libselinux's getfilecon(3) and setfilecon(3) do (see
+// lib/selinux.fern). A change that fails reports the kernel's errno in
+// GNU's frame — `Operation not permitted` for a caller who may not write
+// `security.*` on a kernel with no SELinux, which is what GNU built with
+// libselinux prints there too.
 //
 // ---- the argument shape ------------------------------------------------
 //
@@ -194,12 +176,6 @@ function help_text(): string {
   return out;
 }
 
-// What a diagnostic says where GNU prints the errno of setfilecon(3), the
-// one libselinux call this build cannot make (#9154).
-function no_set(): string {
-  return "setting a security context is not supported on this system";
-}
-
 // `comps` / `set` are the component options, indexed user 0, role 1, type 2,
 // range 3 as `selinux.merge_context` reads them.
 struct Settings { recursive: boolean, preserve_root: boolean, verbose: boolean, walk: i32, deref: i32, referent: boolean, context: string, component: boolean, comps: string[], set: boolean[] }
@@ -336,10 +312,10 @@ function is_dir_mode(m: u32): boolean {
 
 // ---- one entry -------------------------------------------------------------
 // The component forms read the file's context first and rebuild it; an
-// unchanged result is success without a write. The write itself has no
-// primitive behind it. `shown` is the name fts would hand libselinux, which
-// is the path relative to the directory fts is sitting in; `path` is the
-// whole one, which is what this process needs.
+// unchanged result is success without a write. A context named outright is
+// always written. `shown` is the name fts would hand libselinux, which is
+// the path relative to the directory fts is sitting in; `path` is the whole
+// one, which is what this process needs.
 function change_one(st0: St, s: Settings, path: string, shown: string): St {
   let st: St = st0;
   if (s.verbose) {
@@ -356,7 +332,7 @@ function change_one(st0: St, s: Settings, path: string, shown: string): St {
         // ENODATA is a file with no label, which GNU will not complete
         // from a partial context.
         let why: string = gnu.io_error_text(e);
-        if (why == "No data available") {
+        if (why == gnu.enodata_text()) {
           return fail(st, "can't apply partial context to unlabeled file " + gnu.quotea(shown));
         }
         return fail(st, "failed to get security context of " + gnu.quotea(shown) + ": " + why);
@@ -377,7 +353,14 @@ function change_one(st0: St, s: Settings, path: string, shown: string): St {
       return st;
     }
   }
-  return fail(st, "failed to change context of " + gnu.quotea(shown) + " to " + gnu.quote(target) + ": " + no_set());
+  match (selinux.set_file_context(path, target, s.referent)) {
+    Ok(_) => {
+      return st;
+    },
+    Err(e) => {
+      return fail(st, "failed to change context of " + gnu.quotea(shown) + " to " + gnu.quote(target) + ": " + gnu.io_error_text(e));
+    }
+  }
 }
 
 // ---- the walk --------------------------------------------------------------

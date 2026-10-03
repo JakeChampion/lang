@@ -1092,6 +1092,16 @@ pub function op_lgetxattr(): Op {
   return op0(363);
 }
 
+// `setxattr` / `lsetxattr` take [path, name, value] and push Result[void,
+// IoError]. Native only, like the reads.
+pub function op_setxattr(): Op {
+  return op0(364);
+}
+
+pub function op_lsetxattr(): Op {
+  return op0(365);
+}
+
 pub function op_rename_noreplace(): Op {
   return op0(356);
 }
@@ -3501,6 +3511,9 @@ function kind_id_len8(name: string): i32 {
   if (c == b'g' && name == "getxattr") {
     return 362;
   }
+  if (c == b's' && name == "setxattr") {
+    return 364;
+  }
   if (c == b'h' && name == "hostname") {
     return 240;
   }
@@ -3683,6 +3696,9 @@ function kind_id_len9(name: string): i32 {
   }
   if (c == b'l' && name == "lgetxattr") {
     return 363;
+  }
+  if (c == b'l' && name == "lsetxattr") {
+    return 365;
   }
   if (c == b'o' && name == "open_file") {
     return 203;
@@ -5426,6 +5442,12 @@ pub function kind_name(id: i32): string {
   if (id == 363) {
     return "lgetxattr";
   }
+  if (id == 364) {
+    return "setxattr";
+  }
+  if (id == 365) {
+    return "lsetxattr";
+  }
   if (id <= 40) {
     return kind_name_0(id);
   }
@@ -5611,7 +5633,8 @@ function pops3(t: i32): boolean {
     || t == 313  // termios_set (fd, when, words)
     || t == 314  // set_window_size (fd, rows, cols)
     || t == 324  // scan_set (str, from, set)
-    || t == 327;  // count_runs (str, inside, set)
+    || t == 327  // count_runs (str, inside, set)
+    || t == 364 || t == 365;  // setxattr, lsetxattr (path, name, value)
 }
 
 // pops_buf is the operand count of one of the capacity-carrying string
@@ -8109,7 +8132,7 @@ pub function op_allocates(tag: i32): boolean {
   // The single-step directory and link primitives, rename, set_file_times
   // and truncate box a Result and heap-build the NUL-terminated paths they
   // pass to the kernel; read_link and the xattr reads box a string as well.
-  if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 || tag == 267 || tag == 269 || tag == 273 || tag == 356 || tag == 357 || tag == 362 || tag == 363) {
+  if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 || tag == 267 || tag == 269 || tag == 273 || tag == 356 || tag == 357 || tag == 362 || tag == 363 || tag == 364 || tag == 365) {
     return true;
   }
   // read_dir / read_dir_all box a fresh string[] (the arr box + a string

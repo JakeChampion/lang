@@ -236,14 +236,23 @@ function arm64_refusals(target: string, stage: string, unknown: string[]): strin
   return "";
 }
 
+// arm64_word_buf is the buffer the arm64 emitter hands encoded words to when
+// the output is a binary, 0 when it is the text.
+function arm64_word_buf(emit_text: boolean): usize {
+  if (emit_text) {
+    return 0 as usize;
+  }
+  return buf_new(1048576);
+}
+
 // arm64_elf_binary assembles arm64 Linux GAS text (from either the SSA or AST
 // emitter) into a runnable static ELF entirely in-process via arm64_native +
 // elf.fern — no `.s` + external gcc/ld. Returns the binary bytes packed into a
 // string (written verbatim by write_file), or "" if the assembler hit an
 // instruction it doesn't yet support (the caller reports it and exits 2). The
 // arm64-darwin counterpart is the macho_executable path above.
-function arm64_elf_binary(asm: string, emit_syms: boolean): string {
-  let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(asm);
+function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean): string {
+  let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program_words(asm, words);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-linux", "assembler", p.unknown);
   }
@@ -308,8 +317,8 @@ function arm64_elf_binary(asm: string, emit_syms: boolean): string {
 // emit_ir_reloc lays down at _start — see #7112, which is what that gap cost
 // before anyone noticed (`match` on a const aggregate took no arm and the
 // program silently returned 0).
-function arm64_elf_binary_pie(asm: string): string {
-  let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(asm);
+function arm64_elf_binary_pie(asm: string, words: u8[]): string {
+  let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program_words(asm, words);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-android", "assembler", p.unknown);
   }
@@ -2786,13 +2795,14 @@ function run(): i32 {
     //
     // The default form is the in-process ELF (arm64_native + elf.fern) —
     // no `.s` + gcc/ld.
-    out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub);
+    let recs: usize = arm64_word_buf(emit_text);
+    out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub, recs);
     util.arr_push_cliff_report("arm64:emitted", 0);
     if (out_asm.len() == 0) {
       return 2;
     }
     if (!emit_text) {
-      out_asm = arm64_elf_binary(out_asm, emit_syms);
+      out_asm = arm64_elf_binary(out_asm, buf_take_bytes(recs), emit_syms);
       util.arr_push_cliff_report("arm64:image", 0);
       if (out_asm.len() == 0) {
         return 2;
@@ -2805,12 +2815,13 @@ function run(): i32 {
     // the one construct that cares — the startup self-relocation loop — is
     // emitted on both, where ET_EXEC simply computes a zero slide and skips
     // it (#7112).
-    out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub);
+    let recs: usize = arm64_word_buf(emit_text);
+    out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub, recs);
     if (out_asm.len() == 0) {
       return 2;
     }
     if (!emit_text) {
-      out_asm = arm64_elf_binary_pie(out_asm);
+      out_asm = arm64_elf_binary_pie(out_asm, buf_take_bytes(recs));
       if (out_asm.len() == 0) {
         return 2;
       }
@@ -2833,7 +2844,7 @@ function run(): i32 {
     // `-emit asm` stops at the darwinized text: it is the only way to hand
     // the emitter's output to clang, which decides whether a misbehaving
     // binary is the emitter's fault or arm64_gas_program's.
-    out_asm = asm_arm64_ir.emit_module_or_error_sub(full, true, sub);
+    out_asm = asm_arm64_ir.emit_module_or_error_sub(full, true, sub, 0 as usize);
     util.arr_push_cliff_report("darwin:emitted", 0);
     out_asm = asm_arm64_ir.darwinize(out_asm);
     util.arr_push_cliff_report("darwin:darwinized", 0);

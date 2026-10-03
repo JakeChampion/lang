@@ -1,10 +1,11 @@
-// getxattr and lgetxattr (#9098) end to end on every backend that has them:
-// the value's bytes verbatim (a NUL inside it included), a final symlink
-// followed by one and not the other, and the Err an absent attribute or a
-// missing path gives. The host sets the attribute through Go, so the probe
-// reads back something it did not write itself.
+// getxattr and lgetxattr (#9098), setxattr and lsetxattr (#9154) end to end
+// on every backend that has them: the value's bytes verbatim (a NUL inside it
+// included), a final symlink followed by one call and not the other, and the
+// Err an absent attribute or a missing path gives. The host sets the
+// attribute the probe reads, and reads back the ones the probe writes, so
+// neither half is checked only against itself.
 //
-// WASI has no extended attributes; E066 refuses both there (capability
+// WASI has no extended attributes; E066 refuses all four there (capability
 // `xattr`), which TestWASMXattrRefused pins.
 package e2e
 
@@ -53,21 +54,51 @@ func xattrFixture(t *testing.T, dir string) string {
         Err(_) => { return 11; }
     }
     match (lgetxattr(%[3]q, "user.fern")) { Ok(_) => { return 12; }, Err(NotFound(_)) => {}, Err(_) => { return 13; } }
+    // A written value, NUL included, reads back whole.
+    match (setxattr(%[1]q, "user.set", "a" + "\x00" + "b")) { Ok(_) => {}, Err(_) => { return 14; } }
+    match (getxattr(%[1]q, "user.set")) { Ok(v) => { if (v.len() != 3 || v[1] != 0 as u8) { return 15; } }, Err(_) => { return 16; } }
+    // An empty value is still an attribute.
+    match (setxattr(%[1]q, "user.empty", "")) { Ok(_) => {}, Err(_) => { return 17; } }
+    match (getxattr(%[1]q, "user.empty")) { Ok(v) => { if (v.len() != 0) { return 18; } }, Err(_) => { return 19; } }
+    // setxattr through the link lands on f; lsetxattr never does, whatever
+    // the link's own filesystem says to a user attribute on a symlink.
+    match (setxattr(%[2]q, "user.via", "v")) { Ok(_) => {}, Err(_) => { return 20; } }
+    match (lsetxattr(%[2]q, "user.link", "v")) { Ok(_) => {}, Err(_) => {} }
+    match (getxattr(%[1]q, "user.link")) { Ok(_) => { return 21; }, Err(_) => {} }
+    match (setxattr(%[3]q, "user.set", "v")) { Ok(_) => { return 22; }, Err(NotFound(_)) => {}, Err(_) => { return 23; } }
     return 0;
 }
 `, p("f"), p("l"), p("missing"), xattrAbsentText)
 }
 
-func TestInterpXattrPrimitives(t *testing.T) {
-	if code := runInterpExit(t, xattrFixture(t, t.TempDir())); code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see xattrFixture)", code)
+// checkXattrWrites reads the probe's writes back through the host.
+func checkXattrWrites(t *testing.T, dir string) {
+	t.Helper()
+	f := filepath.Join(dir, "f")
+	for name, want := range map[string]string{"user.set": "a\x00b", "user.empty": "", "user.via": "v"} {
+		if got, ok := hostUserXattr(t, f, name); !ok || got != want {
+			t.Errorf("host reads %s = %q (present %v), want %q", name, got, ok, want)
+		}
+	}
+	if _, ok := hostUserXattr(t, f, "user.link"); ok {
+		t.Errorf("lsetxattr on the link set user.link on its target")
 	}
 }
 
+func TestInterpXattrPrimitives(t *testing.T) {
+	dir := t.TempDir()
+	if code := runInterpExit(t, xattrFixture(t, dir)); code != 0 {
+		t.Fatalf("exit = %d, want 0 — the code names the step (see xattrFixture)", code)
+	}
+	checkXattrWrites(t, dir)
+}
+
 func TestX86_64XattrPrimitives(t *testing.T) {
-	if code, out := compileRunX86_64WithSetup(t, xattrFixture(t, t.TempDir()), nil); code != 0 {
+	dir := t.TempDir()
+	if code, out := compileRunX86_64WithSetup(t, xattrFixture(t, dir), nil); code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see xattrFixture)\n%s", code, out)
 	}
+	checkXattrWrites(t, dir)
 }
 
 func TestX86_64SSAXattrPrimitives(t *testing.T) {
@@ -80,13 +111,16 @@ func TestX86_64SSAXattrPrimitives(t *testing.T) {
 			t.Errorf("-backend %s: exit = %d, want 0 — the code names the step (see xattrFixture)", backend, code)
 		}
 	}
+	checkXattrWrites(t, dir)
 }
 
 func TestArm64XattrPrimitives(t *testing.T) {
-	out, code := compileAndRunArm64(t, xattrFixture(t, t.TempDir()))
+	dir := t.TempDir()
+	out, code := compileAndRunArm64(t, xattrFixture(t, dir))
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see xattrFixture)\n%s", code, out)
 	}
+	checkXattrWrites(t, dir)
 }
 
 func TestArm64SSAXattrPrimitives(t *testing.T) {
@@ -97,22 +131,25 @@ func TestArm64SSAXattrPrimitives(t *testing.T) {
 	if code, stderr := runArm64SSABin(t, qemu, bin, dir, os.Environ()); code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see xattrFixture)\n%s", code, stderr)
 	}
+	checkXattrWrites(t, dir)
 }
 
-// Darwin's getxattr is one call with an options word, and XATTR_NOFOLLOW is
-// what makes it lgetxattr.
+// Darwin's getxattr and setxattr are one call each with an options word,
+// and XATTR_NOFOLLOW is what makes them the `l` forms.
 func TestArm64DarwinXattrPrimitives(t *testing.T) {
 	dir := t.TempDir()
 	buildAndRunDarwin(t, dir, xattrFixture(t, dir))
+	checkXattrWrites(t, dir)
 }
 
 func TestWASMXattrRefused(t *testing.T) {
 	bin := buildFernCLI(t)
-	for _, name := range []string{"getxattr", "lgetxattr"} {
+	for _, call := range []string{`getxattr("a", "user.x")`, `lgetxattr("a", "user.x")`, `setxattr("a", "user.x", "v")`, `lsetxattr("a", "user.x", "v")`} {
+		name := call[:strings.IndexByte(call, '(')]
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			src := filepath.Join(dir, "prog.fern")
-			prog := fmt.Sprintf("function main(): i32 {\n    match (%s(\"a\", \"user.x\")) { Ok(_) => { return 0; }, Err(_) => { return 1; } }\n}\n", name)
+			prog := fmt.Sprintf("function main(): i32 {\n    match (%s) { Ok(_) => { return 0; }, Err(_) => { return 1; } }\n}\n", call)
 			if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 				t.Fatal(err)
 			}
