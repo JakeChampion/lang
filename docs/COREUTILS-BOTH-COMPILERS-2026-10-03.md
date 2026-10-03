@@ -39,29 +39,30 @@ uutils on more rows than the native compiler does. The accumulation cliffs
 that run recorded (`tsort` 751x, `tac` unfinished, `seq` 7.6x) are gone:
 `seq -w 1 1000000` is 3.1 ms under the self-host against GNU's 189 ms.
 
-## Where the self-host build is slower than native
+## Where the table says the self-host build is slower than native — and is not
 
-29 rows by more than 1.25x, and every one of them is a small operation whose
-whole run is a few milliseconds — the shape is a fixed cost per process or
-per syscall, not a loop:
+29 rows show the self-host build 1.25-2.75x slower than native, every one a
+small operation whose whole run is a few milliseconds (`install one file`
+0.76 → 2.09 ms, `chown 200 numeric groups` 3.63 → 9.79 ms, `rm one file`
+1.09 → 2.18 ms, `cp 200 files into a directory` 50.35 → 89.27 ms). Timed
+again directly, with the same binaries, interleaved and with the seeding
+outside the timed region, the gap is not there:
 
-| utility | workload | native | self-host | self-host / native |
-|---|---|---|---|---|
-| `install` | install one file | 0.76 ms | 2.09 ms | 2.75x |
-| `chown` | chown 200 numeric groups in one call | 3.63 ms | 9.79 ms | 2.70x |
-| `mknod` | mknod one fifo | 2.71 ms | 6.34 ms | 2.34x |
-| `rm` | rm one file | 1.09 ms | 2.18 ms | 2.00x |
-| `chown` | chown -Rh a 400-file tree | 8.82 ms | 16.63 ms | 1.89x |
-| `timeout` | timeout --foreground | 1.91 ms | 3.56 ms | 1.86x |
-| `cp` | cp 200 files into a directory | 50.35 ms | 89.27 ms | 1.77x |
-| `env` | env dump the inherited environment | 1.55 ms | 2.70 ms | 1.74x |
-| `stty` | stty set six settings | 1.47 ms | 2.45 ms | 1.67x |
-| `tee` | tee 62 MiB to four files | 95.96 ms | 121.43 ms | 1.27x |
+| workload | native | self-host |
+|---|---|---|
+| `rm --version` / `rm nosuchfile` / `rm f1` | 1.7 / 1.5 / 1.7 ms | 1.4 / 1.4 / 1.7 ms |
+| `chown :20` over 200 files | 3.7 ± 0.2 ms | 3.9 ± 2.0 ms |
+| `cp` 200 files into a directory | 25.3 ± 1.7 ms | 25.3 ± 2.5 ms |
 
-`false` is 0.87x of GNU under the self-host and 0.96x under native, so about a
-tenth of a millisecond of it is process startup; the rest is in the
-file-operation utilities and is the open item this run leaves for the
-self-host compiler (`cp 200 files` is the one large enough to profile).
+Two things made the rows: the bench's `cp` / `install` / `mkdir` workloads
+seed their trees inside the timed command (the comment in
+`scripts/coreutils-bench.d/cp.sh` says why — the same shell work lands on
+all three implementations), which puts 200 shell redirections and a
+`rm -rf` in a 50 ms row with a σ of 27 ms native and 70 ms self-host; and
+below about 5 ms a row is process startup plus one syscall, where the σ in
+the table is the size of the difference it reports. Read the ratio columns
+only above that. The self-host build has no small-operation cost the native
+build lacks on this host.
 
 ## Where the self-host build is faster than native
 

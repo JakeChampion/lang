@@ -3296,10 +3296,11 @@ and uutils on 85%, more than the native build does.
 
 What is left, in the order it costs:
 
-- The self-host build is 1.3-2.8x slower than native on 29 rows, all small
-  file operations of a few milliseconds (`install one file`, `chown` by
-  number, `mknod`, `rm one file`, `cp 200 files`, `stty`, `timeout`, `env`) —
-  a fixed cost per process or per syscall, not a loop (#11333).
+- 29 rows read the self-host build 1.3-2.8x slower than native, all small
+  file operations of a few milliseconds; timed again directly they are at
+  parity (`cp` of 200 files 25.3 ms under both). Those rows are the bench's
+  seeding inside the timed command and sub-5 ms noise; the ratio columns
+  are not readable there (#11333, closed on that measurement).
 - Both builds lose to GNU's digest and base-encoder kernels (0.07-0.4x), to
   `fmt` (0.4-0.8x) and to the directory walks of `du` / `ls` / `dir`
   (0.6-0.9x), as before.
