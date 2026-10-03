@@ -102,7 +102,7 @@ func runSSAProgram(t *testing.T, prog *ast.Program, info *checker.Info, numAlloc
 // the expected exit code is pinned instead.
 func TestProgramNamesItsTarget(t *testing.T) {
 	src := `function main(): i32 {
-    var code: i32 = 0;
+    let code: i32 = 0;
     if (target_arch() == "x86-64") { code = code + 1; }
     if (target_os() == "linux") { code = code + 2; }
     return code;
@@ -131,7 +131,7 @@ func TestProgramRunInteger(t *testing.T) {
 		`function main(): i32 { return (10 - 2) * 3; }`,
 		`function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(20, 22); }`,
 		`function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }`,
-		`function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 10) { t = t + i; i = i + 1; } return t; }`,
+		`function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 10) { t = t + i; i = i + 1; } return t; }`,
 		`function abs(n: i32): i32 { if (n < 0) { return 0 - n; } return n; } function main(): i32 { return abs(0 - 7); }`,
 		`function main(): i32 { return (100 / 7) + (100 % 7); }`,
 	}
@@ -181,27 +181,27 @@ func TestProgramRunClosure(t *testing.T) {
 // stays 1, so drop takes the free path).
 func TestProgramRunClosureEscaping(t *testing.T) {
 	srcs := []string{
-		// Stored non-capturing closure: var g = (n) => n*2; g(21) = 42.
-		`function main(): i32 { var g: (i32) => i32 = (n: i32): i32 => n * 2; return g(21); }`,
+		// Stored non-capturing closure: let g = (n) => n*2; g(21) = 42.
+		`function main(): i32 { let g: (i32) => i32 = (n: i32): i32 => n * 2; return g(21); }`,
 		// Scalar-capturing closure: captures a: i32. g(5) = 5 + 10 = 15.
 		`function main(): i32 {
-		   var a: i32 = 10;
-		   var g: (i32) => i32 = (n: i32): i32 => n + a;
+		   let a: i32 = 10;
+		   let g: (i32) => i32 = (n: i32): i32 => n + a;
 		   return g(5);
 		 }`,
 		// Two i32 captures — packed at offsets 0 and 4: g(100) = 100+10+3 = 113.
 		`function main(): i32 {
-		   var a: i32 = 10;
-		   var b: i32 = 3;
-		   var g: (i32) => i32 = (n: i32): i32 => n + a + b;
+		   let a: i32 = 10;
+		   let b: i32 = 3;
+		   let g: (i32) => i32 = (n: i32): i32 => n + a + b;
 		   return g(100);
 		 }`,
 		// Three i32 captures — offsets 0, 4, 8: g(1) = 1+10+20+30 = 61.
 		`function main(): i32 {
-		   var a: i32 = 10;
-		   var b: i32 = 20;
-		   var c: i32 = 30;
-		   var g: (i32) => i32 = (n: i32): i32 => n + a + b + c;
+		   let a: i32 = 10;
+		   let b: i32 = 20;
+		   let c: i32 = 30;
+		   let g: (i32) => i32 = (n: i32): i32 => n + a + b + c;
 		   return g(1);
 		 }`,
 	}
@@ -218,17 +218,17 @@ func TestProgramRunClosureEscaping(t *testing.T) {
 func TestProgramRunString(t *testing.T) {
 	srcs := []string{
 		// Single literal length: "hello".len() = 5.
-		`function main(): i32 { var s: string = "hello"; return s.len(); }`,
+		`function main(): i32 { let s: string = "hello"; return s.len(); }`,
 		// Sum of two literals' lengths: 5 + 3 = 8.
 		`function main(): i32 {
-		   var a: string = "hello";
-		   var b: string = "abc";
+		   let a: string = "hello";
+		   let b: string = "abc";
 		   return a.len() + b.len();
 		 }`,
 		// Empty string length is 0; a non-empty adds its length: 0 + 4 = 4.
 		`function main(): i32 {
-		   var e: string = "";
-		   var w: string = "abcd";
+		   let e: string = "";
+		   let w: string = "abcd";
 		   return e.len() + w.len();
 		 }`,
 	}
@@ -244,13 +244,13 @@ func TestProgramRunString(t *testing.T) {
 func TestProgramRunStringEq(t *testing.T) {
 	srcs := []string{
 		// Equal contents (distinct literals): "hi" == "hi" -> 1 -> 7.
-		`function main(): i32 { var a: string = "hi"; if (a == "hi") { return 7; } return 0; }`,
+		`function main(): i32 { let a: string = "hi"; if (a == "hi") { return 7; } return 0; }`,
 		// Different contents, same length: "ab" != "cd" -> 0 -> 9.
-		`function main(): i32 { var a: string = "ab"; if (a == "cd") { return 1; } return 9; }`,
+		`function main(): i32 { let a: string = "ab"; if (a == "cd") { return 1; } return 9; }`,
 		// Different lengths: "abc" != "ab" -> 0 -> 5.
-		`function main(): i32 { var a: string = "abc"; if (a == "ab") { return 1; } return 5; }`,
+		`function main(): i32 { let a: string = "abc"; if (a == "ab") { return 1; } return 5; }`,
 		// A longer match to exercise the byte loop past the first char.
-		`function main(): i32 { var a: string = "banana"; if (a == "banana") { return 3; } return 0; }`,
+		`function main(): i32 { let a: string = "banana"; if (a == "banana") { return 3; } return 0; }`,
 	}
 	for _, n := range []int{1, 2, 8} {
 		for _, src := range srcs {
@@ -266,13 +266,13 @@ func TestProgramRunStringEq(t *testing.T) {
 func TestProgramRunStringConcat(t *testing.T) {
 	srcs := []string{
 		// Concatenated length: ("ab" + "cde").len() = 5.
-		`function main(): i32 { var a: string = "ab"; var b: string = "cde"; var c: string = a + b; return c.len(); }`,
+		`function main(): i32 { let a: string = "ab"; let b: string = "cde"; let c: string = a + b; return c.len(); }`,
 		// Empty + non-empty: ("" + "wxyz").len() = 4.
-		`function main(): i32 { var c: string = "" + "wxyz"; return c.len(); }`,
+		`function main(): i32 { let c: string = "" + "wxyz"; return c.len(); }`,
 		// Concatenation content is correct, checked via ==: "foo"+"bar" == "foobar".
-		`function main(): i32 { var c: string = "foo" + "bar"; if (c == "foobar") { return 6; } return 0; }`,
+		`function main(): i32 { let c: string = "foo" + "bar"; if (c == "foobar") { return 6; } return 0; }`,
 		// Chained concat: (("a"+"b")+"c").len() = 3.
-		`function main(): i32 { var c: string = ("a" + "b") + "c"; return c.len(); }`,
+		`function main(): i32 { let c: string = ("a" + "b") + "c"; return c.len(); }`,
 	}
 	for _, n := range []int{1, 2, 8} {
 		for _, src := range srcs {
@@ -287,14 +287,14 @@ func TestProgramRunStringConcat(t *testing.T) {
 func TestProgramRunArray(t *testing.T) {
 	srcs := []string{
 		// Literal + index reads: [10,20,12] -> a[0]+a[1]+a[2] = 42.
-		`function main(): i32 { var a: i32[] = [10, 20, 12]; return a[0] + a[1] + a[2]; }`,
+		`function main(): i32 { let a: i32[] = [10, 20, 12]; return a[0] + a[1] + a[2]; }`,
 		// Array length via .len(): [1,2,3,4,5].len() = 5.
-		`function main(): i32 { var a: i32[] = [1, 2, 3, 4, 5]; return a.len(); }`,
+		`function main(): i32 { let a: i32[] = [1, 2, 3, 4, 5]; return a.len(); }`,
 		// Sum by index over a known length.
 		`function main(): i32 {
-		   var a: i32[] = [3, 9, 15, 15];
-		   var t: i32 = 0;
-		   var i: i32 = 0;
+		   let a: i32[] = [3, 9, 15, 15];
+		   let t: i32 = 0;
+		   let i: i32 = 0;
 		   while (i < a.len()) { t = t + a[i]; i = i + 1; }
 		   return t;
 		 }`,

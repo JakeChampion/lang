@@ -81,14 +81,14 @@ func TestSelfHostIREligibilityProbe(t *testing.T) {
 		{
 			// Regression guard: break/continue in a for-x-in-array body lowers.
 			name:        "break-continue-array-for-lowers",
-			src:         "function main(): i32 {\n var acc: i32 = 0;\n var xs: i32[] = [1, 2, 3, 4, 5];\n for x in xs { if (x == 2) { continue; } if (x == 4) { break; } acc = acc + x; }\n return acc;\n}",
+			src:         "function main(): i32 {\n let acc: i32 = 0;\n let xs: i32[] = [1, 2, 3, 4, 5];\n for x in xs { if (x == 2) { continue; } if (x == 4) { break; } acc = acc + x; }\n return acc;\n}",
 			wantVerdict: "module: IR",
 			wantLines:   []string{"main: ir"},
 		},
 		{
 			// Method receivers lower; the report keys them by the dispatch label.
 			name:        "method-receiver-lowers",
-			src:         "struct P { x: i32 }\nfunction (p: P) get(): i32 { return p.x; }\nfunction main(): i32 { var p = P { x: 7 }; return p.get(); }",
+			src:         "struct P { x: i32 }\nfunction (p: P) get(): i32 { return p.x; }\nfunction main(): i32 { let p = P { x: 7 }; return p.get(); }",
 			wantVerdict: "module: IR",
 			wantLines:   []string{"P.get: ir", "main: ir"},
 		},
@@ -201,7 +201,7 @@ func TestSelfHostIRPipelineProbe(t *testing.T) {
 		// Importing a stdlib module pulls its (mangled) functions into the
 		// loaded program; the report must list them, proving the probe sees the
 		// whole flattened program, not just the entry module.
-		rep := probe(t, "import \"std/array\";\nfunction main(): i32 { var xs: i32[] = [1, 2, 3]; return xs.len(); }", stdlibRoot)
+		rep := probe(t, "import \"std/array\";\nfunction main(): i32 { let xs: i32[] = [1, 2, 3]; return xs.len(); }", stdlibRoot)
 		if !strings.Contains(rep, "module:") {
 			t.Errorf("report missing verdict line\n--- report ---\n%s", rep)
 		}
@@ -230,9 +230,9 @@ func TestSelfHostPathProbePrintsRefused(t *testing.T) {
 
 // viewCaptureSrc is a module the typed lowering refuses: viewer's closure
 // captures a view of a local string, which is refused where it is built.
-const viewCaptureSrc = "function mk(n: i32): string {\n var s: string = \"ab\";\n var i: i32 = 0;\n while (i < n) { s = s + \"c\"; i = i + 1; }\n return s;\n}\n" +
-	"function viewer(n: i32): () => i32 {\n var s: string = mk(n);\n var v: str = slice_unchecked(s, 1, 4);\n return () => v.len();\n}\n" +
-	"function main(): i32 { var f: () => i32 = viewer(3); return f(); }\n"
+const viewCaptureSrc = "function mk(n: i32): string {\n let s: string = \"ab\";\n let i: i32 = 0;\n while (i < n) { s = s + \"c\"; i = i + 1; }\n return s;\n}\n" +
+	"function viewer(n: i32): () => i32 {\n let s: string = mk(n);\n let v: str = slice_unchecked(s, 1, 4);\n return () => v.len();\n}\n" +
+	"function main(): i32 { let f: () => i32 = viewer(3); return f(); }\n"
 
 // firstNLines returns the first n newline-delimited lines of s (for compact
 // failure output on a large report).

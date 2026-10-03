@@ -15,7 +15,7 @@ import "std/array";
 import "./lib/gnu";
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " FILE1 FILE2\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";
   out = out + "Call the link function to create a link named FILE2 to an existing FILE1.\n";
@@ -26,7 +26,7 @@ function help_text(): string {
 }
 
 pub function main(): i32 {
-  var operands: string[] = gnu.parse_standard_options_only(args(), "link", help_text(), 1);
+  let operands: string[] = gnu.parse_standard_options_only(args(), "link", help_text(), 1);
   if (operands.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }

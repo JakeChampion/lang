@@ -110,7 +110,7 @@ func TestSelfHostConstOperandReachesImmediateFormX86_64(t *testing.T) {
 @noinline function masked(x: i32): i32 { return x & 6; }
 @noinline function less(x: i32): boolean { return x < 7; }
 function main(): i32 {
-    var i: i64 = 0i64; var s: i64 = 0i64;
+    let i: i64 = 0i64; let s: i64 = 0i64;
     while (i < 3i64) { s = s + bump(i) + scaled(i) + (masked(i as i32) as i64); if (less(i as i32)) { s = s + 100i64; } i = i + 1i64; }
     return (s % 100i64) as i32;
 }`,
@@ -178,9 +178,9 @@ func TestSelfHostConstZeroExtendedFormX86_64(t *testing.T) {
 @noinline function small64(): i64 { return 4294967295i64; }
 @noinline function wide64(): i64 { return 4294967296i64; }
 function main(): i32 {
-    var h: u32 = hex();
-    var w: i64 = wide64();
-    var r: i32 = pos() + zero() + neg();
+    let h: u32 = hex();
+    let w: i64 = wide64();
+    let r: i32 = pos() + zero() + neg();
     if (h == 4294967295) { r = r + 10; }
     if (w == small64() + 1i64) { r = r + 100; }
     return r;

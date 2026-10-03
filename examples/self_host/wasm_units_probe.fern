@@ -33,7 +33,7 @@ import "./parser";
 import "./rundriver";
 import "./asmcore";
 import "./wasm_ir";
-import "./irlower";
+import "./irtables";
 import "./ircore";
 import "./semlower";
 import "./util";
@@ -41,8 +41,8 @@ import "./util";
 // slice_funcs returns funcs[lo:hi] — the self-host language has no slice
 // syntax for struct arrays, so build it by hand.
 function slice_funcs(fs: parser.FuncDecl[], lo: i32, hi: i32): parser.FuncDecl[] {
-  var out: parser.FuncDecl[] = [];
-  var i: i32 = lo;
+  let out: parser.FuncDecl[] = [];
+  let i: i32 = lo;
   while (i < hi) {
     out = out.append(fs[i]);
     i = i + 1;
@@ -50,9 +50,9 @@ function slice_funcs(fs: parser.FuncDecl[], lo: i32, hi: i32): parser.FuncDecl[]
   return out;
 }
 
-function slice_cache(c: irlower.LowerResult[], lo: i32, hi: i32): irlower.LowerResult[] {
-  var out: irlower.LowerResult[] = [];
-  var i: i32 = lo;
+function slice_cache(c: irtables.LowerResult[], lo: i32, hi: i32): irtables.LowerResult[] {
+  let out: irtables.LowerResult[] = [];
+  let i: i32 = lo;
   while (i < hi) {
     out = out.append(c[i]);
     i = i + 1;
@@ -79,12 +79,12 @@ function with_funcs(m: parser.Module, fs: parser.FuncDecl[]): parser.Module {
 }
 
 function main(): i32 {
-  var mod: parser.Module = rundriver.parse_stdin("wasm_units_probe");
+  let mod: parser.Module = rundriver.parse_stdin("wasm_units_probe");
   if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) {
     return 1;
   }
 
-  var arity_errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(mod));
+  let arity_errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(mod));
   arity_errs = util.append_diags(arity_errs, asmcore.check_call_arity(mod));
   if (arity_errs.len() > 0) {
     eprint(util.format_diags(arity_errs));
@@ -99,67 +99,67 @@ function main(): i32 {
   // `$<fn>$wrap<N>` thunks a function VALUE is taken through, so skipping it
   // leaves the funcref table naming functions the units never emit — which
   // traps at call_indirect rather than failing to link.
-  var d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
-  var im: parser.Module = ircore.with_records(parser.infer_ret_types_module(wasm_ir.route_normalized(d.full)), d.sub);
+  let d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
+  let im: parser.Module = ircore.with_records(parser.infer_ret_types_module(wasm_ir.route_normalized(d.full)), d.sub);
 
-  var n: i32 = im.funcs.len();
+  let n: i32 = im.funcs.len();
   if (n < 2) {
     eprint("wasm_units_probe: need at least 2 functions to split");
     return 1;
   }
-  var half: i32 = n / 2;
-  var mod_a: parser.Module = with_funcs(im, slice_funcs(im.funcs, 0, half));
-  var mod_b: parser.Module = with_funcs(im, slice_funcs(im.funcs, half, n));
+  let half: i32 = n / 2;
+  let mod_a: parser.Module = with_funcs(im, slice_funcs(im.funcs, 0, half));
+  let mod_b: parser.Module = with_funcs(im, slice_funcs(im.funcs, half, n));
 
   // Whole-program view for both halves — see the header. Both halves index the
   // same struct set, so the table is built once (#8178). The whole program is
   // lowered once and its cache split with the functions; the bodies with no
   // declaration of their own (generic instances, drop helpers) go with the
   // second half.
-  var stab: irlower.StructTab = irlower.struct_tab(im.structs);
-  var g: ircore.Lowered = ircore.gate(im, d.sub);
+  let stab: irtables.StructTab = irtables.struct_tab(im.structs);
+  let g: ircore.Lowered = ircore.gate(im, d.sub);
   if (!g.ok) {
     ircore.eprint_ir_ineligible();
     return 1;
   }
-  var whole: irlower.LowerResult[] = g.cache;
-  var cache_a: irlower.LowerResult[] = slice_cache(whole, 0, half);
-  var cache_b: irlower.LowerResult[] = slice_cache(whole, half, whole.len());
+  let whole: irtables.LowerResult[] = g.cache;
+  let cache_a: irtables.LowerResult[] = slice_cache(whole, 0, half);
+  let cache_b: irtables.LowerResult[] = slice_cache(whole, half, whole.len());
 
-  var unit_a: string = wasm_ir.emit_functions_view("", mod_a, cache_a, im.funcs, stab);
-  var unit_b: string = wasm_ir.emit_functions_view("$u1", mod_b, cache_b, im.funcs, stab);
+  let unit_a: string = wasm_ir.emit_functions_view("", mod_a, cache_a, im.funcs, stab);
+  let unit_b: string = wasm_ir.emit_functions_view("$u1", mod_b, cache_b, im.funcs, stab);
 
-  var strs_a: string[] = wasm_ir.str_values(cache_a);
-  var strs_b: string[] = wasm_ir.str_values(cache_b);
-  var caggs_a: string[] = wasm_ir.const_agg_values(cache_a);
-  var caggs_b: string[] = wasm_ir.const_agg_values(cache_b);
-  var fns_a: string[] = wasm_ir.fn_value_table(cache_a);
-  var fns_b: string[] = wasm_ir.fn_value_table(cache_b);
+  let strs_a: string[] = wasm_ir.str_values(cache_a);
+  let strs_b: string[] = wasm_ir.str_values(cache_b);
+  let caggs_a: string[] = wasm_ir.const_agg_values(cache_a);
+  let caggs_b: string[] = wasm_ir.const_agg_values(cache_b);
+  let fns_a: string[] = wasm_ir.fn_value_table(cache_a);
+  let fns_b: string[] = wasm_ir.fn_value_table(cache_b);
 
   // Link gates on the MERGED needs of the two units, not on a combined cache
   // (#5331). That is the whole point: a real driver reads each unit's recorded
   // needs from its cache entry, never re-lowering a module it did not have to
   // re-emit. Here both caches are in hand, so merging them exercises the same
   // path a cached link takes.
-  var needs: string[] = wasm_ir.union_strs(wasm_ir.needs_of(cache_a), wasm_ir.needs_of(cache_b));
-  var fn_sigs: string[] = wasm_ir.union_strs(wasm_ir.indirect_fn_sigs(cache_a), wasm_ir.indirect_fn_sigs(cache_b));
+  let needs: string[] = wasm_ir.union_strs(wasm_ir.needs_of(cache_a), wasm_ir.needs_of(cache_b));
+  let fn_sigs: string[] = wasm_ir.union_strs(wasm_ir.indirect_fn_sigs(cache_a), wasm_ir.indirect_fn_sigs(cache_b));
 
   // The per-type RC helper bodies come from the MERGED type lists, not a
   // combined cache — the same metadata a cached link reads back. Both units
   // resolve against one shared struct world, so a type named by both yields a
   // single body.
-  var frt: string[] = wasm_ir.union_strs(wasm_ir.field_reclaim_types(cache_a), wasm_ir.field_reclaim_types(cache_b));
-  var sdt: string[] = wasm_ir.union_strs(wasm_ir.struct_drop_types(cache_a, stab), wasm_ir.struct_drop_types(cache_b, stab));
-  var aet: string[] = wasm_ir.union_strs(wasm_ir.struct_arr_elems_drop_types(cache_a, stab), wasm_ir.struct_arr_elems_drop_types(cache_b, stab));
+  let frt: string[] = wasm_ir.union_strs(wasm_ir.field_reclaim_types(cache_a), wasm_ir.field_reclaim_types(cache_b));
+  let sdt: string[] = wasm_ir.union_strs(wasm_ir.struct_drop_types(cache_a, stab), wasm_ir.struct_drop_types(cache_b, stab));
+  let aet: string[] = wasm_ir.union_strs(wasm_ir.struct_arr_elems_drop_types(cache_a, stab), wasm_ir.struct_arr_elems_drop_types(cache_b, stab));
 
   // heap_base is a whole-LINK quantity (it sits past every unit's literals
   // and aggregate constants), so it is computed from the concatenated lists,
   // exactly as the link step computes it.
-  var units: wasm_ir.WasmUnit[] = [
+  let units: wasm_ir.WasmUnit[] = [
     wasm_ir.WasmUnit { ns: "", text: unit_a, strs: strs_a, caggs: caggs_a, fns: fns_a },
     wasm_ir.WasmUnit { ns: "$u1", text: unit_b, strs: strs_b, caggs: caggs_b, fns: fns_b },
   ];
-  var rc_bodies: string = wasm_ir.emit_ir_rc_bodies_from(im, frt, sdt, aet, wasm_ir.heap_base_for_units(units));
+  let rc_bodies: string = wasm_ir.emit_ir_rc_bodies_from(im, frt, sdt, aet, wasm_ir.heap_base_for_units(units));
 
   write(wasm_ir.emit_ir_module_units(units, im, needs, fn_sigs, rc_bodies, 0));
   return 0;

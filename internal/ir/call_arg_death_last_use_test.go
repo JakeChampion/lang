@@ -26,6 +26,7 @@ function (s: St) emit(v: i32): St {
 }
 function pair(a: St, b: St): i32 { return a.ctrl + b.ctrl; }
 function emitf(s: St, v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }; }
+function both(s: St, t: St): (St, St) { return (s.emit(1), t.emit(2)); }
 function split(s: St, v: i32): (St, i32) {
     return (St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }, s.ctrl);
 }
@@ -33,54 +34,54 @@ function split(s: St, v: i32): (St, i32) {
 // Every link is at its last occurrence, and each intermediate is bound from a
 // direct call — the threading chain the shape exists for.
 function chain(s: St, k: i32): St {
-    var a: St = s.emit(k);
-    var b: St = a.emit(k + 1);
-    var c: St = b.emit(k + 2);
+    let a: St = s.emit(k);
+    let b: St = a.emit(k + 1);
+    let c: St = b.emit(k + 2);
     return c;
 }
 // A param whose last read is the call, with an earlier read that puts it out
 // of the sole-occurrence shape's reach.
 function param_last(p: St): i32 {
-    var n: i32 = p.ctrl;
-    var r: St = p.emit(1);
+    let n: i32 = p.ctrl;
+    let r: St = p.emit(1);
     return r.ctrl + n;
 }
 // NOT the last occurrence: the first call's argument is read again after it.
 function read_after(s: St): i32 {
-    var a: St = s.emit(1);
-    var x: St = a.emit(2);
-    var y: St = a.emit(3);
+    let a: St = s.emit(1);
+    let x: St = a.emit(2);
+    let y: St = a.emit(3);
     return x.ctrl + y.ctrl;
 }
 // An ALIAS initialiser. ` + "`t`" + ` dies at the call, but binding a struct incs
 // the box and not the field buffers inside it, so an in-place grow of t.ops is
 // still observable through h.
 function alias_init(h: St): i32 {
-    var t: St = h;
-    var r: St = t.emit(1);
+    let t: St = h;
+    let r: St = t.emit(1);
     return r.ctrl + h.ops.len();
 }
 // A local that RENAMES a parameter at that parameter's only occurrence is the
 // same binding spelled twice, so the chain below it threads unbracketed.
 function rename_chain(p: St): i32 {
-    var q: St = p;
-    var a: St = q.emit(1);
-    var b: St = a.emit(2);
+    let q: St = p;
+    let a: St = q.emit(1);
+    let b: St = a.emit(2);
     return b.ctrl;
 }
 // Chained renames close under the rule itself.
 function rename_twice(p: St): i32 {
-    var q: St = p;
-    var r: St = q;
-    var a: St = r.emit(1);
+    let q: St = p;
+    let r: St = q;
+    let a: St = r.emit(1);
     return a.ctrl;
 }
 // A rename of a literal-built local is admitted on the literal's footing: the
 // frame built every buffer in it (#10864).
 function rename_literal(k: i32): i32 {
-    var s: St = St { ops: [], names: [], ctrl: 0, who: "x" };
-    var t: St = s;
-    var a: St = t.emit(k);
+    let s: St = St { ops: [], names: [], ctrl: 0, who: "x" };
+    let t: St = s;
+    let a: St = t.emit(k);
     return a.ctrl;
 }
 // The TWO-STATEMENT spelling of the self-reassign: the store still supersedes
@@ -91,7 +92,7 @@ function des_rebind(p: St): i32 {
     return p.ctrl + k;
 }
 function var_rebind(p: St): i32 {
-    var a: St = p.emit(1);
+    let a: St = p.emit(1);
     p = a;
     return p.ctrl;
 }
@@ -104,15 +105,37 @@ function des_reads_after(p: St): i32 {
 // A statement stands between the call and the store, and it reads p.
 function des_gap(p: St): i32 {
     let (a, k) = split(p, 1);
-    var n: i32 = p.ctrl;
+    let n: i32 = p.ctrl;
     p = a;
     return p.ctrl + n + k;
+}
+// Straight-line statements that do not name p may stand between the call and
+// the store (#11093): the second of two buffers handed back is stored after
+// the first.
+function var_gap(p: St, k: i32): i32 {
+    let a: St = p.emit(1);
+    let n: i32 = k + 1;
+    p = a;
+    return p.ctrl + n;
+}
+function des_two(s: St, t: St): i32 {
+    let (a, b) = both(s, t);
+    s = a;
+    t = b;
+    return s.ctrl + t.ctrl;
+}
+// Control flow between the call and the store could leave the block first.
+function gap_branch(p: St, k: i32): i32 {
+    let a: St = p.emit(1);
+    if (k > 0) { k = k + 1; }
+    p = a;
+    return p.ctrl + k;
 }
 // The assignment's value hands the cursor to a NESTED call. The store
 // supersedes it either way, so the death belongs at the inner call — and
 // inside a loop no other shape can reach it.
 function nested_in_loop(s: St, n: i32): St {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         s = emitf(emitf(s, i), i + 1);
         i = i + 1;
@@ -122,7 +145,7 @@ function nested_in_loop(s: St, n: i32): St {
 // The value names the cursor TWICE, so the second read would see the buffer
 // the inner call grew.
 function nested_twice(s: St, n: i32): St {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         s = emitf(emitf(s, i), s.ctrl);
         i = i + 1;
@@ -133,10 +156,10 @@ function nested_twice(s: St, n: i32): St {
 // many dynamic ones, so the next iteration would observe the previous one's
 // in-place growth and the last-occurrence shapes stay off.
 function in_loop_live(s: St, n: i32): i32 {
-    var i: i32 = 0;
-    var total: i32 = 0;
+    let i: i32 = 0;
+    let total: i32 = 0;
     while (i < n) {
-        var a: St = s.emit(i);
+        let a: St = s.emit(i);
         total = total + a.ctrl;
         i = i + 1;
     }
@@ -147,9 +170,9 @@ function in_loop_live(s: St, n: i32): i32 {
 // next iteration reads the value this one produced, never the buffer the
 // callee grew.
 function in_loop(s: St, n: i32): St {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var a: St = s.emit(i);
+        let a: St = s.emit(i);
         s = a.emit(i + 1);
         i = i + 1;
     }
@@ -157,38 +180,39 @@ function in_loop(s: St, n: i32): St {
 }
 // Twice in the SAME call: the second read would see the first's growth.
 function twice_in_call(s: St): i32 {
-    var a: St = s.emit(1);
+    let a: St = s.emit(1);
     return pair(a, a);
 }
 // Read inside a lambda, which runs when the closure is called rather than
 // where it is written.
 function lambda_capture(s: St): i32 {
-    var a: St = s.emit(1);
-    var f: () => i32 = () => a.ops.len();
-    var r: St = a.emit(2);
+    let a: St = s.emit(1);
+    let f: () => i32 = () => a.ops.len();
+    let r: St = a.emit(2);
     return r.ctrl + f();
 }
 // An ENCLOSING call already holds the value (#9879). The name reaches pair's
 // first argument before emitf runs, so the textually last read inside emitf is
 // not the last use: the operand is on the stack, waiting for pair.
 function held_by_enclosing(s: St): i32 {
-    var a: St = s.emit(1);
+    let a: St = s.emit(1);
     return pair(a, emitf(a, 2));
 }
 // Same shape written as a method chain, which is what std/ndarray's
 // zip_with over a reversed view desugars to.
 function held_by_enclosing_method(s: St): i32 {
-    var a: St = s.emit(1);
+    let a: St = s.emit(1);
     return pair(a, a.emit(2));
 }
 // The enclosing call names it only once, so the death stands.
 function enclosing_names_once(s: St): i32 {
-    var a: St = s.emit(1);
+    let a: St = s.emit(1);
     return pair(mk(), emitf(a, 2));
 }
 function main(): i32 { return chain(mk(), 1).ctrl + param_last(mk()) + read_after(mk()) +
     alias_init(mk()) + rename_chain(mk()) + rename_twice(mk()) + rename_literal(1) +
     des_rebind(mk()) + var_rebind(mk()) + des_reads_after(mk()) + des_gap(mk()) +
+    var_gap(mk(), 1) + des_two(mk(), mk()) + gap_branch(mk(), 1) +
     nested_in_loop(mk(), 2).ctrl + nested_twice(mk(), 2).ctrl +
     in_loop_live(mk(), 2) + in_loop(mk(), 2).ctrl + twice_in_call(mk()) + lambda_capture(mk()) +
     held_by_enclosing(mk()) + held_by_enclosing_method(mk()) + enclosing_names_once(mk()); }`
@@ -221,6 +245,9 @@ function main(): i32 { return chain(mk(), 1).ctrl + param_last(mk()) + read_afte
 		"var_rebind":      "p",
 		"des_reads_after": "",
 		"des_gap":         "",
+		"var_gap":         "p",
+		"des_two":         "s,t",
+		"gap_branch":      "",
 		"nested_in_loop":  "s",
 		"nested_twice":    "",
 		"in_loop_live":    "",

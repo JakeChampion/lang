@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -64,11 +64,7 @@ function make_pair(a: i32, b: i32): (i32, i32) { return (a + 1, b * 2); }`
 	if err := os.WriteFile(expPath, []byte(expSrc), 0o644); err != nil {
 		t.Fatalf("write exporter prog: %v", err)
 	}
-	expInfo, expProg := loadCheckMono(t, expPath)
-	expCore, err := wasmbin.BuildWithOptions(expProg, expInfo, wasmbin.BuildOptions{ForceMemorySection: true, Preview2WASI: true})
-	if err != nil {
-		t.Fatalf("build exporter core: %v", err)
-	}
+	expCore := e2eharness.SelfHostReactorCore(t, expPath)
 	if !bytes.Contains(expCore, []byte("local:test/pairs@0.1.0#make-pair")) {
 		t.Fatalf("exporter core missing the surfaced @export export")
 	}
@@ -114,7 +110,7 @@ function make_pair(a: i32, b: i32): (i32, i32) { return (a + 1, b * 2); }`
 function make_pair(a: i32, b: i32): (i32, i32);
 
 function main(): i32 {
-	var p: (i32, i32) = make_pair(10, 21);
+	let p: (i32, i32) = make_pair(10, 21);
 	if (p.0 == 11 && p.1 == 42) { write("` + want + `"); } else { write("tup-bad"); }
 	return 0;
 }`
@@ -122,13 +118,7 @@ function main(): i32 {
 	if err := os.WriteFile(userPath, []byte(userSrc), 0o644); err != nil {
 		t.Fatalf("write consumer prog: %v", err)
 	}
-	userInfo, userProg := loadCheckMono(t, userPath)
-	userCore, err := wasmbin.BuildWithOptions(userProg, userInfo, wasmbin.BuildOptions{
-		ForceMemorySection: true, Preview2WASI: true, SynthCliRun: true, CliRunResult: true,
-	})
-	if err != nil {
-		t.Fatalf("build consumer core: %v", err)
-	}
+	userCore := e2eharness.SelfHostComponentCore(t, userPath)
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)

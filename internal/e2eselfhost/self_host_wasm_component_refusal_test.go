@@ -11,26 +11,26 @@ import (
 // A handle-carrying tuple literal, `(stdout(), true)`, lowers wherever the same
 // tuple built from a named handle does (#9238). And a module the lowering takes
 // whole but a wasm COMPONENT cannot import for is refused by naming the op: the
-// component framing has no preview2 body for opening a file, and the refusal
-// used to be the generic "not IR-eligible", with FERN_STRICT_IR=1 naming nothing.
+// component framing has no preview2 body for sleeping, and the refusal used to
+// be the generic "not IR-eligible", with FERN_STRICT_IR=1 naming nothing.
 const handleTupleSrc = `function handle_lit(): (Writer, boolean) {
     return (stdout(), true);
 }
 function handle_var(): (Writer, boolean) {
-    var w: Writer = stdout();
+    let w: Writer = stdout();
     return (w, true);
 }
 function main(): i32 {
-    var a: (Writer, boolean) = handle_lit();
-    var b: (Writer, boolean) = handle_var();
+    let a: (Writer, boolean) = handle_lit();
+    let b: (Writer, boolean) = handle_var();
     match (a.0.write("ok\n")) { Some(_) => { return 1; }, None => {} }
     if (a.1 && b.1) { return 7; }
     return 0;
 }
 `
 
-const openFileSrc = `function main(): i32 {
-    match (open_reader("x.txt")) { Ok(_) => { return 1; }, Err(_) => { return 2; } }
+const sleepSrc = `function main(): i32 {
+    sleep_ms(1 as i64);
     return 0;
 }
 `
@@ -84,13 +84,13 @@ func TestSelfHostHandleTupleLiteralWasm(t *testing.T) {
 	})
 
 	t.Run("component-names-the-op", func(t *testing.T) {
-		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", writeSrc(t, "open_file.fern", openFileSrc), cli.stdlib, "-o", filepath.Join(dir, "open.wasm"))
+		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", writeSrc(t, "sleep.fern", sleepSrc), cli.stdlib, "-o", filepath.Join(dir, "sleep.wasm"))
 		cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 		out, err := cmd.CombinedOutput()
 		if err == nil {
-			t.Fatalf("component build succeeded; want a refusal naming open_file\n%s", out)
+			t.Fatalf("component build succeeded; want a refusal naming sleep_ms\n%s", out)
 		}
-		if !strings.Contains(string(out), "open_file is not supported in a wasm component") {
+		if !strings.Contains(string(out), "sleep_ms is not supported in a wasm component") {
 			t.Fatalf("refusal does not name the op:\n%s", out)
 		}
 	})

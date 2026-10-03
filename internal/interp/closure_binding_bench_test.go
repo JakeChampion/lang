@@ -9,9 +9,9 @@ import (
 
 func BenchmarkClosureBindings(b *testing.B) {
 	cases := []struct{ name, src string }{
-		{"locals", `function main(): i32 { var a = 1; var c = 2; var d = 3; return a + c + d; }`},
-		{"capture-free", `function main(): i32 { var n = 7; var f = (): i32 => 7; return f(); }`},
-		{"capture", `function main(): i32 { var n = 7; var unused = 99; var f = (): i32 => n; return f(); }`},
+		{"locals", `function main(): i32 { let a = 1; let c = 2; let d = 3; return a + c + d; }`},
+		{"capture-free", `function main(): i32 { let n = 7; let f = (): i32 => 7; return f(); }`},
+		{"capture", `function main(): i32 { let n = 7; let unused = 99; let f = (): i32 => n; return f(); }`},
 	}
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {

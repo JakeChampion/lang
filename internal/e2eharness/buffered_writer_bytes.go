@@ -16,9 +16,9 @@ func BufferedWriterBytesOutput() []byte {
 
 const BufferedWriterBytesProgram = `import "std/io_buffered" as io;
 function main(): i32 {
-  var b = io.buf_writer_new(stdout(), 4);
+  let b = io.buf_writer_new(stdout(), 4);
   b = b.write_string("directé");
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 256) { b = b.write_byte(i); i = i + 1; }
   b = b.write_range("é", 0, 1);
   b = b.flush();
@@ -28,8 +28,8 @@ function main(): i32 {
   b = b.flush();
   b = b.write_string("tail");
   b = b.flush();
-  var raw: u8[] = [255 as u8, 0 as u8, 128 as u8, 254 as u8];
-  var held = raw;
+  let raw: u8[] = [255 as u8, 0 as u8, 128 as u8, 254 as u8];
+  let held = raw;
   b = b.write_bytes(raw);
   b = b.write_bytes([193 as u8]);
   b = b.write_bytes_range(raw, 0 - 2, 2);
@@ -44,9 +44,9 @@ function main(): i32 {
   buf_free(b.handle());
   // Fresh builder results must be released after the writer borrows them.
   // Exercise direct writes, buffered writes, ranges, and empty arrays.
-  var seed = buf_new(3);
+  let seed = buf_new(3);
   for capacity in [1, 64] {
-    var fresh = io.buf_writer_new(stdout(), capacity);
+    let fresh = io.buf_writer_new(stdout(), capacity);
     for iteration in 0..32 {
       buf_push_byte(seed, 255); buf_push_byte(seed, 0); buf_push_byte(seed, 128);
       fresh = fresh.write_bytes(buf_take_bytes(seed));
@@ -58,7 +58,7 @@ function main(): i32 {
     buf_free(fresh.handle());
   }
   // An existing error discards pending bytes but survives each flush.
-  var failed = io.BufWriter { w: stdout(), buf: buf_new(1), cap: 1, err: Some(Other("first", "failure")) };
+  let failed = io.BufWriter { w: stdout(), buf: buf_new(1), cap: 1, err: Some(Other("first", "failure")) };
   failed = failed.write_byte(255);
   failed = failed.write_string("discarded");
   failed = failed.write_bytes(held);

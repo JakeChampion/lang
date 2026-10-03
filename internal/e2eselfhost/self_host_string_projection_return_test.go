@@ -16,7 +16,7 @@ import (
 const stringProjectionReturnSrc = `import "std/i32";
 
 @noinline function joined(n: i32): string {
-    var parts: string[] = [];
+    let parts: string[] = [];
     parts = parts.append("runtime-record-field-" + n.to_string());
     return join_range(parts, 0, parts.len());
 }
@@ -24,10 +24,10 @@ const stringProjectionReturnSrc = `import "std/i32";
     return "different-field-data-" + n.to_string();
 }
 function main(): i32 {
-    var result = joined(1);
-    var i = 0;
+    let result = joined(1);
+    let i = 0;
     while (i < 64) {
-        var replacement = churn(i);
+        let replacement = churn(i);
         if (replacement.len() == 0) { return 2; }
         if (result != "runtime-record-field-1") { print(result); return 1; }
         i = i + 1;
@@ -35,10 +35,10 @@ function main(): i32 {
     return 0;
 }
 @noinline function join_range(parts: string[], lo: i32, hi: i32): string {
-    var n: i32 = hi - lo;
+    let n: i32 = hi - lo;
     if (n <= 0) { return ""; }
     if (n == 1) { return parts[lo]; }
-    var mid: i32 = lo + n / 2;
+    let mid: i32 = lo + n / 2;
     return join_range(parts, lo, mid) + join_range(parts, mid, hi);
 }
 `

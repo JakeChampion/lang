@@ -28,7 +28,7 @@ function chain(fail: boolean): Result[(), IoError] {
 }
 
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (chain(false)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 10; } }
     match (chain(true))  { Ok(_) => { n = n + 100; }, Err(_) => { n = n + 2; } }
     return n;

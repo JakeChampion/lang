@@ -52,7 +52,7 @@ function main(): i32 { return rd(E.A([1i64, 2i64])).len() + rd(E.B).len(); }`, 3
 	// the temp buys — without it `v[0]` / `v.len()` resolve against the wrong
 	// shape rather than merely leaking.
 	{"iife-array-bound-and-read", `enum E { A(i32[]), B }
-function rd(e: E, i: i32): i32 { var v: i32[] = (match (e) { E.A(xs) => xs, E.B => [i] }); return v[0] + v.len(); }
+function rd(e: E, i: i32): i32 { let v: i32[] = (match (e) { E.A(xs) => xs, E.B => [i] }); return v[0] + v.len(); }
 function main(): i32 { return rd(E.A([4, 5]), 0) + rd(E.B, 6); }`, 13},
 
 	// THE SAFE HALF. The borrowed arm's buffer belongs to the enum box; a temp
@@ -62,8 +62,8 @@ function main(): i32 { return rd(E.A([4, 5]), 0) + rd(E.B, 6); }`, 13},
 	{"iife-array-no-underflow", `enum E { A(i32[]), B }
 function rd(e: E, i: i32): i32[] { return (match (e) { E.A(xs) => xs, E.B => [i] }); }
 function main(): i32 {
-    var i: i32 = 0;
-    while (i < 30) { var k: E = E.A([i, i + 1]); if (rd(k, i).len() != 2) { return 90; } if (rd(E.B, i).len() != 1) { return 91; } i = i + 1; }
+    let i: i32 = 0;
+    while (i < 30) { let k: E = E.A([i, i + 1]); if (rd(k, i).len() != 2) { return 90; } if (rd(E.B, i).len() != 1) { return 91; } i = i + 1; }
     return __rc_underflow_count();
 }`, 0},
 
@@ -82,20 +82,20 @@ enum E { A(Q[]), B }
 function rd(e: E): Q[] { return (match (e) { E.A(xs) => xs, E.B => [Q { k: 1 }] }); }
 function main(): i32 { return rd(E.A([Q { k: 1 }, Q { k: 2 }])).len() + rd(E.B).len(); }`, 3},
 	{"iife-strarr-bound-and-read", `enum E { A(string[]), B }
-function rd(e: E): i32 { var v: string[] = (match (e) { E.A(xs) => xs, E.B => ["zz"] }); return v[0].len() + v.len(); }
+function rd(e: E): i32 { let v: string[] = (match (e) { E.A(xs) => xs, E.B => ["zz"] }); return v[0].len() + v.len(); }
 function main(): i32 { return rd(E.A(["abc", "d"])) + rd(E.B); }`, 8},
 	{"iife-structarr-bound-and-field", `struct Q { k: i32 }
 enum E { A(Q[]), B }
-function rd(e: E): i32 { var v: Q[] = (match (e) { E.A(xs) => xs, E.B => [Q { k: 5 }] }); return v[0].k + v.len(); }
+function rd(e: E): i32 { let v: Q[] = (match (e) { E.A(xs) => xs, E.B => [Q { k: 5 }] }); return v[0].k + v.len(); }
 function main(): i32 { return rd(E.A([Q { k: 3 }, Q { k: 4 }])) + rd(E.B); }`, 11},
 	// The safe half for the deeper kinds: a borrowed temp must never release,
 	// so an element walk can never double-free one. 30 rounds, returning the
 	// underflow counter's verdict through the answer.
 	{"iife-strarr-no-underflow", `enum E { A(string[]), B }
 function rd(e: E): string[] { return (match (e) { E.A(xs) => xs, E.B => ["z"] }); }
-function round(i: i32): i32 { var k: E = E.A(["a", "b"]); return rd(k).len() + rd(E.B).len(); }
+function round(i: i32): i32 { let k: E = E.A(["a", "b"]); return rd(k).len() + rd(E.B).len(); }
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 30) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;

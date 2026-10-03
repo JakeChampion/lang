@@ -80,6 +80,6 @@ Two findings there, neither this slice's, both filed as #9832:
 ## Trap
 
 A probe has to be typed for the typed path to take it. The first round of
-probes wrote `var v = getcwd();` and every one reported `produced 0 of 1`,
-so their numbers were the AST lowering's twice over; `var v: string =` is
+probes wrote `let v = getcwd();` and every one reported `produced 0 of 1`,
+so their numbers were the AST lowering's twice over; `let v: string =` is
 what the producer types. Read the tally before reading the leak.

@@ -22,7 +22,7 @@ import "./machine";
 import "./report";
 
 function report_diags(path: string, diags: diag.Diag[]): void {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < diags.len()) {
     eprint(diags[i].render(path));
     i = i + 1;
@@ -30,7 +30,7 @@ function report_diags(path: string, diags: diag.Diag[]): void {
 }
 
 function report_problems(path: string, ps: check.Problem[]): void {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ps.len()) {
     eprint(path + ":" + ps[i].line.to_string() + ":" + ps[i].col.to_string() + ": [" + ps[i].entry + "] " + ps[i].msg);
     i = i + 1;
@@ -40,25 +40,25 @@ function report_problems(path: string, ps: check.Problem[]): void {
 function main(): i32 {
   // args()[0] is the program name; argv[1] is the policy, and the request
   // starts at argv[2].
-  var argv: string[] = args();
-  var a: report.Args = report.parse_args(argv, 2);
+  let argv: string[] = args();
+  let a: report.Args = report.parse_args(argv, 2);
   if (argv.len() < 4 || !a.ok) {
     eprint("usage: vclrun FILE.vcl METHOD URL [CLIENT_IP] [Name:Value ...] [-n COUNT]");
     return 2;
   }
-  var path: string = argv[1];
+  let path: string = argv[1];
   match (io.read_input(path)) {
     Err(e) => {
       eprint("vclrun: " + path + ": cannot read");
       return 2;
     },
     Ok(src) => {
-      var p: parser.ParseResult = parser.parse(src);
+      let p: parser.ParseResult = parser.parse(src);
       if (p.diags.len() > 0) {
         report_diags(path, p.diags);
         return 2;
       }
-      var problems: check.Problem[] = check.check(p.decls);
+      let problems: check.Problem[] = check.check(p.decls);
       if (problems.len() > 0) {
         report_problems(path, problems);
         return 1;

@@ -16,7 +16,7 @@
 # forms in self_host_derive_{eq,ord}_ir_test.go pin the shape directly.
 #
 # `audit_numeric_types` was here and is now FIXED (#6010): the self-host IR path
-# applied its zero-cost-ascription rewrite (`var x: T = E as T` -> `var x: T = E`)
+# applied its zero-cost-ascription rewrite (`let x: T = E as T` -> `let x: T = E`)
 # to a real width conversion, so a narrowing `as u8` lost its mask in BINDING
 # position only — 260 as u8 stayed 260 and the fixture's u8-wrap check returned 13.
 # `cast_narrow_binding` now pins that shape directly.
@@ -53,7 +53,7 @@
 # `regex_captures`, `regex_captures_all`, `regex_named_groups` and
 # `regex_replace_groups` were here and are now FIXED (#6008). All four trapped
 # on `?` over a CAPTURING group, and the fault was neither in the capture
-# machinery nor in the wasm backend: irlower bound `var pg = prog.append(v)` —
+# machinery nor in the wasm backend: irlower bound `let pg = prog.append(v)` —
 # std/regex's __rx_emit — straight to the buffer arr_push had appended into IN
 # PLACE, so a frame and its caller each held one buffer under two names and each
 # released it. The freed cell was recycled by the next `caps.with(slot, ti)`, so

@@ -14,24 +14,24 @@ function bump(own h: Holder, v: i32): Holder {
 }
 
 function churn(): i32 {
-    var junk: i32[][] = [];
-    var i: i32 = 0;
+    let junk: i32[][] = [];
+    let i: i32 = 0;
     while (i < 300) { junk = junk.append([i, i, i, i]); i = i + 1; }
     return junk.len();
 }
 
 function main(): i32 {
-    var total: i32 = 0;
-    var r: i32 = 0;
+    let total: i32 = 0;
+    let r: i32 = 0;
     while (r < 6) {
-        var h: Holder = Holder { code: [], inner: Inner { xs: [7, 11, 13, 17], n: 4 }, len: 0 };
-        var i: i32 = 0;
+        let h: Holder = Holder { code: [], inner: Inner { xs: [7, 11, 13, 17], n: 4 }, len: 0 };
+        let i: i32 = 0;
         while (i < 40) {
             h = bump(h, i);
             i = i + 1;
         }
         churn();
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < h.inner.xs.len()) { total = total + h.inner.xs[k]; k = k + 1; }
         total = total + h.inner.n + h.len + h.code[39];
         r = r + 1;

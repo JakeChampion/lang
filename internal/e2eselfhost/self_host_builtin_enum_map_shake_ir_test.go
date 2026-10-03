@@ -10,7 +10,7 @@ import "testing"
 const builtinEnumMapShakeSrc = `import "std/json";
 import "std/i32";
 function main(): i32 {
-    var j: JsonValue = JString("hi");
+    let j: JsonValue = JString("hi");
     match (j) { JString(s) => { print(s.len().to_string()); }, _ => { print("other"); } }
     return 0;
 }

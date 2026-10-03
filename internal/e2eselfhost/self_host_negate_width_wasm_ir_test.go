@@ -44,7 +44,7 @@ func TestSelfHostNegateWidthWasm(t *testing.T) {
 			// negation cannot even represent the answer.
 			name: "i64 receiver",
 			src: `import "std/i64";
-function main(): i32 { var b: i64 = 5000000000; print((-b).to_string()); return 0; }`,
+function main(): i32 { let b: i64 = 5000000000; print((-b).to_string()); return 0; }`,
 			want: "-5000000000\n",
 		},
 		{
@@ -52,7 +52,7 @@ function main(): i32 { var b: i64 = 5000000000; print((-b).to_string()); return 
 			// routes into the lowering are both covered.
 			name: "i64 local",
 			src: `import "std/i64";
-function main(): i32 { var b: i64 = 5000000000; var c: i64 = -b; print(c.to_string()); return 0; }`,
+function main(): i32 { let b: i64 = 5000000000; let c: i64 = -b; print(c.to_string()); return 0; }`,
 			want: "-5000000000\n",
 		},
 		{
@@ -60,7 +60,7 @@ function main(): i32 { var b: i64 = 5000000000; var c: i64 = -b; print(c.to_stri
 			// it wraps to itself, which docs/INTEGER-SEMANTICS.md defines.
 			name: "i64 min wraps to itself",
 			src: `import "std/i64";
-function main(): i32 { var b: i64 = 0 - 9223372036854775807 - 1; print((-b).to_string()); return 0; }`,
+function main(): i32 { let b: i64 = 0 - 9223372036854775807 - 1; print((-b).to_string()); return 0; }`,
 			want: "-9223372036854775808\n",
 		},
 		{
@@ -73,8 +73,8 @@ function main(): i32 { var b: i64 = 0 - 9223372036854775807 - 1; print((-b).to_s
 			// value is pinned by comparisons the driver can lower without it.
 			name: "i32 min literal",
 			src: `function main(): i32 {
-  var n: i32 = 0 - 2147483647 - 1;
-  var m: i32 = 7;
+  let n: i32 = 0 - 2147483647 - 1;
+  let m: i32 = 7;
   if (m == 0 - 2147483647 - 1) { print("eq-bad"); } else { print("eq-ok"); }
   if (n < 0) { print("neg-ok"); } else { print("neg-bad"); }
   if (n == -2147483648) { print("min-ok"); } else { print("min-bad"); }
@@ -85,7 +85,7 @@ function main(): i32 { var b: i64 = 0 - 9223372036854775807 - 1; print((-b).to_s
 		{
 			name: "i32 control",
 			src: `import "std/i32";
-function main(): i32 { var b: i32 = 5; print((-b).to_string()); return 0; }`,
+function main(): i32 { let b: i32 = 5; print((-b).to_string()); return 0; }`,
 			want: "-5\n",
 		},
 		{
@@ -93,8 +93,8 @@ function main(): i32 { var b: i32 = 5; print((-b).to_string()); return 0; }`,
 			// selection; this pins that.
 			name: "f64 control",
 			src: `function main(): i32 {
-  var b: f64 = 2.5;
-  var c: f64 = -b;
+  let b: f64 = 2.5;
+  let c: f64 = -b;
   if (c == 0.0 - 2.5) { print("neg-ok"); } else { print("neg-bad"); }
   if (0.0 - c == b) { print("back-ok"); } else { print("back-bad"); }
   return 0;

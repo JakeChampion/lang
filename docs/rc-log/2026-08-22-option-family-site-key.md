@@ -61,7 +61,7 @@ retirement-aware; a site key is retirement-aware by construction, and the sets
 coincide.
 
 **No derived markers**, checked before starting rather than after. `"NODEEP:"` /
-`"FLDCHECKED:"` are built in a loop bounded by `var mvn = out.len()` captured
+`"FLDCHECKED:"` are built in a loop bounded by `let mvn = out.len()` captured
 before the first Option append, so that loop structurally cannot see an Option
 entry. That is a proof, not a grep that came back empty — the distinction that
 cost #7349 a rebuild when its equivalent readers were missed.
@@ -83,7 +83,7 @@ that only ever matched by collision. See the PR for what the sweep actually said
 
 The shape is real independently of whether the corpus contains it, and
 `binder_forin_collide` is the proof. A `for o in keep` element binder, in a body
-that also declares a credited `var o: Option[i32[]]`, inherited that verdict and
+that also declares a credited `let o: Option[i32[]]`, inherited that verdict and
 released elements of `keep` that `keep` still owns:
 
 | | base | after |

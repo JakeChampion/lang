@@ -96,16 +96,16 @@ function main(): i32 {
 // this uses SIGINT (2 everywhere) and its bit, 1 << (2-1).
 const signalMaskSource = `
 function main(): i32 {
-    var bit: i64 = 2 as i64;
+    let bit: i64 = 2 as i64;
     // Start from a known state rather than assuming one.
     signal_mask(1, bit);
     if ((signal_mask(0, 0 as i64) & bit) != (0 as i64)) { return 61; }
     // Blocking answers the mask as it was: without the bit.
-    var prev: i64 = signal_mask(0, bit);
+    let prev: i64 = signal_mask(0, bit);
     if ((prev & bit) != (0 as i64)) { return 62; }
     if ((signal_mask(0, 0 as i64) & bit) == (0 as i64)) { return 63; }
     // Unblocking answers the mask as it was: WITH the bit.
-    var p2: i64 = signal_mask(1, bit);
+    let p2: i64 = signal_mask(1, bit);
     if ((p2 & bit) == (0 as i64)) { return 64; }
     if ((signal_mask(0, 0 as i64) & bit) != (0 as i64)) { return 65; }
     // Replace outright rather than adding to or removing from.

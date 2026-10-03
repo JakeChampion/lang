@@ -3,11 +3,11 @@
 // also checks the catalogue's example really does produce the error
 // it documents.
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3, 4];
-    var i: i64 = 0 as i64;
-    var s = xs[i:2];           // error[E037]: slice low bound must be i32, got i64
+    let xs: i32[] = [1, 2, 3, 4];
+    let i: i64 = 0 as i64;
+    let s = xs[i:2];           // error[E037]: slice low bound must be i32, got i64
 
-    var n: i32 = 42;
-    var bad = n[0:1];          // error[E037]: cannot slice value of type i32
+    let n: i32 = 42;
+    let bad = n[0:1];          // error[E037]: cannot slice value of type i32
     return 0;
 }

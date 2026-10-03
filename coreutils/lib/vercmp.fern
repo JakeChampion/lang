@@ -39,16 +39,16 @@ function ver_order(c: i32): i32 {
 }
 
 function verrevcmp(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
-  var a: i32 = a0;
-  var b: i32 = b0;
+  let a: i32 = a0;
+  let b: i32 = b0;
   while (a < a1 || b < b1) {
-    var first_diff: i32 = 0;
+    let first_diff: i32 = 0;
     while (a < a1 && !gnu.is_digit(ta[a] as i32) || b < b1 && !gnu.is_digit(tb[b] as i32)) {
-      var ca: i32 = 0;
+      let ca: i32 = 0;
       if (a < a1) {
         ca = ver_order(ta[a] as i32);
       }
-      var cb: i32 = 0;
+      let cb: i32 = 0;
       if (b < b1) {
         cb = ver_order(tb[b] as i32);
       }
@@ -97,7 +97,7 @@ function verrevcmp(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): 
 // and the names a sort sees look like that. The cost is the per-byte
 // call, not the shape.
 function file_prefixlen(text: string, from: i32, end: i32): i32 {
-  var i: i32 = from;
+  let i: i32 = from;
   while (i < end) {
     if (text[i] as i32 == 46 && i > from) {
       if (suffix_runs_to_end(text, i, end)) {
@@ -112,7 +112,7 @@ function file_prefixlen(text: string, from: i32, end: i32): i32 {
 // Whether [at, end) is one or more `\.[A-Za-z~][A-Za-z0-9~]*` segments
 // and nothing else.
 function suffix_runs_to_end(text: string, at: i32, end: i32): boolean {
-  var i: i32 = at;
+  let i: i32 = at;
   while (i < end) {
     if (text[i] as i32 != 46) {
       return false;
@@ -121,13 +121,13 @@ function suffix_runs_to_end(text: string, at: i32, end: i32): boolean {
     if (i >= end) {
       return false;
     }
-    var c: i32 = text[i] as i32;
+    let c: i32 = text[i] as i32;
     if (!is_alpha_b(c) && c != 126) {
       return false;
     }
     i = i + 1;
     while (i < end) {
-      var d: i32 = text[i] as i32;
+      let d: i32 = text[i] as i32;
       if (!is_alnum_b(d) && d != 126) {
         break;
       }
@@ -156,8 +156,8 @@ pub function compare_texts(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1
     if (tb[b0] as i32 != 46) {
       return 0 - 1;
     }
-    var adot: boolean = a1 - a0 == 1;
-    var bdot: boolean = b1 - b0 == 1;
+    let adot: boolean = a1 - a0 == 1;
+    let bdot: boolean = b1 - b0 == 1;
     if (adot) {
       if (bdot) {
         return 0;
@@ -167,8 +167,8 @@ pub function compare_texts(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1
     if (bdot) {
       return 1;
     }
-    var add: boolean = a1 - a0 == 2 && ta[a0 + 1] as i32 == 46;
-    var bdd: boolean = b1 - b0 == 2 && tb[b0 + 1] as i32 == 46;
+    let add: boolean = a1 - a0 == 2 && ta[a0 + 1] as i32 == 46;
+    let bdd: boolean = b1 - b0 == 2 && tb[b0 + 1] as i32 == 46;
     if (add) {
       if (bdd) {
         return 0;
@@ -181,10 +181,10 @@ pub function compare_texts(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1
   } else if (tb[b0] as i32 == 46) {
     return 1;
   }
-  var ap: i32 = file_prefixlen(ta, a0, a1);
-  var bp: i32 = file_prefixlen(tb, b0, b1);
-  var one_pass: boolean = ap == a1 && bp == b1;
-  var r: i32 = verrevcmp(ta, a0, ap, tb, b0, bp);
+  let ap: i32 = file_prefixlen(ta, a0, a1);
+  let bp: i32 = file_prefixlen(tb, b0, b1);
+  let one_pass: boolean = ap == a1 && bp == b1;
+  let r: i32 = verrevcmp(ta, a0, ap, tb, b0, bp);
   if (r != 0 || one_pass) {
     return r;
   }

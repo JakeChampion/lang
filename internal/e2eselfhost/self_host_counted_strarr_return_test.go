@@ -19,15 +19,16 @@ func TestSelfHostCountedStrArrReturnProofX86_64(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	const probe = `import "./rundriver";
-import "./irlower";
+import "./irtables";
+import "./fnsigs";
 import "./lexical";
 import "./parser";
 function main(): i32 {
-    var m = rundriver.parse_stdin("counted-strarr-proof");
+    let m = rundriver.parse_stdin("counted-strarr-proof");
     // Resolved as the lowering sees them: every binding renamed.
-    var funcs: parser.FuncDecl[] = [];
+    let funcs: parser.FuncDecl[] = [];
     for f in m.funcs { funcs = funcs.append(lexical.resolve_func(f).func); }
-    var rows = irlower.return_fresh_struct_ret_fns_of(funcs, irlower.struct_tab(m.structs), []);
+    let rows = fnsigs.return_fresh_struct_ret_fns_of(funcs, irtables.struct_tab(m.structs), []);
     for row in rows { print(row); }
     return 0;
 }`
@@ -43,31 +44,31 @@ function main(): i32 {
 		owned        bool
 		row          string
 	}{
-		{"direct", `function build(p: string[]): string[] { var out: string[] = []; out = out.append(p[0]); return out; }`, true, ""},
+		{"direct", `function build(p: string[]): string[] { let out: string[] = []; out = out.append(p[0]); return out; }`, true, ""},
 		{"array-literal", `function build(p: string[]): string[] { return [p[0], p[1]]; }`, true, ""},
-		{"alias-chain", `function build(p: string[]): string[] { var q = p; var r = q; var x = r[0]; var y = x; var out: string[] = []; out = out.append(y); return out; }`, true, ""},
-		{"foreach-alias", `function build(p: string[]): string[] { var q = p; var out: string[] = []; for x in q { out = out.append(x); } return out; }`, true, ""},
+		{"alias-chain", `function build(p: string[]): string[] { let q = p; let r = q; let x = r[0]; let y = x; let out: string[] = []; out = out.append(y); return out; }`, true, ""},
+		{"foreach-alias", `function build(p: string[]): string[] { let q = p; let out: string[] = []; for x in q { out = out.append(x); } return out; }`, true, ""},
 		{"forward-result", `function build(p: string[]): string[] { return helper(p); } function helper(p: string[]): string[] { return [p[0]]; }`, true, ""},
-		{"bound-forward-result", `function build(p: string[]): string[] { var out: string[] = helper(p); return out; } function helper(p: string[]): string[] { return [p[0]]; }`, true, ""},
-		{"conditional-store", `function build(p: string[], yes: boolean): string[] { var out: string[] = []; if (yes) { out = out.append(p[0]); } else { out = out.append(p[1]); } return out; }`, true, ""},
-		{"unowned-string", `function build(p: string): string[] { var out: string[] = []; out = out.append(p); return out; }`, false, ""},
+		{"bound-forward-result", `function build(p: string[]): string[] { let out: string[] = helper(p); return out; } function helper(p: string[]): string[] { return [p[0]]; }`, true, ""},
+		{"conditional-store", `function build(p: string[], yes: boolean): string[] { let out: string[] = []; if (yes) { out = out.append(p[0]); } else { out = out.append(p[1]); } return out; }`, true, ""},
+		{"unowned-string", `function build(p: string): string[] { let out: string[] = []; out = out.append(p); return out; }`, false, ""},
 		{"parameter-return", `function build(p: string[]): string[] { return p; }`, false, ""},
 		{"owned-parameter-return", `function build(own p: string[]): string[] { return p; }`, false, ""},
-		{"tuple-fresh-destructure", `function w(a: string): string { return a + "!"; } function build(): string[] { var p: (i32, string[]) = (0, [w("x"), w("y")]); var (a, out) = p; return out; }`, false, ""},
-		{"tuple-borrowed-destructure", `function build(p: (i32, string[])): string[] { var (a, out) = p; return out; }`, false, ""},
+		{"tuple-fresh-destructure", `function w(a: string): string { return a + "!"; } function build(): string[] { let p: (i32, string[]) = (0, [w("x"), w("y")]); let (a, out) = p; return out; }`, false, ""},
+		{"tuple-borrowed-destructure", `function build(p: (i32, string[])): string[] { let (a, out) = p; return out; }`, false, ""},
 		{"foreach-bound-return", `function build(p: string[][]): string[] { for out in p { return out; } return []; }`, false, ""},
 		{"match-bound-return", `function build(p: Option[string[]]): string[] { match (p) { Some(out) => { return out; }, None => { return []; } } }`, false, ""},
-		{"local-array-element", `function build(): string[] { var p: string[] = ["aa" + "!"]; var out: string[] = []; out = out.append(p[0]); return out; }`, false, ""},
-		{"mutable-array-alias", `function build(p: string[], q: string[]): string[] { var a = p; a = q; return [a[0]]; }`, false, ""},
-		{"mutable-element-alias", `function build(p: string[], x: string): string[] { var a = p[0]; a = x; return [a]; }`, false, ""},
-		{"shadowed-source", `function build(p: string[], yes: boolean): string[] { var out: string[] = []; if (yes) { var p: string[] = ["aa" + "!"]; out = out.append(p[0]); } return out; }`, false, ""},
-		{"shadowed-element", `function build(p: string[], yes: boolean): string[] { var x = p[0]; var out: string[] = []; if (yes) { var x = "bb" + "!"; out = out.append(x); } return out; }`, false, ""},
-		{"parameter-shadowed-by-element", `function build(p: string[], x: string, yes: boolean): string[] { var out: string[] = []; if (yes) { var x = p[0]; out = out.append(x); } out = out.append(x); return out; }`, false, ""},
+		{"local-array-element", `function build(): string[] { let p: string[] = ["aa" + "!"]; let out: string[] = []; out = out.append(p[0]); return out; }`, false, ""},
+		{"mutable-array-alias", `function build(p: string[], q: string[]): string[] { let a = p; a = q; return [a[0]]; }`, false, ""},
+		{"mutable-element-alias", `function build(p: string[], x: string): string[] { let a = p[0]; a = x; return [a]; }`, false, ""},
+		{"shadowed-source", `function build(p: string[], yes: boolean): string[] { let out: string[] = []; if (yes) { let p: string[] = ["aa" + "!"]; out = out.append(p[0]); } return out; }`, false, ""},
+		{"shadowed-element", `function build(p: string[], yes: boolean): string[] { let x = p[0]; let out: string[] = []; if (yes) { let x = "bb" + "!"; out = out.append(x); } return out; }`, false, ""},
+		{"parameter-shadowed-by-element", `function build(p: string[], x: string, yes: boolean): string[] { let out: string[] = []; if (yes) { let x = p[0]; out = out.append(x); } out = out.append(x); return out; }`, false, ""},
 		{"unproven-call", `function build(p: string[], f: (string[]) => string[]): string[] { return f(p); }`, false, ""},
 		{"unproven-branch", `function build(p: string[], yes: boolean): string[] { if (yes) { return [p[0]]; } return p; }`, false, ""},
-		{"builder-element-handout", `function build(p: string[]): string[] { var out: string[] = []; out = out.append(p[0]); var x = out[0]; return out; }`, false, ""},
-		{"builder-buffer-alias", `function build(p: string[]): string[] { var out: string[] = []; out = out.append(p[0]); var x = out; return out; }`, false, ""},
-		{"builder-replaced", `function build(p: string[]): string[] { var out: string[] = []; out = p; return out; }`, false, ""},
+		{"builder-element-handout", `function build(p: string[]): string[] { let out: string[] = []; out = out.append(p[0]); let x = out[0]; return out; }`, false, ""},
+		{"builder-buffer-alias", `function build(p: string[]): string[] { let out: string[] = []; out = out.append(p[0]); let x = out; return out; }`, false, ""},
+		{"builder-replaced", `function build(p: string[]): string[] { let out: string[] = []; out = p; return out; }`, false, ""},
 		{"ungrounded-cycle", `function build(p: string[]): string[] { return helper(p); } function helper(p: string[]): string[] { return build(p); }`, false, ""},
 		// Handbacks: fresh when each `own string[]` argument is, one
 		// "SARRH:build|<k>" row per such position.

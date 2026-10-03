@@ -160,25 +160,25 @@ function entries_ext(): (string, string)[];
 @import("local:test/src@0.1.0", "append")
 function append_ext(f: i32, name: string, value: string): Result[i32, i32];
 function main(): i32 {
-    var p: string = "none";
+    let p: string = "none";
     match (path_ext()) { Some(s) => { p = s; }, None => { p = "none"; } }
-    var rd: i32 = 0;
+    let rd: i32 = 0;
     match (read_ext(3)) {
         Ok(b) => { if (b.len() == 3 && (b[0] as i32) == 1 && (b[2] as i32) == 3) { rd = 1; } },
         Err(e) => { rd = 0 - e; }
     }
-    var rerr: i32 = 0;
+    let rerr: i32 = 0;
     match (read_ext(0)) { Ok(b) => { rerr = 99; }, Err(e) => { rerr = e; } }
-    var m0: string = "";
+    let m0: string = "";
     match (verb_ext(0)) { Get => { m0 = "GET"; }, Post => { m0 = "POST"; }, Other(s) => { m0 = s; } }
-    var m2: string = "";
+    let m2: string = "";
     match (verb_ext(2)) { Get => { m2 = "GET"; }, Post => { m2 = "POST"; }, Other(s) => { m2 = s; } }
-    var es: (string, string)[] = entries_ext();
-    var (n0, v0) = es[0];
-    var (n1, v1) = es[1];
-    var ap: i32 = 0;
+    let es: (string, string)[] = entries_ext();
+    let (n0, v0) = es[0];
+    let (n1, v1) = es[1];
+    let ap: i32 = 0;
     match (append_ext(1, "x-a", "b")) { Ok(v) => { ap = 1; }, Err(e) => { ap = 0 - e; } }
-    var ae: i32 = 0;
+    let ae: i32 = 0;
     match (append_ext(1, "x-a", "")) { Ok(v) => { ae = 99; }, Err(e) => { ae = e; } }
     if (p == "/hello" && rd == 1 && rerr == 7 && m0 == "GET" && m2 == "PATCH"
         && es.len() == 2 && n0 == "content-type" && v0 == "text/plain" && n1 == "x-fern" && v1 == "yes"

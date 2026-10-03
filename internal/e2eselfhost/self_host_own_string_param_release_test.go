@@ -18,11 +18,11 @@ function back(own s: string): string { return s; }
 function fwd(own s: string): i32 { return takes(s); }
 function takea(own a: i32[]): i32 { return a.len(); }
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         n = n + takes("a" + i.to_string());
-        var b: string = back("b" + i.to_string());
+        let b: string = back("b" + i.to_string());
         n = n + b.len();
         n = n + fwd("c" + i.to_string());
         n = n + takea([1, 2, i]);

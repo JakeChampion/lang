@@ -58,33 +58,33 @@ func TestSelfHostMapVsReclaimIRX86_64(t *testing.T) {
 	// than a same-shape Map[i32, i32] — i.e. the value column adds no leak beyond
 	// the shared arr_push grow-leak. Returns 1 iff the string map leaks its values.
 	run(t, `function build_str(n: i32): i32 {
-    var m: Map[i32, string] = Map { 1: "a" + "b", 2: "c" + "d" };
-    var r: i32 = 0;
+    let m: Map[i32, string] = Map { 1: "a" + "b", 2: "c" + "d" };
+    let r: i32 = 0;
     if (m.has(1)) { r = r + 1; }
     if (m.has(2)) { r = r + 1; }
     return r;
 }
 function build_i32(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 1: 2, 3: 4 };
-    var r: i32 = 0;
+    let m: Map[i32, i32] = Map { 1: 2, 3: 4 };
+    let r: i32 = 0;
     if (m.has(1)) { r = r + 1; }
     if (m.has(3)) { r = r + 1; }
     return r;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + build_str(i) + build_i32(i); i = i + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + build_str(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
-    var k: i32 = 0;
+    let s2: i32 = (__heap_bump_bytes() as i32);
+    let k: i32 = 0;
     while (k < 2000) { acc = acc + build_i32(k); k = k + 1; }
-    var k2: i32 = (__heap_bump_bytes() as i32);
+    let k2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
-    var str_growth: i32 = s2 - s1;
-    var i32_growth: i32 = k2 - s2;
+    let str_growth: i32 = s2 - s1;
+    let i32_growth: i32 = k2 - s2;
     if (str_growth > i32_growth + 4096) { return 1; }
     if (acc < 0) { return 97; }
     return 0;
@@ -92,10 +92,10 @@ function main(): i32 {
 
 	// Value correctness through the churn — no premature free / over-release.
 	run(t, `function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var m: Map[i32, string] = Map { 7: "hel" + "lo", 8: "wor" + "ld" };
+        let m: Map[i32, string] = Map { 7: "hel" + "lo", 8: "wor" + "ld" };
         if (m.get_or(7, "").len() != 5) { bad = 1; }
         if (m.get_or(8, "").len() != 5) { bad = 1; }
         i = i + 1;
@@ -110,11 +110,11 @@ function main(): i32 {
 	// still MAP-reclaimable — is NOT credited MAPVS and keeps the shallow free. The
 	// local `s` (its own reclaimed string) is thus not double-freed under the map.
 	run(t, `function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var s: string = "aa" + "bb";
-        var m: Map[i32, string] = Map { 1: s };
+        let s: string = "aa" + "bb";
+        let m: Map[i32, string] = Map { 1: s };
         if (s.len() != 4) { bad = 1; }
         if (m.get_or(1, "").len() != 4) { bad = 1; }
         i = i + 1;

@@ -10,7 +10,7 @@ import "testing"
 // arm64; each leg skips itself when its toolchain is absent.
 const floatCbrtProg = `
 import "std/float" as float;
-function approx(a: f64, b: f64): boolean { var d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.001; }
+function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.001; }
 function main(): i32 {
     if (!approx((27.0).cbrt(), 3.0)) { return 1; }
     if (!approx((8.0).cbrt(), 2.0)) { return 2; }

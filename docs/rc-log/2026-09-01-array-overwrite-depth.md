@@ -28,7 +28,7 @@ Measured over 8 rounds, x86-64 and arm64 alike:
 
 The two that were already clean are the two the lowering special-cases
 (`isSelfArraySetReassign` emits no dec at all; the self-append keeps the
-buffer-only one). Note `var a = mk()` re-executed in a LOOP already
+buffer-only one). Note `let a = mk()` re-executed in a LOOP already
 reclaimed correctly — `emitVarReinitDropOld` routes to the deep
 `emitOwnedSlotDrop` — so the two spellings of one thing disagreed.
 

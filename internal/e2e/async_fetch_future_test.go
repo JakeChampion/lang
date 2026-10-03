@@ -54,13 +54,13 @@ import "std/fetch";
 import "std/utf8";
 
 function main(): i32 {
-    var none: u8[] = [];
-    var f1: async.Future[u8[]] = fetch.fetch_future(%d, %d, "/1");
-    var f2: async.Future[u8[]] = fetch.fetch_future(%d, %d, "/2");
-    var fs: async.Future[u8[]][] = [f1, f2];
-    var bodies: u8[][] = async.gather(fs, none);
-    var b0: boolean = false;
-    var b1: boolean = false;
+    let none: u8[] = [];
+    let f1: async.Future[u8[]] = fetch.fetch_future(%d, %d, "/1");
+    let f2: async.Future[u8[]] = fetch.fetch_future(%d, %d, "/2");
+    let fs: async.Future[u8[]][] = [f1, f2];
+    let bodies: u8[][] = async.gather(fs, none);
+    let b0: boolean = false;
+    let b1: boolean = false;
     match (utf8.from_bytes(bodies[0])) { Some(t) => { b0 = t == "hello-world"; }, None => {}, }
     match (utf8.from_bytes(bodies[1])) { Some(t) => { b1 = t == "hello-world"; }, None => {}, }
     if (b0 && b1) { return 42; }
@@ -138,10 +138,10 @@ func TestAsyncFetchFutureLargeBody(t *testing.T) {
 import "std/fetch";
 
 function main(): i32 {
-    var none: u8[] = [];
-    var f: async.Future[u8[]] = fetch.fetch_future(%d, %d, "/big");
-    var fs: async.Future[u8[]][] = [f];
-    var bodies: u8[][] = async.gather(fs, none);
+    let none: u8[] = [];
+    let f: async.Future[u8[]] = fetch.fetch_future(%d, %d, "/big");
+    let fs: async.Future[u8[]][] = [f];
+    let bodies: u8[][] = async.gather(fs, none);
     if (bodies[0].len() == %d) { return 42; }
     return bodies[0].len() & 127;  // distinct small code on a truncated read
 }`, host, port, bodyLen)

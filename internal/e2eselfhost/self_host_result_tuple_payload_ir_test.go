@@ -18,13 +18,13 @@ var resultTuplePayloadIRCases = []struct {
 	main string
 }{
 	// Ok payload is a tuple; read both elements.
-	{"ok-tuple", `function main(): i32 { var r: Result[(i32, i32), string] = Ok((3, 4)); match (r) { Ok(t) => { return t.0 + t.1; }, Err(e) => { return 0; } } }`},
+	{"ok-tuple", `function main(): i32 { let r: Result[(i32, i32), string] = Ok((3, 4)); match (r) { Ok(t) => { return t.0 + t.1; }, Err(e) => { return 0; } } }`},
 	// Same type, Err arm taken (string payload).
-	{"err-string", `function main(): i32 { var r: Result[(i32, i32), string] = Err("ab"); match (r) { Ok(t) => { return t.0 + t.1; }, Err(e) => { return e.len(); } } }`},
+	{"err-string", `function main(): i32 { let r: Result[(i32, i32), string] = Err("ab"); match (r) { Ok(t) => { return t.0 + t.1; }, Err(e) => { return e.len(); } } }`},
 	// The Err type is the tuple (mirror): exercises the E side of the split.
-	{"err-tuple", `function main(): i32 { var r: Result[i32, (i32, i32)] = Err((5, 6)); match (r) { Ok(n) => { return n; }, Err(t) => { return t.0 + t.1; } } }`},
+	{"err-tuple", `function main(): i32 { let r: Result[i32, (i32, i32)] = Err((5, 6)); match (r) { Ok(n) => { return n; }, Err(t) => { return t.0 + t.1; } } }`},
 	// Scalar-Result regression (must stay on the IR path).
-	{"scalar-regress", `function main(): i32 { var r: Result[i32, string] = Ok(5); match (r) { Ok(n) => { return n; }, Err(e) => { return 0; } } }`},
+	{"scalar-regress", `function main(): i32 { let r: Result[i32, string] = Ok(5); match (r) { Ok(n) => { return n; }, Err(e) => { return 0; } } }`},
 }
 
 // TestSelfHostResultTuplePayloadIR compiles each case with the self-host CLI for

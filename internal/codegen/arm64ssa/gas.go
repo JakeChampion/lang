@@ -1421,6 +1421,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	// actually has.
 	"now_ns":                           emitClockHelper("now_ns", clockRealtime, 1_000_000_000, 1),
 	"getuid":                           emitIdHelper("getuid", 174),
+	"__getpwuid_name":                  emitPwNameHelper,
 	"getgid":                           emitIdHelper("getgid", 176),
 	"getgroups":                        emitGetgroupsHelper,
 	"environ":                          emitEnvironHelper,
@@ -12477,6 +12478,15 @@ func emitRuntimeHelpers(w func(string, ...any), helpers []string) {
 		}
 		runtimeHelperEmitters[h](w)
 	}
+}
+
+// emitPwNameHelper writes __getpwuid_name(uid) -> 0: Linux keeps every
+// account in the files the caller reads (#9815).
+func emitPwNameHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__getpwuid_name"))
+	w("\tmov x0, #0")
+	w("\tret")
 }
 
 func fnLabel(name string) string {

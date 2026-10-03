@@ -7,8 +7,8 @@ function bump(x: i32): i32 {
 }
 
 function lower(a: i32, b: i32): i32 {
-    var e: i32 = a + bump(a);
-    var eb: i32 = b + bump(b);
+    let e: i32 = a + bump(a);
+    let eb: i32 = b + bump(b);
     if (eb < e) {
         e = eb;
     }

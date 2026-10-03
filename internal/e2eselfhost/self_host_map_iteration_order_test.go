@@ -32,19 +32,19 @@ import (
 // sweep looks correct by accident on a small map.
 const mapIterationOrderSrc = `import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = Map {};
-    var i: i32 = 0;
+    let m: Map[i32, i32] = Map {};
+    let i: i32 = 0;
     while (i < 12) { m = m.insert(i, i * 2); i = i + 1; }
-    var ks: i32[] = m.keys();
+    let ks: i32[] = m.keys();
     if (ks.len() != 12) { return 10; }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < 12) { if (ks[j] != j) { return 20 + j; } j = j + 1; }
-    var vs: i32[] = m.values();
+    let vs: i32[] = m.values();
     if (vs[5] != 10) { return 34; }
     m = m.insert(3, 99);
     ks = m.keys();
     if (ks[3] != 3) { return 40; }
-    var d: (Map[i32, i32], boolean) = m.without(1);
+    let d: (Map[i32, i32], boolean) = m.without(1);
     m = d.0;
     ks = m.keys();
     if (ks.len() != 11) { return 50; }

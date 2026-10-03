@@ -9,9 +9,9 @@ import (
 
 // TestSelfHostClosureOfClosureIRX86_64 pins a closure factory that returns a
 // (capturing) closure, called through both levels via locals:
-// `var outer = make(30); var inner = outer(); inner(12)`. `outer` is a closure
+// `let outer = make(30); let inner = outer(); inner(12)`. `outer` is a closure
 // local (make returns a closure box); calling it yields ANOTHER closure box,
-// but `var inner = outer()` wasn't classified as a closure local — the callee
+// but `let inner = outer()` wasn't classified as a closure local — the callee
 // `outer` is a closure LOCAL, not a module fn in closure_fns — so `inner(x)`
 // called the box pointer as code and SIGSEGV'd. The closure-local var-init
 // classification now also fires when the callee is a closure local whose
@@ -37,16 +37,16 @@ func TestSelfHostClosureOfClosureIRX86_64(t *testing.T) {
 		// Double-nested factory: inner closure captures `base` through two
 		// levels; called via `outer()` then `inner(12)`.
 		{"closure-of-closure-captured",
-			`function make(base: i32): () => (i32) => i32 { return (): (i32) => i32 => { return (x: i32): i32 => { return x + base; }; }; } function main(): i32 { var outer: () => (i32) => i32 = make(30); var inner: (i32) => i32 = outer(); return inner(12); }`,
+			`function make(base: i32): () => (i32) => i32 { return (): (i32) => i32 => { return (x: i32): i32 => { return x + base; }; }; } function main(): i32 { let outer: () => (i32) => i32 = make(30); let inner: (i32) => i32 = outer(); return inner(12); }`,
 			42},
 		// Triple-nested factory with captures at each level.
 		{"closure-of-closure-triple-captured",
-			`function make(base: i32): (i32) => (i32) => i32 { return (a: i32): (i32) => i32 => { return (b: i32): i32 => { return a + b + base; }; }; } function main(): i32 { var f: (i32) => (i32) => i32 = make(10); var g: (i32) => i32 = f(12); return g(20); }`,
+			`function make(base: i32): (i32) => (i32) => i32 { return (a: i32): (i32) => i32 => { return (b: i32): i32 => { return a + b + base; }; }; } function main(): i32 { let f: (i32) => (i32) => i32 = make(10); let g: (i32) => i32 = f(12); return g(20); }`,
 			42},
 		// The inner closure also captures the middle-level parameter, exercised
 		// through the two-arg chain.
 		{"closure-of-closure-middle-capture",
-			`function make(base: i32): (i32) => (i32) => i32 { return (a: i32): (i32) => i32 => { return (b: i32): i32 => { return a * b + base; }; }; } function main(): i32 { var f: (i32) => (i32) => i32 = make(2); var g: (i32) => i32 = f(8); return g(5); }`,
+			`function make(base: i32): (i32) => (i32) => i32 { return (a: i32): (i32) => i32 => { return (b: i32): i32 => { return a * b + base; }; }; } function main(): i32 { let f: (i32) => (i32) => i32 = make(2); let g: (i32) => i32 = f(8); return g(5); }`,
 			42},
 	}
 	for _, tc := range cases {

@@ -43,11 +43,11 @@ pub function shadow_param(x: i32): i32 {
 }
 
 pub function shadow_local(x: i32): i32 {
-    return apply((v: i32): i32 => { var add_one: i32 = 7; return v + add_one; }, x);
+    return apply((v: i32): i32 => { let add_one: i32 = 7; return v + add_one; }, x);
 }
 
 pub function shadow_capture(x: i32): i32 {
-    var add_one: i32 = 50;
+    let add_one: i32 = 50;
     return apply((v: i32): i32 => { return v + add_one; }, x);
 }
 `

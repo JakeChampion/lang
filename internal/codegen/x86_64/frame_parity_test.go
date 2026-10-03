@@ -24,8 +24,8 @@ import (
 const parityProg = `
 @noinline function f(x: i32): i32 { return x + 1; }
 function main(): i32 {
-  var acc: i32 = 0;
-  var i: i32 = 0;
+  let acc: i32 = 0;
+  let i: i32 = 0;
   while (i < 4) { acc = acc + f(i); i = i + 1; }
   return acc;
 }`
@@ -90,8 +90,8 @@ func TestBiasHoldsWithStackArguments(t *testing.T) {
   return a + b + c + d + e + f + g + h + i;
 }
 function main(): i32 {
-  var t: i32 = 0;
-  var k: i32 = 0;
+  let t: i32 = 0;
+  let k: i32 = 0;
   while (k < 3) { t = t + nine(k, 1, 2, 3, 4, 5, 6, 7, 8); k = k + 1; }
   return t;
 }`)

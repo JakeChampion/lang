@@ -54,15 +54,15 @@ function test_i64_lt_failure_message(): test.TestOutcome {
 
 function test_f64_bits_round_trip(): test.TestOutcome {
   // 1.0 as f64 = 0x3FF0000000000000 = 4607182418800017408
-  var x: f64 = 1.0;
-  var bits: i64 = f64_bits(x);
+  let x: f64 = 1.0;
+  let bits: i64 = f64_bits(x);
   return test.assert_eq(bits, 4607182418800017408 as i64);
 }
 
 function test_f64_from_bits_round_trips(): test.TestOutcome {
-  var x: f64 = 3.14;
-  var bits: i64 = f64_bits(x);
-  var back: f64 = f64_from_bits(bits);
+  let x: f64 = 3.14;
+  let bits: i64 = f64_bits(x);
+  let back: f64 = f64_from_bits(bits);
   return test.assert_eq_f64_exact(back, x);
 }
 
@@ -74,7 +74,7 @@ function test_stat_workflow(r: test.TestRunner): test.TestRunner {
     return rr;
   }
 
-  var path: string = dir + "/payload.dat";
+  let path: string = dir + "/payload.dat";
   match (write_file(path, "0123456789")) {
     Ok(_) => {},
     Err(_) => {
@@ -137,7 +137,7 @@ function test_json_invalid_actual_fails(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("batch 7");
+  let r: test.TestRunner = test.test_new("batch 7");
 
   r = r.it("i64 lt", test_i64_lt);
   r = r.it("i64 le", test_i64_le);

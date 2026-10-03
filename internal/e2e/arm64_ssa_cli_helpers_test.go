@@ -38,8 +38,8 @@ const arm64SSACLIHelpersSource = `function main(): i32 {
 			}
 		}
 	}
-	var xs: i32[] = [1, 2, 3];
-	var i: i32 = 0;
+	let xs: i32[] = [1, 2, 3];
+	let i: i32 = 0;
 	while (i < 40) { xs = xs.append(i); i = i + 1; }
 	// Nothing has crossed the rc==1 cliff yet: xs held the only reference all
 	// the way through, so every append grew it in place.
@@ -48,7 +48,7 @@ const arm64SSACLIHelpersSource = `function main(): i32 {
 	// Now make a second reference and append through it. The buffer still has
 	// spare capacity, so the copy that follows is bought by the extra
 	// reference alone — which is the crossing the tally counts.
-	var ys: i32[] = xs;
+	let ys: i32[] = xs;
 	ys = ys.append(999);
 	if (__arr_push_shared_count() < 1) { return 95; }
 	if (__arr_push_shared_bytes() < (4 as i64)) { return 96; }
@@ -140,14 +140,14 @@ const arm64SSAProcessHelpersSource = `function main(): i32 {
 	// Two calls must agree: the second takes the memoised cell, so a cache
 	// that stored the wrong pointer, or a widening pass that ran twice over
 	// the same buffer, answers a different length here.
-	var g0: i64[] = getgroups();
+	let g0: i64[] = getgroups();
 	if (getgroups().len() != g0.len()) { return 82; }
-	var env: string[] = environ();
+	let env: string[] = environ();
 	if (env.len() != 2) { return 83; }
 	if (env[0].len() == 0) { return 84; }
 	if (env[1].len() == 0) { return 85; }
-	var t0: i64 = now_ns();
-	var t1: i64 = now_ns();
+	let t0: i64 = now_ns();
+	let t1: i64 = now_ns();
 	if (t1 < t0) { return 86; }
 	if (t0 < (1600000000000000000 as i64)) { return 87; }
 	return 42;

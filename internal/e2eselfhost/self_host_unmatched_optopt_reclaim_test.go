@@ -57,7 +57,7 @@ type unmatchedOptoptCase struct {
 	want int
 }
 
-const unmatchedOptoptMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
+const unmatchedOptoptMain = "\nfunction main(): i32 { let t: i32 = 0; let i: i32 = 0; " +
 	"while (i < 200) { t = t + round(i); i = i + 1; } " +
 	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
@@ -67,7 +67,7 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
 			// THE REPRO. Was 400/0 live 16000.
 			name: "unmatched_nested_option",
 			src: `function round(i: i32): i32 {
-    var o: Option[Option[i32]] = Some(Some(i));
+    let o: Option[Option[i32]] = Some(Some(i));
     return i % 7;
 }` + unmatchedOptoptMain,
 			want: 13,
@@ -76,7 +76,7 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
 			// The None-payload spelling of the same construction.
 			name: "unmatched_nested_none",
 			src: `function round(i: i32): i32 {
-    var o: Option[Option[i32]] = Some(None);
+    let o: Option[Option[i32]] = Some(None);
     return i % 7;
 }` + unmatchedOptoptMain,
 			want: 13,
@@ -87,7 +87,7 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
 			// an over-release, caught by the 99 guard rather than by any byte count.
 			name: "matched_control",
 			src: `function round(i: i32): i32 {
-    var o: Option[Option[i32]] = Some(Some(i));
+    let o: Option[Option[i32]] = Some(Some(i));
     match (o) { Some(inner) => { match (inner) { Some(v) => { return v; }, None => { return 3; } } }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,
@@ -98,7 +98,7 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
 			// never the releaser.
 			name: "matched_wildcard_control",
 			src: `function round(i: i32): i32 {
-    var o: Option[Option[i32]] = Some(Some(i));
+    let o: Option[Option[i32]] = Some(Some(i));
     match (o) { Some(_) => { return 5; }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,
@@ -109,7 +109,7 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
 			// inner box. Was 600/0 live 24000.
 			name: "reassigned_unmatched",
 			src: `function round(i: i32): i32 {
-    var o: Option[Option[i32]] = Some(Some(i));
+    let o: Option[Option[i32]] = Some(Some(i));
     if (i % 2 == 0) { o = Some(Some(i + 1)); }
     return i % 7;
 }` + unmatchedOptoptMain,
@@ -129,7 +129,7 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
 			// partial one.
 			name: "reassigned_matched",
 			src: `function round(i: i32): i32 {
-    var o: Option[Option[i32]] = Some(Some(i));
+    let o: Option[Option[i32]] = Some(Some(i));
     if (i % 2 == 0) { o = Some(Some(i + 1)); }
     match (o) { Some(inner) => { match (inner) { Some(v) => { return v; }, None => { return 3; } } }, None => { return 2; } }
     return 0;
@@ -143,7 +143,7 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
 			// 700/700.
 			name: "reassigned_matched_multi_rebind",
 			src: `function round(i: i32): i32 {
-    var o: Option[Option[i32]] = Some(Some(i));
+    let o: Option[Option[i32]] = Some(Some(i));
     o = Some(Some(i + 1));
     if (i % 2 == 0) { o = Some(Some(i + 2)); }
     o = Some(None);
@@ -158,8 +158,8 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
 			// reference.
 			name: "refuses_rebind_aliasing_inner",
 			src: `function round(i: i32): i32 {
-    var keep: Option[i32] = Some(i);
-    var o: Option[Option[i32]] = Some(Some(i));
+    let keep: Option[i32] = Some(i);
+    let o: Option[Option[i32]] = Some(Some(i));
     if (i % 2 == 0) { o = Some(keep); }
     match (keep) { Some(v) => { return v; }, None => { return 2; } }
     return 0;
@@ -176,7 +176,7 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
 			name: "rc_inner_unmatched",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var o: Option[Option[string]] = Some(Some(w("ab")));
+    let o: Option[Option[string]] = Some(Some(w("ab")));
     return i % 7;
 }` + unmatchedOptoptMain,
 			want: 13,
@@ -187,7 +187,7 @@ function round(i: i32): i32 {
 			// hand __fern_str_free whatever the payload word holds. Was 400/0.
 			name: "rc_inner_none_payload",
 			src: `function round(i: i32): i32 {
-    var o: Option[Option[string]] = Some(None);
+    let o: Option[Option[string]] = Some(None);
     return i % 7;
 }` + unmatchedOptoptMain,
 			want: 13,
@@ -206,7 +206,7 @@ function round(i: i32): i32 {
 			name: "rc_inner_matched_balances",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var o: Option[Option[string]] = Some(Some(w("ab")));
+    let o: Option[Option[string]] = Some(Some(w("ab")));
     match (o) { Some(inner) => { match (inner) { Some(v) => { return v.len(); }, None => { return 3; } } }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,
@@ -221,7 +221,7 @@ function round(i: i32): i32 {
 			// is what the producer row above loses.
 			name: "rc_inner_matched_literal",
 			src: `function round(i: i32): i32 {
-    var o: Option[Option[string]] = Some(Some("ab"));
+    let o: Option[Option[string]] = Some(Some("ab"));
     match (o) { Some(inner) => { match (inner) { Some(v) => { return v.len(); }, None => { return 3; } } }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,
@@ -237,7 +237,7 @@ function round(i: i32): i32 {
 			// guard in the emitter the gate widens to any direct construction.
 			name: "rc_inner_matched_none",
 			src: `function round(i: i32): i32 {
-    var o: Option[Option[string]] = Some(None);
+    let o: Option[Option[string]] = Some(None);
     match (o) { Some(inner) => { match (inner) { Some(v) => { return v.len(); }, None => { return 3; } } }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,
@@ -248,8 +248,8 @@ function round(i: i32): i32 {
 			// reads. Releasing it would free a box under a live reference.
 			name: "refuses_aliased_inner",
 			src: `function round(i: i32): i32 {
-    var inner: Option[i32] = Some(i);
-    var o: Option[Option[i32]] = Some(inner);
+    let inner: Option[i32] = Some(i);
+    let o: Option[Option[i32]] = Some(inner);
     match (inner) { Some(v) => { return v; }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,

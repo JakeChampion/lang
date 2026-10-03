@@ -8,7 +8,7 @@ import (
 )
 
 // TestSelfHostArrArrReclaimIRX86_64 pins #4355 slice 9: an arr-of-arr local
-// (`var g = [[..], [..]]`) had NO reclaim at all on the self-host IR path —
+// (`let g = [[..], [..]]`) had NO reclaim at all on the self-host IR path —
 // the init marks is_arrarr but the slot is not is_arr, so neither the exit
 // sweep nor any rebind dec touched it: the outer buffer, every inner buffer,
 // and every string element leaked per iteration (native is flat on the same
@@ -18,7 +18,7 @@ import (
 // inners — __fern_str_arr_free each), routed by the slot's type-aware
 // arrarr_elem kind. Admission: rows must be array LITERALS ("ARRARR:"), and
 // string-kind inners additionally need every element to be a fresh string
-// ("ARRARRS:"); a bare row read (`var row = g[i]`) or `for row in g` rejects
+// ("ARRARRS:"); a bare row read (`let row = g[i]`) or `for row in g` rejects
 // the candidate (the row pointer would dangle).
 func TestSelfHostArrArrReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -54,21 +54,21 @@ func TestSelfHostArrArrReclaimIRX86_64(t *testing.T) {
 	// string[][] churn — the slice target: rows + string elements all fresh,
 	// whole structure freed per rebind, flat at detector zero.
 	run(t, `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var g: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
+        let g: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
         acc = acc + g.len() + g[0][0].len();
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var g2: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
+        let g2: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
         acc = acc + g2.len() + g2[1][1].len();
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -78,36 +78,36 @@ func TestSelfHostArrArrReclaimIRX86_64(t *testing.T) {
 	// i32[][] churn with EXPRESSION inner elements (idents / binaries — value-
 	// copied scalars, admitted by the lax rows-are-literals credit), flat.
 	run(t, `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var g: i32[][] = [[i, i + 1], [i + 2]];
+        let g: i32[][] = [[i, i + 1], [i + 2]];
         acc = acc + g.len() + g[0][0];
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var g2: i32[][] = [[j, j + 1], [j + 2]];
+        let g2: i32[][] = [[j, j + 1], [j + 2]];
         acc = acc + g2.len() + g2[1][0];
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
 }`, "arrarr-scalar-flat", 0)
 
-	// ROW-ALIAS exclusion: `var row = g[1]` binds an inner buffer pointer, so
+	// ROW-ALIAS exclusion: `let row = g[1]` binds an inner buffer pointer, so
 	// the candidate is rejected — row stays readable at detector zero (the
 	// structure keeps its prior sound leak).
 	run(t, `function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var g: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
-        var row: string[] = g[1];
+        let g: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
+        let row: string[] = g[1];
         if (row.len() != 2) { bad = 1; }
         if (row[0].len() != 2) { bad = 1; }
         i = i + 1;
@@ -121,11 +121,11 @@ func TestSelfHostArrArrReclaimIRX86_64(t *testing.T) {
 	// strict "ARRARRS:" credit is withheld (string-kind slot, non-fresh
 	// element), so nothing is freed and s1 survives at detector zero.
 	run(t, `function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var s1: string = "aa" + "bb";
-        var g: string[][] = [[s1], ["c" + "d"]];
+        let s1: string = "aa" + "bb";
+        let g: string[][] = [[s1], ["c" + "d"]];
         if (g[0][0].len() != 4) { bad = 1; }
         if (s1.len() != 4) { bad = 1; }
         i = i + 1;

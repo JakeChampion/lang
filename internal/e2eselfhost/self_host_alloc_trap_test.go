@@ -31,7 +31,7 @@ import (
 // arena-size ≈ runner-RAM entirely, and the loop bound (100000 × ~2 GiB, far
 // past any arena) also makes the trap immune to future arena bumps — it still
 // fires after ~8 iterations, the rest are unreached.
-const allocTrapSrc = "function main(): i32 { var i: i32 = 0; var last: usize = 0; while (i < 100000) { last = __alloc(2000000000); i = i + 1; } if (last == 0) { return 99; } return i; }"
+const allocTrapSrc = "function main(): i32 { let i: i32 = 0; let last: usize = 0; while (i < 100000) { last = __alloc(2000000000); i = i + 1; } if (last == 0) { return 99; } return i; }"
 
 // TestSelfHostAllocTrapX86_64 — heap-overflow trap, self-hosted x86-64.
 func TestSelfHostAllocTrapX86_64(t *testing.T) {

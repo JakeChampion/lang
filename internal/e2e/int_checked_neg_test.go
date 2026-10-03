@@ -18,8 +18,8 @@ function ni32(o: Option[i32]): boolean { match (o) { Some(v) => { return false; 
 function ci64(o: Option[i64], w: i64): boolean { match (o) { Some(v) => { return v == w; }, None => { return false; } } }
 function ni64(o: Option[i64]): boolean { match (o) { Some(v) => { return false; }, None => { return true; } } }
 function main(): i32 {
-    var min32: i32 = 0 - 2147483647 - 1;
-    var min64: i64 = (0 as i64) - 9223372036854775807 - 1;
+    let min32: i32 = 0 - 2147483647 - 1;
+    let min64: i64 = (0 as i64) - 9223372036854775807 - 1;
     // i32 checked_neg / checked_abs.
     if (!ci32((5).checked_neg(), 0 - 5)) { return 1; }
     if (!ci32((0 - 5).checked_neg(), 5)) { return 2; }
@@ -29,18 +29,18 @@ function main(): i32 {
     if (!ci32((7).checked_abs(), 7)) { return 6; }
     if (!ni32(min32.checked_abs())) { return 7; }
     // i32 overflowing_neg.
-    var (a1, o1) = (5).overflowing_neg();
+    let (a1, o1) = (5).overflowing_neg();
     if (a1 != (0 - 5) || o1) { return 8; }
-    var (a2, o2) = min32.overflowing_neg();
+    let (a2, o2) = min32.overflowing_neg();
     if (a2 != min32 || !o2) { return 9; }
     // i64.
     if (!ci64((5 as i64).checked_neg(), (0 as i64) - 5)) { return 10; }
     if (!ni64(min64.checked_neg())) { return 11; }
     if (!ci64((0 - 9 as i64).checked_abs(), 9 as i64)) { return 12; }
     if (!ni64(min64.checked_abs())) { return 13; }
-    var (b1, p1) = min64.overflowing_neg();
+    let (b1, p1) = min64.overflowing_neg();
     if (b1 != min64 || !p1) { return 14; }
-    var (b2, p2) = (100 as i64).overflowing_neg();
+    let (b2, p2) = (100 as i64).overflowing_neg();
     if (b2 != ((0 as i64) - 100) || p2) { return 15; }
     return 42;
 }

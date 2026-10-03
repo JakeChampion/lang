@@ -17,8 +17,8 @@ import "core/int";
 enum List { Cons(i32, List), Nil }
 
 function build(n: i32): List {
-    var acc: List = Nil;
-    var i: i32 = 1;
+    let acc: List = Nil;
+    let i: i32 = 1;
     while (i <= n) {
         acc = Cons(i, acc);
         i = i + 1;
@@ -42,17 +42,17 @@ function sum(l: List): i32 {
 
 function main(): i32 {
     // The plain loop: every cell it hands back is intact.
-    var xs: List = build(4);
+    let xs: List = build(4);
     print((sum(xs)).to_string());
 
     // The rebind on an aliased spine.
-    var keep: List = build(3);
-    var grown: List = keep;
+    let keep: List = build(3);
+    let grown: List = keep;
     grown = Cons(10, grown);
     print((sum(grown)).to_string());
 
     // A consuming walk over the alias: it must stop at the shared head.
-    var ys: List = inc_all(keep);
+    let ys: List = inc_all(keep);
     print((sum(ys)).to_string());
     print((sum(keep)).to_string());
     print((sum(grown)).to_string());

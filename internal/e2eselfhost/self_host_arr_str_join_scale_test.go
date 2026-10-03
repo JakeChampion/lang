@@ -29,10 +29,10 @@ import (
 // separators. The first byte is checked too, so a join that returned an empty
 // or truncated buffer of the right length would still fail.
 const arrStrJoinScaleSrc = `function main(): i32 {
-    var parts: string[] = [];
-    var i: i32 = 0;
+    let parts: string[] = [];
+    let i: i32 = 0;
     while (i < 100000) { parts = parts.append("item"); i = i + 1; }
-    var j: string = parts.join(",");
+    let j: string = parts.join(",");
     if (j.len() != 499999) { return 1; }
     if (j[0] as i32 != 105) { return 2; }
     if (j[4] as i32 != 44) { return 3; }
@@ -44,7 +44,7 @@ const arrStrJoinScaleSrc = `function main(): i32 {
 func TestSelfHostArrStrJoinScaleX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	asm := runCapture(t, gcc, runner, driverBin, []byte(arrStrJoinScaleSrc), "-ir")

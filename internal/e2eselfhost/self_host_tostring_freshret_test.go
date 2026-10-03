@@ -4,14 +4,14 @@ import "testing"
 
 // tostringFreshRetCases pin a helper whose return is a scalar `.to_string()` —
 // `function util_num(i: i32): string { return i.to_string(); }` — entering the
-// whole-program fresh-ret registry, so `var sv = util_num(i)` reclaims the box
+// whole-program fresh-ret registry, so `let sv = util_num(i)` reclaims the box
 // the callee moved out.
 //
 // Isolated by varying only the callee body; the AST lowering leaked on the
 // first two before the fix:
 //
 //	return i.to_string();                32 B/round
-//	var t = i.to_string(); return t;     32
+//	let t = i.to_string(); return t;     32
 //	return "x" + i.to_string();           0
 //	return "abc";                         0
 //
@@ -27,20 +27,20 @@ var tostringFreshRetCases = []struct {
     return i.to_string();
 }
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var sv: string = util_num(i);
+        let sv: string = util_num(i);
         acc = (acc + sv.len()) % 91;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -51,20 +51,20 @@ function main(): i32 {
     return i.to_string();
 }
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var sv: string = "v" + util_num(i);
+        let sv: string = "v" + util_num(i);
         acc = (acc + sv.len()) % 91;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -73,24 +73,24 @@ function main(): i32 {
 	// runs through str_local_is_fresh_ret -> strloc_declared_fresh, which is why
 	// the params thread has to reach the local-declaration test too.
 	{"freshret-tostring-via-local", `function util_num(i: i32): string {
-    var t: string = i.to_string();
+    let t: string = i.to_string();
     return t;
 }
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var sv: string = util_num(i);
+        let sv: string = util_num(i);
         acc = (acc + sv.len()) % 91;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -101,20 +101,20 @@ function main(): i32 {
     return "x" + i.to_string();
 }
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var sv: string = util_num(i);
+        let sv: string = util_num(i);
         acc = (acc + sv.len()) % 91;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -131,19 +131,19 @@ function util_tag(t: Tag): string {
     return t.to_string();
 }
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var tg: Tag = Tag { s: "abc" };
-        var sv: string = util_tag(tg);
+        let tg: Tag = Tag { s: "abc" };
+        let sv: string = util_tag(tg);
         acc = (acc + sv.len() + tg.s.len()) % 91;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 91;
@@ -155,19 +155,19 @@ function main(): i32 {
     return s.to_string();
 }
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var base: string = "v" + i.to_string();
-        var sv: string = util_s(base);
+        let base: string = "v" + i.to_string();
+        let sv: string = util_s(base);
         acc = (acc + sv.len() + base.len()) % 91;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 91;

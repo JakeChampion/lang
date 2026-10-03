@@ -33,14 +33,14 @@ function order_of(cost: i64, read_at: i64): string {
 }
 
 function main(): i32 {
-    var b0: i64 = __heap_alloc_count();
-    var m: M = M { a: __heap_alloc_count(), b: 0 as i64 };
-    var a0: i64 = __heap_alloc_count();
+    let b0: i64 = __heap_alloc_count();
+    let m: M = M { a: __heap_alloc_count(), b: 0 as i64 };
+    let a0: i64 = __heap_alloc_count();
     print("struct: " + order_of(a0 - b0, m.a - b0));
 
-    var b1: i64 = __heap_alloc_count();
-    var v: i64[] = [__heap_alloc_count(), 0 as i64];
-    var a1: i64 = __heap_alloc_count();
+    let b1: i64 = __heap_alloc_count();
+    let v: i64[] = [__heap_alloc_count(), 0 as i64];
+    let a1: i64 = __heap_alloc_count();
     print("array:  " + order_of(a1 - b1, v[0] - b1));
     return 0;
 }

@@ -28,8 +28,8 @@ var untypedLiteralFoldCases = []struct {
 func untypedLiteralFoldSource(ty, expr, seed string) string {
 	return "const K: " + ty + " = " + strings.ReplaceAll(expr, "@", seed) + ";\n" +
 		"function main(): i32 {\n" +
-		"    var s: " + ty + " = " + seed + ";\n" +
-		"    var r: " + ty + " = " + strings.ReplaceAll(expr, "@", "s") + ";\n" +
+		"    let s: " + ty + " = " + seed + ";\n" +
+		"    let r: " + ty + " = " + strings.ReplaceAll(expr, "@", "s") + ";\n" +
 		"    if (K == r) { return 0; }\n" +
 		"    return 7;\n}\n"
 }
@@ -37,8 +37,8 @@ func untypedLiteralFoldSource(ty, expr, seed string) string {
 // A binding's declared type is the same context without a const: 256 / 2 at
 // u8 is 0, and at i32 it is 128.
 const untypedLiteralBindingSrc = `function main(): i32 {
-    var r: u8 = (255 + 1) / 2;
-    var w: u32 = 0 - 1;
+    let r: u8 = (255 + 1) / 2;
+    let w: u32 = 0 - 1;
     if (w != (4294967295 as u32)) { return 2; }
     return r as i32;
 }

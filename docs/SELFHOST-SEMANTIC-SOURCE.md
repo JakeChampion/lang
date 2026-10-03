@@ -90,7 +90,7 @@ Unsupported constructs refuse the whole function with a reason.
   truncated on its way out and reads the same either way).
 
 - An i64 or u64 gets a slot of its own, which only wasm spells out: in the
-  function's type for a parameter and a result (`irlower.result_i64`), and in
+  function's type for a parameter and a result (`irtables.result_i64`), and in
   its locals otherwise. Its operators run at width 64 and are already
   full-width, so nothing masks after them; negation pushes its zero at that
   width too, or the subtraction's two sides disagree. A 64-bit literal does not
@@ -122,7 +122,7 @@ Unsupported constructs refuse the whole function with a reason.
 
   An unsigned operand takes the operator forms that read no sign bit — the
   four orderings, the right shift, division and remainder — through
-  `irlower.to_unsigned_kind`, the same remap the AST lowering applies. The
+  `irtables.to_unsigned_kind`, the same remap the AST lowering applies. The
   byte goes through it too, though nothing turns on that: 0..255 is inside the
   signed range at every slot width. Negation is refused at every unsigned
   width, as it is at the byte: its result leaves the range the type names, and
@@ -169,7 +169,7 @@ Unsupported constructs refuse the whole function with a reason.
 - The f64, as a VALUE, a declared field and an array element but never a tuple
   element, for the same reason the i64 is one (`narrow_slot`): it gets a slot
   of its own that only wasm spells
-  out (`irlower.result_f64`, the `f64_slots` a produced body declares). A
+  out (`irtables.result_f64`, the `f64_slots` a produced body declares). A
   literal is an f64 — the checker types it polymorphic and settles it where it
   lands, so a `f32` suffix or an f32 destination makes it an f32, and a
   binding with no annotation settles it at the f64 it is — and it
@@ -195,7 +195,7 @@ Unsupported constructs refuse the whole function with a reason.
 - Integer literals in both bases the lexer writes, decimal and hexadecimal.
   A suffix names the type outright, which is how a byte literal (`b'x'`)
   carries its width; an unsuffixed literal has none of its own and takes the
-  integer type of what it is written against, so `var b: u8 = 65` binds a byte
+  integer type of what it is written against, so `let b: u8 = 65` binds a byte
   and `65` in an i32 position an i32. For an operator, that width is decided
   BEFORE either operand is produced — from the checker's type for the whole
   expression, or from whichever operand bears one — so a literal takes it on
@@ -514,7 +514,7 @@ Unsupported constructs refuse the whole function with a reason.
 
   The captures are named by the body's ENVIRONMENT RECORD. The lift hoists a
   capturing body with `__env: i32[]` first and reads each capture at the top
-  of the body as `var cap: T = __env[1 + i]`, one per slot in slot order, so
+  of the body as `let cap: T = __env[1 + i]`, one per slot in slot order, so
   those leading reads say what the box holds: the producer types the `__env`
   parameter as `__env$<body>` with the capture types as its arguments
   (`semtypes.is_env`), a record whose fields are the address word and then
@@ -633,9 +633,9 @@ Unsupported constructs refuse the whole function with a reason.
   argument: `__sem_release_<T>`, a body the physical lowering emits beside the
   drop helpers, which does for one value what the frame does for a unit of
   its type. A value column of function values is a column of
-  environment boxes, released through the `_vf` members like any other box.
-  A value column of maps (whose box a read could not retain) and a key column
-  of generic records stay refused ("unsupported map shape").
+  environment boxes, and a value column of maps a column of map boxes, each
+  released through the `_vf` members like any other box. A key column of
+  generic records stays refused ("unsupported map shape").
 
   A map's unit is counted like any box's. The box carries the array header
   on the register backends (`__fern_map_new` takes it from `__fern_arr_box`)
@@ -647,7 +647,7 @@ Unsupported constructs refuse the whole function with a reason.
   and copies the entries into a fresh box first when it is shared, so a
   `snapshot = m` still reads what it held. The receiver's retain is never
   held back the way an array append's is (`deferred_retain`): a map the frame
-  still reads counts as shared, and `var n = m.insert(k, v)` leaves `m` as it
+  still reads counts as shared, and `let n = m.insert(k, v)` leaves `m` as it
   was, which is what E055 promises. Native, the interpreter and the AST
   lowering borrow the receiver and write a sole-held box in place instead
   (#9834); the production row `a-map-the-frame-still-reads-is-not-written`
@@ -701,7 +701,7 @@ Unsupported constructs refuse the whole function with a reason.
   its box is released like an array's and its slot, when the element is a
   reference, walked by the same element loop. The element decides what a cell
   may hold: whatever this boundary can drop. A cell with no element — what an
-  unannotated `var c = cell_new(0)` carries, since the destination names T —
+  unannotated `let c = cell_new(0)` carries, since the destination names T —
   has no layout and is refused. The cell's own vocabulary, `cell_new` and
   `get` and `set`, is NOT here: a body naming one is refused at the callee, so
   a produced function receives, stores, projects and drops cells but never
@@ -746,7 +746,7 @@ Unsupported constructs refuse the whole function with a reason.
   template no produced body reaches is "uninstantiated generic". No produced
   value carries a variable: `ssasem.schema_error` refuses one as unresolved.
   In a module produced whole a template's erased body is SUPERSEDED
-  (`irlower.LowerResult.superseded`): nothing calls it, since every produced
+  (`irtables.LowerResult.superseded`): nothing calls it, since every produced
   caller calls an instance, so no emit writes it and no gate judges it — the
   AST lowering of an erased `__arrm_map__i64` clone carried the wasm route's
   only `erased_wide` verdict and declined the module (#9838).
@@ -927,7 +927,7 @@ graphs.
 
 `internal/e2eselfhost/self_host_semsource_test.go`:
 
-Both drivers run `irlower.lift_lambdas_typed` over the module first, the way the typed
+Both drivers run `lift.lift_lambdas_typed` over the module first, the way the typed
 lowering does. That is what puts a closure in
 front of the boundary at all — the lift is where a lambda becomes a hoisted
 body and a `__mkclo$` box — and it holds the two drivers to the same input the
@@ -1273,8 +1273,8 @@ was probed before building and neither was what its reason read as:
 - The 75 `binding type does not match its semantic value` were every one an
   `ExprIndex` initializer whose declared type is a reference and whose value
   is i32, and the binding NAME is the CAPTURE's (`$binding$1$name`,
-  `$binding$5$mfuncs`), never `__env`. `irlower.make_clo_func` writes
-  `var cap: T = __env[1 + i]` with `__env: i32[]`: the declaration carries
+  `$binding$5$mfuncs`), never `__env`. `lift.make_clo_func` writes
+  `let cap: T = __env[1 + i]` with `__env: i32[]`: the declaration carries
   the capture's real type over a box slot the AST lowering treats as an
   untyped word, which is a reinterpretation Fern has no operator for. The
   declared type is the truth and the READ is the lie, so the fix is a typed
@@ -1640,7 +1640,7 @@ With a real control, four defects showed, and three of them were one cause:
   that had been silently zeroed.
 - **A mutable capture is a `Cell[T]`**, on both lowerings (#9320). `capturebox`
   rewrites a captured local the closure or its creator reassigns into
-  `var $cell$x: Cell[T] = cell_new(init)`, every read into `$cell$x.get()` and
+  `let $cell$x: Cell[T] = cell_new(init)`, every read into `$cell$x.get()` and
   every write into `$cell$x.set(v)`, and the lambda captures the cell. The
   box is the one-element array box a cell already is, so nothing changed in
   the representation; what changed is that the write is the cell's in-place
@@ -1736,7 +1736,7 @@ release one box twice. Four lines reproduce the smallest shape:
 ```fern
 function keep(text: string): string { return text; }
 function scan(src: string): string {
-    var v: str = slice_unchecked(src, 0, 3);
+    let v: str = slice_unchecked(src, 0, 3);
     return keep(v);
 }
 function main(): i32 { return scan("12345 abc").len(); }
@@ -1780,9 +1780,9 @@ separates "keeps the argument" from "builds something new" — only the body doe
 `return` as itself, inside an aggregate the return builds, or as an argument of
 a call to a declaration that already escapes its own, closed to a fixpoint over
 the module. A local carries a parameter the same way once it is bound from an
-expression that hands one out — `var st = s; st = st.emit(ir.op_call_direct(freefn,
+expression that hands one out — `let st = s; st = st.emit(ir.op_call_direct(freefn,
 1)); return st;` returns `freefn` inside `st` — so `hands_back` closes the body's
-`var` and assignment bindings over the names first and reads the returns against
+`let` and assignment bindings over the names first and reads the returns against
 that set; reading the returns alone left `emit_opt_payload_drop_via` out of the
 set, and the self-host-built compiler stored a frame-resident view of a callee
 name in an `ir.Op` that outlived the frame (#10680). `escapes_in` is the
@@ -1879,8 +1879,8 @@ to work against rather than the 7-minute rebuild:
 ```fern
 function push(buf: i32[], v: i32): i32[] { return buf.append(v); }
 function build(n: i32): i32[] {
-    var out: i32[] = [];
-    var i: i32 = 0;
+    let out: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { out = push(out, i); i = i + 1; }
     return out;
 }
@@ -1930,10 +1930,10 @@ reorder:
 ```fern
 function set0(buf: i32[], v: i32): i32[] { return buf.with(0, v); }
 function main(): i32 {
-    var a: i32[] = [];
+    let a: i32[] = [];
     a = a.append(1);
     a = a.append(2);
-    var b: i32[] = set0(a, 99);
+    let b: i32[] = set0(a, 99);
     return a[0] * 100 + b[0];
 }
 ```
@@ -2055,7 +2055,7 @@ would not:
 - **The produced compiler's ANSWER on `lexer.fern` is wrong**, and was
   before either change: the semantic build of main at `b15a016` emits the
   same 150-line divergence from the AST build, at three sites: the two
-  `var b: i32 = 0 - 1;` in `match_multipunct` and the `return -1;` in
+  `let b: i32 = 0 - 1;` in `match_multipunct` and the `return -1;` in
   `test_mixed`, each lowered as zero minus one, which the AST build folds
   to `movq $-1` and the produced build emits as `xorl; movq $o, %rcx; subq`.
   The constant op's `str` field is the literal's text, a view the constant
@@ -2229,7 +2229,7 @@ leaves of the same kind: a `str` result escaping its source
 (`alloc_flat_method_identity_return`), a view lent past its frame
 (`string_slice_option`), and a `dyn Trait` call (`dyn_trait_dispatch`). A
 fn-typed local holding a function whose parameter is itself callable
-(`var t = taker; t(lambda)`) produced nothing when this section was written
+(`let t = taker; t(lambda)`) produced nothing when this section was written
 (`function signature slot`); it produces since #10024, which admits a
 function type nested in a function value's signature.
 
@@ -2257,13 +2257,13 @@ What the typed path produced whole, 2026-09-24:
 (`rc-log/2026-09-24-i-…`), and so does `TestSelfHostStrEqSymbolTypeChecks`
 (`rc-log/2026-09-25-t-…`).
 
-### The runtime helpers never reach the typed path
+### The runtime helpers
 
 The Fern-source runtime functions (#2649, `asmcore.rt_src_*`: file open,
 writes, sockets, process control, the map finder and more) are appended to a
-program on demand. `asm_ir`, `asm_arm64_ir` and `wasm_ir` compile them through
-`emit_ir_runtime_fern_fn`, which calls the AST lowering directly and never
-asks the substitution. They are written on the raw floor: `__raw_alloc`,
+program on demand. `asm_ir` and `asm_arm64_ir` compile them through
+`emit_ir_runtime_fern_fn`, which takes their bodies from the typed lowering
+(below). They are written on the raw floor: `__raw_alloc`,
 `__raw_store8` / `__raw_load8`, `__raw_store_ptr` / `__raw_load_ptr`,
 `__raw_string`, `__raw_data`, `__raw_array`, `__raw_arr_box`, `__raw_addr`,
 `__raw_scratch`, `__raw_environ`, `__raw_splice_pipe`, `__syscall3`–`6`,
@@ -2271,14 +2271,14 @@ asks the substitution. They are written on the raw floor: `__raw_alloc`,
 
 The raw floor is typed and lowered on the typed path: one table,
 `checker.raw_floor_sigs`, gives the checker its signatures and `semsource` its
-contracts, and `ssarc.raw_floor_ops` emits the op `irlower` emits for each.
+contracts, and `ssarc.raw_floor_ops` emits each one's op.
 An address is a `usize`, an offset, byte or length an `i32`, and a syscall's
 operands and result are `i64` words. `__raw_string` and `__raw_array` hand a
 block to a fresh `string` or `i32[]` the caller owns; `__raw_data` is lent its
-string. `TestSelfHostRawFloorIsTypedWhole` fails when `irlower` lowers a
-raw-floor name either table lacks.
+string. `TestSelfHostRawFloorIsTypedWhole` fails when a helper source in
+`asmcore.fern` calls a raw-floor name either table lacks.
 
-The x86-64 and arm64 backends ask for a helper's typed lowering first:
+The x86-64 and arm64 backends take a helper's body from the typed lowering:
 `emit_ir_runtime_fern_fn` calls `EmitState.rt_lower`, which the CLI sets to
 `semlower.runtime_bodies` through `ircore.Sub`, so no backend links the
 pipeline. A source that does not type-check, or that the typed path does not
@@ -2332,7 +2332,9 @@ What is left, in order:
    modload drivers' per-module AST view. The differential legs run the typed
    path only, and the tests' AST legs went with the switch.
 4. Done: the AST lowering is deleted. `irlower.fern` went from 108,028 lines
-   to about 33,700; what it still holds is below.
+   to about 33,700, and what it still held was then split into
+   `irtables.fern`, `fnsigs.fern` and `lift.fern` (#11032); what each holds
+   is below.
 
 ### What deleting the AST lowering touches, 2026-09-26
 
@@ -2405,23 +2407,22 @@ source lines and the typed path adds about 16,600, so once step 3 lands each
 driver is smaller than it is today. A test that exists to inspect the AST
 lowering's own output goes with the lowering.
 
-**`irlower.fern`.** What every driver reaches, computed by tree-shaking each
-driver's program and taking the union, is what stays; everything else went,
+**What survived `irlower.fern`.** What every driver reaches, computed by
+tree-shaking each driver's program and taking the union, is what stayed;
+everything else went,
 `LowerState` and its methods, `lower_expr` / `lower_stmt` and their arms, the
 reuse passes and the dumps among it (1,829 functions and 33 types). What
-stays:
+stayed is now three files:
 
-- the core types and tables (`LowerResult`, `SigReg`, `FnSigs`,
-  `StructTab`, the declaration and field-type lookups);
-- the op builders `ssarc` calls (`sat_binary_ops`, `chk_binary_ops`,
-  `map_fbinop` and similar);
-- the layout and RC-body helpers the backends read;
-- the whole-program registries behind `FnSigs`, of which the emit reads two
-  fields (`borrowable_params`, `strfld_ok_types`) through the field-reclaim
-  admissions; the rest are read only by `wp_fact_rows`, the per-unit cache
-  key's facts;
-- the AST-to-AST lambda lift (`lift_lambdas_typed`), which the typed path
-  runs first.
+- `irtables.fern`: the core types and tables (`LowerResult`, `SigReg`,
+  `StructTab`, the declaration and field-type lookups), the op builders
+  `ssarc` calls (`sat_binary_ops`, `chk_binary_ops`, `map_fbinop` and
+  similar), and the layout and RC-body helpers the backends read;
+- `fnsigs.fern`: `FnSigs`, of which the emit reads two fields
+  (`borrowable_params`, `strfld_ok_types`) through the field-reclaim
+  admissions, and `wp_fact_rows`, the per-unit cache key's facts;
+- `lift.fern`: the AST-to-AST lambda lift (`lift_lambdas_typed`), which the
+  typed path runs first.
 
 `regrow_sigs` and `consume_sigs` rewrote registry rows only an AST-lowered
 caller read, and went with it. `ssarc.caller_sigs` stays: its rewrite of

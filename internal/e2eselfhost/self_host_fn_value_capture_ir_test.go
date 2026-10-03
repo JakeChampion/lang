@@ -10,7 +10,7 @@ import (
 // fnValueCaptureIRCases pin a closure that CAPTURES a fn-valued local — the
 // remaining half of #6256's `<fn>$clo not defined` cluster.
 //
-// A fn-valued `var` is env-boxed at its binding only when the enclosing body
+// A fn-valued `let` is env-boxed at its binding only when the enclosing body
 // uses the name as a VALUE; a name it merely calls is left to the cheaper
 // direct-call lift. Inside a nested lambda that distinction does not hold —
 // every free var there is copied into the closure's env box (make_clo_func) or
@@ -21,7 +21,7 @@ import (
 // before the box can be built, and cap_type_expr had no arm for a lambda init
 // nor for the `__mkclo$` marker the lift leaves in its place.
 //
-// A nested `function` declaration desugars to `var f = <lambda>`, which is why
+// A nested `function` declaration desugars to `let f = <lambda>`, which is why
 // the shape reaches this through ordinary-looking source.
 //
 // Every case asserts the ANSWER through the value: a reduced program that only
@@ -40,21 +40,21 @@ function main(): i32 { return mk()(3i32) & 63i32; }`, 8},
 	// The same with the fn-typed local written out, so the capture types from
 	// the annotation rather than from the lambda.
 	{"annotated-fn-local-captured", `function mk(): (i32) => i32 {
-    var lf: (i32) => i32 = ((x: i32) => (x + 1i32));
+    let lf: (i32) => i32 = ((x: i32) => (x + 1i32));
     return ((x0: i32) => (lf(x0) * 2i32));
 }
 function main(): i32 { return mk()(3i32) & 63i32; }`, 8},
 	// A fn value and a scalar captured by the same closure: the env box carries
 	// both, so the box slot order has to hold across the two kinds.
 	{"fn-and-scalar-captured", `function mk(n: i32): (i32) => i32 {
-    var lf: (i32) => i32 = ((x: i32) => (x * 2i32));
+    let lf: (i32) => i32 = ((x: i32) => (x * 2i32));
     return ((x0: i32) => (lf(x0) + n));
 }
 function main(): i32 { return mk(5i32)(4i32) & 63i32; }`, 13},
 	// The captured fn value is itself a CAPTURING closure, so the outer box
 	// holds a box.
 	{"capturing-closure-captured", `function mk(n: i32): (i32) => i32 {
-    var inner: (i32) => i32 = ((y: i32) => (y + n));
+    let inner: (i32) => i32 = ((y: i32) => (y + n));
     return ((x0: i32) => (inner(x0) * 2i32));
 }
 function main(): i32 { return mk(3i32)(4i32) & 63i32; }`, 14},
@@ -62,7 +62,7 @@ function main(): i32 { return mk(3i32)(4i32) & 63i32; }`, 14},
 	// one container, one dispatch ABI (#5071), so both elements must be boxes.
 	{"fn-capture-in-closure-array", `function main(): i32 {
     function lf(x: i32): i32 { return x + 1i32; }
-    var fs: ((i32) => i32)[] = [((x0: i32) => (lf(x0) * 2i32)), ((x1: i32) => x1)];
+    let fs: ((i32) => i32)[] = [((x0: i32) => (lf(x0) * 2i32)), ((x1: i32) => x1)];
     return fs[0i32](3i32) & 63i32;
 }`, 8},
 	// The seed shape (fernsmith s0172): the capturing lambda reaches its
@@ -71,22 +71,22 @@ function main(): i32 { return mk(3i32)(4i32) & 63i32; }`, 14},
 	{"passthrough-arg-captures-fn-local", `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
 function main(): i32 {
     function lf(x: i32): boolean { return false; }
-    var v1: (i32) => i32 = pick(true, ((x0: i32) => (if (lf(4i32)) { x0 } else { 34i32 })), ((x1: i32) => 5i32));
+    let v1: (i32) => i32 = pick(true, ((x0: i32) => (if (lf(4i32)) { x0 } else { 34i32 })), ((x1: i32) => 5i32));
     return v1(3i32) & 255i32;
 }`, 34},
 	// Regression guard for the representation this must not move: a fn-valued
 	// local that is only ever CALLED, never captured, stays on the direct-call
 	// lift rather than being boxed.
 	{"call-only-fn-local-unchanged", `function main(): i32 {
-    var f: (i32) => i32 = ((x: i32) => (x + 1i32));
+    let f: (i32) => i32 = ((x: i32) => (x + 1i32));
     return f(3i32) & 63i32;
 }`, 4},
 	// The other half of that guard: a call-only local whose lambda CAPTURES is
 	// what closure_lift_one param-lifts, and boxing it instead would pre-empt
 	// the closure-calls-closure path.
 	{"call-only-capturing-local-unchanged", `function main(): i32 {
-    var n: i32 = 3i32;
-    var f: (i32) => i32 = ((x: i32) => (x + n));
+    let n: i32 = 3i32;
+    let f: (i32) => i32 = ((x: i32) => (x + n));
     return f(4i32) & 63i32;
 }`, 7},
 	// And the guard on the carve-out itself: a value-position if/match is an
@@ -96,7 +96,7 @@ function main(): i32 {
 	// fernsmith seed s0489, which regressed on exactly this.
 	{"iife-call-only-fn-local-unchanged", `function main(): i32 {
     function lf(p: i32): i64 { return 501i64; }
-    var v1: i64[] = (if (true) { [806i64, lf(1i32), 155i64] } else { [452i64] });
+    let v1: i64[] = (if (true) { [806i64, lf(1i32), 155i64] } else { [452i64] });
     return (v1[1i32] as i32) & 63i32;
 }`, 53},
 	// #6862 — a WIDE fn signature, i.e. one with an i64 / u64 / f64 / f32
@@ -105,7 +105,7 @@ function main(): i32 {
 	// arguments have to be pushed at the declared widths or the module does
 	// not even load. Both facts come from the signature, which the flat "fn"
 	// tag drops; the capture read carries the full `(P) => R` spelling so
-	// lower_func can seed FNSIG / FNRET for the local the way it does for a
+	// the lowering has the signature for the local the way it does for a
 	// param. The register backends answered these correctly all along — the
 	// wasm leg is the one that decides them.
 	//
@@ -130,7 +130,7 @@ function main(): i32 { return mk(((y: i32) => ((y * 3i32) as i64)))(7i32) & 63i3
 	// A wide position among narrow ones, so the tag has to be positional
 	// rather than a single "is it wide" flag.
 	{"wide-fn-local-multi-param-captured", `function mk(): (i32) => i32 {
-    var lf: (i64, i32) => i32 = ((a: i64, b: i32) => ((a as i32) + b));
+    let lf: (i64, i32) => i32 = ((a: i64, b: i32) => ((a as i32) + b));
     return ((x0: i32) => (lf(11i64, x0) * 2i32));
 }
 function main(): i32 { return mk()(4i32) & 63i32; }`, 30},
@@ -205,7 +205,7 @@ func TestSelfHostFnValueCaptureWasmIR(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	for _, tc := range fnValueCaptureIRCases {

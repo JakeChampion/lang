@@ -7,7 +7,7 @@ import (
 
 // The self-host port of native's loop-body-var drop suite
 // (internal/e2e/rc_loop_var_test.go), which #4365 records as having no
-// equivalent on this side. A `var` re-declared inside a loop reuses ONE slot
+// equivalent on this side. A `let` re-declared inside a loop reuses ONE slot
 // across iterations; without a dec-on-reinit the prior iteration's value is
 // overwritten with no release, so N-1 allocations are stranded — unbounded
 // growth in a hot build-and-discard loop.
@@ -50,14 +50,14 @@ var loopVarReclaimCases = []struct {
 }{
 	{
 		name: "array",
-		body: `        var row: i32[] = [i, i * 2, i * 3];
+		body: `        let row: i32[] = [i, i * 2, i * 3];
         acc = acc + (row[0] + row[1] + row[2]) - (i * 6);`,
 		want: 7,
 	},
 	{
 		name: "struct",
 		decl: `struct Pt { x: i32, y: i32 }`,
-		body: `        var p: Pt = Pt { x: i, y: i + 1 };
+		body: `        let p: Pt = Pt { x: i, y: i + 1 };
         acc = acc + (p.y - p.x) - 1;`,
 		want: 7,
 	},
@@ -85,11 +85,11 @@ var loopVarReclaimCases = []struct {
 		name: "enum-payload-reclaimed",
 		decl: `enum Box { Val(i32[]), Empty }
 function head(b: Box): i32 { match (b) { Val(xs) => { return xs[0]; }, Empty => { return 0; } } }`,
-		body: `        var b: Box = Val([i, i + 7]);
+		body: `        let b: Box = Val([i, i + 7]);
         acc = acc + head(b) - i;`,
 		want: 7,
 	},
-	// #6606's string half. PARTLY closed by #6624 — the `var` binding earned its
+	// #6606's string half. PARTLY closed by #6624 — the `let` binding earned its
 	// credit while the two INLINE suffix(i) calls stayed anonymous temps — and
 	// CLOSED by #7292, which keys the "STR:" credit on the binding site so a
 	// block-scoped local is swept at all. This row was `-still-leak` / want 3
@@ -103,7 +103,7 @@ function head(b: Box): i32 { match (b) { Val(xs) => { return xs[0]; }, Empty => 
 	{
 		name: "string-concat-temps-reclaimed",
 		decl: `function suffix(n: i32): string { if (n % 2 == 0) { return "even"; } return "odd"; }`,
-		body: `        var s: string = "v-" + suffix(i);
+		body: `        let s: string = "v-" + suffix(i);
         acc = acc + s.len() - 2 - suffix(i).len();`,
 		want: 7,
 	},
@@ -113,8 +113,8 @@ function head(b: Box): i32 { match (b) { Val(xs) => { return xs[0]; }, Empty => 
 func loopVarSrc(decl, body string) string {
 	return decl + `
 function work(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
 ` + body + `
         i = i + 1;
@@ -122,10 +122,10 @@ function work(n: i32): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = work(100);
-    var b1: i64 = __heap_bump_bytes();
-    var m: i32 = work(100);
-    var b2: i64 = __heap_bump_bytes();
+    let w: i32 = work(100);
+    let b1: i64 = __heap_bump_bytes();
+    let m: i32 = work(100);
+    let b2: i64 = __heap_bump_bytes();
     if (w != 0) { return 1; }
     if (m != 0) { return 2; }
     if ((b2 - b1) == (0 as i64)) { return 7; }
@@ -170,7 +170,7 @@ func TestSelfHostLoopVarReclaimIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostLoopVarReclaimIRArm64 is the arm64 leg. The slot-reinit drop
-// lives in shared irlower.fern, so both natives are expected to agree exactly
+// lives in the shared lowering, so both natives are expected to agree exactly
 // — including on the two pinned rows, which measured identical byte counts on
 // each. A divergence BETWEEN the legs would mean the gap moved into codegen.
 func TestSelfHostLoopVarReclaimIRArm64(t *testing.T) {

@@ -28,7 +28,7 @@ struct Opts { number: boolean, number_nonblank: boolean, squeeze: boolean, show_
 // Expand a single line under the active display flags (tabs → ^I,
 // trailing `$`). The line text never includes its own newline.
 function render_line(line: string, o: Opts): string {
-  var body: string = line;
+  let body: string = line;
   if (o.show_tabs) {
     body = body.replace("\t", "^I");
   }
@@ -42,20 +42,20 @@ function render_line(line: string, o: Opts): string {
 // counter (for -n / -b) and the "previous line was blank" flag (for
 // -s) through and back out so they persist across multiple inputs.
 function emit(text: string, o: Opts, counter: i32, prev_blank: boolean): (i32, boolean) {
-  var lines: string[] = text.lines();
-  var n: i32 = lines.len();
-  var i: i32 = 0;
+  let lines: string[] = text.lines();
+  let n: i32 = lines.len();
+  let i: i32 = 0;
   while (i < n) {
-    var line: string = lines[i];
-    var is_blank: boolean = line.is_empty();
+    let line: string = lines[i];
+    let is_blank: boolean = line.is_empty();
     if (o.squeeze && is_blank && prev_blank) {
       i = i + 1;
       continue;
     }
     prev_blank = is_blank;
-    var rendered: string = render_line(line, o);
+    let rendered: string = render_line(line, o);
     // -b (number-nonblank) wins over -n and skips blank lines.
-    var want_number: boolean = false;
+    let want_number: boolean = false;
     if (o.number_nonblank) {
       want_number = !is_blank;
     } else if (o.number) {
@@ -65,7 +65,7 @@ function emit(text: string, o: Opts, counter: i32, prev_blank: boolean): (i32, b
       counter = counter + 1;
       // GNU cat right-aligns the line number in a 6-wide field
       // followed by a tab.
-      var num: string = counter.to_string().pad_start(6, " ");
+      let num: string = counter.to_string().pad_start(6, " ");
       print(num + "\t" + rendered);
     } else {
       print(rendered);
@@ -76,14 +76,14 @@ function emit(text: string, o: Opts, counter: i32, prev_blank: boolean): (i32, b
 }
 
 function main(): i32 {
-  var argv: string[] = args();
-  var o: Opts = Opts { number: false, number_nonblank: false, squeeze: false, show_ends: false, show_tabs: false };
-  var inputs: string[] = [];
-  var status: i32 = 0;
+  let argv: string[] = args();
+  let o: Opts = Opts { number: false, number_nonblank: false, squeeze: false, show_ends: false, show_tabs: false };
+  let inputs: string[] = [];
+  let status: i32 = 0;
 
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a == "-n" || a == "--number") {
       o = Opts { ...o, number: true };
     } else if (a == "-b" || a == "--number-nonblank") {
@@ -105,13 +105,13 @@ function main(): i32 {
     inputs = inputs.append("-");
   }
 
-  var counter: i32 = 0;
-  var prev_blank: boolean = false;
-  var j: i32 = 0;
+  let counter: i32 = 0;
+  let prev_blank: boolean = false;
+  let j: i32 = 0;
   while (j < inputs.len()) {
     match (io.read_input(inputs[j])) {
       Ok(text) => {
-        var st: (i32, boolean) = emit(text, o, counter, prev_blank);
+        let st: (i32, boolean) = emit(text, o, counter, prev_blank);
         counter = st.0;
         prev_blank = st.1;
       },

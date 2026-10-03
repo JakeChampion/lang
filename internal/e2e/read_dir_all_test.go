@@ -33,7 +33,7 @@ import (
 // show up here.
 func readDirAllSource(dots bool) string {
 	const src = `function has(names: string[], want: string): boolean {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < names.len()) {
         if (names[i] == want) { return true; }
         i = i + 1;
@@ -45,9 +45,9 @@ function main(): i32 {
     match (create_dir_all("d")) { Err(_) => { return 1; }, Ok(_) => {} }
     match (write_file("d/a.txt", "x")) { Err(_) => { return 2; }, Ok(_) => {} }
     match (write_file("d/b.txt", "y")) { Err(_) => { return 3; }, Ok(_) => {} }
-    var all: string[] = [];
+    let all: string[] = [];
     match (read_dir_all("d")) { Ok(ns) => { all = ns; }, Err(_) => { return 4; } }
-    var plain: string[] = [];
+    let plain: string[] = [];
     match (read_dir("d")) { Ok(ns) => { plain = ns; }, Err(_) => { return 5; } }
     if (plain.len() != 2) { return 6; }
     if (!has(plain, "a.txt")) { return 7; }
@@ -60,8 +60,8 @@ __DOTS__
     // Drop the dot entries from read_dir_all's listing and what is left
     // must be read_dir's, IN ORDER: both drain the same directory, so the
     // surviving names line up one for one.
-    var k: i32 = 0;
-    var j: i32 = 0;
+    let k: i32 = 0;
+    let j: i32 = 0;
     while (k < all.len()) {
         if (all[k] != "." && all[k] != "..") {
             if (j >= plain.len()) { return 19; }
@@ -137,12 +137,9 @@ func TestWASMPreview1ReadDirAll(t *testing.T) {
 }
 
 func TestWASMReadDirAll(t *testing.T) {
-	stdout, stderr, ec, _ := runWasmInDirOpts(t, readDirAllSource(false), nil, runOpts{stdin: ""})
+	stdout, stderr, ec := runCLIComponent(t, readDirAllSource(false), runOpts{workDir: t.TempDir()})
 	if ec != 0 {
-		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
-	}
-	if got := parseMainResult(t, stdout); got != 0 {
-		t.Errorf("main = %d, want 0 (see readDirAllSource)\nstdout:\n%s\nstderr:\n%s", got, stdout, stderr)
+		t.Errorf("wasmtime exit %d, want 0 — the preview-1 command module's main names the case (see readDirAllSource)\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
 	}
 }
 
@@ -165,7 +162,7 @@ func TestWASMReadDirAll(t *testing.T) {
 const readDirAllWithRemoveSource = `function main(): i32 {
     match (create_dir_all("d/sub")) { Ok(_) => {}, Err(_) => { return 1; } }
     match (write_file("d/a.txt", "x")) { Ok(_) => {}, Err(_) => { return 2; } }
-    var all: string[] = [];
+    let all: string[] = [];
     match (read_dir_all("d")) { Ok(es) => { all = es; }, Err(_) => { return 3; } }
     // a.txt, sub, "." and "..".
     if (all.len() != 4) { return 4; }

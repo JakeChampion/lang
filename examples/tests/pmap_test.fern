@@ -24,7 +24,7 @@ impl cmp.Hash for Coarse {
 }
 
 function test_new_is_empty(): test.TestOutcome {
-  var m: pmap.PMap[i32, i32] = pmap.pmap_new();
+  let m: pmap.PMap[i32, i32] = pmap.pmap_new();
   if (!m.is_empty() || m.len() != 0) {
     return test.fail("empty map has entries");
   }
@@ -32,7 +32,7 @@ function test_new_is_empty(): test.TestOutcome {
 }
 
 function test_insert_get(): test.TestOutcome {
-  var m: pmap.PMap[i32, string] = pmap.pmap_new();
+  let m: pmap.PMap[i32, string] = pmap.pmap_new();
   m = m.insert(2, "two");
   m = m.insert(1, "one");
   m = m.insert(3, "three");
@@ -46,7 +46,7 @@ function test_insert_get(): test.TestOutcome {
 }
 
 function test_insert_replaces(): test.TestOutcome {
-  var m: pmap.PMap[i32, i32] = pmap.from_arrays([1, 2, 1], [10, 20, 11]);
+  let m: pmap.PMap[i32, i32] = pmap.from_arrays([1, 2, 1], [10, 20, 11]);
   if (m.len() != 2) {
     return test.fail("duplicate key grew the map");
   }
@@ -54,13 +54,13 @@ function test_insert_replaces(): test.TestOutcome {
 }
 
 function test_insert_is_persistent(): test.TestOutcome {
-  var m: pmap.PMap[i32, i32] = pmap.pmap_new();
-  var i: i32 = 0;
+  let m: pmap.PMap[i32, i32] = pmap.pmap_new();
+  let i: i32 = 0;
   while (i < 2000) {
     m = m.insert(i * 37 % 2000, i);
     i = i + 1;
   }
-  var snapshot: pmap.PMap[i32, i32] = m;
+  let snapshot: pmap.PMap[i32, i32] = m;
   i = 0;
   while (i < 2000) {
     m = m.insert(i, i + 5000);
@@ -83,13 +83,13 @@ function test_insert_is_persistent(): test.TestOutcome {
 }
 
 function test_remove(): test.TestOutcome {
-  var m: pmap.PMap[i32, i32] = pmap.pmap_new();
-  var i: i32 = 0;
+  let m: pmap.PMap[i32, i32] = pmap.pmap_new();
+  let i: i32 = 0;
   while (i < 1000) {
     m = m.insert(i * 53 % 1000, i);
     i = i + 1;
   }
-  var keep: pmap.PMap[i32, i32] = m;
+  let keep: pmap.PMap[i32, i32] = m;
   i = 0;
   while (i < 1000) {
     if (i % 3 != 0) {
@@ -119,15 +119,15 @@ function test_remove(): test.TestOutcome {
 }
 
 function test_iteration(): test.TestOutcome {
-  var m: pmap.PMap[i32, i32] = pmap.from_arrays([5, 1, 4, 2, 3], [50, 10, 40, 20, 30]);
-  var ks: i32[] = m.keys();
-  var vs: i32[] = m.values();
+  let m: pmap.PMap[i32, i32] = pmap.from_arrays([5, 1, 4, 2, 3], [50, 10, 40, 20, 30]);
+  let ks: i32[] = m.keys();
+  let vs: i32[] = m.values();
   if (ks.len() != 5 || vs.len() != 5) {
     return test.fail("lengths");
   }
   // keys() and values() line up entry for entry, whatever the order.
-  var i: i32 = 0;
-  var total: i32 = 0;
+  let i: i32 = 0;
+  let total: i32 = 0;
   while (i < 5) {
     if (vs[i] != ks[i] * 10) {
       return test.fail("keys/values misaligned at " + i.to_string());
@@ -138,24 +138,24 @@ function test_iteration(): test.TestOutcome {
   if (total != 15) {
     return test.fail("keys missing");
   }
-  var sum: i32 = m.fold(0, (a: i32, k: i32, v: i32) => a + k * v);
+  let sum: i32 = m.fold(0, (a: i32, k: i32, v: i32) => a + k * v);
   return test.assert_eq(sum, 550);
 }
 
 function test_update_map_filter(): test.TestOutcome {
-  var m: pmap.PMap[i32, i32] = pmap.from_arrays([1, 2, 3, 4], [1, 2, 3, 4]);
-  var u: pmap.PMap[i32, i32] = m.update(2, (v: i32) => v * 100);
+  let m: pmap.PMap[i32, i32] = pmap.from_arrays([1, 2, 3, 4], [1, 2, 3, 4]);
+  let u: pmap.PMap[i32, i32] = m.update(2, (v: i32) => v * 100);
   if (u.get_or(2, -1) != 200 || m.get_or(2, -1) != 2) {
     return test.fail("update");
   }
   if (m.update(9, (v: i32) => v).len() != 4) {
     return test.fail("update absent");
   }
-  var d: pmap.PMap[i32, i32] = m.map_values((v: i32) => v * 2);
+  let d: pmap.PMap[i32, i32] = m.map_values((v: i32) => v * 2);
   if (d.get_or(4, -1) != 8 || !d.is_valid()) {
     return test.fail("map_values");
   }
-  var f: pmap.PMap[i32, i32] = m.filter((k: i32, v: i32) => k % 2 == 0);
+  let f: pmap.PMap[i32, i32] = m.filter((k: i32, v: i32) => k % 2 == 0);
   if (f.len() != 2 || f.contains(1) || !f.contains(4) || !f.is_valid()) {
     return test.fail("filter");
   }
@@ -163,9 +163,9 @@ function test_update_map_filter(): test.TestOutcome {
 }
 
 function test_set_algebra(): test.TestOutcome {
-  var a: pmap.PMap[i32, i32] = pmap.pmap_new();
-  var b: pmap.PMap[i32, i32] = pmap.pmap_new();
-  var i: i32 = 0;
+  let a: pmap.PMap[i32, i32] = pmap.pmap_new();
+  let b: pmap.PMap[i32, i32] = pmap.pmap_new();
+  let i: i32 = 0;
   while (i < 500) {
     a = a.insert(i, 1);
     i = i + 1;
@@ -175,19 +175,19 @@ function test_set_algebra(): test.TestOutcome {
     b = b.insert(i, 2);
     i = i + 1;
   }
-  var u: pmap.PMap[i32, i32] = a.union(b);
+  let u: pmap.PMap[i32, i32] = a.union(b);
   if (u.len() != 750 || !u.is_valid() || u.get_or(300, -1) != 1 || u.get_or(600, -1) != 2) {
     return test.fail("union (left-biased)");
   }
-  var u2: pmap.PMap[i32, i32] = b.union(a);
+  let u2: pmap.PMap[i32, i32] = b.union(a);
   if (u2.len() != 750 || u2.get_or(300, -1) != 2) {
     return test.fail("union other way");
   }
-  var x: pmap.PMap[i32, i32] = a.intersection(b);
+  let x: pmap.PMap[i32, i32] = a.intersection(b);
   if (x.len() != 250 || !x.is_valid() || x.get_or(300, -1) != 1 || x.contains(100)) {
     return test.fail("intersection");
   }
-  var d: pmap.PMap[i32, i32] = a.difference(b);
+  let d: pmap.PMap[i32, i32] = a.difference(b);
   if (d.len() != 250 || !d.is_valid() || d.contains(300) || !d.contains(100)) {
     return test.fail("difference");
   }
@@ -195,8 +195,8 @@ function test_set_algebra(): test.TestOutcome {
 }
 
 function test_string_keys(): test.TestOutcome {
-  var m: pmap.PMap[string, i32] = pmap.pmap_new();
-  var i: i32 = 0;
+  let m: pmap.PMap[string, i32] = pmap.pmap_new();
+  let i: i32 = 0;
   while (i < 300) {
     m = m.insert("key-" + i.to_string(), i);
     i = i + 1;
@@ -204,7 +204,7 @@ function test_string_keys(): test.TestOutcome {
   if (m.len() != 300 || !m.is_valid() || m.get_or("key-77", -1) != 77 || m.contains("key-300")) {
     return test.fail("string insert/get");
   }
-  var snap: pmap.PMap[string, i32] = m;
+  let snap: pmap.PMap[string, i32] = m;
   m = m.remove("key-77");
   if (snap.len() != 300 || m.len() != 299 || !snap.contains("key-77") || m.contains("key-77")) {
     return test.fail("string snapshot");
@@ -213,8 +213,8 @@ function test_string_keys(): test.TestOutcome {
 }
 
 function test_collisions(): test.TestOutcome {
-  var c: pmap.PMap[Coarse, i32] = pmap.pmap_new();
-  var i: i32 = 0;
+  let c: pmap.PMap[Coarse, i32] = pmap.pmap_new();
+  let i: i32 = 0;
   while (i < 200) {
     c = c.insert(Coarse { bucket: i % 5, id: i }, i);
     i = i + 1;
@@ -225,7 +225,7 @@ function test_collisions(): test.TestOutcome {
   if (c.get_or(Coarse { bucket: 3, id: 13 }, -1) != 13 || c.contains(Coarse { bucket: 3, id: 14 })) {
     return test.fail("collision lookup");
   }
-  var snap: pmap.PMap[Coarse, i32] = c;
+  let snap: pmap.PMap[Coarse, i32] = c;
   i = 0;
   while (i < 200) {
     if (i % 2 == 0) {
@@ -239,13 +239,13 @@ function test_collisions(): test.TestOutcome {
   if (c.contains(Coarse { bucket: 0, id: 10 }) || !c.contains(Coarse { bucket: 1, id: 11 })) {
     return test.fail("collision membership");
   }
-  var total: i32 = c.fold(0, (a: i32, k: Coarse, v: i32) => a + v);
+  let total: i32 = c.fold(0, (a: i32, k: Coarse, v: i32) => a + v);
   return test.assert_eq(total, 10000);
 }
 
 function test_for_each(): test.TestOutcome {
-  var m: pmap.PMap[i32, i32] = pmap.from_arrays([2, 1], [20, 10]);
-  var seen: i32 = 0;
+  let m: pmap.PMap[i32, i32] = pmap.from_arrays([2, 1], [20, 10]);
+  let seen: i32 = 0;
   function visit(k: i32, v: i32): void {
     seen = seen + k * 100 + v;
   }
@@ -254,7 +254,7 @@ function test_for_each(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/pmap");
+  let r: test.TestRunner = test.test_new("std/pmap");
   r = r.it("new is empty", test_new_is_empty);
   r = r.it("insert + get", test_insert_get);
   r = r.it("insert replaces", test_insert_replaces);

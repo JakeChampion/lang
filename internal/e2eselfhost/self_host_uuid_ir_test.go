@@ -19,7 +19,7 @@ function validate(u: string, ver: i32): i32 {
     if (u.len() != 36) { return 100; }
     if (u[8] != 45 || u[13] != 45 || u[18] != 45 || u[23] != 45) { return 101; }
     if (u[14] as i32 != ver) { return 102; }
-    var v: i32 = u[19] as i32;
+    let v: i32 = u[19] as i32;
     if (v != 56 && v != 57 && v != 97 && v != 98) { return 103; }
     return 42;
 }

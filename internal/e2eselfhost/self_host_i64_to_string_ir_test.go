@@ -33,19 +33,19 @@ var i64ToStringIRCases = []struct {
 	// std/i64 to_string of a large NEGATIVE value (magnitude > 2^32). The sign
 	// path plus the >2^32 div/mod chain.
 	{"i64-neg-large", `import "std/i64";
-function main(): i32 { var n: i64 = 0 - (9876543210 as i64); if (n.to_string() == "-9876543210") { return 42; } return 0; }`},
+function main(): i32 { let n: i64 = 0 - (9876543210 as i64); if (n.to_string() == "-9876543210") { return 42; } return 0; }`},
 	// std/i64 to_string of a large POSITIVE value (> 2^32).
 	{"i64-pos-large", `import "std/i64";
-function main(): i32 { var n: i64 = 9876543210 as i64; if (n.to_string() == "9876543210") { return 42; } return 0; }`},
+function main(): i32 { let n: i64 = 9876543210 as i64; if (n.to_string() == "9876543210") { return 42; } return 0; }`},
 	// core/int's u64 formatter on a high-bit-set value (> 2^63): `n as i64` is a
 	// negative i64 whose bits are the full unsigned magnitude; the unsigned
 	// div/mod must keep all 64 bits.
 	{"u64-highbit-direct", `import "core/int";
-function main(): i32 { var n: u64 = 18000000000000000007 as u64; if (int.__int_to_string_u64(n as i64, 0) == "18000000000000000007") { return 42; } return 0; }`},
+function main(): i32 { let n: u64 = 18000000000000000007 as u64; if (int.__int_to_string_u64(n as i64, 0) == "18000000000000000007") { return 42; } return 0; }`},
 	// the underlying `(i64-var as u64) % k` — the exact shape the formatter loop
 	// uses. Truncation to 32 bits would give 1286608618 % 7 = 1, not 2.
 	{"i64-as-u64-mod", `import "core/int";
-function main(): i32 { var m: i64 = 9876543210 as i64; return (m as u64 % (7 as u64)) as i32; }`},
+function main(): i32 { let m: i64 = 9876543210 as i64; return (m as u64 % (7 as u64)) as i32; }`},
 }
 
 func TestSelfHostI64ToStringIR(t *testing.T) {

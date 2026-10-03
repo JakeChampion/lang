@@ -4,7 +4,7 @@
 one line:
 
 ```fern
-var none: ndarray.NdArray[i32] = ndarray.from_flat([] as i32[], [0, 3]).map_rank(1, first_one);
+let none: ndarray.NdArray[i32] = ndarray.from_flat([] as i32[], [0, 3]).map_rank(1, first_one);
 ```
 
 Nine lines are the whole of it:
@@ -25,7 +25,7 @@ FERN_SEM_IR: main: unresolved array literal type
 operand was evaluated with nothing:
 
 ```fern
-var operand: Value = expr(u.operand, s, typeinfo.unchecked());
+let operand: Value = expr(u.operand, s, typeinfo.unchecked());
 ```
 
 So an empty literal was asked to name its own type, which it cannot. T was in

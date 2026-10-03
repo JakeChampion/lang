@@ -25,22 +25,22 @@ import (
 // probe returns 0*100 + 10 = 10 when sound; the UAF makes names.len() read the
 // recycled string box, so probe != 10 (exit 97/96); a double-free trips the
 // underflow detector (exit 99).
-const okReturnArrProg = `function mk_ok(): Result[string[], i32] { var names: string[] = []; return Ok(names); }
-function mk_some(): Option[string[]] { var names: string[] = []; return Some(names); }
+const okReturnArrProg = `function mk_ok(): Result[string[], i32] { let names: string[] = []; return Ok(names); }
+function mk_some(): Option[string[]] { let names: string[] = []; return Some(names); }
 function probe_ok(): i32 {
     match (mk_ok()) {
-        Ok(names) => { var s: string = "0123456789"; return names.len() * 100 + s.len(); },
+        Ok(names) => { let s: string = "0123456789"; return names.len() * 100 + s.len(); },
         Err(_) => { return -1; }
     }
 }
 function probe_some(): i32 {
     match (mk_some()) {
-        Some(names) => { var s: string = "0123456789"; return names.len() * 100 + s.len(); },
+        Some(names) => { let s: string = "0123456789"; return names.len() * 100 + s.len(); },
         None => { return -1; }
     }
 }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
         if (probe_ok() != 10) { return 97; }
         if (probe_some() != 10) { return 96; }

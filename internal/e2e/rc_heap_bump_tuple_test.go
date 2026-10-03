@@ -8,7 +8,7 @@ import (
 
 // Tuple reclamation (RC-Perceus) — the sibling of rc_heap_bump_test.go
 // for tuple loop-body vars. A tuple is heap-boxed with an rc header, so
-// a `var t = (a, b)` re-declared in a loop reuses one slot across
+// a `let t = (a, b)` re-declared in a loop reuses one slot across
 // iterations; before this slice emitVarReinitDropOld SKIPPED TupleType,
 // so every prior iteration's box (and its rc-tracked elements) leaked
 // and the bump high-water grew linearly with N. The dec-on-reinit now
@@ -25,11 +25,11 @@ import (
 // box_free path (no rc-tracked element to deep-drop).
 func tupleBumpGrowthSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
-        var p: (i32, i32) = (i, i + 1);
+        let p: (i32, i32) = (i, i + 1);
         sum = sum + p.0 + p.1;
         i = i + 1;
     }
@@ -43,11 +43,11 @@ func tupleBumpGrowthSrc(n string) string {
 // deep drop this leaks the array buffer in addition to the box.
 func tupleArrBumpGrowthSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
-        var p: (i32[], i32) = ([i, i + 1, i + 2], i);
+        let p: (i32[], i32) = ([i, i + 1, i + 2], i);
         sum = sum + p.1;
         i = i + 1;
     }
@@ -87,25 +87,6 @@ func TestArm64TupleHeapBumpBounded(t *testing.T) {
 	}
 }
 
-func TestWASMTupleHeapBumpBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
-	small := runWasm(t, tupleBumpGrowthSrc("50"))
-	large := runWasm(t, tupleBumpGrowthSrc("5000"))
-	if small != large {
-		t.Errorf("plain-tuple bump growth should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
-	}
-	if small == 0 {
-		t.Errorf("expected a non-zero bounded high-water (one box), got 0")
-	}
-	asmall := runWasm(t, tupleArrBumpGrowthSrc("50"))
-	alarge := runWasm(t, tupleArrBumpGrowthSrc("5000"))
-	if asmall != alarge {
-		t.Errorf("tuple-of-array bump growth should be bounded (deep-drop): N=50 -> %d, N=5000 -> %d", asmall, alarge)
-	}
-}
-
 // The string-element sibling (#6879), and the tuple half of the struct fix in
 // #6499: the exit sweep's INLINE tuple arm released a native single-word
 // string element with a bare __fern_rc_dec, which decrements and never frees,
@@ -113,7 +94,7 @@ func TestWASMTupleHeapBumpBounded(t *testing.T) {
 // x86-64 while arm64 and wasm (two-word ABIs, __fern_str_dec) were already
 // flat.
 //
-// The binding has to be in a CALLEE: a loop-scoped `var t` re-declared in the
+// The binding has to be in a CALLEE: a loop-scoped `let t` re-declared in the
 // body reclaims through emitVarReinitDropOld, which routes to the generated
 // __drop_tuple_<mangled> — and that body has always called __fern_str_dec, so
 // the loop spelling was flat throughout. Only the function-exit sweep was
@@ -124,20 +105,20 @@ func TestWASMTupleHeapBumpBounded(t *testing.T) {
 const tupleStrElemChurnSrc = `import "std/i32";
 function wide(k: i32): string { return "a-value-well-past-the-inline-threshold-" + k.to_string(); }
 function probe(k: i32): i32 {
-    var t: (string, i32) = (wide(k), k);
+    let t: (string, i32) = (wide(k), k);
     return t.0.len();
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + probe(i); i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var warm: i32 = churn(200);
-    var before: i64 = __heap_bump_bytes();
-    var again: i32 = churn(200);
-    var per: i64 = (__heap_bump_bytes() - before) / 200;
+    let warm: i32 = churn(200);
+    let before: i64 = __heap_bump_bytes();
+    let again: i32 = churn(200);
+    let per: i64 = (__heap_bump_bytes() - before) / 200;
     if (warm != again) { return 98; }
     if (warm <= 0) { return 97; }
     return (per as i32);

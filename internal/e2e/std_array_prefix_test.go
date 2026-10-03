@@ -18,9 +18,9 @@ func TestStdArrayPrefix(t *testing.T) {
 			name: "starts_with i32 + bounds + empty",
 			src: `import "std/array";
 function main(): i32 {
-    var a: i32[] = [1, 2, 3, 4, 5];
-    var e: i32[] = [];
-    var r: i32 = 0;
+    let a: i32[] = [1, 2, 3, 4, 5];
+    let e: i32[] = [];
+    let r: i32 = 0;
     if (array.starts_with(a, [1, 2, 3])) { r = r + 1; }
     if (!array.starts_with(a, [1, 3])) { r = r + 2; }
     if (array.starts_with(a, e)) { r = r + 4; }
@@ -33,9 +33,9 @@ function main(): i32 {
 			name: "ends_with i32 + bounds",
 			src: `import "std/array";
 function main(): i32 {
-    var a: i32[] = [1, 2, 3, 4, 5];
-    var e: i32[] = [];
-    var r: i32 = 0;
+    let a: i32[] = [1, 2, 3, 4, 5];
+    let e: i32[] = [];
+    let r: i32 = 0;
     if (array.ends_with(a, [4, 5])) { r = r + 1; }
     if (!array.ends_with(a, [3, 5])) { r = r + 2; }
     if (array.ends_with(a, e)) { r = r + 4; }
@@ -48,8 +48,8 @@ function main(): i32 {
 			name: "string element prefix/suffix",
 			src: `import "std/array";
 function main(): i32 {
-    var ss: string[] = ["a", "b", "c", "d"];
-    var r: i32 = 0;
+    let ss: string[] = ["a", "b", "c", "d"];
+    let r: i32 = 0;
     if (array.starts_with(ss, ["a", "b"])) { r = r + 10; }
     if (array.ends_with(ss, ["c", "d"])) { r = r + 5; }
     if (!array.starts_with(ss, ["a", "c"])) { r = r + 1; }

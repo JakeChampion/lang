@@ -42,14 +42,14 @@ var leakcheckCounts = regexp.MustCompile(`leakcheck: allocs=(\d+) frees=(\d+) li
 const x86SSALeakcheckSrc = `struct P { a: i32, b: i32 }
 
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
-    var base: string = "abcdefghij";
+    let n: i32 = 0;
+    let i: i32 = 0;
+    let base: string = "abcdefghij";
     loop {
         if (i >= 500) { break; }
-        var s: string = base + base;
-        var xs: i32[] = [1, 2, 3];
-        var p: P = P { a: i, b: 2 };
+        let s: string = base + base;
+        let xs: i32[] = [1, 2, 3];
+        let p: P = P { a: i, b: 2 };
         n = (n + s.len() + xs[0] + p.a + p.b) % 101;
         i = i + 1;
     }
@@ -63,14 +63,14 @@ function main(): i32 {
 const x86SSALeakcheckExitSrc = `struct P { a: i32, b: i32 }
 
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
-    var base: string = "abcdefghij";
+    let n: i32 = 0;
+    let i: i32 = 0;
+    let base: string = "abcdefghij";
     loop {
         if (i >= 500) { break; }
-        var s: string = base + base;
-        var xs: i32[] = [1, 2, 3];
-        var p: P = P { a: i, b: 2 };
+        let s: string = base + base;
+        let xs: i32[] = [1, 2, 3];
+        let p: P = P { a: i, b: 2 };
         n = (n + s.len() + xs[0] + p.a + p.b) % 101;
         i = i + 1;
     }

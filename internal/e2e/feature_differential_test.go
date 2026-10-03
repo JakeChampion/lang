@@ -41,14 +41,14 @@ var featureDifferentialCases = []struct {
 	// silently over-allocated. Must be 105 everywhere.
 	{"closure_capture_string_and_i32", `import "std/i32";
 function outer(s: string): i32 {
-    var bonus: i32 = 100;
+    let bonus: i32 = 100;
     function inner(): i32 { return s.len() + bonus; }
     return inner();
 }
 function main(): i32 { print(outer("hello").to_string()); return 0; }`},
 	{"closure_capture_i32_then_string", `import "std/i32";
 function outer(s: string): i32 {
-    var a: i32 = 1;
+    let a: i32 = 1;
     function inner(): i32 { return a + s.len(); }
     return inner();
 }
@@ -59,15 +59,15 @@ function makeAdder(n: i32): (i32) => i32 {
     return add;
 }
 function main(): i32 {
-    var f = makeAdder(7);
-    var g = makeAdder(10);
+    let f = makeAdder(7);
+    let g = makeAdder(10);
     print(f(35).to_string());
     print((f(1) + g(1)).to_string());
     return 0;
 }`},
 	{"closure_capture_two_strings", `import "std/i32";
 function outer(s: string): i32 {
-    var t: string = "world";
+    let t: string = "world";
     function inner(): i32 { return s.len() + t.len(); }
     return inner();
 }
@@ -77,7 +77,7 @@ function main(): i32 { print(outer("hello").to_string()); return 0; }`},
 	// arm64's env access until the capture layout was 8-aligned.
 	{"closure_capture_i32_string_unaligned", `import "std/i32";
 function outer(s: string): i32 {
-    var a: i32 = 1;
+    let a: i32 = 1;
     function inner(): i32 { return a + s.len(); }
     return inner();
 }
@@ -85,9 +85,9 @@ function main(): i32 { print(outer("hi").to_string()); return 0; }`},
 	{"closure_capture_struct_i32_string", `import "std/i32";
 struct P { x: i32, y: i32 }
 function outer(): i32 {
-    var p: P = P{x: 3, y: 4};
-    var n: i32 = 10;
-    var s: string = "hi";
+    let p: P = P{x: 3, y: 4};
+    let n: i32 = 10;
+    let s: string = "hi";
     function inner(): i32 { return p.x + n + s.len(); }
     return inner();
 }
@@ -95,9 +95,9 @@ function main(): i32 { print(outer().to_string()); return 0; }`},
 	{"closure_capture_i64_i32_string", `import "std/i32";
 import "std/i64";
 function outer(): i64 {
-    var a: i64 = 5000000000;
-    var b: i32 = 3;
-    var s: string = "z";
+    let a: i64 = 5000000000;
+    let b: i32 = 3;
+    let s: string = "z";
     function inner(): i64 { return a + b as i64 + s.len() as i64; }
     return inner();
 }
@@ -108,7 +108,7 @@ function main(): i32 { print(outer().to_string()); return 0; }`},
 import "std/i32";
 function pb(x: boolean): string { if (x) { return "T"; } return "F"; }
 function main(): i32 {
-    var s: string = "Hello, World";
+    let s: string = "Hello, World";
     print(s.len().to_string());
     print(slice_unchecked(s, 0, 5));
     // The checked slice is Option-shaped, so the matrix compares the
@@ -127,15 +127,15 @@ function main(): i32 {
 	// ---- arrays ----
 	{"array_ops", `import "std/i32";
 function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
+    let xs: i32[] = [10, 20, 30];
     xs = xs.append(40);
     print(xs.len().to_string());
     print(xs[3].to_string());
-    var sum: i32 = 0;
-    var i: i32 = 0;
+    let sum: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { sum = sum + xs[i]; i = i + 1; }
     print(sum.to_string());
-    var ys: string[] = ["a", "b", "c"];
+    let ys: string[] = ["a", "b", "c"];
     print(ys[0] + ys[2]);
     return 0;
 }`},
@@ -145,7 +145,7 @@ function main(): i32 {
 import "core/map";
 function pb(x: boolean): string { if (x) { return "T"; } return "F"; }
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 100);
     m = m.insert(2, 200);
     m = m.insert(1, 111);
@@ -162,11 +162,11 @@ function main(): i32 {
 struct Point { x: i32, y: i32 }
 struct Line { a: Point, b: Point }
 function main(): i32 {
-    var p: Point = Point{ x: 3, y: 4 };
+    let p: Point = Point{ x: 3, y: 4 };
     print((p.x + p.y).to_string());
-    var l: Line = Line{ a: Point{x:1,y:2}, b: Point{x:5,y:6} };
+    let l: Line = Line{ a: Point{x:1,y:2}, b: Point{x:5,y:6} };
     print((l.a.x + l.b.y).to_string());
-    var p2: Point = Point{ ...p, x: 100 };
+    let p2: Point = Point{ ...p, x: 100 };
     print((p2.x + p2.y).to_string());
     return 0;
 }`},
@@ -176,8 +176,8 @@ function main(): i32 {
 	{"struct_field_array_foreach", `import "std/i32";
 struct Bag { items: i32[] }
 function main(): i32 {
-    var b: Bag = Bag{ items: [10, 20, 30] };
-    var sum: i32 = 0;
+    let b: Bag = Bag{ items: [10, 20, 30] };
+    let sum: i32 = 0;
     for x in b.items { sum = sum + x; }
     print(sum.to_string());
     return 0;
@@ -215,7 +215,7 @@ function main(): i32 {
 	// ---- control flow returning values ----
 	{"control_flow", `import "std/i32";
 function classify(n: i32): string {
-    var label: string = if (n < 0) { "neg" } else if (n == 0) { "zero" } else { "pos" };
+    let label: string = if (n < 0) { "neg" } else if (n == 0) { "zero" } else { "pos" };
     return label;
 }
 function fib(n: i32): i32 {
@@ -227,7 +227,7 @@ function main(): i32 {
     print(classify(0));
     print(classify(42));
     print(fib(10).to_string());
-    var total: i32 = 0;
+    let total: i32 = 0;
     for x in [1, 2, 3, 4, 5] { total = total + x; }
     print(total.to_string());
     return 0;
@@ -237,10 +237,10 @@ function main(): i32 {
 	{"tuples", `import "std/i32";
 function swap(p: (i32, string)): (string, i32) { return (p.1, p.0); }
 function main(): i32 {
-    var t: (i32, string) = (42, "hi");
+    let t: (i32, string) = (42, "hi");
     print(t.0.to_string());
     print(t.1);
-    var s = swap(t);
+    let s = swap(t);
     print(s.0);
     print(s.1.to_string());
     return 0;
@@ -279,7 +279,7 @@ function main(): i32 {
     print(wrap("hi"));
     print(b(42).to_string());
     print(b("deep"));
-    var xs = twice("z");
+    let xs = twice("z");
     print(xs.len().to_string());
     print(xs[1]);
     return 0;
@@ -294,11 +294,11 @@ function sum(t: Tree): i32 {
 function depth(t: Tree): i32 {
     match (t) {
         Leaf(v) => { return 1; },
-        Node(l, r) => { var dl = depth(l); var dr = depth(r); if (dl > dr) { return dl + 1; } return dr + 1; }
+        Node(l, r) => { let dl = depth(l); let dr = depth(r); if (dl > dr) { return dl + 1; } return dr + 1; }
     }
 }
 function main(): i32 {
-    var t: Tree = Node(Node(Leaf(1), Leaf(2)), Leaf(3));
+    let t: Tree = Node(Node(Leaf(1), Leaf(2)), Leaf(3));
     print(sum(t).to_string());
     print(depth(t).to_string());
     return 0;
@@ -308,9 +308,9 @@ function main(): i32 {
 	{"struct_array_string_field", `import "std/i32";
 struct P { x: i32, name: string }
 function main(): i32 {
-    var ps: P[] = [P{x: 1, name: "a"}, P{x: 2, name: "b"}, P{x: 3, name: "c"}];
-    var i: i32 = 0;
-    var out: string = "";
+    let ps: P[] = [P{x: 1, name: "a"}, P{x: 2, name: "b"}, P{x: 3, name: "c"}];
+    let i: i32 = 0;
+    let out: string = "";
     while (i < ps.len()) { out = out + ps[i].name + ps[i].x.to_string(); i = i + 1; }
     print(out);
     return 0;
@@ -323,11 +323,11 @@ function adder(n: i32): (i32) => i32 {
     return add;
 }
 function compose(n: i32): (i32) => i32 {
-    var f = adder(n);
+    let f = adder(n);
     function g(x: i32): i32 { return f(f(x)); }
     return g;
 }
-function main(): i32 { var h = compose(5); print(h(10).to_string()); return 0; }`},
+function main(): i32 { let h = compose(5); print(h(10).to_string()); return 0; }`},
 
 	// ---- enum with string payloads, in an array ----
 	{"enum_string_payloads", `import "std/i32";
@@ -340,8 +340,8 @@ function show(m: Msg): string {
     }
 }
 function main(): i32 {
-    var msgs: Msg[] = [Text("hi"), Num(42), Pair("k", 7)];
-    var i: i32 = 0;
+    let msgs: Msg[] = [Text("hi"), Num(42), Pair("k", 7)];
+    let i: i32 = 0;
     while (i < msgs.len()) { print(show(msgs[i])); i = i + 1; }
     return 0;
 }`},
@@ -349,7 +349,7 @@ function main(): i32 {
 	// ---- the ? propagation operator ----
 	{"try_operator", `import "std/i32";
 function parse(s: string): Option[i32] { if (s == "42") { return Some(42); } return None; }
-function chain(s: string): Option[i32] { var v = parse(s)?; return Some(v * 2); }
+function chain(s: string): Option[i32] { let v = parse(s)?; return Some(v * 2); }
 function main(): i32 {
     match (chain("42")) { Some(v) => { print(v.to_string()); }, None => { print("none"); } }
     match (chain("xx")) { Some(v) => { print(v.to_string()); }, None => { print("none"); } }
@@ -366,8 +366,8 @@ function main(): i32 {
 	{"closure_capture_map_rebind_in_place", `import "std/i32";
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(2);
-    var f: () => i32 = (): i32 => { return m.len(); };
+    let m: Map[string, i32] = map_new(2);
+    let f: () => i32 = (): i32 => { return m.len(); };
     m = m.insert("k", 1);
     print((m.len() * 10 + f()).to_string());
     return 0;
@@ -377,12 +377,12 @@ function main(): i32 {
 	{"map_iteration", `import "std/i32";
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30);
-    var total: i32 = 0;
+    let total: i32 = 0;
     for k in m.keys() { total = total + k; }
     print(total.to_string());
-    var vsum: i32 = 0;
+    let vsum: i32 = 0;
     for v in m.values() { vsum = vsum + v; }
     print(vsum.to_string());
     return 0;
@@ -396,11 +396,11 @@ function main(): i32 {
 	{"map_delete_order", `import "std/i32";
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); m = m.insert(4, 40);
     m = m.without(1).0;
-    var ks = m.keys();
-    var i: i32 = 0;
+    let ks = m.keys();
+    let i: i32 = 0;
     while (i < ks.len()) { print(ks[i].to_string()); i = i + 1; }
     return 0;
 }`},
@@ -412,9 +412,9 @@ function main(): i32 {
 	{"map_cow_alias_isolation", `import "std/i32";
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 1);
-    var n = m;
+    let n = m;
     n = n.insert(1, 999);
     print(m.get_or(1, -1).to_string());
     print(n.get_or(1, -1).to_string());
@@ -429,7 +429,7 @@ function bump(p: Map[i32, i32]): i32 {
     return p.get_or(1, -1);
 }
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 1);
     print(bump(m).to_string());
     print(m.get_or(1, -1).to_string());
@@ -440,14 +440,14 @@ function main(): i32 {
 	{"map_cow_returned", `import "std/i32";
 import "core/map";
 function build(): Map[i32, i32] {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10);
     m = m.insert(2, 20);
     return m;
 }
 function main(): i32 {
-    var a: Map[i32, i32] = build();
-    var b = a;
+    let a: Map[i32, i32] = build();
+    let b = a;
     b = b.insert(1, 111);
     print(a.get_or(1, -1).to_string());
     print(b.get_or(1, -1).to_string());
@@ -459,9 +459,9 @@ function main(): i32 {
 	{"map_cow_alias_then_scope_exit", `import "std/i32";
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 1);
-    { var n = m; n = n.insert(1, 2); }
+    { let n = m; n = n.insert(1, 2); }
     m = m.insert(1, 7);
     print(m.get_or(1, -1).to_string());
     return 0;
@@ -475,8 +475,8 @@ function main(): i32 {
 	// uniqueness signal wrong prints something no backend does.
 	{"array_with_alias_isolation", `import "std/i32";
 function main(): i32 {
-    var a: i32[] = [1, 2, 3];
-    var b: i32[] = a;
+    let a: i32[] = [1, 2, 3];
+    let b: i32[] = a;
     a = a.with(0, 9);
     print(b[0].to_string());
     print(a[0].to_string());
@@ -486,8 +486,8 @@ function main(): i32 {
 	// land in its buffer even though one binding holds it.
 	{"array_with_live_receiver", `import "std/i32";
 function main(): i32 {
-    var a: i32[] = [1, 2, 3];
-    var b: i32[] = a.with(0, 9);
+    let a: i32[] = [1, 2, 3];
+    let b: i32[] = a.with(0, 9);
     print(a[0].to_string());
     print(b[0].to_string());
     return 0;
@@ -495,9 +495,9 @@ function main(): i32 {
 	{"array_with_alias_in_container", `import "std/i32";
 struct Box { items: i32[] }
 function main(): i32 {
-    var a: i32[] = [1, 2, 3];
-    var rows: i32[][] = [a];
-    var b: Box = Box { items: a };
+    let a: i32[] = [1, 2, 3];
+    let rows: i32[][] = [a];
+    let b: Box = Box { items: a };
     a = a.with(0, 9);
     print(rows[0][0].to_string());
     print(b.items[0].to_string());
@@ -507,11 +507,11 @@ function main(): i32 {
 	{"array_with_alias_in_map", `import "std/i32";
 import "core/map";
 function main(): i32 {
-    var a: i32[] = [1, 2, 3];
-    var m: Map[i32, i32[]] = map_new(8);
+    let a: i32[] = [1, 2, 3];
+    let m: Map[i32, i32[]] = map_new(8);
     m = m.insert(1, a);
     a = a.with(0, 9);
-    var got: i32[] = m.get_or(1, []);
+    let got: i32[] = m.get_or(1, []);
     print(got[0].to_string());
     print(a[0].to_string());
     return 0;
@@ -522,7 +522,7 @@ function bump(p: i32[]): i32 {
     return p[0];
 }
 function main(): i32 {
-    var a: i32[] = [1, 2, 3];
+    let a: i32[] = [1, 2, 3];
     print(bump(a).to_string());
     print(a[0].to_string());
     return 0;
@@ -531,8 +531,8 @@ function main(): i32 {
 	// unshared again — the sticky-shared shape would print 1 here.
 	{"array_with_alias_then_scope_exit", `import "std/i32";
 function main(): i32 {
-    var a: i32[] = [1, 2, 3];
-    { var b: i32[] = a; a = a.with(0, 7); print(b[0].to_string()); }
+    let a: i32[] = [1, 2, 3];
+    { let b: i32[] = a; a = a.with(0, 7); print(b[0].to_string()); }
     a = a.with(1, 8);
     print(a[0].to_string());
     print(a[1].to_string());
@@ -542,13 +542,13 @@ function main(): i32 {
 	// every element then reading them all back.
 	{"array_with_self_reassign_loop", `import "std/i32";
 function main(): i32 {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < 64) { a = a.append(0); i = i + 1; }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < 64) { a = a.with(j, j * 2); j = j + 1; }
-    var sum: i32 = 0;
-    var k: i32 = 0;
+    let sum: i32 = 0;
+    let k: i32 = 0;
     while (k < 64) { sum = sum + a[k]; k = k + 1; }
     print(sum.to_string());
     return 0;
@@ -558,8 +558,8 @@ function main(): i32 {
 	{"array_with_stores_a_map", `import "std/i32";
 import "core/map";
 function main(): i32 {
-    var a: Map[i32, i32][] = [map_new(8), map_new(8)];
-    var m: Map[i32, i32] = map_new(8);
+    let a: Map[i32, i32][] = [map_new(8), map_new(8)];
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 5);
     a = a.with(0, m);
     m = m.insert(1, 9);
@@ -571,8 +571,8 @@ function main(): i32 {
 	// the shorter view must not reach the longer one.
 	{"array_with_after_append", `import "std/i32";
 function main(): i32 {
-    var a: i32[] = [1, 2, 3];
-    var b: i32[] = a.append(4);
+    let a: i32[] = [1, 2, 3];
+    let b: i32[] = a.append(4);
     a = a.with(0, 9);
     print(b[0].to_string());
     print(b[3].to_string());
@@ -587,15 +587,15 @@ import "core/map";
 struct V3 { x: f64, y: f64, z: f64 }
 function dot(a: V3, b: V3): f64 { return a.x*b.x + a.y*b.y + a.z*b.z; }
 function main(): i32 {
-    var a: V3 = V3{x: 1.0, y: 2.0, z: 3.0};
-    var b: V3 = V3{x: 4.0, y: 5.0, z: 6.0};
+    let a: V3 = V3{x: 1.0, y: 2.0, z: 3.0};
+    let b: V3 = V3{x: 4.0, y: 5.0, z: 6.0};
     print(dot(a, b).to_string());
-    var fs: f64[] = [1.5, 2.5, 3.5];
-    var sum: f64 = 0.0;
-    var i: i32 = 0;
+    let fs: f64[] = [1.5, 2.5, 3.5];
+    let sum: f64 = 0.0;
+    let i: i32 = 0;
     while (i < fs.len()) { sum = sum + fs[i]; i = i + 1; }
     print(sum.to_string());
-    var m: Map[i32, f64] = map_new(8);
+    let m: Map[i32, f64] = map_new(8);
     m = m.insert(1, 3.14);
     print(m.get_or(1, 0.0).to_string());
     return 0;
@@ -609,12 +609,12 @@ function main(): i32 {
 function mkf(): f64[] { return [1.5, 2.5]; }
 function mks(): string[] { return ["ab", "cde"]; }
 function main(): i32 {
-    var mf = [mkf(), [0.25]];
+    let mf = [mkf(), [0.25]];
     print((((mf[0][0] + mf[0][1] + mf[1][0]) * 4.0) as i32).to_string());
-    var inner = mkf();
-    var mi = [inner, [0.5]];
+    let inner = mkf();
+    let mi = [inner, [0.5]];
     print((((mi[0][0] + mi[1][0]) * 2.0) as i32).to_string());
-    var ms = [mks(), ["f"]];
+    let ms = [mks(), ["f"]];
     print((ms[0][0].len() + ms[0][1].len() + ms[1][0].len()).to_string());
     return 0;
 }`},
@@ -626,9 +626,9 @@ function main(): i32 {
 function mk2(): f64[] { return [1.5, 2.5]; }
 function mk3(): string[] { return ["ab", "cde"]; }
 function main(): i32 {
-    var a = mk2();
+    let a = mk2();
     print((((a[0] + a[1]) * 2.0) as i32).to_string());
-    var b = mk3();
+    let b = mk3();
     print((b[0].len() + b[1].len()).to_string());
     return 0;
 }`},
@@ -676,8 +676,8 @@ function main(): i32 {
 	{"stdlib_array_combinators", `import "std/i32";
 import "std/array";
 function main(): i32 {
-    var xs: i32[] = [5, 2, 8, 1, 9, 3];
-    var s = xs.sorted_asc();
+    let xs: i32[] = [5, 2, 8, 1, 9, 3];
+    let s = xs.sorted_asc();
     print((s[0] as i32).to_string());
     print((s[5] as i32).to_string());
     print(xs.sum().to_string());
@@ -689,7 +689,7 @@ function main(): i32 {
 	// get / set round-trip: (0+5)*2 = 10, identical on every backend.
 	{"cell_get_set", `import "std/i32";
 function main(): i32 {
-    var c: Cell[i32] = cell_new(0);
+    let c: Cell[i32] = cell_new(0);
     c.set(c.get() + 5);
     c.set(c.get() * 2);
     print(c.get().to_string());
@@ -701,7 +701,7 @@ function main(): i32 {
 	{"cell_shared_mutation", `import "std/i32";
 function bump(c: Cell[i32]): void { c.set(c.get() + 1); }
 function main(): i32 {
-    var c: Cell[i32] = cell_new(10);
+    let c: Cell[i32] = cell_new(10);
     bump(c); bump(c); bump(c);
     print(c.get().to_string());
     return 0;
@@ -709,8 +709,8 @@ function main(): i32 {
 	// A cell as a loop accumulator (the counter idiom) — sum 1..=5 = 15.
 	{"cell_accumulator", `import "std/i32";
 function main(): i32 {
-    var acc: Cell[i32] = cell_new(0);
-    var i: i32 = 1;
+    let acc: Cell[i32] = cell_new(0);
+    let i: i32 = 1;
     while (i <= 5) { acc.set(acc.get() + i); i = i + 1; }
     print(acc.get().to_string());
     return 0;
@@ -721,7 +721,7 @@ function main(): i32 {
 	{"cell_string", `import "std/i32";
 import "std/string";
 function main(): i32 {
-    var c: Cell[string] = cell_new("hi");
+    let c: Cell[string] = cell_new("hi");
     c.set(c.get() + "!");
     print(c.get());
     print(c.get().len().to_string());
@@ -731,8 +731,8 @@ function main(): i32 {
 	// both the Go and self-host parsers, so the built array is identical.
 	{"array_build", `import "std/i32";
 function main(): i32 {
-    var out: i32[] = Array.build((b: ArrayBuilder[i32]): void => {
-        var i: i32 = 0;
+    let out: i32[] = Array.build((b: ArrayBuilder[i32]): void => {
+        let i: i32 = 0;
         while (i < 4) { b.append(i * i); i = i + 1; }
     });
     print(out.len().to_string());
@@ -744,8 +744,8 @@ function main(): i32 {
 	{"map_build", `import "std/i32";
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = Map.build((b: MapBuilder[i32, i32]): void => {
-        var i: i32 = 0;
+    let m: Map[i32, i32] = Map.build((b: MapBuilder[i32, i32]): void => {
+        let i: i32 = 0;
         while (i < 4) { b.insert(i, i * i); i = i + 1; }
     });
     print(m.len().to_string());
@@ -761,9 +761,9 @@ function main(): i32 {
 import "std/i64";
 import "core/cmp";
 function main(): i32 {
-    var a: i32 = 42;
-    var b: i64 = 9000000000;
-    var ok: boolean = true;
+    let a: i32 = 42;
+    let b: i64 = 9000000000;
+    let ok: boolean = true;
     print(a);
     print(b);
     print(ok);
@@ -778,7 +778,7 @@ import "core/cmp";
 @derive(cmp.Display)
 struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var p: Point = Point { x: 1, y: 2 };
+    let p: Point = Point { x: 1, y: 2 };
     print(p);
     return 0;
 }`},
@@ -792,8 +792,8 @@ import "core/cmp";
 @derive(cmp.Display)
 enum Shape { Circle(i32), Empty }
 function main(): i32 {
-    var c: Shape = Circle(5);
-    var e: Shape = Empty;
+    let c: Shape = Circle(5);
+    let e: Shape = Empty;
     print(c);
     print(e);
     return 0;

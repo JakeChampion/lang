@@ -16,7 +16,7 @@ func inlayHintsFor(src string) []inlayHint {
 }
 
 func TestInlayHints_InferredVar(t *testing.T) {
-	src := "function main(): i32 {\n  var x = 7;\n  return x;\n}\n"
+	src := "function main(): i32 {\n  let x = 7;\n  return x;\n}\n"
 	got := inlayHintsFor(src)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 inlay hint, got %d: %+v", len(got), got)
@@ -27,7 +27,7 @@ func TestInlayHints_InferredVar(t *testing.T) {
 	if got[0].Kind != inlayHintKindType {
 		t.Errorf("hint kind = %d, want %d (type)", got[0].Kind, inlayHintKindType)
 	}
-	// Position should be right after the `x`. The line is "  var x = 7;"
+	// Position should be right after the `x`. The line is "  let x = 7;"
 	// — `x` is at 0-based col 6, name end at col 7.
 	if got[0].Position.Line != 1 || got[0].Position.Character != 7 {
 		t.Errorf("hint position = %+v, want (1, 7)", got[0].Position)
@@ -35,15 +35,15 @@ func TestInlayHints_InferredVar(t *testing.T) {
 }
 
 func TestInlayHints_SkipsAnnotated(t *testing.T) {
-	src := "function main(): i32 {\n  var x: i32 = 7;\n  return x;\n}\n"
+	src := "function main(): i32 {\n  let x: i32 = 7;\n  return x;\n}\n"
 	got := inlayHintsFor(src)
 	if len(got) != 0 {
-		t.Errorf("annotated var should produce no hint, got %+v", got)
+		t.Errorf("annotated let should produce no hint, got %+v", got)
 	}
 }
 
 func TestInlayHints_FiltersByRange(t *testing.T) {
-	src := "function main(): i32 {\n  var x = 1;\n  var y = 2;\n  return x + y;\n}\n"
+	src := "function main(): i32 {\n  let x = 1;\n  let y = 2;\n  return x + y;\n}\n"
 	s := NewServer()
 	s.updateDoc("file:///t", src)
 	// Only ask about line 2 (the y declaration).

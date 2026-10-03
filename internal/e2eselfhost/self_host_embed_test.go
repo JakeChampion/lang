@@ -140,13 +140,13 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 		{"asset-one", assets, "function main(): i32 {\n    return __fern_asset(\"a.txt\").len() + __fern_asset(\"sub/b.txt\").len();\n}\n", 5},
 		// Names sorted, contents alongside: 5+8+9+5 name bytes, 3+5+2+3
 		// contents, the 5 being the binary blob counted by its own length word.
-		{"assets-all", assets, "function main(): i32 {\n    var n: i32 = 0;\n    for a in __fern_assets() { n = n + a.0.len() + a.1.len(); }\n    return n;\n}\n", 40},
+		{"assets-all", assets, "function main(): i32 {\n    let n: i32 = 0;\n    for a in __fern_assets() { n = n + a.0.len() + a.1.len(); }\n    return n;\n}\n", 40},
 		// Sorted order is observable, and it is what keeps the emitted program
 		// identical across hosts — a filesystem-order walk would not be.
-		{"assets-sorted", assets, "function main(): i32 {\n    var first: string = \"\";\n    for a in __fern_assets() { if (first.len() == 0) { first = a.0; } }\n    if (first == \"a.txt\") { return 7; }\n    return 9;\n}\n", 7},
+		{"assets-sorted", assets, "function main(): i32 {\n    let first: string = \"\";\n    for a in __fern_assets() { if (first.len() == 0) { first = a.0; } }\n    if (first == \"a.txt\") { return 7; }\n    return 9;\n}\n", 7},
 		// An empty bundle yields an empty typed array, so the loop body simply
 		// never runs. The element type has to be stamped for that to compile.
-		{"assets-empty-bundle", empty, "function main(): i32 {\n    var n: i32 = 0;\n    for a in __fern_assets() { n = n + 1; }\n    return n;\n}\n", 0},
+		{"assets-empty-bundle", empty, "function main(): i32 {\n    let n: i32 = 0;\n    for a in __fern_assets() { n = n + 1; }\n    return n;\n}\n", 0},
 		// A symlinked entry is not in the bundle at all, so naming it is the
 		// ordinary unknown-asset refusal. This is the sharp form of the skip:
 		// `escape.txt` points OUTSIDE the embed root, so a walk that followed
@@ -156,20 +156,20 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 		{"symlinked-entry-is-not-an-asset", assets, "function main(): i32 {\n    return __fern_asset(\"escape.txt\").len();\n}\n", -1},
 		// Naming a symlinked directory on the command line embeds what it
 		// points at, and gives the same bundle as naming the directory itself.
-		{"assets-follow-symlinked-root", "SYMLINKED_ROOT", "function main(): i32 {\n    var n: i32 = 0;\n    for a in __fern_assets() { n = n + a.0.len() + a.1.len(); }\n    return n;\n}\n", 40},
+		{"assets-follow-symlinked-root", "SYMLINKED_ROOT", "function main(): i32 {\n    let n: i32 = 0;\n    for a in __fern_assets() { n = n + a.0.len() + a.1.len(); }\n    return n;\n}\n", 40},
 		// Binary bytes, asserted per byte: nothing truncated at the NUL and
 		// nothing rewrote the 0xff. The length alone would not catch either,
 		// since a walk that mangled the high byte in place keeps the count.
-		{"asset-binary", assets, "function main(): i32 {\n    var b: string = __fern_asset(\"blob.bin\");\n    if (b.len() != 5) { return 1; }\n    if (b[0] != 65 || b[1] != 0 || b[2] != 66) { return 2; }\n    if (b[3] != 255 || b[4] != 67) { return 3; }\n    return 0;\n}\n", 0},
+		{"asset-binary", assets, "function main(): i32 {\n    let b: string = __fern_asset(\"blob.bin\");\n    if (b.len() != 5) { return 1; }\n    if (b[0] != 65 || b[1] != 0 || b[2] != 66) { return 2; }\n    if (b[3] != 255 || b[4] != 67) { return 3; }\n    return 0;\n}\n", 0},
 
 		// Every refusal. Each of these is a program that would otherwise build
 		// with a silently empty asset in it.
 		{"no-embed-flag", "", "function main(): i32 {\n    return __fern_asset(\"a.txt\").len();\n}\n", -1},
-		{"no-embed-flag-enumerate", "", "function main(): i32 {\n    var n: i32 = 0;\n    for a in __fern_assets() { n = n + 1; }\n    return n;\n}\n", -1},
+		{"no-embed-flag-enumerate", "", "function main(): i32 {\n    let n: i32 = 0;\n    for a in __fern_assets() { n = n + 1; }\n    return n;\n}\n", -1},
 		{"unknown-name", assets, "function main(): i32 {\n    return __fern_asset(\"a.tx\").len();\n}\n", -1},
-		{"computed-name", assets, "function main(): i32 {\n    var n: string = \"a.txt\";\n    return __fern_asset(n).len();\n}\n", -1},
+		{"computed-name", assets, "function main(): i32 {\n    let n: string = \"a.txt\";\n    return __fern_asset(n).len();\n}\n", -1},
 		{"wrong-arity", assets, "function main(): i32 {\n    return __fern_asset(\"a.txt\", \"z.txt\").len();\n}\n", -1},
-		{"enumerate-with-argument", assets, "function main(): i32 {\n    var n: i32 = 0;\n    for a in __fern_assets(\"a.txt\") { n = n + 1; }\n    return n;\n}\n", -1},
+		{"enumerate-with-argument", assets, "function main(): i32 {\n    let n: i32 = 0;\n    for a in __fern_assets(\"a.txt\") { n = n + 1; }\n    return n;\n}\n", -1},
 		// A nested call is refused on the OUTER argument not being a literal.
 		// Both passes claim an asset call before descending into it, so the
 		// inner one never resolves into a name the outer could then accept —
@@ -264,8 +264,8 @@ func TestSelfHostEmbedCarriesTheStdlib(t *testing.T) {
 	// walk that returned names without contents cannot pass.
 	src := filepath.Join(dir, "embed_stdlib.fern")
 	prog := "function main(): i32 {\n" +
-		"    var n: i32 = 0;\n" +
-		"    var io_len: i32 = 0;\n" +
+		"    let n: i32 = 0;\n" +
+		"    let io_len: i32 = 0;\n" +
 		"    for a in __fern_assets() {\n" +
 		"        if (a.0.len() > 5 && a.0[a.0.len() - 5] == b'.') { n = n + 1; }\n" +
 		"        if (a.0 == \"std/io.fern\") { io_len = a.1.len(); }\n" +

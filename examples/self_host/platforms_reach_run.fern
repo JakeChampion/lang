@@ -32,22 +32,22 @@ import "./modloader";
 import "./platforms";
 
 function main(): i32 {
-  var a: string[] = args();
+  let a: string[] = args();
   if (a.len() < 2) {
     eprint("usage: platforms_reach_run <entry.fern>");
     return 2;
   }
-  var entry_path: string = a[1];
+  let entry_path: string = a[1];
   match (read_file(entry_path)) {
     Ok(src) => {
-      var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
+      let entry: parser.Module = parser.parse_module(lexer.tokenize(src));
       let (loaded, missing) = modloader.load_imports(modloader.no_overlay(), entry_path, entry);
       if (modloader.report_unresolved(missing, "platforms_reach_run")) {
         return 1;
       }
-      var merged: parser.Module = flatten.bundle(entry, loaded, "");
-      var caps: string[] = platforms.reach(merged);
-      var i: i32 = 0;
+      let merged: parser.Module = flatten.bundle(entry, loaded, "");
+      let caps: string[] = platforms.reach(merged);
+      let i: i32 = 0;
       while (i < caps.len()) {
         print(caps[i]);
         i = i + 1;

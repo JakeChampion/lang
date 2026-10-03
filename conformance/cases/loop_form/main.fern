@@ -2,8 +2,8 @@
 // loop (its own AST node, not While-true sugar); a plain `break` /
 // `continue` works inside it.
 function main(): i32 {
-    var i: i32 = 0;
-    var evens: i32 = 0;
+    let i: i32 = 0;
+    let evens: i32 = 0;
     loop {
         i = i + 1;
         if (i % 2 == 1) { continue; }   // count only even i

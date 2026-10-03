@@ -215,7 +215,7 @@ function inst_detail(ins: SInst): string {
   if (ins.kind_tag == 1 && ins.str != "") {
     return " " + ins.str;
   }
-  var out: string = "";
+  let out: string = "";
   if (carries_imm(ins.kind_tag)) {
     out = out + " " + util.i32_to_string(ins.imm);
   }
@@ -226,16 +226,16 @@ function inst_detail(ins: SInst): string {
 }
 
 pub function print_func(f: SFunc): string {
-  var out: string = "func " + f.name + " {\n";
-  var bi: i32 = 0;
+  let out: string = "func " + f.name + " {\n";
+  let bi: i32 = 0;
   while (bi < f.blocks.len()) {
-    var blk: SBlock = f.blocks[bi];
+    let blk: SBlock = f.blocks[bi];
     out = out + "  b" + util.i32_to_string(blk.id) + ":\n";
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < blk.insts.len()) {
-      var ins: SInst = blk.insts[k];
+      let ins: SInst = blk.insts[k];
       out = out + "    v" + util.i32_to_string(ins.result) + " = " + kind_name(ins.kind_tag) + inst_detail(ins);
-      var ai: i32 = 0;
+      let ai: i32 = 0;
       while (ai < ins.args.len()) {
         out = out + " v" + util.i32_to_string(ins.args[ai]);
         ai = ai + 1;
@@ -285,7 +285,7 @@ pub function print_func(f: SFunc): string {
 //   56 call_ind   args [target, a0..]   a call through a function value, on the stack ABI
 //   57 agg_lit    str = packed constant a static record or variant box (ir.const_struct_*), by address
 function prod_kind_name(id: i32): string {
-  var names: string[] = [
+  let names: string[] = [
     "ld_at", "st_at", "arr_at", "arr_st", "str_at", "fn_addr", "shape_addr", "str_lit", "arr_box", "str_call", "rt_call", "str_view",
     "ld_idx", "st_idx", "ld_byte", "st_byte", "call_ind", "agg_lit", "sym_addr", "flat_op", "dyn_dispatch",
   ];
@@ -297,7 +297,7 @@ function prod_kind_name(id: i32): string {
 // run from -1 downward without gaps, so the table is indexed by -id - 1; an id
 // outside it names nothing, exactly as an unknown id always did.
 function semantic_kind_name(id: i32): string {
-  var names: string[] = [
+  let names: string[] = [
     "array_new", "tuple_new", "array_get", "tuple_get",
     "record_new", "record_get", "call", "variant_new", "variant_is",
     "variant_get", "variant_up", "variant_as", "length", "append", "slice",
@@ -306,9 +306,9 @@ function semantic_kind_name(id: i32): string {
     "map_keys", "map_values", "map_delete", "map_cleared", "zero", "str_bytes",
     "arr_join", "arr_slice", "map_iter", "mapiter_has_next",
     "mapiter_key", "mapiter_value", "mapiter_advance", "dyn_up", "dyn_box",
-    "dyn_is", "dyn_as", "hole_at", "hole_fill",
+    "dyn_is", "dyn_as", "hole_at", "hole_fill", "array_lend", "str_byte_view",
   ];
-  var at: i32 = 0 - id - 1;
+  let at: i32 = 0 - id - 1;
   if (at < 0 || at >= names.len()) {
     return "invalid";
   }
@@ -493,21 +493,10 @@ pub function term_name(id: i32): string {
   return "";
 }
 
-function index_of_i32(xs: i32[], n: i32): i32 {
-  var i: i32 = 0;
-  while (i < xs.len()) {
-    if (xs[i] == n) {
-      return i;
-    }
-    i = i + 1;
-  }
-  return 0 - 1;
-}
-
 // zeros returns an n-long i32 array of 0s (scratch flag/value tables).
 function zeros(n: i32): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(0);
     i = i + 1;
@@ -516,8 +505,8 @@ function zeros(n: i32): i32[] {
 }
 
 function rewrite_args(ins: SInst, resolved: i32[]): SInst {
-  var na: i32[] = [];
-  var i: i32 = 0;
+  let na: i32[] = [];
+  let i: i32 = 0;
   while (i < ins.args.len()) {
     na = na.append(resolved[ins.args[i]]);
     i = i + 1;
@@ -578,9 +567,9 @@ pub function rc_inlined(ins: SInst): boolean {
 // ran once per value, which on a function with thousands of calls and tens
 // of thousands of values was most of the allocator's time.
 function calls_before(calls: i32[], total_pos: i32): i32[] {
-  var cum: i32[] = zeros(total_pos + 2);
-  var ci: i32 = 0;
-  var p: i32 = 0;
+  let cum: i32[] = zeros(total_pos + 2);
+  let ci: i32 = 0;
+  let p: i32 = 0;
   while (p <= total_pos + 1) {
     cum = cum.with(p, ci);
     while (ci < calls.len() && calls[ci] < p + 1) {
@@ -596,11 +585,11 @@ function spans_call(cum: i32[], lo: i32, hi: i32): boolean {
   if (hi <= lo + 1) {
     return false;
   }
-  var a: i32 = lo + 1;
+  let a: i32 = lo + 1;
   if (a >= cum.len()) {
     return false;
   }
-  var b: i32 = hi;
+  let b: i32 = hi;
   if (b >= cum.len()) {
     b = cum.len() - 1;
   }
@@ -613,8 +602,8 @@ function spans_call(cum: i32[], lo: i32, hi: i32): boolean {
 // tens of thousands of values was a quadratic number of allocations the arena
 // never returns.
 function order_by_lo(n: i32, lo: i32[]): i32[] {
-  var maxp: i32 = 0;
-  var v: i32 = 0;
+  let maxp: i32 = 0;
+  let v: i32 = 0;
   while (v < n) {
     if (lo[v] < 2000000000 && lo[v] > maxp) {
       maxp = lo[v];
@@ -622,22 +611,22 @@ function order_by_lo(n: i32, lo: i32[]): i32[] {
     v = v + 1;
   }
   // Bucket maxp + 1 holds the values never referenced (lo left at the sentinel).
-  var starts: i32[] = zeros(maxp + 3);
+  let starts: i32[] = zeros(maxp + 3);
   v = 0;
   while (v < n) {
-    var b: i32 = order_bucket(lo[v], maxp);
+    let b: i32 = order_bucket(lo[v], maxp);
     starts = starts.with(b + 1, starts[b + 1] + 1);
     v = v + 1;
   }
-  var b2: i32 = 1;
+  let b2: i32 = 1;
   while (b2 < starts.len()) {
     starts = starts.with(b2, starts[b2] + starts[b2 - 1]);
     b2 = b2 + 1;
   }
-  var out: i32[] = zeros(n);
+  let out: i32[] = zeros(n);
   v = 0;
   while (v < n) {
-    var bk: i32 = order_bucket(lo[v], maxp);
+    let bk: i32 = order_bucket(lo[v], maxp);
     out = out.with(starts[bk], v);
     starts = starts.with(bk, starts[bk] + 1);
     v = v + 1;
@@ -666,31 +655,31 @@ function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i
   // Each value's extension reads only the back edges, in block order, so the
   // values are independent: one with no header in (def, hi] cannot extend,
   // and a binary search over the sorted header starts rules most out.
-  var top: i32 = 0 - 1;
+  let top: i32 = 0 - 1;
   for b in f.blocks {
     if (b.id > top) {
       top = b.id;
     }
   }
-  var start_of: i32[] = [];
+  let start_of: i32[] = [];
   while (start_of.len() <= top) {
     start_of = start_of.append(0 - 1);
   }
-  var rpos: i32 = 0;
+  let rpos: i32 = 0;
   for b in f.blocks {
     if (b.id >= 0) {
       start_of = start_of.with(b.id, rpos);
     }
     rpos = rpos + b.insts.len() + 1;
   }
-  var edge_head: i32[] = [];
-  var edge_end: i32[] = [];
-  var lstart: i32 = 0;
+  let edge_head: i32[] = [];
+  let edge_end: i32[] = [];
+  let lstart: i32 = 0;
   for lblk in f.blocks {
-    var lterm_pos: i32 = lstart + lblk.insts.len();
-    var th: i32 = 0;
+    let lterm_pos: i32 = lstart + lblk.insts.len();
+    let th: i32 = 0;
     while (th < 2) {
-      var tgt: i32 = 0 - 1;
+      let tgt: i32 = 0 - 1;
       if (th == 0) {
         if (lblk.term.kind_tag == 2) {
           tgt = lblk.term.target;
@@ -701,7 +690,7 @@ function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i
         tgt = lblk.term.f;
       }
       if (tgt >= 0 && tgt <= top) {
-        var hstart: i32 = start_of[tgt];
+        let hstart: i32 = start_of[tgt];
         if (hstart >= 0 && hstart <= lstart) {
           edge_head = edge_head.append(hstart);
           edge_end = edge_end.append(lterm_pos);
@@ -714,14 +703,14 @@ function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i
   if (edge_head.len() == 0) {
     return hi;
   }
-  var heads: i32[] = sorted_i32(edge_head);
-  var vv: i32 = 0;
+  let heads: i32[] = sorted_i32(edge_head);
+  let vv: i32 = 0;
   while (vv < f.nvals && vv < hi.len()) {
-    var d: i32 = def_pos[vv];
+    let d: i32 = def_pos[vv];
     if (d >= 0) {
-      var first: i32 = first_above(heads, d);
+      let first: i32 = first_above(heads, d);
       if (first < heads.len() && heads[first] <= hi[vv]) {
-        var e: i32 = 0;
+        let e: i32 = 0;
         while (e < edge_head.len()) {
           if (d < edge_head[e] && hi[vv] >= edge_head[e] && edge_end[e] > hi[vv]) {
             hi = hi.with(vv, edge_end[e]);
@@ -738,10 +727,10 @@ function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i
 // sorted_i32 is xs in ascending order (an insertion sort; the lists are a
 // function's back edges).
 function sorted_i32(xs: i32[]): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   for x in xs {
     out = out.append(x);
-    var i: i32 = out.len() - 1;
+    let i: i32 = out.len() - 1;
     while (i > 0 && out[i - 1] > x) {
       out = out.with(i, out[i - 1]);
       i = i - 1;
@@ -754,10 +743,10 @@ function sorted_i32(xs: i32[]): i32[] {
 // first_above is the index of the first element of ascending xs greater than
 // v, or xs.len() when there is none.
 function first_above(xs: i32[], v: i32): i32 {
-  var lo: i32 = 0;
-  var hi: i32 = xs.len();
+  let lo: i32 = 0;
+  let hi: i32 = xs.len();
   while (lo < hi) {
-    var mid: i32 = (lo + hi) / 2;
+    let mid: i32 = (lo + hi) / 2;
     if (xs[mid] > v) {
       hi = mid;
     } else {
@@ -798,7 +787,7 @@ function pick_caller_reg(free: i32[], abi_reg: i32, want_abi: boolean, abi_ok: b
       }
     }
   }
-  var i: i32 = free.len() - 1;
+  let i: i32 = free.len() - 1;
   while (i >= 0) {
     if (free[i] != abi_reg) {
       return free[i];
@@ -812,8 +801,8 @@ function pick_caller_reg(free: i32[], abi_reg: i32, want_abi: boolean, abi_ok: b
 }
 
 function remove_reg(free: i32[], reg: i32): i32[] {
-  var out: i32[] = [];
-  var dropped: boolean = false;
+  let out: i32[] = [];
+  let dropped: boolean = false;
   for r in free {
     if (r == reg && !dropped) {
       dropped = true;
@@ -831,15 +820,15 @@ function remove_reg(free: i32[], reg: i32): i32[] {
 // spilled should be what is referenced least for the span it holds, weighted
 // by loop depth.
 function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_with: i32[], weight: i32[], lo: i32[], nregs: i32, need_saved: boolean): i32 {
-  var best: i32 = 0 - 1;
-  var best_w: i32 = 0;
-  var best_len: i32 = 1;
-  var i: i32 = 0;
+  let best: i32 = 0 - 1;
+  let best_w: i32 = 0;
+  let best_len: i32 = 1;
+  let i: i32 = 0;
   while (i < act_val.len()) {
     if (act_reg[i] >= nregs == need_saved) {
-      var w: i32 = chain_weight(act_val[i], shared_with, weight);
-      var len: i32 = act_hi[i] - chain_lo(act_val[i], shared_with, lo) + 1;
-      var cmp: i32 = cmp_density(w, len, best_w, best_len);
+      let w: i32 = chain_weight(act_val[i], shared_with, weight);
+      let len: i32 = act_hi[i] - chain_lo(act_val[i], shared_with, lo) + 1;
+      let cmp: i32 = cmp_density(w, len, best_w, best_len);
       if (best < 0 || cmp < 0 || cmp == 0 && act_hi[i] > act_hi[best]) {
         best = i;
         best_w = w;
@@ -854,8 +843,8 @@ function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_w
 // cmp_density orders two spill costs by weight per position covered:
 // negative when w1 / len1 is the smaller.
 function cmp_density(w1: i32, len1: i32, w2: i32, len2: i32): i32 {
-  var a: i64 = w1 as i64 * (len2 as i64);
-  var b: i64 = w2 as i64 * (len1 as i64);
+  let a: i64 = w1 as i64 * (len2 as i64);
+  let b: i64 = w2 as i64 * (len1 as i64);
   if (a < b) {
     return 0 - 1;
   }
@@ -867,8 +856,8 @@ function cmp_density(w1: i32, len1: i32, w2: i32, len2: i32): i32 {
 
 // chain_lo is where the first of the values sharing v's register begins.
 function chain_lo(v: i32, shared_with: i32[], lo: i32[]): i32 {
-  var m: i32 = lo[v];
-  var ev: i32 = shared_with[v];
+  let m: i32 = lo[v];
+  let ev: i32 = shared_with[v];
   while (ev >= 0) {
     if (lo[ev] < m) {
       m = lo[ev];
@@ -881,8 +870,8 @@ function chain_lo(v: i32, shared_with: i32[], lo: i32[]): i32 {
 // chain_weight sums the spill weights of a register's holder and of the
 // values that shared the register before it, which an eviction spills too.
 function chain_weight(v: i32, shared_with: i32[], weight: i32[]): i32 {
-  var w: i32 = 0;
-  var ev: i32 = v;
+  let w: i32 = 0;
+  let ev: i32 = v;
   while (ev >= 0) {
     w = w + weight[ev];
     ev = shared_with[ev];
@@ -894,16 +883,16 @@ function chain_weight(v: i32, shared_with: i32[], weight: i32[]): i32 {
 // reference inside it: 8 per enclosing loop, up to three. A loop is the span
 // of block positions from a back edge's target to its source.
 function block_loop_weights(f: SFunc): i32[] {
-  var at: i32[] = block_positions(f);
-  var depth: i32[] = [];
+  let at: i32[] = block_positions(f);
+  let depth: i32[] = [];
   for blk in f.blocks {
     depth = depth.append(0);
   }
-  var bi: i32 = 0;
+  let bi: i32 = 0;
   while (bi < f.blocks.len()) {
     for tgt in successor_positions(f, at, bi) {
       if (tgt >= 0 && tgt <= bi) {
-        var k: i32 = tgt;
+        let k: i32 = tgt;
         while (k <= bi) {
           depth = depth.with(k, depth[k] + 1);
           k = k + 1;
@@ -912,10 +901,10 @@ function block_loop_weights(f: SFunc): i32[] {
     }
     bi = bi + 1;
   }
-  var out: i32[] = [];
+  let out: i32[] = [];
   for d in depth {
-    var w: i32 = 1;
-    var n: i32 = 0;
+    let w: i32 = 1;
+    let n: i32 = 0;
     while (n < d && n < 3) {
       w = w * 8;
       n = n + 1;
@@ -926,8 +915,8 @@ function block_loop_weights(f: SFunc): i32[] {
 }
 
 function drop_active_at(a: i32[], k: i32): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < a.len()) {
     if (i != k) {
       out = out.append(a[i]);
@@ -949,25 +938,25 @@ function drop_active_at(a: i32[], k: i32): i32[] {
 // is taken when free and v does not live across a call; an empty `pref` asks
 // for nothing.
 pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[]): i32[] {
-  var big: i32 = 2000000000;
-  var lo: i32[] = [];
-  var hi: i32[] = [];
-  var i: i32 = 0;
+  let big: i32 = 2000000000;
+  let lo: i32[] = [];
+  let hi: i32[] = [];
+  let i: i32 = 0;
   while (i < f.nvals) {
     lo = lo.append(big);
     hi = hi.append(0 - 1);
     i = i + 1;
   }
-  var calls: i32[] = [];
-  var abi_cl: i32[] = [];
+  let calls: i32[] = [];
+  let abi_cl: i32[] = [];
 
   // Number instructions and record each value's def/use positions.
-  var def_pos: i32[] = [];
-  var def_blk: i32[] = [];
-  var call_def: i32[] = [];
-  var reads_mate: boolean[] = [];
-  var def_a: i32[] = [];
-  var def_b: i32[] = [];
+  let def_pos: i32[] = [];
+  let def_blk: i32[] = [];
+  let call_def: i32[] = [];
+  let reads_mate: boolean[] = [];
+  let def_a: i32[] = [];
+  let def_b: i32[] = [];
   i = 0;
   while (i < f.nvals) {
     def_pos = def_pos.append(0 - 1);
@@ -978,15 +967,15 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     def_b = def_b.append(0 - 1);
     i = i + 1;
   }
-  var blk_start: i32[] = [];
-  var pos: i32 = 0;
-  var bi: i32 = 0;
+  let blk_start: i32[] = [];
+  let pos: i32 = 0;
+  let bi: i32 = 0;
   while (bi < f.blocks.len()) {
-    var blk: SBlock = f.blocks[bi];
+    let blk: SBlock = f.blocks[bi];
     blk_start = blk_start.append(pos);
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < blk.insts.len()) {
-      var ins: SInst = blk.insts[k];
+      let ins: SInst = blk.insts[k];
       if (ins.result >= 0 && ins.result < lo.len() && pos < lo[ins.result]) {
         lo = lo.with(ins.result, pos);
       }
@@ -1008,7 +997,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
           }
         }
       }
-      var a: i32 = 0;
+      let a: i32 = 0;
       while (a < ins.args.len() && ins.kind_tag != 8) {
         if (ins.args[a] >= 0 && ins.args[a] < lo.len() && pos < lo[ins.args[a]]) {
           lo = lo.with(ins.args[a], pos);
@@ -1048,8 +1037,8 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     pos = pos + 1;
     bi = bi + 1;
   }
-  var total_pos: i32 = pos;
-  var at: i32[] = block_positions(f);
+  let total_pos: i32 = pos;
+  let at: i32[] = block_positions(f);
   // A phi reads its operand on the edge from the predecessor, at that
   // block's terminator, not at its own position inside the header. Read
   // there, an operand arriving from before a loop ends before the loop
@@ -1058,19 +1047,19 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
   // what follows the loop, calls included, is not on its interval.
   bi = 0;
   while (bi < f.blocks.len()) {
-    var pb: SBlock = f.blocks[bi];
-    var pk: i32 = 0;
+    let pb: SBlock = f.blocks[bi];
+    let pk: i32 = 0;
     while (pk < pb.insts.len()) {
-      var ph: SInst = pb.insts[pk];
+      let ph: SInst = pb.insts[pk];
       if (ph.kind_tag == 8) {
-        var sl: i32 = 0;
+        let sl: i32 = 0;
         while (sl < ph.args.len()) {
-          var upos: i32 = blk_start[bi] + pk;
+          let upos: i32 = blk_start[bi] + pk;
           if (sl < pb.preds.len() && pb.preds[sl] >= 0 && pb.preds[sl] < at.len() && at[pb.preds[sl]] >= 0) {
-            var pi: i32 = at[pb.preds[sl]];
+            let pi: i32 = at[pb.preds[sl]];
             upos = blk_start[pi] + f.blocks[pi].insts.len();
           }
-          var pa: i32 = ph.args[sl];
+          let pa: i32 = ph.args[sl];
           if (pa >= 0 && pa < lo.len() && upos < lo[pa]) {
             lo = lo.with(pa, upos);
           }
@@ -1095,13 +1084,13 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
   }
 
   hi = extend_loop_invariant_intervals(f, def_pos, hi);
-  var cum: i32[] = calls_before(calls, total_pos);
-  var cum_abi: i32[] = calls_before(abi_cl, total_pos);
-  var mates: Mates = phi_mates(f, def_pos);
-  var weight: i32[] = spill_weights(f, at);
+  let cum: i32[] = calls_before(calls, total_pos);
+  let cum_abi: i32[] = calls_before(abi_cl, total_pos);
+  let mates: Mates = phi_mates(f, def_pos);
+  let weight: i32[] = spill_weights(f, at);
 
-  var reg_of: i32[] = [];
-  var shared_with: i32[] = [];
+  let reg_of: i32[] = [];
+  let shared_with: i32[] = [];
   i = 0;
   while (i < f.nvals) {
     reg_of = reg_of.append(0 - 1);
@@ -1110,35 +1099,35 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
   }
 
   // Linear scan in order of interval start.
-  var order: i32[] = order_by_lo(f.nvals, lo);
-  var act_val: i32[] = [];
-  var act_hi: i32[] = [];
-  var act_reg: i32[] = [];
-  var free: i32[] = [];
-  var r: i32 = nregs - 1;
+  let order: i32[] = order_by_lo(f.nvals, lo);
+  let act_val: i32[] = [];
+  let act_hi: i32[] = [];
+  let act_reg: i32[] = [];
+  let free: i32[] = [];
+  let r: i32 = nregs - 1;
   while (r >= 0) {
     free = free.append(r);
     r = r - 1;
   }
-  var free_s: i32[] = [];
+  let free_s: i32[] = [];
   r = nregs + nsaved - 1;
   while (r >= nregs) {
     free_s = free_s.append(r);
     r = r - 1;
   }
 
-  var oi: i32 = 0;
+  let oi: i32 = 0;
   while (oi < order.len()) {
-    var v: i32 = order[oi];
+    let v: i32 = order[oi];
     if (hi[v] < 0) {  // never referenced
       oi = oi + 1;
       continue;
     }
     // Expire active intervals that end before v begins.
-    var nv: i32[] = [];
-    var nh: i32[] = [];
-    var nr: i32[] = [];
-    var ai: i32 = 0;
+    let nv: i32[] = [];
+    let nh: i32[] = [];
+    let nr: i32[] = [];
+    let ai: i32 = 0;
     while (ai < act_val.len()) {
       if (act_hi[ai] < lo[v]) {
         if (act_reg[ai] >= nregs) {
@@ -1157,21 +1146,21 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     act_hi = nh;
     act_reg = nr;
 
-    var abi_ok: boolean = !spans_call(cum_abi, lo[v], hi[v]);
+    let abi_ok: boolean = !spans_call(cum_abi, lo[v], hi[v]);
     // A value takes the register of its phi mate, or of an operand of
     // its definition, when it can: the register is free, or its holder
     // dies at this very definition and the emitter reads before it
     // writes, or the holder is the phi this loop-carried value feeds and
     // the two never live at once. First fit wins; the phi mate first.
-    var placed: boolean = false;
+    let placed: boolean = false;
     // -2 stands for `pref[v]`, which names a register rather than a value.
-    var cands: i32[] = [mates.hint[v], 0 - 2, def_a[v], def_b[v]];
-    var ci: i32 = 0;
+    let cands: i32[] = [mates.hint[v], 0 - 2, def_a[v], def_b[v]];
+    let ci: i32 = 0;
     while (ci < cands.len() && !placed) {
-      var h: i32 = cands[ci];
+      let h: i32 = cands[ci];
       ci = ci + 1;
       if (h == 0 - 2) {
-        var pr: i32 = 0 - 1;
+        let pr: i32 = 0 - 1;
         if (v < pref.len()) {
           pr = pref[v];
         }
@@ -1189,7 +1178,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
       if (h < 0 || reg_of[h] < 0) {
         continue;
       }
-      var hr: i32 = reg_of[h];
+      let hr: i32 = reg_of[h];
       // A call's result arrives in abi_reg, so an argument's register
       // saves a move only when it is that one.
       if (call_def[v] == 1 && h != mates.hint[v] && hr != abi_reg) {
@@ -1198,8 +1187,8 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
       if (spans_call(cum, lo[v], hi[v]) && hr < nregs || hr == abi_reg && !abi_ok) {
         continue;
       }
-      var fi: i32 = index_of_reg(free, hr);
-      var fsi: i32 = index_of_reg(free_s, hr);
+      let fi: i32 = index_of_reg(free, hr);
+      let fsi: i32 = index_of_reg(free_s, hr);
       if (fi >= 0 || fsi >= 0) {
         if (fi >= 0) {
           free = remove_reg(free, hr);
@@ -1214,22 +1203,22 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         placed = true;
         continue;
       }
-      var ha: i32 = index_of_reg(act_reg, hr);
+      let ha: i32 = index_of_reg(act_reg, hr);
       if (ha < 0) {
         continue;
       }
-      var share: boolean = act_hi[ha] == lo[v] && reads_mate[v];
+      let share: boolean = act_hi[ha] == lo[v] && reads_mate[v];
       if (!share && h == mates.hint[v] && mates.carried[v] && act_val[ha] == h) {
         share = !mate_interferes(f, at, blk_start, h, v, def_blk[h], def_blk[v], def_pos[v]);
       }
       if (!share) {
         continue;
       }
-      var top: i32 = act_hi[ha];
+      let top: i32 = act_hi[ha];
       if (hi[v] > top) {
         top = hi[v];
       }
-      var holder: i32 = act_val[ha];
+      let holder: i32 = act_val[ha];
       act_val = drop_active_at(act_val, ha);
       act_hi = drop_active_at(act_hi, ha);
       act_reg = drop_active_at(act_reg, ha);
@@ -1244,26 +1233,26 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
       oi = oi + 1;
       continue;
     }
-    var pick: i32 = pick_caller_reg(free, abi_reg, call_def[v] == 1 && abi_ok, abi_ok);
-    var from_caller: boolean = !spans_call(cum, lo[v], hi[v]) && pick >= 0;
+    let pick: i32 = pick_caller_reg(free, abi_reg, call_def[v] == 1 && abi_ok, abi_ok);
+    let from_caller: boolean = !spans_call(cum, lo[v], hi[v]) && pick >= 0;
     if (!from_caller && free_s.len() == 0) {
       // Nothing free: take the register from the active interval whose
       // spill costs least, if that is less than this one's, and spill it
       // instead. `need_saved` keeps the two pools apart, since a value
       // live across a call may only sit in a callee-saved register.
-      var need_saved: boolean = spans_call(cum, lo[v], hi[v]);
-      var fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, nregs, need_saved);
-      var cmp: i32 = 0;
+      let need_saved: boolean = spans_call(cum, lo[v], hi[v]);
+      let fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, nregs, need_saved);
+      let cmp: i32 = 0;
       if (fa >= 0) {
-        var fw: i32 = chain_weight(act_val[fa], shared_with, weight);
+        let fw: i32 = chain_weight(act_val[fa], shared_with, weight);
         cmp = cmp_density(fw, act_hi[fa] - chain_lo(act_val[fa], shared_with, lo) + 1, weight[v], hi[v] - lo[v] + 1);
       }
       if (fa >= 0 && (cmp < 0 || cmp == 0 && act_hi[fa] > hi[v])) {
-        var taken: i32 = act_reg[fa];
-        var ev: i32 = act_val[fa];
+        let taken: i32 = act_reg[fa];
+        let ev: i32 = act_val[fa];
         while (ev >= 0) {
           reg_of = reg_of.with(ev, 0 - 1);
-          var nx: i32 = shared_with[ev];
+          let nx: i32 = shared_with[ev];
           shared_with = shared_with.with(ev, 0 - 1);
           ev = nx;
         }
@@ -1278,7 +1267,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         reg_of = reg_of.with(v, 0 - 1);  // spill
       }
     } else {
-      var reg: i32 = 0;
+      let reg: i32 = 0;
       if (from_caller) {
         reg = pick;
         free = remove_reg(free, reg);
@@ -1303,15 +1292,15 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
 struct SlotHints { hint: i32[], take_over: boolean[] }
 
 function slot_hints(f: SFunc, at: i32[], blk_start: i32[], def_blk: i32[], def_pos: i32[], reg_of: i32[], mates: Mates): SlotHints {
-  var hint: i32[] = [];
-  var take_over: boolean[] = [];
-  var i: i32 = 0;
+  let hint: i32[] = [];
+  let take_over: boolean[] = [];
+  let i: i32 = 0;
   while (i < f.nvals) {
-    var sh: i32 = mates.hint[i];
+    let sh: i32 = mates.hint[i];
     if (reg_of[i] >= 0 || sh < 0 || reg_of[sh] >= 0) {
       sh = 0 - 1;
     }
-    var free: boolean = sh >= 0 && def_pos[sh] >= 0 && !mate_interferes(f, at, blk_start, sh, i, def_blk[sh], def_blk[i], def_pos[i]);
+    let free: boolean = sh >= 0 && def_pos[sh] >= 0 && !mate_interferes(f, at, blk_start, sh, i, def_blk[sh], def_blk[i], def_pos[i]);
     if (sh >= 0 && mates.carried[i] && !free) {
       sh = 0 - 1;
     }
@@ -1326,24 +1315,24 @@ function slot_hints(f: SFunc, at: i32[], blk_start: i32[], def_blk: i32[], def_p
 // loop weight of the block it happens in; a phi operand is read at the end of
 // the predecessor it arrives from. A spilled value pays a load or store at each.
 function spill_weights(f: SFunc, at: i32[]): i32[] {
-  var bw: i32[] = block_loop_weights(f);
-  var w: i32[] = [];
-  var i: i32 = 0;
+  let bw: i32[] = block_loop_weights(f);
+  let w: i32[] = [];
+  let i: i32 = 0;
   while (i < f.nvals) {
     w = w.append(0);
     i = i + 1;
   }
-  var bi: i32 = 0;
+  let bi: i32 = 0;
   while (bi < f.blocks.len()) {
-    var blk: SBlock = f.blocks[bi];
+    let blk: SBlock = f.blocks[bi];
     for ins in blk.insts {
       if (ins.result >= 0 && ins.result < f.nvals) {
         w = w.with(ins.result, w[ins.result] + bw[bi]);
       }
-      var sl: i32 = 0;
+      let sl: i32 = 0;
       while (sl < ins.args.len()) {
-        var a: i32 = ins.args[sl];
-        var rb: i32 = bi;
+        let a: i32 = ins.args[sl];
+        let rb: i32 = bi;
         if (ins.kind_tag == 8) {
           rb = 0 - 1;
           if (sl < blk.preds.len()) {
@@ -1356,7 +1345,7 @@ function spill_weights(f: SFunc, at: i32[]): i32[] {
         sl = sl + 1;
       }
     }
-    var tv: i32 = 0 - 1;
+    let tv: i32 = 0 - 1;
     if (blk.term.kind_tag == 1) {
       tv = blk.term.value;
     }
@@ -1374,7 +1363,7 @@ function spill_weights(f: SFunc, at: i32[]): i32[] {
 // kept_for_mate says the slot `holder` last held is wanted by its phi mate,
 // which is not `v` and has no slot yet.
 function kept_for_mate(wanted_by: i32[], reg_of: i32[], holder: i32, v: i32): boolean {
-  var w: i32 = wanted_by[holder];
+  let w: i32 = wanted_by[holder];
   return w >= 0 && w != v && reg_of[w] == 0 - 1;
 }
 
@@ -1384,8 +1373,8 @@ function kept_for_mate(wanted_by: i32[], reg_of: i32[], holder: i32, v: i32): bo
 // frame by `spill_count` rather than by the id space, which the lift's phi per
 // local per merge makes hundreds of times larger than what survives pruning.
 function drop_last_i(a: i32[]): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < a.len() - 1) {
     out = out.append(a[i]);
     i = i + 1;
@@ -1402,7 +1391,7 @@ pub function spill_slot(code: i32): i32 {
 }
 
 pub function spill_count(reg_of: i32[]): i32 {
-  var n: i32 = 0;
+  let n: i32 = 0;
   for h in reg_of {
     if (h < 0 - 1 && spill_slot(h) + 1 > n) {
       n = spill_slot(h) + 1;
@@ -1415,7 +1404,7 @@ pub function spill_count(reg_of: i32[]): i32 {
 // operand that dies at them: both emitters read the operands before writing
 // the destination, or swap them when the right one lives there.
 function shares_operand_home(op: string): boolean {
-  var ops: string[] = ["add", "sub", "mul", "and", "or", "xor", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"];
+  let ops: string[] = ["add", "sub", "mul", "and", "or", "xor", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"];
   for o in ops {
     if (o == op) {
       return true;
@@ -1433,15 +1422,15 @@ function shares_operand_home(op: string): boolean {
 struct Mates { hint: i32[], carried: boolean[] }
 
 function phi_mates(f: SFunc, def_pos: i32[]): Mates {
-  var hint: i32[] = [];
-  var carried: boolean[] = [];
-  var i: i32 = 0;
+  let hint: i32[] = [];
+  let carried: boolean[] = [];
+  let i: i32 = 0;
   while (i < f.nvals) {
     hint = hint.append(0 - 1);
     carried = carried.append(false);
     i = i + 1;
   }
-  var pos: i32 = 0;
+  let pos: i32 = 0;
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag == 8 && ins.result >= 0 && ins.result < hint.len()) {
@@ -1469,21 +1458,21 @@ function phi_mates(f: SFunc, def_pos: i32[]): Mates {
 // block_positions maps each non-negative block id to the position of the
 // first block carrying it, -1 for an id no block carries.
 pub function block_positions(f: SFunc): i32[] {
-  var top: i32 = 0 - 1;
+  let top: i32 = 0 - 1;
   for blk in f.blocks {
     if (blk.id > top) {
       top = blk.id;
     }
   }
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i <= top) {
     out = out.append(0 - 1);
     i = i + 1;
   }
   i = 0;
   while (i < f.blocks.len()) {
-    var id: i32 = f.blocks[i].id;
+    let id: i32 = f.blocks[i].id;
     if (id >= 0 && out[id] < 0) {
       out = out.with(id, i);
     }
@@ -1495,8 +1484,8 @@ pub function block_positions(f: SFunc): i32[] {
 // successor_positions lists the positions of bi's successors; an edge to an
 // id no block carries contributes -1.
 function successor_positions(f: SFunc, at: i32[], bi: i32): i32[] {
-  var t: STerm = f.blocks[bi].term;
-  var out: i32[] = [];
+  let t: STerm = f.blocks[bi].term;
+  let out: i32[] = [];
   if (t.kind_tag == 2) {
     out = out.append(position_of(at, t.target));
   }
@@ -1544,16 +1533,17 @@ pub function term_reads_value(t: STerm, v: i32): boolean {
 // read before the write and does not count, unless a's block reaches itself
 // again without `hdr`.
 function mate_interferes(f: SFunc, at: i32[], blk_start: i32[], r: i32, a: i32, hdr: i32, ablk: i32, apos: i32): boolean {
-  var reach: boolean[] = [];
-  var i: i32 = 0;
+  let reach: boolean[] = [];
+  let i: i32 = 0;
   while (i < f.blocks.len()) {
     reach = reach.append(false);
     i = i + 1;
   }
-  var work: i32[] = successor_positions(f, at, ablk);
-  while (work.len() > 0) {
-    var b: i32 = work[work.len() - 1];
-    work = drop_last_i(work);
+  let work: i32[] = successor_positions(f, at, ablk);
+  let next: i32 = 0;
+  while (next < work.len()) {
+    let b: i32 = work[next];
+    next = next + 1;
     if (b < 0 || b == hdr || reach[b]) {
       continue;
     }
@@ -1562,10 +1552,10 @@ function mate_interferes(f: SFunc, at: i32[], blk_start: i32[], r: i32, a: i32, 
       work = work.append(s);
     }
   }
-  var bi: i32 = 0;
+  let bi: i32 = 0;
   while (bi < f.blocks.len()) {
-    var blk: SBlock = f.blocks[bi];
-    var from: boolean = reach[bi] || bi == ablk;
+    let blk: SBlock = f.blocks[bi];
+    let from: boolean = reach[bi] || bi == ablk;
     if (reach[bi] && bi != ablk) {
       for ins in blk.insts {
         if (ins.kind_tag != 8 && reads_value(ins, r)) {
@@ -1574,9 +1564,9 @@ function mate_interferes(f: SFunc, at: i32[], blk_start: i32[], r: i32, a: i32, 
       }
     }
     if (bi == ablk) {
-      var k: i32 = 0;
+      let k: i32 = 0;
       while (k < blk.insts.len()) {
-        var ki: SInst = blk.insts[k];
+        let ki: SInst = blk.insts[k];
         if ((reach[bi] || blk_start[bi] + k > apos) && ki.kind_tag != 8 && reads_value(ki, r)) {
           return true;
         }
@@ -1591,8 +1581,8 @@ function mate_interferes(f: SFunc, at: i32[], blk_start: i32[], r: i32, a: i32, 
         if (s < 0) {
           continue;
         }
-        var sb: SBlock = f.blocks[s];
-        var slot: i32 = pred_slot(sb, blk.id);
+        let sb: SBlock = f.blocks[s];
+        let slot: i32 = pred_slot(sb, blk.id);
         for ins in sb.insts {
           if (ins.kind_tag == 8 && slot < ins.args.len() && ins.args[slot] == r) {
             return true;
@@ -1606,7 +1596,7 @@ function mate_interferes(f: SFunc, at: i32[], blk_start: i32[], r: i32, a: i32, 
 }
 
 function index_of_reg(a: i32[], x: i32): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
     if (a[i] == x) {
       return i;
@@ -1627,19 +1617,19 @@ function index_of_reg(a: i32[], x: i32): i32 {
 // operand arriving from before them dies at the edge, so the first phi would
 // otherwise take the slot a later one wants.
 function assign_spill_slots(lo: i32[], hi: i32[], def_pos: i32[], reg_of: i32[], hints: SlotHints): i32[] {
-  var from: i32[] = spill_starts(lo, def_pos);
-  var wanted_by: i32[] = mates_wanted(hi, reg_of, hints.hint);
-  var slot_end: i32[] = [];
-  var holder: i32[] = [];
+  let from: i32[] = spill_starts(lo, def_pos);
+  let wanted_by: i32[] = mates_wanted(hi, reg_of, hints.hint);
+  let slot_end: i32[] = [];
+  let holder: i32[] = [];
   for v in order_by_lo(reg_of.len(), from) {
     if (hi[v] < 0 || reg_of[v] >= 0) {
       continue;
     }
-    var s: i32 = hinted_slot(slot_end, holder, reg_of, hints.hint[v], from[v], hints.take_over[v]);
+    let s: i32 = hinted_slot(slot_end, holder, reg_of, hints.hint[v], from[v], hints.take_over[v]);
     if (s < 0) {
       s = free_slot(slot_end, holder, wanted_by, reg_of, from[v], v);
     }
-    var end: i32 = hi[v];
+    let end: i32 = hi[v];
     if (s < slot_end.len() && slot_end[s] > end) {
       end = slot_end[s];
     }
@@ -1656,8 +1646,8 @@ function assign_spill_slots(lo: i32[], hi: i32[], def_pos: i32[], reg_of: i32[],
 }
 
 function spill_starts(lo: i32[], def_pos: i32[]): i32[] {
-  var from: i32[] = [];
-  var i: i32 = 0;
+  let from: i32[] = [];
+  let i: i32 = 0;
   while (i < lo.len()) {
     if (def_pos[i] < 0) {
       from = from.append(0);
@@ -1671,15 +1661,15 @@ function spill_starts(lo: i32[], def_pos: i32[]): i32[] {
 
 // wanted_by[m] is the spilled value whose phi mate is m, or -1.
 function mates_wanted(hi: i32[], reg_of: i32[], hint: i32[]): i32[] {
-  var wanted_by: i32[] = [];
-  var i: i32 = 0;
+  let wanted_by: i32[] = [];
+  let i: i32 = 0;
   while (i < reg_of.len()) {
     wanted_by = wanted_by.append(0 - 1);
     i = i + 1;
   }
   i = 0;
   while (i < reg_of.len()) {
-    var m: i32 = hint[i];
+    let m: i32 = hint[i];
     if (m >= 0 && hi[i] >= 0 && reg_of[i] == 0 - 1 && reg_of[m] == 0 - 1) {
       wanted_by = wanted_by.with(m, i);
     }
@@ -1694,7 +1684,7 @@ function hinted_slot(slot_end: i32[], holder: i32[], reg_of: i32[], h: i32, from
   if (h < 0 || reg_of[h] >= 0 - 1) {
     return 0 - 1;
   }
-  var hs: i32 = spill_slot(reg_of[h]);
+  let hs: i32 = spill_slot(reg_of[h]);
   if (slot_end[hs] < from || take_over && holder[hs] == h) {
     return hs;
   }
@@ -1702,7 +1692,7 @@ function hinted_slot(slot_end: i32[], holder: i32[], reg_of: i32[], h: i32, from
 }
 
 function free_slot(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32[], from: i32, v: i32): i32 {
-  var s: i32 = 0;
+  let s: i32 = 0;
   while (s < slot_end.len() && (slot_end[s] >= from || kept_for_mate(wanted_by, reg_of, holder[s], v))) {
     s = s + 1;
   }
@@ -1724,10 +1714,10 @@ function free_slot(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32
 pub struct Imms { is_imm: boolean[], konst: boolean[], value: i64[] }
 
 pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: string[]): Imms {
-  var is_imm: boolean[] = [];
-  var konst: boolean[] = [];
-  var value: i64[] = [];
-  var i: i32 = 0;
+  let is_imm: boolean[] = [];
+  let konst: boolean[] = [];
+  let value: i64[] = [];
+  let i: i32 = 0;
   while (i < f.nvals) {
     is_imm = is_imm.append(false);
     konst = konst.append(false);
@@ -1740,7 +1730,7 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
         continue;
       }
       konst = konst.with(ins.result, true);
-      var c: i64 = ins.imm as i64;
+      let c: i64 = ins.imm as i64;
       if (ins.kind_tag == 3) {
         c = util.lit_to_i64(ins.str);
       }
@@ -1753,16 +1743,16 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
   }
   for blk in f.blocks {
     for ins in blk.insts {
-      var a: i32 = 0;
+      let a: i32 = 0;
       while (a < ins.args.len()) {
-        var v: i32 = ins.args[a];
+        let v: i32 = ins.args[a];
         if (v >= 0 && v < is_imm.len() && is_imm[v] && !imm_use(ins, a, konst, right, left)) {
           is_imm = is_imm.with(v, false);
         }
         a = a + 1;
       }
     }
-    var t: STerm = blk.term;
+    let t: STerm = blk.term;
     if (t.kind_tag == 1 && t.value >= 0 && t.value < is_imm.len()) {
       is_imm = is_imm.with(t.value, false);
     }
@@ -1777,14 +1767,14 @@ function imm_use(ins: SInst, a: i32, konst: boolean[], right: string[], left: st
   if (ins.kind_tag != 9 || ins.args.len() != 2) {
     return false;
   }
-  var other: i32 = ins.args[1 - a];
+  let other: i32 = ins.args[1 - a];
   if (other < 0 || other >= konst.len()) {
     return false;
   }
   if (a == 0 && konst[other]) {
     return false;
   }
-  var names: string[] = left;
+  let names: string[] = left;
   if (a == 1) {
     names = right;
   }
@@ -1800,7 +1790,7 @@ function imm_use(ins: SInst, a: i32, konst: boolean[], right: string[], left: st
 // the value is the address of (kind 47), or -1: for every other value, and
 // for the empty literal, which has no byte to read.
 pub function literal_first_bytes(f: SFunc): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   while (out.len() < f.nvals) {
     out = out.append(0 - 1);
   }
@@ -1818,8 +1808,8 @@ pub function literal_first_bytes(f: SFunc): i32[] {
 // value; a value read once by the branch that ends its block can be
 // consumed as flags rather than materialised.
 pub function use_counts(f: SFunc): i32[] {
-  var uses: i32[] = [];
-  var i: i32 = 0;
+  let uses: i32[] = [];
+  let i: i32 = 0;
   while (i < f.nvals) {
     uses = uses.append(0);
     i = i + 1;
@@ -1832,7 +1822,7 @@ pub function use_counts(f: SFunc): i32[] {
         }
       }
     }
-    var t: STerm = blk.term;
+    let t: STerm = blk.term;
     if (t.kind_tag == 1 && t.value >= 0 && t.value < uses.len()) {
       uses = uses.with(t.value, uses[t.value] + 1);
     }
@@ -1857,10 +1847,10 @@ pub function use_counts(f: SFunc): i32[] {
 // phi_sole_operand is the one value a phi collapses to, or -1. `repl`
 // resolves operands folded in an earlier round.
 function phi_sole_operand(ins: SInst, repl: i32[]): i32 {
-  var only: i32 = 0 - 1;
-  var i: i32 = 0;
+  let only: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < ins.args.len()) {
-    var a: i32 = resolve_repl(repl, ins.args[i]);
+    let a: i32 = resolve_repl(repl, ins.args[i]);
     if (a != ins.result) {
       if (only < 0) {
         only = a;
@@ -1874,7 +1864,7 @@ function phi_sole_operand(ins: SInst, repl: i32[]): i32 {
 }
 
 function resolve_repl(repl: i32[], v: i32): i32 {
-  var seen: i32 = 0;
+  let seen: i32 = 0;
   while (repl[v] != v && seen < 1000) {
     v = repl[v];
     seen = seen + 1;
@@ -1885,14 +1875,14 @@ function resolve_repl(repl: i32[], v: i32): i32 {
 // trivial_phi_repl builds the value-to-value map, to a fixpoint: folding one
 // phi can make the next trivial.
 function trivial_phi_repl(f: SFunc): i32[] {
-  var repl: i32[] = [];
-  var i: i32 = 0;
+  let repl: i32[] = [];
+  let i: i32 = 0;
   while (i < f.nvals) {
     repl = repl.append(i);
     i = i + 1;
   }
-  var rounds: i32 = 0;
-  var changed: boolean = true;
+  let rounds: i32 = 0;
+  let changed: boolean = true;
   while (changed && rounds < 100) {
     changed = false;
     rounds = rounds + 1;
@@ -1904,7 +1894,7 @@ function trivial_phi_repl(f: SFunc): i32[] {
         if (repl[ins.result] != ins.result) {
           continue;
         }
-        var only: i32 = phi_sole_operand(ins, repl);
+        let only: i32 = phi_sole_operand(ins, repl);
         if (only >= 0 && only != ins.result) {
           repl = repl.with(ins.result, only);
           changed = true;
@@ -1938,12 +1928,12 @@ pub function leaf_of(name: string, f: SFunc): Leaf[] {
   if (f.takes_env || f.blocks.len() == 0) {
     return [];
   }
-  var at: i32[] = block_positions(f);
-  var insts: SInst[] = [];
-  var bi: i32 = position_of(at, f.entry);
-  var seen: i32 = 0;
+  let at: i32[] = block_positions(f);
+  let insts: SInst[] = [];
+  let bi: i32 = position_of(at, f.entry);
+  let seen: i32 = 0;
   while (bi >= 0 && seen < f.blocks.len()) {
-    var b: SBlock = f.blocks[bi];
+    let b: SBlock = f.blocks[bi];
     for ins in b.insts {
       insts = insts.append(ins);
     }
@@ -1969,7 +1959,7 @@ function returning_leaf(name: string, f: SFunc, insts: SInst[], term: STerm): Le
   if (term.value < 0) {
     return [];
   }
-  var n: i32 = 0;
+  let n: i32 = 0;
   for ins in insts {
     if (!leaf_kind(ins.kind_tag)) {
       return [];
@@ -1981,7 +1971,7 @@ function returning_leaf(name: string, f: SFunc, insts: SInst[], term: STerm): Le
   if (n > leaf_limit()) {
     return [];
   }
-  var one: SBlock = SBlock { id: f.entry, insts: insts, term: term, preds: [] };
+  let one: SBlock = SBlock { id: f.entry, insts: insts, term: term, preds: [] };
   return [Leaf { name: name, func: SFunc { ...f, blocks: [one] } }];
 }
 
@@ -1993,12 +1983,12 @@ pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
   if (leaves.len() == 0) {
     return f;
   }
-  var nvals: i32 = f.nvals;
-  var blocks: SBlock[] = [];
+  let nvals: i32 = f.nvals;
+  let blocks: SBlock[] = [];
   for b in f.blocks {
-    var insts: SInst[] = [];
+    let insts: SInst[] = [];
     for ins in b.insts {
-      var at: i32 = 0 - 1;
+      let at: i32 = 0 - 1;
       if (ins.kind_tag == 11) {
         at = leaf_index(leaves, ins.str, ins.args.len());
       }
@@ -2006,9 +1996,9 @@ pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
         insts = insts.append(ins);
         continue;
       }
-      var leaf: SFunc = leaves[at].func;
-      var map: i32[] = [];
-      var i: i32 = 0;
+      let leaf: SFunc = leaves[at].func;
+      let map: i32[] = [];
+      let i: i32 = 0;
       while (i < leaf.nvals) {
         map = map.append(0 - 1);
         i = i + 1;
@@ -2018,7 +2008,7 @@ pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
           map = map.with(li.result, ins.args[li.imm]);
         } else {
           map = map.with(li.result, nvals);
-          var args: i32[] = [];
+          let args: i32[] = [];
           for a in li.args {
             args = args.append(map[a]);
           }
@@ -2036,7 +2026,7 @@ pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
 }
 
 function leaf_index(leaves: Leaf[], name: string, argc: i32): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < leaves.len()) {
     if (leaves[i].name == name && leaves[i].func.nparams == argc) {
       return i;
@@ -2048,9 +2038,9 @@ function leaf_index(leaves: Leaf[], name: string, argc: i32): i32 {
 
 // prune_trivial_phis drops the folded phis and rewrites every reader.
 pub function prune_trivial_phis(f: SFunc): SFunc {
-  var repl: i32[] = trivial_phi_repl(f);
-  var any: boolean = false;
-  var i: i32 = 0;
+  let repl: i32[] = trivial_phi_repl(f);
+  let any: boolean = false;
+  let i: i32 = 0;
   while (i < f.nvals) {
     if (repl[i] != i) {
       any = true;
@@ -2060,15 +2050,15 @@ pub function prune_trivial_phis(f: SFunc): SFunc {
   if (!any) {
     return f;
   }
-  var flat: i32[] = [];
+  let flat: i32[] = [];
   i = 0;
   while (i < f.nvals) {
     flat = flat.append(resolve_repl(repl, i));
     i = i + 1;
   }
-  var nblocks: SBlock[] = [];
+  let nblocks: SBlock[] = [];
   for blk in f.blocks {
-    var ninsts: SInst[] = [];
+    let ninsts: SInst[] = [];
     for ins in blk.insts {
       if (ins.kind_tag == 8 && flat[ins.result] != ins.result) {
         continue;
@@ -2085,14 +2075,14 @@ pub function prune_trivial_phis(f: SFunc): SFunc {
 // per entry, so a repeat spells one label twice and the assembler rejects the
 // whole module without naming the pass that produced it (#9688).
 pub function repeated_block_id(f: SFunc): i32 {
-  var top: i32 = 0;
+  let top: i32 = 0;
   for blk in f.blocks {
     if (blk.id > top) {
       top = blk.id;
     }
   }
-  var seen: i32[] = [];
-  var i: i32 = 0;
+  let seen: i32[] = [];
+  let i: i32 = 0;
   while (i <= top) {
     seen = seen.append(0);
     i = i + 1;
@@ -2119,10 +2109,10 @@ pub function repeated_block_id(f: SFunc): i32 {
 // carried only values nothing read. A block with phis keeps every edge into
 // it, since the phis' operands are per predecessor.
 pub function thread_forwarding(f: SFunc): SFunc {
-  var at: i32[] = block_positions(f);
-  var nblocks: SBlock[] = [];
+  let at: i32[] = block_positions(f);
+  let nblocks: SBlock[] = [];
   for blk in f.blocks {
-    var t: STerm = blk.term;
+    let t: STerm = blk.term;
     if (t.kind_tag == 2) {
       t = STerm { ...t, target: forwarded(f, at, t.target) };
     }
@@ -2131,17 +2121,18 @@ pub function thread_forwarding(f: SFunc): SFunc {
     }
     nblocks = nblocks.append(SBlock { id: blk.id, insts: blk.insts, term: t, preds: blk.preds });
   }
-  var g: SFunc = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
-  var live: boolean[] = [];
-  var i: i32 = 0;
+  let g: SFunc = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
+  let live: boolean[] = [];
+  let i: i32 = 0;
   while (i < g.blocks.len()) {
     live = live.append(false);
     i = i + 1;
   }
-  var work: i32[] = [position_of(at, g.entry)];
-  while (work.len() > 0) {
-    var b: i32 = work[work.len() - 1];
-    work = drop_last_i(work);
+  let work: i32[] = [position_of(at, g.entry)];
+  let next: i32 = 0;
+  while (next < work.len()) {
+    let b: i32 = work[next];
+    next = next + 1;
     if (b < 0 || live[b]) {
       continue;
     }
@@ -2150,7 +2141,7 @@ pub function thread_forwarding(f: SFunc): SFunc {
       work = work.append(s);
     }
   }
-  var kept: SBlock[] = [];
+  let kept: SBlock[] = [];
   i = 0;
   while (i < g.blocks.len()) {
     if (live[i]) {
@@ -2158,24 +2149,24 @@ pub function thread_forwarding(f: SFunc): SFunc {
     }
     i = i + 1;
   }
-  var out: SFunc = SFunc { ...g, blocks: kept };
+  let out: SFunc = SFunc { ...g, blocks: kept };
   return SFunc { ...out, blocks: refreshed_preds(out) };
 }
 
 // forwarded follows a chain of empty forwarding blocks from `id` to the
 // first block that is not one; a cycle of them ends the walk where it is.
 function forwarded(f: SFunc, at: i32[], id: i32): i32 {
-  var cur: i32 = id;
-  var steps: i32 = 0;
+  let cur: i32 = id;
+  let steps: i32 = 0;
   while (steps <= f.blocks.len()) {
     if (cur < 0 || cur >= at.len() || at[cur] < 0) {
       return cur;
     }
-    var b: SBlock = f.blocks[at[cur]];
+    let b: SBlock = f.blocks[at[cur]];
     if (b.insts.len() != 0 || b.term.kind_tag != 2 || b.term.target == cur) {
       return cur;
     }
-    var nt: i32 = b.term.target;
+    let nt: i32 = b.term.target;
     if (nt < 0 || nt >= at.len() || at[nt] < 0 || has_phi(f.blocks[at[nt]])) {
       return cur;
     }
@@ -2199,9 +2190,9 @@ function has_phi(b: SBlock): boolean {
 // whose order the phis' operands follow, less the entries no edge backs any
 // more: a dropped block, or a folded branch that no longer comes this way.
 function refreshed_preds(f: SFunc): SBlock[] {
-  var at: i32[] = block_positions(f);
-  var preds: i32[][] = [];
-  var i: i32 = 0;
+  let at: i32[] = block_positions(f);
+  let preds: i32[][] = [];
+  let i: i32 = 0;
   while (i < f.blocks.len()) {
     preds = preds.append([]);
     i = i + 1;
@@ -2215,10 +2206,10 @@ function refreshed_preds(f: SFunc): SBlock[] {
     }
     i = i + 1;
   }
-  var out: SBlock[] = [];
+  let out: SBlock[] = [];
   i = 0;
   while (i < f.blocks.len()) {
-    var b: SBlock = f.blocks[i];
+    let b: SBlock = f.blocks[i];
     if (has_phi(b)) {
       out = out.append(trim_phi_edges(b, preds[i]));
     } else {
@@ -2233,10 +2224,10 @@ function refreshed_preds(f: SFunc): SBlock[] {
 // for them, whose predecessor is not among `edges`, the blocks that branch
 // to b now.
 function trim_phi_edges(b: SBlock, edges: i32[]): SBlock {
-  var keep: boolean[] = [];
-  var npreds: i32[] = [];
+  let keep: boolean[] = [];
+  let npreds: i32[] = [];
   for p in b.preds {
-    var k: boolean = has_pred(edges, p);
+    let k: boolean = has_pred(edges, p);
     keep = keep.append(k);
     if (k) {
       npreds = npreds.append(p);
@@ -2245,14 +2236,14 @@ function trim_phi_edges(b: SBlock, edges: i32[]): SBlock {
   if (npreds.len() == b.preds.len()) {
     return b;
   }
-  var ninsts: SInst[] = [];
+  let ninsts: SInst[] = [];
   for ins in b.insts {
     if (ins.kind_tag != 8) {
       ninsts = ninsts.append(ins);
       continue;
     }
-    var nargs: i32[] = [];
-    var i: i32 = 0;
+    let nargs: i32[] = [];
+    let i: i32 = 0;
     while (i < ins.args.len()) {
       if (i >= keep.len() || keep[i]) {
         nargs = nargs.append(ins.args[i]);
@@ -2278,9 +2269,9 @@ function has_pred(ps: i32[], id: i32): boolean {
 // value zero-extended, so its left half carries a u32_wrap and its right half
 // needs none; a 64-bit rotate has neither. The shifts are left to prune_dead.
 pub function fuse_rotates(f: SFunc): SFunc {
-  var defs: SInst[] = [];
-  var none: SInst = SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
-  var i: i32 = 0;
+  let defs: SInst[] = [];
+  let none: SInst = SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let i: i32 = 0;
   while (i < f.nvals) {
     defs = defs.append(none);
     i = i + 1;
@@ -2292,14 +2283,14 @@ pub function fuse_rotates(f: SFunc): SFunc {
       }
     }
   }
-  var changed: boolean = false;
-  var nblocks: SBlock[] = [];
+  let changed: boolean = false;
+  let nblocks: SBlock[] = [];
   for blk in f.blocks {
-    var ninsts: SInst[] = [];
+    let ninsts: SInst[] = [];
     for ins in blk.insts {
-      var r: SInst = ins;
+      let r: SInst = ins;
       if (ins.kind_tag == 9 && ins.str == "or" && ins.args.len() == 2) {
-        var m: SInst = rotate_half_pair(defs, ins, ins.args[0], ins.args[1]);
+        let m: SInst = rotate_half_pair(defs, ins, ins.args[0], ins.args[1]);
         if (m.kind_tag == 0) {
           m = rotate_half_pair(defs, ins, ins.args[1], ins.args[0]);
         }
@@ -2321,10 +2312,10 @@ pub function fuse_rotates(f: SFunc): SFunc {
 // rotate_half_pair is the rotate `or` computes when `rv` is the logical right
 // shift and `lv` the left one, or an instruction of kind 0 when it is not one.
 function rotate_half_pair(defs: SInst[], or: SInst, rv: i32, lv: i32): SInst {
-  var no: SInst = SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
-  var rs: SInst = def_of(defs, rv);
-  var ls: SInst = def_of(defs, lv);
-  var w: i32 = 64;
+  let no: SInst = SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let rs: SInst = def_of(defs, rv);
+  let ls: SInst = def_of(defs, lv);
+  let w: i32 = 64;
   if (zero_extends_u32(ls)) {
     w = 32;
     ls = def_of(defs, ls.args[0]);
@@ -2338,8 +2329,8 @@ function rotate_half_pair(defs: SInst[], or: SInst, rv: i32, lv: i32): SInst {
   if (copy_root(defs, rs.args[0]) != copy_root(defs, ls.args[0])) {
     return no;
   }
-  var n: i64 = const_value(defs, rs.args[1]);
-  var k: i64 = const_value(defs, ls.args[1]);
+  let n: i64 = const_value(defs, rs.args[1]);
+  let k: i64 = const_value(defs, ls.args[1]);
   if (n <= 0i64 || k <= 0i64 || n + k != w as i64) {
     return no;
   }
@@ -2374,10 +2365,10 @@ function shift_width(imm: i32): i32 {
 
 // copy_root follows `copy` instructions back to the value they alias.
 function copy_root(defs: SInst[], v: i32): i32 {
-  var r: i32 = v;
-  var steps: i32 = 0;
+  let r: i32 = v;
+  let steps: i32 = 0;
   while (steps < defs.len()) {
-    var d: SInst = def_of(defs, r);
+    let d: SInst = def_of(defs, r);
     if (d.kind_tag != 7 || d.args.len() != 1) {
       return r;
     }
@@ -2390,7 +2381,7 @@ function copy_root(defs: SInst[], v: i32): i32 {
 // const_value is an integer constant's value, or -1 for anything else (no
 // rotate count is negative).
 function const_value(defs: SInst[], v: i32): i64 {
-  var d: SInst = def_of(defs, copy_root(defs, v));
+  let d: SInst = def_of(defs, copy_root(defs, v));
   if (d.kind_tag == 1) {
     return d.imm as i64;
   }
@@ -2409,8 +2400,8 @@ pub function rotr_width(what: string): i32 {
 }
 
 pub function rotr_count(what: string): i32 {
-  var n: i32 = 0;
-  var i: i32 = 8;
+  let n: i32 = 0;
+  let i: i32 = 8;
   while (i < what.len()) {
     n = n * 10 + (what[i] as i32 - 48);
     i = i + 1;
@@ -2419,10 +2410,10 @@ pub function rotr_count(what: string): i32 {
 }
 
 pub function prune_dead(f: SFunc): SFunc {
-  var live: i32[] = prune_mark(f, prune_roots(f));
-  var nblocks: SBlock[] = [];
+  let live: i32[] = prune_mark(f, prune_roots(f));
+  let nblocks: SBlock[] = [];
   for blk in f.blocks {
-    var ninsts: SInst[] = [];
+    let ninsts: SInst[] = [];
     for ins in blk.insts {
       if (inst_has_effect(ins.kind_tag) || live[ins.result] == 1) {
         ninsts = ninsts.append(ins);
@@ -2440,24 +2431,15 @@ function inst_has_effect(k: i32): boolean {
   // everything but a load (40) and a label address (45..47) has one: the
   // output, file and buffer ops, a store, a bounds-checked read (it may
   // abort) and the box allocation.
-  var below: i32[] = [6, 11, 12, 14, 16, 17];
-  for e in below {
-    if (k == e) {
-      return true;
-    }
+  if (k < 19) {
+    return k == 6 || k == 11 || k == 12 || k == 14 || k == 16 || k == 17;
   }
-  var pure: i32[] = [40, 45, 46, 47, 52, 54, 57, 58];
-  for q in pure {
-    if (k == q) {
-      return false;
-    }
-  }
-  return k >= 19;
+  return k != 40 && k != 45 && k != 46 && k != 47 && k != 52 && k != 54 && k != 57 && k != 58;
 }
 
 // prune_roots is every value an effectful instruction or a terminator reads.
 function prune_roots(f: SFunc): i32[] {
-  var work: i32[] = [];
+  let work: i32[] = [];
   for blk in f.blocks {
     for ins in blk.insts {
       if (inst_has_effect(ins.kind_tag)) {
@@ -2479,23 +2461,23 @@ function prune_roots(f: SFunc): i32[] {
 // prune_mark marks the roots and, through the pure instructions that define
 // them, everything they read.
 function prune_mark(f: SFunc, work: i32[]): i32[] {
-  var live: i32[] = zeros(f.nvals);
-  var def_b: i32[] = zeros(f.nvals);
-  var def_k: i32[] = zeros(f.nvals);
-  var bi: i32 = 0;
+  let live: i32[] = zeros(f.nvals);
+  let def_b: i32[] = zeros(f.nvals);
+  let def_k: i32[] = zeros(f.nvals);
+  let bi: i32 = 0;
   while (bi < f.blocks.len()) {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < f.blocks[bi].insts.len()) {
-      var r: i32 = f.blocks[bi].insts[k].result;
+      let r: i32 = f.blocks[bi].insts[k].result;
       def_b = def_b.with(r, bi + 1);
       def_k = def_k.with(r, k);
       k = k + 1;
     }
     bi = bi + 1;
   }
-  var at: i32 = 0;
+  let at: i32 = 0;
   while (at < work.len()) {
-    var v: i32 = work[at];
+    let v: i32 = work[at];
     at = at + 1;
     if (v < 0 || v >= f.nvals || live[v] == 1) {
       continue;
@@ -2514,8 +2496,8 @@ function prune_mark(f: SFunc, work: i32[]): i32[] {
 // count_insts totals the instructions across all blocks (used by tests to
 // confirm the optimiser actually shrinks the IR).
 pub function count_insts(f: SFunc): i32 {
-  var n: i32 = 0;
-  var bi: i32 = 0;
+  let n: i32 = 0;
+  let bi: i32 = 0;
   while (bi < f.blocks.len()) {
     n = n + f.blocks[bi].insts.len();
     bi = bi + 1;
@@ -2524,7 +2506,7 @@ pub function count_insts(f: SFunc): i32 {
 }
 
 pub function block_index(f: SFunc, id: i32): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < f.blocks.len()) {
     if (f.blocks[i].id == id) {
       return i;
@@ -2535,7 +2517,7 @@ pub function block_index(f: SFunc, id: i32): i32 {
 }
 
 pub function pred_slot(blk: SBlock, prev: i32): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < blk.preds.len()) {
     if (blk.preds[i] == prev) {
       return i;

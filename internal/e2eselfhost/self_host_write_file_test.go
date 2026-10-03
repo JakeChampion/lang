@@ -27,7 +27,7 @@ func TestSelfHostWriteFileX86_64(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "wf_roundtrip.txt")
 	prog := `function main(): i32 {
-    var p: string = "` + path + `";
+    let p: string = "` + path + `";
     match (write_file(p, "hello-selfhost")) {
         Err(_) => { return 1; },
         Ok(_) => {}

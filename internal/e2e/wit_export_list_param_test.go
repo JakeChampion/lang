@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -60,7 +60,7 @@ func TestExportListParamRunsViaConsumer(t *testing.T) {
 	}
 	expSrc := `@export("local:test/nums@0.1.0", "sum")
 function sum(xs: i32[]): i32 {
-	var s: i32 = 0;
+	let s: i32 = 0;
 	for x in xs { s = s + x; }
 	return s;
 }`
@@ -68,11 +68,7 @@ function sum(xs: i32[]): i32 {
 	if err := os.WriteFile(expPath, []byte(expSrc), 0o644); err != nil {
 		t.Fatalf("write exporter prog: %v", err)
 	}
-	expInfo, expProg := loadCheckMono(t, expPath)
-	expCore, err := wasmbin.BuildWithOptions(expProg, expInfo, wasmbin.BuildOptions{ForceMemorySection: true, Preview2WASI: true})
-	if err != nil {
-		t.Fatalf("build exporter core: %v", err)
-	}
+	expCore := e2eharness.SelfHostReactorCore(t, expPath)
 	if !bytes.Contains(expCore, []byte("local:test/nums@0.1.0#sum")) {
 		t.Fatalf("exporter core missing the surfaced @export export")
 	}
@@ -118,7 +114,7 @@ function sum(xs: i32[]): i32 {
 function sum(xs: i32[]): i32;
 
 function main(): i32 {
-	var xs: i32[] = [10, 20, 30, 40];
+	let xs: i32[] = [10, 20, 30, 40];
 	if (sum(xs) == 100) { write("` + want + `"); } else { write("sum-bad"); }
 	return 0;
 }`
@@ -126,13 +122,7 @@ function main(): i32 {
 	if err := os.WriteFile(userPath, []byte(userSrc), 0o644); err != nil {
 		t.Fatalf("write consumer prog: %v", err)
 	}
-	userInfo, userProg := loadCheckMono(t, userPath)
-	userCore, err := wasmbin.BuildWithOptions(userProg, userInfo, wasmbin.BuildOptions{
-		ForceMemorySection: true, Preview2WASI: true, SynthCliRun: true, CliRunResult: true,
-	})
-	if err != nil {
-		t.Fatalf("build consumer core: %v", err)
-	}
+	userCore := e2eharness.SelfHostComponentCore(t, userPath)
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)

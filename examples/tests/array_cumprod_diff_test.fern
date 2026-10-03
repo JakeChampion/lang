@@ -10,7 +10,7 @@ import "std/array" as array;
 // backends; this is the migration-shaped companion.
 
 function near(a: f64, b: f64): boolean {
-  var d: f64 = a - b;
+  let d: f64 = a - b;
   if (d < 0.0) {
     d = 0.0 - d;
   }
@@ -19,7 +19,7 @@ function near(a: f64, b: f64): boolean {
 
 function test_cumprod(): test.TestOutcome {
   // 1, 1*2, 1*2*3, 1*2*3*4 = 1, 2, 6, 24
-  var cp: f64[] = array.cumprod_f64([1.0, 2.0, 3.0, 4.0]);
+  let cp: f64[] = array.cumprod_f64([1.0, 2.0, 3.0, 4.0]);
   if (!near(cp[0], 1.0)) {
     return test.fail("first");
   }
@@ -30,7 +30,7 @@ function test_cumprod(): test.TestOutcome {
 }
 
 function test_diff(): test.TestOutcome {
-  var df: f64[] = array.diff_f64([1.0, 3.0, 6.0, 10.0]);
+  let df: f64[] = array.diff_f64([1.0, 3.0, 6.0, 10.0]);
   if (df.len() != 3) {
     return test.fail("length one shorter");
   }
@@ -46,8 +46,8 @@ function test_diff_negatives(): test.TestOutcome {
 
 function test_diff_inverts_cumsum(): test.TestOutcome {
   // diff(cumsum(xs)) recovers xs (minus its first element).
-  var xs: f64[] = [1.0, 2.0, 3.0, 4.0];
-  var d2: f64[] = array.diff_f64(array.cumsum_f64(xs));
+  let xs: f64[] = [1.0, 2.0, 3.0, 4.0];
+  let d2: f64[] = array.diff_f64(array.cumsum_f64(xs));
   if (!near(d2[0], 2.0)) {
     return test.fail("recover 2");
   }
@@ -65,7 +65,7 @@ function test_edge_cases(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/array f64 cumprod/diff");
+  let r: test.TestRunner = test.test_new("std/array f64 cumprod/diff");
   r = r.it("cumprod", test_cumprod);
   r = r.it("diff", test_diff);
   r = r.it("diff negatives", test_diff_negatives);

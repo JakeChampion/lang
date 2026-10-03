@@ -147,7 +147,7 @@ func TestWASMAsmReservedNameFn(t *testing.T) {
 // __fern_alloc(3 + 38) = 42.
 const runtimeHelperNameFnSrc = `function __fern_alloc(x: i32): i32 { return x + 1; }
 function main(): i32 {
-    var a: i32[] = [1, 2, 3];
+    let a: i32[] = [1, 2, 3];
     return __fern_alloc(a.len() + 38);
 }
 `
@@ -210,7 +210,7 @@ func TestWASMRuntimeHelperNameFn(t *testing.T) {
 // s = "a" + "b"*3 → len 4; __fern_str_append(4 + 37) = 42.
 const loweringHelperNameFnSrc = `function __fern_str_append(x: i32): i32 { return x + 1; }
 function main(): i32 {
-    var s: string = "a";
+    let s: string = "a";
     for i in 0..3 { s = s + "b"; }
     return __fern_str_append(s.len() + 37);
 }

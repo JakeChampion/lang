@@ -136,7 +136,7 @@ func TestCollectVtablesNoneWhenNoDyn(t *testing.T) {
 trait Shape { function area(self: Self): i32; }
 struct Circle { r: i32 }
 impl Shape for Circle { function area(self: Self): i32 { return self.r; } }
-function main(): i32 { var c: Circle = Circle { r: 2 }; return c.area(); }`
+function main(): i32 { let c: Circle = Circle { r: 2 }; return c.area(); }`
 	prog, info := checkSourceForVtable(t, src)
 	if vts := collectVtables(prog, info); len(vts) != 0 {
 		t.Fatalf("want 0 vtables without any dyn use, got %d: %+v", len(vts), vts)
@@ -255,7 +255,7 @@ trait Show {
 impl Show for i32 { function show(self: Self): i32 { return self; } }
 impl Show for boolean { function show(self: Self): i32 { return 1; } }
 function main(): i32 {
-    var d: dyn Show = 7;
+    let d: dyn Show = 7;
     return d.show();
 }`
 	prog, info := checkSourceForVtable(t, src)

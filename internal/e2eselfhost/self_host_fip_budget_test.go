@@ -50,7 +50,7 @@ function main(): i32 { return make(3).count; }
 fip function bump(own s: State): State {
 	return State { ...s, count: s.count + 1 };
 }
-function main(): i32 { var s: State = bump(State { count: 0, total: 0 as i64 }); return s.count; }
+function main(): i32 { let s: State = bump(State { count: 0, total: 0 as i64 }); return s.count; }
 `
 	// A graded claim buys exactly the fresh site it names, so the same body
 	// the bare claim is refused for is accepted here. This is what keeps the
@@ -70,7 +70,7 @@ fbip function two(own s: S, k: i32): S {
 	if (k > 0) { return S { ...s, n: s.n + k }; }
 	return S { ...s, n: s.n - 1 };
 }
-function main(): i32 { var s: S = two(S { xs: [1, 2], n: 0 }, 1); return s.n; }
+function main(): i32 { let s: S = two(S { xs: [1, 2], n: 0 }, 1); return s.n; }
 `
 	fipNoClaimSrc = `struct State { count: i32, total: i64 }
 function make(n: i32): State {
@@ -78,13 +78,11 @@ function make(n: i32): State {
 }
 function main(): i32 { return make(3).count; }
 `
-	// `xs.map(f)` on an `own` array passes E053 on both compilers (#9733).
-	// Native writes it through the donor (R7) and the claim holds there;
-	// this compiler has no in-place map, so its E068 says so rather than
-	// letting an annotation it cannot honour read as a guarantee. The
-	// element is i32 so the same source reaches E068 on the wasm leg too:
-	// the wasm route refuses a combinator handed a function over a 64-bit
-	// element before any claim is examined (#9838).
+	// `xs.map(f)` on an `own` array passes E053 on both compilers (#9733),
+	// but R7 writes a map through its donor only over a 64-bit element, on
+	// both, so this i32 map is materialized by the combinator and E068 says
+	// so rather than letting the annotation read as a guarantee.
+	// self_host_fip_inplace_reuse_test.go holds the i64 map the claim holds for.
 	fipOwnedMapSrc = `import "std/array";
 fip function dbl(x: i32): i32 { return x * 2; }
 fip function twice(own xs: i32[]): i32[] { return xs.map((x: i32): i32 => dbl(x)); }
@@ -128,7 +126,7 @@ func TestSelfHostCompilePathEnforcesFipBudget(t *testing.T) {
 			for _, tc := range []struct{ name, src, kw string }{
 				{"unpaired fbip", fipUnpairedFbipSrc, "`fbip` function"},
 				{"unpaired fip", fipUnpairedFipSrc, "`fip` function"},
-				{"owned map without an in-place shape", fipOwnedMapSrc, "no in-place map"},
+				{"owned map without an in-place shape", fipOwnedMapSrc, "R7 writes a map in place only"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					out, code := compile(t, target, tc.src)

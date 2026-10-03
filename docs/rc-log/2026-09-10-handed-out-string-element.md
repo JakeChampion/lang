@@ -20,7 +20,7 @@ found the free; the raw stack walk found the walker.
 
 `for_binding` splits the pattern into a fresh `string[]` and hands it to
 `bind_tuple_destr_names`, whose parameter is box-borrowable, so the caller keeps
-its deep free. Inside, `var nm: string = names[i]` reads an element that deep
+its deep free. Inside, `let nm: string = names[i]` reads an element that deep
 free releases, and `out.bind(nm, et)` hands it to `bind`'s `name`, a parameter
 that is stored (`s.names.append(name)`) and so neither borrowable nor counted.
 A string parameter at such a position takes over the argument's reference; the

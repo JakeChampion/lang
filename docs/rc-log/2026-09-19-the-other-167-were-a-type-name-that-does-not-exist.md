@@ -8,7 +8,7 @@ sidecar" and the next step being to reduce one.
 Reducing one took four programs. All 167 were this:
 
 ```fern
-function main(): i32 { var v: boolean = if (true) { false } else { true }; … }
+function main(): i32 { let v: boolean = if (true) { false } else { true }; … }
 ```
 
 An if-expression in value position desugars to a 0-arg IIFE whose `ret_type`
@@ -96,12 +96,12 @@ lines reproduce it.
 
 ```fern
 function main(): i32 {
-    var f: (i32) => i32 = if (true) { ((x: i32) => x) } else { ((y: i32) => y + 1) };
+    let f: (i32) => i32 = if (true) { ((x: i32) => x) } else { ((y: i32) => y + 1) };
     return f(42);
 }
 ```
 
-`irlower.hoist_value_iife` declares the hoisted IIFE `ret_type: "fn"`
+`lift.hoist_value_iife` declares the hoisted IIFE `ret_type: "fn"`
 deliberately — the hoist fires only when the arms yield a fn value, so the
 function IS a higher-order factory and `closure_ret_fns_of` is gated on exactly
 that declaration. The coarse tag is right. What it has no sidecar pair for is

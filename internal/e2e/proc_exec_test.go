@@ -28,10 +28,10 @@ import "testing"
 // `return 71` after proc_exec would mean exec failed.
 const procExecSpawnSrc = `
 function main(): i32 {
-    var pid: i32 = proc_fork();
+    let pid: i32 = proc_fork();
     if (pid < 0) { return 70; }
     if (pid == 0) {
-        var rc: i32 = proc_exec("/bin/sh", ["-c", "exit 23"]);
+        let rc: i32 = proc_exec("/bin/sh", ["-c", "exit 23"]);
         return 71;
     }
     return proc_waitpid(pid);
@@ -41,12 +41,12 @@ function main(): i32 {
 // arguments after the implicit argv[0].
 const procExecFailAndArgvSrc = `
 function main(): i32 {
-    var rc: i32 = proc_exec("/nonexistent/binary", ["x"]);
+    let rc: i32 = proc_exec("/nonexistent/binary", ["x"]);
     if (rc >= 0) { return 70; }
-    var pid: i32 = proc_fork();
+    let pid: i32 = proc_fork();
     if (pid < 0) { return 71; }
     if (pid == 0) {
-        var r2: i32 = proc_exec("/bin/sh", ["-c", "test \"$0\" = zeroname && test \"$1\" = one && exit 17", "zeroname", "one"]);
+        let r2: i32 = proc_exec("/bin/sh", ["-c", "test \"$0\" = zeroname && test \"$1\" = one && exit 17", "zeroname", "one"]);
         return 72;
     }
     return proc_waitpid(pid);
@@ -56,12 +56,12 @@ function main(): i32 {
 // ([path, NULL]) — the array-length load runs even when the copy loop does not.
 const procExecEmptyArgsSrc = `
 function main(): i32 {
-    var rc: i32 = proc_exec("/nonexistent/binary", []);
+    let rc: i32 = proc_exec("/nonexistent/binary", []);
     if (rc >= 0) { return 70; }
-    var pid: i32 = proc_fork();
+    let pid: i32 = proc_fork();
     if (pid < 0) { return 71; }
     if (pid == 0) {
-        var r2: i32 = proc_exec("/bin/true", []);
+        let r2: i32 = proc_exec("/bin/true", []);
         return 72;
     }
     return proc_waitpid(pid);
@@ -112,7 +112,7 @@ func TestArm64ProcExec(t *testing.T) {
 func TestInterpProcExecENOSYS(t *testing.T) {
 	src := `
 function main(): i32 {
-    var rc: i32 = proc_exec("/bin/true", []);
+    let rc: i32 = proc_exec("/bin/true", []);
     if (rc == 0 - 38) { return 9; }
     return 8;
 }`

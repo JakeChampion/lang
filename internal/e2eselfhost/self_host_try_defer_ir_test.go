@@ -23,7 +23,7 @@ var tryDeferIRCases = []struct {
 function f(x: i32): Result[i32, i32] {
     defer print("D");
     errdefer print("E");
-    var v: i32 = step(x)?;
+    let v: i32 = step(x)?;
     return Ok(v);
 }
 function main(): i32 {
@@ -37,7 +37,7 @@ function main(): i32 {
 function f(x: i32): Result[i32, i32] {
     defer print("D");
     errdefer print("E");
-    var v: i32 = step(x)?;
+    let v: i32 = step(x)?;
     return Ok(v);
 }
 function main(): i32 {
@@ -50,7 +50,7 @@ function main(): i32 {
 function f(x: i32): Result[i32, i32] {
     defer print("A");
     defer print("B");
-    var v: i32 = step(x)?;
+    let v: i32 = step(x)?;
     return Ok(v);
 }
 function main(): i32 { match (f(0 - 3)) { Ok(v) => {}, Err(e) => { print("err"); } } return 0; }`,
@@ -61,7 +61,7 @@ function main(): i32 { match (f(0 - 3)) { Ok(v) => {}, Err(e) => { print("err");
 		`function step(x: i32): Result[i32, i32] { if (x < 0) { return Err(1); } return Ok(x); }
 function f(reg: boolean, x: i32): Result[i32, i32] {
     if (reg) { defer print("C"); }
-    var v: i32 = step(x)?;
+    let v: i32 = step(x)?;
     defer print("L");
     return Ok(v);
 }
@@ -76,7 +76,7 @@ function main(): i32 {
 function f(x: i32): Option[i32] {
     defer print("D");
     errdefer print("E");
-    var v: i32 = step(x)?;
+    let v: i32 = step(x)?;
     return Some(v + 1);
 }
 function main(): i32 { match (f(0 - 2)) { Some(v) => {}, None => { print("none"); } } return 0; }`,
@@ -86,15 +86,15 @@ function main(): i32 { match (f(0 - 2)) { Some(v) => {}, None => { print("none")
 	// owned loop's extra heap growth stays ~0 only if the array is freed.
 	{"rc-owned-array-reclaimed-with-defer",
 		`function fails(): Option[i32] { return None; }
-function step_bare(): Option[i32] { var acc: i32 = 0; defer acc = acc + 1; var x: i32 = fails()?; return Some(x); }
-function step_owned(): Option[i32] { var acc: i32 = 0; defer acc = acc + 1; var owned: i32[] = [1, 2, 3, 4, 5]; var x: i32 = fails()?; return Some(x + owned[0]); }
+function step_bare(): Option[i32] { let acc: i32 = 0; defer acc = acc + 1; let x: i32 = fails()?; return Some(x); }
+function step_owned(): Option[i32] { let acc: i32 = 0; defer acc = acc + 1; let owned: i32[] = [1, 2, 3, 4, 5]; let x: i32 = fails()?; return Some(x + owned[0]); }
 function main(): i32 {
-    var b0: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let b0: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < 20000) { match (step_bare()) { Some(_) => {}, None => {} } i = i + 1; }
-    var base: i32 = (__heap_bump_bytes() as i32) - b0;
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let base: i32 = (__heap_bump_bytes() as i32) - b0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 20000) { match (step_owned()) { Some(_) => {}, None => {} } j = j + 1; }
     if ((__heap_bump_bytes() as i32) - b1 - base < 100000) { return 7; }
     return 1;

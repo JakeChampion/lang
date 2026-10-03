@@ -738,8 +738,8 @@ func asmAddSub(a *Assembler, mnem string, ops []string) error {
 	// denotes SP only in the EXTENDED-register form. The shifted-register
 	// form (ADDreg/SUBreg) treats 31 as XZR, so it silently turns
 	// `sub sp, sp, x16` into `sub xzr, xzr, x16` (`neg xzr, x16`) — a no-op
-	// that never adjusts SP. Large stack frames (> 4095 bytes, e.g. the
-	// self-host `lower_stmt`) materialise the frame size in a register and
+	// that never adjusts SP. Large stack frames (> 4095 bytes) materialise
+	// the frame size in a register and
 	// emit `sub sp, sp, x16` / `add sp, sp, x16`; encoded as shifted-register
 	// the frame was never allocated, so the operand-stack push/pops overran
 	// the locals and corrupted them (issue #3598). Route SP-targeting plain-

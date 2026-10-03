@@ -28,19 +28,19 @@ func TestMapWideKeyGetOrFallbackIsReclaimed(t *testing.T) {
 import "core/int";
 import "core/map";
 function mk(): i32 {
-    var m: Map[i64, i32[]] = map_new(8);
+    let m: Map[i64, i32[]] = map_new(8);
     m = m.insert(7 as i64, [1, 2]);
 ` + read + `
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 100) { t = t + mk(); k = k + 1; }
     return 0;
 }`
 	}
 	const insertOnly = `    return 0;`
-	const freshFallback = `    var v: i32[] = m.get_or(9 as i64, [0]);
+	const freshFallback = `    let v: i32[] = m.get_or(9 as i64, [0]);
     return v.len();`
 
 	for _, tc := range []struct {

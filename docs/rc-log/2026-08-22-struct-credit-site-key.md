@@ -9,8 +9,8 @@ not to touch without a narrower gate, and the only one whose collision is a
 ## What it was
 
 ```fern
-if (i % 2 == 0) { var v: P = P { xs: [i, i + 1], s: w("p") }; t = t + v.xs.len(); }
-if (i % 2 == 1) { var v: P = base;                            t = t + v.xs.len(); }
+if (i % 2 == 0) { let v: P = P { xs: [i, i + 1], s: w("p") }; t = t + v.xs.len(); }
+if (i % 2 == 1) { let v: P = base;                            t = t + v.xs.len(); }
 ```
 
 | shape | interp / native | before | after |

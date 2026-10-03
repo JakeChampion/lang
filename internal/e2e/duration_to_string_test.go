@@ -22,7 +22,7 @@ function main(): i32 {
     if (time.duration_seconds((0 as i64) - 10).to_string() != "-10s") { return 10; }
     if (time.duration_millis((0 as i64) - 500).to_string() != "-500ms") { return 11; }
     if (time.duration_seconds((0 as i64) - 3661).to_string() != "-1h1m1s") { return 12; }
-    var subms: Duration = Duration { sec: 0 as i64, nsec: 500000 };
+    let subms: Duration = Duration { sec: 0 as i64, nsec: 500000 };
     if (subms.to_string() != "0s") { return 13; }
     if (time.duration_seconds(172800 as i64).to_string() != "48h") { return 14; }
     return 42;

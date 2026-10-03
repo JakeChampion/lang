@@ -16,8 +16,7 @@ import (
 // arithmetic five (`+= -= *= /= %=`) — so a program using `x &= y` parsed wrong
 // and the module bailed. parser.fern now mirrors the native
 // set exactly, so the bitwise/shift forms desugar to the already-IR-eligible
-// binary ops (`& | ^ << >>` all lower through lower_expr) and the whole module
-// routes IR.
+// binary ops and the whole module routes IR.
 //
 // Each case is oracle-checked against the interpreter and routing-pinned to "ir"
 // via asm_pathprobe_run, mirroring self_host_labeled_break_ir_test.go. Results
@@ -26,16 +25,16 @@ var compoundBitwiseIRCases = []struct {
 	name string
 	main string
 }{
-	{"and-eq", `function main(): i32 { var x = 12; x &= 6; return x; }`},
-	{"or-eq", `function main(): i32 { var x = 8; x |= 5; return x; }`},
-	{"xor-eq", `function main(): i32 { var x = 12; x ^= 10; return x; }`},
-	{"shl-eq", `function main(): i32 { var x = 3; x <<= 4; return x; }`},
-	{"shr-eq", `function main(): i32 { var x = 100; x >>= 2; return x; }`},
+	{"and-eq", `function main(): i32 { let x = 12; x &= 6; return x; }`},
+	{"or-eq", `function main(): i32 { let x = 8; x |= 5; return x; }`},
+	{"xor-eq", `function main(): i32 { let x = 12; x ^= 10; return x; }`},
+	{"shl-eq", `function main(): i32 { let x = 3; x <<= 4; return x; }`},
+	{"shr-eq", `function main(): i32 { let x = 100; x >>= 2; return x; }`},
 	// the operator should compose with the surrounding control flow.
-	{"shl-eq-in-loop", `function main(): i32 { var x = 1; var i = 0; while (i < 5) { x <<= 1; i += 1; } return x; }`},
-	{"and-eq-mask-loop", `function main(): i32 { var acc = 0; var i = 0; while (i < 8) { acc |= i; i += 1; } acc &= 7; return acc; }`},
+	{"shl-eq-in-loop", `function main(): i32 { let x = 1; let i = 0; while (i < 5) { x <<= 1; i += 1; } return x; }`},
+	{"and-eq-mask-loop", `function main(): i32 { let acc = 0; let i = 0; while (i < 8) { acc |= i; i += 1; } acc &= 7; return acc; }`},
 	// regression: the arithmetic compound forms still route IR unchanged.
-	{"add-eq-regress", `function main(): i32 { var x = 10; x += 5; return x; }`},
+	{"add-eq-regress", `function main(): i32 { let x = 10; x += 5; return x; }`},
 }
 
 // TestSelfHostCompoundBitwiseIRX86_64 routes each case through the self-hosted

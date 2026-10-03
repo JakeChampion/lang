@@ -32,7 +32,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("x".repeat(%d));
 }
 function main(): i32 {
-    var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), min_data_rate: 100000, data_rate_grace: time.duration_millis(300 as i64) };
+    let opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), min_data_rate: 100000, data_rate_grace: time.duration_millis(300 as i64) };
     return tcp.tcp_serve_opts(%d, opts, handle);
 }
 `, DataRateResponseBytes, port)

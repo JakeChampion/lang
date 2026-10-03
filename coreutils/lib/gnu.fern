@@ -32,7 +32,7 @@ import "std/io_buffered";
 // verbatim (see the header). Empty when argv is empty, which only
 // happens under an exec that passes no argv at all.
 pub function prog(): string {
-  var argv: string[] = args();
+  let argv: string[] = args();
   if (argv.len() == 0) {
     return "";
   }
@@ -67,7 +67,7 @@ pub function error_out(o: io_buffered.BufWriter, msg: string): io_buffered.BufWr
     error(msg);
     return o;
   }
-  var w: io_buffered.BufWriter = o.flush();
+  let w: io_buffered.BufWriter = o.flush();
   error(msg);
   return w;
 }
@@ -91,7 +91,7 @@ function stdout_open(): boolean {
 // --check-order` on a full disk says the order fault AND `write error`.
 // Never returns.
 pub function die(o: io_buffered.BufWriter, msg: string, status: i32): void {
-  var w: io_buffered.BufWriter = error_out(o, msg);
+  let w: io_buffered.BufWriter = error_out(o, msg);
   close_stdout_with(w, false, status);
   exit(status);
 }
@@ -146,11 +146,11 @@ pub function argmatch(v: string, names: string[], option: string): i32 {
 // Returns the VALUE rather than the index; `argmatch` above is this
 // over a table where every name stands for itself.
 pub function argmatch_valued(v: string, names: string[], values: i32[], option: string): i32 {
-  var found: i32 = argmatch_find(v, names, values);
+  let found: i32 = argmatch_find(v, names, values);
   if (found >= 0) {
     return found;
   }
-  var what: string = "invalid";
+  let what: string = "invalid";
   if (found == 0 - 2) {
     what = "ambiguous";
   }
@@ -161,9 +161,9 @@ pub function argmatch_valued(v: string, names: string[], values: i32[], option: 
 // without its diagnostic: the value `v` names, -1 when it names none
 // and -2 when it is a prefix of names with different values.
 pub function argmatch_find(v: string, names: string[], values: i32[]): i32 {
-  var found: i32 = 0 - 1;
-  var ambiguous: boolean = false;
-  var i: i32 = 0;
+  let found: i32 = 0 - 1;
+  let ambiguous: boolean = false;
+  let i: i32 = 0;
   while (i < names.len()) {
     if (names[i] == v) {
       return values[i];
@@ -191,7 +191,7 @@ pub function argmatch_find(v: string, names: string[], values: i32[]): i32 {
 // is a unique prefix. The failure is the same text, and there is no
 // `ambiguous` half of it because only an exact name matches.
 pub function argmatch_exact(v: string, names: string[], option: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < names.len()) {
     if (names[i] == v) {
       return i;
@@ -204,10 +204,10 @@ pub function argmatch_exact(v: string, names: string[], option: string): i32 {
 function argmatch_die(v: string, names: string[], values: i32[], option: string, what: string): i32 {
   error(what + " argument " + quote(v) + " for " + quote(option));
   eprint("Valid arguments are:");
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < names.len()) {
-    var line: string = "  - " + quote(names[i]);
-    var j: i32 = i + 1;
+    let line: string = "  - " + quote(names[i]);
+    let j: i32 = i + 1;
     while (j < names.len() && values[j] == values[i]) {
       line = line + ", " + quote(names[j]);
       j = j + 1;
@@ -222,8 +222,8 @@ function argmatch_die(v: string, names: string[], values: i32[], option: string,
 // The values of a table where no two names share one, so every name
 // prints on its own line and a prefix of several is ambiguous.
 function one_value_each(n: i32): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(i);
     i = i + 1;
@@ -344,7 +344,7 @@ pub function write_out(s: string): void {
 // write-failure exit is not 1: gnulib's `exit_failure`, which test(1)
 // sets to 2.
 pub function write_out_with(s: string, status: i32): void {
-  var w: Writer = stdout();
+  let w: Writer = stdout();
   match (w.write(s)) {
     Some(e) => {
       error("write error: " + io_error_text(e));
@@ -448,25 +448,25 @@ pub function count_overflow(status: i32): boolean {
 }
 
 function parse_count(s: string, suffixes: boolean): (u64, i32) {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len() && is_blank(s[i] as i32)) {
     i = i + 1;
   }
   if (i < s.len() && s[i] as i32 == 43) {
     i = i + 1;
   }
-  var starts: boolean = i < s.len() && is_digit(s[i] as i32);
+  let starts: boolean = i < s.len() && is_digit(s[i] as i32);
   if (!starts && !(suffixes && i < s.len() && is_suffix(s[i] as i32))) {
     return (0 as u64, 1);
   }
-  var v: u64 = 1 as u64;
+  let v: u64 = 1 as u64;
   if (starts) {
     v = 0 as u64;
   }
-  var over: boolean = false;
-  var digits_over: boolean = false;
+  let over: boolean = false;
+  let digits_over: boolean = false;
   while (i < s.len() && is_digit(s[i] as i32)) {
-    var d: u64 = (s[i] as i32 - 48) as u64;
+    let d: u64 = (s[i] as i32 - 48) as u64;
     match (v.checked_mul(10 as u64)) {
       Some(m) => {
         match (m.checked_add(d)) {
@@ -484,26 +484,26 @@ function parse_count(s: string, suffixes: boolean): (u64, i32) {
     }
     i = i + 1;
   }
-  var mul: u64 = 1 as u64;
+  let mul: u64 = 1 as u64;
   if (i < s.len() && suffixes) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c == 98) {
       mul = 512 as u64;
       i = i + 1;
     } else {
-      var p: i32 = suffix_power(c);
+      let p: i32 = suffix_power(c);
       if (p == 0) {
         return (0 as u64, 4);
       }
       i = i + 1;
-      var base: u64 = 1024 as u64;
+      let base: u64 = 1024 as u64;
       if (i < s.len() && s[i] as i32 == 66) {
         base = 1000 as u64;
         i = i + 1;
       } else if (i + 1 < s.len() && s[i] as i32 == 105 && s[i + 1] as i32 == 66) {
         i = i + 2;
       }
-      var k: i32 = 0;
+      let k: i32 = 0;
       while (k < p) {
         match (mul.checked_mul(base)) {
           Some(m) => {
@@ -569,11 +569,11 @@ pub function posix2_version(): i64 {
 // posix2_version clamps to INT_MIN / INT_MAX. None when anything is left
 // over, which is when gnulib keeps its default.
 function strtol_int(s: string): Option[i64] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len() && is_blank(s[i] as i32)) {
     i = i + 1;
   }
-  var neg: boolean = false;
+  let neg: boolean = false;
   if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
     neg = s[i] as i32 == 45;
     i = i + 1;
@@ -581,8 +581,8 @@ function strtol_int(s: string): Option[i64] {
   if (i >= s.len() || !is_digit(s[i] as i32)) {
     return None;
   }
-  var v: i64 = 0 as i64;
-  var over: boolean = false;
+  let v: i64 = 0 as i64;
+  let over: boolean = false;
   while (i < s.len() && is_digit(s[i] as i32)) {
     if (v > 999999999 as i64) {
       over = true;
@@ -612,11 +612,11 @@ function strtol_int(s: string): Option[i64] {
 // so the tokens are re-read: a digit reaches this only as an option
 // byte, which is always in a short cluster.
 pub function digit_option(argv: string[]): string {
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a.len() >= 2 && a[0] as i32 == 45) {
-      var k: i32 = 1;
+      let k: i32 = 1;
       while (k < a.len()) {
         if (is_digit(a[k] as i32)) {
           return slice_unchecked(a, k, k + 1) + "";
@@ -682,7 +682,7 @@ pub function stream_fail(o: Stream, msg: string): Stream {
 // header cannot be confused with the content around it. GNU <= 9.11
 // printed it raw.
 pub function stream_header(o: Stream, name: string): Stream {
-  var lead: string = "\n";
+  let lead: string = "\n";
   if (o.first) {
     lead = "";
   }
@@ -768,8 +768,8 @@ pub function quoting_style_from_env(): i32 {
 pub function quoting_style_from_env_with(fallback: i32): i32 {
   match (env("QUOTING_STYLE")) {
     Some(v) => {
-      var names: string[] = quoting_style_names();
-      var found: i32 = argmatch_find(v, names, one_value_each(names.len()));
+      let names: string[] = quoting_style_names();
+      let found: i32 = argmatch_find(v, names, one_value_each(names.len()));
       if (found >= 0) {
         return found;
       }
@@ -823,7 +823,7 @@ pub function quote_style_with(s: string, style: i32, extra: string): string {
 }
 
 function in_set(extra: string, b: i32): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < extra.len()) {
     if (extra[i] as i32 == b) {
       return true;
@@ -843,13 +843,13 @@ function c_quote(s: string, q: i32, elide: boolean, extra: string): string {
   if (elide && !c_needs_quotes(s, q, extra)) {
     return s;
   }
-  var bs: u8[] = [];
+  let bs: u8[] = [];
   if (q != 0) {
     bs = bs.append(q as u8);
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 92 || q != 0 && b == q || in_set(extra, b)) {
       bs = bs.append(92 as u8);
       bs = bs.append(b as u8);
@@ -867,9 +867,9 @@ function c_quote(s: string, q: i32, elide: boolean, extra: string): string {
 }
 
 function c_needs_quotes(s: string, q: i32, extra: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == q || is_control_or_high(b) || in_set(extra, b)) {
       return true;
     }
@@ -881,8 +881,8 @@ function c_needs_quotes(s: string, q: i32, extra: string): boolean {
 // One control or non-ASCII byte as a C escape: `\a \b \f \n \r \t \v`
 // by name, anything else as `\NNN`.
 function append_c_escape(out: u8[], b: i32): u8[] {
-  var bs: u8[] = out.append(92 as u8);
-  var named: i32 = c_escape_letter(b);
+  let bs: u8[] = out.append(92 as u8);
+  let named: i32 = c_escape_letter(b);
   if (named > 0) {
     return bs.append(named as u8);
   }
@@ -941,9 +941,9 @@ function shell_needs_quotes(s: string, escapes: boolean, extra: string): boolean
   if (s.len() == 1 && (s[0] == 123 as u8 || s[0] == 125 as u8)) {
     return true;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (is_control_or_high(b)) {
       if (escapes || b == 10 || b == 13 || b == 9) {
         return true;
@@ -979,11 +979,11 @@ function shell_quote(s: string, elide: boolean, escapes: boolean, extra: string)
   if (elide && !shell_needs_quotes(s, escapes, extra)) {
     return s;
   }
-  var double_ok: boolean = true;
-  var has_quote: boolean = false;
-  var i: i32 = 0;
+  let double_ok: boolean = true;
+  let has_quote: boolean = false;
+  let i: i32 = 0;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (double_quote_unsafe(b, i == 0)) {
       double_ok = false;
     }
@@ -995,13 +995,13 @@ function shell_quote(s: string, elide: boolean, escapes: boolean, extra: string)
   if (has_quote && double_ok) {
     return "\"" + s + "\"";
   }
-  var bs: u8[] = [];
+  let bs: u8[] = [];
   bs = bs.append(39 as u8);
-  var open: boolean = true;
-  var run: boolean = false;
+  let open: boolean = true;
+  let run: boolean = false;
   i = 0;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (escapes && is_control_or_high(b)) {
       if (open) {
         bs = bs.append(39 as u8);
@@ -1053,11 +1053,11 @@ function shell_quote(s: string, elide: boolean, escapes: boolean, extra: string)
 // all — which a parent writing environ directly can leave — is quoted
 // whole.
 pub function env_entry(entry: string, style: i32): string {
-  var eq: i32 = entry.index_of("=");
+  let eq: i32 = entry.index_of("=");
   if (eq < 0) {
     return quote_style(entry, style);
   }
-  var name: string = quote_style(slice_unchecked(entry, 0, eq) + "", style);
+  let name: string = quote_style(slice_unchecked(entry, 0, eq) + "", style);
   if (eq + 1 == entry.len()) {
     return name + "=";
   }
@@ -1094,7 +1094,7 @@ pub function put(o: io_buffered.BufWriter, s: string): io_buffered.BufWriter {
 // `put_with(o, s, status)` — `put` for a utility whose write-failure
 // exit is not 1: gnulib's `exit_failure`, which expr(1) sets to 3.
 pub function put_with(o: io_buffered.BufWriter, s: string, status: i32): io_buffered.BufWriter {
-  var w: io_buffered.BufWriter = o.write_string(s);
+  let w: io_buffered.BufWriter = o.write_string(s);
   die_on_write_error(w, status);
   return w;
 }
@@ -1110,7 +1110,7 @@ pub function check(o: io_buffered.BufWriter): io_buffered.BufWriter {
 // `settle(o)` — the flush-if-full and the error check a loop that pushed
 // straight into `o.handle()` owes at the end of a line.
 pub function settle(o: io_buffered.BufWriter): io_buffered.BufWriter {
-  var w: io_buffered.BufWriter = o.settle();
+  let w: io_buffered.BufWriter = o.settle();
   die_on_write_error(w, 1);
   return w;
 }
@@ -1118,7 +1118,7 @@ pub function settle(o: io_buffered.BufWriter): io_buffered.BufWriter {
 // `flush(o)` — write what is buffered now; dies like `put` when that
 // fails. Rebind: `o = gnu.flush(o);`.
 pub function flush(o: io_buffered.BufWriter): io_buffered.BufWriter {
-  var w: io_buffered.BufWriter = o.flush();
+  let w: io_buffered.BufWriter = o.flush();
   die_on_write_error(w, 1);
   return w;
 }
@@ -1148,8 +1148,8 @@ pub function close_stdout(o: io_buffered.BufWriter, prev_fail: boolean): void {
 // `close_stdout_with(o, prev_fail, status)` — the same, exiting with
 // gnulib's `exit_failure` rather than 1.
 pub function close_stdout_with(o: io_buffered.BufWriter, prev_fail: boolean, status: i32): void {
-  var some_pending: boolean = o.buffered() > 0;
-  var prev: boolean = prev_fail;
+  let some_pending: boolean = o.buffered() > 0;
+  let prev: boolean = prev_fail;
   match (o.error()) {
     Some(_) => {
       prev = true;
@@ -1158,7 +1158,7 @@ pub function close_stdout_with(o: io_buffered.BufWriter, prev_fail: boolean, sta
   }
   match (o.close()) {
     Some(e) => {
-      var text: string = io_error_text(e);
+      let text: string = io_error_text(e);
       if (prev || some_pending || text != "Bad file descriptor") {
         error("write error: " + text);
         exit(status);
@@ -1211,8 +1211,8 @@ function die_on_write_error(w: io_buffered.BufWriter, status: i32): void {
 pub struct Stdio { w: Writer, buf: string, cap: i32, alloc: boolean, err: Option[IoError] }
 
 pub function stdio_new(): Stdio {
-  var w: Writer = stdout();
-  var cap: i32 = bufsiz();
+  let w: Writer = stdout();
+  let cap: i32 = bufsiz();
   match (w.stat()) {
     Ok(st) => {
       if (st.blksize > 0 as i64 && st.blksize < bufsiz() as i64) {
@@ -1239,14 +1239,14 @@ pub function (s: Stdio) fflush(): Stdio {
   if (s.buf.len() == 0) {
     return s;
   }
-  var r: (Stdio, boolean) = sys_write(s, s.buf);
+  let r: (Stdio, boolean) = sys_write(s, s.buf);
   return Stdio { ...r.0, buf: "" };
 }
 
 // `(s).report(msg)` — gnulib's error(): stdout flushed, then the
 // diagnostic. Rebind: `s = s.report(msg);`.
 pub function (s: Stdio) report(msg: string): Stdio {
-  var flushed: Stdio = s.fflush();
+  let flushed: Stdio = s.fflush();
   error(msg);
   return flushed;
 }
@@ -1256,18 +1256,18 @@ pub function (s: Stdio) report(msg: string): Stdio {
 // without one when only an earlier write had, and no error at all for
 // a closed descriptor that had nothing pending and no earlier failure.
 pub function (s: Stdio) close_stdout(): void {
-  var some_pending: boolean = s.buf.len() > 0;
-  var prev_fail: boolean = false;
+  let some_pending: boolean = s.buf.len() > 0;
+  let prev_fail: boolean = false;
   match (s.err) {
     Some(_) => {
       prev_fail = true;
     },
     None => {}
   }
-  var fclose_fail: boolean = false;
-  var text: string = "";
+  let fclose_fail: boolean = false;
+  let text: string = "";
   if (some_pending) {
-    var r: (Stdio, boolean) = sys_write(s, s.buf);
+    let r: (Stdio, boolean) = sys_write(s, s.buf);
     if (!r.1) {
       fclose_fail = true;
       match (r.0.err) {
@@ -1300,13 +1300,13 @@ pub function (s: Stdio) close_stdout(): void {
 // the remainder. Returns the stream and how many bytes it took; a
 // failed flush ends the write with the rest dropped.
 function xsputn(s0: Stdio, data: string): (Stdio, i32) {
-  var s: Stdio = s0;
-  var n: i32 = data.len();
+  let s: Stdio = s0;
+  let n: i32 = data.len();
   if (n == 0) {
     return (s, 0);
   }
-  var pos: i32 = 0;
-  var count: i32 = 0;
+  let pos: i32 = 0;
+  let count: i32 = 0;
   if (s.alloc) {
     count = s.cap - s.buf.len();
   }
@@ -1318,19 +1318,19 @@ function xsputn(s0: Stdio, data: string): (Stdio, i32) {
     pos = count;
   }
   if (pos < n) {
-    var f: (Stdio, boolean) = overflow(s);
+    let f: (Stdio, boolean) = overflow(s);
     s = f.0;
     if (!f.1) {
       return (s, pos);
     }
-    var to_do: i32 = n - pos;
-    var do_write: i32 = to_do - to_do % s.cap;
+    let to_do: i32 = n - pos;
+    let do_write: i32 = to_do - to_do % s.cap;
     if (do_write > 0) {
-      var piece: string = data;
+      let piece: string = data;
       if (do_write != n) {
         piece = slice_unchecked(data, pos, pos + do_write) + "";
       }
-      var w: (Stdio, boolean) = sys_write(s, piece);
+      let w: (Stdio, boolean) = sys_write(s, piece);
       s = w.0;
       if (!w.1) {
         return (s, pos);
@@ -1348,11 +1348,11 @@ function xsputn(s0: Stdio, data: string): (Stdio, i32) {
 // it holds. The buffer is empty afterwards whether or not the write
 // succeeded, as `new_do_write` leaves it.
 function overflow(s0: Stdio): (Stdio, boolean) {
-  var s: Stdio = Stdio { ...s0, alloc: true };
+  let s: Stdio = Stdio { ...s0, alloc: true };
   if (s.buf.len() == 0) {
     return (s, true);
   }
-  var r: (Stdio, boolean) = sys_write(s, s.buf);
+  let r: (Stdio, boolean) = sys_write(s, s.buf);
   return (Stdio { ...r.0, buf: "" }, r.1);
 }
 
@@ -1377,8 +1377,8 @@ function sys_write(s: Stdio, data: string): (Stdio, boolean) {
 // The long-option name in `a` (`--name` or `--name=value`), plus
 // whether a value was glued on.
 function long_parts(a: string): (string, boolean) {
-  var body: str = slice_unchecked(a, 2, a.len());
-  var eq: i32 = body.index_of("=");
+  let body: str = slice_unchecked(a, 2, a.len());
+  let eq: i32 = body.index_of("=");
   if (eq >= 0) {
     return (slice_unchecked(body, 0, eq) + "", true);
   }
@@ -1501,17 +1501,17 @@ pub function version_id(): i32 {
 // `getopt_new(argv, opts, name, help_text, status)` — start a scan.
 // `status` is the utility's usage-error exit code.
 pub function getopt_new(argv: string[], opts: Opt[], name: string, help_text: string, status: i32): Getopt {
-  var all: Opt[] = opts;
+  let all: Opt[] = opts;
   all = all.append(flag("", "help", help_id()));
   all = all.append(flag("", "version", version_id()));
-  var in_order: boolean = false;
+  let in_order: boolean = false;
   match (env("POSIXLY_CORRECT")) {
     Some(_) => {
       in_order = true;
     },
     None => {}
   }
-  var empty: string[] = [];
+  let empty: string[] = [];
   return Getopt { argv: argv, opts: all, name: name, help: help_text, status: status, fail: status, in_order: in_order, report_operands: false, i: 1, cluster: "", operands: empty, past_dashdash: false, hint: "" };
 }
 
@@ -1571,13 +1571,13 @@ pub function (g: Getopt) return_in_order(): Getopt {
 }
 
 // `(g).next()` — the next option, or None once the options are
-// exhausted; rebind the cursor: `var (m, g) = g.next();`.
+// exhausted; rebind the cursor: `let (m, g) = g.next();`.
 pub function (g: Getopt) next(): (Option[OptMatch], Getopt) {
   if (g.cluster.len() > 0) {
     return short_option(g);
   }
   while (g.i < g.argv.len()) {
-    var a: string = g.argv[g.i];
+    let a: string = g.argv[g.i];
     if (a == "--") {
       g = Getopt { ...g, i: g.i + 1 };
       return (None, take_rest(g));
@@ -1619,9 +1619,9 @@ pub function (g: Getopt) operands(): string[] {
 // `m.value`. join(1) is the caller — `join -o 1.1 2.2 f1 f2` gives -o
 // two arguments, and only the count of what follows says so.
 pub function (g: Getopt) next_argv_order(): (i32, OptMatch, Getopt) {
-  var nil: OptMatch = OptMatch { id: 0, value: "", has_value: false, long_form: false };
+  let nil: OptMatch = OptMatch { id: 0, value: "", has_value: false, long_form: false };
   if (g.cluster.len() > 0) {
-    var r: (Option[OptMatch], Getopt) = short_option(g);
+    let r: (Option[OptMatch], Getopt) = short_option(g);
     match (r.0) {
       Some(m) => {
         return (1, m, r.1);
@@ -1631,9 +1631,9 @@ pub function (g: Getopt) next_argv_order(): (i32, OptMatch, Getopt) {
       }
     }
   }
-  var s: Getopt = g;
+  let s: Getopt = g;
   while (s.i < s.argv.len()) {
-    var a: string = s.argv[s.i];
+    let a: string = s.argv[s.i];
     if (!s.past_dashdash && a == "--") {
       s = Getopt { ...s, i: s.i + 1, past_dashdash: true };
       continue;
@@ -1643,7 +1643,7 @@ pub function (g: Getopt) next_argv_order(): (i32, OptMatch, Getopt) {
     }
     s = Getopt { ...s, i: s.i + 1 };
     if (a.starts_with("--")) {
-      var rl: (Option[OptMatch], Getopt) = long_option(s, a);
+      let rl: (Option[OptMatch], Getopt) = long_option(s, a);
       match (rl.0) {
         Some(m) => {
           return (1, m, rl.1);
@@ -1654,7 +1654,7 @@ pub function (g: Getopt) next_argv_order(): (i32, OptMatch, Getopt) {
       }
     }
     s = Getopt { ...s, cluster: slice_unchecked(a, 1, a.len()) + "" };
-    var rs: (Option[OptMatch], Getopt) = short_option(s);
+    let rs: (Option[OptMatch], Getopt) = short_option(s);
     match (rs.0) {
       Some(m) => {
         return (1, m, rs.1);
@@ -1689,11 +1689,11 @@ pub function (g: Getopt) at_negative_number(): boolean {
   if (g.cluster.len() > 0 || g.i >= g.argv.len()) {
     return false;
   }
-  var a: string = g.argv[g.i];
+  let a: string = g.argv[g.i];
   if (a.len() < 2 || a[0] as i32 != 45) {
     return false;
   }
-  var b: i32 = a[1] as i32;
+  let b: i32 = a[1] as i32;
   return b == 46 || b >= 48 && b <= 57;
 }
 
@@ -1721,8 +1721,8 @@ pub function (g: Getopt) stop(): Getopt {
 
 // Everything from the cursor on is an operand.
 function take_rest(g: Getopt): Getopt {
-  var ops: string[] = g.operands;
-  var i: i32 = g.i;
+  let ops: string[] = g.operands;
+  let i: i32 = g.i;
   while (i < g.argv.len()) {
     ops = ops.append(g.argv[i]);
     i = i + 1;
@@ -1731,9 +1731,9 @@ function take_rest(g: Getopt): Getopt {
 }
 
 function short_option(g: Getopt): (Option[OptMatch], Getopt) {
-  var b: i32 = g.cluster[0] as i32;
-  var rest: string = slice_unchecked(g.cluster, 1, g.cluster.len()) + "";
-  var k: i32 = 0;
+  let b: i32 = g.cluster[0] as i32;
+  let rest: string = slice_unchecked(g.cluster, 1, g.cluster.len()) + "";
+  let k: i32 = 0;
   while (k < g.opts.len()) {
     if (g.opts[k].short == b) {
       break;
@@ -1743,7 +1743,7 @@ function short_option(g: Getopt): (Option[OptMatch], Getopt) {
   if (k == g.opts.len()) {
     die_fault(g, "invalid option -- '" + slice_unchecked(g.cluster, 0, 1) + "'");
   }
-  var o: Opt = g.opts[k];
+  let o: Opt = g.opts[k];
   // A short spelling of --help / --version is answered here exactly as
   // the long one is, so it short-circuits the rest of the cluster:
   // `mktemp -Vx` prints the version rather than reaching the invalid x.
@@ -1763,7 +1763,7 @@ function short_option(g: Getopt): (Option[OptMatch], Getopt) {
     return (Some(OptMatch { id: o.id, value: rest, has_value: true, long_form: false }), Getopt { ...g, cluster: "" });
   }
   if (g.i < g.argv.len()) {
-    var v: string = g.argv[g.i];
+    let v: string = g.argv[g.i];
     return (Some(OptMatch { id: o.id, value: v, has_value: true, long_form: false }), Getopt { ...g, cluster: "", i: g.i + 1 });
   }
   die_fault(g, "option requires an argument -- '" + slice_unchecked(g.cluster, 0, 1) + "'");
@@ -1771,16 +1771,16 @@ function short_option(g: Getopt): (Option[OptMatch], Getopt) {
 }
 
 function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
-  var parts: (string, boolean) = long_parts(a);
-  var name: string = parts.0;
-  var glued: boolean = parts.1;
-  var value: string = "";
+  let parts: (string, boolean) = long_parts(a);
+  let name: string = parts.0;
+  let glued: boolean = parts.1;
+  let value: string = "";
   if (glued) {
-    var eq: i32 = a.index_of("=");
+    let eq: i32 = a.index_of("=");
     value = slice_unchecked(a, eq + 1, a.len()) + "";
   }
-  var found: i32 = 0 - 1;
-  var k: i32 = 0;
+  let found: i32 = 0 - 1;
+  let k: i32 = 0;
   while (k < g.opts.len()) {
     if (g.opts[k].long.len() > 0 && g.opts[k].long == name) {
       found = k;
@@ -1795,11 +1795,11 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
     // make no ambiguity and only one of them is listed — `tty --=x`
     // names `--silent` and not `--quiet`, and `rmdir --p` is `--parents`
     // even though `--path` matches it too.
-    var list: string = "";
-    var ambiguous: boolean = false;
+    let list: string = "";
+    let ambiguous: boolean = false;
     k = 0;
     while (k < g.opts.len()) {
-      var o: Opt = g.opts[k];
+      let o: Opt = g.opts[k];
       if (o.long.len() > 0 && o.long.starts_with(name)) {
         // glibc lists the FIRST prefix match plus every later one that
         // differs from it, so an alias sharing the first one's arity
@@ -1825,12 +1825,12 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
       die_fault(g, "option '" + a + "' is ambiguous; possibilities:" + list);
     }
   }
-  var o: Opt = g.opts[found];
+  let o: Opt = g.opts[found];
   if (o.arg == 0 && glued) {
     die_fault(g, "option '--" + o.long + "' doesn't allow an argument");
   }
-  var s: Getopt = g;
-  var has: boolean = glued;
+  let s: Getopt = g;
+  let has: boolean = glued;
   if (o.arg == 1 && !glued) {
     if (s.i < s.argv.len()) {
       value = s.argv[s.i];
@@ -1860,10 +1860,10 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
 // (`yes x --help` prints the help) and every other token is an
 // operand. Returns the operands in argv order.
 pub function parse_standard_options_only(argv: string[], name: string, help_text: string, status: i32): string[] {
-  var none: Opt[] = [];
-  var g: Getopt = getopt_new(argv, none, name, help_text, status);
+  let none: Opt[] = [];
+  let g: Getopt = getopt_new(argv, none, name, help_text, status);
   while (true) {
-    var r: (Option[OptMatch], Getopt) = g.next();
+    let r: (Option[OptMatch], Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(_) => {},
@@ -1912,7 +1912,7 @@ function is_slash(c: u8): boolean {
 // A name that is nothing but slashes is `/`, and the empty name stays
 // empty.
 pub function base_name(s: string): string {
-  var end: i32 = s.len();
+  let end: i32 = s.len();
   while (end > 0 && is_slash(s[end - 1])) {
     end = end - 1;
   }
@@ -1922,7 +1922,7 @@ pub function base_name(s: string): string {
     }
     return "";
   }
-  var start: i32 = end;
+  let start: i32 = end;
   while (start > 0 && !is_slash(s[start - 1])) {
     start = start - 1;
   }
@@ -1932,7 +1932,7 @@ pub function base_name(s: string): string {
 // `dir_name(s)` — everything before `base_name`'s component, `.` when
 // there is none.
 pub function dir_name(s: string): string {
-  var end: i32 = s.len();
+  let end: i32 = s.len();
   while (end > 0 && is_slash(s[end - 1])) {
     end = end - 1;
   }
@@ -1942,7 +1942,7 @@ pub function dir_name(s: string): string {
     }
     return ".";
   }
-  var i: i32 = end;
+  let i: i32 = end;
   while (i > 0 && !is_slash(s[i - 1])) {
     i = i - 1;
   }
@@ -1970,11 +1970,11 @@ pub function join_path(dir: string, name: string): string {
   if (dir.len() == 0) {
     return name;
   }
-  var end: i32 = dir.len();
+  let end: i32 = dir.len();
   while (end > 1 && is_slash(dir[end - 1])) {
     end = end - 1;
   }
-  var head: string = slice_unchecked(dir, 0, end) + "";
+  let head: string = slice_unchecked(dir, 0, end) + "";
   if (head.len() > 0 && is_slash(head[head.len() - 1])) {
     return head + name;
   }
@@ -1985,7 +1985,7 @@ pub function join_path(dir: string, name: string): string {
 // what `mv --strip-trailing-slashes` does to each source operand. A
 // name that is nothing but slashes keeps one, so `//` is `/`.
 pub function strip_slashes(s: string): string {
-  var end: i32 = s.len();
+  let end: i32 = s.len();
   while (end > 1 && is_slash(s[end - 1])) {
     end = end - 1;
   }
@@ -1996,12 +1996,12 @@ pub function strip_slashes(s: string): string {
 // NOT `base_name`: trailing slashes belong to the component here, so
 // `x/`'s last component is `x/` and `/`'s is empty.
 function last_component_start(s: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len() && is_slash(s[i])) {
     i = i + 1;
   }
-  var last: i32 = i;
-  var after_slash: boolean = false;
+  let last: i32 = i;
+  let after_slash: boolean = false;
   while (i < s.len()) {
     if (is_slash(s[i])) {
       after_slash = true;
@@ -2059,20 +2059,20 @@ pub function usable_suffix(s: string): boolean {
 // backups. A leading zero disqualifies it — `b.~09~` is not a backup of
 // `b` and does not raise the next number.
 function numbered_index(entry: string, name: string): i32 {
-  var head: string = name + ".~";
+  let head: string = name + ".~";
   if (!entry.starts_with(head) || !entry.ends_with("~")) {
     return 0 - 1;
   }
-  var start: i32 = head.len();
-  var end: i32 = entry.len() - 1;
+  let start: i32 = head.len();
+  let end: i32 = entry.len() - 1;
   if (end <= start) {
     return 0 - 1;
   }
   if (entry[start] as i32 == 48 && end - start > 1) {
     return 0 - 1;
   }
-  var n: i32 = 0;
-  var i: i32 = start;
+  let n: i32 = 0;
+  let i: i32 = start;
   while (i < end) {
     if (!is_digit(entry[i] as i32)) {
       return 0 - 1;
@@ -2086,12 +2086,12 @@ function numbered_index(entry: string, name: string): i32 {
 // The highest N over `dir`'s `NAME.~N~` entries, or -1 when there is
 // none. A DIRECTORY named that way counts: the scan reads names.
 function highest_numbered(dir: string, name: string): i32 {
-  var best: i32 = 0 - 1;
+  let best: i32 = 0 - 1;
   match (read_dir(dir)) {
     Ok(entries) => {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < entries.len()) {
-        var n: i32 = numbered_index(entries[i], name);
+        let n: i32 = numbered_index(entries[i], name);
         if (n > best) {
           best = n;
         }
@@ -2107,7 +2107,7 @@ function highest_numbered(dir: string, name: string): i32 {
 // moved to. `existing` picks numbered only when a numbered backup of
 // this name is already there.
 pub function backup_name(dest: string, control: i32, suffix: string): string {
-  var c: i32 = control;
+  let c: i32 = control;
   if (c == backup_existing()) {
     if (highest_numbered(dir_name(dest), base_name(dest)) >= 0) {
       c = backup_numbered();
@@ -2118,7 +2118,7 @@ pub function backup_name(dest: string, control: i32, suffix: string): string {
   if (c == backup_numbered()) {
     // The first numbered backup is `.~1~`, so a directory with none in
     // it starts there rather than one past the -1 the scan reports.
-    var n: i32 = highest_numbered(dir_name(dest), base_name(dest));
+    let n: i32 = highest_numbered(dir_name(dest), base_name(dest));
     if (n < 0) {
       n = 0;
     }
@@ -2134,7 +2134,7 @@ pub function backup_name(dest: string, control: i32, suffix: string): string {
 // flushes it first, so an earlier `-v` line cannot land after the
 // question it preceded.
 pub function prompt(msg: string): boolean {
-  var w: Writer = stderr();
+  let w: Writer = stderr();
   match (w.write(prog() + ": " + msg)) {
     Some(_) => {},
     None => {}
@@ -2246,16 +2246,16 @@ pub function resolve_command(cmd: string, envp: string[]): Exec {
   } else {
     path = "/bin:/usr/bin";
   }
-  var best: i32 = 2;
-  var start: i32 = 0;
-  var j: i32 = 0;
+  let best: i32 = 2;
+  let start: i32 = 0;
+  let j: i32 = 0;
   while (j <= path.len()) {
     if (j == path.len() || path[j] == b':') {
-      var dir: string = slice_unchecked(path, start, j) + "";
+      let dir: string = slice_unchecked(path, start, j) + "";
       if (dir.len() == 0) {
         dir = ".";
       }
-      var cand: string = dir + "/" + cmd;
+      let cand: string = dir + "/" + cmd;
       match (access(cand, 1)) {
         Ok(_) => {
           return Exec { path: cand, errno: 0 };
@@ -2287,16 +2287,16 @@ pub function resolve_command(cmd: string, envp: string[]): Exec {
 // the caller passed. A directory with the execute bit, or a file without
 // one, is EACCES rather than ENOEXEC and stays a refusal.
 pub function exec_command(cmd: string, argv: string[], envp: string[]): i32 {
-  var f: Exec = resolve_command(cmd, envp);
+  let f: Exec = resolve_command(cmd, envp);
   if (f.errno != 0) {
     return f.errno;
   }
-  var rc: i32 = proc_exec_as(f.path, argv, envp);
+  let rc: i32 = proc_exec_as(f.path, argv, envp);
   if (0 - rc != 8) {
     return 0 - rc;
   }
-  var shell_argv: string[] = ["/bin/sh", f.path];
-  var i: i32 = 1;
+  let shell_argv: string[] = ["/bin/sh", f.path];
+  let i: i32 = 1;
   while (i < argv.len()) {
     shell_argv = shell_argv.append(argv[i]);
     i = i + 1;
@@ -2308,11 +2308,11 @@ pub function exec_command(cmd: string, argv: string[], envp: string[]): i32 {
 // whether it is there at all. A LATER entry wins, which is what the kernel
 // hands a process and what glibc's getenv reads.
 pub function env_value(envp: string[], name: string): (string, boolean) {
-  var value: string = "";
-  var found: boolean = false;
-  var i: i32 = 0;
+  let value: string = "";
+  let found: boolean = false;
+  let i: i32 = 0;
   while (i < envp.len()) {
-    var entry: string = envp[i];
+    let entry: string = envp[i];
     if (entry.len() > name.len() && entry[name.len()] as i32 == 61 && starts_with_name(entry, name)) {
       value = slice_unchecked(entry, name.len() + 1, entry.len()) + "";
       found = true;
@@ -2323,7 +2323,7 @@ pub function env_value(envp: string[], name: string): (string, boolean) {
 }
 
 function starts_with_name(entry: string, name: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < name.len()) {
     if (entry[i] != name[i]) {
       return false;

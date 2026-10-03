@@ -33,14 +33,14 @@ function total(b: Box): i32 { match (b) { Full(v) => { return v; }, Empty => { r
 
 // A defer action's block declares a local shadowing the module const.
 pub function defer_local(): i32 {
-    var out: i32 = 3;
-    defer { var K: i32 = 5; out = K + 1; }
+    let out: i32 = 3;
+    defer { let K: i32 = 5; out = K + 1; }
     return out;
 }
 
 // The @ whole-value binding shadows the module const.
 pub function at_binding(): i32 {
-    var b: Box = Full(4);
+    let b: Box = Full(4);
     match (b) {
         K @ Full(v) => { return total(K) + v; },
         Empty => { return 0; },
@@ -93,7 +93,7 @@ enum Holder { Has(Option[i32]), Nothing }
 function helper(): i32 { return 100; }
 
 pub function tuple_binder(): i32 {
-    var t: (i32, i32) = (3, 4);
+    let t: (i32, i32) = (3, 4);
     match (t) {
         (helper, b) => { return helper + b; }
     }
@@ -101,7 +101,7 @@ pub function tuple_binder(): i32 {
 }
 
 pub function nested_tuple_binder(): i32 {
-    var t: (i32, (i32, i32)) = (1, (2, 4));
+    let t: (i32, (i32, i32)) = (1, (2, 4));
     match (t) {
         (a, (helper, c)) => { return a + helper + c; }
     }
@@ -109,7 +109,7 @@ pub function nested_tuple_binder(): i32 {
 }
 
 pub function variant_in_tuple_binder(): i32 {
-    var t: (Box, i32) = (Wrap(3), 4);
+    let t: (Box, i32) = (Wrap(3), 4);
     match (t) {
         (Wrap(helper), b) => { return helper + b; },
         _ => { return 0; }
@@ -118,7 +118,7 @@ pub function variant_in_tuple_binder(): i32 {
 }
 
 pub function payload_subpattern_binder(): i32 {
-    var h: Holder = Has(Some(7));
+    let h: Holder = Has(Some(7));
     match (h) {
         Has(Some(helper)) => { return helper; },
         _ => { return 0; }
@@ -127,12 +127,12 @@ pub function payload_subpattern_binder(): i32 {
 }
 
 pub function match_expr_binder(): i32 {
-    var t: (i32, i32) = (3, 4);
+    let t: (i32, i32) = (3, 4);
     return match (t) { (helper, b) => helper + b };
 }
 
 pub function variant_binder(): i32 {
-    var b: Box = Wrap(3);
+    let b: Box = Wrap(3);
     match (b) {
         Wrap(helper) => { return helper + 4; },
         Empty => { return 0; }

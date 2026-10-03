@@ -28,12 +28,12 @@ function peek(o: Option[string]): i32 {
     match (o) { Some(s) => { return s.len(); }, None => { return 0; } }
 }
 function round(i: i32): i32 {
-    var o: Option[string] = Some(mk("abc"));
+    let o: Option[string] = Some(mk("abc"));
     return peek(o) + i % 3;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -51,16 +51,16 @@ function peek(o: Option[string]): i32 {
     match (o) { Some(s) => { return s.len(); }, None => { return 0; } }
 }
 function round(i: i32): i32 {
-    var o: Option[string] = Some(mk("abcdefgh"));
-    var churn: string = mk("zzzzzzzz");
+    let o: Option[string] = Some(mk("abcdefgh"));
+    let churn: string = mk("zzzzzzzz");
     return peek(o) + churn.len() + i % 3;
 }
 function main(): i32 {
-    var keep: string = mk("keepmeeee");
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let keep: string = mk("keepmeeee");
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 200) { t = t + round(r); r = r + 1; }
-    var ok: i32 = 0;
+    let ok: i32 = 0;
     if (keep == "keepmeeee!") { ok = 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return (t + ok) % 97;

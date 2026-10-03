@@ -9,7 +9,7 @@ import (
 //
 // `rcpayload_option_call_ptype` admitted a call-bound Option/Result only when
 // the success payload was a leak-safe scalar array. A `string` success payload
-// was refused, so `var v: Option[string] = mk(i)` emitted no free at all and the
+// was refused, so `let v: Option[string] = mk(i)` emitted no free at all and the
 // box AND its string leaked every iteration — `frees=0` — while the same shape
 // with the constructor written inline was flat at 0.
 //
@@ -20,7 +20,7 @@ import (
 // proof `__fern_str_free` needs, because op_opt_make stores the payload
 // UNCOUNTED: a fresh payload is sole-owned, an aliased one is not. Only the
 // flag was being discarded by the two name extractors, so lower_func
-// could not see it; it is now seeded as "OPTFRESHF:<name>" beside the existing
+// could not see it; the fix seeded it as "OPTFRESHF:<name>" beside the existing
 // "OPTFRESH:<name>".
 //
 // Freeing a non-fresh payload under a live alias does not leak less — it
@@ -34,18 +34,18 @@ const cbsOptStrCallSrc = `function mk(i: i32): Option[string] {
     return Some("abcd");
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[string] = mk(i);
+        let v: Option[string] = mk(i);
         match (v) { Some(s) => { acc = acc + s.len(); }, None => { acc = acc + 1; } }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -57,18 +57,18 @@ const cbsResultStrOkCallSrc = `function mk(i: i32): Result[string, i32] {
     return Ok("abcd");
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Result[string, i32] = mk(i);
+        let v: Result[string, i32] = mk(i);
         match (v) { Ok(s) => { acc = acc + s.len(); }, Err(_) => { acc = acc + 1; } }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -82,18 +82,18 @@ const cbsOptStrConcatCallSrc = `function mk(i: i32): Option[string] {
     return Some("ab" + "cd");
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[string] = mk(i);
+        let v: Option[string] = mk(i);
         match (v) { Some(s) => { acc = acc + s.len(); }, None => { acc = acc + 1; } }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -104,14 +104,14 @@ const cbsOptStrFnScopeSrc = `function mk(i: i32): Option[string] {
     return Some("abcd");
 }
 function round(r: i32): i32 {
-    var v: Option[string] = mk(r);
-    var acc: i32 = 0;
+    let v: Option[string] = mk(r);
+    let acc: i32 = 0;
     match (v) { Some(s) => { acc = acc + s.len(); }, None => { acc = acc + 1; } }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -119,18 +119,18 @@ function main(): i32 {
 // The direct-ctor sibling, which already reclaimed: a guard that the new
 // admission does not disturb the path it sits beside.
 const cbsOptStrDirectSrc = `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[string] = Some("abcd");
+        let v: Option[string] = Some("abcd");
         match (v) { Some(s) => { acc = acc + s.len(); }, None => { acc = acc + 1; } }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -140,23 +140,23 @@ function main(): i32 {
 // The producer returns a bare LOCAL, so opt_fresh_ret_fns_of flags it "a": the
 // box is fresh, the payload is not. Freeing it would dangle the local.
 const cbsOptStrAliasLocalSrc = `function mk(i: i32): Option[string] {
-    var pre: string = "abcd";
+    let pre: string = "abcd";
     if (i < 0) { return None; }
     return Some(pre);
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[string] = mk(i);
+        let v: Option[string] = mk(i);
         match (v) { Some(s) => { acc = acc + s.len(); }, None => { acc = acc + 1; } }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -169,19 +169,19 @@ const cbsOptStrParamAliasSrc = `function mk(s: string, i: i32): Option[string] {
     return Some(s);
 }
 function round(r: i32): i32 {
-    var keep: string = "abcd";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: string = "abcd";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[string] = mk(keep, i);
+        let v: Option[string] = mk(keep, i);
         match (v) { Some(s) => { acc = acc + s.len(); }, None => { acc = acc + 1; } }
         i = i + 1;
     }
     return acc + keep.len() + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`

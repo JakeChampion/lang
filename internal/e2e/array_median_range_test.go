@@ -10,17 +10,17 @@ import "testing"
 // x86-64 / wasm / arm64; each leg skips itself when its toolchain is absent.
 const arrayMedianRangeProg = `
 import "std/array" as array;
-function approx(a: f64, b: f64): boolean { var d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
+function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
 function unwrap(o: Option[f64]): f64 { match (o) { Some(v) => { return v; }, None => { return 0.0 - 999.0; } } }
 function main(): i32 {
     // odd length -> exact middle (unsorted input)
-    var odd: f64[] = [5.0, 1.0, 3.0, 2.0, 4.0];
+    let odd: f64[] = [5.0, 1.0, 3.0, 2.0, 4.0];
     if (!approx(unwrap(array.median_f64(odd)), 3.0)) { return 1; }
     // even length -> average of the two middles
-    var even: f64[] = [1.0, 2.0, 3.0, 4.0];
+    let even: f64[] = [1.0, 2.0, 3.0, 4.0];
     if (!approx(unwrap(array.median_f64(even)), 2.5)) { return 2; }
     // even, unsorted, with a fractional result
-    var even2: f64[] = [10.0, 2.0, 8.0, 4.0];
+    let even2: f64[] = [10.0, 2.0, 8.0, 4.0];
     if (!approx(unwrap(array.median_f64(even2)), 6.0)) { return 3; }   // sorted 2,4,8,10 -> (4+8)/2
     if (!approx(unwrap(array.median_f64([42.0])), 42.0)) { return 4; }
     // range = max - min
@@ -28,7 +28,7 @@ function main(): i32 {
     if (!approx(unwrap(array.range_f64([7.0])), 0.0)) { return 6; }
     if (!approx(unwrap(array.range_f64([0.0 - 3.0, 5.0, 1.0])), 8.0)) { return 7; }
     // empty -> None
-    var empty: f64[] = [];
+    let empty: f64[] = [];
     match (array.median_f64(empty)) { Some(v) => { return 8; }, None => {} }
     match (array.range_f64(empty)) { Some(v) => { return 9; }, None => {} }
     return 42;

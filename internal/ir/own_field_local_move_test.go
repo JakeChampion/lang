@@ -6,29 +6,29 @@ import (
 	"github.com/jakechampion/lang/internal/ir"
 )
 
-// #10084: `var a = s.a` and `var S { a, b } = s` move the field out of s's
+// #10084: `let a = s.a` and `let S { a, b } = s` move the field out of s's
 // box, gated on is_unique(s) at runtime, when nothing after the declaration
 // can read the field again. The shapes that could are left as retains.
 const ownFieldLocalSrc = `struct S { a: i64[], b: string[], n: i32 }
 function viaVar(own s: S, i: i32): S {
-    var a: i64[] = s.a;
+    let a: i64[] = s.a;
     a = a.with(i, 1 as i64);
     return S { ...s, a: a };
 }
 function viaPattern(own s: S, i: i32): S {
-    var S { a, b, n } = s;
+    let S { a, b, n } = s;
     a = a.with(i, 1 as i64);
     return S { a: a, b: b, n: n };
 }
 function rereads(own s: S, i: i32): i64 {
-    var a: i64[] = s.a;
+    let a: i64[] = s.a;
     a = a.with(i, 1 as i64);
     return s.a[i] + a[i];
 }
 function inLoop(own s: S, k: i32): S {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < k) {
-        var a: i64[] = s.a;
+        let a: i64[] = s.a;
         a = a.with(0, 1 as i64);
         s = S { ...s, a: a };
         i = i + 1;
@@ -36,23 +36,23 @@ function inLoop(own s: S, k: i32): S {
     return s;
 }
 function viaPatternKeeps(i: i32): i64 {
-    var s: S = S { a: [0 as i64, 0 as i64], b: ["x"], n: 1 };
-    var S { a, b, n } = s;
+    let s: S = S { a: [0 as i64, 0 as i64], b: ["x"], n: 1 };
+    let S { a, b, n } = s;
     a = a.with(i, 1 as i64);
     return a[i] + s.a[i];
 }
 function borrowed(s: S, i: i32): i64 {
-    var a: i64[] = s.a;
+    let a: i64[] = s.a;
     a = a.with(i, 1 as i64);
     return a[i];
 }
 function main(): i32 {
-    var s: S = S { a: [0 as i64], b: ["x"], n: 1 };
+    let s: S = S { a: [0 as i64], b: ["x"], n: 1 };
     s = viaVar(s, 0);
     s = viaPattern(s, 0);
     s = inLoop(s, 2);
-    var u: i64 = borrowed(s, 0);
-    var r: i64 = rereads(S { a: [0 as i64], b: ["y"], n: 1 }, 0);
+    let u: i64 = borrowed(s, 0);
+    let r: i64 = rereads(S { a: [0 as i64], b: ["y"], n: 1 }, 0);
     return (r + u + viaPatternKeeps(1)) as i32;
 }`
 

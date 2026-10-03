@@ -115,7 +115,7 @@ func TestSelfHostExternArrayResultCustomProvider(t *testing.T) {
 	prog := `@import("local:test/src@0.1.0", "iota")
 function iota(n: u32): i32[];
 function main(): i32 {
-    var xs: i32[] = iota(4u32);
+    let xs: i32[] = iota(4u32);
     xs = xs.append(40);
     if (xs.len() == 5 && xs[3] == 3 && xs[4] == 40) { write("` + want + `"); } else { write("iota-bad"); }
     return 0;

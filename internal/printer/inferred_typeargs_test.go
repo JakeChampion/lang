@@ -23,7 +23,7 @@ func TestInferredTypeArgsAreNotPrinted(t *testing.T) {
 	}{
 		{
 			"struct literal",
-			"struct Box[T] { val: T }\nfunction main(): i32 { var b = Box { val: 1 }; return b.val; }\n",
+			"struct Box[T] { val: T }\nfunction main(): i32 { let b = Box { val: 1 }; return b.val; }\n",
 			"Box[",
 		},
 		{

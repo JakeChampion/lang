@@ -29,7 +29,7 @@ and every half-measure is measurably wrong:
 
 1. **An analysis-level pin** — `self_host_rcplan_diff_test.go`
    `tuple-elem-extract-bind`. It surfaced something the scoping had wrong:
-   the BIND half already agrees (`var e = src.1` retains on both sides,
+   the BIND half already agrees (`let e = src.1` retains on both sides,
    anchored `aliasBindIncs 2:2=e`), which is why the elemret leak is one free
    short rather than a dangle. The self-host's actual analysis gap is
    OWNERSHIP of the extracted element — native marks `e` freeEligible with a

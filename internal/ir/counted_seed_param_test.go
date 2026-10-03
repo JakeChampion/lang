@@ -2,7 +2,7 @@ package ir
 
 import "testing"
 
-// `var cur = p;` followed by `cur = advance(cur)` is a COUNTED alias, not
+// `let cur = p;` followed by `cur = advance(cur)` is a COUNTED alias, not
 // a borrow: the *ast.Var lowering emits the transfer inc for a reassigned
 // binding seeded from a parameter, so the local owns a reference of its
 // own and the caller's argument is retained counted.
@@ -18,23 +18,23 @@ func TestParamSeededIntoAReassignedLocalIsCounted(t *testing.T) {
 	}{
 		{"string", `function step(x: string): string { return x + "."; }
 function walk(n: i32, s: string): i32 {
-    var cur: string = s;
-    var i: i32 = 0;
+    let cur: string = s;
+    let i: i32 = 0;
     while (i < n) { cur = step(cur); i = i + 1; }
     return cur.len();
 }`, "walk"},
 		{"array", `function step(x: string[]): string[] { return x.append("."); }
 function walk(n: i32, s: string[]): i32 {
-    var cur: string[] = s;
-    var i: i32 = 0;
+    let cur: string[] = s;
+    let i: i32 = 0;
     while (i < n) { cur = step(cur); i = i + 1; }
     return cur.len();
 }`, "walk"},
 		{"struct", `struct Scope { names: string[], depth: i32 }
 function step(x: Scope): Scope { return Scope { names: x.names, depth: x.depth + 1 }; }
 function walk(n: i32, s: Scope): i32 {
-    var cur: Scope = s;
-    var i: i32 = 0;
+    let cur: Scope = s;
+    let i: i32 = 0;
     while (i < n) { cur = step(cur); i = i + 1; }
     return cur.depth;
 }`, "walk"},
@@ -56,7 +56,7 @@ function walk(n: i32, s: Scope): i32 {
 // buffer the callee is still reading through.
 func TestParamSeededIntoAConstantLocalStaysUncredited(t *testing.T) {
 	src := `function hold(s: string[]): string[] {
-    var cur: string[] = s;
+    let cur: string[] = s;
     return cur;
 }
 function main(): i32 { return 0; }`
@@ -71,14 +71,14 @@ function main(): i32 { return 0; }`
 // computeFreeEligible's own copy of this rule.
 func TestParamSeededIntoADuplicatedNameStaysUncredited(t *testing.T) {
 	src := `function walk(n: i32, s: string[]): i32 {
-    var total: i32 = 0;
+    let total: i32 = 0;
     if (n > 0) {
-        var cur: string[] = s;
+        let cur: string[] = s;
         cur = cur.append("x");
         total = total + cur.len();
     }
     if (n > 1) {
-        var cur: string[] = s;
+        let cur: string[] = s;
         total = total + cur.len();
     }
     return total;
@@ -97,8 +97,8 @@ func TestSeedCreditGroundsTheForwardingChain(t *testing.T) {
 	src := `struct Scope { names: string[], depth: i32 }
 function advance(x: Scope): Scope { return Scope { names: x.names, depth: x.depth + 1 }; }
 function block(n: i32, s: Scope): i32 {
-    var cur: Scope = s;
-    var i: i32 = 0;
+    let cur: Scope = s;
+    let i: i32 = 0;
     while (i < n) { cur = advance(cur); i = i + 1; }
     return cur.depth;
 }

@@ -67,7 +67,7 @@ struct Changes { created: string[], modified: string[], deleted: string[] }
 // accidental difference, not adversarial collision — but it does what mtime
 // cannot: notice an edit that leaves the size unchanged.
 function checksum(s: string): i32 {
-  var h: i32 = 7;
+  let h: i32 = 7;
   for i in 0..s.len() {
     h = (h * 31 + s[i] as i32) % 1000003;
   }
@@ -86,7 +86,7 @@ function find_entry(es: Entry[], name: string): Option[Entry] {
 }
 
 function names_of(es: Entry[]): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   for i in 0..es.len() {
     out = out.append(es[i].name);
   }
@@ -107,9 +107,9 @@ function contains_name(xs: string[], n: string): boolean {
 // four-way backend differential this file runs under would be comparing the
 // filesystem's iteration order rather than the tool.
 function diff(before: Entry[], after: Entry[]): Changes {
-  var created: string[] = [];
-  var modified: string[] = [];
-  var deleted: string[] = [];
+  let created: string[] = [];
+  let modified: string[] = [];
+  let deleted: string[] = [];
   for i in 0..after.len() {
     match (find_entry(before, after[i].name)) {
       None => {
@@ -142,7 +142,7 @@ function diff(before: Entry[], after: Entry[]): Changes {
 // which is exactly why the test asserts on names and checks contents
 // separately.
 function apply_names(before: string[], c: Changes): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   for i in 0..before.len() {
     if (!contains_name(c.deleted, before[i])) {
       out = out.append(before[i]);
@@ -164,19 +164,19 @@ function total(c: Changes): i32 {
 // Directories are skipped rather than recursed — a watcher that silently
 // descended would report a nested change as a change to the parent.
 function snapshot(dir: string): Entry[] {
-  var out: Entry[] = [];
+  let out: Entry[] = [];
   match (read_dir(dir)) {
     Err(e) => {
       return out;
     },
     Ok(names) => {
       for i in 0..names.len() {
-        var path: string = dir + "/" + names[i];
+        let path: string = dir + "/" + names[i];
         match (stat(path)) {
           Err(e) => {},
           Ok(st) => {
             if (!st.is_dir) {
-              var sum: i32 = 0;
+              let sum: i32 = 0;
               match (read_file(path)) {
                 Err(e) => {},
                 Ok(body) => {
@@ -197,8 +197,8 @@ function snapshot(dir: string): Entry[] {
 }
 
 function sort_entries(es: Entry[]): Entry[] {
-  var ns: string[] = sort_names(names_of(es));
-  var out: Entry[] = [];
+  let ns: string[] = sort_names(names_of(es));
+  let out: Entry[] = [];
   for i in 0..ns.len() {
     match (find_entry(es, ns[i])) {
       None => {},
@@ -232,16 +232,16 @@ function names_alphabet(): string[] {
 }
 
 function gen_snapshot(seed: i32): Entry[] {
-  var az: string[] = names_alphabet();
-  var out: Entry[] = [];
-  var s: i32 = seed;
+  let az: string[] = names_alphabet();
+  let out: Entry[] = [];
+  let s: i32 = seed;
   for i in 0..az.len() {
     s = (s * 1103515245 + 12345) % 2147483647;
     if (s < 0) {
       s = 0 - s;
     }
     if (s % 3 != 0) {
-      var size: i64 = (s % 17) as i64;
+      let size: i64 = (s % 17) as i64;
       out = out.append(Entry {
         name: az[i], size: size,
         sum: s / 7 % 1000003,
@@ -260,11 +260,11 @@ function gen_snapshot(seed: i32): Entry[] {
 function test_applying_the_diff_reconstructs_the_after_state(): test.TestOutcome {
   for i in 0..60 {
     for j in 0..7 {
-      var before: Entry[] = gen_snapshot(i + 1);
-      var after: Entry[] = gen_snapshot(i * 7 + j + 2);
-      var c: Changes = diff(before, after);
-      var rebuilt: string[] = apply_names(names_of(before), c);
-      var want: string[] = sort_names(names_of(after));
+      let before: Entry[] = gen_snapshot(i + 1);
+      let after: Entry[] = gen_snapshot(i * 7 + j + 2);
+      let c: Changes = diff(before, after);
+      let rebuilt: string[] = apply_names(names_of(before), c);
+      let want: string[] = sort_names(names_of(after));
       if (rebuilt.len() != want.len()) {
         return test.fail("seeds " + i.to_string() + "/" + j.to_string()
           + ": rebuilt " + rebuilt.len().to_string() + " names, wanted "
@@ -287,12 +287,12 @@ function test_applying_the_diff_reconstructs_the_after_state(): test.TestOutcome
 // mask — deleting and re-creating reconstructs the same name list.
 function test_every_name_is_in_exactly_one_bucket(): test.TestOutcome {
   for i in 0..60 {
-    var before: Entry[] = gen_snapshot(i + 1);
-    var after: Entry[] = gen_snapshot(i * 3 + 5);
-    var c: Changes = diff(before, after);
-    var all: string[] = names_alphabet();
+    let before: Entry[] = gen_snapshot(i + 1);
+    let after: Entry[] = gen_snapshot(i * 3 + 5);
+    let c: Changes = diff(before, after);
+    let all: string[] = names_alphabet();
     for k in 0..all.len() {
-      var n: i32 = 0;
+      let n: i32 = 0;
       if (contains_name(c.created, all[k])) {
         n = n + 1;
       }
@@ -315,8 +315,8 @@ function test_every_name_is_in_exactly_one_bucket(): test.TestOutcome {
 // thing a watcher gets wrong when it compares by identity rather than value.
 function test_nothing_changed_reports_nothing(): test.TestOutcome {
   for i in 0..60 {
-    var s: Entry[] = gen_snapshot(i + 1);
-    var c: Changes = diff(s, s);
+    let s: Entry[] = gen_snapshot(i + 1);
+    let c: Changes = diff(s, s);
     if (total(c) != 0) {
       return test.fail("seed " + i.to_string() + ": a snapshot differs"
         + " from itself by " + total(c).to_string() + " changes");
@@ -329,10 +329,10 @@ function test_nothing_changed_reports_nothing(): test.TestOutcome {
 // A differ that computes one bucket and infers the others fails this.
 function test_swapping_the_snapshots_swaps_created_and_deleted(): test.TestOutcome {
   for i in 0..60 {
-    var a: Entry[] = gen_snapshot(i + 1);
-    var b: Entry[] = gen_snapshot(i * 5 + 3);
-    var fwd: Changes = diff(a, b);
-    var rev: Changes = diff(b, a);
+    let a: Entry[] = gen_snapshot(i + 1);
+    let b: Entry[] = gen_snapshot(i * 5 + 3);
+    let fwd: Changes = diff(a, b);
+    let rev: Changes = diff(b, a);
     if (fwd.created.len() != rev.deleted.len()
       || fwd.deleted.len() != rev.created.len()) {
       return test.fail("seed " + i.to_string() + ": forward created/"
@@ -363,18 +363,18 @@ function test_swapping_the_snapshots_swaps_created_and_deleted(): test.TestOutco
 // four-way backend comparison.
 function test_the_report_does_not_depend_on_directory_order(): test.TestOutcome {
   for i in 0..60 {
-    var a: Entry[] = gen_snapshot(i + 1);
-    var b: Entry[] = gen_snapshot(i * 11 + 4);
-    var ra: Entry[] = [];
+    let a: Entry[] = gen_snapshot(i + 1);
+    let b: Entry[] = gen_snapshot(i * 11 + 4);
+    let ra: Entry[] = [];
     for k in 0..a.len() {
       ra = ra.append(a[a.len() - 1 - k]);
     }
-    var rb: Entry[] = [];
+    let rb: Entry[] = [];
     for k in 0..b.len() {
       rb = rb.append(b[b.len() - 1 - k]);
     }
-    var straight: Changes = diff(a, b);
-    var reversed: Changes = diff(ra, rb);
+    let straight: Changes = diff(a, b);
+    let reversed: Changes = diff(ra, rb);
     if (straight.created.len() != reversed.created.len()
       || straight.modified.len() != reversed.modified.len()
       || straight.deleted.len() != reversed.deleted.len()) {
@@ -401,9 +401,9 @@ function test_the_report_does_not_depend_on_directory_order(): test.TestOutcome 
 // size is invisible to size alone, and invisible to mtime within a clock tick.
 // Two files of equal length and different bytes must read as modified.
 function test_a_same_size_edit_is_still_a_modification(): test.TestOutcome {
-  var before: Entry[] = [Entry { name: "a.txt", size: 5 as i64, sum: checksum("hello") }];
-  var after: Entry[] = [Entry { name: "a.txt", size: 5 as i64, sum: checksum("world") }];
-  var c: Changes = diff(before, after);
+  let before: Entry[] = [Entry { name: "a.txt", size: 5 as i64, sum: checksum("hello") }];
+  let after: Entry[] = [Entry { name: "a.txt", size: 5 as i64, sum: checksum("world") }];
+  let c: Changes = diff(before, after);
   if (c.modified.len() != 1 || c.modified[0] != "a.txt") {
     return test.fail("a same-size content change reported "
       + c.modified.len().to_string() + " modifications");
@@ -418,7 +418,7 @@ function test_a_same_size_edit_is_still_a_modification(): test.TestOutcome {
       + " this test proves nothing");
   }
   // And an identical rewrite is NOT a modification — the point of hashing.
-  var same: Entry[] = [Entry { name: "a.txt", size: 5 as i64, sum: checksum("hello") }];
+  let same: Entry[] = [Entry { name: "a.txt", size: 5 as i64, sum: checksum("hello") }];
   if (total(diff(before, same)) != 0) {
     return test.fail("rewriting a file with identical contents reported a"
       + " change");
@@ -429,9 +429,9 @@ function test_a_same_size_edit_is_still_a_modification(): test.TestOutcome {
 // A rename is one creation and one deletion, never a modification. A differ
 // that matched on size or inode would call it a move and report neither.
 function test_a_rename_is_a_creation_and_a_deletion(): test.TestOutcome {
-  var before: Entry[] = [Entry { name: "old.txt", size: 5 as i64, sum: 42 }];
-  var after: Entry[] = [Entry { name: "new.txt", size: 5 as i64, sum: 42 }];
-  var c: Changes = diff(before, after);
+  let before: Entry[] = [Entry { name: "old.txt", size: 5 as i64, sum: 42 }];
+  let after: Entry[] = [Entry { name: "new.txt", size: 5 as i64, sum: 42 }];
+  let c: Changes = diff(before, after);
   if (c.created.len() != 1 || c.created[0] != "new.txt") {
     return test.fail("rename: created = " + c.created.len().to_string());
   }
@@ -458,22 +458,22 @@ function test_a_real_directory_reports_its_real_changes(): test.TestOutcome {
       if (!write_at(d, "keep.txt", "unchanged")
         || !write_at(d, "edit.txt", "before")
         || !write_at(d, "gone.txt", "doomed")) {
-        var _w: Result[void, IoError] = remove_dir_all(d);
+        let _w: Result[void, IoError] = remove_dir_all(d);
         return test.fail("could not write the initial files");
       }
-      var before: Entry[] = snapshot(d);
+      let before: Entry[] = snapshot(d);
       if (before.len() != 3) {
-        var _w2: Result[void, IoError] = remove_dir_all(d);
+        let _w2: Result[void, IoError] = remove_dir_all(d);
         return test.fail("the initial snapshot saw "
           + before.len().to_string() + " files, not 3");
       }
       // Same length as "before", so size alone cannot see this edit.
-      var _e: boolean = write_at(d, "edit.txt", "aftr!!");
-      var _n: boolean = write_at(d, "new.txt", "fresh");
-      var _r: Result[void, IoError] = remove_file(d + "/gone.txt");
-      var after: Entry[] = snapshot(d);
-      var c: Changes = diff(before, after);
-      var _w3: Result[void, IoError] = remove_dir_all(d);
+      let _e: boolean = write_at(d, "edit.txt", "aftr!!");
+      let _n: boolean = write_at(d, "new.txt", "fresh");
+      let _r: Result[void, IoError] = remove_file(d + "/gone.txt");
+      let after: Entry[] = snapshot(d);
+      let c: Changes = diff(before, after);
+      let _w3: Result[void, IoError] = remove_dir_all(d);
 
       if (c.created.len() != 1 || c.created[0] != "new.txt") {
         return test.fail("created = " + c.created.len().to_string()
@@ -501,12 +501,12 @@ function test_polling_an_unchanged_directory_is_silent(): test.TestOutcome {
       return test.fail("could not create a temp directory");
     },
     Ok(d) => {
-      var _a: boolean = write_at(d, "x.txt", "one");
-      var _b: boolean = write_at(d, "y.txt", "two");
-      var first: Entry[] = snapshot(d);
-      var second: Entry[] = snapshot(d);
-      var c: Changes = diff(first, second);
-      var _w: Result[void, IoError] = remove_dir_all(d);
+      let _a: boolean = write_at(d, "x.txt", "one");
+      let _b: boolean = write_at(d, "y.txt", "two");
+      let first: Entry[] = snapshot(d);
+      let second: Entry[] = snapshot(d);
+      let c: Changes = diff(first, second);
+      let _w: Result[void, IoError] = remove_dir_all(d);
       if (total(c) != 0) {
         return test.fail("two snapshots of an untouched directory"
           + " differ by " + total(c).to_string() + " changes");
@@ -523,7 +523,7 @@ function test_polling_an_unchanged_directory_is_silent(): test.TestOutcome {
 // ------------------------------------------------------------------- app
 
 function show(label: string, xs: string[]): string {
-  var s: string = label + "=[";
+  let s: string = label + "=[";
   for i in 0..xs.len() {
     if (i > 0) {
       s = s + " ";
@@ -540,29 +540,29 @@ function main(): i32 {
       eprint("  (no temp directory available)");
     },
     Ok(d) => {
-      var _a: boolean = write_at(d, "notes.md", "hello");
-      var _b: boolean = write_at(d, "data.csv", "1,2,3");
-      var _c: boolean = write_at(d, "stale.tmp", "junk");
-      var before: Entry[] = snapshot(d);
+      let _a: boolean = write_at(d, "notes.md", "hello");
+      let _b: boolean = write_at(d, "data.csv", "1,2,3");
+      let _c: boolean = write_at(d, "stale.tmp", "junk");
+      let before: Entry[] = snapshot(d);
       eprint("  first poll: " + before.len().to_string() + " files");
 
-      var _d: boolean = write_at(d, "notes.md", "world");  // same size
-      var _e: boolean = write_at(d, "fresh.log", "new");
-      var _f: Result[void, IoError] = remove_file(d + "/stale.tmp");
+      let _d: boolean = write_at(d, "notes.md", "world");  // same size
+      let _e: boolean = write_at(d, "fresh.log", "new");
+      let _f: Result[void, IoError] = remove_file(d + "/stale.tmp");
 
-      var after: Entry[] = snapshot(d);
-      var ch: Changes = diff(before, after);
+      let after: Entry[] = snapshot(d);
+      let ch: Changes = diff(before, after);
       eprint("  second poll: " + after.len().to_string() + " files");
       eprint("  " + show("created", ch.created));
       eprint("  " + show("modified", ch.modified));
       eprint("  " + show("deleted", ch.deleted));
       eprint("  third poll (nothing touched): "
         + total(diff(after, snapshot(d))).to_string() + " changes");
-      var _g: Result[void, IoError] = remove_dir_all(d);
+      let _g: Result[void, IoError] = remove_dir_all(d);
     }
   }
 
-  var t: test.TestRunner = test.test_new("dirwatch");
+  let t: test.TestRunner = test.test_new("dirwatch");
   t = t.it("applying the diff reconstructs the after state", test_applying_the_diff_reconstructs_the_after_state);
   t = t.it("every name is in exactly one bucket", test_every_name_is_in_exactly_one_bucket);
   t = t.it("nothing changed reports nothing", test_nothing_changed_reports_nothing);

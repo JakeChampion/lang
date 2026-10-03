@@ -9,7 +9,10 @@
 // response-outparam)` plus `memory` + `cabi_realloc`, and imports 22
 // Canonical-ABI functions across wasi:http/types and wasi:io/streams.
 // We implement exactly those, mint opaque i32 resource handles, and
-// marshal the request/response across linear memory.
+// marshal the request/response across linear memory. The outgoing side
+// (wasi:http/outgoing-handler, what std/fetch sends through on this
+// target) is not hosted: a handler that calls std/fetch fails to
+// instantiate here, naming the interface the browser lacks.
 //
 // The big simplification over a general Component-Model runtime: we
 // own the emitter, so the guest's call sequence is fixed and known.

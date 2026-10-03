@@ -27,38 +27,38 @@ struct P { v: i32 }
 impl Ord for P { function cmp(self: Self, other: Self): i32 { if (self.v < other.v) { return 0 - 1; } if (self.v > other.v) { return 1; } return 0; } }
 function min[T: Ord](a: T, b: T): T { if (b.cmp(a) < 0) { return b; } return a; }
 function max[T: Ord](a: T, b: T): T { if (a.cmp(b) < 0) { return b; } return a; }
-function main(): i32 { var lo = min(P { v: 5 }, P { v: 2 }); var hi = max(P { v: 5 }, P { v: 2 }); return lo.v + hi.v; }`, 7},
+function main(): i32 { let lo = min(P { v: 5 }, P { v: 2 }); let hi = max(P { v: 5 }, P { v: 2 }); return lo.v + hi.v; }`, 7},
 	// clamp(9, 1, 6).v = 6.
 	{"clamp", `pub trait Ord { function cmp(self: Self, other: Self): i32; }
 struct P { v: i32 }
 impl Ord for P { function cmp(self: Self, other: Self): i32 { if (self.v < other.v) { return 0 - 1; } if (self.v > other.v) { return 1; } return 0; } }
 function clamp[T: Ord](x: T, lo: T, hi: T): T { if (x.cmp(lo) < 0) { return lo; } if (x.cmp(hi) > 0) { return hi; } return x; }
-function main(): i32 { var c = clamp(P { v: 9 }, P { v: 1 }, P { v: 6 }); return c.v; }`, 6},
+function main(): i32 { let c = clamp(P { v: 9 }, P { v: 1 }, P { v: 6 }); return c.v; }`, 6},
 	// relational helpers return boolean (direct bounded-generic). lt(2,9)=true → 5.
 	{"lt-gte", `pub trait Ord { function cmp(self: Self, other: Self): i32; }
 struct P { v: i32 }
 impl Ord for P { function cmp(self: Self, other: Self): i32 { if (self.v < other.v) { return 0 - 1; } if (self.v > other.v) { return 1; } return 0; } }
 function lt[T: Ord](a: T, b: T): boolean { return a.cmp(b) < 0; }
 function gte[T: Ord](a: T, b: T): boolean { return a.cmp(b) >= 0; }
-function main(): i32 { var r = 0; if (lt(P { v: 2 }, P { v: 9 })) { r = r + 5; } if (gte(P { v: 9 }, P { v: 9 })) { r = r + 2; } return r; }`, 7},
+function main(): i32 { let r = 0; if (lt(P { v: 2 }, P { v: 9 })) { r = r + 5; } if (gte(P { v: 9 }, P { v: 9 })) { r = r + 2; } return r; }`, 7},
 	// generic sort over a user Ord struct array → [1,2,3]; 1*100+2*10+3 = 123.
 	{"sort", `pub trait Ord { function cmp(self: Self, other: Self): i32; }
 struct P { v: i32 }
 impl Ord for P { function cmp(self: Self, other: Self): i32 { if (self.v < other.v) { return 0 - 1; } if (self.v > other.v) { return 1; } return 0; } }
-function sort[T: Ord](arr: T[]): T[] { var out = arr; var n = out.len(); var i = 1; while (i < n) { var j = i; while (j > 0 && out[j].cmp(out[j - 1]) < 0) { var tmp = out[j]; out = out.with(j, out[j - 1]); out = out.with(j - 1, tmp); j = j - 1; } i = i + 1; } return out; }
-function main(): i32 { var xs: P[] = [P { v: 3 }, P { v: 1 }, P { v: 2 }]; var s = sort(xs); return s[0].v * 100 + s[1].v * 10 + s[2].v; }`, 123},
+function sort[T: Ord](arr: T[]): T[] { let out = arr; let n = out.len(); let i = 1; while (i < n) { let j = i; while (j > 0 && out[j].cmp(out[j - 1]) < 0) { let tmp = out[j]; out = out.with(j, out[j - 1]); out = out.with(j - 1, tmp); j = j - 1; } i = i + 1; } return out; }
+function main(): i32 { let xs: P[] = [P { v: 3 }, P { v: 1 }, P { v: 2 }]; let s = sort(xs); return s[0].v * 100 + s[1].v * 10 + s[2].v; }`, 123},
 	// is_sorted over a user Ord struct array. sorted→+5, unsorted→+2 → 7.
 	{"is-sorted", `pub trait Ord { function cmp(self: Self, other: Self): i32; }
 struct P { v: i32 }
 impl Ord for P { function cmp(self: Self, other: Self): i32 { if (self.v < other.v) { return 0 - 1; } if (self.v > other.v) { return 1; } return 0; } }
-function is_sorted[T: Ord](arr: T[]): boolean { var i = 1; var n = arr.len(); while (i < n) { if (arr[i].cmp(arr[i - 1]) < 0) { return false; } i = i + 1; } return true; }
-function main(): i32 { var a: P[] = [P { v: 1 }, P { v: 2 }, P { v: 3 }]; var b: P[] = [P { v: 3 }, P { v: 1 }]; var r = 0; if (is_sorted(a)) { r = r + 5; } if (!is_sorted(b)) { r = r + 2; } return r; }`, 7},
+function is_sorted[T: Ord](arr: T[]): boolean { let i = 1; let n = arr.len(); while (i < n) { if (arr[i].cmp(arr[i - 1]) < 0) { return false; } i = i + 1; } return true; }
+function main(): i32 { let a: P[] = [P { v: 1 }, P { v: 2 }, P { v: 3 }]; let b: P[] = [P { v: 3 }, P { v: 1 }]; let r = 0; if (is_sorted(a)) { r = r + 5; } if (!is_sorted(b)) { r = r + 2; } return r; }`, 7},
 	// eq_arrays over a user Eq struct array. equal→+5, unequal→+2 → 7.
 	{"eq-arrays", `pub trait Eq { function eq(self: Self, other: Self): boolean; }
 struct P { v: i32 }
 impl Eq for P { function eq(self: Self, other: Self): boolean { return self.v == other.v; } }
-function eq_arrays[T: Eq](a: T[], b: T[]): boolean { var n = a.len(); if (n != b.len()) { return false; } var i = 0; while (i < n) { if (!a[i].eq(b[i])) { return false; } i = i + 1; } return true; }
-function main(): i32 { var xs: P[] = [P { v: 1 }, P { v: 2 }]; var ys: P[] = [P { v: 1 }, P { v: 2 }]; var zs: P[] = [P { v: 1 }]; var r = 0; if (eq_arrays(xs, ys)) { r = r + 5; } if (!eq_arrays(xs, zs)) { r = r + 2; } return r; }`, 7},
+function eq_arrays[T: Eq](a: T[], b: T[]): boolean { let n = a.len(); if (n != b.len()) { return false; } let i = 0; while (i < n) { if (!a[i].eq(b[i])) { return false; } i = i + 1; } return true; }
+function main(): i32 { let xs: P[] = [P { v: 1 }, P { v: 2 }]; let ys: P[] = [P { v: 1 }, P { v: 2 }]; let zs: P[] = [P { v: 1 }]; let r = 0; if (eq_arrays(xs, ys)) { r = r + 5; } if (!eq_arrays(xs, zs)) { r = r + 2; } return r; }`, 7},
 }
 
 // TestNativeCmpHelpers runs the inline Ord-helper programs on the native
@@ -107,20 +107,20 @@ func TestNativeCmpModule(t *testing.T) {
 struct P { v: i32 }
 impl cmp.Ord for P { function cmp(self: Self, other: Self): i32 { if (self.v < other.v) { return 0 - 1; } if (self.v > other.v) { return 1; } return 0; } }
 function main(): i32 {
-    var a = cmp.min(8, 3);               // 3   (primitive impl Ord for i32)
-    var b = cmp.max(8, 3);               // 8
-    var c = cmp.clamp(15, 0, 10);        // 10
-    var p = cmp.min(P { v: 5 }, P { v: 2 }); // P{v:2}
-    var d = 0;
+    let a = cmp.min(8, 3);               // 3   (primitive impl Ord for i32)
+    let b = cmp.max(8, 3);               // 8
+    let c = cmp.clamp(15, 0, 10);        // 10
+    let p = cmp.min(P { v: 5 }, P { v: 2 }); // P{v:2}
+    let d = 0;
     if (cmp.lt(2, 9)) { d = 1; }         // 1
-    var arr = cmp.sort([3, 1, 2]);       // [1,2,3]  (primitive impl Ord for i32)
-    var srt = 0;
+    let arr = cmp.sort([3, 1, 2]);       // [1,2,3]  (primitive impl Ord for i32)
+    let srt = 0;
     if (cmp.is_sorted(arr)) { srt = 1; } // 1
-    var ix = 0;
+    let ix = 0;
     match (cmp.index_of([10, 20, 30], 20)) { Some(v) => { ix = v; }, None => { ix = 0 - 1; } } // 1  (index_of -> Option[i32], #5348)
-    var has = 0;
+    let has = 0;
     if (cmp.contains([10, 20, 30], 30)) { has = 1; }                              // 1
-    var eqa = 0;
+    let eqa = 0;
     if (cmp.eq_arrays([1, 2], [1, 2])) { eqa = 1; }                               // 1
     return a + b + c + p.v + d + arr[0] * 100 + arr[2] + srt + ix + has + eqa;    // 128 + 1+1+1 = 131
 }

@@ -68,21 +68,21 @@ function test_byte_order_digits(): test.TestOutcome {
 
 // Non-literal operands, so nothing can constant-fold the comparison away.
 function test_vars(): test.TestOutcome {
-  var a: string = "alpha";
-  var b: string = "beta";
+  let a: string = "alpha";
+  let b: string = "beta";
   return test.assert_true(a < b && b > a && a <= a);
 }
 
 function test_long_operands(): test.TestOutcome {
-  var a: string = "the quick brown fox jumps over the lazy dog";
-  var b: string = "the quick brown fox jumps over the lazy dogs";
+  let a: string = "the quick brown fox jumps over the lazy dog";
+  let b: string = "the quick brown fox jumps over the lazy dogs";
   return test.assert_true(a < b && b > a);
 }
 
 // A computed operand is a fresh owned temp; the lowering has to release it
 // without reading freed bytes.
 function test_computed_operand(): test.TestOutcome {
-  var a: string = "ab";
+  let a: string = "ab";
   return test.assert_true(a + "c" < "abd" && "abb" < a + "c");
 }
 
@@ -104,8 +104,8 @@ function test_string_cmp_agrees(): test.TestOutcome {
 }
 
 function test_sort_matches_operator(): test.TestOutcome {
-  var s = cmp.sort(["pear", "Apple", "banana", "apple"]);
-  var i: i32 = 1;
+  let s = cmp.sort(["pear", "Apple", "banana", "apple"]);
+  let i: i32 = 1;
   while (i < s.len()) {
     if (!(s[i - 1] < s[i])) {
       return test.fail("cmp.sort produced an order the `<` operator disagrees with");
@@ -116,7 +116,7 @@ function test_sort_matches_operator(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("string ordering operators");
+  let r: test.TestRunner = test.test_new("string ordering operators");
   r = r.it("first differing byte", test_first_diff_byte);
   r = r.it("first differing byte >", test_first_diff_byte_gt);
   r = r.it("first differing byte off", test_first_diff_byte_false);

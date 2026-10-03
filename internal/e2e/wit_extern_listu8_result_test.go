@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -96,19 +96,13 @@ func TestExternListU8ResultCustomProvider(t *testing.T) {
 function get_bytes(n: u32): u8[];
 
 function main(): i32 {
-	var xs: u8[] = get_bytes(4u32);
+	let xs: u8[] = get_bytes(4u32);
 	if (xs.len() == 4 && xs[3] == 3) { write("` + want + `"); } else { write("bytes-bad"); }
 	return 0;
 }`
 	mainPath := filepath.Join(dir, "main.fern")
 	os.WriteFile(mainPath, []byte(src), 0o644)
-	info, prog := loadCheckMono(t, mainPath)
-	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true, Preview2WASI: true, SynthCliRun: true, PrintMainResult: true,
-	})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
+	core := e2eharness.SelfHostComponentCore(t, mainPath)
 	userComp, err := component.ComposeFromWorldAuto(core, w)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto: %v", err)

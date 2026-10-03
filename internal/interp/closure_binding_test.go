@@ -12,26 +12,26 @@ func TestClosureBindingIdentity(t *testing.T) {
 		want      Number
 	}{
 		{"later declaration", `function main(): i32 {
-var n = 7; var call = (): i32 => {
-var inner = (): i32 => n; var n = 99; return inner(); }; return call(); }`, 7},
+let n = 7; let call = (): i32 => {
+let inner = (): i32 => n; let n = 99; return inner(); }; return call(); }`, 7},
 		{"local function", `function main(): i32 {
-var n = 7; if (true) { function inner(): i32 { return n; }
-var n = 99; return inner(); } return 99; }`, 7},
+let n = 7; if (true) { function inner(): i32 { return n; }
+let n = 99; return inner(); } return 99; }`, 7},
 		{"original binding remains mutable", `function main(): i32 {
-var n = 1; var call = (): i32 => n; n = 7; return call(); }`, 7},
+let n = 1; let call = (): i32 => n; n = 7; return call(); }`, 7},
 		{"write through original binding", `function main(): i32 {
-var n = 1; if (true) { var put = (): void => { n = 7; };
-var n = 99; put(); if (n != 99) { return 98; } } return n; }`, 7},
+let n = 1; if (true) { let put = (): void => { n = 7; };
+let n = 99; put(); if (n != 99) { return 98; } } return n; }`, 7},
 		{"recursive local function", `function main(): i32 {
 function rec(n: i32): i32 { if (n == 0) { return 7; } return rec(n - 1); }
 return rec(3); }`, 7},
 		{"escaping mutable binding", `function make(): () => i32 {
-var n = 0; return (): i32 => { n = n + 1; return n; }; }
-function main(): i32 { var f = make(); return f() * 10 + f(); }`, 12},
+let n = 0; return (): i32 => { n = n + 1; return n; }; }
+function main(): i32 { let f = make(); return f() * 10 + f(); }`, 12},
 		{"escaping array binding", `function make(xs: i32[]): () => i32[] {
 return (): i32[] => xs; }
-function main(): i32 { var xs = [1]; var f = make(xs); xs = xs.with(0, 9);
-var original = f(); return original[0] * 10 + xs[0]; }`, 19},
+function main(): i32 { let xs = [1]; let f = make(xs); xs = xs.with(0, 9);
+let original = f(); return original[0] * 10 + xs[0]; }`, 19},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

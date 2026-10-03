@@ -7,7 +7,7 @@ import (
 
 // --- map alias groups: who owns the box a clone superseded (#7235) ----------
 //
-// A mapbox carries no rc word, so `var q: Map[..] = m` is an UNCOUNTED share and
+// A mapbox carries no rc word, so `let q: Map[..] = m` is an UNCOUNTED share and
 // the release of every box the pair reaches has to be decided statically: m, its
 // plain aliases and the local tuples holding it at an element form a group, and
 // each box the group reaches is freed exactly once. An insert clones only when an
@@ -25,7 +25,7 @@ type mapAliasGroupCase struct {
 }
 
 func mapAliasGroupMain(rounds string) string {
-	return "\nfunction main(): i32 { var x: i32 = 0; var r: i32 = 0; " +
+	return "\nfunction main(): i32 { let x: i32 = 0; let r: i32 = 0; " +
 		"while (r < " + rounds + ") { x = x + round(r); r = r + 1; } " +
 		"if (__rc_underflow_count() != 0) { return 99; } return x % 83; }"
 }
@@ -33,8 +33,8 @@ func mapAliasGroupMain(rounds string) string {
 func mapAliasGroupCases() []mapAliasGroupCase {
 	const repro = `import "core/map";
 function round(i: i32): i32 {
-    var m: Map[string, i32] = map_new(4);
-    var q: Map[string, i32] = m;
+    let m: Map[string, i32] = map_new(4);
+    let q: Map[string, i32] = m;
     m = m.insert("k", i);
     return (q.get_or("k", 0) + m.get_or("k", 0)) % 91;
 }`
@@ -57,9 +57,9 @@ function round(i: i32): i32 {
 			name: "alias_after_insert",
 			src: `import "core/map";
 function round(i: i32): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("k", i);
-    var q: Map[string, i32] = m;
+    let q: Map[string, i32] = m;
     return (q.get_or("k", 0) + m.get_or("k", 0)) % 91;
 }` + mapAliasGroupMain("100"),
 			want: 17, allocs: 200, frees: 200,
@@ -70,8 +70,8 @@ function round(i: i32): i32 {
 			name: "alias_and_conditional_insert",
 			src: `import "core/map";
 function round(i: i32): i32 {
-    var m: Map[string, i32] = map_new(4);
-    var q: Map[string, i32] = m;
+    let m: Map[string, i32] = map_new(4);
+    let q: Map[string, i32] = m;
     if (i % 2 == 0) { m = m.insert("k", i); }
     return (q.get_or("k", 0) + m.get_or("k", 0)) % 91;
 }` + mapAliasGroupMain("100"),
@@ -82,9 +82,9 @@ function round(i: i32): i32 {
 			name: "alias_before_a_loop_of_inserts",
 			src: `import "core/map";
 function round(i: i32): i32 {
-    var m: Map[string, i32] = map_new(4);
-    var q: Map[string, i32] = m;
-    var k: i32 = 0;
+    let m: Map[string, i32] = map_new(4);
+    let q: Map[string, i32] = m;
+    let k: i32 = 0;
     while (k < 3) { m = m.insert("k", i + k); k = k + 1; }
     return (q.get_or("k", 0) + m.get_or("k", 0)) % 91;
 }` + mapAliasGroupMain("100"),
@@ -96,10 +96,10 @@ function round(i: i32): i32 {
 			name: "two_aliases_two_inserts",
 			src: `import "core/map";
 function round(i: i32): i32 {
-    var m: Map[string, i32] = map_new(4);
-    var q: Map[string, i32] = m;
+    let m: Map[string, i32] = map_new(4);
+    let q: Map[string, i32] = m;
     m = m.insert("k", i);
-    var r: Map[string, i32] = m;
+    let r: Map[string, i32] = m;
     m = m.insert("k", i + 1);
     return (q.get_or("k", 0) + r.get_or("k", 0) + m.get_or("k", 0)) % 91;
 }` + mapAliasGroupMain("100"),
@@ -114,17 +114,17 @@ function round(i: i32): i32 {
 			name: "alias_in_enclosing_loop_snapshot",
 			src: `import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
-    var seen: Map[string, i32][] = [];
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let m: Map[string, i32] = map_new(4);
+    let seen: Map[string, i32][] = [];
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         m = m.insert("k", i);
-        var alias: Map[string, i32] = m;
+        let alias: Map[string, i32] = m;
         seen = seen.append(alias);
         i = i + 1;
     }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < seen.len()) { acc = acc + seen[j].get_or("k", 0); j = j + 1; }
     return acc + __rc_underflow_count() * 100;
 }`,
@@ -136,8 +136,8 @@ function main(): i32 {
 			src: `import "core/map";
 import "std/i32";
 function round(i: i32): i32 {
-    var m: Map[string, string] = map_new(4);
-    var q: Map[string, string] = m;
+    let m: Map[string, string] = map_new(4);
+    let q: Map[string, string] = m;
     m = m.insert("k", i.to_string());
     return (q.get_or("k", "").len() + m.get_or("k", "").len() + i) % 91;
 }` + mapAliasGroupMain("100"),
@@ -149,9 +149,9 @@ function round(i: i32): i32 {
 			src: `import "core/map";
 import "std/i32";
 function round(i: i32): i32 {
-    var m: Map[string, string] = map_new(4);
+    let m: Map[string, string] = map_new(4);
     m = m.insert(i.to_string(), i.to_string());
-    var q: Map[string, string] = m;
+    let q: Map[string, string] = m;
     m = m.insert((i + 1).to_string(), (i + 1).to_string());
     return (q.len() + m.len() + m.get_or(i.to_string(), "").len() + i) % 91;
 }` + mapAliasGroupMain("100"),
@@ -162,8 +162,8 @@ function round(i: i32): i32 {
 			name: "tuple_element",
 			src: `import "core/map";
 function round(i: i32): i32 {
-    var m: Map[string, i32] = map_new(4);
-    var t: (i32, Map[string, i32]) = (i, m);
+    let m: Map[string, i32] = map_new(4);
+    let t: (i32, Map[string, i32]) = (i, m);
     m = m.insert("k", i);
     return (t.0 + t.1.get_or("k", 0) + m.get_or("k", 0)) % 91;
 }` + mapAliasGroupMain("100"),
@@ -174,7 +174,7 @@ function round(i: i32): i32 {
 			name: "never_aliased",
 			src: `import "core/map";
 function round(i: i32): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("k", i);
     return m.get_or("k", 0) % 91;
 }` + mapAliasGroupMain("100"),
@@ -185,22 +185,22 @@ function round(i: i32): i32 {
 			name: "alias_declared_in_loop_refused",
 			src: `import "core/map";
 function round(i: i32): i32 {
-    var m: Map[string, i32] = map_new(4);
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 2) { var q: Map[string, i32] = m; m = m.insert("k", i + k); acc = acc + q.get_or("k", 0); k = k + 1; }
+    let m: Map[string, i32] = map_new(4);
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 2) { let q: Map[string, i32] = m; m = m.insert("k", i + k); acc = acc + q.get_or("k", 0); k = k + 1; }
     return (acc + m.get_or("k", 0)) % 91;
 }` + mapAliasGroupMain("100"),
 			want: 26, allocs: 600, frees: 600,
 		},
 		{
-			// A chain: `var r = q` aliases the alias.
+			// A chain: `let r = q` aliases the alias.
 			name: "alias_chain_refused",
 			src: `import "core/map";
 function round(i: i32): i32 {
-    var m: Map[string, i32] = map_new(4);
-    var q: Map[string, i32] = m;
-    var r: Map[string, i32] = q;
+    let m: Map[string, i32] = map_new(4);
+    let q: Map[string, i32] = m;
+    let r: Map[string, i32] = q;
     m = m.insert("k", i);
     return (q.get_or("k", 0) + r.get_or("k", 0) + m.get_or("k", 0)) % 91;
 }` + mapAliasGroupMain("100"),

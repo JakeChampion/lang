@@ -31,7 +31,7 @@ func assertNoDanglingLocalLabels(t *testing.T, ctx string, asm []byte) {
 // defining, sorted.
 //
 // The character class has to admit `$`: a capturing lambda is hoisted to
-// `<fn>$cloN` (irlower.fern:54733) and its labels carry that name. Excluding it
+// `<fn>$cloN` and its labels carry that name. Excluding it
 // truncated every REFERENCE at the `$` while each DEFINITION was recorded whole,
 // so a closure label reported as dangling from an assembly that links.
 func danglingLocalLabels(asm []byte) []string {
@@ -112,7 +112,7 @@ var readFileIRCases = []struct {
 	{"len", `function main(): i32 { match (read_file("rf_data.txt")) { Ok(s) => { return s.len(); }, Err(e) => { return 99; } } return 0; }`, "", 5},
 	{"echo", `function main(): i32 { match (read_file("rf_data.txt")) { Ok(s) => { write(s); return 0; }, Err(e) => { return 1; } } return 0; }`, "hello", 0},
 	{"missing", `function main(): i32 { match (read_file("rf_nope.txt")) { Ok(s) => { return 0; }, Err(e) => { return 42; } } return 0; }`, "", 42},
-	{"bind", `function main(): i32 { var r = read_file("rf_data.txt"); match (r) { Ok(s) => { return s.len(); }, Err(e) => { return 7; } } return 0; }`, "", 5},
+	{"bind", `function main(): i32 { let r = read_file("rf_data.txt"); match (r) { Ok(s) => { return s.len(); }, Err(e) => { return 7; } } return 0; }`, "", 5},
 }
 
 func writeRFData(t *testing.T, dir string) {

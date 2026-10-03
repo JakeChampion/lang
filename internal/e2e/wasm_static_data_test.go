@@ -20,7 +20,7 @@ import (
 func TestWASMStaticDataPastOnePage(t *testing.T) {
 	const count, width = 40, 2048 // 80 KiB of literals, comfortably past one page
 	var b strings.Builder
-	b.WriteString("function main(): i32 {\n    var xs: string[] = [\n")
+	b.WriteString("function main(): i32 {\n    let xs: string[] = [\n")
 	for i := 0; i < count; i++ {
 		if i > 0 {
 			b.WriteString(",\n")
@@ -29,8 +29,8 @@ func TestWASMStaticDataPastOnePage(t *testing.T) {
 	}
 	b.WriteString(`
     ];
-    var i: i32 = 0;
-    var n: i32 = 0;
+    let i: i32 = 0;
+    let n: i32 = 0;
     while (i < xs.len()) { n = n + xs[i].len(); i = i + 1; }
     return n;
 }`)

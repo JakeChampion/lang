@@ -17,7 +17,7 @@ impl Named for Cat {
 }
 
 function run(own d: dyn Named): i32 {
-    var t: string = d.tag(7);
+    let t: string = d.tag(7);
     return d.score("abcd") + t.len();
 }
 

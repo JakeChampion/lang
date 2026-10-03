@@ -1,7 +1,7 @@
 # A borrowed struct param handed back bare is counted
 
 #9203, the `core/bigint` residue behind `od -t fL` and `printf`'s
-subnormals: `var c: Big = b.id_or_make(0)` over a fresh `b` read 200 / 0 for
+subnormals: `let c: Big = b.id_or_make(0)` over a fresh `b` read 200 / 0 for
 a hundred rounds — both boxes credited by the plan and refused by the struct
 credit collector — and every bigint shape built on `if (k <= 0) { return a; }`
 read the same.
@@ -65,13 +65,13 @@ hundred rounds:
 
 | shape | before | after |
 | --- | --- | --- |
-| `var c = b.id_or_make(0)` (the receiver back) | 200 / 0 | 200 / 200 |
-| `var held = keepit(b)`, both read | 200 / 0 | 200 / 200 |
-| `var c = keepit(b)`, b dead at the bind | 200 / 0 | 200 / 200 |
+| `let c = b.id_or_make(0)` (the receiver back) | 200 / 0 | 200 / 200 |
+| `let held = keepit(b)`, both read | 200 / 0 | 200 / 200 |
+| `let c = keepit(b)`, b dead at the bind | 200 / 0 | 200 / 200 |
 | `x = x.id_or_make(0)` three times | 200 / 0 | 200 / 200 |
 | `x = x.id_or_make(j % 2)`, identity and fresh alternating | 300 / 0 | 300 / 300 |
 | `b.id_or_make(0).mag.len() + b.id_or_make(1).mag.len()` | 300 / 100 | 300 / 200 |
-| `var c = b.id_or_make(1)` (the fresh path, `make(a.neg, mag)`) | 300 / 0 | 300 / 200 |
+| `let c = b.id_or_make(1)` (the fresh path, `make(a.neg, mag)`) | 300 / 0 | 300 / 200 |
 | `c = b.id_or_make(0); c = c.id_or_make(1)`, b live | 300 / 0 | 300 / 200 |
 | `b.mul_pow10(1)` (the bigint shape) | 400 / 0 | 400 / 300 |
 | `take(Big { … })` (an `own` param handed back) | 400 / 400 | 400 / 400 |
@@ -138,7 +138,7 @@ leak, never a double release.
 
 The 48 bytes a round that stood on the fresh-path rows after the first cut
 were `b.mag`: `id_or_make` reads `a.mag` into a local before forwarding it, so
-it earns neither the receiver-borrow key nor — with `var c = b.id_or_make(1)`
+it earns neither the receiver-borrow key nor — with `let c = b.id_or_make(1)`
 a move of its result — the identity-only admission, and the caller marked `b`
 "NODEEP:": box-only, with the count the callee's field read added never given
 back. `recv_ident_methods_of` refused the move because the result could be
@@ -149,7 +149,7 @@ moved result no longer costs the receiver its deep drop:
 
 | shape | after the first cut | now |
 | --- | --- | --- |
-| `var c = b.id_or_make(1)` | 300 / 200 | 300 / 300 |
+| `let c = b.id_or_make(1)` | 300 / 200 | 300 / 300 |
 | `c = b.id_or_make(0); c = c.id_or_make(1)`, b live | 300 / 200 | 300 / 300 |
 | `b.mul_pow10(1)` | 400 / 300 | 400 / 400 |
 | `mul_pow10` over a fresh `make` (`bi_pow10_fresh`) | 900 / 800 | 900 / 900 |
@@ -161,7 +161,7 @@ u64) }`, and the strict-fresh classifier admits an array field set from a
 literal, a producer call, a frame-built ident or a counted share — not from
 the `.with` / `.append` copy the ExprStructLit lowering makes for a
 scalar-element field, though that copy is as fresh and sole-owned as a
-literal. `zero()` is therefore in no class and `var d = zero()` earns nothing:
+literal. `zero()` is therefore in no class and `let d = zero()` earns nothing:
 300 / 0 for a hundred rounds. Admitting the form takes the binding to
 300 / 200.
 
@@ -183,7 +183,7 @@ does not and the count is owed back at the bind. The snapshot local is the
 case with neither today.
 
 What the `od` / `printf` residue is made of, measured alongside: the
-`ld.Format.from_decimal` shape `var d = bigint.zero(); match (bigint.parse(s))
+`ld.Format.from_decimal` shape `let d = bigint.zero(); match (bigint.parse(s))
 { Some(v) => { d = v; } }` — a STRUCT payload carried out of a consuming
 match into an outer local, which `reassigned_from_alias` refuses and whose
 store-out takes no retain (`store_out_takes_counted_claim` is scalar arrays

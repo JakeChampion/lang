@@ -30,7 +30,7 @@ func TestSelfHostWatbinFlat(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern", "watbin.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern", "watbin.fern")
 	// The flat WAT emitter.
 	irDriver := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "ir_driver")
 
@@ -41,10 +41,10 @@ import "std/io";
 import "./util";
 import "./watbin";
 function main(): i32 {
-    var wat: string = "";
+    let wat: string = "";
     match (io.read_all_stdin()) { Ok(text) => { wat = text; }, Err(_) => { return 253; } }
-    var bs: i32[] = watbin.wat_to_binary(wat);
-    var i: i32 = 0;
+    let bs: i32[] = watbin.wat_to_binary(wat);
+    let i: i32 = 0;
     while (i < bs.len()) { write(util.i32_to_string(bs[i])); write("\n"); i = i + 1; }
     return 0;
 }
@@ -77,32 +77,32 @@ function main(): i32 {
 		exit int
 	}{
 		{"const", "function main(): i32 { return 42; }", 42},
-		{"hex-immediates", "function main(): i32 { var wide = 0xFFFFFFFF; var upper = 0X80000000; var word: u32 = 0xffffffff; if (wide / 65536 == 65535 && upper > 0 && word + 1 == 0u32) { return 42; } return 1; }", 42},
+		{"hex-immediates", "function main(): i32 { let wide = 0xFFFFFFFF; let upper = 0X80000000; let word: u32 = 0xffffffff; if (wide / 65536 == 65535 && upper > 0 && word + 1 == 0u32) { return 42; } return 1; }", 42},
 		{"arith", "function main(): i32 { return 2 + 3 * 4; }", 14},
-		{"while-sum", "function main(): i32 { var i = 1; var s = 0; while (i <= 5) { s = s + i; i = i + 1; } return s; }", 15},
-		{"if-else", "function main(): i32 { var x = 0; if (2 < 1) { x = 3; } else { x = 9; } return x; }", 9},
+		{"while-sum", "function main(): i32 { let i = 1; let s = 0; while (i <= 5) { s = s + i; i = i + 1; } return s; }", 15},
+		{"if-else", "function main(): i32 { let x = 0; if (2 < 1) { x = 3; } else { x = 9; } return x; }", 9},
 		{"factorial", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }", 120},
 		{"fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(8); }", 21},
 		// Array program: flat user functions + the emitter's folded heap/RC
 		// helpers in the SAME module — exercises the per-function dispatch.
-		{"arr-index", "function main(): i32 { var a = [10, 20, 30]; return a[0] + a[2]; }", 40},
-		{"arr-loop-sum", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }", 75},
-		{"arr-set", "function main(): i32 { var a = [0, 0, 0]; a = a.with(1, 99); return a[0] + a[1] + a[2]; }", 99},
+		{"arr-index", "function main(): i32 { let a = [10, 20, 30]; return a[0] + a[2]; }", 40},
+		{"arr-loop-sum", "function main(): i32 { let a = [5, 10, 15, 20, 25]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }", 75},
+		{"arr-set", "function main(): i32 { let a = [0, 0, 0]; a = a.with(1, 99); return a[0] + a[1] + a[2]; }", 99},
 		// Scientific-notation f64 literal (#4342): the literal's SOURCE TEXT
 		// is carried by the IR (op_const_f64_text) into `f64.const 1e3` in the WAT, so
 		// watbin's parse_f64 must honour the exponent — the pre-fix parser
 		// stopped at the 'e' and assembled 1.0.
-		{"sci-float-exp", "function main(): i32 { var x = 1e3; var y = 1.5e-2; if (x == 1000.0 && y > 0.0149 && y < 0.0151) { return 42; } return 1; }", 42},
+		{"sci-float-exp", "function main(): i32 { let x = 1e3; let y = 1.5e-2; if (x == 1000.0 && y > 0.0149 && y < 0.0151) { return 42; } return 1; }", 42},
 		// f64 -> i32 SATURATING truncation (`as i32`): the stack-IR backend emits
 		// `i32.trunc_sat_f64_s` (the two-byte 0xFC 0x02 form), which watbin's
 		// opcode table lacked — it fell through both enc paths emitting NOTHING,
 		// so an f64 stayed on the stack where an i32 was expected and the module
 		// failed validation (`type mismatch: expected i32, found f64`). These pin
 		// the 0xFC saturating-conversion family (#4801).
-		{"f64-trunc-mul", "function main(): i32 { var x: f64 = 3.5; return (x * 2.0) as i32; }", 7},
-		{"f64-trunc-sub", "function main(): i32 { var a: f64 = 10.5; var b: f64 = 3.5; return (a - b) as i32; }", 7},
-		{"f64-trunc-sqrt", "function main(): i32 { var a: f64 = 9.0; return (__sqrt_f64(a)) as i32; }", 3},
-		{"f64-int-roundtrip", "function main(): i32 { var n: i32 = 7; var x: f64 = n as f64; return (x + 0.5) as i32; }", 7},
+		{"f64-trunc-mul", "function main(): i32 { let x: f64 = 3.5; return (x * 2.0) as i32; }", 7},
+		{"f64-trunc-sub", "function main(): i32 { let a: f64 = 10.5; let b: f64 = 3.5; return (a - b) as i32; }", 7},
+		{"f64-trunc-sqrt", "function main(): i32 { let a: f64 = 9.0; return (__sqrt_f64(a)) as i32; }", 3},
+		{"f64-int-roundtrip", "function main(): i32 { let n: i32 = 7; let x: f64 = n as f64; return (x + 0.5) as i32; }", 7},
 		// A struct with a POINTER field generates a `__struct_drop_<T>` helper whose
 		// folded body reads the field via `(i32.load offset=8 …)`. watbin ignored
 		// the `offset=N` memarg — it hardcoded offset 0 AND recursed into the
@@ -110,14 +110,14 @@ function main(): i32 {
 		// SIGSEGV). Any struct with a nested-struct / array / string field crashed
 		// the assembler (#4801). Pins the memarg parse on both the load and the
 		// field read.
-		{"struct-nested-field", "struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { var o = Outer { inner: Inner { v: 8 }, k: 34 }; return o.inner.v + o.k; }", 42},
+		{"struct-nested-field", "struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { let o = Outer { inner: Inner { v: 8 }, k: 34 }; return o.inner.v + o.k; }", 42},
 		// An ESCAPING closure (returned from a function, capturing a param) is
 		// called via `call_indirect (type $c)` through the funcref table. The FLAT
 		// emitter's `call_indirect` was unhandled in enc_flat_body (only the folded
 		// enc_instr path had it), so the indirect call was DROPPED — the module
 		// validated but computed garbage. Pins the flat call_indirect encoding
 		// (#4801).
-		{"closure-capture-return", "function adder(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; } function main(): i32 { var a = adder(10); return a(5); }", 15},
+		{"closure-capture-return", "function adder(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; } function main(): i32 { let a = adder(10); return a(5); }", 15},
 		{"lambda-as-arg", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { return apply((x: i32): i32 => { return x * 7; }, 6); }", 42},
 	}
 

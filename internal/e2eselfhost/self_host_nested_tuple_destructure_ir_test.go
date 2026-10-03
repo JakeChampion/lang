@@ -10,9 +10,9 @@ import (
 //
 // The destructure lowering marked a bound slot's element kind (string / i64 /
 // array / struct / …) for scalar and pointer LEAF elements, but had no branch
-// for a nested-TUPLE element: `var (p, c) = t` with t : ((string,i32), i32)
+// for a nested-TUPLE element: `let (p, c) = t` with t : ((string,i32), i32)
 // bound p (a (string,i32) pointer) with NO tuple_elems, so the second-level
-// `var (s, b) = p` resolved s's tag as "" and read it via the untyped
+// `let (s, b) = p` resolved s's tag as "" and read it via the untyped
 // op_tuple_get — a pointer element (string) came through empty (#5306 gap 1).
 // The fix records the nested tuple's element tags on p's slot, so the second
 // destructure (and `p.N`) resolve each element's type. i32 nested elements were
@@ -26,33 +26,33 @@ var nestedTupleDestructureIRCases = []struct {
 	// Nested string element via a second destructure: 2 + 4 + 5 = 11 (was 9 — s
 	// came through empty).
 	{"nested-str-2level", `function g(): i32 {
-	var t: ((string, i32), i32) = (("hi", 4), 5);
-	var (p, c) = t;
-	var (s, b) = p;
+	let t: ((string, i32), i32) = (("hi", 4), 5);
+	let (p, c) = t;
+	let (s, b) = p;
 	return s.len() + b + c;
 }
 function main(): i32 { return g(); }`},
 	// Nested string element read via `.N` on the intermediate binding: 3+4+5 = 12.
 	{"nested-str-dotN", `function g(): i32 {
-	var t: ((string, i32), i32) = (("hey", 4), 5);
-	var (p, c) = t;
+	let t: ((string, i32), i32) = (("hey", 4), 5);
+	let (p, c) = t;
 	return p.0.len() + p.1 + c;
 }
 function main(): i32 { return g(); }`},
 	// Three-level nesting with a string at the bottom: 2 + 1 + 2 + 3 = 8.
 	{"nested-str-3level", `function g(): i32 {
-	var t: (((string, i32), i32), i32) = ((("ab", 1), 2), 3);
-	var (q, d) = t;
-	var (p, c) = q;
-	var (s, b) = p;
+	let t: (((string, i32), i32), i32) = ((("ab", 1), 2), 3);
+	let (q, d) = t;
+	let (p, c) = q;
+	let (s, b) = p;
 	return s.len() + b + c + d;
 }
 function main(): i32 { return g(); }`},
 	// All-i32 nested destructure (regression baseline): 3 + 4 + 5 = 12.
 	{"nested-i32-2level", `function g(): i32 {
-	var t: ((i32, i32), i32) = ((3, 4), 5);
-	var (p, c) = t;
-	var (a, b) = p;
+	let t: ((i32, i32), i32) = ((3, 4), 5);
+	let (p, c) = t;
+	let (a, b) = p;
 	return a + b + c;
 }
 function main(): i32 { return g(); }`},

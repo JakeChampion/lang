@@ -46,7 +46,7 @@ func TestSelfHostTupleIdentTagWasmIR(t *testing.T) {
 }
 
 function main(): i32 {
-    var t: (i32, i64) = mk(9000000000000000007i64, 4000000000000000000i64);
+    let t: (i32, i64) = mk(9000000000000000007i64, 4000000000000000000i64);
     return ((t.1 / 4294967296i64) % 251i64) as i32;
 }`},
 		{"option_match_binding", `function pick(a: i64): Option[i64] { if (a > 0i64) { return Some(a); } return None; }
@@ -56,7 +56,7 @@ function mk(a: i64): (i32, i64) {
 }
 
 function main(): i32 {
-    var t: (i32, i64) = mk(1000000000000000007i64);
+    let t: (i32, i64) = mk(1000000000000000007i64);
     return ((t.1 / 4294967296i64) % 251i64) as i32;
 }`},
 	}

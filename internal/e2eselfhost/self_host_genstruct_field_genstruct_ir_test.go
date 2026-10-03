@@ -30,29 +30,29 @@ var genStructFieldGenStructIRCases = []genStructFieldGenStructIRCase{
 	{"i32_field", `struct Box[T] { v: T }
 struct Holder[U] { b: Box[U] }
 function main(): i32 {
-    var h: Holder[i32] = Holder { b: Box { v: 9 } };
+    let h: Holder[i32] = Holder { b: Box { v: 9 } };
     return h.b.v;
 }`, 9},
 	// string field, method dispatch on the innermost value.
 	{"string_field", `struct Box[T] { v: T }
 struct Holder[U] { b: Box[U] }
 function main(): i32 {
-    var h: Holder[string] = Holder { b: Box { v: "hey" } };
+    let h: Holder[string] = Holder { b: Box { v: "hey" } };
     return h.b.v.len();
 }`, 3},
 	// the outer struct also has a plain field alongside the generic one.
 	{"mixed_fields", `struct Box[T] { v: T }
 struct Holder[U] { tag: i32, b: Box[U] }
 function main(): i32 {
-    var h: Holder[i32] = Holder { tag: 3, b: Box { v: 4 } };
+    let h: Holder[i32] = Holder { tag: 3, b: Box { v: 4 } };
     return h.tag + h.b.v;
 }`, 7},
 	// two distinct instantiations of the outer struct coexisting.
 	{"two_instantiations", `struct Box[T] { v: T }
 struct Holder[U] { b: Box[U] }
 function main(): i32 {
-    var a: Holder[i32] = Holder { b: Box { v: 4 } };
-    var c: Holder[string] = Holder { b: Box { v: "xyz" } };
+    let a: Holder[i32] = Holder { b: Box { v: 4 } };
+    let c: Holder[string] = Holder { b: Box { v: "xyz" } };
     return a.b.v + c.b.v.len();
 }`, 7},
 	// the outer struct arrives as a function parameter.

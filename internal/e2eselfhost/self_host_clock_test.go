@@ -31,8 +31,8 @@ func TestSelfHostClockX86_64(t *testing.T) {
 
 	prog := `function main(): i32 {
     if (now_unix_ms() <= 1000000000000) { return 1; }
-    var a: i64 = monotonic_ns();
-    var b: i64 = monotonic_ns();
+    let a: i64 = monotonic_ns();
+    let b: i64 = monotonic_ns();
     if (b < a) { return 2; }
     return 7;
 }`
@@ -67,8 +67,8 @@ func TestSelfHostClockArm64(t *testing.T) {
 
 	clockSrc := `function main(): i32 {
     if (now_unix_ms() <= 1000000000000) { return 1; }
-    var a: i64 = monotonic_ns();
-    var b: i64 = monotonic_ns();
+    let a: i64 = monotonic_ns();
+    let b: i64 = monotonic_ns();
     if (b < a) { return 2; }
     return 7;
 }`

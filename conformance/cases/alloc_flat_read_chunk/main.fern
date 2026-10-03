@@ -21,8 +21,8 @@ import "std/i32";
 import "std/i64";
 
 function rounds(r: Reader, size: i32, n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         match (r.read_chunk(size)) {
             Ok(chunk) => {
@@ -37,19 +37,19 @@ function rounds(r: Reader, size: i32, n: i32): i32 {
 }
 
 function main(): i32 {
-    var r: Reader = stdin();
-    var warm: i32 = rounds(r, 16, 1);
-    var b0: i64 = __heap_bump_bytes();
-    var x1: i32 = rounds(r, 16, 20);
-    var b1: i64 = __heap_bump_bytes();
-    var x2: i32 = rounds(r, 16, 20);
-    var b2: i64 = __heap_bump_bytes();
+    let r: Reader = stdin();
+    let warm: i32 = rounds(r, 16, 1);
+    let b0: i64 = __heap_bump_bytes();
+    let x1: i32 = rounds(r, 16, 20);
+    let b1: i64 = __heap_bump_bytes();
+    let x2: i32 = rounds(r, 16, 20);
+    let b2: i64 = __heap_bump_bytes();
     warm = warm + rounds(r, 1024, 1);
-    var b3: i64 = __heap_bump_bytes();
-    var y1: i32 = rounds(r, 1024, 20);
-    var b4: i64 = __heap_bump_bytes();
-    var y2: i32 = rounds(r, 1024, 20);
-    var b5: i64 = __heap_bump_bytes();
+    let b3: i64 = __heap_bump_bytes();
+    let y1: i32 = rounds(r, 1024, 20);
+    let b4: i64 = __heap_bump_bytes();
+    let y2: i32 = rounds(r, 1024, 20);
+    let b5: i64 = __heap_bump_bytes();
 
     print(warm.to_string());
     print((x1 + x2).to_string());

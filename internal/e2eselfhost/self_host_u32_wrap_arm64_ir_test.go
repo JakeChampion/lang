@@ -48,17 +48,17 @@ func TestSelfHostU32WrapArm64IR(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"add-wrap", `function main(): i32 { var x: u32 = 0x80000000; var s: u32 = x + x; return ((s >> 28) & 255) as i32; }`},
-		{"add5-wrap", `function main(): i32 { var a: u32 = 0xffffffff; var s: u32 = a + a + a + a + a; return ((s >> 24) & 255) as i32; }`},
+		{"add-wrap", `function main(): i32 { let x: u32 = 0x80000000; let s: u32 = x + x; return ((s >> 28) & 255) as i32; }`},
+		{"add5-wrap", `function main(): i32 { let a: u32 = 0xffffffff; let s: u32 = a + a + a + a + a; return ((s >> 24) & 255) as i32; }`},
 		{"bare-hex-context", `function mask(): u32 { return 0XFFFFFFFF; }
-function main(): i32 { var a: u32 = 1; var b: u32 = a + (0xfffffffe + 1); var c: u32 = a + (0xfffffffe | 1); a = 0xffffffff; if (a == mask() && b == 0u32 && c == 0u32 && 0xffffffff > b) { return 42; } return 0; }`},
-		{"shl-wrap", `function main(): i32 { var a: u32 = 0xff; var s: u32 = a << 28; return ((s >> 24) & 255) as i32; }`},
-		{"shr-logical", `function main(): i32 { var a: u32 = 0x80000000; return ((a >> 24) & 255) as i32; }`},
-		{"rotr-inline", `function __rotr(x: u32, n: u32): u32 { return (x >> n) | (x << (32 - n)); } function main(): i32 { var x: u32 = 0x7da86405; var r: u32 = __rotr(x, 17) ^ __rotr(x, 19) ^ (x >> 10); return ((r >> 24) & 255) as i32; }`},
-		{"sha256-abc-b0", shaCoreSrc + `function main(): i32 { var d: u8[] = __sha256_core(__str_to_bytes("abc")); return d[0] as i32; }`},
-		{"sha256-abc-b31", shaCoreSrc + `function main(): i32 { var d: u8[] = __sha256_core(__str_to_bytes("abc")); return d[31] as i32; }`},
-		{"sha256-empty-b0", shaCoreSrc + `function main(): i32 { var d: u8[] = __sha256_core(__str_to_bytes("")); return d[0] as i32; }`},
-		{"alloc-u8", `function main(): i32 { var m: u8[] = __alloc_u8(3); m = m.with(0, 65); m = m.with(2, 67); return (m[0] as i32) + (m[2] as i32); }`},
+function main(): i32 { let a: u32 = 1; let b: u32 = a + (0xfffffffe + 1); let c: u32 = a + (0xfffffffe | 1); a = 0xffffffff; if (a == mask() && b == 0u32 && c == 0u32 && 0xffffffff > b) { return 42; } return 0; }`},
+		{"shl-wrap", `function main(): i32 { let a: u32 = 0xff; let s: u32 = a << 28; return ((s >> 24) & 255) as i32; }`},
+		{"shr-logical", `function main(): i32 { let a: u32 = 0x80000000; return ((a >> 24) & 255) as i32; }`},
+		{"rotr-inline", `function __rotr(x: u32, n: u32): u32 { return (x >> n) | (x << (32 - n)); } function main(): i32 { let x: u32 = 0x7da86405; let r: u32 = __rotr(x, 17) ^ __rotr(x, 19) ^ (x >> 10); return ((r >> 24) & 255) as i32; }`},
+		{"sha256-abc-b0", shaCoreSrc + `function main(): i32 { let d: u8[] = __sha256_core(__str_to_bytes("abc")); return d[0] as i32; }`},
+		{"sha256-abc-b31", shaCoreSrc + `function main(): i32 { let d: u8[] = __sha256_core(__str_to_bytes("abc")); return d[31] as i32; }`},
+		{"sha256-empty-b0", shaCoreSrc + `function main(): i32 { let d: u8[] = __sha256_core(__str_to_bytes("")); return d[0] as i32; }`},
+		{"alloc-u8", `function main(): i32 { let m: u8[] = __alloc_u8(3); m = m.with(0, 65); m = m.with(2, 67); return (m[0] as i32) + (m[2] as i32); }`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

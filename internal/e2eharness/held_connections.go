@@ -38,7 +38,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 }
 
 function main(): i32 {
-    var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), recv_deadline: time.duration_seconds(120 as i64), max_connections_per_ip: 0 };
+    let opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), recv_deadline: time.duration_seconds(120 as i64), max_connections_per_ip: 0 };
     return tcp.tcp_serve_opts(%d, opts, handle);
 }
 `, port)

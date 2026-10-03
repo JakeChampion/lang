@@ -51,11 +51,11 @@ struct Holder { o: Option[i32[]] }
 
 // --- the reported shape: arm binding from a map lookup, escaping ---
 function map_escape_churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    var keep: i32[] = [0, 0];
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    let keep: i32[] = [0, 0];
     while (i < n) {
-        var m: Map[i32, i32[]] = map_new(4);
+        let m: Map[i32, i32[]] = map_new(4);
         m = m.insert(1, [i, i + 1]);
         match (m.get(1)) {
             Some(g) => { keep = g; },
@@ -69,12 +69,12 @@ function map_escape_churn(n: i32): i32 {
 
 // --- control: same work, no arm binding (already flat before the fix) ---
 function get_or_churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    var fb: i32[] = [0, 0];
-    var keep: i32[] = [0, 0];
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    let fb: i32[] = [0, 0];
+    let keep: i32[] = [0, 0];
     while (i < n) {
-        var m: Map[i32, i32[]] = map_new(4);
+        let m: Map[i32, i32[]] = map_new(4);
         m = m.insert(1, [i, i + 1]);
         keep = m.get_or(1, fb);
         acc = (acc + keep[0]) % 251;
@@ -85,10 +85,10 @@ function get_or_churn(n: i32): i32 {
 
 // --- control: arm binding that does NOT escape (the #7144 shape) ---
 function nonescape_churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, i32[]] = map_new(4);
+        let m: Map[i32, i32[]] = map_new(4);
         m = m.insert(1, [i, i + 1]);
         match (m.get(1)) {
             Some(g) => { acc = (acc + g[0]) % 251; },
@@ -101,11 +101,11 @@ function nonescape_churn(n: i32): i32 {
 
 // --- the same defect with NO map involved ---
 function field_escape_churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    var keep: i32[] = [0, 0];
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    let keep: i32[] = [0, 0];
     while (i < n) {
-        var h: Holder = Holder { o: Some([i, i + 5]) };
+        let h: Holder = Holder { o: Some([i, i + 5]) };
         match (h.o) { Some(g) => { keep = g; }, None => {} }
         acc = (acc + keep[1]) % 251;
         i = i + 1;
@@ -114,11 +114,11 @@ function field_escape_churn(n: i32): i32 {
 }
 
 function iflet_escape_churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    var keep: i32[] = [0, 0];
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    let keep: i32[] = [0, 0];
     while (i < n) {
-        var o: Option[i32[]] = Some([i, i + 11]);
+        let o: Option[i32[]] = Some([i, i + 11]);
         if let Some(g) = o { keep = g; }
         acc = (acc + keep[1]) % 251;
         i = i + 1;
@@ -128,10 +128,10 @@ function iflet_escape_churn(n: i32): i32 {
 
 // --- correctness: the escapee outlives the map that owned it ---
 function read_after_map_death(n: i32): i32 {
-    var keep: i32[] = [0, 0];
-    var i: i32 = 0;
+    let keep: i32[] = [0, 0];
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, i32[]] = map_new(4);
+        let m: Map[i32, i32[]] = map_new(4);
         m = m.insert(1, [i, i + 7]);
         match (m.get(1)) { Some(g) => { keep = g; }, None => {} }
         i = i + 1;
@@ -141,13 +141,13 @@ function read_after_map_death(n: i32): i32 {
 
 // --- correctness: two live escapees from two maps, interleaved ---
 function two_escapees(n: i32): i32 {
-    var a: i32[] = [0, 0];
-    var b: i32[] = [0, 0];
-    var i: i32 = 0;
+    let a: i32[] = [0, 0];
+    let b: i32[] = [0, 0];
+    let i: i32 = 0;
     while (i < n) {
-        var m1: Map[i32, i32[]] = map_new(4);
+        let m1: Map[i32, i32[]] = map_new(4);
         m1 = m1.insert(1, [i, i + 1]);
-        var m2: Map[i32, i32[]] = map_new(4);
+        let m2: Map[i32, i32[]] = map_new(4);
         m2 = m2.insert(2, [i + 100, i + 101]);
         match (m1.get(1)) { Some(g) => { a = g; }, None => {} }
         match (m2.get(2)) { Some(g) => { b = g; }, None => {} }
@@ -160,11 +160,11 @@ function two_escapees(n: i32): i32 {
 
 // --- correctness: the escapee aliased again afterwards; both stay live ---
 function alias_after_escape(n: i32): i32 {
-    var keep: i32[] = [0, 0];
-    var alias: i32[] = [0, 0];
-    var i: i32 = 0;
+    let keep: i32[] = [0, 0];
+    let alias: i32[] = [0, 0];
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, i32[]] = map_new(4);
+        let m: Map[i32, i32[]] = map_new(4);
         m = m.insert(1, [i, i + 3]);
         match (m.get(1)) { Some(g) => { keep = g; }, None => {} }
         alias = keep;
@@ -176,33 +176,33 @@ function alias_after_escape(n: i32): i32 {
 
 function main(): i32 {
     if (map_escape_churn(1000) < 0) { return 11; }
-    var a1: i64 = __heap_bump_bytes();
+    let a1: i64 = __heap_bump_bytes();
     if (map_escape_churn(2000) < 0) { return 11; }
-    var a2: i64 = __heap_bump_bytes();
+    let a2: i64 = __heap_bump_bytes();
     if ((a2 - a1) / 2000 != 0) { return 1; }
 
     if (get_or_churn(1000) < 0) { return 12; }
-    var b1: i64 = __heap_bump_bytes();
+    let b1: i64 = __heap_bump_bytes();
     if (get_or_churn(2000) < 0) { return 12; }
-    var b2: i64 = __heap_bump_bytes();
+    let b2: i64 = __heap_bump_bytes();
     if ((b2 - b1) / 2000 != 0) { return 2; }
 
     if (nonescape_churn(1000) < 0) { return 13; }
-    var c1: i64 = __heap_bump_bytes();
+    let c1: i64 = __heap_bump_bytes();
     if (nonescape_churn(2000) < 0) { return 13; }
-    var c2: i64 = __heap_bump_bytes();
+    let c2: i64 = __heap_bump_bytes();
     if ((c2 - c1) / 2000 != 0) { return 3; }
 
     if (field_escape_churn(1000) < 0) { return 14; }
-    var d1: i64 = __heap_bump_bytes();
+    let d1: i64 = __heap_bump_bytes();
     if (field_escape_churn(2000) < 0) { return 14; }
-    var d2: i64 = __heap_bump_bytes();
+    let d2: i64 = __heap_bump_bytes();
     if ((d2 - d1) / 2000 != 0) { return 4; }
 
     if (iflet_escape_churn(1000) < 0) { return 15; }
-    var e1: i64 = __heap_bump_bytes();
+    let e1: i64 = __heap_bump_bytes();
     if (iflet_escape_churn(2000) < 0) { return 15; }
-    var e2: i64 = __heap_bump_bytes();
+    let e2: i64 = __heap_bump_bytes();
     if ((e2 - e1) / 2000 != 0) { return 5; }
 
     if (read_after_map_death(500) != 499 * 1000 + 506) { return 6; }

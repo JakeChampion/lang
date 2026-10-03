@@ -36,7 +36,7 @@ func TestCheckTargetFreestandingRejectsHostBuiltins(t *testing.T) {
 // The complement: a program that only computes checks clean, so the
 // target is usable and not merely restrictive.
 func TestCheckTargetFreestandingAllowsCore(t *testing.T) {
-	entry := writeFern(t, "function main(): i32 {\n  var b: i64 = f64_bits(1.5);\n  return ((b + 1) as i32);\n}\n")
+	entry := writeFern(t, "function main(): i32 {\n  let b: i64 = f64_bits(1.5);\n  return ((b + 1) as i32);\n}\n")
 	if err := runCheck(entry, "arm64-freestanding"); err != nil {
 		t.Fatalf("core-only program rejected: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestCheckTargetFreestandingAllowsCore(t *testing.T) {
 func TestCheckWithoutTargetSkipsEnforcement(t *testing.T) {
 	// `subprocess` is interp-only: NO compiled target grants it, so a
 	// check that enforced any target at all would reject this.
-	entry := writeFern(t, "function main(): i32 {\n  var r = subprocess(\"/bin/echo\", [\"hi\"], \"\");\n  return r.exit_code;\n}\n")
+	entry := writeFern(t, "function main(): i32 {\n  let r = subprocess(\"/bin/echo\", [\"hi\"], \"\");\n  return r.exit_code;\n}\n")
 	if err := runCheck(entry, ""); err != nil {
 		t.Fatalf("bare -check should not enforce a target: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestCompileFreestandingRefusesClearly(t *testing.T) {
 // `fern explain`. As `-backend ssa` on an ordinary target they keep the
 // target's descriptor, so E066 applies to them like anything else (#6536).
 func TestBackendSSAKeepsCapabilityEnforcement(t *testing.T) {
-	entry := writeFern(t, "function main(): i32 {\n  var r = subprocess(\"/bin/echo\", [\"hi\"], \"\");\n  return r.exit_code;\n}\n")
+	entry := writeFern(t, "function main(): i32 {\n  let r = subprocess(\"/bin/echo\", [\"hi\"], \"\");\n  return r.exit_code;\n}\n")
 	for _, target := range []string{"wasm32-wasi", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			out := filepath.Join(t.TempDir(), "out")

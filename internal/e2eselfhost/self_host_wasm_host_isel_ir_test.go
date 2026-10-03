@@ -46,7 +46,7 @@ const wasmHandleFlagsSrc = `function main(): i32 {
 // wasmStoreU8Src writes bytes into raw memory through both spellings of the
 // byte store and reads them back.
 const wasmStoreU8Src = `function main(): i32 {
-    var p: usize = __alloc(8);
+    let p: usize = __alloc(8);
     __store_u8(p, 104);
     __store_u8(p + 1, 361);
     __raw_store8(p, 2, 106);
@@ -110,7 +110,7 @@ func TestSelfHostWatbinUndefinedReference(t *testing.T) {
 		{"undefined-global", `(module (func $f (result i32) (global.get $base)))`, "watbin: reference to undefined $base\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			src := string(watbin) + "\nfunction main(): i32 {\n    var b: i32[] = wat_to_binary(\"" + c.wat + "\");\n    return 0;\n}\n"
+			src := string(watbin) + "\nfunction main(): i32 {\n    let b: i32[] = wat_to_binary(\"" + c.wat + "\");\n    return 0;\n}\n"
 			bin := buildBin(t, cli.gcc, t.TempDir(), "watbin", cli.emit(t, "x86-64-linux", src))
 			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
 			want := 0

@@ -4,7 +4,7 @@ Self-host (`ssasem.boxes_into_dyn`).
 
 `2026-09-23-h` admitted every integer, boolean and `f64` into a `dyn` box, and
 kept `f32` out because wasm had no f32 scratch local to stash it in. The
-typed lowering therefore refused `var xs: dyn Show[] = [41, x]` with `x: f32`
+typed lowering therefore refused `let xs: dyn Show[] = [41, x]` with `x: f32`
 (`array element type: f32 in dyn Show[]`), where native and the interpreter
 answer.
 

@@ -36,13 +36,13 @@ function mkP(n: i32): P {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < %d) {
-        var ps: P[] = [];
-        var i: i32 = 0;
+        let ps: P[] = [];
+        let i: i32 = 0;
         while (i < 8) { ps = ps.append(mkP(i)); i = i + 1; }
-        var j: i32 = 0;
+        let j: i32 = 0;
         while (j < ps.len()) { t = t + %s + ps[j].name.len(); j = j + 1; }
         r = r + 1;
     }

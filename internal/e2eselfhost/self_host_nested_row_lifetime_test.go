@@ -13,14 +13,14 @@ import (
 // returns so a missing retain overwrites the borrowed row before its read.
 const nestedRowLifetimeSource = `struct Rows { rows: ELEMENT[][] }
 function collect(): Rows {
-  var out: Rows = Rows { rows: [] };
-  var source: Rows = Rows { rows: [[FIRST, SECOND]] };
+  let out: Rows = Rows { rows: [] };
+  let source: Rows = Rows { rows: [[FIRST, SECOND]] };
   return Rows { rows: out.rows.append(source.rows[0]) };
 }
 function main(): i32 {
-  var out: Rows = collect();
-  var churn: ELEMENT[][] = [];
-  var i: i32 = 0;
+  let out: Rows = collect();
+  let churn: ELEMENT[][] = [];
+  let i: i32 = 0;
   while (i < 32) { churn = churn.append([CHURN, CHURN]); i = i + 1; }
   if (churn[31][1] != CHURN) { return 1; }
   if (out.rows[0].len() != 2) { return 2; }

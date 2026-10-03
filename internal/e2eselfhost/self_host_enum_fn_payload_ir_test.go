@@ -19,11 +19,11 @@ const futureEnumProgram = `enum Future { Ready(i32), Pending(i32, (i32) => Futur
 function step(x: i32): Future { return Ready(x + 1); }
 
 function main(): i32 {
-    var f: Future = Pending(41, step);
+    let f: Future = Pending(41, step);
     match (f) {
         Ready(v) => { return v; },
         Pending(tag, k) => {
-            var r: Future = k(tag);
+            let r: Future = k(tag);
             match (r) {
                 Ready(v2) => { return v2; },
                 Pending(t2, k2) => { return 100; }

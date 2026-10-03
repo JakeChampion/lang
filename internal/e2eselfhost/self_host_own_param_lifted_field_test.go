@@ -11,7 +11,7 @@ import (
 // #8267: a field lifted into a local and then handed to an `own` parameter was
 // freed twice.
 //
-// `var st = a.cfi` emits no retain — the local is an UNCOUNTED alias and the
+// `let st = a.cfi` emits no retain — the local is an UNCOUNTED alias and the
 // base's box keeps the only claim. Passing it to a declared `own` parameter
 // gives the callee a claim that was never made: the callee releases it at exit
 // (or, having found it unique, reuses the box in place and hands it back), and
@@ -39,46 +39,46 @@ var selfHostOwnParamLiftedFieldCases = []struct {
 }{
 	// The reported shape: lift a field of the `own` param, hand it to a callee
 	// that consumes it, return it inside a box built from the result.
-	{"lifted-field-returned", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: CfiState = a.cfi;\n    st = directive(st, v);\n    return Asm { cfi: st, n: a.n };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"lifted-field-returned", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    let st: CfiState = a.cfi;\n    st = directive(st, v);\n    return Asm { cfi: st, n: a.n };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
 	// The same with the write-back spelled as a spread. Both spellings reach the
 	// same emit today; the analysis reads the SOURCE, so pinning both is what
 	// says the fix is at the argument rather than in one literal form.
-	{"lifted-field-returned-spread", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: CfiState = a.cfi;\n    st = directive(st, v);\n    return Asm { ...a, cfi: st };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"lifted-field-returned-spread", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    let st: CfiState = a.cfi;\n    st = directive(st, v);\n    return Asm { ...a, cfi: st };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
 	// The supersede shape (#8267's A): the base is REBOUND between the lift and
 	// the call, and its in-place reuse decs the replaced field outright — so the
 	// box st names is freed before the call even runs. This is why the retain is
 	// emitted at the BIND: at the argument it would already be too late.
-	{"lifted-field-superseded-base", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: CfiState = a.cfi;\n    a = Asm { ...a, cfi: CfiState { bad: [], open: false } };\n    st = directive(st, v);\n    return Asm { cfi: st, n: a.n };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"lifted-field-superseded-base", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    let st: CfiState = a.cfi;\n    a = Asm { ...a, cfi: CfiState { bad: [], open: false } };\n    st = directive(st, v);\n    return Asm { cfi: st, n: a.n };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
 	// Control: the callee BORROWS the field, so nothing consumes the alias and
 	// the base's single claim is still the right count. Correct before the fix,
 	// and the row that fails if the retain is hung on the LIFT instead of on the
 	// `own` position — there it strands the field's box.
-	{"borrowed-callee-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: CfiState = a.cfi;\n    st = directive(st, v);\n    return Asm { cfi: st, n: a.n };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"borrowed-callee-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    let st: CfiState = a.cfi;\n    st = directive(st, v);\n    return Asm { cfi: st, n: a.n };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
 	// Control: nothing is lifted — `st` is built fresh and owns its claim, so
 	// the `own` position takes it as it stands. A retain here would leak.
-	{"no-lift-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: CfiState = CfiState { bad: [v], open: true };\n    st = directive(st, v);\n    return Asm { cfi: st, n: a.n };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"no-lift-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    let st: CfiState = CfiState { bad: [v], open: true };\n    st = directive(st, v);\n    return Asm { cfi: st, n: a.n };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
 	// Control: the lifted field is an ARRAY, not a nested struct. Its bind
 	// already takes a Perceus dup, so it owns its claim before the `own`
 	// position sees it and a second retain there would strand the box — which
 	// is exactly what the first gate did (it admitted every field_move_type
 	// kind, and this row went clean to leak).
-	{"array-field-lift-control", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction directive(own s: i32[], v: i32): i32[] {\n    return s.append(v);\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: i32[] = a.bad;\n    st = directive(st, v);\n    return Asm { bad: st, n: a.n };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.bad.len() + __rc_underflow_count();\n}"},
+	{"array-field-lift-control", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction directive(own s: i32[], v: i32): i32[] {\n    return s.append(v);\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    let st: i32[] = a.bad;\n    st = directive(st, v);\n    return Asm { bad: st, n: a.n };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.bad.len() + __rc_underflow_count();\n}"},
 
 	// Control: an ENUM field, balanced by its own alias marking before the fix
 	// and after it. The array row's sibling — together they say the gate admits
 	// the nested-struct field and nothing else.
-	{"enum-field-lift-control", "enum Color { Red, Green(i32) }\nstruct Asm { c: Color, n: i32 }\n@noinline\nfunction directive(own s: Color, v: i32): Color {\n    return Color.Green(v);\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: Color = a.c;\n    st = directive(st, v);\n    return Asm { c: st, n: a.n };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { c: Color.Red, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    var r: i32 = 2;\n    match (a.c) { Color.Red => { r = 0; }, Color.Green(g) => { r = g; } }\n    return r + __rc_underflow_count();\n}"},
+	{"enum-field-lift-control", "enum Color { Red, Green(i32) }\nstruct Asm { c: Color, n: i32 }\n@noinline\nfunction directive(own s: Color, v: i32): Color {\n    return Color.Green(v);\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    let st: Color = a.c;\n    st = directive(st, v);\n    return Asm { c: st, n: a.n };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { c: Color.Red, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    let r: i32 = 2;\n    match (a.c) { Color.Red => { r = 0; }, Color.Green(g) => { r = g; } }\n    return r + __rc_underflow_count();\n}"},
 
 	// Control: the local IS lifted, but is rebound to a fresh box before the
 	// `own` call, so by then it owns its value and the alias is gone. This is
 	// what the forward scan's stop-on-rebind is for; without it the retain lands
 	// on a counted value and strands it.
-	{"lift-then-rebind-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction fresh(v: i32): CfiState {\n    return CfiState { bad: [v], open: false };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: CfiState = a.cfi;\n    st = fresh(v);\n    st = directive(st, v);\n    return Asm { cfi: st, n: a.n };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"lift-then-rebind-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction fresh(v: i32): CfiState {\n    return CfiState { bad: [v], open: false };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    let st: CfiState = a.cfi;\n    st = fresh(v);\n    st = directive(st, v);\n    return Asm { cfi: st, n: a.n };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 }
 
 // TestSelfHostOwnParamLiftedFieldX86_64 — the production x86-64 IR path against
@@ -88,7 +88,7 @@ func TestSelfHostOwnParamLiftedFieldX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range selfHostOwnParamLiftedFieldCases {
@@ -114,14 +114,14 @@ func TestSelfHostOwnParamLiftedFieldX86_64(t *testing.T) {
 }
 
 // TestSelfHostOwnParamLiftedFieldArm64 — the same cases through the arm64 emit.
-// The retain is inserted by shared irlower analysis rather than per-backend
+// The retain is inserted by shared lowering analysis rather than per-backend
 // emission, so this leg is what would catch it landing on one register backend.
 func TestSelfHostOwnParamLiftedFieldArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range selfHostOwnParamLiftedFieldCases {
@@ -150,7 +150,7 @@ func TestSelfHostOwnParamLiftedFieldWasmIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	for _, tc := range selfHostOwnParamLiftedFieldCases {

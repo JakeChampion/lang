@@ -33,11 +33,11 @@ var structRCIRCases = []struct {
 	// each iteration (the prior box released on rebind) and at exit. sum over
 	// i in 0..4 of (i + (i+1)) = 1+3+5+7+9 = 25.
 	{"loop-rebind-reclaimed",
-		`struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5) { var p: P = P { x: i, y: i + 1 }; sum = sum + p.x + p.y; i = i + 1; } return sum; }`,
+		`struct P { x: i32, y: i32 } function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 5) { let p: P = P { x: i, y: i + 1 }; sum = sum + p.x + p.y; i = i + 1; } return sum; }`,
 		25, 1},
 	// Single fresh struct, only field-read: freed once at scope exit.
 	{"single-reclaimed",
-		`struct P { x: i32, y: i32 } function main(): i32 { var p: P = P { x: 30, y: 12 }; return p.x + p.y; }`,
+		`struct P { x: i32, y: i32 } function main(): i32 { let p: P = P { x: 30, y: 12 }; return p.x + p.y; }`,
 		42, 1},
 	// Borrow via call argument: p is passed to sumit, which only FIELD-READS it
 	// (`return p.x + p.y`) and so has a BORROWABLE param — passing p there is a
@@ -48,20 +48,20 @@ var structRCIRCases = []struct {
 	// pins soundness: total = (0+10)+(1+10)+(2+10) = 33, and a struct free is now
 	// REQUIRED (regressing to leak-only would drop it).
 	{"borrow-call-arg-reclaimed",
-		`struct P { x: i32, y: i32 } function sumit(p: P): i32 { return p.x + p.y; } function main(): i32 { var total: i32 = 0; var i: i32 = 0; while (i < 3) { var p: P = P { x: i, y: 10 }; total = total + sumit(p); i = i + 1; } return total; }`,
+		`struct P { x: i32, y: i32 } function sumit(p: P): i32 { return p.x + p.y; } function main(): i32 { let total: i32 = 0; let i: i32 = 0; while (i < 3) { let p: P = P { x: i, y: 10 }; total = total + sumit(p); i = i + 1; } return total; }`,
 		33, 1},
 	// Escape via return: make() returns its fresh local, so it is NOT freed in
 	// make (the caller's reference survives); main's q is call-bound (not a fresh
 	// literal) so also not reclaimed. A premature free in make would corrupt q.
 	// 7 + 9 = 16.
 	{"escape-return-survives",
-		`struct P { x: i32, y: i32 } function make(): P { var p: P = P { x: 7, y: 9 }; return p; } function main(): i32 { var q: P = make(); return q.x + q.y; }`,
+		`struct P { x: i32, y: i32 } function make(): P { let p: P = P { x: 7, y: 9 }; return p; } function main(): i32 { let q: P = make(); return q.x + q.y; }`,
 		16, 0},
 	// Escape via struct-literal field value: q is built into r (a field value), so
 	// q escapes and is not reclaimed (no dangling field). r is returned → escapes
 	// too. Value: 5 + 8 = 13. (Both structs leak — safe.)
 	{"escape-struct-field-value",
-		`struct Inner { a: i32 } struct Outer { v: i32, w: i32 } function main(): i32 { var q: Inner = Inner { a: 5 }; var r: Outer = Outer { v: q.a, w: 8 }; return r.v + r.w; }`,
+		`struct Inner { a: i32 } struct Outer { v: i32, w: i32 } function main(): i32 { let q: Inner = Inner { a: 5 }; let r: Outer = Outer { v: q.a, w: 8 }; return r.v + r.w; }`,
 		13, 0},
 }
 

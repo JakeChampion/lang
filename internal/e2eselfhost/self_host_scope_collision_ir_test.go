@@ -7,41 +7,41 @@ import (
 )
 
 // scopeCollisionProg exercises the scope-blind-locals fix: a local name reused
-// with a DIFFERENT type across sibling match arms. `m` is a `var Ent[]` (array
+// with a DIFFERENT type across sibling match arms. `m` is a `let Ent[]` (array
 // slot) in the NIf arm and the struct payload binding in the NMatch arm. The IR
 // lowerer allocates slots by name function-wide, so before the fix both `m`s
 // collapsed onto one slot with conflicting type metadata (is_arr AND struct) and
-// `lower_func` bailed (`g: BAIL lower`). With lower_block
-// retiring the locals a block introduces on exit, the NIf arm's `m` is retired
-// before the NMatch arm binds its `m`, so each gets a distinct, correctly-typed
-// slot and `g` lowers through the IR. main() exercises both arms: g(NIf,b) joins
+// `lower_func` bailed (`g: BAIL lower`). The fix had lower_block
+// retire the locals a block introduces on exit, so the NIf arm's `m` was retired
+// before the NMatch arm bound its `m` and each got a distinct, correctly-typed
+// slot; `g` lowers through the IR. main() exercises both arms: g(NIf,b) joins
 // b with itself (len 4); g(NMatch,..) returns b (len 2) -> 4*10 + 2 = 42.
 const scopeCollisionProg = `struct Ent { k: i32 }
 struct MatchPayload { scrutinee: i32, arms: i32 }
 enum Node { NIf(i32), NMatch(MatchPayload) }
 function join(a: Ent[], b: Ent[]): Ent[] {
-    var out: Ent[] = a;
-    var i: i32 = 0;
+    let out: Ent[] = a;
+    let i: i32 = 0;
     while (i < b.len()) { out = out.append(b[i]); i = i + 1; }
     return out;
 }
 function g(n: Node, base: Ent[]): Ent[] {
     match (n) {
         NIf(f) => {
-            var m: Ent[] = join(base, base);
+            let m: Ent[] = join(base, base);
             return m;
         },
         NMatch(m) => {
-            var x: i32 = m.scrutinee + m.arms;
+            let x: i32 = m.scrutinee + m.arms;
             return base;
         },
         _ => { return base; }
     }
 }
 function main(): i32 {
-    var b: Ent[] = [Ent { k: 7 }, Ent { k: 8 }];
-    var r1: Ent[] = g(NIf(1), b);
-    var r2: Ent[] = g(NMatch(MatchPayload { scrutinee: 3, arms: 4 }), b);
+    let b: Ent[] = [Ent { k: 7 }, Ent { k: 8 }];
+    let r1: Ent[] = g(NIf(1), b);
+    let r2: Ent[] = g(NMatch(MatchPayload { scrutinee: 3, arms: 4 }), b);
     return r1.len() * 10 + r2.len();
 }
 `

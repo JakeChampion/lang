@@ -34,20 +34,20 @@ var tupleScalarElemReclaimCases = []struct {
 	// The scalar binary element on its own. Nothing is nested and nothing is a
 	// string: the tuple leaked only because `i + 1` is an ExprBinary.
 	{"tuple-scalar-binary-elem-flat", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[]) = (i + 1, [i, i + 1]);
+        let t: (i32, i32[]) = (i + 1, [i, i + 1]);
         acc = (acc + t.0 + t.1[1]) % 251;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -57,20 +57,20 @@ function main(): i32 {
 	// `i + 1` was already flat, and the un-nested tuple leaks as soon as it
 	// carries the binary.
 	{"tuple-nested-scalar-binary-flat", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: ((i32, i32[]), i32) = ((i, [i, i + 1]), i + 1);
+        let t: ((i32, i32[]), i32) = ((i, [i, i + 1]), i + 1);
         acc = (acc + t.1) % 251;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -79,21 +79,21 @@ function main(): i32 {
 	// is a provable fresh producer, admitted and deep-freed on its own, and the
 	// scalar sibling is all that held it back.
 	{"tuple-string-elem-with-scalar-sibling-flat", `function churn(n: i32, s: string): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, string) = (i + 1, "a-wide-string-past-the-inline-threshold-" + s);
+        let t: (i32, string) = (i + 1, "a-wide-string-past-the-inline-threshold-" + s);
         acc = (acc + t.0 + t.1.len()) % 251;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var s: string = "tail";
-    var w: i32 = churn(1000, s);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000, s);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let s: string = "tail";
+    let w: i32 = churn(1000, s);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000, s);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     if (s.len() != 4) { return 96; }
@@ -105,19 +105,19 @@ function main(): i32 {
 	// The emitter must leave that position alone; freeing it corrupts `live`.
 	{"tuple-call-elem-alias-safe", `function id(xs: i32[]): i32[] { return xs; }
 function churn(n: i32): i32 {
-    var live: i32[] = [7, 8, 9];
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let live: i32[] = [7, 8, 9];
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[], i32[]) = (i + 1, [i, i + 1], id(live));
+        let t: (i32, i32[], i32[]) = (i + 1, [i, i + 1], id(live));
         acc = (acc + t.0 + t.1[1] + t.2[0] + t.2[2]) % 251;
         i = i + 1;
     }
     return (acc + live[0] * 3 + live[1] * 5 + live[2] * 7) % 251;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w;
@@ -131,17 +131,17 @@ function main(): i32 {
 	// rejects a status of 126 or more, so an expectation carried in the exit
 	// code has to stay under it on the wasm leg.
 	{"tuple-scalar-binary-escape-safe", `function churn(n: i32): (i32, i32[]) {
-    var last: (i32, i32[]) = (0, [0, 0]);
-    var i: i32 = 0;
+    let last: (i32, i32[]) = (0, [0, 0]);
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[]) = (i + 1, [i, i + 1]);
+        let t: (i32, i32[]) = (i + 1, [i, i + 1]);
         last = t;
         i = i + 1;
     }
     return last;
 }
 function main(): i32 {
-    var r: (i32, i32[]) = churn(1000);
+    let r: (i32, i32[]) = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     return (r.0 + r.1[0] + r.1[1]) % 97;
 }`, 89},
@@ -150,20 +150,20 @@ function main(): i32 {
 	// That is a leak, not a fault — what must hold is that both operands survive
 	// the tuple's reclaim.
 	{"tuple-unproven-concat-safe", `function churn(n: i32, a: string, b: string): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, string, i32[]) = (i + 1, a + b, [i, i + 1]);
+        let t: (i32, string, i32[]) = (i + 1, a + b, [i, i + 1]);
         acc = (acc + t.0 + t.1.len() + t.2[0]) % 251;
         i = i + 1;
     }
     return (acc + a.len() + b.len()) % 251;
 }
 function main(): i32 {
-    var a: string = "a-wide-left-side-past-the-inline-threshold";
-    var b: string = "-and-a-wide-right-side-too";
-    var w: i32 = churn(1000, a, b);
-    var x: i32 = churn(1000, a, b);
+    let a: string = "a-wide-left-side-past-the-inline-threshold";
+    let b: string = "-and-a-wide-right-side-too";
+    let w: i32 = churn(1000, a, b);
+    let x: i32 = churn(1000, a, b);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     if (a.len() != 41 || b.len() != 26) { return 96; }

@@ -1545,7 +1545,7 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 				specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: []byte{encode.ValtypeI32}}
 				in.add(rawName)
 				helpers.add("__fern_alloc")
-				// VALUE context (`var b: u8[] = f()`, or eager `for x in f()` over a
+				// VALUE context (`let b: u8[] = f()`, or eager `for x in f()` over a
 				// non-u8 stream): the collect-wrapper drains the whole stream to EOF
 				// into a Fern array, materialised under the Fern name `f`.
 				if used[ex.Name] {
@@ -2540,6 +2540,10 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	}
 	if helpers.set["__fern_tcp_pollable"] {
 		in.add("wasi_sockets_tcp_subscribe")
+		in.add("wasi_io_input_stream_subscribe")
+		if helpers.set["__fern_udp_bind"] {
+			in.add("wasi_sockets_udp_incoming_subscribe")
+		}
 	}
 	if helpers.set["__fern_reactor_ctl"] {
 		in.add("wasi_sockets_tcp_subscribe")
@@ -2595,7 +2599,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_sockets_incoming_datagram_stream_drop")
 		in.add("wasi_sockets_outgoing_datagram_stream_drop")
 	}
-	if helpers.set["__fern_udp_sendto"] {
+	if helpers.set["__fern_udp_sendto"] || helpers.set["__fern_udp_sendto_bytes"] {
 		in.add("wasi_sockets_udp_check_send")
 		in.add("wasi_sockets_udp_outgoing_subscribe")
 		in.add("wasi_io_pollable_block")
@@ -2819,6 +2823,12 @@ func buildIsattyBody(idxs map[string]uint32) []byte {
 // it selects plain text, which is right for every embedder that
 // captures the component's output, and `FORCE_COLOR` remains the way to
 // ask for escapes anyway.
+func buildGetpwuidNameBody(map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI32Const(body, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
 func buildIsattyBodyP2(map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstI32Const(body, 0)

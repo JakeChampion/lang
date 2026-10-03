@@ -37,7 +37,7 @@ function put(path: string, content: string): i32 {
 function chunks(path: string, size: i32): i32 {
     match (open_reader(path)) {
         Ok(r) => {
-            var acc: i32 = 0;
+            let acc: i32 = 0;
             while (true) {
                 match (r.read_chunk(size)) {
                     Ok(c) => { if (c.len() == 0) { break; } acc = acc + c.len(); },
@@ -54,7 +54,7 @@ function chunks(path: string, size: i32): i32 {
 function lines(path: string): i32 {
     match (open_reader(path)) {
         Ok(r) => {
-            var acc: i32 = 0;
+            let acc: i32 = 0;
             while (true) {
                 match (r.read_line()) {
                     Some(l) => { acc = acc + l.len(); },
@@ -88,8 +88,8 @@ function iflet(path: string): i32 {
     if let Ok(s) = read_file(path) { return s.len(); } else { return -1; }
 }
 function kept(path: string): i32 {
-    var all: string[] = [];
-    var i: i32 = 0;
+    let all: string[] = [];
+    let i: i32 = 0;
     while (i < 3) {
         match (read_file(path)) { Ok(s) => { all = all.append(s); }, Err(_) => { return -1; } }
         i = i + 1;
@@ -97,8 +97,8 @@ function kept(path: string): i32 {
     return all[0].len() + all[2].len();
 }
 function rounds(path: string, size: i32, n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         acc = acc + chunks(path, size) + lines(path) + file(path) + filebytes(path)
             + take(path).len() + discard(path) + iflet(path) + kept(path);
@@ -109,18 +109,18 @@ function rounds(path: string, size: i32, n: i32): i32 {
 function main(): i32 {
     // Both files hold ONE line, so read_line runs once per round at either
     // size and only the payload differs.
-    var narrow: string = "0123456789abcde" + "\n";
-    var wide: string = "0123456789abcde".repeat(68) + "\n";
+    let narrow: string = "0123456789abcde" + "\n";
+    let wide: string = "0123456789abcde".repeat(68) + "\n";
     if (put("n.txt", narrow) != 0) { return 90; }
     if (put("w.txt", wide) != 0) { return 91; }
-    var warm: i32 = rounds("n.txt", 64, 1);
-    var b0: i64 = __heap_bump_bytes();
-    var x: i32 = rounds("n.txt", 64, 20);
-    var b1: i64 = __heap_bump_bytes();
+    let warm: i32 = rounds("n.txt", 64, 1);
+    let b0: i64 = __heap_bump_bytes();
+    let x: i32 = rounds("n.txt", 64, 20);
+    let b1: i64 = __heap_bump_bytes();
     warm = warm + rounds("w.txt", 4096, 1);
-    var b2: i64 = __heap_bump_bytes();
-    var y: i32 = rounds("w.txt", 4096, 20);
-    var b3: i64 = __heap_bump_bytes();
+    let b2: i64 = __heap_bump_bytes();
+    let y: i32 = rounds("w.txt", 4096, 20);
+    let b3: i64 = __heap_bump_bytes();
     if (warm <= 0 || x <= 0 || y <= x) { return 97; }
     if ((b3 - b2) > 2 * (b1 - b0)) { return 98; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -139,8 +139,8 @@ function put(path: string, content: string): i32 {
 }
 function main(): i32 {
     if (put("e.txt", "0123456789abcdefghij") != 0) { return 90; }
-    var kept: string[] = [];
-    var i: i32 = 0;
+    let kept: string[] = [];
+    let i: i32 = 0;
     while (i < 20) {
         match (read_file("e.txt")) {
             Ok(s) => { kept = kept.append(s); },
@@ -204,10 +204,10 @@ func TestArm64OwnedPayloadMatchReclaim(t *testing.T) {
 
 func TestWASMOwnedPayloadMatchReclaim(t *testing.T) {
 	for _, c := range []struct{ name, src string }{{"family", ownedPayloadFamilySrc}, {"escape", ownedPayloadEscapeSrc}} {
-		_, stderr, code, _ := runWasmInDir(t, c.src, nil)
-		if code != 0 {
-			t.Logf("stderr:\n%s", stderr)
+		stdout, stderr, ec, _ := runWasmInDir(t, c.src, nil)
+		if ec != 0 {
+			t.Fatalf("%s: wasmtime exit %d\nstderr:\n%s", c.name, ec, stderr)
 		}
-		ownedPayloadCheck(t, c.name, code)
+		ownedPayloadCheck(t, c.name, parseMainResult(t, stdout))
 	}
 }

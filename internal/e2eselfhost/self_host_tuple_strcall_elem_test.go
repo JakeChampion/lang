@@ -6,7 +6,7 @@ import (
 )
 
 // The rc-tuple credit learns the string-fresh registry at a CALL element
-// (#7374): `var v: (i32, string) = (1, w("p"))` with w a
+// (#7374): `let v: (i32, string) = (1, w("p"))` with w a
 // str_fresh_ret_fns_of-registered producer now earns the "TUPRC:"/"TUPRCS:"
 // credits (tuple_str_elem_fresh_reg at both gates — tuple_lit_has_rc_child
 // and tuple_arg_payload_retained), so the scope-exit sweep frees the string
@@ -31,9 +31,9 @@ func tupleStrCallElemCases() []tupleAliasParamCase {
 			// live=14400 (native 200/200/0), now balanced.
 			name: "inline_call_string_elem",
 			src: `function w(a: string): string { return a + "!"; }
-function round(i: i32): i32 { var v: (i32, string) = (1, w("p")); return v.1.len(); }
+function round(i: i32): i32 { let v: (i32, string) = (1, w("p")); return v.1.len(); }
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0;
+    let t: i32 = 0; let i: i32 = 0;
     while (i < 200) { t = t + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
@@ -47,15 +47,15 @@ function main(): i32 {
 			name: "churn_read_back",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var v: (i32, string) = (1, w("abcdefgh"));
-    var churn: string = w("zzzzzzzz");
+    let v: (i32, string) = (1, w("abcdefgh"));
+    let churn: string = w("zzzzzzzz");
     return v.1.len() + churn.len() + i % 3;
 }
 function main(): i32 {
-    var keep: string = w("keepmeeee");
-    var t: i32 = 0; var r: i32 = 0;
+    let keep: string = w("keepmeeee");
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 200) { t = t + round(r); r = r + 1; }
-    var ok: i32 = 0;
+    let ok: i32 = 0;
     if (keep == "keepmeeee!") { ok = 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return (t + ok) % 97;
@@ -71,13 +71,13 @@ function main(): i32 {
 			name: "rebind_call_string_elem",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var v: (i32, string) = (1, w("p"));
-    var j: i32 = 0;
+    let v: (i32, string) = (1, w("p"));
+    let j: i32 = 0;
     while (j < 3) { v = (j, w("qr")); j = j + 1; }
     return v.1.len() + i % 3;
 }
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -91,9 +91,9 @@ function main(): i32 {
 			name: "aliased_producer_refused",
 			src: `function id(s: string): string { return s; }
 function w(a: string): string { return a + "!"; }
-function round(i: i32): i32 { var q: string = w("q"); var v: (i32, string) = (1, id(q)); return v.1.len() + q.len(); }
+function round(i: i32): i32 { let q: string = w("q"); let v: (i32, string) = (1, id(q)); return v.1.len() + q.len(); }
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0;
+    let t: i32 = 0; let i: i32 = 0;
     while (i < 200) { t = t + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;

@@ -78,7 +78,7 @@ fbip function bump(own p: P): P {
     p = P { x: p.x + 1, y: p.y };
     return p;
 }
-function main(): i32 { var q: P = bump(P { x: 1, y: 2 }); return q.x; }`)
+function main(): i32 { let q: P = bump(P { x: 1, y: 2 }); return q.x; }`)
 }
 
 // The R3 general pairing: a construction takes over a DIFFERENT dead owned
@@ -86,9 +86,9 @@ function main(): i32 { var q: P = bump(P { x: 1, y: 2 }); return q.x; }`)
 // fbip(1) covers it and credits the paired second site.
 func TestFbipVerifyGeneralPairingCredited(t *testing.T) {
 	const body = ` function churn(a0: i32): i32 {
-    var a: P = P { x: a0, y: a0 + 1 };
-    var s: i32 = a.x + a.y;
-    var b: P = P { x: s + 1, y: a0 };
+    let a: P = P { x: a0, y: a0 + 1 };
+    let s: i32 = a.x + a.y;
+    let b: P = P { x: s + 1, y: a0 };
     return b.x + b.y;
 }
 function main(): i32 { return churn(3); }`
@@ -101,7 +101,7 @@ function main(): i32 { return churn(3); }`
 func TestFbipVerifyUnpairedConstructionRejected(t *testing.T) {
 	src := `struct P { x: i32, y: i32 }
 fbip function mk(a: i32): P { return P { x: a, y: a + 1 }; }
-function main(): i32 { var p: P = mk(3); return p.x; }`
+function main(): i32 { let p: P = mk(3); return p.x; }`
 	err := lowerErrForTest(t, src)
 	if err == nil {
 		t.Fatal("expected E068 for an un-paired fbip construction, got none")
@@ -119,12 +119,12 @@ function main(): i32 { var p: P = mk(3); return p.x; }`
 func TestGradedFipAllowanceCounted(t *testing.T) {
 	wantLowerOK(t, "fip(1) with one fresh ctor", `struct P { x: i32, y: i32 }
 fip(1) function mk(a: i32): P { return P { x: a, y: a + 1 }; }
-function main(): i32 { var p: P = mk(3); return p.x; }`)
+function main(): i32 { let p: P = mk(3); return p.x; }`)
 
 	src := `struct P { x: i32, y: i32 }
 fip(1) function mk2(a: i32): i32 {
-    var p: P = P { x: a, y: a };
-    var q: P = P { x: a + 1, y: p.x };
+    let p: P = P { x: a, y: a };
+    let q: P = P { x: a + 1, y: p.x };
     return p.y + q.x;
 }
 function main(): i32 { return mk2(3); }`
@@ -143,11 +143,11 @@ function main(): i32 { return mk2(3); }`
 // allocation-free fip function lowers clean.
 func TestFipVerifyZeroAllocClean(t *testing.T) {
 	wantLowerOK(t, "bare fip in-place sort", `fip function sort_inplace(own arr: i32[]): i32[] {
-    var n: i32 = arr.len();
-    var k: i32 = 1;
+    let n: i32 = arr.len();
+    let k: i32 = 1;
     while (k < n) {
-        var key: i32 = arr[k];
-        var j: i32 = k - 1;
+        let key: i32 = arr[k];
+        let j: i32 = k - 1;
         while (j >= 0 && arr[j] > key) { arr = arr.with(j + 1, arr[j]); j = j - 1; }
         arr = arr.with(j + 1, key);
         k = k + 1;
@@ -219,14 +219,14 @@ func TestFipVerifyPairedStructRebuild(t *testing.T) {
 fip function bump(own s: State): State {
     return State { ...s, count: s.count + 1, total: s.total + (2 as i64) };
 }
-function main(): i32 { var s: State = bump(State { count: 0, total: 0 as i64 }); return s.count; }`)
+function main(): i32 { let s: State = bump(State { count: 0, total: 0 as i64 }); return s.count; }`)
 
 	wantLowerOK(t, "fip self-overwrite", `struct P { x: i32, y: i32 }
 fip function bump(own p: P): P {
     p = P { x: p.x + 1, y: p.y };
     return p;
 }
-function main(): i32 { var q: P = bump(P { x: 1, y: 2 }); return q.x; }`)
+function main(): i32 { let q: P = bump(P { x: 1, y: 2 }); return q.x; }`)
 }
 
 // The other half: `fip` did not become `fbip`. A construction with no donor to
@@ -242,7 +242,7 @@ function main(): i32 { return make(3).count; }`)
 	wantE068(t, "fip fresh tuple literal", `fip function pair(a: i32): (i32, i32) {
     return (a, a + 1);
 }
-function main(): i32 { var t: (i32, i32) = pair(1); return t.0; }`)
+function main(): i32 { let t: (i32, i32) = pair(1); return t.0; }`)
 
 	// Grading the claim is the remedy the diagnostic names, and it works.
 	wantLowerOK(t, "graded fip(1) admits the fresh site", `struct State { count: i32, total: i64 }

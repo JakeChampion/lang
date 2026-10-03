@@ -23,7 +23,7 @@ import (
 // marks only where its result is read for its ELEMENTS — indexed, sliced or
 // iterated — since the forwarding return retains the buffer and a result bound
 // or handed on whole is a counted reference (#9187). So `keep.get()[0]` is the
-// escape `keep.xs[0]` already was, and `var g = keep.get()` is not.
+// escape `keep.xs[0]` already was, and `let g = keep.get()` is not.
 //
 // Every want was confirmed against native x86-64 and `bin/fern -interp`, which
 // agree on every row. Native allocates a different number of boxes for the same
@@ -51,10 +51,10 @@ func strArrFwdCases() []strArrFwdCase {
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function (h: Holder) get(): string[] { return h.xs; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
+        let keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
         t = t + keep.get().len();
         i = i + 1;
     }
@@ -73,10 +73,10 @@ function main(): i32 {
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function (h: Holder) get(): string[] { return h.xs; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
+        let keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
         t = t + 3;
         i = i + 1;
     }
@@ -94,10 +94,10 @@ function main(): i32 {
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function grab(h: Holder): string[] { return h.xs; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
+        let keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
         t = t + grab(keep).len();
         i = i + 1;
     }
@@ -118,11 +118,11 @@ function main(): i32 {
 function (h: Holder) get(): string[] { return h.xs; }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function main(): i32 {
-    var live: Holder = Holder { xs: [w("y"), w("z")] };
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let live: Holder = Holder { xs: [w("y"), w("z")] };
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
+        let keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
         t = t + keep.get().len() + live.get().len();
         i = i + 1;
     }
@@ -140,10 +140,10 @@ function main(): i32 {
 			src: `struct Holder { xs: string[] }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
+        let keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
         t = t + keep.xs.len();
         i = i + 1;
     }
@@ -161,11 +161,11 @@ function main(): i32 {
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function (h: Holder) get(): string[] { return h.xs; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
-        var got: string[] = keep.get();
+        let keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
+        let got: string[] = keep.get();
         t = t + got.len();
         i = i + 1;
     }
@@ -181,11 +181,11 @@ function main(): i32 {
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function (h: Holder) get(): string[] { return h.xs; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
-        var s0: string = keep.get()[0];
+        let keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
+        let s0: string = keep.get()[0];
         t = t + s0.len();
         i = i + 1;
     }
@@ -201,10 +201,10 @@ function main(): i32 {
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function (h: Holder) get(): string[] { return h.xs; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
+        let keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
         for s in keep.get() { t = t + s.len(); }
         i = i + 1;
     }
@@ -220,11 +220,11 @@ function main(): i32 {
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function grab(h: Holder): string[] { return h.xs; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
-        var got: string[] = grab(keep);
+        let keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
+        let got: string[] = grab(keep);
         t = t + got.len();
         i = i + 1;
     }
@@ -243,11 +243,11 @@ function (h: Holder) get(): string[] { return h.xs; }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function stash(h: Holder): string { return h.get()[0]; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
-        var got: string = stash(keep);
+        let keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
+        let got: string = stash(keep);
         t = t + got.len();
         i = i + 1;
     }
@@ -263,10 +263,10 @@ function main(): i32 {
 function (h: Holder) get(pick: boolean): string[] { if (pick) { return h.xs; } return h.ys; }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var keep: Holder = Holder { xs: [w("a"), w("b")], ys: [w("c")] };
+        let keep: Holder = Holder { xs: [w("a"), w("b")], ys: [w("c")] };
         t = t + keep.get(true).len() + keep.get(false).len();
         i = i + 1;
     }
@@ -282,15 +282,15 @@ function main(): i32 {
 function (h: Holder) get(): string[] { return h.xs; }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var s: string = w("a");
-        var h1: Holder = Holder { xs: [s, s] };
-        var h2: Holder = Holder { xs: [s] };
+        let s: string = w("a");
+        let h1: Holder = Holder { xs: [s, s] };
+        let h2: Holder = Holder { xs: [s] };
         t = t + h1.get().len() + h2.get().len() + s.len();
-        var j1: string = w("p");
-        var j2: string = w("q");
+        let j1: string = w("p");
+        let j2: string = w("q");
         t = t + (s[0] as i32) + s.len() + j1.len() - j1.len() + j2.len() - j2.len();
         i = i + 1;
     }
@@ -308,14 +308,14 @@ function main(): i32 {
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function (h: Holder) get(): string[] { return h.xs; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
+        let keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
         t = t + keep.get().len();
-        var j1: string = w("p");
-        var j2: string = w("q");
-        var j3: string = w("r");
+        let j1: string = w("p");
+        let j2: string = w("q");
+        let j3: string = w("r");
         t = t + (keep.xs[0][0] as i32) + (keep.xs[2][0] as i32) + keep.xs[1].len()
             + j1.len() - j1.len() + j2.len() - j2.len() + j3.len() - j3.len();
         i = i + 1;

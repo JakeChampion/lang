@@ -73,10 +73,10 @@ function (b: Box[T]) get(): T { return b.v; }
 function dbl(x: i32): i32 { return x * 2; }
 function label(x: i32): string { if (x > 5) { return "big"; } return "small"; }
 function main(): i32 {
-    var b: Box[i32] = Box { v: 7 };
-    var d: Box[i32] = b.map(dbl);
-    var s: Box[string] = b.map(label);
-    var lm: Box[i32] = b.map((x: i32) => x + 1);
+    let b: Box[i32] = Box { v: 7 };
+    let d: Box[i32] = b.map(dbl);
+    let s: Box[string] = b.map(label);
+    let lm: Box[i32] = b.map((x: i32) => x + 1);
     if (s.get() != "big") { return 90; }
     return d.get() + lm.get();
 }`, "map-own-typaram", 22)
@@ -90,8 +90,8 @@ function (b: Box[T]) get(): T { return b.v; }
 function dbl(x: i32): i32 { return x * 2; }
 function shout(x: i32): string { return "n"; }
 function main(): i32 {
-    var b: Box[i32] = Box { v: 7 };
-    var c: Box[string] = b.map(dbl).map(shout);
+    let b: Box[i32] = Box { v: 7 };
+    let c: Box[string] = b.map(dbl).map(shout);
     if (c.get() != "n") { return 91; }
     return 33;
 }`, "map-chained", 33)
@@ -105,8 +105,8 @@ function (p: Pair[K, V]) remap[W](f: (V) => W): Pair[K, W] { return Pair { k: p.
 function (p: Pair[K, V]) val(): V { return p.v; }
 function neg(x: i32): i32 { return 0 - x; }
 function main(): i32 {
-    var p: Pair[string, i32] = Pair { k: "a", v: 5 };
-    var q: Pair[string, i32] = p.remap(neg);
+    let p: Pair[string, i32] = Pair { k: "a", v: 5 };
+    let q: Pair[string, i32] = p.remap(neg);
     return 100 + q.val();
 }`, "two-receiver-vars", 95)
 
@@ -118,8 +118,8 @@ function main(): i32 {
 function (b: Box[T]) tag[E](e: E): E { return e; }
 function (b: Box[T]) get(): T { return b.v; }
 function main(): i32 {
-    var b: Box[i32] = Box { v: 3 };
-    var t: i32 = b.tag(40);
+    let b: Box[i32] = Box { v: 3 };
+    let t: i32 = b.tag(40);
     return t + b.get();
 }`, "own-var-in-param-only", 43)
 
@@ -131,9 +131,9 @@ function main(): i32 {
 function (b: Box[T]) get(): T { return b.v; }
 function (b: Box[T]) swap(x: T): Box[T] { return Box { v: x }; }
 function main(): i32 {
-    var b: Box[i32] = Box { v: 4 };
-    var c: Box[i32] = b.swap(9);
-    var s: Box[string] = Box { v: "hi" };
+    let b: Box[i32] = Box { v: 4 };
+    let c: Box[i32] = b.swap(9);
+    let s: Box[string] = Box { v: "hi" };
     if (s.get() != "hi") { return 92; }
     return b.get() + c.get();
 }`, "no-own-typaram-unchanged", 13)

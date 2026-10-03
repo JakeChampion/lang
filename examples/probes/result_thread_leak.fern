@@ -48,15 +48,15 @@ type Tok = TId | TEof;
 struct Res { lex: Lx, tok: Tok }
 
 function scan(l: Lx): Res {
-  var t: Tok = TId { text: slice_unchecked(l.src, l.i, l.i + 1) + "" };
+  let t: Tok = TId { text: slice_unchecked(l.src, l.i, l.i + 1) + "" };
   return Res { lex: Lx { src: l.src, i: l.i + 1 }, tok: t };
 }
 
 function run(src: string): i32 {
-  var l: Lx = Lx { src: src, i: 0 };
-  var out: Tok[] = [];
+  let l: Lx = Lx { src: src, i: 0 };
+  let out: Tok[] = [];
   while (l.i < 5) {
-    var r = scan(l);
+    let r = scan(l);
     l = r.lex;
     out = out.append(r.tok);
   }
@@ -64,8 +64,8 @@ function run(src: string): i32 {
 }
 
 function main(): i32 {
-  var acc: i32 = 0;
-  var n: i32 = 0;
+  let acc: i32 = 0;
+  let n: i32 = 0;
   while (n < 100) {
     acc = acc + run("abcdefgh");
     n = n + 1;

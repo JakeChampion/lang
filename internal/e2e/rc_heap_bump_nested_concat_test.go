@@ -22,11 +22,11 @@ import (
 
 func nestedConcatBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var a: string = "longer_string_one_here";
-    var b: string = "longer_string_two_here";
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let a: string = "longer_string_one_here";
+    let b: string = "longer_string_two_here";
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
         acc = acc + (a + b + a + b).len();
         i = i + 1;
@@ -37,18 +37,18 @@ func nestedConcatBumpSrc(n string) string {
 
 // Deep chain: value-correctness (length + content) + 0 over-release.
 const nestedConcatUnderflowSrc = `function main(): i32 {
-    var a: string = "ab";
-    var b: string = "cd";
-    var c: string = "ef";
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let a: string = "ab";
+    let b: string = "cd";
+    let c: string = "ef";
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
-        var s: string = a + b + c + a; // "abcdefab", len 8
+        let s: string = a + b + c + a; // "abcdefab", len 8
         acc = acc + s.len();
         i = i + 1;
     }
     if (acc != 1600) { return 999; } // 8 * 200
-    var t: string = a + b + c;       // content check
+    let t: string = a + b + c;       // content check
     if (t != "abcdef") { return 888; }
     return __rc_underflow_count();
 }`

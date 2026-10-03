@@ -32,13 +32,13 @@ func tupleCallargCountedCases() []tupleAliasParamCase {
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function keepit(t: (i32, i32[])): Hold { return Hold { t: t, n: 1 }; }
 function round(i: i32): i32 {
-    var keep: (i32, i32[]) = (i, [i, i + 1]);
-    var h: Hold = keepit(keep);
+    let keep: (i32, i32[]) = (i, [i, i + 1]);
+    let h: Hold = keepit(keep);
     return h.n + keep.0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -52,14 +52,14 @@ function main(): i32 {
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function keepit(t: (i32, i32[])): Hold { return Hold { t: t, n: 1 }; }
 function round(i: i32): i32 {
-    var keep: (i32, i32[]) = (i, [i, i + 1]);
-    var h1: Hold = keepit(keep);
-    var h2: Hold = keepit(keep);
+    let keep: (i32, i32[]) = (i, [i, i + 1]);
+    let h1: Hold = keepit(keep);
+    let h2: Hold = keepit(keep);
     return h1.n + h2.n + keep.0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -73,13 +73,13 @@ function main(): i32 {
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function keepit(t: (i32, i32[])): Hold { return Hold { t: t, n: 1 }; }
 function round(i: i32): i32 {
-    var keep: (i32, i32[]) = (i, [i, i + 1]);
-    var h: Hold = keepit(keep);
+    let keep: (i32, i32[]) = (i, [i, i + 1]);
+    let h: Hold = keepit(keep);
     return h.n + h.t.1.len() + keep.1.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -96,14 +96,14 @@ function main(): i32 {
 function keepit(t: (i32, i32[])): Hold { return Hold { t: t, n: t.1.len() }; }
 function grab(t: (i32, i32[])): i32[] { return t.1; }
 function round(i: i32): i32 {
-    var keep: (i32, i32[]) = (i, [i, i + 1]);
-    var h: Hold = keepit(keep);
-    var e: i32[] = grab(keep);
+    let keep: (i32, i32[]) = (i, [i, i + 1]);
+    let h: Hold = keepit(keep);
+    let e: i32[] = grab(keep);
     return h.n + e.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;

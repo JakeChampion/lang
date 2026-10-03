@@ -12,7 +12,7 @@ var patternHeadCases = []struct {
 }{
 	{"if_let_braceless_then", `enum Box { Full(i32), Empty }
 function main(): i32 {
-  var b: Box = Full(8);
+  let b: Box = Full(8);
   if let Full(v) = b return v;
   return 99;
 }`},

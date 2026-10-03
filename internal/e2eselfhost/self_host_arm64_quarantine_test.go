@@ -49,10 +49,10 @@ func mustMatch(t *testing.T, pat, asm string) bool {
 const armQuarantineSrc = `import "std/string";
 function mk(a: string): string { return a + "!"; }
 function main(): i32 {
-    var xs: string[] = [mk("x"), mk("y")];
-    var s: string = mk("ab");
-    var n: i32[] = [1, 2, 3];
-    var big: u8[] = __alloc_u8(600000);
+    let xs: string[] = [mk("x"), mk("y")];
+    let s: string = mk("ab");
+    let n: i32[] = [1, 2, 3];
+    let big: u8[] = __alloc_u8(600000);
     __rc_dec(big);
     return xs.len() + s.len() + n[0];
 }`

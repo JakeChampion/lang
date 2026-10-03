@@ -491,7 +491,11 @@ coreutils/
                     getgrouplist's ordering, the process's own group
                     set, and the gecos field finger reads as a real name
                     (`&` is the login name capitalised) — for whoami,
-                    id, groups, logname and pinky
+                    id, groups, logname and pinky. A uid's NAME falls
+                    back to libSystem's getpwuid(3) on arm64-darwin
+                    (`user_name`, #9815): regular accounts live in
+                    Directory Services there, and /etc/passwd holds only
+                    the system ones
   lib/utmp.fern     the login-accounting record: the fixed-size utmp
                     entry, the scans over it, and the terminal a ut_line
                     names — its mode is the message status and its atime
@@ -2087,7 +2091,7 @@ words are a field of `State` now, `feed` takes the state by ownership, and
 the append happens inside the rebuild of that record
 (`words: scan_body(s.words, …)`), which is the one shape the compiler moves
 rather than copies — an `own` parameter's fields read into locals are still
-held by the parameter until scope exit, so the plain `var words = p.words`
+held by the parameter until scope exit, so the plain `let words = p.words`
 move-out idiom does not reach it. 40 000 lines is 63 ms natively and 68 ms
 under the self-host build, both linear, both byte-identical to before.
 
@@ -2238,11 +2242,11 @@ do not qualify. The arm64 backend carries the same index-helper layout
 as the second slice — the abort and the inline-string arm after the
 epilogue, one compare and a `b.hs` on the common path — measured only
 by its shape here, since this container runs arm64 under qemu. The pass also accepts the bound captured in a variable —
-`var n = s.len(); … while (i < n)`, which `tr` writes seven times —
+`let n = s.len(); … while (i < n)`, which `tr` writes seven times —
 when nothing between the capture and the loop, or in the body, assigns
 or re-binds either name.
 
-A scan loop's `var c = s[i]; if (c >= 48 && c <= 57)` body is eleven
+A scan loop's `let c = s[i]; if (c >= 48 && c <= 57)` body is eleven
 instructions per byte after all three, from twenty-seven. What it still
 pays is the stack machine itself: every local is a frame slot, so the
 induction variable is stored and reloaded on each iteration, and the byte
@@ -2996,10 +3000,10 @@ The same move applies when the list that declares y ends without
 mentioning y again, since y's scope ends there and a loop coming back
 into the list re-runs the declaration first. That also counts when the copy
 sits in an if/else arm of the declaring list and nothing after the `if`
-names y. uniq's `var src = chunk; ... prev = src;` and comm's
-`var line ...; if (...) { cur1 = line; }` are both that shape. A loop
+names y. uniq's `let src = chunk; ... prev = src;` and comm's
+`let line ...; if (...) { cur1 = line; }` are both that shape. A loop
 between the declaration and the copy still keeps the copy, because
-the next pass reads y again. So does a y that a `var v = y` borrows
+the next pass reads y again. So does a y that a `let v = y` borrows
 without a count: x's next write would free the box v still reads.
 
 | workload | instructions before | after |
@@ -3030,7 +3034,7 @@ content, and the offsets come out as the byte walk gave them.
 
 Over the first 20 MB of that input: 1.17 G instructions to 1.04 G
 (GNU: 0.92 G). What is left is the per-line loop itself, about 290
-instructions a line, and the retain `var src = chunk` takes. The one
+instructions a line, and the retain `let src = chunk` takes. The one
 `prev = src` took is gone with the scope-dead move above.
 
 ### cat -n's number field in two pushes, 2026-09-24 (GNU coreutils 9.12)
@@ -3708,21 +3712,17 @@ input flag`, which is itself the divergence:
   #9237 is the flags-word bit that closes it, and it is why the corpus
   holds only the taken-name half of that case.
 
-**`expr`'s empty alternation branch inside a COUNTED repetition follows no
-branch order at all.** glibc demotes a branch that compiles to nothing — `expr
-aa : '\(\|a\)a*'` reports the empty string, not `a` — and `bre.fern` now does
-the same, which fixed 34 inputs. Inside `\{m,n\}` that rule stops applying and
-nothing replaces it. Measured: `a : \(\|a\)\{2\}` is empty (demoted),
-`\{2,3\}` is `a` (written order), `\{1,3\}` is empty, `\{1,2\}` is `a`; and
-`aa : \(\|a\)\{1,2\}a*` is `a` where the same pattern without the trailing
-`a*` is not. So it is not monotonic in the bound AND the rest of the pattern
-decides, which means no compile-time branch order can express it.
-`compile_rep` therefore compiles its body with the demotion off, leaving that
-family answering exactly as it did before — 27 inputs still disagree with GNU,
-all of them this shape, all pre-existing. #9092 §7 has the measurements.
-
-Applying the demotion uniformly was tried and rejected: it fixed 8 more inputs
-and broke 6, which is a worse trade than leaving a known shape alone.
+**`expr`'s capture registers follow glibc's own construction, not a branch
+order.** glibc prefers the non-empty branch of an alternation everywhere,
+`expr aa : '\(\|a\)a*'` reporting `a`. What looked like an exception inside
+`\{m,n\}` is how glibc builds the repetition: the optional copies nest as
+`((x?)x)?`, and only the FIRST optional copy of a repeated group is marked
+optional, because every later copy is duplicated through `create_token_tree`,
+which clears the mark. An empty pass through a marked group puts every
+register back as the last non-empty group end left it (`update_regs`), and an
+unbounded repetition makes one empty pass through its body before it leaves.
+So `a : \(\|a\)\{1,2\}` is `a` and `\{1,3\}` is empty. `bre.fern` builds the
+same shapes and applies the same register rule in both matchers.
 
 The other six shapes in #9092 are GNU behaving worse than Fern — a SIGSEGV on
 `expr "" : '\(\)\1\{2\}*'`, a non-terminating match on

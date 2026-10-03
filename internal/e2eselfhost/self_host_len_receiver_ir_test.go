@@ -22,7 +22,7 @@ import (
 // the prior safe-leak, so live caller values are never touched.
 //
 // The builder shapes deliberately avoid literal-bound string LOCALS
-// (`var p: string = "..."`): those leak their 24-byte box per call through a
+// (`let p: string = "..."`): those leak their 24-byte box per call through a
 // separate, pre-existing callee-side exit-sweep gap (bare-literal inits are
 // excluded from the fresh classes) that would mask these fixpoints.
 var lenRecvIRCases = []struct {
@@ -36,12 +36,12 @@ var lenRecvIRCases = []struct {
     return "prefix-block-aaaa" + "suffix-block-bbbb";
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + f(i).len(); i = i + 1; }
     if (acc != ` + n + ` * 34) { return 121; }
-    var g: i32 = (__heap_bump_bytes() as i32) - before;
+    let g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -51,12 +51,12 @@ function main(): i32 {
     return [k, k + 1, k + 2, k + 3, k + 4, k + 5, k + 6, k + 7, k + 8, k + 9];
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + mk(i).len(); i = i + 1; }
     if (acc != ` + n + ` * 10) { return 121; }
-    var g: i32 = (__heap_bump_bytes() as i32) - before;
+    let g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -68,10 +68,10 @@ function main(): i32 {
 		return `function id(s: string): string { return s; }
 function ida(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
-    var base: string = "0123456789abcdef" + "-suffix-to-force-heap";
-    var arr: i32[] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let base: string = "0123456789abcdef" + "-suffix-to-force-heap";
+    let arr: i32[] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 3000) { acc = acc + id(base).len() + ida(arr).len(); i = i + 1; }
     if (acc != 3000 * (37 + 10)) { return 121; }
     if (base.len() != 37) { return 122; }

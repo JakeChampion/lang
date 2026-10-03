@@ -28,11 +28,11 @@ function mkstr(p: string): string { return p + "-long-enough-to-heap-allocate"; 
 function mks(i: i32): S[] {
     return [S{ name: mkstr("a"), fields: [mkstr("f")] }, S{ name: mkstr("bb"), fields: [] }];
 }
-function churn(i: i32): i32 { var a: string[] = [mkstr("c"), mkstr("d")]; return a[0].len() + a[1].len(); }
+function churn(i: i32): i32 { let a: string[] = [mkstr("c"), mkstr("d")]; return a[0].len() + a[1].len(); }
 `
 
 const forinStructElemMain = `
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
 `
 
 func forinStructElemReturnCases() []arrenumShareCase {
@@ -41,8 +41,8 @@ func forinStructElemReturnCases() []arrenumShareCase {
 			// The control: a read-only body over a local struct array.
 			name: "forin_local_read",
 			src: forinStructElemDecl + `@noinline function scan(i: i32): i32 {
-    var xs: S[] = mks(i);
-    var t: i32 = 0;
+    let xs: S[] = mks(i);
+    let t: i32 = 0;
     for sd in xs { t = t + sd.name.len() + sd.fields.len(); }
     return t;
 }
@@ -55,7 +55,7 @@ function round(i: i32): i32 { return scan(i) % 101; }` + forinStructElemMain,
 			// element, after the read.
 			name: "forin_local_return_scalar",
 			src: forinStructElemDecl + `@noinline function count(i: i32, k: i32): i32 {
-    var xs: S[] = mks(i);
+    let xs: S[] = mks(i);
     for sd in xs { if (sd.name.len() == k) { return sd.fields.len(); } }
     return 0 - 1;
 }
@@ -66,11 +66,11 @@ function round(i: i32): i32 { return (count(i, 30) + count(i, 31) + 2) % 101; }`
 			// The same two bodies over a PARAM container.
 			name: "forin_param_read",
 			src: forinStructElemDecl + `@noinline function scan(xs: S[]): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for sd in xs { t = t + sd.name.len() + sd.fields.len(); }
     return t;
 }
-function round(i: i32): i32 { var xs: S[] = mks(i); return (scan(xs) + scan(xs)) % 101; }` + forinStructElemMain,
+function round(i: i32): i32 { let xs: S[] = mks(i); return (scan(xs) + scan(xs)) % 101; }` + forinStructElemMain,
 			want: 59,
 		},
 		{
@@ -79,7 +79,7 @@ function round(i: i32): i32 { var xs: S[] = mks(i); return (scan(xs) + scan(xs))
     for sd in xs { if (sd.name.len() == k) { return sd.fields.len(); } }
     return 0 - 1;
 }
-function round(i: i32): i32 { var xs: S[] = mks(i); return (count(xs, 30) + count(xs, 31) + 2) % 101; }` + forinStructElemMain,
+function round(i: i32): i32 { let xs: S[] = mks(i); return (count(xs, 30) + count(xs, 31) + 2) % 101; }` + forinStructElemMain,
 			want: 51,
 		},
 		{
@@ -91,9 +91,9 @@ function round(i: i32): i32 { var xs: S[] = mks(i); return (count(xs, 30) + coun
     return "";
 }
 function round(i: i32): i32 {
-    var xs: S[] = mks(i);
-    var hit: string = pick(xs, 1);
-    var junk: i32 = churn(i);
+    let xs: S[] = mks(i);
+    let hit: string = pick(xs, 1);
+    let junk: i32 = churn(i);
     if (hit.len() != 30) { return 0 - 1; }
     return (hit.len() + junk) % 101;
 }` + forinStructElemMain,
@@ -103,14 +103,14 @@ function round(i: i32): i32 {
 			// The INDEX spelling of the case above.
 			name: "index_param_return_string_field",
 			src: forinStructElemDecl + `@noinline function pick(xs: S[], k: i32): string {
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < xs.len()) { if (xs[j].fields.len() == k) { return xs[j].name; } j = j + 1; }
     return "";
 }
 function round(i: i32): i32 {
-    var xs: S[] = mks(i);
-    var hit: string = pick(xs, 1);
-    var junk: i32 = churn(i);
+    let xs: S[] = mks(i);
+    let hit: string = pick(xs, 1);
+    let junk: i32 = churn(i);
     if (hit.len() != 30) { return 0 - 1; }
     return (hit.len() + junk) % 101;
 }` + forinStructElemMain,
@@ -120,7 +120,7 @@ function round(i: i32): i32 {
 			// A CALL-RESULT iterand with a read-only body.
 			name: "forin_call_iterand_read",
 			src: forinStructElemDecl + `@noinline function scan(i: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for sd in mks(i) { t = t + sd.name.len() + sd.fields.len(); }
     return t;
 }

@@ -143,7 +143,7 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	// compiles the WHOLE compiler — its own ~1000-function multi-module source, the
 	// fixpoint gen2 input. This is the case the per-module bootstrap needs and the
 	// one that first surfaced the string[]-struct-field `.append()` aliasing UAF:
-	// the checker's `var actx = ctx` (StmtMatch) aliases asmcore.EmitState across a
+	// the checker's `let actx = ctx` (StmtMatch) aliases asmcore.EmitState across a
 	// match arm, and bind_local_typed's `s.local_names.append(name)` — a string[]
 	// FIELD read — took the in-place consume form, corrupting the shared local_names
 	// buffer (it desynced from the clone-form local_types, so local_type_of read out
@@ -203,12 +203,12 @@ const pmEmitAllBatch = 64
 // pmFuncBudget is the [lo,hi) function-window budget the emit plan is sized
 // with, passed to the driver as -func-budget so its internal windowing matches.
 //
-// An oversized module (irlower, ~511 funcs) OOMs (exit 137) if emitted in one
+// An oversized module (~511 funcs) OOMs (exit 137) if emitted in one
 // process: the leak-mode runtime never reclaims the per-function IR-op lists, so
 // they accumulate past the arena ceiling. The #3425 fix shards such a module's
 // emit by a [lo,hi) FUNCTION WINDOW — each window emits a non-entry library
-// sub-unit that links exactly like a per-module unit. irlower's heaviest
-// lowering functions cluster around index ~200, so peak scales with which
+// sub-unit that links exactly like a per-module unit. The AST lowering's heaviest
+// lowering functions clustered around index ~200, so peak scales with which
 // functions a window holds, not just the count. 100-func windows keep the worst
 // window's measured peak ~2.3 GB — comfortably clear of the kill point — while a
 // coarser split (e.g. 150) can land the whole heavy cluster in one window

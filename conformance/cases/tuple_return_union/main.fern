@@ -10,10 +10,10 @@ function mk(k: i32, c: Cur): (AB, Cur) {
 }
 
 function main(): i32 {
-  var c = Cur { pos: 0 };
-  var (v1, c1) = mk(0, c);
-  var (v2, c2) = mk(1, c1);
-  var t = 0;
+  let c = Cur { pos: 0 };
+  let (v1, c1) = mk(0, c);
+  let (v2, c2) = mk(1, c1);
+  let t = 0;
   match (v1) { A(a) => { t = t + a.x; }, B(b) => { t = t + b.y; } }
   match (v2) { A(a) => { t = t + a.x; }, B(b) => { t = t + b.y; } }
   return t - c2.pos + 3;

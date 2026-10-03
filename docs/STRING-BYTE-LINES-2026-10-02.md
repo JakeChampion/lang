@@ -1,7 +1,7 @@
 # Byte records and binary-safe shuf
 
-The refresh integrates stdin checkpoint `3730af531`, preserving
-typed-IR-only lowering and the removal of unrelated map-method roots.
+The October 3 refresh integrates stdin checkpoint `3b3c349de`, including
+allocation-free string byte views and typed escape diagnostics.
 Bootstrap, actual stage-2 probes, target tests, the full unit suite and
 all lint gates pass.
 
@@ -18,8 +18,8 @@ close the underlying reader themselves.
 
 `__memchr_bytes` searches borrowed arrays without allocation. Negative starts
 clamp to zero; out-of-range starts and needles return `-1`. Packed native
-arrays reuse the existing vector kernels. Unpacked native arrays and primary
-WASM arrays use their actual element stride. The bootstrap WASM vector bound
+arrays reuse the existing vector kernels. Unpacked native arrays use slot
+scans, and primary WASM scans the packed byte representation. The bootstrap WASM vector bound
 uses remaining length, preventing an extreme start from overflowing into a
 load outside the input.
 
@@ -31,17 +31,21 @@ now frees its scratch return area on success and failure.
 
 ## Current integration validation
 
-The source is based on stdin commit `3730af531`. In-process partial-read
-faults and the Go compiler's byte-record and byte-scan target matrix pass
-in 14.500 seconds. Primary byte-record, byte-scan, `shuf` and seek tests
-pass. After reconciling the registry totals for both `tcp_send_bytes` and
-`memchr_bytes`, the opcode and lift-admission checks pass in 1.257 seconds.
-GNU `shuf` parity passes in 0.940 seconds. The full unit suite and all lint
-gates pass on the final source.
+The source is based on stdin commit `3b3c349de`. In-process partial-read
+faults pass. The final Go compiler byte-record and byte-scan target matrix
+passes in 11.706 seconds. Primary byte-record, byte-scan, `shuf`, seek and
+registry tests pass in 75.155 seconds. Registry checks preserve the incoming
+UDP operations and the new `memchr_bytes` entry. GNU `shuf` parity passes in
+1.007 seconds. The full unit suite and all lint gates pass on the final source.
 
-The published-seed bootstrap completes in 25, 21 and 19 seconds. Stages two
-and three are identical: 12,411,905 bytes, SHA-256
-`857784a4d4a5ec1d690ddb914f0b294b88650f98b437ef4f6474bbcc5bada346`.
+The initial primary WASM run caught a stale four-byte stride in the prepared
+scan helper. Changing its load address to the packed byte offset fixes the
+existing all-byte and boundary regression corpus. The focused WASM scan
+passes in 23.080 seconds before the broader final matrix.
+
+The published-seed bootstrap completes in 36, 26 and 23 seconds. Stages two
+and three are identical: 12,496,737 bytes, SHA-256
+`b95c45f5d33144f6d17c650f684e8ef0b0f17f73d3c814f52c36936475b8e383`.
 That stage-2 compiler passes 84 byte-record cases and 20 `shuf` cases across
 Darwin and core WASM, with balanced allocations and frees. Byte-scan probes
 also pass on those targets, Preview 2 and the primary interpreter. Compiled
@@ -70,32 +74,36 @@ separately.
 
 | Workload | Previous Fern | Byte-based Fern | GNU | uutils |
 | --- | ---: | ---: | ---: | ---: |
-| Whole file, median | 15.167 ms | 14.683 ms | 11.933 ms | 12.393 ms |
-| Stdin reservoir, median | 54.260 ms | 50.028 ms | 47.075 ms | 52.924 ms |
+| Whole file, median | 23.406 ms | 13.540 ms | 12.040 ms | 11.310 ms |
+| Stdin reservoir, median | 50.780 ms | 48.252 ms | 45.707 ms | 49.401 ms |
 | Whole file, peak RSS | 43,827,200 B | 35,176,448 B | 9,584,640 B | 12,271,616 B |
-| Reservoir, peak RSS | 81,182,720 B | 43,499,520 B | 9,715,712 B | 20,824,064 B |
+| Reservoir, peak RSS | 81,166,336 B | 43,499,520 B | 9,764,864 B | 20,824,064 B |
 
-Both timing ranges overlap: whole-file timings are 13.838-29.098 ms before
-and 12.918-16.122 ms after; reservoir timings are 51.831-57.741 ms before
-and 49.187-54.616 ms after. This run establishes lower peak memory use for
-these workloads, not a throughput improvement.
+Whole-file timings are noisy: 11.697-83.696 ms before and 10.995-106.321 ms
+after, with large outliers in GNU and uutils too. Reservoir ranges are
+50.102-51.895 ms before and 47.567-50.070 ms after. No task-owned build or
+test job ran during measurement, but desktop activity was not isolated.
+The peak-memory reduction is clear in these workloads; the timing samples
+do not support a general throughput claim.
 
 ## Size
 
-Both `shuf` executables are 149,409 bytes. Native code grows from 101,748 to
-103,772 bytes, unwind data from 12,812 to 13,460, and the data section stays
+Both `shuf` executables are 149,409 bytes. Native code grows from 103,124 to
+105,340 bytes, unwind data from 12,812 to 13,460, and the data section stays
 at 7,840 bytes. Segment sizes remain unchanged.
 
-Platform-assembled objects attribute 2,004 bytes of additional code; the
-native emitter's increase is 20 bytes larger. The new byte-line routine
-uses 2,432 bytes versus 2,876 for the old text routine. Raw input, byte
+Platform-assembled objects attribute 2,204 bytes of additional code; the
+native emitter's increase is 12 bytes larger. The new byte-line routine
+uses 2,476 bytes versus 2,916 for the old text routine. Raw input, byte
 copying/scanning, output and ownership helpers account for the additions;
 removing string joins, delimiter stripping and the old slurp loop offsets
 part of that cost. For this symbol comparison, ELF `.weak` directives in
 the emitted assembly were translated to Mach-O `.weak_definition` before
 assembly. No executable code was changed. No size baseline changed.
 
-The compiler grows from 12,411,809 to 12,411,905 bytes. Code adds 5,776 bytes,
+The same-generator compiler comparison grows from 12,480,129 to 12,496,737
+bytes. Code adds 5,752 bytes,
 unwind data 272 and data 1,280 for the new intrinsic's checking, interpretation
-and lowering. Text and data file segments stay the same; the link-edit
-payload grows by 96 bytes. Both compilers include the shared seek cleanup.
+and lowering. The text segment stays the same; the data file segment grows
+by 16,384 bytes after crossing its alignment boundary, and the link-edit
+payload grows by 224 bytes. Both compilers include the shared seek cleanup.

@@ -30,10 +30,10 @@ function main(): i32 { return mk()(5, 6); }`},
 function main(): i32 { return mk()(4) + mk()(10); }`},
 	// Regression: binding the result first still lowers (4 + 1 = 5).
 	{"bind-regress", `function mk(): (i32) => i32 { return (b: i32): i32 => { return b + 1; }; }
-function main(): i32 { var g = mk(); return g(4); }`},
+function main(): i32 { let g = mk(); return g(4); }`},
 	// Regression: calling a function-array element still lowers (4 + 1 = 5).
 	{"fnarr-regress", `function inc(b: i32): i32 { return b + 1; }
-function main(): i32 { var fs: ((i32) => i32)[] = [inc]; return fs[0](4); }`},
+function main(): i32 { let fs: ((i32) => i32)[] = [inc]; return fs[0](4); }`},
 }
 
 // TestSelfHostCallOnCallIR compiles each case with the self-host CLI for

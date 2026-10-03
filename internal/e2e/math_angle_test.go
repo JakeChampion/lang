@@ -27,18 +27,18 @@ function main(): i32 {
     if (math.to_radians(0.0) != 0.0) { return 8; }
     if (math.to_degrees(0.0) != 0.0) { return 9; }
     // degree -> radian -> degree round-trips to within a tight epsilon.
-    var rt: f64 = math.to_degrees(math.to_radians(90.0));
-    var d: f64 = rt - 90.0;
+    let rt: f64 = math.to_degrees(math.to_radians(90.0));
+    let d: f64 = rt - 90.0;
     if (d < 0.0) { d = 0.0 - d; }
     if (d > 0.0000001) { return 10; }
     // 180 degrees is pi radians (up to rounding).
-    var rad: f64 = math.to_radians(180.0);
-    var dp: f64 = rad - math.pi();
+    let rad: f64 = math.to_radians(180.0);
+    let dp: f64 = rad - math.pi();
     if (dp < 0.0) { dp = 0.0 - dp; }
     if (dp > 0.0000001) { return 11; }
     // to_degrees is the inverse of to_radians on a non-trivial angle.
-    var back: f64 = math.to_radians(math.to_degrees(1.25));
-    var db: f64 = back - 1.25;
+    let back: f64 = math.to_radians(math.to_degrees(1.25));
+    let db: f64 = back - 1.25;
     if (db < 0.0) { db = 0.0 - db; }
     if (db > 0.0000001) { return 12; }
     return 42;

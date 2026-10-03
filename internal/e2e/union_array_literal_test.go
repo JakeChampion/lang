@@ -7,9 +7,9 @@ import (
 )
 
 // Union-of-structs array literals must wrap each element into the union, the
-// same way a single `var n: N = A { … }`, a `return`, or an `arr.append(A { … })`
+// same way a single `let n: N = A { … }`, a `return`, or an `arr.append(A { … })`
 // argument is. Before the fix the checker's ArrayLit case had no union-wrap:
-// `var xs: N[] = [A { … }, B { … }]` stored bare, un-tagged structs, so a later
+// `let xs: N[] = [A { … }, B { … }]` stored bare, un-tagged structs, so a later
 // `match` misfired (the interpreter reported "match scrutinee is *interp.Struct,
 // expected enum value"; the native backends segfaulted). The `.push` path was
 // unaffected because it coerces through the Call-argument path. The fix wraps
@@ -27,9 +27,9 @@ const unionArrMixed = `struct A { x: i32 }
 struct B { y: i32 }
 type N = A | B;
 function main(): i32 {
-    var xs: N[] = [A { x: 5 }, B { y: 7 }, A { x: 11 }];
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let xs: N[] = [A { x: 5 }, B { y: 7 }, A { x: 11 }];
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) {
         t = t + match (xs[i]) { A(a) => a.x, B(b) => 100 + b.y };
         i = i + 1;
@@ -44,8 +44,8 @@ const unionArrSame = `struct A { x: i32 }
 struct B { y: i32 }
 type N = A | B;
 function ksum(xs: N[]): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) {
         t = t + match (xs[i]) { A(a) => a.x, B(b) => 100 + b.y };
         i = i + 1;
@@ -53,7 +53,7 @@ function ksum(xs: N[]): i32 {
     return t;
 }
 function main(): i32 {
-    var xs: N[] = [A { x: 1 }, A { x: 2 }];
+    let xs: N[] = [A { x: 1 }, A { x: 2 }];
     if (ksum(xs) != 3) { return 99; }
     return 0;
 }`

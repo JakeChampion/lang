@@ -19,36 +19,36 @@ var matchExprValueLocalCases = []struct {
 }{
 	{"struct_arm", `struct P { x: i32 }
 function main(): i32 {
-    var t: (i32, i32) = (7, 2);
-    var p: P = match (t) { (a, b) => P { x: a } };
+    let t: (i32, i32) = (7, 2);
+    let p: P = match (t) { (a, b) => P { x: a } };
     return p.x;
 }`}, // 7
 	{"struct_nested_if_arms", `struct P { x: i32, name: string }
 function main(): i32 {
-    var t: (i32, i32) = (7, 2);
-    var p: P = match (t) { (a, b) => P { x: a + b, name: "q" } };
-    var q: P = match (t) { (a, b) => { if (a > b) { P { x: 1, name: "big" } } else { P { x: 2, name: "small" } } } };
+    let t: (i32, i32) = (7, 2);
+    let p: P = match (t) { (a, b) => P { x: a + b, name: "q" } };
+    let q: P = match (t) { (a, b) => { if (a > b) { P { x: 1, name: "big" } } else { P { x: 2, name: "small" } } } };
     return p.x + q.x + q.name.len();
 }`}, // 13
 	{"option_via_destination", `function main(): i32 {
-    var t: (i32, i32) = (7, 2);
-    var o: Option[i32] = match (t) { (a, b) => Some(a + b) };
+    let t: (i32, i32) = (7, 2);
+    let o: Option[i32] = match (t) { (a, b) => Some(a + b) };
     match (o) { Some(v) => { return v; }, None => { return 50; } }
 }`}, // 9
 	{"result_struct_payload", `struct Q { n: i32 }
 function main(): i32 {
-    var t: (i32, i32) = (7, 2);
-    var r: Result[Q, string] = match (t) { (a, b) => { if (a > b) { Ok(Q { n: a }) } else { Err("no") } } };
+    let t: (i32, i32) = (7, 2);
+    let r: Result[Q, string] = match (t) { (a, b) => { if (a > b) { Ok(Q { n: a }) } else { Err("no") } } };
     match (r) { Ok(q) => { return q.n + 10; }, Err(_) => { return 51; } }
 }`}, // 17
 	{"array_arm", `function main(): i32 {
-    var t: (i32, i32) = (7, 2);
-    var xs: i32[] = match (t) { (a, b) => [a, b, 1] };
+    let t: (i32, i32) = (7, 2);
+    let xs: i32[] = match (t) { (a, b) => [a, b, 1] };
     return xs.len() * 10 + xs[0];
 }`}, // 37
 	{"tuple_arm", `function main(): i32 {
-    var t: (i32, i32) = (7, 2);
-    var u: (i32, i32) = match (t) { (a, b) => (b, a) };
+    let t: (i32, i32) = (7, 2);
+    let u: (i32, i32) = match (t) { (a, b) => (b, a) };
     return u.0 * 10 + u.1;
 }`}, // 27
 }

@@ -137,8 +137,8 @@ impl Point {
     function sum(self: Self): i32 { return self.x + self.y; }   // method
 }
 
-var p: Point = Point.make(3, 4);   // Type.f(args) — associated function
-var n: i32 = p.sum();              // p.method()    — ordinary method
+let p: Point = Point.make(3, 4);   // Type.f(args) — associated function
+let n: i32 = p.sum();              // p.method()    — ordinary method
 ```
 
 The desugaring is identical to a trait impl: a receiver-less function
@@ -224,7 +224,7 @@ trait From[T] { function from(v: T): Self; }
 struct Celsius { deg: i32 }
 impl From[i32] for Celsius { function from(v: i32): Self { return Celsius { deg: v }; } }
 
-var c: Celsius = Celsius.from(20);   // associated function, T=i32
+let c: Celsius = Celsius.from(20);   // associated function, T=i32
 
 trait Container[T] { function get(self: Self): T; }
 impl Container[i32] for IntBox { function get(self: Self): i32 { return self.v; } }
@@ -316,7 +316,7 @@ import "core/cmp";
 struct Point { x: i32, y: i32 }
 
 function main(): i32 {
-    var p: Point = Point { x: 1, y: 2 };
+    let p: Point = Point { x: 1, y: 2 };
     print(42);   // was: print((42).to_string())
     print(p);    // was: print(p.to_string())  →  "Point { x: 1, y: 2 }"
     return 0;
@@ -666,7 +666,7 @@ written so the printer round-trips it) and resolve identically:
 ```fern
 trait Default { function default(): Self; }
 impl Default for Point { function default(): Self { return Point { x: 0, y: 0 }; } }
-var p: Point = Point::default();         // `Self` resolves to Point (`::` or `.`)
+let p: Point = Point::default();         // `Self` resolves to Point (`::` or `.`)
 function mk[T: Default](): T { return T::default(); }  // generic constructor
 ```
 
@@ -822,7 +822,7 @@ regressing the self-host gates. It needs traits in two slices:
   `module_with_builtins`, so every asm driver gets it with no checker)
   walks call sites, infers each instantiation's concrete type from the
   argument bound to the type variable, clones `f` → `f__<type>` with the
-  type variable substituted in params / return / `var` annotations, and
+  type variable substituted in params / return / `let` annotations, and
   rewrites call sites; a worklist covers clones that call other bounded
   generics. The clone's concrete receiver then routes through the
   emitter's static-primitive dispatch — no emitter change. Unbounded
@@ -1031,7 +1031,7 @@ regressing the self-host gates. It needs traits in two slices:
   struct-typed and primitive-receiver paths), so existing dispatch is
   untouched, and returns `""` (keeping the old fallback) when no struct
   implements the method. One companion fix: a `dyn Trait[]` local
-  initialised with a struct-literal array (`var xs: dyn Named[] = [Cat {},
+  initialised with a struct-literal array (`let xs: dyn Named[] = [Cat {},
   Dog {}]`) was pinned to the first element's concrete type by
   `sa_elem_decl_type` (so the loop var dispatched statically to `Cat`);
   a `dyn`-spelled annotation now suppresses that homogeneous-array

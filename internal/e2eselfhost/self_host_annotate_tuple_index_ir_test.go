@@ -43,7 +43,7 @@ function main(): i32 { return mk()[1].0 + mk()[1].1; }`}, // 42
 	// Structural path, unchanged: the same read off a NAMED (tuple)[] local,
 	// which the slot walk resolves without ever consulting the tag.
 	{"tuple_elem_local_array_f64", `function main(): i32 {
-    var a: (f64, i32)[] = [(1.5, 7), (2.5, 8)];
+    let a: (f64, i32)[] = [(1.5, 7), (2.5, 8)];
     return (a[1].0 * 10.0) as i32 + a[1].1;
 }`}, // 33
 }

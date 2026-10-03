@@ -41,9 +41,9 @@ function sep(): string {
 }
 
 function is_blank(line: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < line.len()) {
-    var c: u8 = line[i];
+    let c: u8 = line[i];
     if (c != 32 && c != 9 && c != 13) {
       return false;
     }
@@ -56,8 +56,8 @@ function digits(n: i32): i32 {
   if (n <= 0) {
     return 1;
   }
-  var d: i32 = 0;
-  var m: i32 = n;
+  let d: i32 = 0;
+  let m: i32 = n;
   while (m > 0) {
     d = d + 1;
     m = m / 10;
@@ -66,9 +66,9 @@ function digits(n: i32): i32 {
 }
 
 function pad_left(s: string, width: i32): string {
-  var out: string = "";
-  var need: i32 = width - s.len();
-  var i: i32 = 0;
+  let out: string = "";
+  let need: i32 = width - s.len();
+  let i: i32 = 0;
   while (i < need) {
     out = out + " ";
     i = i + 1;
@@ -83,21 +83,21 @@ function pad_left(s: string, width: i32): string {
 // formatting second. A single streaming pass is the shape that gets 9 -> 10
 // wrong.
 function number(lines: string[]): Numbered {
-  var count: i32 = 0;
-  var i: i32 = 0;
+  let count: i32 = 0;
+  let i: i32 = 0;
   while (i < lines.len()) {
     if (!is_blank(lines[i])) {
       count = count + 1;
     }
     i = i + 1;
   }
-  var width: i32 = digits(count);
+  let width: i32 = digits(count);
 
-  var out: string[] = [];
-  var n: i32 = 0;
-  var k: i32 = 0;
+  let out: string[] = [];
+  let n: i32 = 0;
+  let k: i32 = 0;
   while (k < lines.len()) {
-    var line: string = lines[k];
+    let line: string = lines[k];
     if (is_blank(line)) {
       out = out.append(line);
     } else {
@@ -112,10 +112,10 @@ function number(lines: string[]): Numbered {
 // The inverse, used only by the round-trip property: strip the fixed-width
 // prefix from every line that got one. A blank line got none.
 function unnumber(numbered: string[], width: i32): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < numbered.len()) {
-    var line: string = numbered[i];
+    let line: string = numbered[i];
     if (is_blank(line)) {
       out = out.append(line);
     } else {
@@ -133,11 +133,11 @@ function field_number(line: string, width: i32): i32 {
   if (line.len() < width) {
     return -1;
   }
-  var seen_digit: boolean = false;
-  var value: i32 = 0;
-  var i: i32 = 0;
+  let seen_digit: boolean = false;
+  let value: i32 = 0;
+  let i: i32 = 0;
   while (i < width) {
-    var c: u8 = line[i];
+    let c: u8 = line[i];
     if (c == 32) {
       // Padding is only legal BEFORE the digits — a space after a digit
       // means the number was left-aligned.
@@ -165,14 +165,14 @@ function field_number(line: string, width: i32): i32 {
 // a pattern that varies with `shape`, so the numbering is exercised against
 // leading, trailing, adjacent and interior blanks rather than one arrangement.
 function make_doc(content: i32, shape: i32): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   if (shape % 3 == 1) {
     out = out.append("");
   }
   if (shape % 5 == 2) {
     out = out.append("   ");
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < content) {
     // Some content lines carry leading and trailing whitespace of their
     // own. Without them the round-trip property cannot see a filter that
@@ -216,13 +216,13 @@ function boundary_counts(): i32[] {
 // The main test. At every carry boundary, the field must be as wide as the LAST
 // number — no wider, no narrower.
 function test_the_width_is_the_digit_count_of_the_last_number(): test.TestOutcome {
-  var counts: i32[] = boundary_counts();
-  var ci: i32 = 0;
+  let counts: i32[] = boundary_counts();
+  let ci: i32 = 0;
   while (ci < counts.len()) {
-    var c: i32 = counts[ci];
-    var shape: i32 = 0;
+    let c: i32 = counts[ci];
+    let shape: i32 = 0;
     while (shape < 4) {
-      var r: Numbered = number(make_doc(c, shape));
+      let r: Numbered = number(make_doc(c, shape));
       if (r.count != c) {
         return test.fail("count=" + c.to_string() + " shape=" + shape.to_string()
           + ": numbered " + r.count.to_string() + " lines, want " + c.to_string());
@@ -241,20 +241,20 @@ function test_the_width_is_the_digit_count_of_the_last_number(): test.TestOutcom
 // Every numbered line in one document shares one field width, and the numbers
 // read back out of those fields are exactly 1..k in order.
 function test_the_numbers_are_one_to_k_in_a_uniform_field(): test.TestOutcome {
-  var counts: i32[] = boundary_counts();
-  var ci: i32 = 0;
+  let counts: i32[] = boundary_counts();
+  let ci: i32 = 0;
   while (ci < counts.len()) {
-    var c: i32 = counts[ci];
-    var shape: i32 = 0;
+    let c: i32 = counts[ci];
+    let shape: i32 = 0;
     while (shape < 4) {
-      var r: Numbered = number(make_doc(c, shape));
-      var expect: i32 = 0;
-      var i: i32 = 0;
+      let r: Numbered = number(make_doc(c, shape));
+      let expect: i32 = 0;
+      let i: i32 = 0;
       while (i < r.lines.len()) {
-        var line: string = r.lines[i];
+        let line: string = r.lines[i];
         if (!is_blank(line)) {
           expect = expect + 1;
-          var got: i32 = field_number(line, r.width);
+          let got: i32 = field_number(line, r.width);
           if (got < 0) {
             return test.fail("count=" + c.to_string() + " line " + i.to_string()
               + ": field is not a right-aligned decimal: `" + line + "`");
@@ -281,15 +281,15 @@ function test_the_numbers_are_one_to_k_in_a_uniform_field(): test.TestOutcome {
 // every blank comes back byte-identical — including a whitespace-only line,
 // which must not be trimmed on its way through.
 function test_blank_lines_are_preserved_unnumbered(): test.TestOutcome {
-  var shape: i32 = 0;
+  let shape: i32 = 0;
   while (shape < 8) {
-    var src: string[] = make_doc(12, shape);
-    var r: Numbered = number(src);
+    let src: string[] = make_doc(12, shape);
+    let r: Numbered = number(src);
     if (r.lines.len() != src.len()) {
       return test.fail("shape=" + shape.to_string() + ": " + src.len().to_string()
         + " lines in, " + r.lines.len().to_string() + " out");
     }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < src.len()) {
       if (is_blank(src[i])) {
         if (r.lines[i] != src[i]) {
@@ -307,19 +307,19 @@ function test_blank_lines_are_preserved_unnumbered(): test.TestOutcome {
 // The strongest property, and the one that needs no expected document: strip
 // the prefix and the input must come back exactly.
 function test_stripping_the_prefix_recovers_the_input(): test.TestOutcome {
-  var counts: i32[] = boundary_counts();
-  var ci: i32 = 0;
+  let counts: i32[] = boundary_counts();
+  let ci: i32 = 0;
   while (ci < counts.len()) {
-    var shape: i32 = 0;
+    let shape: i32 = 0;
     while (shape < 8) {
-      var src: string[] = make_doc(counts[ci], shape);
-      var r: Numbered = number(src);
-      var back: string[] = unnumber(r.lines, r.width);
+      let src: string[] = make_doc(counts[ci], shape);
+      let r: Numbered = number(src);
+      let back: string[] = unnumber(r.lines, r.width);
       if (back.len() != src.len()) {
         return test.fail("count=" + counts[ci].to_string() + " shape=" + shape.to_string()
           + ": round trip changed the line count");
       }
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < src.len()) {
         if (back[i] != src[i]) {
           return test.fail("count=" + counts[ci].to_string() + " line " + i.to_string()
@@ -338,14 +338,14 @@ function test_stripping_the_prefix_recovers_the_input(): test.TestOutcome {
 // front of it — checked directly rather than inferred from the parsed value,
 // because `1 ` and ` 1` parse the same and align differently.
 function test_the_padding_is_on_the_left(): test.TestOutcome {
-  var r: Numbered = number(make_doc(10, 0));
-  var i: i32 = 0;
-  var seen: i32 = 0;
+  let r: Numbered = number(make_doc(10, 0));
+  let i: i32 = 0;
+  let seen: i32 = 0;
   while (i < r.lines.len()) {
-    var line: string = r.lines[i];
+    let line: string = r.lines[i];
     if (!is_blank(line)) {
       seen = seen + 1;
-      var last: u8 = line[r.width - 1];
+      let last: u8 = line[r.width - 1];
       if (last < 48 || last > 57) {
         return test.fail("line " + i.to_string() + ": field does not end in a digit: `"
           + line + "`");
@@ -366,8 +366,8 @@ function test_the_padding_is_on_the_left(): test.TestOutcome {
 // A whitespace-only line is blank for numbering purposes, and a line whose
 // content merely LOOKS blank after the prefix (leading spaces) is not.
 function test_whitespace_only_counts_as_blank(): test.TestOutcome {
-  var src: string[] = ["", "   ", "\t", " x ", "y"];
-  var r: Numbered = number(src);
+  let src: string[] = ["", "   ", "\t", " x ", "y"];
+  let r: Numbered = number(src);
   if (r.count != 2) {
     return test.fail("counted " + r.count.to_string() + " non-blank, want 2");
   }
@@ -381,7 +381,7 @@ function test_whitespace_only_counts_as_blank(): test.TestOutcome {
     return test.fail("`y` should be numbered 2, got `" + r.lines[4] + "`");
   }
   // Leading whitespace in the CONTENT survives the prefix.
-  var back: string[] = unnumber(r.lines, r.width);
+  let back: string[] = unnumber(r.lines, r.width);
   if (back[3] != " x ") {
     return test.fail("content whitespace was trimmed: `" + back[3] + "`");
   }
@@ -391,7 +391,7 @@ function test_whitespace_only_counts_as_blank(): test.TestOutcome {
 // Degenerate inputs must not need a special case at the call site: no lines, no
 // non-blank lines, and one line each behave.
 function test_degenerate_inputs(): test.TestOutcome {
-  var empty: Numbered = number([]);
+  let empty: Numbered = number([]);
   if (empty.lines.len() != 0) {
     return test.fail("empty input produced output lines");
   }
@@ -402,7 +402,7 @@ function test_degenerate_inputs(): test.TestOutcome {
     return test.fail("empty input gave width " + empty.width.to_string());
   }
 
-  var blanks: Numbered = number(["", "  ", ""]);
+  let blanks: Numbered = number(["", "  ", ""]);
   if (blanks.count != 0) {
     return test.fail("all-blank counted " + blanks.count.to_string());
   }
@@ -413,7 +413,7 @@ function test_degenerate_inputs(): test.TestOutcome {
     return test.fail("all-blank altered a line");
   }
 
-  var one: Numbered = number(["only"]);
+  let one: Numbered = number(["only"]);
   if (one.width != 1) {
     return test.fail("one line gave width " + one.width.to_string());
   }
@@ -426,8 +426,8 @@ function test_degenerate_inputs(): test.TestOutcome {
 // The pair that catches a width chosen from the first number rather than the
 // last, stated on its own so a failure names it.
 function test_nine_and_ten_differ_in_width(): test.TestOutcome {
-  var nine: Numbered = number(make_doc(9, 0));
-  var ten: Numbered = number(make_doc(10, 0));
+  let nine: Numbered = number(make_doc(9, 0));
+  let ten: Numbered = number(make_doc(10, 0));
   if (nine.width != 1) {
     return test.fail("9 lines gave width " + nine.width.to_string());
   }
@@ -435,8 +435,8 @@ function test_nine_and_ten_differ_in_width(): test.TestOutcome {
     return test.fail("10 lines gave width " + ten.width.to_string());
   }
   // In the 10-line document EVERY number is two wide, including the first.
-  var i: i32 = 0;
-  var seen: i32 = 0;
+  let i: i32 = 0;
+  let seen: i32 = 0;
   while (i < ten.lines.len()) {
     if (!is_blank(ten.lines[i])) {
       seen = seen + 1;
@@ -453,20 +453,20 @@ function test_nine_and_ten_differ_in_width(): test.TestOutcome {
 function main(): i32 {
   eprint("linenum — number the non-blank lines, right-aligned");
 
-  var src: string[] = ["alpha", "", "beta", "   ", "gamma", "delta"];
-  var r: Numbered = number(src);
-  var i: i32 = 0;
+  let src: string[] = ["alpha", "", "beta", "   ", "gamma", "delta"];
+  let r: Numbered = number(src);
+  let i: i32 = 0;
   while (i < r.lines.len()) {
     eprint("  |" + r.lines[i]);
     i = i + 1;
   }
   eprint("  width " + r.width.to_string() + " for " + r.count.to_string() + " numbered lines");
 
-  var wide: Numbered = number(make_doc(10, 0));
+  let wide: Numbered = number(make_doc(10, 0));
   eprint("  10 lines -> width " + wide.width.to_string()
     + ", first field `" + wide.lines[0].take(2).to_owned() + "`");
 
-  var t: test.TestRunner = test.test_new("linenum");
+  let t: test.TestRunner = test.test_new("linenum");
   t = t.it("the width is the digit count of the last number", test_the_width_is_the_digit_count_of_the_last_number);
   t = t.it("the numbers are 1..k in a uniform field", test_the_numbers_are_one_to_k_in_a_uniform_field);
   t = t.it("blank lines are preserved unnumbered", test_blank_lines_are_preserved_unnumbered);

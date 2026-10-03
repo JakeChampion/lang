@@ -73,7 +73,7 @@ early-returns `Err`; on an `Option`, it unwraps `Some` and early-returns
 
 ```fern
 function double(s: string): Result[i32, ParseError] {
-    var n: i32 = parse_int(s)?;   // returns the Err if parse_int failed
+    let n: i32 = parse_int(s)?;   // returns the Err if parse_int failed
     return Ok(n * 2);
 }
 ```
@@ -156,8 +156,8 @@ import "core/map";
 import "std/option";
 
 // Default a missing config value instead of branching.
-var config: Map[string, i32] = Map { "workers": 4 };
-var port: i32 = config.get("port").unwrap_or(8080);
+let config: Map[string, i32] = Map { "workers": 4 };
+let port: i32 = config.get("port").unwrap_or(8080);
 ```
 
 ## Choosing between them

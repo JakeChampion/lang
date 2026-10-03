@@ -310,7 +310,7 @@ func TestWASMPreview1FsMetaPrimitives(t *testing.T) {
 // a mode word that describes nothing.
 //
 // main's return reaches us on STDOUT, not as the exit status: the harness
-// builds with PrintMainResult.
+// runs the module with `--invoke main`.
 func TestWASMFsMetaPrimitives(t *testing.T) {
 	p := buildComponent(t, fsMetaSource("", false, true))
 	dir := t.TempDir()

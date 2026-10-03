@@ -29,13 +29,13 @@ func TestArm64NativePrintRunsUnderQemu(t *testing.T) {
 		{"int", `import "std/i32"; function main(): i32 { print((42).to_string()); return 0; }`, "42\n"},
 		{"negint", `import "std/i32"; function main(): i32 { print((0 - 42).to_string()); return 0; }`, "-42\n"},
 		{"concat", `import "std/i32"; function main(): i32 { print("x=" + (42).to_string()); return 0; }`, "x=42\n"},
-		{"loopsum", `import "std/i32"; function main(): i32 { var s: i32 = 0; var i: i32 = 0; while (i < 9) { s = s + i; i = i + 1; } print(s.to_string()); return 0; }`, "36\n"},
+		{"loopsum", `import "std/i32"; function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 9) { s = s + i; i = i + 1; } print(s.to_string()); return 0; }`, "36\n"},
 		{"float", `import "std/float"; function main(): i32 { print((3.5).to_string()); return 0; }`, "3.5\n"},
 		{"negfloat", `import "std/float"; function main(): i32 { print((0.0 - 2.25).to_string()); return 0; }`, "-2.25\n"},
 		{"wholefloat", `import "std/float"; function main(): i32 { print((42.0).to_string()); return 0; }`, "42\n"},
-		{"floatarith", `import "std/float"; function main(): i32 { var x: f64 = 1.5; var y: f64 = 2.0; print((x * y).to_string()); return 0; }`, "3\n"},
+		{"floatarith", `import "std/float"; function main(): i32 { let x: f64 = 1.5; let y: f64 = 2.0; print((x * y).to_string()); return 0; }`, "3\n"},
 		{"slashstring", `function main(): i32 { print("x: i32 = 1; // comment"); return 0; }`, "x: i32 = 1; // comment\n"},
-		{"strarr_iter", `function main(): i32 { var a: string[] = ["a", "bb", "ccc"]; for s in a { print(s); } return 0; }`, "a\nbb\nccc\n"},
+		{"strarr_iter", `function main(): i32 { let a: string[] = ["a", "bb", "ccc"]; for s in a { print(s); } return 0; }`, "a\nbb\nccc\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -86,22 +86,22 @@ func TestArm64NativeBackendRunsUnderQemu(t *testing.T) {
 		{"sub", "function main(): i32 { return 50 - 8; }", 42},
 		{"mul", "function main(): i32 { return 6 * 7; }", 42},
 		{"div", "function main(): i32 { return 84 / 2; }", 42},
-		{"locals", "function main(): i32 { var x: i32 = 40; var y: i32 = 2; return x + y; }", 42},
+		{"locals", "function main(): i32 { let x: i32 = 40; let y: i32 = 2; return x + y; }", 42},
 		{"ifelse", "function main(): i32 { if (3 > 2) { return 42; } return 0; }", 42},
-		{"while", "function main(): i32 { var i: i32 = 0; var s: i32 = 0; while (i < 42) { s = s + 1; i = i + 1; } return s; }", 42},
+		{"while", "function main(): i32 { let i: i32 = 0; let s: i32 = 0; while (i < 42) { s = s + 1; i = i + 1; } return s; }", 42},
 		{"call", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(40, 2); }", 42},
 		{"recur", "function f(n: i32): i32 { if (n <= 1) { return 1; } return n * f(n - 1); } function main(): i32 { return f(5) / 3; }", 40},
-		{"i64", "function main(): i32 { var x: i64 = 40; var y: i64 = 2; return (x + y) as i32; }", 42},
-		{"f64", "function main(): i32 { var x: f64 = 21.0; return (x * 2.0) as i32; }", 42},
-		{"bitand", "function main(): i32 { var x: i32 = 250; return x & 42; }", 42},
-		{"bitor", "function main(): i32 { var x: i32 = 40; return x | 2; }", 42},
+		{"i64", "function main(): i32 { let x: i64 = 40; let y: i64 = 2; return (x + y) as i32; }", 42},
+		{"f64", "function main(): i32 { let x: f64 = 21.0; return (x * 2.0) as i32; }", 42},
+		{"bitand", "function main(): i32 { let x: i32 = 250; return x & 42; }", 42},
+		{"bitor", "function main(): i32 { let x: i32 = 40; return x | 2; }", 42},
 		// Array element addressing past [0] needs the scaled/extended add
 		// forms (lsl #N for the element-size stride, uxtw to widen the
 		// 32-bit index), or element [1]+ is corrupted.
-		{"i32arr_index", "function main(): i32 { var a: i32[] = [10, 20, 12]; return a[1] + a[2]; }", 32},
-		{"i32arr_iter", "function main(): i32 { var a: i32[] = [1, 2, 3, 36]; var s: i32 = 0; for x in a { s = s + x; } return s; }", 42},
-		{"structarr_index", "struct P { x: i32, y: i32 } function main(): i32 { var ps: P[] = [P{x:1,y:2}, P{x:40,y:2}]; return ps[1].x + ps[1].y; }", 42},
-		{"structarr_iter", "struct P { v: i32 } function main(): i32 { var ps: P[] = [P{v:20}, P{v:22}]; var s: i32 = 0; for p in ps { s = s + p.v; } return s; }", 42},
+		{"i32arr_index", "function main(): i32 { let a: i32[] = [10, 20, 12]; return a[1] + a[2]; }", 32},
+		{"i32arr_iter", "function main(): i32 { let a: i32[] = [1, 2, 3, 36]; let s: i32 = 0; for x in a { s = s + x; } return s; }", 42},
+		{"structarr_index", "struct P { x: i32, y: i32 } function main(): i32 { let ps: P[] = [P{x:1,y:2}, P{x:40,y:2}]; return ps[1].x + ps[1].y; }", 42},
+		{"structarr_iter", "struct P { v: i32 } function main(): i32 { let ps: P[] = [P{v:20}, P{v:22}]; let s: i32 = 0; for p in ps { s = s + p.v; } return s; }", 42},
 		// Cheap f64 math intrinsics lower to single FP instructions
 		// (fabs/fsqrt/frintm/frintp/frintz/frinta) — no libm.
 		{"abs_f64", "function main(): i32 { return __abs_f64(0.0 - 42.0) as i32; }", 42},
@@ -115,10 +115,10 @@ func TestArm64NativeBackendRunsUnderQemu(t *testing.T) {
 		// contract; exit codes pin the integer-truncated result.
 		{"exp_f64", "function main(): i32 { return __exp_f64(2.0) as i32; }", 7},
 		{"log_f64", "function main(): i32 { return __log_f64(10.0) as i32; }", 2},
-		{"sin_f64", "function main(): i32 { var r: f64 = __sin_f64(1.5707963267948966); if (r > 0.999 && r < 1.001) { return 42; } return 0; }", 42},
+		{"sin_f64", "function main(): i32 { let r: f64 = __sin_f64(1.5707963267948966); if (r > 0.999 && r < 1.001) { return 42; } return 0; }", 42},
 		{"cos_f64", "function main(): i32 { return __cos_f64(0.0) as i32; }", 1},
 		{"pow_f64", "function main(): i32 { return __pow_f64(3.0, 2.0) as i32; }", 9},
-		{"exp_log_roundtrip_f64", "function main(): i32 { var r: f64 = __log_f64(__exp_f64(3.0)); if (r > 2.999 && r < 3.001) { return 42; } return 0; }", 42},
+		{"exp_log_roundtrip_f64", "function main(): i32 { let r: f64 = __log_f64(__exp_f64(3.0)); if (r > 2.999 && r < 3.001) { return 42; } return 0; }", 42},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

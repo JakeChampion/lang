@@ -3,9 +3,9 @@
 ## Shape
 
 ```fern
-var o: Outer = mk();          // mk builds the box; its xs has spare capacity
-var t: Inner = o.inner;       // t names the box o still holds
-var ys: i32[] = t.xs.append(9);
+let o: Outer = mk();          // mk builds the box; its xs has spare capacity
+let t: Inner = o.inner;       // t names the box o still holds
+let ys: i32[] = t.xs.append(9);
 return ys.len() * 10 + o.inner.xs.len();
 ```
 
@@ -29,7 +29,7 @@ The call half is a new identity analysis, `findReturnsConstructedBox`. Neither
 ownership fact serves: `returnsFreshBox` credits a returned OWNED parameter
 (the caller retained it on the way in, so the count is the caller's — but its
 other bindings still name that box), and `returnsNoParamEscape` excuses a bare
-returned parameter as "not a flow-out". `var u = same(o)` with
+returned parameter as "not a flow-out". `let u = same(o)` with
 `same(o: Outer): Outer { return o; }` was in place under both and answered 44.
 
 Everything else copies, with the rule named in `fern -append-report`: a local

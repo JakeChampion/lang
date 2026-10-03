@@ -1,9 +1,9 @@
 // Nested while loops with a block-scoped inner counter. 7 * 6 = 42.
 function main(): i32 {
-    var c: i32 = 0;
-    var i: i32 = 0;
+    let c: i32 = 0;
+    let i: i32 = 0;
     while (i < 7) {
-        var j: i32 = 0;
+        let j: i32 = 0;
         while (j < 6) {
             c = c + 1;
             j = j + 1;

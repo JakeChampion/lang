@@ -80,7 +80,7 @@ func describeName(info *checker.Info, hit *nameHit) (string, bool) {
 			return formatStructDecl(sd), true
 		}
 	}
-	// Type annotation reference (`var c: Color`, `Option[T]`, …).
+	// Type annotation reference (`let c: Color`, `Option[T]`, …).
 	// Look the name up as a struct or enum; the parser doesn't
 	// distinguish at parse-time, so we try both.
 	if hit.typeRef != nil && info != nil {

@@ -15,7 +15,7 @@ function test_count_range(): test.TestOutcome {
 }
 
 function test_of_sum(): test.TestOutcome {
-  var xs: i32[] = [3, 1, 4, 1, 5];
+  let xs: i32[] = [3, 1, 4, 1, 5];
   return test.assert_eq(iter.sum(iter.of(xs)), 14);  // array → iterator
 }
 
@@ -46,7 +46,7 @@ function test_last(): test.TestOutcome {
 }
 
 function test_min(): test.TestOutcome {
-  var xs: i32[] = [5, 2, 8, 1];
+  let xs: i32[] = [5, 2, 8, 1];
   match (iter.min(iter.of(xs))) {
     Some(v) => {
       return test.assert_eq(v, 1);
@@ -58,7 +58,7 @@ function test_min(): test.TestOutcome {
 }
 
 function test_max(): test.TestOutcome {
-  var xs: i32[] = [5, 2, 8, 1];
+  let xs: i32[] = [5, 2, 8, 1];
   match (iter.max(iter.of(xs))) {
     Some(v) => {
       return test.assert_eq(v, 8);
@@ -74,12 +74,12 @@ function test_contains(): test.TestOutcome {
 }
 
 function test_count_value(): test.TestOutcome {
-  var xs: i32[] = [1, 2, 2, 3, 2];
+  let xs: i32[] = [1, 2, 2, 3, 2];
   return test.assert_eq(iter.count_value(iter.of(xs), 2), 3);
 }
 
 function test_fold(): test.TestOutcome {
-  var s = iter.fold(iter.range(1, 5), 0, (a: i32, x: i32): i32 => a + x);
+  let s = iter.fold(iter.range(1, 5), 0, (a: i32, x: i32): i32 => a + x);
   return test.assert_eq(s, 10);
 }
 
@@ -96,14 +96,14 @@ function test_any_miss(): test.TestOutcome {
 }
 
 function test_map_filter(): test.TestOutcome {
-  var xs: i32[] = [1, 2, 3, 4, 5, 6];
-  var evens = iter.filter(iter.of(xs), (x: i32): boolean => x % 2 == 0);
-  var doubled = iter.map(iter.of(evens), (x: i32): i32 => x * 2);
+  let xs: i32[] = [1, 2, 3, 4, 5, 6];
+  let evens = iter.filter(iter.of(xs), (x: i32): boolean => x % 2 == 0);
+  let doubled = iter.map(iter.of(evens), (x: i32): i32 => x * 2);
   return test.assert_eq(iter.sum(iter.of(doubled)), 24);  // (2+4+6)*2
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("core/iter");
+  let r: test.TestRunner = test.test_new("core/iter");
   r = r.it("sum over a range", test_sum_range);
   r = r.it("count over a range", test_count_range);
   r = r.it("of: array to iterator", test_of_sum);

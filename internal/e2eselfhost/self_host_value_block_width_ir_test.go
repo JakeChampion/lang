@@ -27,26 +27,26 @@ var valueBlockWidthIRCases = []struct {
 	// width. The None arm is taken.
 	{"i64-call-arm", `function widen(v: i64): i64 { return v; }
 function main(): i32 {
-    var x: i64 = (match ((1i64) /? (0i64)) { Some(w) => w, None => widen(5000000000i64) });
+    let x: i64 = (match ((1i64) /? (0i64)) { Some(w) => w, None => widen(5000000000i64) });
     return (x / 1000000000i64) as i32;
 }`, 5},
 	// The same shape with the PAYLOAD arm taken, so the width has to survive on
 	// the binding that the classifier could not read either.
 	{"i64-payload-arm", `function widen(v: i64): i64 { return v; }
 function main(): i32 {
-    var x: i64 = (match ((9000000000i64) /? (2i64)) { Some(w) => w, None => widen(0i64) });
+    let x: i64 = (match ((9000000000i64) /? (2i64)) { Some(w) => w, None => widen(0i64) });
     return (x / 1000000000i64) as i32;
 }`, 4},
 	// u64 takes the same route as i64 — the annotation is read, not assumed.
 	{"u64-call-arm", `function ident_u(v: u64): u64 { return v; }
 function main(): i32 {
-    var x: u64 = (match ((1u64) /? (0u64)) { Some(w) => w, None => ident_u(9000000000u64) });
+    let x: u64 = (match ((1u64) /? (0u64)) { Some(w) => w, None => ident_u(9000000000u64) });
     return (x / 1000000000u64) as i32;
 }`, 9},
 	// Control: a WIDE LITERAL arm already named the width, so this shape lowered
 	// before the annotation was consulted and must keep doing so.
 	{"wide-literal-arm-control", `function main(): i32 {
-    var x: i64 = (match ((1i64) /? (0i64)) { Some(w) => w, None => 5000000000i64 });
+    let x: i64 = (match ((1i64) /? (0i64)) { Some(w) => w, None => 5000000000i64 });
     return (x / 1000000000i64) as i32;
 }`, 5},
 }
@@ -55,7 +55,7 @@ function main(): i32 {
 func TestSelfHostValueBlockWidthIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range valueBlockWidthIRCases {
@@ -89,7 +89,7 @@ func TestSelfHostValueBlockWidthIRArm64(t *testing.T) {
 		t.Skip("arm64 value-block width gate needs a native x86 host to run the driver")
 	}
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range valueBlockWidthIRCases {
@@ -109,13 +109,13 @@ func TestSelfHostValueBlockWidthIRArm64(t *testing.T) {
 }
 
 // A literal local a block tail returns takes the width its destination reads
-// it at (an annotated `var`, a parameter, a return), as it does outside a
+// it at (an annotated `let`, a parameter, a return), as it does outside a
 // block, so the arithmetic on it runs at that width.
 const valueBlockLiteralLocalWidthSrc = `function wide(n: u64): u64 { return n / 1000000000u64; }
-function f(): i64 { return { var z = 2; z * 1000000000 }; }
+function f(): i64 { return { let z = 2; z * 1000000000 }; }
 function main(): i32 {
-    var y: i64 = { var z = 5; z * 1000000000 };
-    var w: u64 = wide({ var k = 3; k * 1000000000 });
+    let y: i64 = { let z = 5; z * 1000000000 };
+    let w: u64 = wide({ let k = 3; k * 1000000000 });
     return ((y / 1000000000i64) as i32) + 10 * (w as i32) + 40 * ((f() / 1000000000i64) as i32);
 }
 `

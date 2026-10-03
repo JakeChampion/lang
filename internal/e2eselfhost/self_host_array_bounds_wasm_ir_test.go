@@ -40,16 +40,16 @@ func TestSelfHostArrayBoundsIRWasm(t *testing.T) {
 		want int
 	}{
 		{"read-past-end",
-			`function main(): i32 { var a: i32[] = [1, 2, 3]; return a[5]; }`, 134},
+			`function main(): i32 { let a: i32[] = [1, 2, 3]; return a[5]; }`, 134},
 		{"read-negative",
-			`function main(): i32 { var a: i32[] = [1, 2, 3]; var i: i32 = 0 - 1; return a[i]; }`, 134},
+			`function main(): i32 { let a: i32[] = [1, 2, 3]; let i: i32 = 0 - 1; return a[i]; }`, 134},
 		{"read-at-len",
-			`function main(): i32 { var a: i32[] = [1, 2, 3]; return a[3]; }`, 134},
+			`function main(): i32 { let a: i32[] = [1, 2, 3]; return a[3]; }`, 134},
 		{"write-past-end",
-			`function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.with(5, 9); return a[0]; }`, 134},
+			`function main(): i32 { let a: i32[] = [1, 2, 3]; a = a.with(5, 9); return a[0]; }`, 134},
 		// In-range: every element read + a write, no trap. 10+20+30 -> exit 60.
 		{"in-range-ok",
-			`function main(): i32 { var a: i32[] = [10, 20, 30]; a = a.with(1, 20); var s: i32 = 0; var i: i32 = 0; while (i < 3) { s = s + a[i]; i = i + 1; } return s; }`, 60},
+			`function main(): i32 { let a: i32[] = [10, 20, 30]; a = a.with(1, 20); let s: i32 = 0; let i: i32 = 0; while (i < 3) { s = s + a[i]; i = i + 1; } return s; }`, 60},
 	}
 
 	for _, tc := range cases {

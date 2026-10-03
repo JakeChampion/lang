@@ -121,11 +121,11 @@ It was first written down as "calling a fn-typed array element returning
 
 | shape | |
 |---|---|
-| `var f: () => Option[i32] = <lambda>; match (f())` | **bails** |
-| `var f: () => Option[i32] = g;` (a NAMED fn) `match (f())` | lowers — `try_opt_type` resolves it via `opt_ret_type` |
+| `let f: () => Option[i32] = <lambda>; match (f())` | **bails** |
+| `let f: () => Option[i32] = g;` (a NAMED fn) `match (f())` | lowers — `try_opt_type` resolves it via `opt_ret_type` |
 | `function call(f: () => Option[i32])` … `match (f())` | lowers — the `closure_opt_rets` param seeding |
-| `var o: Option[i32] = f(); match (o)` | **lowers** — so the call itself is fine |
-| `var fs: (() => i32)[]; fs[0]()` | lowers — non-`Option` closure arrays are fine |
+| `let o: Option[i32] = f(); match (o)` | **lowers** — so the call itself is fine |
+| `let fs: (() => i32)[]; fs[0]()` | lowers — non-`Option` closure arrays are fine |
 
 So it is not "fn-typed locals are unsupported", not "`Option` through a closure
 is unsupported", and not about arrays. It is specifically **a match whose
@@ -155,7 +155,7 @@ sites in `emit_module_ir_gated` (lowering, unknown call symbol, undefined
 function value, budget) fail for completely unrelated reasons.
 
 What the closure-local `closure_opt_rets` entry DOES close is the alias shape
-(`var g = f; match (g())`), landed with `mark_closure_opt_ret`. The detail that
+(`let g = f; match (g())`), landed with `mark_closure_opt_ret`. The detail that
 makes it work is that the lift runs BEFORE lowering, so the init is a
 `__mkclo$<cloname>` marker call whose callee ident is not a module function —
 `<cloname>`, after the 8-char prefix, is. Reading the callee name directly
@@ -165,7 +165,7 @@ exactly that and was reverted for being byte-identical on every probe.
 #### Instrumented (2026-07-29) — the bail is `const_func("main$clo")`, a lift gap
 
 The "instrument the bail" step above was done. `asm_ir_run -ir-probe` on the
-canonical `var f: () => Option[i32] = () => Some(7); match (f())` reports
+canonical `let f: () => Option[i32] = () => Some(7); match (f())` reports
 **`main: BAIL lower const_func`** — TWO bails, and the second is the load-bearing
 one. Instrumenting `const_funcs_only_known` (asm_ir.fern) to print the offending
 name shows the unresolved reference is **`main$clo`** — the *first-class
@@ -175,7 +175,7 @@ whose `main$clo` body was never hoisted/registered, and `const_funcs_only_known`
 rejects the module. This is **not** a scrutinee-type-recovery problem at all —
 confirming "upstream of the scrutinee-type recovery".
 
-Why only the INLINE match: in the working rewrite `var o = f(); match (o)` the
+Why only the INLINE match: in the working rewrite `let o = f(); match (o)` the
 capture-free lambda is lifted to a registered `__lam_N` (a plain fn pointer), so
 `f` binds a fn-name and no `$clo` is emitted. In `match (f())` the lambda is
 **not** lifted, stays inline, and hits the escaping-closure arm. The lift's
@@ -190,10 +190,10 @@ Two candidate fixes, both to be validated against the whole-compiler byte-identi
 fixpoint (the risk is changing what lifts for existing lambda-plus-match code):
 1. **Complete the lift walks for `StmtMatch`** — traverse the scrutinee, arm
    bodies, and guards in `subst_fcall_stmts` and the parallel call-only
-   use-analysis, so the binding lifts to `__lam_N` exactly as the `var o = f()`
+   use-analysis, so the binding lifts to `__lam_N` exactly as the `let o = f()`
    rewrite already does. Most direct; closes both the `const_func` and the
    `lower` bail at once.
-2. **Desugar `match (<call-through-fn-local>)` → `var $s = f(); match ($s)`**
+2. **Desugar `match (<call-through-fn-local>)` → `let $s = f(); match ($s)`**
    before the lift pass — reuse the proven case-A path. Narrower blast radius
    (only this shape, which currently bails to AST anyway), but needs the
    fn-local/closure classification available at the desugar site.
@@ -204,7 +204,7 @@ The `const_func("main$clo")` finding was reproduced with a throwaway `eprint` in
 **CLOSED (fix option 1).** `subst_fcall_stmts` gained a `StmtMatch` arm
 (scrutinee + arm bodies + guards), so the leftover-`f` guard no longer declines
 the lift: `match (f())` rewrites to `match (__lam_N())` and the binding lifts
-like the `var o = f()` path. Both the `const_func` and the `lower` bail clear.
+like the `let o = f()` path. Both the `const_func` and the `lower` bail clear.
 Pinned by `match-closure-local-opt` / `match-capturing-closure-local-opt` in
 `strictIRCorpus` (route IR under FERN_STRICT_IR on x86-64 AND wasm); the batch=4
 whole-compiler emit-all fixpoint stays gen0==gen1 byte-identical. Watch for the
@@ -212,25 +212,25 @@ latent native-codegen footgun this surfaced: reusing the `StmtAssign` arm's
 local name `a` for the new `MatchArm` binding made the IR field resolver mis-key
 `a.target` to `MatchArm` and abort codegen — bind a distinct name (`marm`).
 **Follow-up CLOSED (annotated named-fn) + one artifact ruled out.** The
-"Result-payload lambda" (`var f: () => Result[i32,i32] = () => Ok(5)`) is NOT a
+"Result-payload lambda" (`let f: () => Result[i32,i32] = () => Ok(5)`) is NOT a
 gap — it is native-INVALID (`E003`: `() => Ok(5)` infers `() => Result` with no
 `Err` type), so it never reaches the gate; the valid Result shape (fn-form with
 an explicit return) already routes IR. The **annotated** named-fn-bound form
-(`var f: () => Option[i32] = g; match (f())`, Option AND Result) now routes IR:
+(`let f: () => Option[i32] = g; match (f())`, Option AND Result) now routes IR:
 `lower_stmt_var` seeds `mark_closure_opt_ret` from `closure_init_opt_ret` for a
 fn-typed local, so `closure_opt_ret` at the match recovery names the payload.
 Pinned by `match-fnlocal-named-opt` / `match-fnlocal-named-result` (x86-64 AND
 wasm); fixpoint stays gen0==gen1. **The seed is GATED on the fn-type annotation**
-because the bare unannotated `var f = g` form miscompiles on the IR path
+because the bare unannotated `let f = g` form miscompiles on the IR path
 (SIGSEGV, caught pre-landing), so the match form deliberately stays on the AST
 fallback.
 
-**The bare `var f = g` miscompile is BROADER than the match, and it is a
+**The bare `let f = g` miscompile is BROADER than the match, and it is a
 WRONG-ANSWER bug, not goal-1 debt** (characterised 2026-07-29, asm-verified).
-Even `var f = g; return f()` with NO match routes IR (no bail) and SIGSEGVs,
+Even `let f = g; return f()` with NO match routes IR (no bail) and SIGSEGVs,
 while native interp and the annotated form both return correctly. Root cause is
 the `const_fns` design (#2954): a bare 0-arg receiver-less fn-name is a *const
-accessor*, auto-CALLED, so `var f = g` lowers to `call __fn_g` (f = g()'s result)
+accessor*, auto-CALLED, so `let f = g` lowers to `call __fn_g` (f = g()'s result)
 instead of `leaq __fn_g` / `const_func` (g's address). The later `f()` then
 calls that result as a code pointer → SIGSEGV. The checker types `f` as
 `() => i32` (a fn value) while the `const_fns` lowering treats it as a call —
@@ -243,12 +243,12 @@ is a focused follow-up, not part of the match-recovery work.
 **The naive fix is INSUFFICIENT — attempted 2026-07-29, reverted.** The obvious
 move is to widen `parser.infer_fnvalue_locals_module`'s `fnv_rewrite_stmt`
 (#3640 slice B.2) from its struct-return gate to *any non-callable* return, so
-`var f = g` (g called, g's return not a fn) is annotated `type_name: "fn"` and
+`let f = g` (g called, g's return not a fn) is annotated `type_name: "fn"` and
 the existing #3574 fn-value-bind path emits `const_func`. This DOES fix the
-SIGSEGV for scalar returns (`var f = g; f()` → 42), and correctly preserves the
-const-accessor (`var x = getC; x + 1` → 100, not called so not annotated) and
+SIGSEGV for scalar returns (`let f = g; f()` → 42), and correctly preserves the
+const-accessor (`let x = getC; x + 1` → 100, not called so not annotated) and
 closure-return (callable return excluded) cases. But it MISCOMPILES a
-string/array/Option-etc. return whose result is method-chained: `var f = g;
+string/array/Option-etc. return whose result is method-chained: `let f = g;
 f().len()` (g: string) returns 0, not 2 — the fn-value CALL dispatches correctly
 now, but the call RESULT's type is not recovered, so `.len()` mis-dispatches
 (and `i32`'s `f().to_string()` disagrees native-vs-IR too). So the dispatch fix
@@ -377,9 +377,9 @@ The faithful form keeps every statement and every use, and changes only which
 value is returned:
 
 ```fern
-var ua = __fern_rc_is_unique(a);
-var uf = __fern_rc_underflow_count();
-var t  = ua + both[0][1] + both[1][0] + uf;   // all uses preserved
+let ua = __fern_rc_is_unique(a);
+let uf = __fern_rc_underflow_count();
+let t  = ua + both[0][1] + both[1][0] + uf;   // all uses preserved
 if (t > 1000) { return 99; }                  // t stays live
 return ua;                                     // ... or uf
 ```
@@ -416,8 +416,8 @@ wasm paths *agree*:
 
 | shape | AST | IR |
 |---|---|---|
-| array retained in an array (`var both = [a, b]`) | 0 | **1 — differs** |
-| struct retained in an array (`var keep = [d]`) | 1 | 1 — agree |
+| array retained in an array (`let both = [a, b]`) | 0 | **1 — differs** |
+| struct retained in an array (`let keep = [d]`) | 1 | 1 — agree |
 
 and agreeing on 1 is plausibly correct there, since the struct is copied into the
 array rather than aliased. So the disagreement is specific to arrays, where the
@@ -455,8 +455,8 @@ rc would genuinely be 1, and the IR answer of 1 would be *correct* with the AST
 path over-counting. That reading is **disproven**, and the test is one line:
 
 ```fern
-var a: i32[] = [11, 22];
-var both: i32[][] = [a];
+let a: i32[] = [11, 22];
+let both: i32[][] = [a];
 return a[1] + both[0][1];        // 44 — BOTH references readable
 ```
 
@@ -483,7 +483,7 @@ Every revision above framed this as a *wasm backend disagreement*, because wasm
 is where the failing tests live. Running the same probe on x86-64 shows that
 framing is wrong:
 
-| path | `is_unique(a)` after `var both = [a, b]` |
+| path | `is_unique(a)` after `let both = [a, b]` |
 |---|---|
 | x86-64 AST | **0** — correct |
 | wasm AST | **0** — correct |
@@ -563,9 +563,9 @@ below are the pre-fix ones, and all three are balanced now):
 
 | shape | result |
 |---|---|
-| `var xs = [1,2,3]; var t = (xs, 99);` in a loop body | allocs=6 frees=4 **live_bytes=64** |
-| `var t = ([1,2,3], 99);` in a loop body | allocs=6 frees=6 live_bytes=0 |
-| `var xs = [1,2,3]; var t = (xs, 99);` at top level | allocs=2 frees=2 live_bytes=0 |
+| `let xs = [1,2,3]; let t = (xs, 99);` in a loop body | allocs=6 frees=4 **live_bytes=64** |
+| `let t = ([1,2,3], 99);` in a loop body | allocs=6 frees=6 live_bytes=0 |
+| `let xs = [1,2,3]; let t = (xs, 99);` at top level | allocs=2 frees=2 live_bytes=0 |
 
 A bare ident at its last use is *supposed* to be moved into the construction —
 the inc is skipped and `__drop_tuple` releases the element, which is pairing (B)
@@ -596,7 +596,7 @@ re-ask what those 6 rows should assert.
 
 `markLoopBodyConstructionMoves` (#5879) extends move-on-construction into loop
 bodies under three guards the top-level walk does not need: the ident must name
-a var declared **earlier in the same body** (one declared outside the loop lives
+a let declared **earlier in the same body** (one declared outside the loop lives
 across iterations, and moving it would be a use-after-free rather than a leak),
 the body must contain no `return` / `break` / `continue` (which would make the
 construction conditional), and the name must be declared exactly once in the
@@ -605,8 +605,8 @@ iterations — allocs=200 000 frees=200 000 live_bytes=0, from 3.2 MB leaked.
 
 The shortcut that looks equivalent is **not**: having the loop-body
 re-declaration drop (`emitVarReinitDropOld`) mirror the exit sweep instead of
-bailing on `!freeEligible` would release an alias-WITHOUT-inc loop var
-(`var a1: i32[] = a0;`, measured clean at allocs=1 frees=1) once per iteration
+bailing on `!freeEligible` would release an alias-WITHOUT-inc loop let
+(`let a1: i32[] = a0;`, measured clean at allocs=1 frees=1) once per iteration
 and over-release the shared buffer. That shape is now a fixture in
 `TestX86_64LeakCheckLoopConstructionMove` precisely so the shortcut cannot be
 reintroduced silently.
@@ -626,10 +626,10 @@ identical but for what the loop body reads afterwards:
 
 | shape | reads after | result |
 |---|---|---|
-| `var o = Some(xs);` | `1` | allocs=2000 frees=2000 live_bytes=0 |
-| `var o = Some(xs);` | `xs[1]` | allocs=2000 frees=1001 **live_bytes=31968** |
-| `var o = (xs, 99);` | `o.0[2]` | allocs=2000 frees=2000 live_bytes=0 |
-| `var o = (xs, 99);` | `xs[1]` | allocs=2000 frees=1001 **live_bytes=31968** |
+| `let o = Some(xs);` | `1` | allocs=2000 frees=2000 live_bytes=0 |
+| `let o = Some(xs);` | `xs[1]` | allocs=2000 frees=1001 **live_bytes=31968** |
+| `let o = (xs, 99);` | `o.0[2]` | allocs=2000 frees=2000 live_bytes=0 |
+| `let o = (xs, 99);` | `xs[1]` | allocs=2000 frees=1001 **live_bytes=31968** |
 
 Option and tuple behave identically. Reading the source *after* the construction
 makes it genuinely aliased, so the inc is correct and the move is not available
@@ -646,7 +646,7 @@ above is unsafe — the fix has to distinguish an alias-inc'd source from an
 alias-WITHOUT-inc one, which is what the two shapes look like from the drop
 site.
 
-**B. A tuple-VALUED element.** `var t = (3, 4); var c = [t];` leaked
+**B. A tuple-VALUED element.** `let t = (3, 4); let c = [t];` leaked
 allocs=2000 frees=1000 live_bytes=16000 **whether or not** `t` is at its last
 use — last-use is irrelevant because neither path released it. Drop-side,
 independent of the move analysis.
@@ -753,7 +753,7 @@ representative subset splits it three ways:
     What survives from the original bullet: its *observations*. The two stdlib programs (the flagship handler, `http_parse_request`) do route IR on arm64. Why they clear a gate the 701-function fixture does not is **not established** — do not re-derive it from this bullet's reasoning, which is the part that was wrong.
 
     The size note also stands: arm64 emits the whole closure rather than the treeshaken subset (~2.5 MB vs ~430 KB).
-  * A fn value handed to a SIBLING module's function was passed unboxed while the callee always dereferenced a box (#5698) — the caller's boxing decision looked the callee up in `mod.funcs`. `irlower.lift_lambdas_view` threads a whole-program signature view through that lookup; an empty view keeps every other caller byte-identical. Only the single-process concat threaded one, so the other per-module routes went on missing it until a CAPTURING lambda at such a call site dangled a `<fd>$clo` at link (#7215); every per-module route now lifts through `asm_ir.lift_lambdas_parts` / `wasm_ir.lift_lambdas_parts`, which builds the view from the bundle.
+  * A fn value handed to a SIBLING module's function was passed unboxed while the callee always dereferenced a box (#5698) — the caller's boxing decision looked the callee up in `mod.funcs`. `lift.lift_lambdas_view` threads a whole-program signature view through that lookup; an empty view keeps every other caller byte-identical. Only the single-process concat threaded one, so the other per-module routes went on missing it until a CAPTURING lambda at such a call site dangled a `<fd>$clo` at link (#7215); every per-module route now lifts through `asm_ir.lift_lambdas_parts` / `wasm_ir.lift_lambdas_parts`, which builds the view from the bundle.
 
   Net: the flagship edge-handler program (`std/http` + `std/tcp` + a `handle` function, ~925 merged functions) is compiled by the self-hosted compiler and **serves real HTTP** (`TestSelfHostHttpHandlerServesX86_64`).
 
@@ -776,12 +776,12 @@ verdict per row rather than carrying the 2026-07-28 list forward. That last row
 | test | subtests | shape | verdict |
 |---|---|---|---|
 | ~~`TestSelfHostReturnInferenceIR`~~ | ~~`option-some`, `option-none`~~ | UN-ANNOTATED fn whose return type had to infer to `Option[i32]` | **GONE (E070, #5755)** — requiring return annotations made those programs *invalid*, so the gate never sees them and the test was deleted. Note what this is NOT: the IR path was not taught anything — 17 declines → 15 by removing programs, not by widening the subset. |
-| ~~`TestSelfHostTupleFnStructFieldX86_64`~~ | ~~`bare`, `arg-elem0`, `two-arg`, `read-then-call`, `churn`~~ | fn-typed TUPLE element in a struct field, `s.p.1()` | **CLOSED (#5758)** — re-probed 2026-07-28: both the direct form and the via-a-local form (`var t = s.p; t.1()`) report `module: IR`. |
+| ~~`TestSelfHostTupleFnStructFieldX86_64`~~ | ~~`bare`, `arg-elem0`, `two-arg`, `read-then-call`, `churn`~~ | fn-typed TUPLE element in a struct field, `s.p.1()` | **CLOSED (#5758)** — re-probed 2026-07-28: both the direct form and the via-a-local form (`let t = s.p; t.1()`) report `module: IR`. |
 | ~~`TestSelfHostCloArrayFieldCallIRX86_64`~~ | ~~`capture-multi`, `with-arg`~~ | closure-ARRAY struct field (`hs: (() => i32)[]`), capturing call | **CLOSED (#5790)** — this row read `STILL OPEN` after #5758 (correctly — the tuple-side `clo` admission does not reach an array-of-fn field); #5790 closed it separately by proving the field positively (`CLOARR:<Type>.<field>`). See "The closure-ARRAY gap is a DISPATCH gap" below. The param-built / loop-built construction shapes (#5787) still decline, but for **soundness** — they are unprovable at the struct literal — not as a subset gap. |
 | ~~`TestSelfHostStructMatchX86_64`~~ | ~~`expr_form`, `rename_expr`~~ | `return match (p) { … }` over a struct — the match-EXPRESSION form | **NOT DECLINING (measured 2026-07-30)** — the whole test runs clean under `FERN_STRICT_IR=1`. It was never a verified gap; see the attribution caveat below, which already flagged the shape as `module: IR`. |
 | ~~`TestSelfHostAtBindingX86_64`~~ | ~~`struct_expr_guard_uses_at`, `tuple_expr_guard_uses_at`~~ | `@` binding read from inside a `when` guard | **NOT DECLINING (measured 2026-07-30)** — same as above: clean under the flag, and the caveat table below already read `module: IR`. |
 | ~~`TestSelfHostAsmIRPath`~~ | ~~`asc-none-opt-nested`~~ | nested `None` in an ascribed Option position | **NOT DECLINING (measured 2026-07-30)** — clean under the flag. |
-| ~~`TestSelfHostTryOptionPayloadIRX86_64`~~ | ~~`result-option`, `nested-chain`~~ | `?` whose success payload is itself a bracketed generic (`Result[Option[i32], E]`) | **CLOSED** — the only row that still declined on 2026-07-30. `lower_try`'s payload whitelist reached `is_enum_like_name`, which rejects any type containing `[`, so a pointer-boxed `Option[…]` / `Result[…]` payload fell through to `s.fail()` and dropped the whole module to AST. Both halves were needed: the admission in `lower_try`, and the binding side (`mark_opt_type` off the annotation, or off `try_opt_type` for the unannotated `var o = f()?`) so the following `match (o)` resolves. |
+| ~~`TestSelfHostTryOptionPayloadIRX86_64`~~ | ~~`result-option`, `nested-chain`~~ | `?` whose success payload is itself a bracketed generic (`Result[Option[i32], E]`) | **CLOSED** — the only row that still declined on 2026-07-30. `lower_try`'s payload whitelist reached `is_enum_like_name`, which rejects any type containing `[`, so a pointer-boxed `Option[…]` / `Result[…]` payload fell through to `s.fail()` and dropped the whole module to AST. Both halves were needed: the admission in `lower_try`, and the binding side (`mark_opt_type` off the annotation, or off `try_opt_type` for the unannotated `let o = f()?`) so the following `match (o)` resolves. |
 
 Note the `TestSelfHostAsmIRPath` row in context: the other ~80 subtests pass
 under the probe, which is the control proving the probe placement is right
@@ -809,7 +809,7 @@ splits the list in two:
 | closure-array struct field (`r.hs[1]()`) | was `main: BAIL lower` | **CLOSED** — see below |
 | struct match-expression + `when` guard | `module: IR` | **NOT the declining construct** |
 | `w @ P { a, b } when w.a > 0` | `module: IR` | **NOT the declining construct** |
-| `var o: Option[i32] = f()?`, `f: Result[Option[i32], E]` | `module: AST`, 0 `.Lir` labels | **verified gap; CLOSED 2026-07-30** |
+| `let o: Option[i32] = f()?`, `f: Result[Option[i32], E]` | `module: AST`, 0 `.Lir` labels | **verified gap; CLOSED 2026-07-30** |
 
 So only the two struct-field-of-callable shapes and the `?`-over-a-bracketed-
 generic payload were verified gaps. The two callable ones present the same way:
@@ -910,8 +910,8 @@ Differential-probed 2026-07-28 (interp / native x86-64 / self-host):
 | construction | interp | native x86-64 | self-host |
 |---|---|---|---|
 | `R { hs: [seven] }` — array LITERAL | 7 | 7 | 7 |
-| `var a = [seven]; R { hs: a }` | 7 | 7 | **crash** |
-| `var a = []; a = a.append(seven); R { hs: a }` | 7 | 7 | **crash** |
+| `let a = [seven]; R { hs: a }` | 7 | 7 | **crash** |
+| `let a = []; a = a.append(seven); R { hs: a }` | 7 | 7 | **crash** |
 
 `fnptr_scan` only credits a field constructed from an all-fn-value array
 LITERAL; any other store marks it `bad`, so a local-built pointer array is
@@ -937,7 +937,7 @@ into a re-proof.** `field_access_is_closurearr` used to be
 closure-by-elimination — "`fn[]` and not FNPTR" — so it claimed every field the
 pointer scan could not prove. It now requires a `CLOARR:<Type>.<field>` marker
 emitted from the same walk, and a field with neither marker is simply unproven.
-That flipped `rebind-retracts-proof` (`var a = [seven]; a = [() => n];`) from
+That flipped `rebind-retracts-proof` (`let a = [seven]; a = [() => n];`) from
 "claimed by elimination" to unproven, which dropped it to the AST emitter —
 correct on x86-64, **0 instead of 5 on wasm**. So the assignment no longer only
 retracts: on the function's own statement list it also re-proves the CLOSURE
@@ -947,7 +947,7 @@ side from the assigned value. Two limits are deliberate:
   `if` / loop / match arm / lambda body may not run, so a credit from it would
   claim a store the program never made. Nested assignments still only retract.
   `if (n > 100) { a = [() => n]; }` therefore stays unproven.
-- **Only the closure side.** The mirror rebind `var a = [() => n]; a = [seven];`
+- **Only the closure side.** The mirror rebind `let a = [() => n]; a = [seven];`
   is *not* credited as a pointer array, because a local's element representation
   is fixed by its DECLARATION rather than by what is later stored into it —
   see the next section. Crediting it routed that shape onto the IR path and it
@@ -960,9 +960,9 @@ confirms `module: IR` for every row — these are IR miscompiles, not AST gaps):
 
 | program | interp | self-host |
 |---|---:|---:|
-| `var t: ((() => i32), i32) = (a1, 4); t.0() + t.1` — `a1(): i32` | 7 | **SIGSEGV** |
+| `let t: ((() => i32), i32) = (a1, 4); t.0() + t.1` — `a1(): i32` | 7 | **SIGSEGV** |
 | same, but `a1(x: i32): i32` (ONE param) | 8 | 8 |
-| `var xs: ((() => i32), i32)[] = [(a1, 4)]; xs[0].0() + xs[0].1` | 7 | **SIGSEGV** |
+| `let xs: ((() => i32), i32)[] = [(a1, 4)]; xs[0].0() + xs[0].1` | 7 | **SIGSEGV** |
 | same, one param | 8 | 8 |
 | `(() => 3, 4)` — a LAMBDA element | 7 | 7 |
 | `[(() => 3, 4)]` | 7 | 7 |
@@ -997,7 +997,7 @@ unshadowed zero-arg module fn. Elements with >= 1 param are left to the ordinary
 tuple walk that already boxes them, so nothing is double-wrapped.
 
 Restricting it to ANNOTATED tuples is what keeps `const` reads intact: an
-unannotated `var t = (K, 4)` has no declared fn segment, so the pre-pass does not
+unannotated `let t = (K, 4)` has no declared fn segment, so the pre-pass does not
 fire, and a bare `K` still reads as the const's value. Pinned by
 `TestSelfHostTupleFnZeroArg{IRX86_64,IRWasm}`, which carries four const-read
 regression cases (const in a tuple, a plain const read, a const and a fn value in
@@ -1006,7 +1006,7 @@ crash cases — an over-eager version of this fix breaks those four, so they are
 real gate on it.
 
 The Option/Result sibling found in the same sweep is **also CLOSED**, by the same
-fix one container over: `var o: Option[() => i32] = Some(a1)` (and `Ok` / `Err`)
+fix one container over: `let o: Option[() => i32] = Some(a1)` (and `Ok` / `Err`)
 left a zero-arg payload unboxed while the match-arm bind dispatches it env-first.
 `wrap_ann_fn_variant_payload` is the variant twin of the tuple pre-pass — `Some`
 and `Ok` read the first type argument, `Err` the SECOND, which is the case a fix
@@ -1053,7 +1053,7 @@ exactly:
 | `Option[(i32, i32)]` → `t.0 + t.1` | IR, correct |
 | `Option[((() => i32), i32)]` → `t.1` (read the NON-fn element) | **IR, correct** |
 | `Option[((() => i32), i32)]` → `t.0()` (CALL the fn element) | **bails** |
-| `var t: ((() => i32), i32) = (a1, 4); t.0()` (a LOCAL, not a payload) | IR, correct |
+| `let t: ((() => i32), i32) = (a1, 4); t.0()` (a LOCAL, not a payload) | IR, correct |
 
 Row 2 is the informative one: the bound slot's `mark_tuple_elems` tags ARE being
 recorded, since reading the non-fn element resolves its width correctly. And row 4
@@ -1064,7 +1064,7 @@ payload is BORROWED from the Option box (the arm-bind comments say so), where a
 var-bound tuple is owned; that asymmetry is the first thing to check.
 
 **(2) A fn element in a NESTED array.** `FERN_STRICT_IR` names only `main`, no
-reason. `var g: i32[][] = [[3]]; g[0][0]` lowers fine, so it is not the nesting —
+reason. `let g: i32[][] = [[3]]; g[0][0]` lowers fine, so it is not the nesting —
 it is the element type, i.e. the array-of-array element classifier
 (`mark_arrarr_elem` / `arrarr_elem`) not admitting a fn/`"clo"` element the way
 `tuple_elems_lowerable` already admits one.
@@ -1074,7 +1074,7 @@ worth doing before reaching for the uniform-representation rewrite.
 
 Positions PROBED CLEAN in the same sweep, so they need no work: a plain struct
 field (`S { f: a1 }`), a call argument (`takes(a1)`), a fn-value local
-(`var g: () => i32 = a1`), and a fn-POINTER array (`var xs: (() => i32)[] = [a1]`,
+(`let g: () => i32 = a1`), and a fn-POINTER array (`let xs: (() => i32)[] = [a1]`,
 which goes through the const_func path instead).
 
 **The sweep was then widened AWAY from fn values and came back empty** (2026-07-29,
@@ -1105,10 +1105,10 @@ path traps where x86-64 SIGSEGVs):
 
 | program | interp | before | after |
 |---|---|---|---|
-| `var a = [seven]; a = [nine]; a[0]()` | 9 | **SIGSEGV** | 9 |
-| `var a = [() => n]; a = [() => m]; a[0]()` | 6 | 6 | 6 |
-| `var a = [() => n]; a = [seven]; a[0]()` | 7 | **SIGSEGV** | SIGSEGV |
-| `var a = [seven]; a = [() => n]; a[0]()` | 5 | **SIGSEGV** | SIGSEGV |
+| `let a = [seven]; a = [nine]; a[0]()` | 9 | **SIGSEGV** | 9 |
+| `let a = [() => n]; a = [() => m]; a[0]()` | 6 | 6 | 6 |
+| `let a = [() => n]; a = [seven]; a[0]()` | 7 | **SIGSEGV** | SIGSEGV |
+| `let a = [seven]; a = [() => n]; a[0]()` | 5 | **SIGSEGV** | SIGSEGV |
 
 Three of the four directions were broken, for two different reasons.
 
@@ -1136,8 +1136,8 @@ does not run it turns two currently-correct programs into SIGSEGVs —
 
 | program | interp | with re-marking |
 |---|---|---|
-| `var a = [seven]; if (n > 100) { a = [() => n]; } a[0]()` | 7 | **SIGSEGV** (was 7) |
-| `var a = [() => n]; if (n > 100) { a = [seven]; } a[0]()` | 5 | **SIGSEGV** (was 5) |
+| `let a = [seven]; if (n > 100) { a = [() => n]; } a[0]()` | 7 | **SIGSEGV** (was 7) |
+| `let a = [() => n]; if (n > 100) { a = [seven]; } a[0]()` | 5 | **SIGSEGV** (was 5) |
 
 Those two work today only because the untaken branch's mis-lowered store never
 runs. Closing this properly needs either dominance information at the lowering
@@ -1147,7 +1147,7 @@ level out.
 
 This is also why #5790's assignment re-proof credits the closure side only. The
 symmetric version was implemented and measured: with the pointer side re-proved,
-`var a = [() => n]; a = [seven]; R { hs: a }` returns the correct 7 — but only
+`let a = [() => n]; a = [seven]; R { hs: a }` returns the correct 7 — but only
 because the local re-marking was in the tree at the time. Without it the field
 would be credited `FNPTR` over a buffer of boxes.
 
@@ -1320,10 +1320,10 @@ the full 763-function checker reproduced the same two failures —
 - **missing `E030`** on a match whose only guarded arm is `Red when 1 == 2`.
 
 **Root cause: a missing Perceus retain on a CONTAINER READ.** An array-typed
-`var` binding whose init reads a buffer out of a container it does not own was
+`let` binding whose init reads a buffer out of a container it does not own was
 marked `is_arr` (folded in from the *declared* type) but took no alias-inc, while
 `emit_dec_sweep_except_list` decs **every** `is_arr` slot at function exit. So
-`var vn: string[] = mod.enums[en].variant_names;` — in `check_module`'s E017 walk
+`let vn: string[] = mod.enums[en].variant_names;` — in `check_module`'s E017 walk
 and in `ambiguous_variants` — freed the enum table's variant-name buffer on the
 first call; the next allocation recycled it, after which unit-variant lookups read
 garbage. That is exactly the pair of symptoms above: a variant that no longer
@@ -1333,8 +1333,8 @@ The scalar-element and struct/enum-element field reads had carried this retain
 since the RC-frontier slices (the `scalar_arr_field_type` /
 `struct_arr_field_read_type` early paths in `lower_stmt_var`). Three shapes fell
 through to the generic path, which had none: a **`string[]` field**, a **tuple
-element** (`var xs: i32[] = t.0;`), and an **array-of-array element**
-(`var row: i32[] = g[i];`). `lower_stmt_assign` had the matching hole on the
+element** (`let xs: i32[] = t.0;`), and an **array-of-array element**
+(`let row: i32[] = g[i];`). `lower_stmt_assign` had the matching hole on the
 reassign side — its field-read arm was gated on the same three type predicates.
 
 Both are now closed by a generic container-read retain (`ExprFieldAccess` /
@@ -2283,7 +2283,7 @@ tier → leak.
        is identical either way). f64[] / i64[] receivers stay excluded, the same
        exclusion sum / index_of / min / max carry: their element reads lower in
        the WIDE contexts, which do not route through the `ExprCall` arm, so
-       `var v: i64 = xs.last()` would read a 4-byte slot. An f64[][] / i64[][]
+       `let v: i64 = xs.last()` would read a 4-byte slot. An f64[][] / i64[][]
        receiver IS admitted — the element is a pointer.
      - ~~**Array methods (rest):** `xs.concat()` / `xs.reverse()`~~ — **CLOSED**
        (#5963), as two new IR ops (`op_arr_reverse` / `op_arr_concat`, ids
@@ -2310,7 +2310,7 @@ tier → leak.
        expression classifiers type the CALL; `lower_stmt_var`'s hand-enumerated
        `is_arr` list types the SLOT. Only the latter is what `for v in r`
        consults — it requires `is_arr_slot` and bails outright otherwise — so
-       with the classifiers alone an UNANNOTATED `var r = xs.reverse()` followed
+       with the classifiers alone an UNANNOTATED `let r = xs.reverse()` followed
        by a `for` still routed AST, while `r.len()` on the same slot appeared to
        work (an untyped slot dispatches `str_len`, and an array box and a string
        box both carry their length at offset 0, so the answer coincides). The
@@ -2342,7 +2342,7 @@ tier → leak.
        `lower_value_block`'s inline treatment with zero leading statements and so
        no user return/break/continue to escape. Worth recording WHY it was narrow:
        only positions where the LIFT leaves the lambda inline ever reach
-       `lower_iife`. `var a = (…)()`, an operand and an argument all hoist to
+       `lower_iife`. `let a = (…)()`, an operand and an argument all hoist to
        `__lam_N` and lowered fine; `return (…)();` does not hoist, so that — and
        only that — bailed.
      - ~~**`try` over an Option payload:** `result-option`, `nested-chain`~~ —
@@ -2511,8 +2511,8 @@ tier → leak.
        | shape | verdict |
        |---|---|
        | `pick[T](arr: T[], key: (T) => i32): i32` — closure param, scalar return | **ir** |
-       | `var s: P[] = idf(xs)` — generic `T[]` return, ANNOTATED | **ir** |
-       | `var s = idf(xs)` — the same, UNANNOTATED | **ast** |
+       | `let s: P[] = idf(xs)` — generic `T[]` return, ANNOTATED | **ir** |
+       | `let s = idf(xs)` — the same, UNANNOTATED | **ast** |
 
        So the gap is an unannotated binding of a generic `T[]`-returning call, and
        it is the **third instance of the same second-mechanism pattern**:
@@ -2766,10 +2766,10 @@ tier → leak.
         - `TestSelfHostArrayX86_64` / `Arm64`, `TestSelfHostStdTestE2E{,Arm64}`:
           an inline `match (xs.gcd_all())` over a USER array method returning
           `Option[T]`. The scrutinee/try resolvers knew only the BUILTIN array
-          methods (`min` / `max`). Binding first (`var o: Option[i32] = …`)
+          methods (`min` / `max`). Binding first (`let o: Option[i32] = …`)
           lowered — the tell.
         - `TestSelfHostImmutabilityGateX86_64/cell-scalar-ok`: an UNANNOTATED
-          `var c = cell_new(0)`. The `: Cell[i32]` spelling records `is_cell`;
+          `let c = cell_new(0)`. The `: Cell[i32]` spelling records `is_cell`;
           without it `c.get()` dispatched on the ELEMENT type ("call to unknown
           symbol i32.get").
         `TestSelfHostTreeshakeStdlibIR` was neither — its two-way build loop
@@ -2789,7 +2789,7 @@ tier → leak.
        shape. The wide `to_string` intercept lowered its receiver with
        `lower_expr`, which has no `as_i64` / `as_u64` arm (the same hole the
        i64[]-literal path documents), so the INLINE cast bailed the module while
-       `var v: i64 = n as i64; v.to_string()` lowered. Note the fix tries
+       `let v: i64 = n as i64; v.to_string()` lowered. Note the fix tries
        `lower_expr` FIRST and falls back to `lower_i64`, not the reverse: for
        every receiver that lowers today both paths succeed but emit DIFFERENT
        ops, and this is on the byte-identical self-compile path. Reaching for the
@@ -2992,7 +2992,7 @@ So the split is:
 
 | component | MB | share of peak |
 |---|---:|---:|
-| `irlower.borrowable_params_interproc` | ~848 | 51% |
+| `fnsigs.borrowable_params_interproc` | ~848 | 51% |
 | `irlower.consume_safe_params_interproc` | ~333 | 20% |
 | the other 22 derivations, combined | ~6 | 0.4% |
 | rest of the emit call | ~245 | 15% |
@@ -3306,9 +3306,9 @@ elements, measured with `FERN_LEAKCHECK=1` on x86-64:
 
 | shape | freed |
 |---|---:|
-| `var t = <heap str>; xs = xs.append(t)` | 35.6% |
+| `let t = <heap str>; xs = xs.append(t)` | 35.6% |
 | ...the same, into an enum payload (this section's probe) | 69.1% |
-| `var e = out[0]` — a counted view outliving its owner | 66.7% |
+| `let e = out[0]` — a counted view outliving its owner | 66.7% |
 | a builder fn returning an appended array | 37.1% |
 
 Inlining the element (`xs.append(<expr>)`) is clean in every case; binding it to
@@ -3421,7 +3421,7 @@ the compiler can have its sweep reversed without breaking the build.
 
 **What its sweep looks like.** `parse_primary` is 306 lines with **58 distinct
 rc-tracked locals** in the exit sweep, 22 of them `eligible=true`. The
-structural feature is that a destructuring `var (a, b, c) = f()` emits a hidden
+structural feature is that a destructuring `let (a, b, c) = f()` emits a hidden
 `__destruct_<line>_<col>` TUPLE local that is `eligible=true` (a deep walk that
 decs elements and frees the buffer) declared IMMEDIATELY BEFORE its component
 locals, which are `eligible=false` (plain, non-freeing decs):
@@ -3443,7 +3443,7 @@ swept once.
 seventh, once the search moved from the destructuring function to its CALLEE —
 see "The drop order half, solved".) Neither a struct holding
 an owned array, nor that shape split across mutually-exclusive branches, nor a
-`var (a, b) = f()` destructuring of a `(string, i32[])` diverges between forward
+`let (a, b) = f()` destructuring of a `(string, i32[])` diverges between forward
 and reverse — all match their interp oracle with identical leakcheck totals. The
 effect needs `parse_primary`'s scale, so the next attempt should bisect WITHIN
 the function (drop-index ranges rather than function-name buckets) instead of
@@ -3466,7 +3466,7 @@ Swapping ONLY those two miscompiles the compiler. Everything else in the sweep,
 and every other function, tolerates reversal. The source site is
 `parser.fern:1751`:
 
-    var (inner_expr, inner_p) = parse_expr(p);
+    let (inner_expr, inner_p) = parse_expr(p);
     ...
     elems = elems.append(inner_expr);
 
@@ -3514,7 +3514,7 @@ the old value:
 
 `e_unary_at` incs `operand` when it stores it in the returned `ExprUnary` (+1),
 and the reassignment's overwrite dec releases the slot's old value (−1). That
-pair is only balanced when the SLOT owns a reference — true for a `var`, and
+pair is only balanced when the SLOT owns a reference — true for a `let`, and
 true for a param the consumed-threaded promotion entry-incs. It was NOT true
 here: `computeConsumedParams` promoted `StructType` / `TupleType` params only,
 so a reassigned ENUM param stayed on the borrow baseline and the dec released a
@@ -3603,8 +3603,8 @@ that RETAINS it into what it returns leaks **exactly one reference per call**:
 the caller's.
 
     function mkT(name: string, line: i32): Tk { return Tk { name: name, line: line }; }
-    var s: string = "id" + r.to_string();
-    var t: Tk = mkT(s, r);                   // <- leaks one reference, every call
+    let s: string = "id" + r.to_string();
+    let t: Tk = mkT(s, r);                   // <- leaks one reference, every call
 
 The `Tk { name: name }` field init is a COUNTED store (the StructLit alias inc),
 so the returned struct owns a reference. The caller's own reference is then
@@ -3617,9 +3617,9 @@ Measured with `FERN_LEAKCHECK=1` on 1000 rounds, 3 allocs per round (the
 
 | shape | leaked |
 |---|---:|
-| `var t = Tk { name: s, line: r };` — inline literal | 1000 (baseline) |
-| `var t = mkT(s, r);` — via the retaining helper | **2000** |
-| `var t = mkT("id" + r.to_string(), r);` — fresh arg, no local | **2000** |
+| `let t = Tk { name: s, line: r };` — inline literal | 1000 (baseline) |
+| `let t = mkT(s, r);` — via the retaining helper | **2000** |
+| `let t = mkT("id" + r.to_string(), r);` — fresh arg, no local | **2000** |
 | `mkT` stores `name + ""` (a fresh copy) instead of the param | 1000 |
 
 So it is the CALL that leaks, not the binding (a fresh argument expression leaks
@@ -3671,7 +3671,7 @@ the whole lift does nothing. But exempting scalars unconditionally frees a value
 the caller still shares:
 
     function grow(m: Map[i32, i32], k: i32): Map[i32, i32] { m = m.insert(k, k * 7); return m; }
-    var g: Map[i32, i32] = grow(base, i + 2);
+    let g: Map[i32, i32] = grow(base, i + 2);
 
 `base` is untainted, so the ONLY thing keeping `g` ineligible was the tainted
 scalar `i + 2` — and `g` shares `base`'s buffer. Exempt the scalar and `g`'s drop
@@ -3698,7 +3698,7 @@ result-aliasing analysis (below), and because a future attempt will otherwise
 re-derive the same too-good measurement and ship it.
 
 **What the narrowness costs, and the obvious widenings.** One `name.len()`, one
-`var s = name`, one `xs.append(name)`, one onward call — any use outside a
+`let s = name`, one `xs.append(name)`, one onward call — any use outside a
 construction literal — and the summary is false, which also drags down the
 scalar exemption for that whole callee.
 
@@ -3864,10 +3864,10 @@ Re-applying it used to fail
 (`internal/ir/push_counted_store_test.go`), whose second half is exactly this
 invariant:
 
-    var row: i32[] = [k, k + 1];
-    var out: i32[][] = [];
+    let row: i32[] = [k, k + 1];
+    let out: i32[][] = [];
     out = out.append(row);      // DIRECT IDENT element -> moved, NOT inc'd
-    var e: i32[] = out[0];
+    let e: i32[] = out[0];
 
 **CORRECTION, same day, before anyone acts on it.** The first version of this
 entry said a direct-Ident element "takes the moveSites shape: `emitArrayPush`
@@ -3895,7 +3895,7 @@ measured with `FERN_LEAKCHECK=1` and checked against `fern -interp`:
 
 | fixture | baseline | with the arm |
 |---|---|---|
-| direct-ident (`out = out.append(row); var e = out[0]`) | 600 allocs / 200 frees, 16000 live | 600 / **400**, 6400 live |
+| direct-ident (`out = out.append(row); let e = out[0]`) | 600 allocs / 200 frees, 16000 live | 600 / **400**, 6400 live |
 | projection source (`out.append(rows[0])`) | 1000 / 600, 16000 live | 1000 / **1000**, **0 live** |
 
 Exit codes match the interpreter in both (1 = 1), frees never exceed allocs, and
@@ -3961,7 +3961,7 @@ so the call sites' correct name resolves to nothing.
 
 and `sanitize_label` (`asmcore.fern:17`) is a scan over its argument:
 
-    var out: string = "";
+    let out: string = "";
     while (i < name.len()) { ... out = out + name[i : i + 1]; ... }
 
 A truncated `__fn_m` and an empty `__fn_` are precisely what that emits when
@@ -3999,7 +3999,7 @@ traps on `ud2` at the stale holder).
 
 **The chain, each link measured.**
 
-1. The one function that matters is `irlower.lift_lambdas_view` — established by
+1. The one function that matters is `lift.lift_lambdas_view` — established by
    bisecting the arm itself, not by reading code. `rhsTainted`'s arm was gated on
    a per-function allow-list (`FERN_ARM_LIST`) and the 147 functions whose
    rcPlan the arm changes (an `RcPlanHook` dump of the driver, diffed between
@@ -4009,7 +4009,7 @@ traps on `ud2` at the stale holder).
 2. In that function the arm makes BOTH halves of an aliased pair reclaimable —
    `freeEligible` gains `gfns,lgfns` (plus `worklist`, `r`, `cbody`):
 
-       var lgfns: string[] = gfns;                       // alias inc -> buffer rc 2
+       let lgfns: string[] = gfns;                       // alias inc -> buffer rc 2
        while (gj < acc.funcs.len()) { lgfns = lgfns.append(acc.funcs[gj].name); … }
 
 3. `lgfns = lgfns.append(..)` is the **self-append MOVE form**, which
@@ -4043,7 +4043,7 @@ expression, a different string), the DEFINITION is what lost it. In
 **The chain is causal, not correlational — the shape was removed and remeasured**
 (the method note further up this file, applied). With the arm still enabled for
 `lift_lambdas_view` and ONLY the alias replaced by an element-by-element copy
-(`var lgfns: string[] = []` + a loop over `gfns`, which inc's each element into
+(`let lgfns: string[] = []` + a loop over `gfns`, which inc's each element into
 the new buffer), all four cases go back to **byte-identical** with baseline:
 
 | build | option | result | array | map_eq |
@@ -4120,7 +4120,7 @@ becoming eligible … the only thing left in this strand"; that was written
 against a stale baseline and is **wrong**. `perceus: interprocedural
 counted-retain fixpoint credits method-receiver threading (#5880)` landed in
 parallel and delivered it. Bisected by building each commit and running the
-same driver (`var toks = lexer.tokenize(io.read_all_stdin()); return
+same driver (`let toks = lexer.tokenize(io.read_all_stdin()); return
 toks.len() % 7;`) over `parser.fern` under `FERN_LEAKCHECK=1`:
 
 | commit | frees of 509152 | live |
@@ -4184,7 +4184,7 @@ naive versions of that metric are wrong, and both wrong versions look plausible:
 | filter | count | why it's wrong |
 |---|---:|---|
 | every pointer-typed local not in `freeEligible` | 1258 / 381 funcs | counts locals MOVED into a returned construction — correct behaviour |
-| ...also excluding `movedLocals` | 1151 / 371 funcs | still counts BORROWED ALIASES — `var name = p.peek_ident()` owns nothing, so having nothing to free is right, not a leak |
+| ...also excluding `movedLocals` | 1151 / 371 funcs | still counts BORROWED ALIASES — `let name = p.peek_ident()` owns nothing, so having nothing to free is right, not a leak |
 | ...and only inits that DEFINITELY allocate (`StructLit` / `ArrayLit` / `TupleLit` / `MakeClosure` / string concat) | **297 / 161 funcs** | this is the one to use |
 
 The middle row is the trap worth naming: **"not `freeEligible`" is not the same
@@ -4267,7 +4267,7 @@ three earlier mimics all reclaimed 100%). Result:
 [taint tokenize] tainted=[after_dot i l mp out ptext rf ri rn rs …]
   l   <= rhsTainted *ast.FieldAccess@653  (l = rf.lex)
   out <= rhsTainted *ast.Call@654         (out = out.append(rf.tok))
-  rf  <= rhsTainted *ast.Call@652         (var rf = scan_fstring(l, …))
+  rf  <= rhsTainted *ast.Call@652         (let rf = scan_fstring(l, …))
   rn  <= rhsTainted *ast.Call@660         ri <= @668   rs <= @675
 ```
 
@@ -4276,7 +4276,7 @@ dominant one is the mutual `l`/`rf`/`rn`/`ri`/`rs` taint knot:
 
 - `l = rf.lex` reads a pointer field OUT of the result struct. `rhsTainted`'s
   `FieldAccess` arm is unconditionally `true`, so `l` is tainted.
-- `l` tainted makes `var rf = scan_fstring(l, …)` tainted — `scan_*`'s cursor
+- `l` tainted makes `let rf = scan_fstring(l, …)` tainted — `scan_*`'s cursor
   param is a STRUCT, and `inferParamCountedRetain` handles only STRING params
   (`rc_analysis.go:489`), so the callee is never proven counted-retain and a
   tainted arg taints the result.
@@ -4425,7 +4425,7 @@ units, no OOM — the change is byte-identity-preserving on the self-host
 compiler, which is dense with `return p` and struct-threading).
 
 **Residual, localised and mostly closed (2026-07-29).** The 24000/60200 was not
-the FStringPart sub-arrays — it was a CALLER-side taint: `var toks =
+the FStringPart sub-arrays — it was a CALLER-side taint: `let toks =
 tokenize(src)` left `toks` tainted, so its tokens stranded at the caller. Cause:
 `tokenize`'s `src` param is `Lex { src: src, n: src.len() }`, and the `src.len()`
 occurrence — a pure scalar read — disqualified the counted-retain summary
@@ -4490,9 +4490,9 @@ collapsed the moment the counters were used instead:
 
 | shape, 4 calls | allocs / frees | verdict |
 |---|---|---|
-| `var xs: i32[] = [1, 2, 3];` | 4 / 4 | reclaims |
+| `let xs: i32[] = [1, 2, 3];` | 4 / 4 | reclaims |
 | `xs = xs.append(1);` straight-line | 8 / 8 | reclaims |
-| `var ys: i32[] = xs.append(1);` (new binding) | 8 / 8 | reclaims |
+| `let ys: i32[] = xs.append(1);` (new binding) | 8 / 8 | reclaims |
 | **`while (i < 1) { xs = xs.append(i); i = i + 1; }`** | **8 / 4** | **1 block leaked per call** |
 
 One iteration is enough. The leak is exactly **one block per call** — the
@@ -4666,7 +4666,7 @@ The first thing `-decide` turned up is a bug, not a gap. For
 
 ```fern
 function eqf[T](a: T, b: T): boolean { return a == b; }
-function main(): i32 { var x: i64 = 5000000000; var y: i64 = 5000000000;
+function main(): i32 { let x: i64 = 5000000000; let y: i64 = 5000000000;
                        if (eqf(x, y)) { return 42; } return 1; }
 ```
 
@@ -4704,12 +4704,12 @@ The clause fires when every unbounded var is bound by a bare-scalar param
 (`ret_mentions_any` false). Unlike clause (c) it is NOT limited to one type
 variable — clause (c)'s `all_tp_count == 1` guard exists to stop a var surviving
 ERASED in the clone, and requiring every var to be param-bound rules that out
-directly, so the two-var sibling (`both[T, U](a: T, b: U): boolean`) is covered
+directly, so the two-let sibling (`both[T, U](a: T, b: U): boolean`) is covered
 too.
 
 Safety: a scan of every `function f[…](… : T …): <concrete>` across
 `internal/stdlib` and `examples/self_host` found **zero** matches for both the
-single- and multi-var forms, so the bootstrap monomorphises nothing new — the
+single- and multi-let forms, so the bootstrap monomorphises nothing new — the
 same argument clause (c') rests on. Verified: all three shapes (i64, f64,
 two-var) now route `ir` and return the interpreter's answer on wasm; the 31-case
 strict-IR corpus is unchanged on wasm; the x86 emit of a matching program still
@@ -4721,7 +4721,7 @@ ARRAY param, not a bare scalar one, so nothing can bind the clone. And it is
 still miscompiled through the AST route (1, where the interpreter says 42).
 
 That generalises: **every erased-wide shape tested returns the wrong answer
-through the wasm AST emitter** — the two-var form, the fold form, and (before
+through the wasm AST emitter** — the two-let form, the fold form, and (before
 the fix) the scalar form. For this family the AST fallback is not a safety net,
 it is a source of silent wrong answers, so retiring it strictly improves matters
 even before the remaining shapes lower.
@@ -4883,7 +4883,7 @@ PATH="$HOME/.fern-wasm:$HOME/.wasmtime/bin:$PATH" FERN_SELFHOST_INTERP=1 \
 
    ```fern
    struct S { code: i32[], n: i32 }
-   function main(): i32 { var s: S = S { code: [], n: 0 }; s.code = [1, 2]; return s.code.len(); }
+   function main(): i32 { let s: S = S { code: [], n: 0 }; s.code = [1, 2]; return s.code.len(); }
    ```
 
    `s.n = 5` (scalar field) lowers, and `S { code: [1, 2] }` (array field in the
@@ -5043,7 +5043,7 @@ spelling fix, on `origin/main`, with a program that already routes `ir` because 
 does not mention the underflow counter:
 
 ```fern
-function main(): i32 { var xs: i32[] = [1, 2, 3]; var t = (xs, 99);
+function main(): i32 { let xs: i32[] = [1, 2, 3]; let t = (xs, 99);
                        return __fern_rc_is_unique(xs) + t.0[2]; }
 ```
 
@@ -5093,8 +5093,8 @@ already did — which is why they read as unrelated language gaps until reduced:
   `for plane in cube` bound `plane` as a plain array, the next level bound a
   SCALAR, and the third `for` bailed. A new `"arr"` kind records "the element is
   itself an array" and the foreach marking re-marks the loop var. FOUR-deep is
-  still outside the model, deliberately — its loop var gets `arrarr_elem ""`.
-- **an un-annotated Option ALIAS.** `var u = o` did not copy `o`'s `opt_type`, so
+  still outside the model, deliberately — its loop let gets `arrarr_elem ""`.
+- **an un-annotated Option ALIAS.** `let u = o` did not copy `o`'s `opt_type`, so
   a later `match (u)` could not recover the payload. Annotating `u` worked, which
   is exactly what made this look like a match gap rather than a propagation one.
   The IIFE-leaf arm alongside it already recovered an opt_type from an ident; the
@@ -5137,10 +5137,10 @@ Bisected properly, from the two corpus programs, there were TWO gaps:
 | program | route before |
 |---|---|
 | method, escaping lambda reads the RECEIVER (`x + a.base`) | `ast` — bails on `make$wrap0` |
-| method or free fn, escaping lambda captures a local bound from a FIELD (`var b = a.base`) | `ast` — `make$clo not defined` |
+| method or free fn, escaping lambda captures a local bound from a FIELD (`let b = a.base`) | `ast` — `make$clo not defined` |
 | method, escaping lambda captures a PARAM | `ir` (control) |
 | free fn, escaping lambda captures a local bound from ARITHMETIC | `ir` (control) |
-| either, with the local ANNOTATED (`var b: i32 = a.base`) | `ir` (control) |
+| either, with the local ANNOTATED (`let b: i32 = a.base`) | `ir` (control) |
 
 Two different mechanisms behind one symptom:
 
@@ -5149,11 +5149,11 @@ Two different mechanisms behind one symptom:
   capture, `caps` came back EMPTY, and the NO-capture lift hoisted the body to a
   `<fd>$wrapN` trampoline in which `a` is unbound — the module then bailed on the
   wrapper, not on the method. `cap_type_at` had the same blind spot.
-- `cap_type_expr` knew literals, idents and arithmetic only. `var b = a.base`
+- `cap_type_expr` knew literals, idents and arithmetic only. `let b = a.base`
   resolved `""`, `cap_slot_ok("")` declined, and the lambda stayed an `ExprLambda`
   whose lowering emits `const_func(<cur_fn>$clo)` naming a function nothing hoisted.
   `cap_type_in_stmts` already did exactly this resolution for a for-in iter
-  (`for x in s.items`) and a match scrutinee — the plain `var` init arm simply never
+  (`for x in s.items`) and a match scrutinee — the plain `let` init arm simply never
   did, which is what made ANNOTATING the local the only way through. Field-access,
   call and index arms added, matching the arms already there.
 
@@ -5161,7 +5161,7 @@ Both are pure route widenings: the AST emitter answered all of these correctly, 
 unlike the erased-wide family nothing was miscompiling — which is exactly why every
 pinned case asserts `-decide` as well as the exit code.
 
-**And the Map one, same shape.** `var p = m.get_or(k, P { … })` had no struct type,
+**And the Map one, same shape.** `let p = m.get_or(k, P { … })` had no struct type,
 so `p.field` bailed; annotating `p` worked, annotating the MAP did not, which is
 what isolates the read. Three sites carry V now — the read (`expr_struct_type`), the
 unannotated `__map_new_i32(n).insert(k, P { … })` chain, and the separate

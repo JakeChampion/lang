@@ -45,30 +45,30 @@ var selfHostArrEnumElemReadCases = []struct {
 	refused bool
 }{
 	// The reported shape: rc payload, borrow-only arm binding.
-	{"rc-payload-borrow-read", "enum Payload { None, Some(i32[]) }\nfunction main(): i32 {\n    var keep: Payload[] = [Payload.Some([9, 9, 9])];\n    var r: i32 = 0;\n    match (keep[0]) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}", false},
+	{"rc-payload-borrow-read", "enum Payload { None, Some(i32[]) }\nfunction main(): i32 {\n    let keep: Payload[] = [Payload.Some([9, 9, 9])];\n    let r: i32 = 0;\n    match (keep[0]) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}", false},
 
 	// A SCALAR payload stored straight out to an outer local. Not an escape — it
 	// is a copy — and this row is what says the rule reads it that way.
-	{"scalar-payload-stored-out", "enum Payload { None, Some(i32) }\nfunction main(): i32 {\n    var keep: Payload[] = [Payload.Some(3)];\n    var r: i32 = 0;\n    match (keep[0]) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g; } }\n    return r + __rc_underflow_count();\n}", false},
+	{"scalar-payload-stored-out", "enum Payload { None, Some(i32) }\nfunction main(): i32 {\n    let keep: Payload[] = [Payload.Some(3)];\n    let r: i32 = 0;\n    match (keep[0]) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g; } }\n    return r + __rc_underflow_count();\n}", false},
 
 	// In a loop, so a per-round leak accumulates rather than resting on one missed
 	// release. This is the unbounded form the issue measured at 88 B/round.
-	{"loop-thirty-rounds", "enum Payload { None, Some(i32[]) }\nfunction main(): i32 {\n    var r: i32 = 0;\n    var i: i32 = 0;\n    while (i < 30) {\n        var keep: Payload[] = [Payload.Some([9, 9, 9])];\n        match (keep[0]) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n        i = i + 1;\n    }\n    return r + __rc_underflow_count();\n}", false},
+	{"loop-thirty-rounds", "enum Payload { None, Some(i32[]) }\nfunction main(): i32 {\n    let r: i32 = 0;\n    let i: i32 = 0;\n    while (i < 30) {\n        let keep: Payload[] = [Payload.Some([9, 9, 9])];\n        match (keep[0]) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n        i = i + 1;\n    }\n    return r + __rc_underflow_count();\n}", false},
 
 	// Two rc-carrying variants, so the arm vet has to clear both rather than the
 	// one the scrutinee happens to hold.
-	{"two-rc-variants-both-borrowed", "enum Payload { None, Some(i32[]), Many(i32[]) }\nfunction main(): i32 {\n    var keep: Payload[] = [Payload.Many([7, 7])];\n    var r: i32 = 0;\n    match (keep[0]) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); }, Payload.Many(h) => { r = h.len(); } }\n    return r + __rc_underflow_count();\n}", false},
+	{"two-rc-variants-both-borrowed", "enum Payload { None, Some(i32[]), Many(i32[]) }\nfunction main(): i32 {\n    let keep: Payload[] = [Payload.Many([7, 7])];\n    let r: i32 = 0;\n    match (keep[0]) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); }, Payload.Many(h) => { r = h.len(); } }\n    return r + __rc_underflow_count();\n}", false},
 
 	// Control: `.len()` only, which the old rule already admitted. Clean before
 	// and after — it says the widening did not disturb the admitted shape.
-	{"len-only-control", "enum Payload { None, Some(i32[]) }\nfunction main(): i32 {\n    var keep: Payload[] = [Payload.Some([9, 9, 9])];\n    return keep.len() + __rc_underflow_count();\n}", false},
+	{"len-only-control", "enum Payload { None, Some(i32[]) }\nfunction main(): i32 {\n    let keep: Payload[] = [Payload.Some([9, 9, 9])];\n    return keep.len() + __rc_underflow_count();\n}", false},
 
 	// THE BOUNDARY, and deliberately still refused: the arm binds a POINTER
 	// payload and stores it to an outer local, so it outlives the arm. Admitting
 	// this row would free a buffer `out` still names. It keeps the leak-safe
 	// shallow path, and the assertion below is that it stays SAFE — right answer,
 	// no underflow — not that it stopped leaking.
-	{"escaping-pointer-binding-stays-refused", "enum Payload { None, Some(i32[]) }\nfunction main(): i32 {\n    var out: i32[] = [];\n    var keep: Payload[] = [Payload.Some([9, 9, 9])];\n    match (keep[0]) { Payload.None => { }, Payload.Some(g) => { out = g; } }\n    return out.len() + __rc_underflow_count();\n}", true},
+	{"escaping-pointer-binding-stays-refused", "enum Payload { None, Some(i32[]) }\nfunction main(): i32 {\n    let out: i32[] = [];\n    let keep: Payload[] = [Payload.Some([9, 9, 9])];\n    match (keep[0]) { Payload.None => { }, Payload.Some(g) => { out = g; } }\n    return out.len() + __rc_underflow_count();\n}", true},
 }
 
 // TestSelfHostArrEnumElemReadLeakCheck is the gate. Every admitted row must be
@@ -120,7 +120,7 @@ func TestSelfHostArrEnumElemReadX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range selfHostArrEnumElemReadCases {
@@ -145,14 +145,14 @@ func TestSelfHostArrEnumElemReadX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrEnumElemReadArm64 — the credit is shared irlower analysis, so
+// TestSelfHostArrEnumElemReadArm64 — the credit is shared lowering analysis, so
 // this leg is where an added release landing on one register backend would show.
 func TestSelfHostArrEnumElemReadArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range selfHostArrEnumElemReadCases {
@@ -181,7 +181,7 @@ func TestSelfHostArrEnumElemReadWasmIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	for _, tc := range selfHostArrEnumElemReadCases {

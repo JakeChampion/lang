@@ -35,19 +35,19 @@ function build(a: Acc): Acc {
 
 // scalar-array field — k_scalar path.
 function bag_sum(): i32 {
-  var b: Bag = Bag { items: [10, 20, 30] };
+  let b: Bag = Bag { items: [10, 20, 30] };
   return b.items[0] + b.items[1] + b.items[2];
 }
 
 // struct-array field — k_box path (element walk).
 function nest_sum(): i32 {
-  var nz: Nest = Nest { inners: [Inner { v: 5 }, Inner { v: 7 }] };
+  let nz: Nest = Nest { inners: [Inner { v: 5 }, Inner { v: 7 }] };
   return nz.inners[0].v + nz.inners[1].v;
 }
 
 function test_scalar_array_field(): test.TestOutcome {
-  var s: i32 = 0;
-  var i: i32 = 0;
+  let s: i32 = 0;
+  let i: i32 = 0;
   while (i < 100) {
     s = s + bag_sum();
     i = i + 1;
@@ -56,8 +56,8 @@ function test_scalar_array_field(): test.TestOutcome {
 }
 
 function test_struct_array_field(): test.TestOutcome {
-  var s: i32 = 0;
-  var i: i32 = 0;
+  let s: i32 = 0;
+  let i: i32 = 0;
   while (i < 100) {
     s = s + nest_sum();
     i = i + 1;
@@ -68,11 +68,11 @@ function test_struct_array_field(): test.TestOutcome {
 // __field_reclaim_<T>: the consume-rebind path. Each `build` returns Acc with
 // items=[4,5,6] (sum 15) after freeing the two superseded intermediates.
 function test_field_reclaim(): test.TestOutcome {
-  var sum: i32 = 0;
-  var i: i32 = 0;
+  let sum: i32 = 0;
+  let i: i32 = 0;
   while (i < 50) {
-    var seed: Acc = Acc { items: [0] };
-    var r: Acc = build(seed);
+    let seed: Acc = Acc { items: [0] };
+    let r: Acc = build(seed);
     sum = sum + r.items[0] + r.items[1] + r.items[2];
     i = i + 1;
   }
@@ -80,7 +80,7 @@ function test_field_reclaim(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("rc struct drop");
+  let r: test.TestRunner = test.test_new("rc struct drop");
   r = r.it("scalar-array field drop", test_scalar_array_field);
   r = r.it("struct-array field drop", test_struct_array_field);
   r = r.it("consume-rebind field reclaim", test_field_reclaim);

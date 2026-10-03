@@ -105,14 +105,14 @@ same code(s) the Go checker does — restricted to
   positives).
 - **Slice 5 (done): free-function call arity** (E004). `call_diags` /
   `stmts_call_diags` walk every expression (scope-threaded, so a callee
-  name shadowed by a local `var` / closure is recognised as a local, not
+  name shadowed by a local `let` / closure is recognised as a local, not
   the function) and emit E004 when a free-function call's argument count
   doesn't match the function's declared parameter count. Conservative:
   only a name that resolves to a module function sig (and isn't a local
   binding) is checked; method and closure arity are deferred.
-- **Slice 6 (done): assignment / annotated-var mismatch** (E003).
+- **Slice 6 (done): assignment / annotated-let mismatch** (E003).
   `stmts_assign_diags` walks each body (scope-threaded) and emits E003 for
-  an annotated `var x: T = v` whose init type isn't assignable to T, or an
+  an annotated `let x: T = v` whose init type isn't assignable to T, or an
   assignment `x = v` whose value type isn't assignable to x's declared
   type. Reuses the same `type_assignable` predicate check_stmt uses, so no
   new false positives. (The scope-threaded walks — ret_diags /
@@ -143,14 +143,14 @@ same code(s) the Go checker does — restricted to
   E012. Void functions (no declared return) never reach `ret_diags`, so a
   bare `return;` there is fine, matching the Go checker.
 - **Slice 11 (done): duplicate var in scope** (E013). `dupvar_diags`
-  emits E013 for a `var` whose name was already declared by an earlier
-  `var` in the SAME block; each block (function body, branch, loop /
+  emits E013 for a `let` whose name was already declared by an earlier
+  `let` in the SAME block; each block (function body, branch, loop /
   match-arm body) gets a fresh name set, so shadowing across nested blocks
-  — and a `var` shadowing a parameter or loop / pattern binding — is
+  — and a `let` shadowing a parameter or loop / pattern binding — is
   allowed, matching the Go checker. Purely structural.
 - **Slice 12 (done): empty array literal needs annotation** (E020).
-  `dupvar_diags` (now the structural `var`-declaration walk) also emits
-  E020 for an un-annotated `var x = []` whose empty-array initializer
+  `dupvar_diags` (now the structural `let`-declaration walk) also emits
+  E020 for an un-annotated `let x = []` whose empty-array initializer
   can't infer an element type. (E010 reserved-name was investigated and
   skipped: it doesn't fire in the standalone `-check` path the differential
   gate uses — builtins aren't injected there — so it isn't differentially
@@ -180,8 +180,8 @@ same code(s) the Go checker does — restricted to
 - **Slice 17 (done): tuple field index** (E046). The field-access arm of
   `call_diags` emits E046 when a tuple field name isn't a numeric index
   ("requires a numeric index") or the index is out of range. Fires for an
-  inferred tuple value (`var t = (1, 2)`), where `check_expr` yields a
-  `TypeTuple`; an annotated tuple (`var t: (i32, i32)`) doesn't yet resolve
+  inferred tuple value (`let t = (1, 2)`), where `check_expr` yields a
+  `TypeTuple`; an annotated tuple (`let t: (i32, i32)`) doesn't yet resolve
   to a `TypeTuple` (a separate self-host gap), so it's under-reported there
   — safe, and the differential corpus uses inferred tuples where the two
   checkers agree.
@@ -192,7 +192,7 @@ same code(s) the Go checker does — restricted to
   rules `check_expr` applies, so E009 fires only where check_expr already
   rejects the operands.
 - **Slice 19 (done): integer literal out of i32 range** (E047). The
-  structural `var` walk emits E047 when an un-suffixed integer literal
+  structural `let` walk emits E047 when an un-suffixed integer literal
   assigned to an `i32` var exceeds i32's max — `digits_fit_i32` compares
   the decimal digit string against "2147483647" (length, then char-by-char
   at 10 digits). Scoped to `i32`-annotated vars (other integer widths /
@@ -250,7 +250,7 @@ same code(s) the Go checker does — restricted to
   generic-struct reference against the struct's declared type-parameter
   count (`count_type_args` + `struct_type_param_count`). Checked at
   **parameter** and **struct-field** positions — where the Go checker
-  reports E019 on its own; a `var` / return annotation with the wrong
+  reports E019 on its own; a `let` / return annotation with the wrong
   arity additionally trips E003 / E002 in Go, so those positions are left
   out to keep the code sets matching.
 - **Later: pattern matching** (E014 bad-variant-in-match, E023 — both
@@ -300,11 +300,11 @@ same code(s) the Go checker does — restricted to
   `TestSelfHostCLIX86_64/check-position-func`.
 - **Slice 28 (done): `StmtVar` positions → E003 / E013 / E020 line:col.**
   First statement node. `StmtVar` gains `line`/`col`; `parse_stmt` captures
-  the `var`/`let` keyword and the regular-var + tuple-destructure paths
+  the `let` keyword and the regular-var + tuple-destructure paths
   build via a new `s_var_at` helper (`s_var` keeps a 0 position for
   desugar / synth callers); the monomorphiser / constfold / flatten
   rebuilds propagate, the ssa lowering synthetics carry 0. **E003** /
-  **E013** / **E020** now point at the `var` keyword, matching Go. (E047
+  **E013** / **E020** now point at the `let` keyword, matching Go. (E047
   stays position-less — Go reports it at the literal, an `ExprNumber`
   position, in a later slice.) Fixpoint-safe (x86 + arm64). Gated by
   `TestSelfHostCLIX86_64/check-position-var`.
@@ -500,7 +500,7 @@ same code(s) the Go checker does — restricted to
      empty / uninferred array literal (`unknown[]`) is assignable to any
      concrete `T[]`. Crucially, **scalar `unknown` is NOT a wildcard** —
      a genuinely unresolved value still surfaces its assignment error
-     (e.g. `var s: string = badMethodCall()` stays ill-typed; the
+     (e.g. `let s: string = badMethodCall()` stays ill-typed; the
      checker self-test `src55` guards exactly this).
   With both, the method-argument E038 check (slice 44) drops its
   primitive-only restriction and uses full `type_assignable`. Verified
@@ -661,7 +661,7 @@ same code(s) the Go checker does — restricted to
   first: **zero** false positives across all fifteen modules (every
   bundle function ending in `while (true)`, an exhaustive returning
   `match`, an if/else, or a trailing `return` is recognised as exiting).
-  `function f(): i32 { var x = 1; }` → `1:1: error[E052]`, matching Go's
+  `function f(): i32 { let x = 1; }` → `1:1: error[E052]`, matching Go's
   code, position, and message. Gated by new corpus (`missing-return`,
   `missing-return-one-armed-if`, `return-while-true-ok`,
   `return-if-else-ok`) and `check-position-missing-return`. (Corpus uses
@@ -734,7 +734,7 @@ same code(s) the Go checker does — restricted to
   (E050/E051 owned-parameter move checking and E049 captured-reference
   reassignment are now done — see below.)
 - **Slice 73 (done): E003 false positive on an annotated map var.** A
-  `var m: Map[K, V] = Map { … }` (including the empty `Map {}`)
+  `let m: Map[K, V] = Map { … }` (including the empty `Map {}`)
   false-positived E003: the literal desugars to `map_new[_i32](n)…`, whose
   key/value type the self-host leaves `unknown` (it doesn't infer K / V from
   a literal's entries), and `type_assignable` had no map arm — so the
@@ -796,7 +796,7 @@ same code(s) the Go checker does — restricted to
   key-type case. Gated by 4 corpus cases (float key → E045; string-key,
   i32-key, used-map → clean), cross-checked against Go. Checker-only;
   checker.fern isn't in the fixpoint bundle. (Found on the way, left for a
-  follow-up: `var m: Map[K,V] = Map {}` false-positives E003 because
+  follow-up: `let m: Map[K,V] = Map {}` false-positives E003 because
   `type_assignable` has no Map arm — independent of E045.)
 - **Slice 70 (done): E031 — match/if-expression arm-type unification.** A
   `match` / `if` used in VALUE position is desugared by the parser into an
@@ -860,12 +860,12 @@ same code(s) the Go checker does — restricted to
 - **Slice 68 (done): E002 — return-type checking inside lambda bodies.**
   The top-level `ret_diags` pass recurses through if / while / for / match /
   defer sub-bodies but deliberately stops at a lambda boundary — a nested
-  function has its own return contract — so a `var f = function(): i32 {
+  function has its own return contract — so a `let f = function(): i32 {
   return "x"; }` went unflagged even though the Go checker reports E002.
   The new `lret_stmts` / `lret_expr` pair walks every function (and the
   top-level statements), scope-threaded, finds each lambda, and runs the
   same `ret_diags` against the lambda's body using the lambda's OWN declared
-  return type. A recursive local (`var f = function…`) pre-binds its own
+  return type. A recursive local (`let f = function…`) pre-binds its own
   name to its function type so a self-call inside the body resolves rather
   than inferring `unknown` (which would silently skip the check). Because it
   reuses `ret_diags`, bare `return;` inside a non-void lambda is reported as
@@ -895,7 +895,7 @@ same code(s) the Go checker does — restricted to
   (`match-expr-string-arms-ok`, `if-expr-string-arms-ok`), both clean under
   Go + self-host.
 - **Slice 67 (done): recursive local functions no longer false-flag E001.**
-  A local function `function f(...) { ... }` desugars to `var f =
+  A local function `function f(...) { ... }` desugars to `let f =
   function(...) { ... }`, and the codegen hoist lifts a recursive one to
   top level — but the checker walked the lambda body without binding `f`,
   so a recursive self-call `f(...)` was reported as an undefined function
@@ -905,7 +905,7 @@ same code(s) the Go checker does — restricted to
   function-valued local to its function type before checking the init —
   letrec scoping — so the self-call resolves and the body is checked
   properly. Only a nested `function` pre-binds (`ast.var_binds_itself`); an
-  arrow lambda bound by `var` naming itself is E001 on both checkers
+  arrow lambda bound by `let` naming itself is E001 on both checkers
   (#10383). Gated by two new
   differential-corpus cases: a simple recursive local and a capturing one,
   both clean under Go + self-host. Checker-only; checker.fern isn't in the
@@ -914,7 +914,7 @@ same code(s) the Go checker does — restricted to
   to a reference-typed (pointer) variable that a closure captures from an
   enclosing scope is read-only (rebinding it inside the closure can't take
   effect outside and could close a reference cycle) → E049. `e049_diags`
-  finds lambdas (in var inits / returns / expr-and-assign values, through
+  finds lambdas (in let inits / returns / expr-and-assign values, through
   control blocks) and flags a `StmtAssign` whose target is a reference-
   typed enclosing var not shadowed by a lambda param/local. Reference vs
   scalar is classified by the declared type-name (scalars i32/i64/bool/
@@ -944,15 +944,15 @@ same code(s) the Go checker does — restricted to
   yet); this establishes the affine invariant. Ten new differential-corpus
   cases cross-checked against the Go checker.
 - **Slice 56 (done): E024 — tuple destructure of a non-tuple / wrong
-  arity.** The parser already lowers `var (a, b) = E` to a `StmtVar` whose
+  arity.** The parser already lowers `let (a, b) = E` to a `StmtVar` whose
   `name` is `"a,b"`, so this is checker-only after all (not a missing
-  feature). In the scope-aware var walk, a comma-named `StmtVar` whose
+  feature). In the scope-aware let walk, a comma-named `StmtVar` whose
   init types to a non-tuple is E024 (`tuple destructure needs a tuple
   expression, got <type>`); a tuple whose element count ≠ the name count
   is the other E024 (`tuple has N elements, but M names given`). An
-  unresolved (`unknown`) init is skipped. `var (a, b) = n` for `n: i32` →
+  unresolved (`unknown`) init is skipped. `let (a, b) = n` for `n: i32` →
   `1:35: error[E024]`, matching Go's code, position, and message; a real
-  `var (a, b) = (1, 2)` stays clean. Zero false positives across all
+  `let (a, b) = (1, 2)` stays clean. Zero false positives across all
   fifteen modules (the bundle only mentions destructuring in comments,
   never destructures a non-tuple). Checker-only (fixpoint-safe). Gated by
   new corpus (`tuple-destructure-non-tuple`, `tuple-destructure-ok`) and
@@ -1035,9 +1035,9 @@ same code(s) the Go checker does — restricted to
   is genuinely undefined — Go emits both E014 and E001), and binding the
   constructs the assign walk previously left unbound: **loop variables**
   (incl. `for (k, v)` via `bind_names`), **tuple-destructure** names
-  (`var (a, b)` is the single name "a,b" — split and bound for subsequent
+  (`let (a, b)` is the single name "a,b" — split and bound for subsequent
   reads), and **lambda params** (the body sees them). A sharp bug found en
-  route: rebinding a normal `var` after `check_stmt` shadowed its precise
+  route: rebinding a normal `let` after `check_stmt` shadowed its precise
   type (lookup is newest-first) and silently broke every type-dependent
   diagnostic (E033/E043/E046/E035/E004-method) — fixed by only splitting
   comma names. **Zero false positives**, verified two ways: the
@@ -1079,7 +1079,7 @@ same code(s) the Go checker does — restricted to
   the Go checker's `FuncSigs` builtins and the emitter's dispatched names;
   over-inclusion only suppresses E001, so it's safe). `is_resolvable_value`
   gained the same builtin / `__` checks, since a builtin may also be
-  referenced as a bare value (`var w = write;`). Completeness is
+  referenced as a bare value (`let w = write;`). Completeness is
   CI-enforced: the bundle-wide `check-selfhost-no-e001` guard now runs the
   self-host `-check` over **all 13 major modules** (incl. asm / asm_arm64 /
   wasm / fern, which call the full breadth of builtins) and asserts no
@@ -1203,7 +1203,7 @@ picks them up with the right prerequisite, not as a lone checker tweak:
   `isCellElemType`, modulo the generic-`ParamType` case the self-host
   doesn't model). The diagnostic points at the argument, matching the Go
   checker's `n.Args[0].Pos()`. *Annotation form* (`Cell[T]` in a param /
-  return / body-`var` / field position): the Go blocker is fixed — native
+  return / body-`let` / field position): the Go blocker is fixed — native
   `resolveType` now threads the annotation's use-site position through and
   anchors E057 there instead of the synthesised `Cell` decl at 0:0 (which
   `diag.Format` rendered with no `error[E0XX]` prefix, hiding the code
@@ -1234,7 +1234,7 @@ picks them up with the right prerequisite, not as a lone checker tweak:
   **non-generic, non-enum-variant** struct — contexts with no type
   parameter in scope to be mistaken for an undefined type. This keeps the
   bundle fixpoint-clean while matching Go's E064 on the ported shape; the
-  array-element / generic-argument / body-`var` positions Go also covers
+  array-element / generic-argument / body-`let` positions Go also covers
   are a later widening. Gated by corpus cases `unknown-param-type`,
   `unknown-field-type`.
 - **E067** (`@must_consume` value may leave scope unconsumed) — **done.**
@@ -1256,7 +1256,7 @@ picks them up with the right prerequisite, not as a lone checker tweak:
   resolves through `mx_enum_of` / `mx_builtin_enum_of`), and an
   immediately-invoked lambda — the parser's IIFE desugar of a
   value-position `match`/`if` — is treated as an inline block (`mc_seq`
-  over its body), not a closure capture, so `var r = match (p) { … }`
+  over its body), not a closure capture, so `let r = match (p) { … }`
   consumes `p` like the native `MatchExpr` tag rule (with the residual
   strictness that the IIFE body must consume on ALL paths, where the
   native expression walk accepts a consuming use on any). Gated only
@@ -1347,7 +1347,7 @@ reasons cannot pass by being rejected here for the wrong one.
 
 Two shapes in the same neighbourhood remain un-inferable and are NOT part of
 this: a method call on a `string` local (`s.len()`) and a function-typed local
-(`var f: (i32) => i32 = twice;`). Both fail with no const involved.
+(`let f: (i32) => i32 = twice;`). Both fail with no const involved.
 
 ## The one front-end code: P002
 
@@ -1436,7 +1436,7 @@ The end-to-end direction — that a gating code actually stops `-target` — is
 ## 2026-08-18 — integer width enters the type (#7011)
 
 `type_eq`'s integer arm compared only `is_char`, so every width and signedness
-was interchangeable: `var x: i32 = c;` with `c: i64` type-checked, and no
+was interchangeable: `let x: i32 = c;` with `c: i64` type-checked, and no
 i64/u32/u64 differential row could be written for anything else because each one
 failed on this instead of on what it meant to test.
 
@@ -1444,12 +1444,12 @@ Native's rule, measured rather than assumed:
 
 | shape | native |
 |---|---|
-| `var x: i32 = c;` (`c: i64`) — narrowing | E003 |
-| `var x: i64 = f();` (`f(): i32`) — widening | E003 |
+| `let x: i32 = c;` (`c: i64`) — narrowing | E003 |
+| `let x: i64 = f();` (`f(): i32`) — widening | E003 |
 | `c - n`, `c < n` (`c: i64`, `n: i32`) — arithmetic / ordering | accepted |
 | `c == n` (`c: i64`, `n: i32`) — equality | E041 |
-| `var x: i64 = 5;` — unsuffixed literal | accepted |
-| `var x: i32 = 3000000000;` — literal out of range | E047 only |
+| `let x: i64 = 5;` — unsuffixed literal | accepted |
+| `let x: i32 = 3000000000;` — literal out of range | E047 only |
 
 So there is no implicit conversion in either direction, integer widths unify in
 numeric *operator* contexts but not in equality, and an unsuffixed literal is
@@ -1469,10 +1469,10 @@ now explicit:
    `type_eq(_, t_i32())` sites. Behaviour-preserving on its own: with the old
    `type_eq` those calls already meant exactly this.
 2. **`settles_to` reaches integer destinations** — an unsuffixed literal is read
-   at the destination's width, so `var n: i64 = 5;` is not an i32-into-i64
+   at the destination's width, so `let n: i64 = 5;` is not an i32-into-i64
    assignment. The predicate already existed for `f64` (#6654); it needed the
    integer arm and five more call sites (method / closure / free-function
-   arguments, `var` initialisers, `return`, array elements, `append` / `with`).
+   arguments, `let` initialisers, `return`, array elements, `append` / `with`).
 3. **`int_result`** — an integer binop yields its operands' width rather than
    always i32, so `a + a` on i64 stays i64. Unary minus likewise.
 
@@ -1539,8 +1539,8 @@ partial type system's erasure of a type variable — rather than to a declared
 type sharing the name. It feeds the signature tables (`collect_func_sigs`,
 `collect_method_sigs`), the body scope (`build_func_scope`), and `Scope`'s own
 `resolve_type`, which is what every spelling read while walking a body goes
-through: a `var` annotation, a lambda's parameter or return, a cast. Three sites
-were not enough — `var acc: T = T.zero()` inside `sum[T: Add + Zero]` recaptured
+through: a `let` annotation, a lambda's parameter or return, a cast. Three sites
+were not enough — `let acc: T = T.zero()` inside `sum[T: Add + Zero]` recaptured
 the parameter one statement inside the body it had been erased out of.
 
 Call-site return inference had the same defect from the other end.
@@ -1670,7 +1670,7 @@ Two of those disagreements were miscompiles rather than missing diagnostics:
 | program | native | self-host `-check` | self-host `-o` before | after |
 |---|---|---|---|---|
 | `xs == ys` on `i32[]` | E041 | E041 | compiled to a POINTER compare, exit 0 | E041, refused |
-| `var (a, _) = pair(); return _;` | E001 | E001 | compiled, returned **2** — the discarded element | E001, refused |
+| `let (a, _) = pair(); return _;` | E001 | E001 | compiled, returned **2** — the discarded element | E001, refused |
 
 ### What had to be fixed first
 
@@ -1707,10 +1707,10 @@ Same four-corpus sweep as #6961, re-run whole:
 The list is empty and `is_partial_checker_gap_code` is gone: every coded
 diagnostic gates the build. Its last two entries were E013 / E018 (#8852), one
 bug: the self-host parser bound `_` as a real name, so a repeated discard
-(`function f(_: i32, _: string)`, `var _ = 1; var _ = 2;`) read as a
+(`function f(_: i32, _: string)`, `let _ = 1; let _ = 2;`) read as a
 redeclared one and `return _` read the discarded value. `parser.discard_name`
 now renames each occurrence to `__discard_<line>_<col>_<n>` at every binding
-site — parameter, `var`, tuple- and struct-destructure element, `for` header —
+site — parameter, `let`, tuple- and struct-destructure element, `for` header —
 as native's `discardName` does, and `printer.written_name` writes `_` back.
 
 ### Gate
@@ -1812,7 +1812,7 @@ callee's trailing parameter is the callback slot, and its first parameter is
 NAME's type. The self-host only *verified* that the inference had a signature
 to read (E032) and left the parameter untyped, so:
 
-- the checker typed NAME as unknown, and `var s: string = n;` under a `use`
+- the checker typed NAME as unknown, and `let s: string = n;` under a `use`
   passed where native reports E003;
 - the closure lift copied the untyped parameter into the `$wrapN` trampoline,
   whose body then returned a value of no type, and semsource refused the
@@ -1822,7 +1822,7 @@ to read (E032) and left the parameter untyped, so:
 
 The value-block retype pass (`retype_value_blocks`, #8657) already ran ahead
 of both `check_module` and `annotate_module` with a scoped walk, which is the
-shape the stamp needs — the callee may be a fn-typed local (`var t = taker;
+shape the stamp needs — the callee may be a fn-typed local (`let t = taker;
 use x <- t();`), which shadows a module function of the same name (#6302). It
 is now `pretype_module`, with two rules: a value-block local gets the type its
 arms assign, and an unannotated `use` binding gets the type its callee's

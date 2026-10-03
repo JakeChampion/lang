@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// tupleDestructureCases cover `var (a, b) = E` destructuring. The
+// tupleDestructureCases cover `let (a, b) = E` destructuring. The
 // parser encodes the names as "a,b"; the emitter evaluates the tuple
 // box and binds a = box.0, b = box.1. Exit codes cross-checked vs the
 // Go backend.
@@ -16,19 +16,19 @@ var tupleDestructureCases = []struct {
 	src  string
 	exit int
 }{
-	{"from-fn-return", "function swap(a: i32, b: i32): (i32, i32) { return (b, a); } function main(): i32 { var (x, y) = swap(10, 32); return x + y; }", 42},
-	{"from-local", "function main(): i32 { var t: (i32, i32) = (15, 27); var (a, b) = t; return a + b; }", 42},
-	{"first-only", "function mk(): (i32, i32) { return (42, 7); } function main(): i32 { var (a, b) = mk(); return a; }", 42},
-	{"second-only", "function mk(): (i32, i32) { return (7, 42); } function main(): i32 { var (a, b) = mk(); return b; }", 42},
-	// `let (a, b) = E` binds the same way as `var (a, b)`. Before the
+	{"from-fn-return", "function swap(a: i32, b: i32): (i32, i32) { return (b, a); } function main(): i32 { let (x, y) = swap(10, 32); return x + y; }", 42},
+	{"from-local", "function main(): i32 { let t: (i32, i32) = (15, 27); let (a, b) = t; return a + b; }", 42},
+	{"first-only", "function mk(): (i32, i32) { return (42, 7); } function main(): i32 { let (a, b) = mk(); return a; }", 42},
+	{"second-only", "function mk(): (i32, i32) { return (7, 42); } function main(): i32 { let (a, b) = mk(); return b; }", 42},
+	// `let (a, b) = E` binds the same way as `let (a, b)`. Before the
 	// parser learned the `let` statement arm, these hung the self-host
 	// compiler (no cursor progress on the `let` keyword → infinite
-	// loop / SIGKILL). Same expected exit as the `var` forms above.
+	// loop / SIGKILL). Same expected exit as the `let` forms above.
 	{"let-from-fn-return", "function swap(a: i32, b: i32): (i32, i32) { return (b, a); } function main(): i32 { let (x, y) = swap(10, 32); return x + y; }", 42},
-	{"let-from-local", "function main(): i32 { var t: (i32, i32) = (15, 27); let (a, b) = t; return a + b; }", 42},
+	{"let-from-local", "function main(): i32 { let t: (i32, i32) = (15, 27); let (a, b) = t; return a + b; }", 42},
 }
 
-// TestSelfHostTupleDestructureX86_64 — `var (a,b) = …` with the
+// TestSelfHostTupleDestructureX86_64 — `let (a,b) = …` with the
 // self-hosted x86-64 compiler.
 func TestSelfHostTupleDestructureX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

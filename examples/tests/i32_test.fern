@@ -143,22 +143,22 @@ function test_percent_of_large(): test.TestOutcome {
 // to spin zero times and silently return 0 / false. The magnitude is now
 // carried in i64. `0 - 2147483647 - 1` builds i32::MIN staying in i32 range.
 function test_digits_min(): test.TestOutcome {
-  var m: i32 = 0 - 2147483647 - 1;
+  let m: i32 = 0 - 2147483647 - 1;
   return test.assert_eq(m.digits(), 10);
 }
 
 function test_sum_of_digits_min(): test.TestOutcome {
-  var m: i32 = 0 - 2147483647 - 1;
+  let m: i32 = 0 - 2147483647 - 1;
   return test.assert_eq(m.sum_of_digits(), 47);
 }
 
 function test_has_digit_min(): test.TestOutcome {
-  var m: i32 = 0 - 2147483647 - 1;  // 2147483648 — has a 3, no 9
+  let m: i32 = 0 - 2147483647 - 1;  // 2147483648 — has a 3, no 9
   return test.assert_true(m.has_digit(3) && !m.has_digit(9));
 }
 
 function test_reverse_digits_min(): test.TestOutcome {
-  var m: i32 = 0 - 2147483647 - 1;  // was silently 0 pre-fix
+  let m: i32 = 0 - 2147483647 - 1;  // was silently 0 pre-fix
   return test.assert_true(m.reverse_digits() != 0);
 }
 
@@ -208,7 +208,7 @@ function test_ordinal_exceptions(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/i32");
+  let r: test.TestRunner = test.test_new("std/i32");
   r = r.it("ordinal suffixes", test_ordinal);
   r = r.it("ordinal exceptions", test_ordinal_exceptions);
   r = r.it("abs negative", test_abs_neg);

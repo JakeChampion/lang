@@ -27,21 +27,21 @@ function main(): i32 {
     }
 
     // --- arrays ---
-    var a: i32[] = [10, 20, 30];
+    let a: i32[] = [10, 20, 30];
     if (a[0] + a[2] != 40) { print("FAIL arr-index"); return 17; }
-    var b: i32[] = [1, 2, 3, 4];
+    let b: i32[] = [1, 2, 3, 4];
     if (b.len() != 4) { print("FAIL arr-len"); return 18; }
     // `.with` is the functional element-set; canonical idiom reassigns
     // the binding (the old buffer may be reused in place).
-    var w: i32[] = [10, 20, 30];
+    let w: i32[] = [10, 20, 30];
     w = w.with(1, 99);
     if (w[0] != 10 || w[1] != 99 || w[2] != 30) { print("FAIL arr-with"); return 19; }
-    var sum: i32 = 0;
+    let sum: i32 = 0;
     for x in b { sum = sum + x; }
     if (sum != 10) { print("FAIL arr-iter"); return 20; }
 
     // --- maps: i32 keys ---
-    var mi: Map[i32, i32] = map_new(8);
+    let mi: Map[i32, i32] = map_new(8);
     mi = mi.insert(1, 10);
     mi = mi.insert(2, 20);
     mi = mi.insert(1, 99); // overwrite
@@ -51,7 +51,7 @@ function main(): i32 {
     if (mi.len() != 2) { print("FAIL map-len"); return 24; }
 
     // --- maps: string keys ---
-    var ms: Map[string, i32] = map_new(8);
+    let ms: Map[string, i32] = map_new(8);
     ms = ms.insert("a", 3);
     ms = ms.insert("b", 4);
     if (ms.get_or("a", 0) + ms.get_or("b", 0) != 7) { print("FAIL map-str"); return 25; }

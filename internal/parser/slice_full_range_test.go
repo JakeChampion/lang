@@ -12,7 +12,7 @@ import (
 // reserved form, which left the caller of a `[T]`-taking function spelling
 // `xs[0:xs.len()]` (#6798).
 func TestParseFullRangeSlice(t *testing.T) {
-	prog, err := Parse(`function main(): i32 { var a: i32[] = [1, 2]; var s: [i32] = a[:]; return s.len(); }`)
+	prog, err := Parse(`function main(): i32 { let a: i32[] = [1, 2]; let s: [i32] = a[:]; return s.len(); }`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestParseFullRangeSlice(t *testing.T) {
 // Both printers already emitted `[:]` for a both-bounds-absent SliceExpr, so
 // accepting the form closes the round-trip the formatter could not complete.
 func TestFullRangeSliceRoundTrips(t *testing.T) {
-	src := "function main(): i32 {\n  var a: i32[] = [1, 2];\n  var s: [i32] = a[:];\n  return s.len();\n}\n"
+	src := "function main(): i32 {\n  let a: i32[] = [1, 2];\n  let s: [i32] = a[:];\n  return s.len();\n}\n"
 	prog, err := Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)

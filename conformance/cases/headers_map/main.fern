@@ -5,7 +5,7 @@ import "std/headers";
 // position-stable set, duplicate-preserving append. `set`/`append` are
 // functional (return a new map), so we rebind. Verified across all backends.
 function main(): i32 {
-    var h: HeaderMap = headers.header_map_new();
+    let h: HeaderMap = headers.header_map_new();
     // set then append the same name keeps both (set is replace, append adds).
     h = h.set("Set-Cookie", "a");
     h = h.append("Set-Cookie", "b");

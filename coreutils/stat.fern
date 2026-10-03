@@ -80,7 +80,7 @@ import "./lib/canon";
 import "./lib/filetype";
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... FILE...\n";
   out = out + "Display file or file system status.\n";
   out = out + "\n";
@@ -233,11 +233,11 @@ function is_digit_byte(b: i32): boolean {
 // backslash takes the byte after it into the literal, so `\%n` and
 // `\045n` print `%n` rather than a name.
 function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
-  var out: Piece[] = [];
-  var lit: u8[] = [];
-  var i: i32 = 0;
+  let out: Piece[] = [];
+  let lit: u8[] = [];
+  let i: i32 = 0;
   while (i < fmt.len()) {
-    var b: i32 = fmt[i] as i32;
+    let b: i32 = fmt[i] as i32;
     if (b != 37) {
       lit = lit.append(b as u8);
       i = i + 1;
@@ -253,11 +253,11 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
       i = i + 1;
       continue;
     }
-    var start: i32 = i;
+    let start: i32 = i;
     i = i + 1;
-    var d: Directive = Directive { minus: false, zero: false, hash: false, plus: false, space: false, width: 0, prec: 0, has_prec: false, raw: false, plain_flags: 0, mod: 0, conv: 0, text: "" };
+    let d: Directive = Directive { minus: false, zero: false, hash: false, plus: false, space: false, width: 0, prec: 0, has_prec: false, raw: false, plain_flags: 0, mod: 0, conv: 0, text: "" };
     while (i < fmt.len()) {
-      var f: i32 = fmt[i] as i32;
+      let f: i32 = fmt[i] as i32;
       if (f == 45) {
         d = Directive { ...d, minus: true, raw: true };
         i = i + 1;
@@ -279,8 +279,8 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
       d = Directive { ...d, raw: true, plain_flags: d.plain_flags + 1 };
       i = i + 1;
     }
-    var w: i32 = 0;
-    var saw_width: boolean = false;
+    let w: i32 = 0;
+    let saw_width: boolean = false;
     while (i < fmt.len() && is_digit_byte(fmt[i] as i32)) {
       if (w < max_width()) {
         w = w * 10 + (fmt[i] as i32 - 48);
@@ -296,7 +296,7 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
     }
     if (i < fmt.len() && fmt[i] as i32 == 46) {
       i = i + 1;
-      var p: i32 = 0;
+      let p: i32 = 0;
       while (i < fmt.len() && is_digit_byte(fmt[i] as i32)) {
         if (p < max_width()) {
           p = p * 10 + (fmt[i] as i32 - 48);
@@ -309,7 +309,7 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
       d = Directive { ...d, prec: p, has_prec: true, raw: true };
     }
     if (i < fmt.len()) {
-      var m: i32 = fmt[i] as i32;
+      let m: i32 = fmt[i] as i32;
       if (m == 72 || m == 76 || m == 81) {
         d = Directive { ...d, mod: m };
         i = i + 1;
@@ -323,9 +323,9 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
       out = out.append(Piece { literal: "", dir: Directive { ...d, conv: 0, mod: 0, text: slice_unchecked(fmt, start, i) + "" }, is_dir: true, escapes: false });
       continue;
     }
-    var conv: i32 = fmt[i] as i32;
+    let conv: i32 = fmt[i] as i32;
     i = i + 1;
-    var mod_ok: boolean = d.mod == 81 && conv == 110 || (d.mod == 72 || d.mod == 76) && !fs_mode && (conv == 100 || conv == 114);
+    let mod_ok: boolean = d.mod == 81 && conv == 110 || (d.mod == 72 || d.mod == 76) && !fs_mode && (conv == 100 || conv == 114);
     if (d.mod != 0 && !mod_ok) {
       // `H` and `L` select a half of a device number and only `d` and
       // `r` have halves — and `-f` has no device numbers at all; `Q`
@@ -355,7 +355,7 @@ function flush_literal(out: Piece[], lit: u8[], escapes: boolean): Piece[] {
   if (lit.len() == 0) {
     return out;
   }
-  var empty: Directive = Directive { minus: false, zero: false, hash: false, plus: false, space: false, width: 0, prec: 0, has_prec: false, raw: false, plain_flags: 0, mod: 0, conv: 0, text: "" };
+  let empty: Directive = Directive { minus: false, zero: false, hash: false, plus: false, space: false, width: 0, prec: 0, has_prec: false, raw: false, plain_flags: 0, mod: 0, conv: 0, text: "" };
   return out.append(Piece { literal: string_from_bytes_unchecked(lit), dir: empty, is_dir: false, escapes: escapes });
 }
 
@@ -381,11 +381,11 @@ function hex_value(b: i32): i32 {
 // the escapes as it prints each operand, so a warning repeats per
 // operand and lands after the text written before it.
 function put_unescaped(o: io_buffered.BufWriter, s: string): io_buffered.BufWriter {
-  var w: io_buffered.BufWriter = o;
-  var out: u8[] = [];
-  var i: i32 = 0;
+  let w: io_buffered.BufWriter = o;
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b != 92) {
       out = out.append(b as u8);
       i = i + 1;
@@ -398,7 +398,7 @@ function put_unescaped(o: io_buffered.BufWriter, s: string): io_buffered.BufWrit
       i = i + 1;
       continue;
     }
-    var c: i32 = s[i + 1] as i32;
+    let c: i32 = s[i + 1] as i32;
     i = i + 2;
     if (c == 97) {
       out = out.append(7 as u8);
@@ -422,8 +422,8 @@ function put_unescaped(o: io_buffered.BufWriter, s: string): io_buffered.BufWrit
       out = out.append(34 as u8);
     } else if (c >= 48 && c <= 55) {
       // Up to three octal digits, wrapping at a byte: `\777` is 0xff.
-      var v: i32 = c - 48;
-      var n: i32 = 1;
+      let v: i32 = c - 48;
+      let n: i32 = 1;
       while (n < 3 && i < s.len() && s[i] as i32 >= 48 && s[i] as i32 <= 55) {
         v = v * 8 + (s[i] as i32 - 48);
         i = i + 1;
@@ -437,7 +437,7 @@ function put_unescaped(o: io_buffered.BufWriter, s: string): io_buffered.BufWrit
         out = [];
         out = out.append(120 as u8);
       } else {
-        var hv: i32 = hex_value(s[i] as i32);
+        let hv: i32 = hex_value(s[i] as i32);
         i = i + 1;
         if (i < s.len() && hex_value(s[i] as i32) >= 0) {
           hv = hv * 16 + hex_value(s[i] as i32);
@@ -456,8 +456,8 @@ function put_unescaped(o: io_buffered.BufWriter, s: string): io_buffered.BufWrit
 
 // ---- padding ----------------------------------------------------------------
 function spaces(n: i32): string {
-  var out: u8[] = [];
-  var i: i32 = 0;
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(32 as u8);
     i = i + 1;
@@ -466,8 +466,8 @@ function spaces(n: i32): string {
 }
 
 function zeros(n: i32): string {
-  var out: u8[] = [];
-  var i: i32 = 0;
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(48 as u8);
     i = i + 1;
@@ -478,7 +478,7 @@ function zeros(n: i32): string {
 // A string conversion: precision truncates, width pads, `-` pads on
 // the right. `0` and `#` do nothing, as they do to a C `%s`.
 function out_string(d: Directive, s: string): string {
-  var v: string = s;
+  let v: string = s;
   if (d.has_prec && d.prec < v.len()) {
     v = slice_unchecked(v, 0, d.prec) + "";
   }
@@ -495,15 +495,15 @@ function out_string(d: Directive, s: string): string {
 // " ") split off so a `0` fill lands after it. Precision is a minimum
 // digit count and suppresses the `0` fill, as in C.
 function out_digits(d: Directive, sign: string, digits: string): string {
-  var body: string = digits;
+  let body: string = digits;
   if (d.has_prec && d.prec > body.len()) {
     body = zeros(d.prec - body.len()) + body;
   }
-  var v: string = sign + body;
+  let v: string = sign + body;
   if (v.len() >= d.width) {
     return v;
   }
-  var pad: i32 = d.width - v.len();
+  let pad: i32 = d.width - v.len();
   if (d.minus) {
     return v + spaces(pad);
   }
@@ -523,8 +523,8 @@ function out_unsigned(d: Directive, v: u64): string {
 }
 
 function out_signed(d: Directive, v: i64): string {
-  var sign: string = "";
-  var mag: u64 = v as u64;
+  let sign: string = "";
+  let mag: u64 = v as u64;
   if (v < 0 as i64) {
     sign = "-";
     mag = (0 as i64 - v) as u64;
@@ -540,10 +540,10 @@ function hex_digits(v: u64): string {
   if (v == 0 as u64) {
     return "0";
   }
-  var out: u8[] = [];
-  var n: u64 = v;
+  let out: u8[] = [];
+  let n: u64 = v;
   while (n > 0 as u64) {
-    var dgt: i32 = (n % (16 as u64)) as i32;
+    let dgt: i32 = (n % (16 as u64)) as i32;
     if (dgt < 10) {
       out = out.append((48 + dgt) as u8);
     } else {
@@ -551,8 +551,8 @@ function hex_digits(v: u64): string {
     }
     n = n / (16 as u64);
   }
-  var rev: u8[] = [];
-  var i: i32 = out.len() - 1;
+  let rev: u8[] = [];
+  let i: i32 = out.len() - 1;
   while (i >= 0) {
     rev = rev.append(out[i]);
     i = i - 1;
@@ -561,8 +561,8 @@ function hex_digits(v: u64): string {
 }
 
 function out_hex(d: Directive, v: u64): string {
-  var body: string = hex_digits(v);
-  var prefix: string = "";
+  let body: string = hex_digits(v);
+  let prefix: string = "";
   if (d.hash && v != 0 as u64) {
     prefix = "0x";
   }
@@ -576,14 +576,14 @@ function octal_digits(v: u64): string {
   if (v == 0 as u64) {
     return "0";
   }
-  var out: u8[] = [];
-  var n: u64 = v;
+  let out: u8[] = [];
+  let n: u64 = v;
   while (n > 0 as u64) {
     out = out.append((48 + (n % (8 as u64)) as i32) as u8);
     n = n / (8 as u64);
   }
-  var rev: u8[] = [];
-  var i: i32 = out.len() - 1;
+  let rev: u8[] = [];
+  let i: i32 = out.len() - 1;
   while (i >= 0) {
     rev = rev.append(out[i]);
     i = i - 1;
@@ -594,7 +594,7 @@ function octal_digits(v: u64): string {
 // `%a` is a C `%o`, so `#` forces a leading zero — on a value that
 // already starts with one (and on zero itself) it changes nothing.
 function out_octal(d: Directive, v: u64): string {
-  var body: string = octal_digits(v);
+  let body: string = octal_digits(v);
   if (d.has_prec && d.prec == 0 && v == 0 as u64) {
     body = "";
   }
@@ -625,13 +625,13 @@ function pad2(n: i32): string {
 }
 
 function pad_year(y: i32): string {
-  var mag: i32 = y;
-  var sign: string = "";
+  let mag: i32 = y;
+  let sign: string = "";
   if (y < 0) {
     sign = "-";
     mag = 0 - y;
   }
-  var s: string = mag.to_string();
+  let s: string = mag.to_string();
   while (s.len() < 4) {
     s = "0" + s;
   }
@@ -639,7 +639,7 @@ function pad_year(y: i32): string {
 }
 
 function pad9(n: i64): string {
-  var s: string = n.to_string();
+  let s: string = n.to_string();
   while (s.len() < 9) {
     s = "0" + s;
   }
@@ -649,10 +649,10 @@ function pad9(n: i64): string {
 // `%x` / `%y` / `%z`: `nstrftime("%Y-%m-%d %H:%M:%S.%N %z")` in the
 // LOCAL zone, which is `lib/tz.fern`'s tzset.
 function human_time(z: tz.Zone, sec: i64, nsec: i64): string {
-  var dt: DateTime = z.civil(sec);
-  var off: i32 = z.offset_at(sec);
-  var sign: string = "+";
-  var mag: i32 = off;
+  let dt: DateTime = z.civil(sec);
+  let off: i32 = z.offset_at(sec);
+  let sign: string = "+";
+  let mag: i32 = off;
   if (off < 0) {
     sign = "-";
     mag = 0 - off;
@@ -667,9 +667,9 @@ function epoch_time(d: Directive, sec: i64, nsec: i64): string {
   if (!d.has_prec || d.prec == 0) {
     return out_signed(d, sec);
   }
-  var whole: i64 = sec;
-  var frac: i64 = nsec;
-  var sign: string = "";
+  let whole: i64 = sec;
+  let frac: i64 = nsec;
+  let sign: string = "";
   if (sec < 0 as i64) {
     sign = "-";
     if (nsec == 0 as i64) {
@@ -683,11 +683,11 @@ function epoch_time(d: Directive, sec: i64, nsec: i64): string {
   } else if (d.space) {
     sign = " ";
   }
-  var f: string = pad9(frac);
+  let f: string = pad9(frac);
   while (f.len() < d.prec) {
     f = f + "0";
   }
-  var digits: string = whole.to_string() + "." + (slice_unchecked(f, 0, d.prec) + "");
+  let digits: string = whole.to_string() + "." + (slice_unchecked(f, 0, d.prec) + "");
   // The precision is spent on the fraction, so what is left is a plain
   // width fill — a `0` flag pads after the sign, as it does for a
   // number with no precision at all.
@@ -699,7 +699,7 @@ function parent_of(p: string): string {
   if (p == "/") {
     return "/";
   }
-  var i: i32 = p.len() - 1;
+  let i: i32 = p.len() - 1;
   while (i > 0 && p[i] as i32 != 47) {
     i = i - 1;
   }
@@ -725,7 +725,7 @@ function dev_of(path: string): Option[i64] {
 // then walks up from the containing directory while `st_dev` stays
 // the same; the last path that still matched is the answer.
 function mount_point(name: string, st: FileStat): Option[string] {
-  var real: string = "";
+  let real: string = "";
   match (canon.canonicalize(name, canon.existing(), false)) {
     Ok(p) => {
       real = p;
@@ -734,13 +734,13 @@ function mount_point(name: string, st: FileStat): Option[string] {
       return None;
     }
   }
-  var cur: string = real;
+  let cur: string = real;
   if (!st.is_dir) {
     cur = parent_of(real);
   }
-  var dev: i64 = st.dev;
+  let dev: i64 = st.dev;
   while (cur != "/") {
-    var up: string = parent_of(cur);
+    let up: string = parent_of(cur);
     match (dev_of(up)) {
       Some(d) => {
         if (d != dev) {
@@ -808,12 +808,12 @@ function quoting_ready(q: Quoting): Quoting {
 }
 
 function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered, Quoting) {
-  var st: FileStat = it.st;
-  var c: i32 = d.conv;
+  let st: FileStat = it.st;
+  let c: i32 = d.conv;
   if (d.mod != 0 && d.mod != 81) {
     // The scanner only lets `H` and `L` through in front of `d` and
     // `r`, so the half is all that is left to choose.
-    var dev: u64 = st.dev as u64;
+    let dev: u64 = st.dev as u64;
     if (c == 114) {
       dev = st.rdev as u64;
     }
@@ -871,13 +871,13 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
   }
   if (c == 110) {
     if (d.mod == 81) {
-      var qn: Quoting = quoting_ready(qi);
+      let qn: Quoting = quoting_ready(qi);
       return (ok_rendered(out_string(d, gnu.quote_style(it.name, qn.style))), qn);
     }
     return (ok_rendered(out_string(d, it.name)), qi);
   }
   if (c == 78) {
-    var qq: Quoting = quoting_ready(qi);
+    let qq: Quoting = quoting_ready(qi);
     return (ok_rendered(quoted_name(d, it, qq.style)), qq);
   }
   if (c == 111) {
@@ -930,7 +930,7 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
 // along with the name and `%.3N` can cut a quote off. A link's target
 // is quoted and padded the same way, separately.
 function quoted_name(d: Directive, it: Item, style: i32): string {
-  var name: string = out_string(d, gnu.quote_style(it.name, style));
+  let name: string = out_string(d, gnu.quote_style(it.name, style));
   if (!it.is_link) {
     return name;
   }
@@ -958,9 +958,9 @@ function link_tail(d: Directive): string {
 // the database has none — which is what GNU prints for an orphaned
 // file.
 function user_text(uid: i64): string {
-  match (pwdb.user_by_uid(uid)) {
-    Some(u) => {
-      return u.name;
+  match (pwdb.user_name(uid)) {
+    Some(name) => {
+      return name;
     },
     None => {
       return uid.to_string();
@@ -980,10 +980,10 @@ function group_text(gid: i64): string {
 }
 
 function render_fs(d: Directive, it: FsItem, qi: Quoting): (Rendered, Quoting) {
-  var fs: FsStat = it.fs;
-  var c: i32 = d.conv;
+  let fs: FsStat = it.fs;
+  let c: i32 = d.conv;
   if (d.mod == 81 && c == 110) {
-    var qn: Quoting = quoting_ready(qi);
+    let qn: Quoting = quoting_ready(qi);
     return (ok_rendered(out_string(d, gnu.quote_style(it.name, qn.style))), qn);
   }
   if (d.mod != 0) {
@@ -1042,10 +1042,10 @@ function blocked(d: Directive, fs_mode: boolean): string {
 // leave the text already written in place, which is what makes
 // `stat -c '[%5%]' f` write its `[` before the diagnostic.
 function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boolean, it: Item, fs: FsItem, z: tz.Zone, qi: Quoting): (io_buffered.BufWriter, boolean, Quoting) {
-  var w: io_buffered.BufWriter = o;
-  var q: Quoting = qi;
-  var failed: boolean = false;
-  var i: i32 = 0;
+  let w: io_buffered.BufWriter = o;
+  let q: Quoting = qi;
+  let failed: boolean = false;
+  let i: i32 = 0;
   while (i < pieces.len()) {
     if (!pieces[i].is_dir) {
       if (pieces[i].escapes) {
@@ -1056,15 +1056,15 @@ function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boole
       i = i + 1;
       continue;
     }
-    var d: Directive = pieces[i].dir;
+    let d: Directive = pieces[i].dir;
     if (d.conv == 37) {
       gnu.die(w, gnu.quote(d.text) + ": invalid directive", 1);
     }
-    var stop: string = blocked(d, fs_mode);
+    let stop: string = blocked(d, fs_mode);
     if (stop != "") {
       gnu.die(w, stop + " is not supported on this system", 1);
     }
-    var rq: (Rendered, Quoting) = (unknown_rendered(), q);
+    let rq: (Rendered, Quoting) = (unknown_rendered(), q);
     if (fs_mode) {
       rq = render_fs(d, fs, q);
     } else {
@@ -1083,9 +1083,9 @@ function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boole
 // Whether the format asks for a human-readable time, which is the only
 // thing that makes the local zone worth reading off disk.
 function needs_zone(pieces: Piece[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < pieces.len()) {
-    var c: i32 = pieces[i].dir.conv;
+    let c: i32 = pieces[i].dir.conv;
     if (pieces[i].is_dir && (c == 120 || c == 121 || c == 122)) {
       return true;
     }
@@ -1110,11 +1110,11 @@ function is_symlink(st: FileStat): boolean {
 }
 
 function do_file(o: io_buffered.BufWriter, pieces: Piece[], name: string, deref: boolean, newline: boolean, z: tz.Zone, qi: Quoting, builtin: string): (io_buffered.BufWriter, boolean, Quoting) {
-  var w: io_buffered.BufWriter = o;
+  let w: io_buffered.BufWriter = o;
   match (stat_of(name, deref)) {
     Ok(st) => {
-      var link: string = "";
-      var is_link: boolean = is_symlink(st);
+      let link: string = "";
+      let is_link: boolean = is_symlink(st);
       if (is_link) {
         match (read_link(name)) {
           Ok(t) => {
@@ -1128,9 +1128,9 @@ function do_file(o: io_buffered.BufWriter, pieces: Piece[], name: string, deref:
       if (builtin != "") {
         gnu.die(w, builtin, 1);
       }
-      var it: Item = Item { name: name, st: st, link: link, is_link: is_link };
-      var empty_fs: FsItem = FsItem { name: name, fs: fsstat_zero() };
-      var rendered: (io_buffered.BufWriter, boolean, Quoting) = render_pieces(w, pieces, false, it, empty_fs, z, qi);
+      let it: Item = Item { name: name, st: st, link: link, is_link: is_link };
+      let empty_fs: FsItem = FsItem { name: name, fs: fsstat_zero() };
+      let rendered: (io_buffered.BufWriter, boolean, Quoting) = render_pieces(w, pieces, false, it, empty_fs, z, qi);
       w = rendered.0;
       if (newline) {
         w = gnu.put(w, "\n");
@@ -1145,15 +1145,15 @@ function do_file(o: io_buffered.BufWriter, pieces: Piece[], name: string, deref:
 }
 
 function do_fs(o: io_buffered.BufWriter, pieces: Piece[], name: string, newline: boolean, qi: Quoting, builtin: string): (io_buffered.BufWriter, boolean, Quoting) {
-  var w: io_buffered.BufWriter = o;
+  let w: io_buffered.BufWriter = o;
   match (statfs(name)) {
     Ok(fs) => {
       if (builtin != "") {
         gnu.die(w, builtin, 1);
       }
-      var it: FsItem = FsItem { name: name, fs: fs };
-      var empty_st: Item = Item { name: name, st: stat_zero(), link: "", is_link: false };
-      var rendered: (io_buffered.BufWriter, boolean, Quoting) = render_pieces(w, pieces, true, empty_st, it, tz.utc_zone(), qi);
+      let it: FsItem = FsItem { name: name, fs: fs };
+      let empty_st: Item = Item { name: name, st: stat_zero(), link: "", is_link: false };
+      let rendered: (io_buffered.BufWriter, boolean, Quoting) = render_pieces(w, pieces, true, empty_st, it, tz.utc_zone(), qi);
       w = rendered.0;
       if (newline) {
         w = gnu.put(w, "\n");
@@ -1169,7 +1169,7 @@ function do_fs(o: io_buffered.BufWriter, pieces: Piece[], name: string, newline:
 
 // ---- main -------------------------------------------------------------------
 pub function main(): i32 {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("L", "dereference", opt_dereference()));
   opts = opts.append(gnu.flag("f", "file-system", opt_file_system()));
   opts = opts.append(gnu.valued("c", "format", opt_format()));
@@ -1177,15 +1177,15 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("t", "terse", opt_terse()));
   opts = opts.append(gnu.valued("", "cached", opt_cached()));
 
-  var deref: boolean = false;
-  var fs_mode: boolean = false;
-  var terse: boolean = false;
-  var format: string = "";
-  var have_format: boolean = false;
-  var escapes: boolean = false;
-  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "stat", help_text(), 1);
+  let deref: boolean = false;
+  let fs_mode: boolean = false;
+  let terse: boolean = false;
+  let format: string = "";
+  let have_format: boolean = false;
+  let escapes: boolean = false;
+  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "stat", help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -1208,8 +1208,8 @@ pub function main(): i32 {
           // and `default` all name a statx(2) AT_STATX_ flag this
           // build has no statx to hand it to, and the answer on a
           // local filesystem is the same either way.
-          var names: string[] = ["default", "never", "always"];
-          var ignored: i32 = gnu.argmatch(m.value, names, "--cached");
+          let names: string[] = ["default", "never", "always"];
+          let ignored: i32 = gnu.argmatch(m.value, names, "--cached");
         }
       },
       None => {
@@ -1218,7 +1218,7 @@ pub function main(): i32 {
     }
   }
 
-  var operands: string[] = g.operands();
+  let operands: string[] = g.operands();
   if (operands.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }
@@ -1227,7 +1227,7 @@ pub function main(): i32 {
   // reports, so there is nothing to render; the refusal waits until the
   // operand has been read, because GNU reports an operand it cannot stat
   // before it ever formats one. See the header.
-  var builtin: string = "";
+  let builtin: string = "";
   if (!have_format) {
     if (fs_mode && terse) {
       builtin = "--terse --file-system requires %i, which is not supported on this system";
@@ -1240,25 +1240,25 @@ pub function main(): i32 {
     }
   }
 
-  var quoting: Quoting = quoting_new();
-  var pieces: Piece[] = scan(format, fs_mode, escapes);
+  let quoting: Quoting = quoting_new();
+  let pieces: Piece[] = scan(format, fs_mode, escapes);
 
-  var z: tz.Zone = tz.utc_zone();
+  let z: tz.Zone = tz.utc_zone();
   if (needs_zone(pieces)) {
     z = tz.local_zone();
   }
-  var status: i32 = 0;
-  var o: io_buffered.BufWriter = gnu.out_new();
-  var i: i32 = 0;
+  let status: i32 = 0;
+  let o: io_buffered.BufWriter = gnu.out_new();
+  let i: i32 = 0;
   while (i < operands.len()) {
-    var name: string = operands[i];
+    let name: string = operands[i];
     if (fs_mode && name == "-") {
       o = gnu.error_out(o, "using '-' to denote standard input does not work in file system mode");
       status = 1;
       i = i + 1;
       continue;
     }
-    var res: (io_buffered.BufWriter, boolean, Quoting) = (o, true, quoting);
+    let res: (io_buffered.BufWriter, boolean, Quoting) = (o, true, quoting);
     if (fs_mode) {
       res = do_fs(o, pieces, name, !escapes, quoting, builtin);
     } else {

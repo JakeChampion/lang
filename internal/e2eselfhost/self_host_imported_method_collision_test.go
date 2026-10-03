@@ -13,7 +13,7 @@ import (
 // importedMethodCollisionCases pin an imported struct METHOD against a free
 // function of the same spelling in the importing module (#8997).
 //
-// The self-host var-binding lowering classified `var t: Counter = c.release()`
+// The self-host var-binding lowering classified `let t: Counter = c.release()`
 // by looking `release` up in the array-returning-function registry under its
 // BARE name, gated only on "the receiver is a struct". The registry keys every
 // free function by that same bare name, so an unrelated
@@ -42,7 +42,7 @@ pub function (c: Counter) value(): i32 { return c.n; }
 pub function (c: Counter) release(): Counter { return Counter { n: c.n }; }
 
 pub function (c: Counter) release_zero(): Counter {
-    var t: Counter = c.release();
+    let t: Counter = c.release();
     return Counter { n: t.value() };
 }
 `,
@@ -51,9 +51,9 @@ pub function (c: Counter) release_zero(): Counter {
 function release(xs: i32[], n: i32): i32[] { return xs.append(n); }
 
 function main(): i32 {
-    var c: counter.Counter = counter.Counter { n: 42 };
-    var r: counter.Counter = c.release_zero();
-    var xs: i32[] = release([1], 2);
+    let c: counter.Counter = counter.Counter { n: 42 };
+    let r: counter.Counter = c.release_zero();
+    let xs: i32[] = release([1], 2);
     return r.value() + xs.len() - 2;
 }
 `}, 42},
@@ -68,8 +68,8 @@ function main(): i32 {
 pub function (b: Bag) take(): i32[] { return b.xs; }
 
 pub function (b: Bag) total(): i32 {
-    var ys = b.take();
-    var t: i32 = 0;
+    let ys = b.take();
+    let t: i32 = 0;
     for y in ys { t = t + y; }
     return t;
 }
@@ -79,7 +79,7 @@ pub function (b: Bag) total(): i32 {
 function take(n: i32): i32 { return n; }
 
 function main(): i32 {
-    var b: bag.Bag = bag.Bag { xs: [20, 20] };
+    let b: bag.Bag = bag.Bag { xs: [20, 20] };
     return b.total() + take(2);
 }
 `}, 42},

@@ -6,7 +6,7 @@ import "./lib/cond";
 import "./lib/gnu";
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " EXPRESSION ]\n";
   out = out + "  or:  " + gnu.prog() + " ]\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";

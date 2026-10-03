@@ -154,7 +154,7 @@ function test_object_size_wrong(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("JSON detail assertions");
+  let r: test.TestRunner = test.test_new("JSON detail assertions");
   r = r.it("has_key pass", test_has_key_pass);
   r = r.it("has_key missing names size", test_has_key_missing);
   r = r.it("has_key invalid JSON diag", test_has_key_invalid_json);

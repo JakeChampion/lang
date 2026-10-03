@@ -33,7 +33,7 @@ function builtin_res(r: Result[i32, i32]): i32 {
 }
 
 function main(): i32 {
-    var total: i32 = 0;
+    let total: i32 = 0;
     total = total + opt_of(Opt.Some(1));        // 1
     total = total + opt_of(Opt.None);           // 6
     total = total + outcome_of(Outcome.Ok(2));  // 8

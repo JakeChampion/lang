@@ -7,7 +7,7 @@ import (
 
 // Dup-at-extract for a tuple destructure (#7682).
 //
-// `var (a, b) = p` lowered `op_tuple_get` → `op_store_local` → `mark_arr`
+// `let (a, b) = p` lowered `op_tuple_get` → `op_store_local` → `mark_arr`
 // without any retain: the marks make the slot one the scope-exit sweep
 // RELEASES, so the binding gave back a reference it never took. Wherever the
 // source tuple also carried a reclaim credit the same buffer was decremented
@@ -38,9 +38,9 @@ func tupleDestructureRetainCases() []tupleAliasParamCase {
 			// The issue's minimal repro. Fires on a single round; the loop is
 			// only here to make a byte rate visible if the polarity ever flips.
 			name: "i32arr_bind_read",
-			src: `function round(i: i32): i32 { var p: (i32, i32[]) = (i, [i, i + 1]); var (a, b) = p; return a + b.len(); }
+			src: `function round(i: i32): i32 { let p: (i32, i32[]) = (i, [i, i + 1]); let (a, b) = p; return a + b.len(); }
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -52,9 +52,9 @@ function main(): i32 {
 			// (mark_f64arr / mark_i64arr) but the same shallow dec, so they
 			// over-released identically and must be covered by the same gate.
 			name: "f64arr_bind_read",
-			src: `function round(i: i32): i32 { var p: (i32, f64[]) = (i, [1.5, 2.5]); var (a, b) = p; return a + b.len(); }
+			src: `function round(i: i32): i32 { let p: (i32, f64[]) = (i, [1.5, 2.5]); let (a, b) = p; return a + b.len(); }
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -63,9 +63,9 @@ function main(): i32 {
 		},
 		{
 			name: "i64arr_bind_read",
-			src: `function round(i: i32): i32 { var p: (i32, i64[]) = (i, [1i64, 2i64]); var (a, b) = p; return a + b.len(); }
+			src: `function round(i: i32): i32 { let p: (i32, i64[]) = (i, [1i64, 2i64]); let (a, b) = p; return a + b.len(); }
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -79,9 +79,9 @@ function main(): i32 {
 			// different reason than the literal row and has to be held
 			// separately.
 			name: "bare_ident_elem_source",
-			src: `function round(i: i32): i32 { var xs: i32[] = [i, i + 1]; var p: (i32, i32[]) = (i, xs); var (a, b) = p; return a + b.len(); }
+			src: `function round(i: i32): i32 { let xs: i32[] = [i, i + 1]; let p: (i32, i32[]) = (i, xs); let (a, b) = p; return a + b.len(); }
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -95,10 +95,10 @@ function main(): i32 {
 			// here would leak instead of balancing, and the caller's binding is
 			// what spends the reference handed out.
 			name: "moved_out_by_return",
-			src: `function get(i: i32): i32[] { var p: (i32, i32[]) = (i, [i, i + 1]); var (a, b) = p; return b; }
-function round(i: i32): i32 { var r: i32[] = get(i); return r.len(); }
+			src: `function get(i: i32): i32[] { let p: (i32, i32[]) = (i, [i, i + 1]); let (a, b) = p; return b; }
+function round(i: i32): i32 { let r: i32[] = get(i); return r.len(); }
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -111,9 +111,9 @@ function main(): i32 {
 			// argument rather than the binding.
 			name: "passed_to_callee",
 			src: `function consume(xs: i32[]): i32 { return xs.len(); }
-function round(i: i32): i32 { var p: (i32, i32[]) = (i, [i, i + 1]); var (a, b) = p; return consume(b) + a % 3; }
+function round(i: i32): i32 { let p: (i32, i32[]) = (i, [i, i + 1]); let (a, b) = p; return consume(b) + a % 3; }
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -129,9 +129,9 @@ function main(): i32 {
 			// registry — this row is where the widening surfaced.
 			name: "strarr_elem_bind_read",
 			src: `function w(a: string): string { return a + "!"; }
-function round(i: i32): i32 { var p: (i32, string[]) = (i, [w("x"), w("y")]); var (a, b) = p; return a + b.len(); }
+function round(i: i32): i32 { let p: (i32, string[]) = (i, [w("x"), w("y")]); let (a, b) = p; return a + b.len(); }
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -144,9 +144,9 @@ function main(): i32 {
 			// registry widened it. Held separately for that reason — a fix
 			// scoped to the registry form would leave this one corrupting.
 			name: "strarr_literal_elems",
-			src: `function round(i: i32): i32 { var p: (i32, string[]) = (i, ["x", "y"]); var (a, b) = p; return a + b.len(); }
+			src: `function round(i: i32): i32 { let p: (i32, string[]) = (i, ["x", "y"]); let (a, b) = p; return a + b.len(); }
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -159,9 +159,9 @@ function main(): i32 {
 			// extract took no reference of its own, so this over-released on
 			// its own account.
 			name: "strarr_bare_ident_elem_source",
-			src: `function round(i: i32): i32 { var xs: string[] = ["x", "y"]; var p: (i32, string[]) = (i, xs); var (a, b) = p; return a + b.len(); }
+			src: `function round(i: i32): i32 { let xs: string[] = ["x", "y"]; let p: (i32, string[]) = (i, xs); let (a, b) = p; return a + b.len(); }
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -175,9 +175,9 @@ function main(): i32 {
 			name: "strarr_passed_to_callee",
 			src: `function w(a: string): string { return a + "!"; }
 function consume(xs: string[]): i32 { return xs.len(); }
-function round(i: i32): i32 { var p: (i32, string[]) = (i, [w("x"), w("y")]); var (a, b) = p; return consume(b) + a % 3; }
+function round(i: i32): i32 { let p: (i32, string[]) = (i, [w("x"), w("y")]); let (a, b) = p; return consume(b) + a % 3; }
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -190,10 +190,10 @@ function main(): i32 {
 			// read back.
 			name: "strarr_moved_out_by_return",
 			src: `function w(a: string): string { return a + "!"; }
-function get(i: i32): string[] { var p: (i32, string[]) = (i, [w("x"), w("y")]); var (a, b) = p; return b; }
-function round(i: i32): i32 { var r: string[] = get(i); return r.len(); }
+function get(i: i32): string[] { let p: (i32, string[]) = (i, [w("x"), w("y")]); let (a, b) = p; return b; }
+function round(i: i32): i32 { let r: string[] = get(i); return r.len(); }
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;

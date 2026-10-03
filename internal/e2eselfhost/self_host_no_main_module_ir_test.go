@@ -46,7 +46,7 @@ pub function label(i: i32): string {
     return "xyz";
 }
 pub function total(xs: i32[]): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for x in xs { t = t + x; }
     return t;
 }`},

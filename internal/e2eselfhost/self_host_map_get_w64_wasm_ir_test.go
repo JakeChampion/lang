@@ -32,13 +32,13 @@ func TestSelfHostMapGetW64WasmIR(t *testing.T) {
 		expected int
 	}{
 		// HIT path: Some(v) carries the full-width i64. 5000000007 % 1000 == 7.
-		{"hit", `function main(): i32 { var m: Map[i32, i64] = Map { 1: 5000000007 }; match (m.get(1)) { Some(v) => { return (v % 1000) as i32; }, None => { return 42; } } }`, 7},
+		{"hit", `function main(): i32 { let m: Map[i32, i64] = Map { 1: 5000000007 }; match (m.get(1)) { Some(v) => { return (v % 1000) as i32; }, None => { return 42; } } }`, 7},
 		// MISS path: None → the fallback arm. Returns 42.
-		{"miss", `function main(): i32 { var m: Map[i32, i64] = Map { 1: 5000000007 }; match (m.get(9)) { Some(v) => { return (v % 1000) as i32; }, None => { return 42; } } }`, 42},
+		{"miss", `function main(): i32 { let m: Map[i32, i64] = Map { 1: 5000000007 }; match (m.get(9)) { Some(v) => { return (v % 1000) as i32; }, None => { return 42; } } }`, 42},
 		// u64 value through Some, unsigned shift. 18e18 >> 58 == 62.
-		{"u64-hit-shift", `function main(): i32 { var m: Map[i32, u64] = Map { 1: 18000000000000000000 as u64 }; match (m.get(1)) { Some(v) => { return (v >> 58) as i32; }, None => { return 0; } } }`, 62},
+		{"u64-hit-shift", `function main(): i32 { let m: Map[i32, u64] = Map { 1: 18000000000000000000 as u64 }; match (m.get(1)) { Some(v) => { return (v >> 58) as i32; }, None => { return 0; } } }`, 62},
 		// HIT after a map_new'd + .insert, value from a variable. 9000000000 % 1000 == 0.
-		{"insert-hit", `function main(): i32 { var m: Map[i32, i64] = map_new(8); var x: i64 = 9000000000; m = m.insert(3, x); match (m.get(3)) { Some(v) => { return (v % 1000) as i32; }, None => { return 7; } } }`, 0},
+		{"insert-hit", `function main(): i32 { let m: Map[i32, i64] = map_new(8); let x: i64 = 9000000000; m = m.insert(3, x); match (m.get(3)) { Some(v) => { return (v % 1000) as i32; }, None => { return 7; } } }`, 0},
 	}
 
 	for _, tc := range cases {

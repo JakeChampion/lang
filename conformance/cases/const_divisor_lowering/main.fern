@@ -17,9 +17,9 @@
 // sign cannot cancel, and every quotient and remainder is folded into it in
 // order.
 function main(): i32 {
-  var h: i64 = 1i64;
-  var v: i32 = 0;  var w: i64 = 0i64;
-  var uv: u32 = 0u32; var uw: u64 = 0u64;
+  let h: i64 = 1i64;
+  let v: i32 = 0;  let w: i64 = 0i64;
+  let uv: u32 = 0u32; let uw: u64 = 0u64;
   v = 0; h = h * 1000003i64 + (v / 0) as i64; h = h * 1000003i64 + (v % 0) as i64;
   v = 1; h = h * 1000003i64 + (v / 0) as i64; h = h * 1000003i64 + (v % 0) as i64;
   v = -1; h = h * 1000003i64 + (v / 0) as i64; h = h * 1000003i64 + (v % 0) as i64;

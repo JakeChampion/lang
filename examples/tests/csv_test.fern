@@ -42,7 +42,7 @@ function test_join_empty(): test.TestOutcome {
 // (#4379) growing path where csv_join used to recopy the whole record
 // per field.
 function test_join_many(): test.TestOutcome {
-  var row: string[] = ["plain", "has,comma", "has\"quote", "", "line\nbreak"];
+  let row: string[] = ["plain", "has,comma", "has\"quote", "", "line\nbreak"];
   return test.assert_eq(
     csv.csv_join(row),
     "plain,\"has,comma\",\"has\"\"quote\",,\"line\nbreak\"",
@@ -85,7 +85,7 @@ function test_parse_multibyte_and_growth(): test.TestOutcome {
 
 // csv_parse — the full multi-record document parser.
 function test_doc_multi_record(): test.TestOutcome {
-  var rows: string[][] = csv.csv_parse("a,b,c\n1,2,3");
+  let rows: string[][] = csv.csv_parse("a,b,c\n1,2,3");
   if (rows.len() != 2) {
     return test.fail("row count " + rows.len().to_string());
   }
@@ -97,7 +97,7 @@ function test_doc_multi_record(): test.TestOutcome {
 
 function test_doc_embedded_newline(): test.TestOutcome {
   // A newline inside a quoted field does NOT end the record.
-  var rows: string[][] = csv.csv_parse("\"a,b\",\"line1\nline2\",z");
+  let rows: string[][] = csv.csv_parse("\"a,b\",\"line1\nline2\",z");
   if (rows.len() != 1) {
     return test.fail("row count " + rows.len().to_string());
   }
@@ -106,7 +106,7 @@ function test_doc_embedded_newline(): test.TestOutcome {
 
 function test_doc_crlf_and_trailing(): test.TestOutcome {
   // CRLF separators + a trailing terminator → no spurious empty record.
-  var rows: string[][] = csv.csv_parse("a,b\r\nc,d\r\n");
+  let rows: string[][] = csv.csv_parse("a,b\r\nc,d\r\n");
   if (rows.len() != 2) {
     return test.fail("row count " + rows.len().to_string());
   }
@@ -122,8 +122,8 @@ function test_doc_empty_and_trailing_field(): test.TestOutcome {
 }
 
 function test_doc_serialize_roundtrip(): test.TestOutcome {
-  var rows: string[][] = [["x", "y,z"], ["1", "two\nlines"]];
-  var back: string[][] = csv.csv_parse(csv.csv_serialize(rows));
+  let rows: string[][] = [["x", "y,z"], ["1", "two\nlines"]];
+  let back: string[][] = csv.csv_parse(csv.csv_serialize(rows));
   if (back.len() != 2) {
     return test.fail("row count");
   }
@@ -134,7 +134,7 @@ function test_doc_serialize_roundtrip(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/csv");
+  let r: test.TestRunner = test.test_new("std/csv");
   r = r.it("escape plain", test_escape_plain);
   r = r.it("escape comma", test_escape_comma);
   r = r.it("escape quote", test_escape_quote);

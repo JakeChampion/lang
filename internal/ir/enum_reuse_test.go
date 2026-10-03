@@ -27,8 +27,8 @@ import (
 func TestEnumReuseFiresForPointerPayload(t *testing.T) {
 	ip := lowerForTest(t, `enum Bag { Keep(i32[]), Swap(i32[]) }
 function churn(n: i32): i32 {
-    var b: Bag = Keep([0, 0]);
-    var i: i32 = 0;
+    let b: Bag = Keep([0, 0]);
+    let i: i32 = 0;
     while (i < n) {
         b = Keep([i, i]);
         i = i + 1;
@@ -52,8 +52,8 @@ function main(): i32 { return churn(3); }`)
 func TestEnumReuseFiresAcrossVariants(t *testing.T) {
 	ip := lowerForTest(t, `enum Bag { Keep(i32[]), Swap(i32[]) }
 function churn(n: i32): i32 {
-    var b: Bag = Keep([0, 0]);
-    var i: i32 = 0;
+    let b: Bag = Keep([0, 0]);
+    let i: i32 = 0;
     while (i < n) {
         b = Keep([i, i]);
         b = Swap([i, i]);
@@ -78,8 +78,8 @@ function main(): i32 { return churn(3); }`)
 func TestEnumReuseSkipsNonUniformBoxSize(t *testing.T) {
 	ip := lowerForTest(t, `enum V { A(i32[]), B(i32[], i32[]) }
 function churn(n: i32): i32 {
-    var v: V = A([0]);
-    var i: i32 = 0;
+    let v: V = A([0]);
+    let i: i32 = 0;
     while (i < n) {
         v = A([i]);
         i = i + 1;
@@ -102,8 +102,8 @@ function main(): i32 { return churn(3); }`)
 func TestEnumReuseSkipsPayloadlessConstruction(t *testing.T) {
 	ip := lowerForTest(t, `enum Box2 { Full(i32[]), Empty }
 function churn(n: i32): i32 {
-    var o: Box2 = Full([0]);
-    var i: i32 = 0;
+    let o: Box2 = Full([0]);
+    let i: i32 = 0;
     while (i < n) {
         o = Empty;
         i = i + 1;
@@ -172,8 +172,8 @@ function main(): i32 { return 0; }`)
 func TestEnumReuseScalarPayload(t *testing.T) {
 	const src = `enum Step { Fwd(i32), Bwd(i32) }
 function churn(n: i32): i32 {
-    var s: Step = Fwd(0);
-    var i: i32 = 0;
+    let s: Step = Fwd(0);
+    let i: i32 = 0;
     while (i < n) {
         s = Fwd(i);
         i = i + 1;

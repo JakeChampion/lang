@@ -22,13 +22,13 @@ import (
 // leaf (`(1 + 1)`, a cast's target) and takes the first key that answers.
 // It cannot answer for a call, a field access or an `if` expression — the
 // parser has no types — so the structural one reads the DECLARATION instead:
-// a `var m: Map[i32, i32] = …` annotation reaches parse_map_lit as
+// a `let m: Map[i32, i32] = …` annotation reaches parse_map_lit as
 // `Par.map_kind` and picks the constructor outright, and the guess is only
 // consulted where there is no annotation.
 //
 // That annotation describes ONE literal, and plenty of literals have none of
 // their own — a sibling literal in the same initialiser, a `return`, a call
-// argument, a struct-field value. The third fix is in irlower, where the types
+// argument, a struct-field value. The third fix is in the lowering, where the types
 // the parser lacks are in hand: a key argument that is provably an integer
 // overrides the constructor's spelling (#7438). Evidence only — a key it cannot
 // type keeps whatever the constructor said, so a string key is never flipped.
@@ -53,13 +53,13 @@ var mapLiteralComputedKeyCases = []struct {
 	// The reduced repro's shape: two computed keys. 10 + 20 + 2 = 32.
 	{"two_computed_keys", `import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = Map { (1i32 + 1i32): 10i32, (2i32 + 2i32): 20i32 };
+    let m: Map[i32, i32] = Map { (1i32 + 1i32): 10i32, (2i32 + 2i32): 20i32 };
     return m.get_or(2i32, 0i32) + m.get_or(4i32, 0i32) + m.len();
 }`},
 	// One computed key — the silent case. 7 + 1 = 8.
 	{"one_computed_key", `import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = Map { (1i32 + 1i32): 7i32 };
+    let m: Map[i32, i32] = Map { (1i32 + 1i32): 7i32 };
     return m.get_or(2i32, 0i32) + m.len();
 }`},
 	// A computed key whose decisive literal is two nodes down, under the
@@ -67,14 +67,14 @@ function main(): i32 {
 	// 296 <<| 403 masks to 296 << 19. 5 + 1 = 6.
 	{"nested_shift_key", `import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = Map { (560i32 | ((372i32 & 865i32) <<| 422i32)): 5i32 };
+    let m: Map[i32, i32] = Map { (560i32 | ((372i32 & 865i32) <<| 422i32)): 5i32 };
     return m.get_or(23088i32, 0i32) + m.len();
 }`},
 	// The string direction must NOT flip: a computed STRING key stays
 	// string-keyed. 5 + 1 = 6.
 	{"computed_string_key", `import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = Map { ("a" + "b"): 5i32 };
+    let m: Map[string, i32] = Map { ("a" + "b"): 5i32 };
     return m.get_or("ab", 0i32) + m.len();
 }`},
 	// A cast is decisive on its TARGET even when nothing below it is: the
@@ -85,7 +85,7 @@ function main(): i32 {
 function k(): i32 { return 5i32; }
 function j(): i32 { return 9i32; }
 function main(): i32 {
-    var m: Map[i32, i32] = Map { (k() as i32): 7i32, (j() as i32): 3i32 };
+    let m: Map[i32, i32] = Map { (k() as i32): 7i32, (j() as i32): 3i32 };
     return m.get_or(5i32, 0i32) + m.get_or(9i32, 0i32) + m.len();
 }`},
 	// The string direction of the ANNOTATION: a `Map[string, …]` declaration
@@ -94,7 +94,7 @@ function main(): i32 {
 	{"undecidable_key_string_annotation", `import "core/map";
 function k(): string { return "z"; }
 function main(): i32 {
-    var m: Map[string, i32] = Map { k(): 4i32 };
+    let m: Map[string, i32] = Map { k(): 4i32 };
     return m.get_or("z", 0i32) + m.len();
 }`},
 	// Keys the parser CANNOT classify at all — two calls. Nothing syntactic
@@ -104,7 +104,7 @@ function main(): i32 {
 function k(): i32 { return 3i32; }
 function j(): i32 { return 8i32; }
 function main(): i32 {
-    var m: Map[i32, i32] = Map { k(): 6i32, j(): 4i32 };
+    let m: Map[i32, i32] = Map { k(): 6i32, j(): 4i32 };
     return m.get_or(3i32, 0i32) + m.get_or(8i32, 0i32) + m.len();
 }`},
 	// The reduced shape of seed 97: both keys are `if` expressions. An arm can
@@ -113,8 +113,8 @@ function main(): i32 {
 	// 9 + 5 + 2 = 16.
 	{"if_expression_keys_from_annotation", `import "core/map";
 function main(): i32 {
-    var c: boolean = true;
-    var m: Map[i32, i32] = Map {
+    let c: boolean = true;
+    let m: Map[i32, i32] = Map {
         (if (c) { 11i32 } else { 12i32 }): 9i32,
         (if (c) { 21i32 } else { 22i32 }): 5i32
     };
@@ -128,8 +128,8 @@ function main(): i32 {
 	{"neighbouring_literals_keep_own_kind", `import "core/map";
 function k(): i32 { return 3i32; }
 function main(): i32 {
-    var outer: Map[i32, i32] = Map { k(): 5i32, (1i32 + 1i32): 6i32 };
-    var inner: Map[string, i32] = Map { ("a" + "b"): 7i32 };
+    let outer: Map[i32, i32] = Map { k(): 5i32, (1i32 + 1i32): 6i32 };
+    let inner: Map[string, i32] = Map { ("a" + "b"): 7i32 };
     return outer.get_or(3i32, 0i32) + outer.get_or(2i32, 0i32) + inner.get_or("ab", 0i32) + outer.len() + inner.len();
 }`},
 	// No annotation to read, so the syntactic guess is still what decides.
@@ -137,12 +137,12 @@ function main(): i32 {
 	// 7 + 1 = 8.
 	{"unannotated_keeps_the_guess", `import "core/map";
 function main(): i32 {
-    var m = Map { (1i32 + 1i32): 7i32 };
+    let m = Map { (1i32 + 1i32): 7i32 };
     return m.get_or(2i32, 0i32) + m.len();
 }`},
 
 	// #7438 — the declaration reaches ONE literal, so neither of the fixes
-	// above covers a literal with no annotation of its own. irlower resolves
+	// above covers a literal with no annotation of its own. The lowering resolves
 	// the kind from the key ARGUMENT's type instead, which is the answer the
 	// parser could not give; the constructor spelling is kept wherever no key
 	// carries positive integer evidence, so a string key is never flipped.
@@ -153,32 +153,32 @@ function main(): i32 {
 	{"sibling_literals_one_initialiser", `import "core/map";
 function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
 function main(): i32 {
-    var k0: i32 = 144i32;
-    var k1: i32 = 145i32;
-    var m: Map[i32, i32] = pick(false, Map { k0: 1i32 }, Map { k0: 6i32, k1: 4i32 });
+    let k0: i32 = 144i32;
+    let k1: i32 = 145i32;
+    let m: Map[i32, i32] = pick(false, Map { k0: 1i32 }, Map { k0: 6i32, k1: 4i32 });
     return m.get_or(144i32, 0i32) + m.get_or(145i32, 0i32) + m.len();
 }`},
-	// The three positions that carry no `var` annotation at all. Each builds
+	// The three positions that carry no `let` annotation at all. Each builds
 	// string-keyed and SIGSEGV's on the second insert's compare.
 	{"ident_keys_in_return_position", `import "core/map";
 function mk(k0: i32, k1: i32): Map[i32, i32] { return Map { k0: 6i32, k1: 4i32 }; }
 function main(): i32 {
-    var m: Map[i32, i32] = mk(144i32, 145i32);
+    let m: Map[i32, i32] = mk(144i32, 145i32);
     return m.get_or(144i32, 0i32) + m.get_or(145i32, 0i32) + m.len();
 }`},
 	{"ident_keys_as_call_argument", `import "core/map";
 function take(m: Map[i32, i32]): i32 { return m.get_or(144i32, 0i32) + m.get_or(145i32, 0i32) + m.len(); }
 function main(): i32 {
-    var k0: i32 = 144i32;
-    var k1: i32 = 145i32;
+    let k0: i32 = 144i32;
+    let k1: i32 = 145i32;
     return take(Map { k0: 6i32, k1: 4i32 });
 }`},
 	{"ident_keys_in_struct_field", `import "core/map";
 struct S { m: Map[i32, i32] }
 function main(): i32 {
-    var k0: i32 = 144i32;
-    var k1: i32 = 145i32;
-    var s: S = S { m: Map { k0: 6i32, k1: 4i32 } };
+    let k0: i32 = 144i32;
+    let k1: i32 = 145i32;
+    let s: S = S { m: Map { k0: 6i32, k1: 4i32 } };
     return s.m.get_or(144i32, 0i32) + s.m.get_or(145i32, 0i32) + s.m.len();
 }`},
 	// Three entries, so the constructor's own hint is exercised past the first
@@ -186,7 +186,7 @@ function main(): i32 {
 	{"param_keys_read_back_after_grow", `import "core/map";
 function mk(a: i32, b: i32, c: i32): Map[i32, i32] { return Map { a: 1i32, b: 2i32, c: 3i32 }; }
 function main(): i32 {
-    var m: Map[i32, i32] = mk(10i32, 20i32, 30i32);
+    let m: Map[i32, i32] = mk(10i32, 20i32, 30i32);
     return m.get_or(10i32, 0i32) + m.get_or(20i32, 0i32) + m.get_or(30i32, 0i32) + m.len();
 }`},
 	// #8090 — a key read out of an ARRAY ELEMENT. Hand-written that is rare,
@@ -198,7 +198,7 @@ function main(): i32 {
 	{"element_keys_from_int_array", `import "core/map";
 function take(m: Map[i32, i32]): i32 { return m.get_or(3i32, 0i32) + m.get_or(4i32, 0i32) + m.len(); }
 function main(): i32 {
-    var xs: i32[] = [3i32, 4i32];
+    let xs: i32[] = [3i32, 4i32];
     return take(Map { xs[0i32]: 6i32, xs[1i32]: 4i32 });
 }`},
 	// The cell shape itself, reduced from fernsmith seed 15072: both keys are
@@ -208,12 +208,12 @@ function main(): i32 {
 struct S0 { n: i32, s: string }
 function reads(m: Map[i32, i32]): (i32) => i32 { return ((x: i32) => (m.get_or(144i32, 0i32) + m.get_or(145i32, 0i32) + m.len())); }
 function main(): i32 {
-    var k0: i32 = 143i32;
-    var k1: i32 = 144i32;
+    let k0: i32 = 143i32;
+    let k1: i32 = 144i32;
     k0 = k0 + 1i32;
     k1 = k1 + 1i32;
-    var w: S0 = (if (true) { S0 { n: k0, s: "a" } } else { S0 { n: k1, s: "b" } });
-    var f: (i32) => i32 = reads(Map { k0: 6i32, k1: 4i32 });
+    let w: S0 = (if (true) { S0 { n: k0, s: "a" } } else { S0 { n: k1, s: "b" } });
+    let f: (i32) => i32 = reads(Map { k0: 6i32, k1: 4i32 });
     return f(0i32) + w.n - 144i32;
 }`},
 	// The element shape's string direction: a `string[]` element key must keep
@@ -221,7 +221,7 @@ function main(): i32 {
 	{"element_string_keys_stay_string", `import "core/map";
 function take(m: Map[string, i32]): i32 { return m.get_or("ab", 0i32) + m.get_or("cd", 0i32) + m.len(); }
 function main(): i32 {
-    var ss: string[] = ["ab", "cd"];
+    let ss: string[] = ["ab", "cd"];
     return take(Map { ss[0i32]: 6i32, ss[1i32]: 4i32 });
 }`},
 	// Arithmetic over ident keys, in the second arm of an `if` whose first arm
@@ -229,8 +229,8 @@ function main(): i32 {
 	// where the negative key's hash read faulted on wasm. 7 + 3 + 2 = 12.
 	{"arithmetic_keys_in_sibling_literal", `import "core/map";
 function main(): i32 {
-    var a: i32 = 5i32;
-    var m: Map[i32, i32] = if (a < 0i32) { Map {} } else { Map { (a - (a ^ 726i32)): 7i32, -(a * 2i32): 3i32 } };
+    let a: i32 = 5i32;
+    let m: Map[i32, i32] = if (a < 0i32) { Map {} } else { Map { (a - (a ^ 726i32)): 7i32, -(a * 2i32): 3i32 } };
     return m.get_or(0i32 - 718i32, 0i32) + m.get_or(0i32 - 10i32, 0i32) + m.len();
 }`},
 	// The direction the evidence rule must never flip: string-typed ident keys
@@ -238,7 +238,7 @@ function main(): i32 {
 	{"ident_string_keys_stay_string", `import "core/map";
 function mk(k0: string, k1: string): Map[string, i32] { return Map { k0: 6i32, k1: 4i32 }; }
 function main(): i32 {
-    var m: Map[string, i32] = mk("ab", "cd");
+    let m: Map[string, i32] = mk("ab", "cd");
     return m.get_or("ab", 0i32) + m.get_or("cd", 0i32) + m.len();
 }`},
 }

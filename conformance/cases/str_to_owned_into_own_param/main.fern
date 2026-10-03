@@ -20,18 +20,18 @@ function consume(own s: string): i32 { return s.len(); }
 function trimmed(s: string): string { return s.trim().to_owned(); }
 
 function main(): i32 {
-    var total: i32 = 0;
+    let total: i32 = 0;
     for i in 0..8 {
-        var src: string = "  item-" + i.to_string() + "  ";
+        let src: string = "  item-" + i.to_string() + "  ";
 
         // Consumed by an `own` parameter, then the source is read again.
         total = total + consume(src.trim().to_owned());
         total = total + src.len();
 
-        // The other owning sinks: var init, struct field, return, array.
-        var v: string = src.trim().to_owned();
-        var b: Box = Box { name: src.trim().to_owned() };
-        var arr: string[] = [trimmed(src)];
+        // The other owning sinks: let init, struct field, return, array.
+        let v: string = src.trim().to_owned();
+        let b: Box = Box { name: src.trim().to_owned() };
+        let arr: string[] = [trimmed(src)];
         if (v != b.name) { return 1; }
         if (arr[0] != v) { return 2; }
         if (v != "item-" + i.to_string()) { return 3; }
@@ -40,8 +40,8 @@ function main(): i32 {
 
     // A copy is independent of its source: rebinding the source must not
     // disturb it.
-    var a: string = "  keep me  ";
-    var copy: string = a.trim().to_owned();
+    let a: string = "  keep me  ";
+    let copy: string = a.trim().to_owned();
     a = "  something else  ";
     print(copy);
     print(a.trim().to_owned());

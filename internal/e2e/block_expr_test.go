@@ -48,8 +48,8 @@ func TestBlockExprInterp(t *testing.T) {
 			// value. The block evaluates to `e + 1` = 6.
 			"if-block-tail",
 			`function main(): i32 {
-				var e = 5;
-				var x: i32 = if (e > 0) { var k = e + 1; k } else { 0 };
+				let e = 5;
+				let x: i32 = if (e > 0) { let k = e + 1; k } else { 0 };
 				return x;
 			}`,
 			6,
@@ -59,19 +59,19 @@ func TestBlockExprInterp(t *testing.T) {
 			// reached, the single-expr `else` value flows.
 			"if-block-else-taken",
 			`function main(): i32 {
-				var e = 0;
-				var x: i32 = if (e > 0) { var k = e + 1; k } else { var z = 9; z };
+				let e = 0;
+				let x: i32 = if (e > 0) { let k = e + 1; k } else { let z = 9; z };
 				return x;
 			}`,
 			9,
 		},
 		{
-			// `match`-arm block-expression: arm 0 runs `var s = tag +
+			// `match`-arm block-expression: arm 0 runs `let s = tag +
 			// 5; s` → 5; the wildcard arm is a bare expr.
 			"match-arm-block",
 			`function main(): i32 {
-				var tag = 0;
-				var r: i32 = match (tag) { 0 => { var s = tag + 5; s }, _ => 99 };
+				let tag = 0;
+				let r: i32 = match (tag) { 0 => { let s = tag + 5; s }, _ => 99 };
 				return r;
 			}`,
 			5,
@@ -80,20 +80,20 @@ func TestBlockExprInterp(t *testing.T) {
 			// Multiple leading statements; the tail sees them all.
 			"multi-leading-statements",
 			`function main(): i32 {
-				var x: i32 = if (true) { var a = 2; var b = a * 3; var c = b + 1; c } else { 0 };
+				let x: i32 = if (true) { let a = 2; let b = a * 3; let c = b + 1; c } else { 0 };
 				return x;
 			}`,
 			7,
 		},
 		{
 			// Composition: a block-expr `if` nested inside a `match`
-			// scrutinee. `match (if (c) { var k = 7; k } else { 0 }) {
+			// scrutinee. `match (if (c) { let k = 7; k } else { 0 }) {
 			// ... }` → matches 7.
 			"compose-through-match",
 			`function main(): i32 {
-				var c = true;
-				var r: i32 = match (if (c) { var k = 7; k } else { 0 }) {
-					7 => { var hit = 1; hit },
+				let c = true;
+				let r: i32 = match (if (c) { let k = 7; k } else { 0 }) {
+					7 => { let hit = 1; hit },
 					_ => 0
 				};
 				return r;
@@ -106,19 +106,19 @@ func TestBlockExprInterp(t *testing.T) {
 			// gets its own scope.
 			"locals-confined-to-block",
 			`function main(): i32 {
-				var a: i32 = if (true) { var k = 10; k } else { 0 };
-				var b: i32 = if (true) { var k = 20; k } else { 0 };
+				let a: i32 = if (true) { let k = 10; k } else { 0 };
+				let b: i32 = if (true) { let k = 20; k } else { 0 };
 				return a + b;
 			}`,
 			30,
 		},
 		{
 			// #4521: a general value-position block-expression (not an
-			// if/match branch) — the RHS of `var`. Leading statements then
+			// if/match branch) — the RHS of `let`. Leading statements then
 			// a trailing value; 3*4 = 12.
 			"value-position-var-rhs",
 			`function main(): i32 {
-				var n: i32 = { var k = 3; var m = 4; k * m };
+				let n: i32 = { let k = 3; let m = 4; k * m };
 				return n;
 			}`,
 			12,
@@ -128,7 +128,7 @@ func TestBlockExprInterp(t *testing.T) {
 			"value-position-call-arg",
 			`function id(x: i32): i32 { return x; }
 			function main(): i32 {
-				return id({ var a = 40; a + 2 });
+				return id({ let a = 40; a + 2 });
 			}`,
 			42,
 		},
@@ -137,7 +137,7 @@ func TestBlockExprInterp(t *testing.T) {
 			// branch-form passthrough), so it stays a plain expression.
 			"value-position-single-expr",
 			`function main(): i32 {
-				var n: i32 = { 7 };
+				let n: i32 = { 7 };
 				return n + 1;
 			}`,
 			8,
@@ -147,7 +147,7 @@ func TestBlockExprInterp(t *testing.T) {
 			// early exit escapes the enclosing function; the else branch (with a
 			// reachable tail) yields the block's value. f(5): tail e+1 = 6.
 			"cf-conditional-return-tail",
-			`function f(e: i32): i32 { var x: i32 = { if (e < 0) { return 99; } e + 1 }; return x; }
+			`function f(e: i32): i32 { let x: i32 = { if (e < 0) { return 99; } e + 1 }; return x; }
 			function main(): i32 { return f(5); }`,
 			6,
 		},
@@ -155,7 +155,7 @@ func TestBlockExprInterp(t *testing.T) {
 			// #4522: the early-exit path is taken — `return` escapes the block
 			// AND the function. f(-1): return 99.
 			"cf-conditional-return-taken",
-			`function f(e: i32): i32 { var x: i32 = { if (e < 0) { return 99; } e + 1 }; return x; }
+			`function f(e: i32): i32 { let x: i32 = { if (e < 0) { return 99; } e + 1 }; return x; }
 			function main(): i32 { return f(-1); }`,
 			99,
 		},
@@ -164,8 +164,8 @@ func TestBlockExprInterp(t *testing.T) {
 			// escapes to the loop. i=1,2,3 add; break at 4. s = 6.
 			"cf-break-in-block",
 			`function main(): i32 {
-				var s: i32 = 0; var i: i32 = 0;
-				while (i < 10) { i = i + 1; var d: i32 = { if (i == 4) { break; } i }; s = s + d; }
+				let s: i32 = 0; let i: i32 = 0;
+				while (i < 10) { i = i + 1; let d: i32 = { if (i == 4) { break; } i }; s = s + d; }
 				return s;
 			}`,
 			6,
@@ -175,8 +175,8 @@ func TestBlockExprInterp(t *testing.T) {
 			// the loop body. i=3 skipped: s = 1+2+4+5+6 = 18.
 			"cf-continue-in-block",
 			`function main(): i32 {
-				var s: i32 = 0; var i: i32 = 0;
-				while (i < 6) { i = i + 1; var d: i32 = { if (i == 3) { continue; } i }; s = s + d; }
+				let s: i32 = 0; let i: i32 = 0;
+				while (i < 6) { i = i + 1; let d: i32 = { if (i == 3) { continue; } i }; s = s + d; }
 				return s;
 			}`,
 			18,
@@ -186,14 +186,14 @@ func TestBlockExprInterp(t *testing.T) {
 			// `return`s, so the block is `never` (not a void-block E061). f(-1)
 			// takes the first return → 1.
 			"cf-no-tail-all-return-first",
-			`function f(n: i32): i32 { var x: i32 = { if (n < 0) { return 1; } return 2; }; return x; }
+			`function f(n: i32): i32 { let x: i32 = { if (n < 0) { return 1; } return 2; }; return x; }
 			function main(): i32 { return f(-1); }`,
 			1,
 		},
 		{
 			// The fall-through return is taken. f(5) → 2.
 			"cf-no-tail-all-return-second",
-			`function f(n: i32): i32 { var x: i32 = { if (n < 0) { return 1; } return 2; }; return x; }
+			`function f(n: i32): i32 { let x: i32 = { if (n < 0) { return 1; } return 2; }; return x; }
 			function main(): i32 { return f(5); }`,
 			2,
 		},
@@ -201,7 +201,7 @@ func TestBlockExprInterp(t *testing.T) {
 			// #4522: an if-EXPRESSION whose two arms both diverge — the whole
 			// if is `never`, assignable to i32. f(5) → 2.
 			"cf-if-expr-both-arms-diverge",
-			`function f(n: i32): i32 { var x: i32 = if (n < 0) { return 1; } else { return 2; }; return x; }
+			`function f(n: i32): i32 { let x: i32 = if (n < 0) { return 1; } else { return 2; }; return x; }
 			function main(): i32 { return f(5); }`,
 			2,
 		},
@@ -209,7 +209,7 @@ func TestBlockExprInterp(t *testing.T) {
 			// #4522: a match arm that always exits, unified with a value arm.
 			// f(0) hits the divergent arm → 100.
 			"cf-match-arm-diverges",
-			`function f(n: i32): i32 { var x: i32 = match (n) { 0 => { return 100; }, _ => { n * 2 } }; return x; }
+			`function f(n: i32): i32 { let x: i32 = match (n) { 0 => { return 100; }, _ => { n * 2 } }; return x; }
 			function main(): i32 { return f(0); }`,
 			100,
 		},
@@ -233,14 +233,14 @@ func TestBlockExprInterp(t *testing.T) {
 // every compiled backend and asserts each compiled stdout matches the
 // interpreter's, and that the interpreter's matches the expected string.
 
-// An `if`-expression branch block whose value flows into a `var`, printed
+// An `if`-expression branch block whose value flows into a `let`, printed
 // so each backend's stdout is differentially compared. The taken branch
-// runs a leading `var k = e + 1;` and yields `k`; e=5 → 6.
+// runs a leading `let k = e + 1;` and yields `k`; e=5 → 6.
 func TestBlockExprCompiledIfBranch(t *testing.T) {
 	src := `import "std/i32";
 function main(): i32 {
-	var e = 5;
-	var x: i32 = if (e > 0) { var k = e + 1; k } else { 0 };
+	let e = 5;
+	let x: i32 = if (e > 0) { let k = e + 1; k } else { 0 };
 	print("x=" + x.to_string());
 	return 0;
 }
@@ -248,15 +248,15 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "x=6"))
 }
 
-// #4521: a general value-position block-expression (the RHS of a `var`, not
+// #4521: a general value-position block-expression (the RHS of a `let`, not
 // an if/match branch) compiles + runs identically on every native backend.
 // Leading statements then a trailing value; k*m = 12, and a string-tail block
 // to exercise the RC-survives-exit-sweep path in value position too.
 func TestBlockExprCompiledValuePosition(t *testing.T) {
 	src := `import "std/i32";
 function main(): i32 {
-	var n: i32 = { var k = 3; var m = 4; k * m };
-	var s: string = { var a = "foo"; var b = "bar"; a + b };
+	let n: i32 = { let k = 3; let m = 4; k * m };
+	let s: string = { let a = "foo"; let b = "bar"; a + b };
 	print("n=" + n.to_string() + " s=" + s);
 	return 0;
 }
@@ -271,10 +271,10 @@ function main(): i32 {
 // fall-through path.
 func TestBlockExprCompiledControlFlow(t *testing.T) {
 	src := `import "std/i32";
-function f(e: i32): i32 { var x: i32 = { if (e < 0) { return 99; } e + 1 }; return x; }
+function f(e: i32): i32 { let x: i32 = { if (e < 0) { return 99; } e + 1 }; return x; }
 function main(): i32 {
-	var s: i32 = 0; var i: i32 = 0;
-	while (i < 10) { i = i + 1; var d: i32 = { if (i == 4) { break; } i }; s = s + d; }
+	let s: i32 = 0; let i: i32 = 0;
+	while (i < 10) { i = i + 1; let d: i32 = { if (i == 4) { break; } i }; s = s + d; }
 	print("a=" + f(5).to_string() + " b=" + f(-1).to_string() + " s=" + s.to_string());
 	return 0;
 }
@@ -290,9 +290,9 @@ function main(): i32 {
 // diverge; h: divergent match arm vs value arm.
 func TestBlockExprCompiledControlFlowNoTail(t *testing.T) {
 	src := `import "std/i32";
-function f(n: i32): i32 { var x: i32 = { if (n < 0) { return 1; } return 2; }; return x; }
-function g(n: i32): i32 { var x: i32 = if (n < 0) { return 10; } else { return 20; }; return x; }
-function h(n: i32): i32 { var x: i32 = match (n) { 0 => { return 100; }, _ => { n * 2 } }; return x; }
+function f(n: i32): i32 { let x: i32 = { if (n < 0) { return 1; } return 2; }; return x; }
+function g(n: i32): i32 { let x: i32 = if (n < 0) { return 10; } else { return 20; }; return x; }
+function h(n: i32): i32 { let x: i32 = match (n) { 0 => { return 100; }, _ => { n * 2 } }; return x; }
 function main(): i32 {
 	print("f-1=" + f(-1).to_string() + " f5=" + f(5).to_string() +
 		" g-1=" + g(-1).to_string() + " g5=" + g(5).to_string() +
@@ -303,13 +303,13 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "f-1=1 f5=2 g-1=10 g5=20 h0=100 h3=6"))
 }
 
-// A `match`-arm block-expression: arm 0 runs `var v = t + 10; v * 2`.
+// A `match`-arm block-expression: arm 0 runs `let v = t + 10; v * 2`.
 // t=0 → v=10 → 20.
 func TestBlockExprCompiledMatchArm(t *testing.T) {
 	src := `import "std/i32";
 function main(): i32 {
-	var t = 0;
-	var r: i32 = match (t) { 0 => { var v = t + 10; v * 2 }, _ => 0 };
+	let t = 0;
+	let r: i32 = match (t) { 0 => { let v = t + 10; v * 2 }, _ => 0 };
 	print("r=" + r.to_string());
 	return 0;
 }
@@ -317,16 +317,16 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "r=20"))
 }
 
-// A STRING-producing block tail: `{ var s = a + b; s }`. The block-local
+// A STRING-producing block tail: `{ let s = a + b; s }`. The block-local
 // `s` is a heap value; it's the block's result, so it must survive the
 // function-exit dec sweep (its reference flows out to the printed
 // result) — no double-free / leak-induced wrongness. Differential across
 // all backends confirms RC correctness end to end.
 func TestBlockExprCompiledStringTail(t *testing.T) {
 	src := `function main(): i32 {
-	var a = "foo";
-	var b = "bar";
-	var s: string = if (true) { var joined = a + b; joined } else { "" };
+	let a = "foo";
+	let b = "bar";
+	let s: string = if (true) { let joined = a + b; joined } else { "" };
 	print("s=" + s);
 	return 0;
 }
@@ -339,11 +339,11 @@ func TestBlockExprCompiledStringTail(t *testing.T) {
 // string block type; typed as one i32 the module failed validation.
 func TestBlockExprStringTailRuntimeCondition(t *testing.T) {
 	src := `function pick(n: i32): string {
-	var s: string = if (n > 1) { var joined = "foo" + "bar"; joined } else { "" };
+	let s: string = if (n > 1) { let joined = "foo" + "bar"; joined } else { "" };
 	return s;
 }
 function main(): i32 {
-	var i: i32 = 0;
+	let i: i32 = 0;
 	while (i < 3) {
 		print("s=" + pick(i));
 		i = i + 1;
@@ -355,13 +355,13 @@ function main(): i32 {
 }
 
 // Nested: a block-expr whose tail is itself an `if`-expression. The outer
-// block runs `var base = 3;` then yields `if (base > 0) { base * 7 } else
+// block runs `let base = 3;` then yields `if (base > 0) { base * 7 } else
 // { -1 }` → 21.
 func TestBlockExprCompiledNestedIfTail(t *testing.T) {
 	src := `import "std/i32";
 function main(): i32 {
-	var x: i32 = if (true) {
-		var base = 3;
+	let x: i32 = if (true) {
+		let base = 3;
 		if (base > 0) { base * 7 } else { 0 - 1 }
 	} else { 0 };
 	print("x=" + x.to_string());
@@ -377,11 +377,11 @@ function main(): i32 {
 func TestBlockExprCompiledNestedMatchTail(t *testing.T) {
 	src := `import "std/i32";
 function main(): i32 {
-	var sel = 1;
-	var r: i32 = if (true) {
-		var bump = 100;
+	let sel = 1;
+	let r: i32 = if (true) {
+		let bump = 100;
 		match (sel) {
-			1 => { var hit = bump + 5; hit },
+			1 => { let hit = bump + 5; hit },
 			_ => 0
 		}
 	} else { 0 };
@@ -399,8 +399,8 @@ function main(): i32 {
 func TestBlockExprCompiledLocalsConfined(t *testing.T) {
 	src := `import "std/i32";
 function main(): i32 {
-	var a: i32 = if (true) { var k = 10; k } else { 0 };
-	var b: i32 = if (true) { var k = 20; k } else { 0 };
+	let a: i32 = if (true) { let k = 10; k } else { 0 };
+	let b: i32 = if (true) { let k = 20; k } else { 0 };
 	print("sum=" + (a + b).to_string());
 	return 0;
 }

@@ -25,32 +25,32 @@ var dynEnumIRCases = []struct {
 	// The issue #4785 repro: an enum LOCAL coerced into a scalar `dyn` local.
 	// Add(3).show() = 3 + 1 = 4.
 	{"enum-local-coerce",
-		`trait Show { function show(self: Self): i32; } enum Op { Add(i32), Neg } impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } } function go(k: i32): i32 { var e: Op = Add(k); var d: dyn Show = e; return d.show(); } function main(): i32 { return go(3); }`, 4},
+		`trait Show { function show(self: Self): i32; } enum Op { Add(i32), Neg } impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } } function go(k: i32): i32 { let e: Op = Add(k); let d: dyn Show = e; return d.show(); } function main(): i32 { return go(3); }`, 4},
 	// Direct construction into the dyn slot (the shape that already worked —
 	// regression guard). Add(41).show() = 42.
 	{"enum-direct-init",
-		`trait Show { function show(self: Self): i32; } enum Op { Add(i32), Neg } impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } } function main(): i32 { var d: dyn Show = Add(41); return d.show(); }`, 42},
+		`trait Show { function show(self: Self): i32; } enum Op { Add(i32), Neg } impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } } function main(): i32 { let d: dyn Show = Add(41); return d.show(); }`, 42},
 	// An enum LOCAL passed to a `dyn` PARAM. Add(9).show() = 10.
 	{"enum-local-to-param",
-		`trait Show { function show(self: Self): i32; } enum Op { Add(i32), Neg } impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } } function run(s: dyn Show): i32 { return s.show(); } function main(): i32 { var e: Op = Add(9); return run(e); }`, 10},
+		`trait Show { function show(self: Self): i32; } enum Op { Add(i32), Neg } impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } } function run(s: dyn Show): i32 { return s.show(); } function main(): i32 { let e: Op = Add(9); return run(e); }`, 10},
 	// A UNIT variant behind dyn — the payloadless arm must dispatch too. 7.
 	{"enum-unit-variant",
-		`trait Show { function show(self: Self): i32; } enum Op { Add(i32), Neg } impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 7; } } } } function go(): i32 { var e: Op = Neg; var d: dyn Show = e; return d.show(); } function main(): i32 { return go(); }`, 7},
+		`trait Show { function show(self: Self): i32; } enum Op { Add(i32), Neg } impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 7; } } } } function go(): i32 { let e: Op = Neg; let d: dyn Show = e; return d.show(); } function main(): i32 { return go(); }`, 7},
 	// A dispatched method taking an ARGUMENT. Add(5).sc(3) = 5 * 3 = 15.
 	{"enum-method-arg",
-		`trait Sc { function sc(self: Self, k: i32): i32; } enum Op { Add(i32), Neg } impl Sc for Op { function sc(self: Self, k: i32): i32 { match (self) { Add(v) => { return v * k; }, Neg => { return 0 - k; } } } } function f(s: dyn Sc): i32 { return s.sc(3); } function main(): i32 { var e: Op = Add(5); return f(e); }`, 15},
+		`trait Sc { function sc(self: Self, k: i32): i32; } enum Op { Add(i32), Neg } impl Sc for Op { function sc(self: Self, k: i32): i32 { match (self) { Add(v) => { return v * k; }, Neg => { return 0 - k; } } } } function f(s: dyn Sc): i32 { return s.sc(3); } function main(): i32 { let e: Op = Add(5); return f(e); }`, 15},
 	// TWO enums implementing the same trait: each value must reach its OWN
 	// impl (per-variant keying — a blanket first-enum fallback would send the
 	// Col value to Op.show). Add(3).show() + Blue.show() = 4 + 20 = 24.
 	{"enum-two-enums",
-		`trait Show { function show(self: Self): i32; } enum Op { Add(i32), Neg } enum Col { Red, Blue } impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } } impl Show for Col { function show(self: Self): i32 { match (self) { Red => { return 10; }, Blue => { return 20; } } } } function run(s: dyn Show): i32 { return s.show(); } function main(): i32 { var a: Op = Add(3); var b: Col = Blue; return run(a) + run(b); }`, 24},
+		`trait Show { function show(self: Self): i32; } enum Op { Add(i32), Neg } enum Col { Red, Blue } impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } } impl Show for Col { function show(self: Self): i32 { match (self) { Red => { return 10; }, Blue => { return 20; } } } } function run(s: dyn Show): i32 { return s.show(); } function main(): i32 { let a: Op = Add(3); let b: Col = Blue; return run(a) + run(b); }`, 24},
 	// A heterogeneous STRUCT + ENUM `dyn Show[]` — the struct element takes
 	// the shape arm, the enum-local element the variant arm, in one chain.
 	// Circle{3}.show() + Add(4).show() = 9 + 5 = 14. (The native x86-64
 	// backend segfaults on this exact shape — tracked separately as #4787;
 	// interp, the validity oracle, exits 14.)
 	{"enum-struct-mixed-array",
-		`trait Show { function show(self: Self): i32; } enum Op { Add(i32), Neg } struct Circle { r: i32 } impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } } impl Show for Circle { function show(self: Self): i32 { return self.r * self.r; } } function sum(xs: dyn Show[]): i32 { var t: i32 = 0; for x in xs { t = t + x.show(); } return t; } function main(): i32 { var e: Op = Add(4); var xs: dyn Show[] = [Circle { r: 3 }, e]; return sum(xs); }`, 14},
+		`trait Show { function show(self: Self): i32; } enum Op { Add(i32), Neg } struct Circle { r: i32 } impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } } impl Show for Circle { function show(self: Self): i32 { return self.r * self.r; } } function sum(xs: dyn Show[]): i32 { let t: i32 = 0; for x in xs { t = t + x.show(); } return t; } function main(): i32 { let e: Op = Add(4); let xs: dyn Show[] = [Circle { r: 3 }, e]; return sum(xs); }`, 14},
 }
 
 // TestSelfHostDynEnumIRX86_64 routes each case through the self-hosted x86-64

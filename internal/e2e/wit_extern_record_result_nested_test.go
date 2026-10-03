@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -110,7 +110,7 @@ struct Line { p: Point, q: Point }
 function make_line(x0: i32, y0: i32, x1: i32, y1: i32): Line;
 
 function main(): i32 {
-	var l: Line = make_line(1, 2, 3, 4);
+	let l: Line = make_line(1, 2, 3, 4);
 	// p.x + p.y*10 + q.x*100 + q.y*1000 = 1 + 20 + 300 + 4000 = 4321
 	if (l.p.x + l.p.y * 10 + l.q.x * 100 + l.q.y * 1000 == 4321) { write("` + want + `"); } else { write("lr-bad"); }
 	return 0;
@@ -119,16 +119,7 @@ function main(): i32 {
 	if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
-	info, prog := loadCheckMono(t, mainPath)
-	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		PrintMainResult:    true,
-	})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
+	core := e2eharness.SelfHostComponentCore(t, mainPath)
 	if !bytes.Contains(core, []byte("local:test/src@0.1.0")) {
 		t.Fatalf("core is missing the custom extern import")
 	}

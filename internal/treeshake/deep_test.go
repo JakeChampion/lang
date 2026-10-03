@@ -109,7 +109,7 @@ func TestShakeKeepsMethodReachableViaCall(t *testing.T) {
 	src := `struct Point { x: i32 }
 function (p: Point) getx(): i32 { return p.x; }
 function dead(): i32 { return 9; }
-function main(): i32 { var p = Point { x: 5 }; return p.getx(); }`
+function main(): i32 { let p = Point { x: 5 }; return p.getx(); }`
 	names := runShake(t, src)
 	if !hasName(names, "__method_Point_getx") {
 		t.Errorf("method getx (mangled) should survive via the method call: %v", names)
@@ -128,8 +128,8 @@ function main(): i32 { var p = Point { x: 5 }; return p.getx(); }`
 func TestShakeKeepsFunctionReachableOnlyViaClosure(t *testing.T) {
 	src := `function target(): i32 { return 7; }
 function main(): i32 {
-    var x = 3;
-    var f = (): i32 => { return target() + x; };
+    let x = 3;
+    let f = (): i32 => { return target() + x; };
     return f();
 }`
 	names := runShake(t, src)

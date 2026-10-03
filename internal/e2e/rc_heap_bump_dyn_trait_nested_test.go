@@ -41,12 +41,12 @@ struct Circle { tag: string }
 impl Shape for Circle { function area(self: Self): i32 { return 1; } }
 enum Box { Wrap(dyn Shape), Empty }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
-        var dc: dyn Shape = Circle { tag: "a heap string owned by a circle behind a dyn enum payload" };
-        var b: Box = Box.Wrap(dc);
+        let dc: dyn Shape = Circle { tag: "a heap string owned by a circle behind a dyn enum payload" };
+        let b: Box = Box.Wrap(dc);
         match (b) {
             Wrap(s) => { sum = sum + s.area(); },
             Empty => { sum = sum + 0; },
@@ -68,11 +68,11 @@ struct Circle { tag: string }
 impl Shape for Circle { function area(self: Self): i32 { return 1; } }
 enum Box { Wrap(dyn Shape), Empty }
 function main(): i32 {
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
-        var dc: dyn Shape = Circle { tag: "a heap string owned by a circle behind a dyn enum payload" };
-        var b: Box = Box.Wrap(dc);
+        let dc: dyn Shape = Circle { tag: "a heap string owned by a circle behind a dyn enum payload" };
+        let b: Box = Box.Wrap(dc);
         match (b) {
             Wrap(s) => { sum = sum + s.area(); },
             Empty => { sum = sum + 0; },

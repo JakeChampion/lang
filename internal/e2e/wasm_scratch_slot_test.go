@@ -41,11 +41,11 @@ import "testing"
 // iovec and nwritten slots, with fd the only difference.
 const wasmScratchSlotProg = `
 function main(): i32 {
-    var before: i64 = __heap_bump_bytes();
+    let before: i64 = __heap_bump_bytes();
     // Long enough that a clobbered iov_len / nwritten is unmistakably not 0,
     // and heap-form rather than SSO-inline so the helper actually allocates.
     eprint("the reserved low-memory scratch window must not be double-claimed");
-    var after: i64 = __heap_bump_bytes();
+    let after: i64 = __heap_bump_bytes();
 
     // The bump high-water mark can only grow, and one print grows it by the
     // buffer it allocated — not by the whole static region. Reading the
@@ -56,7 +56,7 @@ function main(): i32 {
     // Both counters are "0 on a healthy run"; this run is healthy.
     if (__rc_underflow_count() != 0) { return 3; }
     if (__arr_push_shared_count() != 0) { return 4; }
-    var weight: i64 = __arr_push_shared_bytes();
+    let weight: i64 = __arr_push_shared_bytes();
     if (weight != 0) { return 5; }
 
     return 42;

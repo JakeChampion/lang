@@ -227,7 +227,7 @@ indexes as well: 227 G to 216 G with the stage0 pin at c891ebc
 round took the function-table scan of `asmcore.infer_call_named_type`
 (1.5%), the per-kill copy of the escape set in `irlower.noesc_set_kill` and
 the prefix-by-slice compares (`semtypes.is_env` 0.9%) and the
-borrowable registry's 251 buckets (`irlower.param_is_borrowable` 1.7%) with
+borrowable registry's 251 buckets (`fnsigs.param_is_borrowable` 1.7%) with
 it: 214 G to 207 G on the base of 0d7a8d32
 (`docs/rc-log/2026-10-02-g-a-table-scan-a-copied-set-and-sliced-prefixes.md`).
 A fourth round handed the emit state to `asmcore.add_string_lit` owned,
@@ -347,9 +347,9 @@ A new test only proves something if it fails without the fix. To check that,
 restore one file to its pre-fix state:
 
 ```sh
-git checkout <parent-sha> -- examples/self_host/irlower.fern
+git checkout <parent-sha> -- examples/self_host/ssarc.fern
 go test ./internal/e2eselfhost/ -run TestYourNewCase > run.log 2>&1; echo "EXIT=$?"
-git checkout HEAD -- examples/self_host/irlower.fern
+git checkout HEAD -- examples/self_host/ssarc.fern
 ```
 
 **Do not reach for `git stash push <file>`.** Once the fix is committed the file
@@ -481,7 +481,7 @@ the script against `.github/alloc-baseline.txt` on every PR, but with
 cannot be baselined against whatever runner CI hands you. Read it locally, on
 one machine, A/B.
 
-**It returns i64.** Bind it to an `i64` (`var b: i64 = __heap_bump_bytes();`);
+**It returns i64.** Bind it to an `i64` (`let b: i64 = __heap_bump_bytes();`);
 narrowing to an exit code needs an explicit `as i32`, which is what the existing
 corpus does. It used to be declared i32 while every runtime helper computed the
 offset in 64 bits, and a quadratic sweep read 141 MB / 555 MB / **-2.09 GB** /

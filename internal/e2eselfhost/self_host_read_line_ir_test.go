@@ -39,17 +39,17 @@ var readLineIRCases = []struct {
 	{"no-newline", `function main(): i32 { match (read_line()) { Some(s) => { return s.len(); }, None => { return 0; }, } }`, "bare", "", 4},
 	{"empty-line", `function main(): i32 { match (read_line()) { Some(s) => { return s.len(); }, None => { return 9; }, } }`, "\nx", "", 1},
 	{"eof-none", `function main(): i32 { match (read_line()) { Some(s) => { return 1; }, None => { return 7; }, } }`, "", "", 7},
-	{"method", `function main(): i32 { var r: Reader = stdin(); match (r.read_line()) { Some(s) => { return s.len(); }, None => { return 0; }, } }`, "xy\n", "", 3},
+	{"method", `function main(): i32 { let r: Reader = stdin(); match (r.read_line()) { Some(s) => { return s.len(); }, None => { return 0; }, } }`, "xy\n", "", 3},
 	// Two consecutive calls: the minimal reproduction. Under the single-read
 	// runtime the second call returned None and this exited 0.
-	{"two-calls", `function main(): i32 { var a: i32 = 0; match (read_line()) { Some(s) => { a = s.len(); }, None => { a = 0; }, } match (read_line()) { Some(s) => { return a + s.len(); }, None => { return 0; }, } }`, "ab\ncd\n", "", 6},
+	{"two-calls", `function main(): i32 { let a: i32 = 0; match (read_line()) { Some(s) => { a = s.len(); }, None => { a = 0; }, } match (read_line()) { Some(s) => { return a + s.len(); }, None => { return 0; }, } }`, "ab\ncd\n", "", 6},
 	// Read-until-EOF, the multiline_stdin fixture's shape without the stdlib
 	// (these programs compile with no stdlib root, so no trim/parse_int).
 	// Counted 1 instead of 5 before the fix.
-	{"count-until-eof", `function main(): i32 { var n: i32 = 0; var done: boolean = false; while (!done) { match (read_line()) { Some(s) => { n = n + 1; }, None => { done = true; }, } } return n; }`, "a\nb\nc\nd\ne\n", "", 5},
+	{"count-until-eof", `function main(): i32 { let n: i32 = 0; let done: boolean = false; while (!done) { match (read_line()) { Some(s) => { n = n + 1; }, None => { done = true; }, } } return n; }`, "a\nb\nc\nd\ne\n", "", 5},
 	// The same loop where the final line has NO trailing newline: it must still
 	// come back as Some, so three lines in, three out.
-	{"count-unterminated-tail", `function main(): i32 { var n: i32 = 0; var done: boolean = false; while (!done) { match (read_line()) { Some(s) => { n = n + 1; }, None => { done = true; }, } } return n; }`, "a\nb\nc", "", 3},
+	{"count-unterminated-tail", `function main(): i32 { let n: i32 = 0; let done: boolean = false; while (!done) { match (read_line()) { Some(s) => { n = n + 1; }, None => { done = true; }, } } return n; }`, "a\nb\nc", "", 3},
 }
 
 func TestSelfHostReadLineIRX86_64(t *testing.T) {

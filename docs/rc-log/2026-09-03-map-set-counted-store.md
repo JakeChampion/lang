@@ -65,14 +65,14 @@ neither is this sink's:
    string key without retaining it, and `get_or` retains its fallback
    counted on every ABI (`isMapStringGetOr`).
 2. **All targets: a builtin lookup's retained result is tainted by a
-   tainted scalar argument.** `var got = m.get_or(i, [])` with `i` a
+   tainted scalar argument.** `let got = m.get_or(i, [])` with `i` a
    parameter: `i` is borrow-tainted, rhsTainted's generic Call rule
    taints `got`, and `got`'s flat dec runs LAST in the sweep — after the
    map's freeing column walk — so the reference get_or retained is
    taken 1 → 0 by a dec that frees nothing. 800/400 live 9600 before
    and after on both natives (the value buffer plus the `[]` fallback
    temp, which the generic arg-temp reclaim refuses for a pointer
-   result). The same rule strands `var r = pick(s, c)` where `pick`
+   result). The same rule strands `let r = pick(s, c)` where `pick`
    returns its string parameter bare, on every ABI.
 
 ## The blanket taint, measured on user callees

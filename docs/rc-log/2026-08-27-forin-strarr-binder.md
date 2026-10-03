@@ -6,7 +6,7 @@
 ## The cell
 
 ```fern
-var names: string[] = [mkstr("a"), mkstr("b")];
+let names: string[] = [mkstr("a"), mkstr("b")];
 for s in names { t = (t + s.len()) % 101; }
 ```
 

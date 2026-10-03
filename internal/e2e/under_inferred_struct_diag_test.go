@@ -26,7 +26,7 @@ func TestUnderInferredGenericStructLitIsADiagnostic(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "stack.fern")
 	if err := os.WriteFile(src, []byte(`struct Stack[T] { items: T[] }
-function main(): i32 { var s = Stack { items: [] }; return 0; }
+function main(): i32 { let s = Stack { items: [] }; return 0; }
 `), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}

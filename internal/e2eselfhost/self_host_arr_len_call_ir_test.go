@@ -36,7 +36,7 @@ function main(): i32 { return mk().len() + 40; }`},
 	{"struct-value-user-len", `struct Box { v: i32 }
 function (b: Box) len(): i32 { return b.v + 100; }
 function mk(): Box { return Box { v: 5 }; }
-function main(): i32 { var b: Box = mk(); return b.len(); }`},
+function main(): i32 { let b: Box = mk(); return b.len(); }`},
 }
 
 // TestSelfHostArrLenCallIR compiles each case with the self-host CLI for

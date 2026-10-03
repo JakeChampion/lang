@@ -7,7 +7,7 @@ import (
 // #6036, half one: the #4873 grow-containment bracket is skipped for an
 // argument that provably does not survive the call. callArgDeaths recognised
 // only the self-reassign (`x = f(.., x, ..)`) and direct return-argument
-// (`return f(.., x, ..)`) shapes, so `var t = f(b, v); return t;` — where `b`
+// (`return f(.., x, ..)`) shapes, so `let t = f(b, v); return t;` — where `b`
 // is read exactly once in the whole function and never again — was bracketed
 // with an rc-inc/rc-dec pair purely to force the callee onto its copy path.
 // One full-buffer copy per call, and the caller is a loop.
@@ -18,7 +18,7 @@ import (
 func TestSoleOccurrenceArgSkipsGrowBracket(t *testing.T) {
 	src := `function f(b: i32[], v: i32): i32[] { return b.append(v); }
 function intolocal(b: i32[], v: i32): i32[] {
-    var t: i32[] = f(b, v);
+    let t: i32[] = f(b, v);
     return t;
 }
 function nestedarg(b: i32[], v: i32): i32[] {
@@ -46,10 +46,10 @@ function main(): i32 { return 0; }`
 func TestSoleOccurrenceArgInLoopKeepsGrowBracket(t *testing.T) {
 	src := `function f(b: i32[], v: i32): i32[] { return b.append(v); }
 function looped(b: i32[], n: i32): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: i32[] = f(b, i);
+        let t: i32[] = f(b, i);
         total = total + t.len();
         i = i + 1;
     }

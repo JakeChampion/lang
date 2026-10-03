@@ -11,7 +11,7 @@ import (
 // or `w.write(out)` leaves `out` owned and its scope-exit release freeing. The
 // self-host's escape walk had no such credit: any builtin taking `out` was
 // an escape, so the local lost its release and every round leaked its
-// accumulator. copying_builtin_keys (irlower.fern) seeds the same table into
+// accumulator. copying_builtin_keys (fnsigs.fern) seeds the same table into
 // the borrowability registry both builders produce.
 //
 // The method form is admitted by NAME: the walk cannot see a receiver's type,
@@ -33,8 +33,8 @@ import (
 // concats per round and frees all of them.
 
 const copyingBuiltinProlog = `function round(n: i32): i32 {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < 3) { out = out + "abcdefgh"; i = i + 1; }
 `
 
@@ -42,8 +42,8 @@ const copyingBuiltinEpilog = `
     return out.len() + n;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 50) { t = t + round(k); k = k + 1; }
     return t % 7;
 }
@@ -62,22 +62,22 @@ type copyingBuiltinCase struct {
 
 func copyingBuiltinCases() []copyingBuiltinCase {
 	return []copyingBuiltinCase{
-		{name: "control_len", use: `var q: i32 = out.len();`, pinCounts: true},
+		{name: "control_len", use: `let q: i32 = out.len();`, pinCounts: true},
 		{name: "print", use: `print(out);`, pinCounts: true},
 		{name: "eprint", use: `eprint(out);`, pinCounts: true},
-		{name: "memchr", use: `var q: i32 = __memchr(out, 10, 0);`, pinCounts: true},
-		{name: "count_byte", use: `var q: i32 = __count_byte(out, 97);`, pinCounts: true},
-		{name: "scan_set", use: `var st: u8[] = __alloc_u8(256);
-    var q: i32 = __scan_set(out, 0, st);`, pinCounts: true},
-		{name: "mismatch", use: `var q: i32 = __mismatch(out, 0, out, 0, 24);`, pinCounts: true},
-		{name: "writer_write", use: `var w: Writer = stdout();
+		{name: "memchr", use: `let q: i32 = __memchr(out, 10, 0);`, pinCounts: true},
+		{name: "count_byte", use: `let q: i32 = __count_byte(out, 97);`, pinCounts: true},
+		{name: "scan_set", use: `let st: u8[] = __alloc_u8(256);
+    let q: i32 = __scan_set(out, 0, st);`, pinCounts: true},
+		{name: "mismatch", use: `let q: i32 = __mismatch(out, 0, out, 0, 24);`, pinCounts: true},
+		{name: "writer_write", use: `let w: Writer = stdout();
     match (w.write(out)) { Some(_) => { return -1; }, None => {} }`, pinCounts: true},
 		{
 			name: "user_write_method_retains",
 			decls: `struct Sink { last: string }
 function (k: Sink) write(s: string): Sink { return Sink { last: s }; }
 `,
-			use: `var w: Sink = Sink { last: "" };
+			use: `let w: Sink = Sink { last: "" };
     w = w.write(out);
     if (w.last.len() != out.len() || w.last[0] != b'a') { return 250; }`,
 		},

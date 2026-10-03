@@ -1,6 +1,6 @@
 # 2026-09-16 — a polymorphic float settles at its binding
 
-`var f = 2.5;` refused the whole of `var_inference` as "unresolved type
+`let f = 2.5;` refused the whole of `var_inference` as "unresolved type
 of binding f: f64": the checker types an unsuffixed float literal
 polymorphic and settles it where it lands, and a binding with no
 annotation is nowhere it lands, so the binding's type stayed polymorphic

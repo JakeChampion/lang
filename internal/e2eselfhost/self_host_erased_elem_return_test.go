@@ -37,54 +37,54 @@ var erasedElemReturnCases = []struct {
 }{
 	{"first_f64", `function first_of[T](xs: T[]): T { return xs[0]; }
 function main(): i32 {
-    var xs: f64[] = [4.5, 1.5];
+    let xs: f64[] = [4.5, 1.5];
     return (first_of(xs) * 10.0) as i32;
 }`}, // 45; was 255
 	{"first_i64", `function first_of[T](xs: T[]): T { return xs[0]; }
 function main(): i32 {
-    var xs: i64[] = [9000000000, 1];
+    let xs: i64[] = [9000000000, 1];
     return (first_of(xs) / 1000000000) as i32 + 36;
 }`}, // 45; was 36 (the element read back as 0)
 	{"first_string", `function first_of[T](xs: T[]): T { return xs[0]; }
 function main(): i32 {
-    var xs: string[] = ["abcde"];
+    let xs: string[] = ["abcde"];
     return first_of(xs).len() + 40;
 }`}, // 45; was 40 — len() on a string box read the ARRAY length slot
 	{"first_i32", `function first_of[T](xs: T[]): T { return xs[0]; }
 function main(): i32 {
-    var xs: i32[] = [4, 1];
+    let xs: i32[] = [4, 1];
     return first_of(xs) * 10 + 5;
 }`}, // 45; the one width that was already correct — keep it correct
 	{"first_struct", `struct P { a: i32 }
 function first_of[T](xs: T[]): T { return xs[0]; }
 function main(): i32 {
-    var xs: P[] = [P { a: 4 }, P { a: 1 }];
+    let xs: P[] = [P { a: 4 }, P { a: 1 }];
     return first_of(xs).a * 10 + 5;
 }`}, // 45; used to be refused on both self-host backends
 	{"pair_of_f64", `function pair_of[T](xs: T[]): (T, T) { return (xs[0], xs[1]); }
 function main(): i32 {
-    var xs: f64[] = [4.5, 1.5];
-    var (a, b) = pair_of(xs);
+    let xs: f64[] = [4.5, 1.5];
+    let (a, b) = pair_of(xs);
     return ((a + b) * 10.0) as i32;
 }`}, // 60; was 0 — a bare TUPLE of the typevar is the same defect in another return spelling
 	{"pair_of_string", `function pair_of[T](xs: T[]): (T, T) { return (xs[0], xs[1]); }
 function main(): i32 {
-    var xs: string[] = ["ab", "cde"];
-    var (a, b) = pair_of(xs);
+    let xs: string[] = ["ab", "cde"];
+    let (a, b) = pair_of(xs);
     return a.len() + b.len() + 40;
 }`}, // 45; was 42
 	{"mixed_tuple_return", `function head_and_one[T](xs: T[]): (T, i32) { return (xs[0], 1); }
 function main(): i32 {
-    var xs: f64[] = [4.4];
-    var (a, b) = head_and_one(xs);
+    let xs: f64[] = [4.4];
+    let (a, b) = head_and_one(xs);
     return (a * 10.0) as i32 + b;
 }`}, // 45; was 0
 	{"receiver_typevar_control", `struct Pair { a: i32 }
 function (xs: T[]) firstpair[U](other: U[]): (T, U) { return (xs[0], other[0]); }
 function main(): i32 {
-    var a: f64[] = [4.5];
-    var b: i32[] = [1];
-    var (x, y) = a.firstpair(b);
+    let a: f64[] = [4.5];
+    let b: i32[] = [1];
+    let (x, y) = a.firstpair(b);
     return (x * 10.0) as i32 + y - 1;
 }`}, // 45 — a METHOD must NOT be promoted: its receiver's `T` is not in
 	// type_params, so `all_tp_count` reads 1 while `T` is right there in the
@@ -92,12 +92,12 @@ function main(): i32 {
 	// `array.zip`'s method form is exactly this and fell off the IR path.
 	{"count_of_control", `function count_of[T](xs: T[]): i32 { return xs.len(); }
 function main(): i32 {
-    var xs: f64[] = [4.5, 1.5];
+    let xs: f64[] = [4.5, 1.5];
     return count_of(xs) * 20 + 5;
 }`}, // 45 — erased array param, NON-erased return: always was correct
 	{"id_of_control", `function id_of[T](x: T): T { return x; }
 function main(): i32 {
-    var xs: f64[] = [4.5, 1.5];
+    let xs: f64[] = [4.5, 1.5];
     return (id_of(xs[0]) * 10.0) as i32;
 }`}, // 45 — bare T param and return, no array: the #5586 pass-through
 }

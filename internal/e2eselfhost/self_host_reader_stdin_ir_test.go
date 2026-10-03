@@ -31,15 +31,15 @@ var readerStdinIRCases = []struct {
 	wantSyms []string
 }{
 	// Sum the lengths of all chunks = total byte count. "hello" -> 5.
-	{"count-bytes", `function main(): i32 { var r: Reader = stdin(); var n: i32 = 0; while (true) { match (r.read_chunk(4096)) { Ok(c) => { if (c.len() == 0) { r.close(); return n; } n = n + c.len(); }, Err(e) => { r.close(); return n; } } } return n; }`, "hello", []string{"call __fn___fern_reader_read_chunk", "call __fn___fern_reader_close"}},
+	{"count-bytes", `function main(): i32 { let r: Reader = stdin(); let n: i32 = 0; while (true) { match (r.read_chunk(4096)) { Ok(c) => { if (c.len() == 0) { r.close(); return n; } n = n + c.len(); }, Err(e) => { r.close(); return n; } } } return n; }`, "hello", []string{"call __fn___fern_reader_read_chunk", "call __fn___fern_reader_close"}},
 	// Empty stdin -> first read is None -> 0.
-	{"empty", `function main(): i32 { var r: Reader = stdin(); var n: i32 = 0; while (true) { match (r.read_chunk(4096)) { Ok(c) => { if (c.len() == 0) { r.close(); return n; } n = n + c.len(); }, Err(e) => { r.close(); return n; } } } return n; }`, "", []string{"call __fn___fern_reader_read_chunk", "call __fn___fern_reader_close"}},
+	{"empty", `function main(): i32 { let r: Reader = stdin(); let n: i32 = 0; while (true) { match (r.read_chunk(4096)) { Ok(c) => { if (c.len() == 0) { r.close(); return n; } n = n + c.len(); }, Err(e) => { r.close(); return n; } } } return n; }`, "", []string{"call __fn___fern_reader_read_chunk", "call __fn___fern_reader_close"}},
 	// A longer input still totals correctly across one or more chunks. 16 bytes.
-	{"longer", `function main(): i32 { var r: Reader = stdin(); var n: i32 = 0; while (true) { match (r.read_chunk(4096)) { Ok(c) => { if (c.len() == 0) { r.close(); return n; } n = n + c.len(); }, Err(e) => { r.close(); return n; } } } return n; }`, "hello world test", []string{"call __fn___fern_reader_read_chunk", "call __fn___fern_reader_close"}},
+	{"longer", `function main(): i32 { let r: Reader = stdin(); let n: i32 = 0; while (true) { match (r.read_chunk(4096)) { Ok(c) => { if (c.len() == 0) { r.close(); return n; } n = n + c.len(); }, Err(e) => { r.close(); return n; } } } return n; }`, "hello world test", []string{"call __fn___fern_reader_read_chunk", "call __fn___fern_reader_close"}},
 	// A single read_chunk, matched directly (not in a loop): Ok -> len, Err -> 0.
-	{"single-chunk", `function main(): i32 { var r: Reader = stdin(); return match (r.read_chunk(4096)) { Ok(c) => c.len(), Err(e) => 0 }; }`, "abcd", []string{"call __fn___fern_reader_read_chunk"}},
+	{"single-chunk", `function main(): i32 { let r: Reader = stdin(); return match (r.read_chunk(4096)) { Ok(c) => c.len(), Err(e) => 0 }; }`, "abcd", []string{"call __fn___fern_reader_read_chunk"}},
 	// close()'s result (Option[IoError]) discarded; just exercise stdin+close. 7.
-	{"close-only", `function main(): i32 { var r: Reader = stdin(); r.close(); return 7; }`, "ignored", []string{"call __fn___fern_reader_close"}},
+	{"close-only", `function main(): i32 { let r: Reader = stdin(); r.close(); return 7; }`, "ignored", []string{"call __fn___fern_reader_close"}},
 }
 
 func runExitStdin(t *testing.T, bin, in string) int {

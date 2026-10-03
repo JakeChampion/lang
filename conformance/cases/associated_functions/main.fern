@@ -16,11 +16,11 @@ enum Opt { Nothing, Just(i32) }
 impl Empty for Opt { function empty(): Self { return Nothing; } }
 
 function main(): i32 {
-    var p: Point = Point.make(3, 4);          // {3,4}
-    var z: Point = Point.zero();              // {0,0}
-    var base: i32 = p.x + p.y + z.x + z.y;    // 7
+    let p: Point = Point.make(3, 4);          // {3,4}
+    let z: Point = Point.zero();              // {0,0}
+    let base: i32 = p.x + p.y + z.x + z.y;    // 7
     base = base + Point.make(10, 0).x;        // + 10 = 17 (chained)
-    var o: Opt = Opt.empty();
+    let o: Opt = Opt.empty();
     match (o) {
         Nothing => { return base; },          // 17
         Just(n) => { return base + n; }

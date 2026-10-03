@@ -44,7 +44,7 @@ func TestSelfHostExternImportRunsUnderWasmtime(t *testing.T) {
 	prog := `@import("wasi:random/random@0.2.0", "get-random-u64")
 function random_u64(): i64;
 function main(): i32 {
-    var r: i64 = random_u64();
+    let r: i64 = random_u64();
     write("` + want + `");
     return 0;
 }`

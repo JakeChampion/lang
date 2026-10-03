@@ -8,7 +8,7 @@ import (
 )
 
 // TestSelfHostStructArrReclaimIRX86_64 pins the #4355 struct-array element-box
-// reclaim: a fresh, non-escaping `var g = [P { .. }, P { .. }]` had NO element
+// reclaim: a fresh, non-escaping `let g = [P { .. }, P { .. }]` had NO element
 // reclaim on the self-host IR path — the slot is a plain is_arr array whose exit
 // sweep did a SHALLOW __fern_rc_dec of the OUTER buffer only, leaking every
 // element struct box per iteration (the outer buffer was freed; the P{} boxes
@@ -16,7 +16,7 @@ import (
 // __fern_arrarr_free helper (one rc-guarded arr_dec per element pointer — which
 // is exactly a struct-box free — then the outer buffer), so no new backend
 // runtime is needed. Admission: every element must be a fresh no-base struct
-// LITERAL ("STRUCTARR:"); a bare element bind (`var q = g[0]`) or a `for p in g`
+// LITERAL ("STRUCTARR:"); a bare element bind (`let q = g[0]`) or a `for p in g`
 // whose body lets `p` escape rejects the candidate (the element pointer would
 // dangle). The elements' own rc-array / string FIELDS still leak (sound) — the
 // deep per-element __struct_drop_<T> walk is a follow-up, so these fixtures use
@@ -56,46 +56,46 @@ func TestSelfHostStructArrReclaimIRX86_64(t *testing.T) {
 	// element boxes freed per rebind, flat at detector zero.
 	run(t, `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var g = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
+        let g = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
         acc = acc + g.len() + g[0].x;
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var g2 = [P { x: j, y: j + 1 }, P { x: j + 2, y: j + 3 }];
+        let g2 = [P { x: j, y: j + 1 }, P { x: j + 2, y: j + 3 }];
         acc = acc + g2.len() + g2[1].y;
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
 }`, "structarr-scalar-flat", 0)
 
-	// ANNOTATED struct[] churn — the `var g: P[] = [..]` spelling must reclaim
+	// ANNOTATED struct[] churn — the `let g: P[] = [..]` spelling must reclaim
 	// the same way as the inferred one.
 	run(t, `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var g: P[] = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
+        let g: P[] = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
         acc = acc + g.len() + g[0].y;
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var g2: P[] = [P { x: j, y: j + 1 }, P { x: j + 2, y: j + 3 }];
+        let g2: P[] = [P { x: j, y: j + 1 }, P { x: j + 2, y: j + 3 }];
         acc = acc + g2.len() + g2[0].x;
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -107,38 +107,38 @@ function main(): i32 {
 	// candidate is still credited and stays flat.
 	run(t, `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var g = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
+        let g = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
         for p in g { acc = acc + p.x + p.y; }
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var g2 = [P { x: j, y: j + 1 }, P { x: j + 2, y: j + 3 }];
+        let g2 = [P { x: j, y: j + 1 }, P { x: j + 2, y: j + 3 }];
         for p in g2 { acc = acc + p.x; }
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
 }`, "structarr-iter-flat", 0)
 
-	// ELEMENT-ALIAS exclusion: `var q = g[0]` binds an element struct box, so
+	// ELEMENT-ALIAS exclusion: `let q = g[0]` binds an element struct box, so
 	// the candidate is rejected (structarr_elem_escapes) — the structure keeps
 	// its prior sound leak and q stays a valid, correctly-valued box (never
 	// freed under it).
 	run(t, `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var g = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
-        var q = g[1];
+        let g = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
+        let q = g[1];
         if (q.x != i + 2) { bad = 1; }
         if (q.y != i + 3) { bad = 1; }
         i = i + 1;

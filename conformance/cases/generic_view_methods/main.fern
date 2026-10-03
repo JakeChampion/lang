@@ -84,9 +84,9 @@ function (xs: [string]) echo[T](value: T): T {
 }
 
 function main(): i32 {
-  var a: i32[] = [3, 5, 7];
-  var v: [i32] = a[:];
-  var inferred = a[:];
+  let a: i32[] = [3, 5, 7];
+  let v: [i32] = a[:];
+  let inferred = a[:];
   if (a[:].pick() != 7 || inferred.pick() != 7) {
     return 6;
   }
@@ -99,20 +99,20 @@ function main(): i32 {
   if (v.tail().pick() != 7 || view_head(v.tail()) != 5) {
     return 3;
   }
-  var words: string[] = ["first", "last"];
-  var text: [string] = words[:];
+  let words: string[] = ["first", "last"];
+  let text: [string] = words[:];
   if (words.pick() != "first" || text.pick() != "last") {
     return 4;
   }
   if (view_head(text.tail()) != "last") {
     return 5;
   }
-  var source: string = "az";
-  var bytes = source.as_bytes();
+  let source: string = "az";
+  let bytes = source.as_bytes();
   if (bytes.pick() != 122 as u8 || source.as_bytes().pick() != 122 as u8) {
     return 7;
   }
-  var owned: u8[] = [97 as u8, 122 as u8];
+  let owned: u8[] = [97 as u8, 122 as u8];
   if (bytes.back() != 122 as u8 || owned.back() != 97 as u8) {
     return 12;
   }
@@ -126,8 +126,8 @@ function main(): i32 {
     return 15;
   }
   // A lambda's own parameters are receivers too.
-  var pick_last = (v: [i32]): i32 => v.pick();
-  var pick_first = (v: i32[]): i32 => v.pick();
+  let pick_last = (v: [i32]): i32 => v.pick();
+  let pick_first = (v: i32[]): i32 => v.pick();
   if (pick_last(a[:]) != 7 || pick_first(a) != 3) {
     return 16;
   }
@@ -143,13 +143,13 @@ function main(): i32 {
   if (owned.select(identity([0 as u8])) != 97 as u8 || bytes.select(identity([0 as u8])) != 122 as u8) {
     return 20;
   }
-  var rows: i32[][] = [[9, 11], [13, 15]];
-  var row_view: [i32[]] = rows[:];
+  let rows: i32[][] = [[9, 11], [13, 15]];
+  let row_view: [i32[]] = rows[:];
   if (row_view[0].pick() != 9) {
     return 8;
   }
-  var pieces = [source[0:1]];
-  var piece: Option[str] = pieces.pick();
+  let pieces = [source[0:1]];
+  let piece: Option[str] = pieces.pick();
   match (piece) {
     Some(value) => {
       if (value != "a") {
@@ -160,8 +160,8 @@ function main(): i32 {
       return 10;
     }
   }
-  var invalid_pieces = ["é"[0:1]];
-  var invalid: Option[str] = invalid_pieces.pick();
+  let invalid_pieces = ["é"[0:1]];
+  let invalid: Option[str] = invalid_pieces.pick();
   match (invalid) {
     Some(_) => {
       return 11;

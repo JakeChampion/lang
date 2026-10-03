@@ -18,14 +18,14 @@ func TestCopyingBuiltinArgIsCounted(t *testing.T) {
 		body string
 	}{
 		{"strbuf_append", `strbuf_append(p); return 0;`},
-		{"buf_push", `var b: usize = buf_new(16); buf_push(b, p); buf_free(b); return 0;`},
-		{"buf_push_range", `var b: usize = buf_new(16); buf_push_range(b, p, 0, 1); buf_free(b); return 0;`},
-		{"buf_push_mapped", `var b: usize = buf_new(16); var t: u8[] = [1 as u8]; buf_push_mapped(b, p, t); buf_free(b); return 0;`},
-		{"buf_push_filtered", `var b: usize = buf_new(16); var t: u8[] = [1 as u8]; buf_push_filtered(b, p, t); buf_free(b); return 0;`},
+		{"buf_push", `let b: usize = buf_new(16); buf_push(b, p); buf_free(b); return 0;`},
+		{"buf_push_range", `let b: usize = buf_new(16); buf_push_range(b, p, 0, 1); buf_free(b); return 0;`},
+		{"buf_push_mapped", `let b: usize = buf_new(16); let t: u8[] = [1 as u8]; buf_push_mapped(b, p, t); buf_free(b); return 0;`},
+		{"buf_push_filtered", `let b: usize = buf_new(16); let t: u8[] = [1 as u8]; buf_push_filtered(b, p, t); buf_free(b); return 0;`},
 		{"count_byte", `return __count_byte(p, 97);`},
 		{"memchr", `return __memchr(p, 97, 0);`},
 		{"print", `print(p); return 0;`},
-		{"writer-write", `var w: Writer = stdout(); var e: Option[IoError] = w.write(p); return 0;`},
+		{"writer-write", `let w: Writer = stdout(); let e: Option[IoError] = w.write(p); return 0;`},
 		{"Writer.write", `match (stdout().write(p)) { Some(_) => { return 1; }, None => { return 0; } } return 0;`},
 		// A socket send reads the bytes and answers a count. The serve
 		// loop's serialised response is a local passed to a helper that
@@ -49,7 +49,7 @@ func TestCopyingBuiltinArgIsCounted(t *testing.T) {
 // so a table parameter is credited the way the string is.
 func TestCopyingBuiltinTableArgIsCounted(t *testing.T) {
 	for _, builtin := range []string{"buf_push_mapped", "buf_push_filtered"} {
-		src := "function eat(p: u8[]): i32 { var b: usize = buf_new(16); " + builtin + "(b, \"ab\", p); buf_free(b); return 0; }\n" +
+		src := "function eat(p: u8[]): i32 { let b: usize = buf_new(16); " + builtin + "(b, \"ab\", p); buf_free(b); return 0; }\n" +
 			"function main(): i32 { return 0; }"
 		got := paramCountedFor(t, src, "eat")
 		if len(got) != 1 || !got[0] {
@@ -87,7 +87,7 @@ function main(): i32 { return 0; }`
 
 func TestCopyingBuiltinByteRangeArgIsCounted(t *testing.T) {
 	src := `function eat(p: u8[]): i32 {
-    var b: usize = buf_new(1);
+    let b: usize = buf_new(1);
     buf_push_bytes_range(b, p, 0, p.len());
     buf_free(b);
     return 0;
@@ -131,8 +131,8 @@ func TestCopyingUseComposesWithThePushCredit(t *testing.T) {
 	// this used to watch (an occurrence nothing counts) lives on in
 	// TestStringParamPushedThenReturnedBareStaysUncredited.
 	src := `function keep(p: string): string[] {
-    var n: i32 = __count_byte(p, 97);
-    var out: string[] = [];
+    let n: i32 = __count_byte(p, 97);
+    let out: string[] = [];
     out = out.append(p);
     if (n > 0) { return out; }
     return out;
@@ -221,7 +221,7 @@ func TestCopyingBuiltinArgsCreditTheMapReadKey(t *testing.T) {
 // leak looks like in the IR.
 func TestBoundLocalPassedToCopyingBuiltinIsFreed(t *testing.T) {
 	src := `function shout(pfx: string, body: string): i32 {
-    var msg: string = pfx + body;
+    let msg: string = pfx + body;
     strbuf_append(msg);
     return msg.len();
 }
@@ -240,7 +240,7 @@ func TestCopyingBuiltinCreditIsInertWithFreeOff(t *testing.T) {
 	defer func(prev bool) { ast.RcFreeEnabled = prev }(ast.RcFreeEnabled)
 	ast.RcFreeEnabled = false
 	src := `function shout(pfx: string, body: string): i32 {
-    var msg: string = pfx + body;
+    let msg: string = pfx + body;
     strbuf_append(msg);
     return msg.len();
 }
@@ -262,11 +262,11 @@ function main(): i32 { return 0; }`
 // was decremented without being freed (#8394).
 func TestAccumulatorWrittenToWriterStaysInPlace(t *testing.T) {
 	src := `function main(): i32 {
-    var w: Writer = stdout();
+    let w: Writer = stdout();
     match (Some("abcdefgh\n")) {
         Some(chunk) => {
-            var out: string = "";
-            var i: i32 = 0;
+            let out: string = "";
+            let i: i32 = 0;
             while (i < 4) {
                 out = out + slice_unchecked(chunk, 0, chunk.len());
                 i = i + 1;
@@ -302,11 +302,11 @@ func TestAccumulatorWrittenToWriterStaysInPlace(t *testing.T) {
 // live at exit under `FERN_LEAKCHECK`.
 func TestAccumulatorWrittenToWriterWriteSomeStaysInPlace(t *testing.T) {
 	src := `function main(): i32 {
-    var w: Writer = stdout();
+    let w: Writer = stdout();
     match (Some("abcdefgh\n")) {
         Some(chunk) => {
-            var out: string = "";
-            var i: i32 = 0;
+            let out: string = "";
+            let i: i32 = 0;
             while (i < 4) {
                 out = out + slice_unchecked(chunk, 0, chunk.len());
                 i = i + 1;
@@ -340,13 +340,13 @@ func TestAccumulatorWrittenToWriterWriteSomeStaysInPlace(t *testing.T) {
 // one whole output chunk leaked per iteration of a cat-shaped loop.
 func TestFreshStringPassedToWriterIsReleased(t *testing.T) {
 	src := `function build(n: i32): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < n) { out = out + "abcdefgh"; i = i + 1; }
     return out;
 }
 function main(): i32 {
-    var w: Writer = stdout();
+    let w: Writer = stdout();
     match (w.write(build(4))) { Some(_) => { return 1; }, None => {} }
     return 0;
 }`

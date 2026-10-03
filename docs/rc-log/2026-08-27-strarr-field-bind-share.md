@@ -1,15 +1,15 @@
 # The string[] field-read BIND — the hoisted spelling of the inline share
 
-*2026-08-27* — `var tt: string[] = q.f; P { f: tt }`. Part of #5338, and the
+*2026-08-27* — `let tt: string[] = q.f; P { f: tt }`. Part of #5338, and the
 row `2026-08-27-strarr-field-share-read.md` left pinned as
 `hoisted_bind_still_leaks` when it closed the inline cell earlier the same day.
 
 ## The cell
 
 ```fern
-var q: P = P { f: mkv(i), n: i };
-var tt: string[] = q.f;             // f: string[]
-var p: P = P { f: tt, n: i };
+let q: P = P { f: mkv(i), n: i };
+let tt: string[] = q.f;             // f: string[]
+let p: P = P { f: tt, n: i };
 ```
 
 800 allocs / 300 frees, 16 800 live, against native's 600/600 — the identical
@@ -21,7 +21,7 @@ emit says so:
 | inline (already clean) | `__struct_drop_P`×2, `__field_reclaim_P`, `rc_is_unique` |
 | hoisted (leaking) | **neither, at all** |
 
-`strarrfld_scan` marks `<T>.<field>` for any read, and a `var` initialiser is a
+`strarrfld_scan` marks `<T>.<field>` for any read, and a `let` initialiser is a
 read, so `q.f` refused P's string[]-field reclaim before either holder was
 dropped.
 
@@ -42,7 +42,7 @@ its `sfld_ok` carve-out exists for exactly the struct-literal share this needs
 forgiven — the comment there already describes the shape. So the admission is
 two lookups and a call, not a new walker:
 
-- collect the site keys of `var p: T = T { …, <string[] field>: tt, … }`
+- collect the site keys of `let p: T = T { …, <string[] field>: tt, … }`
   binds directly in the statement list (`strarrfld_share_bind_stores`);
 - refuse unless there is at least one, and `strarr_unsafe_for_alias` is clean
   for `tt` over that list with those keys forgiven.

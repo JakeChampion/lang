@@ -16,12 +16,12 @@ import "std/time";
 // immediately, no suspension, the clock does not move, the hit still
 // counts, and a healthy sibling endpoint is untouched.
 function test_fail_immediate(): test.TestOutcome {
-  var d: sim.Sim = sim.new(1);
-  var n: sim.Net = sim.net(d);
+  let d: sim.Sim = sim.new(1);
+  let n: sim.Net = sim.net(d);
   n = n.serve(1, 80, "/k", "body", time.duration_nanos(10000000 as i64));
   n = n.serve(2, 80, "/k", "other", time.duration_nanos(10000000 as i64));
   n = n.fault_fail(1, 80, "/k");
-  var f: async.Future[string] = n.fetch_future(1, 80, "/k");
+  let f: async.Future[string] = n.fetch_future(1, 80, "/k");
   match (f) {
     Ready(v) => {
       if (v != "") {
@@ -38,8 +38,8 @@ function test_fail_immediate(): test.TestOutcome {
   if (n.hits(1, 80, "/k") != 1 as i64) {
     return test.fail("faulted fetch not counted as a hit");
   }
-  var fs: async.Future[string][] = [n.fetch_future(2, 80, "/k")];
-  var got: string[] = async.gather_on(d, fs, "!");
+  let fs: async.Future[string][] = [n.fetch_future(2, 80, "/k")];
+  let got: string[] = async.gather_on(d, fs, "!");
   if (got[0] != "other") {
     return test.fail("healthy sibling broken by fault_fail");
   }
@@ -49,16 +49,16 @@ function test_fail_immediate(): test.TestOutcome {
 // stall-mode never resolves: with_deadline drops it with None at the
 // EXACT virtual deadline while the healthy endpoint still answers.
 function test_stall_dropped_at_deadline(): test.TestOutcome {
-  var d: sim.Sim = sim.new(7);
-  var n: sim.Net = sim.net(d);
+  let d: sim.Sim = sim.new(7);
+  let n: sim.Net = sim.net(d);
   n = n.serve(1, 80, "/k", "healthy", time.duration_nanos(10000000 as i64));
   n = n.serve(2, 80, "/k", "silent", time.duration_nanos(5000000 as i64));
   n = n.fault_stall(2, 80, "/k");
-  var fs: async.Future[string][] = [
+  let fs: async.Future[string][] = [
     n.fetch_future(1, 80, "/k"),
     n.fetch_future(2, 80, "/k"),
   ];
-  var got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
+  let got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
   match (got[0]) {
     Some(v) => {
       if (v != "healthy") {
@@ -84,16 +84,16 @@ function test_stall_dropped_at_deadline(): test.TestOutcome {
 // A stalled slot in an unbounded gather lands on_incomplete (poll over
 // only never-ready tokens returns -1) instead of hanging the fan-out.
 function test_stall_gather_incomplete(): test.TestOutcome {
-  var d: sim.Sim = sim.new(1);
-  var n: sim.Net = sim.net(d);
+  let d: sim.Sim = sim.new(1);
+  let n: sim.Net = sim.net(d);
   n = n.serve(1, 80, "/k", "ok", time.duration_nanos(10000000 as i64));
   n = n.serve(2, 80, "/k", "gone", time.duration_nanos(5000000 as i64));
   n = n.fault_stall(2, 80, "/k");
-  var fs: async.Future[string][] = [
+  let fs: async.Future[string][] = [
     n.fetch_future(1, 80, "/k"),
     n.fetch_future(2, 80, "/k"),
   ];
-  var got: string[] = async.gather_on(d, fs, "!");
+  let got: string[] = async.gather_on(d, fs, "!");
   if (got[0] != "ok") {
     return test.fail("healthy body lost: " + got[0]);
   }
@@ -105,13 +105,13 @@ function test_stall_gather_incomplete(): test.TestOutcome {
 // schedule under fault_partial(2) yields tokens 5 and 10 and then a
 // never-ready (negative) token — the future never resolves.
 function test_partial_prefix_then_silent(): test.TestOutcome {
-  var d: sim.Sim = sim.new(1);
-  var n: sim.Net = sim.net(d);
+  let d: sim.Sim = sim.new(1);
+  let n: sim.Net = sim.net(d);
   n = n.serve_chunked(1, 80, "/big", "abcdefghij", time.duration_nanos(5000000 as i64), time.duration_nanos(5000000 as i64), sim.chunks_of(10, 4));
   n = n.fault_partial(1, 80, "/big", 2);
-  var f: async.Future[string] = n.fetch_future(1, 80, "/big");
-  var toks: i32[] = [];
-  var guard: i32 = 0;
+  let f: async.Future[string] = n.fetch_future(1, 80, "/big");
+  let toks: i32[] = [];
+  let guard: i32 = 0;
   while (guard < 10) {
     match (f) {
       Ready(v) => {
@@ -140,12 +140,12 @@ function test_partial_prefix_then_silent(): test.TestOutcome {
 // stall: None at exactly the deadline, even though its prefix chunks
 // arrived on time.
 function test_partial_deadline_none(): test.TestOutcome {
-  var d: sim.Sim = sim.new(1);
-  var n: sim.Net = sim.net(d);
+  let d: sim.Sim = sim.new(1);
+  let n: sim.Net = sim.net(d);
   n = n.serve_chunked(1, 80, "/big", "abcdefghij", time.duration_nanos(5000000 as i64), time.duration_nanos(5000000 as i64), sim.chunks_of(10, 4));
   n = n.fault_partial(1, 80, "/big", 2);
-  var fs: async.Future[string][] = [n.fetch_future(1, 80, "/big")];
-  var got: Option[string][] = async.with_deadline_on(d, time.duration_millis(30), fs);
+  let fs: async.Future[string][] = [n.fetch_future(1, 80, "/big")];
+  let got: Option[string][] = async.with_deadline_on(d, time.duration_millis(30), fs);
   match (got[0]) {
     Some(v) => {
       return test.fail("partial endpoint resolved: " + v);
@@ -160,12 +160,12 @@ function test_partial_deadline_none(): test.TestOutcome {
 // (Ready("")). Sequential calls with no polls between them, so the
 // pattern is exactly the sim PRNG's first ten draws for the seed.
 function __flaky_pattern(seed: i64): string {
-  var d: sim.Sim = sim.new(seed);
-  var n: sim.Net = sim.net(d);
+  let d: sim.Sim = sim.new(seed);
+  let n: sim.Net = sim.net(d);
   n = n.serve(1, 80, "/k", "body", time.duration_nanos(10000000 as i64));
   n = n.fault_flaky(1, 80, "/k", 50);
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < 10) {
     match (n.fetch_future(1, 80, "/k")) {
       Ready(v) => {
@@ -192,8 +192,8 @@ function test_same_seed_reproducible(): test.TestOutcome {
   if (__flaky_pattern(9) != __flaky_pattern(9)) {
     return test.fail("same seed diverged");
   }
-  var a: sim.Sim = sim.new(9);
-  var b: sim.Sim = sim.new(9);
+  let a: sim.Sim = sim.new(9);
+  let b: sim.Sim = sim.new(9);
   if (a.rng_state() != b.rng_state()) {
     return test.fail("same-seed sims start with different PRNG states");
   }
@@ -207,19 +207,19 @@ function test_same_seed_reproducible(): test.TestOutcome {
 // healthy + one flaky(50) + one stalled endpoint ALWAYS returns exactly
 // 3 results in input order, whatever the seed's fault outcomes.
 function __gather_shape_ok(seed: i64): boolean {
-  var d: sim.Sim = sim.new(seed);
-  var n: sim.Net = sim.net(d);
+  let d: sim.Sim = sim.new(seed);
+  let n: sim.Net = sim.net(d);
   n = n.serve(1, 80, "/k", "alpha", time.duration_nanos(10000000 as i64));
   n = n.serve(2, 80, "/k", "beta", time.duration_nanos(20000000 as i64));
   n = n.serve(3, 80, "/k", "gamma", time.duration_nanos(5000000 as i64));
   n = n.fault_flaky(2, 80, "/k", 50);
   n = n.fault_stall(3, 80, "/k");
-  var fs: async.Future[string][] = [
+  let fs: async.Future[string][] = [
     n.fetch_future(1, 80, "/k"),
     n.fetch_future(2, 80, "/k"),
     n.fetch_future(3, 80, "/k"),
   ];
-  var got: string[] = async.gather_on(d, fs, "!");
+  let got: string[] = async.gather_on(d, fs, "!");
   if (got.len() != 3) {
     return false;
   }
@@ -236,11 +236,11 @@ function __gather_shape_ok(seed: i64): boolean {
 // seed (the first draw of a flaky(50) endpoint succeeds), used to pin
 // sweep_seeds' failure path.
 function __flaky_first_call_ok(seed: i64): boolean {
-  var d: sim.Sim = sim.new(seed);
-  var n: sim.Net = sim.net(d);
+  let d: sim.Sim = sim.new(seed);
+  let n: sim.Net = sim.net(d);
   n = n.serve(1, 80, "/k", "body", time.duration_nanos(10000000 as i64));
   n = n.fault_flaky(1, 80, "/k", 50);
-  var ok: boolean = false;
+  let ok: boolean = false;
   match (n.fetch_future(1, 80, "/k")) {
     Ready(v) => {},
     Pending(tok, c) => {
@@ -261,7 +261,7 @@ function test_seed_sweep(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/sim faults");
+  let r: test.TestRunner = test.test_new("std/sim faults");
   r = r.it("fail-mode resolves Ready empty immediately", test_fail_immediate);
   r = r.it("stall-mode dropped at the exact deadline", test_stall_dropped_at_deadline);
   r = r.it("stalled gather slot lands on_incomplete", test_stall_gather_incomplete);

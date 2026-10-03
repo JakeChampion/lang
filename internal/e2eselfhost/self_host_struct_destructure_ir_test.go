@@ -9,8 +9,8 @@ import (
 // gained the same `let/var Point { x, y } = E;` support as the native
 // front-end: parse_struct_destructure encodes it as a StmtVar whose
 // type_name is "@sd:<Struct>:<fields>" and whose name is the comma-joined
-// bindings, and irlower's lower_struct_destructure expands it into per-field
-// `var bind = tmp.field;` binds (reusing the field-read typing + RC dup-on-
+// bindings, and semsource expands it into per-field
+// `let bind = tmp.field;` binds (reusing the field-read typing + RC dup-on-
 // projection). These build the self-host x86-64 IR driver and assert the
 // compiled binary agrees with the interpreter oracle.
 var selfHostStructDestructureCases = []struct {
@@ -19,31 +19,31 @@ var selfHostStructDestructureCases = []struct {
 }{
 	{"shorthand", `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var p: Point = Point { x: 3, y: 4 };
+    let p: Point = Point { x: 3, y: 4 };
     let Point { x, y } = p;
     return x * 10 + y;
 }`},
 	{"var_keyword", `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var p: Point = Point { x: 7, y: 2 };
-    var Point { x, y } = p;
+    let p: Point = Point { x: 7, y: 2 };
+    let Point { x, y } = p;
     return x - y;
 }`},
 	{"rename", `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var p: Point = Point { x: 8, y: 1 };
+    let p: Point = Point { x: 8, y: 1 };
     let Point { x: a, y: b } = p;
     return a * 10 + b;
 }`},
 	{"rest_partial", `struct Point { x: i32, y: i32, z: i32 }
 function main(): i32 {
-    var p: Point = Point { x: 5, y: 6, z: 7 };
+    let p: Point = Point { x: 5, y: 6, z: 7 };
     let Point { x, z, .. } = p;
     return x * 10 + z;
 }`},
 	{"string_field", `struct Named { id: i32, label: string }
 function main(): i32 {
-    var n: Named = Named { id: 40, label: "abc" };
+    let n: Named = Named { id: 40, label: "abc" };
     let Named { id, label } = n;
     return id + label.len();
 }`},
@@ -62,7 +62,7 @@ func TestSelfHostStructDestructureX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range selfHostStructDestructureCases {
@@ -89,14 +89,14 @@ func TestSelfHostStructDestructureX86_64(t *testing.T) {
 }
 
 // TestSelfHostStructDestructureArm64 — CI-gated arm64 counterpart. The
-// destructure expansion is shared irlower analysis, so both register
+// destructure expansion is shared lowering analysis, so both register
 // backends inherit it; the driver is built x86 and emits arm64 asm.
 func TestSelfHostStructDestructureArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range selfHostStructDestructureCases {

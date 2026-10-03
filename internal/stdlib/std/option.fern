@@ -6,8 +6,8 @@
 // by the generic-methods support (#2692), so there's no runtime magic:
 // each is a small `match`.
 //
-//   var name: Option[string] = headers.get("name");
-//   var greeting: string = name.map(greet).unwrap_or("hello, stranger");
+//   let name: Option[string] = headers.get("name");
+//   let greeting: string = name.map(greet).unwrap_or("hello, stranger");
 //
 // NOTE: callback combinators invoke their function through an indirect
 // call. Composite callback parameter / return types (struct, enum,

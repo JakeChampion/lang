@@ -81,7 +81,7 @@ function main(): i32 { return f(1, 2); }`)
 func TestCmpBranchFusionWhile(t *testing.T) {
 	// A `while (i < n)` loop guard is an OpBrIf-shaped consumer; it must
 	// fuse too (the hot path the #4378 benchmark measured).
-	asm := compile(t, `@noinline function f(n: i32): i32 { var i: i32 = 0; while (i < n) { i = i + 1; } return i; }
+	asm := compile(t, `@noinline function f(n: i32): i32 { let i: i32 = 0; while (i < n) { i = i + 1; } return i; }
 function main(): i32 { return f(3); }`)
 	body := fnBody(t, asm, "f")
 	if strings.Count(body, "setl")+strings.Count(body, "movzx eax, al") > 0 {
@@ -98,9 +98,9 @@ function main(): i32 { return f(3); }`)
 
 // notBranchProg puts a call result — not a comparison — behind the `!`.
 const notBranchProg = `@noinline function flag(x: i32): boolean { return x > 2; }
-@noinline function f(x: i32): i32 { var b: boolean = flag(x); if (!b) { return 10; } return 20; }
-@noinline function g(x: i32): i32 { var b: boolean = flag(x); var i: i32 = 0; while (!b) { i = i + 1; b = true; } return i; }
-@noinline function h(x: i32): i32 { var b: boolean = flag(x); if (!!b) { return 30; } return 40; }
+@noinline function f(x: i32): i32 { let b: boolean = flag(x); if (!b) { return 10; } return 20; }
+@noinline function g(x: i32): i32 { let b: boolean = flag(x); let i: i32 = 0; while (!b) { i = i + 1; b = true; } return i; }
+@noinline function h(x: i32): i32 { let b: boolean = flag(x); if (!!b) { return 30; } return 40; }
 function main(): i32 { return f(1) + g(1) + h(1); }`
 
 func TestNotBranchFusionShape(t *testing.T) {

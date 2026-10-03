@@ -45,7 +45,7 @@ The moving parts:
 
 | Native function (`ir.go`) | Role |
 |---|---|
-| `computeReuseSources()` | The general-FBIP **pairing analysis**: matches a construction site C (`var c = T{…}` / a tuple lit) to a **dead, owned** struct/tuple local D of the exact same box layout whose box C can repurpose. Returns the C→D map + the set of consumed D names (so precise-drop won't *also* drop them). |
+| `computeReuseSources()` | The general-FBIP **pairing analysis**: matches a construction site C (`let c = T{…}` / a tuple lit) to a **dead, owned** struct/tuple local D of the exact same box layout whose box C can repurpose. Returns the C→D map + the set of consumed D names (so precise-drop won't *also* drop them). |
 | `structReuseEligible` / `tupleReuseEligible` / `enumReuseLoads` | **Eligibility**: box sizes match exactly; fields are i32-class scalars or single-word rc-tracked pointers (strings + wide/float scalars excluded); enum layout uniform; box ≤ 2048 (exact-fit freelist class). |
 | `reuseClassOf` / `reuseSourceLayout` | The box "kind" (struct/tuple/enum), type name, and freelist class `(alloc+15)&-16` of `data + 8-byte rc header`. |
 | `emitReuseToken(dName, dAlloc, cAlloc)` | **Codegen for the reuse allocation**: at C, if D's box is uniquely owned, reuse it; else fall back to a fresh alloc. |
@@ -70,7 +70,7 @@ A reuse is the pair **(static pairing, runtime guard)**:
 1. **Static** (`computeReuseSources`, deliberately narrow first cut):
    - D and C are the same *kind* (struct↔struct / tuple↔tuple / enum↔enum) and
      the same exact box layout / freelist class.
-   - D is a `var`, declared before C in the **same block** (function body, loop
+   - D is a `let`, declared before C in the **same block** (function body, loop
      body, or if-arm), never reassigned, name-unique (no shadowing).
    - D is `freeEligible` — **owned**, never a borrowed param.
    - D is **dead from C onward** within its block: referenced in no statement at
@@ -117,7 +117,7 @@ comment). What exists today, enabled unconditionally (so the byte-identical
 self-compile already exercises it) and tested:
 
 - `self_overwrite_reuse_sites` / `emit_self_overwrite_reuse` — the
-  functional-update self-overwrite `var c = T{ ...d, f: v }` reusing d's dead
+  functional-update self-overwrite `let c = T{ ...d, f: v }` reusing d's dead
   same-type box in place (the record-update idiom; native's
   `tryStructReuseOverwrite`).
 - `self_assign_update_names` — the **self-assign** record update
@@ -516,7 +516,7 @@ landed — the reuse families shipped **on by default**, each gated by its own
 detector/corruption-probe/fixpoint coverage, and (as of #4350) each carrying
 the runtime `is_unique` token guard.
 
-The reuse-on/off switch exists as `irlower.reuse_layer_disabled()`: setting
+The reuse-on/off switch exists as `irtables.reuse_layer_disabled()`: setting
 **`FERN_SELFHOST_NO_REUSE=1`** in the compiler's environment empties every
 donor-based pairing (self-overwrite / cross-struct / cross-tuple / enum-donor
 / enum-cross / in-arm — the site lists stay empty, so their donor-free

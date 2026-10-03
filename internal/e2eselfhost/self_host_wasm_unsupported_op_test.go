@@ -38,7 +38,7 @@ func TestSelfHostWasmUnsupportedOpRefused(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
 	wasmDriver := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasmdriver")
 
-	const src = `function main(): i32 { var m: i64 = __heap_mark(); __heap_release_to(m); return 0; }`
+	const src = `function main(): i32 { let m: i64 = __heap_mark(); __heap_release_to(m); return 0; }`
 
 	t.Run("wasm-refuses", func(t *testing.T) {
 		cmd := exec.Command(wasmDriver)

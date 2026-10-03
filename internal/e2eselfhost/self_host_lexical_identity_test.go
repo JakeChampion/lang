@@ -13,17 +13,17 @@ import (
 func TestSelfHostLexicalIdentityX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	cases := []struct{ name, src, want string }{
-		{"initializer", `function f(x: i64): i64 { var x = x + 1; return x; }`, "x=0;x=1;|$binding$0$x;$binding$1$x;"},
-		{"nested capture", `function f(n: i32): i32 { var call = (): i32 => { var inner = (): i32 => n; var n = 99; return inner(); }; return call(); }`, "n=0;inner=1;n=2;call=3;|$binding$0$n;$binding$1$inner;$binding$3$call;"},
-		{"sibling scopes", `function f(n: i32): i32 { if (true) { var n = 1; print(n); } else { var n = 2; print(n); } return n; }`, "n=0;n=1;n=2;|print;$binding$1$n;print;$binding$2$n;$binding$0$n;"},
+		{"initializer", `function f(x: i64): i64 { let x = x + 1; return x; }`, "x=0;x=1;|$binding$0$x;$binding$1$x;"},
+		{"nested capture", `function f(n: i32): i32 { let call = (): i32 => { let inner = (): i32 => n; let n = 99; return inner(); }; return call(); }`, "n=0;inner=1;n=2;call=3;|$binding$0$n;$binding$1$inner;$binding$3$call;"},
+		{"sibling scopes", `function f(n: i32): i32 { if (true) { let n = 1; print(n); } else { let n = 2; print(n); } return n; }`, "n=0;n=1;n=2;|print;$binding$1$n;print;$binding$2$n;$binding$0$n;"},
 		{"loop scope", `function f(xs: i32[], x: i32): i32 { for x in xs { print(x); } return x; }`, "xs=0;x=1;x=2;|$binding$0$xs;print;$binding$2$x;$binding$1$x;"},
 		{"recursive nested function", `function f(): i32 { function recur(n: i32): i32 { if (n == 0) { return 7; } return recur(n - 1); } return recur(2); }`, "recur=0;n=1;|$binding$1$n;$binding$0$recur;$binding$1$n;$binding$0$recur;"},
-		{"arrow lambda does not see its var", `function f(): i32 { var recur = (n: i32): i32 => { if (n == 0) { return 7; } return recur(n - 1); }; return recur(2); }`, "n=0;recur=1;|$binding$0$n;recur;$binding$0$n;$binding$1$recur;"},
-		{"assignment identity", `function f(n: i32): i32 { n = n + 1; var n = 4; n = n + 2; return n; }`, "n=0;n=1;|=$binding$0$n;$binding$0$n;=$binding$1$n;$binding$1$n;$binding$1$n;"},
-		{"tuple binding", `function f(): i32 { var (x, y) = (3, 4); return x + y; }`, "x=0;y=1;|$binding$0$x;$binding$1$y;"},
+		{"arrow lambda does not see its var", `function f(): i32 { let recur = (n: i32): i32 => { if (n == 0) { return 7; } return recur(n - 1); }; return recur(2); }`, "n=0;recur=1;|$binding$0$n;recur;$binding$0$n;$binding$1$recur;"},
+		{"assignment identity", `function f(n: i32): i32 { n = n + 1; let n = 4; n = n + 2; return n; }`, "n=0;n=1;|=$binding$0$n;$binding$0$n;=$binding$1$n;$binding$1$n;$binding$1$n;"},
+		{"tuple binding", `function f(): i32 { let (x, y) = (3, 4); return x + y; }`, "x=0;y=1;|$binding$0$x;$binding$1$y;"},
 		{"pattern scope", `enum E { Full(i32), Empty } function f(e: E, x: i32): i32 { match(e) { Full(x) => { print(x); }, Empty => {} } return x; }`, "e=0;x=1;x=2;|$binding$0$e;print;$binding$2$x;$binding$1$x;"},
 		{"receiver", `struct S { value: i32 } function (s: S) f(n: i32): i32 { return s.value + n; }`, "s=0;n=1;|$binding$0$s;$binding$1$n;"},
-		{"defer binding", `function f(n: i32): i32 { defer print(n); var n = 9; return n; }`, "n=0;n=1;|print;$binding$0$n;$binding$1$n;"},
+		{"defer binding", `function f(n: i32): i32 { defer print(n); let n = 9; return n; }`, "n=0;n=1;|print;$binding$0$n;$binding$1$n;"},
 	}
 	var src strings.Builder
 	src.WriteString(`import "./ast";
@@ -41,20 +41,20 @@ function read_stmt(st: ast.Stmt, own out: string): string {
     return out;
 }
 function reads(fd: parser.FuncDecl): string {
-    var out = "";
+    let out = "";
     for st in fd.body { out = astwalk.fold_stmt_nodes(st, out, read_stmt, read_expr, astwalk.descend_all); }
     return out;
 }
 function inspect(source: string): string {
-    var mod = parser.parse_module(lexer.tokenize(source));
-    var fd = mod.funcs[0];
-    var before = reads(fd);
-    var resolved = lexical.resolve_func(fd);
+    let mod = parser.parse_module(lexer.tokenize(source));
+    let fd = mod.funcs[0];
+    let before = reads(fd);
+    let resolved = lexical.resolve_func(fd);
     if (reads(fd) != before) { return "mutated input"; }
-    var pi = 0;
+    let pi = 0;
     while (pi < fd.params.len()) {
-        var original = fd.params[pi];
-        var renamed = resolved.func.params[pi];
+        let original = fd.params[pi];
+        let renamed = resolved.func.params[pi];
         if (original.type_name != renamed.type_name || original.own != renamed.own ||
             original.fn_ret != renamed.fn_ret || original.fn_param_types != renamed.fn_param_types) {
             return "changed parameter contract";
@@ -65,7 +65,7 @@ function inspect(source: string): string {
         fd.ret_type != resolved.func.ret_type || fd.fip != resolved.func.fip || fd.fbip != resolved.func.fbip) {
         return "changed declaration metadata";
     }
-    var out = "";
+    let out = "";
     for b in resolved.bindings {
         if (lexical.source_name(b.symbol) != b.name) { return "lost diagnostic spelling"; }
         out = out + b.name + "=" + util.i32_to_string(b.id) + ";";

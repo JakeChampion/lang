@@ -38,10 +38,10 @@ function tag(s: string, n: i32): i32 {
     BODY
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 400) {
-        var line: string = mkstr(seed(i));
+        let line: string = mkstr(seed(i));
         acc = (acc + tag(line, i)) % 101;
         i = i + 1;
     }
@@ -99,7 +99,7 @@ func TestSingleWordABIReclaimsAStringParamBoundToALocal(t *testing.T) {
 	directAllocs, directFrees := censusAtExit(t, bin, runner, dir, "reclaim_direct",
 		strings.Replace(singleWordAliasReclaimSrc, "BODY", "return s.len() + n;", 1))
 	aliasAllocs, aliasFrees := censusAtExit(t, bin, runner, dir, "reclaim_alias",
-		strings.Replace(singleWordAliasReclaimSrc, "BODY", "var x: string = s;\n    return x.len() + n;", 1))
+		strings.Replace(singleWordAliasReclaimSrc, "BODY", "let x: string = s;\n    return x.len() + n;", 1))
 
 	if directAllocs != aliasAllocs {
 		t.Fatalf("the two spellings allocate differently (%d direct, %d through an alias) — "+
@@ -107,7 +107,7 @@ func TestSingleWordABIReclaimsAStringParamBoundToALocal(t *testing.T) {
 			directAllocs, aliasAllocs)
 	}
 	if aliasFrees != directFrees {
-		t.Errorf("`var x: string = s; return x.len() + n;` frees %d of %d allocations where "+
+		t.Errorf("`let x: string = s; return x.len() + n;` frees %d of %d allocations where "+
 			"`return s.len() + n;` frees %d — binding the parameter to a local cost the CALLER "+
 			"its reclaim.\n\n"+
 			"Both bodies read the parameter and return a scalar, so neither retains anything "+

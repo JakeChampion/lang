@@ -7,7 +7,7 @@ import (
 )
 
 // A state-threading function that opens by renaming its parameter —
-// `var c: C = c0;`, the line most of the self-host lowering starts with — used
+// `let c: C = c0;`, the line most of the self-host lowering starts with — used
 // to pay a full-buffer copy at every append below it (#8498). Two independent
 // mechanisms had to hold for the rename to cost nothing:
 //
@@ -20,27 +20,27 @@ import (
 // took 3.0 s against 2 ms for the same work written without the rename.
 const renameAliasSrc = `struct C { insts: i32[], n: i32 }
 function emit(c: C, v: i32): C { return C { ...c, insts: c.insts.append(v), n: c.n + 1 }; }
-function renameOnly(c0: C): C { var c: C = c0; return C { ...c, n: c.n + 1 }; }
-function renameSourceLive(c0: C): C { var c: C = c0; return C { ...c, n: c.n + c0.n }; }
+function renameOnly(c0: C): C { let c: C = c0; return C { ...c, n: c.n + 1 }; }
+function renameSourceLive(c0: C): C { let c: C = c0; return C { ...c, n: c.n + c0.n }; }
 function threaded(c0: C): C {
-    var c: C = c0;
-    var open: C = emit(c, 1);
+    let c: C = c0;
+    let open: C = emit(c, 1);
     return emit(open, 2);
 }
 function threadedSourceLive(c0: C): i32 {
-    var c: C = c0;
-    var open: C = emit(c, 1);
+    let c: C = c0;
+    let open: C = emit(c, 1);
     return open.n + c0.insts.len();
 }
 function main(): i32 {
-    var a: C = C { insts: [], n: 0 };
+    let a: C = C { insts: [], n: 0 };
     return renameOnly(a).n + renameSourceLive(a).n + threaded(a).n + threadedSourceLive(a);
 }`
 
 func TestRenamedParamAliasMoves(t *testing.T) {
 	ip := lowerForTest(t, renameAliasSrc)
 	if n := incsBeforeFirstCall(fnNamed(t, ip, "renameOnly")); n != 0 {
-		t.Errorf("renameOnly retains for `var c: C = c0` (%d rc_inc before its first call); c0 is never named again, so the alias should take its reference:\n%s", n, ip)
+		t.Errorf("renameOnly retains for `let c: C = c0` (%d rc_inc before its first call); c0 is never named again, so the alias should take its reference:\n%s", n, ip)
 	}
 	// Anti-vacuity: the source read after the rename keeps both names live,
 	// and there the transfer inc is what the exit sweep's second dec pairs

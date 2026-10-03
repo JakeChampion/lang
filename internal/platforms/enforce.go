@@ -149,9 +149,11 @@ var gatedBuiltins = map[string]string{
 	"tcp_close":        "tcp",
 	"tcp_pollable":     "tcp",
 	"udp_send":         "tcp",
+	"udp_send_bytes":   "tcp",
 	"udp_bind":         "tcp",
 	"udp_connect":      "tcp",
 	"udp_sendto":       "tcp",
+	"udp_sendto_bytes": "tcp",
 	"udp_recvfrom":     "tcp",
 	"tcp_listen_with":  "tcp",
 	"tcp_socket_ctl":   "tcp",
@@ -377,6 +379,10 @@ var coreBuiltins = map[string]bool{
 	"isatty":      true,
 	"target_os":   true,
 	"target_arch": true,
+	// Answered on every target: Darwin asks libSystem's getpwuid(3), and
+	// the rest answer 0, meaning use the files, which is the truth there
+	// (#9815).
+	"__getpwuid_name": true,
 
 	"map_new":                     true,
 	"cell_new":                    true,

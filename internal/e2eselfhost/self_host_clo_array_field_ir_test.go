@@ -25,7 +25,7 @@ import (
 // closure convention (box ptr in %r10/x9, fn_addr = box[0]), mirroring the
 // ExprLambda arm right above it.
 //
-// (A SEPARATE, still-open defect — issue #5160 — is `var f = reg.hs[i]; f()`
+// (A SEPARATE, still-open defect — issue #5160 — is `let f = reg.hs[i]; f()`
 // and `for h in reg.hs { h() }`: binding a closure-array element from a struct
 // field yields a value the `f()` lowering treats as a raw fn pointer rather
 // than a closure box, so it SIGSEGVs. That is the element-BIND path, not the
@@ -38,22 +38,22 @@ var cloArrayFieldCallCases = []struct {
 	exit int
 }{
 	// A local-built closure array stored into the field.
-	{"clo-local-built", "struct R { hs: (() => i32)[] }\nfunction main(): i32 { var n: i32 = 3; var c: (() => i32)[] = [() => n]; var r = R { hs: c }; return r.hs[0](); }", 3},
+	{"clo-local-built", "struct R { hs: (() => i32)[] }\nfunction main(): i32 { let n: i32 = 3; let c: (() => i32)[] = [() => n]; let r = R { hs: c }; return r.hs[0](); }", 3},
 	// The local is rebound from a named-function array to a lambda array before
 	// the store; both hold boxes. Read through an element bind rather than an
 	// inline call, so a second dispatch site is exercised.
-	{"clo-rebound-bind", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { var n: i32 = 5; var a: (() => i32)[] = [seven]; a = [() => n, () => n]; var r: R = R { hs: a }; var f = r.hs[1]; return f(); }", 5},
+	{"clo-rebound-bind", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { let n: i32 = 5; let a: (() => i32)[] = [seven]; a = [() => n, () => n]; let r: R = R { hs: a }; let f = r.hs[1]; return f(); }", 5},
 	// No-capture closure element, direct call.
-	{"nocap", "struct Reg { hs: (() => i32)[] } function main(): i32 { var r = Reg { hs: [() => 40] }; return r.hs[0](); }", 40},
+	{"nocap", "struct Reg { hs: (() => i32)[] } function main(): i32 { let r = Reg { hs: [() => 40] }; return r.hs[0](); }", 40},
 	// Capturing closures, two elements, both called directly.
-	{"capture-multi", "struct Reg { hs: (() => i32)[] } function main(): i32 { var n: i32 = 2; var r = Reg { hs: [() => n, () => n + 1] }; return r.hs[0]() + r.hs[1](); }", 5},
+	{"capture-multi", "struct Reg { hs: (() => i32)[] } function main(): i32 { let n: i32 = 2; let r = Reg { hs: [() => n, () => n + 1] }; return r.hs[0]() + r.hs[1](); }", 5},
 	// Closure taking one arg (exercises the arg-push + cleanup math).
-	{"with-arg", "struct Reg { hs: ((i32) => i32)[] } function main(): i32 { var n: i32 = 5; var r = Reg { hs: [(x: i32) => x + n] }; return r.hs[0](10); }", 15},
+	{"with-arg", "struct Reg { hs: ((i32) => i32)[] } function main(): i32 { let n: i32 = 5; let r = Reg { hs: [(x: i32) => x + n] }; return r.hs[0](10); }", 15},
 	// Two args (pins the (args+1)-slot cleanup).
-	{"two-arg", "struct Reg { hs: ((i32, i32) => i32)[] } function main(): i32 { var r = Reg { hs: [(a: i32, b: i32) => a * b] }; return r.hs[0](6, 7); }", 42},
+	{"two-arg", "struct Reg { hs: ((i32, i32) => i32)[] } function main(): i32 { let r = Reg { hs: [(a: i32, b: i32) => a * b] }; return r.hs[0](6, 7); }", 42},
 	// Regression: a plain (non-struct) local closure array direct call stays
 	// correct — it lowers on the IR path rather than bailing.
-	{"local-array-regress", "function main(): i32 { var n: i32 = 2; var hs: (() => i32)[] = [() => n, () => n + 1]; return hs[0]() + hs[1](); }", 5},
+	{"local-array-regress", "function main(): i32 { let n: i32 = 2; let hs: (() => i32)[] = [() => n, () => n + 1]; return hs[0]() + hs[1](); }", 5},
 }
 
 // TestSelfHostCloArrayFieldCallIRX86_64 — the x86-64 asm.fern fix, through the
@@ -61,7 +61,7 @@ var cloArrayFieldCallCases = []struct {
 func TestSelfHostCloArrayFieldCallIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range cloArrayFieldCallCases {
@@ -95,7 +95,7 @@ func TestSelfHostCloArrayFieldCallIRArm64(t *testing.T) {
 		t.Skip("arm64 clo-array-field gate needs a native x86 host to run the driver")
 	}
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range cloArrayFieldCallCases {

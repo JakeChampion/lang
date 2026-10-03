@@ -23,12 +23,12 @@ var rawFreeCases = []struct {
 	// The block is bigger than the freelist link it has to hold, and small
 	// enough to land in the word-indexed small tier.
 	{"small-blocks-are-recycled", `function main(): i32 {
-    var w: i32 = 0;
-    while (w < 200) { var p: usize = __alloc(64); __free(p, 64); w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { var q: usize = __alloc(64); __free(q, 64); i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = 0;
+    while (w < 200) { let p: usize = __alloc(64); __free(p, 64); w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let q: usize = __alloc(64); __free(q, 64); i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (b2 - b1 >= 1024) { return 98; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -37,12 +37,12 @@ var rawFreeCases = []struct {
 	// allocator rounded the request to, or the block returns to a class whose
 	// next request is bigger than it is.
 	{"an-unrounded-size-returns-to-its-own-class", `function main(): i32 {
-    var w: i32 = 0;
-    while (w < 200) { var p: usize = __alloc(52); __free(p, 52); w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { var q: usize = __alloc(52); __free(q, 52); i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = 0;
+    while (w < 200) { let p: usize = __alloc(52); __free(p, 52); w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let q: usize = __alloc(52); __free(q, 52); i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (b2 - b1 >= 1024) { return 98; }
     return 0;
 }`},
@@ -54,10 +54,10 @@ var rawFreeCases = []struct {
 	// corrupt anything, so it answers 0 either way. It earns its place only
 	// once op_free pushes.
 	{"a-recycled-block-still-stores", `function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 500) {
-        var p: usize = __alloc(32);
+        let p: usize = __alloc(32);
         __store_i32(p + 8, i);
         __store_i32(p + 16, i * 2);
         acc = acc + __load_i32(p + 8) + __load_i32(p + 16);
@@ -70,12 +70,12 @@ var rawFreeCases = []struct {
 	// The large tier (>= 512 KiB) has its own class array and its own push;
 	// this is the only case that reaches it.
 	{"large-blocks-are-recycled", `function main(): i32 {
-    var w: i32 = 0;
-    while (w < 4) { var p: usize = __alloc(600000); __free(p, 600000); w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 64) { var q: usize = __alloc(600000); __free(q, 600000); i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = 0;
+    while (w < 4) { let p: usize = __alloc(600000); __free(p, 600000); w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 64) { let q: usize = __alloc(600000); __free(q, 600000); i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (b2 - b1 >= 1048576) { return 98; }
     return 0;
 }`},

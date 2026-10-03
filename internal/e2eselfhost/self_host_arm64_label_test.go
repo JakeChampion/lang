@@ -60,7 +60,7 @@ const arm64LabelsSelfTestMain = `
 function main(): i32 {
     // forward b: b skip; <movz>; skip: -> b at off 0 targets off 8, rel +8
     // -> 0x14000002 -> 02 00 00 14
-    var a: Arm64Asm = arm64_asm_new();
+    let a: Arm64Asm = arm64_asm_new();
     a = arm64_asm_b(a, "skip");
     a = Arm64Asm { ...a, code: arm64_movz(a.code, arm64_x0(), 99, 0, false) };
     a = arm64_asm_label(a, "skip");
@@ -69,7 +69,7 @@ function main(): i32 {
 
     // forward b.eq: b.eq end; <movz>; end: -> at off 0 targets off 8 ->
     // 0x54000040 -> 40 00 00 54
-    var b: Arm64Asm = arm64_asm_new();
+    let b: Arm64Asm = arm64_asm_new();
     b = arm64_asm_bcond(b, arm64_eq(), "end");
     b = Arm64Asm { ...b, code: arm64_movz(b.code, arm64_x0(), 7, 0, false) };
     b = arm64_asm_label(b, "end");
@@ -78,7 +78,7 @@ function main(): i32 {
 
     // forward bl: bl f; f: -> bl at off 0 targets off 4, rel +4 ->
     // 0x94000001 -> 01 00 00 94
-    var c: Arm64Asm = arm64_asm_new();
+    let c: Arm64Asm = arm64_asm_new();
     c = arm64_asm_bl(c, "f");
     c = arm64_asm_label(c, "f");
     c = arm64_asm_resolve(c);
@@ -86,7 +86,7 @@ function main(): i32 {
 
     // backward cbnz: top: <movz>; cbnz x1, top -> cbnz at off 4 targets
     // off 0, rel -4 (patched immediately) -> 0xB5FFFFE1 -> E1 FF FF B5
-    var d: Arm64Asm = arm64_asm_new();
+    let d: Arm64Asm = arm64_asm_new();
     d = arm64_asm_label(d, "top");
     d = Arm64Asm { ...d, code: arm64_movz(d.code, arm64_x0(), 1, 0, false) };
     d = arm64_asm_cbnz(d, arm64_x1(), "top", false);
@@ -104,7 +104,7 @@ function main(): i32 {
 // label) and returns; _main exits with x0.
 const arm64MachOCallDriverMain = `
 function main(): i32 {
-    var a: Arm64Asm = arm64_asm_new();
+    let a: Arm64Asm = arm64_asm_new();
     a = arm64_asm_bl(a, "compute");                    // call compute (forward)
     a = Arm64Asm { ...a, code: arm64_movz(a.code, arm64_x16(), 1, 0, false) };    // SYS_exit (Darwin)
     a = Arm64Asm { ...a, code: arm64_svc(a.code, 128) };                    // svc #0x80
@@ -117,8 +117,8 @@ function main(): i32 {
     a = arm64_asm_cbnz(a, arm64_x1(), "loop", false);          // loop if != 0 (backward)
     a = Arm64Asm { ...a, code: arm64_ret(a.code, arm64_lr()) };             // return to caller
     a = arm64_asm_resolve(a);
-    var none: i32[] = [];
-    var bin: i32[] = macho_executable(a.code, none, none, "fern", macho_entry_off(a), 0, none);
+    let none: i32[] = [];
+    let bin: i32[] = macho_executable(a.code, none, none, "fern", macho_entry_off(a), 0, none);
     write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
@@ -176,7 +176,7 @@ func TestSelfHostArm64GasNumericLabels(t *testing.T) {
 //	off 20  b 1b        -> back to 16          (imm26 field = 0x3ffffff, i.e. -1)
 const arm64NumericLabelSelfTestMain = `
 function main(): i32 {
-    var src: string = "";
+    let src: string = "";
     src = src + "    b.ne 1f\n";
     src = src + "1:\n";
     src = src + "    mov x0, #0\n";
@@ -186,10 +186,10 @@ function main(): i32 {
     src = src + "    mov x0, #0\n";
     src = src + "    b 1b\n";
 
-    var p: Arm64GasProg = arm64_gas_program(src);
+    let p: Arm64GasProg = arm64_gas_program(src);
     // Every reference resolved, so nothing is refused.
     if (p.unknown.len() != 0) { return 1; }
-    var a: Arm64Asm = p.asm;
+    let a: Arm64Asm = p.asm;
     if (a.code.len() != 24) { return 2; }
 
     // b.ne 1f @0 -> the FIRST definition (off 4): imm19 = (4 - 0) / 4 = 1.
@@ -203,10 +203,10 @@ function main(): i32 {
     if (imm26_at(a.code, 20) != 67108863) { return 5; }
 
     // An undefined target is REFUSED, not patched to a wild offset.
-    var p2: Arm64GasProg = arm64_gas_program("    b nowhere\n");
+    let p2: Arm64GasProg = arm64_gas_program("    b nowhere\n");
     if (p2.unknown.len() != 1) { return 6; }
     // A numeric reference with no matching definition is refused the same way.
-    var p3: Arm64GasProg = arm64_gas_program("    b.eq 1f\n    mov x0, #0\n");
+    let p3: Arm64GasProg = arm64_gas_program("    b.eq 1f\n    mov x0, #0\n");
     if (p3.unknown.len() != 1) { return 7; }
     return 0;
 }
@@ -215,13 +215,13 @@ function main(): i32 {
 // conditional-branch word at byte offset at. Bits 5..23 sit inside the low
 // three bytes, so this needs no 32-bit assembly.
 function imm19_at(code: i32[], at: i32): i32 {
-    var lo: i32 = code[at] + code[at + 1] * 256 + code[at + 2] * 65536;
+    let lo: i32 = code[at] + code[at + 1] * 256 + code[at + 2] * 65536;
     return (lo >> 5) & 524287;
 }
 
 // imm26_at extracts the 26-bit offset from an unconditional-branch word.
 function imm26_at(code: i32[], at: i32): i32 {
-    var w: i32 = code[at] + code[at + 1] * 256 + code[at + 2] * 65536 + (code[at + 3] & 3) * 16777216;
+    let w: i32 = code[at] + code[at + 1] * 256 + code[at + 2] * 65536 + (code[at + 3] & 3) * 16777216;
     return w & 67108863;
 }
 
@@ -304,14 +304,14 @@ function main(): i32 {
     // ---- integration, BACKWARD (patched immediately) ----
     // Place the label, put 8200 instructions between it and the tbz, and the
     // displacement (-32800) is past imm14's -32768.
-    var a: Arm64Asm = arm64_asm_new();
+    let a: Arm64Asm = arm64_asm_new();
     a = arm64_asm_label(a, "far");
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 8200) {
         a = Arm64Asm { ...a, code: arm64_movz(a.code, arm64_x0(), 0, 0, false) };
         i = i + 1;
     }
-    var before: i32 = a.code.len();
+    let before: i32 = a.code.len();
     a = arm64_asm_tbz(a, arm64_x1(), 0, "far");
     if (a.oor.len() != 1) { return 19; }
     // The placeholder is still there (the instruction was emitted, not patched)
@@ -320,10 +320,10 @@ function main(): i32 {
     if (a.fix_offs.len() != 0) { return 21; }
 
     // ---- integration, FORWARD (resolved later) ----
-    var b: Arm64Asm = arm64_asm_new();
+    let b: Arm64Asm = arm64_asm_new();
     b = arm64_asm_tbz(b, arm64_x1(), 0, "ahead");
     if (b.fix_offs.len() != 1) { return 22; }   // queued, range not yet knowable
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < 8200) {
         b = Arm64Asm { ...b, code: arm64_movz(b.code, arm64_x0(), 0, 0, false) };
         j = j + 1;
@@ -334,9 +334,9 @@ function main(): i32 {
     if (b.oor.len() != 1) { return 24; }
 
     // An in-range branch is unaffected: same shape, 8 instructions apart.
-    var c: Arm64Asm = arm64_asm_new();
+    let c: Arm64Asm = arm64_asm_new();
     c = arm64_asm_label(c, "near");
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < 8) {
         c = Arm64Asm { ...c, code: arm64_movz(c.code, arm64_x0(), 0, 0, false) };
         k = k + 1;

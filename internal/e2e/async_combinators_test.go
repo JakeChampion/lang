@@ -27,12 +27,12 @@ func TestAsyncCombinatorsPortable(t *testing.T) {
 	const src = `import "std/async";
 import "std/time";
 function main(): i32 {
-    var fs: async.Future[i32][] = [Ready(5), Ready(7), Ready(30)];
-    var summed: i32[] = async.gather(fs, -1);
-    var sum: i32 = summed[0] + summed[1] + summed[2];   // 42
-    var (w, v) = async.race(fs, -1);                    // (0, 5)
-    var d: Option[i32][] = async.with_deadline(time.duration_millis(50), fs); // [Some(5),Some(7),Some(30)]
-    var d2: i32 = 0;
+    let fs: async.Future[i32][] = [Ready(5), Ready(7), Ready(30)];
+    let summed: i32[] = async.gather(fs, -1);
+    let sum: i32 = summed[0] + summed[1] + summed[2];   // 42
+    let (w, v) = async.race(fs, -1);                    // (0, 5)
+    let d: Option[i32][] = async.with_deadline(time.duration_millis(50), fs); // [Some(5),Some(7),Some(30)]
+    let d2: i32 = 0;
     match (d[2]) { Some(x) => { d2 = x; }, None => { } }
     if (sum == 42 && w == 0 && v == 5 && d2 == 30) { return 42; }
     return 1;
@@ -98,7 +98,7 @@ func TestAsyncCombinatorsRealFd(t *testing.T) {
 
 function fetch_future(conn: i32): async.Future[i32] {
     function resume(woken_fd: i32): async.Future[i32] {
-        var resp: u8[] = tcp_recv(woken_fd, 4096);
+        let resp: u8[] = tcp_recv(woken_fd, 4096);
         if (resp.len() > 0) { return Ready(1); }
         return Ready(0);
     }
@@ -106,14 +106,14 @@ function fetch_future(conn: i32): async.Future[i32] {
 }
 
 function main(): i32 {
-    var c1: i32 = tcp_connect(%d, %d);
-    var c2: i32 = tcp_connect(%d, %d);
+    let c1: i32 = tcp_connect(%d, %d);
+    let c2: i32 = tcp_connect(%d, %d);
     if (c1 < 0) { return 81; }
     if (c2 < 0) { return 82; }
     if (tcp_send(c1, "GET /1 HTTP/1.1\r\nHost: x\r\n\r\n") < 0) { return 83; }
     if (tcp_send(c2, "GET /2 HTTP/1.1\r\nHost: x\r\n\r\n") < 0) { return 84; }
-    var fs: async.Future[i32][] = [fetch_future(c1), fetch_future(c2)];
-    var r: i32[] = async.gather(fs, -1);
+    let fs: async.Future[i32][] = [fetch_future(c1), fetch_future(c2)];
+    let r: i32[] = async.gather(fs, -1);
     if (r[0] == 1 && r[1] == 1) { return 42; }
     return 85;
 }`, host, port, host, port)
@@ -122,7 +122,7 @@ function main(): i32 {
 
 function fetch_future(conn: i32): async.Future[i32] {
     function resume(woken_fd: i32): async.Future[i32] {
-        var resp: u8[] = tcp_recv(woken_fd, 4096);
+        let resp: u8[] = tcp_recv(woken_fd, 4096);
         if (resp.len() > 0) { return Ready(1); }
         return Ready(0);
     }
@@ -130,14 +130,14 @@ function fetch_future(conn: i32): async.Future[i32] {
 }
 
 function main(): i32 {
-    var c1: i32 = tcp_connect(%d, %d);
-    var c2: i32 = tcp_connect(%d, %d);
+    let c1: i32 = tcp_connect(%d, %d);
+    let c2: i32 = tcp_connect(%d, %d);
     if (c1 < 0) { return 81; }
     if (c2 < 0) { return 82; }
     if (tcp_send(c1, "GET /1 HTTP/1.1\r\nHost: x\r\n\r\n") < 0) { return 83; }
     if (tcp_send(c2, "GET /2 HTTP/1.1\r\nHost: x\r\n\r\n") < 0) { return 84; }
-    var fs: async.Future[i32][] = [fetch_future(c1), fetch_future(c2)];
-    var (winner, result) = async.race(fs, -1);
+    let fs: async.Future[i32][] = [fetch_future(c1), fetch_future(c2)];
+    let (winner, result) = async.race(fs, -1);
     if (winner >= 0 && result == 1) { return 42; }
     return 86;
 }`, host, port, host, port)

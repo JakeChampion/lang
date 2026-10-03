@@ -22,7 +22,7 @@ function main(): i32 {
     if (W[0] != 5000000000) { return 5; }
     if (Z[1] != 20) { return 6; }
     if (P[1].0.len() != 2 || P[1].1 != 2) { return 7; }
-    var xs: i32[] = XS.with(0, 99);
+    let xs: i32[] = XS.with(0, 99);
     if (XS[0] != 2 || xs[0] != 99) { return 8; }
     if ((4, B { n: 3 }).1.n != 3) { return 9; }
     if ((4, (5, 6)).1.0 != 5) { return 10; }

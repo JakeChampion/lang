@@ -12,8 +12,8 @@ have the two preconditions below, which only measurement produced.
 ## The shape
 
 ```fern
-var q: P = P { f: mkv(i), n: i };   // q owns the E[] buffer
-var p: P = P { f: q.f, n: i };      // the read aliases it — uncounted
+let q: P = P { f: mkv(i), n: i };   // q owns the E[] buffer
+let p: P = P { f: q.f, n: i };      // the read aliases it — uncounted
 ```
 
 `q.f` lowers via `struct_get` to the source box's buffer, so `p` co-owns it. The
@@ -54,8 +54,8 @@ credits' `*_share_holder_respread`. Those know their holders; this one decides
 mid-expression, where the dangerous base can name a local with no slot yet:
 
 ```fern
-var p: P = P { f: q.f, n: i };   // decided here — `p` has no slot
-var z: P = P { ...p, n: i + 2 }; // and `p` is the base
+let p: P = P { f: q.f, n: i };   // decided here — `p` has no slot
+let z: P = P { ...p, n: i + 2 }; // and `p` is the base
 ```
 
 `LowerState.spread_sites` carries both questions' rows, seeded once per function
@@ -71,7 +71,7 @@ with neither marker:
 
 | shape | before | with NODEEP dropped only | with the witness written |
 |---|---|---|---|
-| `var p: P = P { f: q.f … }` at top level | 600/300 | 600/600 | 600/600 |
+| `let p: P = P { f: q.f … }` at top level | 600/300 | 600/600 | 600/600 |
 | the same inside `if (i >= 0) { … }` | 600/300 | **600/300** | 600/600 |
 
 Two programs differing only in braces, one clean and one leaking its entire

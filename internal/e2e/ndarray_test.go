@@ -26,76 +26,76 @@ import (
 const ndarraySrc = `import "std/ndarray";
 
 function build(n: i32): i64[] {
-	var xs: i64[] = [];
-	var i: i32 = 0;
+	let xs: i64[] = [];
+	let i: i32 = 0;
 	while (i < n) { xs = xs.append(i as i64); i = i + 1; }
 	return xs;
 }
 
 function main(): i32 {
-	var n: i32 = 64;
-	var probe0: i64 = __heap_bump_bytes();
-	var xs: i64[] = build(n * n);
-	var counters: boolean = __heap_bump_bytes() - probe0 > 0 as i64;
-	var elem_bytes: i64 = (n * n * 8) as i64;
-	var small: i64 = 1024 as i64;
+	let n: i32 = 64;
+	let probe0: i64 = __heap_bump_bytes();
+	let xs: i64[] = build(n * n);
+	let counters: boolean = __heap_bump_bytes() - probe0 > 0 as i64;
+	let elem_bytes: i64 = (n * n * 8) as i64;
+	let small: i64 = 1024 as i64;
 
-	var a: ndarray.NdArray[i64] = ndarray.from_flat(xs, [n, n]);
+	let a: ndarray.NdArray[i64] = ndarray.from_flat(xs, [n, n]);
 	if (a.rank() != 2 || a.len() != n * n || a.shape()[1] != n) { return 10; }
 	if (a.get([3, 5]) != (3 * n + 5) as i64) { return 11; }
 	if (!a.is_row_major() || !a.is_packed()) { return 12; }
 
-	var b0: i64 = __heap_bump_bytes();
-	var t: ndarray.NdArray[i64] = a.transpose();
-	var d_t: i64 = __heap_bump_bytes() - b0;
+	let b0: i64 = __heap_bump_bytes();
+	let t: ndarray.NdArray[i64] = a.transpose();
+	let d_t: i64 = __heap_bump_bytes() - b0;
 	if (t.get([3, 5]) != a.get([5, 3]) || t.shape()[0] != n) { return 20; }
 	if (counters && d_t >= small) { return 21; }
 	if (t.is_row_major()) { return 22; }
 
-	var b1: i64 = __heap_bump_bytes();
-	var rv: ndarray.NdArray[i64] = a.reverse(1);
-	var sl: ndarray.NdArray[i64] = a.slice(0, 10, 20);
-	var se: ndarray.NdArray[i64] = a.select(1, 9);
-	var pm: ndarray.NdArray[i64] = a.permute([1, 0]);
-	var d_meta: i64 = __heap_bump_bytes() - b1;
+	let b1: i64 = __heap_bump_bytes();
+	let rv: ndarray.NdArray[i64] = a.reverse(1);
+	let sl: ndarray.NdArray[i64] = a.slice(0, 10, 20);
+	let se: ndarray.NdArray[i64] = a.select(1, 9);
+	let pm: ndarray.NdArray[i64] = a.permute([1, 0]);
+	let d_meta: i64 = __heap_bump_bytes() - b1;
 	if (rv.get([2, 0]) != a.get([2, n - 1])) { return 30; }
 	if (sl.shape()[0] != 10 || sl.get([0, 7]) != a.get([10, 7])) { return 31; }
 	if (se.rank() != 1 || se.get([4]) != a.get([4, 9])) { return 32; }
 	if (pm.get([3, 5]) != a.get([5, 3])) { return 33; }
 	if (counters && d_meta >= small) { return 34; }
 
-	var col: ndarray.NdArray[i64] = t.select(0, 9);
+	let col: ndarray.NdArray[i64] = t.select(0, 9);
 	if (col.get([4]) != a.get([4, 9])) { return 40; }
 	if (rv.reverse(1).get([2, 0]) != a.get([2, 0])) { return 41; }
 	if (sl.slice(0, 2, 5).get([0, 1]) != a.get([12, 1])) { return 42; }
 
-	var b2: i64 = __heap_bump_bytes();
-	var r2: ndarray.NdArray[i64] = a.reshape([n * n]);
-	var d_r2: i64 = __heap_bump_bytes() - b2;
+	let b2: i64 = __heap_bump_bytes();
+	let r2: ndarray.NdArray[i64] = a.reshape([n * n]);
+	let d_r2: i64 = __heap_bump_bytes() - b2;
 	if (r2.get([n + 1]) != a.get([1, 1])) { return 50; }
 	if (counters && d_r2 >= small) { return 51; }
 
-	var b3: i64 = __heap_bump_bytes();
-	var r3: ndarray.NdArray[i64] = t.reshape([n * n]);
-	var d_r3: i64 = __heap_bump_bytes() - b3;
+	let b3: i64 = __heap_bump_bytes();
+	let r3: ndarray.NdArray[i64] = t.reshape([n * n]);
+	let d_r3: i64 = __heap_bump_bytes() - b3;
 	if (r3.get([1]) != a.get([1, 0])) { return 60; }
 	if (counters && d_r3 < elem_bytes) { return 61; }
 
-	var b4: i64 = __heap_bump_bytes();
-	var f1: i64[] = a.to_flat();
-	var d_f1: i64 = __heap_bump_bytes() - b4;
+	let b4: i64 = __heap_bump_bytes();
+	let f1: i64[] = a.to_flat();
+	let d_f1: i64 = __heap_bump_bytes() - b4;
 	if (f1.len() != n * n || f1[n + 1] != a.get([1, 1])) { return 70; }
 	if (counters && d_f1 >= small) { return 71; }
 
-	var b5: i64 = __heap_bump_bytes();
-	var f2: i64[] = t.to_flat();
-	var d_f2: i64 = __heap_bump_bytes() - b5;
+	let b5: i64 = __heap_bump_bytes();
+	let f2: i64[] = t.to_flat();
+	let d_f2: i64 = __heap_bump_bytes() - b5;
 	if (f2.len() != n * n || f2[1] != a.get([1, 0])) { return 80; }
 	if (counters && d_f2 < elem_bytes) { return 81; }
 
-	var b6: i64 = __heap_bump_bytes();
-	var p: ndarray.NdArray[i64] = t.packed();
-	var d_p: i64 = __heap_bump_bytes() - b6;
+	let b6: i64 = __heap_bump_bytes();
+	let p: ndarray.NdArray[i64] = t.packed();
+	let d_p: i64 = __heap_bump_bytes() - b6;
 	if (!p.is_packed() || p.get([3, 5]) != t.get([3, 5])) { return 90; }
 	if (counters && d_p < elem_bytes) { return 91; }
 	if (!a.packed().is_packed()) { return 92; }
@@ -103,28 +103,28 @@ function main(): i32 {
 	// A reversed handle is the one strided shape a transpose does not
 	// cover: negative strides and an offset at the far end, walked by the
 	// same odometer.
-	var b7: i64 = __heap_bump_bytes();
-	var rvf: i64[] = rv.to_flat();
-	var d_rvf: i64 = __heap_bump_bytes() - b7;
+	let b7: i64 = __heap_bump_bytes();
+	let rvf: i64[] = rv.to_flat();
+	let d_rvf: i64 = __heap_bump_bytes() - b7;
 	if (rvf.len() != n * n || rvf[0] != a.get([0, n - 1]) || rvf[n - 1] != a.get([0, 0])) { return 93; }
 	if (rvf[n] != a.get([1, n - 1]) || rvf[n * n - 1] != a.get([n - 1, 0])) { return 94; }
 	if (counters && d_rvf < elem_bytes) { return 95; }
-	var both: ndarray.NdArray[i64] = a.reverse(0).reverse(1).packed();
+	let both: ndarray.NdArray[i64] = a.reverse(0).reverse(1).packed();
 	if (!both.is_packed() || both.get([0, 0]) != a.get([n - 1, n - 1]) || both.get([n - 1, n - 1]) != a.get([0, 0])) { return 96; }
 
-	var z: ndarray.NdArray[i64] = ndarray.from_flat([7 as i64], []);
+	let z: ndarray.NdArray[i64] = ndarray.from_flat([7 as i64], []);
 	if (z.rank() != 0 || z.len() != 1 || z.get([]) != 7 as i64) { return 100; }
-	var e: ndarray.NdArray[i64] = a.slice(0, 5, 5);
+	let e: ndarray.NdArray[i64] = a.slice(0, 5, 5);
 	if (e.len() != 0 || e.to_flat().len() != 0) { return 101; }
 
 	// Elementwise: one packed buffer of the input's size, over a strided
 	// input as much as a packed one.
-	var b8: i64 = __heap_bump_bytes();
-	var m: ndarray.NdArray[i64] = t.map((x: i64): i64 => x * (2 as i64));
-	var d_m: i64 = __heap_bump_bytes() - b8;
+	let b8: i64 = __heap_bump_bytes();
+	let m: ndarray.NdArray[i64] = t.map((x: i64): i64 => x * (2 as i64));
+	let d_m: i64 = __heap_bump_bytes() - b8;
 	if (!m.is_packed() || m.shape()[0] != n || m.get([3, 5]) != (2 * (5 * n + 3)) as i64) { return 120; }
 	if (counters && d_m < elem_bytes) { return 121; }
-	var zw: ndarray.NdArray[i64] = a.zip_with(t, (x: i64, y: i64): i64 => x - y);
+	let zw: ndarray.NdArray[i64] = a.zip_with(t, (x: i64, y: i64): i64 => x - y);
 	if (zw.get([3, 5]) != a.get([3, 5]) - a.get([5, 3]) || zw.get([7, 7]) != 0 as i64) { return 122; }
 
 	// The PACKED arm of map and fold_all, which walks data[0..n) directly
@@ -134,16 +134,16 @@ function main(): i32 {
 	// commutative and cannot tell the two walks apart. Element order is
 	// therefore asserted three ways — a multiply-by-ten fold, and the
 	// index each mapped element lands at.
-	var pk: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
+	let pk: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
 	if (!pk.is_packed()) { return 123; }
 	if (pk.fold_all(0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x) != 1234 as i64) { return 124; }
-	var pmm: ndarray.NdArray[i64] = pk.map((x: i64): i64 => x * (10 as i64));
+	let pmm: ndarray.NdArray[i64] = pk.map((x: i64): i64 => x * (10 as i64));
 	if (!pmm.is_packed() || pmm.get([0, 0]) != 10 as i64 || pmm.get([0, 1]) != 20 as i64) { return 125; }
 	if (pmm.get([1, 0]) != 30 as i64 || pmm.get([1, 1]) != 40 as i64) { return 125; }
 	// A broadcast that only prepends extent-1 axes adds no elements and
 	// leaves the reading order alone, so the handle stays packed (§2) and
 	// takes the same walk at a rank the odometer would have grown.
-	var pkl: ndarray.NdArray[i64] = pk.broadcast_to([1, 2, 2]);
+	let pkl: ndarray.NdArray[i64] = pk.broadcast_to([1, 2, 2]);
 	if (!pkl.is_packed()) { return 126; }
 	if (pkl.fold_all(0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x) != 1234 as i64) { return 127; }
 
@@ -153,37 +153,37 @@ function main(): i32 {
 	// nothing else here reaches it. Operand order and element order are both
 	// pinned: the element function is not symmetric, and all four positions
 	// of the result are checked, so an interior permutation cannot pass.
-	var zl: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
-	var zr: ndarray.NdArray[i64] = ndarray.from_flat([10 as i64, 20 as i64, 30 as i64, 40 as i64], [2, 2]);
-	var zp: ndarray.NdArray[i64] = zl.zip_with(zr, (u: i64, v: i64): i64 => u * (100 as i64) + v);
+	let zl: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
+	let zr: ndarray.NdArray[i64] = ndarray.from_flat([10 as i64, 20 as i64, 30 as i64, 40 as i64], [2, 2]);
+	let zp: ndarray.NdArray[i64] = zl.zip_with(zr, (u: i64, v: i64): i64 => u * (100 as i64) + v);
 	if (!zp.is_packed() || zp.get([0, 0]) != 110 as i64 || zp.get([0, 1]) != 220 as i64) { return 128; }
 	if (zp.get([1, 0]) != 330 as i64 || zp.get([1, 1]) != 440 as i64) { return 128; }
 	// A prepending broadcast keeps both operands packed, so the pair still
 	// takes this arm at a rank the odometer would have grown.
-	var zb: ndarray.NdArray[i64] = zl.zip_with(zr.broadcast_to([1, 2, 2]), (u: i64, v: i64): i64 => u * (100 as i64) + v);
+	let zb: ndarray.NdArray[i64] = zl.zip_with(zr.broadcast_to([1, 2, 2]), (u: i64, v: i64): i64 => u * (100 as i64) + v);
 	if (zb.rank() != 3 || zb.get([0, 0, 0]) != 110 as i64 || zb.get([0, 1, 1]) != 440 as i64) { return 129; }
 
 	// Along an axis: the result is lane-sized, never buffer-sized, and
 	// every lane folds in increasing index order — the order-sensitive
 	// fold is what a float reduction relies on (docs/ARRAY-ALGEBRA.md §3).
-	var b9: i64 = __heap_bump_bytes();
-	var rows: ndarray.NdArray[i64] = a.reduce_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc + x);
-	var d_rows: i64 = __heap_bump_bytes() - b9;
+	let b9: i64 = __heap_bump_bytes();
+	let rows: ndarray.NdArray[i64] = a.reduce_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc + x);
+	let d_rows: i64 = __heap_bump_bytes() - b9;
 	if (rows.rank() != 1 || rows.shape()[0] != n) { return 130; }
 	if (rows.get([3]) != (3 * n * n + n * (n - 1) / 2) as i64) { return 131; }
 	if (counters && d_rows >= elem_bytes) { return 132; }
-	var ord: ndarray.NdArray[i64] = a.slice(0, 0, 2).slice(1, 0, 3).reduce_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (1000 as i64) + x);
+	let ord: ndarray.NdArray[i64] = a.slice(0, 0, 2).slice(1, 0, 3).reduce_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (1000 as i64) + x);
 	if (ord.get([0]) != 1002 as i64 || ord.get([1]) != (64065066 as i64)) { return 133; }
-	var sc0: ndarray.NdArray[i64] = t.scan_axis(0, 0 as i64, (acc: i64, x: i64): i64 => acc + x);
+	let sc0: ndarray.NdArray[i64] = t.scan_axis(0, 0 as i64, (acc: i64, x: i64): i64 => acc + x);
 	if (sc0.shape()[0] != n || sc0.get([3, 5]) != (5 * n * 4 + 6) as i64 || sc0.get([0, 5]) != a.get([5, 0])) { return 134; }
 	// A reversed handle is where index order and storage order disagree,
 	// so a kernel that walked storage would fold these backwards.
-	var ordrv: ndarray.NdArray[i64] = rv.slice(0, 0, 1).slice(1, 0, 3).reduce_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (1000 as i64) + x);
+	let ordrv: ndarray.NdArray[i64] = rv.slice(0, 0, 1).slice(1, 0, 3).reduce_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (1000 as i64) + x);
 	if (ordrv.get([0]) != (63062061 as i64)) { return 136; }
-	var scrv: ndarray.NdArray[i64] = rv.slice(1, 0, 3).scan_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (1000 as i64) + x);
+	let scrv: ndarray.NdArray[i64] = rv.slice(1, 0, 3).scan_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (1000 as i64) + x);
 	if (scrv.get([1, 0]) != 127 as i64 || scrv.get([1, 2]) != (127126125 as i64)) { return 137; }
-	var one: ndarray.NdArray[i64] = rows.reduce_axis(0, 0 as i64, (acc: i64, x: i64): i64 => acc + x);
-	var total: i64 = a.fold_all(0 as i64, (acc: i64, x: i64): i64 => acc + x);
+	let one: ndarray.NdArray[i64] = rows.reduce_axis(0, 0 as i64, (acc: i64, x: i64): i64 => acc + x);
+	let total: i64 = a.fold_all(0 as i64, (acc: i64, x: i64): i64 => acc + x);
 	if (one.rank() != 0 || one.get([]) != total || total != ((n * n) as i64) * ((n * n - 1) as i64) / (2 as i64)) { return 135; }
 
 	// The axis folds' PACKED arm: three counters enumerate data[0..n) and the
@@ -191,88 +191,88 @@ function main(): i32 {
 	// Every order-sensitive axis case above is over a strided or reversed
 	// handle, and the one packed reduce_axis adds, which is commutative, so
 	// nothing else here pins this arm's order or its lane arithmetic.
-	var ax: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64, 5 as i64, 6 as i64], [2, 3]);
+	let ax: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64, 5 as i64, 6 as i64], [2, 3]);
 	if (!ax.is_packed()) { return 138; }
 	// Along the LAST axis, inner == 1, so a lane is a contiguous run.
-	var axl: ndarray.NdArray[i64] = ax.reduce_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
+	let axl: ndarray.NdArray[i64] = ax.reduce_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
 	if (axl.rank() != 1 || axl.get([0]) != 123 as i64 || axl.get([1]) != 456 as i64) { return 138; }
 	// Along axis 0, inner == 3, so consecutive elements belong to DIFFERENT
 	// lanes — which is the half of the lane arithmetic the last axis cannot
 	// exercise. Every lane is checked.
-	var axf: ndarray.NdArray[i64] = ax.reduce_axis(0, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
+	let axf: ndarray.NdArray[i64] = ax.reduce_axis(0, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
 	if (axf.rank() != 1 || axf.get([0]) != 14 as i64 || axf.get([1]) != 25 as i64 || axf.get([2]) != 36 as i64) { return 138; }
 	// scan_axis writes in reading order, so its output position is pinned as
 	// well as its lane, on both a strided axis and the contiguous one.
-	var axs: ndarray.NdArray[i64] = ax.scan_axis(0, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
+	let axs: ndarray.NdArray[i64] = ax.scan_axis(0, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
 	if (axs.rank() != 2 || axs.get([0, 2]) != 3 as i64 || axs.get([1, 0]) != 14 as i64 || axs.get([1, 2]) != 36 as i64) { return 139; }
-	var axs1: ndarray.NdArray[i64] = ax.scan_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
+	let axs1: ndarray.NdArray[i64] = ax.scan_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
 	if (axs1.get([0, 0]) != 1 as i64 || axs1.get([0, 2]) != 123 as i64 || axs1.get([1, 1]) != 45 as i64) { return 139; }
 	// Rank 3, folded along the MIDDLE axis, which is the only shape where
 	// both halves of the lane are live: at rank 2 one of outer and inner is
 	// 1, so h * inner + l and a dropped multiply agree on every lane, and
 	// neither case above can tell them apart. Here outer = inner = 2.
-	var ax3: ndarray.NdArray[i64] = ndarray.from_flat(
+	let ax3: ndarray.NdArray[i64] = ndarray.from_flat(
 		[1 as i64, 2 as i64, 3 as i64, 4 as i64, 5 as i64, 6 as i64, 7 as i64, 8 as i64], [2, 2, 2]);
 	if (!ax3.is_packed()) { return 138; }
-	var ax3r: ndarray.NdArray[i64] = ax3.reduce_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
+	let ax3r: ndarray.NdArray[i64] = ax3.reduce_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
 	if (ax3r.rank() != 2 || ax3r.get([0, 0]) != 13 as i64 || ax3r.get([0, 1]) != 24 as i64) { return 138; }
 	if (ax3r.get([1, 0]) != 57 as i64 || ax3r.get([1, 1]) != 68 as i64) { return 138; }
-	var ax3s: ndarray.NdArray[i64] = ax3.scan_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
+	let ax3s: ndarray.NdArray[i64] = ax3.scan_axis(1, 0 as i64, (acc: i64, x: i64): i64 => acc * (10 as i64) + x);
 	if (ax3s.rank() != 3 || ax3s.get([0, 1, 0]) != 13 as i64 || ax3s.get([1, 0, 0]) != 5 as i64) { return 139; }
 	if (ax3s.get([1, 0, 1]) != 6 as i64 || ax3s.get([1, 1, 1]) != 68 as i64) { return 139; }
 
 	// Broadcasting: a stretched axis is stride 0, so broadcast_to is
 	// metadata, and zip_with over a row, a column and a scalar allocates
 	// the one result buffer.
-	var b10: i64 = __heap_bump_bytes();
-	var rowv: ndarray.NdArray[i64] = a.select(0, 0);
-	var wide: ndarray.NdArray[i64] = rowv.broadcast_to([n, n]);
-	var d_bc: i64 = __heap_bump_bytes() - b10;
+	let b10: i64 = __heap_bump_bytes();
+	let rowv: ndarray.NdArray[i64] = a.select(0, 0);
+	let wide: ndarray.NdArray[i64] = rowv.broadcast_to([n, n]);
+	let d_bc: i64 = __heap_bump_bytes() - b10;
 	if (wide.rank() != 2 || wide.strides()[0] != 0 || wide.get([5, 3]) != a.get([0, 3])) { return 140; }
 	if (counters && d_bc >= small) { return 141; }
 	if (wide.is_row_major() || wide.to_flat()[n + 3] != a.get([0, 3])) { return 142; }
-	var sub: ndarray.NdArray[i64] = a.zip_with(rowv, (x: i64, y: i64): i64 => x - y);
+	let sub: ndarray.NdArray[i64] = a.zip_with(rowv, (x: i64, y: i64): i64 => x - y);
 	if (sub.shape()[0] != n || sub.get([5, 3]) != (5 * n) as i64) { return 143; }
-	var colv: ndarray.NdArray[i64] = a.slice(1, 0, 1);
-	var diff: ndarray.NdArray[i64] = a.zip_with(colv, (x: i64, y: i64): i64 => x - y);
+	let colv: ndarray.NdArray[i64] = a.slice(1, 0, 1);
+	let diff: ndarray.NdArray[i64] = a.zip_with(colv, (x: i64, y: i64): i64 => x - y);
 	if (diff.shape()[1] != n || diff.get([5, 3]) != 3 as i64) { return 144; }
-	var scal: ndarray.NdArray[i64] = ndarray.from_flat([2 as i64], []);
-	var dbl: ndarray.NdArray[i64] = scal.zip_with(a, (x: i64, y: i64): i64 => x * y);
+	let scal: ndarray.NdArray[i64] = ndarray.from_flat([2 as i64], []);
+	let dbl: ndarray.NdArray[i64] = scal.zip_with(a, (x: i64, y: i64): i64 => x * y);
 	if (dbl.rank() != 2 || dbl.get([5, 3]) != (2 * (5 * n + 3)) as i64) { return 145; }
-	var op: ndarray.NdArray[i64] = colv.zip_with(rowv, (x: i64, y: i64): i64 => x * y);
+	let op: ndarray.NdArray[i64] = colv.zip_with(rowv, (x: i64, y: i64): i64 => x * y);
 	if (op.shape()[0] != n || op.shape()[1] != n || op.get([5, 3]) != (5 * n * 3) as i64) { return 146; }
-	var bs: i32[] = ndarray.broadcast_shape([1, n], [n, 1]);
+	let bs: i32[] = ndarray.broadcast_shape([1, n], [n, 1]);
 	if (bs.len() != 2 || bs[0] != n || bs[1] != n) { return 147; }
 
 	// Products: outer is one result buffer over two broadcast views; inner
 	// contracts the last axis of the receiver against the first of the
 	// argument, in increasing index order along it, on a strided or
 	// reversed operand exactly as on a packed one.
-	var b11: i64 = __heap_bump_bytes();
-	var op2: ndarray.NdArray[i64] = rowv.outer(rowv, (x: i64, y: i64): i64 => x * y);
-	var d_op2: i64 = __heap_bump_bytes() - b11;
+	let b11: i64 = __heap_bump_bytes();
+	let op2: ndarray.NdArray[i64] = rowv.outer(rowv, (x: i64, y: i64): i64 => x * y);
+	let d_op2: i64 = __heap_bump_bytes() - b11;
 	if (op2.rank() != 2 || op2.shape()[1] != n || !op2.is_packed() || op2.get([5, 3]) != 15 as i64) { return 150; }
 	if (counters && d_op2 < elem_bytes) { return 151; }
-	var dot: ndarray.NdArray[i64] = rowv.inner(rowv, 0 as i64, (x: i64, y: i64): i64 => x * y, (x: i64, y: i64): i64 => x + y);
+	let dot: ndarray.NdArray[i64] = rowv.inner(rowv, 0 as i64, (x: i64, y: i64): i64 => x * y, (x: i64, y: i64): i64 => x + y);
 	if (dot.rank() != 0 || dot.get([]) != 85344 as i64) { return 152; }
-	var mv: ndarray.NdArray[i64] = a.inner(rowv, 0 as i64, (x: i64, y: i64): i64 => x * y, (x: i64, y: i64): i64 => x + y);
+	let mv: ndarray.NdArray[i64] = a.inner(rowv, 0 as i64, (x: i64, y: i64): i64 => x * y, (x: i64, y: i64): i64 => x + y);
 	if (mv.rank() != 1 || mv.shape()[0] != n || mv.get([5]) != 730464 as i64) { return 153; }
-	var mmt: ndarray.NdArray[i64] = a.inner(t, 0 as i64, (x: i64, y: i64): i64 => x * y, (x: i64, y: i64): i64 => x + y);
+	let mmt: ndarray.NdArray[i64] = a.inner(t, 0 as i64, (x: i64, y: i64): i64 => x * y, (x: i64, y: i64): i64 => x + y);
 	if (mmt.rank() != 2 || mmt.shape()[0] != n || mmt.shape()[1] != n || mmt.get([1, 2]) != 996704 as i64 || mmt.get([1, 2]) != mmt.get([2, 1])) { return 154; }
-	var sl2: ndarray.NdArray[i64] = a.slice(0, 0, 1).slice(1, 0, 3);
-	var v3: ndarray.NdArray[i64] = rowv.slice(0, 0, 3);
-	var ord2: ndarray.NdArray[i64] = sl2.inner(v3, 0 as i64, (x: i64, y: i64): i64 => x + y, (acc: i64, q: i64): i64 => acc * (10 as i64) + q);
+	let sl2: ndarray.NdArray[i64] = a.slice(0, 0, 1).slice(1, 0, 3);
+	let v3: ndarray.NdArray[i64] = rowv.slice(0, 0, 3);
+	let ord2: ndarray.NdArray[i64] = sl2.inner(v3, 0 as i64, (x: i64, y: i64): i64 => x + y, (acc: i64, q: i64): i64 => acc * (10 as i64) + q);
 	if (ord2.rank() != 1 || ord2.get([0]) != 24 as i64) { return 155; }
-	var ordr: ndarray.NdArray[i64] = sl2.inner(v3.reverse(0), 0 as i64, (x: i64, y: i64): i64 => x + y, (acc: i64, q: i64): i64 => acc * (10 as i64) + q);
+	let ordr: ndarray.NdArray[i64] = sl2.inner(v3.reverse(0), 0 as i64, (x: i64, y: i64): i64 => x + y, (acc: i64, q: i64): i64 => acc * (10 as i64) + q);
 	if (ordr.get([0]) != 222 as i64) { return 156; }
 
 	// By rank: the frame splits off the leading axes, every cell is a view
 	// (so peeling costs no element copy), and the results reassemble under
 	// frame ++ cell-result shape.
-	var b12: i64 = __heap_bump_bytes();
-	var sums: ndarray.NdArray[i64] = a.map_rank(1, (row: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
+	let b12: i64 = __heap_bump_bytes();
+	let sums: ndarray.NdArray[i64] = a.map_rank(1, (row: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
 		ndarray.from_flat([row.fold_all(0 as i64, (acc: i64, x: i64): i64 => acc + x)], []));
-	var d_mr: i64 = __heap_bump_bytes() - b12;
+	let d_mr: i64 = __heap_bump_bytes() - b12;
 	if (sums.rank() != 1 || sums.shape()[0] != n) { return 160; }
 	// Same answer as reducing the same axis away, which is the identity a
 	// rank-1 cell fold has to satisfy.
@@ -280,16 +280,16 @@ function main(): i32 {
 	if (counters && d_mr >= elem_bytes) { return 162; }
 	// A cell result wider than one element: the cell axis comes back, so
 	// the result has the frame's rank plus the cell result's.
-	var pair: ndarray.NdArray[i64] = a.map_rank(1, (row: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
+	let pair: ndarray.NdArray[i64] = a.map_rank(1, (row: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
 		ndarray.from_flat([row.get([0]), row.get([1])], [2]));
 	if (pair.rank() != 2 || pair.shape()[0] != n || pair.shape()[1] != 2) { return 163; }
 	if (pair.get([5, 1]) != a.get([5, 1])) { return 164; }
 	// k == rank is one cell, the whole handle; k == 0 gives every element
 	// its own rank-0 cell. Neither is special-cased in the implementation.
-	var whole: ndarray.NdArray[i64] = a.map_rank(2, (c: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
+	let whole: ndarray.NdArray[i64] = a.map_rank(2, (c: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
 		ndarray.from_flat([c.fold_all(0 as i64, (acc: i64, x: i64): i64 => acc + x)], []));
 	if (whole.rank() != 0 || whole.get([]) != total) { return 165; }
-	var each: ndarray.NdArray[i64] = a.map_rank(0, (c: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
+	let each: ndarray.NdArray[i64] = a.map_rank(0, (c: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
 		ndarray.from_flat([c.get([]) * (3 as i64)], []));
 	if (each.rank() != 2 || each.get([5, 3]) != a.get([5, 3]) * (3 as i64)) { return 166; }
 	// A reversed FRAME axis: the cells must arrive in index order, not in
@@ -298,13 +298,13 @@ function main(): i32 {
 	// these assertions would fail. Reversing the cell axis instead proves
 	// nothing, since it permutes within a cell and leaves the cell order
 	// alone.
-	var rfr: ndarray.NdArray[i64] = a.reverse(0);
-	var rvr: ndarray.NdArray[i64] = rfr.map_rank(1, (row: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
+	let rfr: ndarray.NdArray[i64] = a.reverse(0);
+	let rvr: ndarray.NdArray[i64] = rfr.map_rank(1, (row: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
 		ndarray.from_flat([row.get([0])], []));
 	if (rvr.get([0]) != rfr.get([0, 0]) || rvr.get([1]) != rfr.get([1, 0])) { return 167; }
 	// No cells: f never runs, so there is no cell result shape to learn
 	// and the result is the empty handle of the frame's shape.
-	var none: ndarray.NdArray[i64] = ndarray.from_flat([] as i64[], [0, 3]).map_rank(1,
+	let none: ndarray.NdArray[i64] = ndarray.from_flat([] as i64[], [0, 3]).map_rank(1,
 		(row: ndarray.NdArray[i64]): ndarray.NdArray[i64] => ndarray.from_flat([row.get([0])], []));
 	if (none.rank() != 1 || none.shape()[0] != 0 || none.len() != 0) { return 168; }
 	// A packed cell is the handle with its offset moved to i * csize, so the
@@ -313,9 +313,9 @@ function main(): i32 {
 	// never both a multi-axis frame and a cell wider than one element. Rank 3
 	// at k = 1 has frame [2,2] and cell [2], and pins each cell's contents in
 	// order as well as the order the cells arrive in.
-	var mr3: ndarray.NdArray[i64] = ndarray.from_flat(
+	let mr3: ndarray.NdArray[i64] = ndarray.from_flat(
 		[1 as i64, 2 as i64, 3 as i64, 4 as i64, 5 as i64, 6 as i64, 7 as i64, 8 as i64], [2, 2, 2]);
-	var mr3c: ndarray.NdArray[i64] = mr3.map_rank(1, (c: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
+	let mr3c: ndarray.NdArray[i64] = mr3.map_rank(1, (c: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
 		ndarray.from_flat([c.get([0]) * (10 as i64) + c.get([1])], []));
 	if (mr3c.rank() != 2 || mr3c.get([0, 0]) != 12 as i64 || mr3c.get([0, 1]) != 34 as i64) { return 169; }
 	if (mr3c.get([1, 0]) != 56 as i64 || mr3c.get([1, 1]) != 78 as i64) { return 169; }
@@ -324,17 +324,17 @@ function main(): i32 {
 	// packed. Elements never step along such an axis, so every read agrees —
 	// but strides() is public, and the cell the select chain produced kept
 	// a.strides verbatim. The direct build has to slice, not recompute.
-	var mrs: ndarray.NdArray[i64] = ndarray.from_flat(
+	let mrs: ndarray.NdArray[i64] = ndarray.from_flat(
 		[1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2, 1]).reverse(2);
 	if (!mrs.is_packed()) { return 170; }
-	var mrsc: ndarray.NdArray[i64] = mrs.map_rank(1, (c: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
+	let mrsc: ndarray.NdArray[i64] = mrs.map_rank(1, (c: ndarray.NdArray[i64]): ndarray.NdArray[i64] =>
 		ndarray.from_flat([(c.strides()[0]) as i64, c.get([0])], [2]));
 	if (mrsc.rank() != 3 || mrsc.get([0, 0, 0]) != (0 as i64) - (1 as i64)) { return 170; }
 	if (mrsc.get([0, 0, 1]) != 1 as i64 || mrsc.get([1, 1, 1]) != 4 as i64) { return 170; }
 	if (mrsc.get([1, 1, 0]) != (0 as i64) - (1 as i64)) { return 170; }
 
 	// The keep-alive: every buffer measured above is still held here.
-	var live: i32 = t.rank() + rv.rank() + sl.rank() + se.rank() + pm.rank() + col.rank()
+	let live: i32 = t.rank() + rv.rank() + sl.rank() + se.rank() + pm.rank() + col.rank()
 		+ r2.rank() + r3.rank() + f1.len() + f2.len() + p.rank() + z.rank() + e.rank()
 		+ rvf.len() + both.rank() + m.rank() + zw.rank() + rows.rank() + ord.rank()
 		+ sc0.rank() + ordrv.rank() + scrv.rank() + one.rank() + rowv.rank() + wide.rank()
@@ -354,33 +354,33 @@ function main(): i32 {
 var ndarrayAbortSrcs = map[string]string{
 	"a shape that does not fit its storage": `import "std/ndarray";
 function main(): i32 {
-	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5], [2, 3]);
+	let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5], [2, 3]);
 	return a.rank();
 }
 `,
 	"zip_with over two shapes of one rank that do not broadcast": `import "std/ndarray";
 function main(): i32 {
-	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
-	var b: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [3, 2]);
+	let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+	let b: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [3, 2]);
 	return a.zip_with(b, (x: i32, y: i32): i32 => x + y).rank();
 }
 `,
 	"zip_with over a row of the wrong extent": `import "std/ndarray";
 function main(): i32 {
-	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
-	var b: ndarray.NdArray[i32] = ndarray.from_flat([1, 2], [2]);
+	let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+	let b: ndarray.NdArray[i32] = ndarray.from_flat([1, 2], [2]);
 	return a.zip_with(b, (x: i32, y: i32): i32 => x + y).rank();
 }
 `,
 	"broadcast_to a shape of lower rank": `import "std/ndarray";
 function main(): i32 {
-	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+	let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
 	return a.broadcast_to([6]).rank();
 }
 `,
 	"broadcast_to a shape with a negative extent": `import "std/ndarray";
 function main(): i32 {
-	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3], [3]);
+	let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3], [3]);
 	return a.broadcast_to([-1, 3]).rank();
 }
 `,
@@ -391,13 +391,13 @@ function main(): i32 {
 `,
 	"broadcast_to a shape whose count wraps negative": `import "std/ndarray";
 function main(): i32 {
-	var a: ndarray.NdArray[i32] = ndarray.from_flat([1], [1, 1]);
+	let a: ndarray.NdArray[i32] = ndarray.from_flat([1], [1, 1]);
 	return a.broadcast_to([50000, 50000]).rank();
 }
 `,
 	"broadcast_to a shape whose count wraps to zero": `import "std/ndarray";
 function main(): i32 {
-	var a: ndarray.NdArray[i32] = ndarray.from_flat([1], [1, 1]);
+	let a: ndarray.NdArray[i32] = ndarray.from_flat([1], [1, 1]);
 	return a.broadcast_to([65536, 65536]).rank();
 }
 `,
@@ -408,27 +408,27 @@ function main(): i32 {
 `,
 	"inner over contracted extents that differ": `import "std/ndarray";
 function main(): i32 {
-	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
-	var v: ndarray.NdArray[i32] = ndarray.from_flat([1, 2], [2]);
+	let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+	let v: ndarray.NdArray[i32] = ndarray.from_flat([1, 2], [2]);
 	return a.inner(v, 0, (x: i32, y: i32): i32 => x * y, (x: i32, y: i32): i32 => x + y).rank();
 }
 `,
 	"inner with a rank-0 operand": `import "std/ndarray";
 function main(): i32 {
-	var v: ndarray.NdArray[i32] = ndarray.from_flat([1, 2], [2]);
-	var s: ndarray.NdArray[i32] = ndarray.from_flat([3], []);
+	let v: ndarray.NdArray[i32] = ndarray.from_flat([1, 2], [2]);
+	let s: ndarray.NdArray[i32] = ndarray.from_flat([3], []);
 	return v.inner(s, 0, (x: i32, y: i32): i32 => x * y, (x: i32, y: i32): i32 => x + y).rank();
 }
 `,
 	"reduce_axis over an axis the handle lacks": `import "std/ndarray";
 function main(): i32 {
-	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+	let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
 	return a.reduce_axis(2, 0, (acc: i32, x: i32): i32 => acc + x).rank();
 }
 `,
 	"map_rank at a rank the handle lacks": `import "std/ndarray";
 function main(): i32 {
-	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+	let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
 	return a.map_rank(3, (c: ndarray.NdArray[i32]): ndarray.NdArray[i32] => c).rank();
 }
 `,
@@ -443,7 +443,7 @@ function ragged(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
 	return ndarray.from_flat([9, 9], [2, 1]);
 }
 function main(): i32 {
-	var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+	let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
 	return a.map_rank(1, ragged).rank();
 }
 `,

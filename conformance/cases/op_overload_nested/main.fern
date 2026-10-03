@@ -10,9 +10,9 @@ function (a: V) sub(b: V): V { return V { x: a.x - b.x }; }
 function (a: V) mul(b: V): V { return V { x: a.x * b.x }; }
 function (a: V) neg(): V { return V { x: 0 - a.x }; }
 function main(): i32 {
-    var a: V = V { x: 5 };
-    var b: V = V { x: 3 };
-    var d: V = (a + b) * (a - b);    // (8) * (2) = 16
-    var e: V = -(a - b);             // -(2) = -2
+    let a: V = V { x: 5 };
+    let b: V = V { x: 3 };
+    let d: V = (a + b) * (a - b);    // (8) * (2) = 16
+    let e: V = -(a - b);             // -(2) = -2
     return d.x + e.x + 100;          // 16 + (-2) + 100 = 114
 }

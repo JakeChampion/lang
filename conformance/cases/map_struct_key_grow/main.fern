@@ -16,8 +16,8 @@ struct Coord { a: i32, b: i32 }
 struct Box { n: i32, tag: string }
 
 function main(): i32 {
-    var m: Map[Coord, Box] = map_new(4);   // small cap -> forces grows
-    var i: i32 = 0;
+    let m: Map[Coord, Box] = map_new(4);   // small cap -> forces grows
+    let i: i32 = 0;
     while (i < 20) {
         m = m.insert(Coord { a: i, b: i * 2 }, Box { n: i * 10, tag: "v" });
         i = i + 1;
@@ -44,7 +44,7 @@ function main(): i32 {
     }
 
     // delete shrinks; the deleted key misses, the rest survive
-    var (m2, ok) = m.without(Coord { a: 3, b: 6 });
+    let (m2, ok) = m.without(Coord { a: 3, b: 6 });
     m = m2;
     if (!ok) { return 8; }
     if (m.len() != 19) { return 9; }

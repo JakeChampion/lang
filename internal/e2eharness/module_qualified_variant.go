@@ -30,9 +30,9 @@ function family(a: net.IpAddr): i32 {
     }
 }
 function main(): i32 {
-    var other: net.NetError = net.Other(7);
-    var intr: net.NetError = net.Interrupted;
-    var in_use: net.NetError = net.AddrInUse;
+    let other: net.NetError = net.Other(7);
+    let intr: net.NetError = net.Interrupted;
+    let in_use: net.NetError = net.AddrInUse;
     if (kind(other) != 1007) { print("1"); return 1; }
     if (kind(intr) != 2) { print("2"); return 1; }
     if (kind(in_use) != 3) { print("3"); return 1; }

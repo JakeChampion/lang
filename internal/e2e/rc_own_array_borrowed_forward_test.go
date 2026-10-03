@@ -14,15 +14,15 @@ const ownArrayBorrowedForwardSrc = `@noinline
 function update(own xs: i32[], n: i32): i32[] { xs = xs.with(0, n); return xs; }
 @noinline
 function forward(xs: i32[], rounds: i32): i32[] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < rounds) { xs = update(xs, i); i = i + 1; }
     return xs;
 }
 function churn(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 32) {
-        var xs: i32[] = [1, 2, 3];
-        var next: i32[] = forward(xs, 32);
+        let xs: i32[] = [1, 2, 3];
+        let next: i32[] = forward(xs, 32);
         if (xs[0] != 1 || xs[1] != 2 || xs[2] != 3) { return 1; }
         if (next[0] != 31 || next[1] != 2 || next[2] != 3) { return 2; }
         i = i + 1;
@@ -31,7 +31,7 @@ function churn(): i32 {
 }
 function main(): i32 {
     if (churn() != 0) { return 1; }
-    var before: i64 = __heap_bump_bytes();
+    let before: i64 = __heap_bump_bytes();
     if (churn() != 0) { return 2; }
     if (__rc_underflow_count() != 0) { return 3; }
     if (__heap_bump_bytes() != before) { return 4; }
@@ -43,15 +43,15 @@ func ownArrayPointerForwardSource(ty, initial, replacement, checks string) strin
 function update(own xs: ` + ty + `, n: i32): ` + ty + ` { xs = xs.with(0, ` + replacement + `); return xs; }
 @noinline
 function forward(xs: ` + ty + `): ` + ty + ` {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 32) { xs = update(xs, i); i = i + 1; }
     return xs;
 }
 function churn(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 32) {
-        var xs: ` + ty + ` = ` + initial + `;
-        var next: ` + ty + ` = forward(xs);
+        let xs: ` + ty + ` = ` + initial + `;
+        let next: ` + ty + ` = forward(xs);
         if (` + checks + `) { return 1; }
         i = i + 1;
     }
@@ -85,14 +85,14 @@ func TestOwnArrayBorrowedForwardLifetime(t *testing.T) {
 		{"scalar-return-releases-owned", strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(ownArrayBorrowedForwardSrc,
 			"function forward(xs: i32[], rounds: i32): i32[]", "function forward(xs: i32[], rounds: i32): i32"),
 			"    return xs;", "    return xs[0];"),
-			"var next: i32[] = forward(xs, 32);", "var value: i32 = forward(xs, 32); var next: i32[] = [value, 2, 3];")},
+			"let next: i32[] = forward(xs, 32);", "let value: i32 = forward(xs, 32); let next: i32[] = [value, 2, 3];")},
 		{"string-elements", ownArrayPointerForwardSource("string[]", `["old" + "!", "keep" + "!"]`, `"new" + "!"`,
 			`xs[0] != "old!" || xs[1] != "keep!" || next[0] != "new!" || next[1] != "keep!"`)},
 		{"nested-elements", ownArrayPointerForwardSource("i32[][]", `[[1, 2], [3, 4]]`, `[n, n + 1]`,
 			`xs[0][0] != 1 || xs[0][1] != 2 || xs[1][0] != 3 || xs[1][1] != 4 || next[0][0] != 31 || next[0][1] != 32 || next[1][0] != 3 || next[1][1] != 4`)},
 		{"owned-replacement-reuses", strings.ReplaceAll(ownArrayBorrowedForwardSrc,
-			"var i: i32 = 0;\n    while (i < rounds) { xs = update(xs, i); i = i + 1; }",
-			"xs = update(xs, 0); var mark: i64 = __heap_bump_bytes(); var i: i32 = 0;\n"+
+			"let i: i32 = 0;\n    while (i < rounds) { xs = update(xs, i); i = i + 1; }",
+			"xs = update(xs, 0); let mark: i64 = __heap_bump_bytes(); let i: i32 = 0;\n"+
 				"    while (i < rounds) { xs = update(xs, i); assert(__heap_bump_bytes() == mark); i = i + 1; }")},
 	}
 	for _, tc := range []struct {

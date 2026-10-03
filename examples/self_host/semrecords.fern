@@ -14,7 +14,7 @@ pub struct Record { ty: typeinfo.Type, fields: Field[], views: boolean }
 pub struct Records { list: Record[], names: util.NameIndex }
 
 pub function records_of(list: Record[]): Records {
-  var names: string[] = [];
+  let names: string[] = [];
   for r in list {
     names = names.append(record_name(r));
   }
@@ -22,7 +22,7 @@ pub function records_of(list: Record[]): Records {
 }
 
 pub function no_records(): Records {
-  var none: Record[] = [];
+  let none: Record[] = [];
   return records_of(none);
 }
 
@@ -50,22 +50,12 @@ pub function layout_option(): i32 {
   return 3;
 }
 
+// A record's type is a struct and an enum's is a union (semsource's schema
+// walk reads each off that declaration), so any other type is in neither
+// table.
 pub function find(records: Records, ty: typeinfo.Type): i32 {
   if let typeinfo.TypeStruct(s) = ty {
     return find_struct(records, s.name, ty);
-  }
-  return find_in(records.list, ty);
-}
-
-// find_in is find over a list with no index yet: the table while a function's
-// schema is still being collected.
-pub function find_in(list: Record[], ty: typeinfo.Type): i32 {
-  var i: i32 = 0;
-  while (i < list.len()) {
-    if (semtypes.equal(list[i].ty, ty)) {
-      return i;
-    }
-    i = i + 1;
   }
   return 0 - 1;
 }
@@ -73,7 +63,7 @@ pub function find_in(list: Record[], ty: typeinfo.Type): i32 {
 // find_named is find_in over a list with a name index kept beside it, one
 // entry per record in order: the name's chain, ascending, as find_struct.
 pub function find_named(list: Record[], names: util.NameIndex, name: string, ty: typeinfo.Type): i32 {
-  var i: i32 = names.chain(name);
+  let i: i32 = names.chain(name);
   while (i >= 0) {
     if (names.names[i] == name && semtypes.equal(list[i].ty, ty)) {
       return i;
@@ -95,20 +85,13 @@ pub function find_enum(enums: Enum[], ty: typeinfo.Type): i32 {
   if let typeinfo.TypeUnion(u) = ty {
     return find_union(enums, u.name, ty);
   }
-  var i: i32 = 0;
-  while (i < enums.len()) {
-    if (semtypes.equal(enums[i].ty, ty)) {
-      return i;
-    }
-    i = i + 1;
-  }
   return 0 - 1;
 }
 
 // Only a struct of the same name can equal a struct type, so the walk is the
 // name's chain, ascending, and the first full match is find's own.
 function find_struct(records: Records, name: string, ty: typeinfo.Type): i32 {
-  var i: i32 = records.names.chain(name);
+  let i: i32 = records.names.chain(name);
   while (i >= 0) {
     if (records.names.names[i] == name && semtypes.equal(records.list[i].ty, ty)) {
       return i;
@@ -119,7 +102,7 @@ function find_struct(records: Records, name: string, ty: typeinfo.Type): i32 {
 }
 
 function find_union(enums: Enum[], name: string, ty: typeinfo.Type): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < enums.len()) {
     if let typeinfo.TypeUnion(e) = enums[i].ty {
       if (e.name == name && semtypes.equal(enums[i].ty, ty)) {
@@ -132,7 +115,7 @@ function find_union(enums: Enum[], name: string, ty: typeinfo.Type): i32 {
 }
 
 pub function find_variant(e: Enum, name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < e.variants.len()) {
     if (e.variants[i].name == name) {
       return i;
@@ -188,9 +171,9 @@ function resolved_structural(ty: typeinfo.Type, records: Records, enums: Enum[])
 }
 
 function fields_error(fields: Field[], records: Records, enums: Enum[]): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < fields.len()) {
-    var field: Field = fields[i];
+    let field: Field = fields[i];
     if (field.name == "") {
       return "empty record field name";
     }
@@ -200,7 +183,7 @@ function fields_error(fields: Field[], records: Records, enums: Enum[]): string 
     if (!resolved(field.ty, records, enums)) {
       return "missing nested record schema";
     }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < i) {
       if (fields[j].name == field.name) {
         return "duplicate record field name";
@@ -224,7 +207,7 @@ function instance_error(a: Record, b: Record): string {
       if (x.args.len() != y.args.len() || a.fields.len() != b.fields.len()) {
         return "inconsistent record instance schema";
       }
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < a.fields.len()) {
         if (a.fields[i].name != b.fields[i].name) {
           return "inconsistent record instance schema";
@@ -247,27 +230,27 @@ function record_name(r: Record): string {
 // compared with the earlier records of its name alone: the table's chain for
 // the name, ascending, which is the order the pairwise scan reported in.
 function records_error(records: Records, enums: Enum[]): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < records.list.len()) {
-    var record: Record = records.list[i];
+    let record: Record = records.list[i];
     if (!semtypes.concrete(record.ty, false)) {
       return "unresolved record identity";
     }
     if let typeinfo.TypeStruct(_) = record.ty {} else {
       return "non-nominal record identity";
     }
-    var name: string = record_name(record);
-    var j: i32 = records.names.chain(name);
+    let name: string = record_name(record);
+    let j: i32 = records.names.chain(name);
     while (j >= 0 && j < i) {
       if (records.names.names[j] == name) {
-        var clash: string = instance_error(record, records.list[j]);
+        let clash: string = instance_error(record, records.list[j]);
         if (clash != "") {
           return clash;
         }
       }
       j = records.names.next[j];
     }
-    var why: string = fields_error(record.fields, records, enums);
+    let why: string = fields_error(record.fields, records, enums);
     if (why != "") {
       return why;
     }
@@ -277,19 +260,19 @@ function records_error(records: Records, enums: Enum[]): string {
 }
 
 function variants_error(variants: Variant[], records: Records, enums: Enum[]): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < variants.len()) {
     if (variants[i].name == "") {
       return "empty variant name";
     }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < i) {
       if (variants[j].name == variants[i].name) {
         return "duplicate variant name";
       }
       j = j + 1;
     }
-    var why: string = fields_error(variants[i].fields, records, enums);
+    let why: string = fields_error(variants[i].fields, records, enums);
     if (why != "") {
       return why;
     }
@@ -312,7 +295,7 @@ function layout_error(e: Enum, records: Records): string {
     return "";
   }
   for v in e.variants {
-    var at: i32 = records.names.find(v.name);
+    let at: i32 = records.names.find(v.name);
     if (at < 0) {
       return "missing union member record";
     }
@@ -330,8 +313,8 @@ function option_layout_error(e: Enum): string {
   if (e.variants.len() != 2) {
     return "builtin union arity";
   }
-  var first: string = e.variants[0].name;
-  var second: string = e.variants[1].name;
+  let first: string = e.variants[0].name;
+  let second: string = e.variants[1].name;
   if (first != "Some" && first != "Ok") {
     return "builtin union variant order";
   }
@@ -350,7 +333,7 @@ function same_fields(a: Field[], b: Field[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
     if (a[i].name != b[i].name || !semtypes.equal(a[i].ty, b[i].ty)) {
       return false;
@@ -361,23 +344,23 @@ function same_fields(a: Field[], b: Field[]): boolean {
 }
 
 function enums_error(records: Records, enums: Enum[]): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < enums.len()) {
-    var e: Enum = enums[i];
+    let e: Enum = enums[i];
     if (!semtypes.concrete(e.ty, false)) {
       return "unresolved enum identity";
     }
     if let typeinfo.TypeUnion(_) = e.ty {} else {
       return "non-union enum identity";
     }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < i) {
       if (semtypes.equal(e.ty, enums[j].ty)) {
         return "duplicate enum schema";
       }
       j = j + 1;
     }
-    var why: string = variants_error(e.variants, records, enums);
+    let why: string = variants_error(e.variants, records, enums);
     if (why != "") {
       return why;
     }
@@ -391,7 +374,7 @@ function enums_error(records: Records, enums: Enum[]): string {
 }
 
 pub function verify(records: Records, enums: Enum[]): string {
-  var why: string = records_error(records, enums);
+  let why: string = records_error(records, enums);
   if (why != "") {
     return why;
   }

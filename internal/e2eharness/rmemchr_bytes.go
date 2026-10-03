@@ -6,8 +6,8 @@ import "strings"
 func RmemchrBytesSource(allocations bool) string {
 	probe := ""
 	if allocations {
-		probe = `var before: i64 = __heap_alloc_count();
-    var repeat: i32 = 0;
+		probe = `let before: i64 = __heap_alloc_count();
+    let repeat: i32 = 0;
     while (repeat < 1000) {
         if (find(all, 128, all.len()) != 128) { return 11; }
         repeat = repeat + 1;
@@ -18,7 +18,7 @@ func RmemchrBytesSource(allocations bool) string {
 }
 
 const rmemchrBytesProgram = `function slow(bytes: u8[], byte: i32, from: i32): i32 {
-    var at = from;
+    let at = from;
     if (at >= bytes.len()) { at = bytes.len() - 1; }
     while (at >= 0) {
         if (bytes[at] as i32 == byte) { return at; }
@@ -33,10 +33,10 @@ function check(bytes: u8[], byte: i32, from: i32): boolean {
     return find(bytes, byte, from) == slow(bytes, byte, from);
 }
 function main(): i32 {
-    var all: u8[] = __alloc_u8(256);
-    var b = 0;
+    let all: u8[] = __alloc_u8(256);
+    let b = 0;
     while (b < 256) { all = all.with(b, b as u8); b = b + 1; }
-    var held = all;
+    let held = all;
     // Allocation probe
     b = 0;
     while (b < 256) {
@@ -44,10 +44,10 @@ function main(): i32 {
         if (find(all, b, b - 1) != 0 - 1) { return 2; }
         b = b + 1;
     }
-    var lengths: i32[] = [0, 1, 2, 7, 15, 16, 17, 31, 32, 33, 47, 48, 63, 64, 65, 79, 80, 95, 96, 97, 300];
+    let lengths: i32[] = [0, 1, 2, 7, 15, 16, 17, 31, 32, 33, 47, 48, 63, 64, 65, 79, 80, 95, 96, 97, 300];
     for n in lengths {
-        var bytes: u8[] = __alloc_u8(n);
-        var at = 0;
+        let bytes: u8[] = __alloc_u8(n);
+        let at = 0;
         while (at < n) { bytes = bytes.with(at, 255 as u8); at = at + 1; }
         // No load may include allocator padding or the array header.
         if (find(bytes, 0, n) != 0 - 1 || find(bytes, 255, n) != n - 1) { return 3; }
@@ -69,7 +69,7 @@ function main(): i32 {
     all = all.with(128, 17 as u8);
     if (find(held, 128, 256) != 128 || find(all, 128, 256) != 0 - 1) { return 6; }
     if (find(held, 17, 256) != 17 || find(all, 17, 256) != 128) { return 7; }
-    var literal: u8[] = [255 as u8, 0 as u8, 255 as u8];
+    let literal: u8[] = [255 as u8, 0 as u8, 255 as u8];
     if (find(literal, 255, 3) != 2 || find(literal, 255, 1) != 0) { return 8; }
     return 0;
 }`

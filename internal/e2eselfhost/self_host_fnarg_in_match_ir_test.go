@@ -69,7 +69,7 @@ func TestSelfHostFnArgInMatchIR(t *testing.T) {
 	// scrutinee; before the StmtMatch lift arm this passed an unwrapped pointer
 	// and the indirect call segfaulted. Evens in [1..6] = 3 -> the `3` arm.
 	const src = `function count_pred(arr: i32[], pred: (i32) => boolean): i32 {
-    var h: i32 = 0; var i: i32 = 0;
+    let h: i32 = 0; let i: i32 = 0;
     while (i < arr.len()) { if (pred(arr[i])) { h = h + 1; } i = i + 1; }
     return h;
 }

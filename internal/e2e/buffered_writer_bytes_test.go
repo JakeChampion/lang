@@ -45,9 +45,9 @@ func TestBufferedWriterBytesInterp(t *testing.T) {
 
 const bufferedWriterFreshBytesProgram = `import "std/io_buffered" as io;
 function main(): i32 {
-  var seed = buf_new(3);
+  let seed = buf_new(3);
   for capacity in [1, 64] {
-    var b = io.buf_writer_new(stdout(), capacity);
+    let b = io.buf_writer_new(stdout(), capacity);
     for iteration in 0..32 {
       buf_push_byte(seed, 255); buf_push_byte(seed, 0); buf_push_byte(seed, 128);
       b = b.write_bytes(buf_take_bytes(seed));

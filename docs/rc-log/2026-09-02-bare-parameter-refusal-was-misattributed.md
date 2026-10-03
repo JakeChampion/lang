@@ -20,9 +20,9 @@ spellings of the same call:
 
 | probe | refused (shipped) | credited |
 | --- | --- | --- |
-| `var m = query_parse("a=1"); m.len() - m.len()` | 5 allocs / 5 frees / **0 B** | 5 / 5 / **0 B** |
+| `let m = query_parse("a=1"); m.len() - m.len()` | 5 allocs / 5 frees / **0 B** | 5 / 5 / **0 B** |
 | `return query_parse("a=1").len() - 1` | 5 / 2 / **256 B** | 5 / 2 / **256 B** |
-| `var m = query_parse("a=1"); return 0` | 5 / 5 / 0 B | 5 / 5 / 0 B |
+| `let m = query_parse("a=1"); return 0` | 5 / 5 / 0 B | 5 / 5 / 0 B |
 
 Identical in every cell, and the same table comes back from current main. The
 "three of five frees, 256 B" signature is the **middle row** — the unnamed

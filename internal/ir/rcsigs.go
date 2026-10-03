@@ -417,7 +417,7 @@ var rcInertBuiltins = map[string]bool{
 	// here under the builtin names.
 	"priority": true, "set_priority": true,
 	"geteuid": true, "getegid": true, "hostname": true,
-	"getuid": true, "getgid": true,
+	"getuid": true, "getgid": true, "__getpwuid_name": true,
 	// `getgroups` has no arguments either, and it is classified here
 	// under the BUILTIN name rather than as `__fern_getgroups`: the
 	// runtime tables are the WASM registry's, and wasm has no users, so
@@ -579,7 +579,8 @@ var rcInert = map[string]bool{
 	"__fern_tcp_pollable": true,
 	"__fern_tcp_recv":     true, "__fern_tcp_send": true, "__fern_temp_dir": true,
 	"__fern_tcp_send_bytes": true,
-	"__fern_trunc_f64":      true, "__fern_udp_send": true,
+	"__fern_udp_send_bytes": true, "__fern_udp_sendto_bytes": true,
+	"__fern_trunc_f64": true, "__fern_udp_send": true,
 	"__fern_udp_bind": true, "__fern_udp_connect": true,
 	"__fern_udp_sendto": true, "__fern_udp_recvfrom": true, "__fern_udp_close": true,
 	"__fern_wasm_block": true,

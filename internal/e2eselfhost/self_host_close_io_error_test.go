@@ -38,9 +38,9 @@ const closeIoErrorSrc = `function code_of(o: Option[IoError]): i32 {
     }
 }
 function main(): i32 {
-    var w: Writer = stdout();
-    var first: i32 = code_of(w.close());
-    var second: i32 = code_of(w.close());
+    let w: Writer = stdout();
+    let first: i32 = code_of(w.close());
+    let second: i32 = code_of(w.close());
     return first * 10 + second;
 }`
 

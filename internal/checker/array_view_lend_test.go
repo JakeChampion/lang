@@ -18,16 +18,16 @@ func TestOwnedArrayLendsIntoViewParam(t *testing.T) {
 		src  string
 	}{
 		{"concrete element", `function total(bs: [u8]): i32 { return bs.len(); }
-function main(): i32 { var owned: u8[] = [1, 2, 3]; return total(owned); }`},
+function main(): i32 { let owned: u8[] = [1, 2, 3]; return total(owned); }`},
 		{"not u8-specific", `function total(bs: [i32]): i32 { return bs.len(); }
-function main(): i32 { var owned: i32[] = [1, 2, 3]; return total(owned); }`},
+function main(): i32 { let owned: i32[] = [1, 2, 3]; return total(owned); }`},
 		{"generic view parameter", `function total[T](bs: [T]): i32 { return bs.len(); }
-function main(): i32 { var owned: u8[] = [1, 2, 3]; return total(owned); }`},
+function main(): i32 { let owned: u8[] = [1, 2, 3]; return total(owned); }`},
 		{"array literal at a view parameter", `function total(bs: [u8]): i32 { return bs.len(); }
 function main(): i32 { return total([1, 2, 3]); }`},
 		{"method argument", `struct Sink { n: i32 }
 function (s: Sink) take(bs: [u8]): i32 { return bs.len() + s.n; }
-function main(): i32 { var owned: u8[] = [1]; var s = Sink { n: 0 }; return s.take(owned); }`},
+function main(): i32 { let owned: u8[] = [1]; let s = Sink { n: 0 }; return s.take(owned); }`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -50,15 +50,15 @@ func TestArrayViewLendIsParameterOnlyAndOneWay(t *testing.T) {
 		want string
 	}{
 		{"view does not promote to owned", `function takes_owned(bs: u8[]): i32 { return bs.len(); }
-function main(): i32 { var owned: u8[] = [1, 2]; var v: [u8] = owned[:]; return takes_owned(v); }`,
+function main(): i32 { let owned: u8[] = [1, 2]; let v: [u8] = owned[:]; return takes_owned(v); }`,
 			"expected u8[], got [u8]"},
 		{"own parameter consumes, so no lend", `function consume(own bs: [u8]): i32 { return bs.len(); }
-function main(): i32 { var owned: u8[] = [1, 2]; return consume(owned); }`,
+function main(): i32 { let owned: u8[] = [1, 2]; return consume(owned); }`,
 			"expected [u8], got u8[]"},
-		{"var initialiser is an owning sink", `function main(): i32 { var owned: u8[] = [1, 2]; var v: [u8] = owned; return v.len(); }`,
+		{"let initialiser is an owning sink", `function main(): i32 { let owned: u8[] = [1, 2]; let v: [u8] = owned; return v.len(); }`,
 			"cannot assign u8[] to variable of type [u8]"},
 		{"element types must match exactly", `function total(bs: [i64]): i32 { return bs.len(); }
-function main(): i32 { var owned: i32[] = [1, 2]; return total(owned); }`,
+function main(): i32 { let owned: i32[] = [1, 2]; return total(owned); }`,
 			"expected [i64], got i32[]"},
 	}
 	for _, c := range cases {
@@ -78,7 +78,7 @@ function main(): i32 { var owned: i32[] = [1, 2]; return total(owned); }`,
 // an explicit slice — nothing downstream needs to learn about the coercion.
 func TestArrayViewLendRewritesArgumentToFullRangeSlice(t *testing.T) {
 	const src = `function total(bs: [u8]): i32 { return bs.len(); }
-function main(): i32 { var owned: u8[] = [1, 2, 3]; return total(owned); }`
+function main(): i32 { let owned: u8[] = [1, 2, 3]; return total(owned); }`
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)

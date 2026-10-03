@@ -17,26 +17,26 @@ import (
 func containerAliasStringSource(rebuild string, rounds int, shared bool) string {
 	loadResult := "return rebuild(names);"
 	if shared {
-		loadResult = `var first: string[] = rebuild(names);
-    var second: string[] = rebuild(names);
+		loadResult = `let first: string[] = rebuild(names);
+    let second: string[] = rebuild(names);
     print(first[0]);
     print(first[1]);
     return second;`
 	}
 	return `function rebuild(names: string[]): string[] {
-    var out: string[] = [];
+    let out: string[] = [];
     ` + rebuild + `
     return out;
 }
 function load(): string[] {
-    var names: string[] = [];
+    let names: string[] = [];
     names = names.append("aa" + "!");
     names = names.append("bb" + "!");
     ` + loadResult + `
 }
 function churn(): i32 {
-    var junk: string[] = [];
-    var i: i32 = 0;
+    let junk: string[] = [];
+    let i: i32 = 0;
     while (i < 16) {
         junk = junk.append("cc" + "?");
         i = i + 1;
@@ -44,9 +44,9 @@ function churn(): i32 {
     return junk.len();
 }
 function exercise(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < ` + fmt.Sprint(rounds) + `) {
-        var a: string[] = load();
+        let a: string[] = load();
         if (churn() != 16) { return 98; }
         print(a[0]);
         print(a[1]);
@@ -55,7 +55,7 @@ function exercise(): i32 {
     return 0;
 }
 function main(): i32 {
-    var code: i32 = exercise();
+    let code: i32 = exercise();
     if (__rc_underflow_count() != 0) { return 99; }
     return code;
 }`
@@ -63,11 +63,11 @@ function main(): i32 {
 
 var containerAliasLifetimeCases = []struct{ name, body string }{
 	{"direct", `out = out.append(names[0]); out = out.append(names[1]);`},
-	{"bound-elements", `var x = names[0]; var y = names[1]; out = out.append(x); out = out.append(y);`},
+	{"bound-elements", `let x = names[0]; let y = names[1]; out = out.append(x); out = out.append(y);`},
 	{"foreach", `for x in names { out = out.append(x); }`},
-	{"array-alias", `var alias = names; out = out.append(alias[0]); out = out.append(alias[1]);`},
-	{"array-alias-bound-elements", `var alias = names; var x = alias[0]; var y = alias[1]; out = out.append(x); out = out.append(y);`},
-	{"array-alias-foreach", `var alias = names; for x in alias { out = out.append(x); }`},
+	{"array-alias", `let alias = names; out = out.append(alias[0]); out = out.append(alias[1]);`},
+	{"array-alias-bound-elements", `let alias = names; let x = alias[0]; let y = alias[1]; out = out.append(x); out = out.append(y);`},
+	{"array-alias-foreach", `let alias = names; for x in alias { out = out.append(x); }`},
 }
 
 func TestSelfHostContainerAliasLifetimeArm64(t *testing.T) {
@@ -98,10 +98,10 @@ func TestSelfHostContainerAliasLifetimeWasm(t *testing.T) {
 				// The second identical exercise must reuse the first one's freed
 				// allocations. Check after both frames have released their arrays.
 				src := containerAliasStringSource(tc.body, 32, shared)
-				src = strings.Replace(src, "var code: i32 = exercise();", `var first: i32 = exercise();
-    var before = __heap_bump_bytes();
-    var code: i32 = exercise();
-    var after = __heap_bump_bytes();
+				src = strings.Replace(src, "let code: i32 = exercise();", `let first: i32 = exercise();
+    let before = __heap_bump_bytes();
+    let code: i32 = exercise();
+    let after = __heap_bump_bytes();
     if (first != 0) { return first; }
     if (after != before) { return 97; }`, 1)
 				wat := runCapture(t, gcc, runner, driver, []byte(src), "-ir")

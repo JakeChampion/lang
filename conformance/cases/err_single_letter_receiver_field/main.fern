@@ -13,6 +13,6 @@ struct V { x: i32 }
 function (a: V) bad(): i32 { return a.nope; }
 
 function main(): i32 {
-    var v: V = V { x: 1 };
+    let v: V = V { x: 1 };
     return v.bad();
 }

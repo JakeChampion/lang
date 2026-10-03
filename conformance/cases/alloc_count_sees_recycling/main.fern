@@ -20,12 +20,12 @@ import "std/i64";
 import "std/string";
 
 function round(n: i32): i32 {
-    var s: string = "abcdefgh" + n.to_string();
+    let s: string = "abcdefgh" + n.to_string();
     return s.len();
 }
 
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     for i in 0..n {
         acc = acc + round(i);
     }
@@ -33,11 +33,11 @@ function rounds(n: i32): i32 {
 }
 
 function main(): i32 {
-    var c0: i64 = __heap_alloc_count();
-    var x: i32 = rounds(50);
-    var c1: i64 = __heap_alloc_count();
-    var y: i32 = rounds(100);
-    var c2: i64 = __heap_alloc_count();
+    let c0: i64 = __heap_alloc_count();
+    let x: i32 = rounds(50);
+    let c1: i64 = __heap_alloc_count();
+    let y: i32 = rounds(100);
+    let c2: i64 = __heap_alloc_count();
 
     print(x.to_string());
     print(y.to_string());

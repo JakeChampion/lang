@@ -29,31 +29,31 @@ func TestSelfHostCaptureLambdaWasmIR(t *testing.T) {
 		src      string
 		expected int
 	}{
-		{"single-capture", `function main(): i32 { var base: i32 = 20; var add = (x: i32): i32 => { return x + base; }; return add(5) + add(10); }`, 55},
-		{"capture-param", `function f(base: i32): i32 { var g = (x: i32): i32 => { return x * base; }; return g(3) + g(4); } function main(): i32 { return f(10); }`, 70},
-		{"multi-capture", `function main(): i32 { var a: i32 = 7; var b: i32 = 3; var combine = (x: i32): i32 => { return x + a - b; }; return combine(10); }`, 14},
-		{"capture-in-loop", `function main(): i32 { var step: i32 = 2; var bump = (x: i32): i32 => { return x + step; }; var total: i32 = 0; var i: i32 = 0; while (i < 3) { total = bump(total); i = i + 1; } return total; }`, 6},
+		{"single-capture", `function main(): i32 { let base: i32 = 20; let add = (x: i32): i32 => { return x + base; }; return add(5) + add(10); }`, 55},
+		{"capture-param", `function f(base: i32): i32 { let g = (x: i32): i32 => { return x * base; }; return g(3) + g(4); } function main(): i32 { return f(10); }`, 70},
+		{"multi-capture", `function main(): i32 { let a: i32 = 7; let b: i32 = 3; let combine = (x: i32): i32 => { return x + a - b; }; return combine(10); }`, 14},
+		{"capture-in-loop", `function main(): i32 { let step: i32 = 2; let bump = (x: i32): i32 => { return x + step; }; let total: i32 = 0; let i: i32 = 0; while (i < 3) { total = bump(total); i = i + 1; } return total; }`, 6},
 		// Unannotated literal captures: cap_type infers the type from an array /
 		// struct LITERAL initializer (lit_init_type), so these lift like the
 		// annotated/param cases (capture threaded as an ordinary typed argument).
-		{"arr-literal-capture", `function main(): i32 { var a = [10, 20, 30]; var len = (): i32 => { return a.len(); }; return len(); }`, 3},
-		{"arr-literal-index", `function main(): i32 { var a = [3, 5, 9]; var third = (): i32 => { return a[2]; }; return third(); }`, 9},
-		{"strarr-literal-capture", `function main(): i32 { var a = ["x", "y"]; var len = (): i32 => { return a.len(); }; return len(); }`, 2},
-		{"struct-literal-capture", `struct P { x: i32 } function main(): i32 { var p = P { x: 42 }; var get = (): i32 => { return p.x; }; return get(); }`, 42},
+		{"arr-literal-capture", `function main(): i32 { let a = [10, 20, 30]; let len = (): i32 => { return a.len(); }; return len(); }`, 3},
+		{"arr-literal-index", `function main(): i32 { let a = [3, 5, 9]; let third = (): i32 => { return a[2]; }; return third(); }`, 9},
+		{"strarr-literal-capture", `function main(): i32 { let a = ["x", "y"]; let len = (): i32 => { return a.len(); }; return len(); }`, 2},
+		{"struct-literal-capture", `struct P { x: i32 } function main(): i32 { let p = P { x: 42 }; let get = (): i32 => { return p.x; }; return get(); }`, 42},
 		// Nested capturing closure — inner captures the OUTER lambda's own capture
 		// (`a` flows main → outer → inner). Before unwrap_sole_iife_return the
 		// block-body `outer` lifted to `[return (IIFE)()]` with `inner` buried in
 		// the IIFE, so it bailed to the wasm AST emitter which emitted `unknown
 		// local $a` (a runtime trap). Now the IIFE is beta-reduced inline so inner
 		// lifts and the module stays on the wasm IR path.
-		{"nested-capture-transitive", `function main(): i32 { var a: i32 = 10; var outer = () => { var b: i32 = 20; var inner = () => a + b; inner() }; return outer(); }`, 30},
+		{"nested-capture-transitive", `function main(): i32 { let a: i32 = 10; let outer = () => { let b: i32 = 20; let inner = () => a + b; inner() }; return outer(); }`, 30},
 		// Wide-value (i64/u64) lambdas with an INFERRED return type: the lifted
 		// __lam_N had ret_type "" so eligibility's `lower` bailed on the i64 return
 		// and the lambda bailed the module (the wasm AST emitter it fell to emitted
 		// WASM the loader rejected). lift_lambdas now infers the return type so these
 		// lower on the wasm IR path.
-		{"i64-capture-inferred-ret", `function main(): i32 { var base: i64 = 7000000000; var f = () => base + 2000000000; return (f() / 1000000000) as i32; }`, 9},
-		{"i64-param-inferred-ret", `function main(): i32 { var f = (x: i64) => x + 1; return f(5) as i32; }`, 6},
+		{"i64-capture-inferred-ret", `function main(): i32 { let base: i64 = 7000000000; let f = () => base + 2000000000; return (f() / 1000000000) as i32; }`, 9},
+		{"i64-param-inferred-ret", `function main(): i32 { let f = (x: i64) => x + 1; return f(5) as i32; }`, 6},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

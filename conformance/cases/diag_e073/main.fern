@@ -17,7 +17,7 @@ impl mem.Drop for Sink {
 }
 
 function main(): i32 {
-    var w: Sink = Sink { n: 1 };
+    let w: Sink = Sink { n: 1 };
     w.drop();                       // error[E073]: the runtime will run this again
     return 0;
 }

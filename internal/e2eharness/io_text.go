@@ -12,7 +12,7 @@ import (
 // new stdin stream resource, so it uses the same-handle raw-reader tests.
 const IOTextReadErrorProgram = `import "std/io";
 function main(): i32 {
-    var r: Reader = stdin();
+    let r: Reader = stdin();
     match (r.close()) { Some(_) => { return 1; }, None => {} }
     match (io.read_all_stdin()) {
         Ok(_) => { return 2; },

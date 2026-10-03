@@ -9,7 +9,7 @@ import (
 
 // operatorOverloadIRCase is a self-host composite-operator-overload program
 // whose exit code is pinned against the native interpreter's oracle. Each
-// exercises irlower's #2706 lowering: a binary `a <op> b` (or unary `-a`) on a
+// exercises the #2706 lowering: a binary `a <op> b` (or unary `-a`) on a
 // struct rewrites to the conventionally-named method (`+`→add, `-`→sub, `*`→mul,
 // `/`→div, unary `-`→neg) and lowers through the existing struct-returning
 // method-call path. Before this, the self-host *admitted* `a + b` on a struct
@@ -27,34 +27,34 @@ var operatorOverloadIRCases = []operatorOverloadIRCase{
 	// `a + b` must type `c` as the struct so `c.x` resolves.
 	{"binary_add", `struct V { x: i32 }
 function (self: V) add(o: V): V { return V { x: self.x + o.x }; }
-function main(): i32 { var a = V { x: 3 }; var b = V { x: 4 }; var c = a + b; return c.x; }`, 7},
+function main(): i32 { let a = V { x: 3 }; let b = V { x: 4 }; let c = a + b; return c.x; }`, 7},
 	// All four arithmetic operators chained: (20+4)=24, -4=20, *4=80, /4=20.
 	{"all_ops", `struct V { x: i32 }
 function (self: V) add(o: V): V { return V { x: self.x + o.x }; }
 function (self: V) sub(o: V): V { return V { x: self.x - o.x }; }
 function (self: V) mul(o: V): V { return V { x: self.x * o.x }; }
 function (self: V) div(o: V): V { return V { x: self.x / o.x }; }
-function main(): i32 { var a = V { x: 20 }; var b = V { x: 4 }; var r = a + b; r = r - b; r = r * b; r = r / b; return r.x; }`, 20},
+function main(): i32 { let a = V { x: 20 }; let b = V { x: 4 }; let r = a + b; r = r - b; r = r * b; r = r / b; return r.x; }`, 20},
 	// Unary `-a` → `a.neg()`. -5 + 100 = 95.
 	{"unary_neg", `struct V { x: i32 }
 function (self: V) neg(): V { return V { x: 0 - self.x }; }
-function main(): i32 { var a = V { x: 5 }; var b = -a; return b.x + 100; }`, 95},
+function main(): i32 { let a = V { x: 5 }; let b = -a; return b.x + 100; }`, 95},
 	// The result of `a + b` is a struct value read inline (no intermediate
 	// local): exercises expr_struct_type on the ExprBinary for the field read.
 	{"inline_field", `struct V { x: i32 }
 function (self: V) add(o: V): V { return V { x: self.x + o.x }; }
-function main(): i32 { var a = V { x: 3 }; var b = V { x: 4 }; return (a + b).x; }`, 7},
+function main(): i32 { let a = V { x: 3 }; let b = V { x: 4 }; return (a + b).x; }`, 7},
 	// A composite result fed back in as an operand of another overload
 	// (`(a + b) + a`): the intermediate is typed as the struct, so it dispatches
 	// `.add` again. 7 + 3 = 10.
 	{"chained", `struct V { x: i32 }
 function (self: V) add(o: V): V { return V { x: self.x + o.x }; }
-function main(): i32 { var a = V { x: 3 }; var b = V { x: 4 }; var c = a + b; var d = c + a; return d.x; }`, 10},
+function main(): i32 { let a = V { x: 3 }; let b = V { x: 4 }; let c = a + b; let d = c + a; return d.x; }`, 10},
 	// A second struct type with a multi-field payload, to show it's not
 	// V-specific: Money{50} + Money{30} → 80.
 	{"named_struct", `struct Money { cents: i32, tag: i32 }
 function (self: Money) add(o: Money): Money { return Money { cents: self.cents + o.cents, tag: self.tag }; }
-function main(): i32 { var a = Money { cents: 50, tag: 1 }; var b = Money { cents: 30, tag: 2 }; var c = a + b; return c.cents; }`, 80},
+function main(): i32 { let a = Money { cents: 50, tag: 1 }; let b = Money { cents: 30, tag: 2 }; let c = a + b; return c.cents; }`, 80},
 }
 
 // TestSelfHostOperatorOverloadIRX86_64 builds the self-host asm_run driver and
@@ -94,7 +94,7 @@ func TestSelfHostOperatorOverloadIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostOperatorOverloadWasmIR is the wasm sibling: the overload lowering
-// lives in irlower (target-independent), so the wasm IR backend gets it for
+// lives in the lowering (target-independent), so the wasm IR backend gets it for
 // free. Same oracle exit codes through the self-host CLI on wasm32-wasi.
 func TestSelfHostOperatorOverloadWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)

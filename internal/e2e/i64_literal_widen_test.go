@@ -8,7 +8,7 @@ import (
 
 // unannotatedBigLiteralProgram pins the #3676 semantics: an UNANNOTATED integer
 // literal that doesn't fit i32 (`2147483648`, one past i32 max) defaults to i64
-// rather than being silently truncated. i32 is the default int, so `var x = 5`
+// rather than being silently truncated. i32 is the default int, so `let x = 5`
 // stays i32 — but a written-out constant past i32 range has no valid i32 reading,
 // so it widens to i64 (option 2 of the issue). Before the fix, native x86-64
 // truncated the literal to INT_MIN (so `x < 0` was true → exit 1) while the AST
@@ -17,7 +17,7 @@ import (
 // bits (#3581) — only the bare literal's own type widens.
 const unannotatedBigLiteralProgram = `
 function main(): i32 {
-  var x = 2147483648;        // one past i32 max, no annotation → i64
+  let x = 2147483648;        // one past i32 max, no annotation → i64
   if (x < 0) { return 1; }   // i64 2147483648 is positive → false
   return 0;
 }
@@ -28,7 +28,7 @@ function main(): i32 {
 // truncated to i32).
 const bigLiteralArithmeticProgram = `
 function main(): i32 {
-  var x = 5000000000;
+  let x = 5000000000;
   return (x / 1000000000) as i32;
 }
 `
@@ -42,11 +42,11 @@ function main(): i32 {
 // 2^62 / 10^18 = 4, so a correct run exits 44; the truncated one exited 1.
 const compoundBigLiteralProgram = `
 function main(): i32 {
-  var w: i64 = 3 - 4611686018427387904;
-  var t = 3 - 4611686018427387904;
-  var u = 4611686018427387904 - 3;
-  var v = if (u > 0) { 3 - 4611686018427387904 } else { 0 };
-  var f = (3 - 4611686018427387904) as f64;
+  let w: i64 = 3 - 4611686018427387904;
+  let t = 3 - 4611686018427387904;
+  let u = 4611686018427387904 - 3;
+  let v = if (u > 0) { 3 - 4611686018427387904 } else { 0 };
+  let f = (3 - 4611686018427387904) as f64;
   if (t != w) { return 1; }
   if (u != 0 - w) { return 2; }
   if (v != w) { return 3; }
@@ -66,14 +66,14 @@ const wideLiteralSiblingsProgram = `
 function id[T](v: T): T { return v; }
 function pair[A, B](a: A, b: B): (A, B) { return (a, b); }
 function main(): i32 {
-  var t = id(4611686018427387904);
-  var c = 0;
+  let t = id(4611686018427387904);
+  let c = 0;
   if (t > 0) { c = c + 1; }
   if (4611686018427387904 > 1) { c = c + 2; }
-  var b = 1 < 4611686018427387904;
+  let b = 1 < 4611686018427387904;
   if (b) { c = c + 4; }
   if (4611686018427387904 != 0) { c = c + 8; }
-  var p = pair(4611686018427387904, "hello");
+  let p = pair(4611686018427387904, "hello");
   if (p.0 == 4611686018427387904 && p.1 == "hello") { c = c + 16; }
   if (p.0 / 1000000000000000000 == 4) { c = c + 32; }
   return c;
@@ -83,7 +83,7 @@ function main(): i32 {
 // compositeBigLiteralProgram pins #8722: the widening reaches the ELEMENTS of
 // an unannotated tuple / array init, which nothing settled — so a wide element
 // typed i32 and lowered at that default, reading back as 0 for 2^62 on every
-// native backend while `-interp` computed it wide (`var t = (1, 2^62); var a:
+// native backend while `-interp` computed it wide (`let t = (1, 2^62); let a:
 // i64 = t.1;` printed 0 against interp's 4611686018427387904, with no
 // diagnostic anywhere). Each element shape adds a distinct bit: a tuple
 // element, an array element, a tuple nested in a tuple, an array nested in a
@@ -93,17 +93,17 @@ function main(): i32 {
 // the i64 `w` is E041.
 const compositeBigLiteralProgram = `
 function main(): i32 {
-  var w: i64 = 4611686018427387904;
-  var c = 0;
-  var t = (1, 4611686018427387904);
+  let w: i64 = 4611686018427387904;
+  let c = 0;
+  let t = (1, 4611686018427387904);
   if (t.1 == w) { c = c + 1; }
-  var xs = [4611686018427387904, 1];
+  let xs = [4611686018427387904, 1];
   if (xs[0] == w) { c = c + 2; }
-  var n = (1, (2, 4611686018427387904));
+  let n = (1, (2, 4611686018427387904));
   if (n.1.1 == w) { c = c + 4; }
-  var m = (1, [4611686018427387904]);
+  let m = (1, [4611686018427387904]);
   if (m.1[0] == w) { c = c + 8; }
-  var d = (1, 4611686018427387904 / 2);
+  let d = (1, 4611686018427387904 / 2);
   if (d.1 == w / 2) { c = c + 16; }
   if (t.0 == 1 && xs[1] == 1) { c = c + 32; }
   return c;
@@ -120,12 +120,12 @@ function main(): i32 {
 // 157 (both first arms taken).
 const matchScrutineeBigLiteralProgram = `
 function main(): i32 {
-  var c = 0;
+  let c = 0;
   match (3 - 4611686018427387904) { 3 => { c = c + 1; }, _ => { c = c + 2; } }
-  var m = match (3 - 4611686018427387904) { 3 => 100, _ => 4 };
+  let m = match (3 - 4611686018427387904) { 3 => 100, _ => 4 };
   c = c + m;
   match (7) { 4611686018427387904 => { c = c + 200; }, 7 => { c = c + 8; }, _ => { } }
-  var r = match (4611686018427387904) { 4611686018427387904 => 16, _ => 300 };
+  let r = match (4611686018427387904) { 4611686018427387904 => 16, _ => 300 };
   c = c + r;
   if (4611686018427387904 != 0) { c = c + 32; }
   return c;
@@ -133,16 +133,16 @@ function main(): i32 {
 `
 
 // genericScrutineeBigLiteralProgram: a generic call in SCRUTINEE position
-// settles its literal-bound type parameter the way an unannotated `var` init
+// settles its literal-bound type parameter the way an unannotated `let` init
 // does, so `pick(1, 2^62)` binds T = i64 and the payload compares wide. Before,
 // T took the i32 default there and the arm's comparison against a wide literal
 // was refused as E041 (#8722). A correct run exits 9.
 const genericScrutineeBigLiteralProgram = `
 function pick[T](a: T, b: T): Option[T] { return Some(b); }
 function main(): i32 {
-  var c = 0;
+  let c = 0;
   match (pick(1, 4611686018427387904)) { Some(v) => { if (v / 1000000000000000000 == 4) { c = c + 1; } }, None => { } }
-  var m = match (pick(2, 4611686018427387904)) { Some(v) => v / 1000000000000000000, None => 0 };
+  let m = match (pick(2, 4611686018427387904)) { Some(v) => v / 1000000000000000000, None => 0 };
   c = c + (m as i32) * 2;
   return c;
 }
@@ -162,18 +162,18 @@ function pair[A, B](a: A, b: B): (A, B) { return (a, b); }
 function first[A, B](a: A, b: B): A { return a; }
 function some[T](x: T): Option[T] { return Some(x); }
 function main(): i32 {
-  var c = 0;
-  var o: Option[i64] = some(4611686018427387904);
+  let c = 0;
+  let o: Option[i64] = some(4611686018427387904);
   match (o) { Some(v) => { if (v / 1000000000000000000 == 4) { c = c + 32; } }, None => { } }
-  var p: (i64, string) = pair(1234567890123, "hello");
+  let p: (i64, string) = pair(1234567890123, "hello");
   if (p.0 / 1000000000000 == 1 && p.1 == "hello") { c = c + 1; }
-  var q: i64 = first(1234567890123, "x");
+  let q: i64 = first(1234567890123, "x");
   if (q / 1000000000000 == 1) { c = c + 2; }
-  var r: (string, i64) = pair("x", 4611686018427387904);
+  let r: (string, i64) = pair("x", 4611686018427387904);
   if (r.1 / 1000000000000000000 == 4) { c = c + 4; }
-  var s: (i64, i64) = pair(4611686018427387904, 5);
+  let s: (i64, i64) = pair(4611686018427387904, 5);
   if (s.0 / 1000000000000000000 == 4 && s.1 == 5) { c = c + 8; }
-  var t: (i32, i64) = pair(5, 4611686018427387904);
+  let t: (i32, i64) = pair(5, 4611686018427387904);
   if (t.0 == 5 && t.1 / 1000000000000000000 == 4) { c = c + 16; }
   return c;
 }
@@ -188,14 +188,14 @@ const arrayDestinationGenericProgram = `
 function wrap[T](x: T): T[] { return [x]; }
 function two[T](a: T, b: T): T[] { return [a, b]; }
 function main(): i32 {
-  var c = 0;
-  var xs: i64[] = wrap(1234567890123);
+  let c = 0;
+  let xs: i64[] = wrap(1234567890123);
   if (xs[0] / 1000000000000 == 1) { c = c + 1; }
-  var ys: i64[] = wrap(5);
+  let ys: i64[] = wrap(5);
   if (ys.len() == 1 && ys[0] == 5) { c = c + 2; }
-  var zs: i64[] = two(4611686018427387904, 7);
+  let zs: i64[] = two(4611686018427387904, 7);
   if (zs[0] / 1000000000000000000 == 4 && zs[1] == 7) { c = c + 4; }
-  var ws: i32[] = wrap(9);
+  let ws: i32[] = wrap(9);
   if (ws[0] == 9) { c = c + 8; }
   return c;
 }
@@ -203,7 +203,7 @@ function main(): i32 {
 
 // genericPositionsBigLiteralProgram pins #10176: a generic call's type
 // parameter that only untyped literals bind settles in every position reading
-// it — an unannotated `var`, a scrutinee, a comparison, an annotated `u64`
+// it — an unannotated `let`, a scrutinee, a comparison, an annotated `u64`
 // destination, a destination reached through a field read of the result, and
 // arithmetic beside a wide literal. Before, the comparison was E041 and the
 // field read truncated 2^62 to 0 on the native backends. A correct run exits
@@ -213,14 +213,14 @@ function both[T](a: T, b: T): (T, T) { return (a, b); }
 function pick[T](a: T, b: T): Option[T] { return Some(b); }
 function id[T](a: T): T { return a; }
 function main(): i32 {
-  var c = 0;
-  var q = both(1, 4611686018427387904);
+  let c = 0;
+  let q = both(1, 4611686018427387904);
   if (q.1 == 4611686018427387904) { c = c + 1; }
   match (pick(1, 4611686018427387904)) { Some(v) => { if (v == 4611686018427387904) { c = c + 2; } }, None => { } }
   if (both(1, 4611686018427387904).1 == 4611686018427387904) { c = c + 4; }
-  var x: (u64, u64) = both(1, 4611686018427387904);
+  let x: (u64, u64) = both(1, 4611686018427387904);
   if (x.1 / 1000000000000000000 == 4 && x.0 == 1) { c = c + 8; }
-  var z: i64 = both(1, 4611686018427387904).1;
+  let z: i64 = both(1, 4611686018427387904).1;
   if (z / 1000000000000000000 == 4) { c = c + 16; }
   if (id(1) + 4294967296 == 4294967297) { c = c + 32; }
   return c;
@@ -238,23 +238,23 @@ const typedFieldBindsAheadOfLiteralProgram = `
 struct Same[T] { a: T, b: T }
 @noinline function pair[T](a: T, b: T): T { return a; }
 function main(): i32 {
-  var y: i64 = 8589934592;
-  var q = Same { a: 3, b: y };
-  var r: i64 = pair(1, y);
-  var c = 0;
+  let y: i64 = 8589934592;
+  let q = Same { a: 3, b: y };
+  let r: i64 = pair(1, y);
+  let c = 0;
   if (q.b - y == 0) { c = c + 1; }
   if (q.a + q.b == 8589934595) { c = c + 2; }
   if (r == 1) { c = c + 4; }
-  var xs = [Same { a: 1, b: 2 }, Same { a: 3, b: y }];
+  let xs = [Same { a: 1, b: 2 }, Same { a: 3, b: y }];
   if (xs[0].a * 4294967296 + xs[1].b == 12884901888) { c = c + 8; }
-  var ws = [Same { a: 3, b: y }, Same { a: 1, b: 2 }];
+  let ws = [Same { a: 3, b: y }, Same { a: 1, b: 2 }];
   if (ws[1].b * 4294967296 == 8589934592) { c = c + 16; }
-  var o = Same { a: 1, b: 2 };
-  var o2 = o;
-  var z: i64 = o2.a * 4294967296;
+  let o = Same { a: 1, b: 2 };
+  let o2 = o;
+  let z: i64 = o2.a * 4294967296;
   if (z == 4294967296 && o.b == 2) { c = c + 32; }
-  var p = Same { a: 3, b: 4 };
-  var g = (): i64 => p.a * 4294967296;
+  let p = Same { a: 3, b: 4 };
+  let g = (): i64 => p.a * 4294967296;
   if (g() == 12884901888) { c = c + 64; }
   return c;
 }
@@ -272,18 +272,18 @@ struct Stack[T] { items: T[] }
 @noinline function take(xs: Same[i64][]): i64 { return xs[0].a * 4294967296; }
 @noinline function take_stack(x: Stack[i64]): i64 { return x.items[1] * 4294967296; }
 function main(): i32 {
-  var q = Same { a: 1, b: 2 };
-  var c = 0;
+  let q = Same { a: 1, b: 2 };
+  let c = 0;
   if (take1(q) == 8589934595) { c = c + 1; }
-  var p = Same { a: 3, b: 4 };
+  let p = Same { a: 3, b: 4 };
   if (take([p]) == 12884901888) { c = c + 2; }
-  var o = Same { a: 5, b: 6 };
-  var r: i64 = o.a;
+  let o = Same { a: 5, b: 6 };
+  let r: i64 = o.a;
   r = r * 4294967296;
   if (r == 21474836480 && o.b + 1 == 7) { c = c + 4; }
-  var d = Same { a: 7, b: 8 };
+  let d = Same { a: 7, b: 8 };
   if (d.a + d.b == 15) { c = c + 8; }
-  var st = Stack { items: [1, 2] };
+  let st = Stack { items: [1, 2] };
   if (take_stack(st) == 8589934592) { c = c + 16; }
   return c;
 }
@@ -299,33 +299,33 @@ const genericStructLocalBigLiteralProgram = `
 struct Same[T] { a: T, b: T }
 struct Stack[T] { items: T[] }
 function main(): i32 {
-  var q = Same { a: 1, b: 4611686018427387904 };
-  var r: i64 = q.b;
-  var c = 0;
+  let q = Same { a: 1, b: 4611686018427387904 };
+  let r: i64 = q.b;
+  let c = 0;
   if (r == 4611686018427387904) { c = c + 1; }
   if (q.a + 1 == 2) { c = c + 2; }
   if (q.b - q.a == 4611686018427387903) { c = c + 4; }
-  var xs = [Same { a: 1, b: 4611686018427387904 }];
+  let xs = [Same { a: 1, b: 4611686018427387904 }];
   if (xs[0].b == r) { c = c + 8; }
-  var st = Stack { items: [1, 4611686018427387904] };
+  let st = Stack { items: [1, 4611686018427387904] };
   if (st.items[1] == r) { c = c + 16; }
   return c;
 }
 `
 
 // arrayArgumentStructLiteralProgram: an array argument's parameter is the
-// destination of its literal's elements, as an annotated `var` is. Each
+// destination of its literal's elements, as an annotated `let` is. Each
 // `Same` literal is a Same[i64], so the first reads `3` at i64 beside the i64
 // `y` and the second holds 2^32. Before, the elements were typed on their
 // own, as Same[i32], and the call was refused as E038. A correct run exits 3.
 const arrayArgumentStructLiteralProgram = `
 struct Same[T] { a: T, b: T }
 function take(xs: Same[i64][]): i32 {
-  var s: i64 = xs[0].a + xs[0].b + xs[1].b;
+  let s: i64 = xs[0].a + xs[0].b + xs[1].b;
   return (s - 8589934592) as i32;
 }
 function main(): i32 {
-  var y: i64 = 4294967296;
+  let y: i64 = 4294967296;
   return take([Same { a: 3, b: y }, Same { a: 1, b: 4294967296 }]);
 }
 `

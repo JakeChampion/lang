@@ -24,22 +24,22 @@ enum N { Chr(i32), Seq(N[]), Alt(N[]), Grp(GD) }
 struct P { node: N, pos: i32, g: i32 }
 
 function mkseq(a: i32, b: i32): P {
-    var items: N[] = [];
+    let items: N[] = [];
     items = items.append(Chr(a));
     items = items.append(Chr(b));
     return P { node: Seq(items), pos: 0, g: 0 };
 }
 
 function mkalt(): P {
-    var first: P = mkseq(97, 98);
-    var branches: N[] = [first.node];
-    var nxt: P = mkseq(99, 100);
+    let first: P = mkseq(97, 98);
+    let branches: N[] = [first.node];
+    let nxt: P = mkseq(99, 100);
     branches = branches.append(nxt.node);
     return P { node: Alt(branches), pos: 0, g: 0 };
 }
 
 function mkgroup(): P {
-    var inner: P = mkalt();
+    let inner: P = mkalt();
     return P { node: Grp(GD { idx: 1, node: inner.node }), pos: 0, g: 0 };
 }
 
@@ -47,14 +47,14 @@ function walk(n: N, d: i32): i32 {
     if (d > 5) { return 90; }
     match (n) {
         Chr(c) => { return 1; },
-        Seq(xs) => { var s: i32 = 10; var k: i32 = 0; while (k < xs.len()) { s = s + walk(xs[k], d + 1); k = k + 1; } return s; },
-        Alt(xs) => { var s2: i32 = 20; var k2: i32 = 0; while (k2 < xs.len()) { s2 = s2 + walk(xs[k2], d + 1); k2 = k2 + 1; } return s2; },
+        Seq(xs) => { let s: i32 = 10; let k: i32 = 0; while (k < xs.len()) { s = s + walk(xs[k], d + 1); k = k + 1; } return s; },
+        Alt(xs) => { let s2: i32 = 20; let k2: i32 = 0; while (k2 < xs.len()) { s2 = s2 + walk(xs[k2], d + 1); k2 = k2 + 1; } return s2; },
         Grp(gd) => { return 60 + walk(gd.node, d + 1); }
     }
 }
 
 function main(): i32 {
-    var r: P = mkgroup();
+    let r: P = mkgroup();
     // Grp 60 + Alt 20 + two Seqs (10 + 1 + 1) each = 104.
     return walk(r.node, 0);
 }

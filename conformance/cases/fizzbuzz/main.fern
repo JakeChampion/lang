@@ -2,7 +2,7 @@ import "std/i32";
 // FizzBuzz 1..15 — exercises modulo, if/else-if chains, and exact
 // multi-line stdout.
 function main(): i32 {
-    var i: i32 = 1;
+    let i: i32 = 1;
     while (i <= 15) {
         if (i % 15 == 0) {
             print("FizzBuzz");

@@ -20,13 +20,13 @@ const frameViewProgram = `@noinline function has_prefix(row: string, head: strin
 }
 @noinline function copy_tail(s: string): string { return slice_unchecked(s, 2, s.len()) + ""; }
 @noinline function count_a(s: string): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < s.len()) { if (s[i] == b'a') { n = n + 1; } i = i + 1; }
     return n;
 }
 @noinline function reads(s: string): i32 {
-    var mid: i32 = slice_unchecked(slice_unchecked(s, 1, s.len()), 1, 3).len();
+    let mid: i32 = slice_unchecked(slice_unchecked(s, 1, s.len()), 1, 3).len();
     return mid + (slice_unchecked(s, 0, 2)[1] as i32) + count_a(slice_unchecked(s, 0, 4));
 }
 @noinline function wrapped(s: string): i32 {
@@ -36,35 +36,35 @@ const frameViewProgram = `@noinline function has_prefix(row: string, head: strin
     }
 }
 @noinline function scan(rows: string[], head: string): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for r in rows { if (has_prefix(r, head)) { n = n + 1; } }
     return n;
 }
 @noinline function scan_rounds(rows: string[]): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { t = t + scan(rows, "beta("); i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function copy_rounds(rows: string[]): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { t = t + copy_tail(rows[i % 3]).len(); i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function read_rounds(rows: string[]): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { t = t + reads(rows[i % 3]); i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function wrapped_rounds(rows: string[]): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { t = t + wrapped(rows[i % 3]); i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
@@ -74,7 +74,7 @@ function print_int(n: i32): i32 {
     return 0;
 }
 function main(): i32 {
-    var rows: string[] = ["alpha(x)", "beta(y)", "banana(z)"];
+    let rows: string[] = ["alpha(x)", "beta(y)", "banana(z)"];
     print_int(scan_rounds(rows)); print("");
     print_int(copy_rounds(rows)); print("");
     print_int(read_rounds(rows)); print("");

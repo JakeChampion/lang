@@ -12,13 +12,13 @@ import "testing"
 const reuseBoxSrc = `struct Blk { buf: u8[], note: string, n: i32 }
 enum Bag { Keep(i32[]), Swap(i32[]) }
 function step(b: Blk, v: i32): Blk {
-    var out: Blk = b;
+    let out: Blk = b;
     out = Blk { ...out, n: v };
     return out;
 }
 function eStep(n: i32): i32 {
-    var b: Bag = Keep([0, 0]);
-    var i: i32 = 0;
+    let b: Bag = Keep([0, 0]);
+    let i: i32 = 0;
     while (i < n) { b = Swap([i, i]); i = i + 1; }
     return 0;
 }

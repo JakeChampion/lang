@@ -1,4 +1,4 @@
-// returnsNoParamEscape fresh-local extension: `var r = build(n); return r;` is
+// returnsNoParamEscape fresh-local extension: `let r = build(n); return r;` is
 // proven param-free, so an owned temp passed to such a callee is reclaimed.
 // Differentially pinned: free-on == free-off, reuse-on == reuse-off, + interp.
 enum List { Cons(i32, List), Nil }
@@ -10,7 +10,7 @@ function build(n: i32): List {
 function sum(l: List): i32 {
     match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } }
 }
-function relay(xs: List): List { var r: List = build(5); return r; }
+function relay(xs: List): List { let r: List = build(5); return r; }
 
 function main(): i32 {
     return sum(relay(build(3)));   // build(5): 5+4+3+2+1 = 15

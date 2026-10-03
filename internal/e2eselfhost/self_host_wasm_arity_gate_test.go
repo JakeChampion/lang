@@ -19,7 +19,7 @@ import (
 func TestSelfHostWasmArityGate(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern", "wasm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern", "wasm_ir_run.fern")
 	astDriver := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	irDriver := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasm_ir_run")
 
@@ -47,7 +47,7 @@ func TestSelfHostWasmArityGate(t *testing.T) {
 		{"too-few", "function f(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return f(1); }"},
 		{"too-many", "function g(a: i32): i32 { return a; } function main(): i32 { return g(1, 2); }"},
 		// Nested inside an expression and a while body.
-		{"nested", "function h(a: i32, b: i32): i32 { return a * b; } function main(): i32 { var s = 0; while (s < 3) { s = s + h(1); } return s; }"},
+		{"nested", "function h(a: i32, b: i32): i32 { return a * b; } function main(): i32 { let s = 0; while (s < 3) { s = s + h(1); } return s; }"},
 	}
 	accepts := []struct {
 		name string

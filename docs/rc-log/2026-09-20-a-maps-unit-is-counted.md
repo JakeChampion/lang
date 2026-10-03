@@ -37,7 +37,7 @@ once.
 ## A shared map is copied before it is written
 
 With a unit that can be shared, the fixture corpus's `cow_alias_safety`
-came back 81 for 129: `var snapshot = m; m = m.insert(1, 99)` wrote the
+came back 81 for 129: `let snapshot = m; m = m.insert(1, 99)` wrote the
 box both bindings held. The AST lowering never meets this because its
 alias group refuses the shape; the semantic lowering's `insert` and
 `without` consumed their receiver's unit and wrote in place whatever the
@@ -55,7 +55,7 @@ count without this frame's unit and writes a lent map in place — matches
 what native answers for `grown(m, 7)` through a lent parameter (43), but
 native's answer is the bug: E055 says every collection operation returns a
 new value, and native's rc pass borrows a map mutator's receiver, so
-`var n = m.insert(k, v)` changes `m` on the native compiler, the
+`let n = m.insert(k, v)` changes `m` on the native compiler, the
 interpreter and the AST lowering alike (#9834). The semantic lowering keeps
 the retain: a map the frame still reads counts as shared and is copied,
 and `a-map-the-frame-still-reads-is-not-written` pins the contract's

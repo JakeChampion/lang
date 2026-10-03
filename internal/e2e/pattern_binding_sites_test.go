@@ -2,7 +2,7 @@
 // sites the issue named all read `parseMatchPattern`, but each still kept its
 // own lookahead deciding whether a pattern was there at all, and the three
 // gates admitted different subsets: a `for` header took only a tuple head, and
-// neither `for` nor the `let` / `var` destructure took an `@` binding, which a
+// neither `for` nor the `let` destructure took an `@` binding, which a
 // destructured parameter had.
 //
 // `atPatternHead` is now the one lookahead all of them ask, so a head admitted
@@ -30,8 +30,8 @@ var patternBindingSiteCases = []struct {
 		name: "for_struct_shorthand",
 		src: `struct Point { x: i32, y: i32 }
 function main(): i32 {
-  var ps: Point[] = [Point { x: 3, y: 4 }, Point { x: 1, y: 2 }];
-  var acc = 0;
+  let ps: Point[] = [Point { x: 3, y: 4 }, Point { x: 1, y: 2 }];
+  let acc = 0;
   for Point { x, y } in ps { acc = acc + x * 10 + y; }
   return acc;
 }`,
@@ -42,8 +42,8 @@ function main(): i32 {
 		name: "for_struct_rename",
 		src: `struct Point { x: i32, y: i32 }
 function main(): i32 {
-  var ps: Point[] = [Point { x: 3, y: 4 }];
-  var acc = 0;
+  let ps: Point[] = [Point { x: 3, y: 4 }];
+  let acc = 0;
   for Point { x: a, y: b } in ps { acc = acc + a * 10 + b; }
   return acc;
 }`,
@@ -54,8 +54,8 @@ function main(): i32 {
 		name: "for_struct_rest",
 		src: `struct Point { x: i32, y: i32, z: i32 }
 function main(): i32 {
-  var ps: Point[] = [Point { x: 5, y: 6, z: 7 }];
-  var acc = 0;
+  let ps: Point[] = [Point { x: 5, y: 6, z: 7 }];
+  let acc = 0;
   for Point { x, z, .. } in ps { acc = acc + x * 10 + z; }
   return acc;
 }`,
@@ -67,8 +67,8 @@ function main(): i32 {
 		name: "for_at_struct",
 		src: `struct Point { x: i32, y: i32 }
 function main(): i32 {
-  var ps: Point[] = [Point { x: 2, y: 3 }];
-  var acc = 0;
+  let ps: Point[] = [Point { x: 2, y: 3 }];
+  let acc = 0;
   for w @ Point { x, y } in ps { acc = acc + w.x + w.y + x + y; }
   return acc;
 }`,
@@ -77,8 +77,8 @@ function main(): i32 {
 	{
 		name: "for_at_tuple",
 		src: `function main(): i32 {
-  var ts: (i32, i32)[] = [(3, 4), (5, 6)];
-  var acc = 0;
+  let ts: (i32, i32)[] = [(3, 4), (5, 6)];
+  let acc = 0;
   for w @ (a, b) in ts { acc = acc + w.0 + b; }
   return acc;
 }`,
@@ -87,8 +87,8 @@ function main(): i32 {
 	{
 		name: "for_nested_tuple",
 		src: `function main(): i32 {
-  var ts: ((i32, i32), i32)[] = [((1, 2), 3)];
-  var acc = 0;
+  let ts: ((i32, i32), i32)[] = [((1, 2), 3)];
+  let acc = 0;
   for ((a, b), c) in ts { acc = acc + a + b + c; }
   return acc;
 }`,
@@ -100,8 +100,8 @@ function main(): i32 {
 		name: "for_struct_discard",
 		src: `struct Point { x: i32, y: i32 }
 function main(): i32 {
-  var ps: Point[] = [Point { x: 4, y: 9 }];
-  var acc = 0;
+  let ps: Point[] = [Point { x: 4, y: 9 }];
+  let acc = 0;
   for Point { x: _, y: _ } in ps { acc = acc + 7; }
   return acc;
 }`,
@@ -114,8 +114,8 @@ function main(): i32 {
 		name: "var_at_struct",
 		src: `struct Point { x: i32, y: i32 }
 function main(): i32 {
-  var p = Point { x: 6, y: 1 };
-  var w @ Point { x, y } = p;
+  let p = Point { x: 6, y: 1 };
+  let w @ Point { x, y } = p;
   return w.x * 10 + w.y + x + y;
 }`,
 		want: 68,
@@ -124,7 +124,7 @@ function main(): i32 {
 		name: "let_at_struct_rename",
 		src: `struct Point { x: i32, y: i32 }
 function main(): i32 {
-  var p = Point { x: 8, y: 3 };
+  let p = Point { x: 8, y: 3 };
   let w @ Point { x: a, y: b } = p;
   return w.x * 10 + a + b;
 }`,
@@ -133,7 +133,7 @@ function main(): i32 {
 	{
 		name: "var_at_tuple",
 		src: `function main(): i32 {
-  var w @ (a, b) = (9, 2);
+  let w @ (a, b) = (9, 2);
   return w.0 * 10 + w.1 + a + b;
 }`,
 		want: 103,
@@ -154,7 +154,7 @@ function main(): i32 {
 		name: "at_struct_string_field",
 		src: `struct Named { id: i32, label: string }
 function main(): i32 {
-  var n = Named { id: 30, label: "abcd" };
+  let n = Named { id: 30, label: "abcd" };
   let w @ Named { id, label } = n;
   return id + label.len() + w.label.len();
 }`,
@@ -224,9 +224,9 @@ func TestPatternBindingSitesWasm(t *testing.T) {
 func TestPatternBindingSitesMapAtRejected(t *testing.T) {
 	const src = `import "core/map";
 function main(): i32 {
-  var m: Map[string, i32] = map_new(8);
+  let m: Map[string, i32] = map_new(8);
   m = m.insert("a", 1);
-  var acc = 0;
+  let acc = 0;
   for w @ (k, v) in m { acc = acc + v; }
   return acc;
 }`

@@ -16,8 +16,8 @@ const unsignedHelpersProg = `
 import "std/u32";
 import "std/u64";
 function main(): i32 {
-    var M64: u64 = 18446744073709551615 as u64;
-    var M32: u32 = 4294967295 as u32;
+    let M64: u64 = 18446744073709551615 as u64;
+    let M32: u32 = 4294967295 as u32;
     if (!(0 as u64).is_zero() || !(4 as u64).is_even() || !(3 as u64).is_odd()) { return 1; }
     if ((2 as u64).pow(40) != (1099511627776 as u64)) { return 2; }
     if (M64.saturating_add(1 as u64) != M64) { return 3; }
@@ -39,7 +39,7 @@ function opt(o: Option[u32], fallback: u32): u32 {
     match (o) { Some(v) => { return v; }, None => { return fallback; } }
 }
 function main(): i32 {
-    var M32: u32 = 4294967295 as u32;
+    let M32: u32 = 4294967295 as u32;
     if (opt(M32.checked_add(1 as u32), 99 as u32) != (99 as u32)) { return 1; }
     if (opt((3 as u32).checked_add(4 as u32), 99 as u32) != (7 as u32)) { return 2; }
     if (opt((3 as u32).checked_sub(10 as u32), 99 as u32) != (99 as u32)) { return 3; }
@@ -54,7 +54,7 @@ function opt(o: Option[u64], fallback: u64): u64 {
     match (o) { Some(v) => { return v; }, None => { return fallback; } }
 }
 function main(): i32 {
-    var M64: u64 = 18446744073709551615 as u64;
+    let M64: u64 = 18446744073709551615 as u64;
     if (opt(M64.checked_add(1 as u64), 99 as u64) != (99 as u64)) { return 1; }
     if (opt((3 as u64).checked_add(4 as u64), 99 as u64) != (7 as u64)) { return 2; }
     if (opt((3 as u64).checked_sub(10 as u64), 99 as u64) != (99 as u64)) { return 3; }

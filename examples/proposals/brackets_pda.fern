@@ -170,16 +170,16 @@ function verdict_text(v: Verdict): string {
 // The automaton. Pushes a Frame per opener, pops on a matching closer,
 // and refuses on the first transition it has no rule for.
 function analyze(src: string): Report {
-  var stack: Frame[] = [];
-  var mode: i32 = st_text();
-  var str_start: i32 = 0;
-  var max_depth: i32 = 0;
-  var opens: i32 = 0;
-  var i: i32 = 0;
-  var n: i32 = src.len();
+  let stack: Frame[] = [];
+  let mode: i32 = st_text();
+  let str_start: i32 = 0;
+  let max_depth: i32 = 0;
+  let opens: i32 = 0;
+  let i: i32 = 0;
+  let n: i32 = src.len();
 
   while (i < n) {
-    var b: i32 = src[i] as i32;
+    let b: i32 = src[i] as i32;
 
     if (mode == st_comment()) {
       if (b == 10) {
@@ -309,9 +309,9 @@ function broken_corpus(): string[] {
 // leave no residue: a balanced string closes exactly as many frames as
 // it opens.
 function test_corpus_is_balanced(): test.TestOutcome {
-  var xs: string[] = balanced_corpus();
+  let xs: string[] = balanced_corpus();
   for i in 0..xs.len() {
-    var r: Report = analyze(xs[i]);
+    let r: Report = analyze(xs[i]);
     if (verdict_code(r.verdict) != 0) {
       return test.fail("expected balanced for input " + i.to_string()
         + ": " + verdict_text(r.verdict));
@@ -324,12 +324,12 @@ function test_corpus_is_balanced(): test.TestOutcome {
 // property that makes the stack discipline a monoid, and it fails loudly
 // if a pop leaks state across the join.
 function test_concatenation_is_closed(): test.TestOutcome {
-  var xs: string[] = balanced_corpus();
+  let xs: string[] = balanced_corpus();
   for i in 0..xs.len() {
     for j in 0..xs.len() {
       // Comment-carrying members only compose when the comment is
       // terminated, which it is — every member ends outside a comment.
-      var joined: string = xs[i] + "\n" + xs[j];
+      let joined: string = xs[i] + "\n" + xs[j];
       if (!is_balanced(joined)) {
         return test.fail("concat of " + i.to_string() + " and "
           + j.to_string() + " is not balanced: "
@@ -343,16 +343,16 @@ function test_concatenation_is_closed(): test.TestOutcome {
 // Wrapping a balanced string in any one kind stays balanced and lifts the
 // maximum depth by exactly one.
 function test_wrapping_lifts_depth(): test.TestOutcome {
-  var xs: string[] = balanced_corpus();
-  var opens: string[] = ["(", "[", "{", "<"];
-  var closes: string[] = [")", "]", "}", ">"];
+  let xs: string[] = balanced_corpus();
+  let opens: string[] = ["(", "[", "{", "<"];
+  let closes: string[] = [")", "]", "}", ">"];
   for i in 0..xs.len() {
     // A member ending inside a line comment would swallow the closer,
     // so wrap on its own line.
-    var inner: Report = analyze(xs[i]);
+    let inner: Report = analyze(xs[i]);
     for k in 0..opens.len() {
-      var wrapped: string = opens[k] + "\n" + xs[i] + "\n" + closes[k];
-      var outer: Report = analyze(wrapped);
+      let wrapped: string = opens[k] + "\n" + xs[i] + "\n" + closes[k];
+      let outer: Report = analyze(wrapped);
       if (verdict_code(outer.verdict) != 0) {
         return test.fail("wrapping input " + i.to_string() + " in "
           + opens[k] + " broke it: " + verdict_text(outer.verdict));
@@ -370,11 +370,11 @@ function test_wrapping_lifts_depth(): test.TestOutcome {
 
 // Each broken input must be refused, at the byte the PDA actually stopped on.
 function test_broken_inputs_are_refused(): test.TestOutcome {
-  var xs: string[] = broken_corpus();
-  var want_code: i32[] = [1, 2, 3, 2, 4];
-  var want_pos: i32[] = [0, 1, 0, 2, 2];
+  let xs: string[] = broken_corpus();
+  let want_code: i32[] = [1, 2, 3, 2, 4];
+  let want_pos: i32[] = [0, 1, 0, 2, 2];
   for i in 0..xs.len() {
-    var v: Verdict = check(xs[i]);
+    let v: Verdict = check(xs[i]);
     if (verdict_code(v) != want_code[i]) {
       return test.fail("input " + i.to_string() + ": wanted code "
         + want_code[i].to_string() + ", got "
@@ -409,15 +409,15 @@ function test_quoting_suppresses_brackets(): test.TestOutcome {
 
 // The stack has to be a real stack: n nested openers reach depth n.
 function test_deep_nesting_reaches_depth(): test.TestOutcome {
-  var depth: i32 = 200;
-  var s: string = "";
+  let depth: i32 = 200;
+  let s: string = "";
   for i in 0..depth {
     s = s + "(";
   }
   for i in 0..depth {
     s = s + ")";
   }
-  var r: Report = analyze(s);
+  let r: Report = analyze(s);
   if (verdict_code(r.verdict) != 0) {
     return test.fail("deep nest not balanced: " + verdict_text(r.verdict));
   }
@@ -455,7 +455,7 @@ function test_counting_is_not_enough(): test.TestOutcome {
 // ----------------------------------------------------------------- app
 
 function report_line(src: string, label: string): string {
-  var r: Report = analyze(src);
+  let r: Report = analyze(src);
   return label + ": " + verdict_text(r.verdict) + " (depth "
     + r.max_depth.to_string() + ", " + r.opens.to_string() + " opens)";
 }
@@ -467,7 +467,7 @@ function main(): i32 {
   eprint(report_line("{ \"a ) b\" }", "quoted closer"));
   eprint(report_line("(((", "run of openers"));
 
-  var r: test.TestRunner = test.test_new("brackets_pda");
+  let r: test.TestRunner = test.test_new("brackets_pda");
   r = r.it("corpus is balanced", test_corpus_is_balanced);
   r = r.it("concatenation is closed", test_concatenation_is_closed);
   r = r.it("wrapping lifts depth", test_wrapping_lifts_depth);

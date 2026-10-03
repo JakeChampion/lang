@@ -37,7 +37,7 @@ import (
 const signalDispositionSrc = `function main(): i32 {
     if (args().len() == 2) { signal_ignore(13); }
     if (args().len() == 3) { signal_ignore(13); signal_default(13); }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 200000) {
         print("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
         i = i + 1;
@@ -180,7 +180,7 @@ func TestInterpSignalDisposition(t *testing.T) {
 // mis-balanced stack shows up as the wrong number rather than as a trap only.
 func TestWASMSignalDispositionIsANoOp(t *testing.T) {
 	src := `function main(): i32 {
-    var n: i32 = 40;
+    let n: i32 = 40;
     signal_ignore(13);
     n = n + 1;
     signal_default(2);

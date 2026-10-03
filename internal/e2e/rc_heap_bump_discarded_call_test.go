@@ -21,14 +21,14 @@ import (
 // decs it — never frees a value the caller's source still owns. The excluded
 // `__method_*` mutators (push / set) are the ones that return an UNCOUNTED
 // rc==1 receiver alias the gate couldn't distinguish. Mirrors the shipped
-// `var t = call(); /* t unused */` exit-sweep dec.
+// `let t = call(); /* t unused */` exit-sweep dec.
 
 func discardedCallStructBump(n string) string {
 	return `struct P { x: i32, y: i32 }
 function mk(v: i32): P { return P { x: v, y: v }; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) { mk(i); i = i + 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -37,8 +37,8 @@ function main(): i32 {
 func discardedCallArrBump(n string) string {
 	return `function mk(v: i32): i32[] { return [v, v + 1, v + 2]; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) { mk(i); i = i + 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -50,8 +50,8 @@ function main(): i32 {
 // free shows up as a wrong sum (999) or a non-zero underflow count.
 const discardedCallAliasedSafe = `function pass(p: i32[]): i32[] { return p; }
 function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
-    var arr: i32[] = [10, 20, 30];
+    let i: i32 = 0; let acc: i32 = 0;
+    let arr: i32[] = [10, 20, 30];
     while (i < 200) {
         pass(arr);
         acc = acc + arr[0] + arr[1] + arr[2];
@@ -66,10 +66,10 @@ function main(): i32 {
 const discardedCallFreshSafe = `struct P { x: i32, y: i32 }
 function mk(n: i32): P { return P { x: n, y: n + 1 }; }
 function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
         mk(i);
-        var p: P = mk(i);
+        let p: P = mk(i);
         acc = acc + p.x + p.y;
         i = i + 1;
     }

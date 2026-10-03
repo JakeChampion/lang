@@ -36,52 +36,52 @@ function main(): i32 {
         return 10;
     }
     // Block body whose only statement returns.
-    var single = (x: i32) => { return x * 2; };
+    let single = (x: i32) => { return x * 2; };
     if (apply(single, 4) != 8) {
         return 11;
     }
     // Statements, then a return.
-    var stmts = (x: i32) => { var y: i32 = x + 1; return y * 2; };
+    let stmts = (x: i32) => { let y: i32 = x + 1; return y * 2; };
     if (apply(stmts, 3) != 8) {
         return 12;
     }
     // Returns on every branch, so the block's own type is `never`.
-    var branch = (x: i32) => { if (x > 0) { return x; } return 0 - x; };
+    let branch = (x: i32) => { if (x > 0) { return x; } return 0 - x; };
     if (apply(branch, 0 - 8) != 8) {
         return 13;
     }
     // A tail value instead of a return — the block has a value of its own.
-    var tail = (x: i32) => { var y: i32 = x + 1; y * 2 };
+    let tail = (x: i32) => { let y: i32 = x + 1; y * 2 };
     if (apply(tail, 3) != 8) {
         return 14;
     }
     // An explicit return type beside a block body still means what it said.
-    var typed = (x: i32): i32 => { return x * 2; };
+    let typed = (x: i32): i32 => { return x * 2; };
     if (apply(typed, 4) != 8) {
         return 15;
     }
     // A body that only runs statements: void, not a missing value.
-    var sink: i32 = 0;
-    var log = (x: i32) => { sink = sink + x * 2; };
+    let sink: i32 = 0;
+    let log = (x: i32) => { sink = sink + x * 2; };
     run(log, 4);
     if (sink != 8) {
         return 16;
     }
     // The same with the return type written out.
-    var logged = (x: i32): void => { sink = sink + x; };
+    let logged = (x: i32): void => { sink = sink + x; };
     run(logged, 2);
     if (sink != 10) {
         return 17;
     }
     // An empty body is void too, and does nothing.
-    var nothing = (x: i32) => {};
+    let nothing = (x: i32) => {};
     run(nothing, 99);
     if (sink != 10) {
         return 18;
     }
     // A `match` STATEMENT among the body's statements, not the block's value:
     // its arms need not yield anything, and more statements follow it.
-    var classify = (x: i32) => {
+    let classify = (x: i32) => {
         match (x) {
             0 => { return 100; },
             _ => {}
@@ -95,7 +95,7 @@ function main(): i32 {
         return 20;
     }
     // The same for an `if` with an `else`, which can equally be a value.
-    var branchy = (x: i32) => {
+    let branchy = (x: i32) => {
         if (x > 0) { return x * 2; } else { return 0 - x; }
     };
     if (apply(branchy, 4) != 8) {
@@ -106,15 +106,15 @@ function main(): i32 {
     }
     // `use` and `let … else` rewrite the REST of the block they appear in, so
     // they only work where the body is a real function body (#8593).
-    var bound = (): i32 => {
+    let bound = (): i32 => {
         use n <- give(41);
         return n + 1;
     };
     if (bound() != 42) {
         return 23;
     }
-    var unwrapped = (): i32 => {
-        var o: Opt = Nil;
+    let unwrapped = (): i32 => {
+        let o: Opt = Nil;
         let Has(v) = o else { return 7; };
         return v;
     };
@@ -122,8 +122,8 @@ function main(): i32 {
         return 24;
     }
     // A trailing `match` written without a `;` IS the value, still.
-    var pick = (x: i32) => {
-        var y: i32 = x + 1;
+    let pick = (x: i32) => {
+        let y: i32 = x + 1;
         match (y) { 0 => 100, _ => y * 2 }
     };
     if (apply(pick, 3) != 8) {

@@ -122,7 +122,7 @@ func (b *builder) insertConsumedParamEntryIncs(at int, pos ast.Position) {
 // rhsTainted / computeFreeEligible treat as untainted-owned: array / struct
 // / tuple literals, string concat (Binary.IsStringConcat), and string slice
 // (SliceExpr whose result is a string — the runtime copies into a new owned
-// buffer). These are exactly the RHS shapes that make a bound `var t = …`
+// buffer). These are exactly the RHS shapes that make a bound `let t = …`
 // freeEligible, so DEC'ing such a temp is as safe as the already-shipped
 // exit-sweep dec of that bound var.
 //
@@ -414,7 +414,7 @@ func (b *builder) freshOwnedBoxType(e ast.Expr) (ast.Type, bool) {
 // result or literal is owned outright at rc 1.
 //
 // Measured against three controls in the identical argument position —
-// the same value bound to a `var` first, a struct literal, and a tuple
+// the same value bound to a `let` first, a struct literal, and a tuple
 // literal — all of which were reclaimed while `sink(E.A(mk(...)))`
 // stranded its box AND its payload every call (200 allocs / 0 frees
 // over 100 rounds).
@@ -458,7 +458,7 @@ func (b *builder) freshVariantConstructionType(x *ast.Call) (ast.Type, bool) {
 // return (a function handing back a param / field) carries the return-
 // transfer inc, so its rc is >= 2 and the gate merely decs it — never frees
 // a value the caller's source still owns. This is exactly the shipped
-// `var t = call(); /* t unused */` exit-sweep dec (computeFreeEligible marks
+// `let t = call(); /* t unused */` exit-sweep dec (computeFreeEligible marks
 // such a t eligible), so it inherits that proven safety.
 //
 // Excluded — the callees that hand back an UNCOUNTED rc==1 alias the
@@ -863,7 +863,7 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string, bt ast.Type) 
 // (#8003).
 //
 // The same question serves the borrow-alias CANCELLATION in rc_analysis, where
-// it is asked of a `var y = c` over a match binding (#9923): y takes no count
+// it is asked of a `let y = c` over a match binding (#9923): y takes no count
 // of its own, so what it hands on must take one. Refusing to take a count and
 // refusing to give one back need the same fact — every escape is counted —
 // which is why one predicate answers both.
@@ -934,7 +934,7 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 				excused[id] = true
 			}
 		case *ast.Var:
-			// `var y = c` whose inc the borrow-alias analysis CANCELLED
+			// `let y = c` whose inc the borrow-alias analysis CANCELLED
 			// (#9923). y then holds no count of its own and its exit dec is
 			// elided with the inc, so it leaves no reference behind at all —
 			// the same property `_` has, established by the cancellation
@@ -1054,7 +1054,7 @@ func (b *builder) sinkRetainsArg(c *ast.Call, i int, bt ast.Type) bool {
 
 // variantRetainsPayload reports whether the variant construction `c` retains
 // its alias payload `id`, so the box it builds holds a count of its own —
-// wherever the construction sits: `return Some(c)`, `var r = Err(c)`, or a
+// wherever the construction sits: `return Some(c)`, `let r = Err(c)`, or a
 // struct field `{ ...s, err: Some(c) }`. The gate is emitEnumNew's, the
 // stricter of the two constructors' (the pair form's emitPairFormPayloadRetain
 // drops the eligibility and reuse terms). A move site hands over the
@@ -1798,11 +1798,11 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			if sdOk {
 				// Outlined form, for the same reason as the eligible arm
 				// above: this shape is ~6 ops per rc-tracked field and the
-				// sweep repeats per function EXIT. It is the arm that
-				// dominates the self-host compiler — `LowerState` has 24
-				// rc-tracked fields, and `lower_call_named` holds 112 such
-				// locals across 259 exits, which is ~3.5M of its ~3.57M sweep
-				// ops. genStructFlatDropFn emits this body verbatim against
+				// sweep repeats per function EXIT. It was the arm that
+				// dominated the self-host compiler — the AST lowering's
+				// `LowerState` had 24 rc-tracked fields, and `lower_call_named`
+				// held 112 such locals across 259 exits, ~3.5M of its ~3.57M
+				// sweep ops. genStructFlatDropFn emits this body verbatim against
 				// local 0 and declines (keeping the inline path) for the one
 				// shape it cannot reproduce, a Cell field.
 				if ast.RcFreeEnabled {
@@ -1884,7 +1884,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	}
 	// Use b.locals[name] so we only dec slots that user code
 	// actually writes to. Two scope-separated Var declarations
-	// sharing a name (e.g. `var ns` declared 9 times across
+	// sharing a name (e.g. `let ns` declared 9 times across
 	// different branches of vm.fern) all map to the SAME
 	// physical slot via b.locals[name] — only the last entry
 	// wins in the slot map, and every Var-decl Store reaches
@@ -1932,7 +1932,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	// the borrow. This is what lets a Map passed to a function be
 	// mutated in place (the handle stays rc==1, so the Phase 2d
 	// copy-on-write check mutates rather than copies), while a
-	// genuine local alias (`var m2 = m1`) still inc's and so gets
+	// genuine local alias (`let m2 = m1`) still inc's and so gets
 	// a copy on write. Only OWNED locals are dec'd below.
 	seen := map[string]bool{}
 	if exclude != "" {
@@ -1966,7 +1966,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		emitDec(slot, v.Type, b.rc.freeEligible[v.Name], v.Name)
 	}
 	// Owned (`own`) params are reclaimed by the callee at exit, like an owned
-	// local — the borrow model sweeps only `var` locals, so they need an extra
+	// local — the borrow model sweeps only `let` locals, so they need an extra
 	// pass. A moved own param (passed onward to another `own` param) is already
 	// in `seen` (b.rc.movedLocals) and skipped, so the value is freed exactly once
 	// at the end of the transfer chain; an own param that escaped is not
@@ -2137,7 +2137,7 @@ func (b *builder) emitPreciseDrop(name string) {
 // short-circuits inc/dec), or headered heap (real rc) — there is no
 // view form anymore (args()/env() copy into owned strings; see the
 // args/env view-fix PR). So a borrowed read of a string out of a
-// container (`var s = foo.field` / `arr[i]`) co-owns the buffer, which
+// container (`let s = foo.field` / `arr[i]`) co-owns the buffer, which
 // is required once a container drop dec's its string fields/elements:
 // without the inc, dropping the container would free the buffer out
 // from under the still-live alias (UAF). The earlier eligibility gate
@@ -2242,11 +2242,11 @@ func (b *builder) emitDynRetain() {
 
 // emitVarReinitDropOld releases the value currently in a var's slot
 // before its (re-)initialisation store — Phase 5h (loop-body local
-// drops). A `var row = …` declared inside a loop reuses one slot across
+// drops). A `let row = …` declared inside a loop reuses one slot across
 // iterations; without this the prior iteration's value is overwritten
 // with no dec, so N-1 allocations leak — and the rc undercount keeps the
 // freelist from reclaiming them, so a hot build-and-discard loop grows
-// unbounded. A loop-body `var` is a re-DECLARATION (not a reassignment),
+// unbounded. A loop-body `let` is a re-DECLARATION (not a reassignment),
 // so the assign hook's dec-on-overwrite never ran for it.
 //
 // Mirrors the reassignment dec-on-overwrite (the assign Ident case) for
@@ -2461,7 +2461,7 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 		// A capture that IS or CONTAINS a closure is left alone. This thunk
 		// runs from the drop-fn pointer a closure pair carries, so releasing
 		// another closure from inside it re-enters a closure release — and
-		// on a cyclic graph, re-enters THIS thunk. `var f = () => g(); g = f;`
+		// on a cyclic graph, re-enters THIS thunk. `let f = () => g(); g = f;`
 		// boxes the mutated capture into a one-element closure array whose
 		// element becomes the pair under release: dispatching there recursed
 		// until the stack ran out, and the flat per-element dec instead
@@ -3643,7 +3643,7 @@ func genArrDynDropFn(dynDrop string, ptrW int) *Func {
 // dyn value's `data` word: the last unit frees the box, header included, and
 // any other unit is a flat rc dec. A `string` concrete's box holds the string
 // value without a retain, so the string buffer itself is not released here:
-// an aliased source (`var s = ...; var d: dyn T = s;`) would be freed out
+// an aliased source (`let s = ...; let d: dyn T = s;`) would be freed out
 // from under `s`.
 func genDynPrimDropFn(prim string, ptrW int) *Func {
 	ct := astTypeForConcreteName(prim)
@@ -4607,7 +4607,7 @@ func rcTrackedForFlatDec(t ast.Type) bool {
 // frame's own. Where the move IS marked, nothing changes (no inc, sweep
 // skipped), so already-correct code keeps its exact rc traffic.
 //
-// A `var` local reaches an `own` position as the self-reassign `x = f(…, x,
+// A `let` local reaches an `own` position as the self-reassign `x = f(…, x,
 // …)`, whose overwrite-dec callConsumesIdent suppresses (ownCallMoveArgs), or
 // at a last use E051 admits (#9541), which computeOwnedArgMoves moves where it
 // can and marks for this retain where it cannot (ownArgRetains).

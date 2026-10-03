@@ -101,7 +101,7 @@ func itoa(n int) string {
 // nothing.
 func TestRawSyscallRefusedUnderSandbox(t *testing.T) {
 	const literal = `function main(): i32 {
-    var closed: i64 = __syscall3(3, 0 - 1, 0, 0);
+    let closed: i64 = __syscall3(3, 0 - 1, 0, 0);
     if (closed != 0 - 9) { return 1; }
     return 0;
 }
@@ -115,8 +115,8 @@ func TestRawSyscallRefusedUnderSandbox(t *testing.T) {
 		t.Fatal("a raw syscall with a literal number was not recorded")
 	}
 	const src = `function main(): i32 {
-    var nr: i32 = __load_i32(__alloc(4)) + 3;
-    var closed: i64 = __syscall3(nr, 0 - 1, 0, 0);
+    let nr: i32 = __load_i32(__alloc(4)) + 3;
+    let closed: i64 = __syscall3(nr, 0 - 1, 0, 0);
     if (closed != 0 - 9) { return 1; }
     return 0;
 }
@@ -249,8 +249,8 @@ func TestSyscallSetIsProgramSpecific(t *testing.T) {
 // syscallProbeSrc reaches a deliberately wide slice of the runtime so
 // the asm scan has several distinct syscalls to check, not just write.
 const syscallProbeSrc = `function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
+    let xs: i32[] = [1, 2, 3];
     print("hi");
-    var n: i32 = xs.len();
+    let n: i32 = xs.len();
     return n - 3;
 }`

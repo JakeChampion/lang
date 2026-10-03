@@ -11,7 +11,7 @@ for a capturing lambda only. Main went red on all three targets.
 
 ```fern
 function main(): i32 {
-    var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + 3i32))] } else { [((y: i32) => y)] });
+    let xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + 3i32))] } else { [((y: i32) => y)] });
     return xs[0i32](1i32) & 63i32;
 }
 ```

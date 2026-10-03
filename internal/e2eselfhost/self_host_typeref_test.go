@@ -93,6 +93,7 @@ func TestSelfHostTypeRef(t *testing.T) {
 		"tag fn0=() => U\n" +
 		"tag fn2=(T, Map[string, U]) => (string, i32)\n" +
 		"tag fnarr=((T) => U)[]\n" +
+		"tag fnview=[(T) => U]\n" +
 		"tag opaque=fn\n" +
 		"tag plain=i32[]\n" +
 		"round_trip_failures=0\n"

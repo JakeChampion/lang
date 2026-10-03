@@ -5,7 +5,7 @@ was a deterministic wrong-answer UAF that every memory instrument read as
 clean.
 
 ```fern
-function mkv(): str { var s: string = mk("  pad  "); return s.trim(); }
+function mkv(): str { let s: string = mk("  pad  "); return s.trim(); }
 ```
 
 | shape | interp / native | self-host x86-64 before | after |
@@ -70,7 +70,7 @@ STRING-ness is proven, never by name: the ownership arm gates on
 `expr_is_str` (it has LowerState), the binding credit keeps the restored
 receiver-type-gated trim collector, and the fresh-ret registry gains a
 `trim_recv_is_string_param` arm (param annotation or a single
-`var s: string` declaration — the `to_string`-on-scalar precedent one type
+`let s: string` declaration — the `to_string`-on-scalar precedent one type
 over). The free-fn spelling `str_trim` joins `str_free_producer_ident`, the
 same exposure the rest of that family already carries.
 

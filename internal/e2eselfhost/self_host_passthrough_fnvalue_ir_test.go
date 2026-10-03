@@ -37,15 +37,15 @@ var passthroughFnValueCases = []struct {
 	src  string
 	exit int
 }{
-	{"array-elem-pick-capturing", `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; } function main(): i32 { var p: i32 = 5i32; var xs: ((i32) => i32)[] = [((z: i32) => z), pick(true, ((x: i32) => (x + p)), ((y: i32) => y))]; return xs[1i32](1i32) & 63i32; }`, 6},
-	{"array-elem-id-capturing", `function id[T](x: T): T { return x; } function main(): i32 { var p: i32 = 5i32; var xs: ((i32) => i32)[] = [((z: i32) => z), id(((x: i32) => (x + p)))]; return xs[1i32](1i32) & 63i32; }`, 6},
+	{"array-elem-pick-capturing", `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; } function main(): i32 { let p: i32 = 5i32; let xs: ((i32) => i32)[] = [((z: i32) => z), pick(true, ((x: i32) => (x + p)), ((y: i32) => y))]; return xs[1i32](1i32) & 63i32; }`, 6},
+	{"array-elem-id-capturing", `function id[T](x: T): T { return x; } function main(): i32 { let p: i32 = 5i32; let xs: ((i32) => i32)[] = [((z: i32) => z), id(((x: i32) => (x + p)))]; return xs[1i32](1i32) & 63i32; }`, 6},
 	// The passthrough element FIRST: the array's classification reads element 0,
 	// so this is the path through the new marker rather than through a boxed
 	// sibling.
-	{"array-elem-pick-first", `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; } function main(): i32 { var p: i32 = 5i32; var xs: ((i32) => i32)[] = [pick(true, ((x: i32) => (x + p)), ((y: i32) => y)), ((z: i32) => z)]; return (xs[0i32](1i32) + xs[1i32](2i32)) & 63i32; }`, 8},
-	{"array-elem-id-nocapture", `function id[T](x: T): T { return x; } function main(): i32 { var xs: ((i32) => i32)[] = [((z: i32) => (z + 1i32)), id(((x: i32) => (x + 2i32)))]; return (xs[0i32](1i32) + xs[1i32](1i32)) & 63i32; }`, 5},
-	{"struct-field-id-capturing", `function id[T](x: T): T { return x; } struct H { f: (i32) => i32 } function main(): i32 { var p: i32 = 5i32; var h: H = H { f: id(((x: i32) => (x + p))) }; return h.f(1i32) & 63i32; }`, 6},
-	{"tuple-elem-passthrough", `function id[T](x: T): T { return x; } function main(): i32 { var p: i32 = 5i32; var t: ((i32) => i32, i32) = (id(((x: i32) => (x + p))), 2i32); return t.0(1i32) & 63i32; }`, 6},
+	{"array-elem-pick-first", `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; } function main(): i32 { let p: i32 = 5i32; let xs: ((i32) => i32)[] = [pick(true, ((x: i32) => (x + p)), ((y: i32) => y)), ((z: i32) => z)]; return (xs[0i32](1i32) + xs[1i32](2i32)) & 63i32; }`, 8},
+	{"array-elem-id-nocapture", `function id[T](x: T): T { return x; } function main(): i32 { let xs: ((i32) => i32)[] = [((z: i32) => (z + 1i32)), id(((x: i32) => (x + 2i32)))]; return (xs[0i32](1i32) + xs[1i32](1i32)) & 63i32; }`, 5},
+	{"struct-field-id-capturing", `function id[T](x: T): T { return x; } struct H { f: (i32) => i32 } function main(): i32 { let p: i32 = 5i32; let h: H = H { f: id(((x: i32) => (x + p))) }; return h.f(1i32) & 63i32; }`, 6},
+	{"tuple-elem-passthrough", `function id[T](x: T): T { return x; } function main(): i32 { let p: i32 = 5i32; let t: ((i32) => i32, i32) = (id(((x: i32) => (x + p))), 2i32); return t.0(1i32) & 63i32; }`, 6},
 }
 
 // TestSelfHostPassthroughFnValueIRX86_64 — the x86-64 IR path (asm_ir_run `-ir`).
@@ -102,7 +102,7 @@ func TestSelfHostPassthroughFnValueIRArm64(t *testing.T) {
 }
 
 // TestSelfHostPassthroughFnValueWasmIR — the wasm leg. The lift and the marker
-// live in irlower.fern, which every backend shares.
+// live in the lowering, which every backend shares.
 func TestSelfHostPassthroughFnValueWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host passthrough fn-value wasm IR e2e")

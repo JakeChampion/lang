@@ -30,9 +30,9 @@ func TestSelfHostTCPSendBytesFaults(t *testing.T) {
 				dir := t.TempDir()
 				src, bin := filepath.Join(dir, "fault.fern"), filepath.Join(dir, "fault.wasm")
 				program := fmt.Sprintf(`function main(): i32 {
-    var data: u8[] = [];
+    let data: u8[] = [];
     for i in 0..%d { data = data.append((i %% 251) as u8); }
-    var n: i32 = tcp_send_bytes(0, data);
+    let n: i32 = tcp_send_bytes(0, data);
     if (data.len() != %d) { return -100; }
     for i in 0..data.len() { if (data[i] != (i %% 251) as u8) { return -101; } }
     return n;

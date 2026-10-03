@@ -35,8 +35,8 @@ function test_ipv4_word(): test.TestOutcome {
 }
 
 function names(ss: resolv.Source[]): string {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < ss.len()) {
     out = out.append(ss[i].name);
     i = i + 1;
@@ -58,7 +58,7 @@ function test_nsswitch_default(): test.TestOutcome {
 }
 
 function test_nsswitch_plain(): test.TestOutcome {
-  var ss: resolv.Source[] = resolv.nsswitch_hosts("# comment\nhosts: files mdns4_minimal dns myhostname\n");
+  let ss: resolv.Source[] = resolv.nsswitch_hosts("# comment\nhosts: files mdns4_minimal dns myhostname\n");
   if (names(ss) != "files mdns4_minimal dns myhostname") {
     return test.fail("the sources in order");
   }
@@ -69,7 +69,7 @@ function test_nsswitch_plain(): test.TestOutcome {
 }
 
 function test_nsswitch_actions(): test.TestOutcome {
-  var ss: resolv.Source[] = resolv.nsswitch_hosts("hosts: files [NOTFOUND=return] dns [UNAVAIL=return SUCCESS=continue]\n");
+  let ss: resolv.Source[] = resolv.nsswitch_hosts("hosts: files [NOTFOUND=return] dns [UNAVAIL=return SUCCESS=continue]\n");
   if (names(ss) != "files dns") {
     return test.fail("a bracketed group is not a source");
   }
@@ -86,7 +86,7 @@ function test_nsswitch_actions(): test.TestOutcome {
 }
 
 function test_nsswitch_negated_action(): test.TestOutcome {
-  var ss: resolv.Source[] = resolv.nsswitch_hosts("hosts: mdns4_minimal [!UNAVAIL=return] dns\n");
+  let ss: resolv.Source[] = resolv.nsswitch_hosts("hosts: mdns4_minimal [!UNAVAIL=return] dns\n");
   if (!ss[0].stops(resolv.success()) || !ss[0].stops(resolv.notfound()) || ss[0].stops(resolv.unavail())) {
     return test.fail("!UNAVAIL=return lands on every other status");
   }
@@ -94,11 +94,11 @@ function test_nsswitch_negated_action(): test.TestOutcome {
 }
 
 function test_nsswitch_spaced_bracket_and_empty(): test.TestOutcome {
-  var ss: resolv.Source[] = resolv.nsswitch_hosts("hosts: files [ NOTFOUND=return ] dns\n");
+  let ss: resolv.Source[] = resolv.nsswitch_hosts("hosts: files [ NOTFOUND=return ] dns\n");
   if (names(ss) != "files dns" || !ss[0].stops(resolv.notfound())) {
     return test.fail("spaces inside the brackets");
   }
-  var alone: resolv.Source[] = resolv.nsswitch_hosts("hosts: [NOTFOUND=return] dns\n");
+  let alone: resolv.Source[] = resolv.nsswitch_hosts("hosts: [NOTFOUND=return] dns\n");
   if (names(alone) != "dns" || alone[0].stops(resolv.notfound())) {
     return test.fail("an action with no source before it applies to nothing");
   }
@@ -111,7 +111,7 @@ function test_lookup_walk(): test.TestOutcome {
   if (word(resolv.lookup("localhost", [resolv.source("nosuch"), resolv.source("files")])) != loopback()) {
     return test.fail("an unimplemented source continues to the next");
   }
-  var stop: resolv.Source = resolv.Source { ...resolv.source("nosuch"), unavail_return: true };
+  let stop: resolv.Source = resolv.Source { ...resolv.source("nosuch"), unavail_return: true };
   match (resolv.lookup("localhost", [stop, resolv.source("files")])) {
     Some(_) => {
       return test.fail("[UNAVAIL=return] ends the walk before files");
@@ -156,7 +156,7 @@ function test_live_canon_localhost(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("coreutils/lib/resolv");
+  let r: test.TestRunner = test.test_new("coreutils/lib/resolv");
   r = r.it("ipv4_word packs the in_addr word", test_ipv4_word);
   r = r.it("nsswitch: the default is files dns", test_nsswitch_default);
   r = r.it("nsswitch: a plain hosts line", test_nsswitch_plain);

@@ -16,7 +16,7 @@ import (
 //
 // The three original divergences, each verified against the runtime form
 // before the fix (`const W: i32 = (2147483647 + 1) / 2` reported 1073741824
-// while `var w: i32 = (a + 1) / 2` evaluated to −1073741824):
+// while `let w: i32 = (a + 1) / 2` evaluated to −1073741824):
 func TestConstFoldsAtDeclaredWidth(t *testing.T) {
 	cases := []struct {
 		name string

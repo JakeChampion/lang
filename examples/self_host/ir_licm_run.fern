@@ -2,7 +2,7 @@
 // code motion (ir.fern's hoist_loop_invariants, the op-list twin of native's
 // internal/ir/licm.go, #8245) and for the slot growth it depends on (#8247).
 //
-// Each case builds the op list irlower emits for a small `while` and prints the
+// Each case builds the op list the lowering emits for a small `while` and prints the
 // pass's output — the ops AND the frame count — so the companion Go test
 // (internal/e2eselfhost/self_host_ir_licm_test.go) pins what every backend
 // receives. The refusals carry the weight: an operand the body stores to, a
@@ -21,8 +21,8 @@ import "./util";
 // render joins an op list into one line, so a case's whole shape is a single
 // comparable string.
 function render(ops: ir.Op[]): string {
-  var s: string = "";
-  var i: i32 = 0;
+  let s: string = "";
+  let i: i32 = 0;
   while (i < ops.len()) {
     if (i > 0) {
       s = s + " ; ";
@@ -40,8 +40,8 @@ function show(r: ir.OptimizedOps): string {
 }
 
 function cat(a: ir.Op[], b: ir.Op[]): ir.Op[] {
-  var out: ir.Op[] = a;
-  var i: i32 = 0;
+  let out: ir.Op[] = a;
+  let i: i32 = 0;
   while (i < b.len()) {
     out = out.append(b[i]);
     i = i + 1;
@@ -69,13 +69,13 @@ function add(): ir.Op {
   return ir.op_bin("add", 0, false);
 }
 
-// while_loop is the canonical `while` shape irlower emits around a condition
+// while_loop is the canonical `while` shape the lowering emits around a condition
 // and a body:
 //   block ; loop ; <cond> ; not ; brif 1 ; <body> ; br 0 ; end ; end
 function while_loop(cond: ir.Op[], body: ir.Op[]): ir.Op[] {
-  var head: ir.Op[] = [ir.op_block(0), ir.op_loop(0)];
-  var test: ir.Op[] = [ir.op_bin("not", 0, false), ir.op_brif(1)];
-  var tail: ir.Op[] = [ir.op_br(0), ir.op_end(), ir.op_end()];
+  let head: ir.Op[] = [ir.op_block(0), ir.op_loop(0)];
+  let test: ir.Op[] = [ir.op_bin("not", 0, false), ir.op_brif(1)];
+  let tail: ir.Op[] = [ir.op_br(0), ir.op_end(), ir.op_end()];
   return cat(cat(cat(cat(head, cond), test), body), tail);
 }
 
@@ -92,7 +92,7 @@ function same(a: ir.OptimizedOps, b: ir.OptimizedOps): boolean {
 // finds nothing: the spliced prologue being stack-net-zero is what the whole
 // transform rests on.
 function stack_neutral(ops: ir.Op[]): i32 {
-  var r: irverifystack.StackResult = irverifystack.verify_stack_fn("f", ops);
+  let r: irverifystack.StackResult = irverifystack.verify_stack_fn("f", ops);
   if (r.bail.len() > 0 || r.problems.len() > 0) {
     return 0;
   }
@@ -107,74 +107,74 @@ function problems(ops: ir.Op[], n_params: i32, n_locals: i32): i32 {
 }
 
 function main(): i32 {
-  var out: string = "";
+  let out: string = "";
 
   // 1. `while (i < s.len())`: slots 0 = s (the param), 1 = i, 2 = n. The
   //    length is read once, before the loop, into the fresh slot 3, and the
   //    header reads the cache. Frame 3 -> 4.
-  var scan: ir.Op[] = cat(while_loop([load(1), load(0), slen(), lt()], inc(1)), [load(1), ir.op_return()]);
-  var once: ir.OptimizedOps = ir.hoist_loop_invariants(scan, 3);
+  let scan: ir.Op[] = cat(while_loop([load(1), load(0), slen(), lt()], inc(1)), [load(1), ir.op_return()]);
+  let once: ir.OptimizedOps = ir.hoist_loop_invariants(scan, 3);
   out = out + "licm_while_cond: " + show(once) + "\n";
 
   // 2. The operand is stored to inside the body (`s = ...`), so its length
   //    is NOT invariant: hoisting would read the old string's length on
   //    every iteration.
-  var grow: ir.Op[] = while_loop([load(1), load(0), slen(), lt()], cat([load(2), store(0)], inc(1)));
+  let grow: ir.Op[] = while_loop([load(1), load(0), slen(), lt()], cat([load(2), store(0)], inc(1)));
   out = out + "licm_mutated_refused: " + show(ir.hoist_loop_invariants(grow, 3)) + "\n";
 
   // 3. A length read from the BODY rather than the header stays there: a
   //    loop whose body never runs would otherwise gain a read the original
   //    program never performed. Slots 0 = s, 1 = i, 2 = k, 3 = n.
-  var total: ir.Op[] = while_loop([load(1), load(2), lt()], cat([load(3), load(0), slen(), add(), store(3)], inc(1)));
+  let total: ir.Op[] = while_loop([load(1), load(2), lt()], cat([load(3), load(0), slen(), add(), store(3)], inc(1)));
   out = out + "licm_body_refused: " + show(ir.hoist_loop_invariants(total, 4)) + "\n";
 
   // 4. Running the pass twice must not hoist the hoist.
-  var twice: ir.OptimizedOps = ir.hoist_loop_invariants(once.ops, once.n_locals);
+  let twice: ir.OptimizedOps = ir.hoist_loop_invariants(once.ops, once.n_locals);
   out = out + "licm_idempotent=" + util.i32_to_string(bool_i32(same(once, twice))) + "\n";
 
   // 5. Two distinct operands in one header take a slot each, in read order.
   //    Slots 0 = s, 1 = t, 2 = i; frame 3 -> 5.
-  var two: ir.Op[] = while_loop([load(2), load(0), slen(), load(1), slen(), add(), lt()], inc(2));
-  var two_h: ir.OptimizedOps = ir.hoist_loop_invariants(two, 3);
+  let two: ir.Op[] = while_loop([load(2), load(0), slen(), load(1), slen(), add(), lt()], inc(2));
+  let two_h: ir.OptimizedOps = ir.hoist_loop_invariants(two, 3);
   out = out + "licm_two_slots: " + show(two_h) + "\n";
   out = out + "licm_two_slots_stack_neutral=" + util.i32_to_string(stack_neutral(two_h.ops)) + "\n";
 
   // 6. The same operand read twice in one header shares one slot.
-  var dup: ir.Op[] = while_loop([load(1), load(0), slen(), load(0), slen(), add(), lt()], inc(1));
+  let dup: ir.Op[] = while_loop([load(1), load(0), slen(), load(0), slen(), add(), lt()], inc(1));
   out = out + "licm_same_operand_once: " + show(ir.hoist_loop_invariants(dup, 3)) + "\n";
 
   // 7. `&&` lowers to control flow — a temp local, a block and a branch — so
   //    the branch ends the header and the right-hand length stays in the
   //    loop: it is guarded, and hoisting it would evaluate it on a path the
   //    original never did. Slots 0 = a, 1 = b, 2 = i, 3 = the short-circuit temp.
-  var sc_cond: ir.Op[] = [load(2), load(0), slen(), lt(), store(3), ir.op_block(0), load(3), ir.op_bin("not", 0, false), ir.op_brif(0), load(2), load(1), slen(), lt(), store(3), ir.op_end(), load(3)];
-  var sc: ir.Op[] = while_loop(sc_cond, inc(2));
-  var sc_h: ir.OptimizedOps = ir.hoist_loop_invariants(sc, 4);
+  let sc_cond: ir.Op[] = [load(2), load(0), slen(), lt(), store(3), ir.op_block(0), load(3), ir.op_bin("not", 0, false), ir.op_brif(0), load(2), load(1), slen(), lt(), store(3), ir.op_end(), load(3)];
+  let sc: ir.Op[] = while_loop(sc_cond, inc(2));
+  let sc_h: ir.OptimizedOps = ir.hoist_loop_invariants(sc, 4);
   out = out + "licm_short_circuit: " + show(sc_h) + "\n";
   out = out + "licm_short_circuit_stack_neutral=" + util.i32_to_string(stack_neutral(sc_h.ops)) + "\n";
 
   // 7b. The typed lowering's shape: a block opens between `loop` and the
   //     condition, which falls through, so the length is still in the header.
   //     Slots 0 = s, 1 = i, 3 = the lowering's temp; frame 4 -> 5.
-  var tb: ir.Op[] = cat(cat([ir.op_block(0), ir.op_loop(0), ir.op_block(0), load(0), slen(), store(3), load(1), load(3), lt(), ir.op_bin("not", 0, false), ir.op_brif(2), ir.op_end()], inc(1)), [ir.op_br(0), ir.op_end(), ir.op_end()]);
-  var tb_h: ir.OptimizedOps = ir.hoist_loop_invariants(tb, 4);
+  let tb: ir.Op[] = cat(cat([ir.op_block(0), ir.op_loop(0), ir.op_block(0), load(0), slen(), store(3), load(1), load(3), lt(), ir.op_bin("not", 0, false), ir.op_brif(2), ir.op_end()], inc(1)), [ir.op_br(0), ir.op_end(), ir.op_end()]);
+  let tb_h: ir.OptimizedOps = ir.hoist_loop_invariants(tb, 4);
   out = out + "licm_typed_block_header: " + show(tb_h) + "\n";
   out = out + "licm_typed_block_header_stack_neutral=" + util.i32_to_string(stack_neutral(tb_h.ops)) + "\n";
 
   // 7c. `exit` ends the header like `return`: the length read after it is
   //     unreachable, so it stays. Slots 0 = s, 1 = i.
-  var tx: ir.Op[] = cat(cat([ir.op_block(0), ir.op_loop(0), ir.op_block(0), ir.op_const_i32(134), ir.op_exit(), load(1), load(0), slen(), lt(), ir.op_bin("not", 0, false), ir.op_brif(2), ir.op_end()], inc(1)), [ir.op_br(0), ir.op_end(), ir.op_end()]);
+  let tx: ir.Op[] = cat(cat([ir.op_block(0), ir.op_loop(0), ir.op_block(0), ir.op_const_i32(134), ir.op_exit(), load(1), load(0), slen(), lt(), ir.op_bin("not", 0, false), ir.op_brif(2), ir.op_end()], inc(1)), [ir.op_br(0), ir.op_end(), ir.op_end()]);
   out = out + "licm_exit_refused: " + show(ir.hoist_loop_invariants(tx, 3)) + "\n";
 
   // 8. Nested loops: each header hoists to just before ITS loop, and the
   //    later (inner) loop is rewritten first, so it takes the first fresh
   //    slot. Slots 0 = s, 1 = t, 2 = i, 3 = j; frame 4 -> 6.
-  var inner: ir.Op[] = while_loop([load(3), load(1), slen(), lt()], inc(3));
-  var outer: ir.Op[] = while_loop([load(2), load(0), slen(), lt()], cat(inner, inc(2)));
+  let inner: ir.Op[] = while_loop([load(3), load(1), slen(), lt()], inc(3));
+  let outer: ir.Op[] = while_loop([load(2), load(0), slen(), lt()], cat(inner, inc(2)));
   out = out + "licm_nested: " + show(ir.hoist_loop_invariants(outer, 4)) + "\n";
 
   // 9. A loop nothing closes is left alone rather than half-rewritten.
-  var open: ir.Op[] = [ir.op_block(0), ir.op_loop(0), load(1), load(0), slen(), lt(), ir.op_bin("not", 0, false), ir.op_brif(1)];
+  let open: ir.Op[] = [ir.op_block(0), ir.op_loop(0), load(1), load(0), slen(), lt(), ir.op_bin("not", 0, false), ir.op_brif(1)];
   out = out + "licm_unclosed_refused: " + show(ir.hoist_loop_invariants(open, 3)) + "\n";
 
   // 10. The verifier sees the grown frame (#8247): against the count the pass
@@ -185,11 +185,11 @@ function main(): i32 {
     + " old=" + util.i32_to_string(problems(once.ops, 1, 3)) + "\n";
 
   // 11. Through the whole battery, where the pass runs last.
-  var opt: ir.OptimizedOps = ir.optimize_ops(scan, 1, 3);
+  let opt: ir.OptimizedOps = ir.optimize_ops(scan, 1, 3);
   out = out + "licm_in_optimize: " + show(opt) + "\n";
 
   write(out);
-  var again: ir.OptimizedOps = ir.optimize_ops(opt.ops, 1, opt.n_locals);
+  let again: ir.OptimizedOps = ir.optimize_ops(opt.ops, 1, opt.n_locals);
   if (!same(opt, again)) {
     return 1;
   }

@@ -1364,7 +1364,13 @@ func runCheck(srcPath, target string) error {
 		prog = e.prog
 		formatErr = e.format
 	}
-	if err := constfold.Fold(prog, embeddedAssets); err != nil {
+	// A check against a target folds the target's name as a compile does,
+	// so the E066 pass below judges the arm the target takes.
+	targetOS, targetArch := "", ""
+	if d := platforms.ForTarget(target); d != nil {
+		targetOS, targetArch = d.Environment, d.ISA
+	}
+	if err := constfold.FoldWith(prog, constfold.Inputs{Assets: embeddedAssets, TargetOS: targetOS, TargetArch: targetArch}); err != nil {
 		return formatErr(err)
 	}
 	info, err := checker.CheckTarget(prog, target)
@@ -2813,11 +2819,19 @@ func linkNativeDarwin(asm, outPath string) error {
 	var bin []byte
 	if emitDebugSyms {
 		syms := nativemacho.FuncSyms(a.TextLabelVAddrs(m.Text), m.Text+uint64(len(text)))
-		bin = nativemacho.StaticExecutableSyms(text, eh, data, filepath.Base(outPath), syms, a.MachODataRebaseOffsets())
+		bin = nativemacho.StaticExecutableSyms(text, eh, data, filepath.Base(outPath), syms, a.MachODataRebaseOffsets(), machOBinds(a))
 	} else {
-		bin = nativemacho.StaticExecutable(text, eh, data, filepath.Base(outPath), a.MachODataRebaseOffsets())
+		bin = nativemacho.StaticExecutable(text, eh, data, filepath.Base(outPath), a.MachODataRebaseOffsets(), machOBinds(a))
 	}
 	return writeExecutable(outPath, bin)
+}
+
+func machOBinds(a *nativearm64.Assembler) []nativemacho.Bind {
+	var out []nativemacho.Bind
+	for _, b := range a.MachODataBinds() {
+		out = append(out, nativemacho.Bind{Off: b.Off, Sym: b.Sym})
+	}
+	return out
 }
 
 // layoutMachO is the Mach-O counterpart of layoutWithUnwind: the code size

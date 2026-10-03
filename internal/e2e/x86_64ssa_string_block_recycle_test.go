@@ -41,19 +41,19 @@ import (
 // the per-iteration Option box allocates and frees alongside the string, so it
 // masks which class is leaking.
 const x86SSAStringBlockSrc = `function main(): i32 {
-    var r: Reader = stdin();
-    var n: i32 = 0;
-    var start: i64 = __heap_bump_bytes();
-    var lines: i64 = 0;
+    let r: Reader = stdin();
+    let n: i32 = 0;
+    let start: i64 = __heap_bump_bytes();
+    let lines: i64 = 0;
     loop {
         match (r.read_line()) {
             Some(line) => { n = (n + line.len()) % 101; lines = lines + 1; },
             None => { break; }
         }
     }
-    var used: i64 = __heap_bump_bytes() - start;
+    let used: i64 = __heap_bump_bytes() - start;
     if (lines == 0) { return 250; }
-    var per: i64 = (used / lines) + (n % 1);
+    let per: i64 = (used / lines) + (n % 1);
     if (per > 200) { return 200; }
     return per as i32;
 }

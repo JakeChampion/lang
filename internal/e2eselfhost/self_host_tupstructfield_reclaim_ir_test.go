@@ -35,13 +35,13 @@ var tupStructFieldReclaimCases = []struct {
 	// ARRTUP `(i32, P)[]`, struct scalar-field read `xs[i].1.y` — reclaims (was: AST bail).
 	{"arrtupstruct-churn", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var xs: (i32, P)[] = [(i, P { xs: [i, i + 1], y: i })]; acc = (acc + xs[0].0) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var ys: (i32, P)[] = [(j, P { xs: [j, j + 1], y: j })]; acc = (acc + ys[0].1.y) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let xs: (i32, P)[] = [(i, P { xs: [i, i + 1], y: i })]; acc = (acc + xs[0].0) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let ys: (i32, P)[] = [(j, P { xs: [j, j + 1], y: j })]; acc = (acc + ys[0].1.y) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -51,13 +51,13 @@ function main(): i32 {
 	// array field, struct array-field .len() — all borrows, still reclaims.
 	{"arrtupstruct-borrow-full", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 5000) { var xs: (i32, P)[] = [(i, P { xs: [i, i + 1], y: i })]; acc = (acc + xs[0].0 + xs[0].1.y + xs[0].1.xs[0] + xs[0].1.xs.len()) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var ys: (i32, P)[] = [(j, P { xs: [j, j + 1], y: j })]; acc = (acc + ys[0].1.xs[1]) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 5000) { let xs: (i32, P)[] = [(i, P { xs: [i, i + 1], y: i })]; acc = (acc + xs[0].0 + xs[0].1.y + xs[0].1.xs[0] + xs[0].1.xs.len()) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let ys: (i32, P)[] = [(j, P { xs: [j, j + 1], y: j })]; acc = (acc + ys[0].1.xs[1]) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -67,10 +67,10 @@ function main(): i32 {
 	// un-credited (leak-safe), never over-released.
 	{"arrtupstruct-escape-store-safe", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
-    var keep: P = P { xs: [0, 0], y: 0 };
-    var i: i32 = 0;
-    while (i < 50) { var xs: (i32, P)[] = [(i, P { xs: [i, i + 1], y: i })]; keep = xs[0].1; i = i + 1; }
-    var acc: i32 = keep.xs[0] + keep.y;
+    let keep: P = P { xs: [0, 0], y: 0 };
+    let i: i32 = 0;
+    while (i < 50) { let xs: (i32, P)[] = [(i, P { xs: [i, i + 1], y: i })]; keep = xs[0].1; i = i + 1; }
+    let acc: i32 = keep.xs[0] + keep.y;
     if (acc < 0) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -79,10 +79,10 @@ function main(): i32 {
 	// field bare — un-credited (leak-safe), never over-released.
 	{"arrtupstruct-escape-arrfield-safe", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
-    var keep: i32[] = [0, 0];
-    var i: i32 = 0;
-    while (i < 50) { var xs: (i32, P)[] = [(i, P { xs: [i, i + 1], y: i })]; keep = xs[0].1.xs; i = i + 1; }
-    var acc: i32 = keep[0] + keep[1];
+    let keep: i32[] = [0, 0];
+    let i: i32 = 0;
+    while (i < 50) { let xs: (i32, P)[] = [(i, P { xs: [i, i + 1], y: i })]; keep = xs[0].1.xs; i = i + 1; }
+    let acc: i32 = keep[0] + keep[1];
     if (acc < 0) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -90,13 +90,13 @@ function main(): i32 {
 	// OPTTUP `Option[(i32, P)]`, struct scalar-field read `g.1.y` — reclaims.
 	{"opttupstruct-churn", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 100) { var o: Option[(i32, P)] = Some((i, P { xs: [i, i + 1], y: i })); match (o) { Some(g) => { acc = (acc + g.0) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var o2: Option[(i32, P)] = Some((j, P { xs: [j, j + 1], y: j })); match (o2) { Some(g) => { acc = (acc + g.1.y) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) { let o: Option[(i32, P)] = Some((i, P { xs: [i, i + 1], y: i })); match (o) { Some(g) => { acc = (acc + g.0) % 251; }, None => {} } i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let o2: Option[(i32, P)] = Some((j, P { xs: [j, j + 1], y: j })); match (o2) { Some(g) => { acc = (acc + g.1.y) % 251; }, None => {} } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -105,13 +105,13 @@ function main(): i32 {
 	// OPTTUP full borrow set (scalar + struct scalar + indexed struct array + .len()).
 	{"opttupstruct-borrow-full", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 5000) { var o: Option[(i32, P)] = Some((i, P { xs: [i, i + 1], y: i })); match (o) { Some(g) => { acc = (acc + g.0 + g.1.y + g.1.xs[0] + g.1.xs.len()) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var o2: Option[(i32, P)] = Some((j, P { xs: [j, j + 1], y: j })); match (o2) { Some(g) => { acc = (acc + g.1.xs[1]) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 5000) { let o: Option[(i32, P)] = Some((i, P { xs: [i, i + 1], y: i })); match (o) { Some(g) => { acc = (acc + g.0 + g.1.y + g.1.xs[0] + g.1.xs.len()) % 251; }, None => {} } i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let o2: Option[(i32, P)] = Some((j, P { xs: [j, j + 1], y: j })); match (o2) { Some(g) => { acc = (acc + g.1.xs[1]) % 251; }, None => {} } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -120,10 +120,10 @@ function main(): i32 {
 	// OPTTUP escape-store negative: `keep = g.1` extracts the whole struct — leak-safe.
 	{"opttupstruct-escape-store-safe", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
-    var keep: P = P { xs: [0, 0], y: 0 };
-    var i: i32 = 0;
-    while (i < 50) { var o: Option[(i32, P)] = Some((i, P { xs: [i, i + 1], y: i })); match (o) { Some(g) => { keep = g.1; }, None => {} } i = i + 1; }
-    var acc: i32 = keep.xs[0] + keep.y;
+    let keep: P = P { xs: [0, 0], y: 0 };
+    let i: i32 = 0;
+    while (i < 50) { let o: Option[(i32, P)] = Some((i, P { xs: [i, i + 1], y: i })); match (o) { Some(g) => { keep = g.1; }, None => {} } i = i + 1; }
+    let acc: i32 = keep.xs[0] + keep.y;
     if (acc < 0) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -131,13 +131,13 @@ function main(): i32 {
 	// REGRESSION: the plain `(i32, i32[])[]` array-field reclaim (no struct element) still
 	// reclaims after the escape checker gained struct-awareness.
 	{"arrtup-plain-array-regression", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 5000) { var xs: (i32, i32[])[] = [(i, [i, i + 1])]; acc = (acc + xs[0].0 + xs[0].1[0] + xs[0].1.len()) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var ys: (i32, i32[])[] = [(j, [j, j + 1])]; acc = (acc + ys[0].1[1]) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 5000) { let xs: (i32, i32[])[] = [(i, [i, i + 1])]; acc = (acc + xs[0].0 + xs[0].1[0] + xs[0].1.len()) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let ys: (i32, i32[])[] = [(j, [j, j + 1])]; acc = (acc + ys[0].1[1]) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;

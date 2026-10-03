@@ -30,7 +30,7 @@ function lsh64(x: i64, c: i64): i64 { return x << c; }
 function rsh64(x: i64, c: i64): i64 { return x >> c; }
 
 function main(): i32 {
-    var agree: i32 = 0;
+    let agree: i32 = 0;
     if (lsh(1, 64) == CA) { agree = agree + 1; }
     if (lsh(1, 65) == CB) { agree = agree + 2; }
     if (rsh(256, 65) == CC) { agree = agree + 4; }

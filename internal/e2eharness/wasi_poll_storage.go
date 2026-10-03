@@ -17,13 +17,13 @@ import (
 // The host fixture supplies borrowed pollable handles and ready-index lists.
 func WasiPollStorageProbe(expr string) string {
 	return `function main(): i32 {
-    var ps: i32[] = [41, 42];
-    var i: i32 = 0;
-    var stable: i64 = 0;
-    var result: i32 = 0;
+    let ps: i32[] = [41, 42];
+    let i: i32 = 0;
+    let stable: i64 = 0;
+    let result: i32 = 0;
     while (i < 32) {
         result = ` + expr + `;
-        var used: i64 = __heap_bump_bytes();
+        let used: i64 = __heap_bump_bytes();
         if (i == 0) { stable = used; }
         if (used != stable) { return -1000; }
         i = i + 1;
@@ -35,12 +35,12 @@ func WasiPollStorageProbe(expr string) string {
 // WasiPollCensusProbe uses a real ready timer, with every resource released.
 func WasiPollCensusProbe(expr string) string {
 	return `function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 32) {
-        var duration: i64 = 0;
-        var p: i32 = wasm_timer_pollable(duration);
-        var ps: i32[] = [p];
-        var result: i32 = ` + expr + `;
+        let duration: i64 = 0;
+        let p: i32 = wasm_timer_pollable(duration);
+        let ps: i32[] = [p];
+        let result: i32 = ` + expr + `;
         wasm_pollable_drop(p);
         if (result != 0) { return 1; }
         i = i + 1;
@@ -67,21 +67,21 @@ func WasiPollDeadlineCases() []struct{ Name, Source string } {
 		{"ready", 1000000, 5000, 0, 1000000, false},
 		{"indefinite", 1000000, -1, 0, 1000000, false},
 	} {
-		setup := fmt.Sprintf("var duration: i64 = %d; var p: i32 = wasm_timer_pollable(duration); var ps: i32[] = [p];", tc.duration)
+		setup := fmt.Sprintf("let duration: i64 = %d; let p: i32 = wasm_timer_pollable(duration); let ps: i32[] = [p];", tc.duration)
 		cleanup := "wasm_pollable_drop(p);"
 		if tc.empty {
-			setup, cleanup = "var ps: i32[] = [];", ""
+			setup, cleanup = "let ps: i32[] = [];", ""
 		}
 		src := fmt.Sprintf(`function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 32) {
-        var before: i64 = monotonic_ns();
+        let before: i64 = monotonic_ns();
         %s
-        var result: i32 = poll(ps, %d);
-        var elapsed: i64 = monotonic_ns() - before;
+        let result: i32 = poll(ps, %d);
+        let elapsed: i64 = monotonic_ns() - before;
         %s
         if (result != %d) { return 1; }
-        var minimum: i64 = %d;
+        let minimum: i64 = %d;
         if (elapsed < minimum) { return 2; }
         i = i + 1;
     }

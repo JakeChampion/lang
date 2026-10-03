@@ -49,11 +49,11 @@ import (
 const arenaCheckpointSrc = `
 struct Node { name: string, kids: string[] }
 function mk(k: i32): Node[] {
-    var out: Node[] = [];
-    var i: i32 = 0;
+    let out: Node[] = [];
+    let i: i32 = 0;
     while (i < k) {
-        var ks: string[] = [];
-        var j: i32 = 0;
+        let ks: string[] = [];
+        let j: i32 = 0;
         while (j < 8) { ks = ks.append("kid"); j = j + 1; }
         out = out.append(Node { name: "n", kids: ks });
         i = i + 1;
@@ -61,9 +61,9 @@ function mk(k: i32): Node[] {
     return out;
 }
 function window(k: i32): i32 {
-    var a: Node[] = mk(k);
-    var sum: i32 = 0;
-    var i: i32 = 0;
+    let a: Node[] = mk(k);
+    let sum: i32 = 0;
+    let i: i32 = 0;
     while (i < a.len()) { sum = sum + a[i].kids.len(); i = i + 1; }
     return sum;
 }
@@ -71,12 +71,12 @@ function main(): i32 {
     // Warm the runtime so the cursor is seeded and b0 is a real address:
     // a mark of 0 means "no checkpoint" and release_to would ignore it.
     if (window(4) != 32) { return 80; }
-    var b0: i32 = (__heap_bump_bytes() as i32);
-    var m: i64 = __heap_mark();
+    let b0: i32 = (__heap_bump_bytes() as i32);
+    let m: i64 = __heap_mark();
     if (window(400) != 3200) { return 81; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
+    let b1: i32 = (__heap_bump_bytes() as i32);
     __heap_release_to(m);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (b1 <= b0) { return 82; }
     if (b2 != b0) { return 83; }
     return 0;
@@ -93,11 +93,11 @@ function main(): i32 {
 const arenaCheckpointCyclesSrc = `
 struct Node { name: string, kids: string[] }
 function mk(k: i32): Node[] {
-    var out: Node[] = [];
-    var i: i32 = 0;
+    let out: Node[] = [];
+    let i: i32 = 0;
     while (i < k) {
-        var ks: string[] = [];
-        var j: i32 = 0;
+        let ks: string[] = [];
+        let j: i32 = 0;
         while (j < 8) { ks = ks.append("kid"); j = j + 1; }
         out = out.append(Node { name: "n", kids: ks });
         i = i + 1;
@@ -105,18 +105,18 @@ function mk(k: i32): Node[] {
     return out;
 }
 function window(k: i32): i32 {
-    var a: Node[] = mk(k);
-    var sum: i32 = 0;
-    var i: i32 = 0;
+    let a: Node[] = mk(k);
+    let sum: i32 = 0;
+    let i: i32 = 0;
     while (i < a.len()) { sum = sum + a[i].kids.len(); i = i + 1; }
     return sum;
 }
 function main(): i32 {
     if (window(4) != 32) { return 80; }
-    var b0: i32 = (__heap_bump_bytes() as i32);
-    var c: i32 = 0;
+    let b0: i32 = (__heap_bump_bytes() as i32);
+    let c: i32 = 0;
     while (c < 300) {
-        var m: i64 = __heap_mark();
+        let m: i64 = __heap_mark();
         if (window(200) != 1600) { return 81; }
         __heap_release_to(m);
         c = c + 1;

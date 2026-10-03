@@ -28,23 +28,23 @@ var genericDefaultIRCases = []struct {
 	// defaulted field; the native compiler dispatches through the primitive
 	// `Default` impl. Both yield the same result.
 	{"box-i32",
-		`trait Default { function default(): Self; } impl Default for i32 { function default(): i32 { return 0; } } @derive(Default) struct Box[T] { v: T } function main(): i32 { var b: Box[i32] = Box.default(); return b.v + 7; }`, 7},
+		`trait Default { function default(): Self; } impl Default for i32 { function default(): i32 { return 0; } } @derive(Default) struct Box[T] { v: T } function main(): i32 { let b: Box[i32] = Box.default(); return b.v + 7; }`, 7},
 	{"box-string",
-		`trait Default { function default(): Self; } impl Default for string { function default(): string { return ""; } } @derive(Default) struct Box[T] { v: T, k: i32 } function main(): i32 { var b: Box[string] = Box.default(); return b.v.len() + b.k + 4; }`, 4},
+		`trait Default { function default(): Self; } impl Default for string { function default(): string { return ""; } } @derive(Default) struct Box[T] { v: T, k: i32 } function main(): i32 { let b: Box[string] = Box.default(); return b.v.len() + b.k + 4; }`, 4},
 	{"box-boolean",
-		`trait Default { function default(): Self; } impl Default for boolean { function default(): boolean { return false; } } @derive(Default) struct Box[T] { v: T, k: i32 } function main(): i32 { var b: Box[boolean] = Box.default(); if (b.v) { return 1; } return b.k + 8; }`, 8},
+		`trait Default { function default(): Self; } impl Default for boolean { function default(): boolean { return false; } } @derive(Default) struct Box[T] { v: T, k: i32 } function main(): i32 { let b: Box[boolean] = Box.default(); if (b.v) { return 1; } return b.k + 8; }`, 8},
 	// Box[Inner]: the type param defaults to a nested struct's own default. 5.
 	{"box-inner",
-		`trait Default { function default(): Self; } @derive(Default) struct Inner { n: i32 } @derive(Default) struct Box[T] { v: T } function main(): i32 { var b: Box[Inner] = Box.default(); return b.v.n + 5; }`, 5},
+		`trait Default { function default(): Self; } @derive(Default) struct Inner { n: i32 } @derive(Default) struct Box[T] { v: T } function main(): i32 { let b: Box[Inner] = Box.default(); return b.v.n + 5; }`, 5},
 	// Generic field mixed with a concrete field. 0 + 0 + 9 = 9.
 	{"two-field",
-		`trait Default { function default(): Self; } @derive(Default) struct Inner { n: i32 } @derive(Default) struct Pair[T] { a: T, b: i32 } function main(): i32 { var p: Pair[Inner] = Pair.default(); return p.a.n + p.b + 9; }`, 9},
+		`trait Default { function default(): Self; } @derive(Default) struct Inner { n: i32 } @derive(Default) struct Pair[T] { a: T, b: i32 } function main(): i32 { let p: Pair[Inner] = Pair.default(); return p.a.n + p.b + 9; }`, 9},
 	// Two distinct instantiations of the same generic struct in one program. 12.
 	{"two-instantiations",
-		`trait Default { function default(): Self; } @derive(Default) struct A { n: i32 } @derive(Default) struct B { m: i32 } @derive(Default) struct Box[T] { v: T } function main(): i32 { var x: Box[A] = Box.default(); var y: Box[B] = Box.default(); return x.v.n + y.v.m + 12; }`, 12},
+		`trait Default { function default(): Self; } @derive(Default) struct A { n: i32 } @derive(Default) struct B { m: i32 } @derive(Default) struct Box[T] { v: T } function main(): i32 { let x: Box[A] = Box.default(); let y: Box[B] = Box.default(); return x.v.n + y.v.m + 12; }`, 12},
 	// The instantiating struct has several fields, all defaulted. 15.
 	{"multi-field-inner",
-		`trait Default { function default(): Self; } @derive(Default) struct Pt { x: i32, y: i32, tag: string } @derive(Default) struct Box[T] { v: T } function main(): i32 { var b: Box[Pt] = Box.default(); return b.v.x + b.v.y + b.v.tag.len() + 15; }`, 15},
+		`trait Default { function default(): Self; } @derive(Default) struct Pt { x: i32, y: i32, tag: string } @derive(Default) struct Box[T] { v: T } function main(): i32 { let b: Box[Pt] = Box.default(); return b.v.x + b.v.y + b.v.tag.len() + 15; }`, 15},
 }
 
 // TestSelfHostGenericDefaultIR compiles each case with the self-host CLI for

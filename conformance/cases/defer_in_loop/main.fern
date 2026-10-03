@@ -16,9 +16,9 @@ import "std/i32";
 // The count, and the values: three iterations, three runs, each reading its
 // own `k`. One run at function exit would print `w20` alone.
 function counted(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var k: i32 = i * 10;
+        let k: i32 = i * 10;
         defer print("w" + k.to_string());
         i = i + 1;
     }
@@ -39,9 +39,9 @@ function ranged(): i32 {
 // `continue` and `break` are edges out of the body, so the iteration's pending
 // action runs there — and only once, not again at function exit.
 function edges(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 5) {
-        var k: i32 = i;
+        let k: i32 = i;
         defer print("e" + k.to_string());
         i = i + 1;
         if (k == 1) { continue; }
@@ -53,12 +53,12 @@ function edges(): i32 {
 
 // A labelled `break` leaves two bodies at once: both run, innermost first.
 function nested(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     outer: while (i < 2) {
         defer print("o" + i.to_string());
-        var j: i32 = 0;
+        let j: i32 = 0;
         while (j < 3) {
-            var jj: i32 = j;
+            let jj: i32 = j;
             defer print("i" + jj.to_string());
             if (jj == 1) { break outer; }
             j = j + 1;
@@ -75,12 +75,12 @@ function nested(): i32 {
 // here must therefore run nothing, and the two iterations that reach the defer
 // must each run their own.
 function ahead(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         i = i + 1;
         if (i == 2) { continue; }
         if (i == 4) { break; }
-        var k: i32 = i * 10;
+        let k: i32 = i * 10;
         defer print("a" + k.to_string());
     }
     print("a-done");
@@ -92,9 +92,9 @@ function ahead(): i32 {
 // that already ended do not run a second time.
 function early(): i32 {
     defer print("fn-last");
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var k: i32 = i;
+        let k: i32 = i;
         defer print("r" + k.to_string());
         if (k == 2) { return 7; }
         i = i + 1;
@@ -104,11 +104,11 @@ function early(): i32 {
 
 function main(): i32 {
     if (counted() != 3) { return 1; }
-    var r: i32 = ranged();
+    let r: i32 = ranged();
     if (r != 0) { return 2; }
-    var e: i32 = edges();
+    let e: i32 = edges();
     if (e != 0) { return 3; }
-    var n: i32 = nested();
+    let n: i32 = nested();
     if (n != 0) { return 4; }
     if (ahead() != 0) { return 6; }
     if (early() != 7) { return 5; }

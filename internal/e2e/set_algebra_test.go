@@ -10,10 +10,10 @@ import "testing"
 const setAlgebraProg = `
 import "std/set" as set;
 function main(): i32 {
-    var a: set.Set[i32] = set.set_of([1, 2, 3]);
-    var b: set.Set[i32] = set.set_of([2, 3, 4]);
-    var sub: set.Set[i32] = set.set_of([2, 3]);
-    var empty: set.Set[i32] = set.set_new();
+    let a: set.Set[i32] = set.set_of([1, 2, 3]);
+    let b: set.Set[i32] = set.set_of([2, 3, 4]);
+    let sub: set.Set[i32] = set.set_of([2, 3]);
+    let empty: set.Set[i32] = set.set_new();
     if (!a.is_superset(sub)) { return 1; }
     if (a.is_superset(b)) { return 2; }
     if (!a.is_superset(empty)) { return 3; }
@@ -22,11 +22,11 @@ function main(): i32 {
     if (!a.is_disjoint(set.set_of([7, 8]))) { return 6; }
     if (!a.is_disjoint(empty)) { return 7; }
     if (!empty.is_disjoint(empty)) { return 8; }
-    var sd: set.Set[i32] = a.symmetric_difference(b);
+    let sd: set.Set[i32] = a.symmetric_difference(b);
     if (sd.len() != 2 || !sd.contains(1) || !sd.contains(4) || sd.contains(2)) { return 9; }
     if (a.symmetric_difference(a).len() != 0) { return 10; }
     if (!a.symmetric_difference(empty).equals(a)) { return 11; }
-    var arr: i32[] = sd.to_array();
+    let arr: i32[] = sd.to_array();
     if (arr[0] != 1 || arr[1] != 4) { return 12; }
     return 42;
 }

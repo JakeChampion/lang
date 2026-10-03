@@ -162,7 +162,7 @@ func TestFsLstatDoesNotFollowSymlinks(t *testing.T) {
 // whether or not the test created one.
 func TestFsTempDirReadDirRemoveAll(t *testing.T) {
 	src := `function main(): i32 {
-    var d: string = "";
+    let d: string = "";
     match (temp_dir("probe")) { Err(e) => { return 1; }, Ok(p) => { d = p; } }
     match (stat(d)) {
         Err(e) => { return 2; },
@@ -174,8 +174,8 @@ func TestFsTempDirReadDirRemoveAll(t *testing.T) {
         Err(e) => { return 6; },
         Ok(names) => {
             if (names.len() != 2) { return 7; }
-            var seen: i32 = 0;
-            var i: i32 = 0;
+            let seen: i32 = 0;
+            let i: i32 = 0;
             while (i < names.len()) {
                 if (names[i] == "a.txt") { seen = seen + 1; }
                 if (names[i] == "b.txt") { seen = seen + 1; }
@@ -204,13 +204,13 @@ func TestFsRemoveDirAllNested(t *testing.T) {
 	// remove_dir_all(d) at the end has to descend two levels to clear
 	// it.
 	src := `function main(): i32 {
-    var d: string = "";
+    let d: string = "";
     match (temp_dir("nest")) { Err(e) => { return 1; }, Ok(p) => { d = p; } }
     match (write_file(d + "/top.txt", "t")) { Err(e) => { return 2; }, Ok(_) => {} }
-    var mid: string = d + "/mid";
+    let mid: string = d + "/mid";
     match (create_dir_all(mid)) { Err(e) => { return 3; }, Ok(_) => {} }
     match (write_file(mid + "/deep.txt", "d")) { Err(e) => { return 4; }, Ok(_) => {} }
-    var leaf: string = mid + "/leaf";
+    let leaf: string = mid + "/leaf";
     match (create_dir_all(leaf)) { Err(e) => { return 5; }, Ok(_) => {} }
     match (write_file(leaf + "/deepest.txt", "x")) { Err(e) => { return 6; }, Ok(_) => {} }
     // One call clears all three levels and the files at each.
@@ -239,7 +239,7 @@ func TestFsStdTestBuildsForWasm(t *testing.T) {
 	src := `import "std/test";
 function fabs(x: f64): f64 { if (x > 0.0) { return x; } return 0.0 - x; }
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("wasm f64 suite");
+    let r: test.TestRunner = test.test_new("wasm f64 suite");
     r = r.it("abs positive", () => test.assert_eq_f64_near(fabs(3.5), 3.5, 0.001));
     return r.finish();
 }`

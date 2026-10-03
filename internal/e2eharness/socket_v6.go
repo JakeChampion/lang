@@ -20,8 +20,8 @@ function fail(n: i32): i32 {
 }
 
 function zeros(n: i32): u8[] {
-    var b: u8[] = [];
-    var i: i32 = 0;
+    let b: u8[] = [];
+    let i: i32 = 0;
     while (i < n) {
         b = b.append(0u8);
         i = i + 1;
@@ -36,7 +36,7 @@ function port_of(from: u8[]): i32 {
 // The sender record names ::1 as family 6.
 function is_lo6(from: u8[]): boolean {
     if (from[0] != 6u8 || from[16] != 1u8) { return false; }
-    var i: i32 = 1;
+    let i: i32 = 1;
     while (i < 16) {
         if (from[i] != 0u8) { return false; }
         i = i + 1;
@@ -52,40 +52,40 @@ function no_v6(rc: i32): boolean {
 }
 
 function main(): i32 {
-    var lo6: u8[] = zeros(15).append(1u8);
-    var peer: u8[] = [];
-    var ln: i32 = tcp_listen_with(lo6, 0, 4, false);
+    let lo6: u8[] = zeros(15).append(1u8);
+    let peer: u8[] = [];
+    let ln: i32 = tcp_listen_with(lo6, 0, 4, false);
     if (no_v6(ln)) {
         print("nov6");
         return 43;
     }
     if (ln < 0) { return fail(1); }
-    var port: i32 = tcp_local_port(ln);
+    let port: i32 = tcp_local_port(ln);
     if (port <= 0) { return fail(2); }
-    var c: i32 = tcp_connect_with(lo6, port, false);
+    let c: i32 = tcp_connect_with(lo6, port, false);
     if (c < 0) { return fail(3); }
-    var a: i32 = tcp_accept(ln);
+    let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(4); }
     if (tcp_send(c, "hi") != 2) { return fail(5); }
-    var got: u8[] = tcp_recv(a, 16);
+    let got: u8[] = tcp_recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(6); }
     if (tcp_send(a, "yo") != 2) { return fail(7); }
-    var back: u8[] = tcp_recv(c, 16);
+    let back: u8[] = tcp_recv(c, 16);
     if (back.len() != 2 || back[0] != 121u8) { return fail(8); }
     tcp_close(a);
     tcp_close(c);
     tcp_close(ln);
-    var s: i32 = udp_bind(lo6, 0);
+    let s: i32 = udp_bind(lo6, 0);
     if (s < 0) { return fail(9); }
-    var ps: i32 = tcp_local_port(s);
+    let ps: i32 = tcp_local_port(s);
     if (ps <= 0) { return fail(10); }
-    var t: i32 = udp_bind(lo6, 0);
+    let t: i32 = udp_bind(lo6, 0);
     if (t < 0) { return fail(11); }
-    var pt: i32 = tcp_local_port(t);
+    let pt: i32 = tcp_local_port(t);
     if (pt <= 0 || pt == ps) { return fail(12); }
     if (udp_sendto(s, lo6, pt, "ping") != 4) { return fail(13); }
-    var buf: u8[] = zeros(16);
-    var from: u8[] = zeros(19);
+    let buf: u8[] = zeros(16);
+    let from: u8[] = zeros(19);
     if (udp_recvfrom(t, buf, from) != 4 || buf[0] != 112u8 || buf[3] != 103u8) { return fail(14); }
     if (!is_lo6(from) || port_of(from) != ps) { return fail(15); }
     if (udp_connect(t, lo6, ps) != 0) { return fail(16); }
@@ -98,11 +98,11 @@ function main(): i32 {
     // dialler's port. Not on wasi:sockets, whose IPv6 socket stays
     // IPv6-only.
     if (target_os() != "wasi") {
-        var dl: i32 = tcp_listen_with(zeros(16), 0, 4, false);
+        let dl: i32 = tcp_listen_with(zeros(16), 0, 4, false);
         if (dl < 0) { return fail(30); }
-        var dc: i32 = tcp_connect(16777343, tcp_local_port(dl));
+        let dc: i32 = tcp_connect(16777343, tcp_local_port(dl));
         if (dc < 0) { return fail(31); }
-        var da: i32 = tcp_accept(dl);
+        let da: i32 = tcp_accept(dl);
         if (da < 0) { return fail(32); }
         if (tcp_socket_ctl(da, 10, 8) != 6) { return fail(33); }
         if (tcp_socket_ctl(da, 10, 4) != 0) { return fail(34); }
@@ -135,8 +135,8 @@ function fail(n: i32): i32 {
 }
 
 function zeros(n: i32): u8[] {
-    var b: u8[] = [];
-    var i: i32 = 0;
+    let b: u8[] = [];
+    let i: i32 = 0;
     while (i < n) {
         b = b.append(0u8);
         i = i + 1;
@@ -156,7 +156,7 @@ function no_v6(errno: i32): boolean {
 }
 
 function main(): i32 {
-    var ln: i32 = 0;
+    let ln: i32 = 0;
     match (net.listen_at(lo6(0), net.listen_options())) {
         Ok(fd) => { ln = fd; },
         Err(e) => {
@@ -167,49 +167,49 @@ function main(): i32 {
             return fail(1);
         },
     }
-    var port: i32 = 0;
+    let port: i32 = 0;
     match (net.local_port(ln)) {
         Ok(p) => { port = p; },
         Err(e) => { return fail(2); },
     }
-    var c: i32 = 0;
+    let c: i32 = 0;
     match (net.connect(lo6(port))) {
         Ok(fd) => { c = fd; },
         Err(e) => { return fail(3); },
     }
-    var a: i32 = tcp_accept(ln);
+    let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(4); }
     if (tcp_send(c, "hi") != 2) { return fail(5); }
-    var got: u8[] = tcp_recv(a, 16);
+    let got: u8[] = tcp_recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8) { return fail(6); }
     tcp_close(a);
     tcp_close(c);
     tcp_close(ln);
-    var s: i32 = 0;
+    let s: i32 = 0;
     match (net.udp_socket(lo6(0))) {
         Ok(fd) => { s = fd; },
         Err(e) => { return fail(7); },
     }
-    var ps: i32 = 0;
+    let ps: i32 = 0;
     match (net.local_port(s)) {
         Ok(p) => { ps = p; },
         Err(e) => { return fail(8); },
     }
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (net.udp_socket(lo6(0))) {
         Ok(fd) => { t = fd; },
         Err(e) => { return fail(9); },
     }
-    var pt: i32 = 0;
+    let pt: i32 = 0;
     match (net.local_port(t)) {
         Ok(p) => { pt = p; },
         Err(e) => { return fail(10); },
     }
-    match (net.send_to(s, "ping", lo6(pt))) {
+    match (net.send_to(s, [112u8, 105u8, 110u8, 103u8], lo6(pt))) {
         Ok(n) => { if (n != 4) { return fail(11); } },
         Err(e) => { return fail(12); },
     }
-    var buf: u8[] = zeros(16);
+    let buf: u8[] = zeros(16);
     match (net.recv_from(t, buf)) {
         Ok(got2) => {
             if (got2.0 != 4 || buf[0] != 112u8) { return fail(13); }
@@ -221,7 +221,7 @@ function main(): i32 {
         Ok(u) => { },
         Err(e) => { return fail(16); },
     }
-    match (net.send(t, "pong")) {
+    match (net.send(t, [112u8, 111u8, 110u8, 103u8])) {
         Ok(n) => { if (n != 4) { return fail(17); } },
         Err(e) => { return fail(18); },
     }
@@ -237,17 +237,17 @@ function main(): i32 {
     // The same :: listener through std/net: peer_addr hands the IPv4
     // peer back as the V4 it is, and peer_key keys it as one.
     if (target_os() != "wasi") {
-        var dl: i32 = 0;
+        let dl: i32 = 0;
         match (net.listen_at(net.socket_addr(net.ipv6_unspecified(), 0), net.listen_options())) {
             Ok(fd) => { dl = fd; },
             Err(e) => { return fail(30); },
         }
-        var dc: i32 = 0;
+        let dc: i32 = 0;
         match (net.connect(net.socket_addr(net.ipv4_loopback(), tcp_local_port(dl)))) {
             Ok(fd) => { dc = fd; },
             Err(e) => { return fail(31); },
         }
-        var da: i32 = tcp_accept(dl);
+        let da: i32 = tcp_accept(dl);
         if (da < 0) { return fail(32); }
         match (net.peer_addr(da)) {
             Ok(pa) => { if (!pa.ip.eq(net.ipv4_loopback()) || pa.port != tcp_local_port(dc)) { return fail(33); } },

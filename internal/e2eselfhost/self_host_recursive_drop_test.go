@@ -17,8 +17,8 @@ const recursiveDropSrc = `enum L { Nil, Cons(i32, L) }
 enum T { Leaf, Node(T, i32, T) }
 @noinline
 function build(n: i32): L {
-    var l: L = Nil;
-    var i: i32 = 0;
+    let l: L = Nil;
+    let i: i32 = 0;
     while (i < n) { l = Cons(i, l); i = i + 1; }
     return l;
 }
@@ -31,11 +31,11 @@ function mid(t: T): i32 {
     match (t) { Node(a, v, b) => { return v; }, Leaf => { return 0 - 1; } }
 }
 function main(): i32 {
-    var shared: L = build(1000);
-    var a: L = Cons(7, shared);
-    var b: L = Cons(9, shared);
-    var long: L = build(300000);
-    var tr: T = Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Node(Leaf, 4, Leaf)));
+    let shared: L = build(1000);
+    let a: L = Cons(7, shared);
+    let b: L = Cons(9, shared);
+    let long: L = build(300000);
+    let tr: T = Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Node(Leaf, 4, Leaf)));
     return head(a) + head(b) + head(shared) % 101 + head(long) % 7 + mid(tr);
 }
 `

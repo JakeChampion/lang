@@ -63,7 +63,7 @@ function opt_utc(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [+FORMAT]\n";
   out = out + "  or:  " + gnu.prog() + " [-u|--utc|--universal] [MMDDhhmm[[CC]YY][.ss]]\n";
   out = out + "Display date and time in the given FORMAT.\n";
@@ -193,8 +193,8 @@ function rfc_3339_formats(): string[] {
 // `adjust_resolution(fmt)` — every `%-N` becomes `%9N`, the width the
 // clock's nanosecond resolution needs.
 function adjust_resolution(fmt: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < fmt.len()) {
     if (fmt[i] as i32 == 37) {
       if (i + 2 < fmt.len() && fmt[i + 1] as i32 == 45 && fmt[i + 2] as i32 == 78) {
@@ -225,12 +225,12 @@ struct Show { zone: tz.Zone, tzstring: string, has_tz: boolean, format: string, 
 // format did: an instant localtime refuses still ends a line, and so
 // does a format that renders to nothing.
 function show_date(o: io_buffered.BufWriter, s: Show, sec: i64, nsec: i64): (boolean, io_buffered.BufWriter) {
-  var w: io_buffered.BufWriter = o;
+  let w: io_buffered.BufWriter = o;
   if (s.debug) {
     w = gnu.error_out(w, "output format: " + gnu.quote(s.format));
   }
   // localtime refuses an instant whose year does not fit an int.
-  var year: i64 = s.zone.local_fields(sec).year - 1900 as i64;
+  let year: i64 = s.zone.local_fields(sec).year - 1900 as i64;
   if (year > 2147483647 as i64 || year < 0 as i64 - 2147483648 as i64) {
     w = gnu.error_out(w, "time " + gnu.quote(sec.to_string()) + " is out of range");
     return (false, gnu.put(w, "\n"));
@@ -248,16 +248,16 @@ function trace(r: datetime.Result): void {
 }
 
 function parse(s: Show, text: string, hint: i64): datetime.Result {
-  var ns: i64 = now_ns();
+  let ns: i64 = now_ns();
   return datetime.parse_full(text, s.zone, s.tzstring, s.has_tz, ns / (1000000000 as i64), ns % (1000000000 as i64), hint, s.debug);
 }
 
 // `batch(o, s, name)` — `-f FILE`: each line parsed and printed, a
 // line that does not parse costing the status and not the run.
 function batch(o: io_buffered.BufWriter, s: Show, name: string): (boolean, io_buffered.BufWriter) {
-  var w: io_buffered.BufWriter = o;
-  var shown: string = name;
-  var r: Reader = stdin();
+  let w: io_buffered.BufWriter = o;
+  let shown: string = name;
+  let r: Reader = stdin();
   if (name == "-") {
     shown = "standard input";
   } else {
@@ -270,32 +270,32 @@ function batch(o: io_buffered.BufWriter, s: Show, name: string): (boolean, io_bu
       }
     }
   }
-  var ok: boolean = true;
-  var hint: i64 = 0;
-  var lr: io_buffered.LineReader = io_buffered.line_reader_new(r, 10, 65536);
+  let ok: boolean = true;
+  let hint: i64 = 0;
+  let lr: io_buffered.LineReader = io_buffered.line_reader_new(r, 10, 65536);
   while (true) {
-    var next: (Option[string], io_buffered.LineReader) = lr.next_line();
+    let next: (Option[string], io_buffered.LineReader) = lr.next_line();
     lr = next.1;
     match (next.0) {
       Some(full) => {
         // A C string ends at the first NUL, and so does the line.
-        var line: string = full;
-        var nul: i32 = __memchr(line, 0, 0);
+        let line: string = full;
+        let nul: i32 = __memchr(line, 0, 0);
         if (nul >= 0) {
           line = slice_unchecked(line, 0, nul) + "";
         }
-        var res: datetime.Result = parse(s, line, hint);
+        let res: datetime.Result = parse(s, line, hint);
         hint = res.hint;
         trace(res);
         if (!res.ok) {
-          var bare: string = line;
+          let bare: string = line;
           if (bare.len() > 0 && bare[bare.len() - 1] as i32 == 10) {
             bare = slice_unchecked(bare, 0, bare.len() - 1) + "";
           }
           w = gnu.error_out(w, "invalid date " + gnu.quote(bare));
           ok = false;
         } else {
-          var shown: (boolean, io_buffered.BufWriter) = show_date(w, s, res.sec, res.nsec);
+          let shown: (boolean, io_buffered.BufWriter) = show_date(w, s, res.sec, res.nsec);
           w = shown.1;
           if (!shown.0) {
             ok = false;
@@ -325,7 +325,7 @@ function batch(o: io_buffered.BufWriter, s: Show, name: string): (boolean, io_bu
 }
 
 pub function main(): i32 {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("d", "date", opt_date()));
   opts = opts.append(gnu.flag("", "debug", opt_debug()));
   opts = opts.append(gnu.valued("f", "file", opt_file()));
@@ -340,24 +340,24 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("", "uct", opt_utc()));
   opts = opts.append(gnu.flag("u", "utc", opt_utc()));
   opts = opts.append(gnu.flag("", "universal", opt_utc()));
-  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "date", help_text(), 1);
-  var datestr: string = "";
-  var has_date: boolean = false;
-  var discarded_date: boolean = false;
-  var set_datestr: string = "";
-  var set_date: boolean = false;
-  var discarded_set: boolean = false;
-  var format: string = "";
-  var has_format: boolean = false;
-  var debug: boolean = false;
-  var resolution: boolean = false;
-  var batch_file: string = "";
-  var has_batch: boolean = false;
-  var reference: string = "";
-  var has_reference: boolean = false;
-  var utc: boolean = false;
+  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "date", help_text(), 1);
+  let datestr: string = "";
+  let has_date: boolean = false;
+  let discarded_date: boolean = false;
+  let set_datestr: string = "";
+  let set_date: boolean = false;
+  let discarded_set: boolean = false;
+  let format: string = "";
+  let has_format: boolean = false;
+  let debug: boolean = false;
+  let resolution: boolean = false;
+  let batch_file: string = "";
+  let has_batch: boolean = false;
+  let reference: string = "";
+  let has_reference: boolean = false;
+  let utc: boolean = false;
   while (true) {
-    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
     match (res.0) {
       Some(m) => {
@@ -375,11 +375,11 @@ pub function main(): i32 {
         } else if (m.id == opt_resolution()) {
           resolution = true;
         } else if (m.id == opt_rfc_3339()) {
-          var names: string[] = ["date", "seconds", "ns"];
+          let names: string[] = ["date", "seconds", "ns"];
           format = rfc_3339_formats()[gnu.argmatch(m.value, names, "--rfc-3339")];
           has_format = true;
         } else if (m.id == opt_iso()) {
-          var which: i32 = 2;
+          let which: i32 = 2;
           if (m.has_value) {
             which = gnu.argmatch(m.value, time_spec_names(), "--iso-8601");
           }
@@ -406,7 +406,7 @@ pub function main(): i32 {
       }
     }
   }
-  var specified: i32 = 0;
+  let specified: i32 = 0;
   if (has_date) {
     specified = specified + 1;
   }
@@ -431,9 +431,9 @@ pub function main(): i32 {
   if (discarded_set && debug) {
     gnu.error("only using last of multiple -s options");
   }
-  var operands: string[] = g.operands();
-  var operand: string = "";
-  var has_operand: boolean = false;
+  let operands: string[] = g.operands();
+  let operand: string = "";
+  let has_operand: boolean = false;
   if (operands.len() > 0) {
     if (operands.len() > 1) {
       gnu.die_usage("extra operand " + gnu.quote(operands[1]), 1);
@@ -459,8 +459,8 @@ pub function main(): i32 {
       format = "%a %b %e %H:%M:%S %Z %Y";
     }
   }
-  var tzstring: string = "";
-  var has_tz: boolean = false;
+  let tzstring: string = "";
+  let has_tz: boolean = false;
   match (env("TZ")) {
     Some(v) => {
       tzstring = v;
@@ -472,33 +472,33 @@ pub function main(): i32 {
     tzstring = "UTC0";
     has_tz = true;
   }
-  var zone: tz.Zone = tz.local_zone();
+  let zone: tz.Zone = tz.local_zone();
   if (utc) {
     zone = tz.zone_from_tz(tzstring);
   }
-  var s: Show = Show { zone: zone, tzstring: tzstring, has_tz: has_tz, format: adjust_resolution(format), debug: debug };
-  var o: io_buffered.BufWriter = gnu.out_new();
+  let s: Show = Show { zone: zone, tzstring: tzstring, has_tz: has_tz, format: adjust_resolution(format), debug: debug };
+  let o: io_buffered.BufWriter = gnu.out_new();
   if (has_batch) {
-    var b: (boolean, io_buffered.BufWriter) = batch(o, s, batch_file);
+    let b: (boolean, io_buffered.BufWriter) = batch(o, s, batch_file);
     gnu.finish_with(b.1, 1);
     if (b.0) {
       return 0;
     }
     return 1;
   }
-  var when_sec: i64 = 0;
-  var when_nsec: i64 = 0;
-  var valid: boolean = true;
-  var shown: string = datestr;
+  let when_sec: i64 = 0;
+  let when_nsec: i64 = 0;
+  let valid: boolean = true;
+  let shown: string = datestr;
   if (specified == 0 && !set_date) {
     if (has_operand) {
       set_date = true;
       shown = operand;
-      var pt: (boolean, i64, i64) = datetime.posixtime(operand, 2 + 4 + 8, zone, now_ns() / (1000000000 as i64), 0);
+      let pt: (boolean, i64, i64) = datetime.posixtime(operand, 2 + 4 + 8, zone, now_ns() / (1000000000 as i64), 0);
       valid = pt.0;
       when_sec = pt.1;
     } else {
-      var ns: i64 = now_ns();
+      let ns: i64 = now_ns();
       when_sec = ns / (1000000000 as i64);
       when_nsec = ns % (1000000000 as i64);
     }
@@ -519,7 +519,7 @@ pub function main(): i32 {
     if (set_date) {
       shown = set_datestr;
     }
-    var r: datetime.Result = parse(s, shown, 0);
+    let r: datetime.Result = parse(s, shown, 0);
     trace(r);
     valid = r.ok;
     when_sec = r.sec;
@@ -528,12 +528,12 @@ pub function main(): i32 {
   if (!valid) {
     gnu.die(o, "invalid date " + gnu.quote(shown), 1);
   }
-  var ok: boolean = true;
+  let ok: boolean = true;
   if (set_date) {
     o = gnu.error_out(o, "cannot set date: Operation not permitted");
     ok = false;
   }
-  var printed: (boolean, io_buffered.BufWriter) = show_date(o, s, when_sec, when_nsec);
+  let printed: (boolean, io_buffered.BufWriter) = show_date(o, s, when_sec, when_nsec);
   if (!printed.0) {
     ok = false;
   }

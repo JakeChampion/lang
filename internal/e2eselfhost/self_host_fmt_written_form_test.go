@@ -166,7 +166,7 @@ return a+b;
 }
 
 function main(): i32 {
-    var t: i32   = add(1,2);
+    let t: i32   = add(1,2);
   if (t != 3) {
         return 1;
   }

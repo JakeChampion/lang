@@ -3,7 +3,7 @@ package e2eharness
 const StringConstructorsProgram = `import "std/string";
 import "std/i32";
 function main(): i32 {
-    var parts: string[] = "aé€𐀀".to_array();
+    let parts: string[] = "aé€𐀀".to_array();
     if (parts.len() != 4) { return 1; }
     if (parts[0] != "a" || parts[1] != "é" || parts[2] != "€" || parts[3] != "𐀀") { return 2; }
     if ("".to_array().len() != 0) { return 3; }
@@ -23,11 +23,11 @@ function main(): i32 {
     if (string.repeat_char(65536 as char, 2) != "𐀀𐀀") { return 20; }
     if (string.repeat_char(233 as char, 0) != "") { return 21; }
     if (string.repeat_char(233 as char, 0 - 1) != "") { return 22; }
-    var truncated: string = string_from_bytes_unchecked([241 as u8, 128 as u8, 98 as u8]);
-    var short: string = string_from_bytes_unchecked([226 as u8, 130 as u8]);
-    var overlong: string = string_from_bytes_unchecked([192 as u8, 175 as u8]);
-    var surrogate: string = string_from_bytes_unchecked([237 as u8, 160 as u8, 128 as u8]);
-    var high: string = string_from_bytes_unchecked([244 as u8, 144 as u8, 128 as u8, 128 as u8]);
+    let truncated: string = string_from_bytes_unchecked([241 as u8, 128 as u8, 98 as u8]);
+    let short: string = string_from_bytes_unchecked([226 as u8, 130 as u8]);
+    let overlong: string = string_from_bytes_unchecked([192 as u8, 175 as u8]);
+    let surrogate: string = string_from_bytes_unchecked([237 as u8, 160 as u8, 128 as u8]);
+    let high: string = string_from_bytes_unchecked([244 as u8, 144 as u8, 128 as u8, 128 as u8]);
     if (truncated.split("").len() != 2 || short.split("").len() != 1) { return 23; }
     if (overlong.split("").len() != 2 || surrogate.split("").len() != 3) { return 24; }
     if (high.split("").len() != 4) { return 25; }

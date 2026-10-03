@@ -248,7 +248,7 @@ analysis, which is independent, pure, and de-risks the design.
 
     1. `preciseDroppableType` excludes `EnumType`.
     2. `computeFreeEligible` TAINTS a pointer-payload enum construction
-       (`var xs = Cons(1, tail)`) — the escape analysis keeps the local
+       (`let xs = Cons(1, tail)`) — the escape analysis keeps the local
        ineligible so the moved-in payload's borrow isn't freed out from
        under. So enum-of-pointers locals are never even `freeEligible`,
        the gate *before* `preciseDroppableType`.

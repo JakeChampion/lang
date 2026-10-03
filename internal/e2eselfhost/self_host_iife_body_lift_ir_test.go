@@ -20,17 +20,17 @@ var iifeBodyLiftIRCases = []struct {
 	// A lambda written inside an `if` BRANCH, in an array of function values.
 	// Reduced from seed s0002.
 	{"lambda-in-if-branch", `function main(): i32 {
-    var v0: (i32) => i32 = ((x0: i32) => 189i32);
-    var w: boolean = ((851i64 / 242i64) != 763i64);
-    var fs: ((i32) => i32)[] = [v0, (if (w) { v0 } else { ((x1: i32) => x1) }), v0];
+    let v0: (i32) => i32 = ((x0: i32) => 189i32);
+    let w: boolean = ((851i64 / 242i64) != 763i64);
+    let fs: ((i32) => i32)[] = [v0, (if (w) { v0 } else { ((x1: i32) => x1) }), v0];
     return (fs[1](40i32) + fs[0](1i32)) & 63i32;
 }`, 58},
 	// A lambda inside a `match` arm that is itself inside an `if` branch — two
 	// levels of value-position desugar. Reduced from seed s0073.
 	{"lambda-in-match-arm-in-if-branch", `enum E0 { __E0_V0, __E0_V1 }
 function main(): i32 {
-    var p1: E0 = __E0_V1;
-    var fs: ((i32) => i32)[] = (if (false) { [((x0: i32) => 105i32)] } else { [(match (p1) { __E0_V0 => ((x4: i32) => x4), __E0_V1 => ((x5: i32) => 548i32) })] });
+    let p1: E0 = __E0_V1;
+    let fs: ((i32) => i32)[] = (if (false) { [((x0: i32) => 105i32)] } else { [(match (p1) { __E0_V0 => ((x4: i32) => x4), __E0_V1 => ((x5: i32) => 548i32) })] });
     return fs[0](3i32) & 63i32;
 }`, 36},
 	// The same mixed shape with the arms the other way round: the BOXED arm is
@@ -38,8 +38,8 @@ function main(): i32 {
 	// the binding's one ABI, so which arm runs must not matter.
 	{"boxed-arm-first-raw-arm-second", `enum E0 { __E0_V0, __E0_V1 }
 function main(): i32 {
-    var p1: E0 = __E0_V1;
-    var fs: ((i32) => i32)[] = (if (true) { [(match (p1) { __E0_V0 => ((x4: i32) => x4), __E0_V1 => ((x5: i32) => 548i32) })] } else { [((x0: i32) => 105i32)] });
+    let p1: E0 = __E0_V1;
+    let fs: ((i32) => i32)[] = (if (true) { [(match (p1) { __E0_V0 => ((x4: i32) => x4), __E0_V1 => ((x5: i32) => 548i32) })] } else { [((x0: i32) => 105i32)] });
     return fs[0](3i32) & 63i32;
 }`, 36},
 	// Three arms, two of them plain lambda arrays and the third an array holding
@@ -48,8 +48,8 @@ function main(): i32 {
 	// elements across ALL arms, it does not compare a pair.
 	{"three-arms-one-nested-iife-array", `enum E0 { __E0_V0, __E0_V1, __E0_V2 }
 function main(): i32 {
-    var p1: E0 = __E0_V2;
-    var fs: ((i32) => i32)[] = (match (p1) {
+    let p1: E0 = __E0_V2;
+    let fs: ((i32) => i32)[] = (match (p1) {
         __E0_V0 => [((x0: i32) => 105i32)],
         __E0_V1 => [((x1: i32) => 7i32)],
         __E0_V2 => [(if (true) { ((x2: i32) => 548i32) } else { ((x3: i32) => x3) })]
@@ -60,7 +60,7 @@ function main(): i32 {
 	// another expression in the branch. That already lowered — the branch value
 	// is the array itself, so the existing walk reached it.
 	{"if-yields-lambda-array-control", `function main(): i32 {
-    var fs: ((i32) => i32)[] = (if (true) { [((x0: i32) => 105i32), ((x1: i32) => 859i32)] } else { [((x3: i32) => (947i32 - x3))] });
+    let fs: ((i32) => i32)[] = (if (true) { [((x0: i32) => 105i32), ((x1: i32) => 859i32)] } else { [((x3: i32) => (947i32 - x3))] });
     return (fs[0](7i32) + fs[1](7i32)) & 63i32;
 }`, 4},
 	// One arm yields the array literal directly, the other yields a NESTED
@@ -70,8 +70,8 @@ function main(): i32 {
 	// lambda in the first arm never got its box. Reduced from seed s0017.
 	{"nested-iife-arm-yields-lambda-array", `enum Status { Active, Inactive }
 function main(): i32 {
-    var v1: Status = Active;
-    var fs: ((i32) => i32)[] = (match (v1) {
+    let v1: Status = Active;
+    let fs: ((i32) => i32)[] = (match (v1) {
         Active => [((x0: i32) => (match (v1) { Active => (x0 + 1i32), Inactive => 5i32 }))],
         Inactive => (if (true) { [((x1: i32) => 1i32)] } else { [((x2: i32) => 2i32)] })
     });
@@ -88,7 +88,7 @@ function main(): i32 {
 func TestSelfHostIifeBodyLiftIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range iifeBodyLiftIRCases {
@@ -116,8 +116,8 @@ func TestSelfHostIifeBodyLiftIRX86_64(t *testing.T) {
 // lift_call_callee's in-IIFE gate is what stops the inner one being hoisted to a
 // top-level `__lam_N`, which would split one desugar across the IR and AST paths.
 const nestedIifeGateSrc = `function main(): i32 {
-    var b: boolean = true;
-    var w: i32 = (if (b) { (if (true) { 7i32 } else { 2i32 }) } else { (if (b) { 9i32 } else { 3i32 }) });
+    let b: boolean = true;
+    let w: i32 = (if (b) { (if (true) { 7i32 } else { 2i32 }) } else { (if (b) { 9i32 } else { 3i32 }) });
     return w & 63i32;
 }`
 
@@ -132,7 +132,7 @@ const nestedIifeGateSrc = `function main(): i32 {
 func TestSelfHostNestedIifeStaysWholeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	stdout, stderr, code := runDriver(t, runner, driverBin, []byte(nestedIifeGateSrc), true, "-ir")
@@ -170,7 +170,7 @@ func TestSelfHostIifeBodyLiftIRArm64(t *testing.T) {
 		t.Skip("arm64 IIFE-body-lift gate needs a native x86 host to run the driver")
 	}
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range iifeBodyLiftIRCases {

@@ -12,11 +12,11 @@ left one open. With this the three positions agree:
 | a discarded STATEMENT | clean | clean |
 | a call ARGUMENT | 100/0, 200/0 | clean (#7576) |
 | an intermediate FIELD READ | 100/0, 200/0 | **clean** |
-| bound first: `var p: S = S { … }` | clean | clean |
+| bound first: `let p: S = S { … }` | clean | clean |
 
 Like the argument position it leaks per EVALUATION, and like it, the shape is
 invisible to the construction-retain matrix, whose 35 cells all bind the literal
-to `var p` first.
+to `let p` first.
 
 ## The mechanism was here, for a different receiver
 

@@ -45,13 +45,13 @@ import "std/string";
 // A three-way tie: every future is ready at the same virtual instant, so the
 // winner is entirely the seeded draw.
 function tie3(seed: i64): i32 {
-    var d: sim.Sim = sim.new(seed);
-    var fs: async.Future[i32][] = [
+    let d: sim.Sim = sim.new(seed);
+    let fs: async.Future[i32][] = [
         sim.future_at(d, 5000000, 0),
         sim.future_at(d, 5000000, 1),
         sim.future_at(d, 5000000, 2)
     ];
-    var (w, v) = async.race_on(d, fs, -1);
+    let (w, v) = async.race_on(d, fs, -1);
     // The winner's index and its value must agree, or the draw is not what
     // is being measured.
     if (w != v) { return 0 - 1; }
@@ -59,11 +59,11 @@ function tie3(seed: i64): i32 {
 }
 
 function main(): i32 {
-    var trials: i32 = 600;
-    var counts: i32[] = [0, 0, 0];
-    var s: i64 = 1;
+    let trials: i32 = 600;
+    let counts: i32[] = [0, 0, 0];
+    let s: i64 = 1;
     while (s <= (trials as i64)) {
-        var w: i32 = tie3(s);
+        let w: i32 = tie3(s);
         if (w < 0 || w > 2) { return 1; }
         counts = counts.with(w, counts[w] + 1);
         s = s + 1;
@@ -73,7 +73,7 @@ function main(): i32 {
     // Even split is 200 per bucket; allow +/- 25% (150..250). A mapping that
     // collapsed to a constant puts 600 in one bucket; one that lost a bit of
     // entropy puts ~300 in each of two.
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
         if (counts[i] < 150) { return 3; }
         if (counts[i] > 250) { return 4; }
@@ -83,7 +83,7 @@ function main(): i32 {
     // Determinism is unaffected by any of the above: the same seed must still
     // give the same winner. This is the contract sim exists to provide, and it
     // is the thing a debiasing change must NOT break.
-    var k: i64 = 1;
+    let k: i64 = 1;
     while (k <= 50) {
         if (tie3(k) != tie3(k)) { return 5; }
         k = k + 1;

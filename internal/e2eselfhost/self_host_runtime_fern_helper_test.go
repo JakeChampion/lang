@@ -50,7 +50,7 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			// fold landed that emitted no comparison at all — the helper was
 			// still migrated, but this case had stopped asking.
 			"str_eq",
-			`function main(): i32 { var xs: string[] = args(); if (xs[0] == "ab") { return 1; } return 0; }`,
+			`function main(): i32 { let xs: string[] = args(); if (xs[0] == "ab") { return 1; } return 0; }`,
 			"__fn___fern_str_eq",
 			[]string{"\n__fern_str_eq:", ".Lstreq_loop"},
 		},
@@ -94,7 +94,7 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			// The old register-ABI hand-asm (__fern_str_concat: / .Lstrconcat_a_loop)
 			// is gone; the `+` call site now targets __fn___fern_str_concat.
 			"str_concat",
-			`function main(): i32 { var s: string = "ab" + "cd"; return s.len(); }`,
+			`function main(): i32 { let s: string = "ab" + "cd"; return s.len(); }`,
 			"__fn___fern_str_concat",
 			[]string{"\n__fern_str_concat:", ".Lstrconcat_a_loop"},
 		},
@@ -141,7 +141,7 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			// the call site targets the u8[] helper __fn___fern_string_from_bytes_u8
 			// via the stack ABI.
 			"string_from_bytes_unchecked",
-			`function main(): i32 { var b: u8[] = [104 as u8, 105 as u8]; return string_from_bytes_unchecked(b).len(); }`,
+			`function main(): i32 { let b: u8[] = [104 as u8, 105 as u8]; return string_from_bytes_unchecked(b).len(); }`,
 			"__fn___fern_string_from_bytes_u8",
 			[]string{"\n__fern_string_from_bytes:", ".Lsfb_loop"},
 		},
@@ -159,7 +159,7 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			// arr_str_join (string[].join) — fills one exact-size block, so the
 			// heap is its only runtime dep.
 			"arr_str_join",
-			`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.join(",").len(); }`,
+			`function main(): i32 { let xs: string[] = ["a", "b"]; return xs.join(",").len(); }`,
 			"__fn___fern_arr_str_join",
 			[]string{"\n__fern_arr_str_join:", ".Lasj_loop"},
 		},

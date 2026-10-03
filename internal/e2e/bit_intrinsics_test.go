@@ -50,9 +50,9 @@ function main(): i32 {
 
     // Every single-bit position, 32-bit. Catches an off-by-one in the
     // "31 - clz" arithmetic at either end of the range.
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 32) {
-        var v: u32 = (1 as u32) << (i as u32);
+        let v: u32 = (1 as u32) << (i as u32);
         if (__clz32(v) != 31 - i) { return 10 + i; }
         if (__ctz32(v) != i) { return 50 + i; }
         if (__popcount32(v) != 1) { return 90 + i; }
@@ -68,9 +68,9 @@ function main(): i32 {
 
     // Every single-bit position, 64-bit -- the width where a 32-bit-shaped
     // constant or a w-register slip would truncate silently.
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < 64) {
-        var w: u64 = (1 as u64) << (j as u64);
+        let w: u64 = (1 as u64) << (j as u64);
         if (__clz64(w) != 63 - j) { return 300 + j; }
         if (__ctz64(w) != j) { return 400 + j; }
         if (__popcount64(w) != 1) { return 500 + j; }

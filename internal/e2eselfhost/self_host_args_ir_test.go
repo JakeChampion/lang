@@ -31,15 +31,15 @@ var argsIRCases = []struct {
 	extraArgs []string
 	wantExit  int
 }{
-	{"argc-0", `function main(): i32 { var a: string[] = args(); return a.len(); }`, nil, 1},
-	{"argc-2", `function main(): i32 { var a: string[] = args(); return a.len(); }`, []string{"x", "y"}, 3},
-	{"index", `function main(): i32 { var a: string[] = args(); if (a.len() < 2) { return 0; } var f: string = a[1]; return f.len(); }`, []string{"hello"}, 5},
+	{"argc-0", `function main(): i32 { let a: string[] = args(); return a.len(); }`, nil, 1},
+	{"argc-2", `function main(): i32 { let a: string[] = args(); return a.len(); }`, []string{"x", "y"}, 3},
+	{"index", `function main(): i32 { let a: string[] = args(); if (a.len() < 2) { return 0; } let f: string = a[1]; return f.len(); }`, []string{"hello"}, 5},
 	{"element-rc", `function main(): i32 {
-    var argv: string[] = args();
+    let argv: string[] = args();
     if (argv.len() != 3) { return 1; }
-    var a: string = argv[1];
-    var b: string = argv[2];
-    var held: string[] = [b, b, b];
+    let a: string = argv[1];
+    let b: string = argv[2];
+    let held: string[] = [b, b, b];
     if (held.len() != 3) { return 2; }
     if (a.len() != 5) { return 3; }
     if (a != "alpha") { return 4; }
@@ -47,12 +47,12 @@ var argsIRCases = []struct {
     return 42;
 }`, []string{"alpha", "beta"}, 42},
 	{"element-outlives-array", `function pick(): string {
-    var argv: string[] = args();
+    let argv: string[] = args();
     return argv[1];
 }
 function main(): i32 {
-    var a: string = pick();
-    var b: string = pick();
+    let a: string = pick();
+    let b: string = pick();
     if (a != "alpha") { return 1; }
     if (b != "alpha") { return 2; }
     if (a.len() + b.len() != 10) { return 3; }

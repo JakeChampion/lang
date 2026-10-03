@@ -16,19 +16,19 @@ import (
 // sum, so exit 0 means correctly zero-initialised on every backend.
 const allocU8ZeroProgram = `
 function fill(): i32 {
-    var a: u8[] = __alloc_u8(32);
-    var i: i32 = 0;
+    let a: u8[] = __alloc_u8(32);
+    let i: i32 = 0;
     while (i < 32) { a = a.with(i, 0xAB as u8); i = i + 1; }
     return a[0] as i32;
 }
 function check(): i32 {
-    var b: u8[] = __alloc_u8(32);
-    var s: i32 = 0;
-    var i: i32 = 0;
+    let b: u8[] = __alloc_u8(32);
+    let s: i32 = 0;
+    let i: i32 = 0;
     while (i < 32) { s = s + (b[i] as i32); i = i + 1; }
     return s;
 }
-function main(): i32 { var x: i32 = fill(); return check(); }
+function main(): i32 { let x: i32 = fill(); return check(); }
 `
 
 func TestInterpAllocU8Zero(t *testing.T) {

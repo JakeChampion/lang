@@ -19,13 +19,13 @@ func TestMapLitEntriesMustMatchInferredTypes(t *testing.T) {
 		{
 			"key type mismatch",
 			`import "core/map";
-function main(): i32 { var m = Map { 1: "a", "two": "b" }; return 0; }`,
+function main(): i32 { let m = Map { 1: "a", "two": "b" }; return 0; }`,
 			"map key type string, expected i32",
 		},
 		{
 			"value type mismatch",
 			`import "core/map";
-function main(): i32 { var m = Map { 1: "a", 2: 42 }; return 0; }`,
+function main(): i32 { let m = Map { 1: "a", 2: 42 }; return 0; }`,
 			"map value type i32, expected string",
 		},
 		{
@@ -33,7 +33,7 @@ function main(): i32 { var m = Map { 1: "a", 2: 42 }; return 0; }`,
 			`import "core/map";
 struct P { x: i32 }
 struct Q { y: i32 }
-function main(): i32 { var m = Map { 1: P { x: 1 }, 2: Q { y: 2 } }; return 0; }`,
+function main(): i32 { let m = Map { 1: P { x: 1 }, 2: Q { y: 2 } }; return 0; }`,
 			"map value type Q, expected P",
 		},
 	} {
@@ -52,11 +52,11 @@ function main(): i32 { var m = Map { 1: P { x: 1 }, 2: Q { y: 2 } }; return 0; }
 	// keys the settling pass is there to reconcile.
 	for _, src := range []string{
 		`import "core/map";
-function main(): i32 { var m = Map { 1: "a", 2: "b" }; return m.len(); }`,
+function main(): i32 { let m = Map { 1: "a", 2: "b" }; return m.len(); }`,
 		`import "core/map";
-function main(): i32 { var m: Map[i64, i32] = Map { 1 as i64: 10, 2 as i64: 20 }; return m.len(); }`,
+function main(): i32 { let m: Map[i64, i32] = Map { 1 as i64: 10, 2 as i64: 20 }; return m.len(); }`,
 		`import "core/map";
-function main(): i32 { var m = Map { "a": 1, "b": 2 }; return m.len(); }`,
+function main(): i32 { let m = Map { "a": 1, "b": 2 }; return m.len(); }`,
 	} {
 		if err := checkModuleSource(t, src); err != nil {
 			t.Errorf("expected a clean check for:\n%s\ngot: %v", src, err)

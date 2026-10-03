@@ -8,12 +8,12 @@ function scaled(n: i32): f64 {
 }
 
 function main(): i32 {
-    var a: f64 = scaled(15);
-    var b: f64 = scaled(5);
-    var d: f64 = a - b;
-    var neg: f64 = -d;
+    let a: f64 = scaled(15);
+    let b: f64 = scaled(5);
+    let d: f64 = a - b;
+    let neg: f64 = -d;
 
-    var flags: i32 = 0;
+    let flags: i32 = 0;
     if (a != b) { flags = flags + 1; }
     if (b <= a) { flags = flags + 2; }
     if (neg <= b) { flags = flags + 4; }

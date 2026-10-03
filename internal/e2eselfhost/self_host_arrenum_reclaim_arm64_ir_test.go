@@ -6,7 +6,7 @@ import (
 
 // TestSelfHostArrEnumReclaimIRArm64 is the arm64 port of
 // TestSelfHostArrEnumReclaimIRX86_64. The ARRENUM class lives entirely in shared
-// irlower.fern — the element walk is IR (op_arr_get on the 8-byte pointer element slot
+// lowering — the element walk is IR (op_arr_get on the 8-byte pointer element slot
 // plus emit_enum_variant_drops' runtime variant dispatch), so it needs no arm64 helper.
 // Case table shared with the x86-64 leg.
 func TestSelfHostArrEnumReclaimIRArm64(t *testing.T) {

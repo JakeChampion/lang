@@ -99,7 +99,7 @@ var hintTextCases = []hintTextCase{
 	{
 		name: "E043 generic struct literal clash names the later field",
 		src: `struct Same[T] { a: T, b: T }
-function main(): i32 { var q = Same { a: 1, b: "x" }; return 0; }`,
+function main(): i32 { let q = Same { a: 1, b: "x" }; return 0; }`,
 		code:     "E043",
 		spelling: `field "b": expected i32`,
 	},
@@ -107,9 +107,9 @@ function main(): i32 { var q = Same { a: 1, b: "x" }; return 0; }`,
 		name: "E043 struct update over a literal-bound base",
 		src: `struct Same[T] { a: T, b: T }
 function main(): i32 {
-    var q = Same { a: 1, b: 2 };
-    var y: i64 = 8589934592;
-    var w = Same { ...q, b: y };
+    let q = Same { a: 1, b: 2 };
+    let y: i64 = 8589934592;
+    let w = Same { ...q, b: y };
     return 0;
 }`,
 		code:     "E043",
@@ -120,7 +120,7 @@ function main(): i32 {
 	{
 		name: "E040 uninferred struct type parameter",
 		src: `struct Box[T] { xs: T[] }
-function main(): i32 { var b = Box { xs: [] }; return b.xs.len(); }`,
+function main(): i32 { let b = Box { xs: [] }; return b.xs.len(); }`,
 		code:     "E040",
 		spelling: "could not infer type parameter T for struct Box",
 	},
@@ -128,8 +128,8 @@ function main(): i32 { var b = Box { xs: [] }; return b.xs.len(); }`,
 		name: "E041 equality",
 		src: `struct P { x: i32 }
 function main(): i32 {
-    var a: P = P { x: 1 };
-    var b: P = P { x: 1 };
+    let a: P = P { x: 1 };
+    let b: P = P { x: 1 };
     if (a == b) { return 1; }
     return 0;
 }`,
@@ -140,8 +140,8 @@ function main(): i32 {
 		name: "E041 ordering",
 		src: `struct P { x: i32 }
 function main(): i32 {
-    var a: P = P { x: 1 };
-    var b: P = P { x: 1 };
+    let a: P = P { x: 1 };
+    let b: P = P { x: 1 };
     if (a < b) { return 1; }
     return 0;
 }`,
@@ -150,7 +150,7 @@ function main(): i32 {
 	},
 	{
 		name:     "E056 array element assignment",
-		src:      `function main(): i32 { var a: i32[] = [1, 2]; a[0] = 5; return a[0]; }`,
+		src:      `function main(): i32 { let a: i32[] = [1, 2]; a[0] = 5; return a[0]; }`,
 		code:     "E056",
 		spelling: "`arr = arr.with(i, value)`",
 	},
@@ -160,8 +160,8 @@ function main(): i32 {
 	{
 		name: "E003 str view into owned string",
 		src: `function main(): i32 {
-    var t: string = "abcdef";
-    var s: string = slice_unchecked(t, 0, 3);
+    let t: string = "abcdef";
+    let s: string = slice_unchecked(t, 0, 3);
     return s.len();
 }`,
 		code:     "E003",
@@ -172,8 +172,8 @@ function main(): i32 {
 	{
 		name: "E003 array view into owned array",
 		src: `function main(): i32 {
-    var all: string[] = ["alpha", "beta", "gamma"];
-    var mid: string[] = all[1:3];
+    let all: string[] = ["alpha", "beta", "gamma"];
+    let mid: string[] = all[1:3];
     return mid.len();
 }`,
 		code:     "E003",
@@ -184,7 +184,7 @@ function main(): i32 {
 	{
 		name: "E063 view of local storage returned",
 		src: `function middle(): [string] {
-    var all: string[] = ["alpha", "beta", "gamma"];
+    let all: string[] = ["alpha", "beta", "gamma"];
     return all[1:3];
 }
 function main(): i32 { return 0; }`,
@@ -195,7 +195,7 @@ function main(): i32 { return 0; }`,
 		name: "E026 wildcard arm placement",
 		src: `enum C { R, G }
 function main(): i32 {
-    var c: C = R;
+    let c: C = R;
     match (c) { _ => { return 0; }, R => { return 1; } }
     return 0;
 }`,
@@ -206,7 +206,7 @@ function main(): i32 {
 		name: "E030 inexhaustive match",
 		src: `enum C { R, G }
 function main(): i32 {
-    var c: C = R;
+    let c: C = R;
     match (c) { R => { return 1; } }
     return 0;
 }`,
@@ -229,7 +229,7 @@ function main(): i32 { return 0; }`,
 		name: "E038 print needs Display",
 		src: `struct P { x: i32 }
 function main(): i32 {
-    var a: P = P { x: 1 };
+    let a: P = P { x: 1 };
     print(a);
     return 0;
 }`,
@@ -238,14 +238,14 @@ function main(): i32 {
 	},
 	{
 		name:     "E045 float map key",
-		src:      `function main(): i32 { var m = Map { 1.5: 1 }; return 0; }`,
+		src:      `function main(): i32 { let m = Map { 1.5: 1 }; return 0; }`,
 		code:     "E045",
 		spelling: "`@derive(cmp.Eq, cmp.Hash)`",
 	},
 	{
 		name: "E045 struct map key",
 		src: `struct K { a: i32 }
-function main(): i32 { var m = Map { K { a: 1 }: 1 }; return 0; }`,
+function main(): i32 { let m = Map { K { a: 1 }: 1 }; return 0; }`,
 		code:     "E045",
 		spelling: "`@derive(cmp.Eq, cmp.Hash)`",
 	},
@@ -255,19 +255,19 @@ function main(): i32 { var m = Map { K { a: 1 }: 1 }; return 0; }`,
 		// as a synonym for `boolean` — which is what the self-host's five
 		// type-name resolvers did while native errored.
 		name:     "E064 bool for boolean",
-		src:      `function main(): i32 { var b: bool = true; return 0; }`,
+		src:      `function main(): i32 { let b: bool = true; return 0; }`,
 		code:     "E064",
 		spelling: "did you mean `boolean`?",
 	},
 	{
 		name:     "E064 int for i32",
-		src:      `function main(): i32 { var n: int = 1; return 0; }`,
+		src:      `function main(): i32 { let n: int = 1; return 0; }`,
 		code:     "E064",
 		spelling: "did you mean `i32`?",
 	},
 	{
 		name:     "E064 String for string",
-		src:      `function main(): i32 { var s: String = "x"; return 0; }`,
+		src:      `function main(): i32 { let s: String = "x"; return 0; }`,
 		code:     "E064",
 		spelling: "did you mean `string`?",
 	},
@@ -278,7 +278,7 @@ function main(): i32 { var m = Map { K { a: 1 }: 1 }; return 0; }`,
 		// worst case for the two situations that produce it — a typo and a
 		// spelling that was deliberately retired (#7442).
 		name:     "E043 unknown array method lists the API",
-		src:      `function main(): i32 { var a: i32[] = [1]; return a.sum(); }`,
+		src:      `function main(): i32 { let a: i32[] = [1]; return a.sum(); }`,
 		code:     "E043",
 		spelling: "it has: append, len, with",
 	},
@@ -287,7 +287,7 @@ function main(): i32 { var m = Map { K { a: 1 }: 1 }; return 0; }`,
 		// without the replacement name the reader is left guessing at a
 		// rename they never saw.
 		name:     "E043 retired collection spelling names the replacement",
-		src:      `function main(): i32 { var a: i32[] = [1]; a.push(2); return a.len(); }`,
+		src:      `function main(): i32 { let a: i32[] = [1]; a.push(2); return a.len(); }`,
 		code:     "E043",
 		spelling: `use "append"`,
 	},
@@ -296,7 +296,7 @@ function main(): i32 { var m = Map { K { a: 1 }: 1 }; return 0; }`,
 		// and not just the receiver — the two checkers have to agree on
 		// what they are suggesting from, not only on the suggester.
 		name:     "E043 near-miss method name suggests the real one",
-		src:      `function main(): i32 { var a: i32[] = [1]; return a.lenn(); }`,
+		src:      `function main(): i32 { let a: i32[] = [1]; return a.lenn(); }`,
 		code:     "E043",
 		spelling: `did you mean "len"?`,
 	},
@@ -306,7 +306,7 @@ function main(): i32 { var m = Map { K { a: 1 }: 1 }; return 0; }`,
 		// `f"{n}"` to `n.to_string()`, so the bare message talked about
 		// struct field access on code the reader never wrote.
 		name:     "E043 f-string to_string names the import",
-		src:      `function main(): i32 { var n: i32 = 1; var s: string = f"x{n}y"; return s.len(); }`,
+		src:      `function main(): i32 { let n: i32 = 1; let s: string = f"x{n}y"; return s.len(); }`,
 		code:     "E043",
 		spelling: "add `import \"std/i32\"`",
 	},
@@ -316,7 +316,7 @@ function main(): i32 { var m = Map { K { a: 1 }: 1 }; return 0; }`,
 		// lists the surface instead, so a checker that cannot see its
 		// imports cannot say either thing correctly.
 		name:     "E043 unknown string method names the import",
-		src:      `function main(): i32 { var s: string = "ab"; return s.frobnicate(); }`,
+		src:      `function main(): i32 { let s: string = "ab"; return s.frobnicate(); }`,
 		code:     "E043",
 		spelling: "if it comes from std/string, add `import \"std/string\"`",
 	},
@@ -325,7 +325,7 @@ function main(): i32 { var m = Map { K { a: 1 }: 1 }; return 0; }`,
 		// thing at both sites; this checker had two messages for one
 		// mistake.
 		name:     "E043 field read on a non-struct gets the method advice",
-		src:      `function main(): i32 { var s = "a"; return s.foo; }`,
+		src:      `function main(): i32 { let s = "a"; return s.foo; }`,
 		code:     "E043",
 		spelling: "if it comes from std/string, add `import \"std/string\"`",
 	},
@@ -335,7 +335,7 @@ function main(): i32 { var m = Map { K { a: 1 }: 1 }; return 0; }`,
 		// naming a type the reader cannot spell. e042_ret_label patched
 		// exactly one of the two E042 sites; this is the other one (#7251).
 		name: "E042 non-Option operand names boolean",
-		src: `function f(): i32 { var b: boolean = true; var c = b?; return 0; }
+		src: `function f(): i32 { let b: boolean = true; let c = b?; return 0; }
 function main(): i32 { return 0; }`,
 		code:     "E042",
 		spelling: "got boolean",
@@ -363,7 +363,7 @@ function main(): i32 { return pick(P { v: 42 }); }`,
 trait Mk { function make(own b: Box): i32; }
 struct P { v: i32 }
 impl Mk for P { function make(own b: Box): i32 { return b.v; } }
-function main(): i32 { var d: dyn Mk = P { v: 0 }; return d.make(Box { v: 3 }); }`,
+function main(): i32 { let d: dyn Mk = P { v: 0 }; return d.make(Box { v: 3 }); }`,
 		code:     "E021",
 		spelling: "call it on a concrete type",
 	},

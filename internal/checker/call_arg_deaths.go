@@ -83,7 +83,7 @@ func DeferOrLambdaNames(body ast.Node) map[string]bool {
 	return esc
 }
 
-// RenameRoots maps a local that RENAMES another binding — `var c: C = c0;`,
+// RenameRoots maps a local that RENAMES another binding — `let c: C = c0;`,
 // where c0 is named nowhere else in the body — to the name it renames, chased
 // through chained renames to the root.
 //
@@ -165,22 +165,22 @@ type ArgDeaths struct {
 //   - the SOLE-OCCURRENCE shape (#6036): a PARAMETER read exactly once in
 //     the whole body, at a straight-line position — no later read of the
 //     binding exists at all, whatever the syntax around the call. This is
-//     what covers `var t = f(b, v); return t;` and the inner call of
+//     what covers `let t = f(b, v); return t;` and the inner call of
 //     `return f(f(b, v), v + 1)`, neither of which is a reassign or a
 //     direct return argument, yet both of which were paying one
 //     full-buffer copy per call;
 //   - the LAST-OCCURRENCE shape: the read at this call is the binding's
 //     textually last (IdentOrder.IsLast) and the call is enclosed by no
 //     loop or lambda body, so control passes it once and nothing reads the
-//     binding again. Admitted for a param and for a `var` local whose
+//     binding again. Admitted for a param and for a `let` local whose
 //     initialiser is a fresh value — a direct call to a named function, or
 //     an array, string or plain struct literal (#10864) — the state-
-//     threading chain `var a = s.emit(o); var b = a.emit(o); return b;`,
+//     threading chain `let a = s.emit(o); let b = a.emit(o); return b;`,
 //     where every receiver is at its last use. Each of those was paying a
 //     full-buffer copy per link, which is O(n²) bytes over a chain: the
-//     self-host lowering threads its LowerState this way and one 400-arm
+//     AST lowering threaded its LowerState this way and one 400-arm
 //     `else if` chain bumped 40 MB in `emit` alone. A local that RENAMES
-//     an admitted name at that name's only occurrence — `var c: C = c0;`
+//     an admitted name at that name's only occurrence — `let c: C = c0;`
 //     on a parameter — is the same binding spelled twice, so it is
 //     admitted on the source's footing.
 //
@@ -191,7 +191,7 @@ type ArgDeaths struct {
 // those run after the syntactic position that looks final.
 //
 // For a LOCAL the death verdict also needs the binding not to be an alias
-// of something else still live: `var t = holder; f(t)` makes `t`'s last
+// of something else still live: `let t = holder; f(t)` makes `t`'s last
 // use unbracketed while `holder` still reads the same field buffers, and
 // binding a struct incs the BOX, not the buffers inside it. A literal
 // initialiser cannot be that: it builds a new value whose elements and fields
@@ -281,8 +281,8 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 			delete(freshInitLocal, name)
 		}
 	}
-	// A local UNPACKED from a fresh-init local's field — `var eqL = park(…);
-	// var sl = eqL.state;` — is admitted on the same footing. The alias
+	// A local UNPACKED from a fresh-init local's field — `let eqL = park(…);
+	// let sl = eqL.state;` — is admitted on the same footing. The alias
 	// exclusion asks whether another live name in this frame reads the same
 	// buffers, and the unpack is the only reader of that field: `h.f` occurs
 	// once in the body and every other mention of `h` selects a different
@@ -328,7 +328,7 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 		}
 		return true
 	})
-	// A local RENAMED from an already-admitted name — `var c: C = c0;` on a
+	// A local RENAMED from an already-admitted name — `let c: C = c0;` on a
 	// parameter, the line every state-threading function in the self-host
 	// lowering opens with — is admitted on that name's footing. The alias
 	// exclusion asks whether another live name in this frame reads the same
@@ -456,7 +456,7 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 	// beside the cursor — a label id, an offset, a slot number — or that just
 	// names the result before storing it, spells the same thing as two:
 	//
-	//	let (c2, p) = emit(c, op);   var c2 = emit(c, op);
+	//	let (c2, p) = emit(c, op);   let c2 = emit(c, op);
 	//	c = c2;                      c = c2;
 	//
 	// The store still supersedes x before any other statement runs, so no
@@ -468,8 +468,12 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 	// against 0 ms for the same emit written as one statement, over 20000
 	// appends (#8633).
 	//
-	// The store's value must not READ x: `var y = f(x); x = g(x);` would hand
+	// The store's value must not READ x: `let y = f(x); x = g(x);` would hand
 	// g the buffer the callee just grew.
+	//
+	// Statements may stand between the two when none names x and each runs
+	// through to the next — no control flow, no `?` — so nothing reads x or
+	// leaves the block before the store (#11093).
 	ast.Walk(body, func(n ast.Node) bool {
 		blk, isBlk := n.(*ast.Block)
 		if !isBlk {
@@ -489,19 +493,15 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 			if !isCall {
 				continue
 			}
-			es, isExpr := blk.Stmts[i+1].(*ast.ExprStmt)
-			if !isExpr {
-				continue
+			for j := i + 1; j < len(blk.Stmts); j++ {
+				t, asn := storeTarget(blk.Stmts[j])
+				if t == "" || !StmtReferencesName(c, t) || !reboundAfter(blk.Stmts[i+1:j], t) {
+					continue
+				}
+				if !StmtReferencesName(asn.Value, t) {
+					markOnce(c, t)
+				}
 			}
-			asn, isAsn := es.Expr.(*ast.Assign)
-			if !isAsn || asn.Value == nil {
-				continue
-			}
-			t, isID := asn.Target.(*ast.Ident)
-			if !isID || StmtReferencesName(asn.Value, t.Name) {
-				continue
-			}
-			markOnce(c, t.Name)
 		}
 		return true
 	})
@@ -862,7 +862,7 @@ func markSupersededFields(out map[*ast.Call]map[string]bool, sl *ast.StructLit, 
 
 // lastUseArgs is the E051 admission for a local handed over at its last use
 // (#9541): each ident argument of a direct call that CallArgDeaths marks dead
-// there, names a `var` local of fn, and is read by no defer or lambda. Those
+// there, names a `let` local of fn, and is read by no defer or lambda. Those
 // are the positions computeOwnedArgMoves moves into an owned parameter.
 // Calls inside a nested function or lambda are left out of fn's own walk:
 // those bodies are lowered as functions of their own, so a nested function is
@@ -915,4 +915,52 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info) map[ast.Expr]bool {
 		}
 	}
 	return out
+}
+
+// storeTarget is the local a statement `x = v` stores to, and the store.
+func storeTarget(st ast.Stmt) (string, *ast.Assign) {
+	es, isExpr := st.(*ast.ExprStmt)
+	if !isExpr {
+		return "", nil
+	}
+	asn, isAsn := es.Expr.(*ast.Assign)
+	if !isAsn || asn.Value == nil {
+		return "", nil
+	}
+	t, isID := asn.Target.(*ast.Ident)
+	if !isID {
+		return "", nil
+	}
+	return t.Name, asn
+}
+
+// reboundAfter reports whether every statement in gap runs through to the
+// next one without naming name: a var, a destructure or an expression
+// statement holding no `?`.
+func reboundAfter(gap []ast.Stmt, name string) bool {
+	for _, st := range gap {
+		switch st.(type) {
+		case *ast.Var, *ast.Destructure, *ast.ExprStmt:
+		default:
+			return false
+		}
+		if StmtReferencesName(st, name) || holdsTry(st) {
+			return false
+		}
+	}
+	return true
+}
+
+func holdsTry(n ast.Node) bool {
+	found := false
+	ast.Walk(n, func(m ast.Node) bool {
+		switch m.(type) {
+		case *ast.TryOp:
+			found = true
+		case *ast.Lambda, *ast.FuncDecl:
+			return false
+		}
+		return !found
+	})
+	return found
 }

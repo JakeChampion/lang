@@ -26,25 +26,31 @@ function main(): i32 {
   // the harvested corpus since #5977; component mode never had a probe at all,
   // so its decline set was unmeasured, and those declines are exactly what an
   // IR-or-error reroute turns into hard errors.
-  var decide: boolean = false;
-  var av: string[] = args();
-  var ai: i32 = 1;
+  // `-reactor`: the core imports its WASI host only when the program reaches
+  // it, the form an export-only component (and a wasi:http handler) takes.
+  let decide: boolean = false;
+  let reactor: boolean = false;
+  let av: string[] = args();
+  let ai: i32 = 1;
   while (ai < av.len()) {
     if (av[ai] == "-decide") {
       decide = true;
     }
+    if (av[ai] == "-reactor") {
+      reactor = true;
+    }
     ai = ai + 1;
   }
-  var mod: parser.Module = rundriver.parse_stdin("wasm_runio_run");
+  let mod: parser.Module = rundriver.parse_stdin("wasm_runio_run");
   if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) {
     return 1;
   }
-  var d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
+  let d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
   if (decide) {
     // The emit's own decision (component=true, io=true), reused from
     // wasm_ir rather than restated so the probe cannot drift from the
     // emitter it describes.
-    var plm: parser.Module = wasm_ir.route_normalized(d.full);
+    let plm: parser.Module = wasm_ir.route_normalized(d.full);
     if (wasm_ir.ir_route_ok(plm, true, true, d.sub)) {
       print("ir\n");
     } else {
@@ -52,6 +58,6 @@ function main(): i32 {
     }
     return 0;
   }
-  write(wasm_ir.emit_module_mode_or_error_sub(d.full, true, true, d.sub));
+  write(wasm_ir.emit_module_mode_or_error_sub(d.full, true, !reactor || wasm_ir.component_needs_host(d.full), d.sub));
   return 0;
 }

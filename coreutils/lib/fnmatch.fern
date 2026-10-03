@@ -31,8 +31,8 @@ function fn_is_space(c: i32): boolean {
 // fails the whole match on a name that is not one, so the two answers
 // are separate.
 function fn_class(name: string, c: i32): (boolean, boolean) {
-  var alpha: boolean = c >= 65 && c <= 90 || c >= 97 && c <= 122;
-  var digit: boolean = c >= 48 && c <= 57;
+  let alpha: boolean = c >= 65 && c <= 90 || c >= 97 && c <= 122;
+  let digit: boolean = c >= 48 && c <= 57;
   if (name == "alpha") {
     return (true, alpha);
   }
@@ -77,20 +77,20 @@ function fn_class(name: string, c: i32): (boolean, boolean) {
 // match, 2 the pattern is invalid, 3 the bracket never closed and the
 // `[` is an ordinary byte; `next` is the index just past the `]`.
 function fn_bracket(p: string, start: i32, ch: i32): (i32, i32) {
-  var n: i32 = p.len();
-  var i: i32 = start + 1;
-  var negate: boolean = false;
+  let n: i32 = p.len();
+  let i: i32 = start + 1;
+  let negate: boolean = false;
   if (i < n && (p[i] as i32 == 33 || p[i] as i32 == 94)) {
     negate = true;
     i = i + 1;
   }
-  var hit: boolean = false;
-  var first: boolean = true;
+  let hit: boolean = false;
+  let first: boolean = true;
   while (true) {
     if (i >= n) {
       return (3, start);
     }
-    var c: i32 = p[i] as i32;
+    let c: i32 = p[i] as i32;
     if (c == 93 && !first) {
       i = i + 1;
       break;
@@ -98,19 +98,19 @@ function fn_bracket(p: string, start: i32, ch: i32): (i32, i32) {
     first = false;
     // `[:class:]`, `[.symbol.]`, `[=equivalence=]`.
     if (c == 91 && i + 1 < n && (p[i + 1] as i32 == 58 || p[i + 1] as i32 == 46 || p[i + 1] as i32 == 61)) {
-      var kind: i32 = p[i + 1] as i32;
-      var body: i32 = i + 2;
-      var j: i32 = body;
+      let kind: i32 = p[i + 1] as i32;
+      let body: i32 = i + 2;
+      let j: i32 = body;
       while (j + 1 < n && !(p[j] as i32 == kind && p[j + 1] as i32 == 93)) {
         j = j + 1;
       }
       if (j + 1 >= n) {
         return (2, start);
       }
-      var name: string = slice_unchecked(p, body, j) + "";
+      let name: string = slice_unchecked(p, body, j) + "";
       i = j + 2;
       if (kind == 58) {
-        var cls: (boolean, boolean) = fn_class(name, ch);
+        let cls: (boolean, boolean) = fn_class(name, ch);
         if (!cls.0) {
           return (2, start);
         }
@@ -124,14 +124,14 @@ function fn_bracket(p: string, start: i32, ch: i32): (i32, i32) {
       if (name.len() != 1) {
         return (2, start);
       }
-      var lo: i32 = name[0] as i32;
+      let lo: i32 = name[0] as i32;
       // A `[.x.]` may open a range: `[[.a.]-c]`.
-      var r: (i32, boolean) = fn_range(p, i, lo, ch, hit);
+      let r: (i32, boolean) = fn_range(p, i, lo, ch, hit);
       i = r.0;
       hit = r.1;
       continue;
     }
-    var lo2: i32 = c;
+    let lo2: i32 = c;
     if (c == 92) {
       if (i + 1 >= n) {
         return (3, start);
@@ -141,7 +141,7 @@ function fn_bracket(p: string, start: i32, ch: i32): (i32, i32) {
     } else {
       i = i + 1;
     }
-    var r2: (i32, boolean) = fn_range(p, i, lo2, ch, hit);
+    let r2: (i32, boolean) = fn_range(p, i, lo2, ch, hit);
     i = r2.0;
     hit = r2.1;
   }
@@ -157,10 +157,10 @@ function fn_bracket(p: string, start: i32, ch: i32): (i32, i32) {
 // `lo` has been read; if a `-` follows that is not the bracket's last
 // byte, read the range's upper bound. Returns (next index, hit).
 function fn_range(p: string, at: i32, lo: i32, ch: i32, hit: boolean): (i32, boolean) {
-  var n: i32 = p.len();
-  var i: i32 = at;
+  let n: i32 = p.len();
+  let i: i32 = at;
   if (i + 1 < n && p[i] as i32 == 45 && p[i + 1] as i32 != 93) {
-    var hi: i32 = p[i + 1] as i32;
+    let hi: i32 = p[i + 1] as i32;
     i = i + 2;
     if (hi == 92 && i < n) {
       hi = p[i] as i32;
@@ -181,12 +181,12 @@ function fn_range(p: string, at: i32, lo: i32, ch: i32, hit: boolean): (i32, boo
 // a `*` backtracks over. Returns (matched, valid); an invalid pattern
 // is reported rather than answered so the `*` retry loop stops.
 function fn_match(p: string, pi0: i32, s: string, si0: i32): (boolean, boolean) {
-  var pi: i32 = pi0;
-  var si: i32 = si0;
-  var pn: i32 = p.len();
-  var sn: i32 = s.len();
+  let pi: i32 = pi0;
+  let si: i32 = si0;
+  let pn: i32 = p.len();
+  let sn: i32 = s.len();
   while (pi < pn) {
-    var c: i32 = p[pi] as i32;
+    let c: i32 = p[pi] as i32;
     if (c == 42) {
       while (pi < pn && p[pi] as i32 == 42) {
         pi = pi + 1;
@@ -194,9 +194,9 @@ function fn_match(p: string, pi0: i32, s: string, si0: i32): (boolean, boolean) 
       if (pi >= pn) {
         return (true, true);
       }
-      var k: i32 = si;
+      let k: i32 = si;
       while (k <= sn) {
-        var r: (boolean, boolean) = fn_match(p, pi, s, k);
+        let r: (boolean, boolean) = fn_match(p, pi, s, k);
         if (!r.1) {
           return (false, false);
         }
@@ -231,7 +231,7 @@ function fn_match(p: string, pi0: i32, s: string, si0: i32): (boolean, boolean) 
       if (si >= sn) {
         return (false, true);
       }
-      var b: (i32, i32) = fn_bracket(p, pi, s[si] as i32);
+      let b: (i32, i32) = fn_bracket(p, pi, s[si] as i32);
       if (b.0 == 2) {
         return (false, false);
       }
@@ -261,6 +261,6 @@ function fn_match(p: string, pi0: i32, s: string, si0: i32): (boolean, boolean) 
 }
 
 pub function fnmatch(pat: string, s: string): boolean {
-  var r: (boolean, boolean) = fn_match(pat, 0, s, 0);
+  let r: (boolean, boolean) = fn_match(pat, 0, s, 0);
   return r.0 && r.1;
 }

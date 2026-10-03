@@ -25,8 +25,8 @@ import "./gnu";
 // the general path, which counts terminators across the hold as well
 // and was always right for that case.
 pub function tail_start(s: u8[], n: u64, term: i32): i32 {
-  var pos: i32 = s.len();
-  var left: u64 = n + 1 as u64;
+  let pos: i32 = s.len();
+  let left: u64 = n + 1 as u64;
   while (left > 0 as u64) {
     pos = __rmemchr_bytes(s, term, pos - 1);
     if (pos < 0) {
@@ -60,10 +60,10 @@ pub function hold_push(own h: Hold, bytes: u8[]): Hold {
   if (h.n == 0 as u64) {
     return hold_from(bytes, 0);
   }
-  var first = h.first;
-  var offset = h.offset;
-  var n = h.n + bytes.len() as u64;
-  var blocks = h.blocks;
+  let first = h.first;
+  let offset = h.offset;
+  let n = h.n + bytes.len() as u64;
+  let blocks = h.blocks;
   blocks = blocks.append(bytes);
   return Hold { blocks: blocks, first: first, offset: offset, n: n, last: bytes[bytes.len() - 1] };
 }
@@ -75,14 +75,14 @@ pub function hold_drop(own h: Hold, n: u64): Hold {
   if (n >= h.n) {
     return hold_empty();
   }
-  var first = h.first;
-  var offset = h.offset;
-  var remaining = h.n - n;
-  var last = h.last;
-  var blocks = h.blocks;
-  var left = n;
+  let first = h.first;
+  let offset = h.offset;
+  let remaining = h.n - n;
+  let last = h.last;
+  let blocks = h.blocks;
+  let left = n;
   while (left > 0 as u64) {
-    var available = blocks[first].len() - offset;
+    let available = blocks[first].len() - offset;
     if (left < available as u64) {
       offset = offset + left as i32;
       break;
@@ -93,8 +93,8 @@ pub function hold_drop(own h: Hold, n: u64): Hold {
     offset = 0;
   }
   if (first > 0 && first >= blocks.len() / 2) {
-    var kept: u8[][] = [];
-    var i = first;
+    let kept: u8[][] = [];
+    let i = first;
     while (i < blocks.len()) {
       kept = kept.append(blocks[i]);
       i = i + 1;
@@ -106,15 +106,15 @@ pub function hold_drop(own h: Hold, n: u64): Hold {
 }
 
 pub function hold_cut(h: Hold, n: u64, term: i32): u64 {
-  var i = h.first;
-  var start = h.offset;
-  var walked = 0 as u64;
-  var left = n;
+  let i = h.first;
+  let start = h.offset;
+  let walked = 0 as u64;
+  let left = n;
   while (i < h.blocks.len()) {
-    var chunk = h.blocks[i];
-    var pos = start;
+    let chunk = h.blocks[i];
+    let pos = start;
     while (left > 0 as u64) {
-      var found = __memchr_bytes(chunk, term, pos);
+      let found = __memchr_bytes(chunk, term, pos);
       if (found < 0) {
         break;
       }
@@ -132,13 +132,13 @@ pub function hold_cut(h: Hold, n: u64, term: i32): u64 {
 }
 
 pub function hold_write(h: Hold, o: gnu.Stream, n: u64): gnu.Stream {
-  var out = o;
-  var i = h.first;
-  var start = h.offset;
-  var left = n;
+  let out = o;
+  let i = h.first;
+  let start = h.offset;
+  let left = n;
   while (left > 0 as u64 && i < h.blocks.len()) {
-    var chunk = h.blocks[i];
-    var size = chunk.len() - start;
+    let chunk = h.blocks[i];
+    let size = chunk.len() - start;
     if (size as u64 > left) {
       size = left as i32;
     }

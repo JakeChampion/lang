@@ -1,11 +1,8 @@
-// E2E tests for the WASM backend, executed against a preview-2
-// Component Model component under wasmtime. The pipeline is parse
-// → check → wasm.EmitWithOptions{PrintMainResult: true} →
-// wasm-tools parse + component embed + component new (with the
-// wasi-preview1-component-adapter for the legacy entry-point
-// trampoline only) → `wasmtime run`. Tests skip when any of
-// wasm-tools / wasmtime / `FERN_WASI_ADAPTER` is missing so
-// `go test ./...` stays green on machines without the toolchain.
+// E2E tests for wasm32-wasi. A program compiles with the self-host CLI to a
+// WASI core module, which `wasmtime run --invoke main` runs, printing main's
+// result after the program's own stdout. Tests of preview-2 host behaviour
+// build a wasi:cli component instead (buildCLIComponent). Tests skip when
+// wasmtime is missing or not the pinned version (skipIfPreview2Missing).
 package e2e
 
 import (
@@ -27,6 +24,7 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
@@ -116,32 +114,59 @@ type runOpts struct {
 	fdLimit int      // when > 0, run wasmtime under `ulimit -n <fdLimit>`
 }
 
-// buildComponent runs the in-process parse → check → wasm.Emit
-// pipeline for src, then drives wasm-tools to emit a Component
-// Model component. PrintMainResult is on so `_start` appends
-// main()'s i32 result to stdout via int_to_string + print. Skips
-// the test if the preview-2 toolchain is unavailable.
-// withResultPrinter guarantees `core/int` is in the import closure so
-// the BuildOptions.PrintMainResult wrapper can stringify main()'s i32
-// return via int_to_string. The auto-prelude used to supply that name
-// to every program; with the prelude gone (docs/PRELUDE-TO-MODULES.md
-// phase 5) the test harness — which is what turns main()'s result into
-// the stdout line runWasm parses — has to pull it in itself rather than
-// make all ~400 wasm programs declare an import they don't otherwise
-// use. Imports may appear in any order and modload dedups, so an
-// unconditional prepend is safe whether or not the program already
-// imports core/int.
-func withResultPrinter(src string) string {
-	return "import \"core/int\";\n" + src
-}
-
+// buildComponent compiles src with the self-host compiler to a WASI core
+// module, which runComponent runs with `--invoke main` so main's result is
+// printed after the program's own stdout.
 func buildComponent(t *testing.T, src string) string {
 	t.Helper()
-	skipIfPreview2Missing(t)
+	return buildComponentMulti(t, "main.fern", map[string]string{"main.fern": src})
+}
 
-	src = withResultPrinter(src)
+// buildComponentMulti is buildComponent for an entry and its sibling modules.
+func buildComponentMulti(t *testing.T, entry string, files map[string]string) string {
+	t.Helper()
+	skipIfPreview2Missing(t)
+	dir := t.TempDir()
+	for path, contents := range files {
+		full := filepath.Join(dir, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return e2eharness.CompileSelfHostFile(t, e2eharness.TargetWasm32Wasi, filepath.Join(dir, entry), nil)
+}
+
+// buildCLIComponent compiles src with the self-host compiler to a plain
+// wasi:cli/run component, so the program's own prints are its only stdout.
+func buildCLIComponent(t *testing.T, src string) string {
+	t.Helper()
+	skipIfPreview2Missing(t)
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	comp := filepath.Join(dir, "prog.component.wasm")
+	if out, err := e2eharness.SelfHostCompileCmd(t, e2eharness.TargetWasm32Wasi, srcPath, comp).CombinedOutput(); err != nil {
+		t.Fatalf("SELFHOST-COMPILE-FAIL -target wasm32-wasi: %v\n%s\nsrc:\n%s", err, out, src)
+	}
+	return comp
+}
+
+// buildNativeComponent builds src into a wasi:cli/run component with the
+// native wasm backend. Only the async programs use it: their poll host has no
+// import in the self-host's wasm component, so they stay native until the wasm
+// async decision on #4451.
+func buildNativeComponent(t *testing.T, src string, opts wasmbin.BuildOptions) string {
+	t.Helper()
+	skipIfPreview2Missing(t)
+	if opts.PrintMainResult {
+		src = withResultPrinter(src)
+	}
+	srcPath := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
@@ -159,63 +184,47 @@ func buildComponent(t *testing.T, src string) string {
 	if err := monomorph.Run(prog, info); err != nil {
 		t.Fatalf("monomorph: %v", err)
 	}
-	bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		PrintMainResult:    true,
-	})
+	bin, err := wasmbin.BuildWithOptions(prog, info, opts)
 	if err != nil {
 		t.Fatalf("wasmbin.Build: %v", err)
 	}
 	return finishComponentFromCoreBytes(t, bin)
 }
 
-// buildComponentMulti is buildComponent for a module set loaded
-// through modload (the multi-file analogue).
-func buildComponentMulti(t *testing.T, entry string, files map[string]string) string {
-	t.Helper()
-	skipIfPreview2Missing(t)
+// nativeMainResult builds a component whose stdout ends with main's result.
+var nativeMainResult = wasmbin.BuildOptions{ForceMemorySection: true, Preview2WASI: true, SynthCliRun: true, PrintMainResult: true}
 
-	dir := t.TempDir()
-	for path, contents := range files {
-		if path == entry {
-			// core/int for the PrintMainResult wrapper's int_to_string
-			// (see withResultPrinter) — the entry is what defines main.
-			contents = withResultPrinter(contents)
-		}
-		full := filepath.Join(dir, path)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(full, []byte(contents), 0o644); err != nil {
-			t.Fatal(err)
-		}
+// runNativeStdout runs src through buildNativeComponent and returns its stdout.
+func runNativeStdout(t *testing.T, src string) string {
+	t.Helper()
+	s, e, ec := runComponent(t, buildNativeComponent(t, src, nativeMainResult), runOpts{})
+	if ec != 0 {
+		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, s, e)
 	}
-	prog, _, err := modload.Load(filepath.Join(dir, entry))
+	return s
+}
+
+// runWasmNative is runWasm through the native backend.
+func runWasmNative(t *testing.T, src string) int {
+	t.Helper()
+	return parseMainResult(t, runNativeStdout(t, src))
+}
+
+// isCoreModule reports whether the wasm binary at path is a core module
+// rather than a component: their headers differ in the version field, which is
+// 1 for a core module.
+func isCoreModule(t *testing.T, path string) bool {
+	t.Helper()
+	f, err := os.Open(path)
 	if err != nil {
-		t.Fatalf("modload: %v", err)
+		t.Fatal(err)
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
+	defer f.Close()
+	head := make([]byte, 8)
+	if _, err := io.ReadFull(f, head); err != nil {
+		t.Fatalf("read wasm header of %s: %v", path, err)
 	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		PrintMainResult:    true,
-	})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
-	return finishComponentFromCoreBytes(t, bin)
+	return bytes.Equal(head, []byte{0, 'a', 's', 'm', 1, 0, 0, 0})
 }
 
 // finishComponentFromCoreBytes composes the wasmbin-produced core
@@ -249,6 +258,9 @@ func runComponent(t *testing.T, componentPath string, opts runOpts) (stdout, std
 	}
 	for _, e := range opts.envs {
 		cmdArgs = append(cmdArgs, "--env", e)
+	}
+	if isCoreModule(t, componentPath) {
+		cmdArgs = append(cmdArgs, "--invoke", "main")
 	}
 	cmdArgs = append(cmdArgs, componentPath)
 	cmdArgs = append(cmdArgs, opts.args...)
@@ -366,7 +378,7 @@ pub function make(x: i32, y: i32): Point {
 }`,
 		"main.fern": `import "./point";
 function main(): i32 {
-	var p: point.Point = point.make(3, 4);
+	let p: point.Point = point.make(3, 4);
 	return p.x + p.y;
 }`,
 	})
@@ -399,7 +411,7 @@ func TestWASMHttpParseRequest(t *testing.T) {
 	src := `
 import "std/http";
 function main(): i32 {
-    var raw: string = "POST /todos HTTP/1.1\r\nHost: localhost\r\nContent-Length: 13\r\n\r\nhello, world!";
+    let raw: string = "POST /todos HTTP/1.1\r\nHost: localhost\r\nContent-Length: 13\r\n\r\nhello, world!";
     match (http.http_parse_request(raw)) {
         Some(req) => {
             if (req.method != "POST") { return 1; }
@@ -424,7 +436,7 @@ func TestWASMHttpParseRequestNoBody(t *testing.T) {
 	src := `
 import "std/http";
 function main(): i32 {
-    var raw: string = "GET /hello?name=world HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    let raw: string = "GET /hello?name=world HTTP/1.1\r\nHost: localhost\r\n\r\n";
     match (http.http_parse_request(raw)) {
         Some(req) => {
             if (req.method != "GET") { return 1; }
@@ -447,7 +459,7 @@ func TestWASMHttpParseRequestPartial(t *testing.T) {
 	src := `
 import "std/http";
 function main(): i32 {
-    var raw: string = "GET /partial HTTP/1.1\r\nHost: loca";
+    let raw: string = "GET /partial HTTP/1.1\r\nHost: loca";
     match (http.http_parse_request(raw)) {
         Some(_) => { return 1; },
         None => { return 42; }
@@ -466,9 +478,9 @@ func TestWASMHttpSerializeResponse(t *testing.T) {
 	src := `
 import "std/http";
 function main(): i32 {
-    var resp: HttpResponse = http.ok("hi");
-    var wire: string = http.http_serialize_response(resp);
-    var expected: string = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi";
+    let resp: HttpResponse = http.ok("hi");
+    let wire: string = http.http_serialize_response(resp);
+    let expected: string = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi";
     if (wire != expected) { return 1; }
     return 42;
 }`
@@ -483,8 +495,8 @@ func TestWASMHttpSerializeResponse404(t *testing.T) {
 	src := `
 import "std/http";
 function main(): i32 {
-    var resp: HttpResponse = http.text(404, "not found");
-    var wire: string = http.http_serialize_response(resp);
+    let resp: HttpResponse = http.text(404, "not found");
+    let wire: string = http.http_serialize_response(resp);
     if (!wire.starts_with("HTTP/1.1 404 Not Found\r\n")) { return 1; }
     return 42;
 }`
@@ -497,7 +509,7 @@ function main(): i32 {
 // argv = [mod.wat, alpha, beta] and `len(args()) == 3`.
 func TestWASMArgsBuiltin(t *testing.T) {
 	src := `function main(): i32 {
-		var a: string[] = args();
+		let a: string[] = args();
 		return a.len();
 	}`
 	stdout, _ := invokeWasmtimeWithArgs(t, src, "alpha", "beta")
@@ -525,7 +537,7 @@ func TestWASMArgsBuiltin(t *testing.T) {
 // language's `print` lowers via fd_write like any other string.
 func TestWASMArgsBuiltinReadsValue(t *testing.T) {
 	src := `function main(): i32 {
-		var a: string[] = args();
+		let a: string[] = args();
 		print(a[1]);
 		return 0;
 	}`
@@ -543,7 +555,7 @@ func TestWASMArgsBuiltinReadsValue(t *testing.T) {
 // would print garbage or truncate.
 func TestWASMArgsBuiltinCopiesLongValue(t *testing.T) {
 	src := `function main(): i32 {
-		var a: string[] = args();
+		let a: string[] = args();
 		print(a[1]);
 		return 0;
 	}`
@@ -563,6 +575,14 @@ func runWasmStdinEnv(t *testing.T, src, stdin string, envs []string) (stdout, st
 	t.Helper()
 	p := buildComponent(t, src)
 	return runComponent(t, p, runOpts{stdin: stdin, envs: envs})
+}
+
+// runCLIComponent runs src as a wasi:cli/run component, for a test of
+// preview-2 host behaviour: its stdout is the program's alone, and its exit
+// status is the one wasi:cli/exit carries.
+func runCLIComponent(t *testing.T, src string, opts runOpts) (stdout, stderr string, exitCode int) {
+	t.Helper()
+	return runComponent(t, buildCLIComponent(t, src), opts)
 }
 
 // `read_line()` reads one line from stdin including the trailing
@@ -757,8 +777,8 @@ func TestWASMFStringInterpolation(t *testing.T) {
 	src := `
 import "std/string";
 function main(): i32 {
-		var name: string = "world";
-		var n: i32 = 7;
+		let name: string = "world";
+		let n: i32 = 7;
 		print(f"hi {name}");
 		print(f"n is {n}, n*n is {n * n}");
 		print(f"plain");
@@ -820,7 +840,7 @@ func TestWASMWriterWriteStdoutNoCorruption(t *testing.T) {
 	const src = `
 import "std/string";
 function emit(s: string): i32 {
-    var w: Writer = stdout();
+    let w: Writer = stdout();
     match (w.write(s)) { Some(_) => { return 1; }, None => {}, }
     return 0;
 }
@@ -869,9 +889,9 @@ function leafOf(t: Tree[i32]): i32 {
 }
 
 function main(): i32 {
-    var a: Tree[i32] = Tree.Leaf(Leaf[i32] { v: 4 });
-    var b: Tree[i32] = Pair[i32] { a: 5, b: 6 };
-    var c: Tree[i32] = Lit { v: 7 };
+    let a: Tree[i32] = Tree.Leaf(Leaf[i32] { v: 4 });
+    let b: Tree[i32] = Pair[i32] { a: 5, b: 6 };
+    let c: Tree[i32] = Lit { v: 7 };
     if (leafOf(a) + leafOf(b) + leafOf(c) == 22) { return 0; }
     return 1;
 }`
@@ -909,7 +929,7 @@ func TestWASMReturn42(t *testing.T) {
 }
 
 // i64 round-trips through arithmetic + comparison. main() stays
-// i32 (the test harness reads main's i32 return via int_to_string),
+// i32 (the harness reads main's i32 return from wasmtime's --invoke line),
 // but the body holds an i64 value through addition and comparison.
 // Exercises OpExtendI32S on the casts in, OpAdd/OpEq with Width=64
 // in the body, and the i64 wasm types on the local + parameter
@@ -917,7 +937,7 @@ func TestWASMReturn42(t *testing.T) {
 func TestWASMI64Arithmetic(t *testing.T) {
 	src := `function add64(x: i64, y: i64): i64 { return x + y; }
 function main(): i32 {
-    var z: i64 = add64(40, 2);
+    let z: i64 = add64(40, 2);
     if (z == 42) { return 0; }
     return 1;
 }`
@@ -927,7 +947,7 @@ function main(): i32 {
 }
 
 // Polymorphic numeric literals: a bare `1` flows into any
-// integer-typed slot — `var x: i64 = 1` works without `1 as
+// integer-typed slot — `let x: i64 = 1` works without `1 as
 // i64`, `f(x, 0)` resolves the `0` against f's parameter type,
 // `x + 1` settles the `1` to x's width. This test exercises all
 // three sites in a single program and verifies the wasm output
@@ -935,9 +955,9 @@ function main(): i32 {
 func TestWASMPolymorphicNumericLiterals(t *testing.T) {
 	src := `function add64(x: i64, y: i64): i64 { return x + y; }
 function main(): i32 {
-    var a: i64 = 40;
-    var b: u32 = 4294967295;
-    var c: u64 = 1 << 62;
+    let a: i64 = 40;
+    let b: u32 = 4294967295;
+    let c: u64 = 1 << 62;
     if (add64(a, 2) != 42) { return 1; }
     if (b / 2 != 2147483647) { return 2; }
     if (c <= 0) { return 3; }
@@ -949,10 +969,10 @@ function main(): i32 {
 }
 
 // Out-of-range polymorphic literal in i32 context is rejected:
-// `var x: i32 = 5000000000` is way past 2^31 so the checker
+// `let x: i32 = 5000000000` is way past 2^31 so the checker
 // should refuse rather than silently wrap.
 func TestPolymorphicLiteralI32Overflow(t *testing.T) {
-	src := `function bad(): i32 { var x: i32 = 5000000000; return x; }`
+	src := `function bad(): i32 { let x: i32 = 5000000000; return x; }`
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -974,7 +994,7 @@ func TestPolymorphicLiteralI32Overflow(t *testing.T) {
 func TestWASMUsize(t *testing.T) {
 	src := `function dbl(x: usize): usize { return x + x; }
 function main(): i32 {
-    var n: usize = 21;
+    let n: usize = 21;
     return dbl(n) as i32;
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -984,12 +1004,12 @@ function main(): i32 {
 
 func TestWASMSubI32Widths(t *testing.T) {
 	src := `function main(): i32 {
-    var a: u8 = 200;
-    var b: u8 = 50;
-    var sum: u8 = (a + b) as u8;
+    let a: u8 = 200;
+    let b: u8 = 50;
+    let sum: u8 = (a + b) as u8;
     if (sum != 250) { return 1; }
-    var u: u8 = 250;
-    var widened: u32 = u as u32;
+    let u: u8 = 250;
+    let widened: u32 = u as u32;
     if (widened != 250) { return 2; }
     return 0;
 }`
@@ -999,9 +1019,9 @@ func TestWASMSubI32Widths(t *testing.T) {
 }
 
 // Out-of-range polymorphic literal in u8 context is rejected.
-// `var x: u8 = 300` exceeds 2^8-1 so the checker should refuse.
+// `let x: u8 = 300` exceeds 2^8-1 so the checker should refuse.
 func TestSubI32LiteralOverflow(t *testing.T) {
-	src := `function bad(): i32 { var x: u8 = 300; return x as i32; }`
+	src := `function bad(): i32 { let x: u8 = 300; return x as i32; }`
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -1018,7 +1038,7 @@ func TestSubI32LiteralOverflow(t *testing.T) {
 // of three bytes round-trips through indexing.
 func TestWASMU8Array(t *testing.T) {
 	src := `function main(): i32 {
-    var bytes: u8[] = [255, 0, 66];
+    let bytes: u8[] = [255, 0, 66];
     if (bytes[0] != 255) { return 1; }
     if (bytes[1] != 0) { return 2; }
     if (bytes[2] != 66) { return 3; }
@@ -1043,7 +1063,7 @@ function (self: Color) is_red(): boolean {
     }
 }
 function main(): i32 {
-    var c: Color = Red;
+    let c: Color = Red;
     if (c.is_red()) { return 0; }
     return 1;
 }`
@@ -1062,8 +1082,8 @@ func TestWASMEnumMethodGeneric(t *testing.T) {
     }
 }
 function main(): i32 {
-    var s: Option[i32] = Some(7);
-    var n: Option[i32] = None;
+    let s: Option[i32] = Some(7);
+    let n: Option[i32] = None;
     if (s.unwrap_or(0) != 7) { return 1; }
     if (n.unwrap_or(99) != 99) { return 2; }
     return 0;
@@ -1083,7 +1103,7 @@ func TestWASMMapBasics(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     if (m.len() != 0) { return 1; }
     if (m.has(7)) { return 2; }
     m = m.insert(7, 42);
@@ -1132,7 +1152,7 @@ func TestWASMMapHasShortCircuit(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10);
     if (m.has(1) && !m.has(2)) { return 7; }
     return 0;
@@ -1167,8 +1187,8 @@ function (s: IntSet) insert(x: i32): IntSet { return IntSet { m: s.m.insert(x, 1
 function (s: IntSet) wipe(): IntSet { return IntSet { m: s.m.cleared() }; }
 function (s: IntSet) len(): i32 { return s.m.len(); }
 function main(): i32 {
-    var m0: Map[i32, i32] = map_new(4);
-    var s: IntSet = IntSet { m: m0 };
+    let m0: Map[i32, i32] = map_new(4);
+    let s: IntSet = IntSet { m: m0 };
     s = s.insert(10);
     s = s.insert(20);
     s = s.wipe();
@@ -1193,14 +1213,14 @@ func TestWASMMapResize(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(2);
-    var i: i32 = 0;
+    let m: Map[i32, i32] = map_new(2);
+    let i: i32 = 0;
     while (i < 12) {
         m = m.insert(i, i * 10);
         i = i + 1;
     }
     if (m.len() != 12) { return 1; }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < 12) {
         if let Some(v) = m.get(j) {
             if (v != j * 10) { return j + 100; }
@@ -1224,12 +1244,12 @@ func TestWASMMapKeysValues(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(4);
+    let m: Map[i32, i32] = map_new(4);
     m = m.insert(10, 100);
     m = m.insert(20, 200);
     m = m.insert(30, 300);
-    var ks: i32[] = m.keys();
-    var vs: i32[] = m.values();
+    let ks: i32[] = m.keys();
+    let vs: i32[] = m.values();
     if (ks.len() != 3) { return 1; }
     if (vs.len() != 3) { return 2; }
     // Insertion order: ks == [10, 20, 30], vs == [100, 200, 300].
@@ -1240,8 +1260,8 @@ function main(): i32 {
     if (vs[1] != 200) { return 7; }
     if (vs[2] != 300) { return 8; }
     // Sum the values via a normal indexed loop.
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < vs.len()) {
         sum = sum + vs[i];
         i = i + 1;
@@ -1264,11 +1284,11 @@ func TestWASMMapValuesWideI64(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i64] = map_new(4);
+    let m: Map[i32, i64] = map_new(4);
     m = m.insert(1, 1000000000000i64);
     m = m.insert(2, 2000000000000i64);
     m = m.insert(3, 3000000000000i64);
-    var vs: i64[] = m.values();
+    let vs: i64[] = m.values();
     if (vs.len() != 3) { return 1; }
     if (vs[0] != 1000000000000i64) { return 2; }
     if (vs[2] != 3000000000000i64) { return 3; }
@@ -1283,10 +1303,10 @@ func TestWASMMapValuesWideF64(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, f64] = map_new(4);
+    let m: Map[i32, f64] = map_new(4);
     m = m.insert(1, 1.5f64);
     m = m.insert(2, 2.5f64);
-    var vs: f64[] = m.values();
+    let vs: f64[] = m.values();
     if (vs.len() != 2) { return 1; }
     if (vs[0] != 1.5f64) { return 2; }
     if (vs[1] != 2.5f64) { return 3; }
@@ -1310,7 +1330,7 @@ func TestWASMWideKeyMapBasic(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i64, i32] = map_new(4);
+    let m: Map[i64, i32] = map_new(4);
     m = m.insert(1i64, 100);
     m = m.insert(2i64, 200);
     return m.get_or(2i64, 0) + m.get_or(1i64, 0);
@@ -1324,13 +1344,13 @@ func TestWASMWideKeyMapHasDelete(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i64, i32] = map_new(4);
+    let m: Map[i64, i32] = map_new(4);
     m = m.insert(7i64, 100);
     m = m.insert(42i64, 200);
     if (!m.has(7i64)) { return 1; }
     if (!m.has(42i64)) { return 2; }
     if (m.has(99i64)) { return 3; }
-    var (m7, had7) = m.without(7i64);
+    let (m7, had7) = m.without(7i64);
     if (!had7) { return 4; }
     m = m7;
     if (m.has(7i64)) { return 5; }
@@ -1346,7 +1366,7 @@ func TestWASMWideKeyMapOverwrite(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i64, i32] = map_new(4);
+    let m: Map[i64, i32] = map_new(4);
     m = m.insert(1i64, 100);
     m = m.insert(1i64, 999);
     if (m.len() != 1) { return 1; }
@@ -1361,15 +1381,15 @@ func TestWASMWideKeyMapGrow(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i64, i32] = map_new(2);
-    var i: i32 = 0;
+    let m: Map[i64, i32] = map_new(2);
+    let i: i32 = 0;
     while (i < 20) {
         m = m.insert(i as i64, i * 10);
         i = i + 1;
     }
     if (m.len() != 20) { return 1; }
-    var sum: i32 = 0;
-    var j: i32 = 0;
+    let sum: i32 = 0;
+    let j: i32 = 0;
     while (j < 20) {
         sum = sum + m.get_or(j as i64, 0);
         j = j + 1;
@@ -1390,9 +1410,9 @@ func TestWASMWideKeyMapHighBitsDistinct(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i64, i32] = map_new(8);
-    var k1: i64 = 0i64;
-    var k2: i64 = 1i64 << 33i64;
+    let m: Map[i64, i32] = map_new(8);
+    let k1: i64 = 0i64;
+    let k2: i64 = 1i64 << 33i64;
     m = m.insert(k1, 1);
     m = m.insert(k2, 2);
     return m.get_or(k1, 99) + m.get_or(k2, 99);
@@ -1406,7 +1426,7 @@ func TestWASMWideKeyMapU64(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[u64, i32] = map_new(4);
+    let m: Map[u64, i32] = map_new(4);
     m = m.insert(1u64, 100);
     return m.get_or(1u64, 0);
 }`
@@ -1419,7 +1439,7 @@ func TestWASMWideKeyMapStringV(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i64, string] = map_new(4);
+    let m: Map[i64, string] = map_new(4);
     m = m.insert(1i64, "hello");
     return (m.get_or(1i64, "")).len();
 }`
@@ -1441,10 +1461,10 @@ func TestWASMWideKeyMapKeysSnapshot(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i64, i32] = map_new(4);
+    let m: Map[i64, i32] = map_new(4);
     m = m.insert(1i64, 10);
     m = m.insert(1000000000000i64, 20);
-    var keys: i64[] = m.keys();
+    let keys: i64[] = m.keys();
     if (keys.len() != 2) { return 1; }
     if (keys[0] != 1i64 && keys[0] != 1000000000000i64) { return 2; }
     if (keys[1] != 1i64 && keys[1] != 1000000000000i64) { return 3; }
@@ -1465,12 +1485,12 @@ func TestWASMMapDelete(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(4);
+    let m: Map[i32, i32] = map_new(4);
     m = m.insert(1, 10);
     m = m.insert(2, 20);
     m = m.insert(3, 30);
     if (m.len() != 3) { return 1; }
-    var (m2, had2) = m.without(2);
+    let (m2, had2) = m.without(2);
     if (!had2) { return 2; }   // present → true
     m = m2;
     if (m.len() != 2) { return 3; }
@@ -1511,7 +1531,7 @@ func TestWASMMapLiteral(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
+    let m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
     if (m.len() != 3) { return 1; }
     if let Some(v) = m.get(2) {
         if (v != 20) { return 2; }
@@ -1520,11 +1540,11 @@ function main(): i32 {
     }
     if let Some(_) = m.get(99) { return 4; }
     // Empty literal works too.
-    var empty: Map[i32, i32] = Map {};
+    let empty: Map[i32, i32] = Map {};
     if (empty.len() != 0) { return 5; }
     if (empty.has(0)) { return 6; }
     // Trailing comma is fine.
-    var m2: Map[i32, i32] = Map { 7: 700, };
+    let m2: Map[i32, i32] = Map { 7: 700, };
     if (m2.len() != 1) { return 7; }
     return 0;
 }`
@@ -1539,7 +1559,7 @@ function main(): i32 {
 // this completes the symmetry.
 func TestWASMSubI32ArrayWrites(t *testing.T) {
 	src := `function main(): i32 {
-    var bytes: u8[] = [1, 2, 3, 4];
+    let bytes: u8[] = [1, 2, 3, 4];
     bytes = bytes.with(0, 250);
     bytes = bytes.with(2, 99);
     if (bytes[0] != 250) { return 1; }
@@ -1559,8 +1579,8 @@ func TestWASMSubI32ArrayWrites(t *testing.T) {
 // read.
 func TestWASMI64Array(t *testing.T) {
 	src := `function i64Sum(xs: i64[], n: i32): i64 {
-    var i: i32 = 0;
-    var s: i64 = 0;
+    let i: i32 = 0;
+    let s: i64 = 0;
     while (i < n) {
         s = s + xs[i];
         i = i + 1;
@@ -1568,9 +1588,9 @@ func TestWASMI64Array(t *testing.T) {
     return s;
 }
 function main(): i32 {
-    var xs: i64[] = [1, 2, 3, 4];
+    let xs: i64[] = [1, 2, 3, 4];
     xs = xs.with(1, (1 << 62) + 1);
-    var s: i64 = i64Sum(xs, 4);
+    let s: i64 = i64Sum(xs, 4);
     // 1 + ((1 << 62) + 1) + 3 + 4 == (1 << 62) + 9
     if (s != (1 << 62) + 9) { return 1; }
     if (xs[0] != 1) { return 2; }
@@ -1587,12 +1607,12 @@ function main(): i32 {
 // values round-trips through indexing.
 func TestWASMF64Array(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: f64[] = [1.5, 2.5, 3.5];
+    let xs: f64[] = [1.5, 2.5, 3.5];
     xs = xs.with(1, 99.25);
     if (xs[0] != 1.5) { return 1; }
     if (xs[1] != 99.25) { return 2; }
     if (xs[2] != 3.5) { return 3; }
-    var sum: f64 = xs[0] + xs[1] + xs[2];
+    let sum: f64 = xs[0] + xs[1] + xs[2];
     if (sum != 104.25) { return 4; }
     return 0;
 }`
@@ -1606,21 +1626,21 @@ func TestWASMF64Array(t *testing.T) {
 // indexing into the slice should match the underlying array.
 func TestWASMSubI32Slices(t *testing.T) {
 	src := `function main(): i32 {
-    var bytes: u8[] = [10, 20, 30, 40, 50];
-    var view: [u8] = bytes[1:4];
+    let bytes: u8[] = [10, 20, 30, 40, 50];
+    let view: [u8] = bytes[1:4];
     if (view.len() != 3) { return 1; }
     if (view[0] != 20) { return 2; }
     if (view[1] != 30) { return 3; }
     if (view[2] != 40) { return 4; }
 
-    var words: i32[] = [1, 2, 3, 4];
-    var wordview: [i32] = words[2:];
+    let words: i32[] = [1, 2, 3, 4];
+    let wordview: [i32] = words[2:];
     if (wordview.len() != 2) { return 5; }
     if (wordview[0] != 3) { return 6; }
     if (wordview[1] != 4) { return 7; }
 
-    var wide: i64[] = [(1 << 40), (1 << 41), (1 << 42)];
-    var wview: [i64] = wide[1:3];
+    let wide: i64[] = [(1 << 40), (1 << 41), (1 << 42)];
+    let wview: [i64] = wide[1:3];
     if (wview.len() != 2) { return 8; }
     if (wview[0] != (1 << 41)) { return 9; }
     if (wview[1] != (1 << 42)) { return 10; }
@@ -1644,10 +1664,10 @@ func TestWASMSubI32Slices(t *testing.T) {
 // allocated substring on wasm.
 func TestWASMStringSlice(t *testing.T) {
 	src := `function main(): i32 {
-    var greeting: string = "hello world";
-    var hello: str = slice_unchecked(greeting, 0, 5);
-    var world: str = slice_unchecked(greeting, 6, 11);
-    var dot: str = slice_unchecked(greeting, 5, 6);
+    let greeting: string = "hello world";
+    let hello: str = slice_unchecked(greeting, 0, 5);
+    let world: str = slice_unchecked(greeting, 6, 11);
+    let dot: str = slice_unchecked(greeting, 5, 6);
     if (hello.len() != 5) { return 1; }
     if (world.len() != 5) { return 2; }
     if (dot.len() != 1) { return 3; }
@@ -1655,7 +1675,7 @@ func TestWASMStringSlice(t *testing.T) {
     if (world != "world") { return 5; }
     if (dot != " ") { return 6; }
     // Empty slice.
-    var empty: str = slice_unchecked(greeting, 3, 3);
+    let empty: str = slice_unchecked(greeting, 3, 3);
     if (empty.len() != 0) { return 9; }
     return 0;
 }`
@@ -1673,7 +1693,7 @@ func TestWASMStringSlice(t *testing.T) {
 // have to survive that, as does the abort NOT happening.
 func TestWASMStringSliceOption(t *testing.T) {
 	src := `function main(): i32 {
-    var g: string = "hello world";
+    let g: string = "hello world";
     match (g[0:5]) { Some(v) => { if (v != "hello") { return 1; } }, None => { return 2; } }
     match (g[:5]) { Some(v) => { if (v != "hello") { return 3; } }, None => { return 4; } }
     match (g[6:]) { Some(v) => { if (v != "world") { return 5; } }, None => { return 6; } }
@@ -1682,7 +1702,7 @@ func TestWASMStringSliceOption(t *testing.T) {
     match (g[1:99]) { Some(v) => { return 9; }, None => {} }
     match (g[4:2]) { Some(v) => { return 10; }, None => {} }
     // "héllo" is 68 C3 A9 6C 6C 6F: offset 2 is inside the é.
-    var m: string = "héllo";
+    let m: string = "héllo";
     match (m[1:3]) { Some(v) => { if (v.len() != 2) { return 11; } }, None => { return 12; } }
     match (m[1:2]) { Some(v) => { return 13; }, None => {} }
     match (m[2:4]) { Some(v) => { return 14; }, None => {} }
@@ -1701,7 +1721,7 @@ func TestWASMStringMethods(t *testing.T) {
 	src := `
 import "std/string";
 function main(): i32 {
-    var s: string = "hello world";
+    let s: string = "hello world";
     if (!s.starts_with("hello")) { return 1; }
     if (!s.starts_with("h")) { return 2; }
     if (s.starts_with("world")) { return 3; }
@@ -1732,7 +1752,7 @@ func TestWASMStringMethodsExtra(t *testing.T) {
 	src := `
 import "std/string";
 function main(): i32 {
-    var s: string = "hello world";
+    let s: string = "hello world";
     if (s.index_of("hello") != 0) { return 1; }
     if (s.index_of("world") != 6) { return 2; }
     if (s.index_of(" ") != 5) { return 3; }
@@ -1740,13 +1760,13 @@ function main(): i32 {
     if (s.index_of("") != 0) { return 5; }
     if (s.index_of("hello world!") != -1) { return 6; }
 
-    var padded: string = "  hello   ";
-    var trimmed: str = padded.trim();
+    let padded: string = "  hello   ";
+    let trimmed: str = padded.trim();
     if (trimmed != "hello") { return 7; }
     if (trimmed.len() != 5) { return 8; }
-    var blank: string = "    ";
+    let blank: string = "    ";
     if (blank.trim() != "") { return 9; }
-    var nopad: string = "abc";
+    let nopad: string = "abc";
     if (nopad.trim() != "abc") { return 10; }
 
     if ("Hello, World!".to_lower() != "hello, world!") { return 11; }
@@ -1767,8 +1787,8 @@ func TestWASMStringSplit(t *testing.T) {
 	src := `
 import "std/string";
 function main(): i32 {
-    var s: string = "a,b,c,d";
-    var parts: string[] = s.split(",");
+    let s: string = "a,b,c,d";
+    let parts: string[] = s.split(",");
     if (parts.len() != 4) { return 1; }
     if (parts[0] != "a") { return 2; }
     if (parts[1] != "b") { return 3; }
@@ -1776,27 +1796,27 @@ function main(): i32 {
     if (parts[3] != "d") { return 5; }
 
     // No occurrence: single-element array holding the whole input.
-    var none: string[] = "hello".split(",");
+    let none: string[] = "hello".split(",");
     if (none.len() != 1) { return 6; }
     if (none[0] != "hello") { return 7; }
 
     // Multi-byte separator.
-    var s2: string = "alpha::beta::gamma";
-    var p2: string[] = s2.split("::");
+    let s2: string = "alpha::beta::gamma";
+    let p2: string[] = s2.split("::");
     if (p2.len() != 3) { return 8; }
     if (p2[0] != "alpha") { return 9; }
     if (p2[1] != "beta") { return 10; }
     if (p2[2] != "gamma") { return 11; }
 
     // Empty separator splits into chars.
-    var chars: string[] = "abc".split("");
+    let chars: string[] = "abc".split("");
     if (chars.len() != 3) { return 12; }
     if (chars[0] != "a") { return 13; }
     if (chars[1] != "b") { return 14; }
     if (chars[2] != "c") { return 15; }
 
     // Empty pieces around separators are preserved.
-    var trailing: string[] = ",a,b,".split(",");
+    let trailing: string[] = ",a,b,".split(",");
     if (trailing.len() != 4) { return 16; }
     if (trailing[0] != "") { return 17; }
     if (trailing[3] != "") { return 18; }
@@ -1829,9 +1849,9 @@ function eval(e: Expr): i32 {
 }
 
 function main(): i32 {
-    var lhs: Expr = Add(Add { l: 2, r: 3 });
-    var rhs: Expr = Lit(Lit { v: 4 });
-    var prod: Expr = Mul(Mul { l: eval(lhs), r: eval(rhs) });
+    let lhs: Expr = Add(Add { l: 2, r: 3 });
+    let rhs: Expr = Lit(Lit { v: 4 });
+    let prod: Expr = Mul(Mul { l: eval(lhs), r: eval(rhs) });
     return eval(prod);
 }`
 	if got := runWasm(t, src); got != 20 {
@@ -1882,10 +1902,10 @@ function mk_add(l: i32, r: i32): Expr {
 }
 
 function main(): i32 {
-    var a: Expr = Add { l: 2, r: 3 };
-    var sum: i32 = eval(Lit { v: 5 });
+    let a: Expr = Add { l: 2, r: 3 };
+    let sum: i32 = eval(Lit { v: 5 });
     a = Mul { l: 2, r: sum };
-    var built: Expr = mk_add(1, 2);
+    let built: Expr = mk_add(1, 2);
     return eval(a) + eval(built) + sum;
 }`
 	if got := runWasm(t, src); got != 18 {
@@ -1902,40 +1922,40 @@ func TestWASMStringLines(t *testing.T) {
 import "std/string";
 function main(): i32 {
     // LF-only.
-    var lf: string[] = "a\nb\nc".lines();
+    let lf: string[] = "a\nb\nc".lines();
     if (lf.len() != 3) { return 1; }
     if (lf[0] != "a") { return 2; }
     if (lf[1] != "b") { return 3; }
     if (lf[2] != "c") { return 4; }
 
     // CRLF stripped.
-    var crlf: string[] = "a\r\nb\r\nc".lines();
+    let crlf: string[] = "a\r\nb\r\nc".lines();
     if (crlf.len() != 3) { return 5; }
     if (crlf[0] != "a") { return 6; }
     if (crlf[1] != "b") { return 7; }
     if (crlf[2] != "c") { return 8; }
 
     // Trailing '\n' drops the phantom empty line.
-    var trail: string[] = "a\nb\n".lines();
+    let trail: string[] = "a\nb\n".lines();
     if (trail.len() != 2) { return 9; }
     if (trail[1] != "b") { return 10; }
 
     // Single "\n" → one empty line.
-    var solo: string[] = "\n".lines();
+    let solo: string[] = "\n".lines();
     if (solo.len() != 1) { return 11; }
     if (solo[0] != "") { return 12; }
 
     // Empty input → no lines at all.
-    var empty: string[] = "".lines();
+    let empty: string[] = "".lines();
     if (empty.len() != 0) { return 13; }
 
     // No trailing newline: partial line still emits.
-    var partial: string[] = "abc".lines();
+    let partial: string[] = "abc".lines();
     if (partial.len() != 1) { return 14; }
     if (partial[0] != "abc") { return 15; }
 
     // Mixed CRLF / LF.
-    var mixed: string[] = "x\r\ny\nz".lines();
+    let mixed: string[] = "x\r\ny\nz".lines();
     if (mixed.len() != 3) { return 16; }
     if (mixed[0] != "x") { return 17; }
     if (mixed[1] != "y") { return 18; }
@@ -1944,7 +1964,7 @@ function main(): i32 {
     // Bare '\r' is NOT a separator on its own — it stays in
     // the line. Only the '\r' immediately before '\n' (the
     // CRLF tail) is stripped.
-    var bareCR: string[] = "a\rb\nc".lines();
+    let bareCR: string[] = "a\rb\nc".lines();
     if (bareCR.len() != 2) { return 20; }
     if (bareCR[0] != "a\rb") { return 21; }
     if (bareCR[1] != "c") { return 22; }
@@ -1986,24 +2006,24 @@ import "std/i64";
 import "std/u32";
 import "std/u64";
 function main(): i32 {
-    var a: i32 = 42;
+    let a: i32 = 42;
     if (a.to_string() != "42") { return 1; }
-    var b: i32 = -123;
+    let b: i32 = -123;
     if (b.to_string() != "-123") { return 2; }
-    var z: i32 = 0;
+    let z: i32 = 0;
     if (z.to_string() != "0") { return 3; }
 
-    var u: u32 = 4294967295;
+    let u: u32 = 4294967295;
     if (u.to_string() != "4294967295") { return 4; }
-    var u2: u32 = 1;
+    let u2: u32 = 1;
     if (u2.to_string() != "1") { return 5; }
 
-    var i: i64 = (1 << 40) + 7;
+    let i: i64 = (1 << 40) + 7;
     if (i.to_string() != "1099511627783") { return 6; }
-    var ineg: i64 = 0 - ((1 << 40) + 7);
+    let ineg: i64 = 0 - ((1 << 40) + 7);
     if (ineg.to_string() != "-1099511627783") { return 7; }
 
-    var big: u64 = (1 << 63);
+    let big: u64 = (1 << 63);
     if (big.to_string() != "9223372036854775808") { return 8; }
     return 0;
 }`
@@ -2018,8 +2038,8 @@ func TestWASMStringBytes(t *testing.T) {
 	src := `
 import "std/string";
 function main(): i32 {
-    var s: string = "hello";
-    var bs: u8[] = s.bytes();
+    let s: string = "hello";
+    let bs: u8[] = s.bytes();
     if (bs.len() != 5) { return 1; }
     if (bs[0] != 104) { return 2; }   // 'h'
     if (bs[1] != 101) { return 3; }   // 'e'
@@ -2029,12 +2049,12 @@ function main(): i32 {
     // Mutating the bytes shouldn't affect the source string.
     bs = bs.with(0, 72); // 'H'
     if (s != "hello") { return 7; }
-    var s2: string = string_from_bytes_unchecked(bs);
+    let s2: string = string_from_bytes_unchecked(bs);
     if (s2 != "Hello") { return 8; }
     if (s2.len() != 5) { return 9; }
     // Empty string round-trip.
-    var es: string = "";
-    var ebs: u8[] = es.bytes();
+    let es: string = "";
+    let ebs: u8[] = es.bytes();
     if (ebs.len() != 0) { return 10; }
     if (string_from_bytes_unchecked(ebs) != "") { return 11; }
     return 0;
@@ -2053,24 +2073,24 @@ func TestWASMStringAsBytes(t *testing.T) {
 	src := `
 import "std/string";
 function main(): i32 {
-    var s: string = "hello";
-    var view: [u8] = s.as_bytes();
+    let s: string = "hello";
+    let view: [u8] = s.as_bytes();
     if (view.len() != 5) { return 1; }
     if (view[0] != 104) { return 2; }   // 'h'
     if (view[4] != 111) { return 3; }   // 'o'
     // Sub-slicing the view should still alias the source.
-    var tail: [u8] = view[1:5];
+    let tail: [u8] = view[1:5];
     if (tail.len() != 4) { return 4; }
     if (tail[0] != 101) { return 5; }   // 'e'
 
     // Empty string -> zero-length view, no allocation.
-    var es: string = "";
-    var ev: [u8] = es.as_bytes();
+    let es: string = "";
+    let ev: [u8] = es.as_bytes();
     if (ev.len() != 0) { return 6; }
 
     // Read parity with the copying bytes() variant.
-    var copied: u8[] = s.bytes();
-    var i: i32 = 0;
+    let copied: u8[] = s.bytes();
+    let i: i32 = 0;
     while (i < copied.len()) {
         if (copied[i] != view[i]) { return 7; }
         i = i + 1;
@@ -2186,11 +2206,11 @@ func TestWASMParseFloat(t *testing.T) {
 	src := `
 import "std/string";
 function near(actual: f64, expected: f64, eps: f64): boolean {
-		var diff: f64 = actual - expected;
+		let diff: f64 = actual - expected;
 		if (diff < 0.0) { diff = 0.0 - diff; }
-		var bound: f64 = expected;
+		let bound: f64 = expected;
 		if (bound < 0.0) { bound = 0.0 - bound; }
-		var rel: f64 = bound * eps;
+		let rel: f64 = bound * eps;
 		if (rel < eps) { rel = eps; }
 		return diff < rel;
 	}
@@ -2268,7 +2288,7 @@ func TestWASMMapStringKeysInlineSSO(t *testing.T) {
 import "core/map";
 import "core/int";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
 
     // Inline-form keys (≤ 3 bytes each).
     m = m.insert("a", 1);
@@ -2321,7 +2341,7 @@ function main(): i32 {
     if let Some(v) = m.get("GET") {
         if (v != 30) { return 22; }
     } else { return 23; }
-    var (mg, hadg) = m.without("GET");
+    let (mg, hadg) = m.without("GET");
     if (!hadg) { return 24; }
     m = mg;
     if (m.has("GET")) { return 25; }
@@ -2342,7 +2362,7 @@ func TestWASMMapStringKeys(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("hello", 1);
     m = m.insert("world", 2);
     m = m.insert("foo", 3);
@@ -2372,7 +2392,7 @@ function main(): i32 {
         return 12;
     }
     // Delete.
-    var (mf, hadf) = m.without("foo");
+    let (mf, hadf) = m.without("foo");
     if (!hadf) { return 13; }
     m = mf;
     if (m.has("foo")) { return 14; }
@@ -2390,7 +2410,7 @@ func TestWASMMapStringStringValues(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var headers: Map[string, string] = map_new(4);
+    let headers: Map[string, string] = map_new(4);
     headers = headers.insert("content-type", "text/plain");
     headers = headers.insert("x-trace-id", "abc123");
     if (headers.len() != 2) { return 1; }
@@ -2425,15 +2445,15 @@ func TestWASMMapHashStress(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(4);
-    var i: i32 = 0;
+    let m: Map[i32, i32] = map_new(4);
+    let i: i32 = 0;
     while (i < 100) {
         m = m.insert(i, i * 7 + 1);
         i = i + 1;
     }
     if (m.len() != 100) { return 1; }
     // Verify every insert is reachable.
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < 100) {
         if let Some(v) = m.get(j) {
             if (v != j * 7 + 1) { return 100 + j; }
@@ -2443,7 +2463,7 @@ function main(): i32 {
         j = j + 1;
     }
     // Update every entry's value.
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < 100) {
         m = m.insert(k, k * 11 + 2);
         k = k + 1;
@@ -2451,15 +2471,15 @@ function main(): i32 {
     if (m.len() != 100) { return 2; }
     // Delete every even key. After deletion, even keys must
     // miss and odd keys must still hit.
-    var d: i32 = 0;
+    let d: i32 = 0;
     while (d < 100) {
-        var (md, hadd) = m.without(d);
+        let (md, hadd) = m.without(d);
         if (!hadd) { return 300 + d; }
         m = md;
         d = d + 2;
     }
     if (m.len() != 50) { return 3; }
-    var c: i32 = 0;
+    let c: i32 = 0;
     while (c < 100) {
         if (c % 2 == 0) {
             if (m.has(c)) { return 400 + c; }
@@ -2474,14 +2494,14 @@ function main(): i32 {
     }
     // Re-insert deleted keys; tombstone reuse should mean
     // the load factor stays manageable.
-    var r: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
         m = m.insert(r, r);
         r = r + 2;
     }
     if (m.len() != 100) { return 4; }
     // Every key should now be present.
-    var f: i32 = 0;
+    let f: i32 = 0;
     while (f < 100) {
         if let Some(v) = m.get(f) {
             if (f % 2 == 0) {
@@ -2523,14 +2543,14 @@ function key_of(i: i32): string {
     return "k_" + digit(i / 10) + digit(i % 10);
 }
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
-    var i: i32 = 0;
+    let m: Map[string, i32] = map_new(4);
+    let i: i32 = 0;
     while (i < 80) {
         m = m.insert(key_of(i), i);
         i = i + 1;
     }
     if (m.len() != 80) { return 1; }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < 80) {
         if let Some(v) = m.get(key_of(j)) {
             if (v != j) { return 100 + j; }
@@ -2555,11 +2575,11 @@ func TestWASMMapIter(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = Map { 10: 100, 20: 200, 30: 300, 40: 400 };
-    var sum_keys: i32 = 0;
-    var sum_vals: i32 = 0;
-    var count: i32 = 0;
-    var it: MapIter[i32, i32] = m.iter();
+    let m: Map[i32, i32] = Map { 10: 100, 20: 200, 30: 300, 40: 400 };
+    let sum_keys: i32 = 0;
+    let sum_vals: i32 = 0;
+    let count: i32 = 0;
+    let it: MapIter[i32, i32] = m.iter();
     while (it.has_next()) {
         sum_keys = sum_keys + it.key();
         sum_vals = sum_vals + it.value();
@@ -2570,8 +2590,8 @@ function main(): i32 {
     if (sum_keys != 100) { return 2; }   // 10+20+30+40
     if (sum_vals != 1000) { return 3; }  // 100+200+300+400
     // Iteration over an empty map yields zero steps.
-    var empty: Map[i32, i32] = map_new(4);
-    var it2: MapIter[i32, i32] = empty.iter();
+    let empty: Map[i32, i32] = map_new(4);
+    let it2: MapIter[i32, i32] = empty.iter();
     if (it2.has_next()) { return 4; }
     return 0;
 }`
@@ -2592,10 +2612,10 @@ func TestWASMForTupleInMap(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30, 4: 40 };
-    var sum_keys: i32 = 0;
-    var sum_vals: i32 = 0;
-    var count: i32 = 0;
+    let m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30, 4: 40 };
+    let sum_keys: i32 = 0;
+    let sum_vals: i32 = 0;
+    let count: i32 = 0;
     for (k, v) in m {
         if (k == 3) { continue; }
         sum_keys = sum_keys + k;
@@ -2608,9 +2628,9 @@ function main(): i32 {
 
     // String-keyed map iterates the same way; insertion order
     // is observable so we check the concatenation directly.
-    var labels: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
-    var keys_concat: string = "";
-    var val_sum: i32 = 0;
+    let labels: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
+    let keys_concat: string = "";
+    let val_sum: i32 = 0;
     for (k2, v2) in labels {
         keys_concat = keys_concat + k2;
         val_sum = val_sum + v2;
@@ -2619,8 +2639,8 @@ function main(): i32 {
     if (val_sum != 6) { return 5; }
 
     // An empty map's foreach is a no-op.
-    var empty: Map[i32, i32] = map_new(4);
-    var ran: i32 = 0;
+    let empty: Map[i32, i32] = map_new(4);
+    let ran: i32 = 0;
     for (ek, ev) in empty {
         ran = ran + 1;
         if (ek + ev > 0) { return 6; }
@@ -2646,7 +2666,7 @@ func TestWASMMapValueI64(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i64] = map_new(8);
+    let m: Map[i32, i64] = map_new(8);
     m = m.insert(1, 4294967296 as i64);
     m = m.insert(2, 8589934592 as i64);
     match (m.get(1)) {
@@ -2661,9 +2681,9 @@ function main(): i32 {
         Some(v) => { return 5; },
         None => { }
     }
-    var fallback: i64 = m.get_or(99, 7777777777 as i64);
+    let fallback: i64 = m.get_or(99, 7777777777 as i64);
     if (fallback != (7777777777 as i64)) { return 6; }
-    var hit: i64 = m.get_or(1, 0 as i64);
+    let hit: i64 = m.get_or(1, 0 as i64);
     if (hit != (4294967296 as i64)) { return 7; }
     return 0;
 }`
@@ -2679,7 +2699,7 @@ func TestWASMMapValueF64(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, f64] = map_new(8);
+    let m: Map[string, f64] = map_new(8);
     m = m.insert("pi", 3.14 as f64);
     m = m.insert("e", 2.71 as f64);
     match (m.get("pi")) {
@@ -2715,7 +2735,7 @@ func TestWASMMapLiteralWideValue(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i64] = Map { 1: 4294967296 as i64, 2: 8589934592 as i64 };
+    let m: Map[i32, i64] = Map { 1: 4294967296 as i64, 2: 8589934592 as i64 };
     match (m.get(2)) {
         Some(v) => { if (v == (8589934592 as i64)) { return 0; } },
         None => { return 1; }
@@ -2734,9 +2754,9 @@ func TestWASMMapIterValueWide(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i64] = Map { 1: 4294967296 as i64, 2: 8589934592 as i64 };
-    var sum: i64 = 0 as i64;
-    var it: MapIter[i32, i64] = m.iter();
+    let m: Map[i32, i64] = Map { 1: 4294967296 as i64, 2: 8589934592 as i64 };
+    let sum: i64 = 0 as i64;
+    let it: MapIter[i32, i64] = m.iter();
     while (it.has_next()) {
         sum = sum + it.value();
         it.advance();
@@ -2756,10 +2776,10 @@ func TestWASMMapIterStringKeys(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
-    var concat: string = "";
-    var sum: i32 = 0;
-    var it: MapIter[string, i32] = m.iter();
+    let m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
+    let concat: string = "";
+    let sum: i32 = 0;
+    let it: MapIter[string, i32] = m.iter();
     while (it.has_next()) {
         concat = concat + it.key();
         sum = sum + it.value();
@@ -2771,55 +2791,6 @@ function main(): i32 {
 }`
 	if got := runWasm(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (Map.iter string keys)", got)
-	}
-}
-
-// __memcpy / __memset bridge functions: wat-shim wrappers
-// around wasm's bulk-memory `memory.copy` / `memory.fill`.
-// They're what enables migrating helpers that build /
-// scan growable byte buffers (the json buffer family + map
-// runtime). This test exercises both via raw alloc + an
-// `as_bytes` slice view, then pokes through the slice's
-// data_ptr to verify the bytes landed.
-//
-// `as_bytes` returns a [u8] slice whose data_ptr aliases
-// the string payload, so casting that pointer back to an
-// i32 lets us drive __memcpy / __memset against arbitrary
-// regions for testing. Production usage will always call
-// __memcpy through dedicated buffer-management code.
-func TestWASMBulkMemoryPrimitives(t *testing.T) {
-	src := `function main(): i32 {
-    // __memset: clear 8 bytes starting at the second slot
-    // of a 16-byte buffer, leave the first 8 alone.
-    var buf: u8[] = [
-        65 as u8, 66 as u8, 67 as u8, 68 as u8,
-        69 as u8, 70 as u8, 71 as u8, 72 as u8,
-        73 as u8, 74 as u8, 75 as u8, 76 as u8,
-        77 as u8, 78 as u8, 79 as u8, 80 as u8
-    ];
-    var bs: [u8] = buf[0:16];
-    // The data pointer is a memory address — type it usize (pointer
-    // width) so it flows into the usize-typed __memset / __memcpy params.
-    // Under F2, user code must reach usize via an explicit cast rather
-    // than the implicit i32<->usize hop. See docs/ADVERSARIAL-REVIEW-2026-06.md.
-    var base: usize = (bs as usize);
-    __memset(base + 8, 0, 8);
-    if (buf[0]  != 65)  { return 1; }
-    if (buf[7]  != 72)  { return 2; }
-    if (buf[8]  != 0)   { return 3; }
-    if (buf[15] != 0)   { return 4; }
-    // __memcpy: copy first 4 bytes onto the now-zeroed
-    // back half so the buffer reads ABCDEFGHABCD0000.
-    __memcpy(base + 8, base, 4);
-    if (buf[8]  != 65)  { return 5; }
-    if (buf[9]  != 66)  { return 6; }
-    if (buf[10] != 67)  { return 7; }
-    if (buf[11] != 68)  { return 8; }
-    if (buf[12] != 0)   { return 9; }
-    return 0;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("__memcpy/__memset: exit = %d, want 0", got)
 	}
 }
 
@@ -2871,8 +2842,8 @@ function inner(trace: Cell[i32]): i32 {
     return 42;
 }
 function main(): i32 {
-    var trace: Cell[i32] = cell_new(0);
-    var r: i32 = inner(trace);
+    let trace: Cell[i32] = cell_new(0);
+    let r: i32 = inner(trace);
     if (r != 42) { return 1; }
     // Body steps 1 and 2, then the defers in LIFO order: 4, then 3.
     if (trace.get() != 1243) { return 2; }
@@ -2895,7 +2866,7 @@ function run(fired: Cell[i32], taken: boolean): i32 {
     return 0;
 }
 function main(): i32 {
-    var fired: Cell[i32] = cell_new(0);
+    let fired: Cell[i32] = cell_new(0);
     run(fired, false);
     if (fired.get() != 2) { return 1; }
     fired.set(0);
@@ -2922,7 +2893,7 @@ function early(counts: Cell[i32], branch: i32): i32 {
     return 30;
 }
 function main(): i32 {
-    var counts: Cell[i32] = cell_new(0);
+    let counts: Cell[i32] = cell_new(0);
     if (early(counts, 1) != 10) { return 1; }
     if (early(counts, 2) != 20) { return 2; }
     if (early(counts, 0) != 30) { return 3; }
@@ -2941,13 +2912,13 @@ func TestWASMMapGetOr(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var counts: Map[string, i32] = Map { "apple": 3, "banana": 5 };
+    let counts: Map[string, i32] = Map { "apple": 3, "banana": 5 };
     if (counts.get_or("apple", 0) != 3) { return 1; }
     if (counts.get_or("banana", 0) != 5) { return 2; }
     if (counts.get_or("missing", -1) != -1) { return 3; }
     if (counts.get_or("missing", 100) != 100) { return 4; }
 
-    var ints: Map[i32, i32] = Map { 1: 10, 2: 20 };
+    let ints: Map[i32, i32] = Map { 1: 10, 2: 20 };
     if (ints.get_or(1, 999) != 10) { return 5; }
     if (ints.get_or(99, 999) != 999) { return 6; }
     return 0;
@@ -2964,7 +2935,7 @@ func TestWASMMapClear(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
+    let m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
     if (m.len() != 3) { return 1; }
     m = m.cleared();
     if (m.len() != 0) { return 2; }
@@ -2999,7 +2970,7 @@ func TestWASMMapStringKeyLiteral(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
+    let m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
     if (m.len() != 3) { return 1; }
     if let Some(v) = m.get("b") {
         if (v != 2) { return 2; }
@@ -3024,7 +2995,7 @@ function main(): i32 {
 func TestWASMF64Arithmetic(t *testing.T) {
 	src := `function add64f(x: f64, y: f64): f64 { return x + y; }
 function main(): i32 {
-    var z: f64 = add64f(1.5, 2.5);
+    let z: f64 = add64f(1.5, 2.5);
     if (z == 4.0) { return 0; }
     return 1;
 }`
@@ -3038,9 +3009,9 @@ function main(): i32 {
 // round-trip a value through the cast.
 func TestWASMFloatCasts(t *testing.T) {
 	src := `function main(): i32 {
-    var a: f32 = 1.25;
-    var b: f64 = a as f64;
-    var c: f32 = b as f32;
+    let a: f32 = 1.25;
+    let b: f64 = a as f64;
+    let c: f32 = b as f32;
     if (c == a) { return 0; }
     return 1;
 }`
@@ -3052,7 +3023,7 @@ func TestWASMFloatCasts(t *testing.T) {
 // Mixing f32 and f64 without an explicit cast is a checker
 // error — same rule as i32/i64.
 func TestF32F64MixRejected(t *testing.T) {
-	src := `function bad(): f64 { var x: f32 = 1.0; var y: f64 = 2.0; return x + y; }`
+	src := `function bad(): f64 { let x: f32 = 1.0; let y: f64 = 2.0; return x + y; }`
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -3070,8 +3041,8 @@ func TestF32F64MixRejected(t *testing.T) {
 // signed reading would give -1 > 1 = false.
 func TestWASMU32Unsigned(t *testing.T) {
 	src := `function main(): i32 {
-    var x: u32 = 4294967295;
-    var half: u32 = x / 2;
+    let x: u32 = 4294967295;
+    let half: u32 = x / 2;
     if (half != 2147483647) { return 1; }
     if (!(x > 1)) { return 2; }
     if ((x >> 1) != 2147483647) { return 3; }
@@ -3083,15 +3054,15 @@ func TestWASMU32Unsigned(t *testing.T) {
 }
 
 // u64 unsigned arithmetic. Builds a value with the high bit set
-// via `1 << 63` (the literals settle to u64 from `var x: u64`)
+// via `1 << 63` (the literals settle to u64 from `let x: u64`)
 // and checks div / compare under unsigned semantics: dividing
 // the high-bit-set value by 2 should equal `1 << 62`, and x > 1
 // should be true (under signed it would be false because the
 // top bit reads as a sign bit).
 func TestWASMU64Unsigned(t *testing.T) {
 	src := `function main(): i32 {
-    var x: u64 = 1 << 63;
-    var half: u64 = x / 2;
+    let x: u64 = 1 << 63;
+    let half: u64 = x / 2;
     if (half != 1 << 62) { return 1; }
     if (!(x > 1)) { return 2; }
     return 0;
@@ -3105,7 +3076,7 @@ func TestWASMU64Unsigned(t *testing.T) {
 // rule as i32/i64. Signedness is part of the integer type, so
 // the implicit-widening rejection applies here too.
 func TestU32SignedMixRejected(t *testing.T) {
-	src := `function bad(): i32 { var x: i32 = 1; var y: u32 = 2 as u32; return x + y; }`
+	src := `function bad(): i32 { let x: i32 = 1; let y: u32 = 2 as u32; return x + y; }`
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -3125,7 +3096,7 @@ func TestWASMTupleMultiReturn(t *testing.T) {
     return (a / b, a - (a / b) * b);
 }
 function main(): i32 {
-    var p = divmod(17, 5);
+    let p = divmod(17, 5);
     if (p.0 == 3 && p.1 == 2) { return 0; }
     return 1;
 }`
@@ -3143,9 +3114,9 @@ func TestWASMPipeOperator(t *testing.T) {
 	src := `function double(n: i32): i32 { return n * 2; }
 function add(a: i32, b: i32): i32 { return a + b; }
 function main(): i32 {
-    var x = 5 |> double;
-    var y = x |> add(3);
-    var z = y |> double |> add(4);
+    let x = 5 |> double;
+    let y = x |> add(3);
+    let z = y |> double |> add(4);
     if (x == 10 && y == 13 && z == 30) { return 0; }
     return 1;
 }`
@@ -3163,8 +3134,8 @@ function main(): i32 {
 func TestWASMGenericFunctionInfersFromArg(t *testing.T) {
 	src := `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var a = id(42);
-    var b = id(7);
+    let a = id(42);
+    let b = id(7);
     if (a == 42 && b == 7) { return 0; }
     return 1;
 }`
@@ -3180,10 +3151,10 @@ function main(): i32 {
 func TestWASMGenericFunctionMultipleInstantiations(t *testing.T) {
 	src := `function first[T](xs: T[]): T { return xs[0]; }
 function main(): i32 {
-    var ints: i32[] = [10, 20, 30];
-    var strs: string[] = ["hello", "world"];
-    var n = first(ints);
-    var s = first(strs);
+    let ints: i32[] = [10, 20, 30];
+    let strs: string[] = ["hello", "world"];
+    let n = first(ints);
+    let s = first(strs);
     print(s);
     return n;
 }`
@@ -3201,7 +3172,7 @@ function main(): i32 {
 func TestWASMGenericStructInfersAndMonomorphises(t *testing.T) {
 	src := `struct Pair[A, B] { first: A, second: B }
 function main(): i32 {
-    var p = Pair { first: 42, second: "hello" };
+    let p = Pair { first: 42, second: "hello" };
     print(p.second);
     return p.first;
 }`
@@ -3220,8 +3191,8 @@ func TestWASMGenericFunctionOverGenericStruct(t *testing.T) {
 	src := `struct Box[T] { val: T }
 function unbox[T](b: Box[T]): T { return b.val; }
 function main(): i32 {
-    var i = Box { val: 7 };
-    var s = Box { val: "world" };
+    let i = Box { val: 7 };
+    let s = Box { val: "world" };
     print(unbox(s));
     return unbox(i);
 }`
@@ -3271,7 +3242,7 @@ func TestWASMUseInferredTypeFromGenericCallee(t *testing.T) {
     return cb(items[0]);
 }
 function main(): i32 {
-    var nums: i32[] = [10, 20, 30];
+    let nums: i32[] = [10, 20, 30];
     use n <- each(nums);
     return n + 1;
 }`
@@ -3289,7 +3260,7 @@ func TestWASMUseInferredTypeThroughEnumPayload(t *testing.T) {
     return 0;
 }
 function main(): i32 {
-    var x: Option[i32] = Some(7);
+    let x: Option[i32] = Some(7);
     use n <- try_opt(x);
     return n + 1;
 }`
@@ -3343,7 +3314,7 @@ function main(): i32 {
 // `let Variant(b) = expr else { divergent };` —
 // pattern-binding declaration with mandatory-divergent else.
 // Bindings flow into the enclosing scope, so subsequent
-// statements see them as if they were declared via `var`.
+// statements see them as if they were declared via `let`.
 // The else branch must terminate the surrounding control
 // flow; the checker enforces this at compile time.
 func TestWASMLetElseHappyPath(t *testing.T) {
@@ -3377,7 +3348,7 @@ function main(): i32 {
 // instead of nesting in `match`.
 func TestWASMIfLetMatch(t *testing.T) {
 	src := `function main(): i32 {
-    var o: Option[i32] = Some(42);
+    let o: Option[i32] = Some(42);
     if let Some(n) = o {
         return n;
     }
@@ -3392,7 +3363,7 @@ func TestWASMIfLetMatch(t *testing.T) {
 // else runs and the bindings from the pattern aren't in scope.
 func TestWASMIfLetMismatchTakesElse(t *testing.T) {
 	src := `function main(): i32 {
-    var o: Option[i32] = None;
+    let o: Option[i32] = None;
     if let Some(n) = o {
         return 1;
     } else {
@@ -3485,13 +3456,13 @@ function main(): i32 { return area(Rect(P { x: 4, y: 5 })) * 10 + area(Dot); }`,
 // `slice + 4` instead of `arr - 4`.
 func TestWASMSliceViews(t *testing.T) {
 	src := `function main(): i32 {
-    var arr: i32[] = [10, 20, 30, 40, 50];
-    var s: [i32] = arr[1:4];          // [20, 30, 40]
+    let arr: i32[] = [10, 20, 30, 40, 50];
+    let s: [i32] = arr[1:4];          // [20, 30, 40]
     if (s.len() != 3) { return 1; }
     if (s[0] != 20) { return 2; }
     if (s[1] != 30) { return 3; }
     if (s[2] != 40) { return 4; }
-    var t = s[1:3];                   // [30, 40]
+    let t = s[1:3];                   // [30, 40]
     if (t.len() != 2) { return 5; }
     if (t[0] != 30 || t[1] != 40) { return 6; }
     return 0;
@@ -3505,10 +3476,10 @@ func TestWASMSliceViews(t *testing.T) {
 // defaults to 0; high defaults to len(source).
 func TestWASMSliceHalfBoundedForms(t *testing.T) {
 	src := `function main(): i32 {
-    var arr: i32[] = [1, 2, 3, 4, 5];
-    var head: [i32] = arr[:3];
+    let arr: i32[] = [1, 2, 3, 4, 5];
+    let head: [i32] = arr[:3];
     if (head.len() != 3 || head[0] != 1 || head[2] != 3) { return 1; }
-    var tail: [i32] = arr[2:];
+    let tail: [i32] = arr[2:];
     if (tail.len() != 3 || tail[0] != 3 || tail[2] != 5) { return 2; }
     return 0;
 }`
@@ -3522,7 +3493,7 @@ func TestWASMSliceHalfBoundedForms(t *testing.T) {
 func TestWASMTupleHeterogeneous(t *testing.T) {
 	src := `function pair(): (i32, string) { return (42, "hello"); }
 function main(): i32 {
-    var p = pair();
+    let p = pair();
     if (p.0 == 42) { return 0; }
     return 1;
 }`
@@ -3545,7 +3516,7 @@ func TestWASMGenericStructMethod(t *testing.T) {
 	src := `struct Box[T] { value: T }
 pub function [T] (b: Box[T]) unwrap(): T { return b.value; }
 function main(): i32 {
-    var b: Box[i32] = Box { value: 42 };
+    let b: Box[i32] = Box { value: 42 };
     return b.unwrap();
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -3557,8 +3528,8 @@ func TestWASMGenericStructMethodWide(t *testing.T) {
 	src := `struct Box[T] { value: T }
 pub function [T] (b: Box[T]) unwrap(): T { return b.value; }
 function main(): i32 {
-    var b: Box[i64] = Box { value: 1000000000000i64 };
-    var v: i64 = b.unwrap();
+    let b: Box[i64] = Box { value: 1000000000000i64 };
+    let v: i64 = b.unwrap();
     if (v != 1000000000000i64) { return 1; }
     return 0;
 }`
@@ -3571,7 +3542,7 @@ func TestWASMGenericStructMethodString(t *testing.T) {
 	src := `struct Box[T] { value: T }
 pub function [T] (b: Box[T]) unwrap(): T { return b.value; }
 function main(): i32 {
-    var b: Box[string] = Box { value: "hello" };
+    let b: Box[string] = Box { value: "hello" };
     return (b.unwrap()).len();
 }`
 	if got := runWasm(t, src); got != 5 {
@@ -3585,7 +3556,7 @@ func TestWASMGenericStructMethodMultipleTypeParams(t *testing.T) {
 pub function [A, B] (p: Pair[A, B]) first(): A { return p.a; }
 pub function [A, B] (p: Pair[A, B]) second(): B { return p.b; }
 function main(): i32 {
-    var p: Pair[i32, string] = Pair { a: 42, b: "hello" };
+    let p: Pair[i32, string] = Pair { a: 42, b: "hello" };
     return p.first() + (p.second()).len();
 }`
 	if got := runWasm(t, src); got != 47 {
@@ -3607,8 +3578,8 @@ pub function [T] (b: Box[T]) replace(v: T): Box[T] {
     return Box { value: v };
 }
 function main(): i32 {
-    var b: Box[i32] = Box { value: 1 };
-    var c = b.replace(42);
+    let b: Box[i32] = Box { value: 1 };
+    let c = b.replace(42);
     return c.value;
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -3679,7 +3650,7 @@ func TestWASMMutualRecursionThreeWay(t *testing.T) {
 // already use.
 func TestWASMImmediateLambdaCall(t *testing.T) {
 	src := `function main(): i32 {
-    var n: i32 = ((x: i32): i32 => { return x * 2; })(21);
+    let n: i32 = ((x: i32): i32 => { return x * 2; })(21);
     return n;
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -3702,7 +3673,7 @@ func TestWASMLambdaInGenericFn(t *testing.T) {
     return (x: T): T => { return x; };
 }
 function main(): i32 {
-    var f = makeId[i32]();
+    let f = makeId[i32]();
     return f(42);
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -3730,7 +3701,7 @@ function main(): i32 {
 func TestWASMGenericTwoTypeArgs(t *testing.T) {
 	src := `function pair[A, B](a: A, b: B): (A, B) { return (a, b); }
 function main(): i32 {
-    var p = pair[i32, string](42, "hi");
+    let p = pair[i32, string](42, "hi");
     if (p.0 != 42) { return 1; }
     if (p.1 != "hi") { return 2; }
     return 0;
@@ -3747,7 +3718,7 @@ function main(): i32 {
 // fall-through). Exhaustiveness requires a trailing unguarded `_`.
 func TestWASMMatchLiteralInt(t *testing.T) {
 	src := `function main(): i32 {
-    var n: i32 = 1;
+    let n: i32 = 1;
     match (n) {
         0 => { return 100; },
         1 => { return 200; },
@@ -3781,7 +3752,7 @@ function main(): i32 {
 
 func TestWASMMatchLiteralBool(t *testing.T) {
 	src := `function main(): i32 {
-    var b: boolean = true;
+    let b: boolean = true;
     return match (b) {
         true => 1,
         false => 0,
@@ -3795,7 +3766,7 @@ func TestWASMMatchLiteralBool(t *testing.T) {
 
 func TestWASMMatchLiteralString(t *testing.T) {
 	src := `function main(): i32 {
-    var s: string = "world";
+    let s: string = "world";
     return match (s) {
         "hello" => 1,
         "world" => 2,
@@ -3836,7 +3807,7 @@ function main(): i32 {
 // immediately returned / passed — the lambda just elides the name.
 func TestWASMLambdaBasic(t *testing.T) {
 	src := `function main(): i32 {
-    var f = (x: i32): i32 => { return x + 1; };
+    let f = (x: i32): i32 => { return x + 1; };
     return f(41);
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -3846,8 +3817,8 @@ func TestWASMLambdaBasic(t *testing.T) {
 
 func TestWASMLambdaCaptures(t *testing.T) {
 	src := `function main(): i32 {
-    var n: i32 = 10;
-    var f = (x: i32): i32 => { return x + n; };
+    let n: i32 = 10;
+    let f = (x: i32): i32 => { return x + n; };
     return f(32);
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -3860,7 +3831,7 @@ func TestWASMLambdaReturned(t *testing.T) {
     return (x: i32): i32 => { return x + n; };
 }
 function main(): i32 {
-    var add10 = makeAdder(10);
+    let add10 = makeAdder(10);
     return add10(32);
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -3878,22 +3849,22 @@ function main(): i32 {
 	}
 }
 
-// `var (a, b) = expr;` tuple destructuring — alternative to
-// `let (a, b) = expr;` for symmetry with regular `var name = …;`
-// declarations. The parser detects the `(` after `var` and routes
+// `let (a, b) = expr;` tuple destructuring — alternative to
+// `let (a, b) = expr;` for symmetry with regular `let name = …;`
+// declarations. The parser detects the `(` after `let` and routes
 // to the same parseTupleDestructure path the `let` form uses.
 func TestWASMVarTupleDestructure(t *testing.T) {
 	src := `function getit(): (i64, i32) {
     return (1000000000000i64, 42);
 }
 function main(): i32 {
-    var (a, b) = getit();
+    let (a, b) = getit();
     if (a != 1000000000000i64) { return 1; }
     if (b != 42) { return 2; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got %d, want 0 (var tuple destructure)", got)
+		t.Errorf("got %d, want 0 (let tuple destructure)", got)
 	}
 }
 
@@ -3931,7 +3902,7 @@ func TestWASMArrayOfClosures(t *testing.T) {
     return add;
 }
 function main(): i32 {
-    var arr: ((i32) => i32)[] = [makeAdder(1), makeAdder(10), makeAdder(100)];
+    let arr: ((i32) => i32)[] = [makeAdder(1), makeAdder(10), makeAdder(100)];
     return arr[0](1) + arr[1](2) + arr[2](3);
 }`
 	// (1 + 1) + (10 + 2) + (100 + 3) = 117
@@ -3946,8 +3917,8 @@ func TestWASMSliceOfClosures(t *testing.T) {
     return add;
 }
 function main(): i32 {
-    var arr: ((i32) => i32)[] = [makeAdder(1), makeAdder(2), makeAdder(3)];
-    var sl: [(i32) => i32] = arr[1:3];
+    let arr: ((i32) => i32)[] = [makeAdder(1), makeAdder(2), makeAdder(3)];
+    let sl: [(i32) => i32] = arr[1:3];
     return sl[0](10) + sl[1](10);
 }`
 	// (10 + 2) + (10 + 3) = 25
@@ -3964,10 +3935,10 @@ function main(): i32 {
 // assigned locals) and every closure keeps its own binding.
 func TestWASMClosureInLoopCapturesIterVar(t *testing.T) {
 	src := `function main(): i32 {
-    var arr: ((i32) => i32)[] = [];
-    var i: i32 = 0;
+    let arr: ((i32) => i32)[] = [];
+    let i: i32 = 0;
     while (i < 3) {
-        var ic: i32 = i;
+        let ic: i32 = i;
         function f(x: i32): i32 { return x + ic; }
         arr = arr.append(f);
         i = i + 1;
@@ -3989,7 +3960,7 @@ func TestWASMClosureInLoopCapturesIterVar(t *testing.T) {
 // `i32 as i64` everywhere when doing pointer-style arithmetic.
 // Mixed SIGNEDNESS still requires an explicit cast.
 func TestI64ImplicitWideningAccepted(t *testing.T) {
-	src := `function f(): i64 { var x: i32 = 1; var y: i64 = 2i64; return x + y; }
+	src := `function f(): i64 { let x: i32 = 1; let y: i64 = 2i64; return x + y; }
 function main(): i32 { return f() as i32; }`
 	if got := runWasm(t, src); got != 3 {
 		t.Errorf("got %d, want 3 (i32 + i64 auto-widens)", got)
@@ -4002,8 +3973,8 @@ function main(): i32 { return f() as i32; }`
 // `u32 + i64` (different widths AND signedness).
 func TestMixedSignednessRejected(t *testing.T) {
 	for _, src := range []string{
-		`function bad(): i32 { var x: i32 = 1; var y: u32 = 2 as u32; return x + y; }`,
-		`function bad(): i64 { var x: u32 = 1 as u32; var y: i64 = 2i64; return (x as i64) + y; }`,
+		`function bad(): i32 { let x: i32 = 1; let y: u32 = 2 as u32; return x + y; }`,
+		`function bad(): i64 { let x: u32 = 1 as u32; let y: i64 = 2i64; return (x as i64) + y; }`,
 	} {
 		prog, err := parser.Parse(src)
 		if err != nil {
@@ -4014,7 +3985,7 @@ func TestMixedSignednessRejected(t *testing.T) {
 		_ = err
 	}
 	// Targeted error check on the genuinely-bad source.
-	src := `function bad(): i32 { var x: i32 = 1; var y: u32 = 2 as u32; return x + y; }`
+	src := `function bad(): i32 { let x: i32 = 1; let y: u32 = 2 as u32; return x + y; }`
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -4039,8 +4010,8 @@ func TestWASMFactorial(t *testing.T) {
 
 func TestWASMForLoopWithBreakContinue(t *testing.T) {
 	src := `function main(): i32 {
-		var sum = 0;
-		for (var i = 0; i < 10; i = i + 1) {
+		let sum = 0;
+		for (let i = 0; i < 10; i = i + 1) {
 			if (i < 5) { continue; }
 			if (i == 8) { break; }
 			sum = sum + i;
@@ -4081,6 +4052,11 @@ func TestWASMFunctionValueOrderIndependent(t *testing.T) {
 func runWasmCapturingStdout(t *testing.T, src string) string {
 	t.Helper()
 	stdout, _ := invokeWasmtime(t, src)
+	return stripMainResult(stdout)
+}
+
+// stripMainResult drops the trailing main-result line and blank lines.
+func stripMainResult(stdout string) string {
 	lines := strings.Split(stdout, "\n")
 	for len(lines) > 0 {
 		last := strings.TrimSpace(lines[len(lines)-1])
@@ -4109,7 +4085,7 @@ func TestWASMPrintHelloWorld(t *testing.T) {
 }
 
 // Float observation through the component pipeline: stdout only
-// carries i32 results (via PrintMainResult + int_to_string), and
+// carries i32 results (wasmtime's --invoke line), and
 // `wasi:cli/exit` clamps the exit code to 0/1, so neither channel
 // can carry an f32. Float tests instead express the assertion in
 // the lang program itself — main returns 1 when the expected
@@ -4162,7 +4138,7 @@ func TestWASMPutcharWritesBytes(t *testing.T) {
 func TestWASMForEachOverArray(t *testing.T) {
 	src := `
 		function main(): i32 {
-			var sum: i32 = 0;
+			let sum: i32 = 0;
 			for x in [10, 20, 30] {
 				sum = sum + x;
 			}
@@ -4178,7 +4154,7 @@ func TestWASMForEachOverArray(t *testing.T) {
 func TestWASMForEachBreakContinue(t *testing.T) {
 	src := `
 		function main(): i32 {
-			var sum: i32 = 0;
+			let sum: i32 = 0;
 			for x in [1, 2, 3, 4, 5] {
 				if (x == 2) { continue; }
 				if (x == 5) { break; }
@@ -4193,7 +4169,7 @@ func TestWASMForEachBreakContinue(t *testing.T) {
 
 func TestWASMArraySumAndMutation(t *testing.T) {
 	src := `function main(): i32 {
-		var a: i32[] = [10, 20, 30, 40];
+		let a: i32[] = [10, 20, 30, 40];
 		a = a.with(2, 100);
 		return a[0] + a[1] + a[2] + a[3];
 	}`
@@ -4206,8 +4182,8 @@ func TestWASMArraySumAndMutation(t *testing.T) {
 // can finish allocating before the outer one assigns its base.
 func TestWASMNestedArrayLits(t *testing.T) {
 	src := `function main(): i32 {
-		var inner: i32[] = [3, 4];
-		var outer: i32[] = [1, 2, inner[0]];
+		let inner: i32[] = [3, 4];
+		let outer: i32[] = [1, 2, inner[0]];
 		return outer[2] + inner[1];
 	}`
 	if got := runWasm(t, src); got != 7 {
@@ -4242,7 +4218,7 @@ func TestWASMIndirectCallStringParam(t *testing.T) {
 			return f(a, b);
 		}
 		function main(): i32 {
-			var cmp: (string, string) => i32 = (a: string, b: string) => a.len() + b.len();
+			let cmp: (string, string) => i32 = (a: string, b: string) => a.len() + b.len();
 			return apply(cmp, "hi", "world");
 		}`
 	if got := runWasm(t, src); got != 7 {
@@ -4256,7 +4232,7 @@ func TestWASMIndirectCallSingleStringParam(t *testing.T) {
 	src := `
 		function apply(f: (string) => i32, a: string): i32 { return f(a); }
 		function main(): i32 {
-			var g: (string) => i32 = (a: string) => a.len() * 10;
+			let g: (string) => i32 = (a: string) => a.len() * 10;
 			return apply(g, "hello");
 		}`
 	if got := runWasm(t, src); got != 50 {
@@ -4271,7 +4247,7 @@ func TestWASMIndirectCallMixedScalarStringParam(t *testing.T) {
 	src := `
 		function apply(f: (i32, string) => i32, a: i32, b: string): i32 { return f(a, b); }
 		function main(): i32 {
-			var g: (i32, string) => i32 = (a: i32, b: string) => a + b.len();
+			let g: (i32, string) => i32 = (a: i32, b: string) => a + b.len();
 			return apply(g, 3, "hello");
 		}`
 	if got := runWasm(t, src); got != 8 {
@@ -4288,13 +4264,13 @@ func TestWASMIndirectCallMixedScalarStringParam(t *testing.T) {
 func TestWASMStringComparatorSort(t *testing.T) {
 	src := `
 		function sort_by(xs: string[], cmp: (string, string) => i32): string[] {
-			var out: string[] = xs;
-			var i: i32 = 0;
+			let out: string[] = xs;
+			let i: i32 = 0;
 			while (i < out.len()) {
-				var j: i32 = i + 1;
+				let j: i32 = i + 1;
 				while (j < out.len()) {
 					if (cmp(out[j], out[i]) < 0) {
-						var t: string = out[i];
+						let t: string = out[i];
 						out = out.with(i, out[j]);
 						out = out.with(j, t);
 					}
@@ -4306,8 +4282,8 @@ func TestWASMStringComparatorSort(t *testing.T) {
 		}
 		function by_len(a: string, b: string): i32 { return a.len() - b.len(); }
 		function main(): i32 {
-			var xs: string[] = ["ccc", "a", "bb"];
-			var s: string[] = sort_by(xs, by_len);
+			let xs: string[] = ["ccc", "a", "bb"];
+			let s: string[] = sort_by(xs, by_len);
 			if (s[0] == "a" && s[1] == "bb" && s[2] == "ccc") { return 0; }
 			return 1;
 		}`
@@ -4334,7 +4310,7 @@ func TestWASMArrayElemStringClosureArg(t *testing.T) {
 	src := `
 		function scmp(a: string, b: string): i32 { if (a.len() < b.len()) { return 0-1; } return 1; }
 		function g(arr: string[], cmp: (string, string) => i32): i32 { return cmp(arr[0], "zz"); }
-		function main(): i32 { var xs: string[] = ["a","bb"]; if (g(xs, scmp) == 0-1) { return 0; } return 1; }`
+		function main(): i32 { let xs: string[] = ["a","bb"]; if (g(xs, scmp) == 0-1) { return 0; } return 1; }`
 	if got := runNativeWasmCli(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (scmp(\"a\",\"zz\")=-1) — #4816 string helper funcidx", got)
 	}
@@ -4351,14 +4327,14 @@ func TestWASMGenericStringSortTwoInstantiations(t *testing.T) {
 		function asc(a: string, b: string): i32 { if (a.len() < b.len()) { return 0-1; } if (a.len() > b.len()) { return 1; } return 0; }
 		function desc(a: string, b: string): i32 { if (a.len() > b.len()) { return 0-1; } if (a.len() < b.len()) { return 1; } return 0; }
 		function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] {
-			var n: i32 = arr.len(); if (n < 2) { return arr; } var out: T[] = arr; var i: i32 = 1;
-			while (i < n) { var j: i32 = i; while (j > 0 && cmp(out[j], out[j-1]) < 0) { var t: T = out[j]; out = out.with(j, out[j-1]); out = out.with(j-1, t); j = j - 1; } i = i + 1; }
+			let n: i32 = arr.len(); if (n < 2) { return arr; } let out: T[] = arr; let i: i32 = 1;
+			while (i < n) { let j: i32 = i; while (j > 0 && cmp(out[j], out[j-1]) < 0) { let t: T = out[j]; out = out.with(j, out[j-1]); out = out.with(j-1, t); j = j - 1; } i = i + 1; }
 			return out;
 		}
 		function main(): i32 {
-			var xs: string[] = ["cc","a","bb"];
-			var up: string[] = sort_by(xs, asc);
-			var dn: string[] = sort_by(xs, desc);
+			let xs: string[] = ["cc","a","bb"];
+			let up: string[] = sort_by(xs, asc);
+			let dn: string[] = sort_by(xs, desc);
 			if (up[0] == "a" && dn[0].len() == 2) { return 0; }
 			return 1;
 		}`
@@ -4371,7 +4347,7 @@ func TestWASMFunctionValueInVar(t *testing.T) {
 	src := `
 		function dbl(x: i32): i32 { return x * 2; }
 		function main(): i32 {
-			var f = dbl;
+			let f = dbl;
 			return f(7);
 		}`
 	if got := runWasm(t, src); got != 14 {
@@ -4395,11 +4371,11 @@ func TestWASMOptionTryHappyPath(t *testing.T) {
 	src := `
 import "core/map";
 function chained(m: Map[i32, i32], k: i32): Option[i32] {
-    var v: i32 = m.get(k)?;
+    let v: i32 = m.get(k)?;
     return Some(v + 1);
 }
 function main(): i32 {
-    var m: Map[i32, i32] = Map { 7: 100 };
+    let m: Map[i32, i32] = Map { 7: 100 };
     match (chained(m, 7)) {
         Some(v) => { return v; },
         None    => { return 1; }
@@ -4417,11 +4393,11 @@ func TestWASMOptionTryNoneEarlyReturn(t *testing.T) {
 	src := `
 import "core/map";
 function chained(m: Map[i32, i32], k: i32): Option[i32] {
-    var v: i32 = m.get(k)?;
+    let v: i32 = m.get(k)?;
     return Some(v + 1);
 }
 function main(): i32 {
-    var m: Map[i32, i32] = Map { 7: 100 };
+    let m: Map[i32, i32] = Map { 7: 100 };
     match (chained(m, 99)) {
         Some(v) => { return 1; },
         None    => { return 0; }
@@ -4440,7 +4416,7 @@ func TestWASMResultTryHappyPath(t *testing.T) {
     return Ok(n * 2);
 }
 function outer(n: i32): Result[i32, i32] {
-    var v: i32 = inner(n)?;
+    let v: i32 = inner(n)?;
     return Ok(v + 1);
 }
 function main(): i32 {
@@ -4461,8 +4437,8 @@ function main(): i32 {
 // of OpConstI32) so the runtime computation is float-correct.
 func TestWASMPolyIntPromotesToF32Mul(t *testing.T) {
 	src := `function main(): i32 {
-    var r: f32 = 1.5f32;
-    var s: f32 = r * 2;
+    let r: f32 = 1.5f32;
+    let s: f32 = r * 2;
     if (s == 3.0f32) { return 0; }
     return 1;
 }`
@@ -4484,7 +4460,7 @@ function classify(s: Shape): i32 {
     return 0;
 }
 function main(): i32 {
-    var c: Shape = Circle(0.5f32);
+    let c: Shape = Circle(0.5f32);
     return classify(c);
 }`
 	if got := runWasm(t, src); got != 2 {
@@ -4495,8 +4471,8 @@ function main(): i32 {
 // f64 promotion path — different OpConstF64 lowering.
 func TestWASMPolyIntPromotesToF64(t *testing.T) {
 	src := `function main(): i32 {
-    var x: f64 = 100.5f64;
-    var y: f64 = x - 100;
+    let x: f64 = 100.5f64;
+    let y: f64 = x - 100;
     if (y == 0.5f64) { return 0; }
     return 1;
 }`
@@ -4511,8 +4487,8 @@ func TestWASMPolyIntPromotesToF64(t *testing.T) {
 // uses `i64.const`.
 func TestWASMNumericLiteralSuffixI64(t *testing.T) {
 	src := `function main(): i32 {
-    var n: i64 = 1000000i64;
-    var m: i64 = n + 23i64;
+    let n: i64 = 1000000i64;
+    let m: i64 = n + 23i64;
     if (m == 1000023i64) { return 0; }
     return 1;
 }`
@@ -4534,7 +4510,7 @@ function classify(s: Shape): i32 {
     return 0;
 }
 function main(): i32 {
-    var c: Shape = Circle(0.5f32);
+    let c: Shape = Circle(0.5f32);
     return classify(c);
 }`
 	if got := runWasm(t, src); got != 2 {
@@ -4556,7 +4532,7 @@ function main(): i32 {
 // a perf hint penalty we accept here.
 func TestWASMArrayPushI64(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: i64[] = [10i64, 20i64];
+    let xs: i64[] = [10i64, 20i64];
     xs = xs.append(30i64);
     xs = xs.append(40i64);
     if (xs[0] != 10i64) { return 1; }
@@ -4575,7 +4551,7 @@ func TestWASMArrayPushI64(t *testing.T) {
 // way the i64 sibling does.
 func TestWASMArrayPushF64(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: f64[] = [1.5f64, 2.5f64];
+    let xs: f64[] = [1.5f64, 2.5f64];
     xs = xs.append(3.5f64);
     xs = xs.append(4.5f64);
     if (xs[3] != 4.5f64) { return 1; }
@@ -4592,7 +4568,7 @@ func TestWASMArrayPushF64(t *testing.T) {
 // back via the array indexer with the right zero-extension.
 func TestWASMArrayPushU8(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: u8[] = [];
+    let xs: u8[] = [];
     xs = xs.append(10u8);
     xs = xs.append(20u8);
     xs = xs.append(255u8);
@@ -4609,7 +4585,7 @@ func TestWASMArrayPushU8(t *testing.T) {
 // helper (skips memory.copy).
 func TestWASMArrayPushI64EmptyStart(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: i64[] = [];
+    let xs: i64[] = [];
     xs = xs.append(7i64);
     if (xs[0] != 7i64) { return 1; }
     return xs.len();
@@ -4621,7 +4597,7 @@ func TestWASMArrayPushI64EmptyStart(t *testing.T) {
 
 func TestWASMArrayPushI32(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: i32[] = [1, 2];
+    let xs: i32[] = [1, 2];
     xs = xs.append(3);
     xs = xs.append(4);
     if (xs[0] != 1) { return 1; }
@@ -4638,7 +4614,7 @@ func TestWASMArrayPushEnum(t *testing.T) {
 	// same 4-byte helper. Confirms enum payloads survive the
 	// push round-trip.
 	src := `function main(): i32 {
-    var xs: JsonValue[] = [];
+    let xs: JsonValue[] = [];
     xs = xs.append(JString("a"));
     xs = xs.append(JString("bb"));
     return match (xs[1]) {
@@ -4653,7 +4629,7 @@ func TestWASMArrayPushEnum(t *testing.T) {
 
 func TestWASMArrayPushString(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: string[] = ["a", "b"];
+    let xs: string[] = ["a", "b"];
     xs = xs.append("c");
     xs = xs.append("d");
     return xs.len();
@@ -4667,7 +4643,7 @@ func TestWASMArrayPushString(t *testing.T) {
 // alias to __array_append_string preserves the heap layout.
 func TestWASMArrayPushStringValuesPreserved(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: string[] = [];
+    let xs: string[] = [];
     xs = xs.append("hello");
     xs = xs.append("world");
     if (xs[0] != "hello") { return 1; }
@@ -4737,7 +4713,7 @@ function main(): i32 {
 // confirms it slots into a binary op without parse-time conflict.
 func TestWASMMatchExprComposesInExpr(t *testing.T) {
 	src := `function main(): i32 {
-    var o: Option[i32] = Some(10);
+    let o: Option[i32] = Some(10);
     return 1 + match (o) {
         Some(x) => x * 2,
         None    => 0
@@ -4756,7 +4732,7 @@ func TestWASMResultTryErrPropagates(t *testing.T) {
     return Ok(n * 2);
 }
 function outer(n: i32): Result[i32, i32] {
-    var v: i32 = inner(n)?;
+    let v: i32 = inner(n)?;
     return Ok(v + 1);
 }
 function main(): i32 {
@@ -4774,7 +4750,7 @@ function main(): i32 {
 
 func TestWASMCompoundAssign(t *testing.T) {
 	src := `function main(): i32 {
-		var x: i32 = 1;
+		let x: i32 = 1;
 		x += 2;
 		x *= 5;
 		x -= 1;
@@ -4795,12 +4771,12 @@ func TestWASMLenOfString(t *testing.T) {
 
 func TestWASMStringIndexAndCompare(t *testing.T) {
 	src := `function main(): i32 {
-		var s: string = "abc";
-		var byte: i32 = s[1] as i32;
-		var equal: boolean = "yes" == "yes";
-		var different: boolean = "yes" == "no";
+		let s: string = "abc";
+		let byte: i32 = s[1] as i32;
+		let equal: boolean = "yes" == "yes";
+		let different: boolean = "yes" == "no";
 		// 'b' = 98; equal=1, different=0 → 98 + 1 - 0 = 99
-		var ok: i32 = 0;
+		let ok: i32 = 0;
 		if (equal) { ok = ok + 1; }
 		if (different) { ok = ok - 1; }
 		return byte + ok;
@@ -4815,7 +4791,7 @@ func TestWASMStructBasic(t *testing.T) {
 	// Fields are immutable; update via struct-update + rebind.
 	src := `struct Point { x: i32, y: i32 }
 		function main(): i32 {
-			var p: Point = Point { x: 10, y: 32 };
+			let p: Point = Point { x: 10, y: 32 };
 			p = Point { ...p, x: p.x + 5 };
 			return p.x + p.y;
 		}`
@@ -4834,7 +4810,7 @@ func TestWASMStructFunctionalUpdate(t *testing.T) {
 	src := `struct Box { v: i32 }
 		function bump(b: Box): Box { return Box { ...b, v: b.v + 100 }; }
 		function main(): i32 {
-			var b: Box = Box { v: 5 };
+			let b: Box = Box { v: 5 };
 			b = bump(b);
 			return b.v;
 		}`
@@ -4845,9 +4821,9 @@ func TestWASMStructFunctionalUpdate(t *testing.T) {
 
 func TestWASMStringConcat(t *testing.T) {
 	src := `function main(): i32 {
-		var a: string = "hello, ";
-		var b: string = "world";
-		var c: string = a + b;
+		let a: string = "hello, ";
+		let b: string = "world";
+		let c: string = a + b;
 		return c.len();
 	}`
 	if got := runWasm(t, src); got != 12 {
@@ -4881,10 +4857,10 @@ func TestWASMStringConcatPreservesContent(t *testing.T) {
 // via `slice_unchecked(s, 0, 0)` on any non-empty string.
 func TestWASMEmptyStringSentinelConcat(t *testing.T) {
 	src := `function main(): i32 {
-		var s: string = "abcd";
-		var a: str = slice_unchecked(s, 0, 0);
-		var b: str = slice_unchecked(s, 0, 0);
-		var c: string = a + b;
+		let s: string = "abcd";
+		let a: str = slice_unchecked(s, 0, 0);
+		let b: str = slice_unchecked(s, 0, 0);
+		let c: string = a + b;
 		return c.len();
 	}`
 	if got := runWasm(t, src); got != 0 {
@@ -4894,8 +4870,8 @@ func TestWASMEmptyStringSentinelConcat(t *testing.T) {
 
 func TestWASMEmptyStringSentinelSlice(t *testing.T) {
 	src := `function main(): i32 {
-		var s: string = "abcd";
-		var empty: str = slice_unchecked(s, 2, 2);
+		let s: string = "abcd";
+		let empty: str = slice_unchecked(s, 2, 2);
 		return empty.len();
 	}`
 	if got := runWasm(t, src); got != 0 {
@@ -4911,7 +4887,7 @@ func TestWASMEmptyStringSentinelSlice(t *testing.T) {
 // distinct symbols.
 func TestWASMEmptyU8Sentinel(t *testing.T) {
 	src := `function main(): i32 {
-        var bs: u8[] = __alloc_u8(0);
+        let bs: u8[] = __alloc_u8(0);
         return bs.len();
     }`
 	if got := runWasm(t, src); got != 0 {
@@ -4921,8 +4897,8 @@ func TestWASMEmptyU8Sentinel(t *testing.T) {
 
 func TestWASMEmptyStringSentinelFromBytes(t *testing.T) {
 	src := `function main(): i32 {
-		var bs: u8[] = __alloc_u8(0);
-		var s: string = string_from_bytes_unchecked(bs);
+		let bs: u8[] = __alloc_u8(0);
+		let s: string = string_from_bytes_unchecked(bs);
 		return s.len();
 	}`
 	if got := runWasm(t, src); got != 0 {
@@ -4935,9 +4911,9 @@ func TestWASMEmptyStringSentinelFromBytes(t *testing.T) {
 // pointer the concat path then dereferenced wrong.
 func TestWASMEmptyStringSentinelRoundtrip(t *testing.T) {
 	src := `function main(): i32 {
-		var s: string = "world";
-		var empty: str = slice_unchecked(s, 0, 0);
-		var greeting: string = "hello, " + empty + s;
+		let s: string = "world";
+		let empty: str = slice_unchecked(s, 0, 0);
+		let greeting: string = "hello, " + empty + s;
 		return greeting.len();
 	}`
 	if got := runWasm(t, src); got != 12 {
@@ -4957,7 +4933,7 @@ func runWasmExpectingTrap(t *testing.T, src string) (stdout, stderr string, ok b
 
 func TestWASMArrayOutOfBoundsTraps(t *testing.T) {
 	src := `function main(): i32 {
-		var a: i32[] = [1, 2, 3];
+		let a: i32[] = [1, 2, 3];
 		return a[10];
 	}`
 	stdout, stderr, ok := runWasmExpectingTrap(t, src)
@@ -4968,7 +4944,7 @@ func TestWASMArrayOutOfBoundsTraps(t *testing.T) {
 
 func TestWASMNegativeIndexTraps(t *testing.T) {
 	src := `function main(): i32 {
-		var a: i32[] = [1, 2, 3];
+		let a: i32[] = [1, 2, 3];
 		return a[0 - 1];
 	}`
 	if _, _, ok := runWasmExpectingTrap(t, src); !ok {
@@ -4979,7 +4955,7 @@ func TestWASMNegativeIndexTraps(t *testing.T) {
 func TestWASMInBoundsStillWorks(t *testing.T) {
 	// Make sure the bounds check doesn't break the happy path.
 	src := `function main(): i32 {
-		var a: i32[] = [10, 20, 30];
+		let a: i32[] = [10, 20, 30];
 		return a[1];
 	}`
 	if got := runWasm(t, src); got != 20 {
@@ -4993,7 +4969,7 @@ func TestWASMClosureFactory(t *testing.T) {
 		return add;
 	}
 	function main(): i32 {
-		var f = makeAdder(7);
+		let f = makeAdder(7);
 		return f(35);
 	}`
 	if got := runWasm(t, src); got != 42 {
@@ -5008,8 +4984,8 @@ func TestWASMClosureMultipleInstances(t *testing.T) {
 		return add;
 	}
 	function main(): i32 {
-		var add5 = makeAdder(5);
-		var add10 = makeAdder(10);
+		let add5 = makeAdder(5);
+		let add10 = makeAdder(10);
 		return add5(1) + add10(1);
 	}`
 	// (5+1) + (10+1) = 17
@@ -5020,7 +4996,7 @@ func TestWASMClosureMultipleInstances(t *testing.T) {
 
 func TestWASMClosureCapturesParamAndVar(t *testing.T) {
 	src := `function outer(seed: i32): i32 {
-		var bonus: i32 = 100;
+		let bonus: i32 = 100;
 		function inner(x: i32): i32 { return x + seed + bonus; }
 		return inner(2);
 	}
@@ -5050,15 +5026,15 @@ function main(): i32 { return outer("hello"); }`
 // Mirror of TestArm64LambdaWithBodyLocals. Anonymous lambdas
 // used to compile fine without body-locals but panic with
 // "var X has no slot (compiler bug)" the moment the lambda
-// declared `var sq = ...` or similar — the checker stored those
+// declared `let sq = ...` or similar — the checker stored those
 // Var nodes against a throwaway synthetic FuncDecl pointer that
 // closureconv never re-keyed onto the hoisted lambda.
 func TestWASMLambdaWithBodyLocals(t *testing.T) {
 	src := `function main(): i32 {
-    var greet = "hi";
-    var f = (n: i32): i32 => {
-        var sq = n * n;
-        var tag = greet + "!";
+    let greet = "hi";
+    let f = (n: i32): i32 => {
+        let sq = n * n;
+        let tag = greet + "!";
         print(tag);
         return sq;
     };
@@ -5084,9 +5060,9 @@ func TestWASMLambdaCallsMethodOnCapturedString(t *testing.T) {
 	src := `
 import "std/string";
 function main(): i32 {
-    var s: string = "  hi  ";
-    var f = (): string => { return s.trim().to_owned(); };
-    var got = f();
+    let s: string = "  hi  ";
+    let f = (): string => { return s.trim().to_owned(); };
+    let got = f();
     if (got == "hi") { return 0; }
     return 1;
 }`
@@ -5101,7 +5077,7 @@ func TestWASMClosureCapturesArray(t *testing.T) {
     return inner(2);
 }
 function main(): i32 {
-    var xs: i32[] = [10, 20, 30, 40];
+    let xs: i32[] = [10, 20, 30, 40];
     return outer(xs);
 }`
 	if got := runWasm(t, src); got != 30 {
@@ -5116,7 +5092,7 @@ function outer(p: Pt): i32 {
     return inner();
 }
 function main(): i32 {
-    var p: Pt = Pt { x: 10, y: 32 };
+    let p: Pt = Pt { x: 10, y: 32 };
     return outer(p);
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -5152,7 +5128,7 @@ func TestWASMClosureCapturesI64(t *testing.T) {
     return inner();
 }
 function main(): i32 {
-    var v: i64 = outer(1000000000000i64);
+    let v: i64 = outer(1000000000000i64);
     if (v != 1000000000001i64) { return 1; }
     return 0;
 }`
@@ -5167,7 +5143,7 @@ func TestWASMClosureCapturesF64(t *testing.T) {
     return inner();
 }
 function main(): i32 {
-    var r: f64 = outer(3.5f64);
+    let r: f64 = outer(3.5f64);
     if (r != 7.0f64) { return 1; }
     return 0;
 }`
@@ -5186,7 +5162,7 @@ func TestWASMClosureCapturesMixedWidths(t *testing.T) {
     return inner();
 }
 function main(): i32 {
-    var r: i64 = outer(7, 1000000000000i64, 3);
+    let r: i64 = outer(7, 1000000000000i64, 3);
     if (r != 1000000000010i64) { return 1; }
     return 0;
 }`
@@ -5203,7 +5179,7 @@ func TestWASMClosureCapturesMixedPointers(t *testing.T) {
     return inner();
 }
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
+    let xs: i32[] = [1, 2, 3];
     return outer("hi", xs);
 }`
 	if got := runWasm(t, src); got != 5 {
@@ -5223,12 +5199,12 @@ function main(): i32 {
 // reached the backends.
 func TestWASMClosureCapturesTuple(t *testing.T) {
 	src := `function build(): () => i64 {
-    var t: (i64, i64) = (1000000000000i64, 2000000000000i64);
+    let t: (i64, i64) = (1000000000000i64, 2000000000000i64);
     function read(): i64 { return t.0 + t.1; }
     return read;
 }
 function main(): i32 {
-    var f = build();
+    let f = build();
     if (f() != 3000000000000i64) { return 1; }
     return 0;
 }`
@@ -5254,7 +5230,7 @@ func TestWASMChainedClosureCallResult(t *testing.T) {
     return level2;
 }
 function main(): i32 {
-    var m = makeMaker(42);
+    let m = makeMaker(42);
     return m()();
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -5274,7 +5250,7 @@ function main(): i32 {
 // reference inward to the deepest reader.
 func TestWASMTransitiveClosureCapture(t *testing.T) {
 	src := `function makeChain(): () => () => () => i32 {
-    var x: i32 = 42;
+    let x: i32 = 42;
     function level3(): () => () => i32 {
         function level2(): () => i32 {
             function level1(): i32 { return x; }
@@ -5285,9 +5261,9 @@ func TestWASMTransitiveClosureCapture(t *testing.T) {
     return level3;
 }
 function main(): i32 {
-    var f3 = makeChain();
-    var f2 = f3();
-    var f1 = f2();
+    let f3 = makeChain();
+    let f2 = f3();
+    let f1 = f2();
     return f1();
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -5296,7 +5272,7 @@ function main(): i32 {
 }
 
 // A nested function captures an outer-scope name that's been
-// shadowed by a sibling `var` declaration. With proper lexical
+// shadowed by a sibling `let` declaration. With proper lexical
 // scoping the body should see the SHADOWED local, not the
 // pre-shadow param. Pre-fix shadowrename ran a fresh sub-
 // renamer for the nested body so the parent's `n -> n$1`
@@ -5309,12 +5285,12 @@ function main(): i32 {
 // match the body's post-rename references.
 func TestWASMClosureShadowedParamCapture(t *testing.T) {
 	src := `function makeReader(n: i32): () => i32 {
-    var n: i32 = n * 2;
+    let n: i32 = n * 2;
     function build(): i32 { return n; }
     return build;
 }
 function main(): i32 {
-    var f = makeReader(21);
+    let f = makeReader(21);
     return f();
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -5334,7 +5310,7 @@ func TestWASMCallClosureFromTupleElem(t *testing.T) {
     return add;
 }
 function main(): i32 {
-    var t: ((i32) => i32, i32) = (makeAdder(10), 32);
+    let t: ((i32) => i32, i32) = (makeAdder(10), 32);
     return (t.0)(t.1);
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -5353,7 +5329,7 @@ func TestWASMCallClosurePatternBound(t *testing.T) {
     return add;
 }
 function main(): i32 {
-    var o: Option[(i32) => i32] = Some(makeAdder(10));
+    let o: Option[(i32) => i32] = Some(makeAdder(10));
     match (o) {
         Some(f) => { return f(32); },
         None => { return 0; }
@@ -5378,7 +5354,7 @@ function makeAdder(n: i32): (i32) => i32 {
     return add;
 }
 function main(): i32 {
-    var b: Box = Box { f: makeAdder(10) };
+    let b: Box = Box { f: makeAdder(10) };
     return (b.f)(32);
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -5401,7 +5377,7 @@ function makeReader(): () => P {
     return build;
 }
 function main(): i32 {
-    var f = makeReader();
+    let f = makeReader();
     return f().x + f().y;
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -5415,7 +5391,7 @@ func TestWASMClosureResultTupleAccess(t *testing.T) {
     return build;
 }
 function main(): i32 {
-    var f = makeReader();
+    let f = makeReader();
     return f().0 + f().1;
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -5438,8 +5414,8 @@ func TestWASMSiblingLocalFnCapture(t *testing.T) {
     return outer;
 }
 function main(): i32 {
-    var mk = makeMaker();
-    var f = mk();
+    let mk = makeMaker();
+    let f = mk();
     return f();
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -5463,7 +5439,7 @@ func TestWASMLenOfClosureReturningString(t *testing.T) {
     return build;
 }
 function main(): i32 {
-    var f = makeReader();
+    let f = makeReader();
     return (f()).len();
 }`
 	if got := runWasm(t, src); got != 5 {
@@ -5488,7 +5464,7 @@ func TestWASMClosureIfLetCapture(t *testing.T) {
     return build;
 }
 function main(): i32 {
-    var f = makeReader(Some(42));
+    let f = makeReader(Some(42));
     return f();
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -5508,7 +5484,7 @@ func TestWASMClosureMatchStmtCapture(t *testing.T) {
     return build;
 }
 function main(): i32 {
-    var f = makeReader(Some(42));
+    let f = makeReader(Some(42));
     return f();
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -5527,7 +5503,7 @@ func TestWASMClosureLetElseCapture(t *testing.T) {
     return build;
 }
 function main(): i32 {
-    var f = makeReader(Some(42));
+    let f = makeReader(Some(42));
     return f();
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -5552,7 +5528,7 @@ function makeNamer(name: string): () => string {
     return build;
 }
 function main(): i32 {
-    var f = makeNamer("world");
+    let f = makeNamer("world");
     if (f() != "hello, world!") { return 1; }
     return 0;
 }`
@@ -5569,8 +5545,8 @@ function makeMap(k: i32, v: i32): () => Map[i32, i32] {
     return build;
 }
 function main(): i32 {
-    var f = makeMap(7, 42);
-    var m = f();
+    let f = makeMap(7, 42);
+    let m = f();
     return m.get_or(7, 0);
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -5591,7 +5567,7 @@ function main(): i32 {
 // env copy — they don't share the slot.
 func TestWASMMutableCapturedVar(t *testing.T) {
 	src := `function makeCounter(): () => i32 {
-    var count: i32 = 0;
+    let count: i32 = 0;
     function tick(): i32 {
         count = count + 1;
         return count;
@@ -5599,10 +5575,10 @@ func TestWASMMutableCapturedVar(t *testing.T) {
     return tick;
 }
 function main(): i32 {
-    var c = makeCounter();
-    var a: i32 = c();
-    var b: i32 = c();
-    var d: i32 = c();
+    let c = makeCounter();
+    let a: i32 = c();
+    let b: i32 = c();
+    let d: i32 = c();
     return a + b + d;
 }`
 	// 1 + 2 + 3 = 6
@@ -5616,7 +5592,7 @@ function main(): i32 {
 // round-trip through the env block.
 func TestWASMMutableCapturedI64(t *testing.T) {
 	src := `function makeCounter(): () => i64 {
-    var count: i64 = 0i64;
+    let count: i64 = 0i64;
     function tick(): i64 {
         count = count + 1i64;
         return count;
@@ -5624,9 +5600,9 @@ func TestWASMMutableCapturedI64(t *testing.T) {
     return tick;
 }
 function main(): i32 {
-    var c = makeCounter();
-    var a: i64 = c();
-    var b: i64 = c();
+    let c = makeCounter();
+    let a: i64 = c();
+    let b: i64 = c();
     if (a != 1i64) { return 1; }
     if (b != 2i64) { return 2; }
     return 0;
@@ -5655,8 +5631,8 @@ function makeApplier(f: (i32) => i32): (i32) => i32 {
     return apply;
 }
 function main(): i32 {
-    var a = makeAdder(10);
-    var ap = makeApplier(a);
+    let a = makeAdder(10);
+    let ap = makeApplier(a);
     return ap(5);
 }`
 	// (5 + 10) + 1 = 16
@@ -5684,7 +5660,7 @@ func TestWASMClosureRecursiveSelfCall(t *testing.T) {
     return fact;
 }
 function main(): i32 {
-    var f = makeFact();
+    let f = makeFact();
     return f(5);
 }`
 	// 5! = 120
@@ -5697,7 +5673,7 @@ func TestWASMMethodOnStruct(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 		function (p: Point) sum(): i32 { return p.x + p.y; }
 		function main(): i32 {
-			var p: Point = Point { x: 10, y: 32 };
+			let p: Point = Point { x: 10, y: 32 };
 			return p.sum();
 		}`
 	if got := runWasm(t, src); got != 42 {
@@ -5710,7 +5686,7 @@ func TestWASMMethodWithExtraArg(t *testing.T) {
 	src := `struct Box { v: i32 }
 		function (b: Box) shifted(n: i32): i32 { return b.v + n; }
 		function main(): i32 {
-			var b: Box = Box { v: 5 };
+			let b: Box = Box { v: 5 };
 			return b.shifted(37);
 		}`
 	if got := runWasm(t, src); got != 42 {
@@ -5724,7 +5700,7 @@ func TestWASMMethodWithExtraArg(t *testing.T) {
 func TestWASMEnumMatchPayload(t *testing.T) {
 	src := `enum Pair { Two(i32, i32) }
 		function main(): i32 {
-			var p: Pair = Two(7, 5);
+			let p: Pair = Two(7, 5);
 			match (p) {
 				Two(a, b) => { return a + b; }
 			}
@@ -5745,13 +5721,13 @@ func TestWASMEnumMatchPayload(t *testing.T) {
 // The explicit `as i64` cast on the literal is needed today
 // because polymorphic-literal inference doesn't yet flow from
 // an enum-constructor's destination annotation back into the
-// argument expression — `var o: Option[i64] = Some(1)` reads
+// argument expression — `let o: Option[i64] = Some(1)` reads
 // the `1` as i32 and rejects the assignment. Separate concern
 // from the wide-payload IR work; once contextual literal
 // inference covers enum constructors the casts can drop.
 func TestWASMEnumMatchPayloadI64(t *testing.T) {
 	src := `function main(): i32 {
-    var o: Option[i64] = Some(4294967296 as i64);
+    let o: Option[i64] = Some(4294967296 as i64);
     match (o) {
         Some(n) => {
             if (n == (4294967296 as i64)) { return 1; }
@@ -5771,7 +5747,7 @@ func TestWASMEnumMatchPayloadI64(t *testing.T) {
 // f64.store / f64.load.
 func TestWASMEnumMatchPayloadF64(t *testing.T) {
 	src := `function main(): i32 {
-    var o: Option[f64] = Some(3.5 as f64);
+    let o: Option[f64] = Some(3.5 as f64);
     match (o) {
         Some(x) => {
             if (x > (3.4 as f64)) { if (x < (3.6 as f64)) { return 1; } }
@@ -5792,7 +5768,7 @@ func TestWASMEnumMatchPayloadF64(t *testing.T) {
 // before assignable runs. No `as i64` cast on the literal.
 func TestWASMEnumPayloadInferredI64(t *testing.T) {
 	src := `function main(): i32 {
-    var o: Option[i64] = Some(4294967296);
+    let o: Option[i64] = Some(4294967296);
     match (o) {
         Some(n) => {
             if (n == 4294967296) { return 1; }
@@ -5807,11 +5783,11 @@ func TestWASMEnumPayloadInferredI64(t *testing.T) {
 	}
 }
 
-// Same shape with f64 — `var o: Option[f64] = Some(3.5);`
+// Same shape with f64 — `let o: Option[f64] = Some(3.5);`
 // resolves the literal from the destination type.
 func TestWASMEnumPayloadInferredF64(t *testing.T) {
 	src := `function main(): i32 {
-    var o: Option[f64] = Some(3.5);
+    let o: Option[f64] = Some(3.5);
     match (o) {
         Some(x) => {
             if (x > 3.4) { if (x < 3.6) { return 1; } }
@@ -5840,7 +5816,7 @@ func TestWASMEnumMatchPayloadWideMixed(t *testing.T) {
 	// provides the concrete type.
 	src := `enum Wide { W(i64, i32) }
 function main(): i32 {
-    var w: Wide = W(8589934592, 7);
+    let w: Wide = W(8589934592, 7);
     match (w) {
         W(big, small) => {
             if (big == 8589934592) { if (small == 7) { return 1; } }
@@ -5859,7 +5835,7 @@ function main(): i32 {
 // too.
 func TestWASMIfLetPayloadI64(t *testing.T) {
 	src := `function main(): i32 {
-    var o: Option[i64] = Some(4294967296 as i64);
+    let o: Option[i64] = Some(4294967296 as i64);
     if let Some(n) = o {
         if (n == (4294967296 as i64)) { return 1; }
         return 0;
@@ -5874,7 +5850,7 @@ func TestWASMIfLetPayloadI64(t *testing.T) {
 // And via `let else` — the third payload-load lowering path.
 func TestWASMLetElsePayloadI64(t *testing.T) {
 	src := `function main(): i32 {
-    var o: Option[i64] = Some(4294967296 as i64);
+    let o: Option[i64] = Some(4294967296 as i64);
     let Some(n) = o else { return -1; };
     if (n == (4294967296 as i64)) { return 1; }
     return 0;
@@ -5988,12 +5964,12 @@ func TestWASMGenericResult(t *testing.T) {
 // content checks since it's a CSPRNG.
 func TestWASMRandomBytes(t *testing.T) {
 	src := `function main(): i32 {
-		var a: u8[] = random_bytes(16);
-		var b: u8[] = random_bytes(16);
+		let a: u8[] = random_bytes(16);
+		let b: u8[] = random_bytes(16);
 		if (a.len() != 16) { return 1; }
 		if (b.len() != 16) { return 2; }
-		var same: i32 = 1;
-		var i: i32 = 0;
+		let same: i32 = 1;
+		let i: i32 = 0;
 		while (i < 16) {
 			if ((a[i] as i32) != (b[i] as i32)) { same = 0; }
 			i = i + 1;
@@ -6013,8 +5989,8 @@ func TestWASMRandomBytes(t *testing.T) {
 // two draws must differ.
 func TestWASMRandomI32(t *testing.T) {
 	src := `function main(): i32 {
-		var a: i32 = random_i32();
-		var b: i32 = random_i32();
+		let a: i32 = random_i32();
+		let b: i32 = random_i32();
 		if (a == b) { return 1; }
 		return 0;
 	}`
@@ -6588,7 +6564,7 @@ import "std/url";
 function main(): i32 {
 		// Standard pairs — each unique key has a 1-element
 		// string[] containing the decoded value.
-		var m: Map[string, string[]] = url.query_parse("a=1&b=2&c=hello%20world");
+		let m: Map[string, string[]] = url.query_parse("a=1&b=2&c=hello%20world");
 		if (m.len() != 3) { return 1; }
 		match (m.get("a")) {
 			Some(arr) => {
@@ -6605,14 +6581,14 @@ function main(): i32 {
 		}
 
 		// Encoded key.
-		var m2: Map[string, string[]] = url.query_parse("k%3D%26=v");
+		let m2: Map[string, string[]] = url.query_parse("k%3D%26=v");
 		match (m2.get("k=&")) {
 			Some(arr) => { if (arr[0] != "v") { return 10; } },
 			None => { return 11; }
 		}
 
 		// Pair without '=' -> single-element empty value.
-		var m3: Map[string, string[]] = url.query_parse("flag&x=1");
+		let m3: Map[string, string[]] = url.query_parse("flag&x=1");
 		if (m3.len() != 2) { return 20; }
 		match (m3.get("flag")) {
 			Some(arr) => {
@@ -6623,15 +6599,15 @@ function main(): i32 {
 		}
 
 		// Empty input -> empty map.
-		var m4: Map[string, string[]] = url.query_parse("");
+		let m4: Map[string, string[]] = url.query_parse("");
 		if (m4.len() != 0) { return 30; }
 
 		// Trailing '&' is ignored.
-		var m5: Map[string, string[]] = url.query_parse("a=1&");
+		let m5: Map[string, string[]] = url.query_parse("a=1&");
 		if (m5.len() != 1) { return 40; }
 
 		// Duplicate keys: all values preserved in order.
-		var m6: Map[string, string[]] = url.query_parse("tag=a&tag=b&tag=c");
+		let m6: Map[string, string[]] = url.query_parse("tag=a&tag=b&tag=c");
 		if (m6.len() != 1) { return 50; }
 		match (m6.get("tag")) {
 			Some(arr) => {
@@ -6644,7 +6620,7 @@ function main(): i32 {
 		}
 
 		// Mixed unique + duplicates.
-		var m7: Map[string, string[]] = url.query_parse("k=1&j=x&k=2");
+		let m7: Map[string, string[]] = url.query_parse("k=1&j=x&k=2");
 		if (m7.len() != 2) { return 60; }
 		match (m7.get("k")) {
 			Some(arr) => {
@@ -6697,15 +6673,15 @@ function main(): i32 {
 		// Empty object — empty array literal needs a type
 		// annotation that's awkward at construction site, so
 		// just exercise empty objects.
-		var emptyMap: Map[string, JsonValue] = map_new(4);
+		let emptyMap: Map[string, JsonValue] = map_new(4);
 		if (json.json_encode(JObject(emptyMap)) != "{}") { return 20; }
 
 		// Heterogeneous array.
-		var a: JsonValue[] = [JNumber("1"), JString("two"), JBool(true), JNull];
+		let a: JsonValue[] = [JNumber("1"), JString("two"), JBool(true), JNull];
 		if (json.json_encode(JArray(a)) != "[1,\"two\",true,null]") { return 30; }
 
 		// Object — insertion order preserved (IndexMap).
-		var m: Map[string, JsonValue] = map_new(4);
+		let m: Map[string, JsonValue] = map_new(4);
 		m = m.insert("name", JString("alice"));
 		m = m.insert("age", JNumber("30"));
 		m = m.insert("admin", JBool(false));
@@ -6714,8 +6690,8 @@ function main(): i32 {
 		}
 
 		// Nested: object containing an array of numbers.
-		var inner: JsonValue[] = [JNumber("1"), JNumber("2"), JNumber("3")];
-		var outer: Map[string, JsonValue] = map_new(2);
+		let inner: JsonValue[] = [JNumber("1"), JNumber("2"), JNumber("3")];
+		let outer: Map[string, JsonValue] = map_new(2);
 		outer = outer.insert("nums", JArray(inner));
 		if (json.json_encode(JObject(outer)) != "{\"nums\":[1,2,3]}") { return 50; }
 
@@ -6913,23 +6889,23 @@ func TestWASMFloatToString(t *testing.T) {
 import "std/float";
 function main(): i32 {
 		// Integer values lose the decimal point entirely.
-		var a: f32 = 0.0;
+		let a: f32 = 0.0;
 		if (a.to_string() != "0") { return 1; }
-		var b: f32 = 42.0;
+		let b: f32 = 42.0;
 		if (b.to_string() != "42") { return 2; }
-		var c: f32 = -7.0;
+		let c: f32 = -7.0;
 		if (c.to_string() != "-7") { return 3; }
 
 		// Common fractional values.
-		var d: f32 = 0.5;
+		let d: f32 = 0.5;
 		if (d.to_string() != "0.5") { return 10; }
-		var e: f32 = -0.25;
+		let e: f32 = -0.25;
 		if (e.to_string() != "-0.25") { return 11; }
 
 		// f64 renders shortest-round-trip, same as f32.
-		var f: f64 = 0.5;
+		let f: f64 = 0.5;
 		if (f.to_string() != "0.5") { return 20; }
-		var g: f64 = 1.5;
+		let g: f64 = 1.5;
 		if (g.to_string() != "1.5") { return 21; }
 
 		// Round-trip through parse_float (f64 domain) for tolerance check.
@@ -6939,7 +6915,7 @@ function main(): i32 {
 				// parses back to ≈ 3.14.
 				match (x.to_string().parse_float()) {
 					Some(y) => {
-						var diff: f64 = y - 3.14;
+						let diff: f64 = y - 3.14;
 						if (diff < 0.0) { diff = 0.0 - diff; }
 						if (diff > 0.001) { return 30; }
 					},
@@ -6982,12 +6958,7 @@ function main(): i32 {
 // prelude-to-modules stack works on wasm32 too. See the arm64
 // version for the rationale and per-case explanations. Programs
 // return 0 on success; runWasm parses the i32 main returned out
-// of the PrintMainResult-emitted stdout line.
-//
-// The PrintMainResult wrapper picks the mangled `int__int_to_string`
-// name (versus bare `int_to_string` under auto-prelude) so this
-// test exercises both the no-prelude load path AND the wat
-// emitter's runtime-name lookup.
+// of wasmtime's --invoke line.
 func TestWASMNoPreludeStdlibImports(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -6996,22 +6967,22 @@ func TestWASMNoPreludeStdlibImports(t *testing.T) {
 		{"i32_string_cycle", `
 import "std/i32";
 function main(): i32 {
-    var s: string = (42).to_string_padded(6);
+    let s: string = (42).to_string_padded(6);
     if (s == "000042") { return 0; }
     return 1;
 }`},
 		{"array_method_chain", `
 import "std/array";
 function main(): i32 {
-    var xs: i32[] = [0 - 3, 4, 0 - 1];
-    var ys = xs.abs_each();
+    let xs: i32[] = [0 - 3, 4, 0 - 1];
+    let ys = xs.abs_each();
     if (ys[0] + ys[1] + ys[2] == 8) { return 0; }
     return 1;
 }`},
 		{"qualified_int_call", `
 import "core/int";
 function main(): i32 {
-    var s: string = int.int_to_string_radix(255, 16);
+    let s: string = int.int_to_string_radix(255, 16);
     if (s == "ff") { return 0; }
     return 1;
 }`},
@@ -7020,10 +6991,10 @@ import "std/i32";
 import "std/string";
 import "std/array";
 function main(): i32 {
-    var s: string = (0 - 42).to_string();
+    let s: string = (0 - 42).to_string();
     if (s != "-42") { return 1; }
-    var strs: string[] = ["b", "a", "c"];
-    var joined: string = strs.join(",");
+    let strs: string[] = ["b", "a", "c"];
+    let joined: string = strs.join(",");
     if (joined != "b,a,c") { return 2; }
     return 0;
 }`},
@@ -7048,33 +7019,33 @@ function main(): i32 {
 func TestWASMLeb128Uleb(t *testing.T) {
 	src := `import "std/wasm/leb128";
 function main(): i32 {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
 
     // 0 -> [0x00]
-    var b1: u8[] = leb128.uleb_u32(empty, 0u32);
+    let b1: u8[] = leb128.uleb_u32(empty, 0u32);
     if (b1.len() != 1) { return 1; }
     if (b1[0] != 0u8) { return 2; }
 
     // 127 -> [0x7F]
-    var b2: u8[] = leb128.uleb_u32(empty, 127u32);
+    let b2: u8[] = leb128.uleb_u32(empty, 127u32);
     if (b2.len() != 1) { return 10; }
     if (b2[0] != 127u8) { return 11; }
 
     // 128 -> [0x80, 0x01]
-    var b3: u8[] = leb128.uleb_u32(empty, 128u32);
+    let b3: u8[] = leb128.uleb_u32(empty, 128u32);
     if (b3.len() != 2) { return 20; }
     if (b3[0] != 128u8) { return 21; }
     if (b3[1] != 1u8) { return 22; }
 
     // 624485 -> [0xE5, 0x8E, 0x26]
-    var b4: u8[] = leb128.uleb_u32(empty, 624485u32);
+    let b4: u8[] = leb128.uleb_u32(empty, 624485u32);
     if (b4.len() != 3) { return 30; }
     if (b4[0] != 229u8) { return 31; }
     if (b4[1] != 142u8) { return 32; }
     if (b4[2] != 38u8) { return 33; }
 
     // u32 max -> [0xFF, 0xFF, 0xFF, 0xFF, 0x0F]
-    var b5: u8[] = leb128.uleb_u32(empty, 4294967295u32);
+    let b5: u8[] = leb128.uleb_u32(empty, 4294967295u32);
     if (b5.len() != 5) { return 40; }
     if (b5[0] != 255u8) { return 41; }
     if (b5[1] != 255u8) { return 42; }
@@ -7083,8 +7054,8 @@ function main(): i32 {
     if (b5[4] != 15u8) { return 45; }
 
     // Append preserves seed bytes.
-    var seed: u8[] = [10u8, 20u8];
-    var b6: u8[] = leb128.uleb_u32(seed, 128u32);
+    let seed: u8[] = [10u8, 20u8];
+    let b6: u8[] = leb128.uleb_u32(seed, 128u32);
     if (b6.len() != 4) { return 50; }
     if (b6[0] != 10u8) { return 51; }
     if (b6[1] != 20u8) { return 52; }
@@ -7093,7 +7064,7 @@ function main(): i32 {
 
     // u64 path with a value above 2^32: 8589934592 (= 2^33).
     // Encoding: [0x80, 0x80, 0x80, 0x80, 0x20].
-    var b7: u8[] = leb128.uleb_u64(empty, 8589934592u64);
+    let b7: u8[] = leb128.uleb_u64(empty, 8589934592u64);
     if (b7.len() != 5) { return 60; }
     if (b7[0] != 128u8) { return 61; }
     if (b7[1] != 128u8) { return 62; }
@@ -7117,42 +7088,42 @@ function main(): i32 {
 func TestWASMLeb128Sleb(t *testing.T) {
 	src := `import "std/wasm/leb128";
 function main(): i32 {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
 
     // 0 -> [0x00]
-    var b1: u8[] = leb128.sleb_i32(empty, 0);
+    let b1: u8[] = leb128.sleb_i32(empty, 0);
     if (b1.len() != 1) { return 1; }
     if (b1[0] != 0u8) { return 2; }
 
     // -1 -> [0x7F]   (the canonical "all-ones" sleb terminator)
-    var b2: u8[] = leb128.sleb_i32(empty, 0 - 1);
+    let b2: u8[] = leb128.sleb_i32(empty, 0 - 1);
     if (b2.len() != 1) { return 10; }
     if (b2[0] != 127u8) { return 11; }
 
     // 63 -> [0x3F]   (largest single-byte positive)
-    var b3: u8[] = leb128.sleb_i32(empty, 63);
+    let b3: u8[] = leb128.sleb_i32(empty, 63);
     if (b3.len() != 1) { return 20; }
     if (b3[0] != 63u8) { return 21; }
 
     // 64 -> [0xC0, 0x00]   (bit-6 set forces a continuation byte)
-    var b4: u8[] = leb128.sleb_i32(empty, 64);
+    let b4: u8[] = leb128.sleb_i32(empty, 64);
     if (b4.len() != 2) { return 30; }
     if (b4[0] != 192u8) { return 31; }
     if (b4[1] != 0u8) { return 32; }
 
     // -64 -> [0x40]   (smallest single-byte negative)
-    var b5: u8[] = leb128.sleb_i32(empty, 0 - 64);
+    let b5: u8[] = leb128.sleb_i32(empty, 0 - 64);
     if (b5.len() != 1) { return 40; }
     if (b5[0] != 64u8) { return 41; }
 
     // -65 -> [0xBF, 0x7F]
-    var b6: u8[] = leb128.sleb_i32(empty, 0 - 65);
+    let b6: u8[] = leb128.sleb_i32(empty, 0 - 65);
     if (b6.len() != 2) { return 50; }
     if (b6[0] != 191u8) { return 51; }
     if (b6[1] != 127u8) { return 52; }
 
     // -123456 -> [0xC0, 0xBB, 0x78]   (multi-byte negative)
-    var b7: u8[] = leb128.sleb_i32(empty, 0 - 123456);
+    let b7: u8[] = leb128.sleb_i32(empty, 0 - 123456);
     if (b7.len() != 3) { return 60; }
     if (b7[0] != 192u8) { return 61; }
     if (b7[1] != 187u8) { return 62; }
@@ -7160,14 +7131,14 @@ function main(): i32 {
 
     // i64 wide value: 8589934592 (= 2^33).
     // Encoding: [0x80, 0x80, 0x80, 0x80, 0x20].
-    var b8: u8[] = leb128.sleb_i64(empty, 8589934592i64);
+    let b8: u8[] = leb128.sleb_i64(empty, 8589934592i64);
     if (b8.len() != 5) { return 70; }
     if (b8[0] != 128u8) { return 71; }
     if (b8[4] != 32u8) { return 75; }
 
     // i64 negative wide value: -8589934592.
     // Encoding: [0x80, 0x80, 0x80, 0x80, 0x60].
-    var b9: u8[] = leb128.sleb_i64(empty, 0i64 - 8589934592i64);
+    let b9: u8[] = leb128.sleb_i64(empty, 0i64 - 8589934592i64);
     if (b9.len() != 5) { return 80; }
     if (b9[0] != 128u8) { return 81; }
     if (b9[4] != 96u8) { return 85; }
@@ -7212,10 +7183,10 @@ function main(): i32 {
 func TestWASMEncodePreamble(t *testing.T) {
 	src := `import "std/wasm/encode";
 function main(): i32 {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
 
     // Module preamble: \0asm 0x01000000.
-    var hdr: u8[] = encode.put_module_header(empty);
+    let hdr: u8[] = encode.put_module_header(empty);
     if (hdr.len() != 8) { return 1; }
     if (hdr[0] != 0u8) { return 2; }
     if (hdr[1] != 97u8) { return 3; }    // 'a'
@@ -7227,7 +7198,7 @@ function main(): i32 {
     if (hdr[7] != 0u8) { return 9; }
 
     // put_u32_le(0x12345678) — verifies byte order.
-    var le: u8[] = encode.put_u32_le(empty, 305419896u32);
+    let le: u8[] = encode.put_u32_le(empty, 305419896u32);
     if (le.len() != 4) { return 20; }
     if (le[0] != 120u8) { return 21; }   // 0x78
     if (le[1] != 86u8) { return 22; }    // 0x56
@@ -7235,8 +7206,8 @@ function main(): i32 {
     if (le[3] != 18u8) { return 24; }    // 0x12
 
     // put_u32_le on a seeded buffer appends, not replaces.
-    var seed: u8[] = [255u8];
-    var le2: u8[] = encode.put_u32_le(seed, 1u32);
+    let seed: u8[] = [255u8];
+    let le2: u8[] = encode.put_u32_le(seed, 1u32);
     if (le2.len() != 5) { return 30; }
     if (le2[0] != 255u8) { return 31; }
     if (le2[1] != 1u8) { return 32; }
@@ -7259,29 +7230,29 @@ function main(): i32 {
 func TestWASMEncodeNameAndSection(t *testing.T) {
 	src := `import "std/wasm/encode";
 function main(): i32 {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
 
     // Empty name: uleb(0) only.
-    var n0: u8[] = encode.put_name(empty, "");
+    let n0: u8[] = encode.put_name(empty, "");
     if (n0.len() != 1) { return 1; }
     if (n0[0] != 0u8) { return 2; }
 
     // "hi" -> [0x02, 'h', 'i']
-    var n1: u8[] = encode.put_name(empty, "hi");
+    let n1: u8[] = encode.put_name(empty, "hi");
     if (n1.len() != 3) { return 10; }
     if (n1[0] != 2u8) { return 11; }
     if (n1[1] != 104u8) { return 12; }   // 'h'
     if (n1[2] != 105u8) { return 13; }   // 'i'
 
     // Empty section body: id + uleb(0) = 2 bytes.
-    var s0: u8[] = encode.put_section(empty, encode.section_type(), empty);
+    let s0: u8[] = encode.put_section(empty, encode.section_type(), empty);
     if (s0.len() != 2) { return 20; }
     if (s0[0] != 1u8) { return 21; }     // section_type id
     if (s0[1] != 0u8) { return 22; }     // size 0
 
     // Non-empty section body: id + uleb(2) + body.
-    var body: u8[] = [170u8, 187u8];     // 0xAA 0xBB
-    var s1: u8[] = encode.put_section(empty, encode.section_function(), body);
+    let body: u8[] = [170u8, 187u8];     // 0xAA 0xBB
+    let s1: u8[] = encode.put_section(empty, encode.section_function(), body);
     if (s1.len() != 4) { return 30; }
     if (s1[0] != 3u8) { return 31; }     // section_function id
     if (s1[1] != 2u8) { return 32; }     // size 2
@@ -7321,15 +7292,15 @@ func TestWASMEncodeMinimalModule(t *testing.T) {
 	src := `import "std/wasm/encode";
 import "std/wasm/leb128";
 function main(): i32 {
-    var bytes: u8[] = [];
+    let bytes: u8[] = [];
     bytes = encode.put_module_header(bytes);
 
     // Build the type section body: vec(functype) count=1, then
     // one functype "(i32) -> (i32)".
-    var type_body: u8[] = [];
+    let type_body: u8[] = [];
     type_body = leb128.uleb_u32(type_body, 1u32);
-    var params: u8[] = [encode.valtype_i32()];
-    var results: u8[] = [encode.valtype_i32()];
+    let params: u8[] = [encode.valtype_i32()];
+    let results: u8[] = [encode.valtype_i32()];
     type_body = encode.put_func_type(type_body, params, results);
 
     bytes = encode.put_section(bytes, encode.section_type(), type_body);
@@ -7360,9 +7331,9 @@ function main(): i32 {
     if (bytes[15] != 127u8) { return 35; }   // 0x7F i32
 
     // A two-param / no-result functype: 0x60 02 7F 7E 00.
-    var ft2: u8[] = [];
-    var ps: u8[] = [encode.valtype_i32(), encode.valtype_i64()];
-    var rs: u8[] = [];
+    let ft2: u8[] = [];
+    let ps: u8[] = [encode.valtype_i32(), encode.valtype_i64()];
+    let rs: u8[] = [];
     ft2 = encode.put_func_type(ft2, ps, rs);
     if (ft2.len() != 5) { return 40; }
     if (ft2[0] != 96u8) { return 41; }
@@ -7386,17 +7357,17 @@ function main(): i32 {
 func TestWASMInstConsts(t *testing.T) {
 	src := `import "std/wasm/inst";
 function main(): i32 {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
 
     // i32.const 0 -> 0x41 0x00
-    var c0: u8[] = inst.inst_i32_const(empty, 0);
+    let c0: u8[] = inst.inst_i32_const(empty, 0);
     if (c0.len() != 2) { return 1; }
     if (c0[0] != 65u8) { return 2; }
     if (c0[1] != 0u8) { return 3; }
 
     // i32.const 63 -> 0x41 0x3F (largest single-byte sleb positive
     // — bit-6 clear so no continuation needed).
-    var c63: u8[] = inst.inst_i32_const(empty, 63);
+    let c63: u8[] = inst.inst_i32_const(empty, 63);
     if (c63.len() != 2) { return 10; }
     if (c63[0] != 65u8) { return 11; }
     if (c63[1] != 63u8) { return 12; }
@@ -7404,33 +7375,33 @@ function main(): i32 {
     // i32.const 127 -> 0x41 0xFF 0x00. 127 has bit-6 set, so the
     // sleb form needs a continuation byte; otherwise [0x7F] would
     // decode to -1. This is where wasm hex dumps commonly go wrong.
-    var c127: u8[] = inst.inst_i32_const(empty, 127);
+    let c127: u8[] = inst.inst_i32_const(empty, 127);
     if (c127.len() != 3) { return 15; }
     if (c127[0] != 65u8) { return 16; }
     if (c127[1] != 255u8) { return 17; }
     if (c127[2] != 0u8) { return 18; }
 
     // i32.const -1 -> 0x41 0x7F (sleb 0x7F is the all-ones term)
-    var cn1: u8[] = inst.inst_i32_const(empty, 0 - 1);
+    let cn1: u8[] = inst.inst_i32_const(empty, 0 - 1);
     if (cn1.len() != 2) { return 20; }
     if (cn1[1] != 127u8) { return 22; }
 
     // i32.const 128 -> 0x41 0x80 0x01 (sleb boundary)
-    var c128: u8[] = inst.inst_i32_const(empty, 128);
+    let c128: u8[] = inst.inst_i32_const(empty, 128);
     if (c128.len() != 3) { return 30; }
     if (c128[0] != 65u8) { return 31; }
     if (c128[1] != 128u8) { return 32; }
     if (c128[2] != 1u8) { return 33; }
 
     // i64.const 42 -> 0x42 0x2A
-    var ci64: u8[] = inst.inst_i64_const(empty, 42i64);
+    let ci64: u8[] = inst.inst_i64_const(empty, 42i64);
     if (ci64.len() != 2) { return 40; }
     if (ci64[0] != 66u8) { return 41; }
     if (ci64[1] != 42u8) { return 42; }
 
     // f32.const with bit pattern 0x3F800000 (= 1.0): 0x43 followed
     // by four LE bytes [0x00, 0x00, 0x80, 0x3F].
-    var f1: u8[] = inst.inst_f32_const(empty, 1065353216u32);
+    let f1: u8[] = inst.inst_f32_const(empty, 1065353216u32);
     if (f1.len() != 5) { return 50; }
     if (f1[0] != 67u8) { return 51; }
     if (f1[1] != 0u8) { return 52; }
@@ -7440,7 +7411,7 @@ function main(): i32 {
 
     // f64.const with bit pattern 0x3FF0000000000000 (= 1.0): 0x44
     // followed by eight LE bytes ending in 0x3F.
-    var f2: u8[] = inst.inst_f64_const(empty, 4607182418800017408u64);
+    let f2: u8[] = inst.inst_f64_const(empty, 4607182418800017408u64);
     if (f2.len() != 9) { return 60; }
     if (f2[0] != 68u8) { return 61; }
     if (f2[1] != 0u8) { return 62; }
@@ -7461,41 +7432,41 @@ function main(): i32 {
 func TestWASMInstVariable(t *testing.T) {
 	src := `import "std/wasm/inst";
 function main(): i32 {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
 
     // local.get 0 -> 0x20 0x00
-    var lg0: u8[] = inst.inst_local_get(empty, 0u32);
+    let lg0: u8[] = inst.inst_local_get(empty, 0u32);
     if (lg0.len() != 2) { return 1; }
     if (lg0[0] != 32u8) { return 2; }
     if (lg0[1] != 0u8) { return 3; }
 
     // local.set 5 -> 0x21 0x05
-    var ls5: u8[] = inst.inst_local_set(empty, 5u32);
+    let ls5: u8[] = inst.inst_local_set(empty, 5u32);
     if (ls5.len() != 2) { return 10; }
     if (ls5[0] != 33u8) { return 11; }
     if (ls5[1] != 5u8) { return 12; }
 
     // local.tee 1 -> 0x22 0x01
-    var lt1: u8[] = inst.inst_local_tee(empty, 1u32);
+    let lt1: u8[] = inst.inst_local_tee(empty, 1u32);
     if (lt1.len() != 2) { return 20; }
     if (lt1[0] != 34u8) { return 21; }
     if (lt1[1] != 1u8) { return 22; }
 
     // local.get 130 -> 0x20 0x82 0x01 (uleb of 130)
-    var lg130: u8[] = inst.inst_local_get(empty, 130u32);
+    let lg130: u8[] = inst.inst_local_get(empty, 130u32);
     if (lg130.len() != 3) { return 30; }
     if (lg130[0] != 32u8) { return 31; }
     if (lg130[1] != 130u8) { return 32; }
     if (lg130[2] != 1u8) { return 33; }
 
     // global.get 7 -> 0x23 0x07
-    var gg7: u8[] = inst.inst_global_get(empty, 7u32);
+    let gg7: u8[] = inst.inst_global_get(empty, 7u32);
     if (gg7.len() != 2) { return 40; }
     if (gg7[0] != 35u8) { return 41; }
     if (gg7[1] != 7u8) { return 42; }
 
     // global.set 0 -> 0x24 0x00
-    var gs0: u8[] = inst.inst_global_set(empty, 0u32);
+    let gs0: u8[] = inst.inst_global_set(empty, 0u32);
     if (gs0.len() != 2) { return 50; }
     if (gs0[0] != 36u8) { return 51; }
     if (gs0[1] != 0u8) { return 52; }
@@ -7515,7 +7486,7 @@ func TestWASMInstControl(t *testing.T) {
 	src := `import "std/wasm/inst";
 import "std/wasm/encode";
 function main(): i32 {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
 
     // Single-byte opcodes.
     if ((inst.inst_unreachable(empty)).len() != 1) { return 1; }
@@ -7528,39 +7499,39 @@ function main(): i32 {
     if (inst.inst_select(empty)[0] != 27u8) { return 8; }
 
     // block bt=empty -> 0x02 0x40
-    var bk: u8[] = inst.inst_block_start(empty, inst.blocktype_empty());
+    let bk: u8[] = inst.inst_block_start(empty, inst.blocktype_empty());
     if (bk.len() != 2) { return 10; }
     if (bk[0] != 2u8) { return 11; }
     if (bk[1] != 64u8) { return 12; }
 
     // loop bt=i32 -> 0x03 0x7F
-    var lp: u8[] = inst.inst_loop_start(empty, encode.valtype_i32());
+    let lp: u8[] = inst.inst_loop_start(empty, encode.valtype_i32());
     if (lp.len() != 2) { return 20; }
     if (lp[0] != 3u8) { return 21; }
     if (lp[1] != 127u8) { return 22; }
 
     // if bt=empty -> 0x04 0x40
-    var ifs: u8[] = inst.inst_if_start(empty, inst.blocktype_empty());
+    let ifs: u8[] = inst.inst_if_start(empty, inst.blocktype_empty());
     if (ifs[0] != 4u8) { return 30; }
     if (ifs[1] != 64u8) { return 31; }
 
     // br 0 -> 0x0C 0x00
-    var br0: u8[] = inst.inst_br(empty, 0u32);
+    let br0: u8[] = inst.inst_br(empty, 0u32);
     if (br0[0] != 12u8) { return 40; }
     if (br0[1] != 0u8) { return 41; }
 
     // br_if 3 -> 0x0D 0x03
-    var bri: u8[] = inst.inst_br_if(empty, 3u32);
+    let bri: u8[] = inst.inst_br_if(empty, 3u32);
     if (bri[0] != 13u8) { return 50; }
     if (bri[1] != 3u8) { return 51; }
 
     // call 7 -> 0x10 0x07
-    var c7: u8[] = inst.inst_call(empty, 7u32);
+    let c7: u8[] = inst.inst_call(empty, 7u32);
     if (c7[0] != 16u8) { return 60; }
     if (c7[1] != 7u8) { return 61; }
 
     // call_indirect typeidx=2 tableidx=0 -> 0x11 0x02 0x00
-    var ci: u8[] = inst.inst_call_indirect(empty, 2u32, 0u32);
+    let ci: u8[] = inst.inst_call_indirect(empty, 2u32, 0u32);
     if (ci.len() != 3) { return 70; }
     if (ci[0] != 17u8) { return 71; }
     if (ci[1] != 2u8) { return 72; }
@@ -7581,14 +7552,14 @@ func TestWASMInstFunctionBody(t *testing.T) {
 	src := `import "std/wasm/inst";
 import "std/wasm/encode";
 function main(): i32 {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
 
     // Build body: i32.const 42 (no locals).
-    var body: u8[] = inst.inst_i32_const(empty, 42);
+    let body: u8[] = inst.inst_i32_const(empty, 42);
 
-    var locals: u8[] = inst.put_locals_empty(empty);
+    let locals: u8[] = inst.put_locals_empty(empty);
 
-    var entry: u8[] = inst.put_function_body(empty, locals, body);
+    let entry: u8[] = inst.put_function_body(empty, locals, body);
 
     // Expected inner bytes: 0x00 (locals=0), 0x41 0x2A (i32.const 42),
     // 0x0B (end). Wrapped: 0x04 (size=4) + the 4 inner bytes.
@@ -7600,16 +7571,16 @@ function main(): i32 {
     if (entry[4] != 11u8) { return 6; }    // end
 
     // Locals: one group of 3 i32s.
-    var locals3: u8[] = inst.put_locals_one_group(empty, 3u32, encode.valtype_i32());
+    let locals3: u8[] = inst.put_locals_one_group(empty, 3u32, encode.valtype_i32());
     if (locals3.len() != 3) { return 10; }
     if (locals3[0] != 1u8) { return 11; }      // num groups
     if (locals3[1] != 3u8) { return 12; }      // count
     if (locals3[2] != 127u8) { return 13; }    // i32 valtype
 
     // Wrap a body with those locals.
-    var body2: u8[] = inst.inst_local_get(empty, 0u32);  // 0x20 0x00
+    let body2: u8[] = inst.inst_local_get(empty, 0u32);  // 0x20 0x00
     body2 = inst.inst_return(body2);                     // 0x0F
-    var entry2: u8[] = inst.put_function_body(empty, locals3, body2);
+    let entry2: u8[] = inst.put_function_body(empty, locals3, body2);
     // Inner: locals(3 bytes) + body(3 bytes) + end(1) = 7 bytes.
     // Wrapped: size_uleb(7) = 0x07, then the 7 inner bytes.
     if (entry2.len() != 8) { return 20; }
@@ -7637,7 +7608,7 @@ function main(): i32 {
 func TestWASMNumericI32(t *testing.T) {
 	src := `import "std/wasm/numeric";
 function main(): i32 {
-    var e: u8[] = [];
+    let e: u8[] = [];
 
     // Unary
     if (numeric.inst_i32_clz(e)[0]    != 103u8) { return 1; }
@@ -7686,7 +7657,7 @@ function main(): i32 {
 func TestWASMNumericI64(t *testing.T) {
 	src := `import "std/wasm/numeric";
 function main(): i32 {
-    var e: u8[] = [];
+    let e: u8[] = [];
 
     // Unary + eqz (eqz is in the i32-eqz neighbourhood at 0x50).
     if (numeric.inst_i64_eqz(e)[0]    != 80u8)  { return 1; }
@@ -7728,7 +7699,7 @@ function main(): i32 {
 func TestWASMNumericFloat(t *testing.T) {
 	src := `import "std/wasm/numeric";
 function main(): i32 {
-    var e: u8[] = [];
+    let e: u8[] = [];
 
     // f32 compare (0x5B-0x60).
     if (numeric.inst_f32_eq(e)[0] != 91u8) { return 1; }
@@ -7773,7 +7744,7 @@ func TestWASMNumericCompose(t *testing.T) {
 	src := `import "std/wasm/inst";
 import "std/wasm/numeric";
 function main(): i32 {
-    var body: u8[] = [];
+    let body: u8[] = [];
     body = inst.inst_local_get(body, 0u32);
     body = inst.inst_local_get(body, 1u32);
     body = numeric.inst_i32_add(body);
@@ -7788,7 +7759,7 @@ function main(): i32 {
 
     // A second composite: local.get 0 ; i32.eqz ; br_if 0
     // — the canonical "bail out early when arg is zero" shape.
-    var body2: u8[] = [];
+    let body2: u8[] = [];
     body2 = inst.inst_local_get(body2, 0u32);
     body2 = numeric.inst_i32_eqz(body2);
     body2 = inst.inst_br_if(body2, 0u32);
@@ -7814,17 +7785,17 @@ function main(): i32 {
 func TestWASMMemoryLoad(t *testing.T) {
 	src := `import "std/wasm/memory";
 function main(): i32 {
-    var e: u8[] = [];
+    let e: u8[] = [];
 
     // i32.load align=2 offset=0 -> 0x28 0x02 0x00
-    var l32: u8[] = memory.inst_i32_load(e, 2u32, 0u32);
+    let l32: u8[] = memory.inst_i32_load(e, 2u32, 0u32);
     if (l32.len() != 3)       { return 1; }
     if (l32[0] != 40u8)      { return 2; }
     if (l32[1] != 2u8)       { return 3; }
     if (l32[2] != 0u8)       { return 4; }
 
     // i64.load align=3 offset=128 -> 0x29 0x03 0x80 0x01 (uleb 128)
-    var l64: u8[] = memory.inst_i64_load(e, 3u32, 128u32);
+    let l64: u8[] = memory.inst_i64_load(e, 3u32, 128u32);
     if (l64.len() != 4)       { return 10; }
     if (l64[0] != 41u8)      { return 11; }
     if (l64[1] != 3u8)       { return 12; }
@@ -7832,7 +7803,7 @@ function main(): i32 {
     if (l64[3] != 1u8)       { return 14; }
 
     // i32.load8_u align=0 offset=0 -> 0x2D 0x00 0x00
-    var lu8: u8[] = memory.inst_i32_load8_u(e, 0u32, 0u32);
+    let lu8: u8[] = memory.inst_i32_load8_u(e, 0u32, 0u32);
     if (lu8[0] != 45u8)      { return 20; }
     if (lu8[1] != 0u8)       { return 21; }
     if (lu8[2] != 0u8)       { return 22; }
@@ -7863,10 +7834,10 @@ function main(): i32 {
 func TestWASMMemoryStore(t *testing.T) {
 	src := `import "std/wasm/memory";
 function main(): i32 {
-    var e: u8[] = [];
+    let e: u8[] = [];
 
     // i32.store align=2 offset=4 -> 0x36 0x02 0x04
-    var s32: u8[] = memory.inst_i32_store(e, 2u32, 4u32);
+    let s32: u8[] = memory.inst_i32_store(e, 2u32, 4u32);
     if (s32.len() != 3)  { return 1; }
     if (s32[0] != 54u8) { return 2; }
     if (s32[1] != 2u8)  { return 3; }
@@ -7898,14 +7869,14 @@ function main(): i32 {
 func TestWASMMemorySizeGrow(t *testing.T) {
 	src := `import "std/wasm/memory";
 function main(): i32 {
-    var e: u8[] = [];
+    let e: u8[] = [];
 
-    var sz: u8[] = memory.inst_memory_size(e);
+    let sz: u8[] = memory.inst_memory_size(e);
     if (sz.len() != 2)  { return 1; }
     if (sz[0] != 63u8) { return 2; }
     if (sz[1] != 0u8)  { return 3; }
 
-    var gr: u8[] = memory.inst_memory_grow(e);
+    let gr: u8[] = memory.inst_memory_grow(e);
     if (gr.len() != 2)  { return 10; }
     if (gr[0] != 64u8) { return 11; }
     if (gr[1] != 0u8)  { return 12; }
@@ -7925,16 +7896,16 @@ function main(): i32 {
 func TestWASMMemoryBulk(t *testing.T) {
 	src := `import "std/wasm/memory";
 function main(): i32 {
-    var e: u8[] = [];
+    let e: u8[] = [];
 
-    var cp: u8[] = memory.inst_memory_copy(e);
+    let cp: u8[] = memory.inst_memory_copy(e);
     if (cp.len() != 4)  { return 1; }
     if (cp[0] != 252u8) { return 2; }   // 0xFC prefix
     if (cp[1] != 10u8)  { return 3; }   // 0x0A memory.copy
     if (cp[2] != 0u8)   { return 4; }   // dst memidx
     if (cp[3] != 0u8)   { return 5; }   // src memidx
 
-    var fl: u8[] = memory.inst_memory_fill(e);
+    let fl: u8[] = memory.inst_memory_fill(e);
     if (fl.len() != 3)  { return 10; }
     if (fl[0] != 252u8) { return 11; }  // 0xFC prefix
     if (fl[1] != 11u8)  { return 12; }  // 0x0B memory.fill
@@ -7954,7 +7925,7 @@ function main(): i32 {
 func TestWASMConvertIntWidth(t *testing.T) {
 	src := `import "std/wasm/convert";
 function main(): i32 {
-    var e: u8[] = [];
+    let e: u8[] = [];
 
     // Integer width
     if (convert.inst_i32_wrap_i64(e)[0]     != 167u8) { return 1; }
@@ -7988,7 +7959,7 @@ function main(): i32 {
 func TestWASMConvertFloatInt(t *testing.T) {
 	src := `import "std/wasm/convert";
 function main(): i32 {
-    var e: u8[] = [];
+    let e: u8[] = [];
 
     // Float -> integer (trapping): 0xA8-0xAB then 0xAE-0xB1.
     if (convert.inst_i32_trunc_f32_s(e)[0] != 168u8) { return 1; }
@@ -8028,11 +7999,11 @@ function main(): i32 {
 func TestWASMSectionsFunction(t *testing.T) {
 	src := `import "std/wasm/sections";
 function main(): i32 {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
 
     // No functions: section id=3, size=1, body=[0x00] (vec count 0).
-    var noidxs: u32[] = [];
-    var s0: u8[] = sections.encode_function_section(empty, noidxs);
+    let noidxs: u32[] = [];
+    let s0: u8[] = sections.encode_function_section(empty, noidxs);
     if (s0.len() != 3) { return 1; }
     if (s0[0] != 3u8) { return 2; }
     if (s0[1] != 1u8) { return 3; }
@@ -8040,8 +8011,8 @@ function main(): i32 {
 
     // Three functions with typeidxs 0, 1, 2 -> body [0x03, 0x00,
     // 0x01, 0x02]. Wrapped: [0x03, 0x04, 0x03, 0x00, 0x01, 0x02].
-    var idxs: u32[] = [0u32, 1u32, 2u32];
-    var s3: u8[] = sections.encode_function_section(empty, idxs);
+    let idxs: u32[] = [0u32, 1u32, 2u32];
+    let s3: u8[] = sections.encode_function_section(empty, idxs);
     if (s3.len() != 6) { return 10; }
     if (s3[0] != 3u8) { return 11; }    // section_function id
     if (s3[1] != 4u8) { return 12; }    // size = 4
@@ -8052,8 +8023,8 @@ function main(): i32 {
 
     // Multi-byte typeidx (128 = uleb 0x80 0x01) -> body is
     // count=1 + 0x80 0x01 = 3 bytes; wrapped = 5 bytes.
-    var big: u32[] = [128u32];
-    var s4: u8[] = sections.encode_function_section(empty, big);
+    let big: u32[] = [128u32];
+    let s4: u8[] = sections.encode_function_section(empty, big);
     if (s4.len() != 5)   { return 20; }
     if (s4[0] != 3u8)   { return 21; }
     if (s4[1] != 3u8)   { return 22; }    // body size 3
@@ -8074,10 +8045,10 @@ function main(): i32 {
 func TestWASMSectionsStartMemory(t *testing.T) {
 	src := `import "std/wasm/sections";
 function main(): i32 {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
 
     // start: id=8, size=1, body=[funcidx]. funcidx=0 -> [0x08, 0x01, 0x00].
-    var ss: u8[] = sections.encode_start_section(empty, 0u32);
+    let ss: u8[] = sections.encode_start_section(empty, 0u32);
     if (ss.len() != 3) { return 1; }
     if (ss[0] != 8u8) { return 2; }
     if (ss[1] != 1u8) { return 3; }
@@ -8085,7 +8056,7 @@ function main(): i32 {
 
     // memory, no max: id=5, body=[count=1, flag=0, min=1]
     // -> wrapped 5 bytes.
-    var mNoMax: u8[] = sections.encode_memory_section(empty, 1u32, 0 - 1);
+    let mNoMax: u8[] = sections.encode_memory_section(empty, 1u32, 0 - 1);
     if (mNoMax.len() != 5) { return 10; }
     if (mNoMax[0] != 5u8) { return 11; }   // section_memory id
     if (mNoMax[1] != 3u8) { return 12; }   // size = 3
@@ -8095,7 +8066,7 @@ function main(): i32 {
 
     // memory, with max: id=5, body=[count=1, flag=1, min=1, max=2]
     // -> wrapped 6 bytes.
-    var mWithMax: u8[] = sections.encode_memory_section(empty, 1u32, 2);
+    let mWithMax: u8[] = sections.encode_memory_section(empty, 1u32, 2);
     if (mWithMax.len() != 6) { return 20; }
     if (mWithMax[0] != 5u8) { return 21; }
     if (mWithMax[1] != 4u8) { return 22; }   // size = 4
@@ -8117,14 +8088,14 @@ function main(): i32 {
 func TestWASMSectionsExport(t *testing.T) {
 	src := `import "std/wasm/sections";
 function main(): i32 {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
 
     // One func export named "main" -> 0 + 0x00 + 0
     // body: count=1, "main"=[4, 0x6D, 0x61, 0x69, 0x6E], kind=0, idx=0
-    var nms: string[] = ["main"];
-    var ks: u8[] = [sections.export_func()];
-    var ixs: u32[] = [0u32];
-    var s1: u8[] = sections.encode_export_section(empty, nms, ks, ixs);
+    let nms: string[] = ["main"];
+    let ks: u8[] = [sections.export_func()];
+    let ixs: u32[] = [0u32];
+    let s1: u8[] = sections.encode_export_section(empty, nms, ks, ixs);
     // Expected: [0x07, 0x08, 0x01, 0x04, 'm', 'a', 'i', 'n', 0x00, 0x00]
     // = 10 bytes.
     if (s1.len() != 10) { return 1; }
@@ -8140,10 +8111,10 @@ function main(): i32 {
     if (s1[9] != 0u8)   { return 11; }   // idx 0
 
     // Two exports: ("memory", memory, 0) and ("g", global, 2).
-    var nms2: string[] = ["memory", "g"];
-    var ks2: u8[] = [sections.export_memory(), sections.export_global()];
-    var ixs2: u32[] = [0u32, 2u32];
-    var s2: u8[] = sections.encode_export_section(empty, nms2, ks2, ixs2);
+    let nms2: string[] = ["memory", "g"];
+    let ks2: u8[] = [sections.export_memory(), sections.export_global()];
+    let ixs2: u32[] = [0u32, 2u32];
+    let s2: u8[] = sections.encode_export_section(empty, nms2, ks2, ixs2);
     // Body: count=2,
     //   "memory"=[6, m,e,m,o,r,y], kind=2, idx=0     -> 9 bytes
     //   "g"=[1, g], kind=3, idx=2                    -> 4 bytes
@@ -8177,14 +8148,14 @@ func TestWASMSectionsTypeCode(t *testing.T) {
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
 
     // Type section with one (i32) -> (i32) functype.
-    var p: u8[] = [encode.valtype_i32()];
-    var r: u8[] = [encode.valtype_i32()];
-    var pp: u8[][] = [p];
-    var rr: u8[][] = [r];
-    var ts: u8[] = sections.encode_type_section(empty, pp, rr);
+    let p: u8[] = [encode.valtype_i32()];
+    let r: u8[] = [encode.valtype_i32()];
+    let pp: u8[][] = [p];
+    let rr: u8[][] = [r];
+    let ts: u8[] = sections.encode_type_section(empty, pp, rr);
     // Expected: id=1, size=6, body=[count=1, 0x60, 1, 0x7F, 1, 0x7F] = 8 bytes.
     if (ts.len() != 8) { return 1; }
     if (ts[0] != 1u8) { return 2; }
@@ -8198,12 +8169,12 @@ function main(): i32 {
 
     // Code section with one body: i32.const 42 returning. Use
     // put_function_body to wrap, then feed to encode_code_section.
-    var bodyExpr: u8[] = inst.inst_i32_const(empty, 42);
-    var locals: u8[] = inst.put_locals_empty(empty);
-    var fn: u8[] = inst.put_function_body(empty, locals, bodyExpr);
+    let bodyExpr: u8[] = inst.inst_i32_const(empty, 42);
+    let locals: u8[] = inst.put_locals_empty(empty);
+    let fn: u8[] = inst.put_function_body(empty, locals, bodyExpr);
     // fn = [size=4, 0x00 locals, 0x41 0x2A, 0x0B end] = 5 bytes.
-    var bodies: u8[][] = [fn];
-    var cs: u8[] = sections.encode_code_section(empty, bodies);
+    let bodies: u8[][] = [fn];
+    let cs: u8[] = sections.encode_code_section(empty, bodies);
     // Section body: count=1 (1 byte) + fn (5 bytes) = 6 bytes.
     // Wrapped: id (1) + size_uleb (1) + body (6) = 8 bytes.
     if (cs.len() != 8)  { return 20; }
@@ -8230,16 +8201,16 @@ function main(): i32 {
 func TestWASMSectionsData(t *testing.T) {
 	src := `import "std/wasm/sections";
 function main(): i32 {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
 
     // One segment at offset 50 with init bytes [0xAA, 0xBB].
     // Offset 50 (= 0x32) has bit-6 clear so sleb fits in 1 byte;
     // 100 would need 2 bytes (bit-6 set), which is a fine
     // boundary to bear in mind for the wider IR-walker tests.
-    var offs: i32[] = [50];
-    var initBytes: u8[] = [170u8, 187u8];
-    var inits: u8[][] = [initBytes];
-    var ds: u8[] = sections.encode_data_section(empty, offs, inits);
+    let offs: i32[] = [50];
+    let initBytes: u8[] = [170u8, 187u8];
+    let inits: u8[][] = [initBytes];
+    let ds: u8[] = sections.encode_data_section(empty, offs, inits);
     // Segment bytes:
     //   memidx 0 (1 byte)
     //   i32.const 50 ; end -> 0x41 0x32 0x0B (3 bytes)
@@ -8276,10 +8247,10 @@ func TestWASMSectionsTableElement(t *testing.T) {
 	src := `import "std/wasm/sections";
 import "std/wasm/imports";
 function main(): i32 {
-    var e: u8[] = [];
+    let e: u8[] = [];
 
     // Table: one funcref table, min 2, no max.
-    var tbl: u8[] = sections.encode_table_section(e, imports.reftype_funcref(), 2u32, 0 - 1);
+    let tbl: u8[] = sections.encode_table_section(e, imports.reftype_funcref(), 2u32, 0 - 1);
     // [id=4, size=4, count=1, reftype=0x70, flag=0, min=2]
     if (tbl.len() != 6)  { return 1; }
     if (tbl[0] != 4u8)   { return 2; }   // section_table id
@@ -8290,9 +8261,9 @@ function main(): i32 {
     if (tbl[5] != 2u8)   { return 7; }   // min 2
 
     // Element: one active segment at offset 0, funcidxs [0, 1].
-    var offs: i32[] = [0];
-    var fids: u32[][] = [[0u32, 1u32]];
-    var el: u8[] = sections.encode_element_section(e, offs, fids);
+    let offs: i32[] = [0];
+    let fids: u32[][] = [[0u32, 1u32]];
+    let el: u8[] = sections.encode_element_section(e, offs, fids);
     // [id=9, size=8, count=1, flag=0, 0x41, off=0, 0x0B, veclen=2, 0, 1]
     if (el.len() != 10)  { return 20; }
     if (el[0] != 9u8)    { return 21; }  // section_element id
@@ -8321,14 +8292,14 @@ func TestWASMImportsFunc(t *testing.T) {
 	src := `import "std/wasm/imports";
 import "std/wasm/encode";
 function main(): i32 {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
 
     // One function import: ("env", "log", func, typeidx=0).
-    var mods: string[] = ["env"];
-    var nms: string[] = ["log"];
-    var ks: u8[] = [imports.import_func()];
-    var descs: u8[][] = [imports.import_desc_func(0u32)];
-    var s1: u8[] = imports.encode_import_section(empty, mods, nms, ks, descs);
+    let mods: string[] = ["env"];
+    let nms: string[] = ["log"];
+    let ks: u8[] = [imports.import_func()];
+    let descs: u8[][] = [imports.import_desc_func(0u32)];
+    let s1: u8[] = imports.encode_import_section(empty, mods, nms, ks, descs);
     // Body:
     //   count=1 (1)
     //   "env" = [3, e, n, v] (4)
@@ -8350,18 +8321,18 @@ function main(): i32 {
 
     // Two imports of different kinds: ("wasi", "fd_write", func, 7)
     // and ("env", "g", global, i32 mut).
-    var mods2: string[] = ["wasi", "env"];
-    var nms2: string[] = ["fd_write", "g"];
-    var ks2: u8[] = [imports.import_func(), imports.import_global()];
-    var d_func: u8[] = imports.import_desc_func(7u32);
-    var d_glob: u8[] = imports.import_desc_global(encode.valtype_i32(), imports.mut_var());
-    var descs2: u8[][] = [d_func, d_glob];
-    var s2: u8[] = imports.encode_import_section(empty, mods2, nms2, ks2, descs2);
+    let mods2: string[] = ["wasi", "env"];
+    let nms2: string[] = ["fd_write", "g"];
+    let ks2: u8[] = [imports.import_func(), imports.import_global()];
+    let d_func: u8[] = imports.import_desc_func(7u32);
+    let d_glob: u8[] = imports.import_desc_global(encode.valtype_i32(), imports.mut_var());
+    let descs2: u8[][] = [d_func, d_glob];
+    let s2: u8[] = imports.encode_import_section(empty, mods2, nms2, ks2, descs2);
     // Spot-check the global descriptor at the tail: valtype + mut
     // are the last two bytes.
     if (s2.len() < 20) { return 20; }
     if (s2[0] != 2u8) { return 21; }
-    var last: i32 = s2.len() - 1;
+    let last: i32 = s2.len() - 1;
     if (s2[last] != 1u8)       { return 22; }   // mut_var
     if (s2[last - 1] != 127u8) { return 23; }   // valtype_i32
 
@@ -8380,31 +8351,31 @@ func TestWASMImportsDescBuilders(t *testing.T) {
 import "std/wasm/encode";
 function main(): i32 {
     // import_desc_func(typeidx=5) -> [0x05]
-    var df: u8[] = imports.import_desc_func(5u32);
+    let df: u8[] = imports.import_desc_func(5u32);
     if (df.len() != 1) { return 1; }
     if (df[0] != 5u8) { return 2; }
 
     // import_desc_global(i32, const) -> [0x7F, 0x00]
-    var dg: u8[] = imports.import_desc_global(encode.valtype_i32(), imports.mut_const());
+    let dg: u8[] = imports.import_desc_global(encode.valtype_i32(), imports.mut_const());
     if (dg.len() != 2)    { return 10; }
     if (dg[0] != 127u8)  { return 11; }
     if (dg[1] != 0u8)    { return 12; }
 
     // import_desc_memory(min=1, no max) -> [0x00, 0x01]
-    var dm1: u8[] = imports.import_desc_memory(1u32, 0 - 1);
+    let dm1: u8[] = imports.import_desc_memory(1u32, 0 - 1);
     if (dm1.len() != 2) { return 20; }
     if (dm1[0] != 0u8) { return 21; }
     if (dm1[1] != 1u8) { return 22; }
 
     // import_desc_memory(min=1, max=2) -> [0x01, 0x01, 0x02]
-    var dm2: u8[] = imports.import_desc_memory(1u32, 2);
+    let dm2: u8[] = imports.import_desc_memory(1u32, 2);
     if (dm2.len() != 3) { return 30; }
     if (dm2[0] != 1u8) { return 31; }
     if (dm2[1] != 1u8) { return 32; }
     if (dm2[2] != 2u8) { return 33; }
 
     // import_desc_table(funcref, min=0, no max) -> [0x70, 0x00, 0x00]
-    var dt: u8[] = imports.import_desc_table(imports.reftype_funcref(), 0u32, 0 - 1);
+    let dt: u8[] = imports.import_desc_table(imports.reftype_funcref(), 0u32, 0 - 1);
     if (dt.len() != 3)   { return 40; }
     if (dt[0] != 112u8) { return 41; }   // funcref 0x70
     if (dt[1] != 0u8)   { return 42; }   // flag no max
@@ -8426,17 +8397,17 @@ func TestWASMImportsGlobalSection(t *testing.T) {
 import "std/wasm/encode";
 import "std/wasm/inst";
 function main(): i32 {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
 
     // One mutable i32 global, initialized to 0.
     // init_expr: i32.const 0 ; end = [0x41, 0x00, 0x0B] (3 bytes)
-    var init0: u8[] = inst.inst_i32_const(empty, 0);
+    let init0: u8[] = inst.inst_i32_const(empty, 0);
     init0 = inst.inst_end(init0);
 
-    var vts: u8[] = [encode.valtype_i32()];
-    var ms: u8[] = [imports.mut_var()];
-    var inits: u8[][] = [init0];
-    var gs: u8[] = imports.encode_global_section(empty, vts, ms, inits);
+    let vts: u8[] = [encode.valtype_i32()];
+    let ms: u8[] = [imports.mut_var()];
+    let inits: u8[][] = [init0];
+    let gs: u8[] = imports.encode_global_section(empty, vts, ms, inits);
     // Body: count=1 + valtype=0x7F + mut=0x01 + init(3) = 6 bytes
     // Wrapped: id(1) + size(1) + body(6) = 8 bytes
     if (gs.len() != 8) { return 1; }
@@ -8462,8 +8433,8 @@ function main(): i32 {
 func TestWASMModuleEmpty(t *testing.T) {
 	src := `import "std/wasm/module";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var bytes: u8[] = module.build(m);
+    let m: module.Module = module.module_new();
+    let bytes: u8[] = module.build(m);
     if (bytes.len() != 8) { return 1; }
     if (bytes[0] != 0u8)   { return 2; }
     if (bytes[1] != 97u8)  { return 3; }    // 'a'
@@ -8495,11 +8466,11 @@ import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
+    let m: module.Module = module.module_new();
 
     // Type: one functype () -> i32.
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
 
     // Function: one function with typeidx 0.
@@ -8509,12 +8480,12 @@ function main(): i32 {
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // Code: body is i32.const 42 with no locals.
-    var bodyExpr: u8[] = inst.inst_i32_const([], 42);
-    var localsBytes: u8[] = inst.put_locals_empty([]);
-    var fn: u8[] = inst.put_function_body([], localsBytes, bodyExpr);
+    let bodyExpr: u8[] = inst.inst_i32_const([], 42);
+    let localsBytes: u8[] = inst.put_locals_empty([]);
+    let fn: u8[] = inst.put_function_body([], localsBytes, bodyExpr);
     m = m.with_code([fn]);
 
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
     // Expected: 8 (preamble) + 7 (type) + 4 (function) + 10
     // (export) + 8 (code) = 37 bytes.
@@ -8581,11 +8552,11 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 import "std/wasm/imports";
 function main(): i32 {
-    var m: module.Module = module.module_new();
+    let m: module.Module = module.module_new();
 
     // Type: one functype () -> ().
-    var pe: u8[] = [];
-    var re: u8[] = [];
+    let pe: u8[] = [];
+    let re: u8[] = [];
     m = m.with_types([pe], [re]);
 
     // Import: one ("env", "h", func, typeidx=0).
@@ -8598,7 +8569,7 @@ function main(): i32 {
     m = m.with_memory(1u32, 0 - 1);
 
     // Global: one const i32 = 0.
-    var g0: u8[] = inst.inst_i32_const([], 0);
+    let g0: u8[] = inst.inst_i32_const([], 0);
     g0 = inst.inst_end(g0);
     m = m.with_globals([encode.valtype_i32()], [imports.mut_const()], [g0]);
 
@@ -8609,32 +8580,32 @@ function main(): i32 {
     m = m.with_start(1u32);
 
     // Code: empty body — just the terminating 0x0B.
-    var localsBytes: u8[] = inst.put_locals_empty([]);
-    var emptyBody: u8[] = [];
-    var fn: u8[] = inst.put_function_body([], localsBytes, emptyBody);
+    let localsBytes: u8[] = inst.put_locals_empty([]);
+    let emptyBody: u8[] = [];
+    let fn: u8[] = inst.put_function_body([], localsBytes, emptyBody);
     m = m.with_code([fn]);
 
     // Data: one segment at offset 0 with byte 0xAB.
     m = m.with_data([0], [[171u8]]);
 
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
     // Scan for section IDs in order. Section IDs the spec assigns:
     // type=1, import=2, function=3, table=4, memory=5, global=6,
     // export=7, start=8, element=9, code=10, data=11.
     // We expect 1, 2, 3, 5, 6, 7, 8, 10, 11 (no table, no element).
-    var expected_ids: u8[] = [1u8, 2u8, 3u8, 5u8, 6u8, 7u8, 8u8, 10u8, 11u8];
+    let expected_ids: u8[] = [1u8, 2u8, 3u8, 5u8, 6u8, 7u8, 8u8, 10u8, 11u8];
 
     // Walk the byte stream: byte 8 is the first section id; after
     // each id comes uleb size + that many body bytes; repeat.
-    var pos: i32 = 8;  // skip preamble
-    var idx: i32 = 0;
+    let pos: i32 = 8;  // skip preamble
+    let idx: i32 = 0;
     while (idx < expected_ids.len()) {
         if (pos >= bytes.len()) { return 100 + idx; }
         if (bytes[pos] != expected_ids[idx]) { return 1 + idx; }
         pos = pos + 1;
         // Read uleb size — small enough that bit-7 is clear here.
-        var sz: i32 = bytes[pos] as i32;
+        let sz: i32 = bytes[pos] as i32;
         if (sz >= 128) { return 200 + idx; }    // would need multi-byte uleb decoder
         pos = pos + 1;
         pos = pos + sz;
@@ -8677,11 +8648,11 @@ import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
+    let m: module.Module = module.module_new();
 
     // Type: one functype () -> i32.
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
 
     // Function: one function with typeidx 0.
@@ -8692,15 +8663,15 @@ function main(): i32 {
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // Code: body is i32.const 42 with no locals.
-    var bodyExpr: u8[] = inst.inst_i32_const([], 42);
-    var localsBytes: u8[] = inst.put_locals_empty([]);
-    var fn: u8[] = inst.put_function_body([], localsBytes, bodyExpr);
+    let bodyExpr: u8[] = inst.inst_i32_const([], 42);
+    let localsBytes: u8[] = inst.put_locals_empty([]);
+    let fn: u8[] = inst.put_function_body([], localsBytes, bodyExpr);
     m = m.with_code([fn]);
 
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -8832,20 +8803,20 @@ import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
-    var bodyExpr: u8[] = inst.inst_i32_const([], 42);
-    var localsBytes: u8[] = inst.put_locals_empty([]);
-    var fn: u8[] = inst.put_function_body([], localsBytes, bodyExpr);
+    let bodyExpr: u8[] = inst.inst_i32_const([], 42);
+    let localsBytes: u8[] = inst.put_locals_empty([]);
+    let fn: u8[] = inst.put_function_body([], localsBytes, bodyExpr);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -8877,23 +8848,23 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
-    var body: u8[] = inst.inst_i32_const([], 3);
+    let body: u8[] = inst.inst_i32_const([], 3);
     body = inst.inst_i32_const(body, 4);
     body = numeric.inst_i32_add(body);
-    var localsBytes: u8[] = inst.put_locals_empty([]);
-    var fn: u8[] = inst.put_function_body([], localsBytes, body);
+    let localsBytes: u8[] = inst.put_locals_empty([]);
+    let fn: u8[] = inst.put_function_body([], localsBytes, body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -8927,15 +8898,15 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
+    let m: module.Module = module.module_new();
 
     // Two types:
     //   type 0: (i32, i32) -> i32   for the add callee
     //   type 1: () -> i32           for main
-    var p_add: u8[] = [encode.valtype_i32(), encode.valtype_i32()];
-    var r_add: u8[] = [encode.valtype_i32()];
-    var p_main: u8[] = [];
-    var r_main: u8[] = [encode.valtype_i32()];
+    let p_add: u8[] = [encode.valtype_i32(), encode.valtype_i32()];
+    let r_add: u8[] = [encode.valtype_i32()];
+    let p_main: u8[] = [];
+    let r_main: u8[] = [encode.valtype_i32()];
     m = m.with_types([p_add, p_main], [r_add, r_main]);
 
     // Function 0 uses type 0 (add), function 1 uses type 1 (main).
@@ -8945,22 +8916,22 @@ function main(): i32 {
     m = m.with_exports(["main"], [sections.export_func()], [1u32]);
 
     // add(a, b): local.get 0 ; local.get 1 ; i32.add.
-    var add_body: u8[] = inst.inst_local_get([], 0u32);
+    let add_body: u8[] = inst.inst_local_get([], 0u32);
     add_body = inst.inst_local_get(add_body, 1u32);
     add_body = numeric.inst_i32_add(add_body);
-    var add_fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), add_body);
+    let add_fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), add_body);
 
     // main(): i32.const 10 ; i32.const 32 ; call 0.
-    var main_body: u8[] = inst.inst_i32_const([], 10);
+    let main_body: u8[] = inst.inst_i32_const([], 10);
     main_body = inst.inst_i32_const(main_body, 32);
     main_body = inst.inst_call(main_body, 0u32);
-    var main_fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), main_body);
+    let main_fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), main_body);
 
     m = m.with_code([add_fn, main_fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -8985,8 +8956,8 @@ function main(): i32 {
 func TestWASMComponentHeader(t *testing.T) {
 	src := `import "std/wasm/component";
 function main(): i32 {
-    var empty: u8[] = [];
-    var hdr: u8[] = component.put_component_header(empty);
+    let empty: u8[] = [];
+    let hdr: u8[] = component.put_component_header(empty);
     if (hdr.len() != 8) { return 1; }
     if (hdr[0] != 0u8)   { return 2; }
     if (hdr[1] != 97u8)  { return 3; }   // 'a'
@@ -9025,23 +8996,23 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
     // Build a "function returning 42" core module.
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
-    var bodyExpr: u8[] = inst.inst_i32_const([], 42);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
+    let bodyExpr: u8[] = inst.inst_i32_const([], 42);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
     m = m.with_code([fn]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
     // Wrap it in a component envelope.
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_core_module_section(comp, core_bytes);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -9115,24 +9086,24 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
     // Build a no-import core module: function "f" returns 7.
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["f"], [sections.export_func()], [0u32]);
-    var bodyExpr: u8[] = inst.inst_i32_const([], 7);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
+    let bodyExpr: u8[] = inst.inst_i32_const([], 7);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
     m = m.with_code([fn]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
     // Component envelope: preamble + core-module + core-instance.
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_core_module_section(comp, core_bytes);
     comp = component.put_core_instance_section_instantiate(comp, 0u32);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -9213,25 +9184,25 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
     // Build a core module: function "f" returns 9.
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["f"], [sections.export_func()], [0u32]);
-    var bodyExpr: u8[] = inst.inst_i32_const([], 9);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
+    let bodyExpr: u8[] = inst.inst_i32_const([], 9);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
     m = m.with_code([fn]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
     // Component: preamble + core-module + core-instance + alias.
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_core_module_section(comp, core_bytes);
     comp = component.put_core_instance_section_instantiate(comp, 0u32);
     comp = component.put_alias_section_core_export_func(comp, 0u32, "f");
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -9302,29 +9273,29 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
     // Core module: one func + one memory, both exported.
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_memory(1u32, 0 - 1);
     m = m.with_exports(["f", "mem"], [sections.export_func(), sections.export_memory()], [0u32, 0u32]);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 1));
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 1));
     m = m.with_code([fn]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_core_module_section(comp, core_bytes);
     comp = component.put_core_instance_section_instantiate(comp, 0u32);
 
     // Alias section with two entries of different core sorts.
-    var sorts: u8[] = [component.core_sort_func(), component.core_sort_memory()];
-    var instance_idxs: u32[] = [0u32, 0u32];
-    var names: string[] = ["f", "mem"];
+    let sorts: u8[] = [component.core_sort_func(), component.core_sort_memory()];
+    let instance_idxs: u32[] = [0u32, 0u32];
+    let names: string[] = ["f", "mem"];
     comp = component.put_alias_section_core_exports(comp, sorts, instance_idxs, names);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -9391,15 +9362,15 @@ func TestWASMComponentInstanceTypeWithResult(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var names: string[] = ["len"];
-    var vts: u8[] = [component.cvaltype_u64()];
-    var comp: u8[] = component.put_component_header([]);
+    let names: string[] = ["len"];
+    let vts: u8[] = [component.cvaltype_u64()];
+    let comp: u8[] = component.put_component_header([]);
     // Type 0: instance { export get-info(len: u64) -> u32 }
     comp = component.put_type_section_one_instance_one_func_with_result_export(comp, "get-info", names, vts, component.cvaltype_u32());
     comp = component.put_import_section_one_instance(comp, "test:reader/iface", 0u32);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -9468,31 +9439,31 @@ function main(): i32 {
     // and get-args (() → ()). Real WASI get-arguments returns a
     // list, but the canon-lower-no-opts path used by the helper only
     // supports scalar funcs, so this test uses a stub-signature shape.
-    var m: module.Module = module.module_new();
-    var p_exit: u8[] = [encode.valtype_i32()];
-    var r_void: u8[] = [];
-    var p_args: u8[] = [];
+    let m: module.Module = module.module_new();
+    let p_exit: u8[] = [encode.valtype_i32()];
+    let r_void: u8[] = [];
+    let p_args: u8[] = [];
     m = m.with_types([p_exit, p_args], [r_void, r_void]);
     m = m.with_imports(["wasi-exit", "wasi-env"], ["exit", "get-args"], [imports.import_func(), imports.import_func()], [imports.import_desc_func(0u32), imports.import_desc_func(1u32)]);
     m = m.with_functions([]);
     m = m.with_code([]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
     // Two WASI imports, threaded in one call.
-    var interfaces: string[] = ["wasi:cli/exit@0.2.0", "wasi:cli/environment@0.2.0"];
-    var funcs: string[] = ["exit", "get-args"];
-    var p0: string[] = ["code"];
-    var v0: u8[] = [component.cvaltype_u32()];
-    var p1: string[] = [];
-    var v1: u8[] = [];
-    var names_per: string[][] = [p0, p1];
-    var valtypes_per: u8[][] = [v0, v1];
-    var core_modules: string[] = ["wasi-exit", "wasi-env"];
+    let interfaces: string[] = ["wasi:cli/exit@0.2.0", "wasi:cli/environment@0.2.0"];
+    let funcs: string[] = ["exit", "get-args"];
+    let p0: string[] = ["code"];
+    let v0: u8[] = [component.cvaltype_u32()];
+    let p1: string[] = [];
+    let v1: u8[] = [];
+    let names_per: string[][] = [p0, p1];
+    let valtypes_per: u8[][] = [v0, v1];
+    let core_modules: string[] = ["wasi-exit", "wasi-env"];
 
-    var comp: u8[] = component.build_wasi_multi_imported_component(core_bytes, interfaces, funcs, names_per, valtypes_per, core_modules);
+    let comp: u8[] = component.build_wasi_multi_imported_component(core_bytes, interfaces, funcs, names_per, valtypes_per, core_modules);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -9578,9 +9549,9 @@ func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 
 	// listen + accept: validates + the imports are all present.
 	full := build("tcpfull", `function main(): i32 {
-    var s: i32 = tcp_listen(8080);
+    let s: i32 = tcp_listen(8080);
     if (s < 0) { return 1; }
-    var c: i32 = tcp_accept(s);
+    let c: i32 = tcp_accept(s);
     tcp_close(c);
     tcp_close(s);
     return 0;
@@ -9603,9 +9574,9 @@ func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 	// validated here (running it needs a connecting client); confirms the
 	// stream methods are composed in.
 	echo := build("tcpecho", `function main(): i32 {
-    var s: i32 = tcp_listen(8080);
-    var c: i32 = tcp_accept(s);
-    var d: string = string_from_bytes_unchecked(tcp_recv(c, 1024));
+    let s: i32 = tcp_listen(8080);
+    let c: i32 = tcp_accept(s);
+    let d: string = string_from_bytes_unchecked(tcp_recv(c, 1024));
     tcp_send(c, d);
     tcp_close(c);
     tcp_close(s);
@@ -9624,7 +9595,7 @@ func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 	// listen + close (no accept) runs to completion against the host
 	// sockets — exit 0 confirms the component links and executes.
 	srv := build("tcplisten", `function main(): i32 {
-    var s: i32 = tcp_listen(8080);
+    let s: i32 = tcp_listen(8080);
     if (s < 0) { return 1; }
     tcp_close(s);
     return 0;
@@ -9675,10 +9646,10 @@ func TestCmdLangComponentWrapCliTcpServerWithEnv(t *testing.T) {
 	src := `function port_from_env(): i32 {
     match (env("PORT")) {
         Some(s) => {
-            var n: i32 = 0;
-            var i: i32 = 0;
+            let n: i32 = 0;
+            let i: i32 = 0;
             while (i < s.len()) {
-                var b: i32 = s[i] as i32;
+                let b: i32 = s[i] as i32;
                 if (b < 48 || b > 57) { return 8080; }
                 n = n * 10 + (b - 48);
                 i = i + 1;
@@ -9691,12 +9662,12 @@ func TestCmdLangComponentWrapCliTcpServerWithEnv(t *testing.T) {
 }
 
 function main(): i32 {
-    var sock = tcp_listen(port_from_env());
+    let sock = tcp_listen(port_from_env());
     if (sock < 0) { return 1; }
-    var conn = tcp_accept(sock);
+    let conn = tcp_accept(sock);
     if (conn < 0) { return 2; }
-    var msg: string = string_from_bytes_unchecked(tcp_recv(conn, 1024));
-    var sent = tcp_send(conn, msg);
+    let msg: string = string_from_bytes_unchecked(tcp_recv(conn, 1024));
+    let sent = tcp_send(conn, msg);
     if (sent < 0) { return 3; }
     tcp_close(conn);
     tcp_close(sock);
@@ -10031,7 +10002,7 @@ func TestCmdLangComponentWrapCliWithRandom(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "rand.fern")
 	src := []byte(`function main(): i32 {
-    var r: i32 = random_i32();
+    let r: i32 = random_i32();
     if (r == r) { return 0; }
     return 1;
 }`)
@@ -10080,7 +10051,7 @@ func TestCmdLangComponentWrapCliWithMonotonic(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "mono.fern")
 	src := []byte(`function main(): i32 {
-    var t: i64 = monotonic_ns();
+    let t: i64 = monotonic_ns();
     if (t == t) { return 0; }
     return 1;
 }`)
@@ -10130,7 +10101,7 @@ func TestCmdLangComponentWrapCliWithNowNs(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "now.fern")
 	src := []byte(`function main(): i32 {
-    var t: i64 = now_ns();
+    let t: i64 = now_ns();
     if (t >= 0i64) { return 0; }
     return 1;
 }`)
@@ -10179,7 +10150,7 @@ func TestCmdLangComponentWrapCliVoidMain(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "void.fern")
 	src := []byte(`function main(): void {
-    var t: i64 = monotonic_ns();
+    let t: i64 = monotonic_ns();
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
@@ -10632,7 +10603,7 @@ func TestCmdLangComponentWrapCliComposedMemTramp(t *testing.T) {
 
 	// now() + print: wall-clock (mem-only trampoline) + stdout write.
 	np := build("np", `function main(): i32 {
-    var t: i64 = now_unix_ms();
+    let t: i64 = now_unix_ms();
     print("tick");
     if (t >= 0) { return 0; }
     return 1;
@@ -11397,7 +11368,7 @@ func TestCmdLangComponentWrapCliWithRandomInt(t *testing.T) {
 	src := []byte(`
 import "std/math";
 function main(): i32 {
-    var r: i32 = math.random_int(0, 100);
+    let r: i32 = math.random_int(0, 100);
     if (r >= 0 && r < 100) { return 0; }
     return 1;
 }`)
@@ -11449,7 +11420,7 @@ func TestCmdLangComponentWrapCliWithMultipleImports(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "multi.fern")
 	src := []byte(`function main(): i32 {
-    var r: i32 = random_i32();
+    let r: i32 = random_i32();
     if (r == r) {
         exit(0);
     }
@@ -11508,7 +11479,7 @@ func TestCmdLangComponentWrapCliWithRandomBytes(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "randbytes.fern")
 	src := []byte(`function main(): i32 {
-    var b: u8[] = random_bytes(3);
+    let b: u8[] = random_bytes(3);
     if (b.len() == 3) { return 0; }
     return 1;
 }`)
@@ -11606,7 +11577,7 @@ func TestCmdLangComponentWrapVoidMain(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "void.fern")
 	src := []byte(`function main(): void {
-    var t: i64 = monotonic_ns();
+    let t: i64 = monotonic_ns();
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
@@ -11788,21 +11759,21 @@ import "std/wasm/component";
 import "std/wasm/encode";
 import "std/wasm/imports";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [encode.valtype_i32()];
-    var r0: u8[] = [];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [];
     m = m.with_types([p0], [r0]);
     m = m.with_imports(["wasi-exit"], ["exit"], [imports.import_func()], [imports.import_desc_func(0u32)]);
     m = m.with_functions([]);
     m = m.with_code([]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
-    var pnames: string[] = ["code"];
-    var pvals: u8[] = [component.cvaltype_u32()];
-    var comp: u8[] = component.build_wasi_imported_component(core_bytes, "wasi:cli/exit@0.2.0", "exit", pnames, pvals, "wasi-exit");
+    let pnames: string[] = ["code"];
+    let pvals: u8[] = [component.cvaltype_u32()];
+    let comp: u8[] = component.build_wasi_imported_component(core_bytes, "wasi:cli/exit@0.2.0", "exit", pnames, pvals, "wasi-exit");
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -11914,9 +11885,9 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 import "std/wasm/imports";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32, 0u32]);
     m = m.with_memory(1u32, 0 - 1);
@@ -11924,7 +11895,7 @@ function main(): i32 {
     m = m.with_elements([0], [[0u32]]);
     m = m.with_exports(["main"], [sections.export_func()], [1u32]);
 
-    var f0: u8[] = inst.inst_i32_const([], 0);
+    let f0: u8[] = inst.inst_i32_const([], 0);
     f0 = inst.inst_i32_const(f0, 9);
     f0 = inst.inst_i32_const(f0, 1);
     f0 = memory.inst_memory_fill(f0);
@@ -11933,17 +11904,17 @@ function main(): i32 {
     f0 = inst.inst_i32_const(f0, 1);
     f0 = memory.inst_memory_copy(f0);
     f0 = inst.inst_i32_const(f0, 7);
-    var f0body: u8[] = inst.put_function_body([], inst.put_locals_empty([]), f0);
+    let f0body: u8[] = inst.put_function_body([], inst.put_locals_empty([]), f0);
 
-    var f1: u8[] = inst.inst_i32_const([], 0);
+    let f1: u8[] = inst.inst_i32_const([], 0);
     f1 = inst.inst_call_indirect(f1, 0u32, 0u32);
-    var f1body: u8[] = inst.put_function_body([], inst.put_locals_empty([]), f1);
+    let f1body: u8[] = inst.put_function_body([], inst.put_locals_empty([]), f1);
 
     m = m.with_code([f0body, f1body]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -11986,21 +11957,21 @@ import "std/wasm/component";
 import "std/wasm/encode";
 import "std/wasm/imports";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [encode.valtype_i32()];
-    var r0: u8[] = [];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [];
     m = m.with_types([p0], [r0]);
     m = m.with_imports(["wasi"], ["exit"], [imports.import_func()], [imports.import_desc_func(0u32)]);
     m = m.with_functions([]);
     m = m.with_code([]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
-    var pnames: string[] = ["code"];
-    var pvals: u8[] = [component.cvaltype_u32()];
-    var comp: u8[] = component.build_wasi_imported_component(core_bytes, "wasi:cli/exit@0.2.0", "exit", pnames, pvals, "wasi");
+    let pnames: string[] = ["code"];
+    let pvals: u8[] = [component.cvaltype_u32()];
+    let comp: u8[] = component.build_wasi_imported_component(core_bytes, "wasi:cli/exit@0.2.0", "exit", pnames, pvals, "wasi");
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -12089,20 +12060,20 @@ import "std/wasm/imports";
 function main(): i32 {
     // Core module: imports "wasi" "exit" : (i32) -> () then
     // calls it with 0 (or some constant).
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [encode.valtype_i32()];
-    var r0: u8[] = [];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [];
     m = m.with_types([p0], [r0]);
     m = m.with_imports(["wasi"], ["exit"], [imports.import_func()], [imports.import_desc_func(0u32)]);
     m = m.with_functions([]);
     m = m.with_code([]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
     // Component build.
-    var pnames: string[] = ["code"];
-    var pvals: u8[] = [component.cvaltype_u32()];
+    let pnames: string[] = ["code"];
+    let pvals: u8[] = [component.cvaltype_u32()];
 
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     // Type 0: instance { export exit(code: u32) }
     comp = component.put_type_section_one_instance_one_func_export(comp, "exit", pnames, pvals);
     // Import "wasi:cli/exit@0.2.0" of type 0.
@@ -12118,8 +12089,8 @@ function main(): i32 {
     // Instantiate it with "wasi" -> core instance 0.
     comp = component.put_core_instance_section_instantiate_with_one_instance_arg(comp, 0u32, "wasi", 0u32);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -12187,20 +12158,20 @@ func TestWASMComponentWasiStdMultiExport(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var names: string[] = ["flush", "close"];
-    var ps0: string[] = [];
-    var pv0: u8[] = [];
-    var ps1: string[] = [];
-    var pv1: u8[] = [];
-    var names_per: string[][] = [ps0, ps1];
-    var valtypes_per: u8[][] = [pv0, pv1];
+    let names: string[] = ["flush", "close"];
+    let ps0: string[] = [];
+    let pv0: u8[] = [];
+    let ps1: string[] = [];
+    let pv1: u8[] = [];
+    let names_per: string[][] = [ps0, ps1];
+    let valtypes_per: u8[][] = [pv0, pv1];
 
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_instance_with_func_exports(comp, names, names_per, valtypes_per);
     comp = component.put_import_section_one_instance(comp, "test:multi/iface", 0u32);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -12264,16 +12235,16 @@ func TestWASMComponentWasiExitImport(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     // Type 0: instance { export "exit" (func (param "code" u32)) }
-    var names: string[] = ["code"];
-    var valtypes: u8[] = [component.cvaltype_u32()];
+    let names: string[] = ["code"];
+    let valtypes: u8[] = [component.cvaltype_u32()];
     comp = component.put_type_section_one_instance_one_func_export(comp, "exit", names, valtypes);
     // Import "wasi:cli/exit@0.2.0" of type 0 (the instance type).
     comp = component.put_import_section_one_instance(comp, "wasi:cli/exit@0.2.0", 0u32);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -12340,13 +12311,13 @@ import "std/i32";
 import "std/wasm/component";
 import "std/wasm/encode";
 function main(): i32 {
-    var params: u8[] = [encode.valtype_i32()];
-    var results: u8[] = [encode.valtype_i32()];
-    var comp: u8[] = component.put_component_header([]);
+    let params: u8[] = [encode.valtype_i32()];
+    let results: u8[] = [encode.valtype_i32()];
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_core_type_section_one_func(comp, params, results);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -12409,11 +12380,11 @@ func TestWASMComponentTypeFuncU32(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_func_no_param(comp, component.cvaltype_u32());
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -12476,13 +12447,13 @@ func TestWASMComponentTypeFuncWithParams(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var names: string[] = ["x", "y"];
-    var valtypes: u8[] = [component.cvaltype_u32(), component.cvaltype_string()];
-    var comp: u8[] = component.put_component_header([]);
+    let names: string[] = ["x", "y"];
+    let valtypes: u8[] = [component.cvaltype_u32(), component.cvaltype_string()];
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_func(comp, names, valtypes, component.cvaltype_bool());
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -12553,19 +12524,19 @@ function main(): i32 {
     // Two functypes:
     //   0: ()         -> u32
     //   1: (n: u32)   -> string
-    var names0: string[] = [];
-    var valtypes0: u8[] = [];
-    var names1: string[] = ["n"];
-    var valtypes1: u8[] = [component.cvaltype_u32()];
-    var names_per: string[][] = [names0, names1];
-    var valtypes_per: u8[][] = [valtypes0, valtypes1];
-    var results_per: u8[] = [component.cvaltype_u32(), component.cvaltype_string()];
+    let names0: string[] = [];
+    let valtypes0: u8[] = [];
+    let names1: string[] = ["n"];
+    let valtypes1: u8[] = [component.cvaltype_u32()];
+    let names_per: string[][] = [names0, names1];
+    let valtypes_per: u8[][] = [valtypes0, valtypes1];
+    let results_per: u8[] = [component.cvaltype_u32(), component.cvaltype_string()];
 
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_funcs(comp, names_per, valtypes_per, results_per);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -12634,17 +12605,17 @@ function main(): i32 {
     // Synthetic payload: 4 bytes of ASCII. wasm-tools doesn't
     // parse the inside of a component-type custom section so
     // anything goes for this structural test.
-    var payload: u8[] = [];
+    let payload: u8[] = [];
     payload = payload.append(116u8);   // 't' = 0x74
     payload = payload.append(101u8);   // 'e' = 0x65
     payload = payload.append(115u8);   // 's' = 0x73
     payload = payload.append(116u8);   // 't' = 0x74
 
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_component_type_section(comp, payload);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -12703,12 +12674,12 @@ func TestWASMComponentImportFunc(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_func_no_param(comp, component.cvaltype_u32());
     comp = component.put_import_section_one_func(comp, "host-func", 0u32);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -12776,24 +12747,24 @@ function main(): i32 {
     // Two functypes:
     //   0: () -> u32
     //   1: (n: u32) -> string
-    var names0: string[] = [];
-    var valtypes0: u8[] = [];
-    var names1: string[] = ["n"];
-    var valtypes1: u8[] = [component.cvaltype_u32()];
-    var names_per: string[][] = [names0, names1];
-    var valtypes_per: u8[][] = [valtypes0, valtypes1];
-    var results_per: u8[] = [component.cvaltype_u32(), component.cvaltype_string()];
+    let names0: string[] = [];
+    let valtypes0: u8[] = [];
+    let names1: string[] = ["n"];
+    let valtypes1: u8[] = [component.cvaltype_u32()];
+    let names_per: string[][] = [names0, names1];
+    let valtypes_per: u8[][] = [valtypes0, valtypes1];
+    let results_per: u8[] = [component.cvaltype_u32(), component.cvaltype_string()];
 
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_funcs(comp, names_per, valtypes_per, results_per);
 
     // Two imports, one of each type.
-    var imp_names: string[] = ["h0", "h1"];
-    var imp_types: u32[] = [0u32, 1u32];
+    let imp_names: string[] = ["h0", "h1"];
+    let imp_types: u32[] = [0u32, 1u32];
     comp = component.put_import_section_funcs(comp, imp_names, imp_types);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -12867,16 +12838,16 @@ func TestWASMComponentCanonLower(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var names: string[] = ["x"];
-    var valtypes: u8[] = [component.cvaltype_u32()];
+    let names: string[] = ["x"];
+    let valtypes: u8[] = [component.cvaltype_u32()];
 
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_func(comp, names, valtypes, component.cvaltype_u32());
     comp = component.put_import_section_one_func(comp, "h", 0u32);
     comp = component.put_canon_section_lower_no_opts(comp, 0u32);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -12943,21 +12914,21 @@ import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
     // One functype: () -> u32. Both imports re-use it.
-    var no_names: string[] = [];
-    var no_valtypes: u8[] = [];
-    var imp_names: string[] = ["h0", "h1"];
-    var imp_types: u32[] = [0u32, 0u32];
+    let no_names: string[] = [];
+    let no_valtypes: u8[] = [];
+    let imp_names: string[] = ["h0", "h1"];
+    let imp_types: u32[] = [0u32, 0u32];
 
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_u32());
     comp = component.put_import_section_funcs(comp, imp_names, imp_types);
 
     // Lower both imported funcs in one canon section.
-    var lower_funcs: u32[] = [0u32, 1u32];
+    let lower_funcs: u32[] = [0u32, 1u32];
     comp = component.put_canon_section_lowers_no_opts(comp, lower_funcs);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -13027,30 +12998,30 @@ import "std/wasm/component";
 function main(): i32 {
     // Two functypes (one each so we can have two distinct
     // lowered core funcs). Both () -> u32 for simplicity.
-    var no_names: string[] = [];
-    var no_valtypes: u8[] = [];
-    var names_per: string[][] = [no_names, no_names];
-    var valtypes_per: u8[][] = [no_valtypes, no_valtypes];
-    var results_per: u8[] = [component.cvaltype_u32(), component.cvaltype_u32()];
+    let no_names: string[] = [];
+    let no_valtypes: u8[] = [];
+    let names_per: string[][] = [no_names, no_names];
+    let valtypes_per: u8[][] = [no_valtypes, no_valtypes];
+    let results_per: u8[] = [component.cvaltype_u32(), component.cvaltype_u32()];
 
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_funcs(comp, names_per, valtypes_per, results_per);
 
     // Two imports + lower each to a core func.
-    var imp_names: string[] = ["h0", "h1"];
-    var imp_types: u32[] = [0u32, 1u32];
+    let imp_names: string[] = ["h0", "h1"];
+    let imp_types: u32[] = [0u32, 1u32];
     comp = component.put_import_section_funcs(comp, imp_names, imp_types);
 
-    var lower_funcs: u32[] = [0u32, 1u32];
+    let lower_funcs: u32[] = [0u32, 1u32];
     comp = component.put_canon_section_lowers_no_opts(comp, lower_funcs);
 
     // Package both lowered core funcs into one core instance.
-    var exp_names: string[] = ["stdout", "exit"];
-    var exp_core_funcs: u32[] = [0u32, 1u32];
+    let exp_names: string[] = ["stdout", "exit"];
+    let exp_core_funcs: u32[] = [0u32, 1u32];
     comp = component.put_core_instance_section_from_func_exports(comp, exp_names, exp_core_funcs);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -13122,28 +13093,28 @@ import "std/wasm/sections";
 import "std/wasm/imports";
 function main(): i32 {
     // Core module: imports host_a.f and host_b.f, both () -> i32.
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_imports(["host_a", "host_b"], ["f", "f"], [imports.import_func(), imports.import_func()], [imports.import_desc_func(0u32), imports.import_desc_func(0u32)]);
     // No funcs of our own.
     m = m.with_functions([]);
     m = m.with_code([]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
     // Component: 1 type, 2 imports, 2 lowers, 2 single-export
     // instances, then instantiate the core with both.
-    var no_names: string[] = [];
-    var no_valtypes: u8[] = [];
-    var comp: u8[] = component.put_component_header([]);
+    let no_names: string[] = [];
+    let no_valtypes: u8[] = [];
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_u32());
 
-    var imp_names: string[] = ["a", "b"];
-    var imp_types: u32[] = [0u32, 0u32];
+    let imp_names: string[] = ["a", "b"];
+    let imp_types: u32[] = [0u32, 0u32];
     comp = component.put_import_section_funcs(comp, imp_names, imp_types);
 
-    var lower_funcs: u32[] = [0u32, 1u32];
+    let lower_funcs: u32[] = [0u32, 1u32];
     comp = component.put_canon_section_lowers_no_opts(comp, lower_funcs);
 
     // Two instances, each wrapping one lowered core func under name "f".
@@ -13152,12 +13123,12 @@ function main(): i32 {
 
     // Core module section + instantiate-with-two-args section.
     comp = component.put_core_module_section(comp, core_bytes);
-    var arg_names: string[] = ["host_a", "host_b"];
-    var arg_instance_idxs: u32[] = [0u32, 1u32];
+    let arg_names: string[] = ["host_a", "host_b"];
+    let arg_instance_idxs: u32[] = [0u32, 1u32];
     comp = component.put_core_instance_section_instantiate_with_instance_args(comp, 0u32, arg_names, arg_instance_idxs);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -13244,9 +13215,9 @@ import "std/wasm/imports";
 function main(): i32 {
     // Core module: imports host.f : () -> i32, exports main that
     // returns whatever the import returns.
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     // Type 0 = () -> i32. Import "host"."f" of type 0.
     m = m.with_imports(["host"], ["f"], [imports.import_func()], [imports.import_desc_func(0u32)]);
@@ -13254,15 +13225,15 @@ function main(): i32 {
     // is our own; type 0 too. Function 1 = "main", body: call 0.
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [1u32]);  // imports shift the export idx by 1
-    var bodyExpr: u8[] = inst.inst_call([], 0u32);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
+    let bodyExpr: u8[] = inst.inst_call([], 0u32);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
     m = m.with_code([fn]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
     // Component envelope.
-    var names: string[] = [];
-    var valtypes: u8[] = [];
-    var comp: u8[] = component.put_component_header([]);
+    let names: string[] = [];
+    let valtypes: u8[] = [];
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_func(comp, names, valtypes, component.cvaltype_u32());
     comp = component.put_import_section_one_func(comp, "h", 0u32);
     comp = component.put_canon_section_lower_no_opts(comp, 0u32);
@@ -13270,8 +13241,8 @@ function main(): i32 {
     comp = component.put_core_module_section(comp, core_bytes);
     comp = component.put_core_instance_section_instantiate_with_one_instance_arg(comp, 0u32, "host", 0u32);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -13338,20 +13309,20 @@ func TestWASMComponentExportSectionTwoFuncs(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var no_names: string[] = [];
-    var no_valtypes: u8[] = [];
+    let no_names: string[] = [];
+    let no_valtypes: u8[] = [];
 
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_u32());
     comp = component.put_import_section_one_func(comp, "h", 0u32);
 
     // Re-export the imported func twice under different names.
-    var exp_names: string[] = ["g0", "g1"];
-    var exp_funcs: u32[] = [0u32, 0u32];
+    let exp_names: string[] = ["g0", "g1"];
+    let exp_funcs: u32[] = [0u32, 0u32];
     comp = component.put_export_section_funcs(comp, exp_names, exp_funcs);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -13438,19 +13409,19 @@ function main(): i32 {
     //   func 1: signature 1, body i32.const 0   (the realloc stub)
     //   memory 0: min=1
     //   exports: "f" -> func 0, "alloc" -> func 1, "mem" -> mem 0
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
-    var p1: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
-    var r1: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
+    let p1: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
+    let r1: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0, p1], [r0, r1]);
     m = m.with_functions([0u32, 1u32]);
     m = m.with_memory(1u32, 0 - 1);
     m = m.with_exports(["f", "alloc", "mem"], [sections.export_func(), sections.export_func(), sections.export_memory()], [0u32, 1u32, 0u32]);
-    var body_f: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 7));
-    var body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
+    let body_f: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 7));
+    let body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
     m = m.with_code([body_f, body_alloc]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
     // Component: header + core-module + core-instance + 2 alias
     // calls (one for the lift target func, one for the realloc
@@ -13461,7 +13432,7 @@ function main(): i32 {
     // accepts the byte shape even when the memory idx is out of
     // range, since validation of the component world is a separate
     // pass.
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_core_module_section(comp, core_bytes);
     comp = component.put_core_instance_section_instantiate(comp, 0u32);
     comp = component.put_alias_section_core_export_func(comp, 0u32, "f");
@@ -13470,8 +13441,8 @@ function main(): i32 {
     // Type: () -> u32 (would-be string in a real lift, but u32 keeps
     // the wasm-tools structural check satisfied without needing
     // canonical-ABI lowering compatibility).
-    var no_names: string[] = [];
-    var no_valtypes: u8[] = [];
+    let no_names: string[] = [];
+    let no_valtypes: u8[] = [];
     comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_u32());
 
     // canon lift with mem + realloc opts. core-func 0 is the
@@ -13482,8 +13453,8 @@ function main(): i32 {
     // within bounds, not that they came from an alias section.
     comp = component.put_canon_section_lift_mem_realloc(comp, 0u32, 0u32, 0u32, 1u32);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -13555,31 +13526,31 @@ function main(): i32 {
     // Core module exporting a memory + a realloc stub. We alias
     // both out of its instance, then lower a host-imported func
     // that takes a string under those opts.
-    var m: module.Module = module.module_new();
+    let m: module.Module = module.module_new();
     // type 0: (i32 i32 i32 i32) -> i32 (realloc signature)
-    var p0: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
-    var r0: u8[] = [encode.valtype_i32()];
+    let p0: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_memory(1u32, 0 - 1);
     m = m.with_exports(["mem", "alloc"], [sections.export_memory(), sections.export_func()], [0u32, 0u32]);
-    var body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
+    let body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
     m = m.with_code([body_alloc]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_core_module_section(comp, core_bytes);
     comp = component.put_core_instance_section_instantiate(comp, 0u32);
 
     // Alias both memory + alloc out of the instance.
-    var sorts: u8[] = [component.core_sort_memory(), component.core_sort_func()];
-    var instance_idxs: u32[] = [0u32, 0u32];
-    var alias_names: string[] = ["mem", "alloc"];
+    let sorts: u8[] = [component.core_sort_memory(), component.core_sort_func()];
+    let instance_idxs: u32[] = [0u32, 0u32];
+    let alias_names: string[] = ["mem", "alloc"];
     comp = component.put_alias_section_core_exports(comp, sorts, instance_idxs, alias_names);
 
     // Type: (s: string) -> u32. Then import "h" of that type.
-    var p_names: string[] = ["s"];
-    var p_valtypes: u8[] = [component.cvaltype_string()];
+    let p_names: string[] = ["s"];
+    let p_valtypes: u8[] = [component.cvaltype_string()];
     comp = component.put_type_section_one_func(comp, p_names, p_valtypes, component.cvaltype_u32());
     comp = component.put_import_section_one_func(comp, "h", 0u32);
 
@@ -13588,8 +13559,8 @@ function main(): i32 {
     // realloc).
     comp = component.put_canon_section_lower_mem_realloc(comp, 0u32, 0u32, 0u32);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -13663,43 +13634,43 @@ import "std/wasm/sections";
 function main(): i32 {
     // Core module exports: f (() -> i32), alloc (4xi32 -> i32),
     // cleanup (3xi32 -> ()), mem.
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
-    var p1: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
-    var r1: u8[] = [encode.valtype_i32()];
-    var p2: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
-    var r2: u8[] = [];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
+    let p1: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
+    let r1: u8[] = [encode.valtype_i32()];
+    let p2: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
+    let r2: u8[] = [];
     m = m.with_types([p0, p1, p2], [r0, r1, r2]);
     m = m.with_functions([0u32, 1u32, 2u32]);
     m = m.with_memory(1u32, 0 - 1);
     m = m.with_exports(["f", "alloc", "cleanup", "mem"], [sections.export_func(), sections.export_func(), sections.export_func(), sections.export_memory()], [0u32, 1u32, 2u32, 0u32]);
-    var body_f: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
-    var body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
-    var body_cleanup: u8[] = inst.put_function_body([], inst.put_locals_empty([]), []);
+    let body_f: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
+    let body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
+    let body_cleanup: u8[] = inst.put_function_body([], inst.put_locals_empty([]), []);
     m = m.with_code([body_f, body_alloc, body_cleanup]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_core_module_section(comp, core_bytes);
     comp = component.put_core_instance_section_instantiate(comp, 0u32);
 
     // Alias all four into the top-level core space.
-    var sorts: u8[] = [component.core_sort_func(), component.core_sort_memory(), component.core_sort_func(), component.core_sort_func()];
-    var instance_idxs: u32[] = [0u32, 0u32, 0u32, 0u32];
-    var alias_names: string[] = ["f", "mem", "alloc", "cleanup"];
+    let sorts: u8[] = [component.core_sort_func(), component.core_sort_memory(), component.core_sort_func(), component.core_sort_func()];
+    let instance_idxs: u32[] = [0u32, 0u32, 0u32, 0u32];
+    let alias_names: string[] = ["f", "mem", "alloc", "cleanup"];
     comp = component.put_alias_section_core_exports(comp, sorts, instance_idxs, alias_names);
 
-    var no_names: string[] = [];
-    var no_valtypes: u8[] = [];
+    let no_names: string[] = [];
+    let no_valtypes: u8[] = [];
     comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_u32());
 
     // canon-lift with mem (idx 0) + realloc (core-func 1) +
     // post-return (core-func 2). Lift target is core-func 0.
     comp = component.put_canon_section_lift_mem_realloc_post_return(comp, 0u32, 0u32, 0u32, 1u32, 2u32);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -13776,19 +13747,19 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
     // Core module: function "f" returns 11.
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["f"], [sections.export_func()], [0u32]);
-    var bodyExpr: u8[] = inst.inst_i32_const([], 11);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
+    let bodyExpr: u8[] = inst.inst_i32_const([], 11);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
     m = m.with_code([fn]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
     // Component: preamble + the seven-section recipe.
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_core_module_section(comp, core_bytes);
     comp = component.put_core_instance_section_instantiate(comp, 0u32);
     comp = component.put_alias_section_core_export_func(comp, 0u32, "f");
@@ -13796,8 +13767,8 @@ function main(): i32 {
     comp = component.put_canon_section_lift_no_opts(comp, 0u32, 0u32);
     comp = component.put_export_section_one_func(comp, "g", 0u32);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -13872,38 +13843,38 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
     // Core module exports: f (() -> i32), alloc (4xi32 -> i32), mem.
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
-    var p1: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
-    var r1: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
+    let p1: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
+    let r1: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0, p1], [r0, r1]);
     m = m.with_functions([0u32, 1u32]);
     m = m.with_memory(1u32, 0 - 1);
     m = m.with_exports(["f", "alloc", "mem"], [sections.export_func(), sections.export_func(), sections.export_memory()], [0u32, 1u32, 0u32]);
-    var body_f: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
-    var body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
+    let body_f: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
+    let body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
     m = m.with_code([body_f, body_alloc]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_core_module_section(comp, core_bytes);
     comp = component.put_core_instance_section_instantiate(comp, 0u32);
 
-    var sorts: u8[] = [component.core_sort_func(), component.core_sort_memory(), component.core_sort_func()];
-    var instance_idxs: u32[] = [0u32, 0u32, 0u32];
-    var alias_names: string[] = ["f", "mem", "alloc"];
+    let sorts: u8[] = [component.core_sort_func(), component.core_sort_memory(), component.core_sort_func()];
+    let instance_idxs: u32[] = [0u32, 0u32, 0u32];
+    let alias_names: string[] = ["f", "mem", "alloc"];
     comp = component.put_alias_section_core_exports(comp, sorts, instance_idxs, alias_names);
 
-    var no_names: string[] = [];
-    var no_valtypes: u8[] = [];
+    let no_names: string[] = [];
+    let no_valtypes: u8[] = [];
     comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_string());
 
     // canon-lift with utf16 string encoding + mem + realloc.
     comp = component.put_canon_section_lift_mem_realloc_encoding(comp, 0u32, 0u32, 0u32, 1u32, component.canonopt_string_encoding_utf16());
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -13970,13 +13941,13 @@ func TestWASMComponentTypeFuncNoResult(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var names: string[] = ["status"];
-    var valtypes: u8[] = [component.cvaltype_u32()];
-    var comp: u8[] = component.put_component_header([]);
+    let names: string[] = ["status"];
+    let valtypes: u8[] = [component.cvaltype_u32()];
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_func_no_result(comp, names, valtypes);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -14047,10 +14018,10 @@ func TestWASMComponentStartSection(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var no_params: string[] = [];
-    var no_valtypes: u8[] = [];
+    let no_params: string[] = [];
+    let no_valtypes: u8[] = [];
 
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     // Type 0: (func)
     comp = component.put_type_section_one_func_no_result(comp, no_params, no_valtypes);
     // Import "f" of type 0.
@@ -14058,8 +14029,8 @@ function main(): i32 {
     // Start: call func 0 with no args, no result bindings.
     comp = component.put_start_section_no_args_no_results(comp, 0u32);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -14124,15 +14095,15 @@ import "std/i32";
 import "std/wasm/component";
 import "std/wasm/encode";
 function main(): i32 {
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_resource(comp, encode.valtype_i32());
     comp = component.put_type_section_one_resource(comp, encode.valtype_i32());
-    var idxs: u32[] = [0u32, 1u32];
+    let idxs: u32[] = [0u32, 1u32];
     comp = component.put_canon_section_resource_news(comp, idxs);
     comp = component.put_canon_section_resource_reps(comp, idxs);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -14194,16 +14165,16 @@ import "std/i32";
 import "std/wasm/component";
 import "std/wasm/encode";
 function main(): i32 {
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     // Two resource types, both rep=i32, no dtor.
     comp = component.put_type_section_one_resource(comp, encode.valtype_i32());
     comp = component.put_type_section_one_resource(comp, encode.valtype_i32());
     // Drop both in one canon section.
-    var idxs: u32[] = [0u32, 1u32];
+    let idxs: u32[] = [0u32, 1u32];
     comp = component.put_canon_section_resource_drops(comp, idxs);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -14262,13 +14233,13 @@ import "std/i32";
 import "std/wasm/component";
 import "std/wasm/encode";
 function main(): i32 {
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_resource(comp, encode.valtype_i32());
     comp = component.put_canon_section_resource_new(comp, 0u32);
     comp = component.put_canon_section_resource_rep(comp, 0u32);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -14332,7 +14303,7 @@ import "std/i32";
 import "std/wasm/component";
 import "std/wasm/encode";
 function main(): i32 {
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     // Type 0: resource with i32 rep, no dtor.
     comp = component.put_type_section_one_resource(comp, encode.valtype_i32());
     // Type 1: own<$0>.
@@ -14340,8 +14311,8 @@ function main(): i32 {
     // Type 2: borrow<$0>.
     comp = component.put_type_section_one_borrow(comp, 0u32);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -14400,14 +14371,14 @@ func TestWASMComponentVariantMixed(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var names: string[] = ["ok", "err", "abort"];
-    var has_payload: boolean[] = [true, true, false];
-    var payload_vts: u8[] = [component.cvaltype_u32(), component.cvaltype_string(), 0u8];
-    var comp: u8[] = component.put_component_header([]);
+    let names: string[] = ["ok", "err", "abort"];
+    let has_payload: boolean[] = [true, true, false];
+    let payload_vts: u8[] = [component.cvaltype_u32(), component.cvaltype_string(), 0u8];
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_variant(comp, names, has_payload, payload_vts);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -14470,13 +14441,13 @@ func TestWASMComponentRecordNameAge(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var names: string[] = ["name", "age"];
-    var valtypes: u8[] = [component.cvaltype_string(), component.cvaltype_u32()];
-    var comp: u8[] = component.put_component_header([]);
+    let names: string[] = ["name", "age"];
+    let valtypes: u8[] = [component.cvaltype_string(), component.cvaltype_u32()];
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_record(comp, names, valtypes);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -14538,12 +14509,12 @@ func TestWASMComponentFlagsRWX(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var labels: string[] = ["read", "write", "execute"];
-    var comp: u8[] = component.put_component_header([]);
+    let labels: string[] = ["read", "write", "execute"];
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_flags(comp, labels);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -14605,12 +14576,12 @@ func TestWASMComponentEnumColor(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var labels: string[] = ["red", "green", "blue"];
-    var comp: u8[] = component.put_component_header([]);
+    let labels: string[] = ["red", "green", "blue"];
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_enum(comp, labels);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -14673,11 +14644,11 @@ func TestWASMComponentResultOkErr(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_result_ok_err(comp, component.cvaltype_u32(), component.cvaltype_string());
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -14741,12 +14712,12 @@ func TestWASMComponentTupleStringU32(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var elems: u8[] = [component.cvaltype_string(), component.cvaltype_u32()];
-    var comp: u8[] = component.put_component_header([]);
+    let elems: u8[] = [component.cvaltype_string(), component.cvaltype_u32()];
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_tuple(comp, elems);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -14810,11 +14781,11 @@ func TestWASMComponentOptionOfU32(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_option(comp, component.cvaltype_u32());
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -14871,11 +14842,11 @@ func TestWASMComponentListOfU8(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_list(comp, component.cvaltype_u8());
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -14940,14 +14911,14 @@ import "std/i32";
 import "std/wasm/component";
 import "std/wasm/encode";
 function main(): i32 {
-    var comp: u8[] = component.put_component_header([]);
+    let comp: u8[] = component.put_component_header([]);
     // Resource type 0: representation is i32, no dtor.
     comp = component.put_type_section_one_resource(comp, encode.valtype_i32());
     // canon resource.drop of type 0.
     comp = component.put_canon_section_resource_drop(comp, 0u32);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -15020,26 +14991,26 @@ import "std/wasm/sections";
 import "std/wasm/numeric";
 function main(): i32 {
     // Core module: function "add" takes two i32s and returns their sum.
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [encode.valtype_i32(), encode.valtype_i32()];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [encode.valtype_i32(), encode.valtype_i32()];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["add"], [sections.export_func()], [0u32]);
-    var body: u8[] = inst.inst_local_get([], 0u32);
+    let body: u8[] = inst.inst_local_get([], 0u32);
     body = inst.inst_local_get(body, 1u32);
     body = numeric.inst_i32_add(body);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
     // Wrap as a component-level (u32, u32) -> u32.
-    var names: string[] = ["a", "b"];
-    var valtypes: u8[] = [component.cvaltype_u32(), component.cvaltype_u32()];
-    var comp: u8[] = component.build_lifted_export_component_with_params(core_bytes, "add", "add", names, valtypes, component.cvaltype_u32());
+    let names: string[] = ["a", "b"];
+    let valtypes: u8[] = [component.cvaltype_u32(), component.cvaltype_u32()];
+    let comp: u8[] = component.build_lifted_export_component_with_params(core_bytes, "add", "add", names, valtypes, component.cvaltype_u32());
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -15106,22 +15077,22 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
     // Core module: function "f" returns 99.
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["f"], [sections.export_func()], [0u32]);
-    var bodyExpr: u8[] = inst.inst_i32_const([], 99);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
+    let bodyExpr: u8[] = inst.inst_i32_const([], 99);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
     m = m.with_code([fn]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
     // The whole component recipe in one call.
-    var comp: u8[] = component.build_lifted_export_component(core_bytes, "f", "g", component.cvaltype_u32());
+    let comp: u8[] = component.build_lifted_export_component(core_bytes, "f", "g", component.cvaltype_u32());
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -15190,21 +15161,21 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
     // Core module: function "f" returns 42.
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["f"], [sections.export_func()], [0u32]);
-    var bodyExpr: u8[] = inst.inst_i32_const([], 42);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
+    let bodyExpr: u8[] = inst.inst_i32_const([], 42);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
     m = m.with_code([fn]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
     // Component envelope: full lift-and-export recipe.
-    var no_names: string[] = [];
-    var no_valtypes: u8[] = [];
-    var comp: u8[] = component.put_component_header([]);
+    let no_names: string[] = [];
+    let no_valtypes: u8[] = [];
+    let comp: u8[] = component.put_component_header([]);
     comp = component.put_core_module_section(comp, core_bytes);
     comp = component.put_core_instance_section_instantiate(comp, 0u32);
     comp = component.put_alias_section_core_export_func(comp, 0u32, "f");
@@ -15212,8 +15183,8 @@ function main(): i32 {
     comp = component.put_canon_section_lift_no_opts(comp, 0u32, 0u32);
     comp = component.put_export_section_one_func(comp, "g", 0u32);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
@@ -15270,27 +15241,27 @@ import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // Body: i32.const 1 ; if (result i32) { i32.const 100 }
     //       else { i32.const 200 } ; end
-    var body: u8[] = inst.inst_i32_const([], 1);
+    let body: u8[] = inst.inst_i32_const([], 1);
     body = inst.inst_if_start(body, encode.valtype_i32());
     body = inst.inst_i32_const(body, 100);
     body = inst.inst_else(body);
     body = inst.inst_i32_const(body, 200);
     body = inst.inst_end(body);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -15317,27 +15288,27 @@ import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // 1 local of type i32 (index 0).
-    var localsBytes: u8[] = inst.put_locals_one_group([], 1u32, encode.valtype_i32());
+    let localsBytes: u8[] = inst.put_locals_one_group([], 1u32, encode.valtype_i32());
 
     // Body: i32.const 42 ; local.set 0 ; local.get 0
-    var body: u8[] = inst.inst_i32_const([], 42);
+    let body: u8[] = inst.inst_i32_const([], 42);
     body = inst.inst_local_set(body, 0u32);
     body = inst.inst_local_get(body, 0u32);
 
-    var fn: u8[] = inst.put_function_body([], localsBytes, body);
+    let fn: u8[] = inst.put_function_body([], localsBytes, body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -15367,17 +15338,17 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // 2 locals of type i32: index 0 = i (counter), index 1 = sum.
-    var localsBytes: u8[] = inst.put_locals_one_group([], 2u32, encode.valtype_i32());
+    let localsBytes: u8[] = inst.put_locals_one_group([], 2u32, encode.valtype_i32());
 
-    var body: u8[] = inst.inst_loop_start([], inst.blocktype_empty());
+    let body: u8[] = inst.inst_loop_start([], inst.blocktype_empty());
     body = inst.inst_local_get(body, 0u32);
     body = inst.inst_i32_const(body, 10);
     body = numeric.inst_i32_lt_s(body);
@@ -15397,12 +15368,12 @@ function main(): i32 {
     body = inst.inst_end(body);
     body = inst.inst_local_get(body, 1u32);
 
-    var fn: u8[] = inst.put_function_body([], localsBytes, body);
+    let fn: u8[] = inst.put_function_body([], localsBytes, body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -15424,13 +15395,13 @@ function main(): i32 {
 func TestWASMSectionsCustom(t *testing.T) {
 	src := `import "std/wasm/sections";
 function main(): i32 {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
 
     // Custom section named "foo" with payload [0xAA, 0xBB].
     // Body: uleb(3) + "foo" (3 bytes) + 0xAA 0xBB = 6 bytes.
     // Wrapped: id(0) + uleb(6) + body = 8 bytes total.
-    var payload: u8[] = [170u8, 187u8];
-    var s: u8[] = sections.encode_custom_section(empty, "foo", payload);
+    let payload: u8[] = [170u8, 187u8];
+    let s: u8[] = sections.encode_custom_section(empty, "foo", payload);
     if (s.len() != 8) { return 1; }
     if (s[0] != 0u8)   { return 2; }    // section_custom id
     if (s[1] != 6u8)   { return 3; }    // body size
@@ -15442,7 +15413,7 @@ function main(): i32 {
     if (s[7] != 187u8) { return 9; }    // 0xBB
 
     // Empty payload: just the name.
-    var s2: u8[] = sections.encode_custom_section(empty, "x", empty);
+    let s2: u8[] = sections.encode_custom_section(empty, "x", empty);
     if (s2.len() != 4)  { return 20; }
     if (s2[0] != 0u8)  { return 21; }
     if (s2[1] != 2u8)  { return 22; }   // body size
@@ -15471,22 +15442,22 @@ import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
-    var bodyExpr: u8[] = inst.inst_i32_const([], 42);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
+    let bodyExpr: u8[] = inst.inst_i32_const([], 42);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
     m = m.with_code([fn]);
-    var core_bytes: u8[] = module.build(m);
+    let core_bytes: u8[] = module.build(m);
 
-    var marker_payload: u8[] = [104u8, 101u8, 108u8, 108u8, 111u8, 45u8, 108u8, 97u8, 110u8, 103u8];
-    var with_custom: u8[] = sections.encode_custom_section(core_bytes, "marker", marker_payload);
+    let marker_payload: u8[] = [104u8, 101u8, 108u8, 108u8, 111u8, 45u8, 108u8, 97u8, 110u8, 103u8];
+    let with_custom: u8[] = sections.encode_custom_section(core_bytes, "marker", marker_payload);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < with_custom.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (with_custom[i] as i32).to_string();
@@ -15543,23 +15514,23 @@ import "std/wasm/memory";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_memory(1u32, 0 - 1);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
     m = m.with_data([0], [[42u8, 7u8, 99u8, 5u8]]);
 
-    var body: u8[] = inst.inst_i32_const([], 2);
+    let body: u8[] = inst.inst_i32_const([], 2);
     body = memory.inst_i32_load8_u(body, 0u32, 0u32);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -15587,25 +15558,25 @@ import "std/wasm/memory";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_memory(1u32, 0 - 1);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
-    var body: u8[] = inst.inst_i32_const([], 16);
+    let body: u8[] = inst.inst_i32_const([], 16);
     body = inst.inst_i32_const(body, 77);
     body = memory.inst_i32_store8(body, 0u32, 0u32);
     body = inst.inst_i32_const(body, 16);
     body = memory.inst_i32_load8_u(body, 0u32, 0u32);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -15635,11 +15606,11 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 import "std/wasm/imports";
 function main(): i32 {
-    var m: module.Module = module.module_new();
+    let m: module.Module = module.module_new();
 
     // One shared type: () -> i32 (both callees and main).
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
 
     // func0 / func1 are indirect-call targets; func2 is main.
@@ -15654,19 +15625,19 @@ function main(): i32 {
     m = m.with_exports(["main"], [sections.export_func()], [2u32]);
 
     // func0 -> 11, func1 -> 22.
-    var f0: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 11));
-    var f1: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 22));
+    let f0: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 11));
+    let f1: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 22));
 
     // main: i32.const 1 ; call_indirect type 0 table 0 -> func1 -> 22.
-    var main_body: u8[] = inst.inst_i32_const([], 1);
+    let main_body: u8[] = inst.inst_i32_const([], 1);
     main_body = inst.inst_call_indirect(main_body, 0u32, 0u32);
-    var f2: u8[] = inst.put_function_body([], inst.put_locals_empty([]), main_body);
+    let f2: u8[] = inst.put_function_body([], inst.put_locals_empty([]), main_body);
 
     m = m.with_code([f0, f1, f2]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -15695,9 +15666,9 @@ import "std/wasm/memory";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_memory(1u32, 0 - 1);
@@ -15705,19 +15676,19 @@ function main(): i32 {
     m = m.with_data([0], [[5u8, 6u8, 7u8, 8u8]]);
 
     // memory.copy dst=16, src=0, len=2  -> bytes [5,6] land at 16,17.
-    var body: u8[] = inst.inst_i32_const([], 16);
+    let body: u8[] = inst.inst_i32_const([], 16);
     body = inst.inst_i32_const(body, 0);
     body = inst.inst_i32_const(body, 2);
     body = memory.inst_memory_copy(body);
     // Read back addr 17 -> 6.
     body = inst.inst_i32_const(body, 17);
     body = memory.inst_i32_load8_u(body, 0u32, 0u32);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -15745,28 +15716,28 @@ import "std/wasm/memory";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_memory(1u32, 0 - 1);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // memory.fill dst=8, val=9, len=3 -> addrs 8,9,10 = 9.
-    var body: u8[] = inst.inst_i32_const([], 8);
+    let body: u8[] = inst.inst_i32_const([], 8);
     body = inst.inst_i32_const(body, 9);
     body = inst.inst_i32_const(body, 3);
     body = memory.inst_memory_fill(body);
     // Read back addr 9 -> 9.
     body = inst.inst_i32_const(body, 9);
     body = memory.inst_i32_load8_u(body, 0u32, 0u32);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -15794,24 +15765,24 @@ import "std/wasm/imports";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
-    var initExpr: u8[] = inst.inst_i32_const([], 314);
+    let initExpr: u8[] = inst.inst_i32_const([], 314);
     initExpr = inst.inst_end(initExpr);
     m = m.with_globals([encode.valtype_i32()], [imports.mut_const()], [initExpr]);
 
-    var body: u8[] = inst.inst_global_get([], 0u32);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let body: u8[] = inst.inst_global_get([], 0u32);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -15841,22 +15812,22 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
-    var body: u8[] = inst.inst_i32_const([], 0 - 20);
+    let body: u8[] = inst.inst_i32_const([], 0 - 20);
     body = inst.inst_i32_const(body, 3);
     body = numeric.inst_i32_div_s(body);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -15884,22 +15855,22 @@ import "std/wasm/convert";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // i32.const 255 ; i32.extend8_s -> -1
-    var body: u8[] = inst.inst_i32_const([], 255);
+    let body: u8[] = inst.inst_i32_const([], 255);
     body = convert.inst_i32_extend8_s(body);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -15931,23 +15902,23 @@ import "std/wasm/convert";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
-    var body: u8[] = inst.inst_i64_const([], 1000000000000i64);
+    let body: u8[] = inst.inst_i64_const([], 1000000000000i64);
     body = inst.inst_i64_const(body, 234567890123i64);
     body = numeric.inst_i64_add(body);
     body = convert.inst_i32_wrap_i64(body);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -15976,22 +15947,22 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
-    var body: u8[] = inst.inst_i32_const([], 12);
+    let body: u8[] = inst.inst_i32_const([], 12);
     body = inst.inst_i32_const(body, 10);
     body = numeric.inst_i32_xor(body);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -16021,22 +15992,22 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
-    var body: u8[] = inst.inst_i32_const([], 0 - 1);
+    let body: u8[] = inst.inst_i32_const([], 0 - 1);
     body = inst.inst_i32_const(body, 1);
     body = numeric.inst_i32_lt_s(body);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -16064,25 +16035,25 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // (1 << 5) = 32 ; then rotr by 1 -> 16.
-    var body: u8[] = inst.inst_i32_const([], 1);
+    let body: u8[] = inst.inst_i32_const([], 1);
     body = inst.inst_i32_const(body, 5);
     body = numeric.inst_i32_shl(body);
     body = inst.inst_i32_const(body, 1);
     body = numeric.inst_i32_rotr(body);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -16111,24 +16082,24 @@ import "std/wasm/convert";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // f32 1.0 bit pattern: 0x3F800000 = 1065353216.
-    var body: u8[] = inst.inst_f32_const([], 1065353216u32);
+    let body: u8[] = inst.inst_f32_const([], 1065353216u32);
     body = inst.inst_f32_const(body, 1065353216u32);
     body = numeric.inst_f32_add(body);
     body = convert.inst_i32_reinterpret_f32(body);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -16155,23 +16126,23 @@ import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
-    var body: u8[] = inst.inst_i32_const([], 7);
+    let body: u8[] = inst.inst_i32_const([], 7);
     body = inst.inst_i32_const(body, 9);
     body = inst.inst_i32_const(body, 1);
     body = inst.inst_select(body);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -16200,19 +16171,19 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
+    let m: module.Module = module.module_new();
 
-    var p_fact: u8[] = [encode.valtype_i32()];
-    var r_fact: u8[] = [encode.valtype_i32()];
-    var p_main: u8[] = [];
-    var r_main: u8[] = [encode.valtype_i32()];
+    let p_fact: u8[] = [encode.valtype_i32()];
+    let r_fact: u8[] = [encode.valtype_i32()];
+    let p_main: u8[] = [];
+    let r_main: u8[] = [encode.valtype_i32()];
     m = m.with_types([p_fact, p_main], [r_fact, r_main]);
 
     m = m.with_functions([0u32, 1u32]);
     m = m.with_exports(["main"], [sections.export_func()], [1u32]);
 
     // fact(n): if (n <= 1) 1 else n * fact(n - 1)
-    var fact_body: u8[] = inst.inst_local_get([], 0u32);
+    let fact_body: u8[] = inst.inst_local_get([], 0u32);
     fact_body = inst.inst_i32_const(fact_body, 1);
     fact_body = numeric.inst_i32_le_s(fact_body);
     fact_body = inst.inst_if_start(fact_body, encode.valtype_i32());
@@ -16225,18 +16196,18 @@ function main(): i32 {
     fact_body = inst.inst_call(fact_body, 0u32);
     fact_body = numeric.inst_i32_mul(fact_body);
     fact_body = inst.inst_end(fact_body);
-    var fact_fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), fact_body);
+    let fact_fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), fact_body);
 
     // main(): i32.const 5 ; call 0
-    var main_body: u8[] = inst.inst_i32_const([], 5);
+    let main_body: u8[] = inst.inst_i32_const([], 5);
     main_body = inst.inst_call(main_body, 0u32);
-    var main_fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), main_body);
+    let main_fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), main_body);
 
     m = m.with_code([fact_fn, main_fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -16266,27 +16237,27 @@ import "std/wasm/convert";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // f64 1.5 = 0x3FF8000000000000; f64 2.5 = 0x4004000000000000.
-    var body: u8[] = inst.inst_f64_const([], 4609434218613702656u64);
+    let body: u8[] = inst.inst_f64_const([], 4609434218613702656u64);
     body = inst.inst_f64_const(body, 4612811918334230528u64);
     body = numeric.inst_f64_add(body);
     body = convert.inst_i64_reinterpret_f64(body);
     body = inst.inst_i64_const(body, 32i64);
     body = numeric.inst_i64_shr_u(body);
     body = convert.inst_i32_wrap_i64(body);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -16313,21 +16284,21 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
-    var body: u8[] = inst.inst_i32_const([], 16);
+    let body: u8[] = inst.inst_i32_const([], 16);
     body = numeric.inst_i32_clz(body);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -16356,18 +16327,18 @@ import "std/wasm/memory";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_memory(1u32, 0 - 1);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
     m = m.with_data([0], [[10u8, 20u8, 30u8, 40u8]]);
 
-    var localsBytes: u8[] = inst.put_locals_one_group([], 2u32, encode.valtype_i32());
+    let localsBytes: u8[] = inst.put_locals_one_group([], 2u32, encode.valtype_i32());
 
-    var body: u8[] = inst.inst_loop_start([], inst.blocktype_empty());
+    let body: u8[] = inst.inst_loop_start([], inst.blocktype_empty());
     body = inst.inst_local_get(body, 0u32);
     body = inst.inst_i32_const(body, 4);
     body = numeric.inst_i32_lt_s(body);
@@ -16386,12 +16357,12 @@ function main(): i32 {
     body = inst.inst_end(body);
     body = inst.inst_local_get(body, 1u32);
 
-    var fn: u8[] = inst.put_function_body([], localsBytes, body);
+    let fn: u8[] = inst.put_function_body([], localsBytes, body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -16457,8 +16428,8 @@ import "std/i32";
 import "std/string";
 
 function dump(bs: u8[]): string {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < bs.len()) {
         if (i > 0) { s = s + " "; }
         s = s + (bs[i] as i32).to_string();
@@ -16468,7 +16439,7 @@ function dump(bs: u8[]): string {
 }
 
 function main(): i32 {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
 `)
 	for _, e := range exps {
 		sb.WriteString("    print(dump(leb128.")
@@ -16480,9 +16451,8 @@ function main(): i32 {
 	sb.WriteString("    return 0;\n}\n")
 
 	stdout, _ := invokeWasmtime(t, sb.String())
-	// buildComponent uses PrintMainResult: true, so the harness's
-	// trailing main()-returns-0 produces an extra "0" line at the
-	// end. Drop trailing blank + the result line.
+	// wasmtime's --invoke prints main's 0 as a last line. Drop
+	// trailing blank + the result line.
 	gotLines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
 	if len(gotLines) < len(exps) {
 		t.Fatalf("got %d lines, want >= %d\nstdout:\n%s", len(gotLines), len(exps), stdout)
@@ -16692,19 +16662,19 @@ import "std/wasm/sections";
 import "std/i32";
 import "std/string";
 function main(): i32 {
-    var m: module.Module = module.module_new();
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
+    let m: module.Module = module.module_new();
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_exports(["main"], [sections.export_func()], [0u32]);
-    var body: u8[] = inst.inst_i32_const([], 42);
-    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    let body: u8[] = inst.inst_i32_const([], 42);
+    let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
-    var output: string = "";
-    var i: i32 = 0;
+    let output: string = "";
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
@@ -16721,175 +16691,6 @@ function main(): i32 {
 	}
 }
 
-// Refcount builtins (`__rc_get` / `__rc_inc` / `__rc_dec`)
-// exposed for Phase-1 testing. Validates Phase 1a (rc=1 on
-// `__alloc_u8`) and Phase 1b (inc / dec are sentinel-aware and
-// don't corrupt the rc word). main returns 0 iff the observed
-// rc progression is exactly 1 → 2 → 1.
-func TestWASMRcBuiltins(t *testing.T) {
-	src := `function main(): i32 {
-    var arr: u8[] = __alloc_u8(10);
-    var r1: i32 = __rc_get(arr);
-    __rc_inc(arr);
-    var r2: i32 = __rc_get(arr);
-    __rc_dec(arr);
-    var r3: i32 = __rc_get(arr);
-    return r1 + r2 + r3 - 4;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got exit %d, want 0 (rc progression off)", got)
-	}
-}
-
-// Phase 1d transfer inc, refined by #4402 opt 1 (dead-alias dup/drop
-// cancellation): a pure borrowed-view alias — never reassigned, never
-// returned, never moved — elides its inc AND its exit-sweep dec as a
-// net-zero pair, so the rc stays 1. An alias that is still referenced
-// under the return keeps the ordinary transfer inc (rc 2).
-func TestWASMRcAliasInc(t *testing.T) {
-	dead := `function main(): i32 {
-    var arr: u8[] = __alloc_u8(8);
-    var alias: u8[] = arr;
-    return __rc_get(arr) - 1;
-}`
-	if got := runWasm(t, dead); got != 0 {
-		t.Errorf("dead alias: got exit %d, want 0 (borrowed view elides the inc — rc stays 1)", got)
-	}
-	live := `function main(): i32 {
-    var arr: u8[] = __alloc_u8(8);
-    var alias: u8[] = arr;
-    return __rc_get(arr) - 2 + alias.len() - 8;
-}`
-	if got := runWasm(t, live); got != 0 {
-		t.Errorf("returned alias: got exit %d, want 0 (transfer inc kept — rc 2)", got)
-	}
-}
-
-// Phase 1d-ii (+ Phase 1d-viii): FieldAccess + Index alias
-// reads inc the rc; with Phase 1d-viii, the struct- / array-
-// lit constructor also inc's the captured array. A LIVE alias
-// ends at rc=3 — alloc (1) + lit store (1) + alias read (1);
-// a DEAD one cancels the read's inc against its own exit dec
-// and ends at rc=2. Both are pinned, because dropping either
-// side of that pair alone is an over-release.
-func TestWASMRcAliasIncFieldAndIndex(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		// want names the rc the case's arithmetic subtracts, so a failure
-		// says which expectation moved.
-		want string
-		src  string
-	}{
-		{"field_access", "rc=3 (alloc + struct-lit store + live alias read)", `struct Holder { items: u8[] }
-function main(): i32 {
-    var inner: u8[] = __alloc_u8(8);
-    var h: Holder = Holder { items: inner };
-    var alias: u8[] = h.items;
-    // Precise drops (RC-Perceus) release the now-dead struct h AND the
-    // now-dead alias at their last use; reference both in the return so they
-    // stay live through the check — this measures the fully-aliased rc
-    // (inner + h.items + alias). Both .len()-8 terms are 0, so the result is
-    // unchanged.
-    return __rc_get(inner) - 3 + h.items.len() - 8 + alias.len() - 8;
-}`},
-		{"index_load", "rc=3 (alloc + array-lit store + live alias read)", `function main(): i32 {
-    var inner: u8[] = __alloc_u8(8);
-    var matrix: u8[][] = [inner];
-    var alias: u8[] = matrix[0];
-    // Precise drops (RC-Perceus) release the now-dead matrix AND the now-dead
-    // alias at their last use; reference both in the return so they stay live
-    // through the check — this measures the fully-aliased rc (inner + the
-    // array element + alias), which is what the test asserts. An alias that is
-    // NOT read again cancels its inc against its own exit dec instead, which
-    // is a different rc and the case below. matrix.len()-1 and alias.len()-8
-    // are both 0, so the result is unchanged.
-    return __rc_get(inner) - 3 + matrix.len() - 1 + alias.len() - 8;
-}`},
-		{"index_load_dead_alias", "rc=2 (alloc + array-lit store; the dead alias inc/dec cancel)", `function main(): i32 {
-    var inner: u8[] = __alloc_u8(8);
-    var matrix: u8[][] = [inner];
-    var alias: u8[] = matrix[0];
-    // The alias is never read again, so it is a pure borrowed view: the
-    // transfer inc cancels against its own exit dec as a net-zero pair — the
-    // #4402 opt-1 shape RcAliasInc's dead case pins for a plain ident, which
-    // an element read reaches too now that it is not permanently borrow-
-    // tainted (#6567). rc is therefore 2 (alloc + the array-literal element
-    // store), and the underflow counter must still be 0: eliding ONE side of
-    // that pair is an over-release, not an optimisation.
-    return __rc_get(inner) - 2 + matrix.len() - 1 + __rc_underflow_count();
-}`},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if got := runWasm(t, c.src); got != 0 {
-				t.Errorf("got exit %d, want 0 — expected %s", got, c.want)
-			}
-		})
-	}
-}
-
-// Phase 1d-iii: `y = x;` reassignment bumps the rc on x.
-func TestWASMRcAliasIncReassign(t *testing.T) {
-	src := `function main(): i32 {
-    var arr: u8[] = __alloc_u8(8);
-    var other: u8[] = __alloc_u8(8);
-    other = arr;
-    return __rc_get(arr) - 2;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got exit %d, want 0 (assign-alias should bump rc to 2)", got)
-	}
-}
-
-// Phase 2d-borrow: passing an array to a function is a borrow —
-// no caller-side inc, no callee-side exit dec. The rc is
-// untouched across the call and stays at 1.
-func TestWASMRcAliasIncCallArg(t *testing.T) {
-	src := `function f(arr: u8[]): i32 { return 0; }
-function main(): i32 {
-    var arr: u8[] = __alloc_u8(8);
-    var _: i32 = f(arr);
-    return __rc_get(arr) - 1;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got exit %d, want 0 (borrowed arg: rc stays 1)", got)
-	}
-}
-
-// Phase 3 step 1: rc-underflow detector. __fern_rc_dec bumps a
-// counter (read back via __rc_underflow_count) whenever it is
-// asked to decrement an rc that is already <= 0 — an over-release
-// that, once Phase 3 turns on reclamation, becomes a
-// use-after-free. WASM-only probe (the counter is a linear-memory
-// slot). This test pins the detector's two contracts:
-//   - a program with no over-release reports 0 (no false
-//     positives from healthy 1->0 decs or sentinel statics), and
-//   - a deliberate double-dec (1->0 healthy, then 0-> under) is
-//     caught and counted exactly once.
-func TestWASMRcUnderflowDetector(t *testing.T) {
-	clean := `
-import "core/map";
-function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
-    m = m.insert("a", 1);
-    m = m.insert("b", 2);
-    var xs: i32[] = [1, 2, 3];
-    return __rc_underflow_count() + m.get_or("a", 0) - 1 + xs[0] - 1;
-}`
-	if got := runWasm(t, clean); got != 0 {
-		t.Errorf("clean program: got %d, want 0 (no over-release expected)", got)
-	}
-
-	overRelease := `function main(): i32 {
-    var a: u8[] = __alloc_u8(8);   // rc = 1
-    __rc_dec(a);                   // 1 -> 0 (healthy)
-    __rc_dec(a);                   // 0 -> -1 (over-release, counted)
-    return __rc_underflow_count();
-}`
-	if got := runWasm(t, overRelease); got != 1 {
-		t.Errorf("double-dec: got underflow count %d, want 1", got)
-	}
-}
-
 // Phase 3 step 2: the idiomatic value-returning map mutation
 // `m = m.insert(...)` / `m = m.cleared()` must NOT over-release. The
 // mutators cow in place without bumping rc, so b.assign uses a
@@ -16900,7 +16701,7 @@ func TestWASMRcMapSelfAssignNoUnderflow(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("a", 1);
     m = m.insert("b", 2);
     m = m.insert("c", 3);
@@ -16923,9 +16724,9 @@ function main(): i32 {
 	aliased := `
 import "core/map";
 function main(): i32 {
-    var m1: Map[string, i32] = map_new(8);
+    let m1: Map[string, i32] = map_new(8);
     m1 = m1.insert("a", 1);
-    var m2 = m1;                  // alias → rc 2
+    let m2 = m1;                  // alias → rc 2
     m2 = m2.insert("a", 999);        // copy; old handle released, not leaked
     return __rc_underflow_count() * 1000
          + (m1.get_or("a", 0) - 1)
@@ -16933,97 +16734,6 @@ function main(): i32 {
 }`
 	if got := runWasm(t, aliased); got != 0 {
 		t.Errorf("got %d, want 0 (aliased self-assign: 0 underflow, m1=1, m2=999)", got)
-	}
-}
-
-// Phase 3 step 3: drop handlers. An array of pointer-shaped
-// rc-tracked elements (here u8[][]) routes its scope-exit dec
-// through __fern_drop_arr_ptr, which on the last reference dec's
-// each element — balancing the per-element inc the IR emits at
-// array-literal construction (Phase 1d-viii). Without the drop,
-// the nested element's rc leaks.
-func TestWASMRcDropArrayElements(t *testing.T) {
-	// Proof the drop FIRES: `consume` nests `inner` into a local
-	// array and drops it on exit; inner's rc must return to its
-	// pre-call value (1), not stay at the constructed 2.
-	fires := `function consume(inner: u8[]): i32 {
-    var outer: u8[][] = [inner];
-    return 0;
-}
-function main(): i32 {
-    var inner: u8[] = __alloc_u8(4);
-    var before: i32 = __rc_get(inner);
-    var ignore: i32 = consume(inner);
-    var after: i32 = __rc_get(inner);
-    return (before - 1) + (after - 1);  // 0 iff drop balanced the inc
-}`
-	if got := runWasm(t, fires); got != 0 {
-		t.Errorf("got %d, want 0 (drop must dec the nested element back to rc 1)", got)
-	}
-
-	// And no over-release: nesting fresh + aliased elements and
-	// dropping the outer array reports 0 underflows.
-	noUnder := `function build(): i32 {
-    var inner: i32[] = [1, 2, 3];
-    var a: i32[][] = [inner];        // aliased element (inc'd)
-    var b: i32[][] = [[4, 5], [6]];  // fresh elements (not inc'd)
-    return a[0][1] + b[1][0];        // 2 + 6
-}
-function main(): i32 {
-    return (build() - 8) + __rc_underflow_count();
-}`
-	if got := runWasm(t, noUnder); got != 0 {
-		t.Errorf("got %d, want 0 (nested-array drop: correct values, 0 underflow)", got)
-	}
-}
-
-// Phase 3 step 3: struct drop handlers. A user struct with
-// pointer-shaped rc-tracked fields drops those fields on its last
-// reference (gated by __fern_rc_is_unique) before dec'ing the box,
-// balancing the per-field inc from Phase 1e-struct-ii.
-func TestWASMRcDropStructFields(t *testing.T) {
-	fires := `struct Holder { items: u8[] }
-function consume(inner: u8[]): i32 {
-    var h: Holder = Holder { items: inner };
-    return 0;
-}
-function main(): i32 {
-    var inner: u8[] = __alloc_u8(4);
-    var before: i32 = __rc_get(inner);
-    var ignore: i32 = consume(inner);
-    var after: i32 = __rc_get(inner);
-    return (before - 1) + (after - 1) + __rc_underflow_count();
-}`
-	if got := runWasm(t, fires); got != 0 {
-		t.Errorf("got %d, want 0 (struct field drop must dec the array back to rc 1)", got)
-	}
-
-	aliased := `struct Holder { items: i32[] }
-function main(): i32 {
-    var inner: i32[] = [1, 2, 3];
-    var h1: Holder = Holder { items: inner };
-    var h2: Holder = h1;
-    return h2.items[2] + __rc_underflow_count() - 3;
-}`
-	if got := runWasm(t, aliased); got != 0 {
-		t.Errorf("got %d, want 0 (aliased struct: no double field-drop, 0 underflow)", got)
-	}
-
-	nested := `struct Grid { rows: i32[][] }
-struct Inner { v: i32[] }
-struct Outer { inner: Inner }
-function build(): i32 {
-    var a: i32[] = [1, 2, 3];
-    var g: Grid = Grid { rows: [a] };
-    var arr: i32[] = [7, 8];
-    var o: Outer = Outer { inner: Inner { v: arr } };
-    return g.rows[0][1] + o.inner.v[0] + __rc_underflow_count();
-}
-function main(): i32 {
-    return build() - 9;
-}`
-	if got := runWasm(t, nested); got != 0 {
-		t.Errorf("got %d, want 0 (nested struct/array fields: correct values, 0 underflow)", got)
 	}
 }
 
@@ -17038,7 +16748,7 @@ struct V2 { b: i32 }
 type U = W | V2;
 function mk(): U { return W { a: [1, 2, 3] }; }
 function build(): i32 {
-    var u: U = mk();
+    let u: U = mk();
     match (u) { W(w) => { return w.a[1] + __rc_underflow_count(); }, V2(x) => { return x.b; } }
     return 0 - 1;
 }
@@ -17051,8 +16761,8 @@ function main(): i32 { return build() - 2; }`
 struct V2 { b: i32 }
 type U = W | V2;
 function main(): i32 {
-    var w: W = W { a: 7 };
-    var u: U = w;
+    let w: W = W { a: 7 };
+    let u: U = w;
     return w.a + __rc_underflow_count() - 7;
 }`
 	if got := runWasm(t, aliased); got != 0 {
@@ -17061,8 +16771,8 @@ function main(): i32 {
 
 	nonUniform := `enum E { Arr(i32[]), Num(i32) }
 function main(): i32 {
-    var e: E = Arr([1, 2, 3]);
-    var f: E = Num(9);
+    let e: E = Arr([1, 2, 3]);
+    let f: E = Num(9);
     match (e) {
         Arr(a) => { return a.len() + __rc_underflow_count() - 3; },
         Num(_) => { return 0 - 1; }
@@ -17074,50 +16784,14 @@ function main(): i32 {
 	}
 }
 
-// Phase 1d-vi: dec on overwrite.
-func TestWASMRcDecOnOverwrite(t *testing.T) {
-	src := `function main(): i32 {
-    var arr1: u8[] = __alloc_u8(8);
-    var arr2: u8[] = __alloc_u8(8);
-    var arr3: u8[] = __alloc_u8(8);
-    arr1 = arr2;
-    arr1 = arr3;
-    return __rc_get(arr2) + __rc_get(arr3) - 3;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got exit %d, want 0 (arr2 rc=1, arr3 rc=2, sum=3)", got)
-	}
-}
-
-// Phase 2: arr.push mutates in place when rc==1 and cap > len.
-// First push of [10, 20] copies (cap=2=len, no spare); the
-// copy bumps cap to max(2*newLen, 4) = 6, so the second push
-// hits the fast path and returns the same pointer.
-func TestWASMArrayPushInPlaceFastPath(t *testing.T) {
-	src := `function main(): i32 {
-    var xs: i32[] = [10, 20];
-    xs = xs.append(30);
-    var addr_before: usize = xs as usize;
-    xs = xs.append(40);
-    var addr_after: usize = xs as usize;
-    if (addr_before != addr_after) { return 1; }
-    if (xs.len() != 4) { return 2; }
-    if (xs[3] != 40) { return 3; }
-    return 0;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got exit %d, want 0 (in-place fast path should reuse buffer)", got)
-	}
-}
-
 // Phase 2: aliased rc>1 forces copy semantics even with spare
 // cap — otherwise the other holder's view of the array would
 // silently extend.
 func TestWASMArrayPushAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: i32[] = [10, 20];
+    let xs: i32[] = [10, 20];
     xs = xs.append(30);
-    var ys = xs;
+    let ys = xs;
     ys = ys.append(40);
     if (xs.len() != 3) { return 1; }
     if (xs[0] != 10) { return 2; }
@@ -17130,28 +16804,11 @@ func TestWASMArrayPushAliasedCopies(t *testing.T) {
 	}
 }
 
-func TestWASMArrayIndexSetInPlaceFastPath(t *testing.T) {
-	src := `function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
-    var addr_before: usize = xs as usize;
-    xs = xs.with(1, 999);
-    var addr_after: usize = xs as usize;
-    if (addr_before != addr_after) { return 1; }
-    if (xs[1] != 999) { return 2; }
-    if (xs[0] != 10) { return 3; }
-    if (xs[2] != 30) { return 4; }
-    return 0;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got exit %d, want 0 (arr[i]=v in-place when rc==1)", got)
-	}
-}
-
 // Mirror of TestArm64ArrayIndexSetAliasedCopies.
 func TestWASMArrayIndexSetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
-    var ys = xs;
+    let xs: i32[] = [10, 20, 30];
+    let ys = xs;
     ys = ys.with(0, 999);
     if (xs[0] != 10) { return 1; }
     if (xs[1] != 20) { return 2; }
@@ -17172,7 +16829,7 @@ func TestWASMArrayIndexSetAliasedCopies(t *testing.T) {
 // circuit and break the pre-helper bump-then-dec design.
 func TestWASMArrayIndexSetU8Stride(t *testing.T) {
 	src := `function main(): i32 {
-    var buf: u8[] = __alloc_u8(4);
+    let buf: u8[] = __alloc_u8(4);
     buf = buf.with(0, 65 as u8);
     buf = buf.with(1, 66 as u8);
     buf = buf.with(2, 67 as u8);
@@ -17188,7 +16845,7 @@ func TestWASMArrayIndexSetU8Stride(t *testing.T) {
 func TestWASMArrayIndexSetStructField(t *testing.T) {
 	src := `struct State { items: i32[] }
 function main(): i32 {
-    var s: State = State{items: [10, 20, 30]};
+    let s: State = State{items: [10, 20, 30]};
     s = State { ...s, items: s.items.with(1, 999) };
     if (s.items[0] != 10) { return 1; }
     if (s.items[1] != 999) { return 2; }
@@ -17204,8 +16861,8 @@ function main(): i32 {
 func TestWASMArrayIndexSetStructFieldAliasedCopies(t *testing.T) {
 	src := `struct State { items: i32[] }
 function main(): i32 {
-    var arr: i32[] = [10, 20, 30];
-    var s: State = State{items: arr};
+    let arr: i32[] = [10, 20, 30];
+    let s: State = State{items: arr};
     s = State { ...s, items: s.items.with(1, 999) };
     if (arr[0] != 10) { return 1; }
     if (arr[1] != 20) { return 2; }
@@ -17225,7 +16882,7 @@ func TestWASMArrayIndexSetNestedStructField(t *testing.T) {
 	src := `struct Inner { items: i32[] }
 struct Outer { inner: Inner }
 function main(): i32 {
-    var o: Outer = Outer{inner: Inner{items: [10, 20, 30]}};
+    let o: Outer = Outer{inner: Inner{items: [10, 20, 30]}};
     o = Outer { ...o, inner: Inner { ...o.inner, items: o.inner.items.with(1, 999) } };
     if (o.inner.items[0] != 10) { return 1; }
     if (o.inner.items[1] != 999) { return 2; }
@@ -17242,8 +16899,8 @@ func TestWASMArrayIndexSetNestedStructFieldAliasedCopies(t *testing.T) {
 	src := `struct Inner { items: i32[] }
 struct Outer { inner: Inner }
 function main(): i32 {
-    var arr: i32[] = [10, 20, 30];
-    var o: Outer = Outer{inner: Inner{items: arr}};
+    let arr: i32[] = [10, 20, 30];
+    let o: Outer = Outer{inner: Inner{items: arr}};
     o = Outer { ...o, inner: Inner { ...o.inner, items: o.inner.items.with(1, 999) } };
     if (arr[1] != 20) { return 1; }
     if (o.inner.items[1] != 999) { return 2; }
@@ -17257,7 +16914,7 @@ function main(): i32 {
 // Mirror of TestArm64ArrayIndexSetMat.
 func TestWASMArrayIndexSetMat(t *testing.T) {
 	src := `function main(): i32 {
-    var mat: i32[][] = [[1, 2, 3], [4, 5, 6]];
+    let mat: i32[][] = [[1, 2, 3], [4, 5, 6]];
     mat = mat.with(0, mat[0].with(1, 999));
     if (mat[0][0] != 1) { return 1; }
     if (mat[0][1] != 999) { return 2; }
@@ -17273,8 +16930,8 @@ func TestWASMArrayIndexSetMat(t *testing.T) {
 // Mirror of TestArm64ArrayIndexSetMatInnerAliasedCopies.
 func TestWASMArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
-    var mat: i32[][] = [[1, 2], [3, 4]];
-    var inner = mat[0];
+    let mat: i32[][] = [[1, 2], [3, 4]];
+    let inner = mat[0];
     mat = mat.with(0, mat[0].with(1, 999));
     if (inner[1] != 2) { return 1; }
     if (mat[0][1] != 999) { return 2; }
@@ -17290,7 +16947,7 @@ func TestWASMMapSetReturnsMap(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("a", 1);
     m = m.insert("b", 2);
     m = m.insert("c", 3);
@@ -17309,8 +16966,8 @@ function main(): i32 {
 func TestWASMArrayIndexSetObjMatInnerAliasedCopies(t *testing.T) {
 	src := `struct State { mat: i32[][] }
 function main(): i32 {
-    var inner: i32[] = [1, 2, 3];
-    var s: State = State{mat: [inner, [4, 5, 6]]};
+    let inner: i32[] = [1, 2, 3];
+    let s: State = State{mat: [inner, [4, 5, 6]]};
     s = State { ...s, mat: s.mat.with(0, s.mat[0].with(1, 999)) };
     if (inner[1] != 2) { return 1; }
     if (s.mat[0][1] != 999) { return 2; }
@@ -17325,7 +16982,7 @@ function main(): i32 {
 // Mirror of TestArm64ArraySetSelfAssign.
 func TestWASMArraySetSelfAssign(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
+    let xs: i32[] = [10, 20, 30];
     xs = xs.with(1, 999);
     if (xs[0] != 10) { return 1; }
     if (xs[1] != 999) { return 2; }
@@ -17340,8 +16997,8 @@ func TestWASMArraySetSelfAssign(t *testing.T) {
 // Mirror of TestArm64ArraySetAliasedCopies.
 func TestWASMArraySetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
-    var ys = xs;
+    let xs: i32[] = [10, 20, 30];
+    let ys = xs;
     ys = ys.with(0, 999);
     if (xs[0] != 10) { return 1; }
     if (ys[0] != 999) { return 2; }
@@ -17357,15 +17014,15 @@ func TestWASMMapDeleteReturnsMapBool(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("a", 1);
     m = m.insert("b", 2);
     m = m.insert("c", 3);
-    var (mb, hadb) = m.without("b");
+    let (mb, hadb) = m.without("b");
     if (!hadb) { return 1; }
     m = mb;
     if (m.without("z").1)  { return 2; }
-    var (m2, ok) = m.without("a");
+    let (m2, ok) = m.without("a");
     if (!ok) { return 3; }
     if (m2.has("a")) { return 4; }
     if (!m2.has("c")) { return 5; }
@@ -17382,7 +17039,7 @@ func TestWASMMapClearReturnsMap(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("x", 10);
     m = m.insert("y", 20);
     if (m.len() != 2) { return 1; }
@@ -17400,15 +17057,15 @@ function main(): i32 {
 }
 
 // Phase 2d: Map.set copy-on-write — wasm sibling of
-// TestX86_64MapSetAliasedCopies. An aliased map (var m2 = m1)
+// TestX86_64MapSetAliasedCopies. An aliased map (let m2 = m1)
 // has rc=2, so m2.insert(...) copies and leaves m1 intact.
 func TestWASMMapSetAliasedCopies(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m1: Map[string, i32] = map_new(8);
+    let m1: Map[string, i32] = map_new(8);
     m1 = m1.insert("a", 1);                 // in-place (rc==1)
-    var m2 = m1;                    // alias → rc=2
+    let m2 = m1;                    // alias → rc=2
     m2 = m2.insert("a", 999);          // rc>1 → copy; m1 unchanged
     if (m1.get_or("a", 0) != 1)   { return 1; }
     if (m2.get_or("a", 0) != 999) { return 2; }
@@ -17425,17 +17082,17 @@ func TestWASMMapDeleteClearAliasedCopies(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m1: Map[string, i32] = map_new(8);
+    let m1: Map[string, i32] = map_new(8);
     m1 = m1.insert("a", 1);
     m1 = m1.insert("b", 2);
-    var m2 = m1;                       // alias → rc=2
-    var (m3, ok) = m2.without("a");     // rc>1 → copy; m1/m2 intact
+    let m2 = m1;                       // alias → rc=2
+    let (m3, ok) = m2.without("a");     // rc>1 → copy; m1/m2 intact
     if (!ok)            { return 1; }
     if (m1.len() != 2)  { return 2; }
     if (!m1.has("a"))   { return 3; }
     if (m3.len() != 1)  { return 4; }
     if (m3.has("a"))    { return 5; }
-    var m4 = m1;                       // alias → rc=2
+    let m4 = m1;                       // alias → rc=2
     m4 = m4.cleared();                   // rc>1 → copy; m1 intact
     if (m1.len() != 2)  { return 6; }
     if (m4.len() != 0)  { return 7; }
@@ -17450,9 +17107,9 @@ function main(): i32 {
 func TestWASMTupleStructElem(t *testing.T) {
 	src := `struct Inner { x: i32, y: i32 }
 function main(): i32 {
-    var t: (i32, Inner) = (1, Inner { x: 2, y: 3 });
+    let t: (i32, Inner) = (1, Inner { x: 2, y: 3 });
     if (t.0 != 1) { return 1; }
-    var inner: Inner = t.1;
+    let inner: Inner = t.1;
     if (inner.x != 2) { return 2; }
     if (inner.y != 3) { return 3; }
     return 0;
@@ -17465,9 +17122,9 @@ function main(): i32 {
 // Mirror of TestArm64TupleArrayElem.
 func TestWASMTupleArrayElem(t *testing.T) {
 	src := `function main(): i32 {
-    var t: (i32, i32[]) = (1, [10, 20, 30]);
+    let t: (i32, i32[]) = (1, [10, 20, 30]);
     if (t.0 != 1) { return 1; }
-    var arr: i32[] = t.1;
+    let arr: i32[] = t.1;
     if (arr.len() != 3) { return 2; }
     if (arr[0] != 10) { return 3; }
     if (arr[2] != 30) { return 4; }
@@ -17481,10 +17138,10 @@ func TestWASMTupleArrayElem(t *testing.T) {
 // Mirror of TestArm64TupleNestedTuple.
 func TestWASMTupleNestedTuple(t *testing.T) {
 	src := `function main(): i32 {
-    var t: (i32, (i32, i32)) = (1, (2, 3));
-    var (a, b) = t;
+    let t: (i32, (i32, i32)) = (1, (2, 3));
+    let (a, b) = t;
     if (a != 1) { return 1; }
-    var (c, d) = b;
+    let (c, d) = b;
     if (c != 2) { return 2; }
     if (d != 3) { return 3; }
     return 0;
@@ -17497,7 +17154,7 @@ func TestWASMTupleNestedTuple(t *testing.T) {
 // Mirror of TestArm64LexerChainedTupleNumericAccess.
 func TestWASMLexerChainedTupleNumericAccess(t *testing.T) {
 	src := `function main(): i32 {
-    var t: (i32, (i32, i32)) = (1, (2, 3));
+    let t: (i32, (i32, i32)) = (1, (2, 3));
     if (t.0 != 1) { return 1; }
     if (t.1.0 != 2) { return 2; }
     if (t.1.1 != 3) { return 3; }
@@ -17515,18 +17172,18 @@ import "core/map";
 function take(m: Map[string, i32]): i32 { return m.len(); }
 function mkEmpty(): Map[i32, string] { return Map {}; }
 function main(): i32 {
-    var a: Map[string, i32] = Map {};
+    let a: Map[string, i32] = Map {};
     if (a.len() != 0) { return 1; }
     a = a.insert("k", 42);
     if (a.get_or("k", 0) != 42) { return 2; }
-    var b: Map[i32, string] = Map {};
+    let b: Map[i32, string] = Map {};
     if (b.len() != 0) { return 3; }
     b = b.insert(7, "hello");
     if (!b.has(7)) { return 4; }
     if (take(Map {}) != 0) { return 5; }
-    var r = mkEmpty();
+    let r = mkEmpty();
     if (r.len() != 0) { return 6; }
-    var d: Map[i32, i32] = Map {};
+    let d: Map[i32, i32] = Map {};
     if (d.len() != 0) { return 7; }
     return 0;
 }`
@@ -17539,20 +17196,20 @@ function main(): i32 {
 func TestWASMEnumVariantInTuple(t *testing.T) {
 	src := `enum Color { Red, Green, Blue }
 function main(): i32 {
-    var t: (i32, Color) = (1, Green);
+    let t: (i32, Color) = (1, Green);
     if (t.0 != 1) { return 1; }
     match (t.1) {
         Red => { return 2; },
         Green => { },
         Blue => { return 3; }
     }
-    var u: (i32, Option[i32]) = (5, Some(42));
+    let u: (i32, Option[i32]) = (5, Some(42));
     if (u.0 != 5) { return 4; }
     match (u.1) {
         Some(v) => { if (v != 42) { return 5; } },
         None => { return 6; }
     }
-    var w: (Color, i32) = (Blue, 99);
+    let w: (Color, i32) = (Blue, 99);
     if (w.1 != 99) { return 7; }
     match (w.0) {
         Blue => { return 0; },
@@ -17571,25 +17228,25 @@ func TestWASMMapPointerShapedValues(t *testing.T) {
 import "core/map";
 struct P { x: i32, y: i32 }
 function main(): i32 {
-    var mt: Map[string, (i32, i32)] = Map {};
+    let mt: Map[string, (i32, i32)] = Map {};
     mt = mt.insert("a", (3, 4));
     match (mt.get("a")) {
         Some(p) => { if (p.0 + p.1 != 7) { return 1; } },
         None => { return 2; }
     }
-    var ms: Map[string, P] = Map {};
+    let ms: Map[string, P] = Map {};
     ms = ms.insert("a", P { x: 3, y: 4 });
     match (ms.get("a")) {
         Some(s) => { if (s.x + s.y != 7) { return 3; } },
         None => { return 4; }
     }
-    var ma: Map[i32, i32[]] = Map {};
+    let ma: Map[i32, i32[]] = Map {};
     ma = ma.insert(1, [10, 20, 30]);
     match (ma.get(1)) {
         Some(arr) => { if (arr[0] + arr[2] != 40) { return 5; } },
         None => { return 6; }
     }
-    var mi: Map[string, i32] = Map {};
+    let mi: Map[string, i32] = Map {};
     mi = mi.insert("a", 42);
     match (mi.get("a")) {
         Some(v) => { if (v != 42) { return 7; } },
@@ -17607,10 +17264,10 @@ func TestWASMStructTupleFieldAccess(t *testing.T) {
 	src := `struct Rec { pos: (i32, i32), name: string }
 struct Nested { t: (i32, (i32, i32)) }
 function main(): i32 {
-    var r: Rec = Rec { pos: (3, 4), name: "p" };
+    let r: Rec = Rec { pos: (3, 4), name: "p" };
     if (r.pos.0 != 3) { return 1; }
     if (r.pos.1 != 4) { return 2; }
-    var n: Nested = Nested { t: (1, (2, 3)) };
+    let n: Nested = Nested { t: (1, (2, 3)) };
     if (n.t.0 != 1) { return 3; }
     if (n.t.1.0 != 2) { return 4; }
     if (n.t.1.1 != 3) { return 5; }
@@ -17624,19 +17281,19 @@ function main(): i32 {
 // Mirror of TestArm64UnsignedComparison (regression guard).
 func TestWASMUnsignedComparison(t *testing.T) {
 	src := `function main(): i32 {
-    var big: u32 = 4294967295u32;
+    let big: u32 = 4294967295u32;
     if (!(big > 0u32)) { return 1; }
     if (!(big > 1000000u32)) { return 2; }
     if (big < 5u32) { return 3; }
     if (!(big >= 4294967295u32)) { return 4; }
     if (big <= 100u32) { return 5; }
-    var b64: u64 = 18446744073709551615u64;
+    let b64: u64 = 18446744073709551615u64;
     if (!(b64 > 9u64)) { return 6; }
     if (b64 < 9u64) { return 7; }
-    var u: u8 = 200u8;
+    let u: u8 = 200u8;
     if (!(u > 100u8)) { return 8; }
-    var i: u32 = 4294967293u32;
-    var c: i32 = 0;
+    let i: u32 = 4294967293u32;
+    let c: i32 = 0;
     while (i > 4294967290u32) { c = c + 1; i = i - 1u32; }
     if (c != 3) { return 9; }
     return 0;
@@ -17649,17 +17306,17 @@ func TestWASMUnsignedComparison(t *testing.T) {
 // Mirror of TestArm64UnaryMinusWideTypes.
 func TestWASMUnaryMinusWideTypes(t *testing.T) {
 	src := `function main(): i32 {
-    var a: i64 = -5i64;
+    let a: i64 = -5i64;
     if (a != 0i64 - 5i64) { return 1; }
-    var b: f64 = -5.0;
+    let b: f64 = -5.0;
     if (!(b < 0.0)) { return 2; }
-    var c: f64 = -b;
+    let c: f64 = -b;
     if (c != 5.0) { return 3; }
-    var f: f32 = -2.5f32;
+    let f: f32 = -2.5f32;
     if (!(f < 0.0f32)) { return 4; }
-    var z: f64 = -0.0;
+    let z: f64 = -0.0;
     if (f64_bits(z) == 0i64) { return 5; }
-    var g: i64 = 10i64 + -3i64;
+    let g: i64 = 10i64 + -3i64;
     if (g != 7i64) { return 6; }
     return 0;
 }`
@@ -17671,19 +17328,19 @@ func TestWASMUnaryMinusWideTypes(t *testing.T) {
 // Mirror of TestArm64ScientificNotation.
 func TestWASMScientificNotation(t *testing.T) {
 	src := `function main(): i32 {
-    var a: f64 = 1e3;
+    let a: f64 = 1e3;
     if (a != 1000.0) { return 1; }
-    var b: f64 = 1.5e3;
+    let b: f64 = 1.5e3;
     if (b != 1500.0) { return 2; }
-    var c: f64 = 1500.0e-3;
+    let c: f64 = 1500.0e-3;
     if (c != 1.5) { return 3; }
-    var d: f64 = 1.5e+3;
+    let d: f64 = 1.5e+3;
     if (d != 1500.0) { return 4; }
-    var e: f64 = 2.5E2;
+    let e: f64 = 2.5E2;
     if (e != 250.0) { return 5; }
-    var f: f32 = 1.5e2f32;
+    let f: f32 = 1.5e2f32;
     if (f != 150.0f32) { return 6; }
-    var big: f64 = 1.8e19;
+    let big: f64 = 1.8e19;
     if (!(big > 1.7e19)) { return 7; }
     return 0;
 }`
@@ -17696,19 +17353,19 @@ func TestWASMScientificNotation(t *testing.T) {
 func TestWASMSubI32ArithmeticWraps(t *testing.T) {
 	src := `struct S { v: u8 }
 function main(): i32 {
-    var a: u8 = 255u8;
+    let a: u8 = 255u8;
     a = a + 1u8;
     if ((a as i32) != 0) { return 1; }
-    var b: u8 = 0u8;
+    let b: u8 = 0u8;
     b = b - 1u8;
     if ((b as i32) != 255) { return 2; }
-    var c: u8 = 16u8;
+    let c: u8 = 16u8;
     c = c * 16u8;
     if ((c as i32) != 0) { return 3; }
-    var s: S = S { v: 200u8 };
-    var h: u8 = s.v + 100u8;
+    let s: S = S { v: 200u8 };
+    let h: u8 = s.v + 100u8;
     if ((h as i32) != 44) { return 4; }
-    var k: u8 = 100u8;
+    let k: u8 = 100u8;
     k = k + 50u8;
     if ((k as i32) != 150) { return 5; }
     return 0;
@@ -17736,8 +17393,8 @@ func TestWASMWideKeyMapDispatch(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i64, i32] = map_new(4);
-    var big: i64 = (7 as i64) << (33 as i64);
+    let m: Map[i64, i32] = map_new(4);
+    let big: i64 = (7 as i64) << (33 as i64);
     m = m.insert(big, 40);
     m = m.insert(3 as i64, 2);
     if (m.get_or(big, 0) != 40) { return 1; }
@@ -17772,7 +17429,7 @@ func TestWASMVoidCallThroughFunctionValue(t *testing.T) {
 		{"fn-typed-parameter", `
 function apply(f: (i32) => void, x: i32): void { f(x); }
 function main(): i32 {
-    var seen: i32 = 0;
+    let seen: i32 = 0;
     apply((n: i32): void => { seen = n; }, 7);
     if (seen != 7) { return 1; }
     return 0;
@@ -17780,8 +17437,8 @@ function main(): i32 {
 `},
 		{"local-lambda", `
 function main(): i32 {
-    var seen: i32 = 0;
-    var lam: (i32) => void = (n: i32): void => { seen = n; };
+    let seen: i32 = 0;
+    let lam: (i32) => void = (n: i32): void => { seen = n; };
     lam(7);
     if (seen != 7) { return 1; }
     return 0;
@@ -17789,9 +17446,9 @@ function main(): i32 {
 `},
 		{"capturing-closure", `
 function main(): i32 {
-    var base: i32 = 10;
-    var seen: i32 = 0;
-    var cap: (i32) => void = (n: i32): void => { seen = n + base; };
+    let base: i32 = 10;
+    let seen: i32 = 0;
+    let cap: (i32) => void = (n: i32): void => { seen = n + base; };
     cap(7);
     if (seen != 17) { return 1; }
     return 0;
@@ -17799,8 +17456,8 @@ function main(): i32 {
 `},
 		{"array-element", `
 function main(): i32 {
-    var seen: i32 = 0;
-    var arr: ((i32) => void)[] = [(n: i32): void => { seen = n; }];
+    let seen: i32 = 0;
+    let arr: ((i32) => void)[] = [(n: i32): void => { seen = n; }];
     arr[0](7);
     if (seen != 7) { return 1; }
     return 0;
@@ -17808,8 +17465,8 @@ function main(): i32 {
 `},
 		{"higher-order-result", `
 function main(): i32 {
-    var seen: i32 = 0;
-    var pick: () => (i32) => void = (): (i32) => void => {
+    let seen: i32 = 0;
+    let pick: () => (i32) => void = (): (i32) => void => {
         return (n: i32): void => { seen = n; };
     };
     pick()(7);
@@ -17819,14 +17476,14 @@ function main(): i32 {
 `},
 		{"inline-arrow-lambda", `
 function main(): i32 {
-    var sink: i32 = 0;
+    let sink: i32 = 0;
     ((x: i32) => { sink = sink + x; })(4);
     return sink - 4;
 }
 `},
 		{"inline-arrow-lambda-discarded-value", `
 function main(): i32 {
-    var sink: i32 = 0;
+    let sink: i32 = 0;
     ((x: i32) => { sink = sink + x; return sink; })(4);
     return sink - 4;
 }
@@ -17834,10 +17491,10 @@ function main(): i32 {
 		{"pvec-for-each", `
 import "std/pvec";
 function main(): i32 {
-    var v: pvec.PVec[i32] = pvec.pvec_new();
+    let v: pvec.PVec[i32] = pvec.pvec_new();
     v = v.append(1);
     v = v.append(2);
-    var total: i32 = 0;
+    let total: i32 = 0;
     v.for_each((x: i32): void => { total = total + x; });
     if (total != 3) { return 1; }
     return 0;

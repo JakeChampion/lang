@@ -25,17 +25,17 @@ const urlQueryIRPrelude = `function url_hex_val(c: i32): i32 {
     return -1;
 }
 function url_decode(s: string): string {
-    var n: i32 = s.len();
-    var out: string = "";
-    var i: i32 = 0;
+    let n: i32 = s.len();
+    let out: string = "";
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i] as i32;
-        var emit: string = slice_unchecked(s, i, i+1).to_owned();
-        var consumed: i32 = 1;
+        let b: i32 = s[i] as i32;
+        let emit: string = slice_unchecked(s, i, i+1).to_owned();
+        let consumed: i32 = 1;
         if (b == 37 && i + 2 < n) {
-            var h1: i32 = url_hex_val(s[i+1] as i32);
-            var h2: i32 = url_hex_val(s[i+2] as i32);
-            if (h1 >= 0 && h2 >= 0) { var by: u8[] = [((h1 << 4) | h2) as u8]; emit = string_from_bytes_unchecked(by); consumed = 3; }
+            let h1: i32 = url_hex_val(s[i+1] as i32);
+            let h2: i32 = url_hex_val(s[i+2] as i32);
+            if (h1 >= 0 && h2 >= 0) { let by: u8[] = [((h1 << 4) | h2) as u8]; emit = string_from_bytes_unchecked(by); consumed = 3; }
         }
         out = out + emit;
         i = i + consumed;
@@ -45,23 +45,23 @@ function url_decode(s: string): string {
 function append_pair(m: Map[string, string[]], k: string, v: string): Map[string, string[]] {
     match (m.get(k)) {
         Some(existing) => { return m.insert(k, existing.append(v)); },
-        None => { var arr: string[] = [v]; return m.insert(k, arr); },
+        None => { let arr: string[] = [v]; return m.insert(k, arr); },
     }
     return m;
 }
 function query_parse(s: string): Map[string, string[]] {
-    var m: Map[string, string[]] = Map {};
-    var n: i32 = s.len();
+    let m: Map[string, string[]] = Map {};
+    let n: i32 = s.len();
     if (n == 0) { return m; }
-    var pair_start: i32 = 0;
-    var i: i32 = 0;
+    let pair_start: i32 = 0;
+    let i: i32 = 0;
     while (i <= n) {
-        var sep: boolean = false;
+        let sep: boolean = false;
         if (i == n) { sep = true; } else if (s[i] == 38) { sep = true; }
         if (sep) {
             if (i - pair_start > 0) {
-                var eq: i32 = -1;
-                var j: i32 = pair_start;
+                let eq: i32 = -1;
+                let j: i32 = pair_start;
                 while (j < i) { if (s[j] == 61) { eq = j; break; } j = j + 1; }
                 if (eq >= 0) { m = append_pair(m, url_decode(slice_unchecked(s, pair_start, eq).to_owned()), url_decode(slice_unchecked(s, eq+1, i).to_owned())); }
                 else { m = append_pair(m, url_decode(slice_unchecked(s, pair_start, i).to_owned()), ""); }
@@ -91,7 +91,7 @@ var urlQueryIRCases = []struct {
 	// #3495 regression guard (pre-fix the wasm IR backend returned 22 — b's
 	// array corrupted by the append to a — because map_set's value `vis` flag
 	// was hardcoded 0 for the string[] value).
-	{"dup-keys", `var m: Map[string, string[]] = query_parse("a=1&b=2&a=3"); return vcount(m, "a") * 10 + vcount(m, "b");`, 21},
+	{"dup-keys", `let m: Map[string, string[]] = query_parse("a=1&b=2&a=3"); return vcount(m, "a") * 10 + vcount(m, "b");`, 21},
 	// single value.
 	{"single", `return vcount(query_parse("x=hello"), "x");`, 1},
 	// missing key -> the None arm -> 0.

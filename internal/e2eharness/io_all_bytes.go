@@ -14,7 +14,7 @@ func IOAllBytesInput() []byte {
 // reader leaves its handle open. The closed-handle call exercises cleanup.
 const IOAllBytesProgram = `import "std/io";
 function main(): i32 {
-    var r: Reader = stdin();
+    let r: Reader = stdin();
     match (io.read_all_bytes(r)) {
         Err(_) => { return 1; },
         Ok(bytes) => {
@@ -25,7 +25,7 @@ function main(): i32 {
             }
             match (r.close()) { Some(_) => { return 5; }, None => {} }
             match (io.read_all_bytes(r)) { Ok(_) => { return 6; }, Err(_) => {} }
-            var i: i32 = 0;
+            let i: i32 = 0;
             while (i < bytes.len()) {
                 if (bytes[i] != (i % 256) as u8) { return 7; }
                 i = i + 1;
@@ -38,7 +38,7 @@ function main(): i32 {
 
 func IOStdinBytesProgram(call string, empty bool) string {
 	check := `if (bytes.len() != 8448) { return 2; }
-            var i: i32 = 0;
+            let i: i32 = 0;
             while (i < bytes.len()) {
                 if (bytes[i] != (i % 256) as u8) { return 3; }
                 i = i + 1;

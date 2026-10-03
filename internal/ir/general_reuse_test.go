@@ -12,9 +12,9 @@ import (
 func TestGeneralReuseDisabledByFlag(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var s: i32 = a.x + a.y;
-    var b: Point = Point { x: s + 1, y: 9 };
+    let a: Point = Point { x: 1, y: 2 };
+    let s: i32 = a.x + a.y;
+    let b: Point = Point { x: s + 1, y: 9 };
     return b.x + b.y;
 }`
 	if got := allocReuseCount(funcByName(lowerForTest(t, src), "main")); got != 1 {
@@ -38,9 +38,9 @@ function main(): i32 {
 func TestGeneralReuseFiresForDeadLocal(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var s: i32 = a.x + a.y;
-    var b: Point = Point { x: s + 1, y: 9 };
+    let a: Point = Point { x: 1, y: 2 };
+    let s: i32 = a.x + a.y;
+    let b: Point = Point { x: s + 1, y: 9 };
     return b.x + b.y;
 }`)
 	f := funcByName(ip, "main")
@@ -57,12 +57,12 @@ function main(): i32 {
 func TestGeneralReuseFiresInLoopBody(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
-        var a: Point = Point { x: i, y: i + 1 };
-        var s: i32 = a.x + a.y;
-        var b: Point = Point { x: s, y: i };
+        let a: Point = Point { x: i, y: i + 1 };
+        let s: i32 = a.x + a.y;
+        let b: Point = Point { x: s, y: i };
         acc = acc + b.x + b.y;
         i = i + 1;
     }
@@ -79,11 +79,11 @@ function main(): i32 {
 func TestGeneralReuseFiresCrossBlock(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var s: i32 = a.x + a.y;          // a's last use (before the if)
-    var acc: i32 = 0;
+    let a: Point = Point { x: 1, y: 2 };
+    let s: i32 = a.x + a.y;          // a's last use (before the if)
+    let acc: i32 = 0;
     if (s > 0) {
-        var b: Point = Point { x: s, y: 9 };   // reuses a's box
+        let b: Point = Point { x: s, y: 9 };   // reuses a's box
         acc = b.x + b.y;
     }
     return acc;
@@ -99,10 +99,10 @@ function main(): i32 {
 func TestGeneralReuseSkipsCrossBlockUsedAfter(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var acc: i32 = 0;
+    let a: Point = Point { x: 1, y: 2 };
+    let acc: i32 = 0;
     if (acc == 0) {
-        var b: Point = Point { x: 5, y: 9 };
+        let b: Point = Point { x: 5, y: 9 };
         acc = b.x + b.y;
     }
     return acc + a.x;
@@ -118,10 +118,10 @@ function main(): i32 {
 func TestGeneralReuseSkipsCrossBlockSiblingUse(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var acc: i32 = 0;
+    let a: Point = Point { x: 1, y: 2 };
+    let acc: i32 = 0;
     if (acc == 0) {
-        var b: Point = Point { x: 5, y: 9 };
+        let b: Point = Point { x: 5, y: 9 };
         acc = b.x + b.y;
     } else {
         acc = a.x + a.y;
@@ -139,13 +139,13 @@ function main(): i32 {
 func TestGeneralReuseFiresCrossBlockInLoop(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
-        var a: Point = Point { x: i, y: i + 1 };
-        var s: i32 = a.x + a.y;          // a's last use within the loop body
+        let a: Point = Point { x: i, y: i + 1 };
+        let s: i32 = a.x + a.y;          // a's last use within the loop body
         if (s > 0) {
-            var b: Point = Point { x: s, y: i };   // reuses a's box
+            let b: Point = Point { x: s, y: i };   // reuses a's box
             acc = acc + b.x + b.y;
         }
         i = i + 1;
@@ -167,15 +167,15 @@ function main(): i32 {
 func TestGeneralReuseCrossBlockComposesLevels(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var sa: i32 = a.x + a.y;          // a dead from here (body level)
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let a: Point = Point { x: 1, y: 2 };
+    let sa: i32 = a.x + a.y;          // a dead from here (body level)
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
-        var m: Point = Point { x: i, y: i };
-        var sm: i32 = m.x + m.y;      // m dead from here (loop level)
+        let m: Point = Point { x: i, y: i };
+        let sm: i32 = m.x + m.y;      // m dead from here (loop level)
         if (sm >= 0) {
-            var c: Point = Point { x: sa + sm, y: i };
+            let c: Point = Point { x: sa + sm, y: i };
             acc = acc + c.x + c.y;
         }
         i = i + 1;
@@ -192,8 +192,8 @@ function main(): i32 {
 func TestGeneralReuseSkipsLiveSource(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var b: Point = Point { x: a.x + 1, y: 9 };
+    let a: Point = Point { x: 1, y: 2 };
+    let b: Point = Point { x: a.x + 1, y: 9 };
     return a.y + b.x;
 }`)
 	f := funcByName(ip, "main")
@@ -207,8 +207,8 @@ function main(): i32 {
 func TestGeneralReuseSkipsSourceReadInConstruction(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var b: Point = Point { x: a.x + 1, y: a.y };
+    let a: Point = Point { x: 1, y: 2 };
+    let b: Point = Point { x: a.x + 1, y: a.y };
     return b.x + b.y;
 }`)
 	f := funcByName(ip, "main")
@@ -223,9 +223,9 @@ function main(): i32 {
 func TestGeneralReuseFiresForPointerField(t *testing.T) {
 	ip := lowerForTest(t, `struct Holder { id: i32, items: i32[] }
 function main(): i32 {
-    var a: Holder = Holder { id: 1, items: [1, 2] };
-    var s: i32 = a.id + a.items[0];
-    var b: Holder = Holder { id: s, items: [3, 4] };
+    let a: Holder = Holder { id: 1, items: [1, 2] };
+    let s: i32 = a.id + a.items[0];
+    let b: Holder = Holder { id: s, items: [3, 4] };
     return b.id;
 }`)
 	f := funcByName(ip, "main")
@@ -241,9 +241,9 @@ func TestGeneralReuseFiresCrossTypeSameClass(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
 struct Pair { a: i32, b: i32 }
 function main(): i32 {
-    var p: Point = Point { x: 1, y: 2 };
-    var s: i32 = p.x + p.y;
-    var q: Pair = Pair { a: s, b: 9 };
+    let p: Point = Point { x: 1, y: 2 };
+    let s: i32 = p.x + p.y;
+    let q: Pair = Pair { a: s, b: 9 };
     return q.a + q.b;
 }`)
 	f := funcByName(ip, "main")
@@ -258,9 +258,9 @@ func TestGeneralReuseSkipsCrossTypeDifferentClass(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
 struct Triple { a: i32, b: i32, c: i32, d: i32, e: i32 }
 function main(): i32 {
-    var p: Point = Point { x: 1, y: 2 };
-    var s: i32 = p.x + p.y;
-    var q: Triple = Triple { a: s, b: 1, c: 2, d: 3, e: 4 };
+    let p: Point = Point { x: 1, y: 2 };
+    let s: i32 = p.x + p.y;
+    let q: Triple = Triple { a: s, b: 1, c: 2, d: 3, e: 4 };
     return q.a;
 }`)
 	f := funcByName(ip, "main")
@@ -276,9 +276,9 @@ func TestGeneralReuseFiresCrossTypePointerField(t *testing.T) {
 	ip := lowerForTest(t, `struct Holder { id: i32, items: i32[] }
 struct Bag { tag: i32, data: i32[] }
 function main(): i32 {
-    var a: Holder = Holder { id: 1, items: [1, 2] };
-    var s: i32 = a.id + a.items[0];
-    var b: Bag = Bag { tag: s, data: [3, 4] };
+    let a: Holder = Holder { id: 1, items: [1, 2] };
+    let s: i32 = a.id + a.items[0];
+    let b: Bag = Bag { tag: s, data: [3, 4] };
     return b.tag + b.data[0];
 }`)
 	f := funcByName(ip, "main")
@@ -288,9 +288,9 @@ function main(): i32 {
 }
 func TestGeneralReuseFiresForTuple(t *testing.T) {
 	ip := lowerForTest(t, `function main(): i32 {
-    var a: (i32, i32) = (1, 2);
-    var s: i32 = a.0 + a.1;
-    var b: (i32, i32) = (s + 1, 9);
+    let a: (i32, i32) = (1, 2);
+    let s: i32 = a.0 + a.1;
+    let b: (i32, i32) = (s + 1, 9);
     return b.0 + b.1;
 }`)
 	f := funcByName(ip, "main")
@@ -301,9 +301,9 @@ func TestGeneralReuseFiresForTuple(t *testing.T) {
 
 func TestGeneralReuseFiresForTuplePointerElem(t *testing.T) {
 	ip := lowerForTest(t, `function main(): i32 {
-    var a: (i32, i32[]) = (1, [1, 2]);
-    var s: i32 = a.0 + a.1[0];
-    var b: (i32, i32[]) = (s, [3, 4]);
+    let a: (i32, i32[]) = (1, [1, 2]);
+    let s: i32 = a.0 + a.1[0];
+    let b: (i32, i32[]) = (s, [3, 4]);
     return b.0 + b.1[0];
 }`)
 	f := funcByName(ip, "main")
@@ -317,9 +317,9 @@ func TestGeneralReuseFiresForTuplePointerElem(t *testing.T) {
 func TestGeneralReuseFiresForEnum(t *testing.T) {
 	ip := lowerForTest(t, `enum Wrapper { Wrap(i32[]) }
 function main(): i32 {
-    var a: Wrapper = Wrap([1, 2]);
-    var s: i32 = match (a) { Wrap(xs) => xs[0] };
-    var b: Wrapper = Wrap([s, 3]);
+    let a: Wrapper = Wrap([1, 2]);
+    let s: i32 = match (a) { Wrap(xs) => xs[0] };
+    let b: Wrapper = Wrap([s, 3]);
     return match (b) { Wrap(xs) => xs[0] };
 }`)
 	f := funcByName(ip, "main")
@@ -336,9 +336,9 @@ func TestGeneralReuseFiresEnumDonorStructRecipient(t *testing.T) {
 	ip := lowerForTest(t, `enum Wrapper { Wrap(i32[]) }
 struct Holder { n: i32, items: i32[] }
 function main(): i32 {
-    var a: Wrapper = Wrap([1, 2]);
-    var s: i32 = match (a) { Wrap(xs) => xs[0] };
-    var b: Holder = Holder { n: s, items: [s, 3] };
+    let a: Wrapper = Wrap([1, 2]);
+    let s: i32 = match (a) { Wrap(xs) => xs[0] };
+    let b: Holder = Holder { n: s, items: [s, 3] };
     return b.items[0] + b.n;
 }`)
 	f := funcByName(ip, "main")
@@ -350,9 +350,9 @@ function main(): i32 {
 func TestGeneralReuseSkipsStringField(t *testing.T) {
 	ip := lowerForTest(t, `struct Named { id: i32, name: string }
 function main(): i32 {
-    var a: Named = Named { id: 1, name: "x" };
-    var s: i32 = a.id;
-    var b: Named = Named { id: s, name: "y" };
+    let a: Named = Named { id: 1, name: "x" };
+    let s: i32 = a.id;
+    let b: Named = Named { id: s, name: "y" };
     return b.id;
 }`)
 	f := funcByName(ip, "main")
@@ -369,9 +369,9 @@ function main(): i32 {
 func TestGeneralReuseFiresForWideScalarField(t *testing.T) {
 	ip := lowerForTest(t, `struct Wide { id: i32, big: i64 }
 function main(): i32 {
-    var a: Wide = Wide { id: 1, big: 2 };
-    var s: i32 = a.id;
-    var b: Wide = Wide { id: s, big: 3 };
+    let a: Wide = Wide { id: 1, big: 2 };
+    let s: i32 = a.id;
+    let b: Wide = Wide { id: s, big: 3 };
     return b.id;
 }`)
 	f := funcByName(ip, "main")
@@ -384,9 +384,9 @@ function main(): i32 {
 func TestGeneralReuseFiresForFloatField(t *testing.T) {
 	ip := lowerForTest(t, `struct FWide { id: i32, v: f64 }
 function main(): i32 {
-    var a: FWide = FWide { id: 1, v: 2.5 };
-    var s: i32 = a.id;
-    var b: FWide = FWide { id: s, v: 3.5 };
+    let a: FWide = FWide { id: 1, v: 2.5 };
+    let s: i32 = a.id;
+    let b: FWide = FWide { id: s, v: 3.5 };
     return b.id;
 }`)
 	f := funcByName(ip, "main")

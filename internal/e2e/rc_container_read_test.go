@@ -15,7 +15,7 @@ import (
 //     rebuilds from it. Measured 48 B/get on x86-64, arm64-linux and
 //     arm64-darwin and 32 B/get on wasm; a MISS stranded 16 B on every
 //     backend through the rebuilt box alone.
-//   - `var line = words[0]` followed by `line = line + …` (#6567) stranded
+//   - `let line = words[0]` followed by `line = line + …` (#6567) stranded
 //     every intermediate concat, 64 B/round on all four compiled backends.
 //     Neither ingredient leaks alone: a `""` seed is flat, and so is a single
 //     append onto a container-read seed, which is what let the shape survive
@@ -48,8 +48,8 @@ const bumpVerdictFlat = 0
 func mapGetVerdictSrc() string {
 	return `import "core/map";
 function lookups(index: Map[string, i32], n: i32): i32 {
-    var i: i32 = 0;
-    var hits: i32 = 0;
+    let i: i32 = 0;
+    let hits: i32 = 0;
     while (i < n) {
         match (index.get("alpha")) {
             Some(g) => { hits = hits + g; },
@@ -64,13 +64,13 @@ function lookups(index: Map[string, i32], n: i32): i32 {
     return hits;
 }
 function main(): i32 {
-    var index: Map[string, i32] = map_new(64);
+    let index: Map[string, i32] = map_new(64);
     index = index.insert("alpha", 1);
-    var b0: i64 = __heap_bump_bytes();
-    var x: i32 = lookups(index, 400);
-    var b1: i64 = __heap_bump_bytes();
-    var y: i32 = lookups(index, 800);
-    var b2: i64 = __heap_bump_bytes();
+    let b0: i64 = __heap_bump_bytes();
+    let x: i32 = lookups(index, 400);
+    let b1: i64 = __heap_bump_bytes();
+    let y: i32 = lookups(index, 800);
+    let b2: i64 = __heap_bump_bytes();
     if (x != 1200) { return 991; }
     if (y != 2400) { return 992; }
     // The map still owns its value after 3600 borrowed reads.
@@ -82,24 +82,24 @@ function main(): i32 {
 
 func seededAccumulatorVerdictSrc() string {
 	return `function build(words: string[]): string {
-    var line: string = words[0];
-    var g: i32 = 1;
+    let line: string = words[0];
+    let g: i32 = 1;
     while (g < words.len()) { line = line + "  " + words[g]; g = g + 1; }
     return line;
 }
 function rounds(words: string[], n: i32): i32 {
-    var i: i32 = 0;
-    var t: i32 = 0;
+    let i: i32 = 0;
+    let t: i32 = 0;
     while (i < n) { t = t + build(words).len(); i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var words: string[] = ["alpha", "beta", "gamma", "delta"];
-    var b0: i64 = __heap_bump_bytes();
-    var x: i32 = rounds(words, 400);
-    var b1: i64 = __heap_bump_bytes();
-    var y: i32 = rounds(words, 800);
-    var b2: i64 = __heap_bump_bytes();
+    let words: string[] = ["alpha", "beta", "gamma", "delta"];
+    let b0: i64 = __heap_bump_bytes();
+    let x: i32 = rounds(words, 400);
+    let b1: i64 = __heap_bump_bytes();
+    let y: i32 = rounds(words, 800);
+    let b2: i64 = __heap_bump_bytes();
     if (x != 10000) { return 991; }
     if (y != 20000) { return 992; }
     if ((b2 - b1) > (b1 - b0)) { return 1; }

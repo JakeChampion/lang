@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -120,7 +120,7 @@ func TestExternRecordResultCustomProvider(t *testing.T) {
 function make_point(a: i32, b: i32): Point;
 
 function main(): i32 {
-	var p: Point = make_point(10, 32);
+	let p: Point = make_point(10, 32);
 	if (p.x + p.y == 42) { write("` + want + `"); } else { write("mk-bad"); }
 	return 0;
 }`
@@ -128,16 +128,7 @@ function main(): i32 {
 	if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
-	info, prog := loadCheckMono(t, mainPath)
-	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		PrintMainResult:    true,
-	})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
+	core := e2eharness.SelfHostComponentCore(t, mainPath)
 	if !bytes.Contains(core, []byte("local:test/src@0.1.0")) {
 		t.Fatalf("core is missing the custom extern import")
 	}

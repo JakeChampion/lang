@@ -5,15 +5,15 @@
 ## What was measured
 
 `ARRENUM` (#5474) was the last array-of-X element kind to get an element walk at
-all, and it arrived admitting exactly one shape: `var xs: E[] = [E.A(..), ..]`, a
+all, and it arrived admitting exactly one shape: `let xs: E[] = [E.A(..), ..]`, a
 non-empty literal of fresh ctors, never reassigned. Measured on the compiler at
 #7548's head:
 
 | probe | shape | self-host | needs |
 |---|---|---|---|
-| `dp_ea_lit` | `var xs: E[] = [E.A([..])]` | 3/3 clean | — |
+| `dp_ea_lit` | `let xs: E[] = [E.A([..])]` | 3/3 clean | — |
 | `dp_ea_litret` | producer returns a LITERAL | 3/1, 80 B | producer registry |
-| `dp_ea_append` | `var xs: E[] = []; xs = xs.append(..)` | 4/2, 80 B | append-built local credit |
+| `dp_ea_append` | `let xs: E[] = []; xs = xs.append(..)` | 4/2, 80 B | append-built local credit |
 | `dp_ea_call` | producer returns an APPEND-BUILT local | 4/2, 80 B | both |
 
 80 bytes a round each, unbounded, against 0 on native and interp — and the two

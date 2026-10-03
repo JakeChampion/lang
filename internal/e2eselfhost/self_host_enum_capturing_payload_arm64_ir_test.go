@@ -7,7 +7,7 @@ import (
 
 // TestSelfHostEnumCapturingPayloadIRArm64 is the arm64 half of slice 5b
 // (docs/ASYNC-SELFHOST-IR.md). The fix is in the shared, target-agnostic
-// irlower.fern (env-box user-enum fn payloads in the lift; mark the match bind a
+// lowering (env-box user-enum fn payloads in the lift; mark the match bind a
 // closure local before the enum/struct branch), so arm64 gets it via the
 // existing closure call_indirect machinery. The capturing-payload enum routes
 // the IR path and runs to the interp oracle (42) under qemu.

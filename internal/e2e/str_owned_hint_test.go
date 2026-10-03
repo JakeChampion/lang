@@ -16,7 +16,7 @@ import (
 //
 // The view here is `slice_unchecked`, which is what a `str` producer looks like
 // under O2 (docs/STR-VIEW-CONTRACT.md §5). `.trim()` used to stand in for it and
-// no longer can: it hands back an owned copy, so `var t: string = s.trim();` is
+// no longer can: it hands back an owned copy, so `let t: string = s.trim();` is
 // simply legal now and tests nothing.
 //
 // The second half matters more than the first: a hint you cannot follow is
@@ -45,14 +45,14 @@ func TestStrToOwnedHintAtEveryOwningSink(t *testing.T) {
 		good string // the same program with the hint taken
 	}{
 		{
-			"var init",
-			`function main(): i32 { var s: string = "  x  "; var t: string = slice_unchecked(s, 0, 2); return t.len(); }`,
-			`function main(): i32 { var s: string = "  x  "; var t: string = slice_unchecked(s, 0, 2).to_owned(); return t.len(); }`,
+			"let init",
+			`function main(): i32 { let s: string = "  x  "; let t: string = slice_unchecked(s, 0, 2); return t.len(); }`,
+			`function main(): i32 { let s: string = "  x  "; let t: string = slice_unchecked(s, 0, 2).to_owned(); return t.len(); }`,
 		},
 		{
 			"assignment",
-			`function main(): i32 { var s: string = "  x  "; var t: string = "y"; t = slice_unchecked(s, 0, 2); return t.len(); }`,
-			`function main(): i32 { var s: string = "  x  "; var t: string = "y"; t = slice_unchecked(s, 0, 2).to_owned(); return t.len(); }`,
+			`function main(): i32 { let s: string = "  x  "; let t: string = "y"; t = slice_unchecked(s, 0, 2); return t.len(); }`,
+			`function main(): i32 { let s: string = "  x  "; let t: string = "y"; t = slice_unchecked(s, 0, 2).to_owned(); return t.len(); }`,
 		},
 		{
 			"return",
@@ -63,13 +63,13 @@ function main(): i32 { return f("  x  ").len(); }`,
 		},
 		{
 			"struct field",
-			`function main(): i32 { var s: string = "  x  "; var b: Box = Box { name: slice_unchecked(s, 0, 2) }; return b.name.len(); }`,
-			`function main(): i32 { var s: string = "  x  "; var b: Box = Box { name: slice_unchecked(s, 0, 2).to_owned() }; return b.name.len(); }`,
+			`function main(): i32 { let s: string = "  x  "; let b: Box = Box { name: slice_unchecked(s, 0, 2) }; return b.name.len(); }`,
+			`function main(): i32 { let s: string = "  x  "; let b: Box = Box { name: slice_unchecked(s, 0, 2).to_owned() }; return b.name.len(); }`,
 		},
 		{
 			"own parameter",
-			`function main(): i32 { var s: string = "  x  "; return consume(slice_unchecked(s, 0, 2)); }`,
-			`function main(): i32 { var s: string = "  x  "; return consume(slice_unchecked(s, 0, 2).to_owned()); }`,
+			`function main(): i32 { let s: string = "  x  "; return consume(slice_unchecked(s, 0, 2)); }`,
+			`function main(): i32 { let s: string = "  x  "; return consume(slice_unchecked(s, 0, 2).to_owned()); }`,
 		},
 	}
 
@@ -95,10 +95,10 @@ function main(): i32 { return f("  x  ").len(); }`,
 // The hint is scoped to the pair it describes. A `string` flowing INTO a `str`
 // is legal, and an unrelated mismatch must not pick up string-view advice.
 func TestStrToOwnedHintDoesNotLeakIntoOtherMismatches(t *testing.T) {
-	if err := checkStrHintSource(t, `function main(): i32 { var s: string = "abc"; var v: str = s; return v.len(); }`); err != nil {
+	if err := checkStrHintSource(t, `function main(): i32 { let s: string = "abc"; let v: str = s; return v.len(); }`); err != nil {
 		t.Errorf("borrowing a string into a str should be legal: %s", err)
 	}
-	err := checkStrHintSource(t, `function main(): i32 { var n: i32 = "abc"; return n; }`)
+	err := checkStrHintSource(t, `function main(): i32 { let n: i32 = "abc"; return n; }`)
 	if err == nil {
 		t.Fatal("expected a type error")
 	}

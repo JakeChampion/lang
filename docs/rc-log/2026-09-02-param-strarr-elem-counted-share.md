@@ -2,7 +2,7 @@
 
 `make distcheck` (#6644 — the self-host-built compiler recompiling its own
 source) died at 12.2 GB with `SIGSEGV` on a read of address 1 in
-`irlower.bytes_at`, deterministically, where the native-built compiler needs
+`fnsigs.bytes_at`, deterministically, where the native-built compiler needs
 4.0 GB for the same compile. `rc-log/2026-09-01-fused-string-box.md` had already
 seen the frame and ruled out the fused string free; this entry is the cause.
 
@@ -10,7 +10,7 @@ seen the frame and ruled out the fused string free; this entry is the cause.
 
 ```fern
 function reclaimable_credit(asrows: string[], out: string[]): string[] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < asrows.len()) { out = out.append(asrows[i]); i = i + 1; }
     return out;
 }
@@ -46,7 +46,7 @@ destination, and not how the element was read (index, bound local, `for`).
 
 ## The fix
 
-`LocalInfo.str_caller_elem` marks a string slot bound from such a read (`var
+`LocalInfo.str_caller_elem` marks a string slot bound from such a read (`let
 e = p[i]`, `for e in p`, a reassign, an alias). `str_param_elem_escapes`
 recognises a direct `p[i]` over a `string[]` parameter or a marked local. Four
 store sites retain it: the self-append (`out = out.append(v)`), the
@@ -82,7 +82,7 @@ stage1 (`nm`, nearest preceding symbol), puts the leaked words in order:
 |---|---|---|
 | 66,298 | 35,745,888 | `__fern_arr_push` — the plain (non-owned) push's pre-grow buffers |
 | 43,042 | 1,924,312 | `__fern_str_concat` results |
-| 3 × 25,464 | 3 × 814,848 | `irlower.assign_targets_into` |
+| 3 × 25,464 | 3 × 814,848 | `irtables.assign_targets_into` |
 | 25,352 | 1,014,080 | `checker.t_unknown` — a fresh struct result never released |
 | 16,186 | 1,424,368 | `parser.Par.with_depth` — the builder rebind's superseded box |
 | 13,619 / 13,382 / 8,853 | 980,568 / 1,177,616 / 637,416 | `lexer.Lex.advance_to` / `parser.Par.advance` / `lexer.Lex.advance` |

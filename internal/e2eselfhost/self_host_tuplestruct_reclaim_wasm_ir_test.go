@@ -6,7 +6,7 @@ import (
 
 // TestSelfHostTupleStructReclaimWasmIR is the wasm port of
 // TestSelfHostTupleStructReclaimIRX86_64: the tuple-with-struct-element TUPRC path
-// lives in shared irlower.fern; on wasm __fern_rc_dec maps to $__fern_arr_dec and
+// lives in shared lowering; on wasm __fern_rc_dec maps to $__fern_arr_dec and
 // emit_struct_field_drops emits $__struct_drop_<P> (backend-complete), so the
 // per-element struct-field deep-drop + box dec resolves without any dedicated runtime
 // helper. Case table shared with the x86-64 leg.

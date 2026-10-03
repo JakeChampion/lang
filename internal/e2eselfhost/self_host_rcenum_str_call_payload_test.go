@@ -52,11 +52,11 @@ func rcEnumStrCallCases() []rcEnumStrCallCase {
 			src: `enum R { Full(string), Empty }
 function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: R = R.Full(w("x")); t = t + 1; }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: R = R.Full(w("x")); t = t + 1; }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 50, allocs: 100, frees: 100,
 		},
 		{
@@ -66,11 +66,11 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			src: `enum R { Full(string), Empty }
 function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var o: R = R.Full(w("x"));
+    let o: R = R.Full(w("x"));
     match (o) { R.Full(s) => { return s.len(); }, R.Empty => { return 0; } }
     return 0;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34, allocs: 200, frees: 200,
 		},
 		{
@@ -81,11 +81,11 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			src: `enum R { Full(string), Empty }
 function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: R = R.Full(w("x")); o = R.Full(w("yz")); t = t + 1; }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: R = R.Full(w("x")); o = R.Full(w("yz")); t = t + 1; }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 50, allocs: 200, frees: 200,
 		},
 		{
@@ -94,11 +94,11 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "ctl_literal_payload",
 			src: `enum R { Full(string), Empty }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: R = R.Full("x"); t = t + 1; }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: R = R.Full("x"); t = t + 1; }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 50, allocs: 50, frees: 50,
 		},
 		{
@@ -110,13 +110,13 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 function w(a: string): string { return a + "!"; }
 function id(a: string): string { return a; }
 function round(i: i32): i32 {
-    var keep: string = w("base");
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: R = R.Full(id(keep)); t = t + 1; }
+    let keep: string = w("base");
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: R = R.Full(id(keep)); t = t + 1; }
     t = t + keep.len();
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 52, allocs: 150, frees: 150,
 		}}
 }

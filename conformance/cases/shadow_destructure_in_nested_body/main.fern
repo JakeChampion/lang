@@ -10,32 +10,32 @@
 struct Point { x: i32, y: i32 }
 
 function main(): i32 {
-    var x: i32 = 1;
-    var y: i32 = 2;
+    let x: i32 = 1;
+    let y: i32 = 2;
 
     // Destructuring lambda parameter shadowing both outer names.
-    var lam = (Point { x, y }: Point): i32 => { return x * 10 + y; };
+    let lam = (Point { x, y }: Point): i32 => { return x * 10 + y; };
     if (lam(Point { x: 3, y: 4 }) != 34) { return 1; }
 
     // The same, one lambda deeper.
-    var outer = (): i32 => {
-        var inner = ((x, y): (i32, i32)): i32 => { return x * 100 + y; };
+    let outer = (): i32 => {
+        let inner = ((x, y): (i32, i32)): i32 => { return x * 100 + y; };
         return inner((5, 6));
     };
     if (outer() != 506) { return 2; }
 
-    // A destructuring `var` inside a nested named function.
-    function f(a: i32, b: i32): i32 { var (x, y) = (a, b); return x * 10 + y; }
+    // A destructuring `let` inside a nested named function.
+    function f(a: i32, b: i32): i32 { let (x, y) = (a, b); return x * 10 + y; }
     if (f(7, 8) != 78) { return 3; }
 
     // A destructuring `for` header binding the same names, in the enclosing
     // body rather than a nested one — the control for the case above.
-    var total: i32 = 0;
+    let total: i32 = 0;
     for (x, y) in [(1, 2), (3, 4)] { total = total + x * 10 + y; }
     if (total != 46) { return 4; }
 
     // A nested body whose binders shadow nothing still works.
-    var free = ((p, q): (i32, i32)): i32 => { return p - q; };
+    let free = ((p, q): (i32, i32)): i32 => { return p - q; };
     if (free((9, 5)) != 4) { return 5; }
 
     if (x != 1) { return 6; }

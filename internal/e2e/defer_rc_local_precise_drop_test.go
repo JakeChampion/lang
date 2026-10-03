@@ -28,63 +28,63 @@ func TestDeferReadLocalKeepsItLive(t *testing.T) {
 		// The minimal shape: the defer is the local's ONLY reference, so the
 		// release landed immediately after the array was built.
 		{"defer_is_only_use", `function f(out: Cell[i32]): i32 {
-    var arr: i32[] = [1, 2, 3];
+    let arr: i32[] = [1, 2, 3];
     defer out.set(arr[1]);
     return 0;
 }
-function main(): i32 { var a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 2},
+function main(): i32 { let a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 2},
 		// A real use BEFORE the defer and none after — the release still lands
 		// on the defer statement, so reading it earlier does not save it.
 		{"last_use_before_defer", `function f(out: Cell[i32]): i32 {
-    var arr: i32[] = [1, 2, 3];
+    let arr: i32[] = [1, 2, 3];
     out.set(arr[0]);
     defer out.set(arr[1]);
     return 0;
 }
-function main(): i32 { var a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 2},
+function main(): i32 { let a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 2},
 		// The quiet face: `.len()` through the zeroed slot answered 0 instead
 		// of faulting, so this case fails on the VALUE, not on a crash.
 		{"silent_wrong_answer", `function f(out: Cell[i32]): i32 {
-    var arr: i32[] = [1, 2, 3];
+    let arr: i32[] = [1, 2, 3];
     defer out.set(arr.len());
     return 0;
 }
-function main(): i32 { var a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 3},
+function main(): i32 { let a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 3},
 		// A later use that is the `return` itself was always correct, but NOT
 		// because the local survived on merit: the scan picks the return
 		// statement and preciseDropTarget refuses to drop after a return, so
 		// the local fell through to the exit sweep by that abort alone. Kept
 		// as the shape that always worked, named for what it actually is.
 		{"later_use_is_the_return", `function f(out: Cell[i32]): i32 {
-    var arr: i32[] = [1, 2, 3];
+    let arr: i32[] = [1, 2, 3];
     defer out.set(arr[1]);
     return arr[0];
 }
-function main(): i32 { var a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 2},
+function main(): i32 { let a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 2},
 		// A later use that is NOT a return is the shape the case above does
 		// not reach: the scan picks that statement, the drop-after-return
 		// abort does not apply, so the local was precise-dropped there and the
 		// replay still read the zeroed slot. 1 + 2 = 3.
 		{"later_use_is_not_a_return", `function sink(c: Cell[i32], v: i32): i32 { c.set(c.get() + v); return v; }
 function f(out: Cell[i32]): i32 {
-    var arr: i32[] = [1, 2, 3];
+    let arr: i32[] = [1, 2, 3];
     defer out.set(out.get() + arr[1]);
     sink(out, arr[0]);
     return 0;
 }
-function main(): i32 { var a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 3},
+function main(): i32 { let a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 3},
 		// errdefer replays through emitErrDeferCleanup rather than
 		// emitDeferCleanup, so it is a second replay site with the same
 		// hazard — and collectDefers gathers both forms into b.defers, so
 		// one bail-out covers both. Confirmed failing the same way before
 		// the fix.
 		{"errdefer_reads_local", `function f(out: Cell[i32]): Option[i32] {
-    var arr: i32[] = [1, 2, 3];
+    let arr: i32[] = [1, 2, 3];
     errdefer out.set(arr[1]);
     return None;
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
+    let a: Cell[i32] = cell_new(0);
     match (f(a)) { Some(v) => { return 90; }, None => { return a.get(); } }
 }`, 2},
 		// The reported program (#9471): a defer inside a loop reading a
@@ -94,12 +94,12 @@ function main(): i32 {
 		// preciseDropTarget with the top-level pass — but it is the shape that
 		// was reported and it belongs in the record.
 		{"defer_in_loop_over_loop_local", `function f(out: Cell[i32]): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var arr: i32[] = [i, i + 1, i + 2];
+        let arr: i32[] = [i, i + 1, i + 2];
         defer out.set(out.get() + arr[1]);
         if (i == 2) {
-            var brr: i32[] = [9, 9];
+            let brr: i32[] = [9, 9];
             out.set(out.get() + brr[0]);
             i = i + 1;
             continue;
@@ -108,7 +108,7 @@ function main(): i32 {
     }
     return 0;
 }
-function main(): i32 { var a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 19},
+function main(): i32 { let a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 19},
 	}
 	for _, c := range cases {
 		c := c

@@ -34,7 +34,7 @@ func TestSelfHostReadDirIR(t *testing.T) {
             match (write_file(d + "/b.txt", "y")) { Err(_) => { return 2; }, Ok(_) => {}, }
             match (read_dir(d)) {
                 Ok(names) => {
-                    var n: i32 = names.len();
+                    let n: i32 = names.len();
                     match (remove_dir_all(d)) { Err(_) => { return 3; }, Ok(_) => {}, }
                     if (n != 2) { return 4; }
                     return 0;
@@ -122,10 +122,10 @@ func TestSelfHostReadDirIRWasm(t *testing.T) {
             match (read_dir("rd_dir")) {
                 Ok(names) => {
                     if (names.len() != 3) { return 1; }
-                    var total: i32 = 0;
-                    var i: i32 = 0;
+                    let total: i32 = 0;
+                    let i: i32 = 0;
                     while (i < names.len()) {
-                        var nm: string = names[i];
+                        let nm: string = names[i];
                         if (nm.len() == 0) { return 2; }
                         total = total + nm.len();
                         i = i + 1;
@@ -193,9 +193,9 @@ func TestSelfHostReadDirAllIR(t *testing.T) {
                             match (remove_dir_all(d)) { Err(_) => { return 3; }, Ok(_) => {}, }
                             if (plain.len() != 2) { return 4; }
                             if (all.len() != 4) { return 5; }
-                            var k: i32 = 0;
-                            var j: i32 = 0;
-                            var dots: i32 = 0;
+                            let k: i32 = 0;
+                            let j: i32 = 0;
+                            let dots: i32 = 0;
                             while (k < all.len()) {
                                 if (all[k] == "." || all[k] == "..") {
                                     dots = dots + 1;
@@ -280,8 +280,8 @@ func TestSelfHostReadDirAllIRWasm(t *testing.T) {
             match (read_dir_all("rda_dir")) {
                 Ok(names) => {
                     if (names.len() != 5) { return 1; }
-                    var dots: i32 = 0;
-                    var i: i32 = 0;
+                    let dots: i32 = 0;
+                    let i: i32 = 0;
                     while (i < names.len()) {
                         if (names[i] == "." || names[i] == "..") { dots = dots + 1; }
                         i = i + 1;

@@ -92,7 +92,7 @@ func runCountRunsCorpus(t *testing.T, run func(t *testing.T, src string) string)
 		if !ok {
 			name = fmt.Sprintf("set%d", len(sets))
 			sets[key] = name
-			decls.WriteString(fmt.Sprintf("    var %s: u8[] = %s;\n", name, fernSet(c.set)))
+			decls.WriteString(fmt.Sprintf("    let %s: u8[] = %s;\n", name, fernSet(c.set)))
 		}
 		body.WriteString(fmt.Sprintf("    write((__count_runs(%s, %d, %s)).to_string()); write(\"\\n\");\n",
 			fernQuote(c.s), c.inside, name))

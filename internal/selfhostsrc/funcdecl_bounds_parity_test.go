@@ -48,7 +48,9 @@ import (
 // shape the code actually uses, and chasing further would need real dataflow.
 var selfHostSources = []string{
 	"../../examples/self_host/parser.fern",
-	"../../examples/self_host/irlower.fern",
+	"../../examples/self_host/irtables.fern",
+	"../../examples/self_host/fnsigs.fern",
+	"../../examples/self_host/lift.fern",
 	"../../examples/self_host/constfold.fern",
 }
 
@@ -73,9 +75,9 @@ var carriesBoundTraits = regexp.MustCompile(`bound_traits:\s*\w+\.bound_traits`)
 var typeParamsLocal = regexp.MustCompile(`type_params:\s*(\w+)\s*[,}]`)
 
 // derivedLocal matches a local declared FROM a declaration's type params —
-// `var mtps: string[] = m.type_params;`. Such a local carries the declaration
+// `let mtps: string[] = m.type_params;`. Such a local carries the declaration
 // forward just as the field access does.
-var derivedLocal = regexp.MustCompile(`var\s+(\w+)\s*:\s*string\[\]\s*=\s*\w+\.type_params`)
+var derivedLocal = regexp.MustCompile(`let\s+(\w+)\s*:\s*string\[\]\s*=\s*\w+\.type_params`)
 
 // fernFuncStart matches a top-level Fern function header, used to bound the
 // search for a derived local to the function the literal sits in — two

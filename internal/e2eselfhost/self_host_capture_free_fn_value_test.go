@@ -27,13 +27,13 @@ var captureFreeFnValueCases = []struct {
 }{
 	{"a-capture-free-value-costs-no-block", `function pick(): (i32) => i32 { return (x: i32): i32 => x * 2; }
 function main(): i32 {
-    var t: i32 = 0;
-    var w: i32 = 0;
-    while (w < 20) { var g: (i32) => i32 = pick(); t = t + g(1); w = w + 1; }
-    var a1: i64 = __heap_alloc_count();
-    var i: i32 = 0;
-    while (i < 2000) { var g2: (i32) => i32 = pick(); t = t + g2(i); i = i + 1; }
-    var a2: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let w: i32 = 0;
+    while (w < 20) { let g: (i32) => i32 = pick(); t = t + g(1); w = w + 1; }
+    let a1: i64 = __heap_alloc_count();
+    let i: i32 = 0;
+    while (i < 2000) { let g2: (i32) => i32 = pick(); t = t + g2(i); i = i + 1; }
+    let a2: i64 = __heap_alloc_count();
     if (a2 != a1) { return 98; }
     if (t != 3998040) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -44,13 +44,13 @@ function main(): i32 {
 	// out of a shared block would answer with whichever round wrote last.
 	{"a-capturing-value-still-builds-a-box", `function mk(n: i32): (i32) => i32 { return (x: i32): i32 => x + n; }
 function main(): i32 {
-    var t: i32 = 0;
-    var w: i32 = 0;
-    while (w < 20) { var g: (i32) => i32 = mk(w); t = t + g(1); w = w + 1; }
-    var a1: i64 = __heap_alloc_count();
-    var i: i32 = 0;
-    while (i < 500) { var g2: (i32) => i32 = mk(i); t = t + g2(1); i = i + 1; }
-    var a2: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let w: i32 = 0;
+    while (w < 20) { let g: (i32) => i32 = mk(w); t = t + g(1); w = w + 1; }
+    let a1: i64 = __heap_alloc_count();
+    let i: i32 = 0;
+    while (i < 500) { let g2: (i32) => i32 = mk(i); t = t + g2(1); i = i + 1; }
+    let a2: i64 = __heap_alloc_count();
     if (a2 - a1 < (500 as i64)) { return 98; }
     if (t != 125460) { return 97; }
     return 0;
@@ -70,18 +70,18 @@ function pick(which: i32): (i32) => i32 {
     return (x: i32): i32 => x + 100;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var ys: i32[] = [1, 2, 3].map((x: i32): i32 => dbl(x));
+    let total: i32 = 0;
+    let ys: i32[] = [1, 2, 3].map((x: i32): i32 => dbl(x));
     for y in ys { total = total + y; }
     if (total != 12) { return 91; }
     total = total + apply(Box { f: inc }, 5);
     if (total != 18) { return 92; }
-    var fns: ((i32) => i32)[] = [dbl, inc];
+    let fns: ((i32) => i32)[] = [dbl, inc];
     total = total + fns[0](10) + fns[1](10);
     if (total != 49) { return 93; }
     total = total + pick(0)(4) + pick(1)(4);
     if (total != 165) { return 94; }
-    var h: (i32) => i32 = inc;
+    let h: (i32) => i32 = inc;
     total = total + h(0);
     if (total != 166) { return 95; }
     if (__rc_underflow_count() != 0) { return 99; }

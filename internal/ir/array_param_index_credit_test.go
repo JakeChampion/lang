@@ -12,8 +12,8 @@ import "testing"
 
 func TestArrayParamScalarElementReadIsCounted(t *testing.T) {
 	src := `function sum(f: i32[]): i32 {
-    var s: i32 = 0;
-    var k: i32 = 0;
+    let s: i32 = 0;
+    let k: i32 = 0;
     while (k < f.len()) { s = s + f[k]; k = k + 1; }
     return s;
 }
@@ -28,8 +28,8 @@ function main(): i32 { return 0; }`
 func TestArrayParamScalarFieldProjectionIsCounted(t *testing.T) {
 	src := `struct Diag { msg: string, line: i32 }
 function count_even(ds: Diag[]): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < ds.len()) { if (ds[i].line % 2 == 0) { n = n + 1; } i = i + 1; }
     return n;
 }
@@ -44,8 +44,8 @@ function main(): i32 { return 0; }`
 func TestArrayParamElementPushedIsCounted(t *testing.T) {
 	src := `struct Diag { msg: string, line: i32 }
 function gate(ds: Diag[]): Diag[] {
-    var out: Diag[] = [];
-    var i: i32 = 0;
+    let out: Diag[] = [];
+    let i: i32 = 0;
     while (i < ds.len()) {
         if (ds[i].line % 2 == 0) { out = out.append(ds[i]); }
         i = i + 1;
@@ -71,7 +71,7 @@ function keep(ds: Diag[]): string { return ds[0].msg; }`},
 		{"element returned bare", `struct Diag { msg: string, line: i32 }
 function keep(ds: Diag[]): Diag { return ds[0]; }`},
 		{"element bound to a local", `struct Diag { msg: string, line: i32 }
-function keep(ds: Diag[]): i32 { var d: Diag = ds[0]; return d.line; }`},
+function keep(ds: Diag[]): i32 { let d: Diag = ds[0]; return d.line; }`},
 	}
 	for _, c := range cases {
 		got := paramCountedFor(t, c.src+"\nfunction main(): i32 { return 0; }", "keep")

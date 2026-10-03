@@ -7,7 +7,7 @@ import (
 )
 
 // litPoolFixture builds a program whose arm64 .text exceeds the LDR-literal
-// reach. Every `var v = <7-digit constant>` lowers to `ldr x0, =N` — a load
+// reach. Every `let v = <7-digit constant>` lowers to `ldr x0, =N` — a load
 // from the assembler's literal pool, reached by a signed 19-bit word offset,
 // i.e. ±1 MB. asm_arm64_ir emits a `.ltorg` at each function's `ret` so each
 // pool sits beside the loads that use it; with no flush the whole module
@@ -35,7 +35,7 @@ func litPoolFixture(nFuncs, nVars int) (src string, wantExit int) {
 	for f := 0; f < nFuncs; f++ {
 		// `pool_fnN`, not `fN`: `f32` and `f64` are type keywords, and a
 		// function so named is a parse error rather than a link failure.
-		fmt.Fprintf(&b, "function pool_fn%d(p: i32): i32 {\n    var s = 0;\n", f)
+		fmt.Fprintf(&b, "function pool_fn%d(p: i32): i32 {\n    let s = 0;\n", f)
 		acc := 0
 		for i := 0; i < nVars; i++ {
 			// Each constant is distinct so the assembler cannot dedupe the
@@ -47,7 +47,7 @@ func litPoolFixture(nFuncs, nVars int) (src string, wantExit int) {
 		b.WriteString("    return s % 7;\n}\n\n")
 		sum += acc % 7
 	}
-	b.WriteString("function main(): i32 {\n    var s = 0;\n")
+	b.WriteString("function main(): i32 {\n    let s = 0;\n")
 	for f := 0; f < nFuncs; f++ {
 		fmt.Fprintf(&b, "    s = s + pool_fn%d(1);\n", f)
 	}

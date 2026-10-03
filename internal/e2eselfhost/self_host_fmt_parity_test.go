@@ -81,7 +81,7 @@ var fmtParityCases = []struct {
 `},
 	{"assert-nested", `function check(x: i32): void {
   defer assert(x > 0);
-  var f: (i32) => void = (n: i32): void => { assert(n > 0); };
+  let f: (i32) => void = (n: i32): void => { assert(n > 0); };
   f(x);
 }
 `},
@@ -117,7 +117,7 @@ function b(n: i32): i32 { let k @ 20..30 = n else { return 0; }; return k + 1; }
 `},
 	{"if-let-braceless-then", `enum Box { Full(i32), Empty }
 function main(): i32 {
-  var b: Box = Full(8);
+  let b: Box = Full(8);
   if let Full(v) = b return v;
   return 99;
 }
@@ -151,7 +151,7 @@ pub fip function keep(own xs: i32[]): i32[] { return xs; }
 function id[T](x: T): T { return x; }
 `},
 	// A self-recursive nested function must reprint as a `function`: the
-	// arrow-lambda `var` it desugars to cannot call itself (#10383).
+	// arrow-lambda `let` it desugars to cannot call itself (#10383).
 	{"nested-fn-recursive", `function main(): i32 {
 function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); }
 return f(3);
@@ -163,15 +163,15 @@ return f(3);
 	// so an and-then-compare that loses its parens re-parses as ANDing a
 	// number with a boolean.
 	{"precedence-arith", `function main(): i32 {
-var a: i32 = 1;
-var b: i32 = 2;
-var c: i32 = 3;
-var t1: i32 = a + b * c;
-var t2: i32 = (a + b) * c;
-var t3: i32 = a - b - c;
-var t4: i32 = a - (b - c);
-var t5: i32 = a * b / c % a;
-var t6: i32 = a << b >> c;
+let a: i32 = 1;
+let b: i32 = 2;
+let c: i32 = 3;
+let t1: i32 = a + b * c;
+let t2: i32 = (a + b) * c;
+let t3: i32 = a - b - c;
+let t4: i32 = a - (b - c);
+let t5: i32 = a * b / c % a;
+let t6: i32 = a << b >> c;
 return t1 + t2 + t3 + t4 + t5 + t6;
 }
 `},
@@ -181,10 +181,10 @@ return t1 + t2 + t3 + t4 + t5 + t6;
 	// `s[1:0]` for `s[1:]` — an empty slice where the source asked for the
 	// tail. `-fmt -w` would then rewrite the program into a different one.
 	{"slice-bounds", `function f(s: string): string {
-var a: string = s[1:];
-var b: string = s[:3];
-var c: string = s[:];
-var d: string = s[1:3];
+let a: string = s[1:];
+let b: string = s[:3];
+let c: string = s[:];
+let d: string = s[1:3];
 return a + b + c + d;
 }
 function main(): i32 {
@@ -209,7 +209,7 @@ return 0;
 	// are the only thing covering them.
 	// A tuple- or struct-SCRUTINEE match desugars to a done-flag chain and
 	// leaves no StmtMatch behind, so the self-host had only the chain to
-	// reprint — `if (true) { var __sm4_5_d = false; … }` over the user's
+	// reprint — `if (true) { let __sm4_5_d = false; … }` over the user's
 	// match (#7065). Independent of pattern nesting: the plainest all-binder
 	// `P { x, y }` reproduced it. Nothing in the parity CORPUS spells either
 	// scrutinee, so these fixtures are the only cover.
@@ -267,7 +267,7 @@ function tup((a, b): (i32, i32)): i32 {
 return a - b;
 }
 function main(): i32 {
-var f = (P { x, y }: P): i32 => { return x * 10 + y; };
+let f = (P { x, y }: P): i32 => { return x * 10 + y; };
 return add(P { x: 1, y: 2 }) + ren(P { x: 3, y: 4 }) + part(R { w: 1, h: 2 }) + whole(P { x: 1, y: 1 }) + tup((9, 4)) + f(P { x: 1, y: 1 });
 }
 `},
@@ -316,11 +316,11 @@ return plain(Opt.Sm(1)) + with_else(Opt.Nn) + nested_head(Outer.A(Inner.Ok2(3)))
 enum Outer { A(Inner), B }
 enum Opt { Sm(i32), Nn }
 function nested_expr(o: Outer): i32 {
-var v = match (o) { A(Ok2(n)) => n, A(Err2(n)) => 0 - n, _ => 0 };
+let v = match (o) { A(Ok2(n)) => n, A(Err2(n)) => 0 - n, _ => 0 };
 return v;
 }
 function guarded_expr(o: Opt): i32 {
-var v = match (o) { Sm(n) when n > 2 => n, Sm(n) => 0 - n, Nn => 0 };
+let v = match (o) { Sm(n) when n > 2 => n, Sm(n) => 0 - n, Nn => 0 };
 return v;
 }
 function main(): i32 {
@@ -477,10 +477,10 @@ return folds_struct(Point { x: 1, y: 2 }) + folds_tuple((1, (2, 3))) + folds_at(
 return (n & (n - 1)) == 0;
 }
 function main(): i32 {
-var n: i32 = 8;
-var x: boolean = n & 1 == 0;
-var y: boolean = (n | 2) != 0;
-var z: boolean = n ^ 1 > 0;
+let n: i32 = 8;
+let x: boolean = n & 1 == 0;
+let y: boolean = (n | 2) != 0;
+let z: boolean = n ^ 1 > 0;
 if (is_pow2(n) && x && y || z) {
 return 1;
 }
@@ -488,13 +488,13 @@ return 0;
 }
 `},
 	{"precedence-logical-and-unary", `function main(): i32 {
-var a: boolean = true;
-var b: boolean = false;
-var n: i32 = 5;
-var p: boolean = a && b || !a;
-var q: boolean = !(a && b);
-var r: i32 = 0 - n;
-var s: i32 = 0 - (n + 1);
+let a: boolean = true;
+let b: boolean = false;
+let n: i32 = 5;
+let p: boolean = a && b || !a;
+let q: boolean = !(a && b);
+let r: i32 = 0 - n;
+let s: i32 = 0 - (n + 1);
 if (p && q) {
 return r + s;
 }
@@ -506,24 +506,24 @@ return 0;
 	// index, a slice or a field read.
 	{"precedence-postfix-receivers", `struct P { x: i32, y: i32 }
 function main(): i32 {
-var s: string = "hello";
-var xs: i32[] = [1, 2, 3];
-var p: P = P { x: 1, y: 2 };
-var a: i32 = (s + "x").len();
-var b: i32 = xs[p.x + 1];
-var c: string = slice_unchecked(s, p.x, p.x + 2);
-var d: i32 = (p.x + p.y) * 2;
+let s: string = "hello";
+let xs: i32[] = [1, 2, 3];
+let p: P = P { x: 1, y: 2 };
+let a: i32 = (s + "x").len();
+let b: i32 = xs[p.x + 1];
+let c: string = slice_unchecked(s, p.x, p.x + 2);
+let d: i32 = (p.x + p.y) * 2;
 return a + b + c.len() + d;
 }
 `},
 	// Indentation depth: every nesting level differed by two spaces per level,
 	// so a deeply nested block is where the two formatters were furthest apart.
 	{"indent-nesting", `function main(): i32 {
-var total: i32 = 0;
-var i: i32 = 0;
+let total: i32 = 0;
+let i: i32 = 0;
 while (i < 4) {
 if (i > 1) {
-var j: i32 = 0;
+let j: i32 = 0;
 while (j < i) {
 total = total + j;
 j = j + 1;
@@ -545,8 +545,8 @@ import "std/i32";
 
 // doc comment for f
 function f(a: i32): i32 {
-  // leading comment on the var
-  var t: i32 = a + 1;
+  // leading comment on the let
+  let t: i32 = a + 1;
 
   // leading comment on the if
   if (t > 0) {
@@ -556,10 +556,10 @@ function f(a: i32): i32 {
 }
 
 function g(): i32 {
-  var x: i32 = 1;  // trailing on a var
+  let x: i32 = 1;  // trailing on a let
 
 
-  var y: i32 = 2;
+  let y: i32 = 2;
   return x + y;
 }
 `},
@@ -671,8 +671,8 @@ return s.len() + t.len();
 }
 struct View { text: str, label: string }
 function main(): i32 {
-var t: str = "  hi  ";
-var u: string = "owned";
+let t: str = "  hi  ";
+let u: string = "owned";
 return t.len() + u.len();
 }
 `},
@@ -712,7 +712,7 @@ return o.x;
 `},
 	// #6773 item 5: both destructuring forms parse to a StmtVar — the tuple one
 	// with its bindings comma-joined, the struct one additionally tagged on
-	// type_name — and printing either as a plain `var` emitted `var a,b = …`,
+	// type_name — and printing either as a plain `let` emitted `let a,b = …`,
 	// which is not syntax the parser accepts back.
 	{"destructuring-forms", `struct Point { x: i32, y: i32 }
 function pair(): (i32, i32) {
@@ -727,16 +727,16 @@ return a + b + q + r + s + x + y + px + py;
 }
 `},
 	// #5356: the pattern-head lookahead is now shared, so a `for` header and a
-	// `let` / `var` destructure take the struct and `@` heads a destructured
+	// `let` destructure take the struct and `@` heads a destructured
 	// parameter already did. The two printers reach them by different routes —
 	// native reprints the ForEach node's Pattern, while the self-host reprints
 	// the `$forpat_` element's own destructure, its desugar having consumed the
 	// header — so this is where the two would diverge on the written form.
 	{"pattern-binding-sites", `struct Point { x: i32, y: i32 }
 function main(): i32 {
-var ps: Point[] = [Point { x: 1, y: 2 }];
-var ts: (i32, i32)[] = [(3, 4)];
-var acc = 0;
+let ps: Point[] = [Point { x: 1, y: 2 }];
+let ts: (i32, i32)[] = [(3, 4)];
+let acc = 0;
 for Point { x, y } in ps {
 acc = acc + x + y;
 }
@@ -749,8 +749,8 @@ acc = acc + w.x + x + y;
 for w @ (m, n) in ts {
 acc = acc + w.0 + m + n;
 }
-var v @ Point { x, y } = ps[0];
-var t @ (p, q) = ts[0];
+let v @ Point { x, y } = ps[0];
+let t @ (p, q) = ts[0];
 return acc + v.x + x + y + t.0 + p + q;
 }
 `},
@@ -764,9 +764,9 @@ function param(Point { x, .. }: Point): i32 {
 return x;
 }
 function main(): i32 {
-var p: Point = Point { x: 1, y: 2, z: 3 };
-var ps: Point[] = [p];
-var acc = 0;
+let p: Point = Point { x: 1, y: 2, z: 3 };
+let ps: Point[] = [p];
+let acc = 0;
 let Point { x, .. } = p;
 let w @ Point { y, .. } = p;
 for Point { z, .. } in ps {
@@ -811,7 +811,7 @@ return None;
 }
 
 function main(): i32 {
-  var t: i32 = 0;
+  let t: i32 = 0;
   for i in 0..4 {
     t = t + i;
   }
@@ -825,7 +825,7 @@ function main(): i32 {
 }
 `},
 	{"for-array-and-map", `function main(m: map[string, i32], a: i32[]): i32 {
-  var t: i32 = 0;
+  let t: i32 = 0;
   for x in a {
     t = t + x;
   }
@@ -839,9 +839,9 @@ function main(): i32 {
 	// twice: dropping either half retargets the jump at the innermost loop, so
 	// the reformatted program leaves a different loop than the one written.
 	{"loop-labels", `function main(a: i32[]): i32 {
-  var t: i32 = 0;
+  let t: i32 = 0;
   outer: while (t < 10) {
-    inner: for (var i: i32 = 0; i < 3; i = i + 1) {
+    inner: for (let i: i32 = 0; i < 3; i = i + 1) {
       if (i == 2) {
         continue outer;
       }
@@ -943,7 +943,7 @@ function to_string(self: Self): string;
 impl Display for boolean {
 function to_string(self: Self): string {
 // leading comment inside the method
-var s: string = "t";  // trailing on a statement
+let s: string = "t";  // trailing on a statement
 return s;
 }
 }
@@ -953,10 +953,10 @@ function mk(x: i32, y: i32): P {
 return P { x: x, y: y };
 }
 function main(): i32 {
-var p: P = mk(1, 2);
-var q: P = P { ...p, y: p.y + 1 };
-var xs: i32[] = [1, 2, 3, 4];
-var s: string = "a" + "b" + "c";
+let p: P = mk(1, 2);
+let q: P = P { ...p, y: p.y + 1 };
+let xs: i32[] = [1, 2, 3, 4];
+let s: string = "a" + "b" + "c";
 return p.x + q.y + xs[2] + s.len();
 }
 `},
@@ -1008,7 +1008,7 @@ function h(c: i32): i32 {
   if (c == 1) {
     return 1;
   } else {
-    var x: i32 = c + 1;
+    let x: i32 = c + 1;
     if (x == 3) {
       return 2;
     }
@@ -1017,24 +1017,24 @@ function h(c: i32): i32 {
 }
 `},
 	{"c-style-for", `function main(): i32 {
-var sum: i32 = 0;
-for (var i: i32 = 1; i <= 10; i = i + 1) {
+let sum: i32 = 0;
+for (let i: i32 = 1; i <= 10; i = i + 1) {
 sum = sum + i;
 }
 return sum;
 }
 `},
 	{"c-style-for-optional-clauses", `function main(): i32 {
-var t: i32 = 0;
-var j: i32 = 0;
+let t: i32 = 0;
+let j: i32 = 0;
 for (; j < 3; j = j + 1) {
 t = t + 1;
 }
-for (var m: i32 = 0; m < 4; ) {
+for (let m: i32 = 0; m < 4; ) {
 m = m + 1;
 t = t + 1;
 }
-for (var n: i32 = 0; n < 5; n = n + 1) {
+for (let n: i32 = 0; n < 5; n = n + 1) {
 if (n == 2) {
 continue;
 }
@@ -1048,10 +1048,10 @@ return t;
 	// reconstruction would rewrite ordinary code into a loop that never existed
 	// — the bug's mirror image.
 	{"if-true-while-is-not-a-for", `function main(): i32 {
-var acc: i32 = 0;
+let acc: i32 = 0;
 if (true) {
-var q: i32 = 1;
-var r = true;
+let q: i32 = 1;
+let r = true;
 while (true) {
 acc = acc + q;
 break;
@@ -1096,12 +1096,12 @@ function first(xs: i32[]): Result[i32, string] {
 }
 
 function head_plus_one(xs: i32[]): Result[i32, string] {
-  var v: i32 = first(xs)?;
+  let v: i32 = first(xs)?;
   return Ok(v + 1);
 }
 
 function byte_count(s: string): i32 {
-  var bs: [u8] = s.as_bytes();
+  let bs: [u8] = s.as_bytes();
   return bs.len();
 }
 
@@ -1111,7 +1111,7 @@ fip function consume(own arr: i32[]): i32[] {
 }
 
 function apply_all(fs: ((string) => string)[], seed: string): string {
-  var acc: string = seed;
+  let acc: string = seed;
   for i in 0..fs.len() {
     acc = fs[i](acc);
   }
@@ -1132,12 +1132,12 @@ function drop_first(): i32 {
 }
 
 function widen(kk: i32): string {
-  var ctor: string = if (kk == 1) { "wide" } else { "narrow" };
+  let ctor: string = if (kk == 1) { "wide" } else { "narrow" };
   return ctor;
 }
 
 function main(): i32 {
-  var fs: ((string) => string)[] = [(s: string) => s + "!"];
+  let fs: ((string) => string)[] = [(s: string) => s + "!"];
   if (apply_all(fs, "x") != "x!") {
     return 1;
   }
@@ -1176,7 +1176,7 @@ function main(): i32 {
 }
 `},
 	{"match-expression-in-value-position", `function pick(o: Option[string]): string {
-  var s: string = match (o) { Some(v) => v, None => "none" };
+  let s: string = match (o) { Some(v) => v, None => "none" };
   return s;
 }
 
@@ -1205,12 +1205,12 @@ function main(): i32 {
 `},
 	// A module-QUALIFIED generic argument. The self-host's generic-arg
 	// reconstruction broke on the `.`, truncating the type and corrupting the
-	// whole `var` into a StmtUnknown — which `-fmt` wrote back as
-	// `/*unknown-stmt:missing = in var*/`, destroying the statement.
+	// whole `let` into a StmtUnknown — which `-fmt` wrote back as
+	// `/*unknown-stmt:missing = in let*/`, destroying the statement.
 	{"qualified-type-in-generic-args", `import "std/test";
 
 function tally(): i32 {
-  var seen: Map[string, test.TestOutcome] = map_new(4);
+  let seen: Map[string, test.TestOutcome] = map_new(4);
   seen = seen.insert("a", test.pass());
   return seen.len();
 }
@@ -1243,8 +1243,8 @@ function take(b: Box[i64]): i64 {
 }
 
 function main(): i32 {
-  var b = Box[i64] { val: 42 };
-  var s = Stack[i32] { items: [] };
+  let b = Box[i64] { val: 42 };
+  let s = Stack[i32] { items: [] };
   return (take(b) as i32) + s.items.len();
 }
 `},
@@ -1253,13 +1253,13 @@ function main(): i32 {
 }
 
 function main(): i32 {
-  var xs = empty[i32]();
+  let xs = empty[i32]();
   return xs.len();
 }
 `},
 	// #6802's remaining rows. A `Map { … }` literal desugars to
 	// `map_new(8).insert(…)`, which states no K/V — so a formatted
-	// `var m: Map[string, i32] = Map { }` came back as `map_new(8)` and
+	// `let m: Map[string, i32] = Map { }` came back as `map_new(8)` and
 	// stopped compiling (E043). A comment written INSIDE a struct or enum
 	// forces the multi-line block form in both formatters; printing the
 	// one-liner instead left every such comment queued and re-emitted it
@@ -1306,7 +1306,7 @@ function main(): i32 {
     },
     Unclosed(_) => {}
   }
-  var e: Empty = Empty {};
+  let e: Empty = Empty {};
   return 0;
 }
 `},
@@ -1318,9 +1318,9 @@ function main(): i32 {
 	// (an if/else-if chain, in statement and in expression position alike).
 	// None appear in the parity CORPUS, so these fixtures are the only cover.
 	{"lowering-bare-block", `function main(): i32 {
-var s: i32 = 0;
+let s: i32 = 0;
 {
-var t: i32 = 3;
+let t: i32 = 3;
 s = t;
 }
 defer {
@@ -1330,9 +1330,9 @@ return s;
 }
 `},
 	{"lowering-chained-assign", `function main(): i32 {
-var a: i32 = 0;
-var b: i32 = 0;
-var c: i32 = 0;
+let a: i32 = 0;
+let b: i32 = 0;
+let c: i32 = 0;
 a = b = c = 7;
 return a + b + c;
 }
@@ -1353,7 +1353,7 @@ _ => { return 0; },
 }
 }
 function pick(n: i32): i32 {
-var v: i32 = match (n) {
+let v: i32 = match (n) {
 0 => 5,
 _ => 7,
 };
@@ -1373,15 +1373,15 @@ return grade(3).len() + words("a") + pick(0);
 return n;
 }
 function shapes(n: i32): i32 {
-var stmts: i32 = { var t: i32 = n * 2; t + 1 };
-var tail: i32 = { n };
-var operand: i32 = { n + 1 } * 3;
-var nested: i32 = { var t: i32 = { var q: i32 = n; q + 1 }; t * 2 };
-var arg: i32 = id({ var t: i32 = n; t + 1 });
+let stmts: i32 = { let t: i32 = n * 2; t + 1 };
+let tail: i32 = { n };
+let operand: i32 = { n + 1 } * 3;
+let nested: i32 = { let t: i32 = { let q: i32 = n; q + 1 }; t * 2 };
+let arg: i32 = id({ let t: i32 = n; t + 1 });
 return stmts + tail + operand + nested + arg;
 }
 function real_lambda(n: i32): i32 {
-var f: fn = (): i32 => { var t: i32 = n; return t + 1; };
+let f: fn = (): i32 => { let t: i32 = n; return t + 1; };
 return f();
 }
 function main(): i32 {
@@ -1428,7 +1428,7 @@ match (t) {
 }
 }
 function expr_form(c: Col): i32 {
-var v: i32 = match (c) { Col.R | Col.G => 1, Col.B => 2 };
+let v: i32 = match (c) { Col.R | Col.G => 1, Col.B => 2 };
 return v;
 }
 function main(): i32 {
@@ -1439,7 +1439,7 @@ return variant(Col.R, 1) + guarded(Col.R, 1) + lits(3) + strs("b") + tup((3, 4))
 	// values through a local instead of a `return` (IfChain.value_local), so
 	// the IIFE body is three statements and the one-statement shape
 	// print_expr_iife recognises did not fit it — `-fmt` reprinted the whole
-	// `(): i32 => { var __tm4_18_r = 0; … }()`, synthesised name and all
+	// `(): i32 => { let __tm4_18_r = 0; … }()`, synthesised name and all
 	// (#7089). #7065 fixed only the statement form.
 	//
 	// A TUPLE sub-pattern in an arm payload (`Pr((a, b))`) is the same leak one
@@ -1450,22 +1450,22 @@ return variant(Col.R, 1) + guarded(Col.R, 1) + lits(3) + strs("b") + tup((3, 4))
 	{"lowering-value-local-match", `struct P { x: i32, y: i32 }
 enum W { Pr((i32, i32)), None }
 function tup(t: (i32, i32)): i32 {
-var v: i32 = match (t) {
+let v: i32 = match (t) {
 (0, b) => b,
 (a, b) => a + b,
 };
 return v;
 }
 function strct(p: P): i32 {
-var v: i32 = match (p) {
+let v: i32 = match (p) {
 P { x, y } when x > 0 => x + y,
 _ => 0,
 };
 return v;
 }
 function block_arm(t: (i32, i32)): i32 {
-var v: i32 = match (t) {
-(0, b) => { var k: i32 = b * 2; k + 1 },
+let v: i32 = match (t) {
+(0, b) => { let k: i32 = b * 2; k + 1 },
 (a, b) => a + b,
 };
 return v;
@@ -1477,7 +1477,7 @@ None => { return 0; },
 }
 }
 function sub_pattern_expr(w: W): i32 {
-var v: i32 = match (w) {
+let v: i32 = match (w) {
 Pr((a, b)) => a + b,
 None => 0,
 };
@@ -1545,16 +1545,16 @@ function g(a: i32, b: i32): i32 {
   return a + b;
 }
 function main(): i32 {
-  var s: S = S { a: 1,
+  let s: S = S { a: 1,
     b: 2 };
-  var t: S = S {
+  let t: S = S {
     ...s,
     a: 3
   };
-  var xs: i32[] = [1,
+  let xs: i32[] = [1,
     2, 3];
-  var flat: i32[] = [1, 2];
-  var n: i32 = g(xs[0],
+  let flat: i32[] = [1, 2];
+  let n: i32 = g(xs[0],
     t.a + s.b + flat[0]);
   return n + NAMES.len() + xs
     .len();
@@ -1568,13 +1568,13 @@ function main(): i32 {
   return 0;
 }
 function main(): i32 {
-  var a: i32 = 1;
-  var s: string = "x"
+  let a: i32 = 1;
+  let s: string = "x"
     + "y" + a.to_string()
     + "z";
-  var t: i32 = a +
+  let t: i32 = a +
     2;
-  var u: i32 = a + t;
+  let u: i32 = a + t;
   if (a > 0 &&
       t > 0) { u = u + 1; }
   return g(a,
@@ -1595,9 +1595,9 @@ type Trail = A | B |
   D;
 type Flat = A | B | C;
 function main(): i32 {
-  var l: Lead = C { n: 1 };
-  var t: Trail = D { n: 2 };
-  var f: Flat = A { n: 3 };
+  let l: Lead = C { n: 1 };
+  let t: Trail = D { n: 2 };
+  let f: Flat = A { n: 3 };
   return 0;
 }
 `},
@@ -1612,17 +1612,17 @@ function g(a: i32, b: i32): i32 {
   return a + b;
 }
 function main(): i32 {
-  var s: S = S {
+  let s: S = S {
     // the a field
     a: 1,
     b: 2,  // trailing
   };
-  var t: S = S {
+  let t: S = S {
     ...s,
     // override
     a: 3,
   };
-  var xs: i32[] = [
+  let xs: i32[] = [
     1, 2,
     // then
     3,
@@ -1650,8 +1650,8 @@ function main(): i32 {
 	// printer has a `\0` arm — so this pins the two agreeing on which spelling
 	// wins as well as on escaping at all.
 	{"string-control-bytes", "function main(): i32 {\n" +
-		"var s: string = \"a\\x00b\\x1fc\\x7fd\\0e\";\n" +
-		"var f: string = f\"pre\\x01{s}\";\n" +
+		"let s: string = \"a\\x00b\\x1fc\\x7fd\\0e\";\n" +
+		"let f: string = f\"pre\\x01{s}\";\n" +
 		"return s.len() + f.len();\n" +
 		"}\n"},
 
@@ -1659,8 +1659,8 @@ function main(): i32 {
 	// sides; written raw it made the formatted file invalid UTF-8, which the
 	// self-host reader then refused. A real multibyte character stays itself.
 	{"string-non-utf8-bytes", "function main(): i32 {\n" +
-		"var s: string = \"\\x07\\xb2é\\xff\\xed\\xa0\\x80\";\n" +
-		"var f: string = f\"\\xc3{s}\\xa9\";\n" +
+		"let s: string = \"\\x07\\xb2é\\xff\\xed\\xa0\\x80\";\n" +
+		"let f: string = f\"\\xc3{s}\\xa9\";\n" +
 		"return s.len() + f.len();\n" +
 		"}\n"},
 
@@ -1677,7 +1677,7 @@ function chain(start: i32): Option[i32] {
 // bind the doubled value
 use a <- maybe_double(start);  // trailing
 
-var k: i32 = a * 2;
+let k: i32 = a * 2;
 use b: i32 <- maybe_double(k);
 return Some(b + 1);
 }
@@ -1697,17 +1697,17 @@ None => { return 0; }
 	// whose callee needs parens.
 	{"lambda-arrow-depth", `struct P { x: i32, y: i32 }
 function chain(start: i32): i32 {
-var f = (n: i32): i32 => {
-var a: i32 = n + 1;
+let f = (n: i32): i32 => {
+let a: i32 = n + 1;
 return a * 2;
 };
-var g = (P { x, y }: P): i32 => x * 10 + y;
-var h = (n: i32) => { var t: i32 = n; return t + 1; };
-var k = (): i32 => { return 7; }();
+let g = (P { x, y }: P): i32 => x * 10 + y;
+let h = (n: i32) => { let t: i32 = n; return t + 1; };
+let k = (): i32 => { return 7; }();
 while (true) {
-var inner = (m: i32): i32 => {
-var q = (z: i32): i32 => {
-var w: i32 = z;
+let inner = (m: i32): i32 => {
+let q = (z: i32): i32 => {
+let w: i32 = z;
 return w;
 };
 return q(m);
@@ -1728,15 +1728,15 @@ function main(): i32 { return chain(1); }
 function pair(): (i32, i32) { return (1, 2); }
 function constant(_: i32, _: string): i32 { return 7; }
 function main(): i32 {
-var _ = 99;
-var _ = 98;
-var (a, _) = pair();
-var (_, b) = pair();
+let _ = 99;
+let _ = 98;
+let (a, _) = pair();
+let (_, b) = pair();
 let ((c, _), _) = ((3, 4), 5);
 let P { x: _, y } = P { x: 1, y: 6 };
-var g = (_: i32, n: i32): i32 => n;
-var xs: (i32, i32)[] = [(1, 2)];
-var s: i32 = 0;
+let g = (_: i32, n: i32): i32 => n;
+let xs: (i32, i32)[] = [(1, 2)];
+let s: i32 = 0;
 for (k, _) in xs { s = s + k; }
 return a + b + c + y + s + g(0, 1) + constant(1, "x");
 }
@@ -1749,19 +1749,19 @@ return a + b + c + y + s + g(0, 1) + constant(1, "x");
 	// grouping are included, since those are the shapes the reservation exists
 	// for.
 	{"lambda-return-annotation", `function main(): i32 {
-var tup = (): (string, i32) => { return ("ab", 7); };
-var grp = (): (i32) => { return 7; };
-var fnp = (p: i32): ((i32) => i32) => (q: i32) => p + q;
-var fnb = (p: i32): (i32) => i32 => (q: i32) => p + q;
-var fnt = (p: i32): ((i32) => (i32, i32)) => (q: i32) => (p, q);
-var r = fnt(1)(2);
+let tup = (): (string, i32) => { return ("ab", 7); };
+let grp = (): (i32) => { return 7; };
+let fnp = (p: i32): ((i32) => i32) => (q: i32) => p + q;
+let fnb = (p: i32): (i32) => i32 => (q: i32) => p + q;
+let fnt = (p: i32): ((i32) => (i32, i32)) => (q: i32) => (p, q);
+let r = fnt(1)(2);
 return tup().1 + grp() + fnp(1)(2) + fnb(1)(2) + r.0 + r.1;
 }
 `},
 	// The unit, in both its halves (#8759). The self-host parser records the
 	// VALUE `()` as the constant 0 it lowers to, and had nothing left to
 	// reprint but that constant — so `Ok(())` came back as `Ok(0)` and
-	// `var u: () = ();` as `var u: () = 0;`, which is E003. The TYPE is the
+	// `let u: () = ();` as `let u: () = 0;`, which is E003. The TYPE is the
 	// byte-parity half: native's type parser folds the empty parens to void
 	// and writes `void`, and the self-host kept the written parens.
 	//
@@ -1771,11 +1771,11 @@ return tup().1 + grp() + fnp(1)(2) + fnb(1)(2) + r.0 + r.1;
 function fallible(): Result[(), i32] { return Ok(()); }
 function thunk(): () => i32 { return (): i32 => { return 1; }; }
 function main(): i32 {
-var u: () = ();
-var v = ();
-var r: Result[(), i32] = fallible();
-var o: Option[()] = None;
-var t: ((), i32) = ((), 1);
+let u: () = ();
+let v = ();
+let r: Result[(), i32] = fallible();
+let o: Option[()] = None;
+let t: ((), i32) = ((), 1);
 return sink(u) + sink(v) + sink(t.0) + thunk()() + t.1;
 }
 `},
@@ -1927,8 +1927,8 @@ func TestSelfHostFmtKeepsCStyleFor(t *testing.T) {
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
 	const src = `function main(): i32 {
-  var sum: i32 = 0;
-  for (var i: i32 = 1; i <= 10; i = i + 1) {
+  let sum: i32 = 0;
+  for (let i: i32 = 1; i <= 10; i = i + 1) {
     sum = sum + i;
   }
   return sum;
@@ -1946,7 +1946,7 @@ func TestSelfHostFmtKeepsCStyleFor(t *testing.T) {
 	if strings.Contains(got, "__forc_") {
 		t.Errorf("formatted output leaks the desugar's synthesised flag:\n%s", got)
 	}
-	if !strings.Contains(got, "for (var i: i32 = 1; i <= 10; i = i + 1)") {
+	if !strings.Contains(got, "for (let i: i32 = 1; i <= 10; i = i + 1)") {
 		t.Errorf("the C-style for header did not survive formatting:\n%s", got)
 	}
 	// Source preservation is the point, so the formatted file must still be the
@@ -2041,9 +2041,9 @@ func TestSelfHostFmtCorpusParityX86_64(t *testing.T) {
 // alignment (#8611) 166 of these files came out arranged differently, with both
 // suites green.
 //
-// It is the only gate on the cost, too. examples/self_host/irlower.fern is the
-// one input in the tree that pushes the search at all, and the O(m*n) table
-// this replaced wanted 48 GB for it — a failure here that is a timeout rather
+// It is the only gate on the cost, too. The large self-host sources are the
+// inputs in the tree that push the search at all, and the O(m*n) table
+// this replaced wanted 48 GB for the deleted irlower.fern — a failure here that is a timeout rather
 // than a mismatch is that table coming back.
 func TestSelfHostFmtDiffCorpusParityX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

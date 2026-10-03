@@ -57,7 +57,7 @@ var p3StreamF64EOFProducerCore = []byte{
 //
 //	@import("test:dep/d","prod") async function body(): stream[f64];
 //	async function run(): i32 {
-//	    var sum: f64 = 0.0;
+//	    let sum: f64 = 0.0;
 //	    for x in body() { sum = sum + x; }   // x: f64, pulled one at a time
 //	    return sum as i32;
 //	}
@@ -71,7 +71,7 @@ func TestWasmP3StreamF64ForIn(t *testing.T) {
 
 	src := `@import("test:dep/d", "prod") async function body(): stream[f64];
 async function run(): i32 {
-	var sum: f64 = 0.0;
+	let sum: f64 = 0.0;
 	for x in body() {
 		sum = sum + x;
 	}

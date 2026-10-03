@@ -103,7 +103,7 @@ pub struct FipResult {
 // static data, heap_bump_bytes only reads the cursor. Counting those would
 // report a budget overrun for a function that allocates nothing.
 pub function fresh_alloc_what(o: ir.Op): string {
-  var t: i32 = o.kind_tag;
+  let t: i32 = o.kind_tag;
   // Constructor expressions: what E053 lets any tier write — it admits the
   // shape and leaves the verdict here (#9602) — and therefore what this pass
   // has to count on every claim's behalf. A
@@ -142,13 +142,11 @@ pub function fresh_alloc_what(o: ir.Op): string {
   if (t == 77) {
     return "byte-buffer allocation";
   }
-  // A std/array `map` E053 admitted on an `own` receiver (#9733). Native
-  // writes it through the donor when R7 of docs/REUSE-CONTRACT.md holds and
-  // counts the ones it declines; this compiler has no in-place map at all,
-  // so every one it emits builds a fresh array by append and is counted as
-  // such, with the reason — the honest half of "which compiler checks what".
+  // A std/array `map` E053 admitted on an `own` receiver (#9733). A map R7
+  // of docs/REUSE-CONTRACT.md writes through its donor lowers to a loop
+  // (ssarc.map_in_place), so a combinator call still here is one it declined.
   if (t == ir.kind_id("call_direct") && util.str_has_prefix(o.str, "__arrm_map__")) {
-    return "`map` materialized by the combinator: the self-hosted compiler has no in-place map (R7 is native-only until the reuse port)";
+    return "`map` materialized by the combinator: R7 writes a map in place only over an `own` parameter that dies at the call, with an i64 element it does not change and an element function that captures nothing and reaches no effect";
   }
   return "";
 }
@@ -163,7 +161,7 @@ pub function is_paired_alloc(o: ir.Op): boolean {
 
 // elided_carried_at counts the carried fields elided by the reuse site whose
 // `__fern_alloc_reuse` call sits at ops[at]. The self-overwrite lowering
-// (irlower's emit_self_overwrite_reuse) is the one family with carried
+// is the one family with carried
 // fields: after the call comes the uniqueness branch, and its FRESH arm opens
 // with the raw shape-word copy (`raw_store_ptr`) and then copies every
 // carried field out of the donor with one `struct_set` each — the stores the
@@ -172,14 +170,14 @@ pub function is_paired_alloc(o: ir.Op): boolean {
 // so their fresh arm has no `struct_set` and no raw shape copy, and they
 // count 0 here.
 pub function elided_carried_at(ops: ir.Op[], at: i32): i32 {
-  var k_if: i32 = ir.kind_id("if");
-  var k_else: i32 = ir.kind_id("else");
-  var k_end: i32 = ir.kind_id("end");
-  var k_block: i32 = ir.kind_id("block");
-  var k_loop: i32 = ir.kind_id("loop");
-  var k_store: i32 = ir.kind_id("struct_set");
-  var k_shape_copy: i32 = ir.kind_id("raw_store_ptr");
-  var i: i32 = at + 1;
+  let k_if: i32 = ir.kind_id("if");
+  let k_else: i32 = ir.kind_id("else");
+  let k_end: i32 = ir.kind_id("end");
+  let k_block: i32 = ir.kind_id("block");
+  let k_loop: i32 = ir.kind_id("loop");
+  let k_store: i32 = ir.kind_id("struct_set");
+  let k_shape_copy: i32 = ir.kind_id("raw_store_ptr");
+  let i: i32 = at + 1;
   // The uniqueness branch: the first `if` after the call.
   while (i < ops.len() && ops[i].kind_tag != k_if) {
     if (ops[i].kind_tag == k_end || ops[i].kind_tag == k_else) {
@@ -188,10 +186,10 @@ pub function elided_carried_at(ops: ir.Op[], at: i32): i32 {
     i = i + 1;
   }
   // Its fresh arm: the `else` at the branch's own depth.
-  var depth: i32 = 0;
+  let depth: i32 = 0;
   i = i + 1;
   while (i < ops.len()) {
-    var t: i32 = ops[i].kind_tag;
+    let t: i32 = ops[i].kind_tag;
     if (t == k_if || t == k_block || t == k_loop) {
       depth = depth + 1;
     } else if (t == k_end) {
@@ -204,11 +202,11 @@ pub function elided_carried_at(ops: ir.Op[], at: i32): i32 {
     }
     i = i + 1;
   }
-  var stores: i32 = 0;
-  var shape_copied: boolean = false;
+  let stores: i32 = 0;
+  let shape_copied: boolean = false;
   i = i + 1;
   while (i < ops.len()) {
-    var t2: i32 = ops[i].kind_tag;
+    let t2: i32 = ops[i].kind_tag;
     if (t2 == k_if || t2 == k_block || t2 == k_loop) {
       depth = depth + 1;
     } else if (t2 == k_end) {
@@ -235,18 +233,18 @@ pub function elided_carried_at(ops: ir.Op[], at: i32): i32 {
 // at most one problem — native reports a single E068 naming every offending
 // site, and a per-site list would bury the count, which is the actual verdict.
 pub function verify_fip_fn(claim: FipClaim, ops: ir.Op[]): FipResult {
-  var out: irverify.Problem[] = [];
-  var fresh: i32 = 0;
-  var paired: i32 = 0;
-  var elided: i32 = 0;
-  var sites: string = "";
-  var i: i32 = 0;
+  let out: irverify.Problem[] = [];
+  let fresh: i32 = 0;
+  let paired: i32 = 0;
+  let elided: i32 = 0;
+  let sites: string = "";
+  let i: i32 = 0;
   while (i < ops.len()) {
     if (is_paired_alloc(ops[i])) {
       paired = paired + 1;
       elided = elided + elided_carried_at(ops, i);
     } else {
-      var what: string = fresh_alloc_what(ops[i]);
+      let what: string = fresh_alloc_what(ops[i]);
       if (what.len() > 0) {
         if (fresh > 0) {
           sites = sites + "; ";
@@ -263,14 +261,14 @@ pub function verify_fip_fn(claim: FipClaim, ops: ir.Op[]): FipResult {
   if (fresh <= claim.allowance) {
     return FipResult { problems: out, fresh: fresh, paired: paired, elided: elided };
   }
-  var kw: string = "fip";
+  let kw: string = "fip";
   if (claim.is_fbip) {
     kw = "fbip";
   }
   // One remedy for every tier now that the checker admits the constructor
   // shape everywhere (#9602): a site here is an un-paired construction the
   // author can pair or grade, in a bare `fip` exactly as in an `fbip`.
-  var remedy: string = "pair each construction with a dead uniquely-owned donor of the same shape, or grade the claim (`" + kw + "(n)`)";
+  let remedy: string = "pair each construction with a dead uniquely-owned donor of the same shape, or grade the claim (`" + kw + "(n)`)";
   out = out.append(irverify.Problem {
     fn_name: claim.fn_name, op: 0 - 1, kind: "E068",
     msg: "`" + kw + "` function \"" + claim.fn_name + "\" allocates: "

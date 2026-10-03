@@ -69,17 +69,17 @@ pub struct Rule { valid: boolean, has_dst: boolean, std_off: i32, dst_off: i32, 
 pub struct DateRule { kind: i32, mon: i32, week: i32, day: i32, n: i32, time: i32 }
 
 pub function utc_rule(): Rule {
-  var none: DateRule = DateRule { kind: 2, mon: 0, week: 0, day: 0, n: 0, time: 0 };
+  let none: DateRule = DateRule { kind: 2, mon: 0, week: 0, day: 0, n: 0, time: 0 };
   return Rule { valid: false, has_dst: false, std_off: 0, dst_off: 0, std_name: "", dst_name: "", start: none, end: none };
 }
 
 // `fixed_zone(off, name)` — a zone with no transitions and no rule, so
 // every instant is the same offset under the same name.
 pub function fixed_zone(off: i32, name: string): Zone {
-  var t: i64[] = [];
-  var o: i32[] = [];
-  var a: string[] = [];
-  var d: boolean[] = [];
+  let t: i64[] = [];
+  let o: i32[] = [];
+  let a: string[] = [];
+  let d: boolean[] = [];
   return Zone { times: t, offs: o, abbrs: a, dsts: d, first: off, first_abbr: name, first_dst: false, rule: utc_rule() };
 }
 
@@ -106,7 +106,7 @@ pub function zone_from_tz(spec: string): Zone {
   // runs it through the same two steps, which is why `TZ=` prints
   // that word as its abbreviation on a machine carrying no
   // zoneinfo file of that name.
-  var name: string = spec;
+  let name: string = spec;
   if (name.len() == 0) {
     name = "Universal";
   }
@@ -124,7 +124,7 @@ pub function zone_from_tz(spec: string): Zone {
     },
     None => {}
   }
-  var r: Rule = parse_posix(name);
+  let r: Rule = parse_posix(name);
   if (!r.valid) {
     // A TZ that is neither a file nor a rule leaves tzset with the
     // UTC offset and NO abbreviation, which is what a fresh
@@ -150,10 +150,10 @@ function default_zone(): Zone {
 // A zone that is nothing but a rule: no transitions, so every time is
 // answered by the rule.
 function rule_zone(r: Rule): Zone {
-  var t: i64[] = [];
-  var o: i32[] = [];
-  var a: string[] = [];
-  var d: boolean[] = [];
+  let t: i64[] = [];
+  let o: i32[] = [];
+  let a: string[] = [];
+  let d: boolean[] = [];
   return Zone { times: t, offs: o, abbrs: a, dsts: d, first: r.std_off, first_abbr: r.std_name, first_dst: false, rule: r };
 }
 
@@ -167,7 +167,7 @@ function zone_path(name: string): string {
   if (name[0] as i32 == 47) {
     return name;
   }
-  var dir: string = "/usr/share/zoneinfo";
+  let dir: string = "/usr/share/zoneinfo";
   match (env("TZDIR")) {
     Some(d) => {
       if (d.len() > 0) {
@@ -183,7 +183,7 @@ function zone_path(name: string): string {
 // instant. Before the first transition the zone's opening offset
 // stands; past the last one the footer rule does, when there is one.
 pub function (z: Zone) offset_at(sec: i64): i32 {
-  var i: i32 = z.index_at(sec);
+  let i: i32 = z.index_at(sec);
   if (i == 0 - 1) {
     return z.first;
   }
@@ -200,7 +200,7 @@ pub function (z: Zone) offset_at(sec: i64): i32 {
 // the table entry's own flag, or which side of the footer rule it
 // falls on.
 pub function (z: Zone) is_dst_at(sec: i64): boolean {
-  var i: i32 = z.index_at(sec);
+  let i: i32 = z.index_at(sec);
   if (i == 0 - 1) {
     return z.first_dst;
   }
@@ -223,7 +223,7 @@ pub struct Entry { off: i32, abbrev: string, dst: boolean }
 // `(z: Zone) entry_at(sec)` — the offset, designation and DST flag at
 // that instant, from a single search of the table.
 pub function (z: Zone) entry_at(sec: i64): Entry {
-  var i: i32 = z.index_at(sec);
+  let i: i32 = z.index_at(sec);
   if (i == 0 - 1) {
     return Entry { off: z.first, abbrev: z.first_abbr, dst: z.first_dst };
   }
@@ -240,7 +240,7 @@ pub function (z: Zone) entry_at(sec: i64): Entry {
 // instant: the table's own string, or the name the footer rule gives
 // the side of the year `sec` falls on.
 pub function (z: Zone) abbrev_at(sec: i64): string {
-  var i: i32 = z.index_at(sec);
+  let i: i32 = z.index_at(sec);
   if (i == 0 - 1) {
     return z.first_abbr;
   }
@@ -257,7 +257,7 @@ pub function (z: Zone) abbrev_at(sec: i64): string {
 // before the first transition, or `-2` when the footer rule has taken
 // over past the last one.
 function (z: Zone) index_at(sec: i64): i32 {
-  var n: i32 = z.times.len();
+  let n: i32 = z.times.len();
   if (n == 0) {
     if (z.rule.valid) {
       return 0 - 2;
@@ -270,10 +270,10 @@ function (z: Zone) index_at(sec: i64): i32 {
   if (z.rule.valid && sec >= z.times[n - 1]) {
     return 0 - 2;
   }
-  var lo: i32 = 0;
-  var hi: i32 = n - 1;
+  let lo: i32 = 0;
+  let hi: i32 = n - 1;
   while (lo < hi) {
-    var mid: i32 = lo + (hi - lo + 1) / 2;
+    let mid: i32 = lo + (hi - lo + 1) / 2;
     if (z.times[mid] <= sec) {
       lo = mid;
     } else {
@@ -285,8 +285,8 @@ function (z: Zone) index_at(sec: i64): i32 {
 
 // ---- TZif -------------------------------------------------------------------
 function be32(bs: u8[], o: i32): i64 {
-  var v: i64 = 0;
-  var i: i32 = 0;
+  let v: i64 = 0;
+  let i: i32 = 0;
   while (i < 4) {
     v = v * (256 as i64) + bs[o + i] as i64;
     i = i + 1;
@@ -295,7 +295,7 @@ function be32(bs: u8[], o: i32): i64 {
 }
 
 function be32s(bs: u8[], o: i32): i64 {
-  var v: i64 = be32(bs, o);
+  let v: i64 = be32(bs, o);
   if (v > 2147483647 as i64) {
     return v - 4294967296 as i64;
   }
@@ -303,8 +303,8 @@ function be32s(bs: u8[], o: i32): i64 {
 }
 
 function be64s(bs: u8[], o: i32): i64 {
-  var v: i64 = 0;
-  var i: i32 = 0;
+  let v: i64 = 0;
+  let i: i32 = 0;
   while (i < 8) {
     v = v * (256 as i64) + bs[o + i] as i64;
     i = i + 1;
@@ -317,7 +317,7 @@ function be64s(bs: u8[], o: i32): i64 {
 struct Counts { isut: i32, isstd: i32, leap: i32, time: i32, type_: i32, chars: i32 }
 
 function read_counts(bs: u8[], off: i32): Counts {
-  var bad: Counts = Counts { isut: 0 - 1, isstd: 0, leap: 0, time: 0, type_: 0, chars: 0 };
+  let bad: Counts = Counts { isut: 0 - 1, isstd: 0, leap: 0, time: 0, type_: 0, chars: 0 };
   if (off < 0 || off + 44 > bs.len()) {
     return bad;
   }
@@ -327,7 +327,7 @@ function read_counts(bs: u8[], off: i32): Counts {
   // A count with its high bit set is not a count. Reading them through
   // i64 and refusing the negatives keeps the arithmetic below in range
   // rather than wrapping into an offset that passes a length check.
-  var c: Counts = Counts { isut: clamp(be32(bs, off + 20)), isstd: clamp(be32(bs, off + 24)), leap: clamp(be32(bs, off + 28)), time: clamp(be32(bs, off + 32)), type_: clamp(be32(bs, off + 36)), chars: clamp(be32(bs, off + 40)) };
+  let c: Counts = Counts { isut: clamp(be32(bs, off + 20)), isstd: clamp(be32(bs, off + 24)), leap: clamp(be32(bs, off + 28)), time: clamp(be32(bs, off + 32)), type_: clamp(be32(bs, off + 36)), chars: clamp(be32(bs, off + 40)) };
   if (c.isut < 0 || c.isstd < 0 || c.leap < 0 || c.time < 0 || c.type_ < 0 || c.chars < 0) {
     return bad;
   }
@@ -368,27 +368,27 @@ function read_zone_file(path: string): Option[Zone] {
 }
 
 pub function parse_tzif(bs: u8[]): Option[Zone] {
-  var h1: Counts = read_counts(bs, 0);
+  let h1: Counts = read_counts(bs, 0);
   if (h1.isut < 0 || h1.type_ < 1) {
     return None;
   }
-  var version: i32 = bs[4] as i32;
-  var off: i32 = 44;
-  var width: i32 = 4;
-  var c: Counts = h1;
-  var footer: string = "";
+  let version: i32 = bs[4] as i32;
+  let off: i32 = 44;
+  let width: i32 = 4;
+  let c: Counts = h1;
+  let footer: string = "";
   if (version != 0) {
     // Version 2 and up repeat everything with 64-bit times; the second
     // block is the authoritative one and the footer follows it.
-    var first_block: i64 = off as i64 + block_bytes(h1, 4);
+    let first_block: i64 = off as i64 + block_bytes(h1, 4);
     if (first_block <= bs.len() as i64) {
-      var second: i32 = first_block as i32;
-      var h2: Counts = read_counts(bs, second);
+      let second: i32 = first_block as i32;
+      let h2: Counts = read_counts(bs, second);
       if (h2.isut >= 0 && h2.type_ >= 1) {
         c = h2;
         off = second + 44;
         width = 8;
-        var end: i64 = off as i64 + block_bytes(h2, 8);
+        let end: i64 = off as i64 + block_bytes(h2, 8);
         if (end <= bs.len() as i64) {
           footer = read_footer(bs, end as i32);
         }
@@ -400,32 +400,32 @@ pub function parse_tzif(bs: u8[]): Option[Zone] {
   }
   // The transition times, then the index into the type table that each
   // one selects, then the types themselves.
-  var idx_off: i32 = off + c.time * width;
-  var type_off: i32 = idx_off + c.time;
-  var chars_off: i32 = type_off + c.type_ * 6;
-  var offs: i32[] = [];
-  var isdst: boolean[] = [];
-  var names: string[] = [];
-  var i: i32 = 0;
+  let idx_off: i32 = off + c.time * width;
+  let type_off: i32 = idx_off + c.time;
+  let chars_off: i32 = type_off + c.type_ * 6;
+  let offs: i32[] = [];
+  let isdst: boolean[] = [];
+  let names: string[] = [];
+  let i: i32 = 0;
   while (i < c.type_) {
     offs = offs.append(be32s(bs, type_off + i * 6) as i32);
     isdst = isdst.append(bs[type_off + i * 6 + 4] as i32 != 0);
     names = names.append(designation(bs, chars_off, c.chars, bs[type_off + i * 6 + 5] as i32));
     i = i + 1;
   }
-  var times: i64[] = [];
-  var tofs: i32[] = [];
-  var tabb: string[] = [];
-  var tdst: boolean[] = [];
+  let times: i64[] = [];
+  let tofs: i32[] = [];
+  let tabb: string[] = [];
+  let tdst: boolean[] = [];
   i = 0;
   while (i < c.time) {
-    var t: i64 = 0;
+    let t: i64 = 0;
     if (width == 8) {
       t = be64s(bs, off + i * 8);
     } else {
       t = be32s(bs, off + i * 4);
     }
-    var k: i32 = bs[idx_off + i] as i32;
+    let k: i32 = bs[idx_off + i] as i32;
     if (k >= c.type_) {
       k = 0;
     }
@@ -437,8 +437,8 @@ pub function parse_tzif(bs: u8[]): Option[Zone] {
   }
   // Before the first transition, localtime uses the first type that is
   // not daylight saving, and type 0 when every type is.
-  var first: i32 = offs[0];
-  var first_name: string = names[0];
+  let first: i32 = offs[0];
+  let first_name: string = names[0];
   i = 0;
   while (i < c.type_) {
     if (!isdst[i]) {
@@ -458,9 +458,9 @@ function designation(bs: u8[], base: i32, len: i32, at: i32): string {
   if (at < 0 || at >= len) {
     return "";
   }
-  var out: u8[] = [];
-  var i: i32 = base + at;
-  var end: i32 = base + len;
+  let out: u8[] = [];
+  let i: i32 = base + at;
+  let end: i32 = base + len;
   while (i < end && i < bs.len() && bs[i] as i32 != 0) {
     out = out.append(bs[i]);
     i = i + 1;
@@ -475,8 +475,8 @@ function read_footer(bs: u8[], start: i32): string {
   if (start >= bs.len() || bs[start] as i32 != 10) {
     return "";
   }
-  var i: i32 = start + 1;
-  var out: u8[] = [];
+  let i: i32 = start + 1;
+  let out: u8[] = [];
   while (i < bs.len() && bs[i] as i32 != 10) {
     out = out.append(bs[i]);
     i = i + 1;
@@ -493,16 +493,16 @@ function read_footer(bs: u8[], start: i32): string {
 // its own means one hour ahead of standard time, and DST with no rules
 // at all means the United States dates, which is what glibc supplies.
 pub function parse_posix(s: string): Rule {
-  var r: Rule = utc_rule();
-  var std_name: (string, i32) = take_name(s, 0);
+  let r: Rule = utc_rule();
+  let std_name: (string, i32) = take_name(s, 0);
   if (std_name.1 <= 0) {
     return r;
   }
-  var p: i32 = std_name.1;
+  let p: i32 = std_name.1;
   // The offset POSIX demands is optional to glibc, which reads a bare
   // name as that name at UTC — `TZ=Universal`, and `TZ=` with it.
-  var std: (boolean, i32, i32) = parse_offset(s, p);
-  var std_off: i32 = 0;
+  let std: (boolean, i32, i32) = parse_offset(s, p);
+  let std_off: i32 = 0;
   if (std.0) {
     // A TZ string writes the offset to ADD to local time to get UT, so
     // `EST5` is five hours west and localtime subtracts five.
@@ -510,14 +510,14 @@ pub function parse_posix(s: string): Rule {
     p = std.2;
   }
   r = Rule { ...r, valid: true, std_off: std_off, dst_off: std_off, std_name: std_name.0, dst_name: std_name.0 };
-  var dst_name: (string, i32) = take_name(s, p);
+  let dst_name: (string, i32) = take_name(s, p);
   if (dst_name.1 <= p) {
     return r;
   }
   r = Rule { ...r, has_dst: true, dst_off: r.std_off + 3600, dst_name: dst_name.0 };
   p = dst_name.1;
   if (p < s.len() && s[p] as i32 != 44) {
-    var d: (boolean, i32, i32) = parse_offset(s, p);
+    let d: (boolean, i32, i32) = parse_offset(s, p);
     if (!d.0) {
       return Rule { ...r, valid: false };
     }
@@ -527,15 +527,15 @@ pub function parse_posix(s: string): Rule {
   // A rule that does not parse is not fatal: the offsets stand and the
   // dates fall back to the default, which is what a TZ string naming a
   // daylight zone and no dates at all gets.
-  var fallback: Rule = Rule { ...r, start: us_dst_start(), end: us_dst_end() };
+  let fallback: Rule = Rule { ...r, start: us_dst_start(), end: us_dst_end() };
   if (p >= s.len() || s[p] as i32 != 44) {
     return fallback;
   }
-  var a: (boolean, DateRule, i32) = parse_date_rule(s, p + 1);
+  let a: (boolean, DateRule, i32) = parse_date_rule(s, p + 1);
   if (!a.0 || a.2 >= s.len() || s[a.2] as i32 != 44) {
     return fallback;
   }
-  var b: (boolean, DateRule, i32) = parse_date_rule(s, a.2 + 1);
+  let b: (boolean, DateRule, i32) = parse_date_rule(s, a.2 + 1);
   if (!b.0) {
     return fallback;
   }
@@ -562,7 +562,7 @@ function take_name(s: string, p: i32): (string, i32) {
     return ("", p);
   }
   if (s[p] as i32 == 60) {
-    var i: i32 = p + 1;
+    let i: i32 = p + 1;
     while (i < s.len() && s[i] as i32 != 62) {
       i = i + 1;
     }
@@ -571,7 +571,7 @@ function take_name(s: string, p: i32): (string, i32) {
     }
     return (slice_unchecked(s, p + 1, i) + "", i + 1);
   }
-  var j: i32 = p;
+  let j: i32 = p;
   while (j < s.len() && is_alpha(s[j] as i32)) {
     j = j + 1;
   }
@@ -594,8 +594,8 @@ function is_digit(c: i32): boolean {
 // glibc does: `TZ=AAA+25` is a 24-hour offset and `AAA+25:59:59` is
 // 24:59:59, neither of them the 25 hours written.
 function parse_offset(s: string, p: i32): (boolean, i32, i32) {
-  var i: i32 = p;
-  var neg: boolean = false;
+  let i: i32 = p;
+  let neg: boolean = false;
   if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
     neg = s[i] as i32 == 45;
     i = i + 1;
@@ -603,8 +603,8 @@ function parse_offset(s: string, p: i32): (boolean, i32, i32) {
   if (i >= s.len() || !is_digit(s[i] as i32)) {
     return (false, 0, p);
   }
-  var h: i32 = 0;
-  var n: i32 = 0;
+  let h: i32 = 0;
+  let n: i32 = 0;
   while (i < s.len() && is_digit(s[i] as i32) && n < 3) {
     h = h * 10 + (s[i] as i32 - 48);
     i = i + 1;
@@ -613,12 +613,12 @@ function parse_offset(s: string, p: i32): (boolean, i32, i32) {
   if (h > 24) {
     h = 24;
   }
-  var total: i32 = h * 3600;
-  var k: i32 = 0;
+  let total: i32 = h * 3600;
+  let k: i32 = 0;
   while (k < 2 && i < s.len() && s[i] as i32 == 58) {
     i = i + 1;
-    var v: i32 = 0;
-    var d: i32 = 0;
+    let v: i32 = 0;
+    let d: i32 = 0;
     while (i < s.len() && is_digit(s[i] as i32) && d < 2) {
       v = v * 10 + (s[i] as i32 - 48);
       i = i + 1;
@@ -646,19 +646,19 @@ function parse_offset(s: string, p: i32): (boolean, i32, i32) {
 // `Mm.w.d`, `Jn` or `n`, each with an optional `/time` whose default is
 // 02:00:00 local.
 function parse_date_rule(s: string, p: i32): (boolean, DateRule, i32) {
-  var bad: DateRule = DateRule { kind: 2, mon: 0, week: 0, day: 0, n: 0, time: 0 };
-  var i: i32 = p;
-  var out: DateRule = bad;
+  let bad: DateRule = DateRule { kind: 2, mon: 0, week: 0, day: 0, n: 0, time: 0 };
+  let i: i32 = p;
+  let out: DateRule = bad;
   if (i < s.len() && s[i] as i32 == 77) {
-    var m: (boolean, i32, i32) = parse_uint(s, i + 1);
+    let m: (boolean, i32, i32) = parse_uint(s, i + 1);
     if (!m.0 || m.2 >= s.len() || s[m.2] as i32 != 46) {
       return (false, bad, p);
     }
-    var w: (boolean, i32, i32) = parse_uint(s, m.2 + 1);
+    let w: (boolean, i32, i32) = parse_uint(s, m.2 + 1);
     if (!w.0 || w.2 >= s.len() || s[w.2] as i32 != 46) {
       return (false, bad, p);
     }
-    var d: (boolean, i32, i32) = parse_uint(s, w.2 + 1);
+    let d: (boolean, i32, i32) = parse_uint(s, w.2 + 1);
     if (!d.0) {
       return (false, bad, p);
     }
@@ -668,14 +668,14 @@ function parse_date_rule(s: string, p: i32): (boolean, DateRule, i32) {
     out = DateRule { kind: 0, mon: m.1, week: w.1, day: d.1, n: 0, time: 7200 };
     i = d.2;
   } else if (i < s.len() && s[i] as i32 == 74) {
-    var j: (boolean, i32, i32) = parse_uint(s, i + 1);
+    let j: (boolean, i32, i32) = parse_uint(s, i + 1);
     if (!j.0 || j.1 < 1 || j.1 > 365) {
       return (false, bad, p);
     }
     out = DateRule { kind: 1, mon: 0, week: 0, day: 0, n: j.1, time: 7200 };
     i = j.2;
   } else {
-    var z: (boolean, i32, i32) = parse_uint(s, i);
+    let z: (boolean, i32, i32) = parse_uint(s, i);
     if (!z.0) {
       return (false, bad, p);
     }
@@ -683,7 +683,7 @@ function parse_date_rule(s: string, p: i32): (boolean, DateRule, i32) {
     i = z.2;
   }
   if (i < s.len() && s[i] as i32 == 47) {
-    var t: (boolean, i32, i32) = parse_offset(s, i + 1);
+    let t: (boolean, i32, i32) = parse_offset(s, i + 1);
     if (!t.0) {
       return (false, bad, p);
     }
@@ -694,8 +694,8 @@ function parse_date_rule(s: string, p: i32): (boolean, DateRule, i32) {
 }
 
 function parse_uint(s: string, p: i32): (boolean, i32, i32) {
-  var i: i32 = p;
-  var v: i32 = 0;
+  let i: i32 = p;
+  let v: i32 = 0;
   while (i < s.len() && is_digit(s[i] as i32)) {
     v = v * 10 + (s[i] as i32 - 48);
     i = i + 1;
@@ -723,10 +723,10 @@ function rule_dst(r: Rule, sec: i64): boolean {
   // The year the dates are computed for is the UTC one, not the local
   // one, so an instant in the last hours of December is measured
   // against the NEXT year's dates where the zone is west of Greenwich.
-  var year: i32 = year_of(sec);
-  var start: i64 = rule_instant(r.start, year) - r.std_off as i64;
-  var end: i64 = rule_instant(r.end, year) - r.dst_off as i64;
-  var on: boolean = false;
+  let year: i32 = year_of(sec);
+  let start: i64 = rule_instant(r.start, year) - r.std_off as i64;
+  let end: i64 = rule_instant(r.end, year) - r.dst_off as i64;
+  let on: boolean = false;
   if (start <= end) {
     on = sec >= start && sec < end;
   } else {
@@ -745,11 +745,11 @@ function rule_dst(r: Rule, sec: i64): boolean {
 // from 1970-01-01 as glibc measures it, so the dates a rule names in
 // 1969 are the dates it names in 1970.
 function rule_instant(d: DateRule, year: i32): i64 {
-  var base: i32 = 0;
+  let base: i32 = 0;
   if (year > 1970) {
     base = epoch_day(year, 1, 1);
   }
-  var doy: i32 = 1;
+  let doy: i32 = 1;
   if (d.kind == 0) {
     doy = month_week_day(year, d.mon, d.week, d.day);
   } else if (d.kind == 1) {
@@ -768,10 +768,10 @@ function rule_instant(d: DateRule, year: i32): i64 {
 // The day of the year of the `week`th `day`-of-the-week in `mon`, with
 // week 5 meaning the last one in the month.
 function month_week_day(year: i32, mon: i32, week: i32, day: i32): i32 {
-  var first: i64 = days_from_civil(year as i64, mon, 1);
-  var wd: i32 = floor_mod(first + 4 as i64, 7 as i64) as i32;
-  var dom: i32 = 1 + (day - wd + 7) % 7 + (week - 1) * 7;
-  var last: i32 = time.days_in_month(year, mon);
+  let first: i64 = days_from_civil(year as i64, mon, 1);
+  let wd: i32 = floor_mod(first + 4 as i64, 7 as i64) as i32;
+  let dom: i32 = 1 + (day - wd + 7) % 7 + (week - 1) * 7;
+  let last: i32 = time.days_in_month(year, mon);
   while (dom > last) {
     dom = dom - 7;
   }
@@ -790,7 +790,7 @@ function year_of(local_sec: i64): i32 {
 // `(z: Zone) civil(sec)` — the broken-down local time, which is
 // localtime(3) with the fields nobody here prints left out.
 pub function (z: Zone) civil(sec: i64): DateTime {
-  var off: i32 = z.offset_at(sec);
+  let off: i32 = z.offset_at(sec);
   return time.instant_from_unix(sec).in_zone(time.timezone_fixed_offset(off)).to_datetime();
 }
 
@@ -807,16 +807,16 @@ pub function (z: Zone) local_fields(sec: i64): Civil {
 // `civil_at(local)` — the fields of a local-seconds count, which is a
 // UTC instant when the offset is zero.
 pub function civil_at(local: i64): Civil {
-  var days: i64 = floor_div(local, 86400 as i64);
-  var rem: i32 = (local - days * (86400 as i64)) as i32;
-  var ymd: (i64, i32, i32) = civil_from_days(days);
-  var wday: i32 = floor_mod(days + 4 as i64, 7 as i64) as i32;
-  var yday: i32 = (days - days_from_civil(ymd.0, 1, 1)) as i32;
+  let days: i64 = floor_div(local, 86400 as i64);
+  let rem: i32 = (local - days * (86400 as i64)) as i32;
+  let ymd: (i64, i32, i32) = civil_from_days(days);
+  let wday: i32 = floor_mod(days + 4 as i64, 7 as i64) as i32;
+  let yday: i32 = (days - days_from_civil(ymd.0, 1, 1)) as i32;
   return Civil { year: ymd.0, month: ymd.1, day: ymd.2, hour: rem / 3600, min: rem / 60 % 60, sec: rem % 60, wday: wday, yday: yday };
 }
 
 pub function floor_div(a: i64, b: i64): i64 {
-  var q: i64 = a / b;
+  let q: i64 = a / b;
   if (a % b != 0 as i64 && a < 0 as i64 != b < 0 as i64) {
     q = q - 1 as i64;
   }
@@ -832,32 +832,32 @@ pub function floor_mod(a: i64, b: i64): i64 {
 // 1..12; the day may be anything, which is how a caller normalises
 // `mday` the way mktime does.
 pub function days_from_civil(y: i64, m: i32, d: i32): i64 {
-  var yy: i64 = y;
+  let yy: i64 = y;
   if (m <= 2) {
     yy = yy - 1 as i64;
   }
-  var era: i64 = floor_div(yy, 400 as i64);
-  var yoe: i64 = yy - era * (400 as i64);
-  var mp: i32 = m + 9;
+  let era: i64 = floor_div(yy, 400 as i64);
+  let yoe: i64 = yy - era * (400 as i64);
+  let mp: i32 = m + 9;
   if (m > 2) {
     mp = m - 3;
   }
-  var doy: i64 = ((153 * mp + 2) / 5) as i64 + d as i64 - 1 as i64;
-  var doe: i64 = yoe * (365 as i64) + yoe / (4 as i64) - yoe / (100 as i64) + doy;
+  let doy: i64 = ((153 * mp + 2) / 5) as i64 + d as i64 - 1 as i64;
+  let doe: i64 = yoe * (365 as i64) + yoe / (4 as i64) - yoe / (100 as i64) + doy;
   return era * (146097 as i64) + doe - 719468 as i64;
 }
 
 // `civil_from_days(z)` — the inverse: (year, month, day).
 pub function civil_from_days(z_in: i64): (i64, i32, i32) {
-  var z: i64 = z_in + 719468 as i64;
-  var era: i64 = floor_div(z, 146097 as i64);
-  var doe: i64 = z - era * (146097 as i64);
-  var yoe: i64 = (doe - doe / (1460 as i64) + doe / (36524 as i64) - doe / (146096 as i64)) / (365 as i64);
-  var y: i64 = yoe + era * (400 as i64);
-  var doy: i64 = doe - (365 as i64 * yoe + yoe / (4 as i64) - yoe / (100 as i64));
-  var mp: i64 = (5 as i64 * doy + 2 as i64) / (153 as i64);
-  var d: i32 = (doy - (153 as i64 * mp + 2 as i64) / (5 as i64) + 1 as i64) as i32;
-  var m: i32 = (mp + 3 as i64) as i32;
+  let z: i64 = z_in + 719468 as i64;
+  let era: i64 = floor_div(z, 146097 as i64);
+  let doe: i64 = z - era * (146097 as i64);
+  let yoe: i64 = (doe - doe / (1460 as i64) + doe / (36524 as i64) - doe / (146096 as i64)) / (365 as i64);
+  let y: i64 = yoe + era * (400 as i64);
+  let doy: i64 = doe - (365 as i64 * yoe + yoe / (4 as i64) - yoe / (100 as i64));
+  let mp: i64 = (5 as i64 * doy + 2 as i64) / (153 as i64);
+  let d: i32 = (doy - (153 as i64 * mp + 2 as i64) / (5 as i64) + 1 as i64) as i32;
+  let m: i32 = (mp + 3 as i64) as i32;
   if (mp >= 10 as i64) {
     m = (mp - 9 as i64) as i32;
   }

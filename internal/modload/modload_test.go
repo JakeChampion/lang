@@ -450,7 +450,7 @@ func TestLoadSingleFileNoImports(t *testing.T) {
 	}
 }
 
-// Cross-module struct types: an entry that says `var p: mod.Foo`
+// Cross-module struct types: an entry that says `let p: mod.Foo`
 // must rewrite the type annotation to the mangled name. The struct
 // declaration in the imported module gets prefixed; the entry's
 // reference to it gets flattened.
@@ -462,7 +462,7 @@ pub function make(x: i32, y: i32): Point {
 }`,
 		"main.fern": `import "./point";
 function main(): i32 {
-	var p: point.Point = point.make(3, 4);
+	let p: point.Point = point.make(3, 4);
 	return p.x + p.y;
 }`,
 	})
@@ -480,7 +480,7 @@ function main(): i32 {
 	if !hasPointStruct {
 		t.Errorf("expected struct point__Point in combined program; got %v", prog.Structs)
 	}
-	// Entry's `var p: point.Point` must have been rewritten to
+	// Entry's `let p: point.Point` must have been rewritten to
 	// reference the mangled type.
 	main := findFunc(prog, "main")
 	if main == nil {
@@ -507,7 +507,7 @@ func TestLoadRewritesCrossModuleStructLit(t *testing.T) {
 		"point.fern": `pub struct Point { x: i32, y: i32 }`,
 		"main.fern": `import "./point";
 function main(): i32 {
-	var p: point.Point = point.Point { x: 5, y: 7 };
+	let p: point.Point = point.Point { x: 5, y: 7 };
 	return p.x;
 }`,
 	})
@@ -568,8 +568,8 @@ pub function maybe(): Option[Box] { return Some(Box { v: 2 }); }
 pub function many(): Box[] { return [Box { v: 3 }]; }`,
 		"main.fern": `import "./box";
 function main(): i32 {
-    var t = box.pair();
-    var arr = box.many();
+    let t = box.pair();
+    let arr = box.many();
     match (box.maybe()) {
         Some(b) => { return t.1.v + arr[0].v + b.v; },
         None => { return 0; }
@@ -715,7 +715,7 @@ func TestLoadPubUseExtendsImportClosure(t *testing.T) {
 		"shapes.fern": `pub enum Kind { Text, Binary }`,
 		"facade.fern": `pub use "./shapes".{Kind};`,
 		"main.fern": `import "./facade";
-function main(): i32 { var k: facade.Kind = Text; return 0; }`,
+function main(): i32 { let k: facade.Kind = Text; return 0; }`,
 	})
 	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
@@ -832,7 +832,7 @@ func TestLoadRejectsPrivateFunctionValueReference(t *testing.T) {
 		"util.fern": `function secret(): i32 { return 9; }`,
 		"main.fern": `import "./util";
 function main(): i32 {
-	var f: () => i32 = util.secret;
+	let f: () => i32 = util.secret;
 	return f();
 }`,
 	})
@@ -852,7 +852,7 @@ func TestLoadRejectsPrivateStructType(t *testing.T) {
 		"point.fern": `struct Point { x: i32, y: i32 }`,
 		"main.fern": `import "./point";
 function main(): i32 {
-	var p: point.Point = point.Point { x: 1, y: 2 };
+	let p: point.Point = point.Point { x: 1, y: 2 };
 	return p.x;
 }`,
 	})
@@ -1065,7 +1065,7 @@ func TestLoadStampsTypeRefSourceModule(t *testing.T) {
 		"util.fern": `pub struct Point { x: i32 }
 pub function origin(): Point { return Point { x: 0 }; }`,
 		"main.fern": `import "./util";
-function main(): i32 { var p: util.Point = util.origin(); return p.x; }`,
+function main(): i32 { let p: util.Point = util.origin(); return p.x; }`,
 	})
 	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
@@ -1385,8 +1385,8 @@ import "std/i32";
 import "std/string";
 import "std/sort";
 function main(): i32 {
-    var xs: i32[] = [0 - 3, 4, 0 - 1];
-    var ys = xs.abs_each();
+    let xs: i32[] = [0 - 3, 4, 0 - 1];
+    let ys = xs.abs_each();
     return ys[0] + ys[1] + ys[2];
 }`,
 	})
@@ -1422,7 +1422,7 @@ func TestLoadPreservesManuallyHoistedMethodNames(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"main.fern": `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3, 4, 5];
+    let xs: i32[] = [1, 2, 3, 4, 5];
     match (xs.avg()) { Some(a) => { return a; }, None => { return 0; } }
 }`,
 	})
@@ -1458,7 +1458,7 @@ func TestLoadPreservesMapRuntimeHelperNames(t *testing.T) {
 		"main.fern": `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("answer", 42);
     return m.get_or("answer", 0);
 }`,
@@ -1562,7 +1562,7 @@ pub function ping(): i32 { return 0; }`,
 import "./mid";
 trait Near { function scale(self: Self): i32; }
 impl Near for p.P { function scale(self: Self): i32 { return 2; } }
-function main(): i32 { var v: p.P = p.P { x: 1 }; return v.scale() + mid.ping(); }`,
+function main(): i32 { let v: p.P = p.P { x: 1 }; return v.scale() + mid.ping(); }`,
 	})
 	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
@@ -1598,7 +1598,7 @@ impl Far for p.P { function scale(self: Self): i32 { return 1; } }`,
 import "./far";
 trait Near { function scale(self: Self): i32; }
 impl Near for p.P { function scale(self: Self): i32 { return 2; } }
-function main(): i32 { var v: p.P = p.P { x: 1 }; return v.scale(); }`,
+function main(): i32 { let v: p.P = p.P { x: 1 }; return v.scale(); }`,
 	})
 	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {

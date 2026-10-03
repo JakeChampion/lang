@@ -39,14 +39,14 @@ func TestSelfHostArm64DarwinAssemblesRealRuntime(t *testing.T) {
 	}
 
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostFiles(t, dir, "flatten.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "asm_ir_run.fern", "wasm_run.fern")
+	copySelfHostFiles(t, dir, "flatten.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "asm_ir_run.fern", "wasm_run.fern")
 	darwinEmit := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "darwin_emit")
 	wrun := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	native := arm64NativeSrc(t)
 
 	cases := []struct{ name, src string }{
 		{"exit42", `function main(): i32 { return 42; }`},
-		{"arith", `function main(): i32 { var x = 6; var y = 7; return x * y; }`},
+		{"arith", `function main(): i32 { let x = 6; let y = 7; return x * y; }`},
 		{"fib", `function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(10); }`},
 	}
 
@@ -62,25 +62,25 @@ func TestSelfHostArm64DarwinAssemblesRealRuntime(t *testing.T) {
 			// Mach-O bytes.
 			var sb strings.Builder
 			sb.WriteString(native)
-			sb.WriteString("\nfunction main(): i32 {\n    var asm: string = \"\";\n")
+			sb.WriteString("\nfunction main(): i32 {\n    let asm: string = \"\";\n")
 			for _, ln := range strings.Split(string(asmText), "\n") {
 				sb.WriteString("    asm = asm + \"" + fernEscapeAsmLine(ln) + "\\n\";\n")
 			}
-			sb.WriteString("    var p: Arm64GasProg = arm64_gas_program(asm);\n")
+			sb.WriteString("    let p: Arm64GasProg = arm64_gas_program(asm);\n")
 			// Loop-write, not `.join` — see asmToMachoDriver: join forces the
 			// driver onto the AST-fallback wasm backend, which miscompiles the
 			// `p = arm64_gas_link(p, …)` rebind and crashes the signature hash.
-			sb.WriteString("    if (p.unknown.len() > 0) { write(\"UNKNOWN:\"); var ui: i32 = 0; while (ui < p.unknown.len()) { if (ui > 0) { write(\",\"); } write(p.unknown[ui]); ui = ui + 1; } return 0; }\n")
-			sb.WriteString("    var pa: Arm64Asm = p.asm;\n")
+			sb.WriteString("    if (p.unknown.len() > 0) { write(\"UNKNOWN:\"); let ui: i32 = 0; while (ui < p.unknown.len()) { if (ui > 0) { write(\",\"); } write(p.unknown[ui]); ui = ui + 1; } return 0; }\n")
+			sb.WriteString("    let pa: Arm64Asm = p.asm;\n")
 			// Same unwind orchestration as fern.fern's arm64-darwin path.
-			sb.WriteString("    var ehlen: i32 = arm64_eh_frame_darwin_len(p);\n")
-			sb.WriteString("    var tv: i64 = macho_text_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
-			sb.WriteString("    var ev: i64 = macho_eh_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
-			sb.WriteString("    var dv: i64 = macho_data_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
-			sb.WriteString("    var eh: i32[] = arm64_eh_frame_darwin(p, tv, ev);\n")
+			sb.WriteString("    let ehlen: i32 = arm64_eh_frame_darwin_len(p);\n")
+			sb.WriteString("    let tv: i64 = macho_text_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
+			sb.WriteString("    let ev: i64 = macho_eh_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
+			sb.WriteString("    let dv: i64 = macho_data_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
+			sb.WriteString("    let eh: i32[] = arm64_eh_frame_darwin(p, tv, ev);\n")
 			sb.WriteString("    p = arm64_gas_link(p, tv, dv);\n")
-			sb.WriteString("    var pa2: Arm64Asm = p.asm;\n")
-			sb.WriteString("    var bin: i32[] = macho_executable(pa2.code, eh, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n")
+			sb.WriteString("    let pa2: Arm64Asm = p.asm;\n")
+			sb.WriteString("    let bin: i32[] = macho_executable(pa2.code, eh, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n")
 			sb.WriteString("    write(string_from_bytes_unchecked(to_u8(bin)));\n    return 0;\n}\n")
 
 			wat := runCapture(t, gcc, runner, wrun, []byte(sb.String()))
