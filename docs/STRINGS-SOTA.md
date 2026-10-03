@@ -954,6 +954,9 @@ records in a builder. Evidence is recorded in
 accumulation across reads. Evidence is recorded in
 [the join report](STRING-JOIN-BYTES-2026-10-03.md).
 
+`csplit` uses raw record buffers, byte BRE matching and raw output pieces. Evidence is recorded in
+[the csplit report](STRING-CSPLIT-BYTES-2026-10-03.md).
+
 `head` and `tail` use raw byte input, delimiter scans and output. Their
 shared hold retains input blocks with a 64-bit byte count and releases
 consumed blocks without repeatedly copying long records. Target checks and
