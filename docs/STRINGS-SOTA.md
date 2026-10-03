@@ -988,6 +988,11 @@ for records that span reads. GNU parity, allocation checks, size and native
 measurements are recorded in
 [the uniq report](STRING-UNIQ-BYTES-2026-10-03.md).
 
+Base64, base32 and basenc keep raw input and decoded output in byte buffers
+and release their lookup tables after successful runs. GNU error-prefix
+corrections, target checks, size and native measurements are recorded in
+[the base encoding report](STRING-BASE-BYTES-2026-10-03.md).
+
 `head` and `tail` use raw byte input, delimiter scans and output. Their
 shared hold retains input blocks with a 64-bit byte count and releases
 consumed blocks without repeatedly copying long records. Target checks and
