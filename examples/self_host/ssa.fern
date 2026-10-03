@@ -546,6 +546,19 @@ function inst_is_call(k: i32): boolean {
   return k >= 19 && k <= 27;
 }
 
+// calls_out reports an instruction that is a call wherever it is emitted. An
+// inlined rc primitive is not one, though its slow path may still call.
+pub function calls_out(f: SFunc): boolean {
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (inst_is_call(ins.kind_tag) && !rc_inlined(ins)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // rc_inlined names a call both register-path emitters render at the site
 // rather than calling: the two rc primitives whose whole body is a guard
 // chain over the count word. `__fern_rc_dec` is NOT one of them — it maps to
