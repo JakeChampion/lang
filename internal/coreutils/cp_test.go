@@ -1219,19 +1219,25 @@ func treePaths(t *testing.T, root string) []string {
 
 // `--debug` on a real copy: the exit status and the `-v` line it implies
 // are GNU's, and the report line is ours, naming the sparse detection the
-// copy used — none for a dense source, SEEK_HOLE for one with a hole.
+// copy used — SEEK_HOLE for a source the filesystem stored with a hole,
+// none otherwise. Whether the fixture's hole survives is the filesystem's
+// call (APFS on the macOS runner allocates it), so the expectation is read
+// off the seeded source rather than assumed.
 func TestCpDebug(t *testing.T) {
-	for _, c := range []struct {
-		src, want string
-	}{
-		{"dense", "copy offload: no, reflink: unsupported, sparse detection: no"},
-		{"sp", "copy offload: no, reflink: unsupported, sparse detection: SEEK_HOLE"},
-	} {
-		t.Run(c.src, func(t *testing.T) {
+	for _, src := range []string{"dense", "sp"} {
+		t.Run(src, func(t *testing.T) {
+			want := "copy offload: no, reflink: unsupported, sparse detection: no"
 			run := func(bin string) []string {
 				dir := t.TempDir()
 				cpSparse(t, dir)
-				return strings.Split(strings.TrimSuffix(runCpIn(t, bin, dir, "--debug", c.src, "out"), "\n"), "\n")
+				var st syscall.Stat_t
+				if err := syscall.Stat(filepath.Join(dir, src), &st); err != nil {
+					t.Fatal(err)
+				}
+				if st.Blocks*512 < st.Size {
+					want = "copy offload: no, reflink: unsupported, sparse detection: SEEK_HOLE"
+				}
+				return strings.Split(strings.TrimSuffix(runCpIn(t, bin, dir, "--debug", src, "out"), "\n"), "\n")
 			}
 			gnu := run(referenceBin(t, "cp"))
 			ours := run(fernBin(t, "cp"))
@@ -1241,8 +1247,8 @@ func TestCpDebug(t *testing.T) {
 			if ours[0] != gnu[0] || ours[1] != gnu[1] {
 				t.Errorf("--debug differs from GNU before the report line\n gnu: %q\nfern: %q", gnu[:2], ours[:2])
 			}
-			if ours[2] != c.want {
-				t.Errorf("--debug's report is %q, want %q", ours[2], c.want)
+			if ours[2] != want {
+				t.Errorf("--debug's report is %q, want %q", ours[2], want)
 			}
 		})
 	}
