@@ -2002,6 +2002,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-some-typed-payload", "function h(): Option[i32] { let x: i32 = 4; let v: f32 = Some(x)?; return Some(1); }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
 		// Cell.set keeps its argument, so a str view is not lent (#10702).
 		{"cell-set-str-view", "function main(): i32 { let b: string = \"abcdefgh\"; let u: str = slice_unchecked(b, 0, 8); let c: Cell[string] = cell_new(b); c.set(u); return c.get().len(); }\n", []string{"E038"}},
+		// A return type naming no declared type takes no value (#10842).
+		{"unknown-return-type-mismatch", "function g(): Undef { return 1; }\nfunction main(): i32 { return 0; }\n", []string{"E002", "E064"}},
+		// An enum variant's name is no type (#10843).
+		{"variant-name-as-field-type", "enum X { P, Q }\nstruct H { f: P }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
+		{"variant-name-as-param-type", "enum X { P, Q }\nfunction g(p: P): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
 		{"i32-min-literal-local-ok", "function main(): i32 { let k = -2147483648; return k + 2147483647 + 1; }\n", nil},
 		{"ctor-builtin-settles-ok", "function takes(o: Option[i64]): i32 { return 0; }\nfunction main(): i32 { return takes(Some(40)) + takes(Option.Some(1)); }\n", nil},
 		{"enum-non-reserved-ok", "enum Color { Red, Green }\nfunction main(): i32 { return 0; }\n", nil},

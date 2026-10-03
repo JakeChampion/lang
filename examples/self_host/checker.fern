@@ -18350,6 +18350,18 @@ function e064_unknown_bare(type_name: string, tn: TypeNames): boolean {
   return is_unknown(type_from_spelling(type_name, tn));
 }
 
+// declared_struct_names is the struct names a type annotation may spell: every
+// struct but an enum variant's, unless a struct of its own shares the name.
+function declared_struct_names(structs: parser.StructDecl[]): string[] {
+  let out: string[] = [];
+  for sd in structs {
+    if (sd.enum_owner.len() == 0) {
+      out = out.append(sd.name);
+    }
+  }
+  return out;
+}
+
 // plain_ident reports whether `name` is one identifier: letters, digits and
 // underscores only, so no array suffix, generic argument, dot or arrow.
 function plain_ident(name: string): boolean {
@@ -21347,7 +21359,15 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
       // checker, which treats void specially on both fronts.
       body_diags = util.append_diags(body_diags, void_ret_diags(dbody, fsc, unions));
     } else if (mod.funcs[i].ret_type.len() > 0) {
-      body_diags = util.append_diags(body_diags, ret_diags(dbody, fsc, fsc.ret_type, unions));
+      // A return type naming no declared type (the E064 case) takes no value,
+      // so each typed `return` is E002 beside the E064, as an annotated
+      // binding's init is E003 (#10842).
+      let rty: typeinfo.Type = fsc.ret_type;
+      let rname: string = mod.funcs[i].ret_type;
+      if (is_unknown(rty) && util.index_of_str(fsc.tparams, rname) < 0 && e064_unknown_bare(rname, fsc.type_names())) {
+        rty = typeinfo.TypeStruct { name: rname, args: [] };
+      }
+      body_diags = util.append_diags(body_diags, ret_diags(dbody, fsc, rty, unions));
       // E052: a non-void function whose body can fall off the end
       // without returning, reported at the function declaration.
       //
@@ -21489,6 +21509,8 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   for resource in mod.resources {
     e064_extra = e064_extra.append(resource.name);
   }
+  // A variant is materialised as a struct, but its name is no type (#10843).
+  let e064_tn: TypeNames = with_spellings(type_names(declared_struct_names(mod.structs), union_names, rnames), mod);
   for efn in mod.funcs {
     // Skip generic functions: unbounded generics (`id[T]`) record their
     // parameters in all_type_params rather than type_params, so both must
@@ -21497,7 +21519,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
     // associated function whose `impl[T] Box[T]` binds them the same way.
     if (in_focus(focus, efn) && efn.all_type_params.len() == 0 && func_scope_tparams(efn).len() == 0 && efn.receiver_name.len() == 0) {
       for param in efn.params {
-        let pu: string = e064_unknown_name(param.type_name, tn, e064_extra);
+        let pu: string = e064_unknown_name(param.type_name, e064_tn, e064_extra);
         if (pu.len() > 0) {
           body_diags = body_diags.append(dg_at("E064", "unknown type \"" + pu + "\"" + unknown_type_hint(pu), efn.line, efn.col));
         }
@@ -21506,14 +21528,14 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
         // so a generic's `Cell[T]` is never flagged).
         body_diags = util.append_diags(body_diags, e057_annot_diags(param.type_name, efn.line, efn.col));
       }
-      let ru: string = e064_unknown_name(efn.ret_type, tn, e064_extra);
+      let ru: string = e064_unknown_name(efn.ret_type, e064_tn, e064_extra);
       if (ru.len() > 0) {
         body_diags = body_diags.append(dg_at("E064", "unknown type \"" + ru + "\"" + unknown_type_hint(ru), efn.line, efn.col));
       }
       body_diags = util.append_diags(body_diags, e057_annot_diags(efn.ret_type, efn.line, efn.col));
       // Body `let x: T` annotations (same non-generic scope).
       let efn_annots: Annot[] = collect_annots(efn.body);
-      body_diags = util.append_diags(body_diags, e064_annot_diags(efn_annots, tn, e064_extra));
+      body_diags = util.append_diags(body_diags, e064_annot_diags(efn_annots, e064_tn, e064_extra));
       body_diags = util.append_diags(body_diags, e057_var_annot_diags(efn_annots));
     }
   }
@@ -21642,7 +21664,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   for esd in mod.structs {
     if (esd.type_params.len() == 0 && esd.enum_owner.len() == 0) {
       for field in esd.fields {
-        let fu: string = e064_unknown_name(field.type_name, tn, e064_extra);
+        let fu: string = e064_unknown_name(field.type_name, e064_tn, e064_extra);
         if (fu.len() > 0) {
           body_diags = body_diags.append(dg_at("E064", "unknown type \"" + fu + "\"" + unknown_type_hint(fu), esd.line, esd.col));
         }
