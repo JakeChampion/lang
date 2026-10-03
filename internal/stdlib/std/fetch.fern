@@ -523,6 +523,9 @@ function __asks_gzip(req: Request): boolean {
 // reset, following a redirect, decoding) stays above the seam, so a
 // scripted transport exercises exactly what a real one would.
 //
+// `connect` races `addrs` as `dns.connect_race` does: a bound that has
+// already passed is `TimedOut` before any attempt, every address refusing
+// is the last refusal, and none connected within the bound is `TimedOut`.
 // `read` answers within `wait_ms`: a chunk, an empty chunk at the end of
 // the stream, or `None` when the wait passed with nothing. `write` answers
 // the bytes taken, or a negated errno.
