@@ -3243,11 +3243,33 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// when `to` is under `from`. The `IoError` names `to`, the operand
 	// the failure is about.
 	//
-	// There is no no-replace or exchange flag. `renameat2` is Linux's
-	// alone — Darwin spells the pair `renameatx_np` and WASI has
-	// neither — and a flag one target honours and two refuse belongs to
-	// the capability system, not to an argument.
+	// The no-replace and exchange forms are the two builtins below,
+	// not a flag here: WASI has neither, and E066 refuses them there
+	// (capability `fsrename`) while this one stays on `fs`.
 	c.info.FuncSigs["rename"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// rename_noreplace(from, to): Result[void, IoError] — `rename`
+	// that refuses an existing `to` with EEXIST, in the same kernel
+	// call rather than a stat before it: Linux's renameat2 with
+	// RENAME_NOREPLACE, Darwin's renameatx_np with RENAME_EXCL.
+	c.info.FuncSigs["rename_noreplace"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// rename_exchange(a, b): Result[void, IoError] — swap the two
+	// names atomically; both must exist. Linux's renameat2 with
+	// RENAME_EXCHANGE, Darwin's renameatx_np with RENAME_SWAP. A
+	// filesystem without the operation answers EINVAL (Linux) or
+	// ENOTSUP (Darwin), and that is the Err. The IoError names `b`.
+	c.info.FuncSigs["rename_exchange"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
 			ast.VoidType{},

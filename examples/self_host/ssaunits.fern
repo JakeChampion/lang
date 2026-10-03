@@ -1664,7 +1664,7 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
     // read through it still chain to the record, which has to die at the
     // read. option_layout already admits a record (it is not an enum), so
     // the record_get test states that rather than widening the gate.
-    if (payloads[i] && (defs[i].kind_tag == ssasem.record_get() || option_layout(f, f.values[defs[i].args[0]]))) {
+    if (payloads[i] && (defs[i].kind_tag == ssasem.record_get() || defs[i].kind_tag == ssasem.tuple_get() || option_layout(f, f.values[defs[i].args[0]]))) {
       reflow = true;
     }
     if (takes[i] >= 0 || held[i] || payloads[i]) {
@@ -1873,14 +1873,15 @@ function other_payload_get(ins: ssa.SInst, root: i32, slot: i32): boolean {
 }
 
 // The box whose slot the read at (`bi`, `pos`) may MOVE out of rather than
-// borrow, or -1: an enum's payload named by a variant read, or a record's
-// array or record field. Same shape as `projection_root` above, over the one
-// slot the read names: the box is a unit of this frame's own, no later block
-// names it, and after the read it is reached only through reads of its OTHER
-// slots (`needed_past`).
+// borrow, or -1: an enum's payload named by a variant read, a record's array
+// or record field, or a tuple's array or record element. Same shape as
+// `projection_root` above, over the one slot the read names: the box is a
+// unit of this frame's own, no later block names it, and after the read it
+// is reached only through reads of its OTHER slots (`needed_past`).
 //
-// A tuple take next door demands more of its source — `takeable_root`, a box
-// this frame ALLOCATED — because it nulls without asking. Here the physical
+// The untested tuple take next door demands more of its source —
+// `takeable_root`, a box this frame ALLOCATED — because it nulls without
+// asking, and keeps the tuples that qualify for it. Here the physical
 // lowering pays for a weaker source with a runtime uniqueness test on the box
 // (`ssarc.steal`): a box somebody else also holds keeps its payload and the
 // read retains, exactly as a borrow did. So what this predicate has to prove
@@ -1893,7 +1894,8 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
   let none: i32 = 0 - 1;
   let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
   let field: boolean = ins.kind_tag == ssasem.record_get();
-  if (ins.kind_tag != ssasem.variant_get() && !field || ins.args.len() != 1) {
+  let element: boolean = ins.kind_tag == ssasem.tuple_get();
+  if (ins.kind_tag != ssasem.variant_get() && !field && !element || ins.args.len() != 1) {
     return none;
   }
   // This runs BEFORE the graph is verified, so a malformed instruction has
@@ -1905,7 +1907,12 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
   if (root < 0 || root >= f.graph.nvals || root >= owned.len() || root >= defs.len()) {
     return none;
   }
-  if (!slot_takeable(f, defs, f.values[ins.result], root, field)) {
+  // A tuple this frame built is `tuple_take_field`'s, which nulls without
+  // asking; this tested take is for one it was handed.
+  if (element && takeable_root(defs[root].kind_tag)) {
+    return none;
+  }
+  if (!slot_takeable(f, defs, f.values[ins.result], root, field, element)) {
     return none;
   }
   if (!owned[root] || projection(defs[root].kind_tag) && !taken_read(defs[root].kind_tag)) {
@@ -1921,12 +1928,16 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
 }
 
 // Whether the box `root` can give up the slot the read `got` names: a
-// buffer or record field of a record, or a reference payload of a union.
-// A view, or the builtin Option layout, needs a box nobody else sees.
-function slot_takeable(f: ssasem.Func, defs: ssa.SInst[], got: typeinfo.Type, root: i32, field: boolean): boolean {
+// buffer or record field of a record, a buffer or record element of a tuple,
+// or a reference payload of a union. A view, or the builtin Option layout,
+// needs a box nobody else sees.
+function slot_takeable(f: ssasem.Func, defs: ssa.SInst[], got: typeinfo.Type, root: i32, field: boolean, element: boolean): boolean {
   let box: typeinfo.Type = f.values[root];
   if (field) {
     return field_takeable(got) && is_record(box) && !semtypes.is_env(box);
+  }
+  if (element) {
+    return field_takeable(got) && is_tuple(box);
   }
   if (!ssasem.reference(got) || !is_union(box)) {
     return false;
@@ -2016,13 +2027,17 @@ function needed_past(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: 
   if (!ssalive.live_out_has(a.flow, bi, root)) {
     return false;
   }
-  return named_after(f, a.flow, bi, root) || reached_past_take(f, a, defs, bi, take, root);
+  return named_after(f, a.flow, bi, root, take) || reached_past_take(f, a, defs, bi, take, root);
 }
 
 // A block after bi reads v. The walk stops at the block defining v — a loop's
 // header, for a phi — since past that definition v is a new value, and only a
-// phi operand there can still read the old one.
-function named_after(f: ssasem.Func, fl: ssalive.Flow, bi: i32, v: i32): boolean {
+// phi operand there can still read the old one. A tuple take lets a later read
+// of another of v's elements through, as `reached_past_take` does: the scalar
+// a tuple carries beside what was taken keeps it live, not the slot taken. A
+// read of the taken slot itself still counts, so a take a loop would run again
+// on the same tuple is refused.
+function named_after(f: ssasem.Func, fl: ssalive.Flow, bi: i32, v: i32, take: ssa.SInst): boolean {
   let seen: boolean[] = bits(f.graph.blocks.len());
   let work: i32[] = [];
   for id in successors(f.graph.blocks[bi]) {
@@ -2043,7 +2058,7 @@ function named_after(f: ssasem.Func, fl: ssalive.Flow, bi: i32, v: i32): boolean
       }
       continue;
     }
-    if (block_reads(blk, v)) {
+    if (block_reads(blk, v, take)) {
       return true;
     }
     for id in successors(blk) {
@@ -2071,9 +2086,10 @@ function phi_reads(blk: ssa.SBlock, v: i32): boolean {
   return false;
 }
 
-function block_reads(blk: ssa.SBlock, v: i32): boolean {
+function block_reads(blk: ssa.SBlock, v: i32, take: ssa.SInst): boolean {
+  let element: boolean = take.kind_tag == ssasem.tuple_get();
   for ins in blk.insts {
-    if (ssa.reads_value(ins, v)) {
+    if (ssa.reads_value(ins, v) && !(element && other_slot_get(ins, take))) {
       return true;
     }
   }
@@ -2102,6 +2118,9 @@ function other_slot_get(later: ssa.SInst, take: ssa.SInst): boolean {
   if (take.kind_tag == ssasem.record_get()) {
     return other_field_get(later, take.args[0], take.imm);
   }
+  if (take.kind_tag == ssasem.tuple_get()) {
+    return other_tuple_get(later, take.args[0], take.imm);
+  }
   return other_payload_get(later, take.args[0], take.imm);
 }
 
@@ -2118,7 +2137,7 @@ function field_takeable(t: typeinfo.Type): boolean {
 // A projection whose read may itself be a take, and so a unit of the frame's
 // own that a nested read can take from in turn.
 function taken_read(kind: i32): boolean {
-  return kind == ssasem.record_get() || kind == ssasem.variant_get();
+  return kind == ssasem.record_get() || kind == ssasem.variant_get() || kind == ssasem.tuple_get();
 }
 
 // A box nobody but this frame's tag tests and payload reads ever sees: built
@@ -2175,6 +2194,13 @@ pub function shell_root(f: ssasem.Func, p: Plan, ins: ssa.SInst): i32 {
     return 0 - 1;
   }
   return ins.args[0];
+}
+
+function is_tuple(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeTuple(_) = t {
+    return true;
+  }
+  return false;
 }
 
 function is_union(t: typeinfo.Type): boolean {

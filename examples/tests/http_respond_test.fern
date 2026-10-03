@@ -3,6 +3,8 @@ import "std/http";
 import "std/json";
 import "std/mock_platform";
 import "std/error";
+import "std/fetch";
+import "std/net";
 
 // examples/tests/http_respond_test.fern — a handler that fails with `?`
 // (#9854): its helpers answer `Result[HttpResponse, http.HttpError]`, and
@@ -220,6 +222,37 @@ function test_respond_error_with_keeps_the_state(): test.TestOutcome {
   return test.assert_eq(m.call_count(), 1);
 }
 
+// A handler that fetches upstream, standing in for `plat.http` with the
+// failure it is handed.
+function proxied(failure: fetch.FetchError): Result[HttpResponse, fetch.FetchError] {
+  let upstream: Result[string, fetch.FetchError] = Err(failure);
+  let body: string = upstream?;
+  return Ok(http.ok(body));
+}
+
+function test_fetch_timeout_answers_504(): test.TestOutcome {
+  return test.assert_status(http.respond(proxied(fetch.Timeout(fetch.Inactivity))), 504);
+}
+
+function test_fetch_failure_answers_502_without_the_message(): test.TestOutcome {
+  let resp: HttpResponse = http.respond(proxied(fetch.Connect(net.ConnectionRefused)));
+  match (test.assert_status(resp, 502)) {
+    Fail(msg) => {
+      return test.fail(msg);
+    },
+    Pass => {}
+  }
+  return test.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Bad Gateway\",\"status\":502}");
+}
+
+function test_fetch_bad_request_answers_500(): test.TestOutcome {
+  return test.assert_status(http.respond(proxied(fetch.InvalidRequest("method"))), 500);
+}
+
+function test_fetch_bad_url_answers_502(): test.TestOutcome {
+  return test.assert_status(http.respond(proxied(fetch.InvalidUrl("no scheme"))), 502);
+}
+
 function main(): i32 {
   let t: test.TestRunner = test.test_new("HTTP respond");
   t = t.it("an Ok response passes through", test_ok_passes_through);
@@ -232,5 +265,9 @@ function main(): i32 {
   t = t.it("respond_with keeps the state beside the answer", test_respond_with_keeps_the_state);
   t = t.it("a dyn error.Error answers 500 and logs the message", test_dyn_error_answers_500_and_logs_the_message);
   t = t.it("respond_error_with keeps the state beside the answer", test_respond_error_with_keeps_the_state);
+  t = t.it("a fetch timeout answers 504", test_fetch_timeout_answers_504);
+  t = t.it("a failed fetch answers 502 without the message", test_fetch_failure_answers_502_without_the_message);
+  t = t.it("a fetch the handler built wrong answers 500", test_fetch_bad_request_answers_500);
+  t = t.it("a fetch of a URL that does not parse answers 502", test_fetch_bad_url_answers_502);
   return t.finish();
 }

@@ -2543,13 +2543,22 @@ function (s: Scope) lookup_assoc_sig(tyname: string, field: string): FuncSig {
   return s.lookup_sig("");
 }
 
-function (s: Scope) lookup_sig(name: string): FuncSig {
+// sig_at is the index of `name`'s signature in the scope's table, or -1.
+function (s: Scope) sig_at(name: string): i32 {
   let i: i32 = s.sigs.head[sig_name_bucket(name)];
   while (i >= 0) {
     if (s.sigs.sigs[i].name == name) {
-      return s.sigs.sigs[i];
+      return i;
     }
     i = s.sigs.next[i];
+  }
+  return 0 - 1;
+}
+
+function (s: Scope) lookup_sig(name: string): FuncSig {
+  let i: i32 = s.sig_at(name);
+  if (i >= 0) {
+    return s.sigs.sigs[i];
   }
   // Sentinel: empty name + empty param list + unknown ret_type tells callers
   // the name isn't a function. The reason carries no name because no caller
@@ -3470,14 +3479,7 @@ function (s: Scope) has_method(name: string, recv_type: string): boolean {
 // costs a second chain walk on the HIT and saves the whole sentinel on the
 // miss.
 function (s: Scope) has_sig(name: string): boolean {
-  let i: i32 = s.sigs.head[sig_name_bucket(name)];
-  while (i >= 0) {
-    if (s.sigs.sigs[i].name == name) {
-      return true;
-    }
-    i = s.sigs.next[i];
-  }
-  return false;
+  return s.sig_at(name) >= 0;
 }
 
 // has_array_recv_method is array_recv_method's predicate form, same rules,
@@ -4355,10 +4357,14 @@ function settle_shared_literal_typevars(c: ast.ExprCall, nargs: ast.Expr[], s: S
   if let ast.ExprIdent(cid) = c.callee {
     name = cid.name;
   }
-  if (name.len() == 0 || !s.has_sig(name)) {
+  let at: i32 = 0 - 1;
+  if (name.len() > 0) {
+    at = s.sig_at(name);
+  }
+  if (at < 0) {
     return nargs;
   }
-  let sig: FuncSig = s.lookup_sig(name);
+  let sig: FuncSig = s.sigs.sigs[at];
   let out: ast.Expr[] = nargs;
   for tp in sig.typevars {
     let (wty, wok) = shared_literal_typevar_width(sig, c, tp, s);
@@ -4464,6 +4470,8 @@ function builtin_sigs(): string[] {
     "create_dir_all(string): Result[void, IoError]",
     "create_link(string, string): Result[void, IoError]",
     "create_symlink(string, string): Result[void, IoError]",
+    "rename_noreplace(string, string): Result[void, IoError]",
+    "rename_exchange(string, string): Result[void, IoError]",
     "env(string): Option[string]",
     "config_get(string): Option[string]",
     "environ(): string[]",
@@ -4655,10 +4663,14 @@ function undeclared_call_type(name: string, s: Scope, args: ast.Expr[]): typeinf
     }
   }
   let body: string = parser.mkclo_body(name);
-  if (body.len() == 0 || !s.has_sig(body)) {
+  let at: i32 = 0 - 1;
+  if (body.len() > 0) {
+    at = s.sig_at(body);
+  }
+  if (at < 0) {
     return t_unknown("undefined function: " + name);
   }
-  let sig: FuncSig = s.lookup_sig(body);
+  let sig: FuncSig = s.sigs.sigs[at];
   if (!closure_env_param(sig)) {
     return t_unknown("undefined function: " + name);
   }
@@ -5192,10 +5204,11 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   if (ctor_enum.len() > 0) {
     return builtin_ctor_type(ctor_enum, name, c, s);
   }
-  if (!s.has_sig(name)) {
+  let at: i32 = s.sig_at(name);
+  if (at < 0) {
     return undeclared_call_type(name, s, c.args);
   }
-  return sig_call_type(s.lookup_sig(name), name, c, s);
+  return sig_call_type(s.sigs.sigs[at], name, c, s);
 }
 
 // sig_call_type types a call of the function `sig` describes: its arity and
@@ -24958,8 +24971,9 @@ function unknown_slots(n: i32): typeinfo.Type[] {
 // gcall_sig: the signature a call names, or an empty one.
 function gcall_sig(c: ast.ExprCall, s: Scope): FuncSig {
   if let ast.ExprIdent(cid) = c.callee {
-    if (s.has_sig(cid.name)) {
-      return s.lookup_sig(cid.name);
+    let at: i32 = s.sig_at(cid.name);
+    if (at >= 0) {
+      return s.sigs.sigs[at];
     }
   }
   return FuncSig { receiver: "", name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), all_type_params: [], type_params: [], param_bound: [], type_bounds: [], ret_type_name: "", param_type_names: [], param_names: [], is_const: false, typevars: [] };

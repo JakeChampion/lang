@@ -2243,7 +2243,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
     "stat", "lstat", "statfs", "access", "read_file",
     "read_file_bytes", "read_file_bytes_u8", "remove_file", "create_dir_all", "create_dir",
-    "remove_dir", "create_link", "create_symlink", "rename", "chmod", "chmod_at",
+    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
     "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
@@ -2262,7 +2262,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "str_read_line", "strbuf", "buf", "reader",
     "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "temp_dir",
     "read_dir", "read_dir_all", "remove_file", "create_dir_all", "create_dir",
-    "remove_dir", "create_link", "create_symlink", "rename", "chmod", "chmod_at",
+    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups",
     "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs",
@@ -2777,11 +2777,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
       s = s.write("    incq __fern_alloc_count(%rip)\n");
     }
   }
-  // A request of at most 256 words whose class has a freed block is served
-  // with %rax and %rdi alone, so it needs no frame and saves nothing: below
-  // 257 words a class is its word count, and the rounded byte count indexes
-  // the freelist directly. A miss restores the rounded size and takes the
-  // full path.
+  // A request of at most 256 words is served with %rax and %rdi alone, so it
+  // needs no frame and saves nothing: below 257 words a class is its word
+  // count, so the rounded byte count indexes the freelist directly and is
+  // also the size to bump on a miss. Only the first allocation, before the
+  // arena is mapped, takes the full path.
   s = s.write("    addq $7, %rdi\n");
   s = s.write("    andq $-8, %rdi\n");
   s = s.write("    cmpq $2048, %rdi\n");
@@ -2797,6 +2797,14 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lalloc_fast_miss:\n");
   s = s.write("    leaq __fern_freelist(%rip), %rax\n");
   s = s.write("    subq %rax, %rdi\n");
+  s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
+  s = s.write("    testq %rax, %rax\n");
+  s = s.write("    jz .Lalloc_full\n");
+  s = s.write("    addq %rax, %rdi\n");
+  s = s.write("    cmpq __fern_heap_end(%rip), %rdi\n");
+  s = s.write("    ja .Lalloc_oom\n");
+  s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n");
+  s = s.write("    ret\n");
   s = s.write(".Lalloc_full:\n");
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
@@ -2928,18 +2936,25 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // base = [cap, rc=1, len=cap, e0..]; element i at data+(i+1)*8.
   s = s.write("__fern_arr_box:\n");
   s = hev_shim_site(s, "arrbox");
-  s = s.write("    pushq %rbp\n");
-  s = s.write("    movq %rsp, %rbp\n");
+  // __fern_alloc clobbers only %rax and %rdi, so the capacity rides the stack
+  // across it, and that one push aligns the call. A traced build keeps the
+  // frame: it names allocation sites by the frame chain.
+  if (hev_on()) {
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+  }
   s = s.write("    pushq %rdi\n");
   s = s.write("    addq $3, %rdi\n");
   s = s.write("    shlq $3, %rdi\n");
   s = s.write("    call __fern_alloc\n");
-  s = s.write("    movq -8(%rbp), %rdi\n");
+  s = s.write("    popq %rdi\n");
   s = s.write("    movq %rdi, (%rax)\n");
   s = s.write("    movq $1, 8(%rax)\n");
   s = s.write("    movq %rdi, 16(%rax)\n");
   s = s.write("    addq $16, %rax\n");
-  s = s.write("    leave\n");
+  if (hev_on()) {
+    s = s.write("    leave\n");
+  }
   s = s.write("    ret\n");
   // __fn___fern_struct_copy(%rdi = src box data, %rsi = nf) -> %rax = fresh box that is
   // a shallow word-for-word copy of src (shape@0 + nf field slots). Allocates via
@@ -9114,6 +9129,12 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_rename\n    addq $16, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("rename");
+  } else if (o.kind_tag == 356 || o.kind_tag == 357) {  // rename_noreplace, rename_exchange
+    let op: string = ir.kind_name(o.kind_tag);
+    s = s.write("    popq %rsi\n    popq %rdi\n");
+    s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_" + op + "\n    addq $16, %rsp\n    pushq %rax\n");
+    s = s.need("heap");
+    s = s.need(op);
   } else if (o.kind_tag == 263) {  // create_symlink
     s = s.write("    popq %rsi\n    popq %rdi\n");
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_create_symlink\n    addq $16, %rsp\n    pushq %rax\n");
@@ -11441,6 +11462,12 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("rename")) {
       fs_src = fs_src + " " + asmcore.rt_src_rename("x86_64");
+    }
+    if (s.has_need("rename_noreplace")) {
+      fs_src = fs_src + " " + asmcore.rt_src_rename_noreplace("x86_64");
+    }
+    if (s.has_need("rename_exchange")) {
+      fs_src = fs_src + " " + asmcore.rt_src_rename_exchange("x86_64");
     }
     if (s.has_need("chmod")) {
       fs_src = fs_src + " " + asmcore.rt_src_chmod("x86_64");

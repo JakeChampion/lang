@@ -13,10 +13,11 @@
 // rename's errno and not a stat's, while `mv a b/` with `b` a plain file
 // says `cannot stat 'b/'`, which is a stat's.
 //
-// `rename` here has no RENAME_NOREPLACE, so the EEXIST is reconstructed
-// from an `lstat` of the destination — see `dest_present`, whose one
-// subtlety is that the kernel answers EEXIST for a trailing slash on an
-// existing NON-directory, where the lstat answers ENOTDIR.
+// The first rename is `rename_noreplace` too, but the destination is
+// `lstat`ed before it — see `dest_present`, whose one subtlety is that the
+// kernel answers EEXIST for a trailing slash on an existing NON-directory,
+// where the lstat answers ENOTDIR — because a directory destination has
+// to be descended into before anything is renamed.
 //
 // A CROSS-DEVICE move is a rename that cannot happen: `rename` answers
 // EXDEV and GNU falls back to a recursive copy followed by removing the
@@ -378,12 +379,24 @@ function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWrit
   // and one that does not is this errno and nothing more.
   let rename_err: string = "File exists";
   if (!present) {
-    match (rename(m.raw_src, m.raw_dest)) {
+    // No-replace, so a destination created since `dest_present` looked
+    // is EEXIST and the replace path below, not clobbered.
+    match (rename_noreplace(m.raw_src, m.raw_dest)) {
       Ok(_) => {
         return verbose(cfg, m, "", w);
       },
       Err(e) => {
         rename_err = gnu.io_error_text(e);
+      }
+    }
+    if (lacks_noreplace(rename_err)) {
+      match (rename(m.raw_src, m.raw_dest)) {
+        Ok(_) => {
+          return verbose(cfg, m, "", w);
+        },
+        Err(e) => {
+          rename_err = gnu.io_error_text(e);
+        }
       }
     }
     if (rename_err.len() == 0) {
@@ -425,6 +438,14 @@ function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWrit
     return skipped2;
   }
   return replace_dest(cfg, m, s, d, skipped2.out);
+}
+
+// Whether a no-replace rename failed for want of the flag rather than for
+// anything about the names: a filesystem without it answers EINVAL on
+// Linux and ENOTSUP on Darwin, and a kernel without renameat2 ENOSYS.
+// gnulib's renameatu retries those as a plain rename, and so does mv.
+function lacks_noreplace(err: string): boolean {
+  return err == "Invalid argument" || err == "Operation not supported" || err == "Function not implemented";
 }
 
 // The destination exists and the rename is going to be made over it:
@@ -639,13 +660,8 @@ function verbose(cfg: Cfg, m: Move, backup: string, o: io_buffered.BufWriter): M
 }
 
 // `--exchange`: the two names swap what they point at, with neither
-// file copied and neither inode changed.
-//
-// GNU asks the kernel for it in one renameat2(RENAME_EXCHANGE). Fern
-// has no such primitive (#9784), so this is the three-rename sequence
-// that leaves the same tree behind and is NOT atomic: a crash between
-// the renames leaves the temporary name in the source's directory.
-// docs/COREUTILS.md carries the difference.
+// file copied and neither inode changed — one `rename_exchange`, as GNU's
+// one renameat2(RENAME_EXCHANGE).
 function exchange_pair(cfg: Cfg, m: Move, o: io_buffered.BufWriter): MoveOut {
   let w: io_buffered.BufWriter = o;
   let s: StatInfo = lstat_info(m.src);
@@ -657,27 +673,7 @@ function exchange_pair(cfg: Cfg, m: Move, o: io_buffered.BufWriter): MoveOut {
   if (same_file(cfg, m.src, m.dest, s, d)) {
     return MoveOut { status: 1, out: gnu.error_out(w, gnu.quotea(m.src) + " and " + gnu.quotea(m.dest) + " are the same file") };
   }
-  let tmp: string = scratch_name(m.src);
-  match (rename(m.src, tmp)) {
-    Ok(_) => {},
-    Err(e) => {
-      return MoveOut { status: 1, out: gnu.error_out(w, exchange_failure(m, gnu.io_error_text(e))) };
-    }
-  }
-  match (rename(dest, m.src)) {
-    Ok(_) => {},
-    Err(e) => {
-      let why: string = gnu.io_error_text(e);
-      // Put the source back before reporting, so a failure here leaves
-      // the tree exactly as it was found.
-      match (rename(tmp, m.src)) {
-        Ok(_) => {},
-        Err(_) => {}
-      }
-      return MoveOut { status: 1, out: gnu.error_out(w, exchange_failure(m, why)) };
-    }
-  }
-  match (rename(tmp, dest)) {
+  match (rename_exchange(m.src, dest)) {
     Ok(_) => {},
     Err(e) => {
       return MoveOut { status: 1, out: gnu.error_out(w, exchange_failure(m, gnu.io_error_text(e))) };
@@ -691,22 +687,6 @@ function exchange_pair(cfg: Cfg, m: Move, o: io_buffered.BufWriter): MoveOut {
 
 function exchange_failure(m: Move, why: string): string {
   return "cannot exchange " + gnu.quotea(m.src) + " and " + gnu.quotea(m.dest) + ": " + why;
-}
-
-// A name nothing holds, beside `path` so the rename onto it cannot
-// cross a filesystem. Only `--exchange` needs one, and only for the
-// moment between its first rename and its last.
-function scratch_name(path: string): string {
-  let dir: string = gnu.dir_name(path);
-  let i: i32 = 0;
-  while (true) {
-    let name: string = gnu.join_path(dir, ".mv_exchange." + i.to_string());
-    if (!lstat_info(name).ok) {
-      return name;
-    }
-    i = i + 1;
-  }
-  return path;
 }
 
 // How an occupied destination ends the operand before anything is

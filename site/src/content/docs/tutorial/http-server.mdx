@@ -236,6 +236,13 @@ one starting from `init`'s value again, not from where the dead one left
 off. Anything that must be shared across workers or outlive a crash
 belongs in a store the handler reaches through `plat`, not in the state.
 
+A worker is also the unit of concurrency. Each worker runs one handler at
+a time to completion, so a handler that blocks, sleeping or waiting on a
+slow upstream, holds every other connection on that worker until it
+returns. Add workers rather than connections to absorb slow handlers;
+multiplexing many waiting handlers on one worker is planned work
+([#9857](https://github.com/JakeChampion/lang/issues/9857)).
+
 A handler compiled for `wasm32-wasi-http` cannot take a state at all,
 because that world builds a fresh instance per request. An `init`
 returning nothing is still useful — it runs before the first request,

@@ -39,11 +39,8 @@ func TestArm64DarwinStringConcatCopySearch(t *testing.T) {
 }
 
 func TestStringTransformInvolutionDoesNotLeak(t *testing.T) {
-	gcc, runner, ok := e2eharness.LookupX86_64Tooling()
-	if !ok {
-		t.Skip("requires x86-64 tooling")
-	}
-	n, sites, err := traceOneFixture(t, gcc, runner, filepath.Join(conformanceCases, "prop_string_involution"))
+	_, runner := x86_64Tooling(t)
+	n, sites, err := traceOneFixture(t, runner, filepath.Join(conformanceCases, "prop_string_involution"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,11 +50,8 @@ func TestStringTransformInvolutionDoesNotLeak(t *testing.T) {
 }
 
 func TestStringBytesRoundtripDoesNotLeak(t *testing.T) {
-	gcc, runner, ok := e2eharness.LookupX86_64Tooling()
-	if !ok {
-		t.Skip("requires x86-64 tooling")
-	}
-	n, sites, err := traceOneFixture(t, gcc, runner, filepath.Join(conformanceCases, "alloc_flat_bytes_roundtrip"))
+	_, runner := x86_64Tooling(t)
+	n, sites, err := traceOneFixture(t, runner, filepath.Join(conformanceCases, "alloc_flat_bytes_roundtrip"))
 	if err != nil {
 		t.Fatal(err)
 	}

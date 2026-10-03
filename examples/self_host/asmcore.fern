@@ -1030,6 +1030,9 @@ pub function sysno(t: string, name: string): string {
     if (name == "renameat") {
       return "264";
     }
+    if (name == "renameat2") {
+      return "316";
+    }
     if (name == "fchmodat") {
       return "268";
     }
@@ -1260,6 +1263,11 @@ pub function sysno(t: string, name: string): string {
     }
     if (name == "renameat") {
       return "465";
+    }
+    // renameatx_np(2), under renameat2's spelling so the tables pair up: the
+    // same five arguments, with Darwin's own flag values (rename_flag).
+    if (name == "renameat2") {
+      return "488";
     }
     if (name == "geteuid") {
       return "25";
@@ -1526,6 +1534,9 @@ pub function sysno(t: string, name: string): string {
   }
   if (name == "renameat") {
     return "38";
+  }
+  if (name == "renameat2") {
+    return "276";
   }
   // No Darwin row: XNU has no utimensat syscall at all — libc builds it out
   // of setattrlistat(2), which is what the native arm64 backend issues
@@ -3666,6 +3677,33 @@ pub function rt_src_create_symlink(t: string): string {
 // for rt_src_create_link's reason (#7351).
 pub function rt_src_rename(t: string): string {
   return "function __fern_rename(old: string, newp: string): Result[void, IoError] { let olen: i32 = old.len(); let oldz: usize = __raw_alloc(olen + 1); let j: i32 = 0; while (j < olen) { __raw_store8(oldz, j, old[j] as i32); j = j + 1; } __raw_store8(oldz, olen, 0); let plen: i32 = newp.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, newp[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = __syscall4(" + sysno(t, "renameat") + ", " + at_fdcwd(t) + ", oldz as i64, " + at_fdcwd(t) + ", pathz as i64) as i32; let oldz_own: string = __raw_string(oldz, olen + 1); let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
+}
+
+// rt_src_rename_noreplace and rt_src_rename_exchange back the conditioned
+// renames → Result[void, IoError]: rt_src_rename's body with renameat2 and a
+// flags word, so the kernel holds the condition in the same call.
+pub function rt_src_rename_noreplace(t: string): string {
+  return rt_src_rename_flagged(t, "__fern_rename_noreplace", rename_flag(t, "noreplace"));
+}
+
+pub function rt_src_rename_exchange(t: string): string {
+  return rt_src_rename_flagged(t, "__fern_rename_exchange", rename_flag(t, "exchange"));
+}
+
+// rename_flag is RENAME_NOREPLACE / RENAME_EXCHANGE on Linux and
+// RENAME_EXCL / RENAME_SWAP on Darwin.
+function rename_flag(t: string, which: string): string {
+  if (which == "exchange") {
+    return "2";
+  }
+  if (t == "arm64-darwin") {
+    return "4";
+  }
+  return "1";
+}
+
+function rt_src_rename_flagged(t: string, fname: string, flags: string): string {
+  return "function " + fname + "(old: string, newp: string): Result[void, IoError] { let olen: i32 = old.len(); let oldz: usize = __raw_alloc(olen + 1); let j: i32 = 0; while (j < olen) { __raw_store8(oldz, j, old[j] as i32); j = j + 1; } __raw_store8(oldz, olen, 0); let plen: i32 = newp.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, newp[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = __syscall5(" + sysno(t, "renameat2") + ", " + at_fdcwd(t) + ", oldz as i64, " + at_fdcwd(t) + ", pathz as i64, " + flags + ") as i32; let oldz_own: string = __raw_string(oldz, olen + 1); let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
 }
 
 // rt_src_read_link backs `read_link(path)` (#8883, syscall-leaf) →
@@ -7080,6 +7118,12 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "rename") {
     return ty_option(ty_unknown());
   }
+  if (id.name == "rename_noreplace") {
+    return ty_option(ty_unknown());
+  }
+  if (id.name == "rename_exchange") {
+    return ty_option(ty_unknown());
+  }
   if (id.name == "chmod") {
     return ty_option(ty_unknown());
   }
@@ -9847,7 +9891,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_create_dir_all",
     "__fn___fern_create_dir", "__fn___fern_remove_dir",
     "__fn___fern_create_link", "__fn___fern_create_symlink",
-    "__fn___fern_rename",
+    "__fn___fern_rename", "__fn___fern_rename_noreplace", "__fn___fern_rename_exchange",
     "__fn___fern_read_link", "__fn___fern_umask",
     "__fn___fern_chmod", "__fn___fern_chmod_at", "__fn___fern_set_file_times", "__fn___fern_truncate",
     "__fn___fern_mknod", "__fn___fern_chown_at",

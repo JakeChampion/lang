@@ -220,6 +220,12 @@ var gatedBuiltins = map[string]string{
 	// "every filesystem" for a component to name — and a no-op would be
 	// a flush the program asked for and never got.
 	"sync": "fssync",
+	// A rename the kernel conditions in the same step: refuse an existing
+	// destination, or swap the two names. Neither WASI preview has either
+	// — `path_rename` and `rename-at` always replace — and emulating one
+	// would reopen the window the call exists to close.
+	"rename_noreplace": "fsrename",
+	"rename_exchange":  "fsrename",
 	// Who OWNS an entry. A host can have files, directories and
 	// permission bits and still have no users to attach them to, which
 	// is what both WASI previews are: preview 1's `filestat` has no uid
