@@ -245,7 +245,7 @@ the register of its phi mate or of an operand of its definition when that
 register is free or its holder dies at the definition, and a loop-carried
 operand takes its phi's register whenever no use of the phi is reachable
 from the operand's definition without passing the header
-(`ssa.phi_mates`, `ssa.mate_interferes`), so `sum = sum + i` computes into
+(`ssa.phi_mates`, `ssa.live_at_def`), so `sum = sum + i` computes into
 `sum`'s register and the back edge moves nothing. A phi whose operand from
 before it outlives it, as the loop header's phi does at each merge of an
 else-if chain inside the loop, is mated with the first operand that dies by
