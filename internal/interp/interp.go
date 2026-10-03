@@ -2877,9 +2877,10 @@ func builtinSliceUnchecked(_ *Interp, args []Value) (Value, error) {
 
 // `__method_string_bytes` / `__method_string_as_bytes` —
 // String → Array<Number> conversion, one Number per UTF-8
-// byte. Sidesteps the stdlib's `__memcpy(out as i32,
-// s.as_bytes() as i32, n)` path which can't be modelled
-// without a flat byte address space.
+// byte. Sidesteps the stdlib's body, which copies with
+// `__memcpy(out as usize, data, n)` from the address
+// `__str_bytes(s, 0 as usize)` answers: the value-tree heap
+// has no flat byte address space to give it.
 func builtinStringBytes(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("__method_string_bytes: expected 1 arg (s), got %d", len(args))
