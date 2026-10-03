@@ -24,10 +24,13 @@ import (
 // heapBumpIsI64Src binds the probe to i64 locals and shifts/masks in 64 bits.
 // It also checks the value still reads correctly small: `before` is 0 (nothing
 // allocated yet), `after` is a positive one-array high-water whose high 32 bits
-// are clear. Returns 7 when every leg holds.
+// are clear. Returns 7 when every leg holds. The array's first element is only
+// known at run time, so the array is built on the heap: a literal of constants
+// is a static the program never allocates.
 const heapBumpIsI64Src = `function main(): i32 {
     let before: i64 = __heap_bump_bytes();
-    let a: i32[] = [1, 2, 3];
+    let first: i32 = (before as i32) + 1;
+    let a: i32[] = [first, 2, 3];
     let after: i64 = __heap_bump_bytes();
     if (before != (0 as i64)) { return 1; }
     if (after <= before) { return 2; }
