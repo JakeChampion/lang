@@ -58,6 +58,15 @@ func TestCopyingBuiltinTableArgIsCounted(t *testing.T) {
 	}
 }
 
+func TestMemchrBytesArgIsCounted(t *testing.T) {
+	src := `function scan(p: u8[]): i32 { return __memchr_bytes(p, 128, 0); }
+function main(): i32 { return 0; }`
+	got := paramCountedFor(t, src, "scan")
+	if len(got) != 1 || !got[0] {
+		t.Fatalf("paramCountedRetain[scan] = %v, want [true]: scanning borrows p", got)
+	}
+}
+
 func TestCopyingBuiltinByteRangeArgIsCounted(t *testing.T) {
 	src := `function eat(p: u8[]): i32 {
     let b: usize = buf_new(1);

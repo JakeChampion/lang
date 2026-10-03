@@ -1886,6 +1886,21 @@ buffer as bytes or validate it as text. Extraction leaves the writer usable.
   writes, so one scalar may span multiple writes.
 - `(w).len()`, `(w).is_empty()`, `(w).reset()`.
 
+`ByteLineReader` reads arbitrary byte records without decoding them as text.
+
+- `byte_line_reader_new(reader, term, chunk_size)` borrows the reader. Close
+  the reader yourself after consuming the cursor.
+- `(lr).next_line_bytes(): (Option[u8[]], ByteLineReader)` returns the next
+  record, including its terminating byte when present. It preserves a final
+  unterminated record. Rebind the returned cursor after each call.
+- `(lr).next_chunk_bytes()` has the same return type. It first returns any
+  unread suffix of the buffered chunk, then subsequent chunks from the reader.
+- Each result owns its bytes and remains valid after later reads or closing
+  the reader. Records spanning chunks use a growing buffer.
+- `None` means EOF or a read failure; `(lr).error()` distinguishes them. Read
+  failures are sticky. A partial record accumulated before a failure is
+  returned once, with the error already available on the returned cursor.
+
 ### `std/time`
 
 Date/time module shaped after jiff / NodaTime, backing the
