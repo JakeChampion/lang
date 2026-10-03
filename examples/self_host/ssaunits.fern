@@ -1491,7 +1491,7 @@ function projection_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], d
   }
   let w: i32 = 0;
   while (w < f.graph.nvals) {
-    if (w != root && used_after(f, a, bi, pos, w) && reaches_past_field(a, defs, root, get.imm, w)) {
+    if (w != root && reaches_past_field(a, defs, root, get.imm, w) && used_after(f, a, bi, pos, w)) {
       return none;
     }
     w = w + 1;
