@@ -499,3 +499,25 @@ func jsonRaw(v any) json.RawMessage {
 	}
 	return b
 }
+
+// A successful response carries `result` even when it is null: JSON-RPC
+// requires one of `result` and `error`, and a strict client rejects a
+// response with neither.
+func TestHandleMessage_NullResultIsSent(t *testing.T) {
+	s := NewServer()
+	for _, req := range []string{
+		`{"jsonrpc":"2.0","id":1,"method":"shutdown"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///unopened.fern"},"position":{"line":0,"character":0}}}`,
+	} {
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(s.HandleMessage([]byte(req)), &m); err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := m["result"]; !ok || string(got) != "null" {
+			t.Errorf("%s: response %v has no null result", req, m)
+		}
+		if _, ok := m["error"]; ok {
+			t.Errorf("%s: response carries an error: %v", req, m)
+		}
+	}
+}
