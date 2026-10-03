@@ -1200,33 +1200,25 @@ func New() *Interp {
 		if !ok {
 			return nil, fmt.Errorf("__scan_set: expected a string, got %T", args[0])
 		}
-		fn, ok := args[1].(Number)
+		return scanSet("__scan_set", []byte(string(s)), args[1], args[2])
+	}}
+	i.Builtins["__scan_set_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("__scan_set_bytes: expected 3 args, got %d", len(args))
+		}
+		arr, ok := args[0].(Array)
 		if !ok {
-			return nil, fmt.Errorf("__scan_set: expected an integer start, got %T", args[1])
+			return nil, fmt.Errorf("__scan_set_bytes: expected an array, got %T", args[0])
 		}
-		set, ok := args[2].(Array)
-		if !ok {
-			return nil, fmt.Errorf("__scan_set: expected a u8[] set, got %T", args[2])
-		}
-		from := int(int64(fn))
-		if from < 0 {
-			from = 0
-		}
-		b := []byte(string(s))
-		for idx := from; idx < len(b); idx++ {
-			c := int(b[idx])
-			if c >= len(set.E) {
-				continue
-			}
-			e, ok := set.E[c].(Number)
+		b := make([]byte, len(arr.E))
+		for at, e := range arr.E {
+			n, ok := e.(Number)
 			if !ok {
-				return nil, fmt.Errorf("__scan_set: set element %d is %T, not a byte", c, set.E[c])
+				return nil, fmt.Errorf("__scan_set_bytes: element %d is %T, not u8", at, e)
 			}
-			if int64(e) != 0 {
-				return Number(idx), nil
-			}
+			b[at] = byte(n)
 		}
-		return Number(len(b)), nil
+		return scanSet("__scan_set_bytes", b, args[1], args[2])
 	}}
 	// __sum_bytes(s): the wrapped 32-bit sum of every byte of `s`. The oracle
 	// for the sixth fused kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3).
@@ -8480,4 +8472,32 @@ func asBool(v Value) bool {
 		return x != 0
 	}
 	return false
+}
+
+// scanSet is __scan_set's reference semantics over bytes: the index of the
+// first byte at or after `from` whose entry in `set` is nonzero, or len(b).
+func scanSet(name string, b []byte, fromArg, setArg Value) (Value, error) {
+	fn, ok := fromArg.(Number)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected an integer start, got %T", name, fromArg)
+	}
+	set, ok := setArg.(Array)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected a u8[] set, got %T", name, setArg)
+	}
+	from := max(int(int64(fn)), 0)
+	for idx := from; idx < len(b); idx++ {
+		c := int(b[idx])
+		if c >= len(set.E) {
+			continue
+		}
+		e, ok := set.E[c].(Number)
+		if !ok {
+			return nil, fmt.Errorf("%s: set element %d is %T, not a byte", name, c, set.E[c])
+		}
+		if int64(e) != 0 {
+			return Number(idx), nil
+		}
+	}
+	return Number(len(b)), nil
 }

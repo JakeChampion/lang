@@ -12,9 +12,20 @@ import (
 )
 
 func TestMemchrBytes(t *testing.T) {
+	runOnEveryNativeTarget(t, e2eharness.MemchrBytesSource(true))
+}
+
+func TestScanSetBytes(t *testing.T) {
+	runOnEveryNativeTarget(t, e2eharness.ScanSetBytesSource(true))
+}
+
+// runOnEveryNativeTarget compiles src with the native compiler for every
+// target this host can run, and the interpreter, and requires each to exit 0.
+func runOnEveryNativeTarget(t *testing.T, program string) {
+	t.Helper()
 	fern := buildLangBinForInterp(t)
 	src := filepath.Join(t.TempDir(), "scan.fern")
-	if err := os.WriteFile(src, []byte(e2eharness.MemchrBytesSource(true)), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for _, target := range []string{"interp", "arm64-darwin", "x86-64-linux", "arm64-linux", "x86-64-linux-ssa", "arm64-linux-ssa", "wasm32-wasi", "wasm32-preview2"} {
