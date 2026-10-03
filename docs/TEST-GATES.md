@@ -210,13 +210,13 @@ the Driver's reactor half (`e2eharness.SimReactorProbe`: the virtual clock
 advancing to a scripted readiness or the timeout, interest bits selecting
 it, an unwatch dropping it). The serve loops run on the reactor, so every
 serve, fetch and handler-census gate below exercises it.
-`TestHeldConnectionsHeapBoundX86_64` and `TestSelfHostHeldConnectionsHeapBoundX86_64`
-are the per-held-connection bound of #9853: a serve loop whose handler
+`TestSelfHostHeldConnectionsHeapBoundX86_64` is the per-held-connection
+bound of #9853: a serve loop whose handler
 answers `__heap_bump_bytes()` holds 64 idle connections, then 64 more, and
 the growth the second batch cost must be under 1 KiB per connection (the
 first batch carries the table's one-time growth, so the bound is on the
-second). The Go compiler's loop costs about 145 bytes per connection and
-the self-host's about 120. The twin compiles with the production driver:
+second). The self-host's loop costs about 120 bytes per connection. The
+test compiles with the production driver:
 the per-module driver's older lowering keeps an array of arrays it cannot
 prove fresh, so the connection table it rebuilds per accept leaks there
 by that lowering's design, and a gate on it would measure the lowering
@@ -226,13 +226,12 @@ driver for x86-64, arm64 and wasm under strict IR with complete semantic
 lowering required (it is what caught the self-host `tcp_recv` body
 adopting its buffer before the copy loop, #10486; the rest of that idiom
 in asmcore is `TestSelfHostRawOwnerAfterLastRead`'s, below);
-`TestSupervisedServeReusePortWorkers` and its self-host twin serve
+`TestSelfHostSupervisedServeReusePortWorkers` serves
 through two workers binding their own `SO_REUSEPORT` listeners and prove
 a replacement worker binds anew after a trap.
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
-by the `TestArm64Darwin` prefix). `TestServeOptionsX86_64` and
-`TestSelfHostServeOptions` serve through
+by the `TestArm64Darwin` prefix). `TestSelfHostServeOptions` serves through
 `tcp_serve_opts` with a backlog of 4 and `SO_REUSEPORT`, and prove the
 option reached the kernel by binding a second `SO_REUSEPORT` socket to the
 served port while the loop answers. A wasi:cli/run
@@ -299,57 +298,47 @@ and native Darwin run the same fixture; QEMU is permitted for correctness.
 (x86-64 and arm64 on both the flat and SSA backends, native Darwin, and real
 wasi:sockets), the bounded-serve exit criterion of #9853 on that compiler.
 
-`TestServeShutdownDrainsAndExitsClean`, `TestServeShutdownAbortsAtDrainDeadline`,
-`TestSupervisedServeForwardsShutdown` and `TestServeInheritsListenFds`
-(`internal/e2e`, native x86-64) pin the shutdown (#9854): after SIGTERM
+`TestSelfHostServeShutdownDrainsAndExitsClean`,
+`TestSelfHostServeShutdownAbortsAtDrainDeadline`,
+`TestSelfHostSupervisedServeForwardsShutdown` and
+`TestSelfHostServeInheritsListenFds` pin the shutdown (#9854): after SIGTERM
 a request in flight is answered with close, the readiness path answers
 503 within the grace, an idle keep-alive connection is closed and the
 process exits 0; a request that never completes is cut off at the drain
 deadline and the process exits 1; the supervisor forwards the signal to
 two workers and exits 0 once they drained, logging no death; and a
 listener handed in through `LISTEN_FDS` is served. The scenarios are
-`internal/e2eharness/serve_shutdown.go`'s, and their self-host twins
-(`TestSelfHostServeShutdownDrainsAndExitsClean`,
-`TestSelfHostServeShutdownAbortsAtDrainDeadline`,
-`TestSelfHostSupervisedServeForwardsShutdown`,
-`TestSelfHostServeInheritsListenFds`) drive the same servers compiled by
-the self-host compiler.
-`TestSupervisedServeWorkersServeSideBySide` pins two workers over one
-listener answering side by side and surviving one worker's death, and
-`TestSupervisedServeHandlerStallsItsWorker` (with its self-host twin) the
-converse on one worker: a request behind /slow waits for it, the pin
+`internal/e2eharness/serve_shutdown.go`'s.
+`TestSelfHostSupervisedServeWorkersServeSideBySide` pins two workers over
+one listener answering side by side and surviving one worker's death, and
+`TestSelfHostSupervisedServeHandlerStallsItsWorker` the converse on one
+worker: a request behind /slow waits for it, the pin
 #9857's multiplexing has to turn;
-`TestSupervisedServeOneWorkerPerCPU` counts the default worker set
-against the processing units, and `TestSupervisedServeShutsDownAfterBurst`
-requires every one of four workers to exit on SIGTERM after a burst of
+`TestSelfHostSupervisedServeOneWorkerPerCPU` counts the default worker set
+against the processing units, and
+`TestSelfHostSupervisedServeShutsDownAfterBurst` requires every one of four workers to exit on SIGTERM after a burst of
 connections over the shared listener.
-`TestServeResponseRateCutsStalledReaderX86_64` and
-`TestServeResponseRateKeepsSteadyReaderX86_64` (`internal/e2e`, with
-self-host twins) pin the minimum data rate on the write side: an 8 MiB
+`TestSelfHostServeResponseRateCutsStalledReader` and
+`TestSelfHostServeResponseRateKeepsSteadyReader` pin the minimum data rate on the write side: an 8 MiB
 response to a reader that stops reading is cut off after the grace, and
 one to a reader pacing itself above the rate goes out whole however long
 it takes, which needs the socket's send queue (`tcp_socket_ctl` op 6)
 rather than a writable event for the peer's progress.
 The remaining serve-loop scenarios live in
 `internal/e2eharness/serve_scenarios.go` as well, each a server program
-and a client-side check, so `TestServeWithThreadedStateX86_64`,
-`TestServeLargeResponseX86_64`, `TestServeRecvDeadlineX86_64`,
-`TestSupervisedServeWorkersServeSideBySide`,
-`TestSupervisedServeSurvivesHandlerTrap` and
-`TestSupervisedServeCrashLoopGivesUp` each have a `TestSelfHost` twin
-driving the same server compiled by the self-host compiler
-(`internal/e2eselfhost/self_host_serve_test.go`).
-`TestServeInitProvidedStateX86_64` and its twin
+and a client-side check, driven by the tests in
+`internal/e2eselfhost/self_host_serve_test.go`; `internal/e2e` keeps only
+the interpreter legs.
 `TestSelfHostServeInitProvidedState`, with `TestSelfHostServeHandleOnly`,
 pin the `main` both compilers synthesise for a handler program that
 writes none (`flatten.with_handler_main` in the self-host, the checker
 in native): it serves on `PORT` and threads `init`'s state.
-`TestServeResultHandlerX86_64`, `TestServeStatefulResultHandlerX86_64`
-and their self-host twins pin the handler that answers a Result: the
+`TestSelfHostServeResultHandler` and
+`TestSelfHostServeStatefulResultHandler` pin the handler that answers a Result: the
 compilers wrap it so `?` fails into an RFC 9457 problem and the state
 survives the failure; `TestResultHandlerIsAdapted` (`internal/checker`)
-pins the rename and the wrapper's shape. `TestServeShutdownHookX86_64`
-and `TestSelfHostServeShutdownHook` pin the `shutdown(reason, state)`
+pins the rename and the wrapper's shape. `TestSelfHostServeShutdownHook`
+pins the `shutdown(reason, state)`
 hook: after two requests and SIGTERM the hook reports "sigterm" and the
 count; `TestSynthesisedHandleMainWiresShutdown` and
 `TestSynthesisedHandleMainTakesInitOptions` (`internal/checker`) and
@@ -362,8 +351,8 @@ sees is deterministic. On wasm32-wasi, which has no processes, the
 synthesis serves single-process: `TestSynthesisedHandleMainFollowsTargetProcesses`
 (`internal/checker`), `TestHandlerKindsMatchWhatTheCompilerAccepts` and
 `TestSelfHostWasiCliHandlerProgramBuilds` pin that on both compilers.
-`TestServeStreamingBodyX86_64`, `TestServeStreamingBodyInterp` and
-`TestSelfHostServeStreamingBody` pin the produced bodies: a three-million-byte
+`TestServeStreamingBodyInterp` and `TestSelfHostServeStreamingBody` pin
+the produced bodies: a three-million-byte
 file streamed whole under its length on a keep-alive connection, a chunk
 producer under chunked transfer coding and close-delimited over HTTP/1.0,
 an empty chunk skipped, and a bare head for HEAD.
@@ -703,6 +692,7 @@ rather than the IR path.
 | `internal/e2e` fixtures (`TestFernFixtures`) | The interpreter gives each case its expected answer, the checker rejects each `expected.error` case and lowering each `expected.lowering-error` one | Any compiled target: the `TestFernFixturesSelfHost*` legs run the corpus through the self-host compiler. Anything about *how much* a program allocated |
 | `TestFernFixturesSelfHost{Wasm,X86_64,Arm64}` (`FERN_SELFHOST_FIXTURES=1`) | The self-host compiler gives each case the fixture's expected exit and output, on all three emitted targets. Both Linux legs produce the finished binary by themselves (emit + assemble + link in-process), so they are also the gates on `arm64_native.fern` and `x86_native.fern`. NOTE what that does NOT gate: an assembler that DROPS an instruction still emits a plausible binary, so a green leg is not evidence the assembler is complete — `rep stosq` was silently ignored at 63,637 sites and this leg stayed green on the programs that did not depend on zeroed memory. The gate for THAT is a decoded-instruction differential against the same program built via `-target x86-64-linux -emit asm` and linked by gcc | Values >= 126 on the wasm leg, which WASI cannot express — the x86-64 and arm64 legs check those. Each leg's `testdata/selfhost-<target>-known-divergences.txt` rows, which are listed rather than fixed |
 | `internal/e2eselfhost` | The self-host compiler is right on programs outside its own sources | Whole-program self-compilation; memory |
+| `TestSharedVariantNameEmitIsDeterministic`, `TestCrossModuleVariantOrdinalEmitIsDeterministic` (`internal/e2e`) | That a variant name two enums or two modules share resolves the same way on every compile: the self-host's assembly for each program is byte-identical across 32 compiler processes. An arm resolves against its scrutinee and a constructor within its own module, never by a program-wide scan whose order can vary; native's map-ordered scan answered 79 or 69 between compiles of identical source (#6944), and a single compile-and-run agrees with the oracle often enough to look green | Whether the resolution is RIGHT, which the answer tests beside them check. Order dependence in any other shape |
 | `internal/coreutils` (lane: `test-coreutils`, four shards) | That `coreutils/*.fern` matches GNU coreutils 9.x byte for byte — stdout, stderr, exit status or signal — over a corpus of invocations, with GNU as the ORACLE rather than golden files, so a case cannot record a wrong expectation. Its `TestSelfHostCoreutils*` leg then compiles every utility with the SELF-HOST compiler under `FERN_STRICT_IR=1` and runs the same corpus against those binaries, requiring them to agree with the native build: the only gate that compiles this tree both ways, and the one that found `Writer.close()` swallowing its error (#8569) and the getopt cursor's tuple refusing to lower (#8407) | `--help` / `--version` TEXT and `cksum --debug` for the CRC, which are ours by design (`docs/COREUTILS.md`): the harness gates the first two's exit status, stream and shape instead, and the corpus holds everything about the third but the one line only the CRC prints. Anything not in the corpus — a case is one invocation, so an option nobody wrote a case for is untested. Missing GNU coreutils is a FAILURE, not a skip, so a green run means the oracle really ran. Until #9645 it ran on LINUX ONLY: the `macos-15` lane now runs the same corpus there against a from-source 9.12, minus the `TestSelfHost*` leg, which is what the thirteen `target_os() == "darwin"` branches and the hundred utilities with no Darwin branch at all had no oracle for |
 | Formatter corpus properties (`internal/printer/corpus_test.go`, plus `TestSelfHostFmtCorpusParityX86_64`) | That `-fmt` does not rewrite the program. Three properties over all 425 `.fern` files under examples/ + internal/stdlib rather than a fixture list: the formatted output still TYPE-CHECKS (where the input did), it re-parses to the same AST modulo position (the structural one — the only property that sees data loss whose output still compiles, e.g. `Box[i64]` dropping to `Box[i32]`), and formatting is idempotent. The self-host leg adds byte-parity with native over the same corpus, against an allowlist that is exact in both directions. `TestSelfHostFmtWrittenFormViaInterp` states the structural + byte-parity + type-check properties for the SELF-HOST formatter over the fixture cases without a cross toolchain, by driving `fern.fern` through the native `-interp` — every other self-host `-fmt` gate is suffixed `X86_64` and skips on any other host, so the #6802 shapes were unreachable from a dev machine while being reproducible there in ~0.35 s | Comment PLACEMENT, which no property here pins — a comment moved onto the wrong declaration still type-checks, re-parses identically (they are a side table) and is stable. Only byte-parity with native catches that, and only while native is right |
 | Self-host IR verifiers (`TestSelfHostIRVerify{Structure,Stack,Fip,Rc}`, the compile-path gate, and `TestSelfHostIRVerifyProvidedCorpusClean`'s sweep) | The op stream the self-host backends are handed is WELL-FORMED: local indices inside the frame, balanced scopes, in-range branch depths, call arity (`irverify.fern`), and that every op finds its operands, every scope leaves the stack where it found it, and nothing is left dangling at the function's end (`irverifystack.fern`). Its distinguishing value is that it is not self-referential — it does not care whether the compiler reproduces itself, only whether what it emitted can be lowered at all. It runs on the compile path by default (`irverifygate.fern`), which is where the arity half gets a real signature index; `FERN_IR_VERIFY=0` opts out, which is what a bisect wants when the gate itself is the suspect | Whether the ops MEAN the program: a perfectly well-formed stream can compute the wrong answer. Operand KINDS and widths, which the IR does not carry. Any function that did not lower, which has no IR to verify. Any op outside the stack pass's arity table, which the compile-path gate skips without a word and `-verifyprovided`'s corpus sweep COUNTS — it holds coverage of the typed lowering's bodies at 100%, so a new op shows up there rather than as an unchecked function. The ownership half (`irverifyrc.fern`) checks two things: that a reuse site's uniqueness gate, allocation token and decline release all name ONE donor, and that no donor's box is claimed by two sites reachable from each other without a rebind between (sibling `if` arms are exclusive and are deliberately not reported). It says nothing about whether the counts around a site balance, which needs callee ownership signatures (#7786). |

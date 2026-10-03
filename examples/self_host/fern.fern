@@ -1345,6 +1345,8 @@ function is_vendorable(name: string): boolean {
 // when a module could not be read — the diagnostic is already printed.
 struct Bundle {
   entry: parser.Module,
+  entry_ident: string,
+  root: string,
   loaded: flatten.LoadedModule[],
   merged: parser.Module,
   pkgs: caps.Pkg[],
@@ -1446,7 +1448,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
           bad = rm.err_path;
         }
         eprint("fern: " + modloader.unresolved_import(ipath, importer, bad, rm.err));
-        return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
+        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
       }
       let mdir: string = rm.dir;
       let m: parser.Module = parser.parse_module(lexer.tokenize_from(rm.src, util.line_base(files.len()) + 1));
@@ -1466,9 +1468,10 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
   }
   if (q.unrooted.len() > 0) {
     eprint("fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file");
-    return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
   }
-  let merged: parser.Module = flatten.bundle(flatten.resolve_imports(entry_mod, dir_slash, root), loaded, target);
+  let entry_r: parser.Module = flatten.resolve_imports(entry_mod, dir_slash, root);
+  let merged: parser.Module = flatten.bundle(entry_r, loaded, target);
   // Fill omitted trailing args from default parameter values up front, so the
   // checker, SSA, and interpreter all see complete calls.
   merged = parser.fill_default_args_module(merged);
@@ -1476,7 +1479,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
   // settle against until the bundle exists; parse_module resolved the
   // same-module ones already, and the pass is idempotent.
   merged = parser.resolve_variant_fields_module(merged);
-  return Bundle { entry: entry_mod, loaded: loaded, merged: merged, pkgs: pkgs, files: files, ok: true };
+  return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, ok: true };
 }
 
 // bundle_visibility_diags reports cross-module visibility errors (#6714): a
@@ -1486,7 +1489,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
 // well as `-check` — native REFUSES TO BUILD such a program, and accepting it
 // here is the divergence. True means the program is refused.
 function bundle_visibility_diags(b: Bundle): boolean {
-  let vis_diags: util.Diag[] = visibility.export_diags(b.entry, b.loaded);
+  let vis_diags: util.Diag[] = visibility.export_diags(b.entry, b.entry_ident, b.loaded, b.root);
   let vi: i32 = 0;
   while (vi < vis_diags.len()) {
     let vd: util.Diag = vis_diags[vi];

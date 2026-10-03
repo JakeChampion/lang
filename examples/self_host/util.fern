@@ -1372,6 +1372,49 @@ pub function is_local(import_path: string): boolean {
 // module_path_join builds `<dir>/<name>.fern` (or `<name>.fern` if dir empty).
 // Named apart from mvs.join_path, which normalises `.`/`..` and appends no
 // extension — the two are not interchangeable.
+// clean_path cleans a slash-separated path lexically: empty and `.` segments
+// drop out and `x/..` cancels, so two spellings of one directory compare equal.
+// A `..` with nothing before it to cancel stays, and an empty answer is `.`.
+pub function clean_path(p: string): string {
+  let out: string = "";
+  let skip: i32 = 0;
+  let end: i32 = p.len();
+  let i: i32 = p.len() - 1;
+  while (i >= 0 - 1) {
+    if (i < 0 || p[i] == b'/') {
+      let seg: string = slice_unchecked(p, i + 1, end) + "";
+      if (seg == "..") {
+        skip = skip + 1;
+      } else if (seg.len() > 0 && seg != ".") {
+        if (skip > 0) {
+          skip = skip - 1;
+        } else if (out.len() == 0) {
+          out = seg;
+        } else {
+          out = seg + "/" + out;
+        }
+      }
+      end = i;
+    }
+    i = i - 1;
+  }
+  if (p.len() > 0 && p[0] == b'/') {
+    return "/" + out;
+  }
+  while (skip > 0) {
+    if (out.len() == 0) {
+      out = "..";
+    } else {
+      out = "../" + out;
+    }
+    skip = skip - 1;
+  }
+  if (out.len() == 0) {
+    return ".";
+  }
+  return out;
+}
+
 pub function module_path_join(dir: string, name: string): string {
   if (dir.len() == 0) {
     return name + ".fern";

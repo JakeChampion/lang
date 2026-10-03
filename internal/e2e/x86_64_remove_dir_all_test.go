@@ -1,37 +1,20 @@
-// x86-64 native `remove_dir_all` (recursive `rm -rf`) coverage.
+// x86-64 `remove_dir_all` (recursive `rm -rf`) coverage.
 //
-// Regression for issue #5372: std/test's TestRunner.finish()
-// calls remove_dir_all(...) to clean up its temp dirs, so any TAP
-// program that imports std/test references the builtin. The
-// native x86-64 CLI pipeline had no lowering for it — neither a
-// __fern_remove_dir_all runtime helper nor a call-target remap —
-// so the in-process assembler failed with `undefined label
-// "remove_dir_all"` and no examples/tests/*.fern would link
-// natively. The fix ports arm64-ssa's emitRemoveDirAllHelper to
-// the x86-64 backend (inlined openat/getdents64/unlinkat/close
-// syscalls, self-recursion per directory entry).
-//
-// These tests exercise the helper end-to-end: a nested tree is
-// fully removed (→ None), a missing path is a silent success
-// (→ None, matching os.RemoveAll), and a plain file is unlinked
-// via the ENOTDIR path (→ None). The interpreter is the oracle
-// for the same shapes in interp_script_test.go; here we assert
-// the native binary both links and produces the right filesystem
-// effect.
+// std/test's TestRunner.finish() calls remove_dir_all(...) to clean up its
+// temp dirs, so any TAP program that imports std/test references the builtin
+// (#5372). A nested tree is fully removed, a missing path is a silent success
+// (matching os.RemoveAll), and a plain file is unlinked via the ENOTDIR path.
+// The interpreter is the oracle for the same shapes in interp_script_test.go;
+// here the binary must link and produce the right filesystem effect.
 package e2e
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/monomorph"
-	"github.com/jakechampion/lang/internal/parser"
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // compileRunX86_64WithSetup builds `src`, runs `setup(dir)` to
@@ -41,43 +24,17 @@ import (
 // assertions about what the program deleted.
 func compileRunX86_64WithSetup(t *testing.T, src string, setup func(dir string)) (int, string) {
 	t.Helper()
-	gcc, runner := x86_64Tooling(t)
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
+	_, runner := x86_64Tooling(t)
+	srcPath := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
+	binPath := e2eharness.CompileSelfHostFile(t, e2eharness.TargetX86_64Linux, srcPath, nil)
 	dir := t.TempDir()
 	if setup != nil {
 		setup(dir)
 	}
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(binPath)
-	} else {
-		cmd = exec.Command(runner[0], append(runner[1:], binPath)...)
-	}
+	cmd := e2eharness.RunX86_64Bin(runner, binPath)
 	cmd.Dir = dir
 	_ = cmd.Run()
 	return cmd.ProcessState.ExitCode(), dir
@@ -145,30 +102,18 @@ func TestX86_64RemoveDirAllFile(t *testing.T) {
 	}
 }
 
-// The issue's main regression pin: an unmodified
-// examples/tests TAP file must compile to a native x86-64 binary
-// through the full CLI pipeline (modload + the in-process
-// assembler) and run. Before the fix this failed at link with
-// `undefined label "remove_dir_all"` — std/test's
-// TestRunner.finish() references the builtin unconditionally via
-// its temp-dir cleanup loop. We assert both that it links/runs
-// and that the TAP output reports no failures.
-func TestX86_64ArithmeticTapLinksNatively(t *testing.T) {
+// The issue's main regression pin: an unmodified examples/tests TAP file
+// compiles to an x86-64 binary and runs. std/test's TestRunner.finish()
+// references the builtin unconditionally via its temp-dir cleanup loop, so a
+// missing lowering fails the link. Asserts both that it runs and that the TAP
+// output reports no failures.
+func TestX86_64ArithmeticTapLinks(t *testing.T) {
 	_, runner := x86_64Tooling(t)
-	fern := buildFernCLI(t)
 	out := filepath.Join(t.TempDir(), "arith_tap")
-	// Default -target x86-64-linux path = the in-process pure-Go
-	// assembler+linker, exactly the pipeline the issue reports.
-	if o, err := exec.Command(fern, "-target", "x86-64-linux", "-o", out,
-		"../../examples/tests/arithmetic_test.fern").CombinedOutput(); err != nil {
-		t.Fatalf("native compile of arithmetic_test.fern failed: %v\n%s", err, o)
+	if o, err := e2eharness.SelfHostCompileCmd(t, e2eharness.TargetX86_64Linux, "../../examples/tests/arithmetic_test.fern", out).CombinedOutput(); err != nil {
+		t.Fatalf("compile of arithmetic_test.fern failed: %v\n%s", err, o)
 	}
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(out)
-	} else {
-		cmd = exec.Command(runner[0], append(runner[1:], out)...)
-	}
+	cmd := e2eharness.RunX86_64Bin(runner, out)
 	tap, _ := cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Fatalf("TAP binary exit = %d, want 0\n%s", code, tap)

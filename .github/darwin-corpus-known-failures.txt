@@ -77,7 +77,6 @@
 # failures to 1647.
 
 TestBracketParity
-TestChown
 TestCpParity
 TestCpWalkOrder
 TestCsplit
@@ -115,13 +114,10 @@ TestSortParity
 TestStat
 TestStty
 TestSyncParity
-TestTailParity
 TestTestParity
 TestTtyParity
-TestUniqParity
 TestUptime
 TestUsersParity
 TestUtmpRecordLayoutMatchesTheHost
 TestVdir
 TestWhoParity
-TestWhoamiParity

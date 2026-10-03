@@ -2,16 +2,9 @@ package e2e
 
 import (
 	"bytes"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
 )
 
 // pub(package): a package-scoped helper is usable from a sibling module
@@ -37,42 +30,8 @@ func TestInterpPubPackage(t *testing.T) {
 }
 
 func TestX86_64PubPackage(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
 	dir := writeProject(t, pubPackageProject)
-	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(binPath)
-	} else {
-		cmd = exec.Command(runner[0], append(runner[1:], binPath)...)
-	}
-	_ = cmd.Run()
-	if code := cmd.ProcessState.ExitCode(); code != 42 {
-		t.Errorf("native exit = %d, want 42", code)
+	if _, code := runFixtureX86_64(t, filepath.Join(dir, "main.fern"), ""); code != 42 {
+		t.Errorf("exit = %d, want 42", code)
 	}
 }

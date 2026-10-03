@@ -12,9 +12,9 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// The self-host twin of internal/e2e's TestHeldConnectionsHeapBoundX86_64:
-// the serve loop compiled by the production self-host driver, with
-// complete semantic lowering required, holds 64 idle connections, then
+// The per-held-connection bound of #9853: the serve loop compiled by the
+// production self-host driver, with complete semantic lowering required,
+// holds 64 idle connections, then
 // 64 more, and the bump allocator's growth the second batch cost must be
 // under 1 KiB per connection.
 func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {

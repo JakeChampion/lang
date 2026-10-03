@@ -13,8 +13,8 @@ method was never an arm.
 That was latent until #11122 made the backends dispatch over exactly the arms
 `dyn_arms` names, instead of every method with the same name. cec5cefc (#11138)
 made the arm search key the receiver with `receiver_base`, as
-`implements_traits` and `decl_key` do. #11157 added the single-implementer case
-and this entry.
+`implements_traits` and `decl_key` do, and 58869434 (#11155) added the
+single-implementer case.
 
 ## The trap: the two shapes fail at different layers
 
@@ -38,5 +38,5 @@ Both agree with the native compiler.
 
 `TestSelfHostSemanticProduction`:
 
-- `a-str-impl-is-the-only-dyn-arm` (new; refused before)
+- `a-dyn-whose-only-implementer-is-str-is-produced` (refused before)
 - `a-string-boxed-through-an-impl-for-str-is-produced` (exit 134 before)

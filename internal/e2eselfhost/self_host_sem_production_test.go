@@ -6214,18 +6214,17 @@ function main(): i32 {
     return 0;
 }
 `},
-	// The same impl as a dyn's only implementer is the call's one arm: the
-	// arm search keys the method's `str` receiver as `string`, as the impl
-	// list does.
-	{name: "a-str-impl-is-the-only-dyn-arm", atLeast: 3, want: "0|1043 1030\n", src: `
+	// With `str` the only implementer, the dyn call's one arm is the impl on
+	// `str`, keyed `string` like every other receiver (#11155).
+	{name: "a-dyn-whose-only-implementer-is-str-is-produced", atLeast: 2, want: "0|1073 1043\n", src: `
 import "std/i32";
 trait Size { function size(self: Self): i32; }
 impl Size for str { function size(self: str): i32 { return 1000 + self.len() * 10 + (self[0] as i32) - 97; } }
-function pick(s: string): dyn Size { let t: string = s + "!"; return t; }
+function pick(n: i32): dyn Size { if (n > 0) { return "x" + "yz"; } return "ab"; }
 function main(): i32 {
+    let d: dyn Size = pick(1);
     let lit: dyn Size = "xy";
-    let d: dyn Size = pick("ab");
-    print(lit.size().to_string() + " " + d.size().to_string());
+    print((d.size() + lit.size() - 1023).to_string() + " " + lit.size().to_string());
     return 0;
 }
 `},

@@ -2,16 +2,12 @@ package e2e
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
 )
 
 // Cross-module variant-pattern matching: a sibling module declares
@@ -24,10 +20,8 @@ import (
 // visibility), and checker (validate the qualifier against the
 // scrutinee enum's SourceModule).
 //
-// The two helpers below assemble a two-file project on disk so
-// modload's import-resolution path is exercised end-to-end (rather
-// than going through the single-source `compileAndRunX86_64` /
-// `compileAndRunArm64` helpers).
+// The project is two files on disk so import resolution is exercised
+// end-to-end rather than through a single-source helper.
 
 const crossModuleVariantTokens = `pub struct TokA { x: i32 }
 pub struct TokB { y: i32 }
@@ -70,78 +64,15 @@ func writeCrossModuleVariantProject(t *testing.T) string {
 }
 
 func TestCrossModuleVariantPatternX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
 	dir := writeCrossModuleVariantProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
-	}
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(binPath)
-	} else {
-		cmd = exec.Command(runner[0], append(runner[1:], binPath)...)
-	}
-	_, _ = cmd.CombinedOutput()
-	if got := cmd.ProcessState.ExitCode(); got != 22 {
+	if _, got := runFixtureX86_64(t, filepath.Join(dir, "main.fern"), ""); got != 22 {
 		t.Errorf("exit code: got %d, want 22", got)
 	}
 }
 
 func TestCrossModuleVariantPatternArm64(t *testing.T) {
-	gcc, qemu := arm64Tooling(t)
 	dir := writeCrossModuleVariantProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := arm64codegen.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
-	}
-	cmd := runArm64Bin(qemu, binPath)
-	_, _ = cmd.CombinedOutput()
-	if got := cmd.ProcessState.ExitCode(); got != 22 {
+	if _, got := runFixtureArm64(t, filepath.Join(dir, "main.fern"), ""); got != 22 {
 		t.Errorf("exit code: got %d, want 22", got)
 	}
 }
