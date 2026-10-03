@@ -3507,17 +3507,16 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $1, %rax\n");
   s = s.write(".Lshuniq_ret:\n");
   s = s.write("    ret\n");
-  // __fern_arr_inc_elems(arr) -> arr: one guarded __fn___fern_rc_inc per
-  // element of a pointer-element array. The lowering emits it ahead of a copy of
-  // a pointer-element buffer (the un-share push of a shared receiver, the
-  // clone the value forms take): the copy duplicates every element pointer,
-  // so both buffers must hold a count of each element for the last owner's
-  // element walk to free them once. Null / low-address / immortal buffers
-  // are skipped like the deep-free walks skip them; an immortal or tagged
-  // element is skipped by rc_inc's own guards. %rbx/%r12/%r13 hold
-  // arr/len/i across the per-element call (callee-saved; rc_inc is a leaf).
-  // Gated on its need: a program with no such copy must not carry a body
-  // whose `call __fn___fern_rc_inc` the negative asm-grep contracts read.
+  // __fern_arr_inc_elems(arr) -> arr: one retain per element of a
+  // pointer-element array. The lowering emits it ahead of a copy of a
+  // pointer-element buffer (the un-share push of a shared receiver, the clone
+  // the value forms take): the copy duplicates every element pointer, so both
+  // buffers must hold a count of each element for the last owner's element
+  // walk to free them once. Null / low-address / immortal buffers are skipped
+  // like the deep-free walks skip them, and each element takes rc_inc's guards
+  // inline: a tagged or low pointer and a static box's negative count are
+  // left alone. It makes no call, so it needs no saved register: %rsi / %rdx
+  // hold len / i and %rcx / %edi the element and its count.
   if (s.has_need("arr_inc_elems")) {
     s = s.write("__fn___fern_arr_inc_elems:\n");
     s = s.write("    movq 8(%rsp), %rax\n");  // arr (also the result)
@@ -3528,26 +3527,25 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(san_poison_check("%ecx"));
     s = s.write("    testl %ecx, %ecx\n");
     s = s.write("    js .Laie_ret\n");  // immortal buffer: its elements are too
-    s = s.write("    pushq %rbx\n");
-    s = s.write("    pushq %r12\n");
-    s = s.write("    pushq %r13\n");
-    s = s.write("    movq %rax, %rbx\n");  // arr
-    s = s.write("    movq (%rbx), %r12\n");  // len @ [arr]
-    s = s.write("    movq $0, %r13\n");  // i
+    s = s.write("    movq (%rax), %rsi\n");  // len @ [arr]
+    s = s.write("    xorl %edx, %edx\n");  // i
     s = s.write(".Laie_loop:\n");
-    s = s.write("    cmpq %r12, %r13\n");
-    s = s.write("    jge .Laie_done\n");
-    s = s.write("    movq 8(%rbx,%r13,8), %rax\n");  // element i @ [arr+8+i*8]
-    s = s.write("    pushq %rax\n");
-    s = s.write("    call __fn___fern_rc_inc\n");
-    s = s.write("    addq $8, %rsp\n");
-    s = s.write("    incq %r13\n");
+    s = s.write("    cmpq %rsi, %rdx\n");
+    s = s.write("    jge .Laie_ret\n");
+    s = s.write("    movq 8(%rax,%rdx,8), %rcx\n");  // element i @ [arr+8+i*8]
+    s = s.write("    incq %rdx\n");
+    s = s.write("    testb $1, %cl\n");
+    s = s.write("    jnz .Laie_loop\n");
+    s = s.write("    cmpq $0x10000, %rcx\n");
+    s = s.write("    jb .Laie_loop\n");
+    // Byte views retain the untagged descriptor.
+    s = s.write("    andq $-3, %rcx\n");
+    s = s.write("    movl -8(%rcx), %edi\n");
+    s = s.write(san_poison_check("%edi"));
+    s = s.write("    testl %edi, %edi\n");
+    s = s.write("    js .Laie_loop\n");
+    s = s.write("    addl $1, -8(%rcx)\n");
     s = s.write("    jmp .Laie_loop\n");
-    s = s.write(".Laie_done:\n");
-    s = s.write("    movq %rbx, %rax\n");
-    s = s.write("    popq %r13\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    popq %rbx\n");
     s = s.write(".Laie_ret:\n");
     s = s.write("    ret\n");
   }
