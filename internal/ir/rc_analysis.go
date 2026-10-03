@@ -2307,13 +2307,18 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *chec
 					}
 				}
 			}
-			// Copying builtins, for tier parity with the string and
-			// struct classifiers. Nothing in the table takes an array
-			// today, so this arm is inert until one does.
+			// Copying builtins retain neither the argument nor an array
+			// behind an immediately lent view. The checker wraps Writer's
+			// array argument in a SliceExpr now that it accepts [u8]; keep
+			// the source's existing synchronous-copy credit through that
+			// wrapper. A view passed to any other callee stays uncredited.
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				for ai, a := range x.Args {
 					if copyingBuiltinArg(id.Name, ai) {
 						mark(a)
+						if view, ok := a.(*ast.SliceExpr); ok && !view.IsString {
+							mark(view.Source)
+						}
 					}
 				}
 			}
