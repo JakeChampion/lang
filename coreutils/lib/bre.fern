@@ -43,6 +43,113 @@
 import "std/string";
 import "std/array";
 
+// Keep the source owner alive while sharing one matching engine.
+enum Input { Text(string, i32), Bytes(u8[], i32) }
+
+function text_input(text: string): Input {
+  return Text(text, text.len());
+}
+
+function byte_input(bytes: u8[]): Input {
+  return Bytes(bytes, bytes.len());
+}
+
+function (s: Input) len(): i32 {
+  match (s) {
+    Text(_, n) => {
+      return n;
+    },
+    Bytes(_, n) => {
+      return n;
+    }
+  }
+}
+
+function (s: Input) at(k: i32): i32 {
+  match (s) {
+    Text(t, _) => {
+      return t[k] as i32;
+    },
+    Bytes(b, _) => {
+      return b[k] as i32;
+    }
+  }
+}
+
+function (s: Input) find_byte(byte: i32, from: i32): i32 {
+  match (s) {
+    Text(t, _) => {
+      return __memchr(t, byte, from);
+    },
+    Bytes(b, _) => {
+      return __memchr_bytes(b, byte, from);
+    }
+  }
+}
+
+function (s: Input) scan_set(from: i32, set: u8[]): i32 {
+  match (s) {
+    Text(t, _) => {
+      return __scan_set(t, from, set);
+    },
+    Bytes(b, _) => {
+      return __scan_set_bytes(b, from, set);
+    }
+  }
+}
+
+function (s: Input) same_range(a: i32, b: i32, n: i32): boolean {
+  match (s) {
+    Text(t, _) => {
+      return __mismatch(t, a, t, b, n) == n;
+    },
+    Bytes(v, _) => {
+      return __mismatch_bytes(v, a, v, b, n) == n;
+    }
+  }
+}
+
+// Text and raw APIs preserve byte offsets and the same matching rules.
+pub function (re: Bre) exec(text: string): BreMatch {
+  return re.exec_input(text_input(text));
+}
+
+pub function (re: Bre) exec_bytes(text: u8[]): BreMatch {
+  return re.exec_input(byte_input(text));
+}
+
+pub function (re: Bre) search_from(text: string, lo: i32, hi: i32): (i32, i32) {
+  return re.search_from_input(text_input(text), lo, hi);
+}
+
+pub function (re: Bre) search_from_bytes(text: u8[], lo: i32, hi: i32): (i32, i32) {
+  return re.search_from_input(byte_input(text), lo, hi);
+}
+
+pub function (re: Bre) search_back(text: string, hi: i32): (i32, i32) {
+  return re.search_back_input(text_input(text), hi);
+}
+
+pub function (re: Bre) search_back_bytes(text: u8[], hi: i32): (i32, i32) {
+  return re.search_back_input(byte_input(text), hi);
+}
+
+pub function (re: Bre) search(text: string): boolean {
+  return re.search_input(text_input(text));
+}
+
+pub function (re: Bre) search_bytes(text: u8[]): boolean {
+  return re.search_input(byte_input(text));
+}
+
+pub function (re: Bre) search_range(text: string, lo: i32, hi: i32): boolean {
+  return re.search_range_input(text_input(text), lo, hi);
+}
+
+pub function (re: Bre) search_range_bytes(text: u8[], lo: i32, hi: i32): boolean {
+  return re.search_range_input(byte_input(text), lo, hi);
+}
+
 // ---- instructions ----------------------------------------------------------
 //
 // `op` selects the form; `a` and `b` are its operands. `Split` tries `a`
@@ -151,7 +258,7 @@ function assert_buf_end(): i32 {
 // positions, so a cleared one is -1 whatever the search, and the
 // engine's first stamp copies this rather than filling a new array on
 // every line.
-pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean, pre: string, pre_bol: boolean, pre_eol: boolean, literal: boolean, alts: string[], seen0: i32[] }
+pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean, pre: u8[], pre_bol: boolean, pre_eol: boolean, literal: boolean, alts: u8[][], seen0: i32[] }
 
 // `Syntax` — which glibc dialect a pattern is read in, and whether a
 // newline anchors `$` at match time (the header has the three cases).
@@ -1307,7 +1414,7 @@ pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
   let nodes: Node[] = [Node { kind: nd_empty(), a: 0, b: 0, c: 0 }];
   let cls: u8[] = [];
   let none_first: u8[] = [];
-  let no_alts: string[] = [];
+  let no_alts: u8[][] = [];
   let no_seen: i32[] = [];
   let p: P = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, done: 0, err: "", emacs: syntax.emacs };
   let r: (P, i32) = parse_alt(p);
@@ -1317,7 +1424,7 @@ pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
   }
   if (p.err.len() > 0) {
     let no_insts: Inst[] = [];
-    return Bre { insts: no_insts, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: p.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: "", pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen };
+    return Bre { insts: no_insts, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: p.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: none_first, pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen };
   }
   let empty: Inst[] = [];
   let c: C = C { insts: empty, nmarks: 0, err: "" };
@@ -1328,14 +1435,14 @@ pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
   c = emit(c, Inst { op: op_match(), a: 0, b: 0 });
   if (c.err.len() > 0) {
     let none: Inst[] = [];
-    return Bre { insts: none, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: c.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: "", pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen };
+    return Bre { insts: none, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: c.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: none_first, pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen };
   }
   let fm: (u8[], boolean) = fastmap(c.insts, p.classes);
-  let pre: (string, boolean, i32) = prefix_scan(c.insts);
+  let pre: (u8[], boolean, i32) = prefix_scan(c.insts);
   let tail: (boolean, boolean) = literal_tail(c.insts, pre.2);
   // A program with a prefix run needs no branch literals: `pre` is that
   // one branch, and the stronger filter of the two.
-  let alts: string[] = no_alts;
+  let alts: u8[][] = no_alts;
   if (pre.0.len() == 0) {
     alts = branch_literals(c.insts);
   }
@@ -1416,6 +1523,8 @@ function all_bytes(): u8[] {
 }
 
 // ---- the literal prefix ----------------------------------------------------
+// A valid UTF-8 pattern can quantify only the final byte of a scalar.
+// Its compiled literal runs are therefore byte arrays, not text.
 // The fastmap answers with a SET the first byte has to fall in. Where a
 // program opens with a run of `Char` instructions there is a stronger
 // answer — the run itself — and where the program is that run and
@@ -1424,7 +1533,7 @@ function all_bytes(): u8[] {
 // `^` precedes it, and the instruction the run stops at. Instructions
 // run in sequence, so those bytes are what EVERY match begins with,
 // whatever the rest of the program does.
-function prefix_scan(insts: Inst[]): (string, boolean, i32) {
+function prefix_scan(insts: Inst[]): (u8[], boolean, i32) {
   let i: i32 = 0;
   let bol: boolean = false;
   if (i < insts.len() && insts[i].op == op_bol()) {
@@ -1436,7 +1545,7 @@ function prefix_scan(insts: Inst[]): (string, boolean, i32) {
     bs = bs.append(insts[i].a as u8);
     i = i + 1;
   }
-  return (string_from_bytes_unchecked(bs), bol, i);
+  return (bs, bol, i);
 }
 
 // Whether what follows the prefix run is only an optional `$` and the
@@ -1482,9 +1591,9 @@ function alt_max(): i32 {
 // filter unsound for the others too. Zero-width instructions consume
 // nothing and so cannot move where a match begins; walking through them
 // keeps the literal behind them.
-function branch_literals(insts: Inst[]): string[] {
-  let none: string[] = [];
-  let out: string[] = [];
+function branch_literals(insts: Inst[]): u8[][] {
+  let none: u8[][] = [];
+  let out: u8[][] = [];
   let seen: i32[] = fill(insts.len(), 0);
   let work: i32[] = [0];
   let top: i32 = 1;
@@ -1503,7 +1612,7 @@ function branch_literals(insts: Inst[]): string[] {
         bs = bs.append(insts[k].a as u8);
         k = k + 1;
       }
-      out = out.append(string_from_bytes_unchecked(bs));
+      out = out.append(bs);
       if (out.len() > alt_max()) {
         return none;
       }
@@ -1527,7 +1636,7 @@ function branch_literals(insts: Inst[]): string[] {
 // The first index in `text[lo..hi)` at which any of `lits` occurs, or
 // -1 where none does. A match begins with one of them, so that index is
 // the earliest position one can start at.
-function find_any_literal(text: string, lits: string[], lo: i32, hi: i32): i32 {
+function find_any_literal(text: Input, lits: u8[][], lo: i32, hi: i32): i32 {
   let best: i32 = 0 - 1;
   let i: i32 = 0;
   while (i < lits.len()) {
@@ -1545,7 +1654,7 @@ function find_any_literal(text: string, lits: string[], lo: i32, hi: i32): i32 {
 
 // Whether one of `lits` sits at `at`. The caller has not checked the
 // room, since the literals differ in length.
-function any_bytes_at(text: string, at: i32, lits: string[], hi: i32): boolean {
+function any_bytes_at(text: Input, at: i32, lits: u8[][], hi: i32): boolean {
   let i: i32 = 0;
   while (i < lits.len()) {
     if (at + lits[i].len() <= hi && bytes_at(text, at, lits[i])) {
@@ -1557,15 +1666,29 @@ function any_bytes_at(text: string, at: i32, lits: string[], hi: i32): boolean {
 }
 
 // Whether `lit` sits at `at` in `text`. The caller has checked the room.
-function bytes_at(text: string, at: i32, lit: string): boolean {
-  let k: i32 = 0;
-  while (k < lit.len()) {
-    if (text[at + k] as i32 != lit[k] as i32) {
-      return false;
+function bytes_at(text: Input, at: i32, lit: u8[]): boolean {
+  match (text) {
+    Text(t, _) => {
+      let k: i32 = 0;
+      while (k < lit.len()) {
+        if (t[at + k] as i32 != lit[k] as i32) {
+          return false;
+        }
+        k = k + 1;
+      }
+      return true;
+    },
+    Bytes(b, _) => {
+      let k: i32 = 0;
+      while (k < lit.len()) {
+        if (b[at + k] != lit[k]) {
+          return false;
+        }
+        k = k + 1;
+      }
+      return true;
     }
-    k = k + 1;
   }
-  return true;
 }
 
 // The first index in `text[lo..hi)` at which `lit` occurs, or -1.
@@ -1577,7 +1700,7 @@ function bytes_at(text: string, at: i32, lit: string): boolean {
 // 64 KiB read, and a first byte absent from that line sends the vector
 // pass on across every line after it. A bounded range gets the plain
 // scan, whose cost is the range itself however rare the byte is.
-function find_literal(text: string, lit: string, lo: i32, hi: i32): i32 {
+function find_literal(text: Input, lit: u8[], lo: i32, hi: i32): i32 {
   if (lit.len() == 0) {
     return lo;
   }
@@ -1587,7 +1710,7 @@ function find_literal(text: string, lit: string, lo: i32, hi: i32): i32 {
   let i: i32 = lo;
   if (hi == text.len()) {
     while (true) {
-      let j: i32 = __memchr(text, first, i);
+      let j: i32 = text.find_byte(first, i);
       if (j < 0 || j > last) {
         return 0 - 1;
       }
@@ -1598,7 +1721,7 @@ function find_literal(text: string, lit: string, lo: i32, hi: i32): i32 {
     }
   }
   while (i <= last) {
-    if (text[i] as i32 == first && bytes_at(text, i, lit)) {
+    if (text.at(i) as i32 == first && bytes_at(text, i, lit)) {
       return i;
     }
     i = i + 1;
@@ -1636,38 +1759,38 @@ function find_literal(text: string, lit: string, lo: i32, hi: i32): i32 {
 // `zw_caps` holds the captures of the first path that reached the end
 // through a trailing zero-width assertion, kept only until a path that
 // did not is found (see step).
-struct M { text: string, lo: i32, hi: i32, re: Bre, target: i32, caps: i32[], marks: i32[], have_zw: boolean, zw_caps: i32[] }
+struct M { text: Input, lo: i32, hi: i32, re: Bre, target: i32, caps: i32[], marks: i32[], have_zw: boolean, zw_caps: i32[] }
 
 function class_has_byte(re: Bre, idx: i32, b: i32): boolean {
   return re.classes[idx * 256 + b] as i32 != 0;
 }
 
-function is_word_at(text: string, k: i32, lo: i32, hi: i32): boolean {
+function is_word_at(text: Input, k: i32, lo: i32, hi: i32): boolean {
   if (k < lo || k >= hi) {
     return false;
   }
-  let b: i32 = text[k] as i32;
+  let b: i32 = text.at(k) as i32;
   return is_alpha(b) || is_digit(b) || b == 95;
 }
 
 // `^`: the start of the window, or just after a newline when the buffer
 // anchors there.
-function bol_holds(re: Bre, text: string, pos: i32, lo: i32): boolean {
+function bol_holds(re: Bre, text: Input, pos: i32, lo: i32): boolean {
   if (pos == lo) {
     return true;
   }
-  return re.newline_anchor && text[pos - 1] as i32 == 10;
+  return re.newline_anchor && text.at(pos - 1) as i32 == 10;
 }
 
 // `$`: the end, or just before a newline when the buffer anchors there.
-function eol_holds(re: Bre, text: string, pos: i32, hi: i32): boolean {
+function eol_holds(re: Bre, text: Input, pos: i32, hi: i32): boolean {
   if (pos >= hi) {
     return true;
   }
-  return re.newline_anchor && text[pos] as i32 == 10;
+  return re.newline_anchor && text.at(pos) as i32 == 10;
 }
 
-function assert_holds(text: string, which: i32, pos: i32, lo: i32, hi: i32): boolean {
+function assert_holds(text: Input, which: i32, pos: i32, lo: i32, hi: i32): boolean {
   let before: boolean = is_word_at(text, pos - 1, lo, hi);
   let after: boolean = is_word_at(text, pos, lo, hi);
   if (which == assert_wordb()) {
@@ -1711,7 +1834,7 @@ function step(m0: M, pc0: i32, pos0: i32, zw0: boolean): (boolean, M) {
   while (true) {
     let in: Inst = m.re.insts[pc];
     if (in.op == op_char()) {
-      if (pos >= m.hi || m.text[pos] as i32 != in.a) {
+      if (pos >= m.hi || m.text.at(pos) as i32 != in.a) {
         return (false, m);
       }
       pc = pc + 1;
@@ -1720,7 +1843,7 @@ function step(m0: M, pc0: i32, pos0: i32, zw0: boolean): (boolean, M) {
       continue;
     }
     if (in.op == op_class()) {
-      if (pos >= m.hi || !class_has_byte(m.re, in.a, m.text[pos] as i32)) {
+      if (pos >= m.hi || !class_has_byte(m.re, in.a, m.text.at(pos) as i32)) {
         return (false, m);
       }
       pc = pc + 1;
@@ -1783,7 +1906,7 @@ function step(m0: M, pc0: i32, pos0: i32, zw0: boolean): (boolean, M) {
         return (false, m);
       }
       let n: i32 = e - s;
-      if (pos + n > m.hi || slice_unchecked(m.text, pos, pos + n) != slice_unchecked(m.text, s, e)) {
+      if (pos + n > m.hi || !m.text.same_range(pos, s, n)) {
         return (false, m);
       }
       pc = pc + 1;
@@ -1874,13 +1997,13 @@ function fresh_caps(n: i32): i32[] {
 
 // `(re).exec(text)` — the longest match starting at the beginning of
 // `text`, with every group's span.
-pub function (re: Bre) exec(text: string): BreMatch {
+function (re: Bre) exec_input(text: Input): BreMatch {
   return exec_at(re, text, 0, 0, text.len());
 }
 
 // `(re).match_at(text, start, hi)` — the end of the longest match
 // starting at `start` in `text[0, hi)`, or -1.
-function (re: Bre) match_at(text: string, start: i32, hi: i32): i32 {
+function (re: Bre) match_at(text: Input, start: i32, hi: i32): i32 {
   if (!re.backref) {
     return longest_at(re, text, start, 0, hi);
   }
@@ -1897,7 +2020,7 @@ function (re: Bre) match_at(text: string, start: i32, hi: i32): i32 {
 // and nothing else, so each counter is entered once per position. The
 // lists are sized once: a position holds each counter at most once, and
 // the closure's stack at most two entries per counter entered.
-function longest_at(re: Bre, text: string, start: i32, lo: i32, hi: i32): i32 {
+function longest_at(re: Bre, text: Input, start: i32, lo: i32, hi: i32): i32 {
   let n: i32 = re.insts.len();
   let seen: i32[] = fill(n, 0 - 1);
   let cur: i32[] = fill(n, 0);
@@ -1940,7 +2063,7 @@ function longest_at(re: Bre, text: string, start: i32, lo: i32, hi: i32): i32 {
     if (pos >= hi || nc == 0) {
       break;
     }
-    let b: i32 = text[pos] as i32;
+    let b: i32 = text.at(pos) as i32;
     let k: i32 = 0;
     while (k < nc) {
       let at: i32 = cur[k];
@@ -1962,7 +2085,7 @@ function longest_at(re: Bre, text: string, start: i32, lo: i32, hi: i32): i32 {
 // `^` and `$` mean the ends of `text[0, hi)` as `search_range` has
 // them, so a caller scanning a buffer for every match in turn asks with
 // bounds rather than with a cut-out suffix.
-pub function (re: Bre) search_from(text: string, lo: i32, hi: i32): (i32, i32) {
+function (re: Bre) search_from_input(text: Input, lo: i32, hi: i32): (i32, i32) {
   let start: i32 = lo;
   while (start <= hi) {
     start = next_start(re, text, start, hi);
@@ -1980,7 +2103,7 @@ pub function (re: Bre) search_from(text: string, lo: i32, hi: i32): (i32, i32) {
 
 // The first position in `text[pos, hi]` that `can_start_at` accepts, or
 // -1, found by one scan rather than a test per position.
-function next_start(re: Bre, text: string, pos: i32, hi: i32): i32 {
+function next_start(re: Bre, text: Input, pos: i32, hi: i32): i32 {
   if (re.pre.len() > 0) {
     return find_literal(text, re.pre, pos, hi);
   }
@@ -1992,9 +2115,9 @@ function next_start(re: Bre, text: string, pos: i32, hi: i32): i32 {
   }
   let i: i32 = pos;
   if (hi == text.len()) {
-    i = __scan_set(text, pos, re.first);
+    i = text.scan_set(pos, re.first);
   } else {
-    while (i < hi && re.first[text[i] as i32] as i32 == 0) {
+    while (i < hi && re.first[text.at(i) as i32] as i32 == 0) {
       i = i + 1;
     }
   }
@@ -2009,7 +2132,7 @@ function next_start(re: Bre, text: string, pos: i32, hi: i32): i32 {
 // `hi - 1` down to 0, as (start, end), or (-1, -1). The position `hi`
 // itself is never a start, which is what keeps tac's backward scan
 // from finding the same empty match twice.
-pub function (re: Bre) search_back(text: string, hi: i32): (i32, i32) {
+function (re: Bre) search_back_input(text: Input, hi: i32): (i32, i32) {
   let start: i32 = hi - 1;
   while (start >= 0) {
     if (can_start_at(re, text, start, hi)) {
@@ -2029,7 +2152,7 @@ pub function (re: Bre) search_back(text: string, hi: i32): (i32, i32) {
 // literal test subsumes the fastmap — the run's first bytes ARE the
 // fastmap for such a program — so they replace it rather than run after
 // it.
-function can_start_at(re: Bre, text: string, pos: i32, hi: i32): boolean {
+function can_start_at(re: Bre, text: Input, pos: i32, hi: i32): boolean {
   let n: i32 = re.pre.len();
   if (n > 0) {
     return pos + n <= hi && bytes_at(text, pos, re.pre);
@@ -2040,7 +2163,7 @@ function can_start_at(re: Bre, text: string, pos: i32, hi: i32): boolean {
   if (re.empty_ok) {
     return true;
   }
-  return pos < hi && re.first[text[pos] as i32] as i32 != 0;
+  return pos < hi && re.first[text.at(pos) as i32] as i32 != 0;
 }
 
 // `(re).search(text)` — glibc's `re_search` reduced to the question a
@@ -2052,8 +2175,8 @@ function can_start_at(re: Bre, text: string, pos: i32, hi: i32): boolean {
 // suffix, so `^` still means the start of the line and `$` its end
 // however far in the scan has reached — `nl -bp'^a'` numbers a line
 // beginning with `a`, not every line containing one.
-pub function (re: Bre) search(text: string): boolean {
-  return re.search_range(text, 0, text.len());
+function (re: Bre) search_input(text: Input): boolean {
+  return re.search_range_input(text, 0, text.len());
 }
 
 // `(re).search_range(text, lo, hi)` — `search` over the bytes
@@ -2082,7 +2205,7 @@ pub function (re: Bre) search(text: string): boolean {
 // is off. With it on they hold at every newline too, so an anchored
 // prefix no longer fixes the position it has to sit at and the first two
 // filters give way to the scan that assumes none.
-pub function (re: Bre) search_range(text: string, lo: i32, hi: i32): boolean {
+function (re: Bre) search_range_input(text: Input, lo: i32, hi: i32): boolean {
   let n: i32 = re.pre.len();
   let pinned: boolean = !re.newline_anchor;
   if (re.literal && (pinned || !re.pre_bol && !re.pre_eol)) {
@@ -2142,7 +2265,7 @@ pub function (re: Bre) search_range(text: string, lo: i32, hi: i32): boolean {
   return exec_threads_from(re, text, from, lo, hi, true).matched;
 }
 
-function exec_at(re: Bre, text: string, start: i32, lo: i32, hi: i32): BreMatch {
+function exec_at(re: Bre, text: Input, start: i32, lo: i32, hi: i32): BreMatch {
   if (re.backref) {
     return exec_backtrack(re, text, start, lo, hi);
   }
@@ -2151,7 +2274,7 @@ function exec_at(re: Bre, text: string, start: i32, lo: i32, hi: i32): BreMatch 
 
 // The backtracking engine: ask for one end position at a time, longest
 // first, and take the first that answers yes.
-function exec_backtrack(re: Bre, text: string, start: i32, lo: i32, hi: i32): BreMatch {
+function exec_backtrack(re: Bre, text: Input, start: i32, lo: i32, hi: i32): BreMatch {
   let no: i32[] = [];
   let end: i32 = hi;
   while (end >= start) {
@@ -2199,7 +2322,7 @@ function zw_stamp(gen: i32): i32 {
 // array, and each stamp would then copy it (#8498) — one copy per
 // instruction of the closure, which a pattern like `\(a*\)\{3200\}`
 // walks in full at every position.
-function add_thread(re: Bre, own t0: Threads, gen: i32, pc: i32, caps: i32[], pos: i32, text: string, lo: i32, hi: i32, zw: boolean): Threads {
+function add_thread(re: Bre, own t0: Threads, gen: i32, pc: i32, caps: i32[], pos: i32, text: Input, lo: i32, hi: i32, zw: boolean): Threads {
   let seen: i32 = t0.seen[pc];
   if (seen == gen) {
     return t0;
@@ -2283,7 +2406,7 @@ function append_match_thread(own t: Threads, pc: i32, caps: i32[]): Threads {
   return Threads { ...t, pcs: t.pcs.append(pc), caps: t.caps.append(caps), match_at: at };
 }
 
-function zero_width_holds(re: Bre, text: string, in: Inst, pos: i32, lo: i32, hi: i32): boolean {
+function zero_width_holds(re: Bre, text: Input, in: Inst, pos: i32, lo: i32, hi: i32): boolean {
   if (in.op == op_bol()) {
     return bol_holds(re, text, pos, lo);
   }
@@ -2302,7 +2425,7 @@ function zero_width_holds(re: Bre, text: string, in: Inst, pos: i32, lo: i32, hi
 // about the position in `text[lo, hi)`, not about where the scan began.
 // The generation stamp is the position, so it starts at `start` and
 // `re.seen0` is below every one of them.
-function exec_threads_from(re: Bre, text: string, start: i32, lo: i32, hi: i32, unanchored: boolean): BreMatch {
+function exec_threads_from(re: Bre, text: Input, start: i32, lo: i32, hi: i32, unanchored: boolean): BreMatch {
   let no_pcs: i32[] = [];
   let no_caps: i32[][] = [];
   let t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: re.seen0, match_at: 0 - 1 };
@@ -2335,7 +2458,7 @@ function exec_threads_from(re: Bre, text: string, start: i32, lo: i32, hi: i32, 
           best_caps = caps[k];
           found = true;
         }
-      } else if (pos < hi && byte_matches(re, in, text[pos] as i32)) {
+      } else if (pos < hi && byte_matches(re, in, text.at(pos) as i32)) {
         t = add_thread(re, t, pos + 1, pcs[k] + 1, caps[k], pos + 1, text, lo, hi, false);
       }
       k = k + 1;
