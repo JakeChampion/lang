@@ -6340,6 +6340,24 @@ function lc_bump_alloc_add(s: asmcore.EmitState, addend: string, t1: string, t2:
   return s;
 }
 
+// RegTriple names three scratch registers a census helper may clobber.
+struct RegTriple { a: string, b: string, c: string }
+
+// lc_grow_bytes charges a block grown in place from `old` to `grown` words:
+// it is still one block, so only its live bytes move.
+function lc_grow_bytes(s: asmcore.EmitState, old: string, grown: string, t: RegTriple): asmcore.EmitState {
+  if (!leak_check_on()) {
+    return s;
+  }
+  s = s.write("    sub " + t.a + ", " + grown + ", " + old + "\n");
+  s = s.write("    adrp " + t.b + ", __fern_lc_alloc_bytes\n");
+  s = s.write("    add " + t.b + ", " + t.b + ", :lo12:__fern_lc_alloc_bytes\n");
+  s = s.write("    ldr " + t.c + ", [" + t.b + "]\n");
+  s = s.write("    add " + t.c + ", " + t.c + ", " + t.a + ", lsl #3\n");
+  s = s.write("    str " + t.c + ", [" + t.b + "]\n");
+  return s;
+}
+
 // lc_bump_free_add: count one freed block — count += 1, bytes += <addend>.
 // Emitted immediately BEFORE the site's freelist push / large_push handoff,
 // where t1/t2 — the push's own address and head registers — are still dead,
@@ -7776,8 +7794,8 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   }
   // __fern_str_grow(a@[sp,#16], b@[sp]) -> 1 once b is appended to a in
   // place, else 0 with nothing written: the arm64 sibling of the x86-64
-  // body, with the same fused, rc-1 and same-class tests. Under a leak-check
-  // build the growth counts as a free of the old size and an alloc of the new.
+  // body, with the same fused, rc-1 and same-class tests. The leak census sees
+  // one block that grew: its live bytes move and its counts do not.
   // __fern_getpwuid_name(uid@[sp]) -> the address of pw_name in the entry
   // libSystem's getpwuid(3) answers, or 0. Darwin keeps regular accounts in
   // Directory Services, which only libSystem can ask (#9815): the call goes
@@ -7853,8 +7871,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    cmp x6, x7\n");
     s = s.write("    b.hi .Lsg_no\n");
     s = s.write(".Lsg_fits:\n");
-    s = lc_bump_free_words(s, "x5", "x9", "x10");
-    s = lc_bump_alloc_add(s, "x6, lsl #3", "x9", "x10");
+    s = lc_grow_bytes(s, "x5", "x6", RegTriple { a: "x7", b: "x9", c: "x10" });
     s = s.write(".Lsg_copy:\n");
     s = s.write("    str x4, [x0, #8]\n");  // len = grown length
     s = s.write("    ldr x5, [x0]\n");
