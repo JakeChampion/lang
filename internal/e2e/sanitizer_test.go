@@ -15,6 +15,7 @@ import (
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 )
@@ -104,16 +105,18 @@ func emitSanitize(t *testing.T, backend, src string, on bool) string {
 // contract is "stderr only, stdout untouched").
 func runSanitizeX86_64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
-	gcc, runner := x86_64Tooling(t)
-	return buildAndRunSanitized(t, gcc, runner, emitSanitize(t, "x86_64", src, true), false)
+	_, runner := x86_64Tooling(t)
+	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetX86_64Linux, src, []string{"FERN_SANITIZE=1"})
+	return runSplit(t, runX86_64Bin(runner, bin))
 }
 
 // runSanitizeArm64 is the arm64 sibling (qemu; SKIPs without the
 // aarch64 toolchain — runs in CI).
 func runSanitizeArm64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
-	gcc, qemu := arm64Tooling(t)
-	return buildAndRunSanitized(t, gcc, []string{qemu}, emitSanitize(t, "arm64-linux", src, true), true)
+	_, qemu := arm64Tooling(t)
+	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetArm64Linux, src, []string{"FERN_SANITIZE=1"})
+	return runSplit(t, runArm64Bin(qemu, bin))
 }
 
 // checkSanitizedBalanced runs src under the sanitizer and asserts the answer,
@@ -186,11 +189,11 @@ const sanLeakSrc = `function main(): i32 {
     return 42;
 }`
 
-// sanDoubleFreeSrc over-releases deliberately: __alloc_u8 hands back an
-// rc==1 buffer, the first __rc_dec takes it to 0, and the second sees a
-// non-positive count — the exact shape __rc_underflow_count() was built
-// to notice. Under the sanitizer that stops being a counter nobody
-// reads and becomes a fatal, named report.
+// sanDoubleFreeSrc releases a buffer twice. On the self-host __rc_dec is the
+// freeing dec, so the first call reclaims the block and poisons its rc word
+// and the second touches the poison: a use-after-free report. Native's
+// __rc_dec never frees, so its leg (TestArm64DarwinSanitize) reads rc 0 and
+// reports the over-release instead (docs/SANITIZER.md).
 const sanDoubleFreeSrc = `function main(): i32 {
     let a: u8[] = __alloc_u8(16);
     __rc_dec(a);
@@ -225,18 +228,26 @@ const sanRcHelpersSrc = `function main(): i32 {
     return 0;
 }`
 
-// sanUseAfterFreeSrc builds a real dangling reference. The plain
-// __rc_dec builtin never frees on native (it reads rc 0 and reports an
-// over-release instead), so the block has to go through the FREEING dec:
-// __fern_arr_dec on the data pointer takes the rc==1 buffer to zero,
-// poisons its rc word and hands the block to __fern_free, which under
-// the sanitizer accounts the release and declines to recycle it. The
-// retained raw address then reaches __fern_rc_inc, which reads the
-// poison. Perceus's own drop of `a` at scope exit is never reached.
+// sanUseAfterFreeSrc builds a real dangling reference on native, whose
+// plain __rc_dec never frees: __fern_arr_dec on the data pointer takes the
+// rc==1 buffer to zero, poisons its rc word and frees the block, and the
+// retained raw address then reaches __fern_rc_inc, which reads the poison.
+// Native's Darwin leg (TestArm64DarwinSanitize) runs it.
 const sanUseAfterFreeSrc = `function main(): i32 {
     let a: u8[] = __alloc_u8(16);
     let p: usize = a as usize;
     __fern_arr_dec(p, 1);
+    __fern_rc_inc(p);
+    return 0;
+}`
+
+// sanStaleTouchSrc is the same dangling reference on the self-host, where
+// __fern_arr_dec is core/map's no-op array release and __rc_dec is the
+// freeing dec. Perceus's own drop of `a` at scope exit is never reached.
+const sanStaleTouchSrc = `function main(): i32 {
+    let a: u8[] = __alloc_u8(16);
+    let p: usize = a as usize;
+    __rc_dec(a);
     __fern_rc_inc(p);
     return 0;
 }`
@@ -390,7 +401,7 @@ func TestX86_64SanitizeDoubleFreeReported(t *testing.T) {
 	if code != x86_64.ExitSanitizer {
 		t.Errorf("exit=%d, want %d (a sanitizer finding is fatal and has its own status)", code, x86_64.ExitSanitizer)
 	}
-	if !strings.Contains(stderr, "fern-sanitizer: rc over-release (double free)") {
+	if !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)") {
 		t.Errorf("stderr does not name the finding: %q", stderr)
 	}
 	if !strings.Contains(stderr, "backtrace:") {
@@ -415,7 +426,7 @@ func TestX86_64DoubleFreeSilentWithoutSanitize(t *testing.T) {
 }
 
 func TestX86_64SanitizeUseAfterFreeReported(t *testing.T) {
-	_, stderr, code := runSanitizeX86_64(t, sanUseAfterFreeSrc)
+	_, stderr, code := runSanitizeX86_64(t, sanStaleTouchSrc)
 	if code != x86_64.ExitSanitizer {
 		t.Errorf("exit=%d, want %d", code, x86_64.ExitSanitizer)
 	}
@@ -533,7 +544,7 @@ func TestArm64SanitizeDoubleFreeReported(t *testing.T) {
 	if code != arm64codegen.ExitSanitizer {
 		t.Errorf("exit=%d, want %d", code, arm64codegen.ExitSanitizer)
 	}
-	if !strings.Contains(stderr, "fern-sanitizer: rc over-release (double free)") {
+	if !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)") {
 		t.Errorf("stderr does not name the finding: %q", stderr)
 	}
 	if !strings.Contains(stderr, "backtrace:") {
@@ -542,7 +553,7 @@ func TestArm64SanitizeDoubleFreeReported(t *testing.T) {
 }
 
 func TestArm64SanitizeUseAfterFreeReported(t *testing.T) {
-	_, stderr, code := runSanitizeArm64(t, sanUseAfterFreeSrc)
+	_, stderr, code := runSanitizeArm64(t, sanStaleTouchSrc)
 	if code != arm64codegen.ExitSanitizer {
 		t.Errorf("exit=%d, want %d", code, arm64codegen.ExitSanitizer)
 	}

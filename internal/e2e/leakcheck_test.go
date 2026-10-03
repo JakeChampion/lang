@@ -16,6 +16,7 @@ import (
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 )
@@ -81,29 +82,14 @@ func emitLeakCheck(t *testing.T, backend, src string, leakCheck bool) string {
 	return asm
 }
 
-// runLeakCheckX86_64 compiles src flag-on and runs it, returning
+// runLeakCheckX86_64 compiles src with the leak census on and runs it, returning
 // stdout, stderr, and the exit code separately (the report contract is
 // "stderr only, stdout untouched", so combined output won't do).
 func runLeakCheckX86_64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
-	gcc, runner := x86_64Tooling(t)
-	asm := emitLeakCheck(t, "x86_64", src, true)
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(binPath)
-	} else {
-		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), binPath)...)
-	}
-	return runSplit(t, cmd)
+	_, runner := x86_64Tooling(t)
+	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetX86_64Linux, src, []string{"FERN_LEAKCHECK=1"})
+	return runSplit(t, runX86_64Bin(runner, bin))
 }
 
 // runLeakCheckArm64 is the arm64 sibling (qemu; SKIPs without the
@@ -117,18 +103,9 @@ func runLeakCheckArm64(t *testing.T, src string) (string, string, int) {
 // as its argv[1..].
 func runLeakCheckArm64Args(t *testing.T, src string, args ...string) (string, string, int) {
 	t.Helper()
-	gcc, qemu := arm64Tooling(t)
-	asm := emitLeakCheck(t, "arm64-linux", src, true)
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
-	return runSplit(t, runArm64Bin(qemu, binPath, args...))
+	_, qemu := arm64Tooling(t)
+	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetArm64Linux, src, []string{"FERN_LEAKCHECK=1"})
+	return runSplit(t, runArm64Bin(qemu, bin, args...))
 }
 
 func runSplit(t *testing.T, cmd *exec.Cmd) (string, string, int) {
@@ -204,7 +181,7 @@ const leakCheckLeakySrc = `function main(): i32 {
 // leakCheckExitBuiltinSrc: the exit() builtin bypasses the _start
 // epilogue, so __fern_exit must report too — with the exit code (7)
 // preserved and stdout (the print) clean of the report. alloc(100)
-// rounds to 112 live bytes.
+// rounds to 104 live bytes, the 8-byte class above it.
 const leakCheckExitBuiltinSrc = `function main(): i32 {
     let a: usize = __alloc(100);
     print("hello");
@@ -272,8 +249,8 @@ func TestX86_64LeakCheckExitBuiltinReports(t *testing.T) {
 		t.Errorf("stdout=%q, want %q", stdout, "hello\n")
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	if allocs != 1 || frees != 0 || live != 112 {
-		t.Errorf("got allocs=%d frees=%d live=%d, want 1/0/112", allocs, frees, live)
+	if allocs != 1 || frees != 0 || live != 104 {
+		t.Errorf("got allocs=%d frees=%d live=%d, want 1/0/104", allocs, frees, live)
 	}
 }
 
@@ -312,8 +289,8 @@ func TestArm64LeakCheckExitBuiltinReports(t *testing.T) {
 		t.Errorf("stdout=%q, want %q", stdout, "hello\n")
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	if allocs != 1 || frees != 0 || live != 112 {
-		t.Errorf("got allocs=%d frees=%d live=%d, want 1/0/112", allocs, frees, live)
+	if allocs != 1 || frees != 0 || live != 104 {
+		t.Errorf("got allocs=%d frees=%d live=%d, want 1/0/104", allocs, frees, live)
 	}
 }
 
@@ -578,11 +555,13 @@ const loopConstructionFreshSrc = `function main(): i32 {
 // The hazard the move must NOT reach: `a1` aliases a loop-OUTER array
 // without an inc. Moving it would let the first iteration's release free a
 // buffer later iterations still read — a use-after-free, not a leak. Pinned by
-// exit code as well as balance, since an over-release corrupts the read.
+// exit code as well as balance, since an over-release corrupts the read. The
+// append builds `a0` on the heap; a constant literal is a static aggregate,
+// which no release can free.
 const loopAliasNoIncSrc = `function main(): i32 {
     let s: i32 = 0;
     let k: i32 = 0;
-    let a0: i32[] = [1, 2, 3];
+    let a0: i32[] = [1, 2, 3].append(4);
     while (k < 20) {
         let a1: i32[] = a0;
         s = s + a1[2];
@@ -972,9 +951,10 @@ const ctorOuterAliasSrc = `function main(): i32 {
 // to rc 1, and then `xs`'s own flat dec at the sweep took the rc to zero
 // without freeing anything — the buffer leaked, on plain top-level code with
 // no loop and no nested block in sight. retainsCtorAliasedSource keeps such a
-// container on the exit sweep.
+// container on the exit sweep. The append builds `xs` on the heap, as
+// loopAliasNoIncSrc's does.
 const ctorRetainedDropOrderSrc = `function main(): i32 {
-    let xs: i32[] = [4, 5, 6];
+    let xs: i32[] = [4, 5, 6].append(7);
     let o = (xs, 9);
     let s: i32 = xs[1] + o.1;
     return s % 251;

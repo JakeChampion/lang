@@ -138,7 +138,7 @@ func CompileAndRunX86_64(t testing.TB, src string) (stdout string, exitCode int)
 func CompileX86_64Bin(t testing.TB, src string) (binPath string, runner []string) {
 	t.Helper()
 	runner = X86_64Runner(t)
-	return compileSelfHostProgram(t, TargetX86_64Linux, src, nil), runner
+	return CompileSelfHostSource(t, TargetX86_64Linux, src, nil), runner
 }
 
 // x86MachinePrefix is what `gcc -dumpmachine` starts with for a compiler that

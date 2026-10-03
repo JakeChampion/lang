@@ -12,16 +12,11 @@ import "testing"
 // What this pins today is the argv strings' whole life on arm64 under the
 // freelist: bound, compared, concatenated and re-bound across rounds with
 // every small class populated between them, with the answer and the
-// over-release counter folded into the exit code, and a leak census that
-// counts exactly the `args()` cache and its strings as never freed — they are
-// immortal by design (the cache hands the same array to every caller), so a
-// free of one would be a use-after-free through the cache, and this is where
-// it would first read as `frees > 0`.
-//
-// The size-word contract itself is pinned structurally in
-// internal/codegen/arm64 (TestTwoWordStringProducersLeaveAllocRc1SizeWord),
-// because no reclaim path reaches an argv string at rc==1 while the cache
-// holds it.
+// over-release counter folded into the exit code, and a balanced leak
+// census. `args()` builds a fresh array of counted boxes over the argv bytes
+// on each call, and the frame releases it at its last use, so a box freed
+// into the wrong class or released twice reads as a census imbalance or an
+// over-release here.
 
 const argvStraddleA = "aaaaaaaa"                                 // 8
 const argvStraddleB = "bbbbbbbbbbbbbbbbbbbbbbbb"                 // 24
@@ -78,12 +73,10 @@ func TestArm64ArgvStraddleFreeOn(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("leakcheck build: exit %d, want 0: %q", code, stderr)
 	}
-	allocs, frees, _ := parseLeakCheckLine(t, stderr)
-	// The args() cache array and its four strings (argv[0] and the three
-	// above) are the only blocks that must survive; everything the rounds
-	// allocate comes back.
-	if allocs-frees != 5 {
-		t.Errorf("leakcheck: allocs-frees = %d (allocs=%d frees=%d), want 5 — the immortal args() cache and its 4 strings; "+
-			"fewer means an argv string was freed under the cache, more means a round leaked", allocs-frees, allocs, frees)
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	// The args() array, its four boxes (argv[0] and the three above) and
+	// everything the rounds allocate all come back.
+	if allocs < 5 || allocs != frees || live != 0 {
+		t.Errorf("leakcheck: allocs=%d frees=%d live_bytes=%d, want at least the args() array and its 4 boxes, all released", allocs, frees, live)
 	}
 }

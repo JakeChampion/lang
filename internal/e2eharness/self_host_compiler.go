@@ -154,16 +154,17 @@ func CompileWithSelfHost(t testing.TB, compiler, target, src, binPath string, we
 	})
 }
 
-// EmitAsmWithSelfHost runs `compiler -target target -emit asm` on src and
-// returns the assembly text. It reserves what a driver build of that name
+// EmitAsmWithSelfHost runs `compiler -target target -emit asm` on src, with env
+// added to the compiler's environment, and returns the assembly text. It reserves what a driver build of that name
 // takes: the compiler's own footprint dominates, and over-reserving only
 // delays another build.
-func EmitAsmWithSelfHost(t testing.TB, compiler, target, src string) string {
+func EmitAsmWithSelfHost(t testing.TB, compiler, target, src string, env []string) string {
 	t.Helper()
 	stdlib := SelfHostStdlibRoot(t)
 	asmPath := filepath.Join(t.TempDir(), "out.s")
 	err := withBuildMemory(DriverBuildWeightMB(filepath.Base(src)), func() error {
 		cmd := exec.Command(compiler, "-target", target, "-emit", "asm", "-o", asmPath, src, stdlib)
+		cmd.Env = append(os.Environ(), env...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("%s -target %s -emit asm %s: %v\n%s", filepath.Base(compiler), target, filepath.Base(src), err, out)
 		}
@@ -295,10 +296,11 @@ func RunWasmCore(t testing.TB, corePath string, args ...string) *exec.Cmd {
 	return exec.Command(wasmtime, append([]string{"run", corePath}, args...)...)
 }
 
-// compileSelfHostProgram writes src to a temp dir and compiles it with the
+// CompileSelfHostSource writes src to a temp dir and compiles it with the
 // current self-host compiler for target, with env added to the compiler's
-// environment. It returns the output path.
-func compileSelfHostProgram(t testing.TB, target, src string, env []string) string {
+// environment (FERN_LEAKCHECK=1 or FERN_SANITIZE=1 build the instrumented
+// program). It returns the output path.
+func CompileSelfHostSource(t testing.TB, target, src string, env []string) string {
 	t.Helper()
 	srcPath := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
