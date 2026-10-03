@@ -15,11 +15,12 @@
 #   /port      the client's source port, so two requests on one held
 #              `fetch.Sockets` show whether the connection was reused
 #
-# The origins are scripts/net-interop.d/goserver (Go's net/http with its
-# defaults), nginx and h2o, the host's packages, configured here.
+# The origins are scripts/net-bench.d/gohello (Go's net/http with its
+# defaults), nginx, configured here, and h2o, configured by
+# scripts/net-lib; the last two are the host's packages.
 #
-# THE SERVER. scripts/net-interop.d/echo.fern answers every request with
-# the length and text of the body it read. curl checks one HTTP/1.1
+# THE SERVER. scripts/net-bench.d/hello.fern answers a request with a body
+# with the length and text of the body it read. curl checks one HTTP/1.1
 # connection carrying two requests, an upload behind `Expect:
 # 100-continue` answered with `100 Continue`, and a chunked upload;
 # h2load sends 2,000 requests over 16 kept connections, every one of
@@ -32,11 +33,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-case "$(uname -m)" in
-  x86_64)          TARGET=x86-64-linux ;;
-  aarch64 | arm64) TARGET=arm64-linux ;;
-  *) echo "net-interop: unsupported host $(uname -m)" >&2; exit 2 ;;
-esac
+. scripts/net-lib
 
 for tool in nginx h2o curl h2load go python3; do
   if ! command -v "$tool" >/dev/null 2>&1; then
@@ -45,44 +42,16 @@ for tool in nginx h2o curl h2load go python3; do
   fi
 done
 
-GZIP_TEXT="$(python3 -c 'print("hello gzip " * 30, end="")')"
 EXPECTED="hello: 200 hello
 redirect: 200 hello
 gzip: 200 decoded
 reuse: one connection"
 
-go build -o bin/fern ./cmd/fern
-
-work="$(mktemp -d)"
-chmod 755 "$work"
-server_pgid=""
-stop_server() {
-  if [ -n "$server_pgid" ]; then
-    kill -TERM -- "-$server_pgid" 2>/dev/null || true
-    local waited=0
-    while kill -0 "$server_pgid" 2>/dev/null && [ "$waited" -lt 25 ]; do
-      sleep 0.2
-      waited=$((waited + 1))
-    done
-    kill -KILL -- "-$server_pgid" 2>/dev/null || true
-    wait "$server_pgid" 2>/dev/null || true
-    server_pgid=""
-  fi
-}
-trap 'stop_server; rm -rf "$work"' EXIT
-
 bin/fern -target "$TARGET" -o "$work/client" scripts/net-interop.d/client.fern
-bin/fern -target "$TARGET" -o "$work/echo" scripts/net-interop.d/echo.fern
-go build -o "$work/goserver" ./scripts/net-interop.d/goserver
+bin/fern -target "$TARGET" -o "$work/hello" scripts/net-bench.d/hello.fern
+go build -o "$work/go-hello" ./scripts/net-bench.d/gohello
 mkdir -p "$work/www"
 printf '%s' "$GZIP_TEXT" > "$work/www/gzip.txt"
-
-free_port() {
-  python3 -c 'import socket
-s = socket.socket()
-s.bind(("127.0.0.1", 0))
-print(s.getsockname()[1])'
-}
 
 nginx_config() {
   cat > "$work/nginx.conf" <<EOF
@@ -115,54 +84,15 @@ http {
 EOF
 }
 
-h2o_config() {
-  cat > "$work/h2o.conf" <<EOF
-listen:
-  host: 127.0.0.1
-  port: $1
-hosts:
-  default:
-    paths:
-      /:
-        compress: ON
-        mruby.handler: |
-          Proc.new do |env|
-            case env["PATH_INFO"]
-            when "/hello"
-              [200, {"content-type" => "text/plain"}, ["hello"]]
-            when "/redirect"
-              [302, {"location" => "/hello"}, []]
-            when "/port"
-              [200, {"content-type" => "text/plain"}, [env["REMOTE_PORT"].to_s]]
-            when "/gzip"
-              [200, {"content-type" => "text/plain"}, ["$GZIP_TEXT"]]
-            else
-              [404, {}, []]
-            end
-          end
-EOF
-}
-
-# start_server NAME PORT — the server in its own process group, answering
-# before this returns.
-start_server() {
+# start NAME PORT — the server, answering before this returns.
+start() {
   case "$1" in
-    go)    PORT="$2" setsid "$work/goserver" > "$work/server.log" 2>&1 & ;;
-    nginx) nginx_config "$2"; setsid nginx -c "$work/nginx.conf" -p "$work" > "$work/server.log" 2>&1 & ;;
-    h2o)   h2o_config "$2"; setsid h2o -c "$work/h2o.conf" > "$work/server.log" 2>&1 & ;;
-    fern)  PORT="$2" setsid "$work/echo" > "$work/server.log" 2>&1 & ;;
+    go)    PORT="$2" start_server "$work/server.log" "$work/go-hello" ;;
+    nginx) nginx_config "$2"; start_server "$work/server.log" nginx -c "$work/nginx.conf" -p "$work" ;;
+    h2o)   h2o_config "$2"; start_server "$work/server.log" h2o -c "$work/h2o.conf" ;;
+    fern)  PORT="$2" start_server "$work/server.log" "$work/hello" ;;
   esac
-  server_pgid="$!"
-  local tries=0
-  until curl -s -m 1 -o /dev/null "http://127.0.0.1:$2/"; do
-    tries=$((tries + 1))
-    if [ "$tries" -ge 50 ]; then
-      echo "net-interop: $1 did not answer on port $2" >&2
-      cat "$work/server.log" >&2
-      exit 1
-    fi
-    sleep 0.2
-  done
+  await_server "$1" "$2" "$work/server.log"
 }
 
 failed=0
@@ -173,7 +103,7 @@ fail() {
 
 for origin in go nginx h2o; do
   port="$(free_port)"
-  start_server "$origin" "$port"
+  start "$origin" "$port"
   # The gzip case means something only if the origin really codes it, and
   # chunked, which the client's line cannot show once it has decoded.
   head="$(curl -s --http1.1 -H 'Accept-Encoding: gzip' -D - -o /dev/null "http://127.0.0.1:$port/gzip" | tr 'A-Z' 'a-z')"
@@ -192,7 +122,7 @@ for origin in go nginx h2o; do
 done
 
 port="$(free_port)"
-start_server fern "$port"
+start fern "$port"
 url="http://127.0.0.1:$port"
 
 connects="$(curl -s --http1.1 -o /dev/null -o /dev/null -w '%{num_connects}\n' "$url/a" "$url/b" | tr '\n' ' ')"
