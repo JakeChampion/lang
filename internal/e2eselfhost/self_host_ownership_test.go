@@ -226,7 +226,10 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 // takes no unit. For a recursive enum: `pick` hands back one tree and drops the
 // other, `depth` walks its tree and must not drop it. And for a receiver:
 // `advance` builds a new cursor out of its parameter and must drop it, `peek`
-// returns an element of its token array and must not.
+// returns an element of its token array and must not. For a user callee's lends:
+// `checked_keep` reads its record only through a function whose result holds
+// no reference, so it is counted and drops on its fresh arm; `view_keep` reads
+// it through one that returns a view of it, so it stays borrowed.
 const inferredModesProgram = `enum Node { Leaf(i32), Label(string), Empty }
 enum Tree { Tip(i32), Fork(Tree, Tree) }
 struct Rec { text: string, n: i32 }
@@ -255,6 +258,21 @@ function keep_or_new(r: Rec, k: i32): Rec {
     return Rec { text: "z" + "", n: k };
 }
 @noinline
+function checked_keep(r: Rec, k: i32): Rec {
+    if (lends_to_builtin(r) > k) { return r; }
+    return Rec { text: "y" + "", n: k };
+}
+@noinline
+function text_view(r: Rec): str {
+    let v: str = r.text;
+    return v;
+}
+@noinline
+function view_keep(r: Rec, k: i32): Rec {
+    if (text_view(r).len() > k) { return r; }
+    return Rec { text: "x" + "", n: k };
+}
+@noinline
 function reads_only(n: Node): i32 {
     match (n) { Leaf(v) => { return v * 2; }, Label(s) => { return s.len(); }, Empty => { return 0; } }
 }
@@ -280,6 +298,11 @@ function main(): i32 {
     let seen: i32 = 0;
     while (j < 4) { seen = seen + lends_to_builtin(r); r = keep_or_new(r, j); j = j + 1; }
     if (seen != 4) { return 3; }
+    let q: Rec = Rec { text: "aab" + "", n: 0 };
+    q = checked_keep(q, 1);
+    q = view_keep(q, 2);
+    q = checked_keep(q, 5);
+    if (q.text != "y" || q.n != 5) { return 7; }
     let t: Tree = Fork(Tip(1), Fork(Tip(2), Tip(3)));
     if (depth(t) != 5) { return 4; }
     t = pick(t, Tip(9), 1);
@@ -363,6 +386,20 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	}
 	if strings.Contains(lends, recDrop) {
 		t.Errorf("lends_to_builtin calls %s: a record whose field only reaches a builtin's lent slot was inferred COUNTED", recDrop)
+	}
+	checked, ok := asmWholeFunc(string(asm), "checked_keep")
+	if !ok {
+		t.Fatal("no __fn_checked_keep in the emitted code")
+	}
+	if !strings.Contains(checked, recDrop) {
+		t.Errorf("checked_keep does not call %s: a record read only through a user function whose result holds no reference was inferred BORROWED", recDrop)
+	}
+	viewed, ok := asmWholeFunc(string(asm), "view_keep")
+	if !ok {
+		t.Fatal("no __fn_view_keep in the emitted code")
+	}
+	if strings.Contains(viewed, recDrop) {
+		t.Errorf("view_keep calls %s: a record lent to a user function returning a view of it was inferred COUNTED", recDrop)
 	}
 	const treeDrop = "__sem_release_Tree"
 	picked, ok := asmWholeFunc(string(asm), "pick")

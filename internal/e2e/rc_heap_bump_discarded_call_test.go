@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Discarded owned call-result reclamation (statement-temp follow-up). A bare
@@ -97,9 +95,6 @@ func TestArm64DiscardedCallReclaim(t *testing.T) {
 }
 
 func TestWASMDiscardedCallReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, c := range []struct {
 		name string
 		src  func(string) string

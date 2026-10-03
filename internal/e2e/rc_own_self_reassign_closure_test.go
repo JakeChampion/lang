@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // The `own` self-reassign move — `a = grow(a, n)` where `grow` consumes `a` —
@@ -46,9 +44,6 @@ func TestArm64OwnSelfReassignInClosure(t *testing.T) {
 }
 
 func TestWASMOwnSelfReassignInClosure(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, ownSelfReassignClosureSrc); got != 0 {
 		t.Errorf("own self-reassign in a closure: got %d, want 0", got)
 	}

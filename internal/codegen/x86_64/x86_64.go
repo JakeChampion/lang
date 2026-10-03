@@ -1343,8 +1343,10 @@ type generator struct {
 	// usesAsciiRun gates the SSE2 high-bit scan kernel (__fern_ascii_run).
 	usesAsciiRun bool
 	// usesMemchr gates the SSE2 byte-search kernel (__fern_memchr).
-	usesMemchr      bool
-	usesMemchrBytes bool
+	usesMemchr         bool
+	usesCountByteBytes bool
+	usesMemchrBytes    bool
+	usesRmemchrBytes   bool
 	// usesMismatch gates the two-range comparison kernel
 	// (__fern_mismatch), which is __memchr's kernel over a pair of
 	// operands instead of a broadcast needle.
@@ -2041,12 +2043,18 @@ func (g *generator) recordUse(target string) {
 	case "__fern_memchr_bytes":
 		g.usesMemchrBytes = true
 		g.usesMemchr = true
+	case "__fern_rmemchr_bytes":
+		g.usesRmemchrBytes = true
+		g.usesRmemchr = true
 	case "__fern_memchr":
 		g.usesMemchr = true
 	case "__fern_mismatch":
 		g.usesMismatch = true
 	case "__fern_rmemchr":
 		g.usesRmemchr = true
+	case "__fern_count_byte_bytes":
+		g.usesCountByteBytes = true
+		g.usesCountByte = true
 	case "__fern_count_byte":
 		g.usesCountByte = true
 	case "__fern_scan_set":
@@ -11838,6 +11846,11 @@ func (g *generator) emitMismatchRuntime() {
 // three exits (a 32-byte hit, falling into the 16-byte tail loop, and the
 // tail loop's own below-the-string escape) apply here.
 func (g *generator) emitRmemchrRuntime() {
+	if g.usesRmemchrBytes {
+		g.line(".globl __fern_rmemchr_bytes")
+		g.label("__fern_rmemchr_bytes")
+		g.emit("jmp __fern_rmemchr")
+	}
 	g.line("")
 	g.line(".globl __fern_rmemchr")
 	g.line(".type __fern_rmemchr, @function")
@@ -12209,6 +12222,11 @@ func (g *generator) emitCountRunsRuntime() {
 // rather than sentinels: an out-of-range byte counts 0 because no byte can
 // equal it, and an empty string counts 0 because it has no bytes.
 func (g *generator) emitCountByteRuntime() {
+	if g.usesCountByteBytes {
+		g.line(".global __fern_count_byte_bytes")
+		g.label("__fern_count_byte_bytes")
+		g.emit("jmp __fern_count_byte")
+	}
 	g.line("")
 	g.line(".globl __fern_count_byte")
 	g.line(".type __fern_count_byte, @function")

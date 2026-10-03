@@ -211,11 +211,14 @@ advancing to a scripted readiness or the timeout, interest bits selecting
 it, an unwatch dropping it). The serve loops run on the reactor, so every
 serve, fetch and handler-census gate below exercises it.
 `TestSelfHostHeldConnectionsHeapBoundX86_64` is the per-held-connection
-bound of #9853: a serve loop whose handler
+bound of #9853 and #9854: a serve loop whose handler
 answers `__heap_bump_bytes()` holds 64 idle connections, then 64 more, and
 the growth the second batch cost must be under 1 KiB per connection (the
 first batch carries the table's one-time growth, so the bound is on the
-second). The self-host's loop costs about 120 bytes per connection. The
+second). It holds two shapes on a server each: connections accepted and
+never used, and connections kept alive after one served request, which is
+the exit criterion's idle keep-alive connection. The self-host's loop costs
+about 560 and 590 bytes per connection respectively. The
 test compiles with the production driver:
 the per-module driver's older lowering keeps an array of arrays it cannot
 prove fresh, so the connection table it rebuilds per accept leaks there

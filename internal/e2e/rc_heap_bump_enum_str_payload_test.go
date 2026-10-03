@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Enum string-payload reclamation (#6901) — the enum sibling of the tuple
@@ -128,9 +126,6 @@ func TestArm64EnumStringPayloadReclaimed(t *testing.T) {
 }
 
 func TestWASMEnumStringPayloadReclaimed(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, enumStrPayloadChurnSrc); got != 0 {
 		t.Errorf("enum string-payload churn leaked %d bytes/round on wasm, want 0", got)
 	}

@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Index-of-fresh-array reclamation (stage-(c) value-consuming-op sibling). A
@@ -74,9 +72,6 @@ func TestArm64IndexOfFreshReclaim(t *testing.T) {
 }
 
 func TestWASMIndexOfFreshReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, indexFreshBumpSrc("5000"))
 	large := runWasm(t, indexFreshBumpSrc("50000"))
 	if small != large {

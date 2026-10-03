@@ -20,8 +20,6 @@ package e2e
 import (
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // ownParamNonDominatingCliffSrc is the reduced #8146 shape: an `own` param
@@ -101,9 +99,6 @@ func TestArm64OwnParamNonDominatingMove(t *testing.T) {
 }
 
 func TestWASMOwnParamNonDominatingMove(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, ownParamNonDominatingCliffSrc); got != 0 {
 		t.Errorf("wasm own param returned on one branch and transferred on another: "+
 			"__arr_push_shared_count() = %d, want 0", got)

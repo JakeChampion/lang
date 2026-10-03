@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // A function that builds its result in a LOCAL and returns it — `let r =
@@ -36,9 +34,6 @@ func TestArm64FreshLocalReturn(t *testing.T) {
 }
 
 func TestWASMFreshLocalReturn(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, freshLocalSrc); got != 0 {
 		t.Errorf("fresh-local return: got %d, want 0", got)
 	}

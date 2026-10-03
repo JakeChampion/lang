@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // A function reached through a function VALUE — a lambda kept in a local, a
@@ -14,12 +12,9 @@ import (
 // do. Classify one owned instead and the callee decs at exit a reference
 // nobody incremented: the caller's value is freed underneath it (#7307).
 //
-// Borrow inference reaches the same verdict from the escape facts, so the
-// default configuration cannot see any of this — every case here runs with
-// ast.BorrowInferEnabled OFF, which is the model borrow inference is an
-// optimisation OF. Each program folds __rc_underflow_count() into a value
-// check, so a non-zero exit is either a wrong answer or an over-release; on
-// wasm the over-release also corrupts the freelist and aborts outright.
+// Each program folds __rc_underflow_count() into a value check, so a non-zero
+// exit is either a wrong answer or an over-release; on wasm the over-release
+// also corrupts the freelist and aborts outright.
 //
 // The exposed surface is exactly the owned-by-default set: a pointer-shaped
 // param whose type is string/array-FREE, i.e. a tuple or struct of scalars.
@@ -144,16 +139,10 @@ function main(): i32 {
 
 func runRcIndirectDispatchCorpus(t *testing.T, run func(t *testing.T, src string) int) {
 	t.Helper()
-	prevFree := ast.RcFreeEnabled
-	defer func() { ast.RcFreeEnabled = prevFree }()
-	ast.RcFreeEnabled = true
-	prevBorrow := ast.BorrowInferEnabled
-	defer func() { ast.BorrowInferEnabled = prevBorrow }()
-	ast.BorrowInferEnabled = false
 	for _, c := range rcIndirectDispatchCorpus {
 		t.Run(c.name, func(t *testing.T) {
 			if code := run(t, c.src); code != 0 {
-				t.Errorf("%s: got exit %d, want 0 (wrong value or rc over-release under the owned model)", c.name, code)
+				t.Errorf("%s: got exit %d, want 0 (wrong value or rc over-release)", c.name, code)
 			}
 		})
 	}
@@ -177,17 +166,10 @@ func TestWASMRcIndirectDispatchOwned(t *testing.T) {
 	runRcIndirectDispatchCorpus(t, runWasm)
 }
 
-// The shipping DEFAULT configuration is affected too, and this is the half that
-// matters most: borrow inference only demotes a param the escape analysis
-// proves non-escaping, so an ESCAPING param of an address-taken function
-// reached paramVerdictOwned with ast.BorrowInferEnabled left at its default.
-// No indirect call site retained it, and the callee's exit dec then released a
-// reference nobody had counted.
-//
-// The `*BorrowInferMatchesOwned` differentials are structurally blind to this:
-// both configurations are wrong in the same way, so comparing them agrees. That
-// is why these cases run with the flags UNTOUCHED — asserting the shipping
-// compiler is right, not that two configurations match.
+// An ESCAPING param of an address-taken function is the other half: borrow
+// inference only demotes a param it proves non-escaping, so an escaping one
+// was classified owned. No indirect call site retained it, and the callee's
+// exit dec then released a reference nobody had counted.
 //
 // The escape has to be an identity / projection return. A construction that
 // carries the param out (`Holder { t: p }`) inc's what it stores, which
@@ -239,19 +221,10 @@ function main(): i32 {
 
 func runRcIndirectDispatchDefaultCorpus(t *testing.T, run func(t *testing.T, src string) int) {
 	t.Helper()
-	// RcFreeEnabled is the only flag set: reclamation has to actually happen
-	// for an over-release to be reachable. BorrowInferEnabled is deliberately
-	// left at its shipping default.
-	prevFree := ast.RcFreeEnabled
-	defer func() { ast.RcFreeEnabled = prevFree }()
-	ast.RcFreeEnabled = true
-	if !ast.BorrowInferEnabled {
-		t.Fatal("this corpus asserts the SHIPPING configuration; ast.BorrowInferEnabled must be at its default")
-	}
 	for _, c := range rcIndirectDispatchDefaultCorpus {
 		t.Run(c.name, func(t *testing.T) {
 			if code := run(t, c.src); code != 0 {
-				t.Errorf("%s: got exit %d, want 0 (wrong value or rc over-release in the DEFAULT configuration)", c.name, code)
+				t.Errorf("%s: got exit %d, want 0 (wrong value or rc over-release)", c.name, code)
 			}
 		})
 	}

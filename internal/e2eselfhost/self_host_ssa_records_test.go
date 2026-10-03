@@ -62,6 +62,21 @@ graph = ssa.SFunc { name: "duplicate", nparams: 1, nvals: 2, entry: 7, takes_env
 ] };
 `
 
+// A borrowed record's array field handed to a callee: alone it is handed
+// without a bracket; beside the record itself in the same call it is not,
+// since the callee reads the field through the record too (#11212).
+const unitRecordHanded = `
+let recordType: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [i32t] };
+records = [semrecords.Record { views: false, ty: recordType, fields: [
+    semrecords.Field { name: "xs", ty: ia }, semrecords.Field { name: "n", ty: i32t }
+] }];
+calls = [contract("g", [ia], [2], ia), contract("h", [recordType, ia], [2, 2], ia)];
+params = [recordType]; types = [recordType, ia, ia]; result = ia; modes = [2];
+graph = ssa.SFunc { name: "handed", nparams: 1, nvals: 3, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), field(1, 0, 0, "xs"), call_inst(2, "g", [1])], term: ret(2) }
+] };
+`
+
 func unitRecordCases() []unitCase {
 	return []unitCase{
 		// The rebuilt record dies at its field read, so the read takes the
@@ -106,6 +121,14 @@ if (!supply(s, 0, 0, 0, ssaunits.retain_unit()) || !supply(s, 1, 0, 1, ssaunits.
 `, "", ""},
 		{"record-double-move", unitRecordDuplicate, "", `let s = find(p, 7, 1, 0 - 1); let a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 2 }, s.supplies[1]] });`, "move without counted unit"},
 		{"record-borrowed-move", unitRecordDuplicate + "modes = [2];", "", `let s = find(p, 7, 1, 0 - 1); let a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 2 }, s.supplies[1]] });`, "move without counted unit"},
+		{"record-field-handed", unitRecordHanded, `
+let c = find(p, 7, 2, 0 - 1);
+if (c.hand_roots.len() != 1 || c.hand_roots[0] != 0 || c.hand_fields[0] != 0) { return 57; }
+`, "", ""},
+		{"record-field-not-handed-beside-its-record", unitRecordHanded + `graph = change(graph, 2, call_inst(2, "h", [0, 1]));`, `
+let c = find(p, 7, 2, 0 - 1);
+if (c.hand_roots.len() != 2 || c.hand_roots[1] != 0 - 1) { return 58; }
+`, "", ""},
 		{"record-changed-schema", unitRecordDuplicate, "", `let r = f.records.list[0]; f = ssasem.Func { ...f, records: semrecords.records_of([semrecords.Record { ...r, fields: [r.fields[0]] }]) };`, "record construction arity"},
 	}
 }

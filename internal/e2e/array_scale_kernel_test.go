@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // The scale kernel rewrite (#9735), from the outside.
@@ -148,9 +146,6 @@ func TestX86_64ScaleKernelMatchesTheLoop(t *testing.T) {
 }
 
 func TestWASMScaleKernelMatchesTheLoop(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, arrayScaleKernelSrc); got != 0 {
 		t.Errorf("scale kernel on wasm: got %d, want 0", got)
 	}

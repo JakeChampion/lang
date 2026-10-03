@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Ownership-aware materialization for a same-shape map (#9733), from the
@@ -96,9 +94,6 @@ func TestX86_64OwnedMapMatchesTheLoop(t *testing.T) {
 }
 
 func TestWASMOwnedMapMatchesTheLoop(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, arrayInPlaceSrc); got != 0 {
 		t.Errorf("owned map on wasm: got %d, want 0", got)
 	}

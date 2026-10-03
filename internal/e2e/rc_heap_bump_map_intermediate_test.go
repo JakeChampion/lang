@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // A map RETURNED FROM A CALL — `let m = mk(i)` / a discarded `mk(i);` where
@@ -209,9 +207,6 @@ func TestArm64MapIntermediateReclaim(t *testing.T) {
 }
 
 func TestWASMMapIntermediateReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	runMapIntermediateChecks(t, func(t *testing.T, src string) int {
 		return runWasm(t, src)
 	})

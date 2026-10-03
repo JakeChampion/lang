@@ -313,8 +313,8 @@ the nine `emitAliasInc` call sites is gated on `moveSites`
   measured numbers lives in `RC-PERCEUS-PLAN.md` ("E3 drop-guided
   reuse evaluation — verdict"). The shapes' observable behavior
   is identical under both strategies by construction (shared
-  gates + is_unique guard + degrade path; 224-seed differential
-  in `drop_guided_differential_test.go`).
+  gates + is_unique guard + degrade path; a 224-seed differential
+  on the native compiler agreed).
 - **Visibility** (`fip`/`fbip` verify-and-enable): **CLOSED on the
   native compiler** (plan item **E2'**, 2026-07-13). `fbip` /
   `fbip(n)` / `fip(n)` make the pairing programmer-visible: the IR

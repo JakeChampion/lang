@@ -228,34 +228,34 @@ function copy_head(r: Reader, o: gnu.Stream, s: Settings, name: string): gnu.Str
     return out;
   }
   while (true) {
-    match (r.read_chunk(read_size())) {
+    match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           return out;
         }
         if (!s.lines) {
           if (chunk.len() as u64 >= left) {
-            out = gnu.stream_put(out, slice_unchecked(chunk, 0, left as i32) + "");
+            out = gnu.stream_put_bytes_range(out, chunk, 0, left as i32);
             return out;
           }
-          out = gnu.stream_put(out, chunk);
+          out = gnu.stream_put_bytes(out, chunk);
           left = left - chunk.len() as u64;
         } else {
           // One SIMD tally decides the whole chunk: fewer terminators
           // in it than are still wanted and it goes out unsplit, so
           // only the chunk that reaches the count is walked line by
           // line.
-          let here: u64 = __count_byte(chunk, s.term) as u64;
+          let here: u64 = __count_byte_bytes(chunk, s.term) as u64;
           if (here < left) {
-            out = gnu.stream_put(out, chunk);
+            out = gnu.stream_put_bytes(out, chunk);
             left = left - here;
           } else {
             let i: i32 = 0;
             while (left > 0 as u64) {
-              i = __memchr(chunk, s.term, i) + 1;
+              i = __memchr_bytes(chunk, s.term, i) + 1;
               left = left - 1 as u64;
             }
-            out = gnu.stream_put(out, slice_unchecked(chunk, 0, i) + "");
+            out = gnu.stream_put_bytes_range(out, chunk, 0, i);
             return out;
           }
         }
@@ -347,12 +347,12 @@ function copy_span(r: Reader, o: gnu.Stream, name: string, at: i64, n: i64): gnu
     if (left < want as i64) {
       want = left as i32;
     }
-    match (r.read_chunk(want)) {
+    match (r.read_chunk_bytes(want)) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           return out;
         }
-        out = gnu.stream_put(out, chunk);
+        out = gnu.stream_put_bytes(out, chunk);
         left = left - chunk.len() as i64;
       },
       Err(e) => {
@@ -365,31 +365,45 @@ function copy_span(r: Reader, o: gnu.Stream, name: string, at: i64, n: i64): gnu
 
 // `read_at(r, o, name, at, n)` — `n` bytes at offset `at`, short only
 // at end of input, as (stream, bytes, ok).
-function read_at(r: Reader, o: gnu.Stream, name: string, at: i64, n: i32): (gnu.Stream, string, boolean) {
+function read_at(r: Reader, o: gnu.Stream, name: string, at: i64, n: i32): (gnu.Stream, u8[], boolean) {
   match (r.seek(at, 0)) {
     Ok(_) => {},
     Err(e) => {
-      return (gnu.stream_fail(o, gnu.quotef(name) + ": cannot seek to offset " + at.to_string() + ": " + gnu.io_error_text(e)), "", false);
+      return (gnu.stream_fail(o, gnu.quotef(name) + ": cannot seek to offset " + at.to_string() + ": " + gnu.io_error_text(e)), [], false);
     }
   }
-  let got: string = "";
-  while (got.len() < n) {
-    match (r.read_chunk(n - got.len())) {
+  let first: u8[] = [];
+  match (r.read_chunk_bytes(n)) {
+    Ok(chunk) => {
+      first = chunk;
+    },
+    Err(e) => {
+      return (gnu.stream_fail(o, "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e)), [], false);
+    }
+  }
+  if (first.len() == n || first.len() == 0) {
+    return (o, first, true);
+  }
+  let b = buf_new(n);
+  buf_push_bytes_range(b, first, 0, first.len());
+  let size = first.len();
+  while (size < n) {
+    match (r.read_chunk_bytes(n - size)) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
-          return (o, got, true);
+          break;
         }
-        if (got.len() == 0) {
-          got = chunk;
-        } else {
-          got = got + chunk;
-        }
+        buf_push_bytes_range(b, chunk, 0, chunk.len());
+        size = size + chunk.len();
       },
       Err(e) => {
-        return (gnu.stream_fail(o, "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e)), "", false);
+        buf_free(b);
+        return (gnu.stream_fail(o, "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e)), [], false);
       }
     }
   }
+  let got = buf_take_bytes(b);
+  buf_free(b);
   return (o, got, true);
 }
 
@@ -437,12 +451,12 @@ function elide_lines_seekable(r: Reader, o: gnu.Stream, s: Settings, name: strin
   let pos: i64 = reg.end - want;
   let first: boolean = true;
   while (true) {
-    let rb: (gnu.Stream, string, boolean) = read_at(r, out, name, pos, want as i32);
+    let rb: (gnu.Stream, u8[], boolean) = read_at(r, out, name, pos, want as i32);
     out = rb.0;
     if (!rb.2) {
       return out;
     }
-    let buf: string = rb.1;
+    let buf: u8[] = rb.1;
     if (first) {
       if (buf.len() > 0 && buf[buf.len() - 1] as i32 != s.term) {
         skip = skip - 1 as i64;
@@ -454,7 +468,7 @@ function elide_lines_seekable(r: Reader, o: gnu.Stream, s: Settings, name: strin
     }
     let j: i32 = buf.len() - 1;
     while (j >= 0) {
-      j = __rmemchr(buf, s.term, j);
+      j = __rmemchr_bytes(buf, s.term, j);
       if (j < 0) {
         break;
       }
@@ -478,18 +492,18 @@ function elide_lines_seekable(r: Reader, o: gnu.Stream, s: Settings, name: strin
 // once the stream is longer than that.
 function copy_elide_bytes(r: Reader, o: gnu.Stream, s: Settings, name: string): gnu.Stream {
   let out: gnu.Stream = o;
-  let hold: string = "";
+  let hold = lines.hold_empty();
   while (true) {
-    match (r.read_chunk(read_size())) {
+    match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           return out;
         }
-        hold = hold + chunk;
-        if (hold.len() as u64 > s.count.n) {
-          let keep: i32 = hold.len() - s.count.n as i32;
-          out = gnu.stream_put(out, slice_unchecked(hold, 0, keep) + "");
-          hold = slice_unchecked(hold, keep, hold.len()) + "";
+        hold = lines.hold_push(hold, chunk);
+        if (hold.n > s.count.n) {
+          let keep = hold.n - s.count.n;
+          out = lines.hold_write(hold, out, keep);
+          hold = lines.hold_drop(hold, keep);
         }
       },
       Err(e) => {
@@ -506,24 +520,24 @@ function copy_elide_bytes(r: Reader, o: gnu.Stream, s: Settings, name: string): 
 // it, so the release scan runs once per chunk rather than once per line.
 function copy_elide_lines(r: Reader, o: gnu.Stream, s: Settings, name: string): gnu.Stream {
   let out: gnu.Stream = o;
-  let hold: string = "";
+  let hold = lines.hold_empty();
   let pending: u64 = 0 as u64;
   while (true) {
-    match (r.read_chunk(read_size())) {
+    match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           // An unterminated tail is a line of its own, so it joins the
           // count only once the input has ended.
           let total: u64 = pending;
-          if (hold.len() > 0 && hold[hold.len() - 1] as i32 != s.term) {
+          if (hold.n > 0 as u64 && hold.last as i32 != s.term) {
             total = total + 1 as u64;
           }
           if (total > s.count.n) {
-            out = gnu.stream_put(out, release_lines(hold, total - s.count.n, s.term));
+            out = lines.hold_write(hold, out, lines.hold_cut(hold, total - s.count.n, s.term));
           }
           return out;
         }
-        let here: u64 = __count_byte(chunk, s.term) as u64;
+        let here: u64 = __count_byte_bytes(chunk, s.term) as u64;
         let start: i32 = 0 - 1;
         if (here >= s.count.n) {
           start = lines.tail_start(chunk, s.count.n, s.term);
@@ -533,17 +547,17 @@ function copy_elide_lines(r: Reader, o: gnu.Stream, s: Settings, name: string): 
           // so everything before them goes out and none of it is
           // scanned forward: the boundary is n + 1 terminators back
           // from the end.
-          out = gnu.stream_put(out, hold);
-          out = gnu.stream_put(out, slice_unchecked(chunk, 0, start) + "");
-          hold = slice_unchecked(chunk, start, chunk.len()) + "";
+          out = lines.hold_write(hold, out, hold.n);
+          out = gnu.stream_put_bytes_range(out, chunk, 0, start);
+          hold = lines.hold_from(chunk, start);
           pending = s.count.n;
         } else {
-          hold = hold + chunk;
+          hold = lines.hold_push(hold, chunk);
           pending = pending + here;
           if (pending > s.count.n) {
-            let cut: i32 = lines.line_cut(hold, pending - s.count.n, s.term);
-            out = gnu.stream_put(out, slice_unchecked(hold, 0, cut) + "");
-            hold = slice_unchecked(hold, cut, hold.len()) + "";
+            let cut = lines.hold_cut(hold, pending - s.count.n, s.term);
+            out = lines.hold_write(hold, out, cut);
+            hold = lines.hold_drop(hold, cut);
             pending = s.count.n;
           }
         }
@@ -554,10 +568,6 @@ function copy_elide_lines(r: Reader, o: gnu.Stream, s: Settings, name: string): 
     }
   }
   return out;
-}
-
-function release_lines(hold: string, n: u64, term: i32): string {
-  return slice_unchecked(hold, 0, lines.line_cut(hold, n, term)) + "";
 }
 
 // `head_file(path, o, s, show)` — one operand: its header when `show`,

@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // std/ndarray's materialization rule (docs/ARRAY-SHAPES.md, #9734), held to
@@ -477,9 +475,6 @@ func TestArm64NdarrayStructuralOpsAreMetadata(t *testing.T) {
 }
 
 func TestWASMNdarrayStructuralOpsAreMetadata(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, ndarraySrc); got != 0 {
 		t.Errorf("ndarray on wasm: got %d, want 0", got)
 	}

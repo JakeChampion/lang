@@ -654,7 +654,18 @@ pub function stream_new(): Stream {
 // error:`. Which one a run gets is the stdio buffer: output under one
 // block never reaches the fd until close.
 pub function stream_put(o: Stream, s: string): Stream {
-  let w: io_buffered.BufWriter = o.w.write_string(s);
+  return stream_written(o, o.w.write_string(s));
+}
+
+pub function stream_put_bytes(o: Stream, bytes: u8[]): Stream {
+  return stream_written(o, o.w.write_bytes(bytes));
+}
+
+pub function stream_put_bytes_range(o: Stream, bytes: u8[], lo: i32, hi: i32): Stream {
+  return stream_written(o, o.w.write_bytes_range(bytes, lo, hi));
+}
+
+function stream_written(o: Stream, w: io_buffered.BufWriter): Stream {
   match (w.error()) {
     Some(e) => {
       error("error writing " + quotea("standard output") + ": " + io_error_text(e));

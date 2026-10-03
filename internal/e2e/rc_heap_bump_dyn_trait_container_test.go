@@ -23,8 +23,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // dynShapeArraySrc builds + drops a heterogeneous `dyn Shape[]` of two
@@ -181,9 +179,6 @@ func TestArm64DynMultiTraitArrayHeapBumpBounded(t *testing.T) {
 // the array case on wasm exactly as on the natives; the dedicated
 // array-of-dyn drop covers both, and this guards the wasm side.
 func TestWASMDynShapeArrayHeapBumpBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, dynShapeArraySrc("50"))
 	large := runWasm(t, dynShapeArraySrc("5000"))
 	if small != large {
@@ -196,9 +191,6 @@ func TestWASMDynShapeArrayHeapBumpBounded(t *testing.T) {
 
 // TestWASMDynShapeArrayNoUnderflow: no over-release on wasm.
 func TestWASMDynShapeArrayNoUnderflow(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, dynShapeArrayUnderflowSrc("200")); got != 0 {
 		t.Errorf("dyn Shape[] over-releases = %d, want 0", got)
 	}
@@ -208,9 +200,6 @@ func TestWASMDynShapeArrayNoUnderflow(t *testing.T) {
 // wasm (inline two-word elements; the drop slot is a function-table index
 // at the merged method count).
 func TestWASMDynMultiTraitArrayHeapBumpBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, dynMultiTraitArraySrc("50"))
 	large := runWasm(t, dynMultiTraitArraySrc("5000"))
 	if small != large {
@@ -262,9 +251,6 @@ function main(): i32 {
 // TestWASMDynShapeArrayExitBounded: the exit sweep walks a function-local
 // `dyn Shape[]`'s elements on wasm, and releases none of them twice.
 func TestWASMDynShapeArrayExitBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	bump := "(__heap_bump_bytes() as i32) - before"
 	small := runWasm(t, dynShapeArrayExitSrc("50", bump))
 	large := runWasm(t, dynShapeArrayExitSrc("5000", bump))

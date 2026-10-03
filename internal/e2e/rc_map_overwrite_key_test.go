@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #7911 — `m.insert(k, v)` overwriting an existing entry keeps the key the
@@ -121,9 +119,6 @@ func TestArm64MapOverwriteKeyReclaim(t *testing.T) {
 }
 
 func TestWASMMapOverwriteKeyReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, mapOverwriteFreshKeyBumpSrc("50"))
 	large := runWasm(t, mapOverwriteFreshKeyBumpSrc("5000"))
 	if small != large {

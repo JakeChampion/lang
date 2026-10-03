@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #4402 opt 3: the runtime contract for the two widened reuse pairings.
@@ -102,9 +100,6 @@ func TestArm64CrossBranchReuse(t *testing.T) {
 }
 
 func TestWASMCrossBranchReuse(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, crossBranchReuseSrc); got != 0 {
 		t.Errorf("cross-branch / cross-kind reuse on wasm: got %d, want 0", got)
 	}

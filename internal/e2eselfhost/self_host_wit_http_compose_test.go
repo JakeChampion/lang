@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -137,6 +138,15 @@ func serveComponent(t *testing.T, wasmtime, component, method, path, body string
 // serveComponentHeaders is serveComponent with request headers.
 func serveComponentHeaders(t *testing.T, wasmtime, component, method, path, body string, headers map[string]string) (int, http.Header, string) {
 	t.Helper()
+	status, hdr, got, _ := serveComponentLogged(t, wasmtime, component, method, path, body, headers, "")
+	return status, hdr, got
+}
+
+// serveComponentLogged is serveComponentHeaders that also returns what
+// `wasmtime serve` wrote, once that holds `logged`: the guest's stderr
+// arrives on its own stream, after the response it was written before.
+func serveComponentLogged(t *testing.T, wasmtime, component, method, path, body string, headers map[string]string, logged string) (int, http.Header, string, string) {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("pick port: %v", err)
@@ -145,7 +155,7 @@ func serveComponentHeaders(t *testing.T, wasmtime, component, method, path, body
 	ln.Close()
 
 	srv := exec.Command(wasmtime, "serve", "--addr", addr, component)
-	var slog bytes.Buffer
+	var slog lockedBuffer
 	srv.Stdout = &slog
 	srv.Stderr = &slog
 	if err := srv.Start(); err != nil {
@@ -181,5 +191,26 @@ func serveComponentHeaders(t *testing.T, wasmtime, component, method, path, body
 	if resp.StatusCode >= 500 {
 		t.Logf("wasmtime serve:\n%s", slog.String())
 	}
-	return resp.StatusCode, resp.Header, string(got)
+	for wait := time.Now().Add(2 * time.Second); logged != "" && !strings.Contains(slog.String(), logged) && time.Now().Before(wait); {
+		time.Sleep(50 * time.Millisecond)
+	}
+	return resp.StatusCode, resp.Header, string(got), slog.String()
+}
+
+// lockedBuffer is a buffer `wasmtime serve` writes while the test reads it.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

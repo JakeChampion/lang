@@ -327,7 +327,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_ascii_run")
-				case "__fern_rmemchr":
+				case "__fern_rmemchr", "__fern_rmemchr_bytes":
 					// The backward byte search. Scalar for now, so it
 					// reads every byte through str_byte rather than
 					// only the inline ones — one path that is correct
@@ -335,13 +335,19 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_rmemchr")
-				case "__fern_count_byte":
+					if op.Str == "__fern_rmemchr_bytes" {
+						needs.add("__fern_rmemchr_bytes")
+					}
+				case "__fern_count_byte", "__fern_count_byte_bytes":
 					// The byte tally. Scalar for now, and it reads
 					// every byte through str_byte for the same reason
 					// the backward search does.
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_count_byte")
+					if op.Str == "__fern_count_byte_bytes" {
+						needs.add("__fern_count_byte_bytes")
+					}
 				case "__fern_scan_set":
 					// The byte-set scan. Scalar, and it reads every
 					// byte through str_byte for the same reason.
@@ -1729,10 +1735,20 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildMemchrBody,
 	},
+	"__fern_count_byte_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildCountByteBytesBody,
+	},
 	"__fern_memchr_bytes": {
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildMemchrBytesBody,
+	},
+	"__fern_rmemchr_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildRmemchrBytesBody,
 	},
 	"__fern_mismatch": {
 		// (a_data, a_len, ao, b_data, b_len, bo, n) → i32 offset of the
@@ -6975,6 +6991,18 @@ func buildMismatchBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+func buildCountByteBytesBody(idxs map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, idxs["__fern_count_byte"])
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
 func buildMemchrBytesBody(idxs map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstLocalGet(body, 0)
@@ -6985,6 +7013,19 @@ func buildMemchrBytesBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstCall(body, idxs["__fern_memchr"])
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+func buildRmemchrBytesBody(idxs map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, idxs["__fern_rmemchr"])
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 

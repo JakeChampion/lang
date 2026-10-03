@@ -603,12 +603,12 @@ struct Copy { o: gnu.Stream, pos: i64, ok: boolean }
 function dump_rest(c: Copy, r: Reader, pretty: string, one: boolean, fatal: boolean): Copy {
   let out: Copy = c;
   while (true) {
-    match (r.read_chunk(read_size())) {
+    match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           return out;
         }
-        out = Copy { ...out, o: gnu.stream_put(out.o, chunk), pos: out.pos + chunk.len() as i64 };
+        out = Copy { ...out, o: gnu.stream_put_bytes(out.o, chunk), pos: out.pos + chunk.len() as i64 };
         if (one) {
           return out;
         }
@@ -681,7 +681,7 @@ function copy_from_start(c: Copy, r: Reader, pretty: string, s: Settings): Copy 
     }
   }
   while (skip > 0 as u64) {
-    match (r.read_chunk(read_size())) {
+    match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           return out;
@@ -689,22 +689,22 @@ function copy_from_start(c: Copy, r: Reader, pretty: string, s: Settings): Copy 
         out = Copy { ...out, pos: out.pos + chunk.len() as i64 };
         if (!s.lines) {
           if (chunk.len() as u64 > skip) {
-            out = Copy { ...out, o: gnu.stream_put(out.o, slice_unchecked(chunk, skip as i32, chunk.len()) + "") };
+            out = Copy { ...out, o: gnu.stream_put_bytes_range(out.o, chunk, skip as i32, chunk.len()) };
             skip = 0 as u64;
           } else {
             skip = skip - chunk.len() as u64;
           }
         } else {
-          let here: u64 = __count_byte(chunk, s.term) as u64;
+          let here: u64 = __count_byte_bytes(chunk, s.term) as u64;
           if (here < skip) {
             skip = skip - here;
           } else {
             let i: i32 = 0;
             while (skip > 0 as u64) {
-              i = __memchr(chunk, s.term, i) + 1;
+              i = __memchr_bytes(chunk, s.term, i) + 1;
               skip = skip - 1 as u64;
             }
-            out = Copy { ...out, o: gnu.stream_put(out.o, slice_unchecked(chunk, i, chunk.len()) + "") };
+            out = Copy { ...out, o: gnu.stream_put_bytes_range(out.o, chunk, i, chunk.len()) };
           }
         }
       },
@@ -734,20 +734,21 @@ function copy_last_bytes(c: Copy, r: Reader, pretty: string, s: Settings): Copy 
       return dump_rest(out, r, pretty, false, false);
     }
   }
-  let hold: string = "";
+  let hold = lines.hold_empty();
   while (true) {
-    match (r.read_chunk(read_size())) {
+    match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
-          return Copy { ...out, o: gnu.stream_put(out.o, hold) };
+          return Copy { ...out, o: lines.hold_write(hold, out.o, hold.n) };
         }
         out = Copy { ...out, pos: out.pos + chunk.len() as i64 };
         if (chunk.len() as u64 >= s.count) {
-          hold = slice_unchecked(chunk, chunk.len() - s.count as i32, chunk.len()) + "";
+          hold = lines.hold_from(chunk, chunk.len() - s.count as i32);
         } else {
-          hold = hold + chunk;
-          if (hold.len() as u64 > s.count) {
-            hold = slice_unchecked(hold, hold.len() - s.count as i32, hold.len()) + "";
+          hold = lines.hold_push(hold, chunk);
+          if (hold.n > s.count) {
+            let cut = hold.n - s.count;
+            hold = lines.hold_drop(hold, cut);
           }
         }
       },
@@ -793,8 +794,8 @@ function file_lines(c: Copy, r: Reader, pretty: string, s: Settings, start: i64,
   }
   pos = pos - want;
   seek_to(r, pos);
-  let chunk: string = "";
-  match (r.read_chunk(want as i32)) {
+  let chunk: u8[] = [];
+  match (r.read_chunk_bytes(want as i32)) {
     Ok(ch) => {
       chunk = ch;
     },
@@ -808,13 +809,13 @@ function file_lines(c: Copy, r: Reader, pretty: string, s: Settings, start: i64,
   while (true) {
     let n: i32 = chunk.len();
     while (n > 0) {
-      let nl: i32 = __rmemchr(chunk, s.term, n - 1);
+      let nl: i32 = __rmemchr_bytes(chunk, s.term, n - 1);
       if (nl < 0) {
         break;
       }
       n = nl;
       if (left == 0 as u64) {
-        out = Copy { ...out, o: gnu.stream_put(out.o, slice_unchecked(chunk, nl + 1, chunk.len()) + ""), pos: pos + chunk.len() as i64 };
+        out = Copy { ...out, o: gnu.stream_put_bytes_range(out.o, chunk, nl + 1, chunk.len()), pos: pos + chunk.len() as i64 };
         return dump_rest(out, r, pretty, false, false);
       }
       left = left - 1 as u64;
@@ -825,7 +826,7 @@ function file_lines(c: Copy, r: Reader, pretty: string, s: Settings, start: i64,
     }
     pos = pos - bufsize;
     seek_to(r, pos);
-    match (r.read_chunk(bufsize as i32)) {
+    match (r.read_chunk_bytes(bufsize as i32)) {
       Ok(ch) => {
         chunk = ch;
       },
@@ -845,23 +846,24 @@ function file_lines(c: Copy, r: Reader, pretty: string, s: Settings, start: i64,
 // in it, so the drop scan runs once per chunk rather than per line.
 function pipe_lines(c: Copy, r: Reader, pretty: string, s: Settings): Copy {
   let out: Copy = c;
-  let hold: string = "";
+  let hold = lines.hold_empty();
   let pending: u64 = 0 as u64;
   while (true) {
-    match (r.read_chunk(read_size())) {
+    match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           let total: u64 = pending;
-          if (hold.len() > 0 && hold[hold.len() - 1] as i32 != s.term) {
+          if (hold.n > 0 as u64 && hold.last as i32 != s.term) {
             total = total + 1 as u64;
           }
           if (total > s.count) {
-            hold = slice_unchecked(hold, lines.line_cut(hold, total - s.count, s.term), hold.len()) + "";
+            let cut = lines.hold_cut(hold, total - s.count, s.term);
+            hold = lines.hold_drop(hold, cut);
           }
-          return Copy { ...out, o: gnu.stream_put(out.o, hold) };
+          return Copy { ...out, o: lines.hold_write(hold, out.o, hold.n) };
         }
         out = Copy { ...out, pos: out.pos + chunk.len() as i64 };
-        let here: u64 = __count_byte(chunk, s.term) as u64;
+        let here: u64 = __count_byte_bytes(chunk, s.term) as u64;
         let start: i32 = 0 - 1;
         if (here >= s.count) {
           start = lines.tail_start(chunk, s.count, s.term);
@@ -870,14 +872,14 @@ function pipe_lines(c: Copy, r: Reader, pretty: string, s: Settings): Copy {
           // The chunk alone carries the lines to keep: the hold
           // restarts at the last N terminated lines, an unterminated
           // tail after them counted only once the input has ended.
-          hold = slice_unchecked(chunk, start, chunk.len()) + "";
+          hold = lines.hold_from(chunk, start);
           pending = s.count;
         } else {
-          hold = hold + chunk;
+          hold = lines.hold_push(hold, chunk);
           pending = pending + here;
           if (pending > s.count) {
-            let cut: i32 = lines.line_cut(hold, pending - s.count, s.term);
-            hold = slice_unchecked(hold, cut, hold.len()) + "";
+            let cut = lines.hold_cut(hold, pending - s.count, s.term);
+            hold = lines.hold_drop(hold, cut);
             pending = s.count;
           }
         }

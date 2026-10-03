@@ -19,8 +19,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // dynPrimBumpGrowthSrc churns a `dyn Show` over a plain i32: per iteration
@@ -103,9 +101,6 @@ function main(): i32 {
 }`
 
 func TestWASMDynTraitPrimHeapBumpBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, dynPrimBumpGrowthSrc("50"))
 	large := runWasm(t, dynPrimBumpGrowthSrc("5000"))
 	if small != large {
@@ -114,9 +109,6 @@ func TestWASMDynTraitPrimHeapBumpBounded(t *testing.T) {
 }
 
 func TestWASMDynTraitPrimStringHeapBumpBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, dynPrimStringBumpGrowthSrc("50"))
 	large := runWasm(t, dynPrimStringBumpGrowthSrc("5000"))
 	if small != large {
@@ -125,9 +117,6 @@ func TestWASMDynTraitPrimStringHeapBumpBounded(t *testing.T) {
 }
 
 func TestWASMDynTraitLocalReturnMove(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, dynLocalReturnMoveSrc); got != 0 {
 		t.Errorf("returned dyn local dispatch = %d, want 0 (1/2 = wrong dispatch value — freed cell; 99 = rc underflow)", got)
 	}
@@ -190,9 +179,6 @@ function main(): i32 {
 // box un-swept → freelist corruption. Fixed by excluding dyn-slot callees
 // from inlining (internal/ir/inline.go). Now bounded like the natives.
 func TestWASMDynTraitEnumPayloadHeapBumpBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, dynEnumPayloadBumpGrowthSrc("50"))
 	large := runWasm(t, dynEnumPayloadBumpGrowthSrc("5000"))
 	if small != large {
@@ -236,9 +222,6 @@ function main(): i32 {
 }
 
 func TestWASMDynTraitStructFnExitHeapBumpBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, dynStructFnExitBumpGrowthSrc("50"))
 	large := runWasm(t, dynStructFnExitBumpGrowthSrc("5000"))
 	if small != large {
@@ -300,9 +283,6 @@ function main(): i32 {
 // gains a sound element walk, promote this to the bounded shape the native
 // siblings use.
 func TestWASMDynTraitArrFnExitCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	src := `import "std/i32";
 trait Show {
     function show(self: Self): i32;

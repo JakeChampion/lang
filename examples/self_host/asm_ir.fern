@@ -484,8 +484,6 @@ function str_grow_census(s: asmcore.EmitState): asmcore.EmitState {
 function emit_ir_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl: string, elem: string): asmcore.EmitState {
   s = s.write("__fn___fern_" + sym + ":\n");
   s = s.write("    movq 8(%rsp), %rax\n");  // arr
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .L" + lbl + "_ret\n");
   s = s.write("    cmpq $0x10000, %rax\n");  // low-addr guard
   s = s.write("    jb .L" + lbl + "_ret\n");
   s = s.write("    movl -8(%rax), %ecx\n");  // rc
@@ -555,8 +553,7 @@ function emit_ir_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl: s
 // shared box (rc>1) skips the payload — another owner still reads it — and the
 // box's own arr_dec does the decrement.
 function optarrarr_elem(): string {
-  let e: string = "    testq %rax, %rax\n    jz .Loaf_next\n";
-  e = e + "    cmpq $0x10000, %rax\n    jb .Loaf_next\n";
+  let e: string = "    cmpq $0x10000, %rax\n    jb .Loaf_next\n";
   e = e + "    pushq %rax\n    call __fn___fern_rc_is_unique\n    addq $8, %rsp\n";
   e = e + "    testq %rax, %rax\n    jz .Loaf_box\n";
   e = e + "    movq 8(%rbx,%r13,8), %rax\n";  // reload e
@@ -600,8 +597,6 @@ function map_free_block(s: asmcore.EmitState, box: string): asmcore.EmitState {
 function emit_ir_map_free_variant(s: asmcore.EmitState, suffix: string, kfree: string, vfree: string, lbl: string): asmcore.EmitState {
   s = s.write("__fn___fern_map_free" + suffix + ":\n");
   s = s.write("    movq 8(%rsp), %rax\n");  // box
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .L" + lbl + "_ret\n");
   s = s.write("    cmpq $0x10000, %rax\n");  // low-addr guard
   s = s.write("    jb .L" + lbl + "_ret\n");
   s = map_free_shared_guard(s, "%rax", lbl);
@@ -650,8 +645,6 @@ function emit_ir_map_free_fn_variant(s: asmcore.EmitState, suffix: string, krel:
   }
   s = s.write("__fn___fern_map_free" + suffix + ":\n");
   s = s.write("    movq " + util.i32_to_string(8 * nargs) + "(%rsp), %rax\n");  // box
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .L" + lbl + "_ret\n");
   s = s.write("    cmpq $0x10000, %rax\n");  // low-addr guard
   s = s.write("    jb .L" + lbl + "_ret\n");
   s = map_free_shared_guard(s, "%rax", lbl);
@@ -818,9 +811,9 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
   if (!s.rc_free_debug) {
     s = s.write("    jmp .Larr_push_u8_grow\n");
   }
-  s = s.write("    movq -8(%r12), %rcx\n");
+  s = s.write("    movl -8(%r12), %ecx\n");
   s = s.write(san_poison_check("%ecx"));
-  s = s.write("    cmpq $1, %rcx\n    je .Larr_push_u8_rc_ok\n    btq $31, %rcx\n    jc .Larr_push_u8_rc_ok\n    jmp .Larr_push_u8_grow\n");
+  s = s.write("    cmpl $1, %ecx\n    je .Larr_push_u8_rc_ok\n    testl %ecx, %ecx\n    js .Larr_push_u8_rc_ok\n    jmp .Larr_push_u8_grow\n");
   s = s.write(".Larr_push_u8_rc_ok:\n");
   s = s.write("    movq %r15, %rcx\n    shlq $3, %rcx\n    cmpq %rcx, %r14\n    jge .Larr_push_u8_grow\n");
   s = s.write("    movb %r13b, 8(%r12,%r14)\n    incq %r14\n    movq %r14, (%r12)\n    movq %r12, %rax\n    jmp .Larr_push_u8_ret\n");
@@ -871,8 +864,8 @@ function arr_push_fast_u8(slow: string): string {
   }
   let ok: string = slow + "_ok";
   return "    movq (%rdi), %rdx\n    movq -16(%rdi), %rcx\n    shlq $3, %rcx\n    cmpq %rcx, %rdx\n    jge " + slow + "\n"
-    + "    movq -8(%rdi), %rcx\n    cmpq $1, %rcx\n    je " + ok + "\n"
-    + "    btq $31, %rcx\n    jnc " + slow + "\n"
+    + "    movl -8(%rdi), %ecx\n    cmpl $1, %ecx\n    je " + ok + "\n"
+    + "    testl %ecx, %ecx\n    jns " + slow + "\n"
     + ok + ":\n    movb %sil, 8(%rdi,%rdx)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
     + "    movq %rdi, %rax\n    ret\n";
 }
@@ -888,8 +881,8 @@ function arr_push_fast(slow: string): string {
   }
   let ok: string = slow + "_ok";
   return "    movq (%rdi), %rdx\n    cmpq -16(%rdi), %rdx\n    jge " + slow + "\n"
-    + "    movq -8(%rdi), %rcx\n    cmpq $1, %rcx\n    je " + ok + "\n"
-    + "    btq $31, %rcx\n    jnc " + slow + "\n"
+    + "    movl -8(%rdi), %ecx\n    cmpl $1, %ecx\n    je " + ok + "\n"
+    + "    testl %ecx, %ecx\n    jns " + slow + "\n"
     + ok + ":\n    movq %rsi, 8(%rdi,%rdx,8)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
     + "    movq %rdi, %rax\n    ret\n";
 }
@@ -3026,12 +3019,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    addq $8, %rax\n");  // box = base+8 = data-16
   s = s.write("    ret\n");
   // RC helpers — stack-arg ABI (arg at 8(%rsp)); rc is the 32-bit field at
-  // data-8. Guard chain: null / SSO inline tag / low-address / static
-  // sentinel. __fn___fern_arr_dec frees (size-class freelist) at rc==1.
+  // data-8. Guard chain: SSO inline tag / low-address (null included) /
+  // static sentinel. __fn___fern_arr_dec frees (size-class freelist) at rc==1.
   s = s.write("__fn___fern_rc_inc:\n");
   s = s.write("    movq 8(%rsp), %rax\n");
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .Lshrcinc_ret\n");
   s = s.write("    testb $1, %al\n");
   s = s.write("    jnz .Lshrcinc_ret\n");
   s = s.write("    cmpq $0x10000, %rax\n");
@@ -3159,8 +3150,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fn___fern_arr_dec:\n");
   s = s.write("    movq 8(%rsp), %rax\n");
   s = s.write("__fn___fern_arr_dec.r:\n");
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .Larrdec_ret\n");
   s = s.write("    cmpq $0x10000, %rax\n");
   s = s.write("    jb .Larrdec_ret\n");
   s = s.write("    movl -8(%rax), %ecx\n");
@@ -3216,8 +3205,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fn___fern_str_free:\n");
   s = s.write("    movq 8(%rsp), %rax\n");  // box
   s = s.write("__fn___fern_str_free.r:\n");
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .Lstrfree_ret\n");
   s = s.write("    testb $1, %al\n");  // tagged / SSO sentinel (defensive)
   s = s.write("    jnz .Lstrfree_ret\n");
   s = s.write("    cmpq $0x10000, %rax\n");  // low-addr guard
@@ -3337,8 +3324,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // `.data` blocks, neither of which is in the arena.
   s = s.write("__fn___fern_str_view_free:\n");
   s = s.write("    movq 8(%rsp), %rax\n");  // box
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .Lstrvfree_ret\n");
   s = s.write("    testb $1, %al\n");  // tagged / SSO sentinel (defensive)
   s = s.write("    jnz .Lstrvfree_ret\n");
   s = s.write("    cmpq $0x10000, %rax\n");  // low-addr guard
@@ -3508,8 +3493,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fn___fern_rc_is_unique:\n");
   s = s.write("    movq 8(%rsp), %rcx\n");
   s = s.write("    movq $0, %rax\n");
-  s = s.write("    testq %rcx, %rcx\n");
-  s = s.write("    jz .Lshuniq_ret\n");
   s = s.write("    testb $1, %cl\n");
   s = s.write("    jnz .Lshuniq_ret\n");
   s = s.write("    cmpq $0x10000, %rcx\n");
@@ -3524,49 +3507,45 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $1, %rax\n");
   s = s.write(".Lshuniq_ret:\n");
   s = s.write("    ret\n");
-  // __fern_arr_inc_elems(arr) -> arr: one guarded __fn___fern_rc_inc per
-  // element of a pointer-element array. The lowering emits it ahead of a copy of
-  // a pointer-element buffer (the un-share push of a shared receiver, the
-  // clone the value forms take): the copy duplicates every element pointer,
-  // so both buffers must hold a count of each element for the last owner's
-  // element walk to free them once. Null / low-address / immortal buffers
-  // are skipped like the deep-free walks skip them; an immortal or tagged
-  // element is skipped by rc_inc's own guards. %rbx/%r12/%r13 hold
-  // arr/len/i across the per-element call (callee-saved; rc_inc is a leaf).
-  // Gated on its need: a program with no such copy must not carry a body
-  // whose `call __fn___fern_rc_inc` the negative asm-grep contracts read.
+  // __fern_arr_inc_elems(arr) -> arr: one retain per element of a
+  // pointer-element array. The lowering emits it ahead of a copy of a
+  // pointer-element buffer (the un-share push of a shared receiver, the clone
+  // the value forms take): the copy duplicates every element pointer, so both
+  // buffers must hold a count of each element for the last owner's element
+  // walk to free them once. Null / low-address / immortal buffers are skipped
+  // like the deep-free walks skip them, and each element takes rc_inc's guards
+  // inline: a tagged or low pointer and a static box's negative count are
+  // left alone. It makes no call, so it needs no saved register: %rsi / %rdx
+  // hold len / i and %rcx / %edi the element and its count.
   if (s.has_need("arr_inc_elems")) {
     s = s.write("__fn___fern_arr_inc_elems:\n");
     s = s.write("    movq 8(%rsp), %rax\n");  // arr (also the result)
     s = s.write("__fn___fern_arr_inc_elems.r:\n");
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jz .Laie_ret\n");
     s = s.write("    cmpq $0x10000, %rax\n");
     s = s.write("    jb .Laie_ret\n");
     s = s.write("    movl -8(%rax), %ecx\n");  // rc
     s = s.write(san_poison_check("%ecx"));
     s = s.write("    testl %ecx, %ecx\n");
     s = s.write("    js .Laie_ret\n");  // immortal buffer: its elements are too
-    s = s.write("    pushq %rbx\n");
-    s = s.write("    pushq %r12\n");
-    s = s.write("    pushq %r13\n");
-    s = s.write("    movq %rax, %rbx\n");  // arr
-    s = s.write("    movq (%rbx), %r12\n");  // len @ [arr]
-    s = s.write("    movq $0, %r13\n");  // i
+    s = s.write("    movq (%rax), %rsi\n");  // len @ [arr]
+    s = s.write("    xorl %edx, %edx\n");  // i
     s = s.write(".Laie_loop:\n");
-    s = s.write("    cmpq %r12, %r13\n");
-    s = s.write("    jge .Laie_done\n");
-    s = s.write("    movq 8(%rbx,%r13,8), %rax\n");  // element i @ [arr+8+i*8]
-    s = s.write("    pushq %rax\n");
-    s = s.write("    call __fn___fern_rc_inc\n");
-    s = s.write("    addq $8, %rsp\n");
-    s = s.write("    incq %r13\n");
+    s = s.write("    cmpq %rsi, %rdx\n");
+    s = s.write("    jge .Laie_ret\n");
+    s = s.write("    movq 8(%rax,%rdx,8), %rcx\n");  // element i @ [arr+8+i*8]
+    s = s.write("    incq %rdx\n");
+    s = s.write("    testb $1, %cl\n");
+    s = s.write("    jnz .Laie_loop\n");
+    s = s.write("    cmpq $0x10000, %rcx\n");
+    s = s.write("    jb .Laie_loop\n");
+    // Byte views retain the untagged descriptor.
+    s = s.write("    andq $-3, %rcx\n");
+    s = s.write("    movl -8(%rcx), %edi\n");
+    s = s.write(san_poison_check("%edi"));
+    s = s.write("    testl %edi, %edi\n");
+    s = s.write("    js .Laie_loop\n");
+    s = s.write("    addl $1, -8(%rcx)\n");
     s = s.write("    jmp .Laie_loop\n");
-    s = s.write(".Laie_done:\n");
-    s = s.write("    movq %rbx, %rax\n");
-    s = s.write("    popq %r13\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    popq %rbx\n");
     s = s.write(".Laie_ret:\n");
     s = s.write("    ret\n");
   }
@@ -3739,13 +3718,15 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // with the shape/tag before any read); cap mismatch -> push the donor block
   // onto its size-class freelist and alloc fresh — a mispaired reuse is only
   // ever slower, never unsound. Clobbers rax/rcx/rdx/rsi/rdi/r8 (the same
-  // contract as the other __fn_ rc helpers).
+  // contract as the other __fn_ rc helpers). The register entry takes the
+  // token in %rax and the slots in %rsi.
   s = s.write("__fn___fern_alloc_reuse:\n");
   s = s.write("    movq 16(%rsp), %rax\n");  // token (donor data ptr, or 0)
+  s = s.write("    movq 8(%rsp), %rsi\n");  // slots (total payload words: struct nf+1 incl. shape, tuple arity)
+  s = s.write("__fn___fern_alloc_reuse.r:\n");
   s = s.write("    testq %rax, %rax\n");
   s = s.write("    jz .Lsarelo_fresh\n");
-  s = s.write("    movq 8(%rsp), %rcx\n");  // slots (total payload words: struct nf+1 incl. shape, tuple arity)
-  s = s.write("    cmpq %rcx, -16(%rax)\n");  // donor cap == wanted slots?
+  s = s.write("    cmpq %rsi, -16(%rax)\n");  // donor cap == wanted slots?
   s = s.write("    je .Lsarelo_ret\n");  // reuse: return token
   // Mismatch: return the donor block ((cap+3) words at data-16) to its
   // freelist class, mirroring __fn___fern_arr_dec's free path; an oversize
@@ -3756,6 +3737,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    leaq -16(%rax), %rcx\n");  // block base
   s = s.write("    cmpq $65536, %rdx\n");
   s = s.write("    jae .Lsarelo_fresh\n");
+  // The slots outlive the free, whose event hook and size class may call.
+  s = s.write("    pushq %rsi\n");
   s = hev_free(s, "%rcx", "%rdx");
   if (s.rc_free_debug) {
     // Quarantine: the mispaired donor is freed here, so it gets the same
@@ -3764,8 +3747,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   } else {
     s = freelist_push(s, "%rcx", "%rdx", "%rsi");
   }
+  s = s.write("    popq %rsi\n");
   s = s.write(".Lsarelo_fresh:\n");
-  s = s.write("    movq 8(%rsp), %rdi\n");  // slots = arr_box cap
+  s = s.write("    movq %rsi, %rdi\n");  // slots = arr_box cap
   // TAIL-jump (not call): arr_box returns straight to OUR caller with the
   // fresh data ptr in %rax. Besides saving a frame, this keeps the emitted
   // text free of an extra `call __fern_arr_box` line — the reuse contract
@@ -4504,12 +4488,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // which leaves the old buffer untouched (and, per the load-bearing-leak
     // note below, never freed). rc == 1 (sole owner) and the bit-31
     // static/immortal sentinel keep today's in-place fast path.
-    s = s.write("    movq -8(%r12), %rcx\n");  // rc word
+    s = s.write("    movl -8(%r12), %ecx\n");  // rc word
     s = s.write(san_poison_check("%ecx"));
-    s = s.write("    cmpq $1, %rcx\n");
+    s = s.write("    cmpl $1, %ecx\n");
     s = s.write("    je .Larr_push_rc_ok\n");
-    s = s.write("    btq $31, %rcx\n");
-    s = s.write("    jc .Larr_push_rc_ok\n");
+    s = s.write("    testl %ecx, %ecx\n");
+    s = s.write("    js .Larr_push_rc_ok\n");
     s = s.write("    jmp .Larr_push_grow\n");  // shared → copy (#4873)
     s = s.write(".Larr_push_rc_ok:\n");
     s = s.write("    cmpq %r15, %r14\n");
@@ -4572,16 +4556,30 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %r14, %rcx\n");
     s = s.write("    incq %rcx\n");
     s = s.write("    movq %rcx, (%rax)\n");  // new len = old+1 (overwrite helper's len)
-    // Copy old elements (slots 1..len) from old arr to new, four to the
-    // iteration through a pair of 16-byte SSE2 moves: 2.25 instructions per
-    // element against the six a one-element-per-branch loop costs. SSE2 is
-    // below the Haswell baseline, so the moves need no dispatch. %rsi / %rdi /
-    // %rcx / %rdx and xmm0-1 are the scratch; %rax (the new buffer, the return
-    // value), %r12, %r13 and %r14 all outlive this and are untouched.
+    // Copy old elements (slots 1..len) from old arr to new, eight to the
+    // round through a pair of 32-byte AVX2 moves (one instruction per
+    // element), then at most one round of four through 16-byte moves, then
+    // one at a time. AVX2 is inside the x86-64-v3 baseline, so the moves need
+    // no dispatch; vzeroupper follows the ymm loop. %rsi / %rdi / %rcx / %rdx
+    // and ymm0-1 are the scratch; %rax (the new buffer, the return value),
+    // %r12, %r13 and %r14 all outlive this and are untouched.
     s = s.write("    leaq 8(%r12), %rsi\n");  // src cursor
     s = s.write("    leaq 8(%rax), %rdi\n");  // dst cursor
-    s = s.write("    movq %r14, %rcx\n");  // elements remaining
-    s = s.write(".Larr_push_copy4:\n");
+    s = s.write("    movq %r14, %rcx\n");
+    s = s.write("    subq $8, %rcx\n");  // elements remaining, less one round
+    s = s.write("    jl .Larr_push_copy_lt8\n");
+    s = s.write(".Larr_push_copy8:\n");
+    s = s.write("    vmovdqu (%rsi), %ymm0\n");
+    s = s.write("    vmovdqu 32(%rsi), %ymm1\n");
+    s = s.write("    vmovdqu %ymm0, (%rdi)\n");
+    s = s.write("    vmovdqu %ymm1, 32(%rdi)\n");
+    s = s.write("    addq $64, %rsi\n");
+    s = s.write("    addq $64, %rdi\n");
+    s = s.write("    subq $8, %rcx\n");
+    s = s.write("    jge .Larr_push_copy8\n");
+    s = s.write("    vzeroupper\n");
+    s = s.write(".Larr_push_copy_lt8:\n");
+    s = s.write("    addq $8, %rcx\n");  // 0..7 left
     s = s.write("    cmpq $4, %rcx\n");
     s = s.write("    jl .Larr_push_copy1\n");
     s = s.write("    movdqu (%rsi), %xmm0\n");
@@ -4591,7 +4589,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    addq $32, %rsi\n");
     s = s.write("    addq $32, %rdi\n");
     s = s.write("    subq $4, %rcx\n");
-    s = s.write("    jmp .Larr_push_copy4\n");
     s = s.write(".Larr_push_copy1:\n");
     s = s.write("    testq %rcx, %rcx\n");
     s = s.write("    jz .Larr_push_copy_done\n");
@@ -5791,7 +5788,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(l_done + ":\n    pushq %rdx\n");
     return s;
   }
-  if (o.kind_tag == 234) {  // rmemchr
+  if (o.kind_tag == 234 || o.kind_tag == 360) {  // rmemchr / rmemchr_bytes
     // operand stack [box, byte, from] (from on top) -> the index of the
     // LAST `byte` at or before `from`, or -1.
     //
@@ -5836,7 +5833,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let r_avx_done: string = rlo11.name;
     s = rlo11.state;
     s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
-    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    if (o.kind_tag == 360) {
+      s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
+    } else {
+      s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    }
     // A byte outside 0..255 can never match. One UNSIGNED compare covers
     // both ends, checked once so neither loop needs a per-iteration guard.
     s = s.write("    cmpq $255, %rcx\n    ja " + r_none + "\n");
@@ -5844,6 +5845,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    subq $1, %r8\n    cmpq $0, %r8\n    jl " + r_none + "\n");
     s = s.write("    cmpq %r8, %rdx\n    jle " + r_ok + "\n    movq %r8, %rdx\n");
     s = s.write(r_ok + ":\n");
+    if (o.kind_tag == 360 && !ir.is_packed(o)) {
+      s = s.write(r_tail + ":\n    cmpq $0, %rdx\n    jl " + r_none + "\n");
+      s = s.write("    movzbq (%rax,%rdx,8), %r9\n    cmpq %rcx, %r9\n    je " + r_done + "\n");
+      s = s.write("    subq $1, %rdx\n    jmp " + r_tail + "\n");
+      s = s.write(r_none + ":\n    movq $-1, %rdx\n");
+      return s.write(r_done + ":\n    pushq %rdx\n");
+    }
     // Broadcast the needle byte across xmm1, then ymm1.
     s = s.write("    movd %ecx, %xmm1\n    punpcklbw %xmm1, %xmm1\n");
     s = s.write("    punpcklwd %xmm1, %xmm1\n    pshufd $0, %xmm1, %xmm1\n");
@@ -5890,7 +5898,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(r_done + ":\n    pushq %rdx\n");
     return s;
   }
-  if (o.kind_tag == 235) {  // count_byte
+  if (o.kind_tag == 235 || o.kind_tag == 359) {  // count_byte
     // operand stack [box, byte] (byte on top) -> how many bytes of the
     // string equal it.
     //
@@ -5919,12 +5927,23 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let c_avx_done: string = clo6.name;
     s = clo6.state;
     s = s.write("    popq %rcx\n    popq %rax\n");
-    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    if (o.kind_tag == 359) {
+      s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
+    } else {
+      s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    }
     s = s.write("    xorq %rdx, %rdx\n    xorq %r10, %r10\n");
     // A byte outside 0..255 can never match. One UNSIGNED compare covers
     // both ends, checked once so neither loop needs a per-iteration guard,
     // and so the splat below is exact rather than truncating.
     s = s.write("    cmpq $255, %rcx\n    ja " + c_done + "\n");
+    if (o.kind_tag == 359 && !ir.is_packed(o)) {
+      s = s.write(c_tail + ":\n    cmpq %r8, %rdx\n    jge " + c_done + "\n");
+      s = s.write("    movzbq (%rax,%rdx,8), %r9\n    cmpq %rcx, %r9\n    jne " + c_next + "\n");
+      s = s.write("    addq $1, %r10\n");
+      s = s.write(c_next + ":\n    addq $1, %rdx\n    jmp " + c_tail + "\n");
+      return s.write(c_done + ":\n    pushq %r10\n");
+    }
     s = s.write("    movd %ecx, %xmm1\n    punpcklbw %xmm1, %xmm1\n");
     s = s.write("    punpcklwd %xmm1, %xmm1\n    pshufd $0, %xmm1, %xmm1\n");
     s = s.write("    vpbroadcastb %xmm1, %ymm1\n");
@@ -6549,6 +6568,11 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
     s = s.write("    imulq $" + util.i64_to_string(fr.imm.value[b]) + ", " + ssa_reg(reg_of[a]) + ", " + dh + "\n");
     return ssa_store(reg_of, ins.result, dh, s);
   }
+  let lea: string = ssa_lea_operand(tag, a, b, dh, reg_of, fr);
+  if (lea != "") {
+    s = s.write("    leaq " + lea + ", " + dh + "\n");
+    return ssa_store(reg_of, ins.result, dh, s);
+  }
   s = ssa_read_rhs(fr, reg_of, b, "%rcx", s);
   s = ssa_load(reg_of, a, dh, s);
   if (ssa_shift_tag(tag)) {
@@ -6557,6 +6581,36 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
     s = s.write(ir_bin_asm(tag, ins.imm, dh, ssa_rhs(fr, reg_of, b, "%rcx")));
   }
   return ssa_store(reg_of, ins.result, dh, s);
+}
+
+// ssa_lea_operand is the address an add, or a subtract of a constant, computes
+// when its result lands in a register the left operand does not hold: one lea
+// in place of a copy and the two-address op. Nothing reads the flags an add
+// leaves. It is "" when the op takes the two-address form.
+function ssa_lea_operand(tag: i32, a: i32, b: i32, dh: string, reg_of: i32[], fr: SsaFrame): string {
+  if (tag != 21 && tag != 22 || reg_of[a] < 0) {
+    return "";
+  }
+  let ra: string = ssa_reg(reg_of[a]);
+  if (ra == dh) {
+    return "";
+  }
+  if (fr.imm.is_imm[b]) {
+    // An immediate is a signed 32-bit value, so only the least one has no
+    // negation for the displacement.
+    let v: i64 = fr.imm.value[b];
+    if (tag == 22 && v == -2147483648i64) {
+      return "";
+    }
+    if (tag == 22) {
+      v = 0i64 - v;
+    }
+    return util.i64_to_string(v) + "(" + ra + ")";
+  }
+  if (tag == 21 && reg_of[b] >= 0) {
+    return "(" + ra + "," + ssa_reg(reg_of[b]) + ")";
+  }
+  return "";
 }
 
 // ssa_r32 and ssa_r8 are the 32-bit and 8-bit names of a 64-bit register.
@@ -7160,7 +7214,21 @@ function ssa_release_entry(r: irtables.LowerResult, lp: string, s: asmcore.EmitS
   s = s.write("    cmpl $0, -8(%rax)\n    jns " + slow + "\n");
   s = s.write(kept + ":\n    xorl %eax, %eax\n    ret\n");
   s = s.write(dec + ":\n    subl $1, -8(%rax)\n    xorl %eax, %eax\n    ret\n");
-  return s.write(slow + ":\n");
+  s = s.write(slow + ":\n");
+  // A named type's sole owner runs its drop and frees the box with the box
+  // held on the stack, which also aligns both calls; a count of zero takes
+  // the body, whose helper reports the underflow.
+  let drop: string = ircore.nominal_release_drop(r);
+  if (drop == "" || !irtables.sig_reg_has_exact(s.reg_entries, asmcore.sanitize_label(drop))) {
+    return s;
+  }
+  let body: string = lp + "release_body";
+  s = helper_call_needs("__fern_rc_dec", s);
+  s = s.write("    cmpl $1, -8(%rax)\n    jne " + body + "\n");
+  s = s.write("    pushq %rax\n    call __fn_" + asmcore.sanitize_label(drop) + ".r\n");
+  s = s.write("    movq (%rsp), %rax\n    call " + ircore.ir_helper_symbol("__fern_rc_dec") + ".r\n");
+  s = s.write("    popq %rax\n    xorl %eax, %eax\n    ret\n");
+  return s.write(body + ":\n");
 }
 
 // ssa_mem_inst selects the production lift's memory kinds (ssa.fern 40..44)
@@ -7791,8 +7859,8 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
 // the receiver has no free slot or is shared.
 function arr_push_inline(sym: string, l: string): string {
   return "    movq (%rdi), %rdx\n    cmpq -16(%rdi), %rdx\n    jge " + l + "s\n"
-    + "    movq -8(%rdi), %rcx\n    cmpq $1, %rcx\n    je " + l + "o\n"
-    + "    btq $31, %rcx\n    jnc " + l + "s\n"
+    + "    movl -8(%rdi), %ecx\n    cmpl $1, %ecx\n    je " + l + "o\n"
+    + "    testl %ecx, %ecx\n    jns " + l + "s\n"
     + l + "o:\n    movq %rsi, 8(%rdi,%rdx,8)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
     + "    movq %rdi, %rax\n    jmp " + l + "e\n"
     + l + "s:\n    call " + sym + "\n" + l + "e:\n";
@@ -7802,8 +7870,8 @@ function arr_push_inline(sym: string, l: string): string {
 // capacity is in 8-byte words, so the room test is against cap * 8.
 function arr_push_inline_u8(sym: string, l: string): string {
   return "    movq (%rdi), %rdx\n    movq -16(%rdi), %rcx\n    shlq $3, %rcx\n    cmpq %rcx, %rdx\n    jge " + l + "s\n"
-    + "    movq -8(%rdi), %rcx\n    cmpq $1, %rcx\n    je " + l + "o\n"
-    + "    btq $31, %rcx\n    jnc " + l + "s\n"
+    + "    movl -8(%rdi), %ecx\n    cmpl $1, %ecx\n    je " + l + "o\n"
+    + "    testl %ecx, %ecx\n    jns " + l + "s\n"
     + l + "o:\n    movb %sil, 8(%rdi,%rdx)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
     + "    movq %rdi, %rax\n    jmp " + l + "e\n"
     + l + "s:\n    call " + sym + "\n" + l + "e:\n";
@@ -8488,7 +8556,7 @@ function ssa_entry_shim(f: ssa.SFunc, name: string): string {
 // pool's first registers, which is where the `.r` entry reads them.
 function ssa_reg_helper(sym: string, argc: i32): boolean {
   if (argc == 2) {
-    return sym == "__fn___fern_str_eq";
+    return sym == "__fn___fern_str_eq" || sym == "__fn___fern_alloc_reuse";
   }
   return argc == 1 && (sym == "__fn___fern_arr_dec" || sym == "__fn___fern_str_free" || sym == "__fn___fern_arr_inc_elems");
 }
@@ -8557,20 +8625,32 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
   s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n    .cfi_startproc\n");
   s = s.write(ssa_entry_shim(f, asmcore.sanitize_label(label_name)));
   s = ssa_release_entry(r, lp, s);
-  s = s.write("    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n    movq %rsp, %rbp\n    .cfi_def_cfa_register %rbp\n");
   let saved: i32[] = ssa_saved_regs(reg_of);
   let save: i32 = 8 * saved.len();
-  s = s.write(ssa_save_asm(saved));
   let views: i32[] = ssa_view_slots(f);
-  let fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), views: views, blk_pos: ssa.block_positions(f), uses: ssa.use_counts(f), nsave: save, epilogue: ssa_epilogue_for(saved), imm: imm, lit0: ssa.literal_first_bytes(f) };
+  let nspill: i32 = ssa.spill_count(reg_of);
+  // A function with no frame slots that might make no call is emitted into a
+  // buffer first, behind a placeholder for its epilogue; its text decides
+  // whether it needs %rbp at all.
+  let leaf: boolean = nspill == 0 && ssa_view_count(views) == 0 && !hev_on() && !ssa.calls_out(f);
+  let epilogue: string = ssa_epilogue_for(saved);
+  if (leaf) {
+    epilogue = ssa_epilogue_mark();
+  }
+  let fr: SsaFrame = SsaFrame { nspill: nspill, views: views, blk_pos: ssa.block_positions(f), uses: ssa.use_counts(f), nsave: save, epilogue: epilogue, imm: imm, lit0: ssa.literal_first_bytes(f) };
   let frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
   // %rsp is 16-byte aligned at a call when the pushes and the frame together
   // are a multiple of 16.
   if ((frame + save) % 16 != 0) {
     frame = frame + 8;
   }
-  if (frame > 0) {
-    s = s.write("    subq $" + util.i32_to_string(frame) + ", %rsp\n");
+  let outer: usize = s.capture;
+  let body: usize = 0 as usize;
+  if (leaf) {
+    body = buf_new(4096);
+    s = asmcore.EmitState { ...s, capture: body };
+  } else {
+    s = s.write(ssa_frame_asm(saved, frame));
   }
   s = asmcore.EmitState { ...s, ssa_save: save };
   s = ssa_load_params(f, reg_of, s);
@@ -8596,8 +8676,105 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
     s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
     bi = bi + 1;
   }
+  if (leaf) {
+    let text: string = buf_take(body);
+    s = asmcore.EmitState { ...s, capture: outer };
+    if (ssa_needs_frame(text)) {
+      s = s.write(ssa_frame_asm(saved, frame));
+      s = s.write(ssa_replace_all(text, ssa_epilogue_mark(), ssa_epilogue_for(saved)));
+    } else {
+      s = s.write(ssa_leaf_save_asm(saved));
+      s = s.write(ssa_replace_all(text, ssa_epilogue_mark(), ssa_leaf_epilogue(saved)));
+    }
+  }
   s = asmcore.EmitState { ...s, ssa_save: 0 };
   return s.write("    .cfi_endproc\n");
+}
+
+// ssa_frame_asm builds the %rbp frame: the saved registers pushed under it and
+// `frame` bytes of slots below them.
+function ssa_frame_asm(saved: i32[], frame: i32): string {
+  let out: string = "    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n    movq %rsp, %rbp\n    .cfi_def_cfa_register %rbp\n";
+  out = out + ssa_save_asm(saved);
+  if (frame > 0) {
+    out = out + "    subq $" + util.i32_to_string(frame) + ", %rsp\n";
+  }
+  return out;
+}
+
+// ssa_epilogue_mark stands for a buffered function's epilogue until its
+// frame is chosen.
+function ssa_epilogue_mark(): string {
+  return "    .ssa_epilogue\n";
+}
+
+// ssa_needs_frame reports a buffered body with an instruction that calls,
+// pushes, pops or names either frame register. One with none of these runs
+// with no frame: it has no slots, and makes no call that would need %rsp
+// aligned. Labels are skipped, since each carries the function's name.
+function ssa_needs_frame(text: string): boolean {
+  let start: i32 = 0;
+  while (start < text.len()) {
+    let end: i32 = start;
+    while (end < text.len() && text[end] != 10) {
+      end = end + 1;
+    }
+    let line: string = slice_unchecked(text, start, end) + "";
+    if (util.str_has_prefix(line, "    ") && ssa_line_needs_frame(line)) {
+      return true;
+    }
+    start = end + 1;
+  }
+  return false;
+}
+
+function ssa_line_needs_frame(line: string): boolean {
+  for m in ["    call", "    push", "    pop"] {
+    if (util.str_has_prefix(line, m)) {
+      return true;
+    }
+  }
+  return util.index_of_sub(line, "%rbp") >= 0 || util.index_of_sub(line, "%rsp") >= 0;
+}
+
+// ssa_leaf_save_asm pushes the saved registers of a function with no frame,
+// with the canonical frame address following %rsp.
+function ssa_leaf_save_asm(saved: i32[]): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < saved.len()) {
+    let off: string = util.i32_to_string(16 + 8 * i);
+    out = out + "    pushq " + ssa_reg(saved[i]) + "\n    .cfi_def_cfa_offset " + off + "\n    .cfi_offset " + ssa_reg(saved[i]) + ", -" + off + "\n";
+    i = i + 1;
+  }
+  return out;
+}
+
+// ssa_leaf_epilogue pops what ssa_leaf_save_asm pushed and returns.
+function ssa_leaf_epilogue(saved: i32[]): string {
+  if (saved.len() == 0) {
+    return "    ret\n";
+  }
+  let out: string = "    .cfi_remember_state\n";
+  let i: i32 = saved.len() - 1;
+  while (i >= 0) {
+    out = out + "    popq " + ssa_reg(saved[i]) + "\n    .cfi_def_cfa_offset " + util.i32_to_string(8 + 8 * i) + "\n";
+    i = i - 1;
+  }
+  return out + "    ret\n    .cfi_restore_state\n";
+}
+
+// ssa_replace_all is text with every occurrence of mark replaced by with.
+function ssa_replace_all(text: string, mark: string, with: string): string {
+  let out: string = "";
+  let rest: string = text;
+  let at: i32 = util.index_of_sub(rest, mark);
+  while (at >= 0) {
+    out = out + slice_unchecked(rest, 0, at) + with;
+    rest = slice_unchecked(rest, at + mark.len(), rest.len()) + "";
+    at = util.index_of_sub(rest, mark);
+  }
+  return out + rest;
 }
 
 // emit_ssa_function emits one lowered function through the register path,

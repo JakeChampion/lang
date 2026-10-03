@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Self-reassign of an owned struct/enum LOCAL through a method or call —
@@ -195,9 +193,6 @@ func TestArm64SelfReassignStringFieldBounded(t *testing.T) {
 }
 
 func TestWASMSelfReassignFieldBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	n1 := runWasm(t, selfReassignFieldBumpSrc("200"))
 	n2 := runWasm(t, selfReassignFieldBumpSrc("400"))
 	assertSubQuadratic(t, "wasm32-wasi", n1, n2)
@@ -299,9 +294,6 @@ func TestArm64UnionThreadedParam(t *testing.T) {
 }
 
 func TestWASMUnionThreadedParam(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, unionThreadedParamSrc); got != 0 {
 		t.Errorf("union threaded param: got %d, want 0 (100=corrupted payload, >0=over-release)", got)
 	}

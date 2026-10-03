@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Statement-temporary reclamation, stage (a): a discarded bare-ExprStmt
@@ -104,9 +102,6 @@ func TestArm64StmtTempReclaim(t *testing.T) {
 }
 
 func TestWASMStmtTempReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, stmtTempArrBumpSrc("50"))
 	large := runWasm(t, stmtTempArrBumpSrc("5000"))
 	if small != large {

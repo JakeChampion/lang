@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Consuming methods (`own self`) — the FBIP recursive traversal written in
@@ -52,9 +50,6 @@ func TestArm64ConsumingMethod(t *testing.T) {
 }
 
 func TestWASMConsumingMethod(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, consumingMethodSrc); got != 0 {
 		t.Errorf("consuming method: got %d, want 0", got)
 	}
