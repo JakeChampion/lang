@@ -558,11 +558,8 @@ def generate():
         path = os.path.join(tmp, "region.fern")
         with open(path, "w", encoding="utf-8") as f:
             f.write(unformatted())
-        formatted = subprocess.run(["go", "run", "./cmd/fern", "-fmt", path], cwd=ROOT, check=True,
-                                   capture_output=True, text=True).stdout
-    # In crypto.fern the end marker leads the next declaration, so a blank
-    # line separates it from the region's last one.
-    return formatted.replace("\n" + END, "\n\n" + END)
+        return subprocess.run(["go", "run", "./cmd/fern", "-fmt", path], cwd=ROOT, check=True,
+                              capture_output=True, text=True).stdout
 
 
 def unformatted():
