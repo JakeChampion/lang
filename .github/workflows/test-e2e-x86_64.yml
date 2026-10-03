@@ -100,8 +100,7 @@ jobs:
     # that a filter derived from one program's emitted syscalls is right for
     # every program; a syscall the filter forgot is a SIGSYS kill on whichever
     # path nobody exercised. Own lane because it builds every runnable fixture
-    # twice — sandboxed and not — and compares behaviour, with the self-host
-    # compiler.
+    # twice — sandboxed and not — and compares behaviour.
     name: seccomp-corpus-x86_64
     runs-on: ubuntu-latest
     steps:
