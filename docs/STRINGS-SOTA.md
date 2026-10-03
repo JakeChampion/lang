@@ -917,6 +917,16 @@ vector boundaries, all byte values, extreme bounds, aliases and allocations.
 parity checks pass. Current size and native measurements are recorded in
 [the comparison report](STRING-BYTE-COMPARE-2026-10-03.md).
 
+`comm` keeps input chunks and retained line ranges in byte arrays, using the
+same comparator and byte scans. Split lines accumulate in a byte builder;
+diagnostics, column prefixes and totals remain text. GNU parity covers all
+byte values, LF/NUL records, missing terminators, shared stdin, long common
+prefixes and late ordering errors. Primary x86, ARM and wasm tests also
+check balanced ownership, including the late ordering-error return.
+The WASM descriptor-flags helper releases its scratch storage on both result
+paths. Current target, size and native measurement evidence is recorded in
+[the comm report](STRING-BYTE-COMM-2026-10-03.md).
+
 `Reader.read_chunk_bytes(n): Result[u8[], IoError]` provides owned raw input
 on the bootstrap interpreter and native/wasm backends, and on the self-hosted
 native and wasm command-module backends. It preserves NUL, malformed UTF-8
