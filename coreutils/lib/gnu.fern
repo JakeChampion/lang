@@ -72,6 +72,24 @@ pub function error_out(o: io_buffered.BufWriter, msg: string): io_buffered.BufWr
   return w;
 }
 
+// Raw diagnostics preserve the same stdout ordering as error_out.
+pub function error_out_bytes(o: io_buffered.BufWriter, msg: u8[]): io_buffered.BufWriter {
+  let w: io_buffered.BufWriter = o;
+  if (stdout_open()) {
+    w = w.flush();
+  }
+  let h: usize = buf_new(msg.len());
+  buf_push(h, prog());
+  buf_push(h, ": ");
+  buf_push_bytes_range(h, msg, 0, msg.len());
+  buf_push_byte(h, 10);
+  let bytes: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  let diagnostic: Writer = stderr();
+  diagnostic.write_bytes(bytes);
+  return w;
+}
+
 // Whether fd 1 is open, which is gnulib's `is_open` — fcntl F_GETFL.
 function stdout_open(): boolean {
   match (stdout().flags()) {

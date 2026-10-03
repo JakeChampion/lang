@@ -950,6 +950,10 @@ text buffers, preserving the platform-specific NaN spelling. Evidence is recorde
 records in a builder. Evidence is recorded in
 [the fmt report](STRING-FMT-BYTES-2026-10-03.md).
 
+`join` stores keys, records and disorder diagnostics as bytes, with builder
+accumulation across reads. Evidence is recorded in
+[the join report](STRING-JOIN-BYTES-2026-10-03.md).
+
 `head` and `tail` use raw byte input, delimiter scans and output. Their
 shared hold retains input blocks with a 64-bit byte count and releases
 consumed blocks without repeatedly copying long records. Target checks and
