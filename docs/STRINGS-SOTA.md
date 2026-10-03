@@ -1003,6 +1003,10 @@ CRC kernel through a borrowing array intrinsic. Validation, code-size
 attribution and GNU/uutils measurements are recorded in
 [the cksum report](STRING-CKSUM-BYTES-2026-10-03.md).
 
+Streaming cryptographic digests also consume raw arrays through borrowing
+entry points. Coverage and size measurements are recorded in
+[the digest report](STRING-DIGEST-BYTES-2026-10-03.md).
+
 `head` and `tail` use raw byte input, delimiter scans and output. Their
 shared hold retains input blocks with a 64-bit byte count and releases
 consumed blocks without repeatedly copying long records. Target checks and

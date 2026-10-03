@@ -271,28 +271,28 @@ function ctx_new(kind: i32, bits: i32): Ctx {
   return CB2(crypto.blake2b_new(bits / 8));
 }
 
-function ctx_update(c: Ctx, chunk: string): Ctx {
+function ctx_update(c: Ctx, chunk: u8[]): Ctx {
   match (c) {
     CMd5(h) => {
-      return CMd5(h.update(chunk));
+      return CMd5(h.update_array(chunk));
     },
     CSha1(h) => {
-      return CSha1(h.update(chunk));
+      return CSha1(h.update_array(chunk));
     },
     CSha2(h) => {
-      return CSha2(h.update(chunk));
+      return CSha2(h.update_array(chunk));
     },
     CSha5(h) => {
-      return CSha5(h.update(chunk));
+      return CSha5(h.update_array(chunk));
     },
     CB2(h) => {
-      return CB2(h.update(chunk));
+      return CB2(h.update_array(chunk));
     },
     CSm3(h) => {
-      return CSm3(h.update(chunk));
+      return CSm3(h.update_array(chunk));
     },
     CSha3(h) => {
-      return CSha3(h.update(chunk));
+      return CSha3(h.update_array(chunk));
     }
   }
 }
@@ -560,7 +560,7 @@ pub struct Sum { hex: string, bin: u8[], err: Option[IoError], failed: boolean }
 function digest_reader(r: Reader, kind: i32, bits: i32, owned: boolean): Sum {
   let c: Ctx = ctx_new(kind, bits);
   while (true) {
-    match (r.read_chunk(read_size())) {
+    match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           break;
