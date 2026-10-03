@@ -3694,7 +3694,8 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// stranded `l` — and through it the whole result-struct cluster —
 		// every iteration. Gated to a struct source this function holds a
 		// slot for — a local, a parameter or a match binding — reached
-		// directly or through a chain of struct / tuple fields (`r.a.b`):
+		// directly or through a chain of struct / tuple fields (`r.a.b`) and
+		// array elements (`ps[i].steps`, whose root is the array slot):
 		// every container on the chain deep-drops the next one, so the
 		// counted-alias argument holds at each level, and the two-level
 		// read taints nothing the one-level read does not (#8179, the
@@ -3748,9 +3749,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 					t = bt
 				}
 				switch t.(type) {
-				case ast.StructType:
-					return false
-				case ast.TupleType:
+				case ast.StructType, ast.TupleType, ast.ArrayType:
 					return false
 				}
 			}
@@ -3808,11 +3807,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// concat result.
 		if !x.IsString && !x.IsSlice && !isMapType(b.exprType(x)) && needsRcIncOnAlias(x, b) {
 			if _, isArr := b.exprType(x.Array).(ast.ArrayType); isArr {
-				src := x.Array
-				if fa, isField := src.(*ast.FieldAccess); isField {
-					src = b.projectionChainRoot(fa.Target)
-				}
-				if id, isIdent := src.(*ast.Ident); isIdent {
+				if id, isIdent := b.projectionChainRoot(x.Array).(*ast.Ident); isIdent {
 					if _, isLocal := b.locals[id.Name]; isLocal {
 						return false
 					}
@@ -4127,27 +4122,38 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 	}
 }
 
-// projectionChainRoot walks a field-read chain down to the expression it
-// projects out of, stepping only through struct / tuple fields that are not
-// maps: for `s.frame.alias` (Target `s.frame`) it returns `s`; for a direct
-// read (Target `s`) it returns `s` unchanged. A step through any other type
-// stops the walk there, so the caller's Ident test fails for it.
+// projectionChainRoot walks a projection chain down to the expression it
+// projects out of, stepping only out of containers that deep-drop what they
+// hold: struct / tuple fields that are not maps, and array elements. For
+// `s.frame.alias` (Target `s.frame`) it returns `s`; for `ps[i].steps`
+// (Target `ps[i]`) it returns `ps`; for a direct read (Target `s`) it returns
+// `s` unchanged. A step through any other type stops the walk there, so the
+// caller's Ident test fails for it.
 func (b *builder) projectionChainRoot(e ast.Expr) ast.Expr {
 	for {
-		fa, ok := e.(*ast.FieldAccess)
-		if !ok {
-			return e
-		}
-		switch t := b.exprType(fa).(type) {
+		switch t := b.exprType(e).(type) {
 		case ast.StructType:
 			if isMapType(t) {
 				return e
 			}
-		case ast.TupleType:
+		case ast.TupleType, ast.ArrayType:
 		default:
 			return e
 		}
-		e = fa.Target
+		switch p := e.(type) {
+		case *ast.FieldAccess:
+			e = p.Target
+		case *ast.Index:
+			if p.IsString || p.IsSlice {
+				return e
+			}
+			if _, isArr := b.exprType(p.Array).(ast.ArrayType); !isArr {
+				return e
+			}
+			e = p.Array
+		default:
+			return e
+		}
 	}
 }
 
@@ -7637,10 +7643,25 @@ func (b *builder) computeMapCowBindSites() map[ast.Node]bool {
 			if c, ok := s.Target.(*ast.Call); ok && isMapDeleteCall(c) {
 				out[c] = true
 			}
+		case *ast.TupleLit:
+			markMapMutatorElems(out, s.Elems)
+		case *ast.ArrayLit:
+			markMapMutatorElems(out, s.Elems)
 		}
 		return true
 	})
 	return out
+}
+
+// markMapMutatorElems marks each Map mutator stored straight into a tuple or
+// array literal: the container takes the result's count and its drop releases
+// it, so an in-place result owes the retain a binding does (#11121).
+func markMapMutatorElems(out map[ast.Node]bool, elems []ast.Expr) {
+	for _, e := range elems {
+		if c, ok := e.(*ast.Call); ok && isMapMutatorCall(c) {
+			out[c] = true
+		}
+	}
 }
 
 // computeMapCowForcedCopies decides, for each Map mutator (`insert` / `without`

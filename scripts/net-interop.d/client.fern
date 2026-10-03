@@ -1,0 +1,71 @@
+// The Fern client scripts/net-interop runs against Go net/http, nginx and
+// h2o: one line per case, the same lines whichever origin answers, so
+// the script compares them with one expected text.
+import "std/fetch";
+
+// The body every origin's /gzip codes.
+function gzip_text(): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < 30) {
+    out = out + "hello gzip ";
+    i = i + 1;
+  }
+  return out;
+}
+
+function base(): string {
+  match (env("BASE")) {
+    Some(b) => {
+      return b;
+    },
+    None => {
+      return "http://127.0.0.1:8080";
+    }
+  }
+  return "";
+}
+
+// The status and body of `answer`, or the error.
+function line(answer: Result[HttpResponse, fetch.FetchError]): string {
+  match (answer) {
+    Ok(resp) => {
+      match (resp.body_text()) {
+        Some(text) => {
+          return resp.status.to_string() + " " + text;
+        },
+        None => {
+          return resp.status.to_string() + " <not utf-8>";
+        }
+      }
+    },
+    Err(e) => {
+      return "error " + e.message();
+    }
+  }
+  return "";
+}
+
+function main(): i32 {
+  print("hello: " + line(fetch.send(fetch.get(base() + "/hello"))));
+  print("redirect: " + line(fetch.send(fetch.get(base() + "/redirect"))));
+  let coded: string = line(fetch.send(fetch.get(base() + "/gzip")));
+  if (coded == "200 " + gzip_text()) {
+    print("gzip: 200 decoded");
+  } else {
+    print("gzip: " + coded);
+  }
+  // A held transport keeps the connection, so the origin sees both
+  // requests from one source port.
+  let kept: fetch.Sockets = fetch.sockets();
+  let open: fetch.Policy = fetch.Policy { public_only: false, proxies: fetch.proxy_env() };
+  let first: string = line(fetch.send_on(kept, fetch.get(base() + "/port"), open));
+  let second: string = line(fetch.send_on(kept, fetch.get(base() + "/port"), open));
+  fetch.close_idle(kept);
+  if (first == second && first.starts_with("200 ")) {
+    print("reuse: one connection");
+  } else {
+    print("reuse: " + first + " then " + second);
+  }
+  return 0;
+}

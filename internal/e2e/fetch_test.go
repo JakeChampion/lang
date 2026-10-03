@@ -2,13 +2,10 @@ package e2e
 
 import (
 	"bytes"
-	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
@@ -82,60 +79,9 @@ func nativeBackends() []nativeBackend {
 // `__append_bytes`, not by this test.
 func TestFetchAccumulatorStaysLinear(t *testing.T) {
 	bin := buildFernCLI(t)
-
 	const bodyLen = 1 << 20
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("no free TCP port: %v", err)
-	}
-	defer ln.Close()
-	port := ln.Addr().(*net.TCPAddr).Port
-	body := make([]byte, bodyLen)
-	for i := range body {
-		body[i] = byte('a' + i%26)
-	}
-	go func() {
-		for {
-			conn, aerr := ln.Accept()
-			if aerr != nil {
-				return
-			}
-			go func(c net.Conn) {
-				defer c.Close()
-				_ = c.SetDeadline(time.Now().Add(10 * time.Second))
-				b := make([]byte, 512)
-				_, _ = c.Read(b)
-				fmt.Fprintf(c, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n", len(body))
-				_, _ = c.Write(body)
-			}(conn)
-		}
-	}()
-
-	src := fmt.Sprintf(`import "std/async";
-import "std/fetch";
-
-function main(): i32 {
-    match (fetch.send(fetch.get("http://127.0.0.1:%[1]d/"))) {
-        Ok(resp) => { if (resp.body_bytes().len() != %[2]d) { return 1; } },
-        Err(e) => { return 5; }
-    }
-    // send's buffer is a plain local, so it grows in place.
-    if (__arr_push_shared_count() != 0) { return 2; }
-    let h: i32 = fetch.ipv4(127, 0, 0, 1);
-    let none: u8[] = [];
-    let fs: async.Future[u8[]][] = [fetch.fetch_future(h, %[1]d, "/")];
-    let bodies: u8[][] = async.gather(fs, none);
-    if (bodies[0].len() != %[2]d) { return 3; }
-    // A path that cannot stand on a request line resolves to the empty
-    // body without connecting.
-    let bad: async.Future[u8[]][] = [fetch.fetch_future(h, %[1]d, "/a\r\nX-Injected: 1")];
-    let refused: u8[][] = async.gather(bad, none);
-    if (refused[0].len() != 0) { return 6; }
-    // __fetch_drain's list IS captured, so its appends cross the cliff —
-    // pointer-sized, which is the whole point of carrying chunks.
-    if (__arr_push_shared_bytes() > (8388608 as i64)) { return 4; }
-    return 42;
-}`, port, bodyLen)
+	port := e2eharness.StartBodyUpstream(t, e2eharness.AlphabetBody(bodyLen))
+	src := e2eharness.FetchAccumulatorSource(port, bodyLen)
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "fetch_linear.fern")

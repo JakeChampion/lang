@@ -972,8 +972,8 @@ func builtinStructDecls() []*ast.StructDecl {
 		// `it.advance()` which all stay i32-shaped on the
 		// wasm side (Key / Value are reinterpreted via the
 		// type-system substitution path). The fields spell core/map's
-		// __map_iter_impl box, [buf:8][cursor:4][pad:4] on every target,
-		// which is the size its drop frees.
+		// __map_iter_impl box, [buf:8][cursor:4][pad:4][map:8] on every
+		// target, which is the size its drop frees.
 		{
 			Name:       "MapIter",
 			TypeParams: []string{"K", "V"},
@@ -981,6 +981,7 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "data", Type: ast.NumberType{Width: 64}},
 				{Name: "i", Type: ast.NumberType{}},
 				{Name: "pad", Type: ast.NumberType{}},
+				{Name: "map", Type: ast.NumberType{Width: 64}},
 			},
 		},
 		// Cell[T] — a single-slot mutable heap box, the sanctioned

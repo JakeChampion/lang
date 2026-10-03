@@ -346,7 +346,9 @@ function rc_trace_deep_on(): boolean {
 //
 // The detector half of the pair above: this says a leak happened, the trace
 // says where. Both counters tick in the same __fern_hev_* helpers, off the
-// same rounded size, so the trace's own tallies reproduce this line exactly.
+// same rounded size, so the trace's own tallies reproduce this line, except
+// for an in-place string growth: the trace logs it as a free and an alloc,
+// and the census as one block whose bytes grew (str_grow_census).
 function leak_check_on(): boolean {
   if (asmcore.sanitize_on()) {
     return true;
@@ -420,6 +422,28 @@ function hev_on(): boolean {
     return true;
   }
   return leak_check_on();
+}
+
+// str_grow_census charges an in-place string growth to the leak census as
+// one block whose live bytes moved from %r9 words to %r10. Under the heap
+// trace the two event hooks have already counted a free of the old size and
+// an alloc of the new, so the old size and both counts come back out.
+// Clobbers %rax only.
+function str_grow_census(s: asmcore.EmitState): asmcore.EmitState {
+  if (rc_trace_on()) {
+    s = s.write("    movq %r9, %rax\n");
+    s = s.write("    shlq $3, %rax\n");
+    s = s.write("    subq %rax, __fern_lc_free_bytes(%rip)\n");
+    s = s.write("    subq %rax, __fern_lc_alloc_bytes(%rip)\n");
+    s = s.write("    subq $1, __fern_lc_free_count(%rip)\n");
+    s = s.write("    subq $1, __fern_lc_alloc_count(%rip)\n");
+    return s;
+  }
+  s = s.write("    movq %r10, %rax\n");
+  s = s.write("    subq %r9, %rax\n");
+  s = s.write("    shlq $3, %rax\n");
+  s = s.write("    addq %rax, __fern_lc_alloc_bytes(%rip)\n");
+  return s;
 }
 
 // hev_free emits one heap-FREE event hook: the block at `ptr` is `words`
@@ -1370,7 +1394,7 @@ function fc_horner(acc: string, x: string, scratch: string, lbl: string): string
 // scalar fneg.
 // rt_x86_str_eq is __fn___fern_str_eq: 1 when two string boxes hold equal
 // bytes, else 0. A string box is [data ptr, length]; the caller pushes b then
-// a, so 16(%rbp) is a and 24(%rbp) is b, and the result goes in %rax.
+// a, and the result goes in %rax.
 //
 // Hand-written rather than the Fern body it replaces because the cost here is
 // not per byte. Measured on a stage-2 compiler compiling lexer.fern: 5,296,736
@@ -1380,8 +1404,8 @@ function fc_horner(acc: string, x: string, scratch: string, lbl: string): string
 // frame the emitter builds around any Fern body, `rep stosq` to zero it and both
 // parameters spilled to it before the first compare. Rewriting the body to read
 // eight bytes at a time made it WORSE (47.6 instructions per call), because it
-// added setup to a function whose whole cost is setup. Only dropping the frame
-// removes it.
+// added setup to a function whose whole cost is setup. A leaf that never touches
+// %rbp needs no frame of its own, so it builds none.
 //
 // The comparison itself is then the native runtime's __fern_strcmp shape:
 // identical box or identical buffer answers immediately, unequal lengths answer
@@ -1389,47 +1413,42 @@ function fc_horner(acc: string, x: string, scratch: string, lbl: string): string
 // the END of each string, overlapping whatever the loop already read. No read
 // runs past either operand — the loop stops at data + len - 8 — and the 4..7 and
 // 1..3 classes only ever read inside their own length.
-//
-// rbp is kept even though nothing else needs a frame: __fern_report walks the
-// rbp chain to print a backtrace, and a leaf that skipped it would break the
-// walk for every frame below.
 function rt_x86_str_eq(): string {
   // The stack entry loads both boxes into %rax/%rsi, where the register
   // entry `.r` takes them; equality is symmetric, so their order is not.
+  // From there %rcx and %rsi walk the two buffers and %rdx holds the length.
   let s: string = "__fn___fern_str_eq:\n";
   s = s + "    movq 8(%rsp), %rax\n    movq 16(%rsp), %rsi\n";
   s = s + "__fn___fern_str_eq.r:\n";
-  s = s + "    pushq %rbp\n    movq %rsp, %rbp\n";
-  s = s + "    movq %rax, %rdx\n    movq %rsi, %rcx\n";
   // Same box: interned literals, which is most of what a compiler compares.
-  s = s + "    cmpq %rcx, %rdx\n    jz .Lseq_yes\n";
-  s = s + "    movq 8(%rdx), %rsi\n    cmpq 8(%rcx), %rsi\n    jnz .Lseq_no\n";
-  s = s + "    movq (%rdx), %rdx\n    movq (%rcx), %rcx\n";
+  s = s + "    cmpq %rsi, %rax\n    jz .Lseq_yes\n";
+  s = s + "    movq 8(%rax), %rdx\n    cmpq 8(%rsi), %rdx\n    jnz .Lseq_no\n";
+  s = s + "    movq (%rax), %rcx\n    movq (%rsi), %rsi\n";
   // Same buffer, equal length: a slice and its source compare equal here.
-  s = s + "    cmpq %rcx, %rdx\n    jz .Lseq_yes\n";
-  s = s + "    cmpq $8, %rsi\n    jb .Lseq_short\n";
-  s = s + "    leaq -8(%rdx,%rsi), %r8\n    leaq -8(%rcx,%rsi), %r9\n";
+  s = s + "    cmpq %rsi, %rcx\n    jz .Lseq_yes\n";
+  s = s + "    cmpq $8, %rdx\n    jb .Lseq_short\n";
+  s = s + "    leaq -8(%rcx,%rdx), %r8\n    leaq -8(%rsi,%rdx), %r9\n";
   s = s + ".Lseq_word:\n";
-  s = s + "    movq (%rdx), %rax\n    cmpq (%rcx), %rax\n    jnz .Lseq_no\n";
-  s = s + "    addq $8, %rdx\n    addq $8, %rcx\n";
-  s = s + "    cmpq %r8, %rdx\n    jb .Lseq_word\n";
+  s = s + "    movq (%rcx), %rax\n    cmpq (%rsi), %rax\n    jnz .Lseq_no\n";
+  s = s + "    addq $8, %rcx\n    addq $8, %rsi\n";
+  s = s + "    cmpq %r8, %rcx\n    jb .Lseq_word\n";
   s = s + "    movq (%r8), %rax\n    cmpq (%r9), %rax\n    jnz .Lseq_no\n";
   s = s + "    jmp .Lseq_yes\n";
   // 0..7 bytes. Four-byte pairs overlap the same way; under four, byte 0, the
   // last byte and (at length three) byte 1 are every byte there is.
   s = s + ".Lseq_short:\n";
-  s = s + "    testq %rsi, %rsi\n    jz .Lseq_yes\n";
-  s = s + "    cmpq $4, %rsi\n    jb .Lseq_byte\n";
-  s = s + "    movl (%rdx), %eax\n    cmpl (%rcx), %eax\n    jnz .Lseq_no\n";
-  s = s + "    movl -4(%rdx,%rsi), %eax\n    cmpl -4(%rcx,%rsi), %eax\n    jnz .Lseq_no\n";
+  s = s + "    testq %rdx, %rdx\n    jz .Lseq_yes\n";
+  s = s + "    cmpq $4, %rdx\n    jb .Lseq_byte\n";
+  s = s + "    movl (%rcx), %eax\n    cmpl (%rsi), %eax\n    jnz .Lseq_no\n";
+  s = s + "    movl -4(%rcx,%rdx), %eax\n    cmpl -4(%rsi,%rdx), %eax\n    jnz .Lseq_no\n";
   s = s + "    jmp .Lseq_yes\n";
   s = s + ".Lseq_byte:\n";
-  s = s + "    movzbl (%rdx), %eax\n    cmpb (%rcx), %al\n    jnz .Lseq_no\n";
-  s = s + "    movzbl -1(%rdx,%rsi), %eax\n    cmpb -1(%rcx,%rsi), %al\n    jnz .Lseq_no\n";
-  s = s + "    cmpq $3, %rsi\n    jb .Lseq_yes\n";
-  s = s + "    movzbl 1(%rdx), %eax\n    cmpb 1(%rcx), %al\n    jnz .Lseq_no\n";
-  s = s + ".Lseq_yes:\n    movq $1, %rax\n    leave\n    ret\n";
-  s = s + ".Lseq_no:\n    xorq %rax, %rax\n    leave\n    ret\n";
+  s = s + "    movzbl (%rcx), %eax\n    cmpb (%rsi), %al\n    jnz .Lseq_no\n";
+  s = s + "    movzbl -1(%rcx,%rdx), %eax\n    cmpb -1(%rsi,%rdx), %al\n    jnz .Lseq_no\n";
+  s = s + "    cmpq $3, %rdx\n    jb .Lseq_yes\n";
+  s = s + "    movzbl 1(%rcx), %eax\n    cmpb 1(%rsi), %al\n    jnz .Lseq_no\n";
+  s = s + ".Lseq_yes:\n    movl $1, %eax\n    ret\n";
+  s = s + ".Lseq_no:\n    xorl %eax, %eax\n    ret\n";
   s = s + ".size __fn___fern_str_eq, .-__fn___fern_str_eq\n";
   return s;
 }
@@ -3449,9 +3468,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // place, else 0 with nothing written. In place needs a FUSED box at rc 1,
   // whose block __fern_str_free will return to the class it came from: the
   // grown block's words, ceil(len/8) + 3, still fit the capacity __fern_capw
-  // or large_class gave the original, in the same tier. Under a heap-event
-  // build the growth reports as a free of the old size and an alloc of the
-  // new, so the two hooks still pair by size.
+  // or large_class gave the original, in the same tier. The heap trace sees
+  // the growth as a free of the old size and an alloc of the new, so its
+  // lines still pair by size; the leak census sees one block that grew, as
+  // native's does: its live bytes move and its counts do not.
   // __fern_getpwuid_name(uid) -> 0: Linux keeps every account in the files
   // the caller reads (#9815).
   if (s.has_need("pwname")) {
@@ -3507,7 +3527,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movl $0, %eax\n");
     s = s.write("    ja .Lsg_ret\n");
     s = s.write(".Lsg_fits:\n");
-    if (hev_on()) {
+    if (rc_trace_on()) {
       s = s.write("    leaq -8(%r8), %r11\n");  // base
       s = hev_free(s, "%r11", "%r9");
       s = s.write("    pushq %r10\n");
@@ -3515,6 +3535,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
       s = s.write("    pushq 16(%rsp)\n");  // site = our caller
       s = s.write("    call __fern_hev_a\n");
       s = s.write("    addq $24, %rsp\n");
+    }
+    if (leak_check_on()) {
+      s = str_grow_census(s);
     }
     s = s.write(".Lsg_copy:\n");
     s = s.write("    movq %rdi, 8(%r8)\n");  // len = grown length
@@ -4336,6 +4359,25 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_arr_push:\n");
     s = s.write(arr_push_fast(".Larr_push_slow"));
     s = s.write(".Larr_push_slow:\n");
+    // An empty receiver with no capacity, the common first append, grows to
+    // four slots with nothing to copy, so it needs no frame. A static
+    // literal can hold elements at cap 0, hence the length test too. The
+    // debug build keeps the frame path, whose rc read checks for poison, and
+    // so does a traced one, which names allocation sites by the frame chain.
+    if (!s.rc_free_debug && !hev_on()) {
+      s = s.write("    cmpq $0, (%rdi)\n");
+      s = s.write("    jne .Larr_push_frame\n");
+      s = s.write("    cmpq $0, -16(%rdi)\n");
+      s = s.write("    jne .Larr_push_frame\n");
+      s = s.write("    pushq %rsi\n");  // the value, and 16-byte alignment for the call
+      s = s.write("    movl $4, %edi\n");
+      s = s.write("    call __fern_arr_box\n");
+      s = s.write("    popq %rsi\n");
+      s = s.write("    movq $1, (%rax)\n");
+      s = s.write("    movq %rsi, 8(%rax)\n");
+      s = s.write("    ret\n");
+    }
+    s = s.write(".Larr_push_frame:\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     s = s.write("    pushq %r12\n");
@@ -6574,6 +6616,40 @@ function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): 
   return "";
 }
 
+// ssa_unary_from selects a width op or bit count that reads its operand from
+// register `src` and writes `d`, so an operand outside `d` needs no copy into
+// it first; "" for an op whose only form works in place.
+function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string): string {
+  if (what == "load_i32") {
+    return "    movslq (" + src + "), " + d + "\n";
+  }
+  if (what == "int_cast:i32" || (what == "int_extend" || what == "int_wrap") && !unsigned) {
+    return "    movslq " + ssa_r32(src) + ", " + d + "\n";
+  }
+  if (what == "u32_wrap" || what == "int_cast:u32" || what == "int_extend" || what == "int_wrap") {
+    return "    movl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
+  }
+  if (what == "clz:64") {
+    return "    lzcntq " + src + ", " + d + "\n";
+  }
+  if (what == "clz:32") {
+    return "    lzcntl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
+  }
+  if (what == "ctz:64") {
+    return "    tzcntq " + src + ", " + d + "\n";
+  }
+  if (what == "ctz:32") {
+    return "    tzcntl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
+  }
+  if (what == "popcount:64") {
+    return "    popcntq " + src + ", " + d + "\n";
+  }
+  if (what == "popcount:32") {
+    return "    popcntl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
+  }
+  return "";
+}
+
 // ssa_bits_asm is the bit counts on %rax at the width the name carries, as
 // the stack machine's arms select them; "" for any other op.
 function ssa_bits_asm(what: string, d: string): string {
@@ -7044,8 +7120,7 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 
 // ssa_str_eq answers unequal lengths inline, the answer to almost every
 // comparison a compiler makes, and calls the helper's register entry only for
-// equal ones. %rdx and %rcx are never homes, so the operands pass through them
-// on the way to %rax / %rsi whichever of those they already occupy.
+// equal ones.
 // The lengths are compared inline, and against a literal operand so is the
 // first byte: a chain of same-length literals (a mnemonic table, a keyword
 // list) then rejects most arms without the call.
@@ -7065,11 +7140,21 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
   } else if (lit_a >= 0) {
     s = s.write("    movq (" + b + "), %rdx\n    cmpb $" + util.i32_to_string(lit_a) + ", (%rdx)\n    jne " + lp + "streqn" + n + "\n");
   }
-  s = s.write("    movq " + a + ", %rdx\n");
-  if (b != "%rcx") {
-    s = s.write("    movq " + b + ", %rcx\n");
+  // Equality is symmetric, so the operands may land in %rax and %rsi either
+  // way round: whichever is already in one stays, and nothing is overwritten
+  // before it is read.
+  let x: string = a;
+  let y: string = b;
+  if (y == "%rax" || x == "%rsi") {
+    x = b;
+    y = a;
   }
-  s = s.write("    movq %rdx, %rax\n    movq %rcx, %rsi\n");
+  if (x != "%rax") {
+    s = s.write("    movq " + x + ", %rax\n");
+  }
+  if (y != "%rsi") {
+    s = s.write("    movq " + y + ", %rsi\n");
+  }
   s = s.write("    call __fn___fern_str_eq.r\n    jmp " + lp + "streqd" + n + "\n");
   s = s.write(lp + "streqn" + n + ":\n    xorl %eax, %eax\n" + lp + "streqd" + n + ":\n");
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
@@ -7919,8 +8004,16 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     s = ssa_load(reg_of, ins.args[0], d, s);
     s = ssa_binary(ins, fr, lp, d, s);
   } else {
-    s = ssa_load(reg_of, ins.args[0], d, s);
-    s = s.write(ssa_unary_asm(ins.str, ins.imm == 1, lp + "u" + util.i32_to_string(ins.result), d));
+    let from: string = "";
+    if (reg_of[ins.args[0]] >= 0 && ssa_reg(reg_of[ins.args[0]]) != d) {
+      from = ssa_unary_from(ins.str, ins.imm == 1, ssa_reg(reg_of[ins.args[0]]), d);
+    }
+    if (from != "") {
+      s = s.write(from);
+    } else {
+      s = ssa_load(reg_of, ins.args[0], d, s);
+      s = s.write(ssa_unary_asm(ins.str, ins.imm == 1, lp + "u" + util.i32_to_string(ins.result), d));
+    }
   }
   return ssa_store(reg_of, ins.result, d, s);
 }
@@ -9355,7 +9448,8 @@ function emit_ir_op_map_read(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState)
   } else if (o.kind_tag == 133) {  // map_iter
     // m.iter() -> a two-slot array box [map_ptr@8, cursor@16] off the data
     // pointer, so it carries an rc header and the typed lowering's release
-    // (__fern_arr_dec) frees it.
+    // (__fern_arr_dec) frees it. map_ptr is the unit of the map the cursor
+    // took, which that release drops first.
     s = s.write("    movq $2, %rdi\n    call __fern_arr_box\n");
     s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    movq $0, 16(%rax)\n    pushq %rax\n");
   } else if (o.kind_tag == 134) {  // mapiter_has_next

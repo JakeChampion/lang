@@ -64,9 +64,10 @@ pub struct Supply { value: i32, slot: i32, mode: i32 }
 // parameter's, whose every field the callee may grow is handed with it.
 pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops: i32[], hand_roots: i32[], hand_fields: i32[] }
 
-// `grows` names, at an append's or a with's result, the record value whose
-// field buffer the operation may grow or write IN PLACE (field_grow_root), or
-// -1; `grow_fields` holds that field's index at the same position.
+// `grows` names, at an append's, a with's or a string append's result, the
+// record value whose field buffer the operation may grow or write IN PLACE
+// (field_grow_root), or -1; `grow_fields` holds that field's index at the same
+// position.
 // `held` marks an element read that takes a unit of its own at the read
 // (held_elements); the physical lowering retains what it read.
 // `literal` marks the values that can only hold a string literal (`literals`).
@@ -308,23 +309,40 @@ function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32, own seen: boo
 }
 
 // Every produced body's rows, closed over the buffers handed on: a row only
-// ever gains, so the rounds converge.
+// ever gains, so the rounds converge. A plan reads the table only through the
+// rows filed under the callees its steps name, and each row is filed under the
+// key of the plan that produced it, so a plan is evaluated again only once a
+// callee of its has gained a row; until then it would hand back rows the
+// table already holds.
 pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): GrowTable {
   let table: GrowRow[] = [];
   let no_names: string[] = [];
   // tix indexes `table` by callee, one entry per row in order.
   let tix: util.NameIndex = util.name_index(no_names);
+  let kix: util.NameIndex = util.name_index(keys);
+  let callers: i32[][] = plan_callers(kix, funcs, plans);
+  let dirty: boolean[] = [];
+  while (dirty.len() < plans.len()) {
+    dirty = dirty.append(true);
+  }
   let changed: boolean = true;
   while (changed) {
     changed = false;
     let i: i32 = 0;
     while (i < plans.len()) {
-      if (plans[i].ok) {
+      if (plans[i].ok && dirty[i]) {
+        dirty = dirty.with(i, false);
         for row in grow_rows(keys[i], funcs[i], plans[i], table, tix) {
           if (!has_row_at(table, tix, row.callee, row.param, row.field)) {
             table = table.append(row);
             tix = tix.added(row.callee);
             changed = true;
+            let at: i32 = kix.find(row.callee);
+            if (at >= 0) {
+              for c in callers[at] {
+                dirty = dirty.with(c, true);
+              }
+            }
           }
         }
       }
@@ -332,6 +350,31 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
     }
   }
   return GrowTable { rows: table, by_callee: tix };
+}
+
+// plan_callers[j] lists the plans whose steps name the plan first keyed
+// keys[j] (kix), each once.
+function plan_callers(kix: util.NameIndex, funcs: ssasem.Func[], plans: Plan[]): i32[][] {
+  let out: i32[][] = [];
+  while (out.len() < plans.len()) {
+    out = out.append([]);
+  }
+  let i: i32 = 0;
+  while (i < plans.len()) {
+    if (plans[i].ok) {
+      let at: i32[] = ssa.block_positions(funcs[i].graph);
+      for s in plans[i].steps {
+        if (s.point >= 0) {
+          let j: i32 = kix.find(funcs[i].graph.blocks[at[s.block]].insts[s.point].str);
+          if (j >= 0 && (out[j].len() == 0 || out[j][out[j].len() - 1] != i)) {
+            out = out.with(j, out[j].append(i));
+          }
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return out;
 }
 
 function bad(why: string): Plan {
@@ -424,9 +467,9 @@ function unit_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean 
   if let typeinfo.TypeDyn(_) = t {
     return true;
   }
-  // A map cursor's unit is its own block; what it reads stays the map's.
+  // A map cursor holds a unit of its map.
   if (semtypes.is_map_iter(t)) {
-    return true;
+    return unit_shape(semtypes.map_iter_map(t), f, lookup);
   }
   if let typeinfo.TypeArray(a) = t {
     return unit_shape(a.elem, f, lookup);
@@ -892,6 +935,8 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     counted = [true, false, ssasem.reference(f.values[ins.args[2]])];
   } else if (ins.kind_tag == ssasem.hole_fill()) {
     counted = [true, false, true];
+  } else if (ins.kind_tag == ssasem.map_iter()) {
+    counted = [true];
   } else if (string_append(f, ins)) {
     counted = [true, false];
   } else if (construction(ins.kind_tag)) {
@@ -2193,10 +2238,19 @@ function payload_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
   return PayloadTakes { taken: out, crossing: crossing };
 }
 
-// The record whose field buffer the append or with at (`bi`, `pos`) may grow
-// or write in place, or -1: `projection_root` of its receiver.
+// The record whose field buffer the append, with or string append at (`bi`,
+// `pos`) may grow or write in place, or -1: `projection_root` of its receiver.
+// A string append needs a record the frame owns: no caller brackets a text
+// field it lends (grow_rows), so a borrowed record's string is never grown.
 function field_grow_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
   let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
+  if (string_append(f, ins)) {
+    let root: i32 = projection_root(f, a, owned, defs, bi, pos, ins.args[0]);
+    if (root >= 0 && owned[root]) {
+      return root;
+    }
+    return 0 - 1;
+  }
   if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) {
     return 0 - 1;
   }

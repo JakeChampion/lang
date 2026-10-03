@@ -12,9 +12,11 @@ import (
 // An append that fits and may mutate its receiver runs in __fern_arr_push's
 // frameless head; everything else (a full receiver, a shared one, and every
 // append under the sanitizer, which checks the count first) takes the framed
-// body. The program drives each path: appends to the immortal empty literal,
-// in place and growing, and to an alias, which must copy and leave the
-// original alone.
+// body, except an empty receiver with no capacity, which x86-64 grows to four
+// slots before building one. The program drives each path: appends to the
+// immortal empty literal, in place and growing, to a literal that already
+// holds elements, and to an alias, which must copy and leave the original
+// alone.
 const arrPushFastProg = `function main(): i32 {
     let a: i32[] = [];
     let i: i32 = 0;
@@ -27,6 +29,9 @@ const arrPushFastProg = `function main(): i32 {
     let s: i32 = 0;
     for x in a { s = s + x; }
     if (s != 4950) { return 4; }
+    let c: i32[] = [7, 8, 9];
+    c = c.append(10);
+    if (c.len() != 4 || c[0] != 7 || c[3] != 10) { return 5; }
     return 42;
 }
 `
@@ -88,6 +93,12 @@ func TestSelfHostArrPushFastPath(t *testing.T) {
 				}
 				if !store[target].MatchString(head) {
 					t.Errorf("%s: %s's head does not append in place:\n%s", target, label, head)
+				}
+			}
+			if target == "x86-64-linux" && !san {
+				empty := arrPushHead(t, string(asm), ".Larr_push_slow")
+				if !strings.Contains(empty, "call __fern_arr_box") || strings.Contains(empty, "pushq %rbp") {
+					t.Errorf("%s: an empty receiver does not grow before the slow path's frame:\n%s", target, empty)
 				}
 			}
 		}
