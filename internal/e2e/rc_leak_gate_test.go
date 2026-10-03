@@ -48,12 +48,7 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{}
 var rcCorpusLeakBaselineArm64 = map[string]int64{}
 
 // The wasm table (#7912). This leg still compiles with the native wasm
-// backend, and its residuals are the map and closure drop paths.
-// `map_keys_values_header_churn_free` is the one worth naming, because its
-// name points the wrong way: `keys()` / `values()` are clean. Its
-// `Map[i64, i64]` is what leaks — wasm32 boxes a WIDE key into a cell, and
-// the key column's drop does not free those, so it strands one cell per
-// entry.
+// backend, and its residuals are the closure and json paths.
 //
 // Cases the correctness corpus skips on wasm (`skipWasm`) are skipped
 // here too — a case that cannot run cannot be weighed.
@@ -68,7 +63,6 @@ var rcCorpusLeakBaselineWasm = map[string]int64{
 	// in these tables at all (absent means zero) and #8434 is closed. The
 	// call-argument projection joined them as a case rather than a pin: it
 	// leaked only the undropped tuple box, which no fixture had ever covered.
-	"map_keys_values_header_churn_free":              16000,
 	"stdlib_json_cursor_idiom":                       256,
 	"stdlib_json_roundtrip":                          448,
 	"string_pushed_then_returned_bare_stays_refused": 320,
