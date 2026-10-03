@@ -74,7 +74,7 @@ import "std/i64";
 import "std/u64";
 import "std/io_buffered";
 import "./lib/gnu";
-import "./lib/tz";
+import "std/tz";
 import "./lib/pwdb";
 import "./lib/canon";
 import "./lib/filetype";

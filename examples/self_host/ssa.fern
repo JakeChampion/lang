@@ -1123,6 +1123,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
   let cum_abi: i32[] = calls_before(abi_cl, total_pos);
   let mates: Mates = phi_mates(f, def_pos, hi, no_home);
   let weight: i32[] = spill_weights(f, at);
+  let sole: i32[] = sole_readers(f);
 
   let reg_of: i32[] = [];
   let shared_with: i32[] = [];
@@ -1183,6 +1184,13 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
       act_reg = nr;
     }
 
+    // A value read only by its phi mate, already spilled, would be stored to
+    // the mate's slot on the edge whatever its home; it takes the slot.
+    let mh: i32 = mates.hint[v];
+    if (mh >= 0 && sole[v] == mh && lo[mh] <= lo[v] && hi[mh] >= 0 && reg_of[mh] == 0 - 1 && !mate_interferes(f, at, blk_start, mh, v, def_blk[mh], def_blk[v], def_pos[v])) {
+      oi = oi + 1;
+      continue;
+    }
     let abi_ok: boolean = !spans_call(cum_abi, lo[v], hi[v]);
     // A value takes the register of its phi mate, or of an operand of
     // its definition, when it can: the register is free, or its holder
@@ -1350,6 +1358,42 @@ function slot_hints(f: SFunc, at: i32[], blk_start: i32[], def_blk: i32[], def_p
     i = i + 1;
   }
   return SlotHints { hint: hint, take_over: take_over };
+}
+
+// sole_readers gives each value the result of the one instruction that reads
+// it, -1 when nothing does and -2 when more than one instruction or a
+// terminator does.
+function sole_readers(f: SFunc): i32[] {
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < f.nvals) {
+    out = out.append(0 - 1);
+    i = i + 1;
+  }
+  for blk in f.blocks {
+    for ins in blk.insts {
+      for a in ins.args {
+        if (a >= 0 && a < f.nvals && out[a] != ins.result) {
+          if (out[a] == 0 - 1 && ins.result >= 0) {
+            out = out.with(a, ins.result);
+          } else {
+            out = out.with(a, 0 - 2);
+          }
+        }
+      }
+    }
+    let tv: i32 = 0 - 1;
+    if (blk.term.kind_tag == 1) {
+      tv = blk.term.value;
+    }
+    if (blk.term.kind_tag == 3) {
+      tv = blk.term.cond;
+    }
+    if (tv >= 0 && tv < f.nvals) {
+      out = out.with(tv, 0 - 2);
+    }
+  }
+  return out;
 }
 
 // spill_weights counts, per value, its definition and every read, each at the

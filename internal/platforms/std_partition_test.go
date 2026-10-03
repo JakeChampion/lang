@@ -112,6 +112,7 @@ var stdModuleReach = map[string]string{
 	"std/test":          "config,env,fs,log,now,random",
 	"std/textwrap":      "",
 	"std/time":          "now",
+	"std/tz":            "env,fs,now",
 	"std/u32":           "",
 	"std/u64":           "",
 	"std/unicode":       "",
