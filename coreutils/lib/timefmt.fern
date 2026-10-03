@@ -777,24 +777,45 @@ function convert(h: usize, s: Spec, tm: Tm, t: i64, nsec: i64, yr_spec: i32): bo
   return false;
 }
 
-// `format_with(fmt, tm, t, nsec, upcase, yr_spec, width)` — the
-// engine, re-entered for the compound conversions: `upcase` is a `^`
-// carried in from outside, `yr_spec` the padding a year inherits, and
-// `width` the width the first conversion starts with.
-function format_with(fmt: string, tm: Tm, t: i64, nsec: i64, upcase: boolean, yr_spec: i32, width0: i32): string {
-  let h: usize = buf_new(64);
+// One piece of a compiled format. `kind` 0 is a literal run, 1 a literal
+// padded and cased by `s`, 2 a `%z` with `colons` colons, and 3 a
+// conversion, with `lit` the text written when the original refuses it.
+struct Piece { kind: i32, lit: string, s: Spec, colons: i32 }
+
+// A format parsed once, for a caller rendering many timestamps with it.
+pub struct Format { pieces: Piece[] }
+
+function no_spec(): Spec {
+  return Spec { pad: pad_zero(), width: -1, up: false, low: false, change: false, modifier: 0, c: 0, at: 0, end: 0 };
+}
+
+function padded(lit: string, s: Spec): Piece {
+  return Piece { kind: 1, lit: lit, s: s, colons: 0 };
+}
+
+// `compile_with(fmt, upcase, width)` — the format's pieces: `upcase` is a
+// `^` carried in from outside, and `width` the width the first piece
+// starts with, for the compound conversions that re-enter the engine.
+function compile_with(fmt: string, upcase: boolean, width0: i32): Format {
+  let ps: Piece[] = [];
   let i: i32 = 0;
   let width: i32 = width0;
   while (i < fmt.len()) {
     let b: i32 = fmt[i] as i32;
     if (b != 37) {
       if (width > 1) {
-        width_add(h, byte_string(b), width, pad_zero());
-      } else {
-        buf_push_byte(h, b);
+        ps = ps.append(padded(byte_string(b), Spec { ...no_spec(), width: width }));
+        width = -1;
+        i = i + 1;
+        continue;
       }
+      let k: i32 = i;
+      while (k < fmt.len() && fmt[k] as i32 != 37) {
+        k = k + 1;
+      }
+      ps = ps.append(Piece { kind: 0, lit: slice_unchecked(fmt, i, k) + "", s: no_spec(), colons: 0 });
       width = -1;
-      i = i + 1;
+      i = k;
       continue;
     }
     let s: Spec = parse_spec(fmt, i, upcase, width);
@@ -802,18 +823,18 @@ function format_with(fmt: string, tm: Tm, t: i64, nsec: i64, upcase: boolean, yr
     let j: i32 = s.end;
     if (s.c == 37) {
       if (j == i + 1) {
-        width_add(h, "%", s.width, s.pad);
+        ps = ps.append(padded("%", s));
         i = j + 1;
         continue;
       }
       // Flags before a second `%` are copied out, and that `%` opens
       // the next conversion.
-      width_add(h, cased(slice_unchecked(fmt, i, j) + "", s.up, s.low), s.width, s.pad);
+      ps = ps.append(padded(slice_unchecked(fmt, i, j) + "", s));
       i = j;
       continue;
     }
     if (s.c == 0) {
-      width_add(h, cased(slice_unchecked(fmt, i, fmt.len()) + "", s.up, s.low), s.width, s.pad);
+      ps = ps.append(padded(slice_unchecked(fmt, i, fmt.len()) + "", s));
       i = fmt.len();
       continue;
     }
@@ -823,23 +844,55 @@ function format_with(fmt: string, tm: Tm, t: i64, nsec: i64, upcase: boolean, yr
         colons = colons + 1;
       }
       if (j + colons < fmt.len() && fmt[j + colons] as i32 == 122 && colons <= 3) {
-        tz_offset(h, s, tm, colons);
+        ps = ps.append(Piece { kind: 2, lit: "", s: s, colons: colons });
         i = j + colons + 1;
         continue;
       }
       if (j + colons < fmt.len() && fmt[j + colons] as i32 == 122) {
         j = j + colons;
       }
-      width_add(h, cased(slice_unchecked(fmt, i, j + 1) + "", s.up, s.low), s.width, s.pad);
+      ps = ps.append(padded(slice_unchecked(fmt, i, j + 1) + "", s));
       i = j + 1;
       continue;
     }
-    if (!convert(h, s, tm, t, nsec, yr_spec)) {
-      width_add(h, cased(slice_unchecked(fmt, i, j + 1) + "", s.up, s.low), s.width, s.pad);
-    }
+    ps = ps.append(Piece { kind: 3, lit: slice_unchecked(fmt, i, j + 1) + "", s: s, colons: 0 });
     i = j + 1;
   }
+  return Format { pieces: ps };
+}
+
+// `render(f, tm, t, nsec, yr_spec)` — the pieces written out for one
+// time; `yr_spec` is the padding a year inherits.
+function render(f: Format, tm: Tm, t: i64, nsec: i64, yr_spec: i32): string {
+  let h: usize = buf_new(64);
+  for p in f.pieces {
+    if (p.kind == 0) {
+      buf_push(h, p.lit);
+    } else if (p.kind == 1) {
+      width_add(h, cased(p.lit, p.s.up, p.s.low), p.s.width, p.s.pad);
+    } else if (p.kind == 2) {
+      tz_offset(h, p.s, tm, p.colons);
+    } else if (!convert(h, p.s, tm, t, nsec, yr_spec)) {
+      width_add(h, cased(p.lit, p.s.up, p.s.low), p.s.width, p.s.pad);
+    }
+  }
   return buf_take(h);
+}
+
+// `format_with(fmt, tm, t, nsec, upcase, yr_spec, width)` — the engine,
+// re-entered for the compound conversions.
+function format_with(fmt: string, tm: Tm, t: i64, nsec: i64, upcase: boolean, yr_spec: i32, width0: i32): string {
+  return render(compile_with(fmt, upcase, width0), tm, t, nsec, yr_spec);
+}
+
+// `compile(fmt)` — `fmt` parsed once, for `format`.
+pub function compile(fmt: string): Format {
+  return compile_with(fmt, false, -1);
+}
+
+// `format(f, z, t, nsec)` — `strftime` with the format already compiled.
+pub function format(f: Format, z: tz.Zone, t: i64, nsec: i64): string {
+  return render(f, break_time(z, t), t, nsec, pad_zero());
 }
 
 // `strftime(fmt, z, t, nsec)` — nstrftime in the C locale: the
@@ -850,5 +903,5 @@ function format_with(fmt: string, tm: Tm, t: i64, nsec: i64, upcase: boolean, yr
 // of `%z`. A conversion the original does not know is copied out with
 // its percent, padded like anything else.
 pub function strftime(fmt: string, z: tz.Zone, t: i64, nsec: i64): string {
-  return format_with(fmt, break_time(z, t), t, nsec, false, pad_zero(), -1);
+  return format(compile(fmt), z, t, nsec);
 }

@@ -293,7 +293,9 @@ const (
 	// (452), which `chmod_at` issues for its nofollow case so the
 	// kernel's own answer — EOPNOTSUPP, since a symlink has no mode
 	// here — reaches the caller.
-	sysRenameat  = 264
+	sysRenameat = 264
+	// renameat2(2) 316: renameat plus a flags word.
+	sysRenameat2 = 316
 	sysFchmodat  = 268
 	sysFchmodat2 = 452
 	sysUtimensat = 280
@@ -698,7 +700,8 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		g.usesRemoveDirAll || g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir ||
 		g.usesRemoveDir || g.usesCreateLink || g.usesCreateSymlink || g.usesTempDir ||
 		g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink ||
-		g.usesRename || g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
+		g.usesRename || g.usesRenameNoreplace || g.usesRenameExchange ||
+		g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt {
 		g.usesFree = true
 	}
@@ -1100,6 +1103,12 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesRename {
 		g.emitRenameRuntime()
+	}
+	if g.usesRenameNoreplace {
+		g.emitRenameFlagsRuntime("__fern_rename_noreplace", "rnnr", renameNoreplace)
+	}
+	if g.usesRenameExchange {
+		g.emitRenameFlagsRuntime("__fern_rename_exchange", "rnex", renameExchange)
 	}
 	if g.usesChmod {
 		g.emitChmodRuntime()
@@ -1808,6 +1817,9 @@ type generator struct {
 	usesRename       bool
 	usesChmod        bool
 	usesSetFileTimes bool
+	// renameat2 with RENAME_NOREPLACE / RENAME_EXCHANGE.
+	usesRenameNoreplace bool
+	usesRenameExchange  bool
 	// fchmodat / fchmodat2 over a path, a mode and a follow flag.
 	usesChmodAt bool
 	// truncate(2) over a path and a length.
@@ -2478,6 +2490,14 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "rename":
 		g.usesRename = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "rename_noreplace":
+		g.usesRenameNoreplace = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "rename_exchange":
+		g.usesRenameExchange = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "chmod":
@@ -4208,6 +4228,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_set_priority"
 		case "rename":
 			target = "__fern_rename"
+		case "rename_noreplace":
+			target = "__fern_rename_noreplace"
+		case "rename_exchange":
+			target = "__fern_rename_exchange"
 		case "chmod":
 			target = "__fern_chmod"
 		case "chmod_at":
@@ -17507,6 +17531,25 @@ func (g *generator) emitRenameRuntime() {
 		g.emit("mov rsi, rbx")
 		g.emit("mov edx, -100")
 		g.emit("mov r10, r14")
+	})
+}
+
+// Linux's renameat2 flags.
+const (
+	renameNoreplace = 1
+	renameExchange  = 2
+)
+
+// emitRenameFlagsRuntime emits `name(from, to)` — renameat2(AT_FDCWD,
+// from, AT_FDCWD, to, flags), the condition held by the kernel in the
+// same step as the rename.
+func (g *generator) emitRenameFlagsRuntime(name, tag string, flags int) {
+	g.emitPathOpRuntime(name, tag, sysRenameat2, 2, 0, func() {
+		g.emit("mov edi, -100") // AT_FDCWD
+		g.emit("mov rsi, rbx")
+		g.emit("mov edx, -100")
+		g.emit("mov r10, r14")
+		g.emit(fmt.Sprintf("mov r8d, %d", flags))
 	})
 }
 

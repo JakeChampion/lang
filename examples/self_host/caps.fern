@@ -102,6 +102,8 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "create_symlink", capability: "fs" },
     BuiltinCap { builtin: "read_link", capability: "fs" },
     BuiltinCap { builtin: "rename", capability: "fs" },
+    BuiltinCap { builtin: "rename_noreplace", capability: "fs" },
+    BuiltinCap { builtin: "rename_exchange", capability: "fs" },
     BuiltinCap { builtin: "chmod", capability: "fs" },
     BuiltinCap { builtin: "chmod_at", capability: "fs" },
     BuiltinCap { builtin: "set_file_times", capability: "fs" },

@@ -5826,6 +5826,12 @@ function fs_op_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "rename") {
     return Lowered { found: true, r: emit(r, ir.op_rename()) };
   }
+  if (ins.str == "rename_noreplace") {
+    return Lowered { found: true, r: emit(r, ir.op_rename_noreplace()) };
+  }
+  if (ins.str == "rename_exchange") {
+    return Lowered { found: true, r: emit(r, ir.op_rename_exchange()) };
+  }
   if (ins.str == "create_link") {
     return Lowered { found: true, r: emit(r, ir.op_create_link()) };
   }

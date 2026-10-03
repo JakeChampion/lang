@@ -100,6 +100,13 @@ const x86SSAPathOpSrc = `function main(): i32 {
     match (rename(base + "/g", base + "/h")) { Ok(_) => {}, Err(e) => { return 60; } }
     match (read_file(base + "/h")) { Ok(c) => { if (c != "abc") { return 61; } }, Err(e) => { return 62; } }
     match (read_file(base + "/g")) { Ok(c) => { return 63; }, Err(e) => {} }
+    // A flags word in the wrong register degrades both into a plain rename
+    // that still answers Ok, so each checks what it left.
+    match (write_file(base + "/x", "x")) { Ok(_) => {}, Err(e) => { return 64; } }
+    match (rename_noreplace(base + "/x", base + "/h")) { Ok(_) => { return 65; }, Err(e) => {} }
+    match (rename_exchange(base + "/x", base + "/h")) { Ok(_) => {}, Err(e) => { return 66; } }
+    match (read_file(base + "/h")) { Ok(c) => { if (c != "x") { return 67; } }, Err(e) => { return 68; } }
+    match (read_file(base + "/x")) { Ok(c) => { if (c != "abc") { return 69; } }, Err(e) => { return 59; } }
 
     match (mknod(base + "/p", 4096 + 384, 0, 0)) { Ok(_) => {}, Err(e) => { return 70; } }
     match (lstat(base + "/p")) { Ok(s) => { if (s.is_file || s.is_dir) { return 71; } }, Err(e) => { return 72; } }

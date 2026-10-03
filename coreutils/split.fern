@@ -696,6 +696,10 @@ function temp_name(root: string): string {
 // makes the name safe to choose: a name an attacker planted comes back
 // as AlreadyExists and the loop tries another, where `open_writer` would
 // truncate their file instead (#8776).
+//
+// The Reader is opened, and the name removed, before anything is written,
+// as GNU's create_temp_file unlinks at creation: the input never exists
+// under a name, so a signal mid-spool leaves at most an empty file.
 function spool(s: Src, first: string): (Src, i64) {
   let root: string = tmp_root();
   let path: string = "";
@@ -725,6 +729,18 @@ function spool(s: Src, first: string): (Src, i64) {
       }
     }
   }
+  let back: Reader = stdin();
+  match (open_reader(path)) {
+    Ok(r) => {
+      back = r;
+    },
+    Err(e) => {
+      drop_spool(path);
+      gnu.error(path + ": " + gnu.io_error_text(e));
+      exit(1);
+    }
+  }
+  drop_spool(path);
   let total: i64 = 0 as i64;
   let buf: io_buffered.BufWriter = io_buffered.buf_writer_new(w, 65536);
   let block: string = first;
@@ -734,7 +750,6 @@ function spool(s: Src, first: string): (Src, i64) {
     buf = buf.write_string(block);
     match (buf.error()) {
       Some(e) => {
-        drop_spool(path);
         gnu.error(path + ": " + gnu.io_error_text(e));
         exit(1);
       },
@@ -746,36 +761,16 @@ function spool(s: Src, first: string): (Src, i64) {
   }
   match (buf.close()) {
     Some(e) => {
-      drop_spool(path);
       gnu.error(path + ": " + gnu.io_error_text(e));
       exit(1);
     },
     None => {}
   }
-  match (open_reader(path)) {
-    Ok(r) => {
-      match (remove_file(path)) {
-        Ok(_) => {},
-        Err(_) => {}
-      }
-      return (src_new(r, s.name), total);
-    },
-    Err(e) => {
-      drop_spool(path);
-      gnu.error(path + ": " + gnu.io_error_text(e));
-      exit(1);
-    }
-  }
-  return (s, total);
+  return (src_new(back, s.name), total);
 }
 
-// `drop_spool(path)` — best-effort unlink of the spool file, for the exits
-// that leave `spool` without one. GNU never needs this: create_temp_file
-// unlinks at creation and keeps only the fd, so the input has no name to
-// leave behind. This one has a name until the reopen, so every failing
-// path removes it rather than leaving a copy of the input in $TMPDIR.
-// A signal still leaks it — closing that needs the unlink-at-creation
-// shape (#8814).
+// `drop_spool(path)` — best-effort unlink of the spool file's name. The
+// open descriptors keep the inode alive until they close.
 function drop_spool(path: string): void {
   match (remove_file(path)) {
     Ok(_) => {},

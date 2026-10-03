@@ -7112,6 +7112,8 @@ function fs_op_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Contr
     ssasem.Contract { name: "chmod", params: [t_string(), t_i32()], modes: [b, v], result: done },
     ssasem.Contract { name: "access", params: [t_string(), t_i32()], modes: [b, v], result: done },
     ssasem.Contract { name: "rename", params: [t_string(), t_string()], modes: [b, b], result: done },
+    ssasem.Contract { name: "rename_noreplace", params: [t_string(), t_string()], modes: [b, b], result: done },
+    ssasem.Contract { name: "rename_exchange", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "create_link", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "create_symlink", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "tcp_connect", params: [t_i32(), t_i32()], modes: [v, v], result: t_i32() },
