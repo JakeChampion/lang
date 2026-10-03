@@ -59,6 +59,8 @@ jobs:
       # globals), and one serial process left the runner's other cores idle
       # while each test waited on its wasmtime subprocess.
       - name: go test (wasm e2e, prebuilt, two workers)
+        env:
+          FERN_REQUIRE_WASMTIME: "1"
         run: |
           set -euo pipefail
           chmod +x e2e.test

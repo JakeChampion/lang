@@ -1,0 +1,43 @@
+import "core/map";
+import "core/cmp";
+import "std/i32";
+// An f32 map VALUE column under a derived struct key: the key runtime's own
+// get_or block converts the fallback going in and the value coming out,
+// separately from the scalar- and string-keyed paths map_f32_column covers
+// (#10458). Insert, get_or's hit and miss, get, values(), a map literal and
+// iteration.
+//
+// It prints its verdict rather than exiting with it, because a WASI component
+// reports every non-zero status as 1.
+@derive(cmp.Eq, cmp.Hash)
+struct Point { x: i32, y: i32 }
+
+function check(): i32 {
+    let m: Map[Point, f32] = map_new(4);
+    let i: i32 = 0;
+    while (i < 12) {
+        m = m.insert(Point { x: i, y: 0 - i }, (i as f32) / 4.0);
+        i = i + 1;
+    }
+    if (m.get_or(Point { x: 3, y: 0 - 3 }, 9.0 as f32) != 0.75 as f32) { return 1; }
+    if (m.get_or(Point { x: 3, y: 3 }, 0.5 as f32) != 0.5 as f32) { return 2; }
+    match (m.get(Point { x: 5, y: 0 - 5 })) {
+        Some(v) => { if (v != 1.25 as f32) { return 3; } },
+        None => { return 4; }
+    }
+    let vs: f32[] = m.values();
+    if (vs.len() != 12) { return 5; }
+    let vsum: f32 = 0.0 as f32;
+    for v in vs { vsum = vsum + v; }
+    if (vsum != 16.5 as f32) { return 6; }
+    let lit: Map[Point, f32] = Map { Point { x: 1, y: 2 }: 2.5 as f32, Point { x: 2, y: 1 }: 0.25 as f32 };
+    if (lit.get_or(Point { x: 2, y: 1 }, 0.0 as f32) != 0.25 as f32) { return 7; }
+    let lsum: f32 = 0.0 as f32;
+    for (k, v) in lit { lsum = lsum + v + (k.x - k.x) as f32; }
+    if (lsum != 2.75 as f32) { return 8; }
+    return 0;
+}
+function main(): i32 {
+    stdout().write("check=" + check().to_string() + "\n");
+    return 0;
+}

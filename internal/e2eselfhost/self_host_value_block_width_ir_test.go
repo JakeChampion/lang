@@ -135,3 +135,33 @@ func TestSelfHostValueBlockLiteralLocalWidth(t *testing.T) {
 		})
 	}
 }
+
+// A literal local read beside a wide literal takes the destination's width too
+// (#10595): `big` is past i64-max, so it is right only when the product runs
+// at u64. `m` is i32-min, an i32 literal local.
+const wideLiteralLocalWidthSrc = `function giga(n: u64): u64 { return n / 1000000000u64; }
+function exa(n: u64): u64 { return n / 1000000000000000000u64; }
+function main(): i32 {
+    let k = 3;
+    let w: u64 = giga(k * 3000000000);
+    let v: u64 = giga({ let j = 5; j * 3000000000 });
+    let two = 2;
+    let big: u64 = exa(two * 7000000000000000000);
+    let m = -2147483648;
+    return (w as i32) + (v as i32) + (big as i32) + (m + 2147483647 + 1);
+}
+`
+
+func TestSelfHostWideLiteralLocalWidth(t *testing.T) {
+	if want := interpExit(t, buildLangBinForInterp(t), wideLiteralLocalWidthSrc); want != 38 {
+		t.Fatalf("interpreter exit %d, want 38", want)
+	}
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			if stderr, exit := cli.exitOf(t, wideLiteralLocalWidthSrc, target); exit != 38 {
+				t.Errorf("exit = %d, want 38\n%s", exit, stderr)
+			}
+		})
+	}
+}

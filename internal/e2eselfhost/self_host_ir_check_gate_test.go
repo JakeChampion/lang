@@ -126,3 +126,29 @@ func TestSelfHostIRCheckGate(t *testing.T) {
 		}
 	})
 }
+
+// The typed drivers run the emit entry's checks before the lowering, and the
+// entry they hand the module to skips its own copy (#10838): one run per
+// build, counted through FERN_ENTRY_CHECK_TRACE.
+func TestSelfHostIRCheckGateRunsOnce(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "asm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(driverBin)
+	} else {
+		cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
+	}
+	cmd.Stdin = bytes.NewReader([]byte("function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(2, 3); }"))
+	cmd.Env = append(os.Environ(), "FERN_ENTRY_CHECK_TRACE=1")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if _, err := cmd.Output(); err != nil {
+		t.Fatalf("asm_run: %v\n%s", err, stderr.String())
+	}
+	if n := strings.Count(stderr.String(), "entry check\n"); n != 1 {
+		t.Fatalf("the entry checks ran %d times, want 1\n%s", n, stderr.String())
+	}
+}
