@@ -134,8 +134,8 @@ function fn_result_slots(): i32 {
 // value and no operand kinds to check, the height is the whole state. Scopes
 // are tracked in parallel arrays with an explicit depth, so a push/pop is
 // O(1) — an array-slice pop would make the walk quadratic on the compiler's
-// own long functions.
-pub function verify_stack_fn(fn_name: string, ops: ir.Op[]): StackResult {
+// own long functions. `pops` is ir.pops_by_kind, read through ir.op_pops_by.
+pub function verify_stack_fn(fn_name: string, ops: ir.Op[], pops: i32[]): StackResult {
   let out: irverify.Problem[] = [];
   let none: irverify.Problem[] = [];
 
@@ -257,7 +257,7 @@ pub function verify_stack_fn(fn_name: string, ops: ir.Op[]): StackResult {
         height = base;
       }
     } else {
-      let np: i32 = ir.op_pops(o);
+      let np: i32 = ir.op_pops_by(pops, o);
       if (np < 0) {
         return StackResult { problems: none, bail: "unmodelled op " + ir.kind_name(t) };
       }

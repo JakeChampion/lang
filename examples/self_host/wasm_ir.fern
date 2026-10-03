@@ -31,7 +31,6 @@ import "./ir";
 import "./irtables";
 import "./fnsigs";
 import "./lift";
-import "./irverify";
 import "./irverifygate";
 import "./asmcore";
 import "./astwalk";
@@ -6220,7 +6219,7 @@ function emit_dyn_dispatch_wat(o: ir.Op, structs: irtables.StructTab, funcs: par
 // their equivalent in the shared asmcore (EmitState); there is no wasmcore, so
 // it lives here.
 //
-// NOT carried: fd, r and vsigs. The audit proposed bundling all nine of
+// NOT carried: fd, r and vgate. The audit proposed bundling all nine of
 // emit_function_ir's params, but the op dispatch reads none of those three --
 // every apparent hit is inside a comment, where "fd 0"/"fd 3" is the WASI file
 // descriptor and "r.read_chunk" is a Reader method.
@@ -7009,7 +7008,7 @@ function emit_str_op_wat(o: ir.Op): string {
 // the RC-consistency bug (#5509). Consuming the cached `r` makes it one lowering
 // by construction. `fd` supplies the func wrapper (name / receiver / ret); the
 // ~13 ret-fn / borrow side-tables that only fed lower_func are gone.
-function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDecl, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vsigs: irverify.NameIndex): string {
+function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDecl, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
   // Methods get the receiver-type-qualified name `$<Type>.<name>` (matching
   // the lowering's call_direct dispatch); free functions stay `$<name>`. WAT idents
   // allow `.`. r.n_params already counts the receiver as the first param.
@@ -7017,7 +7016,7 @@ function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDe
   if (fd.receiver_type.len() > 0) {
     fn_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
   }
-  return emit_function_ir_named(ns, r, fn_name, decl_result_wat(fd, structs), str_vals, cagg_vals, structs, fn_table, funcs, vsigs);
+  return emit_function_ir_named(ns, r, fn_name, decl_result_wat(fd, structs), str_vals, cagg_vals, structs, fn_table, funcs, vgate);
 }
 
 // decl_result_wat is the WAT result clause a DECLARATION's return type asks for.
@@ -7078,7 +7077,7 @@ function fallthrough_filler(result_wat: string): string {
 // register twins are asm_ir / asm_arm64_ir's emit_function_via_ir_named.
 // fern-lint: allow cyclomatic-complexity
 // The wasm half of the same op table as asm_ir.fern: one guard per op.
-function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: string, result_wat: string, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vsigs: irverify.NameIndex): string {
+function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: string, result_wat: string, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
   let arrtmp: i32 = r.n_locals;
   let eltmp: i32 = r.n_locals + 1;
   // f64tmp: an f64-typed scratch local for reordering 64-bit struct field
@@ -7094,7 +7093,7 @@ function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: st
   // i32 path already parks the value in eltmp, so the index needs its own home.
   let bctmp: i32 = r.n_locals + 4;
   ircore.lower_failed_refuse(fn_name, r);
-  irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vsigs);
+  irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
   let parts: string[] = [];
   parts = parts.append("  (func $" + fn_name);
   let p: i32 = 0;
@@ -7191,7 +7190,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
   // The IR verify gate's callee-arity index: built once for the whole
   // program, not per function, which is what keeps a ~3000-declaration
   // lookup out of the emit loop's inner cost.
-  let vsigs: irverify.NameIndex = irtables.fn_sig_index(all_funcs);
+  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(all_funcs), pops: ir.pops_by_kind() };
   let parts: string[] = [];
   let fi: i32 = 0;
   while (fi < mod.funcs.len()) {
@@ -7208,7 +7207,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
     // A template the substitution superseded has no body of its own here
     // either: its instances are on the cache tail.
     if (mod.funcs[fi].import_iface.len() == 0 && !cache[fi].superseded) {
-      parts = parts.append(emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, cagg_vals, all_structs, ft, all_funcs, vsigs));
+      parts = parts.append(emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, cagg_vals, all_structs, ft, all_funcs, vgate));
     }
     fi = fi + 1;
   }
@@ -7216,7 +7215,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
   // naming the symbol it defines and the shape of the value it returns.
   let xi: i32 = mod.funcs.len();
   while (xi < cache.len()) {
-    parts = parts.append(emit_function_ir_named(ns, cache[xi], cache[xi].name, produced_result_wat(cache[xi]), str_vals, cagg_vals, all_structs, ft, all_funcs, vsigs));
+    parts = parts.append(emit_function_ir_named(ns, cache[xi], cache[xi].name, produced_result_wat(cache[xi]), str_vals, cagg_vals, all_structs, ft, all_funcs, vgate));
     xi = xi + 1;
   }
   return util.str_join_chunks(parts);

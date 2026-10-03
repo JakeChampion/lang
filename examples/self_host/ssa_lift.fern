@@ -269,8 +269,8 @@ function flat_arm_op(op: ir.Op): boolean {
 // module: lift_impl reads it per op instead of classifying each kind it
 // meets per function, which built and scanned the name lists each time.
 // argc is the helper call's operand count for a kind prod_call_argc names,
-// else 0; host marks the host-floor kinds.
-pub struct KindTable { names: string[], classes: i32[], argc: i32[], host: boolean[] }
+// else 0; host marks the host-floor kinds; pops is ir.pops_by_kind.
+pub struct KindTable { names: string[], classes: i32[], argc: i32[], host: boolean[], pops: i32[] }
 
 pub function kind_table(): KindTable {
   let names: string[] = [];
@@ -288,7 +288,7 @@ pub function kind_table(): KindTable {
     host = host.append(prod_host_kind(k));
     id = id + 1;
   }
-  return KindTable { names: names, classes: classes, argc: argc, host: host };
+  return KindTable { names: names, classes: classes, argc: argc, host: host, pops: ir.pops_by_kind() };
 }
 
 pub function lift_from_ir_prod(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResult {
@@ -1195,7 +1195,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
     }
 
     if ((cls & 1) == 0 && flat_arm_op(op)) {
-      let lv: LiftVals = lift_pop_push(LiftVals { nvals: nvals, stack: stack, insts: [], ok: true }, ir.op_pops(op), 59, i, k);
+      let lv: LiftVals = lift_pop_push(LiftVals { nvals: nvals, stack: stack, insts: [], ok: true }, ir.op_pops_by(kt.pops, op), 59, i, k);
       nvals = lv.nvals;
       stack = lv.stack;
       cur_insts = splice(cur_insts, lv.insts);
