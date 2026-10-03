@@ -2437,7 +2437,10 @@ function block_reads_replaced(blk: SBlock, repl: i32[]): boolean {
 
 // counter_step says `a` is `v + 1` at 32 bits computed where v is known to be
 // below a 32-bit value (tested_below): v + 1 cannot pass INT32_MAX, so a wrap
-// of it changes nothing whoever reads it.
+// of it changes nothing whoever reads it. A reader of the high half (a call,
+// `sarq`) still sees the sign extension because v's own register holds it:
+// the header's compare marks v high, and high_operands carries that through
+// the phi to the wrap that defines v.
 function counter_step(f: SFunc, at: i32[], def_b: i32[], def_k: i32[], a: i32): boolean {
   let add: SInst = def_at(f, def_b, def_k, a);
   if (add.kind_tag != 9 || add.str != "add" || add.imm == 64 || add.args.len() != 2) {
@@ -2451,7 +2454,9 @@ function counter_step(f: SFunc, at: i32[], def_b: i32[], def_k: i32[], a: i32): 
 
 // tested_below says block position `d` runs only after v tested below a 32-bit
 // value: v is a phi whose block branches on `v < n` (or out on `v >= n`) to a
-// successor entered from nowhere else, and that successor dominates d.
+// successor that dominates d, which refuses a body another test also enters.
+// The successor must be entered from that test alone too: the lowering never
+// branches into a shared block today, but a lifted op_brif can.
 function tested_below(f: SFunc, at: i32[], def_b: i32[], def_k: i32[], v: i32, d: i32): boolean {
   if (def_at(f, def_b, def_k, v).kind_tag != 8) {
     return false;

@@ -15,7 +15,11 @@ followed an `addq $1`.
 
 The wrap of `v + 1` at 32 bits is dropped, whoever reads it, when v is a phi
 whose block branches on `v < n` (or out on `v >= n`) at 32 bits to a successor
-entered from nowhere else, and that successor dominates the add. On that path
+that dominates the add. The successor must also be entered from that test
+alone. No production lowering branches into a shared block, so today the
+dominance walk is what refuses a body a second test also enters
+(`counter_two_entries_keeps_wrap`); the single-entry check guards a lifted
+`op_brif`, which can. On that path
 v is below a 32-bit value, so `v + 1` cannot pass INT32_MAX: the 64-bit sum
 already equals its sign-extended low half, and every later read, the loop's
 next test included, sees the value the wrap would have produced.
@@ -46,7 +50,8 @@ sweep differ from `2026-10-02-a`, with the same 257 refused.
 ## Witnessed
 
 `TestSelfHostOptimisationShapes` (with `counter_step_unwrapped`, whose loop
-has an `if` between the test and the step, and `counter_le_keeps_wrap`),
+has an `if` between the test and the step, `counter_le_keeps_wrap` and
+`counter_two_entries_keeps_wrap`),
 `TestSelfHostI32OverflowIR`, `TestSelfHostRedundantWrapFlowsThrough`,
 `TestSelfHostSubwordWrapIR`, `TestSelfHostU32Wrap*`, `TestSelfHostSSA*`,
 `TestSelfHostSemantic*`, `TestSelfHostX86*`, `TestSelfHostRc*`,

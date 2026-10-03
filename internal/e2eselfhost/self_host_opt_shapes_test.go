@@ -329,6 +329,19 @@ function main(): i32 { return count_odd([1, 2, 3, 4, 5, 6, 12]) + 12; }
 function main(): i32 { return climb(2147483645); }
 `,
 		want: map[string][]string{"x86-64-linux": {`addq \$1, %(\w+)\n\s+movslq`}, "arm64-linux": {`\badd (x\d+), x\d+, #1\n\s+sxtw`}}},
+	// A body the header's other test also enters is not below `n` on every
+	// path, so its step keeps the wrap: the first test's successor does not
+	// dominate it.
+	{name: "counter_two_entries_keeps_wrap", fn: "mix", exit: 65, src: `
+@noinline function mix(n: i32): i32 {
+    let i: i32 = 0;
+    let acc: i32 = 0;
+    while (i < n || acc < 1000) { acc = acc + i; i = i + 1; }
+    return acc % 97;
+}
+function main(): i32 { return mix(10); }
+`,
+		want: map[string][]string{"x86-64-linux": {`addq \$1, %(\w+)\n\s+movslq`}, "arm64-linux": {`\badd (x\d+), x\d+, #1\n\s+sxtw`}}},
 	// A multiply by a power of two is a shift.
 	{name: "strength_mul_pow2", fn: "times8", exit: 40, src: `
 @noinline function times8(x: i32): i32 { return x * 8; }
