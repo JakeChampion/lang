@@ -427,9 +427,10 @@ arm64), the SSA backends as leaf helpers, wasm as bodies over its
 the length slot of its box. `tcp_send` sends a heap string from where it is;
 only an inline one borrows sixteen bytes for the call.
 The x86-64 stack backend records a raw syscall whose number is a literal
-(`literalSyscallNumbers`, off the IR's operand-stack model), so the seccomp
-allowlist stays exact through them; a number computed at run time is refused
-under `FERN_SANDBOX=1`.
+(`literalSyscallNumbers`, off the IR's operand-stack model), and the self-host
+records it where it writes the `syscall`, when the SSA frame knows the number
+as a constant, so the seccomp allowlist stays exact through them; a number
+computed at run time is refused under `FERN_SANDBOX=1`.
 
 A Fern helper is a function, not a provided callee: it has no row in
 `verifyprovided.go`, `rcsigs.go` or `rcresults.go`, and
