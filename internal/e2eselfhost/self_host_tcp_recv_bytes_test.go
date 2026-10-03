@@ -1,10 +1,9 @@
-package e2e
+package e2eselfhost
 
 import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -15,13 +14,10 @@ import (
 // but consumers routinely truncated at — and the empty array is the
 // sole sentinel for EOF, error, and max <= 0 alike. The 5-byte payload
 // against max=4096 also pins the short-read contract: len is the
-// actual count, not the capacity. x86-64 host-native; the arm64 and
-// wasm helpers are covered by their own tcp e2e suites.
-func TestTcpRecvBytesX86_64(t *testing.T) {
-	if qemu := x86QemuOrEmpty(t); qemu != "" {
-		t.Skip("tcp_recv byte test runs host-native only")
-	}
-	bin := buildFernCLI(t)
+// actual count, not the capacity. The arm64 and wasm helpers are covered
+// by their own tcp e2e suites.
+func TestSelfHostTcpRecvBytesX86_64(t *testing.T) {
+	cli := buildSelfHostCLI(t)
 
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -59,12 +55,7 @@ func TestTcpRecvBytesX86_64(t *testing.T) {
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	out := filepath.Join(dir, "server.bin")
-	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", out, srcPath).CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, o)
-	}
-
-	cmd := exec.Command(out)
+	cmd := runX86_64Bin(cli.runner, cli.x86Binary(t, srcPath, "FERN_STRICT_IR=1"))
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start server: %v", err)
 	}
