@@ -397,7 +397,7 @@ function nd_assert(): i32 {
 // group counter, the groups a backreference may name here, the dialect
 // the pattern is read in, and the first error met (parsing stops
 // reporting after one, the way glibc reports only the first).
-struct P { pat: string, i: i32, nodes: Node[], classes: u8[], ngroups: i32, done: i32, err: string, emacs: boolean }
+struct P { pat: Input, i: i32, nodes: Node[], classes: u8[], ngroups: i32, done: i32, err: string, emacs: boolean }
 
 // `done` is a bitmask of the groups COMPLETED at the cursor, over the
 // nine a `\N` can spell. glibc scopes a backreference to the alternation
@@ -442,7 +442,7 @@ function byte_at(p: P, k: i32): i32 {
   if (k >= p.pat.len()) {
     return 0 - 1;
   }
-  return p.pat[k] as i32;
+  return p.pat.at(k);
 }
 
 // Whether the two bytes at `k` are the escape `\<c>`.
@@ -568,6 +568,23 @@ function range_ok(b: BItem): boolean {
   return b.kind == bi_byte() || b.kind == bi_collate();
 }
 
+// Resolve raw class bytes to a known ASCII spelling without creating text.
+function bracket_class(p: P, lo: i32, hi: i32): string {
+  let names: string[] = ["alpha", "digit", "alnum", "upper", "lower", "space", "blank", "punct", "print", "graph", "cntrl", "xdigit"];
+  for name in names {
+    if (name.len() == hi - lo) {
+      let i: i32 = 0;
+      while (i < name.len() && byte_at(p, lo + i) == name[i] as i32) {
+        i = i + 1;
+      }
+      if (i == name.len()) {
+        return name;
+      }
+    }
+  }
+  return "";
+}
+
 // One `[: :]`, `[. .]` or `[= =]` item starting at `k` (which points at
 // the `[`), or a plain byte. `-` handling is the caller's.
 function bracket_item(p: P, k: i32): BItem {
@@ -584,22 +601,21 @@ function bracket_item(p: P, k: i32): BItem {
       if (close < 0) {
         return BItem { byte: 0, kind: bi_byte(), table: none, err: err_ebrack(), next: k };
       }
-      let body: string = slice_unchecked(p.pat, k + 2, close) + "";
       if (kind == 58) {
-        let t: u8[] = class_name_table(body);
+        let t: u8[] = class_name_table(bracket_class(p, k + 2, close));
         if (t.len() == 0) {
           return BItem { byte: 0, kind: bi_byte(), table: none, err: err_ectype(), next: k };
         }
         return BItem { byte: 0, kind: bi_class(), table: t, err: "", next: close + 2 };
       }
-      if (body.len() != 1) {
+      if (close - k - 2 != 1) {
         return BItem { byte: 0, kind: bi_byte(), table: none, err: err_ecollate(), next: k };
       }
       let which: i32 = bi_collate();
       if (kind == 61) {
         which = bi_equiv();
       }
-      return BItem { byte: body[0] as i32, kind: which, table: none, err: "", next: close + 2 };
+      return BItem { byte: byte_at(p, k + 2), kind: which, table: none, err: "", next: close + 2 };
     }
   }
   return BItem { byte: byte_at(p, k), kind: bi_byte(), table: none, err: "", next: k + 1 };
@@ -1409,8 +1425,20 @@ pub function bre_compile(pat: string): Bre {
   return bre_compile_syntax(pat, posix_basic());
 }
 
+pub function bre_compile_bytes(pat: u8[]): Bre {
+  return bre_compile_bytes_syntax(pat, posix_basic());
+}
+
 // `bre_compile_syntax(pat, syntax)` — the same in the dialect asked for.
 pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
+  return compile_input(text_input(pat), syntax);
+}
+
+pub function bre_compile_bytes_syntax(pat: u8[], syntax: Syntax): Bre {
+  return compile_input(byte_input(pat), syntax);
+}
+
+function compile_input(pat: Input, syntax: Syntax): Bre {
   let nodes: Node[] = [Node { kind: nd_empty(), a: 0, b: 0, c: 0 }];
   let cls: u8[] = [];
   let none_first: u8[] = [];

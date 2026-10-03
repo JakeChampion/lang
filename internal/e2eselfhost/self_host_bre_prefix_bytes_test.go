@@ -37,6 +37,10 @@ func TestSelfHostBREInputBytes(t *testing.T) {
 	testSelfHostBREBytes(t, "bre_input_bytes.fern")
 }
 
+func TestSelfHostBREPatternBytes(t *testing.T) {
+	testSelfHostBREBytes(t, "bre_pattern_bytes.fern")
+}
+
 func testSelfHostBREBytes(t *testing.T, fixture string) {
 	t.Helper()
 	cli := buildSelfHostCLI(t)
@@ -58,6 +62,10 @@ func TestSelfHostArm64DarwinBREPrefixBytes(t *testing.T) {
 
 func TestSelfHostArm64DarwinBREInputBytes(t *testing.T) {
 	testSelfHostArm64DarwinBREBytes(t, "bre_input_bytes.fern")
+}
+
+func TestSelfHostArm64DarwinBREPatternBytes(t *testing.T) {
+	testSelfHostArm64DarwinBREBytes(t, "bre_pattern_bytes.fern")
 }
 
 func testSelfHostArm64DarwinBREBytes(t *testing.T, fixture string) {
