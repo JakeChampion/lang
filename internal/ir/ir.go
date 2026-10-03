@@ -23580,7 +23580,7 @@ func mapSlotArgType(name string, ai int, typeArgs []ast.Type) ast.Type {
 		if ai == 2 {
 			return typeArgs[1]
 		}
-	case "__method_Map_has", "__method_Map_get", "__method_Map_delete":
+	case "__method_Map_has":
 	default:
 		return nil
 	}
