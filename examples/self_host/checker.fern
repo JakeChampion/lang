@@ -1611,7 +1611,7 @@ function as_cast_allowed(src: typeinfo.Type, tgt: typeinfo.Type): boolean {
 // `typevars` is every parameter spelling that is a type VARIABLE of the
 // callee, each once in parameter order, as gc_is_typevar_name recognises
 // them: what the call binding and the literal settling read.
-pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], param_bound: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string, typevars: string[] }
+pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], param_bound: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string, typevars: string[], module: string }
 
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
@@ -2579,7 +2579,7 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
   let empty: typeinfo.Type[] = [];
   let nob: string[] = [];
   let non: string[] = [];
-  return FuncSig { receiver: "", name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), all_type_params: [], type_params: [], param_bound: nob, type_bounds: [], ret_type_name: "", param_type_names: non, param_names: [], is_const: false, typevars: [] };
+  return FuncSig { receiver: "", name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), all_type_params: [], type_params: [], param_bound: nob, type_bounds: [], ret_type_name: "", param_type_names: non, param_names: [], is_const: false, typevars: [], module: "" };
 }
 
 // tp_bound_for returns the `+`-joined trait bound(s) on the type parameter
@@ -5439,7 +5439,7 @@ function bound_arg_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], bt: typein
 // bound to `at`: nothing while either side still has an unknown in it.
 function bound_entry_diag(sig: FuncSig, tp: string, at: typeinfo.Type, bref: parser.TypeRef, bn: string[], bt: typeinfo.Type[], c: ast.ExprCall, s: Scope): util.Diag[] {
   let none: util.Diag[] = [];
-  let iargs: typeinfo.Type[] = impl_trait_args(bref, at, s);
+  let iargs: typeinfo.Type[] = impl_trait_args(bref, sig.module, at, s);
   if (iargs.len() == 0 || iargs.len() != bref.args.len()) {
     return none;
   }
@@ -5585,7 +5585,7 @@ function bound_bindings(sig: FuncSig, s: Scope, names: string[], types: typeinfo
       if (sig.type_bounds[i].len() > 0 && bi >= 0) {
         for entry in parser.split_plus_bounds(sig.type_bounds[i]) {
           let bref: parser.TypeRef = parser.parse_type_ref(entry);
-          let iargs: typeinfo.Type[] = impl_trait_args(bref, ts[bi], s);
+          let iargs: typeinfo.Type[] = impl_trait_args(bref, sig.module, ts[bi], s);
           if (iargs.len() == bref.args.len()) {
             let k: i32 = 0;
             while (k < iargs.len()) {
@@ -5607,15 +5607,14 @@ function bound_bindings(sig: FuncSig, s: Scope, names: string[], types: typeinfo
 // to `bound`, with the impl's own type parameters read off `at`: for
 // `impl[T] Iterator[T] for ArrayIter[T]` at `ArrayIter[f64]`, [f64]. None when
 // no impl applies or an argument stays unknown.
-function impl_trait_args(bound: parser.TypeRef, at: typeinfo.Type, s: Scope): typeinfo.Type[] {
+function impl_trait_args(bound: parser.TypeRef, module: string, at: typeinfo.Type, s: Scope): typeinfo.Type[] {
   let none: typeinfo.Type[] = [];
   if (bound.args.len() == 0 || type_contains_unknown(at)) {
     return none;
   }
   let base: string = util.base_type_name(type_label(at));
-  let tr: string = parser.derive_simple_name(bound.base);
   for imp in s.impls {
-    if (imp.trait_name == tr && util.base_type_name(imp.impl_type) == base) {
+    if (bound_names_impl_trait(bound.base, module, imp) && util.base_type_name(imp.impl_type) == base) {
       let (in_, it_) = gc_bind_param(parser.parse_type_ref(imp.impl_type), at, imp.all_type_params, s.type_names(), [], []);
       let out: typeinfo.Type[] = [];
       for targ in parser.parse_type_ref(imp.trait_ref).args {
@@ -5629,6 +5628,22 @@ function impl_trait_args(bound: parser.TypeRef, at: typeinfo.Type, s: Scope): ty
     }
   }
   return none;
+}
+
+// bound_names_impl_trait: the bound `base`, written in `module`'s function,
+// names the trait `imp` implements. The bundled impl table holds every
+// module's, so a name two modules declare is told apart by the declaring
+// module, as flatten's canon_trait spells it: a bare bound is the writing
+// module's own trait, and a qualified one an import's (#10845).
+function bound_names_impl_trait(base: string, module: string, imp: parser.ImplInfo): boolean {
+  let tr: string = parser.derive_simple_name(base);
+  if (imp.trait_name != tr) {
+    return false;
+  }
+  if (util.index_of_sub(base, ".") >= 0) {
+    return imp.trait_module.len() > 0;
+  }
+  return imp.trait_module == module;
 }
 
 // struct_lit_args are a generic struct literal's type arguments: each is bound
@@ -6194,8 +6209,13 @@ function operator_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo
     }
     return t_unknown("bitwise operands must both be integers");
   }
+  // A shift keeps its left operand's type, except that an unsuffixed literal
+  // there reads at the right's width, as in native's commonIntegerWidth.
   if (b.op == "<<" || b.op == ">>") {
     if (is_integer(lt) && is_integer(rt)) {
+      if (int_literal_tree(b.left) && !int_literal_tree(b.right) || unsettled_int_literal(b.left)) {
+        return rt;
+      }
       return lt;
     }
     let sovt: typeinfo.Type = s.binop_overload_ret(b.op, lt);
@@ -7075,7 +7095,7 @@ function collect_func_sigs(funcs: parser.FuncDecl[], tn: TypeNames): FuncSig[] {
         tvs = tvs.append(spelling);
       }
     }
-    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, tn), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const, typevars: tvs });
+    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, tn), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const, typevars: tvs, module: fd.module });
     i = i + 1;
   }
   return out;
@@ -14182,6 +14202,21 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
     }
   }
   let elem: typeinfo.Type = array_elem_type_of(dest);
+  // A `str[]` destination types the literal too: each element is read at
+  // `str`, so a string literal widens beside a view (#10889).
+  if (is_str_view(elem)) {
+    if let ast.ExprArray(sa) = e {
+      let out: util.Diag[] = [];
+      for element in sa.elements {
+        out = util.append_diags(out, call_diags(element, s));
+        let et: typeinfo.Type = check_expr(element, s);
+        if (!is_unknown(et) && !coercible(et, elem, s)) {
+          out = out.append(dg_at("E034", "array element type " + type_label(et) + ", expected " + type_label(elem), expr_line(element), expr_col(element)));
+        }
+      }
+      return out;
+    }
+  }
   if (!is_unknown(elem) && !is_primitive_type(elem)) {
     if let ast.ExprArray(a) = e {
       let out: util.Diag[] = [];
@@ -16008,6 +16043,9 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
       return LuFacts { ...f, occ: f.occ.append(LuOcc { name: a.target, line: a.target_line, col: a.target_col }) };
     },
     ast.StmtVar(v) => {
+      if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+        return LuFacts { ...f, vars: lu_destr_vars(v, f.vars) };
+      }
       return LuFacts { ...f, vars: f.vars.append(LuVar { name: v.name, init: v.init }) };
     },
     ast.StmtDefer(d) => {
@@ -16018,6 +16056,38 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
     }
   }
   return f;
+}
+
+// lu_destr_vars declares a destructure's bindings. Each top-level one is an
+// element of the value it unpacks, so it is fresh when that value is — unless
+// an `@` binding names the whole value — and is never a rename or an unpack.
+// A nested position's bindings read a synthesised binder, which is not fresh.
+function lu_destr_vars(v: ast.StmtVar, own vars: LuVar[]): LuVar[] {
+  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let init: ast.Expr = none;
+  if (lu_fresh_expr(v.init) && parser.destr_marker_split(v.type_name).at.len() == 0) {
+    init = v.init;
+  }
+  for nm in split_pattern_names(v.name) {
+    if (util.is_tuple_type_name(nm)) {
+      vars = lu_nested_vars(nm, vars);
+    } else {
+      vars = vars.append(LuVar { name: nm, init: init });
+    }
+  }
+  return vars;
+}
+
+function lu_nested_vars(group: string, own vars: LuVar[]): LuVar[] {
+  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  for nm in split_pattern_names(slice_unchecked(group, 1, group.len() - 1) + "") {
+    if (util.is_tuple_type_name(nm)) {
+      vars = lu_nested_vars(nm, vars);
+    } else {
+      vars = vars.append(LuVar { name: nm, init: none });
+    }
+  }
+  return vars;
 }
 
 // A lambda the parser synthesised for a value block or a match / if expression
@@ -16097,10 +16167,11 @@ function lu_is_local(fx: LuFn, name: string): boolean {
 // its base's fields, so it is not fresh.
 function lu_fresh_init(fx: LuFn, name: string): boolean {
   let li: LuInit = lu_init_of(fx, name);
-  if (!li.ok) {
-    return false;
-  }
-  if let ast.ExprCall(c) = li.init {
+  return li.ok && lu_fresh_expr(li.init);
+}
+
+function lu_fresh_expr(e: ast.Expr): boolean {
+  if let ast.ExprCall(c) = e {
     if let ast.ExprIdent(_) = c.callee {
       return true;
     }
@@ -16108,13 +16179,13 @@ function lu_fresh_init(fx: LuFn, name: string): boolean {
       return true;
     }
   }
-  if let ast.ExprArray(_) = li.init {
+  if let ast.ExprArray(_) = e {
     return true;
   }
-  if let ast.ExprString(_) = li.init {
+  if let ast.ExprString(_) = e {
     return true;
   }
-  if let ast.ExprStructLit(sl) = li.init {
+  if let ast.ExprStructLit(sl) = e {
     return !sl.has_base;
   }
   return false;
@@ -24988,7 +25059,7 @@ function gcall_sig(c: ast.ExprCall, s: Scope): FuncSig {
       return s.sigs.sigs[at];
     }
   }
-  return FuncSig { receiver: "", name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), all_type_params: [], type_params: [], param_bound: [], type_bounds: [], ret_type_name: "", param_type_names: [], param_names: [], is_const: false, typevars: [] };
+  return FuncSig { receiver: "", name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), all_type_params: [], type_params: [], param_bound: [], type_bounds: [], ret_type_name: "", param_type_names: [], param_names: [], is_const: false, typevars: [], module: "" };
 }
 
 // lit_bound_typevar: every argument declared as `tp` is an untyped integer

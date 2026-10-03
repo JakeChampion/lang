@@ -1181,7 +1181,7 @@ pub function op_set_file_times(): Op {
 }
 
 // `open_reader_with` / `open_writer_with` take [path, flags] — Fern's flags
-// word, 1 create and 2 non-blocking, translated per target by the runtime
+// word, 1 create, 2 non-blocking and 4 exclusive, translated per target by the runtime
 // rather than baked into an immediate — and push the same
 // Result[Reader|Writer, IoError] box op_open_file does.
 pub function op_open_reader_with(): Op {

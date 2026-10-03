@@ -751,6 +751,455 @@ pub function (x: f64) tan(): f64 {
   return __sin_f64(x) / __cos_f64(x);
 }
 
+// ---- inverse trig, expm1 and log1p ------------------------------------------
+//
+// Ports of fdlibm (FreeBSD msun's e_asin.c, e_acos.c, s_atan.c, e_atan2.c,
+// s_expm1.c, s_log1p.c), so each is a real kernel rather than a composition
+// that inherits its parts' error. The high and low 32-bit words fdlibm reads
+// are `_fd_hi` / `_fd_lo`, kept as i64 so the signed high word compares the way
+// C's int32_t does.
+
+function _fd_hi(x: f64): i64 {
+  return f64_bits(x) >> 32;
+}
+
+function _fd_lo(x: f64): i64 {
+  return f64_bits(x) & 0xffffffff;
+}
+
+function _fd_words(hi: i64, lo: i64): f64 {
+  return f64_from_bits(hi << 32 | lo & 0xffffffff);
+}
+
+// R(t) for asin / acos: (pS0..pS5) / (1 + qS1..qS4), the rational
+// approximation of (asin(x) - x) / x^3 in t = x^2.
+function _fd_asin_r(t: f64): f64 {
+  let p: f64 = t * (1.66666666666666657415e-01 + t * (-3.25565818622400915405e-01 + t * (2.01212532134862925881e-01 + t * (-4.00555345006794114027e-02 + t * (7.91534994289814532176e-04 + t * 3.47933107596021167570e-05)))));
+  let q: f64 = 1.0 + t * (-2.40339491173441421878e+00 + t * (2.02094576023350569471e+00 + t * (-6.88283971605453293030e-01 + t * 7.70381505559019352791e-02)));
+  return p / q;
+}
+
+// `asin(x)` — arcsine in [-π/2, π/2]; NaN outside [-1, 1].
+pub function (x: f64) asin(): f64 {
+  let pio2_hi: f64 = 1.57079632679489655800e+00;
+  let pio2_lo: f64 = 6.12323399573676603587e-17;
+  let pio4_hi: f64 = 7.85398163397448278999e-01;
+  let hx: i64 = _fd_hi(x);
+  let ix: i64 = hx & 0x7fffffff;
+  if (ix >= 0x3ff00000) {
+    if ((ix - 0x3ff00000 | _fd_lo(x)) == 0) {
+      return x * pio2_hi + x * pio2_lo;
+    }
+    return (x - x) / (x - x);
+  }
+  if (ix < 0x3fe00000) {
+    if (ix < 0x3e500000) {
+      return x;
+    }
+    return x + x * _fd_asin_r(x * x);
+  }
+  let w: f64 = 1.0 - __abs_f64(x);
+  let t: f64 = w * 0.5;
+  let r: f64 = _fd_asin_r(t);
+  let s: f64 = __sqrt_f64(t);
+  let res: f64 = 0.0;
+  if (ix >= 0x3fef3333) {
+    res = pio2_hi - (2.0 * (s + s * r) - pio2_lo);
+  } else {
+    let sw: f64 = _fd_words(_fd_hi(s), 0);
+    let c: f64 = (t - sw * sw) / (s + sw);
+    let p: f64 = 2.0 * s * r - (pio2_lo - 2.0 * c);
+    let q: f64 = pio4_hi - 2.0 * sw;
+    res = pio4_hi - (p - q);
+  }
+  if (hx > 0) {
+    return res;
+  }
+  return -res;
+}
+
+// `acos(x)` — arccosine in [0, π]; NaN outside [-1, 1].
+pub function (x: f64) acos(): f64 {
+  let pi: f64 = 3.14159265358979311600e+00;
+  let pio2_hi: f64 = 1.57079632679489655800e+00;
+  let pio2_lo: f64 = 6.12323399573676603587e-17;
+  let hx: i64 = _fd_hi(x);
+  let ix: i64 = hx & 0x7fffffff;
+  if (ix >= 0x3ff00000) {
+    if ((ix - 0x3ff00000 | _fd_lo(x)) == 0) {
+      if (hx > 0) {
+        return 0.0;
+      }
+      return pi + 2.0 * pio2_lo;
+    }
+    return (x - x) / (x - x);
+  }
+  if (ix < 0x3fe00000) {
+    if (ix <= 0x3c600000) {
+      return pio2_hi + pio2_lo;
+    }
+    let r: f64 = _fd_asin_r(x * x);
+    return pio2_hi - (x - (pio2_lo - x * r));
+  }
+  if (hx < 0) {
+    let z: f64 = (1.0 + x) * 0.5;
+    let s: f64 = __sqrt_f64(z);
+    let w: f64 = _fd_asin_r(z) * s - pio2_lo;
+    return pi - 2.0 * (s + w);
+  }
+  let z: f64 = (1.0 - x) * 0.5;
+  let s: f64 = __sqrt_f64(z);
+  let df: f64 = _fd_words(_fd_hi(s), 0);
+  let c: f64 = (z - df * df) / (s + df);
+  let w: f64 = _fd_asin_r(z) * s + c;
+  return 2.0 * (df + w);
+}
+
+// `atan(x)` — arctangent in (-π/2, π/2).
+// Branches mirror the msun source so the port can be read against it.
+// fern-lint: allow cyclomatic-complexity
+pub function (x: f64) atan(): f64 {
+  let hx: i64 = _fd_hi(x);
+  let ix: i64 = hx & 0x7fffffff;
+  if (ix >= 0x44100000) {
+    if (ix > 0x7ff00000 || ix == 0x7ff00000 && _fd_lo(x) != 0) {
+      return x + x;
+    }
+    if (hx > 0) {
+      return 1.57079632679489655800e+00 + 6.12323399573676603587e-17;
+    }
+    return -1.57079632679489655800e+00 - 6.12323399573676603587e-17;
+  }
+  let id: i32 = -1;
+  let v: f64 = x;
+  if (ix < 0x3fdc0000) {
+    if (ix < 0x3e400000) {
+      return x;
+    }
+  } else {
+    v = __abs_f64(x);
+    if (ix < 0x3ff30000) {
+      if (ix < 0x3fe60000) {
+        id = 0;
+        v = (2.0 * v - 1.0) / (2.0 + v);
+      } else {
+        id = 1;
+        v = (v - 1.0) / (v + 1.0);
+      }
+    } else if (ix < 0x40038000) {
+      id = 2;
+      v = (v - 1.5) / (1.0 + 1.5 * v);
+    } else {
+      id = 3;
+      v = -1.0 / v;
+    }
+  }
+  let z: f64 = v * v;
+  let w: f64 = z * z;
+  let s1: f64 = z * (3.33333333333329318027e-01 + w * (1.42857142725034663711e-01 + w * (9.09088713343650656196e-02 + w * (6.66107313738753120669e-02 + w * (4.97687799461593236017e-02 + w * 1.62858201153657823623e-02)))));
+  let s2: f64 = w * (-1.99999999998764832476e-01 + w * (-1.11111104054623557880e-01 + w * (-7.69187620504482999495e-02 + w * (-5.83357013379057348645e-02 + w * -3.65315727442169155270e-02))));
+  if (id < 0) {
+    return v - v * (s1 + s2);
+  }
+  let hi: f64 = 1.57079632679489655800e+00;
+  let lo: f64 = 6.12323399573676603587e-17;
+  if (id == 0) {
+    hi = 4.63647609000806093515e-01;
+    lo = 2.26987774529616870924e-17;
+  } else if (id == 1) {
+    hi = 7.85398163397448278999e-01;
+    lo = 3.06161699786838301793e-17;
+  } else if (id == 2) {
+    hi = 9.82793723247329054082e-01;
+    lo = 1.39033110312309984516e-17;
+  }
+  let r: f64 = hi - (v * (s1 + s2) - lo - v);
+  if (hx < 0) {
+    return -r;
+  }
+  return r;
+}
+
+// `atan2(x)` on receiver `y` — the angle of the point (x, y) in [-π, π],
+// with C's signed-zero and infinity cases.
+// Branches mirror the msun source so the port can be read against it.
+// fern-lint: allow cyclomatic-complexity
+pub function (y: f64) atan2(x: f64): f64 {
+  let pi_o_4: f64 = 7.8539816339744827900e-01;
+  let pi_o_2: f64 = 1.5707963267948965580e+00;
+  let pi: f64 = 3.1415926535897931160e+00;
+  let pi_lo: f64 = 1.2246467991473531772e-16;
+  if (x != x || y != y) {
+    return x + y;
+  }
+  let hx: i64 = _fd_hi(x);
+  let ix: i64 = hx & 0x7fffffff;
+  let lx: i64 = _fd_lo(x);
+  let hy: i64 = _fd_hi(y);
+  let iy: i64 = hy & 0x7fffffff;
+  let ly: i64 = _fd_lo(y);
+  if (hx == 0x3ff00000 && lx == 0) {
+    return y.atan();
+  }
+  // 2 * sign(x) + sign(y)
+  let m: i32 = 0;
+  if (hy < 0) {
+    m = m + 1;
+  }
+  if (hx < 0) {
+    m = m + 2;
+  }
+  if ((iy | ly) == 0) {
+    if (m < 2) {
+      return y;
+    }
+    if (m == 2) {
+      return pi;
+    }
+    return -pi;
+  }
+  if ((ix | lx) == 0) {
+    if (hy < 0) {
+      return -pi_o_2;
+    }
+    return pi_o_2;
+  }
+  if (ix == 0x7ff00000) {
+    if (iy == 0x7ff00000) {
+      if (m == 0) {
+        return pi_o_4;
+      }
+      if (m == 1) {
+        return -pi_o_4;
+      }
+      if (m == 2) {
+        return 3.0 * pi_o_4;
+      }
+      return -3.0 * pi_o_4;
+    }
+    if (m == 0) {
+      return 0.0;
+    }
+    if (m == 1) {
+      return -0.0;
+    }
+    if (m == 2) {
+      return pi;
+    }
+    return -pi;
+  }
+  if (iy == 0x7ff00000) {
+    if (hy < 0) {
+      return -pi_o_2;
+    }
+    return pi_o_2;
+  }
+  let k: i64 = iy - ix >> 20;
+  let z: f64 = 0.0;
+  if (k > 60) {
+    z = pi_o_2 + 0.5 * pi_lo;
+    m = m % 2;
+  } else if (hx < 0 && k < -60) {
+    z = 0.0;
+  } else {
+    z = __abs_f64(y / x).atan();
+  }
+  if (m == 0) {
+    return z;
+  }
+  if (m == 1) {
+    return -z;
+  }
+  if (m == 2) {
+    return pi - (z - pi_lo);
+  }
+  return z - pi_lo - pi;
+}
+
+// `expm1(x)` — eˣ − 1, exact near zero where `exp(x) - 1.0` cancels away.
+// Branches mirror the msun source so the port can be read against it.
+// fern-lint: allow cyclomatic-complexity
+pub function (x: f64) expm1(): f64 {
+  let ln2_hi: f64 = 6.93147180369123816490e-01;
+  let ln2_lo: f64 = 1.90821492927058770002e-10;
+  let invln2: f64 = 1.44269504088896338700e+00;
+  let b: i64 = f64_bits(x);
+  let neg: boolean = b < 0;
+  let hx: i64 = b >> 32 & 0x7fffffff;
+  if (hx >= 0x4043687a) {
+    if (hx >= 0x40862e42) {
+      if (hx >= 0x7ff00000) {
+        if ((hx & 0xfffff | _fd_lo(x)) != 0) {
+          return x + x;
+        }
+        if (neg) {
+          return -1.0;
+        }
+        return x;
+      }
+      if (x > 7.09782712893383973096e+02) {
+        return 1.0e300 * 1.0e300;
+      }
+    }
+    if (neg) {
+      return -1.0;
+    }
+  }
+  let k: i32 = 0;
+  let c: f64 = 0.0;
+  let v: f64 = x;
+  if (hx > 0x3fd62e42) {
+    let hi: f64 = 0.0;
+    let lo: f64 = 0.0;
+    if (hx < 0x3ff0a2b2) {
+      if (!neg) {
+        hi = x - ln2_hi;
+        lo = ln2_lo;
+        k = 1;
+      } else {
+        hi = x + ln2_hi;
+        lo = -ln2_lo;
+        k = -1;
+      }
+    } else {
+      let half: f64 = 0.5;
+      if (neg) {
+        half = -0.5;
+      }
+      k = (invln2 * x + half) as i32;
+      let t: f64 = k as f64;
+      hi = x - t * ln2_hi;
+      lo = t * ln2_lo;
+    }
+    v = hi - lo;
+    c = hi - v - lo;
+  } else if (hx < 0x3c900000) {
+    return x;
+  }
+  let hfx: f64 = 0.5 * v;
+  let hxs: f64 = v * hfx;
+  let r1: f64 = 1.0 + hxs * (-3.33333333333331316428e-02 + hxs * (1.58730158725481460165e-03 + hxs * (-7.93650757867487942473e-05 + hxs * (4.00821782732936239552e-06 + hxs * -2.01099218183624371326e-07))));
+  let t: f64 = 3.0 - r1 * hfx;
+  let e: f64 = hxs * ((r1 - t) / (6.0 - v * t));
+  if (k == 0) {
+    return v - (v * e - hxs);
+  }
+  e = v * (e - c) - c;
+  e = e - hxs;
+  if (k == -1) {
+    return 0.5 * (v - e) - 0.5;
+  }
+  if (k == 1) {
+    if (v < -0.25) {
+      return -2.0 * (e - (v + 0.5));
+    }
+    return 1.0 + 2.0 * (v - e);
+  }
+  if (k <= -2 || k > 56) {
+    let y: f64 = 1.0 - (e - v);
+    if (k == 1024) {
+      y = y * 2.0 * _fd_words(0x7fe00000, 0);
+    } else {
+      y = y * _fd_words(0x3ff + k as i64 << 20, 0);
+    }
+    return y - 1.0;
+  }
+  let twopk: f64 = _fd_words(0x3ff + k as i64 << 20, 0);
+  if (k < 20) {
+    let tk: f64 = _fd_words(0x3ff00000 - (0x200000 >> k as i64), 0);
+    return (tk - (e - v)) * twopk;
+  }
+  let tk: f64 = _fd_words(0x3ff - k as i64 << 20, 0);
+  return (v - (e + tk) + 1.0) * twopk;
+}
+
+// `log1p(x)` — ln(1 + x), exact near zero where `(1.0 + x).log()` loses x.
+// -1 is -Inf and anything below it NaN.
+// Branches mirror the msun source so the port can be read against it.
+// fern-lint: allow cyclomatic-complexity
+pub function (x: f64) log1p(): f64 {
+  let ln2_hi: f64 = 6.93147180369123816490e-01;
+  let ln2_lo: f64 = 1.90821492927058770002e-10;
+  let hx: i64 = _fd_hi(x);
+  let ax: i64 = hx & 0x7fffffff;
+  let k: i32 = 1;
+  let f: f64 = 0.0;
+  let hu: i64 = 0;
+  let c: f64 = 0.0;
+  if (hx < 0x3fda827a) {
+    if (ax >= 0x3ff00000) {
+      if (x == -1.0) {
+        return -1.0 / 0.0;
+      }
+      return (x - x) / (x - x);
+    }
+    if (ax < 0x3e200000) {
+      if (ax < 0x3c900000) {
+        return x;
+      }
+      return x - x * x * 0.5;
+    }
+    if (hx > 0 || hx <= -1076707644) {
+      k = 0;
+      f = x;
+      hu = 1;
+    }
+  }
+  if (hx >= 0x7ff00000) {
+    return x + x;
+  }
+  if (k != 0) {
+    let u: f64 = x;
+    if (hx < 0x43400000) {
+      u = 1.0 + x;
+      hu = _fd_hi(u);
+      k = ((hu >> 20) - 1023) as i32;
+      if (k > 0) {
+        c = 1.0 - (u - x);
+      } else {
+        c = x - (u - 1.0);
+      }
+      c = c / u;
+    } else {
+      hu = _fd_hi(u);
+      k = ((hu >> 20) - 1023) as i32;
+      c = 0.0;
+    }
+    hu = hu & 0x000fffff;
+    if (hu < 0x6a09e) {
+      u = _fd_words(hu | 0x3ff00000, _fd_lo(u));
+    } else {
+      k = k + 1;
+      u = _fd_words(hu | 0x3fe00000, _fd_lo(u));
+      hu = 0x00100000 - hu >> 2;
+    }
+    f = u - 1.0;
+  }
+  let hfsq: f64 = 0.5 * f * f;
+  let dk: f64 = k as f64;
+  if (hu == 0) {
+    if (f == 0.0) {
+      if (k == 0) {
+        return 0.0;
+      }
+      c = c + dk * ln2_lo;
+      return dk * ln2_hi + c;
+    }
+    let r: f64 = hfsq * (1.0 - 0.66666666666666666 * f);
+    if (k == 0) {
+      return f - r;
+    }
+    return dk * ln2_hi - (r - (dk * ln2_lo + c) - f);
+  }
+  let s: f64 = f / (2.0 + f);
+  let z: f64 = s * s;
+  let r: f64 = z * (6.666666666666735130e-01 + z * (3.999999999940941908e-01 + z * (2.857142874366239149e-01 + z * (2.222219843214978396e-01 + z * (1.818357216161805012e-01 + z * (1.531383769920937332e-01 + z * 1.479819860511658591e-01))))));
+  if (k == 0) {
+    return f - (hfsq - s * (hfsq + r));
+  }
+  return dk * ln2_hi - (hfsq - (s * (hfsq + r) + (dk * ln2_lo + c)) - f);
+}
+
 // `sinh(x)` / `cosh(x)` / `tanh(x)` — the hyperbolic trig functions, built on
 // the natural `exp` (`sinh = (eˣ - e⁻ˣ)/2`, `cosh = (eˣ + e⁻ˣ)/2`) so — like
 // `exp2` / `log2` — they need no new primitive and reuse the `__exp_f64` the
@@ -1093,6 +1542,30 @@ pub function (x: f32) cosh(): f32 {
 
 pub function (x: f32) tanh(): f32 {
   return (x as f64).tanh() as f32;
+}
+
+pub function (x: f32) asin(): f32 {
+  return (x as f64).asin() as f32;
+}
+
+pub function (x: f32) acos(): f32 {
+  return (x as f64).acos() as f32;
+}
+
+pub function (x: f32) atan(): f32 {
+  return (x as f64).atan() as f32;
+}
+
+pub function (x: f32) expm1(): f32 {
+  return (x as f64).expm1() as f32;
+}
+
+pub function (x: f32) log1p(): f32 {
+  return (x as f64).log1p() as f32;
+}
+
+pub function (y: f32) atan2(x: f32): f32 {
+  return (y as f64).atan2(x as f64) as f32;
 }
 
 pub function (x: f32) pow(y: f32): f32 {

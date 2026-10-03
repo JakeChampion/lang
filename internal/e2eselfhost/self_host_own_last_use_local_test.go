@@ -20,8 +20,8 @@ func TestSelfHostOwnLastUseLocal(t *testing.T) {
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			stderr, code := cli.exitOf(t, string(prog), target, "FERN_LEAKCHECK=1")
-			if code != 88 {
-				t.Fatalf("exit %d, want 88 (99 is an rc underflow)\n%s", code, stderr)
+			if code != 33 {
+				t.Fatalf("exit %d, want 33 (99 is an rc underflow)\n%s", code, stderr)
 			}
 			assertBalancedCensus(t, stderr)
 		})
@@ -57,7 +57,7 @@ func TestSelfHostOwnLastUseLocalSanitized(t *testing.T) {
 		name, src string
 		want      int
 	}{
-		{"conformance", string(prog), 88},
+		{"conformance", string(prog), 33},
 		{"reassigned", ownLastUseReassignSrc, 15},
 	} {
 		t.Run(c.name, func(t *testing.T) {

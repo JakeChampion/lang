@@ -832,15 +832,15 @@ function remove_reg(free: i32[], reg: i32): i32[] {
 // at every reference and frees its register for its whole interval, so what is
 // spilled should be what is referenced least for the span it holds, weighted
 // by loop depth.
-function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_with: i32[], weight: i32[], lo: i32[], nregs: i32, need_saved: boolean): i32 {
+function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_with: i32[], weight: i32[], lo: i32[], hi: i32[], now: i32, nregs: i32, need_saved: boolean): i32 {
   let best: i32 = 0 - 1;
   let best_w: i32 = 0;
   let best_len: i32 = 1;
   let i: i32 = 0;
   while (i < act_val.len()) {
     if (act_reg[i] >= nregs == need_saved) {
-      let w: i32 = chain_weight(act_val[i], shared_with, weight);
-      let len: i32 = act_hi[i] - chain_lo(act_val[i], shared_with, lo) + 1;
+      let w: i32 = chain_weight(act_val[i], shared_with, weight, hi, now);
+      let len: i32 = act_hi[i] - chain_lo(act_val[i], shared_with, lo, hi, now) + 1;
       let cmp: i32 = cmp_density(w, len, best_w, best_len);
       if (best < 0 || cmp < 0 || cmp == 0 && act_hi[i] > act_hi[best]) {
         best = i;
@@ -867,12 +867,13 @@ function cmp_density(w1: i32, len1: i32, w2: i32, len2: i32): i32 {
   return 0;
 }
 
-// chain_lo is where the first of the values sharing v's register begins.
-function chain_lo(v: i32, shared_with: i32[], lo: i32[]): i32 {
+// chain_lo is where the first of the values sharing v's register that an
+// eviction at `now` spills begins (still_holds).
+function chain_lo(v: i32, shared_with: i32[], lo: i32[], hi: i32[], now: i32): i32 {
   let m: i32 = lo[v];
   let ev: i32 = shared_with[v];
   while (ev >= 0) {
-    if (lo[ev] < m) {
+    if (still_holds(ev, hi, now) && lo[ev] < m) {
       m = lo[ev];
     }
     ev = shared_with[ev];
@@ -881,15 +882,26 @@ function chain_lo(v: i32, shared_with: i32[], lo: i32[]): i32 {
 }
 
 // chain_weight sums the spill weights of a register's holder and of the
-// values that shared the register before it, which an eviction spills too.
-function chain_weight(v: i32, shared_with: i32[], weight: i32[]): i32 {
-  let w: i32 = 0;
-  let ev: i32 = v;
+// values before it that an eviction at `now` spills too.
+function chain_weight(v: i32, shared_with: i32[], weight: i32[], hi: i32[], now: i32): i32 {
+  let w: i32 = weight[v];
+  let ev: i32 = shared_with[v];
   while (ev >= 0) {
-    w = w + weight[ev];
+    if (still_holds(ev, hi, now)) {
+      w = w + weight[ev];
+    }
     ev = shared_with[ev];
   }
   return w;
+}
+
+// still_holds says an eviction at `now` spills ev, an earlier holder of the
+// evicted value's register: one whose interval still reaches `now`, as a phi
+// does when its loop-carried operand took its register over. A holder whose
+// interval ended keeps the register; the edge to its successor moves instead.
+// Ends do not fall along a chain, so a live holder can follow an ended one.
+function still_holds(ev: i32, hi: i32[], now: i32): boolean {
+  return hi[ev] >= now;
 }
 
 // block_loop_weights gives each block, by position, the weight of one
@@ -1099,7 +1111,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
   hi = extend_loop_invariant_intervals(f, def_pos, hi);
   let cum: i32[] = calls_before(calls, total_pos);
   let cum_abi: i32[] = calls_before(abi_cl, total_pos);
-  let mates: Mates = phi_mates(f, def_pos, no_home);
+  let mates: Mates = phi_mates(f, def_pos, hi, no_home);
   let weight: i32[] = spill_weights(f, at);
 
   let reg_of: i32[] = [];
@@ -1254,17 +1266,21 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
       // instead. `need_saved` keeps the two pools apart, since a value
       // live across a call may only sit in a callee-saved register.
       let need_saved: boolean = spans_call(cum, lo[v], hi[v]);
-      let fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, nregs, need_saved);
+      let fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, hi, lo[v], nregs, need_saved);
       let cmp: i32 = 0;
       if (fa >= 0) {
-        let fw: i32 = chain_weight(act_val[fa], shared_with, weight);
-        cmp = cmp_density(fw, act_hi[fa] - chain_lo(act_val[fa], shared_with, lo) + 1, weight[v], hi[v] - lo[v] + 1);
+        let fw: i32 = chain_weight(act_val[fa], shared_with, weight, hi, lo[v]);
+        cmp = cmp_density(fw, act_hi[fa] - chain_lo(act_val[fa], shared_with, lo, hi, lo[v]) + 1, weight[v], hi[v] - lo[v] + 1);
       }
       if (fa >= 0 && (cmp < 0 || cmp == 0 && act_hi[fa] > hi[v])) {
         let taken: i32 = act_reg[fa];
         let ev: i32 = act_val[fa];
+        let first: boolean = true;
         while (ev >= 0) {
-          reg_of = reg_of.with(ev, 0 - 1);
+          if (first || still_holds(ev, hi, lo[v])) {
+            reg_of = reg_of.with(ev, 0 - 1);
+          }
+          first = false;
           let nx: i32 = shared_with[ev];
           shared_with = shared_with.with(ev, 0 - 1);
           ev = nx;
@@ -1431,10 +1447,13 @@ function shares_operand_home(op: string): boolean {
 // parameter, which nothing defines, counts as one), `hint[a]` for an operand
 // a defined at or after its phi is the phi, and `carried[a]` marks that
 // second kind, whose interference with the phi is a question of paths rather
-// than positions. An operand with no home pairs with nothing.
+// than positions. An operand with no home pairs with nothing. When the first
+// operand from before the phi outlives it, as the loop header's phi does at
+// every merge of an else-if chain inside the loop, no home can be shared with
+// it, and the hint is the first operand that dies by the phi instead.
 struct Mates { hint: i32[], carried: boolean[] }
 
-function phi_mates(f: SFunc, def_pos: i32[], no_home: boolean[]): Mates {
+function phi_mates(f: SFunc, def_pos: i32[], hi: i32[], no_home: boolean[]): Mates {
   let hint: i32[] = [];
   let carried: boolean[] = [];
   let i: i32 = 0;
@@ -1447,6 +1466,7 @@ function phi_mates(f: SFunc, def_pos: i32[], no_home: boolean[]): Mates {
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag == 8 && ins.result >= 0 && ins.result < hint.len()) {
+        let dying: i32 = 0 - 1;
         for a in ins.args {
           if (a < 0 || a >= hint.len() || a < no_home.len() && no_home[a]) {
             continue;
@@ -1455,10 +1475,17 @@ function phi_mates(f: SFunc, def_pos: i32[], no_home: boolean[]): Mates {
             if (hint[ins.result] < 0) {
               hint = hint.with(ins.result, a);
             }
+            if (dying < 0 && hi[a] < pos) {
+              dying = a;
+            }
           } else if (hint[a] < 0) {
             hint = hint.with(a, ins.result);
             carried = carried.with(a, true);
           }
+        }
+        let h: i32 = hint[ins.result];
+        if (dying >= 0 && !carried[ins.result] && h >= 0 && hi[h] >= pos) {
+          hint = hint.with(ins.result, dying);
         }
       }
       pos = pos + 1;
