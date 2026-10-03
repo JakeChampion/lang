@@ -865,9 +865,9 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
   if (semtypes.is_handle(t)) {
     return false;
   }
-  // A cursor's release frees whatever its backend's block owns.
+  // A cursor holds a unit of its map.
   if (semtypes.is_map_iter(t)) {
-    return false;
+    return true;
   }
   if let typeinfo.TypeFunc(_) = t {
     return env_records(f, t).len() > 0;
@@ -1042,6 +1042,9 @@ function dyn_concretes(f: ssasem.Func, t: typeinfo.Type): typeinfo.Type[] {
 // already emitted the uniqueness test this belongs under: `drop_value` before
 // it releases the box, `reuse_token` before it hands the box on.
 function drop_children(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
+  if (semtypes.is_map_iter(t)) {
+    return drop_cursor_map(r, slot, t, scratch, f);
+  }
   if let typeinfo.TypeFunc(_) = t {
     r = drop_captures(r, slot, t, f);
   }
@@ -1063,6 +1066,22 @@ function drop_children(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type,
   return r;
 }
 
+// A cursor's one child is the map it holds a unit of: element 0 of a builtin
+// cursor's block on every backend, and read through core/map for a routed one.
+function drop_cursor_map(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
+  let m: typeinfo.Type = semtypes.map_iter_map(t);
+  r = reserve(r, scratch + 1);
+  r = emit(r, ir.op_load_local(slot));
+  if (routed_iter(t, f)) {
+    r = emit(r, ir.op_call_direct("__mapiter_map_impl", 1));
+  } else {
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, arr_get_op(m, true));
+  }
+  r = emit(r, ir.op_store_local(scratch));
+  return drop_value(r, scratch, m, scratch + 1, f);
+}
+
 // A nominal type with children is released by its own helper: the inline
 // test-walk-release is ~20 emitted lines a site, and the self-host assembles
 // every line it emits.
@@ -1074,7 +1093,7 @@ function drop_value(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, sc
 }
 
 function outlined_release(t: typeinfo.Type, f: ssasem.Func): boolean {
-  return named(t) != "" && has_children(t, f);
+  return named(t) != "" && !semtypes.is_map_iter(t) && has_children(t, f);
 }
 
 function drop_value_inline(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
@@ -3737,8 +3756,8 @@ function routed_column_read(own r: irtables.LowerResult, elem: typeinfo.Type, of
   return emit(r, ir.op_call_direct("__map_i32_column", 2));
 }
 
-// The cursor holds the map's buffer, not a unit of the map, as the runtime's
-// does; it is released through __mapiter_drop_impl.
+// The cursor holds the map's buffer and, beside it, the unit of the map that
+// keeps the buffer live; it is released through __mapiter_drop_impl.
 function routed_cursor(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let k: i32 = ins.kind_tag;
   if (k == ssasem.map_iter()) {
@@ -5115,9 +5134,10 @@ function map_in_place(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIns
 }
 
 // The cursor cluster. `map_iter` is the only allocation of the five, a fresh
-// unit the frame releases through `__fern_mapiter_free`. `key` and `value` load the map's own column element at
-// the cursor, so the value is the map's and stays borrowed. `advance` moves
-// the index in place and leaves the dummy the statement stores.
+// unit that takes a unit of its map (drop_cursor_map releases it). `key` and
+// `value` load the map's own column element at the cursor, so the value is the
+// map's and stays borrowed. `advance` moves the index in place and leaves the
+// dummy the statement stores.
 //
 // An i64 or u64 value column sets both width flags, which only the wasm
 // accessors read.
