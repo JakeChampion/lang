@@ -858,8 +858,8 @@ Worth knowing so you do not assume coverage you do not have:
   suite's name about what it proves. It is also what the nightly
   coverage-guided self-host fuzzer steers by — the only lane that observes
   which paths inside the SELF-HOST compiler a generated program reaches, since
-  Go's instrumentation cannot see into a Fern binary. Native x86-64 / arm64
-  only; `docs/COVERAGE.md`.
+  Go's instrumentation cannot see into a Fern binary. x86-64 and arm64 on
+  both compilers; `docs/COVERAGE.md`.
 
 - **Anything outside the FIXED corpus bounds, on a pull request.** Every
   fernsmith sweep that runs per-PR is a fixed prefix — 2048 exit-byte seeds,

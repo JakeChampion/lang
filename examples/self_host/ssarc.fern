@@ -6280,6 +6280,7 @@ function raw_floor_ops(): RawOps[] {
     RawOps { name: "__raw_scratch", ops: [ir.op_raw_scratch()] },
     RawOps { name: "__raw_environ", ops: [ir.op_raw_environ()] },
     RawOps { name: "__raw_splice_pipe", ops: [ir.op_raw_splice_pipe()] },
+    RawOps { name: "__raw_cover", ops: [ir.op_raw_cover()] },
     RawOps { name: "__raw_call1", ops: [ir.op_call_indirect(1)] },
     RawOps { name: "__raw_call2", ops: [ir.op_call_indirect(2)] },
     RawOps { name: "__syscall3", ops: [ir.op_syscall3()] },
