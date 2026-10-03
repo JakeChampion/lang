@@ -547,7 +547,48 @@ function test_proxied(): test.TestOutcome {
   if (!sent.starts_with("GET http://example.test/ HTTP/1.1\r\nHost: example.test\r\n")) {
     return test.fail("request: " + sent);
   }
-  return test.assert_eq(sent.index_of("proxy-authorization: Basic dTo=\r\n") >= 0, true);
+  if (sent.index_of("proxy-authorization: Basic dTo=\r\n") < 0) {
+    return test.fail("request: " + sent);
+  }
+  return test.pass();
+}
+
+// The route through the proxy `spec` names, as the environment gives it.
+function __proxy_spec(spec: string): fetch.Policy {
+  return fetch.Policy { public_only: false, proxies: fetch.proxy_env_from(Some(spec), None, None, None) };
+}
+
+// A proxy named with no scheme and no port is an http one on port 80.
+function test_proxy_bare_host(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = sim_fetch.net(d).listen(PROXY, 80, 5).route(PROXY, 80, "http://example.test/", [sim_fetch.reply(200, "via port 80")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __proxy_spec(PROXY));
+  return test.assert_eq(__body(got), "via port 80");
+}
+
+// A caller's own `Proxy-Authorization` is sent in place of the
+// environment's credentials.
+function test_caller_proxy_credentials(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __proxy_net(d, [sim_fetch.reply(200, "via proxy")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/").with_header("Proxy-Authorization", "Basic b3du"), __via_proxy(false, "", false));
+  let sent: string = n.sent(0);
+  if (__body(got) != "via proxy" || sent.index_of("Basic b3du\r\n") < 0 || sent.index_of("dTo=") >= 0) {
+    return test.fail("request: " + sent);
+  }
+  return test.pass();
+}
+
+// An `http_proxy` that is not an http URL with a host refuses the request
+// rather than dialling around it.
+function test_proxy_spec_refused(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let unparsed: Result[HttpResponse, fetch.FetchError] = fetch.send_on(sim_fetch.net(d), fetch.get("http://example.test/"), __proxy_spec("http://[::1"));
+  if (__message(unparsed) != "invalid URL: http_proxy is not a URL") {
+    return test.fail(__message(unparsed));
+  }
+  let other: Result[HttpResponse, fetch.FetchError] = fetch.send_on(sim_fetch.net(d), fetch.get("http://example.test/"), __proxy_spec("ftp://" + PROXY));
+  return test.assert_eq(__message(other), "invalid URL: http_proxy is not an http URL with a host");
 }
 
 // A host `no_proxy` names is dialled directly.
@@ -641,5 +682,8 @@ function main(): i32 {
   r = r.it("reports a proxy that refuses", test_proxy_refused);
   r = r.it("judges the origin a proxy reaches on the public route", test_proxied_origin_judged);
   r = r.it("keeps the proxy's connection across origins", test_proxy_connection_kept);
+  r = r.it("dials a proxy named without a port on 80", test_proxy_bare_host);
+  r = r.it("sends a caller's own proxy credentials", test_caller_proxy_credentials);
+  r = r.it("refuses an http_proxy it cannot use", test_proxy_spec_refused);
   return r.finish();
 }
