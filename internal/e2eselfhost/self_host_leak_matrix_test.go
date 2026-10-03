@@ -140,6 +140,11 @@ var leakKinds = []leakKind{
 		read: "x.0 + x.1.len()", ptype: "(i32, i32[])", fixedInit: "let keep: (i32, i32[]) = (5, [6, 7]);",
 	},
 	{
+		name: "tuple_nested",
+		init: "let x: (i32, i32[][]) = (i, [[i + 1, i + 2], [i]]);", init2: "x = (i + 1, [[i + 3]]);",
+		read: "x.0 + x.1.len() + x.1[0].len()", ptype: "(i32, i32[][])", fixedInit: "let keep: (i32, i32[][]) = (5, [[6, 7]]);",
+	},
+	{
 		name: "opt_arr",
 		init: "let x: Option[i32[]] = Some([i, i + 1]);", init2: "x = Some([i + 2, i + 3, i + 4]);",
 		match: "match (x) { Some(xs) => { t = t + xs.len(); }, None => {} }",
@@ -460,6 +465,16 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 		leakCell{name: "tuple_mixed__callarg__read", src: `function peek(t: (i32, i32[])): i32 { return t.0 + t.1.len(); }
 function main(): i32 {
     let keep: (i32, i32[]) = (5, [6, 7]);
+    let acc: i32 = peek(keep) + keep.0;
+    if (__rc_underflow_count() != 0) { return 99; }
+    return acc % 83;
+}
+`},
+		// The same with a nested-array element, the one admitted tuple shape
+		// whose parameter form had no external oracle (#10476).
+		leakCell{name: "tuple_nested__callarg__read", src: `function peek(t: (i32, i32[][])): i32 { return t.0 + t.1.len() + t.1[0][1]; }
+function main(): i32 {
+    let keep: (i32, i32[][]) = (5, [[6, 7], [8]]);
     let acc: i32 = peek(keep) + keep.0;
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
