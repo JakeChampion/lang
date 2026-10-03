@@ -942,6 +942,10 @@ scan for its selected mode. Evidence is recorded in
 text from input bytes. Evidence is recorded in
 [the nl report](STRING-NL-BYTES-2026-10-03.md).
 
+`od` keeps dump blocks, string searches and raw-byte diagnostics out of
+text buffers, preserving the platform-specific NaN spelling. Evidence is recorded in
+[the od report](STRING-OD-BYTES-2026-10-03.md).
+
 `head` and `tail` use raw byte input, delimiter scans and output. Their
 shared hold retains input blocks with a 64-bit byte count and releases
 consumed blocks without repeatedly copying long records. Target checks and

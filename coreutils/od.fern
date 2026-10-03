@@ -461,10 +461,25 @@ function parse_type(arg: string, specs: Spec[]): Spec[] {
 // non-printable ones are named in octal — `a1` and `c1` reach this too,
 // because those two carry no size at all.
 function invalid_type_char(c: i32, arg: string): void {
-  gnu.error("invalid character '" + byte_str(c) + "' in type string " + gnu.quote(arg));
+  byte_error("invalid character '", c, "' in type string " + gnu.quote(arg));
   exit(1);
 }
 
+// GNU's %c diagnostics may contain an isolated non-ASCII byte.
+function byte_error(prefix: string, c: i32, suffix: string): void {
+  let h: usize = buf_new(prefix.len() + suffix.len() + 32);
+  buf_push(h, gnu.prog());
+  buf_push(h, ": ");
+  buf_push(h, prefix);
+  buf_push_byte(h, c);
+  buf_push(h, suffix);
+  buf_push_byte(h, 10);
+  let bytes: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  stderr().write_bytes(bytes);
+}
+
+// Callers pass printable ASCII or a seven-bit character name.
 function byte_str(c: i32): string {
   let b: u8[] = [];
   b = b.append(c as u8);
@@ -616,7 +631,7 @@ function push_address(h: usize, t: Tables, s: Settings, off: u64): void {
 //
 // The bytes of one unit as an unsigned integer, in the byte order the
 // input is being read in.
-function unit_value(block: string, at: i32, size: i32, big: boolean): u64 {
+function unit_value(block: u8[], at: i32, size: i32, big: boolean): u64 {
   let v: u64 = 0 as u64;
   if (big) {
     let i: i32 = 0;
@@ -654,7 +669,7 @@ function is_printable(c: i32): boolean {
 // ---- floating point --------------------------------------------------------
 //
 // The unit's bytes as the exact value the format holds.
-function decode_float(block: string, at: i32, f: ld.Format, size: i32, big: boolean): ld.LD {
+function decode_float(block: u8[], at: i32, f: ld.Format, size: i32, big: boolean): ld.LD {
   let lo: u64 = 0 as u64;
   let hi: u64 = 0 as u64;
   if (size <= 8) {
@@ -755,7 +770,7 @@ function decode_x87(f: ld.Format, lo: u64, hi: u64): ld.LD {
 // digit, because that is where a round trip can already succeed.
 function ftoa(f: ld.Format, v: ld.LD): string {
   if (v.is_nan()) {
-    if (v.neg) {
+    if (v.neg && target_os() != "darwin") {
       return "-nan";
     }
     return "nan";
@@ -1143,7 +1158,7 @@ function push_text(h: usize, t: Tables, text: string, width: i32): void {
 
 // One unit of `sp` at `at`, right-aligned in `width` columns, for the
 // kinds without a line loop of their own.
-function push_field(h: usize, t: Tables, sp: Spec, block: string, at: i32, width: i32, big: boolean): void {
+function push_field(h: usize, t: Tables, sp: Spec, block: u8[], at: i32, width: i32, big: boolean): void {
   if (sp.kind == k_char()) {
     push_entry(h, t, t.chars, block[at] as i32, width);
   } else if (sp.kind == k_unsigned()) {
@@ -1175,7 +1190,7 @@ struct Settings { specs: Spec[], base: i32, block: i32, wpb: i32, skip: u64, lim
 // `write_block(h, t, s, block, base, n, off)` — one input block through
 // every spec, the first line carrying the address and the rest the same
 // width in spaces.
-function write_block(h: usize, t: Tables, s: Settings, block: string, base: i32, n: i32, off: u64): void {
+function write_block(h: usize, t: Tables, s: Settings, block: u8[], base: i32, n: i32, off: u64): void {
   let i: i32 = 0;
   while (i < s.specs.len()) {
     if (i == 0) {
@@ -1195,7 +1210,7 @@ function write_block(h: usize, t: Tables, s: Settings, block: string, base: i32,
 // come — which spreads it evenly and is what lines the specs up. The
 // two integer kinds a dump is usually made of have a loop each, with the
 // field written in the loop rather than behind a call.
-function spec_line(h: usize, t: Tables, sp: Spec, s: Settings, block: string, base: i32, n: i32): void {
+function spec_line(h: usize, t: Tables, sp: Spec, s: Settings, block: u8[], base: i32, n: i32): void {
   let fields: i32 = s.block / sp.size;
   let blank: i32 = (s.block - n) / sp.size;
   let used: i32 = 0;
@@ -1215,20 +1230,20 @@ function spec_line(h: usize, t: Tables, sp: Spec, s: Settings, block: string, ba
   let i: i32 = 0;
   while (i < n) {
     if (!is_printable(block[base + i] as i32)) {
-      buf_push_range(h, block, from, base + i);
+      buf_push_bytes_range(h, block, from, base + i);
       buf_push_byte(h, 46);
       from = base + i + 1;
     }
     i = i + 1;
   }
-  buf_push_range(h, block, from, base + n);
+  buf_push_bytes_range(h, block, from, base + n);
   buf_push_byte(h, 60);
 }
 
 // A hexadecimal field is the unit's bytes in print order, a table entry
 // each, so it is read straight from the block; the last blank before it
 // comes with the first byte's entry. Returns the columns written.
-function hex_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, fields: i32, blank: i32, big: boolean): i32 {
+function hex_line(h: usize, t: Tables, sp: Spec, block: u8[], base: i32, fields: i32, blank: i32, big: boolean): i32 {
   let hex: string = t.hex;
   let size: i32 = sp.size;
   let fw: i32 = sp.fw;
@@ -1275,7 +1290,7 @@ function hex_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, field
   return used;
 }
 
-function oct_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, fields: i32, blank: i32, big: boolean): i32 {
+function oct_line(h: usize, t: Tables, sp: Spec, block: u8[], base: i32, fields: i32, blank: i32, big: boolean): i32 {
   let size: i32 = sp.size;
   let fw: i32 = sp.fw;
   let pad: i32 = sp.pad;
@@ -1298,7 +1313,7 @@ function oct_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, field
   return used;
 }
 
-function other_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, fields: i32, blank: i32, big: boolean): i32 {
+function other_line(h: usize, t: Tables, sp: Spec, block: u8[], base: i32, fields: i32, blank: i32, big: boolean): i32 {
   let pad: i32 = sp.pad;
   let w: i32 = sp.fw + 1;
   let used: i32 = 0;
@@ -1325,10 +1340,10 @@ function other_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, fie
 // `buf` / `pos` hold what has been read and not yet handed out. A block
 // is 16 bytes by default, so without them a 62 MiB dump would be four
 // million read(2) calls.
-struct Src { files: string[], at: i32, r: Reader, open: boolean, is_stdin: boolean, buf: string, pos: i32, eof: boolean, fails: i32, opened: boolean }
+struct Src { files: string[], at: i32, r: Reader, open: boolean, is_stdin: boolean, buf: u8[], pos: i32, eof: boolean, fails: i32, opened: boolean }
 
 function src_new(files: string[]): Src {
-  return Src { files: files, at: 0, r: stdin(), open: false, is_stdin: false, buf: "", pos: 0, eof: false, fails: 0, opened: false };
+  return Src { files: files, at: 0, r: stdin(), open: false, is_stdin: false, buf: [], pos: 0, eof: false, fails: 0, opened: false };
 }
 
 function read_size(): i32 {
@@ -1345,11 +1360,11 @@ function src_ensure(s0: Src): Src {
     let name: string = s.files[s.at];
     s = Src { ...s, at: s.at + 1 };
     if (name == "-") {
-      s = Src { ...s, r: stdin(), open: true, is_stdin: true, opened: true, buf: "", pos: 0 };
+      s = Src { ...s, r: stdin(), open: true, is_stdin: true, opened: true, buf: [], pos: 0 };
     } else {
       match (open_reader(name)) {
         Ok(f) => {
-          s = Src { ...s, r: f, open: true, is_stdin: false, opened: true, buf: "", pos: 0 };
+          s = Src { ...s, r: f, open: true, is_stdin: false, opened: true, buf: [], pos: 0 };
         },
         Err(e) => {
           gnu.error(gnu.quotef(name) + ": " + gnu.io_error_text(e));
@@ -1381,39 +1396,54 @@ function skip_buffered(s0: Src, left0: u64): (u64, Src) {
     return (left, s);
   }
   if (have <= left) {
-    return (left - have, Src { ...s, buf: "", pos: 0 });
+    return (left - have, Src { ...s, buf: [], pos: 0 });
   }
   return (0 as u64, Src { ...s, pos: s.pos + left as i32 });
 }
 
 // The next block of at most `want` bytes, spanning operands.
-function src_read(s0: Src, want: i32): (string, Src) {
+function copy_bytes(bytes: u8[], lo: i32, hi: i32): u8[] {
+  let h: usize = buf_new(hi - lo);
+  buf_push_bytes_range(h, bytes, lo, hi);
+  let out: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return out;
+}
+
+function src_read(s0: Src, want: i32): (u8[], Src) {
   let s: Src = s0;
-  let got: string = "";
+  let held: usize = 0 as usize;
+  let got: i32 = 0;
   while (true) {
     if (s.pos < s.buf.len()) {
       let take: i32 = s.buf.len() - s.pos;
-      if (take > want - got.len()) {
-        take = want - got.len();
+      if (take > want - got) {
+        take = want - got;
       }
       if (take > 0) {
-        if (got.len() == 0 && take == want) {
-          // The whole answer is already in the buffer, so it is one
-          // slice rather than a copy into an accumulator.
-          return (slice_unchecked(s.buf, s.pos, s.pos + take) + "", Src { ...s, pos: s.pos + take });
+        if (got == 0 && take == want) {
+          if (s.pos == 0 && take == s.buf.len()) {
+            return (s.buf, Src { ...s, pos: take });
+          }
+          return (copy_bytes(s.buf, s.pos, s.pos + take), Src { ...s, pos: s.pos + take });
         }
-        got = got + slice_unchecked(s.buf, s.pos, s.pos + take);
+        if (held == 0 as usize) {
+          held = buf_new(want);
+        }
+        buf_push_bytes_range(held, s.buf, s.pos, s.pos + take);
+        got = got + take;
         s = Src { ...s, pos: s.pos + take };
       }
     }
-    if (got.len() >= want) {
-      return (got, s);
+    if (got >= want) {
+      break;
     }
     s = src_ensure(s);
     if (!s.open) {
-      return (got, Src { ...s, eof: true });
+      s = Src { ...s, eof: true };
+      break;
     }
-    match (s.r.read_chunk(read_size())) {
+    match (s.r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           s = src_close(s);
@@ -1427,7 +1457,12 @@ function src_read(s0: Src, want: i32): (string, Src) {
       }
     }
   }
-  return (got, s);
+  let out: u8[] = [];
+  if (held != 0 as usize) {
+    out = buf_take_bytes(held);
+    buf_free(held);
+  }
+  return (out, s);
 }
 
 // `skip_input(s, n)` — drop `n` bytes, reporting GNU's refusal when the
@@ -1502,7 +1537,7 @@ function skip_in_file(s0: Src, left0: u64): (u64, Src) {
     if (left < want as u64) {
       want = left as i32;
     }
-    match (s.r.read_chunk(want)) {
+    match (s.r.read_chunk_bytes(want)) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           return (left, s);
@@ -1532,7 +1567,7 @@ function dump(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: Src): (io
   let fails0: i32 = src.fails;
   let off: u64 = s.skip;
   let left: u64 = s.limit;
-  let carry: string = "";
+  let carry: u8[] = [];
   let have_prev: boolean = false;
   let folded: boolean = false;
   let per_read: i32 = read_size() / s.block * s.block;
@@ -1547,9 +1582,9 @@ function dump(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: Src): (io
     if (want == 0) {
       break;
     }
-    let r: (string, Src) = src_read(src, want);
+    let r: (u8[], Src) = src_read(src, want);
     src = r.1;
-    let chunk: string = r.0;
+    let chunk: u8[] = r.0;
     if (chunk.len() == 0) {
       break;
     }
@@ -1559,9 +1594,9 @@ function dump(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: Src): (io
       let repeat: boolean = false;
       if (!s.dups && have_prev) {
         if (at >= s.block) {
-          repeat = __mismatch(chunk, at - s.block, chunk, at, s.block) == s.block;
+          repeat = __mismatch_bytes(chunk, at - s.block, chunk, at, s.block) == s.block;
         } else {
-          repeat = __mismatch(chunk, at, carry, 0, s.block) == s.block;
+          repeat = __mismatch_bytes(chunk, at, carry, 0, s.block) == s.block;
         }
       }
       if (repeat) {
@@ -1585,7 +1620,7 @@ function dump(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: Src): (io
       break;
     }
     if (at >= s.block) {
-      carry = slice_unchecked(chunk, at - s.block, at) + "";
+      carry = copy_bytes(chunk, at - s.block, at);
     }
     if (chunk.len() < want) {
       break;
@@ -1607,7 +1642,7 @@ function dump(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: Src): (io
 // The short last block from `at`, completed with zeros so a multi-byte
 // unit at its end still has a whole unit to print. `__alloc_u8` hands
 // back stale bytes, so the zeros are written.
-function pad_block(chunk: string, at: i32, n: i32): string {
+function pad_block(chunk: u8[], at: i32, n: i32): u8[] {
   let out: u8[] = __alloc_u8(n);
   let i: i32 = 0;
   while (at + i < chunk.len()) {
@@ -1618,7 +1653,7 @@ function pad_block(chunk: string, at: i32, n: i32): string {
     out = out.with(i, 0 as u8);
     i = i + 1;
   }
-  return string_from_bytes_unchecked(out);
+  return out;
 }
 
 // ---- strings mode ----------------------------------------------------------
@@ -1650,9 +1685,9 @@ function dump_strings(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: S
     if (want == 0) {
       break;
     }
-    let r: (string, Src) = src_read(src, want);
+    let r: (u8[], Src) = src_read(src, want);
     src = r.1;
-    let block: string = r.0;
+    let block: u8[] = r.0;
     if (block.len() == 0) {
       break;
     }
@@ -1666,7 +1701,7 @@ function dump_strings(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: S
       let c: i32 = block[i] as i32;
       if (c == 0) {
         if ((buf_len(held) + (i - from)) as u64 >= s.min_string) {
-          buf_push_range(held, block, from, i);
+          buf_push_bytes_range(held, block, from, i);
           push_run(h, t, s, start, held);
           w = gnu.settle(w);
         }
@@ -1681,7 +1716,7 @@ function dump_strings(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: S
       i = i + 1;
     }
     if (from < block.len()) {
-      buf_push_range(held, block, from, block.len());
+      buf_push_bytes_range(held, block, from, block.len());
     }
     off = off + block.len() as u64;
   }
@@ -1702,13 +1737,14 @@ function push_run(h: usize, t: Tables, s: Settings, at: u64, held: usize): void 
     push_address(h, t, s, at);
     buf_push_byte(h, 32);
   }
-  buf_push(h, buf_take(held));
+  let bytes: u8[] = buf_take_bytes(held);
+  buf_push_bytes_range(h, bytes, 0, bytes.len());
   buf_push_byte(h, 10);
 }
 
 function drop_held(held: usize): void {
   if (buf_len(held) > 0) {
-    let _: string = buf_take(held);
+    let _: u8[] = buf_take_bytes(held);
   }
 }
 
@@ -2134,7 +2170,7 @@ function radix_of(v: string): i32 {
   }
   // The byte goes in RAW, as GNU's %c does: `od -A ""` puts a NUL in
   // the middle of its own diagnostic.
-  gnu.error("invalid output address radix '" + byte_str(c) + "'; it must be one character from [doxn]");
+  byte_error("invalid output address radix '", c, "'; it must be one character from [doxn]");
   exit(1);
   return 8;
 }
@@ -2164,7 +2200,7 @@ function option_name(argv: string[], short: string, long: string): string {
     } else if (gnu.is_option(a)) {
       let k: i32 = 1;
       while (k < a.len()) {
-        if (slice_unchecked(a, k, k + 1) + "" == short) {
+        if (a[k] == short[0]) {
           return "-" + short;
         }
         k = k + 1;
