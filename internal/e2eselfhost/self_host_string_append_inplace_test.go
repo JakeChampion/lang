@@ -38,6 +38,8 @@ func TestSelfHostStringAppendInPlace(t *testing.T) {
 // bytes and leaves its counts alone, as native's does; counting it as a free
 // plus an alloc reported one allocation per append. The FERN_RC_TRACE leg
 // covers the path where the trace's event hooks have already counted the pair.
+// Wasm's growth keeps the block's stored size, which its free charges, so its
+// census needs no correction and is checked as it stands.
 const stringAppendCensusSrc = `function churn(n: i32): i32 {
     let piece: string = "abcdefghijklmnopqrstuvwxyz0123456789abcdefgh";
     let out: string = "";
@@ -59,6 +61,7 @@ func TestSelfHostStringAppendInPlaceCensus(t *testing.T) {
 		{"x86-64-linux", []string{"FERN_LEAKCHECK=1"}},
 		{"x86-64-linux", []string{"FERN_LEAKCHECK=1", "FERN_RC_TRACE=1"}},
 		{"arm64-linux", []string{"FERN_LEAKCHECK=1"}},
+		{"wasm32-wasi", []string{"FERN_LEAKCHECK=1"}},
 	}
 	for _, leg := range legs {
 		name := leg.target + "/" + strings.Join(leg.env, ",")

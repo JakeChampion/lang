@@ -346,7 +346,9 @@ function rc_trace_deep_on(): boolean {
 //
 // The detector half of the pair above: this says a leak happened, the trace
 // says where. Both counters tick in the same __fern_hev_* helpers, off the
-// same rounded size, so the trace's own tallies reproduce this line exactly.
+// same rounded size, so the trace's own tallies reproduce this line, except
+// for an in-place string growth: the trace logs it as a free and an alloc,
+// and the census as one block whose bytes grew (str_grow_census).
 function leak_check_on(): boolean {
   if (asmcore.sanitize_on()) {
     return true;
