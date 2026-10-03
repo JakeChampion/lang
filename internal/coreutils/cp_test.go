@@ -70,10 +70,10 @@ import (
 //     an absent one. The dangling-symlink destination below is the part
 //     of the family that IS reachable, so it is covered.
 //
-// `--debug` is held to its exit status and stream shape rather than its
-// bytes, and docs/COREUTILS.md says why: GNU's second line names its own
-// copy_file_range offload and SEEK_HOLE probing, which is a mechanism
-// this copy does not use.
+// `--debug`'s report line names GNU's own copy_file_range offload, which
+// this copy does not use, so no corpus case copies under `--debug`:
+// TestCpDebug holds the rest of the output to GNU's and pins the report
+// line to ours. docs/COREUTILS.md has the reasoning.
 
 // cpBasic is the main fixture: two plain files with different modes, a
 // directory with a nested one inside it, an empty directory to copy
@@ -1215,4 +1215,35 @@ func treePaths(t *testing.T, root string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// `--debug` on a real copy: the exit status and the `-v` line it implies
+// are GNU's, and the report line is ours, naming the sparse detection the
+// copy used — none for a dense source, SEEK_HOLE for one with a hole.
+func TestCpDebug(t *testing.T) {
+	for _, c := range []struct {
+		src, want string
+	}{
+		{"dense", "copy offload: no, reflink: unsupported, sparse detection: no"},
+		{"sp", "copy offload: no, reflink: unsupported, sparse detection: SEEK_HOLE"},
+	} {
+		t.Run(c.src, func(t *testing.T) {
+			run := func(bin string) []string {
+				dir := t.TempDir()
+				cpSparse(t, dir)
+				return strings.Split(strings.TrimSuffix(runCpIn(t, bin, dir, "--debug", c.src, "out"), "\n"), "\n")
+			}
+			gnu := run(referenceBin(t, "cp"))
+			ours := run(fernBin(t, "cp"))
+			if len(ours) != 3 || len(gnu) != 3 {
+				t.Fatalf("--debug printed\n gnu: %q\nfern: %q\nwant the exit line plus two", gnu, ours)
+			}
+			if ours[0] != gnu[0] || ours[1] != gnu[1] {
+				t.Errorf("--debug differs from GNU before the report line\n gnu: %q\nfern: %q", gnu[:2], ours[:2])
+			}
+			if ours[2] != c.want {
+				t.Errorf("--debug's report is %q, want %q", ours[2], c.want)
+			}
+		})
+	}
 }

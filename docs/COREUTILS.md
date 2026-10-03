@@ -123,19 +123,20 @@ implementation:
   accepted, that it refuses a value, and that it stands in the ambiguity
   list.
 - `cp --debug`'s second line is ours, for the same reason as `cksum
-  --debug`'s and no other. GNU's names ITS OWN syscall strategy —
-  measured, `copy offload: yes, reflink: unsupported, sparse detection:
-  no` for a dense file and `copy offload: unknown, …, sparse detection:
-  SEEK_HOLE` for a sparse one. The sparse detection is the same as ours
-  now — the copy walks a sparse source by SEEK_DATA / SEEK_HOLE — but the
-  offload is `copy_file_range`, which has no Fern primitive, and claiming
-  it would say something untrue about our own code. Ours states what the
-  copy actually did, and the corpus holds `--debug` to its exit
-  status and stream rather than its bytes. Everything else about the
-  option IS byte-exact: that it implies `-v`, that the `'src' -> 'dest'`
-  lines it implies are identical, that a directory and a FIFO draw no
-  such line while a regular file does, and that it stands in the
-  ambiguity list between `--copy-contents` and `--dereference`.
+  --debug`'s and no other. GNU's names ITS OWN syscall strategy:
+  `copy offload: yes, reflink: unsupported, sparse detection: SEEK_HOLE`
+  for a sparse file, and for a dense one `sparse detection: no` or
+  `SEEK_HOLE` depending on the host (both measured from GNU 9.4 on
+  ext4). The sparse detection is ours too now — a sparse source is
+  walked by SEEK_DATA / SEEK_HOLE — but the offload is
+  `copy_file_range`, which has no Fern primitive, and claiming it would
+  say something untrue about our own code. Ours states what the copy
+  actually did. No corpus case copies under `--debug`; `TestCpDebug`
+  holds the exit status and the `'src' -> 'dest'` line it implies to
+  GNU's and pins the report line to ours. Everything else about the
+  option IS byte-exact in the corpus: that a skip under `-n` or
+  `--update=none` is named, and that it stands in the ambiguity list
+  between `--copy-contents` and `--dereference`.
 
   This one has a way out that `cksum --debug` does not: a
   `copy_file_range` primitive would let the line be true rather than
