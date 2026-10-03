@@ -818,9 +818,9 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
   if (!s.rc_free_debug) {
     s = s.write("    jmp .Larr_push_u8_grow\n");
   }
-  s = s.write("    movq -8(%r12), %rcx\n");
+  s = s.write("    movl -8(%r12), %ecx\n");
   s = s.write(san_poison_check("%ecx"));
-  s = s.write("    cmpq $1, %rcx\n    je .Larr_push_u8_rc_ok\n    btq $31, %rcx\n    jc .Larr_push_u8_rc_ok\n    jmp .Larr_push_u8_grow\n");
+  s = s.write("    cmpl $1, %ecx\n    je .Larr_push_u8_rc_ok\n    testl %ecx, %ecx\n    js .Larr_push_u8_rc_ok\n    jmp .Larr_push_u8_grow\n");
   s = s.write(".Larr_push_u8_rc_ok:\n");
   s = s.write("    movq %r15, %rcx\n    shlq $3, %rcx\n    cmpq %rcx, %r14\n    jge .Larr_push_u8_grow\n");
   s = s.write("    movb %r13b, 8(%r12,%r14)\n    incq %r14\n    movq %r14, (%r12)\n    movq %r12, %rax\n    jmp .Larr_push_u8_ret\n");
@@ -871,8 +871,8 @@ function arr_push_fast_u8(slow: string): string {
   }
   let ok: string = slow + "_ok";
   return "    movq (%rdi), %rdx\n    movq -16(%rdi), %rcx\n    shlq $3, %rcx\n    cmpq %rcx, %rdx\n    jge " + slow + "\n"
-    + "    movq -8(%rdi), %rcx\n    cmpq $1, %rcx\n    je " + ok + "\n"
-    + "    btq $31, %rcx\n    jnc " + slow + "\n"
+    + "    movl -8(%rdi), %ecx\n    cmpl $1, %ecx\n    je " + ok + "\n"
+    + "    testl %ecx, %ecx\n    jns " + slow + "\n"
     + ok + ":\n    movb %sil, 8(%rdi,%rdx)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
     + "    movq %rdi, %rax\n    ret\n";
 }
@@ -888,8 +888,8 @@ function arr_push_fast(slow: string): string {
   }
   let ok: string = slow + "_ok";
   return "    movq (%rdi), %rdx\n    cmpq -16(%rdi), %rdx\n    jge " + slow + "\n"
-    + "    movq -8(%rdi), %rcx\n    cmpq $1, %rcx\n    je " + ok + "\n"
-    + "    btq $31, %rcx\n    jnc " + slow + "\n"
+    + "    movl -8(%rdi), %ecx\n    cmpl $1, %ecx\n    je " + ok + "\n"
+    + "    testl %ecx, %ecx\n    jns " + slow + "\n"
     + ok + ":\n    movq %rsi, 8(%rdi,%rdx,8)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
     + "    movq %rdi, %rax\n    ret\n";
 }
@@ -4504,12 +4504,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // which leaves the old buffer untouched (and, per the load-bearing-leak
     // note below, never freed). rc == 1 (sole owner) and the bit-31
     // static/immortal sentinel keep today's in-place fast path.
-    s = s.write("    movq -8(%r12), %rcx\n");  // rc word
+    s = s.write("    movl -8(%r12), %ecx\n");  // rc word
     s = s.write(san_poison_check("%ecx"));
-    s = s.write("    cmpq $1, %rcx\n");
+    s = s.write("    cmpl $1, %ecx\n");
     s = s.write("    je .Larr_push_rc_ok\n");
-    s = s.write("    btq $31, %rcx\n");
-    s = s.write("    jc .Larr_push_rc_ok\n");
+    s = s.write("    testl %ecx, %ecx\n");
+    s = s.write("    js .Larr_push_rc_ok\n");
     s = s.write("    jmp .Larr_push_grow\n");  // shared → copy (#4873)
     s = s.write(".Larr_push_rc_ok:\n");
     s = s.write("    cmpq %r15, %r14\n");
@@ -7804,8 +7804,8 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
 // the receiver has no free slot or is shared.
 function arr_push_inline(sym: string, l: string): string {
   return "    movq (%rdi), %rdx\n    cmpq -16(%rdi), %rdx\n    jge " + l + "s\n"
-    + "    movq -8(%rdi), %rcx\n    cmpq $1, %rcx\n    je " + l + "o\n"
-    + "    btq $31, %rcx\n    jnc " + l + "s\n"
+    + "    movl -8(%rdi), %ecx\n    cmpl $1, %ecx\n    je " + l + "o\n"
+    + "    testl %ecx, %ecx\n    jns " + l + "s\n"
     + l + "o:\n    movq %rsi, 8(%rdi,%rdx,8)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
     + "    movq %rdi, %rax\n    jmp " + l + "e\n"
     + l + "s:\n    call " + sym + "\n" + l + "e:\n";
@@ -7815,8 +7815,8 @@ function arr_push_inline(sym: string, l: string): string {
 // capacity is in 8-byte words, so the room test is against cap * 8.
 function arr_push_inline_u8(sym: string, l: string): string {
   return "    movq (%rdi), %rdx\n    movq -16(%rdi), %rcx\n    shlq $3, %rcx\n    cmpq %rcx, %rdx\n    jge " + l + "s\n"
-    + "    movq -8(%rdi), %rcx\n    cmpq $1, %rcx\n    je " + l + "o\n"
-    + "    btq $31, %rcx\n    jnc " + l + "s\n"
+    + "    movl -8(%rdi), %ecx\n    cmpl $1, %ecx\n    je " + l + "o\n"
+    + "    testl %ecx, %ecx\n    jns " + l + "s\n"
     + l + "o:\n    movb %sil, 8(%rdi,%rdx)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
     + "    movq %rdi, %rax\n    jmp " + l + "e\n"
     + l + "s:\n    call " + sym + "\n" + l + "e:\n";

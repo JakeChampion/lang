@@ -2139,8 +2139,8 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
 // the receiver has no free slot or is shared.
 function arr_push_inline(sym: string, l: string): string {
   return "    ldr x2, [x0]\n    ldur x3, [x0, #-16]\n    cmp x2, x3\n    b.ge " + l + "s\n"
-    + "    ldur x3, [x0, #-8]\n    cmp x3, #1\n    b.eq " + l + "o\n"
-    + "    tbz x3, #31, " + l + "s\n"
+    + "    ldur w3, [x0, #-8]\n    cmp w3, #1\n    b.eq " + l + "o\n"
+    + "    tbz w3, #31, " + l + "s\n"
     + l + "o:\n    add x2, x2, #1\n    str x1, [x0, x2, lsl #3]\n    str x2, [x0]\n    b " + l + "e\n"
     + l + "s:\n    bl " + sym + "\n" + l + "e:\n";
 }
@@ -2149,8 +2149,8 @@ function arr_push_inline(sym: string, l: string): string {
 // capacity is in 8-byte words, so the room test is against cap * 8.
 function arr_push_inline_u8(sym: string, l: string): string {
   return "    ldr x2, [x0]\n    ldur x3, [x0, #-16]\n    lsl x3, x3, #3\n    cmp x2, x3\n    b.ge " + l + "s\n"
-    + "    ldur x3, [x0, #-8]\n    cmp x3, #1\n    b.eq " + l + "o\n"
-    + "    tbz x3, #31, " + l + "s\n"
+    + "    ldur w3, [x0, #-8]\n    cmp w3, #1\n    b.eq " + l + "o\n"
+    + "    tbz w3, #31, " + l + "s\n"
     + l + "o:\n    add x3, x0, x2\n    strb w1, [x3, #8]\n    add x2, x2, #1\n    str x2, [x0]\n    b " + l + "e\n"
     + l + "s:\n    bl " + sym + "\n" + l + "e:\n";
 }
@@ -6101,8 +6101,8 @@ function arr_push_fast(slow: string): string {
   }
   let ok: string = slow + "_ok";
   return "    ldr x2, [x0]\n    ldur x3, [x0, #-16]\n    cmp x2, x3\n    b.ge " + slow + "\n"
-    + "    ldur x3, [x0, #-8]\n    cmp x3, #1\n    b.eq " + ok + "\n"
-    + "    tbz x3, #31, " + slow + "\n"
+    + "    ldur w3, [x0, #-8]\n    cmp w3, #1\n    b.eq " + ok + "\n"
+    + "    tbz w3, #31, " + slow + "\n"
     + ok + ":\n    add x2, x2, #1\n    str x1, [x0, x2, lsl #3]\n    str x2, [x0]\n    ret\n";
 }
 
@@ -6113,8 +6113,8 @@ function arr_push_fast_u8(slow: string): string {
   }
   let ok: string = slow + "_ok";
   return "    ldr x2, [x0]\n    ldur x3, [x0, #-16]\n    lsl x3, x3, #3\n    cmp x2, x3\n    b.ge " + slow + "\n"
-    + "    ldur x3, [x0, #-8]\n    cmp x3, #1\n    b.eq " + ok + "\n"
-    + "    tbz x3, #31, " + slow + "\n"
+    + "    ldur w3, [x0, #-8]\n    cmp w3, #1\n    b.eq " + ok + "\n"
+    + "    tbz w3, #31, " + slow + "\n"
     + ok + ":\n    add x3, x0, x2\n    strb w1, [x3, #8]\n    add x2, x2, #1\n    str x2, [x0]\n    ret\n";
 }
 
@@ -6149,9 +6149,9 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
   if (!s.rc_free_debug) {
     s = s.write("    b .Larr_push_u8_grow\n");
   }
-  s = s.write("    ldur x2, [x19, #-8]\n");
+  s = s.write("    ldur w2, [x19, #-8]\n");
   s = s.write(san_poison_check("w2", "w10", ".Larr_push_u8_sanlive", s.rc_free_debug));
-  s = s.write("    cmp x2, #1\n    b.eq .Larr_push_u8_rc_ok\n    tbnz x2, #31, .Larr_push_u8_rc_ok\n    b .Larr_push_u8_grow\n");
+  s = s.write("    cmp w2, #1\n    b.eq .Larr_push_u8_rc_ok\n    tbnz w2, #31, .Larr_push_u8_rc_ok\n    b .Larr_push_u8_grow\n");
   s = s.write(".Larr_push_u8_rc_ok:\n");
   s = s.write("    lsl x2, x22, #3\n    cmp x21, x2\n    b.ge .Larr_push_u8_grow\n");
   s = s.write("    add x2, x19, x21\n    strb w20, [x2, #8]\n    add x21, x21, #1\n    str x21, [x19]\n    mov x0, x19\n    b .Larr_push_u8_ret\n");
@@ -9845,11 +9845,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // rc >= 2 receiver is shared, so take the fresh-box copy path even
     // when capacity fits; rc == 1 / the bit-31 immortal sentinel keep
     // the in-place fast path.
-    s = s.write("    ldur x2, [x19, #-8]\n");  // rc word
+    s = s.write("    ldur w2, [x19, #-8]\n");  // rc word
     s = s.write(san_poison_check("w2", "w10", ".Larr_push_sanlive", s.rc_free_debug));
-    s = s.write("    cmp x2, #1\n");
+    s = s.write("    cmp w2, #1\n");
     s = s.write("    b.eq .Larr_push_rc_ok\n");
-    s = s.write("    tbnz x2, #31, .Larr_push_rc_ok\n");
+    s = s.write("    tbnz w2, #31, .Larr_push_rc_ok\n");
     s = s.write("    b .Larr_push_grow\n");  // shared → copy (#4873)
     s = s.write(".Larr_push_rc_ok:\n");
     s = s.write("    cmp x21, x22\n");
