@@ -212,6 +212,26 @@ func cpSparse(t *testing.T, dir string) {
 	// A dense file of the same length, so a copy that made everything
 	// sparse would fail here rather than pass everywhere.
 	seedWrite(t, dir, "dense", "abcdefghij")
+	// Zeros that were WRITTEN, between two blocks of data and ahead of a
+	// hole: `--sparse=auto` copies a data run as it stands, so only
+	// `always` turns those zeros into a hole.
+	mixed, err := os.Create(filepath.Join(dir, "mixed"))
+	if err != nil {
+		t.Fatalf("create mixed: %v", err)
+	}
+	block := strings.Repeat("A", 4096) + strings.Repeat("\x00", 8192) + strings.Repeat("B", 4096)
+	if _, err := mixed.WriteString(block); err != nil {
+		t.Fatalf("write mixed: %v", err)
+	}
+	if _, err := mixed.WriteAt([]byte("tail"), 1<<20); err != nil {
+		t.Fatalf("write mixed tail: %v", err)
+	}
+	if err := mixed.Truncate(2 << 20); err != nil {
+		t.Fatalf("truncate mixed: %v", err)
+	}
+	if err := mixed.Close(); err != nil {
+		t.Fatalf("close mixed: %v", err)
+	}
 }
 
 // cpGroup is the hard-link fixture: one inode under two names inside a
@@ -597,6 +617,9 @@ func cpCases(t *testing.T) []invocation {
 		{"sparse-dense-default", []string{"dense", "out"}},
 		{"sparse-dense-always", []string{"--sparse=always", "dense", "out"}},
 		{"sparse-into-directory", []string{"sp", "dense", "out"}},
+		{"sparse-written-zeros-auto", []string{"mixed", "out"}},
+		{"sparse-written-zeros-always", []string{"--sparse=always", "mixed", "out"}},
+		{"sparse-written-zeros-never", []string{"--sparse=never", "mixed", "out"}},
 	} {
 		inv := invocation{name: c.name, args: c.args, seedTree: cpSparse, sparse: true}
 		if c.name == "sparse-into-directory" {

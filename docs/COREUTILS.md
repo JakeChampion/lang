@@ -126,10 +126,11 @@ implementation:
   --debug`'s and no other. GNU's names ITS OWN syscall strategy —
   measured, `copy offload: yes, reflink: unsupported, sparse detection:
   no` for a dense file and `copy offload: unknown, …, sparse detection:
-  SEEK_HOLE` for a sparse one — which is `copy_file_range` offload and
-  `SEEK_HOLE` probing, neither of which has a Fern primitive. Claiming
-  either would say something untrue about our own code. Ours states what
-  the copy actually did, and the corpus holds `--debug` to its exit
+  SEEK_HOLE` for a sparse one. The sparse detection is the same as ours
+  now — the copy walks a sparse source by SEEK_DATA / SEEK_HOLE — but the
+  offload is `copy_file_range`, which has no Fern primitive, and claiming
+  it would say something untrue about our own code. Ours states what the
+  copy actually did, and the corpus holds `--debug` to its exit
   status and stream rather than its bytes. Everything else about the
   option IS byte-exact: that it implies `-v`, that the `'src' -> 'dest'`
   lines it implies are identical, that a directory and a FIFO draw no
@@ -137,9 +138,8 @@ implementation:
   ambiguity list between `--copy-contents` and `--dereference`.
 
   This one has a way out that `cksum --debug` does not: a
-  `copy_file_range` / `SEEK_HOLE` primitive would let the line be true
-  rather than ours. Until then it is an exemption, not a divergence to
-  fix in cp.
+  `copy_file_range` primitive would let the line be true rather than
+  ours. Until then it is an exemption, not a divergence to fix in cp.
 
 Exempt is not unchecked. `requireHelp` / `requireVersion` in the harness
 still require the exit status and the stream to match GNU's for each — so
@@ -4355,9 +4355,11 @@ groups are the order of work. Each sub-issue names its group.
   SEEK_HOLE, symlink" was stale but for the clone. `--reflink=always`
   reports the failure GNU reports where the filesystem cannot clone,
   which is what ext4 and overlayfs answer and not what btrfs does:
-  FICLONE is the one primitive still missing. Holes are punched at
-  st_blksize granularity, which reproduces GNU's SEEK_HOLE result
-  without it. A recursive copy walks a directory's entries in
+  FICLONE is the one primitive still missing. A sparse source is walked
+  by SEEK_DATA / SEEK_HOLE, as GNU's lseek_copy does, so zeros that were
+  written stay written under `--sparse=auto`; `--sparse=always` and a
+  source that cannot be asked (WASI) fall back to punching zero blocks
+  at st_blksize granularity. A recursive copy walks a directory's entries in
   ascending INODE order — measured, and neither readdir order nor the
   names sorted nor directories first — so the engine stats each entry
   for the number readdir already had, which #9317 would give it back.
