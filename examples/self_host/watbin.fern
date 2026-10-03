@@ -3366,8 +3366,8 @@ function no_results(n: i32): i32[][] {
 
 // component_suffix_io is component_suffix for a CLI shape whose core can
 // drop a failed stream call's wasi:io/error (type 1 in the fixed prefixes).
-// The drop is lowered after the wasi:io/streams entries, where native's
-// composer puts it.
+// The drop is lowered right after the last wasi:io/streams entry, where
+// native's composer puts it.
 function component_suffix_io(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string): i32[] {
   let at: i32 = 0;
   let i: i32 = 0;
