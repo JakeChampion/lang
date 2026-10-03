@@ -31,8 +31,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // threadedArrayParamSrc threads an accumulator through a borrowed array param
@@ -101,9 +99,6 @@ func TestX86_64ThreadedArrayParamBounded(t *testing.T) {
 }
 
 func TestWASMThreadedArrayParamBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, sz := range threadedArrayParamSizes {
 		got := runWasm(t, threadedArrayParamSrc(sz.src, sz.twoN))
 		checkThreadedArrayParam(t, "wasm32-wasi", sz.n, got)

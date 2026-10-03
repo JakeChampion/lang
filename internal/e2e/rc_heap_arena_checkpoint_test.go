@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // One-level bump-arena checkpoint — `__heap_mark()` / `__heap_release_to(m)`.
@@ -154,11 +152,9 @@ func runArenaCheckpointChecks(t *testing.T, run func(*testing.T, string) int) {
 }
 
 func TestX86_64ArenaCheckpoint(t *testing.T) {
-	ast.RcFreeEnabled = true
 	runArenaCheckpointChecks(t, mustRunX86_64FreeOn)
 }
 
 func TestArm64ArenaCheckpoint(t *testing.T) {
-	ast.RcFreeEnabled = true
 	runArenaCheckpointChecks(t, mustRunArm64FreeOn)
 }

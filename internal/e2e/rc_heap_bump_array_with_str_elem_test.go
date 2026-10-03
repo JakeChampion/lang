@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // The string-element sibling of TestX86_64ArrayWithPtrElemRecycles (#6407).
@@ -65,9 +63,6 @@ func TestArm64ArrayWithStrElemRecycles(t *testing.T) {
 }
 
 func TestWASMArrayWithStrElemRecycles(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, arrWithStrElemChurnSrc); got != 0 {
 		t.Errorf("string-element .with churn: got exit %d, want 0", got)
 	}

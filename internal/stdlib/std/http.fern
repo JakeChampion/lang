@@ -226,9 +226,9 @@ pub function plain(body: string): HttpResponse {
 // the message is dropped, so log it before the `?` when it matters, or
 // fail with an `HttpError` to put it on the wire. std/fetch's `FetchError`
 // answers 504 for a timeout, 500 for an `InvalidRequest` and 502 for the
-// rest, without its message. A handler whose errors
-// are `dyn error.Error` is answered by `respond_error`, which logs each
-// message through the platform.
+// rest, without its message. A handler whose errors are `dyn error.Error`
+// is answered by `respond_error`, which logs each message through the
+// platform.
 
 pub trait ToResponse {
   function to_response(self: Self): HttpResponse;
@@ -2665,6 +2665,19 @@ pub function http_target_ok(target: string): boolean {
 pub function http_field_name_ok(name: string): boolean {
   let n: u8[] = name.bytes();
   return __is_token(n, 0, n.len());
+}
+
+// `http_fields_ok(fields)` — whether every field of the map can be written
+// as a field line: a token name and a value `http_field_value_ok` admits.
+pub function http_fields_ok(fields: HeaderMap): boolean {
+  let i: i32 = 0;
+  while (i < fields.names.len()) {
+    if (!http_field_name_ok(fields.names[i]) || !http_field_value_ok(fields.values[i])) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
 }
 
 // `http_field_value_ok(value)` — whether `value` can be written as one

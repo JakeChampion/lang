@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #7910 (d) — a NESTED enum payload consumed straight off a call.
@@ -137,9 +135,6 @@ func TestArm64NestedEnumScrutineeReclaim(t *testing.T) {
 }
 
 func TestWASMNestedEnumScrutineeReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, nestedEnumScrutineeBumpSrc("50"))
 	large := runWasm(t, nestedEnumScrutineeBumpSrc("5000"))
 	if small != large {
@@ -195,9 +190,6 @@ func TestArm64NestedEnumScrutineeAliasedPayload(t *testing.T) {
 }
 
 func TestWASMNestedEnumScrutineeAliasedPayload(t *testing.T) {
-	prevFree := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prevFree }()
 	if got := runWasm(t, nestedEnumScrutineeAliasedPayloadSrc); got != 0 {
 		t.Errorf("code=%d (99=wrong sum, 98=caller's array freed, >0=over-release)", got)
 	}

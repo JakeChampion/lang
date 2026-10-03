@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #8535 — a `[T]` view bound to a LOCAL never released its header.
@@ -155,9 +153,6 @@ func TestArm64ViewLocalHeaderReclaim(t *testing.T) {
 }
 
 func TestWASMViewLocalHeaderReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, viewLocalBumpSrc("50"))
 	large := runWasm(t, viewLocalBumpSrc("5000"))
 	if small != large {

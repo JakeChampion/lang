@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Move-and-rebind of an `own` STRUCT parameter — `s = f(.., s, ..)` where `f`
@@ -56,9 +54,6 @@ func TestArm64OwnStructRebind(t *testing.T) {
 }
 
 func TestWASMOwnStructRebind(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, ownStructRebindSrc); got != 0 {
 		t.Errorf("own-struct move-and-rebind: got %d, want 0", got)
 	}

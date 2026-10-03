@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #8836 — `acc = put(acc, piece)` on a string LOCAL: the callee hands a
@@ -110,9 +108,6 @@ func TestArm64ThreadedStringAccumulatorReclaim(t *testing.T) {
 }
 
 func TestWASMThreadedStringAccumulatorReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, threadedStringAccumulatorBumpSrc("20"))
 	large := runWasm(t, threadedStringAccumulatorBumpSrc("400"))
 	if small != large {

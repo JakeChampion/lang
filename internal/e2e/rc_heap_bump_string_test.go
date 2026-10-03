@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // String-concat loop-var bounded-growth guard (RC-Perceus). The shipped
@@ -117,9 +115,6 @@ func TestArm64LongStringReinitBounded(t *testing.T) {
 }
 
 func TestWASMLongStringReinitBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, longStringReinitBumpSrc("5000"))
 	large := runWasm(t, longStringReinitBumpSrc("50000"))
 	if small != large {
@@ -153,9 +148,6 @@ func TestArm64StringConcatBounded(t *testing.T) {
 }
 
 func TestWASMStringConcatBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, stringConcatBumpSrc("5000"))
 	large := runWasm(t, stringConcatBumpSrc("50000"))
 	if small != large {

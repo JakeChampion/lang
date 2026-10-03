@@ -2162,8 +2162,8 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
 // the receiver has no free slot or is shared.
 function arr_push_inline(sym: string, l: string): string {
   return "    ldr x2, [x0]\n    ldur x3, [x0, #-16]\n    cmp x2, x3\n    b.ge " + l + "s\n"
-    + "    ldur x3, [x0, #-8]\n    cmp x3, #1\n    b.eq " + l + "o\n"
-    + "    tbz x3, #31, " + l + "s\n"
+    + "    ldur w3, [x0, #-8]\n    cmp w3, #1\n    b.eq " + l + "o\n"
+    + "    tbz w3, #31, " + l + "s\n"
     + l + "o:\n    add x2, x2, #1\n    str x1, [x0, x2, lsl #3]\n    str x2, [x0]\n    b " + l + "e\n"
     + l + "s:\n    bl " + sym + "\n" + l + "e:\n";
 }
@@ -2172,8 +2172,8 @@ function arr_push_inline(sym: string, l: string): string {
 // capacity is in 8-byte words, so the room test is against cap * 8.
 function arr_push_inline_u8(sym: string, l: string): string {
   return "    ldr x2, [x0]\n    ldur x3, [x0, #-16]\n    lsl x3, x3, #3\n    cmp x2, x3\n    b.ge " + l + "s\n"
-    + "    ldur x3, [x0, #-8]\n    cmp x3, #1\n    b.eq " + l + "o\n"
-    + "    tbz x3, #31, " + l + "s\n"
+    + "    ldur w3, [x0, #-8]\n    cmp w3, #1\n    b.eq " + l + "o\n"
+    + "    tbz w3, #31, " + l + "s\n"
     + l + "o:\n    add x3, x0, x2\n    strb w1, [x3, #8]\n    add x2, x2, #1\n    str x2, [x0]\n    b " + l + "e\n"
     + l + "s:\n    bl " + sym + "\n" + l + "e:\n";
 }
@@ -6124,8 +6124,8 @@ function arr_push_fast(slow: string): string {
   }
   let ok: string = slow + "_ok";
   return "    ldr x2, [x0]\n    ldur x3, [x0, #-16]\n    cmp x2, x3\n    b.ge " + slow + "\n"
-    + "    ldur x3, [x0, #-8]\n    cmp x3, #1\n    b.eq " + ok + "\n"
-    + "    tbz x3, #31, " + slow + "\n"
+    + "    ldur w3, [x0, #-8]\n    cmp w3, #1\n    b.eq " + ok + "\n"
+    + "    tbz w3, #31, " + slow + "\n"
     + ok + ":\n    add x2, x2, #1\n    str x1, [x0, x2, lsl #3]\n    str x2, [x0]\n    ret\n";
 }
 
@@ -6136,8 +6136,8 @@ function arr_push_fast_u8(slow: string): string {
   }
   let ok: string = slow + "_ok";
   return "    ldr x2, [x0]\n    ldur x3, [x0, #-16]\n    lsl x3, x3, #3\n    cmp x2, x3\n    b.ge " + slow + "\n"
-    + "    ldur x3, [x0, #-8]\n    cmp x3, #1\n    b.eq " + ok + "\n"
-    + "    tbz x3, #31, " + slow + "\n"
+    + "    ldur w3, [x0, #-8]\n    cmp w3, #1\n    b.eq " + ok + "\n"
+    + "    tbz w3, #31, " + slow + "\n"
     + ok + ":\n    add x3, x0, x2\n    strb w1, [x3, #8]\n    add x2, x2, #1\n    str x2, [x0]\n    ret\n";
 }
 
@@ -6172,9 +6172,9 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
   if (!s.rc_free_debug) {
     s = s.write("    b .Larr_push_u8_grow\n");
   }
-  s = s.write("    ldur x2, [x19, #-8]\n");
+  s = s.write("    ldur w2, [x19, #-8]\n");
   s = s.write(san_poison_check("w2", "w10", ".Larr_push_u8_sanlive", s.rc_free_debug));
-  s = s.write("    cmp x2, #1\n    b.eq .Larr_push_u8_rc_ok\n    tbnz x2, #31, .Larr_push_u8_rc_ok\n    b .Larr_push_u8_grow\n");
+  s = s.write("    cmp w2, #1\n    b.eq .Larr_push_u8_rc_ok\n    tbnz w2, #31, .Larr_push_u8_rc_ok\n    b .Larr_push_u8_grow\n");
   s = s.write(".Larr_push_u8_rc_ok:\n");
   s = s.write("    lsl x2, x22, #3\n    cmp x21, x2\n    b.ge .Larr_push_u8_grow\n");
   s = s.write("    add x2, x19, x21\n    strb w20, [x2, #8]\n    add x21, x21, #1\n    str x21, [x19]\n    mov x0, x19\n    b .Larr_push_u8_ret\n");
@@ -7815,8 +7815,8 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   // RC intrinsics — Phase 0c real bodies (ported from the native
   // arm64 backend, internal/codegen/arm64/arm64.go). The rc word
   // is a 32-bit count at [data-8]; data is the value pointer
-  // callers hold. Guard chain: null -> SSO inline-tag (low bit) ->
-  // low-address (< 0x10000) -> static sentinel (rc high bit). Static /
+  // callers hold. Guard chain: SSO inline-tag (low bit) -> low-address
+  // (< 0x10000, null included) -> static sentinel (rc high bit). Static /
   // immortal cells are distinguished by the rc high-bit sentinel (not by
   // address), so the < 0x10000 guard only filters null-ish / sub-page
   // values; the heap now lives at the 0x10000000 mmap hint and passes it.
@@ -7825,7 +7825,6 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   // __fern_drop_arr_ptr stay no-ops until the layout migration.
   s = s.write("__fn___fern_rc_inc:\n");
   s = s.write("    ldr x0, [sp]\n");  // ptr (also return)
-  s = s.write("    cbz x0, .Lshrcinc_ret\n");
   s = s.write("    tbnz x0, #0, .Lshrcinc_ret\n");  // SSO inline tag
   s = s.write("    mov x9, #0x10000\n");
   s = s.write("    cmp x0, x9\n");
@@ -7842,7 +7841,6 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    ret\n");
   s = s.write("__fn___fern_rc_dec:\n");
   s = s.write("    ldr x0, [sp]\n");  // ptr (also return)
-  s = s.write("    cbz x0, .Lshrcdec_ret\n");
   s = s.write("    tbnz x0, #0, .Lshrcdec_ret\n");
   s = s.write("    mov x9, #0x10000\n");
   s = s.write("    cmp x0, x9\n");
@@ -7869,7 +7867,6 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("__fn___fern_rc_is_unique:\n");
   s = s.write("    ldr x2, [sp]\n");  // ptr
   s = s.write("    mov x0, #0\n");  // default: not unique
-  s = s.write("    cbz x2, .Lshuniq_ret\n");
   s = s.write("    tbnz x2, #0, .Lshuniq_ret\n");
   s = s.write("    mov x9, #0x10000\n");
   s = s.write("    cmp x2, x9\n");
@@ -7894,7 +7891,6 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("__fn___fern_arr_inc_elems:\n");
     s = s.write("    ldr x0, [sp]\n");  // arr (also the result)
     s = s.write("__fn___fern_arr_inc_elems.r:\n");
-    s = s.write("    cbz x0, .Laie_ret\n");
     s = s.write("    mov x9, #0x10000\n");
     s = s.write("    cmp x0, x9\n");
     s = s.write("    blo .Laie_ret\n");
@@ -8278,7 +8274,6 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fn___fern_arr_dec:\n");
   s = s.write("    ldr x0, [sp]\n");
   s = s.write("__fn___fern_arr_dec.r:\n");
-  s = s.write("    cbz x0, .Larrdec_ret\n");
   s = s.write("    cmp x0, #16, lsl #12\n");
   s = s.write("    blo .Larrdec_ret\n");
   s = s.write("    ldur w1, [x0, #-8]\n");  // rc
@@ -8330,7 +8325,6 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fn___fern_str_free:\n");
   s = s.write("    ldr x0, [sp]\n");  // box
   s = s.write("__fn___fern_str_free.r:\n");
-  s = s.write("    cbz x0, .Lstrfree_ret\n");
   s = s.write("    tbnz x0, #0, .Lstrfree_ret\n");  // tagged / SSO sentinel (defensive)
   // x9 is both the heap floor here and the freelist class cap below.
   s = s.write("    mov x9, #0x10000\n");
@@ -8454,7 +8448,6 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   // blocks carry the same sentinel and are outside the arena.
   s = s.write("__fn___fern_str_view_free:\n");
   s = s.write("    ldr x0, [sp]\n");  // box
-  s = s.write("    cbz x0, .Lstrvfree_ret\n");
   s = s.write("    tbnz x0, #0, .Lstrvfree_ret\n");  // tagged / SSO sentinel (defensive)
   s = s.write("    mov x9, #0x10000\n");
   s = s.write("    cmp x0, x9\n");
@@ -8636,7 +8629,6 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
 function emit_arm64_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl: string, elem: string): asmcore.EmitState {
   s = s.write("__fn___fern_" + sym + ":\n");
   s = s.write("    ldr x0, [sp]\n");  // arr
-  s = s.write("    cbz x0, .L" + lbl + "_ret\n");
   s = s.write("    mov x9, #0x10000\n");
   s = s.write("    cmp x0, x9\n");
   s = s.write("    blo .L" + lbl + "_ret\n");  // low-addr guard
@@ -8715,7 +8707,6 @@ function arm64_arr_deep_free_call(target: string): string {
 // shared box (rc>1) skips the payload — another owner still reads it.
 function arm64_optarrarr_elem(): string {
   let e: string = "    ldr x0, [x19, x9, lsl #3]\n";  // e = option box
-  e = e + "    cbz x0, .Loaf_next\n";
   e = e + "    mov x9, #0x10000\n    cmp x0, x9\n    blo .Loaf_next\n";
   e = e + "    str x0, [sp, #-16]!\n    bl __fn___fern_rc_is_unique\n    add sp, sp, #16\n";
   e = e + "    cbz x0, .Loaf_box\n";
@@ -8761,7 +8752,6 @@ function arm64_map_free_block(s: asmcore.EmitState): asmcore.EmitState {
 function emit_arm64_map_free_variant(s: asmcore.EmitState, suffix: string, kfree: string, vfree: string, lbl: string): asmcore.EmitState {
   s = s.write("__fn___fern_map_free" + suffix + ":\n");
   s = s.write("    ldr x0, [sp]\n");  // box
-  s = s.write("    cbz x0, .L" + lbl + "_ret\n");
   s = s.write("    mov x9, #0x10000\n");
   s = s.write("    cmp x0, x9\n");
   s = s.write("    blo .L" + lbl + "_ret\n");  // low-addr guard
@@ -8812,7 +8802,6 @@ function emit_arm64_map_free_fn_variant(s: asmcore.EmitState, suffix: string, kr
   }
   s = s.write("__fn___fern_map_free" + suffix + ":\n");
   s = s.write("    ldr x0, [sp, #" + util.i32_to_string(16 * (nargs - 1)) + "]\n");  // box
-  s = s.write("    cbz x0, .L" + lbl + "_ret\n");
   s = s.write("    mov x9, #0x10000\n");
   s = s.write("    cmp x0, x9\n");
   s = s.write("    blo .L" + lbl + "_ret\n");  // low-addr guard
@@ -9868,11 +9857,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // rc >= 2 receiver is shared, so take the fresh-box copy path even
     // when capacity fits; rc == 1 / the bit-31 immortal sentinel keep
     // the in-place fast path.
-    s = s.write("    ldur x2, [x19, #-8]\n");  // rc word
+    s = s.write("    ldur w2, [x19, #-8]\n");  // rc word
     s = s.write(san_poison_check("w2", "w10", ".Larr_push_sanlive", s.rc_free_debug));
-    s = s.write("    cmp x2, #1\n");
+    s = s.write("    cmp w2, #1\n");
     s = s.write("    b.eq .Larr_push_rc_ok\n");
-    s = s.write("    tbnz x2, #31, .Larr_push_rc_ok\n");
+    s = s.write("    tbnz w2, #31, .Larr_push_rc_ok\n");
     s = s.write("    b .Larr_push_grow\n");  // shared → copy (#4873)
     s = s.write(".Larr_push_rc_ok:\n");
     s = s.write("    cmp x21, x22\n");

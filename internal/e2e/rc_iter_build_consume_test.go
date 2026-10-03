@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Regression: an ITERATIVELY-built list (`acc = Cons(v, acc)` in a loop) that is
@@ -50,9 +48,6 @@ func TestArm64IterBuildConsume(t *testing.T) {
 }
 
 func TestWASMIterBuildConsume(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, iterBuildConsumeSrc); got != 0 {
 		t.Errorf("iter-build consumed: got %d, want 0", got)
 	}

@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Koka-style consuming match on an OWNED-BY-DEFAULT enum parameter (#4400) —
@@ -69,9 +67,6 @@ func TestArm64OwnedConsumingMatch(t *testing.T) {
 }
 
 func TestWASMOwnedConsumingMatch(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, ownedConsumingSrc); got != 0 {
 		t.Errorf("owned consuming match: got %d, want 0", got)
 	}

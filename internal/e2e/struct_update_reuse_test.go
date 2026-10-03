@@ -15,8 +15,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Both branches in one program, so a single exit code covers them.
@@ -92,9 +90,6 @@ func TestArm64StructUpdateSpreadReuse(t *testing.T) {
 }
 
 func TestWASMStructUpdateSpreadReuse(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	checkStructUpdateSpread(t, "wasm32-wasi", runWasm(t, structUpdateSpreadSrc), runWasm(t, structUpdateSpreadCliffSrc))
 }
 

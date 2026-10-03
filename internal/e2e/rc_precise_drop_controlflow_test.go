@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Slice 1 of docs/OWNERSHIP-INFERENCE-PLAN.md: a string/array-free struct/tuple
@@ -47,9 +45,6 @@ func TestArm64PreciseDropControlFlow(t *testing.T) {
 }
 
 func TestWASMPreciseDropControlFlow(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, preciseCfSrc); got != 0 {
 		t.Errorf("precise control-flow drop: got %d, want 0", got)
 	}

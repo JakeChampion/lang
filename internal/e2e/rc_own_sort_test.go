@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Dogfood: std/sort's `own`-taking in-place sorts. `sort_i32_inplace_asc/_desc`
@@ -47,9 +45,6 @@ func TestArm64OwnInplaceSort(t *testing.T) {
 }
 
 func TestWASMOwnInplaceSort(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, ownInplaceSortSrc); got != 0 {
 		t.Errorf("in-place own sort: got %d, want 0", got)
 	}

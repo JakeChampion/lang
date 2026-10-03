@@ -59,6 +59,31 @@ pub function counted_release_body(r: irtables.LowerResult): boolean {
     && r.ops[n - 1].kind_tag == ir.op_return().kind_tag;
 }
 
+// nominal_release_drop is the drop helper a counted release runs on a unique
+// box when its body is exactly that call and the box's own release, the shape
+// a named type's release takes; "" for any other body.
+pub function nominal_release_drop(r: irtables.LowerResult): string {
+  if (!counted_release_body(r) || r.ops.len() != 12) {
+    return "";
+  }
+  let o: ir.Op[] = r.ops;
+  let k_load: i32 = ir.op_load_local(0).kind_tag;
+  let k_call: i32 = ir.op_call_direct("", 1).kind_tag;
+  if (o[0].kind_tag != k_load || o[0].i32_imm != 0 || o[3].kind_tag != k_load || o[3].i32_imm != 0) {
+    return "";
+  }
+  if (o[1].kind_tag != k_call || o[1].str != "__fern_rc_is_unique" || o[2].kind_tag != ir.op_if(0).kind_tag) {
+    return "";
+  }
+  if (o[4].kind_tag != k_call || o[4].i32_imm != 1 || !util.str_has_prefix(o[4].str, "__sem_drop_")) {
+    return "";
+  }
+  if (o[5].kind_tag != ir.op_drop().kind_tag || o[6].kind_tag != ir.op_end().kind_tag) {
+    return "";
+  }
+  return o[4].str;
+}
+
 // is_array_type reports whether a type string denotes an array (ends "[]").
 function is_array_type(t: string): boolean {
   let n: i32 = t.len();

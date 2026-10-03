@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Array-of-string[] (`string[][]`) inner-buffer reclamation (RC-Perceus).
@@ -68,9 +66,6 @@ func TestArm64ArrayOfStrReclaim(t *testing.T) {
 }
 
 func TestWASMArrayOfStrReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, arrOfStrBumpSrc("50"))
 	large := runWasm(t, arrOfStrBumpSrc("5000"))
 	if small != large {

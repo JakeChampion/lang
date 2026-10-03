@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Regression for #4376: a string accumulator initialised from a bare string
@@ -54,9 +52,6 @@ func heapBumpStrLiteralAccumSrc(n string) string {
 }
 
 func TestWASMHeapBumpStrLiteralAccumBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	// Both N are well past the ~5000-iteration point where the reclaimed
 	// high-water plateaus, so a working reclaim gives EQUAL bytes while a leak
 	// grows 4x (640000 -> 2560000).

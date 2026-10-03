@@ -3,8 +3,6 @@ package e2e
 import (
 	"fmt"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // The array-push element move used to be disabled by ANY `return` / `break` /
@@ -87,19 +85,14 @@ func runPushEarlyExitChecks(t *testing.T, run func(*testing.T, string) int) {
 }
 
 func TestX86_64ArrayPushEarlyExitReclaim(t *testing.T) {
-	ast.RcFreeEnabled = true
 	runPushEarlyExitChecks(t, mustRunX86_64FreeOn)
 }
 
 func TestArm64ArrayPushEarlyExitReclaim(t *testing.T) {
-	ast.RcFreeEnabled = true
 	runPushEarlyExitChecks(t, mustRunArm64FreeOn)
 }
 
 func TestWASMArrayPushEarlyExitReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	runPushEarlyExitChecks(t, func(t *testing.T, src string) int {
 		return runWasm(t, src)
 	})

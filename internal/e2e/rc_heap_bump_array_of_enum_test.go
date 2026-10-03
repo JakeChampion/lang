@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Array-of-enum (`E[]`) element reclamation (RC-Perceus). Arrays of
@@ -84,9 +82,6 @@ func TestArm64ArrayOfEnumReclaim(t *testing.T) {
 }
 
 func TestWASMArrayOfEnumReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, arrOfEnumBumpSrc("50"))
 	large := runWasm(t, arrOfEnumBumpSrc("5000"))
 	if small != large {

@@ -8,9 +8,9 @@ import "testing"
 // rewrite reorders when each node's payload is written, so a mis-placed hole
 // or a mis-ordered arm chain shows up as a wrong list rather than a crash.
 //
-// `withTrmc` + the MatchesNoTrmc legs are the real gate: the same source must
-// produce the same answer with the transform off, so a widened shape that
-// lowers wrong cannot hide behind a self-consistent expectation.
+// TestInterpTrmcWidened is the real gate: the interpreter, which has no TRMC,
+// must produce the same answer, so a widened shape that lowers wrong cannot
+// hide behind a self-consistent expectation.
 //
 // build_signed(6) = [-5, 4, -3, 2, -1, 0] (sum -3).
 const trmcWidenSrc = `enum List { Cons(i32, List), Nil }
@@ -95,29 +95,26 @@ function main(): i32 {
 }`
 
 func TestX86_64TrmcWidened(t *testing.T) {
-	var on, off int
-	withTrmc(true, func() { _, on = compileAndRunX86_64FreeOn(t, trmcWidenSrc) })
-	withTrmc(false, func() { _, off = compileAndRunX86_64FreeOn(t, trmcWidenSrc) })
-	if on != 0 || off != 0 {
-		t.Errorf("widened TRMC on=%d off=%d, want both 0", on, off)
+	if _, code := compileAndRunX86_64FreeOn(t, trmcWidenSrc); code != 0 {
+		t.Errorf("widened TRMC: got %d, want 0", code)
 	}
 }
 
 func TestArm64TrmcWidened(t *testing.T) {
-	var on, off int
-	withTrmc(true, func() { _, on = compileAndRunArm64FreeOn(t, trmcWidenSrc) })
-	withTrmc(false, func() { _, off = compileAndRunArm64FreeOn(t, trmcWidenSrc) })
-	if on != 0 || off != 0 {
-		t.Errorf("widened TRMC on=%d off=%d, want both 0", on, off)
+	if _, code := compileAndRunArm64FreeOn(t, trmcWidenSrc); code != 0 {
+		t.Errorf("widened TRMC: got %d, want 0", code)
 	}
 }
 
 func TestWASMTrmcWidened(t *testing.T) {
-	var on, off int
-	withTrmc(true, func() { on = runWasm(t, trmcWidenSrc) })
-	withTrmc(false, func() { off = runWasm(t, trmcWidenSrc) })
-	if on != 0 || off != 0 {
-		t.Errorf("widened TRMC on=%d off=%d, want both 0", on, off)
+	if got := runWasm(t, trmcWidenSrc); got != 0 {
+		t.Errorf("widened TRMC: got %d, want 0", got)
+	}
+}
+
+func TestInterpTrmcWidened(t *testing.T) {
+	if got := runInterpExit(t, trmcWidenSrc); got != 0 {
+		t.Errorf("widened TRMC under the interpreter: got %d, want 0", got)
 	}
 }
 
@@ -139,19 +136,8 @@ function main(): i32 {
 }`
 
 func TestX86_64TrmcWidenedDeepStack(t *testing.T) {
-	var on, off int
-	withTrmc(true, func() {
-		bin, _ := compileX86_64FreeOn(t, trmcWidenDeepSrc)
-		on = runWithStackLimit(t, 16*1024, bin, false)
-	})
-	withTrmc(false, func() {
-		bin, _ := compileX86_64FreeOn(t, trmcWidenDeepSrc)
-		off = runWithStackLimit(t, 16*1024, bin, true)
-	})
-	if on != 0 {
-		t.Errorf("TRMC on: deep filter should succeed, got %d", on)
-	}
-	if off == 0 {
-		t.Errorf("TRMC off: deep filter should overflow the stack, but got 0 (TRMC may not be the reason on succeeds)")
+	bin, _ := compileX86_64FreeOn(t, trmcWidenDeepSrc)
+	if code := runWithStackLimit(t, 16*1024, bin, false); code != 0 {
+		t.Errorf("deep filter should succeed in a 16 MiB stack, got %d", code)
 	}
 }

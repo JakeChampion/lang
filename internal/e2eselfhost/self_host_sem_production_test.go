@@ -7596,6 +7596,30 @@ function main(): i32 {
 }
 `
 
+// semSpreadTwoWithsSource rebuilds a record with two fields written, the
+// second's value read from its own field through a short-circuit, so that
+// read is in a later block than the first field's take.
+const semSpreadTwoWithsSource = `
+struct C { fds: i64[], t: i64[], k: boolean[] }
+
+@noinline function respond(c: C, at: i32, v: i64, keep: boolean): C {
+  return C { ...c, t: c.t.with(at, v), k: c.k.with(at, c.k[at] && keep) };
+}
+
+function main(): i32 {
+  let c: C = C { fds: [1 as i64, 2 as i64, 3 as i64, 4 as i64], t: [0 as i64, 0 as i64, 0 as i64, 0 as i64], k: [true, true, true, true] };
+  let r: i32 = 0;
+  while (r < 10) {
+    c = respond(c, r % 4, r as i64, true);
+    r = r + 1;
+  }
+  if (!c.k[0]) {
+    return 1;
+  }
+  return 0;
+}
+`
+
 const semHeldElementSource = `
 import "std/string";
 
@@ -7662,6 +7686,10 @@ func TestSelfHostSemanticAllocationCounts(t *testing.T) {
 		// (#11203; 33 when the tuple kept the struct shared).
 		{"a-tuple-element-is-taken-past-a-later-sibling-read", 13, semTupleElementTakeSource},
 		{"a-destructured-element-is-taken-past-a-later-sibling-read", 13, semTupleDestructureTakeSource},
+		// The first field is taken past the second's read of its own field in a
+		// later block: the 4 it is built from (#11204; 14 when the first field
+		// was copied each round).
+		{"a-field-is-taken-past-a-sibling-read-in-a-later-block", 4, semSpreadTwoWithsSource},
 	} {
 		t.Run(prog.name, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "main.fern")

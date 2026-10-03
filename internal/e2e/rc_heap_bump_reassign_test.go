@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Struct reassignment-overwrite deep reclamation (RC-Perceus). A
@@ -80,9 +78,6 @@ func TestArm64StructReassignReclaim(t *testing.T) {
 }
 
 func TestWASMStructReassignReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, reassignReplacedFieldSrc("50"))
 	large := runWasm(t, reassignReplacedFieldSrc("5000"))
 	if small != large {

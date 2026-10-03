@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Array self-reassign reclamation — `a = a.append(x)` in a loop.
@@ -51,7 +49,6 @@ function main(): i32 {
 }
 
 func TestX86_64ArraySelfReassignReclaim(t *testing.T) {
-	ast.RcFreeEnabled = true
 	small := mustRunX86_64FreeOn(t, arrSelfReassignSrc("20"))
 	large := mustRunX86_64FreeOn(t, arrSelfReassignSrc("400"))
 	if small == 201 || large == 201 {

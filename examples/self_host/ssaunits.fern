@@ -1482,17 +1482,34 @@ function projection_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], d
   if (b.term.kind_tag == 1 && b.term.value == root) {
     return none;
   }
+  // The instruction's own other operands read the record as the callee or
+  // the op sees it, after the field is taken or grown.
+  for arg in b.insts[pos].args {
+    if (arg != v && reaches_past_field(a, defs, root, get.imm, arg)) {
+      return none;
+    }
+  }
   let w: i32 = 0;
   while (w < f.graph.nvals) {
-    if (w != root && reads(a, w, root) && used_after(f, a, bi, pos, w)) {
-      let hop: i32 = first_hop(a, w, root);
-      if (hop < 0 || !other_field_get(defs[hop], root, get.imm)) {
-        return none;
-      }
+    if (w != root && reaches_past_field(a, defs, root, get.imm, w) && used_after(f, a, bi, pos, w)) {
+      return none;
     }
     w = w + 1;
   }
   return root;
+}
+
+// Whether `w` reaches the record `root` other than through a read of one of
+// its fields other than `field`.
+function reaches_past_field(a: ssasem.Analysis, defs: ssa.SInst[], root: i32, field: i32, w: i32): boolean {
+  if (w == root) {
+    return true;
+  }
+  if (!reads(a, w, root)) {
+    return false;
+  }
+  let hop: i32 = first_hop(a, w, root);
+  return hop < 0 || !other_field_get(defs[hop], root, field);
 }
 
 function other_tuple_get(ins: ssa.SInst, root: i32, field: i32): boolean {
@@ -2032,11 +2049,11 @@ function needed_past(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: 
 
 // A block after bi reads v. The walk stops at the block defining v — a loop's
 // header, for a phi — since past that definition v is a new value, and only a
-// phi operand there can still read the old one. A tuple take lets a later read
-// of another of v's elements through, as `reached_past_take` does: the scalar
-// a tuple carries beside what was taken keeps it live, not the slot taken. A
-// read of the taken slot itself still counts, so a take a loop would run again
-// on the same tuple is refused.
+// phi operand there can still read the old one. A later read of another of
+// v's slots is let through, as `reached_past_take` and `read_later_in_block`
+// do: what keeps v live is then not the slot taken. A read of the taken slot
+// itself still counts, so a take a loop would run again on the same box is
+// refused.
 function named_after(f: ssasem.Func, fl: ssalive.Flow, bi: i32, v: i32, take: ssa.SInst): boolean {
   let seen: boolean[] = bits(f.graph.blocks.len());
   let work: i32[] = [];
@@ -2087,9 +2104,8 @@ function phi_reads(blk: ssa.SBlock, v: i32): boolean {
 }
 
 function block_reads(blk: ssa.SBlock, v: i32, take: ssa.SInst): boolean {
-  let element: boolean = take.kind_tag == ssasem.tuple_get();
   for ins in blk.insts {
-    if (ssa.reads_value(ins, v) && !(element && other_slot_get(ins, take))) {
+    if (ssa.reads_value(ins, v) && !other_slot_get(ins, take)) {
       return true;
     }
   }

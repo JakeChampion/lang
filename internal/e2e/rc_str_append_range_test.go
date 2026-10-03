@@ -3,8 +3,6 @@ package e2e
 import (
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #8770 — end-to-end benefit and safety of `__fern_str_append_range`, the
@@ -102,9 +100,6 @@ xyxyxyxyxy
 // over-release probe: a buffer freed while still aliased shows up as
 // frees > allocs, or as corrupted output.
 func TestX86_64StrAppendRangeCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strAppendRangeCorrectnessSrc)
 	if code != 0 {
@@ -122,9 +117,6 @@ func TestX86_64StrAppendRangeCorrect(t *testing.T) {
 // TestWASMStrAppendRangeCorrect is the two-word (wasm) sibling, where the
 // in-place path returns (a_data, la+lb) with the buffer's rc left at 1.
 func TestWASMStrAppendRangeCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	if got := runWasmCapturingStdout(t, strAppendRangeCorrectnessSrc); got != strAppendRangeWant {
 		t.Errorf("wasm fused range append output =\n%q\nwant\n%q", got, strAppendRangeWant)
@@ -135,9 +127,6 @@ func TestWASMStrAppendRangeCorrect(t *testing.T) {
 // census: the fused helper's fallback releases BOTH the consumed accumulator
 // and the range it materialised, and only that census sees the second one.
 func TestWASMStrAppendRangeBalanced(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	_, stderr, code := runLeakCheckWasm(t, strAppendRangeCorrectnessSrc, false)
 	if code != 0 {
@@ -154,9 +143,6 @@ func TestWASMStrAppendRangeBalanced(t *testing.T) {
 // fallback releases BOTH the consumed accumulator and the range it
 // materialised.
 func TestArm64StrAppendRangeCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckArm64(t, strAppendRangeCorrectnessSrc)
 	if code != 0 {
@@ -172,9 +158,6 @@ func TestArm64StrAppendRangeCorrect(t *testing.T) {
 }
 
 func TestArm64StrAppendRangeAllocsCollapse(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckArm64(t, strAppendRangeAllocSrc)
 	if code != 0 {
@@ -214,9 +197,6 @@ const strAppendRangeAllocSrc = `function main(): i32 {
 // size-class steps, which the fusion does not change. The assertion is the
 // invariant rather than the exact number: no allocation per append.
 func TestX86_64StrAppendRangeAllocsCollapse(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strAppendRangeAllocSrc)
 	if code != 0 {
@@ -232,9 +212,6 @@ func TestX86_64StrAppendRangeAllocsCollapse(t *testing.T) {
 }
 
 func TestWASMStrAppendRangeAllocsCollapse(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	_, stderr, code := runLeakCheckWasm(t, strAppendRangeAllocSrc, false)
 	if code != 0 {
@@ -299,9 +276,6 @@ const strAppendWidePieceSrc = `function main(): i32 {
 }`
 
 func TestStrAppendWidePiece(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	t.Run("x86_64", func(t *testing.T) {
 		_, stderr, code := runLeakCheckX86_64(t, strAppendWidePieceSrc)

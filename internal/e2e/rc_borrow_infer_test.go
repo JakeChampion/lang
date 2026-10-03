@@ -45,9 +45,6 @@ func TestArm64BorrowInferMatchesOwned(t *testing.T) {
 
 func TestWASMBorrowInferMatchesOwned(t *testing.T) {
 	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
-		prev := ast.RcFreeEnabled
-		defer func() { ast.RcFreeEnabled = prev }()
-		ast.RcFreeEnabled = true
 		pb := ast.BorrowInferEnabled
 		defer func() { ast.BorrowInferEnabled = pb }()
 		ast.BorrowInferEnabled = false

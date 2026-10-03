@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Enum reuse-path payload reclamation (RC-Perceus, the enum analog of 5f).
@@ -114,9 +112,6 @@ func TestArm64EnumReusePayloadReclaim(t *testing.T) {
 }
 
 func TestWASMEnumReusePayloadReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, enumReusePayloadBumpSrc("50"))
 	large := runWasm(t, enumReusePayloadBumpSrc("5000"))
 	if small != large {

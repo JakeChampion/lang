@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // The heap-box match-scrutinee reclaim refused the WHOLE match as soon as any
@@ -189,9 +187,6 @@ func TestArm64BoxedScrutineePtrPayloadReclaim(t *testing.T) {
 }
 
 func TestWASMBoxedScrutineePtrPayloadReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, mk := range boxedPtrPayloadSrcs {
 		if code := runWasm(t, mk()); code != 0 {
 			t.Errorf("boxed pointer-payload: code=%d (98=grows, 97=value)", code)
