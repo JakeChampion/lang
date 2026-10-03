@@ -886,8 +886,8 @@ listed in the migration audit above.
 allocating or constructing a string. It returns the first matching byte index
 at or after `from`, or `-1`. Negative starts clamp to zero; starts at or past
 the end and byte values outside 0..255 return `-1`. Packed native arrays use
-the existing vector scan kernels. The self-hosted compiler's unpacked arrays
-use a bounded slot scan, including its four-byte WebAssembly element slots.
+the existing vector scan kernels. Unpacked native arrays use bounded slot
+reads; the primary WebAssembly implementation reads packed byte payloads.
 
 `__rmemchr_bytes(bytes, byte, from)` searches backward in a borrowed array.
 Oversized starts clamp to the final index; negative starts and invalid
@@ -898,6 +898,12 @@ bounded slot scans for unpacked arrays.
 without allocating or constructing text. Invalid byte values return zero.
 Packed native arrays reuse vector kernels; unpacked arrays use bounded
 element-slot scans.
+
+`__scan_set_bytes(bytes, from, set)` searches for a nonzero membership
+entry; `__count_runs_bytes(bytes, inside, set)` counts transitions into
+membership. Both borrow their byte arrays without constructing text.
+Target, ownership, size and native measurement evidence is recorded in
+[the membership-scan report](STRING-BYTE-SET-SCANS-2026-10-03.md).
 
 `head` and `tail` use raw byte input, delimiter scans and output. Their
 shared hold retains input blocks with a 64-bit byte count and releases
@@ -939,6 +945,20 @@ without payloads release their temporary path. File-flags and symlink-read
 helpers release scratch storage on both success and failure. Repeated
 heap-path tests check the core-module allocation census, with additional
 component coverage for file reads and writes.
+
+`paste` keeps serial and parallel input chunks, pending column delimiters
+and the shared stdin cursor as bytes. Delimiter cycling preserves each byte
+of a UTF-8 option and skips NUL entries without changing the cycle.
+Target, ownership, size and native measurement evidence is recorded in
+[the paste report](STRING-PASTE-BYTES-2026-10-03.md).
+
+BRE patterns retain required literal prefixes as bytes, including prefixes
+that end within a scalar. Its raw-input APIs share the text matching engine
+and return byte offsets. `tac` uses these APIs for regex separators and raw
+scans for literal separators; seekable windows, held streams and output
+remain bytes. Target, ownership, size and native measurement evidence is
+recorded in [the BRE report](STRING-BRE-BYTES-2026-10-03.md) and
+[the tac report](STRING-TAC-BYTES-2026-10-03.md).
 
 `Reader.read_chunk_bytes(n): Result[u8[], IoError]` provides owned raw input
 on the bootstrap interpreter and native/wasm backends, and on the self-hosted
