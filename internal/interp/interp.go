@@ -1349,6 +1349,8 @@ func New() *Interp {
 	i.Builtins["priority"] = &Builtin{Fn: builtinPriority}
 	i.Builtins["set_priority"] = &Builtin{Fn: builtinSetPriority}
 	i.Builtins["rename"] = &Builtin{Fn: builtinRename}
+	i.Builtins["rename_noreplace"] = &Builtin{Fn: builtinRenameNoreplace}
+	i.Builtins["rename_exchange"] = &Builtin{Fn: builtinRenameExchange}
 	i.Builtins["chmod"] = &Builtin{Fn: builtinChmod}
 	i.Builtins["chmod_at"] = &Builtin{Fn: builtinChmodAt}
 	i.Builtins["truncate"] = &Builtin{Fn: builtinTruncate}
@@ -4161,6 +4163,25 @@ func builtinRename(_ *Interp, args []Value) (Value, error) {
 	// The IoError names the destination: EXDEV, ENOTEMPTY and EISDIR
 	// are all properties of where the entry was going.
 	return ioResult(p[1], syscall.Rename(p[0], p[1])), nil
+}
+
+// builtinRenameNoreplace is rename that refuses an existing destination
+// with EEXIST, in the same kernel call.
+func builtinRenameNoreplace(_ *Interp, args []Value) (Value, error) {
+	p, err := pathArgs("rename_noreplace", args, 2)
+	if err != nil {
+		return nil, err
+	}
+	return ioResult(p[1], renameNoReplace(p[0], p[1])), nil
+}
+
+// builtinRenameExchange swaps two existing names atomically.
+func builtinRenameExchange(_ *Interp, args []Value) (Value, error) {
+	p, err := pathArgs("rename_exchange", args, 2)
+	if err != nil {
+		return nil, err
+	}
+	return ioResult(p[1], renameExchangeNames(p[0], p[1])), nil
 }
 
 // builtinChmod sets the permission bits of an existing entry. The umask

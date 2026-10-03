@@ -3480,19 +3480,10 @@ LONGER file's line first whichever order the operands are given in. Within one
 file the tie-break is a real offset comparison and is compared in full; the
 one case that pairs two files gives them distinct words instead.
 
-**`mv --exchange` is three renames rather than one (#9784).** 9.5 added the
-option, and GNU does it in a single `renameat2 (…, RENAME_EXCHANGE)`. Fern's
-`rename` has no flag word — the checker's note on it records that a flag one
-target honours and two refuse belongs to the capability system — so
-`mv.fern` renames the source aside, the destination onto the source, and the
-aside name onto the destination, undoing the first when the second fails. The
-tree left behind is the same and every corpus case compares equal; what
-differs is that a crash between the renames can leave `.mv_exchange.N` behind,
-and that a filesystem GNU would refuse for want of `RENAME_EXCHANGE` support
-is one three plain renames do not need.
-
-GNU's own failure line on that path is unmatched, and it is a bug rather than
-a divergence invented here: `mv.c` sets `x.rename_errno` only when
+**`mv --exchange` reports a failure's real errno.** Both do the swap in one
+kernel call — `rename_exchange` is `renameat2 (…, RENAME_EXCHANGE)`, as GNU's
+is — but GNU's failure line on that path is a bug rather than a divergence
+invented here: `mv.c` sets `x.rename_errno` only when
 `n_files == 2 && !x.exchange`, so an `--exchange` that fails reports the `-1`
 sentinel — `cannot exchange 'a' and 'nosuch': Unknown error -1`, measured.
 Fern names the real errno, and no corpus case pairs `--exchange` with a

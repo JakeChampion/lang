@@ -1451,6 +1451,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"priority":                         emitPriorityHelper,
 	"set_priority":                     emitSetPriorityHelper,
 	"rename":                           emitRenameHelper,
+	"rename_noreplace":                 emitRenameNoreplaceHelper,
+	"rename_exchange":                  emitRenameExchangeHelper,
 	"chmod":                            emitChmodHelper,
 	"chmod_at":                         emitChmodAtHelper,
 	"truncate":                         emitTruncateHelper,
@@ -4292,6 +4294,8 @@ var runtimeHelperDeps = map[string][]string{
 	"create_symlink":                   {"__fern_io_error", "__fern_rc_inc"},
 	"read_link":                        {"__fern_io_error", "__fern_rc_inc"},
 	"rename":                           {"__fern_io_error", "__fern_rc_inc"},
+	"rename_noreplace":                 {"__fern_io_error", "__fern_rc_inc"},
+	"rename_exchange":                  {"__fern_io_error", "__fern_rc_inc"},
 	"chmod":                            {"__fern_io_error", "__fern_rc_inc"},
 	"chmod_at":                         {"__fern_io_error", "__fern_rc_inc"},
 	"signal_send":                      {"__fern_io_error"},
@@ -4407,6 +4411,8 @@ var heapUsingHelpers = map[string]bool{
 	"create_symlink":                   true,
 	"read_link":                        true,
 	"rename":                           true,
+	"rename_noreplace":                 true,
+	"rename_exchange":                  true,
 	"chmod":                            true,
 	"chmod_at":                         true,
 	"signal_send":                      true,
@@ -7269,6 +7275,29 @@ func emitRenameHelper(w func(string, ...any)) {
 		w("\tmov x2, #100")
 		w("\tneg x2, x2")
 		w("\tmov x3, x22")
+	})(w)
+}
+
+// emitRenameNoreplaceHelper and emitRenameExchangeHelper write
+// renameat2(AT_FDCWD, from, AT_FDCWD, to, flags) with RENAME_NOREPLACE (1)
+// or RENAME_EXCHANGE (2): the condition held in the same call as the rename.
+func emitRenameNoreplaceHelper(w func(string, ...any)) {
+	emitRenameFlagsHelper(w, "rename_noreplace", "rnnr", 1)
+}
+
+func emitRenameExchangeHelper(w func(string, ...any)) {
+	emitRenameFlagsHelper(w, "rename_exchange", "rnex", 2)
+}
+
+func emitRenameFlagsHelper(w func(string, ...any), name, tag string, flags int) {
+	emitPathOpHelper(name, tag, 276, 2, 0, func(w func(string, ...any)) {
+		w("\tmov x0, #100")
+		w("\tneg x0, x0")
+		w("\tmov x1, x20")
+		w("\tmov x2, #100")
+		w("\tneg x2, x2")
+		w("\tmov x3, x22")
+		w("\tmov x4, #%d", flags)
 	})(w)
 }
 
