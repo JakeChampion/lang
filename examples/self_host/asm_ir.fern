@@ -8570,20 +8570,32 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
   s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n    .cfi_startproc\n");
   s = s.write(ssa_entry_shim(f, asmcore.sanitize_label(label_name)));
   s = ssa_release_entry(r, lp, s);
-  s = s.write("    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n    movq %rsp, %rbp\n    .cfi_def_cfa_register %rbp\n");
   let saved: i32[] = ssa_saved_regs(reg_of);
   let save: i32 = 8 * saved.len();
-  s = s.write(ssa_save_asm(saved));
   let views: i32[] = ssa_view_slots(f);
-  let fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), views: views, blk_pos: ssa.block_positions(f), uses: ssa.use_counts(f), nsave: save, epilogue: ssa_epilogue_for(saved), imm: imm, lit0: ssa.literal_first_bytes(f) };
+  let nspill: i32 = ssa.spill_count(reg_of);
+  // A function with no frame slots that might make no call is emitted into a
+  // buffer first, behind a placeholder for its epilogue; its text decides
+  // whether it needs %rbp at all.
+  let leaf: boolean = nspill == 0 && ssa_view_count(views) == 0 && !hev_on() && !ssa.calls_out(f);
+  let epilogue: string = ssa_epilogue_for(saved);
+  if (leaf) {
+    epilogue = ssa_epilogue_mark();
+  }
+  let fr: SsaFrame = SsaFrame { nspill: nspill, views: views, blk_pos: ssa.block_positions(f), uses: ssa.use_counts(f), nsave: save, epilogue: epilogue, imm: imm, lit0: ssa.literal_first_bytes(f) };
   let frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
   // %rsp is 16-byte aligned at a call when the pushes and the frame together
   // are a multiple of 16.
   if ((frame + save) % 16 != 0) {
     frame = frame + 8;
   }
-  if (frame > 0) {
-    s = s.write("    subq $" + util.i32_to_string(frame) + ", %rsp\n");
+  let outer: usize = s.capture;
+  let body: usize = 0 as usize;
+  if (leaf) {
+    body = buf_new(4096);
+    s = asmcore.EmitState { ...s, capture: body };
+  } else {
+    s = s.write(ssa_frame_asm(saved, frame));
   }
   s = asmcore.EmitState { ...s, ssa_save: save };
   s = ssa_load_params(f, reg_of, s);
@@ -8609,8 +8621,105 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
     s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
     bi = bi + 1;
   }
+  if (leaf) {
+    let text: string = buf_take(body);
+    s = asmcore.EmitState { ...s, capture: outer };
+    if (ssa_needs_frame(text)) {
+      s = s.write(ssa_frame_asm(saved, frame));
+      s = s.write(ssa_replace_all(text, ssa_epilogue_mark(), ssa_epilogue_for(saved)));
+    } else {
+      s = s.write(ssa_leaf_save_asm(saved));
+      s = s.write(ssa_replace_all(text, ssa_epilogue_mark(), ssa_leaf_epilogue(saved)));
+    }
+  }
   s = asmcore.EmitState { ...s, ssa_save: 0 };
   return s.write("    .cfi_endproc\n");
+}
+
+// ssa_frame_asm builds the %rbp frame: the saved registers pushed under it and
+// `frame` bytes of slots below them.
+function ssa_frame_asm(saved: i32[], frame: i32): string {
+  let out: string = "    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n    movq %rsp, %rbp\n    .cfi_def_cfa_register %rbp\n";
+  out = out + ssa_save_asm(saved);
+  if (frame > 0) {
+    out = out + "    subq $" + util.i32_to_string(frame) + ", %rsp\n";
+  }
+  return out;
+}
+
+// ssa_epilogue_mark stands for a buffered function's epilogue until its
+// frame is chosen.
+function ssa_epilogue_mark(): string {
+  return "    .ssa_epilogue\n";
+}
+
+// ssa_needs_frame reports a buffered body with an instruction that calls,
+// pushes, pops or names either frame register. One with none of these runs
+// with no frame: it has no slots, and makes no call that would need %rsp
+// aligned. Labels are skipped, since each carries the function's name.
+function ssa_needs_frame(text: string): boolean {
+  let start: i32 = 0;
+  while (start < text.len()) {
+    let end: i32 = start;
+    while (end < text.len() && text[end] != 10) {
+      end = end + 1;
+    }
+    let line: string = slice_unchecked(text, start, end) + "";
+    if (util.str_has_prefix(line, "    ") && ssa_line_needs_frame(line)) {
+      return true;
+    }
+    start = end + 1;
+  }
+  return false;
+}
+
+function ssa_line_needs_frame(line: string): boolean {
+  for m in ["    call", "    push", "    pop"] {
+    if (util.str_has_prefix(line, m)) {
+      return true;
+    }
+  }
+  return util.index_of_sub(line, "%rbp") >= 0 || util.index_of_sub(line, "%rsp") >= 0;
+}
+
+// ssa_leaf_save_asm pushes the saved registers of a function with no frame,
+// with the canonical frame address following %rsp.
+function ssa_leaf_save_asm(saved: i32[]): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < saved.len()) {
+    let off: string = util.i32_to_string(16 + 8 * i);
+    out = out + "    pushq " + ssa_reg(saved[i]) + "\n    .cfi_def_cfa_offset " + off + "\n    .cfi_offset " + ssa_reg(saved[i]) + ", -" + off + "\n";
+    i = i + 1;
+  }
+  return out;
+}
+
+// ssa_leaf_epilogue pops what ssa_leaf_save_asm pushed and returns.
+function ssa_leaf_epilogue(saved: i32[]): string {
+  if (saved.len() == 0) {
+    return "    ret\n";
+  }
+  let out: string = "    .cfi_remember_state\n";
+  let i: i32 = saved.len() - 1;
+  while (i >= 0) {
+    out = out + "    popq " + ssa_reg(saved[i]) + "\n    .cfi_def_cfa_offset " + util.i32_to_string(8 + 8 * i) + "\n";
+    i = i - 1;
+  }
+  return out + "    ret\n    .cfi_restore_state\n";
+}
+
+// ssa_replace_all is text with every occurrence of mark replaced by with.
+function ssa_replace_all(text: string, mark: string, with: string): string {
+  let out: string = "";
+  let rest: string = text;
+  let at: i32 = util.index_of_sub(rest, mark);
+  while (at >= 0) {
+    out = out + slice_unchecked(rest, 0, at) + with;
+    rest = slice_unchecked(rest, at + mark.len(), rest.len()) + "";
+    at = util.index_of_sub(rest, mark);
+  }
+  return out + rest;
 }
 
 // emit_ssa_function emits one lowered function through the register path,
