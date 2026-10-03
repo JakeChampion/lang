@@ -5404,22 +5404,6 @@ pub function field_type_tag_in(struct_name: string, field: string, s: EmitState)
   return ty_unknown();
 }
 
-pub function field_type_tag(field: string, s: EmitState): Ty {
-  let di: i32 = 0;
-  while (di < s.struct_decls.decls.len()) {
-    let sd: parser.StructDecl = s.struct_decls.decls[di];
-    let fi: i32 = 0;
-    while (fi < sd.fields.len()) {
-      if (sd.fields[fi].name == field) {
-        return ty_from_name(sd.fields[fi].type_name);
-      }
-      fi = fi + 1;
-    }
-    di = di + 1;
-  }
-  return ty_unknown();
-}
-
 pub function struct_local_tag(type_name: string, s: EmitState): Ty {
   let bi: i32 = 0;
   while (bi < type_name.len()) {
@@ -7773,9 +7757,9 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
       return src;
     },
     ast.ExprFieldAccess(fa) => {
-      // Resolve within the receiver's struct when its type is a
-      // known struct name (match-bound variant payloads); else
-      // fall back to the first-match field scan. See asm.fern.
+      // Resolve within the receiver's struct when its type is a known
+      // struct name; an object the gate cannot type reads as unknown, never
+      // as the first struct that happens to spell the field (#11066).
       let frt: Ty = infer_expr_type(fa.obj, s);
       let di: i32 = 0;
       while (di < s.struct_decls.decls.len()) {
@@ -7784,7 +7768,7 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
         }
         di = di + 1;
       }
-      return field_type_tag(fa.field, s);
+      return ty_unknown();
     },
     ast.ExprUnknown(_) => {
       return ty_unknown();
@@ -8981,6 +8965,8 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
                 ),
                 diags: ctx.diags,
               };
+            } else {
+              actx = CheckCtx { st: bind_variant_payloads(pv, ctx.st), diags: ctx.diags };
             }
           },
           ast.PatWildcard(_) => {}
@@ -8997,6 +8983,65 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
     }
   }
   return ctx;
+}
+
+// bind_variant_payloads binds a user variant pattern's names at the types
+// its declaration gives them — each payload position's type, or the member
+// struct itself for a struct-union arm — so a field read through one
+// resolves within that struct (#11066). A variant the table cannot settle
+// to one declaration (a name two enums share with no owner spelled, a
+// module-qualified head, a mismatched arity) binds its names unknown.
+function bind_variant_payloads(pv: ast.PatVariant, st: EmitState): EmitState {
+  let name: string = pv.type_name;
+  let owner: string = "";
+  let dot: i32 = util.index_of_sub(name, ".");
+  if (dot >= 0) {
+    owner = slice_unchecked(name, 0, dot) + "";
+    name = slice_unchecked(name, dot + 1, name.len()) + "";
+  }
+  let di: i32 = 0 - 1;
+  if (owner.len() > 0) {
+    di = irtables.variant_decl_index(st.struct_decls, name, owner);
+  } else {
+    di = irtables.stab_first(st.struct_decls, name);
+    if (di >= 0 && irtables.stab_next(st.struct_decls, di, name) >= 0) {
+      di = 0 - 1;
+    }
+  }
+  let names: string[] = [];
+  if (pv.binding.len() > 0 && pv.binding != "_") {
+    names = names.append(pv.binding);
+  }
+  for extra in pv.extra_bindings {
+    if (extra.len() > 0 && extra != "_") {
+      names = names.append(extra);
+    }
+  }
+  let out: EmitState = st;
+  if (di < 0 || st.struct_decls.decls[di].enum_owner.len() == 0) {
+    for nm in names {
+      out = out.bind_local_typed(nm, ty_unknown());
+    }
+    return out;
+  }
+  let sd: parser.StructDecl = st.struct_decls.decls[di];
+  let payloaded: boolean = sd.fields.len() > 0 && sd.fields[0].name == "__ev";
+  if (!payloaded) {
+    for nm in names {
+      out = out.bind_local_typed(nm, struct_local_tag(sd.name, st));
+    }
+    return out;
+  }
+  let k: i32 = 0;
+  while (k < names.len()) {
+    if (names.len() == sd.fields.len()) {
+      out = out.bind_local_typed(names[k], struct_local_tag(sd.fields[k].type_name, st));
+    } else {
+      out = out.bind_local_typed(names[k], ty_unknown());
+    }
+    k = k + 1;
+  }
+  return out;
 }
 
 pub function check_stmts(stmts: ast.Stmt[], want: Ty, fname: string, ctx: CheckCtx): CheckCtx {
