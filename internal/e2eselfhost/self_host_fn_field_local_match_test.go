@@ -14,7 +14,7 @@ import (
 // initialiser only, so a field-read initialiser left the local without one and
 // the match bailed the whole function — while the direct `match
 // (producer.next(i))` form, which reads the field's declared return, lowered.
-// std/http's `__chunks_joined` and std/tcp's `__tail_piece` are both this
+// std/http's `__chunks_joined` and std/serve's `__tail_piece` are both this
 // shape. The program counts the bytes of the chunks a ChunkProducer answers:
 // "ab" then "cde" then None, so it exits 5.
 func TestSelfHostMatchOnCallThroughFnFieldLocal(t *testing.T) {

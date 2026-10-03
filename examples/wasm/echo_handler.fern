@@ -3,8 +3,8 @@
 // arm64 native binaries — via the auto-`main()` synthesis:
 // programs that define `function handle(req, plat): HttpResponse`
 // without their own `main()` get a synthesised
-// `main(): i32 { return tcp_serve(__port_from_env("PORT",
-// 8080), handle); }`. wasi-http drops the synthesised main at
+// `main(): i32 { return serve.supervise(serve.__port_from_env("PORT",
+// 8080), serve.config(), handle); }`. wasi-http drops the synthesised main at
 // codegen time and uses the `wasi:http/incoming-handler.handle`
 // export wrapper instead.
 //
@@ -25,11 +25,11 @@
 // the handler builds get reclaimed at handler-return, so
 // multi-request long-running deployments don't leak.
 // HttpRequest / HttpResponse struct types live in std/http; the
-// synthesised `main()` calls into std/tcp; the f-string in
+// synthesised `main()` calls into std/serve; the f-string in
 // `body` interpolates an i32 length, which the formatter
 // dispatches through (i32).to_string from std/i32.
 import "std/http";
-import "std/tcp";
+import "std/serve";
 import "std/i32";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {

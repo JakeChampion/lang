@@ -14,7 +14,7 @@ import (
 //
 // The struct-literal half came first: without it the self-host parser bailed
 // mid-literal and cascaded into a run of ExprUnknown nodes, the sole parse gap
-// blocking std/test / std/fuzz / std/tcp from parsing cleanly (std/test's
+// blocking std/test / std/fuzz / std/serve from parsing cleanly (std/test's
 // `TestRunner` literals use the form throughout).
 //
 // The parameter half is #6354, and it survived because this corpus did not

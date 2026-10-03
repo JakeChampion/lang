@@ -3203,7 +3203,7 @@ func builtinSleepNS(_ *Interp, args []Value) (Value, error) {
 // fork(2) in a multithreaded process leaves the child with every
 // lock/state snapshot but only one thread — undefined behaviour.
 // So the interp's answer is a permanent -38 (ENOSYS). Callers
-// (std/tcp's tcp_serve_supervised) detect it and degrade to
+// (std/serve's supervise) detect it and degrade to
 // plain single-process serving, keeping the function runnable
 // under `fern -interp` and on any future fork-less target.
 func builtinProcFork(_ *Interp, args []Value) (Value, error) {

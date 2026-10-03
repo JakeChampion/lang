@@ -19,18 +19,18 @@ func TestSelfHostHandlerStateX86_64(t *testing.T) {
 	bin := buildSelfHostBin(t, gcc, dir, "checker_codes_run.fern", "checker_codes_run")
 	copySelfHostDriver(t, dir, "checker_run.fern")
 	formattedBin := buildSelfHostBin(t, gcc, dir, "checker_run.fern", "checker_run")
-	const decls = `struct ServeOptions { backlog: i32 }
-function serve_options(): ServeOptions { return ServeOptions { backlog: 128 }; }
-function __init_platform(): Platform { return Platform { version: 3, mode: 0, sink: cell_new(""), handle: 0 }; }
-function tcp_serve_supervised_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
-function tcp_serve_supervised_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
-function tcp_serve_supervised_with[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
-function tcp_serve_supervised_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
-function tcp_serve_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
-function tcp_serve_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
-function tcp_serve_with_opts[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
-function tcp_serve_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
-function __port_from_env(name: string, def: i32): i32 { return def; }
+	const decls = `struct serve__Config { backlog: i32 }
+function serve__config(): serve__Config { return serve__Config { backlog: 128 }; }
+function serve____init_platform(): Platform { return Platform { version: 3, mode: 0, sink: cell_new(""), handle: 0 }; }
+function serve__supervise(port: i32, opts: serve__Config, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
+function serve__supervise_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
+function serve__supervise_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
+function serve__supervise_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
+function serve__run(port: i32, opts: serve__Config, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
+function serve__run_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
+function serve__run_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
+function serve__run_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
+function serve____port_from_env(name: string, def: i32): i32 { return def; }
 `
 	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }`
 	const stateless = `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }`
@@ -60,10 +60,11 @@ function __port_from_env(name: string, def: i32): i32 { return def; }
 		{"stateful shutdown without init", stateless + "\nfunction shutdown(reason: string, n: i32): void { print(reason); }", hookNeedsInit},
 		{"stateless shutdown drops the state", "function init(): i32 { return 7; }\n" + stateful + "\nfunction shutdown(reason: string): void { print(reason); }", hookDropsState},
 		{"init takes the platform", "function init(plat: Platform): i32 { return 7; }\n" + stateful, ""},
-		{"init answers the options", "function init(): ServeOptions { return serve_options(); }\n" + stateless, ""},
-		{"init answers the options beside the state", "function init(plat: Platform): (ServeOptions, i32) { return (serve_options(), 7); }\n" + stateful, ""},
-		{"options are not a state", "function init(): ServeOptions { return serve_options(); }\n" + stateful, missingState},
-		{"state beside the options nobody takes", "function init(): (ServeOptions, i32) { return (serve_options(), 7); }\n" + stateless, droppedState},
+		{"init answers the config", "function init(): serve__Config { return serve__config(); }\n" + stateless, ""},
+		{"init answers the config beside the state", "function init(plat: Platform): (serve__Config, i32) { return (serve__config(), 7); }\n" + stateful, ""},
+		{"config is not a state", "function init(): serve__Config { return serve__config(); }\n" + stateful, missingState},
+		{"a Config of the program's own is a state", "struct Config { n: i32 }\nfunction init(): Config { return Config { n: 1 }; }\nfunction handle(c: Config, req: HttpRequest, plat: Platform): (Config, HttpResponse) { return (c, " + response + "); }", ""},
+		{"state beside the config nobody takes", "function init(): (serve__Config, i32) { return (serve__config(), 7); }\n" + stateless, droppedState},
 		{"init takes two parameters", "function init(plat: Platform, n: i32): i32 { return n; }\n" + stateful, initParams},
 		{"init takes something else", "function init(n: i32): i32 { return n; }\n" + stateful, initParam},
 	}

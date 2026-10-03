@@ -82,7 +82,7 @@ func TestTargetOSBranchJudgedForTheTarget(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "handler.fern")
 	if err := os.WriteFile(src, []byte(`import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (target_os() == "wasi-http") {
         return http.ok("hosted arm");

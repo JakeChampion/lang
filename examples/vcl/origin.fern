@@ -14,7 +14,7 @@
 import "std/string";
 import "std/i32";
 import "std/http";
-import "std/tcp";
+import "std/serve";
 
 function main(): i32 {
   let argv: string[] = args();
@@ -39,5 +39,5 @@ function main(): i32 {
     return http.ok(body).with_header("Cache-Control", "max-age=60");
   };
   eprint("origin: serving on port " + port.to_string());
-  return tcp.tcp_serve(port, handler);
+  return serve.run(port, serve.config(), handler);
 }

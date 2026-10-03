@@ -53,7 +53,7 @@ func TestExportWasiHttpHandlerCallsConstructorsComposes(t *testing.T) {
 	// The handler constructs an empty `fields`, builds an `outgoing-response`
 	// from it (consuming the fields handle), and returns — the response handle is
 	// a local owned handle, so it auto-drops. (Not named `handle`: that triggers
-	// the checker's tcp_serve handler-main synthesis.)
+	// the checker's handler-main synthesis.)
 	prog := `@import("wasi:http/types@0.2.0", "incoming-request")
 resource IncomingRequest;
 @import("wasi:http/types@0.2.0", "response-outparam")

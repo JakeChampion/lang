@@ -15285,7 +15285,7 @@ function handler_state_diags(mod: parser.Module): util.Diag[] {
     if (init_fd.params.len() > 1 || init_fd.params.len() == 1 && init_fd.params[0].type_name != "Platform") {
       return [dg_at("E075", "`init` takes " + util.i32_to_string(init_fd.params.len()) + " parameters; it takes none, or the platform alone", init_fd.line, init_fd.col)];
     }
-    let kind: i32 = parser.init_return_kind(init_fd.ret_type);
+    let kind: i32 = parser.init_return_kind(init_fd.ret_type, parser.std_qualifier(mod, "serve"));
     returns_state = kind == 1 || kind == 3;
   }
   let handle: parser.FuncDecl = mod.funcs[handle_idx];

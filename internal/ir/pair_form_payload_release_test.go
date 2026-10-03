@@ -135,7 +135,7 @@ function main(): i32 {
 // This asserted the opposite until #8003. Refusing every escape was sufficient
 // for safety but far from necessary, and the shape it refused is the ordinary
 // one — read a value out of a match, keep it — so a fresh payload was
-// abandoned per match, which is tcp_serve's per-request recv buffer and the
+// abandoned per match, which is the serve loop's per-request recv buffer and the
 // unbounded growth behind it. The escapes that are genuinely unowned (a
 // return, a re-wrap into a constructor, a callee that hands the argument back)
 // are still refused, by the three tests around this one.

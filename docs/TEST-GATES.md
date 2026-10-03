@@ -235,8 +235,8 @@ through two workers binding their own `SO_REUSEPORT` listeners and prove
 a replacement worker binds anew after a trap.
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
-by the `TestArm64Darwin` prefix). `TestSelfHostServeOptions` serves through
-`tcp_serve_opts` with a backlog of 4 and `SO_REUSEPORT`, and prove the
+by the `TestArm64Darwin` prefix). `TestSelfHostServeConfig` serves through
+`serve.run` with a backlog of 4 and `SO_REUSEPORT`, and prove the
 option reached the kernel by binding a second `SO_REUSEPORT` socket to the
 served port while the loop answers. A wasi:cli/run
 component reports only 0 or 1, so the wasm legs read the probe's "ok" on
@@ -292,7 +292,7 @@ monotonic lower bounds, and zero live heap storage after 32 waits.
 ## HTTP handler ownership through semantic lowering
 
 `TestSelfHostHTTPHandlerCensus` and `TestSelfHostArm64DarwinHTTPHandlerCensus`
-bound the existing std/tcp accept-loop body to 32 requests and run it through
+bound the existing std/serve accept-loop body to 32 requests and run it through
 the production self-host compiler. They verify every HTTP response, require
 the compiler to produce every reachable declaration through semantic lowering,
 and require equal allocations/frees with zero live bytes. Linux x86-64, ARM64
@@ -347,9 +347,9 @@ hook: after two requests and SIGTERM the hook reports "sigterm" and the
 count; `TestSynthesisedHandleMainWiresShutdown` and
 `TestSynthesisedHandleMainTakesInitOptions` (`internal/checker`) and
 `TestSelfHostHandlerStateX86_64` pin the wiring, the `init(plat)` and
-`(ServeOptions, S)` shapes, and the E075 pairing on both compilers. The
+`(serve.Config, S)` shapes, and the E075 pairing on both compilers. The
 synthesised main serves under the supervisor, so every handler-program
-server test above runs its workers through `tcp_serve_supervised_*`; the
+server test above runs its workers through `serve.supervise*`; the
 stateful ones answer `workers: 1` from `init` so the count each request
 sees is deterministic. On wasm32-wasi, which has no processes, the
 synthesis serves single-process: `TestSynthesisedHandleMainFollowsTargetProcesses`

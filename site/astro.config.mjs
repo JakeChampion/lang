@@ -63,7 +63,7 @@ const STDLIB_GROUPS = [
     "u64"]],
   ["Files, I/O & time", ["async", "cli", "dotenv", "io", "io_buffered",
     "log", "path", "signal", "stream", "time"]],
-  ["Networking", ["dns", "fetch", "headers", "http", "net", "platform", "tcp",
+  ["Networking", ["dns", "fetch", "headers", "http", "net", "platform", "serve", "tcp",
     "wasi_http"]],
   ["Testing", ["bench", "fuzz", "mock_platform", "sim", "sim_fetch", "test"]],
   ["WebAssembly", ["wasm_component", "wasm_convert", "wasm_encode",
