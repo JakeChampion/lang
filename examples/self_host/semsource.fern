@@ -7921,7 +7921,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
   let i: i32 = 0;
   while (i < all.len() && i < names.len()) {
     if (all[i].ok && !all[i].template && !closure_body_produced(all[i]) && !ownership.names_has(taken, names[i])) {
-      rows = rows.append(ownership.Escapes { name: names[i], bits: seed_bits(all[i].func.params.len()), lends: true, cycle: 0 - 1 });
+      rows = rows.append(ownership.Escapes { name: names[i], bits: seed_bits(all[i].func.params.len()), lends: false, cycle: 0 - 1 });
       analyses = analyses.append(row_analysis(all[i]));
     } else {
       analyses = analyses.append(ssasem.refused_analysis("not produced"));
@@ -7955,8 +7955,9 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
       let at: i32 = own_row[i];
       if (all[i].ok && !all[i].template && at >= 0 && !closure_body_produced(all[i])) {
         let next: boolean[] = ownership.escaping(all[i].func, analyses[i], rows, ix);
-        if (!same_bits(rows[at].bits, next)) {
-          rows = rows.with(at, ownership.Escapes { ...rows[at], bits: next });
+        let lends: boolean = rows[at].lends || ownership.lends(all[i].func, analyses[i], rows, ix);
+        if (!same_bits(rows[at].bits, next) || lends != rows[at].lends) {
+          rows = rows.with(at, ownership.Escapes { ...rows[at], bits: next, lends: lends });
           changed = true;
         }
       }
