@@ -105,16 +105,16 @@ func emitSanitize(t *testing.T, backend, src string, on bool) string {
 // contract is "stderr only, stdout untouched").
 func runSanitizeX86_64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
-	_, runner := x86_64Tooling(t)
+	runner := e2eharness.X86_64Runner(t)
 	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetX86_64Linux, src, []string{"FERN_SANITIZE=1"})
 	return runSplit(t, runX86_64Bin(runner, bin))
 }
 
-// runSanitizeArm64 is the arm64 sibling (qemu; SKIPs without the
-// aarch64 toolchain — runs in CI).
+// runSanitizeArm64 is the arm64 sibling (qemu; SKIPs without qemu-aarch64 —
+// runs in CI).
 func runSanitizeArm64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
-	_, qemu := arm64Tooling(t)
+	qemu := e2eharness.Arm64Runner(t)
 	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetArm64Linux, src, []string{"FERN_SANITIZE=1"})
 	return runSplit(t, runArm64Bin(qemu, bin))
 }

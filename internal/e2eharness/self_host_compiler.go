@@ -154,17 +154,17 @@ func CompileWithSelfHost(t testing.TB, compiler, target, src, binPath string, we
 	})
 }
 
-// EmitAsmWithSelfHost runs `compiler -target target -emit asm` on src, with env
-// added to the compiler's environment, and returns the assembly text. It reserves what a driver build of that name
+// EmitAsmWithSelfHost runs `compiler -target target -emit asm` on src and
+// returns the assembly text. It reserves what a driver build of that name
 // takes: the compiler's own footprint dominates, and over-reserving only
 // delays another build.
-func EmitAsmWithSelfHost(t testing.TB, compiler, target, src string, env []string) string {
+func EmitAsmWithSelfHost(t testing.TB, compiler, target, src string) string {
 	t.Helper()
 	stdlib := SelfHostStdlibRoot(t)
 	asmPath := filepath.Join(t.TempDir(), "out.s")
 	err := withBuildMemory(DriverBuildWeightMB(filepath.Base(src)), func() error {
 		cmd := exec.Command(compiler, "-target", target, "-emit", "asm", "-o", asmPath, src, stdlib)
-		cmd.Env = append(os.Environ(), env...)
+		cmd.Env = ChildEnv()
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("%s -target %s -emit asm %s: %v\n%s", filepath.Base(compiler), target, filepath.Base(src), err, out)
 		}
@@ -296,10 +296,9 @@ func RunWasmCore(t testing.TB, corePath string, args ...string) *exec.Cmd {
 	return exec.Command(wasmtime, append([]string{"run", corePath}, args...)...)
 }
 
-// CompileSelfHostSource writes src to a temp dir and compiles it with the
-// current self-host compiler for target, with env added to the compiler's
-// environment (FERN_LEAKCHECK=1 or FERN_SANITIZE=1 build the instrumented
-// program). It returns the output path.
+// CompileSelfHostSource writes src to a temp dir and compiles it as
+// CompileSelfHostFile does (FERN_LEAKCHECK=1 or FERN_SANITIZE=1 in env build
+// the instrumented program). It returns the output path.
 func CompileSelfHostSource(t testing.TB, target, src string, env []string) string {
 	t.Helper()
 	srcPath := filepath.Join(t.TempDir(), "main.fern")
@@ -310,9 +309,9 @@ func CompileSelfHostSource(t testing.TB, target, src string, env []string) strin
 }
 
 // CompileSelfHostFile compiles the entry file (with the modules beside it) with
-// the current self-host compiler for target, with env added to the compiler's
-// environment, and returns the executable's path: a native binary, or a wasm
-// core module for wasm32-wasi.
+// the current self-host compiler for target, env being the only FERN_*
+// variables the compiler sees (ChildEnv), and returns the executable's path: a
+// native binary, or a wasm core module for wasm32-wasi.
 func CompileSelfHostFile(t testing.TB, target, entry string, env []string) string {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "prog")
@@ -322,7 +321,7 @@ func CompileSelfHostFile(t testing.TB, target, entry string, env []string) strin
 		args = append(args, "-emit", "core-module")
 	}
 	cmd := exec.Command(SelfHostCLI(t), append(args, "-o", out, entry, SelfHostStdlibRoot(t))...)
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = ChildEnv(env...)
 	if msg, err := cmd.CombinedOutput(); err != nil {
 		src, _ := os.ReadFile(entry)
 		t.Fatalf("SELFHOST-COMPILE-FAIL -target %s: %v\n%s\nsrc:\n%s", target, err, msg, src)

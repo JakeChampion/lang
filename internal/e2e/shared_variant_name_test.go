@@ -55,9 +55,9 @@ const emitRuns = 32
 func assertEmitDeterministic(t *testing.T, entry string) {
 	t.Helper()
 	cli := e2eharness.SelfHostCLI(t)
-	first := e2eharness.EmitAsmWithSelfHost(t, cli, e2eharness.TargetX86_64Linux, entry, nil)
+	first := e2eharness.EmitAsmWithSelfHost(t, cli, e2eharness.TargetX86_64Linux, entry)
 	for i := 1; i < emitRuns; i++ {
-		if got := e2eharness.EmitAsmWithSelfHost(t, cli, e2eharness.TargetX86_64Linux, entry, nil); got != first {
+		if got := e2eharness.EmitAsmWithSelfHost(t, cli, e2eharness.TargetX86_64Linux, entry); got != first {
 			t.Fatalf("emit %d of %d differs from the first: a variant name shared across enums or modules is resolved by an order-dependent scan", i+1, emitRuns)
 		}
 	}

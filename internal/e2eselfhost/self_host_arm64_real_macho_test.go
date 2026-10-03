@@ -44,7 +44,7 @@ func TestSelfHostArm64DarwinMachORealAsm(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			srcPath := mustWrite(t, t.TempDir(), c.name+".fern", c.src)
-			asm := e2eharness.EmitAsmWithSelfHost(t, e2eharness.Stage0Compiler(t), e2eharness.TargetArm64Darwin, srcPath, nil)
+			asm := e2eharness.EmitAsmWithSelfHost(t, e2eharness.Stage0Compiler(t), e2eharness.TargetArm64Darwin, srcPath)
 
 			bin := selfHostMachOBytes(t, c.name+"_real", arm64NativeSrc(t)+"\n"+asmToMachoDriver(asm))
 			if bytes.HasPrefix(bin, []byte("UNKNOWN:")) {
