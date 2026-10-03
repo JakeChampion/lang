@@ -1126,7 +1126,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
   let sole: i32[] = sole_readers(f);
 
   // Built the first time an interference question is asked.
-  let sites: ReadSites = ReadSites { start: [], blk: [], pos: [], succ: [] };
+  let sites: ReadSites = ReadSites { start: [], blk: [], pos: [], succ: [], phi_end: [] };
   let reg_of: i32[] = [];
   let shared_with: i32[] = [];
   i = 0;
@@ -1774,14 +1774,25 @@ function still_in(occ: i32[], hi: i32[], from: i32): i32[] {
 // its block's last instruction, and a phi reads its operand there in the
 // predecessor it arrives from. Value v's reads are entries start[v] up to
 // start[v + 1]. `succ` lists each block's successor positions.
-struct ReadSites { start: i32[], blk: i32[], pos: i32[], succ: i32[][] }
+// phi_end is, per block, the position just past its last phi.
+struct ReadSites { start: i32[], blk: i32[], pos: i32[], succ: i32[][], phi_end: i32[] }
 
 function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
   let count: i32[] = zeros(f.nvals + 1);
   let succ: i32[][] = [];
+  let phi_end: i32[] = [];
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {
     succ = succ.append(successor_positions(f, at, bi));
+    let end: i32 = 0;
+    let k: i32 = 0;
+    while (k < f.blocks[bi].insts.len()) {
+      if (f.blocks[bi].insts[k].kind_tag == 8) {
+        end = k + 1;
+      }
+      k = k + 1;
+    }
+    phi_end = phi_end.append(blk_start[bi] + end);
     bi = bi + 1;
   }
   let pass: i32 = 0;
@@ -1853,21 +1864,22 @@ function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
     }
     pass = pass + 1;
   }
-  return ReadSites { start: start, blk: blk, pos: pos, succ: succ };
+  return ReadSites { start: start, blk: blk, pos: pos, succ: succ, phi_end: phi_end };
 }
 
 // live_at_def says r is live where a is defined: some read of r is reachable
 // from there without passing r's definition. The read at a's own definition
 // comes before the write and does not count; one in a's block after it does,
-// unless r is defined between. A value with no definition, a parameter, is
-// defined before every block.
+// unless r is defined between. A block's phis are all defined at its entry,
+// whatever their order. A value with no definition, a parameter, is defined
+// before every block.
 function live_at_def(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i32[]): boolean {
   let ab: i32 = def_blk[a];
   if (r < 0 || ab < 0) {
     return true;
   }
   let rb: i32 = def_blk[r];
-  if (rb == ab && def_pos[r] > def_pos[a]) {
+  if (rb == ab && def_pos[r] > def_pos[a] && def_pos[r] >= sites.phi_end[rb]) {
     return false;
   }
   let first: i32 = sites.start[r];
