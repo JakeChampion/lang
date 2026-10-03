@@ -505,8 +505,9 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 				if got := strings.Count(outside, "call __fn___sem_drop_Acc"); got != 0 {
 					t.Errorf("%s: %d calls to the children-drop helper outside its release helper, want 0 — the update's reuse released the fields it keeps", tc.name, got)
 				}
-				if !strings.Contains(inside, "call __fn___sem_drop_Acc") {
-					t.Errorf("%s: the release helper never calls the children-drop helper", tc.name)
+				// Once in its frameless head for a sole owner, once in its body.
+				if got := strings.Count(inside, "call __fn___sem_drop_Acc"); got != 2 {
+					t.Errorf("%s: the release helper calls the children-drop helper %d times, want 2", tc.name, got)
 				}
 			}
 			asmOff, _ := emit(t, proj, tc.src, "off", "FERN_SELFHOST_NO_REUSE=1")

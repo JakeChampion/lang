@@ -112,16 +112,8 @@ func TestSelfHostLeafFrame(t *testing.T) {
 
 	for _, tg := range h.targets {
 		bin := filepath.Join(dir, tg.target+".bin")
-		cmd := exec.Command(h.cli, "-target", tg.target, "-o", bin, src, h.stdlib)
-		if combined, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%s: building: %v\n%s", tg.target, err, combined)
-		}
-		run := exec.Command(bin)
-		if len(tg.runner) > 0 {
-			run = exec.Command(tg.runner[0], append(tg.runner[1:], bin)...)
-		}
-		_ = run.Run()
-		if got := run.ProcessState.ExitCode(); got != 42 {
+		h.compileWith(t, tg, src, bin)
+		if _, got := h.runProduced(t, tg, bin); got != 42 {
 			t.Errorf("%s: exit %d, want 42", tg.target, got)
 		}
 	}
