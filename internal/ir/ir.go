@@ -15627,6 +15627,18 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	if id.Name == "__scan_set_bytes" && len(n.Args) == 3 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_scan_set_bytes", Width: ResNarrow, I32: 3,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
+			return nil
+		}
+	}
 	// __bsd_sum(s, sum) — __count_byte's operand shape.
 	if id.Name == "__bsd_sum" && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
