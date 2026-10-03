@@ -905,6 +905,11 @@ membership. Both borrow their byte arrays without constructing text.
 Target, ownership, size and native measurement evidence is recorded in
 [the membership-scan report](STRING-BYTE-SET-SCANS-2026-10-03.md).
 
+`wc` keeps counted input and filename-list buffers as bytes, validates
+filenames at their text boundary and preserves GNU counting rules. Target,
+ownership, size and native measurements are recorded in
+[the wc report](STRING-WC-BYTES-2026-10-03.md).
+
 `head` and `tail` use raw byte input, delimiter scans and output. Their
 shared hold retains input blocks with a 64-bit byte count and releases
 consumed blocks without repeatedly copying long records. Target checks and
