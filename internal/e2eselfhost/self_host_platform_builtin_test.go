@@ -13,14 +13,14 @@ import (
 // struct table (the capability bag threaded as every handler's second
 // parameter). The self-host's builtins.fern — which exists precisely so the
 // self-host reads those declarations from real source instead of drifting —
-// never declared it. So any signature mentioning it, which is EVERY std/tcp
+// never declared it. So any signature mentioning it, which is EVERY std/serve
 // serve entry point (`(HttpRequest, Platform) => HttpResponse`), failed to
 // resolve and `__serve_loop` reported `BAIL lower`. One bailing function drops
 // the whole module (and the AST emitter it fell to could not emit `tcp_listen`
 // or `poll` at all) — so the failure surfaced far from its cause, as `undefined
 // reference to __fn_tcp_listen` at link.
 //
-// The probe is the assertion: every function of the std/tcp closure must lower,
+// The probe is the assertion: every function of the std/serve closure must lower,
 // with the serve loop named explicitly so a regression says which one broke.
 func TestSelfHostPlatformBuiltinLowers(t *testing.T) {
 	_, runner, driverBin := buildModloadDriverX86(t)
@@ -57,14 +57,14 @@ func TestSelfHostPlatformBuiltinLowers(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(progDir, "builtins.fern"), bsrc, 0o644); err != nil {
 		t.Fatalf("write builtins.fern: %v", err)
 	}
-	main := "import \"std/tcp\";\nfunction main(): i32 { return 0; }\n"
+	main := "import \"std/serve\";\nfunction main(): i32 { return 0; }\n"
 	if err := os.WriteFile(filepath.Join(progDir, "main.fern"), []byte(main), 0o644); err != nil {
 		t.Fatalf("write main.fern: %v", err)
 	}
 
 	report := string(runDriverFile(t, runner, driverBin, filepath.Join(progDir, "main.fern"), "-ir-probe"))
-	if !strings.Contains(report, "tcp____serve_loop: ir") {
-		t.Errorf("std/tcp's __serve_loop did not lower; probe line: %q", probeLineFor(report, "tcp____serve_loop"))
+	if !strings.Contains(report, "serve____serve_loop: ir") {
+		t.Errorf("std/serve's __serve_loop did not lower; probe line: %q", probeLineFor(report, "serve____serve_loop"))
 	}
 	var bails []string
 	for _, line := range strings.Split(report, "\n") {
@@ -73,7 +73,7 @@ func TestSelfHostPlatformBuiltinLowers(t *testing.T) {
 		}
 	}
 	if len(bails) > 0 {
-		t.Errorf("%d function(s) of the std/tcp closure bail the IR path:\n%s", len(bails), strings.Join(bails, "\n"))
+		t.Errorf("%d function(s) of the std/serve closure bail the IR path:\n%s", len(bails), strings.Join(bails, "\n"))
 	}
 }
 

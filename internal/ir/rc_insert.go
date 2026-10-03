@@ -852,7 +852,7 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string, bt ast.Type) 
 // destination holds a reference of its own and the release the join emits
 // takes the payload from 2 to the 1 that destination owns. Treating that as an
 // escape stranded one fresh payload per match — the shape `match (f()) {
-// Some(c) => { outer = c; } }`, which is tcp_serve's per-request recv buffer
+// Some(c) => { outer = c; } }`, which is the serve loop's per-request recv buffer
 // (#8003).
 //
 // The same question serves the borrow-alias CANCELLATION in rc_analysis, where

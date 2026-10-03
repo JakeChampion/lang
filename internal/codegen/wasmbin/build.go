@@ -190,9 +190,9 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		// per header entry from the canonical-ABI fields list.
 		treeshakeExtras = append(treeshakeExtras, "handle", "__method_HeaderMap_append", "__method_HttpResponse_body_bytes", "__fern_platform_new")
 		// The auto-synthesised `main()` (synthesised by the checker)
-		// calls `tcp_serve` and pulls in wasi:sockets imports
+		// calls `serve.supervise` and pulls in wasi:sockets imports
 		// the http world's WIT doesn't have. Drop it before
-		// tree-shake so it doesn't hold tcp_serve / tcp_listen
+		// tree-shake so it doesn't hold the serve loop / tcp_listen
 		// alive on this target. This is the
 		// `IsSynthesisedHandlerMain` pre-shake.
 		out := prog.Funcs[:0]

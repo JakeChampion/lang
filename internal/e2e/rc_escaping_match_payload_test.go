@@ -10,7 +10,7 @@ import "testing"
 // CONFINED: read through, never stored. `Some(c) => { chunk = c; }` stores,
 // so the whole match was refused and the payload the callee had just
 // allocated was abandoned, once per match. In a serve loop that is unbounded
-// growth: it is tcp_serve's per-request recv buffer, ~5.4 KB a request with
+// growth: it is the serve loop's per-request recv buffer, ~5.4 KB a request with
 // no plateau (#8003).
 //
 // Confinement was sufficient but not necessary. The store copies the pointer

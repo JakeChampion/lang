@@ -9435,7 +9435,7 @@ func TestArm64Floats(t *testing.T) {
 // arm64 indirect calls: OpConstFunc (function value
 // materialisation via adrp + add :lo12:) + OpCallIndirect
 // (blr xN). Lets handlers be passed as function values to
-// generic helpers like tcp_serve.
+// generic helpers like serve.run.
 func TestArm64IndirectCall(t *testing.T) {
 	_, code := compileAndRunArm64(t, `function add(a: i32, b: i32): i32 { return a + b; }
 function main(): i32 {
@@ -9660,7 +9660,7 @@ func TestArm64EprintExit(t *testing.T) {
 // chain. Port 0 means "kernel-assigned ephemeral" — fast
 // way to confirm the listener works without picking a free
 // port. Full HTTP server e2e (handle() + auto-main +
-// tcp_serve + parser/serializer composed) is a follow-up.
+// serve.run + parser/serializer composed) is a follow-up.
 func TestArm64TcpListen(t *testing.T) {
 	_, code := compileAndRunArm64(t, `function main(): i32 {
     let fd: i32 = tcp_listen(0);
@@ -9698,8 +9698,8 @@ function main(): i32 {
 // End-to-end arm64 HTTP handler. Compiles a program that only
 // defines `function handle(req: HttpRequest, plat: Platform):
 // HttpResponse` — the checker synthesises `main()` from it as
-// `tcp_serve(__port_from_env("PORT", 8080), handle)`, and
-// tcp_serve constructs a Platform per request before calling
+// `serve.supervise(serve.__port_from_env("PORT", 8080), serve.config(), handle)`, and
+// the serve loop constructs a Platform per request before calling
 // the handler. The
 // resulting binary listens on the PORT env var, parses an
 // HTTP/1.1 request, calls the user handler, and writes the
@@ -9730,7 +9730,7 @@ func TestArm64HttpHandler(t *testing.T) {
 
 	src := `
 import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("method=" + req.method + " path=" + req.path + " body-len=" + req.body_len().to_string());
 }`
@@ -9740,7 +9740,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	// modload (not bare parser.Parse) so std/http + std/tcp resolve.
+	// modload (not bare parser.Parse) so std/http + std/serve resolve.
 	prog, _, err := modload.Load(srcPath)
 	if err != nil {
 		t.Fatalf("modload: %v", err)

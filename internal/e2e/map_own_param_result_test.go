@@ -89,22 +89,15 @@ func TestMapOwnParamResultInterp(t *testing.T) {
 	}
 }
 
-// The native backends, under the sanitizer: a leak is a verdict line, a
-// double release or a read of a freed handle is fatal.
-func TestMapOwnParamResultNativeX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	_, stderr, code := buildAndRunSanitized(t, gcc, runner, emitSanitize(t, "x86_64", mapOwnParamResultProg, true), false)
-	checkMapOwnParamResult(t, stderr, code)
-}
-
-func TestMapOwnParamResultNativeArm64(t *testing.T) {
-	gcc, qemu := arm64Tooling(t)
-	_, stderr, code := buildAndRunSanitized(t, gcc, []string{qemu}, emitSanitize(t, "arm64-linux", mapOwnParamResultProg, true), true)
-	checkMapOwnParamResult(t, stderr, code)
-}
-
+// Under the sanitizer: a leak is a verdict line, a double release or a read
+// of a freed handle is fatal.
 func TestMapOwnParamResultSelfHostX86_64(t *testing.T) {
 	_, stderr, code := runSanitizeX86_64(t, mapOwnParamResultProg)
+	checkMapOwnParamResult(t, stderr, code)
+}
+
+func TestMapOwnParamResultSelfHostArm64(t *testing.T) {
+	_, stderr, code := runSanitizeArm64(t, mapOwnParamResultProg)
 	checkMapOwnParamResult(t, stderr, code)
 }
 

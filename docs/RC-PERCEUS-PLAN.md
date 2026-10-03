@@ -2622,7 +2622,8 @@ against its eventual free and live_bytes stays exact. x86-64 + arm64
 (Linux and, structurally, arm64-darwin — the helper uses the portable
 `syscall("write")` split); wasm/interp ignore the flag. Flag-off
 emission is byte-identical to a build without the feature (verified by
-`.s` diff; `TestLeakCheckOffEmitsNoSymbols` pins the no-symbols proxy).
+`.s` diff; on the self-host `TestSelfHostHeapEventFlagOffX86_64` and
+`TestSelfHostArm64LeakcheckOffEmitsNothing` pin the no-symbols proxy).
 Tests: `internal/e2e/leakcheck_test.go` (balanced `__alloc`/`__free`
 loop, rc-driven drop-everything loop, deliberate leak with pinned
 counts, exit-code + stdout preservation on both seams, both backends).

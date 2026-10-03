@@ -68,7 +68,8 @@ Real, and the reason this is opt-in:
 
 With the flag **off**, none of this exists: every check is unemitted and the
 asm is byte-identical to a build from a compiler that never had the feature.
-`TestSanitizeOffEmitsNoSymbols` pins the cheap proxy for that.
+`TestSelfHostSanitizeOffEmitsNoSymbolsX86_64` and `TestSelfHostOverReleaseReportArm64`
+pin the cheap proxy for that.
 
 The wasm census is the cheap end of all this: two counters and one line, with
 the freelist still recycling, because the quarantine that carries the rest of

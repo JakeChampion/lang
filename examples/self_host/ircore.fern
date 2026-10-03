@@ -774,7 +774,7 @@ pub function all_runtime_need_roots(): string[] {
     // The platform helpers. These were absent for as long as the list
     // existed, which made the "closed set" claim above false: the
     // bootstrap compiler marks none of them, so nothing noticed until a
-    // per-module build of a REAL program — the std/http + std/tcp
+    // per-module build of a REAL program — the std/http + std/serve
     // edge-handler — linked its library units against undefined
     // __fern_tcp_listen / __fern_tcp_send / __fern_poll / … (#5686).
     // Filesystem + process:

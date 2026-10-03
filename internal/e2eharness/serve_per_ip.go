@@ -13,12 +13,12 @@ import (
 // client hold two connections (`max_connections_per_ip: 2`).
 func PerIPCapServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return tcp.tcp_serve_supervised_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), workers: 1, max_connections_per_ip: 2 }, handle);
+    return serve.supervise(%d, serve.Config { ...serve.config(), workers: 1, max_connections_per_ip: 2 }, handle);
 }
 `, port)
 }

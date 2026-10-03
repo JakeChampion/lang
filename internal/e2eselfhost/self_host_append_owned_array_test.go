@@ -13,7 +13,7 @@ import (
 // sanitizer reports as a use-after-free and a real server hit as a segfault
 // on its second request. Three shapes, all through the sanitizer build: the
 // bare append, the append into a struct field, and a call-born element
-// appended into a struct field the way std/tcp grows a connection's buffer.
+// appended into a struct field the way std/serve grows a connection's buffer.
 //
 // Only the two fatal detectors are asserted. The per-module lowering releases
 // an array of arrays deeply only where it proves the local fresh and

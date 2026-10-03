@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // --- read_file / read_file_bytes vs st_size (#9065) ----------------
@@ -338,33 +340,22 @@ function main(): i32 {
 // path, yielding the census's allocation count.
 func censusRunner(t *testing.T, backend string, reads int) func(dir, path string) int64 {
 	t.Helper()
-	asm := emitLeakCheck(t, backend, readFileCensusProgram(reads), true)
-	bindir := t.TempDir()
-	asmPath := filepath.Join(bindir, "prog.s")
-	binPath := filepath.Join(bindir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	var runner []string
+	target := e2eharness.TargetX86_64Linux
 	if backend == "arm64-linux" {
-		gcc, qemu := arm64Tooling(t)
-		if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-			t.Fatalf("gcc: %v\n%s", err, out)
-		}
-		if qemu != "" {
-			runner = []string{qemu}
-		}
+		target = e2eharness.TargetArm64Linux
+	}
+	binPath := e2eharness.CompileSelfHostSource(t, target, readFileCensusProgram(reads), []string{"FERN_LEAKCHECK=1"})
+	var run func(path string) *exec.Cmd
+	if target == e2eharness.TargetArm64Linux {
+		qemu := e2eharness.Arm64Runner(t)
+		run = func(path string) *exec.Cmd { return runArm64Bin(qemu, binPath, path) }
 	} else {
-		gcc, exec_ := x86_64Tooling(t)
-		if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-			t.Fatalf("gcc: %v\n%s", err, out)
-		}
-		runner = exec_
+		runner := e2eharness.X86_64Runner(t)
+		run = func(path string) *exec.Cmd { return runX86_64Bin(runner, binPath, path) }
 	}
 	return func(dir, path string) int64 {
 		t.Helper()
-		argv := append(append(append([]string{}, runner...), binPath), path)
-		cmd := exec.Command(argv[0], argv[1:]...)
+		cmd := run(path)
 		cmd.Dir = dir
 		_, stderr, code := runSplit(t, cmd)
 		if code != 0 {

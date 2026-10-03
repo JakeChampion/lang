@@ -14,12 +14,12 @@
 //   $ wasmtime serve url.wasm &
 //   $ curl 'http://localhost:8080/search?q=lang&tag=fast&tag=small'
 //   {"path":"/search","q":"lang","tags":["fast","small"]}
-// HttpRequest / HttpResponse + the synthesised tcp_serve main;
+// HttpRequest / HttpResponse + the synthesised serve main;
 // Url + url_parse + query_parse; JsonValue + json_encode; the
 // Map runtime; (string).split-style methods needed by the JSON
 // encoder's internals.
 import "std/http";
-import "std/tcp";
+import "std/serve";
 import "std/url";
 import "std/json";
 import "core/map";

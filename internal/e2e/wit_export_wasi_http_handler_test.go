@@ -55,7 +55,7 @@ func TestExportWasiHttpIncomingHandlerComposes(t *testing.T) {
 	// A Fern reactor implementing the handler. The owned request / response-out
 	// handles are the canonical incoming-handler#handle params (a bare WIT
 	// resource param is `own`). The Fern function is NOT named `handle` (that
-	// triggers the checker's tcp_serve handler-main synthesis); the @export WIT
+	// triggers the checker's handler-main synthesis); the @export WIT
 	// name is "handle".
 	prog := `@import("wasi:http/types@0.2.0", "incoming-request")
 resource IncomingRequest;

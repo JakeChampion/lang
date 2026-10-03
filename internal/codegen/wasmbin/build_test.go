@@ -722,7 +722,7 @@ function main(): i32 {
 func TestBuildHttpHandlerRefusesStatefulHandler(t *testing.T) {
 	src := `
 import "std/http";
-import "std/tcp";
+import "std/serve";
 function init(): i32 { return 0; }
 function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
     return (hits + 1, http.ok("ok"));
@@ -744,7 +744,7 @@ function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse
 func TestBuildHttpHandlerCompiles(t *testing.T) {
 	src := `
 import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
         return http.ok("world");

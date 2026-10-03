@@ -602,7 +602,7 @@ func builtinStructDecls() []*ast.StructDecl {
 				// wins).
 				{Name: "headers", Type: ast.StructType{Name: "HeaderMap"}},
 				// `trailers` follow a chunked body's last chunk
-				// (std/tcp's serve loop); a body with a length has
+				// (std/serve's serve loop); a body with a length has
 				// nowhere to carry them, and the wasi-http wrapper
 				// finishes the outgoing body without them.
 				{Name: "trailers", Type: ast.StructType{Name: "HeaderMap"}},
@@ -633,7 +633,7 @@ func builtinStructDecls() []*ast.StructDecl {
 		// driver) lives behind this handle rather than in the bag.
 		//
 		// Every construction goes through the synthesised
-		// `__fern_platform_new`, std/tcp's `__host_platform`, or
+		// `__fern_platform_new`, std/serve's `__host_platform`, or
 		// std/platform; nothing builds this struct out of raw
 		// memory.
 		{
@@ -2559,7 +2559,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// or a negative errno on failure. Capability-gated (`proc`,
 	// native targets only — E066 elsewhere). The interpreter cannot
 	// bare-fork (Go's runtime is threaded) and returns -38 (ENOSYS);
-	// callers like `tcp_serve_supervised` treat that as "supervision
+	// callers like `serve.supervise` treat that as "supervision
 	// unavailable" and degrade to single-process serving.
 	c.info.FuncSigs["proc_fork"] = &ast.FuncType{
 		Params: []ast.Type{},
@@ -5217,8 +5217,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// Auto-main from handle: when the user defines
 	// `function handle(req: HttpRequest, plat: Platform):
 	// HttpResponse` but no `main()`, synthesise a minimal main
-	// that calls `tcp_serve(port, handle)` after reading PORT
-	// from the environment (default 8080). tcp_serve constructs
+	// that calls `serve.supervise(port, serve.config(), handle)` after reading PORT
+	// from the environment (default 8080). The serve loop constructs
 	// a Platform per request and threads it through. The same
 	// source then
 	// compiles for arm64 (CLI-mode native server), wasm
@@ -21466,19 +21466,20 @@ func initTakesPlatformOnly(init *ast.FuncDecl) bool {
 	return ok && st.Name == "Platform"
 }
 
-// isServeOptionsType reports whether `t` is std/tcp's `ServeOptions`,
-// under its bare name (flat loads) or a module prefix (`tcp__ServeOptions`).
-func isServeOptionsType(t ast.Type) bool {
+// isServeConfigType reports whether `t` is std/serve's `Config`. modload
+// gives a stdlib module its bare prefix and moves a user module that
+// collides with it, so `serve__Config` names that struct and no other.
+func isServeConfigType(t ast.Type) bool {
 	st, ok := t.(ast.StructType)
-	return ok && (st.Name == "ServeOptions" || strings.HasSuffix(st.Name, "__ServeOptions"))
+	return ok && st.Name == "serve__Config"
 }
 
 // initReturnShape reports what a handler program's `init` answers: the
-// serve options, a state for the handler to carry, both as
-// `(ServeOptions, S)`, or neither.
+// serve config, a state for the handler to carry, both as
+// `(serve.Config, S)`, or neither.
 //
 //	function init(): S
-//	function init(plat: Platform): (ServeOptions, S)
+//	function init(plat: Platform): (serve.Config, S)
 //	function handle(state: S, req: HttpRequest, plat: Platform): (S, HttpResponse)
 //
 // The state pair is the two-phase lifecycle of docs/PLATFORM-RESEARCH.md
@@ -21497,10 +21498,10 @@ func initReturnShape(init *ast.FuncDecl) (opts, state bool) {
 	if init == nil || isVoidReturn(init.ReturnType) {
 		return false, false
 	}
-	if isServeOptionsType(init.ReturnType) {
+	if isServeConfigType(init.ReturnType) {
 		return true, false
 	}
-	if tt, ok := init.ReturnType.(ast.TupleType); ok && len(tt.Elems) == 2 && isServeOptionsType(tt.Elems[0]) {
+	if tt, ok := init.ReturnType.(ast.TupleType); ok && len(tt.Elems) == 2 && isServeConfigType(tt.Elems[0]) {
 		return true, true
 	}
 	return false, true
@@ -21625,7 +21626,7 @@ const platformCtorName = "__fern_platform_new"
 // wrapper (internal/codegen/wasmbin/wasi_http.go) is the caller that matters:
 // it is hand-written wasm, and it used to allocate the struct and store the
 // field itself, which is a copy of the layout that goes stale the day the bag
-// grows a capability. std/tcp's accept loop still writes the literal — it is
+// grows a capability. std/serve's accept loop still writes the literal — it is
 // Fern source the checker re-checks, so it cannot drift silently.
 //
 // The `mode`/`sink` fields carry the mock seam (Rec §6): this is the host
@@ -21658,74 +21659,55 @@ func synthesisePlatformCtor() *ast.FuncDecl {
 
 // synthesiseHandleMain builds the main of a handler-shaped program: the
 // handler served under the supervisor (docs/CRASH-ONLY-SERVE.md) on
-// `PORT`, with `init`'s options and state where it answers them —
+// `PORT`, with `init`'s config and state where it answers them —
 //
 //	function main(): i32 {
-//	    return tcp_serve_supervised_opts(__port_from_env("PORT", 8080), serve_options(), handle);
+//	    return serve.supervise(serve.__port_from_env("PORT", 8080), serve.config(), handle);
 //	}
 //
-// or, for `init(plat: Platform): (ServeOptions, S)` beside a handler
+// or, for `init(plat: Platform): (serve.Config, S)` beside a handler
 // threading `S` and a `shutdown(reason, state)` hook:
 //
 //	function main(): i32 {
-//	    let (__fern_opts, __fern_state) = init(__init_platform());
-//	    return tcp_serve_supervised_with_shutdown(__port_from_env("PORT", 8080), __fern_opts, __fern_state, handle, shutdown);
+//	    let (__fern_opts, __fern_state) = init(serve.__init_platform());
+//	    return serve.supervise_with_shutdown(serve.__port_from_env("PORT", 8080), __fern_opts, __fern_state, handle, shutdown);
 //	}
 //
 // An `init` answering only the state goes as the state argument, one
-// answering only the options as the options argument, and a void one
+// answering only the config as the config argument, and a void one
 // runs as a statement before the serve call. Where the target has no
 // processes (`supervised` false: wasm32-wasi) the single-process entries
-// of the same arity serve instead — `tcp_serve_opts`, `tcp_serve_with_opts`
-// and their `_shutdown` twins.
+// of the same arity serve instead — `serve.run`, `serve.run_with` and
+// their `_shutdown` twins.
 //
 // The wasi-http target has its own `wasi:http/incoming-handler.handle`
 // export wrapper that invokes the user's `handle` directly and drops
 // this main before the tree-shake.
 //
-// Loaded flat via `LoadStdlibFlat` (e.g. in tests), the std/tcp entries
-// live at their bare names (no mangling). Loaded via modload with
-// `import "std/tcp";` they get the `tcp__` prefix instead. We probe
-// `prog.Funcs` for whichever name exists and stamp the Ident accordingly
-// so the synthesised main resolves cleanly through both load paths.
+// The calls name std/serve's entries as modload mangles them; a program
+// that does not import std/serve is told they are undefined.
 func synthesiseHandleMain(prog *ast.Program, supervised bool) *ast.FuncDecl {
 	pos := ast.Position{}
-	resolve := func(bare, mangled string) string {
-		for _, fn := range prog.Funcs {
-			if fn.Name == bare {
-				return bare
-			}
-		}
-		for _, fn := range prog.Funcs {
-			if fn.Name == mangled {
-				return mangled
-			}
-		}
-		// Neither variant present — the bare name still gives
-		// the cleanest "undefined identifier" diagnostic when
-		// the program forgot to import std/tcp.
-		return bare
-	}
-	tcpCall := func(bare string, args ...ast.Expr) *ast.Call {
-		return &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: resolve(bare, "tcp__"+bare)}, Args: args}
+	serveRef := func(name string, args ...ast.Expr) *ast.Call {
+		return &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "serve__" + name}, Args: args}
 	}
 	ident := func(name string) *ast.Ident { return &ast.Ident{P: pos, Name: name} }
-	portCall := tcpCall("__port_from_env", &ast.StringLit{P: pos, Value: "PORT"}, &ast.NumberLit{P: pos, Value: 8080})
+	portCall := serveRef("__port_from_env", &ast.StringLit{P: pos, Value: "PORT"}, &ast.NumberLit{P: pos, Value: 8080})
 	// `init` is the BARE name; if a module import qualifies it, modload
 	// rewrites the call separately. It is handed the platform when it
 	// takes one.
 	init := findDecl(prog, "init")
 	initCall := &ast.Call{P: pos, Callee: ident("init")}
 	if init != nil && len(init.Params) == 1 {
-		initCall.Args = []ast.Expr{tcpCall("__init_platform")}
+		initCall.Args = []ast.Expr{serveRef("__init_platform")}
 	}
 	initOpts, initState := initReturnShape(init)
 
 	var stmts []ast.Stmt
-	// The options are `init`'s when it answers them, else the defaults;
-	// the state is `init`'s value, destructured from beside the options
+	// The config is `init`'s when it answers one, else the defaults;
+	// the state is `init`'s value, destructured from beside the config
 	// when it answers both.
-	var opts ast.Expr = tcpCall("serve_options")
+	var opts ast.Expr = serveRef("config")
 	var state ast.Expr = initCall
 	switch {
 	case initOpts && initState:
@@ -21751,13 +21733,13 @@ func synthesiseHandleMain(prog *ast.Program, supervised bool) *ast.FuncDecl {
 	var serveCall *ast.Call
 	switch {
 	case initState && hasShutdown:
-		serveCall = tcpCall(entry("tcp_serve_supervised_with_shutdown", "tcp_serve_with_shutdown"), portCall, opts, state, ident("handle"), ident("shutdown"))
+		serveCall = serveRef(entry("supervise_with_shutdown", "run_with_shutdown"), portCall, opts, state, ident("handle"), ident("shutdown"))
 	case initState:
-		serveCall = tcpCall(entry("tcp_serve_supervised_with", "tcp_serve_with_opts"), portCall, opts, state, ident("handle"))
+		serveCall = serveRef(entry("supervise_with", "run_with"), portCall, opts, state, ident("handle"))
 	case hasShutdown:
-		serveCall = tcpCall(entry("tcp_serve_supervised_shutdown", "tcp_serve_shutdown"), portCall, opts, ident("handle"), ident("shutdown"))
+		serveCall = serveRef(entry("supervise_shutdown", "run_shutdown"), portCall, opts, ident("handle"), ident("shutdown"))
 	default:
-		serveCall = tcpCall(entry("tcp_serve_supervised_opts", "tcp_serve_opts"), portCall, opts, ident("handle"))
+		serveCall = serveRef(entry("supervise", "run"), portCall, opts, ident("handle"))
 	}
 	stmts = append(stmts, &ast.Return{P: pos, Value: serveCall})
 	return &ast.FuncDecl{
