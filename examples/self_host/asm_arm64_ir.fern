@@ -11490,20 +11490,24 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
 // that returns ahead of the type check lets an ill-typed module miscompile
 // silently.
 pub function emit_module_or_error_sub(mod: parser.Module, darwin: boolean, sub: ircore.Sub): string {
-  let parse_errs: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
-  if (parse_errs.len() > 0) {
-    eprint(util.format_diags(parse_errs));
-    exit(1);
-    return "";
+  if (!sub.checked) {
+    let parse_errs: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
+    if (parse_errs.len() > 0) {
+      eprint(util.format_diags(parse_errs));
+      exit(1);
+      return "";
+    }
   }
   // The checked boundary first, as asm_ir.emit_module_or_error_sub: asmcore's
   // Display gate reads the module the checker rewrote.
   let tm: parser.Module = checker.ensure_annotated(mod);
-  let check_errs: util.Diag[] = asmcore.entry_check_errors(tm);
-  if (check_errs.len() > 0) {
-    eprint(util.format_diags(check_errs));
-    exit(1);
-    return "";
+  if (!sub.checked) {
+    let check_errs: util.Diag[] = asmcore.entry_check_errors(tm);
+    if (check_errs.len() > 0) {
+      eprint(util.format_diags(check_errs));
+      exit(1);
+      return "";
+    }
   }
   let g: string = emit_module_ir_gated_sub(ircore.sub_lifted(sub, tm), darwin, sub);
   if (g != "") {

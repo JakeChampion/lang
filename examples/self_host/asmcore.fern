@@ -8794,6 +8794,10 @@ pub function check_func(fd: parser.FuncDecl, s: EmitState): util.Diag[] {
 // entry_check_errors is check_module over `tm` against the state an emit entry
 // checks with; `tm` is the module as the checker annotated it.
 pub function entry_check_errors(tm: parser.Module): util.Diag[] {
+  // FERN_ENTRY_CHECK_TRACE counts the gate's runs, which a build makes once.
+  if let Some(_) = env("FERN_ENTRY_CHECK_TRACE") {
+    eprint("entry check\n");
+  }
   let s: EmitState = new_state();
   s = with_funcs(EmitState { ...s, struct_decls: irtables.struct_tab(tm.structs) }, tm.funcs);
   return check_module(tm, s);

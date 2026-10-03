@@ -10728,22 +10728,26 @@ pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl
 // fused gate+emit used to return ahead of the type check, so every IR-eligible
 // module skipped it and an ill-typed one miscompiled silently.
 pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): string {
-  let parse_errs: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
-  if (parse_errs.len() > 0) {
-    eprint(util.format_diags(parse_errs));
-    exit(1);
-    return "";
+  if (!sub.checked) {
+    let parse_errs: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
+    if (parse_errs.len() > 0) {
+      eprint(util.format_diags(parse_errs));
+      exit(1);
+      return "";
+    }
   }
   // The checked boundary first: a raw driver's module reaches here without
   // the annotate pass, and asmcore's Display gate has to read the module the
   // checker rewrote (`print(q)` to `q.to_string()`, docs/TRAITS.md §3a) or
   // it refuses every non-string argument.
   let tm: parser.Module = checker.ensure_annotated(mod);
-  let check_errs: util.Diag[] = asmcore.entry_check_errors(tm);
-  if (check_errs.len() > 0) {
-    eprint(util.format_diags(check_errs));
-    exit(1);
-    return "";
+  if (!sub.checked) {
+    let check_errs: util.Diag[] = asmcore.entry_check_errors(tm);
+    if (check_errs.len() > 0) {
+      eprint(util.format_diags(check_errs));
+      exit(1);
+      return "";
+    }
   }
   let lm: parser.Module = ircore.sub_lifted(sub, tm);
   let g: string = emit_module_ir_gated_sub(lm, sub);
