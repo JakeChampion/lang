@@ -61,7 +61,7 @@ func TestWorldInterfaces(t *testing.T) {
 	checkInv(t, byName, "wasi:random/random@0.2.0", []string{"get-random-bytes", "get-random-u64"}, nil)
 	checkInv(t, byName, "wasi:cli/environment@0.2.0", []string{"get-arguments", "get-environment"}, nil)
 	checkInv(t, byName, "wasi:cli/exit@0.2.0", []string{"exit"}, nil)
-	checkInv(t, byName, "wasi:clocks/monotonic-clock@0.2.0", []string{"now"}, nil)
+	checkInv(t, byName, "wasi:clocks/monotonic-clock@0.2.0", []string{"now", "subscribe-duration"}, nil)
 	checkInv(t, byName, "wasi:sockets/udp-create-socket@0.2.0", []string{"create-udp-socket"}, nil)
 	checkInv(t, byName, "wasi:sockets/udp@0.2.0",
 		[]string{
