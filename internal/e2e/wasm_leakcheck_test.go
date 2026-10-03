@@ -1,19 +1,12 @@
 package e2e
 
 import (
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/ast"
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // --- The wasm leak census (#7912) ---------------------------------
@@ -24,82 +17,48 @@ import (
 // a block the program never gave back. docs/TEST-GATES.md named that
 // blindness on the rc corpus's row.
 //
-// The census is the natives' contract, byte for byte:
+// The census is the register backends' contract, byte for byte:
 //
 //	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
 //
 // on stderr, once, with stdout and the exit status untouched — plus the
 // sanitizer's `fern-sanitizer: leak <K> bytes in <N> blocks` verdict
 // under FERN_SANITIZE. Every allocation in this runtime reaches
-// __fern_alloc and every reclamation reaches __free, so counting in
-// those two helpers is a census of the whole heap.
+// $__fern_alloc and every reclamation a free path that counts, so the
+// counters are a census of the whole heap.
 //
 // Each test below has BOTH legs: a program that genuinely leaks, whose
 // numbers must show it, and a program that does not, which must report
 // a balanced census and no verdict line.
 
-// buildLeakCheckComponent is buildComponent with the census (and,
-// optionally, the whole sanitizer fold-down) turned on for the emit.
-// The flag is read at EMIT time, like the natives' — it changes the
-// module the backend produces, so it goes on the build, not the run.
+// buildLeakCheckComponent compiles src with the self-host compiler to a WASI
+// core module with the census on (FERN_LEAKCHECK=1), or under the whole
+// sanitizer (FERN_SANITIZE=1, which implies the census). The flag is read at
+// EMIT time, like the register backends' — it changes the module the compiler
+// produces, so it goes on the build, not the run. runComponent runs the core
+// with `--invoke main`, and the exported main reports on its return.
 func buildLeakCheckComponent(t *testing.T, src string, sanitize bool) string {
 	t.Helper()
-	return buildLeakCheckComponentPrinting(t, withResultPrinter(src), sanitize, true)
+	skipIfPreview2Missing(t)
+	return e2eharness.CompileSelfHostSource(t, e2eharness.TargetWasm32Wasi, src, leakCheckEnv(sanitize))
 }
 
-// buildLeakCheckComponentPrinting is buildLeakCheckComponent with the
-// result printer optional, for a program whose stdout is its own (a
-// server announcing its port) and whose source already imports what it
-// needs.
-func buildLeakCheckComponentPrinting(t *testing.T, src string, sanitize, printResult bool) string {
+// buildLeakCheckCLIComponent is buildLeakCheckComponent for a program whose
+// host surface is preview 2 (sockets, clocks, http): the census core, with its
+// stdio and exit through preview 1, becomes a wasi:cli/run component by way of
+// the preview-1 adapter, and the report comes out of _start's exit.
+func buildLeakCheckCLIComponent(t *testing.T, src string, sanitize bool) string {
 	t.Helper()
 	skipIfPreview2Missing(t)
+	core := e2eharness.CompileSelfHostSource(t, e2eharness.TargetWasm32Wasi, src, leakCheckEnv(sanitize))
+	return e2eharness.AdaptPreview1Component(t, core)
+}
 
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
+func leakCheckEnv(sanitize bool) []string {
+	if sanitize {
+		return []string{"FERN_SANITIZE=1"}
 	}
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-
-	prevFree, prevLc, prevSan := ast.RcFreeEnabled, ast.LeakCheckEnabled, ast.SanitizeEnabled
-	prevTrap, prevDbg := ast.RcUnderflowTrap, ast.RcFreeDebug
-	restore := func() {
-		ast.RcFreeEnabled, ast.LeakCheckEnabled, ast.SanitizeEnabled = prevFree, prevLc, prevSan
-		ast.RcUnderflowTrap, ast.RcFreeDebug = prevTrap, prevDbg
-	}
-	t.Cleanup(restore)
-	ast.RcFreeEnabled = true
-	// An ambient FERN_* setting in the developer's environment would
-	// otherwise leak into the census-off leg and make it lie.
-	ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug = true, false, false
-	ast.SanitizeEnabled = sanitize
-	ast.ApplySanitize()
-
-	bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		PrintMainResult:    printResult,
-	})
-	restore()
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
-	return finishComponentFromCoreBytes(t, bin)
+	return []string{"FERN_LEAKCHECK=1"}
 }
 
 // runLeakCheckWasm builds src with the census on and runs it, returning
@@ -238,10 +197,9 @@ func TestWASMSanitizeCleanRunIsSilent(t *testing.T) {
 	}
 }
 
-// The report is emitted at every exit seam but must print ONCE: on this
-// runtime the seams nest (the synthesised entry wrapper's call and the
-// exit() builtin's __fern_exit both reach the reporter), so the latch is
-// what keeps a census from being double-counted by a reader.
+// The report is emitted at every exit seam but must print ONCE: the exit()
+// builtin reports through $proc_exit and never returns to the exported main,
+// which reports on a return.
 func TestWASMLeakCheckReportsOnce(t *testing.T) {
 	src := `function main(): i32 {
     let a: usize = __alloc(64);
@@ -270,11 +228,11 @@ func TestWASMLeakCheckOffEmitsNoCensus(t *testing.T) {
 	}
 }
 
-// parseWasmLeakCheckLine asserts stderr carries exactly one well-formed
-// census line and returns its three numbers. Unlike the natives' fixture
-// this cannot demand stderr be ONLY that line: the component harness
-// prints main's result through the guest's own stdout, and wasmtime is
-// free to add its own noise around a run.
+// parseWasmLeakCheckLine asserts stderr carries a well-formed census line
+// and returns its three numbers. Unlike the register backends' fixture
+// this cannot demand stderr be ONLY that line: wasmtime is free to add its
+// own noise around a run (`--invoke` warns that printing a result is
+// experimental).
 func parseWasmLeakCheckLine(t *testing.T, stderr string) (allocs, frees, live int64) {
 	t.Helper()
 	m := wasmLeakCheckLineRe.FindStringSubmatch(stderr)

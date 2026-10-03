@@ -1,98 +1,13 @@
 package e2e
 
-import (
-	"os"
-	"os/exec"
-	"path/filepath"
-	"testing"
+import "testing"
 
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
-	"github.com/jakechampion/lang/internal/wasm/component"
-)
-
-// runNativeWasmCli compiles src through the native preview-2 pipeline
-// (wasmbin core with Preview2WASI + SynthCliRun → a wasi:cli/run
-// component, no wasm-tools, no preview-1 adapter) and runs the component
-// under wasmtime, returning the process exit code. main()'s i32 return
-// lowers through wasi:cli/run as result<_, _>: 0 → exit 0, non-zero →
-// exit 1.
-//
-// Imports are CLASSIFIED rather than assumed absent, mirroring what the
-// `fern` CLI and the playground both do. This used to call the
-// import-free builder directly on the theory that these programs are pure
-// computation — which stopped being true the moment core/map started
-// seeding its string hash (#6194): every map-using program now imports
-// wasi:random/random for the seed draw, and a fixed zero-import wrapper
-// produces a component wasmtime refuses to instantiate ("missing module
-// instantiation argument named `wasi:random/random@0.2.0`"). That reads
-// as the program returning 1, i.e. as a CoW failure, which is not what
-// it is. Classifying keeps the harness correct about whatever the core
-// module actually imports.
-//
-// This exercises the real native memory layout (heap at ~1024), where
-// the rc helpers' low-address guard lives — the path the preview-1
-// adapter used to mask.
-func runNativeWasmCli(t *testing.T, src string) int {
-	t.Helper()
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH")
-	}
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-	})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
-	req, unsupported := component.ClassifyCore(core)
-	if len(unsupported) > 0 {
-		t.Fatalf("core module has imports the composer can't place: %v", unsupported)
-	}
-	comp := component.BuildWasiCliRunComponent(core, "_lang_run")
-	if !component.RequestEmpty(req) {
-		comp = component.Compose(core, req, "_lang_run")
-	}
-	compPath := filepath.Join(dir, "prog.component.wasm")
-	if err := os.WriteFile(compPath, comp, 0o644); err != nil {
-		t.Fatalf("write component: %v", err)
-	}
-	cmd := exec.Command("wasmtime", "run", compPath)
-	_ = cmd.Run()
-	return cmd.ProcessState.ExitCode()
-}
-
-// TestWASMNativeAliasedArraySetCoW guards the fix for the native-path
-// copy-on-write bug: __fern_rc_inc's low-address guard (0x10000) used
-// to skip every increment on the native heap layout (objects at
-// ~1024), so `let ys = xs` never bumped xs's refcount and `ys.with(...)`
-// took the rc==1 mutate-in-place fast path, corrupting xs. The
-// preview-1 adapter's higher heap base masked this; the native
-// `-target wasm32-wasi` path (and now the e2e suite) exercises it directly.
-func TestWASMNativeAliasedArraySetCoW(t *testing.T) {
+// TestWASMAliasedArraySetCoW: a mutation through one alias of a shared array
+// or map copies rather than writing through, so the other alias keeps its
+// value. The heap here starts at ~1024, which is where an rc helper with a
+// low-address guard skipped its increment and let `ys.with(...)` take the
+// rc==1 in-place path on a shared buffer.
+func TestWASMAliasedArraySetCoW(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
@@ -127,39 +42,43 @@ function main(): i32 {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := runNativeWasmCli(t, c.src); got != 0 {
-				t.Errorf("native -target wasm exit %d, want 0 (aliased mutation must copy)", got)
+			if got := runWasm(t, c.src); got != 0 {
+				t.Errorf("main returned %d, want 0 (aliased mutation must copy)", got)
 			}
 		})
 	}
 }
 
-// TestWASMNativeRcDecReclaim guards the dec-side companion to the CoW
-// inc fix: the dec/free/reclamation helpers' low-address guard also used
-// 0x10000, so on the native heap (~1024) every dec was skipped — drops
-// never balanced their inc and the freelist never filled. The
-// preview-1 adapter (heap above 64 KiB) fired dec normally, masking the
-// asymmetry; these cases run the native cli/run path where inc fires but
-// dec, pre-fix, did not. "drop_dec_fires" is the distinguishing case:
-// pre-fix __rc_get(inner) reads 2 after the drop (inc fired, dec did
-// not) and the program returns 1; post-fix it reads 1 and returns 0.
-func TestWASMNativeRcDecReclaim(t *testing.T) {
-	cases := []struct {
-		name string
-		src  string
-	}{
-		// Drop must dec the nested element back to its pre-call rc.
-		{"drop_dec_fires", `function consume(inner: u8[]): i32 {
+// TestWASMRcDecReclaim is the dec-side companion to the CoW cases: a drop
+// releases what it holds (so nothing is left live, and nothing is released
+// twice), an overwrite frees the prior value, and heavy churn through the
+// freelist stays correct.
+func TestWASMRcDecReclaim(t *testing.T) {
+	// Dropping an array that holds a shared element releases that element's
+	// retain: the census balances. Were the dec skipped, `inner` would
+	// outlive main with one count too many.
+	t.Run("drop_dec_fires", func(t *testing.T) {
+		_, stderr, code := runLeakCheckWasm(t, `function consume(inner: u8[]): i32 {
     let outer: u8[][] = [inner];
     return 0;
 }
 function main(): i32 {
     let inner: u8[] = __alloc_u8(4);
-    let before: i32 = __rc_get(inner);
     let ignore: i32 = consume(inner);
-    let after: i32 = __rc_get(inner);
-    return (before - 1) + (after - 1);  // 0 iff drop balanced the inc
-}`},
+    return 0;
+}`, false)
+		if code != 0 {
+			t.Fatalf("exit=%d, want 0", code)
+		}
+		allocs, frees, live := parseWasmLeakCheckLine(t, stderr)
+		if allocs == 0 || allocs != frees || live != 0 {
+			t.Errorf("got allocs=%d frees=%d live_bytes=%d, want balanced (the drop must release its element)", allocs, frees, live)
+		}
+	})
+	cases := []struct {
+		name string
+		src  string
+	}{
 		// Nesting fresh + aliased elements and dropping the outer
 		// array yields correct values and no over-release.
 		{"drop_no_over_release", `function build(): i32 {
@@ -196,8 +115,8 @@ function main(): i32 {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := runNativeWasmCli(t, c.src); got != 0 {
-				t.Errorf("native -target wasm exit %d, want 0 (dec must fire on the native heap)", got)
+			if got := runWasm(t, c.src); got != 0 {
+				t.Errorf("main returned %d, want 0 (dec must fire)", got)
 			}
 		})
 	}
