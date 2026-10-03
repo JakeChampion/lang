@@ -715,7 +715,7 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && name == "__ascii_run") {
     return t_i32();
   }
-  if (argc == 3 && name == "__scan_set") {
+  if (argc == 3 && (name == "__scan_set" || name == "__scan_set_bytes")) {
     return t_i32();
   }
   if (argc == 3 && name == "__count_runs") {
@@ -880,6 +880,9 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   }
   if (name == "__scan_set") {
     return ([t_string(), t_i32(), t_array(t_u8())], true);
+  }
+  if (name == "__scan_set_bytes") {
+    return ([t_array(t_u8()), t_i32(), t_array(t_u8())], true);
   }
   if (name == "__count_runs") {
     return ([t_string(), t_i32(), t_array(t_u8())], true);
@@ -15452,7 +15455,7 @@ function registered_intrinsics(): string[] {
     "__getpwuid_name", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8", "__log_f64",
     "__map_hash_seed", "__memchr", "__count_byte_bytes", "__memchr_bytes", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
     "__pow_f64", "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
-    "__round_f64", "__scale_f64", "__scan_set", "__sin_f64", "__sqrt_f64", "__store_i32", "__store_i64",
+    "__round_f64", "__scale_f64", "__scan_set", "__scan_set_bytes", "__sin_f64", "__sqrt_f64", "__store_i32", "__store_i64",
     "__store_ptr", "__store_u8", "__str_bytes", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
   ];
 }
@@ -19223,7 +19226,7 @@ function e053_stmts(stmts: ast.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
 function fip_builtin_callees(funcs: parser.FuncDecl[]): string[] {
   let out: string[] = [];
   for name in [
-    "__memchr", "__count_byte_bytes", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set",
+    "__memchr", "__count_byte_bytes", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set", "__scan_set_bytes",
     "__bsd_sum", "__count_runs", "__crc32_cksum", "__clz32", "__ctz32", "__popcount32", "__clz64",
     "__ctz64", "__popcount64", "__ptr_width", "__heap_bump_bytes", "__heap_alloc_count", "monotonic_ns",
   ] {

@@ -323,6 +323,8 @@ var rcOwnedPayloadBuiltins = map[string]bool{
 // is per-stream, not per-call, and keeps the static sentinel.
 var rcOwnedResultBuiltins = map[string]bool{
 	"buf_take_bytes":                   true, // independent array; an empty result may use the immortal sentinel
+	"__method_Map_keys":                true, // a fresh snapshot column (__map_keys_impl or the inline wide / byte / bool column)
+	"__method_Map_values":              true, // likewise, from __map_values_impl
 	"env":                              true, // __fern_env
 	"read_line":                        true, // __fern_read_line
 	"__method_Reader_read_line":        true, // __fern_reader_read_line
@@ -558,7 +560,7 @@ var rcResultNonPointer = map[string]bool{
 	// i32 counts, indices, comparisons and booleans.
 	"__fern_str_len": true, "__fern_str_byte": true, "__fern_memchr": true, "__fern_count_byte_bytes": true, "__fern_memchr_bytes": true, "__fern_rmemchr_bytes": true,
 	"__fern_ascii_run": true, "__fern_rmemchr": true,
-	"__fern_count_byte": true, "__fern_mismatch": true, "__fern_scan_set": true, "__fern_count_runs": true, "__fern_bsd_sum": true,
+	"__fern_count_byte": true, "__fern_mismatch": true, "__fern_scan_set": true, "__fern_scan_set_bytes": true, "__fern_count_runs": true, "__fern_bsd_sum": true,
 	"__fern_sum_bytes": true, "__fern_crc32_cksum": true,
 	"__str_eq":  true,
 	"__str_ord": true, "__fern_env_count": true, "__fern_arg_count": true,

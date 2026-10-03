@@ -1357,6 +1357,8 @@ type generator struct {
 	usesCountByte bool
 	// usesScanSet gates the byte-set scan kernel (__fern_scan_set).
 	usesScanSet bool
+	// usesScanSetBytes adds its u8[] entry, __fern_scan_set_bytes.
+	usesScanSetBytes bool
 	// usesCountRuns gates the run-count kernel (__fern_count_runs).
 	usesCountRuns bool
 	// usesBsdSum gates the BSD checksum kernel (__fern_bsd_sum).
@@ -2058,6 +2060,9 @@ func (g *generator) recordUse(target string) {
 	case "__fern_count_byte":
 		g.usesCountByte = true
 	case "__fern_scan_set":
+		g.usesScanSet = true
+	case "__fern_scan_set_bytes":
+		g.usesScanSetBytes = true
 		g.usesScanSet = true
 	case "__fern_count_runs":
 		g.usesCountRuns = true
@@ -11995,6 +12000,12 @@ func (g *generator) emitRmemchrRuntime() {
 // byte value; a shorter set takes the loop that checks each byte against
 // its length first.
 func (g *generator) emitScanSetRuntime() {
+	// A packed u8[] is laid out as a heap string is.
+	if g.usesScanSetBytes {
+		g.line(".globl __fern_scan_set_bytes")
+		g.label("__fern_scan_set_bytes")
+		g.emit("jmp __fern_scan_set")
+	}
 	g.line("")
 	g.line(".globl __fern_scan_set")
 	g.line(".type __fern_scan_set, @function")

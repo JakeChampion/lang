@@ -374,6 +374,10 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.borrowedMapFieldResults = b.computeBorrowedMapFieldResults()
 	b.rc.arraySetInc = b.computeArraySetIncs()
 	b.computeBorrowedAliases()
+	// Alias cancellation can leave a map at rc=1 while a borrowed alias
+	// still observes it. Re-evaluate the COW decisions with the final
+	// frame-ownership facts before a mutator can reuse that map in place.
+	b.rc.mapCowForced, b.rc.mapCowForcedUntilOwned = b.computeMapCowForcedCopies()
 	// After the borrow analyses: a borrowed view's source must stay in its
 	// slot until the exit sweep, so it is never moved into a call or
 	// another local.
@@ -1522,6 +1526,7 @@ var copyingBuiltinArgs = map[string][]int{
 	// __scan_set and __count_runs read their string and their set and
 	// return a scalar.
 	"__scan_set":          {0, 2},
+	"__scan_set_bytes":    {0, 2},
 	"__count_runs":        {0, 2},
 	"__bsd_sum":           {0},
 	"__method_Map_get":    {1},
@@ -7751,8 +7756,7 @@ func (b *builder) computeMapCowForcedCopies() (forced, untilOwned map[*ast.Call]
 		if !ok {
 			return true
 		}
-		_, consumingBinding := b.rc.consumingBindings[rid.Name]
-		framed := b.isOwnedRcLocal(rid.Name) || b.isOwnedRcParam(rid.Name) || consumingBinding
+		framed := b.frameOwnsIdent(rid.Name)
 		switch {
 		case b.arraySetReceiverBorrowed(rid.Name) || !framed:
 			if selfAssign[c] && b.rc.cowMapParams[rid.Name] {

@@ -767,6 +767,11 @@ pub function op_rmemchr_bytes(): Op {
   return op0(360);
 }
 
+// scan_set over a borrowed byte array: pops [bytes, from, set].
+pub function op_scan_set_bytes(): Op {
+  return op0(361);
+}
+
 // rmemchr (docs/ATLAS-PLATFORM-PLAN.md §3.3, memchr's nominated sibling):
 // pops [str, byte, from] → the i32 index of the LAST `byte` at or before
 // `from`, or -1. Allocates nothing and reads only the source bytes.
@@ -4168,6 +4173,9 @@ function kind_id_len13(name: string): i32 {
 }
 
 function kind_id_len14(name: string): i32 {
+  if (name == "scan_set_bytes") {
+    return 361;
+  }
   if (name == "udp_send_bytes") {
     return 354;
   }
@@ -5396,6 +5404,9 @@ pub function kind_name(id: i32): string {
   if (id == 360) {
     return "rmemchr_bytes";
   }
+  if (id == 361) {
+    return "scan_set_bytes";
+  }
   if (id <= 40) {
     return kind_name_0(id);
   }
@@ -5565,7 +5576,7 @@ function pops2_io(t: i32): boolean {
 }
 
 function pops3(t: i32): boolean {
-  return t == 360 || t == 358 || t == 74 || t == 75  // rmemchr_bytes, memchr_bytes, memcpy, memset
+  return t == 361 || t == 360 || t == 358 || t == 74 || t == 75  // scan_set_bytes, rmemchr_bytes, memchr_bytes, memcpy, memset
     || t == 82 || t == 84  // raw_store8, raw_store_ptr
     || t == 89 || t == 96 || t == 102 || t == 111  // arr_set, arr_slice, str_slice, str_replace
     || t == 125 || t == 129  // map_set, map_get_or
@@ -8148,7 +8159,7 @@ pub function op_allocates(tag: i32): boolean {
 // than logic: every `||` is one row of a table, there is no path through it to
 // get wrong, and the only way to lower the number is to carry fewer string ops.
 pub function is_str_op_kind(tag: i32): boolean {
-  return tag == 360 || tag == 359 || tag == 358 || tag == 97 || tag == 101 || tag == 102
+  return tag == 361 || tag == 360 || tag == 359 || tag == 358 || tag == 97 || tag == 101 || tag == 102
     || tag == 104 || tag == 105 || tag == 106
     || tag == 107 || tag == 108 || tag == 109
     || tag == 111 || tag == 113 || tag == 98
