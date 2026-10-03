@@ -230,9 +230,8 @@ func TestWASMLeakCheckOffEmitsNoCensus(t *testing.T) {
 
 // parseWasmLeakCheckLine asserts stderr carries a well-formed census line
 // and returns its three numbers. Unlike the register backends' fixture
-// this cannot demand stderr be ONLY that line: wasmtime is free to add its
-// own noise around a run (`--invoke` warns that printing a result is
-// experimental).
+// this does not demand stderr be ONLY that line: wasmtime is free to add
+// its own noise around a run.
 func parseWasmLeakCheckLine(t *testing.T, stderr string) (allocs, frees, live int64) {
 	t.Helper()
 	m := wasmLeakCheckLineRe.FindStringSubmatch(stderr)

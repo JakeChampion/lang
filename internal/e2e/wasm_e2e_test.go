@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/constfold"
@@ -162,9 +163,10 @@ func buildCLIComponent(t *testing.T, src string) string {
 }
 
 // buildNativeComponent builds src into a wasi:cli/run component with the
-// native wasm backend. Only the async programs use it: their poll host has no
+// native wasm backend. The async programs use it: their poll host has no
 // import in the self-host's wasm component, so they stay native until the wasm
-// async decision on #4451.
+// async decision on #4451. So does the one census leg the self-host cannot
+// take yet (runNativeLeakCheckWasm, #11327).
 func buildNativeComponent(t *testing.T, src string, opts wasmbin.BuildOptions) string {
 	t.Helper()
 	skipIfPreview2Missing(t)
@@ -198,6 +200,19 @@ func buildNativeComponent(t *testing.T, src string, opts wasmbin.BuildOptions) s
 
 // nativeMainResult builds a component whose stdout ends with main's result.
 var nativeMainResult = wasmbin.BuildOptions{ForceMemorySection: true, Preview2WASI: true, SynthCliRun: true, PrintMainResult: true}
+
+// runNativeLeakCheckWasm is runLeakCheckWasm through the native backend, for
+// the range-append fusion the self-host's wasm emitter does not have (#11327).
+// The census flag is read at emit time, so it is set around the build.
+func runNativeLeakCheckWasm(t *testing.T, src string) (string, string, int) {
+	t.Helper()
+	prevLc, prevTrap, prevDbg := ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug
+	t.Cleanup(func() { ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug = prevLc, prevTrap, prevDbg })
+	ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug = true, false, false
+	component := buildNativeComponent(t, src, nativeMainResult)
+	ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug = prevLc, prevTrap, prevDbg
+	return runComponent(t, component, runOpts{})
+}
 
 // runNativeStdout runs src through buildNativeComponent and returns its stdout.
 func runNativeStdout(t *testing.T, src string) string {
@@ -290,6 +305,10 @@ func runComponent(t *testing.T, componentPath string, opts runOpts) (stdout, std
 	cmd.Stderr = &se
 	_ = cmd.Run()
 	code := cmd.ProcessState.ExitCode()
+	// wasmtime warns about the harness's own `--invoke`; that line is not the
+	// program's, and a test reading stderr as the program's report should
+	// not see it.
+	stderr = strings.Replace(se.String(), "warning: using `--invoke` with a function that returns values is experimental and may break in the future\n", "", 1)
 	// An exit code alone cannot distinguish "the program returned N" from
 	// "wasmtime refused the module", because both are just a status — a
 	// validation failure and `return 1` are both exit 1. That conflation made
@@ -297,10 +316,10 @@ func runComponent(t *testing.T, componentPath string, opts runOpts) (stdout, std
 	// was a wrong ANSWER (u32 converted signed), the other did not COMPILE
 	// (an i32 opcode on an i64 operand). Rejection is a different kind of
 	// failure from a wrong result and should never be silently scored as one.
-	if rejected, why := wasmRejected(se.String()); rejected {
-		t.Fatalf("wasmtime REJECTED the module — this is not a wrong answer, the artifact is invalid or incomplete (%s)\nstderr:\n%s", why, se.String())
+	if rejected, why := wasmRejected(stderr); rejected {
+		t.Fatalf("wasmtime REJECTED the module — this is not a wrong answer, the artifact is invalid or incomplete (%s)\nstderr:\n%s", why, stderr)
 	}
-	return so.String(), se.String(), code
+	return so.String(), stderr, code
 }
 
 // wasmRejected reports whether wasmtime's stderr describes a refusal to run the
