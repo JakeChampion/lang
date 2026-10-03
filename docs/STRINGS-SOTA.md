@@ -969,6 +969,10 @@ GNU parity, ownership and measured costs are recorded in
 byte sinks. Evidence and platform limits are recorded in
 [the stat report](STRING-STAT-BYTES-2026-10-03.md).
 
+`printf` uses raw output for escaped bytes, character conversions, byte
+precision and diagnostics. Evidence and platform limits are recorded in
+[the printf report](STRING-PRINTF-BYTES-2026-10-03.md).
+
 `head` and `tail` use raw byte input, delimiter scans and output. Their
 shared hold retains input blocks with a 64-bit byte count and releases
 consumed blocks without repeatedly copying long records. Target checks and
