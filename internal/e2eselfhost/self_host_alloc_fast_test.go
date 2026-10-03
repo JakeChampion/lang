@@ -11,9 +11,10 @@ import (
 // A request of at most 256 words is served from __fern_alloc's frameless
 // head: a freed block of its class is popped, and a miss bumps the arena,
 // both with %rax and %rdi alone. Only a larger request, or the first one
-// before the arena is mapped, builds the frame. The program allocates and
-// frees boxes of several sizes, so both head paths and the framed path all
-// run.
+// before the arena is mapped, builds the frame. __fern_arr_box keeps its one
+// live value across the call on the stack rather than in a frame. The program
+// allocates and frees boxes of several sizes, so both head paths and the
+// framed path all run.
 const allocFastProg = `function build(n: i32): i32[] {
     let xs: i32[] = [];
     let i: i32 = 0;
@@ -67,6 +68,16 @@ func TestSelfHostAllocFastPath(t *testing.T) {
 		if at < 0 || !strings.Contains(head[at:], "ret") {
 			t.Errorf("__fern_alloc's frameless head lacks %q followed by a return:\n%s", want, head)
 		}
+	}
+
+	box := strings.Index(string(asm), "__fern_arr_box:\n")
+	if box < 0 {
+		t.Fatal("no __fern_arr_box in the listing")
+	}
+	shim := string(asm)[box:]
+	shim = shim[:strings.Index(shim, "ret\n")]
+	if strings.Contains(shim, "pushq %rbp") || !strings.Contains(shim, "call __fern_alloc") {
+		t.Errorf("__fern_arr_box builds a frame around its allocation:\n%s", shim)
 	}
 
 	for _, tg := range h.targets {
