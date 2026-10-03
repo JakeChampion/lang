@@ -10726,6 +10726,9 @@ func assignHint(want, got ast.Type) string {
 // conversion has to be written out — otherwise the checker accepts an
 // assignment no backend lowers (#8446). Empty for any other pair.
 func dynElemHint(want, got ast.Type) string {
+	if _, direct := want.(ast.DynTraitType); direct {
+		return ""
+	}
 	pos, ok := dynElemMismatch(want, got)
 	if !ok {
 		return ""

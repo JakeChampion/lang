@@ -971,8 +971,10 @@ function drop_active_at(a: i32[], k: i32): i32[] {
 // `pref[v]`, when not -1, is the caller-saved register v would rather have:
 // the one a register-ABI parameter arrives in or a call argument leaves in. It
 // is taken when free and v does not live across a call; an empty `pref` asks
-// for nothing.
+// for nothing. A value a block returns that names no register asks for
+// `abi_reg`, where the return reads it (`return_prefs`).
 pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[]): i32[] {
+  let wish: i32[] = return_prefs(f, pref, abi_reg);
   let big: i32 = 2000000000;
   let lo: i32[] = [];
   let hi: i32[] = [];
@@ -1198,7 +1200,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     // writes, or the holder is the phi this loop-carried value feeds and
     // the two never live at once. First fit wins; the phi mate first.
     let placed: boolean = false;
-    // -2 stands for `pref[v]`, which names a register rather than a value.
+    // -2 stands for `wish[v]`, which names a register rather than a value.
     let cands: i32[] = [mates.hint[v], 0 - 2, def_a[v], def_b[v]];
     let ci: i32 = 0;
     while (ci < cands.len() && !placed) {
@@ -1206,8 +1208,8 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
       ci = ci + 1;
       if (h == 0 - 2) {
         let pr: i32 = 0 - 1;
-        if (v < pref.len()) {
-          pr = pref[v];
+        if (v < wish.len()) {
+          pr = wish[v];
         }
         if (pr < 0 || spans_call(cum, lo[v], hi[v]) || pr == abi_reg && !abi_ok || index_of_reg(free, pr) < 0) {
           continue;
@@ -1359,6 +1361,37 @@ function slot_hints(f: SFunc, at: i32[], blk_start: i32[], def_blk: i32[], def_p
     i = i + 1;
   }
   return SlotHints { hint: hint, take_over: take_over };
+}
+
+// return_prefs is `pref`, filled out to every value, with `abi_reg` asked
+// for each value a block returns that asks for nothing else. A phi's ask
+// passes to its operands that ask for nothing, last block first, so the
+// values a returned merge gathers aim for the register it is returned from.
+function return_prefs(f: SFunc, pref: i32[], abi_reg: i32): i32[] {
+  let out: i32[] = pref;
+  while (out.len() < f.nvals) {
+    out = out.append(0 - 1);
+  }
+  for blk in f.blocks {
+    let v: i32 = blk.term.value;
+    if (blk.term.kind_tag == 1 && v >= 0 && v < out.len() && out[v] < 0) {
+      out = out.with(v, abi_reg);
+    }
+  }
+  let bi: i32 = f.blocks.len() - 1;
+  while (bi >= 0) {
+    for ins in f.blocks[bi].insts {
+      if (ins.kind_tag == 8 && ins.result >= 0 && ins.result < out.len() && out[ins.result] >= 0) {
+        for a in ins.args {
+          if (a >= 0 && a < out.len() && out[a] < 0) {
+            out = out.with(a, out[ins.result]);
+          }
+        }
+      }
+    }
+    bi = bi - 1;
+  }
+  return out;
 }
 
 // sole_readers gives each value the result of the one instruction that reads
