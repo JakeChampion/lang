@@ -1,10 +1,10 @@
 package e2e
 
-// A Map that a call returns and nothing binds, on the native backends
-// (#11246): a receiver (`mk().len()`, `mk().get(k)`, `mk().keys()`), an
-// argument to a borrowing parameter, a mutator's receiver, and a `for`
-// iterand. Each one leaked the whole table. The interpreter and the self-host
-// compiler were right throughout.
+// A Map that a call returns and nothing binds (#11246): a receiver
+// (`mk().len()`, `mk().get(k)`, `mk().keys()`), an argument to a borrowing
+// parameter, a mutator's receiver, and a `for` iterand. Each one leaked the
+// whole table on the native backends; the census leg below is the native one.
+// The interpreter and the self-host compiler were right throughout.
 
 import (
 	"strings"
@@ -64,22 +64,31 @@ func TestMapTempReceiverInterp(t *testing.T) {
 	}
 }
 
-// The native backends, under the sanitizer: a leak is a verdict line, a
-// double release or a read of a freed handle is fatal.
-func TestMapTempReceiverNativeX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	_, stderr, code := buildAndRunSanitized(t, gcc, runner, emitSanitize(t, "x86_64", mapTempReceiverProg, true), false)
-	checkMapTempReceiver(t, stderr, code)
+// The native wasm build under the leak census: the leg the fix is for, since
+// native x86-64 and arm64 builds no longer run here (#4451).
+func TestMapTempReceiverNativeWasmCensus(t *testing.T) {
+	_, stderr, code := runLeakCheckWasm(t, mapTempReceiverProg, false)
+	if code != 42 && code != 0 {
+		t.Fatalf("exit=%d, want the program's own 42 (or wasm's 0)\n%s", code, stderr)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs == 0 {
+		t.Fatalf("no allocations — the program is not running")
+	}
+	if allocs != frees || live != 0 {
+		t.Errorf("an unbound map temp leaks: allocs=%d frees=%d live_bytes=%d, want balanced / 0", allocs, frees, live)
+	}
 }
 
-func TestMapTempReceiverNativeArm64(t *testing.T) {
-	gcc, qemu := arm64Tooling(t)
-	_, stderr, code := buildAndRunSanitized(t, gcc, []string{qemu}, emitSanitize(t, "arm64-linux", mapTempReceiverProg, true), true)
-	checkMapTempReceiver(t, stderr, code)
-}
-
+// The self-host, under the sanitizer: a leak is a verdict line, a double
+// release or a read of a freed handle is fatal.
 func TestMapTempReceiverSelfHostX86_64(t *testing.T) {
 	_, stderr, code := runSanitizeX86_64(t, mapTempReceiverProg)
+	checkMapTempReceiver(t, stderr, code)
+}
+
+func TestMapTempReceiverSelfHostArm64(t *testing.T) {
+	_, stderr, code := runSanitizeArm64(t, mapTempReceiverProg)
 	checkMapTempReceiver(t, stderr, code)
 }
 
@@ -90,7 +99,7 @@ func checkMapTempReceiver(t *testing.T, stderr string, code int) {
 	}
 }
 
-func TestMapTempReceiverWasm(t *testing.T) {
+func TestMapTempReceiverSelfHostWasm(t *testing.T) {
 	if got := compileAndRunWasmbinMain(t, mapTempReceiverRcProg); got != 42 {
 		t.Fatalf("wasm got %d, want 42", got)
 	}
