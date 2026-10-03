@@ -7197,7 +7197,6 @@ function licm_data_slots(ops: Op[], loop_idx: i32, end: i32, slot_for: i32[], ne
   return out;
 }
 
-
 // licm_candidates is every local the header takes a length of without the
 // body ever storing to it, in first-read order so the emitted prologue is
 // stable; an operand read twice is listed once.
