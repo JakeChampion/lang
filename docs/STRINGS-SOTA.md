@@ -894,6 +894,15 @@ Oversized starts clamp to the final index; negative starts and invalid
 needles return `-1`. It shares the packed native vector kernels and uses
 bounded slot scans for unpacked arrays.
 
+`__scan_set_bytes(bytes, from, set)` is `__scan_set` over a borrowed `u8[]`:
+the index of the first byte at or after `from` whose entry in `set`, a `u8[]`
+indexed by byte value, is nonzero, or the array's length. A byte past the end
+of `set` is not in it, and negative starts clamp to zero. It shares the
+string kernel, which is scalar: the table read per byte is the kernel. A
+`const NAME: u8[]` is the natural set; the self-hosted compiler places a
+constant byte array in static data, while the native compiler builds it at
+each use.
+
 `__count_byte_bytes(bytes, byte)` counts matches in borrowed byte arrays
 without allocating or constructing text. Invalid byte values return zero.
 Packed native arrays reuse vector kernels; unpacked arrays use bounded
