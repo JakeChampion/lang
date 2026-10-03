@@ -430,6 +430,19 @@ function main(): i32 { return add3(3, 4, 5); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`\bmovslq %(\w+)d?, %\w+`}, "arm64-linux": {`\bsxtw x(\d+), w\d+`}},
 		forbid: map[string][]string{"arm64-linux": {`\bsxtw x4, w4\b`}}},
+	// A wrap whose operand sits in another register reads it there: one
+	// extension into the destination, not a copy and an extension in place.
+	{name: "wrap_reads_its_source", fn: "sum", exit: 15, src: `
+@noinline function sum(xs: i32[]): i32 {
+    let s: i32 = 0;
+    let i: i32 = 0;
+    while (i < xs.len()) { s = s + xs[i]; i = i + 1; }
+    return s;
+}
+function main(): i32 { return sum([3, 5, 7]); }
+`,
+		want:   map[string][]string{"x86-64-linux": {`\bmovslq %r\w+, %r\w+`}, "arm64-linux": {`\bsxtw x\d+, w\d+`}},
+		forbid: map[string][]string{"x86-64-linux": {`movq %r\w+, %r\w+\n\s+movslq`}, "arm64-linux": {`\bmov x\d+, x\d+\n\s+sxtw`}}},
 }
 
 func TestSelfHostOptimisationShapes(t *testing.T) {
