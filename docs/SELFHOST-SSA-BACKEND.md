@@ -256,7 +256,11 @@ back edge: the whole compiler's x86-64 text is 3.8% shorter for it, and a
 self-host `uniq` runs 5% fewer instructions. A phi also takes its entry
 operand's slot when no use of the operand is reachable from the phi, and a
 free slot another phi is waiting for is passed over, so entering an inner
-loop does not copy either. A phi reads its operand
+loop does not copy either. A value read only by its phi mate, when the
+mate is already spilled, takes the mate's slot rather than a register it
+would only be stored from on the edge (`ssa.sole_readers`), so a value a
+loop changes on some iterations is not loaded and stored back on the others.
+A phi reads its operand
 on the edge, at the predecessor's terminator, not inside the header, and
 a loop-carried operand's interval ends at that edge. Empty blocks holding
 only a branch are skipped by every edge into them and dropped, a phi loses
