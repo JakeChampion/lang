@@ -42,7 +42,7 @@ import "std/io_buffered";
 import "std/time";
 import "./lib/gnu";
 import "./lib/resolv";
-import "./lib/tz";
+import "std/tz";
 import "./lib/utmp";
 
 function opt_all(): i32 {

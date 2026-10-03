@@ -71,3 +71,25 @@ core WASM with zero live bytes, and both oversized replacement guards.
 The size table above isolates the runtime correction before this integration;
 the newer compiler also includes upstream changes. Full integrated unit
 and target checks will run in CI before merge.
+
+The subsequent integration with main `d46426a01` includes upstream fixes for
+the seccomp job's missing compiler sources and counted-pointer ownership in
+the snapshot corpus. The full ARM64 backend comparison passes in 146.653
+seconds. Direct x86-64 flat/SSA executions agree on stdout, stderr and all
+seven snapshot assertions. The map ownership census passes across native
+and WASM targets in 23.928 seconds. Seccomp execution still requires the
+fresh x86-64 Linux CI run; the local ARM64 host skips that gate.
+
+Two remaining timezone integration repairs add `std/tz` to the docs sidebar
+and replace the obsolete fixed-offset lookup fixture in the primary matrix
+with the new transition/TZif suite. Its interpreter and both primary native
+targets pass. The repaired integration passes the full unit suite, all lint
+gates, the transform target matrix, and Darwin regressions (38.648 seconds).
+
+This fresh bootstrap takes 35, 27 and 14 seconds. Stages 2 and 3 match at
+12,811,697 bytes, SHA-256
+`d81f52b72a8b3505880d6ad2549acd426f2938a3ff8a617863886ab9d64ea6df`.
+Its actual Darwin/core-WASM transform probes remain balanced and both
+overflow guards pass. The original size table continues to isolate this
+runtime fix; later compiler sizes include upstream changes. Current-head CI
+and review remain merge requirements.

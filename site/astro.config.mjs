@@ -62,7 +62,7 @@ const STDLIB_GROUPS = [
   ["Numbers", ["bigint", "float", "i32", "i64", "int", "math", "rand", "u32",
     "u64"]],
   ["Files, I/O & time", ["async", "cli", "dotenv", "io", "io_buffered",
-    "log", "path", "signal", "stream", "time"]],
+    "log", "path", "signal", "stream", "time", "tz"]],
   ["Networking", ["dns", "fetch", "headers", "http", "net", "platform", "tcp",
     "wasi_http"]],
   ["Testing", ["bench", "fuzz", "mock_platform", "sim", "sim_fetch", "test"]],

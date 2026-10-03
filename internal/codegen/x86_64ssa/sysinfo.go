@@ -53,6 +53,11 @@ func emitStatfsHelper(w func(string, ...any)) {
 	}
 	w("\tmov r9d, %d", nativex86_64.LinuxPathMax)
 	w("\tmov [r13 + %d], r9", ir.FsStat.PathMax)
+	w("\tmov r9d, [rsp + %d]", nativex86_64.LinuxStatfsFsid)
+	w("\tshl r9, 32")
+	w("\tmov r10d, [rsp + %d]", nativex86_64.LinuxStatfsFsid+4)
+	w("\tor r9, r10")
+	w("\tmov [r13 + %d], r9", ir.FsStat.Fsid)
 	ssaOptionBox(w, 0, "r13")
 	w("\tjmp .Lssa_sfs_ret")
 	w(".Lssa_sfs_err:")

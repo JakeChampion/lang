@@ -9765,7 +9765,7 @@ type statfsField struct{ box, src, width int32 }
 // linuxStatfsFields — Linux's 120-byte record, every member a 64-bit
 // word on both supported ISAs: f_type 0, f_bsize 8, f_blocks 16,
 // f_bfree 24, f_bavail 32, f_files 40, f_ffree 48, f_fsid 56,
-// f_namelen 64, f_frsize 72.
+// f_namelen 64, f_frsize 72. f_fsid is joined separately (statfsFsid).
 var linuxStatfsFields = []statfsField{
 	{ir.FsStat.BlockSize, 8, 8},
 	{ir.FsStat.Blocks, 16, 8},
@@ -9774,11 +9774,15 @@ var linuxStatfsFields = []statfsField{
 	{ir.FsStat.Files, 40, 8},
 	{ir.FsStat.FilesFree, 48, 8},
 	{ir.FsStat.NameMax, 64, 8},
+	{ir.FsStat.FsType, 0, 8},
+	{ir.FsStat.FragSize, 72, 8},
 }
 
 // darwinStatfsFields — Darwin's 2168-byte record: f_bsize is a u32 at 0
-// (f_iosize takes 4..7), then five u64 counts. There is no name-length
-// member at all, which is why the Darwin path asks pathconf(2) instead.
+// (f_iosize takes 4..7), then five u64 counts, f_fsid at 48 and the u32
+// f_type at 60. There is no name-length member at all, which is why the
+// Darwin path asks pathconf(2) instead, and no fundamental block size, so
+// `frag_size` is f_bsize.
 var darwinStatfsFields = []statfsField{
 	{ir.FsStat.BlockSize, 0, 4},
 	{ir.FsStat.Blocks, 8, 8},
@@ -9786,6 +9790,17 @@ var darwinStatfsFields = []statfsField{
 	{ir.FsStat.BlocksAvail, 24, 8},
 	{ir.FsStat.Files, 32, 8},
 	{ir.FsStat.FilesFree, 40, 8},
+	{ir.FsStat.FsType, 60, 4},
+	{ir.FsStat.FragSize, 0, 4},
+}
+
+// statfsFsid is the offset of `f_fsid` in each record: two 32-bit words that
+// FsStat joins into one, first word high, as GNU `stat -f` prints it.
+func statfsFsid(darwin bool) int32 {
+	if darwin {
+		return 48
+	}
+	return 56
 }
 
 // emitStatfsRuntime emits `__fern_statfs(path) → Result[FsStat, IoError]`
@@ -9861,6 +9876,11 @@ func (g *generator) emitStatfsRuntime() {
 		}
 		g.emit("str x9, [x0, #%d]", f.box)
 	}
+	fsid := 96 + statfsFsid(g.darwin)
+	g.emit("ldr w9, [x29, #%d]", fsid)
+	g.emit("ldr w10, [x29, #%d]", fsid+4)
+	g.emit("orr x9, x10, x9, lsl #32")
+	g.emit("str x9, [x0, #%d]", ir.FsStat.Fsid)
 	if g.darwin {
 		g.emit("str x24, [x0, #%d]", ir.FsStat.NameMax)
 		g.emit("str x25, [x0, #%d]", ir.FsStat.PathMax)

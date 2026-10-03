@@ -16,7 +16,7 @@ import "std/array";
 import "std/string";
 import "std/io_buffered";
 import "./gnu";
-import "./tz";
+import "std/tz";
 
 function byte_string(b: i32): string {
   return string_from_bytes_unchecked([b as u8]);

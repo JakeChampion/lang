@@ -1937,6 +1937,27 @@ built-in `Instant`, `Date`, `Time`, `DateTime`, `Zoned`, `Span`,
 - Named constants: `NANOS_PER_SECOND`, `SECONDS_PER_DAY`,
   `DAYS_PER_WEEK`, etc.
 
+### `std/tz`
+
+The local time zone as `tzset(3)` finds it, for a program that prints a
+wall-clock time: a TZif file (RFC 8536, the v2 64-bit table and the POSIX
+rule in its footer) or a POSIX TZ string, answering the UTC offset and
+the abbreviation in force at an instant. `std/time`'s `TimeZone` is a
+fixed offset by construction; a `Zone` is the function from an instant to
+that offset.
+
+- **Loading:** `local_zone()` (`TZ`, else `/etc/localtime`, else UTC),
+  `zone_from_tz(spec)` (a file under `TZDIR` or `/usr/share/zoneinfo`,
+  else a rule such as `EST5EDT,M3.2.0,M11.1.0`), `parse_tzif(bytes)`,
+  `parse_posix(s)`, `fixed_zone(off, name)`, `utc_zone()`.
+- **At an instant:** `(z: Zone).offset_at(sec)`, `.abbrev_at(sec)`,
+  `.is_dst_at(sec)`, `.entry_at(sec)` (all three at once), `.at(sec)`
+  (the `time.TimeZone` valid then), `.civil(sec)` / `.local_fields(sec)`
+  (the broken-down local time).
+- A header count the file cannot hold, a type index past the table or a
+  truncated block is a parse failure, never an allocation of the claimed
+  size. Reaches `env`, `fs` and `now`.
+
 ### `std/async`
 
 The blessed structured-concurrency surface (see
