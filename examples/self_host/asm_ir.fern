@@ -6519,21 +6519,17 @@ function ssa_imm_left(): string[] {
   return ["add", "mul", "and", "or", "xor", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"];
 }
 
-// ssa_rhs is a right operand as the instruction reads it: the immediate for a
-// constant that has none, otherwise its home or the scratch; ssa_read_rhs
-// fills the scratch only when there is a spilled value to fill it with.
-function ssa_rhs(fr: SsaFrame, reg_of: i32[], v: i32, scratch: string): string {
+// ssa_rhs is a right operand as an ALU op or compare reads it: the immediate
+// for a constant that has none, the register home, or a spilled value's frame
+// slot, read in place.
+function ssa_rhs(fr: SsaFrame, reg_of: i32[], v: i32, save: i32): string {
   if (fr.imm.is_imm[v]) {
     return "$" + util.i64_to_string(fr.imm.value[v]);
   }
-  return ssa_src(reg_of, v, scratch);
-}
-
-function ssa_read_rhs(fr: SsaFrame, reg_of: i32[], v: i32, scratch: string, s: asmcore.EmitState): asmcore.EmitState {
-  if (fr.imm.is_imm[v]) {
-    return s;
+  if (reg_of[v] >= 0) {
+    return ssa_reg(reg_of[v]);
   }
-  return ssa_read(reg_of, v, scratch, s);
+  return ssa_slot(ssa.spill_slot(reg_of[v]), save);
 }
 
 // ssa_bin_in_place emits a two-operand integer op into the result's home,
@@ -6573,12 +6569,11 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
     s = s.write("    leaq " + lea + ", " + dh + "\n");
     return ssa_store(reg_of, ins.result, dh, s);
   }
-  s = ssa_read_rhs(fr, reg_of, b, "%rcx", s);
   s = ssa_load(reg_of, a, dh, s);
   if (ssa_shift_tag(tag)) {
     s = s.write(shift_imm_asm(tag, ins.imm, fr.imm.value[b], dh));
   } else {
-    s = s.write(ir_bin_asm(tag, ins.imm, dh, ssa_rhs(fr, reg_of, b, "%rcx")));
+    s = s.write(ir_bin_asm(tag, ins.imm, dh, ssa_rhs(fr, reg_of, b, s.ssa_save)));
   }
   return ssa_store(reg_of, ins.result, dh, s);
 }
@@ -8415,9 +8410,13 @@ function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, 
   if (fu.unique) {
     return ssa_unique_flags(reg_of, fu.a, fu.aligned, join, s);
   }
+  let rhs: string = ssa_rhs(fr, reg_of, fu.b, s.ssa_save);
+  let b_in_slot: boolean = !fr.imm.is_imm[fu.b] && reg_of[fu.b] < 0;
+  if (reg_of[fu.a] < 0 && s.ssa_x0 != fu.a && !b_in_slot) {
+    return s.write("    cmpq " + rhs + ", " + ssa_slot(ssa.spill_slot(reg_of[fu.a]), s.ssa_save) + "\n");
+  }
   s = ssa_read(reg_of, fu.a, "%r11", s);
-  s = ssa_read_rhs(fr, reg_of, fu.b, "%rcx", s);
-  return s.write("    cmpq " + ssa_rhs(fr, reg_of, fu.b, "%rcx") + ", " + ssa_src(reg_of, fu.a, "%r11") + "\n");
+  return s.write("    cmpq " + rhs + ", " + ssa_src(reg_of, fu.a, "%r11") + "\n");
 }
 
 // ssa_unique_flags is ssa_rc_prim's uniqueness test as flags: ZF is set only
