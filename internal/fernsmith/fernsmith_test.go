@@ -405,6 +405,13 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"array alias of a bare ident":  false,
 		"alias read after .with":       false,
 		"loop read before .with":       false,
+		"if/else statement":            false,
+		"loop with break":              false,
+		"loop with continue":           false,
+		"tuple destructure":            false,
+		"if let Some":                  false,
+		"if let Ok":                    false,
+		"let Some … else":              false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := fernsmith.GenMain(seed)
@@ -588,6 +595,30 @@ func TestGenFeatureCoverage(t *testing.T) {
 		// Nested function: `function __local_fn<N>(...)`.
 		if strings.Contains(src, "function __local_fn") {
 			want["nested function (closure)"] = true
+		}
+		// Statement-level control flow, by the generator-private names its
+		// productions bind. An if-EXPRESSION is always `(if (`; the statement
+		// is what follows a `; ` or opens a block.
+		if strings.Contains(src, "; if (") || strings.Contains(src, "{ if (") {
+			want["if/else statement"] = true
+		}
+		if strings.Contains(src, "loop { if (__lb") {
+			want["loop with break"] = true
+		}
+		if strings.Contains(src, "continue; }") {
+			want["loop with continue"] = true
+		}
+		if strings.Contains(src, "let (__td") {
+			want["tuple destructure"] = true
+		}
+		if strings.Contains(src, "if let Some(__il") {
+			want["if let Some"] = true
+		}
+		if strings.Contains(src, "if let Ok(__il") {
+			want["if let Ok"] = true
+		}
+		if strings.Contains(src, "let Some(__le") {
+			want["let Some … else"] = true
 		}
 		// Function VALUES. Each of these is a distinct lowering, and
 		// the escaping / array / indirect-call trio is the #5001 /
