@@ -259,27 +259,6 @@ function set_entry_load(o: ir.Op, set: string, idx: string): string {
   return "    add x5, " + set + ", " + idx + ", lsl #3\n    ldr x7, [x5, #8]\n";
 }
 
-// emit_scan_set_slots_arm64 is scan_set_bytes over an unpacked array and
-// set: one element and one set entry per 8-byte slot.
-function emit_scan_set_slots_arm64(s0: asmcore.EmitState): asmcore.EmitState {
-  let l1: asmcore.LabelOut = asmcore.fresh_label(s0);
-  let l2: asmcore.LabelOut = asmcore.fresh_label(l1.state);
-  let l3: asmcore.LabelOut = asmcore.fresh_label(l2.state);
-  let l4: asmcore.LabelOut = asmcore.fresh_label(l3.state);
-  let l5: asmcore.LabelOut = asmcore.fresh_label(l4.state);
-  let s: asmcore.EmitState = l5.state;
-  s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n    ldr x4, [x2]\n");
-  s = s.write("    cmp x1, #0\n    b.ge " + l1.name + "\n    mov x1, #0\n");
-  s = s.write(l1.name + ":\n    cmp x1, x3\n    b.ge " + l4.name + "\n");
-  s = s.write("    ldr x6, [x0, x1, lsl #3]\n    cmp x6, x4\n    b.hs " + l2.name + "\n");
-  s = s.write("    add x5, x2, x6, lsl #3\n    ldr x7, [x5, #8]\n    cbnz x7, " + l3.name + "\n");
-  s = s.write(l2.name + ":\n    add x1, x1, #1\n    b " + l1.name + "\n");
-  s = s.write(l3.name + ":\n    str x1, [sp, #-16]!\n    b " + l5.name + "\n");
-  s = s.write(l4.name + ":\n    str x3, [sp, #-16]!\n");
-  return s.write(l5.name + ":\n");
-}
-
 function set_entry_indexed(o: ir.Op): string {
   if (ir.is_packed(o)) {
     return "ldrb w7, [x10, x6]";
@@ -714,9 +693,6 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    add x1, x1, #1\n    b " + c_loop + "\n");
     s = s.write(c_done + ":\n    str x8, [sp, #-16]!\n");
     return s;
-  }
-  if (o.kind_tag == 361 && !ir.is_packed(o)) {  // scan_set_bytes over 8-byte slots
-    return emit_scan_set_slots_arm64(s);
   }
   if (o.kind_tag == 324 || o.kind_tag == 361) {  // scan_set / scan_set_bytes
     // operand stack [box, from, set] (set on top) -> the index of the
