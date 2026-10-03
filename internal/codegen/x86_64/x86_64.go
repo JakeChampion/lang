@@ -16529,6 +16529,28 @@ const (
 	oflagCreatExcl   = 193  // O_WRONLY|O_CREAT|O_EXCL
 )
 
+// openWithWords is the open_*_with flags word, bit by bit, as Linux
+// x86-64 spells each (the checker's open_reader_with comment is the
+// contract). Every bit has a word here; the refusals are XNU's and
+// WASI's.
+var openWithWords = []struct {
+	bit  int
+	word int
+	name string // the label suffix
+	flag string
+}{
+	{1, 64, "nc", "O_CREAT"},
+	{2, 2048, "nb", "O_NONBLOCK"},
+	{4, 128, "nx", "O_EXCL"},
+	{8, 0x4000, "nd", "O_DIRECT"},
+	{16, 0x10000, "ndir", "O_DIRECTORY"},
+	{32, 0x1000, "nds", "O_DSYNC"},
+	{64, 0x101000, "ns", "O_SYNC"},
+	{128, 0x40000, "na", "O_NOATIME"},
+	{256, 0x100, "nt", "O_NOCTTY"},
+	{512, 0x20000, "nf", "O_NOFOLLOW"},
+}
+
 // emitWriteFileRuntime emits `__fern_write_file(path, content)
 // → Option[IoError]`. Pipeline: openat(AT_FDCWD, path,
 // O_WRONLY|O_CREAT|O_TRUNC, 0644) → write-loop → close →
@@ -19392,8 +19414,8 @@ func (g *generator) emitReaderWriterRuntime() {
 	}
 
 	// open_reader / open_writer / open_appender / open_exclusive, and the
-	// two `_with` forms whose flags word arrives in esi: bit 0 is O_CREAT
-	// (64), bit 1 O_NONBLOCK (2048), on top of the access mode in `flags`.
+	// two `_with` forms whose flags word arrives in esi, each bit becoming
+	// its Linux word (openWithWords) on top of the access mode in `flags`.
 	for _, e := range []struct {
 		sym       string
 		flags     int
@@ -19450,14 +19472,12 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit(fmt.Sprintf("mov edx, %d", e.flags))
 		if e.withFlags {
 			g.emit("mov eax, [rbp - 56]")
-			g.emit("test eax, 1")
-			g.emit("jz .Lorw_nc_" + e.sym)
-			g.emit("or edx, 64") // O_CREAT
-			g.label(".Lorw_nc_" + e.sym)
-			g.emit("test eax, 2")
-			g.emit("jz .Lorw_nb_" + e.sym)
-			g.emit("or edx, 2048") // O_NONBLOCK
-			g.label(".Lorw_nb_" + e.sym)
+			for _, b := range openWithWords {
+				g.emit(fmt.Sprintf("test eax, %d", b.bit))
+				g.emit(fmt.Sprintf("jz .Lorw_%s_%s", b.name, e.sym))
+				g.emit(fmt.Sprintf("or edx, %d", b.word)) // b.flag
+				g.label(fmt.Sprintf(".Lorw_%s_%s", b.name, e.sym))
+			}
 		}
 		g.emit(fmt.Sprintf("mov r10d, %d", e.mode))
 		g.emitSyscall(257)

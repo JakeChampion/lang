@@ -1181,7 +1181,7 @@ pub function op_set_file_times(): Op {
 }
 
 // `open_reader_with` / `open_writer_with` take [path, flags] — Fern's flags
-// word, 1 create and 2 non-blocking, translated per target by the runtime
+// word, 1 create, 2 non-blocking and 4 exclusive, translated per target by the runtime
 // rather than baked into an immediate — and push the same
 // Result[Reader|Writer, IoError] box op_open_file does.
 pub function op_open_reader_with(): Op {
@@ -7162,10 +7162,13 @@ function licm_header_end(ops: Op[], loop_idx: i32): i32 {
   let k_else: i32 = kind_id("else");
   let k_loop: i32 = kind_id("loop");
   let k_end: i32 = kind_id("end");
+  let k_return: i32 = kind_id("return");
+  let k_br: i32 = kind_id("br");
+  let k_exit: i32 = kind_id("exit");
   let j: i32 = loop_idx + 1;
   while (j < ops.len()) {
     let t: i32 = ops[j].kind_tag;
-    if (is_terminator_kind(t) || t == k_brif || t == k_if || t == k_else
+    if (t == k_return || t == k_br || t == k_exit || t == k_brif || t == k_if || t == k_else
       || t == k_loop || t == k_end) {
       return j;
     }

@@ -145,7 +145,10 @@ Receiver methods on i32 / byte values.
   built on `exp`; `tanh` saturates to `±1` past `|x| = 20`).
   Routed through the checker-injected
   `__<op>_f64` builtins so every backend can use its
-  hardware-precise op.
+  hardware-precise op. `asin` / `acos` / `atan`, `y.atan2(x)`
+  (the angle of `(x, y)` in `[-π, π]`), `expm1` (`eˣ − 1`) and
+  `log1p` (`ln(1 + x)`, both exact near zero) are instead fdlibm
+  ports written in Fern, within 1 ulp of glibc on every backend.
 - **IEEE-754 classification:** `is_nan`, `is_finite`, `is_inf`
 - **Combinators:** `min(y)`, `max(y)`, `clamp(lo, hi)` — NaN
   propagates (any NaN input → NaN output), matching Go's
@@ -1500,7 +1503,10 @@ for query ids, `now` for the wait and `reactor` for the race.
 walk and the ordering rules; `TestDnsExchangeX86_64`, `TestDnsPairX86_64`
 and their self-host twins drive the exchange against a nameserver on the
 loopback interface, over UDP, through the TCP retry, against one that
-stays silent, and with the A and AAAA queries together.
+stays silent, and with the A and AAAA queries together. Under the
+interpreter, whose poll is a stub, `TestDnsPairInterp` and
+`TestDnsPairInterpReadsTheReadySocket` cover the sweep the paired wait
+falls back to; the second answers AAAA alone, which only the sweep reads.
 
 ### `std/tcp`
 

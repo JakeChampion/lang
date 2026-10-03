@@ -6941,14 +6941,16 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irta
 // i64_imm == 4 on these two calls is an optional alignment proof; consumers
 // that do not use it retain the fully general runtime behavior.
 function aligned_rc(own r: irtables.LowerResult, f: ssasem.Func): irtables.LowerResult {
+  let call_direct: i32 = ir.kind_id("call_direct");
+  let load_local: i32 = ir.kind_id("load_local");
   let ops: ir.Op[] = r.ops;
   let i: i32 = 1;
   while (i < ops.len()) {
     let op: ir.Op = ops[i];
     let before: ir.Op = ops[i - 1];
-    if (op.kind_tag == ir.kind_id("call_direct") && op.i32_imm == 1
+    if (op.kind_tag == call_direct && op.i32_imm == 1
       && (op.str == "__fern_rc_inc" || op.str == "__fern_rc_is_unique")
-      && before.kind_tag == ir.kind_id("load_local") && before.i32_imm < f.values.len()) {
+      && before.kind_tag == load_local && before.i32_imm < f.values.len()) {
       let t: typeinfo.Type = f.values[before.i32_imm];
       if (ssasem.reference(t) && !byte_view(t)) {
         ops = ops.with(i, ir.Op { ...op, i64_imm: 4 });

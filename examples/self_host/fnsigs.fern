@@ -14160,8 +14160,8 @@ function payload_type_at(structs: irtables.StructTab, ptype: string, variant: st
 //
 // A prime count keeps unrelated hash strides from aliasing onto the same bucket.
 // Sized to the table: the compiler's own registry holds some 11 k keys across
-// its tiers, and a lookup walks its bucket's records byte by byte, so 251
-// buckets cost about 9.7 k instructions per lookup.
+// its tiers, and a lookup walks its bucket's records byte by byte, so 4093
+// buckets keep a bucket to a few records.
 function borrow_reg_buckets(): i32 {
   return 4093;
 }

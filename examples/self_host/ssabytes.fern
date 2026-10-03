@@ -27,8 +27,10 @@ pub function read(value: i32, indexed: boolean, unchecked: boolean): ir.Op {
   return ir.Op { ...op, i64_imm: value as i64 + 1 };
 }
 
-function read_value(op: ir.Op): i32 {
-  if (op.kind_tag == ir.kind_id("call_direct") && op.i64_imm > 0
+// read_value is the view a read call reads, or -1; `call_direct` is that
+// op kind's id.
+function read_value(op: ir.Op, call_direct: i32): i32 {
+  if (op.kind_tag == call_direct && op.i64_imm > 0
     && (op.str == length_name() || op.str == get_name(false) || op.str == get_name(true))) {
     return (op.i64_imm - 1) as i32;
   }
@@ -64,9 +66,10 @@ function decoded_read(op: ir.Op, base: i32, index: i32): ir.Op[] {
 }
 
 pub function lower_reads(own r: irtables.LowerResult): irtables.LowerResult {
+  let call_direct: i32 = ir.kind_id("call_direct");
   let reads: boolean = false;
   for op in r.ops {
-    if (read_value(op) >= 0) {
+    if (read_value(op, call_direct) >= 0) {
       reads = true;
       break;
     }
@@ -82,7 +85,7 @@ pub function lower_reads(own r: irtables.LowerResult): irtables.LowerResult {
   }
   let next: i32 = r.n_locals;
   for op in r.ops {
-    let value: i32 = read_value(op);
+    let value: i32 = read_value(op, call_direct);
     if (value >= 0 && slots[value] < 0) {
       slots = slots.with(value, next);
       next = next + 2;
@@ -91,6 +94,8 @@ pub function lower_reads(own r: irtables.LowerResult): irtables.LowerResult {
   if (next == r.n_locals) {
     return r;
   }
+  let store_local: i32 = ir.kind_id("store_local");
+  let tee_local: i32 = ir.kind_id("tee_local");
   let ops: ir.Op[] = [];
   i = 0;
   while (i < r.n_params) {
@@ -100,12 +105,12 @@ pub function lower_reads(own r: irtables.LowerResult): irtables.LowerResult {
     i = i + 1;
   }
   for op in r.ops {
-    let value: i32 = read_value(op);
+    let value: i32 = read_value(op, call_direct);
     if (value >= 0) {
       ops = joined(ops, decoded_read(op, slots[value], next));
     } else {
       ops = ops.append(op);
-      if ((op.kind_tag == ir.kind_id("store_local") || op.kind_tag == ir.kind_id("tee_local")) && slots[op.i32_imm] >= 0) {
+      if ((op.kind_tag == store_local || op.kind_tag == tee_local) && slots[op.i32_imm] >= 0) {
         ops = joined(ops, decode(op.i32_imm, slots[op.i32_imm]));
       }
     }

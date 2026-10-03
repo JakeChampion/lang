@@ -25,7 +25,8 @@ An empty repeat also returns without looping over the requested count.
 WASM retains its existing, balanced empty-string box representation; the
 native helper uses the empty literal.
 
-The regression table covers zero and negative counts, empty input repeated
+The initial validation on `3ad0b7e2d` covers zero and negative counts,
+empty input repeated
 2,147,483,647 times, Unicode, retained aliases, concatenation, and nonempty
 controls. The matrix passes on x86-64 Linux, ARM64 Linux and core WASM;
 the Darwin test passes in 41.080 seconds. Full Linux unit tests and every
@@ -59,3 +60,14 @@ The added code implements the empty-result branches and checked lengths;
 the compiler also carries the new WASM instruction text. Both probe versions
 produce identical output for a nonempty Unicode input. No size baseline
 was changed.
+
+Integration with main `1e402c138` passes the native/WASM transform matrix
+in 74.347 seconds, every lint gate, and the Darwin regression in 38.740
+seconds. A fresh bootstrap takes 36, 28 and 15 seconds for stages 1, 2 and
+3. Stages 2 and 3 are byte-identical at 12,811,649 bytes, SHA-256
+`96e080e9f7f3d08a5335f312b4f98deed03a796a5bcce9effb66830b1ed5817a`.
+The reproduced compiler passes all ten alias/value probes on Darwin and
+core WASM with zero live bytes, and both oversized replacement guards.
+The size table above isolates the runtime correction before this integration;
+the newer compiler also includes upstream changes. Full integrated unit
+and target checks will run in CI before merge.

@@ -59,11 +59,12 @@ per native backend (x86-64 and arm64, stack machine and `-backend ssa`),
 `TestSyscallFloorRefusedOnWasm`, which wants the E066 refusal to name the
 callee. `TestSelfHostSyscallFloorX86_64` / `…Arm64` run the same probe
 through the self-host driver. `TestRawSyscallRefusedUnderSandbox` in
-`internal/codegen/x86_64` pins that `FERN_SANDBOX=1` records a literal
+`internal/codegen/x86_64` and `TestSelfHostSandboxRefusesRunTimeSyscallNumber`
+in `internal/e2eselfhost` pin that `FERN_SANDBOX=1` records a literal
 syscall number and refuses a run-time one rather than emitting a filter
 that kills the program at its first call; the `sockets` case of
-`TestSeccompDoesNotBreakWorkingPrograms` runs the Fern-bodied socket
-helpers under the filter. The socket helpers themselves are gated by the
+`TestSeccompDoesNotBreakWorkingPrograms` runs the self-host's Fern-bodied
+socket helpers under the filter. The socket helpers themselves are gated by the
 tests that were already on the builtins (`TestTcpLocalPortRoundTrip` on
 every native leg, `TestArm64TcpListen`, the `Serve*` and `Fetch*` tests,
 the Darwin lane) and by `TestEveryHelperLowersForEveryTarget` and

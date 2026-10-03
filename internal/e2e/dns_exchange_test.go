@@ -1,9 +1,11 @@
 package e2e
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,6 +81,29 @@ func TestDnsPairInterp(t *testing.T) {
 	ns := e2eharness.StartFakeNameserver(t, e2eharness.FakeNameserverPair)
 	out, code := runInterpExitCode(t, e2eharness.DnsPairSource(ns.Port))
 	e2eharness.CheckDnsPair(t, ns, out, code)
+}
+
+// TestDnsPairInterpReadsTheReadySocket holds the A reply for ever. Under the
+// interpreter's stub poll only the sweep reads the AAAA reply; a wait on the
+// first pending socket blocks on the A one and never returns (#10942). The
+// run is bounded so that regression is a failure, not a hung package.
+func TestDnsPairInterpReadsTheReadySocket(t *testing.T) {
+	ns := e2eharness.StartFakeNameserver(t, e2eharness.FakeNameserverAAAAOnly)
+	bin := buildLangBinForInterp(t)
+	p := filepath.Join(t.TempDir(), "pair.fern")
+	if err := os.WriteFile(p, []byte(e2eharness.DnsPairSource(ns.Port)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bin, "-interp", p)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	timedOut, _ := runBounded(cmd, 30*time.Second)
+	if timedOut {
+		t.Fatalf("the paired wait did not return within 30 s: it is blocked on the socket whose reply never comes")
+	}
+	if got := strings.TrimSpace(out.String()); got != "2001:db8::1" || cmd.ProcessState.ExitCode() != 0 {
+		t.Fatalf("exit %d, stdout %q; want exit 0 and the AAAA address alone", cmd.ProcessState.ExitCode(), out.String())
+	}
 }
 
 // compileDnsX86 compiles a std/dns program for x86-64 and returns its

@@ -3427,9 +3427,31 @@ func emitOpenExclusiveHelper(w func(string, ...any)) {
 
 // emitOpenWithHelper writes open_reader_with / open_writer_with(path, flags)
 // -> Result[Reader|Writer, IoError]: emitOpenHandleHelper with the flags word
-// arriving in x1 rather than baked in — bit 0 is O_CREAT (64), bit 1
-// O_NONBLOCK (2048), on top of `access` (O_RDONLY 0 / O_WRONLY 1), mode 0666.
+// arriving in x1 rather than baked in, each bit becoming its Linux arm64
+// word (ssaOpenWithWords) on top of `access` (O_RDONLY 0 / O_WRONLY 1),
+// mode 0666. Linux has a word for every bit, so nothing is refused here.
 // The word sits in x21 across the path copy. x0=path, x1=flags.
+// ssaOpenWithWords is the open_*_with flags word, bit by bit, as Linux
+// arm64 spells each (the checker's open_reader_with comment is the
+// contract).
+var ssaOpenWithWords = []struct {
+	bit  int
+	word int
+	name string // the label suffix
+	flag string
+}{
+	{0, 64, "nc", "O_CREAT"},
+	{1, 2048, "nb", "O_NONBLOCK"},
+	{2, 128, "nx", "O_EXCL"},
+	{3, 0x10000, "nd", "O_DIRECT"},
+	{4, 0x4000, "ndir", "O_DIRECTORY"},
+	{5, 0x1000, "nds", "O_DSYNC"},
+	{6, 0x101000, "ns", "O_SYNC"},
+	{7, 0x40000, "na", "O_NOATIME"},
+	{8, 0x100, "nt", "O_NOCTTY"},
+	{9, 0x8000, "nf", "O_NOFOLLOW"},
+}
+
 func emitOpenWithHelper(w func(string, ...any), name, lbl string, access int) {
 	w("")
 	w("%s:", fnLabel(name))
@@ -3445,12 +3467,15 @@ func emitOpenWithHelper(w func(string, ...any), name, lbl string, access int) {
 	w("\tneg x0, x0")
 	w("\tmov x1, x20")
 	w("\tmov x2, #%d", access)
-	w("\ttbz x21, #0, .Lssa_%s_nc", lbl)
-	w("\torr x2, x2, #64") // O_CREAT
-	w(".Lssa_%s_nc:", lbl)
-	w("\ttbz x21, #1, .Lssa_%s_nb", lbl)
-	w("\torr x2, x2, #2048") // O_NONBLOCK
-	w(".Lssa_%s_nb:", lbl)
+	for _, b := range ssaOpenWithWords {
+		w("\ttbz x21, #%d, .Lssa_%s_%s", b.bit, lbl, b.name)
+		// One `orr` per set bit: the immediate form takes a bitmask, and
+		// O_SYNC is two bits apart.
+		for word := b.word; word != 0; word &= word - 1 {
+			w("\torr x2, x2, #%d // %s", word&-word, b.flag)
+		}
+		w(".Lssa_%s_%s:", lbl, b.name)
+	}
 	w("\tmov x3, #438")
 	w("\tmov x8, #56") // openat
 	w("\tsvc #0")
