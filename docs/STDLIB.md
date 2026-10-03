@@ -1136,7 +1136,11 @@ serializer.
   9110 §6.5). A body with a length, an HTTP/1.0 client's close-delimited
   stream and the wasi-http wrapper's outgoing body carry none, so there
   they are dropped. `http_serialize_fields(map)` writes a map as field
-  lines.
+  lines, and `http_fields_ok(map)` says whether every field can be: a
+  token name and a value with no control byte but HTAB. The serve loop
+  answers a response whose headers or trailers fail it with a bare 500
+  instead, so a value copied from the request (a decoded path can hold
+  CR LF) cannot add a field or end the head.
 - **Response parsing:** `http_parse_response_framed(buf, method, eof,
   limits): HttpResponseFraming` is the client side of the wire, the
   request parser's twin: `Complete(HttpResponseFramed { response, len,

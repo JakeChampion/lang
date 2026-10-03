@@ -2667,6 +2667,19 @@ pub function http_field_name_ok(name: string): boolean {
   return __is_token(n, 0, n.len());
 }
 
+// `http_fields_ok(fields)` — whether every field of the map can be written
+// as a field line: a token name and a value `http_field_value_ok` admits.
+pub function http_fields_ok(fields: HeaderMap): boolean {
+  let i: i32 = 0;
+  while (i < fields.names.len()) {
+    if (!http_field_name_ok(fields.names[i]) || !http_field_value_ok(fields.values[i])) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
 // `http_field_value_ok(value)` — whether `value` can be written as one
 // line: no control byte but HTAB and no DEL (RFC 9110 §5.5), the rule
 // `__field_value` reads a value by.
