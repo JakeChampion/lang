@@ -308,23 +308,40 @@ function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32, own seen: boo
 }
 
 // Every produced body's rows, closed over the buffers handed on: a row only
-// ever gains, so the rounds converge.
+// ever gains, so the rounds converge. A plan reads the table only through the
+// rows filed under the callees its steps name, and each row is filed under the
+// key of the plan that produced it, so a plan is evaluated again only once a
+// callee of its has gained a row; until then it would hand back rows the
+// table already holds.
 pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): GrowTable {
   let table: GrowRow[] = [];
   let no_names: string[] = [];
   // tix indexes `table` by callee, one entry per row in order.
   let tix: util.NameIndex = util.name_index(no_names);
+  let kix: util.NameIndex = util.name_index(keys);
+  let callers: i32[][] = plan_callers(kix, funcs, plans);
+  let dirty: boolean[] = [];
+  while (dirty.len() < plans.len()) {
+    dirty = dirty.append(true);
+  }
   let changed: boolean = true;
   while (changed) {
     changed = false;
     let i: i32 = 0;
     while (i < plans.len()) {
-      if (plans[i].ok) {
+      if (plans[i].ok && dirty[i]) {
+        dirty = dirty.with(i, false);
         for row in grow_rows(keys[i], funcs[i], plans[i], table, tix) {
           if (!has_row_at(table, tix, row.callee, row.param, row.field)) {
             table = table.append(row);
             tix = tix.added(row.callee);
             changed = true;
+            let at: i32 = kix.find(row.callee);
+            if (at >= 0) {
+              for c in callers[at] {
+                dirty = dirty.with(c, true);
+              }
+            }
           }
         }
       }
@@ -332,6 +349,31 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
     }
   }
   return GrowTable { rows: table, by_callee: tix };
+}
+
+// plan_callers[j] lists the plans whose steps name the plan first keyed
+// keys[j] (kix), each once.
+function plan_callers(kix: util.NameIndex, funcs: ssasem.Func[], plans: Plan[]): i32[][] {
+  let out: i32[][] = [];
+  while (out.len() < plans.len()) {
+    out = out.append([]);
+  }
+  let i: i32 = 0;
+  while (i < plans.len()) {
+    if (plans[i].ok) {
+      let at: i32[] = ssa.block_positions(funcs[i].graph);
+      for s in plans[i].steps {
+        if (s.point >= 0) {
+          let j: i32 = kix.find(funcs[i].graph.blocks[at[s.block]].insts[s.point].str);
+          if (j >= 0 && (out[j].len() == 0 || out[j][out[j].len() - 1] != i)) {
+            out = out.with(j, out[j].append(i));
+          }
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return out;
 }
 
 function bad(why: string): Plan {

@@ -422,6 +422,28 @@ function hev_on(): boolean {
   return leak_check_on();
 }
 
+// str_grow_census charges an in-place string growth to the leak census as
+// one block whose live bytes moved from %r9 words to %r10. Under the heap
+// trace the two event hooks have already counted a free of the old size and
+// an alloc of the new, so the old size and both counts come back out.
+// Clobbers %rax only.
+function str_grow_census(s: asmcore.EmitState): asmcore.EmitState {
+  if (rc_trace_on()) {
+    s = s.write("    movq %r9, %rax\n");
+    s = s.write("    shlq $3, %rax\n");
+    s = s.write("    subq %rax, __fern_lc_free_bytes(%rip)\n");
+    s = s.write("    subq %rax, __fern_lc_alloc_bytes(%rip)\n");
+    s = s.write("    subq $1, __fern_lc_free_count(%rip)\n");
+    s = s.write("    subq $1, __fern_lc_alloc_count(%rip)\n");
+    return s;
+  }
+  s = s.write("    movq %r10, %rax\n");
+  s = s.write("    subq %r9, %rax\n");
+  s = s.write("    shlq $3, %rax\n");
+  s = s.write("    addq %rax, __fern_lc_alloc_bytes(%rip)\n");
+  return s;
+}
+
 // hev_free emits one heap-FREE event hook: the block at `ptr` is `words`
 // 8-byte words. Both operands are pushed, never moved through a scratch
 // register, so the hook clobbers nothing the surrounding free site still
@@ -3449,9 +3471,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // place, else 0 with nothing written. In place needs a FUSED box at rc 1,
   // whose block __fern_str_free will return to the class it came from: the
   // grown block's words, ceil(len/8) + 3, still fit the capacity __fern_capw
-  // or large_class gave the original, in the same tier. Under a heap-event
-  // build the growth reports as a free of the old size and an alloc of the
-  // new, so the two hooks still pair by size.
+  // or large_class gave the original, in the same tier. The heap trace sees
+  // the growth as a free of the old size and an alloc of the new, so its
+  // lines still pair by size; the leak census sees one block that grew, as
+  // native's does: its live bytes move and its counts do not.
   // __fern_getpwuid_name(uid) -> 0: Linux keeps every account in the files
   // the caller reads (#9815).
   if (s.has_need("pwname")) {
@@ -3507,7 +3530,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movl $0, %eax\n");
     s = s.write("    ja .Lsg_ret\n");
     s = s.write(".Lsg_fits:\n");
-    if (hev_on()) {
+    if (rc_trace_on()) {
       s = s.write("    leaq -8(%r8), %r11\n");  // base
       s = hev_free(s, "%r11", "%r9");
       s = s.write("    pushq %r10\n");
@@ -3515,6 +3538,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
       s = s.write("    pushq 16(%rsp)\n");  // site = our caller
       s = s.write("    call __fern_hev_a\n");
       s = s.write("    addq $24, %rsp\n");
+    }
+    if (leak_check_on()) {
+      s = str_grow_census(s);
     }
     s = s.write(".Lsg_copy:\n");
     s = s.write("    movq %rdi, 8(%r8)\n");  // len = grown length
