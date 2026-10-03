@@ -34,8 +34,8 @@ two meet in a phi, and the caller's `if` branches on the phi. `if
 ```
 
 Spelling the test out at the call site was cheaper than calling the helper,
-so `coreutils/sort.fern` spelled it out. Putting the calls back cost the
-self-host build 4.8% of `sort -n` and 3.2% of `sort -k2,2n`.
+so `coreutils/sort.fern` spelled it out. On main, putting the calls back
+cost the self-host build 4.8% of `sort -n` and 3.2% of `sort -k2,2n`.
 
 ## What changed
 

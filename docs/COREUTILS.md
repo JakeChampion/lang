@@ -3304,7 +3304,7 @@ output was byte-identical to GNU's first.
 **The self-host build is at or ahead of GNU on every row**, multi-threaded
 GNU included; `-k1,1` is a tie, and `-c` and `-m` are within 11%. Against
 single-threaded GNU it is 1.08–3.67× faster. The native build trails GNU on
-eight rows. #8822 opened at 1.93 s and 4.77 s on its two 2M-line rows, against
+nine rows. #8822 opened at 1.93 s and 4.77 s on its two 2M-line rows, against
 GNU's 0.44 s and 0.86 s; they are 365 ms and 450 ms now. Under callgrind
 `sort -n` over 200k lines is 223 M instructions from the self-host build and
 337 M from the native one, against the issue's 5.57 G.
