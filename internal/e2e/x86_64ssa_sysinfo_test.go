@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -9,8 +10,12 @@ import (
 // uname_field and getgroups.
 //
 // The comparison is against the flat x86-64 emitter, for the reason
-// x86_64ssa_path_helpers_test.go gives.
-const x86SSASysInfoSrc = `function main(): i32 {
+// x86_64ssa_path_helpers_test.go gives. The statfs fields that move under a
+// mounted filesystem's own name — type, ID, fundamental block size — are the
+// host's, read for the directory the probe runs in.
+func x86SSASysInfoSrc(t *testing.T, dir string) string {
+	fsType, fsid, fragSize := hostFsIdentity(t, dir)
+	return fmt.Sprintf(`function main(): i32 {
     let base: string = getcwd();
 
     // read_dir_all keeps "." and "..", which read_dir drops; otherwise the
@@ -39,6 +44,9 @@ const x86SSASysInfoSrc = `function main(): i32 {
             if (s.blocks < s.blocks_free) { return 21; }
             if (s.name_max < 1i64) { return 22; }
             if (s.path_max != 4096i64) { return 23; }
+            if (s.fs_type != %di64) { return 26; }
+            if (s.fsid != %di64) { return 27; }
+            if (s.frag_size != %di64) { return 28; }
         },
         Err(e) => { return 24; }
     }
@@ -69,18 +77,19 @@ const x86SSASysInfoSrc = `function main(): i32 {
     }
     return 0;
 }
-`
+`, fsType, fsid, fragSize)
+}
 
 func TestX86_64SSASysInfoMatchesTheFlatEmitter(t *testing.T) {
 	qemu := x86QemuOrEmpty(t)
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 
-	flat := runPathProbe(t, bin, qemu, dir, "sysinfo", "flat", x86SSASysInfoSrc, "")
+	flat := runPathProbe(t, bin, qemu, dir, "sysinfo", "flat", x86SSASysInfoSrc(t, dir), "")
 	if flat != 0 {
 		t.Fatalf("the flat emitter itself reports %d - the probe is wrong, not the SSA backend", flat)
 	}
-	if ssa := runPathProbe(t, bin, qemu, dir, "sysinfo", "ssa", x86SSASysInfoSrc, ""); ssa != flat {
+	if ssa := runPathProbe(t, bin, qemu, dir, "sysinfo", "ssa", x86SSASysInfoSrc(t, dir), ""); ssa != flat {
 		t.Errorf("-backend ssa reports %d where the flat emitter reports %d.\n\n"+
 			"Each code names one assertion in the probe source above; the two backends "+
 			"are two implementations of the same builtins and must agree.", ssa, flat)
