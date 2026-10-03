@@ -1596,7 +1596,7 @@ function seek_output(w: Writer, s: Settings, name: string): boolean {
 // GNU's order so the first conflicting group is the one reported.
 function refuse_combined(conv: i32, group: i32, what: string): void {
   let both: i32 = conv & group;
-  if ((both & (both - 1)) != 0) {
+  if ((both & both - 1) != 0) {
     gnu.error("cannot combine " + what);
     exit(1);
   }
