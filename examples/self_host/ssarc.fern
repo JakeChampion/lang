@@ -5480,6 +5480,9 @@ function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
   if (ins.str == "__rmemchr_bytes") {
     return emit(r, ir.packed(ir.op_rmemchr_bytes()));
   }
+  if (ins.str == "__scan_set_bytes") {
+    return emit(r, ir.packed(ir.op_scan_set_bytes()));
+  }
   if (ins.str == "write") {
     return emit(r, ir.op_print_str());
   }
@@ -5839,6 +5842,18 @@ function fs_op_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   }
   if (ins.str == "rename") {
     return Lowered { found: true, r: emit(r, ir.op_rename()) };
+  }
+  if (ins.str == "getxattr") {
+    return Lowered { found: true, r: emit(r, ir.op_getxattr()) };
+  }
+  if (ins.str == "lgetxattr") {
+    return Lowered { found: true, r: emit(r, ir.op_lgetxattr()) };
+  }
+  if (ins.str == "setxattr") {
+    return Lowered { found: true, r: emit(r, ir.op_setxattr()) };
+  }
+  if (ins.str == "lsetxattr") {
+    return Lowered { found: true, r: emit(r, ir.op_lsetxattr()) };
   }
   if (ins.str == "rename_noreplace") {
     return Lowered { found: true, r: emit(r, ir.op_rename_noreplace()) };

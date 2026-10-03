@@ -1,8 +1,10 @@
-// coreutils/lib/selinux.fern — the two questions libselinux answers for
-// the utilities here: whether the kernel has SELinux at all, and what
-// the calling process's own security context is.
+// coreutils/lib/selinux.fern — what libselinux answers for the utilities
+// here: whether the kernel has SELinux at all, what the calling process's
+// own security context is, what a FILE's is and how it is set, and how a
+// context is rebuilt from replaced components.
 //
-// Neither needs libselinux; both are files.
+// None needs libselinux: the first two are files, a file's context an
+// extended attribute, and the last is string work.
 //
 // No machine this corpus runs on has SELinux, so the only path the
 // oracle has ever compared is `enabled()` answering false and the
@@ -11,6 +13,7 @@
 // policy loaded, which is what `runcon` with no operands prints.
 import "std/string";
 import "std/array";
+import "./gnu";
 
 // `enabled()` — libselinux's is_selinux_enabled(): find the selinuxfs
 // mount and, with no such mount, there is no SELinux. The mount POINT is
@@ -72,4 +75,138 @@ pub function context(): Result[string, IoError] {
       return Err(e);
     }
   }
+}
+
+// `file_context(path, follow)` — getfilecon(3), or lgetfilecon(3) when
+// `follow` is false: a FILE's context, the `security.selinux` attribute
+// with its trailing NUL stripped. An empty attribute is ENOTSUP, as
+// libselinux makes it. Darwin has no libselinux, so a GNU built there always
+// answers from gnulib's stub, ENOTSUP, whatever the file carries.
+pub function file_context(path: string, follow: boolean): Result[string, IoError] {
+  if (target_os() == "darwin") {
+    return Err(Unsupported);
+  }
+  let got: Result[string, IoError] = if (follow) { getxattr(path, "security.selinux") } else { lgetxattr(path, "security.selinux") };
+  match (got) {
+    Ok(v) => {
+      let ctx: string = trim_context(v);
+      if (ctx.len() == 0) {
+        return Err(Unsupported);
+      }
+      return Ok(ctx);
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+}
+
+// `set_file_context(path, ctx, follow)` — setfilecon(3), or lsetfilecon(3)
+// when `follow` is false: the context written NUL-terminated, as libselinux
+// stores it. A filesystem that answers ENOTSUP is still a success when the
+// file already carries exactly `ctx`, which is libselinux's own fallback.
+// Darwin has no `security.selinux` to set (see file_context).
+pub function set_file_context(path: string, ctx: string, follow: boolean): Result[void, IoError] {
+  if (target_os() == "darwin") {
+    return Err(Unsupported);
+  }
+  let value: string = ctx + "\x00";
+  let put: Result[void, IoError] = if (follow) { setxattr(path, "security.selinux", value) } else { lsetxattr(path, "security.selinux", value) };
+  match (put) {
+    Ok(_) => {
+      return Ok(());
+    },
+    Err(e) => {
+      // ENOTSUP arrives as its strerror text (#11296).
+      if (gnu.io_error_text(e) == "Operation not supported") {
+        match (file_context(path, follow)) {
+          Ok(cur) => {
+            if (cur == ctx) {
+              return Ok(());
+            }
+          },
+          Err(_) => {}
+        }
+      }
+      return Err(e);
+    }
+  }
+}
+
+// `merge_context(ctx, comps, set)` — chcon's compute_context_from_mask:
+// libselinux's context_new(ctx), then each component `set` names replaced
+// in chcon's order (user, range, role, type), then context_str. `comps` and
+// `set` are indexed user 0, role 1, type 2, range 3. Err carries GNU's
+// diagnostics, every component that failed rather than only the first.
+//
+// context_new takes two to five colons — `user:role:type`, then a range
+// that may itself hold colons — and refuses whitespace anywhere. A
+// component may hold neither a tab, a newline nor a carriage return, and
+// only the range may hold a colon or a space.
+pub function merge_context(ctx: string, comps: string[], set: boolean[]): Result[string, string[]] {
+  let parts: string[] = ["", "", "", ""];
+  let has_range: boolean = false;
+  let colons: i32 = 0;
+  let start: i32 = 0;
+  let i: i32 = 0;
+  while (i < ctx.len()) {
+    let b: i32 = ctx[i] as i32;
+    if (b == 10 || b == 9 || b == 13 || b == 32) {
+      return Err(["failed to create security context: " + gnu.quote(ctx) + ": Invalid argument"]);
+    }
+    if (b == 58) {
+      if (colons < 3) {
+        parts = parts.with(colons, slice_unchecked(ctx, start, i) + "");
+        start = i + 1;
+      }
+      colons = colons + 1;
+    }
+    i = i + 1;
+  }
+  if (colons < 2 || colons > 5) {
+    return Err(["failed to create security context: " + gnu.quote(ctx) + ": Invalid argument"]);
+  }
+  let last: i32 = colons;
+  if (last > 3) {
+    last = 3;
+  }
+  parts = parts.with(last, slice_unchecked(ctx, start, ctx.len()) + "");
+  has_range = colons > 2;
+  let names: string[] = ["user", "role", "type", "range"];
+  let errs: string[] = [];
+  for k in [0, 3, 1, 2] {
+    if (set[k]) {
+      if (component_ok(comps[k], k == 3)) {
+        parts = parts.with(k, comps[k]);
+        if (k == 3) {
+          has_range = true;
+        }
+      } else {
+        errs = errs.append("failed to set " + names[k] + " security context component to " + gnu.quote(comps[k]) + ": Invalid argument");
+      }
+    }
+  }
+  if (errs.len() > 0) {
+    return Err(errs);
+  }
+  let out: string = parts[0] + ":" + parts[1] + ":" + parts[2];
+  if (has_range) {
+    out = out + ":" + parts[3];
+  }
+  return Ok(out);
+}
+
+function component_ok(v: string, is_range: boolean): boolean {
+  let i: i32 = 0;
+  while (i < v.len()) {
+    let b: i32 = v[i] as i32;
+    if (b == 9 || b == 10 || b == 13) {
+      return false;
+    }
+    if (!is_range && (b == 58 || b == 32)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
 }

@@ -1182,12 +1182,18 @@ function (f: Fmt) blank_before(line: i32): boolean {
   return f.blank_at(top - 1);
 }
 
-// drain_leading emits every pending comment written ABOVE source line `line`.
-// A comment on the same line stays queued for emit_trailing.
+// drain_leading emits every pending comment written ABOVE source line `line`,
+// keeping a blank line the source had between two of them. A comment on the
+// same line stays queued for emit_trailing.
 function drain_leading(f: Fmt, line: i32, depth: i32): (string, Fmt) {
   let out: string = "";
   let g: Fmt = f;
+  let last: i32 = 0;
   while (g.ci < g.comments.len() && g.comments[g.ci].line < line) {
+    if (last > 0 && g.blank_at(g.comments[g.ci].line - 1)) {
+      out = out + "\n";
+    }
+    last = g.comments[g.ci].line;
     out = out + indent_str(depth) + "//" + g.comments[g.ci].text + "\n";
     g = Fmt { ...g, ci: g.ci + 1 };
   }
@@ -1398,12 +1404,18 @@ function field_lines_for(flines: parser.FieldLines[], name: string, decl_line: i
   return none;
 }
 
-// drain_all flushes every remaining comment at `depth` — end of file, and the
-// tail of a block whose last statement is behind the cursor.
-function drain_all(f: Fmt, depth: i32): (string, Fmt) {
+// drain_all flushes every remaining comment at `depth`: the comments past the
+// last declaration at end of file. A blank line the source had above one of
+// them is kept, unless nothing precedes it (`wrote` is false).
+function drain_all(f: Fmt, depth: i32, wrote: boolean): (string, Fmt) {
   let out: string = "";
   let g: Fmt = f;
+  let last: i32 = 0;
   while (g.ci < g.comments.len()) {
+    if (g.blank_at(g.comments[g.ci].line - 1) && (last > 0 || wrote)) {
+      out = out + "\n";
+    }
+    last = g.comments[g.ci].line;
     out = out + indent_str(depth) + "//" + g.comments[g.ci].text + "\n";
     g = Fmt { ...g, ci: g.ci + 1 };
   }
@@ -3964,7 +3976,7 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
     j = j + 1;
   }
   // Comments past the last declaration.
-  let (tail, _) = drain_all(f, 0);
+  let (tail, _) = drain_all(f, 0, chunks.len() > 0);
   chunks = chunks.append(tail);
   return util.str_join_chunks(chunks);
 }

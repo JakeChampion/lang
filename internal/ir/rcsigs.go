@@ -355,6 +355,15 @@ var rcInertBuiltins = map[string]bool{
 	// Native-only — E066 refuses both on the wasm worlds (`fsrename`).
 	"rename_noreplace": true,
 	"rename_exchange":  true,
+	// (path, name) → Result[string]: two borrowed strings in, a fresh
+	// value out. Native-only — E066 refuses both on the wasm worlds
+	// (`xattr`).
+	"getxattr":  true,
+	"lgetxattr": true,
+	// (path, name, value) → Result[void]: three borrowed strings in,
+	// nothing retained.
+	"setxattr":  true,
+	"lsetxattr": true,
 	// (pid, sig) → Result. Two scalars in and nothing retained.
 	// Native-only — E066 refuses it on both wasm worlds, which have no
 	// process table to name a target in — so it is classified here under
@@ -521,7 +530,7 @@ var rcInert = map[string]bool{
 	"__fern_environ":               true,
 	"__fern_arr_push_shared_bytes": true,
 	"__fern_arr_push_shared_count": true, "__fern_ascii_run": true,
-	"__fern_rmemchr": true, "__fern_count_byte": true, "__fern_scan_set": true, "__fern_count_runs": true, "__fern_bsd_sum": true,
+	"__fern_rmemchr": true, "__fern_count_byte": true, "__fern_scan_set": true, "__fern_scan_set_bytes": true, "__fern_count_runs": true, "__fern_bsd_sum": true,
 	"__fern_sum_bytes": true, "__fern_crc32_cksum": true,
 	// Reads its f64[] and allocates the scaled copy; moves no count on the
 	// input. The RESULT is counted, in rcResultOwned.

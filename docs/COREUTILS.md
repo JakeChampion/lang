@@ -3765,31 +3765,18 @@ in a context. No machine the corpus runs on has SELinux, so the compared path is
 the one where GNU warns (`--context=CTX`, once per occurrence) or says nothing
 (`-Z`, a bare `--context`) and carries on.
 
-**`chcon` refuses the context change itself, and there is no answer that
-would not.** A security context is an extended attribute; there is no
-`getxattr` (#9098) or `setxattr` (#9154), so the one step it exists for
-cannot happen. What makes this a divergence rather than a gap is that GNU
-does not refuse either: on a machine with no SELinux it calls
-`setfilecon(3)` and reports whatever the call failed with, and WHICH errno
-that is belongs to the build and to the caller rather than to chcon —
-`Operation not supported` from gnulib's stub where coreutils was configured
-without libselinux, `Operation not permitted` from the kernel where it was
-configured with it and the caller may not write `security.*`. No Fern binary
-can predict that byte. So GNU's frame is kept and our own sentence sits in
-the errno slot: `failed to change context of 'f' to 'ctx': setting a
-security context is not supported on this system`, exit 1, nothing changed
-— which is the same outcome in kind, since on such a machine GNU changes
-nothing either. `--reference` and the `-u -r -t -l` component form need the
-READ side of the same attribute and are refused the same way.
-
-The corpus is therefore the 96 invocations that never reach the call: the
-whole option grammar, the two `-R` traversal combinations GNU rejects
-outright, the operand counts, `cannot access`, `cannot read directory` —
-reachable with a real directory, because fts reports it INSTEAD of yielding
-the visit the change hangs off — and every spelling of the root failsafe.
-`conflicting security context specifiers given` is unreachable on such a
-machine: GNU checks it AFTER reading the reference file, which has already
-failed. `chcon.fern` keeps that order rather than tidying it.
+**`chcon` on a kernel that HAS SELinux.** The change is real: `setxattr` /
+`lsetxattr` write `security.selinux` the way libselinux's `setfilecon(3)`
+does, NUL included, and a failure reports the kernel's errno in GNU's frame.
+Against Ubuntu's libselinux build the corpus compares the stored attribute
+as well as the output, and whichever answer the caller gets — `Operation not
+permitted` for one who may not write `security.*`, success for one who may —
+both sides get it from the same kernel. What is not done is GNU's
+`security_check_context` before a bare CONTEXT, which runs only when
+`is_selinux_enabled()`: there the policy rejects an invalid context as
+`invalid context: 'ctx'` before the walk, where this build reaches the
+kernel's EINVAL on each file instead. No machine the corpus runs on has
+SELinux to compare it against.
 
 **`mkdir`'s post-creation chmod failing is the one wording in the utility the
 reference binary has never been made to print.** A directory this process just
@@ -3853,16 +3840,21 @@ Darwin answers all three from `getfsstat(2)`, whose `struct statfs` carries
 `f_fstypename`. #9104 is that primitive, shaped as a list rather than a lookup
 because df deduplicates by device across the whole table.
 
-**`stat` cannot report a birth time, a file's SELinux context, or — on Darwin —
-a file system's type name.** `stat` and `lstat` lower to `newfstatat(2)`, whose
-`struct stat` has no birth time (#9096); a file's context is an extended
-attribute and there is no `getxattr` (#9098); and Darwin's `%T` is
-`f_fstypename`, a string `FsStat` does not carry (#11255). That is `%w`, `%W`,
-`%C` and Darwin's `-f %T` — and the DEFAULT multi-line block and `--terse` carry
-one of them, as does `-f` on Darwin, so those are refused with a diagnostic
-naming the field and exit 1. On Linux `%T` is GNU's name for the `f_type`
+**`stat` cannot report a birth time or — on Darwin — a file system's type
+name.** `stat` and `lstat` lower to `newfstatat(2)`, whose `struct stat` has no
+birth time (#9096), and Darwin's `%T` is `f_fstypename`, a string `FsStat` does
+not carry (#11255). That is `%w`, `%W` and Darwin's `-f %T` — and the DEFAULT
+multi-line block and `--terse` carry one of them, as does `-f` on Darwin, so
+those are refused with a diagnostic naming the field and exit 1. On Linux `%T` is GNU's name for the `f_type`
 magic, from `coreutils/lib/fstype.fern`, and `-f` and `-t -f` are answered. The refusal comes only after the operand has been read,
 so `stat nosuch` still reports `cannot statx` exactly as GNU does.
+
+`%C` reads the file's `security.selinux` attribute the way a libselinux build of
+GNU does, so a kernel with no SELinux answers `?` and ENODATA ("No data
+available"). The 9.12 oracle is built `--without-selinux`, where gnulib's stub
+answers ENOTSUP for every file whatever it carries, so `%C` is pinned by
+`TestStatFileContext` against the host's own `lgetxattr(2)` rather than by the
+corpus.
 
 Printing GNU's own "unknown" rendering instead — `-` and `0` for a birth time,
 a zeroed magic number — was the tempting shape and is the one thing that must
@@ -4441,9 +4433,8 @@ groups are the order of work. Each sub-issue names its group.
   the self-hosted COMPILER too — see the paragraph below, and #9085), `mktemp` (done — it needed none of them: `open_exclusive`,
   `create_dir`, `remove_dir`, `remove_file`, `lstat`, `random_bytes` and
   `env` were all already here, so its banner was stale), `chmod` (done),
-  `chown` `chgrp` `runcon`, `chcon` (done — the option grammar, the walk and
-  every diagnostic before the context change; the change itself has no
-  primitive, see the divergence above), `stat` `ls` `dir` `vdir` `du` `df`
+  `chown` `chgrp` `runcon`, `chcon` (done, on `getxattr` / `setxattr` —
+  #9098, #9154), `stat` `ls` `dir` `vdir` `du` `df`
   (full stat, statfs, d_type), `dircolors` (done — it needed none of
   those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (done — the grammar behind `-d`, `-f` and `touch -d` is `lib/datetime.fern`, a port of gnulib's parse_datetime with its mktime emulation and the `--debug` trace, over `std/tz`; the `-s` and `MMDDhhmm` forms parse as GNU does and then report `cannot set date`, because no builtin sets the system clock — see the divergence below), `nice` (done, on the
   new `priority()` / `set_priority(n)` pair under the `sched` target

@@ -65,7 +65,7 @@ pub struct Descriptor {
 // native's own note claims for it.
 function capability_profile(profile: string): string[] {
   if (profile == "hosted-native") {
-    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "syscall", "subprocess", "unix", "reactor"];
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "xattr", "syscall", "subprocess", "unix", "reactor"];
   }
   if (profile == "wasi-cli") {
     // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -367,6 +367,10 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "sync", capability: "fssync" },
     Gate { builtin: "rename_noreplace", capability: "fsrename" },
     Gate { builtin: "rename_exchange", capability: "fsrename" },
+    Gate { builtin: "getxattr", capability: "xattr" },
+    Gate { builtin: "lgetxattr", capability: "xattr" },
+    Gate { builtin: "setxattr", capability: "xattr" },
+    Gate { builtin: "lsetxattr", capability: "xattr" },
     // How large the terminal on the other end of a descriptor is. A
     // target with no terminal cannot answer: 0x0 is not "there is no
     // terminal" but "the terminal is empty", and a caller laying out

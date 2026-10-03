@@ -1390,6 +1390,31 @@ function s_unknown_at(kind: string, line: i32, col: i32): ast.Stmt {
   return ast.StmtUnknown { kind: kind, line: line, col: col };
 }
 
+// tok_spelling is a token as an "expected …, got X" diagnostic quotes it.
+function tok_spelling(t: lexer.Token): string {
+  match (t) {
+    lexer.TokPunct(x) => {
+      return x.text;
+    },
+    lexer.TokIdent(x) => {
+      return x.name;
+    },
+    lexer.TokKeyword(x) => {
+      return x.name;
+    },
+    lexer.TokNumber(x) => {
+      return x.text;
+    },
+    lexer.TokString(x) => {
+      return x.value;
+    },
+    _ => {
+      return "";
+    }
+  }
+  return "";
+}
+
 function s_defer(action: ast.Stmt): ast.Stmt {
   return ast.StmtDefer { action: action, on_error: 0, line: 0 };
 }
@@ -1588,14 +1613,17 @@ pub function resolve_labels_module(mod: Module): Module {
 // the flat `fn` tag (#6773). Only `-fmt` sets it: those canonicalisations are
 // what every downstream `== "fn"` dispatch site reads, and the formatter is
 // the one consumer that parses without compiling.
-struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], verbatim: boolean, depth: i32 }
+// type_errs holds a `decl:` sentinel for each type position whose token
+// starts no type (native's P001 "expected type"); parse_module_flagged reports
+// them with the top-level statements.
+struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], verbatim: boolean, depth: i32, type_errs: ast.Stmt[] }
 
 // scan_struct_names walks the token stream for `struct N` / `pub struct N`
 // declarations and returns the names. A shape scan, not a parse: `struct` is a
 // keyword, so the ident that follows one is always a declared struct name.
 function scan_struct_names(toks: lexer.Token[]): string[] {
   let out: string[] = [];
-  let q: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: out, verbatim: false, depth: 0 };
+  let q: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: out, verbatim: false, depth: 0, type_errs: [] };
   while (!q.at_end()) {
     if (q.peek_keyword() != "struct") {
       q = q.advance();
@@ -1700,17 +1728,23 @@ function (p: Par) peek_col(): i32 {
 }
 
 function (p: Par) advance(): Par {
-  return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth };
+  return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs };
 }
 
 // with_no_struct returns a cursor with the struct-literal-suppression
 // flag set as given (position unchanged).
+// expected_type records that the cursor's token starts no type, where one is
+// required: native's P001 "expected type, got X".
+function (p: Par) expected_type(): Par {
+  return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected type, got \"" + tok_spelling(p.peek()) + "\"")) };
+}
+
 function (p: Par) with_no_struct(v: boolean): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth };
+  return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs };
 }
 
 function (p: Par) with_map_kind(v: i32): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth };
+  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs };
 }
 
 // MAX_NEST_DEPTH bounds recursive descent. Past it the parse stops with a
@@ -1736,7 +1770,7 @@ const MAX_NEST_DEPTH: i32 = 5000;
 const BLOCK_NEST_UNITS: i32 = 8;
 
 function (p: Par) with_depth(v: i32): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: v };
+  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: v, type_errs: p.type_errs };
 }
 
 // too_deep reports whether entering one more recursive-descent level would
@@ -1759,7 +1793,7 @@ function (p: Par) bail(): Par {
   if (last < p.pos) {
     last = p.pos;
   }
-  return Par { toks: p.toks, pos: last, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth };
+  return Par { toks: p.toks, pos: last, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs };
 }
 
 // Token-shape queries: each returns "" when the token isn't of
@@ -3046,7 +3080,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
 // before parsing and every node the parse produces names the file.
 function parse_expr_from_text(text: string, base_line: i32, base_col: i32): ast.Expr {
   let toks: lexer.Token[] = lexer.rebase_tokens(lexer.tokenize(text), base_line, base_col);
-  let sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0 };
+  let sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0, type_errs: [] };
   let (r_expr, r_p) = parse_expr(sub);
   return r_expr;
 }
@@ -7821,7 +7855,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
 }
 
 pub function parse_program(toks: lexer.Token[]): ast.Stmt[] {
-  let p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0 };
+  let p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0, type_errs: [] };
   let out: ast.Stmt[] = [];
   while (!p.at_end()) {
     let (r_stmt, r_p) = parse_stmt(p);
@@ -8078,6 +8112,11 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
   let top_comma: boolean = false;
   let tprev_word: boolean = false;
   let tprev_dyn: boolean = false;
+  // telem_empty: no type has been read since the last `(` or `,`, so a `,`
+  // here leaves an element empty, which native refuses; so does a `)` after a
+  // `,`. A `)` right after `(` is a function type's empty parameter list.
+  let telem_empty: boolean = true;
+  let telem_after_comma: boolean = false;
   while (!p.at_end()) {
     let tpk: string = p.peek_punct();
     // A unit ELEMENT of a tuple type — `((), i32)`. The head `()` never
@@ -8088,10 +8127,13 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       p = p.advance();
       tprev_word = false;
       tprev_dyn = false;
+      telem_empty = false;
       continue;
     }
     if (tpk == "(") {
       td = td + 1;
+      telem_empty = true;
+      telem_after_comma = false;
       tbuf = tbuf + "(";
       p = p.advance();
       tprev_word = false;
@@ -8099,6 +8141,10 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       continue;
     }
     if (tpk == ")") {
+      if (telem_empty && telem_after_comma) {
+        p = p.expected_type();
+      }
+      telem_empty = false;
       td = td - 1;
       tbuf = tbuf + ")";
       p = p.advance();
@@ -8110,6 +8156,11 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       continue;
     }
     if (tpk == ",") {
+      if (telem_empty) {
+        p = p.expected_type();
+      }
+      telem_empty = true;
+      telem_after_comma = true;
       if (td == 1) {
         top_comma = true;
       }
@@ -8138,6 +8189,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       p = p.advance();
       tprev_word = false;
       tprev_dyn = false;
+      telem_empty = true;
       continue;
     }
     // Multi-trait object `dyn A + B` as a tuple element — join with ` + `
@@ -8148,6 +8200,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       p = p.advance();
       tprev_word = false;
       tprev_dyn = false;
+      telem_empty = true;
       continue;
     }
     if (tpk.len() > 0) {
@@ -8155,6 +8208,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       p = p.advance();
       tprev_word = false;
       tprev_dyn = false;
+      telem_empty = false;
       continue;
     }
     let tseg: string = p.peek_ident();
@@ -8162,7 +8216,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       tseg = p.peek_keyword();
     }
     if (tseg.len() == 0) {
-      p = p.advance();
+      p = p.expected_type().advance();
       continue;
     }
     // Two adjacent word tokens have no separator of their own, so
@@ -8178,6 +8232,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
     tbuf = tbuf + tseg;
     tprev_word = true;
     tprev_dyn = tseg == "dyn";
+    telem_empty = false;
     p = p.advance();
   }
   // Parenthesized function type `(… => …)` → coarse "fn", plus any
@@ -8417,7 +8472,7 @@ function parse_type_punct_led(p: Par): (string, string, Par) {
     let (suffixed, sp) = parse_array_suffixes(p, "[" + bracketed_name + "]");
     return (suffixed, "", sp);
   }
-  return ("", "", p);
+  return ("", "", p.expected_type());
 }
 
 // parse_type_ident_led handles the identifier-led forms: a qualified
@@ -10034,6 +10089,10 @@ pub function builtin_function_names(): string[] {
     "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
     // the rename the kernel conditions: refuse an existing destination, or swap
     "rename_noreplace", "rename_exchange",
+    // an entry's extended attribute, following a final symlink or not
+    "getxattr", "lgetxattr",
+    // create or replace one
+    "setxattr", "lsetxattr",
     // the metadata writes on an entry that already exists: its permission
     // bits (with and without following a final symlink) and its two
     // timestamps
@@ -27046,7 +27105,7 @@ function record_field_lines(acc: FieldLines[], verbatim: boolean, name: string, 
 }
 
 function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, TraitDecl[], ImplDecl[], FieldLines[], FunctionInlineHint[]) {
-  let p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim, depth: 0 };
+  let p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim, depth: 0, type_errs: [] };
   let funcs: FuncDecl[] = [];
   let trait_defaults: TraitDefault[] = [];
   let trait_reqs: TraitReq[] = [];
@@ -27554,6 +27613,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   // resolve_assoc_projections runs FIRST of the module passes: settle_module
   // and the variant-field resolver both read declared type spellings, and a
   // `Self::Item` left unresolved would reach them as an unknown nominal.
+  for te in p.type_errs {
+    top_stmts = top_stmts.append(te);
+  }
   let parsed: Module = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, inferred_consts: [] };
   if (!verbatim) {
     let inferred: string[] = unannotated_const_names(funcs);

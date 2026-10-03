@@ -51,17 +51,16 @@
 //     `lstat` lower to `newfstatat(2)`, whose `struct stat` has no
 //     such member (#9096). The default multi-line block and `--terse`
 //     both carry it, so both are refused too.
-//   - the SELinux context of a FILE (`%C`) is an extended attribute,
-//     and there is no `getxattr` (#9098). `lib/selinux.fern` answers
-//     the PROCESS's context, which is a different question. GNU only
-//     puts `%C` in the default block and the terse line when
-//     `is_selinux_enabled()`, so on a kernel without SELinux this
-//     blocks the directive and not a mode.
 //   - on Darwin, the file system's type NAME (`%T`), which GNU reads
 //     from `f_fstypename`; `statfs` reports the type number only, and
 //     Darwin's is an index into the running kernel's VFS list rather
 //     than a fixed magic (#11255). The default `-f` block carries it.
 //     On Linux the number IS the name, through `lib/fstype.fern`.
+//
+// `%C` reads a FILE's SELinux context the way a libselinux build of GNU
+// does: the `security.selinux` attribute, so a kernel without SELinux
+// answers ENODATA. A GNU built `--without-selinux` answers ENOTSUP from
+// gnulib's stub instead, whatever the attribute holds.
 //
 // Printing GNU's own "unknown" rendering for these — `-` and `0` for
 // a birth time, a zeroed magic number — would be a fiction on a
@@ -80,6 +79,7 @@ import "./lib/pwdb";
 import "./lib/canon";
 import "./lib/filetype";
 import "./lib/fstype";
+import "./lib/selinux";
 
 function help_text(): string {
   let out: string = "";
@@ -107,6 +107,7 @@ function help_text(): string {
   out = out + "  %A   permission bits and file type in human readable form\n";
   out = out + "  %b   number of blocks allocated (see %B)\n";
   out = out + "  %B   the size in bytes of each block reported by %b\n";
+  out = out + "  %C   SELinux security context string\n";
   out = out + "  %d   device number in decimal (st_dev)\n";
   out = out + "  %D   device number in hex (st_dev)\n";
   out = out + "  %Hd  major device number in decimal\n";
@@ -157,11 +158,10 @@ function help_text(): string {
   out = out + "--terse --file-system is equivalent to the following FORMAT:\n";
   out = out + "    " + fs_terse_format();
   out = out + "\n";
-  out = out + "This build cannot report the file birth time (%w, %W) or a file's\n";
-  out = out + "SELinux context (%C), so the default output and --terse are refused,\n";
-  out = out + "nor, on Darwin, the file system's type name (%T), which refuses the\n";
-  out = out + "default --file-system output there. See JakeChampion/lang issues\n";
-  out = out + "9096, 9098 and 11255.\n";
+  out = out + "This build cannot report the file birth time (%w, %W), so the default\n";
+  out = out + "output and --terse are refused, nor, on Darwin, the file system's type\n";
+  out = out + "name (%T), which refuses the default --file-system output there. See\n";
+  out = out + "JakeChampion/lang issues 9096 and 11255.\n";
   return out;
 }
 
@@ -783,7 +783,7 @@ function mount_point(name: string, st: FileStat): Option[string] {
 // a field twice costs one syscall; `owner` and `group` are the names for
 // `%U` / `%G`, resolved through the run's `pwdb.Names` when the format
 // asks for them and the digits otherwise.
-struct Item { name: string, st: FileStat, link: string, is_link: boolean, owner: string, group: string }
+struct Item { name: string, st: FileStat, link: string, is_link: boolean, deref: boolean, owner: string, group: string }
 
 struct FsItem { name: string, fs: FsStat }
 
@@ -797,7 +797,7 @@ function fsstat_zero(): FsStat {
 
 // ---- rendering one directive ------------------------------------------------
 // What one directive contributes. `failed` is raised by the directives
-// that can fail on their own — `%m` is the only one — which print `?`,
+// that can fail on their own — `%m` and `%C` — which print `?`,
 // say so on stderr, and cost the exit status without stopping the run.
 struct Rendered { text: string, failed: boolean }
 
@@ -899,6 +899,17 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
       return (ok_rendered(out_string(d, gnu.quote_style(it.name, qn.style))), qn);
     }
     return (ok_rendered(out_string(d, it.name)), qi);
+  }
+  if (c == 67) {
+    match (selinux.file_context(it.name, it.deref)) {
+      Ok(ctx) => {
+        return (ok_rendered(out_string(d, ctx)), qi);
+      },
+      Err(e) => {
+        gnu.error("failed to get security context of " + gnu.quotea(it.name) + ": " + gnu.io_error_text(e));
+        return (Rendered { text: out_string(d, "?"), failed: true }, qi);
+      }
+    }
   }
   if (c == 78) {
     let qq: Quoting = quoting_ready(qi);
@@ -1057,7 +1068,7 @@ function blocked(d: Directive, fs_mode: boolean): string {
     }
     return "";
   }
-  if (d.conv == 119 || d.conv == 87 || d.conv == 67) {
+  if (d.conv == 119 || d.conv == 87) {
     return "%" + string_from_bytes_unchecked([d.conv as u8]);
   }
   return "";
@@ -1170,7 +1181,7 @@ function do_file(o: io_buffered.BufWriter, pieces: Piece[], name: string, deref:
       }
       let u: (string, pwdb.Names) = names.user(st.uid as i64);
       let g: (string, pwdb.Names) = u.1.group(st.gid as i64);
-      let it: Item = Item { name: name, st: st, link: link, is_link: is_link, owner: u.0, group: g.0 };
+      let it: Item = Item { name: name, st: st, link: link, is_link: is_link, deref: deref, owner: u.0, group: g.0 };
       let empty_fs: FsItem = FsItem { name: name, fs: fsstat_zero() };
       let rendered: (io_buffered.BufWriter, boolean, Quoting) = render_pieces(w, pieces, false, it, empty_fs, z, qi);
       w = rendered.0;
@@ -1194,7 +1205,7 @@ function do_fs(o: io_buffered.BufWriter, pieces: Piece[], name: string, newline:
         gnu.die(w, builtin, 1);
       }
       let it: FsItem = FsItem { name: name, fs: fs };
-      let empty_st: Item = Item { name: name, st: stat_zero(), link: "", is_link: false, owner: "", group: "" };
+      let empty_st: Item = Item { name: name, st: stat_zero(), link: "", is_link: false, deref: false, owner: "", group: "" };
       let rendered: (io_buffered.BufWriter, boolean, Quoting) = render_pieces(w, pieces, true, empty_st, it, tz.utc_zone(), qi);
       w = rendered.0;
       if (newline) {

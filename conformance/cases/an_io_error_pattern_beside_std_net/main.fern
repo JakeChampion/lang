@@ -1,0 +1,37 @@
+// std/net declares NetError.Other beside IoError's Other. An arm matching an
+// IoError names IoError's, at the top level and nested under Err (#10922).
+import "std/net";
+
+function classify(e: IoError): i32 {
+  match (e) {
+    Other(op, msg) => {
+      return op.len() + msg.len();
+    },
+    NotFound(p) => {
+      return 100;
+    },
+    _ => {
+      return 1;
+    }
+  }
+}
+
+function wrapped(r: Result[i32, IoError]): i32 {
+  match (r) {
+    Err(Other(op, msg)) => {
+      return 20;
+    },
+    Err(NotFound(p)) => {
+      return 40;
+    },
+    _ => {
+      return 1;
+    }
+  }
+}
+
+function main(): i32 {
+  let e: IoError = IoError.Other("open", "boom");
+  let r: Result[i32, IoError] = Err(IoError.Other("a", "b"));
+  return classify(e) + wrapped(r);
+}
