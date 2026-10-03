@@ -11257,6 +11257,19 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 // for the receiver name and reports an `undefined identifier` at every use —
 // a cascade under the real diagnostic, in a file (for a stdlib method) the
 // program never imported and cannot act on.
+// receiverDeclares reports whether the hoisted generic method `name` takes
+// type parameter tp from its receiver. A concrete receiver (`u8[]`,
+// `Box[i32]`) declares none, so the receiver's arguments a dispatch stamps
+// must not bind the method's own parameters. True for anything that is not
+// a generic method, which keeps the receiver stamp as it was.
+func (c *checker) receiverDeclares(name, tp string) bool {
+	fn, ok := c.info.GenericFuncs[name]
+	if !ok || fn.MethodRecv == "" || len(fn.Params) == 0 {
+		return true
+	}
+	return typeMentionsParam(fn.Params[0].Type, tp)
+}
+
 func hoistReceiver(fn *ast.FuncDecl) {
 	if fn.Receiver == nil {
 		return
@@ -17883,7 +17896,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if len(typeParams) == len(n.TypeArgs) {
 					sub := make(map[string]ast.Type, len(typeParams))
 					for i, tp := range typeParams {
-						sub[tp] = n.TypeArgs[i]
+						if c.receiverDeclares(id.Name, tp) {
+							sub[tp] = n.TypeArgs[i]
+						}
 					}
 					substitutedParams := make([]ast.Type, len(ft.Params))
 					for i, p := range ft.Params {
@@ -17966,7 +17981,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					}
 					// The receiver's arguments are the LEADING parameters.
 					for i, ta := range recvArgs {
-						if i < len(fn.TypeParams) {
+						if i < len(fn.TypeParams) && c.receiverDeclares(id.Name, fn.TypeParams[i]) {
 							sub[fn.TypeParams[i]] = ta
 						}
 					}
