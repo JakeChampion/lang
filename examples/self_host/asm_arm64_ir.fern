@@ -1385,6 +1385,42 @@ function ssa_unary_asm(what: string, unsigned: boolean, d: string): string {
   return "";
 }
 
+// ssa_unary_from selects a width op, `not` or bit count that reads its operand
+// from register `src` and writes `d`, so an operand outside `d` needs no copy
+// into it first; "" for an op this does not cover.
+function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string): string {
+  let w: string = ssa_wreg(d);
+  let ws: string = ssa_wreg(src);
+  if (what == "load_i32") {
+    return "    ldrsw " + d + ", [" + src + "]\n";
+  }
+  if (what == "!") {
+    return "    cmp " + src + ", #0\n    cset " + d + ", eq\n";
+  }
+  if (what == "int_cast:i32" || (what == "int_extend" || what == "int_wrap") && !unsigned) {
+    return "    sxtw " + d + ", " + ws + "\n";
+  }
+  if (what == "u32_wrap" || what == "int_cast:u32" || what == "int_extend" || what == "int_wrap") {
+    return "    mov " + w + ", " + ws + "\n";
+  }
+  if (what == "int_cast:u8") {
+    return "    and " + d + ", " + src + ", #255\n";
+  }
+  if (what == "clz:64") {
+    return "    clz " + d + ", " + src + "\n";
+  }
+  if (what == "clz:32") {
+    return "    clz " + w + ", " + ws + "\n";
+  }
+  if (what == "ctz:64") {
+    return "    rbit " + d + ", " + src + "\n    clz " + d + ", " + d + "\n";
+  }
+  if (what == "ctz:32") {
+    return "    rbit " + w + ", " + ws + "\n    clz " + w + ", " + w + "\n";
+  }
+  return "";
+}
+
 // ssa_bits_asm is the bit counts on `d` at the width the name carries, as the
 // stack machine's arms select them; "" for any other op.
 function ssa_bits_asm(what: string, d: string): string {
@@ -2400,8 +2436,16 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
       s = s.write(ir_bin_asm(ir.kind_id(ins.str), ins.imm, "x4", "x5", "x6"));
     }
   } else {
-    s = ssa_load(reg_of, ins.args[0], d, s);
-    s = s.write(ssa_unary_asm(ins.str, ins.imm == 1, d));
+    let from: string = "";
+    if (reg_of[ins.args[0]] >= 0 && ssa_reg(reg_of[ins.args[0]]) != d) {
+      from = ssa_unary_from(ins.str, ins.imm == 1, ssa_reg(reg_of[ins.args[0]]), d);
+    }
+    if (from != "") {
+      s = s.write(from);
+    } else {
+      s = ssa_load(reg_of, ins.args[0], d, s);
+      s = s.write(ssa_unary_asm(ins.str, ins.imm == 1, d));
+    }
   }
   return ssa_store(reg_of, ins.result, d, s);
 }
@@ -3973,7 +4017,8 @@ function emit_arm64_op_map_read(o: ir.Op, i: i32, lp: string, s: asmcore.EmitSta
   } else if (o.kind_tag == 133) {  // map_iter
     // m.iter() -> a two-slot array box [map_ptr@8, cursor@16] off the data
     // pointer, so it carries an rc header and the typed lowering's release
-    // (__fern_arr_dec) frees it. arm64 has no central op_allocates heap
+    // (__fern_arr_dec) frees it. map_ptr is the unit of the map the cursor
+    // took, which that release drops first. arm64 has no central op_allocates heap
     // gate, so mark_heap explicitly.
     s = s.mark_heap();
     s = s.write("    mov x0, #2\n    bl __fern_arr_box\n");

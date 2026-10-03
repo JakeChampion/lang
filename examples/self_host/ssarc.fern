@@ -195,64 +195,56 @@ function supported_leaf(t: typeinfo.Type): boolean {
 // A nominal box is named by a declaration this function's schema table carries,
 // except a cell's: no declaration names it, and what it holds is one slot of
 // its element.
-function nominal_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean, own v: ssaunits.Verdict): ssaunits.Verdict {
+function nominal_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
   if (semtypes.is_cell(t)) {
-    return walk_shape(semtypes.cell_elem(t), f, lookup, v);
+    return walk_shape(semtypes.cell_elem(t), f, lookup);
   }
   // A map cursor has no record layout to find: its block is the map's address
   // and an index, and what it answers is the map's columns, so the two
   // element types are what has to be emittable.
   if (semtypes.is_map_iter(t)) {
-    v = walk_shape(semtypes.map_iter_key(t), f, lookup, v);
-    return walk_shape(semtypes.map_iter_value(t), f, lookup, v);
+    return walk_shape(semtypes.map_iter_key(t), f, lookup) && walk_shape(semtypes.map_iter_value(t), f, lookup);
   }
   if let typeinfo.TypeStruct(_) = t {
-    return ssaunits.nominal(t, f, lookup, v);
+    return ssaunits.nominal(t, f, lookup);
   }
   if let typeinfo.TypeUnion(_) = t {
-    return ssaunits.nominal(t, f, lookup, v);
+    return ssaunits.nominal(t, f, lookup);
   }
-  return ssaunits.refuse();
+  return false;
 }
 
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
-  return rc_shape(t, f, true, ssaunits.admit()).ok;
+  return rc_shape(t, f, true);
 }
 
-// rc_shape folds whether `t` is a value of this physical vocabulary into `v`
-// (ssaunits.Verdict), its struct and union types looked up now or named.
-function rc_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean, own v: ssaunits.Verdict): ssaunits.Verdict {
-  if (!v.ok || supported_leaf(t)) {
-    return v;
+// rc_shape: whether `t` is a value of this physical vocabulary, its struct and
+// union types looked up in f's table with `lookup` (ssaunits.nominal).
+function rc_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
+  if (supported_leaf(t)) {
+    return true;
   }
   if let typeinfo.TypeI32(i) = t {
-    if (supported_integer(i)) {
-      return v;
-    }
-    return ssaunits.refuse();
+    return supported_integer(i);
   }
   if let typeinfo.TypeFloat(_) = t {
-    if (ssasem.is_float(t)) {
-      return v;
-    }
-    return ssaunits.refuse();
+    return ssasem.is_float(t);
   }
   if let typeinfo.TypeArray(a) = t {
-    return rc_shape(a.elem, f, lookup, v);
+    return rc_shape(a.elem, f, lookup);
   }
   if let typeinfo.TypeTuple(tup) = t {
     for e in tup.elements {
-      v = rc_shape(e, f, lookup, v);
+      if (!rc_shape(e, f, lookup)) {
+        return false;
+      }
     }
-    return v;
+    return true;
   }
   if (ssasem.is_map(t)) {
-    if (ssasem.is_supported_map(t)) {
-      return v;
-    }
-    return ssaunits.refuse();
+    return ssasem.is_supported_map(t);
   }
-  return nominal_shape(t, f, lookup, v);
+  return nominal_shape(t, f, lookup);
 }
 
 // A record cloned at a type variable is one declaration per binding, named
@@ -865,9 +857,9 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
   if (semtypes.is_handle(t)) {
     return false;
   }
-  // A cursor's release frees whatever its backend's block owns.
+  // A cursor holds a unit of its map.
   if (semtypes.is_map_iter(t)) {
-    return false;
+    return true;
   }
   if let typeinfo.TypeFunc(_) = t {
     return env_records(f, t).len() > 0;
@@ -1042,6 +1034,9 @@ function dyn_concretes(f: ssasem.Func, t: typeinfo.Type): typeinfo.Type[] {
 // already emitted the uniqueness test this belongs under: `drop_value` before
 // it releases the box, `reuse_token` before it hands the box on.
 function drop_children(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
+  if (semtypes.is_map_iter(t)) {
+    return drop_cursor_map(r, slot, t, scratch, f);
+  }
   if let typeinfo.TypeFunc(_) = t {
     r = drop_captures(r, slot, t, f);
   }
@@ -1063,6 +1058,22 @@ function drop_children(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type,
   return r;
 }
 
+// A cursor's one child is the map it holds a unit of: element 0 of a builtin
+// cursor's block on every backend, and read through core/map for a routed one.
+function drop_cursor_map(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
+  let m: typeinfo.Type = semtypes.map_iter_map(t);
+  r = reserve(r, scratch + 1);
+  r = emit(r, ir.op_load_local(slot));
+  if (routed_iter(t, f)) {
+    r = emit(r, ir.op_call_direct("__mapiter_map_impl", 1));
+  } else {
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, arr_get_op(m, true));
+  }
+  r = emit(r, ir.op_store_local(scratch));
+  return drop_value(r, scratch, m, scratch + 1, f);
+}
+
 // A nominal type with children is released by its own helper: the inline
 // test-walk-release is ~20 emitted lines a site, and the self-host assembles
 // every line it emits.
@@ -1074,7 +1085,7 @@ function drop_value(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, sc
 }
 
 function outlined_release(t: typeinfo.Type, f: ssasem.Func): boolean {
-  return named(t) != "" && has_children(t, f);
+  return named(t) != "" && !semtypes.is_map_iter(t) && has_children(t, f);
 }
 
 function drop_value_inline(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
@@ -2107,86 +2118,87 @@ function enum_name(t: typeinfo.Type): string {
 }
 
 function walkable(t: typeinfo.Type, f: ssasem.Func): boolean {
-  return walk_shape(t, f, true, ssaunits.admit()).ok;
+  return walk_shape(t, f, true);
 }
 
-function walk_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean, own v: ssaunits.Verdict): ssaunits.Verdict {
-  if (!v.ok) {
-    return v;
-  }
+function walk_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
   if let typeinfo.TypeArray(a) = t {
-    return walk_shape(a.elem, f, lookup, v);
+    return walk_shape(a.elem, f, lookup);
   }
   if let typeinfo.TypeTuple(tup) = t {
     for e in tup.elements {
-      v = walk_shape(e, f, lookup, v);
+      if (!walk_shape(e, f, lookup)) {
+        return false;
+      }
     }
-    return v;
+    return true;
   }
   if (ssasem.reference(t)) {
-    return rc_shape(t, f, lookup, v);
+    return rc_shape(t, f, lookup);
   }
   // A handle stores as the descriptor word and its release walks
   // nothing, so a field or payload of one is walkable without a schema.
   if (semtypes.is_handle(t)) {
-    return v;
+    return true;
   }
   if let typeinfo.TypeI32(_) = t {
-    return v;
+    return true;
   }
   if let typeinfo.TypeBool(_) = t {
-    return v;
+    return true;
   }
   if let typeinfo.TypeFloat(fl) = t {
     if (fl.width == 32 || fl.width == 64) {
-      return v;
+      return true;
     }
   }
-  return ssaunits.refuse();
+  return false;
 }
 
-function record_walk(r: semrecords.Record, f: ssasem.Func): ssaunits.Verdict {
-  let v: ssaunits.Verdict = ssaunits.admit();
+function record_walk(r: semrecords.Record, f: ssasem.Func): boolean {
   for field in r.fields {
-    v = walk_shape(field.ty, f, false, v);
+    if (!walk_shape(field.ty, f, false)) {
+      return false;
+    }
   }
-  return v;
+  return true;
 }
 
-function enum_walk(e: semrecords.Enum, f: ssasem.Func): ssaunits.Verdict {
-  let v: ssaunits.Verdict = ssaunits.admit();
+function enum_walk(e: semrecords.Enum, f: ssasem.Func): boolean {
   for vr in e.variants {
     for field in vr.fields {
-      v = walk_shape(field.ty, f, false, v);
+      if (!walk_shape(field.ty, f, false)) {
+        return false;
+      }
     }
   }
-  return v;
+  return true;
 }
 
 function schema_types_error(f: ssasem.Func, view: ssaunits.SchemaView): string {
   let fits: boolean = ssaunits.view_fits(view, f);
   let i: i32 = 0;
   while (i < f.records.list.len()) {
-    let v: ssaunits.Verdict = ssaunits.admit();
+    let ok: boolean = false;
     if (fits) {
-      v = view.rec_walk[i];
+      ok = view.rec_walk[i];
     } else {
-      v = record_walk(f.records.list[i], f);
+      ok = record_walk(f.records.list[i], f);
     }
-    if (!ssaunits.admitted(v, f)) {
+    if (!ok) {
       return "unsupported physical RC record field type";
     }
     i = i + 1;
   }
   i = 0;
   while (i < f.enums.len()) {
-    let v: ssaunits.Verdict = ssaunits.admit();
+    let ok: boolean = false;
     if (fits) {
-      v = view.enum_walk[i];
+      ok = view.enum_walk[i];
     } else {
-      v = enum_walk(f.enums[i], f);
+      ok = enum_walk(f.enums[i], f);
     }
-    if (!ssaunits.admitted(v, f)) {
+    if (!ok) {
       return "unsupported physical RC variant field type";
     }
     i = i + 1;
@@ -2199,19 +2211,19 @@ function schema_types_error(f: ssasem.Func, view: ssaunits.SchemaView): string {
 struct SchemaSeen {
   recs: semrecords.Record[],
   rec_names: util.NameIndex,
-  rec_unit: ssaunits.Verdict[],
-  rec_walk: ssaunits.Verdict[],
+  rec_unit: boolean[],
+  rec_walk: boolean[],
   enums: semrecords.Enum[],
   enum_names: util.NameIndex,
-  enum_unit: ssaunits.Verdict[],
-  enum_walk: ssaunits.Verdict[],
+  enum_unit: boolean[],
+  enum_walk: boolean[],
 }
 
 struct ViewStep { seen: SchemaSeen, view: ssaunits.SchemaView }
 
-// schema_views forms the table-free half of every function's schema checks
-// once per module: a record or enum several functions' tables hold is checked
-// once, and each function's view carries the verdicts for its own table.
+// schema_views forms every function's schema checks once per module: a record
+// or enum several functions' tables hold is checked once, and each function's
+// view carries the verdicts for its own table.
 pub function schema_views(funcs: ssasem.Func[]): ssaunits.SchemaView[] {
   let none: string[] = [];
   let seen: SchemaSeen = SchemaSeen { recs: [], rec_names: util.name_index(none), rec_unit: [], rec_walk: [], enums: [], enum_names: util.name_index(none), enum_unit: [], enum_walk: [] };
@@ -3737,8 +3749,8 @@ function routed_column_read(own r: irtables.LowerResult, elem: typeinfo.Type, of
   return emit(r, ir.op_call_direct("__map_i32_column", 2));
 }
 
-// The cursor holds the map's buffer, not a unit of the map, as the runtime's
-// does; it is released through __mapiter_drop_impl.
+// The cursor holds the map's buffer and, beside it, the unit of the map that
+// keeps the buffer live; it is released through __mapiter_drop_impl.
 function routed_cursor(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let k: i32 = ins.kind_tag;
   if (k == ssasem.map_iter()) {
@@ -5115,9 +5127,10 @@ function map_in_place(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIns
 }
 
 // The cursor cluster. `map_iter` is the only allocation of the five, a fresh
-// unit the frame releases through `__fern_mapiter_free`. `key` and `value` load the map's own column element at
-// the cursor, so the value is the map's and stays borrowed. `advance` moves
-// the index in place and leaves the dummy the statement stores.
+// unit that takes a unit of its map (drop_cursor_map releases it). `key` and
+// `value` load the map's own column element at the cursor, so the value is the
+// map's and stays borrowed. `advance` moves the index in place and leaves the
+// dummy the statement stores.
 //
 // An i64 or u64 value column sets both width flags, which only the wasm
 // accessors read.

@@ -1471,8 +1471,7 @@ func buildWriteFileSpanBodyP2(idxs map[string]uint32, raw bool) []byte {
 		body = inst.InstCall(body, blockingWrite)
 		// disc != 0 → Some(IoError). This err arm carries a
 		// stream-error (not an error-code), so don't run the
-		// error-code mapper; use a generic errno (0 → __build_io_error
-		// default variant).
+		// error-code mapper; answer EIO.
 		body = inst.InstLocalGet(body, 4)
 		body = memory.InstI32Load8U(body, 0, 0)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
@@ -1482,7 +1481,7 @@ func buildWriteFileSpanBodyP2(idxs map[string]uint32, raw bool) []byte {
 			body = inst.InstCall(body, streamDrop)
 			body = inst.InstLocalGet(body, 10)
 			body = inst.InstCall(body, descDrop)
-			body = inst.InstI32Const(body, 29) // EIO
+			body = inst.InstI32Const(body, errnoIo)
 			body = inst.InstLocalSet(body, 17)
 			body = buildWriteFileErr(body, buildIoErr, allocRc1, 17)
 		}

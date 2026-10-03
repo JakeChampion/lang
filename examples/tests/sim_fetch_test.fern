@@ -17,6 +17,9 @@ const ORIGIN: string = "93.184.216.34";
 
 const MS: i64 = 1000000;
 
+// A forward proxy on a private address, which only the deployment chose.
+const PROXY: string = "10.0.0.9";
+
 // The route `fetch.send` takes, with no proxy to consult.
 function __open(): fetch.Policy {
   return fetch.Policy { public_only: false, proxies: fetch.ProxyEnv { http_proxy: "", no_proxy: "" } };
@@ -514,6 +517,131 @@ function test_routes_pool_apart(): test.TestOutcome {
   return test.assert_eq(n.connects(), 2);
 }
 
+// A route through the proxy at `PROXY:3128` with a user and no password,
+// `no_proxy` as given and, when `cgi`, under a `REQUEST_METHOD`.
+function __via_proxy(public_only: boolean, no_proxy: string, cgi: boolean): fetch.Policy {
+  let method: Option[string] = None;
+  if (cgi) {
+    method = Some("GET");
+  }
+  let env: fetch.ProxyEnv = fetch.proxy_env_from(Some("http://u@" + PROXY + ":3128"), Some(no_proxy), None, method);
+  return fetch.Policy { public_only: public_only, proxies: env };
+}
+
+// The proxy listening, answering absolute-form requests for `example.test`.
+function __proxy_net(d: sim.Sim, answers: sim_fetch.Answer[]): sim_fetch.Net {
+  return sim_fetch.net(d).listen(PROXY, 3128, 5).route(PROXY, 3128, "http://example.test/", answers);
+}
+
+// A request the proxy takes is written to it in absolute form, with the
+// origin's `Host` and the proxy's credentials; the origin's name is the
+// proxy's to resolve.
+function test_proxied(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __proxy_net(d, [sim_fetch.reply(200, "via proxy")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __via_proxy(false, "", false));
+  if (__body(got) != "via proxy") {
+    return test.fail(__message(got));
+  }
+  let sent: string = n.sent(0);
+  if (!sent.starts_with("GET http://example.test/ HTTP/1.1\r\nHost: example.test\r\n")) {
+    return test.fail("request: " + sent);
+  }
+  if (sent.index_of("proxy-authorization: Basic dTo=\r\n") < 0) {
+    return test.fail("request: " + sent);
+  }
+  return test.pass();
+}
+
+// The route through the proxy `spec` names, as the environment gives it.
+function __proxy_spec(spec: string): fetch.Policy {
+  return fetch.Policy { public_only: false, proxies: fetch.proxy_env_from(Some(spec), None, None, None) };
+}
+
+// A proxy named with no scheme and no port is an http one on port 80.
+function test_proxy_bare_host(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = sim_fetch.net(d).listen(PROXY, 80, 5).route(PROXY, 80, "http://example.test/", [sim_fetch.reply(200, "via port 80")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __proxy_spec(PROXY));
+  return test.assert_eq(__body(got), "via port 80");
+}
+
+// A caller's own `Proxy-Authorization` is sent in place of the
+// environment's credentials.
+function test_caller_proxy_credentials(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __proxy_net(d, [sim_fetch.reply(200, "via proxy")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/").with_header("Proxy-Authorization", "Basic b3du"), __via_proxy(false, "", false));
+  let sent: string = n.sent(0);
+  if (__body(got) != "via proxy" || sent.index_of("Basic b3du\r\n") < 0 || sent.index_of("dTo=") >= 0) {
+    return test.fail("request: " + sent);
+  }
+  return test.pass();
+}
+
+// An `http_proxy` that is not an http URL with a host refuses the request
+// rather than dialling around it.
+function test_proxy_spec_refused(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let unparsed: Result[HttpResponse, fetch.FetchError] = fetch.send_on(sim_fetch.net(d), fetch.get("http://example.test/"), __proxy_spec("http://[::1"));
+  if (__message(unparsed) != "invalid URL: http_proxy is not a URL") {
+    return test.fail(__message(unparsed));
+  }
+  let other: Result[HttpResponse, fetch.FetchError] = fetch.send_on(sim_fetch.net(d), fetch.get("http://example.test/"), __proxy_spec("ftp://" + PROXY));
+  return test.assert_eq(__message(other), "invalid URL: http_proxy is not an http URL with a host");
+}
+
+// A host `no_proxy` names is dialled directly.
+function test_no_proxy_direct(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "direct")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __via_proxy(false, "example.test", false));
+  return test.assert_eq(__body(got), "direct");
+}
+
+// Under a `REQUEST_METHOD` no proxy is read, since a CGI host makes one of
+// the client's request headers into the environment.
+function test_cgi_no_proxy(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "direct")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __via_proxy(false, "", true));
+  return test.assert_eq(__body(got), "direct");
+}
+
+// A proxy that is not listening refuses the request.
+function test_proxy_refused(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(sim_fetch.net(d), fetch.get("http://example.test/"), __via_proxy(false, "", false));
+  return test.assert_eq(__message(got), "connect: Connection refused");
+}
+
+// The public route resolves and judges the origin a proxy would reach,
+// and refuses one on a private address; the proxy's own private address
+// is the deployment's choice and goes unjudged.
+function test_proxied_origin_judged(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __proxy_net(d, [sim_fetch.reply(200, "via proxy")]).host("example.test", [ORIGIN]).host("inside.test", ["10.0.0.7"]);
+  let blocked: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://inside.test/"), __via_proxy(true, "", false));
+  if (__message(blocked) != "blocked: 10.0.0.7 is not a global address") {
+    return test.fail(__message(blocked));
+  }
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __via_proxy(true, "", false));
+  return test.assert_eq(__body(got), "via proxy");
+}
+
+// The proxy's connection is kept by the proxy's address, so it carries
+// requests for every origin behind it.
+function test_proxy_connection_kept(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __proxy_net(d, [sim_fetch.reply(200, "one").kept()]).route(PROXY, 3128, "http://other.test/", [sim_fetch.reply(200, "two").kept()]);
+  let first: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __via_proxy(false, "", false));
+  let second: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://other.test/"), __via_proxy(false, "", false));
+  if (__body(first) != "one" || __body(second) != "two") {
+    return test.fail(__message(first) + " then " + __message(second));
+  }
+  return test.assert_eq(n.connects(), 1);
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/sim_fetch");
   r = r.it("answers at its virtual time and closes", test_answer_at_its_time);
@@ -548,5 +676,14 @@ function main(): i32 {
   r = r.it("does not keep a connection with bytes past the response", test_trailing_bytes_not_kept);
   r = r.it("closes the longest-idle connection past the cap", test_pool_cap);
   r = r.it("keeps the routes' connections apart", test_routes_pool_apart);
+  r = r.it("sends a proxied request in absolute form", test_proxied);
+  r = r.it("dials a host no_proxy names directly", test_no_proxy_direct);
+  r = r.it("reads no proxy under REQUEST_METHOD", test_cgi_no_proxy);
+  r = r.it("reports a proxy that refuses", test_proxy_refused);
+  r = r.it("judges the origin a proxy reaches on the public route", test_proxied_origin_judged);
+  r = r.it("keeps the proxy's connection across origins", test_proxy_connection_kept);
+  r = r.it("dials a proxy named without a port on 80", test_proxy_bare_host);
+  r = r.it("sends a caller's own proxy credentials", test_caller_proxy_credentials);
+  r = r.it("refuses an http_proxy it cannot use", test_proxy_spec_refused);
   return r.finish();
 }

@@ -435,34 +435,7 @@ function unit_free(t: typeinfo.Type): boolean {
 }
 
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
-  return unit_shape(t, f, true, admit()).ok;
-}
-
-// A Verdict is a type's admission with the table read separately: whether its
-// shape is admitted, and the struct and union types it names, each of which
-// has to be in the function's table. A shape folded with `lookup` reads the
-// table as it goes and names nothing.
-pub struct Verdict { ok: boolean, needs: typeinfo.Type[] }
-
-pub function admit(): Verdict {
-  return Verdict { ok: true, needs: [] };
-}
-
-pub function refuse(): Verdict {
-  return Verdict { ok: false, needs: [] };
-}
-
-// admitted is `v` with its named types looked up in f's table.
-pub function admitted(v: Verdict, f: ssasem.Func): boolean {
-  if (!v.ok) {
-    return false;
-  }
-  for t in v.needs {
-    if (!has_nominal(t, f)) {
-      return false;
-    }
-  }
-  return true;
+  return unit_shape(t, f, true);
 }
 
 pub function has_nominal(t: typeinfo.Type, f: ssasem.Func): boolean {
@@ -472,47 +445,46 @@ pub function has_nominal(t: typeinfo.Type, f: ssasem.Func): boolean {
   return semrecords.find_enum(f.enums, t) >= 0;
 }
 
-// nominal folds a struct or union type into `v`: looked up now, or named.
-pub function nominal(t: typeinfo.Type, f: ssasem.Func, lookup: boolean, own v: Verdict): Verdict {
-  if (!lookup) {
-    return Verdict { ...v, needs: v.needs.append(t) };
-  }
-  if (has_nominal(t, f)) {
-    return v;
-  }
-  return refuse();
+// nominal admits a struct or union type: with `lookup`, when f's table holds
+// it. A schema entry's field is admitted without: the analysis a plan is
+// formed from refuses a table whose fields name a type it lacks
+// (semrecords.verify).
+pub function nominal(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
+  return !lookup || has_nominal(t, f);
 }
 
-// unit_shape folds whether `t` is a value this pass plans into `v`.
-function unit_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean, own v: Verdict): Verdict {
-  if (!v.ok || unit_free(t)) {
-    return v;
+// unit_shape: whether `t` is a value this pass plans.
+function unit_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
+  if (unit_free(t)) {
+    return true;
   }
   if let typeinfo.TypeString(_) = t {
-    return v;
+    return true;
   }
   if let typeinfo.TypeFunc(_) = t {
-    return v;
+    return true;
   }
   if let typeinfo.TypeDyn(_) = t {
-    return v;
+    return true;
   }
-  // A map cursor's unit is its own block; what it reads stays the map's.
+  // A map cursor holds a unit of its map.
   if (semtypes.is_map_iter(t)) {
-    return v;
+    return unit_shape(semtypes.map_iter_map(t), f, lookup);
   }
   if let typeinfo.TypeArray(a) = t {
-    return unit_shape(a.elem, f, lookup, v);
+    return unit_shape(a.elem, f, lookup);
   }
   if let typeinfo.TypeTuple(tup) = t {
     for e in tup.elements {
-      v = unit_shape(e, f, lookup, v);
+      if (!unit_shape(e, f, lookup)) {
+        return false;
+      }
     }
-    return v;
+    return true;
   }
   // A cell holds one unit of its own and one slot; no declaration names it.
   if (semtypes.is_cell(t)) {
-    return unit_shape(semtypes.cell_elem(t), f, lookup, v);
+    return unit_shape(semtypes.cell_elem(t), f, lookup);
   }
   // A map holds one unit of its own and one of every key in its column, and
   // one of every value when that column is counted; only the shapes whose
@@ -520,23 +492,20 @@ function unit_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean, own v: Ve
   // itself is a value this pass plans.
   if (ssasem.is_map(t)) {
     if (!ssasem.is_supported_map(t)) {
-      return refuse();
+      return false;
     }
-    if (ssasem.keyed_map_key(ssasem.map_key(t))) {
-      v = unit_shape(ssasem.map_key(t), f, lookup, v);
+    if (ssasem.keyed_map_key(ssasem.map_key(t)) && !unit_shape(ssasem.map_key(t), f, lookup)) {
+      return false;
     }
-    if (ssasem.boxed_map_value(ssasem.map_value(t))) {
-      v = unit_shape(ssasem.map_value(t), f, lookup, v);
-    }
-    return v;
+    return !ssasem.boxed_map_value(ssasem.map_value(t)) || unit_shape(ssasem.map_value(t), f, lookup);
   }
   if let typeinfo.TypeStruct(_) = t {
-    return nominal(t, f, lookup, v);
+    return nominal(t, f, lookup);
   }
   if let typeinfo.TypeUnion(_) = t {
-    return nominal(t, f, lookup, v);
+    return nominal(t, f, lookup);
   }
-  return refuse();
+  return false;
 }
 
 function mode_error(params: typeinfo.Type[], modes: i32[]): string {
@@ -568,15 +537,15 @@ function call_contract_error(c: ssasem.Contract, f: ssasem.Func): string {
   return mode_error(c.params, c.modes);
 }
 
-// A SchemaView is a function's schema tables already checked as far as no
-// table is involved: per record, then per enum, in table order, the verdict
-// on all its fields as a unit (`*_unit`) and as a physical walk (`*_walk`).
+// A SchemaView is a function's schema tables already checked: per record,
+// then per enum, in table order, whether all its fields are admitted as a unit
+// (`*_unit`) and as a physical walk (`*_walk`).
 // ssarc.schema_views forms each distinct entry's once per module. An empty
 // view, which no_view is, leaves every entry to be checked here.
-pub struct SchemaView { rec_unit: Verdict[], rec_walk: Verdict[], enum_unit: Verdict[], enum_walk: Verdict[] }
+pub struct SchemaView { rec_unit: boolean[], rec_walk: boolean[], enum_unit: boolean[], enum_walk: boolean[] }
 
 pub function no_view(): SchemaView {
-  let none: Verdict[] = [];
+  let none: boolean[] = [];
   return SchemaView { rec_unit: none, rec_walk: none, enum_unit: none, enum_walk: none };
 }
 
@@ -585,22 +554,24 @@ pub function view_fits(v: SchemaView, f: ssasem.Func): boolean {
   return v.rec_unit.len() == f.records.list.len() && v.enum_unit.len() == f.enums.len();
 }
 
-pub function record_unit(r: semrecords.Record, f: ssasem.Func): Verdict {
-  let v: Verdict = admit();
+pub function record_unit(r: semrecords.Record, f: ssasem.Func): boolean {
   for field in r.fields {
-    v = unit_shape(field.ty, f, false, v);
-  }
-  return v;
-}
-
-pub function enum_unit(e: semrecords.Enum, f: ssasem.Func): Verdict {
-  let v: Verdict = admit();
-  for vr in e.variants {
-    for field in vr.fields {
-      v = unit_shape(field.ty, f, false, v);
+    if (!unit_shape(field.ty, f, false)) {
+      return false;
     }
   }
-  return v;
+  return true;
+}
+
+pub function enum_unit(e: semrecords.Enum, f: ssasem.Func): boolean {
+  for vr in e.variants {
+    for field in vr.fields {
+      if (!unit_shape(field.ty, f, false)) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 // Check the finite schema tables, not recursive nominal field expansion.
@@ -608,26 +579,26 @@ function schema_fields_error(f: ssasem.Func, view: SchemaView): string {
   let fits: boolean = view_fits(view, f);
   let i: i32 = 0;
   while (i < f.records.list.len()) {
-    let v: Verdict = admit();
+    let ok: boolean = false;
     if (fits) {
-      v = view.rec_unit[i];
+      ok = view.rec_unit[i];
     } else {
-      v = record_unit(f.records.list[i], f);
+      ok = record_unit(f.records.list[i], f);
     }
-    if (!admitted(v, f)) {
+    if (!ok) {
       return "unsupported counted record field";
     }
     i = i + 1;
   }
   i = 0;
   while (i < f.enums.len()) {
-    let v: Verdict = admit();
+    let ok: boolean = false;
     if (fits) {
-      v = view.enum_unit[i];
+      ok = view.enum_unit[i];
     } else {
-      v = enum_unit(f.enums[i], f);
+      ok = enum_unit(f.enums[i], f);
     }
-    if (!admitted(v, f)) {
+    if (!ok) {
       return "unsupported counted variant field";
     }
     i = i + 1;
@@ -964,6 +935,8 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     counted = [true, false, ssasem.reference(f.values[ins.args[2]])];
   } else if (ins.kind_tag == ssasem.hole_fill()) {
     counted = [true, false, true];
+  } else if (ins.kind_tag == ssasem.map_iter()) {
+    counted = [true];
   } else if (string_append(f, ins)) {
     counted = [true, false];
   } else if (construction(ins.kind_tag)) {
