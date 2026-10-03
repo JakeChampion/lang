@@ -8212,7 +8212,7 @@ pub function dyn_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], method
     if (n == 0 || n >= 2 && slice_unchecked(fd.receiver_type, n - 2, n) == "[]") {
       continue;
     }
-    if (!arm_receiver_implements(impls, util.base_type_name(fd.receiver_type), traits)) {
+    if (!arm_receiver_implements(impls, parser.receiver_base(fd.receiver_type), traits)) {
       continue;
     }
     if (parser.dyn_arm_matches(fd, traits, method, funcs)) {
