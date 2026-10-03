@@ -120,7 +120,7 @@ func TestSelfHostReadAllStdinModloadIRX86_64(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	const prog = "import \"std/io\";\nfunction main(): i32 { return io.read_all_stdin().len(); }\n"
+	const prog = "import \"std/io\";\nfunction main(): i32 { match (io.read_all_stdin()) { Ok(text) => { return text.len(); }, Err(_) => { return 253; } } }\n"
 	for _, in := range []string{"hello", "", "hello world test"} {
 		t.Run("len-"+itoaLen(in), func(t *testing.T) {
 			proj := t.TempDir()

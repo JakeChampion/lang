@@ -73,7 +73,9 @@ $ wasmtime run --dir=. wc.wasm file.txt
   wrapper over `read_all_stdin()` + the `read_file` builtin — added
   alongside these examples to kill the per-tool boilerplate.)
 - **Stdin.** Whole-input tools read via `io.read_input("-")` (i.e.
-  `read_all_stdin()`); line-oriented ones then `.lines()` the result.
+  `read_all_stdin()`), match its `Result`, then use the valid text.
+  Line-oriented tools call `.lines()` on that text. Binary `tr` and `tee`
+  use raw Reader/Writer methods or `io.read_all_stdin_bytes()`.
   (`examples/wasm/wc.fern` shows the alternative streaming
   `Reader.read_line()` loop.)
 - **Number flags.** Integer operands (`head -n N`, `seq STEP`,

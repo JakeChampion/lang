@@ -3241,7 +3241,8 @@ function main(): i32 {
 import "std/io";
 
 function main(): i32 {
-    let text: string = io.read_all_stdin();
+    let text: string = "";
+    match (io.read_all_stdin()) { Ok(input) => { text = input; }, Err(_) => { return 253; } }
     let w: Writer = stdout();
     w.write(text);
     let e: Writer = stderr();

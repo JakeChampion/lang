@@ -8083,7 +8083,8 @@ pub function escape_for_ascii(s: string): string {
   // on every compile (including the self-host build, whose sources carry long
   // literal helper bodies), so the quadratic was pure compile-time overhead.
   // Every append targets the local `out`, growing it in place (amortized O(1)).
-  // Byte-for-byte identical escaping. (`92`='\', `34`='"', `110`='n',
+  // The assembly stays ASCII even for arbitrary embedded bytes.
+  // (`92`='\', `34`='"', `110`='n',
   // `116`='t', `114`='r'; octal digits are `48 + oN`.)
   let out: u8[] = [];
   let i: i32 = 0;
@@ -8104,7 +8105,7 @@ pub function escape_for_ascii(s: string): string {
     } else if (b == 13) {  // \r
       out = out.append(92 as u8);
       out = out.append(114 as u8);
-    } else if (b < 32 || b == 127) {
+    } else if (b < 32 || b >= 127) {
       // 3-digit octal: \<o2><o1><o0>.
       let o0: i32 = b % 8;
       let o1: i32 = b / 8 % 8;

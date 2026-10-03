@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
 	nativeelf "github.com/jakechampion/lang/internal/native/elf"
@@ -26,8 +27,8 @@ import (
 // bytes per control byte, and everything after them in the literal shifted.
 //
 // Nothing caught it because nothing in the corpus puts a control byte in a
-// literal: `\n`, `\t` and `\r` have their own one-letter escapes, and a high
-// byte like `\xff` is written raw and always round-tripped. It surfaced from
+// literal: `\n`, `\t` and `\r` have their own one-letter escapes, and high
+// bytes previously passed through raw. It surfaced from
 // `-embed` (#7986), where an asset is arbitrary bytes by definition.
 // docs/FEATURE-AUDIT.md carried a ✅ for `\xNN` on both self-host columns
 // throughout.
@@ -52,9 +53,10 @@ var escapeCases = []struct {
 	{"run-of-controls", `\x00\x01\x02\x03\x04\x05\x06\x07`, []byte{0, 1, 2, 3, 4, 5, 6, 7}},
 	// The named escapes, which were already right and must stay right.
 	{"named-escapes", `A\tB\nC\rD`, []byte{'A', '\t', 'B', '\n', 'C', '\r', 'D'}},
-	// High bytes are written raw rather than escaped, and always worked.
+	// High bytes must survive octal escaping in UTF-8 assembly text too.
 	{"high-byte", `A\xffB`, []byte{'A', 0xff, 'B'}},
 	{"high-and-control", `\x80\x00\xff\x1b`, []byte{0x80, 0, 0xff, 0x1b}},
+	{"unicode", `é水`, []byte("é水")},
 	// A REAL backslash followed by a digit. The escaped form is `\\0`, and a
 	// decoder that reads octal greedily past the `\\` would turn it into NUL.
 	{"escaped-backslash-then-digit", `A\\0B`, []byte{'A', '\\', '0', 'B'}},
@@ -208,8 +210,8 @@ func TestSelfHostArm64GasEscapesMatchNative(t *testing.T) {
 	}
 }
 
-// gasEscape renders bytes the way asmcore.escape_for_ascii does: the five named
-// escapes, three-digit octal below 0x20 and at 0x7f, everything else raw.
+// gasEscape renders bytes the way asmcore.escape_for_ascii does: named
+// escapes, three-digit octal outside printable ASCII, everything else raw.
 func gasEscape(bs []byte) string {
 	var sb strings.Builder
 	for _, b := range bs {
@@ -224,13 +226,34 @@ func gasEscape(bs []byte) string {
 			sb.WriteString(`\t`)
 		case b == '\r':
 			sb.WriteString(`\r`)
-		case b < 0x20 || b == 0x7f:
+		case b < 0x20 || b >= 0x7f:
 			sb.WriteString(fmt.Sprintf(`\%03o`, b))
 		default:
 			sb.WriteByte(b)
 		}
 	}
 	return sb.String()
+}
+
+// Assembly is text even when a data directive represents arbitrary bytes.
+// Check the actual emitter as well as the decoder's hand-written fixtures.
+func TestSelfHostAssemblyTextUTF8(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := mustWrite(t, t.TempDir(), "bytes.fern", escapeProbeSource(`\x80\x00\xff\x1b`))
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			asm, err := os.ReadFile(cli.emit(t, src, target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !utf8.Valid(asm) {
+				t.Fatal("emitted assembly contains invalid UTF-8")
+			}
+			if !bytes.Contains(asm, []byte(`\200\000\377\033`)) {
+				t.Fatal("emitted assembly lost the expected octal data bytes")
+			}
+		})
+	}
 }
 
 // assembleSelfHostData feeds GAS text to the bench driver and returns the
