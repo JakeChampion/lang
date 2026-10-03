@@ -20,6 +20,7 @@ function main(): i32 {
         sum = sum + __count_byte(s + "a", 97);
         sum = sum + __ascii_run(s + "d", 0);
         sum = sum + __scan_set(" a", 0, SET);
+        sum = sum + __scan_set_bytes([32u8, 1u8], 0, SET);
         sum = sum + __count_runs(s + "e", 0, SET);
         sum = sum + __mismatch(s + "y", 0, s + "z", 0, 4);
         sum = sum + __sum_bytes(s + "") % 2;
@@ -27,7 +28,7 @@ function main(): i32 {
         sum = sum + __crc32_cksum(0, s + "") % 2;
         i = i + 1;
     }
-    if (sum != 100 * (1 + 0 + 4 + 3 + 0 + 2 + 4 + 2 + 0 + 3 + 0 + 0 + 0)) {
+    if (sum != 100 * (1 + 0 + 4 + 3 + 0 + 2 + 4 + 2 + 1 + 0 + 3 + 0 + 0 + 0)) {
         return 1;
     }
     return 0;
