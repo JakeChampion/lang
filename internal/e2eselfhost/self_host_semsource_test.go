@@ -4049,7 +4049,7 @@ function main(): i32 {
     if (av[1] == "x86-64-linux") {
         print(asm_ir.emit_module_or_error_sub(d.full, d.sub));
     } else if (av[1] == "arm64-linux") {
-        print(asm_arm64_ir.emit_module_or_error_sub(d.full, false, d.sub));
+        print(asm_arm64_ir.emit_module_or_error_sub(d.full, false, d.sub, 0 as usize));
     } else { print(wasm_ir.emit_module_mode_or_error_sub(d.full, false, false, d.sub)); }
     return 0;
 }
