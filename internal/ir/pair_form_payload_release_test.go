@@ -112,7 +112,7 @@ func TestReleasesBoundPayloadDiscriminates(t *testing.T) {
 func TestPairFormPayloadReleasedWhenConfined(t *testing.T) {
 	ip := lowerForTest(t, pairPayloadSrc+`
 function main(): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for i in 0..4 {
         match (mk(1)) { Some(a) => { t = t + a[0]; }, None => { }, }
     }
@@ -147,7 +147,7 @@ function main(): i32 {
 func TestPairFormPayloadReleasedWhenEscapeIsCounted(t *testing.T) {
 	ip := lowerForTest(t, pairPayloadSrc+`
 function main(): i32 {
-    var kept: i32[] = [];
+    let kept: i32[] = [];
     for i in 0..4 {
         match (mk(1)) { Some(a) => { kept = a; }, None => { }, }
     }
@@ -195,7 +195,7 @@ function pick(xs: i32[], n: i32): Option[i32[]] {
 // xs is a PARAMETER here, so it is borrowed and carries no exit-sweep drop
 // of its own — any __fern_arr_dec in this function is the arm's release.
 function consume(xs: i32[]): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for i in 0..4 {
         match (pick(xs, 1)) { Some(a) => { t = t + a[0]; }, None => { }, }
     }
@@ -203,7 +203,7 @@ function consume(xs: i32[]): i32 {
 }
 
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
+    let xs: i32[] = [1, 2, 3];
     return consume(xs);
 }
 `)
@@ -227,10 +227,10 @@ function main(): i32 {
 // outlive the arm, so it is excused and the payload is released.
 func TestPairFormPayloadReleasedThroughBorrowingCall(t *testing.T) {
 	ip := lowerForTest(t, pairPayloadSrc+`
-function total(a: i32[]): i32 { var s: i32 = 0; for i in 0..a.len() { s = s + a[i]; } return s; }
+function total(a: i32[]): i32 { let s: i32 = 0; for i in 0..a.len() { s = s + a[i]; } return s; }
 
 function main(): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for i in 0..4 {
         match (mk(1)) { Some(a) => { t = t + a.len(); }, None => { }, }
         match (mk(1)) { Some(a) => { t = t + total(a); }, None => { }, }
@@ -261,7 +261,7 @@ func TestPairFormPayloadKeptWhenCallReturnsTheArgument(t *testing.T) {
 function ident(a: i32[]): i32[] { return a; }
 
 function main(): i32 {
-    var kept: i32[] = [];
+    let kept: i32[] = [];
     for i in 0..4 {
         match (mk(1)) { Some(a) => { kept = ident(a); }, None => { }, }
     }

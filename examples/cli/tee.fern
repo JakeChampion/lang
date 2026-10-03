@@ -28,8 +28,8 @@ function write_output(path: string, append: boolean, bytes: u8[]): Option[IoErro
       return Some(e);
     },
     Ok(w) => {
-      var written: Option[IoError] = w.write_bytes(bytes);
-      var closed: Option[IoError] = w.close();
+      let written: Option[IoError] = w.write_bytes(bytes);
+      let closed: Option[IoError] = w.close();
       match (written) {
         Some(e) => {
           return Some(e);
@@ -43,7 +43,7 @@ function write_output(path: string, append: boolean, bytes: u8[]): Option[IoErro
 }
 
 function copy_outputs(data: u8[], files: string[], append: boolean): i32 {
-  var status: i32 = 0;
+  let status: i32 = 0;
   match (stdout().write_bytes(data)) {
     Some(_) => {
       eprint("tee: cannot write stdout");
@@ -64,13 +64,13 @@ function copy_outputs(data: u8[], files: string[], append: boolean): i32 {
 }
 
 function main(): i32 {
-  var argv: string[] = args();
-  var append: boolean = false;
-  var files: string[] = [];
+  let argv: string[] = args();
+  let append: boolean = false;
+  let files: string[] = [];
 
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a == "-a" || a == "--append") {
       append = true;
     } else {

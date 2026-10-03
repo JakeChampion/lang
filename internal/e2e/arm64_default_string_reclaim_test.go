@@ -49,14 +49,14 @@ const defaultStringReclaimSrc = `function seed(i: i32): string {
 }
 function mkstr(a: string): string { return a + "!"; }
 function tag(s: string, n: i32): i32 {
-    var x: string = s;
+    let x: string = s;
     return x.len() + n;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < ROUNDS) {
-        var line: string = mkstr(seed(i));
+        let line: string = mkstr(seed(i));
         acc = (acc + tag(line, i)) % 101;
         i = i + 1;
     }

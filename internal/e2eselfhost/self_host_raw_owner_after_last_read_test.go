@@ -30,7 +30,7 @@ import (
 // moved off one path shows up as a stranded block.
 func rawOwnerProbeSrc(work string, groups int) string {
 	var sb strings.Builder
-	sb.WriteString("function main(): i32 {\n    var bad: i32 = 0;\n")
+	sb.WriteString("function main(): i32 {\n    let bad: i32 = 0;\n")
 	for n := 1; n <= 20; n++ {
 		child := strings.Repeat("y", n)
 		fmt.Fprintf(&sb, `    match (create_dir_all("%[1]s/t%[2]d/%[3]s")) { Ok(_) => {}, Err(e) => { return 8; } }
@@ -39,7 +39,7 @@ func rawOwnerProbeSrc(work string, groups int) string {
 `, work, n, child)
 	}
 	for n := 1; n <= 80; n++ {
-		fmt.Fprintf(&sb, `    match (read_file_bytes("%[1]s/f%[2]d")) { Ok(b) => { if (b.len() != %[2]d) { eprint("f%[2]d: length\n"); bad = bad + 1; } var i: i32 = 0; while (i < b.len()) { if ((b[i] as i32) != 65 + (i %% 26)) { eprint("f%[2]d: byte\n"); bad = bad + 1; i = b.len(); } i = i + 1; } }, Err(e) => { return 10; } }
+		fmt.Fprintf(&sb, `    match (read_file_bytes("%[1]s/f%[2]d")) { Ok(b) => { if (b.len() != %[2]d) { eprint("f%[2]d: length\n"); bad = bad + 1; } let i: i32 = 0; while (i < b.len()) { if ((b[i] as i32) != 65 + (i %% 26)) { eprint("f%[2]d: byte\n"); bad = bad + 1; i = b.len(); } i = i + 1; } }, Err(e) => { return 10; } }
 `, work, n)
 	}
 	for n := 1; n <= 40; n++ {
@@ -50,7 +50,7 @@ func rawOwnerProbeSrc(work string, groups int) string {
 		}
 	}
 	fmt.Fprintf(&sb, `    if (cpu_count() <= 0) { eprint("cpu_count answered 0\n"); bad = bad + 1; }
-    var g: i64[] = getgroups();
+    let g: i64[] = getgroups();
     if (g.len() != %d) { eprint("getgroups answered the wrong count\n"); bad = bad + 1; }
     if (bad > 0) { return 13; }
     return 0;

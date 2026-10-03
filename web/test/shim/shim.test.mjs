@@ -64,7 +64,7 @@ function main(): i32 {
   it("is consumed once, then reads empty", async () => {
     const bin = compile("twice", `import "std/io";
 function main(): i32 {
-  var reader: Reader = stdin();
+  let reader: Reader = stdin();
   match (io.read_all_bytes(reader)) {
     Ok(bytes) => {
       if (bytes.len() != 4 || bytes[0] != 111 || bytes[1] != 110 || bytes[2] != 99 || bytes[3] != 101) { return 1; }
@@ -117,7 +117,7 @@ function main(): i32 {
 describe("argv", () => {
   it("reaches the guest in order", async () => {
     const bin = compile("argv", `function main(): i32 {
-  var n: i32 = 0;
+  let n: i32 = 0;
   for a in args() {
     print(a);
     n = n + 1;
@@ -133,7 +133,7 @@ describe("argv", () => {
 
   it("defaults to none", async () => {
     const bin = compile("noargv", `function main(): i32 {
-  var n: i32 = 0;
+  let n: i32 = 0;
   for a in args() { n = n + 1; }
   return n;
 }`);

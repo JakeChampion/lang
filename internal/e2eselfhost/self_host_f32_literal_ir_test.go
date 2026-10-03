@@ -14,18 +14,18 @@ function pick[T](c: boolean, a: T, b: T): T { return if (c) { a } else { b }; }
 function half(x: f32): f32 { return x / 2.0; }
 function tag(n: i32): f32 { return match (n) { 0 => 0.25f32, _ => id(1.5f32) }; }
 function main(): i32 {
-    var neg: f32 = 0.0 - 1.0;
+    let neg: f32 = 0.0 - 1.0;
     if (f32_from_bits(f32_bits(neg)) != neg) { return 1; }
     if (f32_bits(0.1) != 1036831949) { return 3; }
-    var p: i32 = 3;
-    var q: i32 = 4;
-    var from_vars: f32 = (p - q) as f32;
+    let p: i32 = 3;
+    let q: i32 = 4;
+    let from_vars: f32 = (p - q) as f32;
     if (from_vars != 0.0 - 1.0) { return 2; }
-    var a: f32 = 1.5;
-    var xs: f32[] = [a, 2.5f32, id(0.5f32), pick(true, 4.0f32, 8.0f32)];
-    var sum: f32 = 0.0;
+    let a: f32 = 1.5;
+    let xs: f32[] = [a, 2.5f32, id(0.5f32), pick(true, 4.0f32, 8.0f32)];
+    let sum: f32 = 0.0;
     for x in xs { sum = sum + x; }
-    var v: f32 = if (sum > 8.0f32) { sum / 2.0 } else { sum };
+    let v: f32 = if (sum > 8.0f32) { sum / 2.0 } else { sum };
     print(neg.to_string() + " " + sum.to_string() + " " + v.to_string() + " " + half(3.0).to_string() + " " + tag(0).to_string() + " " + tag(1).to_string());
     return 0;
 }

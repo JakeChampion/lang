@@ -29,8 +29,8 @@ function drain(c: i32, acc: string): Fut {
     return Pend(c, resume);
 }
 function main(): i32 {
-    var f: Fut = drain(0, "hello");
-    match (f) { Rdy(v) => { return v; }, Pend(fd, k) => { var r: Fut = k(37); match (r) { Rdy(v2) => { return v2; }, Pend(a, b) => { return 0; } } } }
+    let f: Fut = drain(0, "hello");
+    match (f) { Rdy(v) => { return v; }, Pend(fd, k) => { let r: Fut = k(37); match (r) { Rdy(v2) => { return v2; }, Pend(a, b) => { return 0; } } } }
     return 99;
 }`},
 	// A captured struct; resume reads p.x + p.y -> 1 + 30 + 11.
@@ -41,8 +41,8 @@ function drain(c: i32, p: P): Fut {
     return Pend(c, resume);
 }
 function main(): i32 {
-    var f: Fut = drain(0, P { x: 30, y: 11 });
-    match (f) { Rdy(v) => { return v; }, Pend(fd, k) => { var r: Fut = k(1); match (r) { Rdy(v2) => { return v2; }, Pend(a, b) => { return 0; } } } }
+    let f: Fut = drain(0, P { x: 30, y: 11 });
+    match (f) { Rdy(v) => { return v; }, Pend(fd, k) => { let r: Fut = k(1); match (r) { Rdy(v2) => { return v2; }, Pend(a, b) => { return 0; } } } }
     return 99;
 }`},
 	// A captured i32 array; resume reads xs.len() + xs[0] -> 0 + 3 + 40.
@@ -52,8 +52,8 @@ function drain(c: i32, xs: i32[]): Fut {
     return Pend(c, resume);
 }
 function main(): i32 {
-    var f: Fut = drain(0, [40, 7, 8]);
-    match (f) { Rdy(v) => { return v; }, Pend(fd, k) => { var r: Fut = k(0); match (r) { Rdy(v2) => { return v2; }, Pend(a, b) => { return 0; } } } }
+    let f: Fut = drain(0, [40, 7, 8]);
+    match (f) { Rdy(v) => { return v; }, Pend(fd, k) => { let r: Fut = k(0); match (r) { Rdy(v2) => { return v2; }, Pend(a, b) => { return 0; } } } }
     return 99;
 }`},
 	// A MIX of an i32 and a string capture in the same closure -> 17 + 20 + 5.
@@ -63,8 +63,8 @@ function drain(c: i32, n: i32, s: string): Fut {
     return Pend(c, resume);
 }
 function main(): i32 {
-    var f: Fut = drain(0, 20, "abcde");
-    match (f) { Rdy(v) => { return v; }, Pend(fd, k) => { var r: Fut = k(17); match (r) { Rdy(v2) => { return v2; }, Pend(a, b) => { return 0; } } } }
+    let f: Fut = drain(0, 20, "abcde");
+    match (f) { Rdy(v) => { return v; }, Pend(fd, k) => { let r: Fut = k(17); match (r) { Rdy(v2) => { return v2; }, Pend(a, b) => { return 0; } } } }
     return 99;
 }`},
 }

@@ -16,11 +16,11 @@ func hoverFor(src string, line, col int) *hoverResult {
 }
 
 func TestHover_LocalVar(t *testing.T) {
-	src := "function main(): i32 {\n  var x: i32 = 7;\n  return x;\n}\n"
+	src := "function main(): i32 {\n  let x: i32 = 7;\n  return x;\n}\n"
 	// Cursor on the `x` in `return x;` — line index 2, column index 9.
 	got := hoverFor(src, 2, 9)
 	if got == nil {
-		t.Fatal("expected hover for local var x, got nil")
+		t.Fatal("expected hover for local let x, got nil")
 	}
 	if !strings.Contains(got.Contents.Value, "(var) x: i32") {
 		t.Errorf("hover content = %q, want it to mention (var) x: i32", got.Contents.Value)
@@ -70,10 +70,10 @@ func TestHover_StructType(t *testing.T) {
 }
 
 func TestHover_TypeAnnotation_Struct(t *testing.T) {
-	// Cursor on `Point` in `var p: Point` — that name lives in a
+	// Cursor on `Point` in `let p: Point` — that name lives in a
 	// positionless ast.Type, so resolving it relies on the parser's
 	// TypeRefs side table.
-	src := "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  var p: Point = Point { x: 0, y: 0 };\n  return p.x;\n}\n"
+	src := "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: Point = Point { x: 0, y: 0 };\n  return p.x;\n}\n"
 	got := hoverFor(src, 2, 9) // `P` of `Point` in the annotation
 	if got == nil {
 		t.Fatal("expected hover for type annotation Point")
@@ -84,7 +84,7 @@ func TestHover_TypeAnnotation_Struct(t *testing.T) {
 }
 
 func TestHover_TypeAnnotation_Enum(t *testing.T) {
-	src := "enum Color { Red, Green, Blue }\nfunction main(): i32 {\n  var c: Color = Red;\n  return 0;\n}\n"
+	src := "enum Color { Red, Green, Blue }\nfunction main(): i32 {\n  let c: Color = Red;\n  return 0;\n}\n"
 	got := hoverFor(src, 2, 9) // `C` of `Color` in the annotation
 	if got == nil {
 		t.Fatal("expected hover for type annotation Color")
@@ -95,7 +95,7 @@ func TestHover_TypeAnnotation_Enum(t *testing.T) {
 }
 
 func TestHover_FieldAccess(t *testing.T) {
-	src := "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  var p: Point = Point { x: 7, y: 9 };\n  return p.x;\n}\n"
+	src := "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: Point = Point { x: 7, y: 9 };\n  return p.x;\n}\n"
 	got := hoverFor(src, 3, 11) // cursor on `x` in `p.x`
 	if got == nil {
 		t.Fatal("expected hover for field access p.x")
@@ -108,7 +108,7 @@ func TestHover_FieldAccess(t *testing.T) {
 func TestHover_MethodCall(t *testing.T) {
 	src := "struct Point { x: i32, y: i32 }\n" +
 		"function (p: Point) sum(): i32 { return p.x + p.y; }\n" +
-		"function main(): i32 {\n  var p: Point = Point { x: 3, y: 4 };\n  return p.sum();\n}\n"
+		"function main(): i32 {\n  let p: Point = Point { x: 3, y: 4 };\n  return p.sum();\n}\n"
 	// Cursor on `sum` in `p.sum()` — line 4 (0-based), col 13.
 	// `  return p.sum();` → `s` of `sum` is at col 13 (0-based).
 	got := hoverFor(src, 4, 13)
@@ -128,7 +128,7 @@ func TestHover_MethodCall(t *testing.T) {
 
 func TestHover_FieldAccess_Chained(t *testing.T) {
 	src := "struct Inner { v: i32 }\nstruct Outer { inner: Inner }\n" +
-		"function main(): i32 {\n  var o: Outer = Outer { inner: Inner { v: 5 } };\n  return o.inner.v;\n}\n"
+		"function main(): i32 {\n  let o: Outer = Outer { inner: Inner { v: 5 } };\n  return o.inner.v;\n}\n"
 	// Cursor on `v` in `o.inner.v` — chained access requires
 	// resolving o → Outer.inner → Inner.v.
 	got := hoverFor(src, 4, 17)
@@ -141,8 +141,8 @@ func TestHover_FieldAccess_Chained(t *testing.T) {
 }
 
 func TestHover_EnumVariant(t *testing.T) {
-	src := "enum Color { Red, Green, Blue }\nfunction main(): i32 { var c: Color = Red; return 0; }\n"
-	// Cursor on `Red` in `var c: Color = Red;` — line 1, col 39.
+	src := "enum Color { Red, Green, Blue }\nfunction main(): i32 { let c: Color = Red; return 0; }\n"
+	// Cursor on `Red` in `let c: Color = Red;` — line 1, col 39.
 	// Type-annotation positions (`Color`) aren't recognised yet —
 	// they're stored as positionless ast.Types — but enum variants
 	// have an EnumLit node we can locate.
@@ -177,7 +177,7 @@ func TestHover_OnWhitespace(t *testing.T) {
 }
 
 func TestHover_LocalShadowsParameter(t *testing.T) {
-	src := "function f(x: i32): i32 {\n  var x: string = \"hi\";\n  return x.len();\n}\n"
+	src := "function f(x: i32): i32 {\n  let x: string = \"hi\";\n  return x.len();\n}\n"
 	// Cursor on the `x` in `x.len()` — should resolve to the
 	// local (string), not the parameter (i32).
 	got := hoverFor(src, 2, 9)
@@ -197,7 +197,7 @@ func TestHandleMessage_Hover(t *testing.T) {
 		TextDocument: textDocumentItem{
 			URI:        "file:///hover.fern",
 			LanguageID: "fern",
-			Text:       "function main(): i32 {\n  var x: i32 = 7;\n  return x;\n}\n",
+			Text:       "function main(): i32 {\n  let x: i32 = 7;\n  return x;\n}\n",
 		},
 	})
 	openMsg, _ := json.Marshal(message{Jsonrpc: "2.0", Method: "textDocument/didOpen", Params: open})

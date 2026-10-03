@@ -16,7 +16,7 @@ import (
 //
 // It is the regression guard for the `close_needs` use-after-free that the
 // arm64 per-module self-build first surfaced: `EmitState.close_needs` snapshot
-// `var snap: string[] = cur.needed` aliased the needed buffer into a local
+// `let snap: string[] = cur.needed` aliased the needed buffer into a local
 // without an alias-inc, so the function-exit dec-sweep freed a box `cur.needed`
 // still referenced. The freed empty-needs box was reused for a `.rodata`
 // string, so `has_need` later read those bytes as the array length and walked
@@ -106,7 +106,7 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	// fallback gone it now forks ~35 emit children, and under qemu that took the
 	// whole test from 297 s past the 18-minute shard timeout. Its unique value
 	// was the #3561 string[]-field `.append()` UAF guard, whose fix is in SHARED
-	// irlower.fern and which the x86 twin exercises on every run — so what is
+	// lowering and which the x86 twin exercises on every run — so what is
 	// lost here is a duplicate, while what is gained is coverage of code that
 	// otherwise had none.
 	gen2, err := runX86_64Bin(x86runner, driverBin, entry, "-target", "arm64-linux").Output()

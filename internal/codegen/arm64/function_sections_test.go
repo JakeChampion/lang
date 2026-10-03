@@ -50,7 +50,7 @@ const strbufSrc = `function main(): i32 {
 	strbuf_reset();
 	strbuf_append("hello, ");
 	strbuf_append("world");
-	var s: string = strbuf_take();
+	let s: string = strbuf_take();
 	return s.len();
 }`
 

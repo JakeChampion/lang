@@ -154,8 +154,8 @@ Accept `ast.StructType` whose name is in `info.Structs`.
 Inc emissions fire at the same alias sites as the array
 equivalents:
 
-  - `var y = x;` (Phase 1d-i analogue).
-  - `var y = h.items;` / `var y = m[i];` (Phase 1d-ii).
+  - `let y = x;` (Phase 1d-i analogue).
+  - `let y = h.items;` / `let y = m[i];` (Phase 1d-ii).
   - `y = x;` ident reassignment (Phase 1d-iii).
   - `f(arr)` call-arg pass (Phase 1d-iv).
   - Closure capture (Phase 1d-vii).
@@ -164,7 +164,7 @@ equivalents:
 All six existing inc sites consult the same predicate, so
 this is a one-line change. Phase 1e-runtime must have
 shipped first so the sentinel exists on runtime structs;
-otherwise an inc on `var w = open_writer(...)`'s result
+otherwise an inc on `let w = open_writer(...)`'s result
 corrupts memory.
 
 ### Phase 1e-struct-iii: widen `emitRcDecLocalsAtExit` + zero-init (SHIPPED, PR #1244)

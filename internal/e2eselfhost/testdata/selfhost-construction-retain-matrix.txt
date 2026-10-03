@@ -16,7 +16,7 @@
 # (the flatten__RewriteCtx class); call = producer result.
 #
 # READ THE `local` ROWS AS COMPOUND: the shape ends with a second holder aliased
-# to a third name (`var q: P = P { f: mkv(..) }; var p: P = q;`), so a row stays
+# to a third name (`let q: P = P { f: mkv(..) }; let p: P = q;`), so a row stays
 # `leak` while EITHER the field share or the alias bind is uncounted. Both
 # halves of `enum__local` are now clean, and each needed its own fix — the field
 # share (self_host_enum_field_share_test.go) and the value-block borrow read

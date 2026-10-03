@@ -47,14 +47,14 @@ var semanticReuseCases = []struct {
 	// first, since the runtime frees a mismatched donor block shallowly.
 	{"owns-references", `struct R { tag: string, cells: i32[], n: i32 }
 function step(seed: i32): R {
-    var a: R = R { tag: "aa", cells: [seed, seed + 1], n: seed };
-    var s: i32 = a.n + a.cells[0] + a.cells[1] + a.tag.len();
+    let a: R = R { tag: "aa", cells: [seed, seed + 1], n: seed };
+    let s: i32 = a.n + a.cells[0] + a.cells[1] + a.tag.len();
     return R { tag: "bbb", cells: [s, s + 2], n: s };
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < 4) { var r: R = step(i); t = t + r.n + r.cells[0] + r.tag.len(); i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) { let r: R = step(i); t = t + r.n + r.cells[0] + r.tag.len(); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
 }`, 72, 1, 12, 16, false, false},
@@ -66,15 +66,15 @@ function main(): i32 {
 	// `keep` starts as `[]`, one allocation since #10408 where it was two.
 	{"shared-donor-degrades", `struct R { tag: string, cells: i32[], n: i32 }
 function shared(n: i32): i32 {
-    var keep: R[] = [];
-    var a: R = R { tag: "dd", cells: [n], n: n };
+    let keep: R[] = [];
+    let a: R = R { tag: "dd", cells: [n], n: n };
     keep = keep.append(a);
-    var s: i32 = a.n + a.cells[0];
-    var b: R = R { tag: "cc", cells: [s], n: s };
+    let s: i32 = a.n + a.cells[0];
+    let b: R = R { tag: "cc", cells: [s], n: s };
     return keep[0].n + b.n + b.tag.len();
 }
 function main(): i32 {
-    var v: i32 = shared(5);
+    let v: i32 = shared(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return v;
 }`, 17, 1, 5, 5, true, false},
@@ -100,24 +100,24 @@ function sigil_code(g: Sigil): i32 {
     return 0 - 1;
 }
 function cross_step(seed: i32): Sigil {
-    var a: Mote = Mote { text: "nn", k: seed };
-    var s: i32 = a.k + a.text.len();
+    let a: Mote = Mote { text: "nn", k: seed };
+    let s: i32 = a.k + a.text.len();
     return Glyph { xs: [s, s + 1], k: s };
 }
 function cross_back(seed: i32): Sigil {
-    var a: Glyph = Glyph { xs: [seed], k: seed };
-    var s: i32 = a.k + a.xs[0];
+    let a: Glyph = Glyph { xs: [seed], k: seed };
+    let s: i32 = a.k + a.xs[0];
     return Mote { text: "mm", k: s };
 }
 function cross_wide(n: i32): i32 {
-    var p: Mote = Mote { text: "pp", k: n };
-    var s: i32 = p.k + p.text.len();
-    var w: Trio = Trio { a: "qq", b: [s], c: s };
+    let p: Mote = Mote { text: "pp", k: n };
+    let s: i32 = p.k + p.text.len();
+    let w: Trio = Trio { a: "qq", b: [s], c: s };
     return w.c + w.b[0] + w.a.len();
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) { t = t + sigil_code(cross_step(i)); i = i + 1; }
     t = t + sigil_code(cross_back(5)) + cross_wide(3);
     if (__rc_underflow_count() != 0) { return 99; }
@@ -132,34 +132,34 @@ function main(): i32 {
 	// the tuple's does not. The AST path pairs none of the three.
 	{"tuple-form", `struct Parcel { a: string, b: i32 }
 function tuple_step(seed: i32): (i32, string) {
-    var a: (string, i32[]) = ("aa", [seed, seed + 1]);
-    var s: i32 = a.1[0] + a.1[1] + a.0.len();
+    let a: (string, i32[]) = ("aa", [seed, seed + 1]);
+    let s: i32 = a.1[0] + a.1[1] + a.0.len();
     return (s, "bb");
 }
 function tuple_loop(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var p: (i32, string) = tuple_step(i);
+        let p: (i32, string) = tuple_step(i);
         t = t + p.0 + p.1.len();
         i = i + 1;
     }
     return t;
 }
 function tuple_from_rec(n: i32): i32 {
-    var d: Parcel = Parcel { a: "cc", b: n };
-    var s: i32 = d.b + d.a.len();
-    var q: (i32, string, i32) = (s, "dd", s + 1);
+    let d: Parcel = Parcel { a: "cc", b: n };
+    let s: i32 = d.b + d.a.len();
+    let q: (i32, string, i32) = (s, "dd", s + 1);
     return q.0 + q.1.len() + q.2;
 }
 function rec_from_tuple(n: i32): i32 {
-    var d: (string, i32, i32) = ("ee", n, n + 1);
-    var s: i32 = d.1 + d.2 + d.0.len();
-    var q: Parcel = Parcel { a: "ff", b: s };
+    let d: (string, i32, i32) = ("ee", n, n + 1);
+    let s: i32 = d.1 + d.2 + d.0.len();
+    let q: Parcel = Parcel { a: "ff", b: s };
     return q.b + q.a.len();
 }
 function main(): i32 {
-    var t: i32 = tuple_loop(4) + tuple_from_rec(3) + rec_from_tuple(5);
+    let t: i32 = tuple_loop(4) + tuple_from_rec(3) + rec_from_tuple(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
 }`, 60, 3, 10, 16, false, false},
@@ -186,13 +186,13 @@ function duo_size(d: Duo): i32 {
     return 0 - 1;
 }
 function union_donor(seed: i32): i32 {
-    var u: Duo = Two(seed, [seed, seed + 1]);
-    var s: i32 = duo_size(u);
-    var r: Trip = Trip { a: "vv", b: s };
+    let u: Duo = Two(seed, [seed, seed + 1]);
+    let s: i32 = duo_size(u);
+    let r: Trip = Trip { a: "vv", b: s };
     return r.b + r.a.len();
 }
 function main(): i32 {
-    var t: i32 = union_donor(4) + union_donor(9);
+    let t: i32 = union_donor(4) + union_donor(9);
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
 }`, 30, 1, 4, 6, false, false},
@@ -216,21 +216,21 @@ function main(): i32 {
 	{"pairing-reach", `struct A3 { p: string, q: i32 }
 struct B4 { x: string, y: i32, z: i32 }
 function hold_over(seed: i32): i32 {
-    var a: A3 = A3 { p: "aa", q: seed };
-    var s: i32 = a.q + a.p.len();
-    var b: B4 = B4 { x: "bb", y: s, z: s + 1 };
-    var c: A3 = A3 { p: "cc", q: b.y + b.z };
+    let a: A3 = A3 { p: "aa", q: seed };
+    let s: i32 = a.q + a.p.len();
+    let b: B4 = B4 { x: "bb", y: s, z: s + 1 };
+    let c: A3 = A3 { p: "cc", q: b.y + b.z };
     return c.q + c.p.len() + b.z;
 }
 function chain_up(seed: i32): i32 {
-    var a: A3 = A3 { p: "a1", q: seed };
+    let a: A3 = A3 { p: "a1", q: seed };
     a = A3 { ...a, q: a.q + 1 };
     a = A3 { ...a, q: a.q + 2 };
     a = A3 { ...a, q: a.q + 3 };
     return a.q + a.p.len();
 }
 function main(): i32 {
-    var t: i32 = hold_over(3) + chain_up(5);
+    let t: i32 = hold_over(3) + chain_up(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
 }`, 32, 4, 3, 7, false, false},
@@ -240,14 +240,14 @@ function main(): i32 {
 	// separate the layers here — the switch and the answer do.
 	{"scalar-fields", `struct P { x: i32, y: i32 }
 function bump(seed: i32): i32 {
-    var p: P = P { x: seed, y: seed + 1 };
-    var s: i32 = p.x + p.y;
-    var q: P = P { x: s, y: s + 1 };
+    let p: P = P { x: seed, y: seed + 1 };
+    let s: i32 = p.x + p.y;
+    let q: P = P { x: s, y: s + 1 };
     return q.x + q.y;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) { t = t + bump(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
@@ -268,15 +268,15 @@ function main(): i32 {
 	{"token-slot-overlap", `struct A3 { p: string, q: i32 }
 struct B4 { x: string, y: i32, z: i32 }
 function f(seed: i32): i32 {
-    var a: A3 = A3 { p: "aa", q: seed };
-    var s: i32 = a.q + a.p.len();
-    var b: B4 = B4 { x: "bb", y: seed, z: seed + 1 };
+    let a: A3 = A3 { p: "aa", q: seed };
+    let s: i32 = a.q + a.p.len();
+    let b: B4 = B4 { x: "bb", y: seed, z: seed + 1 };
     b = B4 { ...b, y: s };
-    var c: A3 = A3 { p: "cc", q: b.y + b.z };
+    let c: A3 = A3 { p: "cc", q: b.y + b.z };
     return c.q + c.p.len() + b.z;
 }
 function main(): i32 {
-    var t: i32 = f(5);
+    let t: i32 = f(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
 }`, 21, 1, 3, 4, false, false},
@@ -300,8 +300,8 @@ function add(own a: Acc, s: string): Acc {
     return a;
 }
 function main(): i32 {
-    var a: Acc = Acc { names: [], tag: "t", n: 0 };
-    var i: i32 = 0;
+    let a: Acc = Acc { names: [], tag: "t", n: 0 };
+    let i: i32 = 0;
     while (i < 6) { a = add(a, "x"); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return a.n * 10 + a.names.len() + a.tag.len();
@@ -317,8 +317,8 @@ function add(own a: Acc, s: string): Acc {
     return a;
 }
 function main(): i32 {
-    var a: Acc = Acc { names: ["p"], tag: "t", n: 0 };
-    var keep: Acc = a;
+    let a: Acc = Acc { names: ["p"], tag: "t", n: 0 };
+    let keep: Acc = a;
     a = add(a, "x");
     a = add(a, "y");
     if (__rc_underflow_count() != 0) { return 99; }
@@ -330,13 +330,13 @@ function main(): i32 {
 	// construction still leaves the slot alone while the donor is unique.
 	{"update-keeps-field-read-later", `struct Acc { names: string[], tag: string, n: i32 }
 function add(own a: Acc, s: string): Acc {
-    var t: string = a.tag;
+    let t: string = a.tag;
     a = Acc { names: a.names.append(s), tag: t, n: a.n + t.len() };
     return a;
 }
 function main(): i32 {
-    var a: Acc = Acc { names: [], tag: "tag", n: 0 };
-    var i: i32 = 0;
+    let a: Acc = Acc { names: [], tag: "tag", n: 0 };
+    let i: i32 = 0;
     while (i < 6) { a = add(a, "x"); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return a.n * 10 + a.names.len() + a.tag.len();
@@ -349,13 +349,13 @@ function main(): i32 {
 	{"update-duplicate-operand", `struct P { a: i32[], b: i32[], n: i32 }
 function dup(own p: P): P { p = P { ...p, b: p.a, n: p.n + 1 }; return p; }
 function run(k: i32): i32 {
-    var p: P = P { a: [k, k + 1], b: [k + 2], n: 0 };
-    var i: i32 = 0;
+    let p: P = P { a: [k, k + 1], b: [k + 2], n: 0 };
+    let i: i32 = 0;
     while (i < 4) { p = dup(p); i = i + 1; }
     return p.n * 10 + p.a.len() + p.b.len();
 }
 function main(): i32 {
-    var r: i32 = run(3);
+    let r: i32 = run(3);
     if (__rc_underflow_count() != 0) { return 99; }
     return r;
 }`, 44, 1, 3, 7, false, false},
@@ -365,18 +365,18 @@ function main(): i32 {
 	// so the field is not kept and both positions take their unit as before.
 	{"update-local-in-two-slots", `struct P { a: i32[], b: i32[], n: i32 }
 function twice(own p: P): P {
-    var x: i32[] = p.a;
+    let x: i32[] = p.a;
     p = P { ...p, a: x, b: x, n: p.n + 1 };
     return p;
 }
 function run(k: i32): i32 {
-    var p: P = P { a: [k, k + 1], b: [k + 2], n: 0 };
-    var i: i32 = 0;
+    let p: P = P { a: [k, k + 1], b: [k + 2], n: 0 };
+    let i: i32 = 0;
     while (i < 4) { p = twice(p); i = i + 1; }
     return p.n * 10 + p.a.len() + p.b.len();
 }
 function main(): i32 {
-    var r: i32 = run(3);
+    let r: i32 = run(3);
     if (__rc_underflow_count() != 0) { return 99; }
     return r;
 }`, 44, 1, 3, 7, false, false},
@@ -387,24 +387,24 @@ function main(): i32 {
 	// construction's release freed the array `grab` returns.
 	{"update-keeps-no-field-held-twice", `struct P { f: string[], n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
-function mkv(): string[] { var o: string[] = []; o = o.append(w("a")); o = o.append(w("b")); return o; }
+function mkv(): string[] { let o: string[] = []; o = o.append(w("a")); o = o.append(w("b")); return o; }
 function grab(i: i32): string[] {
-    var q: P = P { f: mkv(), n: i };
-    var tt: string[] = q.f;
-    var p: P = P { f: tt, n: i };
+    let q: P = P { f: mkv(), n: i };
+    let tt: string[] = q.f;
+    let p: P = P { f: tt, n: i };
     return tt;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < 4) { var xs: string[] = grab(i); var y: string[] = mkv(); t = t + xs[0].len() + y[1].len(); i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) { let xs: string[] = grab(i); let y: string[] = mkv(); t = t + xs[0].len() + y[1].len(); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 101;
 }`, 46, 1, 28, 32, false, false},
 
 	{"degenerate-self-donor", `struct S0 { f0: i32, f1: i64, f2: boolean }
 function main(): i32 {
-    var v0: S0 = S0 { f0: 687i32, f1: 942i64, f2: false };
+    let v0: S0 = S0 { f0: 687i32, f1: 942i64, f2: false };
     if (__rc_underflow_count() != 0) { return 99; }
     return 326i32 & 255i32;
 }`, 70, 0, 1, 1, false, true},

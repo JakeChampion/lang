@@ -29,7 +29,7 @@ type inlayHint struct {
 const inlayHintKindType = 1
 
 // runInlayHints walks the cached AST + checker info for var
-// declarations whose Type is nil (un-annotated, `var x = 7`) and
+// declarations whose Type is nil (un-annotated, `let x = 7`) and
 // emits a ghost ": Type" right after the name. Only hints from the
 // requested document whose position falls inside the requested LSP
 // range are returned — editors only ask about the visible viewport,
@@ -80,8 +80,8 @@ func runInlayHints(state *docState, uri string, rng Range) []inlayHint {
 // varNameEndPos returns the position immediately past the variable
 // name in the source — that's where the LSP wants the ghost ": T"
 // to render so the result reads as if the user had typed
-// `var x: T = …`. Scans forward from Var.P (which sits on the
-// `var` / `let` keyword) past whitespace + the name. Falls back
+// `let x: T = …`. Scans forward from Var.P (which sits on the
+// `let` keyword) past whitespace + the name. Falls back
 // to ok=false when the byte offset can't be reconstructed (e.g. a
 // synthetic Var with no real source location).
 func varNameEndPos(src string, v *ast.Var) (ast.Position, bool) {
@@ -91,7 +91,7 @@ func varNameEndPos(src string, v *ast.Var) (ast.Position, bool) {
 	}
 	// Skip the var / let keyword + any whitespace.
 	for off < len(src) && isIdentByte(src[off]) {
-		off++ // past `var` / `let`
+		off++ // past `let`
 	}
 	for off < len(src) && (src[off] == ' ' || src[off] == '\t') {
 		off++

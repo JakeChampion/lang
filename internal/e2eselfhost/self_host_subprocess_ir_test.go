@@ -20,7 +20,7 @@ import (
 // so the old spelling passed on both sides of the migration and proved nothing.
 //
 // This exercises the bare-struct-RESULT typing: expr_struct_type types
-// `subprocess(..)` as ProcessResult (no match needed), so `var r = subprocess(..)`
+// `subprocess(..)` as ProcessResult (no match needed), so `let r = subprocess(..)`
 // binds r and r.stdout / r.exit_code resolve against the injected struct. The
 // program runs /bin/echo (stdout capture), /bin/cat (stdin piping), and a
 // nonexistent binary (spawn failure -> exit_code 127), exiting 0 only if all
@@ -38,19 +38,19 @@ func TestSelfHostSubprocessIR(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	const src = `function main(): i32 {
-    var r = subprocess("/bin/echo", ["hello"], "");
+    let r = subprocess("/bin/echo", ["hello"], "");
     if (r.exit_code != 0) { return 1; }
     if (r.stdout != "hello\n") { return 2; }
-    var c = subprocess("/bin/cat", [], "piped-input");
+    let c = subprocess("/bin/cat", [], "piped-input");
     if (c.exit_code != 0) { return 3; }
     if (c.stdout != "piped-input") { return 4; }
-    var n = subprocess("/nonexistent_binary_xyz", [], "");
+    let n = subprocess("/nonexistent_binary_xyz", [], "");
     if (n.exit_code != 127) { return 5; }
-    var e = subprocess("sh", ["-c", "echo oops 1>&2"], "");
+    let e = subprocess("sh", ["-c", "echo oops 1>&2"], "");
     if (e.exit_code != 0) { return 6; }
     if (e.stdout != "") { return 7; }
     if (e.stderr != "oops\n") { return 8; }
-    var x = subprocess("sh", ["-c", "exit 3"], "");
+    let x = subprocess("sh", ["-c", "exit 3"], "");
     if (x.exit_code != 3) { return 9; }
     return 0;
 }`
@@ -92,13 +92,13 @@ func TestSelfHostSubprocessIRArm64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	const src = `function main(): i32 {
-    var r = subprocess("/bin/echo", ["hello"], "");
+    let r = subprocess("/bin/echo", ["hello"], "");
     if (r.exit_code != 0) { return 1; }
     if (r.stdout != "hello\n") { return 2; }
-    var c = subprocess("/bin/cat", [], "piped-input");
+    let c = subprocess("/bin/cat", [], "piped-input");
     if (c.exit_code != 0) { return 3; }
     if (c.stdout != "piped-input") { return 4; }
-    var n = subprocess("/nonexistent_binary_xyz", [], "");
+    let n = subprocess("/nonexistent_binary_xyz", [], "");
     if (n.exit_code != 127) { return 5; }
     return 0;
 }`
@@ -140,7 +140,7 @@ func TestSelfHostSubprocessNeedGatedArm64(t *testing.T) {
 
 	// Allocates (a heap string array) but never spawns.
 	const noSpawn = `function main(): i32 {
-    var xs: string[] = ["a", "b"];
+    let xs: string[] = ["a", "b"];
     return xs.len() - 2;
 }`
 	asm := string(runCapture(t, x86gcc, x86runner, driverBin, []byte(noSpawn+"\n"), "-target", "arm64-linux"))

@@ -16,8 +16,8 @@ import "std/test";
 // fatal — a clean run proves the balance holds.
 
 function make_names(k: i32): Result[string[], i32] {
-  var a: string[] = [];
-  var i: i32 = 0;
+  let a: string[] = [];
+  let i: i32 = 0;
   while (i < k) {
     a = a.append("item_" + (k - i).to_string());
     i = i + 1;
@@ -26,7 +26,7 @@ function make_names(k: i32): Result[string[], i32] {
 }
 
 function ascending(xs: string[]): boolean {
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < xs.len()) {
     if (sort.string_cmp(xs[i - 1], xs[i]) > 0) {
       return false;
@@ -39,15 +39,15 @@ function ascending(xs: string[]): boolean {
 // The core #5311 shape: extract via match, sort (consuming), keep the result
 // live across an allocating call, repeat under churn.
 function test_match_payload_sort(): test.TestOutcome {
-  var rounds: i32 = 0;
+  let rounds: i32 = 0;
   while (rounds < 24) {
-    var k: i32 = 1;
+    let k: i32 = 1;
     while (k <= 8) {
       match (make_names(k)) {
         Ok(names) => {
-          var sorted: string[] = sort.sort_by(names, sort.string_cmp);
-          var churn: string = "x";
-          var c: i32 = 0;
+          let sorted: string[] = sort.sort_by(names, sort.string_cmp);
+          let churn: string = "x";
+          let c: i32 = 0;
           while (c < 40) {
             churn = churn + "yyyy";
             c = c + 1;
@@ -74,12 +74,12 @@ function test_match_payload_sort(): test.TestOutcome {
 // later 24-byte string box recycles — the shape most likely to fault fatally if
 // double-freed.
 function test_empty_payload_sort(): test.TestOutcome {
-  var rounds: i32 = 0;
+  let rounds: i32 = 0;
   while (rounds < 64) {
     match (make_names(0)) {
       Ok(names) => {
-        var sorted: string[] = sort.sort_by(names, sort.string_cmp);
-        var s: string = "a" + "b" + "c";
+        let sorted: string[] = sort.sort_by(names, sort.string_cmp);
+        let s: string = "a" + "b" + "c";
         if (sorted.len() != 0) {
           return test.fail("empty sort grew");
         }
@@ -97,7 +97,7 @@ function test_empty_payload_sort(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("enum payload sort RC (#5311)");
+  let r: test.TestRunner = test.test_new("enum payload sort RC (#5311)");
   r = r.it("match-extracted array into consuming sort", test_match_payload_sort);
   r = r.it("empty extracted array into consuming sort", test_empty_payload_sort);
   return r.finish();

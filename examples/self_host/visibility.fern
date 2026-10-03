@@ -33,7 +33,7 @@ import "./checker";
 // io` → `io`; `import "./lexer"` → `lexer`). Built by concatenation rather than
 // slicing — a slice is a `str` view of the path, and this outlives it.
 function import_quals(mod: parser.Module): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   for im in mod.imports {
     if (im.alias.len() > 0) {
       out = out.append(im.alias);
@@ -49,8 +49,8 @@ function import_quals(mod: parser.Module): string[] {
 // eight-line helper would drag the loader's whole closure back in — the
 // dependency widening that broke six minimal drivers the first time.
 function base_name_of(path: string): string {
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i < path.len()) {
     if (path[i] == b'/') {
       start = i + 1;
@@ -62,7 +62,7 @@ function base_name_of(path: string): string {
 
 // module_named finds a loaded module by its namespace name.
 function module_named(loaded: flatten.LoadedModule[], name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < loaded.len()) {
     if (loaded[i].name == name) {
       return i;
@@ -86,7 +86,7 @@ function module_named(loaded: flatten.LoadedModule[], name: string): i32 {
 // Keying on the private names only makes the scanned list a small fraction of
 // the declarations, since most are exported.
 function private_keys(loaded: flatten.LoadedModule[]): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   for lm in loaded {
     for f in lm.mod.funcs {
       if (!f.is_pub && f.receiver_name.len() == 0 && f.name.len() > 0) {
@@ -120,7 +120,7 @@ function private_keys(loaded: flatten.LoadedModule[]): string[] {
 // as a FuncDecl carrying `is_const`, so it is in private_keys already; this
 // picks it out.
 function private_const_keys(loaded: flatten.LoadedModule[]): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   for lm in loaded {
     for f in lm.mod.funcs {
       if (f.is_const && !f.is_pub && f.receiver_name.len() == 0 && f.name.len() > 0) {
@@ -142,8 +142,8 @@ function package_of(module_name: string): string {
   if (module_name.len() >= 5 && slice_unchecked(module_name, 0, 5) == "core/") {
     return "stdlib";
   }
-  var cut: i32 = 0 - 1;
-  var i: i32 = 0;
+  let cut: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < module_name.len()) {
     if (module_name[i] == b'/') {
       cut = i;
@@ -162,7 +162,7 @@ function package_of(module_name: string): string {
 // check consults this list only when the referring module is in a DIFFERENT
 // package.
 function package_keys(loaded: flatten.LoadedModule[]): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   for lm in loaded {
     for f in lm.mod.funcs {
       if (f.is_package && f.receiver_name.len() == 0 && f.name.len() > 0) {
@@ -198,7 +198,7 @@ function module_name_of(loaded: flatten.LoadedModule[], qual: string): string {
   }
   for lm in loaded {
     if (package_of(lm.name).len() > 0 && lm.name.len() > qual.len()) {
-      var tail: string = slice_unchecked(lm.name, lm.name.len() - qual.len(), lm.name.len()) + "";
+      let tail: string = slice_unchecked(lm.name, lm.name.len() - qual.len(), lm.name.len()) + "";
       if (tail == qual) {
         return lm.name;
       }
@@ -210,26 +210,26 @@ function module_name_of(loaded: flatten.LoadedModule[], qual: string): string {
 // module_diags reports every `<qual>.<name>` in `src`'s own functions that names
 // a private top-level declaration of the module `qual` resolves to.
 function module_diags(src_name: string, src: parser.Module, loaded: flatten.LoadedModule[], priv: util.NameIndex, priv_consts: string[], pkg: string[]): util.Diag[] {
-  var out: util.Diag[] = [];
-  var quals: string[] = import_quals(src);
+  let out: util.Diag[] = [];
+  let quals: string[] = import_quals(src);
   if (quals.len() == 0) {
     return out;
   }
-  var refs: astwalk.QualRef[] = [];
+  let refs: astwalk.QualRef[] = [];
   for fd in src.funcs {
     for st in fd.body {
       refs = astwalk.collect_qualrefs_stmt(st, quals, refs);
     }
   }
   for r in refs {
-    var key: string = r.qual + "." + r.name;
+    let key: string = r.qual + "." + r.name;
     // A `pub(package)` declaration is out of reach only from OUTSIDE its
     // package. An unknown referrer (src_name "") is left alone rather than
     // guessed at: a false "not exported" on a legal sibling reference is
     // worse than the missed diagnostic, and matches the checker's
     // zero-false-positive stance elsewhere.
     if (src_name.len() > 0 && util.has_str(pkg, key)) {
-      var owner: string = module_name_of(loaded, r.qual);
+      let owner: string = module_name_of(loaded, r.qual);
       if (owner.len() > 0 && package_of(owner) != package_of(src_name)) {
         out = out.append(util.Diag {
           code: "",
@@ -240,7 +240,7 @@ function module_diags(src_name: string, src: parser.Module, loaded: flatten.Load
       }
     }
     if (priv.has(key)) {
-      var kw: string = "function";
+      let kw: string = "function";
       if (util.has_str(priv_consts, key)) {
         kw = "const";
       }
@@ -261,11 +261,11 @@ function module_diags(src_name: string, src: parser.Module, loaded: flatten.Load
 // which is what makes this formulation immune to the false positives the
 // bundle-level one produced.
 pub function export_diags(entry: parser.Module, loaded: flatten.LoadedModule[]): util.Diag[] {
-  var priv: util.NameIndex = util.name_index(private_keys(loaded));
-  var priv_consts: string[] = private_const_keys(loaded);
-  var pkg: string[] = package_keys(loaded);
-  var out: util.Diag[] = module_diags("", entry, loaded, priv, priv_consts, pkg);
-  var td: util.Diag[] = type_diags(entry, loaded, priv);
+  let priv: util.NameIndex = util.name_index(private_keys(loaded));
+  let priv_consts: string[] = private_const_keys(loaded);
+  let pkg: string[] = package_keys(loaded);
+  let out: util.Diag[] = module_diags("", entry, loaded, priv, priv_consts, pkg);
+  let td: util.Diag[] = type_diags(entry, loaded, priv);
   for d in td {
     out = out.append(d);
   }
@@ -295,8 +295,8 @@ pub function export_diags(entry: parser.Module, loaded: flatten.LoadedModule[]):
 // finds nothing, and the rule silently never fires. Returns "" for `qual` when
 // the string carries no qualifier.
 function qual_type_parts(tn: string): (string, string) {
-  var dot: i32 = 0 - 1;
-  var i: i32 = 0;
+  let dot: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < tn.len()) {
     if (tn[i] == b'.') {  // first only
       dot = i;
@@ -307,10 +307,10 @@ function qual_type_parts(tn: string): (string, string) {
   if (dot < 0) {
     return ("", "");
   }
-  var q: string = slice_unchecked(tn, 0, dot) + "";
-  var rest: string = slice_unchecked(tn, dot + 1, tn.len()) + "";
-  var cut: i32 = rest.len();
-  var j: i32 = 0;
+  let q: string = slice_unchecked(tn, 0, dot) + "";
+  let rest: string = slice_unchecked(tn, dot + 1, tn.len()) + "";
+  let cut: i32 = rest.len();
+  let j: i32 = 0;
   while (j < rest.len()) {
     if (rest[j] == b'[') {
       cut = j;
@@ -330,10 +330,10 @@ function qual_type_parts(tn: string): (string, string) {
 // variant carries no `pub` of its own — would reject every qualified variant
 // construction in the stdlib.
 function declares_private_type(mod: parser.Module, name: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < mod.structs.len()) {
     if (mod.structs[i].name == name) {
-      var owner: string = mod.structs[i].enum_owner;
+      let owner: string = mod.structs[i].enum_owner;
       if (owner.len() > 0) {
         return declares_private_type(mod, owner);
       }
@@ -341,14 +341,14 @@ function declares_private_type(mod: parser.Module, name: string): boolean {
     }
     i = i + 1;
   }
-  var e: i32 = 0;
+  let e: i32 = 0;
   while (e < mod.enums.len()) {
     if (mod.enums[e].name == name) {
       return !mod.enums[e].is_pub;
     }
     e = e + 1;
   }
-  var a: i32 = 0;
+  let a: i32 = 0;
   while (a < mod.aliases.len()) {
     if (mod.aliases[a].name == name) {
       return !mod.aliases[a].is_pub;
@@ -361,14 +361,14 @@ function declares_private_type(mod: parser.Module, name: string): boolean {
 // type_kind_word names the declaration kind in the message, so the hint tells
 // the reader which keyword to put `pub` in front of, as native's does.
 function type_kind_word(mod: parser.Module, name: string): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < mod.structs.len()) {
     if (mod.structs[i].name == name) {
       return "struct";
     }
     i = i + 1;
   }
-  var e: i32 = 0;
+  let e: i32 = 0;
   while (e < mod.enums.len()) {
     if (mod.enums[e].name == name) {
       return "enum";
@@ -391,7 +391,7 @@ function check_type_name(tn: string, quals: string[], loaded: flatten.LoadedModu
   if (!priv.has(q + "." + base)) {
     return acc;
   }
-  var mi: i32 = module_named(loaded, q);
+  let mi: i32 = module_named(loaded, q);
   if (mi < 0) {
     return acc;
   }
@@ -400,7 +400,7 @@ function check_type_name(tn: string, quals: string[], loaded: flatten.LoadedModu
   if (!declares_private_type(loaded[mi].mod, base)) {
     return acc;
   }
-  var kind: string = type_kind_word(loaded[mi].mod, base);
+  let kind: string = type_kind_word(loaded[mi].mod, base);
   return acc.append(util.Diag {
     code: "",
     message: q + "." + base + " is not exported (declare it as `pub " + kind + " " + base + " …` to make it accessible from other modules)",
@@ -410,34 +410,34 @@ function check_type_name(tn: string, quals: string[], loaded: flatten.LoadedModu
 }
 
 // type_diags scans every type-name position a module writes: each function's
-// params and return type, each local `var`'s declared type, and each struct
+// params and return type, each local `let`'s declared type, and each struct
 // literal's type name. Struct FIELD types are covered through the decl walk.
 function type_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: util.NameIndex): util.Diag[] {
-  var out: util.Diag[] = [];
-  var quals: string[] = import_quals(src);
+  let out: util.Diag[] = [];
+  let quals: string[] = import_quals(src);
   if (quals.len() == 0) {
     return out;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < src.funcs.len()) {
-    var f: parser.FuncDecl = src.funcs[i];
-    var pi: i32 = 0;
+    let f: parser.FuncDecl = src.funcs[i];
+    let pi: i32 = 0;
     while (pi < f.params.len()) {
       out = check_type_name(f.params[pi].type_name, quals, loaded, priv, f.line, f.col, out);
       pi = pi + 1;
     }
     out = check_type_name(f.ret_type, quals, loaded, priv, f.line, f.col, out);
-    var bi: i32 = 0;
+    let bi: i32 = 0;
     while (bi < f.body.len()) {
       out = stmt_type_diags(f.body[bi], quals, loaded, priv, out);
       bi = bi + 1;
     }
     i = i + 1;
   }
-  var si: i32 = 0;
+  let si: i32 = 0;
   while (si < src.structs.len()) {
-    var sd: parser.StructDecl = src.structs[si];
-    var fi: i32 = 0;
+    let sd: parser.StructDecl = src.structs[si];
+    let fi: i32 = 0;
     while (fi < sd.fields.len()) {
       out = check_type_name(sd.fields[fi].type_name, quals, loaded, priv, sd.line, sd.col, out);
       fi = fi + 1;
@@ -471,12 +471,12 @@ function stmt_type_diags(st: ast.Stmt, quals: string[], loaded: flatten.LoadedMo
     },
     ast.StmtIf(i) => {
       acc = expr_type_diags(i.cond, quals, loaded, priv, acc);
-      var ti: i32 = 0;
+      let ti: i32 = 0;
       while (ti < i.then_body.len()) {
         acc = stmt_type_diags(i.then_body[ti], quals, loaded, priv, acc);
         ti = ti + 1;
       }
-      var ei: i32 = 0;
+      let ei: i32 = 0;
       while (ei < i.else_body.len()) {
         acc = stmt_type_diags(i.else_body[ei], quals, loaded, priv, acc);
         ei = ei + 1;
@@ -485,7 +485,7 @@ function stmt_type_diags(st: ast.Stmt, quals: string[], loaded: flatten.LoadedMo
     },
     ast.StmtWhile(w) => {
       acc = expr_type_diags(w.cond, quals, loaded, priv, acc);
-      var wi: i32 = 0;
+      let wi: i32 = 0;
       while (wi < w.body.len()) {
         acc = stmt_type_diags(w.body[wi], quals, loaded, priv, acc);
         wi = wi + 1;
@@ -494,7 +494,7 @@ function stmt_type_diags(st: ast.Stmt, quals: string[], loaded: flatten.LoadedMo
     },
     ast.StmtFor(f) => {
       acc = expr_type_diags(f.iter, quals, loaded, priv, acc);
-      var fi: i32 = 0;
+      let fi: i32 = 0;
       while (fi < f.body.len()) {
         acc = stmt_type_diags(f.body[fi], quals, loaded, priv, acc);
         fi = fi + 1;
@@ -503,9 +503,9 @@ function stmt_type_diags(st: ast.Stmt, quals: string[], loaded: flatten.LoadedMo
     },
     ast.StmtMatch(m) => {
       acc = expr_type_diags(m.scrutinee, quals, loaded, priv, acc);
-      var ai: i32 = 0;
+      let ai: i32 = 0;
       while (ai < m.arms.len()) {
-        var bi: i32 = 0;
+        let bi: i32 = 0;
         while (bi < m.arms[ai].body.len()) {
           acc = stmt_type_diags(m.arms[ai].body[bi], quals, loaded, priv, acc);
           bi = bi + 1;
@@ -535,7 +535,7 @@ function expr_type_diags(e: ast.Expr, quals: string[], loaded: flatten.LoadedMod
       if (sl.has_base) {
         acc = expr_type_diags(sl.base, quals, loaded, priv, acc);
       }
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < sl.field_values.len()) {
         acc = expr_type_diags(sl.field_values[i], quals, loaded, priv, acc);
         i = i + 1;
@@ -550,7 +550,7 @@ function expr_type_diags(e: ast.Expr, quals: string[], loaded: flatten.LoadedMod
       return expr_type_diags(u.operand, quals, loaded, priv, acc);
     },
     ast.ExprCall(c) => {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < c.args.len()) {
         acc = expr_type_diags(c.args[i], quals, loaded, priv, acc);
         i = i + 1;
@@ -558,7 +558,7 @@ function expr_type_diags(e: ast.Expr, quals: string[], loaded: flatten.LoadedMod
       return acc;
     },
     ast.ExprArray(a) => {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < a.elements.len()) {
         acc = expr_type_diags(a.elements[i], quals, loaded, priv, acc);
         i = i + 1;
@@ -566,7 +566,7 @@ function expr_type_diags(e: ast.Expr, quals: string[], loaded: flatten.LoadedMod
       return acc;
     },
     ast.ExprTuple(t) => {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < t.elements.len()) {
         acc = expr_type_diags(t.elements[i], quals, loaded, priv, acc);
         i = i + 1;
@@ -578,7 +578,7 @@ function expr_type_diags(e: ast.Expr, quals: string[], loaded: flatten.LoadedMod
       return expr_type_diags(x.index, quals, loaded, priv, acc);
     },
     ast.ExprLambda(lm) => {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < lm.body.len()) {
         acc = stmt_type_diags(lm.body[i], quals, loaded, priv, acc);
         i = i + 1;

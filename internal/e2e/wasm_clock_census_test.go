@@ -12,9 +12,9 @@ func TestWasmClockCensus(t *testing.T) {
 	loop := func(call string) string {
 		return `import "std/time";
 function main(): i32 {
-    var last: i64 = 1 as i64;
-    var s: string = "";
-    var i: i32 = 0;
+    let last: i64 = 1 as i64;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < 100) {
         ` + call + `
         i = i + 1;

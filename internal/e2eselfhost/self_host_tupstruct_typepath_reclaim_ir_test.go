@@ -34,13 +34,13 @@ var tupStructTypePathCases = []struct {
 	// OPTTUP struct element, scalar-consumed: reclaims the struct + option box each iter.
 	{"opttup-struct-scalar-churn", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var o: Option[(i32, P)] = Some((i, P { xs: [i, i + 1], y: i })); match (o) { Some(g) => { acc = (acc + g.0) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var o2: Option[(i32, P)] = Some((j, P { xs: [j, j + 1], y: j })); match (o2) { Some(g) => { acc = (acc + g.0) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let o: Option[(i32, P)] = Some((i, P { xs: [i, i + 1], y: i })); match (o) { Some(g) => { acc = (acc + g.0) % 251; }, None => {} } i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let o2: Option[(i32, P)] = Some((j, P { xs: [j, j + 1], y: j })); match (o2) { Some(g) => { acc = (acc + g.0) % 251; }, None => {} } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -49,13 +49,13 @@ function main(): i32 {
 	// ARRTUP struct element, scalar-consumed: reclaims each element's struct + the buffer.
 	{"arrtup-struct-scalar-churn", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var xs: (i32, P)[] = [(i, P { xs: [i, i + 1], y: i })]; acc = (acc + xs[0].0) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var ys: (i32, P)[] = [(j, P { xs: [j, j + 1], y: j })]; acc = (acc + ys[0].0) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let xs: (i32, P)[] = [(i, P { xs: [i, i + 1], y: i })]; acc = (acc + xs[0].0) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let ys: (i32, P)[] = [(j, P { xs: [j, j + 1], y: j })]; acc = (acc + ys[0].0) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -65,14 +65,14 @@ function main(): i32 {
 	// option is left uncredited), never over-released.
 	{"opttup-struct-escape-store-safe", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
-    var keep: P = P { xs: [0, 0], y: 0 };
-    var i: i32 = 0;
+    let keep: P = P { xs: [0, 0], y: 0 };
+    let i: i32 = 0;
     while (i < 50) {
-        var o: Option[(i32, P)] = Some((i, P { xs: [i, i + 1], y: i }));
+        let o: Option[(i32, P)] = Some((i, P { xs: [i, i + 1], y: i }));
         match (o) { Some(g) => { keep = g.1; }, None => {} }
         i = i + 1;
     }
-    var acc: i32 = keep.xs[0] + keep.y;
+    let acc: i32 = keep.xs[0] + keep.y;
     if (acc < 0) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -80,14 +80,14 @@ function main(): i32 {
 	// ARRTUP struct WHOLE-EXTRACT: `keep = xs[0].1` — leak-safe, never over-released.
 	{"arrtup-struct-escape-store-safe", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
-    var keep: P = P { xs: [0, 0], y: 0 };
-    var i: i32 = 0;
+    let keep: P = P { xs: [0, 0], y: 0 };
+    let i: i32 = 0;
     while (i < 50) {
-        var xs: (i32, P)[] = [(i, P { xs: [i, i + 1], y: i })];
+        let xs: (i32, P)[] = [(i, P { xs: [i, i + 1], y: i })];
         keep = xs[0].1;
         i = i + 1;
     }
-    var acc: i32 = keep.xs[0] + keep.y;
+    let acc: i32 = keep.xs[0] + keep.y;
     if (acc < 0) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -95,13 +95,13 @@ function main(): i32 {
 	// REGRESSION: the pre-existing plain array-element OPTTUP still reclaims (the shared
 	// admission predicates now thread structs, but the array path is unchanged).
 	{"opttup-arrtuple-regression", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 5000) { var o: Option[(i32, i32[])] = Some((i, [i, i + 1])); match (o) { Some(g) => { acc = (acc + g.0 + g.1[0]) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var o2: Option[(i32, i32[])] = Some((j, [j, j + 1])); match (o2) { Some(g) => { acc = (acc + g.1[1]) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 5000) { let o: Option[(i32, i32[])] = Some((i, [i, i + 1])); match (o) { Some(g) => { acc = (acc + g.0 + g.1[0]) % 251; }, None => {} } i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let o2: Option[(i32, i32[])] = Some((j, [j, j + 1])); match (o2) { Some(g) => { acc = (acc + g.1[1]) % 251; }, None => {} } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;

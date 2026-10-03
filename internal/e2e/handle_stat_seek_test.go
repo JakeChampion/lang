@@ -210,7 +210,7 @@ func handleStatSeekSource(path, out, app string) string {
     match (open_reader(%[1]q)) {
         Err(_) => { return 100; },
         Ok(r) => {
-            var t: boolean = r.isatty();
+            let t: boolean = r.isatty();
             r.close();
             if (t) { return 101; }
         }
@@ -218,7 +218,7 @@ func handleStatSeekSource(path, out, app string) string {
     match (open_writer(%[2]q)) {
         Err(_) => { return 102; },
         Ok(w) => {
-            var t: boolean = w.isatty();
+            let t: boolean = w.isatty();
             w.close();
             if (t) { return 103; }
         }
@@ -498,7 +498,7 @@ func handleStatSeekWasmSource() string {
     match (open_reader("hello.txt")) {
         Err(_) => { return 100; },
         Ok(r) => {
-            var t: boolean = r.isatty();
+            let t: boolean = r.isatty();
             r.close();
             if (t) { return 101; }
         }

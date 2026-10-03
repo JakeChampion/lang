@@ -28,7 +28,7 @@ func TestSelfHostStructArrayFieldIRX86_64(t *testing.T) {
 	prog := `struct P { x: i32, y: i32 }
 struct Q { items: P[], n: i32 }
 function use_q(): i32 {
-    var q: Q = Q { items: [P { x: 1, y: 2 }, P { x: 3, y: 4 }], n: 5 };
+    let q: Q = Q { items: [P { x: 1, y: 2 }, P { x: 3, y: 4 }], n: 5 };
     return q.items[0].x + q.items[1].y + q.n;
 }
 function main(): i32 { return use_q(); }`

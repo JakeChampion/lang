@@ -86,9 +86,9 @@ func FuzzSelfHostFrontEnd(f *testing.F) {
 	seeds := []string{
 		``,
 		`function main(): i32 { return 0; }`,
-		`function main(): i32 { var a: i32[] = [1, 2, 3]; return a[1]; }`,
-		`function main(): i32 { var s = 0; var i = 0; while (i < 10) { s = s + i; i = i + 1; } return s; }`,
-		`struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; return p.x; }`,
+		`function main(): i32 { let a: i32[] = [1, 2, 3]; return a[1]; }`,
+		`function main(): i32 { let s = 0; let i = 0; while (i < 10) { s = s + i; i = i + 1; } return s; }`,
+		`struct P { x: i32, y: i32 } function main(): i32 { let p = P { x: 1, y: 2 }; return p.x; }`,
 		`enum E { A, B } function main(): i32 { match (E.A) { E.A => { return 0; }, E.B => { return 1; } } }`,
 		// Already-invalid programs: the front end should diagnose, not die.
 		`function main(): i32 { return true; }`,

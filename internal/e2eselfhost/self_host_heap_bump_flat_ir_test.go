@@ -55,21 +55,21 @@ var heapBumpFlatCases = []heapBumpFlatCase{
 	// end of the statement.
 	{name: "nested-concat", src: func(n string) string {
 		return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var a: string = "longer_string_one_here";
-    var b: string = "longer_string_two_here";
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let a: string = "longer_string_one_here";
+    let b: string = "longer_string_two_here";
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + (a + b + a + b).len(); i = i + 1; }
     return ((__heap_bump_bytes() as i32) - before) + (acc - acc);
 }`
 	}, retained: func(n string) string {
 		return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var a: string = "longer_string_one_here";
-    var b: string = "longer_string_two_here";
-    var keep: string[] = [];
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let a: string = "longer_string_one_here";
+    let b: string = "longer_string_two_here";
+    let keep: string[] = [];
+    let i: i32 = 0;
     while (i < ` + n + `) { keep = keep.append(a + b + a + b); i = i + 1; }
     if (keep.len() != ` + n + `) { return 200; }
     if ((__heap_bump_bytes() as i32) > before) { return 1; }
@@ -79,11 +79,11 @@ var heapBumpFlatCases = []heapBumpFlatCase{
 	// The receiver of a borrowing method is still a temp the caller owns.
 	{name: "len-receiver", src: func(n string) string {
 		return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var a: string = "hello there friend, ";
-    var b: string = "general kenobi!!!";
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let a: string = "hello there friend, ";
+    let b: string = "general kenobi!!!";
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + (a + b).len(); i = i + 1; }
     if (acc < 0) { return 0 - 1; }
     return (__heap_bump_bytes() as i32) - before;
@@ -93,8 +93,8 @@ var heapBumpFlatCases = []heapBumpFlatCase{
 	// nothing but the drop insertion can free it.
 	{name: "stmt-temp", src: func(n string) string {
 		return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) { [i, i + 1, i + 2]; i = i + 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -105,8 +105,8 @@ var heapBumpFlatCases = []heapBumpFlatCase{
 		return `struct P { x: i32, y: i32 }
 function mk(v: i32): P { return P { x: v, y: v }; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) { mk(i); i = i + 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -114,8 +114,8 @@ function main(): i32 {
 	{name: "discarded-call-arr", src: func(n string) string {
 		return `function mk(v: i32): i32[] { return [v, v + 1, v + 2]; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) { mk(i); i = i + 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -125,9 +125,9 @@ function main(): i32 {
 	{name: "call-arg-temp", src: func(n string) string {
 		return `function sum3(xs: i32[]): i32 { return xs[0] + xs[1] + xs[2]; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + sum3([i, i + 1, i + 2]); i = i + 1; }
     if (acc < 0) { return 0 - 1; }
     return (__heap_bump_bytes() as i32) - before;
@@ -137,11 +137,11 @@ function main(): i32 {
 	// buffer once per call.
 	{name: "literal-alloc", src: func(n string) string {
 		return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
-        var b: u8[] = __alloc_u8(8);
+        let b: u8[] = __alloc_u8(8);
         b = b.with(0, (i % 200) as u8);
         acc = acc + (b[0] as i32);
         i = i + 1;
@@ -155,9 +155,9 @@ function main(): i32 {
 	{name: "replaced-field", src: func(n string) string {
 		return `struct S { name: string, n: i32 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var o: S = S { name: "seed", n: 0 };
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let o: S = S { name: "seed", n: 0 };
+    let i: i32 = 0;
     while (i < ` + n + `) { o = S { name: "ab" + "cd", n: i }; i = i + 1; }
     if (o.name.len() != 4) { return 0 - 1; }
     return (__heap_bump_bytes() as i32) - before;
@@ -167,10 +167,10 @@ function main(): i32 {
 	// because a scalar tuple is not heap-allocated.
 	{name: "tuple-temp", src: func(n string) string {
 		return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
-    while (i < ` + n + `) { var t: (i32, i32[]) = (i, [i + 1]); acc = acc + t.0 + t.1[0]; i = i + 1; }
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
+    while (i < ` + n + `) { let t: (i32, i32[]) = (i, [i + 1]); acc = acc + t.0 + t.1[0]; i = i + 1; }
     if (acc < 0) { return 0 - 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -182,11 +182,11 @@ function main(): i32 {
 	{name: "map-get", src: func(n string) string {
 		return `import "core/map";
 function main(): i32 {
-    var index: Map[string, i32] = map_new(64);
+    let index: Map[string, i32] = map_new(64);
     index = index.insert("alpha", 1);
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
         match (index.get("alpha")) { Some(g) => { acc = acc + g; }, None => { acc = acc - 1; } }
         match (index.get("absent")) { Some(g) => { acc = acc + g; }, None => { acc = acc + 2; } }
@@ -199,10 +199,10 @@ function main(): i32 {
 	// A nested array: the outer buffer's drop has to walk its elements.
 	{name: "nested-array", src: func(n string) string {
 		return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
-    while (i < ` + n + `) { var g: i32[][] = [[i, i + 1], [i + 2]]; acc = acc + g[0].len() + g[1].len(); i = i + 1; }
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
+    while (i < ` + n + `) { let g: i32[][] = [[i, i + 1], [i + 2]]; acc = acc + g[0].len() + g[1].len(); i = i + 1; }
     if (acc < 0) { return 0 - 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`

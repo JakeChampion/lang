@@ -38,13 +38,13 @@ function alphabet(): string[] {
 // build maps each input byte onto one alphabet character, capped so a
 // mutated input cannot make one iteration quadratic.
 function build(input: u8[]): string {
-  var alpha: string[] = alphabet();
-  var out: string = "";
-  var n: i32 = input.len();
+  let alpha: string[] = alphabet();
+  let out: string = "";
+  let n: i32 = input.len();
   if (n > 64) {
     n = 64;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     out = out + alpha[input[i] as i32 % alpha.len()];
     i = i + 1;
@@ -64,7 +64,7 @@ function ok(name: string, produced: string): string {
 }
 
 function ok_all(name: string, produced: string[]): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   for part in produced {
     if (!utf8.is_valid_utf8(part)) {
       return name + " produced an invalid UTF-8 element at index " + i.to_string();
@@ -88,8 +88,8 @@ function first_fail(results: string[]): test.TestOutcome {
 // than cut through one. The counts are driven off the input so the
 // fuzzer walks them across every offset of a multibyte character.
 function check_byte_counts(input: u8[]): test.TestOutcome {
-  var s: string = build(input);
-  var n: i32 = 0;
+  let s: string = build(input);
+  let n: i32 = 0;
   if (s.len() > 0) {
     n = input.len() * 7 % (s.len() + 1);
   }
@@ -111,9 +111,9 @@ function check_byte_counts(input: u8[]): test.TestOutcome {
 // #5634, so the property is that a `Some` payload is always valid — a
 // bound that would have split a character has to come back `None`.
 function check_slice_expression(input: u8[]): test.TestOutcome {
-  var s: string = build(input);
-  var lo: i32 = 0;
-  var hi: i32 = 0;
+  let s: string = build(input);
+  let lo: i32 = 0;
+  let hi: i32 = 0;
   if (s.len() > 0) {
     lo = input.len() * 3 % (s.len() + 1);
     hi = input.len() * 5 % (s.len() + 1);
@@ -134,8 +134,8 @@ function check_slice_expression(input: u8[]): test.TestOutcome {
 // Width-based padding and layout: these pad to a byte width, so a fill
 // character wider than one byte is the hazard.
 function check_width_ops(input: u8[]): test.TestOutcome {
-  var s: string = build(input);
-  var w: i32 = input.len() * 3 % 24;
+  let s: string = build(input);
+  let w: i32 = input.len() * 3 % 24;
   return first_fail([
     ok("pad_start", s.pad_start(w, "é")),
     ok("pad_end", s.pad_end(w, "中")),
@@ -148,7 +148,7 @@ function check_width_ops(input: u8[]): test.TestOutcome {
 // Case mapping and the identifier-style converters walk characters, so
 // a decoder that mis-steps produces invalid output.
 function check_case_and_style(input: u8[]): test.TestOutcome {
-  var s: string = build(input);
+  let s: string = build(input);
   return first_fail([
     ok("to_upper", s.to_upper()),
     ok("to_lower", s.to_lower()),
@@ -167,7 +167,7 @@ function check_case_and_style(input: u8[]): test.TestOutcome {
 // chars() hands back char[], so each code point is re-encoded to check
 // the round trip through utf8.utf8_encode as well as the split itself.
 function chars_as_strings(s: string): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   for c in s.chars() {
     out = out.append(utf8.utf8_encode(c));
   }
@@ -177,7 +177,7 @@ function chars_as_strings(s: string): string[] {
 // Splitters and trimmers: every piece handed back has to be valid, not
 // just the whole.
 function check_split_and_trim(input: u8[]): test.TestOutcome {
-  var s: string = build(input);
+  let s: string = build(input);
   return first_fail([
     ok_all("split", s.split("é")),
     ok_all("lines", s.lines()),
@@ -193,12 +193,12 @@ function check_split_and_trim(input: u8[]): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("utf8 validity is preserved by std/string");
+  let r: test.TestRunner = test.test_new("utf8 validity is preserved by std/string");
 
   // Seeds spanning every character width and every separator class,
   // so the verbatim pass alone already covers the interesting shapes
   // before any mutation runs.
-  var seeds: u8[][] = [
+  let seeds: u8[][] = [
     "".bytes(),
     "a".bytes(),
     "aZ1 \n_éß中𝄞".bytes(),

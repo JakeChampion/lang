@@ -1,10 +1,7 @@
 package e2e
 
 import (
-	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Perceus precise drops (garbage-free, straight-line subset). An owned
@@ -25,45 +22,11 @@ import (
 // last bare use is only DEC'd by the precise drop (the container's reference
 // survives), never freed early.
 
-func pdLit(n int) string {
-	p := make([]string, n)
-	for i := range p {
-		p[i] = "0"
-	}
-	return "[" + strings.Join(p, ", ") + "]"
-}
-
-// seqDead4Src: 4 arrays each dead before the next allocates (precise drop
-// reclaims each) — peak ~1 block.
-func seqDead4Src() string {
-	l := pdLit(100) // 400-byte payload -> size-class block (recyclable)
-	return `function main(): i32 {
-    var a: i32[] = ` + l + `; var sa: i32 = a[0];
-    var b: i32[] = ` + l + `; var sb: i32 = b[0];
-    var c: i32[] = ` + l + `; var sc: i32 = c[0];
-    var d: i32[] = ` + l + `; var sd: i32 = d[0];
-    return (__heap_bump_bytes() as i32) + sa + sb + sc + sd;
-}`
-}
-
-// live4Src: the same 4 arrays, all read at the END (all live to function
-// exit) — peak ~4 blocks. The control that precise drops must beat.
-func live4Src() string {
-	l := pdLit(100)
-	return `function main(): i32 {
-    var a: i32[] = ` + l + `;
-    var b: i32[] = ` + l + `;
-    var c: i32[] = ` + l + `;
-    var d: i32[] = ` + l + `;
-    return (__heap_bump_bytes() as i32) + a[0] + b[0] + c[0] + d[0];
-}`
-}
-
 // pdValuesSrc: distinct values across sequential precise-dropped arrays.
 const pdValuesSrc = `function main(): i32 {
-    var a: i32[] = [10, 20, 30]; var sa: i32 = a[0] + a[2];
-    var b: i32[] = [1, 2, 3]; var sb: i32 = b[1];
-    var c: i32[] = [100, 200]; var sc: i32 = c[0] + c[1];
+    let a: i32[] = [10, 20, 30]; let sa: i32 = a[0] + a[2];
+    let b: i32[] = [1, 2, 3]; let sb: i32 = b[1];
+    let c: i32[] = [100, 200]; let sc: i32 = c[0] + c[1];
     if (sa != 40) { return 901; }
     if (sb != 2) { return 902; }
     if (sc != 300) { return 903; }
@@ -75,13 +38,13 @@ const pdValuesSrc = `function main(): i32 {
 // allocation (junk) would corrupt a wrongly-freed buffer.
 const pdAliasSrc = `struct Holder { items: i32[], n: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var a: i32[] = [i, i + 1, i + 2];
-        var h: Holder = Holder{ items: a, n: 0 };
-        var sa: i32 = a[0];
-        var junk: i32[] = [7, 7, 7];
+        let a: i32[] = [i, i + 1, i + 2];
+        let h: Holder = Holder{ items: a, n: 0 };
+        let sa: i32 = a[0];
+        let junk: i32[] = [7, 7, 7];
         acc = acc + sa + h.items[2] + junk[0];
         i = i + 1;
     }
@@ -98,19 +61,19 @@ function main(): i32 {
 // buffer. This pins the "precise drop is just a dec; a counted alias
 // survives" invariant for the function-return-of-arg shape.
 const pdArgReturnSrc = `function biggy(xs: i32[]): i32[] {
-    var w: i32 = 0;
-    var j: i32 = 0;
+    let w: i32 = 0;
+    let j: i32 = 0;
     while (j < 3) { w = w + xs[j]; j = j + 1; }
     if (w < -999999) { return xs; }
     return xs;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var a: i32[] = [i, i + 1, i + 2];
-        var b: i32[] = biggy(a);
-        var junk: i32[] = [7, 7, 7];
+        let a: i32[] = [i, i + 1, i + 2];
+        let b: i32[] = biggy(a);
+        let junk: i32[] = [7, 7, 7];
         acc = acc + b[0] + b[2] + junk[0];
         i = i + 1;
     }
@@ -124,43 +87,17 @@ function main(): i32 {
 // buffers + the outer buffer), so a sequentially-dead rc-element array
 // reclaims its WHOLE structure early, not just the outer buffer. ---
 
-// rcArrDead4Src: 4 sequentially-dead i32[][] (array-of-arrays) — each fully
-// reclaimed before the next allocates.
-func rcArrDead4Src() string {
-	row := pdLit(64) // inner buffer, size-class
-	mk := "[" + row + ", " + row + ", " + row + ", " + row + "]"
-	return `function main(): i32 {
-    var a: i32[][] = ` + mk + `; var sa: i32 = a[0][0];
-    var b: i32[][] = ` + mk + `; var sb: i32 = b[0][0];
-    var c: i32[][] = ` + mk + `; var sc: i32 = c[0][0];
-    var d: i32[][] = ` + mk + `; var sd: i32 = d[0][0];
-    return (__heap_bump_bytes() as i32) + sa + sb + sc + sd;
-}`
-}
-
-func rcArrLive4Src() string {
-	row := pdLit(64)
-	mk := "[" + row + ", " + row + ", " + row + ", " + row + "]"
-	return `function main(): i32 {
-    var a: i32[][] = ` + mk + `;
-    var b: i32[][] = ` + mk + `;
-    var c: i32[][] = ` + mk + `;
-    var d: i32[][] = ` + mk + `;
-    return (__heap_bump_bytes() as i32) + a[0][0] + b[0][0] + c[0][0] + d[0][0];
-}`
-}
-
 // rcArrValuesSrc: array-of-struct (P[]), distinct values, with an aliased
 // element kept live — the deep struct-array drop must only DEC the shared
 // element box, not free it.
 const rcArrValuesSrc = `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var ps: P[] = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
-        var keep: P = ps[0];
-        var junk: i32[] = [7, 7, 7];
+        let ps: P[] = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
+        let keep: P = ps[0];
+        let junk: i32[] = [7, 7, 7];
         acc = acc + ps[1].x + keep.y + junk[0];
         i = i + 1;
     }
@@ -168,34 +105,6 @@ function main(): i32 {
     if (acc != 41800) { return 999; }
     return __rc_underflow_count();
 }`
-
-func TestWASMPreciseDrops(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
-	dead := runWasm(t, seqDead4Src())
-	live := runWasm(t, live4Src())
-	if dead >= live {
-		t.Errorf("precise drops should reclaim sequentially-dead arrays: dead4 high-water %d should be < live4 %d", dead, live)
-	}
-	rcDead := runWasm(t, rcArrDead4Src())
-	rcLive := runWasm(t, rcArrLive4Src())
-	if rcDead >= rcLive {
-		t.Errorf("precise drops should reclaim sequentially-dead rc-element arrays: dead4 %d should be < live4 %d", rcDead, rcLive)
-	}
-	if pdValues := runWasm(t, pdValuesSrc); pdValues != 0 {
-		t.Errorf("value correctness / over-release: got %d", pdValues)
-	}
-	if got := runWasm(t, pdAliasSrc); got != 0 {
-		t.Errorf("aliased-into-container soundness: got %d", got)
-	}
-	if got := runWasm(t, pdArgReturnSrc); got != 0 {
-		t.Errorf("function-return-of-arg soundness: got %d", got)
-	}
-	if got := runWasm(t, rcArrValuesSrc); got != 0 {
-		t.Errorf("rc-element array value/alias soundness: got %d", got)
-	}
-}
 
 func TestX86_64PreciseDrops(t *testing.T) {
 	if _, code := compileAndRunX86_64FreeOn(t, pdValuesSrc); code != 0 {

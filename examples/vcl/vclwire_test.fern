@@ -23,7 +23,7 @@ function req_msg(method: string, url: string): runtime.Msg {
 
 // ------------------------------------------------------- building requests
 function test_method_and_url(): test.TestOutcome {
-  var req: fetch.Request = wire.request_of(req_msg("GET", "/p"), "http://origin:80");
+  let req: fetch.Request = wire.request_of(req_msg("GET", "/p"), "http://origin:80");
   if (req.method != "GET") {
     return test.fail("bad method: " + req.method);
   }
@@ -31,8 +31,8 @@ function test_method_and_url(): test.TestOutcome {
 }
 
 function test_headers_are_forwarded(): test.TestOutcome {
-  var m: runtime.Msg = req_msg("GET", "/");
-  var h: runtime.Headers = m.headers.set("X-Trace", "abc");
+  let m: runtime.Msg = req_msg("GET", "/");
+  let h: runtime.Headers = m.headers.set("X-Trace", "abc");
   return test.assert_eq(header_of(wire.request_of(runtime.Msg { ...m, headers: h }, "http://h"), "X-Trace"), "abc");
 }
 
@@ -50,12 +50,12 @@ function header_of(req: fetch.Request, name: string): string {
 // A hop-by-hop header belongs to one connection and must not be relayed:
 // the client writes its own `Connection`, `Host` and `Content-Length`.
 function test_hop_by_hop_headers_are_stripped(): test.TestOutcome {
-  var m: runtime.Msg = req_msg("GET", "/");
-  var h: runtime.Headers = m.headers.set("Connection", "keep-alive");
+  let m: runtime.Msg = req_msg("GET", "/");
+  let h: runtime.Headers = m.headers.set("Connection", "keep-alive");
   h = h.set("Transfer-Encoding", "chunked");
   h = h.set("Host", "client-supplied");
   h = h.set("Content-Length", "999");
-  var req: fetch.Request = wire.request_of(runtime.Msg { ...m, headers: h }, "http://real-origin");
+  let req: fetch.Request = wire.request_of(runtime.Msg { ...m, headers: h }, "http://real-origin");
   if (req.headers.len() != 0) {
     return test.fail("a hop-by-hop header was relayed: " + req.headers.names[0]);
   }
@@ -63,8 +63,8 @@ function test_hop_by_hop_headers_are_stripped(): test.TestOutcome {
 }
 
 function test_the_body_is_sent_as_the_policy_left_it(): test.TestOutcome {
-  var m: runtime.Msg = req_msg("POST", "/submit");
-  var req: fetch.Request = wire.request_of(runtime.Msg { ...m, body: "hello" }, "http://h");
+  let m: runtime.Msg = req_msg("POST", "/submit");
+  let req: fetch.Request = wire.request_of(runtime.Msg { ...m, body: "hello" }, "http://h");
   match (req.body) {
     BodyText(s) => {
       return test.assert_eq(s, "hello");
@@ -77,8 +77,8 @@ function test_the_body_is_sent_as_the_policy_left_it(): test.TestOutcome {
 
 // ------------------------------------------------------ response headers
 function test_response_headers_become_the_proxys(): test.TestOutcome {
-  var h: HeaderMap = headers.header_map_new().append("X-A", "1").append("X-B", "two words");
-  var out: runtime.Headers = wire.headers_of(h);
+  let h: HeaderMap = headers.header_map_new().append("X-A", "1").append("X-B", "two words");
+  let out: runtime.Headers = wire.headers_of(h);
   match (out.get("X-A")) {
     VString(s) => {
       if (s != "1") {
@@ -135,18 +135,18 @@ function test_absent_cache_control_has_no_opinion(): test.TestOutcome {
 
 // ------------------------------------------------------- cache encoding
 function entry(key: string, body: string): runtime.CacheEntry {
-  var h: runtime.Headers = runtime.headers_new();
+  let h: runtime.Headers = runtime.headers_new();
   h = h.set("Content-Type", "text/plain");
   return runtime.CacheEntry { key: key, status: 200, reason: "OK", headers: h, body: body, ttl: 60.0, hits: 3 };
 }
 
 function test_roundtrip_preserves_an_entry(): test.TestOutcome {
-  var c: runtime.Cache = runtime.cache_new().store(entry("/a", "hello"));
-  var back: runtime.Cache = store.decode(store.encode(c));
+  let c: runtime.Cache = runtime.cache_new().store(entry("/a", "hello"));
+  let back: runtime.Cache = store.decode(store.encode(c));
   if (back.entries.len() != 1) {
     return test.fail("lost the entry");
   }
-  var e: runtime.CacheEntry = back.entries[0];
+  let e: runtime.CacheEntry = back.entries[0];
   if (e.key != "/a" || e.body != "hello" || e.status != 200 || e.hits != 3) {
     return test.fail("field lost: " + e.key + "/" + e.body + "/" + e.status.to_string());
   }
@@ -158,9 +158,9 @@ function test_roundtrip_preserves_an_entry(): test.TestOutcome {
 // separator was chosen. A body full of newlines and digits that look like
 // length headers is the adversarial case.
 function test_roundtrip_survives_a_body_that_looks_like_the_encoding(): test.TestOutcome {
-  var nasty: string = "5\nhello\n3\nabc\n\n42\n\r\n\r\n0\n";
-  var c: runtime.Cache = runtime.cache_new().store(entry("/x", nasty));
-  var back: runtime.Cache = store.decode(store.encode(c));
+  let nasty: string = "5\nhello\n3\nabc\n\n42\n\r\n\r\n0\n";
+  let c: runtime.Cache = runtime.cache_new().store(entry("/x", nasty));
+  let back: runtime.Cache = store.decode(store.encode(c));
   if (back.entries.len() != 1) {
     return test.fail("lost the entry");
   }
@@ -168,11 +168,11 @@ function test_roundtrip_survives_a_body_that_looks_like_the_encoding(): test.Tes
 }
 
 function test_roundtrip_preserves_several_entries(): test.TestOutcome {
-  var c: runtime.Cache = runtime.cache_new();
+  let c: runtime.Cache = runtime.cache_new();
   c = c.store(entry("/a", "one"));
   c = c.store(entry("/b", "two"));
   c = c.store(entry("/c", ""));
-  var back: runtime.Cache = store.decode(store.encode(c));
+  let back: runtime.Cache = store.decode(store.encode(c));
   if (back.entries.len() != 3) {
     return test.fail("expected 3, got " + back.entries.len().to_string());
   }
@@ -180,8 +180,8 @@ function test_roundtrip_preserves_several_entries(): test.TestOutcome {
 }
 
 function test_roundtrip_preserves_headers(): test.TestOutcome {
-  var c: runtime.Cache = runtime.cache_new().store(entry("/h", "b"));
-  var back: runtime.Cache = store.decode(store.encode(c));
+  let c: runtime.Cache = runtime.cache_new().store(entry("/h", "b"));
+  let back: runtime.Cache = store.decode(store.encode(c));
   match (back.entries[0].headers.get("Content-Type")) {
     VString(v) => {
       return test.assert_eq(v, "text/plain");
@@ -212,7 +212,7 @@ function test_corrupt_input_decodes_to_an_empty_cache(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("vcl-wire");
+  let r: test.TestRunner = test.test_new("vcl-wire");
   r = r.it("method and url", test_method_and_url);
   r = r.it("headers are forwarded", test_headers_are_forwarded);
   r = r.it("hop by hop headers are stripped", test_hop_by_hop_headers_are_stripped);

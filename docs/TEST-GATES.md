@@ -121,6 +121,19 @@ response byte, every one of the six refusal classes must fire, and both must
 report a latency tail. `docs/FIP-HTTP-CODEC.md` holds the numbers the gate
 protects. It does not measure throughput: a slower build passes.
 
+### The key/value core as a `fip` plane
+
+`TestFipKVDisciplinesAgreeAndDoNotAllocate` in `internal/e2e` compiles
+`examples/fip/kv_baseline.fern`, `kv_pmap.fern` and `kv_fip.fern` for x86-64
+and runs them at the default load and at 150% of the table's capacity: the
+`fip` plane must report zero steady-state allocations in both runs, the two
+conventional variants must allocate, all four reports (the persistent map runs
+uniquely owned and with a live snapshot) must agree on the counters, the live
+count and the digest over every response byte, the over-capacity run must
+produce `full` responses, and every report must carry a latency tail.
+`docs/FIP-KV-CORE.md` holds the numbers the gate protects. It does not
+measure throughput: a slower build passes.
+
 ## std/net addresses and errors
 
 `TestNetAddrInterp`, `TestNetAddrX86_64`, `TestNetAddrWasm` and
@@ -1350,7 +1363,7 @@ for the answer.
 ### The emit drivers do not type-check, so a bad probe looks like a bad compiler
 
 `asm_ir_run.fern` is a raw emit harness: it compiles whatever it is handed. It
-accepts `var x: i32 = "hello";` and emits assembly for it. So an ill-typed probe
+accepts `let x: i32 = "hello";` and emits assembly for it. So an ill-typed probe
 driven through it produces a binary that segfaults, which is indistinguishable
 from a codegen bug until you check.
 
@@ -1420,6 +1433,16 @@ compare it, since a refused rewrite also returns the right answer. Pair it with
 an off switch (`FERN_NO_ARRAY_FUSION=1` is the pattern) so "did the pass do
 this?" is one run rather than a rebuild, and so a suite failure can be
 attributed without bisecting.
+
+The self-host's fusion pass (`examples/self_host/semfuse.fern`, #11072) is
+gated the same way, on all three self-host targets:
+`TestSelfHostArrayFusionMatchesHandWrittenLoops` compares every chain shape
+against a loop inside the program, `TestSelfHostArrayFusionStopsAllocatingIntermediates`
+bounds `__heap_alloc_count()` per chain and requires a shared intermediate and
+an unresolved element function to keep allocating, and
+`TestSelfHostArrayFusionKeepsEffectOrder` reads the order of prints from
+element functions. Native's `Test*ArrayFusion*` legs in `internal/e2e` still
+build with the native backend and say nothing about this pass.
 
 ## Diagnostic modes
 
@@ -1542,42 +1565,6 @@ answer, these are the tools, in the order they are usually reached for:
   upstream retain at run time is invisible here and is exactly what
   `__arr_push_shared_count()` is for.
 
-- **`FERN_APPEND_REPORT=1`** — the SELF-HOST AST lowering's (`irlower`)
-  counterpart, which no compile runs any more, and a different axis from `-append-report` above: it reports whether the grow
-  RECLAIMS the superseded buffer (`__fern_arr_push_owned`) or abandons it
-  (`__fern_arr_push`), one line per `a = a.append(v)` self-reassign with the
-  function, position, receiver, verdict and the rule that decided. Reach for it
-  when the question is where the self-built compiler's retention comes from:
-  the plain push is 40% of the leaked bytes in a stage1 built by stage0
-  (#7954), and an `rctrace` line cannot answer it — the alloc site is inside
-  `__fern_arr_push`, so every append in the program aggregates to one address
-  and only the lowering knows which source site chose which push. Compiling
-  `fern.fern` reports 4,117 sites, 671 of them leaking: 533 because the target
-  is a PARAMETER (the `slot < n_params` gate, which guards a real double-free —
-  #3457 — and so is not one to widen casually) and 138 because it is aliased.
-  Env-gated and print-only: a run without it is byte-identical, the contract
-  `util.arr_push_cliff_report` keeps. A library module compiled alone reports
-  almost nothing — tree-shaking means little is lowered — so point it at an
-  entry.
-
-  **The two populations are disjoint at the top of the cost curve, so do not
-  read one as a proxy for the other.** `.github/cliff-baseline.txt` puts 267 MB
-  of its 268 MB on `irlower.LowerState.emit` and `checker.Scope.bind` — and
-  this report calls both of them IN PLACE (`s.ops`, `s.names` / `s.types`,
-  "the container is not read again"). Both readings are right: the compiler
-  forced no copy there, and `__fern_arr_push`'s un-share path copied anyway
-  because the buffer arrived at rc > 1. So a site this report clears is not a
-  site that does not copy, and the bytes gate is where a cost question gets
-  answered. Ranking by this report alone would have aimed work at the sites
-  paying least — the trap `.github/cliff-baseline.txt` and
-  `docs/LOCAL-DEV-LOOP.md` both record two earlier rounds falling into.
-
-  `.with` is deliberately absent: it lowers to a copy-on-write helper that
-  reads the refcount at run time. A FIELD-place `.with` does have a
-  compile-time decision since #8523 — the same admission this reports for
-  `.append`, plus the move-out that pairs with it — and it is still not listed
-  here; nor do the cliff counters see it, so nothing measures a quadratic
-  `.with` today.
 - **`FERN_LEAKCHECK=1`** — alloc/free counts and live bytes at exit. The other
   direction: what the rc detector cannot see. Under `-sanitize` the same
   counters also produce a one-line verdict (`fern-sanitizer: leak <K> bytes in

@@ -107,7 +107,7 @@ func TestExternTupleParamCustomProvider(t *testing.T) {
 function sum_pair(p: (i32, i32)): i32;
 
 function main(): i32 {
-	var p: (i32, i32) = (10, 32);
+	let p: (i32, i32) = (10, 32);
 	if (sum_pair(p) == 42) { write("` + want + `"); } else { write("pair-bad"); }
 	return 0;
 }`

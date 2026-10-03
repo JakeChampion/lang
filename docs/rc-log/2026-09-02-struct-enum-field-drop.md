@@ -20,7 +20,7 @@ to it was wrong in an instructive way.
 enum E { A(i32), B(i32) }
 struct H { e: E, n: i32 }
 function wrap(e: E, i: i32): H { return H { e: e, n: i, }; }
-// main: var e = A(i); var h = wrap(e, i); match (h.e) { … }
+// main: let e = A(i); let h = wrap(e, i); match (h.e) { … }
 ```
 
 Controls, all native / self-host, `allocs`/`frees`, x86-64:
@@ -31,7 +31,7 @@ Controls, all native / self-host, `allocs`/`frees`, x86-64:
 | struct holding an **array** field, field read         | 200/200 | 200/200 clean      |
 | struct holding an enum, field **never read**          | 200/200 | 200/200 clean      |
 | struct holding an enum, **scalar** field read         | 200/200 | 200/200 clean      |
-| `var t: E = h.e;` then `match (t)`                    | 200/200 | 200/200 clean      |
+| `let t: E = h.e;` then `match (t)`                    | 200/200 | 200/200 clean      |
 | **`match (h.e)`**                                     | 200/200 | 200/**101**, 3,960 B |
 | the matrix cell (the above, via `wrap`)               | 200/200 | 200/**0**, 8,800 B |
 
@@ -50,7 +50,7 @@ ast.StmtVar(v)   => { a = structfld_safe_operand(v.init, a, borrowable); },     
 ast.StmtMatch(m) => { a = structfld_collect_unsafe(m.scrutinee, a, borrowable); } // unsafe
 ```
 
-A `var` initialiser is a transient borrow; a match scrutinee was not. So
+A `let` initialiser is a transient borrow; a match scrutinee was not. So
 `match (h.e)` marked `e` unsafe, which disqualified **H itself**, and the
 generated `__field_reclaim_H` carried no arm for the enum field at all — no
 `.Lfr_H_dec0` block. That is the entire difference between the leaking and the
@@ -58,7 +58,7 @@ bound form, whose drop sequences otherwise agree instruction for instruction
 through both `__struct_drop_H` calls.
 
 A scrutinee outlives nothing an arm does not own in its own right, so it is the
-same borrow the `var` case already is. One word.
+same borrow the `let` case already is. One word.
 
 Closes the inline shape: `w_inlineenum`, `v_inline` and the eight-field
 `sz_big` all reach 200/200, sanitizer-clean. The call form stays at 200/0.
@@ -204,7 +204,7 @@ Dumping the taint set itself then named the cause:
 | the leaking cell            | `arm:x`, `arm:y`, **`i@6:5`**, `h@9:9`   |
 | the array-param twin        | *(empty)*                                |
 
-`var e: E = A(i)` escapes the ctor's argument — and `i` is an `i32`. A scalar
+`let e: E = A(i)` escapes the ctor's argument — and `i` is an `i32`. A scalar
 cannot alias heap, so that taint marks a source nothing can reach through, but
 `rc_fe_rhs_tainted`'s any-tainted-arg rule then refuses the result of every
 later call that merely passes the same scalar on. `wrap(e, i)` inherited it,

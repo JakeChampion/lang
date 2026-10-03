@@ -37,7 +37,7 @@ function status_canceled(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " COMMAND [ARG]...\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";
   out = out + "Run COMMAND, ignoring hangup signals.\n";
@@ -72,10 +72,10 @@ function help_text(): string {
 // A mask only affects a CREATION, so an existing nohup.out keeps its own mode
 // — 0644 from an earlier `touch`, say, which is what GNU leaves too.
 function open_nohup_out(path: string): Result[Writer, IoError] {
-  var mask: i32 = umask(0);
+  let mask: i32 = umask(0);
   // 54 is 0066: group and other read/write, the bits 0600 withholds.
   umask(mask | 54);
-  var r: Result[Writer, IoError] = open_appender(path);
+  let r: Result[Writer, IoError] = open_appender(path);
   umask(mask);
   return r;
 }
@@ -148,7 +148,7 @@ function append_output(): Appended {
       return Appended { name: "nohup.out" };
     },
     Err(e) => {
-      var first: string = "failed to open " + gnu.quote("nohup.out") + ": " + gnu.io_error_text(e);
+      let first: string = "failed to open " + gnu.quote("nohup.out") + ": " + gnu.io_error_text(e);
       match (env("HOME")) {
         None => {
           gnu.error(first);
@@ -159,7 +159,7 @@ function append_output(): Appended {
           // path is then the bare `nohup.out` (gnulib's file_name_concat
           // rule, which `join_path` follows), so the second attempt is the
           // same file as the first and both failures name it.
-          var path: string = gnu.join_path(home, "nohup.out");
+          let path: string = gnu.join_path(home, "nohup.out");
           match (open_nohup_out(path)) {
             Ok(w2) => {
               redirect(w2, 1, "output");
@@ -201,8 +201,8 @@ function announce(clauses: string[]): void {
   if (clauses.len() == 0) {
     return;
   }
-  var msg: string = clauses[0];
-  var i: i32 = 1;
+  let msg: string = clauses[0];
+  let i: i32 = 1;
   while (i < clauses.len()) {
     msg = msg + " and " + clauses[i];
     i = i + 1;
@@ -226,10 +226,10 @@ pub function main(): i32 {
   // in_order, so the scan stops at the first operand: `nohup echo --help`
   // runs echo. There are no options of nohup's own beyond the two standard
   // ones the Getopt handles itself.
-  var none: gnu.Opt[] = [];
-  var g: gnu.Getopt = gnu.getopt_new(args(), none, "nohup", help_text(), status_canceled()).in_order();
+  let none: gnu.Opt[] = [];
+  let g: gnu.Getopt = gnu.getopt_new(args(), none, "nohup", help_text(), status_canceled()).in_order();
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(_) => {},
@@ -238,30 +238,30 @@ pub function main(): i32 {
       }
     }
   }
-  var rest: string[] = g.operands();
+  let rest: string[] = g.operands();
   if (rest.len() == 0) {
     gnu.die_usage("missing operand", status_canceled());
   }
 
   // All three answers are taken BEFORE anything is redirected: each
   // redirection changes what the next question would be answered about.
-  var tty_in: boolean = isatty(0);
-  var tty_out: boolean = isatty(1);
-  var tty_err: boolean = isatty(2);
+  let tty_in: boolean = isatty(0);
+  let tty_out: boolean = isatty(1);
+  let tty_err: boolean = isatty(2);
 
-  var ri: i32 = signal_ignore(sig_hup());
+  let ri: i32 = signal_ignore(sig_hup());
   if (ri < 0) {
     gnu.error("failed to set signal action for signal " + sig_hup().to_string() + ": " + gnu.exec_errno_text(0 - ri));
     exit(status_canceled());
   }
 
-  var clauses: string[] = [];
+  let clauses: string[] = [];
   if (tty_in) {
     ignore_input();
     clauses = clauses.append("ignoring input");
   }
   if (tty_out) {
-    var a: Appended = append_output();
+    let a: Appended = append_output();
     clauses = clauses.append("appending output to " + gnu.quote(a.name));
   } else {
     if (tty_err) {

@@ -45,8 +45,8 @@ enum E { A(P), B }
 // driver, so a cell's exit code is comparable across both maps.
 const csmMain = `
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -62,34 +62,34 @@ type csmPosition struct {
 }
 
 var csmPositions = []csmPosition{
-	{"arrlit", `var out: P[] = [p];`, `out.len() + out[0].k`},
-	{"append", `var out: P[] = [];
+	{"arrlit", `let out: P[] = [p];`, `out.len() + out[0].k`},
+	{"append", `let out: P[] = [];
     out = out.append(p);`, `out.len() + out[0].k`},
-	{"with", `var out: P[] = [P { xs: [i, i + 9], k: i }];
+	{"with", `let out: P[] = [P { xs: [i, i + 9], k: i }];
     out = out.with(0, p);`, `out.len() + out[0].k`},
-	{"tuple", `var tp: (i32, P) = (i, p);`, `tp.0 + tp.1.k`},
-	{"variant", `var e: E = E.A(p);`, `(match (e) { E.A(q) => q.k, E.B => 0 })`},
+	{"tuple", `let tp: (i32, P) = (i, p);`, `tp.0 + tp.1.k`},
+	{"variant", `let e: E = E.A(p);`, `(match (e) { E.A(q) => q.k, E.B => 0 })`},
 	// The UNQUALIFIED ctor spelling, pinned separately because the two used to
 	// disagree: struct_box_sink_stored_expr's ident-callee arm caught `A(p)`
 	// while its field-access arm did not catch `E.A(p)`, so the same program
 	// measured 300/0 one way and 300/200 the other. Nothing in this grid used
 	// the bare spelling, which is why that went unnoticed.
-	{"variant_unqual", `var e: E = A(p);`, `(match (e) { E.A(q) => q.k, E.B => 0 })`},
-	{"option", `var o: Option[P] = Some(p);`, `(match (o) { Some(q) => q.k, None => 0 })`},
+	{"variant_unqual", `let e: E = A(p);`, `(match (e) { E.A(q) => q.k, E.B => 0 })`},
+	{"option", `let o: Option[P] = Some(p);`, `(match (o) { Some(q) => q.k, None => 0 })`},
 	// The SAME store read back through a match STATEMENT rather than a match
 	// EXPRESSION. The spelling is not cosmetic here: the Option credit is granted
 	// by a consuming-match analysis that scans for a StmtMatch, and a match inside
 	// a `return` is a StmtReturn, so the two cells above measure "no credit at
 	// all" and can never show whether the payload STORE is counted. These cells
 	// isolate that axis; the pair above stays pinned as the separate, wider gap.
-	{"option_stmt", `var o: Option[P] = Some(p);
-    var n: i32 = 0;
+	{"option_stmt", `let o: Option[P] = Some(p);
+    let n: i32 = 0;
     match (o) { Some(q) => { n = q.k; }, None => { n = 0; } }`, `n`},
 	// `Ok` is the same construction under the Result spelling. Pinned separately
 	// for the reason variant_unqual is: two spellings of one shape drifted apart
 	// unnoticed once already, and only a cell per spelling catches that.
-	{"result_stmt", `var o: Result[P, i32] = Ok(p);
-    var n: i32 = 0;
+	{"result_stmt", `let o: Result[P, i32] = Ok(p);
+    let n: i32 = 0;
     match (o) { Ok(q) => { n = q.k; }, Err(e) => { n = 0; } }`, `n`},
 }
 
@@ -102,7 +102,7 @@ func csmRound(body, read string) string {
 func containerSinkCells() []csmCell {
 	var cells []csmCell
 	for _, pos := range csmPositions {
-		body := "    var p: P = P { xs: [i, i + 1], k: i };\n    " + pos.store + "\n"
+		body := "    let p: P = P { xs: [i, i + 1], k: i };\n    " + pos.store + "\n"
 		// moved: the store is p's last mention, so it TRANSFERS the reference.
 		cells = append(cells, csmCell{pos.name + "__moved", csmRound(body, pos.read)})
 		// live: p's own field is read afterwards, so the store is a counted SHARE
@@ -112,14 +112,14 @@ func containerSinkCells() []csmCell {
 	// rebound: the source is superseded between two stores, so the first store
 	// is a share whose release the rebind owes and the second is a move.
 	cells = append(cells, csmCell{"arrlit__rebound", csmRound(
-		`    var p: P = P { xs: [i, i + 1], k: i };
-    var a: P[] = [p];
+		`    let p: P = P { xs: [i, i + 1], k: i };
+    let a: P[] = [p];
     p = P { xs: [i + 2, i + 3], k: i + 1 };
-    var b: P[] = [p];
+    let b: P[] = [p];
 `, "a[0].k + b[0].xs[0]")})
 	cells = append(cells, csmCell{"append__rebound", csmRound(
-		`    var out: P[] = [];
-    var p: P = P { xs: [i, i + 1], k: i };
+		`    let out: P[] = [];
+    let p: P = P { xs: [i, i + 1], k: i };
     out = out.append(p);
     p = P { xs: [i + 2, i + 3], k: i + 1 };
     out = out.append(p);
@@ -127,10 +127,10 @@ func containerSinkCells() []csmCell {
 	// blockscoped: retire_locals renames the source at block exit, which is the
 	// axis deciding which credit predicate the retain must read.
 	cells = append(cells, csmCell{"append__blockscoped", csmRound(
-		`    var out: P[] = [];
-    var j: i32 = 0;
+		`    let out: P[] = [];
+    let j: i32 = 0;
     while (j < 2) {
-        var p: P = P { xs: [i + j, i + j + 1], k: i + j };
+        let p: P = P { xs: [i + j, i + j + 1], k: i + j };
         out = out.append(p);
         j = j + 1;
     }

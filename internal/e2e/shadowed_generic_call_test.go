@@ -23,7 +23,7 @@ import (
 // The three shadowing shapes exercise the two arms of the resolution order
 // the fix mirrors (scope, then captureChain):
 //   - `apply`'s fn-typed PARAMETER (the issue's repro) — 7 |> inc = 8
-//   - main's local `var id` — 10 |> twice = 20
+//   - main's local `let id` — 10 |> twice = 20
 //   - `via_capture` reading that local as a CAPTURE — 4 |> twice = 8
 //
 // `plain` keeps calling the real generic in the same module, so the fix
@@ -34,7 +34,7 @@ function twice(x: i32): i32 { return x * 2; }
 function apply(v: i32, id: (i32) => i32): i32 { return id(v); }
 function plain(v: i32): i32 { return id(v); }
 function main(): i32 {
-    var id: (i32) => i32 = twice;
+    let id: (i32) => i32 = twice;
     function via_capture(v: i32): i32 { return id(v); }
     return apply(7, inc) + id(10) + plain(3) + via_capture(4);
 }
@@ -46,16 +46,16 @@ function main(): i32 {
 // MODULE `withRes` — `i32` rather than the `string` the binding's own
 // callback takes — while the call still dispatched to the binding.
 //
-// The shadow is a `var` rather than a fn-typed parameter because a
+// The shadow is a `let` rather than a fn-typed parameter because a
 // parameter would have to be written `((string) => i32) => i32`, and the
 // self-host parser does not accept a parenthesised fn type nested in a
-// parameter position (a separate, pre-existing gap). The `var` form
+// parameter position (a separate, pre-existing gap). The `let` form
 // needs no such annotation and both frontends parse it, so the two
 // legs below run the same source.
 const shadowedUseProg = `function withRes(cb: (i32) => i32): i32 { return cb(4); }
 function taker(f: (string) => i32): i32 { return f("hi"); }
 function g(): i32 {
-    var withRes = taker;
+    let withRes = taker;
     use x <- withRes();
     if (x == "hi") { return 21; }
     return 0;

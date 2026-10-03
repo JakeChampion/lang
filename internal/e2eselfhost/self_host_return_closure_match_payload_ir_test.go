@@ -26,23 +26,23 @@ var returnMatchPayloadIRCases = []struct {
 	exit int
 }{
 	// D — the canonical repro: `match (b) { W(f) => { return f; } }`.
-	{"plain", "enum Box { W(() => i32) } function pick(b: Box): () => i32 { match (b) { W(f) => { return f; } } } function main(): i32 { var n: i32 = 9; var g = pick(Box.W(() => n)); return g(); }", 9},
+	{"plain", "enum Box { W(() => i32) } function pick(b: Box): () => i32 { match (b) { W(f) => { return f; } } } function main(): i32 { let n: i32 = 9; let g = pick(Box.W(() => n)); return g(); }", 9},
 	// Argument-taking payload closure.
-	{"arg-payload", "enum Box { W((i32) => i32) } function pick(b: Box): (i32) => i32 { match (b) { W(f) => { return f; } } } function main(): i32 { var n: i32 = 5; var g = pick(Box.W((x: i32) => x + n)); return g(10); }", 15},
+	{"arg-payload", "enum Box { W((i32) => i32) } function pick(b: Box): (i32) => i32 { match (b) { W(f) => { return f; } } } function main(): i32 { let n: i32 = 5; let g = pick(Box.W((x: i32) => x + n)); return g(10); }", 15},
 	// Multiple fn-payload variants, each arm returns its own binding.
-	{"multi-arm", "enum Box { A(() => i32), B(() => i32) } function pick(b: Box): () => i32 { match (b) { A(f) => { return f; }, B(g) => { return g; } } } function main(): i32 { var n: i32 = 3; var h = pick(Box.B(() => n * 7)); return h(); }", 21},
+	{"multi-arm", "enum Box { A(() => i32), B(() => i32) } function pick(b: Box): () => i32 { match (b) { A(f) => { return f; }, B(g) => { return g; } } } function main(): i32 { let n: i32 = 3; let h = pick(Box.B(() => n * 7)); return h(); }", 21},
 	// Qualified variant pattern (`Box.W(f)`), same as plain otherwise.
-	{"qualified-pat", "enum Box { W(() => i32) } function pick(b: Box): () => i32 { match (b) { Box.W(f) => { return f; } } } function main(): i32 { var n: i32 = 4; var g = pick(Box.W(() => n)); return g(); }", 4},
+	{"qualified-pat", "enum Box { W(() => i32) } function pick(b: Box): () => i32 { match (b) { Box.W(f) => { return f; } } } function main(): i32 { let n: i32 = 4; let g = pick(Box.W(() => n)); return g(); }", 4},
 	// Return of the payload from inside a nested `if` (both branches return it).
-	{"nested-if", "enum Box { W(() => i32) } function pick(b: Box, flag: i32): () => i32 { match (b) { W(f) => { if (flag > 0) { return f; } else { return f; } } } } function main(): i32 { var n: i32 = 6; var g = pick(Box.W(() => n), 1); return g(); }", 6},
+	{"nested-if", "enum Box { W(() => i32) } function pick(b: Box, flag: i32): () => i32 { match (b) { W(f) => { if (flag > 0) { return f; } else { return f; } } } } function main(): i32 { let n: i32 = 6; let g = pick(Box.W(() => n), 1); return g(); }", 6},
 	// Control: `return f()` (CALL the payload, not return it) — not a closure
 	// return, must stay unregistered and still evaluate correctly.
-	{"call-not-return", "enum Box { W(() => i32) } function pick(b: Box): i32 { match (b) { W(f) => { return f(); } } } function main(): i32 { var n: i32 = 11; return pick(Box.W(() => n)); }", 11},
+	{"call-not-return", "enum Box { W(() => i32) } function pick(b: Box): i32 { match (b) { W(f) => { return f(); } } } function main(): i32 { let n: i32 = 11; return pick(Box.W(() => n)); }", 11},
 	// Control: a NON-fn (i32) payload return is not a closure.
-	{"nonfn-payload", "enum Box { W(i32) } function pick(b: Box): i32 { match (b) { W(v) => { return v; } } } function main(): i32 { var g = pick(Box.W(42)); return g; }", 42},
+	{"nonfn-payload", "enum Box { W(i32) } function pick(b: Box): i32 { match (b) { W(v) => { return v; } } } function main(): i32 { let g = pick(Box.W(42)); return g; }", 42},
 }
 
-// TestSelfHostReturnMatchPayloadIRX86_64 — the x86-64 irlower fix, through the
+// TestSelfHostReturnMatchPayloadIRX86_64 — the x86-64 fix, through the
 // production driver (asm_ir_run `-ir`).
 func TestSelfHostReturnMatchPayloadIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -72,7 +72,7 @@ func TestSelfHostReturnMatchPayloadIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostReturnMatchPayloadIRArm64 — CI-gated arm64 counterpart. The fix is
-// in the shared irlower.fern, so the arm64 IR backend picks it up.
+// in the shared lowering, so the arm64 IR backend picks it up.
 func TestSelfHostReturnMatchPayloadIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

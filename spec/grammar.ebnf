@@ -57,7 +57,7 @@ NamedParam  = 'own' IDENT [ ':' Type ] [ '=' Expr ]
             | IDENT [ ':' Type ] [ '=' Expr ]
             ;
 # BindPattern is the head of every IRREFUTABLE binding site — a destructuring
-# parameter, a `let` / `var` destructure, and a `for` header. One production,
+# parameter, a `let` / `let` destructure, and a `for` header. One production,
 # because one parser lookahead admits it at all three: a shape spellable at one
 # is spellable at the others. It binds by shape instead of by name — a tuple,
 # whose every position is a name, a `_` discard, or a nested list, or a struct
@@ -149,7 +149,6 @@ Stmt        = Block
             | LoopStmt
             | ForStmt
             | MatchStmt
-            | VarStmt
             | LetStmt
             | UseStmt
             | ReturnStmt
@@ -171,8 +170,8 @@ LoopStmt    = 'loop' Block ;
 ForStmt     = 'for' '(' [ ForInit ] ';' Expr ';' [ Expr ] ')' Block
             | 'for' ForBinding 'in' NoStructExpr Block
             ;
-ForInit     = VarNoSemi | Expr ;
-# A shape binder is a BindPattern, the same production `var (a, b) = e;` and a
+ForInit     = LetNoSemi | Expr ;
+# A shape binder is a BindPattern, the same production `let (a, b) = e;` and a
 # destructuring parameter take, and irrefutable for the same reason: a loop
 # body has no else branch. Which loop it lowers to is a typing question, not a
 # grammar one — over an array it binds against each element, over a Map against
@@ -187,20 +186,18 @@ MatchArm    = ArmPatterns [ 'when' Expr ] '=>' ArmBody [ ',' ] ;
 ArmPatterns = Pattern { '|' Pattern } ;
 ArmBody     = ValueBlock | Expr ;
 
-# A destructuring `var` takes no type annotation: the shape is the declaration,
-# and each binding's type comes from the initialiser.
-VarStmt     = VarNoSemi ';' ;
-VarNoSemi   = 'var' BindPattern '=' Expr
-            | 'var' IDENT [ ':' Type ] '=' Expr
-            ;
-
-# Two forms. The irrefutable one is the `var` destructure under the other
-# keyword, and takes no `else` — nothing can miss. The refutable one is
+# Two forms. The unconditional one binds a name, with an optional type
+# annotation, or a BindPattern, and takes no `else` — nothing can miss. A
+# destructuring `let` takes no annotation: the shape is the declaration, and
+# each binding's type comes from the initialiser. The refutable one is
 # `let PATTERN = expr else { … };`, whose head takes the same or-pattern list a
 # match arm does: `if let` and `let … else` both consume the shared pattern
 # grammar, and the `else` block is what a miss runs.
-LetStmt     = 'let' BindPattern '=' Expr ';'
+LetStmt     = LetNoSemi ';'
             | 'let' ArmPatterns '=' Expr 'else' Block ';'
+            ;
+LetNoSemi   = 'let' BindPattern '=' Expr
+            | 'let' IDENT [ ':' Type ] '=' Expr
             ;
 
 # Callback-flattening bind. `<-` lexes as two punctuation tokens.

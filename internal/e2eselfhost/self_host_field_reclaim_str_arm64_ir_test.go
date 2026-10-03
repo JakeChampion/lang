@@ -35,13 +35,13 @@ func TestSelfHostFieldReclaimStrIRArm64(t *testing.T) {
 	run(t, `struct S { xs: i32[], name: string, n: i32 }
 function step(s: S): S { return S { xs: [s.n, s.n + 1], name: s.name + "x", n: s.n + 1 }; }
 function main(): i32 {
-    var s: S = S { xs: [1, 2], name: "a" + "b", n: 0 };
-    var i: i32 = 0;
+    let s: S = S { xs: [1, 2], name: "a" + "b", n: 0 };
+    let i: i32 = 0;
     while (i < 200) { s = step(s); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 1000) { s = S { xs: [1, 2], name: "a" + "b", n: 0 }; var k: i32 = 0; while (k < 3) { s = step(s); k = k + 1; } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 1000) { s = S { xs: [1, 2], name: "a" + "b", n: 0 }; let k: i32 = 0; while (k < 3) { s = step(s); k = k + 1; } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (s.n != 3) { return 97; }
@@ -52,8 +52,8 @@ function main(): i32 {
 	run(t, `struct S { xs: i32[], name: string, n: i32 }
 function bump(s: S): S { return S { ...s, n: s.n + 1 }; }
 function main(): i32 {
-    var s: S = S { xs: [1, 2], name: "ab" + "cd", n: 0 };
-    var i: i32 = 0;
+    let s: S = S { xs: [1, 2], name: "ab" + "cd", n: 0 };
+    let i: i32 = 0;
     while (i < 1000) { s = bump(s); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (s.name.len() != 4) { return 97; }
@@ -65,28 +65,28 @@ function main(): i32 {
 	run(t, `struct B { name: string, n: i32 }
 function step(b: B): B { return B { name: b.name + "x", n: b.n + 1 }; }
 function main(): i32 {
-    var b: B = B { name: "a" + "b", n: 0 };
-    var i: i32 = 0;
+    let b: B = B { name: "a" + "b", n: 0 };
+    let i: i32 = 0;
     while (i < 200) { b = step(b); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 1000) { b = B { name: "a" + "b", n: 0 }; var k: i32 = 0; while (k < 3) { b = step(b); k = k + 1; } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 1000) { b = B { name: "a" + "b", n: 0 }; let k: i32 = 0; while (k < 3) { b = step(b); k = k + 1; } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (b.n != 3) { return 97; }
     return 0;
 }`, "field-reclaim-str-only-flat-arm64", 0)
 
-	// Aliased read (`var t = s.name`) survives the rebind's field free.
+	// Aliased read (`let t = s.name`) survives the rebind's field free.
 	run(t, `struct S { xs: i32[], name: string, n: i32 }
 function step(s: S): S { return S { xs: [s.n], name: s.name + "x", n: s.n + 1 }; }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var s: S = S { xs: [1], name: "a" + "b", n: 0 };
-        var t: string = s.name;
+        let s: S = S { xs: [1], name: "a" + "b", n: 0 };
+        let t: string = s.name;
         s = step(s);
         s = step(s);
         if (t.len() != 2) { bad = 1; }

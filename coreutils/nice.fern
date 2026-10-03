@@ -38,7 +38,7 @@
 import "./lib/gnu";
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION] [COMMAND [ARG]...]\n";
   out = out + "Run COMMAND with an adjusted niceness, which affects process scheduling.\n";
   out = out + "With no COMMAND, print the current niceness.  Niceness values range from\n";
@@ -78,7 +78,7 @@ function is_dash_number(a: string): boolean {
   if (a.len() < 2 || a[0] as i32 != 45) {
     return false;
   }
-  var i: i32 = 1;
+  let i: i32 = 1;
   if (a[1] as i32 == 43 || a[1] as i32 == 45) {
     i = 2;
   }
@@ -103,7 +103,7 @@ function takes_next_value(a: string): boolean {
   if (!a.starts_with("--") || a.index_of("=") >= 0) {
     return false;
   }
-  var name: string = slice_unchecked(a, 2, a.len()) + "";
+  let name: string = slice_unchecked(a, 2, a.len()) + "";
   return name.len() > 0 && "adjustment".starts_with(name);
 }
 
@@ -114,13 +114,13 @@ function takes_next_value(a: string): boolean {
 // operand, a `-5` belongs to the COMMAND. `nice /bin/echo -5` passes -5
 // to echo, and `nice -- -5` tries to exec a program called `-5`.
 function rewrite_obsolete(argv: string[]): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   if (argv.len() > 0) {
     out = out.append(argv[0]);
   }
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a == "--") {
       break;
     }
@@ -165,11 +165,11 @@ function saturation(): i64 {
 }
 
 function parse_adjustment(v: string): Adj {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < v.len() && is_blank(v[i] as i32)) {
     i = i + 1;
   }
-  var neg: boolean = false;
+  let neg: boolean = false;
   if (i < v.len() && (v[i] as i32 == 43 || v[i] as i32 == 45)) {
     neg = v[i] as i32 == 45;
     i = i + 1;
@@ -177,7 +177,7 @@ function parse_adjustment(v: string): Adj {
   if (i >= v.len() || !gnu.is_digit(v[i] as i32)) {
     return Adj { value: 0 as i64, ok: false };
   }
-  var n: i64 = 0 as i64;
+  let n: i64 = 0 as i64;
   while (i < v.len() && gnu.is_digit(v[i] as i32)) {
     if (n < saturation()) {
       n = n * (10 as i64) + (v[i] as i32 - 48) as i64;
@@ -217,19 +217,19 @@ function clamp_nice(n: i64): i32 {
 }
 
 pub function main(): i32 {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("n", "adjustment", opt_adjust()));
 
-  var adj: i64 = default_adjustment();
-  var given: boolean = false;
-  var g: gnu.Getopt = gnu.getopt_new(rewrite_obsolete(args()), opts, "nice", help_text(), 125).in_order();
+  let adj: i64 = default_adjustment();
+  let given: boolean = false;
+  let g: gnu.Getopt = gnu.getopt_new(rewrite_obsolete(args()), opts, "nice", help_text(), 125).in_order();
   while (true) {
-    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
     match (res.0) {
       Some(m) => {
         if (m.id == opt_adjust()) {
-          var p: Adj = parse_adjustment(m.value);
+          let p: Adj = parse_adjustment(m.value);
           if (!p.ok) {
             // No `Try …` line: gnulib reports this one the way it
             // reports a bad number rather than a bad option.
@@ -245,7 +245,7 @@ pub function main(): i32 {
       }
     }
   }
-  var rest: string[] = g.operands();
+  let rest: string[] = g.operands();
 
   if (rest.len() == 0) {
     if (given) {
@@ -257,7 +257,7 @@ pub function main(): i32 {
     return 0;
   }
 
-  var target: i32 = clamp_nice(priority() as i64 + adj);
+  let target: i32 = clamp_nice(priority() as i64 + adj);
   match (set_priority(target)) {
     Ok(_) => {},
     Err(e) => {

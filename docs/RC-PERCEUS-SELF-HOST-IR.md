@@ -59,12 +59,12 @@ shape native walks. Sketch (shared, `asmcore.fern`):
 // compute_precise_drops(fn, s) -> map stmtIdx -> names to drop after that
 // top-level statement. Mirror of native computePreciseDrops (ir.go:4076).
 pub function compute_precise_drops(fn: parser.FuncDecl, s: EmitState): DropTable {
-    var stmts: parser.Stmt[] = fn.body;
-    var decl_idx: StrIntMap = strintmap_new();
-    var reassigned: StrSet = strset_new();
+    let stmts: parser.Stmt[] = fn.body;
+    let decl_idx: StrIntMap = strintmap_new();
+    let reassigned: StrSet = strset_new();
 
     // 1. record first declaration index; flag any redeclaration/assignment.
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < stmts.length) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
@@ -83,9 +83,9 @@ pub function compute_precise_drops(fn: parser.FuncDecl, s: EmitState): DropTable
     // 2. for each owned, free-eligible, non-moved, uniquely-named local whose
     //    init is a fresh owned value (not a counted alias), find its last
     //    top-level use and schedule a drop right after it.
-    var out: DropTable = droptable_new();
+    let out: DropTable = droptable_new();
     for (name in decl_idx.keys()) {
-        var di: i32 = decl_idx.get_or(name, 0 - 1);
+        let di: i32 = decl_idx.get_or(name, 0 - 1);
         if (reassigned.has(name)) { continue; }
         if (s.moved_locals.has(name)) { continue; }
         if (!s.free_eligible.has(name)) { continue; }
@@ -99,9 +99,9 @@ pub function compute_precise_drops(fn: parser.FuncDecl, s: EmitState): DropTable
             },
             _ => {}
         }
-        var last: i32 = 0 - 1;
-        var unsafe: boolean = false;
-        var j: i32 = di + 1;
+        let last: i32 = 0 - 1;
+        let unsafe: boolean = false;
+        let j: i32 = di + 1;
         while (j < stmts.length) {
             if (stmt_references(stmts[j], name)) {
                 if (flows_into_uncounted_alias(stmts[j], name, s)) { unsafe = true; break; }

@@ -18,7 +18,7 @@
 // table[index], where the table is *env. env is a JNIEnv* — a pointer to
 // the function-table pointer — so two loads are needed.
 pub function method_ptr(env: usize, index: i32): usize {
-  var table: usize = __load_ptr(env);  // *env
+  let table: usize = __load_ptr(env);  // *env
   return __load_ptr(table + (index * 8) as usize);  // table[index] (8-byte slots)
 }
 
@@ -124,17 +124,17 @@ pub function RELEASE_STRING_UTF_CHARS(): i32 {
 // stay zero, so the result is always NUL-terminated (including the empty
 // string and exact-multiple-of-4 lengths).
 pub function cstr(s: string): usize {
-  var n: i32 = s.len();
-  var buf: usize = __alloc(n + 4);
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let buf: usize = __alloc(n + 4);
+  let i: i32 = 0;
   while (i + 4 <= n) {
-    var w: i32 = s[i] as i32 | s[i + 1] as i32 << 8 | s[i + 2] as i32 << 16 | s[i + 3] as i32 << 24;
+    let w: i32 = s[i] as i32 | s[i + 1] as i32 << 8 | s[i + 2] as i32 << 16 | s[i + 3] as i32 << 24;
     __store_i32(buf + i as usize, w);
     i = i + 4;
   }
-  var base: i32 = i;  // start of the (< 4-byte) tail
-  var t: i32 = 0;
-  var sh: i32 = 0;
+  let base: i32 = i;  // start of the (< 4-byte) tail
+  let t: i32 = 0;
+  let sh: i32 = 0;
   while (i < n) {
     t = t | s[i] as i32 << sh;
     sh = sh + 8;
@@ -453,9 +453,9 @@ pub function get_array_length(env: usize, array: usize): i32 {
 // jvalue_set_* setters below instead. Raw __alloc (not __alloc_u8) so the
 // buffer isn't reference-counted out from under the call.
 pub function jvalues(args: usize[]): usize {
-  var n: i32 = args.len();
-  var buf: usize = __alloc(n * 8);
-  var i: i32 = 0;
+  let n: i32 = args.len();
+  let buf: usize = __alloc(n * 8);
+  let i: i32 = 0;
   while (i < n) {
     __store_i64(buf + (i * 8) as usize, args[i] as i64);
     i = i + 1;
@@ -470,8 +470,8 @@ pub function jvalues(args: usize[]): usize {
 // each argument by its JNI type; every setter returns the buffer so calls
 // chain: `jni.jvalue_set_f64(jni.jvalue_set_int(jvalue_alloc(2), 0, x), 1, d)`.
 pub function jvalue_alloc(n: i32): usize {
-  var buf: usize = __alloc(n * 8);
-  var i: i32 = 0;
+  let buf: usize = __alloc(n * 8);
+  let i: i32 = 0;
   while (i < n) {
     __store_i64(buf + (i * 8) as usize, 0 as i64);  // zero (clears f32 padding)
     i = i + 1;

@@ -3,7 +3,7 @@
 struct P { a: i32 }
 
 function build(): P {
-    var p: P = P { a: 3 };
+    let p: P = P { a: 3 };
     defer p = P { a: 9 };
     return p;
 }

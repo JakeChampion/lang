@@ -4,7 +4,7 @@
 
 ```
 function run_with(st: Stage, t: Txn): i32 {
-    var o: Out = st.run(st.name, t);
+    let o: Out = st.run(st.name, t);
     return o.v;
 }
 ```

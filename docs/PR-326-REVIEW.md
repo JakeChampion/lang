@@ -270,7 +270,7 @@ in.
 ### 5.4 Per-call map allocation in `pairFormVariantsFor` **[fix-now — trivial]**
 
 `ir.go:759, 765`: hoist the two variant maps to package-level
-vars: `var optionVariants = map[string]bool{"Some":true,"None":true}`
+vars: `let optionVariants = map[string]bool{"Some":true,"None":true}`
 / `resultVariants`. Saves one allocation per eligibility check.
 
 ### 5.5 Compile-time cost — negligible **[no-action]**

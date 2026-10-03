@@ -38,9 +38,9 @@ function Ok(v: i32): Result[i32, i32] { return Err(v); }
 // Shadows the built-in Some the same way.
 function Some(v: i32): Option[i32] { return None; }
 
-// Call-site position: Ok(4) as a var initialiser.
+// Call-site position: Ok(4) as a let initialiser.
 function call_site(): i32 {
-    var got: Result[i32, i32] = Ok(4);
+    let got: Result[i32, i32] = Ok(4);
     match (got) { Ok(v) => { return 100 + v; }, Err(e) => { return e; } }
 }
 
@@ -53,7 +53,7 @@ function return_site(): i32 {
 
 // The Option pair: shadowed Some returns None, so the None arm must run.
 function option_site(): i32 {
-    var got: Option[i32] = Some(9);
+    let got: Option[i32] = Some(9);
     match (got) { Some(v) => { return 100 + v; }, None => { return 7; } }
 }
 
@@ -65,13 +65,13 @@ function option_return_site(): i32 {
 
 // Controls: Err and None are NOT shadowed, so they must still construct.
 function unshadowed_ctor(): i32 {
-    var e: Result[i32, i32] = Err(5);
+    let e: Result[i32, i32] = Err(5);
     match (e) { Ok(v) => { return 100 + v; }, Err(x) => { return x; } }
 }
 
 
 function unshadowed_nullary(): i32 {
-    var o: Option[i32] = None;
+    let o: Option[i32] = None;
     match (o) { Some(v) => { return 100 + v; }, None => { return 3; } }
 }
 
@@ -101,7 +101,7 @@ function main(): i32 {
     match (mk_err(2)) { Ok(v) => { return 12; }, Err(e) => { if (e != 2) { return 2; } } }
     match (mk_some(3)) { Some(v) => { if (v != 3) { return 3; } }, None => { return 13; } }
     match (mk_none()) { Some(v) => { return 14; }, None => { } }
-    var direct: Result[i32, i32] = Ok(8);
+    let direct: Result[i32, i32] = Ok(8);
     match (direct) { Ok(v) => { if (v != 8) { return 4; } }, Err(e) => { return 15; } }
     return 42;
 }

@@ -21,7 +21,7 @@ func TestSettleIntSkipsStringConcatArg(t *testing.T) {
 	const src = `trait Eq { function eq(self: Self, other: Self): boolean; }
 impl Eq for string { function eq(self: Self, other: Self): boolean { return self == other; } }
 function find[T: Eq](xs: T[], target: T): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) {
         if (xs[i].eq(target)) { return i; }
         i = i + 1;
@@ -29,7 +29,7 @@ function find[T: Eq](xs: T[], target: T): i32 {
     return 0 - 1;
 }
 function main(): i32 {
-    var xs: string[] = ["a", "ab"];
+    let xs: string[] = ["a", "ab"];
     if (find(xs, "a" + "b") != 1) { return 1; }
     return 0;
 }`
@@ -59,7 +59,7 @@ function main(): i32 {
 }
 
 // A float destination reaches the same argument walk through settleFloat, so it
-// needs the same guard: `var r: f64 = pick(cond, "a" + "b", "c").len() as f64`
+// needs the same guard: `let r: f64 = pick(cond, "a" + "b", "c").len() as f64`
 // is contrived, but a `T: Eq` generic returning a float is not.
 func TestSettleFloatSkipsStringConcatArg(t *testing.T) {
 	const src = `trait Eq { function eq(self: Self, other: Self): boolean; }
@@ -69,8 +69,8 @@ function score[T: Eq](xs: T[], target: T): f64 {
     return 0.0;
 }
 function main(): i32 {
-    var xs: string[] = ["ab"];
-    var r: f64 = score(xs, "a" + "b");
+    let xs: string[] = ["ab"];
+    let r: f64 = score(xs, "a" + "b");
     if (r > 0.5) { return 0; }
     return 1;
 }`

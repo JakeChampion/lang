@@ -67,10 +67,10 @@ func TestSelfHostBareBlockIR(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"reproducer", `function main(): i32 { var b: i32 = 1; { var inner: i32 = 40; b = b + inner; } return b; }`, 41},
-		{"two-blocks", `function main(): i32 { var s: i32 = 0; { s = s + 5; } { s = s + 10; } return s; }`, 15},
-		{"block-in-if", `function main(): i32 { var x: i32 = 3; if (x > 0) { { x = x * 7; } } return x; }`, 21},
-		{"block-in-loop", `function main(): i32 { var s: i32 = 0; var i: i32 = 0; while (i < 3) { { s = s + i; } i = i + 1; } return s; }`, 3},
+		{"reproducer", `function main(): i32 { let b: i32 = 1; { let inner: i32 = 40; b = b + inner; } return b; }`, 41},
+		{"two-blocks", `function main(): i32 { let s: i32 = 0; { s = s + 5; } { s = s + 10; } return s; }`, 15},
+		{"block-in-if", `function main(): i32 { let x: i32 = 3; if (x > 0) { { x = x * 7; } } return x; }`, 21},
+		{"block-in-loop", `function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 3) { { s = s + i; } i = i + 1; } return s; }`, 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -48,7 +48,7 @@ function new_thing(): own Thing;
 
 @export("local:test/handler@0.1.0", "handle")
 function on_request(t: borrow Thing): void {
-	var local: own Thing = new_thing();
+	let local: own Thing = new_thing();
 	return;
 }`
 	watBytes := runCapture(t, gcc, runner, driverBin, []byte(handlerSrc))

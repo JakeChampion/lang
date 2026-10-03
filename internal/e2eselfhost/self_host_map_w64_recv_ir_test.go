@@ -9,7 +9,7 @@ import (
 // receiver / inference shapes that were still miscompiled ON the IR path:
 //
 //   - a Map[K, u64] STRUCT FIELD receiver (`c.m.get_or(...) >> 58`) and an
-//     UNANNOTATED map binding (`var m = Map { 1: big as u64 }`): the read-side
+//     UNANNOTATED map binding (`let m = Map { 1: big as u64 }`): the read-side
 //     predicates resolved the receiver via expr_map_type_tag only (a local's
 //     annotation or a map-returning call), so these shapes width-tracked 32 /
 //     signed even though the lowering site stored the column full-width —
@@ -29,43 +29,43 @@ var mapW64RecvIRCases = []struct {
 	// Struct-field receiver: 62 (was 113 — silent on-IR miscompile).
 	{"structfield-u64-getor-shr", `import "core/map";
 struct C { m: Map[i32, u64] }
-function main(): i32 { var c: C = C { m: Map { 1: 18000000000000000000 as u64 } }; return (c.m.get_or(1, 0 as u64) >> 58) as i32; }`},
+function main(): i32 { let c: C = C { m: Map { 1: 18000000000000000000 as u64 } }; return (c.m.get_or(1, 0 as u64) >> 58) as i32; }`},
 	// Unannotated map binding: 62 (was 113).
 	{"unannot-u64-getor-shr", `import "core/map";
-function main(): i32 { var m = Map { 1: 18000000000000000000 as u64 }; return (m.get_or(1, 0 as u64) >> 58) as i32; }`},
+function main(): i32 { let m = Map { 1: 18000000000000000000 as u64 }; return (m.get_or(1, 0 as u64) >> 58) as i32; }`},
 	// Unsigned compare on the get_or result: 7 (signed saw negative → 9).
 	{"u64-getor-cmp", `import "core/map";
-function main(): i32 { var m: Map[i32, u64] = Map { 1: 18000000000000000000 as u64 }; if (m.get_or(1, 0 as u64) > (100 as u64)) { return 7; } return 9; }`},
+function main(): i32 { let m: Map[i32, u64] = Map { 1: 18000000000000000000 as u64 }; if (m.get_or(1, 0 as u64) > (100 as u64)) { return 7; } return 9; }`},
 	// String-keyed u64 map with a computed (fresh) key overwrite — the
 	// kconsume flag decode next to the valwide flag. 62.
 	{"strkey-u64-overwrite", `import "core/map";
-function main(): i32 { var m: Map[string, u64] = Map { "a": 1 as u64 }; m = m.insert("k" + "ey", 18000000000000000000 as u64); m = m.insert("k" + "ey", 18000000000000000000 as u64); return (m.get_or("key", 0 as u64) >> 58) as i32; }`},
+function main(): i32 { let m: Map[string, u64] = Map { "a": 1 as u64 }; m = m.insert("k" + "ey", 18000000000000000000 as u64); m = m.insert("k" + "ey", 18000000000000000000 as u64); return (m.get_or("key", 0 as u64) >> 58) as i32; }`},
 	// NEGATIVE i64 value: lower_i64's int_extend sign-extends the i32 leaf
 	// (a zero-extended store would read back 4294967293). 5.
 	{"i64-negative-value", `import "core/map";
-function main(): i32 { var m: Map[i32, i64] = Map { 1: 0 }; m = m.insert(1, 0 - 3); var g: i64 = m.get_or(1, 0); if (g == (0 - 3)) { return 5; } return 6; }`},
+function main(): i32 { let m: Map[i32, i64] = Map { 1: 0 }; m = m.insert(1, 0 - 3); let g: i64 = m.get_or(1, 0); if (g == (0 - 3)) { return 5; } return 6; }`},
 	// i32/i32 map regression: set/get_or/keys/values + the owncols flag. 21.
 	{"i32-regress", `import "core/map";
-function main(): i32 { var m: Map[i32, i32] = Map { 1: 10, 2: 20 }; m = m.insert(3, 30); var ks = m.keys(); var vs = m.values(); return m.get_or(1, 0) + m.get_or(9, 5) + ks.len() + vs.len(); }`},
+function main(): i32 { let m: Map[i32, i32] = Map { 1: 10, 2: 20 }; m = m.insert(3, 30); let ks = m.keys(); let vs = m.values(); return m.get_or(1, 0) + m.get_or(9, 5) + ks.len() + vs.len(); }`},
 	// String-valued map regression (get_or on string values unchanged). 7.
 	{"strval-regress", `import "core/map";
-function main(): i32 { var m: Map[string, string] = Map { "a": "hello" }; return m.get_or("a", "x").len() + m.get_or("z", "yy").len(); }`},
+function main(): i32 { let m: Map[string, string] = Map { "a": "hello" }; return m.get_or("a", "x").len() + m.get_or("z", "yy").len(); }`},
 	// f64-VALUED map get_or chained in a float op: expr_is_f64's get_or arm
 	// (the f64 sibling of the u64 arm) — without it `* 2.0` lowered as an
 	// integer op on the double's bits (255, want 5). #5253.
 	{"f64-getor-mul", `import "core/map";
-function main(): i32 { var m: Map[i32, f64] = Map { 1: 2.5 }; return (m.get_or(1, 0.0) * 2.0) as i32; }`},
+function main(): i32 { let m: Map[i32, f64] = Map { 1: 2.5 }; return (m.get_or(1, 0.0) * 2.0) as i32; }`},
 	// Unannotated f64 map binding: the structural/binding vtag inference now
 	// records "f64" so the read side float-tracks it. 5.
 	{"f64-unannot-getor", `import "core/map";
-function main(): i32 { var m = Map { 1: 2.5 }; return (m.get_or(1, 0.0) * 2.0) as i32; }`},
+function main(): i32 { let m = Map { 1: 2.5 }; return (m.get_or(1, 0.0) * 2.0) as i32; }`},
 	// f64 map STRUCT FIELD receiver. 5.
 	{"f64-structfield-getor", `import "core/map";
 struct C { m: Map[i32, f64] }
-function main(): i32 { var c: C = C { m: Map { 1: 2.5 } }; return (c.m.get_or(1, 0.0) * 2.0) as i32; }`},
+function main(): i32 { let c: C = C { m: Map { 1: 2.5 } }; return (c.m.get_or(1, 0.0) * 2.0) as i32; }`},
 	// f64 DEFAULT on the miss path. 6.
 	{"f64-default-miss", `import "core/map";
-function main(): i32 { var m: Map[i32, f64] = Map { 9: 1.0 }; return (m.get_or(1, 3.25) * 2.0) as i32; }`},
+function main(): i32 { let m: Map[i32, f64] = Map { 9: 1.0 }; return (m.get_or(1, 3.25) * 2.0) as i32; }`},
 }
 
 func TestSelfHostMapW64RecvIR(t *testing.T) {

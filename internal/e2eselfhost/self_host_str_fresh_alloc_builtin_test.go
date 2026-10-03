@@ -41,13 +41,13 @@ var strFreshAllocBuiltinCases = []struct {
 	// after.
 	{"str-fresh-builtin-len-receiver-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 { return w(pre).to_ascii_upper().len(); }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 32768) { return 98; }
@@ -57,13 +57,13 @@ function main(): i32 {
 	// fresh box. Its output is 2x the source, hence the wider ceiling.
 	{"str-fresh-builtin-repeat-receiver-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 { return w(pre).repeat(2).len(); }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 65536) { return 98; }
@@ -75,13 +75,13 @@ function main(): i32 {
 	// regression there is worth the runtime.
 	{"str-fresh-builtin-concat-operand-unchanged", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 { return (w(pre).to_ascii_upper() + "!").len(); }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 32768) { return 98; }
@@ -94,16 +94,16 @@ function main(): i32 {
 struct Hold { v: string }
 function stash(s: string): Hold { return Hold { v: s }; }
 function round(pre: string): i32 {
-    var h: Hold = stash(w(pre).to_ascii_upper());
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("XXXXXXXX");
+    let h: Hold = stash(w(pre).to_ascii_upper());
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (has_sub(h.v, "XXXX")) { return 0 - 1; }
     if (!has_prefix(h.v, "ABCDEFGH")) { return 0 - 2; }
     return h.v.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// NEGATIVE, and honestly a CONTRACT case rather than a witnessed one. `.trim()`
 	// returns a zero-copy view, so it is outside str_fresh_alloc_method and its
 	// source must stay live. Adding trim to that set does change the emission — one
@@ -113,17 +113,17 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// because a test caught it.
 	{"str-trim-view-not-fresh-alloc", strProbeHelpers + `function w(pre: string): string { return "  " + pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789  "; }
 function round(pre: string): i32 {
-    var b: string = w(pre);
-    var n: i32 = b.trim().len();
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("XXXXXXXX");
+    let b: string = w(pre);
+    let n: i32 = b.trim().len();
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (has_sub(b, "XXXX")) { return 0 - 1; }
     if (!has_prefix(b, "  abcdefgh-a-wide")) { return 0 - 2; }
     return n;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
 // TestSelfHostStrFreshAllocBuiltinIRX86_64 drives the cases through the
@@ -156,7 +156,7 @@ func TestSelfHostStrFreshAllocBuiltinIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostStrFreshAllocBuiltinIRArm64 is the arm64 leg; the admission is shared
-// irlower and the release is a per-backend transcription.
+// lowering analysis and the release is a per-backend transcription.
 func TestSelfHostStrFreshAllocBuiltinIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

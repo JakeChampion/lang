@@ -3,7 +3,7 @@ package e2eselfhost
 import "testing"
 
 // A struct local initialised by a value block that is nothing but its tail
-// (`var h: Holder = { Holder { .. } }`) is as fresh as the flat literal and is
+// (`let h: Holder = { Holder { .. } }`) is as fresh as the flat literal and is
 // reclaimed the same way (#10610). Answers are the interpreter's.
 
 const vblockHolder = `struct Inst { name: string, depth: i32 }
@@ -11,8 +11,8 @@ struct Holder { x: Inst }
 `
 
 const vblockHolderMain = `function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) { t = t + round(i); i = i + 1; }
     return t % 100;
 }
@@ -20,18 +20,18 @@ const vblockHolderMain = `function main(): i32 {
 
 var vblockStructLocalRows = []leakRow{
 	{"flat", vblockHolder + `function round(n: i32): i32 {
-    var h: Holder = Holder { x: Inst { name: "w" + "", depth: n } };
+    let h: Holder = Holder { x: Inst { name: "w" + "", depth: n } };
     return h.x.depth + h.x.name.len();
 }
 ` + vblockHolderMain, true},
 	{"block_tail", vblockHolder + `function round(n: i32): i32 {
-    var h: Holder = { Holder { x: Inst { name: "w" + "", depth: n } } };
+    let h: Holder = { Holder { x: Inst { name: "w" + "", depth: n } } };
     return h.x.depth + h.x.name.len();
 }
 ` + vblockHolderMain, true},
 	{"block_tail_lent", vblockHolder + `function depth_of(h: Holder): i32 { return h.x.depth; }
 function round(n: i32): i32 {
-    var h: Holder = { Holder { x: Inst { name: "w" + "", depth: n } } };
+    let h: Holder = { Holder { x: Inst { name: "w" + "", depth: n } } };
     return depth_of(h) + h.x.name.len();
 }
 ` + vblockHolderMain, true},
@@ -39,7 +39,7 @@ function round(n: i32): i32 {
 	// block's credit view drops the tail, so a block local stored into the
 	// struct would read as unescaped and be freed under the holder.
 	{"block_with_local", vblockHolder + `function round(n: i32): i32 {
-    var h: Holder = { var i: Inst = Inst { name: "w" + "", depth: n }; Holder { x: i } };
+    let h: Holder = { let i: Inst = Inst { name: "w" + "", depth: n }; Holder { x: i } };
     return h.x.depth + h.x.name.len();
 }
 ` + vblockHolderMain, false},

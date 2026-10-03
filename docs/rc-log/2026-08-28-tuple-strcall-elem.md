@@ -1,6 +1,6 @@
 # The rc-tuple credit learns the string-fresh registry at a call element
 
-Closes #7374: `var v: (i32, string) = (1, w("p"))` released NOTHING — not the
+Closes #7374: `let v: (i32, string) = (1, w("p"))` released NOTHING — not the
 string box, not the tuple box — at 72 B/round unbounded (600/0/14400 over 200
 rounds against native's 200/200/0), because the element freshness proof was
 syntactic-only and `.to_string()` was the one call form it knew.
@@ -56,7 +56,7 @@ over-release / use-after-free.
 
 ## What remains under #7374's shapes
 
-The producer-return form (`function mk(): (i32, string) { var t = (1, w("p")); return t; }`
+The producer-return form (`function mk(): (i32, string) { let t = (1, w("p")); return t; }`
 consumed by a caller binding) moved from 600/0/14400 to 600/200/6400 — the
 binding side now releases; the return-transfer side is the second gap the
 issue predicted and is not this entry's. The string-ARRAY element

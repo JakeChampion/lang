@@ -21,24 +21,24 @@ var shortCircuitIRCases = []struct {
 }{
 	// && with a method-call RHS, both true -> 1.
 	{"and-method-both-true",
-		`struct P { x: i32 } function (p: P) ok(): boolean { return p.x > 0; } function main(): i32 { var a: P = P { x: 1 }; var b: P = P { x: 2 }; if (a.ok() && b.ok()) { return 1; } return 0; }`, 1},
+		`struct P { x: i32 } function (p: P) ok(): boolean { return p.x > 0; } function main(): i32 { let a: P = P { x: 1 }; let b: P = P { x: 2 }; if (a.ok() && b.ok()) { return 1; } return 0; }`, 1},
 	// && short-circuits on a false LHS: the RHS divides by zero, which must
 	// NOT execute (else the program traps instead of returning 7).
 	{"and-shortcircuit-skips-trap-rhs",
-		`function rhs(): boolean { var z: i32 = 0; return (10 / z) == 0; } function main(): i32 { var f: boolean = false; if (f && rhs()) { return 1; } return 7; }`, 7},
+		`function rhs(): boolean { let z: i32 = 0; return (10 / z) == 0; } function main(): i32 { let f: boolean = false; if (f && rhs()) { return 1; } return 7; }`, 7},
 	// || short-circuits on a true LHS: the trapping RHS must NOT run -> 7.
 	{"or-shortcircuit-skips-trap-rhs",
-		`function rhs(): boolean { var z: i32 = 0; return (10 / z) == 0; } function main(): i32 { var t: boolean = true; if (t || rhs()) { return 7; } return 1; }`, 7},
+		`function rhs(): boolean { let z: i32 = 0; return (10 / z) == 0; } function main(): i32 { let t: boolean = true; if (t || rhs()) { return 7; } return 1; }`, 7},
 	// && where the RHS IS needed (LHS true) and returns false -> else -> 9.
 	{"and-rhs-false",
-		`function rhs(): boolean { return false; } function main(): i32 { var t: boolean = true; if (t && rhs()) { return 1; } return 9; }`, 9},
+		`function rhs(): boolean { return false; } function main(): i32 { let t: boolean = true; if (t && rhs()) { return 1; } return 9; }`, 9},
 	// || where the RHS IS needed (LHS false) and returns true -> 5.
 	{"or-rhs-true",
-		`function rhs(): boolean { return true; } function main(): i32 { var f: boolean = false; if (f || rhs()) { return 5; } return 1; }`, 5},
+		`function rhs(): boolean { return true; } function main(): i32 { let f: boolean = false; if (f || rhs()) { return 5; } return 1; }`, 5},
 	// Field-wise derived-Eq shape: `self.x.eq(o.x) && self.y.eq(o.y)`. Equal
 	// values -> 1; the AND chains two method calls. r=3 (eq true, neq false).
 	{"and-chain-eq-methods",
-		`trait Eq { function eq(self: Self, other: Self): boolean; } impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } struct P { x: i32, y: i32 } function (p: P) same(o: P): boolean { return p.x.eq(o.x) && p.y.eq(o.y); } function main(): i32 { var a: P = P { x: 1, y: 2 }; var b: P = P { x: 1, y: 2 }; var c: P = P { x: 1, y: 9 }; var r: i32 = 0; if (a.same(b)) { r = r + 1; } if (!a.same(c)) { r = r + 2; } return r; }`, 3},
+		`trait Eq { function eq(self: Self, other: Self): boolean; } impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } struct P { x: i32, y: i32 } function (p: P) same(o: P): boolean { return p.x.eq(o.x) && p.y.eq(o.y); } function main(): i32 { let a: P = P { x: 1, y: 2 }; let b: P = P { x: 1, y: 2 }; let c: P = P { x: 1, y: 9 }; let r: i32 = 0; if (a.same(b)) { r = r + 1; } if (!a.same(c)) { r = r + 2; } return r; }`, 3},
 }
 
 // TestSelfHostShortCircuitIRX86_64 runs each case through the self-hosted

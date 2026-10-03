@@ -28,19 +28,19 @@ var strConcatTempIRCases = []struct {
 }{
 	// Two literal operands: both freed after the concat. len 3.
 	{"two-literals",
-		`function main(): i32 { var r: string = "hi" + "!"; return r.len(); }`,
+		`function main(): i32 { let r: string = "hi" + "!"; return r.len(); }`,
 		3, -1, ""},
 	// Concat chain: the intermediate (a + b) is a fresh temp freed after the outer
 	// concat consumes it; a/b/c (idents) are aliases, not freed as operands. len 6.
 	{"chain-intermediate",
-		`function main(): i32 { var a: string = "x"; var b: string = "yy"; var c: string = "zzz"; var r: string = a + b + c; return r.len(); }`,
+		`function main(): i32 { let a: string = "x"; let b: string = "yy"; let c: string = "zzz"; let r: string = a + b + c; return r.len(); }`,
 		6, -1, ""},
 	// Memory-safety at scale: a concat-chain temporary in a 5,000,000-iteration loop,
 	// non-escaping — the intermediate, the literal, and the final are all reclaimed,
 	// so the heap stays FLAT (a leak would grow it; a double-free would corrupt the
 	// freelist and crash / return garbage). exit 0.
 	{"chain-churn-safe",
-		`function main(): i32 { var pre: string = "aa"; var suf: string = "bb"; var t: i32 = 0; var k: i32 = 0; while (k < 5000000) { var r: string = pre + "x" + suf; t = (t + r.len()) % 7; k = k + 1; } return 0; }`,
+		`function main(): i32 { let pre: string = "aa"; let suf: string = "bb"; let t: i32 = 0; let k: i32 = 0; while (k < 5000000) { let r: string = pre + "x" + suf; t = (t + r.len()) % 7; k = k + 1; } return 0; }`,
 		0, -1, ""},
 	// Ident operands, result consumed inline by .len(): the fresh RESULT temp
 	// is released (the #4365 value-consuming-receiver reclaim — exactly ONE
@@ -49,9 +49,9 @@ var strConcatTempIRCases = []struct {
 	//
 	// a and b are PARAMETERS, which is what makes them un-reclaimable and lets the
 	// count isolate the result temp. Two alternatives do not work. Bare literal-init
-	// locals: a concat operand is a borrow, so `var a = "ab"` used only there earns
+	// locals: a concat operand is a borrow, so `let a = "ab"` used only there earns
 	// the ordinary literal-local reclaim and the count stops isolating anything.
-	// Locals aliased by `var ka = a` — what this case used before #7282 — no longer
+	// Locals aliased by `let ka = a` — what this case used before #7282 — no longer
 	// suppress the reclaim either: an alias now retains the box and both slots
 	// release it, so the operands were freed and the count went 1 → 9.
 	// A parameter is refused by slot_is_reclaimable_str's first line, which is a
@@ -67,13 +67,13 @@ var strConcatTempIRCases = []struct {
 	{"tostring-operand-churn",
 		`import "std/i32";
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 200) { var r: string = "n" + w.to_string(); acc = (acc + r.len()) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { var r2: string = "n" + i.to_string(); acc = (acc + r2.len()) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let r: string = "n" + w.to_string(); acc = (acc + r.len()) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let r2: string = "n" + i.to_string(); acc = (acc + r2.len()) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -84,12 +84,12 @@ function main(): i32 {
 	// admission via the ident-slot arm; the cast arm gets its own case).
 	{"tostring-operand-len",
 		`import "std/i32";
-function main(): i32 { var w: i32 = 47; return ("n" + w.to_string()).len(); }`,
+function main(): i32 { let w: i32 = 47; return ("n" + w.to_string()).len(); }`,
 		3, -1, ""},
 	// Cast-receiver form `(k as u32).to_string()` — the as_* scalar arm.
 	{"tostring-cast-operand-len",
 		`import "std/i32";
-function main(): i32 { var k: i32 = 12; return ("v" + (k as u32).to_string()).len(); }`,
+function main(): i32 { let k: i32 = 12; return ("v" + (k as u32).to_string()).len(); }`,
 		3, -1, ""},
 	// Arithmetic receiver `(i % 8).to_string()` — the scalar proof is inductive
 	// over the operator, so a COMBINATION of scalars admits exactly as a bare
@@ -99,13 +99,13 @@ function main(): i32 { var k: i32 = 12; return ("v" + (k as u32).to_string()).le
 	{"arith-tostring-operand-churn",
 		`import "std/i32";
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 200) { var r: string = "n" + (w % 8).to_string(); acc = (acc + r.len()) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { var r2: string = "n" + (i % 8).to_string(); acc = (acc + r2.len()) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let r: string = "n" + (w % 8).to_string(); acc = (acc + r.len()) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let r2: string = "n" + (i % 8).to_string(); acc = (acc + r2.len()) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -116,13 +116,13 @@ function main(): i32 {
 	{"neg-tostring-operand-churn",
 		`import "std/i32";
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 1;
-    while (w < 200) { var r: string = "v" + (-w).to_string(); acc = (acc + r.len()) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 1;
-    while (i < 5000) { var r2: string = "v" + (-i).to_string(); acc = (acc + r2.len()) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let w: i32 = 1;
+    while (w < 200) { let r: string = "v" + (-w).to_string(); acc = (acc + r.len()) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 1;
+    while (i < 5000) { let r2: string = "v" + (-i).to_string(); acc = (acc + r2.len()) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -137,7 +137,7 @@ function main(): i32 {
 	{"arith-tostring-string-operand-alias-safe",
 		`import "std/i32";
 function main(): i32 {
-    var s: string = "abcd";
+    let s: string = "abcd";
     if (("x" + ("a" + s).to_string()).len() != 6) { return 97; }
     if (s.len() != 4) { return 96; }
     if (__rc_underflow_count() != 0) { return 95; }
@@ -152,7 +152,7 @@ function main(): i32 {
 	{"tostring-string-recv-alias-safe",
 		`import "std/i32";
 function main(): i32 {
-    var s: string = "abcd";
+    let s: string = "abcd";
     if (("x" + s.to_string()).len() != 5) { return 97; }
     if (s.len() != 4) { return 96; }
     return 0;

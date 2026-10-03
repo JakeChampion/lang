@@ -107,7 +107,7 @@ reading and closed on these numbers.
 **And those numbers were not evidence.** Reported by pullfrog on #8422 after
 it merged, and confirmed here: the shape above never fired a COW. A copy comes
 from `__map_cow_inplace`, which runs only when a handle at rc>1 is MUTATED,
-and `var snap = m` is not a mutation — nothing touched a handle afterwards, so
+and `let snap = m` is not a mutation — nothing touched a handle afterwards, so
 `__map_own_copied_cols` never ran. With `valKind != 4` added to its
 `retainVals` guard, all six subtests still passed: the census balanced because
 nothing had to be claimed.

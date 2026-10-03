@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-// #10084 — a field read out of an owned struct into a local, `var a = s.a`
-// or `var S { a, b, n } = s`, is moved out of the box when nothing after it
+// #10084 — a field read out of an owned struct into a local, `let a = s.a`
+// or `let S { a, b, n } = s`, is moved out of the box when nothing after it
 // reads the field again. The local is then the array's only holder, so a
 // `.with` on it writes in place instead of copying the whole buffer.
 //
 // The two loops print how many allocations their 1000 updates made: none
-// for the `var` form, whose spread reuses the box, and one struct each for
+// for the `let` form, whose spread reuses the box, and one struct each for
 // the pattern form. Each copied the 256-element array as well before the
 // move. The shared case checks the other arm of the runtime test: with the
 // box aliased, the field is retained, not emptied, and the alias keeps its
@@ -21,20 +21,20 @@ const ownFieldLocalMoveSrc = `import "std/i64";
 struct S { a: i64[], b: string[], n: i32 }
 
 function via_var(own s: S, i: i32): S {
-    var a: i64[] = s.a;
+    let a: i64[] = s.a;
     a = a.with(i, a[i] + 1 as i64);
     return S { ...s, a: a, n: s.n + 1 };
 }
 
 function via_pattern(own s: S, i: i32): S {
-    var S { a, b, n } = s;
+    let S { a, b, n } = s;
     a = a.with(i, a[i] + 1 as i64);
     return S { a: a, b: b, n: n + 1 };
 }
 
 function fresh(): S {
-    var xs: i64[] = [];
-    var i: i32 = 0;
+    let xs: i64[] = [];
+    let i: i32 = 0;
     while (i < 256) {
         xs = xs.append(0 as i64);
         i = i + 1;
@@ -43,22 +43,22 @@ function fresh(): S {
 }
 
 function main(): i32 {
-    var s: S = fresh();
-    var before: i64 = __heap_alloc_count();
-    var i: i32 = 0;
+    let s: S = fresh();
+    let before: i64 = __heap_alloc_count();
+    let i: i32 = 0;
     while (i < 1000) {
         s = via_var(s, i & 255);
         i = i + 1;
     }
-    var mid: i64 = __heap_alloc_count();
+    let mid: i64 = __heap_alloc_count();
     i = 0;
     while (i < 1000) {
         s = via_pattern(s, i & 255);
         i = i + 1;
     }
-    var after: i64 = __heap_alloc_count();
-    var t: S = fresh();
-    var keep: S = t;
+    let after: i64 = __heap_alloc_count();
+    let t: S = fresh();
+    let keep: S = t;
     t = via_var(t, 3);
     t = via_pattern(t, 3);
     if (keep.a[3] != 0 as i64 || keep.n != 0) { return 1; }

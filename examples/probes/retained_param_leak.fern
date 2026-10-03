@@ -23,9 +23,9 @@
 // buffer, the concat, the struct box); the "via the helper" rows are what the
 // fix moved from 2000 leaked to 1000:
 //
-//   var t = Tk { name: s, line: r };          inline literal   1000 leaked (baseline)
-//   var t = mkT(s, r);                        via the helper   2000 leaked
-//   var t = mkT("id" + r.to_string(), r);     fresh arg        2000 leaked
+//   let t = Tk { name: s, line: r };          inline literal   1000 leaked (baseline)
+//   let t = mkT(s, r);                        via the helper   2000 leaked
+//   let t = mkT("id" + r.to_string(), r);     fresh arg        2000 leaked
 //   mkT stores `name + ""` (a fresh copy)     copy at the sink 1000 leaked
 //
 // So it is the CALL that leaks, not the binding, and it leaks exactly when the
@@ -49,11 +49,11 @@ function mkT(name: string, line: i32): Tk {
 }
 
 function main(): i32 {
-  var acc: i32 = 0;
-  var r: i32 = 0;
+  let acc: i32 = 0;
+  let r: i32 = 0;
   while (r < 1000) {
-    var s: string = "id" + r.to_string();
-    var t: Tk = mkT(s, r);
+    let s: string = "id" + r.to_string();
+    let t: Tk = mkT(s, r);
     acc = acc + t.name.len();
     r = r + 1;
   }

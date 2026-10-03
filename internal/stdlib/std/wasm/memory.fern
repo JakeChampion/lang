@@ -30,7 +30,7 @@ import "std/wasm/leb128";
 // no external caller should ever need to compose a memarg
 // without an opcode in front of it.
 function put_memarg(buf: u8[], align: u32, offset: u32): u8[] {
-  var out: u8[] = leb128.uleb_u32(buf, align);
+  let out: u8[] = leb128.uleb_u32(buf, align);
   return leb128.uleb_u32(out, offset);
 }
 
@@ -145,14 +145,14 @@ pub function inst_i64_store32(buf: u8[], align: u32, offset: u32): u8[] {
 // success, -1 on failure.
 
 pub function inst_memory_size(buf: u8[]): u8[] {
-  var out: u8[] = buf;
+  let out: u8[] = buf;
   out = out.append(63u8);  // 0x3F
   out = out.append(0u8);  // reserved memidx
   return out;
 }
 
 pub function inst_memory_grow(buf: u8[]): u8[] {
-  var out: u8[] = buf;
+  let out: u8[] = buf;
   out = out.append(64u8);  // 0x40
   out = out.append(0u8);  // reserved memidx
   return out;
@@ -169,7 +169,7 @@ pub function inst_memory_grow(buf: u8[]): u8[] {
 // for its memcpy / memset runtime helpers.
 
 pub function inst_memory_copy(buf: u8[]): u8[] {
-  var out: u8[] = buf;
+  let out: u8[] = buf;
   out = out.append(252u8);  // 0xFC prefix
   out = out.append(10u8);  // 0x0A memory.copy sub-opcode
   out = out.append(0u8);  // dst memidx (reserved)
@@ -178,7 +178,7 @@ pub function inst_memory_copy(buf: u8[]): u8[] {
 }
 
 pub function inst_memory_fill(buf: u8[]): u8[] {
-  var out: u8[] = buf;
+  let out: u8[] = buf;
   out = out.append(252u8);  // 0xFC prefix
   out = out.append(11u8);  // 0x0B memory.fill sub-opcode
   out = out.append(0u8);  // memidx (reserved)

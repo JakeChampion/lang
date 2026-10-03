@@ -5,7 +5,7 @@ attempt that fixed the leak and introduced an over-release.
 
 | shape (100 rounds, x86-64) | native | before | after |
 | --- | --- | --- | --- |
-| `{ var s = w("ab"); … }` — a plain block | `live=0` | `200/0` **3200** | `200/200` **0** |
+| `{ let s = w("ab"); … }` — a plain block | `live=0` | `200/0` **3200** | `200/200` **0** |
 | the same in a `while` body | `live=0` | `600/400` **3200** | `600/600` **0** |
 | the same in an `if` arm | `live=0` | **3200** | **0** |
 | the same at FUNCTION scope | `live=0` | **0** | unchanged |
@@ -26,12 +26,12 @@ use (#6285): resolve the credit through `reclaim_slot_name`, which strips
 It also **over-releases**, at exit 99 on all three backends, on
 `str-bind-sfrrecv-same-name-alias-liveness` — whose own comment names the hazard:
 
-> The credit is keyed by NAME, so a second `var v` in another block shares it
+> The credit is keyed by NAME, so a second `let v` in another block shares it
 > while holding a plain alias — here a struct FIELD, which no slot compare can name.
 
 ```fern
-if (base.len() > 0) { var v: str = base.tail(2); … }   // earns the credit
-if (base.len() > 0) { var v: str = h.name;      … }   // a bare alias
+if (base.len() > 0) { let v: str = base.tail(2); … }   // earns the credit
+if (base.len() > 0) { let v: str = h.name;      … }   // a bare alias
 ```
 
 **The exact-match miss was accidentally shielding that collision.** Making the

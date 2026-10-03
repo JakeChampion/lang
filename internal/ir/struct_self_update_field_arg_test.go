@@ -16,7 +16,7 @@ func TestStructSelfUpdateFieldArgNotBracketed(t *testing.T) {
 	ip := lowerForTest(t, `struct Asm { code: i32[], n: i32 }
 function le32(buf: i32[], v: i32): i32[] { buf = buf.append(v & 255); return buf; }
 function emit(own a: Asm, v: i32): Asm { a = Asm { ...a, code: le32(a.code, v) }; return a; }
-function main(): i32 { var a: Asm = Asm { code: [], n: 0 }; a = emit(a, 1); return a.code.len(); }`)
+function main(): i32 { let a: Asm = Asm { code: [], n: 0 }; a = emit(a, 1); return a.code.len(); }`)
 	emit := fnNamed(t, ip, "emit")
 	// The bracket's inc immediately precedes the call it protects, on a
 	// value loaded through the field path; nothing else in this body
@@ -50,9 +50,9 @@ func TestStructReturnUpdateFieldArgNotBracketed(t *testing.T) {
 	ip := lowerForTest(t, `struct Asm { code: i32[], n: i32 }
 function le32(buf: i32[], v: i32): i32[] { buf = buf.append(v & 255); return buf; }
 function emitOwn(own a: Asm, v: i32): Asm { return Asm { ...a, code: le32(a.code, v) }; }
-function emitLocal(v: i32): Asm { var a: Asm = Asm { code: [], n: 0 }; return Asm { ...a, code: le32(a.code, v) }; }
+function emitLocal(v: i32): Asm { let a: Asm = Asm { code: [], n: 0 }; return Asm { ...a, code: le32(a.code, v) }; }
 function emitBorrowed(a: Asm, v: i32): Asm { return Asm { ...a, code: le32(a.code, v) }; }
-function main(): i32 { var a: Asm = Asm { code: [], n: 0 }; a = emitOwn(a, 1); a = emitBorrowed(a, 2); a = emitLocal(3); return a.code.len(); }`)
+function main(): i32 { let a: Asm = Asm { code: [], n: 0 }; a = emitOwn(a, 1); a = emitBorrowed(a, 2); a = emitLocal(3); return a.code.len(); }`)
 	for _, fn := range []string{"emitOwn", "emitLocal"} {
 		if n := incsBeforeCall(fnNamed(t, ip, fn), "le32"); n > 0 {
 			t.Errorf("%s brackets `a.code` around le32 (%d rc_inc before the call); the field is superseded by the returned literal:\n%s", fn, n, ip)

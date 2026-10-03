@@ -26,7 +26,7 @@ function main(): i32 {
     if ((4294967296 as i64).bit_length() != 33) { return 9; }  // 2^32 -> 33 bits
     if (((0 as i64) - 5).bit_length() != 3) { return 10; }     // magnitude
     if ((9223372036854775807 as i64).bit_length() != 63) { return 11; } // i64::MAX
-    var mn: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    let mn: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
     if (mn.bit_length() != 64) { return 12; }                  // i64::MIN
     return 42;
 }

@@ -22,17 +22,17 @@ function intake(listener: i32, c: C, fd: i32): (C, boolean) {
 }
 
 function main(): i32 {
-    var c: C = C { a: [], b: [], c: [], d: [], e: [], f: [], g: [], h: [], i: [], j: [], k: [] };
-    var h0: i64 = __heap_bump_bytes() as i64;
-    var i: i32 = 0;
+    let c: C = C { a: [], b: [], c: [], d: [], e: [], f: [], g: [], h: [], i: [], j: [], k: [] };
+    let h0: i64 = __heap_bump_bytes() as i64;
+    let i: i32 = 0;
     while (i < 600) {
-        var fd: i32 = 7;
+        let fd: i32 = 7;
         if (i % 3 != 0) { fd = 8; }
-        var r: (C, boolean) = intake(7, c, fd);
+        let r: (C, boolean) = intake(7, c, fd);
         c = r.0;
         i = i + 1;
     }
-    var grew: i64 = (__heap_bump_bytes() as i64) - h0;
+    let grew: i64 = (__heap_bump_bytes() as i64) - h0;
     if (c.a.len() != 200 || c.k.len() != 200) { return 1; }
     if (grew >= 100000 as i64) { return 2; }
     return 42;

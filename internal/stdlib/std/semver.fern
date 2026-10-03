@@ -4,7 +4,7 @@
 // SemVer precedence (§11). `SemVer` is a plain struct of scalars +
 // strings, so it copies by value with no aliasing surprises.
 //
-//   var a: SemVer = ...;   // via semver.parse("1.2.3-rc.1")
+//   let a: SemVer = ...;   // via semver.parse("1.2.3-rc.1")
 //   a.compare(b);          // -1 / 0 / 1
 //   a.to_string();         // "1.2.3-rc.1"
 //
@@ -34,7 +34,7 @@ function __sv_all_digits(s: string): boolean {
   if (s.len() == 0) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     if (s[i] < 48 || s[i] > 57) {
       return false;
@@ -59,8 +59,8 @@ function __sv_num(s: string): Option[i32] {
 // __sv_slice returns the bytes [start, end) of `s` as a fresh string
 // (byte-indexed — SemVer syntax is ASCII, so byte offsets are fine).
 function __sv_slice(s: string, start: i32, end: i32): string {
-  var b: u8[] = [];
-  var i: i32 = start;
+  let b: u8[] = [];
+  let i: i32 = start;
   while (i < end) {
     b = b.append(s[i] as u8);
     i = i + 1;
@@ -70,11 +70,11 @@ function __sv_slice(s: string, start: i32, end: i32): string {
 
 // __sv_str_cmp compares two strings by ASCII byte order: -1 / 0 / 1.
 function __sv_str_cmp(a: string, b: string): i32 {
-  var n: i32 = a.len();
+  let n: i32 = a.len();
   if (b.len() < n) {
     n = b.len();
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (a[i] < b[i]) {
       return 0 - 1;
@@ -97,7 +97,7 @@ function __sv_str_cmp(a: string, b: string): i32 {
 // identifier, so its length is the magnitude of the value it names
 // ("" for a run of zeros, which compares equal to "0").
 function __sv_significant_digits(s: string): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len() && s[i] == 48) {
     i = i + 1;
   }
@@ -110,8 +110,8 @@ function __sv_significant_digits(s: string): string {
 // numeric prerelease identifier, so parsing one into a machine integer
 // wraps — `1.0.0-99999999999` then sorts below `1.0.0-1`.
 function __sv_cmp_numeric(x: string, y: string): i32 {
-  var xs: string = __sv_significant_digits(x);
-  var ys: string = __sv_significant_digits(y);
+  let xs: string = __sv_significant_digits(x);
+  let ys: string = __sv_significant_digits(y);
   if (xs.len() != ys.len()) {
     if (xs.len() < ys.len()) {
       return 0 - 1;
@@ -124,8 +124,8 @@ function __sv_cmp_numeric(x: string, y: string): i32 {
 // __sv_cmp_ident compares two prerelease identifiers (§11): numeric vs
 // numeric numerically, numeric < alphanumeric, else lexical.
 function __sv_cmp_ident(x: string, y: string): i32 {
-  var xn: boolean = __sv_all_digits(x);
-  var yn: boolean = __sv_all_digits(y);
+  let xn: boolean = __sv_all_digits(x);
+  let yn: boolean = __sv_all_digits(y);
   if (xn && yn) {
     return __sv_cmp_numeric(x, y);
   }
@@ -145,9 +145,9 @@ function __sv_cmp_ident(x: string, y: string): i32 {
 // have a leading zero.
 pub function parse(s: string): Option[SemVer] {
   // Split off build metadata at the first '+'.
-  var core_pre: string = s;
-  var build: string = "";
-  var plus: i32 = s.index_of("+");
+  let core_pre: string = s;
+  let build: string = "";
+  let plus: i32 = s.index_of("+");
   if (plus >= 0) {
     core_pre = __sv_slice(s, 0, plus);
     build = __sv_slice(s, plus + 1, s.len());
@@ -156,9 +156,9 @@ pub function parse(s: string): Option[SemVer] {
     }
   }
   // Split off prerelease at the first '-'.
-  var core: string = core_pre;
-  var pre: string = "";
-  var dash: i32 = core_pre.index_of("-");
+  let core: string = core_pre;
+  let pre: string = "";
+  let dash: i32 = core_pre.index_of("-");
   if (dash >= 0) {
     core = __sv_slice(core_pre, 0, dash);
     pre = __sv_slice(core_pre, dash + 1, core_pre.len());
@@ -166,13 +166,13 @@ pub function parse(s: string): Option[SemVer] {
       return None;
     }
   }
-  var parts: string[] = core.split(".");
+  let parts: string[] = core.split(".");
   if (parts.len() != 3) {
     return None;
   }
-  var maj: Option[i32] = __sv_num(parts[0]);
-  var min: Option[i32] = __sv_num(parts[1]);
-  var pat: Option[i32] = __sv_num(parts[2]);
+  let maj: Option[i32] = __sv_num(parts[0]);
+  let min: Option[i32] = __sv_num(parts[1]);
+  let pat: Option[i32] = __sv_num(parts[2]);
   match (maj) {
     None => {
       return None;
@@ -191,10 +191,10 @@ pub function parse(s: string): Option[SemVer] {
               // Validate each prerelease identifier: non-empty; a
               // purely-numeric one has no leading zero.
               if (pre.len() > 0) {
-                var ids: string[] = pre.split(".");
-                var i: i32 = 0;
+                let ids: string[] = pre.split(".");
+                let i: i32 = 0;
                 while (i < ids.len()) {
-                  var id: string = ids[i];
+                  let id: string = ids[i];
                   if (id.len() == 0) {
                     return None;
                   }
@@ -235,8 +235,8 @@ pub function (a: SemVer) compare(b: SemVer): i32 {
     return 1;
   }
   // Equal core: a version with a prerelease ranks below one without.
-  var ap: boolean = a.prerelease.len() > 0;
-  var bp: boolean = b.prerelease.len() > 0;
+  let ap: boolean = a.prerelease.len() > 0;
+  let bp: boolean = b.prerelease.len() > 0;
   if (!ap && !bp) {
     return 0;
   }
@@ -246,15 +246,15 @@ pub function (a: SemVer) compare(b: SemVer): i32 {
   if (ap && !bp) {
     return 0 - 1;
   }
-  var ai: string[] = a.prerelease.split(".");
-  var bi: string[] = b.prerelease.split(".");
-  var n: i32 = ai.len();
+  let ai: string[] = a.prerelease.split(".");
+  let bi: string[] = b.prerelease.split(".");
+  let n: i32 = ai.len();
   if (bi.len() < n) {
     n = bi.len();
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var c: i32 = __sv_cmp_ident(ai[i], bi[i]);
+    let c: i32 = __sv_cmp_ident(ai[i], bi[i]);
     if (c != 0) {
       return c;
     }
@@ -286,7 +286,7 @@ pub function (a: SemVer) gt(b: SemVer): boolean {
 
 // `(v).to_string()` — the canonical `major.minor.patch[-pre][+build]`.
 pub function (v: SemVer) to_string(): string {
-  var out: string = v.major.to_string() + "." + v.minor.to_string() + "." + v.patch.to_string();
+  let out: string = v.major.to_string() + "." + v.minor.to_string() + "." + v.patch.to_string();
   if (v.prerelease.len() > 0) {
     out = out + "-" + v.prerelease;
   }

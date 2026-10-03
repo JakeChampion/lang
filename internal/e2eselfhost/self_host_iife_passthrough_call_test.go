@@ -13,13 +13,13 @@ const iifePassthroughArmSrc = `import "std/i32";
 function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
 function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
 function main(): i32 {
-    var k: i32 = 40;
-    var c: boolean = true;
-    var free: i32 = apply(if (c) { pick(false, (x: i32) => x + 2, (x: i32) => x * 3) } else { (x: i32) => x }, 5);
-    var captured: i32 = apply(if (c) { pick(true, (x: i32) => x + k, (x: i32) => x) } else { (x: i32) => k }, 2);
-    var nested: i32 = apply(if (!c) { (x: i32) => 0 } else { (if (c) { pick(false, (x: i32) => x - 1, (x: i32) => x + 10) } else { (x: i32) => x }) }, 7);
-    var piped: i32 = (if (c) { pick(true, (x: i32) => x + k, (x: i32) => x) } else { (x: i32) => x }) |> apply(1);
-    var arr: ((i32) => i32)[] = [if (c) { pick(true, (x: i32) => x * 2, if (c) { (x: i32) => 500 } else { (x: i32) => x }) } else { (x: i32) => x + k }];
+    let k: i32 = 40;
+    let c: boolean = true;
+    let free: i32 = apply(if (c) { pick(false, (x: i32) => x + 2, (x: i32) => x * 3) } else { (x: i32) => x }, 5);
+    let captured: i32 = apply(if (c) { pick(true, (x: i32) => x + k, (x: i32) => x) } else { (x: i32) => k }, 2);
+    let nested: i32 = apply(if (!c) { (x: i32) => 0 } else { (if (c) { pick(false, (x: i32) => x - 1, (x: i32) => x + 10) } else { (x: i32) => x }) }, 7);
+    let piped: i32 = (if (c) { pick(true, (x: i32) => x + k, (x: i32) => x) } else { (x: i32) => x }) |> apply(1);
+    let arr: ((i32) => i32)[] = [if (c) { pick(true, (x: i32) => x * 2, if (c) { (x: i32) => 500 } else { (x: i32) => x }) } else { (x: i32) => x + k }];
     print(free.to_string() + " " + captured.to_string() + " " + nested.to_string() + " " + piped.to_string() + " " + arr[0](6).to_string());
     return 0;
 }

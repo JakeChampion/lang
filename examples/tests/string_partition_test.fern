@@ -56,7 +56,7 @@ function test_empty_sep(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/string partition");
+  let r: test.TestRunner = test.test_new("std/string partition");
   r = r.it("partition found", test_partition_found);
   r = r.it("partition absent", test_partition_absent);
   r = r.it("rpartition found", test_rpartition_found);

@@ -21,7 +21,7 @@ import "std/string";
 // to i64 first.
 pub function (n: i32) abs(): i32 {
   if (n < 0) {
-    var w: i64 = 0 - n as i64;
+    let w: i64 = 0 - n as i64;
     return w as i32;
   }
   return n;
@@ -127,8 +127,8 @@ pub function (b: u8) is_ascii_control(): boolean {
 // custom classifier predicates without writing a chain of
 // `b == x || b == y || ...` comparisons.
 pub function (b: u8) matches_any(bytes: string): boolean {
-  var n: i32 = bytes.len();
-  var i: i32 = 0;
+  let n: i32 = bytes.len();
+  let i: i32 = 0;
   while (i < n) {
     if (bytes[i] == b) {
       return true;
@@ -184,7 +184,7 @@ pub function (b: u8) hex_digit(): string {
   if (b < 0 || b > 15) {
     return "";
   }
-  var buf: u8[] = __alloc_u8(1);
+  let buf: u8[] = __alloc_u8(1);
   if (b < 10) {
     buf = buf.with(0, (b + 48) as u8);
   } else {
@@ -226,7 +226,7 @@ pub function (b: u8) to_ascii_string(): string {
   if (b > 127) {
     return "";
   }
-  var buf: u8[] = __alloc_u8(1);
+  let buf: u8[] = __alloc_u8(1);
   buf = buf.with(0, b as u8);
   return string_from_bytes_unchecked(buf);
 }
@@ -279,15 +279,15 @@ pub function (n: i32) is_between(lo: i32, hi: i32): boolean {
 // reverse drop (1000 → 1). Overflow on the reverse is
 // possible for large values; wraps silently.
 pub function (n: i32) reverse_digits(): i32 {
-  var neg: boolean = n < 0;
+  let neg: boolean = n < 0;
   // i64 magnitude so i32::MIN reverses instead of spinning zero times
   // (abs() can't represent 2147483648). The reversed accumulator stays
   // i32, so it still wraps silently on overflow, as documented.
-  var mag: i64 = n as i64;
+  let mag: i64 = n as i64;
   if (neg) {
     mag = 0 - mag;
   }
-  var r: i32 = 0;
+  let r: i32 = 0;
   while (mag > 0) {
     r = r * 10 + (mag % 10) as i32;
     mag = mag / 10;
@@ -315,11 +315,11 @@ pub function (n: i32) is_palindrome(): boolean {
 pub function (n: i32) sum_of_digits(): i32 {
   // i64 magnitude so i32::MIN's digits are summed (abs() wraps it back
   // negative, which an i32 `while (mag > 0)` loop would skip entirely).
-  var mag: i64 = n as i64;
+  let mag: i64 = n as i64;
   if (mag < 0) {
     mag = 0 - mag;
   }
-  var s: i32 = 0;
+  let s: i32 = 0;
   while (mag > 0) {
     s = s + (mag % 10) as i32;
     mag = mag / 10;
@@ -336,7 +336,7 @@ pub function (n: i32) has_digit(d: i32): boolean {
   }
   // i64 magnitude so i32::MIN's digits are scanned (abs() wraps it back
   // negative, which an i32 `while (mag > 0)` loop would skip entirely).
-  var mag: i64 = n as i64;
+  let mag: i64 = n as i64;
   if (mag < 0) {
     mag = 0 - mag;
   }
@@ -409,7 +409,7 @@ pub function (n: i32) is_perfect_square(): boolean {
   if (n < 0) {
     return false;
   }
-  var k: i32 = n.sqrt_floor();
+  let k: i32 = n.sqrt_floor();
   return k * k == n;
 }
 
@@ -422,8 +422,8 @@ pub function (n: i32) factorial(): i32 {
   if (n < 0 || n > 12) {
     return 0;
   }
-  var result: i32 = 1;
-  var i: i32 = 2;
+  let result: i32 = 1;
+  let i: i32 = 2;
   while (i <= n) {
     result = result * i;
     i = i + 1;
@@ -446,7 +446,7 @@ pub function (n: i32) is_prime(): boolean {
   if (n % 2 == 0 || n % 3 == 0) {
     return false;
   }
-  var i: i32 = 5;
+  let i: i32 = 5;
   // `i <= n / i` rather than `i * i <= n`: the square overflows for
   // i >= 46341, and the wrapped value stays below n, so the loop ran
   // past the square root until i itself wrapped negative and `n % -1`
@@ -535,7 +535,7 @@ pub function (n: i32) clamp(lo: i32, hi: i32): i32 {
 // bug with values straddling the i32::MAX threshold).
 
 pub function (n: i32) saturating_add(other: i32): i32 {
-  var r: i32 = n + other;
+  let r: i32 = n + other;
   // Overflow: both signs match but result flips sign.
   if (n > 0 && other > 0 && r < 0) {
     return 2147483647;
@@ -547,7 +547,7 @@ pub function (n: i32) saturating_add(other: i32): i32 {
 }
 
 pub function (n: i32) saturating_sub(other: i32): i32 {
-  var r: i32 = n - other;
+  let r: i32 = n - other;
   // Overflow: signs differ and result has the wrong sign.
   if (n >= 0 && other < 0 && r < 0) {
     return 2147483647;
@@ -559,7 +559,7 @@ pub function (n: i32) saturating_sub(other: i32): i32 {
 }
 
 pub function (n: i32) checked_add(other: i32): Option[i32] {
-  var r: i32 = n + other;
+  let r: i32 = n + other;
   if (n > 0 && other > 0 && r < 0) {
     return None;
   }
@@ -570,7 +570,7 @@ pub function (n: i32) checked_add(other: i32): Option[i32] {
 }
 
 pub function (n: i32) checked_sub(other: i32): Option[i32] {
-  var r: i32 = n - other;
+  let r: i32 = n - other;
   if (n >= 0 && other < 0 && r < 0) {
     return None;
   }
@@ -586,7 +586,7 @@ pub function (n: i32) checked_div(other: i32): Option[i32] {
   if (other == 0) {
     return None;
   }
-  var min32: i32 = 0 - 2147483647 - 1;
+  let min32: i32 = 0 - 2147483647 - 1;
   if (n == min32 && other == 0 - 1) {
     return None;
   }
@@ -601,7 +601,7 @@ pub function (n: i32) checked_rem(other: i32): Option[i32] {
   if (other == 0) {
     return None;
   }
-  var min32: i32 = 0 - 2147483647 - 1;
+  let min32: i32 = 0 - 2147483647 - 1;
   if (n == min32 && other == 0 - 1) {
     return None;
   }
@@ -614,9 +614,9 @@ pub function (n: i32) checked_rem(other: i32): Option[i32] {
 // i64, so it widens and range-checks against the i32 bounds — no wrap to
 // second-guess.
 pub function (n: i32) checked_mul(other: i32): Option[i32] {
-  var p: i64 = n as i64 * (other as i64);
-  var lo: i64 = 0 as i64 - 2147483647 as i64 - 1 as i64;  // i32::MIN
-  var hi: i64 = 2147483647 as i64;  // i32::MAX
+  let p: i64 = n as i64 * (other as i64);
+  let lo: i64 = 0 as i64 - 2147483647 as i64 - 1 as i64;  // i32::MIN
+  let hi: i64 = 2147483647 as i64;  // i32::MAX
   if (p < lo || p > hi) {
     return None;
   }
@@ -629,7 +629,7 @@ pub function (n: i32) checked_mul(other: i32): Option[i32] {
 // sibling of `saturating_add` / `saturating_sub`. Exact: the full i32×i32
 // product fits an i64, so the clamp reads off the widened product's sign.
 pub function (n: i32) saturating_mul(other: i32): i32 {
-  var p: i64 = n as i64 * (other as i64);
+  let p: i64 = n as i64 * (other as i64);
   if (p > 2147483647 as i64) {
     return 2147483647;
   }
@@ -686,11 +686,11 @@ pub function (n: i32) checked_pow(exp: i32): Option[i32] {
   if (exp < 0) {
     return None;
   }
-  var result: i64 = 1 as i64;
-  var base: i64 = n as i64;
-  var e: i32 = exp;
-  var lo: i64 = 0 as i64 - 2147483647 as i64 - 1 as i64;  // i32::MIN
-  var hi: i64 = 2147483647 as i64;  // i32::MAX
+  let result: i64 = 1 as i64;
+  let base: i64 = n as i64;
+  let e: i32 = exp;
+  let lo: i64 = 0 as i64 - 2147483647 as i64 - 1 as i64;  // i32::MIN
+  let hi: i64 = 2147483647 as i64;  // i32::MAX
   while (e > 0) {
     if (e % 2 == 1) {
       result = result * base;
@@ -717,19 +717,19 @@ pub function (n: i32) checked_pow(exp: i32): Option[i32] {
 // detect overflow without recomputing it. The overflow tests are the same ones
 // `checked_add` / `checked_sub` / `checked_mul` use.
 pub function (n: i32) overflowing_add(other: i32): (i32, boolean) {
-  var r: i32 = n + other;
+  let r: i32 = n + other;
   return (r, n > 0 && other > 0 && r < 0 || n < 0 && other < 0 && r >= 0);
 }
 
 pub function (n: i32) overflowing_sub(other: i32): (i32, boolean) {
-  var r: i32 = n - other;
+  let r: i32 = n - other;
   return (r, n >= 0 && other < 0 && r < 0 || n < 0 && other > 0 && r > 0);
 }
 
 pub function (n: i32) overflowing_mul(other: i32): (i32, boolean) {
-  var p: i64 = n as i64 * (other as i64);
-  var lo: i64 = 0 as i64 - 2147483647 as i64 - 1 as i64;
-  var hi: i64 = 2147483647 as i64;
+  let p: i64 = n as i64 * (other as i64);
+  let lo: i64 = 0 as i64 - 2147483647 as i64 - 1 as i64;
+  let hi: i64 = 2147483647 as i64;
   return (p as i32, p < lo || p > hi);
 }
 
@@ -741,7 +741,7 @@ pub function (n: i32) overflowing_mul(other: i32): (i32, boolean) {
 // the flag is false. Divide-by-zero is the caller's responsibility, exactly as
 // for the bare `/` and `%` operators.
 pub function (n: i32) overflowing_div(other: i32): (i32, boolean) {
-  var min32: i32 = 0 - 2147483647 - 1;
+  let min32: i32 = 0 - 2147483647 - 1;
   if (n == min32 && other == 0 - 1) {
     return (min32, true);
   }
@@ -749,7 +749,7 @@ pub function (n: i32) overflowing_div(other: i32): (i32, boolean) {
 }
 
 pub function (n: i32) overflowing_rem(other: i32): (i32, boolean) {
-  var min32: i32 = 0 - 2147483647 - 1;
+  let min32: i32 = 0 - 2147483647 - 1;
   if (n == min32 && other == 0 - 1) {
     return (0, true);
   }
@@ -844,9 +844,9 @@ pub function (n: i32) pow(exp: i32): i32 {
   if (exp < 0) {
     return 0;
   }
-  var base: i32 = n;
-  var e: i32 = exp;
-  var out: i32 = 1;
+  let base: i32 = n;
+  let e: i32 = exp;
+  let out: i32 = 1;
   while (e > 0) {
     if (e % 2 == 1) {
       out = out * base;
@@ -862,10 +862,10 @@ pub function (n: i32) pow(exp: i32): i32 {
 // abs()'d up front. gcd(0, n) == gcd(n, 0) == abs(n); gcd(0,
 // 0) == 0 per the standard convention.
 pub function (n: i32) gcd(other: i32): i32 {
-  var a: i32 = n.abs();
-  var b: i32 = other.abs();
+  let a: i32 = n.abs();
+  let b: i32 = other.abs();
   while (b != 0) {
-    var t: i32 = b;
+    let t: i32 = b;
     b = a % b;
     a = t;
   }
@@ -880,7 +880,7 @@ pub function (n: i32) lcm(other: i32): i32 {
   if (n == 0 || other == 0) {
     return 0;
   }
-  var g: i32 = n.gcd(other);
+  let g: i32 = n.gcd(other);
   return (n / g).abs() * other.abs();
 }
 
@@ -909,7 +909,7 @@ pub function (n: i32) next_power_of_2(): i32 {
   if (n > 1073741824) {
     return 0;
   }
-  var p: i32 = 1;
+  let p: i32 = 1;
   while (p < n) {
     p = p * 2;
   }
@@ -937,8 +937,8 @@ pub function (n: i32) log10_floor(): i32 {
   if (n <= 0) {
     return 0 - 1;
   }
-  var r: i32 = 0;
-  var m: i32 = n;
+  let r: i32 = 0;
+  let m: i32 = n;
   while (m >= 10) {
     m = m / 10;
     r = r + 1;
@@ -957,9 +957,9 @@ pub function (n: i32) sqrt_floor(): i32 {
   if (n < 4) {
     return 1;
   }
-  var x: i32 = n / 2;
+  let x: i32 = n / 2;
   while (true) {
-    var y: i32 = (x + n / x) / 2;
+    let y: i32 = (x + n / x) / 2;
     if (y >= x) {
       return x;
     }
@@ -989,7 +989,7 @@ pub function (n: i32) ceil_div(d: i32): i32 {
 // further from zero so the remainder stays non-negative. `rhs` must be non-zero
 // (same contract as `/`).
 pub function (n: i32) div_euclid(rhs: i32): i32 {
-  var q: i32 = n / rhs;
+  let q: i32 = n / rhs;
   if (n % rhs < 0) {
     if (rhs > 0) {
       return q - 1;
@@ -1005,7 +1005,7 @@ pub function (n: i32) div_euclid(rhs: i32): i32 {
 // with `div_euclid`: `n == rhs * n.div_euclid(rhs) + n.rem_euclid(rhs)`. `rhs`
 // must be non-zero.
 pub function (n: i32) rem_euclid(rhs: i32): i32 {
-  var r: i32 = n % rhs;
+  let r: i32 = n % rhs;
   if (r < 0) {
     if (rhs < 0) {
       return r - rhs;
@@ -1101,12 +1101,12 @@ pub function (n: i32) bit_length(): i32 {
     return 0;
   }
   // Magnitude as u32 (i32::MIN's negation is representable here).
-  var mag: i64 = n as i64;
+  let mag: i64 = n as i64;
   if (mag < 0 as i64) {
     mag = 0 - mag;
   }
-  var u: u32 = mag as u32;
-  var c: i32 = 0;
+  let u: u32 = mag as u32;
+  let c: i32 = 0;
   while (u != 0 as u32) {
     c = c + 1;
     u = u >> 1 as u32;
@@ -1121,7 +1121,7 @@ pub function (n: i32) bit(i: i32): boolean {
   if (i < 0 || i >= 32) {
     return false;
   }
-  var mask: u32 = 1 as u32 << i as u32;
+  let mask: u32 = 1 as u32 << i as u32;
   return (n as u32 & mask) != 0 as u32;
 }
 
@@ -1132,7 +1132,7 @@ pub function (n: i32) set_bit(i: i32): i32 {
   if (i < 0 || i >= 32) {
     return n;
   }
-  var mask: u32 = 1 as u32 << i as u32;
+  let mask: u32 = 1 as u32 << i as u32;
   return (n as u32 | mask) as i32;
 }
 
@@ -1140,8 +1140,8 @@ pub function (n: i32) clear_bit(i: i32): i32 {
   if (i < 0 || i >= 32) {
     return n;
   }
-  var mask: u32 = 1 as u32 << i as u32;
-  var inv: u32 = (0 - 1) as u32 ^ mask;
+  let mask: u32 = 1 as u32 << i as u32;
+  let inv: u32 = (0 - 1) as u32 ^ mask;
   return (n as u32 & inv) as i32;
 }
 
@@ -1149,7 +1149,7 @@ pub function (n: i32) toggle_bit(i: i32): i32 {
   if (i < 0 || i >= 32) {
     return n;
   }
-  var mask: u32 = 1 as u32 << i as u32;
+  let mask: u32 = 1 as u32 << i as u32;
   return (n as u32 ^ mask) as i32;
 }
 
@@ -1157,11 +1157,11 @@ pub function (n: i32) toggle_bit(i: i32): i32 {
 // Useful for endian conversion when reading / writing on-
 // disk formats. Reverses bytewise: ABCD → DCBA.
 pub function (n: i32) byte_swap(): i32 {
-  var u: u32 = n as u32;
-  var b0: u32 = u & 255 as u32;
-  var b1: u32 = u >> 8 as u32 & 255 as u32;
-  var b2: u32 = u >> 16 as u32 & 255 as u32;
-  var b3: u32 = u >> 24 as u32 & 255 as u32;
+  let u: u32 = n as u32;
+  let b0: u32 = u & 255 as u32;
+  let b1: u32 = u >> 8 as u32 & 255 as u32;
+  let b2: u32 = u >> 16 as u32 & 255 as u32;
+  let b3: u32 = u >> 24 as u32 & 255 as u32;
   return (b0 << 24 as u32 | b1 << 16 as u32 | b2 << 8 as u32 | b3) as i32;
 }
 
@@ -1172,9 +1172,9 @@ pub function (n: i32) byte_swap(): i32 {
 // like the rest of the family), so `reverse_bits(1)` is i32::MIN (bit 0 -> bit
 // 31) and it round-trips (`n.reverse_bits().reverse_bits() == n`).
 pub function (n: i32) reverse_bits(): i32 {
-  var u: u32 = n as u32;
-  var r: u32 = 0 as u32;
-  var i: i32 = 0;
+  let u: u32 = n as u32;
+  let r: u32 = 0 as u32;
+  let i: i32 = 0;
   while (i < 32) {
     r = r << 1 as u32 | u & 1 as u32;
     u = u >> 1 as u32;
@@ -1190,24 +1190,24 @@ pub function (n: i32) reverse_bits(): i32 {
 // rotation. Useful for hash mixing, bit-permutation cipher
 // stages, and other bit-rotation primitives.
 pub function (n: i32) rotate_left(bits: i32): i32 {
-  var k: i32 = bits & 31;
+  let k: i32 = bits & 31;
   if (k == 0) {
     return n;
   }
-  var u: u32 = n as u32;
-  var left: u32 = u << k as u32;
-  var right: u32 = u >> (32 - k) as u32;
+  let u: u32 = n as u32;
+  let left: u32 = u << k as u32;
+  let right: u32 = u >> (32 - k) as u32;
   return (left | right) as i32;
 }
 
 pub function (n: i32) rotate_right(bits: i32): i32 {
-  var k: i32 = bits & 31;
+  let k: i32 = bits & 31;
   if (k == 0) {
     return n;
   }
-  var u: u32 = n as u32;
-  var right: u32 = u >> k as u32;
-  var left: u32 = u << (32 - k) as u32;
+  let u: u32 = n as u32;
+  let right: u32 = u >> k as u32;
+  let left: u32 = u << (32 - k) as u32;
   return (left | right) as i32;
 }
 
@@ -1242,11 +1242,11 @@ pub function (n: i32) digits(): i32 {
   // Magnitude in i64: |i32::MIN| = 2147483648 doesn't fit in i32 (abs()
   // wraps it back to i32::MIN, which is < 0, so an i32 `while (u > 0)`
   // loop would spin zero times and wrongly report 0 digits).
-  var u: i64 = n as i64;
+  let u: i64 = n as i64;
   if (u < 0) {
     u = 0 - u;
   }
-  var c: i32 = 0;
+  let c: i32 = 0;
   while (u > 0) {
     c = c + 1;
     u = u / 10;
@@ -1272,12 +1272,12 @@ pub function (n: i32) pluralize(singular: string, plural: string): string {
 // from |n|, so a negative keeps its sign (`-1` → `"-1st"`). For turning
 // a rank into display text ("the 3rd result").
 pub function (n: i32) ordinal(): string {
-  var m: i32 = n.abs();
-  var suffix: string = "th";
-  var mod100: i32 = m % 100;
+  let m: i32 = n.abs();
+  let suffix: string = "th";
+  let mod100: i32 = m % 100;
   // 11, 12, 13 are always "th"; otherwise the last digit decides.
   if (mod100 < 11 || mod100 > 13) {
-    var mod10: i32 = m % 10;
+    let mod10: i32 = m % 10;
     if (mod10 == 1) {
       suffix = "st";
     } else if (mod10 == 2) {
@@ -1313,7 +1313,7 @@ pub function (n: i32) to_string(): string {
 // the slot AFTER the leading zeros (i.e. "-0042", not
 // "0-042"). Already-wide values pass through.
 pub function (n: i32) to_string_padded(width: i32): string {
-  var s: string = n.to_string();
+  let s: string = n.to_string();
   if (s.len() >= width) {
     return s;
   }
@@ -1321,7 +1321,7 @@ pub function (n: i32) to_string_padded(width: i32): string {
     return s.pad_start(width, "0");
   }
   // For negatives, pad the body and re-prefix with '-'.
-  var body: str = slice_unchecked(s, 1, s.len());
+  let body: str = slice_unchecked(s, 1, s.len());
   return "-" + body.pad_start(width - 1, "0");
 }
 
@@ -1330,20 +1330,20 @@ pub function (n: i32) to_string_padded(width: i32): string {
 // shape; `sep` is typically "," or "_" or " ". Negative
 // numbers keep the "-" prefix outside the grouping.
 pub function (n: i32) to_string_with_sep(sep: string): string {
-  var s: string = n.to_string();
-  var sign: string = "";
+  let s: string = n.to_string();
+  let sign: string = "";
   if (n < 0) {
     sign = "-";
     s = slice_unchecked(s, 1, s.len()).to_owned();
   }
-  var L: i32 = s.len();
+  let L: i32 = s.len();
   if (L <= 3) {
     return sign + s;
   }
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < L) {
-    var idx: i32 = L - 1 - i;
+    let idx: i32 = L - 1 - i;
     out = slice_unchecked(s, idx, idx + 1) + out;
     if (i % 3 == 2 && i < L - 1) {
       out = sep + out;
@@ -1368,9 +1368,9 @@ pub function (n: i32) to_hex(): string {
 // zero-padded). Useful for CSS / SVG / terminal-ANSI
 // emission. Bits above bit 23 are ignored.
 pub function (n: i32) to_rgb_hex(): string {
-  var r: i32 = n >> 16 & 255;
-  var g: i32 = n >> 8 & 255;
-  var b: i32 = n & 255;
+  let r: i32 = n >> 16 & 255;
+  let g: i32 = n >> 8 & 255;
+  let b: i32 = n & 255;
   return "#" + r.to_hex().pad_start(2, "0")
     + g.to_hex().pad_start(2, "0")
     + b.to_hex().pad_start(2, "0");
@@ -1397,8 +1397,8 @@ pub function (n: i32) div_ceil(d: i32): i32 {
   if (d == 0) {
     return 0;
   }
-  var q: i32 = n / d;
-  var r: i32 = n % d;
+  let q: i32 = n / d;
+  let r: i32 = n % d;
   if (r > 0 && d > 0 || r < 0 && d < 0) {
     return q + 1;
   }
@@ -1409,8 +1409,8 @@ pub function (n: i32) div_floor(d: i32): i32 {
   if (d == 0) {
     return 0;
   }
-  var q: i32 = n / d;
-  var r: i32 = n % d;
+  let q: i32 = n / d;
+  let r: i32 = n % d;
   if (r > 0 && d < 0 || r < 0 && d > 0) {
     return q - 1;
   }
@@ -1433,8 +1433,8 @@ pub function (n: i32) next_multiple_of(d: i32): i32 {
 // identity of gcd; `lcm_all` seeds at 1 and an empty array yields 1. The
 // whole-array siblings of the pairwise `(n: i32) gcd` / `lcm`.
 pub function gcd_all(xs: i32[]): i32 {
-  var g: i32 = 0;
-  var i: i32 = 0;
+  let g: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len()) {
     g = g.gcd(xs[i]);
     i = i + 1;
@@ -1443,8 +1443,8 @@ pub function gcd_all(xs: i32[]): i32 {
 }
 
 pub function lcm_all(xs: i32[]): i32 {
-  var l: i32 = 1;
-  var i: i32 = 0;
+  let l: i32 = 1;
+  let i: i32 = 0;
   while (i < xs.len()) {
     l = l.lcm(xs[i]);
     i = i + 1;

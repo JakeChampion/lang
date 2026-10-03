@@ -1,6 +1,6 @@
 # 2026-09-04 — the tuple destructure's retain reaches `string[]`
 
-`var (a, b) = p` over `var p: (i32, string[]) = …` extracted the element
+`let (a, b) = p` over `let p: (i32, string[]) = …` extracted the element
 pointer with no retain while marking `b`'s slot one the scope-exit sweep
 releases. Where `p` also carried the "TUPRCS:" sweep credit the buffer was
 decremented twice — the shallow dec at `b`'s last use frees it, the tuple's
@@ -16,7 +16,7 @@ which is where CI saw it.
 
 ## Measured — 100 rounds, x86-64, one fixed native compiler
 
-`function round(i) { var p: (i32, string[]) = (i, ELEMS); var (a, b) = p; return a + b.len(); }`
+`function round(i) { let p: (i32, string[]) = (i, ELEMS); let (a, b) = p; return a + b.len(); }`
 
 | ELEMS | self_host `00eacd3f3` | self_host `9b4423842` | with the retain |
 |---|---|---|---|
@@ -51,7 +51,7 @@ frees=100 leak it was pinned to.
 The MOVE path is the one position where the retain is not given back:
 
 ```
-function get(i: i32): string[] { var p: (i32, string[]) = (i, [w("x"), w("y")]); var (a, b) = p; return b; }
+function get(i: i32): string[] { let p: (i32, string[]) = (i, [w("x"), w("y")]); let (a, b) = p; return b; }
 ```
 
 `b`'s slot sweep is elided, so the tuple's drop finds rc 2, decs without
@@ -74,7 +74,7 @@ unchanged at 400/100 12000 across all three compilers.
 its own arm:
 
 ```
-var pfresh: boolean = str_local_binding_is_fresh(c.args[0]);
+let pfresh: boolean = str_local_binding_is_fresh(c.args[0]);
 match (c.args[0]) { ast.ExprString(_) => { pfresh = true; }, _ => {} }
 ```
 

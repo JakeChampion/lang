@@ -54,7 +54,7 @@ function main(): i32 {
     if ("straße".to_upper() != "STRASSE") { return 20; }
 
     // Composition: chained, and on a non-literal receiver.
-    var s: string = "  Hello Wörld  ";
+    let s: string = "  Hello Wörld  ";
     if (s.trim().to_upper() != "HELLO WÖRLD") { return 21; }
     if ("AbC".to_lower().to_upper() != "ABC") { return 22; }
 

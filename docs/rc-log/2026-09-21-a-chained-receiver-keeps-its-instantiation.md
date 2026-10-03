@@ -17,7 +17,7 @@ see the difference; only the exit code can.
 Six lines reproduce it:
 
 ```fern
-var m: ndarray.NdArray[i32] = a.transpose().map((x: i32): i32 => x * 2);
+let m: ndarray.NdArray[i32] = a.transpose().map((x: i32): i32 => x * 2);
 ```
 
 Binding the receiver to a name first compiles, and produces whole. So the

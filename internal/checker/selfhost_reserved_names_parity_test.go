@@ -26,7 +26,7 @@ import (
 
 var (
 	selfHostReservedStructsRE = regexp.MustCompile(
-		`(?s)function is_reserved_struct_name\(name: string\): boolean \{.*?var reserved: string\[\] = \[(.*?)\]`)
+		`(?s)function is_reserved_struct_name\(name: string\): boolean \{.*?let reserved: string\[\] = \[(.*?)\]`)
 	selfHostReservedEnumsRE = regexp.MustCompile(
 		`(?s)function is_reserved_enum_name\(name: string\): boolean \{(.*?)\n\}`)
 	fernStringRE              = regexp.MustCompile(`"([A-Za-z_][A-Za-z0-9_]*)"`)

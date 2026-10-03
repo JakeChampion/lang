@@ -30,7 +30,7 @@ than on the call-level gate.
 
 ## The bound local
 
-`var msg = pfx + body; __memchr(msg, 97, 0);` — the
+`let msg = pfx + body; __memchr(msg, 97, 0);` — the
 `computeFreeEligible` taint half, single-word x86-64 only (the
 two-word ABIs never took this taint):
 

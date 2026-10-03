@@ -25,8 +25,8 @@ func allocReuseCount(fn *ir.Func) int {
 func TestStructReuseFiresForSelfOverwrite(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
 function churn(n: i32): i32 {
-    var p: Point = Point { x: 0, y: 0 };
-    var i: i32 = 0;
+    let p: Point = Point { x: 0, y: 0 };
+    let i: i32 = 0;
     while (i < n) {
         p = Point { x: p.x + 1, y: p.y };
         i = i + 1;
@@ -49,8 +49,8 @@ function main(): i32 { return churn(3); }`)
 func TestStructReuseFiresForPointerField(t *testing.T) {
 	ip := lowerForTest(t, `struct Holder { id: i32, items: i32[] }
 function churn(n: i32): i32 {
-    var p: Holder = Holder { id: 0, items: [1, 2] };
-    var i: i32 = 0;
+    let p: Holder = Holder { id: 0, items: [1, 2] };
+    let i: i32 = 0;
     while (i < n) {
         p = Holder { id: p.id + 1, items: p.items };
         i = i + 1;
@@ -77,8 +77,8 @@ function main(): i32 { return churn(3); }`)
 func TestStructReuseSkipsReplacedStringField(t *testing.T) {
 	ip := lowerForTest(t, `struct Named { id: i32, name: string }
 function churn(n: i32, other: string): i32 {
-    var p: Named = Named { id: 0, name: "a" };
-    var i: i32 = 0;
+    let p: Named = Named { id: 0, name: "a" };
+    let i: i32 = 0;
     while (i < n) {
         p = Named { id: p.id + 1, name: other };
         i = i + 1;
@@ -102,8 +102,8 @@ function main(): i32 { return churn(3, "x"); }`)
 func TestStructReuseAdmitsCarriedStringField(t *testing.T) {
 	ip := lowerForTest(t, `struct Named { id: i32, name: string }
 function churn(n: i32): i32 {
-    var p: Named = Named { id: 0, name: "a" };
-    var i: i32 = 0;
+    let p: Named = Named { id: 0, name: "a" };
+    let i: i32 = 0;
     while (i < n) {
         p = Named { id: p.id + 1, name: p.name };
         i = i + 1;
@@ -159,8 +159,8 @@ function main(): i32 { return bump(Point { x: 1, y: 2 }).x; }`
 func TestStructReuseFiresForWideScalarField(t *testing.T) {
 	ip := lowerForTest(t, `struct Wide { x: i64, y: i32 }
 function churn(n: i32): i64 {
-    var p: Wide = Wide { x: 0, y: 0 };
-    var i: i32 = 0;
+    let p: Wide = Wide { x: 0, y: 0 };
+    let i: i32 = 0;
     while (i < n) {
         p = Wide { x: p.x + 1, y: p.y };
         i = i + 1;
@@ -190,8 +190,8 @@ function main(): i32 { return 0; }`)
 // resolution in this test.
 func TestStructReuseSkipsDropImplementors(t *testing.T) {
 	const body = `function churn(n: i32): i32 {
-    var w: W = W { v: [0, 0] };
-    var i: i32 = 0;
+    let w: W = W { v: [0, 0] };
+    let i: i32 = 0;
     while (i < n) {
         w = W { v: [i, i] };
         i = i + 1;
@@ -231,7 +231,7 @@ func TestStructDropGlueCallsUserFinalizer(t *testing.T) {
 struct W { v: i32[] }
 impl Drop for W { function drop(self: Self): void { } }
 function main(): i32 {
-    var w: W = W { v: [1] };
+    let w: W = W { v: [1] };
     return w.v.len();
 }`)
 	glue := funcByName(ip, "__drop_struct_W")

@@ -21,9 +21,9 @@ func TestPointerResultCallReleasesItsArgumentTemps(t *testing.T) {
 struct RAdd { seen: i32[], gen: i32, threads: RThread[] }
 enum RInst { IChar(i32), IClass(string), ISave(i32), IMatch }
 function add(st: RAdd, prog: RInst[], pc: i32, caps: i32[], ti: i32): RAdd {
-    var sn: i32[] = st.seen;
-    var g: i32 = st.gen;
-    var ths: RThread[] = st.threads;
+    let sn: i32[] = st.seen;
+    let g: i32 = st.gen;
+    let ths: RThread[] = st.threads;
     if (sn[pc] == g) { return RAdd { seen: sn, gen: g, threads: ths }; }
     sn = sn.with(pc, g);
     match (prog[pc]) {
@@ -32,32 +32,32 @@ function add(st: RAdd, prog: RInst[], pc: i32, caps: i32[], ti: i32): RAdd {
     }
 }
 function main(): i32 {
-    var prog: RInst[] = [ISave(0), IChar(97), ISave(1), IMatch];
-    var init: i32[] = [0 - 1, 0 - 1];
-    var seen: i32[] = [0, 0, 0, 0];
-    var st: RAdd = add(RAdd { seen: seen, gen: 1, threads: [] }, prog, 0, init, 0);
+    let prog: RInst[] = [ISave(0), IChar(97), ISave(1), IMatch];
+    let init: i32[] = [0 - 1, 0 - 1];
+    let seen: i32[] = [0, 0, 0, 0];
+    let st: RAdd = add(RAdd { seen: seen, gen: 1, threads: [] }, prog, 0, init, 0);
     return st.threads.len();
 }`},
 		{"with-argument-held-by-the-result", 3, `struct H { xs: i32[] }
 function hold(xs: i32[]): H { return H { xs: xs }; }
 function main(): i32 {
-    var caps: i32[] = [1, 2, 3];
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 3) { var h: H = hold(caps.with(2, i)); acc = acc + h.xs[2]; i = i + 1; }
+    let caps: i32[] = [1, 2, 3];
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 3) { let h: H = hold(caps.with(2, i)); acc = acc + h.xs[2]; i = i + 1; }
     return acc;
 }`},
 		{"literal-argument-to-a-with-result", 42, `function set0(xs: i32[]): i32[] { return xs.with(0, 9); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 3) { var s: i32[] = set0([4, 5, 6]); acc = acc + s[0] + s[1]; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 3) { let s: i32[] = set0([4, 5, 6]); acc = acc + s[0] + s[1]; i = i + 1; }
     return acc;
 }`},
 		{"struct-argument-through-a-local", 4, `struct C { value: i32 }
 function bump(c: C): Result[C, string] { return Ok(C { value: c.value + 1 }); }
 function main(): i32 {
-    var f: (C) => Result[C, string] = bump;
+    let f: (C) => Result[C, string] = bump;
     match (f(C { value: 3 })) {
         Ok(n) => { return n.value; },
         Err(e) => { return 9; }
@@ -68,9 +68,9 @@ function main(): i32 {
 struct R { name: string, run: (C) => Result[C, string] }
 function bump(c: C): Result[C, string] { return Ok(C { value: c.value + 1 }); }
 function main(): i32 {
-    var r: R = R { name: "r", run: bump };
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let r: R = R { name: "r", run: bump };
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         match (r.run(C { value: i })) { Ok(n) => { acc = acc + n.value; }, Err(e) => { acc = acc + 100; } }
         i = i + 1;
@@ -81,13 +81,13 @@ function main(): i32 {
 struct C { value: i32 }
 function wrap(c: C): W { return W { c: c, n: 1 }; }
 function main(): i32 {
-    var g: (C) => W = wrap;
-    var h: (C) => W = (c: C) => W { c: c, n: 2 };
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let g: (C) => W = wrap;
+    let h: (C) => W = (c: C) => W { c: c, n: 2 };
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var w: W = g(C { value: i + 10 });
-        var v: W = h(C { value: i });
+        let w: W = g(C { value: i + 10 });
+        let v: W = h(C { value: i });
         acc = acc + w.c.value + v.c.value + v.n;
         i = i + 1;
     }
@@ -98,13 +98,13 @@ struct W { c: C, n: i32 }
 function id(c: C): C { return c; }
 function wrap(c: C): W { return W { c: c, n: 1 }; }
 function main(): i32 {
-    var f: (C) => C = id;
-    var g: (C) => W = wrap;
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let f: (C) => C = id;
+    let g: (C) => W = wrap;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var r: C = f(C { value: i });
-        var w: W = g(C { value: i + 10 });
+        let r: C = f(C { value: i });
+        let w: W = g(C { value: i + 10 });
         acc = acc + r.value + w.c.value;
         i = i + 1;
     }
@@ -140,11 +140,11 @@ function main(): i32 {
 func TestPointerResultCallKeepsATempAnIdentityCalleeReturns(t *testing.T) {
 	src := `function keep(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
-    var k: (i32[]) => i32[] = keep;
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let k: (i32[]) => i32[] = keep;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var a: i32[] = k([i, i + 1, i + 2]);
+        let a: i32[] = k([i, i + 1, i + 2]);
         acc = acc + a[0] + a[2];
         i = i + 1;
     }

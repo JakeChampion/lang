@@ -7,7 +7,7 @@ import (
 // TestSelfHostArrArgReclaimIRArm64 is the arm64 port of
 // TestSelfHostArrArgReclaimIRX86_64: the call-arg array-temp stash + post-call
 // __fern_rc_dec and the consumed-param borrow-verdict fix both live in shared
-// irlower.fern, so the arm64 leg only differs in the release helper body
+// lowering, so the arm64 leg only differs in the release helper body
 // (__fn___fern_arr_dec). Case table shared with the x86-64 leg.
 func TestSelfHostArrArgReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)

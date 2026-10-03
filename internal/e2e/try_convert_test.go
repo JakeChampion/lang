@@ -33,10 +33,10 @@ impl convert.TryInto[Small] for Celsius {
     }
 }
 function main(): i32 {
-    var a: i32 = match (Small.try_from(42)) { Ok(s) => s.v, Err(m) => 0 };
-    var b: i32 = match (Small.try_from(300)) { Ok(s) => 0, Err(m) => m.len() };
-    var c: Celsius = Celsius { deg: 100 };
-    var d: i32 = match (c.try_into()) { Ok(s) => s.v, Err(m) => 0 };
+    let a: i32 = match (Small.try_from(42)) { Ok(s) => s.v, Err(m) => 0 };
+    let b: i32 = match (Small.try_from(300)) { Ok(s) => 0, Err(m) => m.len() };
+    let c: Celsius = Celsius { deg: 100 };
+    let d: i32 = match (c.try_into()) { Ok(s) => s.v, Err(m) => 0 };
     return a + b + d;
 }
 `

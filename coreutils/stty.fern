@@ -137,7 +137,7 @@ function group_mode(name: string, word: i32, bits: i64, mask: i64, sane: i32): M
 // 1 there whatever the bit is — and their values are the asm-generic
 // numbering every other row in this word did confirm.
 function cflag_modes(): Mode[] {
-  var m: Mode[] = [];
+  let m: Mode[] = [];
   m = m.append(bool_mode("parenb", w_cflag(), 256 as i64, 0));
   m = m.append(bool_mode("parodd", w_cflag(), 512 as i64, 0));
   m = m.append(bool_mode("cmspar", w_cflag(), 1073741824 as i64, 0));
@@ -154,7 +154,7 @@ function cflag_modes(): Mode[] {
 }
 
 function iflag_modes(): Mode[] {
-  var m: Mode[] = [];
+  let m: Mode[] = [];
   m = m.append(bool_mode("ignbrk", w_iflag(), 1 as i64, 2));
   m = m.append(bool_mode("brkint", w_iflag(), 2 as i64, 1));
   m = m.append(bool_mode("ignpar", w_iflag(), 4 as i64, 0));
@@ -174,7 +174,7 @@ function iflag_modes(): Mode[] {
 }
 
 function oflag_modes(): Mode[] {
-  var m: Mode[] = [];
+  let m: Mode[] = [];
   m = m.append(bool_mode("opost", w_oflag(), 1 as i64, 1));
   m = m.append(bool_mode("olcuc", w_oflag(), 2 as i64, 2));
   m = m.append(bool_mode("ocrnl", w_oflag(), 8 as i64, 2));
@@ -203,7 +203,7 @@ function oflag_modes(): Mode[] {
 }
 
 function lflag_modes(): Mode[] {
-  var m: Mode[] = [];
+  let m: Mode[] = [];
   m = m.append(bool_mode("isig", w_lflag(), 1 as i64, 1));
   m = m.append(bool_mode("icanon", w_lflag(), 2 as i64, 1));
   m = m.append(bool_mode("iexten", w_lflag(), 32768 as i64, 1));
@@ -224,7 +224,7 @@ function lflag_modes(): Mode[] {
 
 // The second spellings, which print nothing of their own.
 function alias_modes(): Mode[] {
-  var m: Mode[] = [];
+  let m: Mode[] = [];
   m = m.append(alias_mode("hup", w_cflag(), 1024 as i64));
   m = m.append(alias_mode("tandem", w_iflag(), 4096 as i64));
   m = m.append(alias_mode("ctlecho", w_lflag(), 512 as i64));
@@ -238,9 +238,9 @@ function alias_modes(): Mode[] {
 // one. `find_mode` searches this and takes the first match, so an alias can
 // never shadow the row it is an alias of.
 function modes(): Mode[] {
-  var m: Mode[] = cflag_modes();
-  var g: Mode[] = iflag_modes();
-  var i: i32 = 0;
+  let m: Mode[] = cflag_modes();
+  let g: Mode[] = iflag_modes();
+  let i: i32 = 0;
   while (i < g.len()) {
     m = m.append(g[i]);
     i = i + 1;
@@ -275,7 +275,7 @@ function modes(): Mode[] {
 struct Cchar { name: string, idx: i32, dflt: i32, show: boolean }
 
 function cchars(): Cchar[] {
-  var c: Cchar[] = [];
+  let c: Cchar[] = [];
   c = c.append(Cchar { name: "intr", idx: 0, dflt: 3, show: true });
   c = c.append(Cchar { name: "quit", idx: 1, dflt: 28, show: true });
   c = c.append(Cchar { name: "erase", idx: 2, dflt: 127, show: true });
@@ -314,7 +314,7 @@ function idx_time(): i32 {
 struct Speed { value: i64, bits: i64 }
 
 function speeds(): Speed[] {
-  var s: Speed[] = [];
+  let s: Speed[] = [];
   s = s.append(Speed { value: 0 as i64, bits: 0 as i64 });
   s = s.append(Speed { value: 50 as i64, bits: 1 as i64 });
   s = s.append(Speed { value: 75 as i64, bits: 2 as i64 });
@@ -357,7 +357,7 @@ function cbaud_mask(): i64 {
 // A single byte as a string. `chr` is not a builtin here, and the byte array
 // round trip is what the digest and base-N codecs use for the same thing.
 function one_char(c: i32): string {
-  var b: u8[] = [];
+  let b: u8[] = [];
   b = b.append(c as u8);
   return string_from_bytes_unchecked(b);
 }
@@ -366,10 +366,10 @@ function hex_lower(v: i64): string {
   if (v == 0 as i64) {
     return "0";
   }
-  var out: string = "";
-  var n: i64 = v;
+  let out: string = "";
+  let n: i64 = v;
   while (n > 0 as i64) {
-    var d: i32 = (n % (16 as i64)) as i32;
+    let d: i32 = (n % (16 as i64)) as i32;
     if (d < 10) {
       out = one_char(48 + d) + out;
     } else {
@@ -390,8 +390,8 @@ function fmt_cc(v: i32): string {
   if (v == 0) {
     return "<undef>";
   }
-  var pre: string = "";
-  var c: i32 = v;
+  let pre: string = "";
+  let c: i32 = v;
   if (c >= 128) {
     pre = "M-";
     c = c - 128;
@@ -408,9 +408,9 @@ function fmt_cc(v: i32): string {
 // The speed a cflag's CBAUD bits stand for. Every reachable value has one,
 // since the field is only ever set from the table.
 function speed_name(cflag: i64): string {
-  var bits: i64 = cflag & cbaud_mask();
-  var s: Speed[] = speeds();
-  var i: i32 = 0;
+  let bits: i64 = cflag & cbaud_mask();
+  let s: Speed[] = speeds();
+  let i: i32 = 0;
   while (i < s.len()) {
     if (s[i].bits == bits) {
       return s[i].value.to_string();
@@ -473,8 +473,8 @@ function group_token(t: i64[], m: Mode): string {
 // the wider one and that is what GNU prints; the extra thirteen are always
 // zero, which is what the tail of a `-g` line is.
 function print_g(t: i64[]): string {
-  var out: string = hex_lower(t[w_iflag()]) + ":" + hex_lower(t[w_oflag()]) + ":" + hex_lower(t[w_cflag()]) + ":" + hex_lower(t[w_lflag()]);
-  var i: i32 = 0;
+  let out: string = hex_lower(t[w_iflag()]) + ":" + hex_lower(t[w_oflag()]) + ":" + hex_lower(t[w_cflag()]) + ":" + hex_lower(t[w_lflag()]);
+  let i: i32 = 0;
   while (i < n_cc_printed()) {
     if (i < n_cc_kernel()) {
       out = out + ":" + hex_lower(t[cc_base() + i]);
@@ -489,15 +489,15 @@ function print_g(t: i64[]): string {
 // `-a`: every name, whatever its value. The header carries the size, which is
 // the only place `window_size` is consulted.
 function print_all(t: i64[], rows: i64, cols: i64): string {
-  var w: Wrap = wrap_new();
+  let w: Wrap = wrap_new();
   w = wrap_put(w, "speed " + speed_name(t[w_cflag()]) + " baud;");
   w = wrap_put(w, "rows " + rows.to_string() + ";");
   w = wrap_put(w, "columns " + cols.to_string() + ";");
   w = wrap_put(w, "line = " + t[w_line()].to_string() + ";");
   w = wrap_break(w);
 
-  var cs: Cchar[] = cchars();
-  var i: i32 = 0;
+  let cs: Cchar[] = cchars();
+  let i: i32 = 0;
   while (i < cs.len()) {
     if (cs[i].show) {
       w = wrap_put(w, cc_token(cs[i].name, t[cc_base() + cs[i].idx] as i32));
@@ -508,18 +508,18 @@ function print_all(t: i64[], rows: i64, cols: i64): string {
   w = wrap_put(w, "time = " + t[cc_base() + idx_time()].to_string() + ";");
   w = wrap_break(w);
 
-  var ms: Mode[] = modes();
-  var word: i32 = 0 - 1;
+  let ms: Mode[] = modes();
+  let word: i32 = 0 - 1;
   i = 0;
   while (i < ms.len()) {
-    var m: Mode = ms[i];
+    let m: Mode = ms[i];
     if (m.show) {
       if (m.word != word) {
         w = wrap_break(w);
         word = m.word;
       }
       if (m.grp) {
-        var tok: string = group_token(t, m);
+        let tok: string = group_token(t, m);
         if (tok.len() > 0) {
           w = wrap_put(w, tok);
         }
@@ -543,16 +543,16 @@ function print_all(t: i64[], rows: i64, cols: i64): string {
 // unused in canonical mode, so GNU reports them exactly where they matter
 // rather than where they differ.
 function print_diff(t: i64[]): string {
-  var w: Wrap = wrap_new();
+  let w: Wrap = wrap_new();
   w = wrap_put(w, "speed " + speed_name(t[w_cflag()]) + " baud;");
   w = wrap_put(w, "line = " + t[w_line()].to_string() + ";");
   w = wrap_break(w);
 
-  var cs: Cchar[] = cchars();
-  var i: i32 = 0;
+  let cs: Cchar[] = cchars();
+  let i: i32 = 0;
   while (i < cs.len()) {
     if (cs[i].show) {
-      var v: i32 = t[cc_base() + cs[i].idx] as i32;
+      let v: i32 = t[cc_base() + cs[i].idx] as i32;
       if (v != cs[i].dflt) {
         w = wrap_put(w, cc_token(cs[i].name, v));
       }
@@ -565,23 +565,23 @@ function print_diff(t: i64[]): string {
   }
   w = wrap_break(w);
 
-  var ms: Mode[] = modes();
-  var word: i32 = 0 - 1;
+  let ms: Mode[] = modes();
+  let word: i32 = 0 - 1;
   i = 0;
   while (i < ms.len()) {
-    var m: Mode = ms[i];
+    let m: Mode = ms[i];
     if (m.show && m.sane != 0) {
       if (m.word != word) {
         w = wrap_break(w);
         word = m.word;
       }
       if (m.sane == 3) {
-        var tok: string = group_token(t, m);
+        let tok: string = group_token(t, m);
         if (tok.len() > 0) {
           w = wrap_put(w, tok);
         }
       } else if (!m.grp) {
-        var on: boolean = (t[m.word] & m.bits) != 0 as i64;
+        let on: boolean = (t[m.word] & m.bits) != 0 as i64;
         if (on && m.sane == 2) {
           w = wrap_put(w, m.name);
         }
@@ -597,8 +597,8 @@ function print_diff(t: i64[]): string {
 
 // ---- the tables, looked up -------------------------------------------------
 function find_mode(name: string): (Mode, boolean) {
-  var ms: Mode[] = modes();
-  var i: i32 = 0;
+  let ms: Mode[] = modes();
+  let i: i32 = 0;
   while (i < ms.len()) {
     if (ms[i].name == name) {
       return (ms[i], true);
@@ -609,8 +609,8 @@ function find_mode(name: string): (Mode, boolean) {
 }
 
 function find_cchar(name: string): (Cchar, boolean) {
-  var cs: Cchar[] = cchars();
-  var i: i32 = 0;
+  let cs: Cchar[] = cchars();
+  let i: i32 = 0;
   while (i < cs.len()) {
     if (cs[i].name == name) {
       return (cs[i], true);
@@ -624,8 +624,8 @@ function find_cchar(name: string): (Cchar, boolean) {
 // constant for it. It has one for nothing but the table, so an arbitrary
 // baud is refused here rather than passed to the kernel.
 function value_to_baud(v: i64): (i64, boolean) {
-  var ss: Speed[] = speeds();
-  var i: i32 = 0;
+  let ss: Speed[] = speeds();
+  let i: i32 = 0;
   while (i < ss.len()) {
     if (ss[i].value == v) {
       return (ss[i].bits, true);
@@ -645,24 +645,24 @@ function value_to_baud(v: i64): (i64, boolean) {
 // are skipped and a leading `-` refused before strtoul could take it.
 // `exta` and `extb` are the only names.
 function find_speed(arg: string): (i64, boolean) {
-  var n: i32 = arg.len();
-  var i: i32 = 0;
+  let n: i32 = arg.len();
+  let i: i32 = 0;
   while (i < n && is_space(arg[i] as i32)) {
     i = i + 1;
   }
   if (i < n && arg[i] as i32 == 45) {
     return (0 as i64, false);
   }
-  var r: (i64, i32, boolean) = strtoul10(arg, i);
-  var v: i64 = r.0;
-  var p: i32 = r.1;
-  var c: i32 = at_byte(arg, p);
+  let r: (i64, i32, boolean) = strtoul10(arg, i);
+  let v: i64 = r.0;
+  let p: i32 = r.1;
+  let c: i32 = at_byte(arg, p);
   p = p + 1;
   if (c == 46) {
     c = at_byte(arg, p);
     p = p + 1;
     if (c != 0) {
-      var d: i32 = c - 48;
+      let d: i32 = c - 48;
       if (d > 5 || d < 0) {
         v = v + 1 as i64;
       } else if (d == 5) {
@@ -687,7 +687,7 @@ function find_speed(arg: string): (i64, boolean) {
       }
     }
   } else if (c != 0) {
-    var rest: string = slice_unchecked(arg, i, n) + "";
+    let rest: string = slice_unchecked(arg, i, n) + "";
     if (rest == "exta") {
       return value_to_baud(19200 as i64);
     }
@@ -719,16 +719,16 @@ function at_byte(s: string, i: i32): i32 {
 // caller does not need, since a speed of zero and a speed of nothing are
 // the same answer.
 function strtoul10(s: string, i: i32): (i64, i32, boolean) {
-  var p: i32 = i;
+  let p: i32 = i;
   if (at_byte(s, p) == 43) {
     p = p + 1;
   }
-  var start: i32 = p;
-  var v: i64 = 0;
-  var over: boolean = false;
+  let start: i32 = p;
+  let v: i64 = 0;
+  let over: boolean = false;
   while (at_byte(s, p) >= 48 && at_byte(s, p) <= 57) {
     if (!over) {
-      var d: i64 = (at_byte(s, p) - 48) as i64;
+      let d: i64 = (at_byte(s, p) - 48) as i64;
       if (v > 922337203685477580 as i64 || v == 922337203685477580 as i64 && d > 7 as i64) {
         over = true;
       } else {
@@ -754,7 +754,7 @@ function takes_value(name: string): boolean {
   if (name == "min" || name == "time" || name == "ispeed" || name == "ospeed") {
     return true;
   }
-  var r: (Cchar, boolean) = find_cchar(name);
+  let r: (Cchar, boolean) = find_cchar(name);
   return r.1;
 }
 
@@ -771,8 +771,8 @@ function combo_tokens(name: string): (string, boolean) {
   // `-iutf8` is in the list though `--help` omits it: measured, `stty
   // iutf8; stty raw` leaves iutf8 CLEAR. The behaviour is what this follows,
   // the way `cooked` not resetting eof and eol does.
-  var raw: string = "-ignbrk -brkint -ignpar -parmrk -inpck -istrip -inlcr -igncr -icrnl -ixon -ixoff -iutf8 -icanon -opost -isig -iuclc -ixany -imaxbel -xcase min 1 time 0";
-  var cooked: string = "brkint ignpar istrip icrnl ixon opost isig icanon";
+  let raw: string = "-ignbrk -brkint -ignpar -parmrk -inpck -istrip -inlcr -igncr -icrnl -ixon -ixoff -iutf8 -icanon -opost -isig -iuclc -ixany -imaxbel -xcase min 1 time 0";
+  let cooked: string = "brkint ignpar istrip icrnl ixon opost isig icanon";
   if (name == "raw" || name == "-cooked") {
     return (raw, true);
   }
@@ -853,18 +853,18 @@ function parse_hex(s: string): (i64, boolean) {
   if (s.len() == 0) {
     return (0 as i64, false);
   }
-  var body: string = s;
+  let body: string = s;
   if (s.len() > 2 && s[0] as i32 == 48 && (s[1] as i32 == 120 || s[1] as i32 == 88)) {
     body = slice_unchecked(s, 2, s.len()) + "";
   }
   if (body.len() == 0) {
     return (0 as i64, false);
   }
-  var v: i64 = 0 as i64;
-  var i: i32 = 0;
+  let v: i64 = 0 as i64;
+  let i: i32 = 0;
   while (i < body.len()) {
-    var c: i32 = body[i] as i32;
-    var d: i32 = 0 - 1;
+    let c: i32 = body[i] as i32;
+    let d: i32 = 0 - 1;
     if (c >= 48 && c <= 57) {
       d = c - 48;
     }
@@ -886,14 +886,14 @@ function parse_hex(s: string): (i64, boolean) {
 // The fields of a `-g` string, or None when it is not one: the count has to
 // be exactly the thirty-six GNU prints, which is what rules out `1:2:3`.
 function parse_saved(tok: string): (i64[], boolean) {
-  var parts: string[] = tok.split(":");
+  let parts: string[] = tok.split(":");
   if (parts.len() != 4 + n_cc_printed()) {
     return ([], false);
   }
-  var out: i64[] = [];
-  var i: i32 = 0;
+  let out: i64[] = [];
+  let i: i32 = 0;
   while (i < parts.len()) {
-    var r: (i64, boolean) = parse_hex(parts[i]);
+    let r: (i64, boolean) = parse_hex(parts[i]);
     if (!r.1) {
       return ([], false);
     }
@@ -932,10 +932,10 @@ function long_names(): string[] {
 // a first letter, so an ambiguous prefix cannot arise and stty needs none of
 // glibc's ambiguity reporting.
 function long_match(p: string): string {
-  var ns: string[] = long_names();
-  var hit: string = "";
-  var n: i32 = 0;
-  var i: i32 = 0;
+  let ns: string[] = long_names();
+  let hit: string = "";
+  let n: i32 = 0;
+  let i: i32 = 0;
   while (i < ns.len()) {
     if (ns[i].starts_with(p)) {
       hit = ns[i];
@@ -961,17 +961,17 @@ function scan_device(s: Scan, path: string): Scan {
 // consumed as an option at all: a name that matches nothing, or an `=value`
 // on an option that takes none, leaves it to become a mode.
 function scan_long(s: Scan, a: string, argv: string[], i: i32): (Scan, i32, boolean) {
-  var body: string = slice_unchecked(a, 2, a.len()) + "";
-  var eq: i32 = body.index_of("=");
-  var name: string = body;
-  var value: string = "";
-  var has_value: boolean = false;
+  let body: string = slice_unchecked(a, 2, a.len()) + "";
+  let eq: i32 = body.index_of("=");
+  let name: string = body;
+  let value: string = "";
+  let has_value: boolean = false;
   if (eq >= 0) {
     name = slice_unchecked(body, 0, eq) + "";
     value = slice_unchecked(body, eq + 1, body.len()) + "";
     has_value = true;
   }
-  var full: string = long_match(name);
+  let full: string = long_match(name);
   if (full.len() == 0) {
     return (s, i, false);
   }
@@ -1006,10 +1006,10 @@ function scan_long(s: Scan, a: string, argv: string[], i: i32): (Scan, i32, bool
 // is none of the three, and the caller then takes the whole element as a
 // mode.
 function scan_short(s: Scan, a: string, argv: string[], i: i32): (Scan, i32, boolean) {
-  var st: Scan = s;
-  var j: i32 = 1;
+  let st: Scan = s;
+  let j: i32 = 1;
   while (j < a.len()) {
-    var c: i32 = a[j] as i32;
+    let c: i32 = a[j] as i32;
     if (c == 97) {
       st = Scan { ...st, verbose: true };
     } else if (c == 103) {
@@ -1035,10 +1035,10 @@ function scan_short(s: Scan, a: string, argv: string[], i: i32): (Scan, i32, boo
 }
 
 function scan(argv: string[]): Scan {
-  var s: Scan = Scan { verbose: false, save: false, device: "", has_device: false, modes: [] };
-  var i: i32 = 1;
+  let s: Scan = Scan { verbose: false, save: false, device: "", has_device: false, modes: [] };
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a == "--") {
       if (s.modes.len() == 0) {
         return s;
@@ -1048,14 +1048,14 @@ function scan(argv: string[]): Scan {
       continue;
     }
     if (a.len() > 2 && a.starts_with("--")) {
-      var rl: (Scan, i32, boolean) = scan_long(s, a, argv, i);
+      let rl: (Scan, i32, boolean) = scan_long(s, a, argv, i);
       s = rl.0;
       if (rl.2) {
         i = rl.1;
         continue;
       }
     } else if (a.len() > 1 && a[0] as i32 == 45) {
-      var rs: (Scan, i32, boolean) = scan_short(s, a, argv, i);
+      let rs: (Scan, i32, boolean) = scan_short(s, a, argv, i);
       // Whatever the cluster gave up before it stopped being options STAYS
       // given up, which is why `-aecho` is `-a` plus the mode `-aecho`.
       s = rs.0;
@@ -1072,7 +1072,7 @@ function scan(argv: string[]): Scan {
 
 // ---- --help ----------------------------------------------------------------
 function help_special_chars(): string {
-  var o: string = "";
+  let o: string = "";
   o = o + "Special characters:\n";
   o = o + " * discard CHAR  CHAR will toggle discarding of output\n";
   o = o + "   eof CHAR      CHAR will send an end of file (terminate the input)\n";
@@ -1094,7 +1094,7 @@ function help_special_chars(): string {
 }
 
 function help_special_settings(): string {
-  var o: string = "";
+  let o: string = "";
   o = o + "Special settings:\n";
   o = o + "   N             set the input and output speeds to N bauds\n";
   o = o + " * cols N        tell the kernel that the terminal has N columns\n";
@@ -1113,7 +1113,7 @@ function help_special_settings(): string {
 }
 
 function help_control_settings(): string {
-  var o: string = "";
+  let o: string = "";
   o = o + "Control settings:\n";
   o = o + "   [-]clocal     disable modem control signals\n";
   o = o + "   [-]cread      allow input to be received\n";
@@ -1130,7 +1130,7 @@ function help_control_settings(): string {
 }
 
 function help_input_settings(): string {
-  var o: string = "";
+  let o: string = "";
   o = o + "Input settings:\n";
   o = o + "   [-]brkint     breaks cause an interrupt signal\n";
   o = o + "   [-]icrnl      translate carriage return to newline\n";
@@ -1153,7 +1153,7 @@ function help_input_settings(): string {
 }
 
 function help_output_settings(): string {
-  var o: string = "";
+  let o: string = "";
   o = o + "Output settings:\n";
   o = o + " * bsN           backspace delay style, N in [0..1]\n";
   o = o + " * crN           carriage return delay style, N in [0..3]\n";
@@ -1176,7 +1176,7 @@ function help_output_settings(): string {
 }
 
 function help_local_settings(): string {
-  var o: string = "";
+  let o: string = "";
   o = o + "Local settings:\n";
   o = o + "   [-]crterase   echo erase characters as backspace-space-backspace\n";
   o = o + " * crtkill       kill all line by obeying the echoprt and echoe settings\n";
@@ -1203,7 +1203,7 @@ function help_local_settings(): string {
 }
 
 function help_combination_settings(): string {
-  var o: string = "";
+  let o: string = "";
   o = o + "Combination settings:\n";
   o = o + " * [-]LCASE      same as [-]lcase\n";
   o = o + "   cbreak        same as -icanon\n";
@@ -1243,7 +1243,7 @@ function help_combination_settings(): string {
 }
 
 function help_text(): string {
-  var o: string = "";
+  let o: string = "";
   o = o + "Usage: " + gnu.prog() + " [-F DEVICE | --file=DEVICE] [SETTING]...\n";
   o = o + "  or:  " + gnu.prog() + " [-F DEVICE | --file=DEVICE] [-a|--all]\n";
   o = o + "  or:  " + gnu.prog() + " [-F DEVICE | --file=DEVICE] [-g|--save]\n";
@@ -1303,8 +1303,8 @@ function parse_u64(s: string): (u64, boolean, boolean) {
   if (s.len() == 0) {
     return (0 as u64, false, false);
   }
-  var base: u64 = 10 as u64;
-  var i: i32 = 0;
+  let base: u64 = 10 as u64;
+  let i: i32 = 0;
   if (s.len() > 2 && s[0] as i32 == 48 && (s[1] as i32 == 120 || s[1] as i32 == 88)) {
     base = 16 as u64;
     i = 2;
@@ -1315,11 +1315,11 @@ function parse_u64(s: string): (u64, boolean, boolean) {
   if (i >= s.len()) {
     return (0 as u64, false, false);
   }
-  var v: u64 = 0 as u64;
-  var over: boolean = false;
+  let v: u64 = 0 as u64;
+  let over: boolean = false;
   while (i < s.len()) {
-    var c: i32 = s[i] as i32;
-    var d: i32 = 0 - 1;
+    let c: i32 = s[i] as i32;
+    let d: i32 = 0 - 1;
     if (c >= 48 && c <= 57) {
       d = c - 48;
     }
@@ -1332,7 +1332,7 @@ function parse_u64(s: string): (u64, boolean, boolean) {
     if (d < 0 || d as u64 >= base) {
       return (0 as u64, false, false);
     }
-    var du: u64 = d as u64;
+    let du: u64 = d as u64;
     if (v > u64_max() / base) {
       over = true;
     }
@@ -1352,7 +1352,7 @@ function parse_u64(s: string): (u64, boolean, boolean) {
 // argument: '-1'`, and one past the setting's own limit adds `: Value too
 // large for defined data type`.
 function need_limited(s: string, limit: u64): u64 {
-  var r: (u64, boolean, boolean) = parse_u64(s);
+  let r: (u64, boolean, boolean) = parse_u64(s);
   if (!r.1) {
     gnu.error("invalid integer argument: " + gnu.quote(s));
     exit(1);
@@ -1386,7 +1386,7 @@ function parse_cchar(s: string): i64 {
     return s[0] as i64;
   }
   if (s.len() == 2 && s[0] as i32 == 94) {
-    var c: i32 = s[1] as i32;
+    let c: i32 = s[1] as i32;
     if (c == 63) {
       return 127 as i64;
     }
@@ -1424,7 +1424,7 @@ function set_word(st: Set, word: i32, v: i64): Set {
 }
 
 function apply_mode(st: Set, m: Mode, neg: boolean): Set {
-  var cur: i64 = st.t[m.word];
+  let cur: i64 = st.t[m.word];
   if (neg) {
     return set_word(st, m.word, cur & inv(m.bits));
   }
@@ -1443,11 +1443,11 @@ function apply_speed(st: Set, bits: i64): Set {
 // default print form reports deviations from. Every control character goes
 // back to its default too.
 function apply_sane(st: Set): Set {
-  var s: Set = st;
-  var ms: Mode[] = modes();
-  var i: i32 = 0;
+  let s: Set = st;
+  let ms: Mode[] = modes();
+  let i: i32 = 0;
   while (i < ms.len()) {
-    var m: Mode = ms[i];
+    let m: Mode = ms[i];
     if (m.sane == 1) {
       s = set_word(s, m.word, s.t[m.word] & inv(m.mask) | m.bits);
     } else if (m.sane == 2) {
@@ -1455,7 +1455,7 @@ function apply_sane(st: Set): Set {
     }
     i = i + 1;
   }
-  var cs: Cchar[] = cchars();
+  let cs: Cchar[] = cchars();
   i = 0;
   while (i < cs.len()) {
     if (cs[i].show) {
@@ -1470,9 +1470,9 @@ function apply_sane(st: Set): Set {
 
 // `ek`: erase and kill back to their defaults, and nothing else.
 function apply_ek(st: Set): Set {
-  var s: Set = st;
-  var cs: Cchar[] = cchars();
-  var i: i32 = 0;
+  let s: Set = st;
+  let cs: Cchar[] = cchars();
+  let i: i32 = 0;
   while (i < cs.len()) {
     if (cs[i].name == "erase" || cs[i].name == "kill") {
       s = apply_cc(s, cs[i].idx, cs[i].dflt as i64);
@@ -1486,12 +1486,12 @@ function apply_ek(st: Set): Set {
 // thirteen slots past the kernel's NCCS are read and dropped: they are what
 // glibc's wider struct contributes to the line and are always zero.
 function apply_saved(st: Set, f: i64[]): Set {
-  var s: Set = st;
+  let s: Set = st;
   s = set_word(s, w_iflag(), f[0]);
   s = set_word(s, w_oflag(), f[1]);
   s = set_word(s, w_cflag(), f[2]);
   s = set_word(s, w_lflag(), f[3]);
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n_cc_kernel()) {
     s = apply_cc(s, i, f[4 + i]);
     i = i + 1;
@@ -1503,7 +1503,7 @@ function words_equal(a: i64[], b: i64[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
@@ -1515,7 +1515,7 @@ function words_equal(a: i64[], b: i64[]): boolean {
 
 // ---- pass 1: the names, and every value but the window size's ---------------
 function speed_value(tok: string, value: string): i64 {
-  var r: (i64, boolean) = find_speed(value);
+  let r: (i64, boolean) = find_speed(value);
   if (!r.1) {
     gnu.die_usage("invalid " + tok + " " + gnu.quote(value), 1);
   }
@@ -1528,7 +1528,7 @@ function speed_value(tok: string, value: string): i64 {
 // the clearest sign that there are two passes at all. It names the overflow
 // the same way every other out-of-range integer here is named.
 function line_value(value: string): i64 {
-  var n: u64 = need_limited(value, u64_max());
+  let n: u64 = need_limited(value, u64_max());
   if (n > 255 as u64) {
     gnu.error("invalid line discipline " + gnu.quote(value) + ": " + gnu.eoverflow_text());
   }
@@ -1562,7 +1562,7 @@ function check_value(tok: string, value: string): void {
 // so `-cs8`, `-nl0`, `-erase` and `-sane` are all `invalid argument`.
 function known_mode(tok: string): boolean {
   if (looks_like_saved(tok)) {
-    var sv: (i64[], boolean) = parse_saved(tok);
+    let sv: (i64[], boolean) = parse_saved(tok);
     return sv.1;
   }
   if (tok == "size" || tok == "speed" || tok == "drain" || tok == "-drain") {
@@ -1571,13 +1571,13 @@ function known_mode(tok: string): boolean {
   if (tok == "sane" || tok == "ek") {
     return true;
   }
-  var cb: (string, boolean) = combo_tokens(tok);
+  let cb: (string, boolean) = combo_tokens(tok);
   if (cb.1) {
     return true;
   }
-  var neg: boolean = tok.len() > 1 && tok[0] as i32 == 45;
+  let neg: boolean = tok.len() > 1 && tok[0] as i32 == 45;
   if (!neg) {
-    var sp: (i64, boolean) = find_speed(tok);
+    let sp: (i64, boolean) = find_speed(tok);
     if (sp.1) {
       return true;
     }
@@ -1585,11 +1585,11 @@ function known_mode(tok: string): boolean {
       return true;
     }
   }
-  var base: string = tok;
+  let base: string = tok;
   if (neg) {
     base = slice_unchecked(tok, 1, tok.len()) + "";
   }
-  var m: (Mode, boolean) = find_mode(base);
+  let m: (Mode, boolean) = find_mode(base);
   if (!m.1) {
     return false;
   }
@@ -1600,9 +1600,9 @@ function known_mode(tok: string): boolean {
 }
 
 function validate(toks: string[]): void {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < toks.len()) {
-    var tok: string = toks[i];
+    let tok: string = toks[i];
     if (!known_mode(tok)) {
       gnu.die_usage("invalid argument " + gnu.quote(tok), 1);
     }
@@ -1623,7 +1623,7 @@ function validate(toks: string[]): void {
 // with no operands at all does — measured, `stty drain` prints and `stty
 // drain -echo` does not.
 function any_setting(toks: string[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < toks.len()) {
     if (toks[i] != "drain" && toks[i] != "-drain") {
       return true;
@@ -1640,11 +1640,11 @@ function device_error(dev: string, e: IoError): void {
 }
 
 function apply_list(st: Set, r: Reader, dev: string, toks: string[]): Set {
-  var s: Set = st;
-  var i: i32 = 0;
+  let s: Set = st;
+  let i: i32 = 0;
   while (i < toks.len()) {
-    var tok: string = toks[i];
-    var value: string = "";
+    let tok: string = toks[i];
+    let value: string = "";
     if (!looks_like_saved(tok) && takes_value(tok)) {
       value = toks[i + 1];
       i = i + 2;
@@ -1659,9 +1659,9 @@ function apply_list(st: Set, r: Reader, dev: string, toks: string[]): Set {
 // The window size is a second record and goes in as it is read, which is what
 // leaves `stty cs7 rows 40` with 40 rows and a refused cs7.
 function apply_size(r: Reader, dev: string, tok: string, value: string): void {
-  var n: i64 = need_int(value);
-  var rows: i64 = 0;
-  var cols: i64 = 0;
+  let n: i64 = need_int(value);
+  let rows: i64 = 0;
+  let cols: i64 = 0;
   match (r.window_size()) {
     Ok(ws) => {
       rows = ws.rows;
@@ -1686,7 +1686,7 @@ function apply_size(r: Reader, dev: string, tok: string, value: string): void {
 
 function apply_token(st: Set, r: Reader, dev: string, tok: string, value: string): Set {
   if (looks_like_saved(tok)) {
-    var sv: (i64[], boolean) = parse_saved(tok);
+    let sv: (i64[], boolean) = parse_saved(tok);
     return apply_saved(st, sv.0);
   }
   if (tok == "drain") {
@@ -1716,7 +1716,7 @@ function apply_token(st: Set, r: Reader, dev: string, tok: string, value: string
   if (tok == "ek") {
     return apply_ek(st);
   }
-  var cb: (string, boolean) = combo_tokens(tok);
+  let cb: (string, boolean) = combo_tokens(tok);
   if (cb.1) {
     return apply_list(st, r, dev, cb.0.split(" "));
   }
@@ -1734,7 +1734,7 @@ function apply_token(st: Set, r: Reader, dev: string, tok: string, value: string
     return apply_cc(st, idx_time(), need_byte(value));
   }
   if (tok == "ispeed") {
-    var ib: i64 = speed_value(tok, value);
+    let ib: i64 = speed_value(tok, value);
     // An input speed of ZERO means "follow the output" and reaches no
     // kernel field at all — glibc records it in a private flag — so the
     // words are left alone and only the marker below is set.
@@ -1744,23 +1744,23 @@ function apply_token(st: Set, r: Reader, dev: string, tok: string, value: string
     return Set { ...apply_speed(st, ib), isp: value, has_isp: true };
   }
   if (tok == "ospeed") {
-    var ob: i64 = speed_value(tok, value);
+    let ob: i64 = speed_value(tok, value);
     return Set { ...apply_speed(st, ob), osp: value, has_osp: true };
   }
-  var cc: (Cchar, boolean) = find_cchar(tok);
+  let cc: (Cchar, boolean) = find_cchar(tok);
   if (cc.1) {
     return apply_cc(st, cc.0.idx, parse_cchar(value));
   }
-  var sp: (i64, boolean) = find_speed(tok);
+  let sp: (i64, boolean) = find_speed(tok);
   if (sp.1) {
     return Set { ...apply_speed(st, sp.0), isp: tok, osp: tok, has_isp: true, has_osp: true };
   }
-  var neg: boolean = tok.len() > 1 && tok[0] as i32 == 45;
-  var base: string = tok;
+  let neg: boolean = tok.len() > 1 && tok[0] as i32 == 45;
+  let base: string = tok;
   if (neg) {
     base = slice_unchecked(tok, 1, tok.len()) + "";
   }
-  var m: (Mode, boolean) = find_mode(base);
+  let m: (Mode, boolean) = find_mode(base);
   return apply_mode(st, m.0, neg);
 }
 
@@ -1775,7 +1775,7 @@ function input_speed_zero(st: Set): boolean {
   if (!st.has_isp) {
     return false;
   }
-  var b: (i64, boolean) = find_speed(st.isp);
+  let b: (i64, boolean) = find_speed(st.isp);
   return b.0 == 0 as i64;
 }
 
@@ -1800,15 +1800,15 @@ function glibc_refused(st: Set, before: i64[], now: i64[]): boolean {
   if (input_speed_zero(st)) {
     return false;
   }
-  var csize: i64 = 48 as i64;
-  var i: i32 = 0;
-  var moved: boolean = false;
-  var missed: boolean = false;
+  let csize: i64 = 48 as i64;
+  let i: i32 = 0;
+  let moved: boolean = false;
+  let missed: boolean = false;
   while (i < cc_base()) {
     if (now[i] != before[i]) {
       moved = true;
     }
-    var d: i64 = now[i] ^ st.t[i];
+    let d: i64 = now[i] ^ st.t[i];
     if (i == w_cflag() && (st.t[i] & csize) == 0 as i64) {
       d = d & inv(csize);
     }
@@ -1828,8 +1828,8 @@ function check_speeds(st: Set): void {
   if (!st.has_isp || !st.has_osp) {
     return;
   }
-  var ib: (i64, boolean) = find_speed(st.isp);
-  var ob: (i64, boolean) = find_speed(st.osp);
+  let ib: (i64, boolean) = find_speed(st.isp);
+  let ob: (i64, boolean) = find_speed(st.osp);
   if (ib.0 == ob.0) {
     return;
   }
@@ -1839,7 +1839,7 @@ function check_speeds(st: Set): void {
 
 // ---- main -------------------------------------------------------------------
 pub function main(): i32 {
-  var sc: Scan = scan(args());
+  let sc: Scan = scan(args());
   // The two output styles first, in this order: `-ag` reports the conflict
   // where `-aecho` reports the modes, and `-igna` — whose scan abandons the
   // element at the first unknown letter, so neither `-g` nor `-a` is ever
@@ -1856,8 +1856,8 @@ pub function main(): i32 {
   // and never touches the path.
   validate(sc.modes);
 
-  var dev: string = "standard input";
-  var r: Reader = stdin();
+  let dev: string = "standard input";
+  let r: Reader = stdin();
   if (sc.has_device) {
     dev = sc.device;
     // O_RDONLY | O_NONBLOCK, which is what makes `-F` on a FIFO with no
@@ -1872,7 +1872,7 @@ pub function main(): i32 {
     }
   }
 
-  var t: i64[] = [];
+  let t: i64[] = [];
   match (r.termios_get()) {
     Ok(w) => {
       t = w;
@@ -1887,8 +1887,8 @@ pub function main(): i32 {
     return 0;
   }
   if (sc.verbose) {
-    var rows: i64 = 0;
-    var cols: i64 = 0;
+    let rows: i64 = 0;
+    let cols: i64 = 0;
     match (r.window_size()) {
       Ok(ws) => {
         rows = ws.rows;
@@ -1906,7 +1906,7 @@ pub function main(): i32 {
     return 0;
   }
 
-  var st: Set = apply_list(set_new(t), r, dev, sc.modes);
+  let st: Set = apply_list(set_new(t), r, dev, sc.modes);
   check_speeds(st);
   if (st.set_attr) {
     match (r.termios_set(st.act, st.t)) {

@@ -41,13 +41,13 @@ func TestSelfHostScriptMainIRX86_64(t *testing.T) {
 		expected int
 	}{
 		{"bare-return", "return 42;", 42},
-		{"var-then-return", "var x = 5; x = x + 3; return x;", 8},
-		{"two-vars", "var a = 3; var b = 4; return a * b;", 12},
-		{"while-loop", "var i = 1; var s = 0; while (i <= 5) { s += i; i += 1; } return s;", 15},
+		{"var-then-return", "let x = 5; x = x + 3; return x;", 8},
+		{"two-vars", "let a = 3; let b = 4; return a * b;", 12},
+		{"while-loop", "let i = 1; let s = 0; while (i <= 5) { s += i; i += 1; } return s;", 15},
 		{"if-else", "if (1 < 2) { return 9; } return 3;", 9},
 		// No trailing `return`: synth_script_main appends `return 0;`, matching the
 		// fallback exit-0 epilogue the AST emitter wrote after the inlined statements.
-		{"no-trailing-return", "var x = 1;", 0},
+		{"no-trailing-return", "let x = 1;", 0},
 		// Unary minus: the AST emitter selected `negq`, the IR path lowers `0 - x`.
 		// Same answer either way; this pins the answer, not the encoding.
 		{"unary-negation", "return 0 - 5 + 10;", 5},

@@ -17,8 +17,8 @@ arguments — and not the fifth.
 A new `TestSelfHostRcPlanDiff` case, `enum-ctor-payload-move`, on
 
 ```
-var p: P = P { xs: [1, 2], n: 3 };
-var e: E = E.A(p);
+let p: P = P { xs: [1, 2], n: 3 };
+let e: E = E.A(p);
 ```
 
 reports, before:

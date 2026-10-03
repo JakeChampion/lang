@@ -23,7 +23,7 @@ impl Iterator for IntBox {
 }
 function first[I: Iterator](it: I): I::Item { return it.next(); }
 function main(): i32 {
-    var b: IntBox = IntBox { v: 9 };
+    let b: IntBox = IntBox { v: 9 };
     return b.next() + first(b);   // 9 + 9 = 18
 }
 `
@@ -40,7 +40,7 @@ impl Iterator for IntBox {
     function next(self: Self): Self::Item { return self.v; }
 }
 function main(): i32 {
-    var b: IntBox = IntBox { v: 9 };
+    let b: IntBox = IntBox { v: 9 };
     return b.next();   // 9
 }
 `
@@ -103,7 +103,7 @@ impl[T] Carrier for Box[T] {
 }
 function unwrap[C: Carrier](c: C): C::Ok { return c.get(); }
 function main(): i32 {
-    var b: Box[i32] = Box { v: 20 };
+    let b: Box[i32] = Box { v: 20 };
     return b.get() + unwrap(b);   // 20 + 20 = 40
 }
 `
@@ -178,8 +178,8 @@ impl[T] Holder for E[T] {
 }
 function pick[H: Holder](h: H, d: H::Item): H::Item { return h.get(d); }
 function main(): i32 {
-    var b: Box[i32] = Box { v: 20 };
-    var e: E[i32] = A(15);
+    let b: Box[i32] = Box { v: 20 };
+    let e: E[i32] = A(15);
     return pick(b, 0) + pick(e, 0) + e.get(1);   // 20 + 15 + 15 = 50
 }
 `

@@ -13,19 +13,19 @@ import "std/string";
 // through the self-host stdtest gate as well as the interpreter.
 
 function test_text_basic(): test.TestOutcome {
-  var lg: log.Logger = log.new_logger(log.level_info());
+  let lg: log.Logger = log.new_logger(log.level_info());
   return test.assert_eq(lg.info_().render("hello"), "[INFO] hello\n");
 }
 
 function test_text_fields(): test.TestOutcome {
-  var lg: log.Logger = log.new_logger(log.level_trace());
-  var line: string = lg.warn_().str("user", "bob").int("id", 7).bool("ok", true).render("hi");
+  let lg: log.Logger = log.new_logger(log.level_trace());
+  let line: string = lg.warn_().str("user", "bob").int("id", 7).bool("ok", true).render("hi");
   return test.assert_eq(line, "[WARN] hi user=bob id=7 ok=true\n");
 }
 
 function test_threshold_filters_below(): test.TestOutcome {
   // INFO threshold drops DEBUG / TRACE.
-  var lg: log.Logger = log.new_logger(log.level_info());
+  let lg: log.Logger = log.new_logger(log.level_info());
   if (lg.debug_().str("k", "v").render("d") != "") {
     return test.fail("DEBUG should be filtered at INFO threshold");
   }
@@ -33,7 +33,7 @@ function test_threshold_filters_below(): test.TestOutcome {
 }
 
 function test_threshold_passes_at_or_above(): test.TestOutcome {
-  var lg: log.Logger = log.new_logger(log.level_warn());
+  let lg: log.Logger = log.new_logger(log.level_warn());
   if (lg.warn_().render("w") == "") {
     return test.fail("WARN should pass at WARN threshold");
   }
@@ -41,28 +41,28 @@ function test_threshold_passes_at_or_above(): test.TestOutcome {
 }
 
 function test_json_basic(): test.TestOutcome {
-  var lg: log.Logger = log.new_json_logger(log.level_trace());
+  let lg: log.Logger = log.new_json_logger(log.level_trace());
   return test.assert_eq(lg.info_().render("m"), "{\"level\":\"INFO\",\"msg\":\"m\"}\n");
 }
 
 function test_json_fields(): test.TestOutcome {
-  var lg: log.Logger = log.new_json_logger(log.level_trace());
-  var line: string = lg.error_().str("k", "v").int("n", 42).bool("ok", false).render("boom");
+  let lg: log.Logger = log.new_json_logger(log.level_trace());
+  let line: string = lg.error_().str("k", "v").int("n", 42).bool("ok", false).render("boom");
   return test.assert_eq(line, "{\"level\":\"ERROR\",\"msg\":\"boom\",\"k\":\"v\",\"n\":42,\"ok\":false}\n");
 }
 
 function test_json_escaping(): test.TestOutcome {
   // Quote + backslash in the message must not break the JSON object.
-  var lg: log.Logger = log.new_json_logger(log.level_trace());
-  var line: string = lg.info_().render("a\"b\\c");
+  let lg: log.Logger = log.new_json_logger(log.level_trace());
+  let line: string = lg.info_().render("a\"b\\c");
   return test.assert_eq(line, "{\"level\":\"INFO\",\"msg\":\"a\\\"b\\\\c\"}\n");
 }
 
 // Newline / CR / tab take the 2-byte named escapes (\n \r \t), not \u00XX —
 // exercises the escaper's 2-byte-expansion branch on the whitespace controls.
 function test_json_escaping_whitespace(): test.TestOutcome {
-  var lg: log.Logger = log.new_json_logger(log.level_trace());
-  var line: string = lg.info_().render("x\ny\rz\tw");
+  let lg: log.Logger = log.new_json_logger(log.level_trace());
+  let line: string = lg.info_().render("x\ny\rz\tw");
   return test.assert_eq(line, "{\"level\":\"INFO\",\"msg\":\"x\\ny\\rz\\tw\"}\n");
 }
 
@@ -70,10 +70,10 @@ function test_json_escaping_whitespace(): test.TestOutcome {
 // JSON-lines record stays parseable (#4388) — previously it passed
 // through raw, producing invalid JSON.
 function test_json_escaping_control(): test.TestOutcome {
-  var raw: u8[] = [65 as u8, 1 as u8, 66 as u8, 31 as u8];  // "A", 0x01, "B", 0x1F
-  var msg: string = string_from_bytes_unchecked(raw);
-  var lg: log.Logger = log.new_json_logger(log.level_trace());
-  var line: string = lg.info_().render(msg);
+  let raw: u8[] = [65 as u8, 1 as u8, 66 as u8, 31 as u8];  // "A", 0x01, "B", 0x1F
+  let msg: string = string_from_bytes_unchecked(raw);
+  let lg: log.Logger = log.new_json_logger(log.level_trace());
+  let line: string = lg.info_().render(msg);
   return test.assert_eq(line, "{\"level\":\"INFO\",\"msg\":\"A\\u0001B\\u001f\"}\n");
 }
 
@@ -95,12 +95,12 @@ function test_level_names(): test.TestOutcome {
 
 function test_at_explicit_level(): test.TestOutcome {
   // `.at(level)` is the general form the shortcuts delegate to.
-  var lg: log.Logger = log.new_logger(log.level_debug());
+  let lg: log.Logger = log.new_logger(log.level_debug());
   return test.assert_eq(lg.at(log.level_debug()).render("x"), "[DEBUG] x\n");
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("leveled logger");
+  let r: test.TestRunner = test.test_new("leveled logger");
   r = r.it("text basic", test_text_basic);
   r = r.it("text fields", test_text_fields);
   r = r.it("threshold filters below", test_threshold_filters_below);

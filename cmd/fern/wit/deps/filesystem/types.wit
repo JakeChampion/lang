@@ -5,13 +5,11 @@ package wasi:filesystem@0.2.0;
 // I/O actually emits. Source:
 // https://github.com/WebAssembly/wasi-filesystem
 //
-// The directory + metadata half (#6208) added stat-at, the three
-// path mutators, and read-directory with its directory-entry-stream
-// cursor, so the subset now covers all five filesystem builtins:
-// read_file / write_file / open_* over the via-streams, stat over
-// stat-at, remove_file over unlink-file-at, temp_dir over
-// create-directory-at, and read_dir / remove_dir_all over
-// read-directory + remove-directory-at.
+// It holds every method a filesystem builtin lowers to on either
+// backend: the via-streams behind read_file / write_file and the
+// Reader / Writer handles, stat / stat-at / set-size / sync for the
+// handle and path queries, the path mutators, the link family, and
+// read-directory with its directory-entry-stream cursor.
 interface types {
     use wasi:io/streams@0.2.0.{input-stream, output-stream, error};
     use wasi:clocks/wall-clock@0.2.0.{datetime};
@@ -56,10 +54,39 @@ interface types {
             path-flags: path-flags,
             path: string,
         ) -> result<descriptor-stat, error-code>;
+        stat: func() -> result<descriptor-stat, error-code>;
+        set-size: func(size: filesize) -> result<_, error-code>;
+        sync: func() -> result<_, error-code>;
+        sync-data: func() -> result<_, error-code>;
+        set-times-at: func(
+            path-flags: path-flags,
+            path: string,
+            data-access-timestamp: new-timestamp,
+            data-modification-timestamp: new-timestamp,
+        ) -> result<_, error-code>;
         create-directory-at: func(path: string) -> result<_, error-code>;
         unlink-file-at: func(path: string) -> result<_, error-code>;
         remove-directory-at: func(path: string) -> result<_, error-code>;
+        rename-at: func(
+            old-path: string,
+            new-descriptor: borrow<descriptor>,
+            new-path: string,
+        ) -> result<_, error-code>;
+        link-at: func(
+            old-path-flags: path-flags,
+            old-path: string,
+            new-descriptor: borrow<descriptor>,
+            new-path: string,
+        ) -> result<_, error-code>;
+        symlink-at: func(old-path: string, new-path: string) -> result<_, error-code>;
+        readlink-at: func(path: string) -> result<string, error-code>;
         read-directory: func() -> result<directory-entry-stream, error-code>;
+    }
+
+    variant new-timestamp {
+        no-change,
+        now,
+        timestamp(datetime),
     }
 
     // The listing cursor. Unlike preview-1's fd_readdir this does NOT

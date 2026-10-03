@@ -8,6 +8,6 @@
 function name(): string { return "world"; }
 
 function greeting(): str {
-    var s: string = "hello, " + name();
+    let s: string = "hello, " + name();
     return s;                 // `str` view of local `s` — dangles
 }

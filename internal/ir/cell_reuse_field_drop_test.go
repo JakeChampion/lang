@@ -24,9 +24,9 @@ func TestReusedBoxOldCellFieldDropThroughArrayMachinery(t *testing.T) {
 		{
 			name: "scalar cell field",
 			src: `function main(): i32 {
-    var a: (i32, Cell[i32]) = (7, cell_new(0));
-    var r: i32 = a.1.get();
-    var b: (i32, Cell[i32]) = (1, cell_new(2));
+    let a: (i32, Cell[i32]) = (7, cell_new(0));
+    let r: i32 = a.1.get();
+    let b: (i32, Cell[i32]) = (1, cell_new(2));
     return r + b.0 - 1;
 }`,
 			want: "__fern_arr_dec",
@@ -34,9 +34,9 @@ func TestReusedBoxOldCellFieldDropThroughArrayMachinery(t *testing.T) {
 		{
 			name: "string cell field",
 			src: `function main(): i32 {
-    var a: (i32, Cell[string]) = (7, cell_new("p"));
-    var r: i32 = a.0;
-    var b: (i32, Cell[string]) = (1, cell_new("q"));
+    let a: (i32, Cell[string]) = (7, cell_new("p"));
+    let r: i32 = a.0;
+    let b: (i32, Cell[string]) = (1, cell_new("q"));
     return r + b.0 - 8;
 }`,
 			want: "__fern_drop_arr_str",

@@ -378,7 +378,7 @@ argument, then allocs a 16-byte box `{data, 1}`. In Fern:
 
 ```
 function __fern_chr(b: i32): string {
-    var p: usize = __raw_alloc(1);
+    let p: usize = __raw_alloc(1);
     __raw_store8(p, 0, b);
     return __raw_string(p, 1);
 }
@@ -394,9 +394,9 @@ behavioural `chr` cases.
 
 ```
 function __fern_str_concat(a: string, b: string): string {
-    var la: i32 = a.len();
-    var lb: i32 = b.len();
-    var p: usize = __raw_alloc(la + lb);
+    let la: i32 = a.len();
+    let lb: i32 = b.len();
+    let p: usize = __raw_alloc(la + lb);
     __memcpy(p, __raw_data(a), la);
     __memcpy(__raw_addr(p, la), __raw_data(b), lb);
     return __raw_string(p, la + lb);

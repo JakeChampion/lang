@@ -34,7 +34,7 @@ func TestSelfHostBareSiblingImportWithoutRoot(t *testing.T) {
 		return string(out), cmd.ProcessState.ExitCode()
 	}
 
-	write("lib.fern", "pub function f(): i32 { var x: i32 = 3; return x; }\n")
+	write("lib.fern", "pub function f(): i32 { let x: i32 = 3; return x; }\n")
 	if out, code := run("-check", entry); code != 0 {
 		t.Fatalf("-check: exit %d\n%s", code, out)
 	}
@@ -48,7 +48,7 @@ func TestSelfHostBareSiblingImportWithoutRoot(t *testing.T) {
 		t.Fatalf("program exit %d, want 3", code)
 	}
 
-	write("lib.fern", "pub function f(): i32 { var x: i32 = \"s\"; return x; }\n")
+	write("lib.fern", "pub function f(): i32 { let x: i32 = \"s\"; return x; }\n")
 	out, code := run("-check", entry)
 	if code != 1 || !strings.Contains(out, "error[E003]") || strings.Contains(out, "E001") {
 		t.Fatalf("-check of a module in error: exit %d, want 1 with its E003 and no E001\n%s", code, out)

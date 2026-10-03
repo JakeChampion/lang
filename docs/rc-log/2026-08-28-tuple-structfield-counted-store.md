@@ -1,7 +1,7 @@
 # The counted tuple struct-field store — and the false green that hid under it
 
 `tuple_mixed__structfield__local_store` flips `clean leak` → `clean clean`. The
-shape is `var k: (i32, i32[]) = …; var h = Hold { t: k, n: i };` — a tuple local
+shape is `let k: (i32, i32[]) = …; let h = Hold { t: k, n: i };` — a tuple local
 stored into a direct tuple field, both in one body.
 
 ## Three halves, one predicate

@@ -27,7 +27,7 @@ function cp(n: i32): string { return utf8.utf8_encode((n) as char); }
 function main(): i32 {
     // A plain sentence: four words, and seven segments once the three
     // spaces are counted too.
-    var s: string = "The quick brown fox";
+    let s: string = "The quick brown fox";
     if (unicode.word_count(s) != 4) { return 1; }
     if (unicode.words(s).len() != 4) { return 2; }
     if (unicode.word_segments(s).len() != 7) { return 3; }
@@ -83,14 +83,14 @@ function main(): i32 {
 
     // An emoji ZWJ family is ONE segment (WB3c) but is not word-LIKE,
     // so it survives word_segments and is dropped by words.
-    var fam: string = cp(128104) + cp(8205) + cp(128105) + cp(8205) + cp(128103);
+    let fam: string = cp(128104) + cp(8205) + cp(128105) + cp(8205) + cp(128103);
     if (unicode.word_segments(fam).len() != 1) { return 27; }
     if (unicode.word_count(fam) != 0) { return 28; }
     if (unicode.words(fam).len() != 0) { return 29; }
 
     // Regional indicators pair in TWOS (WB15/WB16): two flags, not one
     // run and not four indicators.
-    var flags: string = cp(127468) + cp(127463) + cp(127482) + cp(127480);
+    let flags: string = cp(127468) + cp(127463) + cp(127482) + cp(127480);
     if (unicode.word_segments(flags).len() != 2) { return 30; }
 
     // CRLF stays one segment (WB3) and always breaks (WB3a/WB3b).
@@ -103,12 +103,12 @@ function main(): i32 {
 
     // The lossless property that separates the two surfaces:
     // word_segments concatenates back to the input exactly.
-    var mixed: string = "Hello, world! 42 times.";
+    let mixed: string = "Hello, world! 42 times.";
     if (unicode.word_segments(mixed).len() != 10) { return 35; }
     if (unicode.word_count(mixed) != 4) { return 36; }
-    var segs: str[] = unicode.word_segments(mixed);
-    var joined: string = "";
-    var i: i32 = 0;
+    let segs: str[] = unicode.word_segments(mixed);
+    let joined: string = "";
+    let i: i32 = 0;
     while (i < segs.len()) {
         joined = joined + segs[i];
         i = i + 1;

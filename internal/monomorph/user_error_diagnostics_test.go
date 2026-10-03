@@ -39,7 +39,7 @@ func TestUserErrorsFromMonomorphAreCodedDiagnostics(t *testing.T) {
 			src: `struct Point { x: i32, y: i32 }
 function mk[T](v: T): Cell[T] { return cell_new(v); }
 function main(): i32 {
-  var c = mk(Point { x: 1, y: 2 });
+  let c = mk(Point { x: 1, y: 2 });
   return c.get().x;
 }`,
 			wantCode: "E057",
@@ -100,7 +100,7 @@ function outer[T](x: T): string { return inner(x); }
 function main(): i32 { print(outer(A { v: 1 })); return 0; }`},
 		{"an unbounded generic is not asked to satisfy anything", `function id[T](x: T): T { return x; }
 struct S { v: i32 }
-function main(): i32 { var s = id(S { v: 3 }); return s.v; }`},
+function main(): i32 { let s = id(S { v: 3 }); return s.v; }`},
 	}
 	for _, s := range sources {
 		t.Run(s.name, func(t *testing.T) {

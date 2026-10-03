@@ -7,7 +7,7 @@ import "testing"
 //
 // This is the third coercion site. The two already wired detect a `dyn`
 // destination from a scalar parameter's signature and from a
-// `var xs: dyn Sh[] = […]` annotation; an ARRAY-typed parameter is neither, so
+// `let xs: dyn Sh[] = […]` annotation; an ARRAY-typed parameter is neither, so
 // the literal's elements were built into the buffer RAW. A struct/enum element
 // carries its own shape and so survived that — which is why the existing
 // dyn tests passed — but a primitive/string element does not, and the callee's
@@ -23,7 +23,7 @@ struct C { r: i32 }
 impl Sh for C { function area(self: Self): i32 { return self.r * self.r; } }
 impl Sh for i32 { function area(self: Self): i32 { return self + 1; } }
 impl Sh for string { function area(self: Self): i32 { return self.len(); } }
-function total(xs: dyn Sh[]): i32 { var t: i32 = 0; for x in xs { t = t + x.area(); } return t; }
+function total(xs: dyn Sh[]): i32 { let t: i32 = 0; for x in xs { t = t + x.area(); } return t; }
 `
 
 var dynArrayArgIRCases = []struct {
@@ -46,7 +46,7 @@ var dynArrayArgIRCases = []struct {
 function main(): i32 { return twice(10, [1, 2]); }`},
 	// CONTROL: the same literal bound to a local first is the already-wired
 	// site, and must be unaffected.
-	{"arg-local-binding", `function main(): i32 { var ys: dyn Sh[] = [1, 22, 333]; return total(ys) - 300; }`},
+	{"arg-local-binding", `function main(): i32 { let ys: dyn Sh[] = [1, 22, 333]; return total(ys) - 300; }`},
 	// Empty literal: no elements to coerce, and the buffer is still built.
 	{"arg-literal-empty", `function main(): i32 { return total([]) + 7; }`},
 }

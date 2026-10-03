@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// annotateWidthCases extend the typed-IR annotation (#5531) to irlower's
+// annotateWidthCases extend the typed-IR annotation (#5531) to the AST lowering's
 // infer_expr_width: a checker-typed i64/u64-returning call is a 64-bit value.
 // The annotate pass stamps ExprCall.ty ("i64"/"u64"); infer_expr_width's
 // ExprCall arm reads it as a positive fast-path (→ 64) instead of re-deriving
@@ -44,7 +44,7 @@ function main(): i32 { return d(1) as i32; }`}, // 15
 }
 
 // TestSelfHostAnnotateWidthIR_X86_64 pins the checker-stamped result type feeding
-// irlower's infer_expr_width through the IR path (#5531).
+// the lowering through the IR path (#5531).
 func TestSelfHostAnnotateWidthIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 

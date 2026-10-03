@@ -45,17 +45,17 @@ var sourceIifeCases = []struct {
 	// The filed repro. The defer belongs to the IIFE, so `out` is already 5 by
 	// the time the enclosing return reads it: 5 + 1 = 6, not 1.
 	{"var_init_iife", `function main(): i32 {
-    var out = 0;
-    var v = ((): i32 => { defer { out = out + 5; } return 1; })();
+    let out = 0;
+    let v = ((): i32 => { defer { out = out + 5; } return 1; })();
     return out + v;
 }`},
 	// Per-iteration: the defer fires each time the IIFE returns, not once at
 	// main's exit. 3 * (5 + 1) = 18.
 	{"iife_in_loop", `function main(): i32 {
-    var out = 0;
-    var i = 0;
+    let out = 0;
+    let i = 0;
     while (i < 3) {
-        var v = ((): i32 => { defer { out = out + 5; } return 1; })();
+        let v = ((): i32 => { defer { out = out + 5; } return 1; })();
         out = out + v;
         i = i + 1;
     }
@@ -65,10 +65,10 @@ var sourceIifeCases = []struct {
 	// return, the outer at the outer: 100 + 5 + 2 = 107. A single shared scope
 	// would order them differently.
 	{"nested_iifes", `function main(): i32 {
-    var out = 0;
-    var v = ((): i32 => {
+    let out = 0;
+    let v = ((): i32 => {
         defer { out = out + 5; }
-        var w = ((): i32 => { defer { out = out + 100; } return 2; })();
+        let w = ((): i32 => { defer { out = out + 100; } return 2; })();
         return w;
     })();
     return out + v;
@@ -76,9 +76,9 @@ var sourceIifeCases = []struct {
 	// The IIFE captures an enclosing local, and the defer reads it. Naming the
 	// lambda must not disturb the capture: 10 + 11 = 21.
 	{"iife_captures_local", `function main(): i32 {
-    var base = 10;
-    var out = 0;
-    var v = ((): i32 => { defer { out = out + base; } return base + 1; })();
+    let base = 10;
+    let out = 0;
+    let v = ((): i32 => { defer { out = out + base; } return base + 1; })();
     return out + v;
 }`},
 	// The defer sits inside an `if` in the IIFE body, not at its top level. The
@@ -87,25 +87,25 @@ var sourceIifeCases = []struct {
 	// its own scope. A top-level-only scan would leave this one inlined and the
 	// bug intact: 5 + 1 = 6.
 	{"defer_nested_in_if", `function main(): i32 {
-    var out = 0;
-    var c = true;
-    var v = ((): i32 => { if (c) { defer { out = out + 5; } } return 1; })();
+    let out = 0;
+    let c = true;
+    let v = ((): i32 => { if (c) { defer { out = out + 5; } } return 1; })();
     return out + v;
 }`},
 	// Control: an IIFE with no defer at all. It has no scope to get wrong, and
 	// it compiled before the change — this is what catches a fix that makes the
 	// unmarked shape stop lowering rather than lower correctly.
 	{"iife_no_defer", `function main(): i32 {
-    var v = ((): i32 => { return 42; })();
+    let v = ((): i32 => { return 42; })();
     return v;
 }`},
 	// Control in the other direction: a genuine value block in the same program
 	// as a written IIFE. The marker has to separate them per-node, not per-module
 	// — the block's defer belongs to main, the IIFE's to itself.
 	{"value_block_beside_iife", `function main(): i32 {
-    var out = 0;
-    var b = { defer { out = out + 1; } 3 };
-    var v = ((): i32 => { defer { out = out + 5; } return 1; })();
+    let out = 0;
+    let b = { defer { out = out + 1; } 3 };
+    let v = ((): i32 => { defer { out = out + 5; } return 1; })();
     return out * 100 + b * 10 + v;
 }`},
 }

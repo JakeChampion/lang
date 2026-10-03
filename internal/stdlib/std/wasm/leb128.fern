@@ -25,10 +25,10 @@
 // uleb_u32 — append the ULEB128 encoding of `value` to `buf` and
 // return the extended buffer. 1–5 bytes for any u32.
 pub function uleb_u32(buf: u8[], value: u32): u8[] {
-  var out: u8[] = buf;
-  var v: u32 = value;
+  let out: u8[] = buf;
+  let v: u32 = value;
   while (true) {
-    var lo: u32 = v & 127u32;
+    let lo: u32 = v & 127u32;
     v = v >> 7;
     if (v == 0u32) {
       out = out.append(lo as u8);
@@ -41,10 +41,10 @@ pub function uleb_u32(buf: u8[], value: u32): u8[] {
 
 // uleb_u64 — same as uleb_u32 for the wider type. 1–10 bytes.
 pub function uleb_u64(buf: u8[], value: u64): u8[] {
-  var out: u8[] = buf;
-  var v: u64 = value;
+  let out: u8[] = buf;
+  let v: u64 = value;
   while (true) {
-    var lo: u64 = v & 127u64;
+    let lo: u64 = v & 127u64;
     v = v >> 7;
     if (v == 0u64) {
       out = out.append(lo as u8);
@@ -61,13 +61,13 @@ pub function uleb_u64(buf: u8[], value: u64): u8[] {
 // remaining value: a final 0 with bit-6 clear stops a positive
 // run; a final -1 with bit-6 set stops a negative run.
 pub function sleb_i32(buf: u8[], value: i32): u8[] {
-  var out: u8[] = buf;
-  var v: i32 = value;
+  let out: u8[] = buf;
+  let v: i32 = value;
   while (true) {
-    var byte: i32 = v & 127;
+    let byte: i32 = v & 127;
     v = v >> 7;
-    var sign_bit_set: boolean = (byte & 64) != 0;
-    var done: boolean = v == 0 && !sign_bit_set || v == 0 - 1 && sign_bit_set;
+    let sign_bit_set: boolean = (byte & 64) != 0;
+    let done: boolean = v == 0 && !sign_bit_set || v == 0 - 1 && sign_bit_set;
     if (done) {
       out = out.append(byte as u8);
       return out;
@@ -79,13 +79,13 @@ pub function sleb_i32(buf: u8[], value: i32): u8[] {
 
 // sleb_i64 — same as sleb_i32 for the wider type. 1–10 bytes.
 pub function sleb_i64(buf: u8[], value: i64): u8[] {
-  var out: u8[] = buf;
-  var v: i64 = value;
+  let out: u8[] = buf;
+  let v: i64 = value;
   while (true) {
-    var byte: i64 = v & 127i64;
+    let byte: i64 = v & 127i64;
     v = v >> 7;
-    var sign_bit_set: boolean = (byte & 64i64) != 0i64;
-    var done: boolean = v == 0i64 && !sign_bit_set || v == 0i64 - 1i64 && sign_bit_set;
+    let sign_bit_set: boolean = (byte & 64i64) != 0i64;
+    let done: boolean = v == 0i64 && !sign_bit_set || v == 0i64 - 1i64 && sign_bit_set;
     if (done) {
       out = out.append(byte as u8);
       return out;
@@ -101,8 +101,8 @@ pub function sleb_i64(buf: u8[], value: i64): u8[] {
 // their body's size as a uleb prefix that has to be written
 // before the body).
 pub function uleb_size_u32(value: u32): i32 {
-  var v: u32 = value;
-  var n: i32 = 1;
+  let v: u32 = value;
+  let n: i32 = 1;
   while (true) {
     v = v >> 7;
     if (v == 0u32) {
@@ -115,8 +115,8 @@ pub function uleb_size_u32(value: u32): i32 {
 
 // uleb_size_u64 — byte count for uleb_u64.
 pub function uleb_size_u64(value: u64): i32 {
-  var v: u64 = value;
-  var n: i32 = 1;
+  let v: u64 = value;
+  let n: i32 = 1;
   while (true) {
     v = v >> 7;
     if (v == 0u64) {

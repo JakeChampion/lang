@@ -52,9 +52,9 @@ func TestSelfHostWasmIRBlock(t *testing.T) {
 	// in argument position mis-infers to i32 — a separate pre-existing lowering
 	// quirk, unrelated to this op).
 	const src = `function main(): i32 {
-    var d: i64 = 20000000i64;
-    var p: i32 = wasm_timer_pollable(d);
-    var r: i32 = wasm_block(p);
+    let d: i64 = 20000000i64;
+    let p: i32 = wasm_timer_pollable(d);
+    let r: i32 = wasm_block(p);
     wasm_pollable_drop(p);
     return r;
 }`

@@ -50,21 +50,21 @@ func TestSelfHostLargeCollectionReclaimIRX86_64(t *testing.T) {
 	// buffers via .Lapo, whose >=512 KiB steps take .Lapo's large tier. Only the
 	// array length is read out, so nothing escapes.
 	prog := `function build(pre: string): i32 {
-  var xs: string[] = [pre + "a"];
-  var i: i32 = 0;
+  let xs: string[] = [pre + "a"];
+  let i: i32 = 0;
   while (i < 70000) { xs = xs.append(pre + "b"); i = i + 1; }
   return xs.len();
 }
 function churn(n: i32): i32 {
-  var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0;
+  let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0;
   while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; }
   return acc;
 }
 function main(): i32 {
-  var w: i32 = churn(3);
-  var b1: i32 = (__heap_bump_bytes() as i32);
-  var x: i32 = churn(3);
-  var b2: i32 = (__heap_bump_bytes() as i32);
+  let w: i32 = churn(3);
+  let b1: i32 = (__heap_bump_bytes() as i32);
+  let x: i32 = churn(3);
+  let b2: i32 = (__heap_bump_bytes() as i32);
   if (__rc_underflow_count() != 0) { return 99; }
   if (b2 - b1 >= 1048576) { return 98; }
   if (w != x) { return 97; }

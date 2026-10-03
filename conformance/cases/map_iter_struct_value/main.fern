@@ -12,14 +12,14 @@ struct Item { qty: i32, name: string }
 struct Sku { code: i32 }
 
 function main(): i32 {
-    var m: Map[i32, Item] = map_new(8);
+    let m: Map[i32, Item] = map_new(8);
     m = m.insert(1, Item { qty: 10, name: "a" });
     m = m.insert(2, Item { qty: 20, name: "bb" });
 
     // Unannotated iterator + a struct field read off value().
-    var it = m.iter();
-    var qty: i32 = 0;
-    var chars: i32 = 0;
+    let it = m.iter();
+    let qty: i32 = 0;
+    let chars: i32 = 0;
     while (it.has_next()) {
         qty = qty + it.value().qty;
         chars = chars + it.value().name.len();
@@ -29,10 +29,10 @@ function main(): i32 {
     if (chars != 3) { return 2; }
 
     // Annotated form of the same thing, and binding the struct out first.
-    var it2: MapIter[i32, Item] = m.iter();
-    var viaBind: i32 = 0;
+    let it2: MapIter[i32, Item] = m.iter();
+    let viaBind: i32 = 0;
     while (it2.has_next()) {
-        var v = it2.value();
+        let v = it2.value();
         viaBind = viaBind + v.qty;
         it2.advance();
     }
@@ -47,10 +47,10 @@ function main(): i32 {
     // against — the probes that "proved" that named their structs `K` and
     // `V`, which collides with core/map's own type parameters (#6118). With
     // any other name it checks clean, so the recovery is gated normally.
-    var byKey: Map[Sku, Item] = map_new(8);
+    let byKey: Map[Sku, Item] = map_new(8);
     byKey = byKey.insert(Sku { code: 5 }, Item { qty: 7, name: "z" });
-    var it3 = byKey.iter();
-    var keyed: i32 = 0;
+    let it3 = byKey.iter();
+    let keyed: i32 = 0;
     while (it3.has_next()) {
         keyed = keyed + it3.key().code + it3.value().qty;
         it3.advance();

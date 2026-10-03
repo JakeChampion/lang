@@ -18,7 +18,7 @@ import "./util";
 // two-letter `st` helper miscompiles: the native x86-64 backend doesn't escape a
 // function label that collides with the x87 `st` register name.)
 function split_line(tt: string): string {
-  var r: asmcore.TwoTags = asmcore.split_tuple_ret(tt);
+  let r: asmcore.TwoTags = asmcore.split_tuple_ret(tt);
   return "split(" + tt + ") = {" + asmcore.ty_tag(r.a) + ", " + asmcore.ty_tag(r.b) + "}";
 }
 
@@ -28,7 +28,7 @@ function at_line(tt: string, idx: i32): string {
 }
 
 function main(): i32 {
-  var out: string = "";
+  let out: string = "";
   // split_tuple_ret: 2-element OK/first+second, nested-generic element, a
   // nested-tuple element (→ unknown), non-tuple / single-element fallbacks,
   // and the 3+-element "first + rejoined rest" path.

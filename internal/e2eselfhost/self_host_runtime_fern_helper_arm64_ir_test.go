@@ -42,14 +42,14 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	// rejects (E043) and the compile path refuses it too (#7380).
 	prog := "import \"std/array\";\n" +
 		"function main(): i32 {\n" +
-		"    var b: u8[] = random_bytes(8);\n" +
+		"    let b: u8[] = random_bytes(8);\n" +
 		"    match (write_file(\"/tmp/fern_lockin.txt\", \"x\")) { Ok(_) => {}, Err(_) => { return 1; } }\n" +
 		"    match (read_file(\"/tmp/fern_lockin.txt\")) { Ok(_) => {}, Err(_) => { return 2; } }\n" +
 		"    match (remove_file(\"/tmp/fern_lockin.txt\")) { Ok(_) => {}, Err(_) => { return 3; } }\n" +
 		"    match (temp_dir(\"lockin\")) { Ok(_) => {}, Err(_) => { return 4; } }\n" +
 		"    match (env(\"PATH\")) { Some(_) => {}, None => {} }\n" +
 		"    match (stat(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 5; } }\n" +
-		"    var xs: i32[] = [1, 2];\n" +
+		"    let xs: i32[] = [1, 2];\n" +
 		"    if (xs.reverse().concat(xs).len() != 4) { return 6; }\n" +
 		"    if (xs[0:1].len() != 1) { return 7; }\n" +
 		"    if (now_unix_ms() < (1577836800000 as i64)) { return 8; }\n" +
@@ -65,14 +65,14 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    if (tcp_close(999) == 0) { return 13; }\n" +
 		"    if (tcp_accept(999) >= 0) { return 14; }\n" +
 		"    sleep_ms(1);\n" +
-		"    var pfds: i32[] = [];\n" +
+		"    let pfds: i32[] = [];\n" +
 		"    if (poll(pfds, 0) != 0 - 1) { return 15; }\n" +
 		"    if (proc_waitpid(0 - 1) == 0) { return 16; }\n" +
 		"    if (timer_fd(1) < 0) { return 17; }\n" +
 		"    if (tcp_listen(0) < 0) { return 18; }\n" +
 		"    if (tcp_connect(2130706433, 1) == 0) { return 19; }\n" +
 		"    if (tcp_recv(999, 4).len() != 0) { return 20; }\n" +
-		"    var av: string[] = [];\n" +
+		"    let av: string[] = [];\n" +
 		"    if (proc_exec(\"/nonexistent\", av) == 0) { return 21; }\n" +
 		"    if (proc_fork() == 123456) { return 22; }\n" +
 		"    if (tcp_send(999, \"x\") >= 0) { return 23; }\n" +
@@ -86,7 +86,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// `str_read_line`; read_chunk and close share the `reader` need, so the
 		// Reader has to be both read from and closed for both to be reachable.
 		"    match (read_line()) { Some(_) => {}, None => {} }\n" +
-		"    var rd: Reader = stdin();\n" +
+		"    let rd: Reader = stdin();\n" +
 		"    match (rd.read_chunk(64)) { Ok(_) => {}, Err(_) => {} }\n" +
 		"    rd.close();\n" +
 		"    return b.len();\n" +
@@ -116,7 +116,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"read_dir", "remove_dir_all",
 		// The CSPRNG i32 and the Reader/Writer file opener (#2649). open_res
 		// carries the Darwin open-flag translation the hand-asm did inline; it
-		// has to stay a run-time check because irlower picks the flags and has
+		// has to stay a run-time check because the lowering picks the flags and has
 		// no target, so the Linux emit here simply has no translation to make.
 		"random_i32", "open_res",
 		// The socket leaves that take only an fd (#2649).
@@ -250,7 +250,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	// the three — which is the half of the gating change the probe above, holding
 	// every leaf at once, cannot see.
 	noReader := filepath.Join(t.TempDir(), "no_reader.fern")
-	if err := os.WriteFile(noReader, []byte("function main(): i32 { var s: string = \"a\" + \"b\"; print(s); return s.len(); }\n"), 0o644); err != nil {
+	if err := os.WriteFile(noReader, []byte("function main(): i32 { let s: string = \"a\" + \"b\"; print(s); return s.len(); }\n"), 0o644); err != nil {
 		t.Fatalf("write no-reader probe: %v", err)
 	}
 	nrOut, nrErr, nrCode := runDriverAllowFail(t, x86runner, mmc, "", noReader, "-target", "arm64-linux")
@@ -286,13 +286,13 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	mmc := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "mmc_darwin_rb")
 
 	prog := "function main(): i32 {\n" +
-		"    var b: u8[] = random_bytes(8);\n" +
+		"    let b: u8[] = random_bytes(8);\n" +
 		"    match (write_file(\"/tmp/fern_lockin_d.txt\", \"x\")) { Ok(_) => {}, Err(_) => { return 1; } }\n" +
 		"    match (read_file(\"/tmp/fern_lockin_d.txt\")) { Ok(_) => {}, Err(_) => { return 2; } }\n" +
 		"    match (remove_file(\"/tmp/fern_lockin_d.txt\")) { Ok(_) => {}, Err(_) => { return 3; } }\n" +
 		"    match (temp_dir(\"lockin\")) { Ok(_) => {}, Err(_) => { return 4; } }\n" +
 		"    match (stat(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 5; } }\n" +
-		"    var xs: i32[] = [1, 2];\n" +
+		"    let xs: i32[] = [1, 2];\n" +
 		"    if (xs[0:1].len() != 1) { return 6; }\n" +
 		"    if (now_unix_ms() < (1577836800000 as i64)) { return 7; }\n" +
 		"    if (monotonic_ns() < (0 as i64)) { return 8; }\n" +
@@ -321,7 +321,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		// The three Reader leaves, called for effect so their read(2) / close(2)
 		// numbers can be inspected below.
 		"    match (read_line()) { Some(_) => {}, None => {} }\n" +
-		"    var rd: Reader = stdin();\n" +
+		"    let rd: Reader = stdin();\n" +
 		"    match (rd.read_chunk(64)) { Ok(_) => {}, Err(_) => {} }\n" +
 		"    rd.close();\n" +
 		"    return b.len();\n" +

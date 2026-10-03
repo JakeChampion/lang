@@ -33,7 +33,7 @@ function or_head(e: E): i32 {
 }
 
 function main(): i32 {
-    var total: i32 = 0;
+    let total: i32 = 0;
     total = total + at_head(E.Aa(4));   // 8   (4 + 4)
     total = total + at_head(E.Bb(1));   // 38 — else path
     total = total + or_head(E.Aa(3));   // 41

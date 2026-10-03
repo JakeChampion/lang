@@ -70,7 +70,7 @@ impl Shape for Circle { … }
 impl Shape for Rect   { … }
 
 function total_area(shapes: dyn Shape[]): f64 {
-    var sum: f64 = 0.0;
+    let sum: f64 = 0.0;
     for s in shapes {
         sum = sum + s.area();   // runtime dispatch on each element
     }
@@ -78,7 +78,7 @@ function total_area(shapes: dyn Shape[]): f64 {
 }
 
 function main(): i32 {
-    var shapes: dyn Shape[] = [Circle { r: 1.0 }, Rect { w: 2.0, h: 3.0 }];
+    let shapes: dyn Shape[] = [Circle { r: 1.0 }, Rect { w: 2.0, h: 3.0 }];
     //                          ^ Circle and Rect coerce to `dyn Shape`
     print(total_area(shapes).to_string());
     return 0;
@@ -106,7 +106,7 @@ function main(): i32 {
   `dyn Container[i32]`.
 - A `dyn Trait` value is produced by **coercion**: a concrete value
   whose type `impl`s `Trait` is implicitly boxed where a `dyn Trait` is
-  expected (var init, assignment, argument, array element, `return`).
+  expected (let init, assignment, argument, array element, `return`).
   No explicit cast syntax in v1.
 - Coercion fires at a **direct** site only. A container is INVARIANT in a
   `dyn` argument: `Option[Square]` does not assign to `Option[dyn Shape]`,
@@ -132,8 +132,8 @@ function sum(d: dyn Container[i32]): i32 {
 }
 
 function main(): i32 {
-    var x: dyn Container[i32] = BoxI { v: 40 };
-    var y: dyn Container[i32] = Pair { a: 1, b: 1 };
+    let x: dyn Container[i32] = BoxI { v: 40 };
+    let y: dyn Container[i32] = Pair { a: 1, b: 1 };
     return sum(x) + sum(y);   // 42
 }
 ```
@@ -315,7 +315,7 @@ one slot per non-associated trait method in declaration order.
 
 1. **Checker** — record coercion sites. Add `Info.DynCoercions
    map[ast.Expr]DynCoercion{Trait,Concrete}`; a `maybeRecordDynCoercion(
-   dst, *holder, srcType)` mirrors `maybeWrapForUnion`'s call sites (var
+   dst, *holder, srcType)` mirrors `maybeWrapForUnion`'s call sites (let
    init, assign, call arg, return, array elem, struct field) but
    *records* (doesn't rewrite) when `dst` is `DynTraitType`, `srcType` is
    a concrete struct/enum impl-ing the trait, and `srcType` isn't already
@@ -361,7 +361,7 @@ one slot per non-associated trait method in declaration order.
    - `anyTableOp` must return true when `OpConstVtable`/`OpCallDyn` are
      present (and the impl methods are already in `prog.Funcs`, hence the
      table).
-7. **Tests** — e2e: `var d: dyn Shape = Circle{...}; d.area()` on wasm
+7. **Tests** — e2e: `let d: dyn Shape = Circle{...}; d.area()` on wasm
    matches the interp; a `dyn`-array differential (heterogeneous
    `dyn Shape[]`) vs interp. Keep the natives' reject test green.
 
@@ -549,9 +549,9 @@ below:
 - One real fix in the x86-64 + arm64 emitters: `ret_tag_of` collapses
   every non-scalar `T[]` to the generic `"array"` tag (the element name
   is lost), and the `for x in xs` lowering defaulted that element to
-  `i32` — so a method call on the loop var (`for x in shapes {
+  `i32` — so a method call on the loop let (`for x in shapes {
   x.area() }`) mis-dispatched to the primitive path. The generic
-  `"array"` tag now binds the loop var as `"unknown"`, which routes the
+  `"array"` tag now binds the loop let as `"unknown"`, which routes the
   call through runtime-shape dispatch. (This was a pre-existing bug for
   *any* struct array, not just `dyn` — `for p in points { p.m() }` hit
   it too; the `dyn` work surfaced it.)
@@ -562,14 +562,16 @@ Since two different traits may each provide a method of that name for one
 type, the self-host emits the second provider as `<Type>.<Trait>.<m>`
 (`parser.claim_method_name`) so the symbol namespace stays injective — and
 a dispatch chain searching for a bare `m` would then find only the FIRST
-trait's provider, whatever `d`'s trait says. So `op_dyn_dispatch` carries
-the dyn type's trait set alongside the method name (`str` is `m|B` /
-`m|A,B`), and every backend's arm enumerator resolves through
-`irtables.dyn_arm_matches`: a receiver whose provider for one of the dyn's
-traits was interposed matches THAT definition, and its bare namesake — a
-different trait's method — does not answer for it. Receivers with no
-collision keep matching the bare name, so `dyn A + B` where A provides `m`
-and B provides `n` is unaffected. The reading of the claim table itself is
+trait's provider, whatever `d`'s trait says. So the typed lowering picks
+the arms once (`semsource.dyn_arms`): a receiver must implement every trait
+of the dyn's set, and a receiver whose provider for one of those traits was
+interposed matches THAT definition, while its bare namesake — a different
+trait's method — does not answer for it. `op_dyn_dispatch` carries those
+arms as decl keys (`str` is `Circle.area,Rect.area`), and every backend's
+chain runs over exactly them (`irtables.dyn_arm_matches`). A type with a
+same-named method outside the dyn's traits — an `Add` impl's `add` beside a
+`dyn Adder` — is never an arm; wasm validates every arm, so one there was a
+module wasmtime rejected (#11122). The reading of the claim table itself is
 `parser.dyn_arm_matches` / `parser.dyn_provider_name`, beside the renaming
 it undoes, so both dispatch models share one rule.
 
@@ -578,7 +580,7 @@ resolution without a type checker (#6984). Its `Env` carries each binding's
 DECLARED type spelling parallel to the value — the slot the checker's Scope
 holds a `Type` in — and a method call resolves its written name through
 `parser.dyn_provider_name` against that. The shapes a declaration is in
-reach of are covered: a `var` binding, a parameter, a closure capture, and
+reach of are covered: a `let` binding, a parameter, a closure capture, and
 an element of an annotated array (indexed or iterated). A receiver whose
 static type has no declaration in reach — a struct field, a call result, an
 inferred binding — answers on the runtime value alone, i.e. the first
@@ -597,7 +599,7 @@ args** and **`dyn Trait[]` array-literal elements** (the §4.2 motivating
 shapes: passing to a function + heterogeneous collections), detected via
 a `'2'` flag in the existing `fn_param_sigs` registry (no new
 `LowerState` field, so the byte-identical bootstrap is untouched).
-**Remaining (next self-host increment):** the scalar `var d: dyn = x` /
+**Remaining (next self-host increment):** the scalar `let d: dyn = x` /
 `d = x` / `return x` coercion sites are not yet wired — a primitive there
 still flows in unboxed and mis-dispatches (pre-existing, no regression);
 the `lower_dyn_arg` helper drops straight into those two sites once their
@@ -635,7 +637,7 @@ does not, and the callee's dispatch read a shape pointer out of a scalar
 — SIGSEGV on the register backends, a validation failure on wasm.
 `fn_param_sigs` now carries a `'8'` flag for a `dyn Trait[]` param, and an
 array-LITERAL argument at such a position lowers through the shared
-`lower_dyn_array_lit`, the same helper the `var xs: dyn Show[] = […]`
+`lower_dyn_array_lit`, the same helper the `let xs: dyn Show[] = […]`
 binding uses. Only the literal form needs it: every other argument is an
 already-built array whose elements were coerced where it was built.
 
@@ -974,7 +976,7 @@ return one are its reason to exist.
 A concrete value coerces to `dyn Trait` exactly where a `dyn Trait` type
 is expected and the value's concrete type `impl`s the trait:
 
-- `var d: dyn Shape = Circle { … };`
+- `let d: dyn Shape = Circle { … };`
 - assignment `d = Rect { … };`
 - argument passing to a `dyn Shape` parameter
 - array element `[Circle{…}, Rect{…}]` against `dyn Shape[]`
@@ -1159,7 +1161,7 @@ type into a `dyn Trait`; the downcast asks, at run time, "is this
 
 ```fern
 function describe(s: dyn Shape): string {
-    var c: Option[Circle] = s as? Circle;       // Some(circle) | None
+    let c: Option[Circle] = s as? Circle;       // Some(circle) | None
     match (c) {
         Some(x) => "circle r=" + x.r.to_string(),  // x: Circle — usable concretely
         None    => "other",
@@ -1301,7 +1303,7 @@ non-object-safe one.
 **Coercion — impl-ALL.** A concrete `C` coerces to `dyn A + B` iff `C`
 implements **every** trait in the set (`Info.Impls[t][methodTypeName(C)]`
 for all `t`). The checker's `assignable` gate runs `implementsAllDynTraits`
-so every boxing site (var init, assignment, argument, array element,
+so every boxing site (let init, assignment, argument, array element,
 return) is covered uniformly; a failure names the missing trait(s).
 
 **Method resolution — UNION, collision = error.** A call `d.m()` resolves

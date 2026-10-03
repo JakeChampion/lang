@@ -8,16 +8,16 @@
 // Its sibling record_update wraps the same writes in a struct update; the
 // difference between the two is what a threaded record costs on top.
 function main(): i32 {
-  var buf: u8[] = [];
-  var n: i32 = 0;
+  let buf: u8[] = [];
+  let n: i32 = 0;
   while (n < 4096) {
     buf = buf.append(0u8);
     n = n + 1;
   }
-  var total: i64 = 0i64;
-  var r: i32 = 0;
+  let total: i64 = 0i64;
+  let r: i32 = 0;
   while (r < 400) {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 4096) {
       buf = buf.with(i, ((i + r) % 251) as u8);
       i = i + 1;

@@ -21,12 +21,12 @@ function find(ok: boolean): Result[i32, NotFound] {
     return Err(NotFound { what: "missing" });
 }
 function handler(ok: boolean): Result[i32, dyn Error] {
-    var v: i32 = find(ok)?;
+    let v: i32 = find(ok)?;
     return Ok(v + 1);
 }
 function main(): i32 {
-    var a: i32 = match (handler(true)) { Ok(v) => v, Err(e) => 0 };
-    var b: i32 = match (handler(false)) { Ok(v) => 0, Err(e) => e.message().len() };
+    let a: i32 = match (handler(true)) { Ok(v) => v, Err(e) => 0 };
+    let b: i32 = match (handler(false)) { Ok(v) => 0, Err(e) => e.message().len() };
     return a + b;
 }
 `
@@ -80,12 +80,12 @@ function find(ok: boolean): Result[i32, E] {
     return Err(E { c: 7 });
 }
 function handler(ok: boolean): Result[i32, dyn Code + Msg] {
-    var v: i32 = find(ok)?;
+    let v: i32 = find(ok)?;
     return Ok(v);
 }
 function main(): i32 {
-    var a: i32 = match (handler(true)) { Ok(v) => v, Err(e) => 0 };
-    var b: i32 = match (handler(false)) { Ok(v) => 0, Err(e) => e.code() + e.msg() };
+    let a: i32 = match (handler(true)) { Ok(v) => v, Err(e) => 0 };
+    let b: i32 = match (handler(false)) { Ok(v) => 0, Err(e) => e.code() + e.msg() };
     return a + b;
 }
 `
@@ -146,9 +146,9 @@ function handler(which: i32): Result[i32, dyn Error] {
     return Err(Timeout { secs: 5 });
 }
 function main(): i32 {
-    var a: i32 = match (handler(0)) { Ok(v) => v, Err(e) => 0 };
-    var b: i32 = match (handler(1)) { Ok(v) => 0, Err(e) => e.message().len() };
-    var c: i32 = match (handler(2)) { Ok(v) => 0, Err(e) => e.message().len() };
+    let a: i32 = match (handler(0)) { Ok(v) => v, Err(e) => 0 };
+    let b: i32 = match (handler(1)) { Ok(v) => 0, Err(e) => e.message().len() };
+    let c: i32 = match (handler(2)) { Ok(v) => 0, Err(e) => e.message().len() };
     return a + b + c;
 }
 `

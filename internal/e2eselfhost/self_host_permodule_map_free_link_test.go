@@ -23,8 +23,8 @@ func TestSelfHostPerModuleMapFreeLinks(t *testing.T) {
 	mustWrite(t, proj, "leaf.fern", `import "core/map";
 
 pub function distinct(xs: string[]): i32 {
-  var seen: Map[string, i32] = map_new(xs.len() + 1);
-  var n: i32 = 0;
+  let seen: Map[string, i32] = map_new(xs.len() + 1);
+  let n: i32 = 0;
   for x in xs {
     if (seen.get_or(x, 0) == 0) {
       seen = seen.insert(x, 1);

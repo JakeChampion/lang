@@ -19,7 +19,7 @@ func TestSelfHostRetiredArgvBuiltinsUndefined(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct{ name, src string }{
-		{"arg_at", "function main(): i32 {\n  var a: string = arg_at(1);\n  return a.len();\n}\n"},
+		{"arg_at", "function main(): i32 {\n  let a: string = arg_at(1);\n  return a.len();\n}\n"},
 		{"args_count", "function main(): i32 {\n  return args_count();\n}\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

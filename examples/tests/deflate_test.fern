@@ -59,8 +59,8 @@ function test_fixed_block(): test.TestOutcome {
 }
 
 function test_dynamic_block(): test.TestOutcome {
-  var want: string = "";
-  var i: i32 = 0;
+  let want: string = "";
+  let i: i32 = 0;
   while (i < 12) {
     want = want + "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. ";
     i = i + 1;
@@ -69,7 +69,7 @@ function test_dynamic_block(): test.TestOutcome {
 }
 
 function test_consumed(): test.TestOutcome {
-  var stream: u8[] = hex.hex_decode("cb48cdc9c957c8402701");
+  let stream: u8[] = hex.hex_decode("cb48cdc9c957c8402701");
   match (deflate.inflate(stream.append(255 as u8), 1024)) {
     Ok(inflated) => {
       return test.assert_eq(inflated.consumed, stream.len());
@@ -84,8 +84,8 @@ function test_consumed(): test.TestOutcome {
 // `__appended(out, line)` — `out` with the line's bytes on its end, one
 // append per byte so the array grows in place.
 function __appended(own out: u8[], line: string): u8[] {
-  var bs: u8[] = line.bytes();
-  var i: i32 = 0;
+  let bs: u8[] = line.bytes();
+  let i: i32 = 0;
   while (i < bs.len()) {
     out = out.append(bs[i]);
     i = i + 1;
@@ -96,8 +96,8 @@ function __appended(own out: u8[], line: string): u8[] {
 // 3000 numbered lines: dynamic blocks with matches up to the window's
 // full 32 KB back, checked byte for byte and by CRC-32 against the source.
 function test_corpus_gzip(): test.TestOutcome {
-  var want: u8[] = [];
-  var i: i32 = 0;
+  let want: u8[] = [];
+  let i: i32 = 0;
   while (i < 3000) {
     want = __appended(want, "line " + int.int_to_string(i) + " of the corpus\n");
     i = i + 1;
@@ -107,7 +107,7 @@ function test_corpus_gzip(): test.TestOutcome {
       if (out.len() != want.len()) {
         return test.fail("length " + int.int_to_string(out.len()) + ", want " + int.int_to_string(want.len()));
       }
-      var k: i32 = 0;
+      let k: i32 = 0;
       while (k < out.len()) {
         if (out[k] != want[k]) {
           return test.fail("byte " + int.int_to_string(k) + " differs");
@@ -180,7 +180,7 @@ function test_hand_rolled_refusals(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/deflate");
+  let r: test.TestRunner = test.test_new("std/deflate");
   r = r.it("stored block", test_stored_block);
   r = r.it("fixed block", test_fixed_block);
   r = r.it("dynamic block", test_dynamic_block);

@@ -9,8 +9,8 @@ parameter —
 function acc_fn(xs: i32[], s: i32): i32[] { return xs.append(s); }
 @noinline
 function round(i: i32): i32 {
-    var ys: i32[] = acc_fn([], i);
-    var zs: i32[] = acc_fn([1, 2], i);
+    let ys: i32[] = acc_fn([], i);
+    let zs: i32[] = acc_fn([1, 2], i);
     return ys.len() + zs.len() - 4;
 }
 ```

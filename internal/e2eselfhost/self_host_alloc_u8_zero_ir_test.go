@@ -15,8 +15,8 @@ import (
 // other sizes, over and over: any stale byte fails. 42 means every element
 // of every fresh array read zero; the other codes name the size that did not.
 const allocU8ZeroIRProg = `function filled(n: i32): u8[] {
-    var t: u8[] = __alloc_u8(n);
-    var b: i32 = 0;
+    let t: u8[] = __alloc_u8(n);
+    let b: i32 = 0;
     while (b < n) {
         t = t.with(b, 255 as u8);
         b = b + 1;
@@ -24,7 +24,7 @@ const allocU8ZeroIRProg = `function filled(n: i32): u8[] {
     return t;
 }
 function nonzero(t: u8[]): i32 {
-    var b: i32 = 0;
+    let b: i32 = 0;
     while (b < t.len()) {
         if (t[b] as i32 != 0) { return 1; }
         b = b + 1;
@@ -32,15 +32,15 @@ function nonzero(t: u8[]): i32 {
     return 0;
 }
 function main(): i32 {
-    var sizes: i32[] = [256, 1, 7, 64, 300];
-    var k: i32 = 0;
+    let sizes: i32[] = [256, 1, 7, 64, 300];
+    let k: i32 = 0;
     while (k < 20) {
-        var s: i32 = 0;
+        let s: i32 = 0;
         while (s < sizes.len()) {
-            var n: i32 = sizes[s];
-            var a: u8[] = filled(n);
-            var keep: i32 = a[n - 1] as i32;
-            var z: u8[] = __alloc_u8(n);
+            let n: i32 = sizes[s];
+            let a: u8[] = filled(n);
+            let keep: i32 = a[n - 1] as i32;
+            let z: u8[] = __alloc_u8(n);
             if (z.len() != n) { return 10 + s; }
             if (nonzero(z) != 0) { return 20 + s; }
             if (keep != 255) { return 30 + s; }

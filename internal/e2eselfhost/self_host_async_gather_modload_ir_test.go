@@ -40,8 +40,8 @@ func TestSelfHostAsyncGatherModloadIRX86_64(t *testing.T) {
 	prog := `import "std/async";
 
 function main(): i32 {
-    var fs: async.Future[i32][] = [Ready(5), Ready(7), Ready(30)];
-    var summed: i32[] = async.gather(fs, -1);
+    let fs: async.Future[i32][] = [Ready(5), Ready(7), Ready(30)];
+    let summed: i32[] = async.gather(fs, -1);
     return summed[0] + summed[1] + summed[2];
 }
 `

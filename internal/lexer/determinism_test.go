@@ -44,17 +44,17 @@ function classify(n: i32): i32 {
 
 	"numbers_and_operators": `
 function main(): i32 {
-	var a: i32 = 0xDEAD_BEEF;
-	var b: f64 = 3.14e-2;
-	var c: i32 = 42 + (a >> 4) & 0xFF | a;
-	var d: bool = a == 0 || c != 0 && a < c;
+	let a: i32 = 0xDEAD_BEEF;
+	let b: f64 = 3.14e-2;
+	let c: i32 = 42 + (a >> 4) & 0xFF | a;
+	let d: bool = a == 0 || c != 0 && a < c;
 	return c;
 }`,
 
 	"strings_and_fstrings": `
 function main(): i32 {
-	var s: string = "hello\nworld";
-	var n: i32 = 42;
+	let s: string = "hello\nworld";
+	let n: i32 = 42;
 	print(f"hello, {s}, value={n}, end");
 	print("plain literal");
 	return 0;

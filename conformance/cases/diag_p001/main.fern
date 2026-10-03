@@ -3,7 +3,7 @@
 // also checks the catalogue's example really does produce the error
 // it documents.
 function main(): i32 {
-    var x: i32 = 1     // missing `;` → error[P001]: expected ";", got "}"
+    let x: i32 = 1     // missing `;` → error[P001]: expected ";", got "}"
 }
 
 function f() {

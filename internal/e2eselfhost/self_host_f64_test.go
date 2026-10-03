@@ -21,7 +21,7 @@ import (
 // to the same f64. The last line pins the #5363 default that a bare
 // unsuffixed literal is f64 — 1.0/3.0 renders at f64 precision, not f32's.
 //
-// The `var fx: float` line this program used to carry is GONE, not moved:
+// The `let fx: float` line this program used to carry is GONE, not moved:
 // with std/float actually imported, a `float`-declared receiver dispatches
 // to that module's f32 `.to_string()` and renders "0.33333334" (#5882).
 // That is a pre-existing self-host dispatch bug — a pre-deletion driver

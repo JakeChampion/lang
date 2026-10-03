@@ -15,7 +15,7 @@ func loweredAndDefuncd(t *testing.T, src string) *Program {
 }
 
 // A local function declaration with no captures lowers, post
-// closureconv, to `var <name> = MakeClosure(target, [])`. Calling
+// closureconv, to `let <name> = MakeClosure(target, [])`. Calling
 // `<name>` from the same scope should defunctionalise to a direct
 // call to the hoisted target.
 func TestDefuncRewritesLocalFunctionCall(t *testing.T) {
@@ -46,13 +46,13 @@ func TestDefuncRewritesLocalFunctionCall(t *testing.T) {
 }
 
 // A captured-variable closure: `function add(x) { return x + n; }`
-// closureconv turns into `var add = MakeClosure(target, [n])`.
+// closureconv turns into `let add = MakeClosure(target, [n])`.
 // Single MakeClosure flow → defunctionalises to a direct call;
 // the env-load synthesises the captured `n` access via the
 // closure_pair+4 read path.
 func TestDefuncRewritesCapturingClosure(t *testing.T) {
 	p := loweredAndDefuncd(t, `function main(): i32 {
-		var n: i32 = 7;
+		let n: i32 = 7;
 		function add(x: i32): i32 { return x + n; }
 		return add(35);
 	}`)
@@ -67,7 +67,7 @@ func TestDefuncRewritesCapturingClosure(t *testing.T) {
 	}
 }
 
-// Aliased closure value: `var b = a` where `a` is a known
+// Aliased closure value: `let b = a` where `a` is a known
 // closure-pair-holding slot propagates the monomorphic target
 // through `b`. Without the fixed-point Phase 1 chase, calls
 // through `b` fell back to OpCallIndirect — and at the native
@@ -77,7 +77,7 @@ func TestDefuncRewritesCapturingClosure(t *testing.T) {
 func TestDefuncChasesLoadLocalChain(t *testing.T) {
 	p := loweredAndDefuncd(t, `function main(): i32 {
 		function answer(): i32 { return 42; }
-		var f = answer;
+		let f = answer;
 		return f();
 	}`)
 	main := findFunc(p, "main")
@@ -102,15 +102,15 @@ func TestDefuncChasesLoadLocalChain(t *testing.T) {
 	}
 }
 
-// Two-hop aliasing: `var b = a; var c = b; c()` requires the
+// Two-hop aliasing: `let b = a; let c = b; c()` requires the
 // fixed-point analysis to converge after multiple passes.
 // Each iteration propagates one hop further along the chain.
 func TestDefuncChasesMultiHopLoadLocal(t *testing.T) {
 	p := loweredAndDefuncd(t, `function main(): i32 {
 		function answer(): i32 { return 17; }
-		var a = answer;
-		var b = a;
-		var c = b;
+		let a = answer;
+		let b = a;
+		let c = b;
 		return c();
 	}`)
 	main := findFunc(p, "main")
@@ -124,7 +124,7 @@ func TestDefuncChasesMultiHopLoadLocal(t *testing.T) {
 	}
 }
 
-// Cross-function closure factory: `var f = makeAdder(7);` puts
+// Cross-function closure factory: `let f = makeAdder(7);` puts
 // a closure pair into f from a function that always returns the
 // same closure target. The phase-0 analyseReturnTargets pass
 // recognises makeAdder as monomorphic-returning that target,
@@ -136,7 +136,7 @@ func TestDefuncRewritesClosureFactoryFlow(t *testing.T) {
 		return add;
 	}
 	function main(): i32 {
-		var f = makeAdder(7);
+		let f = makeAdder(7);
 		return f(35);
 	}`)
 	main := findFunc(p, "main")

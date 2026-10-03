@@ -10,7 +10,7 @@ import (
 // `freshOwnedRcTempType` classified only the literal node kinds — a variant
 // construction is spelled as a Call, and that switch excludes Calls because a
 // method call can alias its receiver. So the box AND everything under it was
-// stranded on every call, while the same value bound to a `var` first, and the
+// stranded on every call, while the same value bound to a `let` first, and the
 // struct and tuple literals in the identical position, were all reclaimed
 // (#7867 slice 3, half two).
 //
@@ -50,7 +50,7 @@ function mkpayload(base: string): string { return base + "-payloadpayload"; }
 func variantCtorArgSrc(rounds int) string {
 	return variantReclaimPrelude + `
 function round(i: i32): i32 {
-    var base: string = "shared-left-operand";
+    let base: string = "shared-left-operand";
     return sink(E.A(mkpayload(base)));
 }
 ` + variantChurnMain(rounds, rounds*34)
@@ -63,9 +63,9 @@ function round(i: i32): i32 {
 func variantCtorArgLivePayloadSrc(rounds int) string {
 	return variantReclaimPrelude + `
 function round(i: i32): i32 {
-    var base: string = "shared-left-operand";
-    var live: string = mkpayload(base);
-    var n: i32 = sink(E.A(live));
+    let base: string = "shared-left-operand";
+    let live: string = mkpayload(base);
+    let n: i32 = sink(E.A(live));
     return n + live.len() - 34;
 }
 ` + variantChurnMain(rounds, rounds*34)
@@ -80,8 +80,8 @@ func variantCtorReturnedSrc(rounds int) string {
 @noinline
 function keepf(e: E): E { return e; }
 function round(i: i32): i32 {
-    var base: string = "shared-left-operand";
-    var r: E = keepf(E.A(mkpayload(base)));
+    let base: string = "shared-left-operand";
+    let r: E = keepf(E.A(mkpayload(base)));
     match (r) {
         E.A(s) => { return s.len(); },
         E.B => { return 0; },
@@ -104,7 +104,7 @@ function round(i: i32): i32 {
 func variantPayloadlessArgSrc(rounds int) string {
 	return variantReclaimPrelude + `
 function round(i: i32): i32 {
-    var base: string = "shared-left-operand";
+    let base: string = "shared-left-operand";
     return sink(E.B) + sink(E.A(mkpayload(base)));
 }
 ` + variantChurnMain(rounds, rounds*34)
@@ -123,7 +123,7 @@ function sink2(a: i32, e: E, b: i32): i32 {
     }
 }
 function round(i: i32): i32 {
-    var base: string = "shared-left-operand";
+    let base: string = "shared-left-operand";
     return sink2(1, E.A(mkpayload(base)), 2) - 3;
 }
 ` + variantChurnMain(rounds, rounds*34)
@@ -133,8 +133,8 @@ function round(i: i32): i32 {
 // matches and no rc over-release was counted.
 func variantChurnMain(rounds, want int) string {
 	return `function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < ` + strconv.Itoa(rounds) + `) { acc = acc + round(r); r = r + 1; }
     if (acc != ` + strconv.Itoa(want) + `) { return 1; }
     if (__rc_underflow_count() != 0) { return 2; }

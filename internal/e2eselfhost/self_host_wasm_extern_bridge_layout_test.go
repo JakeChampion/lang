@@ -25,7 +25,7 @@ import (
 //   - the two calling-convention shims the IR path needs and the AST path does
 //     not: a void extern and a void export.
 //
-// TestSelfHostWasmVariantF32ArmMatchIR covers the irlower fix the bridge
+// TestSelfHostWasmVariantF32ArmMatchIR covers the lowering fix the bridge
 // surfaced, on a program with no WIT in it at all.
 
 // The routing assertion. The IR framing emits tid_globals_section
@@ -66,7 +66,7 @@ func TestSelfHostWasmExternBridgeIRLayout(t *testing.T) {
 			src: `struct Mix { a: i32, b: u32, c: i32 }
 @import("local:test/src@0.1.0", "make-mix")
 function make_mix(): Mix;
-function main(): i32 { var p: Mix = make_mix(); return p.a + (p.b as i32) + p.c; }`,
+function main(): i32 { let p: Mix = make_mix(); return p.a + (p.b as i32) + p.c; }`,
 			want: []string{
 				"(local.set $s (call $__fern_str_box (i32.const 32)))",
 				"(i32.const 8)) (i32.load (i32.add (local.get $rb) (i32.const 0))))",
@@ -106,7 +106,7 @@ function main(): i32 { return sum3((1, 2, 3)); }`,
 			name: "tuple-result-retptr",
 			src: `@import("local:test/src@0.1.0", "make-pair")
 function make_pair(a: i32, b: i32): (i32, i32);
-function main(): i32 { var p: (i32, i32) = make_pair(1, 2); return p.0 + p.1; }`,
+function main(): i32 { let p: (i32, i32) = make_pair(1, 2); return p.0 + p.1; }`,
 			want: []string{
 				`(import "local:test/src@0.1.0" "make-pair" (func $make_pair__import (param i32) (param i32) (param i32)))`,
 				"(call $make_pair__import (local.get $ep0) (local.get $ep1) (local.get $rb))",
@@ -164,7 +164,7 @@ function on_request(x: i32): void { return; }`,
 	}
 }
 
-// TestSelfHostWasmVariantF32ArmMatchIR pins the irlower fix the f32-arm WIT
+// TestSelfHostWasmVariantF32ArmMatchIR pins the lowering fix the f32-arm WIT
 // variant surfaced, with no WIT involved: an f32 enum payload is CONSTRUCTED
 // widened to an 8-byte f64 (op_struct_new's f64.store), so the match arm must
 // read it back with f64.load; reading the low half with i32.load makes

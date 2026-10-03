@@ -52,7 +52,7 @@ func TestSelfHostFrontEndNumericLiteralCodes(t *testing.T) {
 
 	// prog wraps a float literal in the smallest program that binds it.
 	prog := func(lit string) string {
-		return "function main(): i32 { var x: f64 = " + lit + "; return 0; }\n"
+		return "function main(): i32 { let x: f64 = " + lit + "; return 0; }\n"
 	}
 	cases := []struct {
 		name string

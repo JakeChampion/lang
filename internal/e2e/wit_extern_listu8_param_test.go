@@ -118,7 +118,7 @@ func TestExternListU8ParamCustomProvider(t *testing.T) {
 function sum_bytes(data: u8[]): u32;
 
 function main(): i32 {
-	var b: u8[] = [10u8, 20u8, 30u8];
+	let b: u8[] = [10u8, 20u8, 30u8];
 	if (sum_bytes(b) == 60u32) { write("` + want + `"); } else { write("sum-bad"); }
 	return 0;
 }`

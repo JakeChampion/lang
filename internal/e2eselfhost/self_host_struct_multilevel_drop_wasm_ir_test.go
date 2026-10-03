@@ -32,11 +32,11 @@ func TestSelfHostStructMultiLevelDropWasm(t *testing.T) {
 struct B { c: C, bt: i32 }
 struct A { b: B, at: i32 }
 function mk(): i32 {
-    var a: A = A { b: B { c: C { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, bt: 2 }, at: 7 };
+    let a: A = A { b: B { c: C { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, bt: 2 }, at: 7 };
     return a.b.c.items[0] + a.b.c.items[15] + a.b.bt + a.at;
 }
 function main(): i32 {
-    var s: i32 = 0; var k: i32 = 0;
+    let s: i32 = 0; let k: i32 = 0;
     while (k < 400000) { s = mk(); k = k + 1; }
     return s - 26;
 }`

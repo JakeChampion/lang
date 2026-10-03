@@ -39,10 +39,44 @@ func (a *Assembler) MachODataLen() int {
 func (a *Assembler) MachODataRebaseOffsets() []int {
 	offs := make([]int, 0, len(a.quadSymFixups))
 	for _, f := range a.quadSymFixups {
-		offs = append(offs, f.at)
+		if !a.isImport(f.label) {
+			offs = append(offs, f.at)
+		}
 	}
 	sort.Ints(offs)
 	return offs
+}
+
+// MachOBind is one 8-byte data slot dyld fills with the address of an
+// imported libSystem symbol.
+type MachOBind struct {
+	Off int
+	Sym string
+}
+
+// MachODataBinds returns the `.quad <symbol>` slots naming a symbol this
+// program does not define and spells as a C symbol (`_getpwuid`): imports
+// from libSystem, which the container declares as bind opcodes and dyld
+// fills at load. Sorted by offset.
+func (a *Assembler) MachODataBinds() []MachOBind {
+	var out []MachOBind
+	for _, f := range a.quadSymFixups {
+		if a.isImport(f.label) {
+			out = append(out, MachOBind{Off: f.at, Sym: f.label})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Off < out[j].Off })
+	return out
+}
+
+// isImport reports whether a `.quad` names a libSystem symbol: undefined
+// here and spelled `_name`. Fern's own symbols are `__`-prefixed or local,
+// so an undefined one of those stays an error.
+func (a *Assembler) isImport(label string) bool {
+	if _, ok := a.syms[label]; ok {
+		return false
+	}
+	return len(label) > 1 && label[0] == '_' && label[1] != '_'
 }
 
 // HasCFI reports whether the program recorded any `.cfi_*` span, which is
@@ -154,6 +188,9 @@ func (a *Assembler) LinkMachO(textVAddr, dataVAddr uint64) (text, data []byte, e
 	}
 
 	for _, f := range a.quadSymFixups {
+		if a.isImport(f.label) {
+			continue // dyld binds it; the slot stays zero
+		}
 		sv, ok := symVAddr(f.label)
 		if !ok {
 			return nil, nil, fmt.Errorf("arm64: .quad of undefined symbol %q", f.label)

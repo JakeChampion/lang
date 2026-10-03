@@ -14,7 +14,7 @@ The issue's 3200 B at 200 rounds is 100 None rounds × 32 B.
 
 ## The mechanism
 
-`var o = mk(i)` reboxes the pair-form result through
+`let o = mk(i)` reboxes the pair-form result through
 `emitRepackPairAsHeapBox`, which materialises a REAL rc=1 box for
 whatever tag the callee returned. The release is the inline
 tag-switch drop (`emitEnumSlotDrop`'s variant-plan tier — the gen-fn

@@ -6,7 +6,7 @@ AST lowering (`irlower.fern`: `nested_arr_field_read_type`,
 
 Not a leak but a use-after-free. `nested_arr_field_read_type` admitted only
 `is_nested_array_field_type`, which leaves `string[][]` out, so
-`var p = r.names` was not even an array slot and took no retain. Rebinding
+`let p = r.names` was not even an array slot and took no retain. Rebinding
 `r` ran `__field_reclaim_<T>` and freed the rows `p` still read: SIGSEGV on
 x86-64. On wasm `p.len()` read 1 for 2, and `p[1][0]` trapped.
 
@@ -31,6 +31,6 @@ the issue on it. The rebound holder is the shape that shows the free.
 
 ## Still leaking
 
-A holder typed from a call (`var r = mk(i)`) defeats `local_struct_type_of`,
+A holder typed from a call (`let r = mk(i)`) defeats `local_struct_type_of`,
 so the bind retains without a credit and its rows leak. An `i32[][]` field
 bind has always behaved the same way: 16 / 7 over four rounds.

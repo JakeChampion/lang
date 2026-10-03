@@ -76,10 +76,10 @@ pub function parse_id(s: string): Option[i64] {
   if (s.len() == 0) {
     return None;
   }
-  var v: i64 = 0;
-  var i: i32 = 0;
+  let v: i64 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c < 48 || c > 57) {
       return None;
     }
@@ -98,7 +98,7 @@ function passwd_entry(line: string): Option[User] {
   if (line.len() == 0) {
     return None;
   }
-  var f: string[] = line.split(":");
+  let f: string[] = line.split(":");
   if (f.len() < 4) {
     return None;
   }
@@ -133,10 +133,10 @@ function field(f: string[], i: i32): string {
 // letter capitalised. The convention is older than /etc/passwd's other
 // uses of the field and it is what `pinky` prints as the real name.
 pub function (u: User) full_name(): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < u.gecos.len()) {
-    var c: i32 = u.gecos[i] as i32;
+    let c: i32 = u.gecos[i] as i32;
     if (c == 44) {
       return out;
     }
@@ -154,7 +154,7 @@ function capitalised(name: string): string {
   if (name.len() == 0) {
     return name;
   }
-  var first: string = slice_unchecked(name, 0, 1) + "";
+  let first: string = slice_unchecked(name, 0, 1) + "";
   return first.to_ascii_upper() + slice_unchecked(name, 1, name.len());
 }
 
@@ -163,13 +163,13 @@ function group_entry(line: string): Option[(Group, string)] {
   if (line.len() == 0) {
     return None;
   }
-  var f: string[] = line.split(":");
+  let f: string[] = line.split(":");
   if (f.len() < 3) {
     return None;
   }
   match (parse_id(f[2])) {
     Some(gid) => {
-      var members: string = "";
+      let members: string = "";
       if (f.len() > 3) {
         members = f[3];
       }
@@ -192,8 +192,8 @@ pub function user_by_name(name: string): Option[User] {
 // these with fixtures for the rules the machine happens not to show —
 // a malformed line, a duplicate name, a gid no group entry claims.
 pub function user_by_name_in(text: string, name: string): Option[User] {
-  var lines: string[] = text.lines();
-  var i: i32 = 0;
+  let lines: string[] = text.lines();
+  let i: i32 = 0;
   while (i < lines.len()) {
     match (passwd_entry(lines[i])) {
       Some(u) => {
@@ -216,8 +216,8 @@ pub function group_by_name(name: string): Option[Group] {
 }
 
 pub function group_by_name_in(text: string, name: string): Option[Group] {
-  var lines: string[] = text.lines();
-  var i: i32 = 0;
+  let lines: string[] = text.lines();
+  let i: i32 = 0;
   while (i < lines.len()) {
     match (group_entry(lines[i])) {
       Some(pair) => {
@@ -238,8 +238,8 @@ pub function user_by_uid(uid: i64): Option[User] {
 }
 
 pub function user_by_uid_in(text: string, uid: i64): Option[User] {
-  var lines: string[] = text.lines();
-  var i: i32 = 0;
+  let lines: string[] = text.lines();
+  let i: i32 = 0;
   while (i < lines.len()) {
     match (passwd_entry(lines[i])) {
       Some(u) => {
@@ -252,6 +252,37 @@ pub function user_by_uid_in(text: string, uid: i64): Option[User] {
     i = i + 1;
   }
   return None;
+}
+
+// The user name for `uid`: the files' entry, then the account database
+// libSystem asks. On Darwin regular accounts live only in Directory Services
+// and /etc/passwd holds just the system ones (#9815); every other target
+// answers no name there and the files are the whole answer.
+pub function user_name(uid: i64): Option[string] {
+  return user_name_in(slurp(passwd_path()), uid);
+}
+
+pub function user_name_in(text: string, uid: i64): Option[string] {
+  match (user_by_uid_in(text, uid)) {
+    Some(u) => {
+      return Some(u.name);
+    },
+    None => {}
+  }
+  if (uid < 0 as i64 || uid > 4294967295 as i64) {
+    return None;
+  }
+  let p: usize = __getpwuid_name(uid as u32);
+  if (p == 0 as usize) {
+    return None;
+  }
+  let bs: u8[] = [];
+  let at: usize = p;
+  while (__load_u8(at) != 0) {
+    bs = bs.append(__load_u8(at) as u8);
+    at = at + 1 as usize;
+  }
+  return Some(string_from_bytes_unchecked(bs));
 }
 
 // The two databases as TEXT, for a caller that looks up more than once. Every
@@ -268,13 +299,13 @@ pub function group_text(): string {
 
 // The first /etc/group entry with this gid, as a name, over already-read text.
 pub function group_name_in(text: string, gid: i64): Option[string] {
-  var names: Option[string][] = group_names_in(text, [gid]);
+  let names: Option[string][] = group_names_in(text, [gid]);
   return names[0];
 }
 
 // The first /etc/group entry with this gid, as a name.
 pub function group_name(gid: i64): Option[string] {
-  var names: Option[string][] = group_names([gid]);
+  let names: Option[string][] = group_names([gid]);
   return names[0];
 }
 
@@ -287,8 +318,8 @@ pub function group_names(gids: i64[]): Option[string][] {
 }
 
 pub function group_names_in(text: string, gids: i64[]): Option[string][] {
-  var out: Option[string][] = [];
-  var k: i32 = 0;
+  let out: Option[string][] = [];
+  let k: i32 = 0;
   while (k < gids.len()) {
     out = out.append(None);
     k = k + 1;
@@ -296,12 +327,12 @@ pub function group_names_in(text: string, gids: i64[]): Option[string][] {
   if (gids.len() == 0) {
     return out;
   }
-  var lines: string[] = text.lines();
-  var i: i32 = 0;
+  let lines: string[] = text.lines();
+  let i: i32 = 0;
   while (i < lines.len()) {
     match (group_entry(lines[i])) {
       Some(e) => {
-        var j: i32 = 0;
+        let j: i32 = 0;
         while (j < gids.len()) {
           if (gids[j] == e.0.gid) {
             // The FIRST line with a gid wins, so a later duplicate
@@ -328,13 +359,13 @@ function has_member(members: string, name: string): boolean {
   if (members.len() == 0) {
     return false;
   }
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i <= members.len()) {
     if (i == members.len() || members[i] as i32 == 44) {
       if (i - start == name.len()) {
-        var same: boolean = true;
-        var k: i32 = 0;
+        let same: boolean = true;
+        let k: i32 = 0;
         while (k < name.len()) {
           if (members[start + k] != name[k]) {
             same = false;
@@ -362,9 +393,9 @@ pub function group_list(name: string, gid: i64): i64[] {
 }
 
 pub function group_list_in(text: string, name: string, gid: i64): i64[] {
-  var out: i64[] = [gid];
-  var lines: string[] = text.lines();
-  var i: i32 = 0;
+  let out: i64[] = [gid];
+  let lines: string[] = text.lines();
+  let i: i32 = 0;
   while (i < lines.len()) {
     match (group_entry(lines[i])) {
       Some(e) => {
@@ -380,7 +411,7 @@ pub function group_list_in(text: string, name: string, gid: i64): i64[] {
 }
 
 pub function contains_gid(gids: i64[], gid: i64): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < gids.len()) {
     if (gids[i] == gid) {
       return true;
@@ -399,9 +430,9 @@ pub function contains_gid(gids: i64[], gid: i64): boolean {
 // a process whose egid is 27 and whose supplementary set is [4, 27]
 // reports `27 4` rather than `4 27`.
 pub function process_groups(): i64[] {
-  var out: i64[] = [getegid() as i64];
-  var gs: i64[] = getgroups();
-  var i: i32 = 0;
+  let out: i64[] = [getegid() as i64];
+  let gs: i64[] = getgroups();
+  let i: i32 = 0;
   while (i < gs.len()) {
     if (!contains_gid(out, gs[i])) {
       out = out.append(gs[i]);

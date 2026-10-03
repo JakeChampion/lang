@@ -18,23 +18,23 @@ import (
 
 const tcpSendBytesProgram = `import "std/array";
 function send_all(fd: i32, data: u8[]): void {
-    var remaining: u8[] = data;
+    let remaining: u8[] = data;
     while (remaining.len() > 0) {
-        var n: i32 = tcp_send_bytes(fd, remaining);
+        let n: i32 = tcp_send_bytes(fd, remaining);
         assert(n > 0 && n <= remaining.len());
         remaining = array.drop(remaining, n);
     }
 }
 function main(): i32 {
-    var fd: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], TCP_PORT, false);
+    let fd: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], TCP_PORT, false);
     assert(fd >= 0);
-    var data: u8[] = [];
+    let data: u8[] = [];
     for i in 0..8193 { data = data.append((i % 256) as u8); }
-    var retained: u8[] = data;
+    let retained: u8[] = data;
     send_all(fd, data);
     send_all(fd, retained);
     send_all(fd, [255u8, 0u8, 128u8]);
-    var empty: u8[] = [];
+    let empty: u8[] = [];
     assert(tcp_send_bytes(fd, empty) == 0);
     assert(data.len() == 8193 && retained.len() == 8193);
     for i in 0..8193 { assert(data[i] == (i % 256) as u8); }
@@ -88,7 +88,7 @@ func TestSelfHostTCPSendBytes(t *testing.T) {
 						for _, shut := range []bool{false, true} {
 							program := e2eharness.NativeSocketSendProbe("abc", shut)
 							program = strings.ReplaceAll(program, "tcp_send(", "tcp_send_bytes(")
-							program = strings.ReplaceAll(program, `var data: string = "abc";`, "var data: u8[] = [255u8, 0u8, 128u8];")
+							program = strings.ReplaceAll(program, `let data: string = "abc";`, "let data: u8[] = [255u8, 0u8, 128u8];")
 							dir := t.TempDir()
 							src, bin := filepath.Join(dir, "errors.fern"), filepath.Join(dir, "errors")
 							if err := os.WriteFile(src, []byte(program), 0o644); err != nil {

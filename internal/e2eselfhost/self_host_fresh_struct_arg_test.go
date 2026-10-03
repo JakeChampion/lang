@@ -52,7 +52,7 @@ const freshStructArgProlog = "struct Op { a: i32, b: i32 }\n" +
 
 func freshStructArgSrc(body string, rounds int) string {
 	return freshStructArgProlog +
-		"function main(): i32 { var st: St = St { n: 0 }; var i: i32 = 0; " +
+		"function main(): i32 { let st: St = St { n: 0 }; let i: i32 = 0; " +
 		"while (i < " + fmt.Sprint(rounds) + ") { " + body + " i = i + 1; } " +
 		"if (__rc_underflow_count() != 0) { return 99; } return st.n % 83; }"
 }
@@ -84,7 +84,7 @@ func freshStructArgCases() []freshStructArgCase {
 		{name: "free_fn_struct_lit_arg", body: "st = countf(st, Op { a: i, b: i });"},
 		// Bound to a local first — the one position that already worked, and
 		// the one a stash firing twice would over-release.
-		{name: "bound_first", body: "var o: Op = mkop(i); st = st.count(o);"},
+		{name: "bound_first", body: "let o: Op = mkop(i); st = st.count(o);"},
 	}
 }
 
@@ -151,7 +151,7 @@ func TestSelfHostFreshStructArgRefusedX86_64(t *testing.T) {
 
 	refused := []struct{ name, body string }{
 		{"callee_returns_arg", "st = st.count(keepf(mkop(i)));"},
-		{"callee_wraps_arg", "var bx: Box = wrapf(mkop(i), i); st = St { n: st.n + bx.o.a };"},
+		{"callee_wraps_arg", "let bx: Box = wrapf(mkop(i), i); st = St { n: st.n + bx.o.a };"},
 	}
 	for _, tc := range refused {
 		t.Run(tc.name, func(t *testing.T) {

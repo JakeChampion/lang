@@ -26,12 +26,12 @@ impl Iterator[i32] for Range {
     }
 }
 pub function take[T, I: Iterator[T]](it: I, n: i32): T[] {
-    var out: T[] = []; var cur = it; var k = n; var go = true;
+    let out: T[] = []; let cur = it; let k = n; let go = true;
     while (go) { if (k <= 0) { go = false; } else { match (cur.next()) { Some(t) => { out = out.append(t.0); cur = t.1; k = k - 1; }, None => { go = false; }, } } }
     return out;
 }
 pub function skip[T, I: Iterator[T]](it: I, n: i32): T[] {
-    var out: T[] = []; var cur = it; var k = n; var go = true;
+    let out: T[] = []; let cur = it; let k = n; let go = true;
     while (go) { match (cur.next()) { Some(t) => { if (k > 0) { k = k - 1; } else { out = out.append(t.0); } cur = t.1; }, None => { go = false; }, } }
     return out;
 }
@@ -43,15 +43,15 @@ var iterTakeSkipCases = []struct {
 	want int
 }{
 	// take the first 4 of [0,100): [0,1,2,3]; sum 6 + len 4 = 10.
-	{"take", `function main(): i32 { var a = take(range(0, 100), 4); var s = 0; for v in a { s = s + v; } return s + a.len(); }`, 10},
+	{"take", `function main(): i32 { let a = take(range(0, 100), 4); let s = 0; for v in a { s = s + v; } return s + a.len(); }`, 10},
 	// take more than available: take 9 of [0,3) yields [0,1,2]; sum 3 + len 3 = 6.
-	{"take-saturating", `function main(): i32 { var a = take(range(0, 3), 9); var s = 0; for v in a { s = s + v; } return s + a.len(); }`, 6},
+	{"take-saturating", `function main(): i32 { let a = take(range(0, 3), 9); let s = 0; for v in a { s = s + v; } return s + a.len(); }`, 6},
 	// skip the first 4 of [0,6): [4,5]; sum 9 + len 2 = 11.
-	{"skip", `function main(): i32 { var b = skip(range(0, 6), 4); var s = 0; for v in b { s = s + v; } return s + b.len(); }`, 11},
+	{"skip", `function main(): i32 { let b = skip(range(0, 6), 4); let s = 0; for v in b { s = s + v; } return s + b.len(); }`, 11},
 	// skip past the end: skip 10 of [0,3) yields []; len 0 + 5 = 5.
-	{"skip-past-end", `function main(): i32 { var b = skip(range(0, 3), 10); return b.len() + 5; }`, 5},
+	{"skip-past-end", `function main(): i32 { let b = skip(range(0, 3), 10); return b.len() + 5; }`, 5},
 	// take(0) is empty; skip(0) keeps all of [0,4) = sum 6; 0 + 6 = 6.
-	{"take0-skip0", `function main(): i32 { var a = take(range(0, 4), 0); var b = skip(range(0, 4), 0); var s = 0; for v in b { s = s + v; } return a.len() + s; }`, 6},
+	{"take0-skip0", `function main(): i32 { let a = take(range(0, 4), 0); let b = skip(range(0, 4), 0); let s = 0; for v in b { s = s + v; } return a.len() + s; }`, 6},
 }
 
 func iterTakeSkipProg(mainBody string) string { return iterTakeSkipPrelude + mainBody + "\n" }
@@ -92,10 +92,10 @@ func TestNativeIterTakeSkipArm64(t *testing.T) {
 func TestNativeIterTakeSkipModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
-    var a = iter.take(iter.range(0, 100), 4);  // [0,1,2,3]
-    var sa = 0; for v in a { sa = sa + v; }     // 6
-    var b = iter.skip(iter.range(0, 6), 4);     // [4,5]
-    var sb = 0; for v in b { sb = sb + v; }     // 9
+    let a = iter.take(iter.range(0, 100), 4);  // [0,1,2,3]
+    let sa = 0; for v in a { sa = sa + v; }     // 6
+    let b = iter.skip(iter.range(0, 6), 4);     // [4,5]
+    let sb = 0; for v in b { sb = sb + v; }     // 9
     return sa + a.len() + sb + b.len();         // 6+4+9+2 = 21
 }
 `

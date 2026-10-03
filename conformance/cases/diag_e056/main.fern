@@ -3,7 +3,7 @@
 // also checks the catalogue's example really does produce the error
 // it documents.
 function main(): i32 {
-var xs: i32[] = [1, 2, 3];
+let xs: i32[] = [1, 2, 3];
 xs[0] = 9;               // error[E056]
 
     return 0;

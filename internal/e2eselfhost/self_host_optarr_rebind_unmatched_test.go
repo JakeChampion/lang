@@ -6,7 +6,7 @@ import (
 
 // --- A rebound Option[i32[]] with nothing consuming it -----------------------
 //
-// `var x: Option[i32[]] = Some([i, i+1]); x = Some([i+2, i+3, i+4]);` measured
+// `let x: Option[i32[]] = Some([i, i+1]); x = Some([i+2, i+3, i+4]);` measured
 // 400 allocs / **0 frees** — nothing released at all, the signature of a credit
 // that was never granted rather than a release that was half-wired. It is
 // `opt_arr__rebind__unused` on both leak-matrix arches (#5338).
@@ -44,13 +44,13 @@ import (
 // FERN_RC_UNDERFLOW_TRAP=1 and FERN_RC_FREE_DEBUG=1: clean, no trap, no
 // quarantine hit.
 
-const optarrRebindChurn = `function churn(i: i32): i32 { var a: i32[] = [i, i + 1, i + 2]; var b: i32[] = [i, i + 1]; return a[0] + b[1]; }
+const optarrRebindChurn = `function churn(i: i32): i32 { let a: i32[] = [i, i + 1, i + 2]; let b: i32[] = [i, i + 1]; return a[0] + b[1]; }
 `
 
 const optarrRebindChurnMain = `
 function main(): i32 {
-    var acc: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
-    while (i < 200) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } acc = acc + r; i = i + 1; }
+    let acc: i32 = 0; let i: i32 = 0; let bad: i32 = 0;
+    while (i < 200) { let r: i32 = round(i); if (r < 0) { bad = bad + 1; } acc = acc + r; i = i + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -58,7 +58,7 @@ function main(): i32 {
 
 const optarrRebindPlainMain = `
 function main(): i32 {
-    var acc: i32 = 0; var i: i32 = 0;
+    let acc: i32 = 0; let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -70,8 +70,8 @@ func optarrRebindCases() []arrenumShareCase {
 			// THE CELL, in the matrix's own spelling. 400/0 before.
 			name: "rebind_unmatched",
 			src: `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var x: Option[i32[]] = Some([i, i + 1]);
+    let t: i32 = 0;
+    let x: Option[i32[]] = Some([i, i + 1]);
     x = Some([i + 2, i + 3, i + 4]);
     t = t + 1;
     return t;
@@ -83,8 +83,8 @@ func optarrRebindCases() []arrenumShareCase {
 			// change. It is what says the release was never the missing half.
 			name: "rebind_matched_unchanged",
 			src: `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var x: Option[i32[]] = Some([i, i + 1]);
+    let t: i32 = 0;
+    let x: Option[i32[]] = Some([i, i + 1]);
     x = Some([i + 2, i + 3, i + 4]);
     match (x) { Some(xs) => { t = t + xs.len(); }, None => {} }
     t = t + 1;
@@ -97,8 +97,8 @@ func optarrRebindCases() []arrenumShareCase {
 			// collector. If it moves, the quadrant fill reached past its axis.
 			name: "single_bind_unchanged",
 			src: `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var x: Option[i32[]] = Some([i, i + 1]);
+    let t: i32 = 0;
+    let x: Option[i32[]] = Some([i, i + 1]);
     t = t + 1;
     return t;
 }` + optarrRebindPlainMain,
@@ -107,11 +107,11 @@ func optarrRebindCases() []arrenumShareCase {
 		{
 			name: "loop_rebind",
 			src: optarrRebindChurn + `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var x: Option[i32[]] = Some([i, i + 1]);
-    var j: i32 = 0;
+    let t: i32 = 0;
+    let x: Option[i32[]] = Some([i, i + 1]);
+    let j: i32 = 0;
     while (j < 3) { x = Some([i + j, i + j + 1, i + j + 2]); j = j + 1; }
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     return (t + junk) % 101;
 }` + optarrRebindChurnMain,
 			want: 25,
@@ -119,10 +119,10 @@ func optarrRebindCases() []arrenumShareCase {
 		{
 			name: "conditional_rebind",
 			src: optarrRebindChurn + `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var x: Option[i32[]] = Some([i, i + 1]);
+    let t: i32 = 0;
+    let x: Option[i32[]] = Some([i, i + 1]);
     if (i % 2 == 0) { x = Some([i + 2, i + 3, i + 4]); }
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     return (t + junk) % 101;
 }` + optarrRebindChurnMain,
 			want: 25,
@@ -133,14 +133,14 @@ func optarrRebindCases() []arrenumShareCase {
 			// answered 25 where native and interp say 42.
 			name: "refused_option_escapes",
 			src: optarrRebindChurn + `function grab(i: i32): Option[i32[]] {
-    var x: Option[i32[]] = Some([i, i + 1]);
+    let x: Option[i32[]] = Some([i, i + 1]);
     x = Some([i + 2, i + 3, i + 4]);
     return x;
 }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    var o: Option[i32[]] = grab(i);
-    var junk: i32 = churn(i);
+    let t: i32 = 0;
+    let o: Option[i32[]] = grab(i);
+    let junk: i32 = churn(i);
     match (o) { Some(xs) => { if (xs.len() != 3) { return 0 - 1; } t = t + xs[0]; }, None => { return 0 - 2; } }
     return (t + junk) % 101;
 }` + optarrRebindChurnMain,
@@ -151,12 +151,12 @@ function round(i: i32): i32 {
 			// sole_top_level_match_idx reports the same way as none.
 			name: "refused_two_matches",
 			src: optarrRebindChurn + `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var x: Option[i32[]] = Some([i, i + 1]);
+    let t: i32 = 0;
+    let x: Option[i32[]] = Some([i, i + 1]);
     match (x) { Some(xs) => { t = t + xs.len(); }, None => {} }
     x = Some([i + 2, i + 3, i + 4]);
     match (x) { Some(ys) => { t = t + ys.len(); }, None => {} }
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (t < 2) { return 0 - 1; }
     return (t + junk) % 101;
 }` + optarrRebindChurnMain,
@@ -166,12 +166,12 @@ function round(i: i32): i32 {
 			// The payload is bound out of the match and outlives it.
 			name: "refused_payload_escapes",
 			src: optarrRebindChurn + `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var keep: i32[] = [0];
-    var x: Option[i32[]] = Some([i, i + 1]);
+    let t: i32 = 0;
+    let keep: i32[] = [0];
+    let x: Option[i32[]] = Some([i, i + 1]);
     x = Some([i + 2, i + 3, i + 4]);
     match (x) { Some(xs) => { keep = xs; }, None => {} }
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (keep.len() != 3) { return 0 - 1; }
     return (keep[0] + junk) % 101;
 }` + optarrRebindChurnMain,
@@ -181,11 +181,11 @@ function round(i: i32): i32 {
 			// An alias is bound before the rebind and matched after.
 			name: "refused_alias_bind",
 			src: optarrRebindChurn + `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var x: Option[i32[]] = Some([i, i + 1]);
-    var y: Option[i32[]] = x;
+    let t: i32 = 0;
+    let x: Option[i32[]] = Some([i, i + 1]);
+    let y: Option[i32[]] = x;
     x = Some([i + 2, i + 3, i + 4]);
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     match (y) { Some(ys) => { if (ys.len() != 2) { return 0 - 1; } t = t + ys[0]; }, None => { return 0 - 2; } }
     return (t + junk) % 101;
 }` + optarrRebindChurnMain,
@@ -196,11 +196,11 @@ function round(i: i32): i32 {
 			// the later store replaces — `match_idx > vi` is what rules it out.
 			name: "refused_match_before_rebind",
 			src: optarrRebindChurn + `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var x: Option[i32[]] = Some([i, i + 1]);
+    let t: i32 = 0;
+    let x: Option[i32[]] = Some([i, i + 1]);
     match (x) { Some(xs) => { t = t + xs.len(); }, None => {} }
     x = Some([i + 2, i + 3, i + 4]);
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (t < 2) { return 0 - 1; }
     return (t + junk) % 101;
 }` + optarrRebindChurnMain,

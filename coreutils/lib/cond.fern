@@ -37,8 +37,8 @@ import "./gnu";
 // `run(bracket)` — the whole program. `bracket` selects the `[` rules;
 // `help` / `name` are what `[ --help` / `[ --version` print.
 pub function run(bracket: boolean, name: string, help: string): i32 {
-  var argv: string[] = args();
-  var argc: i32 = argv.len();
+  let argv: string[] = args();
+  let argc: i32 = argv.len();
   if (bracket) {
     gnu.sole_help_version_with(argv, name, help, 0, 2);
     if (argc < 2 || argv[argc - 1] != "]") {
@@ -49,7 +49,7 @@ pub function run(bracket: boolean, name: string, help: string): i32 {
   if (argc <= 1) {
     return 1;
   }
-  var r: (boolean, S) = posixtest(S { argv: argv, pos: 1, argc: argc }, argc - 1);
+  let r: (boolean, S) = posixtest(S { argv: argv, pos: 1, argc: argc }, argc - 1);
   if (r.1.pos != argc) {
     die("extra argument " + gnu.quote(argv[r.1.pos]));
   }
@@ -88,7 +88,7 @@ function beyond(s: S): void {
 }
 
 function advance(s: S, strict: boolean): S {
-  var n: S = S { ...s, pos: s.pos + 1 };
+  let n: S = S { ...s, pos: s.pos + 1 };
   if (strict && n.pos >= n.argc) {
     beyond(n);
   }
@@ -130,7 +130,7 @@ function one_argument(s: S): (boolean, S) {
 
 function two_arguments(s: S): (boolean, S) {
   if (tok(s) == "!") {
-    var r: (boolean, S) = one_argument(advance(s, false));
+    let r: (boolean, S) = one_argument(advance(s, false));
     return (!r.0, r.1);
   }
   if (unary_shaped(tok(s))) {
@@ -141,16 +141,16 @@ function two_arguments(s: S): (boolean, S) {
 }
 
 function three_arguments(s: S): (boolean, S) {
-  var second: string = at(s, s.pos + 1);
+  let second: string = at(s, s.pos + 1);
   if (is_binop(second)) {
     return binary_operator(s, false);
   }
   if (tok(s) == "!") {
-    var r: (boolean, S) = two_arguments(advance(s, true));
+    let r: (boolean, S) = two_arguments(advance(s, true));
     return (!r.0, r.1);
   }
   if (tok(s) == "(" && at(s, s.pos + 2) == ")") {
-    var p: (boolean, S) = one_argument(advance(s, false));
+    let p: (boolean, S) = one_argument(advance(s, false));
     return (p.0, advance(p.1, false));
   }
   if (second == "-a" || second == "-o" || second == "<" || second == ">") {
@@ -162,11 +162,11 @@ function three_arguments(s: S): (boolean, S) {
 
 function four_arguments(s: S): (boolean, S) {
   if (tok(s) == "!") {
-    var r: (boolean, S) = three_arguments(advance(s, true));
+    let r: (boolean, S) = three_arguments(advance(s, true));
     return (!r.0, r.1);
   }
   if (tok(s) == "(" && at(s, s.pos + 3) == ")") {
-    var p: (boolean, S) = two_arguments(advance(s, false));
+    let p: (boolean, S) = two_arguments(advance(s, false));
     return (p.0, advance(p.1, false));
   }
   if (tok(s) == "-l" && is_binop(at(s, s.pos + 2))) {
@@ -203,10 +203,10 @@ function expr(s: S): (boolean, S) {
 }
 
 function or_expr(s0: S): (boolean, S) {
-  var s: S = s0;
-  var value: boolean = false;
+  let s: S = s0;
+  let value: boolean = false;
   while (true) {
-    var r: (boolean, S) = and_expr(s);
+    let r: (boolean, S) = and_expr(s);
     s = r.1;
     if (r.0) {
       value = true;
@@ -220,10 +220,10 @@ function or_expr(s0: S): (boolean, S) {
 }
 
 function and_expr(s0: S): (boolean, S) {
-  var s: S = s0;
-  var value: boolean = true;
+  let s: S = s0;
+  let value: boolean = true;
   while (true) {
-    var r: (boolean, S) = term(s);
+    let r: (boolean, S) = term(s);
     s = r.1;
     if (!r.0) {
       value = false;
@@ -237,8 +237,8 @@ function and_expr(s0: S): (boolean, S) {
 }
 
 function term(s0: S): (boolean, S) {
-  var s: S = s0;
-  var negated: boolean = false;
+  let s: S = s0;
+  let negated: boolean = false;
   while (s.pos < s.argc && tok(s) == "!") {
     s = advance(s, true);
     negated = !negated;
@@ -246,7 +246,7 @@ function term(s0: S): (boolean, S) {
   if (s.pos >= s.argc) {
     beyond(s);
   }
-  var r: (boolean, S) = primary(s);
+  let r: (boolean, S) = primary(s);
   if (negated) {
     return (!r.0, r.1);
   }
@@ -273,8 +273,8 @@ function primary(s: S): (boolean, S) {
 // when a `)` closes it within four tokens; otherwise everything to the
 // end of the arguments is the inside, and the `)` is expected after.
 function paren(s0: S): (boolean, S) {
-  var s: S = advance(s0, true);
-  var nargs: i32 = 1;
+  let s: S = advance(s0, true);
+  let nargs: i32 = 1;
   while (s.pos + nargs < s.argc && at(s, s.pos + nargs) != ")") {
     if (nargs == 4) {
       nargs = left(s);
@@ -282,7 +282,7 @@ function paren(s0: S): (boolean, S) {
     }
     nargs = nargs + 1;
   }
-  var r: (boolean, S) = posixtest(s, nargs);
+  let r: (boolean, S) = posixtest(s, nargs);
   s = r.1;
   // Past `argc` there is still the `]` of the bracket form, and GNU
   // names it: `[ ( x` says "found ']'" where `test ( x` says nothing.
@@ -319,22 +319,22 @@ function is_digit(b: i32): boolean {
 }
 
 function find_int(str: string): Int {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < str.len() && is_space(str[i] as i32)) {
     i = i + 1;
   }
-  var neg: boolean = false;
+  let neg: boolean = false;
   if (i < str.len() && str[i] as i32 == 43) {
     i = i + 1;
   } else if (i < str.len() && str[i] as i32 == 45) {
     neg = true;
     i = i + 1;
   }
-  var start: i32 = i;
+  let start: i32 = i;
   while (i < str.len() && is_digit(str[i] as i32)) {
     i = i + 1;
   }
-  var end: i32 = i;
+  let end: i32 = i;
   while (i < str.len() && is_space(str[i] as i32)) {
     i = i + 1;
   }
@@ -361,10 +361,10 @@ function magnitude_cmp(a: string, b: string): i32 {
     }
     return 1;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
-    var x: i32 = a[i] as i32;
-    var y: i32 = b[i] as i32;
+    let x: i32 = a[i] as i32;
+    let y: i32 = b[i] as i32;
     if (x != y) {
       if (x < y) {
         return 0 - 1;
@@ -383,7 +383,7 @@ function int_cmp(a: Int, b: Int): i32 {
   if (!a.neg && b.neg) {
     return 1;
   }
-  var c: i32 = magnitude_cmp(a.digits, b.digits);
+  let c: i32 = magnitude_cmp(a.digits, b.digits);
   if (a.neg) {
     return 0 - c;
   }
@@ -416,24 +416,24 @@ function relate(op: string, c: i32): boolean {
 // follows it — for every operator, which is why `abc = -l abc` is a
 // four-token comparison of "=" against "abc".
 function binary_operator(s0: S, l_is_l: boolean): (boolean, S) {
-  var s: S = s0;
+  let s: S = s0;
   if (l_is_l) {
     s = advance(s, false);
   }
-  var op: i32 = s.pos + 1;
-  var r_is_l: boolean = false;
+  let op: i32 = s.pos + 1;
+  let r_is_l: boolean = false;
   if (op < s.argc - 2 && at(s, op + 1) == "-l") {
     r_is_l = true;
     s = advance(s, false);
   }
-  var name: string = at(s, op);
+  let name: string = at(s, op);
   if (is_intop(name)) {
-    var right: i32 = op + 1;
+    let right: i32 = op + 1;
     if (r_is_l) {
       right = op + 2;
     }
-    var l: Int = int_operand(at(s, op - 1), l_is_l);
-    var r: Int = int_operand(at(s, right), r_is_l);
+    let l: Int = int_operand(at(s, op - 1), l_is_l);
+    let r: Int = int_operand(at(s, right), r_is_l);
     return (relate(name, int_cmp(l, r)), skip(s, 3));
   }
   if (name == "-nt" || name == "-ot" || name == "-ef") {
@@ -447,15 +447,15 @@ function binary_operator(s0: S, l_is_l: boolean): (boolean, S) {
   // where `-l` left the cursor: `[ = = -l = ]` compares "=" against
   // "-l". GNU <= 9.4 read them from the cursor and compared "=" with
   // "=" instead.
-  var left: string = at(s, op - 1);
-  var right_str: string = at(s, op + 1);
+  let left: string = at(s, op - 1);
+  let right_str: string = at(s, op + 1);
   if (name == "<") {
     return (byte_less(left, right_str), skip(s, 3));
   }
   if (name == ">") {
     return (byte_less(right_str, left), skip(s, 3));
   }
-  var equal: boolean = left == right_str;
+  let equal: boolean = left == right_str;
   if (name == "!=") {
     return (!equal, skip(s, 3));
   }
@@ -464,11 +464,11 @@ function binary_operator(s0: S, l_is_l: boolean): (boolean, S) {
 
 // strcoll in the C locale: byte order, with a shorter prefix first.
 function byte_less(a: string, b: string): boolean {
-  var n: i32 = a.len();
+  let n: i32 = a.len();
   if (b.len() < n) {
     n = b.len();
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (a[i] != b[i]) {
       return a[i] as i32 < b[i] as i32;
@@ -664,12 +664,12 @@ function same_file(a: string, b: string): boolean {
 // an integer like any other; one that is negative or past INT_MAX is
 // simply not a terminal.
 function is_terminal(arg: string): boolean {
-  var n: Int = find_int(arg);
+  let n: Int = find_int(arg);
   if (n.neg || n.digits.len() > 10) {
     return false;
   }
-  var fd: i64 = 0 as i64;
-  var i: i32 = 0;
+  let fd: i64 = 0 as i64;
+  let i: i32 = 0;
   while (i < n.digits.len()) {
     fd = fd * (10 as i64) + (n.digits[i] as i32 - 48) as i64;
     i = i + 1;
@@ -682,20 +682,20 @@ function is_terminal(arg: string): boolean {
 
 // ---- unary operators -------------------------------------------------------
 function unary_operator(s0: S): (boolean, S) {
-  var name: string = tok(s0);
-  var letter: i32 = name[1] as i32;
+  let name: string = tok(s0);
+  let letter: i32 = name[1] as i32;
   if (!is_unary_letter(letter)) {
     die(gnu.quote(name) + ": unary operator expected");
   }
-  var s: S = advance(s0, true);
-  var arg: string = tok(s);
+  let s: S = advance(s0, true);
+  let arg: string = tok(s);
   s = advance(s, false);
   return (unary_value(letter, arg), s);
 }
 
 function is_unary_letter(b: i32): boolean {
-  var letters: string = "bcdefgGhkLNOprsStuwxzn";
-  var i: i32 = 0;
+  let letters: string = "bcdefgGhkLNOprsStuwxzn";
+  let i: i32 = 0;
   while (i < letters.len()) {
     if (letters[i] as i32 == b) {
       return true;

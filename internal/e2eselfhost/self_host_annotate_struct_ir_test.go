@@ -30,11 +30,11 @@ function main(): i32 { return mk(10).sum(); }`}, // 10 + 11 = 21
 	// struct-returning call bound to an inferred local, then field read.
 	{"call_infer_local", `struct Pt { x: i32, y: i32 }
 function origin(): Pt { return Pt { x: 3, y: 4 }; }
-function main(): i32 { var p = origin(); return p.x * p.y; }`}, // 12
+function main(): i32 { let p = origin(); return p.x * p.y; }`}, // 12
 }
 
 // TestSelfHostAnnotateStructIR_X86_64 pins the checker-stamped struct result type
-// feeding irlower's expr_struct_type through the IR path (#5531).
+// feeding the lowering through the IR path (#5531).
 func TestSelfHostAnnotateStructIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 	for _, tc := range annotateStructCases {

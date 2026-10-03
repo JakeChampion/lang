@@ -17,8 +17,8 @@ import (
 // (3705032704), and /1e9 == 3. Without the mask the value stays negative and
 // /1e9 == 0. The fold is now restricted to non-64-bit widths.
 const i64MaskFoldSrc = `function main(): i32 {
-    var lo: i32 = 0 - 589934592;
-    var r: i64 = (lo as i64) & 4294967295;
+    let lo: i32 = 0 - 589934592;
+    let r: i64 = (lo as i64) & 4294967295;
     return (r / 1000000000) as i32;
 }
 `
@@ -26,8 +26,8 @@ const i64MaskFoldSrc = `function main(): i32 {
 // A genuine i64 `x & -1` (all 64 bits set) must still be identity — the fix
 // keeps the (harmless) AND rather than folding, and the result is unchanged.
 const i64AndNegOneSrc = `function main(): i32 {
-    var x: i64 = 5000000000;
-    var r: i64 = x & (0 - 1);
+    let x: i64 = 5000000000;
+    let r: i64 = x & (0 - 1);
     return (r / 1000000000) as i32;
 }
 `
@@ -92,15 +92,15 @@ func TestArm64I64AndNegOne(t *testing.T) {
 // stayed correct. The fix makes constNumber return the full int64. Each arm
 // returns a distinct nonzero code so a failure names the broken fold.
 const i64LowZeroFoldSrc = `function main(): i32 {
-    var f: i64 = 7;
+    let f: i64 = 7;
     if ((f | 4503599627370496) / 1000000000000000 != 4) { return 1; }   // 7 | 2^52
     if ((f | 4294967296) / 1000000000 != 4) { return 2; }               // 7 | 2^32
     if ((f | 1099511627776) / 1000000000000 != 1) { return 3; }         // 7 | 2^40
     if ((f ^ 4503599627370496) / 1000000000000000 != 4) { return 4; }   // 7 ^ 2^52
     if ((f + 4294967296) / 1000000000 != 4) { return 5; }               // 7 + 2^32
-    var big: i64 = 4294967303;
+    let big: i64 = 4294967303;
     if ((big - 4294967296) != 7) { return 6; }                          // big - 2^32
-    var m: i64 = 3;
+    let m: i64 = 3;
     if ((m * 4294967296) / 1000000000 != 12) { return 7; }              // 3 * 2^32
     return 0;
 }

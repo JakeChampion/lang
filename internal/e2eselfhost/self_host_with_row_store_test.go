@@ -16,12 +16,12 @@ import (
 // a freed block.
 const withRowStoreProg = `@noinline
 function through(deps: i32[][]): i32[][] {
-    var out: i32[][] = deps;
-    var w: i32 = 0;
+    let out: i32[][] = deps;
+    let w: i32 = 0;
     while (w < deps.len()) {
-        var chain: i32[] = [];
-        var r: i32[] = deps[w];
-        var k: i32 = 0;
+        let chain: i32[] = [];
+        let r: i32[] = deps[w];
+        let k: i32 = 0;
         while (k < r.len()) { chain = chain.append(r[k]); k = k + 1; }
         out = out.with(w, chain);
         w = w + 1;
@@ -31,11 +31,11 @@ function through(deps: i32[][]): i32[][] {
 
 @noinline
 function units(dependencies: i32[][], payloads: boolean[]): i32[][] {
-    var deps: i32[][] = dependencies;
-    var i: i32 = 0;
+    let deps: i32[][] = dependencies;
+    let i: i32 = 0;
     while (i < payloads.len()) {
         if (payloads[i]) {
-            var chain: i32[] = [];
+            let chain: i32[] = [];
             deps = deps.with(i, chain);
         }
         i = i + 1;
@@ -44,10 +44,10 @@ function units(dependencies: i32[][], payloads: boolean[]): i32[][] {
 }
 
 function main(): i32 {
-    var rows: i32[][] = [[1], [2], [3], [4], [5], [6]];
-    var payloads: boolean[] = [false, true, false, true, false, false];
-    var deps: i32[][] = units(rows, payloads);
-    var sum: i32 = 0;
+    let rows: i32[][] = [[1], [2], [3], [4], [5], [6]];
+    let payloads: boolean[] = [false, true, false, true, false, false];
+    let deps: i32[][] = units(rows, payloads);
+    let sum: i32 = 0;
     for row in deps { for v in row { sum = sum + v; } }
     return sum;
 }

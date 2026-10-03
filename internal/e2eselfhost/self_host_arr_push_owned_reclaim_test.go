@@ -27,11 +27,11 @@ func TestSelfHostArrPushOwnedReclaimArm64(t *testing.T) {
 	// buffer is reclaimed. A UAF of the live buffer would corrupt the read-back.
 	// sum(0..99) = 4950, so the program returns 7.
 	prog := `function build(): i32 {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < 100) { a = a.append(i); i = i + 1; }
-    var sum: i32 = 0;
-    var j: i32 = 0;
+    let sum: i32 = 0;
+    let j: i32 = 0;
     while (j < a.len()) { sum = sum + a[j]; j = j + 1; }
     return sum;
 }
@@ -72,11 +72,11 @@ func TestSelfHostArrPushOwnedReclaimWasm(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
 	prog := `function build(): i32 {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < 100) { a = a.append(i); i = i + 1; }
-    var sum: i32 = 0;
-    var j: i32 = 0;
+    let sum: i32 = 0;
+    let j: i32 = 0;
     while (j < a.len()) { sum = sum + a[j]; j = j + 1; }
     return sum;
 }
@@ -110,20 +110,20 @@ function main(): i32 { return build() - 4943; }`
 // bytes there) and wasm through a wide wrapper of its own. Correctness under
 // the grow is the check, as above, plus the dispatch in the emitted text.
 const wideOwnedPushProg = `function build_i64(): i64 {
-    var a: i64[] = [];
-    var i: i32 = 0;
+    let a: i64[] = [];
+    let i: i32 = 0;
     while (i < 100) { a = a.append((i as i64) * 3000000000i64); i = i + 1; }
-    var sum: i64 = 0i64;
-    var j: i32 = 0;
+    let sum: i64 = 0i64;
+    let j: i32 = 0;
     while (j < a.len()) { sum = sum + a[j]; j = j + 1; }
     return sum;
 }
 function build_f64(): f64 {
-    var a: f64[] = [];
-    var i: i32 = 0;
+    let a: f64[] = [];
+    let i: i32 = 0;
     while (i < 100) { a = a.append((i as f64) * 0.5); i = i + 1; }
-    var sum: f64 = 0.0;
-    var j: i32 = 0;
+    let sum: f64 = 0.0;
+    let j: i32 = 0;
     while (j < a.len()) { sum = sum + a[j]; j = j + 1; }
     return sum;
 }
@@ -191,8 +191,8 @@ function step(v: V, k: i32): V {
     return V { a: v.a + k, b: v.b + (k as u64), c: !v.c };
 }
 function run(n: i32): V {
-    var v: V = V { a: 0, b: 0 as u64, c: false };
-    var i: i32 = 0;
+    let v: V = V { a: 0, b: 0 as u64, c: false };
+    let i: i32 = 0;
     while (i < n) { v = step(v, i); i = i + 1; }
     return v;
 }

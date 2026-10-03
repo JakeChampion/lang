@@ -22,8 +22,8 @@ function chk(n: i32): Option[string] { return Some("abc"); }
     return Ok(r.path);
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
         match (mkr(i + 3)) {
             Some(r) => { match (bs(r)) { Ok(s) => { t = t + s.len(); }, Err(e) => { t = t + 100; } } },

@@ -19,16 +19,16 @@ function scalar_of(c: char): i32 { return c as i32; }
 function as_char(n: i32): char { return n as char; }
 
 function upper_ascii(c: char): char {
-    var n: i32 = c as i32;
+    let n: i32 = c as i32;
     if (n >= 97 && n <= 122) { return (n - 32) as char; }
     return c;
 }
 
 function main(): i32 {
-    var c: char = 97 as char;
+    let c: char = 97 as char;
     if (scalar_of(c) != 97) { return 1; }
     // char-to-char assignment (Equal, no conversion).
-    var d: char = c;
+    let d: char = c;
     if (scalar_of(d) != 97) { return 2; }
     // Round trip through the integer and back.
     if (scalar_of(as_char(scalar_of(c))) != 97) { return 3; }
@@ -36,9 +36,9 @@ function main(): i32 {
     if (scalar_of(as_char(128512)) != 128512) { return 4; }
     if (scalar_of(as_char(1114111)) != 1114111) { return 5; }
     // char[] arrays: element type survives, indexes as a char.
-    var arr: char[] = [65 as char, 66 as char, 67 as char];
+    let arr: char[] = [65 as char, 66 as char, 67 as char];
     if (scalar_of(arr[2]) != 67) { return 6; }
-    var pick: char = arr[0];
+    let pick: char = arr[0];
     if (scalar_of(pick) != 65) { return 7; }
     // A char-taking, char-returning function composes.
     if (scalar_of(upper_ascii(c)) != 65) { return 8; }
@@ -106,9 +106,9 @@ function main(): i32 {
     if (up(48) != 48) { return 6; }          // a digit is caseless
 
     // Classification.
-    var a: char = 97 as char;
+    let a: char = 97 as char;
     if (!a.is_letter() || !a.is_lower() || a.is_upper() || !a.is_alnum()) { return 7; }
-    var zero: char = 48 as char;
+    let zero: char = 48 as char;
     if (!zero.is_digit() || !zero.is_alnum() || zero.is_letter()) { return 8; }
     // Nd is the DECIMAL class, so Arabic-Indic digits count.
     if (!((0x0669 as char).is_digit())) { return 9; }

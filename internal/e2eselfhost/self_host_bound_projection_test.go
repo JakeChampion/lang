@@ -30,9 +30,9 @@ impl[T] Holder for Box[T] {
 }
 function first[H: Holder](h: H): H::Item { return h.get(); }
 function main(): i32 {
-    var b: SBox = SBox { v: "hello" };
-    var a: ABox = ABox { xs: ["p", "q", "r"] };
-    var g: Box[string] = Box { v: "seven!!" };
+    let b: SBox = SBox { v: "hello" };
+    let a: ABox = ABox { xs: ["p", "q", "r"] };
+    let g: Box[string] = Box { v: "seven!!" };
     return first(b).len() + first(a).len() * 10 + first(a)[1].len() * 40 + first(g).len();
 }
 `

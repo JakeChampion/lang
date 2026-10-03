@@ -84,7 +84,7 @@ function test_is_prime_top_of_range(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/i32 roots + prime");
+  let r: test.TestRunner = test.test_new("std/i32 roots + prime");
   r = r.it("next_power_of_2", test_next_power_of_2);
   r = r.it("next_power_of_2 cap", test_next_power_of_2_cap);
   r = r.it("is_prime small", test_is_prime_small);

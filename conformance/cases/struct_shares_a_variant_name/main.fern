@@ -30,11 +30,11 @@ function name_of(s: Shape): string {
 }
 
 function main(): i32 {
-    var e: Empty = Empty { n: 3 };
-    var q: Square = Square { side: 4 };
-    var v: Shape = Empty;
-    var w: Shape = Square(7);
-    var t: i32 = e.n + q.side;                 // 7
+    let e: Empty = Empty { n: 3 };
+    let q: Square = Square { side: 4 };
+    let v: Shape = Empty;
+    let w: Shape = Square(7);
+    let t: i32 = e.n + q.side;                 // 7
     t = t + name_of(v).len();                  // + "empty"  = 12
     t = t + name_of(w).len();                  // + "sq7"    = 15
     t = t + Empty.to_string().len();           // + "Empty"  = 20

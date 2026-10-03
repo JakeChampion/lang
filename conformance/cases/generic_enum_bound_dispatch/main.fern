@@ -18,9 +18,9 @@ impl[T] Count for Bag[T] {
 function total[C: Count](a: C, b: C): i32 { return a.count() + b.count(); }
 
 function main(): i32 {
-    var ints: i32 = total(Items([1, 2, 3]), Empty);
-    var words: Bag[string] = Items(["a", "b"]);
-    var strs: i32 = total(words, Empty);
+    let ints: i32 = total(Items([1, 2, 3]), Empty);
+    let words: Bag[string] = Items(["a", "b"]);
+    let strs: i32 = total(words, Empty);
     print(ints.to_string() + " " + strs.to_string());
     return ints * 10 + strs;
 }

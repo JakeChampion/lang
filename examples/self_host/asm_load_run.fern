@@ -25,15 +25,17 @@ import "./asm_ir";
 import "./wasm_ir";
 import "./asmcore";
 import "./treeshake";
+import "./constfold";
+import "./platforms";
 import "./ircore";
 import "./semlower";
 
 // add_imports appends each of mod's loadable import paths to paths
 // (deduped by full path), returning the grown list.
 function add_imports(paths: string[], mod: parser.Module, root: string): string[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < mod.imports.len()) {
-    var ip: string = mod.imports[i].path;
+    let ip: string = mod.imports[i].path;
     if (util.should_load(ip, root, []) && !util.has_str(paths, ip)) {
       paths = paths.append(ip);
     }
@@ -58,14 +60,14 @@ function shaken_program(typed: parser.Module, prune: boolean): parser.Module {
 // program and the units are cut from its lowering; only the entry unit emits
 // `_start` and the shared runtime (seeded with the full need roots).
 function emit_per_module_concat(entry_mod: parser.Module, loaded: flatten.LoadedModule[], target: string, d: semlower.Driven): string {
-  var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded, target);
-  var needs: string[] = ircore.all_runtime_need_roots();
-  var out: string = "";
-  var g: ircore.Gated = semlower.program(d);
-  var u: ircore.Units = ircore.split_units(g, part_mods(parts), entry_index(parts));
-  var ti: i32 = 0;
+  let parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded, target);
+  let needs: string[] = ircore.all_runtime_need_roots();
+  let out: string = "";
+  let g: ircore.Gated = semlower.program(d);
+  let u: ircore.Units = ircore.split_units(g, part_mods(parts), entry_index(parts));
+  let ti: i32 = 0;
   while (ti < parts.len()) {
-    var textra: string[] = [];
+    let textra: string[] = [];
     if (parts[ti].is_entry) {
       textra = needs;
     }
@@ -76,7 +78,7 @@ function emit_per_module_concat(entry_mod: parser.Module, loaded: flatten.Loaded
 }
 
 function part_mods(parts: flatten.PerModule[]): parser.Module[] {
-  var out: parser.Module[] = [];
+  let out: parser.Module[] = [];
   for pt in parts {
     out = out.append(pt.mod);
   }
@@ -84,7 +86,7 @@ function part_mods(parts: flatten.PerModule[]): parser.Module[] {
 }
 
 function entry_index(parts: flatten.PerModule[]): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < parts.len()) {
     if (parts[i].is_entry) {
       return i;
@@ -94,14 +96,25 @@ function entry_index(parts: flatten.PerModule[]): i32 {
   return 0;
 }
 
+// targeted is `merged` as built for `target`: `target_os()` / `target_arch()`
+// folded to the target's names and the branch the target never takes
+// dropped, ahead of the shake, so a function reached only through the other
+// target's arm (std/fetch's hosted route, which calls std/wasi_http's
+// externs) is not emitted for this one.
+function targeted(merged: parser.Module, target: string): parser.Module {
+  let md: platforms.Descriptor = platforms.for_target(target);
+  return constfold.prune_literal_branches(constfold.fold_target_name(merged, md.environment, md.isa));
+}
+
 // checked_or_exit is the program the merged emit reads: the bundle, held to
-// the checker's build gate, annotated and pruned when `prune` is set.
-function checked_or_exit(merged: parser.Module, prune: boolean): parser.Module {
+// the checker's build gate, built for the target, annotated and pruned when
+// `prune` is set.
+function checked_or_exit(merged: parser.Module, prune: boolean, target: string): parser.Module {
   // Build gate: reject a program the checker rejects before codegen, so this
   // driver is not more permissive than `-check` or the native compiler
   // (#6961). checker.is_build_gate_code decides the set — every coded
   // diagnostic except the partial-port rules measured to false-positive.
-  var gated: util.Diag[] = checker.build_gate_diags(merged);
+  let gated: util.Diag[] = checker.build_gate_diags(merged);
   if (gated.len() > 0) {
     eprint(util.format_diags(gated));
     exit(1);
@@ -109,27 +122,27 @@ function checked_or_exit(merged: parser.Module, prune: boolean): parser.Module {
   // typed-IR (#5531): stamp each call expression with its checker-inferred
   // result type so the IR lowering READS the type instead of re-deriving it
   // (docs/TYPED-IR-REWRITE.md).
-  return shaken_program(checker.annotate_module(merged), prune);
+  return shaken_program(checker.annotate_module(targeted(merged, target)), prune);
 }
 
 // decided is the typed lowering's verdict on the program checked_or_exit
 // hands the merged emit, without exiting.
 function decided(merged: parser.Module, prune: boolean, target: string): semlower.Verdict {
-  var gated: util.Diag[] = checker.build_gate_diags(merged);
+  let gated: util.Diag[] = checker.build_gate_diags(merged);
   if (gated.len() > 0) {
     return semlower.Verdict { ok: false, errors: gated, rows: [] };
   }
-  return semlower.verdict_annotated(shaken_program(checker.annotate_module(merged), prune), target);
+  return semlower.verdict_annotated(shaken_program(checker.annotate_module(targeted(merged, target)), prune), target);
 }
 
 function main(): i32 {
-  var av: string[] = args();
+  let av: string[] = args();
   if (av.len() < 2) {
     eprint("usage: asm_load_run <entry.fern> [stdlib-root]");
     return 2;
   }
-  var entry_path: string = av[1];
-  var dir: string = util.dir_of(entry_path);
+  let entry_path: string = av[1];
+  let dir: string = util.dir_of(entry_path);
   // Optional stdlib root: the first non-flag arg after the entry. When given,
   // `std/…` / `core/…` imports are resolved under it (`<root>/std/foo.fern`);
   // without it those imports are skipped (the entry must be self-contained
@@ -137,36 +150,36 @@ function main(): i32 {
   // verdict on the fully-loaded program instead of emitting asm
   // (semlower.verdict_text). Unlike the single-module asm_ir_run probe, this
   // sees the WHOLE program with its stdlib imports flattened in.
-  var root: string = "";
-  var probe: boolean = false;
+  let root: string = "";
+  let probe: boolean = false;
   // Per-module compilation modes (#3451 step 4 / #3456). One emit per process
   // (native strbuf limit), so the build is driven across invocations:
   //   -per-module-count / -per-module-needs / -per-module-emit <N>
   // with -extra-need <name> supplying the entry's whole-program need union.
-  var pm_mode: string = "";
-  var pm_index: i32 = 0 - 1;
-  var pm_extra: string[] = [];
+  let pm_mode: string = "";
+  let pm_index: i32 = 0 - 1;
+  let pm_extra: string[] = [];
   // -treeshake prunes the merged module to functions reachable from main
   // before codegen, so a stdlib-importing program fits asm_ir's IR budget
   // instead of being made ineligible by unused stdlib. -decide prints
   // "ir" or "refused" and stops, for observing the treeshake effect without emitting.
-  var do_treeshake: boolean = false;
+  let do_treeshake: boolean = false;
   // -no-treeshake opts OUT of the default (stdlib-root) prune — for observing
   // the un-pruned baseline (e.g. a budget-busting program coming out
   // ineligible).
-  var no_treeshake: boolean = false;
-  var do_decide: boolean = false;
+  let no_treeshake: boolean = false;
+  let do_decide: boolean = false;
   // `-target` selects the emit backend: x86-64-linux, arm64-linux,
   // arm64-darwin (#4398 part 1: the fold that retired the
   // asm_arm64_load_run mirror) or wasm32-wasi. Default x86_64 keeps every
   // pre-fold caller byte-identical. Loading, treeshake and the immutability
   // gate are target-agnostic, and -decide / -ir-probe lower for the target;
   // the per-module modes remain x86-64-only (the mirror never had them).
-  var target: string = "x86-64-linux";
+  let target: string = "x86-64-linux";
   // `-emit component-core` (wasm32-wasi only): the core the CLI frames into a
   // wasi:cli/run component, rather than the preview1 command core.
-  var emit_form: string = "";
-  var ag: i32 = 2;
+  let emit_form: string = "";
+  let ag: i32 = 2;
   while (ag < av.len()) {
     if (av[ag] == "-ir-probe") {
       probe = true;
@@ -218,8 +231,8 @@ function main(): i32 {
     return 2;
   }
 
-  var esrc: string = "";
-  var eok: boolean = false;
+  let esrc: string = "";
+  let eok: boolean = false;
   match (read_file(entry_path)) {
     Ok(s) => {
       esrc = s;
@@ -233,24 +246,24 @@ function main(): i32 {
     eprint("asm_load_run: cannot read entry file");
     return 1;
   }
-  var entry_mod: parser.Module = parser.parse_module(lexer.tokenize(esrc));
+  let entry_mod: parser.Module = parser.parse_module(lexer.tokenize(esrc));
 
   // Worklist of import PATHS to load (seeded from the entry's
   // imports, grown as each loaded module's imports are discovered).
   // Tracking the full path — not just the basename — lets std/core
   // paths resolve under the stdlib root.
-  var paths: string[] = add_imports([], entry_mod, root);
-  var loaded: flatten.LoadedModule[] = [];
-  var done: string[] = [];
-  var j: i32 = 0;
+  let paths: string[] = add_imports([], entry_mod, root);
+  let loaded: flatten.LoadedModule[] = [];
+  let done: string[] = [];
+  let j: i32 = 0;
   while (j < paths.len()) {
-    var ipath: string = paths[j];
+    let ipath: string = paths[j];
     j = j + 1;
     if (!util.has_str(done, ipath)) {
       done = done.append(ipath);
-      var mpath: string = util.resolve_path(ipath, dir, root);
-      var msrc: string = "";
-      var mok: boolean = false;
+      let mpath: string = util.resolve_path(ipath, dir, root);
+      let msrc: string = "";
+      let mok: boolean = false;
       match (read_file(mpath)) {
         Ok(s2) => {
           msrc = s2;
@@ -264,13 +277,13 @@ function main(): i32 {
         eprint("asm_load_run: cannot read module: " + mpath);
         return 1;
       }
-      var m: parser.Module = parser.parse_module(lexer.tokenize(msrc));
+      let m: parser.Module = parser.parse_module(lexer.tokenize(msrc));
       loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), ident: "", mod: m });
       paths = add_imports(paths, m, root);
     }
   }
 
-  var parsed: parser.Module[] = [entry_mod];
+  let parsed: parser.Module[] = [entry_mod];
   for lm in loaded {
     parsed = parsed.append(lm.mod);
   }
@@ -299,7 +312,7 @@ function main(): i32 {
   // first because it is what roots a Display method: `print(q)` becomes
   // `q.to_string()` there (docs/TRAITS.md §3a), and the prune keeps
   // `Q.to_string` only once that call exists.
-  var prune: boolean = (do_treeshake || root.len() > 0) && !no_treeshake;
+  let prune: boolean = (do_treeshake || root.len() > 0) && !no_treeshake;
 
   // Per-module compilation (#3451 step 4 / #3456). Run BEFORE flatten.bundle
   // (which mangles entry_mod / loaded in place) so bundle_per_module sees the
@@ -317,7 +330,7 @@ function main(): i32 {
   // invocation (cheap: parse + analysis, no codegen) so every per-module emit
   // tags cross-module calls by the callee's real signature.
   if (pm_mode.len() > 0) {
-    var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded, target);
+    let parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded, target);
     if (pm_mode == "count") {
       print(util.i32_to_string(parts.len()) + "\n");
       return 0;
@@ -330,8 +343,8 @@ function main(): i32 {
       // which OOMs a self-host-built driver (#3425) — the one thing blocking a
       // self-host per-module self-compile. The entry over-emits a few unused
       // helpers; close_needs still pulls each root's transitive deps.
-      var needs: string[] = ircore.all_runtime_need_roots();
-      var no: i32 = 0;
+      let needs: string[] = ircore.all_runtime_need_roots();
+      let no: i32 = 0;
       while (no < needs.len()) {
         print(needs[no] + "\n");
         no = no + 1;
@@ -344,26 +357,26 @@ function main(): i32 {
       eprint("per-module: emit index out of range");
       return 1;
     }
-    var extra: string[] = [];
+    let extra: string[] = [];
     if (parts[pm_index].is_entry) {
       extra = pm_extra;
     }
     // The typed lowering lowers the program the merged emit reads, whole,
     // and this unit is cut from it.
-    var pd: semlower.Driven = semlower.driven_annotated(checked_or_exit(flatten.bundle(entry_mod, loaded, target), prune), target);
-    var pg: ircore.Gated = semlower.program(pd);
-    var pu: ircore.Units = ircore.split_units(pg, part_mods(parts), entry_index(parts));
+    let pd: semlower.Driven = semlower.driven_annotated(checked_or_exit(flatten.bundle(entry_mod, loaded, target), prune, target), target);
+    let pg: ircore.Gated = semlower.program(pd);
+    let pu: ircore.Units = ircore.split_units(pg, part_mods(parts), entry_index(parts));
     write(asm_ir.emit_module_ir_unit_flat(pu.mods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, pg.im.funcs, pg.stab, 0, 0 - 1, pu.caches[pm_index], pg.base, pd.sub.rt_lower));
     return 0;
   }
 
-  var merged: parser.Module = flatten.bundle(entry_mod, loaded, target);
+  let merged: parser.Module = flatten.bundle(entry_mod, loaded, target);
 
   // `-decide` prints whether the typed lowering produces the program the
   // merged emit reads ("ir") or refuses it ("refused"), and `-ir-probe` the
   // verdict per declaration; both stop there.
   if (do_decide || probe) {
-    var v: semlower.Verdict = decided(merged, prune, target);
+    let v: semlower.Verdict = decided(merged, prune, target);
     if (probe) {
       write(semlower.verdict_text(v));
     } else if (v.ok) {
@@ -374,13 +387,13 @@ function main(): i32 {
     return 0;
   }
 
-  merged = checked_or_exit(merged, prune);
+  merged = checked_or_exit(merged, prune, target);
 
   if (target == "wasm32-wasi") {
     // The preview1 command core, or the component core, as the CLI emits it.
-    var dw: semlower.Driven = semlower.driven_annotated(merged, target);
+    let dw: semlower.Driven = semlower.driven_annotated(merged, target);
     if (emit_form == "component-core") {
-      var shape: i32 = wasm_ir.component_shape(dw.full);
+      let shape: i32 = wasm_ir.component_shape(dw.full);
       if (shape < 0) {
         eprint("asm_load_run: the program uses WASI imports the component wrapper does not frame");
         return 1;
@@ -398,7 +411,7 @@ function main(): i32 {
     // merged path shares the 512-function budget (#5949 corrected the old "arm64
     // needs none of this"), so an over-budget program errors here exactly as it
     // does on x86 — the per-module path is what compiles those.
-    var d64: semlower.Driven = semlower.driven_annotated(merged, target);
+    let d64: semlower.Driven = semlower.driven_annotated(merged, target);
     write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub));
     return 0;
   }
@@ -407,7 +420,7 @@ function main(): i32 {
     // to the Mach-O dialect — the GAS text `fern.fern -target arm64-darwin`
     // hands to its in-process assembler. Emitted here so a harness can
     // inspect the darwinized output without building the whole CLI.
-    var dd: semlower.Driven = semlower.driven_annotated(merged, target);
+    let dd: semlower.Driven = semlower.driven_annotated(merged, target);
     write(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(dd.full, true, dd.sub)));
     return 0;
   }
@@ -418,8 +431,8 @@ function main(): i32 {
   // the upper bound keeps the whole-compiler self-compile (~2040 funcs, driven
   // through this same default) OUT — a single-process per-module concat of that
   // many funcs OOMs, and it has the batched file-based per-module path instead.
-  var d: semlower.Driven = semlower.driven_annotated(merged, target);
-  var nfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
+  let d: semlower.Driven = semlower.driven_annotated(merged, target);
+  let nfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
   if (nfuncs > 512 && nfuncs < 1500) {
     write(emit_per_module_concat(entry_mod, loaded, target, d));
     return 0;

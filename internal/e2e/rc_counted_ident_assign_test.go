@@ -22,8 +22,8 @@ const countedIdentAssignPrelude = `import "core/int";
 import "std/i32";
 
 function mk(i: i32): Option[u8[]] {
-    var b: u8[] = [];
-    var j: i32 = 0;
+    let b: u8[] = [];
+    let j: i32 = 0;
     while (j < 8) { b = b.append(((j + i) % 251) as u8); j = j + 1; }
     if (i % 5 == 0) { return None; }
     return Some(b);
@@ -36,37 +36,37 @@ var countedIdentAssignCases = []struct {
 }{
 	{"cancelled_alias_copy", countedIdentAssignPrelude + `
 function round(i: i32): i32 {
-    var chunk: u8[] = [];
-    var missing: boolean = false;
-    var r: Option[u8[]] = mk(i);
+    let chunk: u8[] = [];
+    let missing: boolean = false;
+    let r: Option[u8[]] = mk(i);
     match (r) {
-        Some(c) => { var kept: u8[] = c; chunk = kept; },
+        Some(c) => { let kept: u8[] = c; chunk = kept; },
         None => { missing = true; },
     }
     if (missing) { return 0; }
     return chunk.len();
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) { t = t + round(i); i = i + 1; }
     return t % 100;
 }`},
 	{"copy_handed_out", countedIdentAssignPrelude + `
 function handed_out(i: i32): u8[] {
-    var chunk: u8[] = [];
-    var r: Option[u8[]] = mk(i);
+    let chunk: u8[] = [];
+    let r: Option[u8[]] = mk(i);
     match (r) {
-        Some(c) => { var kept: u8[] = c; chunk = kept; },
+        Some(c) => { let kept: u8[] = c; chunk = kept; },
         None => {},
     }
     return chunk;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var b: u8[] = handed_out(i);
+        let b: u8[] = handed_out(i);
         for x in b { t = t + x as i32; }
         i = i + 1;
     }
@@ -74,30 +74,30 @@ function main(): i32 {
 }`},
 	{"copy_pushed_past_the_loop", countedIdentAssignPrelude + `
 function main(): i32 {
-    var all: u8[][] = [];
-    var i: i32 = 0;
+    let all: u8[][] = [];
+    let i: i32 = 0;
     while (i < 20) {
-        var chunk: u8[] = [];
-        var r: Option[u8[]] = mk(i);
+        let chunk: u8[] = [];
+        let r: Option[u8[]] = mk(i);
         match (r) {
-            Some(c) => { var kept: u8[] = c; chunk = kept; },
+            Some(c) => { let kept: u8[] = c; chunk = kept; },
             None => {},
         }
         all = all.append(chunk);
         i = i + 1;
     }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for a in all { t = t + a.len(); }
     return t % 100;
 }`},
 	{"copy_then_reassigned", countedIdentAssignPrelude + `
 function round(i: i32): i32 {
-    var chunk: u8[] = [];
-    var r: Option[u8[]] = mk(i);
-    var t: i32 = 0;
+    let chunk: u8[] = [];
+    let r: Option[u8[]] = mk(i);
+    let t: i32 = 0;
     match (r) {
         Some(c) => {
-            var kept: u8[] = c;
+            let kept: u8[] = c;
             chunk = kept;
             t = chunk.len();
             chunk = [1, 2, 3];
@@ -108,24 +108,24 @@ function round(i: i32): i32 {
     return t + chunk.len();
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) { t = t + round(i); i = i + 1; }
     return t % 100;
 }`},
 	{"copy_of_a_borrowed_parameter", countedIdentAssignPrelude + `
 @noinline
 function from_param(p: u8[]): i32 {
-    var kept: u8[] = p;
-    var chunk: u8[] = [];
+    let kept: u8[] = p;
+    let chunk: u8[] = [];
     chunk = kept;
     return chunk.len() + kept.len();
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var p: u8[] = [1, 2, 3, 4];
+        let p: u8[] = [1, 2, 3, 4];
         t = t + from_param(p) + p.len() + p[3] as i32;
         i = i + 1;
     }
@@ -144,21 +144,21 @@ struct Key { a: i32, s: string }
 
 @noinline
 function build(i: i32): Map[Key, i32] {
-    var m: Map[Key, i32] = map_new(4);
-    var kept: Key = Key { a: i, s: i.to_string() + " is a key past the inline threshold" };
+    let m: Map[Key, i32] = map_new(4);
+    let kept: Key = Key { a: i, s: i.to_string() + " is a key past the inline threshold" };
     m = m.insert(kept, 1);
-    var chunk: Key = Key { a: 0, s: "" };
+    let chunk: Key = Key { a: 0, s: "" };
     chunk = kept;
-    var t: i32 = chunk.s.len();
+    let t: i32 = chunk.s.len();
     return m.insert(Key { a: -1, s: "" }, t);
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 20) {
-        var m: Map[Key, i32] = build(i);
-        var probe: Key = Key { a: i, s: i.to_string() + " is a key past the inline threshold" };
+        let m: Map[Key, i32] = build(i);
+        let probe: Key = Key { a: i, s: i.to_string() + " is a key past the inline threshold" };
         match (m.get(probe)) {
             Some(v) => { t = t + v; },
             None => { t = t + 100; },

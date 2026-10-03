@@ -5,7 +5,7 @@ import (
 )
 
 // TestSelfHostOptStructReclaimWasmIR is the wasm port of
-// TestSelfHostOptStructReclaimIRX86_64: the OPTSTRUCT class lives in shared irlower.fern;
+// TestSelfHostOptStructReclaimIRX86_64: the OPTSTRUCT class lives in shared lowering;
 // on wasm the option box is [tag@0, payload@4], __fern_rc_dec maps to $__fern_arr_dec
 // (wasm_helper_symbol), and emit_struct_field_drops emits $__struct_drop_<P>
 // (backend-complete), so the inline tag-check + struct-field deep-drop resolves without any

@@ -43,8 +43,8 @@ func arm64LcCases() []arm64LcCase {
 			// x86 alias-suite family's number for this shape).
 			name: "clean_string_churn",
 			src: `function w(a: string): string { return a + "!"; }
-function round(i: i32): i32 { var t: string = w("ab"); return t.len() + i; }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
+function round(i: i32): i32 { let t: string = w("ab"); return t.len() + i; }
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
 			want: 21, verdict: "balanced",
 		},
 		{
@@ -53,7 +53,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// — the half a green exit code cannot.
 			name: "leak_live_at_exit",
 			src: `function bail(n: i32): i32 { exit(n); return 0; }
-function main(): i32 { var keep: i32[][] = []; var i: i32 = 0; while (i < 3) { keep = keep.append([i, 2, 3, 4]); i = i + 1; } var r: i32 = bail(keep.len()); return r + keep.len(); }`,
+function main(): i32 { let keep: i32[][] = []; let i: i32 = 0; while (i < 3) { keep = keep.append([i, 2, 3, 4]); i = i + 1; } let r: i32 = bail(keep.len()); return r + keep.len(); }`,
 			want: 3, verdict: "leaky",
 		},
 		{

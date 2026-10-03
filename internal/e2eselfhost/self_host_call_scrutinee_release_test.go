@@ -21,60 +21,60 @@ import (
 // (native oracle, sanitize leg); this file is the wasm leg, which asserts a
 // balanced census and the interpreter's exit code.
 
-const callScrutResultStrArrSrc = `function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+const callScrutResultStrArrSrc = `function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function mk(i: i32): Result[string[], string] {
     if (i % 2 == 0) { return Ok([w(i)]); }
     return Err(w(i));
 }
 function round(i: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (mk(i)) { Ok(xs) => { t = t + xs.len(); }, Err(e) => { t = t + e.len(); } }
     return t % 101;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `
 
-const callScrutOptOptStrArrSrc = `function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+const callScrutOptOptStrArrSrc = `function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function mko(i: i32): Option[Option[string[]]] {
     if (i % 2 == 0) { return Some(Some([w(i)])); }
     return None;
 }
 function round(i: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (mko(i)) { Some(o) => { match (o) { Some(xs) => { t = t + xs.len(); }, None => { t = t + 1; } } }, None => { t = t + 2; } }
     return t % 101;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `
 
-const callScrutOptStrSrc = `function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+const callScrutOptStrSrc = `function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function mk(i: i32): Option[string] {
     if (i % 2 == 0) { return None; }
     return Some(w(i));
 }
 function round(i: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (mk(i)) { Some(s) => { t = t + s.len(); }, None => { t = t + 1; } }
     return t % 101;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `
 
-const callBoundOptStrArrSrc = `function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+const callBoundOptStrArrSrc = `function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function mk(i: i32): Option[string[]] {
     if (i % 2 == 0) { return None; }
     return Some([w(i), w(i + 1)]);
 }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    var r: Option[string[]] = mk(i);
+    let t: i32 = 0;
+    let r: Option[string[]] = mk(i);
     match (r) { Some(xs) => { t = t + xs.len(); }, None => { t = t + 1; } }
     return t % 101;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `
 
-const callScrutUserEnumSrc = `function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+const callScrutUserEnumSrc = `function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 enum E { Full(string[]), Note(string), Nil }
 function mk(i: i32): E {
     if (i % 3 == 0) { return E.Full([w(i)]); }
@@ -82,11 +82,11 @@ function mk(i: i32): E {
     return E.Nil;
 }
 function round(i: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (mk(i)) { E.Full(xs) => { t = t + xs.len(); }, E.Note(s) => { t = t + s.len(); }, E.Nil => { t = t + 1; } }
     return t % 101;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `
 
 func TestSelfHostCallScrutineeReleaseWasmIR(t *testing.T) {

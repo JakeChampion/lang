@@ -20,21 +20,21 @@
 struct G { text: string, lines: i32[] }
 
 function main(): i32 {
-    var placed: i32[][] = [[1, 2, 3], [4, 5], [6, 7, 8, 9]];
+    let placed: i32[][] = [[1, 2, 3], [4, 5], [6, 7, 8, 9]];
 
-    var g: G = G { text: "a", lines: placed[0] };
-    var h: G = G { text: "b", lines: placed[1] };
+    let g: G = G { text: "a", lines: placed[0] };
+    let h: G = G { text: "b", lines: placed[1] };
 
     // The control: the same row via a bound local.
-    var row: i32[] = placed[2];
-    var k: G = G { text: "c", lines: row };
+    let row: i32[] = placed[2];
+    let k: G = G { text: "c", lines: row };
 
     // Read the outer array again after every construction. If a field drop had
     // released a row the outer still owns, this is a use-after-free.
-    var tail: i32 = placed[0][2] + placed[1][1] + placed[2][3];
+    let tail: i32 = placed[0][2] + placed[1][1] + placed[2][3];
 
-    var sum: i32 = 0;
-    var i: i32 = 0;
+    let sum: i32 = 0;
+    let i: i32 = 0;
     while (i < g.lines.len()) { sum = sum + g.lines[i]; i = i + 1; }
     i = 0;
     while (i < h.lines.len()) { sum = sum + h.lines[i]; i = i + 1; }

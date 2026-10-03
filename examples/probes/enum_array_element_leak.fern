@@ -22,10 +22,10 @@
 enum Tok { Ident(string), Eof }
 
 function build(n: i32): i32 {
-  var xs: Tok[] = [];
-  var i: i32 = 0;
+  let xs: Tok[] = [];
+  let i: i32 = 0;
   while (i < n) {
-    var t: string = "tok" + slice_unchecked("abcdefghij", 0, i % 10 + 1);
+    let t: string = "tok" + slice_unchecked("abcdefghij", 0, i % 10 + 1);
     xs = xs.append(Ident(t));
     i = i + 1;
   }
@@ -33,8 +33,8 @@ function build(n: i32): i32 {
 }
 
 function main(): i32 {
-  var acc: i32 = 0;
-  var r: i32 = 0;
+  let acc: i32 = 0;
+  let r: i32 = 0;
   while (r < 2) {
     acc = acc + build(5000);
     r = r + 1;

@@ -18,8 +18,8 @@ function mk(i: i32): E {
     return A(i);
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         match (mk(i)) { A(a) => { acc = acc + a; }, B(_) => { acc = acc + 1; } }
         i = i + 1;
@@ -27,8 +27,8 @@ function round(r: i32): i32 {
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -39,8 +39,8 @@ const matchCallResultSrc = `function make(i: i32): Result[i32, string] {
     return Ok(i);
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         match (make(i)) { Ok(x) => { acc = acc + x; }, Err(_) => { acc = acc + 1; } }
         i = i + 1;
@@ -48,8 +48,8 @@ function round(r: i32): i32 {
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -61,8 +61,8 @@ function mk(i: i32): E {
     return A(i, i + 1, i + 2);
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         match (mk(i)) { A(a, b, c) => { acc = acc + a + b + c; }, B(z) => { acc = acc + z; } }
         i = i + 1;
@@ -70,8 +70,8 @@ function round(r: i32): i32 {
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -88,8 +88,8 @@ function step(i: i32): Result[i32, string] {
     match (make(i)) { Ok(v) => { return Ok(v + 1); }, Err(e) => { return Err(e); } }
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         match (step(i)) { Ok(x) => { acc = acc + x; }, Err(e) => { acc = acc + e.len(); } }
         i = i + 1;
@@ -97,8 +97,8 @@ function round(r: i32): i32 {
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`

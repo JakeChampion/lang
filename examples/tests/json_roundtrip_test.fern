@@ -170,7 +170,7 @@ function test_encode_array_round_trip(): test.TestOutcome {
 }
 
 function test_encode_scalars(): test.TestOutcome {
-  var ok: boolean = true;
+  let ok: boolean = true;
   match (json.json_parse("true")) {
     Some(v) => {
       ok = ok && json.json_encode(v) == "true";
@@ -214,7 +214,7 @@ function test_encode_string_escape(): test.TestOutcome {
 // a control byte (, the 6-byte branch) — re-encodes byte-for-byte. Guards
 // the two-pass exact-size buffer: a miscount would corrupt or truncate here.
 function test_encode_string_escape_all(): test.TestOutcome {
-  var j: string = "\"a\\\"b\\\\c\\nd\\re\\tf\\u0001g\"";
+  let j: string = "\"a\\\"b\\\\c\\nd\\re\\tf\\u0001g\"";
   match (json.json_parse(j)) {
     Some(v) => {
       return test.assert_eq(json.json_encode(v), j);
@@ -251,13 +251,13 @@ function test_parse_string_decode_paths(): test.TestOutcome {
   }
   // A lone high surrogate with no following low → U+FFFD (replacement char,
   // UTF-8 EF BF BD).
-  var fffd: string = string_from_bytes_unchecked([239 as u8, 191 as u8, 189 as u8]);
-  var lone: string = __reencode("\"a\\ud83db\"");
+  let fffd: string = string_from_bytes_unchecked([239 as u8, 191 as u8, 189 as u8]);
+  let lone: string = __reencode("\"a\\ud83db\"");
   if (lone != "\"a" + fffd + "b\"") {
     return test.fail("lone surrogate decode: " + lone);
   }
   // A long literal run (buffer grows across reallocations) decodes intact.
-  var long_in: string = "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"";
+  let long_in: string = "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"";
   return test.assert_eq(__reencode(long_in), long_in);
 }
 
@@ -267,7 +267,7 @@ function test_parse_string_decode_paths(): test.TestOutcome {
 // comma separators, quoted+escaped keys, and the nested-object recursion in one
 // shot; a buffer miscount here would reorder or truncate the output.
 function test_encode_nested_round_trip(): test.TestOutcome {
-  var j: string = "{\"items\":[{\"id\":1,\"tag\":\"a\\\"b\"},{\"id\":2,\"kids\":[3,4]}],\"ok\":true}";
+  let j: string = "{\"items\":[{\"id\":1,\"tag\":\"a\\\"b\"},{\"id\":2,\"kids\":[3,4]}],\"ok\":true}";
   match (json.json_parse(j)) {
     Some(v) => {
       return test.assert_eq(json.json_encode(v), j);
@@ -316,8 +316,8 @@ function test_parse_error_byte_render(): test.TestOutcome {
 // nest(n) builds n open brackets followed by n close brackets —
 // an n-deep JSON array `[[[…]]]`. Used by the recursion-depth tests.
 function nest(n: i32): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < n) {
     out = out + "[";
     i = i + 1;
@@ -365,7 +365,7 @@ function test_get_f64(): test.TestOutcome {
     Some(v) => {
       match (json.json_get_f64(v, "x")) {
         Some(f) => {
-          var d: f64 = f - 3.5;
+          let d: f64 = f - 3.5;
           if (d < 0.0) {
             d = 0.0 - d;
           }
@@ -388,7 +388,7 @@ function test_get_f64_exp(): test.TestOutcome {
     Some(v) => {
       match (json.json_get_f64(v, "x")) {
         Some(f) => {
-          var d: f64 = f - 1500.0;
+          let d: f64 = f - 1500.0;
           if (d < 0.0) {
             d = 0.0 - d;
           }
@@ -459,7 +459,7 @@ function test_pretty_scalars_and_empties(): test.TestOutcome {
   if (json.json_encode_pretty(JNull, 2) != "null") {
     return test.fail("null");
   }
-  var empty: JsonValue[] = [];
+  let empty: JsonValue[] = [];
   if (json.json_encode_pretty(JArray(empty), 2) != "[]") {
     return test.fail("empty array");
   }
@@ -470,7 +470,7 @@ function test_pretty_scalars_and_empties(): test.TestOutcome {
 function test_pretty_structure(): test.TestOutcome {
   match (json.json_parse("{\"a\":1,\"b\":[10,20]}")) {
     Some(v) => {
-      var p: string = json.json_encode_pretty(v, 2);
+      let p: string = json.json_encode_pretty(v, 2);
       if (!p.contains("\n")) {
         return test.fail("no newline");
       }
@@ -491,7 +491,7 @@ function test_pretty_structure(): test.TestOutcome {
 // Pretty output re-parses to the same value: json_encode of the reparse
 // equals json_encode of the original (whitespace-only difference).
 function test_pretty_roundtrip(): test.TestOutcome {
-  var src: string = "{\"name\":\"fern\",\"nums\":[1,2,3],\"nested\":{\"ok\":true},\"e\":{}}";
+  let src: string = "{\"name\":\"fern\",\"nums\":[1,2,3],\"nested\":{\"ok\":true},\"e\":{}}";
   match (json.json_parse(src)) {
     Some(v) => {
       match (json.json_parse(json.json_encode_pretty(v, 4))) {
@@ -519,7 +519,7 @@ function test_escape_named(): test.TestOutcome {
 
 function test_escape_control_bytes(): test.TestOutcome {
   // 0x01 and 0x1f are C0 controls without named escapes → lowercase \u00XX.
-  var s: string = string_from_bytes_unchecked([1 as u8, 31 as u8]);
+  let s: string = string_from_bytes_unchecked([1 as u8, 31 as u8]);
   return test.assert_eq(json.json_escape(s), "\\u0001\\u001f");
 }
 
@@ -535,12 +535,12 @@ function test_escape_passthrough(): test.TestOutcome {
 function test_escape_matches_encoder(): test.TestOutcome {
   // The encoder's string leaf is the same function: quote-wrapping
   // json_escape must equal json_encode of a JString.
-  var raw: string = "x\x02\"y\\z\n";
+  let raw: string = "x\x02\"y\\z\n";
   return test.assert_eq("\"" + json.json_escape(raw) + "\"", json.json_encode(JString(raw)));
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/json roundtrip");
+  let r: test.TestRunner = test.test_new("std/json roundtrip");
   r = r.it("escape named", test_escape_named);
   r = r.it("escape control bytes", test_escape_control_bytes);
   r = r.it("escape passthrough", test_escape_passthrough);

@@ -24,7 +24,7 @@ import "./wasm_ir";
 function unit(o: ir.Op): irtables.LowerResult[] {
     return [irtables.LowerResult { ok: true, why: "", ops: [o], n_locals: 0,
         n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
-        f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irtables.result_i32() }];
+        f64_slots: [], str_slots: [], name: "", result_kind: irtables.result_i32() }];
 }
 
 function records(o: ir.Op): boolean {
@@ -32,7 +32,7 @@ function records(o: ir.Op): boolean {
 }
 
 function main(): i32 {
-    var wide: ir.Op[] = [
+    let wide: ir.Op[] = [
         ir.op_map_set(1, false, false, false, true, false, "", 1, 0),
         ir.op_map_get(1, "", 1),
         ir.op_map_get_or(1, "", 1),
@@ -41,8 +41,8 @@ function main(): i32 {
         ir.op_mapiter_value(1),
         ir.op_mapiter_value(2),
     ];
-    var missing: i32 = 0;
-    var bit: i32 = 1;
+    let missing: i32 = 0;
+    let bit: i32 = 1;
     for o in wide {
         if (!records(o)) { missing = missing + bit; }
         bit = bit * 2;
@@ -99,7 +99,7 @@ import "./wasm_ir";
 function unit(o: ir.Op): irtables.LowerResult[] {
     return [irtables.LowerResult { ok: true, why: "", ops: [o], n_locals: 0,
         n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
-        f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irtables.result_i32() }];
+        f64_slots: [], str_slots: [], name: "", result_kind: irtables.result_i32() }];
 }
 
 function records(o: ir.Op): boolean {
@@ -107,7 +107,7 @@ function records(o: ir.Op): boolean {
 }
 
 function main(): i32 {
-    var wide: ir.Op[] = [
+    let wide: ir.Op[] = [
         ir.op_map_new(3, ""),
         ir.op_map_set(3, false, false, false, false, false, "", 0, 0),
         ir.op_map_get(3, "", 0),
@@ -118,9 +118,9 @@ function main(): i32 {
         ir.op_map_iter(0, 1),
         ir.op_mapiter_key(1),
     ];
-    var names: string[] = ["map_new", "map_set", "map_get", "map_has", "map_get_or", "map_delete", "map_keys", "map_iter", "mapiter_key"];
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let names: string[] = ["map_new", "map_set", "map_get", "map_has", "map_get_or", "map_delete", "map_keys", "map_iter", "mapiter_key"];
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < wide.len()) {
         if (!records(wide[i])) { print("wide-key " + names[i] + " does not record @uses_map_k64"); bad = 1; }
         i = i + 1;

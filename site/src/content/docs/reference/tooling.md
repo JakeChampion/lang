@@ -62,7 +62,7 @@ generic LSP client. Features:
   keywords. Triggered on `.` and Ctrl/Cmd-Space.
 - **Signature help** — function signatures with active-parameter
   highlighting.
-- **Inlay hints** — inferred types for `var x = …`.
+- **Inlay hints** — inferred types for `let x = …`.
 - **Document symbols** — outline view (Cmd-Shift-O in VS Code).
 - **Semantic tokens** — type-aware syntax highlighting.
 - **Find references + rename** — workspace-wide, including method
@@ -88,7 +88,7 @@ Set `fern.serverPath` if `fern-lsp` isn't on your `$PATH`.
 
 ```bash
 fern -repl
-> var x = 7;
+> let x = 7;
 > x * 2
 14
 ```

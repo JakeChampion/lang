@@ -19,7 +19,7 @@ function main(): i32 { MAIN }
 `
 	for _, tc := range []struct{ name, main string }{
 		{"without map", "return 0;"},
-		{"integer map", "var m: Map[i32, i32] = map_new(4); m = m.insert(1, 7); return m.get_or(1, 0) - 7;"},
+		{"integer map", "let m: Map[i32, i32] = map_new(4); m = m.insert(1, 7); return m.get_or(1, 0) - 7;"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "unused.fern")

@@ -33,7 +33,7 @@ import (
 // and the registry's "f" flag for the call form.
 //
 // THE EXIT SWEEP ALONE IS NOT ENOUGH, which is what the first cut of this got
-// wrong. A loop-declared `var v` re-stores to the SAME slot each iteration, so a
+// wrong. A loop-declared `let v` re-stores to the SAME slot each iteration, so a
 // function-exit sweep releases only the final value and every earlier iteration
 // still leaks — 22400 improved to 18400 and looked like progress rather than a
 // half-fix. The store is where the previous value has to go, via
@@ -92,18 +92,18 @@ func TestSelfHostUnmatchedOptStrReclaimX86_64(t *testing.T) {
     return Some("v" + "x");
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[string] = mk(i);
+        let v: Option[string] = mk(i);
         acc = acc + i;
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -113,18 +113,18 @@ function main(): i32 {
 			// fresh concat, not on registry membership.
 			name: "option_string_inline_concat",
 			src: `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[string] = Some("v" + "x");
+        let v: Option[string] = Some("v" + "x");
         acc = acc + i;
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -134,18 +134,18 @@ function main(): i32 {
 			// .rodata data, so the box is released and the data is left alone.
 			name: "option_string_literal",
 			src: `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[string] = Some("literal");
+        let v: Option[string] = Some("literal");
         acc = acc + i;
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -158,18 +158,18 @@ function main(): i32 {
     return Ok("v" + "x");
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Result[string, i32] = mk(i);
+        let v: Result[string, i32] = mk(i);
         acc = acc + i;
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -183,18 +183,18 @@ function main(): i32 {
     return Some([i, i + 1]);
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[i32[]] = mk(i);
+        let v: Option[i32[]] = mk(i);
         acc = acc + i;
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -223,25 +223,25 @@ function main(): i32 {
 			name: "aliased_producer_payload",
 			src: `function wrap(s: string): Option[string] { return Some(s); }
 function round(r: i32): i32 {
-    var shared: string = "ab" + "cd";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let shared: string = "ab" + "cd";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[string] = wrap(shared);
+        let v: Option[string] = wrap(shared);
         acc = acc + i;
         i = i + 1;
     }
-    var junk: string = "";
-    var c: i32 = 0;
+    let junk: string = "";
+    let c: i32 = 0;
     while (c < 6) { junk = "zz" + "zz"; c = c + 1; }
-    var sum: i32 = 0;
-    var k: i32 = 0;
+    let sum: i32 = 0;
+    let k: i32 = 0;
     while (k < shared.len()) { sum = sum + (shared[k] as i32); k = k + 1; }
     return acc + sum + junk.len() + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 251;
 }`,
@@ -251,25 +251,25 @@ function main(): i32 {
 			// producer at all.
 			name: "inline_ctor_over_a_bare_local",
 			src: `function round(r: i32): i32 {
-    var base: string = "ab" + "cd";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let base: string = "ab" + "cd";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[string] = Some(base);
+        let v: Option[string] = Some(base);
         acc = acc + i;
         i = i + 1;
     }
-    var junk: string = "";
-    var c: i32 = 0;
+    let junk: string = "";
+    let c: i32 = 0;
     while (c < 6) { junk = "zz" + "zz"; c = c + 1; }
-    var sum: i32 = 0;
-    var k: i32 = 0;
+    let sum: i32 = 0;
+    let k: i32 = 0;
     while (k < base.len()) { sum = sum + (base[k] as i32); k = k + 1; }
     return acc + sum + junk.len() + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 251;
 }`,
@@ -280,11 +280,11 @@ function main(): i32 {
 			name: "box_read_after_the_loop",
 			src: `function mk(i: i32): Option[string] { return Some("v" + "x"); }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var keep: Option[string] = None;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let keep: Option[string] = None;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[string] = mk(i);
+        let v: Option[string] = mk(i);
         keep = v;
         acc = acc + i;
         i = i + 1;
@@ -293,8 +293,8 @@ function round(r: i32): i32 {
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,

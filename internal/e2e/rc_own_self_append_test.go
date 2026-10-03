@@ -22,23 +22,23 @@ import (
 // (docs/RC-ARRAY-MOVE-SEMANTICS-PLAN.md step 3).
 const ownSelfAppendSrc = `
 function build_i32(own p: i32[], n: i32): i32[] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { p = p.append(i * 2 + 1); i = i + 1; }
     return p;
 }
 function build_str(own p: string[], n: i32): string[] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { p = p.append("x"); i = i + 1; }
     return p;
 }
 function main(): i32 {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) {
-        var a: i32[] = build_i32([], 120);
+        let a: i32[] = build_i32([], 120);
         if (a.len() != 120) { return 10; }
         if (a[0] != 1) { return 11; }
         if (a[119] != 239) { return 12; }      // integrity across grows
-        var s: string[] = build_str(["seed"], 60);
+        let s: string[] = build_str(["seed"], 60);
         if (s.len() != 61) { return 20; }
         k = k + 1;
     }

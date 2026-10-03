@@ -34,7 +34,7 @@ func TestFormatting_PreservesComments(t *testing.T) {
 	src := "// header note\n" +
 		"function main(): i32 {\n" +
 		"  // inline note\n" +
-		"  var x: i32 = 7; // trailing\n" +
+		"  let x: i32 = 7; // trailing\n" +
 		"  return x;\n" +
 		"}\n"
 	got := formattingFor(src)

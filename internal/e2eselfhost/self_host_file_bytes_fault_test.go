@@ -24,8 +24,8 @@ func TestSelfHostFileBytesFaults(t *testing.T) {
 	bootstrap := buildLangBinForInterp(t)
 	src := filepath.Join(t.TempDir(), "fault.fern")
 	program := `function main(): i32 {
-  var bytes: u8[] = [0 as u8, 255 as u8, 65 as u8, 128 as u8];
-  var result = write_file_bytes("ignored", bytes);
+  let bytes: u8[] = [0 as u8, 255 as u8, 65 as u8, 128 as u8];
+  let result = write_file_bytes("ignored", bytes);
   if (bytes.len() != 4 || bytes[1] != 255 || bytes[3] != 128) { return 20; }
   match (result) {
     Ok(_) => { return 0; },
@@ -51,7 +51,7 @@ func TestSelfHostFileBytesFaults(t *testing.T) {
 			}
 			cmd := exec.Command(compiler.cli, args...)
 			if compiler.name == "primary" {
-				cmd.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1")
+				cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 			}
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, out)

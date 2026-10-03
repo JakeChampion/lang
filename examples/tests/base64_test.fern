@@ -56,7 +56,7 @@ function test_decode_empty(): test.TestOutcome {
 
 // decode . encode is the identity on arbitrary text.
 function test_roundtrip(): test.TestOutcome {
-  var s = "The quick brown fox jumps over the lazy dog.";
+  let s = "The quick brown fox jumps over the lazy dog.";
   return test.assert_eq(text(base64.base64_decode(base64.base64_encode(s.bytes()))), s);
 }
 
@@ -108,8 +108,8 @@ function test_url_no_padding(): test.TestOutcome {
 }
 
 function test_url_roundtrip(): test.TestOutcome {
-  var payload: string = "Hello, World! ~ tokens+need/url-safety";
-  var enc: string = base64.base64url_encode(payload.bytes());
+  let payload: string = "Hello, World! ~ tokens+need/url-safety";
+  let enc: string = base64.base64url_encode(payload.bytes());
   // Decoding accepts the unpadded url-safe form back to the original.
   return test.assert_true(text(base64.base64url_decode(enc)) == payload
     && text(base64.base64url_decode("SGk=")) == "Hi");  // padded input tolerated
@@ -161,7 +161,7 @@ function test_url_decode_strict_rejects(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/base64");
+  let r: test.TestRunner = test.test_new("std/base64");
   r = r.it("encode (no pad)", test_encode_no_pad);
   r = r.it("encode (one pad)", test_encode_one_pad);
   r = r.it("encode (two pad)", test_encode_two_pad);

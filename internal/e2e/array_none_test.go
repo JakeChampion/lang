@@ -26,12 +26,12 @@ var noneCases = []struct {
 function is_neg(x: i32): boolean { return x < 0; }
 function is_even(x: i32): boolean { return x % 2 == 0; }
 function b2i(b: boolean): i32 { if (b) { return 1; } return 0; }
-function main(): i32 { var xs: i32[] = [1, 2, 3, 4]; return b2i(none(xs, is_neg)) * 10 + b2i(none(xs, is_even)); }`, 10},
+function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; return b2i(none(xs, is_neg)) * 10 + b2i(none(xs, is_even)); }`, 10},
 	// empty -> vacuously true (1); all-match -> false (0); 1*10+0 = 10.
 	{"empty-and-all-match", `function none[T](xs: T[], pred: (T) => boolean): boolean { for x in xs { if (pred(x)) { return false; } } return true; }
 function is_neg(x: i32): boolean { return x < 0; }
 function b2i(b: boolean): i32 { if (b) { return 1; } return 0; }
-function main(): i32 { var e: i32[] = []; var negs: i32[] = [0 - 1, 0 - 2]; return b2i(none(e, is_neg)) * 10 + b2i(none(negs, is_neg)); }`, 10},
+function main(): i32 { let e: i32[] = []; let negs: i32[] = [0 - 1, 0 - 2]; return b2i(none(e, is_neg)) * 10 + b2i(none(negs, is_neg)); }`, 10},
 }
 
 // TestNativeArrayNone runs the inline programs on interp / x86-64 / wasm / arm64.
@@ -67,14 +67,14 @@ function is_neg(x: i32): boolean { return x < 0; }
 function is_even(x: i32): boolean { return x % 2 == 0; }
 function is_empty_str(s: string): boolean { return s.len() == 0; }
 function main(): i32 {
-    var r = 0;
-    var xs: i32[] = [1, 2, 3, 4];
+    let r = 0;
+    let xs: i32[] = [1, 2, 3, 4];
     if (xs.none(is_neg)) { r = r + 1; }        // no negatives
     if (!xs.none(is_even)) { r = r + 2; }      // has evens
     if (arr.none(xs, is_neg)) { r = r + 4; }   // free fn
-    var e: i32[] = [];
+    let e: i32[] = [];
     if (e.none(is_neg)) { r = r + 8; }         // empty -> true
-    var ss: string[] = ["a", "b", "c"];
+    let ss: string[] = ["a", "b", "c"];
     if (ss.none(is_empty_str)) { r = r + 16; } // no empty strings
     return r;
 }

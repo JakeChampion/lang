@@ -375,7 +375,7 @@ func TestFoldConstIfWithNoElseDropsBody(t *testing.T) {
 // scope structure.
 func TestFoldHandlesNestedControlFlow(t *testing.T) {
 	p := loweredAndFolded(t, `function f(): i32 {
-		var i: i32 = 0;
+		let i: i32 = 0;
 		while (i < 3) {
 			if (true) { i = i + 1; }
 		}
@@ -408,7 +408,7 @@ func TestFoldHandlesNestedControlFlow(t *testing.T) {
 // that branch exits is then reduced to what ran before it: nothing, so
 // the loop body's add is gone with it (foldBlockExit).
 func TestFoldConstBrIfAlwaysTaken(t *testing.T) {
-	src := `function f(): i32 { var i: i32 = 0; while (false) { i = i + 1; } return i; }`
+	src := `function f(): i32 { let i: i32 = 0; while (false) { i = i + 1; } return i; }`
 	// Before Fold the exit test is a real br_if on a constant.
 	pre := lowerSource(t, src)
 	if !hasOpKind(pre, "f", OpBrIf) {
@@ -434,7 +434,7 @@ func TestFoldConstBrIfAlwaysTaken(t *testing.T) {
 // loop's body branches via an OpBr (`break`), so none survives.
 func TestFoldConstBrIfNeverTaken(t *testing.T) {
 	src := `function f(): i32 {
-		var i: i32 = 0;
+		let i: i32 = 0;
 		while (true) { i = i + 1; if (i >= 5) { break; } }
 		return i;
 	}`

@@ -12,15 +12,15 @@ import "core/map";
 function id[T](x: T): T { return x; }
 function gen_f0(): (i32) => i32 { return (x: i32) => x + 1; }
 function main(): i32 {
-    var k: i64 = 7i64 << 33i64;
-    var c: boolean = false;
-    var f: (i32) => i32 = if (c) { id(gen_f0()) } else { id((x: i32) => ((k >> 32i64) as i32) + x) };
-    var g: (i32) => i32 = if (!c) { id((x: i32) => x) } else { id((x: i32) => ((k >> 32i64) as i32)) };
-    var m: Map[i32, i32] = Map { 1: 2, 3: 4 };
-    var acc: i32 = 0;
+    let k: i64 = 7i64 << 33i64;
+    let c: boolean = false;
+    let f: (i32) => i32 = if (c) { id(gen_f0()) } else { id((x: i32) => ((k >> 32i64) as i32) + x) };
+    let g: (i32) => i32 = if (!c) { id((x: i32) => x) } else { id((x: i32) => ((k >> 32i64) as i32)) };
+    let m: Map[i32, i32] = Map { 1: 2, 3: 4 };
+    let acc: i32 = 0;
     for (key, value) in m {
-        var w: i64 = (key as i64) * 1000000000i64;
-        var h: (i32) => i32 = if (c) { id(gen_f0()) } else { id((x: i32) => ((w / 1000000000i64) as i32) + x) };
+        let w: i64 = (key as i64) * 1000000000i64;
+        let h: (i32) => i32 = if (c) { id(gen_f0()) } else { id((x: i32) => ((w / 1000000000i64) as i32) + x) };
         acc = acc + h(value);
     }
     print(f(1).to_string() + " " + g(5).to_string() + " " + acc.to_string());

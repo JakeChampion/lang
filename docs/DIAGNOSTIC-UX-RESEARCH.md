@@ -443,7 +443,7 @@ lines:
 ```
    ┌─ src/main.fern:5:9
    │
- 3 │     var x: i32 = 1.0;
+ 3 │     let x: i32 = 1.0;
    │            ───   ─── expected `i32`, found floating-point
    │            │
    │            expected due to this annotation
@@ -462,7 +462,7 @@ lines:
   already did.
 
 - **Unicode default with ASCII fallback.** Detect
-  terminal capability (`LANG=C.UTF-8` etc.) or env var
+  terminal capability (`LANG=C.UTF-8` etc.) or env let
   override; render box-drawing when supported, ASCII
   otherwise.
 

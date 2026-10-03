@@ -18,12 +18,12 @@ function (w: W) put(s: string): W {
     return W { ...w, buf: w.buf + s };
 }
 function rep(o: W): W {
-    var out: W = o.put("a");
+    let out: W = o.put("a");
     out = out.put("b");
     return out;
 }
 function main(): i32 {
-    var o: W = W { buf: "", err: None };
+    let o: W = W { buf: "", err: None };
     return rep(o).buf.len();
 }`
 	prog := lowerSourceWith(t, src, 8)
@@ -70,17 +70,17 @@ function main(): i32 {
 func TestBoxTempUnderPointerResultIsReleased(t *testing.T) {
 	src := `struct W { buf: string, err: Option[i32] }
 function put(w: W, s: string): W {
-    var m: Map[i32, W] = map_new(1);
-    var m2: Map[i32, W] = m.insert(1, w);
+    let m: Map[i32, W] = map_new(1);
+    let m2: Map[i32, W] = m.insert(1, w);
     if (m2.len() > 9) { return w; }
     return W { ...w, buf: w.buf + s };
 }
 function id_w(w: W): W { return w; }
 function apply(f: (W, string) => W, w: W): W { return f(w, "z"); }
 function main(): i32 {
-    var o: W = W { buf: "", err: None };
+    let o: W = W { buf: "", err: None };
     o = put(id_w(o), "a");
-    var q: W = apply(put, W { buf: "q", err: None });
+    let q: W = apply(put, W { buf: "q", err: None });
     return o.buf.len() + q.buf.len();
 }`
 	prog := lowerSourceWith(t, src, 8)

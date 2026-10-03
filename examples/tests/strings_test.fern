@@ -37,14 +37,14 @@ function test_concat(): test.TestOutcome {
 }
 
 function test_split_join_roundtrip(): test.TestOutcome {
-  var parts: string[] = "a,b,c,d".split(",");
+  let parts: string[] = "a,b,c,d".split(",");
   return test.assert_eq(parts.join("|"), "a|b|c|d");
 }
 
 // Length assertion + array-of-string assertion in one test.
 // Both pass; folded together to keep the test list short.
 function test_split_yields_four_parts(): test.TestOutcome {
-  var parts: string[] = "a,b,c,d".split(",");
+  let parts: string[] = "a,b,c,d".split(",");
   return test.assert_len_string(parts, 4);
 }
 
@@ -115,7 +115,7 @@ function test_truncate(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("strings");
+  let r: test.TestRunner = test.test_new("strings");
   r = r.it("to_upper", test_uppercase);
   r = r.it("to_lower", test_lowercase);
   r = r.it("contains substring", test_contains_substring);

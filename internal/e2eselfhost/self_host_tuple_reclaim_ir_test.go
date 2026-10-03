@@ -27,35 +27,35 @@ var tupleReclaimIRCases = []struct {
 	// Loop-body scalar tuple with a variable element: reclaimed each iteration.
 	// sum over i in 0..3 of (i + 1) = 1+2+3+4 = 10.
 	{"loop-body-scalar-tuple",
-		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: (i32, i32) = (i, 1); sum = sum + a.0 + a.1; i = i + 1; } return sum; }`,
+		`function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let a: (i32, i32) = (i, 1); sum = sum + a.0 + a.1; i = i + 1; } return sum; }`,
 		10},
 	// Scalar tuple in a NESTED if inside a loop: reclaimed each time the arm runs.
 	// sum over i in 1..3 of (i + 1) = 2+3+4 = 9.
 	{"nested-if-scalar-tuple",
-		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { if (i > 0) { var a: (i32, i32) = (i, 1); sum = sum + a.0 + a.1; } i = i + 1; } return sum; }`,
+		`function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 4) { if (i > 0) { let a: (i32, i32) = (i, 1); sum = sum + a.0 + a.1; } i = i + 1; } return sum; }`,
 		9},
 	// Mixed i64 / f64 scalar tuple: the wide (8-byte) elements are still by-value,
 	// so the box is reclaimed. sum over i in 0..3 of (5 + 2) = 28.
 	{"i64-f64-scalar-tuple",
-		`function main(): i32 { var sum: i64 = 0; var i: i32 = 0; while (i < 4) { var a: (i64, f64) = (5, 2.0); sum = sum + a.0 + (a.1 as i64); i = i + 1; } return sum as i32; }`,
+		`function main(): i32 { let sum: i64 = 0; let i: i32 = 0; while (i < 4) { let a: (i64, f64) = (5, 2.0); sum = sum + a.0 + (a.1 as i64); i = i + 1; } return sum as i32; }`,
 		28},
 	// Memory-safety at scale: 5,000,000 iterations of a scalar-tuple loop. A leaked
 	// box per iteration would exhaust the heap; a double-free would crash. exit 0
 	// (sum kept mod 1000) with the reclaim present proves the balance.
 	{"scalar-tuple-churn-safe",
-		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var a: (i32, i32) = (i, 1); sum = (sum + a.0 + a.1) % 1000; i = i + 1; } return sum; }`,
+		`function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 5000000) { let a: (i32, i32) = (i, 1); sum = (sum + a.0 + a.1) % 1000; i = i + 1; } return sum; }`,
 		0},
-	// UN-ANNOTATED scalar tuple (`var a = (i, 1)`, inferred type): reclaimed too —
+	// UN-ANNOTATED scalar tuple (`let a = (i, 1)`, inferred type): reclaimed too —
 	// the reclaimability check now accepts number / boolean / IDENT elements (a
 	// SHALLOW box free never touches them), not just all-literal tuples, so the
 	// annotation is no longer required. sum over i in 0..3 of (i + 1) = 10.
 	{"unannotated-scalar-tuple",
-		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a = (i, 1); sum = sum + a.0 + a.1; i = i + 1; } return sum; }`,
+		`function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let a = (i, 1); sum = sum + a.0 + a.1; i = i + 1; } return sum; }`,
 		10},
 	// Un-annotated churn at scale: the inferred `(i, 1)` reclaims per iteration
 	// (flat heap), exit 0.
 	{"unannotated-scalar-tuple-churn-safe",
-		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var a = (i, 1); sum = (sum + a.0 + a.1) % 1000; i = i + 1; } return sum; }`,
+		`function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 5000000) { let a = (i, 1); sum = (sum + a.0 + a.1) % 1000; i = i + 1; } return sum; }`,
 		0},
 }
 

@@ -7,7 +7,7 @@
 // end, from a thin self-validating driver.
 //
 // Scope (matches the parser's): i32 / bool / string runtime
-// values, var binding through a flat scope, arithmetic /
+// values, let binding through a flat scope, arithmetic /
 // comparison / logical / string-concat ops over the same op
 // set the checker (#619) handles. The return value of the first
 // `return` statement is what main() surfaces — anything past it
@@ -174,8 +174,8 @@ function unpack_i64(x: VInt64): i64 {
   // `& 4294967295`: the native backend mis-emits that i64 literal as a
   // sign-extended 32-bit immediate (-1), so an inline mask is a no-op and
   // a negative `lo` stays sign-extended into the high word (which then
-  // corrupts e.g. an i64 divide). A `var` forces a full 64-bit load.
-  var lo_mask: i64 = 4294967295;
+  // corrupts e.g. an i64 divide). A `let` forces a full 64-bit load.
+  let lo_mask: i64 = 4294967295;
   return x.hi as i64 << 32 | x.lo as i64 & lo_mask;
 }
 
@@ -188,7 +188,7 @@ function v_uint(n: i32): Value {
 // i64 the same bits spell (#6051 is the codegen half of this).
 function wide_as_f64(x: VInt64): f64 {
   if (x.unsigned) {
-    var uw: u64 = unpack_i64(x) as u64;
+    let uw: u64 = unpack_i64(x) as u64;
     return uw as f64;
   }
   return unpack_i64(x) as f64;
@@ -198,7 +198,7 @@ function wide_as_f64(x: VInt64): f64 {
 // unsigned div / rem / compares / logical shift. The mask lives in a local
 // for the same native-backend immediate reason as unpack_i64's.
 function uint_zext(n: i32): i64 {
-  var lo_mask: i64 = 4294967295;
+  let lo_mask: i64 = 4294967295;
   return n as i64 & lo_mask;
 }
 
@@ -214,11 +214,11 @@ function box_i64(n: i64): Value {
 
 // coerce_int_width promotes a compact VInt to a VInt64 when a binding's
 // declared type is a 64-bit integer, so arithmetic on it takes the 64-bit
-// path even when the value happens to fit i32 — `var x: i64 = 100000;
+// path even when the value happens to fit i32 — `let x: i64 = 100000;
 // x * 100000` must not overflow as i32. The interpreter is otherwise
 // untyped at the value level, so this declared-type hint at var/param
 // binding sites is where width intent enters.
-// The zero of an annotation, tagged as that annotation's plane: irlower picks
+// The zero of an annotation, tagged as that annotation's plane: the lowering picks
 // the constant's width the same way, and a reference type's zero is the null
 // word the compiled paths store, which is v_int(0) here.
 function zero_value_of(type_name: string): Value {
@@ -242,7 +242,7 @@ function coerce_int_width(val: Value, type_name: string): Value {
     // A declared u64 also (re)tags the pattern unsigned — the value plane
     // is untyped, so this and the `as u64` cast are the only two places
     // the signedness of a 64-bit value can enter.
-    var uns64: boolean = type_name == "u64";
+    let uns64: boolean = type_name == "u64";
     match (val) {
       VInt(i) => {
         return v_wide(i.v as i64, uns64);
@@ -398,10 +398,10 @@ function vint_bits(v: Value): i32 {
 }
 
 // is_destructure_name / split_binding_names decode the comma-joined name the
-// parser gives a tuple-destructuring `var`. A binding name never contains a
+// parser gives a tuple-destructuring `let`. A binding name never contains a
 // comma itself, so a plain scan is enough.
 function is_destructure_name(name: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < name.len()) {
     if (name[i] == b',') {
       return true;
@@ -412,9 +412,9 @@ function is_destructure_name(name: string): boolean {
 }
 
 function split_binding_names(csv: string): string[] {
-  var out: string[] = [];
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let out: string[] = [];
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i <= csv.len()) {
     if (i == csv.len() || csv[i] == b',') {
       out = out.append(slice_unchecked(csv, start, i) + "");
@@ -562,8 +562,8 @@ function v_map(keys: Value[], values: Value[]): Value {
 }
 
 function v_map_new(): Value {
-  var ks: Value[] = [];
-  var vs: Value[] = [];
+  let ks: Value[] = [];
+  let vs: Value[] = [];
   return VMap { keys: ks, values: vs };
 }
 
@@ -658,7 +658,7 @@ function unwrap_try(v: Value): Value {
 // enum_owner test itself now, so the variant consumers are unaffected by the
 // wider list.
 function module_type_decls(structs: parser.StructDecl[]): parser.StructDecl[] {
-  var all: parser.StructDecl[] = parser.inject_builtin_enums(structs);
+  let all: parser.StructDecl[] = parser.inject_builtin_enums(structs);
   all = add_variant_decl(all, "Some", 1, "Option");
   all = add_variant_decl(all, "None", 0, "Option");
   all = add_variant_decl(all, "Ok", 1, "Result");
@@ -671,10 +671,10 @@ function module_type_decls(structs: parser.StructDecl[]): parser.StructDecl[] {
 // line #7291 draws: a field's type is written on its declaration, an inferred
 // binding's is written nowhere.
 function struct_field_type(decls: parser.StructDecl[], sname: string, field: string): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < decls.len()) {
     if (decls[i].name == sname) {
-      var j: i32 = 0;
+      let j: i32 = 0;
       while (j < decls[i].fields.len()) {
         if (decls[i].fields[j].name == field) {
           return decls[i].fields[j].type_name;
@@ -692,17 +692,17 @@ function struct_field_type(decls: parser.StructDecl[], sname: string, field: str
 // program already declares that name — a user `enum MyOpt { Some(i32) }`, or a
 // plain `struct Ok`, keeps its own decl.
 function add_variant_decl(acc: parser.StructDecl[], name: string, arity: i32, enum_name: string): parser.StructDecl[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < acc.len()) {
     if (acc[i].name == name) {
       return acc;
     }
     i = i + 1;
   }
-  var fields: parser.StructFieldDecl[] = [];
-  var f: i32 = 0;
+  let fields: parser.StructFieldDecl[] = [];
+  let f: i32 = 0;
   while (f < arity) {
-    var fname: string = "__ev";
+    let fname: string = "__ev";
     if (f > 0) {
       fname = "__ev" + util.i32_to_string(f);
     }
@@ -720,7 +720,7 @@ function add_variant_decl(acc: parser.StructDecl[], name: string, arity: i32, en
 // Holder` must stay -1 here, or a bare `Holder` would be taken for a
 // nullary variant at the three call sites that ask.
 function variant_arity(name: string, decls: parser.StructDecl[]): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < decls.len()) {
     if (decls[i].name == name && decls[i].enum_owner.len() > 0) {
       return decls[i].fields.len();
@@ -734,7 +734,7 @@ function variant_arity(name: string, decls: parser.StructDecl[]): i32 {
 // of this name. A program is free to define its own `Ok(...)`; the declaration
 // wins, so the builtin constructor is only reached when nothing else answers.
 function user_func_exists(name: string, funcs: parser.FuncDecl[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < funcs.len()) {
     if (funcs[i].name == name && funcs[i].receiver_name.len() == 0) {
       return true;
@@ -749,8 +749,8 @@ function user_func_exists(name: string, funcs: parser.FuncDecl[]): boolean {
 // `__ev` / `__ev1` / … names, which is the marker StmtMatch keys on to bind a
 // `V(a, b, …)` pattern positionally. A nullary variant has no fields.
 function v_variant(name: string, args: Value[]): Value {
-  var vnames: string[] = [];
-  var vi: i32 = 0;
+  let vnames: string[] = [];
+  let vi: i32 = 0;
   while (vi < args.len()) {
     if (vi == 0) {
       vnames = vnames.append("__ev");
@@ -770,7 +770,7 @@ function interp_char_boundary(s: string, i: i32): boolean {
   if (i <= 0 || i >= s.len()) {
     return true;
   }
-  var icb: i32 = s[i] as i32;
+  let icb: i32 = s[i] as i32;
   return icb < 128 || icb >= 192;
 }
 
@@ -806,20 +806,20 @@ pub struct Env { names: string[], values: Value[], types: string[], funcs: parse
 // (eval_program) has no module around it, so the only declarations in reach are
 // the front-end's own injected enums.
 function new_env(): Env {
-  var ns: string[] = [];
-  var vs: Value[] = [];
-  var ts: string[] = [];
-  var fs: parser.FuncDecl[] = [];
-  var al: parser.TypeAlias[] = [];
-  var no_structs: parser.StructDecl[] = [];
-  var no_argv: string[] = [];
+  let ns: string[] = [];
+  let vs: Value[] = [];
+  let ts: string[] = [];
+  let fs: parser.FuncDecl[] = [];
+  let al: parser.TypeAlias[] = [];
+  let no_structs: parser.StructDecl[] = [];
+  let no_argv: string[] = [];
   return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs), argv: no_argv };
 }
 
 function new_module_env(fs: parser.FuncDecl[], al: parser.TypeAlias[], vd: parser.StructDecl[], argv: string[]): Env {
-  var ns: string[] = [];
-  var vs: Value[] = [];
-  var ts: string[] = [];
+  let ns: string[] = [];
+  let vs: Value[] = [];
+  let ts: string[] = [];
   return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, argv: argv };
 }
 
@@ -831,16 +831,16 @@ function (e: Env) bind(name: string, v: Value): Env {
 // value's integer width / float precision / empty-array element, and is kept in
 // the scope for the static questions the value cannot answer (see Env.types).
 function (e: Env) bind_decl(name: string, v: Value, decl_ty: string): Env {
-  var ns: string[] = e.names.append(name);
-  var vs: Value[] = e.values.append(coerce_int_width(v, decl_ty));
-  var ts: string[] = e.types.append(decl_ty);
+  let ns: string[] = e.names.append(name);
+  let vs: Value[] = e.values.append(coerce_int_width(v, decl_ty));
+  let ts: string[] = e.types.append(decl_ty);
   return Env { ...e, names: ns, values: vs, types: ts };
 }
 
 // decl_type reads back the declared type of a binding, "" when it has none or
 // the name is unbound. Newest binding wins, as lookup does.
 function (e: Env) decl_type(name: string): string {
-  var i: i32 = e.names.len() - 1;
+  let i: i32 = e.names.len() - 1;
   while (i >= 0) {
     if (e.names[i] == name) {
       return e.types[i];
@@ -869,14 +869,14 @@ function (e: Env) static_type_of(x: ast.Expr): string {
       return e.decl_type(id.name);
     },
     ast.ExprIndex(ix) => {
-      var at: string = e.static_type_of(ix.array);
+      let at: string = e.static_type_of(ix.array);
       if (name_ends_with(at, "[]")) {
         return slice_unchecked(at, 0, at.len() - 2) + "";
       }
       return "";
     },
     ast.ExprFieldAccess(fa) => {
-      var ot: string = e.static_type_of(fa.obj);
+      let ot: string = e.static_type_of(fa.obj);
       if (ot.len() == 0) {
         return "";
       }
@@ -896,7 +896,7 @@ function (e: Env) static_type_of(x: ast.Expr): string {
           // A METHOD call: the receiver's own declared type names the
           // definition, whose return type the declaration states. A
           // closure held in a FIELD matches no declaration and answers "".
-          var rt: string = e.static_type_of(fa.obj);
+          let rt: string = e.static_type_of(fa.obj);
           if (rt.len() == 0) {
             return "";
           }
@@ -918,9 +918,9 @@ function (e: Env) static_type_of(x: ast.Expr): string {
 // interposition normally rules out — leave it ambiguous, and it answers ""
 // rather than picking one.
 function method_ret_type(funcs: parser.FuncDecl[], recv_ty: string, name: string): string {
-  var found: string = "";
-  var seen: boolean = false;
-  var i: i32 = 0;
+  let found: string = "";
+  let seen: boolean = false;
+  let i: i32 = 0;
   while (i < funcs.len()) {
     if (funcs[i].name == name && funcs[i].receiver_type == recv_ty) {
       if (seen && funcs[i].ret_type != found) {
@@ -936,7 +936,7 @@ function method_ret_type(funcs: parser.FuncDecl[], recv_ty: string, name: string
 
 // binds_name reports whether a local binding shadows `name`.
 function (e: Env) binds_name(name: string): boolean {
-  var i: i32 = e.names.len() - 1;
+  let i: i32 = e.names.len() - 1;
   while (i >= 0) {
     if (e.names[i] == name) {
       return true;
@@ -948,7 +948,7 @@ function (e: Env) binds_name(name: string): boolean {
 
 // func_ret_type names the declared return type of a top-level function.
 function func_ret_type(funcs: parser.FuncDecl[], name: string): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < funcs.len()) {
     if (funcs[i].name == name && funcs[i].receiver_type.len() == 0) {
       return funcs[i].ret_type;
@@ -959,7 +959,7 @@ function func_ret_type(funcs: parser.FuncDecl[], name: string): string {
 }
 
 function (e: Env) lookup(name: string): Value {
-  var i: i32 = e.names.len() - 1;
+  let i: i32 = e.names.len() - 1;
   while (i >= 0) {
     if (e.names[i] == name) {
       return deref_cell(e.values[i]);
@@ -1036,7 +1036,7 @@ function cell_slot_set(slot: Value, v: Value): boolean {
 // repro assigns without reading.
 //
 // The decision is made per STATEMENT rather than per function body: a lambda
-// can appear in any expression position (a `var` init, a call argument, an
+// can appear in any expression position (a `let` init, a call argument, an
 // array element), and doing it here means every one of those is covered by the
 // same code path without threading a set through Env.
 
@@ -1046,7 +1046,7 @@ function cell_slot_set(slot: Value, v: Value): boolean {
 // match-arm guard's nested lambda — shapes where the write previously landed
 // in a private copy — in the direction every other engine already answers.
 function lam_assign_targets(stmts: ast.Stmt[], own acc: string[]): string[] {
-  var a: string[] = acc;
+  let a: string[] = acc;
   for st in stmts {
     a = astwalk.fold_stmt_nodes(st, a, assign_target_of, reads_nothing, astwalk.descend_all);
   }
@@ -1058,12 +1058,12 @@ function lam_assign_targets(stmts: ast.Stmt[], own acc: string[]): string[] {
 // The rule above cells a local because a LAMBDA writes it. This is the other
 // direction, and the one that was never ported: the lambda only READS the
 // local, and the ENCLOSING body reassigns it afterwards. A by-value snapshot
-// freezes the pre-assignment value, so `var i = 0; var f = (x) => x + i;
+// freezes the pre-assignment value, so `let i = 0; let f = (x) => x + i;
 // i = 3; f(0)` answered 0 here and 3 on every other engine.
 //
 // The reassignment guard is what keeps this narrow, and the narrowness is the
 // whole point. A local the body never reassigns reads the same either way, so
-// celling it is invisible — but a per-iteration `var n = k` captured in a loop
+// celling it is invisible — but a per-iteration `let n = k` captured in a loop
 // MUST stay by value, and celling that would hand every closure the last
 // iteration's n. Native answers 3 for that shape, not 6.
 
@@ -1084,7 +1084,7 @@ function ib_ident_of(e: ast.Expr, own acc: string[]): string[] {
 }
 
 function ib_idents_stmts(stmts: ast.Stmt[], own acc: string[]): string[] {
-  var a: string[] = acc;
+  let a: string[] = acc;
   for st in stmts {
     a = astwalk.fold_stmt_nodes(st, a, assign_target_of, ib_ident_of, astwalk.descend_all);
   }
@@ -1102,11 +1102,11 @@ function lam_read_names(st: ast.Stmt): string[] {
 }
 
 // body_assign_names: every name this body reassigns, at any depth. A name NOT
-// in here is captured by value, which is what keeps a loop-local `var` per
+// in here is captured by value, which is what keeps a loop-local `let` per
 // iteration — the statement spine is that stop spelled once: statement lists at
 // every depth, lambda bodies never, since those hang off expressions.
 function body_assign_names(stmts: ast.Stmt[], acc: string[]): string[] {
-  var a: string[] = acc;
+  let a: string[] = acc;
   for st in stmts {
     a = astwalk.fold_stmt_spine(st, a, assign_target_of);
   }
@@ -1143,13 +1143,13 @@ function reads_nothing(e: ast.Expr, own acc: string[]): string[] {
 // Both must run BEFORE the statement evaluates, because that is when the
 // closure snapshots the env; celling afterwards hands it a slot nobody shares.
 function cellify_captures(env: Env, st: ast.Stmt, reassigned: string[]): Env {
-  var out: Env = cellify_env(env, stmt_lambda_writes(st));
+  let out: Env = cellify_env(env, stmt_lambda_writes(st));
   if (reassigned.len() == 0) {
     return out;
   }
-  var reads: string[] = lam_read_names(st);
-  var hit: string[] = [];
-  var i: i32 = 0;
+  let reads: string[] = lam_read_names(st);
+  let hit: string[] = [];
+  let i: i32 = 0;
   while (i < reads.len()) {
     if (util.index_of_str(reassigned, reads[i]) >= 0) {
       hit = hit.append(reads[i]);
@@ -1167,11 +1167,11 @@ function cellify_captures(env: Env, st: ast.Stmt, reassigned: string[]): Env {
 // Every expression the statement OWNS is scanned, not the four shapes a
 // hand-written match happened to spell: a lambda in an `if` / `while`
 // condition, a `for`'s iterated expression or a `match` scrutinee or guard
-// captures the enclosing scope exactly as one in a `var` initialiser does, and
+// captures the enclosing scope exactly as one in a `let` initialiser does, and
 // missing it left the written name uncelled — a write to a private copy. The
 // statement's own child BLOCKS are not entered, which is the point of
 // fold_stmt_own: each gets its own pass with its own reassignment set, and
-// walking in would cell a loop-local `var` that has to stay per-iteration.
+// walking in would cell a loop-local `let` that has to stay per-iteration.
 //
 // Only a lambda body contributes, so the walk stops at one: lam_assign_targets
 // already accounts for its whole body, and descending would re-scan it.
@@ -1227,7 +1227,7 @@ function not_lambda_expr(e: ast.Expr): boolean {
 // raw_slot reads a slot WITHOUT the lookup deref — cellify needs to see whether
 // a binding is already a cell.
 function (e: Env) raw_slot(name: string): i32 {
-  var i: i32 = e.names.len() - 1;
+  let i: i32 = e.names.len() - 1;
   while (i >= 0) {
     if (e.names[i] == name) {
       return i;
@@ -1240,13 +1240,13 @@ function (e: Env) raw_slot(name: string): i32 {
 // cellify_env converts each named scalar binding into a shared cell, so the
 // closure about to be built and the enclosing scope write through the same one.
 function cellify_env(e: Env, names: string[]): Env {
-  var out: Env = e;
-  var i: i32 = 0;
+  let out: Env = e;
+  let i: i32 = 0;
   while (i < names.len()) {
-    var idx: i32 = out.raw_slot(names[i]);
+    let idx: i32 = out.raw_slot(names[i]);
     if (idx >= 0) {
-      var cur: Value = out.values[idx];
-      var boxed: Value = cell_for(cur);
+      let cur: Value = out.values[idx];
+      let boxed: Value = cell_for(cur);
       // cell_for returns its argument unchanged for a non-scalar (E049
       // keeps those read-only) and for an already-celled slot, so this
       // is idempotent and never re-seeds a live cell.
@@ -1299,7 +1299,7 @@ function cell_for(v: Value): Value {
 // cell_value builds the program's cell over `v`, or an error for an element
 // type E057 does not admit.
 function cell_value(v: Value): Value {
-  var c: VCell = VCell { kind: "", ci: cell_new(0), cl: cell_new(0 as i64), cf: cell_new(0.0), cs: cell_new("") };
+  let c: VCell = VCell { kind: "", ci: cell_new(0), cl: cell_new(0 as i64), cf: cell_new(0.0), cs: cell_new("") };
   match (v) {
     VInt(n) => {
       c.ci.set(n.v);
@@ -1353,7 +1353,7 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
     if (args.len() != 1) {
       return v_err("Cell.set takes exactly 1 argument");
     }
-    var v: Value = args[0];
+    let v: Value = args[0];
     if (c.kind == "i32" && is_i32_arg(v)) {
       c.ci.set(vint_bits(v));
       return v_void();
@@ -1395,8 +1395,8 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
 
 // Read the descriptor recorded in the interpreter's opaque stdio handle.
 function stdio_fd(rs: VStruct): i32 {
-  var fd: i32 = 0 - 1;
-  var fi: i32 = 0;
+  let fd: i32 = 0 - 1;
+  let fi: i32 = 0;
   while (fi < rs.field_names.len()) {
     if (rs.field_names[fi] == "fd") {
       fd = vint_bits(rs.field_values[fi]);
@@ -1411,7 +1411,7 @@ function reader_method(rs: VStruct, name: string, args: Value[]): Value {
   if (stdio_fd(rs) != 0) {
     return v_err("Reader." + name + ": only stdin is readable here");
   }
-  var r: Reader = stdin();
+  let r: Reader = stdin();
   if (name == "close") {
     if (args.len() != 0) {
       return v_err("Reader.close takes no arguments");
@@ -1448,8 +1448,8 @@ function reader_method(rs: VStruct, name: string, args: Value[]): Value {
 }
 
 function byte_array_value(bytes: u8[]): Value {
-  var out: Value[] = [];
-  var i: i32 = 0;
+  let out: Value[] = [];
+  let i: i32 = 0;
   while (i < bytes.len()) {
     out = out.append(v_int(bytes[i] as i32));
     i = i + 1;
@@ -1483,8 +1483,8 @@ function write_count_value(result: Result[i64, IoError]): Value {
 // program's array nor its aliases are modified or exposed to the host writer.
 function writer_byte_method(w: Writer, name: string, value: Value): Value {
   if let VArr(a) = value {
-    var bytes: u8[] = __alloc_u8(a.elements.len());
-    var i: i32 = 0;
+    let bytes: u8[] = __alloc_u8(a.elements.len());
+    let i: i32 = 0;
     while (i < a.elements.len()) {
       if (!is_i32_arg(a.elements[i])) {
         return v_err("Writer." + name + ": expected byte array");
@@ -1501,11 +1501,11 @@ function writer_byte_method(w: Writer, name: string, value: Value): Value {
 }
 
 function writer_method(rs: VStruct, name: string, args: Value[]): Value {
-  var fd: i32 = stdio_fd(rs);
+  let fd: i32 = stdio_fd(rs);
   if (fd != 1 && fd != 2) {
     return v_err("Writer." + name + ": only stdout and stderr are writable here");
   }
-  var w: Writer = stdout();
+  let w: Writer = stdout();
   if (fd == 2) {
     w = stderr();
   }
@@ -1536,7 +1536,7 @@ function option_string_value(o: Option[string]): Value {
       return v_variant("Some", [v_string(line)]);
     },
     None => {
-      var none: Value[] = [];
+      let none: Value[] = [];
       return v_variant("None", none);
     }
   }
@@ -1545,7 +1545,7 @@ function option_string_value(o: Option[string]): Value {
 // io_error_value is the program's view of a host IoError: the same variant,
 // its payloads carried over.
 function io_error_value(e: IoError): Value {
-  var none: Value[] = [];
+  let none: Value[] = [];
   match (e) {
     NotFound(p) => {
       return v_variant("NotFound", [v_string(p)]);
@@ -1584,7 +1584,7 @@ function io_error_value(e: IoError): Value {
 // `.with` is copy-on-write, so only the one slot is written and `names` is
 // untouched — no array is rebuilt.
 function (e: Env) update(name: string, v: Value): Env {
-  var i: i32 = e.names.len() - 1;
+  let i: i32 = e.names.len() - 1;
   while (i >= 0) {
     if (e.names[i] == name) {
       return Env { ...e, values: e.values.with(i, v) };
@@ -1643,8 +1643,8 @@ function sat_clamp(v: i64, minv: i64, maxv: i64): i64 {
 // `MIN / -1 == MIN` would otherwise hide. Mirrors the IR lowering
 // (irtables.sat_binary_ops) and native's ir.satBinary.
 function sat_i64(op: string, a: i64, b: i64): i64 {
-  var maxv: i64 = 9223372036854775807;
-  var minv: i64 = 0 - 9223372036854775807 - 1;
+  let maxv: i64 = 9223372036854775807;
+  let minv: i64 = 0 - 9223372036854775807 - 1;
   if (op == "+|") {
     if (b > 0 && a > maxv - b) {
       return maxv;
@@ -1669,8 +1669,8 @@ function sat_i64(op: string, a: i64, b: i64): i64 {
     // bound would need a ceiling division an arithmetic shift cannot
     // give. `>>` is arithmetic, so it restores `a` iff nothing was
     // shifted out.
-    var sc: i64 = b & 63;
-    var sh: i64 = a << sc;
+    let sc: i64 = b & 63;
+    let sh: i64 = a << sc;
     if (sh >> sc == a) {
       return sh;
     }
@@ -1679,14 +1679,14 @@ function sat_i64(op: string, a: i64, b: i64): i64 {
     }
     return maxv;
   }
-  var prod: i64 = a * b;
+  let prod: i64 = a * b;
   if (a != 0) {
-    var bad: boolean = prod / a != b;
+    let bad: boolean = prod / a != b;
     if (a == 0 - 1 && b == minv) {
       bad = true;
     }
     if (bad) {
-      var neg: boolean = false;
+      let neg: boolean = false;
       if (a < 0) {
         neg = !neg;
       }
@@ -1706,10 +1706,10 @@ function sat_i64(op: string, a: i64, b: i64): i64 {
 // every overflow test is a wraparound check, since an unsigned result can only
 // leave the range at the top. Returns the saturated pattern as an i64.
 function sat_u64(op: string, a: u64, b: u64): i64 {
-  var one: u64 = 1 as u64;
-  var maxv: u64 = 0 as u64 - one;
+  let one: u64 = 1 as u64;
+  let maxv: u64 = 0 as u64 - one;
   if (op == "+|") {
-    var s: u64 = a + b;
+    let s: u64 = a + b;
     if (s < a) {
       return maxv as i64;
     }
@@ -1719,18 +1719,18 @@ function sat_u64(op: string, a: u64, b: u64): i64 {
     if (a < b) {
       return 0;
     }
-    var d: u64 = a - b;
+    let d: u64 = a - b;
     return d as i64;
   }
   if (op == "<<|") {
-    var sc: u64 = b & 63 as u64;
-    var sh: u64 = a << sc;
+    let sc: u64 = b & 63 as u64;
+    let sh: u64 = a << sc;
     if (sh >> sc == a) {
       return sh as i64;
     }
     return maxv as i64;
   }
-  var prod: u64 = a * b;
+  let prod: u64 = a * b;
   if (a != 0 as u64 && prod / a != b) {
     return maxv as i64;
   }
@@ -1749,13 +1749,13 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
   // exactly as before. Total div/mod semantics match the i32 path
   // (x/0 == 0, x%0 == x).
   if (is_int_like(lv) && is_int_like(rv) && (is_vint64(lv) || is_vint64(rv))) {
-    var a: i64 = vint_as_i64(lv);
-    var b: i64 = vint_as_i64(rv);
+    let a: i64 = vint_as_i64(lv);
+    let b: i64 = vint_as_i64(rv);
     // u64 semantics are sticky, like VUint's at 32 bits: the ops whose
     // result depends on how the pattern is READ (div / rem / `>>` /
     // ordering compares / saturation) take the unsigned branch, and the
     // width-preserving ops carry the tag through unchanged.
-    var uns: boolean = is_vuint64(lv) || is_vuint64(rv);
+    let uns: boolean = is_vuint64(lv) || is_vuint64(rv);
     // A 64-bit operation always yields a VInt64, even when the
     // result happens to fit i32: narrowing here would strip the width
     // from e.g. a running accumulator (`s = s + 1000000000` whose
@@ -1790,9 +1790,9 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
       return v_bool(a != b);
     }
     if (uns) {
-      var ua: u64 = a as u64;
-      var ub: u64 = b as u64;
-      var uzero: u64 = 0 as u64;
+      let ua: u64 = a as u64;
+      let ub: u64 = b as u64;
+      let uzero: u64 = 0 as u64;
       if (is_sat_op_name(op)) {
         return v_uint64(sat_u64(op, ua, ub));
       }
@@ -1800,18 +1800,18 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
         if (ub == uzero) {
           return v_uint64(0);
         }
-        var uq: u64 = ua / ub;
+        let uq: u64 = ua / ub;
         return v_uint64(uq as i64);
       }
       if (op == "%") {
         if (ub == uzero) {
           return v_uint64(a);
         }
-        var ur: u64 = ua % ub;
+        let ur: u64 = ua % ub;
         return v_uint64(ur as i64);
       }
       if (op == ">>") {
-        var ush: u64 = ua >> ub;
+        let ush: u64 = ua >> ub;
         return v_uint64(ush as i64);
       }
       if (op == "<") {
@@ -1834,14 +1834,14 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
       if (b == 0) {
         return v_int64(0);
       }
-      var q64: i64 = a / b;
+      let q64: i64 = a / b;
       return v_int64(q64);
     }
     if (op == "%") {
       if (b == 0) {
         return v_int64(a);
       }
-      var r64: i64 = a % b;
+      let r64: i64 = a % b;
       return v_int64(r64);
     }
     if (op == "<") {
@@ -1868,8 +1868,8 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
   // VUint (sticky); a VUint mixed with a VInt64 zero-extends through the
   // 64-bit block above instead.
   if (is_int_like(lv) && is_int_like(rv) && (is_vuint(lv) || is_vuint(rv))) {
-    var la: i32 = vint_bits(lv);
-    var rb: i32 = vint_bits(rv);
+    let la: i32 = vint_bits(lv);
+    let rb: i32 = vint_bits(rv);
     if (op == "+") {
       return v_uint(la + rb);
     }
@@ -1894,25 +1894,25 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
     if (op == "<<") {
       return v_uint(la << (rb & 31));
     }
-    var ua: i64 = uint_zext(la);
-    var ub: i64 = uint_zext(rb);
+    let ua: i64 = uint_zext(la);
+    let ub: i64 = uint_zext(rb);
     if (op == ">>") {
-      var sc: i64 = (rb & 31) as i64;
-      var shifted: i64 = ua >> sc;
+      let sc: i64 = (rb & 31) as i64;
+      let shifted: i64 = ua >> sc;
       return v_uint(shifted as i32);
     }
     if (op == "/") {
       if (ub == 0) {
         return v_uint(0);
       }
-      var uq: i64 = ua / ub;
+      let uq: i64 = ua / ub;
       return v_uint(uq as i32);
     }
     if (op == "%") {
       if (ub == 0) {
         return v_uint(la);
       }
-      var ur: i64 = ua % ub;
+      let ur: i64 = ua % ub;
       return v_uint(ur as i32);
     }
     if (op == "<") {
@@ -1939,11 +1939,11 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
   // precision, staying sticky as VFloat32. Comparisons compare the
   // (already rounded) f64 payloads and yield VBool.
   if ((is_vfloat32(lv) || is_vfloat32(rv)) && (is_float_like(lv) || is_int_like(lv)) && (is_float_like(rv) || is_int_like(rv))) {
-    var fa: f64 = vfloat_as_f64(lv);
+    let fa: f64 = vfloat_as_f64(lv);
     if (is_int_like(lv)) {
       fa = vint_as_i64(lv) as f64;
     }
-    var fb: f64 = vfloat_as_f64(rv);
+    let fb: f64 = vfloat_as_f64(rv);
     if (is_int_like(rv)) {
       fb = vint_as_i64(rv) as f64;
     }
@@ -1988,7 +1988,7 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
       VInt(li) => {
         match (rv) {
           VInt(ri) => {
-            var sv: i64 = sat_exact(op, li.v as i64, ri.v as i64);
+            let sv: i64 = sat_exact(op, li.v as i64, ri.v as i64);
             return v_int(sat_clamp(sv, 0 - 2147483647 - 1, 2147483647) as i32);
           },
           _ => {
@@ -2146,7 +2146,7 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
     }
   }
   if (op == "==" || op == "!=") {
-    var eq: boolean = value_eq(lv, rv);
+    let eq: boolean = value_eq(lv, rv);
     if (op == "==") {
       return v_bool(eq);
     }
@@ -2232,7 +2232,7 @@ function f64_trunc_u64(v: f64): i64 {
     return (0 as u64 - 1 as u64) as i64;
   }
   if (v >= 9223372036854775808.0) {
-    var q: i64 = (v - 9223372036854775808.0) as i64;
+    let q: i64 = (v - 9223372036854775808.0) as i64;
     return (q as u64 | 1 as u64 << 63 as u64) as i64;
   }
   if (v >= 0.0) {
@@ -2372,7 +2372,7 @@ function eval_unary(op: string, ov: Value): Value {
   // wrap on the i32 path instead of reaching u64::MAX. `as i64` leaves a
   // small VInt compact, where the signed reading is identical either way.
   if (op == "as_i64" || op == "as_u64") {
-    var uns: boolean = op == "as_u64";
+    let uns: boolean = op == "as_u64";
     match (ov) {
       VInt(i) => {
         if (uns) {
@@ -2506,11 +2506,11 @@ function eval_unsuffixed_literal(is_float: boolean, t: string): Value {
   if (is_float) {
     return v_float(f64_from_bits(util.parse_f64_bits(t)));
   }
-  var hs: i32 = 0;
+  let hs: i32 = 0;
   if (t.len() > 0 && t[0] == b'-') {
     hs = 1;
   }
-  var is_radix: boolean = t.len() > hs + 1 && t[hs] == b'0' && (t[hs + 1] == b'x' || t[hs + 1] == b'X' || t[hs + 1] == b'b' || t[hs + 1] == b'B');
+  let is_radix: boolean = t.len() > hs + 1 && t[hs] == b'0' && (t[hs + 1] == b'x' || t[hs + 1] == b'X' || t[hs + 1] == b'b' || t[hs + 1] == b'B');
   if (is_radix) {
     return v_int(util.lit_to_i32(t));
   }
@@ -2518,7 +2518,7 @@ function eval_unsuffixed_literal(is_float: boolean, t: string): Value {
 }
 
 function resolve_ident_value(name: string, env: Env): Value {
-  var idv: Value = env.lookup(name);
+  let idv: Value = env.lookup(name);
   // A bare identifier with no local binding may name a
   // `const`: the parser desugars `const N = expr;` into a
   // zero-arg function `N()` marked is_const, and the native
@@ -2527,10 +2527,10 @@ function resolve_ident_value(name: string, env: Env): Value {
   // function named as a value (`r.it("case", test_case)`): the
   // latter is a function value below, not a call.
   if (is_err(idv)) {
-    var ci: i32 = 0;
+    let ci: i32 = 0;
     while (ci < env.funcs.len()) {
       if (env.funcs[ci].name == name && env.funcs[ci].receiver_name.len() == 0 && env.funcs[ci].params.len() == 0 && env.funcs[ci].is_const) {
-        var no_args: Value[] = [];
+        let no_args: Value[] = [];
         return call_func(name, no_args, env.funcs, env.aliases, env.type_decls, env.argv);
       }
       ci = ci + 1;
@@ -2541,20 +2541,20 @@ function resolve_ident_value(name: string, env: Env): Value {
     // carry payloads falls through to the undefined-identifier error, as
     // naming it without calling it is a checker error upstream.
     if (variant_arity(name, env.type_decls) == 0) {
-      var none_args: Value[] = [];
+      let none_args: Value[] = [];
       return v_variant(name, none_args);
     }
     // A top-level function named as a VALUE rather than called —
     // `[inc, dbl]`, or passing `inc` to a higher-order function
     // (#6611). Last of the three: a const is claimed by the scan
     // above, and a variant by the one before this.
-    var vfi: i32 = 0;
+    let vfi: i32 = 0;
     while (vfi < env.funcs.len()) {
-      var vfd: parser.FuncDecl = env.funcs[vfi];
+      let vfd: parser.FuncDecl = env.funcs[vfi];
       if (vfd.name == name && vfd.receiver_name.len() == 0) {
-        var no_names: string[] = [];
-        var no_values: Value[] = [];
-        var no_types: string[] = [];
+        let no_names: string[] = [];
+        let no_values: Value[] = [];
+        let no_types: string[] = [];
         return VFunc {
           params: vfd.params,
           ret_type: vfd.ret_type,
@@ -2585,7 +2585,7 @@ function eval_expr(e: ast.Expr, env: Env): Value {
       return resolve_ident_value(id.name, env);
     },
     ast.ExprBinary(b) => {
-      var lv: Value = eval_expr(b.left, env);
+      let lv: Value = eval_expr(b.left, env);
       if (is_err(lv)) {
         return lv;
       }
@@ -2607,14 +2607,14 @@ function eval_expr(e: ast.Expr, env: Env): Value {
           _ => {}
         }
       }
-      var rv: Value = eval_expr(b.right, env);
+      let rv: Value = eval_expr(b.right, env);
       if (is_err(rv)) {
         return rv;
       }
       return eval_binary(b.op, lv, rv);
     },
     ast.ExprUnary(u) => {
-      var ov: Value = eval_expr(u.operand, env);
+      let ov: Value = eval_expr(u.operand, env);
       if (is_err(ov)) {
         return ov;
       }
@@ -2624,10 +2624,10 @@ function eval_expr(e: ast.Expr, env: Env): Value {
       return eval_expr_call(c, env);
     },
     ast.ExprTuple(t) => {
-      var elems: Value[] = [];
-      var i: i32 = 0;
+      let elems: Value[] = [];
+      let i: i32 = 0;
       while (i < t.elements.len()) {
-        var ev: Value = eval_expr(t.elements[i], env);
+        let ev: Value = eval_expr(t.elements[i], env);
         if (is_err(ev)) {
           return ev;
         }
@@ -2637,10 +2637,10 @@ function eval_expr(e: ast.Expr, env: Env): Value {
       return v_tuple(elems);
     },
     ast.ExprArray(a) => {
-      var elems: Value[] = [];
-      var i: i32 = 0;
+      let elems: Value[] = [];
+      let i: i32 = 0;
       while (i < a.elements.len()) {
-        var ev: Value = eval_expr(a.elements[i], env);
+        let ev: Value = eval_expr(a.elements[i], env);
         if (is_err(ev)) {
           return ev;
         }
@@ -2709,21 +2709,21 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
   // FieldAccess callee → method call.
   // Any other expression evaluates to a callee value
   // — VFunc → closure call, else error.
-  var name: string = "";
-  var is_method: boolean = false;
-  var is_closure: boolean = false;
-  var is_variant: boolean = false;
-  var variant_name: string = "";
-  var recv: Value = v_absent();
-  var closure_val: Value = v_absent();
+  let name: string = "";
+  let is_method: boolean = false;
+  let is_closure: boolean = false;
+  let is_variant: boolean = false;
+  let variant_name: string = "";
+  let recv: Value = v_absent();
+  let closure_val: Value = v_absent();
   match (c.callee) {
     ast.ExprIdent(id) => {
       // If the name is bound in scope to a VFunc,
       // it's a closure call. Plain function names
       // shadow ident bindings via call_func's
-      // walk, but a `var f = (...) => {…}`
+      // walk, but a `let f = (...) => {…}`
       // binding is observable here.
-      var bound: Value = env.lookup(id.name);
+      let bound: Value = env.lookup(id.name);
       match (bound) {
         VFunc(_) => {
           is_closure = true;
@@ -2751,12 +2751,12 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
       // a function in env.funcs literally named
       // `Ns.func`. Falls back to method-call
       // semantics otherwise.
-      var qualified_handled: boolean = false;
+      let qualified_handled: boolean = false;
       match (fa.obj) {
         ast.ExprIdent(ns_id) => {
-          var qname: string = ns_id.name + "." + fa.field;
-          var qi: i32 = 0;
-          var qfound: boolean = false;
+          let qname: string = ns_id.name + "." + fa.field;
+          let qi: i32 = 0;
+          let qfound: boolean = false;
           while (qi < env.funcs.len()) {
             if (env.funcs[qi].name == qname && env.funcs[qi].receiver_name.len() == 0) {
               qfound = true;
@@ -2777,8 +2777,8 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
         // sibling `E.Red` is handled on the ExprFieldAccess
         // eval path). Anything with a real object value is a
         // method call.
-        var variant_call: boolean = false;
-        var static_type: string = "";
+        let variant_call: boolean = false;
+        let static_type: string = "";
         match (fa.obj) {
           ast.ExprIdent(oid) => {
             // Ask the same question the ident evaluator
@@ -2788,7 +2788,7 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
             // `S.len()` was classified as a variant
             // construction and built a variant named
             // `len` instead of dispatching a method.
-            var probe: Value = resolve_ident_value(oid.name, env);
+            let probe: Value = resolve_ident_value(oid.name, env);
             if (is_err(probe)) {
               variant_call = true;
               // `i32.zero()` / `Point.default()` — the object
@@ -2829,7 +2829,7 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
     _ => {
       // Treat as a value-producing expression
       // (e.g. immediate `() => { … }()`).
-      var cv: Value = eval_expr(c.callee, env);
+      let cv: Value = eval_expr(c.callee, env);
       if (is_err(cv)) {
         return cv;
       }
@@ -2845,10 +2845,10 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
     }
   }
   // Evaluate args in order, propagating the first VErr.
-  var arg_vals: Value[] = [];
-  var i: i32 = 0;
+  let arg_vals: Value[] = [];
+  let i: i32 = 0;
   while (i < c.args.len()) {
-    var av: Value = eval_expr(c.args[i], env);
+    let av: Value = eval_expr(c.args[i], env);
     if (is_err(av)) {
       return av;
     }
@@ -2868,11 +2868,11 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
 }
 
 function eval_expr_index(x: ast.ExprIndex, env: Env): Value {
-  var av: Value = eval_expr(x.array, env);
+  let av: Value = eval_expr(x.array, env);
   if (is_err(av)) {
     return av;
   }
-  var iv: Value = eval_expr(x.index, env);
+  let iv: Value = eval_expr(x.index, env);
   if (is_err(iv)) {
     return iv;
   }
@@ -2916,16 +2916,16 @@ function eval_expr_index(x: ast.ExprIndex, env: Env): Value {
 }
 
 function eval_expr_slice(sl: ast.ExprSlice, env: Env): Value {
-  var av: Value = eval_expr(sl.array, env);
+  let av: Value = eval_expr(sl.array, env);
   if (is_err(av)) {
     return av;
   }
-  var sv: Value = eval_expr(sl.start, env);
+  let sv: Value = eval_expr(sl.start, env);
   if (is_err(sv)) {
     return sv;
   }
-  var sb: i32 = 0;
-  var eb: i32 = 0;
+  let sb: i32 = 0;
+  let eb: i32 = 0;
   match (sv) {
     VInt(i) => {
       sb = i.v;
@@ -2949,7 +2949,7 @@ function eval_expr_slice(sl: ast.ExprSlice, env: Env): Value {
       }
     }
   } else {
-    var ev: Value = eval_expr(sl.end, env);
+    let ev: Value = eval_expr(sl.end, env);
     if (is_err(ev)) {
       return ev;
     }
@@ -2968,11 +2968,11 @@ function eval_expr_slice(sl: ast.ExprSlice, env: Env): Value {
       // bound or a bound that splits a code point yields `None`
       // rather than an error. `slice_unchecked` keeps the trap.
       if (sb < 0 || eb > s.v.len() || sb > eb) {
-        var slcn1: Value[] = [];
+        let slcn1: Value[] = [];
         return v_variant("None", slcn1);
       }
       if (!interp_char_boundary(s.v, sb) || !interp_char_boundary(s.v, eb)) {
-        var slcn2: Value[] = [];
+        let slcn2: Value[] = [];
         return v_variant("None", slcn2);
       }
       return v_variant("Some", [v_string(slice_unchecked(s.v, sb, eb))]);
@@ -2981,8 +2981,8 @@ function eval_expr_slice(sl: ast.ExprSlice, env: Env): Value {
       if (sb < 0 || eb > a.elements.len() || sb > eb) {
         return v_err("array slice out of range");
       }
-      var out: Value[] = [];
-      var i: i32 = sb;
+      let out: Value[] = [];
+      let i: i32 = sb;
       while (i < eb) {
         out = out.append(a.elements[i]);
         i = i + 1;
@@ -3002,23 +3002,23 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
   // (or append any not already present). Field lookup is by
   // name, so order is irrelevant.
   if (sl.has_base) {
-    var bv: Value = eval_expr(sl.base, env);
+    let bv: Value = eval_expr(sl.base, env);
     if (is_err(bv)) {
       return bv;
     }
     match (bv) {
       VStruct(sv) => {
-        var bnames: string[] = sv.field_names;
-        var bvals: Value[] = sv.field_values;
-        var oi: i32 = 0;
+        let bnames: string[] = sv.field_names;
+        let bvals: Value[] = sv.field_values;
+        let oi: i32 = 0;
         while (oi < sl.field_values.len()) {
-          var ov2: Value = eval_expr(sl.field_values[oi], env);
+          let ov2: Value = eval_expr(sl.field_values[oi], env);
           if (is_err(ov2)) {
             return ov2;
           }
-          var oname: string = sl.field_names[oi];
-          var replaced: boolean = false;
-          var bi: i32 = 0;
+          let oname: string = sl.field_names[oi];
+          let replaced: boolean = false;
+          let bi: i32 = 0;
           while (bi < bnames.len()) {
             if (bnames[bi] == oname) {
               bvals = bvals.with(bi, ov2);
@@ -3043,10 +3043,10 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
   // propagating the first VErr. Field names are
   // copied as-is from the parser; the runtime treats
   // them as opaque strings for lookup.
-  var fvs: Value[] = [];
-  var i: i32 = 0;
+  let fvs: Value[] = [];
+  let i: i32 = 0;
   while (i < sl.field_values.len()) {
-    var fv: Value = eval_expr(sl.field_values[i], env);
+    let fv: Value = eval_expr(sl.field_values[i], env);
     if (is_err(fv)) {
       return fv;
     }
@@ -3062,7 +3062,7 @@ function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
   //   * tuple index `0` / `1` / … (string-of-digits)
   // The parser stores both shapes as a bare string;
   // we disambiguate on the receiver's runtime type.
-  var ov: Value = eval_expr(fa.obj, env);
+  let ov: Value = eval_expr(fa.obj, env);
   if (is_err(ov)) {
     // `E.Red` — a field access whose object is a bare
     // identifier that resolves to no runtime value is a
@@ -3078,8 +3078,8 @@ function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
     // arises for an enum type name.
     match (fa.obj) {
       ast.ExprIdent(_) => {
-        var no_names: string[] = [];
-        var no_vals: Value[] = [];
+        let no_names: string[] = [];
+        let no_vals: Value[] = [];
         return v_struct(fa.field, no_names, no_vals);
       },
       _ => {
@@ -3089,7 +3089,7 @@ function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
   }
   match (ov) {
     VStruct(sv) => {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < sv.field_names.len()) {
         if (sv.field_names[i] == fa.field) {
           return sv.field_values[i];
@@ -3099,7 +3099,7 @@ function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
       return v_err("struct " + sv.type_name + " has no field `" + fa.field + "`");
     },
     VTuple(tv) => {
-      var idx: i32 = util.digits_to_i32(fa.field);
+      let idx: i32 = util.digits_to_i32(fa.field);
       if (idx < 0 || idx >= tv.elements.len()) {
         return v_err("tuple index `" + fa.field + "` out of range");
       }
@@ -3129,10 +3129,10 @@ function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
 // to dispatch methods declared on a union receiver type when
 // the runtime receiver is one of its variant structs.
 function is_variant_of_alias_interp(struct_name: string, union_name: string, aliases: parser.TypeAlias[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < aliases.len()) {
     if (aliases[i].name == union_name) {
-      var j: i32 = 0;
+      let j: i32 = 0;
       while (j < aliases[i].variants.len()) {
         if (aliases[i].variants[j] == struct_name) {
           return true;
@@ -3161,7 +3161,7 @@ function is_array_recv_type(t: string): boolean {
   if (t[0] == b'[') {
     return false;
   }
-  var n: i32 = t.len();
+  let n: i32 = t.len();
   if (t[n - 2] != b'[' || t[n - 1] != b']') {
     return false;
   }
@@ -3190,8 +3190,8 @@ function name_ends_with(nm: string, suffix: string): boolean {
 // qualified variant pattern against a runtime enum value, whose
 // type_name is the bare variant name.
 function variant_simple_name(name: string): string {
-  var last_dot: i32 = 0 - 1;
-  var i: i32 = 0;
+  let last_dot: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < name.len()) {
     if (name[i] == b'.') {
       last_dot = i;
@@ -3212,13 +3212,13 @@ function variant_simple_name(name: string): string {
 // area()` — wouldn't dispatch on a variant value: is_variant_of_alias_interp
 // only consults the alias table.
 function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDecl[]): parser.TypeAlias[] {
-  var out: parser.TypeAlias[] = aliases;
-  var base: i32 = aliases.len();
-  var i: i32 = 0;
+  let out: parser.TypeAlias[] = aliases;
+  let base: i32 = aliases.len();
+  let i: i32 = 0;
   while (i < types.len()) {
-    var owner: string = types[i].enum_owner;
+    let owner: string = types[i].enum_owner;
     if (owner.len() > 0) {
-      var k: i32 = base;
+      let k: i32 = base;
       while (k < out.len() && out[k].name != owner) {
         k = k + 1;
       }
@@ -3238,7 +3238,7 @@ function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDec
 // the lambda body resolve against the enclosing function's
 // scope. Args bind on top in declaration order.
 function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[]): Value {
-  var fv: VFunc = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [] };
+  let fv: VFunc = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [] };
   match (cv) {
     VFunc(v) => {
       fv = v;
@@ -3250,13 +3250,13 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
   if (args.len() != fv.params.len()) {
     return v_err("arity mismatch calling closure");
   }
-  var env: Env = Env { names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, argv: argv };
-  var j: i32 = 0;
+  let env: Env = Env { names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, argv: argv };
+  let j: i32 = 0;
   while (j < fv.params.len()) {
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
     j = j + 1;
   }
-  var step: StepResult = eval_block(fv.body, env);
+  let step: StepResult = eval_block(fv.body, env);
   // Falling off the end is how a void body returns, exactly as it is for a
   // named function — native's callFunc yields Void{} there rather than
   // failing, and a non-void body that does it is a checker error, not the
@@ -3275,7 +3275,7 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
 // such a function's name unmangled (it keys mangling off receiver_type), so
 // the pair is the whole key. -1 when there is none.
 function assoc_index(funcs: parser.FuncDecl[], type_name: string, name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < funcs.len()) {
     if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type == type_name) {
       return i;
@@ -3290,21 +3290,21 @@ function assoc_index(funcs: parser.FuncDecl[], type_name: string, name: string):
 // to it gives `i64.zero()` a 64-bit zero rather than the i32 its `return 0`
 // body literally evaluates to.
 function call_assoc(type_name: string, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[]): Value {
-  var ai: i32 = assoc_index(funcs, type_name, name);
+  let ai: i32 = assoc_index(funcs, type_name, name);
   if (ai < 0) {
     return v_err("undefined associated function `" + name + "` on `" + type_name + "`");
   }
-  var fd: parser.FuncDecl = funcs[ai];
+  let fd: parser.FuncDecl = funcs[ai];
   if (args.len() != fd.params.len()) {
     return v_err("arity mismatch calling `" + type_name + "." + name + "`");
   }
-  var env: Env = new_module_env(funcs, aliases, type_decls, argv);
-  var j: i32 = 0;
+  let env: Env = new_module_env(funcs, aliases, type_decls, argv);
+  let j: i32 = 0;
   while (j < fd.params.len()) {
     env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
     j = j + 1;
   }
-  var step: StepResult = eval_block(fd.body, env);
+  let step: StepResult = eval_block(fd.body, env);
   if (step.sig != 1) {
     return v_void();
   }
@@ -3375,19 +3375,19 @@ function tyarg_match(decl: string, tp: string, v: Value): string {
 // bind_tyargs binds each of a generic function's bounded type parameters to
 // the type its receiver / arguments carry. Generics are otherwise ERASED in
 // this engine — the binding exists so a receiver-less trait call in the body
-// (`var acc: T = T.zero();`) has a type to dispatch on, which no runtime value
+// (`let acc: T = T.zero();`) has a type to dispatch on, which no runtime value
 // supplies. A parameter nothing pins stays unbound and that call still errors.
 // Bound BEFORE the parameters so a value parameter of the same name shadows it.
 function bind_tyargs(env: Env, fd: parser.FuncDecl, has_recv: boolean, recv: Value, args: Value[]): Env {
-  var e: Env = env;
-  var t: i32 = 0;
+  let e: Env = env;
+  let t: i32 = 0;
   while (t < fd.type_params.len()) {
-    var tp: string = fd.type_params[t];
-    var concrete: string = "";
+    let tp: string = fd.type_params[t];
+    let concrete: string = "";
     if (has_recv) {
       concrete = tyarg_match(fd.receiver_type, tp, recv);
     }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < fd.params.len() && j < args.len()) {
       if (concrete.len() == 0) {
         concrete = tyarg_match(fd.params[j].type_name, tp, args[j]);
@@ -3464,7 +3464,7 @@ function has_receiver_method(funcs: parser.FuncDecl[], recv_type: string, name: 
 // instead (parser.claim_method_name). Receivers with no declared dyn type, and
 // dyn receivers with no collision, keep the written name.
 function dyn_method_name(name: string, decl_ty: string, recv: Value, funcs: parser.FuncDecl[]): string {
-  var traits: string[] = parser.dyn_trait_set(decl_ty);
+  let traits: string[] = parser.dyn_trait_set(decl_ty);
   if (traits.len() == 0) {
     return name;
   }
@@ -3517,8 +3517,8 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (args.len() != 0) {
           return v_err("string." + name + ": takes no arguments");
         }
-        var bs: Value[] = [];
-        var bi: i32 = 0;
+        let bs: Value[] = [];
+        let bi: i32 = 0;
         while (bi < sv.v.len()) {
           bs = bs.append(v_int(sv.v[bi] as i32));
           bi = bi + 1;
@@ -3540,12 +3540,12 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (!is_i32_arg(args[0])) {
           return v_err("array.with: index must be an integer");
         }
-        var wi: i32 = vint_bits(args[0]);
+        let wi: i32 = vint_bits(args[0]);
         if (wi < 0 || wi >= av.elements.len()) {
           return v_err("array.with: index " + util.i32_to_string(wi) + " out of range [0, " + util.i32_to_string(av.elements.len()) + ")");
         }
-        var wout: Value[] = [];
-        var wj: i32 = 0;
+        let wout: Value[] = [];
+        let wj: i32 = 0;
         while (wj < av.elements.len()) {
           if (wj == wi) {
             wout = wout.append(args[1]);
@@ -3566,8 +3566,8 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         // the shared buffer directly can alias it and mutate
         // the original array in place. Mirrors the copy-loop
         // the VMap methods use for the same reason.
-        var out: Value[] = [];
-        var ai: i32 = 0;
+        let out: Value[] = [];
+        let ai: i32 = 0;
         while (ai < av.elements.len()) {
           out = out.append(av.elements[ai]);
           ai = ai + 1;
@@ -3581,12 +3581,12 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (args.len() != 2) {
           return v_err("map.set: need 2 args");
         }
-        var i: i32 = 0;
+        let i: i32 = 0;
         while (i < m.keys.len()) {
           if (value_eq(m.keys[i], args[0])) {
             // Replace value at slot i.
-            var nvs: Value[] = [];
-            var j: i32 = 0;
+            let nvs: Value[] = [];
+            let j: i32 = 0;
             while (j < m.values.len()) {
               if (j == i) {
                 nvs = nvs.append(args[1]);
@@ -3605,21 +3605,21 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (args.len() != 1) {
           return v_err("map.get: need 1 arg");
         }
-        var oi: i32 = 0;
+        let oi: i32 = 0;
         while (oi < m.keys.len()) {
           if (value_eq(m.keys[oi], args[0])) {
             return v_variant("Some", [m.values[oi]]);
           }
           oi = oi + 1;
         }
-        var no_payload: Value[] = [];
+        let no_payload: Value[] = [];
         return v_variant("None", no_payload);
       }
       if (name == "get_or") {
         if (args.len() != 2) {
           return v_err("map.get_or: need 2 args");
         }
-        var gi: i32 = 0;
+        let gi: i32 = 0;
         while (gi < m.keys.len()) {
           if (value_eq(m.keys[gi], args[0])) {
             return m.values[gi];
@@ -3632,7 +3632,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (args.len() != 1) {
           return v_err("map.has: need 1 arg");
         }
-        var hi: i32 = 0;
+        let hi: i32 = 0;
         while (hi < m.keys.len()) {
           if (value_eq(m.keys[hi], args[0])) {
             return v_bool(true);
@@ -3645,9 +3645,9 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (args.len() != 1) {
           return v_err("map.delete: need 1 arg");
         }
-        var nk: Value[] = [];
-        var nv: Value[] = [];
-        var di: i32 = 0;
+        let nk: Value[] = [];
+        let nv: Value[] = [];
+        let di: i32 = 0;
         while (di < m.keys.len()) {
           if (!value_eq(m.keys[di], args[0])) {
             nk = nk.append(m.keys[di]);
@@ -3655,7 +3655,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
           }
           di = di + 1;
         }
-        var found: boolean = nk.len() != m.keys.len();
+        let found: boolean = nk.len() != m.keys.len();
         return v_tuple([v_map(nk, nv), v_bool(found)]);
       }
       if (name == "len") {
@@ -3678,7 +3678,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
   // holding a closure is the only thing this spelling can mean.
   match (recv) {
     VTuple(tv) => {
-      var ti: i32 = util.digits_to_i32(name);
+      let ti: i32 = util.digits_to_i32(name);
       if (ti >= 0 && ti < tv.elements.len()) {
         match (tv.elements[ti]) {
           VFunc(_) => {
@@ -3690,18 +3690,18 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
     },
     _ => {}
   }
-  var recv_type: string = value_type_name(recv);
+  let recv_type: string = value_type_name(recv);
   if (recv_type.len() == 0) {
     return v_err("method `" + name + "`: receiver has no type name to dispatch on");
   }
   // A byte is an int at runtime: `s[i]` and `b as u8` both evaluate to a
   // VInt, so a `(b: u8)` method is reachable from an i32-named receiver when
   // no i32 method claims the name.
-  var byte_recv: boolean = recv_type == "i32" && !has_receiver_method(funcs, "i32", name);
-  var i: i32 = 0;
+  let byte_recv: boolean = recv_type == "i32" && !has_receiver_method(funcs, "i32", name);
+  let i: i32 = 0;
   while (i < funcs.len()) {
-    var fd: parser.FuncDecl = funcs[i];
-    var rt_match: boolean = fd.receiver_type == recv_type;
+    let fd: parser.FuncDecl = funcs[i];
+    let rt_match: boolean = fd.receiver_type == recv_type;
     if (!rt_match && byte_recv && fd.receiver_type == "u8") {
       rt_match = true;
     }
@@ -3721,18 +3721,18 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling method `" + name + "`");
       }
-      var env: Env = new_module_env(funcs, aliases, type_decls, argv);
+      let env: Env = new_module_env(funcs, aliases, type_decls, argv);
       env = bind_tyargs(env, fd, true, recv, args);
       // No declared type on the receiver: an array receiver is always the
       // abstract `T[]`, whose element spelling would self-pin an empty
       // VArr. `self` is never a trait object, so nothing asks for it.
       env = env.bind(fd.receiver_name, recv);
-      var j: i32 = 0;
+      let j: i32 = 0;
       while (j < fd.params.len()) {
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
         j = j + 1;
       }
-      var step: StepResult = eval_block(fd.body, env);
+      let step: StepResult = eval_block(fd.body, env);
       if (step.sig != 1) {
         return v_void();
       }
@@ -3747,12 +3747,12 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
   // convention name or one ending in it — the suffix match
   // checker.has_array_method makes.
   if (recv_type == "Array") {
-    var conv: string = "__method_Array_" + name;
-    var ai: i32 = 0;
+    let conv: string = "__method_Array_" + name;
+    let ai: i32 = 0;
     while (ai < funcs.len()) {
       if (funcs[ai].receiver_name.len() == 0 && name_ends_with(funcs[ai].name, conv)) {
-        var conv_args: Value[] = [recv];
-        var aj: i32 = 0;
+        let conv_args: Value[] = [recv];
+        let aj: i32 = 0;
         while (aj < args.len()) {
           conv_args = conv_args.append(args[aj]);
           aj = aj + 1;
@@ -3773,7 +3773,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
   // turn an error into an answer.
   match (recv) {
     VStruct(sv2) => {
-      var fi: i32 = 0;
+      let fi: i32 = 0;
       while (fi < sv2.field_names.len()) {
         if (sv2.field_names[fi] == name) {
           match (sv2.field_values[fi]) {
@@ -3840,7 +3840,7 @@ function call_buf_new(args: Value[]): Value {
   if (args.len() != 1 || !is_int_like(args[0])) {
     return v_err("buf_new: expected 1 arg (cap)");
   }
-  var reserve: i32 = int_arg_i32(args[0]);
+  let reserve: i32 = int_arg_i32(args[0]);
   if (reserve < 0) {
     reserve = 0;
   }
@@ -3857,8 +3857,8 @@ function call_buf_push_bytes_range(h: usize, args: Value[]): Value {
   }
   match (args[1]) {
     VArr(a) => {
-      var lo: i32 = int_arg_i32(args[2]);
-      var hi: i32 = int_arg_i32(args[3]);
+      let lo: i32 = int_arg_i32(args[2]);
+      let hi: i32 = int_arg_i32(args[3]);
       if (lo < 0) {
         lo = 0;
       }
@@ -3889,9 +3889,9 @@ function call_buf_push_range(h: usize, args: Value[]): Value {
   if (!is_int_like(args[2]) || !is_int_like(args[3])) {
     return v_err("buf_push_range: bounds must be integers");
   }
-  var s: string = vstr_of(args[1]);
-  var lo: i32 = int_arg_i32(args[2]);
-  var hi: i32 = int_arg_i32(args[3]);
+  let s: string = vstr_of(args[1]);
+  let lo: i32 = int_arg_i32(args[2]);
+  let hi: i32 = int_arg_i32(args[3]);
   if (lo < 0 || hi > s.len() || lo > hi) {
     return v_err("buf_push_range [" + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + "] out of range for length " + util.i32_to_string(s.len()));
   }
@@ -3914,12 +3914,12 @@ function call_buf_push_table(name: string, h: usize, args: Value[]): Value {
   }
   match (args[2]) {
     VArr(tv) => {
-      var table: i32[] = [];
+      let table: i32[] = [];
       for e in tv.elements {
         table = table.append(vint_bits(e) & 255);
       }
-      var s: string = vstr_of(args[1]);
-      var i: i32 = 0;
+      let s: string = vstr_of(args[1]);
+      let i: i32 = 0;
       while (i < s.len()) {
         push_table_byte(name, h, s[i] as i32, table);
         i = i + 1;
@@ -3939,11 +3939,11 @@ function push_table_byte(name: string, h: usize, c: i32, table: i32[]): void {
       buf_push_byte(h, c);
       return;
     }
-    var n: i32 = table[c * 8];
+    let n: i32 = table[c * 8];
     if (n > 7) {
       n = 7;
     }
-    var k: i32 = 1;
+    let k: i32 = 1;
     while (k <= n) {
       buf_push_byte(h, table[c * 8 + k]);
       k = k + 1;
@@ -3988,8 +3988,8 @@ function call_buf_append(name: string, h: usize, args: Value[]): Value {
     // builtin added after it was published, and the interpreter's speed is
     // not what the op exists for. Little-endian, which is the order every
     // target stores a u64 in and what the checker's contract states.
-    var w: i64 = vint_as_i64(args[1]);
-    var k: i32 = 0;
+    let w: i64 = vint_as_i64(args[1]);
+    let k: i32 = 0;
     while (k < 8) {
       buf_push_byte(h, (w >> (k * 8) as i64) as i32 & 255);
       k = k + 1;
@@ -4043,7 +4043,7 @@ function call_buf_builtin(name: string, args: Value[]): Value {
   if (args.len() == 0 || !is_int_like(args[0])) {
     return v_err(name + ": expected a builder handle");
   }
-  var h: usize = buf_handle_of(args[0]);
+  let h: usize = buf_handle_of(args[0]);
   if (name == "buf_push_range") {
     return call_buf_push_range(h, args);
   }
@@ -4076,11 +4076,11 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     // The Display spine: a non-string argument is printed as its
     // `to_string()`, the call native's checker rewrites it to. This engine
     // runs no checker pass, so it dispatches the method here.
-    var text_val: Value = args[0];
+    let text_val: Value = args[0];
     match (text_val) {
       VString(_) => {},
       _ => {
-        var no_args: Value[] = [];
+        let no_args: Value[] = [];
         text_val = call_method(args[0], "to_string", no_args, funcs, aliases, type_decls, argv);
       }
     }
@@ -4095,7 +4095,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
         // (VInt, VBool and VString all name their payload `v`), and
         // stage1 fails to build with E038 on an i32. Elsewhere `s.v`
         // is fine — it is this argument position that misresolves.
-        var text: string = s.v;
+        let text: string = s.v;
         if (name == "print") {
           print(text);
         } else if (name == "write") {
@@ -4164,12 +4164,12 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     if (!is_i32_arg(args[0])) {
       return v_err("__alloc_u8: arg must be an integer");
     }
-    var an: i32 = vint_bits(args[0]);
+    let an: i32 = vint_bits(args[0]);
     if (an < 0) {
       return v_err("__alloc_u8: negative length " + util.i32_to_string(an));
     }
-    var zs: Value[] = [];
-    var zi: i32 = 0;
+    let zs: Value[] = [];
+    let zi: i32 = 0;
     while (zi < an) {
       zs = zs.append(v_int(0));
       zi = zi + 1;
@@ -4184,8 +4184,8 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
       VArr(a) => {
         // Each element is narrowed to its low 8 bits, so a caller-side
         // width mismatch cannot leak a wider value into the result.
-        var raw: u8[] = [];
-        var ri: i32 = 0;
+        let raw: u8[] = [];
+        let ri: i32 = 0;
         while (ri < a.elements.len()) {
           if (!is_i32_arg(a.elements[ri])) {
             return v_err("string_from_bytes_unchecked: element " + util.i32_to_string(ri) + " is not an integer");
@@ -4213,8 +4213,8 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     }
     match (args[0]) {
       VString(s) => {
-        var sua: i32 = vint_bits(args[1]);
-        var sub: i32 = vint_bits(args[2]);
+        let sua: i32 = vint_bits(args[1]);
+        let sub: i32 = vint_bits(args[2]);
         if (sua < 0 || sub > s.v.len() || sua > sub) {
           return v_err("string slice out of range");
         }
@@ -4252,8 +4252,8 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     }
     if let VArr(xa) = args[0] {
       if let VFloat(kf) = args[1] {
-        var sout: Value[] = [];
-        var sidx: i32 = 0;
+        let sout: Value[] = [];
+        let sidx: i32 = 0;
         while (sidx < xa.elements.len()) {
           if let VFloat(ef) = xa.elements[sidx] {
             sout = sout.append(v_float(ef.v * kf.v));
@@ -4278,15 +4278,15 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     if (!is_string_arg(args[0]) || !is_i32_arg(args[1])) {
       return v_err("__scan_set: s must be a string and from an integer");
     }
-    var ss: string = vstr_of(args[0]);
-    var si: i32 = vint_bits(args[1]);
+    let ss: string = vstr_of(args[0]);
+    let si: i32 = vint_bits(args[1]);
     if (si < 0) {
       si = 0;
     }
     match (args[2]) {
       VArr(set) => {
         while (si < ss.len()) {
-          var sb: i32 = ss[si] as i32;
+          let sb: i32 = ss[si] as i32;
           if (sb < set.elements.len() && vint_bits(set.elements[sb]) != 0) {
             return v_int(si);
           }
@@ -4307,9 +4307,9 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     if (!is_string_arg(args[0]) || !is_i32_arg(args[1])) {
       return v_err("__bsd_sum: s must be a string and sum an integer");
     }
-    var bs: string = vstr_of(args[0]);
-    var sum: i32 = vint_bits(args[1]) & 65535;
-    var bi: i32 = 0;
+    let bs: string = vstr_of(args[0]);
+    let sum: i32 = vint_bits(args[1]) & 65535;
+    let bi: i32 = 0;
     while (bi < bs.len()) {
       sum = (sum >> 1 | sum << 15) & 65535;
       sum = sum + bs[bi] as i32 & 65535;
@@ -4326,15 +4326,15 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     if (!is_string_arg(args[0]) || !is_i32_arg(args[1])) {
       return v_err("__count_runs: s must be a string and inside an integer");
     }
-    var rs: string = vstr_of(args[0]);
-    var prev: boolean = vint_bits(args[1]) != 0;
+    let rs: string = vstr_of(args[0]);
+    let prev: boolean = vint_bits(args[1]) != 0;
     match (args[2]) {
       VArr(set) => {
-        var runs: i32 = 0;
-        var ri: i32 = 0;
+        let runs: i32 = 0;
+        let ri: i32 = 0;
         while (ri < rs.len()) {
-          var rb: i32 = rs[ri] as i32;
-          var member: boolean = rb < set.elements.len() && vint_bits(set.elements[rb]) != 0;
+          let rb: i32 = rs[ri] as i32;
+          let member: boolean = rb < set.elements.len() && vint_bits(set.elements[rb]) != 0;
           if (member && !prev) {
             runs = runs + 1;
           }
@@ -4349,8 +4349,8 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     }
   }
   if (name == "__memchr" || name == "__count_byte" || name == "__sum_bytes") {
-    var cb: boolean = name == "__count_byte";
-    var sb: boolean = name == "__sum_bytes";
+    let cb: boolean = name == "__count_byte";
+    let sb: boolean = name == "__sum_bytes";
     if (sb) {
       if (args.len() != 1) {
         return v_err("__sum_bytes: expected 1 arg (s)");
@@ -4375,21 +4375,21 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
         // Ahead of `want`, which reads args[1]: __sum_bytes has no
         // second argument to read.
         if (sb) {
-          var si: i32 = 0;
-          var sacc: i32 = 0;
+          let si: i32 = 0;
+          let sacc: i32 = 0;
           while (si < s.v.len()) {
             sacc = sacc + s.v[si] as i32;
             si = si + 1;
           }
           return v_int(sacc);
         }
-        var want: i32 = vint_bits(args[1]);
+        let want: i32 = vint_bits(args[1]);
         if (cb) {
           if (want < 0 || want > 255) {
             return v_int(0);
           }
-          var ci: i32 = 0;
-          var cn: i32 = 0;
+          let ci: i32 = 0;
+          let cn: i32 = 0;
           while (ci < s.v.len()) {
             if (s.v[ci] as i32 == want) {
               cn = cn + 1;
@@ -4401,7 +4401,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
         if (want < 0 || want > 255) {
           return v_int(-1);
         }
-        var mi: i32 = vint_bits(args[2]);
+        let mi: i32 = vint_bits(args[2]);
         if (mi < 0) {
           mi = 0;
         }
@@ -4431,11 +4431,11 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     }
     match (args[0]) {
       VString(s) => {
-        var rwant: i32 = vint_bits(args[1]);
+        let rwant: i32 = vint_bits(args[1]);
         if (rwant < 0 || rwant > 255) {
           return v_int(-1);
         }
-        var ri: i32 = vint_bits(args[2]);
+        let ri: i32 = vint_bits(args[2]);
         if (ri > s.v.len() - 1) {
           ri = s.v.len() - 1;
         }
@@ -4473,11 +4473,11 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     }
     match (args[1]) {
       VString(s) => {
-        var crc: i32 = vint_bits(args[0]);
-        var ci: i32 = 0;
+        let crc: i32 = vint_bits(args[0]);
+        let ci: i32 = 0;
         while (ci < s.v.len()) {
           crc = crc ^ s.v[ci] as i32 << 24;
-          var bk: i32 = 0;
+          let bk: i32 = 0;
           while (bk < 8) {
             // `crc < 0` IS the top bit, and says so without
             // depending on whether `>>` propagates the sign or
@@ -4518,11 +4518,11 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     if (!is_i32_arg(args[1]) || !is_i32_arg(args[3]) || !is_i32_arg(args[4])) {
       return v_err("__mismatch: offsets and length must be integers");
     }
-    var ma: string = vstr_of(args[0]);
-    var mb: string = vstr_of(args[2]);
-    var mao: i32 = clamp_offset(vint_bits(args[1]), ma.len());
-    var mbo: i32 = clamp_offset(vint_bits(args[3]), mb.len());
-    var mn: i32 = vint_bits(args[4]);
+    let ma: string = vstr_of(args[0]);
+    let mb: string = vstr_of(args[2]);
+    let mao: i32 = clamp_offset(vint_bits(args[1]), ma.len());
+    let mbo: i32 = clamp_offset(vint_bits(args[3]), mb.len());
+    let mn: i32 = vint_bits(args[4]);
     if (mn > ma.len() - mao) {
       mn = ma.len() - mao;
     }
@@ -4532,7 +4532,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     if (mn < 0) {
       mn = 0;
     }
-    var mk: i32 = 0;
+    let mk: i32 = 0;
     while (mk < mn) {
       if (ma[mao + mk] != mb[mbo + mk]) {
         return v_int(mk);
@@ -4550,7 +4550,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     }
     match (args[0]) {
       VString(s) => {
-        var ai: i32 = vint_bits(args[1]);
+        let ai: i32 = vint_bits(args[1]);
         if (ai < 0) {
           ai = 0;
         }
@@ -4577,8 +4577,8 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     if (args.len() != 0) {
       return v_err("args takes no arguments");
     }
-    var av: Value[] = [];
-    var ai: i32 = 0;
+    let av: Value[] = [];
+    let ai: i32 = 0;
     while (ai < argv.len()) {
       av = av.append(v_string(argv[ai]));
       ai = ai + 1;
@@ -4595,7 +4595,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     if (args.len() != 0) {
       return v_err(name + " takes no arguments");
     }
-    var fd: i32 = 1;
+    let fd: i32 = 1;
     if (name == "stderr") {
       fd = 2;
     }
@@ -4637,25 +4637,25 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     }
     return v_float32(f32_from_bits(vint_bits(args[0])) as f64);
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < funcs.len()) {
     // Skip receiver methods — they're dispatched via
     // call_method only. A plain function call must match
     // a non-method (receiver_name empty) of the same name.
     if (funcs[i].name == name && funcs[i].receiver_name.len() == 0) {
-      var fd: parser.FuncDecl = funcs[i];
+      let fd: parser.FuncDecl = funcs[i];
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling `" + name + "`");
       }
-      var env: Env = new_module_env(funcs, aliases, type_decls, argv);
-      var no_recv: Value = v_absent();
+      let env: Env = new_module_env(funcs, aliases, type_decls, argv);
+      let no_recv: Value = v_absent();
       env = bind_tyargs(env, fd, false, no_recv, args);
-      var j: i32 = 0;
+      let j: i32 = 0;
       while (j < fd.params.len()) {
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
         j = j + 1;
       }
-      var step: StepResult = eval_block(fd.body, env);
+      let step: StepResult = eval_block(fd.body, env);
       if (step.sig != 1) {
         return v_void();
       }
@@ -4780,7 +4780,7 @@ function value_eq(a: Value, b: Value): boolean {
           if (aa.elements.len() != ba.elements.len()) {
             return false;
           }
-          var ai: i32 = 0;
+          let ai: i32 = 0;
           while (ai < aa.elements.len()) {
             if (!value_eq(aa.elements[ai], ba.elements[ai])) {
               return false;
@@ -4814,7 +4814,7 @@ function value_eq(a: Value, b: Value): boolean {
           if (asv.field_values.len() != bsv.field_values.len()) {
             return false;
           }
-          var si: i32 = 0;
+          let si: i32 = 0;
           while (si < asv.field_values.len()) {
             if (!value_eq(asv.field_values[si], bsv.field_values[si])) {
               return false;
@@ -4836,7 +4836,7 @@ function value_eq(a: Value, b: Value): boolean {
           if (at.elements.len() != bt.elements.len()) {
             return false;
           }
-          var ti: i32 = 0;
+          let ti: i32 = 0;
           while (ti < at.elements.len()) {
             if (!value_eq(at.elements[ti], bt.elements[ti])) {
               return false;
@@ -4882,7 +4882,7 @@ function value_eq(a: Value, b: Value): boolean {
 }
 
 // eval_stmt returns (new env, control signal, optional value). The
-// returned env carries `var x = …;` bindings forward. Control flow
+// returned env carries `let x = …;` bindings forward. Control flow
 // uses the DEDICATED `sig` channel (SH-002) — never the Value union,
 // so a user value like Err("__break__") can no longer be mistaken for
 // a loop signal (the old encoding keyed break/continue/return off
@@ -4910,7 +4910,7 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       return eval_stmt(d.action, env);
     },
     ast.StmtVar(v) => {
-      var val: Value = eval_expr(v.init, env);
+      let val: Value = eval_expr(v.init, env);
       // A runtime error in the initializer aborts the function rather
       // than being bound and silently swallowed (#4348 item 4). eval_expr
       // only ever yields VALUES (control signals are statement-level,
@@ -4918,18 +4918,18 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       if (is_err(val)) {
         return step_stop(env, val);
       }
-      // `var (a, b) = t` arrives as ONE StmtVar whose name is the
+      // `let (a, b) = t` arrives as ONE StmtVar whose name is the
       // comma-joined binding list (see parser's tuple-destructure arm),
       // so a name carrying a comma binds per tuple slot, not whole.
       if (is_destructure_name(v.name)) {
-        var names: string[] = split_binding_names(v.name);
+        let names: string[] = split_binding_names(v.name);
         match (val) {
           VTuple(tv) => {
             if (tv.elements.len() != names.len()) {
               return step_stop(env, v_err("destructuring `" + v.name + "`: tuple has " + util.i32_to_string(tv.elements.len()) + " element(s)"));
             }
-            var denv: Env = env;
-            var di: i32 = 0;
+            let denv: Env = env;
+            let di: i32 = 0;
             while (di < names.len()) {
               denv = denv.bind(names[di], tv.elements[di]);
               di = di + 1;
@@ -4941,22 +4941,22 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
           }
         }
       }
-      // An unannotated `var` carries its initialiser's declared type, so
+      // An unannotated `let` carries its initialiser's declared type, so
       // a `dyn` value keeps the type its dispatch depends on across the
       // binding (#7291).
-      var declared: string = v.type_name;
+      let declared: string = v.type_name;
       if (declared.len() == 0) {
         declared = env.static_type_of(v.init);
       }
-      var env2: Env = env.bind_decl(v.name, val, declared);
+      let env2: Env = env.bind_decl(v.name, val, declared);
       return step_none(env2);
     },
     ast.StmtReturn(r) => {
-      var val: Value = eval_expr(r.value, env);
+      let val: Value = eval_expr(r.value, env);
       return step_stop(env, val);
     },
     ast.StmtExpr(x) => {
-      var val: Value = eval_expr(x.value, env);
+      let val: Value = eval_expr(x.value, env);
       // A runtime error in an expression-statement aborts rather than
       // being dropped and swallowed (#4348 item 4). Otherwise the value
       // is discarded (expression-statements are side-effect only here).
@@ -4966,7 +4966,7 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       return step_none(env);
     },
     ast.StmtIf(ifs) => {
-      var cv: Value = eval_expr(ifs.cond, env);
+      let cv: Value = eval_expr(ifs.cond, env);
       if (is_err(cv)) {
         return step_stop(env, cv);
       }
@@ -4982,17 +4982,17 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       }
       match (cv) {
         VBool(b) => {
-          var body: ast.Stmt[] = ifs.else_body;
+          let body: ast.Stmt[] = ifs.else_body;
           if (b.v) {
             body = ifs.then_body;
           }
-          // Branch-local `var`s don't escape: trim the
+          // Branch-local `let`s don't escape: trim the
           // env back to the entry length. Assignments
           // to outer-scoped names sit at index < base
           // and survive the trim (update() rewrites
           // slots in place).
-          var base: i32 = env.names.len();
-          var step: StepResult = eval_block(body, env);
+          let base: i32 = env.names.len();
+          let step: StepResult = eval_block(body, env);
           return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
         },
         _ => {
@@ -5006,12 +5006,12 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       // Assignments inside the body need to outlive each
       // iteration — eval_block's "drop branch-local
       // bindings" stance is wrong here, so we step the body
-      // ourselves and thread `cur` forward. `var` declared
+      // ourselves and thread `cur` forward. `let` declared
       // inside the body still doesn't leak past the loop:
       // we snapshot the names-length at entry and trim back
       // on each iteration boundary, simulating block scope.
       //
-      // Concretely: the names array grows only by `var`
+      // Concretely: the names array grows only by `let`
       // inside the body; truncating to entry-length on each
       // iteration discards those bindings before the next
       // iteration starts, but keeps any updates to
@@ -5019,10 +5019,10 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       // and update() rewrites them in place). The trim also
       // applies on loop exit so the outer scope sees the
       // env it started with, plus assignment updates.
-      var cur: Env = env;
-      var base: i32 = env.names.len();
+      let cur: Env = env;
+      let base: i32 = env.names.len();
       while (true) {
-        var cv: Value = eval_expr(w.cond, cur);
+        let cv: Value = eval_expr(w.cond, cur);
         if (is_err(cv)) {
           return step_stop(env, cv);
         }
@@ -5036,7 +5036,7 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
             return step_stop(env, v_err("while cond not bool"));
           }
         }
-        var step: StepResult = eval_block(w.body, cur);
+        let step: StepResult = eval_block(w.body, cur);
         // break inside the loop exits immediately —
         // discard the body's env, return noreturn so
         // the surrounding stmt list continues.
@@ -5064,15 +5064,15 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       return step_none(cur);
     },
     ast.StmtAssign(a) => {
-      var av: Value = eval_expr(a.value, env);
+      let av: Value = eval_expr(a.value, env);
       if (is_err(av)) {
         return step_stop(env, av);
       }
       // update silently no-ops on undefined names; surface
       // the error explicitly so a mistake is observable in
       // tests.
-      var i: i32 = env.names.len() - 1;
-      var found: boolean = false;
+      let i: i32 = env.names.len() - 1;
+      let found: boolean = false;
       while (i >= 0 && !found) {
         if (env.names[i] == a.target) {
           found = true;
@@ -5086,7 +5086,7 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       // leave the Env alone. That is what makes the write visible to the
       // enclosing scope and to every other closure sharing the cell —
       // env.update would only rebind this copy (SH-057).
-      var tslot: i32 = env.raw_slot(a.target);
+      let tslot: i32 = env.raw_slot(a.target);
       if (tslot >= 0 && cell_slot_set(env.values[tslot], av)) {
         return step_none(env);
       }
@@ -5095,7 +5095,7 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
     ast.StmtMatch(m) => {
       // Evaluate the scrutinee. An error in the scrutinee
       // propagates without running any arm.
-      var sv: Value = eval_expr(m.scrutinee, env);
+      let sv: Value = eval_expr(m.scrutinee, env);
       if (is_err(sv)) {
         return step_stop(env, sv);
       }
@@ -5103,12 +5103,12 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       // matches. Variant patterns require a VStruct
       // scrutinee whose type_name matches the pattern's
       // type_name; PatWildcard always matches.
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < m.arms.len()) {
-        var arm: ast.MatchArm = m.arms[i];
-        var matched: boolean = false;
-        var bind_names: string[] = [];
-        var bind_values: Value[] = [];
+        let arm: ast.MatchArm = m.arms[i];
+        let matched: boolean = false;
+        let bind_names: string[] = [];
+        let bind_values: Value[] = [];
         match (arm.pattern) {
           ast.PatWildcard(_) => {
             matched = true;
@@ -5147,18 +5147,18 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
                   // marker, so a single binding takes the
                   // whole struct (so `c.field` works).
                   // Bare `Foo` / `Foo(_)` bind nothing.
-                  var is_payload: boolean = vs.field_names.len() > 0 && vs.field_names[0] == "__ev";
+                  let is_payload: boolean = vs.field_names.len() > 0 && vs.field_names[0] == "__ev";
                   if (is_payload) {
-                    var pat_binds: string[] = [];
+                    let pat_binds: string[] = [];
                     if (pv.binding.len() > 0) {
                       pat_binds = pat_binds.append(pv.binding);
                     }
-                    var xi: i32 = 0;
+                    let xi: i32 = 0;
                     while (xi < pv.extra_bindings.len()) {
                       pat_binds = pat_binds.append(pv.extra_bindings[xi]);
                       xi = xi + 1;
                     }
-                    var pbi: i32 = 0;
+                    let pbi: i32 = 0;
                     while (pbi < pat_binds.len() && pbi < vs.field_values.len()) {
                       if (pat_binds[pbi] != "_") {
                         bind_names = bind_names.append(pat_binds[pbi]);
@@ -5180,14 +5180,14 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
         }
         if (matched) {
           // Arm-local bindings die at the close of the
-          // arm body, same as branch-local `var`s in
+          // arm body, same as branch-local `let`s in
           // StmtIf. Trim env back to the entry length
           // before returning so the surrounding scope
           // doesn't see the binding (or any nested
-          // `var`s) leak out.
-          var base: i32 = env.names.len();
-          var bodyEnv: Env = env;
-          var bk: i32 = 0;
+          // `let`s) leak out.
+          let base: i32 = env.names.len();
+          let bodyEnv: Env = env;
+          let bk: i32 = 0;
           while (bk < bind_names.len()) {
             bodyEnv = bodyEnv.bind(bind_names[bk], bind_values[bk]);
             bk = bk + 1;
@@ -5195,9 +5195,9 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
           // A guard (`Pat if <expr> =>`) is evaluated with the
           // binding in scope; a false guard falls through to the
           // next arm instead of running this body.
-          var pass: boolean = true;
+          let pass: boolean = true;
           if (arm.has_guard) {
-            var gv: Value = eval_expr(arm.guard, bodyEnv);
+            let gv: Value = eval_expr(arm.guard, bodyEnv);
             if (is_err(gv)) {
               return step_stop(trim_env(bodyEnv, base), gv);
             }
@@ -5211,7 +5211,7 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
             }
           }
           if (pass) {
-            var step: StepResult = eval_block(arm.body, bodyEnv);
+            let step: StepResult = eval_block(arm.body, bodyEnv);
             return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
           }
         }
@@ -5234,11 +5234,11 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
     },
     ast.StmtFor(f) => {
       // Evaluate the iter expression — must be a VArr.
-      var iv: Value = eval_expr(f.iter, env);
+      let iv: Value = eval_expr(f.iter, env);
       if (is_err(iv)) {
         return step_stop(env, iv);
       }
-      var elems: Value[] = [];
+      let elems: Value[] = [];
       match (iv) {
         VArr(a) => {
           elems = a.elements;
@@ -5253,17 +5253,17 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       // circuits the rest of the iterations. The loop var is declared by
       // the ELEMENT type of the iterable's annotation — `dyn Shape[]`
       // makes each `x` a `dyn Shape`.
-      var elem_ty: string = "";
-      var iter_ty: string = env.static_type_of(f.iter);
+      let elem_ty: string = "";
+      let iter_ty: string = env.static_type_of(f.iter);
       if (name_ends_with(iter_ty, "[]")) {
         elem_ty = slice_unchecked(iter_ty, 0, iter_ty.len() - 2) + "";
       }
-      var base: i32 = env.names.len();
-      var cur: Env = env;
-      var i: i32 = 0;
+      let base: i32 = env.names.len();
+      let cur: Env = env;
+      let i: i32 = 0;
       while (i < elems.len()) {
-        var iter_env: Env = cur.bind_decl(f.var_name, elems[i], elem_ty);
-        var step: StepResult = eval_block(f.body, iter_env);
+        let iter_env: Env = cur.bind_decl(f.var_name, elems[i], elem_ty);
+        let step: StepResult = eval_block(f.body, iter_env);
         if (step.sig == 2) {
           return step_none(trim_env(step.env, base));
         }
@@ -5293,17 +5293,17 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
 }
 
 // trim_env drops bindings past index `base`. Used by the while
-// loop to discard body-local `var`s between iterations while
+// loop to discard body-local `let`s between iterations while
 // preserving any update()s to outer-scoped names (those sit at
 // index < base and aren't touched).
 function trim_env(e: Env, base: i32): Env {
   if (e.names.len() <= base) {
     return e;
   }
-  var ns: string[] = [];
-  var vs: Value[] = [];
-  var ts: string[] = [];
-  var i: i32 = 0;
+  let ns: string[] = [];
+  let vs: Value[] = [];
+  let ts: string[] = [];
+  let i: i32 = 0;
   while (i < base) {
     ns = ns.append(e.names[i]);
     vs = vs.append(e.values[i]);
@@ -5316,18 +5316,18 @@ function trim_env(e: Env, base: i32): Env {
 // eval_block walks a body, threading env forward through every
 // stmt. Returns the threaded env so the caller can decide how
 // much of it to keep — the StmtIf path trims back to the entry
-// length (branch-local `var`s die), while StmtWhile uses the
+// length (branch-local `let`s die), while StmtWhile uses the
 // same trim per iteration but keeps it. Both rely on the fact
 // that update() rewrites slots in place, so reassignments to
 // outer-scoped names sit at index < base and survive the trim.
 // The first non-zero sig short-circuits the walk.
 function eval_block(body: ast.Stmt[], env: Env): StepResult {
-  var cur: Env = env;
-  var reassigned: string[] = body_assign_names(body, []);
-  var i: i32 = 0;
+  let cur: Env = env;
+  let reassigned: string[] = body_assign_names(body, []);
+  let i: i32 = 0;
   while (i < body.len()) {
     cur = cellify_captures(cur, body[i], reassigned);
-    var r: StepResult = eval_stmt(body[i], cur);
+    let r: StepResult = eval_stmt(body[i], cur);
     cur = r.env;
     if (r.sig != 0) {
       return StepResult { env: cur, ret: r.ret, sig: r.sig };
@@ -5341,12 +5341,12 @@ function eval_block(body: ast.Stmt[], env: Env): StepResult {
 // (or end of stmts). Returns the return-value or VErr if no
 // explicit return was seen.
 function eval_program(prog: ast.Stmt[]): Value {
-  var env: Env = new_env();
-  var preassigned: string[] = body_assign_names(prog, []);
-  var i: i32 = 0;
+  let env: Env = new_env();
+  let preassigned: string[] = body_assign_names(prog, []);
+  let i: i32 = 0;
   while (i < prog.len()) {
     env = cellify_captures(env, prog[i], preassigned);
-    var r: StepResult = eval_stmt(prog[i], env);
+    let r: StepResult = eval_stmt(prog[i], env);
     env = r.env;
     if (r.sig != 0) {
       return r.ret;
@@ -5363,7 +5363,7 @@ function eval_program(prog: ast.Stmt[]): Value {
 // eval_module runs a module whose program sees `-` as its argv, the spelling
 // the stdin-fed drivers give a program that arrived on stdin.
 pub function eval_module(raw_mod: parser.Module): Value {
-  var dash: string[] = ["-"];
+  let dash: string[] = ["-"];
   return eval_module_argv(raw_mod, dash);
 }
 
@@ -5379,25 +5379,25 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
   // actions eagerly at their source position (native 2 / eager 101 on the
   // timing-sensitive repro). lower_defers_module is idempotent on a
   // defer-free module, so callers that already lowered stay correct.
-  var mod: parser.Module = parser.fill_default_args_module(parser.desugar_ranges_module(parser.lower_defers_module(parser.erase_view_module(raw_mod))));
+  let mod: parser.Module = parser.fill_default_args_module(parser.desugar_ranges_module(parser.lower_defers_module(parser.erase_view_module(raw_mod))));
   // Fold each enum into the alias table as a synthetic union so a method
   // declared on the enum type dispatches on its variant values.
-  var all_variants: parser.StructDecl[] = module_type_decls(mod.structs);
-  var all_aliases: parser.TypeAlias[] = aliases_with_enums(mod.aliases, all_variants);
-  var i: i32 = 0;
+  let all_variants: parser.StructDecl[] = module_type_decls(mod.structs);
+  let all_aliases: parser.TypeAlias[] = aliases_with_enums(mod.aliases, all_variants);
+  let i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (mod.funcs[i].name == "main") {
-      var empty_args: Value[] = [];
+      let empty_args: Value[] = [];
       return call_func("main", empty_args, mod.funcs, all_aliases, all_variants, argv);
     }
     i = i + 1;
   }
-  var env: Env = new_module_env(mod.funcs, all_aliases, all_variants, argv);
-  var mreassigned: string[] = body_assign_names(mod.top_stmts, []);
-  var j: i32 = 0;
+  let env: Env = new_module_env(mod.funcs, all_aliases, all_variants, argv);
+  let mreassigned: string[] = body_assign_names(mod.top_stmts, []);
+  let j: i32 = 0;
   while (j < mod.top_stmts.len()) {
     env = cellify_captures(env, mod.top_stmts[j], mreassigned);
-    var r: StepResult = eval_stmt(mod.top_stmts[j], env);
+    let r: StepResult = eval_stmt(mod.top_stmts[j], env);
     env = r.env;
     if (r.sig != 0) {
       return r.ret;
@@ -5410,19 +5410,19 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
 // =================== VALIDATION ====================
 
 function run_source(src: string): Value {
-  var toks: lexer.Token[] = lexer.tokenize(src);
-  var stmts: ast.Stmt[] = parser.parse_program(toks);
+  let toks: lexer.Token[] = lexer.tokenize(src);
+  let stmts: ast.Stmt[] = parser.parse_program(toks);
   return eval_program(stmts);
 }
 
 function run_module(src: string): Value {
-  var toks: lexer.Token[] = lexer.tokenize(src);
-  var mod: parser.Module = parser.parse_module(toks);
+  let toks: lexer.Token[] = lexer.tokenize(src);
+  let mod: parser.Module = parser.parse_module(toks);
   return eval_module(mod);
 }
 
 function main(): i32 {
-  var rc: i32 = check_arithmetic_and_idents();
+  let rc: i32 = check_arithmetic_and_idents();
   if (rc != 0) {
     return rc;
   }
@@ -5511,8 +5511,8 @@ function main(): i32 {
 }
 
 function check_arithmetic_and_idents(): i32 {
-  // Arithmetic + ident lookup. var x = 7; var y = 9; return x + y.
-  var r1: Value = run_source("var x = 1 + 2 * 3; var y = (1 + 2) * 3; return x + y;");
+  // Arithmetic + ident lookup. let x = 7; let y = 9; return x + y.
+  let r1: Value = run_source("let x = 1 + 2 * 3; let y = (1 + 2) * 3; return x + y;");
   match (r1) {
     VInt(i) => {
       if (i.v != 16) {
@@ -5525,7 +5525,7 @@ function check_arithmetic_and_idents(): i32 {
   }
 
   // String concat.
-  var r2: Value = run_source("var a = \"hi \" + \"there\"; return 0 - 1;");
+  let r2: Value = run_source("let a = \"hi \" + \"there\"; return 0 - 1;");
   match (r2) {
     VInt(i) => {
       if (i.v != 0 - 1) {
@@ -5537,10 +5537,10 @@ function check_arithmetic_and_idents(): i32 {
     }
   }
 
-  // Logical + equality. var b = 5 < 10; return b && (1 == 1).
+  // Logical + equality. let b = 5 < 10; return b && (1 == 1).
   // Can't `return bool` directly — surface as i32 via a
   // separate var + a ternary-shaped return.
-  var r3: Value = run_source("var b = 5 < 10; var c = b && (1 == 1); return 42;");
+  let r3: Value = run_source("let b = 5 < 10; let c = b && (1 == 1); return 42;");
   match (r3) {
     VInt(i) => {
       if (i.v != 42) {
@@ -5553,7 +5553,7 @@ function check_arithmetic_and_idents(): i32 {
   }
 
   // Unary minus.
-  var r4: Value = run_source("var n = 0 - 5; return n;");
+  let r4: Value = run_source("let n = 0 - 5; return n;");
   match (r4) {
     VInt(i) => {
       if (i.v != 0 - 5) {
@@ -5566,7 +5566,7 @@ function check_arithmetic_and_idents(): i32 {
   }
 
   // Division.
-  var r5: Value = run_source("return 20 / 4;");
+  let r5: Value = run_source("return 20 / 4;");
   match (r5) {
     VInt(i) => {
       if (i.v != 5) {
@@ -5580,7 +5580,7 @@ function check_arithmetic_and_idents(): i32 {
 
   // Division by zero → 0 (total semantics, docs/INTEGER-SEMANTICS.md /
   // #4348 item 6), not a VErr. `x % 0 == x` likewise.
-  var r6: Value = run_source("return 1 / 0;");
+  let r6: Value = run_source("return 1 / 0;");
   match (r6) {
     VInt(i) => {
       if (i.v != 0) {
@@ -5591,7 +5591,7 @@ function check_arithmetic_and_idents(): i32 {
       return 61;
     }
   }
-  var r6b: Value = run_source("return 7 % 0;");
+  let r6b: Value = run_source("return 7 % 0;");
   match (r6b) {
     VInt(i) => {
       if (i.v != 7) {
@@ -5604,7 +5604,7 @@ function check_arithmetic_and_idents(): i32 {
   }
 
   // Undefined identifier → VErr.
-  var r7: Value = run_source("return missing;");
+  let r7: Value = run_source("return missing;");
   match (r7) {
     VErr(_) => {},
     _ => {
@@ -5616,8 +5616,8 @@ function check_arithmetic_and_idents(): i32 {
 }
 
 function check_conditionals_and_assignment(): i32 {
-  // If/else, then-branch taken: `var x = 5; if (x < 10) { return 1; } else { return 2; }`
-  var r8: Value = run_source("var x = 5; if (x < 10) { return 1; } else { return 2; }");
+  // If/else, then-branch taken: `let x = 5; if (x < 10) { return 1; } else { return 2; }`
+  let r8: Value = run_source("let x = 5; if (x < 10) { return 1; } else { return 2; }");
   match (r8) {
     VInt(i) => {
       if (i.v != 1) {
@@ -5630,7 +5630,7 @@ function check_conditionals_and_assignment(): i32 {
   }
 
   // Else-branch taken.
-  var r9: Value = run_source("var x = 20; if (x < 10) { return 1; } else { return 2; }");
+  let r9: Value = run_source("let x = 20; if (x < 10) { return 1; } else { return 2; }");
   match (r9) {
     VInt(i) => {
       if (i.v != 2) {
@@ -5644,7 +5644,7 @@ function check_conditionals_and_assignment(): i32 {
 
   // No else, condition false: control falls past the if to the
   // trailing return.
-  var r10: Value = run_source("if (false) { return 7; } return 11;");
+  let r10: Value = run_source("if (false) { return 7; } return 11;");
   match (r10) {
     VInt(i) => {
       if (i.v != 11) {
@@ -5657,7 +5657,7 @@ function check_conditionals_and_assignment(): i32 {
   }
 
   // Chained else-if: branches through the second arm.
-  var r11: Value = run_source("var k = 2; if (k == 1) { return 10; } else if (k == 2) { return 20; } else { return 30; }");
+  let r11: Value = run_source("let k = 2; if (k == 1) { return 10; } else if (k == 2) { return 20; } else { return 30; }");
   match (r11) {
     VInt(i) => {
       if (i.v != 20) {
@@ -5670,7 +5670,7 @@ function check_conditionals_and_assignment(): i32 {
   }
 
   // Plain assignment: declared, reassigned, returned.
-  var r12: Value = run_source("var n = 1; n = 7; return n;");
+  let r12: Value = run_source("let n = 1; n = 7; return n;");
   match (r12) {
     VInt(i) => {
       if (i.v != 7) {
@@ -5687,8 +5687,8 @@ function check_conditionals_and_assignment(): i32 {
 
 function check_while_loops(): i32 {
   // While loop, counter. Sum of 1..=5 == 15.
-  var r13: Value = run_source(
-    "var i = 1; var s = 0; while (i <= 5) { s = s + i; i = i + 1; } return s;",
+  let r13: Value = run_source(
+    "let i = 1; let s = 0; while (i <= 5) { s = s + i; i = i + 1; } return s;",
   );
   match (r13) {
     VInt(i) => {
@@ -5702,8 +5702,8 @@ function check_while_loops(): i32 {
   }
 
   // Early `return` inside while short-circuits the loop.
-  var r14: Value = run_source(
-    "var i = 0; while (i < 10) { if (i == 3) { return i; } i = i + 1; } return 0 - 1;",
+  let r14: Value = run_source(
+    "let i = 0; while (i < 10) { if (i == 3) { return i; } i = i + 1; } return 0 - 1;",
   );
   match (r14) {
     VInt(i) => {
@@ -5717,7 +5717,7 @@ function check_while_loops(): i32 {
   }
 
   // While with always-false cond: body never runs.
-  var r15: Value = run_source("var x = 5; while (false) { x = 99; } return x;");
+  let r15: Value = run_source("let x = 5; while (false) { x = 99; } return x;");
   match (r15) {
     VInt(i) => {
       if (i.v != 5) {
@@ -5734,7 +5734,7 @@ function check_while_loops(): i32 {
 
 function check_functions_and_recursion(): i32 {
   // Function decl + call: `add(2, 3)` via `main` → 5.
-  var r16: Value = run_module(
+  let r16: Value = run_module(
     "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }",
   );
   match (r16) {
@@ -5749,7 +5749,7 @@ function check_functions_and_recursion(): i32 {
   }
 
   // Recursive factorial: fact(5) = 120.
-  var r17: Value = run_module(
+  let r17: Value = run_module(
     "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }",
   );
   match (r17) {
@@ -5764,7 +5764,7 @@ function check_functions_and_recursion(): i32 {
   }
 
   // Mutual recursion: is_even(4) → true (encoded as 1).
-  var r18: Value = run_module(
+  let r18: Value = run_module(
     "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); }"
       + " function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); }"
       + " function main(): i32 { return is_even(4); }",
@@ -5781,7 +5781,7 @@ function check_functions_and_recursion(): i32 {
   }
 
   // Undefined function call → VErr.
-  var r19: Value = run_module(
+  let r19: Value = run_module(
     "function main(): i32 { return missing(1); }",
   );
   match (r19) {
@@ -5792,7 +5792,7 @@ function check_functions_and_recursion(): i32 {
   }
 
   // Arity mismatch → VErr.
-  var r20: Value = run_module(
+  let r20: Value = run_module(
     "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(1); }",
   );
   match (r20) {
@@ -5807,8 +5807,8 @@ function check_functions_and_recursion(): i32 {
 
 function check_arrays(): i32 {
   // Array literal + indexing: `a[0] == 10`, `a[2] == 30`.
-  var r21: Value = run_source(
-    "var a = [10, 20, 30]; return a[2];",
+  let r21: Value = run_source(
+    "let a = [10, 20, 30]; return a[2];",
   );
   match (r21) {
     VInt(i) => {
@@ -5822,7 +5822,7 @@ function check_arrays(): i32 {
   }
 
   // .len() on an array.
-  var r22: Value = run_source("var a = [1, 2, 3, 4]; return a.len();");
+  let r22: Value = run_source("let a = [1, 2, 3, 4]; return a.len();");
   match (r22) {
     VInt(i) => {
       if (i.v != 4) {
@@ -5835,8 +5835,8 @@ function check_arrays(): i32 {
   }
 
   // Sum-an-array via while loop. Sum of [3, 5, 7, 9] = 24.
-  var r23: Value = run_source(
-    "var a = [3, 5, 7, 9]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s;",
+  let r23: Value = run_source(
+    "let a = [3, 5, 7, 9]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s;",
   );
   match (r23) {
     VInt(i) => {
@@ -5850,7 +5850,7 @@ function check_arrays(): i32 {
   }
 
   // Out-of-range index → VErr.
-  var r24: Value = run_source("var a = [1, 2]; return a[5];");
+  let r24: Value = run_source("let a = [1, 2]; return a[5];");
   match (r24) {
     VErr(_) => {},
     _ => {
@@ -5859,7 +5859,7 @@ function check_arrays(): i32 {
   }
 
   // Empty array literal: len → 0.
-  var r25: Value = run_source("var a = []; return a.len();");
+  let r25: Value = run_source("let a = []; return a.len();");
   match (r25) {
     VInt(i) => {
       if (i.v != 0) {
@@ -5877,7 +5877,7 @@ function check_arrays(): i32 {
 function check_string_indexing(): i32 {
   // String indexing returns the byte at position as i32.
   // ASCII 'h' is 104.
-  var r26: Value = run_source("var s = \"hello\"; return s[0];");
+  let r26: Value = run_source("let s = \"hello\"; return s[0];");
   match (r26) {
     VInt(i) => {
       if (i.v != 104) {
@@ -5890,7 +5890,7 @@ function check_string_indexing(): i32 {
   }
 
   // String indexing + arithmetic: "ABC" → 'A' + 'B' + 'C' = 65 + 66 + 67 = 198.
-  var r27: Value = run_source("var s = \"ABC\"; return s[0] + s[1] + s[2];");
+  let r27: Value = run_source("let s = \"ABC\"; return s[0] + s[1] + s[2];");
   match (r27) {
     VInt(i) => {
       if (i.v != 198) {
@@ -5903,7 +5903,7 @@ function check_string_indexing(): i32 {
   }
 
   // Out-of-range string index → VErr.
-  var r28: Value = run_source("var s = \"hi\"; return s[5];");
+  let r28: Value = run_source("let s = \"hi\"; return s[5];");
   match (r28) {
     VErr(_) => {},
     _ => {
@@ -5916,7 +5916,7 @@ function check_string_indexing(): i32 {
 
 function check_slicing(): i32 {
   // String slicing is checked (#5634): `"hello"[1:4]` → `Some("ell")`.
-  var r29: Value = run_source("var s = \"hello\"; return s[1:4];");
+  let r29: Value = run_source("let s = \"hello\"; return s[1:4];");
   match (r29) {
     VStruct(sv29) => {
       if (sv29.type_name != "Some") {
@@ -5940,7 +5940,7 @@ function check_slicing(): i32 {
 
   // The unchecked byte slice keeps the raw string: slice + index
   // → 'l' = 108.
-  var r30: Value = run_source("var s = \"hello\"; return slice_unchecked(s, 1, 4)[1];");
+  let r30: Value = run_source("let s = \"hello\"; return slice_unchecked(s, 1, 4)[1];");
   match (r30) {
     VInt(i) => {
       if (i.v != 108) {
@@ -5954,7 +5954,7 @@ function check_slicing(): i32 {
 
   // Array slicing: `[10,20,30,40,50][1:4]` → length 3, first
   // element 20.
-  var r31: Value = run_source("var a = [10, 20, 30, 40, 50]; var b = a[1:4]; return b[0];");
+  let r31: Value = run_source("let a = [10, 20, 30, 40, 50]; let b = a[1:4]; return b[0];");
   match (r31) {
     VInt(i) => {
       if (i.v != 20) {
@@ -5967,7 +5967,7 @@ function check_slicing(): i32 {
   }
 
   // Out-of-range slice → `None`, not an error (#5634).
-  var r32: Value = run_source("var s = \"hi\"; return s[0:99];");
+  let r32: Value = run_source("let s = \"hi\"; return s[0:99];");
   match (r32) {
     VStruct(sv32) => {
       if (sv32.type_name != "None") {
@@ -5981,7 +5981,7 @@ function check_slicing(): i32 {
 
   // A bound that splits a code point → `None`. "héllo" is 6 bytes,
   // with the two-byte é at offsets 1..2, so 2 is interior.
-  var r32b: Value = run_source("var s = \"héllo\"; return s[0:2];");
+  let r32b: Value = run_source("let s = \"héllo\"; return s[0:2];");
   match (r32b) {
     VStruct(sv32b) => {
       if (sv32b.type_name != "None") {
@@ -5997,7 +5997,7 @@ function check_slicing(): i32 {
   // an out-of-range bound is still an error there. (Surface it through
   // .len() so it reaches the program's return rather than getting
   // silently stored in a var.)
-  var r32u: Value = run_source("var s = \"hi\"; return slice_unchecked(s, 0, 99).len();");
+  let r32u: Value = run_source("let s = \"hi\"; return slice_unchecked(s, 0, 99).len();");
   match (r32u) {
     VErr(_) => {},
     _ => {
@@ -6012,8 +6012,8 @@ function check_compound_assignment(): i32 {
   // Compound assignment lowers to plain assign at parse time —
   // `x += 1` is `x = x + 1` by the time the interp sees it.
   // Sum 1..=10 via `+=` in the body: 55.
-  var r33: Value = run_source(
-    "var i = 1; var s = 0; while (i <= 10) { s += i; i += 1; } return s;",
+  let r33: Value = run_source(
+    "let i = 1; let s = 0; while (i <= 10) { s += i; i += 1; } return s;",
   );
   match (r33) {
     VInt(i) => {
@@ -6027,7 +6027,7 @@ function check_compound_assignment(): i32 {
   }
 
   // `*=` desugar: `x *= 2; x *= 3; return x;` → 6 from start 1.
-  var r34: Value = run_source("var x = 1; x *= 2; x *= 3; return x;");
+  let r34: Value = run_source("let x = 1; x *= 2; x *= 3; return x;");
   match (r34) {
     VInt(i) => {
       if (i.v != 6) {
@@ -6044,7 +6044,7 @@ function check_compound_assignment(): i32 {
 
 function check_structs_and_fields(): i32 {
   // Struct literal + field access: `Point { x: 3, y: 4 }.x` → 3.
-  var r35: Value = run_source("return Point { x: 3, y: 4 }.x;");
+  let r35: Value = run_source("return Point { x: 3, y: 4 }.x;");
   match (r35) {
     VInt(i) => {
       if (i.v != 3) {
@@ -6058,8 +6058,8 @@ function check_structs_and_fields(): i32 {
 
   // Struct value bound to a var then field-accessed via the
   // ident → recovers the original field.
-  var r36: Value = run_source(
-    "var p = Point { x: 7, y: 11 }; return p.x + p.y;",
+  let r36: Value = run_source(
+    "let p = Point { x: 7, y: 11 }; return p.x + p.y;",
   );
   match (r36) {
     VInt(i) => {
@@ -6074,8 +6074,8 @@ function check_structs_and_fields(): i32 {
 
   // Nested struct: `Box { inner: Point { x: 5, y: 0 } }.inner.x`
   // exercises field access on a struct-valued field.
-  var r37: Value = run_source(
-    "var b = Box { inner: Point { x: 5, y: 0 } }; return b.inner.x;",
+  let r37: Value = run_source(
+    "let b = Box { inner: Point { x: 5, y: 0 } }; return b.inner.x;",
   );
   match (r37) {
     VInt(i) => {
@@ -6089,7 +6089,7 @@ function check_structs_and_fields(): i32 {
   }
 
   // Missing field → VErr.
-  var r38: Value = run_source("return Point { x: 1, y: 2 }.z;");
+  let r38: Value = run_source("return Point { x: 1, y: 2 }.z;");
   match (r38) {
     VErr(_) => {},
     _ => {
@@ -6103,8 +6103,8 @@ function check_structs_and_fields(): i32 {
 function check_match_statements(): i32 {
   // StmtMatch — variant pattern binds the scrutinee and the
   // body reads a field off it.
-  var src39: string = "struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 5 }; match (c) { Circle(x) => { return x.r; }, _ => { return -1; } } return -2; }";
-  var r39: Value = run_module(src39);
+  let src39: string = "struct Circle { r: i32 } function main(): i32 { let c = Circle { r: 5 }; match (c) { Circle(x) => { return x.r; }, _ => { return -1; } } return -2; }";
+  let r39: Value = run_module(src39);
   match (r39) {
     VInt(i) => {
       if (i.v != 5) {
@@ -6117,8 +6117,8 @@ function check_match_statements(): i32 {
   }
 
   // StmtMatch — second variant matches, first is skipped.
-  var src40: string = "struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { var q = Square { s: 7 }; match (q) { Circle(_) => { return 1; }, Square(sq) => { return sq.s; }, _ => { return -1; } } return -2; }";
-  var r40: Value = run_module(src40);
+  let src40: string = "struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { let q = Square { s: 7 }; match (q) { Circle(_) => { return 1; }, Square(sq) => { return sq.s; }, _ => { return -1; } } return -2; }";
+  let r40: Value = run_module(src40);
   match (r40) {
     VInt(i) => {
       if (i.v != 7) {
@@ -6131,8 +6131,8 @@ function check_match_statements(): i32 {
   }
 
   // StmtMatch — wildcard catches when no variant matches.
-  var src41: string = "struct Circle { r: i32 } struct Square { s: i32 } struct Triangle { b: i32 } function main(): i32 { var t = Triangle { b: 3 }; match (t) { Circle(_) => { return 1; }, Square(_) => { return 2; }, _ => { return 99; } } return -1; }";
-  var r41: Value = run_module(src41);
+  let src41: string = "struct Circle { r: i32 } struct Square { s: i32 } struct Triangle { b: i32 } function main(): i32 { let t = Triangle { b: 3 }; match (t) { Circle(_) => { return 1; }, Square(_) => { return 2; }, _ => { return 99; } } return -1; }";
+  let r41: Value = run_module(src41);
   match (r41) {
     VInt(i) => {
       if (i.v != 99) {
@@ -6146,8 +6146,8 @@ function check_match_statements(): i32 {
 
   // StmtMatch — bare variant pattern (no binding), arm body
   // doesn't reference the value.
-  var src42: string = "struct Empty { } function main(): i32 { var e = Empty { }; match (e) { Empty => { return 42; }, _ => { return -1; } } return -2; }";
-  var r42: Value = run_module(src42);
+  let src42: string = "struct Empty { } function main(): i32 { let e = Empty { }; match (e) { Empty => { return 42; }, _ => { return -1; } } return -2; }";
+  let r42: Value = run_module(src42);
   match (r42) {
     VInt(i) => {
       if (i.v != 42) {
@@ -6162,8 +6162,8 @@ function check_match_statements(): i32 {
   // StmtMatch — non-exhaustive: scrutinee doesn't match any
   // arm and there's no wildcard. v_err("non-exhaustive match")
   // bubbles out as the function's return value.
-  var src43: string = "struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { var c = Circle { r: 1 }; match (c) { Square(_) => { return 2; } } return -1; }";
-  var r43: Value = run_module(src43);
+  let src43: string = "struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { let c = Circle { r: 1 }; match (c) { Square(_) => { return 2; } } return -1; }";
+  let r43: Value = run_module(src43);
   match (r43) {
     VErr(_) => {},
     _ => {
@@ -6174,8 +6174,8 @@ function check_match_statements(): i32 {
   // StmtMatch — arm body without `return` falls through to
   // the stmt after the match. Verifies the no-return signal
   // doesn't accidentally short-circuit.
-  var src44: string = "struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 8 }; var n: i32 = 0; match (c) { Circle(x) => { n = x.r; }, _ => { n = -1; } } return n; }";
-  var r44: Value = run_module(src44);
+  let src44: string = "struct Circle { r: i32 } function main(): i32 { let c = Circle { r: 8 }; let n: i32 = 0; match (c) { Circle(x) => { n = x.r; }, _ => { n = -1; } } return n; }";
+  let r44: Value = run_module(src44);
   match (r44) {
     VInt(i) => {
       if (i.v != 8) {
@@ -6191,8 +6191,8 @@ function check_match_statements(): i32 {
   // the match closes, the outer scope must NOT see `x`.
   // Re-binding `x` in the surrounding scope to a different
   // value verifies the inner binding was dropped.
-  var src45: string = "struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 1 }; match (c) { Circle(x) => { }, _ => { } } var x: i32 = 77; return x; }";
-  var r45: Value = run_module(src45);
+  let src45: string = "struct Circle { r: i32 } function main(): i32 { let c = Circle { r: 1 }; match (c) { Circle(x) => { }, _ => { } } let x: i32 = 77; return x; }";
+  let r45: Value = run_module(src45);
   match (r45) {
     VInt(i) => {
       if (i.v != 77) {
@@ -6212,8 +6212,8 @@ function check_receiver_methods(): i32 {
   // the method whose receiver_type matches the struct type
   // (Circle). The method body reads the receiver via its
   // bound name and returns a derived value.
-  var src46: string = "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function main(): i32 { var k = Circle { r: 5 }; return k.area(); }";
-  var r46: Value = run_module(src46);
+  let src46: string = "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function main(): i32 { let k = Circle { r: 5 }; return k.area(); }";
+  let r46: Value = run_module(src46);
   match (r46) {
     VInt(i) => {
       if (i.v != 25) {
@@ -6226,8 +6226,8 @@ function check_receiver_methods(): i32 {
   }
 
   // Method takes an arg. `b.scale(3)` binds c=b and n=3.
-  var src47: string = "struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = Box { v: 4 }; return x.scale(3); }";
-  var r47: Value = run_module(src47);
+  let src47: string = "struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { let x = Box { v: 4 }; return x.scale(3); }";
+  let r47: Value = run_module(src47);
   match (r47) {
     VInt(i) => {
       if (i.v != 12) {
@@ -6241,8 +6241,8 @@ function check_receiver_methods(): i32 {
 
   // Method name and plain function name don't collide. Plain
   // call resolves to the non-method (receiver_name empty).
-  var src48: string = "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function area(): i32 { return 100; } function main(): i32 { var k = Circle { r: 5 }; var m: i32 = area(); var n: i32 = k.area(); return m + n; }";
-  var r48: Value = run_module(src48);
+  let src48: string = "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function area(): i32 { return 100; } function main(): i32 { let k = Circle { r: 5 }; let m: i32 = area(); let n: i32 = k.area(); return m + n; }";
+  let r48: Value = run_module(src48);
   match (r48) {
     VInt(i) => {
       if (i.v != 125) {
@@ -6256,8 +6256,8 @@ function check_receiver_methods(): i32 {
 
   // Method on wrong receiver type → VErr. Circle has an
   // `area` method; Square does not.
-  var src49: string = "struct Circle { r: i32 } struct Square { s: i32 } function (c: Circle) area(): i32 { return c.r; } function main(): i32 { var sq = Square { s: 7 }; return sq.area(); }";
-  var r49: Value = run_module(src49);
+  let src49: string = "struct Circle { r: i32 } struct Square { s: i32 } function (c: Circle) area(): i32 { return c.r; } function main(): i32 { let sq = Square { s: 7 }; return sq.area(); }";
+  let r49: Value = run_module(src49);
   match (r49) {
     VErr(_) => {},
     _ => {
@@ -6270,7 +6270,7 @@ function check_receiver_methods(): i32 {
 
 function check_floats(): i32 {
   // Float literal — `3.14` evaluates to a VFloat.
-  var r50: Value = run_source("return 3.14;");
+  let r50: Value = run_source("return 3.14;");
   match (r50) {
     VFloat(f) => {
       if (f.v < 3.13 || f.v > 3.15) {
@@ -6283,7 +6283,7 @@ function check_floats(): i32 {
   }
 
   // Float arithmetic: `1.5 + 2.5` → 4.0.
-  var r51: Value = run_source("return 1.5 + 2.5;");
+  let r51: Value = run_source("return 1.5 + 2.5;");
   match (r51) {
     VFloat(f) => {
       if (f.v < 3.99 || f.v > 4.01) {
@@ -6296,7 +6296,7 @@ function check_floats(): i32 {
   }
 
   // Float multiplication: `2.5 * 4.0` → 10.0.
-  var r52: Value = run_source("return 2.5 * 4.0;");
+  let r52: Value = run_source("return 2.5 * 4.0;");
   match (r52) {
     VFloat(f) => {
       if (f.v < 9.99 || f.v > 10.01) {
@@ -6309,7 +6309,7 @@ function check_floats(): i32 {
   }
 
   // Float comparison: `3.14 > 3.0` → true.
-  var r53: Value = run_source("return 3.14 > 3.0;");
+  let r53: Value = run_source("return 3.14 > 3.0;");
   match (r53) {
     VBool(b) => {
       if (!b.v) {
@@ -6322,7 +6322,7 @@ function check_floats(): i32 {
   }
 
   // Float equality through ==: `1.5 == 1.5` → true.
-  var r54: Value = run_source("return 1.5 == 1.5;");
+  let r54: Value = run_source("return 1.5 == 1.5;");
   match (r54) {
     VBool(b) => {
       if (!b.v) {
@@ -6335,7 +6335,7 @@ function check_floats(): i32 {
   }
 
   // Mixed-numeric `+` is rejected: `1 + 2.5` → VErr.
-  var r55: Value = run_source("return 1 + 2.5;");
+  let r55: Value = run_source("return 1 + 2.5;");
   match (r55) {
     VErr(_) => {},
     _ => {
@@ -6344,7 +6344,7 @@ function check_floats(): i32 {
   }
 
   // Float division: `10.0 / 4.0` → 2.5.
-  var r56: Value = run_source("return 10.0 / 4.0;");
+  let r56: Value = run_source("return 10.0 / 4.0;");
   match (r56) {
     VFloat(f) => {
       if (f.v < 2.49 || f.v > 2.51) {
@@ -6357,7 +6357,7 @@ function check_floats(): i32 {
   }
 
   // Unary minus on a float: `-3.5` → -3.5.
-  var r57: Value = run_source("return 0.0 - 3.5;");
+  let r57: Value = run_source("return 0.0 - 3.5;");
   match (r57) {
     VFloat(f) => {
       if (f.v > 0.0 - 3.49 || f.v < 0.0 - 3.51) {
@@ -6374,8 +6374,8 @@ function check_floats(): i32 {
 
 function check_for_in_loops(): i32 {
   // For-in: sum [1, 2, 3] via in-loop accumulator.
-  var src58: string = "function main(): i32 { var arr = [1, 2, 3]; var s: i32 = 0; for n in arr { s = s + n; } return s; }";
-  var r58: Value = run_module(src58);
+  let src58: string = "function main(): i32 { let arr = [1, 2, 3]; let s: i32 = 0; for n in arr { s = s + n; } return s; }";
+  let r58: Value = run_module(src58);
   match (r58) {
     VInt(i) => {
       if (i.v != 6) {
@@ -6388,8 +6388,8 @@ function check_for_in_loops(): i32 {
   }
 
   // For-in: in-body `return` short-circuits the loop.
-  var src59: string = "function main(): i32 { for n in [10, 20, 30] { return n; } return 0 - 1; }";
-  var r59: Value = run_module(src59);
+  let src59: string = "function main(): i32 { for n in [10, 20, 30] { return n; } return 0 - 1; }";
+  let r59: Value = run_module(src59);
   match (r59) {
     VInt(i) => {
       if (i.v != 10) {
@@ -6402,8 +6402,8 @@ function check_for_in_loops(): i32 {
   }
 
   // For-in: iter not an array → VErr.
-  var src60: string = "function main(): i32 { for n in 7 { } return 0; }";
-  var r60: Value = run_module(src60);
+  let src60: string = "function main(): i32 { for n in 7 { } return 0; }";
+  let r60: Value = run_module(src60);
   match (r60) {
     VErr(_) => {},
     _ => {
@@ -6416,7 +6416,7 @@ function check_for_in_loops(): i32 {
 
 function check_tuples(): i32 {
   // Tuple literal — evaluates to VTuple.
-  var r61: Value = run_source("var t = (1, 2, 3); return 0;");
+  let r61: Value = run_source("let t = (1, 2, 3); return 0;");
   match (r61) {
     VInt(i) => {
       if (i.v != 0) {
@@ -6429,7 +6429,7 @@ function check_tuples(): i32 {
   }
 
   // Tuple field access — `(10, 20, 30).0` → 10.
-  var r62: Value = run_source("var t = (10, 20, 30); return t.0;");
+  let r62: Value = run_source("let t = (10, 20, 30); return t.0;");
   match (r62) {
     VInt(i) => {
       if (i.v != 10) {
@@ -6442,7 +6442,7 @@ function check_tuples(): i32 {
   }
 
   // Tuple index 1.
-  var r63: Value = run_source("var t = (10, 20, 30); return t.1;");
+  let r63: Value = run_source("let t = (10, 20, 30); return t.1;");
   match (r63) {
     VInt(i) => {
       if (i.v != 20) {
@@ -6455,7 +6455,7 @@ function check_tuples(): i32 {
   }
 
   // Tuple index out of range → VErr.
-  var r64: Value = run_source("var t = (10, 20); return t.5;");
+  let r64: Value = run_source("let t = (10, 20); return t.5;");
   match (r64) {
     VErr(_) => {},
     _ => {
@@ -6464,7 +6464,7 @@ function check_tuples(): i32 {
   }
 
   // Heterogeneous tuple — int + string slot.
-  var r65: Value = run_source("var t = (42, \"hi\"); return t.0;");
+  let r65: Value = run_source("let t = (42, \"hi\"); return t.0;");
   match (r65) {
     VInt(i) => {
       if (i.v != 42) {
@@ -6482,8 +6482,8 @@ function check_tuples(): i32 {
 function check_break_and_continue(): i32 {
   // break inside a while exits the loop. The accumulator
   // stops growing once i hits 3.
-  var src66: string = "function main(): i32 { var i: i32 = 0; var s: i32 = 0; while (i < 10) { if (i == 3) { break; } s = s + i; i = i + 1; } return s; }";
-  var r66: Value = run_module(src66);
+  let src66: string = "function main(): i32 { let i: i32 = 0; let s: i32 = 0; while (i < 10) { if (i == 3) { break; } s = s + i; i = i + 1; } return s; }";
+  let r66: Value = run_module(src66);
   match (r66) {
     VInt(i) => {
       if (i.v != 3) {
@@ -6497,8 +6497,8 @@ function check_break_and_continue(): i32 {
 
   // continue skips the rest of the iter. `s` accumulates
   // only the even values in 0..5: 0 + 2 + 4 = 6.
-  var src67: string = "function main(): i32 { var i: i32 = 0; var s: i32 = 0; while (i < 5) { if (i % 2 == 1) { i = i + 1; continue; } s = s + i; i = i + 1; } return s; }";
-  var r67: Value = run_module(src67);
+  let src67: string = "function main(): i32 { let i: i32 = 0; let s: i32 = 0; while (i < 5) { if (i % 2 == 1) { i = i + 1; continue; } s = s + i; i = i + 1; } return s; }";
+  let r67: Value = run_module(src67);
   match (r67) {
     VInt(i) => {
       if (i.v != 6) {
@@ -6512,8 +6512,8 @@ function check_break_and_continue(): i32 {
 
   // for-in + break — sums [1, 2, 10, 20] only until 10 then
   // stops: 1 + 2 = 3.
-  var src68: string = "function main(): i32 { var s: i32 = 0; for n in [1, 2, 10, 20] { if (n > 5) { break; } s = s + n; } return s; }";
-  var r68: Value = run_module(src68);
+  let src68: string = "function main(): i32 { let s: i32 = 0; for n in [1, 2, 10, 20] { if (n > 5) { break; } s = s + n; } return s; }";
+  let r68: Value = run_module(src68);
   match (r68) {
     VInt(i) => {
       if (i.v != 3) {
@@ -6526,8 +6526,8 @@ function check_break_and_continue(): i32 {
   }
 
   // for-in + continue — skips elements that match.
-  var src69: string = "function main(): i32 { var s: i32 = 0; for n in [1, 2, 3, 4, 5] { if (n == 3) { continue; } s = s + n; } return s; }";
-  var r69: Value = run_module(src69);
+  let src69: string = "function main(): i32 { let s: i32 = 0; for n in [1, 2, 3, 4, 5] { if (n == 3) { continue; } s = s + n; } return s; }";
+  let r69: Value = run_module(src69);
   match (r69) {
     VInt(i) => {
       if (i.v != 12) {
@@ -6546,8 +6546,8 @@ function check_primitive_receivers(): i32 {
   // Method on a primitive receiver — `function (s: string)
   // doubled(): string { return s + s; }` dispatches when
   // called on a string value.
-  var src70: string = "function (s: string) doubled(): string { return s + s; } function main(): i32 { var v: string = \"ab\"; var w: string = v.doubled(); if (w == \"abab\") { return 0; } return 1; }";
-  var r70: Value = run_module(src70);
+  let src70: string = "function (s: string) doubled(): string { return s + s; } function main(): i32 { let v: string = \"ab\"; let w: string = v.doubled(); if (w == \"abab\") { return 0; } return 1; }";
+  let r70: Value = run_module(src70);
   match (r70) {
     VInt(i) => {
       if (i.v != 0) {
@@ -6560,8 +6560,8 @@ function check_primitive_receivers(): i32 {
   }
 
   // Method on an i32 receiver.
-  var src71: string = "function (n: i32) twice(): i32 { return n * 2; } function main(): i32 { var x: i32 = 21; return x.twice(); }";
-  var r71: Value = run_module(src71);
+  let src71: string = "function (n: i32) twice(): i32 { return n * 2; } function main(): i32 { let x: i32 = 21; return x.twice(); }";
+  let r71: Value = run_module(src71);
   match (r71) {
     VInt(i) => {
       if (i.v != 42) {
@@ -6578,7 +6578,7 @@ function check_primitive_receivers(): i32 {
 
 function check_structural_equality(): i32 {
   // Tuple structural equality.
-  var r72: Value = run_source("return (1, 2, 3) == (1, 2, 3);");
+  let r72: Value = run_source("return (1, 2, 3) == (1, 2, 3);");
   match (r72) {
     VBool(b) => {
       if (!b.v) {
@@ -6591,7 +6591,7 @@ function check_structural_equality(): i32 {
   }
 
   // Tuple inequality (one element differs).
-  var r73: Value = run_source("return (1, 2, 3) == (1, 2, 4);");
+  let r73: Value = run_source("return (1, 2, 3) == (1, 2, 4);");
   match (r73) {
     VBool(b) => {
       if (b.v) {
@@ -6604,7 +6604,7 @@ function check_structural_equality(): i32 {
   }
 
   // Heterogeneous tuple equality.
-  var r74: Value = run_source("return (1, \"hi\") == (1, \"hi\");");
+  let r74: Value = run_source("return (1, \"hi\") == (1, \"hi\");");
   match (r74) {
     VBool(b) => {
       if (!b.v) {
@@ -6617,7 +6617,7 @@ function check_structural_equality(): i32 {
   }
 
   // Array structural equality.
-  var r75: Value = run_source("return [1, 2, 3] == [1, 2, 3];");
+  let r75: Value = run_source("return [1, 2, 3] == [1, 2, 3];");
   match (r75) {
     VBool(b) => {
       if (!b.v) {
@@ -6630,7 +6630,7 @@ function check_structural_equality(): i32 {
   }
 
   // Array inequality.
-  var r76: Value = run_source("return [1, 2, 3] == [1, 2, 4];");
+  let r76: Value = run_source("return [1, 2, 3] == [1, 2, 4];");
   match (r76) {
     VBool(b) => {
       if (b.v) {
@@ -6643,7 +6643,7 @@ function check_structural_equality(): i32 {
   }
 
   // Different lengths → not equal.
-  var r77: Value = run_source("return [1, 2] == [1, 2, 3];");
+  let r77: Value = run_source("return [1, 2] == [1, 2, 3];");
   match (r77) {
     VBool(b) => {
       if (b.v) {
@@ -6656,8 +6656,8 @@ function check_structural_equality(): i32 {
   }
 
   // Struct structural equality.
-  var src78: string = "struct Point { x: i32, y: i32 } function main(): i32 { var a = Point { x: 1, y: 2 }; var b = Point { x: 1, y: 2 }; if (a == b) { return 0; } return 1; }";
-  var r78: Value = run_module(src78);
+  let src78: string = "struct Point { x: i32, y: i32 } function main(): i32 { let a = Point { x: 1, y: 2 }; let b = Point { x: 1, y: 2 }; if (a == b) { return 0; } return 1; }";
+  let r78: Value = run_module(src78);
   match (r78) {
     VInt(i) => {
       if (i.v != 0) {
@@ -6670,8 +6670,8 @@ function check_structural_equality(): i32 {
   }
 
   // Struct inequality (one field differs).
-  var src79: string = "struct Point { x: i32, y: i32 } function main(): i32 { var a = Point { x: 1, y: 2 }; var b = Point { x: 1, y: 3 }; if (a == b) { return 1; } return 0; }";
-  var r79: Value = run_module(src79);
+  let src79: string = "struct Point { x: i32, y: i32 } function main(): i32 { let a = Point { x: 1, y: 2 }; let b = Point { x: 1, y: 3 }; if (a == b) { return 1; } return 0; }";
+  let r79: Value = run_module(src79);
   match (r79) {
     VInt(i) => {
       if (i.v != 0) {
@@ -6690,8 +6690,8 @@ function check_union_receiver_method(): i32 {
   // Union-receiver method: a method declared on a union
   // (`function (sh: Shape) tag(): i32`) dispatches when the
   // receiver is one of the union's variant structs.
-  var src80: string = "struct Circle { r: i32 } struct Square { s: i32 } pub type Shape = Circle | Square; function (sh: Shape) tag(): i32 { return 1; } function main(): i32 { var c = Circle { r: 3 }; return c.tag(); }";
-  var r80: Value = run_module(src80);
+  let src80: string = "struct Circle { r: i32 } struct Square { s: i32 } pub type Shape = Circle | Square; function (sh: Shape) tag(): i32 { return 1; } function main(): i32 { let c = Circle { r: 3 }; return c.tag(); }";
+  let r80: Value = run_module(src80);
   match (r80) {
     VInt(i) => {
       if (i.v != 1) {
@@ -6708,8 +6708,8 @@ function check_union_receiver_method(): i32 {
 
 function check_lambdas_and_closures(): i32 {
   // Lambda expression bound to a var, then called.
-  var src81: string = "function main(): i32 { var f = (x: i32): i32 => { return x + 1; }; return f(41); }";
-  var r81: Value = run_module(src81);
+  let src81: string = "function main(): i32 { let f = (x: i32): i32 => { return x + 1; }; return f(41); }";
+  let r81: Value = run_module(src81);
   match (r81) {
     VInt(i) => {
       if (i.v != 42) {
@@ -6722,8 +6722,8 @@ function check_lambdas_and_closures(): i32 {
   }
 
   // Closure captures an outer local var.
-  var src82: string = "function main(): i32 { var k: i32 = 10; var f = (x: i32): i32 => { return x + k; }; return f(5); }";
-  var r82: Value = run_module(src82);
+  let src82: string = "function main(): i32 { let k: i32 = 10; let f = (x: i32): i32 => { return x + k; }; return f(5); }";
+  let r82: Value = run_module(src82);
   match (r82) {
     VInt(i) => {
       if (i.v != 15) {
@@ -6736,8 +6736,8 @@ function check_lambdas_and_closures(): i32 {
   }
 
   // Immediate-invoked function expression.
-  var src83: string = "function main(): i32 { return (n: i32): i32 => { return n * 2; }(21); }";
-  var r83: Value = run_module(src83);
+  let src83: string = "function main(): i32 { return (n: i32): i32 => { return n * 2; }(21); }";
+  let r83: Value = run_module(src83);
   match (r83) {
     VInt(i) => {
       if (i.v != 42) {
@@ -6754,8 +6754,8 @@ function check_lambdas_and_closures(): i32 {
 
 function check_maps(): i32 {
   // Map: set / get_or / has / len.
-  var src84: string = "function main(): i32 { var m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); var got: i32 = m.get_or(\"a\", 0 - 1); return got; }";
-  var r84: Value = run_module(src84);
+  let src84: string = "function main(): i32 { let m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); let got: i32 = m.get_or(\"a\", 0 - 1); return got; }";
+  let r84: Value = run_module(src84);
   match (r84) {
     VInt(i) => {
       if (i.v != 1) {
@@ -6768,8 +6768,8 @@ function check_maps(): i32 {
   }
 
   // Map: get_or returns default on miss.
-  var src85: string = "function main(): i32 { var m = map_new(); m = m.insert(\"a\", 1); return m.get_or(\"missing\", 99); }";
-  var r85: Value = run_module(src85);
+  let src85: string = "function main(): i32 { let m = map_new(); m = m.insert(\"a\", 1); return m.get_or(\"missing\", 99); }";
+  let r85: Value = run_module(src85);
   match (r85) {
     VInt(i) => {
       if (i.v != 99) {
@@ -6782,8 +6782,8 @@ function check_maps(): i32 {
   }
 
   // Map: len after multiple sets.
-  var src86: string = "function main(): i32 { var m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); m = m.insert(\"c\", 3); return m.len(); }";
-  var r86: Value = run_module(src86);
+  let src86: string = "function main(): i32 { let m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); m = m.insert(\"c\", 3); return m.len(); }";
+  let r86: Value = run_module(src86);
   match (r86) {
     VInt(i) => {
       if (i.v != 3) {
@@ -6796,8 +6796,8 @@ function check_maps(): i32 {
   }
 
   // Map: overwrite same key keeps the latest value.
-  var src87: string = "function main(): i32 { var m = map_new(); m = m.insert(\"k\", 1); m = m.insert(\"k\", 99); return m.get_or(\"k\", 0); }";
-  var r87: Value = run_module(src87);
+  let src87: string = "function main(): i32 { let m = map_new(); m = m.insert(\"k\", 1); m = m.insert(\"k\", 99); return m.get_or(\"k\", 0); }";
+  let r87: Value = run_module(src87);
   match (r87) {
     VInt(i) => {
       if (i.v != 99) {
@@ -6815,12 +6815,12 @@ function check_maps(): i32 {
   // after the prefix merge. ExprFieldAccess(ExprIdent
   // "parser", "parse_module") dispatches as a qualified-
   // name function call.
-  var mainSrc88: string = "function main(): i32 { return parser.parse_module(); }";
-  var modSrc88: string = "pub function parse_module(): i32 { return 42; }";
-  var mainMod88: parser.Module = parser.parse_module(lexer.tokenize(mainSrc88));
-  var pMod88: parser.Module = parser.parse_module(lexer.tokenize(modSrc88));
-  var merged88: parser.Module = parser.merge_module_prefixed(mainMod88, pMod88, "parser");
-  var r88: Value = eval_module(merged88);
+  let mainSrc88: string = "function main(): i32 { return parser.parse_module(); }";
+  let modSrc88: string = "pub function parse_module(): i32 { return 42; }";
+  let mainMod88: parser.Module = parser.parse_module(lexer.tokenize(mainSrc88));
+  let pMod88: parser.Module = parser.parse_module(lexer.tokenize(modSrc88));
+  let merged88: parser.Module = parser.merge_module_prefixed(mainMod88, pMod88, "parser");
+  let r88: Value = eval_module(merged88);
   match (r88) {
     VInt(i) => {
       if (i.v != 42) {
@@ -6839,8 +6839,8 @@ function check_numeric_widths(): i32 {
   // u32 unsigned semantics (#4348 final slice): logical `>>` on a
   // high-bit pattern (arithmetic shift would smear the sign) and
   // unsigned div/compare (signed would see -6).
-  var src89: string = "function main(): i32 { var x: u32 = 4294967288 as u32; var y = x >> 2; if (y == (1073741822 as u32)) { return 1; } return 0; }";
-  var r89: Value = run_module(src89);
+  let src89: string = "function main(): i32 { let x: u32 = 4294967288 as u32; let y = x >> 2; if (y == (1073741822 as u32)) { return 1; } return 0; }";
+  let r89: Value = run_module(src89);
   match (r89) {
     VInt(i) => {
       if (i.v != 1) {
@@ -6851,8 +6851,8 @@ function check_numeric_widths(): i32 {
       return 891;
     }
   }
-  var src90: string = "function main(): i32 { var x: u32 = 4294967290 as u32; var y: u32 = 5 as u32; if (x / y > (100 as u32) && x > y) { return 1; } return 0; }";
-  var r90: Value = run_module(src90);
+  let src90: string = "function main(): i32 { let x: u32 = 4294967290 as u32; let y: u32 = 5 as u32; if (x / y > (100 as u32) && x > y) { return 1; } return 0; }";
+  let r90: Value = run_module(src90);
   match (r90) {
     VInt(i) => {
       if (i.v != 1) {
@@ -6866,8 +6866,8 @@ function check_numeric_widths(): i32 {
 
   // f32 single-precision rounding: 2^24 + 1 is not representable at
   // f32, so the sum rounds back to 2^24 (at f64 it would stay 2^24+1).
-  var src91: string = "function main(): i32 { var a: f32 = 16777216.0 as f32; var b = a + (1.0 as f32); if ((b as f64) > 16777215.5 && (b as f64) < 16777216.5) { return 1; } return 0; }";
-  var r91: Value = run_module(src91);
+  let src91: string = "function main(): i32 { let a: f32 = 16777216.0 as f32; let b = a + (1.0 as f32); if ((b as f64) > 16777215.5 && (b as f64) < 16777216.5) { return 1; } return 0; }";
+  let r91: Value = run_module(src91);
   match (r91) {
     VInt(i) => {
       if (i.v != 1) {

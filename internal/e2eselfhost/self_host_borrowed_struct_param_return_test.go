@@ -8,7 +8,7 @@ import (
 // #8240: a self-host caller freed a struct box while a live binding still
 // named it.
 //
-// `var q2: T = g(.., name, ..)` where `name` dies at that call routes through
+// `let q2: T = g(.., name, ..)` where `name` dies at that call routes through
 // release_last_use_source, whose `old == q2` arm dec'd name's box on the
 // grounds that "q2 holds its own count on it". It does not: a callee that
 // hands back a borrowed struct param returns an UNCOUNTED alias, so that count
@@ -21,7 +21,7 @@ import (
 // array one, q2 owns the count it holds, and the source's release at the
 // binding gives back the count the handback added where the two are one box
 // (emit_handback_identity_dec). A callee that hands the box back through a
-// LOCAL alias (`var st = s; … return st;`) is outside cnt_struct_ret_fns and
+// LOCAL alias (`let st = s; … return st;`) is outside cnt_struct_ret_fns and
 // keeps the uncounted convention, which the identity release still answers.
 //
 // NOTHING ELSE CAUGHT THIS. The free is at rc 1, so the underflow counter
@@ -41,13 +41,13 @@ var selfHostBorrowedStructParamCases = []struct {
 	src  string
 }{
 	// The callee returns the borrowed parameter itself.
-	{"return-param", "struct St { ops: i32[], names: string[], ctrl: i32 }\n@noinline\nfunction (s: St) emit(op: i32): St {\n    return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 };\n}\n@noinline\nfunction ret_param(s: St): St { return s; }\nfunction main(): i32 {\n    var s: St = St { ops: [], names: [\"alpha\"], ctrl: 0 };\n    var s1: St = s.emit(1);\n    var a: St = ret_param(s1);\n    var junk: St = St { ops: [7], names: [\"zzz\"], ctrl: 42 };\n    if (junk.ctrl != 42) { return 81; }\n    return a.ctrl + __rc_underflow_count();\n}"},
+	{"return-param", "struct St { ops: i32[], names: string[], ctrl: i32 }\n@noinline\nfunction (s: St) emit(op: i32): St {\n    return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 };\n}\n@noinline\nfunction ret_param(s: St): St { return s; }\nfunction main(): i32 {\n    let s: St = St { ops: [], names: [\"alpha\"], ctrl: 0 };\n    let s1: St = s.emit(1);\n    let a: St = ret_param(s1);\n    let junk: St = St { ops: [7], names: [\"zzz\"], ctrl: 42 };\n    if (junk.ctrl != 42) { return 81; }\n    return a.ctrl + __rc_underflow_count();\n}"},
 
 	// The same box handed back through a LOCAL bound from the parameter — the
 	// issue's own shape, and the half a callee-side retain could not close.
 	// The caller cannot tell the two apart, which is why the fix belongs on
 	// this side: the runtime `old == q2` compare answers both.
-	{"return-alias-passthrough", "struct St { ops: i32[], names: string[], ctrl: i32 }\n@noinline\nfunction (s: St) emit(op: i32): St {\n    return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 };\n}\n@noinline\nfunction ret_alias(n: i32, s: St): St {\n    var st: St = s;\n    var i: i32 = 0;\n    while (i < n) { st = st.emit(i); i = i + 1; }\n    return st;\n}\nfunction main(): i32 {\n    var s: St = St { ops: [], names: [\"alpha\"], ctrl: 0 };\n    var s1: St = s.emit(1);\n    var a: St = ret_alias(0, s1);\n    var junk: St = St { ops: [7], names: [\"zzz\"], ctrl: 42 };\n    if (junk.ctrl != 42) { return 81; }\n    return a.ctrl + __rc_underflow_count();\n}"},
+	{"return-alias-passthrough", "struct St { ops: i32[], names: string[], ctrl: i32 }\n@noinline\nfunction (s: St) emit(op: i32): St {\n    return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 };\n}\n@noinline\nfunction ret_alias(n: i32, s: St): St {\n    let st: St = s;\n    let i: i32 = 0;\n    while (i < n) { st = st.emit(i); i = i + 1; }\n    return st;\n}\nfunction main(): i32 {\n    let s: St = St { ops: [], names: [\"alpha\"], ctrl: 0 };\n    let s1: St = s.emit(1);\n    let a: St = ret_alias(0, s1);\n    let junk: St = St { ops: [7], names: [\"zzz\"], ctrl: 42 };\n    if (junk.ctrl != 42) { return 81; }\n    return a.ctrl + __rc_underflow_count();\n}"},
 
 	// The other side of the compare: the local IS rebound before the return, so
 	// a FRESH box comes back and the caller's box is genuinely dead. What this
@@ -55,12 +55,12 @@ var selfHostBorrowedStructParamCases = []struct {
 	// the release it must keep is a LEAK question, and a leak moves neither the
 	// exit code nor __rc_underflow_count(). That direction is carried by the
 	// leak matrix and the conformance leak census, not here.
-	{"return-alias-rebound", "struct St { ops: i32[], names: string[], ctrl: i32 }\n@noinline\nfunction (s: St) emit(op: i32): St {\n    return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 };\n}\n@noinline\nfunction ret_alias(n: i32, s: St): St {\n    var st: St = s;\n    var i: i32 = 0;\n    while (i < n) { st = st.emit(i); i = i + 1; }\n    return st;\n}\nfunction main(): i32 {\n    var s: St = St { ops: [], names: [\"alpha\"], ctrl: 0 };\n    var s1: St = s.emit(1);\n    var a: St = ret_alias(2, s1);\n    var junk: St = St { ops: [7], names: [\"zzz\"], ctrl: 42 };\n    if (junk.ctrl != 42) { return 81; }\n    return a.ctrl + __rc_underflow_count();\n}"},
+	{"return-alias-rebound", "struct St { ops: i32[], names: string[], ctrl: i32 }\n@noinline\nfunction (s: St) emit(op: i32): St {\n    return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 };\n}\n@noinline\nfunction ret_alias(n: i32, s: St): St {\n    let st: St = s;\n    let i: i32 = 0;\n    while (i < n) { st = st.emit(i); i = i + 1; }\n    return st;\n}\nfunction main(): i32 {\n    let s: St = St { ops: [], names: [\"alpha\"], ctrl: 0 };\n    let s1: St = s.emit(1);\n    let a: St = ret_alias(2, s1);\n    let junk: St = St { ops: [7], names: [\"zzz\"], ctrl: 42 };\n    if (junk.ctrl != 42) { return 81; }\n    return a.ctrl + __rc_underflow_count();\n}"},
 
 	// Control: an ARRAY param handed back the same way. Arrays keep the
 	// callee-side transfer retain (ret-borrowed-param) and no caller-side
 	// release fires for them, so this is the untouched path.
-	{"array-param-control", "@noinline\nfunction ret_alias(n: i32, a: i32[]): i32[] {\n    var t: i32[] = a;\n    var i: i32 = 0;\n    while (i < n) { t = t.append(i); i = i + 1; }\n    return t;\n}\nfunction main(): i32 {\n    var a: i32[] = [];\n    var a1: i32[] = a.append(1);\n    var a2: i32[] = ret_alias(0, a1);\n    var junk: i32[] = [7, 7, 7, 7, 7];\n    if (junk[0] != 7) { return 81; }\n    return a2.len() + __rc_underflow_count();\n}"},
+	{"array-param-control", "@noinline\nfunction ret_alias(n: i32, a: i32[]): i32[] {\n    let t: i32[] = a;\n    let i: i32 = 0;\n    while (i < n) { t = t.append(i); i = i + 1; }\n    return t;\n}\nfunction main(): i32 {\n    let a: i32[] = [];\n    let a1: i32[] = a.append(1);\n    let a2: i32[] = ret_alias(0, a1);\n    let junk: i32[] = [7, 7, 7, 7, 7];\n    if (junk[0] != 7) { return 81; }\n    return a2.len() + __rc_underflow_count();\n}"},
 }
 
 // TestSelfHostBorrowedStructParamReturnX86_64 — the production x86-64 IR path
@@ -96,7 +96,7 @@ func TestSelfHostBorrowedStructParamReturnX86_64(t *testing.T) {
 }
 
 // TestSelfHostBorrowedStructParamReturnArm64 — the same cases through the arm64
-// emit. The release is shared irlower analysis rather than per-backend
+// emit. The release is shared lowering analysis rather than per-backend
 // emission, so this leg is what would catch it landing on one register backend.
 func TestSelfHostBorrowedStructParamReturnArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)

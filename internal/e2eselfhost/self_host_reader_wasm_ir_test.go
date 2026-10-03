@@ -44,7 +44,7 @@ func TestSelfHostReaderWasmIR(t *testing.T) {
 		// (" world"). Proves read_chunk returns the requested-bounded chunk and
 		// close returns None (no error).
 		{"two_chunks_then_close", `function main(): i32 {
-    var r: Reader = stdin();
+    let r: Reader = stdin();
     match (r.read_chunk(5)) { Ok(s) => { write(s); write(":"); }, Err(e) => { return 4; } }
     match (r.read_chunk(20)) { Ok(s) => { write(s); }, Err(e) => { return 5; } }
     match (r.close()) { Some(_) => { return 6; }, None => {} }
@@ -54,9 +54,9 @@ func TestSelfHostReaderWasmIR(t *testing.T) {
 		// bytes. Exit code = total bytes (7), proving the empty chunk arrives
 		// exactly at end-of-stream.
 		{"drain_to_eof", `function main(): i32 {
-    var r: Reader = stdin();
-    var total: i32 = 0;
-    var go: boolean = true;
+    let r: Reader = stdin();
+    let total: i32 = 0;
+    let go: boolean = true;
     while (go) {
         match (r.read_chunk(3)) { Ok(s) => { if (s.len() == 0) { go = false; } total = total + s.len(); }, Err(e) => { go = false; } }
     }
@@ -65,7 +65,7 @@ func TestSelfHostReaderWasmIR(t *testing.T) {
 		// Empty stdin: the very first read_chunk is Ok("") (nread == 0), so the
 		// program sees a zero-length chunk immediately.
 		{"empty_stdin_eof", `function main(): i32 {
-    var r: Reader = stdin();
+    let r: Reader = stdin();
     match (r.read_chunk(16)) { Ok(s) => { if (s.len() > 0) { return 1; } return 42; }, Err(e) => { return 2; } }
     return 0;
 }`, "", "", 42},

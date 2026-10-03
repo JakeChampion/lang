@@ -31,12 +31,12 @@ function whole(p @ Point { x, y }: Point): i32 {
 }
 
 function lam(): i32 {
-    var f = (Point { x, y }: Point): i32 => { return x * 10 + y; };
+    let f = (Point { x, y }: Point): i32 => { return x * 10 + y; };
     return f(Point { x: 1, y: 2 });
 }
 
 function arrow(): i32 {
-    var g = (Point { x, y }: Point) => x - y;
+    let g = (Point { x, y }: Point) => x - y;
     return g(Point { x: 9, y: 4 });
 }
 

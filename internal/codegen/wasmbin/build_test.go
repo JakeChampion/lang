@@ -109,8 +109,8 @@ function main(): i32 { return 42; }
 func TestBuildArithmeticReturn(t *testing.T) {
 	src := `
 function main(): i32 {
-    var a: i32 = 7;
-    var b: i32 = 11;
+    let a: i32 = 7;
+    let b: i32 = 11;
     return a * b + 3;
 }
 `
@@ -646,7 +646,7 @@ func exportExists(t *testing.T, bin []byte, want string) bool {
 func TestBuildReportsUnsupported(t *testing.T) {
 	src := `
 function main(): i32 {
-    var r = subprocess("/bin/echo", [], "");
+    let r = subprocess("/bin/echo", [], "");
     return r.exit_code;
 }
 `
@@ -672,15 +672,15 @@ function main(): i32 {
 func TestBuildTcpHelpersCompile(t *testing.T) {
 	src := `
 function main(): i32 {
-    var srv: i32 = tcp_listen(8080);
+    let srv: i32 = tcp_listen(8080);
     if (srv < 0) { return -1; }
-    var conn: i32 = tcp_accept(srv);
+    let conn: i32 = tcp_accept(srv);
     if (conn < 0) {
         tcp_close(srv);
         return -2;
     }
-    var data: u8[] = tcp_recv(conn, 4096i32);
-    var sent: i32 = tcp_send(conn, "ok");
+    let data: u8[] = tcp_recv(conn, 4096i32);
+    let sent: i32 = tcp_send(conn, "ok");
     tcp_close(conn);
     tcp_close(srv);
     return sent + data.len();
@@ -829,7 +829,7 @@ func TestBuildMapReal(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = (Map { 1i32: 10i32 });
+    let m: Map[i32, i32] = (Map { 1i32: 10i32 });
     return m.get_or(1i32, 0i32);
 }
 `

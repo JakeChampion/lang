@@ -18,8 +18,8 @@ import (
 // alias at all, so it passed the gate.
 //
 // SCOPE: the FIELD-READ shapes, the bare-ident REBIND shapes (#6170) —
-// `var heap = heap_in; heap = heap.with(…)` over a borrowed param, and
-// `var b = a; b = b.with(…)` over a still-live local — and the DIRECT form
+// `let heap = heap_in; heap = heap.with(…)` over a borrowed param, and
+// `let b = a; b = b.with(…)` over a still-live local — and the DIRECT form
 // (#6185), `function f(buf: i32[]) { buf = buf.with(…); }`.
 //
 // The direct form is the one that needed a representation change rather than a
@@ -78,15 +78,15 @@ func TestSelfHostBorrowedWithInPlaceIRX86_64(t *testing.T) {
 	// second call observes the first's write. Pre-fix: 10.
 	run(t, `struct St { seen: i32[], n: i32 }
 function mark(st: St, pc: i32): St {
-    var sn: i32[] = st.seen;
+    let sn: i32[] = st.seen;
     if (sn[pc] == 1) { return St { seen: sn, n: 0 }; }
     sn = sn.with(pc, 1);
     return St { seen: sn, n: 1 };
 }
 function main(): i32 {
-    var st: St = St { seen: [0, 0, 0, 0], n: 0 };
-    var a: St = mark(st, 2);
-    var b: St = mark(st, 2);
+    let st: St = St { seen: [0, 0, 0, 0], n: 0 };
+    let a: St = mark(st, 2);
+    let b: St = mark(st, 2);
     return a.n * 10 + b.n;
 }`, "borrowed-struct-param-field", 11)
 
@@ -94,8 +94,8 @@ function main(): i32 {
 	// the same hazard. Pre-fix: 11 (st.seen[2] became 1).
 	run(t, `struct St { seen: i32[], n: i32 }
 function main(): i32 {
-    var st: St = St { seen: [0, 0, 0, 0], n: 0 };
-    var sn: i32[] = st.seen;
+    let st: St = St { seen: [0, 0, 0, 0], n: 0 };
+    let sn: i32[] = st.seen;
     sn = sn.with(2, 1);
     return st.seen[2] * 10 + sn[2];
 }`, "local-struct-field", 1)
@@ -107,13 +107,13 @@ function main(): i32 {
 	// ownership-blind fix would send it down the clone path.
 	run(t, `struct St { seen: i32[], n: i32 }
 function bump(own st: St, pc: i32): St {
-    var sn: i32[] = st.seen;
+    let sn: i32[] = st.seen;
     st = St { ...st, seen: [] };
     sn = sn.with(pc, 1);
     return St { seen: sn, n: 1 };
 }
 function main(): i32 {
-    var a: St = bump(St { seen: [0, 0, 0, 0], n: 0 }, 2);
+    let a: St = bump(St { seen: [0, 0, 0, 0], n: 0 }, 2);
     return a.seen[2] * 10 + a.n;
 }`, "own-param-field-cleared", 11)
 
@@ -122,14 +122,14 @@ function main(): i32 {
 	// alter it.
 	run(t, `struct St { xs: i32[], n: i32 }
 function grow(st: St, v: i32): i32 {
-    var a: i32[] = st.xs;
+    let a: i32[] = st.xs;
     a = a.append(v);
     return a.len();
 }
 function main(): i32 {
-    var st: St = St { xs: [1, 2], n: 0 };
-    var p: i32 = grow(st, 9);
-    var q: i32 = grow(st, 8);
+    let st: St = St { xs: [1, 2], n: 0 };
+    let p: i32 = grow(st, 9);
+    let q: i32 = grow(st, 8);
     return p * 10 + q;
 }`, "append-unaffected", 33)
 
@@ -144,17 +144,17 @@ function main(): i32 {
 	// comparable across hosts. Pre-fix and post-fix this reads 0 MB; with the
 	// ownership check dropped it reads ~128 MB.
 	run(t, `function fill(own buf: i32[], n: i32): i32[] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { buf = buf.with(i, i); i = i + 1; }
     return buf;
 }
 function main(): i32 {
-    var b: i32[] = [];
-    var k: i32 = 0;
+    let b: i32[] = [];
+    let k: i32 = 0;
     while (k < 4000) { b = b.append(0); k = k + 1; }
-    var before: i64 = __heap_bump_bytes();
+    let before: i64 = __heap_bump_bytes();
     b = fill(b, 4000);
-    var after: i64 = __heap_bump_bytes();
+    let after: i64 = __heap_bump_bytes();
     if (b[3999] != 3999) { return 90; }
     // Any cloning at all shows up here: one clone is 16 KB, and the loop would
     // do 4000 of them. Allow 64 KB of slack for unrelated allocation.
@@ -167,13 +167,13 @@ function main(): i32 {
 	// mutated is `heap`, which is neither a param nor a field read, so nothing marked
 	// it and the write went through into the caller's buffer. Pre-fix: 77.
 	run(t, `function run(heap_in: i32[], at: i32, v: i32): i32[] {
-    var heap: i32[] = heap_in;
+    let heap: i32[] = heap_in;
     heap = heap.with(at, v);
     return heap;
 }
 function main(): i32 {
-    var h: i32[] = [0, 0, 0, 0];
-    var r: i32[] = run(h, 1, 7);
+    let h: i32[] = [0, 0, 0, 0];
+    let r: i32[] = run(h, 1, 7);
     return h[1] * 10 + r[1];
 }`, "rebind-of-borrowed-param", 7)
 
@@ -181,8 +181,8 @@ function main(): i32 {
 	// and no field read is involved, so this one is invisible to both prior gates;
 	// it is the shape the liveness arm of the rule exists for. Pre-fix: 77.
 	run(t, `function main(): i32 {
-    var a: i32[] = [0, 0, 0, 0];
-    var b: i32[] = a;
+    let a: i32[] = [0, 0, 0, 0];
+    let b: i32[] = a;
     b = b.with(1, 7);
     return a[1] * 10 + b[1];
 }`, "rebind-of-live-local", 7)
@@ -190,26 +190,26 @@ function main(): i32 {
 	// MUST NOT REGRESS, and the case that keeps the rule from being written as
 	// "any rebind clones": the source is an `own` param and is dead after the
 	// rebind, so `heap` is the buffer's only remaining name and the stores stay
-	// in place. This is the const-eval VM's shape (irlower's `eval_ops`, which
-	// rebinds `heap` from `heap_in` and writes it a dozen times per op), and the
+	// in place. This is the const-eval VM's shape (the AST lowering's `eval_ops`, which
+	// rebound `heap` from `heap_in` and wrote it a dozen times per op), and the
 	// reason #6170 was split out of #6158 in the first place.
 	//
 	// Asserted by ALLOCATION, not by answer: getting this wrong is silent
 	// quadratic copying that every correctness case above still passes. With the
 	// rebind credited unconditionally this read ~128 MB instead of 0.
 	run(t, `function fill(own heap_in: i32[], n: i32): i32[] {
-    var heap: i32[] = heap_in;
-    var i: i32 = 0;
+    let heap: i32[] = heap_in;
+    let i: i32 = 0;
     while (i < n) { heap = heap.with(i, i); i = i + 1; }
     return heap;
 }
 function main(): i32 {
-    var b: i32[] = [];
-    var k: i32 = 0;
+    let b: i32[] = [];
+    let k: i32 = 0;
     while (k < 4000) { b = b.append(0); k = k + 1; }
-    var before: i64 = __heap_bump_bytes();
+    let before: i64 = __heap_bump_bytes();
     b = fill(b, 4000);
-    var after: i64 = __heap_bump_bytes();
+    let after: i64 = __heap_bump_bytes();
     if (b[3999] != 3999) { return 90; }
     if (after - before > 65536) { return 91; }
     return 7;
@@ -223,8 +223,8 @@ function main(): i32 {
     return heap;
 }
 function main(): i32 {
-    var h: i32[] = [0, 0, 0, 0];
-    var r: i32[] = run(h, 1, 7);
+    let h: i32[] = [0, 0, 0, 0];
+    let r: i32[] = run(h, 1, 7);
     return h[1] * 10 + r[1];
 }`, "direct-borrowed-param", 7)
 
@@ -234,10 +234,10 @@ function main(): i32 {
 	// closure's caller and must clone, while `k` in the same body is a capture.
 	// Pre-fix: 104.
 	run(t, `function main(): i32 {
-    var k: i32 = 5;
-    var g: (i32[]) => i32 = (a: i32[]): i32 => { a = a.with(0, 9); return a[0] + k; };
-    var b: i32[] = [1, 2];
-    var r: i32 = g(b);
+    let k: i32 = 5;
+    let g: (i32[]) => i32 = (a: i32[]): i32 => { a = a.with(0, 9); return a[0] + k; };
+    let b: i32[] = [1, 2];
+    let r: i32 = g(b);
     return b[0] * 10 + r;
 }`, "lifted-lambda-declared-array-param", 24)
 
@@ -247,10 +247,10 @@ function main(): i32 {
 	// A fix that credits every array param without the `$cell$` exemption
 	// returns 38 here.
 	run(t, `function main(): i32 {
-    var x: i32 = 0;
-    var f: () => i32 = (): i32 => { x = x + 4; return 0; };
+    let x: i32 = 0;
+    let f: () => i32 = (): i32 => { x = x + 4; return 0; };
     x = 3;
-    var r: i32 = f();
+    let r: i32 = f();
     return x + 35;
 }`, "mut-capture-cell-param-writes-through", 42)
 }

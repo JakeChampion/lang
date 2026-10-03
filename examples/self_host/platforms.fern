@@ -89,7 +89,7 @@ function capability_profile(profile: string): string[] {
     return ["log", "now", "config", "random", "fetch"];
   }
   // "none" — no host at all. Everything still reachable is core_builtin.
-  var empty: string[] = [];
+  let empty: string[] = [];
   return empty;
 }
 
@@ -166,8 +166,8 @@ pub function emits_code(name: string): boolean {
 // back with `known: false`; enforcement skips it rather than reporting, since
 // the driver's own -target validation owns that error.
 pub function for_target(name: string): Descriptor {
-  var env_name: string = target_environment(name);
-  var empty: string[] = [];
+  let env_name: string = target_environment(name);
+  let empty: string[] = [];
   if (env_name.len() == 0) {
     return Descriptor { name: name, isa: "", environment: "", capabilities: empty, known: false };
   }
@@ -183,7 +183,7 @@ pub function for_target(name: string): Descriptor {
 // has_capability reports whether the target grants the named capability.
 // False for an unknown target — call for_target first to tell the two apart.
 pub function has_capability(target: string, capability: string): boolean {
-  var d: Descriptor = for_target(target);
+  let d: Descriptor = for_target(target);
   if (!d.known) {
     return false;
   }
@@ -193,9 +193,9 @@ pub function has_capability(target: string, capability: string): boolean {
 // targets_providing lists the targets granting a capability, for E066's
 // "targets providing it" hint.
 pub function targets_providing(capability: string): string[] {
-  var out: string[] = [];
-  var all: string[] = targets();
-  var i: i32 = 0;
+  let out: string[] = [];
+  let all: string[] = targets();
+  let i: i32 = 0;
   while (i < all.len()) {
     if (has_capability(all[i], capability)) {
       out = out.append(all[i]);
@@ -471,6 +471,9 @@ pub function gated_builtins(): Gate[] {
 pub function core_builtins(): string[] {
   return [
     "exit", "isatty", "target_os", "target_arch",
+    // Darwin asks libSystem's getpwuid(3); the rest answer 0, meaning use
+    // the files, which is the truth there (#9815).
+    "__getpwuid_name",
     "map_new", "cell_new", "string_from_bytes_unchecked",
     "slice_unchecked",
     "strbuf_reset", "strbuf_append", "strbuf_take",
@@ -489,8 +492,8 @@ pub function core_builtin(name: string): boolean {
 // gated_capability returns the capability gating a builtin, or "" when it is
 // ungated.
 pub function gated_capability(name: string): string {
-  var gates: Gate[] = gated_builtins();
-  var i: i32 = 0;
+  let gates: Gate[] = gated_builtins();
+  let i: i32 = 0;
   while (i < gates.len()) {
     if (gates[i].builtin == name) {
       return gates[i].capability;
@@ -505,13 +508,13 @@ pub function gated_capability(name: string): string {
 // wasi worlds. That is what keeps the call-site scan a membership test
 // against a short list rather than a scan of the whole registry per call.
 pub function forbidden_gates(target: string): Gate[] {
-  var out: Gate[] = [];
-  var d: Descriptor = for_target(target);
+  let out: Gate[] = [];
+  let d: Descriptor = for_target(target);
   if (!d.known) {
     return out;
   }
-  var gates: Gate[] = gated_builtins();
-  var i: i32 = 0;
+  let gates: Gate[] = gated_builtins();
+  let i: i32 = 0;
   while (i < gates.len()) {
     if (!util.has_str(d.capabilities, gates[i].capability)) {
       out = out.append(gates[i]);
@@ -545,32 +548,32 @@ pub struct Violation {
 // Results are in declaration order, then source order, deduplicated per
 // (function, builtin) so a builtin called in a loop reports once.
 pub function enforce(mod: parser.Module, target: string): Violation[] {
-  var out: Violation[] = [];
-  var forbidden: Gate[] = forbidden_gates(target);
+  let out: Violation[] = [];
+  let forbidden: Gate[] = forbidden_gates(target);
   if (forbidden.len() == 0) {
     return out;
   }
-  var wanted: string[] = [];
-  var wi: i32 = 0;
+  let wanted: string[] = [];
+  let wi: i32 = 0;
   while (wi < forbidden.len()) {
     wanted = wanted.append(forbidden[wi].builtin);
     wi = wi + 1;
   }
-  var want: util.NameIndex = util.name_index(wanted);
+  let want: util.NameIndex = util.name_index(wanted);
 
-  var fi: i32 = 0;
+  let fi: i32 = 0;
   while (fi < mod.funcs.len()) {
-    var fd: parser.FuncDecl = mod.funcs[fi];
-    var calls: astwalk.CallSite[] = [];
-    var bi: i32 = 0;
+    let fd: parser.FuncDecl = mod.funcs[fi];
+    let calls: astwalk.CallSite[] = [];
+    let bi: i32 = 0;
     while (bi < fd.body.len()) {
       calls = astwalk.collect_calls_stmt(fd.body[bi], want, calls);
       bi = bi + 1;
     }
-    var seen: string[] = [];
-    var ci: i32 = 0;
+    let seen: string[] = [];
+    let ci: i32 = 0;
     while (ci < calls.len()) {
-      var gi: i32 = 0;
+      let gi: i32 = 0;
       while (gi < forbidden.len()) {
         // `!method`: a gated builtin is a free function, so a
         // same-named METHOD on a user type (`sb.write(x)`) is a
@@ -610,31 +613,31 @@ pub function enforce(mod: parser.Module, target: string): Violation[] {
 //
 // Capabilities come back sorted and deduplicated.
 pub function reach(mod: parser.Module): string[] {
-  var gates: Gate[] = gated_builtins();
-  var wanted: string[] = [];
-  var wi: i32 = 0;
+  let gates: Gate[] = gated_builtins();
+  let wanted: string[] = [];
+  let wi: i32 = 0;
   while (wi < gates.len()) {
     wanted = wanted.append(gates[wi].builtin);
     wi = wi + 1;
   }
-  var want: util.NameIndex = util.name_index(wanted);
+  let want: util.NameIndex = util.name_index(wanted);
 
-  var found: string[] = [];
-  var fi: i32 = 0;
+  let found: string[] = [];
+  let fi: i32 = 0;
   while (fi < mod.funcs.len()) {
-    var calls: astwalk.CallSite[] = [];
-    var bi: i32 = 0;
+    let calls: astwalk.CallSite[] = [];
+    let bi: i32 = 0;
     while (bi < mod.funcs[fi].body.len()) {
       calls = astwalk.collect_calls_stmt(mod.funcs[fi].body[bi], want, calls);
       bi = bi + 1;
     }
-    var ci: i32 = 0;
+    let ci: i32 = 0;
     while (ci < calls.len()) {
       // `!method` for the same reason enforce checks it: a gated
       // builtin is a free function, so `sb.write(x)` is a different
       // callee.
       if (!calls[ci].method) {
-        var cap: string = gated_capability(calls[ci].name);
+        let cap: string = gated_capability(calls[ci].name);
         if (cap.len() > 0 && !util.has_str(found, cap)) {
           found = found.append(cap);
         }
@@ -649,15 +652,15 @@ pub function reach(mod: parser.Module): string[] {
 // sorted returns `xs` in ascending order. Insertion sort: the list is one
 // capability per gate at worst, so the simple shape is the right one.
 function sorted(xs: string[]): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < xs.len()) {
-    var pos: i32 = 0;
+    let pos: i32 = 0;
     while (pos < out.len() && util.str_less(out[pos], xs[i])) {
       pos = pos + 1;
     }
-    var next: string[] = [];
-    var j: i32 = 0;
+    let next: string[] = [];
+    let j: i32 = 0;
     while (j < pos) {
       next = next.append(out[j]);
       j = j + 1;
@@ -677,16 +680,16 @@ function sorted(xs: string[]): string[] {
 // the builtin first, because the capability is what the user has to change
 // target for; the builtin is the evidence.
 pub function violation_message(v: Violation): string {
-  var where: string = "";
+  let where: string = "";
   if (v.fn_module.len() > 0) {
     where = " (reached via \"" + v.fn_name + "\" from module \"" + v.fn_module + "\")";
   }
   // Every gated capability has at least one target granting it — asserted
   // in platforms_run.fern, which is what makes an empty provider list a
   // typo in the gate table rather than a shape the message has to render.
-  var providers: string[] = targets_providing(v.capability);
-  var list: string = "";
-  var i: i32 = 0;
+  let providers: string[] = targets_providing(v.capability);
+  let list: string = "";
+  let i: i32 = 0;
   while (i < providers.len()) {
     if (i > 0) {
       list = list + " ";

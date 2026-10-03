@@ -7,12 +7,12 @@ import "std/sort";
 // through the unique owner and starts copying, the count jumps by an order of
 // magnitude here while `sort_ints` (which allocates by design) barely moves.
 function main(): i32 {
-  var total: i64 = 0i64;
-  var r: i32 = 0;
+  let total: i64 = 0i64;
+  let r: i32 = 0;
   while (r < 2500) {
-    var xs: i32[] = [];
-    var i: i32 = 0;
-    var seed: i32 = 12345 + r;
+    let xs: i32[] = [];
+    let i: i32 = 0;
+    let seed: i32 = 12345 + r;
     while (i < 48) {
       seed = (seed * 1103515 + 12345) % 100000;
       if (seed < 0) {

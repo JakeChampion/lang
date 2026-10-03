@@ -44,8 +44,8 @@ function emit_maybe(own a: Asm, v: i32, skip: boolean): Asm {
 }
 
 function assemble(n: i32): Asm {
-  var a: Asm = Asm { code: [], names: [], n: 0 };
-  var i: i32 = 0;
+  let a: Asm = Asm { code: [], names: [], n: 0 };
+  let i: i32 = 0;
   while (i < n) {
     a = emit_word(a, i * 7);
     a = emit_byte(a, i & 255);
@@ -57,19 +57,19 @@ function assemble(n: i32): Asm {
 }
 
 function churn(): i32 {
-  var junk: string[] = [];
-  var i: i32 = 0;
+  let junk: string[] = [];
+  let i: i32 = 0;
   while (i < 300) { junk = junk.append("junk"); i = i + 1; }
   return junk.len();
 }
 
 function main(): i32 {
-  var total: i32 = 0;
-  var r: i32 = 0;
+  let total: i32 = 0;
+  let r: i32 = 0;
   while (r < 8) {
-    var a: Asm = assemble(60);
+    let a: Asm = assemble(60);
     churn();
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < a.code.len()) { total = total + a.code[k]; k = k + 1; }
     k = 0;
     while (k < a.names.len()) { total = total + a.names[k].len(); k = k + 1; }

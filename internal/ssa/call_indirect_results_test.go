@@ -41,8 +41,8 @@ func TestCallIndirectLiftMatchesVerifierResultCount(t *testing.T) {
 			wantResults: 0,
 			src: `function run(f: (i32) => void, v: i32): void { f(v); }
 function main(): i32 {
-    var seen: i32 = 0;
-    var g = (x: i32) => { seen = seen + x; };
+    let seen: i32 = 0;
+    let g = (x: i32) => { seen = seen + x; };
     run(g, 4);
     return seen - 4;
 }`,
@@ -52,7 +52,7 @@ function main(): i32 {
 			wantResults: 1,
 			src: `function run(f: (i32) => i32, v: i32): i32 { return f(v); }
 function main(): i32 {
-    var g = (x: i32) => x + 1;
+    let g = (x: i32) => x + 1;
     return run(g, 4) - 5;
 }`,
 		},
@@ -64,8 +64,8 @@ function main(): i32 {
 			twoWord:     true,
 			src: `function run(f: () => string): string { return f(); }
 function main(): i32 {
-    var g = () => "hi";
-    var s = run(g);
+    let g = () => "hi";
+    let s = run(g);
     if (s == "hi") { return 0; }
     return 1;
 }`,

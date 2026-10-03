@@ -33,11 +33,11 @@ var resultElemReclaimCases = []struct {
 	want int
 }{
 	{"result-elem-ok", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, Result[i32, i32]) = (i, Ok(i));
-        var r: i32 = 0;
+        let t: (i32, Result[i32, i32]) = (i, Ok(i));
+        let r: i32 = 0;
         match (t.1) { Ok(v) => { r = t.0 + v; }, Err(e) => { r = e; } }
         acc = (acc + r) % 91;
         i = i + 1;
@@ -45,20 +45,20 @@ var resultElemReclaimCases = []struct {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
 	{"result-elem-err", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, Result[i32, i32]) = (i, Err(i));
-        var r: i32 = 0;
+        let t: (i32, Result[i32, i32]) = (i, Err(i));
+        let r: i32 = 0;
         match (t.1) { Ok(v) => { r = t.0 + v; }, Err(e) => { r = e; } }
         acc = (acc + r) % 91;
         i = i + 1;
@@ -66,10 +66,10 @@ function main(): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -78,11 +78,11 @@ function main(): i32 {
 	// shape's buffer and array element already reclaimed, so it measured the
 	// same 40 | 40 | 16 as the two-element tuple above.
 	{"result-elem-beside-array", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[], Result[i32, i32]) = (i, [i, i + 1], Ok(i));
-        var r: i32 = t.0 + t.1[0];
+        let t: (i32, i32[], Result[i32, i32]) = (i, [i, i + 1], Ok(i));
+        let r: i32 = t.0 + t.1[0];
         match (t.2) { Ok(v) => { r = r + v; }, Err(e) => { r = e; } }
         acc = (acc + r) % 91;
         i = i + 1;
@@ -90,10 +90,10 @@ function main(): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -102,12 +102,12 @@ function main(): i32 {
 	// holds, so the element is not a construction and must keep its leak.
 	{"ok-shadowed-by-free-fn", `function Ok(r: Result[i32, i32]): Result[i32, i32] { return r; }
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var keep: Result[i32, i32] = Err(i);
-        var t: (i32, Result[i32, i32]) = (i, Ok(keep));
-        var r: i32 = 0;
+        let keep: Result[i32, i32] = Err(i);
+        let t: (i32, Result[i32, i32]) = (i, Ok(keep));
+        let r: i32 = 0;
         match (t.1) { Ok(v) => { r = v; }, Err(e) => { r = e; } }
         match (keep) { Ok(v) => { r = r + v; }, Err(e) => { r = r + e; } }
         acc = (acc + r) % 91;
@@ -116,8 +116,8 @@ function churn(n: i32): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w;
@@ -125,12 +125,12 @@ function main(): i32 {
 	// BARE-IDENT negative: the element aliases a live local, so it is skipped
 	// by the literal-driven walk exactly as before.
 	{"bare-ident-elem-still-refused", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var keep: Result[i32, i32] = Ok(i);
-        var t: (i32, Result[i32, i32]) = (i, keep);
-        var r: i32 = 0;
+        let keep: Result[i32, i32] = Ok(i);
+        let t: (i32, Result[i32, i32]) = (i, keep);
+        let r: i32 = 0;
         match (t.1) { Ok(v) => { r = v; }, Err(e) => { r = e; } }
         match (keep) { Ok(v) => { r = r + v; }, Err(e) => { r = r + e; } }
         acc = (acc + r) % 91;
@@ -139,8 +139,8 @@ function main(): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w;
@@ -149,11 +149,11 @@ function main(): i32 {
 	// of the loop, so it outlives every reclaim point. The reclaim releases the
 	// union BOX and never its payload, which is what keeps this readable.
 	{"ok-payload-carried-out-safe", `function churn(n: i32): i32 {
-    var keep: i32[] = [0, 0];
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: i32[] = [0, 0];
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[], Result[i32[], i32]) = (i, [i, i + 1], Ok([i, i + 2]));
+        let t: (i32, i32[], Result[i32[], i32]) = (i, [i, i + 1], Ok([i, i + 2]));
         match (t.2) { Ok(v) => { keep = v; }, Err(e) => {} }
         acc = (acc + t.0 + t.1[0]) % 91;
         i = i + 1;
@@ -161,8 +161,8 @@ function main(): i32 {
     return (acc + keep[0] + keep[1] + 5) % 91;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w;

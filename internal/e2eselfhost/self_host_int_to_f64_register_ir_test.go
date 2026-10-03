@@ -128,39 +128,39 @@ func intToF64Cases() []struct {
 		// u64::MAX as f64 is ~1.8446744e19, not -1.0 (#6051 — the fixture
 		// u64_max_to_f64_is_huge, which returned 1 here and 0 natively).
 		{"u64-max-is-above-1e19", `function main(): i32 {
-    var i: i64 = 0 - 1i64;
-    var u: u64 = i as u64;
-    var f: f64 = u as f64;
-    var threshold: f64 = 10000000000000000000.0f64;
+    let i: i64 = 0 - 1i64;
+    let u: u64 = i as u64;
+    let f: f64 = u as f64;
+    let threshold: f64 = 10000000000000000000.0f64;
     if (f > threshold) { return 0; }
     return 1;
 }`, []string{`shrq \$1, %rcx`, `addsd %xmm0, %xmm0`}, nil, []string{`ucvtf d0, x\d+\b`}},
 		// A u64 BELOW 2^63 must still take the plain signed convert — the
 		// halving path is only for the values it cannot express.
 		{"u64-below-2p63", `function main(): i32 {
-    var u: u64 = 9223372036854775807i64 as u64;
-    var f: f64 = u as f64;
+    let u: u64 = 9223372036854775807i64 as u64;
+    let f: f64 = u as f64;
     if (f > 9000000000000000000.0f64) { return 0; }
     return 1;
 }`, []string{`cvtsi2sd`}, nil, []string{`ucvtf d0, x\d+\b`}},
 		// u32 with bit 31 set: zero-extended into the 64-bit source, so the
 		// signed convert is exact.
 		{"u32-roundtrips-through-f64", `function main(): i32 {
-    var u: u32 = 3000000000 as u32;
-    var f: f64 = u as f64;
-    var back: u32 = f as u32;
+    let u: u32 = 3000000000 as u32;
+    let f: f64 = u as f64;
+    let back: u32 = f as u32;
     if (back == u) { return 0; }
     return 1;
 }`, []string{`movl %[a-z0-9]+, %[a-z0-9]+\n\s+cvtsi2sd %[a-z0-9]+, %xmm0`}, nil, []string{`ucvtf d0, w\d+\b`}},
 		{"negative-i32-stays-signed", `function main(): i32 {
-    var n: i32 = 0 - 5;
-    var f: f64 = n as f64;
+    let n: i32 = 0 - 5;
+    let f: f64 = n as f64;
     if (f < 0.0) { return 0; }
     return 1;
 }`, []string{`cvtsi2sd %[a-z0-9]+, %xmm0`}, []string{`movl %[a-z0-9]+, %[a-z0-9]+\n\s+cvtsi2sd`}, []string{`scvtf d0, x\d+\b`}},
 		{"negative-i64-stays-signed", `function main(): i32 {
-    var n: i64 = 0 - 5000000000;
-    var f: f64 = n as f64;
+    let n: i64 = 0 - 5000000000;
+    let f: f64 = n as f64;
     if (f < 0.0) { return 0; }
     return 1;
 }`, []string{`cvtsi2sd %[a-z0-9]+, %xmm0`}, []string{`shrq \$1, %rcx`}, []string{`scvtf d0, x\d+\b`}},

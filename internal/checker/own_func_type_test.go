@@ -73,9 +73,9 @@ function thread[T](own acc: T, n: i32): T {
     return thread(acc, n - 1);
 }
 function main(): i32 {
-    var s: i32 = thread(7, 2);
-    var c: i32 = 0;
-    var t: i32 = thread(c, 1);
+    let s: i32 = thread(7, 2);
+    let c: i32 = 0;
+    let t: i32 = thread(c, 1);
     return s - 7 + t;
 }`)
 }
@@ -95,7 +95,7 @@ function main(): i32 { return apply((own xs: i32[]) => xs.len()); }`)
 // emitted, since the callee had released the buffer.
 func TestOwnFuncTypeIndirectCallMovesArgument(t *testing.T) {
 	wantCheckError(t, "indirect-own-use-after-move", ownFnConsumer+`
-function apply(f: (own i32[]) => i32, own a: i32[]): i32 { var n = f(a); return n + a.len(); }
+function apply(f: (own i32[]) => i32, own a: i32[]): i32 { let n = f(a); return n + a.len(); }
 function main(): i32 { return apply(eat, [1, 2]); }`,
 		`use of owned parameter "a" after it was consumed`)
 }

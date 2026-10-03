@@ -30,8 +30,8 @@ var arrPushCliffIRCases = []struct {
 	// holds the buffer, so every append after a grow mutates in place.
 	{"healthy-threaded-accumulator", `function step(acc: i32[], v: i32): i32[] { return acc.append(v); }
 function main(): i32 {
-    var acc: i32[] = [];
-    var i: i32 = 0;
+    let acc: i32[] = [];
+    let i: i32 = 0;
     while (i < 200) { acc = step(acc, i); i = i + 1; }
     if (acc.len() != 200) { return 254; }
     if (acc[7] != 7 || acc[199] != 199) { return 253; }
@@ -43,11 +43,11 @@ function main(): i32 {
 	// Reading both afterwards proves the copy really happened — had the append
 	// mutated in place, b would see the longer length.
 	{"shared-buffer-with-spare-capacity", `function main(): i32 {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < 5) { a = a.append(i); i = i + 1; }
-    var b: i32[] = a;
-    var c: i32[] = a.append(99);
+    let b: i32[] = a;
+    let c: i32[] = a.append(99);
     if (b.len() != 5 || c.len() != 6) { return 250; }
     if (c[5] != 99 || b[4] != 4) { return 251; }
     return __arr_push_shared_count();
@@ -60,19 +60,19 @@ function main(): i32 {
 	// read 0 while the program copied the whole accumulator per call, which is
 	// the reading this counter exists to make impossible (#9526).
 	{"shared-param-accumulator-appended-in-a-loop", `function chunk(out: i32[], s: i32[]): i32[] {
-    var bs: i32[] = out;
-    var i: i32 = 0;
+    let bs: i32[] = out;
+    let i: i32 = 0;
     while (i < s.len()) { bs = bs.append(s[i]); i = i + 1; }
     return bs;
 }
 function main(): i32 {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < 5) { a = a.append(i); i = i + 1; }
-    var s: i32[] = [];
+    let s: i32[] = [];
     s = s.append(9);
-    var keep: i32[] = a;
-    var c: i32[] = chunk(a, s);
+    let keep: i32[] = a;
+    let c: i32[] = chunk(a, s);
     if (keep.len() != 5 || c.len() != 6) { return 250; }
     if (c[5] != 9 || keep[4] != 4) { return 251; }
     return __arr_push_shared_count();

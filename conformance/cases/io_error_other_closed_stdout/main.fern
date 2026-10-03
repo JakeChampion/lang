@@ -7,12 +7,12 @@
 // Nothing can reach stdout once it is closed, so the verdict is the exit
 // status: 0 when both fields carry exactly what the contract says.
 function main(): i32 {
-  var w: Writer = stdout();
+  let w: Writer = stdout();
   match (w.close()) {
     Some(_) => { return 2; },
     None => {}
   }
-  var again: Writer = stdout();
+  let again: Writer = stdout();
   match (again.write("x")) {
     Some(e) => {
       match (e) {

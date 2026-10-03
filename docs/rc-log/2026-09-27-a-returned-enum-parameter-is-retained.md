@@ -13,8 +13,8 @@ On the AST lowering this answered 93 where 3 is right:
 ```fern
 function hb_sc_param(e: Sc): Sc { return e; }
 function mk(r: i32): Sc {
-    var a0: Sc = SA(k_of(r));
-    var a: Sc = hb_sc_param(a0);
+    let a0: Sc = SA(k_of(r));
+    let a: Sc = hb_sc_param(a0);
     return a;
 }
 ```
@@ -45,14 +45,14 @@ lowering did not.
    tiers credit the retained return. The escape walkers already read the merged
    `CNT:` key, so the lender keeps its own release, and a fresh temporary at that
    position is stashed and released after the call. The structfld admission scan
-   counts a member's `return p.f` as a counted share, like the `var` bind's dup.
+   counts a member's `return p.f` as a counted share, like the `let` bind's dup.
    Without that, `HS` lost its `__field_reclaim_HS` field arm, and the loop
    rebind stranded the `SA` box of `hs.e`.
 
 Part 3 has a consequence for releases. A local lent at a counted position may now
 be shared with the call's result when it is released, so the last-use drop of a
 fresh rc-payload enum (`precise_drop_names`' `enum-rcpayload:` kind) gates its
-payload walk on `__fern_rc_is_unique`. Ungated, `var s = A([..]); var v =
+payload walk on `__fern_rc_is_unique`. Ungated, `let s = A([..]); let v =
 passthru(s);` freed `s`'s array under `v`, and the underflow detector reported
 it (`param_handback_counted`, formerly the `non_registered_producer_refused`
 negative control, now 200/200).

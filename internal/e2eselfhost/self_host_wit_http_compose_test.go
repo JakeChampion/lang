@@ -111,13 +111,13 @@ const selfHostComposeHttpDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var tbody: i32[] = wit_section_body(blob_to_bytes(proxy_world_payload()), 7);
-            var c: Composed = compose_http(tbody, core);
+            let tbody: i32[] = wit_section_body(blob_to_bytes(proxy_world_payload()), 7);
+            let c: Composed = compose_http(tbody, core);
             if (c.refused.len() > 0) { eprint(c.refused); return 3; }
-            var j: i32 = 0;
+            let j: i32 = 0;
             while (j < c.bytes.len()) { print_int(c.bytes[j]); write("\n"); j = j + 1; }
             return 0;
         },

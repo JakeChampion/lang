@@ -38,8 +38,8 @@ import "core/cmp";
 struct Coord { x: i32, y: i32 }
 
 function build(n: i32): i32 {
-    var m: Map[Coord, i32] = map_new(2);
-    var i: i32 = 0;
+    let m: Map[Coord, i32] = map_new(2);
+    let i: i32 = 0;
     while (i < 8) {
         m = m.insert(Coord { x: i, y: n }, i * 10);
         i = i + 1;
@@ -48,13 +48,13 @@ function build(n: i32): i32 {
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 200) { acc = acc + build(w); w = w + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc != 17600) { return 88; }
@@ -69,8 +69,8 @@ import "core/cmp";
 enum Tag { TagLo(i32), TagHi(i32), TagNil }
 
 function build(n: i32): i32 {
-    var m: Map[Tag, i32] = map_new(2);
-    var i: i32 = 0;
+    let m: Map[Tag, i32] = map_new(2);
+    let i: i32 = 0;
     while (i < 8) {
         m = m.insert(Tag.TagLo(i + n), i);
         i = i + 1;
@@ -79,13 +79,13 @@ function build(n: i32): i32 {
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 200) { acc = acc + build(w); w = w + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc != 17600) { return 88; }
@@ -100,8 +100,8 @@ import "core/cmp";
 struct Coord { x: i32, y: i32 }
 
 function build(n: i32): i32 {
-    var m: Map[Coord, string] = map_new(2);
-    var i: i32 = 0;
+    let m: Map[Coord, string] = map_new(2);
+    let i: i32 = 0;
     while (i < 8) {
         m = m.insert(Coord { x: i, y: n }, "v" + "al");
         i = i + 1;
@@ -110,13 +110,13 @@ function build(n: i32): i32 {
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 200) { acc = acc + build(w); w = w + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc != 17600) { return 88; }
@@ -131,11 +131,11 @@ import "core/cmp";
 struct Coord { x: i32, y: i32 }
 
 function main(): i32 {
-    var bad: i32 = 0;
-    var r: i32 = 0;
+    let bad: i32 = 0;
+    let r: i32 = 0;
     while (r < 500) {
-        var m: Map[Coord, i32] = map_new(2);
-        var i: i32 = 0;
+        let m: Map[Coord, i32] = map_new(2);
+        let i: i32 = 0;
         while (i < 8) {
             m = m.insert(Coord { x: i, y: i * 2 }, i * 10);
             i = i + 1;
@@ -166,11 +166,11 @@ import "core/cmp";
 enum Tag { TagLo(i32), TagNil }
 
 function main(): i32 {
-    var bad: i32 = 0;
-    var r: i32 = 0;
+    let bad: i32 = 0;
+    let r: i32 = 0;
     while (r < 500) {
-        var TagNil: Tag = Tag.TagLo(r);
-        var m: Map[Tag, i32] = map_new(2);
+        let TagNil: Tag = Tag.TagLo(r);
+        let m: Map[Tag, i32] = map_new(2);
         m = m.insert(TagNil, 7);
         if (m.get_or(TagNil, 0) != 7) { bad = 1; }
         r = r + 1;
@@ -189,11 +189,11 @@ import "core/cmp";
 struct Coord { x: i32, y: i32 }
 
 function main(): i32 {
-    var bad: i32 = 0;
-    var r: i32 = 0;
+    let bad: i32 = 0;
+    let r: i32 = 0;
     while (r < 500) {
-        var k: Coord = Coord { x: 1, y: 2 };
-        var m: Map[Coord, i32] = map_new(2);
+        let k: Coord = Coord { x: 1, y: 2 };
+        let m: Map[Coord, i32] = map_new(2);
         m = m.insert(k, 7);
         if (k.x != 1) { bad = 1; }
         if (k.y != 2) { bad = 1; }

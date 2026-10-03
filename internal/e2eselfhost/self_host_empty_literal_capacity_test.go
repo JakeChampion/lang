@@ -42,21 +42,21 @@ var emptyLitElems = []emptyLitElem{
 func emptyLitSource(el emptyLitElem) string {
 	var b strings.Builder
 	b.WriteString(el.prefix)
-	fmt.Fprintf(&b, "function sum(xs: %s[]): i32 {\n    var t: i32 = 0;\n    for e in xs { t = t + %s; }\n    return t;\n}\n", el.ty, el.toI32)
+	fmt.Fprintf(&b, "function sum(xs: %s[]): i32 {\n    let t: i32 = 0;\n    for e in xs { t = t + %s; }\n    return t;\n}\n", el.ty, el.toI32)
 	fmt.Fprintf(&b, "function fresh(): %s[] { return []; }\n", el.ty)
 	b.WriteString("function main(): i32 {\n")
-	fmt.Fprintf(&b, "    var xs: %s[] = [];\n    var guard: i32[] = [5, 6, 7, 8];\n", el.ty)
+	fmt.Fprintf(&b, "    let xs: %s[] = [];\n    let guard: i32[] = [5, 6, 7, 8];\n", el.ty)
 	for i := 0; i < 4; i++ {
 		fmt.Fprintf(&b, "    xs = xs.append(%s);\n", el.vals[i])
 	}
-	b.WriteString("    var a: i32 = sum(xs) + guard[0] + guard[3] * 2 + guard.len();\n")
-	fmt.Fprintf(&b, "    var c: i32 = sum(xs.append(%s));\n", el.vals[4])
+	b.WriteString("    let a: i32 = sum(xs) + guard[0] + guard[3] * 2 + guard.len();\n")
+	fmt.Fprintf(&b, "    let c: i32 = sum(xs.append(%s));\n", el.vals[4])
 	fmt.Fprintf(&b, "    xs = xs.append(%s);\n", el.vals[4])
-	fmt.Fprintf(&b, "    var ys: %s[] = fresh();\n    var guard2: i32[] = [9, 10, 11, 12];\n", el.ty)
+	fmt.Fprintf(&b, "    let ys: %s[] = fresh();\n    let guard2: i32[] = [9, 10, 11, 12];\n", el.ty)
 	for i := 0; i < 4; i++ {
 		fmt.Fprintf(&b, "    ys = ys.append(%s);\n", el.vals[i])
 	}
-	b.WriteString("    var d: i32 = sum(ys) + guard2[0] + guard2[3] + guard2.len();\n")
+	b.WriteString("    let d: i32 = sum(ys) + guard2[0] + guard2[3] + guard2.len();\n")
 	b.WriteString("    return (a + c + d + sum(xs) + xs.len() + guard[1]) % 100;\n}\n")
 	return b.String()
 }
@@ -71,18 +71,18 @@ func emptyLitCases() []emptyLitCase {
 	// A generic `T[]` built from `[]`: the literal's element type is the type
 	// parameter, so nothing at the literal says the slot is 8 bytes.
 	cases = append(cases, emptyLitCase{"generic_f64_i64", `function rep[T](x: T, n: i32): T[] {
-    var out: T[] = [];
-    var i: i32 = 0;
+    let out: T[] = [];
+    let i: i32 = 0;
     while (i < n) { out = out.append(x); i = i + 1; }
     return out;
 }
 function main(): i32 {
-    var fs: f64[] = rep(2.5, 4);
-    var guard: i32[] = [5, 6, 7, 8];
-    var is: i64[] = rep(3 as i64, 4);
-    var t: f64 = 0.0;
+    let fs: f64[] = rep(2.5, 4);
+    let guard: i32[] = [5, 6, 7, 8];
+    let is: i64[] = rep(3 as i64, 4);
+    let t: f64 = 0.0;
     for f in fs { t = t + f; }
-    var u: i64 = 0;
+    let u: i64 = 0;
     for v in is { u = u + v; }
     return (t as i32) + (u as i32) + guard[0] + guard[3] + guard.len() + fs.len() + is.len();
 }
@@ -90,14 +90,14 @@ function main(): i32 {
 	// The empty literal as a struct field.
 	cases = append(cases, emptyLitCase{"struct_field_f64", `struct H { n: i32, xs: f64[] }
 function main(): i32 {
-    var h: H = H { n: 1, xs: [] };
-    var guard: i32[] = [5, 6, 7, 8];
-    var xs: f64[] = h.xs;
+    let h: H = H { n: 1, xs: [] };
+    let guard: i32[] = [5, 6, 7, 8];
+    let xs: f64[] = h.xs;
     xs = xs.append(1.5);
     xs = xs.append(2.5);
     xs = xs.append(3.5);
     xs = xs.append(4.5);
-    var t: f64 = 0.0;
+    let t: f64 = 0.0;
     for f in xs { t = t + f; }
     return (t as i32) + guard[0] + guard[3] + guard.len() + h.xs.len() + h.n;
 }

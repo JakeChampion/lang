@@ -5,10 +5,10 @@ import "std/array";
 // T[] groups (last shorter); `xs.windows(n)` yields sliding length-n sub-slices.
 // Runs interp / x86-64 / arm64 / wasm.
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3, 4, 5];
-    var cs: i32[][] = xs.chunks(2);      // [[1,2],[3,4],[5]] — len 3
-    var ws: i32[][] = xs.windows(2);     // [[1,2],[2,3],[3,4],[4,5]] — len 4
-    var r: i32 = 0;
+    let xs: i32[] = [1, 2, 3, 4, 5];
+    let cs: i32[][] = xs.chunks(2);      // [[1,2],[3,4],[5]] — len 3
+    let ws: i32[][] = xs.windows(2);     // [[1,2],[2,3],[3,4],[4,5]] — len 4
+    let r: i32 = 0;
     if (cs.len() != 3) { return 1; }
     if (cs[0][0] != 1 || cs[0][1] != 2 || cs[2][0] != 5) { return 2; }
     if (ws.len() != 4) { return 3; }

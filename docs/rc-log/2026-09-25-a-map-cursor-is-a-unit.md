@@ -42,7 +42,7 @@ carries the bundle.
 
 - A function that returns a cursor is still refused ("cursor result escapes its
   map"), so its module stays on the AST lowering. That lowering never releases a
-  cursor, and it also types an unannotated `var o = over(m)` and a `MapIter`
+  cursor, and it also types an unannotated `let o = over(m)` and a `MapIter`
   parameter as `i32`. Both are AST-only and go when that lowering is retired.
 - A typed module containing `__rc_underflow()` falls back to the AST lowering,
   because the intrinsic has no semantic contract. A typed-path test therefore

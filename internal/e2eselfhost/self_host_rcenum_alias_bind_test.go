@@ -6,7 +6,7 @@ import (
 )
 
 // A DEAD alias bind used to kill an rc-enum local's whole reclaim credit
-// (#7687): `var x: E = src;` — with `x` never read — took `src` from
+// (#7687): `let x: E = src;` — with `x` never read — took `src` from
 // 200 allocs / 200 frees to 200 / 0, 8000 live, against native's 200/200.
 // The match the leak-matrix rows blamed was irrelevant; the bind alone did it.
 //
@@ -24,9 +24,9 @@ func rcenumAliasBindCases() []tupleAliasParamCase {
 			// The issue's repro: the alias is never read at all.
 			name: "dead_alias_bind",
 			src: `enum E { Full(i32[]), None }
-function round(i: i32): i32 { var src: E = E.Full([i, i + 1]); var x: E = src; var t: i32 = 7; return t; }
+function round(i: i32): i32 { let src: E = E.Full([i, i + 1]); let x: E = src; let t: i32 = 7; return t; }
 function main(): i32 {
-    var s: i32 = 0; var r: i32 = 0;
+    let s: i32 = 0; let r: i32 = 0;
     while (r < 100) { s = s + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;
@@ -38,9 +38,9 @@ function main(): i32 {
 			// (`enum_rc_payload__fnscope__alias_match`) are this shape.
 			name: "alias_matched_borrow_only",
 			src: `enum E { Full(i32[]), None }
-function round(i: i32): i32 { var src: E = E.Full([i, i + 1]); var x: E = src; match (x) { Full(xs) => { return xs.len(); }, None => { return 0; } } }
+function round(i: i32): i32 { let src: E = E.Full([i, i + 1]); let x: E = src; match (x) { Full(xs) => { return xs.len(); }, None => { return 0; } } }
 function main(): i32 {
-    var s: i32 = 0; var r: i32 = 0;
+    let s: i32 = 0; let r: i32 = 0;
     while (r < 100) { s = s + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;
@@ -53,9 +53,9 @@ function main(): i32 {
 			// first if the rc gate were not arbitrating.
 			name: "source_rebound_alias_live",
 			src: `enum E { Full(i32[]), None }
-function round(i: i32): i32 { var src: E = E.Full([i, i + 1]); var x: E = src; src = E.Full([i + 2]); match (x) { Full(xs) => { return xs.len(); }, None => { return 0; } } }
+function round(i: i32): i32 { let src: E = E.Full([i, i + 1]); let x: E = src; src = E.Full([i + 2]); match (x) { Full(xs) => { return xs.len(); }, None => { return 0; } } }
 function main(): i32 {
-    var s: i32 = 0; var r: i32 = 0;
+    let s: i32 = 0; let r: i32 = 0;
     while (r < 100) { s = s + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;
@@ -67,9 +67,9 @@ function main(): i32 {
 			name: "alias_passed_to_callee",
 			src: `enum E { Full(i32[]), None }
 function peek(e: E): i32 { match (e) { Full(xs) => { return xs.len(); }, None => { return 0; } } }
-function round(i: i32): i32 { var src: E = E.Full([i, i + 1]); var x: E = src; return peek(x); }
+function round(i: i32): i32 { let src: E = E.Full([i, i + 1]); let x: E = src; return peek(x); }
 function main(): i32 {
-    var s: i32 = 0; var r: i32 = 0;
+    let s: i32 = 0; let r: i32 = 0;
     while (r < 100) { s = s + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;
@@ -82,10 +82,10 @@ function main(): i32 {
 			// while both allocations are reclaimed on every call.
 			name: "payload_out_via_alias_counted",
 			src: `enum E { Full(i32[]), None }
-function g(i: i32): i32[] { var src: E = E.Full([i, i + 1]); var x: E = src; match (x) { Full(xs) => { return xs; }, None => { return [0]; } } }
-function round(i: i32): i32 { var v: i32[] = g(i); return v.len(); }
+function g(i: i32): i32[] { let src: E = E.Full([i, i + 1]); let x: E = src; match (x) { Full(xs) => { return xs; }, None => { return [0]; } } }
+function round(i: i32): i32 { let v: i32[] = g(i); return v.len(); }
 function main(): i32 {
-    var s: i32 = 0; var r: i32 = 0;
+    let s: i32 = 0; let r: i32 = 0;
     while (r < 100) { s = s + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;
@@ -98,10 +98,10 @@ function main(): i32 {
 			// sanitize leg guard it.
 			name: "alias_returned_refused",
 			src: `enum E { Full(i32[]), None }
-function mk(i: i32): E { var src: E = E.Full([i, i + 1]); var x: E = src; return x; }
-function round(i: i32): i32 { var v: E = mk(i); match (v) { Full(xs) => { return xs.len(); }, None => { return 0; } } }
+function mk(i: i32): E { let src: E = E.Full([i, i + 1]); let x: E = src; return x; }
+function round(i: i32): i32 { let v: E = mk(i); match (v) { Full(xs) => { return xs.len(); }, None => { return 0; } } }
 function main(): i32 {
-    var s: i32 = 0; var r: i32 = 0;
+    let s: i32 = 0; let r: i32 = 0;
     while (r < 100) { s = s + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;

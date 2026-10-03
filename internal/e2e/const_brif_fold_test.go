@@ -20,7 +20,7 @@ import (
 // runs its body (exercises the constant-true / always-taken br_if that
 // Fold rewrites to OpBr). 5 + 0 = 5.
 const constBrIfFoldSrc = `function count_true(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (true) {
         i = i + 1;
         if (i >= 5) { break; }
@@ -28,7 +28,7 @@ const constBrIfFoldSrc = `function count_true(): i32 {
     return i;
 }
 function count_false(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (false) { i = i + 1; }
     return i;
 }

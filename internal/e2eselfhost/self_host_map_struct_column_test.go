@@ -9,7 +9,7 @@ import (
 //
 // A `Map[K, S]` whose value struct carries a string or array field. The
 // column's one-dec free (__fern_map_free_va) takes each value box, so every
-// box must first release its own fields: irlower routes such a column through
+// box must first release its own fields: the lowering routes such a column through
 // __map_vals_struct_drop_<S>, a per-type helper each backend hand-writes over
 // its own map layout (the raw {keys@0, vals@8} pair on the register backends,
 // the rc-headered cap/vals/used box on wasm), walking sole-owned values through
@@ -30,35 +30,35 @@ import (
 
 const mapStructColumnInsertMatchSrc = `import "core/map";
 struct S { name: string, k: i32 }
-function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    var m: Map[i32, S] = Map {};
+    let t: i32 = 0;
+    let m: Map[i32, S] = Map {};
     m = m.insert(i, S { name: w(i), k: i });
     match (m.get(i)) { Some(s) => { t = t + s.k + s.name.len(); }, None => { t = t - 1000; } }
     return t % 101;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `
 
 const mapStructColumnLiteralLenSrc = `import "core/map";
 struct S { name: string, k: i32 }
-function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function round(i: i32): i32 {
-    var m: Map[i32, S] = Map { 1: S { name: w(i), k: i }, 2: S { name: w(i + 1), k: i + 1 } };
+    let m: Map[i32, S] = Map { 1: S { name: w(i), k: i }, 2: S { name: w(i + 1), k: i + 1 } };
     return m.len() + i % 3;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `
 
 const mapStructColumnArrFieldInsertSrc = `import "core/map";
 struct A { xs: i32[], k: i32 }
 function round(i: i32): i32 {
-    var m: Map[i32, A] = Map {};
+    let m: Map[i32, A] = Map {};
     m = m.insert(i, A { xs: [i, i + 1], k: i });
     return m.len() + i % 3;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `
 
 func TestSelfHostMapStructColumnWasmIR(t *testing.T) {

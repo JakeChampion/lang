@@ -25,7 +25,7 @@ import (
 // consumer downstream.
 //
 // The `local` and `call` rows were already correct, and the `bind` row was
-// correct because a `var f: f64 = …` annotation supplies the width the field
+// correct because a `let f: f64 = …` annotation supplies the width the field
 // type could not. They are kept as controls.
 var tupleArrayFieldCases = []struct {
 	name string
@@ -34,7 +34,7 @@ var tupleArrayFieldCases = []struct {
 	// The gap: an f64 element behind a (tuple)[] FIELD.
 	{"tuple_array_field_f64", `struct P { ts: (i32, f64)[] }
 function main(): i32 {
-    var p: P = P { ts: [(2, 4.5)] };
+    let p: P = P { ts: [(2, 4.5)] };
     return p.ts[0].0 + (p.ts[0].1 * 10.0) as i32;
 }`},
 	// The same field reached through a call result.
@@ -47,31 +47,31 @@ function main(): i32 {
 	// resolved element type, not just that an element exists.
 	{"tuple_array_field_i64", `struct P { ts: (i32, i64)[] }
 function main(): i32 {
-    var p: P = P { ts: [(7, 5000000000)] };
+    let p: P = P { ts: [(7, 5000000000)] };
     return p.ts[0].0 + (p.ts[0].1 / 1000000000) as i32;
 }`},
 	// A nested tuple element inside the array element.
 	{"tuple_array_field_nested", `struct P { ts: (i32, (f64, i32))[] }
 function main(): i32 {
-    var p: P = P { ts: [(2, (4.5, 3))] };
+    let p: P = P { ts: [(2, (4.5, 3))] };
     return p.ts[0].0 + (p.ts[0].1.0 * 10.0) as i32 + p.ts[0].1.1;
 }`},
 	// Negative guard: an all-i32 tuple field must stay 4-byte.
 	{"tuple_array_field_i32_narrow", `struct P { ts: (i32, i32)[] }
 function main(): i32 {
-    var p: P = P { ts: [(30, 12)] };
+    let p: P = P { ts: [(30, 12)] };
     return p.ts[0].0 + p.ts[0].1;
 }`},
 	// Controls that were already correct.
 	{"tuple_array_local_f64", `function mk(): (i32, f64)[] { return [(2, 4.5)]; }
 function main(): i32 {
-    var ps: (i32, f64)[] = mk();
+    let ps: (i32, f64)[] = mk();
     return ps[0].0 + (ps[0].1 * 10.0) as i32;
 }`},
 	{"tuple_array_annotated_bind_f64", `struct P { ts: (i32, f64)[] }
 function main(): i32 {
-    var p: P = P { ts: [(2, 4.5)] };
-    var f: f64 = p.ts[0].1;
+    let p: P = P { ts: [(2, 4.5)] };
+    let f: f64 = p.ts[0].1;
     return p.ts[0].0 + (f * 10.0) as i32;
 }`},
 }

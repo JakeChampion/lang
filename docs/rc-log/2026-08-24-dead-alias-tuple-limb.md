@@ -1,6 +1,6 @@
 # Dead-alias cancellation, tuple limb — the last alias-credit kind
 
-The #4402 opt 1 port's fourth limb: `var v = t` on a credited tuple source is
+The #4402 opt 1 port's fourth limb: `let v = t` on a credited tuple source is
 cancelled through `tuple_dead_alias_bind` (slot gate: `slot_is_tuple_box` AND
 a `TUP:`/`TUPRC:`/`TUPRCS:` credit). Under duplication the alias holds only
 the shallow `TUP:` box dec — the deep `TUPRCS:` release stays with the source
@@ -22,7 +22,7 @@ cancel (the `alias_match` cells stay the denial rows they were).
   its sanitize-leg witness and a `tuple_alias_cancelled` container row behind
   the underflow guard.
 - **The limb fixes a baseline leak**: the unannotated alias
-  (`var t: (i32, i32[]) = (i, [i, i+1]); var v = t;`) retained at the bind
+  (`let t: (i32, i32[]) = (i, [i, i+1]); let v = t;`) retained at the bind
   but the unannotated slot never earned the balancing sweep dec — 4000 bytes
   per 100 rounds. The cancellation elides both halves of the unbalanced pair;
   clean now, matching native.
@@ -33,7 +33,7 @@ cancel (the `alias_match` cells stay the denial rows they were).
 
 ## Tabled boundary
 
-A call-producer tuple source (`var t = mk()`): native's `freeEligible` admits
+A call-producer tuple source (`let t = mk()`): native's `freeEligible` admits
 any owned-args call and cancels; the self-host's tuple credits are
 literal-init (or direct-scalar-literal-ret) only, so the source is uncredited
 — no retain, no cancellation, no release. The rcplan tables AGREE on both
@@ -44,9 +44,9 @@ one instrument documenting it.
 
 ## Leads left on the table (pre-existing, found by the review)
 
-- Tuple alias vetting has no element-aware gate: `var e = v.1` through an
+- Tuple alias vetting has no element-aware gate: `let e = v.1` through an
   alias is invisible to `rctuple_payload_escapes_alias` (source-name-only)
-  where the direct `var e = t.1` refuses the credit — the same class
+  where the direct `let e = t.1` refuses the credit — the same class
   `strarr_alias_bind_sites_of` was given its element-aware gate for. No
   reachable over-release today (probed); worth mirroring the strarr fix.
 - An rc-tuple returned behind a conditional (`if … { return (0, [0]); }

@@ -16,8 +16,8 @@ import "std/string";
 // overhead instead. It is at index 3 rather than 0 so the checksum is nonzero
 // — a loop optimised away would otherwise sum to the same 0 as a loop that ran.
 function haystack(): string {
-  var s: string = "abcdefghijklmnopqrstuvwxyz012345";
-  var k: i32 = 0;
+  let s: string = "abcdefghijklmnopqrstuvwxyz012345";
+  let k: i32 = 0;
   while (k < 10) {  // 32 B -> 32 KiB
     s = s + s;
     k = k + 1;
@@ -26,9 +26,9 @@ function haystack(): string {
 }
 
 function main(): i32 {
-  var hay: string = haystack();
-  var acc: i32 = 0;
-  var r: i32 = 0;
+  let hay: string = haystack();
+  let acc: i32 = 0;
+  let r: i32 = 0;
   while (r < 6000) {
     acc = acc + hay.last_index_of("!");
     r = r + 1;

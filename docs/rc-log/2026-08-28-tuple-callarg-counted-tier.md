@@ -5,8 +5,8 @@ the interprocedural half of the counted-store question:
 
 ```fern
 function keepit(t: (i32, i32[])): Hold { return Hold { t: t, n: 1 }; }
-var keep: (i32, i32[]) = (5, [6, 7]);
-var h: Hold = keepit(keep);
+let keep: (i32, i32[]) = (5, [6, 7]);
+let h: Hold = keepit(keep);
 ```
 
 Step 2+3 of the ordering in `2026-08-28-tuple-callarg-instruments.md`. It was

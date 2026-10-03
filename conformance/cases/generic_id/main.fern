@@ -4,8 +4,8 @@ function id[T](x: T): T {
 }
 
 function main(): i32 {
-    var a = id(42);
-    var s = id("hi");
+    let a = id(42);
+    let s = id("hi");
     if (s == "hi") { return a; }
     return 0;
 }

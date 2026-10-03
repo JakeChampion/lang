@@ -7,7 +7,7 @@ import (
 )
 
 // A `match` over a call through a fn-typed local bound from a struct field
-// (`var next = producer.next; match (next(i))`) lowers on the IR path.
+// (`let next = producer.next; match (next(i))`) lowers on the IR path.
 //
 // The scrutinee's Option payload is named from the fn value's recorded return.
 // That sidecar was seeded from a lambda, a named function or a `__mkclo$`
@@ -20,9 +20,9 @@ import (
 func TestSelfHostMatchOnCallThroughFnFieldLocal(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 	src := `function total(producer: ChunkProducer): i32 {
-    var next: (i32) => Option[u8[]] = producer.next;
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let next: (i32) => Option[u8[]] = producer.next;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
         match (next(i)) {
             Some(chunk) => { n = n + chunk.len(); },
@@ -33,7 +33,7 @@ func TestSelfHostMatchOnCallThroughFnFieldLocal(t *testing.T) {
     return n;
 }
 function main(): i32 {
-    var p: ChunkProducer = ChunkProducer { next: (i: i32): Option[u8[]] => {
+    let p: ChunkProducer = ChunkProducer { next: (i: i32): Option[u8[]] => {
         if (i == 0) { return Some("ab".bytes()); }
         if (i == 1) { return Some("cde".bytes()); }
         return None;

@@ -2,8 +2,8 @@ import "./checker";
 import "./typeinfo";
 
 function joined(ts: typeinfo.Type[]): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < ts.len()) {
     if (i > 0) {
       out = out + ",";
@@ -52,7 +52,7 @@ function shape(t: typeinfo.Type): string {
 }
 
 function main(): i32 {
-  var corpus: string[] = [
+  let corpus: string[] = [
     "() => void", "fn", "(i64, string) => boolean", "((((i32) => string[])))",
     "((i64) => string, (boolean, i32[])) => (string) => i64[]",
     "((i32) => string)[]", "(Foo[string], Option[i32[]]) => Foo[boolean]",
@@ -61,7 +61,7 @@ function main(): i32 {
     "dyn Shape[]", "(dyn Shape[], Map[string, dyn Shape]) => dyn Shape",
   ];
   for spelling in corpus {
-    var t: typeinfo.Type = checker.type_from_name_with_names_and_unions(spelling, ["Foo"], ["Shape"]);
+    let t: typeinfo.Type = checker.type_from_name_with_names_and_unions(spelling, ["Foo"], ["Shape"]);
     print(shape(t));
   }
   return 0;

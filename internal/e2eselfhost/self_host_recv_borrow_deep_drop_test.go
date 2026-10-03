@@ -31,17 +31,17 @@ var recvBorrowDeepDropCases = []struct {
 	expected int
 }{
 	// REFUSED at the CALL SITE — an identity-returning method whose result is
-	// BOUND (`var alias = held.keep()`). The result may be the receiver's own
+	// BOUND (`let alias = held.keep()`). The result may be the receiver's own
 	// box, so `held` keeps its box-only release; the alias is read after 4000
 	// further rounds, and a granted deep drop would have freed its tag.
 	{"recvborrow-identity-return-safe", `struct Box { tag: string, n: i32 }
 function (b: Box) keep(): Box { return b; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var held: Box = Box { tag: "start-tag-value", n: 1 };
-    var alias: Box = held.keep();
-    var i: i32 = 0;
-    while (i < 4000) { var b: Box = Box { tag: "start-tag-value", n: i % 8 }; acc = (acc + b.keep().n) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let held: Box = Box { tag: "start-tag-value", n: 1 };
+    let alias: Box = held.keep();
+    let i: i32 = 0;
+    while (i < 4000) { let b: Box = Box { tag: "start-tag-value", n: i % 8 }; acc = (acc + b.keep().n) % 251; i = i + 1; }
     if (alias.tag.len() != 15) { return 95; }
     if (held.tag.len() != 15) { return 96; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -55,11 +55,11 @@ function main(): i32 {
 	{"recvborrow-field-move-safe", `struct Box { tag: string, n: i32 }
 function (b: Box) label(): string { return b.tag; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var src: Box = Box { tag: "start-tag-value", n: 1 };
-    var moved: string = src.label();
-    var i: i32 = 0;
-    while (i < 4000) { var b: Box = Box { tag: "start-tag-value", n: i % 8 }; acc = (acc + b.label().len()) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let src: Box = Box { tag: "start-tag-value", n: 1 };
+    let moved: string = src.label();
+    let i: i32 = 0;
+    while (i < 4000) { let b: Box = Box { tag: "start-tag-value", n: i % 8 }; acc = (acc + b.label().len()) % 251; i = i + 1; }
     if (moved.len() != 15) { return 95; }
     if (slice_unchecked(moved, 0, 5) != "start") { return 96; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -74,9 +74,9 @@ function main(): i32 {
 function (b: Box) inner(): i32 { return b.n; }
 function (b: Box) via(): i32 { return b.inner() + 1; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 4000) { var b: Box = Box { tag: "start-tag-value", n: i % 8 }; acc = (acc + b.via()) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4000) { let b: Box = Box { tag: "start-tag-value", n: i % 8 }; acc = (acc + b.via()) % 251; i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
@@ -88,11 +88,11 @@ function main(): i32 {
 	{"recvborrow-aliased-field-balanced", `struct Box { tag: string, n: i32 }
 function (b: Box) score(): i32 { return b.n * 2; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4000) {
-        var nm: string = "start-tag-value";
-        var b: Box = Box { tag: nm, n: i % 8 };
+        let nm: string = "start-tag-value";
+        let b: Box = Box { tag: nm, n: i % 8 };
         acc = (acc + b.score()) % 251;
         if (nm.len() != 15) { return 95; }
         if (b.tag.len() != 15) { return 96; }
@@ -112,13 +112,13 @@ function main(): i32 {
 	{"recvret-rebound-outer-no-over-release", `struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
 function rounds(n: i32): i32 {
-    var t: i32 = 0;
-    var keep: Box = Box { tag: "outer-tag-value", n: 0 };
-    for i in 0..n { var b: Box = Box { tag: "start-tag-value", n: i % 8 }; keep = b.me(); t = (t + b.n) % 251; }
+    let t: i32 = 0;
+    let keep: Box = Box { tag: "outer-tag-value", n: 0 };
+    for i in 0..n { let b: Box = Box { tag: "start-tag-value", n: i % 8 }; keep = b.me(); t = (t + b.n) % 251; }
     return t + keep.tag.len();
 }
 function main(): i32 {
-    var acc: i32 = rounds(4000);
+    let acc: i32 = rounds(4000);
     if (acc < 15) { return 95; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -127,11 +127,11 @@ function main(): i32 {
 	// `b` cannot keep a credit that would free it on the way out.
 	{"recvret-returned-result-safe", `struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
-function mk(k: i32): Box { var b: Box = Box { tag: "start-tag-value", n: k }; return b.me(); }
+function mk(k: i32): Box { let b: Box = Box { tag: "start-tag-value", n: k }; return b.me(); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 4000) { var r: Box = mk(i % 8); if (r.tag.len() != 15) { return 95; } acc = (acc + r.n) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4000) { let r: Box = mk(i % 8); if (r.tag.len() != 15) { return 95; } acc = (acc + r.n) % 251; i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
@@ -141,11 +141,11 @@ function main(): i32 {
 	{"recvret-container-result-safe", `struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4000) {
-        var b: Box = Box { tag: "start-tag-value", n: i % 8 };
-        var xs: Box[] = [b.me()];
+        let b: Box = Box { tag: "start-tag-value", n: i % 8 };
+        let xs: Box[] = [b.me()];
         if (xs[0].tag.len() != 15) { return 95; }
         acc = (acc + xs[0].n) % 251;
         i = i + 1;
@@ -159,9 +159,9 @@ function main(): i32 {
 	{"recvborrow-array-field-safe", `struct Box { tag: string, items: i32[] }
 function (b: Box) total(): i32 { return b.items.len() + b.tag.len(); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 4000) { var b: Box = Box { tag: "start-tag-value", items: [1, 2, 3] }; if (b.total() != 18) { return 95; } acc = (acc + b.items[i % 3]) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4000) { let b: Box = Box { tag: "start-tag-value", items: [1, 2, 3] }; if (b.total() != 18) { return 95; } acc = (acc + b.items[i % 3]) % 251; i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
@@ -180,16 +180,16 @@ var recvBorrowDeepDropLeakCases = []struct {
 struct Box { tag: string, n: i32 }
 function (b: Box) score(): i32 { return b.n * 2; }
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; acc = (acc + b.score()) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; acc = (acc + b.score()) % 251; i = i + 1; }
     return acc;
 }
 function main(): i32 {
-    var acc: i32 = rounds(200);
-    var b1: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = rounds(200);
+    let b1: i32 = (__heap_bump_bytes() as i32);
     acc = acc + rounds(5000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -203,16 +203,16 @@ function main(): i32 {
 struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; acc = (acc + b.me().tag.len()) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; acc = (acc + b.me().tag.len()) % 251; i = i + 1; }
     return acc;
 }
 function main(): i32 {
-    var acc: i32 = rounds(200);
-    var b1: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = rounds(200);
+    let b1: i32 = (__heap_bump_bytes() as i32);
     acc = acc + rounds(5000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -227,16 +227,16 @@ struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
 function take(x: Box): i32 { return x.n; }
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; acc = (acc + take(b.me())) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; acc = (acc + take(b.me())) % 251; i = i + 1; }
     return acc;
 }
 function main(): i32 {
-    var acc: i32 = rounds(200);
-    var b1: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = rounds(200);
+    let b1: i32 = (__heap_bump_bytes() as i32);
     acc = acc + rounds(5000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -247,16 +247,16 @@ function main(): i32 {
 struct Box { tag: string, items: i32[] }
 function (b: Box) total(): i32 { return b.items.len(); }
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), items: [i, i + 1, i + 2] }; acc = (acc + b.total()) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), items: [i, i + 1, i + 2] }; acc = (acc + b.total()) % 251; i = i + 1; }
     return acc;
 }
 function main(): i32 {
-    var acc: i32 = rounds(200);
-    var b1: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = rounds(200);
+    let b1: i32 = (__heap_bump_bytes() as i32);
     acc = acc + rounds(5000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -271,16 +271,16 @@ struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
 function (b: Box) val(): i32 { return b.n; }
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; acc = (acc + b.me().val()) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; acc = (acc + b.me().val()) % 251; i = i + 1; }
     return acc;
 }
 function main(): i32 {
-    var acc: i32 = rounds(200);
-    var b1: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = rounds(200);
+    let b1: i32 = (__heap_bump_bytes() as i32);
     acc = acc + rounds(5000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -293,16 +293,16 @@ struct Box { tag: string, items: i32[] }
 function (b: Box) me(): Box { return b; }
 function (b: Box) total(): i32 { return b.items.len(); }
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), items: [i, i + 1, i + 2] }; acc = (acc + b.me().total()) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), items: [i, i + 1, i + 2] }; acc = (acc + b.me().total()) % 251; i = i + 1; }
     return acc;
 }
 function main(): i32 {
-    var acc: i32 = rounds(200);
-    var b1: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = rounds(200);
+    let b1: i32 = (__heap_bump_bytes() as i32);
     acc = acc + rounds(5000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -316,16 +316,16 @@ struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
 function (b: Box) val(): i32 { return b.n; }
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; acc = (acc + b.me().me().val()) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; acc = (acc + b.me().me().val()) % 251; i = i + 1; }
     return acc;
 }
 function main(): i32 {
-    var acc: i32 = rounds(200);
-    var b1: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = rounds(200);
+    let b1: i32 = (__heap_bump_bytes() as i32);
     acc = acc + rounds(5000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -339,16 +339,16 @@ function mk(i: i32): Box { return Box { tag: "start-tag-value-" + (i % 8).to_str
 function (b: Box) me(): Box { return b; }
 function (b: Box) val(): i32 { return b.n; }
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var b: Box = mk(i); acc = (acc + b.me().val()) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let b: Box = mk(i); acc = (acc + b.me().val()) % 251; i = i + 1; }
     return acc;
 }
 function main(): i32 {
-    var acc: i32 = rounds(200);
-    var b1: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = rounds(200);
+    let b1: i32 = (__heap_bump_bytes() as i32);
     acc = acc + rounds(5000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }

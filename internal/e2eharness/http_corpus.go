@@ -87,20 +87,20 @@ function flag(b: boolean): string {
 // parser that does not enforce the Host rule (RFC 9112 §3.2) otherwise
 // hides every other answer behind it.
 function verdict(wire: u8[]): string {
-    var v: string = answer(wire);
+    let v: string = answer(wire);
     if (v != "malformed 400") { return v; }
-    var line: i32 = 0;
+    let line: i32 = 0;
     if (find_crlf(wire) == 0) { line = 2; }
-    var crlf: i32 = find_crlf(wire.drop(line));
+    let crlf: i32 = find_crlf(wire.drop(line));
     if (crlf < 0) { return v; }
-    var with_host: u8[] = wire.take(line + crlf + 2).concat("Host: corpus\r\n".bytes()).concat(wire.drop(line + crlf + 2));
-    var again: string = answer(with_host);
+    let with_host: u8[] = wire.take(line + crlf + 2).concat("Host: corpus\r\n".bytes()).concat(wire.drop(line + crlf + 2));
+    let again: string = answer(with_host);
     if (again == "malformed 400") { return v; }
     return "nohost " + again;
 }
 
 function find_crlf(wire: u8[]): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i + 1 < wire.len()) {
         if (wire[i] == (13 as u8) && wire[i + 1] == (10 as u8)) { return i; }
         i = i + 1;
@@ -112,10 +112,10 @@ function find_crlf(wire: u8[]): i32 {
 // percent sign itself, as a percent and two hex digits, so a verdict is one
 // printable line whatever the target decoded to.
 function shown(path: string): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < path.len()) {
-        var b: u8 = path[i];
+        let b: u8 = path[i];
         if (b > (32 as u8) && b < (127 as u8) && b != (37 as u8)) {
             out = out + slice_unchecked(path, i, i + 1);
         } else {

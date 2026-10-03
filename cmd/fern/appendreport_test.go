@@ -18,16 +18,16 @@ func TestAppendReportCLI(t *testing.T) {
 	// reads as linear and is not, because the intermediate binding keeps
 	// the old buffer readable across the grow.
 	if err := os.WriteFile(src, []byte(`function grow(n: i32): i32 {
-    var xs: i32[] = [];
-    var i: i32 = 0;
+    let xs: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { xs = xs.append(i); i = i + 1; }
     return xs.len();
 }
 function quadratic(n: i32): i32 {
-    var xs: i32[] = [];
-    var i: i32 = 0;
+    let xs: i32[] = [];
+    let i: i32 = 0;
     while (i < n) {
-        var keep: i32[] = xs.append(i);
+        let keep: i32[] = xs.append(i);
         xs = keep;
         i = i + 1;
     }
@@ -93,8 +93,8 @@ func TestAppendReportCLIProgramWithMethodCalls(t *testing.T) {
 	src := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(src, []byte(`import "std/i32";
 function grow(n: i32): string {
-    var xs: i32[] = [];
-    var i: i32 = 0;
+    let xs: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { xs = xs.append(i); i = i + 1; }
     return xs.len().to_string();
 }

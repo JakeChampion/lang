@@ -114,7 +114,7 @@ function main(): i32 {
 }`,
 		"helper/fern.toml": "[package]\nname = \"helper\"\n",
 		"helper/lib.fern": `pub function save(s: string): void {
-  var fd: i32 = tcp_connect(0, 80);
+  let fd: i32 = tcp_connect(0, 80);
   write_file("/tmp/fern-caps-out.txt", s);
 }`,
 	})
@@ -175,7 +175,7 @@ func TestEnforceCapabilitiesRootSilent(t *testing.T) {
 	root := writeCapsTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n",
 		"app/main.fern": `function main(): i32 {
-  var fd: i32 = tcp_connect(0, 80);
+  let fd: i32 = tcp_connect(0, 80);
   write_file("/tmp/fern-caps-out.txt", "x");
   return 0;
 }`,
@@ -215,7 +215,7 @@ pub function fetch(s: string): void {
 }`,
 		"b/fern.toml": "[package]\nname = \"b\"\nlib = \"b.fern\"\n",
 		"b/b.fern": `pub function send(s: string): void {
-  var fd: i32 = tcp_connect(0, 80);
+  let fd: i32 = tcp_connect(0, 80);
 }`,
 	})
 	err, warns := runEnforce(t, filepath.Join(root, "app", "main.fern"))

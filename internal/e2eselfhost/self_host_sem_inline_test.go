@@ -16,7 +16,7 @@ const semInlineProgram = `struct Range { lo: i32, hi: i32 }
 function span(r: Range): (i32, i32) { return (r.lo, r.hi - r.lo); }
 @noinline function kept_span(r: Range): (i32, i32) { return (r.lo, r.hi - r.lo); }
 function pick(c: boolean, a: Range, b: Range): (i32, i32) {
-    var r: Range = a;
+    let r: Range = a;
     if (c) { r = b; }
     return (r.lo, r.hi);
 }
@@ -32,51 +32,51 @@ function clamp(v: i32, lo: i32, hi: i32): i32 {
 }
 @noinline function kept(a: i32, b: i32): (i32, i32) { return (a / b, a % b); }
 @noinline function divmod_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { let (q, r) = divmod(i + 7, 3); t = t + q + r; i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function scan_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { let (hit, rest) = scan(i); if (hit) { t = t + rest; } i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function clamp_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { t = t + clamp(i, 10, 20); i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function kept_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { let (q, r) = kept(i + 7, 3); t = t + q + r; i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function span_rounds(r: Range): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { let (lo, width) = span(r); t = t + lo + width + i; i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function kept_span_rounds(r: Range): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { let (lo, width) = kept_span(r); t = t + lo + width + i; i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function pick_rounds(a: Range, b: Range): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { let (lo, hi) = pick(i % 2 == 0, a, b); t = t + lo + hi; i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
@@ -90,7 +90,7 @@ function main(): i32 {
     print_int(scan_rounds()); print("");
     print_int(clamp_rounds()); print("");
     print_int(kept_rounds()); print("");
-    var r: Range = Range { lo: 3, hi: 10 };
+    let r: Range = Range { lo: 3, hi: 10 };
     print_int(span_rounds(r)); print("");
     print_int(kept_span_rounds(r)); print("");
     print_int(pick_rounds(r, Range { lo: 1, hi: 4 })); print("");

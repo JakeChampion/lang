@@ -26,15 +26,15 @@ struct P { x: i32 }
 struct Bag { ps: P[], n: i32 }
 
 function make(): (u8[], boolean) {
-  var t: u8[] = __alloc_u8(4);
+  let t: u8[] = __alloc_u8(4);
   return (t, true);
 }
 function mk_bag(): (P[], i32) {
-  var ps: P[] = [P { x: 1 }, P { x: 2 }, P { x: 3 }];
+  let ps: P[] = [P { x: 1 }, P { x: 2 }, P { x: 3 }];
   return (ps, 9);
 }
 function nest(): (i32, (u8[], boolean)) {
-  var t: u8[] = __alloc_u8(6);
+  let t: u8[] = __alloc_u8(6);
   return (1, (t, false));
 }
 `
@@ -44,41 +44,41 @@ var tupleElemFieldCases = []struct {
 }{
 	// The issue's reproducer: a scalar-element array out of a tuple local.
 	{"u8_elem_direct",
-		`var m: (u8[], boolean) = make();
-    var h: Holder = Holder { bytes: m.0, flag: m.1 };
+		`let m: (u8[], boolean) = make();
+    let h: Holder = Holder { bytes: m.0, flag: m.1 };
     if (!h.flag) { return 2; }
     acc = acc + h.bytes.len();`,
-		`var m: (u8[], boolean) = make();
-    var b: u8[] = m.0;
-    var h: Holder = Holder { bytes: b, flag: m.1 };
+		`let m: (u8[], boolean) = make();
+    let b: u8[] = m.0;
+    let h: Holder = Holder { bytes: b, flag: m.1 };
     if (!h.flag) { return 2; }
     acc = acc + h.bytes.len();`},
 	// An array-of-struct element, whose field drop walks the elements.
 	{"struct_arr_elem",
-		`var m: (P[], i32) = mk_bag();
-    var b: Bag = Bag { ps: m.0, n: m.1 };
+		`let m: (P[], i32) = mk_bag();
+    let b: Bag = Bag { ps: m.0, n: m.1 };
     if (b.n != 9) { return 3; }
     acc = acc + b.ps[2].x;`,
-		`var m: (P[], i32) = mk_bag();
-    var ps: P[] = m.0;
-    var b: Bag = Bag { ps: ps, n: m.1 };
+		`let m: (P[], i32) = mk_bag();
+    let ps: P[] = m.0;
+    let b: Bag = Bag { ps: ps, n: m.1 };
     if (b.n != 9) { return 3; }
     acc = acc + b.ps[2].x;`},
 	// A nested element, `n.1.0`, read through the outer element's tuple tag.
 	{"nested_tuple_elem",
-		`var n: (i32, (u8[], boolean)) = nest();
-    var h: Holder = Holder { bytes: n.1.0, flag: n.1.1 };
+		`let n: (i32, (u8[], boolean)) = nest();
+    let h: Holder = Holder { bytes: n.1.0, flag: n.1.1 };
     if (h.flag) { return 4; }
     acc = acc + h.bytes.len();`,
-		`var n: (i32, (u8[], boolean)) = nest();
-    var b: u8[] = n.1.0;
-    var h: Holder = Holder { bytes: b, flag: n.1.1 };
+		`let n: (i32, (u8[], boolean)) = nest();
+    let b: u8[] = n.1.0;
+    let h: Holder = Holder { bytes: b, flag: n.1.1 };
     if (h.flag) { return 4; }
     acc = acc + h.bytes.len();`},
 }
 
 func tupleElemFieldSrc(run string, rounds int) string {
-	return tupleElemFieldCommon + "function main(): i32 {\n  var acc: i32 = 0;\n  var i: i32 = 0;\n  while (i < " +
+	return tupleElemFieldCommon + "function main(): i32 {\n  let acc: i32 = 0;\n  let i: i32 = 0;\n  while (i < " +
 		strconv.Itoa(rounds) + ") {\n    " + run + "\n    i = i + 1;\n  }\n  return acc % 200;\n}\n"
 }
 

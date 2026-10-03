@@ -25,7 +25,7 @@ import (
 // no move applies).
 func tupleDiscardBareIdentSrc(rounds int) string {
 	return `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
+    let xs: i32[] = [i, i + 1];
     (xs, [i + 2, i + 3]);
     return xs[0] + xs[1];
 }
@@ -37,7 +37,7 @@ func tupleDiscardBareIdentSrc(rounds int) string {
 func structDiscardBareIdentSrc(rounds int) string {
 	return `struct Holder { a: i32[], b: i32[] }
 function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
+    let xs: i32[] = [i, i + 1];
     Holder { a: xs, b: [i + 2, i + 3] };
     return xs[0] + xs[1];
 }
@@ -50,14 +50,14 @@ function round(i: i32): i32 {
 // value check and the underflow counter both catch that.
 func tupleEscapingBareIdentSrc(rounds int) string {
 	return `function mk(i: i32): (i32[], i32[]) {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32[], i32[]) = (xs, [i + 2, i + 3]);
-    var guard: i32 = xs[1];
+    let xs: i32[] = [i, i + 1];
+    let t: (i32[], i32[]) = (xs, [i + 2, i + 3]);
+    let guard: i32 = xs[1];
     if (guard < 0) { return (xs, xs); }
     return t;
 }
 function round(i: i32): i32 {
-    var t: (i32[], i32[]) = mk(i);
+    let t: (i32[], i32[]) = mk(i);
     return t.0[0] + t.0[1] + t.1[0] + t.1[1];
 }
 ` + churnMain(rounds, 2*rounds*rounds+4*rounds)
@@ -67,8 +67,8 @@ function round(i: i32): i32 {
 // when the accumulated value matches and no rc over-release was counted.
 func churnMain(rounds, want int) string {
 	return `function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < ` + strconv.Itoa(rounds) + `) { acc = acc + round(r); r = r + 1; }
     if (acc != ` + strconv.Itoa(want) + `) { return 1; }
     if (__rc_underflow_count() != 0) { return 2; }

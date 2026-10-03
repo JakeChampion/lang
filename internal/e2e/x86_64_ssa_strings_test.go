@@ -17,22 +17,22 @@ func TestX86_64SSAStringChurnHoldsTheHeapFlat(t *testing.T) {
 	fern := buildFernCLI(t)
 	src := `import "std/i32";
 function label(i: i32): string {
-  var s: string = "item-";
+  let s: string = "item-";
   s = s + i.to_string();
   s = s + "/" + (i * 7).to_string();
   return s;
 }
 function main(): i32 {
-  var warm: string = label(0);
-  var b0: i64 = __heap_bump_bytes();
-  var i: i32 = 1;
-  var total: i32 = 0;
+  let warm: string = label(0);
+  let b0: i64 = __heap_bump_bytes();
+  let i: i32 = 1;
+  let total: i32 = 0;
   while (i < 10000) {
-    var s: string = label(i);
+    let s: string = label(i);
     total = total + s.len();
     i = i + 1;
   }
-  var grown: i64 = __heap_bump_bytes() - b0;
+  let grown: i64 = __heap_bump_bytes() - b0;
   if (total < 100000) { return 101; }
   return (grown / 1024i64) as i32;
 }

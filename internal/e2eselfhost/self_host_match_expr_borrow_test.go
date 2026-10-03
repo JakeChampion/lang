@@ -16,7 +16,7 @@ import (
 // plain field read was flat.
 //
 // A match expression is not an AST expression: parser.fern desugars it to a
-// zero-arg IIFE marked ORIGIN_MATCH_EXPR, one of the VALUE BLOCK origins irlower
+// zero-arg IIFE marked ORIGIN_MATCH_EXPR, one of the VALUE BLOCK origins the lowering
 // INLINES rather than calls, so no closure is ever built. expr_unsafe_for's
 // ExprLambda arm did not know that and read every ident in the body as a
 // capture. From there the credit machinery worked correctly on a false premise:
@@ -51,8 +51,8 @@ type matchExprBorrowCase struct {
 }
 
 const mebMain = `function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -64,7 +64,7 @@ enum E { A(i32[]), B }
 function mkv(i: i32): E { return E.A([i, i + 1]); }
 `
 	const arrDecls = `struct Q { xs: i32[], n: i32 }
-function mkxs(i: i32): i32[] { var o: i32[] = [i, i + 1]; return o; }
+function mkxs(i: i32): i32[] { let o: i32[] = [i, i + 1]; return o; }
 `
 	return []matchExprBorrowCase{
 		{
@@ -73,8 +73,8 @@ function mkxs(i: i32): i32[] { var o: i32[] = [i, i + 1]; return o; }
 			// holder box all stranded, every round.
 			name: "match_expr_field_read_aliased",
 			src: enumDecls + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var p: P = q;
+    let q: P = P { f: mkv(i), n: i };
+    let p: P = q;
     return ((match (p.f) { E.A(xs) => xs.len(), E.B => 0 }) + p.n) % 101;
 }
 ` + mebMain,
@@ -85,8 +85,8 @@ function mkxs(i: i32): i32[] { var o: i32[] = [i, i + 1]; return o; }
 			// makes the row above attributable. This one was ALWAYS clean.
 			name: "plain_field_read_aliased",
 			src: enumDecls + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var p: P = q;
+    let q: P = P { f: mkv(i), n: i };
+    let p: P = q;
     return p.n % 101;
 }
 ` + mebMain,
@@ -98,7 +98,7 @@ function mkxs(i: i32): i32[] { var o: i32[] = [i, i + 1]; return o; }
 			// where the refusal became visible.
 			name: "match_expr_no_alias",
 			src: enumDecls + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
+    let q: P = P { f: mkv(i), n: i };
     return ((match (q.f) { E.A(xs) => xs.len(), E.B => 0 }) + q.n) % 101;
 }
 ` + mebMain,
@@ -110,8 +110,8 @@ function mkxs(i: i32): i32[] { var o: i32[] = [i, i + 1]; return o; }
 			// field kind was never what mattered.
 			name: "if_expr_field_read_aliased",
 			src: arrDecls + `function round(i: i32): i32 {
-    var q: Q = Q { xs: mkxs(i), n: i };
-    var p: Q = q;
+    let q: Q = Q { xs: mkxs(i), n: i };
+    let p: Q = q;
     return ((if (p.n % 2 == 0) { p.xs.len() } else { 0 }) + p.n) % 101;
 }
 ` + mebMain,
@@ -121,9 +121,9 @@ function mkxs(i: i32): i32[] { var o: i32[] = [i, i + 1]; return o; }
 			// A block expression, the third origin in the set.
 			name: "block_expr_field_read_aliased",
 			src: arrDecls + `function round(i: i32): i32 {
-    var q: Q = Q { xs: mkxs(i), n: i };
-    var p: Q = q;
-    return (({ var k: i32 = p.xs.len(); k + 1 }) + p.n) % 101;
+    let q: Q = Q { xs: mkxs(i), n: i };
+    let p: Q = q;
+    return (({ let k: i32 = p.xs.len(); k + 1 }) + p.n) % 101;
 }
 ` + mebMain,
 			want: 4, allocs: 200, frees: 200,
@@ -136,7 +136,7 @@ function mkxs(i: i32): i32[] { var o: i32[] = [i, i + 1]; return o; }
 			name: "match_expr_strarr_read",
 			src: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function round(i: i32): i32 {
-    var xs: string[] = [w("a"), w("b")];
+    let xs: string[] = [w("a"), w("b")];
     return (match (xs.len()) { 2 => xs[0].len(), _ => 0 }) % 101;
 }
 ` + mebMain,
@@ -148,7 +148,7 @@ function round(i: i32): i32 {
 			name: "plain_strarr_read",
 			src: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function round(i: i32): i32 {
-    var xs: string[] = [w("a"), w("b")];
+    let xs: string[] = [w("a"), w("b")];
     return xs[0].len() % 101;
 }
 ` + mebMain,
@@ -162,8 +162,8 @@ function round(i: i32): i32 {
 			name: "real_lambda_capture_refused",
 			src: arrDecls + `function apply(f: () => i32): i32 { return f(); }
 function round(i: i32): i32 {
-    var q: Q = Q { xs: mkxs(i), n: i };
-    var p: Q = q;
+    let q: Q = Q { xs: mkxs(i), n: i };
+    let p: Q = q;
     return (apply(() => p.xs.len() + p.n)) % 101;
 }
 ` + mebMain,

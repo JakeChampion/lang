@@ -38,7 +38,7 @@ function opt_zero(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
   out = out + "Write lines consisting of the sequentially corresponding lines from\n";
   out = out + "each FILE, separated by TABs, to standard output.\n";
@@ -66,7 +66,7 @@ function block_size(): i32 {
 }
 
 function byte_str(b: i32): string {
-  var bs: u8[] = [];
+  let bs: u8[] = [];
   bs = bs.append(b as u8);
   return string_from_bytes_unchecked(bs);
 }
@@ -75,10 +75,10 @@ function byte_str(b: i32): string {
 // named ones are the seven C escapes plus `\0`; any other backslashed
 // byte is itself, and a list ending in a bare backslash is an error.
 function collapse(list: string): u8[] {
-  var out: u8[] = [];
-  var i: i32 = 0;
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < list.len()) {
-    var c: i32 = list[i] as i32;
+    let c: i32 = list[i] as i32;
     if (c != 92) {
       out = out.append(c as u8);
       i = i + 1;
@@ -89,7 +89,7 @@ function collapse(list: string): u8[] {
       gnu.error("delimiter list ends with an unescaped backslash: " + list);
       exit(1);
     }
-    var e: i32 = list[i] as i32;
+    let e: i32 = list[i] as i32;
     if (e == 48) {
       out = out.append(0 as u8);
     } else if (e == 98) {
@@ -113,18 +113,18 @@ function collapse(list: string): u8[] {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var opts: gnu.Opt[] = [];
+  let argv: string[] = args();
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("s", "serial", opt_serial()));
   opts = opts.append(gnu.valued("d", "delimiters", opt_delims()));
   opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
 
-  var serial: boolean = false;
-  var list: string = "\t";
-  var term: i32 = 10;
-  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "paste", help_text(), 1);
+  let serial: boolean = false;
+  let list: string = "\t";
+  let term: i32 = 10;
+  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "paste", help_text(), 1);
   while (true) {
-    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
     match (res.0) {
       Some(m) => {
@@ -150,9 +150,9 @@ pub function main(): i32 {
   // The delimiters as the strings they are written as: a NUL entry is
   // the empty string, since GNU writes nothing for one. Built once so
   // the output loop never makes a string per delimiter.
-  var bytes: u8[] = collapse(list);
-  var delims: string[] = [];
-  var di: i32 = 0;
+  let bytes: u8[] = collapse(list);
+  let delims: string[] = [];
+  let di: i32 = 0;
   while (di < bytes.len()) {
     if (bytes[di] as i32 == 0) {
       delims = delims.append("");
@@ -162,7 +162,7 @@ pub function main(): i32 {
     di = di + 1;
   }
 
-  var files: string[] = g.operands();
+  let files: string[] = g.operands();
   if (files.len() == 0) {
     files = files.append("-");
   }
@@ -176,18 +176,18 @@ pub function main(): i32 {
 // joined by the delimiters. Even a FILE with nothing in it produces its
 // line delimiter; one that cannot be opened produces nothing at all.
 function run_serial(files: string[], delims: string[], term: i32): i32 {
-  var o: io_buffered.BufWriter = gnu.out_with(block_size());
-  var h: usize = o.handle();
-  var ok: boolean = true;
-  var termstr: string = byte_str(term);
+  let o: io_buffered.BufWriter = gnu.out_with(block_size());
+  let h: usize = o.handle();
+  let ok: boolean = true;
+  let termstr: string = byte_str(term);
 
-  var fi: i32 = 0;
+  let fi: i32 = 0;
   while (fi < files.len()) {
-    var name: string = files[fi];
+    let name: string = files[fi];
     fi = fi + 1;
-    var is_stdin: boolean = name == "-";
-    var r: Reader = stdin();
-    var opened: boolean = true;
+    let is_stdin: boolean = name == "-";
+    let r: Reader = stdin();
+    let opened: boolean = true;
     if (!is_stdin) {
       opened = false;
       match (open_reader(name)) {
@@ -204,19 +204,19 @@ function run_serial(files: string[], delims: string[], term: i32): i32 {
     if (!opened) {
       continue;
     }
-    var chunk: string = "";
-    var pos: i32 = 0;
-    var eof: boolean = false;
-    var di: i32 = 0;
-    var first_line: boolean = true;
-    var in_line: boolean = false;
+    let chunk: string = "";
+    let pos: i32 = 0;
+    let eof: boolean = false;
+    let di: i32 = 0;
+    let first_line: boolean = true;
+    let in_line: boolean = false;
     while (true) {
       if (pos >= chunk.len()) {
         if (eof) {
           break;
         }
-        var piece: string = "";
-        var read_ok: boolean = true;
+        let piece: string = "";
+        let read_ok: boolean = true;
         match (r.read_chunk(read_size())) {
           Ok(c) => {
             piece = c;
@@ -235,9 +235,9 @@ function run_serial(files: string[], delims: string[], term: i32): i32 {
         }
         continue;
       }
-      var j: i32 = __memchr(chunk, term, pos);
-      var end: i32 = chunk.len();
-      var terminated: boolean = false;
+      let j: i32 = __memchr(chunk, term, pos);
+      let end: i32 = chunk.len();
+      let terminated: boolean = false;
       if (j >= 0) {
         end = j;
         terminated = true;
@@ -286,26 +286,26 @@ function run_serial(files: string[], delims: string[], term: i32): i32 {
 // out: they are only written once a later file on the same line
 // produces something.
 function run_parallel(files: string[], delims: string[], term: i32): i32 {
-  var o: io_buffered.BufWriter = gnu.out_with(block_size());
-  var h: usize = o.handle();
-  var ok: boolean = true;
-  var termstr: string = byte_str(term);
+  let o: io_buffered.BufWriter = gnu.out_with(block_size());
+  let h: usize = o.handle();
+  let ok: boolean = true;
+  let termstr: string = byte_str(term);
 
-  var rs: Reader[] = [];
-  var chunks: string[] = [];
-  var poss: i32[] = [];
-  var eofs: boolean[] = [];
-  var live: boolean[] = [];
-  var stdins: boolean[] = [];
+  let rs: Reader[] = [];
+  let chunks: string[] = [];
+  let poss: i32[] = [];
+  let eofs: boolean[] = [];
+  let live: boolean[] = [];
+  let stdins: boolean[] = [];
   // Every `-` operand is the SAME stream, so they share one read
   // position: `paste - -` puts consecutive lines of stdin side by side
   // rather than giving each column a buffer of its own.
-  var slot: i32[] = [];
-  var stdin_slot: i32 = 0 - 1;
-  var i: i32 = 0;
+  let slot: i32[] = [];
+  let stdin_slot: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < files.len()) {
-    var name: string = files[i];
-    var is_stdin: boolean = name == "-";
+    let name: string = files[i];
+    let is_stdin: boolean = name == "-";
     live = live.append(true);
     stdins = stdins.append(is_stdin);
     if (is_stdin && stdin_slot >= 0) {
@@ -313,7 +313,7 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
       i = i + 1;
       continue;
     }
-    var r: Reader = stdin();
+    let r: Reader = stdin();
     if (!is_stdin) {
       match (open_reader(name)) {
         Ok(f) => {
@@ -337,27 +337,27 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
     i = i + 1;
   }
 
-  var open_count: i32 = files.len();
+  let open_count: i32 = files.len();
   while (open_count > 0) {
-    var somedone: boolean = false;
-    var di: i32 = 0;
-    var held: string = "";
+    let somedone: boolean = false;
+    let di: i32 = 0;
+    let held: string = "";
     i = 0;
     while (i < files.len()) {
-      var k: i32 = slot[i];
-      var produced: boolean = false;
+      let k: i32 = slot[i];
+      let produced: boolean = false;
       // Whether the line's own terminator went out with its content.
       // For the LAST column of a line that is exactly what follows it,
       // so taking the two together halves the appends per row.
-      var took_term: boolean = false;
-      var whole: boolean = false;
+      let took_term: boolean = false;
+      let whole: boolean = false;
       if (live[i]) {
         // The usual line: already whole in the chunk this file is on,
         // so it needs neither the refill loop nor the piece loop.
-        var ck: string = chunks[k];
-        var cp: i32 = poss[k];
+        let ck: string = chunks[k];
+        let cp: i32 = poss[k];
         if (cp < ck.len()) {
-          var w: i32 = __memchr(ck, term, cp);
+          let w: i32 = __memchr(ck, term, cp);
           if (w >= 0) {
             whole = true;
             produced = true;
@@ -366,7 +366,7 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
               buf_push(h, held);
               held = "";
             }
-            var upto: i32 = w;
+            let upto: i32 = w;
             if (i + 1 == files.len()) {
               upto = w + 1;
               took_term = true;
@@ -380,8 +380,8 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
         // Is there anything left at all? The answer decides whether
         // this file still holds a column on this line.
         while (poss[k] >= chunks[k].len() && !eofs[k]) {
-          var piece: string = "";
-          var read_ok: boolean = true;
+          let piece: string = "";
+          let read_ok: boolean = true;
           match (rs[k].read_chunk(read_size())) {
             Ok(c) => {
               piece = c;
@@ -407,14 +407,14 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
             held = "";
           }
           // The line itself, terminator dropped.
-          var reading: boolean = true;
+          let reading: boolean = true;
           while (reading) {
             if (poss[k] >= chunks[k].len()) {
               if (eofs[k]) {
                 reading = false;
               } else {
-                var more: string = "";
-                var read2: boolean = true;
+                let more: string = "";
+                let read2: boolean = true;
                 match (rs[k].read_chunk(read_size())) {
                   Ok(c) => {
                     more = c;
@@ -433,9 +433,9 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
                 }
               }
             } else {
-              var j: i32 = __memchr(chunks[k], term, poss[k]);
+              let j: i32 = __memchr(chunks[k], term, poss[k]);
               if (j >= 0) {
-                var upto: i32 = j;
+                let upto: i32 = j;
                 if (i + 1 == files.len()) {
                   upto = j + 1;
                   took_term = true;

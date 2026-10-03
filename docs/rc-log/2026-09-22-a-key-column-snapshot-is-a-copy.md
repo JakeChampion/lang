@@ -11,13 +11,13 @@ import "core/cmp";
 struct Coord { x: i32, y: i32 }
 
 function main(): i32 {
-    var m: Map[Coord, i32] = map_new(2);
-    var i: i32 = 0;
+    let m: Map[Coord, i32] = map_new(2);
+    let i: i32 = 0;
     while (i < 12) {
         m = m.insert(Coord { x: i, y: i * 2 }, i * 10);
         i = i + 1;
     }
-    var ks: Coord[] = m.keys();
+    let ks: Coord[] = m.keys();
     return m.len() + ks.len();
 }
 ```

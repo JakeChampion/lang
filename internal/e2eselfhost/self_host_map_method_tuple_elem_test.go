@@ -47,9 +47,9 @@ func TestSelfHostMapMethodTupleElem(t *testing.T) {
 			// The issue's own shape.
 			"len-elem",
 			`function main(): i32 {
-			   var m: Map[string, i32] = map_new(4);
+			   let m: Map[string, i32] = map_new(4);
 			   m = m.insert("k", 7);
-			   var u: (i32, i32) = (m.len(), 5);
+			   let u: (i32, i32) = (m.len(), 5);
 			   if (u.0 == m.len() && u.1 == 5) { return 7; }
 			   return 9;
 			 }`,
@@ -57,9 +57,9 @@ func TestSelfHostMapMethodTupleElem(t *testing.T) {
 		{
 			"has-elem",
 			`function main(): i32 {
-			   var m: Map[string, i32] = map_new(4);
+			   let m: Map[string, i32] = map_new(4);
 			   m = m.insert("k", 7);
-			   var u: (boolean, boolean) = (m.has("k"), m.has("nope"));
+			   let u: (boolean, boolean) = (m.has("k"), m.has("nope"));
 			   if (u.0 && !u.1) { return 7; }
 			   return 9;
 			 }`,
@@ -67,9 +67,9 @@ func TestSelfHostMapMethodTupleElem(t *testing.T) {
 		{
 			"get_or-i32-elem",
 			`function main(): i32 {
-			   var m: Map[string, i32] = map_new(4);
+			   let m: Map[string, i32] = map_new(4);
 			   m = m.insert("k", 7);
-			   var u: (i32, i32) = (m.get_or("k", 0), m.get_or("nope", 3));
+			   let u: (i32, i32) = (m.get_or("k", 0), m.get_or("nope", 3));
 			   if (u.0 == 7 && u.1 == 3) { return 7; }
 			   return 9;
 			 }`,
@@ -80,9 +80,9 @@ func TestSelfHostMapMethodTupleElem(t *testing.T) {
 			// read the box's data-ptr slot as a length.
 			"get_or-string-elem",
 			`function main(): i32 {
-			   var m: Map[string, string] = map_new(4);
+			   let m: Map[string, string] = map_new(4);
 			   m = m.insert("k", "abcd");
-			   var u: (string, i32) = (m.get_or("k", "zz"), 5);
+			   let u: (string, i32) = (m.get_or("k", "zz"), 5);
 			   if (u.0.len() == 4 && u.1 == 5) { return 7; }
 			   return 9;
 			 }`,
@@ -92,9 +92,9 @@ func TestSelfHostMapMethodTupleElem(t *testing.T) {
 			// survive the round trip rather than truncating.
 			"get_or-i64-elem",
 			`function main(): i32 {
-			   var m: Map[i32, i64] = __map_new_i32(4);
+			   let m: Map[i32, i64] = __map_new_i32(4);
 			   m = m.insert(1, 3000000000i64);
-			   var u: (i64, i32) = (m.get_or(1, 0i64), 5);
+			   let u: (i64, i32) = (m.get_or(1, 0i64), 5);
 			   if (u.0 == 3000000000 && u.1 == 5) { return 7; }
 			   return 9;
 			 }`,
@@ -102,10 +102,10 @@ func TestSelfHostMapMethodTupleElem(t *testing.T) {
 		{
 			"get-elem",
 			`function main(): i32 {
-			   var m: Map[string, i32] = map_new(4);
+			   let m: Map[string, i32] = map_new(4);
 			   m = m.insert("k", 7);
-			   var u: (Option[i32], i32) = (m.get("k"), 5);
-			   var got: i32 = 0;
+			   let u: (Option[i32], i32) = (m.get("k"), 5);
+			   let got: i32 = 0;
 			   match (u.0) {
 			     Some(v) => { got = v; },
 			     None => { got = 0 - 1; },
@@ -119,10 +119,10 @@ func TestSelfHostMapMethodTupleElem(t *testing.T) {
 			// only exercised at position 0.
 			"len-second-elem",
 			`function main(): i32 {
-			   var m: Map[string, i32] = map_new(4);
+			   let m: Map[string, i32] = map_new(4);
 			   m = m.insert("a", 1);
 			   m = m.insert("b", 2);
-			   var u: (i32, i32) = (5, m.len());
+			   let u: (i32, i32) = (5, m.len());
 			   if (u.0 == 5 && u.1 == 2) { return 7; }
 			   return 9;
 			 }`,
@@ -131,8 +131,8 @@ func TestSelfHostMapMethodTupleElem(t *testing.T) {
 		{
 			"arr-len-elem-control",
 			`function main(): i32 {
-			   var xs: i32[] = [1, 2, 3];
-			   var u: (i32, i32) = (xs.len(), 5);
+			   let xs: i32[] = [1, 2, 3];
+			   let u: (i32, i32) = (xs.len(), 5);
 			   if (u.0 == 3 && u.1 == 5) { return 7; }
 			   return 9;
 			 }`,
@@ -140,9 +140,9 @@ func TestSelfHostMapMethodTupleElem(t *testing.T) {
 		{
 			"keys-elem-control",
 			`function main(): i32 {
-			   var m: Map[string, i32] = map_new(4);
+			   let m: Map[string, i32] = map_new(4);
 			   m = m.insert("k", 7);
-			   var u: (string[], i32) = (m.keys(), 5);
+			   let u: (string[], i32) = (m.keys(), 5);
 			   if (u.0.len() == 1 && u.1 == 5) { return 7; }
 			   return 9;
 			 }`,
@@ -150,8 +150,8 @@ func TestSelfHostMapMethodTupleElem(t *testing.T) {
 		{
 			"insert-elem-control",
 			`function main(): i32 {
-			   var m: Map[string, i32] = map_new(4);
-			   var u: (Map[string, i32], i32) = (m.insert("k", 7), 5);
+			   let m: Map[string, i32] = map_new(4);
+			   let u: (Map[string, i32], i32) = (m.insert("k", 7), 5);
 			   if (u.0.get_or("k", 0) == 7 && u.1 == 5) { return 7; }
 			   return 9;
 			 }`,

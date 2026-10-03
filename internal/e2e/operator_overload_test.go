@@ -18,9 +18,9 @@ function (self: V) sub(o: V): V { return V { x: self.x - o.x }; }
 function (self: V) mul(o: V): V { return V { x: self.x * o.x }; }
 function (self: V) div(o: V): V { return V { x: self.x / o.x }; }
 function main(): i32 {
-    var a: V = V { x: 20 };
-    var b: V = V { x: 4 };
-    var r: V = a + b;
+    let a: V = V { x: 20 };
+    let b: V = V { x: 4 };
+    let r: V = a + b;
     r = r - b;
     r = r * b;
     r = r / b;

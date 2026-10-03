@@ -16,19 +16,19 @@ import (
 // The insert copies, so the caller's `a` keeps its one entry (#9834).
 const returnedBorrowedMapInsertSrc = `import "core/map";
 function add(m: Map[string, i32]): Map[string, i32] {
-    var s: string = "z";
+    let s: string = "z";
     return m.insert(s + "-key-long-nine", 90);
 }
 function mk(): i32 {
-    var stem: string = "a";
-    var a: Map[string, i32] = map_new(4);
+    let stem: string = "a";
+    let a: Map[string, i32] = map_new(4);
     a = a.insert(stem + "-key-long-seven", 70);
-    var b: Map[string, i32] = add(a);
+    let b: Map[string, i32] = add(a);
     return a.len() + b.len();
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 10) { t = t + mk(); k = k + 1; }
     return t - 20;
 }`
@@ -37,18 +37,18 @@ function main(): i32 {
 // local, so the retain is what the caller's binding lives on.
 const returnedOwnedMapInsertSrc = `import "core/map";
 function mkm(): Map[string, i32] {
-    var s: string = "z";
-    var m2: Map[string, i32] = map_new(4);
+    let s: string = "z";
+    let m2: Map[string, i32] = map_new(4);
     m2 = m2.insert(s + "-key-long-one", 1);
     return m2.insert(s + "-key-long-nine", 90);
 }
 function mk(): i32 {
-    var b: Map[string, i32] = mkm();
+    let b: Map[string, i32] = mkm();
     return b.len();
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 10) { t = t + mk(); k = k + 1; }
     return t - 10;
 }`
@@ -57,20 +57,20 @@ function main(): i32 {
 // (move-on-return); both hand back a counted handle.
 const returnedMapInsertBranchSrc = `import "core/map";
 function add(m: Map[string, i32]): Map[string, i32] {
-    var s: string = "z";
+    let s: string = "z";
     if (m.len() > 0) { return m.insert(s + "-key-long-nine", 90); }
     return m;
 }
 function mk(): i32 {
-    var stem: string = "a";
-    var a: Map[string, i32] = map_new(4);
+    let stem: string = "a";
+    let a: Map[string, i32] = map_new(4);
     a = a.insert(stem + "-key-long-seven", 70);
-    var b: Map[string, i32] = add(a);
+    let b: Map[string, i32] = add(a);
     return a.len() + b.len();
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 10) { t = t + mk(); k = k + 1; }
     return t - 20;
 }`

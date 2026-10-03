@@ -80,7 +80,7 @@ function opt_digit(d: i32): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [INPUT [OUTPUT]]\n";
   out = out + "Filter adjacent matching lines from INPUT (or standard input),\n";
   out = out + "writing to OUTPUT (or standard output).\n";
@@ -124,7 +124,7 @@ function is_space(c: i32): boolean {
 // leading minus is malformed rather than a wrap, which is why `-f-1`
 // is a diagnostic and not a skip of everything.
 function parse_size(s: string): (u64, i32) {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len() && is_space(s[i] as i32)) {
     i = i + 1;
   }
@@ -134,10 +134,10 @@ function parse_size(s: string): (u64, i32) {
   if (i >= s.len() || !is_digit(s[i] as i32)) {
     return (0 as u64, 1);
   }
-  var v: u64 = 0 as u64;
-  var over: boolean = false;
+  let v: u64 = 0 as u64;
+  let over: boolean = false;
   while (i < s.len() && is_digit(s[i] as i32)) {
-    var d: u64 = (s[i] as i32 - 48) as u64;
+    let d: u64 = (s[i] as i32 - 48) as u64;
     match (v.checked_mul(10 as u64)) {
       Some(m) => {
         match (m.checked_add(d)) {
@@ -168,7 +168,7 @@ function parse_size(s: string): (u64, i32) {
 // line naming the operand and exit 1, with NO `Try …` line; one too
 // large for size_t saturates instead of failing.
 function size_opt(v: string, msgid: string): u64 {
-  var r: (u64, i32) = parse_size(v);
+  let r: (u64, i32) = parse_size(v);
   if (r.1 == 1) {
     gnu.error(v + ": " + msgid);
     exit(1);
@@ -189,7 +189,7 @@ function size_max(): u64 {
 // `_POSIX2_VERSION=200112` makes `uniq +2 f` read a file called `+2`
 // and `=200809` does not.
 function obsolete_plus_allowed(): boolean {
-  var v: i64 = gnu.posix2_version();
+  let v: i64 = gnu.posix2_version();
   return v < 200112 as i64 || v >= 200809 as i64;
 }
 
@@ -232,9 +232,9 @@ function gm_both(): i32 {
 // before the `Try …` line. The empty value matches everything, so
 // `--group=` is ambiguous rather than unrecognised.
 function argmatch(v: string, names: string[], opt: string): i32 {
-  var found: i32 = 0 - 1;
-  var ambiguous: boolean = false;
-  var i: i32 = 0;
+  let found: i32 = 0 - 1;
+  let ambiguous: boolean = false;
+  let i: i32 = 0;
   while (i < names.len()) {
     if (names[i] == v) {
       return i;
@@ -251,11 +251,11 @@ function argmatch(v: string, names: string[], opt: string): i32 {
   if (found >= 0 && !ambiguous) {
     return found;
   }
-  var what: string = "invalid";
+  let what: string = "invalid";
   if (ambiguous) {
     what = "ambiguous";
   }
-  var msg: string = what + " argument " + gnu.quote(v) + " for '" + opt + "'\n";
+  let msg: string = what + " argument " + gnu.quote(v) + " for '" + opt + "'\n";
   msg = msg + "Valid arguments are:\n";
   i = 0;
   while (i < names.len()) {
@@ -302,10 +302,10 @@ function cap(v: u64, hi: i32): i32 {
 // not a separator, `cfg.seps` at the first separator or the terminator. A
 // scan can pass the line's end, so its answer is clamped to the content.
 function field_offset(s: string, at: i32, len: i32, cfg: Cfg): i32 {
-  var size: i32 = len - 1;
-  var i: i32 = 0;
-  var n: i32 = cap(cfg.skip_fields, size);
-  var c: i32 = 0;
+  let size: i32 = len - 1;
+  let i: i32 = 0;
+  let n: i32 = cap(cfg.skip_fields, size);
+  let c: i32 = 0;
   while (c < n && i < size) {
     i = __scan_set(s, at + i, cfg.ink) - at;
     if (i < size) {
@@ -322,9 +322,9 @@ function field_offset(s: string, at: i32, len: i32, cfg: Cfg): i32 {
 // The two byte sets field_offset scans with: the separators and the line
 // terminator, and every byte that is not a separator.
 function field_sets(cfg: Cfg): Cfg {
-  var seps: u8[] = __alloc_u8(256);
-  var ink: u8[] = __alloc_u8(256);
-  var c: i32 = 0;
+  let seps: u8[] = __alloc_u8(256);
+  let ink: u8[] = __alloc_u8(256);
+  let c: i32 = 0;
   while (c < 256) {
     if (is_field_sep(c) || c == cfg.term) {
       seps = seps.with(c, 1 as u8);
@@ -348,7 +348,7 @@ function to_lower(c: i32): i32 {
 // 0x7f folds to itself, so the two encodings of one accented letter
 // stay different.
 function eq_fold(a: string, ao: i32, b: string, bo: i32, n: i32): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (to_lower(a[ao + i] as i32) != to_lower(b[bo + i] as i32)) {
       return false;
@@ -362,7 +362,7 @@ function eq_fold(a: string, ao: i32, b: string, bo: i32, n: i32): boolean {
 // held. Incoming lines are compared in their read buffer, without
 // materialising another key for each line.
 function key_of(line: string, at: i32, len: i32, field: i32, cfg: Cfg): string {
-  var n: i32 = cap(cfg.check_chars, len - 1 - field);
+  let n: i32 = cap(cfg.check_chars, len - 1 - field);
   return slice_unchecked(line, at + field, at + field + n).to_string();
 }
 
@@ -372,7 +372,7 @@ function key_of(line: string, at: i32, len: i32, field: i32, cfg: Cfg): string {
 // only if the truncated LENGTHS match too: `uniq -w5` finds `ab` and
 // `a` different.
 function same_key(a: string, at: i32, len: i32, af: i32, key: string, cfg: Cfg): boolean {
-  var an: i32 = cap(cfg.check_chars, len - 1 - af);
+  let an: i32 = cap(cfg.check_chars, len - 1 - af);
   if (an != key.len()) {
     return false;
   }
@@ -406,43 +406,43 @@ function write_block(): i32 {
 // line that spans two blocks is joined into `carry` and read from there
 // instead. Output is pushed range by range into the writer's builder.
 function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
-  var out: io_buffered.BufWriter = io_buffered.buf_writer_new(w, write_block());
-  var h: usize = out.handle();
-  var delim: string = string_from_bytes_unchecked([cfg.term as u8]);
-  var block: i32 = write_block();
+  let out: io_buffered.BufWriter = io_buffered.buf_writer_new(w, write_block());
+  let h: usize = out.handle();
+  let delim: string = string_from_bytes_unchecked([cfg.term as u8]);
+  let block: i32 = write_block();
   // The three fields the per-line path reads every time, in locals: the
   // loop below runs once per input line and a struct field is a load.
-  var term: i32 = cfg.term;
-  var plain: boolean = cfg.plain;
-  var grouped: boolean = cfg.grouping != gm_none();
+  let term: i32 = cfg.term;
+  let plain: boolean = cfg.plain;
+  let grouped: boolean = cfg.grouping != gm_none();
 
-  var chunk: string = "";
-  var pos: i32 = 0;
-  var eof: boolean = false;
-  var carry: string = "";
+  let chunk: string = "";
+  let pos: i32 = 0;
+  let eof: boolean = false;
+  let carry: string = "";
 
   // The held line is the range `[pat, pat + plen)` of `prev`: the block
   // it was read from, or the carry it was joined in, never a copy.
-  var prev: string = "";
-  var pat: i32 = 0;
-  var plen: i32 = 0;
+  let prev: string = "";
+  let pat: i32 = 0;
+  let plen: i32 = 0;
   // The held line's compared field, kept alongside it for every mode
   // but the plain one, where the field IS the line.
-  var prev_key: string = "";
-  var have_prev: boolean = false;
-  var match_count: u64 = 0 as u64;
-  var first_delimiter: boolean = true;
-  var first_group_printed: boolean = false;
+  let prev_key: string = "";
+  let have_prev: boolean = false;
+  let match_count: u64 = 0 as u64;
+  let first_delimiter: boolean = true;
+  let first_group_printed: boolean = false;
 
   while (true) {
     // ---- the next line, as (chunk, at, len) or as `carry` -------------
-    var at: i32 = 0;
-    var len: i32 = 0;
-    var spanned: boolean = false;
-    var got: boolean = false;
+    let at: i32 = 0;
+    let len: i32 = 0;
+    let spanned: boolean = false;
+    let got: boolean = false;
     carry = "";
     while (true) {
-      var j: i32 = __memchr(chunk, term, pos);
+      let j: i32 = __memchr(chunk, term, pos);
       if (j >= 0) {
         at = pos;
         len = j + 1 - pos;
@@ -487,7 +487,7 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
       break;
     }
     // The line is `src[at, at + len)`.
-    var src: string = chunk;
+    let src: string = chunk;
     if (spanned) {
       src = carry;
       at = 0;
@@ -495,11 +495,11 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
     }
 
     // ---- compare it with the line held --------------------------------
-    var field: i32 = 0;
+    let field: i32 = 0;
     if (cfg.skip_fields > 0 as u64 || cfg.skip_chars > 0 as u64) {
       field = field_offset(src, at, len, cfg);
     }
-    var matched: boolean = false;
+    let matched: boolean = false;
     if (have_prev) {
       if (plain) {
         // Nothing skipped, no width, no folding: the whole line INCLUDING
@@ -605,7 +605,7 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
 
 // `-c`'s count: GNU's `%7` PRIuMAX and a blank.
 function push_count(h: usize, v: u64): void {
-  var nd: i32 = io_buffered.buf_u64_len(v);
+  let nd: i32 = io_buffered.buf_u64_len(v);
   while (nd < 7) {
     buf_push_byte(h, 32);
     nd = nd + 1;
@@ -641,8 +641,8 @@ function take_file(f: Files, tok: string): Files {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var opts: gnu.Opt[] = [];
+  let argv: string[] = args();
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("c", "count", opt_count()));
   opts = opts.append(gnu.flag("d", "repeated", opt_repeated()));
   // `-D` and `--all-repeated` are one option to GNU, and the two
@@ -658,29 +658,29 @@ pub function main(): i32 {
   opts = opts.append(gnu.valued("s", "skip-chars", opt_skip_chars()));
   opts = opts.append(gnu.valued("w", "check-chars", opt_check_chars()));
   opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
-  var d: i32 = 0;
+  let d: i32 = 0;
   while (d < 10) {
     opts = opts.append(gnu.flag(slice_unchecked("0123456789", d, d + 1) + "", "", opt_digit(d)));
     d = d + 1;
   }
 
-  var cfg: Cfg = Cfg { count: false, unique: true, first_repeated: true, later_repeated: false, delimit: dm_none(), grouping: gm_none(), skip_fields: 0 as u64, skip_chars: 0 as u64, check_chars: size_max(), ignore_case: false, term: 10, plain: true, seps: [], ink: [] };
+  let cfg: Cfg = Cfg { count: false, unique: true, first_repeated: true, later_repeated: false, delimit: dm_none(), grouping: gm_none(), skip_fields: 0 as u64, skip_chars: 0 as u64, check_chars: size_max(), ignore_case: false, term: 10, plain: true, seps: [], ink: [] };
   // gnulib tracks where the last skip-fields count came from, because a
   // digit after `-f` starts a new number and a digit after a digit
   // continues one: 0 nothing yet, 1 `-f`, 2 the obsolete digits.
-  var sfo: i32 = 0;
+  let sfo: i32 = 0;
 
-  var files: Files = Files { n: 0, in_name: "-", out_name: "-" };
-  var posixly: boolean = false;
+  let files: Files = Files { n: 0, in_name: "-", out_name: "-" };
+  let posixly: boolean = false;
   match (env("POSIXLY_CORRECT")) {
     Some(_) => {
       posixly = true;
     },
     None => {}
   }
-  var obsolete_plus: boolean = obsolete_plus_allowed();
+  let obsolete_plus: boolean = obsolete_plus_allowed();
 
-  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "uniq", help_text(), 1).return_in_order();
+  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "uniq", help_text(), 1).return_in_order();
   while (true) {
     // POSIXLY_CORRECT ends the option scan at the first FILE operand,
     // which is not the same as the first operand: `+2` before one is
@@ -689,20 +689,20 @@ pub function main(): i32 {
       g = g.stop();
       break;
     }
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
-    var done: boolean = false;
+    let done: boolean = false;
     match (r.0) {
       Some(m) => {
         if (m.id == gnu.operand_id()) {
-          var used: boolean = false;
+          let used: boolean = false;
           if (obsolete_plus && m.value.len() > 0 && m.value[0] as i32 == 43) {
-            var p: (u64, i32) = parse_size(m.value);
+            let p: (u64, i32) = parse_size(m.value);
             // 9.5 takes a `+N` that overflows as well as one that fits,
             // clamping either to IDX_MAX. Only a MALFORMED one stays a
             // file name.
             if (p.1 == 0 || p.1 == 2) {
-              var n: u64 = p.0;
+              let n: u64 = p.0;
               if (p.1 == 2 || n > 9223372036854775807 as u64) {
                 n = 9223372036854775807 as u64;
               }
@@ -720,17 +720,17 @@ pub function main(): i32 {
         } else if (m.id == opt_all_short()) {
           cfg = Cfg { ...cfg, unique: false, later_repeated: true, delimit: dm_none() };
         } else if (m.id == opt_all_long()) {
-          var dm: i32 = dm_none();
+          let dm: i32 = dm_none();
           if (m.has_value) {
-            var names: string[] = ["none", "prepend", "separate"];
+            let names: string[] = ["none", "prepend", "separate"];
             dm = argmatch(m.value, names, "--all-repeated");
           }
           cfg = Cfg { ...cfg, unique: false, later_repeated: true, delimit: dm };
         } else if (m.id == opt_group()) {
-          var gm: i32 = gm_separate();
+          let gm: i32 = gm_separate();
           if (m.has_value) {
-            var gnames: string[] = ["prepend", "append", "separate", "both"];
-            var k: i32 = argmatch(m.value, gnames, "--group");
+            let gnames: string[] = ["prepend", "append", "separate", "both"];
+            let k: i32 = argmatch(m.value, gnames, "--group");
             if (k == 0) {
               gm = gm_prepend();
             } else if (k == 1) {
@@ -754,8 +754,8 @@ pub function main(): i32 {
         } else if (m.id == opt_zero()) {
           cfg = Cfg { ...cfg, term: 0 };
         } else {
-          var digit: u64 = (m.id - opt_digit(0)) as u64;
-          var acc: u64 = cfg.skip_fields;
+          let digit: u64 = (m.id - opt_digit(0)) as u64;
+          let acc: u64 = cfg.skip_fields;
           if (sfo == 1) {
             acc = 0 as u64;
           }
@@ -774,8 +774,8 @@ pub function main(): i32 {
   // Whatever the scan stopped short of — the tail after `--`, or after
   // POSIXLY_CORRECT ended it — is a plain file operand: the `+N` rule
   // only ever applied to a token getopt itself handed back.
-  var rest: string[] = g.operands();
-  var i: i32 = 0;
+  let rest: string[] = g.operands();
+  let i: i32 = 0;
   while (i < rest.len()) {
     files = take_file(files, rest[i]);
     i = i + 1;
@@ -795,7 +795,7 @@ pub function main(): i32 {
     cfg = field_sets(cfg);
   }
 
-  var r: Reader = stdin();
+  let r: Reader = stdin();
   if (files.in_name != "-") {
     match (open_reader(files.in_name)) {
       Ok(f) => {
@@ -807,7 +807,7 @@ pub function main(): i32 {
       }
     }
   }
-  var w: Writer = stdout();
+  let w: Writer = stdout();
   if (files.out_name != "-") {
     match (open_writer(files.out_name)) {
       Ok(f) => {

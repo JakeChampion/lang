@@ -35,7 +35,7 @@ var numericMethodsIRCases = []struct {
 function i64_min(a: i64, b: i64): i64 { if (a < b) { return a; } return b; }
 function i64_max(a: i64, b: i64): i64 { if (a > b) { return a; } return b; }
 function main(): i32 {
-    var r: i64 = i64_abs(0 as i64 - 7 as i64) + i64_min(5 as i64, 9 as i64) + i64_max(5 as i64, 9 as i64);
+    let r: i64 = i64_abs(0 as i64 - 7 as i64) + i64_min(5 as i64, 9 as i64) + i64_max(5 as i64, 9 as i64);
     if (i64_max(i64_min(12 as i64, 9 as i64), 3 as i64) == 9 as i64) { r = r + 100 as i64; }
     return r as i32;
 }`},
@@ -44,7 +44,7 @@ function main(): i32 {
 	{"u32-unsigned-min-max", `function u32_min(a: u32, b: u32): u32 { if (a < b) { return a; } return b; }
 function u32_max(a: u32, b: u32): u32 { if (a > b) { return a; } return b; }
 function main(): i32 {
-    var big: u32 = 4000000000 as u32; var one: u32 = 1 as u32;
+    let big: u32 = 4000000000 as u32; let one: u32 = 1 as u32;
     if (u32_max(big, one) == big && u32_min(big, one) == one) { return 42; }
     return 0;
 }`},
@@ -54,37 +54,37 @@ function main(): i32 {
 	// IR path; oracle-checked, so the wide-shift logic must be correct, not just
 	// stable. count_zeros(7)=61, then four predicate hits → 65.
 	{"i64-bitops", `function count_ones(n: i64): i32 {
-    var u: u64 = n as u64; var c: i32 = 0; var i: i32 = 0;
+    let u: u64 = n as u64; let c: i32 = 0; let i: i32 = 0;
     while (i < 64) { if ((u & (1 as u64)) != (0 as u64)) { c = c + 1; } u = u >> (1 as u64); i = i + 1; }
     return c;
 }
 function count_zeros(n: i64): i32 { return 64 - count_ones(n); }
 function leading_zeros(n: i64): i32 {
     if (n == (0 as i64)) { return 64; }
-    var u: u64 = n as u64; var top: u64 = (1 as u64) << (63 as u64); var c: i32 = 0;
+    let u: u64 = n as u64; let top: u64 = (1 as u64) << (63 as u64); let c: i32 = 0;
     while ((u & top) == (0 as u64)) { c = c + 1; u = u << (1 as u64); }
     return c;
 }
 function trailing_zeros(n: i64): i32 {
     if (n == (0 as i64)) { return 64; }
-    var u: u64 = n as u64; var c: i32 = 0;
+    let u: u64 = n as u64; let c: i32 = 0;
     while ((u & (1 as u64)) == (0 as u64)) { c = c + 1; u = u >> (1 as u64); }
     return c;
 }
 function rotl(n: i64, bits: i32): i64 {
-    var k: i32 = bits & 63; if (k == 0) { return n; }
-    var u: u64 = n as u64;
-    var left: u64 = u << (k as u64); var right: u64 = u >> ((64 - k) as u64);
+    let k: i32 = bits & 63; if (k == 0) { return n; }
+    let u: u64 = n as u64;
+    let left: u64 = u << (k as u64); let right: u64 = u >> ((64 - k) as u64);
     return (left | right) as i64;
 }
 function rotr(n: i64, bits: i32): i64 {
-    var k: i32 = bits & 63; if (k == 0) { return n; }
-    var u: u64 = n as u64;
-    var right: u64 = u >> (k as u64); var left: u64 = u << ((64 - k) as u64);
+    let k: i32 = bits & 63; if (k == 0) { return n; }
+    let u: u64 = n as u64;
+    let right: u64 = u >> (k as u64); let left: u64 = u << ((64 - k) as u64);
     return (left | right) as i64;
 }
 function main(): i32 {
-    var r: i32 = count_zeros(7 as i64);                             // 61
+    let r: i32 = count_zeros(7 as i64);                             // 61
     if (leading_zeros(1 as i64) == 63) { r = r + 1; }              // 62
     if (trailing_zeros(8 as i64) == 3) { r = r + 1; }             // 63
     if (rotl(1 as i64, 1) == (2 as i64)) { r = r + 1; }          // 64
@@ -96,29 +96,29 @@ function main(): i32 {
 	// (never signed </>) so the x86-64 IR path is exact for unsigned; oracle-
 	// checked. count_ones(255)=8, then four predicate hits → 12.
 	{"u32-bitops", `function count_ones(n: u32): i32 {
-    var u: u32 = n; var c: i32 = 0; var i: i32 = 0;
+    let u: u32 = n; let c: i32 = 0; let i: i32 = 0;
     while (i < 32) { if ((u & (1 as u32)) != (0 as u32)) { c = c + 1; } u = u >> (1 as u32); i = i + 1; }
     return c;
 }
 function leading_zeros(n: u32): i32 {
     if (n == (0 as u32)) { return 32; }
-    var u: u32 = n; var top: u32 = (1 as u32) << (31 as u32); var c: i32 = 0;
+    let u: u32 = n; let top: u32 = (1 as u32) << (31 as u32); let c: i32 = 0;
     while ((u & top) == (0 as u32)) { c = c + 1; u = u << (1 as u32); }
     return c;
 }
 function trailing_zeros(n: u32): i32 {
     if (n == (0 as u32)) { return 32; }
-    var u: u32 = n; var c: i32 = 0;
+    let u: u32 = n; let c: i32 = 0;
     while ((u & (1 as u32)) == (0 as u32)) { c = c + 1; u = u >> (1 as u32); }
     return c;
 }
 function rotl(n: u32, bits: i32): u32 {
-    var k: i32 = bits & 31; if (k == 0) { return n; }
-    var left: u32 = n << (k as u32); var right: u32 = n >> ((32 - k) as u32);
+    let k: i32 = bits & 31; if (k == 0) { return n; }
+    let left: u32 = n << (k as u32); let right: u32 = n >> ((32 - k) as u32);
     return left | right;
 }
 function main(): i32 {
-    var r: i32 = count_ones(255 as u32);                            // 8
+    let r: i32 = count_ones(255 as u32);                            // 8
     if (leading_zeros(1 as u32) == 31) { r = r + 1; }             // 9
     if (trailing_zeros(8 as u32) == 3) { r = r + 1; }            // 10
     if (rotl(1 as u32, 1) == (2 as u32)) { r = r + 1; }         // 11
@@ -129,19 +129,19 @@ function main(): i32 {
 	// reversal over unsigned shift/mask lanes. u32 swaps 4 bytes, u64 loops
 	// over 8; ==-only, oracle-checked. Four hits → 42.
 	{"int-byte-swap", `function u32_bswap(n: u32): u32 {
-    var b0: u32 = n & (255 as u32);
-    var b1: u32 = (n >> (8 as u32)) & (255 as u32);
-    var b2: u32 = (n >> (16 as u32)) & (255 as u32);
-    var b3: u32 = (n >> (24 as u32)) & (255 as u32);
+    let b0: u32 = n & (255 as u32);
+    let b1: u32 = (n >> (8 as u32)) & (255 as u32);
+    let b2: u32 = (n >> (16 as u32)) & (255 as u32);
+    let b3: u32 = (n >> (24 as u32)) & (255 as u32);
     return (b0 << (24 as u32)) | (b1 << (16 as u32)) | (b2 << (8 as u32)) | b3;
 }
 function u64_bswap(n: u64): u64 {
-    var r: u64 = 0 as u64; var i: i32 = 0;
-    while (i < 8) { var b: u64 = (n >> ((i * 8) as u64)) & (255 as u64); r = r | (b << (((7 - i) * 8) as u64)); i = i + 1; }
+    let r: u64 = 0 as u64; let i: i32 = 0;
+    while (i < 8) { let b: u64 = (n >> ((i * 8) as u64)) & (255 as u64); r = r | (b << (((7 - i) * 8) as u64)); i = i + 1; }
     return r;
 }
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (u32_bswap(16909060 as u32) == (67305985 as u32)) { r = r + 10; }
     if (u32_bswap(4278190080 as u32) == (255 as u32)) { r = r + 10; }
     if (u64_bswap(72623859790382856 as u64) == (578437695752307201 as u64)) { r = r + 10; }
@@ -153,7 +153,7 @@ function main(): i32 {
 	// ==/!=-only, oracle-checked. Four hits → 42.
 	{"int-bit-accessors", `function i64_bit(n: i64, i: i32): boolean {
     if (i < 0 || i >= 64) { return false; }
-    var mask: u64 = (1 as u64) << (i as u64);
+    let mask: u64 = (1 as u64) << (i as u64);
     return ((n as u64) & mask) != (0 as u64);
 }
 function i64_set(n: i64, i: i32): i64 {
@@ -162,11 +162,11 @@ function i64_set(n: i64, i: i32): i64 {
 }
 function i64_clear(n: i64, i: i32): i64 {
     if (i < 0 || i >= 64) { return n; }
-    var inv: u64 = (((0 as i64) - (1 as i64)) as u64) ^ ((1 as u64) << (i as u64));
+    let inv: u64 = (((0 as i64) - (1 as i64)) as u64) ^ ((1 as u64) << (i as u64));
     return ((n as u64) & inv) as i64;
 }
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (i64_bit(5 as i64, 0)) { r = r + 10; }
     if (!i64_bit(5 as i64, 1)) { r = r + 10; }
     if (i64_set(0 as i64, 3) == (8 as i64)) { r = r + 10; }
@@ -178,7 +178,7 @@ function main(): i32 {
 	// sentinel standing in for None; oracle-checked. Four hits → 42.
 	{"int-checked-div", `function i64_cdiv(n: i64, other: i64): i64 {
     if (other == (0 as i64)) { return (0 as i64) - (1 as i64); }
-    var min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    let min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
     if (n == min64 && other == ((0 as i64) - (1 as i64))) { return (0 as i64) - (1 as i64); }
     return n / other;
 }
@@ -187,10 +187,10 @@ function u32_cdiv(n: u32, other: u32): i32 {
     return (n / other) as i32;
 }
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (i64_cdiv(10 as i64, 2 as i64) == (5 as i64)) { r = r + 10; }
     if (i64_cdiv(10 as i64, 0 as i64) == ((0 as i64) - (1 as i64))) { r = r + 10; }
-    var min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    let min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
     if (i64_cdiv(min64, (0 as i64) - (1 as i64)) == ((0 as i64) - (1 as i64))) { r = r + 10; }
     if (u32_cdiv(9 as u32, 3 as u32) == 3) { r = r + 12; }
     return r;
@@ -204,24 +204,24 @@ function main(): i32 {
 	// so the count must be right, not just stable. Five hits → 42.
 	{"int-log10-floor", `function i32_log10(n: i32): i32 {
     if (n <= 0) { return 0 - 1; }
-    var r: i32 = 0; var m: i32 = n;
+    let r: i32 = 0; let m: i32 = n;
     while (m >= 10) { m = m / 10; r = r + 1; }
     return r;
 }
 function i64_log10(n: i64): i32 {
     if (n <= (0 as i64)) { return 0 - 1; }
-    var r: i32 = 0; var m: i64 = n;
+    let r: i32 = 0; let m: i64 = n;
     while (m >= (10 as i64)) { m = m / (10 as i64); r = r + 1; }
     return r;
 }
 function u32_log10(n: u32): i32 {
     if (n == (0 as u32)) { return 0 - 1; }
-    var r: i32 = 0; var m: u32 = n;
+    let r: i32 = 0; let m: u32 = n;
     while (m >= (10 as u32)) { m = m / (10 as u32); r = r + 1; }
     return r;
 }
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (i32_log10(999) == 2) { r = r + 10; }
     if (i32_log10(1000) == 3) { r = r + 10; }
     if (i32_log10(0) == (0 - 1)) { r = r + 10; }
@@ -237,23 +237,23 @@ function main(): i32 {
 	// calls on the IR path; oracle-checked, so the overflow verdict must be
 	// right, not just stable. Four hits → 42.
 	{"int-checked-mul", `function i32_cmul(n: i32, other: i32): i64 {
-    var p: i64 = (n as i64) * (other as i64);
-    var lo: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);
-    var hi: i64 = 2147483647 as i64;
+    let p: i64 = (n as i64) * (other as i64);
+    let lo: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);
+    let hi: i64 = 2147483647 as i64;
     if (p < lo || p > hi) { return (0 as i64) - 1; }
     return p;
 }
 function i64_cmul(n: i64, other: i64): i64 {
     if (n == (0 as i64) || other == (0 as i64)) { return 0 as i64; }
-    var min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
-    var neg1: i64 = (0 as i64) - (1 as i64);
+    let min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    let neg1: i64 = (0 as i64) - (1 as i64);
     if ((n == min64 && other == neg1) || (other == min64 && n == neg1)) { return (0 as i64) - 2; }
-    var p: i64 = n * other;
+    let p: i64 = n * other;
     if (p / n != other) { return (0 as i64) - 2; }
     return p;
 }
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (i32_cmul(6, 7) == (42 as i64)) { r = r + 10; }
     if (i32_cmul(100000, 100000) == ((0 as i64) - 1)) { r = r + 10; }        // 10^10 overflows i32
     if (i64_cmul(6 as i64, 7 as i64) == (42 as i64)) { r = r + 11; }
@@ -267,18 +267,18 @@ function main(): i32 {
 	// sign test across function calls on the IR path; oracle-checked, so both
 	// the clamp direction and the in-range path must be right. Five hits → 42.
 	{"int-saturating-mul", `function i32_smul(n: i32, other: i32): i32 {
-    var p: i64 = (n as i64) * (other as i64);
+    let p: i64 = (n as i64) * (other as i64);
     if (p > (2147483647 as i64)) { return 2147483647; }
     if (p < ((0 as i64) - (2147483647 as i64) - (1 as i64))) { return 0 - 2147483647 - 1; }
     return p as i32;
 }
 function i64_smul(n: i64, other: i64): i64 {
     if (n == (0 as i64) || other == (0 as i64)) { return 0 as i64; }
-    var max64: i64 = 9223372036854775807 as i64;
-    var min64: i64 = (0 as i64) - max64 - (1 as i64);
-    var neg1: i64 = (0 as i64) - (1 as i64);
+    let max64: i64 = 9223372036854775807 as i64;
+    let min64: i64 = (0 as i64) - max64 - (1 as i64);
+    let neg1: i64 = (0 as i64) - (1 as i64);
     if ((n == min64 && other == neg1) || (other == min64 && n == neg1)) { return max64; }
-    var p: i64 = n * other;
+    let p: i64 = n * other;
     if (p / n != other) {
         if ((n > (0 as i64)) == (other > (0 as i64))) { return max64; }
         return min64;
@@ -286,9 +286,9 @@ function i64_smul(n: i64, other: i64): i64 {
     return p;
 }
 function main(): i32 {
-    var max32: i32 = 2147483647;
-    var min32: i32 = 0 - 2147483647 - 1;
-    var r: i32 = 0;
+    let max32: i32 = 2147483647;
+    let min32: i32 = 0 - 2147483647 - 1;
+    let r: i32 = 0;
     if (i32_smul(6, 7) == 42) { r = r + 8; }
     if (i32_smul(100000, 100000) == max32) { r = r + 8; }               // +overflow -> MAX
     if (i32_smul(0 - 100000, 100000) == min32) { r = r + 8; }           // -overflow -> MIN
@@ -302,23 +302,23 @@ function main(): i32 {
 	// calls on the IR path (same shape as int-byte-swap), plus the involution.
 	// Oracle-checked. Five hits → 42.
 	{"int-reverse-bits", `function i32_rev(n: i32): i32 {
-    var u: u32 = n as u32;
-    var r: u32 = 0 as u32;
-    var i: i32 = 0;
+    let u: u32 = n as u32;
+    let r: u32 = 0 as u32;
+    let i: i32 = 0;
     while (i < 32) { r = (r << (1 as u32)) | (u & (1 as u32)); u = u >> (1 as u32); i = i + 1; }
     return r as i32;
 }
 function i64_rev(n: i64): i64 {
-    var u: u64 = n as u64;
-    var r: u64 = 0 as u64;
-    var i: i32 = 0;
+    let u: u64 = n as u64;
+    let r: u64 = 0 as u64;
+    let i: i32 = 0;
     while (i < 64) { r = (r << (1 as u64)) | (u & (1 as u64)); u = u >> (1 as u64); i = i + 1; }
     return r as i64;
 }
 function main(): i32 {
-    var i32min: i32 = 0 - 2147483647 - 1;
-    var i64min: i64 = (0 as i64) - 9223372036854775807 - 1;
-    var r: i32 = 0;
+    let i32min: i32 = 0 - 2147483647 - 1;
+    let i64min: i64 = (0 as i64) - 9223372036854775807 - 1;
+    let r: i32 = 0;
     if (i32_rev(1) == i32min) { r = r + 8; }                          // bit 0 -> bit 31
     if (i32_rev(15) == (0 - 268435456)) { r = r + 8; }               // 0x0000000F -> 0xF0000000
     if (i32_rev(i32_rev(12345)) == 12345) { r = r + 8; }            // involution
@@ -332,22 +332,22 @@ function main(): i32 {
 	// already covered by int-checked-div; this adds i64 %). Oracle-checked, so
 	// the negative-dividend rounding must be right. Five hits → 42.
 	{"int-euclid", `function i32_de(n: i32, rhs: i32): i32 {
-    var q: i32 = n / rhs;
+    let q: i32 = n / rhs;
     if (n % rhs < 0) { if (rhs > 0) { return q - 1; } return q + 1; }
     return q;
 }
 function i32_re(n: i32, rhs: i32): i32 {
-    var r: i32 = n % rhs;
+    let r: i32 = n % rhs;
     if (r < 0) { if (rhs < 0) { return r - rhs; } return r + rhs; }
     return r;
 }
 function i64_re(n: i64, rhs: i64): i64 {
-    var r: i64 = n % rhs;
+    let r: i64 = n % rhs;
     if (r < (0 as i64)) { if (rhs < (0 as i64)) { return r - rhs; } return r + rhs; }
     return r;
 }
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (i32_de(0 - 7, 3) == (0 - 3)) { r = r + 8; }                  // rounds away from zero
     if (i32_re(0 - 7, 3) == 2) { r = r + 8; }                        // non-negative remainder
     if (i32_re(0 - 1, 3) == 2) { r = r + 8; }                        // wrap-around
@@ -364,11 +364,11 @@ function main(): i32 {
 	// interpreter. Five hits → 42.
 	{"int-checked-pow", `function i32_cpow(n: i32, exp: i32): i64 {
     if (exp < 0) { return (0 as i64) - 1; }
-    var result: i64 = 1 as i64;
-    var base: i64 = n as i64;
-    var e: i32 = exp;
-    var lo: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);
-    var hi: i64 = 2147483647 as i64;
+    let result: i64 = 1 as i64;
+    let base: i64 = n as i64;
+    let e: i32 = exp;
+    let lo: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);
+    let hi: i64 = 2147483647 as i64;
     while (e > 0) {
         if (e % 2 == 1) {
             result = result * base;
@@ -383,7 +383,7 @@ function main(): i32 {
     return result;
 }
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (i32_cpow(2, 10) == (1024 as i64)) { r = r + 8; }
     if (i32_cpow(2, 30) == (1073741824 as i64)) { r = r + 8; }       // exactly fits
     if (i32_cpow(2, 31) == ((0 as i64) - 2)) { r = r + 8; }          // overflow sentinel
@@ -398,26 +398,26 @@ function main(): i32 {
 	// both the wrapped value and the flag must match the interpreter. Four
 	// hits → 42.
 	{"int-overflowing", `function i32_oadd(n: i32, other: i32): (i32, boolean) {
-    var r: i32 = n + other;
+    let r: i32 = n + other;
     return (r, (n > 0 && other > 0 && r < 0) || (n < 0 && other < 0 && r >= 0));
 }
 function i32_omul(n: i32, other: i32): (i32, boolean) {
-    var p: i64 = (n as i64) * (other as i64);
-    var lo: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);
-    var hi: i64 = 2147483647 as i64;
+    let p: i64 = (n as i64) * (other as i64);
+    let lo: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);
+    let hi: i64 = 2147483647 as i64;
     return (p as i32, p < lo || p > hi);
 }
 function main(): i32 {
-    var max32: i32 = 2147483647;
-    var min32: i32 = 0 - 2147483647 - 1;
-    var r: i32 = 0;
-    var (a1, o1) = i32_oadd(2, 3);
+    let max32: i32 = 2147483647;
+    let min32: i32 = 0 - 2147483647 - 1;
+    let r: i32 = 0;
+    let (a1, o1) = i32_oadd(2, 3);
     if (a1 == 5 && !o1) { r = r + 10; }
-    var (a2, o2) = i32_oadd(max32, 1);
+    let (a2, o2) = i32_oadd(max32, 1);
     if (a2 == min32 && o2) { r = r + 11; }                          // MAX+1 wraps to MIN
-    var (a3, o3) = i32_omul(46340, 46340);
+    let (a3, o3) = i32_omul(46340, 46340);
     if (a3 == 2147395600 && !o3) { r = r + 10; }
-    var (a4, o4) = i32_omul(100000, 100000);
+    let (a4, o4) = i32_omul(100000, 100000);
     if (o4) { r = r + 11; }                                        // 10^10 overflows
     return r;
 }`},
@@ -437,11 +437,11 @@ function i32_cabs(n: i32): i64 {
     return n as i64;
 }
 function main(): i32 {
-    var min32: i32 = 0 - 2147483647 - 1;
-    var r: i32 = 0;
-    var (a1, o1) = i32_oneg(5);
+    let min32: i32 = 0 - 2147483647 - 1;
+    let r: i32 = 0;
+    let (a1, o1) = i32_oneg(5);
     if (a1 == (0 - 5) && !o1) { r = r + 10; }
-    var (a2, o2) = i32_oneg(min32);
+    let (a2, o2) = i32_oneg(min32);
     if (a2 == min32 && o2) { r = r + 11; }                          // MIN negates to itself
     if (i32_cabs(0 - 7) == (7 as i64)) { r = r + 10; }
     if (i32_cabs(min32) == ((0 as i64) - 2147483648)) { r = r + 11; }  // MIN sentinel
@@ -462,7 +462,7 @@ function i32_cshr(n: i32, rhs: i32): i64 {
     return (n >> rhs) as i64;
 }
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (i32_cshl(1, 4) == (16 as i64)) { r = r + 8; }
     if (i32_cshl(1, 32) == ((0 as i64) - 9999999999)) { r = r + 8; }    // out-of-range sentinel
     if (i32_cshr(0 - 8, 2) == ((0 as i64) - 2)) { r = r + 8; }          // arithmetic shr
@@ -481,8 +481,8 @@ function main(): i32 {
     return (n % other) as i64;
 }
 function main(): i32 {
-    var min32: i32 = 0 - 2147483647 - 1;
-    var r: i32 = 0;
+    let min32: i32 = 0 - 2147483647 - 1;
+    let r: i32 = 0;
     if (i32_crem(17, 5) == (2 as i64)) { r = r + 8; }
     if (i32_crem(0 - 17, 5) == ((0 as i64) - 2)) { r = r + 8; }        // sign of dividend
     if (i32_crem(5, 0) == ((0 as i64) - 9999999999)) { r = r + 8; }    // divide-by-zero sentinel
@@ -497,25 +497,25 @@ function main(): i32 {
 	// % + a tuple return + destructure + the MIN branch on the IR path.
 	// Oracle-checked. Four hits → 42.
 	{"int-overflowing-div", `function i32_odiv(n: i32, other: i32): (i32, boolean) {
-    var min32: i32 = 0 - 2147483647 - 1;
+    let min32: i32 = 0 - 2147483647 - 1;
     if (n == min32 && other == (0 - 1)) { return (min32, true); }
     return (n / other, false);
 }
 function i32_orem(n: i32, other: i32): (i32, boolean) {
-    var min32: i32 = 0 - 2147483647 - 1;
+    let min32: i32 = 0 - 2147483647 - 1;
     if (n == min32 && other == (0 - 1)) { return (0, true); }
     return (n % other, false);
 }
 function main(): i32 {
-    var min32: i32 = 0 - 2147483647 - 1;
-    var r: i32 = 0;
-    var (q1, o1) = i32_odiv(17, 5);
+    let min32: i32 = 0 - 2147483647 - 1;
+    let r: i32 = 0;
+    let (q1, o1) = i32_odiv(17, 5);
     if (q1 == 3 && !o1) { r = r + 10; }
-    var (q2, o2) = i32_odiv(min32, 0 - 1);
+    let (q2, o2) = i32_odiv(min32, 0 - 1);
     if (q2 == min32 && o2) { r = r + 11; }                          // MIN / -1 wraps to MIN
-    var (m1, p1) = i32_orem(min32, 0 - 1);
+    let (m1, p1) = i32_orem(min32, 0 - 1);
     if (m1 == 0 && p1) { r = r + 10; }                              // MIN % -1 is 0, flag set
-    var (m2, p2) = i32_orem(0 - 17, 5);
+    let (m2, p2) = i32_orem(0 - 17, 5);
     if (m2 == (0 - 2) && !p2) { r = r + 11; }                       // sign of dividend
     return r;
 }`},
@@ -538,9 +538,9 @@ function i32_sabs(n: i32): i32 {
     return n;
 }
 function main(): i32 {
-    var max32: i32 = 2147483647;
-    var min32: i32 = 0 - 2147483647 - 1;
-    var r: i32 = 0;
+    let max32: i32 = 2147483647;
+    let min32: i32 = 0 - 2147483647 - 1;
+    let r: i32 = 0;
     if (i32_sdiv(17, 5) == 3) { r = r + 8; }
     if (i32_sdiv(min32, 0 - 1) == max32) { r = r + 8; }            // MIN / -1 clamps to MAX
     if (i32_sneg(min32) == max32) { r = r + 8; }                   // -MIN clamps to MAX
@@ -559,8 +559,8 @@ function main(): i32 {
     return n as u32;
 }
 function main(): i32 {
-    var min32: i32 = 0 - 2147483647 - 1;
-    var r: i32 = 0;
+    let min32: i32 = 0 - 2147483647 - 1;
+    let r: i32 = 0;
     if (i32_uabs(0 - 5) == (5 as u32)) { r = r + 10; }
     if (i32_uabs(7) == (7 as u32)) { r = r + 10; }
     if (i32_uabs(0) == (0 as u32)) { r = r + 11; }

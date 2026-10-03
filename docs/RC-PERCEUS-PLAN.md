@@ -199,7 +199,7 @@ fall into three categories:
 The value is being given to a new owner. The old owner still
 exists.
 
-- **Variable binding from another variable.** `var y = x` or
+- **Variable binding from another variable.** `let y = x` or
   `y = x` → inc on `x`'s value.
 - **Function-call argument.** `f(x)` → inc on `x` (the callee
   is the new owner; it'll dec when done).
@@ -250,8 +250,8 @@ mutates or copies.
 ## The example, walked through
 
 ```Fern
-var nfuncs: FuncDecl[] = into.funcs;        // (1)
-var fi: i32 = 0;
+let nfuncs: FuncDecl[] = into.funcs;        // (1)
+let fi: i32 = 0;
 while (fi < from.funcs.len()) {
     nfuncs = nfuncs.push(FuncDecl{...});    // (2)
     fi = fi + 1;
@@ -406,7 +406,7 @@ to return Map fixes the API and the semantics in one go.
 
 | Today | Target | Phase | Notes |
 |-------|--------|-------|-------|
-| `m.set(k, v): void` | `m.set(k, v): Map[K, V]` | 2 | **API SHIPPED (Phase 2c)** — value-returning, callers can write `m = m.set(k, v)`. Runtime still mutates in place underneath: aliased maps (`var m2 = m1; m2 = m2.set(k, v)`) see the mutation reflected in `m1`. The rc-check + copy path (full Map CoW) requires Phase 1e prereq (struct/handle rc layout); deferred to Phase 2d. |
+| `m.set(k, v): void` | `m.set(k, v): Map[K, V]` | 2 | **API SHIPPED (Phase 2c)** — value-returning, callers can write `m = m.set(k, v)`. Runtime still mutates in place underneath: aliased maps (`let m2 = m1; m2 = m2.set(k, v)`) see the mutation reflected in `m1`. The rc-check + copy path (full Map CoW) requires Phase 1e prereq (struct/handle rc layout); deferred to Phase 2d. |
 | `m.delete(k): bool` | `m.delete(k): (Map[K, V], bool)` | 2 | **API SHIPPED (Phase 2c)** — returns the (possibly new) map plus the present-before flag. Same aliasing caveat as `m.set` until Phase 2d. |
 | `m.clear(): void` | `m.clear(): Map[K, V]` | 2 | **API SHIPPED (Phase 2c)** — empties and returns the map. Same aliasing caveat as `m.set` until Phase 2d. |
 
@@ -522,8 +522,8 @@ type-category. Phase 1d covers ARRAYS only — strings, structs,
 enums, closures join in Phase 1e once their layout grows an rc
 slot. Eight slices, all merged:
 
-  - 1d-i  (#1069): inc on `var y = x;` ident-RHS
-  - 1d-ii (#1073): inc on `var y = h.items;` / `var y = m[i];`
+  - 1d-i  (#1069): inc on `let y = x;` ident-RHS
+  - 1d-ii (#1073): inc on `let y = h.items;` / `let y = m[i];`
   - 1d-iii (#1079): inc on `y = x;` ident reassignment
   - 1d-iv (#1081): inc on `f(arr)` call-arg pass
   - 1d-v  (#1085, #1088): dec on every array-typed param +
@@ -649,7 +649,7 @@ the wasm raw-_start `__fern_rc_dec` guard issue.
 
 `m.delete(k)` now returns `(Map[K,V], bool)` (map handle +
 found-flag); `m.clear()` returns `Map[K,V]`. Callers can chain
-or destructure: `var (m2, ok) = m.delete(k)` or inspect the
+or destructure: `let (m2, ok) = m.delete(k)` or inspect the
 bool alone with `m.delete(k).1`. Statement-position calls
 auto-discard via `OpDrop`.
 
@@ -684,7 +684,7 @@ The fix is the Perceus borrow model: **parameters are borrowed,
 not owned.** No caller-side inc, no callee-side exit dec. A Map
 passed to a function stays rc==1, so the callee mutates it in
 place (visible to the caller). A genuine local alias
-(`var m2 = m1`) still inc's at the Var/Assign site and so gets a
+(`let m2 = m1`) still inc's at the Var/Assign site and so gets a
 copy on write. Ownership transfers (Var init, struct/array/
 closure-capture stores, assignment) keep their inc. Net rc
 traffic across a call is unchanged (was +1/−1, now 0/0), so the
@@ -698,7 +698,7 @@ Closes the `Map.set` half of the gap left by Phase 2c. Built on
 the borrowed-parameter model above, which is what makes it sound:
 a Map mutated through a borrow stays rc==1 and is updated in place
 (ref semantics preserved for `f(m); m.set(...)`), while a genuine
-local alias (`var m2 = m1`) bumps rc and so copies.
+local alias (`let m2 = m1`) bumps rc and so copies.
 
 Shipped:
 
@@ -719,7 +719,7 @@ Shipped:
     per-entry sets stay rc==1 (in-place) without spurious copies.
 
 Test coverage: `Test{Arm64,X86_64,WASM}MapSetAliasedCopies` —
-`var m2 = m1; m2 = m2.set(...)` leaves `m1` intact. The existing
+`let m2 = m1; m2 = m2.set(...)` leaves `m1` intact. The existing
 defer / `query_parse` ref-mutation tests confirm function-passed
 maps still mutate in place under the borrow model.
 
@@ -740,7 +740,7 @@ the in-place delete/clear runs and the source alias keeps its
 entries.
 
 Test coverage: `Test{Arm64,X86_64,WASM}MapDeleteClearAliasedCopies`
-— `var (m3, _) = m2.delete(k)` and `m4 = m4.clear()` on an aliased
+— `let (m3, _) = m2.delete(k)` and `m4 = m4.clear()` on an aliased
 map leave the original intact.
 
 Prerequisites that landed during Phase 2-prep:
@@ -924,7 +924,7 @@ Phase 3 CANNOT start with the freelist — it must start by
      box dec — and the `is_unique` sentinel guard skips the
      sentinel-headered ones anyway. `Test{WASM,X86_64,Arm64}RcDropStructFields`
      pin: drop fires (aliased array field returns to rc 1), aliased
-     struct (`var h2 = h1`) does NOT double-drop, and nested
+     struct (`let h2 = h1`) does NOT double-drop, and nested
      struct/array fields stay value-correct with 0 over-releases.
      `TestSelfHostVM*` (heavy struct users) stay green.
    - **Enum payload drop (uniform case) — SHIPPED ON ALL THREE
@@ -979,7 +979,7 @@ Phase 3 CANNOT start with the freelist — it must start by
      the flat dec. (The UNIFORM enum path can't: the variant at the
      shared offset differs, so it keeps the type-agnostic flat dec.)
      Reachable because composite-literal RHS is now free-eligible (the
-     struct-escape PR), so `var nd = Variant(Foo{…})` enums are owned.
+     struct-escape PR), so `let nd = Variant(Foo{…})` enums are owned.
      A follow-up widened `dropFnNameFor` to ALL concrete user structs
      (not just rc-field-carrying ones), so a CHILDLESS nested-struct
      field / payload now frees its box too (genStructDropFn's field
@@ -1146,12 +1146,12 @@ Phase 3 CANNOT start with the freelist — it must start by
    **Widening slice — composite-literal locals + conditional-alias
    taint (DONE).** `rhsTainted` now returns false for a `StructLit` RHS
    (a fresh struct is OWNED, not an alias of a borrowed value — same as
-   the existing `ArrayLit` / `MakeClosure` cases), so `var s = S{…}`
+   the existing `ArrayLit` / `MakeClosure` cases), so `let s = S{…}`
    locals become free-eligible and reclaim their box at scope exit
    (previously they fell through `default: return true` and leaked).
    Enabling that surfaced a latent use-after-free the no-free default
    had masked: a local aliased through a CONDITIONAL value position —
-   `var v1 = if (c) { v0 } else { v0 }` or `var v1 = match (x) { … =>
+   `let v1 = if (c) { v0 } else { v0 }` or `let v1 = match (x) { … =>
    v0 }` — is not inc'd (the alias-inc only fires for a direct Ident
    RHS, and a per-arm inc can't be emitted unconditionally since some
    arms yield fresh rc=1 values), so freeing `v0` stranded `v1`. The
@@ -1429,13 +1429,13 @@ Backend-agnostic (it's in `lowerFunc`). Covered by `move_on_return_test`
 (fires for owned locals, keeps the inc for params); the differential
 gate confirms the elision is observationally invisible.
 
-**Move-on-alias (DONE).** Sibling slice: `var y = x` / `y = x` where
+**Move-on-alias (DONE).** Sibling slice: `let y = x` / `y = x` where
 the source `x` is an owned rc local whose alias is its LAST occurrence
 is dead afterward, so the alias transfer inc and `x`'s exit-sweep dec
 cancel. `computeMovedLocals` indexes every Ident in pre-order and moves
 the alias iff its read of `x` is `x`'s max-index occurrence — covering
-multi-use locals (`var n = x[0]; var y = x`), not just single-use, and
-ruling out any later read OR reassignment (a `var x` definition is not
+multi-use locals (`let n = x[0]; let y = x`), not just single-use, and
+ruling out any later read OR reassignment (a `let x` definition is not
 an Ident node, so the max-index occurrence also being the alias means
 nothing touches `x` afterward). Two dominance guards keep the global
 sweep-exclusion leak-free: the alias must be a TOP-LEVEL statement (not
@@ -1444,7 +1444,7 @@ it at the top level — so `x` is moved on every path to an exit. Aliases
 inside control flow keep their inc. Removing a balanced inc+dec pair
 can't change the net rc (safe); the last-occurrence + dominance guards
 prove no live read is stranded and nothing leaks. Composes with
-move-on-return: `var x = […]; var y = x; return y` carries zero rc
+move-on-return: `let x = […]; let y = x; return y` carries zero rc
 traffic. Covered by `TestMoveOnAlias{ElidesIncForSingleUseLocal,
 MovesAtLastUseEvenIfMultiUse, KeepsIncForBranchedAlias,
 KeepsIncWhenReadAgain}`.
@@ -1452,7 +1452,7 @@ KeepsIncWhenReadAgain}`.
 **Move-on-construction (DONE).** Third pair-cancellation slice, same
 structural shape: when a `StructLit` built at a dominating top-level
 statement consumes an OWNED rc local in a non-string rc-tracked field at
-the local's LAST use (`var s = Wrap{ inner: x }`, `x` dead after), the
+the local's LAST use (`let s = Wrap{ inner: x }`, `x` dead after), the
 field-init inc and x's exit-sweep dec cancel — x's single reference is
 moved into the field. `markConstructionMoves` (folded into
 `computeMovedLocals`) reuses the same last-occurrence + dominance guards
@@ -1464,13 +1464,13 @@ reuse-path) skip the inc when `b.moveSites[fieldIdent]` is set, and
 eligibility) releases the moved value exactly once, so the net rc is
 unchanged. Eligibility mirrors the inc/drop sides exactly
 (`arrElemIsRcTracked` field — array / struct / enum / closure / tuple;
-strings excluded). Also covers ARRAY LITERAL elements (`var xs = [x]`):
+strings excluded). Also covers ARRAY LITERAL elements (`let xs = [x]`):
 an owned rc local consumed as an element at its last use is moved into
 the array, balanced by `__fern_drop_arr_ptr`'s per-element dec at the
 array's drop. (Tuple / enum literals are deferred — enum payloads aren't
 inc'd on construction at all, so there's no pair to cancel; tuple
 element drop isn't wired the same way.) Composes with move-on-return
-(`var s = Wrap{inner: x}; return s` carries zero rc traffic) and with
+(`let s = Wrap{inner: x}; return s` carries zero rc traffic) and with
 the Phase 5 reuse path. Covered by IR `TestMoveOnConstruction{ElidesIncForLastUse,
 KeepsIncWhenReadAgain, KeepsIncForBranched, ComposesWithReturn}` + e2e
 `Test{X86_64,Arm64,WASM}MoveOnConstruction` (once / churn / returned,
@@ -1481,7 +1481,7 @@ extended to ARRAY elements, TUPLE elements, and CLOSURE captures (every
 container shapes.
 
 **Move-on-destructure (DONE).** Final pair-cancellation slice: a
-`var (a, b) = t` where `t` is an owned rc tuple local at its last use
+`let (a, b) = t` where `t` is an owned rc tuple local at its last use
 moves `t` into the destructure temp — the temp's box-aliasing inc and
 `t`'s exit-sweep dec cancel. Only the tuple-BOX inc/dec pair is removed;
 the extracted elements keep their own dup-incs (so they survive the
@@ -1557,12 +1557,12 @@ exit-sweep avoids via the taint analysis):
     call / slice / if-expr / match-expr after declaration (`f(x)` may RETURN
     x with no inc — `id(x)` / a borrowed-param-returning function).
   - `initMayAliasLive`: skip a local whose INIT is such an alias producer
-    (`var v3 = id(v2)` binds v3 to v2's buffer uncounted). A scalar-arg call
+    (`let v3 = id(v2)` binds v3 to v2's buffer uncounted). A scalar-arg call
     (`fill(100)`) returns a FRESH value and stays eligible — the common
     builder-call win. Both gates treat an unresolved-generic (`ParamType`)
     result as possibly-pointer, since `b.exprType` doesn't instantiate generic
     call results (the bug a `id[T]`-of-a-struct differential seed caught:
-    `mayAliasResult`). Counted-alias inits (`var y = x` / `x.field` / `x[i]`,
+    `mayAliasResult`). Counted-alias inits (`let y = x` / `x.field` / `x[i]`,
     `needsRcIncOnAlias`) are also skipped — precise-dropping them only cancels
     the alias inc (sound, but marginal and churns the rc-count tests).
 
@@ -1596,7 +1596,7 @@ that statement, so a single top-level drop + zero-slot is sound (an early
 `return` on a path keeps the value live to its own exit sweep; the zeroed slot
 makes the post-statement drop a no-op on paths that already returned). This
 reclaims before the often-long tail after an `if`/loop — the common
-peak-memory case (`var big = …; if (c) { use(big) } …long tail…`: big freed
+peak-memory case (`let big = …; if (c) { use(big) } …long tail…`: big freed
 after the `if`, not at function exit, so the tail reuses its block — measured
 416 B vs 832 on wasm). Reassignment is now detected at ANY depth (a nested
 `name = …` excludes the local); freeEligible + the alias gates compose
@@ -1614,7 +1614,7 @@ each element, and an element aliased OUT across an early drop relies on the
 per-element retain/release balancing on EVERY backend — and on arm64 two-word
 heap strings that balance rides the native heap-string reclamation path the
 plan still defers (item 5g). The exact shape that exposed it is the self-host
-driver's `main()`: `var av: string[] = args()` with `entry = av[1]` /
+driver's `main()`: `let av: string[] = args()` with `entry = av[1]` /
 `root = av[2]`, last-used at `av[2]` inside `if (av.len() >= 3)`. A blanket
 nested drop precise-dropped `av` after the `if`; on the arm64-native self-host
 that corrupted a still-live element alias under allocation-reuse pressure (the
@@ -2017,9 +2017,9 @@ reuse the argument. Sliced for risk:
     `C`'s alloc, beyond the self-overwrite `tryStructReuseOverwrite` (`D == C`).
     `computeReuseSources` (run in `lowerFunc` beside `computeMovedLocals` /
     `computeFreeEligible`) walks EVERY block (the body + each loop / if arm —
-    the loop body is the high-value case: a per-iteration `var a = T{…}; …;
-    var b = T{…}` reuses `a`'s box for `b` each turn) and pairs `C`'s
-    `StructLit` with a `D` that is: same all-scalar struct type, a `var`
+    the loop body is the high-value case: a per-iteration `let a = T{…}; …;
+    let b = T{…}` reuses `a`'s box for `b` each turn) and pairs `C`'s
+    `StructLit` with a `D` that is: same all-scalar struct type, a `let`
     declared earlier in the block, never reassigned, name-unique, `freeEligible`
     (OWNED), and DEAD from `C` onward in the block. The StructLit lowering, when
     `reuseSources[sl]` is set, emits `token = is_unique(D) ? base(D) : 0` (the
@@ -2145,7 +2145,7 @@ reuse the argument. Sliced for risk:
   - **5e-vii — cross-block reuse in ANY block (loop bodies). SHIPPED (all three
     backends).** Generalises 5e-vi from a function-top-level `D` to a
     block-top-level `D` in EVERY block, so the dominant shape — a loop-body
-    `var a = …` reused by a construction nested in an `if` inside the loop —
+    `let a = …` reused by a construction nested in an `if` inside the loop —
     fires every iteration (`a` is block-scoped, re-declared and reinit-dropped
     each turn; the reuse zeroes its slot, the reinit drop null-no-ops, the
     not-taken path reinit-drops the live box — no double-free, no leak). Blocks
@@ -2364,14 +2364,14 @@ two-word on wasm + arm64 and (top-bit-tagged) on x86_64 with a uniform
 rc-header home, `isOwnedRcLocal` admits `StringType` uniformly, and
 **native heap strings (>15 B) reclaim to a bounded high-water and are
 sound (0 over-releases) on both backends** — verified for loop var-reinit
-(`var s = a + b`), reassignment-overwrite (`s = s + chunk`), and
+(`let s = a + b`), reassignment-overwrite (`s = s + chunk`), and
 concat-temp shapes. Bound-var short strings stay inline-SSO (no heap, so
 0 bump) as before.
 
 **Loop-reinit + owned-temp arm64 string reclaim — NOW WIRED (slice 5g
 follow-up, this session).** The earlier "these comments are stale,
 reclamation works" note was itself wrong for two paths: `emitOwnedSlotDrop`
-(behind `emitVarReinitDropOld`, the loop-body `var s = …` reinit) and
+(behind `emitVarReinitDropOld`, the loop-body `let s = …` reinit) and
 `emitOwnedTempStackDrop` (fresh owned-string call-arg / statement temps)
 genuinely STILL safe-leaked arm64 two-word heap strings — they only handled
 wasm (`ptrW==4`) and x86_64 single-word, falling through for the arm64
@@ -2381,7 +2381,7 @@ branch into those two paths closes the loop-reinit / owned-temp leak —
 mirroring shipped-sound code, gated identically (`freeEligible` /
 `localNameUnique` / `!movedLocals`; `__fern_str_dec` is_unique-gates again).
 Verified: `Test{X86_64,Arm64,WASM}LongStringReinitBounded` (a >15 B heap
-string rebuilt into a loop-body `var s` each iteration — arm64 bump now holds
+string rebuilt into a loop-body `let s` each iteration — arm64 bump now holds
 a bounded 96 B at N=50 and N=50000, vs the pre-fix divergence; value-correct,
 0 over-release), the existing `TestArm64LoopVarReclaim/string`, and the full
 arm64 e2e + self-host gates. (The arm64 two-word string TEMP-stack path in
@@ -2395,7 +2395,7 @@ boundary, not a wiring gap.
 
 **Shipped** via shape (b) (zero-init + guarded dec-on-reinit), realised as
 `emitVarReinitDropOld` in `ir.go`, called from the `*ast.Var` lowering
-after the alias-inc and before the store. A loop-body `var row = …` now
+after the alias-inc and before the store. A loop-body `let row = …` now
 releases the slot's previous value each iteration, so the freelist
 reclaims it instead of leaking N-1 allocations (and the rc undercount no
 longer pins the buffers live). The new value sits on the stack underneath
@@ -2413,7 +2413,7 @@ The three hazards the analysis below flagged are all closed by the gates:
     marked moved, no moved value is ever dec'd.
   - **unbalanced alias (the regression the corpus caught)** → gate the
     whole emission on `b.freeEligible[name]`, mirroring the EXIT sweep. A
-    `var a1 = match (o) { _ => a0 }` aliases `a0` WITHOUT an inc (a
+    `let a1 = match (o) { _ => a0 }` aliases `a0` WITHOUT an inc (a
     matchexpr isn't an alias shape `needsRcIncOnAlias` recognises), so it
     doesn't own a reference; `freeEligible` is false for it, so dec-on-
     reinit skips it — no over-release of the shared buffer.
@@ -2450,10 +2450,10 @@ only dec sweep is `emitRcDecLocalsAtExit` at each `return` (`ir.go`
 `*ast.Return`), and the loop body's `closeScope()` in the `*ast.While` /
 `*ast.For` cases is structural-only (`OpEnd` + `depth--`, no decs).
 Every local is function-scoped — one slot per name, allocated once — so
-a `var` *declared inside a loop body* reuses a single slot across
+a `let` *declared inside a loop body* reuses a single slot across
 iterations.
 
-Consequence: a loop-body `var row = [i, i+1]` (any fresh rc-tracked
+Consequence: a loop-body `let row = [i, i+1]` (any fresh rc-tracked
 value — array / struct / enum / tuple / closure / owned heap string)
 allocates rc=1 into `row`'s slot every iteration and overwrites the
 previous *without a dec*. The exit sweep dec's `row` exactly once (the
@@ -2469,9 +2469,9 @@ Distinct from the two already-handled overwrite shapes:
   - `nfuncs = nfuncs.push(...)` (the walked example above) is also a
     reassignment — its slot always holds a prior value, so dec-on-
     overwrite is sound.
-A loop-body `var` is *re-declaration*, not reassignment, and is NOT a
+A loop-body `let` is *re-declaration*, not reassignment, and is NOT a
 quick mirror of the assign hook: the slot is **uninitialized on the
-first iteration**, so a naive dec-on-overwrite at the `var`-init store
+first iteration**, so a naive dec-on-overwrite at the `let`-init store
 would dec garbage and UB the first time through. That's the crux of why
 it needs real block-scope machinery.
 
@@ -2492,7 +2492,7 @@ Two fix shapes:
     the slot's old value in the `*ast.Var` path the way the assign hook
     does. The zero makes the first-iteration dec a NULL-guarded no-op.
     Smaller diff, but leaves the dec at re-declaration rather than at
-    scope close — fine for `var`, which can't be read before its own
+    scope close — fine for `let`, which can't be read before its own
     re-init.
 
 ###### Code-grounded findings for shape (b) (2026-06-02 investigation)
@@ -2505,20 +2505,20 @@ lowering — a correct shape (b) must gate around all three:
    Phase 1d-v safety net (`ir.go` ~`zeroSeen[v.Name]`) zeroes each
    rc-tracked local *once keyed by name*. But `info.Locals[fn]` holds a
    *separate `*ast.Var` entry per declaration* (checker `:3322` appends
-   unconditionally), so two same-name `var x` in sibling/nested scopes
+   unconditionally), so two same-name `let x` in sibling/nested scopes
    are distinct slots sharing one name — only one gets zeroed. A
    dec-old on the un-zeroed inner slot reads garbage → UB. Verified:
-   `var x=[1,2]; if(..){ var x=[3,4,5]; sink(x);} return x.len()` returns
+   `let x=[1,2]; if(..){ let x=[3,4,5]; sink(x);} return x.len()` returns
    2 on both interp and x86_64 (distinct slots, correctly managed), so
    shadowing is real and must be excluded.
    → **Gate: only fire when the name appears exactly once in
    `info.Locals[fn]`** (single slot, guaranteed zero-init'd). This is
    provably safe regardless of the scope-remap mechanism, and the
-   loop-body leak target is virtually always a unique-name `var`.
+   loop-body leak target is virtually always a unique-name `let`.
 
 2. **Move-out + re-declaration over-release (the decisive one).** If a
-   loop-body `var`'s value is *moved out* — `b.moveSites` via
-   move-on-alias (`var y = row`), move-on-return, move-on-construction —
+   loop-body `let`'s value is *moved out* — `b.moveSites` via
+   move-on-alias (`let y = row`), move-on-return, move-on-construction —
    ownership transfers and `row` is excluded from the exit dec. A
    dec-old at `row`'s next-iteration re-declaration would then release a
    value whose ownership already moved → over-release / UAF under
@@ -2554,7 +2554,7 @@ native-arm64 string reclaim (and, once 5g lands, the broader path)
 over-releases in ways qemu user-mode masks. A pure leak is also awkward
 to assert: there is no over-*retain* counter (only `__rc_underflow_count`
 for over-release), so a regression test would assert *reuse* instead — a
-loop-body-`var` program whose per-iteration buffers get reclaimed+reused
+loop-body-`let` program whose per-iteration buffers get reclaimed+reused
 to a bounded high-water mark, mirroring `TestX86_64FreelistReuse` /
 `pushLoopFreeSrc` in `internal/e2e/rc_freelist_test.go`.
 
@@ -2640,7 +2640,7 @@ section, not here.)
 A `__heap_bump_bytes()` audit confirmed array / struct / string loop-body
 vars reclaim to a flat high-water (array = 64 B at any N), but
 **tuple loop-body vars leaked** — Phase 5h SKIPPED `TupleType` in
-`emitVarReinitDropOld`, so a `var t = (…)` re-declared in a loop orphaned
+`emitVarReinitDropOld`, so a `let t = (…)` re-declared in a loop orphaned
 every prior iteration's box (and its rc-tracked elements). The fix:
 `emitVarReinitDropOld` (loop-body re-declaration) and the assignment
 dec-on-overwrite (`b.assign` Ident case) now both route a tuple through
@@ -2659,7 +2659,7 @@ duplicating `dropStructField` / `decValueOnStack`, the blocker the prior
 a deep-drop `(i32[], i32)` loop both hold a flat high-water at N=50 vs
 N=5000 (pre-fix the latter grew 2400 → 240000 B); 0 over-releases.
 **Destructure-binding reclamation — SHIPPED ON ALL THREE BACKENDS
-(2026-06-02).** The follow-up the tuple slice flagged: `var (a, b) = p`
+(2026-06-02).** The follow-up the tuple slice flagged: `let (a, b) = p`
 inside a loop reuses the synthetic destructure temp slot AND each binding
 slot across iterations, but the `*ast.Destructure` lowering gave neither a
 per-iteration dec-on-reinit — so every iteration but the last leaked the
@@ -2683,12 +2683,12 @@ with 0 over-releases over 200 iterations and value-correct sums. The
 differential gate + self-host VM/parser suites stay green.
 **Struct / enum loop-var deep reclamation — SHIPPED ON ALL THREE
 BACKENDS (2026-06-02).** Closes the gap the destructure slice flagged,
-for ALL loop-body struct/enum vars (regular `var` re-decl + destructure
+for ALL loop-body struct/enum vars (regular `let` re-decl + destructure
 bindings, which both go through `emitVarReinitDropOld`).
 `emitVarReinitDropOld`'s `StructType`/`EnumType` case did a flat
 `__fern_rc_dec` — which neither frees the box (`rc_dec` has no free path)
-nor recurses into rc-tracked fields/payloads — so a `var b = Box{ data:
-[...] }` / `var e = Arr([...])` re-declared in a loop leaked its box AND
+nor recurses into rc-tracked fields/payloads — so a `let b = Box{ data:
+[...] }` / `let e = Arr([...])` re-declared in a loop leaked its box AND
 its nested heap field every iteration but the last (probe: 2400 →
 240000 B). The fix routes the reinit drop through the generated
 `__drop_struct_<N>` / `__drop_enum_<N>` fn via `dropFnNameFor` (the same
@@ -2739,7 +2739,7 @@ needs a balanced payload-release, a separate slice.
 
 **Map loop-var reclamation — SHIPPED ON ALL THREE BACKENDS
 (2026-06-02).** Found by profiling diverse compound workloads with the
-`__heap_bump_bytes()` probe: a `var m = map_new(8)` re-declared in a loop
+`__heap_bump_bytes()` probe: a `let m = map_new(8)` re-declared in a loop
 leaked the entire map structure every iteration (6400 B → 640000 B),
 even though the EXIT sweep already reclaims an owned Map. The reinit path
 routed Map through `emitStructEnumSlotDrop`, whose `dropFnNameFor`
@@ -2775,14 +2775,14 @@ consults the same dispatch (so array-of-struct / -tuple reinit also
 deep-drops, matching the exit sweep). Inner arrays of rc / string elements
 keep the flat `__fern_drop_arr_ptr` (recursive deep drop — a later slice).
 Verified by `Test{X86_64,Arm64,WASM}NestedArrayReclaim`
-(`internal/e2e/rc_heap_bump_nested_array_test.go`): a `var g = [[..],[..]]`
+(`internal/e2e/rc_heap_bump_nested_array_test.go`): a `let g = [[..],[..]]`
 loop holds a flat 192 B at N=50 vs N=5000 (was 3264→320064), value-correct
 with 0 over-releases over 200 iterations. The full suite (incl. self-host +
 differential gate) stays green.
 
 **String-concat bound-var — investigated + GUARDED (2026-06-02); the real
 remaining leak is statement TEMPORARIES.** A closer look corrected the
-earlier reading: a `var s = a + b` loop is actually BOUNDED, not leaking —
+earlier reading: a `let s = a + b` loop is actually BOUNDED, not leaking —
 the 1600→64576 ramp is a freelist warmup that PLATEAUS (N=5000 == N=50000
 == 64576 on wasm; natives read 0 because a short concat stays SSO-inline,
 no heap). `Test{X86_64,Arm64,WASM}StringConcatBounded`
@@ -2875,9 +2875,9 @@ exercises the rc==1 branch + the differential gate) stays green.
   (192 B), `P[][]` / `i32[][][]` (256/320 B wasm, 0 natives), `E[]`
   (256 B wasm), `Option[i32[]][]` (160 B wasm), `closure[]` (wasm 64720 B
   plateau scalar / 64832 B ptr-capture; natives 64–128 B — see below),
-  string-concat bound-var (wasm 64576 B plateau / natives 0), nested concat
+  string-concat bound-let (wasm 64576 B plateau / natives 0), nested concat
   `(a+b+c)` (wasm 64576 B plateau / x86_64 0 / arm64 144 B), and
-  (post-SSO-flip) NATIVE heap strings `>15 B` — `var s = a + b` /
+  (post-SSO-flip) NATIVE heap strings `>15 B` — `let s = a + b` /
   `s = s + chunk` loops bounded + 0 over-releases on x86_64 + arm64 (item 5g).
 
 Next Phase-6 steps (open):
@@ -2937,7 +2937,7 @@ Next Phase-6 steps (open):
         pair-only free; full env reclaim closes it.
       + Coverage: `internal/e2e/rc_heap_bump_closure_array_test.go` — scalar-
         and pointer-capture `(() => i32)[]` bounded across 10x N on all three
-        backends, plus an aliased-array (`var gs = fs`, rc>1) AND a
+        backends, plus an aliased-array (`let gs = fs`, rc>1) AND a
         shared-element (`[f, f]`, the same pair twice + still-live `f`)
         adversarial case, each pinning `__rc_underflow_count() == 0` (no
         over-release / UAF). Self-host (heavy closure user) + the full
@@ -3055,7 +3055,7 @@ Next Phase-6 steps (open):
 This session (2026-06-03) ALSO SHIPPED the value-consuming-position +
 fresh-result reclamation family on top of statement-temps a/b/c: owned
 call-RESULT args (`take(mk(i))`), discarded owned call results (`mk(i);`),
-match-EXPRESSION owned results (`var s = match … { 0 => a+b, _ => b+a }`,
+match-EXPRESSION owned results (`let s = match … { 0 => a+b, _ => b+a }`,
 rhsTainted MatchExpr case), index-of-fresh (`mk(i)[scalar]`) and field-of-
 fresh (`mk(i).scalarfield` / tuple), all sharing `freshOwnedRcTempType` /
 `ownedCallResultType` + the is_unique-gated `emitOwnedSlotDrop` + the

@@ -30,8 +30,8 @@ import "core/map";
 // dirname returns everything up to and including the last '/', or "" when
 // the path has no directory part ("a/b/c.fern" → "a/b/", "main.fern" → "").
 pub function dirname(path: string): string {
-  var cut: i32 = 0;
-  var i: i32 = 0;
+  let cut: i32 = 0;
+  let i: i32 = 0;
   while (i < path.len()) {
     if (path[i] == b'/') {
       cut = i + 1;
@@ -44,8 +44,8 @@ pub function dirname(path: string): string {
 // base_name strips the directory and the import-relative `./` prefix from
 // an import path: "./lexer" → "lexer", "std/io" → "io".
 pub function base_name(path: string): string {
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i < path.len()) {
     if (path[i] == b'/') {
       start = i + 1;
@@ -69,11 +69,11 @@ function rel_path(path: string): string {
 // its sub-directory file) and de-duplicated by basename — the namespace
 // the bundler keys on — against names already queued/loaded (`seen`).
 function enqueue_imports(queue: string[], seen: string[], mod: parser.Module): string[] {
-  var out: string[] = queue;
-  var i: i32 = 0;
+  let out: string[] = queue;
+  let i: i32 = 0;
   while (i < mod.imports.len()) {
-    var path: string = mod.imports[i].path;
-    var name: string = base_name(path);
+    let path: string = mod.imports[i].path;
+    let name: string = base_name(path);
     if (!util.has_str(seen, name)) {
       out = out.append(path);
     }
@@ -85,8 +85,8 @@ function enqueue_imports(queue: string[], seen: string[], mod: parser.Module): s
 // fill_n appends `n` copies of `v`, keeping a list the same length as the
 // import queue it parallels.
 function fill_n(xs: string[], v: string, n: i32): string[] {
-  var out: string[] = xs;
-  var i: i32 = 0;
+  let out: string[] = xs;
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(v + "");
     i = i + 1;
@@ -144,7 +144,7 @@ function res_read(dir: string, rel: string): Resolved {
 // resolve_module_src finds the source for import `path`, discarding the
 // directory it was found in. `resolve_module` is the full answer.
 pub function resolve_module_src(ov: Overlay, dir: string, path: string, name: string): Option[string] {
-  var r: Resolved = resolve_module(ov, dir, path, name);
+  let r: Resolved = resolve_module(ov, dir, path, name);
   if (!r.ok) {
     return None;
   }
@@ -201,18 +201,18 @@ pub function no_overlay(): Overlay {
 // re-enter the overlay whatever `dir` is; passing it through keeps the
 // fallthrough-to-disk case byte-identical to what it was.
 pub function resolve_module(ov: Overlay, dir: string, path: string, name: string): Resolved {
-  var oi: i32 = util.index_of_str(ov.paths, rel_path(path));
+  let oi: i32 = util.index_of_str(ov.paths, rel_path(path));
   if (oi >= 0) {
     return Resolved { ...res_none(), src: ov.srcs[oi], dir: dir, ok: true, shown: "stdlib://" + rel_path(path) + ".fern" };
   }
   if (ov.sealed) {
     return Resolved { ...res_none(), err_path: "stdlib://" + rel_path(path) + ".fern" };
   }
-  var direct: Resolved = res_read(dir, rel_path(path));
+  let direct: Resolved = res_read(dir, rel_path(path));
   if (direct.ok || direct.err.len() > 0) {
     return direct;
   }
-  var flat: Resolved = res_read(dir, name);
+  let flat: Resolved = res_read(dir, name);
   if (flat.ok || flat.err.len() > 0) {
     return flat;
   }
@@ -221,7 +221,7 @@ pub function resolve_module(ov: Overlay, dir: string, path: string, name: string
   // deps resolved from the per-machine content-addressed store via the
   // `env` runtime builtin. Dormant when no fern.toml is present, so a
   // manifest-less build (every current compiler source) is unchanged.
-  var man: Resolved = try_manifest(dir, name);
+  let man: Resolved = try_manifest(dir, name);
   if (man.ok || man.err.len() > 0) {
     return man;
   }
@@ -235,8 +235,8 @@ pub function resolve_module(ov: Overlay, dir: string, path: string, name: string
 function try_manifest(dir: string, name: string): Resolved {
   match (read_file(dir + "fern.toml")) {
     Ok(src) => {
-      var m: fern_toml.Manifest = fern_toml.parse(src);
-      var kind: string = fern_toml.dep_kind(m, name);
+      let m: fern_toml.Manifest = fern_toml.parse(src);
+      let kind: string = fern_toml.dep_kind(m, name);
       if (kind.len() == 0) {  // undeclared / unrecognised form
         return res_none();
       }
@@ -244,7 +244,7 @@ function try_manifest(dir: string, name: string): Resolved {
       // Vendored mode: a declared dep resolves from <vendor-root>/
       // vendor/<name>/ when that tree exists — offline, form-agnostic,
       // taking precedence (mirrors the native vendored-mode rule).
-      var vend: Resolved = try_vendor(dir, name);
+      let vend: Resolved = try_vendor(dir, name);
       if (vend.ok) {
         return vend;
       }
@@ -292,7 +292,7 @@ function try_manifest(dir: string, name: string): Resolved {
 // load_lib reads a dependency directory's own fern.toml for its `lib`
 // module (default lib.fern) and loads that file.
 function load_lib(depdir: string): Resolved {
-  var deplib: string = "lib.fern";
+  let deplib: string = "lib.fern";
   match (read_file(depdir + "fern.toml")) {
     Ok(src) => {
       deplib = fern_toml.parse(src).lib;
@@ -309,8 +309,8 @@ function parent_dir(dir: string): string {
     return "";
   }
   // Drop the trailing '/', then cut back to (and including) the prior '/'.
-  var end: i32 = dir.len() - 1;
-  var i: i32 = end - 1;
+  let end: i32 = dir.len() - 1;
+  let i: i32 = end - 1;
   while (i >= 0) {
     if (dir[i] == b'/') {
       return slice_unchecked(dir, 0, i + 1) + "";
@@ -324,10 +324,10 @@ function parent_dir(dir: string): string {
 // a tree governs `dir` — either dir's own vendor/ or an ancestor's (a
 // workspace member sharing the root vendor/). Walks up reading each level.
 function try_vendor(dir: string, name: string): Resolved {
-  var d: string = dir;
-  var steps: i32 = 0;
+  let d: string = dir;
+  let steps: i32 = 0;
   while (d.len() > 0 && steps < 64) {
-    var cand: Resolved = load_lib(d + "vendor/" + name + "/");
+    let cand: Resolved = load_lib(d + "vendor/" + name + "/");
     if (cand.ok) {
       return cand;
     }
@@ -341,16 +341,16 @@ function try_vendor(dir: string, name: string): Resolved {
 // ancestor fern.toml with a members list) and loads the member whose
 // package name == `name`.
 function load_workspace_member(dir: string, name: string): Resolved {
-  var d: string = dir;
-  var steps: i32 = 0;
+  let d: string = dir;
+  let steps: i32 = 0;
   while (d.len() > 0 && steps < 64) {
     match (read_file(d + "fern.toml")) {
       Ok(src) => {
-        var wm: fern_toml.Manifest = fern_toml.parse(src);
+        let wm: fern_toml.Manifest = fern_toml.parse(src);
         if (wm.members.len() > 0) {
-          var mi: i32 = 0;
+          let mi: i32 = 0;
           while (mi < wm.members.len()) {
-            var memdir: string = d + wm.members[mi] + "/";
+            let memdir: string = d + wm.members[mi] + "/";
             if (member_name(memdir) == name) {
               return load_lib(memdir);
             }
@@ -387,11 +387,11 @@ function member_name(memdir: string): string {
 function load_locked(dir: string, name: string): Resolved {
   match (read_file(dir + "fern.lock")) {
     Ok(src) => {
-      var lr: fern_toml.LockResult = fern_toml.parse_lock(src);
+      let lr: fern_toml.LockResult = fern_toml.parse_lock(src);
       if (lr.err.len() > 0) {
         return res_none();
       }
-      var entries: fern_toml.LockEntry[] = lr.entries;
+      let entries: fern_toml.LockEntry[] = lr.entries;
       match (fern_toml.lock_path_of(entries, name)) {
         Some(p) => {
           return load_lib(p + "/");
@@ -431,11 +431,11 @@ function load_locked(dir: string, name: string): Resolved {
 // does: the hex is joined onto the store root, so a later route reaching this
 // unchecked would be a directory traversal (#8464).
 function load_from_store(hash: string): Resolved {
-  var hr: fern_toml.HashResult = fern_toml.validate_hash(hash);
+  let hr: fern_toml.HashResult = fern_toml.validate_hash(hash);
   if (hr.err.len() > 0) {
     return res_none();
   }
-  var hex: string = hr.hex;
+  let hex: string = hr.hex;
   match (env("FERN_CACHE_DIR")) {
     Some(d) => {
       return load_lib(d + "/pkgs/" + hex + "/");
@@ -450,7 +450,7 @@ function load_from_store(hash: string): Resolved {
   }
   match (env("HOME")) {
     Some(h) => {
-      var linux: Resolved = load_lib(h + "/.cache/fern/pkgs/" + hex + "/");
+      let linux: Resolved = load_lib(h + "/.cache/fern/pkgs/" + hex + "/");
       if (linux.ok) {
         return linux;
       }
@@ -501,7 +501,7 @@ function stdlib_not_given(ov: Overlay, dir: string, path: string): boolean {
   if (ov.sealed || ov.paths.len() > 0 || !util.is_stdlib_path(path)) {
     return false;
   }
-  var tree: string = "core";
+  let tree: string = "core";
   if (util.str_has_prefix(path, "std/")) {
     tree = "std";
   }
@@ -536,30 +536,30 @@ pub function load_imports(ov: Overlay, entry_path: string, entry: parser.Module)
 // path, in load order. Each module is tokenized from its own util.line_base,
 // so `files` is the table util.pos_str reads a diagnostic's file from.
 pub function load_imports_with_files(ov: Overlay, entry_path: string, entry: parser.Module): (flatten.LoadedModule[], string[], string[]) {
-  var loaded: flatten.LoadedModule[] = [];
-  var files: string[] = [];
-  var missing: string[] = [];
-  var seen: string[] = [];
-  var queue: string[] = enqueue_imports([], seen, entry);
-  var queue_dirs: string[] = fill_n([], dirname(entry_path), queue.len());
-  var importers: string[] = fill_n([], entry_path, queue.len());
-  var qi: i32 = 0;
+  let loaded: flatten.LoadedModule[] = [];
+  let files: string[] = [];
+  let missing: string[] = [];
+  let seen: string[] = [];
+  let queue: string[] = enqueue_imports([], seen, entry);
+  let queue_dirs: string[] = fill_n([], dirname(entry_path), queue.len());
+  let importers: string[] = fill_n([], entry_path, queue.len());
+  let qi: i32 = 0;
   while (qi < queue.len()) {
-    var path: string = queue[qi];
-    var from: string = queue_dirs[qi];
-    var importer: string = importers[qi];
+    let path: string = queue[qi];
+    let from: string = queue_dirs[qi];
+    let importer: string = importers[qi];
     qi = qi + 1;
-    var name: string = base_name(path);
+    let name: string = base_name(path);
     if (util.has_str(seen, name)) {
       continue;
     }
     seen = seen.append(name);
-    var r: Resolved = resolve_module(ov, from, path, name);
+    let r: Resolved = resolve_module(ov, from, path, name);
     if (r.ok) {
-      var m: parser.Module = parser.parse_module(lexer.tokenize_from(r.src, util.line_base(files.len()) + 1));
+      let m: parser.Module = parser.parse_module(lexer.tokenize_from(r.src, util.line_base(files.len()) + 1));
       files = files.append(r.shown);
       loaded = loaded.append(flatten.LoadedModule { name: name, ident: "", mod: m });
-      var before: i32 = queue.len();
+      let before: i32 = queue.len();
       queue = enqueue_imports(queue, seen, m);
       // The module's own imports resolve against ITS directory.
       queue_dirs = fill_n(queue_dirs, r.dir, queue.len() - before);
@@ -585,7 +585,7 @@ pub function load_imports_with_files(ov: Overlay, entry_path: string, entry: par
 pub function merge_builtins(dir: string, merged: parser.Module): parser.Module {
   match (read_file(dir + "builtins.fern")) {
     Ok(bsrc) => {
-      var bmod: parser.Module = parser.parse_module(lexer.tokenize(bsrc));
+      let bmod: parser.Module = parser.parse_module(lexer.tokenize(bsrc));
       return parser.Module {
         funcs: merged.funcs,
         structs: util.append_all(merged.structs, bmod.structs),
@@ -635,12 +635,12 @@ pub function merge_builtins(dir: string, merged: parser.Module): parser.Module {
 // declarations each unit actually references; correctness comes first.
 
 pub function module_sig_string(mod: parser.Module): string {
-  var out: string = "";
-  var fi: i32 = 0;
+  let out: string = "";
+  let fi: i32 = 0;
   while (fi < mod.funcs.len()) {
-    var f: parser.FuncDecl = mod.funcs[fi];
+    let f: parser.FuncDecl = mod.funcs[fi];
     out = out + "fn " + f.receiver_type + "." + f.name + "(";
-    var pi: i32 = 0;
+    let pi: i32 = 0;
     while (pi < f.params.len()) {
       out = out + f.params[pi].type_name + ",";
       pi = pi + 1;
@@ -648,11 +648,11 @@ pub function module_sig_string(mod: parser.Module): string {
     out = out + ")" + f.ret_type + ";";
     fi = fi + 1;
   }
-  var si: i32 = 0;
+  let si: i32 = 0;
   while (si < mod.structs.len()) {
-    var sd: parser.StructDecl = mod.structs[si];
+    let sd: parser.StructDecl = mod.structs[si];
     out = out + "st " + sd.name + "{";
-    var di: i32 = 0;
+    let di: i32 = 0;
     while (di < sd.fields.len()) {
       out = out + sd.fields[di].name + ":" + sd.fields[di].type_name + ",";
       di = di + 1;
@@ -675,9 +675,9 @@ pub function module_sig_string(mod: parser.Module): string {
 // re-emitted — the same stale codegen, one layer out. Only loaded modules are
 // listed; an import that resolved to no part contributes no signature.
 pub function module_dep_ns(parts: flatten.PerModule[], infmods: parser.Module[], idx: i32): string {
-  var deps: string[] = import_closure_ns(parts, infmods, idx);
-  var out: string = "";
-  var j: i32 = 0;
+  let deps: string[] = import_closure_ns(parts, infmods, idx);
+  let out: string = "";
+  let j: i32 = 0;
   while (j < parts.len()) {
     if (util.has_str(deps, parts[j].ns)) {
       if (out.len() > 0) {
@@ -696,10 +696,10 @@ pub function module_dep_ns(parts: flatten.PerModule[], infmods: parser.Module[],
 // its full sub-path — so we recover it from whichever module imported it.
 // Returns "" if no import edge names `ns` (i.e. the entry, or a not-found case).
 pub function module_import_path(parts: flatten.PerModule[], ns: string): string {
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < parts.len()) {
-    var imps: parser.Import[] = parts[j].mod.imports;
-    var ii: i32 = 0;
+    let imps: parser.Import[] = parts[j].mod.imports;
+    let ii: i32 = 0;
     while (ii < imps.len()) {
       if (base_name(imps[ii].path) == ns) {
         return imps[ii].path;
@@ -729,7 +729,7 @@ pub function module_src_hash(ov: Overlay, dir: string, entry_path: string, parts
       }
     }
   }
-  var ip: string = module_import_path(parts, parts[idx].ns);
+  let ip: string = module_import_path(parts, parts[idx].ns);
   if (ip.len() > 0) {
     match (resolve_module_src(ov, dir, ip, parts[idx].ns)) {
       Some(src) => {
@@ -760,17 +760,17 @@ pub function module_src_hash(ov: Overlay, dir: string, entry_path: string, parts
 // (tens), and re-scanning is what makes an import CYCLE terminate instead of
 // revisiting forever.
 pub function import_closure_ns(parts: flatten.PerModule[], infmods: parser.Module[], idx: i32): string[] {
-  var seen: string[] = [];
-  var grew: boolean = true;
+  let seen: string[] = [];
+  let grew: boolean = true;
   while (grew) {
     grew = false;
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < parts.len()) {
       if (j == idx || util.has_str(seen, parts[j].ns)) {
-        var imps: parser.Import[] = infmods[j].imports;
-        var ii: i32 = 0;
+        let imps: parser.Import[] = infmods[j].imports;
+        let ii: i32 = 0;
         while (ii < imps.len()) {
-          var nm: string = base_name(imps[ii].path);
+          let nm: string = base_name(imps[ii].path);
           if (!util.has_str(seen, nm)) {
             seen = seen.append(nm);
             grew = true;
@@ -793,13 +793,13 @@ pub function import_closure_ns(parts: flatten.PerModule[], infmods: parser.Modul
 pub struct FactHashes { per_mod: string[], global: string }
 
 function ident_tokens(s: string): string[] {
-  var out: string[] = [];
-  var start: i32 = 0 - 1;
-  var i: i32 = 0;
+  let out: string[] = [];
+  let start: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i <= s.len()) {
-    var word: boolean = false;
+    let word: boolean = false;
     if (i < s.len()) {
-      var c: i32 = s[i] as i32;
+      let c: i32 = s[i] as i32;
       word = c >= 97 && c <= 122 || c >= 65 && c <= 90 || c >= 48 && c <= 57 || c == 95;
     }
     if (word && start < 0) {
@@ -816,8 +816,8 @@ function ident_tokens(s: string): string[] {
 
 // roll131 is hash_key's second polynomial roll, kept numeric so it can be summed.
 function roll131(s: string): i32 {
-  var b: i32 = 5381;
-  var i: i32 = 0;
+  let b: i32 = 5381;
+  let i: i32 = 0;
   while (i < s.len()) {
     b = b * 131 + s[i] as i32 + 7 & 1073741823;
     i = i + 1;
@@ -826,9 +826,9 @@ function roll131(s: string): i32 {
 }
 
 pub function module_fact_hashes(infmods: parser.Module[], rows: string[]): FactHashes {
-  var names: string[][] = [];
+  let names: string[][] = [];
   for m in infmods {
-    var ns: string[] = [];
+    let ns: string[] = [];
     for f in m.funcs {
       ns = ns.append(f.name);
     }
@@ -837,22 +837,22 @@ pub function module_fact_hashes(infmods: parser.Module[], rows: string[]): FactH
   // Bucket infmods.len() is the global one. A registry can list a row more than
   // once, and in an order that depends on its bucket layout, so each bucket
   // folds its DISTINCT rows with an order-independent sum.
-  var nb: i32 = infmods.len() + 1;
-  var sa: i32[] = [];
-  var sb: i32[] = [];
-  var bi: i32 = 0;
+  let nb: i32 = infmods.len() + 1;
+  let sa: i32[] = [];
+  let sb: i32[] = [];
+  let bi: i32 = 0;
   while (bi < nb) {
     sa = sa.append(0);
     sb = sb.append(0);
     bi = bi + 1;
   }
-  var seen: Map[string, i32] = map_new(rows.len() + 1);
+  let seen: Map[string, i32] = map_new(rows.len() + 1);
   for row in rows {
-    var toks: string[] = ident_tokens(row);
-    var owners: i32[] = [];
-    var j: i32 = 0;
+    let toks: string[] = ident_tokens(row);
+    let owners: i32[] = [];
+    let j: i32 = 0;
     while (j < names.len()) {
-      var owned: boolean = false;
+      let owned: boolean = false;
       for t in toks {
         if (util.has_str(names[j], t)) {
           owned = true;
@@ -867,7 +867,7 @@ pub function module_fact_hashes(infmods: parser.Module[], rows: string[]): FactH
       owners = [infmods.len()];
     }
     for o in owners {
-      var k: string = util.i32_to_string(o) + "|" + row;
+      let k: string = util.i32_to_string(o) + "|" + row;
       if (seen.get_or(k, 0) == 0) {
         seen = seen.insert(k, 1);
         sa = sa.with(o, sa[o] + util.hash_bucket(row, 1073741823) & 1073741823);
@@ -875,8 +875,8 @@ pub function module_fact_hashes(infmods: parser.Module[], rows: string[]): FactH
       }
     }
   }
-  var per: string[] = [];
-  var pj: i32 = 0;
+  let per: string[] = [];
+  let pj: i32 = 0;
   while (pj < infmods.len()) {
     per = per.append(util.i32_to_string(sa[pj]) + "_" + util.i32_to_string(sb[pj]));
     pj = pj + 1;
@@ -888,8 +888,8 @@ pub function module_fact_hashes(infmods: parser.Module[], rows: string[]): FactH
 // dependent's key moves when a fact about a function it can call moves, the way
 // it does for that function's signature.
 pub function fact_sig_hashes(infmods: parser.Module[], fh: FactHashes): string[] {
-  var out: string[] = [];
-  var j: i32 = 0;
+  let out: string[] = [];
+  let j: i32 = 0;
   while (j < infmods.len()) {
     out = out.append(util.hash_key(module_sig_string(infmods[j]) + "|f" + fh.per_mod[j]));
     j = j + 1;
@@ -909,9 +909,9 @@ pub function module_cache_key(parts: flatten.PerModule[], infmods: parser.Module
   if (src_hash == "?") {
     return "";
   }
-  var key: string = parts[idx].ns + "|" + src_hash;
-  var deps: string[] = import_closure_ns(parts, infmods, idx);
-  var j: i32 = 0;
+  let key: string = parts[idx].ns + "|" + src_hash;
+  let deps: string[] = import_closure_ns(parts, infmods, idx);
+  let j: i32 = 0;
   while (j < parts.len()) {
     if (util.has_str(deps, parts[j].ns)) {
       key = key + "#" + sighashes[j];
@@ -919,8 +919,8 @@ pub function module_cache_key(parts: flatten.PerModule[], infmods: parser.Module
     j = j + 1;
   }
   if (parts[idx].is_entry) {
-    var ex: string = "";
-    var ei: i32 = 0;
+    let ex: string = "";
+    let ei: i32 = 0;
     while (ei < extra.len()) {
       ex = ex + extra[ei] + ",";
       ei = ei + 1;
@@ -943,7 +943,7 @@ pub function module_cache_key(parts: flatten.PerModule[], infmods: parser.Module
 // bodies, the module's own and the global ones included, which neither its
 // source nor its dependencies' signatures cover.
 pub function module_unit_cache_key(parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], idx: i32, src_hash: string, extra: string[], lo: i32, hi: i32, fh: FactHashes): string {
-  var key: string = module_cache_key(parts, infmods, sighashes, idx, src_hash, extra);
+  let key: string = module_cache_key(parts, infmods, sighashes, idx, src_hash, extra);
   if (key.len() == 0) {
     return "";
   }

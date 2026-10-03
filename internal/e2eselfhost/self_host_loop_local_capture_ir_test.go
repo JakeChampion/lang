@@ -9,7 +9,7 @@ import (
 )
 
 // TestSelfHostLoopLocalCaptureIRX86_64 pins the loop-local capturing-closure
-// lift (closure_lift_one's nested-body recursion): a `var f = <capturing
+// lift (closure_lift_one's nested-body recursion): a `let f = <capturing
 // lambda>` that is only CALLED (not escaping) is param-lifted to a hoisted
 // `__lam_N` + direct call sites. Before, closure_lift_one scanned only the
 // TOP-LEVEL function body, so a capturing lambda bound inside a `while` / `for`
@@ -39,32 +39,32 @@ func TestSelfHostLoopLocalCaptureIRX86_64(t *testing.T) {
 	}{
 		// while-loop body, capturing a loop-external plain local.
 		{"while-plain-local-capture",
-			`function main(): i32 { var base: i32 = 100; var acc: i32 = 0; var i: i32 = 0; while (i < 3) { var f: (i32) => i32 = (n: i32): i32 => { return n + base; }; acc = acc + f(i); i = i + 1; } return acc - 297; }`,
+			`function main(): i32 { let base: i32 = 100; let acc: i32 = 0; let i: i32 = 0; while (i < 3) { let f: (i32) => i32 = (n: i32): i32 => { return n + base; }; acc = acc + f(i); i = i + 1; } return acc - 297; }`,
 			6, ".Lssa_main"},
 		// while-loop body, capturing a struct FIELD (c.base).
 		{"while-struct-field-capture",
-			`struct Ctx { base: i32 } function main(): i32 { var c: Ctx = Ctx { base: 100 }; var acc: i32 = 0; var i: i32 = 0; while (i < 3) { var f: (i32) => i32 = (n: i32): i32 => { return n + c.base; }; acc = acc + f(i); i = i + 1; } return acc - 297; }`,
+			`struct Ctx { base: i32 } function main(): i32 { let c: Ctx = Ctx { base: 100 }; let acc: i32 = 0; let i: i32 = 0; while (i < 3) { let f: (i32) => i32 = (n: i32): i32 => { return n + c.base; }; acc = acc + f(i); i = i + 1; } return acc - 297; }`,
 			6, ".Lssa_main"},
 		// for-in loop body, capturing a loop-external local.
 		{"for-loop-local-capture",
-			`function main(): i32 { var base: i32 = 100; var xs: i32[] = [1, 2, 3]; var acc: i32 = 0; for x in xs { var f: (i32) => i32 = (n: i32): i32 => { return n + base; }; acc = acc + f(x); } return acc - 300; }`,
+			`function main(): i32 { let base: i32 = 100; let xs: i32[] = [1, 2, 3]; let acc: i32 = 0; for x in xs { let f: (i32) => i32 = (n: i32): i32 => { return n + base; }; acc = acc + f(x); } return acc - 300; }`,
 			6, ".Lssa_main"},
 		// if-branch body, capturing a local.
 		{"if-branch-capture",
-			`function main(): i32 { var base: i32 = 40; var b: boolean = true; if (b) { var f: (i32) => i32 = (n: i32): i32 => { return n + base; }; return f(2); } return 0; }`,
+			`function main(): i32 { let base: i32 = 40; let b: boolean = true; if (b) { let f: (i32) => i32 = (n: i32): i32 => { return n + base; }; return f(2); } return 0; }`,
 			42, ".Lssa_main"},
 		// match-arm body, capturing an outer local AND the arm payload binding.
 		{"match-arm-capture",
-			`function main(): i32 { var base: i32 = 40; var o: Option[i32] = Some(2); match (o) { Some(k) => { var f: (i32) => i32 = (n: i32): i32 => { return n + base + k; }; return f(0); }, None => { return 0; } } }`,
+			`function main(): i32 { let base: i32 = 40; let o: Option[i32] = Some(2); match (o) { Some(k) => { let f: (i32) => i32 = (n: i32): i32 => { return n + base + k; }; return f(0); }, None => { return 0; } } }`,
 			42, ".Lssa_main"},
 		// doubly-nested while, capturing across both loop levels.
 		{"nested-while-capture",
-			`function main(): i32 { var base: i32 = 10; var acc: i32 = 0; var i: i32 = 0; while (i < 2) { var j: i32 = 0; while (j < 3) { var f: (i32) => i32 = (n: i32): i32 => { return n + base; }; acc = acc + f(1); j = j + 1; } i = i + 1; } return acc - 60; }`,
+			`function main(): i32 { let base: i32 = 10; let acc: i32 = 0; let i: i32 = 0; while (i < 2) { let j: i32 = 0; while (j < 3) { let f: (i32) => i32 = (n: i32): i32 => { return n + base; }; acc = acc + f(1); j = j + 1; } i = i + 1; } return acc - 60; }`,
 			6, ".Lssa_main"},
 		// loop-local capturing closure in a non-main function (g) — witnesses
 		// the lift is per-function, not main-special.
 		{"for-loop-capture-in-fn",
-			`function g(base: i32): i32 { var xs: i32[] = [1, 2, 3]; var acc: i32 = 0; for x in xs { var f: (i32) => i32 = (n: i32): i32 => { return n + base; }; acc = acc + f(x); } return acc; } function main(): i32 { return g(100) - 300; }`,
+			`function g(base: i32): i32 { let xs: i32[] = [1, 2, 3]; let acc: i32 = 0; for x in xs { let f: (i32) => i32 = (n: i32): i32 => { return n + base; }; acc = acc + f(x); } return acc; } function main(): i32 { return g(100) - 300; }`,
 			6, ".Lssa_g"},
 	}
 	for _, tc := range cases {

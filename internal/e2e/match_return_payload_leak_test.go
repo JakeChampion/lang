@@ -11,7 +11,7 @@ import "testing"
 const matchReturnPayloadSrc = `import "std/i32";
 struct Box { s: string }
 function lab(n: i32): Option[string] {
-    var r: Option[string] = None;
+    let r: Option[string] = None;
     if (n >= 0) { r = Some("n" + n.to_string()); }
     return r;
 }
@@ -27,7 +27,7 @@ function pick(n: i32): string {
     return "";
 }
 function pick_boxed(n: i32): Box {
-    var f: (i32) => Option[Box] = boxed;
+    let f: (i32) => Option[Box] = boxed;
     match (f(n)) {
         Some(b) => { return b; },
         None => { return Box { s: "none" }; }
@@ -35,8 +35,8 @@ function pick_boxed(n: i32): Box {
     return Box { s: "" };
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var n: i32 = 0;
+    let i: i32 = 0;
+    let n: i32 = 0;
     while (i < 20) {
         n = n + pick(i).len() + pick_boxed(i).s.len();
         i = i + 1;

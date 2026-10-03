@@ -22,7 +22,7 @@ type arrstructBorrowCase struct {
 }
 
 const arrstructBorrowDecl = `struct Inner { xs: i32[] }
-function mkv(i: i32): Inner[] { var o: Inner[] = []; o = o.append(Inner { xs: [i, i + 1] }); return o; }
+function mkv(i: i32): Inner[] { let o: Inner[] = []; o = o.append(Inner { xs: [i, i + 1] }); return o; }
 function seed(): i32 { return 7; }
 `
 
@@ -33,8 +33,8 @@ function seed(): i32 { return 7; }
 func arrstructBorrowMain(src, use string) string {
 	return `
 function main(): i32 {
-    var keep: Inner[] = ` + src + `;
-    var t: i32 = 0; var r: i32 = 0;
+    let keep: Inner[] = ` + src + `;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + ` + use + `; r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -48,24 +48,24 @@ function main(): i32 {
 func arrstructHandout(callee, ret, read string) string {
 	return `struct Inner { xs: i32[] }
 struct H { e: Inner, n: i32 }
-function mkv(i: i32): Inner[] { var o: Inner[] = []; o = o.append(Inner { xs: [i, i + 1] }); return o; }
+function mkv(i: i32): Inner[] { let o: Inner[] = []; o = o.append(Inner { xs: [i, i + 1] }); return o; }
 ` + callee + `
-function f(i: i32): ` + ret + ` { var keep: Inner[] = mkv(i); return grab(keep, i); }
+function f(i: i32): ` + ret + ` { let keep: Inner[] = mkv(i); return grab(keep, i); }
 function churn(i: i32): i32 {
-    var a: i32[] = [i, i + 1, i + 2, i + 3];
-    var b: i32[] = [i + 4, i + 5, i + 6, i + 7];
+    let a: i32[] = [i, i + 1, i + 2, i + 3];
+    let b: i32[] = [i + 4, i + 5, i + 6, i + 7];
     return a[0] + b[3];
 }
 function round(i: i32): i32 {
-    var g: ` + ret + ` = f(i);
-    var junk: i32 = churn(i * 7 + 3);
-    var v: i32 = ` + read + `;
+    let g: ` + ret + ` = f(i);
+    let junk: i32 = churn(i * 7 + 3);
+    let v: i32 = ` + read + `;
     if (v != i + i + 1) { return 0 - 1; }
     return v % 101;
 }
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
-    while (i < 200) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
+    let t: i32 = 0; let i: i32 = 0; let bad: i32 = 0;
+    while (i < 200) { let r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
@@ -99,7 +99,7 @@ func arrstructBorrowCases() []arrstructBorrowCase {
 			want: 6,
 		},
 		{
-			// ADMITTED by the extract-then-die widening: `var e = src[0]` with a
+			// ADMITTED by the extract-then-die widening: `let e = src[0]` with a
 			// confined local (the same body_unsafe_for_match_borrow +
 			// param_match_binding_escapes pair the box flag trusts for a param
 			// name) keeps the "ELB:" flag, because the extracted box dies inside
@@ -108,7 +108,7 @@ func arrstructBorrowCases() []arrstructBorrowCase {
 			// handout witnesses below still refuse, and the widening's own
 			// grant is what the balance pins now.
 			name: "callee_extracts_element",
-			src: mk(`function rd(src: Inner[], i: i32): i32 { var e: Inner = src[0]; return e.xs.len() + i; }`,
+			src: mk(`function rd(src: Inner[], i: i32): i32 { let e: Inner = src[0]; return e.xs.len() + i; }`,
 				producer, "rd(keep, r)"),
 			want: 9,
 		},
@@ -135,7 +135,7 @@ func arrstructBorrowCases() []arrstructBorrowCase {
 			// is green with no gen2 segfault. Only the counted-STORE shape moved.
 			name: "callee_stores_field",
 			src: mk(`struct P { f: Inner[], n: i32 }
-function rd(src: Inner[], i: i32): i32 { var p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }`,
+function rd(src: Inner[], i: i32): i32 { let p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }`,
 				producer, "rd(keep, r)"),
 			want: 6,
 		},
@@ -166,7 +166,7 @@ function rd(src: Inner[], i: i32): i32 { var p: P = P { f: src, n: i }; return (
 		{
 			name: "element_appended_elsewhere",
 			src: arrstructHandout(
-				`function grab(src: Inner[], i: i32): Inner[] { var o: Inner[] = []; o = o.append(src[0]); return o; }`,
+				`function grab(src: Inner[], i: i32): Inner[] { let o: Inner[] = []; o = o.append(src[0]); return o; }`,
 				"Inner[]", "g[0].xs[0] + g[0].xs[1]"),
 			want: 25,
 		},

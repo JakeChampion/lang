@@ -32,9 +32,9 @@ func TestUnderInferredGenericStructLitIsE040(t *testing.T) {
 	const decls = "struct Stack[T] { items: T[] }\nstruct Tagged[T] { n: i32 }\n"
 	bad := []string{
 		// `[]` pins nothing.
-		`function main(): i32 { var s = Stack { items: [] }; return 0; }`,
+		`function main(): i32 { let s = Stack { items: [] }; return 0; }`,
 		// A phantom parameter no field mentions at all.
-		`function main(): i32 { var t = Tagged { n: 1 }; return t.n; }`,
+		`function main(): i32 { let t = Tagged { n: 1 }; return t.n; }`,
 	}
 	for _, body := range bad {
 		err := checkSource(t, decls+body)
@@ -54,13 +54,13 @@ func TestUnderInferredGenericStructLitIsE040(t *testing.T) {
 	// A parameter an ENCLOSING generic declaration binds is a real
 	// instantiation, left for the eventual monomorphic clone.
 	ok := []string{
-		`function wrap[T](x: T): i32 { var s = Stack { items: [x] }; return s.items.len(); }
+		`function wrap[T](x: T): i32 { let s = Stack { items: [x] }; return s.items.len(); }
 function main(): i32 { return wrap(7); }`,
-		`function wrap[U](x: U): i32 { var s: Stack[U] = Stack { items: [x] }; return s.items.len(); }
+		`function wrap[U](x: U): i32 { let s: Stack[U] = Stack { items: [x] }; return s.items.len(); }
 function main(): i32 { return wrap(7); }`,
 		// Both remedies E040 names must actually work.
-		`function main(): i32 { var s = Stack[i32] { items: [] }; return s.items.len(); }`,
-		`function main(): i32 { var s: Stack[i32] = Stack { items: [] }; return s.items.len(); }`,
+		`function main(): i32 { let s = Stack[i32] { items: [] }; return s.items.len(); }`,
+		`function main(): i32 { let s: Stack[i32] = Stack { items: [] }; return s.items.len(); }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, decls+src); err != nil {
@@ -92,7 +92,7 @@ function main(): i32 { return apply(7, skip); }`,
 function outer[T](acc: T): T { return inner(acc, skip); }
 function main(): i32 { return outer(7); }`,
 		// Value positions other than an argument.
-		`function main(): i32 { var f = skip; return 0; }`,
+		`function main(): i32 { let f = skip; return 0; }`,
 	}
 	for _, body := range bad {
 		err := checkSource(t, decls+body)
@@ -139,7 +139,7 @@ function id[T](a: T): T { return a; }
 function k(x: i32): i32 { return x; }
 `
 	ok := []string{
-		`function main(): i32 { var b = Box { n: 5 }; return id[Box](b).n; }`,
+		`function main(): i32 { let b = Box { n: 5 }; return id[Box](b).n; }`,
 		`function main(): i32 { match (id[Shape](Sq(2))) { Sq(n) => { return n; } } }`,
 		`function f[T](a: T): T { return id[T](a); }
 function main(): i32 { return f(3); }`,
@@ -155,8 +155,8 @@ function main(): i32 { return apply([k], 0); }`,
 	bad := map[string]string{
 		`function main(): i32 { return id[Box](5).n; }`:                            "expected Box, got i32",
 		`function main(): i32 { return id[Nope](5); }`:                             "cannot be used as a value",
-		`function main(): i32 { var x = 0; return id[x](5); }`:                     "cannot be used as a value",
-		`function main(): i32 { var b = Box { n: 1 }; return id[Box, Box](b).n; }`: "expects 1 type argument",
+		`function main(): i32 { let x = 0; return id[x](5); }`:                     "cannot be used as a value",
+		`function main(): i32 { let b = Box { n: 1 }; return id[Box, Box](b).n; }`: "expects 1 type argument",
 	}
 	for src, want := range bad {
 		err := checkSource(t, decls+src)
@@ -191,19 +191,19 @@ function take(b: Box[i32, string]): i32 {
 	ok := []string{
 		// Inference alone: the parameter's `Box[U, E]` has E settled from the
 		// receiver, so the payload settles U.
-		`function main(): i32 { var b: Box[i32, string] = Full(5); return take(b.pair(Full(9))); }`,
+		`function main(): i32 { let b: Box[i32, string] = Full(5); return take(b.pair(Full(9))); }`,
 		// The spelling E040 advises.
-		`function main(): i32 { var b: Box[i32, string] = Full(5); return take(b.pair[i32](Full(9))); }`,
+		`function main(): i32 { let b: Box[i32, string] = Full(5); return take(b.pair[i32](Full(9))); }`,
 		// A full list still means the whole list, receiver parameters first.
-		`function main(): i32 { var b: Box[i32, string] = Full(5); return take(b.pair[i32, string, i32](Full(9))); }`,
+		`function main(): i32 { let b: Box[i32, string] = Full(5); return take(b.pair[i32, string, i32](Full(9))); }`,
 		// A STRUCT receiver reaches the same rule by a different route: its
 		// dispatch replaces the call's type arguments with the receiver's
 		// before any of this runs, so the written list has to be read from
 		// what the source wrote rather than from what is left there.
-		`function main(): i32 { var p: Pair[i32, string] = Pair[i32, string] { a: 1, b: "x" }; return p.pick[i32](5); }`,
+		`function main(): i32 { let p: Pair[i32, string] = Pair[i32, string] { a: 1, b: "x" }; return p.pick[i32](5); }`,
 		// And with nothing written, the receiver's arguments still name the
 		// leading parameters.
-		`function main(): i32 { var p: Pair[i32, string] = Pair[i32, string] { a: 1, b: "x" }; return p.pick(5); }`,
+		`function main(): i32 { let p: Pair[i32, string] = Pair[i32, string] { a: 1, b: "x" }; return p.pick(5); }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, decls+src); err != nil {
@@ -229,7 +229,7 @@ function main(): i32 { match (g(40)) { Ok(v) => { return (v / 8) as i32; }, Err(
 	// names what the parameter came to MEAN — `Box[string, string]`, the
 	// written U with E from the receiver — rather than the declared
 	// `Box[U, E]`, which says nothing about why this argument was refused.
-	badSrc := `function main(): i32 { var b: Box[i32, string] = Full(5); return take(b.pair[string](Full(9))); }`
+	badSrc := `function main(): i32 { let b: Box[i32, string] = Full(5); return take(b.pair[string](Full(9))); }`
 	err := checkSource(t, decls+badSrc)
 	if err == nil {
 		t.Fatalf("a written type argument the argument contradicts should not type-check")
@@ -242,8 +242,8 @@ function main(): i32 { match (g(40)) { Ok(v) => { return (v / 8) as i32; }, Err(
 	// surfaces the contradiction, and the numeric-widening exception above must
 	// not swallow this one.
 	annotated := `function main(): i32 {
-    var b: Box[i32, string] = Full(5);
-    var x: Box[string, string] = b.pair[string](Full(9));
+    let b: Box[i32, string] = Full(5);
+    let x: Box[string, string] = b.pair[string](Full(9));
     match (x) { Full(s) => { return s.len(); }, Blank(e) => { return e.len(); } }
 }`
 	if err := checkSource(t, decls+annotated); err == nil {
@@ -255,8 +255,8 @@ function main(): i32 { match (g(40)) { Ok(v) => { return (v / 8) as i32; }, Err(
 	// unreported — on the enum receiver, which keeps its written list, the
 	// same call was refused.
 	surplus := []string{
-		`function main(): i32 { var p: Pair[i32, string] = Pair[i32, string] { a: 1, b: "x" }; return p.pick[i32, string, i32, f64](5); }`,
-		`function main(): i32 { var b: Box[i32, string] = Full(5); return take(b.pair[i32, string, i32, f64](Full(9))); }`,
+		`function main(): i32 { let p: Pair[i32, string] = Pair[i32, string] { a: 1, b: "x" }; return p.pick[i32, string, i32, f64](5); }`,
+		`function main(): i32 { let b: Box[i32, string] = Full(5); return take(b.pair[i32, string, i32, f64](Full(9))); }`,
 	}
 	for _, src := range surplus {
 		err := checkSource(t, decls+src)
@@ -285,21 +285,21 @@ function empty[T](): T[] { return []; }
 `
 	bad := []struct{ body, want string }{
 		// A free function is named as written, unchanged.
-		{`function main(): i32 { var xs = empty(); return 0; }`,
+		{`function main(): i32 { let xs = empty(); return 0; }`,
 			"could not infer type parameter T for empty — supply it explicitly at the call site (e.g. empty[i32](...))"},
 		// A method is named `Type.method`, and the suggested spelling
 		// attaches the type args to the method name.
-		{`function main(): i32 { var h = Holder { n: 1 }; var xs = h.make(); return 0; }`,
+		{`function main(): i32 { let h = Holder { n: 1 }; let xs = h.make(); return 0; }`,
 			"could not infer type parameter T for Holder.make — supply it explicitly at the call site (e.g. .make[i32](...))"},
 		// The owner/method split is at the FIRST underscore, so a
 		// multi-word method name survives intact.
-		{`function main(): i32 { var h = Holder { n: 1 }; var xs = h.read_all(); return 0; }`,
+		{`function main(): i32 { let h = Holder { n: 1 }; let xs = h.read_all(); return 0; }`,
 			"for Holder.read_all — supply it explicitly at the call site (e.g. .read_all[i32](...))"},
 		// An enum receiver mangles the same way.
-		{`function main(): i32 { var w = A; var xs = w.pick(); return 0; }`,
+		{`function main(): i32 { let w = A; let xs = w.pick(); return 0; }`,
 			"for Wrap.pick — supply it explicitly at the call site (e.g. .pick[i32](...))"},
 		// The arity half of E040 shares the rendering.
-		{`function main(): i32 { var h = Holder { n: 1 }; var xs = h.make[i32, i32](); return 0; }`,
+		{`function main(): i32 { let h = Holder { n: 1 }; let xs = h.make[i32, i32](); return 0; }`,
 			"Holder.make expects 1 type argument(s), got 2"},
 		{`function main(): i32 { return empty[i32, i32]().len(); }`,
 			"empty expects 1 type argument(s), got 2"},
@@ -322,10 +322,10 @@ function empty[T](): T[] { return []; }
 	// Both remedies E040 names must actually work, on a method as well as
 	// on a free function.
 	ok := []string{
-		`function main(): i32 { var h = Holder { n: 1 }; var xs = h.make[i32](); return xs.len(); }`,
-		`function main(): i32 { var h = Holder { n: 1 }; var xs: i32[] = h.make(); return xs.len(); }`,
-		`function main(): i32 { var xs = empty[i32](); return xs.len(); }`,
-		`function main(): i32 { var xs: i32[] = empty(); return xs.len(); }`,
+		`function main(): i32 { let h = Holder { n: 1 }; let xs = h.make[i32](); return xs.len(); }`,
+		`function main(): i32 { let h = Holder { n: 1 }; let xs: i32[] = h.make(); return xs.len(); }`,
+		`function main(): i32 { let xs = empty[i32](); return xs.len(); }`,
+		`function main(): i32 { let xs: i32[] = empty(); return xs.len(); }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, decls+src); err != nil {
@@ -341,11 +341,11 @@ func TestStructLitConstructionSiteTypeArgs(t *testing.T) {
 	const decls = "struct Box[T] { val: T }\nstruct Stack[T] { items: T[] }\nstruct Point { x: i32 }\n"
 	ok := []string{
 		// The plain case inference would also have reached.
-		`function main(): i32 { var b = Box[i32] { val: 1 }; return b.val; }`,
+		`function main(): i32 { let b = Box[i32] { val: 1 }; return b.val; }`,
 		// The case inference cannot reach: no field value pins T.
-		`function main(): i32 { var s = Stack[i32] { items: [] }; return s.items.len(); }`,
+		`function main(): i32 { let s = Stack[i32] { items: [] }; return s.items.len(); }`,
 		// Agreeing with the destination is fine.
-		`function main(): i32 { var b: Box[i64] = Box[i64] { val: 1 }; return 0; }`,
+		`function main(): i32 { let b: Box[i64] = Box[i64] { val: 1 }; return 0; }`,
 	}
 	for _, body := range ok {
 		if err := checkSource(t, decls+body); err != nil {
@@ -354,15 +354,15 @@ func TestStructLitConstructionSiteTypeArgs(t *testing.T) {
 	}
 
 	bad := []struct{ body, want string }{
-		{`function main(): i32 { var b = Box[i32, string] { val: 1 }; return 0; }`,
+		{`function main(): i32 { let b = Box[i32, string] { val: 1 }; return 0; }`,
 			"Box expects 1 type argument(s), got 2"},
-		{`function main(): i32 { var p = Point[i32] { x: 1 }; return 0; }`,
+		{`function main(): i32 { let p = Point[i32] { x: 1 }; return 0; }`,
 			"Point expects 0 type argument(s), got 1"},
 		// The written args, not the destination, drive the literal — so a
 		// disagreement is a plain assignment error rather than a silent retype.
-		{`function main(): i32 { var b: Box[i64] = Box[i32] { val: 1 }; return 0; }`,
+		{`function main(): i32 { let b: Box[i64] = Box[i32] { val: 1 }; return 0; }`,
 			"cannot assign Box[i32] to variable of type Box[i64]"},
-		{`function main(): i32 { var b = Box[i32] { val: "x" }; return 0; }`,
+		{`function main(): i32 { let b = Box[i32] { val: "x" }; return 0; }`,
 			`field "val": expected i32, got string`},
 	}
 	for _, tc := range bad {
@@ -379,7 +379,7 @@ func TestStructLitConstructionSiteTypeArgs(t *testing.T) {
 
 // TestGenericStructLitFieldCheckedAgainstDestination covers a generic struct
 // literal whose field value conflicts with an explicit destination
-// instantiation — `var b: Box[i32] = Box { v: "x" }`. Checking the field only
+// instantiation — `let b: Box[i32] = Box { v: "x" }`. Checking the field only
 // against the free parameter `T` (which unifies to `string`) lets the mismatch
 // slip past and crashes monomorph re-check with a confusing "compiler bug".
 // The destination seeds the type-arg substitution, so it's a clean E043 at
@@ -405,19 +405,19 @@ func TestGenericStructLitFieldCheckedAgainstDestination(t *testing.T) {
 	}
 	// Mismatch is caught at check time with the substituted type in the
 	// message (`i32`, not the bare `T`), not deferred to monomorph.
-	mustErr(`struct Box[T] { v: T } function main(): i32 { var b: Box[i32] = Box { v: "x" }; return b.v; }`,
+	mustErr(`struct Box[T] { v: T } function main(): i32 { let b: Box[i32] = Box { v: "x" }; return b.v; }`,
 		`field "v": expected i32, got string`)
-	mustErr(`struct Pair[A, B] { a: A, b: B } function main(): i32 { var p: Pair[i32, string] = Pair { a: "x", b: 1 }; return 0; }`,
+	mustErr(`struct Pair[A, B] { a: A, b: B } function main(): i32 { let p: Pair[i32, string] = Pair { a: "x", b: 1 }; return 0; }`,
 		`field "a": expected i32, got string`)
 	// Valid instantiations and unannotated inference are unaffected.
-	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[i32] = Box { v: 5 }; return b.v; }`)
-	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[string] = Box { v: "x" }; return b.v.len(); }`)
-	mustOK(`struct Box[T] { v: T } function main(): i32 { var b = Box { v: "x" }; return 0; }`)
+	mustOK(`struct Box[T] { v: T } function main(): i32 { let b: Box[i32] = Box { v: 5 }; return b.v; }`)
+	mustOK(`struct Box[T] { v: T } function main(): i32 { let b: Box[string] = Box { v: "x" }; return b.v.len(); }`)
+	mustOK(`struct Box[T] { v: T } function main(): i32 { let b = Box { v: "x" }; return 0; }`)
 	// A generic struct parameter is the destination too, whatever the
 	// callee's body reads (#10262).
 	mustErr(`struct Box[T] { v: T } function take(b: Box[string]): i32 { return 0; } function main(): i32 { return take(Box { v: 3 }); }`,
 		`field "v": expected string, got i32`)
-	mustOK(`struct Box[T] { v: T } function take(b: Box[i64]): i64 { return b.v; } function main(): i32 { var n: i64 = take(Box { v: 5 }); return 0; }`)
+	mustOK(`struct Box[T] { v: T } function take(b: Box[i64]): i64 { return b.v; } function main(): i32 { let n: i64 = take(Box { v: 5 }); return 0; }`)
 }
 
 // TestArrayLitElementReadsElementDestination: an array literal's elements
@@ -425,10 +425,10 @@ func TestGenericStructLitFieldCheckedAgainstDestination(t *testing.T) {
 // call in one completes its type arguments from the element (#10266).
 func TestArrayLitElementReadsElementDestination(t *testing.T) {
 	pre := `trait C[T] { function c(self: Self): T; } struct A { n: i32 } impl C[i32] for A { function c(self: Self): i32 { return self.n; } } function f[T, I: C[T]](i: I): T { return i.c(); } `
-	if err := checkSource(t, pre+`function main(): i32 { var ys: i32[] = [f(A { n: 2 }), 3]; return ys[0]; }`); err != nil {
+	if err := checkSource(t, pre+`function main(): i32 { let ys: i32[] = [f(A { n: 2 }), 3]; return ys[0]; }`); err != nil {
 		t.Errorf("valid element call refused: %v", err)
 	}
-	err := checkSource(t, pre+`function main(): i32 { var xs: string[] = [f(A { n: 1 })]; return 0; }`)
+	err := checkSource(t, pre+`function main(): i32 { let xs: string[] = [f(A { n: 1 })]; return 0; }`)
 	if err == nil || !strings.Contains(err.Error(), "the bound requires C[string] (in f)") {
 		t.Errorf("want the element's E021 against C[string], got: %v", err)
 	}
@@ -443,18 +443,18 @@ func TestArrayLitElementReadsElementDestination(t *testing.T) {
 func TestGenericStructLitInfersThroughArrayField(t *testing.T) {
 	decls := `struct W[T] { items: T[] } struct P[T] { a: T[], b: T } `
 	for _, body := range []string{
-		`var y: i64 = 3; var w = W { items: [y, 1] }; var t: i64 = w.items[0];`,
-		`var w = W { items: [1, 2] }; var t: i32 = w.items[0];`,
-		`var w = W { items: [1.5] }; var t: f64 = w.items[0];`,
-		`var p = P { a: [], b: 5 }; var t: i32 = p.b;`,
-		`var p = P { a: [], b: "x" }; var n: i32 = p.a.len();`,
-		`var w: W[i64] = W { items: [] };`,
+		`let y: i64 = 3; let w = W { items: [y, 1] }; let t: i64 = w.items[0];`,
+		`let w = W { items: [1, 2] }; let t: i32 = w.items[0];`,
+		`let w = W { items: [1.5] }; let t: f64 = w.items[0];`,
+		`let p = P { a: [], b: 5 }; let t: i32 = p.b;`,
+		`let p = P { a: [], b: "x" }; let n: i32 = p.a.len();`,
+		`let w: W[i64] = W { items: [] };`,
 	} {
 		if err := checkSource(t, decls+`function main(): i32 { `+body+` return 0; }`); err != nil {
 			t.Errorf("%s: %v", body, err)
 		}
 	}
-	err := checkSource(t, decls+`function main(): i32 { var w = W { items: [] }; return 0; }`)
+	err := checkSource(t, decls+`function main(): i32 { let w = W { items: [] }; return 0; }`)
 	if err == nil || !strings.Contains(err.Error(), "could not infer type parameter T for struct W") {
 		t.Errorf("an empty array alone binds nothing; want E040, got: %v", err)
 	}
@@ -467,7 +467,7 @@ func TestGenericStructLitInfersThroughArrayField(t *testing.T) {
 // the destination-seeding above (#3763) introduced: a nested struct literal
 // whose field type reuses the SAME generic name re-seeded its type-args from
 // the OUTER destination left in c.expectedType, instead of from its own
-// field type. `var b: Box[Box[i32]] = Box { v: Box { v: 42 } }` wrongly bound
+// field type. `let b: Box[Box[i32]] = Box { v: Box { v: 42 } }` wrongly bound
 // the inner Box's T to Box[i32] (not i32) and reported a spurious
 // `field "v": expected Box[i32], got i32`. The field value is now checked
 // against its substituted field type, so nested generics check cleanly — while
@@ -491,19 +491,19 @@ func TestGenericStructLitNestedInstantiation(t *testing.T) {
 		}
 	}
 	// The regression repro: nested same-named generic now checks cleanly.
-	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[Box[i32]] = Box { v: Box { v: 42 } }; return b.v.v; }`)
+	mustOK(`struct Box[T] { v: T } function main(): i32 { let b: Box[Box[i32]] = Box { v: Box { v: 42 } }; return b.v.v; }`)
 	// Three levels deep, still clean.
-	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[Box[Box[i32]]] = Box { v: Box { v: Box { v: 7 } } }; return b.v.v.v; }`)
+	mustOK(`struct Box[T] { v: T } function main(): i32 { let b: Box[Box[Box[i32]]] = Box { v: Box { v: Box { v: 7 } } }; return b.v.v.v; }`)
 	// A nested generic with a different element type.
-	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[Box[string]] = Box { v: Box { v: "x" } }; return b.v.v.len(); }`)
+	mustOK(`struct Box[T] { v: T } function main(): i32 { let b: Box[Box[string]] = Box { v: Box { v: "x" } }; return b.v.v.len(); }`)
 	// A genuine mismatch in the inner literal is still reported.
-	mustErr(`struct Box[T] { v: T } function main(): i32 { var b: Box[Box[i32]] = Box { v: Box { v: "x" } }; return 0; }`,
+	mustErr(`struct Box[T] { v: T } function main(): i32 { let b: Box[Box[i32]] = Box { v: Box { v: "x" } }; return 0; }`,
 		`field "v": expected i32, got string`)
 	// A numeric-literal field value settles to the CONCRETE (substituted)
 	// field type, not the bare parameter: an i64-magnitude literal in a
 	// Box[i64] field must widen to i64 rather than being left i32 and then
 	// rejected by the seeded sub[T]=i64. (#3763 also regressed this.)
-	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[i64] = Box { v: 1234567890123 }; if (b.v == 1234567890123) { return 0; } return 1; }`)
+	mustOK(`struct Box[T] { v: T } function main(): i32 { let b: Box[i64] = Box { v: 1234567890123 }; if (b.v == 1234567890123) { return 0; } return 1; }`)
 }
 
 // TestOperatorClassMismatchNoRedundantShareError covers the cascade where an
@@ -524,15 +524,15 @@ func TestOperatorClassMismatchNoRedundantShareError(t *testing.T) {
 		return strings.Count(err.Error(), "type error at")
 	}
 	// One wrong-class operand → exactly one E009 (no redundant "share" line).
-	if n := count(`function main(): i32 { var x: i32 = 1 - "b"; return 0; }`); n != 1 {
+	if n := count(`function main(): i32 { let x: i32 = 1 - "b"; return 0; }`); n != 1 {
 		t.Errorf("int op with string operand: %d E009s, want 1", n)
 	}
-	if n := count(`function main(): i32 { var s: string = "a"; return s & 1; }`); n != 1 {
+	if n := count(`function main(): i32 { let s: string = "a"; return s & 1; }`); n != 1 {
 		t.Errorf("bitwise op with string operand: %d E009s, want 1", n)
 	}
 	// Both operands the right class but mismatched width/signedness → the
 	// "share a … type" hint is still emitted (it's actionable via `as`).
-	if n := count(`function main(): i32 { var a: i32 = 1; var b: u32 = 2; return a - b; }`); n != 1 {
+	if n := count(`function main(): i32 { let a: i32 = 1; let b: u32 = 2; return a - b; }`); n != 1 {
 		t.Errorf("i32/u32 mismatch: %d E009s, want 1 (the share hint)", n)
 	}
 }
@@ -560,20 +560,20 @@ func TestUnknownTypeReported(t *testing.T) {
 	// Every annotation position rejects an undefined name.
 	mustE064(`function f(a: Wibble): i32 { return 0; }`)
 	mustE064(`function f(): Wibble { return 0; }`)
-	mustE064(`function main(): i32 { var x: Wibble = 0; return 0; }`)
+	mustE064(`function main(): i32 { let x: Wibble = 0; return 0; }`)
 	mustE064(`struct S { f: Wibble }`)
 	mustE064(`enum E { A(Wibble) }`)
 	// Recurses into composite types (array / tuple / nested).
-	mustE064(`function main(): i32 { var a: Wibble[] = []; return 0; }`)
+	mustE064(`function main(): i32 { let a: Wibble[] = []; return 0; }`)
 	mustE064(`function f(): (i32, Wibble) { return (0, 0); }`)
 	// `bool` is a common slip — the real type is `boolean`.
-	mustE064(`function main(): i32 { var x: bool = 0; return 0; }`)
+	mustE064(`function main(): i32 { let x: bool = 0; return 0; }`)
 	// Valid: built-ins, declared types, and in-scope type parameters.
 	mustOK(`function id[T](x: T): T { return x; }`)
 	mustOK(`struct P { x: i32 } function getx(p: P): i32 { return p.x; }`)
-	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[i32] = Box { v: 7 }; return b.v; }`)
-	mustOK(`function main(): i32 { var o: Option[i32] = None; return 0; }`)
-	mustOK(`function main(): i32 { var n: i32 = 1; var b: boolean = true; if (b) { return n; } return 0; }`)
+	mustOK(`struct Box[T] { v: T } function main(): i32 { let b: Box[i32] = Box { v: 7 }; return b.v; }`)
+	mustOK(`function main(): i32 { let o: Option[i32] = None; return 0; }`)
+	mustOK(`function main(): i32 { let n: i32 = 1; let b: boolean = true; if (b) { return n; } return 0; }`)
 }
 
 // A LAMBDA's parameter and return annotations are declarations too, and the
@@ -588,11 +588,11 @@ func TestUnknownTypeReported(t *testing.T) {
 // reject every `(x) => e` in the corpus.
 func TestUnknownTypeReachesLambdaAnnotations(t *testing.T) {
 	for name, src := range map[string]string{
-		"lambda param":         `function main(): i32 { var f = ((x: Wibble) => 1); return 0; }`,
-		"lambda return":        `function main(): i32 { var f = ((x: i32): Wibble => x); return 0; }`,
-		"lambda param array":   `function main(): i32 { var f = ((x: Wibble[]) => 1); return 0; }`,
-		"function-form lambda": `function main(): i32 { var f = (x: Wibble): i32 => { return 1; }; return 0; }`,
-		"nested in a lambda":   `function main(): i32 { var f = (() => { var g = ((y: Wibble) => 2); return 1; }); return 0; }`,
+		"lambda param":         `function main(): i32 { let f = ((x: Wibble) => 1); return 0; }`,
+		"lambda return":        `function main(): i32 { let f = ((x: i32): Wibble => x); return 0; }`,
+		"lambda param array":   `function main(): i32 { let f = ((x: Wibble[]) => 1); return 0; }`,
+		"function-form lambda": `function main(): i32 { let f = (x: Wibble): i32 => { return 1; }; return 0; }`,
+		"nested in a lambda":   `function main(): i32 { let f = (() => { let g = ((y: Wibble) => 2); return 1; }); return 0; }`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := checkSource(t, src)
@@ -602,9 +602,9 @@ func TestUnknownTypeReachesLambdaAnnotations(t *testing.T) {
 		})
 	}
 	for name, src := range map[string]string{
-		"unannotated arrow return": `function main(): i32 { var f = ((x: i32) => x + 1); return f(1); }`,
-		"declared type":            `struct P { x: i32 } function main(): i32 { var f = ((p: P) => p.x); return f(P { x: 1 }); }`,
-		"type parameter in scope":  `function apply[T](v: T): i32 { var f = ((x: T) => 1); return f(v); }` + "\n" + `function main(): i32 { return apply(1); }`,
+		"unannotated arrow return": `function main(): i32 { let f = ((x: i32) => x + 1); return f(1); }`,
+		"declared type":            `struct P { x: i32 } function main(): i32 { let f = ((p: P) => p.x); return f(P { x: 1 }); }`,
+		"type parameter in scope":  `function apply[T](v: T): i32 { let f = ((x: T) => 1); return f(v); }` + "\n" + `function main(): i32 { return apply(1); }`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := checkSource(t, src); err != nil {
@@ -617,7 +617,7 @@ func TestUnknownTypeReachesLambdaAnnotations(t *testing.T) {
 // The `dyn` reporter shares that node set, so it gains the same reach: an
 // unknown trait on a lambda parameter went unreported for the same reason.
 func TestDynTraitReachesLambdaAnnotations(t *testing.T) {
-	src := `function main(): i32 { var f = ((x: dyn Bogus) => 1); return 0; }`
+	src := `function main(): i32 { let f = ((x: dyn Bogus) => 1); return 0; }`
 	err := checkSource(t, src)
 	if err == nil {
 		t.Fatalf("want E021, got none")
@@ -676,15 +676,15 @@ func TestChainedMethodCallErrorReportedOnce(t *testing.T) {
 		}
 		return strings.Count(err.Error(), "field access on non-struct")
 	}
-	if n := count(`function main(): i32 { var n: i32 = 5; return n.foo().bar(); }`); n != 1 {
+	if n := count(`function main(): i32 { let n: i32 = 5; return n.foo().bar(); }`); n != 1 {
 		t.Errorf("chained call: E043 reported %d times, want 1", n)
 	}
-	if n := count(`function main(): i32 { var n: i32 = 5; return n.a().b().c(); }`); n != 1 {
+	if n := count(`function main(): i32 { let n: i32 = 5; return n.a().b().c(); }`); n != 1 {
 		t.Errorf("triple chain: E043 reported %d times, want 1", n)
 	}
 	// A single (non-chained) bad method call was always reported once —
 	// pin that it still is, so the fix didn't suppress the lone diagnostic.
-	if n := count(`function main(): i32 { var n: i32 = 5; return n.foo(); }`); n != 1 {
+	if n := count(`function main(): i32 { let n: i32 = 5; return n.foo(); }`); n != 1 {
 		t.Errorf("single call: E043 reported %d times, want 1", n)
 	}
 }
@@ -697,27 +697,27 @@ func TestChainedMethodCallErrorReportedOnce(t *testing.T) {
 // i64 slot accepts it.
 func TestUnannotatedBigLiteralDefaultsToI64(t *testing.T) {
 	// Past i32 max → i64, so i64-context assignment is fine...
-	if err := checkSource(t, `function main(): i32 { var x = 2147483648; var y: i64 = x; return (y / 1000000000) as i32; }`); err != nil {
+	if err := checkSource(t, `function main(): i32 { let x = 2147483648; let y: i64 = x; return (y / 1000000000) as i32; }`); err != nil {
 		t.Errorf("big unannotated literal should be i64 (assignable to i64), got: %v", err)
 	}
 	// ...but i32-context assignment is now an error (no implicit narrowing).
-	err := checkSource(t, `function main(): i32 { var x = 2147483648; var y: i32 = x; return y; }`)
+	err := checkSource(t, `function main(): i32 { let x = 2147483648; let y: i32 = x; return y; }`)
 	if err == nil || !strings.Contains(err.Error(), "i64") {
 		t.Errorf("big unannotated literal in i32 slot should error with i64 mention, got: %v", err)
 	}
 	// A literal that fits i32 still defaults to i32 (unchanged) — assigns fine.
-	if err := checkSource(t, `function main(): i32 { var x = 5; var y: i32 = x; return y; }`); err != nil {
+	if err := checkSource(t, `function main(): i32 { let x = 5; let y: i32 = x; return y; }`); err != nil {
 		t.Errorf("small unannotated literal should stay i32, got: %v", err)
 	}
 	// A negative literal past i32 min also widens to i64.
-	if err := checkSource(t, `function main(): i32 { var x = -5000000000; var y: i64 = x; return (y / 1000000000) as i32; }`); err != nil {
+	if err := checkSource(t, `function main(): i32 { let x = -5000000000; let y: i64 = x; return (y / 1000000000) as i32; }`); err != nil {
 		t.Errorf("big negative unannotated literal should be i64, got: %v", err)
 	}
 }
 
 // TestUnannotatedCompoundWithBigLiteralDefaultsToI64 covers #8668: the #3676
 // widening reads through a literal-only init, not only a bare literal. Before
-// it, `var t = 3 - 4611686018427387904` left the binary polymorphic, nothing
+// it, `let t = 3 - 4611686018427387904` left the binary polymorphic, nothing
 // settled it, and the literal lowered at the i32 default as 0 — so `t` was 3
 // with no diagnostic, where the bare literal widens and an operand already
 // committed to i32 gets E047. The width is asserted through assignability as
@@ -726,60 +726,60 @@ func TestUnannotatedBigLiteralDefaultsToI64(t *testing.T) {
 func TestUnannotatedCompoundWithBigLiteralDefaultsToI64(t *testing.T) {
 	const big = "4611686018427387904"
 	widened := []string{
-		`var t = 3 - ` + big + `;`,
-		`var t = ` + big + ` - 3;`,
-		`var t = -` + big + ` + 1;`,
-		`var t = (1 + 2) * ` + big + `;`,
-		`var t = if (true) { 3 - ` + big + ` } else { 0 };`,
+		`let t = 3 - ` + big + `;`,
+		`let t = ` + big + ` - 3;`,
+		`let t = -` + big + ` + 1;`,
+		`let t = (1 + 2) * ` + big + `;`,
+		`let t = if (true) { 3 - ` + big + ` } else { 0 };`,
 	}
 	for _, decl := range widened {
-		if err := checkSource(t, "function main(): i32 { "+decl+" var u: i64 = t; return 0; }"); err != nil {
+		if err := checkSource(t, "function main(): i32 { "+decl+" let u: i64 = t; return 0; }"); err != nil {
 			t.Errorf("%s: should be i64 (assignable to i64), got: %v", decl, err)
 		}
-		err := checkSource(t, "function main(): i32 { "+decl+" var u: i32 = t; return 0; }")
+		err := checkSource(t, "function main(): i32 { "+decl+" let u: i32 = t; return 0; }")
 		if err == nil || !strings.Contains(err.Error(), "cannot assign i64") {
 			t.Errorf("%s: into an i32 slot should be E003 naming i64, got: %v", decl, err)
 		}
 	}
 	// The compound is settled at i64, so its wide literal passes the range
 	// check there instead of being judged against i32.
-	if err := checkSource(t, "function main(): i32 { var t = 3 - "+big+"; var f = (3 - "+big+") as f64; return 0; }"); err != nil {
+	if err := checkSource(t, "function main(): i32 { let t = 3 - "+big+"; let f = (3 - "+big+") as f64; return 0; }"); err != nil {
 		t.Errorf("compound with a wide literal should check clean, got: %v", err)
 	}
 	// A compound of small literals keeps the i32 default.
-	if err := checkSource(t, "function main(): i32 { var t = 3 - 4; var u: i32 = t; return u; }"); err != nil {
+	if err := checkSource(t, "function main(): i32 { let t = 3 - 4; let u: i32 = t; return u; }"); err != nil {
 		t.Errorf("small compound should stay i32, got: %v", err)
 	}
 	// A literal too wide even for i64 is refused against the i64 the compound
 	// settles at, not silently wrapped.
-	err := checkSource(t, "function main(): i32 { var t = 3 - 18446744073709551616; return 0; }")
+	err := checkSource(t, "function main(): i32 { let t = 3 - 18446744073709551616; return 0; }")
 	if err == nil || !strings.Contains(err.Error(), "does not fit in i64") {
 		t.Errorf("past-u64 literal in a compound should be E047 naming i64, got: %v", err)
 	}
 	// An operand already committed to i32 is not widened behind its back.
-	err = checkSource(t, "function main(): i32 { var a: i32 = 3; var t = a - "+big+"; return 0; }")
+	err = checkSource(t, "function main(): i32 { let a: i32 = 3; let t = a - "+big+"; return 0; }")
 	if err == nil || !strings.Contains(err.Error(), "does not fit in i32") {
 		t.Errorf("wide literal beside an i32 operand should stay E047 naming i32, got: %v", err)
 	}
 	// A generic call whose T is pinned by nothing but the literal is still
 	// polymorphic here, so its T-typed arguments are part of the tree — the
-	// annotated `var t: i64 = id(...)` already settles them the same way.
+	// annotated `let t: i64 = id(...)` already settles them the same way.
 	const id = "function id[T](v: T): T { return v; } "
-	if err := checkSource(t, id+"function main(): i32 { var t = id("+big+"); var u: i64 = t; return 0; }"); err != nil {
+	if err := checkSource(t, id+"function main(): i32 { let t = id("+big+"); let u: i64 = t; return 0; }"); err != nil {
 		t.Errorf("generic call on a wide literal should be i64, got: %v", err)
 	}
-	err = checkSource(t, id+"function main(): i32 { var t = id("+big+"); var u: i32 = t; return 0; }")
+	err = checkSource(t, id+"function main(): i32 { let t = id("+big+"); let u: i32 = t; return 0; }")
 	if err == nil || !strings.Contains(err.Error(), "cannot assign i64") {
 		t.Errorf("generic call on a wide literal into an i32 slot should be E003 naming i64, got: %v", err)
 	}
-	if err := checkSource(t, id+"function main(): i32 { var t = id(5); var u: i32 = t; return u; }"); err != nil {
+	if err := checkSource(t, id+"function main(): i32 { let t = id(5); let u: i32 = t; return u; }"); err != nil {
 		t.Errorf("generic call on a small literal should stay i32, got: %v", err)
 	}
 }
 
 // TestUnannotatedCompositeInitWidensElementToI64 covers #8722: the #3676 /
 // #8668 widening reaches the ELEMENTS of an unannotated tuple / array init.
-// Before it, `var t = (1, 4611686018427387904)` typed the wide element i32 and
+// Before it, `let t = (1, 4611686018427387904)` typed the wide element i32 and
 // lowered it truncated to 0 with no diagnostic, while `-interp` computed the
 // full value — a silent wrong answer, and a native-vs-self-host divergence.
 // Widths are asserted through assignability: the widened element goes into an
@@ -787,21 +787,21 @@ func TestUnannotatedCompoundWithBigLiteralDefaultsToI64(t *testing.T) {
 func TestUnannotatedCompositeInitWidensElementToI64(t *testing.T) {
 	const big = "4611686018427387904"
 	widened := []struct{ decl, read string }{
-		{`var t = (1, ` + big + `);`, "t.1"},
-		{`var t = (` + big + `, 1);`, "t.0"},
-		{`var t = (1, -` + big + `);`, "t.1"},
-		{`var t = (1, ` + big + ` / 2);`, "t.1"},
-		{`var t = [` + big + `];`, "t[0]"},
-		{`var t = [1, ` + big + `];`, "t[0]"},
-		{`var t = (1, (2, ` + big + `));`, "t.1.1"},
-		{`var t = (1, [` + big + `]);`, "t.1[0]"},
-		{`var t = if (true) { (1, ` + big + `) } else { (2, 3) };`, "t.1"},
+		{`let t = (1, ` + big + `);`, "t.1"},
+		{`let t = (` + big + `, 1);`, "t.0"},
+		{`let t = (1, -` + big + `);`, "t.1"},
+		{`let t = (1, ` + big + ` / 2);`, "t.1"},
+		{`let t = [` + big + `];`, "t[0]"},
+		{`let t = [1, ` + big + `];`, "t[0]"},
+		{`let t = (1, (2, ` + big + `));`, "t.1.1"},
+		{`let t = (1, [` + big + `]);`, "t.1[0]"},
+		{`let t = if (true) { (1, ` + big + `) } else { (2, 3) };`, "t.1"},
 	}
 	for _, c := range widened {
-		if err := checkSource(t, "function main(): i32 { "+c.decl+" var u: i64 = "+c.read+"; return 0; }"); err != nil {
+		if err := checkSource(t, "function main(): i32 { "+c.decl+" let u: i64 = "+c.read+"; return 0; }"); err != nil {
 			t.Errorf("%s: %s should be i64, got: %v", c.decl, c.read, err)
 		}
-		err := checkSource(t, "function main(): i32 { "+c.decl+" var u: i32 = "+c.read+"; return 0; }")
+		err := checkSource(t, "function main(): i32 { "+c.decl+" let u: i32 = "+c.read+"; return 0; }")
 		if err == nil || !strings.Contains(err.Error(), "cannot assign i64") {
 			t.Errorf("%s: %s into an i32 slot should be E003 naming i64, got: %v", c.decl, c.read, err)
 		}
@@ -809,25 +809,25 @@ func TestUnannotatedCompositeInitWidensElementToI64(t *testing.T) {
 	// Only the element the literal is in widens; its neighbours keep the i32
 	// default, and a composite of small literals is untouched.
 	kept := []struct{ decl, read string }{
-		{`var t = (1, ` + big + `);`, "t.0"},
-		{`var t = (1, 2);`, "t.1"},
-		{`var t = [1, 2];`, "t[0]"},
+		{`let t = (1, ` + big + `);`, "t.0"},
+		{`let t = (1, 2);`, "t.1"},
+		{`let t = [1, 2];`, "t[0]"},
 	}
 	for _, c := range kept {
-		if err := checkSource(t, "function main(): i32 { "+c.decl+" var u: i32 = "+c.read+"; return u; }"); err != nil {
+		if err := checkSource(t, "function main(): i32 { "+c.decl+" let u: i32 = "+c.read+"; return u; }"); err != nil {
 			t.Errorf("%s: %s should stay i32, got: %v", c.decl, c.read, err)
 		}
 	}
 	// An element that is not a literal tree settles nothing: an i32 binding
 	// read into a tuple stays i32 even beside a widened neighbour.
-	if err := checkSource(t, "function main(): i32 { var a: i32 = 3; var t = (a, "+big+"); var u: i32 = t.0; var v: i64 = t.1; return u; }"); err != nil {
+	if err := checkSource(t, "function main(): i32 { let a: i32 = 3; let t = (a, "+big+"); let u: i32 = t.0; let v: i64 = t.1; return u; }"); err != nil {
 		t.Errorf("committed element beside a widened one should stay i32, got: %v", err)
 	}
 	// A literal too wide even for i64 is refused against the i64 the element
 	// settles at, rather than silently wrapping at the i32 default.
 	for _, src := range []string{
-		"var t = (18446744073709551616, 1);",
-		"var xs = [18446744073709551616];",
+		"let t = (18446744073709551616, 1);",
+		"let xs = [18446744073709551616];",
 	} {
 		err := checkSource(t, "function main(): i32 { "+src+" return 0; }")
 		if err == nil || !strings.Contains(err.Error(), "does not fit in i64") {
@@ -838,15 +838,15 @@ func TestUnannotatedCompositeInitWidensElementToI64(t *testing.T) {
 
 // TestGenericCallScrutineeWidensLiteralBoundT covers #8722: a generic call in
 // scrutinee position settles a type parameter its literal arguments alone bind
-// the way an unannotated `var` initialiser does. `match (pick(1, 2^62))` bound
+// the way an unannotated `let` initialiser does. `match (pick(1, 2^62))` bound
 // T at the i32 default, so the payload compared against the same wide literal
 // was refused as E041. A typed argument still pins T.
 func TestGenericCallScrutineeWidensLiteralBoundT(t *testing.T) {
 	const big = "4611686018427387904"
 	const decls = "function pick[T](a: T, b: T): Option[T] { return Some(b); } "
 	for _, body := range []string{
-		`match (pick(1, ` + big + `)) { Some(v) => { var u: i64 = v; if (v == ` + big + `) { return 1; } }, None => { } }`,
-		`var m = match (pick(1, ` + big + `)) { Some(v) => v, None => 0 }; var u: i64 = m;`,
+		`match (pick(1, ` + big + `)) { Some(v) => { let u: i64 = v; if (v == ` + big + `) { return 1; } }, None => { } }`,
+		`let m = match (pick(1, ` + big + `)) { Some(v) => v, None => 0 }; let u: i64 = m;`,
 	} {
 		if err := checkSource(t, decls+"function main(): i32 { "+body+" return 0; }"); err != nil {
 			t.Errorf("%s: should settle T at i64, got: %v", body, err)
@@ -854,8 +854,8 @@ func TestGenericCallScrutineeWidensLiteralBoundT(t *testing.T) {
 	}
 	// Small literals keep the default, and a typed argument pins T.
 	for _, body := range []string{
-		`match (pick(1, 2)) { Some(v) => { var u: i32 = v; }, None => { } }`,
-		`var x: i32 = 1; match (pick(x, 2)) { Some(v) => { var u: i32 = v; }, None => { } }`,
+		`match (pick(1, 2)) { Some(v) => { let u: i32 = v; }, None => { } }`,
+		`let x: i32 = 1; match (pick(x, 2)) { Some(v) => { let u: i32 = v; }, None => { } }`,
 	} {
 		if err := checkSource(t, decls+"function main(): i32 { "+body+" return 0; }"); err != nil {
 			t.Errorf("%s: should stay i32, got: %v", body, err)
@@ -873,13 +873,13 @@ func TestGenericCallResultCarryingWideLiteralTWidens(t *testing.T) {
 	const big = "4611686018427387904"
 	const decls = "function pair[A, B](a: A, b: B): (A, B) { return (a, b); } function both[T](a: T, b: T): (T, T) { return (a, b); } "
 	accepted := []string{
-		`var p = pair(` + big + `, "hello"); var q: i64 = p.0;`,
-		`var p = pair(` + big + `, "hello"); if (p.0 == ` + big + ` && p.1 == "hello") { return 1; }`,
-		`var p = pair("hello", ` + big + `); var q: i64 = p.1;`,
+		`let p = pair(` + big + `, "hello"); let q: i64 = p.0;`,
+		`let p = pair(` + big + `, "hello"); if (p.0 == ` + big + ` && p.1 == "hello") { return 1; }`,
+		`let p = pair("hello", ` + big + `); let q: i64 = p.1;`,
 		// Every literal bound to the same T settles with it.
-		`var q = both(1, ` + big + `); var a: i64 = q.0; var b: i64 = q.1;`,
+		`let q = both(1, ` + big + `); let a: i64 = q.0; let b: i64 = q.1;`,
 		// A small literal keeps the default.
-		`var p = pair(5, "x"); var q: i32 = p.0;`,
+		`let p = pair(5, "x"); let q: i32 = p.0;`,
 	}
 	for _, src := range accepted {
 		if err := checkSource(t, decls+"function main(): i32 { "+src+" return 0; }"); err != nil {
@@ -887,10 +887,10 @@ func TestGenericCallResultCarryingWideLiteralTWidens(t *testing.T) {
 		}
 	}
 	rejected := []struct{ src, want string }{
-		{`var p = pair(` + big + `, "hello"); var q: i32 = p.0;`, "cannot assign i64"},
-		{`var q = both(1, ` + big + `); var a: i32 = q.0;`, "cannot assign i64"},
+		{`let p = pair(` + big + `, "hello"); let q: i32 = p.0;`, "cannot assign i64"},
+		{`let q = both(1, ` + big + `); let a: i32 = q.0;`, "cannot assign i64"},
 		// An argument with a type of its own pins T; the literal is judged there.
-		{`var a: i32 = 1; var q = both(a, ` + big + `);`, "does not fit in i32"},
+		{`let a: i32 = 1; let q = both(a, ` + big + `);`, "does not fit in i32"},
 	}
 	for _, c := range rejected {
 		err := checkSource(t, decls+"function main(): i32 { "+c.src+" return 0; }")
@@ -902,14 +902,14 @@ func TestGenericCallResultCarryingWideLiteralTWidens(t *testing.T) {
 
 // TestArrayArgumentIsItsElementsDestination: an array parameter is the
 // destination its argument's literal elements are read at, as an annotated
-// `var` is. `take([Same { a: 1, b: 2 }])` was E038, the literal typed Same[i32]
+// `let` is. `take([Same { a: 1, b: 2 }])` was E038, the literal typed Same[i32]
 // on its own, and a field an i64 settles clashed with the literal-bound `a` as
 // E043 (#10270).
 func TestArrayArgumentIsItsElementsDestination(t *testing.T) {
 	const decls = "struct Same[T] { a: T, b: T } function take(xs: Same[i64][]): i32 { return xs.len(); } "
 	for _, body := range []string{
 		`return take([Same { a: 1, b: 2 }]);`,
-		`var y: i64 = 5; return take([Same { a: 1, b: y }]);`,
+		`let y: i64 = 5; return take([Same { a: 1, b: y }]);`,
 	} {
 		if err := checkSource(t, decls+"function main(): i32 { "+body+" }"); err != nil {
 			t.Errorf("%s: rejected, want accepted: %v", body, err)
@@ -933,9 +933,9 @@ func TestArrayArgumentIsItsElementsDestination(t *testing.T) {
 func TestClashingGenericStructLiteralDoesNotCascade(t *testing.T) {
 	const decls = "struct Same[T] { a: T, b: T } function take1(x: Same[i64]): i32 { return 1; } "
 	for _, body := range []string{
-		`var q = Same { a: 1, b: "x" }; return take1(q);`,
-		`var q = Same { a: 1, b: "x" }; var z: string = q; return 0;`,
-		`var xs = [Same { a: 1, b: "x" }]; return take1(xs[0]);`,
+		`let q = Same { a: 1, b: "x" }; return take1(q);`,
+		`let q = Same { a: 1, b: "x" }; let z: string = q; return 0;`,
+		`let xs = [Same { a: 1, b: "x" }]; return take1(xs[0]);`,
 	} {
 		err := checkSource(t, decls+"function main(): i32 { "+body+" }")
 		if err == nil {
@@ -959,16 +959,16 @@ func TestClashingGenericStructLiteralDoesNotCascade(t *testing.T) {
 func TestTypedValueBindsAheadOfEarlierLiteral(t *testing.T) {
 	const decls = "struct Same[T] { a: T, b: T } function take1(x: Same[i64]): i32 { return 1; } function pair[T](a: T, b: T): T { return a; } "
 	for _, body := range []string{
-		`var y: i64 = 5; var q = Same { a: 1, b: y }; return take1(q);`,
-		`var y: i64 = 5; var q = Same { a: y, b: 1 }; return take1(q);`,
-		`var y: i64 = 5; var r: i64 = pair(1, y); return 0;`,
-		`var y: i64 = 5; var r: i64 = pair(y, 1); return 0;`,
+		`let y: i64 = 5; let q = Same { a: 1, b: y }; return take1(q);`,
+		`let y: i64 = 5; let q = Same { a: y, b: 1 }; return take1(q);`,
+		`let y: i64 = 5; let r: i64 = pair(1, y); return 0;`,
+		`let y: i64 = 5; let r: i64 = pair(y, 1); return 0;`,
 	} {
 		if err := checkSource(t, decls+"function main(): i32 { "+body+" }"); err != nil {
 			t.Errorf("%s: rejected, want accepted: %v", body, err)
 		}
 	}
-	prog, err := parser.Parse(decls + "function main(): i32 { var y: i64 = 5; var q = Same { a: 1, b: y }; return take1(q); }")
+	prog, err := parser.Parse(decls + "function main(): i32 { let y: i64 = 5; let q = Same { a: 1, b: y }; return take1(q); }")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -990,20 +990,20 @@ func TestTypedValueBindsAheadOfEarlierLiteral(t *testing.T) {
 func TestGenericStructLiteralLocalTakesOneWidth(t *testing.T) {
 	const decls = "struct Same[T] { a: T, b: T } function take1(x: Same[i64]): i32 { return 1; } function take(xs: Same[i64][]): i32 { return 1; } "
 	for _, body := range []string{
-		`var q = Same { a: 1, b: 2 }; var r: i64 = q.a; return 0;`,
-		`var q = Same { a: 1, b: 2 }; return take1(q);`,
-		`var q = Same { a: 1, b: 2 }; return take([q]);`,
-		`var q = Same { a: 1, b: 2 }; var r: i64 = q.a; var z: i64 = q.b; return take1(q);`,
-		`var q = Same { a: 1, b: 2 }; var z: i32 = q.a; return 0;`,
+		`let q = Same { a: 1, b: 2 }; let r: i64 = q.a; return 0;`,
+		`let q = Same { a: 1, b: 2 }; return take1(q);`,
+		`let q = Same { a: 1, b: 2 }; return take([q]);`,
+		`let q = Same { a: 1, b: 2 }; let r: i64 = q.a; let z: i64 = q.b; return take1(q);`,
+		`let q = Same { a: 1, b: 2 }; let z: i32 = q.a; return 0;`,
 	} {
 		if err := checkSource(t, decls+"function main(): i32 { "+body+" }"); err != nil {
 			t.Errorf("%s: rejected, want accepted: %v", body, err)
 		}
 	}
 	for _, body := range []string{
-		`var q = Same { a: 1, b: 2 }; var r: i64 = q.a; var z: i32 = q.b; return 0;`,
-		`var q = Same { a: 1, b: 2 }; var t = take1(q); var z: i32 = q.a; return 0;`,
-		`var q = Same { a: 1, b: 4611686018427387904 }; var z: i32 = q.a; return 0;`,
+		`let q = Same { a: 1, b: 2 }; let r: i64 = q.a; let z: i32 = q.b; return 0;`,
+		`let q = Same { a: 1, b: 2 }; let t = take1(q); let z: i32 = q.a; return 0;`,
+		`let q = Same { a: 1, b: 4611686018427387904 }; let z: i32 = q.a; return 0;`,
 	} {
 		err := checkSource(t, decls+"function main(): i32 { "+body+" }")
 		if err == nil || !strings.Contains(err.Error(), "cannot assign i64 to variable of type i32") {
@@ -1017,8 +1017,8 @@ func TestGenericStructLiteralLocalTakesOneWidth(t *testing.T) {
 // the call settles it. A destination names its width, through a field read of
 // the result too; a comparison or arithmetic with no typed side takes the
 // default, i64 when a literal has no i32 reading. `if (both(1, 2^62).1 ==
-// 2^62)` was E041, `var z: i64 = both(1, 2^62).1` truncated the value to 0,
-// and an i32 destination settled nothing, so `var x: i32 = id(2^32 + 2)` ran
+// 2^62)` was E041, `let z: i64 = both(1, 2^62).1` truncated the value to 0,
+// and an i32 destination settled nothing, so `let x: i32 = id(2^32 + 2)` ran
 // as 2 where the bare literal is E047.
 func TestGenericCallLiteralBoundTSettlesByPosition(t *testing.T) {
 	const big = "4611686018427387904"
@@ -1027,18 +1027,18 @@ func TestGenericCallLiteralBoundTSettlesByPosition(t *testing.T) {
 		"function pick[T](a: T, b: T): Option[T] { return Some(b); } " +
 		"function id[T](a: T): T { return a; } "
 	accepted := []string{
-		`var q = both(1, ` + big + `); if (q.1 == ` + big + `) { return 7; }`,
+		`let q = both(1, ` + big + `); if (q.1 == ` + big + `) { return 7; }`,
 		`match (pick(1, ` + big + `)) { Some(v) => { if (v == ` + big + `) { return 7; } }, None => { } }`,
 		`if (both(1, ` + big + `).1 == ` + big + `) { return 7; }`,
-		`var x: (u64, u64) = both(1, ` + big + `);`,
-		`var z: i64 = both(1, ` + big + `).1;`,
-		`var z: u64 = both(1, 2).1;`,
-		`var b: Box[u64] = box(1);`,
-		`var v: u64 = box(1).v;`,
+		`let x: (u64, u64) = both(1, ` + big + `);`,
+		`let z: i64 = both(1, ` + big + `).1;`,
+		`let z: u64 = both(1, 2).1;`,
+		`let b: Box[u64] = box(1);`,
+		`let v: u64 = box(1).v;`,
 		`if (id(1) == ` + big + `) { return 7; }`,
 		`if (id(1) == id(` + big + `)) { return 7; }`,
-		`var x: i64 = id(1) + 1;`,
-		`var y: u64 = 3 as u64; if (id(1) < y) { return 7; }`,
+		`let x: i64 = id(1) + 1;`,
+		`let y: u64 = 3 as u64; if (id(1) < y) { return 7; }`,
 	}
 	for _, src := range accepted {
 		if err := checkSource(t, decls+"function main(): i32 { "+src+" return 0; }"); err != nil {
@@ -1046,9 +1046,9 @@ func TestGenericCallLiteralBoundTSettlesByPosition(t *testing.T) {
 		}
 	}
 	rejected := []struct{ src, want string }{
-		{`var x: i32 = id(4294967298);`, "does not fit in i32"},
-		{`var x: u8 = id(300);`, "does not fit in u8"},
-		{`var z: i32 = both(1, ` + big + `).1;`, "does not fit in i32"},
+		{`let x: i32 = id(4294967298);`, "does not fit in i32"},
+		{`let x: u8 = id(300);`, "does not fit in u8"},
+		{`let z: i32 = both(1, ` + big + `).1;`, "does not fit in i32"},
 	}
 	for _, c := range rejected {
 		err := checkSource(t, decls+"function main(): i32 { "+c.src+" return 0; }")
@@ -1063,8 +1063,8 @@ func TestGenericCallLiteralBoundTSettlesByPosition(t *testing.T) {
 		call func(ast.Stmt) *ast.Call
 		want ast.NumberType
 	}{
-		{`var x: (u64, u64) = both(1, ` + big + `);`, func(st ast.Stmt) *ast.Call { return st.(*ast.Var).Init.(*ast.Call) }, ast.NumberType{Width: 64}},
-		{`var z: i64 = both(1, ` + big + `).1;`, func(st ast.Stmt) *ast.Call {
+		{`let x: (u64, u64) = both(1, ` + big + `);`, func(st ast.Stmt) *ast.Call { return st.(*ast.Var).Init.(*ast.Call) }, ast.NumberType{Width: 64}},
+		{`let z: i64 = both(1, ` + big + `).1;`, func(st ast.Stmt) *ast.Call {
 			return st.(*ast.Var).Init.(*ast.FieldAccess).Target.(*ast.Call)
 		}, ast.NumberType{Width: 64, Signed: true}},
 		{`if (both(1, ` + big + `).1 == ` + big + `) { return 7; }`, func(st ast.Stmt) *ast.Call {
@@ -1103,17 +1103,17 @@ func TestGenericCallLiteralBoundTSettlesByPosition(t *testing.T) {
 // instantiation: `Same[i32] { …, b: 2^62 }` is E047 (#10453).
 func TestGenericStructLiteralWideningInArrayAndWritten(t *testing.T) {
 	const decls = "struct Same[T] { a: T, b: T } "
-	if err := checkSource(t, decls+"function main(): i32 { var xs = [Same { a: 1, b: 4611686018427387904 }]; var r: i64 = xs[0].b; return 0; }"); err != nil {
+	if err := checkSource(t, decls+"function main(): i32 { let xs = [Same { a: 1, b: 4611686018427387904 }]; let r: i64 = xs[0].b; return 0; }"); err != nil {
 		t.Errorf("array of a wide literal: rejected, want accepted: %v", err)
 	}
-	err := checkSource(t, decls+"function main(): i32 { var q = Same[i32] { a: 1, b: 4611686018427387904 }; return 0; }")
+	err := checkSource(t, decls+"function main(): i32 { let q = Same[i32] { a: 1, b: 4611686018427387904 }; return 0; }")
 	if err == nil || !strings.Contains(err.Error(), "does not fit in i32") {
 		t.Errorf("written Same[i32] with a wide field: want the literal refused, got %v", err)
 	}
 	// A field that holds the parameter inside a composite widens it too.
 	for _, decl := range []string{
-		"struct Stack[T] { items: T[] } function main(): i32 { var q = Stack { items: [4611686018427387904] }; var r: i64 = q.items[0]; return 0; }",
-		"struct Tagged[T] { p: (T, string) } function main(): i32 { var q = Tagged { p: (4611686018427387904, \"x\") }; var r: i64 = q.p.0; return 0; }",
+		"struct Stack[T] { items: T[] } function main(): i32 { let q = Stack { items: [4611686018427387904] }; let r: i64 = q.items[0]; return 0; }",
+		"struct Tagged[T] { p: (T, string) } function main(): i32 { let q = Tagged { p: (4611686018427387904, \"x\") }; let r: i64 = q.p.0; return 0; }",
 	} {
 		prog, err := parser.Parse(decl)
 		if err != nil {
@@ -1136,24 +1136,24 @@ func TestGenericStructLiteralWideningInArrayAndWritten(t *testing.T) {
 // capture share its width.
 func TestTypedFieldRebindStaysInsideTheLiteral(t *testing.T) {
 	const decls = "struct Same[T] { a: T, b: T } "
-	err := checkSource(t, decls+"function main(): i32 { var q = Same { a: 1, b: 2 }; var y: i64 = 8589934592; var w = Same { ...q, b: y }; return 0; }")
+	err := checkSource(t, decls+"function main(): i32 { let q = Same { a: 1, b: 2 }; let y: i64 = 8589934592; let w = Same { ...q, b: y }; return 0; }")
 	if err == nil || !strings.Contains(err.Error(), `field "b": expected i32, got i64`) {
 		t.Errorf("struct update over an i32 base: want the field refused, got %v", err)
 	}
 	for _, body := range []string{
-		"var y: i64 = 8589934592; var xs = [Same { a: 1, b: 2 }, Same { a: 3, b: y }]; var r: i64 = xs[0].a; return 0;",
-		"var y: i64 = 8589934592; var xs = [Same { a: 3, b: y }, Same { a: 1, b: 2 }]; var r: i64 = xs[1].a; return 0;",
-		"var q = Same { a: 1, b: 2 }; var r = q; var z: i64 = r.a; var w: i64 = q.b; return 0;",
-		"var q = Same { a: 1, b: 2 }; var f = (): i64 => q.a; return 0;",
+		"let y: i64 = 8589934592; let xs = [Same { a: 1, b: 2 }, Same { a: 3, b: y }]; let r: i64 = xs[0].a; return 0;",
+		"let y: i64 = 8589934592; let xs = [Same { a: 3, b: y }, Same { a: 1, b: 2 }]; let r: i64 = xs[1].a; return 0;",
+		"let q = Same { a: 1, b: 2 }; let r = q; let z: i64 = r.a; let w: i64 = q.b; return 0;",
+		"let q = Same { a: 1, b: 2 }; let f = (): i64 => q.a; return 0;",
 	} {
 		if err := checkSource(t, decls+"function main(): i32 { "+body+" }"); err != nil {
 			t.Errorf("%s: rejected, want accepted: %v", body, err)
 		}
 	}
-	if err := checkSource(t, decls+"function main(): i32 { var q = Same { a: 1, b: 2 }; var r = q; var z: i64 = r.a; var w: i32 = q.b; return 0; }"); err == nil || !strings.Contains(err.Error(), "already inferred") {
+	if err := checkSource(t, decls+"function main(): i32 { let q = Same { a: 1, b: 2 }; let r = q; let z: i64 = r.a; let w: i32 = q.b; return 0; }"); err == nil || !strings.Contains(err.Error(), "already inferred") {
 		t.Errorf("a copy and its source read at two widths: want E003, got %v", err)
 	}
-	if err := checkSource(t, decls+"function main(): i32 { var xs = [Same { a: 1, b: 2 }, Same { a: \"x\", b: \"y\" }]; return 0; }"); err == nil || !strings.Contains(err.Error(), "array element type") {
+	if err := checkSource(t, decls+"function main(): i32 { let xs = [Same { a: 1, b: 2 }, Same { a: \"x\", b: \"y\" }]; return 0; }"); err == nil || !strings.Contains(err.Error(), "array element type") {
 		t.Errorf("an array of two instantiations no literal reconciles: want E034, got %v", err)
 	}
 }
@@ -1165,13 +1165,13 @@ func TestNestedGenericStructLiteralInfersItsOwnArgs(t *testing.T) {
 	const decls = "struct Box[T] { v: T } struct Outer[T] { b: Box[T] } struct Two[T] { b: Box[T], c: T } " +
 		"struct List[T] { tail: Option[List[T]], head: T } struct C[T] { v: T } struct B[T] { c: C[T] } struct A[T] { b: B[T] } "
 	for _, body := range []string{
-		"var o = Outer { b: Box { v: 4 } }; var r: i32 = o.b.v; return r;",
-		"var o = Outer { b: Box { v: 4611686018427387904 } }; var r: i64 = o.b.v; return 0;",
-		"var o: Outer[i64] = Outer { b: Box { v: 4 } }; var r: i64 = o.b.v; return 0;",
-		"var o = Two { b: Box { v: \"x\" }, c: \"y\" }; return o.c.len();",
-		"var o = Two { b: Box { v: 4611686018427387904 }, c: 1 }; var r: i64 = o.c; return 0;",
-		"var l = List { tail: None, head: 1 }; return l.head;",
-		"var a = A { b: B { c: C { v: 1 } } }; return a.b.c.v;",
+		"let o = Outer { b: Box { v: 4 } }; let r: i32 = o.b.v; return r;",
+		"let o = Outer { b: Box { v: 4611686018427387904 } }; let r: i64 = o.b.v; return 0;",
+		"let o: Outer[i64] = Outer { b: Box { v: 4 } }; let r: i64 = o.b.v; return 0;",
+		"let o = Two { b: Box { v: \"x\" }, c: \"y\" }; return o.c.len();",
+		"let o = Two { b: Box { v: 4611686018427387904 }, c: 1 }; let r: i64 = o.c; return 0;",
+		"let l = List { tail: None, head: 1 }; return l.head;",
+		"let a = A { b: B { c: C { v: 1 } } }; return a.b.c.v;",
 	} {
 		if err := checkSource(t, decls+"function main(): i32 { "+body+" }"); err != nil {
 			t.Errorf("%s: rejected, want accepted: %v", body, err)
@@ -1180,11 +1180,11 @@ func TestNestedGenericStructLiteralInfersItsOwnArgs(t *testing.T) {
 	// A generic call in such a field keeps the destination: it is all the
 	// call has to infer its result's parameter from.
 	if err := checkSource(t, "struct Holder[T] { xs: T[], z: T } function emptyArr[A](): A[] { return []; } "+
-		"function f[T](t: T): Holder[T] { var h = Holder { xs: emptyArr(), z: t }; return h; } "+
-		"function main(): i32 { var h = f(7); return h.z; }"); err != nil {
+		"function f[T](t: T): Holder[T] { let h = Holder { xs: emptyArr(), z: t }; return h; } "+
+		"function main(): i32 { let h = f(7); return h.z; }"); err != nil {
 		t.Errorf("a generic call in an unbound field: rejected, want accepted: %v", err)
 	}
-	err := checkSource(t, decls+"function main(): i32 { var o = Two { b: Box { v: 1 }, c: \"x\" }; return 0; }")
+	err := checkSource(t, decls+"function main(): i32 { let o = Two { b: Box { v: 1 }, c: \"x\" }; return 0; }")
 	if err == nil || !strings.Contains(err.Error(), `field "c": expected i32, got string`) {
 		t.Errorf("clash across the nesting: want the field refused, got %v", err)
 	}
@@ -1192,7 +1192,7 @@ func TestNestedGenericStructLiteralInfersItsOwnArgs(t *testing.T) {
 
 func TestGenericStructLiteralLocalWidensByLiteral(t *testing.T) {
 	src := "struct Same[T] { a: T, b: T } function main(): i32 { " +
-		"var q = Same { a: 1, b: 4611686018427387904 }; var r: i64 = q.b; return 0; }"
+		"let q = Same { a: 1, b: 4611686018427387904 }; let r: i64 = q.b; return 0; }"
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -1214,7 +1214,7 @@ func TestGenericStructLiteralLocalWidensByLiteral(t *testing.T) {
 		}
 	}
 	// Literals that all read at i32 leave the default alone.
-	narrow, err := parser.Parse("struct Same[T] { a: T, b: T } function main(): i32 { var q = Same { a: 1, b: 2 }; return 0; }")
+	narrow, err := parser.Parse("struct Same[T] { a: T, b: T } function main(): i32 { let q = Same { a: 1, b: 2 }; return 0; }")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -1246,7 +1246,7 @@ func TestPolymorphicComparisonWithBigLiteralSettlesAtI64(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			prog, err := parser.Parse("function main(): i32 { var b = " + tc.init + "; if (b) { return 1; } return 0; }")
+			prog, err := parser.Parse("function main(): i32 { let b = " + tc.init + "; if (b) { return 1; } return 0; }")
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
@@ -1263,13 +1263,13 @@ func TestPolymorphicComparisonWithBigLiteralSettlesAtI64(t *testing.T) {
 		})
 	}
 	// A committed i32 side still refuses the literal it cannot hold.
-	err := checkSource(t, "function main(): i32 { var a: i32 = 1; if (a < "+big+") { return 1; } return 0; }")
+	err := checkSource(t, "function main(): i32 { let a: i32 = 1; if (a < "+big+") { return 1; } return 0; }")
 	if err == nil || !strings.Contains(err.Error(), "does not fit in i32") {
 		t.Errorf("wide literal beside an i32 operand should stay E047 naming i32, got: %v", err)
 	}
 }
 
-// varInit returns the initialiser of `var <name> = …;` in main.
+// varInit returns the initialiser of `let <name> = …;` in main.
 func varInit(t *testing.T, prog *ast.Program, name string) ast.Expr {
 	t.Helper()
 	for _, fn := range prog.Funcs {
@@ -1282,7 +1282,7 @@ func varInit(t *testing.T, prog *ast.Program, name string) ast.Expr {
 			}
 		}
 	}
-	t.Fatalf("no `var %s` in main", name)
+	t.Fatalf("no `let %s` in main", name)
 	return nil
 }
 
@@ -1293,7 +1293,7 @@ func varInit(t *testing.T, prog *ast.Program, name string) ast.Expr {
 // pollables — but the signatures are checked on every backend.)
 func TestWasmReactorBuiltinSigs(t *testing.T) {
 	ok := `function main(): i32 {
-    var p: i32 = wasm_timer_pollable(1000000);
+    let p: i32 = wasm_timer_pollable(1000000);
     return wasm_block(p);
 }`
 	if err := checkSource(t, ok); err != nil {
@@ -1340,8 +1340,8 @@ func TestGoodPrograms(t *testing.T) {
 		`function f(): i32 { return 1 + 2; }`,
 		`function f(n: i32): i32 { return n * 2; }`,
 		`function f(n: i32): boolean { return n < 10; }`,
-		`function main(): i32 { var x = 1; var y = x + 2; return y; }`,
-		`function main(): i32 { var a: i32[] = [1,2,3]; return a[0]; }`,
+		`function main(): i32 { let x = 1; let y = x + 2; return y; }`,
+		`function main(): i32 { let a: i32[] = [1,2,3]; return a[0]; }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%q: unexpected error %v", src, err)
@@ -1351,14 +1351,14 @@ func TestGoodPrograms(t *testing.T) {
 
 // A bare variant struct literal in a struct-field initializer should
 // implicitly widen to its union type, the same way it already does in
-// `var x: Union = Variant{...}`, returns, and call arguments. Before
+// `let x: Union = Variant{...}`, returns, and call arguments. Before
 // the fix this reported `field "left": expected Tree, got Leaf`.
 func TestUnionWidenInStructField(t *testing.T) {
 	src := `struct Leaf { v: i32 }
 struct Node { left: Tree, right: Tree }
 type Tree = Leaf | Node;
 function main(): i32 {
-    var t: Tree = Node { left: Leaf { v: 40 }, right: Leaf { v: 2 } };
+    let t: Tree = Node { left: Leaf { v: 40 }, right: Leaf { v: 2 } };
     match (t) {
         Leaf(l) => { return l.v; },
         Node(n) => { return 0; }
@@ -1379,7 +1379,7 @@ func TestTypeErrors(t *testing.T) {
 		{`function f(): boolean { return 1; }`, "return type mismatch"},
 		{`function f(): void { x; }`, "undefined identifier"},
 		{`function f(n: i32): i32 { if (n) { return 0; } return 1; }`, "if condition must be boolean"},
-		{`function f(): void { var x: i32 = true; }`, "cannot assign boolean"},
+		{`function f(): void { let x: i32 = true; }`, "cannot assign boolean"},
 	}
 	for _, c := range cases {
 		err := checkSource(t, c.src)
@@ -1409,7 +1409,7 @@ function find(): Result[i32, NotFound] { return Err(NotFound { what: "x" }); }
 `
 	// Accepted: NotFound implements Error.
 	if err := checkSource(t, hdr+`function h(): Result[i32, dyn Error] {
-  var v: i32 = find()?;
+  let v: i32 = find()?;
   return Ok(v);
 }`); err != nil {
 		t.Errorf("error-converting `?` (NotFound→dyn Error) should type-check, got: %v", err)
@@ -1418,7 +1418,7 @@ function find(): Result[i32, NotFound] { return Err(NotFound { what: "x" }); }
 	err := checkSource(t, `trait Error { function message(self: Self): string; }
 struct Plain { x: i32 }
 function find(): Result[i32, Plain] { return Err(Plain { x: 1 }); }
-function h(): Result[i32, dyn Error] { var v: i32 = find()?; return Ok(v); }
+function h(): Result[i32, dyn Error] { let v: i32 = find()?; return Ok(v); }
 function main(): i32 { return 0; }`)
 	if err == nil || !strings.Contains(err.Error(), "error types must match") {
 		t.Errorf("`?` with a non-implementing error type should be rejected, got: %v", err)
@@ -1431,7 +1431,7 @@ struct Both { n: i32 }
 impl A for Both { function a(self: Self): i32 { return self.n; } }
 impl B for Both { function b(self: Self): i32 { return 0; } }
 function find(): Result[i32, Both] { return Err(Both { n: 1 }); }
-function h(): Result[i32, dyn A + B] { var v: i32 = find()?; return Ok(v); }
+function h(): Result[i32, dyn A + B] { let v: i32 = find()?; return Ok(v); }
 function main(): i32 { return 0; }`); err != nil {
 		t.Errorf("error-converting `?` into a multi-trait `dyn A + B` should type-check, got: %v", err)
 	}
@@ -1442,7 +1442,7 @@ trait B { function b(self: Self): i32; }
 struct OnlyA { n: i32 }
 impl A for OnlyA { function a(self: Self): i32 { return self.n; } }
 function find(): Result[i32, OnlyA] { return Err(OnlyA { n: 1 }); }
-function h(): Result[i32, dyn A + B] { var v: i32 = find()?; return Ok(v); }
+function h(): Result[i32, dyn A + B] { let v: i32 = find()?; return Ok(v); }
 function main(): i32 { return 0; }`)
 	if err == nil || !strings.Contains(err.Error(), "error types must match") {
 		t.Errorf("`?` into `dyn A + B` with an error implementing only A should be rejected, got: %v", err)
@@ -1462,7 +1462,7 @@ impl From[IoErr] for AppErr { function from(e: IoErr): Self { return AppErr { ms
 function read(): Result[i32, IoErr] { return Err(IoErr { code: 1 }); }
 `
 	if err := checkSource(t, hdr+`function run(): Result[i32, AppErr] {
-  var v: i32 = read()?;
+  let v: i32 = read()?;
   return Ok(v);
 }`); err != nil {
 		t.Errorf("From-based error-converting `?` should type-check, got: %v", err)
@@ -1471,7 +1471,7 @@ function read(): Result[i32, IoErr] { return Err(IoErr { code: 1 }); }
 	err := checkSource(t, `struct IoErr { code: i32 }
 struct AppErr { msg: i32 }
 function read(): Result[i32, IoErr] { return Err(IoErr { code: 1 }); }
-function run(): Result[i32, AppErr] { var v: i32 = read()?; return Ok(v); }
+function run(): Result[i32, AppErr] { let v: i32 = read()?; return Ok(v); }
 function main(): i32 { return 0; }`)
 	if err == nil || !strings.Contains(err.Error(), "error types must match") {
 		t.Errorf("`?` with no conversion should be rejected, got: %v", err)
@@ -1489,9 +1489,9 @@ function (self: V) mul(o: V): V { return V { x: self.x * o.x }; }
 function (self: V) div(o: V): V { return V { x: self.x / o.x }; }
 `
 	if err := checkSource(t, ops+`function main(): i32 {
-  var a: V = V { x: 6 };
-  var b: V = V { x: 7 };
-  var r: V = ((a + b) - a) * b;
+  let a: V = V { x: 6 };
+  let b: V = V { x: 7 };
+  let r: V = ((a + b) - a) * b;
   return (r / b).x;
 }`); err != nil {
 		t.Errorf("composite arithmetic with add/sub/mul/div should type-check, got: %v", err)
@@ -1507,16 +1507,16 @@ function (self: F) shl(o: F): F { return F { b: self.b << o.b }; }
 function (self: F) shr(o: F): F { return F { b: self.b >> o.b }; }
 `
 	if err := checkSource(t, bitOps+`function main(): i32 {
-  var a: F = F { b: 12 };
-  var b: F = F { b: 10 };
-  var r: F = ((((a & b) | a) ^ b) << F{b:1}) >> F{b:1};
+  let a: F = F { b: 12 };
+  let b: F = F { b: 10 };
+  let r: F = ((((a & b) | a) ^ b) << F{b:1}) >> F{b:1};
   return (r % F{b:7}).b;
 }`); err != nil {
 		t.Errorf("composite %% & | ^ << >> should type-check, got: %v", err)
 	}
 	// A composite without the operator method is rejected.
 	err := checkSource(t, `struct W { x: i32 }
-function main(): i32 { var a: W = W{x:1}; var b: W = W{x:2}; var c: W = a + b; return c.x; }`)
+function main(): i32 { let a: W = W{x:1}; let b: W = W{x:2}; let c: W = a + b; return c.x; }`)
 	if err == nil || !strings.Contains(err.Error(), `operator "+" is not defined for W`) {
 		t.Errorf("struct without `add` should be rejected with an operator-overload hint, got: %v", err)
 	}
@@ -1528,16 +1528,16 @@ function main(): i32 { var a: W = W{x:1}; var b: W = W{x:2}; var c: W = a + b; r
 	// Unary `-` on a composite routes to `neg`; `ops` has no `neg`, so it
 	// is rejected; a type WITH `neg` type-checks; numeric unary minus is
 	// unaffected. See #2706.
-	if err := checkSource(t, ops+`function main(): i32 { var a: V = V{x:5}; var b: V = -a; return b.x; }`); err == nil ||
+	if err := checkSource(t, ops+`function main(): i32 { let a: V = V{x:5}; let b: V = -a; return b.x; }`); err == nil ||
 		!strings.Contains(err.Error(), "unary `-` is not defined for V") {
 		t.Errorf("unary `-` on a struct without `neg` should be rejected with a hint, got: %v", err)
 	}
 	if err := checkSource(t, `struct V { x: i32 }
 function (self: V) neg(): V { return V { x: 0 - self.x }; }
-function main(): i32 { var a: V = V{x:5}; var b: V = -a; return b.x; }`); err != nil {
+function main(): i32 { let a: V = V{x:5}; let b: V = -a; return b.x; }`); err != nil {
 		t.Errorf("unary `-` with a `neg` method should type-check, got: %v", err)
 	}
-	if err := checkSource(t, `function main(): i32 { var x: i32 = 7; return -x; }`); err != nil {
+	if err := checkSource(t, `function main(): i32 { let x: i32 = 7; return -x; }`); err != nil {
 		t.Errorf("numeric unary minus should still type-check, got: %v", err)
 	}
 }
@@ -1587,9 +1587,9 @@ impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self ==
 		want string
 	}{
 		{`struct P { x: i32 }
-function main(): i32 { var a: P = P{x:1}; var b: P = P{x:1}; if (a == b) { return 1; } return 0; }`,
+function main(): i32 { let a: P = P{x:1}; let b: P = P{x:1}; if (a == b) { return 1; } return 0; }`,
 			"does not implement `Eq`"},
-		{`function main(): i32 { var a: i32[] = [1,2]; var b: i32[] = [1,2]; if (a == b) { return 1; } return 0; }`,
+		{`function main(): i32 { let a: i32[] = [1,2]; let b: i32[] = [1,2]; if (a == b) { return 1; } return 0; }`,
 			"structural equality for arrays"},
 	}
 	for _, c := range reject {
@@ -1613,7 +1613,7 @@ impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other
 		want string
 	}{
 		{`struct P { x: i32 }
-function main(): i32 { var a: P = P{x:1}; var b: P = P{x:2}; if (a < b) { return 1; } return 0; }`,
+function main(): i32 { let a: P = P{x:1}; let b: P = P{x:2}; if (a < b) { return 1; } return 0; }`,
 			"does not implement `Ord`"},
 	}
 	for _, c := range ordReject {
@@ -1623,7 +1623,7 @@ function main(): i32 { var a: P = P{x:1}; var b: P = P{x:2}; if (a < b) { return
 		}
 	}
 	if err := checkSource(t, ordI32+`@derive(Ord) struct P { x: i32 }
-function main(): i32 { var a: P = P{x:1}; var b: P = P{x:2}; if (a < b) { if (b >= a) { return 0; } } return 1; }`); err != nil {
+function main(): i32 { let a: P = P{x:1}; let b: P = P{x:2}; if (a < b) { if (b >= a) { return 0; } } return 1; }`); err != nil {
 		t.Errorf("composite ordering with derived Ord should type-check, got: %v", err)
 	}
 
@@ -1631,7 +1631,7 @@ function main(): i32 { var a: P = P{x:1}; var b: P = P{x:2}; if (a < b) { if (b 
 	ok := eqI32 + `@derive(Eq) struct P { x: i32, y: i32 }
 @derive(Eq) enum E { A, B(i32) }
 function main(): i32 {
-    var a: P = P{x:1, y:2}; var b: P = P{x:1, y:2};
+    let a: P = P{x:1, y:2}; let b: P = P{x:1, y:2};
     if (a == b) { if (A == A) { if (B(1) != B(2)) { return 0; } } }
     return 1;
 }`
@@ -1648,36 +1648,36 @@ func TestGenericReceiverMethods(t *testing.T) {
 	ok := []string{
 		`struct Box[T] { v: T }
 function (b: Box[T]) get(): T { return b.v; }
-function main(): i32 { var b: Box[i32] = Box { v: 7 }; return b.get(); }`,
+function main(): i32 { let b: Box[i32] = Box { v: 7 }; return b.get(); }`,
 		`struct Pair[A, B] { fst: A, snd: B }
 function (p: Pair[A, B]) first(): A { return p.fst; }
-function main(): i32 { var p: Pair[i32, i32] = Pair { fst: 3, snd: 4 }; return p.first(); }`,
+function main(): i32 { let p: Pair[i32, i32] = Pair { fst: 3, snd: 4 }; return p.first(); }`,
 		`enum Opt[T] { Nil, Has(T) }
 function (o: Opt[T]) unwrap_or(d: T): T { match (o) { Has(x) => { return x; }, Nil => { return d; } } }
-function main(): i32 { var o: Opt[i32] = Has(9); return o.unwrap_or(0); }`,
+function main(): i32 { let o: Opt[i32] = Has(9); return o.unwrap_or(0); }`,
 		// A receiver type-arg naming a real struct is a concrete
 		// instantiation, not a type variable.
 		`struct Foo { v: i32 }
 struct Box[T] { v: T }
 function (b: Box[Foo]) deep(): i32 { return b.v.v; }
-function main(): i32 { var b: Box[Foo] = Box { v: Foo { v: 5 } }; return b.deep(); }`,
+function main(): i32 { let b: Box[Foo] = Box { v: Foo { v: 5 } }; return b.deep(); }`,
 		// Element-polymorphic receivers: owned array `T[]` and slice `[T]`.
 		`function (xs: T[]) first(): T { return xs[0]; }
-function main(): i32 { var a: i32[] = [3, 4]; return a.first(); }`,
+function main(): i32 { let a: i32[] = [3, 4]; return a.first(); }`,
 		`function (xs: [T]) head(): T { return xs[0]; }
-function main(): i32 { var a: i32[] = [7, 8]; var s: [i32] = a[0:2]; return s.head(); }`,
+function main(): i32 { let a: i32[] = [7, 8]; let s: [i32] = a[0:2]; return s.head(); }`,
 		`function (xs: T[]) count_where(p: (T) => boolean): i32 {
-    var n: i32 = 0; var i: i32 = 0;
+    let n: i32 = 0; let i: i32 = 0;
     while (i < xs.len()) { if (p(xs[i])) { n = n + 1; } i = i + 1; } return n; }
 function pos(x: i32): boolean { return x > 0; }
-function main(): i32 { var a: i32[] = [1, 0 - 1, 2]; return a.count_where(pos); }`,
+function main(): i32 { let a: i32[] = [1, 0 - 1, 2]; return a.count_where(pos); }`,
 		// Method-level type param: `map[U]` introduces U (inferred from
 		// the argument) alongside the receiver's T.
 		`struct Box[T] { v: T }
 function (b: Box[T]) map[U](f: (T) => U): Box[U] { return Box { v: f(b.v) }; }
 function (b: Box[T]) get(): T { return b.v; }
 function big(x: i32): boolean { return x > 3; }
-function main(): i32 { var b: Box[i32] = Box { v: 7 }; var c: Box[boolean] = b.map(big); if (c.get()) { return 0; } return 1; }`,
+function main(): i32 { let b: Box[i32] = Box { v: 7 }; let c: Box[boolean] = b.map(big); if (c.get()) { return 0; } return 1; }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, src); err != nil {
@@ -1688,14 +1688,14 @@ function main(): i32 { var b: Box[i32] = Box { v: 7 }; var c: Box[boolean] = b.m
 
 // Return-position type inference (#2668): a generic function whose type
 // parameter appears only in its result type (not in any argument) can
-// have that parameter inferred from the destination — the `var x: T =`
+// have that parameter inferred from the destination — the `let x: T =`
 // annotation or the enclosing `return`'s declared type. Without a
 // destination there's nothing to infer from, so it must still error.
 func TestReturnPositionInference(t *testing.T) {
 	ok := []string{
-		// T bound from a `var` annotation.
+		// T bound from a `let` annotation.
 		`function empty[T](): T[] { return []; }
-function main(): i32 { var xs: i32[] = empty(); return xs.len(); }`,
+function main(): i32 { let xs: i32[] = empty(); return xs.len(); }`,
 		// T bound through a `return` whose function result is concrete.
 		`function empty[T](): T[] { return []; }
 function strs(): string[] { return empty(); }
@@ -1703,11 +1703,11 @@ function main(): i32 { return strs().len(); }`,
 		// Argument-driven binding still wins when both are present; the
 		// destination is merely consulted for *unbound* parameters.
 		`function wrap[T](x: T): T[] { return [x]; }
-function main(): i32 { var xs: i32[] = wrap(5); return xs.len(); }`,
+function main(): i32 { let xs: i32[] = wrap(5); return xs.len(); }`,
 		// Generic struct result inferred from the destination.
 		`struct Box[T] { v: T }
 function make_box[T](v: T): Box[T] { return Box { v: v }; }
-function main(): i32 { var b: Box[i32] = make_box(3); return b.v; }`,
+function main(): i32 { let b: Box[i32] = make_box(3); return b.v; }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, src); err != nil {
@@ -1759,7 +1759,7 @@ function main(): i32 { return g(); }`
 
 func TestUnimportedStdlibMethodIsRejected(t *testing.T) {
 	err := checkSource(t, `function main(): i32 {
-    var xs: string[] = "a,b,c".split(",");
+    let xs: string[] = "a,b,c".split(",");
     return len(xs);
 }`)
 	if err == nil {
@@ -1780,7 +1780,7 @@ func TestUnimportedStdlibMethodIsRejected(t *testing.T) {
 func TestMultipleErrorsAreReported(t *testing.T) {
 	src := `function f(): i32 {
 		return true;
-		var x = unknownThing;
+		let x = unknownThing;
 	}`
 	err := checkSource(t, src)
 	if err == nil {
@@ -1950,7 +1950,7 @@ func TestPolyIntLiteralPromotesToFloat(t *testing.T) {
 		`function f(x: f32): f32 { return x * 2; }`,
 		`function f(x: f64): f64 { return x - 100; }`,
 		`function f(x: f32): boolean { return x <= 0; }`,
-		`function f(): i32 { var r: f32 = 0; return 0; }`,
+		`function f(): i32 { let r: f32 = 0; return 0; }`,
 		`function takesF32(x: f32): i32 { return 0; }
 function f(): i32 { return takesF32(0); }`,
 	}
@@ -1963,8 +1963,8 @@ function f(): i32 { return takesF32(0); }`,
 
 func TestStringEqualityTypechecks(t *testing.T) {
 	src := `function f(): boolean {
-		var a: string = "hi";
-		var b: string = "hi";
+		let a: string = "hi";
+		let b: string = "hi";
 		return a == b;
 	}`
 	if err := checkSource(t, src); err != nil {
@@ -1977,7 +1977,7 @@ func TestStringEqualityTypechecks(t *testing.T) {
 // unsigned widening.
 func TestStringIndexReturnsByte(t *testing.T) {
 	src := `function f(): u8 {
-		var s: string = "abc";
+		let s: string = "abc";
 		return s[1];
 	}`
 	if err := checkSource(t, src); err != nil {
@@ -1987,7 +1987,7 @@ func TestStringIndexReturnsByte(t *testing.T) {
 
 func TestStringIndexIsNotI32(t *testing.T) {
 	src := `function f(): i32 {
-		var s: string = "abc";
+		let s: string = "abc";
 		return s[1];
 	}`
 	if err := checkSource(t, src); err == nil {
@@ -1997,7 +1997,7 @@ func TestStringIndexIsNotI32(t *testing.T) {
 
 func TestStringIndexWidensWithCast(t *testing.T) {
 	src := `function f(): i32 {
-		var s: string = "abc";
+		let s: string = "abc";
 		return s[1] as i32;
 	}`
 	if err := checkSource(t, src); err != nil {
@@ -2024,8 +2024,8 @@ func TestLenRejectsNumber(t *testing.T) {
 // type without surfacing a `ParamType` leak in the error path.
 func TestLenOnSlice(t *testing.T) {
 	src := `function f(): i32 {
-		var xs: i32[] = [1, 2, 3, 4];
-		var s: [i32] = xs[1:3];
+		let xs: i32[] = [1, 2, 3, 4];
+		let s: [i32] = xs[1:3];
 		return s.len();
 	}`
 	if err := checkSource(t, src); err != nil {
@@ -2039,8 +2039,8 @@ func TestLenOnSlice(t *testing.T) {
 // would.
 func TestFreeLenIsRejected(t *testing.T) {
 	cases := []string{
-		`function f(): i32 { var s: string = "hi"; return len(s); }`,
-		`function f(): i32 { var xs: i32[] = [1, 2]; return len(xs); }`,
+		`function f(): i32 { let s: string = "hi"; return len(s); }`,
+		`function f(): i32 { let xs: i32[] = [1, 2]; return len(xs); }`,
 	}
 	for _, src := range cases {
 		err := checkSource(t, src)
@@ -2056,7 +2056,7 @@ func TestFreeLenIsRejected(t *testing.T) {
 
 func TestStringCmpFlagSet(t *testing.T) {
 	prog, err := parser.Parse(`function f(): boolean {
-		var a: string = "x";
+		let a: string = "x";
 		return a == "x";
 	}`)
 	if err != nil {
@@ -2073,7 +2073,7 @@ func TestStringCmpFlagSet(t *testing.T) {
 
 func TestUndefinedIdentifierSuggestsClosest(t *testing.T) {
 	prog, err := parser.Parse(`function f(): i32 {
-		var counter: i32 = 0;
+		let counter: i32 = 0;
 		return countr;
 	}`)
 	if err != nil {
@@ -2110,7 +2110,7 @@ func TestUndefinedIdentifierSuggestsClosest(t *testing.T) {
 
 func TestUndefinedIdentifierNoSuggestionWhenFar(t *testing.T) {
 	prog, err := parser.Parse(`function f(): i32 {
-		var counter: i32 = 0;
+		let counter: i32 = 0;
 		return totallyUnrelated;
 	}`)
 	if err != nil {
@@ -2135,8 +2135,8 @@ func TestUnknownFieldFixApplies(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"access", "struct P { count: i32 }\nfunction main(): i32 {\n\tvar p = P { count: 1 };\n\treturn p.countr;\n}"},
-		{"literal", "struct P { count: i32 }\nfunction main(): i32 {\n\tvar p = P { countr: 1 };\n\treturn 0;\n}"},
+		{"access", "struct P { count: i32 }\nfunction main(): i32 {\n\tlet p = P { count: 1 };\n\treturn p.countr;\n}"},
+		{"literal", "struct P { count: i32 }\nfunction main(): i32 {\n\tlet p = P { countr: 1 };\n\treturn 0;\n}"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2188,7 +2188,7 @@ func TestUnknownMethodFixSuggestsMethod(t *testing.T) {
 	src := "struct P { x: i32 }\n" +
 		"pub function (p: P) push(v: i32): i32 { return p.x + v; }\n" +
 		"function main(): i32 {\n" +
-		"\tvar p = P { x: 1 };\n" +
+		"\tlet p = P { x: 1 };\n" +
 		"\treturn p.puzh(2);\n" +
 		"}"
 	prog, err := parser.Parse(src)
@@ -2231,7 +2231,7 @@ func TestUnknownMethodFixSuggestsMethod(t *testing.T) {
 // parses AND checks cleanly — the soundness bar for attaching one.
 func TestUndefinedIdentifierFixApplies(t *testing.T) {
 	src := `function f(): i32 {
-	var counter: i32 = 0;
+	let counter: i32 = 0;
 	return countr;
 }`
 	prog, err := parser.Parse(src)
@@ -2266,7 +2266,7 @@ func TestUndefinedIdentifierFixApplies(t *testing.T) {
 func TestStructTypechecks(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 		function main(): i32 {
-			var p: Point = Point { x: 1, y: 2 };
+			let p: Point = Point { x: 1, y: 2 };
 			p = Point { ...p, x: 10 };
 			return p.x + p.y;
 		}`
@@ -2283,7 +2283,7 @@ func TestStructTypechecks(t *testing.T) {
 func TestFieldAssignmentRejected(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 		function main(): i32 {
-			var p: Point = Point { x: 1, y: 2 };
+			let p: Point = Point { x: 1, y: 2 };
 			p.x = 10;
 			return p.x;
 		}`
@@ -2301,7 +2301,7 @@ func TestFieldAssignmentRejected(t *testing.T) {
 func TestCompoundFieldAssignmentRejected(t *testing.T) {
 	src := `struct Acc { v: i32 }
 		function main(): i32 {
-			var a: Acc = Acc { v: 7 };
+			let a: Acc = Acc { v: 7 };
 			a.v += 35;
 			return a.v;
 		}`
@@ -2317,7 +2317,7 @@ func TestNestedFieldAssignmentRejected(t *testing.T) {
 	src := `struct Inner { x: i32 }
 		struct Outer { inner: Inner }
 		function main(): i32 {
-			var o: Outer = Outer { inner: Inner { x: 0 } };
+			let o: Outer = Outer { inner: Inner { x: 0 } };
 			o.inner.x = 42;
 			return o.inner.x;
 		}`
@@ -2333,8 +2333,8 @@ func TestNestedFieldAssignmentRejected(t *testing.T) {
 // Scalar captures stay legal (see TestScalarCaptureWriteBackAllowed).
 func TestPointerCaptureWriteBackRejected(t *testing.T) {
 	src := `function main(): i32 {
-		var name: string = "a";
-		var f = (): i32 => {
+		let name: string = "a";
+		let f = (): i32 => {
 			name = "b";
 			return name.len();
 		};
@@ -2349,9 +2349,9 @@ func TestPointerCaptureWriteBackRejected(t *testing.T) {
 // two levels up is still rejected.
 func TestNestedPointerCaptureWriteBackRejected(t *testing.T) {
 	src := `function main(): i32 {
-		var acc: i32[] = [];
-		var outer = (): i32 => {
-			var inner = (): i32 => {
+		let acc: i32[] = [];
+		let outer = (): i32 => {
+			let inner = (): i32 => {
 				acc = acc.append(1);
 				return acc.len();
 			};
@@ -2369,7 +2369,7 @@ func TestNestedPointerCaptureWriteBackRejected(t *testing.T) {
 // so E044 is for a captured `void` alone.
 func TestClosureCapturesGenericValue(t *testing.T) {
 	if err := checkSource(t, `function apply[S](init: S, f: (S) => i32): i32 {
-    var run: () => i32 = (): i32 => f(init);
+    let run: () => i32 = (): i32 => f(init);
     return run();
 }
 function main(): i32 { return apply(7, (n: i32): i32 => n + 1); }`); err != nil {
@@ -2377,8 +2377,8 @@ function main(): i32 { return apply(7, (n: i32): i32 => n + 1); }`); err != nil 
 	}
 	err := checkSource(t, `function log(): void { print("x"); }
 function main(): i32 {
-    var done = log();
-    var f = () => done;
+    let done = log();
+    let f = () => done;
     return 0;
 }`)
 	if err == nil || !hasCode(err, "E044") {
@@ -2401,64 +2401,64 @@ function main(): i32 {
 func TestOuterRebindReachingCapturedClosureRejected(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{"direct", `function main(): i32 {
-			var g: () => i32 = (): i32 => { return 1; };
-			var f: () => i32 = (): i32 => { return g(); };
+			let g: () => i32 = (): i32 => { return 1; };
+			let f: () => i32 = (): i32 => { return g(); };
 			g = f;
 			return 0;
 		}`},
 		{"through_call", `function ident(x: () => i32): () => i32 { return x; }
 		function main(): i32 {
-			var g: () => i32 = (): i32 => { return 1; };
-			var f: () => i32 = (): i32 => { return g(); };
+			let g: () => i32 = (): i32 => { return 1; };
+			let f: () => i32 = (): i32 => { return g(); };
 			g = ident(f);
 			return 0;
 		}`},
 		{"local_func", `function main(): i32 {
-			var g: () => i32 = (): i32 => { return 1; };
+			let g: () => i32 = (): i32 => { return 1; };
 			function f(): i32 { return g(); }
 			g = f;
 			return 0;
 		}`},
 		{"mutual", `function main(): i32 {
-			var a: () => i32 = (): i32 => { return 1; };
-			var b: () => i32 = (): i32 => { return 2; };
-			var x: () => i32 = (): i32 => { return b(); };
-			var y: () => i32 = (): i32 => { return a(); };
+			let a: () => i32 = (): i32 => { return 1; };
+			let b: () => i32 = (): i32 => { return 2; };
+			let x: () => i32 = (): i32 => { return b(); };
+			let y: () => i32 = (): i32 => { return a(); };
 			a = x;
 			b = y;
 			return 0;
 		}`},
 		{"struct_field", `struct Holder { cb: () => i32 }
 		function main(): i32 {
-			var h: Holder = Holder { cb: (): i32 => { return 0; } };
-			var f: () => i32 = (): i32 => { return (h.cb)(); };
+			let h: Holder = Holder { cb: (): i32 => { return 0; } };
+			let f: () => i32 = (): i32 => { return (h.cb)(); };
 			h = Holder { cb: f };
 			return 0;
 		}`},
 		{"nested_struct", `struct Inner { cb: () => i32 }
 		struct Outer { inner: Inner }
 		function main(): i32 {
-			var o: Outer = Outer { inner: Inner { cb: (): i32 => { return 0; } } };
-			var f: () => i32 = (): i32 => { return (o.inner.cb)(); };
+			let o: Outer = Outer { inner: Inner { cb: (): i32 => { return 0; } } };
+			let f: () => i32 = (): i32 => { return (o.inner.cb)(); };
 			o = Outer { inner: Inner { cb: f } };
 			return 0;
 		}`},
 		{"array_element", `function main(): i32 {
-			var arr: (() => i32)[] = [];
-			var f: () => i32 = (): i32 => { return arr.len(); };
+			let arr: (() => i32)[] = [];
+			let f: () => i32 = (): i32 => { return arr.len(); };
 			arr = arr.append(f);
 			return 0;
 		}`},
 		{"tuple_element", `function main(): i32 {
-			var t: (i32, () => i32) = (1, (): i32 => { return 0; });
-			var f: () => i32 = (): i32 => { return t.0; };
+			let t: (i32, () => i32) = (1, (): i32 => { return 0; });
+			let f: () => i32 = (): i32 => { return t.0; };
 			t = (2, f);
 			return 0;
 		}`},
 		{"enum_payload", `enum Box { None, Some(() => i32) }
 		function main(): i32 {
-			var e: Box = Box.None;
-			var f: () => i32 = (): i32 => { return match (e) { Box.None => 1, Box.Some(_) => 2 }; };
+			let e: Box = Box.None;
+			let f: () => i32 = (): i32 => { return match (e) { Box.None => 1, Box.Some(_) => 2 }; };
 			e = Box.Some(f);
 			return 0;
 		}`},
@@ -2466,8 +2466,8 @@ func TestOuterRebindReachingCapturedClosureRejected(t *testing.T) {
 		struct Wrap { cb: () => i32 }
 		impl Runner for Wrap { function run(self: Self): i32 { return (self.cb)(); } }
 		function main(): i32 {
-			var d: dyn Runner = Wrap { cb: (): i32 => { return 0; } };
-			var f: () => i32 = (): i32 => { return d.run(); };
+			let d: dyn Runner = Wrap { cb: (): i32 => { return 0; } };
+			let f: () => i32 = (): i32 => { return d.run(); };
 			d = Wrap { cb: f };
 			return 0;
 		}`},
@@ -2480,13 +2480,13 @@ func TestOuterRebindReachingCapturedClosureRejected(t *testing.T) {
 	}
 }
 
-// The rule applies one level down too: a `var` local to a closure, captured by
+// The rule applies one level down too: a `let` local to a closure, captured by
 // a closure nested inside it, is the same shared cell one frame in.
 func TestNestedClosureLocalRebindRejected(t *testing.T) {
 	src := `function main(): i32 {
-		var outer: () => i32 = (): i32 => {
-			var g: () => i32 = (): i32 => { return 1; };
-			var inner: () => i32 = (): i32 => { return g(); };
+		let outer: () => i32 = (): i32 => {
+			let g: () => i32 = (): i32 => { return 1; };
+			let inner: () => i32 = (): i32 => { return g(); };
 			g = inner;
 			return 0;
 		};
@@ -2503,9 +2503,9 @@ func TestNestedClosureLocalRebindRejected(t *testing.T) {
 // iteration stores the lambda that captures `g`.
 func TestOuterRebindRejectedWhenClosureIsDeclaredLater(t *testing.T) {
 	src := `function main(): i32 {
-		var g: () => i32 = (): i32 => { return 1; };
-		var f: () => i32 = (): i32 => { return 2; };
-		var i: i32 = 0;
+		let g: () => i32 = (): i32 => { return 1; };
+		let f: () => i32 = (): i32 => { return 2; };
+		let i: i32 = 0;
 		while (i < 2) {
 			g = f;
 			f = (): i32 => { return g(); };
@@ -2525,27 +2525,27 @@ func TestOuterRebindRejectedWhenClosureIsDeclaredLater(t *testing.T) {
 func TestOuterRebindOfFunctionFreeCaptureAllowed(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{"string", `function main(): i32 {
-			var s: string = "a";
-			var f: () => i32 = (): i32 => { return s.len(); };
+			let s: string = "a";
+			let f: () => i32 = (): i32 => { return s.len(); };
 			s = "bb";
 			return f();
 		}`},
 		{"array", `function main(): i32 {
-			var arr: i32[] = [1, 2];
-			var f: () => i32 = (): i32 => { return arr.len(); };
+			let arr: i32[] = [1, 2];
+			let f: () => i32 = (): i32 => { return arr.len(); };
 			arr = arr.append(3);
 			return f();
 		}`},
 		{"struct", `struct P { a: i32 }
 		function main(): i32 {
-			var p: P = P { a: 1 };
-			var f: () => i32 = (): i32 => { return p.a; };
+			let p: P = P { a: 1 };
+			let f: () => i32 = (): i32 => { return p.a; };
 			p = P { a: 2 };
 			return f();
 		}`},
 		{"scalar", `function main(): i32 {
-			var n: i32 = 1;
-			var f: () => i32 = (): i32 => { return n; };
+			let n: i32 = 1;
+			let f: () => i32 = (): i32 => { return n; };
 			n = 99;
 			return f();
 		}`},
@@ -2555,8 +2555,8 @@ func TestOuterRebindOfFunctionFreeCaptureAllowed(t *testing.T) {
 		struct Sq { s: i32 }
 		impl Shape for Sq { function area(self: Self): i32 { return self.s; } }
 		function main(): i32 {
-			var d: dyn Shape = Sq { s: 3 };
-			var f: () => i32 = (): i32 => { return d.area(); };
+			let d: dyn Shape = Sq { s: 3 };
+			let f: () => i32 = (): i32 => { return d.area(); };
 			d = Sq { s: 5 };
 			return f();
 		}`},
@@ -2576,10 +2576,10 @@ func TestOuterRebindOfFunctionFreeCaptureAllowed(t *testing.T) {
 // already relies on.
 func TestFreshClosureLiteralRebindOfCapturedVariableAllowed(t *testing.T) {
 	src := `function main(): i32 {
-		var flip: boolean = false;
-		var g = (): (string, i32) => { return ("abcd", 4); };
+		let flip: boolean = false;
+		let g = (): (string, i32) => { return ("abcd", 4); };
 		if (flip) { g = (): (string, i32) => { return ("z", 1); }; }
-		var h = () => g().1 + 38;
+		let h = () => g().1 + 38;
 		return h();
 	}`
 	if err := checkSource(t, src); err != nil {
@@ -2593,14 +2593,14 @@ func TestFreshClosureLiteralRebindOfCapturedVariableAllowed(t *testing.T) {
 func TestClosureLiteralThatCapturesIsStillRejected(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{"captures_target", `function main(): i32 {
-			var g: () => i32 = (): i32 => { return 1; };
-			var f: () => i32 = (): i32 => { return g(); };
+			let g: () => i32 = (): i32 => { return 1; };
+			let f: () => i32 = (): i32 => { return g(); };
 			g = (): i32 => { return g() + 1; };
 			return 0;
 		}`},
 		{"captures_a_closure", `function main(): i32 {
-			var g: () => i32 = (): i32 => { return 1; };
-			var f: () => i32 = (): i32 => { return g(); };
+			let g: () => i32 = (): i32 => { return 1; };
+			let f: () => i32 = (): i32 => { return g(); };
 			g = (): i32 => { return f(); };
 			return 0;
 		}`},
@@ -2618,8 +2618,8 @@ func TestClosureLiteralThatCapturesIsStillRejected(t *testing.T) {
 // not about function-typed variables.
 func TestRebindOfUncapturedClosureVariableAllowed(t *testing.T) {
 	src := `function main(): i32 {
-		var g: () => i32 = (): i32 => { return 1; };
-		var h: () => i32 = (): i32 => { return 2; };
+		let g: () => i32 = (): i32 => { return 1; };
+		let h: () => i32 = (): i32 => { return 2; };
 		g = h;
 		return g();
 	}`
@@ -2635,11 +2635,11 @@ func TestRebindOfUncapturedClosureVariableAllowed(t *testing.T) {
 // would reject this.
 func TestShadowingLocalIsNotTheCapturedVariable(t *testing.T) {
 	src := `function main(): i32 {
-		var g: () => i32 = (): i32 => { return 1; };
-		var outer: () => i32 = (): i32 => { return g(); };
-		var pick: () => i32 = (): i32 => {
-			var g: () => i32 = (): i32 => { return 2; };
-			var h: () => i32 = (): i32 => { return 3; };
+		let g: () => i32 = (): i32 => { return 1; };
+		let outer: () => i32 = (): i32 => { return g(); };
+		let pick: () => i32 = (): i32 => {
+			let g: () => i32 = (): i32 => { return 2; };
+			let h: () => i32 = (): i32 => { return 3; };
 			g = h;
 			return g();
 		};
@@ -2655,7 +2655,7 @@ func TestShadowingLocalIsNotTheCapturedVariable(t *testing.T) {
 // stateful "counter closure": each call increments the env's count.
 func TestScalarCaptureWriteBackAllowed(t *testing.T) {
 	src := `function makeCounter(): () => i32 {
-		var count: i32 = 0;
+		let count: i32 = 0;
 		function tick(): i32 {
 			count = count + 1;
 			return count;
@@ -2663,7 +2663,7 @@ func TestScalarCaptureWriteBackAllowed(t *testing.T) {
 		return tick;
 	}
 	function main(): i32 {
-		var c = makeCounter();
+		let c = makeCounter();
 		return c() + c();
 	}`
 	if err := checkSource(t, src); err != nil {
@@ -2676,9 +2676,9 @@ func TestScalarCaptureWriteBackAllowed(t *testing.T) {
 // assignable.
 func TestCaptureReadAndLocalAssignStillAllowed(t *testing.T) {
 	src := `function main(): i32 {
-		var n: i32 = 5;
-		var f = (x: i32): i32 => {
-			var local: i32 = x;
+		let n: i32 = 5;
+		let f = (x: i32): i32 => {
+			let local: i32 = x;
 			local = local + n;
 			return local;
 		};
@@ -2697,7 +2697,7 @@ func TestImmutableRecursiveTypeStillCompiles(t *testing.T) {
 		struct Node { left: Tree, right: Tree }
 		type Tree = Leaf | Node;
 		function main(): i32 {
-			var t: Tree = Node { left: Leaf { v: 40 }, right: Node { left: Leaf { v: 1 }, right: Leaf { v: 1 } } };
+			let t: Tree = Node { left: Leaf { v: 40 }, right: Node { left: Leaf { v: 1 }, right: Leaf { v: 1 } } };
 			match (t) {
 				Leaf(l) => { return l.v; },
 				Node(n) => { return 0; }
@@ -2827,11 +2827,11 @@ func TestIfExprStillRejectsActualBranchMismatch(t *testing.T) {
 func TestNonVariantCallReturningGenericEnum(t *testing.T) {
 	cases := []string{
 		`function f(p: boolean[]): Option[i32] { return None; }
-function main(): i32 { var v: Option[i32] = f([true]); return 0; }`,
+function main(): i32 { let v: Option[i32] = f([true]); return 0; }`,
 		`function g(p: i32[], q: string): Option[i64] { return None; }
-function main(): i32 { var v: Option[i64] = g([1], "x"); return 0; }`,
+function main(): i32 { let v: Option[i64] = g([1], "x"); return 0; }`,
 		`function h(p: boolean[]): Result[i32, i32] { return Ok(0); }
-function main(): i32 { var v: Result[i32, i32] = h([true]); return 0; }`,
+function main(): i32 { let v: Result[i32, i32] = h([true]); return 0; }`,
 	}
 	for _, src := range cases {
 		if err := checkSource(t, src); err != nil {
@@ -2842,7 +2842,7 @@ function main(): i32 { var v: Result[i32, i32] = h([true]); return 0; }`,
 
 func TestOptionTryTypechecks(t *testing.T) {
 	src := `function f(m: Map[i32, i32]): Option[i32] {
-		var v: i32 = m.get(1)?;
+		let v: i32 = m.get(1)?;
 		return Some(v);
 	}`
 	if err := checkSource(t, src); err != nil {
@@ -2853,8 +2853,8 @@ func TestOptionTryTypechecks(t *testing.T) {
 // `?` rejected when the receiver type is not Option[_].
 func TestOptionTryRejectsNonOption(t *testing.T) {
 	src := `function f(): Option[i32] {
-		var n: i32 = 5;
-		var v: i32 = n?;
+		let n: i32 = 5;
+		let v: i32 = n?;
 		return Some(v);
 	}`
 	if err := checkSource(t, src); err == nil {
@@ -2866,7 +2866,7 @@ func TestOptionTryRejectsNonOption(t *testing.T) {
 // Option — the early-return target wouldn't unify.
 func TestOptionTryRejectsNonOptionReturn(t *testing.T) {
 	src := `function f(m: Map[i32, i32]): i32 {
-		var v: i32 = m.get(1)?;
+		let v: i32 = m.get(1)?;
 		return v;
 	}`
 	if err := checkSource(t, src); err == nil {
@@ -2879,7 +2879,7 @@ func TestOptionTryRejectsNonOptionReturn(t *testing.T) {
 func TestResultTryTypechecks(t *testing.T) {
 	src := `function inner(): Result[i32, i32] { return Ok(42); }
 function outer(): Result[i32, i32] {
-	var v: i32 = inner()?;
+	let v: i32 = inner()?;
 	return Ok(v + 1);
 }`
 	if err := checkSource(t, src); err != nil {
@@ -2891,7 +2891,7 @@ function outer(): Result[i32, i32] {
 func TestResultTryRejectsNonResultReturn(t *testing.T) {
 	src := `function inner(): Result[i32, i32] { return Ok(42); }
 function outer(): i32 {
-	var v: i32 = inner()?;
+	let v: i32 = inner()?;
 	return v;
 }`
 	if err := checkSource(t, src); err == nil {
@@ -2904,7 +2904,7 @@ function outer(): i32 {
 func TestResultTryRejectsErrTypeMismatch(t *testing.T) {
 	src := `function inner(): Result[i32, i32] { return Ok(42); }
 function outer(): Result[i32, string] {
-	var v: i32 = inner()?;
+	let v: i32 = inner()?;
 	return Ok(v);
 }`
 	if err := checkSource(t, src); err == nil {
@@ -2942,7 +2942,7 @@ func TestMatchExprRejectsBranchTypeMismatch(t *testing.T) {
 func TestMatchExprRejectsNonExhaustive(t *testing.T) {
 	src := `enum Light { Red, Green, Yellow }
 function pick(): i32 {
-	var l: Light = Green;
+	let l: Light = Green;
 	return match (l) {
 		Red   => 1,
 		Green => 2
@@ -2962,11 +2962,11 @@ func TestNumericLiteralSuffixesTypecheck(t *testing.T) {
 	for _, src := range []string{
 		// var-init context confirms suffix-stamped literals carry
 		// the right concrete type without any `as` cast.
-		`function f(): i32 { var x: i64 = 42i64; return 0; }`,
-		`function f(): i32 { var x: u8 = 7u8; return 0; }`,
-		`function f(): i32 { var x: f64 = 1.5f64; return 0; }`,
+		`function f(): i32 { let x: i64 = 42i64; return 0; }`,
+		`function f(): i32 { let x: u8 = 7u8; return 0; }`,
+		`function f(): i32 { let x: f64 = 1.5f64; return 0; }`,
 		// f32 suffix on integer-shaped text → float literal.
-		`function f(): i32 { var x: f32 = 42f32; return 0; }`,
+		`function f(): i32 { let x: f32 = 42f32; return 0; }`,
 		// Compares against suffixed literal — no `as` cast needed.
 		`enum Shape { Circle(f32), Square(f32) }
 function classify(s: Shape): i32 {
@@ -2987,7 +2987,7 @@ function classify(s: Shape): i32 {
 // Suffix mismatch surfaces as an assignment error, not a silent
 // truncation.
 func TestNumericLiteralSuffixesRejectMismatch(t *testing.T) {
-	if err := checkSource(t, `function f(): i32 { var x: i32 = 42i64; return 0; }`); err == nil {
+	if err := checkSource(t, `function f(): i32 { let x: i32 = 42i64; return 0; }`); err == nil {
 		t.Error("expected error: assigning i64 literal to i32 var")
 	}
 }
@@ -2997,8 +2997,8 @@ func TestNumericLiteralSuffixesRejectMismatch(t *testing.T) {
 // argument and return types substitute correctly.
 func TestArrayPushTypechecks(t *testing.T) {
 	for _, src := range []string{
-		`function f(): i32 { var xs: string[] = []; xs = xs.append("a"); return xs.len(); }`,
-		`function f(): i32 { var xs: i32[] = [1, 2]; xs = xs.append(3); return xs[2]; }`,
+		`function f(): i32 { let xs: string[] = []; xs = xs.append("a"); return xs.len(); }`,
+		`function f(): i32 { let xs: i32[] = [1, 2]; xs = xs.append(3); return xs[2]; }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%q: unexpected error %v", src, err)
@@ -3015,8 +3015,8 @@ func TestArrayPushTypechecks(t *testing.T) {
 // up yet.
 func TestArrayPushI64StridePasses(t *testing.T) {
 	for _, src := range []string{
-		`function f(): i32 { var xs: i64[] = [1i64, 2i64]; xs = xs.append(3i64); return 0; }`,
-		`function f(): i32 { var xs: u64[] = [1u64]; xs = xs.append(2u64); return 0; }`,
+		`function f(): i32 { let xs: i64[] = [1i64, 2i64]; xs = xs.append(3i64); return 0; }`,
+		`function f(): i32 { let xs: u64[] = [1u64]; xs = xs.append(2u64); return 0; }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%q: unexpected error %v", src, err)
@@ -3025,7 +3025,7 @@ func TestArrayPushI64StridePasses(t *testing.T) {
 }
 
 func TestArrayPushF64StridePasses(t *testing.T) {
-	src := `function f(): i32 { var xs: f64[] = [1.0f64]; xs = xs.append(2.0f64); return 0; }`
+	src := `function f(): i32 { let xs: f64[] = [1.0f64]; xs = xs.append(2.0f64); return 0; }`
 	if err := checkSource(t, src); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -3035,7 +3035,7 @@ func TestArrayPushF64StridePasses(t *testing.T) {
 // append helper.
 func TestArrayPushSubI32StridePasses(t *testing.T) {
 	for _, src := range []string{
-		`function f(): i32 { var xs: u8[] = []; xs = xs.append(7u8); return 0; }`,
+		`function f(): i32 { let xs: u8[] = []; xs = xs.append(7u8); return 0; }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%q: unexpected error %v", src, err)
@@ -3045,7 +3045,7 @@ func TestArrayPushSubI32StridePasses(t *testing.T) {
 
 // Argument type must match the receiver's Elem.
 func TestArrayPushRejectsArgTypeMismatch(t *testing.T) {
-	src := `function f(): i32 { var xs: string[] = []; xs = xs.append(1); return xs.len(); }`
+	src := `function f(): i32 { let xs: string[] = []; xs = xs.append(1); return xs.len(); }`
 	if err := checkSource(t, src); err == nil {
 		t.Error("expected error: pushing i32 onto string[]")
 	}
@@ -3056,7 +3056,7 @@ func TestArrayPushRejectsArgTypeMismatch(t *testing.T) {
 func TestMatchExprWildcardCoversExhaustiveness(t *testing.T) {
 	src := `enum Light { Red, Green, Yellow }
 function pick(): i32 {
-	var l: Light = Green;
+	let l: Light = Green;
 	return match (l) {
 		Red => 1,
 		_   => 0
@@ -3069,7 +3069,7 @@ function pick(): i32 {
 
 func TestCompoundAssignTypechecks(t *testing.T) {
 	src := `function f(): i32 {
-		var x: i32 = 0;
+		let x: i32 = 0;
 		x += 1; x -= 1; x *= 2; x /= 2; x %= 3;
 		x &= 7; x |= 8; x ^= 1; x <<= 1; x >>= 1;
 		return x;
@@ -3099,14 +3099,18 @@ func TestMissingReturnRejected(t *testing.T) {
 			if (b) { return P { x: 10, y: 20 }; }
 		}`,
 		// no return at all
-		`function g(): i32 { var x = 1; }`,
+		`function g(): i32 { let x = 1; }`,
 		// if/else where only one arm returns
 		`function h(b: boolean): i32 {
-			if (b) { return 1; } else { var z = 2; }
+			if (b) { return 1; } else { let z = 2; }
 		}`,
 		// match whose wildcard arm doesn't return: an unmatched tag falls through
 		`function sw(n: i32): i32 {
-			match (n) { 0 => { return 0; }, 1 => { return 1; }, _ => { var z = 2; } }
+			match (n) { 0 => { return 0; }, 1 => { return 1; }, _ => { let z = 2; } }
+		}`,
+		// an if on a literal false never takes its only arm
+		`function never(): i32 {
+			if (false) { return 1; }
 		}`,
 	} {
 		err := checkSource(t, src)
@@ -3130,6 +3134,14 @@ func TestMissingReturnAcceptsDivergentForms(t *testing.T) {
 		`function f(b: boolean): i32 {
 			if (b) { return 1; } else { return 2; }
 		}`,
+		// an if on a literal takes one arm: the one the fold leaves of a
+		// branch on the target
+		`function hosted(): i32 {
+			if (true) { return 1; }
+		}`,
+		`function dialled(): i32 {
+			if (false) { let z = 1; } else { return 2; }
+		}`,
 		// trailing return after a one-armed if
 		`function g(b: boolean): i32 {
 			if (b) { return 1; }
@@ -3137,18 +3149,18 @@ func TestMissingReturnAcceptsDivergentForms(t *testing.T) {
 		}`,
 		// infinite loop never falls through
 		`function loops(): i32 {
-			while (true) { var x = 1; }
+			while (true) { let x = 1; }
 		}`,
 		// canonical `loop` never falls through either
 		`function loops2(): i32 {
-			loop { var x = 1; }
+			loop { let x = 1; }
 		}`,
 		// match with wildcard, every arm returns
 		`function sw(n: i32): i32 {
 			match (n) { 0 => { return 0; }, _ => { return 1; } }
 		}`,
 		// void function may fall through
-		`function v(n: i32): void { var x = n + 1; }`,
+		`function v(n: i32): void { let x = n + 1; }`,
 		// plain trailing return
 		`function id(n: i32): i32 { return n; }`,
 	} {
@@ -3173,7 +3185,7 @@ func TestStructLitWrongFieldType(t *testing.T) {
 func TestStructUpdateAllowsSubsetFields(t *testing.T) {
 	src := `struct P { x: i32, y: i32 }
 		function f(): P {
-			var a: P = P { x: 1, y: 2 };
+			let a: P = P { x: 1, y: 2 };
 			return P { ...a, y: 9 };
 		}`
 	if err := checkSource(t, src); err != nil {
@@ -3185,7 +3197,7 @@ func TestStructUpdateAllowsSubsetFields(t *testing.T) {
 func TestStructUpdatePureCopyChecks(t *testing.T) {
 	src := `struct P { x: i32, y: i32 }
 		function f(): P {
-			var a: P = P { x: 1, y: 2 };
+			let a: P = P { x: 1, y: 2 };
 			return P { ...a };
 		}`
 	if err := checkSource(t, src); err != nil {
@@ -3199,7 +3211,7 @@ func TestStructUpdateRejectsWrongBaseType(t *testing.T) {
 	src := `struct P { x: i32, y: i32 }
 		struct Q { z: i32 }
 		function f(): P {
-			var q: Q = Q { z: 1 };
+			let q: Q = Q { z: 1 };
 			return P { ...q, y: 9 };
 		}`
 	if err := checkSource(t, src); err == nil {
@@ -3212,7 +3224,7 @@ func TestStructUpdateRejectsWrongBaseType(t *testing.T) {
 func TestStructUpdateRejectsUnknownOverrideField(t *testing.T) {
 	src := `struct P { x: i32, y: i32 }
 		function f(): P {
-			var a: P = P { x: 1, y: 2 };
+			let a: P = P { x: 1, y: 2 };
 			return P { ...a, nope: 9 };
 		}`
 	if err := checkSource(t, src); err == nil {
@@ -3222,7 +3234,7 @@ func TestStructUpdateRejectsUnknownOverrideField(t *testing.T) {
 
 func TestUnknownStructType(t *testing.T) {
 	src := `function f(): i32 {
-		var p: NoSuchStruct = NoSuchStruct { x: 1 };
+		let p: NoSuchStruct = NoSuchStruct { x: 1 };
 		return p.x;
 	}`
 	if err := checkSource(t, src); err == nil {
@@ -3242,7 +3254,7 @@ func TestNestedFunctionTypechecks(t *testing.T) {
 
 func TestNestedFunctionRecordsCaptures(t *testing.T) {
 	prog, err := parser.Parse(`function outer(seed: i32): i32 {
-		var bonus: i32 = 100;
+		let bonus: i32 = 100;
 		function inner(x: i32): i32 { return x + seed + bonus; }
 		return inner(1);
 	}`)
@@ -3281,11 +3293,11 @@ func TestNestedFunctionRecordsCaptures(t *testing.T) {
 func TestArrayDestinationBindsGenericElement(t *testing.T) {
 	accepted := map[string]string{
 		"literal argument": `function wrap[T](x: T): T[] { return [x]; }
-		function main(): i32 { var xs: i64[] = wrap(5); return xs[0] as i32; }`,
+		function main(): i32 { let xs: i64[] = wrap(5); return xs[0] as i32; }`,
 		"wide literal argument": `function wrap[T](x: T): T[] { return [x]; }
-		function main(): i32 { var xs: i64[] = wrap(1234567890123); return (xs[0] / 1000000000000) as i32; }`,
+		function main(): i32 { let xs: i64[] = wrap(1234567890123); return (xs[0] / 1000000000000) as i32; }`,
 		"two literal arguments": `function two[T](a: T, b: T): T[] { return [a, b]; }
-		function main(): i32 { var xs: i64[] = two(1, 4611686018427387904); return xs[0] as i32; }`,
+		function main(): i32 { let xs: i64[] = two(1, 4611686018427387904); return xs[0] as i32; }`,
 	}
 	for name, src := range accepted {
 		if err := checkSource(t, src); err != nil {
@@ -3293,7 +3305,7 @@ func TestArrayDestinationBindsGenericElement(t *testing.T) {
 		}
 	}
 	rejected := `function wrap[T](x: T): T[] { return [x]; }
-	function main(): i32 { var xs: i64[] = wrap(5i32); return xs[0] as i32; }`
+	function main(): i32 { let xs: i64[] = wrap(5i32); return xs[0] as i32; }`
 	err := checkSource(t, rejected)
 	es, ok := err.(diag.Errors)
 	if !ok || len(es) == 0 {
@@ -3376,7 +3388,7 @@ func TestMethodTypechecksAndRewritesCall(t *testing.T) {
 	prog, err := parser.Parse(`struct Point { x: i32, y: i32 }
 		function (p: Point) sum(): i32 { return p.x + p.y; }
 		function main(): i32 {
-			var p: Point = Point { x: 10, y: 32 };
+			let p: Point = Point { x: 10, y: 32 };
 			return p.sum();
 		}`)
 	if err != nil {
@@ -3423,7 +3435,7 @@ func TestMethodAcceptsBuiltinReceivers(t *testing.T) {
 	// the latter is what std/array's `avg` / `join` need, and declaring
 	// one is not a power the stdlib holds alone.
 	if err := checkSource(t, `function (xs: i32[]) total(): i32 { return 0; }
-function main(): i32 { var a: i32[] = [1]; return a.total(); }`); err != nil {
+function main(): i32 { let a: i32[] = [1]; return a.total(); }`); err != nil {
 		t.Errorf("concrete-element array receiver should be accepted, got: %v", err)
 	}
 	if err := checkSource(t, `function (xs: [u8]) first_byte(): i32 { return 0; }
@@ -3433,7 +3445,7 @@ function main(): i32 { return 0; }`); err != nil {
 	// The element-polymorphic form is accepted (see
 	// TestGenericReceiverMethods for the positive cases).
 	if err := checkSource(t, `function (xs: T[]) first(): T { return xs[0]; }
-function main(): i32 { var a: i32[] = [1]; return a.first(); }`); err != nil {
+function main(): i32 { let a: i32[] = [1]; return a.first(); }`); err != nil {
 		t.Errorf("element-polymorphic array receiver should be accepted, got: %v", err)
 	}
 }
@@ -3463,7 +3475,7 @@ func TestConcreteArrayReceiverRejectsOtherElementType(t *testing.T) {
 	// receiver, not a bad "argument 1" — the receiver was hoisted into the
 	// argument list by the dispatch rewrite, a slot the caller never wrote.
 	err := checkSource(t, `function (xs: i32[]) total(): i32 { return 0; }
-function main(): i32 { var s: string[] = ["a"]; return s.total(); }`)
+function main(): i32 { let s: string[] = ["a"]; return s.total(); }`)
 	if err == nil {
 		t.Fatal("expected error calling an i32[] method on string[]")
 	}
@@ -3482,7 +3494,7 @@ function main(): i32 { var s: string[] = ["a"]; return s.total(); }`)
 func TestMethodCallOnUnknownMethodErrors(t *testing.T) {
 	src := `struct P { x: i32 }
 		function main(): i32 {
-			var p: P = P { x: 1 };
+			let p: P = P { x: 1 };
 			return p.unknown();
 		}`
 	if err := checkSource(t, src); err == nil {
@@ -3547,7 +3559,7 @@ function main(): i32 { return 0; }`, "does not support renaming"},
 func TestEnumVariantConstructorTypeChecks(t *testing.T) {
 	good := `enum E { Pair(i32, i32) }
 		function main(): i32 {
-			var e: E = Pair(1, 2);
+			let e: E = Pair(1, 2);
 			return 0;
 		}`
 	if err := checkSource(t, good); err != nil {
@@ -3556,7 +3568,7 @@ func TestEnumVariantConstructorTypeChecks(t *testing.T) {
 
 	wrongCount := `enum E { Pair(i32, i32) }
 		function main(): i32 {
-			var e: E = Pair(1);
+			let e: E = Pair(1);
 			return 0;
 		}`
 	if err := checkSource(t, wrongCount); err == nil {
@@ -3565,7 +3577,7 @@ func TestEnumVariantConstructorTypeChecks(t *testing.T) {
 
 	wrongType := `enum E { Pair(i32, i32) }
 		function main(): i32 {
-			var e: E = Pair(1, "two");
+			let e: E = Pair(1, "two");
 			return 0;
 		}`
 	if err := checkSource(t, wrongType); err == nil {
@@ -3578,7 +3590,7 @@ func TestEnumVariantConstructorTypeChecks(t *testing.T) {
 func TestMatchExhaustivenessChecked(t *testing.T) {
 	src := `enum Light { Red, Green, Yellow }
 		function main(): i32 {
-			var l: Light = Green;
+			let l: Light = Green;
 			match (l) {
 				Red => { return 1; },
 				Green => { return 2; }
@@ -3599,7 +3611,7 @@ func TestMatchExhaustivenessChecked(t *testing.T) {
 func TestMatchWildcardCoversMissingVariants(t *testing.T) {
 	src := `enum Light { Red, Green, Yellow }
 		function main(): i32 {
-			var l: Light = Green;
+			let l: Light = Green;
 			match (l) {
 				Red => { return 1; },
 				_ => { return 0; }
@@ -3631,7 +3643,7 @@ func TestStringLiteralMatchAccepted(t *testing.T) {
 // the string domain is open, so it can never be exhausted by literals (E030).
 func TestStringLiteralMatchNonExhaustiveRejected(t *testing.T) {
 	src := `function main(): i32 {
-			var s: string = "x";
+			let s: string = "x";
 			match (s) {
 				"a" => { return 1; },
 				"b" => { return 2; }
@@ -3651,7 +3663,7 @@ func TestStringLiteralMatchNonExhaustiveRejected(t *testing.T) {
 // an i32 literal on a string match is a type error, not a fallthrough.
 func TestStringLiteralMatchTypeMismatchRejected(t *testing.T) {
 	src := `function main(): i32 {
-			var s: string = "x";
+			let s: string = "x";
 			match (s) {
 				"a" => { return 1; },
 				0 => { return 2; },
@@ -3674,7 +3686,7 @@ func TestStringLiteralMatchTypeMismatchRejected(t *testing.T) {
 func TestMatchPayloadArityChecked(t *testing.T) {
 	src := `enum E { A, B(i32, i32) }
 		function main(): i32 {
-			var e: E = A;
+			let e: E = A;
 			match (e) {
 				A => { return 0; },
 				B(x) => { return x; }
@@ -3692,14 +3704,14 @@ func TestMatchPayloadArityChecked(t *testing.T) {
 // assignment with a wrong concrete type fails at the slot.
 func TestGenericVariantInfersTypeArgs(t *testing.T) {
 	good := `function main(): i32 {
-			var o: Option[i32] = Some(42);
+			let o: Option[i32] = Some(42);
 			return 0;
 		}`
 	if err := checkSource(t, good); err != nil {
 		t.Errorf("good: %v", err)
 	}
 	bad := `function main(): i32 {
-			var o: Option[string] = Some(42);
+			let o: Option[string] = Some(42);
 			return 0;
 		}`
 	if err := checkSource(t, bad); err == nil {
@@ -3715,7 +3727,7 @@ func TestGenericVariantInfersTypeArgs(t *testing.T) {
 func TestPayloadlessGenericVariantFlowsIntoContext(t *testing.T) {
 	src := `function find(): Option[i32] { return None; }
 		function main(): i32 {
-			var o: Option[i32] = None;
+			let o: Option[i32] = None;
 			return 0;
 		}`
 	if err := checkSource(t, src); err != nil {
@@ -3728,7 +3740,7 @@ func TestPayloadlessGenericVariantFlowsIntoContext(t *testing.T) {
 // `Some(v)` so that `v` is `i32`, not the abstract `T`.
 func TestMatchSubstitutesTypeArgs(t *testing.T) {
 	src := `function main(): i32 {
-			var o: Option[i32] = Some(7);
+			let o: Option[i32] = Some(7);
 			match (o) {
 				Some(v) => { return v + 1; },
 				None => { return 0; }
@@ -3765,7 +3777,7 @@ func TestUsizePreludeHelpersRequireExplicitCastInUserCode(t *testing.T) {
     return 0;
 }`,
 		`function f(): i32 {
-    var buf: usize = __alloc(16);
+    let buf: usize = __alloc(16);
     return buf as i32;
 }`,
 	} {
@@ -3782,14 +3794,14 @@ func TestUsizePreludeHelpersRequireExplicitCastInUserCode(t *testing.T) {
 }`,
 		// usize -> i32 with no cast
 		`function f(): i32 {
-    var buf: i32 = __alloc(16);
+    let buf: i32 = __alloc(16);
     return buf;
 }`,
 		// the soundness exploit: routing i64 -> usize -> i32
 		`function f(): i32 {
-    var big: i64 = 5000000000i64;
-    var p: usize = big;
-    var small: i32 = p;
+    let big: i64 = 5000000000i64;
+    let p: usize = big;
+    let small: i32 = p;
     return small;
 }`,
 	} {
@@ -3808,7 +3820,7 @@ func TestUsizeAutowidensWithSignedInt(t *testing.T) {
     return p + 4;
 }`,
 		`function f(idx: i32, stride: i32): usize {
-    var base: usize = 100;
+    let base: usize = 100;
     return base + idx * stride;
 }`,
 	} {
@@ -3832,7 +3844,7 @@ func TestSignednessMismatchStillErrorsAtOtherWidths(t *testing.T) {
 func TestGenericEnumArityChecked(t *testing.T) {
 	src := `enum Pair[A, B] { Both(A, B) }
 		function main(): i32 {
-			var p: Pair[i32] = Both(1, 2);
+			let p: Pair[i32] = Both(1, 2);
 			return 0;
 		}`
 	if err := checkSource(t, src); err == nil {
@@ -3851,7 +3863,7 @@ func TestUseInfersBindingTypeFromGenericCallee(t *testing.T) {
     return cb(items[0]);
 }
 function main(): i32 {
-    var nums: i32[] = [10, 20, 30];
+    let nums: i32[] = [10, 20, 30];
     use n <- each(nums);
     return n + 1;
 }`
@@ -3870,7 +3882,7 @@ func TestUseInfersFromEnumPayloadGeneric(t *testing.T) {
     return 0;
 }
 function main(): i32 {
-    var x: Option[i32] = Some(7);
+    let x: Option[i32] = Some(7);
     use n <- try_opt(x);
     return n + 1;
 }`
@@ -3976,8 +3988,8 @@ struct Pair[A, B] { first: A, second: B }
 function id[T](x: T): T { return x; }
 function pick[A, B](a: A, b: B, take_first: boolean): A { return a; }
 function main(): i32 {
-	var b = Box { v: 7 };
-	var p = Pair { first: 1, second: "hi" };
+	let b = Box { v: 7 };
+	let p = Pair { first: 1, second: "hi" };
 	return id(b.v) + pick(0, p.second, true);
 }`
 	prog, err := parser.Parse(src)
@@ -4035,15 +4047,15 @@ func TestQualifiedVariantReferences(t *testing.T) {
 		`enum Color { Red, Green, Blue }
 		enum Status { Red, Yellow }
 		function main(): i32 {
-			var c: Color = Color.Red;
-			var s: Status = Status.Red;
+			let c: Color = Color.Red;
+			let s: Status = Status.Red;
 			return 0;
 		}`,
 		// Match-arm qualifier on a clashing variant.
 		`enum A { Foo(i32), Bar }
 		enum B { Foo(i32), Baz }
 		function main(): i32 {
-			var a: A = A.Foo(11);
+			let a: A = A.Foo(11);
 			match (a) {
 				A.Foo(x) => { return x; },
 				A.Bar => { return 0; }
@@ -4053,7 +4065,7 @@ func TestQualifiedVariantReferences(t *testing.T) {
 		// Qualified call with payload.
 		`enum Shape { Circle(i32), Square(i32) }
 		function main(): i32 {
-			var s: Shape = Shape.Circle(7);
+			let s: Shape = Shape.Circle(7);
 			match (s) {
 				Circle(r) => { return r; },
 				Square(side) => { return side * side; }
@@ -4064,7 +4076,7 @@ func TestQualifiedVariantReferences(t *testing.T) {
 		// required, no regression.
 		`enum Light { Red, Green, Yellow }
 		function main(): i32 {
-			var l: Light = Red;
+			let l: Light = Red;
 			match (l) {
 				Red => { return 1; },
 				Green => { return 2; },
@@ -4089,7 +4101,7 @@ func TestQualifiedVariantReferences(t *testing.T) {
 			`enum A { Foo, Bar }
 			enum B { Foo, Baz }
 			function main(): i32 {
-				var x: A = Foo;
+				let x: A = Foo;
 				return 0;
 			}`,
 			"declared in multiple enums",
@@ -4099,7 +4111,7 @@ func TestQualifiedVariantReferences(t *testing.T) {
 			`enum A { Foo(i32) }
 			enum B { Foo(i32) }
 			function main(): i32 {
-				var x: A = Foo(7);
+				let x: A = Foo(7);
 				return 0;
 			}`,
 			"declared in multiple enums",
@@ -4109,7 +4121,7 @@ func TestQualifiedVariantReferences(t *testing.T) {
 			`enum A { Foo }
 			enum B { Bar }
 			function main(): i32 {
-				var x: A = A.Bar;
+				let x: A = A.Bar;
 				return 0;
 			}`,
 			"no variant",
@@ -4119,7 +4131,7 @@ func TestQualifiedVariantReferences(t *testing.T) {
 			`enum A { Foo }
 			enum B { Foo }
 			function main(): i32 {
-				var a: A = A.Foo;
+				let a: A = A.Foo;
 				match (a) {
 					B.Foo => { return 1; }
 				}
@@ -4161,7 +4173,7 @@ func TestAmbiguousVariantHintIsSpellable(t *testing.T) {
 			"main.fern": "import \"./lib\";\n" +
 				"function main(): i32 { return lib.pick(); }\n",
 			"lib.fern": "import \"./other\";\n" + libEnum + "pub function pick(): i32 {\n" +
-				"    var k: Kind = Text;\n    return 0;\n}\n",
+				"    let k: Kind = Text;\n    return 0;\n}\n",
 			"other.fern": otherEnum + "pub function n(): i32 { return 0; }\n",
 		}, "main.fern")
 		if err == nil {
@@ -4186,7 +4198,7 @@ func TestAmbiguousVariantHintIsSpellable(t *testing.T) {
 	t.Run("names imported enums as mod.Enum", func(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"main.fern": "import \"./lib\";\nimport \"./other\";\n" +
-				"function main(): i32 {\n    var k: lib.Kind = Text;\n    return 0;\n}\n",
+				"function main(): i32 {\n    let k: lib.Kind = Text;\n    return 0;\n}\n",
 			"lib.fern":   libEnum,
 			"other.fern": otherEnum,
 		}, "main.fern")
@@ -4228,7 +4240,7 @@ func TestVariantDiagnosticsNeverNameMangledEnums(t *testing.T) {
 pub enum Other { Text, Blah }
 
 pub function go(): i32 {
-    var k: Kind = Kind.Text;
+    let k: Kind = Kind.Text;
     match (k) {
         Other.Text => { return 1; },
         Kind.Number => { return 2; }
@@ -4244,7 +4256,7 @@ pub function go(): i32 {
 			lib: `pub enum Kind { Text, Number }
 
 pub function go(): i32 {
-    var k: Kind = Kind.Missing;
+    let k: Kind = Kind.Missing;
     return 0;
 }
 `,
@@ -4256,7 +4268,7 @@ pub function go(): i32 {
 			lib: `pub enum Kind { Text, Number(i32) }
 
 pub function go(): i32 {
-    var k: Kind = Kind.Number;
+    let k: Kind = Kind.Number;
     return 0;
 }
 `,
@@ -4287,31 +4299,31 @@ pub function go(): i32 {
 // TestCastAsTypeAscription — the `as` operator doubles as a
 // zero-cost type-annotation form. Bare `None`, `[]`, partially-
 // inferred variant constructors, etc. all get a place to pin a
-// concrete type inline where there's no `var x: T = ...` site
+// concrete type inline where there's no `let x: T = ...` site
 // for inference to flow from.
 func TestCastAsTypeAscription(t *testing.T) {
 	good := []string{
 		// Payload-less variant: only the destination type can fix
 		// the type arg.
 		`function main(): i32 {
-			var x: Option[i32] = None as Option[i32];
+			let x: Option[i32] = None as Option[i32];
 			return 0;
 		}`,
 		// Partially-inferred Result — Ok(1) pins T but not E.
 		`function main(): i32 {
-			var r: Result[i32, string] = Ok(1) as Result[i32, string];
+			let r: Result[i32, string] = Ok(1) as Result[i32, string];
 			return 0;
 		}`,
 		// Empty array literal — `[]` carries no element type
 		// without an outside anchor.
 		`function main(): i32 {
-			var a: i32[] = [] as i32[];
+			let a: i32[] = [] as i32[];
 			return a.len() as i32;
 		}`,
 		// Same-shape ascription (i.e. inner already concretely
 		// typed): a no-op annotation, but should still type-check.
 		`function main(): i32 {
-			var x: Option[i32] = Some(1) as Option[i32];
+			let x: Option[i32] = Some(1) as Option[i32];
 			return 0;
 		}`,
 		// Ascription threaded directly into a call argument —
@@ -4337,14 +4349,14 @@ func TestCastAsTypeAscription(t *testing.T) {
 		// `assignable` rule inline.
 		{
 			`function main(): i32 {
-				var x: Option[i32] = "hi" as Option[i32];
+				let x: Option[i32] = "hi" as Option[i32];
 				return 0;
 			}`,
 			"cannot cast",
 		},
 		{
 			`function main(): i32 {
-				var n: i32 = true as i32;
+				let n: i32 = true as i32;
 				return n;
 			}`,
 			"cannot cast",
@@ -5003,7 +5015,7 @@ func TestTupleReturnWidensBareEnumElement(t *testing.T) {
     return (Some(pos), pos + 1);
 }
 function main(): i32 {
-    var (b, p) = read(0, 1);
+    let (b, p) = read(0, 1);
     match (b) { Some(v) => { return v; }, None => { return -1; } }
 }`
 	if err := checkSource(t, src); err != nil {
@@ -5038,7 +5050,7 @@ function mk(k: i32, c: Cur): (AB, Cur) {
     return (B { y: 2 }, c);
 }
 function main(): i32 {
-    var (v, c2) = mk(0, Cur { pos: 0 });
+    let (v, c2) = mk(0, Cur { pos: 0 });
     match (v) { A(a) => { return a.x; }, B(b) => { return b.y + c2.pos; } }
 }`
 	if err := checkSource(t, src); err != nil {
@@ -5046,7 +5058,7 @@ function main(): i32 {
 	}
 }
 
-// The `dyn` object-safety check reaches a local `var` wherever it nests.
+// The `dyn` object-safety check reaches a local `let` wherever it nests.
 // walkVarTypes used to recurse by hand and descend only into blocks, so it
 // never saw a declaration in an else-if chain (an *ast.If sits directly in the
 // Else slot, not a Block) or in any expression-nested position — E021 was
@@ -5062,15 +5074,15 @@ func TestObjectSafetyReachesNestedVarDecls(t *testing.T) {
     if (n == 0) {
         return 7;
     } else if (n == 1) {
-        var b: dyn Eq[] = [];
+        let b: dyn Eq[] = [];
         return b.len();
     }
     return 0;
 }
 function main(): i32 { return pick(1); }`,
 		"lambda body": `function pick(n: i32): i32 {
-    var f = (k: i32): i32 => {
-        var b: dyn Eq[] = [];
+    let f = (k: i32): i32 => {
+        let b: dyn Eq[] = [];
         return b.len() + k;
     };
     return f(n);
@@ -5235,7 +5247,7 @@ struct Point { x: i32, y: i32 }
 impl Display for Point {
     function to_string(self: Self): string { return "p"; }
 }
-function main(): i32 { var p: Point = Point { x: 1, y: 2 }; var s: string = p.to_string(); return 0; }`
+function main(): i32 { let p: Point = Point { x: 1, y: 2 }; let s: string = p.to_string(); return 0; }`
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -5266,10 +5278,10 @@ impl Greet for Cat {
     function greeting(self: Self): string { return "meow"; }
 }
 function main(): i32 {
-    var d: Dog = Dog { age: 1 };
-    var c: Cat = Cat { age: 2 };
-    var a: string = d.greeting();
-    var b: string = c.greeting();
+    let d: Dog = Dog { age: 1 };
+    let c: Cat = Cat { age: 2 };
+    let a: string = d.greeting();
+    let b: string = c.greeting();
     return 0;
 }`
 	prog, err := parser.Parse(src)
@@ -5304,7 +5316,7 @@ func TestTraitDefaultMethodViaBound(t *testing.T) {
 struct Dog { age: i32 }
 impl Greet for Dog { function name(self: Self): string { return "rex"; } }
 function announce[T: Greet](x: T): string { return x.greeting(); }
-function main(): i32 { var d: Dog = Dog { age: 1 }; var s: string = announce(d); return 0; }`
+function main(): i32 { let d: Dog = Dog { age: 1 }; let s: string = announce(d); return 0; }`
 	if err := checkSource(t, src); err != nil {
 		t.Errorf("default method via bound should typecheck: %v", err)
 	}
@@ -5322,7 +5334,7 @@ impl From[i32] for Celsius { function from(v: i32): Self { return Celsius { deg:
 `
 	if err := checkSource(t, hdr+`function describe[T: From[i32]](proto: T, v: i32): T { return T.from(v); }
 function main(): i32 {
-  var z: Celsius = Celsius { deg: 0 };
+  let z: Celsius = Celsius { deg: 0 };
   return describe(z, 20).deg;
 }`); err != nil {
 		t.Errorf("bounded generic over a generic trait should type-check, got: %v", err)
@@ -5336,7 +5348,7 @@ function main(): i32 { return 0; }`)
 	// A type argument that doesn't implement the bound trait.
 	err = checkSource(t, hdr+`struct Plain { x: i32 }
 function describe[T: From[i32]](proto: T, v: i32): T { return T.from(v); }
-function main(): i32 { var p: Plain = Plain { x: 0 }; return describe(p, 5).x; }`)
+function main(): i32 { let p: Plain = Plain { x: 0 }; return describe(p, 5).x; }`)
 	if err == nil || !strings.Contains(err.Error(), "does not implement trait From") {
 		t.Errorf("non-implementing type argument should be rejected, got: %v", err)
 	}
@@ -5344,7 +5356,7 @@ function main(): i32 { var p: Plain = Plain { x: 0 }; return describe(p, 5).x; }
 	// requires From[i64] — precise satisfaction rejects it.
 	err = checkSource(t, hdr+`function describe[T: From[i64]](proto: T, v: i64): T { return T.from(v); }
 function main(): i32 {
-  var z: Celsius = Celsius { deg: 0 };
+  let z: Celsius = Celsius { deg: 0 };
   return describe(z, 20).deg;
 }`)
 	if err == nil || !strings.Contains(err.Error(), "the bound requires From[i64]") {
@@ -5362,7 +5374,7 @@ func TestGenericTraitConformance(t *testing.T) {
 		`trait Container[T] { function get(self: Self): T; }
 struct B { v: i32 }
 impl Container[i32] for B { function get(self: Self): i32 { return self.v; } }
-function main(): i32 { var b: B = B { v: 7 }; return b.get(); }`,
+function main(): i32 { let b: B = B { v: 7 }; return b.get(); }`,
 		// associated function taking the trait param, returning Self
 		`trait From[T] { function from(v: T): Self; }
 struct C { d: i32 }
@@ -5372,7 +5384,7 @@ function main(): i32 { return C.from(9).d; }`,
 		`trait Pair[A, B] { function fst(self: Self): A; function snd(self: Self): B; }
 struct P { a: i32, b: i32 }
 impl Pair[i32, i32] for P { function fst(self: Self): i32 { return self.a; } function snd(self: Self): i32 { return self.b; } }
-function main(): i32 { var p: P = P { a: 1, b: 2 }; return p.fst() + p.snd(); }`,
+function main(): i32 { let p: P = P { a: 1, b: 2 }; return p.fst() + p.snd(); }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, src); err != nil {
@@ -5413,9 +5425,9 @@ impl Iterator for B {
 }
 function first[I: Iterator](it: I): I::Item { return it.next(); }
 function main(): i32 {
-    var b: B = B { v: 9 };
-    var x: i32 = b.next();
-    var y: i32 = first(b);
+    let b: B = B { v: 9 };
+    let x: i32 = b.next();
+    let y: i32 = first(b);
     return x + y;
 }`
 	if err := checkSource(t, src); err != nil {
@@ -5445,8 +5457,8 @@ impl[T] Carrier for Box[T] {
     function get(self: Self): Self::Ok { return self.v; }
 }
 function main(): i32 {
-    var b: Box[i32] = Box { v: 7 };
-    var x: i32 = b.get();
+    let b: Box[i32] = Box { v: 7 };
+    let x: i32 = b.get();
     return x;
 }`},
 		{"projection through a bounded generic", `trait Carrier { type Ok; function get(self: Self): Self::Ok; }
@@ -5457,8 +5469,8 @@ impl[T] Carrier for Box[T] {
 }
 function unwrap[C: Carrier](c: C): C::Ok { return c.get(); }
 function main(): i32 {
-    var b: Box[i32] = Box { v: 7 };
-    var x: i32 = unwrap(b);
+    let b: Box[i32] = Box { v: 7 };
+    let x: i32 = unwrap(b);
     return x;
 }`},
 		{"explicit projection on a concrete base", `trait Carrier { type Ok; function get(self: Self): Self::Ok; }
@@ -5469,7 +5481,7 @@ impl[T] Carrier for Box[T] {
 }
 function twice(x: Box[i32]::Ok): i32 { return x + x; }
 function main(): i32 {
-    var b: Box[i32] = Box { v: 7 };
+    let b: Box[i32] = Box { v: 7 };
     return twice(b.get());
 }`},
 		{"binding is a composite of the parameter", `trait Holder { type Item; function take(self: Self): Self::Item; }
@@ -5479,8 +5491,8 @@ impl[T] Holder for Box[T] {
     function take(self: Self): Self::Item { return Some(self.v); }
 }
 function main(): i32 {
-    var b: Box[i32] = Box { v: 7 };
-    var o: Option[i32] = b.take();
+    let b: Box[i32] = Box { v: 7 };
+    let o: Option[i32] = b.take();
     return 0;
 }`},
 		{"binds parameters other than the first, out of order", `trait Two { type A; type B; function fst(self: Self): Self::A; function snd(self: Self): Self::B; }
@@ -5492,9 +5504,9 @@ impl[X, Y] Two for P[X, Y] {
     function snd(self: Self): Self::B { return self.a; }
 }
 function main(): i32 {
-    var p: P[string, i32] = P { a: "hi", b: 40 };
-    var n: i32 = p.fst();
-    var s: string = p.snd();
+    let p: P[string, i32] = P { a: "hi", b: 40 };
+    let n: i32 = p.fst();
+    let s: string = p.snd();
     return n + s.len();
 }`},
 	}
@@ -5523,8 +5535,8 @@ impl[T] Carrier for Box[T] {
     function get(self: Self): Self::Ok { return self.v; }
 }
 function main(): i32 {
-    var b: Box[i32] = Box { v: 7 };
-    var s: string = b.get();
+    let b: Box[i32] = Box { v: 7 };
+    let s: string = b.get();
     return 0;
 }`, "cannot assign i32"},
 		{`trait Carrier { type Ok; function get(self: Self): Self::Ok; }
@@ -5535,8 +5547,8 @@ impl[T] Carrier for Box[T] {
 }
 function unwrap[C: Carrier](c: C): C::Ok { return c.get(); }
 function main(): i32 {
-    var b: Box[string] = Box { v: "hi" };
-    var n: i32 = unwrap(b);
+    let b: Box[string] = Box { v: "hi" };
+    let n: i32 = unwrap(b);
     return 0;
 }`, "cannot assign string"},
 	}
@@ -5571,7 +5583,7 @@ impl Holder for IntBox {
 }
 function pick[H: Holder](h: H, d: H::Item): H::Item { return h.get(d); }
 function main(): i32 {
-    var b: IntBox = IntBox { v: 7 };
+    let b: IntBox = IntBox { v: 7 };
     return pick(b, 0);
 }`},
 		{"parametric impl on a generic struct", `trait Holder { type Item; function get(self: Self, d: Self::Item): Self::Item; }
@@ -5582,7 +5594,7 @@ impl[T] Holder for Box[T] {
 }
 function pick[H: Holder](h: H, d: H::Item): H::Item { return h.get(d); }
 function main(): i32 {
-    var b: Box[i32] = Box { v: 7 };
+    let b: Box[i32] = Box { v: 7 };
     return pick(b, 0);
 }`},
 		{
@@ -5609,7 +5621,7 @@ impl[T] Holder for E[T] {
 }
 function pick[H: Holder](h: H, d: H::Item): H::Item { return h.get(d); }
 function main(): i32 {
-    var e: E[i32] = A(7);
+    let e: E[i32] = A(7);
     return pick(e, 0) + e.get(1);
 }`},
 	}
@@ -5636,11 +5648,11 @@ function pick[H: Holder](h: H, d: H::Item): H::Item { return h.get(d); }
 `
 	cases := []struct{ src, want string }{
 		{prelude + `function main(): i32 {
-    var b: Box[i32] = Box { v: 7 };
+    let b: Box[i32] = Box { v: 7 };
     return pick(b, "no");
 }`, "expected i32"},
 		{prelude + `function main(): i32 {
-    var b: Box[string] = Box { v: "hi" };
+    let b: Box[string] = Box { v: "hi" };
     return pick(b, 0);
 }`, "expected string"},
 	}
@@ -5661,11 +5673,11 @@ function pick[H: Holder](h: H, d: H::Item): H::Item { return h.get(d); }
 // picks the right stride, and postSettleType reports the stamp back as the
 // literal's type — so stamping unconditionally made every literal CLAIM
 // whatever it was checked against, and the comparison then trivially passed.
-// `var xs: i32[] = ["ab", "cd"]` type-checked, and an `i32[]` parameter handed
+// `let xs: i32[] = ["ab", "cd"]` type-checked, and an `i32[]` parameter handed
 // one summed strings as integers (exit 224 on x86-64, no diagnostic).
 func TestArrayLiteralElementsAreChecked(t *testing.T) {
 	cases := []struct{ name, src, want string }{
-		{"var destination", `function main(): i32 { var xs: i32[] = ["ab", "cd"]; return xs.len(); }`,
+		{"let destination", `function main(): i32 { let xs: i32[] = ["ab", "cd"]; return xs.len(); }`,
 			"cannot assign string[] to variable of type i32[]"},
 		{"argument", `function total(xs: i32[]): i32 { return xs.len(); }
 function main(): i32 { return total(["ab", "cd"]); }`,
@@ -5674,12 +5686,12 @@ function main(): i32 { return total(["ab", "cd"]); }`,
 function main(): i32 { return take([1, 2, 3]); }`,
 			"expected string[], got i32[]"},
 		// A polymorphic FLOAT element settles only to a float destination.
-		// Against an integer one it is a mismatch — `var x: i64 = 1.5` is
+		// Against an integer one it is a mismatch — `let x: i64 = 1.5` is
 		// already E003 as a scalar, and the array literal must not be the one
 		// way round it.
-		{"float literals into i64[]", `function main(): i32 { var xs: i64[] = [1.5, 2.5]; return xs.len(); }`,
+		{"float literals into i64[]", `function main(): i32 { let xs: i64[] = [1.5, 2.5]; return xs.len(); }`,
 			"cannot assign f64[] to variable of type i64[]"},
-		{"float literal into u8[]", `function main(): i32 { var xs: u8[] = [1.5]; return xs.len(); }`,
+		{"float literal into u8[]", `function main(): i32 { let xs: u8[] = [1.5]; return xs.len(); }`,
 			"cannot assign f64[] to variable of type u8[]"},
 		{"float literals into an i64[] argument", `function total(xs: i64[]): i32 { return xs.len(); }
 function main(): i32 { return total([1.5, 2.5]); }`,
@@ -5703,27 +5715,27 @@ function main(): i32 { return total([1.5, 2.5]); }`,
 // A fix that simply stopped stamping would break all of these.
 func TestArrayLiteralSettlingStillWorks(t *testing.T) {
 	srcs := []string{
-		`function main(): i32 { var xs: i64[] = [1, 2, 3]; return xs.len(); }`,
-		`function main(): i32 { var xs: u8[] = [1, 2, 3]; return xs.len(); }`,
-		`function main(): i32 { var xs: f64[] = [1.5, 2.5]; return xs.len(); }`,
+		`function main(): i32 { let xs: i64[] = [1, 2, 3]; return xs.len(); }`,
+		`function main(): i32 { let xs: u8[] = [1, 2, 3]; return xs.len(); }`,
+		`function main(): i32 { let xs: f64[] = [1.5, 2.5]; return xs.len(); }`,
 		// int-to-float promotion: a polymorphic INTEGER element settles into a
 		// float destination, which is the direction that must stay legal.
-		`function main(): i32 { var xs: f64[] = [1, 2]; return xs.len(); }`,
-		`function main(): i32 { var xs: f32[] = [1.5, 2.5]; return xs.len(); }`,
-		`function main(): i32 { var xs: i32[] = []; return xs.len(); }`,
-		`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.len(); }`,
+		`function main(): i32 { let xs: f64[] = [1, 2]; return xs.len(); }`,
+		`function main(): i32 { let xs: f32[] = [1.5, 2.5]; return xs.len(); }`,
+		`function main(): i32 { let xs: i32[] = []; return xs.len(); }`,
+		`function main(): i32 { let xs: string[] = ["a", "b"]; return xs.len(); }`,
 		`function total(xs: i64[]): i32 { return xs.len(); }
 function main(): i32 { return total([1, 2, 3]); }`,
 		// A NESTED literal settles element-wise. The first cut of
 		// elemSettleable compared the outer literal's already-inferred
 		// `i32[]` element against `f64[]` as a concrete mismatch and
 		// rejected this, which broke `settle-nested-array-ok` on main.
-		`function main(): i32 { var xs: f64[][] = [[1], [2]]; return 0; }`,
-		`function main(): i32 { var xs: f64[][][] = [[[1]], [[2]]]; return 0; }`,
+		`function main(): i32 { let xs: f64[][] = [[1], [2]]; return 0; }`,
+		`function main(): i32 { let xs: f64[][][] = [[[1]], [[2]]]; return 0; }`,
 		// A destination element that is still a type PARAMETER names no
 		// concrete type for the literal to contradict — monomorph decides
 		// what it settles to. The first cut rejected this too.
-		`function build[T](): i32 { var local: T[] = [1, 2, 3]; return local.len(); }
+		`function build[T](): i32 { let local: T[] = [1, 2, 3]; return local.len(); }
 function main(): i32 { return 0; }`,
 	}
 	for _, src := range srcs {
@@ -5779,7 +5791,7 @@ struct P { x: i32 }
 impl Eq for P { function eq(self: Self, other: Self): boolean { return self.x == other.x; } }
 impl Ord for P { function lt(self: Self, other: Self): boolean { return self.x < other.x; } }
 function cmp[T: Ord](a: T, b: T): boolean { if (a.eq(b)) { return true; } return a.lt(b); }
-function main(): i32 { var p: P = P { x: 1 }; if (cmp(p, p)) { return 1; } return 0; }`
+function main(): i32 { let p: P = P { x: 1 }; if (cmp(p, p)) { return 1; } return 0; }`
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -5827,7 +5839,7 @@ function main(): i32 { return 0; }`, "cyclic supertrait"},
 func TestTraitImplForBuiltinType(t *testing.T) {
 	src := `trait Tag { function tag(self: Self): string; }
 impl Tag for i32 { function tag(self: Self): string { return "i32"; } }
-function main(): i32 { var n: i32 = 5; var s: string = n.tag(); return 0; }`
+function main(): i32 { let n: i32 = 5; let s: string = n.tag(); return 0; }`
 	if err := checkSource(t, src); err != nil {
 		t.Errorf("impl for builtin type should typecheck: %v", err)
 	}
@@ -5884,7 +5896,7 @@ func TestBoundedGenericAccepted(t *testing.T) {
 struct Point { x: i32 }
 impl Display for Point { function to_string(self: Self): string { return "p"; } }
 function show[T: Display](v: T): string { return v.to_string(); }
-function main(): i32 { var p: Point = Point { x: 1 }; var s: string = show(p); return 0; }`
+function main(): i32 { let p: Point = Point { x: 1 }; let s: string = show(p); return 0; }`
 	if err := checkSource(t, src); err != nil {
 		t.Errorf("bounded generic should typecheck: %v", err)
 	}
@@ -5901,7 +5913,7 @@ struct A { x: i32 }
 struct B { y: i32 }
 impl Display for A { function to_string(self: Self): string { return "a"; } }
 function show[T: Display](v: T): string { return v.to_string(); }
-function main(): i32 { var b: B = B { y: 1 }; var s: string = show(b); return 0; }`,
+function main(): i32 { let b: B = B { y: 1 }; let s: string = show(b); return 0; }`,
 			"does not implement trait Display"},
 		// Method not provided by any bound on the type param.
 		{`trait Display { function to_string(self: Self): string; }
@@ -6011,7 +6023,7 @@ func TestDeriveFieldConformancePreCheck(t *testing.T) {
 		ordTrait + "struct Bar { a: i32 }\nfunction (self: Bar) cmp(other: Bar): i32 { return 0; }\n@derive(Ord)\nstruct Foo { b: Bar }\nfunction main(): i32 { return 0; }",
 		// A generic struct's type-param field is bound-checked per
 		// instantiation, not by the pre-check.
-		ordTrait + ordI32 + "@derive(Ord)\nstruct Box[T] { v: T, n: i32 }\nfunction main(): i32 { var b: Box[i32] = Box { v: 1, n: 2 }; if (b < b) { return 1; } return 0; }",
+		ordTrait + ordI32 + "@derive(Ord)\nstruct Box[T] { v: T, n: i32 }\nfunction main(): i32 { let b: Box[i32] = Box { v: 1, n: 2 }; if (b < b) { return 1; } return 0; }",
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("expected clean derive for %q, got: %v", src, err)
@@ -6104,7 +6116,7 @@ impl Eq for i32 { function eq(self: i32, other: i32): boolean { return self == o
 @derive(Eq)
 enum E[T] { A(T), B }
 function main(): i32 {
-	var x = A(1);
+	let x = A(1);
 	if (x.eq(A(1))) { return 0; }
 	return 1;
 }`
@@ -6125,13 +6137,13 @@ impl Hash for i32 { function hash(self: Self): i32 { return self; } }
 	ok := []string{
 		// Plain struct.
 		hashTrait + `@derive(Hash) struct P { x: i32, y: i32 }
-function main(): i32 { var p: P = P { x: 1, y: 2 }; return p.hash(); }`,
+function main(): i32 { let p: P = P { x: 1, y: 2 }; return p.hash(); }`,
 		// Enum (tag-seeded, payload-folded).
 		hashTrait + `@derive(Hash) enum E { A, B(i32), C(i32, i32) }
-function main(): i32 { var e: E = C(1, 2); return e.hash(); }`,
+function main(): i32 { let e: E = C(1, 2); return e.hash(); }`,
 		// Generic struct: parametric `impl[T: Hash] Hash for Box[T]`.
 		hashTrait + `@derive(Hash) struct Box[T] { v: T }
-function main(): i32 { var b: Box[i32] = Box { v: 7 }; return b.hash(); }`,
+function main(): i32 { let b: Box[i32] = Box { v: 7 }; return b.hash(); }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, src); err != nil {
@@ -6160,21 +6172,21 @@ func TestDeriveDefault(t *testing.T) {
 	ok := []string{
 		// Plain struct of scalars.
 		defTrait + `@derive(Default) struct P { x: i32, y: string, f: boolean }
-function main(): i32 { var p: P = P.default(); return p.x + p.y.len(); }`,
+function main(): i32 { let p: P = P.default(); return p.x + p.y.len(); }`,
 		// Composition: a nominal field delegates to its own default().
 		defTrait + `@derive(Default) struct Inner { n: i32 }
 @derive(Default) struct Outer { i: Inner, k: i32 }
-function main(): i32 { var o: Outer = Outer.default(); return o.i.n + o.k; }`,
+function main(): i32 { let o: Outer = Outer.default(); return o.i.n + o.k; }`,
 		// Enum defaults to its first variant.
 		defTrait + `@derive(Default) enum E { A, B(i32) }
-function main(): i32 { var e: E = E.default(); match (e) { A => { return 0; }, B(n) => { return n; } } }`,
+function main(): i32 { let e: E = E.default(); match (e) { A => { return 0; }, B(n) => { return n; } } }`,
 		// Enum whose first variant carries payloads (each defaulted).
 		defTrait + `@derive(Default) enum E { First(i32, i32), Second }
-function main(): i32 { var e: E = E.default(); match (e) { First(a, b) => { return a + b; }, Second => { return 9; } } }`,
+function main(): i32 { let e: E = E.default(); match (e) { First(a, b) => { return a + b; }, Second => { return 9; } } }`,
 		// Generic struct: parametric `impl[T: Default] Default for Box[T]`.
 		defTrait + `@derive(Default) struct Inner { n: i32 }
 @derive(Default) struct Box[T] { v: T }
-function main(): i32 { var b: Box[Inner] = Box.default(); return b.v.n; }`,
+function main(): i32 { let b: Box[Inner] = Box.default(); return b.v.n; }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, src); err != nil {
@@ -6215,17 +6227,17 @@ impl Json for string { function to_json(self: Self): string { return self; } }
 	ok := []string{
 		// Plain struct.
 		jsonTrait + `@derive(Json) struct P { x: i32, y: i32 }
-function main(): i32 { var p: P = P { x: 1, y: 2 }; var s: string = p.to_json(); return 0; }`,
+function main(): i32 { let p: P = P { x: 1, y: 2 }; let s: string = p.to_json(); return 0; }`,
 		// Enum: unit, single-payload, multi-payload arms all synthesise.
 		jsonTrait + `@derive(Json) enum E { A, B(i32), C(i32, i32) }
-function main(): i32 { var e: E = C(1, 2); var s: string = e.to_json(); return 0; }`,
+function main(): i32 { let e: E = C(1, 2); let s: string = e.to_json(); return 0; }`,
 		// Generic struct: parametric impl[T: Json] Json for Box[T].
 		jsonTrait + `@derive(Json) struct Box[T] { v: T }
-function main(): i32 { var b: Box[string] = Box { v: "hi" }; var s: string = b.to_json(); return 0; }`,
+function main(): i32 { let b: Box[string] = Box { v: "hi" }; let s: string = b.to_json(); return 0; }`,
 		// Nested derived struct composes through the field's to_json.
 		jsonTrait + `@derive(Json) struct Inner { n: i32 }
 @derive(Json) struct Outer { a: Inner, tag: string }
-function main(): i32 { var o: Outer = Outer { a: Inner { n: 5 }, tag: "x" }; var s: string = o.to_json(); return 0; }`,
+function main(): i32 { let o: Outer = Outer { a: Inner { n: 5 }, tag: "x" }; let s: string = o.to_json(); return 0; }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, src); err != nil {
@@ -6275,17 +6287,17 @@ func TestAssociatedFunctions(t *testing.T) {
 		`trait Zero { function zero(): Self; }
 struct Point { x: i32, y: i32 }
 impl Zero for Point { function zero(): Self { return Point { x: 0, y: 0 }; } }
-function main(): i32 { var p: Point = Point.zero(); return p.x + p.y; }`,
+function main(): i32 { let p: Point = Point.zero(); return p.x + p.y; }`,
 		// Constructor with arguments.
 		`trait Ctor { function make(a: i32, b: i32): Self; }
 struct Point { x: i32, y: i32 }
 impl Ctor for Point { function make(a: i32, b: i32): Self { return Point { x: a, y: b }; } }
-function main(): i32 { var p: Point = Point.make(3, 4); return p.x + p.y; }`,
+function main(): i32 { let p: Point = Point.make(3, 4); return p.x + p.y; }`,
 		// Associated function on an enum.
 		`trait Empty { function empty(): Self; }
 enum Opt { Nothing, Just(i32) }
 impl Empty for Opt { function empty(): Self { return Nothing; } }
-function main(): i32 { var o: Opt = Opt.empty(); match (o) { Nothing => { return 0; }, Just(n) => { return n; } } }`,
+function main(): i32 { let o: Opt = Opt.empty(); match (o) { Nothing => { return 0; }, Just(n) => { return n; } } }`,
 		// Result chains directly: `T.f().field`.
 		`trait Zero { function zero(): Self; }
 struct P { x: i32 }
@@ -6297,13 +6309,13 @@ function main(): i32 { return P.zero().x; }`,
 struct P { x: i32 }
 impl Zero for P { function zero(): Self { return P { x: 0 }; } }
 function mk[T: Zero](): T { return T.zero(); }
-function main(): i32 { var p: P = mk(); return p.x; }`,
+function main(): i32 { let p: P = mk(); return p.x; }`,
 		// Generic associated dispatch with an argument.
 		`trait From { function of(n: i32): Self; }
 struct Box { v: i32 }
 impl From for Box { function of(n: i32): Self { return Box { v: n }; } }
 function build[T: From](n: i32): T { return T.of(n); }
-function main(): i32 { var b: Box = build(7); return b.v; }`,
+function main(): i32 { let b: Box = build(7); return b.v; }`,
 		// The trait's parameter names an enum: the signature is resolved
 		// like every other type position, so the argument (an EnumType)
 		// matches it rather than the parser's bare StructType spelling.
@@ -6312,7 +6324,7 @@ trait Mk { function mk(v: V): Result[Self, string]; }
 struct Box { v: i32 }
 impl Mk for Box { function mk(v: V): Result[Self, string] { match (v) { A(n) => { return Ok(Box { v: n }); }, B => { return Err("b"); } } return Err(""); } }
 function build[T: Mk](v: V): Result[T, string] { return T.mk(v); }
-function main(): i32 { var b: Result[Box, string] = build[Box](A(7)); return 0; }`,
+function main(): i32 { let b: Result[Box, string] = build[Box](A(7)); return 0; }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, src); err != nil {
@@ -6360,7 +6372,7 @@ impl Shape for Circle { function area(self: Self): i32 { return self.r; } }
 	// Accepted: coerce a Circle to dyn Shape, dispatch area().
 	if err := checkSource(t, prelude+`
 function f(d: dyn Shape): i32 { return d.area(); }
-function main(): i32 { var d: dyn Shape = Circle { r: 3 }; return f(d); }`); err != nil {
+function main(): i32 { let d: dyn Shape = Circle { r: 3 }; return f(d); }`); err != nil {
 		t.Fatalf("valid dyn use should check: %v", err)
 	}
 
@@ -6369,7 +6381,7 @@ function main(): i32 { var d: dyn Shape = Circle { r: 3 }; return f(d); }`); err
 	// assignable()'s boxing-site list, so this reported a spurious E043 even
 	// though var-init / argument / array-element / return all accept it.
 	if err := checkSource(t, prelude+`struct Holder { shape: dyn Shape, tag: i32 }
-function main(): i32 { var h: Holder = Holder { shape: Circle { r: 4 }, tag: 1 }; return h.shape.area() + h.tag; }`); err != nil {
+function main(): i32 { let h: Holder = Holder { shape: Circle { r: 4 }, tag: 1 }; return h.shape.area() + h.tag; }`); err != nil {
 		t.Fatalf("implicit concrete->dyn coercion in a struct field should check: %v", err)
 	}
 
@@ -6379,14 +6391,14 @@ function main(): i32 { var h: Holder = Holder { shape: Circle { r: 4 }, tag: 1 }
 	// E036 even though the builtin Ok/Some/Err payloads and struct fields
 	// accept it.
 	if err := checkSource(t, prelude+`enum Box { Wrap(dyn Shape), Empty }
-function main(): i32 { var b: Box = Wrap(Circle { r: 4 }); match (b) { Wrap(d) => { return d.area(); }, Empty => { return 0; } } }`); err != nil {
+function main(): i32 { let b: Box = Wrap(Circle { r: 4 }); match (b) { Wrap(d) => { return d.area(); }, Empty => { return 0; } } }`); err != nil {
 		t.Fatalf("implicit concrete->dyn coercion in a variant payload should check: %v", err)
 	}
 
 	cases := []struct{ name, src, want string }{
 		{"non-impl coercion",
 			prelude + `struct NoShape { z: i32 }
-function main(): i32 { var d: dyn Shape = NoShape { z: 1 }; return 0; }`,
+function main(): i32 { let d: dyn Shape = NoShape { z: 1 }; return 0; }`,
 			"cannot assign NoShape"},
 		{"unknown method",
 			prelude + `function f(d: dyn Shape): i32 { return d.perimeter(); }
@@ -6403,17 +6415,17 @@ function main(): i32 { return 0; }`,
 			"not object-safe"},
 		{"heterogeneous array of non-impl",
 			prelude + `struct NoShape { z: i32 }
-function main(): i32 { var ds: dyn Shape[] = [Circle { r: 1 }, NoShape { z: 2 }]; return 0; }`,
+function main(): i32 { let ds: dyn Shape[] = [Circle { r: 1 }, NoShape { z: 2 }]; return 0; }`,
 			"does not implement Shape"},
 		{"non-impl in dyn struct field",
 			prelude + `struct NoShape { z: i32 }
 struct Holder { shape: dyn Shape }
-function main(): i32 { var h: Holder = Holder { shape: NoShape { z: 1 } }; return 0; }`,
+function main(): i32 { let h: Holder = Holder { shape: NoShape { z: 1 } }; return 0; }`,
 			"expected dyn Shape, got NoShape"},
 		{"non-impl in dyn variant payload",
 			prelude + `struct NoShape { z: i32 }
 enum Box { Wrap(dyn Shape) }
-function main(): i32 { var b: Box = Wrap(NoShape { z: 1 }); return 0; }`,
+function main(): i32 { let b: Box = Wrap(NoShape { z: 1 }); return 0; }`,
 			"payload 0 type NoShape, expected dyn Shape"},
 		// A `str` assigns only to a `str`, so it boxes into a dyn at no site,
 		// even through an impl on `str`: the box would hold the view past
@@ -6422,13 +6434,13 @@ function main(): i32 { var b: Box = Wrap(NoShape { z: 1 }); return 0; }`,
 			`trait Size { function size(self: Self): i32; }
 impl Size for str { function size(self: str): i32 { return self.len(); } }
 struct Holder { d: dyn Size }
-function main(): i32 { var s: string = "abc"; var v: str = slice_unchecked(s, 0, 2); var h: Holder = Holder { d: v }; return h.d.size(); }`,
+function main(): i32 { let s: string = "abc"; let v: str = slice_unchecked(s, 0, 2); let h: Holder = Holder { d: v }; return h.d.size(); }`,
 			"expected dyn Size, got str"},
 		{"str in dyn variant payload",
 			`trait Size { function size(self: Self): i32; }
 impl Size for str { function size(self: str): i32 { return self.len(); } }
 enum Box { Wrap(dyn Size) }
-function main(): i32 { var s: string = "abc"; var v: str = slice_unchecked(s, 0, 2); var b: Box = Wrap(v); return 0; }`,
+function main(): i32 { let s: string = "abc"; let v: str = slice_unchecked(s, 0, 2); let b: Box = Wrap(v); return 0; }`,
 			"payload 0 type str, expected dyn Size"},
 	}
 	for _, c := range cases {
@@ -6459,13 +6471,13 @@ impl Container[string] for BoxS { function get(self: Self): string { return "x";
 	// it composes in an i32 context.
 	if err := checkSource(t, prelude+`
 function take(d: dyn Container[i32]): i32 { return d.get(); }
-function main(): i32 { var d: dyn Container[i32] = BoxI { v: 7 }; return take(d); }`); err != nil {
+function main(): i32 { let d: dyn Container[i32] = BoxI { v: 7 }; return take(d); }`); err != nil {
 		t.Fatalf("valid generic dyn use should check: %v", err)
 	}
 
 	cases := []struct{ name, src, want string }{
 		{"argument mismatch",
-			prelude + `function main(): i32 { var d: dyn Container[string] = BoxI { v: 1 }; return 0; }`,
+			prelude + `function main(): i32 { let d: dyn Container[string] = BoxI { v: 1 }; return 0; }`,
 			"cannot assign BoxI"},
 		{"unpinned generic trait",
 			prelude + `function f(d: dyn Container): i32 { return 0; }
@@ -6477,7 +6489,7 @@ function main(): i32 { return 0; }`,
 			"string"},
 		{"string-pinned accepted",
 			prelude + `function f(d: dyn Container[string]): string { return d.get(); }
-function main(): i32 { var d: dyn Container[string] = BoxS { v: 1 }; return 0; }`,
+function main(): i32 { let d: dyn Container[string] = BoxS { v: 1 }; return 0; }`,
 			""},
 	}
 	for _, c := range cases {
@@ -6518,7 +6530,7 @@ function main(): i32 { return take(IntBox { v: 7 }); }`); err != nil {
 function main(): i32 { return 0; }`,
 			"is not pinned"},
 		{"wrong pin coercion",
-			prelude + `function main(): i32 { var d: dyn Producer[Item = string] = IntBox { v: 1 }; return 0; }`,
+			prelude + `function main(): i32 { let d: dyn Producer[Item = string] = IntBox { v: 1 }; return 0; }`,
 			"cannot assign IntBox"},
 	}
 	for _, c := range cases {
@@ -6550,18 +6562,18 @@ impl Show for OnlyShow { function show(self: Self): i32 { return self.v; } }
 	// and a method from EACH trait resolves.
 	if err := checkSource(t, prelude+`
 function f(d: dyn Show + Sized): i32 { return d.show() + d.size(); }
-function main(): i32 { var d: dyn Show + Sized = Both { v: 3 }; return f(d); }`); err != nil {
+function main(): i32 { let d: dyn Show + Sized = Both { v: 3 }; return f(d); }`); err != nil {
 		t.Fatalf("valid multi-trait dyn use should check: %v", err)
 	}
 	// Order-insensitive: `dyn Sized + Show` is the same type.
 	if err := checkSource(t, prelude+`
-function main(): i32 { var d: dyn Sized + Show = Both { v: 3 }; return d.show() + d.size(); }`); err != nil {
+function main(): i32 { let d: dyn Sized + Show = Both { v: 3 }; return d.show() + d.size(); }`); err != nil {
 		t.Fatalf("order-insensitive multi-trait dyn should check: %v", err)
 	}
 
 	cases := []struct{ name, src, want string }{
 		{"missing one trait",
-			prelude + `function main(): i32 { var d: dyn Show + Sized = OnlyShow { v: 1 }; return 0; }`,
+			prelude + `function main(): i32 { let d: dyn Show + Sized = OnlyShow { v: 1 }; return 0; }`,
 			"Sized"},
 		{"ambiguous method across traits",
 			`trait A { function m(self: Self): i32; }
@@ -6612,7 +6624,7 @@ impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; }
 	// Valid downcast: result type Option[Circle], usable through match.
 	if err := checkSource(t, prelude+`
 function describe(s: dyn Shape): i32 {
-    var c: Option[Circle] = s as? Circle;
+    let c: Option[Circle] = s as? Circle;
     return match (c) { Some(x) => x.r, None => 0 };
 }
 function main(): i32 { return describe(Circle { r: 7 }); }`); err != nil {
@@ -6639,7 +6651,7 @@ function main(): i32 { return 0; }`)
 
 	// Enum target: the parser wraps a bare `as? Color` name as a
 	// StructType, but the checker rewrites it to EnumType so the result
-	// `Option[Color]` matches a `var c: Option[Color]` annotation (whose
+	// `Option[Color]` matches a `let c: Option[Color]` annotation (whose
 	// Color resolveType already canonicalised to EnumType). Without the
 	// rewrite this assignment would spuriously E003 ("cannot assign
 	// Option[Color] to Option[Color]" — same spelling, different node).
@@ -6667,11 +6679,11 @@ function main(): i32 { return 0; }`)
 
 	cases := []struct{ name, src, want string }{
 		{"non-dyn LHS",
-			prelude + `function main(): i32 { var c: i32 = 1; var d: Option[Circle] = c as? Circle; return 0; }`,
+			prelude + `function main(): i32 { let c: i32 = 1; let d: Option[Circle] = c as? Circle; return 0; }`,
 			"requires a 'dyn Trait' value on the left"},
 		{"target does not implement trait",
 			prelude + `struct NoShape { z: i32 }
-function describe(s: dyn Shape): i32 { var c: Option[NoShape] = s as? NoShape; return 0; }
+function describe(s: dyn Shape): i32 { let c: Option[NoShape] = s as? NoShape; return 0; }
 function main(): i32 { return 0; }`,
 			"does not implement Shape"},
 	}
@@ -6697,7 +6709,7 @@ struct Circle { r: i32 }
 impl Shape for Circle { function area(self: Self): i32 { return self.r; } }
 function f(d: dyn Shape): i32 { return d.area(); }
 function main(): i32 {
-    var d: dyn Shape = Circle { r: 3 };
+    let d: dyn Shape = Circle { r: 3 };
     return f(Circle { r: 4 });
 }`
 	prog, err := parser.Parse(src)
@@ -6729,7 +6741,7 @@ func TestDynCoercionNotRecordedForNonBoxing(t *testing.T) {
 struct Circle { r: i32 }
 impl Shape for Circle { function area(self: Self): i32 { return self.r; } }
 function passthrough(d: dyn Shape): i32 {
-    var e: dyn Shape = d;
+    let e: dyn Shape = d;
     return e.area();
 }
 function main(): i32 { return passthrough(Circle { r: 1 }); }`
@@ -6742,7 +6754,7 @@ function main(): i32 { return passthrough(Circle { r: 1 }); }`
 		t.Fatalf("check: %v", err)
 	}
 	// Only the `Circle{r:1}` argument to passthrough is a real coercion;
-	// `var e: dyn Shape = d` (dyn→dyn) records nothing.
+	// `let e: dyn Shape = d` (dyn→dyn) records nothing.
 	if len(info.DynCoercions) != 1 {
 		t.Fatalf("want exactly 1 coercion (the Circle arg), got %d: %+v", len(info.DynCoercions), info.DynCoercions)
 	}
@@ -6755,7 +6767,7 @@ func TestExternImportTypeChecks(t *testing.T) {
 	src := `@import("wasi:random/random@0.2.0", "get-random-u64")
 function get_random(): u64;
 function main(): i32 {
-	var r: u64 = get_random();
+	let r: u64 = get_random();
 	return 0;
 }`
 	if err := checkSource(t, src); err != nil {
@@ -6780,7 +6792,7 @@ function ready(h: borrow Pollable): boolean;
 	// Accepted: own handle from subscribe, lent (own → borrow) to ready.
 	if err := checkSource(t, prelude+`
 function main(): i32 {
-	var p: own Pollable = subscribe(0 as u64);
+	let p: own Pollable = subscribe(0 as u64);
 	if (ready(p)) { return 1; }
 	return 0;
 }`); err != nil {
@@ -6789,7 +6801,7 @@ function main(): i32 {
 	// Accepted: a bare resource name is an owned handle.
 	if err := checkSource(t, prelude+`
 function main(): i32 {
-	var p: Pollable = subscribe(0 as u64);
+	let p: Pollable = subscribe(0 as u64);
 	if (ready(p)) { return 1; }
 	return 0;
 }`); err != nil {
@@ -6803,15 +6815,15 @@ function main(): i32 { return 0; }`,
 			"unknown resource"},
 		{"plain i32 is not a handle",
 			prelude + `function main(): i32 {
-	var n: i32 = 7;
+	let n: i32 = 7;
 	if (ready(n)) { return 1; }
 	return 0;
 }`,
 			"expected borrow Pollable, got i32"},
 		{"handle is not a plain i32",
 			prelude + `function main(): i32 {
-	var p: own Pollable = subscribe(0 as u64);
-	var n: i32 = p;
+	let p: own Pollable = subscribe(0 as u64);
+	let n: i32 = p;
 	return n;
 }`,
 			"cannot"},
@@ -6863,11 +6875,11 @@ function main(): i32 {
 
 // E055: a bare statement whose whole expression is a value-returning
 // collection mutator silently discards the new collection (the CoW aliasing
-// bug). It must be reassigned, or explicitly discarded with `var _ = …`.
+// bug). It must be reassigned, or explicitly discarded with `let _ = …`.
 func TestUnusedCollectionResultE055(t *testing.T) {
 	// A bare `arr.append(x);` discards the returned array → E055.
 	err := checkSource(t, `function main(): i32 {
-	var a: i32[] = [1];
+	let a: i32[] = [1];
 	a.append(2);
 	return a[0];
 }`)
@@ -6876,25 +6888,25 @@ func TestUnusedCollectionResultE055(t *testing.T) {
 	}
 	// Threading the result back is the fix — no error.
 	if err := checkSource(t, `function main(): i32 {
-	var a: i32[] = [1];
+	let a: i32[] = [1];
 	a = a.append(2);
 	return a[0];
 }`); err != nil {
 		t.Errorf("reassigned append should check, got %v", err)
 	}
-	// Explicit discard via `var _ = …` is the opt-out — no error.
+	// Explicit discard via `let _ = …` is the opt-out — no error.
 	if err := checkSource(t, `function main(): i32 {
-	var a: i32[] = [1];
-	var _ = a.append(2);
+	let a: i32[] = [1];
+	let _ = a.append(2);
 	return a.len();
 }`); err != nil {
-		t.Errorf("var _ discard should check, got %v", err)
+		t.Errorf("let _ discard should check, got %v", err)
 	}
 	// `arr = arr.with(i, v)` (the value-returning replacement for the removed
 	// `arr[i] = v`) is an assignment, not a discarded result — exempt from
 	// E055 (and it is not subscript assignment, so no E056 either).
 	if err := checkSource(t, `function main(): i32 {
-	var a: i32[] = [1, 2];
+	let a: i32[] = [1, 2];
 	a = a.with(0, 9);
 	return a[0];
 }`); err != nil {
@@ -6902,7 +6914,7 @@ func TestUnusedCollectionResultE055(t *testing.T) {
 	}
 	// Using the result in a larger expression is fine (not a bare statement).
 	if err := checkSource(t, `function main(): i32 {
-	var a: i32[] = [1];
+	let a: i32[] = [1];
 	return a.append(2)[0];
 }`); err != nil {
 		t.Errorf("used append result must not trip E055, got %v", err)
@@ -6916,7 +6928,7 @@ func TestUnusedCollectionResultE055(t *testing.T) {
 func TestArrayElementImmutabilityE056(t *testing.T) {
 	// Plain subscript assignment is rejected.
 	err := checkSource(t, `function main(): i32 {
-	var a: i32[] = [1, 2, 3];
+	let a: i32[] = [1, 2, 3];
 	a[0] = 9;
 	return a[0];
 }`)
@@ -6925,7 +6937,7 @@ func TestArrayElementImmutabilityE056(t *testing.T) {
 	}
 	// Compound subscript assignment (`arr[i] += v` desugars to `arr[i] = arr[i] + v`).
 	err = checkSource(t, `function main(): i32 {
-	var a: i32[] = [1, 2, 3];
+	let a: i32[] = [1, 2, 3];
 	a[1] += 5;
 	return a[1];
 }`)
@@ -6934,7 +6946,7 @@ func TestArrayElementImmutabilityE056(t *testing.T) {
 	}
 	// The replacement form checks clean.
 	if err := checkSource(t, `function main(): i32 {
-	var a: i32[] = [1, 2, 3];
+	let a: i32[] = [1, 2, 3];
 	a = a.with(0, 9);
 	return a[0];
 }`); err != nil {
@@ -6949,7 +6961,7 @@ func TestArrayElementImmutabilityE056(t *testing.T) {
 func TestCellElemTypeE057(t *testing.T) {
 	// Cell[i32] — scalar, fine. cell_new infers T; get/set type-check.
 	if err := checkSource(t, `function main(): i32 {
-	var c: Cell[i32] = cell_new(0);
+	let c: Cell[i32] = cell_new(0);
 	c.set(c.get() + 1);
 	return c.get();
 }`); err != nil {
@@ -6960,7 +6972,7 @@ func TestCellElemTypeE057(t *testing.T) {
 	if err := checkSource(t, `
 import "std/string";
 function main(): i32 {
-	var c: Cell[string] = cell_new("x");
+	let c: Cell[string] = cell_new("x");
 	c.set("yy");
 	return c.get().len();
 }`); err != nil {
@@ -6969,17 +6981,17 @@ function main(): i32 {
 	// Inferred Cell[string] from the cell_new arg — also allowed.
 	if err := checkSource(t, `
 import "std/string";
-function main(): i32 { var c = cell_new("x"); return c.get().len(); }`); err != nil {
+function main(): i32 { let c = cell_new("x"); return c.get().len(); }`); err != nil {
 		t.Errorf("inferred Cell[string] should check, got %v", err)
 	}
 	// Cell[Point] (struct) — a composite type can form a cycle: rejected.
 	err := checkSource(t, `struct Point { x: i32 }
-function main(): i32 { var c: Cell[Point] = cell_new(Point { x: 1 }); return 0; }`)
+function main(): i32 { let c: Cell[Point] = cell_new(Point { x: 1 }); return 0; }`)
 	if err == nil || !strings.Contains(err.Error(), "must be a scalar") {
 		t.Errorf("Cell[Point] should be E057, got %v", err)
 	}
 	// Cell[i32[]] (array) — also a reference/composite type: rejected.
-	err = checkSource(t, `function main(): i32 { var c: Cell[i32[]] = cell_new([1, 2]); return 0; }`)
+	err = checkSource(t, `function main(): i32 { let c: Cell[i32[]] = cell_new([1, 2]); return 0; }`)
 	if err == nil || !strings.Contains(err.Error(), "must be a scalar") {
 		t.Errorf("Cell[i32[]] should be E057, got %v", err)
 	}
@@ -6998,7 +7010,7 @@ func TestCellElemTypeE057AnnotationPosition(t *testing.T) {
 	}{
 		{"field", "struct Point { x: i32 }\nstruct Holder {\n    c: Cell[Point],\n}\nfunction main(): i32 { return 0; }", 3, 5},
 		{"param", "struct Point { x: i32 }\nfunction f(c: Cell[Point]): i32 { return 0; }\nfunction main(): i32 { return 0; }", 2, 12},
-		{"var", "struct Point { x: i32 }\nfunction main(): i32 {\n    var c: Cell[Point] = cell_new(Point { x: 1 });\n    return 0;\n}", 3, 5},
+		{"let", "struct Point { x: i32 }\nfunction main(): i32 {\n    let c: Cell[Point] = cell_new(Point { x: 1 });\n    return 0;\n}", 3, 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -7094,7 +7106,7 @@ func TestCheckPrintDisplayAccepted(t *testing.T) {
 struct Point { x: i32, y: i32 }
 impl Display for Point { function to_string(self: Self): string { return "p"; } }
 function main(): i32 {
-    var p: Point = Point { x: 1, y: 2 };
+    let p: Point = Point { x: 1, y: 2 };
     print(p);
     write(p);
     eprint(p);
@@ -7120,7 +7132,7 @@ func TestCheckBoundDrivenInference(t *testing.T) {
 	src := `trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct RangeIter { cur: i32, end: i32 }
 impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
-function last[T, I: Iterator[T]](it: I, dflt: T): T { var acc = dflt; var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { acc = t.0; cur = t.1; }, None => { go = false; }, } } return acc; }
+function last[T, I: Iterator[T]](it: I, dflt: T): T { let acc = dflt; let cur = it; let go = true; while (go) { match (cur.next()) { Some(t) => { acc = t.0; cur = t.1; }, None => { go = false; }, } } return acc; }
 function main(): i32 { return last(RangeIter { cur: 0, end: 5 }, -1); }`
 	if err := checkSource(t, src); err != nil {
 		t.Errorf("bound-driven inference of T from the impl should typecheck: %v", err)
@@ -7146,7 +7158,7 @@ function main(): i32 { show(Point { x: 1 }); return 0; }`
 func TestCheckPrintNonDisplayRejected(t *testing.T) {
 	cases := []struct{ src, want string }{
 		{`struct Point { x: i32 }
-function main(): i32 { var p: Point = Point { x: 1 }; print(p); return 0; }`,
+function main(): i32 { let p: Point = Point { x: 1 }; print(p); return 0; }`,
 			"does not implement `Display`"},
 		{`trait Display { function to_string(self: Self): string; }
 function show[T](v: T): void { print(v); }
@@ -7166,10 +7178,10 @@ function main(): i32 { return 0; }`,
 // locals don't leak; a value-less block in value position errors E061;
 // branch-tail types unify (or mismatch → E031).
 func TestBlockExprChecker(t *testing.T) {
-	// Tail type flows: `if (c) { var k = e + 1; k } else { 0 }` is i32.
+	// Tail type flows: `if (c) { let k = e + 1; k } else { 0 }` is i32.
 	if err := checkSource(t, `function main(): i32 {
-		var e = 5;
-		var x: i32 = if (e > 0) { var k = e + 1; k } else { 0 };
+		let e = 5;
+		let x: i32 = if (e > 0) { let k = e + 1; k } else { 0 };
 		return x;
 	}`); err != nil {
 		t.Errorf("if-block tail-type: unexpected error: %v", err)
@@ -7178,8 +7190,8 @@ func TestBlockExprChecker(t *testing.T) {
 	// String tails unify across branches: one branch `{ ...; "a" }`, the
 	// other a bare `"b"` → string.
 	if err := checkSource(t, `function main(): i32 {
-		var t = 0;
-		var label: string = if (t == 0) { var s = "a"; s } else { "b" };
+		let t = 0;
+		let label: string = if (t == 0) { let s = "a"; s } else { "b" };
 		return label.len();
 	}`); err != nil {
 		t.Errorf("string-tail unification: unexpected error: %v", err)
@@ -7187,8 +7199,8 @@ func TestBlockExprChecker(t *testing.T) {
 
 	// match-arm block-expr tail type flows.
 	if err := checkSource(t, `function main(): i32 {
-		var tag = 0;
-		var r: i32 = match (tag) { 0 => { var s = tag + 5; s }, _ => 99 };
+		let tag = 0;
+		let r: i32 = match (tag) { 0 => { let s = tag + 5; s }, _ => 99 };
 		return r;
 	}`); err != nil {
 		t.Errorf("match-arm block tail: unexpected error: %v", err)
@@ -7203,7 +7215,7 @@ func TestBlockExprChecker(t *testing.T) {
 func TestCheckDeferBlockVoidAction(t *testing.T) {
 	// defer / errdefer with a value-less block action: clean.
 	if err := checkSource(t, `function f(): Result[i32, i32] {
-		var x: i32 = 0;
+		let x: i32 = 0;
 		defer { x = x + 1; }
 		errdefer { x = x + 2; }
 		return Ok(x);
@@ -7214,7 +7226,7 @@ func TestCheckDeferBlockVoidAction(t *testing.T) {
 	// A value-less block in a genuine value position still errors E061 — the
 	// exemption must not leak beyond the immediate defer action.
 	err := checkSource(t, `function main(): i32 {
-		var y: i32 = { var z = 1; };
+		let y: i32 = { let z = 1; };
 		return y;
 	}`)
 	if err == nil || !strings.Contains(err.Error(), "no trailing value") {
@@ -7235,7 +7247,7 @@ func TestBlockExprCheckerNeverDiverges(t *testing.T) {
 			// General value-position block with no tail: both paths return.
 			"general-block-all-return",
 			`function f(n: i32): i32 {
-				var x: i32 = { if (n < 0) { return 1; } return 2; };
+				let x: i32 = { if (n < 0) { return 1; } return 2; };
 				return x;
 			}
 			function main(): i32 { return f(5); }`,
@@ -7245,7 +7257,7 @@ func TestBlockExprCheckerNeverDiverges(t *testing.T) {
 			// assignable to i32.
 			"if-expr-both-arms-diverge",
 			`function f(n: i32): i32 {
-				var x: i32 = if (n < 0) { return 1; } else { return 2; };
+				let x: i32 = if (n < 0) { return 1; } else { return 2; };
 				return x;
 			}
 			function main(): i32 { return f(5); }`,
@@ -7255,7 +7267,7 @@ func TestBlockExprCheckerNeverDiverges(t *testing.T) {
 			// result type comes from the value arm.
 			"match-arm-diverges",
 			`function f(n: i32): i32 {
-				var x: i32 = match (n) { 0 => { return 100; }, _ => { n * 2 } };
+				let x: i32 = match (n) { 0 => { return 100; }, _ => { n * 2 } };
 				return x;
 			}
 			function main(): i32 { return f(5); }`,
@@ -7264,7 +7276,7 @@ func TestBlockExprCheckerNeverDiverges(t *testing.T) {
 			// No annotation: `never` is inferred, no missing-annotation error.
 			"no-annotation",
 			`function f(n: i32): i32 {
-				var x = { if (n < 0) { return 1; } return 2; };
+				let x = { if (n < 0) { return 1; } return 2; };
 				return x;
 			}
 			function main(): i32 { return f(5); }`,
@@ -7274,10 +7286,10 @@ func TestBlockExprCheckerNeverDiverges(t *testing.T) {
 			// `never`, assignable to the local's type.
 			"break-continue-in-loop",
 			`function main(): i32 {
-				var s: i32 = 0; var i: i32 = 0;
+				let s: i32 = 0; let i: i32 = 0;
 				while (i < 5) {
 					i = i + 1;
-					var d: i32 = { if (i == 4) { break; } if (i == 2) { continue; } i };
+					let d: i32 = { if (i == 4) { break; } if (i == 2) { continue; } i };
 					s = s + d;
 				}
 				return s;
@@ -7300,7 +7312,7 @@ func TestBlockExprCheckerErrors(t *testing.T) {
 		{
 			"local-does-not-escape",
 			`function main(): i32 {
-				var x: i32 = if (true) { var k = 1; k } else { 0 };
+				let x: i32 = if (true) { let k = 1; k } else { 0 };
 				return k;
 			}`,
 			"undefined identifier",
@@ -7308,7 +7320,7 @@ func TestBlockExprCheckerErrors(t *testing.T) {
 		{
 			"value-less-block-in-value-position",
 			`function main(): i32 {
-				var x: i32 = if (true) { var k = 1; } else { 0 };
+				let x: i32 = if (true) { let k = 1; } else { 0 };
 				return x;
 			}`,
 			"block-expression has no trailing value",
@@ -7316,7 +7328,7 @@ func TestBlockExprCheckerErrors(t *testing.T) {
 		{
 			"mismatched-branch-tails",
 			`function main(): i32 {
-				var x = if (true) { var k = 1; k } else { var s = "x"; s };
+				let x = if (true) { let k = 1; k } else { let s = "x"; s };
 				return 0;
 			}`,
 			"branches differ",
@@ -7440,7 +7452,7 @@ function main(): i32 { return pick(P { v: 42 }); }`,
 			src: `trait Zero { function zero(): Self; }
 struct P { v: i32 }
 impl Zero for P { function zero(): Self { return P { v: 7 }; } }
-function mk[T: Zero](): i32 { var z: T = T.zero(); return 1; }
+function mk[T: Zero](): i32 { let z: T = T.zero(); return 1; }
 function main(): i32 { return 42; }`,
 		},
 	} {
@@ -7520,13 +7532,13 @@ function main(): i32 { return describe(Circle { r: 5 }); }`,
 func TestSliceEscapeRejected(t *testing.T) {
 	for _, src := range []string{
 		// slice of a locally-declared owned array
-		`function f(): [i32] { var xs: i32[] = [1, 2, 3]; return xs[0:2]; }`,
+		`function f(): [i32] { let xs: i32[] = [1, 2, 3]; return xs[0:2]; }`,
 		// slice of an array literal
 		`function f(): [i32] { return [1, 2, 3][0:2]; }`,
 		// slice bound to a local, then returned
-		`function f(): [i32] { var xs: i32[] = [1, 2, 3]; var s = xs[0:2]; return s; }`,
+		`function f(): [i32] { let xs: i32[] = [1, 2, 3]; let s = xs[0:2]; return s; }`,
 		// sub-slice of a local slice that views a local array
-		`function f(): [i32] { var xs: i32[] = [1, 2, 3]; var s = xs[0:3]; return s[0:2]; }`,
+		`function f(): [i32] { let xs: i32[] = [1, 2, 3]; let s = xs[0:3]; return s[0:2]; }`,
 	} {
 		err := checkSource(t, src)
 		if err == nil {
@@ -7553,7 +7565,7 @@ func TestSliceEscapeAllowed(t *testing.T) {
 		// slice of a parameter — caller owns the backing array
 		`function f(xs: i32[]): [i32] { return xs[0:2]; }`,
 		// slice of a parameter, bound through a local first
-		`function f(xs: i32[]): [i32] { var s = xs[0:2]; return s; }`,
+		`function f(xs: i32[]): [i32] { let s = xs[0:2]; return s; }`,
 		// a string view of a param-backed source outlives the callee:
 		// `slice_unchecked` hands back the bare `str`, the checked
 		// `s[a:b]` wraps the same view in an Option, and an owning
@@ -7562,11 +7574,11 @@ func TestSliceEscapeAllowed(t *testing.T) {
 		`function f(s: string): Option[str] { return s[0:2]; }`,
 		`function f(s: string): string { return slice_unchecked(s, 0, 2) + ""; }`,
 		// returning the owned array itself is a move
-		`function f(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; }`,
+		`function f(): i32[] { let xs: i32[] = [1, 2, 3]; return xs; }`,
 		// receiver-backed slice (element-polymorphic method): caller owns
 		// the receiver, so the view is valid.
 		`function (xs: T[]) head(): [T] { return xs[0:2]; }
-function main(): i32 { var a: i32[] = [1,2,3]; return a.head()[0]; }`,
+function main(): i32 { let a: i32[] = [1,2,3]; return a.head()[0]; }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%q: unexpected error %v", src, err)
@@ -7605,13 +7617,13 @@ func hasCode(err error, code string) bool {
 func TestStrViewBorrowAllowed(t *testing.T) {
 	for _, src := range []string{
 		// string → str var init (borrow)
-		`function f(): void { var s: string = "x"; var v: str = s; }`,
+		`function f(): void { let s: string = "x"; let v: str = s; }`,
 		// string literal → str param
 		`function g(v: str): i32 { return v.len(); } function f(): i32 { return g("abc"); }`,
 		// str → string param (borrowed position)
 		`function t(o: string): i32 { return o.len(); } function f(v: str): i32 { return t(v); }`,
 		// str[] literal from string elements; element method call
-		`function f(): i32 { var vs: str[] = ["ab"]; return vs[0].len(); }`,
+		`function f(): i32 { let vs: str[] = ["ab"]; return vs[0].len(); }`,
 		// str → str passthrough return
 		`function f(v: str): str { return v; }`,
 	} {
@@ -7629,7 +7641,7 @@ func TestStrViewBorrowAllowed(t *testing.T) {
 func TestStrViewPromoteRejected(t *testing.T) {
 	for _, src := range []string{
 		// str → string var init
-		`function f(v: str) { var o: string = v; }`,
+		`function f(v: str) { let o: string = v; }`,
 		// str → string return
 		`function f(v: str): string { return v; }`,
 	} {
@@ -7650,11 +7662,11 @@ func TestStrViewPromoteRejected(t *testing.T) {
 func TestStrEscapeRejected(t *testing.T) {
 	for _, src := range []string{
 		// local string returned as a str (direct borrow escape)
-		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); return s; }`,
+		`function mk(): string { return "a" + "b"; } function f(): str { let s: string = mk(); return s; }`,
 		// view of a local, bound then returned
-		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); var v: str = s; return v; }`,
+		`function mk(): string { return "a" + "b"; } function f(): str { let s: string = mk(); let v: str = s; return v; }`,
 		// chained view-of-view of a local
-		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); var v: str = s; var w: str = v; return w; }`,
+		`function mk(): string { return "a" + "b"; } function f(): str { let s: string = mk(); let v: str = s; let w: str = v; return w; }`,
 	} {
 		err := checkSource(t, src)
 		if err == nil {
@@ -7678,10 +7690,10 @@ func TestStrEscapeAllowed(t *testing.T) {
 		// param passthrough
 		`function f(v: str): str { return v; }`,
 		// param through a local view binding
-		`function f(p: str): str { var v: str = p; return v; }`,
+		`function f(p: str): str { let v: str = p; return v; }`,
 		// literal directly and via a binding ('static)
 		`function f(): str { return "s"; }`,
-		`function f(): str { var v: str = "s"; return v; }`,
+		`function f(): str { let v: str = "s"; return v; }`,
 		// owned fresh call result (a move; call results are not chased)
 		`function mk(): string { return "a" + "b"; } function f(): str { return mk(); }`,
 	} {
@@ -7705,8 +7717,8 @@ func TestStrEscapeAllowed(t *testing.T) {
 func TestStrSliceProducesOption(t *testing.T) {
 	for _, src := range []string{
 		// binds to an Option sink, annotated or inferred
-		`function f(): void { var s: string = "abcd"; var o: Option[str] = s[1:3]; }`,
-		`function f(): void { var s: string = "abcd"; var o = s[1:3]; }`,
+		`function f(): void { let s: string = "abcd"; let o: Option[str] = s[1:3]; }`,
+		`function f(): void { let s: string = "abcd"; let o = s[1:3]; }`,
 		// returns as an Option of a caller-owned param's view
 		`function f(s: string): Option[str] { return s[1:3]; }`,
 		// a `str` source slices to the same Option
@@ -7717,7 +7729,7 @@ func TestStrSliceProducesOption(t *testing.T) {
 		// the view comes out through a match...
 		`function f(s: string): i32 { match (s[1:3]) { Some(v) => { return v.len(); }, None => { return 0; } } }`,
 		// ...or through `?`, which the Option result makes legal
-		`function f(s: string): Option[str] { var v: str = s[1:3]?; return Some(v); }`,
+		`function f(s: string): Option[str] { let v: str = s[1:3]?; return Some(v); }`,
 		// the unchecked producer keeps the bare `str` and its read surface
 		`function f(s: string): i32 { return slice_unchecked(s, 1, 3).len(); }`,
 		`function f(s: string): void { print(slice_unchecked(s, 1, 3)); }`,
@@ -7728,7 +7740,7 @@ func TestStrSliceProducesOption(t *testing.T) {
 	}
 	for _, src := range []string{
 		// slice → str binding: the Option is not a view
-		`function f(): void { var s: string = "abcd"; var v: str = s[1:3]; }`,
+		`function f(): void { let s: string = "abcd"; let v: str = s[1:3]; }`,
 		// slice → str return
 		`function f(s: string): str { return s[1:3]; }`,
 		// slice → string return (owning sink, no materialisation)
@@ -7757,8 +7769,8 @@ func TestStrSliceProducesOption(t *testing.T) {
 func TestStrSliceTypesAsOptionStr(t *testing.T) {
 	want := ast.EnumType{Name: "Option", Args: []ast.Type{ast.StrType{}}}
 	for name, src := range map[string]string{
-		"string source": `function f(s: string): void { var v = s[1:3]; }`,
-		"str source":    `function f(s: str): void { var v = s[1:3]; }`,
+		"string source": `function f(s: string): void { let v = s[1:3]; }`,
+		"str source":    `function f(s: str): void { let v = s[1:3]; }`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			prog, err := parser.Parse(src)
@@ -7795,8 +7807,8 @@ func TestStrSliceTypesAsOptionStr(t *testing.T) {
 // stays fine (caller-owned backing).
 func TestStrSliceEscapeRejected(t *testing.T) {
 	for _, src := range []string{
-		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); return slice_unchecked(s, 0, 1); }`,
-		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); var v: str = slice_unchecked(s, 0, 1); return v; }`,
+		`function mk(): string { return "a" + "b"; } function f(): str { let s: string = mk(); return slice_unchecked(s, 0, 1); }`,
+		`function mk(): string { return "a" + "b"; } function f(): str { let s: string = mk(); let v: str = slice_unchecked(s, 0, 1); return v; }`,
 	} {
 		err := checkSource(t, src)
 		if err == nil {
@@ -7817,11 +7829,11 @@ func TestStrSliceEscapeRejected(t *testing.T) {
 func TestStrMatchArmEscapeRejected(t *testing.T) {
 	for _, src := range []string{
 		// the Option slice, unwrapped and returned
-		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); match (s[0:1]) { Some(v) => { return v; }, None => { return ""; } } }`,
+		`function mk(): string { return "a" + "b"; } function f(): str { let s: string = mk(); match (s[0:1]) { Some(v) => { return v; }, None => { return ""; } } }`,
 		// two-step: the Option lands in a local first
-		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); var t = s[0:1]; match (t) { Some(v) => { return v; }, None => { return ""; } } }`,
+		`function mk(): string { return "a" + "b"; } function f(): str { let s: string = mk(); let t = s[0:1]; match (t) { Some(v) => { return v; }, None => { return ""; } } }`,
 		// the arm binding re-bound through a `str` local before the return
-		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); match (s[0:1]) { Some(v) => { var w: str = v; return w; }, None => { return ""; } } }`,
+		`function mk(): string { return "a" + "b"; } function f(): str { let s: string = mk(); match (s[0:1]) { Some(v) => { let w: str = v; return w; }, None => { return ""; } } }`,
 	} {
 		err := checkSource(t, src)
 		if err == nil {
@@ -7865,19 +7877,19 @@ function (s: string) view(): str { return s; }
 `
 	for _, src := range []string{
 		// one hop
-		`function f(): str { var s: string = mk(); return id_view(slice_unchecked(s, 0, 1)); }`,
+		`function f(): str { let s: string = mk(); return id_view(slice_unchecked(s, 0, 1)); }`,
 		// two hops — the summary has to reach through hop2 to id_view
-		`function f(): str { var s: string = mk(); return hop2(slice_unchecked(s, 0, 1)); }`,
+		`function f(): str { let s: string = mk(); return hop2(slice_unchecked(s, 0, 1)); }`,
 		// a self-recursive pass-through function: the fixpoint converges
 		// on it rather than looping
-		`function f(): str { var s: string = mk(); return rec(slice_unchecked(s, 0, 1), 3); }`,
+		`function f(): str { let s: string = mk(); return rec(slice_unchecked(s, 0, 1), 3); }`,
 		// method form — the receiver is argument 0 of the hoisted
 		// `__method_string_view`, so it resolves through the same summary
-		`function f(): str { var s: string = mk(); return s.view(); }`,
+		`function f(): str { let s: string = mk(); return s.view(); }`,
 		// the arm binding from the checked producer, handed to a callee
-		`function f(): str { var s: string = mk(); match (s[0:1]) { Some(v) => { return id_view(v); }, None => { return ""; } } }`,
+		`function f(): str { let s: string = mk(); match (s[0:1]) { Some(v) => { return id_view(v); }, None => { return ""; } } }`,
 		// the passed-through view parked in a local before the return
-		`function f(): str { var s: string = mk(); var t: str = id_view(slice_unchecked(s, 0, 1)); return t; }`,
+		`function f(): str { let s: string = mk(); let t: str = id_view(slice_unchecked(s, 0, 1)); return t; }`,
 	} {
 		err := checkSource(t, decls+src)
 		if err == nil {
@@ -7903,9 +7915,9 @@ function (s: string) view(): str { return s; }
 `
 	for _, src := range []string{
 		// the local-backed view is argument 0; only argument 1 escapes
-		`function f(): str { var s: string = mk(); return second(slice_unchecked(s, 0, 1), "lit"); }`,
+		`function f(): str { let s: string = mk(); return second(slice_unchecked(s, 0, 1), "lit"); }`,
 		// the callee returns a literal, viewing no argument at all
-		`function f(): str { var s: string = mk(); return lit_only(slice_unchecked(s, 0, 1)); }`,
+		`function f(): str { let s: string = mk(); return lit_only(slice_unchecked(s, 0, 1)); }`,
 		// the passed-through view is param-backed, so it outlives the callee
 		`function f(p: string): str { return id_view(slice_unchecked(p, 0, 1)); }`,
 		`function f(p: string): str { return p.view(); }`,
@@ -7930,22 +7942,22 @@ function (xs: T[]) win(): [T] { return xs[0:1]; }
 `
 	for _, src := range []string{
 		// one hop
-		`function f(): [i32] { var a: i32[] = [1, 2, 3]; return id_sl(a[0:2]); }`,
+		`function f(): [i32] { let a: i32[] = [1, 2, 3]; return id_sl(a[0:2]); }`,
 		// two hops
-		`function f(): [i32] { var a: i32[] = [1, 2, 3]; return hop(a[0:2]); }`,
+		`function f(): [i32] { let a: i32[] = [1, 2, 3]; return hop(a[0:2]); }`,
 		// the local array itself is the argument: chasing it as a slice
 		// value would find nothing, chasing it as storage finds the array
-		`function f(): [i32] { var a: i32[] = [1, 2, 3]; return id_sl(a)[0:1]; }`,
+		`function f(): [i32] { let a: i32[] = [1, 2, 3]; return id_sl(a)[0:1]; }`,
 		// element-polymorphic receiver method over a local array
-		`function f(): [i32] { var a: i32[] = [1, 2, 3]; return a.win(); }`,
+		`function f(): [i32] { let a: i32[] = [1, 2, 3]; return a.win(); }`,
 		// the escaping storage is the array LITERAL at argument 1, which
 		// is the one the callee returns
-		`function f(): [i32] { var a: i32[] = [1, 2, 3]; return second(a[0:2], [9]); }`,
+		`function f(): [i32] { let a: i32[] = [1, 2, 3]; return second(a[0:2], [9]); }`,
 		// a `T[]`-returning callee that hands back a parameter MOVES the
 		// caller's array, so slicing the result views the caller's
 		// storage — which is why every function is summarised and not
 		// just the `[T]`-returning ones
-		`function f(): [i32] { var a: i32[] = [1, 2, 3]; return idarr(a)[0:1]; }`,
+		`function f(): [i32] { let a: i32[] = [1, 2, 3]; return idarr(a)[0:1]; }`,
 	} {
 		err := checkSource(t, decls+src)
 		if err == nil {
@@ -7964,20 +7976,20 @@ function (xs: T[]) win(): [T] { return xs[0:1]; }
 func TestSliceCalleeEscapeAllowed(t *testing.T) {
 	const decls = `function id_sl(x: [i32]): [i32] { return x; }
 function second(a: [i32], b: [i32]): [i32] { return b; }
-function mkarr(): i32[] { var a: i32[] = [1, 2, 3]; return a; }
+function mkarr(): i32[] { let a: i32[] = [1, 2, 3]; return a; }
 function (xs: T[]) win(): [T] { return xs[0:1]; }
 `
 	for _, src := range []string{
 		`function f(p: i32[]): [i32] { return id_sl(p[0:2]); }`,
 		`function f(p: i32[]): [i32] { return p.win(); }`,
 		// argument 0 is local-backed, but the callee returns argument 1
-		`function f(p: i32[]): [i32] { var a: i32[] = [1, 2, 3]; return second(a[0:2], p[0:1]); }`,
+		`function f(p: i32[]): [i32] { let a: i32[] = [1, 2, 3]; return second(a[0:2], p[0:1]); }`,
 		// an owned `T[]` return MOVES its storage to the caller, so a
 		// function handing back its own local array is not returning a
 		// view at all. Summarising every function makes this reachable;
 		// only reporting against `[T]` returns keeps it accepted.
 		`function f(): i32[] { return mkarr(); }`,
-		`function f(): i32[] { var a: i32[] = [1, 2, 3]; return a; }`,
+		`function f(): i32[] { let a: i32[] = [1, 2, 3]; return a; }`,
 	} {
 		if err := checkSource(t, decls+src); err != nil {
 			t.Errorf("%q: expected acceptance, got %v", src, err)
@@ -7987,11 +7999,11 @@ function (xs: T[]) win(): [T] { return xs[0:1]; }
 
 // TestSlicedTemporaryRejected: a call's result is a TEMPORARY this frame
 // owns, so slicing it and returning the slice dangles exactly as slicing a
-// local does. Binding it first was already rejected — `var t = mkarr();
+// local does. Binding it first was already rejected — `let t = mkarr();
 // return t[0:1];` — so the gap this closes is precisely the storage without
 // a name, on both rules.
 func TestSlicedTemporaryRejected(t *testing.T) {
-	const decls = `function mkarr(): i32[] { var a: i32[] = [1, 2, 3]; return a; }
+	const decls = `function mkarr(): i32[] { let a: i32[] = [1, 2, 3]; return a; }
 function fresharr(): i32[] { return [1, 2, 3]; }
 function mkstr(): string { return "a" + "b"; }
 function (s: string) own_copy(): string { return s + ""; }
@@ -8004,7 +8016,7 @@ function (s: string) own_copy(): string { return s + ""; }
 		// the `str` twin: a view of a string the callee allocated
 		`function f(): str { return slice_unchecked(mkstr(), 0, 1); }`,
 		// method form, and the receiver is a local rather than a param
-		`function f(): str { var s: string = mkstr(); return slice_unchecked(s.own_copy(), 0, 1); }`,
+		`function f(): str { let s: string = mkstr(); return slice_unchecked(s.own_copy(), 0, 1); }`,
 	} {
 		err := checkSource(t, decls+src)
 		if err == nil {
@@ -8098,10 +8110,10 @@ func TestPointerReinterpretFromI32Rejected(t *testing.T) {
 	mustOK(`function f(k: usize): string { return k as string; } function main(): i32 { return 0; }`)
 	mustOK(`function f(k: usize): i32[] { return k as i32[]; } function main(): i32 { return 0; }`)
 	// A plain numeric conversion (not a pointer reinterpret) is unaffected.
-	mustOK(`function main(): i32 { var a: i32 = 5; var b: usize = a as usize; return b as i32; }`)
+	mustOK(`function main(): i32 { let a: i32 = 5; let b: usize = a as usize; return b as i32; }`)
 	// The forward pointer->i32 narrowing (the __memcpy escape hatch) is not
 	// this rule's target and stays allowed.
-	mustOK(`function main(): i32 { var s: string = "x"; return s as i32; }`)
+	mustOK(`function main(): i32 { let s: string = "x"; return s as i32; }`)
 }
 
 // TestFloatAliasAndDefaultWidth pins the #5363 decision on the checker
@@ -8129,15 +8141,15 @@ func TestFloatAliasAndDefaultWidth(t *testing.T) {
 		}
 	}
 	// The alias type-checks: annotation, param, return, cast, array elem.
-	mustOK(`function f(x: float): float { return x as float; } function main(): i32 { var v: float = 1.5; var xs: float[] = [v, f(v)]; return xs.len(); }`)
+	mustOK(`function f(x: float): float { return x as float; } function main(): i32 { let v: float = 1.5; let xs: float[] = [v, f(v)]; return xs.len(); }`)
 	// `float` IS f64: it flows into an f64 destination both ways.
-	mustOK(`function main(): i32 { var x: float = 1.5; var y: f64 = x; var z: float = y; return 0; }`)
+	mustOK(`function main(): i32 { let x: float = 1.5; let y: f64 = x; let z: float = y; return 0; }`)
 	// ... and is NOT f32: the mismatch names f64.
-	mustErr(`function main(): i32 { var x: float = 1.5; var y: f32 = x; return 0; }`,
+	mustErr(`function main(): i32 { let x: float = 1.5; let y: f32 = x; return 0; }`,
 		"cannot assign f64 to variable of type f32")
 	// A bare literal defaults to f64 — the unsettled-literal mismatch
 	// message names f64, not f32.
-	mustErr(`function main(): i32 { var s: string = 1.5; return 0; }`,
+	mustErr(`function main(): i32 { let s: string = 1.5; return 0; }`,
 		"cannot assign f64 to variable of type string")
 	// `float` is no longer an unknown type name, so E064's old
 	// `float` hint path is gone; `double` still draws the f64 hint.
@@ -8228,7 +8240,7 @@ func TestSliceUncheckedMisuseRejected(t *testing.T) {
 
 	// The correct call shape type-checks, into a `str` sink.
 	if err := checkSource(t, `function f(s: string): str { return slice_unchecked(s, 0, 1); }
-function main(): i32 { var s: string = "hey"; return f(s).len(); }`); err != nil {
+function main(): i32 { let s: string = "hey"; return f(s).len(); }`); err != nil {
 		t.Errorf("well-typed slice_unchecked call rejected: %v", err)
 	}
 }
@@ -8237,7 +8249,7 @@ function main(): i32 { var s: string = "hey"; return f(s).len(); }`); err != nil
 // type free, unlike `Some(8)` which pins `Option[i32]` — must type-check the
 // same in every position. It did not: as a METHOD-CALL RECEIVER it was
 // rejected with E038 ("expected T, got Result") while the identical
-// expression passed as a `var` initialiser, a bare statement, an operand, and
+// expression passed as a `let` initialiser, a bare statement, an operand, and
 // a call argument.
 //
 // The receiver is checked twice (the method-dispatch path types it, then falls
@@ -8261,10 +8273,10 @@ struct TMap[K, V] { root: Tree[K, V], size: i32 }
 `
 	for _, tc := range []struct{ name, body string }{
 		{"variant payload", `function one[K, V](k: K, v: V): Tree[K, V] { return Node(Leaf, k, v, Leaf); }
-function main(): i32 { var t: Tree[i32, i32] = one(1, 2); return 0; }`},
+function main(): i32 { let t: Tree[i32, i32] = one(1, 2); return 0; }`},
 		{"struct field", `function empty[K, V](): TMap[K, V] { return TMap { root: Leaf, size: 0 }; }
-function main(): i32 { var m: TMap[i32, string] = empty(); return m.size; }`},
-		{"concrete payload", `function main(): i32 { var t: Tree[i32, i32] = Node(Leaf, 1, 2, Leaf); return 0; }`},
+function main(): i32 { let m: TMap[i32, string] = empty(); return m.size; }`},
+		{"concrete payload", `function main(): i32 { let t: Tree[i32, i32] = Node(Leaf, 1, 2, Leaf); return 0; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := checkSource(t, decls+tc.body); err != nil {
@@ -8275,7 +8287,7 @@ function main(): i32 { var m: TMap[i32, string] = empty(); return m.size; }`},
 	// A DIFFERENT enum's argless form is still a mismatch.
 	t.Run("other enum rejected", func(t *testing.T) {
 		err := checkSource(t, decls+`enum Other { Nil }
-function main(): i32 { var t: Tree[i32, i32] = Node(Nil, 1, 2, Leaf); return 0; }`)
+function main(): i32 { let t: Tree[i32, i32] = Node(Nil, 1, 2, Leaf); return 0; }`)
 		if err == nil || !strings.Contains(err.Error(), "payload 0 type Other, expected Tree[K, V]") {
 			t.Fatalf("expected the payload mismatch, got %v", err)
 		}
@@ -8298,7 +8310,7 @@ func TestArglessBindingIsUpgradedByALaterArgument(t *testing.T) {
 function apply[T](x: T, f: (T) => T): T { return f(x); }
 function bump(m: Map[string, i32]): Map[string, i32] { return m; }
 function main(): i32 {
-    var r: Map[string, i32] = apply(map_new(8), bump);
+    let r: Map[string, i32] = apply(map_new(8), bump);
     return 0;
 }`
 	if err := checkSource(t, src); err != nil {
@@ -8313,8 +8325,8 @@ function main(): i32 {
 function apply[T](x: T, f: (T) => T): T { return f(x); }
 function bump(m: Map[string, i32]): Map[string, i32] { return m; }
 function main(): i32 {
-    var a: Map[i32, i32] = map_new(8);
-    var r: Map[string, i32] = apply(a, bump);
+    let a: Map[i32, i32] = map_new(8);
+    let r: Map[string, i32] = apply(a, bump);
     return 0;
 }`)
 		// The report names the parameter as argument 1 pinned it —
@@ -8333,12 +8345,12 @@ func TestEmptyArrayArgumentLeavesTypeParameterOpen(t *testing.T) {
 		{"later argument pins it", `function fold[T](x: i32, own acc: T, f: (i32, own T) => T): T { return f(x, acc); }
 function add(x: i32, own acc: string[]): string[] { return acc.append("a"); }
 function main(): i32 {
-    var r: string[] = fold(1, [], add);
+    let r: string[] = fold(1, [], add);
     return r.len();
 }`, ""},
 		{"destination pins it", `function id[T](own x: T): T { return x; }
 function main(): i32 {
-    var r: i32[] = id([]);
+    let r: i32[] = id([]);
     return r.len();
 }`, ""},
 		{"nothing pins it", `function first[T](own x: T, n: i32): i32 { return n; }
@@ -8376,9 +8388,9 @@ pub function (b: Box[T]) get_or(i: i32, fallback: T): T { if (i == 0) { return b
 function id[T](x: T): T { return x; }
 `
 	for _, tc := range []struct{ name, body string }{
-		{"free function, literal fallback", `function main(): i32 { var b: Box[i32] = Box { x: 41 }; var t: i64 = get_or2(b, 0, 0) as i64; return t as i32; }`},
-		{"method, typed literal fallback", `function main(): i32 { var b: Box[i32] = Box { x: 41 }; var t: i64 = b.get_or(0, 7i32) as i64; return t as i32; }`},
-		{"var destination", `function main(): i32 { var b: Box[i32] = Box { x: 41 }; var t: i64 = (b.get_or(0, 0) as i64) + 1i64; return t as i32; }`},
+		{"free function, literal fallback", `function main(): i32 { let b: Box[i32] = Box { x: 41 }; let t: i64 = get_or2(b, 0, 0) as i64; return t as i32; }`},
+		{"method, typed literal fallback", `function main(): i32 { let b: Box[i32] = Box { x: 41 }; let t: i64 = b.get_or(0, 7i32) as i64; return t as i32; }`},
+		{"let destination", `function main(): i32 { let b: Box[i32] = Box { x: 41 }; let t: i64 = (b.get_or(0, 0) as i64) + 1i64; return t as i32; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prog, err := parser.Parse(decls + tc.body)
@@ -8407,7 +8419,7 @@ function id[T](x: T): T { return x; }
 	}
 	// The literal-only shape keeps its destination-driven width.
 	t.Run("literal-only call still settles from the cast", func(t *testing.T) {
-		prog, err := parser.Parse(decls + `function main(): i32 { var t: i64 = id(7) as i64; return t as i32; }`)
+		prog, err := parser.Parse(decls + `function main(): i32 { let t: i64 = id(7) as i64; return t as i32; }`)
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
@@ -8442,8 +8454,8 @@ function g(p: Result[i32, i32]): Box { return Box { n: 1 }; }
 		body string
 	}{
 		{"method receiver", `function main(): i32 { return (g(id(Ok(8i32)))).get(); }`},
-		{"var with annotation", `function main(): i32 { var x: Box = g(id(Ok(8i32))); return 0; }`},
-		{"var without annotation", `function main(): i32 { var x = g(id(Ok(8i32))); return 0; }`},
+		{"let with annotation", `function main(): i32 { let x: Box = g(id(Ok(8i32))); return 0; }`},
+		{"let without annotation", `function main(): i32 { let x = g(id(Ok(8i32))); return 0; }`},
 		{"bare statement", `function main(): i32 { g(id(Ok(8i32))); return 0; }`},
 		{"field access", `function main(): i32 { return (g(id(Ok(8i32)))).n; }`},
 		{"call argument", `function h(v: Box): i32 { return 0; }
@@ -8462,8 +8474,8 @@ function main(): i32 { return h(g(id(Ok(8i32)))); }`},
 	t.Run("genuine conflict still rejected", func(t *testing.T) {
 		src := `function pair[T](a: T, b: T): i32 { return 0; }
 function main(): i32 {
-  var x: Result[i32, i32] = Ok(1i32);
-  var y: Result[string, i32] = Ok("s");
+  let x: Result[i32, i32] = Ok(1i32);
+  let y: Result[string, i32] = Ok("s");
   return pair(x, y);
 }`
 		if err := checkSource(t, src); err == nil {
@@ -8485,7 +8497,7 @@ func TestCastOnUntypedOperandDoesNotCascade(t *testing.T) {
 			`function main(): i32 { return nosuchfn() as i32; }`, "E001"},
 		{"unknown struct field",
 			`struct S { a: i32 }
-			 function main(): i32 { var s: S = S { a: 1 }; return s.nofield as i32; }`, "E043"},
+			 function main(): i32 { let s: S = S { a: 1 }; return s.nofield as i32; }`, "E043"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := checkSource(t, tc.src)
@@ -8508,7 +8520,7 @@ func TestCastOnUntypedOperandDoesNotCascade(t *testing.T) {
 // The genuine cast rejection must survive the suppression above — an operand
 // that DID type, cast to something incompatible, is still E033.
 func TestCastRejectionStillReported(t *testing.T) {
-	err := checkSource(t, `function main(): i32 { var s: string = "x"; return s as boolean; }`)
+	err := checkSource(t, `function main(): i32 { let s: string = "x"; return s as boolean; }`)
 	if err == nil {
 		t.Fatalf("expected E033, got no error")
 	}
@@ -8528,10 +8540,10 @@ func TestCastRejectionStillReported(t *testing.T) {
 // lowering in the same change.
 func TestOneSidedNumericCastsAreRejectedBeforeIR(t *testing.T) {
 	for _, src := range []string{
-		`function main(): i32 { var n: i64 = 1; var s = n as string; return 0; }`,
-		`function main(): i32 { var n: i64 = 1; var a = n as i32[]; return 0; }`,
-		`function main(): i32 { var f: f64 = 1.5; var s = f as string; return 0; }`,
-		`struct S { v: i32 } function main(): i32 { var n: i64 = 1; var x = n as S; return 0; }`,
+		`function main(): i32 { let n: i64 = 1; let s = n as string; return 0; }`,
+		`function main(): i32 { let n: i64 = 1; let a = n as i32[]; return 0; }`,
+		`function main(): i32 { let f: f64 = 1.5; let s = f as string; return 0; }`,
+		`struct S { v: i32 } function main(): i32 { let n: i64 = 1; let x = n as S; return 0; }`,
 	} {
 		err := checkSource(t, src)
 		if err == nil {
@@ -8638,7 +8650,7 @@ func TestByteDisplayGateAndDispatchAgree(t *testing.T) {
 	// correct E038 naming u8, not a dispatch failure blaming an import.
 	err := checkSource(t, displayTrait+
 		`impl Display for u32 { function to_string(self: Self): string { return "u32"; } }
-function main(): i32 { var s: string = "A"; var b: u8 = s[0]; print(b); return 0; }`)
+function main(): i32 { let s: string = "A"; let b: u8 = s[0]; print(b); return 0; }`)
 	if err == nil {
 		t.Fatalf("expected print(u8) to be refused with only a u32 Display impl in scope")
 	}
@@ -8652,7 +8664,7 @@ function main(): i32 { var s: string = "A"; var b: u8 = s[0]; print(b); return 0
 	// The byte's own impl is what makes it printable.
 	if err := checkSource(t, displayTrait+
 		`impl Display for u8 { function to_string(self: Self): string { return "b"; } }
-function main(): i32 { var s: string = "A"; var b: u8 = s[0]; print(b); return 0; }`); err != nil {
+function main(): i32 { let s: string = "A"; let b: u8 = s[0]; print(b); return 0; }`); err != nil {
 		t.Errorf("print(u8) with `impl Display for u8` in scope: %v", err)
 	}
 }
@@ -8675,13 +8687,13 @@ function inc(x: i32): i32 { return x + 1; }
 		// The issue's repro: a fn-typed PARAMETER named after the generic.
 		{"fn-param", `function apply(v: i32, id: (i32) => i32): i32 { return id(v); }
 function main(): i32 { return apply(7, inc); }`},
-		// A local `var` holding a closure, same name.
-		{"local-var", `function main(): i32 { var id: (i32) => i32 = inc; return id(7); }`},
+		// A local `let` holding a closure, same name.
+		{"local-var", `function main(): i32 { let id: (i32) => i32 = inc; return id(7); }`},
 		// A CAPTURED outer local: the callee resolves through the
 		// captureChain rather than the current scope, the other half of
 		// the resolution order the fix mirrors.
 		{"capture", `function main(): i32 {
-	var id: (i32) => i32 = inc;
+	let id: (i32) => i32 = inc;
 	function call_it(v: i32): i32 { return id(v); }
 	return call_it(7);
 }`},
@@ -8721,10 +8733,10 @@ func TestCheckValueBindingShadowsUseClauseCallee(t *testing.T) {
 	const mods = `function withRes(cb: (i32) => i32): i32 { return cb(4); }
 function taker(f: (string) => i32): i32 { return f("hi"); }
 `
-	// A local `var` shadowing the module function: `x` must bind as
+	// A local `let` shadowing the module function: `x` must bind as
 	// `string`, the shadowing callee's callback parameter type.
 	if err := checkSource(t, mods+`function g(): i32 {
-	var withRes = taker;
+	let withRes = taker;
 	use x <- withRes();
 	if (x == "hi") { return 21; }
 	return 0;
@@ -8766,15 +8778,15 @@ func TestScalarModuleHintIsFollowable(t *testing.T) {
 		decl    string
 		wantMod string
 	}{
-		{"u8 points at std/i32", `var s: string = "A"; var b: u8 = s[0]; print(b.to_string());`, `std/i32`},
-		{"u32 still points at std/u32", `var x: u32 = 5; print(x.to_string());`, `std/u32`},
-		{"u64 still points at std/u64", `var x: u64 = 5; print(x.to_string());`, `std/u64`},
-		{"i64 still points at std/i64", `var x: i64 = 5; print(x.to_string());`, `std/i64`},
+		{"u8 points at std/i32", `let s: string = "A"; let b: u8 = s[0]; print(b.to_string());`, `std/i32`},
+		{"u32 still points at std/u32", `let x: u32 = 5; print(x.to_string());`, `std/u32`},
+		{"u64 still points at std/u64", `let x: u64 = 5; print(x.to_string());`, `std/u64`},
+		{"i64 still points at std/i64", `let x: i64 = 5; print(x.to_string());`, `std/i64`},
 		// A `str` view had NO hint at all: scalarModuleFor had no StrType case,
 		// so the message fell through to the builtin list ("it has: as_bytes,
 		// len") — the outcome that function's own comment forbids, and the one
 		// a reader reaches by FOLLOWING E043 (TestStrToOwnedAdviceIsFollowable).
-		{"str points at std/string", `var s: string = "abcdef"; var v: str = s[0:3]; print(v.to_owned());`, `std/string`},
+		{"str points at std/string", `let s: string = "abcdef"; let v: str = s[0:3]; print(v.to_owned());`, `std/string`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -8810,12 +8822,12 @@ func TestOneErrorPerMistake(t *testing.T) {
 		want      int
 	}{
 		{"boolean comparison", `function main(): i32 {
-    var a: boolean = true; var b: boolean = false;
+    let a: boolean = true; let b: boolean = false;
     if (a < b) { return 1; }
     return 0;
 }`, 1},
 		{"integer plus string", `function main(): i32 {
-    var a: i32 = 1; var s: string = "x";
+    let a: i32 = 1; let s: string = "x";
     return a + s;
 }`, 1},
 	}
@@ -8836,7 +8848,7 @@ func TestOneErrorPerMistake(t *testing.T) {
 // bad message for a missing good one.
 func TestMixedIntegerHintSurvives(t *testing.T) {
 	err := checkSource(t, `function main(): i32 {
-    var a: i32 = 1; var b: u32 = 2;
+    let a: i32 = 1; let b: u32 = 2;
     if (a < b) { return 1; }
     return 0;
 }`)
@@ -8975,7 +8987,7 @@ enum Two { Pair(Res, i32), Nil }
 }`,
 		// Merged sibling: when another arm of the SAME outer variant nests,
 		// the desugar folds this one into the inner match as a wildcard plus
-		// a synthesised `var Err2 = __nest0;`, so it is no longer a payload
+		// a synthesised `let Err2 = __nest0;`, so it is no longer a payload
 		// binding by the time the checker runs. It reaches the rule through
 		// ast.MatchArm.SlotBinderName instead. Before that it returned 9 for
 		// `Wrap(Third)`.
@@ -9243,7 +9255,7 @@ func TestNestedTuplePatternChecks(t *testing.T) {
   return 0;
 }`,
 		"expression form nests too": `function f(t: (i32, (i32, i32))): i32 {
-  var v = match (t) { (a, (b, c)) => a + b + c };
+  let v = match (t) { (a, (b, c)) => a + b + c };
   return v;
 }`,
 	}
@@ -9307,8 +9319,8 @@ func TestNestedTupleDestructureChecks(t *testing.T) {
 		"a destructuring parameter nests": `function f((a, (b, c)): (i32, (i32, i32))): i32 {
   return a + b + c;
 }`,
-		"var spelling nests too": `function f(t: (i32, (i32, i32))): i32 {
-  var (a, (b, c)) = t;
+		"let spelling nests too": `function f(t: (i32, (i32, i32))): i32 {
+  let (a, (b, c)) = t;
   return a + b + c;
 }`,
 		"pointer-shaped elements at both levels": `function f(t: (string, (i32[], string))): i32 {
@@ -9394,7 +9406,7 @@ func TestTupleVariantPayloadSubPatternChecks(t *testing.T) {
   return 0;
 }`,
 		"expression form takes payload sub-patterns too": `function f(t: (Outer, i32)): i32 {
-  var v = match (t) { (A(Ok2(n)), y) => n + y, _ => 0 };
+  let v = match (t) { (A(Ok2(n)), y) => n + y, _ => 0 };
   return v;
 }`,
 	}
@@ -9492,7 +9504,7 @@ func TestTupleElemVariantPatternChecks(t *testing.T) {
 func TestBreakableLoopDoesNotDiverge(t *testing.T) {
 	rejected := []struct{ name, src string }{
 		{"value-falls-off-the-end", `function f(n: i32): i32 {
-			var acc: i32 = 42;
+			let acc: i32 = 42;
 			loop {
 				acc = acc + n;
 				if (n > 100) { return acc; }
@@ -9530,12 +9542,12 @@ func TestBreakableLoopDoesNotDiverge(t *testing.T) {
 // fall-through. `todo;` desugars to `loop { … }` and depends on this.
 func TestNonBreakingLoopStillDiverges(t *testing.T) {
 	accepted := []struct{ name, src string }{
-		{"bare-loop", `function f(): i32 { loop { var x = 1; } }`},
-		{"while-true", `function f(): i32 { while (true) { var x = 1; } }`},
+		{"bare-loop", `function f(): i32 { loop { let x = 1; } }`},
+		{"while-true", `function f(): i32 { while (true) { let x = 1; } }`},
 		{"todo-stub", `function f(): i32 { todo; }`},
 		{"inner-loop-breaks", `function f(n: i32): i32 {
 			loop {
-				var i: i32 = 0;
+				let i: i32 = 0;
 				while (i < n) { if (i == 3) { break; } i = i + 1; }
 			}
 		}`},
@@ -9551,8 +9563,8 @@ func TestNonBreakingLoopStillDiverges(t *testing.T) {
 		}`},
 		{"break-inside-a-lambda-body", `function f(n: i32): i32 {
 			loop {
-				var g: () => i32 = (): i32 => { while (true) { break; } return 1; };
-				var x: i32 = g();
+				let g: () => i32 = (): i32 => { while (true) { break; } return 1; };
+				let x: i32 = g();
 			}
 		}`},
 		// The same two exclusions hold inside a block expression: a break
@@ -9560,12 +9572,12 @@ func TestNonBreakingLoopStillDiverges(t *testing.T) {
 		// make the outer loop fall through.
 		{"inner-loop-break-inside-block-expr", `function f(): i32 {
 			loop {
-				var z: i32 = { while (true) { break; } 1 };
+				let z: i32 = { while (true) { break; } 1 };
 			}
 		}`},
 		{"lambda-break-inside-block-expr", `function f(): i32 {
 			loop {
-				var z: i32 = { var g: () => i32 = (): i32 => { while (true) { break; } return 1; }; g() };
+				let z: i32 = { let g: () => i32 = (): i32 => { while (true) { break; } return 1; }; g() };
 			}
 		}`},
 	}
@@ -9579,7 +9591,7 @@ func TestNonBreakingLoopStillDiverges(t *testing.T) {
 }
 
 // A `break` inside a block-, `if`- or `match`-expression targets the
-// enclosing loop like any other — irlower inlines the block — but
+// enclosing loop like any other — the lowering inlines the block — but
 // loopCanBreak walked statements only, so it never saw one there (#8562).
 // The loop was still reported as diverging, E052 stayed silent, and an
 // `i32` function fell off the end returning garbage. Every case anchors
@@ -9589,27 +9601,27 @@ func TestBreakInExpressionPositionDoesNotDiverge(t *testing.T) {
 	rejected := []struct{ name, src string }{
 		{"block-expr", `function f(): i32 {
 			loop {
-				var z: i32 = { break; 1 };
+				let z: i32 = { break; 1 };
 			}
 		}`},
 		{"if-expr", `function f(n: i32): i32 {
 			loop {
-				var z: i32 = if (n > 0) { break; 1 } else { 2 };
+				let z: i32 = if (n > 0) { break; 1 } else { 2 };
 			}
 		}`},
 		{"match-expr", `function f(n: i32): i32 {
 			loop {
-				var z: i32 = match (n) { 0 => { break; 1 }, _ => 2 };
+				let z: i32 = match (n) { 0 => { break; 1 }, _ => 2 };
 			}
 		}`},
 		{"labelled-break-in-block-expr", `function f(): i32 {
 			outer: loop {
-				var z: i32 = { break outer; 1 };
+				let z: i32 = { break outer; 1 };
 			}
 		}`},
 		{"block-expr-in-while-true", `function f(): i32 {
 			while (true) {
-				var z: i32 = { break; 1 };
+				let z: i32 = { break; 1 };
 			}
 		}`},
 		// A nested loop's condition runs in the OUTER loop's context, so a
@@ -9660,21 +9672,21 @@ func errorWithCode(err error, code string) *Error {
 func TestMapIterEscapeRejected(t *testing.T) {
 	const decls = "struct B { m: Map[i32, i32] }\n"
 	for _, src := range []string{
-		`function f(): MapIter[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 2); return m.iter(); }`,
-		`function f(): MapIter[i32, i32] { var m: Map[i32, i32] = map_new(4); var it = m.iter(); return it; }`,
-		`function f(): MapIter[i32, i32][] { var m: Map[i32, i32] = map_new(4); return [m.iter()]; }`,
+		`function f(): MapIter[i32, i32] { let m: Map[i32, i32] = map_new(4); m = m.insert(1, 2); return m.iter(); }`,
+		`function f(): MapIter[i32, i32] { let m: Map[i32, i32] = map_new(4); let it = m.iter(); return it; }`,
+		`function f(): MapIter[i32, i32][] { let m: Map[i32, i32] = map_new(4); return [m.iter()]; }`,
 		// A shadowing declaration in an inner block must not stand in for
 		// the outer binding the return names.
 		`function f(m: Map[i32, i32]): MapIter[i32, i32] {
-	var mm: Map[i32, i32] = map_new(4);
-	var it: MapIter[i32, i32] = mm.iter();
-	if (m.len() > 0) { var it2: MapIter[i32, i32] = m.iter(); var it: MapIter[i32, i32] = it2; }
+	let mm: Map[i32, i32] = map_new(4);
+	let it: MapIter[i32, i32] = mm.iter();
+	if (m.len() > 0) { let it2: MapIter[i32, i32] = m.iter(); let it: MapIter[i32, i32] = it2; }
 	return it;
 }`,
 		// Nor may a reassignment on one path hide the local cursor.
 		`function f(m: Map[i32, i32]): MapIter[i32, i32] {
-	var mm: Map[i32, i32] = map_new(4);
-	var it: MapIter[i32, i32] = m.iter();
+	let mm: Map[i32, i32] = map_new(4);
+	let it: MapIter[i32, i32] = m.iter();
 	if (m.len() > 0) { it = mm.iter(); }
 	return it;
 }`,
@@ -9686,7 +9698,7 @@ func TestMapIterEscapeRejected(t *testing.T) {
 	}
 	for _, src := range []string{
 		`function f(m: Map[i32, i32]): MapIter[i32, i32] { return m.iter(); }`,
-		`function f(b: B): MapIter[i32, i32] { var it = b.m.iter(); return it; }`,
+		`function f(b: B): MapIter[i32, i32] { let it = b.m.iter(); return it; }`,
 	} {
 		if err := checkSource(t, decls+src); err != nil {
 			t.Errorf("%q: want no diagnostic, got %v", src, err)
@@ -9694,14 +9706,14 @@ func TestMapIterEscapeRejected(t *testing.T) {
 	}
 }
 
-// A struct field is a destination like a `var`: `map_new(4)` in a field takes
-// its key and value types from the field, as it does from a `var` annotation,
+// A struct field is a destination like a `let`: `map_new(4)` in a field takes
+// its key and value types from the field, as it does from a `let` annotation,
 // an argument or a return. It drew E043 ("expected Map[i32, i32], got Map")
 // in a field alone, and the call's type arguments, which the lowering reads
 // for the key kind, were never stamped.
 func TestStructFieldMapNewTakesTheFieldType(t *testing.T) {
 	prog, err := parser.Parse(`struct Box { m: Map[string, i32], tag: i32 }
-function main(): i32 { var b: Box = Box { m: map_new(4), tag: 2 }; return b.tag; }`)
+function main(): i32 { let b: Box = Box { m: map_new(4), tag: 2 }; return b.tag; }`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

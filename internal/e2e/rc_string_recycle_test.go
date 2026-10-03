@@ -23,9 +23,9 @@ func TestX86_64StringLocalRecycles(t *testing.T) {
 	// (a) a fresh 24-byte (length ≡ 8) strcat string local, reinit-dropped each
 	// iteration — exercises the local-eligibility + size-class fix.
 	const localSrc = `function churn(base: string, n: i32): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var s: string = base + "_payload_data_here";
+        let s: string = base + "_payload_data_here";
         if (s.len() == 0) { return 99; }
         i = i + 1;
     }
@@ -40,7 +40,7 @@ function main(): i32 { return churn("prefix", 100000); }`
 	// (b) a nested concat `a + b + a + b` — the intermediate temps must recycle
 	// via the freeing operand drop.
 	const nestedSrc = `function churn(a: string, b: string, n: i32): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < n) { acc = acc + (a + b + a + b).len(); i = i + 1; }
     if (acc == 0) { return 99; }
     if ((__heap_bump_bytes() as i32) < 1048576) { return 0; }

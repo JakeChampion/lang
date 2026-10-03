@@ -16,10 +16,10 @@ import (
 // backend's rc_inline_test.go.
 
 func TestRcIncInlinesAtSite(t *testing.T) {
-	// `var b = a; return b` retains the borrowed param before transfer,
+	// `let b = a; return b` retains the borrowed param before transfer,
 	// so g carries an rc inc.
-	asm := compile(t, `function g(a: i32[]): i32[] { var b: i32[] = a; return b; }
-function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = g(x); return y[0]; }`)
+	asm := compile(t, `function g(a: i32[]): i32[] { let b: i32[] = a; return b; }
+function main(): i32 { let x: i32[] = [1, 2, 3]; let y: i32[] = g(x); return y[0]; }`)
 	if strings.Contains(asm, "call __fern_rc_inc") {
 		t.Errorf("rc inc must inline, not `call __fern_rc_inc`:\n%s", asm)
 	}
@@ -40,7 +40,7 @@ function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = g(x); return y[0
 // whose IR-op count exceeds rcInlineMaxOps drops the inline sequence and
 // calls the (behaviour-identical) runtime helper instead, so the emitted
 // `.s` for the self-host compiler's ~9.75M-op lowering function
-// (irlower__lower_expr) stays assemblable without ballooning `as`'s RSS.
+// (the deleted AST lowering's lower_expr) stays assemblable without ballooning `as`'s RSS.
 // The threshold is lowered here so a tiny function trips it — production
 // keeps the 1M default.
 func TestRcOpsFallBackToCallInLargeFn(t *testing.T) {
@@ -50,8 +50,8 @@ func TestRcOpsFallBackToCallInLargeFn(t *testing.T) {
 
 	// Same program as the inline test; with the ceiling at 0, g's rc inc
 	// must lower to the call form, not the inline RMW.
-	asm := compile(t, `function g(a: i32[]): i32[] { var b: i32[] = a; return b; }
-function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = g(x); return y[0]; }`)
+	asm := compile(t, `function g(a: i32[]): i32[] { let b: i32[] = a; return b; }
+function main(): i32 { let x: i32[] = [1, 2, 3]; let y: i32[] = g(x); return y[0]; }`)
 	if !strings.Contains(asm, "call __fern_rc_inc") {
 		t.Errorf("over-threshold function must call the rc helper, not inline it:\n%s", asm)
 	}
@@ -70,7 +70,7 @@ function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = g(x); return y[0
 // lowers to an `is_unique`-gated free: `OpRcIsUnique; OpIf`.
 const isUniqueBranchSrc = `struct Holder { n: i32, items: i32[] }
 function mk(k: i32): Holder { return Holder{ n: k, items: [k, k + 1] }; }
-function main(): i32 { var h: Holder = mk(3); return h.items[1]; }`
+function main(): i32 { let h: Holder = mk(3); return h.items[1]; }`
 
 // TestRcIsUniqueFusesWithBranch pins the fused form of an inline is_unique
 // whose result the next op branches on: the guard's two compares jump
@@ -108,8 +108,8 @@ func TestRcIsUniqueFusesWithBranch(t *testing.T) {
 func TestRcIsUniqueKeepsBoolFormWhenStored(t *testing.T) {
 	asm := compile(t, `struct Holder { n: i32, items: i32[] }
 function main(): i32 {
-  var h: Holder = Holder{ n: 0, items: [1, 2] };
-  var i: i32 = 0;
+  let h: Holder = Holder{ n: 0, items: [1, 2] };
+  let i: i32 = 0;
   while (i < 3) { h = Holder{ n: h.n + 1, items: h.items }; i = i + 1; }
   return h.n;
 }`)

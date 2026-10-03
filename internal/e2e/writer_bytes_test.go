@@ -75,7 +75,7 @@ func TestX86_64WriterBytes(t *testing.T) {
 
 func TestWasmWriterBytes(t *testing.T) {
 	program := strings.Replace(e2eharness.WriterBytesProgram, "n <= 0 || n > 8192", "n != 4096", 1)
-	out, stderr, code := runWasmStdinEnv(t, program, "", nil)
+	out, stderr, code := runCLIComponent(t, program, runOpts{})
 	checkWriterBytesOutput(t, []byte(out))
 	if code != 0 {
 		t.Fatalf("writer bytes: exit %d\nstdout: %s\nstderr: %s", code, out, stderr)

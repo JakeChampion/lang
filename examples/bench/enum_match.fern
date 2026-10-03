@@ -35,8 +35,8 @@ function make(k: i32): Node {
 }
 
 function main(): i32 {
-  var total: i64 = 0i64;
-  var i: i32 = 0;
+  let total: i64 = 0i64;
+  let i: i32 = 0;
   while (i < 900000) {
     total = total + weigh(make(i)) as i64;
     i = i + 1;

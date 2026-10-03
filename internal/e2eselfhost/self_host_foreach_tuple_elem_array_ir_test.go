@@ -20,7 +20,7 @@ import (
 // only difference from the struct-field case is the type SOURCE — the element type
 // comes from the tuple (expr_tuple_elem_tag), not a struct field decl — so the
 // classification was unified to read from either. Before this, `for x in t.1`
-// fell to lower_foreach_snapshot's owning `var $forit = t.1` bind, which can't
+// fell to lower_foreach_snapshot's owning `let $forit = t.1` bind, which can't
 // alias a leak-only tuple's array, and the whole module dropped to the legacy AST
 // emitter. Found by differential probing; each case is oracle-checked and pinned
 // "ir". Scalar-array tuple elements (i32[]/f64[]/i64[]) stay deferred (they need
@@ -32,8 +32,8 @@ var foreachTupleElemArrayIRCases = []struct {
 	// A string-array tuple element, LOCAL tuple: sum the element lengths → 5 + (1
 	// + 2 + 3) = 11.
 	{"strarr_local", `function main(): i32 {
-    var t: (i32, string[]) = (5, ["a", "bb", "ccc"]);
-    var s = t.0;
+    let t: (i32, string[]) = (5, ["a", "bb", "ccc"]);
+    let s = t.0;
     for x in t.1 { s = s + x.len(); }
     return s;
 }`},
@@ -41,8 +41,8 @@ var foreachTupleElemArrayIRCases = []struct {
 	// through the struct field's tuple type → 11.
 	{"strarr_field", `struct Row { t: (i32, string[]) }
 function main(): i32 {
-    var r = Row { t: (5, ["a", "bb", "ccc"]) };
-    var s = r.t.0;
+    let r = Row { t: (5, ["a", "bb", "ccc"]) };
+    let s = r.t.0;
     for x in r.t.1 { s = s + x.len(); }
     return s;
 }`},
@@ -50,31 +50,31 @@ function main(): i32 {
 	// bound on the loop var → 5 + (1 + 2 + 3) = 11.
 	{"structarr", `struct Inner { a: i32 }
 function main(): i32 {
-    var t: (i32, Inner[]) = (5, [Inner{a:1}, Inner{a:2}, Inner{a:3}]);
-    var s = t.0;
+    let t: (i32, Inner[]) = (5, [Inner{a:1}, Inner{a:2}, Inner{a:3}]);
+    let s = t.0;
     for x in t.1 { s = s + x.a; }
     return s;
 }`},
 	// An ARRAY-OF-TUPLES tuple element — the loop var is itself a tuple, so its
 	// element tags (`p.1`) must resolve too → 5 + (1 + 2) = 8.
 	{"arr_of_tuples", `function main(): i32 {
-    var t: (i32, (i32, string)[]) = (5, [(1, "a"), (2, "bb")]);
-    var s = t.0;
+    let t: (i32, (i32, string)[]) = (5, [(1, "a"), (2, "bb")]);
+    let s = t.0;
     for p in t.1 { s = s + p.1.len(); }
     return s;
 }`},
 	// An ENUM-array tuple element matched in the body → 5 + 1 + 100 + 1 = 107.
 	{"enumarr_match", `enum Color { Red, Green, Blue }
 function main(): i32 {
-    var t: (i32, Color[]) = (5, [Color.Red, Color.Blue, Color.Green]);
-    var s = t.0;
+    let t: (i32, Color[]) = (5, [Color.Red, Color.Blue, Color.Green]);
+    let s = t.0;
     for c in t.1 { match (c) { Color.Blue => { s = s + 100; }, _ => { s = s + 1; } } }
     return s;
 }`},
 	// An Option-array tuple element, payload recovered via match → 5 + 3 + 1 + 7 = 16.
 	{"optarr_match", `function main(): i32 {
-    var t: (i32, Option[i32][]) = (5, [Some(3), None, Some(7)]);
-    var s = t.0;
+    let t: (i32, Option[i32][]) = (5, [Some(3), None, Some(7)]);
+    let s = t.0;
     for o in t.1 { match (o) { Some(n) => { s = s + n; }, None => { s = s + 1; } } }
     return s;
 }`},
@@ -82,11 +82,11 @@ function main(): i32 {
 	// round — the leak-only borrow must not over-release → (50 * (1+2+3)) % 256 =
 	// 300 % 256 = 44.
 	{"rc_loop", `function main(): i32 {
-    var acc = 0;
-    var i = 0;
+    let acc = 0;
+    let i = 0;
     while (i < 50) {
-        var t: (i32, string[]) = (i, ["a", "bb", "ccc"]);
-        var s = 0;
+        let t: (i32, string[]) = (i, ["a", "bb", "ccc"]);
+        let s = 0;
         for x in t.1 { s = s + x.len(); }
         acc = acc + s;
         i = i + 1;
@@ -147,7 +147,7 @@ func TestSelfHostForeachTupleElemArrayIR(t *testing.T) {
 	}
 }
 
-// The wasm leg: the fix lives in shared irlower.fern, so the wasm IR backend walks
+// The wasm leg: the fix lives in the shared lowering, so the wasm IR backend walks
 // the tuple-element array borrow through the same 4-byte-slot arr_get counted loop.
 func TestSelfHostForeachTupleElemArrayWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

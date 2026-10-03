@@ -35,16 +35,16 @@ var dynArrayParamIRCases = []struct {
 }{
 	// Direct-index dispatch on a `(dyn Sh)[]` param: 9 + 10 = 19.
 	{"param-two-index", `function total(xs: (dyn Sh)[]): i32 { return xs[0].area() + xs[1].area(); }
-function main(): i32 { var s: (dyn Sh)[] = [C { r: 3 }, R { w: 2, h: 5 }]; return total(s); }`},
+function main(): i32 { let s: (dyn Sh)[] = [C { r: 3 }, R { w: 2, h: 5 }]; return total(s); }`},
 	// while-loop index dispatch on a `(dyn Sh)[]` param: 9 + 10 = 19.
-	{"param-while", `function total(xs: (dyn Sh)[]): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < xs.len()) { acc = acc + xs[i].area(); i = i + 1; } return acc; }
-function main(): i32 { var s: (dyn Sh)[] = [C { r: 3 }, R { w: 2, h: 5 }]; return total(s); }`},
+	{"param-while", `function total(xs: (dyn Sh)[]): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < xs.len()) { acc = acc + xs[i].area(); i = i + 1; } return acc; }
+function main(): i32 { let s: (dyn Sh)[] = [C { r: 3 }, R { w: 2, h: 5 }]; return total(s); }`},
 	// for-in loop dispatch on a `(dyn Sh)[]` param: 4 + 6 + 9 = 19.
-	{"param-for", `function total(xs: (dyn Sh)[]): i32 { var acc: i32 = 0; for x in xs { acc = acc + x.area(); } return acc; }
-function main(): i32 { var s: (dyn Sh)[] = [C { r: 2 }, R { w: 2, h: 3 }, C { r: 3 }]; return total(s); }`},
+	{"param-for", `function total(xs: (dyn Sh)[]): i32 { let acc: i32 = 0; for x in xs { acc = acc + x.area(); } return acc; }
+function main(): i32 { let s: (dyn Sh)[] = [C { r: 2 }, R { w: 2, h: 3 }, C { r: 3 }]; return total(s); }`},
 	// Scalar `(dyn Sh)` param (parenthesized, non-array): R{w:2,h:5}.area() = 10.
 	{"param-scalar", `function one(x: (dyn Sh)): i32 { return x.area(); }
-function main(): i32 { var v: dyn Sh = R { w: 2, h: 5 }; return one(v); }`},
+function main(): i32 { let v: dyn Sh = R { w: 2, h: 5 }; return one(v); }`},
 }
 
 // TestSelfHostDynArrayParamIR runs each case through the self-host CLI on
@@ -91,7 +91,7 @@ func TestSelfHostDynFnTypeParamParsesX86_64(t *testing.T) {
 	src := []byte(dynArrayParamPrelude +
 		"function apply(f: (dyn Sh) => i32, x: dyn Sh): i32 { return f(x); }\n" +
 		"function area_of(s: dyn Sh): i32 { return s.area(); }\n" +
-		"function main(): i32 { var q: dyn Sh = R { w: 2, h: 5 }; return apply(area_of, q); }\n")
+		"function main(): i32 { let q: dyn Sh = R { w: 2, h: 5 }; return apply(area_of, q); }\n")
 	asm := runCapture(t, gcc, runner, driverBin, src)
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes for a `(dyn Trait) => R` param — parse regression (#5267 follow-up)")

@@ -18,8 +18,8 @@ var arrStructProducerElemCases = []struct {
 	{"arrfield_append", `struct H { xs: i32[] }
 @noinline function hold(xs: i32[]): H { return H { xs: xs }; }
 function main(): i32 {
-    var hs: H[] = [];
-    var i: i32 = 0;
+    let hs: H[] = [];
+    let i: i32 = 0;
     while (i < 5) { hs = hs.append(hold([i])); i = i + 1; }
     return hs.len();
 }
@@ -27,10 +27,10 @@ function main(): i32 {
 	{"arrfield_literal", `struct H { xs: i32[] }
 @noinline function hold(xs: i32[]): H { return H { xs: xs }; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 5) {
-        var hs: H[] = [hold([i]), hold([i, 1])];
+        let hs: H[] = [hold([i]), hold([i, 1])];
         acc = acc + hs[1].xs.len();
         i = i + 1;
     }
@@ -40,12 +40,12 @@ function main(): i32 {
 	{"strfield_append", `struct L { tag: string, n: i32 }
 @noinline function label(p: string, k: i32): L { return L { tag: p + "-suffix-long", n: k }; }
 function main(): i32 {
-    var prefix: string = "prefix-str";
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let prefix: string = "prefix-str";
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 3) {
-        var ls: L[] = [];
-        var i: i32 = 0;
+        let ls: L[] = [];
+        let i: i32 = 0;
         while (i < 4) { ls = ls.append(label(prefix, i)); i = i + 1; }
         acc = acc + ls[2].tag.len() + ls[3].n;
         r = r + 1;
@@ -57,11 +57,11 @@ function main(): i32 {
 struct Out { inner: In, k: i32 }
 @noinline function wrap(xs: i32[], k: i32): Out { return Out { inner: In { xs: xs }, k: k }; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 3) {
-        var os: Out[] = [];
-        var i: i32 = 0;
+        let os: Out[] = [];
+        let i: i32 = 0;
         while (i < 4) { os = os.append(wrap([i, r], i)); i = i + 1; }
         acc = acc + os[3].k + os.len();
         r = r + 1;
@@ -75,12 +75,12 @@ function main(): i32 {
 struct Out { inner: In, k: i32 }
 @noinline function wrap(xs: i32[], k: i32): Out { return Out { inner: In { xs: xs, k: k }, k: k }; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 3) {
-        var os: Out[] = [];
-        var ls: Out[] = [Out { inner: In { xs: [r, 5], k: 1 }, k: 2 }, Out { inner: In { xs: [r], k: 3 }, k: 4 }];
-        var i: i32 = 0;
+        let os: Out[] = [];
+        let ls: Out[] = [Out { inner: In { xs: [r, 5], k: 1 }, k: 2 }, Out { inner: In { xs: [r], k: 3 }, k: 4 }];
+        let i: i32 = 0;
         while (i < 4) { os = os.append(wrap([i, r], i)); i = i + 1; }
         acc = acc + os[2].inner.xs[1] + os[3].inner.k + os[1].inner.xs.len() + os.len();
         acc = acc + ls[0].inner.xs[1] + ls[1].inner.k + ls[1].inner.xs.len();
@@ -94,11 +94,11 @@ function main(): i32 {
 	{"arrfield_with", `struct H { xs: i32[] }
 @noinline function hold(xs: i32[]): H { return H { xs: xs }; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 3) {
-        var hs: H[] = [hold([r]), hold([r, 1])];
-        var i: i32 = 0;
+        let hs: H[] = [hold([r]), hold([r, 1])];
+        let i: i32 = 0;
         while (i < 3) { hs = hs.with(i % 2, hold([i, r, 7])); i = i + 1; }
         acc = acc + hs[0].xs.len() + hs[1].xs.len();
         r = r + 1;
@@ -109,12 +109,12 @@ function main(): i32 {
 	{"guard_shared_producer", `struct H { xs: i32[] }
 @noinline function pick(src: H[], k: i32): H { return src[k]; }
 function main(): i32 {
-    var src: H[] = [H { xs: [1, 2] }, H { xs: [3, 4] }];
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let src: H[] = [H { xs: [1, 2] }, H { xs: [3, 4] }];
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 3) {
-        var hs: H[] = [];
-        var i: i32 = 0;
+        let hs: H[] = [];
+        let i: i32 = 0;
         while (i < 4) { hs = hs.append(pick(src, i % 2)); i = i + 1; }
         acc = acc + hs[3].xs[1] + hs.len();
         r = r + 1;
@@ -125,17 +125,17 @@ function main(): i32 {
 	{"guard_elem_returned", `struct H { xs: i32[] }
 @noinline function hold(xs: i32[]): H { return H { xs: xs }; }
 @noinline function second(k: i32): H {
-    var hs: H[] = [];
-    var i: i32 = 0;
+    let hs: H[] = [];
+    let i: i32 = 0;
     while (i < 3) { hs = hs.append(hold([i, k])); i = i + 1; }
     return hs[1];
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 3) {
-        var h: H = second(r);
-        var junk: i32[] = [9, 9, 9];
+        let h: H = second(r);
+        let junk: i32[] = [9, 9, 9];
         acc = acc + h.xs[0] + h.xs[1] + junk.len();
         r = r + 1;
     }
@@ -145,15 +145,15 @@ function main(): i32 {
 	{"guard_elem_kept", `struct H { xs: i32[] }
 @noinline function hold(xs: i32[]): H { return H { xs: xs }; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
-    var keep: H = hold([0]);
+    let acc: i32 = 0;
+    let r: i32 = 0;
+    let keep: H = hold([0]);
     while (r < 3) {
-        var hs: H[] = [];
-        var i: i32 = 0;
+        let hs: H[] = [];
+        let i: i32 = 0;
         while (i < 3) { hs = hs.append(hold([i, r])); i = i + 1; }
         keep = hs[2];
-        var junk: i32[] = [9, 9, 9];
+        let junk: i32[] = [9, 9, 9];
         acc = acc + keep.xs[1] + junk.len();
         r = r + 1;
     }
@@ -164,17 +164,17 @@ function main(): i32 {
 struct Out { inner: In, k: i32 }
 @noinline function wrap(xs: i32[], k: i32): Out { return Out { inner: In { xs: xs, k: k }, k: k }; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
-    var kin: In = In { xs: [0], k: 0 };
-    var kxs: i32[] = [0];
+    let acc: i32 = 0;
+    let r: i32 = 0;
+    let kin: In = In { xs: [0], k: 0 };
+    let kxs: i32[] = [0];
     while (r < 3) {
-        var os: Out[] = [];
-        var i: i32 = 0;
+        let os: Out[] = [];
+        let i: i32 = 0;
         while (i < 4) { os = os.append(wrap([i, r], i)); i = i + 1; }
         kin = os[2].inner;
         kxs = os[3].inner.xs;
-        var junk: i32[] = [9, 9, 9];
+        let junk: i32[] = [9, 9, 9];
         acc = acc + kin.xs[1] + kxs[0] + junk.len();
         r = r + 1;
     }

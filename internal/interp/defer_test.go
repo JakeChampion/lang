@@ -112,7 +112,7 @@ func TestInterpDeferReturnValueComputedFirst(t *testing.T) {
 	// call can no longer mutate a shared array in place.
 	v, _ := evalProgramCapture(t, `function set0(c: Cell[i32]): void { c.set(99); }
 	function helper(): i32 {
-		var c: Cell[i32] = cell_new(5);
+		let c: Cell[i32] = cell_new(5);
 		defer set0(c);
 		return c.get();
 	}

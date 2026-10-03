@@ -35,31 +35,31 @@ var selfHostFieldReclaimNestedCases = []struct {
 }{
 	// The reported shape: a struct local rebound from a call, whose old value's
 	// nested-struct field owns a buffer.
-	{"nested-field-rebind-from-call", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { cfi: CfiState { bad: [v], open: false }, n: a.n };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"nested-field-rebind-from-call", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { cfi: CfiState { bad: [v], open: false }, n: a.n };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
 	// The same with the write-back spelled as a spread — the spread is not the
 	// condition, and this row is what says so.
-	{"nested-field-rebind-spread", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, cfi: CfiState { bad: [v], open: false } };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"nested-field-rebind-spread", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, cfi: CfiState { bad: [v], open: false } };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
 	// Two levels of nesting. `__struct_drop_<Inner>` recurses, so one call at the
 	// top reaches the buffer two boxes down — this row is what proves the fix is
 	// a recursion rather than a single extra level.
-	{"nested-two-deep", "struct Inner { xs: i32[] }\nstruct Mid { i: Inner }\nstruct Asm { m: Mid, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, m: Mid { i: Inner { xs: [v] } } };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { m: Mid { i: Inner { xs: [] } }, n: 0 };\n    a = step(a, 1);\n    return a.m.i.xs.len() + __rc_underflow_count();\n}"},
+	{"nested-two-deep", "struct Inner { xs: i32[] }\nstruct Mid { i: Inner }\nstruct Asm { m: Mid, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, m: Mid { i: Inner { xs: [v] } } };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { m: Mid { i: Inner { xs: [] } }, n: 0 };\n    a = step(a, 1);\n    return a.m.i.xs.len() + __rc_underflow_count();\n}"},
 
 	// Control: an ARRAY field in the same shape. The buffer is the box, so the
 	// shallow dec was already complete — a deep walk here would be a double free,
 	// not a fix.
-	{"array-field-control", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, bad: [v] };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
+	{"array-field-control", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, bad: [v] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
 
 	// Control: an enum field whose payload is a SCALAR. Nothing heap sits under
 	// the enum box, so the shallow dec is complete and this row is clean both
 	// ways — the boundary of what the missing walk costs.
-	{"scalar-payload-enum-control", "enum Payload { None, Some(i32) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some(v) };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { p: Payload.Some(0), n: 0 };\n    a = step(a, 1);\n    var r: i32 = 0;\n    match (a.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g; } }\n    return r + __rc_underflow_count();\n}"},
+	{"scalar-payload-enum-control", "enum Payload { None, Some(i32) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some(v) };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { p: Payload.Some(0), n: 0 };\n    a = step(a, 1);\n    let r: i32 = 0;\n    match (a.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g; } }\n    return r + __rc_underflow_count();\n}"},
 
 	// Control: the identical rebind with no call. It reaches the in-place reuse
 	// path, which already deep-drops the replaced field — which is what said the
 	// gap was in the reclaim helper rather than in the rebind.
-	{"no-call-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = Asm { ...a, cfi: CfiState { bad: [1], open: false } };\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"no-call-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = Asm { ...a, cfi: CfiState { bad: [1], open: false } };\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 }
 
 // TestSelfHostFieldReclaimNestedLeakCheck is the gate: clean under

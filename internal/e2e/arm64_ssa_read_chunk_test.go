@@ -41,10 +41,10 @@ function main(): i32 {
     if (put("rca.txt", "0123456789abcdef") != 0) { return 91; }
     match (open_reader("rca.txt")) {
         Ok(r) => {
-            var first: i32 = match (r.read_chunk(65536)) { Ok(s) => s.len(), Err(e) => 0 - 1 };
+            let first: i32 = match (r.read_chunk(65536)) { Ok(s) => s.len(), Err(e) => 0 - 1 };
             if (first != 16) { return 92; }
-            var b0: i64 = __heap_bump_bytes();
-            var i: i32 = 0;
+            let b0: i64 = __heap_bump_bytes();
+            let i: i32 = 0;
             while (i < 8) {
                 match (r.read_chunk(65536)) {
                     Ok(s) => { if (s.len() != 0) { return 93; } },
@@ -52,7 +52,7 @@ function main(): i32 {
                 }
                 i = i + 1;
             }
-            var b1: i64 = __heap_bump_bytes();
+            let b1: i64 = __heap_bump_bytes();
             match (r.close()) { Some(e) => { return 95; }, None => {} }
             if ((b1 - b0) >= 65536) { return 98; }
         },
@@ -70,12 +70,12 @@ function main(): i32 {
 }
 function main(): i32 {
     if (put("rcb.txt", "0123456789abcdef") != 0) { return 91; }
-    var b0: i64 = __heap_bump_bytes();
-    var i: i32 = 0;
+    let b0: i64 = __heap_bump_bytes();
+    let i: i32 = 0;
     while (i < 8) {
         match (open_reader("rcb.txt")) {
             Ok(r) => {
-                var got: i32 = match (r.read_chunk(65536)) { Ok(s) => s.len(), Err(e) => 0 - 1 };
+                let got: i32 = match (r.read_chunk(65536)) { Ok(s) => s.len(), Err(e) => 0 - 1 };
                 if (got != 16) { return 92; }
                 match (r.close()) { Some(e) => { return 95; }, None => {} }
             },
@@ -83,7 +83,7 @@ function main(): i32 {
         }
         i = i + 1;
     }
-    var b1: i64 = __heap_bump_bytes();
+    let b1: i64 = __heap_bump_bytes();
     if ((b1 - b0) >= 65536) { return 99; }
     return 0;
 }`,
@@ -96,8 +96,8 @@ function main(): i32 {
 		src: `function main(): i32 {
     match (open_reader(".")) {
         Ok(r) => {
-            var b0: i64 = __heap_bump_bytes();
-            var i: i32 = 0;
+            let b0: i64 = __heap_bump_bytes();
+            let i: i32 = 0;
             while (i < 8) {
                 match (r.read_chunk(65536)) {
                     Ok(s) => { return 92; },
@@ -105,7 +105,7 @@ function main(): i32 {
                 }
                 i = i + 1;
             }
-            var b1: i64 = __heap_bump_bytes();
+            let b1: i64 = __heap_bump_bytes();
             match (r.close()) { Some(e) => { return 95; }, None => {} }
             if ((b1 - b0) >= 65536) { return 97; }
         },

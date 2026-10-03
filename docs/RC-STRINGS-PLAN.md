@@ -182,7 +182,7 @@ Add `ast.StringType` to, and special-case the two-word shape in:
 
 - `arrElemIsRcTracked` — strings in struct fields / array elements /
   enum-tuple payloads / closure captures become tracked.
-- `needsRcIncOnAlias` — `var s2 = s1`, `return s`, struct/array/tuple
+- `needsRcIncOnAlias` — `let s2 = s1`, `return s`, struct/array/tuple
   element init, call args (alias sites) retain via `__fern_str_inc`.
 - `rcTracked` + `zeroRcTracked` (the `emitDec` sweep) — string locals
   swept + zeroed.
@@ -257,7 +257,7 @@ differential fuzz and `__rc_underflow_count` guard.
    gated eligible. Construction / push retain is the uniform alias-inc +
    escape-move machinery (pushed elements move in; the source escapes →
    not separately freed). Covers `string[]` locals, `string[]` struct
-   fields, and read-out aliases (`var s = arr[i]` retains via
+   fields, and read-out aliases (`let s = arr[i]` retains via
    `needsRcIncOnAlias`). `string[][]` inner buffers still flat-dec (a
    later array-of-array slice).
 5. **String ENUM payloads** (`enum E { S(string) }`) — **DONE.** Both

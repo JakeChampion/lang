@@ -13,10 +13,10 @@ var mapCases = []struct {
 	src  string
 	exit int
 }{
-	{"set-get-sum", "import \"core/map\"; function main(): i32 { var m: Map[string,i32] = map_new(8); m = m.insert(\"a\", 10); m = m.insert(\"b\", 32); var r: i32 = 0; match (m.get(\"a\")) { Some(v) => { r = r + v; }, None => { } } match (m.get(\"b\")) { Some(v) => { r = r + v; }, None => { } } return r; }", 42},
-	{"update", "import \"core/map\"; function main(): i32 { var m: Map[string,i32] = map_new(4); m = m.insert(\"a\", 10); m = m.insert(\"a\", 11); match (m.get(\"a\")) { Some(v) => { return v; }, None => { return 0; } } return 0; }", 11},
-	{"has-len", "import \"core/map\"; function main(): i32 { var m: Map[string,i32] = map_new(4); m = m.insert(\"x\", 7); m = m.insert(\"y\", 8); if (m.has(\"x\") && m.has(\"y\") && !m.has(\"z\")) { return m.len() + 40; } return 0; }", 42},
-	{"get-absent", "import \"core/map\"; function main(): i32 { var m: Map[string,i32] = map_new(4); m = m.insert(\"a\", 1); match (m.get(\"absent\")) { Some(v) => { return 1; }, None => { return 99; } } return 0; }", 99},
+	{"set-get-sum", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(8); m = m.insert(\"a\", 10); m = m.insert(\"b\", 32); let r: i32 = 0; match (m.get(\"a\")) { Some(v) => { r = r + v; }, None => { } } match (m.get(\"b\")) { Some(v) => { r = r + v; }, None => { } } return r; }", 42},
+	{"update", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(4); m = m.insert(\"a\", 10); m = m.insert(\"a\", 11); match (m.get(\"a\")) { Some(v) => { return v; }, None => { return 0; } } return 0; }", 11},
+	{"has-len", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(4); m = m.insert(\"x\", 7); m = m.insert(\"y\", 8); if (m.has(\"x\") && m.has(\"y\") && !m.has(\"z\")) { return m.len() + 40; } return 0; }", 42},
+	{"get-absent", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(4); m = m.insert(\"a\", 1); match (m.get(\"absent\")) { Some(v) => { return 1; }, None => { return 99; } } return 0; }", 99},
 }
 
 // TestSelfHostMapX86_64 compiles map programs with the self-hosted

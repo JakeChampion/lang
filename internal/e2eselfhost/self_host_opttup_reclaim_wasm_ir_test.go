@@ -6,7 +6,7 @@ import (
 
 // TestSelfHostOptTupReclaimWasmIR is the wasm port of
 // TestSelfHostOptTupReclaimIRX86_64: the OPTTUP class lives in shared
-// irlower.fern; on wasm the option box is [tag@0, payload@4] and __fern_rc_dec
+// lowering; on wasm the option box is [tag@0, payload@4] and __fern_rc_dec
 // maps to $__fern_arr_dec (wasm_helper_symbol), so the inline tag-check +
 // type-driven tuple deep-drop resolves without any dedicated runtime helper. Case
 // table shared with the x86-64 leg.

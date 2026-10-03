@@ -1,5 +1,5 @@
-// A state local consumed into another at its last use — `var sl: Buf =
-// emit(s, a); var sr: Buf = emit(sl, b);` with sl never read again — is how
+// A state local consumed into another at its last use — `let sl: Buf =
+// emit(s, a); let sr: Buf = emit(sl, b);` with sl never read again — is how
 // every binary-expression lowering in the compiler threads its state. Nothing
 // rebinds sl, so no rebind release ever runs on it, and the generation it
 // holds (its box, and the code buffer sr's append superseded) was leaked at
@@ -18,40 +18,40 @@ function name(s: Buf, nm: string): Buf {
 }
 
 function lower_pair(s: Buf, a: i32, b: i32): Buf {
-    var sl: Buf = emit(s, a);
-    var sr: Buf = emit(sl, b);
+    let sl: Buf = emit(s, a);
+    let sr: Buf = emit(sl, b);
     return sr;
 }
 
 function lower_chain(s: Buf, k: i32): Buf {
-    var s1: Buf = emit(s, k);
-    var s2: Buf = name(s1, "k");
-    var s3: Buf = emit(s2, k + 2);
-    var s4: Buf = emit(s3, k + 3);
+    let s1: Buf = emit(s, k);
+    let s2: Buf = name(s1, "k");
+    let s3: Buf = emit(s2, k + 2);
+    let s4: Buf = emit(s3, k + 3);
     return s4;
 }
 
 // the consumed local is itself rebound first
 function lower_rebound(s: Buf, k: i32): Buf {
-    var st: Buf = emit(s, k);
+    let st: Buf = emit(s, k);
     st = emit(st, k + 1);
-    var out: Buf = emit(st, k + 2);
+    let out: Buf = emit(st, k + 2);
     return out;
 }
 
 function churn(): i32 {
-    var junk: string[] = [];
-    var i: i32 = 0;
+    let junk: string[] = [];
+    let i: i32 = 0;
     while (i < 300) { junk = junk.append("junk"); i = i + 1; }
     return junk.len();
 }
 
 function main(): i32 {
-    var total: i32 = 0;
-    var r: i32 = 0;
+    let total: i32 = 0;
+    let r: i32 = 0;
     while (r < 8) {
-        var b: Buf = Buf { code: [], names: [], n: 0 };
-        var i: i32 = 0;
+        let b: Buf = Buf { code: [], names: [], n: 0 };
+        let i: i32 = 0;
         while (i < 30) {
             b = lower_pair(b, i, i * 2);
             b = lower_chain(b, i);
@@ -59,7 +59,7 @@ function main(): i32 {
             i = i + 1;
         }
         churn();
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < b.code.len()) { total = total + b.code[k]; k = k + 1; }
         k = 0;
         while (k < b.names.len()) { total = total + b.names[k].len(); k = k + 1; }

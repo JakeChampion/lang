@@ -8,8 +8,8 @@
 import "std/i32";
 
 function main(): i32 {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < 8) {
         s = f"{i}-iteration";
         i = i + 1;

@@ -27,10 +27,10 @@ import (
 var structDropArrArrFreeProg = `struct P { x: i32, y: i32 }
 struct Bag { es: P[], n: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var b: Bag = Bag { es: [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }], n: i };
+        let b: Bag = Bag { es: [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }], n: i };
         acc = (acc + b.n + b.es.len()) % 251;
         i = i + 1;
     }
@@ -53,11 +53,11 @@ var structDropArrArrSharedProg = `struct P { x: i32, y: i32 }
 struct Bag { es: P[], n: i32 }
 function take(b: Bag): i32 { return b.es[0].x + b.es.len(); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var b: Bag = Bag { es: [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }], n: i };
-        var c: Bag = b;
+        let b: Bag = Bag { es: [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }], n: i };
+        let c: Bag = b;
         acc = (acc + take(b) + take(c)) % 251;
         i = i + 1;
     }

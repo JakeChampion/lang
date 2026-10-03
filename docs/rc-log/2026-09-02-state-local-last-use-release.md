@@ -2,7 +2,7 @@
 
 `2026-09-02-snapshot-locals-and-consume-safety-cycle.md` left parser.fern at
 1.05 GB live with the grow buffers still 493 MB of it, and named the survivor:
-`var sr: LowerState = lower_expr(b.right, sl0)` with `sl0` never mentioned
+`let sr: LowerState = lower_expr(b.right, sl0)` with `sl0` never mentioned
 again. Nothing rebinds `sl0`, so no rebind release ever runs on it, and the
 generation it holds — its box and the fields `sr` did not carry on — was
 leaked at every statement of the kind. The compiler has 57 such sites in
@@ -12,7 +12,7 @@ leaked at every statement of the kind. The compiler has 57 such sites in
 
 Two admission rules kept `sl0` out of the snapshot-local set:
 
-- the consume scan (`own_rebinds` true) counts `var sr: T = g(.., sl0, ..)` as
+- the consume scan (`own_rebinds` true) counts `let sr: T = g(.., sl0, ..)` as
   an escape, because a later rebind of `sl0` could free a generation `sr`
   still names — sound, and irrelevant when there is no later mention;
 - a local never reassigned had nothing to reclaim BY, since the rebind was the
@@ -21,7 +21,7 @@ Two admission rules kept `sl0` out of the snapshot-local set:
 ## The rule
 
 `last_use_consumer_in`: in the statement list that declares `name`, the
-`var q2: T = g(.., name, ..)` / `var q2: T = name.m(…)` of name's own type
+`let q2: T = g(.., name, ..)` / `let q2: T = name.m(…)` of name's own type
 after which no statement of the list mentions name. Block scoping makes the
 list sufficient — nothing outside it can read name — and a lambda mentioning
 it is a mention. That site is a move-out for the consume scan, as a bare

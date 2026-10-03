@@ -59,7 +59,7 @@ var heapMarkCases = []struct {
 	// The issue's reproducer: mark, release, return. Native exits 4; the
 	// self-host refused to build it at all.
 	{"heap-mark-roundtrip", `function main(): i32 {
-    var m: i64 = __heap_mark();
+    let m: i64 = __heap_mark();
     __heap_release_to(m);
     return 4;
 }`, 4},
@@ -67,14 +67,14 @@ var heapMarkCases = []struct {
 	// the bump ~125 KiB; after the release the residual is under 1 KiB, and the
 	// pre-mark allocation is still intact.
 	{"heap-mark-reclaims", `function main(): i32 {
-    var seed: i32[] = [(__heap_bump_bytes() as i32) + 1, 2, 3];
-    var m: i64 = __heap_mark();
-    var before: i64 = __heap_bump_bytes();
-    var i: i32 = 0;
-    while (i < 2000) { var p: usize = __raw_alloc(64); i = i + 1; }
-    var mid: i64 = __heap_bump_bytes();
+    let seed: i32[] = [(__heap_bump_bytes() as i32) + 1, 2, 3];
+    let m: i64 = __heap_mark();
+    let before: i64 = __heap_bump_bytes();
+    let i: i32 = 0;
+    while (i < 2000) { let p: usize = __raw_alloc(64); i = i + 1; }
+    let mid: i64 = __heap_bump_bytes();
     __heap_release_to(m);
-    var after: i64 = __heap_bump_bytes();
+    let after: i64 = __heap_bump_bytes();
     if (((mid - before) / 1024) as i32 < 64) { return 97; }
     if (((after - before) / 1024) as i32 > 1) { return 98; }
     if (seed[0] != 1) { return 96; }
@@ -83,17 +83,17 @@ var heapMarkCases = []struct {
 	// The arena is reusable after a release: a second window bumps from the
 	// rewound cursor rather than from where the first one ended.
 	{"heap-mark-reuse-after-release", `function main(): i32 {
-    var seed: i32[] = [(__heap_bump_bytes() as i32) + 1, 2, 3];
-    var m: i64 = __heap_mark();
-    var before: i64 = __heap_bump_bytes();
-    var i: i32 = 0;
-    while (i < 1000) { var p: usize = __raw_alloc(64); i = i + 1; }
+    let seed: i32[] = [(__heap_bump_bytes() as i32) + 1, 2, 3];
+    let m: i64 = __heap_mark();
+    let before: i64 = __heap_bump_bytes();
+    let i: i32 = 0;
+    while (i < 1000) { let p: usize = __raw_alloc(64); i = i + 1; }
     __heap_release_to(m);
-    var m2: i64 = __heap_mark();
-    var j: i32 = 0;
-    while (j < 1000) { var q: usize = __raw_alloc(64); j = j + 1; }
+    let m2: i64 = __heap_mark();
+    let j: i32 = 0;
+    while (j < 1000) { let q: usize = __raw_alloc(64); j = j + 1; }
     __heap_release_to(m2);
-    var after: i64 = __heap_bump_bytes();
+    let after: i64 = __heap_bump_bytes();
     if (((after - before) / 1024) as i32 > 1) { return 98; }
     if (seed[0] != 1) { return 96; }
     return 0;
@@ -102,9 +102,9 @@ var heapMarkCases = []struct {
 	// stray release would hand out the arena base. The allocation after it must
 	// still be sound and distinct from the pre-existing one.
 	{"heap-mark-zero-release-noop", `function main(): i32 {
-    var keep: i32[] = [(__heap_bump_bytes() as i32) + 7, 8, 9];
+    let keep: i32[] = [(__heap_bump_bytes() as i32) + 7, 8, 9];
     __heap_release_to(0i64);
-    var fresh: i32[] = [keep[0] - 6, 2, 3];
+    let fresh: i32[] = [keep[0] - 6, 2, 3];
     if (keep[0] != 7) { return 96; }
     if (fresh[0] != 1) { return 95; }
     if (keep[2] != 9) { return 94; }

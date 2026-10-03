@@ -5,7 +5,7 @@ import (
 )
 
 // TestSelfHostArrStructReclaimWasmIR is the wasm port of
-// TestSelfHostArrStructReclaimIRX86_64: the ARRSTRUCT class lives in shared irlower.fern;
+// TestSelfHostArrStructReclaimIRX86_64: the ARRSTRUCT class lives in shared lowering;
 // on wasm __fern_rc_dec maps to $__fern_arr_dec (wasm_helper_symbol), op_arr_get reads the
 // 4-byte pointer element slots (a struct-box element is a pointer, same width as a scalar),
 // and emit_struct_field_drops emits $__struct_drop_<P> (backend-complete), so the

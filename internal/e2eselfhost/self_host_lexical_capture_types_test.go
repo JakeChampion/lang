@@ -11,24 +11,24 @@ import (
 
 func TestSelfHostLexicalCaptureTypesX86_64(t *testing.T) {
 	cases := []struct{ name, src, want string }{
-		{"wide shadow", `function f(n: i64): i32 { var cb = (): i64 => { var answer = n; var n = 99; return answer; }; return 0; }`, "n:i64;"},
-		{"tuple binder", `function f(): i32 { var (n, other) = (7, 8); var cb = (): i32 => n; return 0; }`, "n:i32;"},
-		{"string loop byte", `function f(text: string): i32 { for ch in text { var cb = (): u8 => ch; } return 0; }`, "ch:u8;"},
-		{"generic callback loop", `function f[T](xs: T[], callback: (T) => i64[]): i32 { for x in xs { for y in callback(x) { var cb = (): i64 => y; } } return 0; }`, "y:i64;"},
-		{"generic callable value loop", `function f[T](xs: T[], callbacks: ((T) => i64[])[]): i32 { for x in xs { for y in callbacks[0](x) { var cb = (): i64 => y; } } return 0; }`, "y:i64;"},
-		{"map pair", `function f(m: Map[string, i64]): i32 { for (k, v) in m { var cb = (): i64 => { k.len(); return v; }; } return 0; }`, "k:string;v:i64;"},
-		{"tuple array loop", `function f(xs: (i64, string)[]): i32 { for (n, text) in xs { var cb = (): i64 => { text.len(); return n; }; } return 0; }`, "text:string;n:i64;"},
-		{"nested tuple loop", `function f(xs: ((i64, string), boolean)[]): i32 { for ((n, text), flag) in xs { var cb = (): i64 => { text.len(); flag; return n; }; } return 0; }`, "text:string;flag:boolean;n:i64;"},
-		{"map loop shadows parameter", `function f(m: Map[string, i64], k: i32): i32 { for (k, v) in m { var cb = (): string => k; } return k; }`, "k:string;"},
-		{"pattern binder", `enum E { Full(i32), Empty } function f(e: E): i32 { match(e) { Full(n) => { var cb = (): i32 => n; }, Empty => {} } return 0; }`, "n:i32;"},
-		{"guarded binder", `enum E { Full(i32), Empty } function f(): i32 { match(E.Full(7)) { Full(n) when n == 7 => { var cb = (): i32 => n; }, _ => {} } return 0; }`, "n:i32;"},
-		{"callable and view", `function f(callback: (f32, str) => i64, text: str): i32 { var cb = (): i32 => { callback(1.0f32, text); return 0; }; return 0; }`, "callback:((f32, str) => i64);text:str;"},
-		{"nominal callable", `struct Node { value: i32 } function f(callback: (Node) => Node): i32 { var cb = (n: Node): Node => callback(n); return 0; }`, "callback:((Node) => Node);"},
+		{"wide shadow", `function f(n: i64): i32 { let cb = (): i64 => { let answer = n; let n = 99; return answer; }; return 0; }`, "n:i64;"},
+		{"tuple binder", `function f(): i32 { let (n, other) = (7, 8); let cb = (): i32 => n; return 0; }`, "n:i32;"},
+		{"string loop byte", `function f(text: string): i32 { for ch in text { let cb = (): u8 => ch; } return 0; }`, "ch:u8;"},
+		{"generic callback loop", `function f[T](xs: T[], callback: (T) => i64[]): i32 { for x in xs { for y in callback(x) { let cb = (): i64 => y; } } return 0; }`, "y:i64;"},
+		{"generic callable value loop", `function f[T](xs: T[], callbacks: ((T) => i64[])[]): i32 { for x in xs { for y in callbacks[0](x) { let cb = (): i64 => y; } } return 0; }`, "y:i64;"},
+		{"map pair", `function f(m: Map[string, i64]): i32 { for (k, v) in m { let cb = (): i64 => { k.len(); return v; }; } return 0; }`, "k:string;v:i64;"},
+		{"tuple array loop", `function f(xs: (i64, string)[]): i32 { for (n, text) in xs { let cb = (): i64 => { text.len(); return n; }; } return 0; }`, "text:string;n:i64;"},
+		{"nested tuple loop", `function f(xs: ((i64, string), boolean)[]): i32 { for ((n, text), flag) in xs { let cb = (): i64 => { text.len(); flag; return n; }; } return 0; }`, "text:string;flag:boolean;n:i64;"},
+		{"map loop shadows parameter", `function f(m: Map[string, i64], k: i32): i32 { for (k, v) in m { let cb = (): string => k; } return k; }`, "k:string;"},
+		{"pattern binder", `enum E { Full(i32), Empty } function f(e: E): i32 { match(e) { Full(n) => { let cb = (): i32 => n; }, Empty => {} } return 0; }`, "n:i32;"},
+		{"guarded binder", `enum E { Full(i32), Empty } function f(): i32 { match(E.Full(7)) { Full(n) when n == 7 => { let cb = (): i32 => n; }, _ => {} } return 0; }`, "n:i32;"},
+		{"callable and view", `function f(callback: (f32, str) => i64, text: str): i32 { let cb = (): i32 => { callback(1.0f32, text); return 0; }; return 0; }`, "callback:((f32, str) => i64);text:str;"},
+		{"nominal callable", `struct Node { value: i32 } function f(callback: (Node) => Node): i32 { let cb = (n: Node): Node => callback(n); return 0; }`, "callback:((Node) => Node);"},
 		{"nominal array", `enum Item { Value(i32), Empty } function f(items: Item[]): i32 { function cb(): i32 { return items.len(); } return 0; }`, "items:Item[];"},
-		{"opaque shadows global", `function f[T](opaque: T): i32 { var cb = (): i32 => { opaque; return 0; }; return 0; } function opaque(): i32 { return 1; }`, "opaque:unknown;"},
+		{"opaque shadows global", `function f[T](opaque: T): i32 { let cb = (): i32 => { opaque; return 0; }; return 0; } function opaque(): i32 { return 1; }`, "opaque:unknown;"},
 		{"recursive binding", `function f(recur: str, outside: i64): i32 { function recur(n: i32): i32 { outside; return recur(n - 1); } return 0; }`, "outside:i64;"},
-		{"arrow reads outer binding", `function f(recur: str, outside: i64): i32 { var recur = (n: i32): i32 => { outside; return recur.len(); }; return 0; }`, "outside:i64;recur:str;"},
-		{"global is not capture", `function f(): i32 { var cb = (): i32 => global(); return 0; } function global(): i32 { return 7; }`, ""},
+		{"arrow reads outer binding", `function f(recur: str, outside: i64): i32 { let recur = (n: i32): i32 => { outside; return recur.len(); }; return 0; }`, "outside:i64;recur:str;"},
+		{"global is not capture", `function f(): i32 { let cb = (): i32 => global(); return 0; } function global(): i32 { return 7; }`, ""},
 	}
 	var src strings.Builder
 	src.WriteString(`import "./ast";
@@ -43,7 +43,7 @@ function add_lambda(e: ast.Expr, own out: ast.ExprLambda[]): ast.ExprLambda[] {
     return out;
 }
 function lambdas(fd: parser.FuncDecl): ast.ExprLambda[] {
-    var out: ast.ExprLambda[] = [];
+    let out: ast.ExprLambda[] = [];
     for st in fd.body { out = astwalk.fold_stmt(st, out, add_lambda); }
     return out;
 }
@@ -52,28 +52,28 @@ function spelling(ty: typeinfo.Type): string {
     return typeinfo.spelling(ty);
 }
 function report(caps: ast.TypedBinding[]): string {
-    var out = "";
+    let out = "";
     for cap in caps { out = out + cap.name + ":" + spelling(cap.ty) + ";"; }
     return out;
 }
 function inspect(source: string): string {
-    var raw = parser.parse_module(lexer.tokenize(source));
-    var checked = checker.annotate_module(raw);
-    var original = lambdas(raw.funcs[0]);
-    var annotated = lambdas(checked.funcs[0]);
+    let raw = parser.parse_module(lexer.tokenize(source));
+    let checked = checker.annotate_module(raw);
+    let original = lambdas(raw.funcs[0]);
+    let annotated = lambdas(checked.funcs[0]);
     if (original.len() != 1 || annotated.len() != 1) { return "wrong lambda count"; }
     if (original[0].captures_known || !annotated[0].captures_known) { return "annotation state"; }
-    var before = report(annotated[0].captures);
-    var resolved = lexical.resolve_func(checked.funcs[0]);
-    var renamed = lambdas(resolved.func);
+    let before = report(annotated[0].captures);
+    let resolved = lexical.resolve_func(checked.funcs[0]);
+    let renamed = lambdas(resolved.func);
     if (renamed.len() != 1 || !renamed[0].captures_known) { return "lost lambda"; }
     if (renamed[0].captures.len() != annotated[0].captures.len()) { return "lost capture"; }
-    var i = 0;
+    let i = 0;
     while (i < renamed[0].captures.len()) {
-        var a = annotated[0].captures[i];
-        var b = renamed[0].captures[i];
+        let a = annotated[0].captures[i];
+        let b = renamed[0].captures[i];
         if (spelling(a.ty) != spelling(b.ty)) { return "changed type"; }
-        var found = false;
+        let found = false;
         for binding in resolved.bindings {
             if (binding.name == a.name && binding.symbol == b.name) { found = true; }
         }

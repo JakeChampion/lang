@@ -32,7 +32,7 @@ function test_to_lower(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("skip-and-subsuites");
+  let r: test.TestRunner = test.test_new("skip-and-subsuites");
 
   // A top-level case before any subsuite — sanity check that
   // the parent's numbering starts at 1.
@@ -50,7 +50,7 @@ function main(): i32 {
   // Subsuite: nested grouping. Cases print with the
   // "arithmetic / " prefix; the bottom-of-stream summary
   // shows the prefixed names.
-  var arith: test.TestRunner = r.subsuite("arithmetic");
+  let arith: test.TestRunner = r.subsuite("arithmetic");
   arith = arith.it("addition", test_addition);
   arith = arith.it("subtraction", test_subtraction);
   arith = arith.skip("multiplication", "out of scope for this slice");
@@ -58,7 +58,7 @@ function main(): i32 {
 
   // Two subsuites can be opened consecutively as long as
   // each is merged back before the next sibling case runs.
-  var str: test.TestRunner = r.subsuite("strings");
+  let str: test.TestRunner = r.subsuite("strings");
   str = str.it("to_upper", test_to_upper);
   str = str.it("to_lower", test_to_lower);
   r = r.merge(str);

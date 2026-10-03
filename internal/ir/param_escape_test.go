@@ -19,13 +19,13 @@ struct Box { inner: List }
 function sum(l: List): i32 { match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } } }
 function eat(own xs: List): i32 { match (xs) { Cons(h, t) => { return h + eat(t); }, Nil => { return 0; } } }
 function dup(xs: List): List { match (xs) { Cons(h, t) => { return Cons(h, dup(t)); }, Nil => { return Nil; } } }
-function reads(xs: List): i32 { var c: i32 = sum(xs); return c; }
-function viadup(xs: List): List { var r: List = dup(xs); return r; }
+function reads(xs: List): i32 { let c: i32 = sum(xs); return c; }
+function viadup(xs: List): List { let r: List = dup(xs); return r; }
 function ident(xs: List): List { return xs; }
 function prepend(x: i32, xs: List): List { return Cons(x, xs); }
 function tailof(xs: List): List { match (xs) { Cons(h, t) => { return t; }, Nil => { return Nil; } } }
 function wrapbox(xs: List): Box { return Box { inner: xs }; }
-function bindret(xs: List): List { var r: List = xs; return r; }
+function bindret(xs: List): List { let r: List = xs; return r; }
 function main(): i32 { return 0; }`)
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ function main(): i32 { return 0; }`)
 		{"prepend", 1, true, "Cons(x, xs) — xs escapes into the tail"},
 		{"tailof", 0, true, "returns a match binding (a projection of the param)"},
 		{"wrapbox", 0, true, "Box{inner: xs} — xs escapes into a field"},
-		{"bindret", 0, true, "var r = xs; return r — escapes via the alias"},
+		{"bindret", 0, true, "let r = xs; return r — escapes via the alias"},
 	}
 	for _, c := range cases {
 		got := false
@@ -84,10 +84,10 @@ func TestParamEscapesCreditsAReturnedCountedProjection(t *testing.T) {
 struct Par { toks: Tok[], pos: i32 }
 function (p: Par) elem(): Tok { return p.toks[p.pos]; }
 function (p: Par) field(): Tok[] { return p.toks; }
-function (p: Par) deeper(): string { var t: Tok = p.elem(); return t.text; }
+function (p: Par) deeper(): string { let t: Tok = p.elem(); return t.text; }
 function (p: Par) whole(): Par { return p; }
 function (p: Par) rebuilt(): Par { return Par { toks: p.toks, pos: p.pos + 1 }; }
-function (p: Par) bound(): Tok[] { var q: Tok[] = p.toks; return q; }
+function (p: Par) bound(): Tok[] { let q: Tok[] = p.toks; return q; }
 function (p: Par) depth(): i32 { return p.pos; }
 function main(): i32 { return 0; }`)
 	if err != nil {

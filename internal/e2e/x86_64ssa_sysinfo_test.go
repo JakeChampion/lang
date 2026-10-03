@@ -11,19 +11,19 @@ import (
 // The comparison is against the flat x86-64 emitter, for the reason
 // x86_64ssa_path_helpers_test.go gives.
 const x86SSASysInfoSrc = `function main(): i32 {
-    var base: string = getcwd();
+    let base: string = getcwd();
 
     // read_dir_all keeps "." and "..", which read_dir drops; otherwise the
     // two must list the same names.
     match (create_dir(base + "/d", 493)) { Ok(_) => {}, Err(e) => { return 10; } }
     match (write_file(base + "/d/one", "x")) { Ok(_) => {}, Err(e) => { return 11; } }
     match (write_file(base + "/d/two", "y")) { Ok(_) => {}, Err(e) => { return 12; } }
-    var all: string[] = match (read_dir_all(base + "/d")) { Ok(v) => v, Err(e) => { return 13; } };
-    var some: string[] = match (read_dir(base + "/d")) { Ok(v) => v, Err(e) => { return 14; } };
+    let all: string[] = match (read_dir_all(base + "/d")) { Ok(v) => v, Err(e) => { return 13; } };
+    let some: string[] = match (read_dir(base + "/d")) { Ok(v) => v, Err(e) => { return 14; } };
     if (some.len() != 2) { return 15; }
     if (all.len() != 4) { return 16; }
-    var dots: i32 = 0;
-    var i: i32 = 0;
+    let dots: i32 = 0;
+    let i: i32 = 0;
     while (i < all.len()) {
         if (all[i] == "." || all[i] == "..") { dots = dots + 1; }
         i = i + 1;
@@ -46,7 +46,7 @@ const x86SSASysInfoSrc = `function main(): i32 {
 
     // uname_field: the five named fields are non-empty, and an index naming
     // no field is the empty string rather than whatever follows in the record.
-    var f: i32 = 0;
+    let f: i32 = 0;
     while (f < 5) {
         if (uname_field(f).len() < 1) { return 30; }
         f = f + 1;
@@ -57,10 +57,10 @@ const x86SSASysInfoSrc = `function main(): i32 {
 
     // getgroups: memoised, so two calls agree entry for entry, and no gid is
     // the kernel's -1 read through a bad widening.
-    var g1: i64[] = getgroups();
-    var g2: i64[] = getgroups();
+    let g1: i64[] = getgroups();
+    let g2: i64[] = getgroups();
     if (g1.len() != g2.len()) { return 40; }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < g1.len()) {
         if (g1[j] != g2[j]) { return 41; }
         if (g1[j] < 0i64) { return 42; }

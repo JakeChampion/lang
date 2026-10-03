@@ -25,7 +25,7 @@ function bucket(v: i32, lo: i32, hi: i32): i32 {
   if (hi <= lo) {
     return 0;
   }
-  var b: i32 = (v - lo) * 7 / (hi - lo);
+  let b: i32 = (v - lo) * 7 / (hi - lo);
   if (b < 0) {
     b = 0;
   }
@@ -36,7 +36,7 @@ function bucket(v: i32, lo: i32, hi: i32): i32 {
 }
 
 function min_of(xs: i32[]): i32 {
-  var m: i32 = xs[0];
+  let m: i32 = xs[0];
   for i in 0..xs.len() {
     if (xs[i] < m) {
       m = xs[i];
@@ -46,7 +46,7 @@ function min_of(xs: i32[]): i32 {
 }
 
 function max_of(xs: i32[]): i32 {
-  var m: i32 = xs[0];
+  let m: i32 = xs[0];
   for i in 0..xs.len() {
     if (xs[i] > m) {
       m = xs[i];
@@ -59,10 +59,10 @@ function spark(xs: i32[]): string {
   if (xs.len() == 0) {
     return "";
   }
-  var lo: i32 = min_of(xs);
-  var hi: i32 = max_of(xs);
-  var bs: string[] = blocks();
-  var out: string = "";
+  let lo: i32 = min_of(xs);
+  let hi: i32 = max_of(xs);
+  let bs: string[] = blocks();
+  let out: string = "";
   for i in 0..xs.len() {
     out = out + bs[bucket(xs[i], lo, hi)];
   }
@@ -75,10 +75,10 @@ function spark(xs: i32[]): string {
 // times that, and asserting both is the point: a renderer that silently
 // truncated a multi-byte block would still pass a byte-length check.
 function test_one_codepoint_per_sample(): test.TestOutcome {
-  var series: i32[][] = [[1], [1, 2], [5, 3, 9, 1], [0, 0, 0, 0, 0, 0]];
+  let series: i32[][] = [[1], [1, 2], [5, 3, 9, 1], [0, 0, 0, 0, 0, 0]];
   for i in 0..series.len() {
-    var s: string = spark(series[i]);
-    var want: i32 = series[i].len();
+    let s: string = spark(series[i]);
+    let want: i32 = series[i].len();
     if (utf8.codepoint_count(s) != want) {
       return test.fail("series " + i.to_string() + ": wanted "
         + want.to_string() + " codepoints, got "
@@ -95,18 +95,18 @@ function test_one_codepoint_per_sample(): test.TestOutcome {
 // Every byte emitted must be part of a valid UTF-8 sequence, and every
 // codepoint must be one of the eight blocks — nothing invented.
 function test_output_is_valid_utf8_blocks(): test.TestOutcome {
-  var s: string = spark([3, 1, 4, 1, 5, 9, 2, 6]);
+  let s: string = spark([3, 1, 4, 1, 5, 9, 2, 6]);
   if (!utf8.is_valid_utf8(s)) {
     return test.fail("sparkline is not valid UTF-8");
   }
-  var bs: string[] = blocks();
+  let bs: string[] = blocks();
   for i in 0..utf8.codepoint_count(s) {
     match (utf8.char_at(s, i)) {
       None => {
         return test.fail("no char at index " + i.to_string());
       },
       Some(ch) => {
-        var known: boolean = false;
+        let known: boolean = false;
         for k in 0..bs.len() {
           if (bs[k] == ch) {
             known = true;
@@ -124,9 +124,9 @@ function test_output_is_valid_utf8_blocks(): test.TestOutcome {
 // The extremes must land on the extreme blocks — a scale that never
 // reaches its own ends is the usual off-by-one here.
 function test_extremes_map_to_extreme_blocks(): test.TestOutcome {
-  var xs: i32[] = [10, 50, 90];
-  var s: string = spark(xs);
-  var bs: string[] = blocks();
+  let xs: i32[] = [10, 50, 90];
+  let s: string = spark(xs);
+  let bs: string[] = blocks();
   match (utf8.char_at(s, 0)) {
     None => {
       return test.fail("no first char");
@@ -153,12 +153,12 @@ function test_extremes_map_to_extreme_blocks(): test.TestOutcome {
 // Monotone input renders a monotone sparkline: bucket must be
 // order-preserving, or the rendering misstates the data.
 function test_rendering_is_order_preserving(): test.TestOutcome {
-  var xs: i32[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-  var lo: i32 = min_of(xs);
-  var hi: i32 = max_of(xs);
-  var prev: i32 = -1;
+  let xs: i32[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  let lo: i32 = min_of(xs);
+  let hi: i32 = max_of(xs);
+  let prev: i32 = -1;
   for i in 0..xs.len() {
-    var b: i32 = bucket(xs[i], lo, hi);
+    let b: i32 = bucket(xs[i], lo, hi);
     if (b < prev) {
       return test.fail("bucket fell from " + prev.to_string() + " to "
         + b.to_string() + " on rising input");
@@ -171,11 +171,11 @@ function test_rendering_is_order_preserving(): test.TestOutcome {
 // A flat series has no range to scale against. It must render, at one
 // bar per sample, rather than dividing by zero.
 function test_a_flat_series_renders_flat(): test.TestOutcome {
-  var s: string = spark([7, 7, 7, 7]);
+  let s: string = spark([7, 7, 7, 7]);
   if (utf8.codepoint_count(s) != 4) {
     return test.fail("flat series lost bars");
   }
-  var bs: string[] = blocks();
+  let bs: string[] = blocks();
   for i in 0..4 {
     match (utf8.char_at(s, i)) {
       None => {
@@ -194,7 +194,7 @@ function test_a_flat_series_renders_flat(): test.TestOutcome {
 // An empty series renders an empty string — zero bytes AND zero
 // codepoints, with no crash on the min/max of nothing.
 function test_empty_series(): test.TestOutcome {
-  var s: string = spark([]);
+  let s: string = spark([]);
   if (s.len() != 0) {
     return test.fail("empty series emitted bytes");
   }
@@ -207,8 +207,8 @@ function test_empty_series(): test.TestOutcome {
 // Shifting every sample by a constant must not change the picture: the
 // scale is relative to the series' own range.
 function test_rendering_is_shift_invariant(): test.TestOutcome {
-  var a: i32[] = [3, 1, 4, 1, 5];
-  var b: i32[] = [];
+  let a: i32[] = [3, 1, 4, 1, 5];
+  let b: i32[] = [];
   for i in 0..a.len() {
     b = b.append(a[i] + 1000);
   }
@@ -226,11 +226,11 @@ function main(): i32 {
   eprint("  falling  " + spark([8, 7, 6, 5, 4, 3, 2, 1]));
   eprint("  noisy    " + spark([3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5]));
   eprint("  flat     " + spark([7, 7, 7, 7, 7]));
-  var s: string = spark([3, 1, 4, 1, 5]);
+  let s: string = spark([3, 1, 4, 1, 5]);
   eprint("  (5 bars = " + utf8.codepoint_count(s).to_string()
     + " codepoints, " + s.len().to_string() + " bytes)");
 
-  var r: test.TestRunner = test.test_new("sparkline");
+  let r: test.TestRunner = test.test_new("sparkline");
   r = r.it("one codepoint per sample", test_one_codepoint_per_sample);
   r = r.it("output is valid utf-8 blocks", test_output_is_valid_utf8_blocks);
   r = r.it("extremes map to extreme blocks", test_extremes_map_to_extreme_blocks);

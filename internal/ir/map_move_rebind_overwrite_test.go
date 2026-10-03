@@ -42,7 +42,7 @@ func mapAliasedOverwriteDecCount(fn *ir.Func) int {
 	return n
 }
 
-// `var (m2, ok) = m.without(k); m = m2` — the destructured handle rebound onto
+// `let (m2, ok) = m.without(k); m = m2` — the destructured handle rebound onto
 // the local it came from. __map_cow_inplace hands the receiver straight back on
 // its in-place branch, so `m2` and the slot `m` is about to overwrite are the
 // SAME pointer, and the same-pointer arm is the only place that release can go.
@@ -59,11 +59,11 @@ import "core/int";
 import "core/map";
 import "std/string";
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var sm: Map[string, i32] = map_new(8);
+    let acc: i32 = 0;
+    let sm: Map[string, i32] = map_new(8);
     sm = sm.insert("ke" + "y", n);
     sm = sm.insert("ot" + "her", 3);
-    var (m2, ok) = sm.without("ke" + "y");
+    let (m2, ok) = sm.without("ke" + "y");
     sm = m2;
     if (ok) { acc = acc + 2; }
     return acc + sm.get_or("ot" + "her", 0);
@@ -89,13 +89,13 @@ import "core/int";
 import "core/map";
 
 function mk(seed: i32): Map[i32, i32] {
-    var fresh: Map[i32, i32] = map_new(8);
+    let fresh: Map[i32, i32] = map_new(8);
     return fresh.insert(seed, seed + 1);
 }
 
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var m: Map[i32, i32] = map_new(8);
+    let acc: i32 = 0;
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 4);
     m = mk(n);
     return acc + m.get_or(n, 0);

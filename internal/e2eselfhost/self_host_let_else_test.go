@@ -19,11 +19,11 @@ var letElseCases = []struct {
 	src  string
 	exit int
 }{
-	{"matched", "enum Shape { Circle(i32), Empty } function main(): i32 { var s: Shape = Circle(42); let Circle(r) = s else { return 0; } return r; }", 42},
-	{"else-path", "enum Shape { Circle(i32), Empty } function main(): i32 { var s: Shape = Empty; let Circle(r) = s else { return 7; } return r; }", 7},
-	{"opt-some", "import \"core/map\"; function main(): i32 { var m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 42); let Some(v) = m.get(\"k\") else { return 1; } return v; }", 42},
-	{"opt-none", "import \"core/map\"; function main(): i32 { var m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 42); let Some(v) = m.get(\"absent\") else { return 9; } return v; }", 9},
-	{"rest-multi", "import \"core/map\"; function main(): i32 { var m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 40); let Some(v) = m.get(\"k\") else { return 1; } var w: i32 = v + 2; return w; }", 42},
+	{"matched", "enum Shape { Circle(i32), Empty } function main(): i32 { let s: Shape = Circle(42); let Circle(r) = s else { return 0; } return r; }", 42},
+	{"else-path", "enum Shape { Circle(i32), Empty } function main(): i32 { let s: Shape = Empty; let Circle(r) = s else { return 7; } return r; }", 7},
+	{"opt-some", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 42); let Some(v) = m.get(\"k\") else { return 1; } return v; }", 42},
+	{"opt-none", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 42); let Some(v) = m.get(\"absent\") else { return 9; } return v; }", 9},
+	{"rest-multi", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 40); let Some(v) = m.get(\"k\") else { return 1; } let w: i32 = v + 2; return w; }", 42},
 }
 
 // TestSelfHostLetElseX86_64 — `let else` desugar with the self-hosted

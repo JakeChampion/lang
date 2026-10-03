@@ -70,7 +70,10 @@ pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops
 // `held` marks an element read that takes a unit of its own at the read
 // (held_elements); the physical lowering retains what it read.
 // `literal` marks the values that can only hold a string literal (`literals`).
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis }
+// `defs` is the definitions table (`definitions`) of the function the plan was
+// planned from, indexed by value; a verifier checking another function
+// derives its own.
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[] }
 
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
@@ -87,15 +90,15 @@ pub struct GrowRow { callee: string, param: i32, field: i32 }
 pub struct GrowTable { rows: GrowRow[], by_callee: util.NameIndex }
 
 pub function no_grows(): GrowTable {
-  var no_names: string[] = [];
+  let no_names: string[] = [];
   return GrowTable { rows: [], by_callee: util.name_index(no_names) };
 }
 
 pub function grow_fields_of(t: GrowTable, callee: string, param: i32): i32[] {
-  var out: i32[] = [];
-  var i: i32 = t.by_callee.chain(callee);
+  let out: i32[] = [];
+  let i: i32 = t.by_callee.chain(callee);
   while (i >= 0) {
-    var row: GrowRow = t.rows[i];
+    let row: GrowRow = t.rows[i];
     if (row.callee == callee && row.param == param && row.field >= 0) {
       out = out.append(row.field);
     }
@@ -126,26 +129,25 @@ function has_row(rows: GrowRow[], callee: string, param: i32, field: i32): boole
 // identically, however much they differ elsewhere. That is what lets a second
 // lowering keep a body the inference did not move.
 pub function grow_rows_agree(a: GrowTable, b: GrowTable, callees: string[]): boolean {
-  for row in a.rows {
-    if (names_has(callees, row.callee) && !has_row_at(b.rows, b.by_callee, row.callee, row.param, row.field)) {
-      return false;
-    }
-  }
-  for row in b.rows {
-    if (names_has(callees, row.callee) && !has_row_at(a.rows, a.by_callee, row.callee, row.param, row.field)) {
+  for callee in callees {
+    if (!rows_within(a, b, callee) || !rows_within(b, a, callee)) {
       return false;
     }
   }
   return true;
 }
 
-function names_has(names: string[], name: string): boolean {
-  for n in names {
-    if (n == name) {
-      return true;
+// rows_within reports whether every row of `a` for `callee` is in `b`.
+function rows_within(a: GrowTable, b: GrowTable, callee: string): boolean {
+  let i: i32 = a.by_callee.chain(callee);
+  while (i >= 0) {
+    let row: GrowRow = a.rows[i];
+    if (row.callee == callee && !has_row_at(b.rows, b.by_callee, callee, row.param, row.field)) {
+      return false;
     }
+    i = a.by_callee.next[i];
   }
-  return false;
+  return true;
 }
 
 function with_row(rows: GrowRow[], callee: string, param: i32, field: i32): GrowRow[] {
@@ -158,7 +160,7 @@ function with_row(rows: GrowRow[], callee: string, param: i32, field: i32): Grow
 // has_row_at is has_row over a table with a name index kept beside it, one
 // entry per row in order: the callee's chain, ascending.
 function has_row_at(rows: GrowRow[], ix: util.NameIndex, callee: string, param: i32, field: i32): boolean {
-  var i: i32 = ix.chain(callee);
+  let i: i32 = ix.chain(callee);
   while (i >= 0) {
     if (rows[i].callee == callee && rows[i].param == param && rows[i].field == field) {
       return true;
@@ -179,16 +181,17 @@ function has_row_at(rows: GrowRow[], ix: util.NameIndex, callee: string, param: 
 // so it contributes no row. An owned parameter needs no caller bracket — its caller moved the
 // unit in, or retained and so made the record's own count answer "shared".
 pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[], tix: util.NameIndex): GrowRow[] {
-  var out: GrowRow[] = [];
-  var defs: ssa.SInst[] = definitions(f);
-  var at: i32[] = ssa.block_positions(f.graph);
+  let out: GrowRow[] = [];
+  let defs: ssa.SInst[] = p.defs;
+  let at: i32[] = ssa.block_positions(f.graph);
+  let seen: boolean[] = bits(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) {
         continue;
       }
-      var root: i32 = ins.args[0];
-      var field: i32 = 0 - 1;
+      let root: i32 = ins.args[0];
+      let field: i32 = 0 - 1;
       if (p.grows[ins.result] >= 0) {
         root = p.grows[ins.result];
         field = p.grow_fields[ins.result];
@@ -196,7 +199,9 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
         continue;
       }
       if (field < 0) {
-        for param in carried_params(f, defs, root) {
+        let carried: Carried = carried_params(f, defs, root, seen);
+        seen = carried.seen;
+        for param in carried.params {
           if (!p.owned[param]) {
             out = with_row(out, callee, defs[param].imm, 0 - 1);
           }
@@ -209,16 +214,16 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
       out = with_row(out, callee, defs[root].imm, field);
     }
   }
-  var partial: GrowTable = GrowTable { rows: table, by_callee: tix };
+  let partial: GrowTable = GrowTable { rows: table, by_callee: tix };
   for s in p.steps {
     if (s.point < 0) {
       continue;
     }
-    var ins: ssa.SInst = f.graph.blocks[at[s.block]].insts[s.point];
+    let ins: ssa.SInst = f.graph.blocks[at[s.block]].insts[s.point];
     out = dying_lent_rows(callee, f, p, defs, s, ins, table, tix, out);
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < s.hand_roots.len()) {
-      var root: i32 = s.hand_roots[i];
+      let root: i32 = s.hand_roots[i];
       if (root >= 0 && defs[root].kind_tag == 6 && !p.owned[root]) {
         if (is_record(f.values[root]) && s.hand_fields[i] < 0) {
           // A whole record handed on: every field the callee may
@@ -243,11 +248,12 @@ function dying_lent_rows(callee: string, f: ssasem.Func, p: Plan, defs: ssa.SIns
   if (ins.kind_tag != ssasem.call()) {
     return out;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ins.args.len()) {
-    var v: i32 = ins.args[i];
+    let v: i32 = ins.args[i];
     if (v >= f.graph.nparams && is_array(f.values[v]) && occurrences(s.drops, v) > 0 && has_row_at(table, tix, ins.str, i, 0 - 1)) {
-      for param in carried_params(f, defs, v) {
+      let carried: Carried = carried_params(f, defs, v, bits(f.graph.nvals));
+      for param in carried.params {
         if (!p.owned[param]) {
           out = with_row(out, callee, defs[param].imm, 0 - 1);
         }
@@ -258,21 +264,23 @@ function dying_lent_rows(callee: string, f: ssasem.Func, p: Plan, defs: ssa.SIns
   return out;
 }
 
+struct Carried { params: i32[], seen: boolean[] }
+
 // The parameters whose box `v` may be, through phis, the receivers of
-// appends and the array operands of calls.
-function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32[] {
-  var out: i32[] = [];
-  var seen: boolean[] = bits(f.graph.nvals);
-  var work: i32[] = [v];
-  var k: i32 = 0;
+// appends and the array operands of calls. `seen` is a clear nvals-long
+// scratch set, handed back clear.
+function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32, own seen: boolean[]): Carried {
+  let out: i32[] = [];
+  let work: i32[] = [v];
+  let k: i32 = 0;
   while (k < work.len()) {
-    var w: i32 = work[k];
+    let w: i32 = work[k];
     k = k + 1;
     if (w < 0 || seen[w]) {
       continue;
     }
     seen = seen.with(w, true);
-    var d: ssa.SInst = defs[w];
+    let d: ssa.SInst = defs[w];
     if (d.kind_tag == 6) {
       out = out.append(w);
     } else if (d.kind_tag == ssasem.append()) {
@@ -289,20 +297,27 @@ function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32[] {
       }
     }
   }
-  return out;
+  let c: i32 = 0;
+  while (c < work.len()) {
+    if (work[c] >= 0) {
+      seen = seen.with(work[c], false);
+    }
+    c = c + 1;
+  }
+  return Carried { params: out, seen: seen };
 }
 
 // Every produced body's rows, closed over the buffers handed on: a row only
 // ever gains, so the rounds converge.
 pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): GrowTable {
-  var table: GrowRow[] = [];
-  var no_names: string[] = [];
+  let table: GrowRow[] = [];
+  let no_names: string[] = [];
   // tix indexes `table` by callee, one entry per row in order.
-  var tix: util.NameIndex = util.name_index(no_names);
-  var changed: boolean = true;
+  let tix: util.NameIndex = util.name_index(no_names);
+  let changed: boolean = true;
   while (changed) {
     changed = false;
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < plans.len()) {
       if (plans[i].ok) {
         for row in grow_rows(keys[i], funcs[i], plans[i], table, tix) {
@@ -320,7 +335,7 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
 }
 
 function bad(why: string): Plan {
-  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why) };
+  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [] };
 }
 
 pub function refused(why: string): Plan {
@@ -336,8 +351,8 @@ function step(block: i32, point: i32, target: i32): Step {
 }
 
 function bits(n: i32): boolean[] {
-  var out: boolean[] = [];
-  var i: i32 = 0;
+  let out: boolean[] = [];
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(false);
     i = i + 1;
@@ -435,7 +450,7 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
 }
 
 function mode_error(params: typeinfo.Type[], modes: i32[]): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < modes.len()) {
     if (ssasem.reference(params[i])) {
       if (modes[i] != borrow_mode() && modes[i] != counted_mode()) {
@@ -494,7 +509,7 @@ function schema_fields_error(f: ssasem.Func): string {
 // and never appears in the type the box hands out, so a counted one there would
 // be a promise nothing can state.
 function closure_body_error(f: ssasem.Func, ins: ssa.SInst): string {
-  var c: ssasem.Contract = f.calls[ssasem.find_contract_in(f.calls, ins.str)];
+  let c: ssasem.Contract = f.calls[ssasem.find_contract_in(f.calls, ins.str)];
   if (c.modes.len() > 0 && c.modes[0] == counted_mode()) {
     return "function value consumes its environment";
   }
@@ -505,7 +520,7 @@ function function_ops_error(f: ssasem.Func): string {
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.closure_new()) {
-        var why: string = closure_body_error(f, ins);
+        let why: string = closure_body_error(f, ins);
         if (why != "") {
           return why;
         }
@@ -527,7 +542,7 @@ function contract_error(f: ssasem.Func, modes: i32[]): string {
   if (!supported(f.result, f)) {
     return "unsupported counted-unit result";
   }
-  var why: string = schema_fields_error(f);
+  let why: string = schema_fields_error(f);
   if (why != "") {
     return why;
   }
@@ -598,7 +613,7 @@ function hands_out(kind: i32): boolean {
     || kind == ssasem.append() || kind == ssasem.with() || kind == ssasem.slice() || kind == ssasem.cell_get()
     || kind == ssasem.map_insert() || kind == ssasem.map_get_or() || kind == ssasem.map_get()
     || kind == ssasem.map_keys() || kind == ssasem.map_values() || kind == ssasem.map_delete()
-    || kind == ssasem.str_bytes() || kind == ssasem.arr_join() || kind == ssasem.arr_slice()
+    || kind == ssasem.str_bytes() || kind == ssasem.str_byte_view() || kind == ssasem.arr_join() || kind == ssasem.arr_slice()
     || kind == ssasem.map_iter() || kind == ssasem.hole_fill();
 }
 
@@ -606,7 +621,7 @@ function hands_out(kind: i32): boolean {
 // withdrawn from each one with another operand, to a fixpoint, so a loop
 // phi that only ever carries literals keeps the mark.
 function literals(f: ssasem.Func): boolean[] {
-  var out: boolean[] = bits(f.graph.nvals);
+  let out: boolean[] = bits(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == 5 || ins.kind_tag == 8) {
@@ -614,7 +629,7 @@ function literals(f: ssasem.Func): boolean[] {
       }
     }
   }
-  var changed: boolean = true;
+  let changed: boolean = true;
   while (changed) {
     changed = false;
     for b in f.graph.blocks {
@@ -622,7 +637,7 @@ function literals(f: ssasem.Func): boolean[] {
         if (ins.kind_tag != 8 || !out[ins.result]) {
           continue;
         }
-        var lit: boolean = true;
+        let lit: boolean = true;
         for a in ins.args {
           if (a < 0 || !out[a]) {
             lit = false;
@@ -638,11 +653,11 @@ function literals(f: ssasem.Func): boolean[] {
   return out;
 }
 
-function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
-  var out: boolean[] = bits(f.graph.nvals);
+function owned_values(f: ssasem.Func, modes: i32[], defs: ssa.SInst[]): boolean[] {
+  let out: boolean[] = bits(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
-      var owns: boolean = false;
+      let owns: boolean = false;
       if (ins.kind_tag == 6) {
         owns = modes[ins.imm] == counted_mode();
       }
@@ -652,7 +667,7 @@ function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
       out = out.with(ins.result, owns);
     }
   }
-  return phi_ownership(f, out);
+  return phi_ownership(f, out, defs);
 }
 
 // A phi owns a unit unless every operand is lent whole: a borrowed parameter,
@@ -666,20 +681,19 @@ function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
 // an owned record is anchored to its root, and the retain the edge supplies
 // is what keeps the child alive past the root's release. To a fixpoint, since
 // ownership reaches a phi through a phi, and through a projection of one.
-function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
-  var defs: ssa.SInst[] = definitions(f);
-  var out: boolean[] = owned;
+function phi_ownership(f: ssasem.Func, owned: boolean[], defs: ssa.SInst[]): boolean[] {
+  let out: boolean[] = owned;
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag != 8 || !ssasem.reference(f.values[ins.result])) {
         continue;
       }
-      var lent: boolean = true;
+      let lent: boolean = true;
       for a in ins.args {
         if (a < 0) {
           continue;
         }
-        var r: i32 = lent_root(f, defs, a);
+        let r: i32 = lent_root(f, defs, a);
         if (defs[r].kind_tag == 8 || defs[r].kind_tag == 5) {
           continue;
         }
@@ -693,7 +707,7 @@ function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
       }
     }
   }
-  var grown: boolean = true;
+  let grown: boolean = true;
   while (grown) {
     grown = false;
     for b in f.graph.blocks {
@@ -719,9 +733,9 @@ function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
 // they stop the tail-call rewrite (`ssasem.crosses_jump`): a view's box has
 // no count to lend, and a map read answers a unit of its own.
 function lent_root(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
-  var at: i32 = v;
+  let at: i32 = v;
   while (part_read(defs[at].kind_tag) && defs[at].args.len() > 0) {
-    var t: typeinfo.Type = f.values[at];
+    let t: typeinfo.Type = f.values[at];
     if (!ssasem.reference(t) || ssasem.holds_view(f, t) || ssasem.is_map(t)) {
       return at;
     }
@@ -747,8 +761,7 @@ function part_read(kind: i32): boolean {
 // A string retagged as a view is the string's own counted box, so retaining
 // it retains the string, which `__fern_str_view_free` then releases as one.
 // A literal's retain is never emitted (ssarc.supplies), so it lends nothing.
-function view_retain_error(f: ssasem.Func, steps: Step[], literal: boolean[]): string {
-  var defs: ssa.SInst[] = definitions(f);
+function view_retain_error(f: ssasem.Func, steps: Step[], literal: boolean[], defs: ssa.SInst[]): string {
   for s in steps {
     for item in s.supplies {
       if (item.mode == retain_unit() && ssasem.is_view(f.values[item.value]) && !retagged_string(f, defs, item.value) && !literal[item.value]) {
@@ -760,12 +773,12 @@ function view_retain_error(f: ssasem.Func, steps: Step[], literal: boolean[]): s
 }
 
 function retagged_string(f: ssasem.Func, defs: ssa.SInst[], v: i32): boolean {
-  var d: ssa.SInst = defs[v];
+  let d: ssa.SInst = defs[v];
   return d.kind_tag == ssasem.str_as() && d.args.len() == 1 && !ssasem.is_view(f.values[d.args[0]]);
 }
 
 function live_out_row(flow: ssalive.Flow, bi: i32): boolean[] {
-  var out: boolean[] = flow.none;
+  let out: boolean[] = flow.none;
   for v in ssalive.live_out_ids(flow, bi) {
     out = out.with(v, true);
   }
@@ -797,8 +810,8 @@ function add_use(own live: boolean[], value: i32, deps: i32[][]): boolean[] {
 // hole's address. A string append takes one for its left operand, whose
 // buffer it may grow in place (`string_append`).
 function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
-  var out: Supply[] = [];
-  var counted: boolean[] = [];
+  let out: Supply[] = [];
+  let counted: boolean[] = [];
   if (ins.kind_tag == ssasem.call()) {
     counted = call_supplied(f, ins);
   } else if (ins.kind_tag == ssasem.call_value()) {
@@ -822,7 +835,7 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
       counted = counted.append(taken(f.values[arg]));
     }
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < counted.len()) {
     if (counted[i]) {
       out = out.append(Supply { value: ins.args[i], slot: i, mode: 0 });
@@ -842,14 +855,14 @@ pub function string_append(f: ssasem.Func, ins: ssa.SInst): boolean {
 // The operands a call lends rather than counts. The callee reads them for the
 // whole call, and it may release a unit it is handed before it does.
 function lent_operands(f: ssasem.Func, ins: ssa.SInst): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   if (ins.kind_tag != ssasem.call() && ins.kind_tag != ssasem.call_value()) {
     return out;
   }
-  var counted: Supply[] = operation_supplies(f, ins);
-  var i: i32 = 0;
+  let counted: Supply[] = operation_supplies(f, ins);
+  let i: i32 = 0;
   while (i < ins.args.len()) {
-    var slot_counted: boolean = false;
+    let slot_counted: boolean = false;
     for got in counted {
       if (got.slot == i) {
         slot_counted = true;
@@ -866,7 +879,7 @@ function lent_operands(f: ssasem.Func, ins: ssa.SInst): i32[] {
 // What a call's lent operands borrow from: none of it may move into the call
 // (#10832).
 function lent_owners(f: ssasem.Func, ins: ssa.SInst, deps: i32[][]): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   for v in lent_operands(f, ins) {
     for dep in deps[v] {
       if (dep != v && !has_id(out, dep)) {
@@ -881,10 +894,10 @@ function lent_owners(f: ssasem.Func, ins: ssa.SInst, deps: i32[][]): i32[] {
 // function type spells CONSUMING, `own T`. The callee box itself (operand 0)
 // is lent like any other.
 function call_value_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
-  var out: boolean[] = [false];
-  var callee: typeinfo.Type = f.values[ins.args[0]];
-  var params: typeinfo.Type[] = ssasem.func_params(callee);
-  var i: i32 = 0;
+  let out: boolean[] = [false];
+  let callee: typeinfo.Type = f.values[ins.args[0]];
+  let params: typeinfo.Type[] = ssasem.func_params(callee);
+  let i: i32 = 0;
   while (i < params.len()) {
     out = out.append(ssasem.func_param_own(callee, i) && ssasem.reference(f.values[ins.args[i + 1]]));
     i = i + 1;
@@ -893,9 +906,9 @@ function call_value_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
 }
 
 function call_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
-  var c: ssasem.Contract = f.calls[ssasem.find_contract_in(f.calls, ins.str)];
-  var out: boolean[] = [];
-  var i: i32 = 0;
+  let c: ssasem.Contract = f.calls[ssasem.find_contract_in(f.calls, ins.str)];
+  let out: boolean[] = [];
+  let i: i32 = 0;
   while (i < ins.args.len()) {
     out = out.append(c.modes[i] == counted_mode() && ssasem.reference(f.values[ins.args[i]]));
     i = i + 1;
@@ -907,7 +920,7 @@ function call_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
 // deciding which arguments its bracket covers. `call_supplied` reads the same
 // contract for the ledger; this is the whole row rather than the counted half.
 pub function callee_modes(f: ssasem.Func, ins: ssa.SInst): i32[] {
-  var at: i32 = ssasem.find_contract_in(f.calls, ins.str);
+  let at: i32 = ssasem.find_contract_in(f.calls, ins.str);
   if (at < 0) {
     return [];
   }
@@ -925,13 +938,13 @@ function return_supplies(f: ssasem.Func, b: ssa.SBlock): Supply[] {
 
 // The edge from b into the block at position si.
 function edge_supplies(f: ssasem.Func, b: ssa.SBlock, si: i32, owned: boolean[]): Supply[] {
-  var succ: ssa.SBlock = f.graph.blocks[si];
-  var pi: i32 = 0;
+  let succ: ssa.SBlock = f.graph.blocks[si];
+  let pi: i32 = 0;
   while (succ.preds[pi] != b.id) {
     pi = pi + 1;
   }
-  var out: Supply[] = [];
-  var i: i32 = 0;
+  let out: Supply[] = [];
+  let i: i32 = 0;
   for ins in succ.insts {
     if (ins.kind_tag == 8 && owned[ins.result]) {
       out = out.append(Supply { value: ins.args[pi], slot: i, mode: 0 });
@@ -942,9 +955,9 @@ function edge_supplies(f: ssasem.Func, b: ssa.SBlock, si: i32, owned: boolean[])
 }
 
 function definitions(f: ssasem.Func): ssa.SInst[] {
-  var none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
-  var out: ssa.SInst[] = [];
-  var i: i32 = 0;
+  let none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let out: ssa.SInst[] = [];
+  let i: i32 = 0;
   while (i < f.graph.nvals) {
     out = out.append(none);
     i = i + 1;
@@ -962,12 +975,13 @@ function definitions(f: ssasem.Func): ssa.SInst[] {
 // Per slice result: whether its view box may live in the frame that made it.
 // Every use has to read the bytes and be done with the box within the one
 // instruction — a comparison or concatenation, a length, a byte, a further
-// window, or a borrowed argument to a callee that does not keep it (semsource's
-// lend retags only for those). A phi, a store, a return or anything else keeps
+// window, or a borrowed argument to a callee that does not keep it. A callee
+// whose result borrows the argument also keeps its descriptor, as recorded by
+// the typed result anchors. A phi, a store, a return or anything else keeps
 // the box past the instruction, and a phi is also the only way an earlier
 // iteration's box could still be read when the site runs again.
 function frame_views(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
-  var out: boolean[] = bits(f.graph.nvals);
+  let out: boolean[] = bits(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.slice()) {
@@ -977,17 +991,20 @@ function frame_views(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
   }
   for b in f.graph.blocks {
     for ins in b.insts {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < ins.args.len()) {
-        var view: i32 = lent_view(defs, ins.args[i]);
-        if (view >= 0 && !reads_view(ins, i, view != ins.args[i])) {
-          out = out.with(view, false);
+        let view: i32 = lent_view(defs, ins.args[i]);
+        if (view >= 0) {
+          let handed: boolean = ins.kind_tag == ssasem.call() && util.index_of_i32(ssasem.anchor_params(f.anchors, ins.str), i) >= 0;
+          if (handed || !reads_view(ins, i, view != ins.args[i])) {
+            out = out.with(view, false);
+          }
         }
         i = i + 1;
       }
     }
     if (b.term.kind_tag == 1) {
-      var ret: i32 = lent_view(defs, b.term.value);
+      let ret: i32 = lent_view(defs, b.term.value);
       if (ret >= 0) {
         out = out.with(ret, false);
       }
@@ -998,7 +1015,7 @@ function frame_views(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
 
 // Per value, the byte length of the string literal it is, or -1.
 function text_lens(f: ssasem.Func): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   while (out.len() < f.graph.nvals) {
     out = out.append(0 - 1);
   }
@@ -1018,25 +1035,25 @@ function text_lens(f: ssasem.Func): i32[] {
 // element type. A static box's rc is immortal, so its releases and uniqueness
 // tests leave it alone.
 function constants(f: ssasem.Func, defs: ssa.SInst[]): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < f.graph.nvals) {
     out = out.append("");
     i = i + 1;
   }
   for b in f.graph.blocks {
     for ins in b.insts {
-      var fields: semrecords.Field[] = constructed_fields(f, ins);
+      let fields: semrecords.Field[] = constructed_fields(f, ins);
       if (fields.len() != ins.args.len()) {
         continue;
       }
       if (ins.result >= 0 && ssasem.finalizer_of(f, f.values[ins.result]) != "") {
         continue;
       }
-      var words: string = "|";
-      var j: i32 = 0;
+      let words: string = "|";
+      let j: i32 = 0;
       while (j < fields.len() && words != "") {
-        var w: string = constant_word(defs, ins.args[j], fields[j].ty);
+        let w: string = constant_word(defs, ins.args[j], fields[j].ty);
         if (w == "") {
           words = "";
         } else {
@@ -1063,31 +1080,31 @@ function constants(f: ssasem.Func, defs: ssa.SInst[]): string[] {
 // through copies and phis. The floor writes that storage without a count, so a
 // literal reaching it is built fresh rather than shared.
 function raw_reached(f: ssasem.Func, defs: ssa.SInst[]): i32[] {
-  var work: i32[] = [];
+  let work: i32[] = [];
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.args.len() == 0) {
         continue;
       }
-      var raw: boolean = ins.kind_tag == ssasem.cast() && is_array(f.values[ins.args[0]]);
+      let raw: boolean = ins.kind_tag == ssasem.cast() && is_array(f.values[ins.args[0]]);
       raw = raw || ins.kind_tag == ssasem.call() && (ins.str == "__arr_set_len" || ins.str == "__raw_arr_ptr");
       if (raw) {
         work = work.append(ins.args[0]);
       }
     }
   }
-  var seen: boolean[] = bits(f.graph.nvals);
-  var out: i32[] = [];
-  var at: i32 = 0;
+  let seen: boolean[] = bits(f.graph.nvals);
+  let out: i32[] = [];
+  let at: i32 = 0;
   while (at < work.len()) {
-    var v: i32 = work[at];
+    let v: i32 = work[at];
     at = at + 1;
     if (v < 0 || v >= seen.len() || seen[v]) {
       continue;
     }
     seen = seen.with(v, true);
     out = out.append(v);
-    var d: ssa.SInst = defs[v];
+    let d: ssa.SInst = defs[v];
     if (d.kind_tag == 7 || d.kind_tag == 8) {
       for a in d.args {
         work = work.append(a);
@@ -1102,11 +1119,11 @@ function raw_reached(f: ssasem.Func, defs: ssa.SInst[]): i32[] {
 // A closure's environment is a record only to the lowering, so it is not one
 // here.
 function constructed_fields(f: ssasem.Func, ins: ssa.SInst): semrecords.Field[] {
-  var none: semrecords.Field[] = [semrecords.Field { name: "", ty: typeinfo.unchecked() }];
-  var t: typeinfo.Type = f.values[ins.result];
+  let none: semrecords.Field[] = [semrecords.Field { name: "", ty: typeinfo.unchecked() }];
+  let t: typeinfo.Type = f.values[ins.result];
   if (ins.kind_tag == ssasem.array_new()) {
     if let typeinfo.TypeArray(a) = t {
-      var elems: semrecords.Field[] = [];
+      let elems: semrecords.Field[] = [];
       while (elems.len() < ins.args.len()) {
         elems = elems.append(semrecords.Field { name: "", ty: a.elem });
       }
@@ -1114,13 +1131,13 @@ function constructed_fields(f: ssasem.Func, ins: ssa.SInst): semrecords.Field[] 
     }
   }
   if (ins.kind_tag == ssasem.record_new() && !semtypes.is_env(t)) {
-    var at: i32 = semrecords.find(f.records, t);
+    let at: i32 = semrecords.find(f.records, t);
     if (at >= 0) {
       return f.records.list[at].fields;
     }
   }
   if (ins.kind_tag == ssasem.variant_new()) {
-    var e: i32 = semrecords.find_enum(f.enums, t);
+    let e: i32 = semrecords.find_enum(f.enums, t);
     if (e >= 0 && f.enums[e].layout == semrecords.layout_variant()) {
       for v in f.enums[e].variants {
         if (v.name == ins.str) {
@@ -1140,8 +1157,8 @@ function constant_word(defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
   if (!narrow_scalar(t)) {
     return "";
   }
-  var d: ssa.SInst = defs[v];
-  var hops: i32 = 0;
+  let d: ssa.SInst = defs[v];
+  let hops: i32 = 0;
   while (d.kind_tag == 7 && d.args.len() == 1 && d.args[0] >= 0 && hops < 16) {
     d = defs[d.args[0]];
     hops = hops + 1;
@@ -1162,14 +1179,14 @@ function constant_word(defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
 // subtraction or, once the front end has folded it, as a negation; negating a
 // non-negative i32 cannot wrap.
 function negated_word(defs: ssa.SInst[], d: ssa.SInst): string {
-  var k: ssa.SInst = defs[d.args[d.args.len() - 1]];
+  let k: ssa.SInst = defs[d.args[d.args.len() - 1]];
   if (k.kind_tag != 1 || k.imm < 0) {
     return "";
   }
   if (d.kind_tag == 10) {
     return util.i32_to_string(0 - k.imm);
   }
-  var zero: ssa.SInst = defs[d.args[0]];
+  let zero: ssa.SInst = defs[d.args[0]];
   if (d.kind_tag != 9 || zero.kind_tag != 1 || zero.imm != 0) {
     return "";
   }
@@ -1182,7 +1199,7 @@ function small_decimal(text: string): string {
   if (text.len() == 0 || text.len() > 9) {
     return "";
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < text.len()) {
     if (text[i] < b'0' || text[i] > b'9') {
       return "";
@@ -1205,7 +1222,7 @@ function lent_view(defs: ssa.SInst[], v: i32): i32 {
   if (v < 0 || v >= defs.len()) {
     return 0 - 1;
   }
-  var d: ssa.SInst = defs[v];
+  let d: ssa.SInst = defs[v];
   if (d.kind_tag == ssasem.slice()) {
     return v;
   }
@@ -1216,7 +1233,7 @@ function lent_view(defs: ssa.SInst[], v: i32): i32 {
 }
 
 function reads_view(ins: ssa.SInst, at: i32, lent: boolean): boolean {
-  var k: i32 = ins.kind_tag;
+  let k: i32 = ins.kind_tag;
   if (k == 9 || k == ssasem.length() || k == ssasem.str_index() || k == ssasem.str_bytes()) {
     return true;
   }
@@ -1240,7 +1257,7 @@ function is_record(t: typeinfo.Type): boolean {
 function projection(kind: i32): boolean {
   return kind == 7 || kind == ssasem.array_get() || kind == ssasem.tuple_get() || kind == ssasem.record_get()
     || kind == ssasem.variant_get() || kind == ssasem.variant_up() || kind == ssasem.variant_as()
-    || kind == ssasem.slice() || kind == ssasem.str_as() || kind == ssasem.dyn_up() || kind == ssasem.dyn_as();
+    || kind == ssasem.slice() || kind == ssasem.arr_slice() || kind == ssasem.str_as() || kind == ssasem.array_lend() || kind == ssasem.str_byte_view() || kind == ssasem.dyn_up() || kind == ssasem.dyn_as();
 }
 
 // Whether reading `arg` reads `w`: the value itself, or one anchored to it.
@@ -1262,11 +1279,11 @@ function reads(a: ssasem.Analysis, arg: i32, w: i32): boolean {
 // Whether `w` is read after position `pos` of block `bi`: by a later
 // instruction, by the terminator, or on the way out of the block.
 function used_after(f: ssasem.Func, a: ssasem.Analysis, bi: i32, pos: i32, w: i32): boolean {
-  var b: ssa.SBlock = f.graph.blocks[bi];
+  let b: ssa.SBlock = f.graph.blocks[bi];
   if (ssalive.live_out_has(a.flow, bi, w)) {
     return true;
   }
-  var i: i32 = pos + 1;
+  let i: i32 = pos + 1;
   while (i < b.insts.len()) {
     for arg in b.insts[i].args {
       if (reads(a, arg, w)) {
@@ -1292,7 +1309,7 @@ function first_hop(a: ssasem.Analysis, w: i32, root: i32): i32 {
   if (a.parents[w].len() > 1) {
     return 0 - 1;
   }
-  var prev: i32 = w;
+  let prev: i32 = w;
   for dep in a.dependencies[w] {
     if (dep == root) {
       return prev;
@@ -1326,12 +1343,12 @@ function other_field_get(ins: ssa.SInst, root: i32, field: i32): boolean {
 // caller-side bracket (`grow_rows`) for the frame that lent the record and
 // still reads it.
 function projection_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32, v: i32): i32 {
-  var none: i32 = 0 - 1;
-  var get: ssa.SInst = defs[v];
+  let none: i32 = 0 - 1;
+  let get: ssa.SInst = defs[v];
   if (get.kind_tag != ssasem.record_get()) {
     return none;
   }
-  var root: i32 = get.args[0];
+  let root: i32 = get.args[0];
   if (!is_record(f.values[root]) || semtypes.is_env(f.values[root])) {
     return none;
   }
@@ -1341,13 +1358,13 @@ function projection_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], d
   if (projection(defs[root].kind_tag)) {
     return none;
   }
-  var b: ssa.SBlock = f.graph.blocks[bi];
+  let b: ssa.SBlock = f.graph.blocks[bi];
   if (ssalive.live_out_has(a.flow, bi, root)) {
     return none;
   }
-  var i: i32 = pos + 1;
+  let i: i32 = pos + 1;
   while (i < b.insts.len()) {
-    var later: ssa.SInst = b.insts[i];
+    let later: ssa.SInst = b.insts[i];
     if (ssa.reads_value(later, root) && !other_field_get(later, root, get.imm)) {
       return none;
     }
@@ -1356,10 +1373,10 @@ function projection_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], d
   if (b.term.kind_tag == 1 && b.term.value == root) {
     return none;
   }
-  var w: i32 = 0;
+  let w: i32 = 0;
   while (w < f.graph.nvals) {
     if (w != root && reads(a, w, root) && used_after(f, a, bi, pos, w)) {
-      var hop: i32 = first_hop(a, w, root);
+      let hop: i32 = first_hop(a, w, root);
       if (hop < 0 || !other_field_get(defs[hop], root, get.imm)) {
         return none;
       }
@@ -1407,8 +1424,7 @@ function takeable_root(kind: i32): boolean {
 
 // The element index a tuple read at (`bi`, `pos`) TAKES rather than borrows,
 // or -1. A projection borrows by default, so a consuming use of what it read
-// owes a retain — and a map box carries no count to retain, which is what made
-// a map read back out of a tuple impossible to use again (#9555).
+// owes a retain, which a take saves (#9555).
 //
 // It takes when the source is a unit of this frame's own, dies at this read,
 // and is reached after it only through reads of its OTHER elements. The
@@ -1421,8 +1437,8 @@ function takeable_root(kind: i32): boolean {
 // tuple has no functional-update form, so a later read through another element
 // is the only way the source may still be mentioned.
 function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
-  var none: i32 = 0 - 1;
-  var ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
+  let none: i32 = 0 - 1;
+  let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
   if (ins.kind_tag != ssasem.tuple_get()) {
     return none;
   }
@@ -1434,7 +1450,7 @@ function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
   if (ins.result < 0 || ins.result >= f.graph.nvals) {
     return none;
   }
-  var root: i32 = ins.args[0];
+  let root: i32 = ins.args[0];
   if (root < 0 || root >= f.graph.nvals || root >= owned.len() || root >= defs.len()) {
     return none;
   }
@@ -1444,13 +1460,13 @@ function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
   if (!owned[root] || !takeable_root(defs[root].kind_tag)) {
     return none;
   }
-  var b: ssa.SBlock = f.graph.blocks[bi];
+  let b: ssa.SBlock = f.graph.blocks[bi];
   if (ssalive.live_out_has(a.flow, bi, root)) {
     return none;
   }
-  var i: i32 = pos + 1;
+  let i: i32 = pos + 1;
   while (i < b.insts.len()) {
-    var later: ssa.SInst = b.insts[i];
+    let later: ssa.SInst = b.insts[i];
     if (ssa.reads_value(later, root) && !other_tuple_get(later, root, ins.imm)) {
       return none;
     }
@@ -1459,10 +1475,10 @@ function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
   if (ssa.term_reads_value(b.term, root)) {
     return none;
   }
-  var w: i32 = 0;
+  let w: i32 = 0;
   while (w < f.graph.nvals) {
     if (w != root && w != ins.result && reads(a, w, root) && used_after(f, a, bi, pos, w)) {
-      var hop: i32 = first_hop(a, w, root);
+      let hop: i32 = first_hop(a, w, root);
       if (hop != ins.result && (hop < 0 || !other_tuple_get(defs[hop], root, ins.imm))) {
         return none;
       }
@@ -1477,17 +1493,17 @@ function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
 // BACKWARDS: a taken element is a unit of the frame's own, and the consuming
 // use that moves it is reached before the read that produced it.
 function tuple_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): i32[] {
-  var out: i32[] = [];
-  var vi: i32 = 0;
+  let out: i32[] = [];
+  let vi: i32 = 0;
   while (vi < f.graph.nvals) {
     out = out.append(0 - 1);
     vi = vi + 1;
   }
-  var bi: i32 = 0;
+  let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
-    var pos: i32 = 0;
+    let pos: i32 = 0;
     while (pos < f.graph.blocks[bi].insts.len()) {
-      var field: i32 = tuple_take_field(f, a, owned, defs, bi, pos);
+      let field: i32 = tuple_take_field(f, a, owned, defs, bi, pos);
       if (field >= 0) {
         out = out.with(f.graph.blocks[bi].insts[pos].result, field);
       }
@@ -1505,8 +1521,9 @@ function tuple_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs:
 // out of — the source is released in the same step, and leaving the dependency
 // would read every later use of the element as a borrow outliving its
 // container. A payload take says the same about an enum box's payload.
-// `reflow` marks a take whose box is released alone (`shell_root`): that box
-// has to die at the read, which the flow derived before the take cannot say.
+// `reflow` marks a take whose box is released alone (`shell_root`), or whose
+// box was live out of the read's block only as the taken value's anchor: that
+// box has to die at the read, which the flow derived before the take cannot say.
 struct Units { owned: boolean[], parents: i32[][], deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[], reflow: boolean }
 
 // The payload takes are derived FIRST and folded into ownership before the
@@ -1517,20 +1534,21 @@ struct Units { owned: boolean[], parents: i32[][], deps: i32[][], takes: i32[], 
 // rather than taking its own unit — which is the whole of what a hold exists
 // to prevent (#9891).
 function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa.SInst[]): Units {
-  var payloads: boolean[] = payload_takes(f, a, base, defs);
-  var owned: boolean[] = base;
-  var i: i32 = 0;
+  let pt: PayloadTakes = payload_takes(f, a, base, defs);
+  let payloads: boolean[] = pt.taken;
+  let owned: boolean[] = base;
+  let i: i32 = 0;
   while (i < payloads.len()) {
     if (payloads[i]) {
       owned = owned.with(i, true);
     }
     i = i + 1;
   }
-  var takes: i32[] = tuple_takes(f, a, owned, defs);
-  var held: boolean[] = held_elements(f, a, owned, defs);
-  var parents: i32[][] = a.parents;
-  var deps: i32[][] = a.dependencies;
-  var reflow: boolean = false;
+  let takes: i32[] = tuple_takes(f, a, owned, defs);
+  let held: boolean[] = held_elements(f, a, owned, defs);
+  let parents: i32[][] = a.parents;
+  let deps: i32[][] = a.dependencies;
+  let reflow: boolean = pt.crossing;
   i = 0;
   while (i < takes.len()) {
     // A taken record field reflows, as a taken payload does: the values
@@ -1544,8 +1562,8 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
       owned = owned.with(i, true);
       // A view's bytes are its source's, not the box's it came out of, so
       // a taken view stays anchored to what the box was.
-      var up: i32[] = [];
-      var chain: i32[] = [];
+      let up: i32[] = [];
+      let chain: i32[] = [];
       if ((takes[i] >= 0 || payloads[i]) && ssasem.is_view(f.values[i])) {
         up = a.parents[defs[i].args[0]];
         chain = a.dependencies[defs[i].args[0]];
@@ -1565,8 +1583,8 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
 // behind it only through that unit's new chain, so every chain stops at each
 // such value and continues with its chain.
 function through_takes(parents: i32[][], deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[]): i32[][] {
-  var out: i32[][] = deps;
-  var w: i32 = 0;
+  let out: i32[][] = deps;
+  let w: i32 = 0;
   while (w < deps.len()) {
     out = out.with(w, reach_through(parents, deps, takes, held, payloads, w, []));
     w = w + 1;
@@ -1599,7 +1617,7 @@ function reach_through(parents: i32[][], deps: i32[][], takes: i32[], held: bool
 // and the array a held read came from dies where its own uses end; a take's
 // source dies at the read, so a take alone leaves the flow as it was.
 function units_analysis(f: ssasem.Func, a: ssasem.Analysis, units: Units): ssasem.Analysis {
-  var any: boolean = units.reflow;
+  let any: boolean = units.reflow;
   for h in units.held {
     if (h) {
       any = true;
@@ -1608,7 +1626,7 @@ function units_analysis(f: ssasem.Func, a: ssasem.Analysis, units: Units): ssase
   if (!any) {
     return ssasem.Analysis { ...a, parents: units.parents, dependencies: units.deps };
   }
-  var flow: ssalive.Flow = ssadeps.analyze(f.graph, units.deps);
+  let flow: ssalive.Flow = ssadeps.analyze(f.graph, units.deps);
   return ssasem.Analysis { ...a, ok: flow.ok, why: flow.why, parents: units.parents, dependencies: units.deps, flow: flow };
 }
 
@@ -1618,7 +1636,7 @@ function retainable_element(f: ssasem.Func, defs: ssa.SInst[], w: i32): boolean 
   if (defs[w].kind_tag != ssasem.array_get()) {
     return false;
   }
-  var t: typeinfo.Type = f.values[w];
+  let t: typeinfo.Type = f.values[w];
   return ssasem.reference(t) && !ssasem.is_view(t);
 }
 
@@ -1628,17 +1646,17 @@ function retainable_element(f: ssasem.Func, defs: ssa.SInst[], w: i32): boolean 
 struct Anchored { start: i32[], at: i32[] }
 
 function anchored_to(a: ssasem.Analysis, nvals: i32): Anchored {
-  var count: i32[] = [];
+  let count: i32[] = [];
   while (count.len() <= nvals) {
     count = count.append(0);
   }
   // The chains run to the values the analysis saw; a refused analysis has
   // none.
-  var known: i32 = a.dependencies.len();
+  let known: i32 = a.dependencies.len();
   if (known > nvals) {
     known = nvals;
   }
-  var w: i32 = 0;
+  let w: i32 = 0;
   while (w < known) {
     for dep in a.dependencies[w] {
       if (dep >= 0 && dep < nvals) {
@@ -1647,9 +1665,9 @@ function anchored_to(a: ssasem.Analysis, nvals: i32): Anchored {
     }
     w = w + 1;
   }
-  var start: i32[] = [];
-  var total: i32 = 0;
-  var v: i32 = 0;
+  let start: i32[] = [];
+  let total: i32 = 0;
+  let v: i32 = 0;
   while (v <= nvals) {
     start = start.append(total);
     if (v < nvals) {
@@ -1657,11 +1675,11 @@ function anchored_to(a: ssasem.Analysis, nvals: i32): Anchored {
     }
     v = v + 1;
   }
-  var at: i32[] = [];
+  let at: i32[] = [];
   while (at.len() < total) {
     at = at.append(0);
   }
-  var fill: i32[] = start;
+  let fill: i32[] = start;
   w = 0;
   while (w < known) {
     for dep in a.dependencies[w] {
@@ -1679,12 +1697,12 @@ function anchored_to(a: ssasem.Analysis, nvals: i32): Anchored {
 // supplied: past the operation at (`bi`, `pos`), or into block `si` when `s`
 // goes out along an edge.
 function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchored: Anchored, held: boolean[], s: i32, bi: i32, pos: i32, si: i32): boolean[] {
-  var out: boolean[] = held;
-  var k: i32 = anchored.start[s];
+  let out: boolean[] = held;
+  let k: i32 = anchored.start[s];
   while (k < anchored.start[s + 1]) {
-    var w: i32 = anchored.at[k];
+    let w: i32 = anchored.at[k];
     if (w != s && !out[w] && retainable_element(f, defs, w)) {
-      var live: boolean = false;
+      let live: boolean = false;
       if (si >= 0) {
         live = ssalive.live_in_has(a.flow, si, w);
       } else {
@@ -1706,16 +1724,16 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchor
 // whole buffer (#9849). A read that dies before any such use stays a borrow
 // and costs nothing.
 function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): boolean[] {
-  var out: boolean[] = bits(f.graph.nvals);
-  var anchored: Anchored = anchored_to(a, f.graph.nvals);
-  var bi: i32 = 0;
+  let out: boolean[] = bits(f.graph.nvals);
+  let anchored: Anchored = anchored_to(a, f.graph.nvals);
+  let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
-    var b: ssa.SBlock = f.graph.blocks[bi];
-    var pos: i32 = 0;
+    let b: ssa.SBlock = f.graph.blocks[bi];
+    let pos: i32 = 0;
     while (pos < b.insts.len()) {
-      var ins: ssa.SInst = b.insts[pos];
+      let ins: ssa.SInst = b.insts[pos];
       if (ins.kind_tag != 6 && ins.kind_tag != 8) {
-        var supplies: Supply[] = operation_supplies(f, ins);
+        let supplies: Supply[] = operation_supplies(f, ins);
         for got in supplies {
           if (owned[got.value]) {
             out = outliving(f, a, defs, anchored, out, got.value, bi, pos, 0 - 1);
@@ -1724,10 +1742,10 @@ function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
       }
       pos = pos + 1;
     }
-    var targets: i32[] = successors(b);
+    let targets: i32[] = successors(b);
     for target in targets {
-      var si: i32 = ssalive.position(a.flow, target);
-      var along: Supply[] = edge_supplies(f, b, si, owned);
+      let si: i32 = ssalive.position(a.flow, target);
+      let along: Supply[] = edge_supplies(f, b, si, owned);
       for got in along {
         if (owned[got.value]) {
           out = outliving(f, a, defs, anchored, out, got.value, bi, 0, si);
@@ -1748,9 +1766,9 @@ function other_payload_get(ins: ssa.SInst, root: i32, slot: i32): boolean {
 // The box whose slot the read at (`bi`, `pos`) may MOVE out of rather than
 // borrow, or -1: an enum's payload named by a variant read, or a record's
 // array or record field. Same shape as `projection_root` above, over the one
-// slot the read names: the box is a unit of this frame's own, it does not
-// leave the block, and after the read it is reached only through reads of its
-// OTHER slots.
+// slot the read names: the box is a unit of this frame's own, no later block
+// names it, and after the read it is reached only through reads of its OTHER
+// slots (`needed_past`).
 //
 // A tuple take next door demands more of its source — `takeable_root`, a box
 // this frame ALLOCATED — because it nulls without asking. Here the physical
@@ -1763,9 +1781,9 @@ function other_payload_get(ins: ssa.SInst, root: i32, slot: i32): boolean {
 // word the physical lowering reads with `op_opt_payload`, which has no store
 // form to null the slot with.
 function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
-  var none: i32 = 0 - 1;
-  var ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
-  var field: boolean = ins.kind_tag == ssasem.record_get();
+  let none: i32 = 0 - 1;
+  let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
+  let field: boolean = ins.kind_tag == ssasem.record_get();
   if (ins.kind_tag != ssasem.variant_get() && !field || ins.args.len() != 1) {
     return none;
   }
@@ -1774,7 +1792,7 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
   if (ins.result < 0 || ins.result >= f.graph.nvals) {
     return none;
   }
-  var root: i32 = ins.args[0];
+  let root: i32 = ins.args[0];
   if (root < 0 || root >= f.graph.nvals || root >= owned.len() || root >= defs.len()) {
     return none;
   }
@@ -1784,7 +1802,7 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
   if (!owned[root] || projection(defs[root].kind_tag) && !taken_read(defs[root].kind_tag)) {
     return none;
   }
-  if (field && needed_past(f, a, defs, bi, ins, root) || !field && ssalive.live_out_has(a.flow, bi, root)) {
+  if (needed_past(f, a, defs, bi, ins, root)) {
     return none;
   }
   if (read_later_in_block(f, a, defs, bi, pos, root)) {
@@ -1797,7 +1815,7 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
 // buffer or record field of a record, or a reference payload of a union.
 // A view, or the builtin Option layout, needs a box nobody else sees.
 function slot_takeable(f: ssasem.Func, defs: ssa.SInst[], got: typeinfo.Type, root: i32, field: boolean): boolean {
-  var box: typeinfo.Type = f.values[root];
+  let box: typeinfo.Type = f.values[root];
   if (field) {
     return field_takeable(got) && is_record(box) && !semtypes.is_env(box);
   }
@@ -1810,9 +1828,9 @@ function slot_takeable(f: ssasem.Func, defs: ssa.SInst[], got: typeinfo.Type, ro
 // Whether the rest of block bi, after the read at pos, reads `root` other than
 // through another of its slots.
 function read_later_in_block(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, pos: i32, root: i32): boolean {
-  var b: ssa.SBlock = f.graph.blocks[bi];
-  var ins: ssa.SInst = b.insts[pos];
-  var i: i32 = pos + 1;
+  let b: ssa.SBlock = f.graph.blocks[bi];
+  let ins: ssa.SInst = b.insts[pos];
+  let i: i32 = pos + 1;
   while (i < b.insts.len()) {
     if (ssa.reads_value(b.insts[i], root) && !other_slot_get(b.insts[i], ins)) {
       return true;
@@ -1831,16 +1849,14 @@ function read_later_in_block(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst
 // reads through, rather than every value of the function asked whether the
 // block reads it; what leaves the block is read off the live-out set.
 function anchored_after(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, pos: i32, root: i32): boolean {
-  var b: ssa.SBlock = f.graph.blocks[bi];
-  var ins: ssa.SInst = b.insts[pos];
-  var w: i32 = 0;
-  while (w < f.graph.nvals) {
-    if (ssalive.live_out_has(a.flow, bi, w) && reaches_root(a, defs, ins, root, w)) {
+  let b: ssa.SBlock = f.graph.blocks[bi];
+  let ins: ssa.SInst = b.insts[pos];
+  for w in ssalive.live_out_ids(a.flow, bi) {
+    if (reaches_root(a, defs, ins, root, w)) {
       return true;
     }
-    w = w + 1;
   }
-  var i: i32 = pos + 1;
+  let i: i32 = pos + 1;
   while (i < b.insts.len()) {
     for arg in b.insts[i].args {
       if (read_reaches_root(a, defs, ins, root, arg)) {
@@ -1878,7 +1894,7 @@ function reaches_root(a: ssasem.Analysis, defs: ssa.SInst[], ins: ssa.SInst, roo
   if (w == root || w == ins.result || !reads(a, w, root)) {
     return false;
   }
-  var hop: i32 = first_hop(a, w, root);
+  let hop: i32 = first_hop(a, w, root);
   return hop != ins.result && (hop < 0 || !other_slot_get(defs[hop], ins));
 }
 
@@ -1894,27 +1910,53 @@ function needed_past(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: 
   return named_after(f, a.flow, bi, root) || reached_past_take(f, a, defs, bi, take, root);
 }
 
-// A block after bi reads v.
+// A block after bi reads v. The walk stops at the block defining v — a loop's
+// header, for a phi — since past that definition v is a new value, and only a
+// phi operand there can still read the old one.
 function named_after(f: ssasem.Func, fl: ssalive.Flow, bi: i32, v: i32): boolean {
-  var seen: boolean[] = bits(f.graph.blocks.len());
-  var work: i32[] = [];
+  let seen: boolean[] = bits(f.graph.blocks.len());
+  let work: i32[] = [];
   for id in successors(f.graph.blocks[bi]) {
     work = work.append(ssalive.position(fl, id));
   }
-  var next: i32 = 0;
+  let next: i32 = 0;
   while (next < work.len()) {
-    var k: i32 = work[next];
+    let k: i32 = work[next];
     next = next + 1;
     if (k < 0 || seen[k]) {
       continue;
     }
     seen = seen.with(k, true);
-    var blk: ssa.SBlock = f.graph.blocks[k];
+    let blk: ssa.SBlock = f.graph.blocks[k];
+    if (block_defines(blk, v)) {
+      if (phi_reads(blk, v)) {
+        return true;
+      }
+      continue;
+    }
     if (block_reads(blk, v)) {
       return true;
     }
     for id in successors(blk) {
       work = work.append(ssalive.position(fl, id));
+    }
+  }
+  return false;
+}
+
+function block_defines(blk: ssa.SBlock, v: i32): boolean {
+  for ins in blk.insts {
+    if (ins.result == v) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function phi_reads(blk: ssa.SBlock, v: i32): boolean {
+  for ins in blk.insts {
+    if (ins.kind_tag == 8 && ssa.reads_value(ins, v)) {
+      return true;
     }
   }
   return false;
@@ -1932,11 +1974,11 @@ function block_reads(blk: ssa.SBlock, v: i32): boolean {
 // A value live out of bi reaches root other than through `take` or a read of
 // another of root's slots.
 function reached_past_take(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, take: ssa.SInst, root: i32): boolean {
-  var out: boolean[] = live_out_row(a.flow, bi);
-  var w: i32 = 0;
+  let out: boolean[] = live_out_row(a.flow, bi);
+  let w: i32 = 0;
   while (w < f.graph.nvals) {
     if (out[w] && w != root && reads(a, w, root)) {
-      var hop: i32 = first_hop(a, w, root);
+      let hop: i32 = first_hop(a, w, root);
       if (hop != take.result && (hop < 0 || !other_slot_get(defs[hop], take))) {
         return true;
       }
@@ -1983,13 +2025,13 @@ function sole_box(f: ssasem.Func, defs: ssa.SInst[], v: i32, seen: boolean[]): b
   if (seen[v]) {
     return true;
   }
-  var d: ssa.SInst = defs[v];
+  let d: ssa.SInst = defs[v];
   if (d.kind_tag != ssasem.variant_new() && d.kind_tag != 8) {
     return false;
   }
   for b in f.graph.blocks {
     for ins in b.insts {
-      var reads: boolean = false;
+      let reads: boolean = false;
       for a in ins.args {
         if (a == v) {
           reads = true;
@@ -2004,7 +2046,7 @@ function sole_box(f: ssasem.Func, defs: ssa.SInst[], v: i32, seen: boolean[]): b
     }
   }
   if (d.kind_tag == 8) {
-    var next: boolean[] = seen.with(v, true);
+    let next: boolean[] = seen.with(v, true);
     for a in d.args {
       if (!sole_box(f, defs, a, next)) {
         return false;
@@ -2036,7 +2078,7 @@ function is_union(t: typeinfo.Type): boolean {
 // True for the builtin Option/Result layout, and for a union whose schema this
 // function does not carry — neither is a box a take may null a slot in.
 function option_layout(f: ssasem.Func, t: typeinfo.Type): boolean {
-  var at: i32 = semrecords.find_enum(f.enums, t);
+  let at: i32 = semrecords.find_enum(f.enums, t);
   if (at < 0) {
     return true;
   }
@@ -2049,36 +2091,48 @@ function option_layout(f: ssasem.Func, t: typeinfo.Type): boolean {
 // payload is reached before the read that produced it.
 //
 // To a fixpoint: a take makes its read a unit of the frame's own, which a read
-// of one of ITS slots may take from in turn — `var ws = s.words; var xs =
+// of one of ITS slots may take from in turn — `let ws = s.words; let xs =
 // ws.xs;`.
-function payload_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): boolean[] {
-  var out: boolean[] = bits(f.graph.nvals);
-  var own: boolean[] = owned;
-  var grown: boolean = true;
+//
+// `crossing` is set when a take's box is live out of the read's block in the
+// flow derived before the take — the taken value leaves the block, and the box
+// stayed live only as its anchor — so the flow has to be derived again for the
+// box to die at the read.
+struct PayloadTakes { taken: boolean[], crossing: boolean }
+
+function payload_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): PayloadTakes {
+  let out: boolean[] = bits(f.graph.nvals);
+  let crossing: boolean = false;
+  let own: boolean[] = owned;
+  let grown: boolean = true;
   while (grown) {
     grown = false;
-    var bi: i32 = 0;
+    let bi: i32 = 0;
     while (bi < f.graph.blocks.len()) {
-      var pos: i32 = 0;
+      let pos: i32 = 0;
       while (pos < f.graph.blocks[bi].insts.len()) {
-        var v: i32 = f.graph.blocks[bi].insts[pos].result;
-        if (v >= 0 && v < out.len() && !out[v] && payload_root(f, a, own, defs, bi, pos) >= 0) {
-          out = out.with(v, true);
-          own = own.with(v, true);
-          grown = true;
+        let v: i32 = f.graph.blocks[bi].insts[pos].result;
+        if (v >= 0 && v < out.len() && !out[v]) {
+          let root: i32 = payload_root(f, a, own, defs, bi, pos);
+          if (root >= 0) {
+            out = out.with(v, true);
+            own = own.with(v, true);
+            crossing = crossing || ssalive.live_out_has(a.flow, bi, root);
+            grown = true;
+          }
         }
         pos = pos + 1;
       }
       bi = bi + 1;
     }
   }
-  return out;
+  return PayloadTakes { taken: out, crossing: crossing };
 }
 
 // The record whose field buffer the append or with at (`bi`, `pos`) may grow
 // or write in place, or -1: `projection_root` of its receiver.
 function field_grow_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
-  var ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
+  let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
   if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) {
     return 0 - 1;
   }
@@ -2093,7 +2147,7 @@ function is_array(t: typeinfo.Type): boolean {
 }
 
 pub function occurrences(xs: i32[], v: i32): i32 {
-  var n: i32 = 0;
+  let n: i32 = 0;
   for x in xs {
     if (x == v) {
       n = n + 1;
@@ -2110,16 +2164,16 @@ pub function occurrences(xs: i32[], v: i32): i32 {
 // threads, so the callee's first append copied it. A field read that took its
 // unit (payload_root) already owns it, and its record may be gone.
 function steals(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32, s: Step): Step {
-  var ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
+  let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
   if (ins.kind_tag != ssasem.call()) {
     return s;
   }
-  var out: Supply[] = s.supplies;
-  var i: i32 = 0;
+  let out: Supply[] = s.supplies;
+  let i: i32 = 0;
   while (i < out.len()) {
-    var v: i32 = out[i].value;
+    let v: i32 = out[i].value;
     if (out[i].mode == retain_unit() && defs[v].kind_tag == ssasem.record_get() && !owned[v] && occurrences(ins.args, v) == 1) {
-      var root: i32 = projection_root(f, a, owned, defs, bi, pos, v);
+      let root: i32 = projection_root(f, a, owned, defs, bi, pos, v);
       if (root >= 0 && owned[root]) {
         out = out.with(i, Supply { ...out[i], mode: steal_unit() });
       }
@@ -2139,16 +2193,16 @@ function steals(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.
 // — retained on identity, fresh on a realloc — and the record or the caller
 // releases the old one.
 function hands(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32, s: Step): Step {
-  var ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
+  let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
   if (ins.kind_tag != ssasem.call()) {
     return s;
   }
-  var roots: i32[] = [];
-  var fields: i32[] = [];
+  let roots: i32[] = [];
+  let fields: i32[] = [];
   for v in ins.args {
-    var root: i32 = 0 - 1;
-    var field: i32 = 0 - 1;
-    var lent_param: boolean = defs[v].kind_tag == 6 && !owned[v] && occurrences(ins.args, v) == 1 && !used_after(f, a, bi, pos, v);
+    let root: i32 = 0 - 1;
+    let field: i32 = 0 - 1;
+    let lent_param: boolean = defs[v].kind_tag == 6 && !owned[v] && occurrences(ins.args, v) == 1 && !used_after(f, a, bi, pos, v);
     if (is_array(f.values[v]) && !ssasem.is_text(f.values[v]) && occurrences(ins.args, v) == 1) {
       if (lent_param) {
         root = v;
@@ -2171,8 +2225,8 @@ function hands(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.S
 
 // Last occurrence may move one dead unit; every other occurrence retains.
 function choose(s: Step, supplies: Supply[], dead: boolean[], owned: boolean[]): Step {
-  var ids: i32[] = [];
-  var i: i32 = 0;
+  let ids: i32[] = [];
+  let i: i32 = 0;
   while (i < dead.len()) {
     if (dead[i]) {
       ids = ids.append(i);
@@ -2187,12 +2241,12 @@ function choose(s: Step, supplies: Supply[], dead: boolean[], owned: boolean[]):
 // dead owned values drop, in ascending id order. A `pinned` value retains and
 // drops after the operation instead of moving.
 function choose_ids(s: Step, supplies: Supply[], dead: i32[], owned: boolean[], pinned: i32[]): Step {
-  var moved: i32[] = [];
-  var selected: Supply[] = supplies;
-  var i: i32 = selected.len() - 1;
+  let moved: i32[] = [];
+  let selected: Supply[] = supplies;
+  let i: i32 = selected.len() - 1;
   while (i >= 0) {
-    var item: Supply = selected[i];
-    var mode: i32 = retain_unit();
+    let item: Supply = selected[i];
+    let mode: i32 = retain_unit();
     if (owned[item.value] && has_id(dead, item.value) && !has_id(moved, item.value) && !has_id(pinned, item.value)) {
       mode = move_unit();
       moved = moved.append(item.value);
@@ -2200,7 +2254,7 @@ function choose_ids(s: Step, supplies: Supply[], dead: i32[], owned: boolean[], 
     selected = selected.with(i, Supply { ...item, mode: mode });
     i = i - 1;
   }
-  var drops: i32[] = [];
+  let drops: i32[] = [];
   for v in dead {
     if (owned[v] && !has_id(moved, v)) {
       drops = insert_sorted(drops, v);
@@ -2220,7 +2274,7 @@ function has_id(xs: i32[], v: i32): boolean {
 
 function insert_sorted(own xs: i32[], v: i32): i32[] {
   xs = xs.append(v);
-  var i: i32 = xs.len() - 1;
+  let i: i32 = xs.len() - 1;
   while (i > 0 && xs[i - 1] > v) {
     xs = xs.with(i, xs[i - 1]);
     i = i - 1;
@@ -2237,52 +2291,52 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
   if (!semantic.ok) {
     return bad(semantic.why);
   }
-  var analysis: ssasem.Analysis = semantic;
-  var why: string = contract_error(f, modes);
+  let analysis: ssasem.Analysis = semantic;
+  let why: string = contract_error(f, modes);
   if (why != "") {
     return bad(why);
   }
-  var owned: boolean[] = owned_values(f, modes);
-  var reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
-  var defs: ssa.SInst[] = definitions(f);
-  var units: Units = units_of(f, owned, analysis, defs);
+  let defs: ssa.SInst[] = definitions(f);
+  let owned: boolean[] = owned_values(f, modes, defs);
+  let reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
+  let units: Units = units_of(f, owned, analysis, defs);
   owned = units.owned;
-  var takes: i32[] = units.takes;
+  let takes: i32[] = units.takes;
   analysis = units_analysis(f, analysis, units);
   if (!analysis.ok) {
     return bad(analysis.why);
   }
-  var grows: i32[] = [];
-  var grow_fields: i32[] = [];
+  let grows: i32[] = [];
+  let grow_fields: i32[] = [];
   // Per append or with result: whether its receiver is read after it, by
   // this block or on the way out, directly or through a dependent.
-  var kept: boolean[] = analysis.flow.none;
+  let kept: boolean[] = analysis.flow.none;
   // Per parameter: whether an edge carries it into a phi while it, or a
   // value depending on it, is still live in the target.
-  var entry_kept: boolean[] = analysis.flow.none;
-  var vi0: i32 = 0;
+  let entry_kept: boolean[] = analysis.flow.none;
+  let vi0: i32 = 0;
   while (vi0 < f.graph.nvals) {
     grows = grows.append(0 - 1);
     grow_fields = grow_fields.append(0 - 1);
     vi0 = vi0 + 1;
   }
-  var steps: Step[] = [];
-  var bi: i32 = 0;
+  let steps: Step[] = [];
+  let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
-    var b: ssa.SBlock = f.graph.blocks[bi];
+    let b: ssa.SBlock = f.graph.blocks[bi];
     if (reachable[bi]) {
-      var live: boolean[] = live_out_row(analysis.flow, bi);
+      let live: boolean[] = live_out_row(analysis.flow, bi);
       if (b.term.kind_tag == 1) {
         live = add_use(live, b.term.value, analysis.dependencies);
       }
       if (b.term.kind_tag == 3) {
         live = add_use(live, b.term.cond, analysis.dependencies);
       }
-      var pos: i32 = b.insts.len() - 1;
+      let pos: i32 = b.insts.len() - 1;
       while (pos >= 0) {
-        var ins: ssa.SInst = b.insts[pos];
+        let ins: ssa.SInst = b.insts[pos];
         if (ins.kind_tag != 6 && ins.kind_tag != 8) {
-          var dead: i32[] = [];
+          let dead: i32[] = [];
           if ((ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.with()) && live[ins.args[0]]) {
             kept = kept.with(ins.result, true);
           }
@@ -2305,7 +2359,7 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
             }
           }
           steps = steps.append(steals(f, analysis, owned, defs, bi, pos, hands(f, analysis, owned, defs, bi, pos, choose_ids(step(b.id, pos, 0 - 1), operation_supplies(f, ins), dead, owned, lent_owners(f, ins, analysis.dependencies)))));
-          var root: i32 = field_grow_root(f, analysis, owned, defs, bi, pos);
+          let root: i32 = field_grow_root(f, analysis, owned, defs, bi, pos);
           if (root >= 0) {
             grows = grows.with(ins.result, root);
             grow_fields = grow_fields.with(ins.result, defs[ins.args[0]].imm);
@@ -2313,7 +2367,7 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
         }
         pos = pos - 1;
       }
-      var entry_dead: boolean[] = analysis.flow.none;
+      let entry_dead: boolean[] = analysis.flow.none;
       for ins in b.insts {
         if ((ins.kind_tag == 6 || ins.kind_tag == 8) && owned[ins.result] && !live[ins.result]) {
           entry_dead = entry_dead.with(ins.result, true);
@@ -2321,32 +2375,32 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
       }
       steps = steps.append(choose(step(b.id, entry_point(), 0 - 1), [], entry_dead, owned));
       if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
-        var dead: boolean[] = analysis.flow.none;
+        let dead: boolean[] = analysis.flow.none;
         if (b.term.kind_tag == 1) {
           dead = add_use(dead, b.term.value, analysis.dependencies);
         }
         steps = steps.append(choose(step(b.id, return_point(), 0 - 1), return_supplies(f, b), dead, owned));
       }
       for target in successors(b) {
-        var si: i32 = ssalive.position(analysis.flow, target);
+        let si: i32 = ssalive.position(analysis.flow, target);
         entry_kept = entry_kept_of(f, analysis, b, si, entry_kept);
-        var dead: i32[] = ssalive.out_not_in(analysis.flow, bi, si);
+        let dead: i32[] = ssalive.out_not_in(analysis.flow, bi, si);
         steps = steps.append(choose_ids(step(b.id, edge_point(), target), edge_supplies(f, b, si, owned), dead, owned, []));
       }
     }
     bi = bi + 1;
   }
-  var literal: boolean[] = literals(f);
-  why = view_retain_error(f, steps, literal);
+  let literal: boolean[] = literals(f);
+  why = view_retain_error(f, steps, literal, defs);
   if (why != "") {
     return bad(why);
   }
-  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: constants(f, defs), text_lens: text_lens(f), analysis: semantic };
+  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: constants(f, defs), text_lens: text_lens(f), analysis: semantic, defs: defs };
 }
 
 function entry_kept_of(f: ssasem.Func, a: ssasem.Analysis, b: ssa.SBlock, si: i32, own out: boolean[]): boolean[] {
-  var succ: ssa.SBlock = f.graph.blocks[si];
-  var pi: i32 = 0;
+  let succ: ssa.SBlock = f.graph.blocks[si];
+  let pi: i32 = 0;
   while (succ.preds[pi] != b.id) {
     pi = pi + 1;
   }
@@ -2354,7 +2408,7 @@ function entry_kept_of(f: ssasem.Func, a: ssasem.Analysis, b: ssa.SBlock, si: i3
     if (ins.kind_tag != 8) {
       continue;
     }
-    var v: i32 = ins.args[pi];
+    let v: i32 = ins.args[pi];
     if (v >= 0 && v < f.graph.nparams && ssalive.live_in_has(a.flow, si, v)) {
       out = out.with(v, true);
     }
@@ -2378,7 +2432,7 @@ function read_error(state: boolean[], value: i32, owned: boolean[], deps: i32[][
 }
 
 function invariant(f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow): boolean[] {
-  var state: boolean[] = flow.none;
+  let state: boolean[] = flow.none;
   for v in ssalive.live_in_ids(flow, bi) {
     if (owned[v]) {
       state = state.with(v, true);
@@ -2395,7 +2449,7 @@ function invariant(f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow
 // holds_invariant is same_bits(state, invariant(f, bi, owned, flow)) without
 // building the invariant.
 function holds_invariant(state: boolean[], f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow): boolean {
-  var want: i32 = 0;
+  let want: i32 = 0;
   for v in ssalive.live_in_ids(flow, bi) {
     if (owned[v]) {
       if (!state[v]) {
@@ -2412,7 +2466,7 @@ function holds_invariant(state: boolean[], f: ssasem.Func, bi: i32, owned: boole
       want = want + 1;
     }
   }
-  var have: i32 = 0;
+  let have: i32 = 0;
   for bit in state {
     if (bit) {
       have = have + 1;
@@ -2422,7 +2476,7 @@ function holds_invariant(state: boolean[], f: ssasem.Func, bi: i32, owned: boole
 }
 
 function same_bits(a: boolean[], b: boolean[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
@@ -2435,21 +2489,21 @@ function same_bits(a: boolean[], b: boolean[]): boolean {
 // step_index lists, for each block id, the positions of the plan's steps at
 // that block, so a lookup scans one block's steps rather than the whole plan.
 pub function step_index(p: Plan): i32[][] {
-  var top: i32 = 0 - 1;
+  let top: i32 = 0 - 1;
   for s in p.steps {
     if (s.block > top) {
       top = s.block;
     }
   }
-  var out: i32[][] = [];
-  var i: i32 = 0;
+  let out: i32[][] = [];
+  let i: i32 = 0;
   while (i <= top) {
     out = out.append([]);
     i = i + 1;
   }
   i = 0;
   while (i < p.steps.len()) {
-    var b: i32 = p.steps[i].block;
+    let b: i32 = p.steps[i].block;
     if (b >= 0) {
       out = out.with(b, out[b].append(i));
     }
@@ -2477,9 +2531,9 @@ function find_step(p: Plan, idx: i32[][], block: i32, point: i32, target: i32): 
   if (block < 0 || block >= idx.len()) {
     return 0 - 1;
   }
-  var found: i32 = 0 - 1;
+  let found: i32 = 0 - 1;
   for i in idx[block] {
-    var s: Step = p.steps[i];
+    let s: Step = p.steps[i];
     if (s.point == point && s.target == target) {
       if (found >= 0) {
         return 0 - 1;
@@ -2496,13 +2550,13 @@ function supply_error(state: boolean[], supplies: Supply[], wanted: Supply[], ow
   if (supplies.len() != wanted.len()) {
     return "unit supply arity";
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < wanted.len()) {
-    var got: Supply = supplies[i];
+    let got: Supply = supplies[i];
     if (got.value != wanted[i].value || got.slot != wanted[i].slot) {
       return "unit supply identity or slot";
     }
-    var why: string = read_error(state, got.value, owned, deps);
+    let why: string = read_error(state, got.value, owned, deps);
     if (why != "") {
       return why;
     }
@@ -2520,11 +2574,11 @@ function supply_error(state: boolean[], supplies: Supply[], wanted: Supply[], ow
 // them as a plain value, never through a record field, which the owned
 // parameter needs.
 function replay_error(state: boolean[], s: Step, wanted: Supply[], result: i32, owned: boolean[], deps: i32[][]): string {
-  var why: string = supply_error(state, s.supplies, wanted, owned, deps);
+  let why: string = supply_error(state, s.supplies, wanted, owned, deps);
   if (why != "") {
     return why;
   }
-  var cleared: i32[] = [];
+  let cleared: i32[] = [];
   for got in s.supplies {
     if (got.mode == move_unit()) {
       if (!owned[got.value] || !state[got.value] || util.index_of_i32(cleared, got.value) >= 0) {
@@ -2533,19 +2587,19 @@ function replay_error(state: boolean[], s: Step, wanted: Supply[], result: i32, 
       cleared = cleared.append(got.value);
     }
   }
-  var set_result: boolean = false;
+  let set_result: boolean = false;
   if (result >= 0 && owned[result]) {
     if (state[result] && util.index_of_i32(cleared, result) < 0) {
       return "result unit already present";
     }
     set_result = true;
   }
-  var dropped: i32[] = [];
+  let dropped: i32[] = [];
   for value in s.drops {
     if (value < 0 || value >= owned.len()) {
       return "drop value out of range";
     }
-    var present: boolean = state[value] && util.index_of_i32(cleared, value) < 0 || set_result && value == result;
+    let present: boolean = state[value] && util.index_of_i32(cleared, value) < 0 || set_result && value == result;
     if (!owned[value] || !present || util.index_of_i32(dropped, value) >= 0) {
       return "drop without counted unit";
     }
@@ -2588,34 +2642,34 @@ function progress_error(why: string): ReplayProgress {
 // verify_operations replays the entry step and then the block's operations
 // over one row it owns, so each step writes the row in place.
 function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: i32[][], own state: boolean[], owned: boolean[], deps: i32[][]): ReplayProgress {
-  var at0: i32 = find_step(p, idx, b.id, entry_point(), 0 - 1);
+  let at0: i32 = find_step(p, idx, b.id, entry_point(), 0 - 1);
   if (at0 < 0) {
     return progress_error("missing or duplicate entry step");
   }
-  var entry_why: string = replay_error(state, p.steps[at0], [], 0 - 1, owned, deps);
+  let entry_why: string = replay_error(state, p.steps[at0], [], 0 - 1, owned, deps);
   if (entry_why != "") {
     return progress_error(entry_why);
   }
-  var next: boolean[] = apply_step(state, p.steps[at0], 0 - 1, owned);
-  var count: i32 = 0;
-  var pos: i32 = 0;
+  let next: boolean[] = apply_step(state, p.steps[at0], 0 - 1, owned);
+  let count: i32 = 0;
+  let pos: i32 = 0;
   for ins in b.insts {
     if (ins.kind_tag != 6 && ins.kind_tag != 8) {
       for arg in ins.args {
-        var why: string = read_error(next, arg, owned, deps);
+        let why: string = read_error(next, arg, owned, deps);
         if (why != "") {
           return progress_error(why);
         }
       }
-      var at: i32 = find_step(p, idx, b.id, pos, 0 - 1);
+      let at: i32 = find_step(p, idx, b.id, pos, 0 - 1);
       if (at < 0) {
         return progress_error("missing or duplicate operation step");
       }
-      var lent: string = lent_error(next, p.steps[at], f, ins, owned, deps);
+      let lent: string = lent_error(next, p.steps[at], f, ins, owned, deps);
       if (lent != "") {
         return progress_error(lent);
       }
-      var why: string = replay_error(next, p.steps[at], operation_supplies(f, ins), ins.result, owned, deps);
+      let why: string = replay_error(next, p.steps[at], operation_supplies(f, ins), ins.result, owned, deps);
       if (why != "") {
         return progress_error(why);
       }
@@ -2632,7 +2686,7 @@ function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: i32[][],
 // copy of the row; a move the row cannot supply is move_supplies' rejection,
 // reported by the replay that follows, not here.
 function lent_error(state: boolean[], s: Step, f: ssasem.Func, ins: ssa.SInst, owned: boolean[], deps: i32[][]): string {
-  var cleared: i32[] = [];
+  let cleared: i32[] = [];
   for got in s.supplies {
     if (got.mode == move_unit()) {
       if (!owned[got.value] || !state[got.value] || util.index_of_i32(cleared, got.value) >= 0) {
@@ -2665,20 +2719,20 @@ function step_clears(s: Step, value: i32): boolean {
 // one the row holds that it neither moves nor drops.
 function verify_return(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: i32[][], state: boolean[], owned: boolean[], deps: i32[][]): string {
   if (b.term.kind_tag == 1) {
-    var why: string = read_error(state, b.term.value, owned, deps);
+    let why: string = read_error(state, b.term.value, owned, deps);
     if (why != "") {
       return why;
     }
   }
-  var at: i32 = find_step(p, idx, b.id, return_point(), 0 - 1);
+  let at: i32 = find_step(p, idx, b.id, return_point(), 0 - 1);
   if (at < 0) {
     return "missing or duplicate return step";
   }
-  var why: string = replay_error(state, p.steps[at], return_supplies(f, b), 0 - 1, owned, deps);
+  let why: string = replay_error(state, p.steps[at], return_supplies(f, b), 0 - 1, owned, deps);
   if (why != "") {
     return why;
   }
-  var v: i32 = 0;
+  let v: i32 = 0;
   while (v < state.len()) {
     if (state[v] && !step_clears(p.steps[at], v)) {
       return "counted unit leaks at return";
@@ -2701,17 +2755,17 @@ function enter_phis(b: ssa.SBlock, own state: boolean[], owned: boolean[]): Ledg
 }
 
 function verify_edge(f: ssasem.Func, b: ssa.SBlock, target: i32, p: Plan, idx: i32[][], own state: boolean[], owned: boolean[], analysis: ssasem.Analysis): string {
-  var at: i32 = find_step(p, idx, b.id, edge_point(), target);
+  let at: i32 = find_step(p, idx, b.id, edge_point(), target);
   if (at < 0) {
     return "missing or duplicate edge step";
   }
-  var si: i32 = ssalive.position(analysis.flow, target);
-  var why: string = replay_error(state, p.steps[at], edge_supplies(f, b, si, owned), 0 - 1, owned, analysis.dependencies);
+  let si: i32 = ssalive.position(analysis.flow, target);
+  let why: string = replay_error(state, p.steps[at], edge_supplies(f, b, si, owned), 0 - 1, owned, analysis.dependencies);
   if (why != "") {
     return why;
   }
-  var left: boolean[] = apply_step(state, p.steps[at], 0 - 1, owned);
-  var entered: Ledger = enter_phis(f.graph.blocks[si], left, owned);
+  let left: boolean[] = apply_step(state, p.steps[at], 0 - 1, owned);
+  let entered: Ledger = enter_phis(f.graph.blocks[si], left, owned);
   if (!entered.ok) {
     return entered.why;
   }
@@ -2728,38 +2782,38 @@ struct BlockProgress { why: string, count: i32 }
 // The row a block's operations leave is read by the return step, copied for
 // the first of two successor edges and moved into the last edge.
 function verify_block(f: ssasem.Func, bi: i32, p: Plan, idx: i32[][], owned: boolean[], analysis: ssasem.Analysis): BlockProgress {
-  var b: ssa.SBlock = f.graph.blocks[bi];
-  var entry_row: boolean[] = invariant(f, bi, owned, analysis.flow);
-  var operations: ReplayProgress = verify_operations(f, b, p, idx, entry_row, owned, analysis.dependencies);
+  let b: ssa.SBlock = f.graph.blocks[bi];
+  let entry_row: boolean[] = invariant(f, bi, owned, analysis.flow);
+  let operations: ReplayProgress = verify_operations(f, b, p, idx, entry_row, owned, analysis.dependencies);
   if (operations.why != "") {
     return BlockProgress { why: operations.why, count: 0 };
   }
-  var state: boolean[] = operations.state;
-  var count: i32 = 1 + operations.count;
+  let state: boolean[] = operations.state;
+  let count: i32 = 1 + operations.count;
   if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
-    var why: string = verify_return(f, b, p, idx, state, owned, analysis.dependencies);
+    let why: string = verify_return(f, b, p, idx, state, owned, analysis.dependencies);
     if (why != "") {
       return BlockProgress { why: why, count: 0 };
     }
     count = count + 1;
   }
   if (b.term.kind_tag == 3) {
-    var why: string = read_error(state, b.term.cond, owned, analysis.dependencies);
+    let why: string = read_error(state, b.term.cond, owned, analysis.dependencies);
     if (why != "") {
       return BlockProgress { why: why, count: 0 };
     }
   }
-  var targets: i32[] = successors(b);
+  let targets: i32[] = successors(b);
   if (targets.len() == 2) {
-    var first: boolean[] = copy_row(state);
-    var why: string = verify_edge(f, b, targets[0], p, idx, first, owned, analysis);
+    let first: boolean[] = copy_row(state);
+    let why: string = verify_edge(f, b, targets[0], p, idx, first, owned, analysis);
     if (why != "") {
       return BlockProgress { why: why, count: 0 };
     }
     count = count + 1;
   }
   if (targets.len() > 0) {
-    var why: string = verify_edge(f, b, targets[targets.len() - 1], p, idx, state, owned, analysis);
+    let why: string = verify_edge(f, b, targets[targets.len() - 1], p, idx, state, owned, analysis);
     if (why != "") {
       return BlockProgress { why: why, count: 0 };
     }
@@ -2772,7 +2826,7 @@ function same_takes(a: i32[], b: i32[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
@@ -2783,30 +2837,44 @@ function same_takes(a: i32[], b: i32[]): boolean {
 }
 
 pub function verify(f: ssasem.Func, modes: i32[], p: Plan): string {
-  return verify_analyzed(f, modes, p, ssasem.analyze(f));
+  return verify_analyzed(f, modes, p, ssasem.analyze(f), true);
 }
 
 // verify_planned checks `p` against the analysis it was planned from, for a
 // caller that lowers the very `f` it planned: analyze is a function of `f`
-// alone, so a second run would only repeat the first.
+// alone, so a second run would only repeat the first, and so is the contract
+// on the values, result, schema tables and calls, which the plan's ok is the
+// answer to. The modes are this call's own input and are checked.
 pub function verify_planned(f: ssasem.Func, modes: i32[], p: Plan): string {
-  return verify_analyzed(f, modes, p, p.analysis);
+  return verify_analyzed(f, modes, p, p.analysis, false);
 }
 
-function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem.Analysis): string {
+// `whole` runs the contract check on `f` as the planner did and derives the
+// definitions table from `f`, for a plan that may be checked against a
+// function other than the one it was planned from.
+function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem.Analysis, whole: boolean): string {
   if (!p.ok || p.why != "") {
     return "missing successful unit plan";
   }
-  var analysis: ssasem.Analysis = semantic;
+  let analysis: ssasem.Analysis = semantic;
   if (!analysis.ok) {
     return analysis.why;
   }
-  var why: string = contract_error(f, modes);
+  let why: string = "";
+  let defs: ssa.SInst[] = p.defs;
+  if (whole) {
+    why = contract_error(f, modes);
+    defs = definitions(f);
+  } else if (modes.len() != f.params.len()) {
+    why = "parameter mode dimensions";
+  } else {
+    why = mode_error(f.params, modes);
+  }
   if (why != "") {
     return why;
   }
-  var units: Units = units_of(f, owned_values(f, modes), analysis, definitions(f));
-  var owned: boolean[] = units.owned;
+  let units: Units = units_of(f, owned_values(f, modes, defs), analysis, defs);
+  let owned: boolean[] = units.owned;
   if (!same_takes(units.takes, p.takes)) {
     return "tuple take disagrees with the plan";
   }
@@ -2820,13 +2888,13 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   if (!analysis.ok) {
     return analysis.why;
   }
-  var reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
-  var idx: i32[][] = step_index(p);
-  var count: i32 = 0;
-  var bi: i32 = 0;
+  let reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
+  let idx: i32[][] = step_index(p);
+  let count: i32 = 0;
+  let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
     if (reachable[bi]) {
-      var done: BlockProgress = verify_block(f, bi, p, idx, owned, analysis);
+      let done: BlockProgress = verify_block(f, bi, p, idx, owned, analysis);
       if (done.why != "") {
         return done.why;
       }

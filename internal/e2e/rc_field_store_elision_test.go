@@ -22,9 +22,9 @@ import (
 // a loop. The carried `items` buffer must survive every reuse untouched.
 const fieldElisionPtrCarriedSrc = `struct Box { id: i32, items: i32[] }
 function main(): i32 {
-    var b: Box = Box { id: 0, items: [1, 2, 3] };
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let b: Box = Box { id: 0, items: [1, 2, 3] };
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 300) {
         b = Box { id: b.id + 1, items: b.items };
         acc = acc + b.items[0] + b.items[2];
@@ -35,18 +35,18 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// fieldElisionAliasedSrc: an aliased struct (var b2 = b) must still COW —
+// fieldElisionAliasedSrc: an aliased struct (let b2 = b) must still COW —
 // updating b leaves b2 intact, and the carried-field elision must not corrupt
 // the shared box. Returns 0 iff value-correct AND 0 over-releases.
 const fieldElisionAliasedSrc = `struct Box { id: i32, items: i32[] }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var b: Box = Box { id: 5, items: [1, 2, 3] };
-        var b2: Box = b;
+        let b: Box = Box { id: 5, items: [1, 2, 3] };
+        let b2: Box = b;
         b = Box { id: b.id + 1, items: b.items };
-        var junk: i32[] = [9, 9, 9];
+        let junk: i32[] = [9, 9, 9];
         acc = acc + b.id + b2.id + b.items[0] + junk[0];
         i = i + 1;
     }

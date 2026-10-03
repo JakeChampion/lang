@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// A loop-body `var` whose LAST use is a `.with` receiver has its reference
+// A loop-body `let` whose LAST use is a `.with` receiver has its reference
 // taken over by __fern_arr_cow_inplace, so the slot must hold nothing when
 // the next iteration re-declares it: releasing it again freed the buffer
 // the RESULT still pointed at — SIGSEGV on both natives for a struct-element
@@ -21,38 +21,38 @@ import (
 const withLoopConsumedSrc = `struct P { a: i32, b: i32 }
 function mk_arr(): P[] { return [P{a:0,b:0}, P{a:1,b:1}]; }
 function consumed(n: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for i in 0..n {
-        var it: P[] = mk_arr();
-        var a: P[] = it.with(0, P{a:i,b:i});
+        let it: P[] = mk_arr();
+        let a: P[] = it.with(0, P{a:i,b:i});
         t = t + a[0].a;
     }
     return t;
 }
 function borrowed(n: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for i in 0..n {
-        var it: P[] = mk_arr();
-        var a: P[] = it.with(0, P{a:i,b:i});
+        let it: P[] = mk_arr();
+        let a: P[] = it.with(0, P{a:i,b:i});
         t = t + a[0].a + it[1].b;
     }
     return t;
 }
 function conditional(n: i32, c: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for i in 0..n {
-        var it: P[] = mk_arr();
+        let it: P[] = mk_arr();
         t = t + it[0].a;
-        if (c > 0) { var a: P[] = it.with(0, P{a:i,b:i}); t = t + a[0].a; }
+        if (c > 0) { let a: P[] = it.with(0, P{a:i,b:i}); t = t + a[0].a; }
     }
     return t;
 }
 function mk_ints(): i32[] { return [0, 1]; }
 function consumedScalar(n: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for i in 0..n {
-        var it: i32[] = mk_ints();
-        var a: i32[] = it.with(0, i);
+        let it: i32[] = mk_ints();
+        let a: i32[] = it.with(0, i);
         t = t + a[0];
     }
     return t;

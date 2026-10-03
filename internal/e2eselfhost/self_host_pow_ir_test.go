@@ -14,7 +14,7 @@ import (
 // that exp + log lower on wasm it does too. fpow lowers to op_fpow (an op_fbin) ->
 // $__fern_pow_f64, a one-line runtime x^y = exp(y·ln x) composing the two
 // polynomial helpers — the wasm sibling of asm_arm64's __fern_pow_f64. The two
-// f64 operands arrive in stack order x then y (irlower's op_fbin), matching the
+// f64 operands arrive in stack order x then y, matching the
 // param order.
 //
 // Value-tested (not differential — the wasm AST path has no pow to diff against):
@@ -33,7 +33,7 @@ func TestSelfHostPowIRWasm(t *testing.T) {
 
 	// `check` returns true when |pow(x,y) - expected| <= 1e-6 * |expected|.
 	const src = `function check(x: f64, y: f64, expected: f64): boolean {
-    var got: f64 = __pow_f64(x, y);
+    let got: f64 = __pow_f64(x, y);
     return __abs_f64(got - expected) <= (__abs_f64(expected) * 0.000001);
 }
 function main(): i32 {

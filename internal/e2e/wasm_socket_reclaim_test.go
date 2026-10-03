@@ -45,7 +45,7 @@ func TestWasmSocketCloseZeroHandles(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			src, wasm := filepath.Join(dir, "main.fern"), filepath.Join(dir, "main.wasm")
-			body := "function main(): i32 { var h: i32 = " + tc.expr + "; if (h < 0) { return h; } return tcp_close(h); }"
+			body := "function main(): i32 { let h: i32 = " + tc.expr + "; if (h < 0) { return h; } return tcp_close(h); }"
 			if err := os.WriteFile(src, []byte(body), 0o644); err != nil {
 				t.Fatal(err)
 			}

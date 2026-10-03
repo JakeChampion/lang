@@ -17,14 +17,14 @@ import "std/string";
 // ---- classification predicates ----
 
 function test_is_int(): test.TestOutcome {
-  var ok: boolean = "42".is_int() && "-42".is_int() && "+5".is_int();
-  var no: boolean = !"4.5".is_int() && !"abc".is_int() && !"".is_int() && !"-".is_int();
+  let ok: boolean = "42".is_int() && "-42".is_int() && "+5".is_int();
+  let no: boolean = !"4.5".is_int() && !"abc".is_int() && !"".is_int() && !"-".is_int();
   return test.assert_true(ok && no);
 }
 
 function test_is_float(): test.TestOutcome {
-  var ok: boolean = "3.14".is_float() && "-0.5".is_float() && "5".is_float();
-  var no: boolean = !"abc".is_float() && !"".is_float() && !"1.2.3".is_float();
+  let ok: boolean = "3.14".is_float() && "-0.5".is_float() && "5".is_float();
+  let no: boolean = !"abc".is_float() && !"".is_float() && !"1.2.3".is_float();
   return test.assert_true(ok && no);
 }
 
@@ -42,14 +42,14 @@ function test_is_blank(): test.TestOutcome {
 }
 
 function test_is_email_like(): test.TestOutcome {
-  var ok: boolean = "a@b.com".is_email_like();
-  var no: boolean = !"noat".is_email_like() && !"a@b".is_email_like() && !"@b.com".is_email_like();
+  let ok: boolean = "a@b.com".is_email_like();
+  let no: boolean = !"noat".is_email_like() && !"a@b".is_email_like() && !"@b.com".is_email_like();
   return test.assert_true(ok && no);
 }
 
 function test_is_url_like(): test.TestOutcome {
-  var ok: boolean = "http://example.com".is_url_like() && "https://a.b/c".is_url_like();
-  var no: boolean = !"ftp://x.y".is_url_like() && !"http://nodot".is_url_like();
+  let ok: boolean = "http://example.com".is_url_like() && "https://a.b/c".is_url_like();
+  let no: boolean = !"ftp://x.y".is_url_like() && !"http://nodot".is_url_like();
   return test.assert_true(ok && no);
 }
 
@@ -92,7 +92,7 @@ function test_kebab_case_caps(): test.TestOutcome {
 }
 
 function test_word_count(): test.TestOutcome {
-  var n: i32 = "  hello   world  ".word_count();
+  let n: i32 = "  hello   world  ".word_count();
   return test.assert_eq(n, 2);
 }
 
@@ -139,7 +139,7 @@ function test_ellipsis(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/string classify + transform");
+  let r: test.TestRunner = test.test_new("std/string classify + transform");
   r = r.it("is_int", test_is_int);
   r = r.it("is_float", test_is_float);
   r = r.it("is_numeric", test_is_numeric);

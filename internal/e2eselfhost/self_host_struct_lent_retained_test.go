@@ -12,7 +12,7 @@ import (
 // only on finding rc 1. The AST lowering walked them unconditionally, freeing
 // the enum and array that the returned value still held: a segfault once the
 // loop reused the memory. It was reached through the literal-match desugar's
-// `var sugar = …; return with_match_sugar(chain, sugar);`.
+// `let sugar = …; return with_match_sugar(chain, sugar);`.
 const structLentRetainedSrc = `enum Expr { EIdent(string), ENum(i32) }
 struct Arm { n: i32 }
 struct Sugar { scrut: Expr, lits: Arm[] }
@@ -27,16 +27,16 @@ function with_sugar(st: Stmt, sugar: Sugar): Stmt {
     return st;
 }
 function build(arms: Arm[]): Stmt {
-    var chain: Stmt = SIf(IfS { cond: 0, sugar: Sugar { scrut: ENum(2), lits: [] } });
-    var sugar: Sugar = Sugar { scrut: ENum(1), lits: arms };
+    let chain: Stmt = SIf(IfS { cond: 0, sugar: Sugar { scrut: ENum(2), lits: [] } });
+    let sugar: Sugar = Sugar { scrut: ENum(1), lits: arms };
     return with_sugar(chain, sugar);
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
-    var keep: Stmt[] = [];
+    let total: i32 = 0;
+    let i: i32 = 0;
+    let keep: Stmt[] = [];
     while (i < 4) {
-        var arms: Arm[] = [Arm { n: i }, Arm { n: 3 }];
+        let arms: Arm[] = [Arm { n: i }, Arm { n: 3 }];
         keep = keep.append(build(arms));
         i = i + 1;
     }

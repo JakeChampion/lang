@@ -55,16 +55,16 @@ func TestSelfHostWatEncode(t *testing.T) {
 // is a distinct failing-check id (0 = pass).
 const watEncodeSelfTestMain = `
 function main(): i32 {
-    var m: i32[] = wmagic();
+    let m: i32[] = wmagic();
     if (m.len() != 8 || m[0] != 0 || m[1] != 97 || m[2] != 115 || m[3] != 109 || m[4] != 1) { return 1; }
-    var nm: i32[] = wname([], "ab");
+    let nm: i32[] = wname([], "ab");
     if (nm.len() != 3 || nm[0] != 2 || nm[1] != 97 || nm[2] != 98) { return 2; }
-    var sec: i32[] = wsection(1, [96]);
+    let sec: i32[] = wsection(1, [96]);
     if (sec.len() != 3 || sec[0] != 1 || sec[1] != 1 || sec[2] != 96) { return 3; }
-    var v: i32[] = wvec(2, [127, 124]);
+    let v: i32[] = wvec(2, [127, 124]);
     if (v.len() != 3 || v[0] != 2 || v[1] != 127 || v[2] != 124) { return 4; }
     if (valtype_byte("i32") != 127 || valtype_byte("f64") != 124 || valtype_byte("i64") != 126) { return 5; }
-    var c: i32[] = wcat([1, 2], [3, 4, 5]);
+    let c: i32[] = wcat([1, 2], [3, 4, 5]);
     if (c.len() != 5 || c[2] != 3 || c[4] != 5) { return 6; }
     return 0;
 }

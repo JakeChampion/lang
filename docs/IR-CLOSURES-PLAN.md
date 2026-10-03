@@ -229,7 +229,7 @@ hoisting/marker pass:
   funcref table on wasm, code-address on x86-64/arm64; `call_indirect`
   dispatches. (`asm_ir` / `asm_arm64_ir` / `wasm_ir`.)
 - **Capturing lambdas bound to a local and only directly called**
-  (`var f = function(x){ … cap … }; … f(a) …`) lower via classic
+  (`let f = function(x){ … cap … }; … f(a) …`) lower via classic
   **lambda-lifting**: hoist to `__lam_<k>(origparams…, captures…)` and
   rewrite each call to thread the captured values as ordinary arguments —
   no box, no new op. `lift.lift_lambdas` (closure_lift_one +
@@ -262,7 +262,7 @@ captures in lift order.
 **Lowering** (irlower, the op-based path — distinct from lambda-lifting):
 - An escaping capturing `ExprLambda` → hoist its body to
   `__lam_<k>(origparams…, __env)`; prepend a capture read per slot
-  (`var cap_i = <load __env slot 1+i>`); at the site emit
+  (`let cap_i = <load __env slot 1+i>`); at the site emit
   `op_make_closure(__lam_<k>, ncap)` + the capture values.
 - `op_make_closure` → box alloc, store callable@0 + caps@1.. .
 - A call through a closure-typed value → `op_call_closure(argc)`: load

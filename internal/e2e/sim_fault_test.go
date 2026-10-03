@@ -49,12 +49,12 @@ import "std/time";
 import "std/sim";
 
 function flaky_pattern(seed: i64): string {
-    var d: sim.Sim = sim.new(seed);
-    var n: sim.Net = sim.net(d);
+    let d: sim.Sim = sim.new(seed);
+    let n: sim.Net = sim.net(d);
     n = n.serve(1, 80, "/k", "body", time.duration_nanos(10000000 as i64));
     n = n.fault_flaky(1, 80, "/k", 50);
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < 10) {
         match (n.fetch_future(1, 80, "/k")) {
             Ready(v) => { out = out + "F"; },
@@ -66,19 +66,19 @@ function flaky_pattern(seed: i64): string {
 }
 
 function gather_shape_ok(seed: i64): boolean {
-    var d: sim.Sim = sim.new(seed);
-    var n: sim.Net = sim.net(d);
+    let d: sim.Sim = sim.new(seed);
+    let n: sim.Net = sim.net(d);
     n = n.serve(1, 80, "/k", "alpha", time.duration_nanos(10000000 as i64));
     n = n.serve(2, 80, "/k", "beta", time.duration_nanos(20000000 as i64));
     n = n.serve(3, 80, "/k", "gamma", time.duration_nanos(5000000 as i64));
     n = n.fault_flaky(2, 80, "/k", 50);
     n = n.fault_stall(3, 80, "/k");
-    var fs: async.Future[string][] = [
+    let fs: async.Future[string][] = [
         n.fetch_future(1, 80, "/k"),
         n.fetch_future(2, 80, "/k"),
         n.fetch_future(3, 80, "/k")
     ];
-    var got: string[] = async.gather_on(d, fs, "!");
+    let got: string[] = async.gather_on(d, fs, "!");
     if (got.len() != 3) { return false; }
     if (got[0] != "alpha") { return false; }
     if (got[1] != "beta" && got[1] != "") { return false; }
@@ -86,11 +86,11 @@ function gather_shape_ok(seed: i64): boolean {
 }
 
 function flaky_first_call_ok(seed: i64): boolean {
-    var d: sim.Sim = sim.new(seed);
-    var n: sim.Net = sim.net(d);
+    let d: sim.Sim = sim.new(seed);
+    let n: sim.Net = sim.net(d);
     n = n.serve(1, 80, "/k", "body", time.duration_nanos(10000000 as i64));
     n = n.fault_flaky(1, 80, "/k", 50);
-    var ok: boolean = false;
+    let ok: boolean = false;
     match (n.fetch_future(1, 80, "/k")) {
         Ready(v) => { },
         Pending(tok, c) => { ok = true; },
@@ -99,8 +99,8 @@ function flaky_first_call_ok(seed: i64): boolean {
 }
 
 function main(): i32 {
-    var fd: sim.Sim = sim.new(1);
-    var fn2: sim.Net = sim.net(fd);
+    let fd: sim.Sim = sim.new(1);
+    let fn2: sim.Net = sim.net(fd);
     fn2 = fn2.serve(1, 80, "/k", "body", time.duration_nanos(10000000 as i64));
     fn2 = fn2.fault_fail(1, 80, "/k");
     match (fn2.fetch_future(1, 80, "/k")) {
@@ -110,40 +110,40 @@ function main(): i32 {
     if (fd.now_ns() != 0) { return 3; }
     if (fn2.hits(1, 80, "/k") != 1) { return 4; }
 
-    var d: sim.Sim = sim.new(7);
-    var n: sim.Net = sim.net(d);
+    let d: sim.Sim = sim.new(7);
+    let n: sim.Net = sim.net(d);
     n = n.serve(1, 80, "/k", "healthy", time.duration_nanos(10000000 as i64));
     n = n.serve(2, 80, "/k", "silent", time.duration_nanos(5000000 as i64));
     n = n.fault_stall(2, 80, "/k");
-    var fs: async.Future[string][] = [
+    let fs: async.Future[string][] = [
         n.fetch_future(1, 80, "/k"),
         n.fetch_future(2, 80, "/k")
     ];
-    var got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
+    let got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
     match (got[0]) { Some(v) => { if (v != "healthy") { return 5; } }, None => { return 6; } }
     match (got[1]) { Some(v) => { return 7; }, None => { } }
     if (d.now_ns() != 25000000) { return 8; }
 
-    var gd: sim.Sim = sim.new(1);
-    var gn: sim.Net = sim.net(gd);
+    let gd: sim.Sim = sim.new(1);
+    let gn: sim.Net = sim.net(gd);
     gn = gn.serve(1, 80, "/k", "ok", time.duration_nanos(10000000 as i64));
     gn = gn.serve(2, 80, "/k", "gone", time.duration_nanos(5000000 as i64));
     gn = gn.fault_stall(2, 80, "/k");
-    var gfs: async.Future[string][] = [
+    let gfs: async.Future[string][] = [
         gn.fetch_future(1, 80, "/k"),
         gn.fetch_future(2, 80, "/k")
     ];
-    var g: string[] = async.gather_on(gd, gfs, "!");
+    let g: string[] = async.gather_on(gd, gfs, "!");
     if (g[0] != "ok" || g[1] != "!") { return 9; }
 
-    var pd: sim.Sim = sim.new(1);
-    var pn: sim.Net = sim.net(pd);
+    let pd: sim.Sim = sim.new(1);
+    let pn: sim.Net = sim.net(pd);
     pn = pn.serve_chunked(1, 80, "/big", "abcdefghij", time.duration_nanos(5000000 as i64), time.duration_nanos(5000000 as i64), sim.chunks_of(10, 4));
     pn = pn.fault_partial(1, 80, "/big", 2);
-    var f: async.Future[string] = pn.fetch_future(1, 80, "/big");
-    var toks: i32[] = [];
-    var silent: boolean = false;
-    var guard: i32 = 0;
+    let f: async.Future[string] = pn.fetch_future(1, 80, "/big");
+    let toks: i32[] = [];
+    let silent: boolean = false;
+    let guard: i32 = 0;
     while (guard < 10 && !silent) {
         match (f) {
             Ready(v) => { return 10; },
@@ -199,7 +199,7 @@ func TestSimFaultNativeX86_64(t *testing.T) {
 }
 
 func TestWASMSimFault(t *testing.T) {
-	if code := runWasm(t, simFaultNativeProgram); code != 42 {
+	if code := runWasmNative(t, simFaultNativeProgram); code != 42 {
 		t.Errorf("wasm sim-fault exit = %d, want 42 (failing check index)", code)
 	}
 }

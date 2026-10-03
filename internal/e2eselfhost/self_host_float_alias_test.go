@@ -34,7 +34,7 @@ func TestSelfHostFloatAliasIsF64(t *testing.T) {
 	}{
 		{
 			"float-local",
-			`function main(): i32 { var a: float = 1.0; return pick(f64_bits(a / 3.0)); }`,
+			`function main(): i32 { let a: float = 1.0; return pick(f64_bits(a / 3.0)); }`,
 			f64Precision,
 		},
 		{
@@ -47,12 +47,12 @@ function main(): i32 { return pick(f(1.0)); }`,
 			// The propagation case: `d` is declared f64 and must stay f64 even
 			// though its initialiser is a `float` local.
 			"f64-local-from-float-local",
-			`function main(): i32 { var c: float = 1.0; var d: f64 = c; return pick(f64_bits(d / 3.0)); }`,
+			`function main(): i32 { let c: float = 1.0; let d: f64 = c; return pick(f64_bits(d / 3.0)); }`,
 			f64Precision,
 		},
 		{
 			"f32-local-still-rounds",
-			`function main(): i32 { var a: f32 = 1.0; return pick(f64_bits((a / 3.0) as f64)); }`,
+			`function main(): i32 { let a: f32 = 1.0; return pick(f64_bits((a / 3.0) as f64)); }`,
 			f32Rounded,
 		},
 		{
@@ -63,7 +63,7 @@ function main(): i32 { return pick(g(1.0)); }`,
 		},
 		{
 			"as-f32-cast-still-rounds",
-			`function main(): i32 { var a: f64 = 1.0; var b = a as f32; return pick(f64_bits((b / 3.0) as f64)); }`,
+			`function main(): i32 { let a: f64 = 1.0; let b = a as f32; return pick(f64_bits((b / 3.0) as f64)); }`,
 			f32Rounded,
 		},
 	} {

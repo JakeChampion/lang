@@ -24,14 +24,14 @@ import "./value";
 pub struct Headers { names: string[], values: string[] }
 
 pub function headers_new(): Headers {
-  var n: string[] = [];
-  var v: string[] = [];
+  let n: string[] = [];
+  let v: string[] = [];
   return Headers { names: n, values: v };
 }
 
 // index_of returns the slot holding `name`, or -1.
 function index_of(h: Headers, name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < h.names.len()) {
     if (h.names[i].eq_ignore_ascii_case(name)) {
       return i;
@@ -45,7 +45,7 @@ function index_of(h: Headers, name: string): i32 {
 // distinction matters: `if (req.http.Cookie)` tests presence, and VNone
 // is the only value that is false there.
 pub function (h: Headers) get(name: string): value.Value {
-  var i: i32 = index_of(h, name);
+  let i: i32 = index_of(h, name);
   if (i < 0) {
     return VNone;
   }
@@ -59,7 +59,7 @@ pub function (h: Headers) has(name: string): boolean {
 // set overwrites in place when the header exists, keeping its position,
 // and appends otherwise.
 pub function (h: Headers) set(name: string, v: string): Headers {
-  var i: i32 = index_of(h, name);
+  let i: i32 = index_of(h, name);
   if (i < 0) {
     return Headers { names: h.names.append(name), values: h.values.append(v) };
   }
@@ -67,9 +67,9 @@ pub function (h: Headers) set(name: string, v: string): Headers {
 }
 
 pub function (h: Headers) unset(name: string): Headers {
-  var names: string[] = [];
-  var vals: string[] = [];
-  var i: i32 = 0;
+  let names: string[] = [];
+  let vals: string[] = [];
+  let i: i32 = 0;
   while (i < h.names.len()) {
     if (!h.names[i].eq_ignore_ascii_case(name)) {
       names = names.append(h.names[i]);
@@ -137,7 +137,7 @@ pub struct Txn {
 }
 
 pub function txn_new(method: string, url: string, client_ip: string): Txn {
-  var empty: string[] = [];
+  let empty: string[] = [];
   return Txn { req: request(method, url), bereq: msg_new(), beresp: msg_new(), resp: msg_new(), obj: msg_new(), client_ip: client_ip, server_ip: "127.0.0.1", backend_hint: "", beresp_ttl: 0.0, beresp_grace: 10.0, beresp_keep: 0.0, beresp_uncacheable: false, obj_ttl: 0.0, obj_hits: 0, hash_parts: empty, log: empty };
 }
 
@@ -161,13 +161,13 @@ pub struct CacheEntry { key: string, status: i64, reason: string, headers: Heade
 pub struct Cache { entries: CacheEntry[] }
 
 pub function cache_new(): Cache {
-  var e: CacheEntry[] = [];
+  let e: CacheEntry[] = [];
   return Cache { entries: e };
 }
 
 // find returns the index of the entry under `key`, or -1.
 function cache_index(c: Cache, key: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < c.entries.len()) {
     if (c.entries[i].key == key) {
       return i;
@@ -178,7 +178,7 @@ function cache_index(c: Cache, key: string): i32 {
 }
 
 pub function (c: Cache) lookup(key: string): Option[CacheEntry] {
-  var i: i32 = cache_index(c, key);
+  let i: i32 = cache_index(c, key);
   if (i < 0) {
     return None;
   }
@@ -188,7 +188,7 @@ pub function (c: Cache) lookup(key: string): Option[CacheEntry] {
 // store inserts or replaces the object under `key`. A replaced entry
 // resets its hit count: it is a different object.
 pub function (c: Cache) store(e: CacheEntry): Cache {
-  var i: i32 = cache_index(c, e.key);
+  let i: i32 = cache_index(c, e.key);
   if (i < 0) {
     return Cache { entries: c.entries.append(e) };
   }
@@ -198,18 +198,18 @@ pub function (c: Cache) store(e: CacheEntry): Cache {
 // touch records a hit against a stored object, which is what `obj.hits`
 // reads on the next lookup.
 pub function (c: Cache) touch(key: string): Cache {
-  var i: i32 = cache_index(c, key);
+  let i: i32 = cache_index(c, key);
   if (i < 0) {
     return c;
   }
-  var e: CacheEntry = c.entries[i];
+  let e: CacheEntry = c.entries[i];
   return Cache { entries: c.entries.with(i, CacheEntry { ...e, hits: e.hits + 1 }) };
 }
 
 // evict removes an object, which is what a `purge` return does.
 pub function (c: Cache) evict(key: string): Cache {
-  var out: CacheEntry[] = [];
-  var i: i32 = 0;
+  let out: CacheEntry[] = [];
+  let i: i32 = 0;
   while (i < c.entries.len()) {
     if (c.entries[i].key != key) {
       out = out.append(c.entries[i]);

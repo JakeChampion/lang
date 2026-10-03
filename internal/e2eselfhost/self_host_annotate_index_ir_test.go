@@ -9,10 +9,10 @@ import (
 
 // annotateIndexCases exercise the ExprIndex.ty typed-IR carrier (#5531's third,
 // docs/TYPED-IR-REWRITE.md). An index read `a[i]` yields an ELEMENT whose width
-// irlower must know at two places that have to agree: the value predicates
+// the AST lowering had to know at two places that have to agree: the value predicates
 // (expr_is_f64 / infer_expr_width, which decide how the result is typed
 // downstream) and the load site (lower_expr's arr_get width / lower_i64's
-// arr_get_i64, which decide how many bytes come out of memory). Both now read
+// arr_get_i64, which decide how many bytes come out of memory). Both came to read
 // one leaf, ix_type_tag, which prefers the structural walk and falls back to the
 // checker-stamped ix.ty.
 //
@@ -37,21 +37,21 @@ var annotateIndexCases = []struct {
 	// The gap: an f64[] produced by an if-expression, then indexed. Pre-carrier
 	// this emitted invalid wasm; the tag supplies the f64 the walk could not.
 	{"if_expr_index_f64", `function main(): i32 {
-    var c: boolean = true;
-    var v: f64 = (if (c) { [1.5, 2.5] } else { [3.5, 4.5] })[1];
+    let c: boolean = true;
+    let v: f64 = (if (c) { [1.5, 2.5] } else { [3.5, 4.5] })[1];
     return (v * 10.0) as i32;
 }`}, // 25
 	// Negative guard: the SAME shape over an i32[] must stay 4-byte. A leaf that
 	// widened on the tag alone would break this.
 	{"if_expr_index_i32", `function main(): i32 {
-    var c: boolean = false;
-    var v: i32 = (if (c) { [1, 2] } else { [30, 40] })[1];
+    let c: boolean = false;
+    let v: i32 = (if (c) { [1, 2] } else { [30, 40] })[1];
     return v + 2;
 }`}, // 42
 	// Structural path, unchanged: an f64[] LOCAL indexed. The walk resolves this
 	// from the slot, so ix_type_tag must answer before ever consulting the tag.
 	{"f64_local_index", `function main(): i32 {
-    var xs: f64[] = [1.5, 2.5, 8.25];
+    let xs: f64[] = [1.5, 2.5, 8.25];
     return (xs[2] * 4.0) as i32;
 }`}, // 33
 	// Structural path via a call result's struct field — `mk().data[2]` on an
@@ -69,7 +69,7 @@ function main(): i32 { return (mk().data[1] / 1000000000) as i32; }`}, // 9
 }
 
 // TestSelfHostAnnotateIndexIR_X86_64 pins the ExprIndex.ty carrier feeding
-// irlower's ix_type_tag through the self-host x86-64 IR path. asm_load_run.fern
+// the lowering through the self-host x86-64 IR path. asm_load_run.fern
 // is the driver because it runs checker.annotate_module after the checker gate
 // and before emit — asm_ir_run and the native compiler skip the pass, leaving
 // every ty empty and exercising only the structural walk.

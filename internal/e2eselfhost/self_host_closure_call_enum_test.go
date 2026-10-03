@@ -28,9 +28,9 @@ function run(s: S, g: (i32) => S): i32 {
     return -1;
 }
 function main(): i32 {
-    var g: (i32) => S = (x: i32): S => mk(x - 1);
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let g: (i32) => S = (x: i32): S => mk(x - 1);
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) { total = total + run(mk(4), g); i = i + 1; }
     return total;
 }
@@ -49,9 +49,9 @@ function run(s: S, g: (i32) => S): i32 {
     return -1;
 }
 function walk(n: i32, g: (i32) => S): i32 {
-    var cur: S = g(n);
-    var acc: i32 = 0;
-    var guard: i32 = 0;
+    let cur: S = g(n);
+    let acc: i32 = 0;
+    let guard: i32 = 0;
     while (guard < 100) {
         match (cur) {
             Done(v) => { return acc + v; },
@@ -62,7 +62,7 @@ function walk(n: i32, g: (i32) => S): i32 {
     return -1;
 }
 function first(g: (i32) => S, n: i32): i32 {
-    var e: S = g(n);
+    let e: S = g(n);
     match (e) {
         Done(v) => { return v; },
         Next(w, t) => { return w + t.len(); }
@@ -70,10 +70,10 @@ function first(g: (i32) => S, n: i32): i32 {
     return -1;
 }
 function round(i: i32): i32 {
-    var k: i32 = i % 3;
-    var g: (i32) => S = (x: i32): S => mk(x - 1);
-    var h: (i32) => S = mk;
-    var c: (i32) => S = (x: i32): S => mk(x - 1 - k);
+    let k: i32 = i % 3;
+    let g: (i32) => S = (x: i32): S => mk(x - 1);
+    let h: (i32) => S = mk;
+    let c: (i32) => S = (x: i32): S => mk(x - 1 - k);
     return run(mk(4), g) + walk(4, g) + walk(3, c) + first(h, 2) + first(c, i) + run(g(3), c);
 }
 ` + closureCallEnumMain
@@ -91,9 +91,9 @@ function run(s: S, g: (i32) => S): i32 {
     return -1;
 }
 function walk(n: i32, g: (i32) => S): i32 {
-    var cur: S = g(n);
-    var acc: i32 = 0;
-    var guard: i32 = 0;
+    let cur: S = g(n);
+    let acc: i32 = 0;
+    let guard: i32 = 0;
     while (guard < 100) {
         match (cur) {
             Done(v) => { return acc + v; },
@@ -104,7 +104,7 @@ function walk(n: i32, g: (i32) => S): i32 {
     return -1;
 }
 function first(g: (i32) => S, n: i32): i32 {
-    var e: S = g(n);
+    let e: S = g(n);
     match (e) {
         Done(v) => { return v; },
         Next(w, t) => { return w + t[2]; }
@@ -112,10 +112,10 @@ function first(g: (i32) => S, n: i32): i32 {
     return -1;
 }
 function round(i: i32): i32 {
-    var k: i32 = i % 3;
-    var g: (i32) => S = (x: i32): S => mk(x - 1);
-    var h: (i32) => S = mk;
-    var c: (i32) => S = (x: i32): S => mk(x - 1 - k);
+    let k: i32 = i % 3;
+    let g: (i32) => S = (x: i32): S => mk(x - 1);
+    let h: (i32) => S = mk;
+    let c: (i32) => S = (x: i32): S => mk(x - 1 - k);
     return run(mk(4), g) + walk(4, g) + walk(3, c) + first(h, 2) + first(c, i) + run(g(3), c);
 }
 ` + closureCallEnumMain
@@ -134,9 +134,9 @@ function run(s: Step): i32 {
     return -1;
 }
 function walk(n: i32, g: (i32) => Step): i32 {
-    var cur: Step = g(n);
-    var acc: i32 = 0;
-    var guard: i32 = 0;
+    let cur: Step = g(n);
+    let acc: i32 = 0;
+    let guard: i32 = 0;
     while (guard < 100) {
         match (cur) {
             Done(v) => { return acc + v; },
@@ -147,7 +147,7 @@ function walk(n: i32, g: (i32) => Step): i32 {
     return -1;
 }
 function first(g: (i32) => Step, n: i32): i32 {
-    var e: Step = g(n);
+    let e: Step = g(n);
     match (e) {
         Done(v) => { return v; },
         Next(w, f) => { return w + run(f(1)); }
@@ -155,8 +155,8 @@ function first(g: (i32) => Step, n: i32): i32 {
     return -1;
 }
 function round(i: i32): i32 {
-    var g: (i32) => Step = (x: i32): Step => make(x, i);
-    var dropped: Step = make(2, 7);
+    let g: (i32) => Step = (x: i32): Step => make(x, i);
+    let dropped: Step = make(2, 7);
     return run(make(4, i)) + walk(3, g) + first(g, 2) + run(g(2));
 }
 ` + closureCallEnumMain
@@ -178,13 +178,13 @@ function size(s: S): i32 {
 }
 function pass(s: S): S { return s; }
 function first(g: (i32) => S, n: i32): i32 {
-    var e: S = g(n);
+    let e: S = g(n);
     return size(e);
 }
 function spin(g: (i32) => S, n: i32): i32 {
-    var cur: S = g(n);
-    var acc: i32 = 0;
-    var k: i32 = 0;
+    let cur: S = g(n);
+    let acc: i32 = 0;
+    let k: i32 = 0;
     while (k < 3) {
         acc = acc + size(cur);
         cur = g(n + k);
@@ -193,10 +193,10 @@ function spin(g: (i32) => S, n: i32): i32 {
     return acc + size(cur);
 }
 function round(i: i32): i32 {
-    var keep: S = mk(i + 1);
-    var g: (i32) => S = (x: i32): S => keep;
-    var h: (i32) => S = (x: i32): S => pass(keep);
-    var a: i32 = size(g(1)) + first(g, 2) + spin(g, 3) + first(h, 1) + size(h(2));
+    let keep: S = mk(i + 1);
+    let g: (i32) => S = (x: i32): S => keep;
+    let h: (i32) => S = (x: i32): S => pass(keep);
+    let a: i32 = size(g(1)) + first(g, 2) + spin(g, 3) + first(h, 1) + size(h(2));
     return a + size(keep);
 }
 ` + closureCallEnumMain
@@ -216,9 +216,9 @@ function run(s: S, g: (i32) => S): i32 {
     return -1;
 }
 function walk(n: i32, g: (i32) => S): i32 {
-    var cur: S = g(n);
-    var acc: i32 = 0;
-    var guard: i32 = 0;
+    let cur: S = g(n);
+    let acc: i32 = 0;
+    let guard: i32 = 0;
     while (guard < 100) {
         match (cur) {
             Done(v) => { return acc + v; },
@@ -229,9 +229,9 @@ function walk(n: i32, g: (i32) => S): i32 {
     return -1;
 }
 function round(i: i32): i32 {
-    var k: i32 = i % 3;
-    var g: (i32) => S = (x: i32): S => { var e: S = mk(x - 1); return e; };
-    var c: (i32) => S = (x: i32): S => { var e: S = mk(x - 1 - k); return e; };
+    let k: i32 = i % 3;
+    let g: (i32) => S = (x: i32): S => { let e: S = mk(x - 1); return e; };
+    let c: (i32) => S = (x: i32): S => { let e: S = mk(x - 1 - k); return e; };
     return run(mk(4), g) + walk(4, g) + walk(3, c) + run(g(3), c);
 }
 ` + closureCallEnumMain
@@ -252,7 +252,7 @@ function size(s: S): i32 {
     return -1;
 }
 function round(i: i32): i32 {
-    var f: (i32) => S = (x: i32): S => { var e: S = mk(x); return e; };
+    let f: (i32) => S = (x: i32): S => { let e: S = mk(x); return e; };
     return size(f(i)) + size(f(i + 1));
 }
 ` + closureCallEnumMain
@@ -262,7 +262,7 @@ function round(i: i32): i32 {
 const closureCallEnumNamedLocalSrc = `enum S { Done(i32), Next(i32, string) }
 function mk(n: i32): S {
     if (n <= 0) { return Done(n); }
-    var e: S = Next(n, "ab" + "c");
+    let e: S = Next(n, "ab" + "c");
     return e;
 }
 function size(s: S): i32 {
@@ -273,14 +273,14 @@ function size(s: S): i32 {
     return -1;
 }
 function round(i: i32): i32 {
-    var a: S = mk(i);
+    let a: S = mk(i);
     return size(a) + size(mk(i + 1));
 }
 ` + closureCallEnumMain
 
 const closureCallEnumMain = `function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 10) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;

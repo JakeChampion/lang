@@ -37,14 +37,14 @@ import "testing"
 var determinismMatrix = map[string]string{
 	"arithmetic": `
 function main(): i32 {
-	var x: i32 = 6;
+	let x: i32 = 6;
 	return x * 7 + (7 - x) / 2;
 }`,
 
 	"struct_drop": `
 struct Pair { a: string, b: string }
 function main(): i32 {
-	var p: Pair = Pair { a: "hello", b: "world" };
+	let p: Pair = Pair { a: "hello", b: "world" };
 	return p.a.len() + p.b.len();
 }`,
 
@@ -64,8 +64,8 @@ function adder(n: i32): (i32) => i32 {
 	return (x: i32): i32 => { return x + n; };
 }
 function main(): i32 {
-	var f: (i32) => i32 = adder(10);
-	var g: (i32) => i32 = adder(20);
+	let f: (i32) => i32 = adder(10);
+	let g: (i32) => i32 = adder(20);
 	return f(1) + g(2);
 }`,
 
@@ -91,17 +91,17 @@ function mk_c(s: string): () => i32 { return (): i32 => { return s.len() + 2; };
 function mk_d(s: string): () => i32 { return (): i32 => { return s.len() + 3; }; }
 function mk_e(s: string): () => i32 { return (): i32 => { return s.len() + 4; }; }
 function main(): i32 {
-	var a: () => i32 = mk_a("v");
-	var b: () => i32 = mk_b("w");
-	var c: () => i32 = mk_c("x");
-	var d: () => i32 = mk_d("y");
-	var e: () => i32 = mk_e("z");
+	let a: () => i32 = mk_a("v");
+	let b: () => i32 = mk_b("w");
+	let c: () => i32 = mk_c("x");
+	let d: () => i32 = mk_d("y");
+	let e: () => i32 = mk_e("z");
 	return a() + b() + c() + d() + e();
 }`,
 
 	"map_ops": `
 function main(): i32 {
-	var m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
+	let m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
 	m = m.insert("d", 4);
 	return m.get_or("b", 0) + m.get_or("d", 0);
 }`,

@@ -25,7 +25,7 @@ func TestErrDefer(t *testing.T) {
     return Ok(x);
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
+    let a: Cell[i32] = cell_new(0);
     match (f(a, 5)) { Ok(v) => {}, Err(e) => {} }
     return a.get();
 }`, 0},
@@ -36,7 +36,7 @@ function main(): i32 {
     return Ok(x);
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
+    let a: Cell[i32] = cell_new(0);
     match (f(a, -1)) { Ok(v) => {}, Err(e) => {} }
     return a.get();
 }`, 9},
@@ -47,11 +47,11 @@ function main(): i32 {
 }
 function outer(out: Cell[i32], x: i32): Result[i32, i32] {
     errdefer out.set(9);
-    var y: i32 = inner(x)?;
+    let y: i32 = inner(x)?;
     return Ok(y + 1);
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
+    let a: Cell[i32] = cell_new(0);
     match (outer(a, -1)) { Ok(v) => {}, Err(e) => {} }
     return a.get();
 }`, 9},
@@ -62,11 +62,11 @@ function main(): i32 {
 }
 function outer(out: Cell[i32], x: i32): Result[i32, i32] {
     errdefer out.set(9);
-    var y: i32 = inner(x)?;
+    let y: i32 = inner(x)?;
     return Ok(y + 1);
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
+    let a: Cell[i32] = cell_new(0);
     match (outer(a, 5)) { Ok(v) => {}, Err(e) => {} }
     return a.get();
 }`, 0},
@@ -77,7 +77,7 @@ function main(): i32 {
     return Some(x);
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
+    let a: Cell[i32] = cell_new(0);
     match (opt(a, -1)) { Some(v) => {}, None => {} }
     return a.get();
 }`, 5},
@@ -87,7 +87,7 @@ function main(): i32 {
     return Some(x);
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
+    let a: Cell[i32] = cell_new(0);
     match (opt(a, 7)) { Some(v) => {}, None => {} }
     return a.get();
 }`, 0},
@@ -101,7 +101,7 @@ function main(): i32 {
     return Ok(x);
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
+    let a: Cell[i32] = cell_new(0);
     match (h(a, 5)) { Ok(v) => {}, Err(e) => {} }
     return a.get();
 }`, 1},
@@ -113,7 +113,7 @@ function main(): i32 {
     return Ok(x);
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
+    let a: Cell[i32] = cell_new(0);
     match (h(a, -1)) { Ok(v) => {}, Err(e) => {} }
     return a.get();
 }`, 11},
@@ -125,7 +125,7 @@ function main(): i32 {
     return Ok(x);
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
+    let a: Cell[i32] = cell_new(0);
     match (cond(a, true, -1)) { Ok(v) => {}, Err(e) => {} }
     return a.get();
 }`, 7},
@@ -135,7 +135,7 @@ function main(): i32 {
     return Ok(x);
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
+    let a: Cell[i32] = cell_new(0);
     match (cond(a, false, -1)) { Ok(v) => {}, Err(e) => {} }
     return a.get();
 }`, 0},
@@ -150,7 +150,7 @@ function main(): i32 {
     return Ok(x);
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
+    let a: Cell[i32] = cell_new(0);
     match (m(a, -1)) { Ok(v) => {}, Err(e) => {} }
     return a.get();
 }`, 21},

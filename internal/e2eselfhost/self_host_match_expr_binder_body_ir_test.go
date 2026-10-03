@@ -31,15 +31,15 @@ var matchExprBinderBodyCases = []struct {
 }{
 	// The issue's first reproducer: tuple scrutinee, string result.
 	{"tuple_string_binder", `function main(): i32 {
-    var t: (string, i32) = ("elem", 4);
-    var got: string = match (t) { (q, n) => q };
+    let t: (string, i32) = ("elem", 4);
+    let got: string = match (t) { (q, n) => q };
     if (got != "elem") { return 13; }
     return got.len() as i32;
 }`}, // 4
 	// The issue's second: the same shape at i64, so the gap is not string-only.
 	{"tuple_i64_binder", `function main(): i32 {
-    var t: (i64, i32) = (5000000000i64, 4);
-    var got: i64 = match (t) { (q, n) => q };
+    let t: (i64, i32) = (5000000000i64, 4);
+    let got: i64 = match (t) { (q, n) => q };
     if (got != 5000000000i64) { return 13; }
     return (got % 97i64) as i32;
 }`},
@@ -62,24 +62,24 @@ function main(): i32 {
 	// third desugar that needs a value local.
 	{"tuple_subpattern_binder", `enum Pair { Both((string, i32)) }
 function main(): i32 {
-    var v: Pair = Both(("hi", 2));
-    var got: string = match (v) { Both((a, b)) => a };
+    let v: Pair = Both(("hi", 2));
+    let got: string = match (v) { Both((a, b)) => a };
     if (got != "hi") { return 13; }
     return got.len() as i32;
 }`}, // 2
 	// A struct-pattern scrutinee: build_struct_match's flag chain.
 	{"struct_pattern_binder", `struct Pt { x: i32, label: string }
 function main(): i32 {
-    var p: Pt = Pt { x: 3, label: "three" };
-    var got: string = match (p) { Pt { x, label } => label };
+    let p: Pt = Pt { x: 3, label: "three" };
+    let got: string = match (p) { Pt { x, label } => label };
     if (got != "three") { return 13; }
     return got.len() as i32;
 }`}, // 5
 	// No annotation on the binding: the arms are the only source of the type,
 	// so a fix that read the declaration instead would still reject this.
 	{"tuple_binder_unannotated", `function main(): i32 {
-    var t: (string, i32) = ("elem", 4);
-    var got = match (t) { (q, n) => q };
+    let t: (string, i32) = ("elem", 4);
+    let got = match (t) { (q, n) => q };
     if (got != "elem") { return 13; }
     return got.len() as i32;
 }`}, // 4
@@ -87,8 +87,8 @@ function main(): i32 {
 	// level below the chain's top, and it is the first arm — so the parser's
 	// guess comes from the binder rather than from the literal below it.
 	{"tuple_binder_guarded", `function main(): i32 {
-    var t: (string, i32) = ("elem", 4);
-    var got: string = match (t) {
+    let t: (string, i32) = ("elem", 4);
+    let got: string = match (t) {
         (q, n) when n > 10 => q,
         (q, n) => "small"
     };
@@ -101,54 +101,54 @@ function main(): i32 {
 	// block itself. A wrong answer rather than a diagnostic, so only an
 	// oracle-compared run catches it.
 	{"unannotated_literal_arm", `function main(): i32 {
-    var t: (string, i32) = ("elem", 4);
-    var got = match (t) { (q, n) => "lit" };
+    let t: (string, i32) = ("elem", 4);
+    let got = match (t) { (q, n) => "lit" };
     return got.len() as i32;
 }`}, // 3
 	// The remaining widths the declaration has to spell, each one a distinct
 	// literal zero: an unsuffixed `0` would leave every one of them an i32.
 	{"tuple_f64_binder", `function main(): i32 {
-    var t: (f64, i32) = (2.5, 4);
-    var got: f64 = match (t) { (q, n) => q };
+    let t: (f64, i32) = (2.5, 4);
+    let got: f64 = match (t) { (q, n) => q };
     return (got * 4.0) as i32;
 }`}, // 10
 	{"tuple_bool_binder", `function main(): i32 {
-    var t: (boolean, i32) = (true, 4);
-    var got: boolean = match (t) { (q, n) => q };
+    let t: (boolean, i32) = (true, 4);
+    let got: boolean = match (t) { (q, n) => q };
     if (!got) { return 13; }
     return 7;
 }`},
 	{"tuple_u32_binder", `function main(): i32 {
-    var t: (u32, i32) = (4000000000u32, 4);
-    var got: u32 = match (t) { (q, n) => q };
+    let t: (u32, i32) = (4000000000u32, 4);
+    let got: u32 = match (t) { (q, n) => q };
     return ((got >> 1u32) % 97u32) as i32;
 }`},
 	{"tuple_u64_binder", `function main(): i32 {
-    var t: (u64, i32) = (18446744073709551615u64, 4);
-    var got: u64 = match (t) { (q, n) => q };
+    let t: (u64, i32) = (18446744073709551615u64, 4);
+    let got: u64 = match (t) { (q, n) => q };
     return ((got / 2u64) % 64u64) as i32;
 }`},
 	{"tuple_u8_binder", `function main(): i32 {
-    var t: (u8, i32) = (200u8, 4);
-    var got: u8 = match (t) { (q, n) => q };
+    let t: (u8, i32) = (200u8, 4);
+    let got: u8 = match (t) { (q, n) => q };
     return (got % 97u8) as i32;
 }`},
 	{"tuple_char_binder", `function main(): i32 {
-    var t: (char, i32) = ('z', 4);
-    var got: char = match (t) { (q, n) => q };
+    let t: (char, i32) = ('z', 4);
+    let got: char = match (t) { (q, n) => q };
     if (got != 'z') { return 13; }
     return 9;
 }`},
 	// Control: a literal arm, where the parser's guess was already the answer.
 	{"control_literal_arm", `function main(): i32 {
-    var t: (string, i32) = ("elem", 4);
-    var got: string = match (t) { (q, n) => "lit" };
+    let t: (string, i32) = ("elem", 4);
+    let got: string = match (t) { (q, n) => "lit" };
     return got.len() as i32;
 }`}, // 3
 	// Control: an i32 binder, where the guess and the answer coincide.
 	{"control_i32_binder", `function main(): i32 {
-    var t: (string, i32) = ("elem", 4);
-    var got: i32 = match (t) { (q, n) => n };
+    let t: (string, i32) = ("elem", 4);
+    let got: i32 = match (t) { (q, n) => n };
     return got;
 }`}, // 4
 	// #8778: the arm body is a nested VALUE BLOCK that consumes the bound
@@ -159,8 +159,8 @@ function main(): i32 {
 	{"nested_match_string_payload", `enum Res { Ok1(string), Err1(string) }
 enum Wrap { Box(Res) }
 function main(): i32 {
-    var w: Wrap = Box(Err1("bad"));
-    var inner: string = match (w) { Box(x) => match (x) { Ok1(q) => q, Err1(r) => r } };
+    let w: Wrap = Box(Err1("bad"));
+    let inner: string = match (w) { Box(x) => match (x) { Ok1(q) => q, Err1(r) => r } };
     if (inner != "bad") { return 14; }
     return inner.len() as i32;
 }`}, // 3
@@ -175,8 +175,8 @@ function main(): i32 {
 }`}, // 7
 	{"option_nested_match_i64_result", `enum Res { Ok1(string), Err1(string) }
 function main(): i32 {
-    var o: Option[Res] = Some(Err1("bad"));
-    var u: i64 = match (o) { Some(x) => match (x) { Ok1(q) => 1i64, Err1(r) => 7000000000i64 }, None => 0i64 };
+    let o: Option[Res] = Some(Err1("bad"));
+    let u: i64 = match (o) { Some(x) => match (x) { Ok1(q) => 1i64, Err1(r) => 7000000000i64 }, None => 0i64 };
     if (u != 7000000000i64) { return 23; }
     return (u % 1000i64) as i32;
 }`}, // 0
@@ -184,8 +184,8 @@ function main(): i32 {
 	// result was refused on its own, whatever the arm did with the value.
 	{"dead_string_payload_literal_arm", `enum Res { Ok1(string), Err1(string) }
 function main(): i32 {
-    var r: Res = Err1("bad");
-    var s: string = match (r) { Ok1(q) => "ok", Err1(e) => "err" };
+    let r: Res = Err1("bad");
+    let s: string = match (r) { Ok1(q) => "ok", Err1(e) => "err" };
     if (s != "err") { return 24; }
     return s.len() as i32;
 }`}, // 3

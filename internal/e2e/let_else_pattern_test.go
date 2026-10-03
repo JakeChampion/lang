@@ -34,7 +34,7 @@ var letElsePatternCases = []struct {
 		src: `enum O { Has(i32), Nil }
 function f(o: O): i32 {
   let Has(v) = o else { return 1; };
-  var doubled: i32 = v * 2;
+  let doubled: i32 = v * 2;
   return doubled;
 }
 function main(): i32 { return f(Has(5)) * 10 + f(Nil); }`,
@@ -95,9 +95,9 @@ function main(): i32 { return f(Red(6)); }`,
 		name: "else_breaks",
 		src: `enum O { Has(i32), Nil }
 function main(): i32 {
-  var xs: O[] = [Has(1), Has(2), Nil, Has(4)];
-  var total: i32 = 0;
-  var i: i32 = 0;
+  let xs: O[] = [Has(1), Has(2), Nil, Has(4)];
+  let total: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len()) {
     let Has(v) = xs[i] else { break; };
     total = total + v;
@@ -126,7 +126,7 @@ function main(): i32 { return f(Has(3), Has(4)); }`,
 		name: "inner_block_scope",
 		src: `enum O { Has(i32), Nil }
 function f(o: O): i32 {
-  var acc: i32 = 0;
+  let acc: i32 = 0;
   {
     let Has(v) = o else { return 9; };
     acc = v;
@@ -206,36 +206,36 @@ func TestLetElsePatternDiagnostics(t *testing.T) {
 		{
 			name: "else_must_diverge",
 			src: `enum O { Has(i32), Nil }
-function main(): i32 { var o: O = Nil; let Has(v) = o else { var x: i32 = 1; }; return v; }`,
+function main(): i32 { let o: O = Nil; let Has(v) = o else { let x: i32 = 1; }; return v; }`,
 			want: []string{"E022"},
 			deny: []string{"E052"},
 		},
 		{
 			name: "else_loop_diverges_ok",
 			src: `enum O { Has(i32), Nil }
-function main(): i32 { var o: O = Nil; let Has(v) = o else { loop { } }; return v; }`,
+function main(): i32 { let o: O = Nil; let Has(v) = o else { loop { } }; return v; }`,
 		},
 		{
 			name: "source_not_enum",
-			src:  `function main(): i32 { var n: i32 = 5; let Has(v) = n else { return 0; }; return 0; }`,
+			src:  `function main(): i32 { let n: i32 = 5; let Has(v) = n else { return 0; }; return 0; }`,
 			want: []string{"E022"},
 		},
 		{
 			name: "source_struct",
 			src: `struct P { x: i32 }
-function main(): i32 { var p: P = P { x: 1 }; let Has(v) = p else { return 0; }; return 0; }`,
+function main(): i32 { let p: P = P { x: 1 }; let Has(v) = p else { return 0; }; return 0; }`,
 			want: []string{"E022"},
 		},
 		{
 			name: "unknown_variant",
 			src: `enum O { Has(i32), Nil }
-function main(): i32 { var o: O = Nil; let Bogus(v) = o else { return 0; }; return 0; }`,
+function main(): i32 { let o: O = Nil; let Bogus(v) = o else { return 0; }; return 0; }`,
 			want: []string{"E014"},
 		},
 		{
 			name: "payload_arity",
 			src: `enum O { Has(i32), Nil }
-function main(): i32 { var o: O = Nil; let Has(a, b) = o else { return 0; }; return 0; }`,
+function main(): i32 { let o: O = Nil; let Has(a, b) = o else { return 0; }; return 0; }`,
 			want: []string{"E015"},
 		},
 	}

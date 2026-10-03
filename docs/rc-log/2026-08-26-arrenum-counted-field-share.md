@@ -8,7 +8,7 @@ instrument the project has, which is the part worth remembering.
 
 ## What was measured
 
-`var p: P = P { f: xs, … }` where `xs` is a credited `E[]` local. The
+`let p: P = P { f: xs, … }` where `xs` is a credited `E[]` local. The
 construction RETAINS it: the `ExprStructLit` fallback arm alias-incs any bare
 arr-slot ident whose field type `is_array_type_name`, which covers `E[]` even
 though the gate above it names only scalar- and struct-arrays. Verified in the

@@ -16,36 +16,36 @@ struct Box { xs: i64[], tag: string }
 @noinline function takes(own s: string): i32 { return s.len() as i32; }
 @noinline function mk(): string { return "ab" + "cd"; }
 function one(): i32 {
-  var xs: i64[] = [];
+  let xs: i64[] = [];
   xs = xs.append(1);
   return take(xs) + 0;
 }
 function two(): i32 {
-  var xs: i64[] = [5, 6];
+  let xs: i64[] = [5, 6];
   xs = xs.append(7);
-  var r: i32 = take(xs);
+  let r: i32 = take(xs);
   return r;
 }
 function three(): i32 {
-  var b: Box = Box { xs: [1, 2], tag: "t" };
+  let b: Box = Box { xs: [1, 2], tag: "t" };
   b = Box { ...b, tag: b.tag + "u" };
-  var r: i32 = takeb(b);
+  let r: i32 = takeb(b);
   return r;
 }
 function four(): i32 {
-  var s: string = "ab";
+  let s: string = "ab";
   s = s + "cd";
-  var r: i32 = takes(s);
+  let r: i32 = takes(s);
   return r;
 }
 function five(): i32 {
-  var s: string = mk();
+  let s: string = mk();
   return takes(s);
 }
 function main(): i32 {
   function nested(): i32 {
-    var b: Box = Box { xs: [], tag: "nest" };
-    var r: i32 = takeb(b);
+    let b: Box = Box { xs: [], tag: "nest" };
+    let r: i32 = takeb(b);
     return r + 1;
   }
   return one() + two() + three() + four() + five() + nested();

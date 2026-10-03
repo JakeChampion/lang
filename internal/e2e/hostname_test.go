@@ -12,7 +12,7 @@ import (
 // stays the assertion.
 func hostnameProbeSource(want string) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var h: string = hostname();
+    let h: string = hostname();
     print(h);
     if (h == %q) { return 0; }
     return 1;
@@ -73,10 +73,10 @@ func TestInterpHostname(t *testing.T) {
 // on both previews, and as a value the string runtime can release.
 func TestWasmHostnameIsEmpty(t *testing.T) {
 	const src = `function main(): i32 {
-    var h: string = hostname();
+    let h: string = hostname();
     if (h.len() != 0) { return 1; }
     if (h != "") { return 2; }
-    var s: string = "[" + h + "]";
+    let s: string = "[" + h + "]";
     if (s != "[]") { return 3; }
     return 0;
 }

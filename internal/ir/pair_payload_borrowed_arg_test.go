@@ -17,8 +17,8 @@ function mk(n: i32): Option[string] {
     return Some("v" + "alue");
 }
 function main(): i32 {
-    var b: Bag = Bag { xs: [] };
-    var i: i32 = 0;
+    let b: Bag = Bag { xs: [] };
+    let i: i32 = 0;
     while (i < 3) {
         match (mk(i)) {
             Some(v) => { b = keep(b, v); },

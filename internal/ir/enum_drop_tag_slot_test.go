@@ -17,7 +17,7 @@ import (
 func TestEnumSlotDropSharesTagStash(t *testing.T) {
 	ip := lowerForTest(t, `enum Box { Val(i32), Empty }
 function f(c: i32): i32 {
-	var b: Box = Val(c);
+	let b: Box = Val(c);
 	if (c > 0) { return 1; }
 	return 0;
 }

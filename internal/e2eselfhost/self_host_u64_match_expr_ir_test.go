@@ -45,7 +45,7 @@ function main(): i32 { return (f(10u64, 3u64) as i32) & 63; }`, 10},
 	{"rhs-operand", `function f(a: u64, b: u64): u64 { return a / (match (a *? b) { Some(v) => v, None => 7u64 }); }
 function main(): i32 { return (f(30u64, 3u64) as i32) & 63; }`, 0},
 	// Binding position rather than return position.
-	{"var-bound", `function f(a: u64, b: u64): u64 { var c: u64 = (match (a *? b) { Some(v) => v, None => 7u64 }); return c + b; }
+	{"var-bound", `function f(a: u64, b: u64): u64 { let c: u64 = (match (a *? b) { Some(v) => v, None => 7u64 }); return c + b; }
 function main(): i32 { return (f(10u64, 3u64) as i32) & 63; }`, 33},
 	// 2^64-1 / 2 — 2^63-1 unsigned (&63 == 63), 0 signed.
 	{"unsigned-div", `function f(o: Option[u64]): u64 { return (match (o) { Some(v) => v, None => 7u64 }) / 2u64; }
@@ -83,7 +83,7 @@ func TestSelfHostU64MatchExprIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostU64MatchExprIRArm64 — the arm64 IR path lowers from the same
-// irlower predicate, so the gate is shared; the emit is not.
+// typed lowering, so the gate is shared; the emit is not.
 func TestSelfHostU64MatchExprIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

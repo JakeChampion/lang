@@ -10,7 +10,7 @@ import "std/array" as array;
 // migration-shaped companion.
 
 function near(a: f64, b: f64): boolean {
-  var d: f64 = a - b;
+  let d: f64 = a - b;
   if (d < 0.0) {
     d = 0.0 - d;
   }
@@ -31,7 +31,7 @@ function test_distance_equal(): test.TestOutcome {
 }
 
 function test_normalize(): test.TestOutcome {
-  var u: f64[] = array.normalize_f64([3.0, 4.0]);
+  let u: f64[] = array.normalize_f64([3.0, 4.0]);
   if (!near(u[0], 0.6)) {
     return test.fail("x component");
   }
@@ -44,7 +44,7 @@ function test_normalize(): test.TestOutcome {
 
 function test_normalize_zero(): test.TestOutcome {
   // zero vector returned unchanged, no NaN.
-  var z: f64[] = array.normalize_f64([0.0, 0.0]);
+  let z: f64[] = array.normalize_f64([0.0, 0.0]);
   if (!near(z[0], 0.0)) {
     return test.fail("zero unchanged");
   }
@@ -56,7 +56,7 @@ function test_normalize_empty(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/array f64 distance/normalize");
+  let r: test.TestRunner = test.test_new("std/array f64 distance/normalize");
   r = r.it("distance", test_distance);
   r = r.it("distance equal", test_distance_equal);
   r = r.it("normalize", test_normalize);

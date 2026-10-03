@@ -9,7 +9,7 @@ import (
 	"github.com/jakechampion/lang/internal/parser"
 )
 
-// A match-arm BINDING that shares its name with a `var`-declared local in
+// A match-arm BINDING that shares its name with a `let`-declared local in
 // sibling arms must REUSE that name's slot, not allocate a fresh one.
 //
 // The return / exit dec sweep resolves names through the builder's slot map
@@ -21,8 +21,8 @@ import (
 // decrements a random live block's rc — a layout-dependent heap corruption.
 // Observed in practice as the self-host driver miscompiling
 // `match(read_file(..)) { Ok(s) => { write(s); .. } }` (a dangling
-// .Lir_main_* branch label): irlower's alias_names_in_stmt binds its
-// StmtAssign arm payload as `a`, shadowing the `var a: string[]`
+// .Lir_main_* branch label): the AST lowering's alias_names_in_stmt bound its
+// StmtAssign arm payload as `a`, shadowing the `let a: string[]`
 // accumulators declared in sibling arms (TestSelfHostReadFileIRX86_64/echo
 // pins it end to end).
 //
@@ -33,7 +33,7 @@ import (
 // (the shared, entry-zeroed `a` slot), not a fresh arm-local slot.
 func TestMatchBindingReusesShadowedVarSlot(t *testing.T) {
 	// Mirrors alias_names_in_stmt's shape: arm 2 binds its payload as `a`
-	// (the same name the StmtIf-like arm declares with `var a`), and the
+	// (the same name the StmtIf-like arm declares with `let a`), and the
 	// wildcard arm returns straight through the exit sweep.
 	ip := lowerForTest(t, `
 struct SV { init: i32 }
@@ -49,14 +49,14 @@ function walk(st: St, acc: string[]): string[] {
         SV(v) => { return idsin(v.init, acc); },
         SA(a) => { return idsin(a.value, acc); },
         SI(iff) => {
-            var a: string[] = idsin(iff.n, acc);
+            let a: string[] = idsin(iff.n, acc);
             return idsin(iff.n, a);
         },
         _ => { return acc; },
     }
 }
 function main(): i32 {
-    var st: St = SE { n: 1 };
+    let st: St = SE { n: 1 };
     return walk(st, []).len();
 }`)
 	fn := funcByName(ip, "walk")
@@ -95,13 +95,13 @@ function main(): i32 {
 }
 
 // The cross-shape counterpart: when a match-arm binding shares its name
-// with a `var` whose slot has a DIFFERENT physical shape — here a
-// two-word string `var t` (any two-word ABI: wasm ptrW==4, arm64
+// with a `let` whose slot has a DIFFERENT physical shape — here a
+// two-word string `let t` (any two-word ABI: wasm ptrW==4, arm64
 // TwoWordOverride) colliding with a pointer-shaped binding
 // `ST(t)` — the binding must get a FRESH slot, not reuse the var's.
 //
 // bindingSlotScoped's shape guard must not read the existing slot's type from
-// b.scratchType, which is never stamped for `var`-declared (info.Locals)
+// b.scratchType, which is never stamped for `let`-declared (info.Locals)
 // slots: nil reads as "single-word", the guard passes, and the binding
 // reuses the string's two-word slot. The backend sizes physical slots
 // from the declared local type, so every OpLoadLocal / OpStoreLocal of
@@ -110,7 +110,7 @@ function main(): i32 {
 // pushed one, desynchronising every stack-machine backend. Observed in
 // practice as the self-host interp's `parser.ExprTuple(t)` arm trapping
 // its own bounds check on arm64 (TestSelfHostInterpArm64, exit 134)
-// once a sibling arm gained `var t: string` (#4497).
+// once a sibling arm gained `let t: string` (#4497).
 func TestMatchBindingCrossShapeVarCollisionGetsFreshSlot(t *testing.T) {
 	src := `
 struct SN { text: string }
@@ -120,12 +120,12 @@ type E = SN | ST;
 function eval(e: E): i32 {
     match (e) {
         SN(n) => {
-            var t: string = n.text;
+            let t: string = n.text;
             return t.len();
         },
         ST(t) => {
-            var s: i32 = 0;
-            var i: i32 = 0;
+            let s: i32 = 0;
+            let i: i32 = 0;
             while (i < t.elements.len()) {
                 s = s + t.elements[i];
                 i = i + 1;
@@ -136,7 +136,7 @@ function eval(e: E): i32 {
     return 0 - 1;
 }
 function main(): i32 {
-    var e: E = ST { elements: [40, 2] };
+    let e: E = ST { elements: [40, 2] };
     return eval(e);
 }`
 	prog, err := parser.Parse(src)
@@ -177,7 +177,7 @@ function main(): i32 {
 		t.Fatal("no two-word entry zero-store found (safety-net layout changed? update the test)")
 	}
 	// Exactly two stores may target the string slot: the entry zero-init
-	// and the SN arm's `var t = n.text`. A third store is the ST arm's
+	// and the SN arm's `let t = n.text`. A third store is the ST arm's
 	// binding wrongly reusing the two-word slot for its one-word payload.
 	stores := 0
 	for _, op := range fn.Ops {
@@ -186,7 +186,7 @@ function main(): i32 {
 		}
 	}
 	if stores != 2 {
-		t.Errorf("string var slot %d has %d stores, want 2 (entry zero-init + var init); a cross-shape match binding is sharing the two-word slot", strSlot, stores)
+		t.Errorf("string let slot %d has %d stores, want 2 (entry zero-init + let init); a cross-shape match binding is sharing the two-word slot", strSlot, stores)
 	}
 }
 

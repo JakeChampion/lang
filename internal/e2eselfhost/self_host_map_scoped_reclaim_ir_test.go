@@ -16,9 +16,9 @@ var mapScopedReclaimCases = []struct {
 	// The map moved into an `if` body. Nothing else differs from the control.
 	{"block-scoped-if-flat", `import "core/map";
 function build(n: i32): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (n >= 0) {
-        var m: Map[i32, i32] = Map { 1: n, 2: n + 1 };
+        let m: Map[i32, i32] = Map { 1: n, 2: n + 1 };
         if (m.has(1)) { r = r + 1; }
         if (m.has(2)) { r = r + 1; }
     }
@@ -26,13 +26,13 @@ function build(n: i32): i32 {
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + build(i); i = i + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (acc != 4400) { return 90; }
     return (s2 - s1) / 4096;
 }
@@ -41,10 +41,10 @@ function main(): i32 {
 	// each iteration's box must be freed exactly once.
 	{"loop-declared-flat", `import "core/map";
 function build(n: i32): i32 {
-    var r: i32 = 0;
-    var k: i32 = 0;
+    let r: i32 = 0;
+    let k: i32 = 0;
     while (k < 3) {
-        var m: Map[i32, i32] = Map { 1: n + k, 2: n + k + 1 };
+        let m: Map[i32, i32] = Map { 1: n + k, 2: n + k + 1 };
         if (m.has(1)) { r = r + 1; }
         if (m.has(2)) { r = r + 1; }
         k = k + 1;
@@ -53,13 +53,13 @@ function build(n: i32): i32 {
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + build(i); i = i + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (acc != 13200) { return 90; }
     return (s2 - s1) / 4096;
 }
@@ -68,9 +68,9 @@ function main(): i32 {
 	// release.
 	{"block-scoped-string-columns-flat", `import "core/map";
 function build(n: i32): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (n >= 0) {
-        var m: Map[string, string] = Map { "k" + "1": "v" + "1", "k" + "2": "v" + "2" };
+        let m: Map[string, string] = Map { "k" + "1": "v" + "1", "k" + "2": "v" + "2" };
         if (m.has("k1")) { r = r + 1; }
         if (m.has("k2")) { r = r + 1; }
     }
@@ -78,13 +78,13 @@ function build(n: i32): i32 {
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + build(i); i = i + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (acc != 4400) { return 90; }
     return (s2 - s1) / 4096;
 }
@@ -93,21 +93,21 @@ function main(): i32 {
 	// at function scope, which was always freed and must stay so.
 	{"function-scope-control-flat", `import "core/map";
 function build(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 1: n, 2: n + 1 };
-    var r: i32 = 0;
+    let m: Map[i32, i32] = Map { 1: n, 2: n + 1 };
+    let r: i32 = 0;
     if (m.has(1)) { r = r + 1; }
     if (m.has(2)) { r = r + 1; }
     return r;
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + build(i); i = i + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (acc != 4400) { return 90; }
     return (s2 - s1) / 4096;
 }
@@ -117,16 +117,16 @@ function main(): i32 {
 	// `base` alone for main to keep using.
 	{"sibling-alias-no-over-release", `import "core/map";
 function round(base: Map[i32, i32], i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var m: Map[i32, i32] = Map { 1: i, 2: i + 1 }; if (m.has(1)) { t = t + 1; } }
-    if (i % 2 == 1) { var m: Map[i32, i32] = base; if (m.has(1)) { t = t + 2; } }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let m: Map[i32, i32] = Map { 1: i, 2: i + 1 }; if (m.has(1)) { t = t + 1; } }
+    if (i % 2 == 1) { let m: Map[i32, i32] = base; if (m.has(1)) { t = t + 2; } }
     return t;
 }
 
 function main(): i32 {
-    var b: Map[i32, i32] = Map { 1: 7, 2: 8 };
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let b: Map[i32, i32] = Map { 1: 7, 2: 8 };
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { t = t + round(b, i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (!b.has(2)) { return 91; }

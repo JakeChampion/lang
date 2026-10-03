@@ -16,14 +16,14 @@ function fail(n: i32): i32 {
 }
 
 function main(): i32 {
-    var any: u8[] = [0u8, 0u8, 0u8, 0u8];
-    var ln: i32 = tcp_listen_with(any, 0, 4, false);
+    let any: u8[] = [0u8, 0u8, 0u8, 0u8];
+    let ln: i32 = tcp_listen_with(any, 0, 4, false);
     if (ln < 0) { return fail(1); }
-    var port: i32 = tcp_local_port(ln);
+    let port: i32 = tcp_local_port(ln);
     if (port <= 0) { return fail(2); }
-    var c: i32 = tcp_connect(16777343, port);
+    let c: i32 = tcp_connect(16777343, port);
     if (c < 0) { return fail(3); }
-    var a: i32 = tcp_accept(ln);
+    let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(4); }
     if (tcp_socket_ctl(a, 7, 0) != 16777343) { return fail(5); }
     if (tcp_socket_ctl(c, 7, 0) != 16777343) { return fail(6); }

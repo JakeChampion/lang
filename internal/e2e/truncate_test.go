@@ -60,7 +60,7 @@ func truncateSource(prefix string) string {
             if (b.len() != 20) { return 10; }
             if (b[0] != 104) { return 11; }
             if (b[4] != 111) { return 12; }
-            var i: i32 = 5;
+            let i: i32 = 5;
             while (i < 20) {
                 if (b[i] != 0) { return 13; }
                 i = i + 1;
@@ -180,7 +180,7 @@ func TestWASMPreview1Truncate(t *testing.T) {
 }
 
 // main's return reaches us on STDOUT, not as the exit status: the harness
-// builds with PrintMainResult.
+// runs the module with `--invoke main`.
 func TestWASMTruncate(t *testing.T) {
 	p := buildComponent(t, truncateSource(""))
 	dir := t.TempDir()

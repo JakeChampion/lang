@@ -8,7 +8,7 @@ import "testing"
 // struct fields / i64 tuple elements (8-byte struct_get_i64 / tuple_get_w) and
 // bail every other field via `return s.fail()`, dropping the whole module to
 // the legacy AST emitter. #2691 widens it: an i32/u32 struct field or tuple
-// element has its value lowered via lower_expr and sign/zero-extended to i64
+// element had its value lowered via lower_expr and sign/zero-extended to i64
 // (op_int_extend). The checker forbids i64 + u32 (E009), so a plain i32 member
 // here is signed; the u32 flag stays defensive. This is the struct/tuple sibling
 // of the i32-ident and i32-array-element widenings. Each case narrows the i64
@@ -18,19 +18,19 @@ var i64FieldWidthIRCases = []struct {
 	main string
 }{
 	// i64 local + i32 struct field. 30 + 12 = 42.
-	{"struct-field", `struct P { x: i32 } function main(): i32 { var p: P = P { x: 12 }; var s: i64 = 30; return (s + p.x) as i32; }`},
+	{"struct-field", `struct P { x: i32 } function main(): i32 { let p: P = P { x: 12 }; let s: i64 = 30; return (s + p.x) as i32; }`},
 	// Sign-extension: a NEGATIVE i32 field must sign-extend. 50 + (-8) = 42.
-	{"struct-neg", `struct P { x: i32 } function main(): i32 { var p: P = P { x: -8 }; var s: i64 = 50; return (s + p.x) as i32; }`},
+	{"struct-neg", `struct P { x: i32 } function main(): i32 { let p: P = P { x: -8 }; let s: i64 = 50; return (s + p.x) as i32; }`},
 	// Two i32 fields summed into i64. 20 + 22 = 42.
-	{"struct-two", `struct P { x: i32, y: i32 } function main(): i32 { var p: P = P { x: 20, y: 22 }; var s: i64 = 0; return (s + p.x + p.y) as i32; }`},
+	{"struct-two", `struct P { x: i32, y: i32 } function main(): i32 { let p: P = P { x: 20, y: 22 }; let s: i64 = 0; return (s + p.x + p.y) as i32; }`},
 	// i64 local + i32 tuple element. 30 + 12 = 42.
-	{"tuple-elem", `function main(): i32 { var t: (i32, i32) = (12, 7); var s: i64 = 30; return (s + t.0) as i32; }`},
+	{"tuple-elem", `function main(): i32 { let t: (i32, i32) = (12, 7); let s: i64 = 30; return (s + t.0) as i32; }`},
 	// Sign-extension on a tuple element. 50 + (-8) = 42.
-	{"tuple-neg", `function main(): i32 { var t: (i32, i32) = (-8, 1); var s: i64 = 50; return (s + t.0) as i32; }`},
+	{"tuple-neg", `function main(): i32 { let t: (i32, i32) = (-8, 1); let s: i64 = 50; return (s + t.0) as i32; }`},
 	// Regression: an i64 struct field still uses the 8-byte read. 0 + 42 = 42.
-	{"struct-i64-keep", `struct P { x: i64 } function main(): i32 { var p: P = P { x: 42 }; var s: i64 = 0; return (s + p.x) as i32; }`},
+	{"struct-i64-keep", `struct P { x: i64 } function main(): i32 { let p: P = P { x: 42 }; let s: i64 = 0; return (s + p.x) as i32; }`},
 	// Regression: an i64 tuple element still uses the 8-byte read. 0 + 42 = 42.
-	{"tuple-i64-keep", `function main(): i32 { var t: (i64, i32) = (42, 1); var s: i64 = 0; return (s + t.0) as i32; }`},
+	{"tuple-i64-keep", `function main(): i32 { let t: (i64, i32) = (42, 1); let s: i64 = 0; return (s + t.0) as i32; }`},
 }
 
 // TestSelfHostI64FieldWidthIR compiles each case with the self-host CLI for

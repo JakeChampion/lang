@@ -99,34 +99,37 @@ func (wi WorldInterface) containsHeap(v Valtype) bool {
 	if d == nil { // resource handle or unresolved alias — scalar
 		return false
 	}
+	// A definition's inner indices read its owner's type-index space: this
+	// interface's, or the one a `use` brought the type in from.
+	o := wi.ownerOf(v.Idx)
 	switch d.Tag {
 	case tagList:
 		return true
 	case tagOption:
-		return wi.containsHeap(d.Elem)
+		return o.containsHeap(d.Elem)
 	case tagTuple:
 		for _, e := range d.Elems {
-			if wi.containsHeap(e) {
+			if o.containsHeap(e) {
 				return true
 			}
 		}
 	case tagRecord:
 		for _, f := range d.Fields {
-			if wi.containsHeap(f.Ty) {
+			if o.containsHeap(f.Ty) {
 				return true
 			}
 		}
 	case tagVariant:
 		for _, c := range d.Cases {
-			if c.HasTy && wi.containsHeap(c.Ty) {
+			if c.HasTy && o.containsHeap(c.Ty) {
 				return true
 			}
 		}
 	case tagResult:
-		if d.HasOk && wi.containsHeap(d.Ok) {
+		if d.HasOk && o.containsHeap(d.Ok) {
 			return true
 		}
-		if d.HasErr && wi.containsHeap(d.Err) {
+		if d.HasErr && o.containsHeap(d.Err) {
 			return true
 		}
 	}
@@ -146,34 +149,35 @@ func (wi WorldInterface) flattenCount(v Valtype) int {
 	if d == nil { // handle
 		return 1
 	}
+	o := wi.ownerOf(v.Idx)
 	switch d.Tag {
 	case tagList:
 		return 2 // ptr + len
 	case tagOwn, tagBorrow, tagEnum, tagFlags:
 		return 1
 	case tagOption:
-		return 1 + wi.flattenCount(d.Elem)
+		return 1 + o.flattenCount(d.Elem)
 	case tagTuple:
 		n := 0
 		for _, e := range d.Elems {
-			n += wi.flattenCount(e)
+			n += o.flattenCount(e)
 		}
 		return n
 	case tagRecord:
 		n := 0
 		for _, f := range d.Fields {
-			n += wi.flattenCount(f.Ty)
+			n += o.flattenCount(f.Ty)
 		}
 		return n
 	case tagVariant:
-		return 1 + wi.maxCaseFlat(d.Cases)
+		return 1 + o.maxCaseFlat(d.Cases)
 	case tagResult:
 		ok, er := 0, 0
 		if d.HasOk {
-			ok = wi.flattenCount(d.Ok)
+			ok = o.flattenCount(d.Ok)
 		}
 		if d.HasErr {
-			er = wi.flattenCount(d.Err)
+			er = o.flattenCount(d.Err)
 		}
 		if ok > er {
 			return 1 + ok

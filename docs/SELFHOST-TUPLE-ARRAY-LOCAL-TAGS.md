@@ -8,8 +8,8 @@
 ```fern
 function mk(): (i32, f64)[] { return [(0, 4.5)]; }
 function main(): i32 {
-    var ps = mk();
-    var t = ps[0];
+    let ps = mk();
+    let t = ps[0];
     return (t.1 * 10.0) as i32;   // want 45; self-host wasm gives 1
 }
 ```
@@ -18,11 +18,11 @@ function main(): i32 {
 
 | probe | form | interp | self-host x86-64 | self-host wasm |
 |---|---|---|---|---|
-| w1 | `var ps = mk(); var t = ps[0]; t.1` | 45 | 45 | **1** |
-| w5 | w1 then `var (a, b) = t` | 45 | 45 | **0** |
-| w6 | `var ps = mk(); for p in ps { … p.1 }` | 45 | 45 | **1** |
-| w2 | `var ps = mk(); ps[0].1` — no intermediate local | 45 | 45 | 45 |
-| w3 | `var ps: (i32, f64)[] = mk(); var t = ps[0]` | 45 | 45 | 45 |
+| w1 | `let ps = mk(); let t = ps[0]; t.1` | 45 | 45 | **1** |
+| w5 | w1 then `let (a, b) = t` | 45 | 45 | **0** |
+| w6 | `let ps = mk(); for p in ps { … p.1 }` | 45 | 45 | **1** |
+| w2 | `let ps = mk(); ps[0].1` — no intermediate local | 45 | 45 | 45 |
+| w3 | `let ps: (i32, f64)[] = mk(); let t = ps[0]` | 45 | 45 | 45 |
 | w4 | array literal, annotated | 45 | 45 | 45 |
 | w7 | annotated + `for p in ps` | 45 | 45 | 45 |
 | w8 | w1 but a `string` element | 45 | 45 | 45 |
@@ -44,11 +44,11 @@ Three places in `irlower.fern` read a TUPLE element tag off an array slot's
 | line | site | `ExprIndex.ty` fallback |
 |---|---|---|
 | 1189 | `expr_tuple_elem_tag`'s `ExprIndex` arm | yes — #6165 |
-| 14728 | `var t = ps[0]` — tuple-local binding | **no** |
-| 15613 | `var (a, b) = ps[0]` — destructure | yes — #6279 |
+| 14728 | `let t = ps[0]` — tuple-local binding | **no** |
+| 15613 | `let (a, b) = ps[0]` — destructure | yes — #6279 |
 
 `arrarr_elem` is only recorded for an ANNOTATED `(tuple)[]` binding, so
-`var ps = mk();` leaves it empty and the un-guarded sites fall through to the
+`let ps = mk();` leaves it empty and the un-guarded sites fall through to the
 untyped read.
 
 A fourth site has the same gap but no `ExprIndex` to fall back on:

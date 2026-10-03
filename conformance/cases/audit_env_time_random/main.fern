@@ -20,7 +20,7 @@ function main(): i32 {
     // random_bytes returns the requested length
     if (random_bytes(16).len() != 16) { print("FAIL randbytes"); return 14; }
     // random_i32 produces a usable value
-    var r: i32 = random_i32();
+    let r: i32 = random_i32();
     if (r != r) { print("FAIL randi32"); return 15; }
     print("OK");
     return 0;

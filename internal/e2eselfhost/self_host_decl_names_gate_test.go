@@ -100,7 +100,7 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		// asserting agreement on it here would fail for an unrelated reason.
 		{"ordinary-name", "function helper(): i32 { return 42; }\nfunction main(): i32 { return helper(); }", false, ""},
 		{"name-containing-keyword", "function usenow(): i32 { return 42; }\nfunction main(): i32 { return usenow(); }", false, ""},
-		{"receiver-method", "struct S { }\nfunction (s: S) twice(): i32 { return 42; }\nfunction main(): i32 { var s = S { }; return s.twice(); }", false, ""},
+		{"receiver-method", "struct S { }\nfunction (s: S) twice(): i32 { return 42; }\nfunction main(): i32 { let s = S { }; return s.twice(); }", false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")
@@ -257,7 +257,7 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 			{"numeric-alias-name", "type 123 = i32;\nfunction main(): i32 { return 0; }\n", "malformed type alias declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
 			// The one sentinel with a native code names it on every driver,
 			// whether or not a checker runs before the gate.
-			{"valueless-block", "function side(): i32 { return 1; }\nfunction main(): i32 {\n    var x: i32 = { side(); };\n    return x;\n}\n", "E061"},
+			{"valueless-block", "function side(): i32 { return 1; }\nfunction main(): i32 {\n    let x: i32 = { side(); };\n    return x;\n}\n", "E061"},
 		} {
 			mainPath := writeTemp(t, stage, tc.name+".fern", []byte(tc.src))
 			for _, args := range ld.modes {

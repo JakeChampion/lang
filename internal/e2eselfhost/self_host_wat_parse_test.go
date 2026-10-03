@@ -54,7 +54,7 @@ func TestSelfHostWatParse(t *testing.T) {
 // is a distinct failing-check id (0 = pass).
 const watParseSelfTestMain = `
 function main(): i32 {
-    var root: SExpr = wat_parse(wat_tokenize("(module (func $f))"));
+    let root: SExpr = wat_parse(wat_tokenize("(module (func $f))"));
     if (root.kind != 0) { return 1; }
     if (root.items.len() != 2) { return 2; }
     if (root.items[0].kind != 2 || root.items[0].text != "module") { return 3; }

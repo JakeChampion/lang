@@ -11,23 +11,24 @@ import (
 )
 
 const semanticFixture = `
-var records: semrecords.Record[] = [];
-var enums: semrecords.Enum[] = [];
-var calls: ssasem.Contract[] = [];
-var i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
-var i64t: typeinfo.Type = typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false };
-var bt: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
-var st: typeinfo.Type = typeinfo.TypeString { tag: 0 };
-var view: typeinfo.Type = typeinfo.TypeString { tag: 1 };
-var sa: typeinfo.Type = typeinfo.TypeArray { elem: st, view: false };
-var saa: typeinfo.Type = typeinfo.TypeArray { elem: sa, view: false };
-var root: typeinfo.Type = typeinfo.TypeTuple { elements: [saa, bt] };
-var ia: typeinfo.Type = typeinfo.TypeArray { elem: i32t, view: false };
-var pair: typeinfo.Type = typeinfo.TypeTuple { elements: [st, i32t] };
-var types: typeinfo.Type[] = [root, i32t, saa, sa, st, st, sa, bt, ia, i32t, pair];
-var params: typeinfo.Type[] = [root, i32t];
-var result: typeinfo.Type = st;
-var insts: ssa.SInst[] = [
+let records: semrecords.Record[] = [];
+let enums: semrecords.Enum[] = [];
+let calls: ssasem.Contract[] = [];
+let anchors: ssasem.Anchor[] = [];
+let i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
+let i64t: typeinfo.Type = typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false };
+let bt: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
+let st: typeinfo.Type = typeinfo.TypeString { tag: 0 };
+let view: typeinfo.Type = typeinfo.TypeString { tag: 1 };
+let sa: typeinfo.Type = typeinfo.TypeArray { elem: st, view: false };
+let saa: typeinfo.Type = typeinfo.TypeArray { elem: sa, view: false };
+let root: typeinfo.Type = typeinfo.TypeTuple { elements: [saa, bt] };
+let ia: typeinfo.Type = typeinfo.TypeArray { elem: i32t, view: false };
+let pair: typeinfo.Type = typeinfo.TypeTuple { elements: [st, i32t] };
+let types: typeinfo.Type[] = [root, i32t, saa, sa, st, st, sa, bt, ia, i32t, pair];
+let params: typeinfo.Type[] = [root, i32t];
+let result: typeinfo.Type = st;
+let insts: ssa.SInst[] = [
     inst(6, 0, [], 0), inst(6, 1, [], 1),
     inst(ssasem.tuple_get(), 2, [0], 0),
     inst(ssasem.array_get(), 3, [2, 1], 0),
@@ -38,7 +39,7 @@ var insts: ssa.SInst[] = [
     inst(ssasem.array_get(), 9, [8, 1], 0),
     inst(ssasem.tuple_new(), 10, [5, 9], 0)
 ];
-var graph = ssa.SFunc { name: "semantic", nparams: 2, nvals: 11, entry: 7, takes_env: false,
+let graph = ssa.SFunc { name: "semantic", nparams: 2, nvals: 11, entry: 7, takes_env: false,
     blocks: [ssa.SBlock { id: 7, insts: insts, preds: [], term: ret(5) }] };
 `
 
@@ -69,37 +70,39 @@ function ret(value: i32): ssa.STerm { return ssa.STerm { kind_tag: 1, value: val
 function br(target: i32): ssa.STerm { return ssa.STerm { kind_tag: 2, value: 0, cond: 0, target: target, t: 0, f: 0 }; }
 function branch(): ssa.STerm { return ssa.STerm { kind_tag: 3, value: 0, cond: 0, target: 0, t: 17, f: 27 }; }
 function change(g: ssa.SFunc, at: i32, ins: ssa.SInst): ssa.SFunc {
-    var b = g.blocks[0];
+    let b = g.blocks[0];
     b = ssa.SBlock { ...b, insts: b.insts.with(at, ins) };
     return ssa.SFunc { ...g, blocks: g.blocks.with(0, b) };
 }
 function type_checks(): i32 {
-    var i: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
-    var wide: typeinfo.Type = typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false };
-    var u: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false };
-    var c: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: true };
-    var s: typeinfo.Type = typeinfo.TypeString { tag: 0 };
-    var v: typeinfo.Type = typeinfo.TypeString { tag: 1 };
-    var f: typeinfo.Type = typeinfo.TypeFloat { width: 64, polymorphic: false };
-    var p: typeinfo.Type = typeinfo.TypeFloat { width: 64, polymorphic: true };
-    var n: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [i] };
-    var nw: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [wide] };
-    var un: typeinfo.Type = typeinfo.TypeUnion { name: "Option", args: [i] };
-    var unw: typeinfo.Type = typeinfo.TypeUnion { name: "Option", args: [wide] };
-    var sig: typeinfo.Type = typeinfo.TypeFunc { param_types: [s], param_own: [], ret_type: f, params_known: true };
-    var opaque: typeinfo.Type = typeinfo.TypeFunc { param_types: [s], param_own: [], ret_type: f, params_known: false };
-    var sv: typeinfo.Type = typeinfo.TypeFunc { param_types: [v], param_own: [], ret_type: f, params_known: true };
-    var tuple: typeinfo.Type = typeinfo.TypeTuple { elements: [n, sig] };
-    var tuple2: typeinfo.Type = typeinfo.TypeTuple { elements: [nw, sig] };
-    var map: typeinfo.Type = typeinfo.TypeMap { key: s, value: un };
-    var map2: typeinfo.Type = typeinfo.TypeMap { key: v, value: un };
+    let i: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
+    let wide: typeinfo.Type = typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false };
+    let u: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false };
+    let c: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: true };
+    let s: typeinfo.Type = typeinfo.TypeString { tag: 0 };
+    let v: typeinfo.Type = typeinfo.TypeString { tag: 1 };
+    let f: typeinfo.Type = typeinfo.TypeFloat { width: 64, polymorphic: false };
+    let p: typeinfo.Type = typeinfo.TypeFloat { width: 64, polymorphic: true };
+    let n: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [i] };
+    let nw: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [wide] };
+    let un: typeinfo.Type = typeinfo.TypeUnion { name: "Option", args: [i] };
+    let unw: typeinfo.Type = typeinfo.TypeUnion { name: "Option", args: [wide] };
+    let sig: typeinfo.Type = typeinfo.TypeFunc { param_types: [s], param_own: [], ret_type: f, params_known: true };
+    let opaque: typeinfo.Type = typeinfo.TypeFunc { param_types: [s], param_own: [], ret_type: f, params_known: false };
+    let sv: typeinfo.Type = typeinfo.TypeFunc { param_types: [v], param_own: [], ret_type: f, params_known: true };
+    let tuple: typeinfo.Type = typeinfo.TypeTuple { elements: [n, sig] };
+    let tuple2: typeinfo.Type = typeinfo.TypeTuple { elements: [nw, sig] };
+    let map: typeinfo.Type = typeinfo.TypeMap { key: s, value: un };
+    let map2: typeinfo.Type = typeinfo.TypeMap { key: v, value: un };
     if (semtypes.equal(i, wide) || semtypes.equal(i, u) || semtypes.equal(i, c)) { return 1; }
     if (semtypes.equal(s, v) || semtypes.equal(f, p) || typeinfo.spelling(f) != typeinfo.spelling(p)) { return 2; }
     if (semtypes.equal(n, nw) || semtypes.equal(un, unw) || semtypes.equal(n, un)) { return 3; }
     if (semtypes.equal(sig, opaque) || semtypes.equal(sig, sv) || semtypes.equal(tuple, tuple2) || semtypes.equal(map, map2)) { return 4; }
-    var array: typeinfo.Type = typeinfo.TypeArray { elem: tuple, view: false };
+    let array: typeinfo.Type = typeinfo.TypeArray { elem: tuple, view: false };
     if (!semtypes.equal(array, array) || !semtypes.equal(map, map) || !semtypes.concrete(array, false)) { return 5; }
     if (semtypes.concrete(p, false) || semtypes.concrete(opaque, false) || semtypes.equal(typeinfo.unchecked(), typeinfo.unchecked())) { return 6; }
+    let av: typeinfo.Type = typeinfo.TypeArray { elem: tuple, view: true };
+    if (ssasem.type_key(array) == ssasem.type_key(av)) { return 7; }
     return 0;
 }
 `
@@ -114,9 +117,55 @@ graph = ssa.SFunc { name: "phi", nparams: 3, nvals: 4, entry: 7, takes_env: fals
 ] };
 `
 
+const semanticArrayLend = `
+let av: typeinfo.Type = typeinfo.TypeArray { elem: i32t, view: true };
+params = [ia]; types = [ia, av]; result = av;
+graph = ssa.SFunc { name: "lend", nparams: 1, nvals: 2, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(ssasem.array_lend(), 1, [0], 0)], term: ret(1) }
+] };
+`
+
+const semanticByteView = `
+let byte: typeinfo.Type = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false };
+let bv: typeinfo.Type = typeinfo.TypeArray { elem: byte, view: true };
+params = [st]; types = [st, bv]; result = bv;
+graph = ssa.SFunc { name: "byte_view", nparams: 1, nvals: 2, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(ssasem.str_byte_view(), 1, [0], 0)], term: ret(1) }
+] };
+`
+
+const semanticViewMutation = `
+let av: typeinfo.Type = typeinfo.TypeArray { elem: i32t, view: true };
+params = [av, i32t, i32t]; types = [av, i32t, i32t, av]; result = av;
+graph = ssa.SFunc { name: "view_mutation", nparams: 3, nvals: 4, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
+        inst(ssasem.append(), 3, [0, 2], 0)], term: ret(3) }
+] };
+`
+
 func semanticCases() []struct{ name, change, want string } {
 	base := []struct{ name, change, want string }{
 		{"nested-projections", "", ""},
+		{"array-lend", semanticArrayLend, ""},
+		{"array-view-cannot-append", semanticViewMutation, "append receiver must own storage"},
+		{"array-view-cannot-update", semanticViewMutation + "graph = change(graph, 3, inst(ssasem.with(), 3, [0, 1, 2], 0));", "with receiver must own storage"},
+		{"array-view-needs-owned-construction", semanticArrayLend + "graph = change(graph, 1, inst(ssasem.array_new(), 1, [], 0));", "array construction must own storage"},
+		{"byte-view", semanticByteView, ""},
+		{"byte-view-string-view", semanticByteView + "types = [view, bv]; params = [view];", ""},
+		{"byte-view-call", semanticByteView + `calls = [contract("lend", [st], [2], bv)]; anchors = [ssasem.Anchor { name: "lend", params: [0] }]; graph = change(graph, 1, call_inst(1, "lend", [0]));`, ""},
+		{"byte-view-literal", semanticByteView + `params = []; graph = ssa.SFunc { ...graph, nparams: 0 }; graph = change(graph, 0, ssa.SInst { kind_tag: 5, result: 0, args: [], imm: 0, str: "hello" });`, ""},
+		{"byte-view-local-source", semanticByteView + `params = []; calls = [contract("source", [], [], st)]; graph = ssa.SFunc { ...graph, nparams: 0 }; graph = change(graph, 0, call_inst(0, "source", []));`, ""},
+		{"array-view-local-source", semanticByteView + `let owned: typeinfo.Type = typeinfo.TypeArray { elem: byte, view: false }; params = []; types = [owned, bv]; graph = ssa.SFunc { ...graph, nparams: 0 }; graph = change(graph, 0, inst(ssasem.array_new(), 0, [], 0)); graph = change(graph, 1, inst(ssasem.array_lend(), 1, [0], 0));`, ""},
+		{"byte-view-tuple", semanticByteView + `result = typeinfo.TypeTuple { elements: [bv, bv] }; types = types.append(result); let b = graph.blocks[0]; graph = ssa.SFunc { ...graph, nvals: 3, blocks: [ssa.SBlock { ...b, insts: b.insts.append(inst(ssasem.tuple_new(), 2, [1, 1], 0)), term: ret(2) }] };`, ""},
+		{"byte-view-arity", semanticByteView + "graph = change(graph, 1, inst(ssasem.str_byte_view(), 1, [], 0));", "str bytes arity"},
+		{"byte-view-receiver", semanticByteView + "types = [ia, bv]; params = [ia];", "str bytes receiver"},
+		{"byte-view-cannot-own", semanticByteView + "result = typeinfo.TypeArray { elem: byte, view: false }; types = [st, result];", "str bytes result"},
+		{"byte-view-element-type", semanticByteView + "result = typeinfo.TypeArray { elem: i32t, view: true }; types = [st, result];", "str bytes result"},
+		{"byte-copy-cannot-view", semanticByteView + "graph = change(graph, 1, inst(ssasem.str_bytes(), 1, [0], 0));", "str bytes result"},
+		{"array-view-copy-needs-lend", semanticArrayLend + "graph = change(graph, 1, inst(7, 1, [0], 0));", "copy or phi type"},
+		{"array-lend-cannot-own", semanticArrayLend + "types = [av, ia]; params = [av]; result = ia;", "array lend type"},
+		{"array-lend-element-type", semanticArrayLend + "let wrong: typeinfo.Type = typeinfo.TypeArray { elem: st, view: true }; types = [ia, wrong]; result = types[1];", "array lend type"},
+		{"array-lend-arity", semanticArrayLend + "graph = change(graph, 1, inst(ssasem.array_lend(), 1, [], 0));", "array lend arity"},
 		{"phi", semanticPhi, ""},
 		{"phi-view-mismatch", semanticPhi + "types = types.with(2, view); params = params.with(2, view);", "copy or phi type"},
 		{"branch-needs-bool", semanticPhi + "types = types.with(0, i32t); params = params.with(0, i32t);", "condition type"},
@@ -133,7 +182,7 @@ func semanticCases() []struct{ name, change, want string } {
 		{"parameter-type", "params = params.with(1, i64t);", "parameter type or identity"},
 		{"missing-parameter", "graph = change(graph, 1, inst(1, 1, [], 0));", "missing parameter definition"},
 		{"return-type", "result = view;", "return type"},
-		{"missing-return", "var b = graph.blocks[0]; b = ssa.SBlock { ...b, term: ret(0 - 1) }; graph = ssa.SFunc { ...graph, blocks: [b] };", "missing return value"},
+		{"missing-return", "let b = graph.blocks[0]; b = ssa.SBlock { ...b, term: ret(0 - 1) }; graph = ssa.SFunc { ...graph, blocks: [b] };", "missing return value"},
 		{"unknown-type", "types = types.with(5, typeinfo.unchecked());", "unresolved value type"},
 		{"polymorphic-type", "types = types.with(5, typeinfo.TypeFloat { width: 64, polymorphic: true });", "unresolved value type"},
 		{"opaque-signature", "types = types.with(5, typeinfo.TypeFunc { param_types: [], param_own: [], ret_type: st, params_known: false });", "unresolved value type"},
@@ -167,8 +216,8 @@ func semanticSource(indices []int) (string, string) {
 		tc := semanticCases()[i]
 		fmt.Fprintf(&source, "function semantic_case_%d(): i32 {\n%s\n%s\n", i, semanticFixture, tc.change)
 		source.WriteString(`
-var before = ssa.print_func(graph);
-var checked = ssasem.analyze(ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls });
+let before = ssa.print_func(graph);
+let checked = ssasem.analyze(ssasem.Func { envs: [], anchors: anchors, dyns: [], shadows: [], finalizers: [], map_module: true, graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls });
 if (checked.ok != (checked.why == "") || checked.flow.ok != checked.ok) { return 2; }
 if (before != ssa.print_func(graph)) { return 3; }
 if (!checked.ok && (checked.dependencies.len() != 0 || checked.flow.live_in.len() != 0 || checked.flow.live_out.len() != 0)) { return 4; }
@@ -176,11 +225,11 @@ if (!checked.ok && (checked.dependencies.len() != 0 || checked.flow.live_in.len(
 		if i == 0 {
 			source.WriteString(`
 if (!checked.ok) { print(checked.why); return 5; }
-var expected: i32[][] = [[], [], [0], [2, 0], [3, 2, 0], [4, 3, 2, 0], [], [], [], [], []];
-var at: i32 = 0;
+let expected: i32[][] = [[], [], [0], [2, 0], [3, 2, 0], [4, 3, 2, 0], [], [], [], [], []];
+let at: i32 = 0;
 while (at < expected.len()) {
     if (checked.dependencies[at].len() != expected[at].len()) { return 6; }
-    var dep: i32 = 0;
+    let dep: i32 = 0;
     while (dep < expected[at].len()) {
         if (checked.dependencies[at][dep] != expected[at][dep]) { return 7; }
         dep = dep + 1;
@@ -196,6 +245,23 @@ if (checked.dependencies[1].len() != 1 || checked.dependencies[1][0] != 0) { ret
 if (checked.dependencies[3].len() != 0 || checked.dependencies[4].len() != 1 || checked.dependencies[4][0] != 3) { return 10; }
 if (checked.dependencies[6].len() != 0) { return 11; }
 `)
+		}
+		if tc.want == "" && (strings.HasPrefix(tc.name, "byte-view") || tc.name == "array-lend" || tc.name == "array-view-local-source") {
+			source.WriteString(`
+if (!checked.ok) { print(checked.why); return 12; }
+if (checked.dependencies[1].len() != 1 || checked.dependencies[1][0] != 0) { return 13; }
+let f = ssasem.Func { envs: [], anchors: anchors, dyns: [], shadows: [], finalizers: [], map_module: true, graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls };
+let anchor = ssasem.result_anchor(f, anchors, []);
+if (!ssasem.holds_view(f, result) || anchor.pending) { return 14; }
+`)
+			switch tc.name {
+			case "byte-view-local-source", "array-view-local-source":
+				source.WriteString("if (!anchor.escapes || anchor.params.len() != 0) { return 15; }\n")
+			case "byte-view-literal":
+				source.WriteString("if (anchor.escapes || anchor.params.len() != 0) { return 16; }\n")
+			default:
+				source.WriteString("if (anchor.escapes || anchor.params.len() != 1 || anchor.params[0] != 0) { return 17; }\n")
+			}
 		}
 		source.WriteString("print(checked.why); return 0; }\n")
 		fmt.Fprintf(&main, "if (semantic_case_%d() != 0) { return %d; }\n", i, i+1)

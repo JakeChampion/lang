@@ -50,8 +50,8 @@ function build(d: i32): N { if (d == 0) { return L(1); } return B(build(d - 1), 
 // the scrutinee's borrow taint into the recursion's arguments). 16 leaves.
 const ownAccTreeBody = ownAccRecursionPrelude + `
 function round(i: i32): i32 {
-    var t: N = build(4);
-    var acc: i32[] = [];
+    let t: N = build(4);
+    let acc: i32[] = [];
     acc = into(t, acc);
     return acc.len();
 }
@@ -61,8 +61,8 @@ function round(i: i32): i32 {
 // is the tainted argument. 8 elements.
 const ownAccIndexBody = ownAccRecursionPrelude + `
 function round(i: i32): i32 {
-    var chunk: i32[] = [1, 2, 3, 4, 5, 6, 7, 8];
-    var acc: i32[] = [];
+    let chunk: i32[] = [1, 2, 3, 4, 5, 6, 7, 8];
+    let acc: i32[] = [];
     acc = idx(chunk, 0, acc);
     return acc.len();
 }
@@ -73,8 +73,8 @@ func ownAccIndexSrc(rounds int) string { return ownAccIndexBody + ownAccMain(rou
 
 func ownAccMain(rounds, want int) string {
 	return `function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < ` + strconv.Itoa(rounds) + `) { acc = acc + round(r); r = r + 1; }
     if (acc != ` + strconv.Itoa(want) + `) { return 1; }
     if (__rc_underflow_count() != 0) { return 2; }
@@ -109,9 +109,9 @@ func TestX86_64OwnAccumulatorRecursionReclaim(t *testing.T) {
 // stranded copy is reclaimed.
 func ownAccBumpSrc(body string, rounds int) string {
 	return body + `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var r: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let r: i32 = 0;
+    let sum: i32 = 0;
     while (r < ` + strconv.Itoa(rounds) + `) { sum = sum + round(r); r = r + 1; }
     if (sum == 0) { return 201; }
     return (__heap_bump_bytes() as i32) - before;

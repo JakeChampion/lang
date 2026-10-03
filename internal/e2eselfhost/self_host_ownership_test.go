@@ -42,9 +42,9 @@ var ownershipCases = []struct {
 function set_leaf(t: Tree, at: i32, v: i32): Tree {
     match (t) {
         Node(kids) => {
-            var nil: Tree = Nil;
-            var child: Tree = kids[at];
-            var rest: Tree[] = kids.with(at, nil);
+            let nil: Tree = Nil;
+            let child: Tree = kids[at];
+            let rest: Tree[] = kids.with(at, nil);
             child = set_leaf(child, 0, v);
             return Node(rest.with(at, child));
         },
@@ -53,10 +53,10 @@ function set_leaf(t: Tree, at: i32, v: i32): Tree {
     }
 }
 function main(): i32 {
-    var leaf: Tree = Leaf(0);
-    var inner: Tree = Node([leaf]);
-    var t: Tree = Node([inner]);
-    var i: i32 = 0;
+    let leaf: Tree = Leaf(0);
+    let inner: Tree = Node([leaf]);
+    let t: Tree = Node([inner]);
+    let i: i32 = 0;
     while (i < 20) { t = set_leaf(t, 0, i); i = i + 1; }
     match (t) {
         Node(a) => {
@@ -69,7 +69,7 @@ function main(): i32 {
     }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
-}`, 105},
+}`, 24},
 	// A RECEIVER is inferred too, which `decl_param_mode` borrowed
 	// unconditionally before — and the whole chain has to line up for it to
 	// pay, which is what this case pins. `keep` hands its parameter back, so
@@ -93,14 +93,14 @@ function keep(c: Chain, at: i32, v: i32): Chain {
 struct Carrier { tag: i32, c: Chain }
 @noinline
 function (b: Carrier) step(at: i32, v: i32): Carrier {
-    var inner: Chain = b.c;
-    var stop: Chain = Stop;
+    let inner: Chain = b.c;
+    let stop: Chain = Stop;
     b = Carrier { ...b, c: stop };
     return Carrier { ...b, c: keep(inner, at, v) };
 }
 function main(): i32 {
-    var b: Carrier = Carrier { tag: 7, c: Link([0, 0, 0]) };
-    var i: i32 = 0;
+    let b: Carrier = Carrier { tag: 7, c: Link([0, 0, 0]) };
+    let i: i32 = 0;
     while (i < 30) { b = b.step(i % 3, i); i = i + 1; }
     match (b.c) {
         Link(xs) => { if (xs[0] + xs[1] + xs[2] != 27 + 28 + 29) { return 1; } },
@@ -135,8 +135,8 @@ function make(k: i32): Node {
     return Empty;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 30) { total = total + weigh(make(i)); i = i + 1; }
     if (total != 300) { return 1; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -158,8 +158,8 @@ function (c: Cursor) peek(): Tok {
 @noinline
 function (c: Cursor) advance(): Cursor { return Cursor { toks: c.toks, pos: c.pos + 1 }; }
 function main(): i32 {
-    var c: Cursor = Cursor { toks: [Word("ab" + "c"), Num(4), Word("de" + "")], pos: 0 };
-    var total: i32 = 0;
+    let c: Cursor = Cursor { toks: [Word("ab" + "c"), Num(4), Word("de" + "")], pos: 0 };
+    let total: i32 = 0;
     while (c.pos < 4) {
         match (c.peek()) { Word(s) => { total = total + s.len(); }, Num(n) => { total = total + n; }, End => { total = total + 100; } }
         c = c.advance();
@@ -176,8 +176,8 @@ function main(): i32 {
 @noinline
 function pass(b: Boxed): Boxed { return b; }
 function main(): i32 {
-    var b: Boxed = One([4, 5, 6]);
-    var i: i32 = 0;
+    let b: Boxed = One([4, 5, 6]);
+    let i: i32 = 0;
     while (i < 20) { b = pass(b); i = i + 1; }
     match (b) { One(xs) => { if (xs[2] != 6) { return 1; } }, None2 => { return 2; } }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -223,9 +223,10 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 // parameter and must drop, `reads_only` must not. The same pair for a record:
 // `keep_or_new` hands its parameter back on one arm and drops it on the other,
 // and `lends_to_builtin` only lends a field to a builtin's lent slot, which
-// takes no unit. And for a receiver: `advance` builds a new cursor out of its
-// parameter and must drop it, `peek` returns an element of its token array and
-// must not.
+// takes no unit. For a recursive enum: `pick` hands back one tree and drops the
+// other, `depth` walks its tree and must not drop it. And for a receiver:
+// `advance` builds a new cursor out of its parameter and must drop it, `peek`
+// returns an element of its token array and must not.
 const inferredModesProgram = `enum Node { Leaf(i32), Label(string), Empty }
 enum Tree { Tip(i32), Fork(Tree, Tree) }
 struct Rec { text: string, n: i32 }
@@ -242,8 +243,9 @@ function depth(t: Tree): i32 {
     match (t) { Tip(_) => { return 1; }, Fork(l, r) => { return 1 + depth(l) + depth(r); } }
 }
 @noinline
-function bump(t: Tree): Tree {
-    match (t) { Tip(v) => { return Tip(v + 1); }, Fork(l, r) => { return Fork(bump(l), bump(r)); } }
+function pick(a: Tree, b: Tree, k: i32): Tree {
+    if (k > 0) { return a; }
+    return b;
 }
 @noinline
 function lends_to_builtin(r: Rec): i32 { return __count_byte(r.text, 97) + r.n; }
@@ -267,23 +269,23 @@ function make(k: i32): Node {
     return Empty;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) { total = total + reads_only(make(i)); i = i + 1; }
-    var n: Node = hands_back(make(1), 5);
+    let n: Node = hands_back(make(1), 5);
     if (total != 12) { return 1; }
     if (reads_only(n) != 3) { return 2; }
-    var r: Rec = Rec { text: "banana" + "", n: 1 };
-    var j: i32 = 0;
-    var seen: i32 = 0;
+    let r: Rec = Rec { text: "banana" + "", n: 1 };
+    let j: i32 = 0;
+    let seen: i32 = 0;
     while (j < 4) { seen = seen + lends_to_builtin(r); r = keep_or_new(r, j); j = j + 1; }
     if (seen != 4) { return 3; }
-    var t: Tree = Fork(Tip(1), Fork(Tip(2), Tip(3)));
+    let t: Tree = Fork(Tip(1), Fork(Tip(2), Tip(3)));
     if (depth(t) != 5) { return 4; }
-    t = bump(t);
+    t = pick(t, Tip(9), 1);
     if (depth(t) != 5) { return 5; }
-    var c: Cursor = Cursor { toks: [Leaf(2), Label("xy" + "")], pos: 0 };
-    var w: i32 = 0;
+    let c: Cursor = Cursor { toks: [Leaf(2), Label("xy" + "")], pos: 0 };
+    let w: i32 = 0;
     while (c.pos < 3) { w = w + reads_only(c.peek()); c = c.advance(); }
     if (w != 6) { return 6; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -363,12 +365,12 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 		t.Errorf("lends_to_builtin calls %s: a record whose field only reaches a builtin's lent slot was inferred COUNTED", recDrop)
 	}
 	const treeDrop = "__sem_release_Tree"
-	rebuilt, ok := asmWholeFunc(string(asm), "bump")
+	picked, ok := asmWholeFunc(string(asm), "pick")
 	if !ok {
-		t.Fatal("no __fn_bump in the emitted code")
+		t.Fatal("no __fn_pick in the emitted code")
 	}
-	if !strings.Contains(rebuilt, treeDrop) {
-		t.Fatalf("bump does not call %s — the marker this reads is gone, so the traversal assertion below proves nothing", treeDrop)
+	if !strings.Contains(picked, treeDrop) {
+		t.Fatalf("pick does not call %s — the marker this reads is gone, so the traversal assertion below proves nothing", treeDrop)
 	}
 	walk, ok := asmWholeFunc(string(asm), "depth")
 	if !ok {

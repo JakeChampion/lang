@@ -9,7 +9,7 @@
 import "std/regex";
 
 function main(): i32 {
-  var r: i32 = 0;
+  let r: i32 = 0;
   if (require_regex_text(regex.regex_replace_all("a", "aaa", "bb")) == "bbbbbb") {  // multi-char repl grows output
     r = r + 1;
   }

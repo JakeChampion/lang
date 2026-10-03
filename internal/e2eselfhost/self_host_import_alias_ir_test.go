@@ -42,7 +42,7 @@ func TestSelfHostImportAliasIR(t *testing.T) {
 	// form (already working) doesn't exercise.
 	src := `import "std/io_buffered" as io;
 function main(): i32 {
-    var w = io.bytes_writer_new().write_string("ok");
+    let w = io.bytes_writer_new().write_string("ok");
     if (w.len() != 2) { return 1; }
     match (w.into_string()) {
         Some(s) => { if (s != "ok") { return 2; } },

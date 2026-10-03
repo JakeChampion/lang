@@ -40,15 +40,15 @@ function make(k: i32, v: i32): Ty {
 
 function columns(done: boolean, mt: TM, recv: Ty): Ty {
   if (done) { return recv; }
-  var ik: Ty = mt.key;
-  var iv: Ty = mt.value;
+  let ik: Ty = mt.key;
+  let iv: Ty = mt.value;
   if (is_unknown(ik)) { ik = TI { w: 8 }; }
   if (is_unknown(iv)) { iv = TI { w: 16 }; }
   return TM { key: ik, value: iv };
 }
 
 function typed(done: boolean, k: i32, v: i32): Ty {
-  var recv: Ty = make(k, v);
+  let recv: Ty = make(k, v);
   match (recv) {
     TM(mt) => { return columns(done, mt, recv); },
     _ => {}
@@ -58,23 +58,23 @@ function typed(done: boolean, k: i32, v: i32): Ty {
 
 function relabel(done: boolean, inner: Ty, b: Boxed): Boxed {
   if (done) { return b; }
-  var fresh: Ty = TM { key: TI { w: 1 }, value: TU { reason: "zz" } };
+  let fresh: Ty = TM { key: TI { w: 1 }, value: TU { reason: "zz" } };
   return Boxed { inner: TI { w: width(inner) + width(fresh) }, tag: "relabelled" };
 }
 
 function boxed(done: boolean, w: i32): Boxed {
-  var b: Boxed = Boxed { inner: TM { key: TI { w: w }, value: TU { reason: "abc" } }, tag: "fresh" };
+  let b: Boxed = Boxed { inner: TM { key: TI { w: w }, value: TU { reason: "abc" } }, tag: "fresh" };
   return relabel(done, b.inner, b);
 }
 
 function main(): i32 {
-  var a: Ty = typed(false, 0 - 1, 32);
-  var churn: Ty[] = [TU { reason: "abcdefgh" }, TU { reason: "ijklmnop" }, TI { w: 1 }];
+  let a: Ty = typed(false, 0 - 1, 32);
+  let churn: Ty[] = [TU { reason: "abcdefgh" }, TU { reason: "ijklmnop" }, TI { w: 1 }];
   if (churn.len() != 3) { return 9; }
   if (width(a) != 832) { return 1; }
   if (width(typed(true, 4, 5)) != 405) { return 2; }
-  var r: Boxed = boxed(false, 7);
-  var churn2: Boxed[] = [Boxed { inner: TI { w: 2 }, tag: "x" }];
+  let r: Boxed = boxed(false, 7);
+  let churn2: Boxed[] = [Boxed { inner: TI { w: 2 }, tag: "x" }];
   if (churn2.len() != 1) { return 9; }
   if (width(r.inner) != 805 || r.tag.len() != 10) { return 3; }
   if (boxed(true, 7).tag != "fresh") { return 4; }

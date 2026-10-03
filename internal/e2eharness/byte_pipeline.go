@@ -8,8 +8,8 @@ import (
 )
 
 const BytePipelineProgram = `function main(): i32 {
-  var r = stdin();
-  var h = buf_new(8);
+  let r = stdin();
+  let h = buf_new(8);
   while (true) {
     match (r.read_chunk_bytes(127)) {
       Err(_) => { buf_free(h); return 1; },
@@ -19,9 +19,9 @@ const BytePipelineProgram = `function main(): i32 {
       }
     }
   }
-  var result = buf_take_bytes(h);
+  let result = buf_take_bytes(h);
   buf_free(h);
-  var w = stdout();
+  let w = stdout();
   match (w.write_bytes(result)) {
     Some(_) => { return 2; },
     None => {},

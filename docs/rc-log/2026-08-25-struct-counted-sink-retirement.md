@@ -55,7 +55,7 @@ The two sink kinds are not equivalent:
   claim, and both releases are now rc-gated, so this position is forgiven.
 - A CONTAINER sink (append/with arg, array or tuple element, variant payload)
   retains only under `slot_is_reclaimable_struct`, which REFUSES a retired
-  slot. A block-scoped `var s` appended inside a loop therefore gets no inc,
+  slot. A block-scoped `let s` appended inside a loop therefore gets no inc,
   while the scoped sweep — reading the retirement-TOLERANT sibling — would
   still release it. Retain and release disagree about retired slots, so these
   sinks stay refused.

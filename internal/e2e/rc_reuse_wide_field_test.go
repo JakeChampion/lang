@@ -17,23 +17,23 @@ import (
 
 const wideReuseSrc = `struct Acc { total: i64, scale: f64, n: i32 }
 function main(): i32 {
-    var p: Acc = Acc { total: 0, scale: 1.0, n: 0 };
-    var i: i32 = 0;
+    let p: Acc = Acc { total: 0, scale: 1.0, n: 0 };
+    let i: i32 = 0;
     while (i < 1000) {
         p = Acc { total: p.total + 3000000000, scale: p.scale, n: p.n + 1 };
         i = i + 1;
     }
     // 1000 * 3e9 = 3e12 — far past i32 range; a truncated temp cannot
     // reproduce it. Check via division back down to i32 range.
-    var q: i64 = p.total / 3000000000;
+    let q: i64 = p.total / 3000000000;
     if (q != 1000) { return 90; }
     if (p.n != 1000) { return 91; }
     if (p.scale != 1.0) { return 92; }
     // Field SWAP through the wide temps — the read-before-overwrite hazard
     // the temps exist for: both i64 reads must complete (width-correct)
     // before the reused box is overwritten.
-    var w: Swap = Swap { a: 6000000000, b: 7000000000 };
-    var j: i32 = 0;
+    let w: Swap = Swap { a: 6000000000, b: 7000000000 };
+    let j: i32 = 0;
     while (j < 3) {
         w = Swap { a: w.b, b: w.a };
         j = j + 1;
@@ -68,9 +68,9 @@ func TestWASMWideFieldReuse(t *testing.T) {
 	bump := func(n string) string {
 		return `struct Acc { total: i64, scale: f64, n: i32 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var p: Acc = Acc { total: 0, scale: 1.0, n: 0 };
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let p: Acc = Acc { total: 0, scale: 1.0, n: 0 };
+    let i: i32 = 0;
     while (i < ` + n + `) {
         p = Acc { total: p.total + 1, scale: p.scale, n: p.n + 1 };
         i = i + 1;

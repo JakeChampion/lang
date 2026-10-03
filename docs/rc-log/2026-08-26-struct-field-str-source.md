@@ -1,6 +1,6 @@
 # A string handed to a struct-literal field keeps no claim of its own
 
-`var src: string = w("k"); var p: P = P { f: src, n: i };` with `src` read
+`let src: string = w("k"); let p: P = P { f: src, n: i };` with `src` read
 afterwards freed 100 of 300 boxes over 100 rounds. Native freed all of them.
 This is the `local` cell of the construction-retain matrix's `str` column.
 

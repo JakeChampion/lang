@@ -109,7 +109,7 @@ function test_encode_upper(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/hex");
+  let r: test.TestRunner = test.test_new("std/hex");
   r = r.it("encode", test_encode);
   r = r.it("encode empty", test_encode_empty);
   r = r.it("decode", test_decode);

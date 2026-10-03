@@ -18,16 +18,16 @@ pub struct Args { method: string, url: string, client_ip: string, names: string[
 // parse_args reads `METHOD URL [CLIENT_IP] [Name:Value ...] [-n COUNT]`
 // starting at `first`.
 pub function parse_args(argv: string[], first: i32): Args {
-  var n: string[] = [];
-  var v: string[] = [];
-  var bad: Args = Args { method: "", url: "", client_ip: "", names: n, values: v, repeat: 1, ok: false };
+  let n: string[] = [];
+  let v: string[] = [];
+  let bad: Args = Args { method: "", url: "", client_ip: "", names: n, values: v, repeat: 1, ok: false };
   if (argv.len() < first + 2) {
     return bad;
   }
-  var a: Args = Args { method: argv[first], url: argv[first + 1], client_ip: "127.0.0.1", names: n, values: v, repeat: 1, ok: true };
-  var i: i32 = first + 2;
+  let a: Args = Args { method: argv[first], url: argv[first + 1], client_ip: "127.0.0.1", names: n, values: v, repeat: 1, ok: true };
+  let i: i32 = first + 2;
   while (i < argv.len()) {
-    var arg: string = argv[i];
+    let arg: string = argv[i];
     if (arg == "-n" && i + 1 < argv.len()) {
       match (argv[i + 1].parse_int()) {
         Some(c) => {
@@ -55,8 +55,8 @@ pub function parse_args(argv: string[], first: i32): Args {
 }
 
 pub function join(items: string[], sep: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < items.len()) {
     if (i > 0) {
       out = out + sep;
@@ -68,7 +68,7 @@ pub function join(items: string[], sep: string): string {
 }
 
 function print_headers(h: runtime.Headers, indent: string): void {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < h.names.len()) {
     print(indent + h.names[i] + ": " + h.values[i]);
     i = i + 1;
@@ -80,7 +80,7 @@ function print_headers(h: runtime.Headers, indent: string): void {
 pub function print_outcome(o: machine.Outcome, n: i32): void {
   print("--- request " + n.to_string() + " ---");
   print("  path:        " + join(o.steps, " -> "));
-  var hit: string = "miss";
+  let hit: string = "miss";
   if (o.hit) {
     hit = "HIT";
   }
@@ -90,7 +90,7 @@ pub function print_outcome(o: machine.Outcome, n: i32): void {
   print_headers(o.txn.resp.headers, "    ");
   if (o.txn.log.len() > 0) {
     print("  log:");
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < o.txn.log.len()) {
       print("    " + o.txn.log[i]);
       i = i + 1;
@@ -101,10 +101,10 @@ pub function print_outcome(o: machine.Outcome, n: i32): void {
 // run_all drives `repeat` requests against one cache, so a second
 // identical request can hit what the first stored.
 pub function run_all(d: machine.Driver, a: Args): i32 {
-  var cache: runtime.Cache = runtime.cache_new();
-  var i: i32 = 0;
+  let cache: runtime.Cache = runtime.cache_new();
+  let i: i32 = 0;
   while (i < a.repeat) {
-    var o: machine.Outcome = machine.run_with(d, a.method, a.url, a.client_ip, a.names, a.values, cache);
+    let o: machine.Outcome = machine.run_with(d, a.method, a.url, a.client_ip, a.names, a.values, cache);
     if (!o.ok) {
       eprint("vcl: " + o.err);
       eprint("     after " + join(o.steps, " -> "));
@@ -120,7 +120,7 @@ pub function run_all(d: machine.Driver, a: Args): i32 {
 // drive is the whole command line for a compiled policy: argv[0] is the
 // program name, so the request starts at 1.
 pub function drive(d: machine.Driver, argv: string[]): i32 {
-  var a: Args = parse_args(argv, 1);
+  let a: Args = parse_args(argv, 1);
   if (!a.ok) {
     eprint("usage: POLICY METHOD URL [CLIENT_IP] [Name:Value ...] [-n COUNT]");
     return 2;

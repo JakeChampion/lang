@@ -47,12 +47,12 @@ function make(i: i32): Option[i32[]] {
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var v: Option[i32[]] = make(k);
+            let v: Option[i32[]] = make(k);
             match (v) { Some(a) => { acc = acc + a.len(); }, None => { acc = acc + 1; } }
             k = k + 1;
         }
@@ -74,12 +74,12 @@ function make(i: i32): Result[i32[], i32] {
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var v: Result[i32[], i32] = make(k);
+            let v: Result[i32[], i32] = make(k);
             match (v) { Ok(a) => { acc = acc + a.len(); }, Err(e) => { acc = acc + e; } }
             k = k + 1;
         }
@@ -96,12 +96,12 @@ function main(): i32 {
 const rcPayloadOptionDirectSrc = `import "core/int";
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var v: Option[i32[]] = Some([k, k + 1, k + 2]);
+            let v: Option[i32[]] = Some([k, k + 1, k + 2]);
             match (v) { Some(a) => { acc = acc + a.len(); }, None => { acc = acc + 1; } }
             k = k + 1;
         }

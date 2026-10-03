@@ -25,17 +25,17 @@ func TestSelfHostMapKeysSnapshotIRArm64(t *testing.T) {
 
 	// Snapshot semantics across a growing insert run (cap 4 -> 8).
 	run(t, `function main(): i32 {
-    var m: Map[i32, i32] = Map { 1: 10, 2: 20 };
-    var ks = m.keys();
-    var vs: i32[] = m.values();
+    let m: Map[i32, i32] = Map { 1: 10, 2: 20 };
+    let ks = m.keys();
+    let vs: i32[] = m.values();
     m = m.insert(9, 90);
     m = m.insert(10, 100);
     m = m.insert(11, 110);
     m = m.insert(1, 11);
     if (ks.len() != 2) { return 10; }
     if (vs.len() != 2) { return 11; }
-    var sv: i32 = 0;
-    var i: i32 = 0;
+    let sv: i32 = 0;
+    let i: i32 = 0;
     while (i < vs.len()) { sv = sv + vs[i]; i = i + 1; }
     if (sv != 30) { return 12; }
     if (m.len() != 5) { return 13; }
@@ -48,20 +48,20 @@ func TestSelfHostMapKeysSnapshotIRArm64(t *testing.T) {
 	// i32/i32 grow churn, no keys() taken: the owned grow + map_free make it
 	// FLAT (the #4877 grow-leak closing on arm64).
 	run(t, `function build(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 1: 2 };
-    var j: i32 = 0;
+    let m: Map[i32, i32] = Map { 1: 2 };
+    let j: i32 = 0;
     while (j < 12) { m = m.insert(j + 10, j * 2); j = j + 1; }
     if (m.has(15)) { return m.len(); }
     return 0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) { acc = acc + build(i); i = i + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 500) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc < 0) { return 97; }
@@ -71,21 +71,21 @@ function main(): i32 {
 	// keys()-taken churn: snapshot copy swept + map_free frees the real
 	// buffers exactly once — flat, no underflow.
 	run(t, `function build(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 1: 2 };
-    var j: i32 = 0;
+    let m: Map[i32, i32] = Map { 1: 2 };
+    let j: i32 = 0;
     while (j < 8) { m = m.insert(j + 10, j); j = j + 1; }
-    var ks = m.keys();
-    var vs = m.values();
+    let ks = m.keys();
+    let vs = m.values();
     return ks.len() + vs.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) { acc = acc + build(i); i = i + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 500) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc < 0) { return 97; }
@@ -95,8 +95,8 @@ function main(): i32 {
 	// Mutation during `for (k, v) in m` + grow: snapshot iteration semantics,
 	// no use-after-free from the owned grow, post-loop snapshot release.
 	run(t, `function main(): i32 {
-    var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
-    var total: i32 = 0;
+    let m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
+    let total: i32 = 0;
     for (k, v) in m {
         total = total + k + v;
         m = m.insert(k + 100, v);

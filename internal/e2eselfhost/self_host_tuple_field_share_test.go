@@ -26,45 +26,45 @@ var tupleFieldShareCases = []struct {
 }{
 	{"returned_strarr", `function pair(r: Rec): (i32, string[]) { return (r.n, r.xs); }
 function main(): i32 {
-    var r: Rec = Rec { n: 2, xs: ["ab", "cd"] };
-    var p: (i32, string[]) = pair(r);
+    let r: Rec = Rec { n: 2, xs: ["ab", "cd"] };
+    let p: (i32, string[]) = pair(r);
     return p.0 + p.1.len();
 }
 `, 4},
 	{"returned_ints_outlives_record", `function pair(r: Ints): (i32, i32[]) { return (r.n, r.ys); }
 function main(): i32 {
-    var r: Ints = Ints { n: 2, ys: [5, 6, 7] };
-    var p: (i32, i32[]) = pair(r);
+    let r: Ints = Ints { n: 2, ys: [5, 6, 7] };
+    let p: (i32, i32[]) = pair(r);
     r = Ints { n: 1, ys: [1, 1] };
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 8) { var junk: i32[] = [9, 9, 9]; acc = acc + junk[k % 3]; k = k + 1; }
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 8) { let junk: i32[] = [9, 9, 9]; acc = acc + junk[k % 3]; k = k + 1; }
     return p.1[0] + p.1.len() + r.n + acc - 72;
 }
 `, 9},
 	{"local_ints_outlives_record", `function main(): i32 {
-    var r: Ints = Ints { n: 2, ys: [5, 6, 7] };
-    var p: (i32, i32[]) = (r.n, r.ys);
+    let r: Ints = Ints { n: 2, ys: [5, 6, 7] };
+    let p: (i32, i32[]) = (r.n, r.ys);
     r = Ints { n: 1, ys: [1, 1] };
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 8) { var junk: i32[] = [9, 9, 9]; acc = acc + junk[k % 3]; k = k + 1; }
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 8) { let junk: i32[] = [9, 9, 9]; acc = acc + junk[k % 3]; k = k + 1; }
     return p.1[0] + p.1.len() + r.n + acc - 72;
 }
 `, 9},
 	{"local_strarr_outlives_record", `function main(): i32 {
-    var r: Rec = Rec { n: 2, xs: ["e", "f", "g"] };
-    var p: (i32, string[]) = (r.n, r.xs);
+    let r: Rec = Rec { n: 2, xs: ["e", "f", "g"] };
+    let p: (i32, string[]) = (r.n, r.xs);
     r = Rec { n: 1, xs: ["a", "a"] };
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 8) { var junk: string[] = ["z", "z", "z"]; acc = acc + junk[k % 3].len(); k = k + 1; }
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 8) { let junk: string[] = ["z", "z", "z"]; acc = acc + junk[k % 3].len(); k = k + 1; }
     return p.1[0].len() * 5 + p.1.len() + r.n + acc - 8;
 }
 `, 9},
 	{"discarded", `function pair(r: Rec): (i32, string[]) { return (r.n, r.xs); }
 function main(): i32 {
-    var r: Rec = Rec { n: 2, xs: ["ab", "cd"] };
+    let r: Rec = Rec { n: 2, xs: ["ab", "cd"] };
     pair(r);
     pair(r);
     return r.xs.len();
@@ -75,67 +75,67 @@ function main(): i32 {
     return (r.n, r.ys);
 }
 function main(): i32 {
-    var r: Ints = Ints { n: 2, ys: [5, 6, 7] };
-    var a: (i32, i32[]) = pick(r, 1);
-    var b: (i32, i32[]) = pick(r, 2);
+    let r: Ints = Ints { n: 2, ys: [5, 6, 7] };
+    let a: (i32, i32[]) = pick(r, 1);
+    let b: (i32, i32[]) = pick(r, 2);
     pick(r, 1);
     r = Ints { n: 1, ys: [1] };
-    var junk: i32[] = [9, 9, 9];
+    let junk: i32[] = [9, 9, 9];
     return a.1[0] + b.1.len() + r.n + junk[0] - 9;
 }
 `, 9},
 	{"forwarded", `function pair(r: Rec): (i32, string[]) { return (r.n, r.xs); }
 function first(r: Rec): string[] {
-    var p: (i32, string[]) = pair(r);
+    let p: (i32, string[]) = pair(r);
     return p.1;
 }
 function main(): i32 {
-    var r: Rec = Rec { n: 2, xs: ["ab", "cd"] };
-    var ys: string[] = first(r);
+    let r: Rec = Rec { n: 2, xs: ["ab", "cd"] };
+    let ys: string[] = first(r);
     r = Rec { n: 1, xs: ["e"] };
-    var junk: string[] = ["zzz", "zzz"];
+    let junk: string[] = ["zzz", "zzz"];
     return ys[0].len() + ys.len() + r.n + junk.len();
 }
 `, 7},
 	{"rebind_ident_or_field", `function main(): i32 {
-    var r: Rec = Rec { n: 2, xs: ["ab", "cd"] };
-    var ys: string[] = ["p", "q", "r"];
-    var p: (i32, string[]) = (0, ys);
-    var i: i32 = 0;
+    let r: Rec = Rec { n: 2, xs: ["ab", "cd"] };
+    let ys: string[] = ["p", "q", "r"];
+    let p: (i32, string[]) = (0, ys);
+    let i: i32 = 0;
     while (i < 3) {
         if (i == 1) { p = (i, ys); } else { p = (r.n + i, r.xs); }
         i = i + 1;
     }
     r = Rec { n: 1, xs: ["e"] };
-    var junk: string[] = ["zzz", "zzz"];
+    let junk: string[] = ["zzz", "zzz"];
     return p.0 + p.1.len() + r.n + ys.len() + junk.len() + p.1[0].len();
 }
 `, 14},
 	// A callee-local record whose array field the returned tuple holds is swept
 	// at the return: the tuple's retain keeps the buffer for the caller (#10315).
 	{"callee_local_ints", `function mk(k: i32): (i32, i32[]) {
-    var r: Ints = Ints { n: k, ys: [k, 1, 2] };
+    let r: Ints = Ints { n: k, ys: [k, 1, 2] };
     return (r.n, r.ys);
 }
 function main(): i32 {
-    var t: (i32, i32[]) = mk(3);
+    let t: (i32, i32[]) = mk(3);
     mk(4);
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 8) { var junk: i32[] = [9, 9, 9]; acc = acc + junk[k % 3]; k = k + 1; }
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 8) { let junk: i32[] = [9, 9, 9]; acc = acc + junk[k % 3]; k = k + 1; }
     return t.0 + t.1[0] + t.1.len() + acc - 72;
 }
 `, 9},
 	{"callee_local_strarr", `function mk(k: i32): (i32, string[]) {
-    var r: Rec = Rec { n: k, xs: ["ab", "cd" + k.to_string()] };
+    let r: Rec = Rec { n: k, xs: ["ab", "cd" + k.to_string()] };
     return (r.n, r.xs);
 }
 function main(): i32 {
-    var t: (i32, string[]) = mk(3);
+    let t: (i32, string[]) = mk(3);
     mk(4);
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 8) { var junk: string[] = ["zzz", "zzz" + k.to_string()]; acc = acc + junk[1].len(); k = k + 1; }
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 8) { let junk: string[] = ["zzz", "zzz" + k.to_string()]; acc = acc + junk[1].len(); k = k + 1; }
     return t.0 + t.1[1].len() + t.1.len() + acc - 32;
 }
 `, 8},
@@ -145,31 +145,31 @@ function main(): i32 {
 	{"callee_local_structarr", `struct Pt { x: i32, tag: i32[] }
 struct Bag { n: i32, pts: Pt[] }
 function mk(k: i32): (i32, Pt[]) {
-    var r: Bag = Bag { n: k, pts: [Pt { x: k, tag: [k, k] }, Pt { x: 2, tag: [2] }] };
+    let r: Bag = Bag { n: k, pts: [Pt { x: k, tag: [k, k] }, Pt { x: 2, tag: [2] }] };
     return (r.n, r.pts);
 }
 function main(): i32 {
-    var t: (i32, Pt[]) = mk(3);
+    let t: (i32, Pt[]) = mk(3);
     mk(4);
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 8) { var junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 8) { let junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
     return t.0 + t.1[0].x + t.1[0].tag[1] + t.1.len() + acc - 72;
 }
 `, 11},
 	{"callee_local_enumarr", `enum Flag { On(i32[]), Off }
 struct Flags { n: i32, fs: Flag[] }
 function mk(k: i32): (i32, Flag[]) {
-    var r: Flags = Flags { n: k, fs: [Flag.On([k, 5]), Flag.Off] };
+    let r: Flags = Flags { n: k, fs: [Flag.On([k, 5]), Flag.Off] };
     return (r.n, r.fs);
 }
 function main(): i32 {
-    var t: (i32, Flag[]) = mk(3);
+    let t: (i32, Flag[]) = mk(3);
     mk(4);
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 8) { var junk: Flag = Flag.On([9, 9]); match (junk) { Flag.On(z) => { acc = acc + z[0]; }, Flag.Off => {} } k = k + 1; }
-    var got: i32 = 0;
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 8) { let junk: Flag = Flag.On([9, 9]); match (junk) { Flag.On(z) => { acc = acc + z[0]; }, Flag.Off => {} } k = k + 1; }
+    let got: i32 = 0;
     match (t.1[0]) { Flag.On(q) => { got = q[1]; }, Flag.Off => { got = 0; } }
     return t.0 + got + t.1.len() + acc - 72;
 }
@@ -177,25 +177,25 @@ function main(): i32 {
 	{"local_structarr_outlives_record", `struct Pt { x: i32, tag: i32[] }
 struct Bag { n: i32, pts: Pt[] }
 function main(): i32 {
-    var r: Bag = Bag { n: 2, pts: [Pt { x: 4, tag: [3, 3] }, Pt { x: 2, tag: [2] }] };
-    var p: (i32, Pt[]) = (r.n, r.pts);
+    let r: Bag = Bag { n: 2, pts: [Pt { x: 4, tag: [3, 3] }, Pt { x: 2, tag: [2] }] };
+    let p: (i32, Pt[]) = (r.n, r.pts);
     r = Bag { n: 1, pts: [Pt { x: 1, tag: [1] }] };
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 8) { var junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 8) { let junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
     return p.0 + p.1[0].x + p.1[0].tag[1] + p.1.len() + r.n + acc - 72;
 }
 `, 12},
 	{"local_enumarr_outlives_record", `enum Flag { On(i32[]), Off }
 struct Flags { n: i32, fs: Flag[] }
 function main(): i32 {
-    var r: Flags = Flags { n: 2, fs: [Flag.On([4, 5]), Flag.Off] };
-    var p: (i32, Flag[]) = (r.n, r.fs);
+    let r: Flags = Flags { n: 2, fs: [Flag.On([4, 5]), Flag.Off] };
+    let p: (i32, Flag[]) = (r.n, r.fs);
     r = Flags { n: 1, fs: [Flag.Off] };
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 8) { var junk: Flag = Flag.On([9, 9]); match (junk) { Flag.On(z) => { acc = acc + z[0]; }, Flag.Off => {} } k = k + 1; }
-    var got: i32 = 0;
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 8) { let junk: Flag = Flag.On([9, 9]); match (junk) { Flag.On(z) => { acc = acc + z[0]; }, Flag.Off => {} } k = k + 1; }
+    let got: i32 = 0;
     match (p.1[0]) { Flag.On(q) => { got = q[1]; }, Flag.Off => { got = 0; } }
     return p.0 + got + p.1.len() + r.n + acc - 72;
 }
@@ -206,16 +206,16 @@ function main(): i32 {
 	{"callee_local_structarr_caller_elem", `struct Pt { x: i32, tag: i32[] }
 struct Bag { n: i32, pts: Pt[] }
 function mk(p: Pt, k: i32): (i32, Pt[]) {
-    var r: Bag = Bag { n: k, pts: [p, Pt { x: 2, tag: [2] }] };
+    let r: Bag = Bag { n: k, pts: [p, Pt { x: 2, tag: [2] }] };
     return (r.n, r.pts);
 }
 function main(): i32 {
-    var p0: Pt = Pt { x: 1, tag: [7, 8] };
+    let p0: Pt = Pt { x: 1, tag: [7, 8] };
     mk(p0, 1);
-    var t: (i32, Pt[]) = mk(p0, 2);
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 8) { var junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
+    let t: (i32, Pt[]) = mk(p0, 2);
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 8) { let junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
     return p0.tag[1] + t.0 + t.1[0].tag[0] + acc - 72;
 }
 `, 17},
@@ -223,45 +223,45 @@ function main(): i32 {
 	// as one (#10318).
 	{"callee_local_arrlen", `struct Fs { n: i32, ws: f64[] }
 function mk(k: i32): (i32, i32, i32) {
-    var r: Ints = Ints { n: k, ys: [k, 1] };
-    var f: Fs = Fs { n: k, ws: [1.5, 2.5, 3.5] };
+    let r: Ints = Ints { n: k, ys: [k, 1] };
+    let f: Fs = Fs { n: k, ws: [1.5, 2.5, 3.5] };
     return (r.n, r.ys.len(), f.ws.len());
 }
 function main(): i32 {
-    var t: (i32, i32, i32) = mk(3);
+    let t: (i32, i32, i32) = mk(3);
     mk(4);
     return t.0 + t.1 + t.2;
 }
 `, 8},
 	{"callee_local_nested", `struct Bag { n: i32, grid: i32[][] }
 function mk(k: i32): (i32, i32[][]) {
-    var r: Bag = Bag { n: k, grid: [[k, 1], [2, 3]] };
+    let r: Bag = Bag { n: k, grid: [[k, 1], [2, 3]] };
     return (r.n, r.grid);
 }
 function main(): i32 {
-    var t: (i32, i32[][]) = mk(3);
+    let t: (i32, i32[][]) = mk(3);
     mk(4);
     return t.0 + t.1[0][0] + t.1[1][1] + t.1.len();
 }
 `, 11},
 	{"callee_local_nested_strarr", `struct Grid { n: i32, rows: string[][] }
 function mk(k: i32): (i32, string[][]) {
-    var r: Grid = Grid { n: k, rows: [["ab", "c"], ["def"]] };
+    let r: Grid = Grid { n: k, rows: [["ab", "c"], ["def"]] };
     return (r.n, r.rows);
 }
 function main(): i32 {
-    var (n, rows) = mk(3);
-    var last: string[] = rows[1];
+    let (n, rows) = mk(3);
+    let last: string[] = rows[1];
     return n + rows[0][0].len() + last[0].len() + rows.len();
 }
 `, 10},
 	// Extracting the element to a new owner: never a second free.
 	{"refused_elem_extracted", `function main(): i32 {
-    var r: Rec = Rec { n: 2, xs: ["ab", "cd"] };
-    var p: (i32, string[]) = (r.n, r.xs);
-    var u: string[] = p.1;
+    let r: Rec = Rec { n: 2, xs: ["ab", "cd"] };
+    let p: (i32, string[]) = (r.n, r.xs);
+    let u: string[] = p.1;
     r = Rec { n: 1, xs: ["e"] };
-    var junk: string[] = ["zzz", "zzz"];
+    let junk: string[] = ["zzz", "zzz"];
     return u[0].len() + u.len() + junk.len();
 }
 `, 6},

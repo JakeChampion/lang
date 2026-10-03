@@ -56,16 +56,16 @@ const wasmSplitScratchPrelude = `function w(pre: string): string { return pre + 
 
 func wasmSplitScratchHeap(body string, limit int) string {
 	return wasmSplitScratchPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
+    let base: string = w(pre);
 ` + body + `
 }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= ` + fmt.Sprint(limit) + `) { return 98; }
@@ -78,62 +78,62 @@ var wasmSplitScratchHeapCases = []struct {
 	body            string
 	regMax, wasmMax int
 }{
-	{"wasm-split-scratch-18-parts", `    var parts: string[] = base.split("-");
+	{"wasm-split-scratch-18-parts", `    let parts: string[] = base.split("-");
     return parts.len();`, 4096, 4096},
 	// Enough parts to cross several doublings, so the orphaned-buffer total is
 	// dominated by growth rather than by the header-less first block.
 	{"wasm-split-scratch-40-parts", wasmSplitScratch40Body, 4096, 4096},
 	// The empty-separator branch has its own push site.
-	{"wasm-split-scratch-char-split", `    var parts: string[] = base.split("");
+	{"wasm-split-scratch-char-split", `    let parts: string[] = base.split("");
     return parts.len() % 251;`, 4096, 4096},
 	// Trailing newline. On wasm this exercises the delimiter release AND the
 	// trimmed element; on the register backends it is the gate on
 	// rt_src_str_lines producing exactly the lines wanted rather than trimming
 	// a split result and stranding the element it dropped.
-	{"wasm-lines-scratch-trailing-newline", `    var doc: string = base + "\n" + base + "\n" + base + "\n";
-    var ls: string[] = doc.lines();
+	{"wasm-lines-scratch-trailing-newline", `    let doc: string = base + "\n" + base + "\n" + base + "\n";
+    let ls: string[] = doc.lines();
     return ls.len();`, 4096, 4096},
 	// No trailing newline: nothing is trimmed, so this isolates the delimiter.
-	{"wasm-lines-scratch-no-trailing-newline", `    var doc: string = base + "\n" + base;
-    var ls: string[] = doc.lines();
+	{"wasm-lines-scratch-no-trailing-newline", `    let doc: string = base + "\n" + base;
+    let ls: string[] = doc.lines();
     return ls.len();`, 4096, 4096},
 }
 
 // wasmSplitScratch40Body is separated out only because a 40-part literal is
 // unreadable inline.
-const wasmSplitScratch40Body = `    var many: string = base + "-1-2-3-4-5-6-7-8-9-10-11-12-13-14-15-16-17-18-19-20-21-22-23-24-25-26-27-28-29-30-31-32-33-34-35-36-37-38-39-40";
-    var parts: string[] = many.split("-");
+const wasmSplitScratch40Body = `    let many: string = base + "-1-2-3-4-5-6-7-8-9-10-11-12-13-14-15-16-17-18-19-20-21-22-23-24-25-26-27-28-29-30-31-32-33-34-35-36-37-38-39-40";
+    let parts: string[] = many.split("-");
     return parts.len() % 251;`
 
 // wasmSplitScratchSemanticsSrc is the other half: releasing scratch must not
 // change a single answer. Every case is checked against the register backends
 // too, which run the same source through a different helper entirely.
 const wasmSplitScratchSemanticsSrc = `function main(): i32 {
-    var a: string[] = "a\nbb\n".lines();
+    let a: string[] = "a\nbb\n".lines();
     if (a.len() != 2) { return 1; }
     if (a[0] != "a" || a[1] != "bb") { return 2; }
-    var b: string[] = "a\n\nc".lines();
+    let b: string[] = "a\n\nc".lines();
     if (b.len() != 3) { return 3; }
     if (b[0] != "a" || b[1] != "" || b[2] != "c") { return 4; }
-    var c: string[] = "x".lines();
+    let c: string[] = "x".lines();
     if (c.len() != 1 || c[0] != "x") { return 5; }
-    var d: string[] = "".lines();
+    let d: string[] = "".lines();
     if (d.len() != 0) { return 6; }
-    var e: string[] = "a\n\n".lines();
+    let e: string[] = "a\n\n".lines();
     if (e.len() != 2) { return 7; }
     if (e[0] != "a" || e[1] != "") { return 8; }
-    var f: string[] = "abc".split("");
+    let f: string[] = "abc".split("");
     if (f.len() != 3 || f[0] != "a" || f[2] != "c") { return 9; }
-    var g: string[] = "".split("");
+    let g: string[] = "".split("");
     if (g.len() != 0) { return 10; }
-    var h: string[] = "-a--b-".split("-");
+    let h: string[] = "-a--b-".split("-");
     if (h.len() != 5) { return 11; }
     if (h[0] != "" || h[1] != "a" || h[2] != "" || h[3] != "b" || h[4] != "") { return 12; }
-    var i2: string[] = "abc".split("|");
+    let i2: string[] = "abc".split("|");
     if (i2.len() != 1 || i2[0] != "abc") { return 13; }
-    var j: string[] = "aXXbXXc".split("XX");
+    let j: string[] = "aXXbXXc".split("XX");
     if (j.len() != 3 || j[1] != "b") { return 14; }
-    var k: string[] = "1-2-3-4-5-6-7-8-9-10-11-12-13-14-15-16-17-18-19-20".split("-");
+    let k: string[] = "1-2-3-4-5-6-7-8-9-10-11-12-13-14-15-16-17-18-19-20".split("-");
     if (k.len() != 20) { return 16; }
     if (k[0] != "1" || k[19] != "20" || k[9] != "10") { return 17; }
     if (__rc_underflow_count() != 0) { return 99; }

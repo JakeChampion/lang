@@ -40,13 +40,13 @@ func splitOwnedCases() []splitOwnedCase {
 			name: "split_returned_across_frame",
 			src: `import "std/string";
 function mk(a: string): string { return a + "abcdefghijklmnopqrstuvwxyz0123456789"; }
-function parts(): string[] { var s: string = mk("aa,bb,cc"); return s.split(","); }
+function parts(): string[] { let s: string = mk("aa,bb,cc"); return s.split(","); }
 function round(i: i32): i32 {
-    var ps: string[] = parts();
-    var clobber: string = mk("ZZZZZZZ");
+    let ps: string[] = parts();
+    let clobber: string = mk("ZZZZZZZ");
     return (ps[0][0] as i32 + ps.len() + clobber.len() + i) % 101;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
 			want: 29, allocs: 600, frees: 600,
 		},
 		{
@@ -54,13 +54,13 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			name: "lines_returned_across_frame",
 			src: `import "std/string";
 function mk(a: string): string { return a + "abcdefghijklmnopqrstuvwxyz0123456789"; }
-function rows(): string[] { var s: string = mk("aa\nbb\ncc:"); return s.lines(); }
+function rows(): string[] { let s: string = mk("aa\nbb\ncc:"); return s.lines(); }
 function round(i: i32): i32 {
-    var rs: string[] = rows();
-    var clobber: string = mk("ZZZZZZZ");
+    let rs: string[] = rows();
+    let clobber: string = mk("ZZZZZZZ");
     return (rs[0][0] as i32 + rs.len() + clobber.len() + i) % 101;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
 			want: 29, allocs: 600, frees: 600,
 		},
 		{
@@ -71,11 +71,11 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			src: `import "std/string";
 function mk(a: string): string { return a + "abcdefghijklmnopqrstuvwxyz0123456789"; }
 function round(i: i32): i32 {
-    var s: string = mk("aa,bb,cc");
-    var ps: string[] = s.split(",");
+    let s: string = mk("aa,bb,cc");
+    let ps: string[] = s.split(",");
     return (ps[0][0] as i32 + ps.len() + s.len() + i) % 101;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
 			want: 28, allocs: 500, frees: 500,
 		},
 	}

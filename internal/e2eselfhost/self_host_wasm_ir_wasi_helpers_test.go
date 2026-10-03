@@ -72,7 +72,7 @@ func TestSelfHostWasmIRWasiHelpers(t *testing.T) {
 		},
 		{
 			name:   "args-index",
-			src:    `function main(): i32 { var a = args(); write(a[1]); return 0; }`,
+			src:    `function main(): i32 { let a = args(); write(a[1]); return 0; }`,
 			stdout: "ALPHA",
 		},
 		{
@@ -82,12 +82,12 @@ func TestSelfHostWasmIRWasiHelpers(t *testing.T) {
 		},
 		{
 			name:   "clock-monotonic-non-decreasing",
-			src:    `function main(): i32 { var a: i64 = monotonic_ns(); var b: i64 = monotonic_ns(); if (b >= a) { print_int(1); } else { print_int(0); } return 0; }`,
+			src:    `function main(): i32 { let a: i64 = monotonic_ns(); let b: i64 = monotonic_ns(); if (b >= a) { print_int(1); } else { print_int(0); } return 0; }`,
 			stdout: "1",
 		},
 		{
 			name:   "clock-now-ns-positive",
-			src:    `function main(): i32 { var t: i64 = now_ns(); if (t > 0) { print_int(1); } else { print_int(0); } return 0; }`,
+			src:    `function main(): i32 { let t: i64 = now_ns(); if (t > 0) { print_int(1); } else { print_int(0); } return 0; }`,
 			stdout: "1",
 		},
 		// --- const width inference ---

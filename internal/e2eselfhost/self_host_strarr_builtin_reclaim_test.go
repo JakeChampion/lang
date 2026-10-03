@@ -14,7 +14,7 @@ import (
 //
 // The credit uses a prefix of its own ("SARRB:") because it needs a gate the
 // existing one does not have. reclaimable_names_of is a NAME-level pass: it sees
-// `var xs = recv.split(sep)` and has no type for `recv`. A user method named
+// `let xs = recv.split(sep)` and has no type for `recv`. A user method named
 // `split` on some other type answers to the same name, and its elements may be
 // aliases of something the receiver still owns. So the name-level pass collects
 // candidates, the BINDING SITE — the one place that knows the receiver's type —
@@ -62,16 +62,16 @@ const strArrBuiltinPrelude = "import \"std/string\";\n" + strProbeHelpers + `fun
 // are set between the fixed number and the parent's.
 func strArrBuiltinHeap(body string, limit int) string {
 	return strArrBuiltinPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
+    let base: string = w(pre);
 ` + body + `
 }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= ` + fmt.Sprint(limit) + `) { return 98; }
@@ -87,24 +87,24 @@ var strArrBuiltinHeapCases = []struct {
 }{
 	// 204800 -> 67200 on wasm. What is left is the buffer plus the boxes the
 	// per-element walk still declines; the elements themselves are gone.
-	{"strarr-builtin-split", `    var parts: string[] = base.split("-");
+	{"strarr-builtin-split", `    let parts: string[] = base.split("-");
     return parts.len();`, 4096, 100000},
 	// 57600 -> 9600. One line, so one element — the smallest shape that shows the
 	// walk happening at all.
-	{"strarr-builtin-lines", `    var ls: string[] = base.lines();
+	{"strarr-builtin-lines", `    let ls: string[] = base.lines();
     return ls.len();`, 4096, 16000},
 	// Reading the elements does not disturb the credit: an index READ is not an
 	// escape, and strarr_unsafe_for says so.
-	{"strarr-builtin-split-elements-read", `    var parts: string[] = base.split("-");
-    var n: i32 = parts.len();
+	{"strarr-builtin-split-elements-read", `    let parts: string[] = base.split("-");
+    let n: i32 = parts.len();
     if (parts[0] != "abcdefgh") { return 0 - 1; }
     if (parts[1] != "a") { return 0 - 2; }
     if (!has_prefix(parts[n - 1], "0123")) { return 0 - 3; }
     return n;`, 4096, 100000},
 	// Two builtin producers in one frame, so the sweep has to credit both slots
 	// rather than the first one it meets.
-	{"strarr-builtin-split-and-lines", `    var parts: string[] = base.split("-");
-    var ls: string[] = base.lines();
+	{"strarr-builtin-split-and-lines", `    let parts: string[] = base.split("-");
+    let ls: string[] = base.lines();
     return parts.len() + ls.len();`, 4096, 110000},
 }
 
@@ -113,19 +113,19 @@ var strArrBuiltinHeapCases = []struct {
 // type stands between the name `split` and a reclaim of boxes `keep` still owns.
 const strArrBuiltinTypeGateSrc = strArrBuiltinPrelude + `struct Holder { xs: string[] }
 function (h: Holder) split(sep: string): string[] {
-    var out: string[] = [];
+    let out: string[] = [];
     out = out.append(h.xs[0]);
     out = out.append(h.xs[1]);
     return out;
 }
 function round(h: Holder): i32 {
-    var parts: string[] = h.split("-");
+    let parts: string[] = h.split("-");
     return parts.len();
 }
-function churn(pre: string): i32 { var a: string = w(pre + "1"); var b: string = w(pre + "2"); var c: string = w(pre + "3"); return a.len() + b.len() + c.len(); }
+function churn(pre: string): i32 { let a: string = w(pre + "1"); let b: string = w(pre + "2"); let c: string = w(pre + "3"); return a.len() + b.len() + c.len(); }
 function main(): i32 {
-    var keep: Holder = Holder { xs: [w("aaaa"), w("bbbb"), w("cccc")] };
-    var i: i32 = 0;
+    let keep: Holder = Holder { xs: [w("aaaa"), w("bbbb"), w("cccc")] };
+    let i: i32 = 0;
     while (i < 300) {
         if (round(keep) != 2) { return 96; }
         if (churn("QQQQQQQQ") < 0) { return 95; }
@@ -148,51 +148,51 @@ var strArrBuiltinFaultCases = []struct {
 	// An element BOUND OUT of the array outlives it, so strarr_unsafe_for
 	// withholds the credit and the box must survive the sweep.
 	{"strarr-builtin-element-bound-out", strArrBuiltinPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var parts: string[] = base.split("-");
-    var keep: string = parts[3];
-    var p1: string = w("XXXXXXXX");
+    let base: string = w(pre);
+    let parts: string[] = base.split("-");
+    let keep: string = parts[3];
+    let p1: string = w("XXXXXXXX");
     if (p1.len() < 0) { return 0; }
     if (keep != "payload") { return 0 - 1; }
     return parts.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 18) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 18) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// The array itself escapes by return: not reclaimable, and the caller's read
 	// of the elements has to find them. The source string is the callee's PARAM,
 	// so it outlives the frame — a local source is a different (and on the
 	// register backends currently broken) shape, tracked separately.
 	{"strarr-builtin-array-returned", strArrBuiltinPrelude + `function parts_of(base: string): string[] {
-    var parts: string[] = base.split("-");
+    let parts: string[] = base.split("-");
     return parts;
 }
 function round(pre: string): i32 {
-    var base: string = w(pre);
-    var ps: string[] = parts_of(base);
-    var p1: string = w("XXXXXXXX");
+    let base: string = w(pre);
+    let ps: string[] = parts_of(base);
+    let p1: string = w("XXXXXXXX");
     if (p1.len() < 0) { return 0; }
     if (ps[0] != "abcdefgh") { return 0 - 1; }
     if (ps[2] != "wide") { return 0 - 2; }
     return ps.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 18) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 18) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// The SOURCE is a .rodata literal, so its element views point outside the
 	// arena and the view free's heap-range guard has to decline them; and the
 	// second half overwrites one view element with a fresh string, leaving a MIXED
 	// array the walk has to reclaim completely and exactly once (str_view_free
 	// tail-jumps to str_free for a non-immortal rc).
 	{"strarr-builtin-literal-source-and-mixed", strArrBuiltinPrelude + `function litround(): i32 {
-    var parts: string[] = "alpha-beta-gamma-delta".split("-");
-    var n: i32 = parts.len();
+    let parts: string[] = "alpha-beta-gamma-delta".split("-");
+    let n: i32 = parts.len();
     if (parts[0] != "alpha") { return 0 - 1; }
     if (parts[3] != "delta") { return 0 - 2; }
     return n;
 }
 function mixround(pre: string): i32 {
-    var base: string = w(pre);
-    var parts: string[] = base.split("-");
+    let base: string = w(pre);
+    let parts: string[] = base.split("-");
     parts = parts.with(1, w("MMMMMMMM"));
-    var n: i32 = parts.len();
-    var p1: string = w("XXXXXXXX");
+    let n: i32 = parts.len();
+    let p1: string = w("XXXXXXXX");
     if (p1.len() < 0) { return 0; }
     if (parts[0] != "abcdefgh") { return 0 - 1; }
     if (!has_prefix(parts[1], "MMMMMMMM-")) { return 0 - 2; }
@@ -200,8 +200,8 @@ function mixround(pre: string): i32 {
     return n;
 }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var i: i32 = 0;
+    let pre: string = "abcdefgh";
+    let i: i32 = 0;
     while (i < 1500) {
         if (litround() != 4) { return 96; }
         if (mixround(pre) != 18) { return 97; }
@@ -214,13 +214,13 @@ function main(): i32 {
 	// back the source's own box rather than a fresh view over it, freeing that box
 	// would destroy `base` and its scope-exit dec would double-free.
 	{"strarr-builtin-whole-source-single-part", strArrBuiltinPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var parts: string[] = base.split("|");
-    var n: i32 = parts.len();
-    var ls: string[] = base.lines();
-    var m: i32 = ls.len();
-    var p1: string = w("XXXXXXXX");
-    var p2: string = w("YYYYYYYY");
+    let base: string = w(pre);
+    let parts: string[] = base.split("|");
+    let n: i32 = parts.len();
+    let ls: string[] = base.lines();
+    let m: i32 = ls.len();
+    let p1: string = w("XXXXXXXX");
+    let p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
     if (n != 1) { return 0 - 1; }
     if (m != 1) { return 0 - 2; }
@@ -228,41 +228,41 @@ function main(): i32 {
     if (has_sub(base, "XXXX")) { return 0 - 4; }
     return n;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 1) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 1) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// An ELEMENT outliving the array: the credit must be withheld, or the sweep
 	// frees the box the caller is holding. The decoys are slices, so they allocate
 	// from the same 24-byte class a freed element box lands in.
 	{"strarr-builtin-escaping-element", strArrBuiltinPrelude + `function first_of(base: string): string {
-    var parts: string[] = base.split("-");
+    let parts: string[] = base.split("-");
     return parts[0];
 }
 function churn(src: string): i32 {
-    var a: str = slice_unchecked(src, 1, 9);
-    var b: str = slice_unchecked(src, 2, 10);
-    var c: str = slice_unchecked(src, 3, 11);
-    var d: str = slice_unchecked(src, 4, 12);
+    let a: str = slice_unchecked(src, 1, 9);
+    let b: str = slice_unchecked(src, 2, 10);
+    let c: str = slice_unchecked(src, 3, 11);
+    let d: str = slice_unchecked(src, 4, 12);
     return a.len() + b.len() + c.len() + d.len();
 }
 function round(pre: string): i32 {
-    var base: string = w(pre);
-    var head: string = first_of(base);
+    let base: string = w(pre);
+    let head: string = first_of(base);
     if (churn(w("QQQQQQQQ")) < 0) { return 0; }
     if (head != "abcdefgh") { return 0 - 1; }
     return head.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 8) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 8) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// LIVENESS across both producers at once, with every element read after decoy
 	// allocations that would be handed a freed box if the sweep landed early.
 	{"strarr-builtin-elements-live", strArrBuiltinPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var parts: string[] = base.split("-");
-    var ls: string[] = base.lines();
-    var n: i32 = parts.len();
-    var first: i32 = (parts[0][0] as i32);
-    var joinlen: i32 = parts[1].len() + parts[n - 1].len();
-    var p1: string = w("XXXXXXXX");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("ZZZZZZZZ");
+    let base: string = w(pre);
+    let parts: string[] = base.split("-");
+    let ls: string[] = base.lines();
+    let n: i32 = parts.len();
+    let first: i32 = (parts[0][0] as i32);
+    let joinlen: i32 = parts[1].len() + parts[n - 1].len();
+    let p1: string = w("XXXXXXXX");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("ZZZZZZZZ");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (parts[0] != "abcdefgh") { return 0 - 1; }
     if (parts[1] != "a") { return 0 - 2; }
@@ -274,7 +274,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     if (joinlen != 11) { return 0 - 8; }
     return n;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { if (round(pre) != 18) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 3000) { if (round(pre) != 18) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 }
 
 const strArrBuiltinExitHint = "98 = the element boxes were stranded; 99 = over-release; 97 = value corrupted; 96/95 = the probe's own guards"

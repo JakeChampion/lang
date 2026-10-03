@@ -34,7 +34,7 @@ struct R { n: i32 }
 impl lib.Greet for R {
     function tag(self: Self): i32 { return self.n; }
 }
-function main(): i32 { var r: R = R { n: 1 }; return r.greet(); }
+function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }
 `,
 	}, "main.fern")
 	if err != nil {
@@ -58,7 +58,7 @@ struct R { n: i32 }
 impl lib.Greet for R {
     function tag(self: Self): i32 { return self.n; }
 }
-function main(): i32 { var r: R = R { n: 1 }; return r.greet(); }
+function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }
 `,
 	}, "main.fern")
 	if err != nil {
@@ -82,7 +82,7 @@ struct R { n: i32 }
 impl lib.Greet for R {
     function tag(self: Self): i32 { return self.n; }
 }
-function main(): i32 { var r: R = R { n: 1 }; return r.greet(); }
+function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }
 `,
 	}, "main.fern")
 	if _, err := Check(prog); err != nil {
@@ -114,7 +114,7 @@ struct R { n: i32 }
 impl lib.Greet for R {
     function tag(self: Self): i32 { return self.n; }
 }
-function main(): i32 { var r: R = R { n: 1 }; return r.greet(); }
+function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }
 `,
 	}, "main.fern")
 	if _, err := Check(prog); err != nil {
@@ -147,7 +147,7 @@ func TestTraitDefaultBodyReachesOwnModuleOpaqueFields(t *testing.T) {
 pub function mk(): Email { return Email { addr: 41 }; }
 pub trait Greet {
     function tag(self: Self): i32;
-    function greet(self: Self): i32 { var e: Email = mk(); return e.addr + 1; }
+    function greet(self: Self): i32 { let e: Email = mk(); return e.addr + 1; }
 }
 `,
 		"main.fern": `import "./lib";
@@ -155,7 +155,7 @@ struct R { n: i32 }
 impl lib.Greet for R {
     function tag(self: Self): i32 { return self.n; }
 }
-function main(): i32 { var r: R = R { n: 1 }; return r.greet(); }
+function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }
 `,
 	}, "main.fern")
 	if err != nil {
@@ -181,7 +181,7 @@ struct R { n: i32 }
 impl lib.Greet for R {
     function tag(self: Self): i32 { return self.n; }
 }
-function main(): i32 { var r: R = R { n: 1 }; return r.greet(); }
+function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }
 `,
 	}, "main.fern")
 	if err == nil {
@@ -208,7 +208,7 @@ pub trait Conv[T] {
     function seed(self: Self): T;
     function one(self: Self): i32 { return base() + 1; }
     function two(self: Self): i32 { return self.one() + 1; }
-    function boxed(self: Self): i32 { var b: Wrap = Wrap { w: base() }; return b.w; }
+    function boxed(self: Self): i32 { let b: Wrap = Wrap { w: base() }; return b.w; }
 }
 `,
 		"main.fern": `import "./lib";
@@ -218,7 +218,7 @@ struct R { n: i32 }
 impl lib.Conv[i32] for R {
     function seed(self: Self): i32 { return self.n; }
 }
-function main(): i32 { var r: R = R { n: 1 }; return r.one() + r.two() + r.boxed(); }
+function main(): i32 { let r: R = R { n: 1 }; return r.one() + r.two() + r.boxed(); }
 `,
 	}
 	if err, _ := checkFiles(t, files, "main.fern"); err != nil {

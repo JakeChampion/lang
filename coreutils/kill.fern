@@ -36,7 +36,7 @@ import "./lib/gnu";
 import "./lib/signals";
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [-s SIGNAL | -SIGNAL] PID...\n";
   out = out + "  or:  " + gnu.prog() + " -l [SIGNAL]...\n";
   out = out + "  or:  " + gnu.prog() + " -t [SIGNAL]...\n";
@@ -87,7 +87,7 @@ function is_digit_str(s: string): boolean {
   if (s.len() == 0) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     if (!gnu.is_digit(s[i] as i32)) {
       return false;
@@ -116,7 +116,7 @@ function bare_signal_attempt(tok: string): string {
   if (tok == "-L") {
     return "";
   }
-  var b: i32 = tok[1] as i32;
+  let b: i32 = tok[1] as i32;
   if (b < 65 || b > 90) {
     return "";
   }
@@ -141,10 +141,10 @@ function refuse_second_signal(given: string): void {
 // wearing the look of a constant, and it put every Darwin row a column wide
 // (#9645).
 function name_width(): i32 {
-  var w: i32 = 0;
-  var n: i32 = 0;
+  let w: i32 = 0;
+  let n: i32 = 0;
   while (n <= signals.highest()) {
-    var nm: string = signals.name(n);
+    let nm: string = signals.name(n);
     if (nm.len() > w) {
       w = nm.len();
     }
@@ -156,7 +156,7 @@ function name_width(): i32 {
 // What `-l` and `-t` print for a number: its name, or the number itself where
 // the kernel names none — 32 and 33, which glibc reserves.
 function shown_name(n: i32): string {
-  var nm: string = signals.name(n);
+  let nm: string = signals.name(n);
   if (nm == "") {
     return n.to_string();
   }
@@ -165,7 +165,7 @@ function shown_name(n: i32): string {
 
 // `pad_name(s, w)` — the left-aligned name column, GNU's `%-*s`.
 function pad_name(s: string, w: i32): string {
-  var out: string = s;
+  let out: string = s;
   while (out.len() < w) {
     out = out + " ";
   }
@@ -175,7 +175,7 @@ function pad_name(s: string, w: i32): string {
 // `num2(n)` — the right-aligned two-column signal number of the `-t` table.
 // Nothing here exceeds 64, so two columns is the whole width GNU uses.
 function num2(n: i32): string {
-  var s: string = n.to_string();
+  let s: string = n.to_string();
   if (s.len() < 2) {
     return " " + s;
   }
@@ -192,11 +192,11 @@ function num2(n: i32): string {
 // prints HUP and then fails — so the failure is remembered and reported at the
 // end. These per-argument messages carry no `Try` line.
 function run_list(args: string[]): i32 {
-  var out: string = "";
+  let out: string = "";
   if (args.len() == 0) {
-    var n: i32 = 0;
+    let n: i32 = 0;
     while (n <= signals.highest()) {
-      var nm: string = signals.name(n);
+      let nm: string = signals.name(n);
       if (nm != "") {
         out = out + nm + "\n";
       }
@@ -205,9 +205,9 @@ function run_list(args: string[]): i32 {
     gnu.write_out(out);
     return 0;
   }
-  var bad: boolean = false;
+  let bad: boolean = false;
   for a in args {
-    var v: i32 = signals.operand2sig(a);
+    let v: i32 = signals.operand2sig(a);
     if (v < 0) {
       gnu.write_out(out);
       out = "";
@@ -232,12 +232,12 @@ function run_list(args: string[]): i32 {
 // with the number and the libc description beside each name, filtered to the
 // named signals when any are given.
 function run_table(args: string[]): i32 {
-  var out: string = "";
-  var w: i32 = name_width();
+  let out: string = "";
+  let w: i32 = name_width();
   if (args.len() == 0) {
-    var n: i32 = 0;
+    let n: i32 = 0;
     while (n <= signals.highest()) {
-      var nm: string = signals.name(n);
+      let nm: string = signals.name(n);
       if (nm != "") {
         out = out + num2(n) + " " + pad_name(nm, w) + " " + signals.description(n) + "\n";
       }
@@ -246,9 +246,9 @@ function run_table(args: string[]): i32 {
     gnu.write_out(out);
     return 0;
   }
-  var bad: boolean = false;
+  let bad: boolean = false;
   for a in args {
-    var v: i32 = signals.operand2sig(a);
+    let v: i32 = signals.operand2sig(a);
     if (v < 0) {
       gnu.write_out(out);
       out = "";
@@ -274,8 +274,8 @@ function parse_pid(s: string): Option[i32] {
   if (s.len() == 0) {
     return None;
   }
-  var i: i32 = 0;
-  var neg: boolean = false;
+  let i: i32 = 0;
+  let neg: boolean = false;
   if (s[0] as i32 == 45) {
     neg = true;
     i = 1;
@@ -283,7 +283,7 @@ function parse_pid(s: string): Option[i32] {
   if (i >= s.len()) {
     return None;
   }
-  var v: i32 = 0;
+  let v: i32 = 0;
   while (i < s.len()) {
     if (!gnu.is_digit(s[i] as i32)) {
       return None;
@@ -304,7 +304,7 @@ function parse_pid(s: string): Option[i32] {
 // attempted even after one fails, and each failure names the operand as
 // written with the errno's own text; none of them carries a `Try` line.
 function run_send(sig: i32, pids: string[]): i32 {
-  var bad: boolean = false;
+  let bad: boolean = false;
   for p in pids {
     match (parse_pid(p)) {
       Some(n) => {
@@ -329,17 +329,17 @@ function run_send(sig: i32, pids: string[]): i32 {
 }
 
 pub function main(): i32 {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("s", "signal", opt_signal()));
   opts = opts.append(gnu.valued("n", "", opt_signal()));
   opts = opts.append(gnu.flag("l", "list", opt_list()));
   opts = opts.append(gnu.flag("t", "table", opt_table()));
   opts = opts.append(gnu.flag("L", "", opt_table()));
 
-  var sig: i32 = 0 - 1;
-  var mode: i32 = mode_send();
-  var rest: string[] = [];
-  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "kill", help_text(), 1).return_in_order();
+  let sig: i32 = 0 - 1;
+  let mode: i32 = mode_send();
+  let rest: string[] = [];
+  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "kill", help_text(), 1).return_in_order();
 
   // A NUMERIC `-N` is a signal only in first position. Taken off argv before
   // the scan so getopt never sees a digit it would refuse, and left alone
@@ -347,8 +347,8 @@ pub function main(): i32 {
   match (g.peek()) {
     Some(first) => {
       if (first.len() >= 2 && first[0] as i32 == 45 && gnu.is_digit(first[1] as i32)) {
-        var v: string = slice_unchecked(first, 1, first.len()) + "";
-        var n: i32 = signals.operand2sig(v);
+        let v: string = slice_unchecked(first, 1, first.len()) + "";
+        let n: i32 = signals.operand2sig(v);
         if (n < 0) {
           gnu.die_usage(gnu.quote(v) + ": invalid signal", 1);
         }
@@ -363,10 +363,10 @@ pub function main(): i32 {
     // An ALPHABETIC `-NAME` is a signal at any position, so it is taken here
     // rather than left to getopt, which would refuse its first letter as an
     // unknown option.
-    var stop: boolean = false;
+    let stop: boolean = false;
     match (g.peek()) {
       Some(tok) => {
-        var nm: string = bare_signal_attempt(tok);
+        let nm: string = bare_signal_attempt(tok);
         if (nm != "") {
           if (mode != mode_send()) {
             gnu.die_usage("cannot combine signal with -l or -t", 1);
@@ -374,7 +374,7 @@ pub function main(): i32 {
           if (sig >= 0) {
             refuse_second_signal(nm);
           }
-          var bn: i32 = signals.operand2sig(nm);
+          let bn: i32 = signals.operand2sig(nm);
           if (bn < 0) {
             gnu.die_usage(gnu.quote(nm) + ": invalid signal", 1);
           }
@@ -403,7 +403,7 @@ pub function main(): i32 {
       }
     }
     if (!stop) {
-      var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+      let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
       g = res.1;
       match (res.0) {
         Some(m) => {
@@ -416,13 +416,13 @@ pub function main(): i32 {
             if (sig >= 0) {
               refuse_second_signal(m.value);
             }
-            var sn: i32 = signals.operand2sig(m.value);
+            let sn: i32 = signals.operand2sig(m.value);
             if (sn < 0) {
               gnu.die_usage(gnu.quote(m.value) + ": invalid signal", 1);
             }
             sig = sn;
           } else if (m.id == opt_list() || m.id == opt_table()) {
-            var want: i32 = mode_list();
+            let want: i32 = mode_list();
             if (m.id == opt_table()) {
               want = mode_table();
             }

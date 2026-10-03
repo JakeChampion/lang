@@ -5,7 +5,7 @@ import "core/map";
 
 function main(): i32 {
     // round-trip percent-encoding.
-    var enc: string = url.url_encode("a b/c?x=1");
+    let enc: string = url.url_encode("a b/c?x=1");
     print(enc);
     print(url.url_decode(enc));
     // unreserved stays as-is; reserved bytes are %-escaped uppercase.
@@ -23,7 +23,7 @@ function main(): i32 {
         None => { print("empty-none"); },
     }
     // query_parse: duplicate keys accumulate into a string[] value.
-    var q: Map[string, string[]] = url.query_parse("a=1&b=2&a=3");
+    let q: Map[string, string[]] = url.query_parse("a=1&b=2&a=3");
     match (q.get("a")) {
         Some(v) => { print("a=" + v.len().to_string()); },   // a=2
         None => { print("a-none"); },

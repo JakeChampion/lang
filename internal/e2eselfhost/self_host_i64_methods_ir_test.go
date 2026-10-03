@@ -54,14 +54,14 @@ func TestSelfHostI64MethodsIR(t *testing.T) {
 		expected int
 	}{
 		// i64 method returning an i64 field. c.get() = 2e10 > 1.5e10 -> 8
-		{"ret-field", `struct C { base: i64 } function (c: C) get(): i64 { return c.base; } function main(): i32 { var c = C { base: 20000000000 }; var r: i64 = c.get(); if (r > 15000000000) { return 8; } return 0; }`, 8},
+		{"ret-field", `struct C { base: i64 } function (c: C) get(): i64 { return c.base; } function main(): i32 { let c = C { base: 20000000000 }; let r: i64 = c.get(); if (r > 15000000000) { return 8; } return 0; }`, 8},
 		// i64 method: i64 param + i64 return. base + x = 5e9 + 6e9 = 11e9 > 1e10 -> 5
-		{"param-ret", `struct C { base: i64 } function (c: C) add(x: i64): i64 { return c.base + x; } function main(): i32 { var c = C { base: 5000000000 }; var r: i64 = c.add(6000000000); if (r > 10000000000) { return 5; } return 0; }`, 5},
+		{"param-ret", `struct C { base: i64 } function (c: C) add(x: i64): i64 { return c.base + x; } function main(): i32 { let c = C { base: 5000000000 }; let r: i64 = c.add(6000000000); if (r > 10000000000) { return 5; } return 0; }`, 5},
 		// i64 method param, i32 return (mixed): arg routed through lower_i64.
 		// base(7e9) + x(6e9) = 1.3e10 > 1.2e10 -> 1
-		{"param-i32ret", `struct C { base: i64 } function (c: C) over(x: i64): i32 { if (c.base + x > 12000000000) { return 1; } return 0; } function main(): i32 { var c = C { base: 7000000000 }; return c.over(6000000000); }`, 1},
+		{"param-i32ret", `struct C { base: i64 } function (c: C) over(x: i64): i32 { if (c.base + x > 12000000000) { return 1; } return 0; } function main(): i32 { let c = C { base: 7000000000 }; return c.over(6000000000); }`, 1},
 		// i64 method used in a loop accumulating its returns.
-		{"loop", `struct C { step: i64 } function (c: C) s(): i64 { return c.step; } function main(): i32 { var c = C { step: 3000000000 }; var acc: i64 = 0; var i = 0; while (i < 4) { acc = acc + c.s(); i = i + 1; } if (acc > 11000000000) { return 9; } return 0; }`, 9},
+		{"loop", `struct C { step: i64 } function (c: C) s(): i64 { return c.step; } function main(): i32 { let c = C { step: 3000000000 }; let acc: i64 = 0; let i = 0; while (i < 4) { acc = acc + c.s(); i = i + 1; } if (acc > 11000000000) { return 9; } return 0; }`, 9},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

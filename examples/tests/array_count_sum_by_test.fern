@@ -34,47 +34,47 @@ function cs_slen(s: string): i32 {
 }
 
 function test_count_where(): test.TestOutcome {
-  var ns: i32[] = [1, 2, 3, 4, 5, 6];
+  let ns: i32[] = [1, 2, 3, 4, 5, 6];
   return test.assert_eq(array.count_where(ns, cs_is_even), 3);
 }
 
 function test_count_where_method(): test.TestOutcome {
-  var ns: i32[] = [1, 2, 3, 4, 5, 6];
+  let ns: i32[] = [1, 2, 3, 4, 5, 6];
   return test.assert_eq(ns.count_where(cs_is_even), 3);
 }
 
 function test_count_where_none(): test.TestOutcome {
-  var ns: i32[] = [1, 2, 3];
+  let ns: i32[] = [1, 2, 3];
   return test.assert_eq(ns.count_where(cs_is_neg), 0);
 }
 
 function test_count_where_empty(): test.TestOutcome {
-  var e: i32[] = [];
+  let e: i32[] = [];
   return test.assert_eq(array.count_where(e, cs_is_even), 0);
 }
 
 function test_sum_by_strings(): test.TestOutcome {
-  var ws: string[] = ["a", "bb", "ccc"];
+  let ws: string[] = ["a", "bb", "ccc"];
   return test.assert_eq(array.sum_by(ws, cs_slen), 6);
 }
 
 function test_sum_by_method(): test.TestOutcome {
-  var ws: string[] = ["a", "bb", "ccc"];
+  let ws: string[] = ["a", "bb", "ccc"];
   return test.assert_eq(ws.sum_by(cs_slen), 6);
 }
 
 function test_sum_by_identity(): test.TestOutcome {
-  var ns: i32[] = [10, 20, 30];
+  let ns: i32[] = [10, 20, 30];
   return test.assert_eq(ns.sum_by(cs_idn), 60);
 }
 
 function test_sum_by_empty(): test.TestOutcome {
-  var e: i32[] = [];
+  let e: i32[] = [];
   return test.assert_eq(array.sum_by(e, cs_idn), 0);
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/array count/sum by");
+  let r: test.TestRunner = test.test_new("std/array count/sum by");
   r = r.it("count_where", test_count_where);
   r = r.it("count_where method", test_count_where_method);
   r = r.it("count_where none", test_count_where_none);

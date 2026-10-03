@@ -26,20 +26,20 @@ var mapArrElemCases = []struct {
 	// marked struct / opt / tuple / arrarr element kinds but never a map.
 	{"maparr-foreach", `import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
-    var ms: Map[string, i32][] = [m, m];
-    var acc: i32 = 0;
+    let ms: Map[string, i32][] = [m, m];
+    let acc: i32 = 0;
     for x in ms { acc = acc + x.get_or("k", 0); }
     return acc + ms.len();
 }`, 16},
 	// Tuple-element base. Bailed before.
 	{"maparr-tuple-elem-index", `import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
-    var ms: Map[string, i32][] = [m];
-    var t: (Map[string, i32][], i32) = (ms, 3);
+    let ms: Map[string, i32][] = [m];
+    let t: (Map[string, i32][], i32) = (ms, 3);
     return t.0[0].get_or("k", 0) + t.1;
 }`, 10},
 	// Struct-field base, reading the element AND the array's own length. Bailed
@@ -47,18 +47,18 @@ function main(): i32 {
 	{"maparr-struct-field-index-and-len", `import "core/map";
 struct Reg { rows: Map[string, i32][] }
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
-    var r: Reg = Reg { rows: [m] };
+    let r: Reg = Reg { rows: [m] };
     return r.rows[0].get_or("k", 0) + r.rows.len();
 }`, 8},
 	// The `.len()` alone, which is the segfault with nothing else in the way.
 	{"maparr-struct-field-len-only", `import "core/map";
 struct Reg { rows: Map[string, i32][] }
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
-    var r: Reg = Reg { rows: [m, m, m] };
+    let r: Reg = Reg { rows: [m, m, m] };
     return r.rows.len();
 }`, 3},
 	// NON-VACUITY on the two new `!is_array_type_name` guards: a genuine Map
@@ -66,38 +66,38 @@ function main(): i32 {
 	{"plain-map-struct-field-unchanged", `import "core/map";
 struct Cfg { caps: Map[string, i32] }
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("a", 3);
     m = m.insert("b", 4);
-    var c: Cfg = Cfg { caps: m };
+    let c: Cfg = Cfg { caps: m };
     return c.caps.len() + c.caps.get_or("a", 0) + c.caps.get_or("b", 0);
 }`, 9},
 	// The same for a genuine Map TUPLE ELEMENT.
 	{"plain-map-tuple-elem-unchanged", `import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("a", 5);
-    var t: (Map[string, i32], i32) = (m, 2);
+    let t: (Map[string, i32], i32) = (m, 2);
     return t.0.len() + t.0.get_or("a", 0) + t.1;
 }`, 8},
 	// Churn over the loop-var path, so a mis-typed dispatch cannot hide behind
 	// a single-shot value check.
 	{"maparr-foreach-churn", `import "core/map";
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[string, i32] = map_new(4);
+        let m: Map[string, i32] = map_new(4);
         m = m.insert("k", i);
-        var ms: Map[string, i32][] = [m, m];
+        let ms: Map[string, i32][] = [m, m];
         for x in ms { acc = (acc + x.get_or("k", 0)) % 83; }
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 83;
@@ -109,7 +109,7 @@ function main(): i32 {
 	// array-marked and slot_map_type declines it.
 	{"maparr-call-receiver-len", `import "core/map";
 function mk(): Map[string, i32][] {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
     return [m, m];
 }
@@ -118,12 +118,12 @@ function main(): i32 {
 }`, 2},
 	{"maparr-call-bound-then-used", `import "core/map";
 function mk(): Map[string, i32][] {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
     return [m, m];
 }
 function main(): i32 {
-    var a: Map[string, i32][] = mk();
+    let a: Map[string, i32][] = mk();
     return a.len() + a[0].get_or("k", 0);
 }`, 9},
 	// A map-ARRAY PARAM. Already correct, and now pinned: the param column
@@ -134,7 +134,7 @@ function count(ms: Map[string, i32][]): i32 {
     return ms.len();
 }
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
     return count([m, m, m]);
 }`, 3},
@@ -143,7 +143,7 @@ function pick(ms: Map[string, i32][]): i32 {
     return ms[0].get_or("k", 0) + ms.len();
 }
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
     return pick([m, m]);
 }`, 9},
@@ -151,10 +151,10 @@ function main(): i32 {
 	{"maparr-struct-field-into-tuple", `import "core/map";
 struct Reg { rows: Map[string, i32][] }
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
-    var r: Reg = Reg { rows: [m] };
-    var t: (Map[string, i32][], i32) = (r.rows, 5);
+    let r: Reg = Reg { rows: [m] };
+    let t: (Map[string, i32][], i32) = (r.rows, 5);
     return t.0.len() + t.1;
 }`, 6},
 }

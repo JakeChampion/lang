@@ -159,7 +159,7 @@ func withLowering(names []string, lowerable map[string]bool) []string {
 }
 
 // selfHostLoweredIntrinsics is every intrinsic name the self-hosted lowering
-// mentions — semsource and ssarc, the typed lowering, irlower for the op
+// mentions — semsource and ssarc, the typed lowering, irtables, fnsigs and lift for the op
 // builders it calls, ir.fern for the op table. A name in none has no IR
 // behind it on this compiler at all.
 func selfHostLoweredIntrinsics(t *testing.T) map[string]bool {

@@ -28,7 +28,7 @@ function kind(text: string): string {
 
 // `kinds(texts)` — each address's kind, space-separated.
 function kinds(texts: string[]): string {
-  var out: string = "";
+  let out: string = "";
   for t in texts {
     if (out.len() > 0) {
       out = out + " ";
@@ -103,7 +103,7 @@ function test_embedded_v4(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/net");
+  let r: test.TestRunner = test.test_new("std/net");
   r = r.it("public addresses are global", test_public_addresses);
   r = r.it("v4 loopback, private and link-local", test_v4_loopback_private_and_link_local);
   r = r.it("v4 other special blocks", test_v4_other_special_blocks);

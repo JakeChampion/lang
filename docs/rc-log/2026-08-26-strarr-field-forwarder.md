@@ -19,10 +19,10 @@ source, so only the ANSWERS are the oracle.
 | free `grab(keep).len()` | `800/100` **28800** | **`800/800` 0** | `500/500` 0 |
 | a Holder outliving 100 rounds of churn | `806/101` **29000** | **`806/806` 0** | `504/504` 0 |
 | direct `keep.xs.len()`, no forwarder | `800/800` 0 | `800/800` 0 | `500/500` 0 |
-| `var g = keep.get()` | `800/100` | unchanged — refused | `500/500` |
+| `let g = keep.get()` | `800/100` | unchanged — refused | `500/500` |
 | `keep.get()[0]` | `800/100` | unchanged — refused | `500/500` |
 | `for s in keep.get()` | `800/100` | unchanged — refused | `500/500` |
-| free `var g = grab(keep)` | `800/100` | unchanged — refused | `500/500` |
+| free `let g = grab(keep)` | `800/100` | unchanged — refused | `500/500` |
 | element escaping through a second call | `800/100` | unchanged — refused | `500/400` |
 | forwarder returning two DIFFERENT fields | `900/100` | unchanged — not registered | `600/600` |
 | bare-ident element shared by two literals | `1000/600` | unchanged — store gate | `700/700` |
@@ -45,8 +45,8 @@ borrowed `string[]` field of the receiver or a struct parameter. Inside such a
 function the forwarding return is exempt from the walk; at a CALL of one, the
 walk applies its existing read rules to the forwarded field. A `.len()` receiver
 admits, everything else marks. So `keep.get().len()` is the borrow
-`keep.xs.len()` already was, and `var g = keep.get()` is the escape
-`var g = keep.xs` already was — one rule, reached through a call.
+`keep.xs.len()` already was, and `let g = keep.get()` is the escape
+`let g = keep.xs` already was — one rule, reached through a call.
 
 Three registry spellings, probed with `tagged_value_of`:
 
@@ -98,11 +98,11 @@ dangle.
 ## Left open
 
 - **The `n:` fallback is unwitnessed too.** Every shape that makes a receiver
-  type unresolvable — `var keep = mk();`, `hs[0].get()` — strands its own struct
+  type unresolvable — `let keep = mk();`, `hs[0].get()` — strands its own struct
   for unrelated reasons, so no probe reaches a case where the fallback's mark
   changes a count. Both rows sat at `800/0` and `900/200` regardless, and were
   dropped rather than pinned as numbers that say nothing.
-- **`var keep = mk()` gets no field reclaim at all** (`800/0` across 100 rounds,
+- **`let keep = mk()` gets no field reclaim at all** (`800/0` across 100 rounds,
   where native is `500/500`). Unannotated struct locals initialised from a call
   are a separate gap, found while looking for an unresolvable receiver.
 - A forwarder that forwards ANOTHER forwarder (`return h.get();`) is not

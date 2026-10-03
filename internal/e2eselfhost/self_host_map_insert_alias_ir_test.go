@@ -7,11 +7,11 @@ import "testing"
 // map sibling of the array `.with` fix #3599).
 //
 // The builtin op_map_set mutates the map's parallel keys[]/values[] in place,
-// which is unsound once `m` is aliased (`var n = m`): the in-place write mutates
+// which is unsound once `m` is aliased (`let n = m`): the in-place write mutates
 // the buffer `n` still references, so `n` observes the change. The interpreter
 // and the native (Perceus) backend both copy-on-write and leave `n` unchanged.
-// The fix detects the alias at lower_func time (aliased_array_names_of, shared
-// with #3599) and routes the aliased self-reassign through a map clone
+// The fix detected the alias at lower_func time (aliased_array_names_of, shared
+// with #3599) and routed the aliased self-reassign through a map clone
 // (lower_map_clone_insert: fresh map_new + a copy loop over keys()/values(),
 // mutate the sole-owned clone) instead of the in-place store. The unaliased
 // "no-alias" case still takes the in-place path.
@@ -26,13 +26,13 @@ var mapInsertAliasIRCases = []struct {
 }{
 	// The minimal repro: overwrite an existing key while an alias is live. The
 	// in-place mutation made n[1]==99 too (99+99=198); copy-on-write keeps n[1]==10.
-	{"overwrite", `var m: Map[i32, i32] = Map {}; m = m.insert(1, 10); var n = m; m = m.insert(1, 99); return m.get_or(1, 0) + n.get_or(1, 0);`, 109},
+	{"overwrite", `let m: Map[i32, i32] = Map {}; m = m.insert(1, 10); let n = m; m = m.insert(1, 99); return m.get_or(1, 0) + n.get_or(1, 0);`, 109},
 	// Insert a NEW key while an alias is live: n must not gain key 2.
-	{"new-key", `var m: Map[i32, i32] = Map {}; m = m.insert(1, 10); var n = m; m = m.insert(2, 20); return m.get_or(2, 0) + n.get_or(2, 0);`, 20},
+	{"new-key", `let m: Map[i32, i32] = Map {}; m = m.insert(1, 10); let n = m; m = m.insert(2, 20); return m.get_or(2, 0) + n.get_or(2, 0);`, 20},
 	// String-keyed map: the clone copies string-pointer key/value slots correctly.
-	{"string-key", `var m: Map[string, i32] = Map {}; m = m.insert("a", 5); var n = m; m = m.insert("a", 9); return m.get_or("a", 0) + n.get_or("a", 0);`, 14},
+	{"string-key", `let m: Map[string, i32] = Map {}; m = m.insert("a", 5); let n = m; m = m.insert("a", 9); return m.get_or("a", 0) + n.get_or("a", 0);`, 14},
 	// REGRESSION: no alias — the in-place fast path must still apply and be correct.
-	{"no-alias", `var m: Map[i32, i32] = Map {}; m = m.insert(1, 10); m = m.insert(1, 99); return m.get_or(1, 0);`, 99},
+	{"no-alias", `let m: Map[i32, i32] = Map {}; m = m.insert(1, 10); m = m.insert(1, 99); return m.get_or(1, 0);`, 99},
 }
 
 func mapInsertAliasIRSrc(mainBody string) string {

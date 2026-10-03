@@ -5,7 +5,7 @@ struct producer, freed only its buffer under the AST lowering (#10582):
 
 ```fern
 hs = hs.append(hold([i]));            // hold returns H { xs: xs }
-var hs: H[] = [hold([i]), hold([i, 1])];
+let hs: H[] = [hold([i]), hold([i, 1])];
 ```
 
 ## Cause

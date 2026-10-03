@@ -214,23 +214,23 @@ pub function compile(spec: string): Option[Changes] {
   if (spec.len() == 0) {
     return None;
   }
-  var whole: (i32, i32) = scan_octal(spec, 0);
+  let whole: (i32, i32) = scan_octal(spec, 0);
   if (whole.0 >= 0 && whole.1 == spec.len()) {
     // Five digits or more name all twelve bits; fewer name only the
     // bits they set, which is what a directory's set-user-ID and
     // set-group-ID survive.
-    var kind: i32 = kind_octal();
+    let kind: i32 = kind_octal();
     if (spec.len() >= 5) {
       kind = kind_num();
     }
-    var one: Change[] = [];
+    let one: Change[] = [];
     one = one.append(Change { who: all_bits(), explicit: false, op: 61, kind: kind, bits: whole.0, x_if: false });
     return Some(Changes { list: one });
   }
-  var list: Change[] = [];
-  var i: i32 = 0;
+  let list: Change[] = [];
+  let i: i32 = 0;
   while (i < spec.len()) {
-    var step: (Change[], i32) = parse_clause(spec, i, list);
+    let step: (Change[], i32) = parse_clause(spec, i, list);
     if (step.1 < 0) {
       return None;
     }
@@ -252,18 +252,18 @@ pub function compile(spec: string): Option[Changes] {
 // half of the answer is the index one past the clause, or -1 when what
 // is there is not a clause at all.
 function parse_clause(spec: string, at: i32, list0: Change[]): (Change[], i32) {
-  var list: Change[] = list0;
-  var i: i32 = at;
-  var who: i32 = 0;
-  var explicit: boolean = false;
+  let list: Change[] = list0;
+  let i: i32 = at;
+  let who: i32 = 0;
+  let explicit: boolean = false;
   while (i < spec.len() && is_who(spec[i] as i32)) {
     who = who | who_mask(spec[i] as i32);
     explicit = true;
     i = i + 1;
   }
-  var acts: i32 = 0;
+  let acts: i32 = 0;
   while (i < spec.len() && is_op(spec[i] as i32)) {
-    var step: (Change, i32) = parse_action(spec, i, who, explicit);
+    let step: (Change, i32) = parse_action(spec, i, who, explicit);
     if (step.1 < 0) {
       return (list, 0 - 1);
     }
@@ -286,11 +286,11 @@ function parse_clause(spec: string, at: i32, list0: Change[]): (Change[], i32) {
 // the index one past it, or -1 for the two refusals an action can be:
 // a numeric perm after a who, and one past 07777.
 function parse_action(spec: string, at: i32, who: i32, explicit: boolean): (Change, i32) {
-  var n: i32 = spec.len();
-  var op: i32 = spec[at] as i32;
-  var i: i32 = at + 1;
-  var refused: Change = Change { who: who, explicit: explicit, op: op, kind: kind_perm(), bits: 0, x_if: false };
-  var src: i32 = 0 - 1;
+  let n: i32 = spec.len();
+  let op: i32 = spec[at] as i32;
+  let i: i32 = at + 1;
+  let refused: Change = Change { who: who, explicit: explicit, op: op, kind: kind_perm(), bits: 0, x_if: false };
+  let src: i32 = 0 - 1;
   if (i < n) {
     src = copy_index(spec[i] as i32);
   }
@@ -301,16 +301,16 @@ function parse_action(spec: string, at: i32, who: i32, explicit: boolean): (Chan
     if (explicit) {
       return (refused, 0 - 1);
     }
-    var num: (i32, i32) = scan_octal(spec, i);
+    let num: (i32, i32) = scan_octal(spec, i);
     if (num.0 < 0) {
       return (refused, 0 - 1);
     }
     return (Change { who: who, explicit: explicit, op: op, kind: kind_num(), bits: num.0, x_if: false }, num.1);
   }
-  var bits: i32 = 0;
-  var xif: boolean = false;
+  let bits: i32 = 0;
+  let xif: boolean = false;
   while (i < n && is_perm(spec[i] as i32)) {
-    var b: i32 = spec[i] as i32;
+    let b: i32 = spec[i] as i32;
     if (b == 88) {
       xif = true;
     } else {
@@ -324,8 +324,8 @@ function parse_action(spec: string, at: i32, who: i32, explicit: boolean): (Chan
 // The run of octal digits at `at`, as (value, one past it). The value is
 // -1 for a number past 07777, which is not a mode however it is spelled.
 function scan_octal(spec: string, at: i32): (i32, i32) {
-  var v: i32 = 0;
-  var i: i32 = at;
+  let v: i32 = 0;
+  let i: i32 = at;
   while (i < spec.len() && is_octal_digit(spec[i] as i32)) {
     v = v * 8 + (spec[i] as i32 - 48);
     if (v > all_bits()) {
@@ -342,23 +342,23 @@ function scan_octal(spec: string, at: i32): (i32, i32) {
 // the set-user-ID and set-group-ID bits a `=` or a short octal does not
 // name.
 pub function (c: Changes) adjust(oldmode: i32, is_dir: boolean, mask: i32): Adjusted {
-  var mode: i32 = oldmode & all_bits();
-  var mentioned: i32 = 0;
-  var touches: boolean = false;
-  var i: i32 = 0;
+  let mode: i32 = oldmode & all_bits();
+  let mentioned: i32 = 0;
+  let touches: boolean = false;
+  let i: i32 = 0;
   while (i < c.list.len()) {
-    var ch: Change = c.list[i];
+    let ch: Change = c.list[i];
     i = i + 1;
     if (ch.kind == kind_octal()) {
       mode = whole_mode(ch.bits, mode, is_dir);
       mentioned = mentioned | ch.bits;
       continue;
     }
-    var affected: i32 = all_bits();
+    let affected: i32 = all_bits();
     if (ch.explicit) {
       affected = ch.who;
     }
-    var value: i32 = change_value(ch, mode, is_dir, affected, mask);
+    let value: i32 = change_value(ch, mode, is_dir, affected, mask);
     if (ch.op == 43) {
       mode = mode | value;
       mentioned = mentioned | value;
@@ -366,7 +366,7 @@ pub function (c: Changes) adjust(oldmode: i32, is_dir: boolean, mask: i32): Adju
       mode = mode & complement(value);
       mentioned = mentioned | value;
     } else {
-      var keep: i32 = 0;
+      let keep: i32 = 0;
       if (is_dir && ch.kind != kind_num()) {
         keep = mode & setid_bits();
       }
@@ -398,13 +398,13 @@ function change_value(ch: Change, mode: i32, is_dir: boolean, affected: i32, mas
   if (ch.kind == kind_num()) {
     return ch.bits & affected;
   }
-  var bits: i32 = ch.bits;
+  let bits: i32 = ch.bits;
   if (ch.kind == kind_copy()) {
     bits = copy_triple(mode, ch.bits);
   } else if (ch.x_if && (is_dir || (mode & s_ixugo()) != 0)) {
     bits = bits | s_ixugo();
   }
-  var value: i32 = bits & affected;
+  let value: i32 = bits & affected;
   if (ch.explicit) {
     return value;
   }
@@ -414,7 +414,7 @@ function change_value(ch: Change, mode: i32, is_dir: boolean, affected: i32, mas
 // The rwx triple of u, g or o, replicated into all three positions,
 // which is what `g=u` copies before the who narrows it.
 function copy_triple(mode: i32, src: i32): i32 {
-  var trip: i32 = mode & 7;
+  let trip: i32 = mode & 7;
   if (src == 0) {
     trip = mode >> 6 & 7;
   } else if (src == 1) {
@@ -433,7 +433,7 @@ function octal_digit(n: i32): string {
 
 // `octal4(m)` — `0644`, `4755`, `7000`: four digits, always.
 pub function octal4(m: i32): string {
-  var v: i32 = m & all_bits();
+  let v: i32 = m & all_bits();
   return octal_digit(v / 512) + octal_digit(v / 64 % 8) + octal_digit(v / 8 % 8) + octal_digit(v % 8);
 }
 
@@ -441,7 +441,7 @@ pub function octal4(m: i32): string {
 // bit is upper case when the matching execute bit is clear, lower case
 // when it is set — `rwsr-Sr-T`.
 function triple(v: i32, shift: i32, sp: i32, lo: string, hi: string): string {
-  var out: string = "-";
+  let out: string = "-";
   if ((v & 4 << shift) != 0) {
     out = "r";
   }
@@ -450,8 +450,8 @@ function triple(v: i32, shift: i32, sp: i32, lo: string, hi: string): string {
   } else {
     out = out + "-";
   }
-  var has_x: boolean = (v & 1 << shift) != 0;
-  var has_sp: boolean = (v & sp) != 0;
+  let has_x: boolean = (v & 1 << shift) != 0;
+  let has_sp: boolean = (v & sp) != 0;
   if (has_sp && has_x) {
     return out + lo;
   }
@@ -466,6 +466,6 @@ function triple(v: i32, shift: i32, sp: i32, lo: string, hi: string): string {
 
 // `symbolic(m)` — the nine characters of `rwxr-xr-x`.
 pub function symbolic(m: i32): string {
-  var v: i32 = m & all_bits();
+  let v: i32 = m & all_bits();
   return triple(v, 6, s_isuid(), "s", "S") + triple(v, 3, s_isgid(), "s", "S") + triple(v, 0, s_isvtx(), "t", "T");
 }

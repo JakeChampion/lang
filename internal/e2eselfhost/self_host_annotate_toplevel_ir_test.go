@@ -36,24 +36,24 @@ var annotateTopLevelCases = []struct {
 	// f64-returning call at the top level: an integer add on the doubles' bits
 	// would not sum to 3.5.
 	{"top_f64_call", `function half(): f64 { return 0.5; }
-var t: f64 = half() + half() + 2.5;
+let t: f64 = half() + half() + 2.5;
 return t as i32;
 `, 3},
 	// u64-returning call at the top level: a SIGNED >> on a bit-63-set value
 	// gives a different answer.
 	{"top_u64_call", `function bigu(): u64 { return 18000000000000000000 as u64; }
-var t: u64 = bigu() >> 40;
+let t: u64 = bigu() >> 40;
 return t as i32;
 `, 216},
 	// string-returning call bound to a top-level local, then measured.
 	{"top_str_call", `function label(): string { return "abc"; }
-var s: string = label();
+let s: string = label();
 return s.len();
 `, 3},
 	// struct-returning call at the top level, read by field.
 	{"top_struct_call", `struct Pt { x: i32, y: i32 }
 function origin(): Pt { return Pt { x: 3, y: 4 }; }
-var p: Pt = origin();
+let p: Pt = origin();
 return p.x * p.y;
 `, 12},
 	// A top-level for-loop over a call-returned array, summing an f64 method on
@@ -62,8 +62,8 @@ return p.x * p.y;
 	{"top_for_f64_method", `struct V { x: f64 }
 function (v: V) scaled(): f64 { return v.x * 2.0; }
 function mk(): V[] { return [V { x: 1.5 }, V { x: 0.375 }]; }
-var vs: V[] = mk();
-var t: f64 = 0.0;
+let vs: V[] = mk();
+let t: f64 = 0.0;
 for v in vs { t = t + v.scaled(); }
 return t as i32;
 `, 3}, // 3.0 + 0.75 = 3.75 -> 3

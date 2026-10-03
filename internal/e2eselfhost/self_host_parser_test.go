@@ -18,7 +18,7 @@ import (
 //
 // The .fern file's `main()` parses the source
 //
-//   var x = 1 + 2 * 3; var y = (1 + 2) * 3; return x + y;
+//   let x = 1 + 2 * 3; let y = (1 + 2) * 3; return x + y;
 //
 // and asserts the resulting Stmt[] shape: precedence rules give
 // `x = 1 + (2*3)`, parens override to `(1+2) * 3`, and `return x + y`

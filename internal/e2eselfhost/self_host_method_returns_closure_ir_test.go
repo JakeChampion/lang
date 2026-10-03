@@ -12,9 +12,9 @@ import (
 // METHOD is bound as a closure local at the call site, so calling it unpacks
 // the env box instead of treating the box pointer as a function index.
 //
-// irlower's `var f = <call>` closure-binding decision only ever inspected a
+// irlower's `let f = <call>` closure-binding decision only ever inspected a
 // bare-IDENT callee (a free function). A method call's callee is an
-// ExprFieldAccess, which fell through the match unhandled — so `var f =
+// ExprFieldAccess, which fell through the match unhandled — so `let f =
 // m.make()` left `f` a plain fn-value local and `f(21)` lowered to a direct
 // `call_indirect` passing the BOX POINTER as the table index, with the wrong
 // signature type as well (the wrapper takes env + arg, the call site declared
@@ -49,7 +49,7 @@ func TestSelfHostMethodReturnsClosureIR(t *testing.T) {
 			name: "noncapturing",
 			src: `struct Maker { }
 function (m: Maker) make(): (i32) => i32 { return (x: i32): i32 => { return x * 2; }; }
-function main(): i32 { var m = Maker { }; var f = m.make(); return f(21); }`,
+function main(): i32 { let m = Maker { }; let f = m.make(); return f(21); }`,
 		},
 		{
 			// The lambda captures the method's PARAMETER, so the env box
@@ -58,7 +58,7 @@ function main(): i32 { var m = Maker { }; var f = m.make(); return f(21); }`,
 			name: "captures-method-param",
 			src: `struct F { }
 function (f: F) mul(k: i32): (i32) => i32 { return (x: i32): i32 => { return x * k; }; }
-function main(): i32 { var f = F { }; var g = f.mul(7); return g(6); }`,
+function main(): i32 { let f = F { }; let g = f.mul(7); return g(6); }`,
 		},
 		{
 			// Called immediately without binding to a local, so the closure
@@ -67,14 +67,14 @@ function main(): i32 { var f = F { }; var g = f.mul(7); return g(6); }`,
 			name: "called-without-binding",
 			src: `struct Maker { }
 function (m: Maker) make(): (i32) => i32 { return (x: i32): i32 => { return x * 3; }; }
-function main(): i32 { var m = Maker { }; return m.make()(14); }`,
+function main(): i32 { let m = Maker { }; return m.make()(14); }`,
 		},
 		{
 			// A free function returning a closure — the path that already
 			// worked. Pins that the new ExprFieldAccess arm did not disturb it.
 			name: "free-fn-unaffected",
 			src: `function make(): (i32) => i32 { return (x: i32): i32 => { return x * 2; }; }
-function main(): i32 { var f = make(); return f(21); }`,
+function main(): i32 { let f = make(); return f(21); }`,
 		},
 	}
 

@@ -54,7 +54,7 @@ func TestSelfHostWatLex(t *testing.T) {
 // 3=string). Each `return N` is a distinct failing-check id (0 = pass).
 const watLexSelfTestMain = `
 function main(): i32 {
-    var ts: WatTok[] = wat_tokenize("(module (func $f (result i32)))");
+    let ts: WatTok[] = wat_tokenize("(module (func $f (result i32)))");
     if (ts.len() != 11) { return 1; }
     if (ts[0].kind != 0) { return 2; }
     if (ts[1].kind != 2 || ts[1].text != "module") { return 3; }
@@ -62,7 +62,7 @@ function main(): i32 {
     if (ts[4].text != "$f") { return 5; }
     if (ts[7].text != "i32") { return 6; }
     if (ts[10].kind != 1) { return 7; }
-    var ds: WatTok[] = wat_tokenize("(data \"\\0a\")");
+    let ds: WatTok[] = wat_tokenize("(data \"\\0a\")");
     if (ds.len() != 4) { return 8; }
     if (ds[1].text != "data") { return 9; }
     if (ds[2].kind != 3 || ds[2].text != "\\0a") { return 10; }

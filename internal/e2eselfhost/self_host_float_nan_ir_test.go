@@ -19,18 +19,18 @@ var floatNanIRCases = []struct {
 	want int
 }{
 	// NaN != NaN is the one true comparison.
-	{"nan-ne-self", `var n: f64 = 0.0 / 0.0; if (n != n) { return 1; } return 0;`, 1},
+	{"nan-ne-self", `let n: f64 = 0.0 / 0.0; if (n != n) { return 1; } return 0;`, 1},
 	// NaN == NaN is false.
-	{"nan-eq-self", `var n: f64 = 0.0 / 0.0; if (n == n) { return 1; } return 0;`, 0},
+	{"nan-eq-self", `let n: f64 = 0.0 / 0.0; if (n == n) { return 1; } return 0;`, 0},
 	// every ordered comparison with NaN is false.
-	{"nan-lt", `var n: f64 = 0.0 / 0.0; if (n < 1.0) { return 1; } return 0;`, 0},
-	{"nan-gt", `var n: f64 = 0.0 / 0.0; if (n > 1.0) { return 1; } return 0;`, 0},
-	{"nan-ge", `var n: f64 = 0.0 / 0.0; if (n >= 1.0) { return 1; } return 0;`, 0},
-	{"nan-le", `var n: f64 = 0.0 / 0.0; if (n <= 1.0) { return 1; } return 0;`, 0},
+	{"nan-lt", `let n: f64 = 0.0 / 0.0; if (n < 1.0) { return 1; } return 0;`, 0},
+	{"nan-gt", `let n: f64 = 0.0 / 0.0; if (n > 1.0) { return 1; } return 0;`, 0},
+	{"nan-ge", `let n: f64 = 0.0 / 0.0; if (n >= 1.0) { return 1; } return 0;`, 0},
+	{"nan-le", `let n: f64 = 0.0 / 0.0; if (n <= 1.0) { return 1; } return 0;`, 0},
 	// the negation: !(NaN < 1.0) is true (the else path runs).
-	{"nan-lt-negated", `var n: f64 = 0.0 / 0.0; if (n < 1.0) { return 0; } return 9;`, 9},
+	{"nan-lt-negated", `let n: f64 = 0.0 / 0.0; if (n < 1.0) { return 0; } return 9;`, 9},
 	// ordered (non-NaN) sanity: a real f64 compares normally.
-	{"ordered-eq", `var a: f64 = 1.5; if (a == a) { return 7; } return 0;`, 7},
+	{"ordered-eq", `let a: f64 = 1.5; if (a == a) { return 7; } return 0;`, 7},
 	{"ordered-lt", `if (1.0 < 2.0) { return 5; } return 0;`, 5},
 }
 

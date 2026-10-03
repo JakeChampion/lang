@@ -57,7 +57,7 @@ overrides, **at the return sink only**:
 | `return p.toks` | escapes | borrows |
 | `return p` | escapes | escapes |
 | `return Par { toks: p.toks, .. }` | escapes | escapes |
-| `var q = p.toks; return q` | escapes | escapes |
+| `let q = p.toks; return q` | escapes | escapes |
 | pair-form or TRMC callee | escapes | escapes |
 
 The last three are the refusals the credit rests on. A bare parameter and a
@@ -131,7 +131,7 @@ measures nothing without `@noinline` on both the callee and its producer —
 
 ## Still open
 
-The taint-propagation half. `var t = p.toks[i]; return t` is the same object
+The taint-propagation half. `let t = p.toks[i]; return t` is the same object
 flowing out through the same inc, and it still escapes. Closing it means
 showing the inc fires for a returned local that only ever held a projection,
 which is `freshLocalsIn`'s question one step further on, not this one.

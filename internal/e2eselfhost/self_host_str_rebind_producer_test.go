@@ -6,7 +6,7 @@ import (
 
 // --- A string local REBOUND from a producer call ------------------------------
 //
-// `var x: string = mk("x"); x = mk("yz");` measured 400 allocs / 0 frees on the
+// `let x: string = mk("x"); x = mk("yz");` measured 400 allocs / 0 frees on the
 // self-host — not a partial sweep, nothing freed at all — and it is the
 // `str__rebind__{read,unused}` pair of the leak matrix (#5338).
 //
@@ -15,7 +15,7 @@ import (
 // has released a rebound local since #2649: it frees the superseded box at each
 // reassignment and the final one at scope exit, and str_accum_reassign_ok's
 // default arm already admits a rebind RHS that does not mention the local at
-// all. `var x = "a" + b; x = "c" + d;` was clean before this change.
+// all. `let x = "a" + b; x = "c" + d;` was clean before this change.
 //
 // What it could not see was that `mk` returns a fresh box. That proof is
 // whole-program — str_fresh_ret_fns_of's registry — and the accumulator
@@ -40,7 +40,7 @@ import (
 // quarantine hit.
 
 const strRebindDecl = `function mkstr(a: string): string { return a + "-long-enough-to-heap-allocate"; }
-function churn(i: i32): i32 { var a: string = mkstr("c"); var b: string = mkstr("d"); return a.len() + b.len(); }
+function churn(i: i32): i32 { let a: string = mkstr("c"); let b: string = mkstr("d"); return a.len() + b.len(); }
 `
 
 // strRebindChurnMain drives 200 rounds and separates the failure modes: a
@@ -49,8 +49,8 @@ function churn(i: i32): i32 { var a: string = mkstr("c"); var b: string = mkstr(
 // segfaults on its own.
 const strRebindChurnMain = `
 function main(): i32 {
-    var acc: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
-    while (i < 200) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } acc = acc + r; i = i + 1; }
+    let acc: i32 = 0; let i: i32 = 0; let bad: i32 = 0;
+    while (i < 200) { let r: i32 = round(i); if (r < 0) { bad = bad + 1; } acc = acc + r; i = i + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -63,15 +63,15 @@ func strRebindCases() []arrenumShareCase {
 			name: "producer_rebind_read",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    var x: string = mkstr("x");
+    let t: i32 = 0;
+    let x: string = mkstr("x");
     x = mkstr("yz");
     t = (t + x.len()) % 101;
     t = t + 1;
     return t;
 }
 function main(): i32 {
-    var acc: i32 = 0; var i: i32 = 0;
+    let acc: i32 = 0; let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -84,14 +84,14 @@ function main(): i32 {
 			// rather than only on the exit.
 			name: "producer_rebind_heap",
 			src: strRebindDecl + `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var x: string = mkstr("x");
+    let t: i32 = 0;
+    let x: string = mkstr("x");
     x = mkstr("yz");
     t = (t + x.len()) % 101;
     return t + 1;
 }
 function main(): i32 {
-    var acc: i32 = 0; var i: i32 = 0;
+    let acc: i32 = 0; let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -103,9 +103,9 @@ function main(): i32 {
 			// leave the declaration's box to the exit sweep.
 			name: "conditional_rebind",
 			src: strRebindDecl + `function round(i: i32): i32 {
-    var x: string = mkstr("x");
+    let x: string = mkstr("x");
     if (i % 2 == 0) { x = mkstr("yz"); }
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (x.len() < 10) { return 0 - 1; }
     return (x.len() + junk) % 101;
 }` + strRebindChurnMain,
@@ -116,10 +116,10 @@ function main(): i32 {
 			// its own store rather than accumulating.
 			name: "loop_rebind",
 			src: strRebindDecl + `function round(i: i32): i32 {
-    var x: string = mkstr("x");
-    var j: i32 = 0;
+    let x: string = mkstr("x");
+    let j: i32 = 0;
     while (j < 3) { x = mkstr("y"); j = j + 1; }
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (x.len() < 10) { return 0 - 1; }
     return (x.len() + junk) % 101;
 }` + strRebindChurnMain,
@@ -131,9 +131,9 @@ function main(): i32 {
 			// concat. Native leaks this one; the self-host does not.
 			name: "self_consuming_rebind",
 			src: strRebindDecl + `function round(i: i32): i32 {
-    var x: string = mkstr("x");
+    let x: string = mkstr("x");
     x = mkstr(x);
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (x.len() < 10) { return 0 - 1; }
     return (x.len() + junk) % 101;
 }` + strRebindChurnMain,
@@ -144,11 +144,11 @@ function main(): i32 {
 			// class already treats as safe. The superseded box is still freed
 			// at the rebind; the returned one is the caller's.
 			name: "moved_out_return",
-			src: strRebindDecl + `function grab(i: i32): string { var x: string = mkstr("x"); x = mkstr("yz"); return x; }
+			src: strRebindDecl + `function grab(i: i32): string { let x: string = mkstr("x"); x = mkstr("yz"); return x; }
 function round(i: i32): i32 {
-    var want: i32 = mkstr("yz").len();
-    var s: string = grab(i);
-    var junk: i32 = churn(i);
+    let want: i32 = mkstr("yz").len();
+    let s: string = grab(i);
+    let junk: i32 = churn(i);
     if (s.len() != want) { return 0 - 1; }
     return (s.len() + junk) % 101;
 }` + strRebindChurnMain,
@@ -160,13 +160,13 @@ function round(i: i32): i32 {
 			name: "single_bind_unchanged",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    var x: string = mkstr("x");
+    let t: i32 = 0;
+    let x: string = mkstr("x");
     t = (t + x.len()) % 101;
     return t + 1;
 }
 function main(): i32 {
-    var acc: i32 = 0; var i: i32 = 0;
+    let acc: i32 = 0; let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -180,11 +180,11 @@ function main(): i32 {
 			// than a loosened gate.
 			name: "refused_alias_before_rebind",
 			src: strRebindDecl + `function round(i: i32): i32 {
-    var want: i32 = mkstr("x").len();
-    var x: string = mkstr("x");
-    var y: string = x;
+    let want: i32 = mkstr("x").len();
+    let x: string = mkstr("x");
+    let y: string = x;
     x = mkstr("yz");
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (y.len() != want) { return 0 - 1; }
     return (y.len() + x.len() + junk) % 101;
 }` + strRebindChurnMain,
@@ -195,10 +195,10 @@ function main(): i32 {
 			// so the slot would hold an alias at exit.
 			name: "refused_nonfresh_rebind",
 			src: strRebindDecl + `function round(i: i32): i32 {
-    var other: string = mkstr("o");
-    var x: string = mkstr("x");
+    let other: string = mkstr("o");
+    let x: string = mkstr("x");
     x = other;
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (x.len() != other.len()) { return 0 - 1; }
     return (x.len() + junk) % 101;
 }` + strRebindChurnMain,
@@ -209,10 +209,10 @@ function main(): i32 {
 			// outlives the sweep.
 			name: "refused_container_store",
 			src: strRebindDecl + `function round(i: i32): i32 {
-    var x: string = mkstr("x");
+    let x: string = mkstr("x");
     x = mkstr("yz");
-    var box: string[] = [x];
-    var junk: i32 = churn(i);
+    let box: string[] = [x];
+    let junk: i32 = churn(i);
     if (box[0].len() != x.len()) { return 0 - 1; }
     return (box[0].len() + junk) % 101;
 }` + strRebindChurnMain,

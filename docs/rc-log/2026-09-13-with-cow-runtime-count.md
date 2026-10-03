@@ -23,7 +23,7 @@ the update wrote through the holder — with a clean census:
 | callee stores the param | `mk(a)`, `function mk(xs) { return H { xs: xs } }` |
 | callee returns the param | `id(a)` |
 | callee returns a field | `get(h)` / `h.get()` returning `h.xs` |
-| element read | `var a = outer[0]` |
+| element read | `let a = outer[0]` |
 | foreach over the array | `for x in a { a = a.with(…) }` |
 | foreach row projection | `for row in outer { row = row.with(…) }` |
 | enum payload projection | `E.Hold(xs) => { xs = xs.with(…) }` |
@@ -35,7 +35,7 @@ a count — that is what the runtime test shows, below — and the last three ar
 the two projection binds (borrowed, with an ownership flag) and the foreach
 reading its slot per iteration.
 
-The shapes the static gate did credit — `var b = a`, `b = a`, a struct /
+The shapes the static gate did credit — `let b = a`, `b = a`, a struct /
 tuple / nested-array literal, a nested block, a local bound from a param or a
 field — were right, at one whole-buffer clone per update: 101–102 allocations
 for the hundred, every one released since the predecessor entry.
@@ -70,7 +70,7 @@ Two holders were uncounted, and each is fixed at its site rather than refused:
   leak-only class, so the row is held, not released (the probe reads
   112 live bytes where it read 64 and a dangling row).
 - `for x in a` over a local the body assigns iterates a hidden snapshot bound
-  through the ordinary `var` ladder (`lower_foreach_snapshot`), so the loop
+  through the ordinary `let` ladder (`lower_foreach_snapshot`), so the loop
   reads the entry value and the body's rebind copies away from it.
 
 And a parameter named in a scalar return (`return p[0] + p[1]`) is now
@@ -86,7 +86,7 @@ the flagged path and the snapshot. The hundred-update loops:
 
 | shape | before | after |
 | --- | --- | --- |
-| `var b = a` | 101 / 101 | 2 / 2 |
+| `let b = a` | 101 / 101 | 2 / 2 |
 | local from a borrowed param (`__bi_mul_small`) | 101 / 101 | 2 / 2 |
 | local from a struct field (`BigInt.to_string`) | 102 / 102 | 3 / 3 |
 | four widths, each aliased | 404 / 404 | 8 / 8 |
@@ -157,7 +157,7 @@ ratchet, `make check-sources` and `make fmt-check`.
 - A `match` on an `Option[T[]]` LOCAL binds the payload as the element type,
   so `xs = xs.with(…)` bails with `i32.with` (#9190). The table uses the
   user-enum payload and the call-scrutinee Option form, both of which lower.
-- `var b = a; … a = a.append(x)` leaks the original buffer, 2 / 1 (#9191);
+- `let b = a; … a = a.append(x)` leaks the original buffer, 2 / 1 (#9191);
   the foreach snapshot reaches the same pairing.
 - An array handed out of an if-expression is credited as moved, so the
   source's updates take the static clone arm with no release: 103 / 3 (#9192).

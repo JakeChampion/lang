@@ -32,13 +32,13 @@ import (
 // resolve to the deepest declaration.
 func TestRenameNestedThreeLevelsEachGetsDistinctName(t *testing.T) {
 	prog := runRename(t, `function f(): i32 {
-		var x: i32 = 1;
+		let x: i32 = 1;
 		{
-			var x: i32 = 2;
+			let x: i32 = 2;
 			{
-				var x: i32 = 3;
+				let x: i32 = 3;
 				{
-					var x: i32 = 4;
+					let x: i32 = 4;
 					return x;
 				}
 			}
@@ -47,7 +47,7 @@ func TestRenameNestedThreeLevelsEachGetsDistinctName(t *testing.T) {
 	fn := prog.Funcs[0]
 	names := collectVarNames(fn.Body)
 	if len(names) != 4 {
-		t.Fatalf("expected 4 var decls, got %d (%v)", len(names), names)
+		t.Fatalf("expected 4 let decls, got %d (%v)", len(names), names)
 	}
 	if names[0] != "x" {
 		t.Errorf("outermost var: got %q, want %q", names[0], "x")
@@ -56,7 +56,7 @@ func TestRenameNestedThreeLevelsEachGetsDistinctName(t *testing.T) {
 	seen := map[string]bool{"x": true}
 	for _, n := range names[1:] {
 		if !strings.HasPrefix(n, "x$") {
-			t.Errorf("shadowed var %q: want `x$<N>` form", n)
+			t.Errorf("shadowed let %q: want `x$<N>` form", n)
 		}
 		if seen[n] {
 			t.Errorf("duplicate shadow name %q across nesting levels", n)
@@ -79,16 +79,16 @@ func TestRenameNestedThreeLevelsEachGetsDistinctName(t *testing.T) {
 // sibling test, which only checks the first pair).
 func TestRenameNestedSiblingCounterStaysGlobal(t *testing.T) {
 	prog := runRename(t, `function f(): i32 {
-		var x: i32 = 1;
-		{ var x: i32 = 2; }
-		{ var x: i32 = 3; }
-		{ var x: i32 = 4; }
+		let x: i32 = 1;
+		{ let x: i32 = 2; }
+		{ let x: i32 = 3; }
+		{ let x: i32 = 4; }
 		return x;
 	}`)
 	fn := prog.Funcs[0]
 	names := collectVarNames(fn.Body)
 	if len(names) != 4 {
-		t.Fatalf("expected 4 var decls, got %d (%v)", len(names), names)
+		t.Fatalf("expected 4 let decls, got %d (%v)", len(names), names)
 	}
 	if names[0] != "x" {
 		t.Errorf("outer var: got %q, want %q", names[0], "x")
@@ -105,15 +105,15 @@ func TestRenameNestedSiblingCounterStaysGlobal(t *testing.T) {
 	}
 }
 
-// TestRenameSelfShadowInitReadsOuter — `var x = x + 10` inside an
+// TestRenameSelfShadowInitReadsOuter — `let x = x + 10` inside an
 // inner block: the RHS is evaluated in the *outer* scope (so it
 // references the outer, un-suffixed `x`) while the LHS binds a
 // fresh `x$N`. The subsequent reference resolves to the new name.
 func TestRenameSelfShadowInitReadsOuter(t *testing.T) {
 	prog := runRename(t, `function f(): i32 {
-		var x: i32 = 1;
+		let x: i32 = 1;
 		{
-			var x: i32 = x + 10;
+			let x: i32 = x + 10;
 			return x;
 		}
 	}`)
@@ -158,9 +158,9 @@ func TestRenameSelfShadowInitReadsOuter(t *testing.T) {
 // untouched outer var.
 func TestRenameLoopInitShadowsOuterVar(t *testing.T) {
 	prog := runRename(t, `function f(): i32 {
-		var i: i32 = 100;
-		var sum: i32 = 0;
-		for (var i: i32 = 0; i < 3; i = i + 1) {
+		let i: i32 = 100;
+		let sum: i32 = 0;
+		for (let i: i32 = 0; i < 3; i = i + 1) {
 			sum = sum + i;
 		}
 		return sum + i;
@@ -212,7 +212,7 @@ func TestRenameLoopInitShadowsOuterVar(t *testing.T) {
 	}
 	bodyIdents := collectIdentNames(body)
 	if !contains(bodyIdents, loopName) {
-		t.Errorf("loop body idents %v missing loop var %q", bodyIdents, loopName)
+		t.Errorf("loop body idents %v missing loop let %q", bodyIdents, loopName)
 	}
 	if contains(bodyIdents, "i") {
 		t.Errorf("loop body references bare outer %q; should use %q", "i", loopName)
@@ -225,7 +225,7 @@ func TestRenameLoopInitShadowsOuterVar(t *testing.T) {
 }
 
 // TestRenameLocalShadowsParam — a function param `n` shadowed by a
-// local `var n` inside a block. The local's init reads the param
+// local `let n` inside a block. The local's init reads the param
 // (outer scope), the local gets a fresh `n$N`, and the return
 // inside the block resolves to the local. Confirms params
 // participate in shadow detection (they're bound into the
@@ -233,7 +233,7 @@ func TestRenameLoopInitShadowsOuterVar(t *testing.T) {
 func TestRenameLocalShadowsParam(t *testing.T) {
 	prog := runRename(t, `function f(n: i32): i32 {
 		{
-			var n: i32 = n + 5;
+			let n: i32 = n + 5;
 			return n;
 		}
 	}`)
@@ -271,13 +271,13 @@ func TestRenameLocalShadowsParam(t *testing.T) {
 }
 
 // TestRenameMatchArmBindingShadowsOuter — a match-arm payload
-// binding (`Val(x)`) shadows an outer `var x`. The binding and the
+// binding (`Val(x)`) shadows an outer `let x`. The binding and the
 // arm body's reference to it must be renamed; the outer reference
 // after the match resolves to the original `x`.
 func TestRenameMatchArmBindingShadowsOuter(t *testing.T) {
 	prog := runRename(t, `enum Box { Val(i32) }
 	function f(b: Box): i32 {
-		var x: i32 = 1;
+		let x: i32 = 1;
 		match (b) {
 			Val(x) => { return x; }
 		}
@@ -434,9 +434,9 @@ func contains(xs []string, want string) bool {
 // (#8607).
 func TestRenameTuplePatternBinderShadowsOuter(t *testing.T) {
 	prog := runRename(t, `function f(): i32 {
-		var x: i32 = 1;
-		var y: i32 = 2;
-		var t: (i32, (i32, i32)) = (5, (6, 7));
+		let x: i32 = 1;
+		let y: i32 = 2;
+		let t: (i32, (i32, i32)) = (5, (6, 7));
 		match (t) {
 			(x, (y, z)) => { return x; }
 		}
@@ -471,7 +471,7 @@ func TestRenameTuplePatternBinderShadowsOuter(t *testing.T) {
 func TestRenamePayloadSubPatternBinderShadowsOuter(t *testing.T) {
 	prog := runRename(t, `enum Holder { Has(Option[i32]), Nothing }
 	function f(h: Holder): i32 {
-		var x: i32 = 1;
+		let x: i32 = 1;
 		match (h) {
 			Has(Some(x)) => { return x; },
 			_ => { return 0; }

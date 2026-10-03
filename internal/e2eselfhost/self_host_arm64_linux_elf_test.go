@@ -47,27 +47,27 @@ func TestSelfHostArm64NativeLinuxElfRuns(t *testing.T) {
 	native := string(mustRead(t, "../../examples/self_host/arm64_native.fern"))
 	elfsrc := string(mustRead(t, "../../examples/self_host/elf.fern"))
 	const driverMain = `
-function to_u8(b: i32[]): u8[] { var o: u8[] = []; var i: i32 = 0; while (i < b.len()) { o = o.append(b[i] as u8); i = i + 1; } return o; }
+function to_u8(b: i32[]): u8[] { let o: u8[] = []; let i: i32 = 0; while (i < b.len()) { o = o.append(b[i] as u8); i = i + 1; } return o; }
 function main(): i32 {
-    var asm: string = ""; var ok: boolean = false;
+    let asm: string = ""; let ok: boolean = false;
     match (read_file("in.s")) { Ok(s) => { asm = s; ok = true; }, Err(e) => { ok = false; } }
     if (!ok) { write("ERR"); return 1; }
-    var p: Arm64GasProg = arm64_gas_program(asm);
+    let p: Arm64GasProg = arm64_gas_program(asm);
     if (p.unknown.len() > 0) {
-        var msg: string = "UNKNOWN:"; var i: i32 = 0;
+        let msg: string = "UNKNOWN:"; let i: i32 = 0;
         while (i < p.unknown.len()) { msg = msg + p.unknown[i] + ","; i = i + 1; }
         write(msg); return 0;
     }
-    var pa: Arm64Asm = p.asm;
+    let pa: Arm64Asm = p.asm;
     // W^X two-segment layout (matches fern.fern's arm64_elf_binary): .text
     // R+X, data R+W on the next page boundary.
-    var tv: i64 = (elf_text_vaddr_wx()) as i64;
-    var dv: i64 = (elf_data_vaddr_wx(pa.code.len())) as i64;
+    let tv: i64 = (elf_text_vaddr_wx()) as i64;
+    let dv: i64 = (elf_data_vaddr_wx(pa.code.len())) as i64;
     p = arm64_gas_link(p, tv, dv);
-    var pa2: Arm64Asm = p.asm;
-    var entry_off: i32 = arm64_asm_label_off(pa2, "_start");
+    let pa2: Arm64Asm = p.asm;
+    let entry_off: i32 = arm64_asm_label_off(pa2, "_start");
     if (entry_off < 0) { entry_off = 0; }
-    var bin: i32[] = elf_image_wx(pa2.code, p.data, elf_em_aarch64(), entry_off, p.bss_size);
+    let bin: i32[] = elf_image_wx(pa2.code, p.data, elf_em_aarch64(), entry_off, p.bss_size);
     write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
@@ -83,21 +83,21 @@ function main(): i32 {
 	// arm64_elf_binary_pie (-target arm64-android). With the arm64 heap now
 	// mmap'd at the low 0x10000000 hint, these run at the kernel-chosen base.
 	const pieDriverMain = `
-function to_u8(b: i32[]): u8[] { var o: u8[] = []; var i: i32 = 0; while (i < b.len()) { o = o.append(b[i] as u8); i = i + 1; } return o; }
+function to_u8(b: i32[]): u8[] { let o: u8[] = []; let i: i32 = 0; while (i < b.len()) { o = o.append(b[i] as u8); i = i + 1; } return o; }
 function main(): i32 {
-    var asm: string = ""; var ok: boolean = false;
+    let asm: string = ""; let ok: boolean = false;
     match (read_file("in.s")) { Ok(s) => { asm = s; ok = true; }, Err(e) => { ok = false; } }
     if (!ok) { write("ERR"); return 1; }
-    var p: Arm64GasProg = arm64_gas_program(asm);
+    let p: Arm64GasProg = arm64_gas_program(asm);
     if (p.unknown.len() > 0) { write("UNKNOWN:"); return 0; }
-    var pa: Arm64Asm = p.asm;
-    var tv: i64 = (elf_text_vaddr_pie()) as i64;
-    var dv: i64 = (elf_data_vaddr_pie(pa.code.len())) as i64;
+    let pa: Arm64Asm = p.asm;
+    let tv: i64 = (elf_text_vaddr_pie()) as i64;
+    let dv: i64 = (elf_data_vaddr_pie(pa.code.len())) as i64;
     p = arm64_gas_link(p, tv, dv);
-    var pa2: Arm64Asm = p.asm;
-    var entry_off: i32 = arm64_asm_label_off(pa2, "_start");
+    let pa2: Arm64Asm = p.asm;
+    let entry_off: i32 = arm64_asm_label_off(pa2, "_start");
     if (entry_off < 0) { entry_off = 0; }
-    var bin: i32[] = elf_image_pie(pa2.code, p.data, elf_em_aarch64(), entry_off, p.bss_size);
+    let bin: i32[] = elf_image_pie(pa2.code, p.data, elf_em_aarch64(), entry_off, p.bss_size);
     write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
@@ -114,13 +114,13 @@ function main(): i32 {
 		want int
 	}{
 		{"exit42", `function main(): i32 { return 42; }`, 42},
-		{"arith", `function main(): i32 { var x = 6; var y = 7; return x * y; }`, 42},
+		{"arith", `function main(): i32 { let x = 6; let y = 7; return x * y; }`, 42},
 		{"fib", `function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n-1)+fib(n-2); } function main(): i32 { return fib(10); }`, 55},
 		{"print", `function main(): i32 { print("hi"); return 0; }`, 0},
-		{"concat", `function main(): i32 { var s: string = "hello, " + "world!"; return s.len(); }`, 13},
-		{"array", `function main(): i32 { var a = [1,2,3,4,5]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15},
-		{"strbuild", `function main(): i32 { var s: string = ""; var i: i32 = 0; while (i < 3) { s = s + "ab"; i = i + 1; } return s.len(); }`, 6},
-		{"floats", `function main(): i32 { var x: f64 = 3.5; var y: f64 = 2.0; var z: f64 = x*y + x/y - x; if (z > 5.0) { return 7; } return 1; }`, 7},
+		{"concat", `function main(): i32 { let s: string = "hello, " + "world!"; return s.len(); }`, 13},
+		{"array", `function main(): i32 { let a = [1,2,3,4,5]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15},
+		{"strbuild", `function main(): i32 { let s: string = ""; let i: i32 = 0; while (i < 3) { s = s + "ab"; i = i + 1; } return s.len(); }`, 6},
+		{"floats", `function main(): i32 { let x: f64 = 3.5; let y: f64 = 2.0; let z: f64 = x*y + x/y - x; if (z > 5.0) { return 7; } return 1; }`, 7},
 		// The bit-counting intrinsics, which are the only place the arm64
 		// backend emits `rbit` (ctz) or the SIMD pair `cnt`/`addv` (popcount).
 		// This is the leg that proves them: the self-host emitter's output

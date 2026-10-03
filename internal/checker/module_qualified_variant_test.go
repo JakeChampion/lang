@@ -41,11 +41,11 @@ func TestModuleQualifiedVariant(t *testing.T) {
 			"lib.fern": lib,
 			"main.fern": "import \"./lib\";\n" +
 				"function main(): i32 {\n" +
-				"    var c: lib.Shape = lib.Circle(3);\n" +
+				"    let c: lib.Shape = lib.Circle(3);\n" +
 				// `Other` is also an IoError variant, so the module form is
 				// the only spelling that reaches lib's.
-				"    var o: lib.Shape = lib.Other(5);\n" +
-				"    var total: i32 = 0;\n" +
+				"    let o: lib.Shape = lib.Other(5);\n" +
+				"    let total: i32 = 0;\n" +
 				"    match (c) { lib.Circle(r) => { total = total + r; }, _ => { return 1; } }\n" +
 				"    match (o) { lib.Other(n) => { total = total + n; }, _ => { return 2; } }\n" +
 				"    match (Some(o)) { Some(lib.Other(n)) => { total = total + n; }, _ => { return 3; } }\n" +
@@ -75,7 +75,7 @@ func TestModuleQualifiedVariant(t *testing.T) {
 		err := loadCheckFiles(t, map[string]string{
 			"lib.fern": "enum Hidden { H(i32) }\npub function q(): i32 { return 0; }\n",
 			"main.fern": "import \"./lib\";\n" +
-				"function main(): i32 { var h = lib.H(1); return lib.q(); }\n",
+				"function main(): i32 { let h = lib.H(1); return lib.q(); }\n",
 		}, "main.fern")
 		if err == nil {
 			t.Fatal("expected an error for a private enum's variant")
@@ -103,7 +103,7 @@ func TestModuleQualifiedVariant(t *testing.T) {
 		err := loadCheckFiles(t, map[string]string{
 			"lib.fern": lib,
 			"main.fern": "import \"./lib\";\n" +
-				"function main(): i32 { var s = lib.Square(2); return 0; }\n",
+				"function main(): i32 { let s = lib.Square(2); return 0; }\n",
 		}, "main.fern")
 		if err == nil || !strings.Contains(err.Error(), "module \"lib\" has no function \"Square\"") {
 			t.Errorf("want the unchanged no-such-function report, got:\n%v", err)
@@ -114,7 +114,7 @@ func TestModuleQualifiedVariant(t *testing.T) {
 		err := loadCheckFiles(t, map[string]string{
 			"lib.fern": "pub enum A { Same }\npub enum B { Same }\npub function q(): i32 { return 0; }\n",
 			"main.fern": "import \"./lib\";\n" +
-				"function main(): i32 { var a: lib.A = lib.Same; return 0; }\n",
+				"function main(): i32 { let a: lib.A = lib.Same; return 0; }\n",
 		}, "main.fern")
 		if err == nil || !strings.Contains(err.Error(), "variant of more than one exported enum") {
 			t.Errorf("want the shared-variant report, got:\n%v", err)
@@ -126,7 +126,7 @@ func TestModuleQualifiedVariant(t *testing.T) {
 			"lib.fern":   lib,
 			"other.fern": "pub enum Shape { Circle(i32) }\n",
 			"main.fern": "import \"./lib\";\nimport \"./other\";\n" +
-				"function main(): i32 { var c: lib.Shape = lib.Circle(1); match (c) { other.Circle(r) => { return r; }, _ => { return 0; } } }\n",
+				"function main(): i32 { let c: lib.Shape = lib.Circle(1); match (c) { other.Circle(r) => { return r; }, _ => { return 0; } } }\n",
 		}, "main.fern")
 		if err == nil || !strings.Contains(err.Error(), "variant pattern qualifier names module") {
 			t.Errorf("want E029 for a qualifier naming the wrong module, got:\n%v", err)
@@ -137,7 +137,7 @@ func TestModuleQualifiedVariant(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"lib.fern": lib,
 			"main.fern": "import \"./lib\";\n" +
-				"function main(): i32 { var o: lib.Shape = Other(1); return 0; }\n",
+				"function main(): i32 { let o: lib.Shape = Other(1); return 0; }\n",
 		}, "main.fern")
 		if err == nil {
 			t.Fatal("expected E036 for the ambiguous bare variant")

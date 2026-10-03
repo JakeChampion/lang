@@ -20,10 +20,10 @@ import (
 // The comparison is against the flat x86-64 emitter, for the reason
 // x86_64ssa_path_helpers_test.go gives.
 const x86SSAFdMethodSrc = `function main(): i32 {
-    var base: string = getcwd();
-    var path: string = base + "/f";
+    let base: string = getcwd();
+    let path: string = base + "/f";
 
-    var wh: Writer = match (open_writer(path)) { Ok(h) => h, Err(e) => { return 10; } };
+    let wh: Writer = match (open_writer(path)) { Ok(h) => h, Err(e) => { return 10; } };
     // write_some reports the count it wrote, where write forgets it.
     match (wh.write_some("abcdefgh")) { Ok(n) => { if (n != 8i64) { return 11; } }, Err(e) => { return 12; } }
     // seek back to 3 and overwrite, so the offset is observable in the bytes.
@@ -39,7 +39,7 @@ const x86SSAFdMethodSrc = `function main(): i32 {
 
     match (read_file(path)) { Ok(c) => { if (c != "abcXYf") { return 30; } }, Err(e) => { return 31; } }
 
-    var rh: Reader = match (open_reader(path)) { Ok(h) => h, Err(e) => { return 40; } };
+    let rh: Reader = match (open_reader(path)) { Ok(h) => h, Err(e) => { return 40; } };
     match (rh.seek(2i64, 0)) { Ok(o) => { if (o != 2i64) { return 41; } }, Err(e) => { return 42; } }
     match (rh.read_chunk(2)) { Ok(s) => { if (s != "cX") { return 43; } }, Err(e) => { return 44; } }
     // seek from the end: -1 lands on the last byte.
@@ -60,8 +60,8 @@ const x86SSAFdMethodSrc = `function main(): i32 {
 
     // dup_onto: point a spare descriptor at the writer's, then write through
     // the original and read the result back.
-    var w2: Writer = match (open_writer(base + "/g")) { Ok(h) => h, Err(e) => { return 70; } };
-    var w3: Writer = match (open_writer(base + "/h")) { Ok(h) => h, Err(e) => { return 71; } };
+    let w2: Writer = match (open_writer(base + "/g")) { Ok(h) => h, Err(e) => { return 70; } };
+    let w3: Writer = match (open_writer(base + "/h")) { Ok(h) => h, Err(e) => { return 71; } };
     match (w3.dup_onto(1)) { Some(e) => { return 72; }, None => {} }
     match (w3.close()) { Some(e) => { return 73; }, None => {} }
     match (w2.close()) { Some(e) => { return 74; }, None => {} }

@@ -11,7 +11,7 @@ Option payloads. Its admission reads
     if (!arms_use && dead_after && !escapes && !binds_esc)
 
 with `escapes = name_escapes_outside_stmt(body, v.name, match_idx)`. An alias
-bind `var x = src;` is a mention of `src` in a statement outside the match, so
+bind `let x = src;` is a mention of `src` in a statement outside the match, so
 `escapes` was true and the free was declined.
 
 That decline is conservative-correct in isolation. The bug is that **nothing
@@ -59,7 +59,7 @@ underflow — the guard still guards.
 
 ## Residual
 
-`var x = src;` where only the ALIAS is matched and the source is not still
+`let x = src;` where only the ALIAS is matched and the source is not still
 leaks. That shape has no consuming match on the source at all, so it belongs
 to the UNMATCHED collector, whose `opt_unmatched_esc_ok` rejects an aliased
 name outright (`!name_is_alias_bound`). Patching that predicate was tried and

@@ -96,7 +96,7 @@ func TestSelfHostExternRecordParamCustomProvider(t *testing.T) {
 @import("local:test/sink@0.1.0", "sum-point")
 function sum_point(p: Point): i32;
 function main(): i32 {
-    var p: Point = Point { x: 10, y: 32 };
+    let p: Point = Point { x: 10, y: 32 };
     if (sum_point(p) == 42) { write("` + want + `"); } else { write("pt-bad"); }
     return 0;
 }`

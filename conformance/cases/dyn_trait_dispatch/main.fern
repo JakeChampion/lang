@@ -25,8 +25,8 @@ function describe(s: dyn Shape): i32 {
 }
 
 function main(): i32 {
-    var sq: dyn Shape = Square { side: 3 };
-    var tr: dyn Shape = Triangle { base: 4, height: 5 };
+    let sq: dyn Shape = Square { side: 3 };
+    let tr: dyn Shape = Triangle { base: 4, height: 5 };
     // 9*10+4 = 94, 10*10+3 = 103. The second method slot is what proves
     // the call reads the vtable rather than always dispatching to slot 0.
     return describe(sq) + describe(tr) - 155;

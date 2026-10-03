@@ -538,7 +538,7 @@ type Interp struct {
 	// to feed scripted argv without going through os.Args.
 	Args []string
 	// Global is the env used by REPL-typed top-level statements;
-	// `var x = 7` at the prompt declares x here so the next prompt
+	// `let x = 7` at the prompt declares x here so the next prompt
 	// can read it.
 	Global *env
 	// strbuf is the interpreter's analogue of the compiled backends'
@@ -1321,6 +1321,7 @@ func New() *Interp {
 	i.Builtins["geteuid"] = &Builtin{Fn: builtinGeteuid}
 	i.Builtins["getegid"] = &Builtin{Fn: builtinGetegid}
 	i.Builtins["getuid"] = &Builtin{Fn: builtinGetuid}
+	i.Builtins["__getpwuid_name"] = &Builtin{Fn: builtinGetpwuidName}
 	i.Builtins["getgid"] = &Builtin{Fn: builtinGetgid}
 	i.Builtins["getgroups"] = &Builtin{Fn: builtinGetgroups}
 	i.Builtins["hostname"] = &Builtin{Fn: builtinHostname}
@@ -3584,6 +3585,16 @@ func builtinGetuid(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("getuid: expected 0 args, got %d", len(args))
 	}
 	return Number(os.Getuid()), nil
+}
+
+// builtinGetpwuidName answers 0, "no name from the account database", as
+// every compiled target but arm64-darwin does: the interpreter has no C
+// string to hand back, so the caller reads the files.
+func builtinGetpwuidName(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("__getpwuid_name: expected 1 arg, got %d", len(args))
+	}
+	return Number(0), nil
 }
 
 func builtinGetgid(_ *Interp, args []Value) (Value, error) {
@@ -6836,7 +6847,7 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 	switch x := e.(type) {
 	case *ast.NumberLit:
 		// IsFloat is the checker's record (settleFloat) that a polymorphic
-		// integer literal settled into FLOAT context — `var x: f64 = 3`, or an
+		// integer literal settled into FLOAT context — `let x: f64 = 3`, or an
 		// integer literal at an f64 parameter. Ignoring it handed the body a
 		// Number where it expected a Float, so the first arithmetic op failed
 		// with `"+" on interp.Number and interp.Float not supported` even
@@ -7693,7 +7704,7 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 		// A `?` that short-circuits inside a lambda returns from the LAMBDA,
 		// so the sentinel has to be absorbed here rather than re-raised after
 		// the errdefers fire. Re-raising unwinds a `None` / `Err` out of the
-		// whole program: `(o: Option[i32]): Option[i32] => { var v: i32
+		// whole program: `(o: Option[i32]): Option[i32] => { let v: i32
 		// = o?; return Some(v + 1); }` applied to None then terminates the
 		// interpreter with exit 0 instead of answering None. This engine is
 		// the differential ORACLE the cross-validation suite grades the

@@ -40,9 +40,9 @@ import (
 // silent pass.
 func readChunkDrainSrc(size, rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var r: Reader = stdin();
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let r: Reader = stdin();
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < %d) {
         match (r.read_chunk(%d)) {
             Ok(chunk) => { acc = acc + chunk.len(); },
@@ -59,8 +59,8 @@ func readChunkDrainSrc(size, rounds int) string {
 // the spot.
 func readChunkDiscardSrc(size, rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var r: Reader = stdin();
-    var i: i32 = 0;
+    let r: Reader = stdin();
+    let i: i32 = 0;
     while (i < %d) {
         match (r.read_chunk(%d)) {
             Ok(_) => { i = i + 1; },
@@ -76,9 +76,9 @@ func readChunkDiscardSrc(size, rounds int) string {
 // same equality holds: a longer line must not cost more live bytes.
 func readLineDrainSrc(rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var r: Reader = stdin();
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let r: Reader = stdin();
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < %d) {
         match (r.read_line()) {
             Some(line) => { acc = acc + line.len(); },
@@ -285,9 +285,9 @@ func TestSelfHostOwnedPayloadHazardsX86_64(t *testing.T) {
 			// is read back after it — the escape-through-append probe.
 			name: "escapes_through_append",
 			src: `function main(): i32 {
-    var r: Reader = stdin();
-    var held: string[] = [];
-    var i: i32 = 0;
+    let r: Reader = stdin();
+    let held: string[] = [];
+    let i: i32 = 0;
     while (i < 4) {
         match (r.read_chunk(16)) {
             Ok(chunk) => { held = held.append(chunk); },
@@ -308,28 +308,28 @@ func TestSelfHostOwnedPayloadHazardsX86_64(t *testing.T) {
 			// this binding answers 27 instead of 32.
 			name: "passed_to_user_fn_that_keeps_it",
 			src: `function eat(n: i32): i32 {
-    var s: string = "x";
-    var i: i32 = 0;
+    let s: string = "x";
+    let i: i32 = 0;
     while (i < n) { s = s + "yyyyyyyyyy"; i = i + 1; }
     return s.len();
 }
 function keep(t: string): string[] {
-    var out: string[] = [];
+    let out: string[] = [];
     out = out.append(t);
     return out;
 }
 function main(): i32 {
-    var r: Reader = stdin();
-    var held: string[] = [];
-    var i: i32 = 0;
+    let r: Reader = stdin();
+    let held: string[] = [];
+    let i: i32 = 0;
     while (i < 4) {
         match (r.read_chunk(16)) {
-            Ok(chunk) => { var one: string[] = keep(chunk); held = held.append(one[0]); },
+            Ok(chunk) => { let one: string[] = keep(chunk); held = held.append(one[0]); },
             Err(e) => { return 9; }
         }
         i = i + 1;
     }
-    var junk: i32 = eat(300);
+    let junk: i32 = eat(300);
     return held[0].len() + held[3].len() + __rc_underflow_count();
 }`,
 			stdin: bytes.Repeat([]byte{'x'}, 64),
@@ -346,8 +346,8 @@ function main(): i32 {
     return "";
 }
 function main(): i32 {
-    var r: Reader = stdin();
-    var s: string = first(r);
+    let r: Reader = stdin();
+    let s: string = first(r);
     return s.len() + __rc_underflow_count();
 }`,
 			stdin: bytes.Repeat([]byte{'x'}, 64),
@@ -358,9 +358,9 @@ function main(): i32 {
 			// a sibling that re-reads the same payload.
 			name: "guarded_arm",
 			src: `function main(): i32 {
-    var r: Reader = stdin();
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let r: Reader = stdin();
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         match (r.read_chunk(16)) {
             Ok(big) when big.len() > 8 => { acc = acc + big.len(); },
@@ -381,9 +381,9 @@ function main(): i32 {
 			// The payload is stored into an outer local that outlives the arm.
 			name: "stored_to_outer_local",
 			src: `function main(): i32 {
-    var r: Reader = stdin();
-    var last: string = "";
-    var i: i32 = 0;
+    let r: Reader = stdin();
+    let last: string = "";
+    let i: i32 = 0;
     while (i < 4) {
         match (r.read_chunk(16)) {
             Ok(chunk) => { last = chunk; },

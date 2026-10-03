@@ -8,7 +8,7 @@ thing with the result named first and it was quadratic:
 | loop body | before | after |
 |---|---|---|
 | `c = emit1(c, op);` | 1 ms | 0 ms |
-| `var c2 = emit1(c, op); c = c2;` | 922 ms | 0 ms |
+| `let c2 = emit1(c, op); c = c2;` | 922 ms | 0 ms |
 | `let (c2, p) = emit2(c, op); c = c2;` | 920 ms | 0 ms |
 
 20000 iterations, `-O`, x86-64-linux, one struct with an `It[]` field.
@@ -29,20 +29,20 @@ while (i < n) { c = step(c, i); i = i + 1; }        // 1 ms
 
 Same tuple, same second element, same `emit2`. What differs is which shape in
 `callArgDeaths` reaches the call: inside `step` it is the last-occurrence one,
-and at the direct spelling it was none of them. The `var` form measures the
+and at the direct spelling it was none of them. The `let` form measures the
 same 920 ms with no tuple anywhere, which is the plainer statement of it.
 
 ## The rule
 
-Statement *i* binds from a call (`var y = f(…)` or `let (a, b) = f(…)`) and
+Statement *i* binds from a call (`let y = f(…)` or `let (a, b) = f(…)`) and
 statement *i+1* is `x = <value>` where the value does not read x. Then x dies
 at that call, on the same argument as the one-statement form: the store runs
 before any other statement, so no later read — including the next iteration of
 an enclosing loop — can reach the buffer the callee grew.
 
-The store's value must not read x, which is what refuses `var y = f(x); x =
+The store's value must not read x, which is what refuses `let y = f(x); x =
 g(x)`; and the two statements must be adjacent, which is what refuses `let (a,
-b) = f(x); var n = x.insts.len(); x = a;`. Both are pinned.
+b) = f(x); let n = x.insts.len(); x = a;`. Both are pinned.
 
 Neither half matched before: the binding statement stores to a NEW name, so it
 is not the `*ast.Assign` the one-statement shape looks for, and `c = c2` names
@@ -52,7 +52,7 @@ nothing marked the argument dead at all.
 ## in_loop moved, and the loop gate did not
 
 `internal/ir/call_arg_death_last_use_test.go`'s `in_loop` case is exactly this
-shape — `var a = s.emit(i); s = a.emit(i + 1);` in a while body — and it was
+shape — `let a = s.emit(i); s = a.emit(i + 1);` in a while body — and it was
 pinned at NO deaths, on the argument that inside a loop one textual read is
 many dynamic ones. That argument is about the last-occurrence shapes and does
 not reach this one: the store at the end of the body means the next iteration

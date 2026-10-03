@@ -18,14 +18,14 @@ import (
 func TestCrossBranchReuseBothArmsShareDonor(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var s: i32 = a.x + a.y;          // a's last use
-    var acc: i32 = 0;
+    let a: Point = Point { x: 1, y: 2 };
+    let s: i32 = a.x + a.y;          // a's last use
+    let acc: i32 = 0;
     if (s > 0) {
-        var b: Point = Point { x: s, y: 9 };
+        let b: Point = Point { x: s, y: 9 };
         acc = b.x + b.y;
     } else {
-        var c: Point = Point { x: 7, y: s };
+        let c: Point = Point { x: 7, y: s };
         acc = c.x + c.y;
     }
     return acc;
@@ -39,13 +39,13 @@ function main(): i32 {
 func TestCrossBranchReuseMatchArmsShareDonor(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var s: i32 = a.x + a.y;
-    var acc: i32 = 0;
+    let a: Point = Point { x: 1, y: 2 };
+    let s: i32 = a.x + a.y;
+    let acc: i32 = 0;
     match (s) {
-        3 => { var p: Point = Point { x: 1, y: 1 }; acc = p.x + p.y; },
-        4 => { var q: Point = Point { x: 2, y: 2 }; acc = q.x + q.y; },
-        _ => { var r: Point = Point { x: 3, y: 3 }; acc = r.x + r.y; },
+        3 => { let p: Point = Point { x: 1, y: 1 }; acc = p.x + p.y; },
+        4 => { let q: Point = Point { x: 2, y: 2 }; acc = q.x + q.y; },
+        _ => { let r: Point = Point { x: 3, y: 3 }; acc = r.x + r.y; },
     }
     return acc;
 }`)
@@ -59,12 +59,12 @@ function main(): i32 {
 func TestCrossBranchReuseDeclinesSequentialClaimants(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var s: i32 = a.x + a.y;
-    var acc: i32 = 0;
+    let a: Point = Point { x: 1, y: 2 };
+    let s: i32 = a.x + a.y;
+    let acc: i32 = 0;
     if (s > 0) {
-        var b: Point = Point { x: s, y: 9 };
-        var c: Point = Point { x: 7, y: 1 };
+        let b: Point = Point { x: s, y: 9 };
+        let c: Point = Point { x: 7, y: 1 };
         acc = b.x + c.y;          // both live to here, so c can't pair with b
     }
     return acc;
@@ -82,9 +82,9 @@ function main(): i32 {
 func TestCrossKindReuseTupleDonorStructRecipient(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var t: (i32, i32) = (1, 2);
-    var s: i32 = t.0 + t.1;          // t's last use
-    var b: Point = Point { x: s, y: 9 };
+    let t: (i32, i32) = (1, 2);
+    let s: i32 = t.0 + t.1;          // t's last use
+    let b: Point = Point { x: s, y: 9 };
     return b.x + b.y;
 }`)
 	if got := allocReuseCount(funcByName(ip, "main")); got != 1 {
@@ -98,9 +98,9 @@ func TestCrossKindReuseDeclinesClassMismatch(t *testing.T) {
 	ip := lowerForTest(t, `struct Wide { a: i32, b: i32, c: i32, d: i32, e: i32, f: i32 }
 struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var w: Wide = Wide { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6 };
-    var s: i32 = w.a + w.f;
-    var p: Point = Point { x: s, y: 9 };
+    let w: Wide = Wide { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6 };
+    let s: i32 = w.a + w.f;
+    let p: Point = Point { x: s, y: 9 };
     return p.x + p.y;
 }`)
 	if got := allocReuseCount(funcByName(ip, "main")); got != 0 {
@@ -124,9 +124,9 @@ impl mem.Drop for W {
 struct Holder { w: W }
 struct Other { w: W }
 function main(): i32 {
-    var h: Holder = Holder { w: W { n: 3 } };
-    var s: i32 = h.w.n;                          // h's last use
-    var o: Other = Other { w: W { n: 4 } };      // same class, must not pair
+    let h: Holder = Holder { w: W { n: 3 } };
+    let s: i32 = h.w.n;                          // h's last use
+    let o: Other = Other { w: W { n: 4 } };      // same class, must not pair
     return s + o.w.n;
 }`
 	prog, _, err := modload.LoadSource(src)

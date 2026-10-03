@@ -115,10 +115,10 @@ func TestPeepholeDropsReloadAfterCompareAndBranch(t *testing.T) {
 // End to end: a scan loop's `c >= 48 && c <= 57` test reads the byte once.
 func TestScanLoopReadsEachByteOnce(t *testing.T) {
 	asm := compile(t, `@noinline function digits(s: string): i32 {
-  var n: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
-    var c = s[i];
+    let c = s[i];
     if (c >= 48 && c <= 57) { n = n + 1; }
     i = i + 1;
   }
@@ -230,7 +230,7 @@ func TestIndexHelperColdArmsFollowTheEpilogue(t *testing.T) {
 	asm := compile(t, `@noinline function f(s: string, a: i32[], i: i32): i32 {
   return (s[i] as i32) + a[i];
 }
-function main(): i32 { var a: i32[] = [1, 2]; return f("ab", a, 1); }`)
+function main(): i32 { let a: i32[] = [1, 2]; return f("ab", a, 1); }`)
 	body := fnBody(t, asm, "f")
 	ret := strings.Index(body, "\tret\n")
 	if ret < 0 {
@@ -432,10 +432,10 @@ func TestPeepholeWindowHoldsBoundedData(t *testing.T) {
 // `.loc` rows and the file table differ (#10016).
 func TestDebugLinesDoNotChangeTheCode(t *testing.T) {
 	src := `@noinline function digits(s: string): i32 {
-  var n: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
-    var c = s[i];
+    let c = s[i];
     if (c >= 48 && c <= 57) { n = n + 1; }
     i = i + 1;
   }

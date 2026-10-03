@@ -23,13 +23,13 @@ var functionalUpdateCases = []struct {
 }{
 	// Return-the-new-value instead of mutate-through-call: bump
 	// returns a fresh Box and the caller rebinds.
-	{"bump-through-fn", "struct Box { v: i32 } function bump(b: Box): Box { return Box { ...b, v: b.v + 1 }; } function main(): i32 { var b: Box = Box { v: 10 }; b = bump(b); b = bump(b); return b.v; }", 12},
+	{"bump-through-fn", "struct Box { v: i32 } function bump(b: Box): Box { return Box { ...b, v: b.v + 1 }; } function main(): i32 { let b: Box = Box { v: 10 }; b = bump(b); b = bump(b); return b.v; }", 12},
 	// Two struct-updates, each overriding one field.
-	{"two-fields", "struct P { x: i32, y: i32 } function main(): i32 { var p: P = P { x: 1, y: 2 }; p = P { ...p, x: 10 }; p = P { ...p, y: 30 }; return p.x + p.y; }", 40},
+	{"two-fields", "struct P { x: i32, y: i32 } function main(): i32 { let p: P = P { x: 1, y: 2 }; p = P { ...p, x: 10 }; p = P { ...p, y: 30 }; return p.x + p.y; }", 40},
 	// Update-in-loop: inc returns the new value, the loop rebinds.
-	{"update-in-loop", "struct C { n: i32 } function inc(c: C): C { return C { ...c, n: c.n + 1 }; } function main(): i32 { var c: C = C { n: 0 }; var i: i32 = 0; while (i < 5) { c = inc(c); i = i + 1; } return c.n; }", 5},
+	{"update-in-loop", "struct C { n: i32 } function inc(c: C): C { return C { ...c, n: c.n + 1 }; } function main(): i32 { let c: C = C { n: 0 }; let i: i32 = 0; while (i < 5) { c = inc(c); i = i + 1; } return c.n; }", 5},
 	// The functional form of a compound field assign (`a.v += 35`).
-	{"compound-via-update", "struct A { v: i32 } function main(): i32 { var a: A = A { v: 7 }; a = A { ...a, v: a.v + 35 }; return a.v; }", 42},
+	{"compound-via-update", "struct A { v: i32 } function main(): i32 { let a: A = A { v: 7 }; a = A { ...a, v: a.v + 35 }; return a.v; }", 42},
 }
 
 // TestSelfHostFunctionalUpdateX86_64 compiles the immutable-update

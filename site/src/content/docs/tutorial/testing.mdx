@@ -36,7 +36,7 @@ function test_strings(): test.TestOutcome {
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("hello");
+    let r: test.TestRunner = test.test_new("hello");
     r = r.it("addition", test_addition);
     r = r.it("strings", test_strings);
     return r.finish();
@@ -102,7 +102,7 @@ skipped cases don't affect the exit code.
 
 ```fern
 function main(): i32 {
-    var r: TestRunner = test_new("backends");
+    let r: TestRunner = test_new("backends");
     r = r.skip_if(env("WASMTIME_PATH").is_none(),
                   "wasm e2e", "wasmtime not on $PATH",
                   run_wasm_test);
@@ -118,7 +118,7 @@ print as `parent / child / case`, so the hierarchy is visible in
 the log.
 
 ```fern
-var arm: TestRunner = r.subsuite("arm64");
+let arm: TestRunner = r.subsuite("arm64");
 arm = arm.it("exit code", run_arm64_exit);
 arm = arm.it("stdout",    run_arm64_stdout);
 r = r.merge(arm);   // fold counts back into parent
@@ -133,7 +133,7 @@ assertion family above (`assert_exit` / `assert_stdout_eq` /
 
 ```fern
 function test_fern_hello(): test.TestOutcome {
-    var r: ProcessResult = subprocess("./fern",
+    let r: ProcessResult = subprocess("./fern",
         ["-interp", "/tmp/hello.fern"], "");
     return assert_process(r, 0, "hello");
 }
@@ -181,7 +181,7 @@ function check_to_upper_idempotent(input: string): test.TestOutcome {
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("fuzz");
+    let r: TestRunner = test_new("fuzz");
     r = r.fuzz("to_upper idempotent",
                ["", "abc", "Hello"],
                fuzz_default_iterations(),
@@ -207,8 +207,8 @@ The example file lifts the pattern off `args()`:
 
 ```fern
 function main(): i32 {
-    var f: string = parse_filter_from_args(args());
-    var r: TestRunner = test_new_filtered("my suite", f);
+    let f: string = parse_filter_from_args(args());
+    let r: TestRunner = test_new_filtered("my suite", f);
     r = r.it("addition basic",    test_a);
     r = r.it("subtraction basic", test_b);
     return r.finish();
@@ -264,9 +264,9 @@ return `fail(...)` directly:
 
 ```fern
 function test_modulo_table(): test.TestOutcome {
-    var inputs: i32[] = [0, 1, 5, 10, 11];
-    var expected: i32[] = [0, 1, 5, 0, 1];
-    var i: i32 = 0;
+    let inputs: i32[] = [0, 1, 5, 10, 11];
+    let expected: i32[] = [0, 1, 5, 0, 1];
+    let i: i32 = 0;
     while (i < len(inputs)) {
         if (inputs[i] % 10 != expected[i]) {
             return fail("table mismatch at " + i.to_string());

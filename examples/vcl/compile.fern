@@ -37,10 +37,10 @@ import "./machine";
 
 // quote renders a string as a Fern literal.
 pub function quote(s: string): string {
-  var out: string = "\"";
-  var i: i32 = 0;
+  let out: string = "\"";
+  let i: i32 = 0;
   while (i < s.len()) {
-    var b: u8 = s[i];
+    let b: u8 = s[i];
     if (b == 34) {
       out = out + "\\\"";
     } else if (b == 92) {
@@ -82,8 +82,8 @@ function object_of(name: string): string {
 
 // header_key returns the header name a `*.http.X` variable addresses.
 function header_key(name: string): string {
-  var obj: string = object_of(name);
-  var prefix: string = obj + ".http.";
+  let obj: string = object_of(name);
+  let prefix: string = obj + ".http.";
   return slice_unchecked(name, prefix.len(), name.len()).to_owned();
 }
 
@@ -181,7 +181,7 @@ function txn_update(field: string, expr: string): string {
 // fern-lint: allow cyclomatic-complexity
 pub function write_code(name: string, v: string): string {
   if (is_header(name)) {
-    var obj: string = object_of(name);
+    let obj: string = object_of(name);
     return msg_update(obj, "headers", "t." + obj + ".headers.set(" + quote(header_key(name)) + ", value.to_str(" + v + "))");
   }
   if (name == "req.method") {
@@ -234,7 +234,7 @@ pub function write_code(name: string, v: string): string {
 
 // unset_code is the Fern statement that removes a header.
 pub function unset_code(name: string): string {
-  var obj: string = object_of(name);
+  let obj: string = object_of(name);
   return msg_update(obj, "headers", "t." + obj + ".headers.unset(" + quote(header_key(name)) + ")");
 }
 
@@ -251,18 +251,18 @@ function tmp(n: i32): string {
   return "v" + n.to_string();
 }
 
-// bind emits `var vN: value.Value = <expr>;` and hands back the local.
+// bind emits `let vN: value.Value = <expr>;` and hands back the local.
 function bind(ind: string, n: i32, expr: string): Emit {
-  return Emit { code: ind + "var " + tmp(n) + ": value.Value = " + expr + ";\n", name: tmp(n), next: n + 1, ok: true, err: "" };
+  return Emit { code: ind + "let " + tmp(n) + ": value.Value = " + expr + ";\n", name: tmp(n), next: n + 1, ok: true, err: "" };
 }
 
 // A checked step: run `expr` (a Result), return the error, keep the value.
 // This is what makes a compiled arithmetic type error report exactly what
 // the interpreter reports instead of silently yielding an empty value.
 function bind_checked(ind: string, n: i32, expr: string): Emit {
-  var res: string = "r" + n.to_string();
-  var out: string = tmp(n);
-  var code: string = ind + "var " + res + ": Result[value.Value, string] = " + expr + ";\n" + ind + "var " + out + ": value.Value = VNone;\n" + ind + "match (" + res + ") {\n" + ind + "  Err(m) => {\n" + ind + "    return eval.failed(t, m);\n" + ind + "  },\n" + ind + "  Ok(ok" + n.to_string() + ") => {\n" + ind + "    " + out + " = ok" + n.to_string() + ";\n" + ind + "  }\n" + ind + "}\n";
+  let res: string = "r" + n.to_string();
+  let out: string = tmp(n);
+  let code: string = ind + "let " + res + ": Result[value.Value, string] = " + expr + ";\n" + ind + "let " + out + ": value.Value = VNone;\n" + ind + "match (" + res + ") {\n" + ind + "  Err(m) => {\n" + ind + "    return eval.failed(t, m);\n" + ind + "  },\n" + ind + "  Ok(ok" + n.to_string() + ") => {\n" + ind + "    " + out + " = ok" + n.to_string() + ";\n" + ind + "  }\n" + ind + "}\n";
   return Emit { code: code, name: out, next: n + 1, ok: true, err: "" };
 }
 
@@ -315,7 +315,7 @@ function literal_code(e: ast.Expr): Result[string, string] {
       return Ok("VBool(false)");
     },
     ENumber(n) => {
-      var code: string = num_literal(n.text);
+      let code: string = num_literal(n.text);
       if (code == "") {
         return Err("malformed number '" + n.text + "'");
       }
@@ -353,7 +353,7 @@ pub struct Env { acls: string[], backends: machine.Backend[] }
 
 // has_backend reports whether `name` is a declared backend.
 function has_backend(env: Env, name: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < env.backends.len()) {
     if (env.backends[i].name == name) {
       return true;
@@ -364,7 +364,7 @@ function has_backend(env: Env, name: string): boolean {
 }
 
 function has(items: string[], s: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < items.len()) {
     if (items[i] == s) {
       return true;
@@ -419,12 +419,12 @@ function acl_operand(env: Env, e: ast.Expr): string {
 struct Seq { code: string, names: string[], next: i32, ok: boolean, err: string }
 
 function emit_seq(env: Env, es: ast.Expr[], ind: string, n: i32): Seq {
-  var code: string = "";
-  var names: string[] = [];
-  var cur: i32 = n;
-  var i: i32 = 0;
+  let code: string = "";
+  let names: string[] = [];
+  let cur: i32 = n;
+  let i: i32 = 0;
   while (i < es.len()) {
-    var e: Emit = emit_expr(env, es[i], ind, cur);
+    let e: Emit = emit_expr(env, es[i], ind, cur);
     if (!e.ok) {
       return Seq { code: "", names: names, next: cur, ok: false, err: e.err };
     }
@@ -440,13 +440,13 @@ function emit_seq(env: Env, es: ast.Expr[], ind: string, n: i32): Seq {
 // compiled and interpreted programs share one implementation of every VCL
 // function rather than having two that can drift.
 function emit_call(env: Env, c: ast.CallExpr, ind: string, n: i32): Emit {
-  var args: Seq = emit_seq(env, c.args, ind, n);
+  let args: Seq = emit_seq(env, c.args, ind, n);
   if (!args.ok) {
     return emit_err(args.err);
   }
-  var cur: i32 = args.next;
-  var lst: string = "";
-  var i: i32 = 0;
+  let cur: i32 = args.next;
+  let lst: string = "";
+  let i: i32 = 0;
   while (i < args.names.len()) {
     if (i > 0) {
       lst = lst + ", ";
@@ -454,9 +454,9 @@ function emit_call(env: Env, c: ast.CallExpr, ind: string, n: i32): Emit {
     lst = lst + args.names[i];
     i = i + 1;
   }
-  var res: string = "c" + cur.to_string();
-  var out: string = tmp(cur);
-  var code: string = args.code + ind + "var a" + cur.to_string() + ": value.Value[] = [" + lst + "];\n" + ind + "var " + res + ": eval.EvalOut = eval.call_builtin(t, " + quote(c.callee) + ", a" + cur.to_string() + ");\n" + ind + "if (!" + res + ".ok) {\n" + ind + "  return eval.failed(" + res + ".txn, " + res + ".err);\n" + ind + "}\n" + ind + "t = " + res + ".txn;\n" + ind + "var " + out + ": value.Value = " + res + ".val;\n";
+  let res: string = "c" + cur.to_string();
+  let out: string = tmp(cur);
+  let code: string = args.code + ind + "let a" + cur.to_string() + ": value.Value[] = [" + lst + "];\n" + ind + "let " + res + ": eval.EvalOut = eval.call_builtin(t, " + quote(c.callee) + ", a" + cur.to_string() + ");\n" + ind + "if (!" + res + ".ok) {\n" + ind + "  return eval.failed(" + res + ".txn, " + res + ".err);\n" + ind + "}\n" + ind + "t = " + res + ".txn;\n" + ind + "let " + out + ": value.Value = " + res + ".val;\n";
   return Emit { code: code, name: out, next: cur + 1, ok: true, err: "" };
 }
 
@@ -465,48 +465,48 @@ function emit_call(env: Env, c: ast.CallExpr, ind: string, n: i32): Emit {
 // INSIDE the branch, so a `std.log` there does not run when the left
 // operand already decided the answer.
 function emit_logical(env: Env, b: ast.BinExpr, ind: string, n: i32): Emit {
-  var left: Emit = emit_expr(env, b.lhs, ind, n);
+  let left: Emit = emit_expr(env, b.lhs, ind, n);
   if (!left.ok) {
     return left;
   }
-  var out: string = tmp(left.next);
-  var inner: i32 = left.next + 1;
-  var gate: string = "if (value.to_bool(" + left.name + "))";
-  var seed: string = "VBool(true)";
+  let out: string = tmp(left.next);
+  let inner: i32 = left.next + 1;
+  let gate: string = "if (value.to_bool(" + left.name + "))";
+  let seed: string = "VBool(true)";
   if (b.op == "&&") {
     seed = "VBool(false)";
   } else {
     gate = "if (!value.to_bool(" + left.name + "))";
   }
-  var right: Emit = emit_expr(env, b.rhs, ind + "  ", inner);
+  let right: Emit = emit_expr(env, b.rhs, ind + "  ", inner);
   if (!right.ok) {
     return right;
   }
-  var code: string = left.code + ind + "var " + out + ": value.Value = " + seed + ";\n" + ind + gate + " {\n" + right.code + ind + "  " + out + " = VBool(value.to_bool(" + right.name + "));\n" + ind + "}\n";
+  let code: string = left.code + ind + "let " + out + ": value.Value = " + seed + ";\n" + ind + gate + " {\n" + right.code + ind + "  " + out + " = VBool(value.to_bool(" + right.name + "));\n" + ind + "}\n";
   return Emit { code: code, name: out, next: right.next, ok: true, err: "" };
 }
 
 // emit_match compiles `~` / `!~`: a call into the generated ACL function
 // when the right side names an ACL, a regex match otherwise.
 function emit_match(env: Env, b: ast.BinExpr, ind: string, n: i32): Emit {
-  var negate: string = "";
+  let negate: string = "";
   if (b.op == "!~") {
     negate = "!";
   }
-  var left: Emit = emit_expr(env, b.lhs, ind, n);
+  let left: Emit = emit_expr(env, b.lhs, ind, n);
   if (!left.ok) {
     return left;
   }
-  var acl: string = acl_operand(env, b.rhs);
+  let acl: string = acl_operand(env, b.rhs);
   if (acl != "") {
-    var hit: Emit = bind(ind, left.next, "VBool(" + negate + "acl_" + acl + "(value.to_str(" + left.name + ")))");
+    let hit: Emit = bind(ind, left.next, "VBool(" + negate + "acl_" + acl + "(value.to_str(" + left.name + ")))");
     return Emit { code: left.code + hit.code, name: hit.name, next: hit.next, ok: true, err: "" };
   }
-  var right: Emit = emit_expr(env, b.rhs, ind, left.next);
+  let right: Emit = emit_expr(env, b.rhs, ind, left.next);
   if (!right.ok) {
     return right;
   }
-  var m: Emit = bind(ind, right.next, "VBool(" + negate + "regex.regex_match(value.to_str(" + right.name + "), value.to_str(" + left.name + ")))");
+  let m: Emit = bind(ind, right.next, "VBool(" + negate + "regex.regex_match(value.to_str(" + right.name + "), value.to_str(" + left.name + ")))");
   return Emit { code: left.code + right.code + m.code, name: m.name, next: m.next, ok: true, err: "" };
 }
 
@@ -514,43 +514,43 @@ function emit_match(env: Env, b: ast.BinExpr, ind: string, n: i32): Emit {
 // cannot fail; ordering and arithmetic can, so both go through the checked
 // form and report the interpreter's own message.
 function emit_binary(env: Env, b: ast.BinExpr, ind: string, n: i32): Emit {
-  var cls: string = eval.op_class(b.op);
+  let cls: string = eval.op_class(b.op);
   if (cls == "match") {
     return emit_match(env, b, ind, n);
   }
   if (cls == "logical") {
     return emit_logical(env, b, ind, n);
   }
-  var left: Emit = emit_expr(env, b.lhs, ind, n);
+  let left: Emit = emit_expr(env, b.lhs, ind, n);
   if (!left.ok) {
     return left;
   }
-  var right: Emit = emit_expr(env, b.rhs, ind, left.next);
+  let right: Emit = emit_expr(env, b.rhs, ind, left.next);
   if (!right.ok) {
     return right;
   }
-  var pre: string = left.code + right.code;
+  let pre: string = left.code + right.code;
   if (cls == "compare" && !is_ordering(b.op)) {
-    var neg: string = "";
+    let neg: string = "";
     if (b.op == "!=") {
       neg = "!";
     }
-    var eq: Emit = bind(ind, right.next, "VBool(" + neg + "value.equal(" + left.name + ", " + right.name + "))");
+    let eq: Emit = bind(ind, right.next, "VBool(" + neg + "value.equal(" + left.name + ", " + right.name + "))");
     return Emit { code: pre + eq.code, name: eq.name, next: eq.next, ok: true, err: "" };
   }
   if (is_ordering(b.op)) {
     return emit_ordering(pre, b.op, left.name, right.name, ind, right.next);
   }
-  var ar: Emit = bind_checked(ind, right.next, "value.arith(" + quote(b.op) + ", " + left.name + ", " + right.name + ")");
+  let ar: Emit = bind_checked(ind, right.next, "value.arith(" + quote(b.op) + ", " + left.name + ", " + right.name + ")");
   return Emit { code: pre + ar.code, name: ar.name, next: ar.next, ok: true, err: "" };
 }
 
 // emit_ordering turns a comparison result into a boolean.
 function emit_ordering(pre: string, op: string, l: string, r: string, ind: string, n: i32): Emit {
-  var res: string = "o" + n.to_string();
-  var out: string = tmp(n);
-  var test: string = res + "v " + op + " 0";
-  var code: string = ind + "var " + res + ": Result[i32, string] = value.compare(" + l + ", " + r + ");\n" + ind + "var " + out + ": value.Value = VNone;\n" + ind + "match (" + res + ") {\n" + ind + "  Err(m) => {\n" + ind + "    return eval.failed(t, m);\n" + ind + "  },\n" + ind + "  Ok(" + res + "v) => {\n" + ind + "    " + out + " = VBool(" + test + ");\n" + ind + "  }\n" + ind + "}\n";
+  let res: string = "o" + n.to_string();
+  let out: string = tmp(n);
+  let test: string = res + "v " + op + " 0";
+  let code: string = ind + "let " + res + ": Result[i32, string] = value.compare(" + l + ", " + r + ");\n" + ind + "let " + out + ": value.Value = VNone;\n" + ind + "match (" + res + ") {\n" + ind + "  Err(m) => {\n" + ind + "    return eval.failed(t, m);\n" + ind + "  },\n" + ind + "  Ok(" + res + "v) => {\n" + ind + "    " + out + " = VBool(" + test + ");\n" + ind + "  }\n" + ind + "}\n";
   return Emit { code: pre + code, name: out, next: n + 1, ok: true, err: "" };
 }
 
@@ -576,15 +576,15 @@ pub function emit_expr(env: Env, e: ast.Expr, ind: string, n: i32): Emit {
       return emit_binary(env, b, ind, n);
     },
     EUnary(u) => {
-      var inner: Emit = emit_expr(env, u.operand, ind, n);
+      let inner: Emit = emit_expr(env, u.operand, ind, n);
       if (!inner.ok) {
         return inner;
       }
       if (u.op == "!") {
-        var not: Emit = bind(ind, inner.next, "VBool(!value.to_bool(" + inner.name + "))");
+        let not: Emit = bind(ind, inner.next, "VBool(!value.to_bool(" + inner.name + "))");
         return Emit { code: inner.code + not.code, name: not.name, next: not.next, ok: true, err: "" };
       }
-      var neg: Emit = bind_checked(ind, inner.next, "value.arith(\"-\", VInt(0), " + inner.name + ")");
+      let neg: Emit = bind_checked(ind, inner.next, "value.arith(\"-\", VInt(0), " + inner.name + ")");
       return Emit { code: inner.code + neg.code, name: neg.name, next: neg.next, ok: true, err: "" };
     },
     EParen(inner) => {
@@ -613,17 +613,17 @@ function stmts_err(msg: string): Stmts {
 // emit_set compiles `set`, including the compound forms, which read the
 // current value and combine before storing.
 function emit_set(env: Env, s: ast.SetStmt, ind: string, n: i32): Stmts {
-  var v: Emit = emit_expr(env, s.value, ind, n);
+  let v: Emit = emit_expr(env, s.value, ind, n);
   if (!v.ok) {
     return stmts_err(v.err);
   }
-  var code: string = v.code;
-  var src: string = v.name;
-  var cur: i32 = v.next;
+  let code: string = v.code;
+  let src: string = v.name;
+  let cur: i32 = v.next;
   if (s.op != "=") {
-    var op: string = slice_unchecked(s.op, 0, s.op.len() - 1).to_owned();
-    var old: Emit = bind(ind, cur, read_code(s.target));
-    var combined: Emit = bind_checked(ind, old.next, "value.arith(" + quote(op) + ", " + old.name + ", " + src + ")");
+    let op: string = slice_unchecked(s.op, 0, s.op.len() - 1).to_owned();
+    let old: Emit = bind(ind, cur, read_code(s.target));
+    let combined: Emit = bind_checked(ind, old.next, "value.arith(" + quote(op) + ", " + old.name + ", " + src + ")");
     code = code + old.code + combined.code;
     src = combined.name;
     cur = combined.next;
@@ -640,19 +640,19 @@ function emit_return(env: Env, s: ast.ReturnStmt, ind: string, n: i32): Stmts {
   if (!s.has_args || s.args.len() == 0) {
     return Stmts { code: ind + "return eval.returned(t, eval.action(" + quote(s.action) + "));\n", next: n, ok: true, err: "" };
   }
-  var args: Seq = emit_seq(env, s.args, ind, n);
+  let args: Seq = emit_seq(env, s.args, ind, n);
   if (!args.ok) {
     return stmts_err(args.err);
   }
-  var status: string = "0";
+  let status: string = "0";
   if (args.names.len() > 0) {
     status = "vars.as_int(" + args.names[0] + ")";
   }
-  var reason: string = "\"\"";
+  let reason: string = "\"\"";
   if (args.names.len() > 1) {
     reason = "value.to_str(" + args.names[1] + ")";
   }
-  var code: string = args.code + ind + "return eval.returned(t, eval.synth_action(" + quote(s.action) + ", " + status + ", " + reason + "));\n";
+  let code: string = args.code + ind + "return eval.returned(t, eval.synth_action(" + quote(s.action) + ", " + status + ", " + reason + "));\n";
   return Stmts { code: code, next: args.next, ok: true, err: "" };
 }
 
@@ -660,8 +660,8 @@ function emit_return(env: Env, s: ast.ReturnStmt, ind: string, n: i32): Stmts {
 // only the callee, so the caller checks for it — the same rule the
 // interpreter applies, expressed here as generated control flow.
 function emit_call_stmt(s: ast.CallStmt, ind: string, n: i32): Stmts {
-  var res: string = "s" + n.to_string();
-  var code: string = ind + "var " + res + ": eval.ExecOut = sub_" + s.name + "(t);\n" + ind + "if (!" + res + ".ok) {\n" + ind + "  return " + res + ";\n" + ind + "}\n" + ind + "t = " + res + ".txn;\n" + ind + "match (" + res + ".flow) {\n" + ind + "  FReturn(a" + n.to_string() + ") => {\n" + ind + "    if (a" + n.to_string() + ".name != \"none\") {\n" + ind + "      return " + res + ";\n" + ind + "    }\n" + ind + "  },\n" + ind + "  FNext => {}\n" + ind + "}\n";
+  let res: string = "s" + n.to_string();
+  let code: string = ind + "let " + res + ": eval.ExecOut = sub_" + s.name + "(t);\n" + ind + "if (!" + res + ".ok) {\n" + ind + "  return " + res + ";\n" + ind + "}\n" + ind + "t = " + res + ".txn;\n" + ind + "match (" + res + ".flow) {\n" + ind + "  FReturn(a" + n.to_string() + ") => {\n" + ind + "    if (a" + n.to_string() + ".name != \"none\") {\n" + ind + "      return " + res + ";\n" + ind + "    }\n" + ind + "  },\n" + ind + "  FNext => {}\n" + ind + "}\n";
   return Stmts { code: code, next: n + 1, ok: true, err: "" };
 }
 
@@ -679,20 +679,20 @@ function emit_arm(env: Env, s: ast.IfStmt, idx: i32, ind: string, n: i32): Stmts
     }
     return Stmts { code: "", next: n, ok: true, err: "" };
   }
-  var arm: ast.IfArm = s.arms[idx];
-  var cond: Emit = emit_expr(env, arm.cond, ind, n);
+  let arm: ast.IfArm = s.arms[idx];
+  let cond: Emit = emit_expr(env, arm.cond, ind, n);
   if (!cond.ok) {
     return stmts_err(cond.err);
   }
-  var body: Stmts = emit_block(env, arm.body, ind + "  ", cond.next);
+  let body: Stmts = emit_block(env, arm.body, ind + "  ", cond.next);
   if (!body.ok) {
     return body;
   }
-  var rest: Stmts = emit_arm(env, s, idx + 1, ind + "  ", body.next);
+  let rest: Stmts = emit_arm(env, s, idx + 1, ind + "  ", body.next);
   if (!rest.ok) {
     return rest;
   }
-  var code: string = cond.code + ind + "if (value.to_bool(" + cond.name + ")) {\n" + body.code + ind + "}";
+  let code: string = cond.code + ind + "if (value.to_bool(" + cond.name + ")) {\n" + body.code + ind + "}";
   if (rest.code == "") {
     return Stmts { code: code + "\n", next: rest.next, ok: true, err: "" };
   }
@@ -718,7 +718,7 @@ function emit_stmt(env: Env, s: ast.Stmt, ind: string, n: i32): Stmts {
       return emit_call_stmt(x, ind, n);
     },
     SExpr(x) => {
-      var e: Emit = emit_expr(env, x.value, ind, n);
+      let e: Emit = emit_expr(env, x.value, ind, n);
       if (!e.ok) {
         return stmts_err(e.err);
       }
@@ -740,11 +740,11 @@ function emit_stmt(env: Env, s: ast.Stmt, ind: string, n: i32): Stmts {
 }
 
 function emit_block(env: Env, b: ast.Block, ind: string, n: i32): Stmts {
-  var code: string = "";
-  var cur: i32 = n;
-  var i: i32 = 0;
+  let code: string = "";
+  let cur: i32 = n;
+  let i: i32 = 0;
   while (i < b.stmts.len()) {
-    var s: Stmts = emit_stmt(env, b.stmts[i], ind, cur);
+    let s: Stmts = emit_stmt(env, b.stmts[i], ind, cur);
     if (!s.ok) {
       return s;
     }
@@ -760,16 +760,16 @@ function emit_block(env: Env, b: ast.Block, ind: string, n: i32): Stmts {
 // Longest-prefix wins, so the walk keeps the widest match seen rather than
 // stopping at the first — the same rule `eval.acl_walk` applies.
 function emit_acl(a: ast.AclDecl): Result[string, string] {
-  var code: string = "// ACL `" + a.name + "`, compiled: masks folded, longest prefix wins.\n" + "function acl_" + a.name + "(addr: string): boolean {\n" + "  match (eval.parse_ipv4(addr)) {\n" + "    None => {\n      return false;\n    },\n" + "    Some(ip) => {\n" + "      var best: i32 = 0 - 1;\n" + "      var neg: boolean = false;\n";
-  var i: i32 = 0;
+  let code: string = "// ACL `" + a.name + "`, compiled: masks folded, longest prefix wins.\n" + "function acl_" + a.name + "(addr: string): boolean {\n" + "  match (eval.parse_ipv4(addr)) {\n" + "    None => {\n      return false;\n    },\n" + "    Some(ip) => {\n" + "      let best: i32 = 0 - 1;\n" + "      let neg: boolean = false;\n";
+  let i: i32 = 0;
   while (i < a.entries.len()) {
-    var e: ast.AclEntry = a.entries[i];
+    let e: ast.AclEntry = a.entries[i];
     match (eval.parse_ipv4(e.host)) {
       None => {
         return Err("ACL entry '" + e.host + "' is not an IPv4 address or 'localhost'");
       },
       Some(base) => {
-        var bits: i32 = 32;
+        let bits: i32 = 32;
         if (e.mask != "") {
           match (e.mask.parse_int()) {
             Some(b) => {
@@ -783,9 +783,9 @@ function emit_acl(a: ast.AclDecl): Result[string, string] {
         if (bits < 0 || bits > 32) {
           return Err("ACL mask /" + e.mask + " is out of range");
         }
-        var m: i64 = eval.mask_of(bits);
-        var masked: i64 = base & m;
-        var negated: string = "false";
+        let m: i64 = eval.mask_of(bits);
+        let masked: i64 = base & m;
+        let negated: string = "false";
         if (e.negated) {
           negated = "true";
         }
@@ -801,17 +801,17 @@ function emit_acl(a: ast.AclDecl): Result[string, string] {
 // transaction, rebound as statements update it, and falling off the end is
 // the "no action" result the state machine reads as fall-through.
 function emit_sub(env: Env, s: ast.SubDecl): Result[string, string] {
-  var body: Stmts = emit_block(env, s.body, "  ", 0);
+  let body: Stmts = emit_block(env, s.body, "  ", 0);
   if (!body.ok) {
     return Err("in sub " + s.name + ": " + body.err);
   }
-  return Ok("function sub_" + s.name + "(t0: runtime.Txn): eval.ExecOut {\n" + "  var t: runtime.Txn = t0;\n" + body.code + "  return eval.fell_through(t);\n}\n");
+  return Ok("function sub_" + s.name + "(t0: runtime.Txn): eval.ExecOut {\n" + "  let t: runtime.Txn = t0;\n" + body.code + "  return eval.fell_through(t);\n}\n");
 }
 
 // env_of collects the ACL and backend names a program declares.
 pub function env_of(decls: ast.Decl[]): Env {
-  var acls: string[] = [];
-  var i: i32 = 0;
+  let acls: string[] = [];
+  let i: i32 = 0;
   while (i < decls.len()) {
     match (decls[i]) {
       DAcl(a) => {
@@ -825,8 +825,8 @@ pub function env_of(decls: ast.Decl[]): Env {
 }
 
 function sub_names(decls: ast.Decl[]): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < decls.len()) {
     match (decls[i]) {
       DSub(s) => {
@@ -843,8 +843,8 @@ function sub_names(decls: ast.Decl[]): string[] {
 // policy does not define falls through, which is how the built-in default
 // gets its turn.
 function emit_dispatch(names: string[]): string {
-  var code: string = "// The dispatcher `machine.Driver` calls. A subroutine this policy does\n" + "// not define falls through, so the built-in default applies.\n" + "function run_sub(name: string, t: runtime.Txn): eval.ExecOut {\n";
-  var i: i32 = 0;
+  let code: string = "// The dispatcher `machine.Driver` calls. A subroutine this policy does\n" + "// not define falls through, so the built-in default applies.\n" + "function run_sub(name: string, t: runtime.Txn): eval.ExecOut {\n";
+  let i: i32 = 0;
   while (i < names.len()) {
     code = code + "  if (name == " + quote(names[i]) + ") {\n" + "    return sub_" + names[i] + "(t);\n  }\n";
     i = i + 1;
@@ -853,8 +853,8 @@ function emit_dispatch(names: string[]): string {
 }
 
 function join(items: string[], sep: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < items.len()) {
     if (i > 0) {
       out = out + sep;
@@ -869,26 +869,26 @@ function join(items: string[], sep: string): string {
 // are read out of the VCL at compile time, so a compiled policy carries no
 // backend-block parsing at all.
 function backend_list(env: Env): string {
-  var lits: string[] = [];
-  var i: i32 = 0;
+  let lits: string[] = [];
+  let i: i32 = 0;
   while (i < env.backends.len()) {
-    var b: machine.Backend = env.backends[i];
+    let b: machine.Backend = env.backends[i];
     lits = lits.append("machine.Backend { name: " + quote(b.name) + ", host: " + quote(b.host) + ", port: " + b.port.to_string() + " }");
     i = i + 1;
   }
   if (lits.len() == 0) {
-    return "var __b: machine.Backend[] = [];";
+    return "let __b: machine.Backend[] = [];";
   }
-  return "var __b: machine.Backend[] = [" + join(lits, ", ") + "];";
+  return "let __b: machine.Backend[] = [" + join(lits, ", ") + "];";
 }
 
 // compile turns a checked program into a Fern module. `prefix` is what the
 // generated imports are relative to — "./" when the output sits beside the
 // runtime modules, a relative path otherwise.
 pub function compile(decls: ast.Decl[], prefix: string): Result[string, string] {
-  var env: Env = env_of(decls);
-  var out: string = "// Generated from VCL by examples/vcl/compile.fern. Do not edit.\n" + "//\n" + "// Variable reads are struct field accesses: the scoping check ran at\n" + "// compile time, so none of it survives here.\n" + "import \"std/string\";\nimport \"std/i64\";\nimport \"std/float\";\nimport \"std/regex\";\n" + "import " + quote(prefix + "value") + ";\n" + "import " + quote(prefix + "runtime") + ";\n" + "import " + quote(prefix + "vars") + ";\n" + "import " + quote(prefix + "eval") + ";\n" + "import " + quote(prefix + "machine") + ";\n" + "import " + quote(prefix + "report") + ";\n\n";
-  var i: i32 = 0;
+  let env: Env = env_of(decls);
+  let out: string = "// Generated from VCL by examples/vcl/compile.fern. Do not edit.\n" + "//\n" + "// Variable reads are struct field accesses: the scoping check ran at\n" + "// compile time, so none of it survives here.\n" + "import \"std/string\";\nimport \"std/i64\";\nimport \"std/float\";\nimport \"std/regex\";\n" + "import " + quote(prefix + "value") + ";\n" + "import " + quote(prefix + "runtime") + ";\n" + "import " + quote(prefix + "vars") + ";\n" + "import " + quote(prefix + "eval") + ";\n" + "import " + quote(prefix + "machine") + ";\n" + "import " + quote(prefix + "report") + ";\n\n";
+  let i: i32 = 0;
   while (i < decls.len()) {
     match (decls[i]) {
       DAcl(a) => {
@@ -922,5 +922,5 @@ pub function compile(decls: ast.Decl[], prefix: string): Result[string, string] 
 // main_code is the generated driver: same command line as `vclrun`, with
 // the policy compiled in rather than parsed.
 function main_code(env: Env): string {
-  return "// The policy's own entry point: same command line as vclrun, with this\n" + "// policy compiled in rather than parsed at startup.\n" + "function main(): i32 {\n" + "  var argv: string[] = args();\n" + "  " + backend_list(env) + "\n" + "  var d: machine.Driver = machine.Driver { run_sub: run_sub, backends: __b, fetch: machine.mock_fetch };\n" + "  return report.drive(d, argv);\n" + "}\n";
+  return "// The policy's own entry point: same command line as vclrun, with this\n" + "// policy compiled in rather than parsed at startup.\n" + "function main(): i32 {\n" + "  let argv: string[] = args();\n" + "  " + backend_list(env) + "\n" + "  let d: machine.Driver = machine.Driver { run_sub: run_sub, backends: __b, fetch: machine.mock_fetch };\n" + "  return report.drive(d, argv);\n" + "}\n";
 }

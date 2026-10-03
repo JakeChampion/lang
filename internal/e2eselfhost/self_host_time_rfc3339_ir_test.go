@@ -21,26 +21,26 @@ struct Civil { year: i32, month: i32, day: i32 }
 struct Moment { sec: i64, nsec: i32 }
 function parse_digits(s: string, start: i32, end: i32): i32 {
     if (start >= end) { return -1; }
-    var acc: i32 = 0; var i: i32 = start;
-    while (i < end) { var b: i32 = s[i] as i32; if (b < 48 || b > 57) { return -1; } acc = acc * 10 + (b - 48); i = i + 1; }
+    let acc: i32 = 0; let i: i32 = start;
+    while (i < end) { let b: i32 = s[i] as i32; if (b < 48 || b > 57) { return -1; } acc = acc * 10 + (b - 48); i = i + 1; }
     return acc;
 }
 function days_from_civil(y_in: i32, m: i32, d: i32): i32 {
-    var y: i32 = y_in; if (m <= 2) { y = y - 1; }
-    var era: i32 = 0; if (y >= 0) { era = y / 400; } else { era = (y - 399) / 400; }
-    var yoe: i32 = y - era * 400; var mp: i32 = 0;
+    let y: i32 = y_in; if (m <= 2) { y = y - 1; }
+    let era: i32 = 0; if (y >= 0) { era = y / 400; } else { era = (y - 399) / 400; }
+    let yoe: i32 = y - era * 400; let mp: i32 = 0;
     if (m > 2) { mp = m - 3; } else { mp = m + 9; }
-    var doy: i32 = (153 * mp + 2) / 5 + d - 1;
-    var doe: i32 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let doy: i32 = (153 * mp + 2) / 5 + d - 1;
+    let doe: i32 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     return era * 146097 + doe - 719468;
 }
 function civil_from_days(z_in: i32): Civil {
-    var z: i32 = z_in + 719468; var era: i32 = 0;
+    let z: i32 = z_in + 719468; let era: i32 = 0;
     if (z >= 0) { era = z / 146097; } else { era = (z - 146096) / 146097; }
-    var doe: i32 = z - era * 146097;
-    var yoe: i32 = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    var y: i32 = yoe + era * 400; var doy: i32 = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    var mp: i32 = (5 * doy + 2) / 153; var d: i32 = doy - (153 * mp + 2) / 5 + 1; var m: i32 = 0;
+    let doe: i32 = z - era * 146097;
+    let yoe: i32 = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y: i32 = yoe + era * 400; let doy: i32 = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp: i32 = (5 * doy + 2) / 153; let d: i32 = doy - (153 * mp + 2) / 5 + 1; let m: i32 = 0;
     if (mp < 10) { m = mp + 3; } else { m = mp - 9; }
     if (m <= 2) { y = y + 1; }
     return Civil { year: y, month: m, day: d };
@@ -54,17 +54,17 @@ function pad4(n: i32): string {
 }
 function (d: Civil) format_iso(): string { return pad4(d.year) + "-" + pad2(d.month) + "-" + pad2(d.day); }
 function (i: Moment) format_rfc3339(): string {
-    var sec: i64 = i.sec; var spd: i64 = 86400 as i64;
-    var days: i64 = sec / spd; var sec_in_day: i64 = sec - days * spd;
+    let sec: i64 = i.sec; let spd: i64 = 86400 as i64;
+    let days: i64 = sec / spd; let sec_in_day: i64 = sec - days * spd;
     if (sec_in_day < (0 as i64)) { sec_in_day = sec_in_day + spd; days = days - (1 as i64); }
-    var d: Civil = civil_from_days(days as i32);
-    var sid: i32 = sec_in_day as i32; var h: i32 = sid / 3600; var rem: i32 = sid - h * 3600;
-    var mn: i32 = rem / 60; var s: i32 = rem - mn * 60;
-    var head: string = d.format_iso() + "T" + pad2(h) + ":" + pad2(mn) + ":" + pad2(s);
+    let d: Civil = civil_from_days(days as i32);
+    let sid: i32 = sec_in_day as i32; let h: i32 = sid / 3600; let rem: i32 = sid - h * 3600;
+    let mn: i32 = rem / 60; let s: i32 = rem - mn * 60;
+    let head: string = d.format_iso() + "T" + pad2(h) + ":" + pad2(mn) + ":" + pad2(s);
     if (i.nsec == 0) { return head + "Z"; }
-    var ns: i32 = i.nsec; var div: i32 = 100000000; var frac: string = "";
+    let ns: i32 = i.nsec; let div: i32 = 100000000; let frac: string = "";
     while (div >= 1) {
-        var digit: i32 = (ns / div) - (ns / (div * 10)) * 10;
+        let digit: i32 = (ns / div) - (ns / (div * 10)) * 10;
         if (digit == 0) { frac = frac + "0"; } else if (digit == 1) { frac = frac + "1"; }
         else if (digit == 2) { frac = frac + "2"; } else if (digit == 3) { frac = frac + "3"; }
         else if (digit == 4) { frac = frac + "4"; } else if (digit == 5) { frac = frac + "5"; }
@@ -75,30 +75,30 @@ function (i: Moment) format_rfc3339(): string {
     return head + "." + frac + "Z";
 }
 function instant_parse_rfc3339(s: string): Option[Moment] {
-    var n: i32 = s.len();
+    let n: i32 = s.len();
     if (n < 20) { return None; }
     if (s[4] != 45 || s[7] != 45) { return None; }
     if (s[10] != 84) { return None; }
     if (s[13] != 58 || s[16] != 58) { return None; }
-    var y: i32 = parse_digits(s, 0, 4); var mo: i32 = parse_digits(s, 5, 7); var d: i32 = parse_digits(s, 8, 10);
-    var h: i32 = parse_digits(s, 11, 13); var mn: i32 = parse_digits(s, 14, 16); var sc: i32 = parse_digits(s, 17, 19);
+    let y: i32 = parse_digits(s, 0, 4); let mo: i32 = parse_digits(s, 5, 7); let d: i32 = parse_digits(s, 8, 10);
+    let h: i32 = parse_digits(s, 11, 13); let mn: i32 = parse_digits(s, 14, 16); let sc: i32 = parse_digits(s, 17, 19);
     if (y < 0 || mo < 0 || d < 0 || h < 0 || mn < 0 || sc < 0) { return None; }
-    var nsec: i32 = 0;
+    let nsec: i32 = 0;
     if (s[19] == 46) {
-        var z_idx: i32 = -1; var i: i32 = 20;
+        let z_idx: i32 = -1; let i: i32 = 20;
         while (i < n) { if (s[i] == 90) { z_idx = i; i = n; } else { i = i + 1; } }
         if (z_idx < 0) { return None; }
         if (z_idx == 20) { return None; }
         if (z_idx - 20 > 9) { return None; }
-        var frac: i32 = parse_digits(s, 20, z_idx);
+        let frac: i32 = parse_digits(s, 20, z_idx);
         if (frac < 0) { return None; }
-        var pad: i32 = 9 - (z_idx - 20);
+        let pad: i32 = 9 - (z_idx - 20);
         while (pad > 0) { frac = frac * 10; pad = pad - 1; }
         nsec = frac;
     } else if (s[19] == 90) {
     } else { return None; }
-    var days: i32 = days_from_civil(y, mo, d); var spd: i64 = 86400 as i64;
-    var sec: i64 = (days as i64) * spd + ((h * 3600 + mn * 60 + sc) as i64);
+    let days: i32 = days_from_civil(y, mo, d); let spd: i64 = 86400 as i64;
+    let sec: i64 = (days as i64) * spd + ((h * 3600 + mn * 60 + sc) as i64);
     return Some(Moment { sec: sec, nsec: nsec });
 }
 `
@@ -118,9 +118,9 @@ var timeRfc3339IRCases = []struct {
 	// Missing 'T' separator -> None -> sentinel 8.
 	{"parse-bad-sep", `match (instant_parse_rfc3339("2024-06-13X12:34:56Z")) { Some(m) => { return 0; }, None => { return 8; }, }`},
 	// format_rfc3339 of a whole-second instant: "YYYY-MM-DDTHH:MM:SSZ" -> 20.
-	{"format-len", `var m: Moment = Moment { sec: 1718281496 as i64, nsec: 0 }; return m.format_rfc3339().len();`},
+	{"format-len", `let m: Moment = Moment { sec: 1718281496 as i64, nsec: 0 }; return m.format_rfc3339().len();`},
 	// format_rfc3339 with a fraction adds ".nnnnnnnnn" (10 chars) -> 30.
-	{"format-frac-len", `var m: Moment = Moment { sec: 1718281496 as i64, nsec: 500000000 }; return m.format_rfc3339().len();`},
+	{"format-frac-len", `let m: Moment = Moment { sec: 1718281496 as i64, nsec: 500000000 }; return m.format_rfc3339().len();`},
 	// Round-trip: parse then format; first byte is '2' (50).
 	{"roundtrip-firstbyte", `match (instant_parse_rfc3339("2024-06-13T12:34:56Z")) { Some(m) => { return m.format_rfc3339()[0] as i32; }, None => { return 100; }, }`},
 }

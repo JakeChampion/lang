@@ -85,7 +85,7 @@ go run ./cmd/fern -target x86-64-linux -o /tmp/shc examples/self_host/asm_run.fe
 
 | # | Program (constructed variant) | Result |
 |---|---|---|
-| A | plain closure `var f = makeAdder(5); f(37)` | ✅ 42 |
+| A | plain closure `let f = makeAdder(5); f(37)` | ✅ 42 |
 | C | 1-arg non-fn variant `Val(10)` | ✅ 10 |
 | E | **multi-arg** non-fn variant `Two(10, 32)` | ✅ 42 |
 | D | fn-payload variant declared + **matched** + only `Empty` constructed | ✅ 5 |
@@ -101,7 +101,7 @@ fails.**
 enum Box { Fn(i32, (i32) => i32), Empty }
 function main(): i32 {
     function add(x: i32): i32 { return x + 1; }
-    var b: Box = Fn(10, add);                 // emits `call __fn_Fn`
+    let b: Box = Fn(10, add);                 // emits `call __fn_Fn`
     match (b) { Fn(n, f) => { return n; }, Empty => { return 0; } }
 }
 ```

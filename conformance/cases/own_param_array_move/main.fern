@@ -19,7 +19,7 @@ function wr_direct(own buf: i32[], at: i32, w: i32): i32[] {
 }
 
 function wr_via_local(own buf: i32[], at: i32, w: i32): i32[] {
-    var r: i32[] = buf.with(at, w);
+    let r: i32[] = buf.with(at, w);
     return r;
 }
 
@@ -34,7 +34,7 @@ struct Box { code: i32[], names: string[] }
 // extra allocation per step (the rebuilt Box) is what claims the wrongly-freed
 // block.
 function step(own b: Box, at: i32, mode: i32): Box {
-    var c: i32[] = b.code;
+    let c: i32[] = b.code;
     b = Box { ...b, code: [] };
     if (mode == 0) { c = wr_direct(c, at, 7); }
     else if (mode == 1) { c = wr_via_local(c, at, 8); }
@@ -44,14 +44,14 @@ function step(own b: Box, at: i32, mode: i32): Box {
 
 function main(): i32 {
     // Each mode, four calls deep.
-    var m: i32 = 0;
+    let m: i32 = 0;
     while (m < 3) {
-        var b: Box = Box { code: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], names: [] };
+        let b: Box = Box { code: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], names: [] };
         b = step(b, 0, m);
         b = step(b, 1, m);
         b = step(b, 2, m);
         b = step(b, 3, m);
-        var c: i32[] = b.code;
+        let c: i32[] = b.code;
         if (c.len() != 12) { print("FAIL len"); return 11 + m; }
         // The writes must have landed, not just the length survived.
         if (c[3] == 0) { print("FAIL value"); return 21 + m; }
@@ -59,8 +59,8 @@ function main(): i32 {
     }
 
     // No struct in the loop: the plain move chain must stay balanced too.
-    var xs: i32[] = [0, 0, 0, 0, 0, 0, 0, 0];
-    var i: i32 = 0;
+    let xs: i32[] = [0, 0, 0, 0, 0, 0, 0, 0];
+    let i: i32 = 0;
     while (i < 8) { xs = wr_direct(xs, i, i + 1); i = i + 1; }
     if (xs.len() != 8) { print("FAIL plain len"); return 31; }
     if (xs[7] != 8) { print("FAIL plain value"); return 32; }

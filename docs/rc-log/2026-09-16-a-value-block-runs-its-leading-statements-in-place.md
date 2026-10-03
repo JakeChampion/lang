@@ -26,7 +26,7 @@ block, in a scope of their own, and takes the last statement's value: an
 arm reads its own. The scope is left after the value is read, so the local
 and the chain's flag and cached scrutinee die there. A block whose leading
 statements leave no live edge is refused; nothing in the corpus does that.
-A general `{ … }` body — `{ var m: i32 = n + 1; m * 2 }`, whose parser
+A general `{ … }` body — `{ let m: i32 = n + 1; m * 2 }`, whose parser
 desugar ends in a `return` — is produced by the same rule.
 
 Corpus, whole modules produced: 361 → 365; the reason is gone from the

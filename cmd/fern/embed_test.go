@@ -56,7 +56,7 @@ func TestEmbedAssetReachesTheBinary(t *testing.T) {
 
 function main(): i32 {
     print(PAGE);
-    var b: string = __fern_asset("blob.bin");
+    let b: string = __fern_asset("blob.bin");
     return b.len() as i32;
 }
 `
@@ -86,7 +86,7 @@ func TestEmbedMissingFlagIsADiagnostic(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.fern")
 	prog := `function main(): i32 {
-    var s: string = __fern_asset("a.txt");
+    let s: string = __fern_asset("a.txt");
     return 0;
 }
 `
@@ -112,7 +112,7 @@ func TestEmbedUnknownAssetSuggests(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.fern")
 	prog := `function main(): i32 {
-    var s: string = __fern_asset("html/index.htm");
+    let s: string = __fern_asset("html/index.htm");
     return 0;
 }
 `
@@ -143,7 +143,7 @@ func TestEmbedEnumerationReachesTheBinary(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.fern")
 	prog := `function main(): i32 {
-    var total: i32 = 0;
+    let total: i32 = 0;
     for a in __fern_assets() {
         print(a.0);
         total = total + (a.1).len() as i32;
@@ -180,7 +180,7 @@ func TestEmbedEnumerationEmptyBundleCompiles(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.fern")
 	prog := `function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for a in __fern_assets() {
         n = n + 1;
     }

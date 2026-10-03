@@ -44,7 +44,7 @@ function reuse(own s: T, p: T): T {
 }
 function single(k: string): T { return Node(Leaf, k, Leaf); }
 function round(i: i32): i32 {
-    var t: T = wrap(mk(i), "k", Leaf);
+    let t: T = wrap(mk(i), "k", Leaf);
     match (t) { Node(l, k, r) => { return k.len(); }, Leaf => { return 0; } }
 }
 function hold(f: (T, string, T) => T): i32 { return 0; }
@@ -87,7 +87,7 @@ func TestVariantPayloadStoreIsCountedRetain(t *testing.T) {
 		}
 	}
 	// A variant construction is a fresh rc=1 box: the summary that lets a
-	// caller's `var nl = ins(l, k)` binding stay reclaimable.
+	// caller's `let nl = ins(l, k)` binding stay reclaimable.
 	fresh := findReturnsFreshBox(prog, info, map[string]bool{}, map[string]bool{})
 	if !fresh["single"] || !fresh["wrap"] || !fresh["mapped"] {
 		t.Errorf("returnsFreshBox: single=%v wrap=%v mapped=%v, want all true — a variant construction of an rc-payload enum is the callee's own box", fresh["single"], fresh["wrap"], fresh["mapped"])

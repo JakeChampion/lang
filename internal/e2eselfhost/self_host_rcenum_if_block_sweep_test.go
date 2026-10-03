@@ -10,13 +10,13 @@ import (
 
 // --- An rc-payload enum local declared inside an `if` block (#7360) ----------
 //
-// `if (…) { var o: R = R.Full([i + 2, i + 3]); … }` earned the "RCENUMS:"
+// `if (…) { let o: R = R.Full([i + 2, i + 3]); … }` earned the "RCENUMS:"
 // function-exit sweep, whose variant dispatch begins with op_variant_is — an op
 // that DEREFERENCES the box for its tag. On a call where the branch is untaken
 // the entry-zeroed slot routes null into that dispatch, so the compiled program
 // SIGSEGVd (exit 139, native and interp both fine at 50). Two calls were the
 // boundary: one call takes the branch and sweeps a live box; the second leaves
-// the slot null and faults. The fix null-guards the sweep in irlower, the same
+// the slot null and faults. The fix null-guards the sweep in the lowering, the same
 // guard emit_enum_deep_reinit_store already documents for the same op, so all
 // backends inherit it.
 //
@@ -50,11 +50,11 @@ func rcEnumIfBlockCases() []rcEnumIfBlockCase {
 			name: "if_block_local",
 			src: `enum R { Full(i32[]), Empty }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: R = R.Full([i + 2, i + 3]); t = t + 1; }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: R = R.Full([i + 2, i + 3]); t = t + 1; }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 50, allocs: 100, frees: 100,
 		},
 		{
@@ -64,11 +64,11 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "two_calls",
 			src: `enum R { Full(i32[]), Empty }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: R = R.Full([i + 2, i + 3]); t = t + 1; }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: R = R.Full([i + 2, i + 3]); t = t + 1; }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 2) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 2) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 1, allocs: 2, frees: 2,
 		},
 		{
@@ -78,11 +78,11 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 2) { t = t + r
 			name: "ctl_plain_block",
 			src: `enum R { Full(i32[]), Empty }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    { var o: R = R.Full([i + 2, i + 3]); t = t + 1; }
+    let t: i32 = 0;
+    { let o: R = R.Full([i + 2, i + 3]); t = t + 1; }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 17, allocs: 200, frees: 200,
 		},
 		{
@@ -92,11 +92,11 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "ctl_scalar_payload",
 			src: `enum R { Full(i32), Empty }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: R = R.Full(i + 2); t = t + 1; }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: R = R.Full(i + 2); t = t + 1; }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 50, allocs: 50, frees: 50,
 		},
 		{
@@ -106,12 +106,12 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "second_return_edge",
 			src: `enum R { Full(i32[]), Empty }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: R = R.Full([i + 2, i + 3]); t = t + 1; }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: R = R.Full([i + 2, i + 3]); t = t + 1; }
     if (i % 3 == 0) { return t + 1; }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 1, allocs: 100, frees: 100,
 		},
 		{
@@ -124,11 +124,11 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			src: `enum R { Full(string), Empty }
 function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: R = R.Full(w("x")); t = t + 1; }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: R = R.Full(w("x")); t = t + 1; }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 50, allocs: 100, frees: 100,
 		}}
 }

@@ -23,8 +23,8 @@ function fd_of(t: Tail): i32 {
 }
 function fd_direct(r: Reader): i32 { return r.fd; }
 function main(): i32 {
-    var w: Writer = stdout();
-    var t: Tail = FileTail(stdin(), 1 as i64);
+    let w: Writer = stdout();
+    let t: Tail = FileTail(stdin(), 1 as i64);
     return w.fd * 10 + fd_of(t) + fd_direct(stdin()) + 5;
 }
 `

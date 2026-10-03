@@ -34,10 +34,10 @@ function new_json_logger(min_level: i32): Logger {
     return Logger { min_level: min_level, json: true };
 }
 function log_json_escape(s: string): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < s.len()) {
-        var c: i32 = s[i] as i32;
+        let c: i32 = s[i] as i32;
         if (c == 92) { out = out + "\\\\"; }
         else if (c == 34) { out = out + "\\\""; }
         else if (c == 10) { out = out + "\\n"; }
@@ -57,20 +57,20 @@ function (lg: Logger) info_(): LogEntry { return lg.at(level_info()); }
 function (lg: Logger) warn_(): LogEntry { return lg.at(level_warn()); }
 function (lg: Logger) error_(): LogEntry { return lg.at(level_error()); }
 function (e: LogEntry) str(key: string, val: string): LogEntry {
-    var t: string = e.text + " " + key + "=" + val;
-    var j: string = e.json + ",\"" + log_json_escape(key) + "\":\"" + log_json_escape(val) + "\"";
+    let t: string = e.text + " " + key + "=" + val;
+    let j: string = e.json + ",\"" + log_json_escape(key) + "\":\"" + log_json_escape(val) + "\"";
     return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j };
 }
 function (e: LogEntry) int(key: string, val: i32): LogEntry {
-    var t: string = e.text + " " + key + "=" + val.to_string();
-    var j: string = e.json + ",\"" + log_json_escape(key) + "\":" + val.to_string();
+    let t: string = e.text + " " + key + "=" + val.to_string();
+    let j: string = e.json + ",\"" + log_json_escape(key) + "\":" + val.to_string();
     return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j };
 }
 function (e: LogEntry) bool(key: string, val: boolean): LogEntry {
-    var vs: string = "false";
+    let vs: string = "false";
     if (val) { vs = "true"; }
-    var t: string = e.text + " " + key + "=" + vs;
-    var j: string = e.json + ",\"" + log_json_escape(key) + "\":" + vs;
+    let t: string = e.text + " " + key + "=" + vs;
+    let j: string = e.json + ",\"" + log_json_escape(key) + "\":" + vs;
     return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j };
 }
 function (e: LogEntry) render(msg: string): string {
@@ -89,18 +89,18 @@ var logLeveledIRCases = []struct {
 }{
 	// plain text with chained str/int/bool fields above the threshold:
 	// "[INFO] hi u=ann id=7 ok=true\n" -> 29.
-	{"plain-fields", `var lg: Logger = new_logger(level_info()); return lg.info_().str("u", "ann").int("id", 7).bool("ok", true).render("hi").len();`, 29},
+	{"plain-fields", `let lg: Logger = new_logger(level_info()); return lg.info_().str("u", "ann").int("id", 7).bool("ok", true).render("hi").len();`, 29},
 	// JSON-lines render of an error record with an int field:
 	// `{"level":"ERROR","msg":"boom","code":42}\n` -> 41.
-	{"json-record", `var lg: Logger = new_json_logger(level_warn()); return lg.error_().int("code", 42).render("boom").len();`, 41},
+	{"json-record", `let lg: Logger = new_json_logger(level_warn()); return lg.error_().int("code", 42).render("boom").len();`, 41},
 	// below-threshold record renders to "" (len 0) — the filter branch.
-	{"filtered", `var lg: Logger = new_logger(level_info()); return lg.debug_().str("k", "v").render("noisy").len();`, 0},
+	{"filtered", `let lg: Logger = new_logger(level_info()); return lg.debug_().str("k", "v").render("noisy").len();`, 0},
 	// JSON escaping of a quote + newline in the message:
 	// `{"level":"TRACE","msg":"a\"b\nc"}\n` -> 34.
-	{"json-escape", `var lg: Logger = new_json_logger(level_trace()); return lg.trace_().render("a\"b\nc").len();`, 34},
+	{"json-escape", `let lg: Logger = new_json_logger(level_trace()); return lg.trace_().render("a\"b\nc").len();`, 34},
 	// at-threshold boundary (warn == warn) emits; level_name picks WARN:
 	// "[WARN] edge\n" -> 12.
-	{"boundary", `var lg: Logger = new_logger(level_warn()); return lg.warn_().render("edge").len();`, 12},
+	{"boundary", `let lg: Logger = new_logger(level_warn()); return lg.warn_().render("edge").len();`, 12},
 }
 
 func logLeveledIRSrc(mainBody string) string {

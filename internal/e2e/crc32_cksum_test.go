@@ -172,14 +172,14 @@ func runCrc32CksumStreams(t *testing.T, run func(t *testing.T, src string) (stri
 	src := `import "std/i32";
 
 function main(): i32 {
-    var s: string = "The quick brown fox jumps over the lazy dog. ".repeat(23);
-    var one: i32 = __crc32_cksum(0, s);
-    var acc: i32 = 0;
-    var off: i32 = 0;
-    var cuts: i32[] = [1, 15, 16, 17, 31, 48, 60, 63, 64, 65, 100, 112, 127, 77];
-    var i: i32 = 0;
+    let s: string = "The quick brown fox jumps over the lazy dog. ".repeat(23);
+    let one: i32 = __crc32_cksum(0, s);
+    let acc: i32 = 0;
+    let off: i32 = 0;
+    let cuts: i32[] = [1, 15, 16, 17, 31, 48, 60, 63, 64, 65, 100, 112, 127, 77];
+    let i: i32 = 0;
     while (i < cuts.len()) {
-        var take: i32 = cuts[i];
+        let take: i32 = cuts[i];
         if (off + take > s.len()) { take = s.len() - off; }
         if (take > 0) { acc = __crc32_cksum(acc, slice_unchecked(s, off, off + take) + ""); }
         off = off + take;

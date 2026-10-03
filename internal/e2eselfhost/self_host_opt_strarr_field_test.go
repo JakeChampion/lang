@@ -50,14 +50,14 @@ func TestSelfHostOptStrArrFieldX86_64(t *testing.T) {
 			name: "strarr_field_only",
 			src: `struct P { xs: string[], n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
     match (o) { Some(p) => { acc = p.n + p.xs.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -70,14 +70,14 @@ function main(): i32 {
 			name: "strarr_field_beside_an_i32_array",
 			src: `struct P { xs: string[], ys: i32[], n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: ["alpha", "beta"], ys: [i, i + 1], n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: ["alpha", "beta"], ys: [i, i + 1], n: i });
     match (o) { Some(p) => { acc = p.n + p.xs.len() + p.ys.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -89,14 +89,14 @@ function main(): i32 {
 			name: "i32_array_field_unchanged",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
     match (o) { Some(p) => { acc = p.n + p.xs.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -106,14 +106,14 @@ function main(): i32 {
 			name: "bare_string_field_unchanged",
 			src: `struct P { s: string, n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { s: "alpha", n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { s: "alpha", n: i });
     match (o) { Some(p) => { acc = p.n + p.s.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -177,9 +177,9 @@ func TestSelfHostOptStrArrFieldHazardsX86_64(t *testing.T) {
 			name: "strarr_field_extracted_to_a_local",
 			body: `struct P { xs: string[], n: i32 }
 function round(i: i32): i32 {
-    var held: string[] = [];
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
+    let held: string[] = [];
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
     match (o) { Some(p) => { held = p.xs; acc = p.n; }, None => {} }
     return acc + held.len() + held[0].len();
 }`,
@@ -189,9 +189,9 @@ function round(i: i32): i32 {
 			name: "strarr_field_into_a_container",
 			body: `struct P { xs: string[], n: i32 }
 function round(i: i32): i32 {
-    var keep: string[][] = [];
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
+    let keep: string[][] = [];
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
     match (o) { Some(p) => { keep = keep.append(p.xs); acc = p.n; }, None => {} }
     return acc + keep[0][1].len();
 }`,
@@ -202,9 +202,9 @@ function round(i: i32): i32 {
 			body: `struct P { xs: string[], n: i32 }
 function keepit(xs: string[]): string[] { return xs; }
 function round(i: i32): i32 {
-    var held: string[] = [];
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
+    let held: string[] = [];
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
     match (o) { Some(p) => { held = keepit(p.xs); acc = p.n; }, None => {} }
     return acc + held[1].len();
 }`,
@@ -219,9 +219,9 @@ function round(i: i32): i32 {
 			name: "string_element_extracted_through_the_field",
 			body: `struct P { xs: string[], n: i32 }
 function round(i: i32): i32 {
-    var hs: string = "";
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
+    let hs: string = "";
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
     match (o) { Some(p) => { hs = p.xs[0]; acc = p.n; }, None => {} }
     return acc + hs.len();
 }`,
@@ -232,8 +232,8 @@ function round(i: i32): i32 {
 			// The answer, with leakcheck on so the leak evidence is available too.
 			valueSrc := tc.body + `
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -263,8 +263,8 @@ function main(): i32 {
 			// under a live reference lands on a zero count, which no exit code shows.
 			ufSrc := tc.body + `
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     if (x == 999999) { return 90; }
     return __rc_underflow_count();
@@ -291,15 +291,15 @@ func TestSelfHostOptStrArrFieldPartialReclaimX86_64(t *testing.T) {
 
 	body := `struct P { xs: string[], n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
     match (o) { Some(p) => { acc = p.n + p.xs.len() + p.xs[0].len(); }, None => {} }
     return acc;
 }`
 	asm := hevCompile(t, runner, driverBin, body+`
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     if (x == 999999) { return 90; }
     return __rc_underflow_count();

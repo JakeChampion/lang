@@ -18,7 +18,7 @@ const matchEarlyExitSrc = `function make(i: i64): Result[i64, i64] {
     return Err(i);
 }
 function fallThrough(i: i64): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     match (make(i)) { Ok(v) => { acc = (v as i32) + 1; }, Err(_) => { acc = 0; } }
     return acc;
 }
@@ -26,13 +26,13 @@ function bothArmsReturn(i: i64): i32 {
     match (make(i)) { Ok(v) => { return (v as i32) + 1; }, Err(_) => { return 0; } }
 }
 function oneArmReturns(i: i64): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     match (make(i)) { Ok(v) => { return (v as i32) + 1; }, Err(_) => { acc = 0; } }
     return acc;
 }
 function armContinues(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         match (make(i as i64)) { Ok(v) => { acc = acc + (v as i32); }, Err(_) => { i = i + 1; continue; } }
         i = i + 1;
@@ -40,10 +40,10 @@ function armContinues(n: i32): i32 {
     return acc;
 }
 function armContinuesLabeled(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     outer: while (i < n) {
-        var j: i32 = 0;
+        let j: i32 = 0;
         while (j < 2) {
             match (make(i as i64)) { Ok(v) => { acc = acc + (v as i32); }, Err(_) => { i = i + 1; continue outer; } }
             j = j + 1;
@@ -53,10 +53,10 @@ function armContinuesLabeled(n: i32): i32 {
     return acc;
 }
 function matchWrapsLoop(n: i32): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     match (make(0i64)) {
         Ok(v) => {
-            var i: i32 = 0;
+            let i: i32 = 0;
             while (i < n) { if (i > 3) { break; } acc = acc + (v as i32); i = i + 1; }
         },
         Err(_) => { acc = 0; }
@@ -64,7 +64,7 @@ function matchWrapsLoop(n: i32): i32 {
     return acc;
 }
 function exprArmReturns(i: i64): i32 {
-    var r: i32 = match (make(i)) { Ok(v) => { return (v as i32) + 1; }, Err(_) => 0 };
+    let r: i32 = match (make(i)) { Ok(v) => { return (v as i32) + 1; }, Err(_) => 0 };
     return r;
 }
 function main(): i32 { return 0; }`

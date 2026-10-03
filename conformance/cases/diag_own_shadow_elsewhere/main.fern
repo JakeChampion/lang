@@ -13,7 +13,7 @@ function keep(own ys: i32[]): i32 { return ys[0]; }
 function apply(g: ((i32[]) => i32), zs: i32[]): i32 { return g(zs); }
 
 function f(xs: i32[]): i32 {
-    var a: i32 = apply((keep: i32[]) => keep.len(), xs);
+    let a: i32 = apply((keep: i32[]) => keep.len(), xs);
     return a + keep(xs);
 }
 

@@ -90,9 +90,9 @@ func TestAppendSeparatesBufferAndElementOwnership(t *testing.T) {
 
 func TestEverySupportedOperationHasAnEffectContract(t *testing.T) {
 	decl, info := checkedFunc(t, `function pilot(items: string[], choose: boolean): string[] {
-  var pair = (items, 7i64);
+  let pair = (items, 7i64);
   let (alias, _) = pair;
-  var item = alias[0];
+  let item = alias[0];
   if (choose) { return [item, "literal"]; }
   return [];
 }`)

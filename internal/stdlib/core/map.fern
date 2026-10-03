@@ -24,7 +24,10 @@
 //   +8   keyKind : i32 — 0 = i32-sized scalar, 1 = string,
 //        2 = wide-scalar-boxed (i64/f64 on a narrow-ptr target),
 //        3 = user struct/enum key (hashed/compared via its derived
-//        hash/eq, threaded in per call — see the keyKind-3 section)
+//        hash/eq, threaded in per call — see the keyKind-3 section),
+//        4 = the same keyed column holding one counted unit of each key,
+//        which the map's copy retains and __map_drop_keyed_impl
+//        releases (the self-host's routed maps)
 //   +12  valTag : i32 — low byte = valKind (0 = scalar,
 //        1 = non-array pointer, 2 = array(plain elems),
 //        3 = array(rc elems)); high bytes = the value element
@@ -82,7 +85,7 @@ pub function __map_pow2_ceil(n: i32): i32 {
   if (n <= 4) {
     return 4;
   }
-  var p: i32 = 4;
+  let p: i32 = 4;
   while (p < n) {
     if (p >= 1073741824) {  // saturate at 2^30
       return p;
@@ -169,12 +172,12 @@ function __map_swar_all(): u64 {  // 0xFFFF…FF
 // Byte-granular stores via i32 read-modify-write — the raw-memory shims
 // have no byte store.
 function __map_ctrl_set(ctrlBase: usize, cap: i32, i: i32, v: i32): void {
-  var p: i32 = i;
+  let p: i32 = i;
   while (p < cap + 8) {
-    var wordOff: i32 = p & 0 - 4;
-    var shift: i32 = (p & 3) * 8;
-    var word: i32 = __load_i32(ctrlBase + wordOff);
-    var keep: i32 = 255 << shift ^ 0 - 1;
+    let wordOff: i32 = p & 0 - 4;
+    let shift: i32 = (p & 3) * 8;
+    let word: i32 = __load_i32(ctrlBase + wordOff);
+    let keep: i32 = 255 << shift ^ 0 - 1;
     __store_i32(ctrlBase + wordOff, word & keep | v << shift);
     p = p + cap;
   }
@@ -228,7 +231,7 @@ function __map_seed(buf: usize): i32 {
 // hash for scalar and wide-scalar-folded keys). Shared by __map_hash
 // and the default keyed-path adapters (#4388 item 1).
 function __map_wang_mix(k: i32): i32 {
-  var h: i32 = k ^ 61;
+  let h: i32 = k ^ 61;
   h = h ^ (h as u32 >> 16 as u32) as i32;
   h = h + (h << 3);
   h = h ^ (h as u32 >> 4 as u32) as i32;
@@ -291,12 +294,12 @@ function __map_wang_mix(k: i32): i32 {
 // SipHash-1-3 behind the same seed slot is the upgrade, and it is a drop-in
 // here: nothing outside this function depends on how the seed is consumed.
 function __map_fnv_str_seeded(s: string, seed: i32): i32 {
-  var h: u32 = 2166136261 as u32 ^ seed as u32;  // 0x811c9dc5, FNV offset basis
-  var prime: u32 = 16777619 as u32;  // 0x01000193
-  var sLen: i32 = s.len();
-  var i: i32 = 0;
+  let h: u32 = 2166136261 as u32 ^ seed as u32;  // 0x811c9dc5, FNV offset basis
+  let prime: u32 = 16777619 as u32;  // 0x01000193
+  let sLen: i32 = s.len();
+  let i: i32 = 0;
   while (i + 4 <= sLen) {
-    var w: u32 = s[i] as u32
+    let w: u32 = s[i] as u32
       | s[i + 1] as u32 << 8 as u32
       | s[i + 2] as u32 << 16 as u32
       | s[i + 3] as u32 << 24 as u32;
@@ -325,10 +328,10 @@ pub function map_new_impl(cap_hint: i32, keyTag: i32, valKind: i32): usize {
   // arrival: the plain kind stays at +8, where eight readers already expect
   // it, and the cell size takes the pad at +20. Encoding the size into +8
   // instead would make every one of those readers mask (#8493).
-  var keyKind: i32 = keyTag & 255;
-  var cap: i32 = __map_pow2_ceil(cap_hint);
-  var hdr: i32 = __map_hdr_bytes(keyKind);
-  var buf: usize = __alloc(__map_buf_bytes(cap, hdr));
+  let keyKind: i32 = keyTag & 255;
+  let cap: i32 = __map_pow2_ceil(cap_hint);
+  let hdr: i32 = __map_hdr_bytes(keyKind);
+  let buf: usize = __alloc(__map_buf_bytes(cap, hdr));
   __store_i32(buf, cap);
   __store_i32(buf + 4, 0);
   __store_i32(buf + 8, keyKind);
@@ -350,7 +353,7 @@ pub function map_new_impl(cap_hint: i32, keyTag: i32, valKind: i32): usize {
   // (`keys` / `values` / `entries` / the MapIter cursor) walks that array,
   // never the bucket table. std/json's key-order preservation depends on the
   // same property and is unaffected.
-  var seed: i32 = 0;
+  let seed: i32 = 0;
   if (keyKind == 1) {
     seed = __map_hash_seed();
   }
@@ -376,9 +379,9 @@ pub function map_new_impl(cap_hint: i32, keyTag: i32, valKind: i32): usize {
   // and all downstream `__load_ptr(m)` / `__store_ptr(m,
   // buf)` reads + writes hit the buf cell exactly as
   // before — they're at offset 0 of the data pointer.
-  var base: usize = __alloc(16);
+  let base: usize = __alloc(16);
   __store_i32(base, 1);  // Phase 2d: live rc=1 (was 0x80000000 sentinel)
-  var m: usize = base + 8;
+  let m: usize = base + 8;
   __store_ptr(m, buf);
   return m;
 }
@@ -402,21 +405,21 @@ pub function map_new_impl(cap_hint: i32, keyTag: i32, valKind: i32): usize {
 // passing a Map to a function no longer inc's the handle, so a
 // map mutated through a borrow stays rc==1 and is mutated in
 // place (visible to the caller). Only a genuine local alias
-// (`var m2 = m1`) bumps rc above 1 and so triggers the copy.
+// (`let m2 = m1`) bumps rc above 1 and so triggers the copy.
 pub function __map_cow_inplace(m: usize): usize {
-  var rc: i32 = __load_i32(m - 8);
+  let rc: i32 = __load_i32(m - 8);
   if (rc <= 1) {
     return m;
   }
-  var buf: usize = __load_ptr(m);
-  var cap: i32 = __load_i32(buf);
-  var bufBytes: i32 = __map_buf_bytes(cap, __map_hdr(buf));
-  var newBuf: usize = __alloc(bufBytes);
+  let buf: usize = __load_ptr(m);
+  let cap: i32 = __load_i32(buf);
+  let bufBytes: i32 = __map_buf_bytes(cap, __map_hdr(buf));
+  let newBuf: usize = __alloc(bufBytes);
   __memcpy(newBuf, buf, bufBytes);
   __map_own_copied_cols(newBuf);
-  var base: usize = __alloc(16);
+  let base: usize = __alloc(16);
   __store_i32(base, 1);
-  var nm: usize = base + 8;
+  let nm: usize = base + 8;
   __store_ptr(nm, newBuf);
   return nm;
 }
@@ -444,29 +447,34 @@ pub function __map_cow_inplace(m: usize): usize {
 //
 // A boxed wide-scalar KEY (keyKind 2) needs a cell of its own for the value
 // cell's reason: a delete, clear or drop frees the key cells it walks (#10968).
+// A counted keyed KEY (keyKind 4) is one inc each, as a counted value is.
 function __map_own_copied_cols(buf: usize): void {
-  var ownKeys: boolean = __load_i32(buf + 8) == 1;
-  var keyCellBytes: i32 = 0;
+  let ownKeys: boolean = __load_i32(buf + 8) == 1;
+  let retainKeys: boolean = __load_i32(buf + 8) == 4;
+  let keyCellBytes: i32 = 0;
   if (__load_i32(buf + 8) == 2) {
     keyCellBytes = __map_key_cell_bytes(buf);
   }
-  var valKind: i32 = __map_val_kind(buf);
-  var ownVals: boolean = valKind == 5;
-  var retainVals: boolean = valKind >= 2 && !ownVals;
-  var cellBytes: i32 = __map_val_cell_bytes(buf);
-  if (!ownKeys && !ownVals && !retainVals && cellBytes == 0 && keyCellBytes == 0) {
+  let valKind: i32 = __map_val_kind(buf);
+  let ownVals: boolean = valKind == 5;
+  let retainVals: boolean = valKind >= 2 && !ownVals;
+  let cellBytes: i32 = __map_val_cell_bytes(buf);
+  if (!ownKeys && !retainKeys && !ownVals && !retainVals && cellBytes == 0 && keyCellBytes == 0) {
     return;
   }
-  var cap: i32 = __load_i32(buf);
-  var len_: i32 = __load_i32(buf + 4);
-  var ptrW: i32 = __ptr_width();
-  var entryStride: i32 = 2 * ptrW;
-  var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-  var i: i32 = 0;
+  let cap: i32 = __load_i32(buf);
+  let len_: i32 = __load_i32(buf + 4);
+  let ptrW: i32 = __ptr_width();
+  let entryStride: i32 = 2 * ptrW;
+  let entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+  let i: i32 = 0;
   while (i < len_) {
-    var slot: usize = entriesBase + i * entryStride;
+    let slot: usize = entriesBase + i * entryStride;
     if (ownKeys) {
       __store_ptr(slot, __map_own_str_slot(__load_ptr(slot)));
+    }
+    if (retainKeys) {
+      __fern_rc_inc(__load_ptr(slot));
     }
     if (ownVals) {
       __store_ptr(slot + ptrW, __map_own_str_slot(__load_ptr(slot + ptrW)));
@@ -475,12 +483,12 @@ function __map_own_copied_cols(buf: usize): void {
       __map_retain_val(buf, __load_ptr(slot + ptrW));
     }
     if (cellBytes != 0) {
-      var fresh: usize = __alloc(cellBytes);
+      let fresh: usize = __alloc(cellBytes);
       __memcpy(fresh, __load_ptr(slot + ptrW), cellBytes);
       __store_ptr(slot + ptrW, fresh);
     }
     if (keyCellBytes != 0) {
-      var freshKey: usize = __alloc(keyCellBytes);
+      let freshKey: usize = __alloc(keyCellBytes);
       __memcpy(freshKey, __load_ptr(slot), keyCellBytes);
       __store_ptr(slot, freshKey);
     }
@@ -509,7 +517,7 @@ function __map_own_copied_cols(buf: usize): void {
 // of the cell's `len` word, which `data` carries no trace of — so inc'ing
 // `data` unguarded there dereferences the key's own characters (#7081).
 function __map_own_str_slot(slot: usize): usize {
-  var boxed: usize = (slot as string) as usize;
+  let boxed: usize = (slot as string) as usize;
   if (boxed == slot) {
     return __fern_rc_inc(slot);
   }
@@ -536,21 +544,21 @@ function __map_own_str_slot(slot: usize): usize {
 // container its own buffer so the lifetimes are independent. The columns are
 // claimed by __map_own_copied_cols, exactly as in __map_cow_inplace.
 pub function __map_clone(m: usize): usize {
-  var buf: usize = __load_ptr(m);
-  var cap: i32 = __load_i32(buf);
-  var bufBytes: i32 = __map_buf_bytes(cap, __map_hdr(buf));
-  var newBuf: usize = __alloc(bufBytes);
+  let buf: usize = __load_ptr(m);
+  let cap: i32 = __load_i32(buf);
+  let bufBytes: i32 = __map_buf_bytes(cap, __map_hdr(buf));
+  let newBuf: usize = __alloc(bufBytes);
   __memcpy(newBuf, buf, bufBytes);
   __map_own_copied_cols(newBuf);
-  var base: usize = __alloc(16);
+  let base: usize = __alloc(16);
   __store_i32(base, 1);
-  var nm: usize = base + 8;
+  let nm: usize = base + 8;
   __store_ptr(nm, newBuf);
   return nm;
 }
 
 pub function __map_len_impl(m: usize): i32 {
-  var buf: usize = __load_ptr(m);
+  let buf: usize = __load_ptr(m);
   return __load_i32(buf + 4);
 }
 
@@ -582,9 +590,9 @@ function __map_eq_scalar(a: usize, b: usize): boolean {
 }
 
 function __map_hash_wide(k: usize): i32 {
-  var w: i64 = __load_i64(k);
-  var lo: i32 = w as i32;
-  var hi: i32 = (w >> 32 as i64) as i32;
+  let w: i64 = __load_i64(k);
+  let lo: i32 = w as i32;
+  let hi: i32 = (w >> 32 as i64) as i32;
   return __map_wang_mix(lo ^ hi);
 }
 
@@ -638,7 +646,7 @@ function __map_bucket_hash(k: usize, hash_fn: (usize) => i32, seed: i32): i32 {
 // __map_lookup returns the entry index of the matching key, or -1 if
 // not present (probing details: __map_lookup_keyed).
 pub function __map_lookup(m: usize, k: usize): i32 {
-  var keyKind: i32 = __load_i32(__load_ptr(m) + 8);
+  let keyKind: i32 = __load_i32(__load_ptr(m) + 8);
   if (keyKind == 0) {
     return __map_lookup_keyed(m, k, __map_hash_scalar, __map_eq_scalar);
   }
@@ -714,7 +722,7 @@ function __map_key_cell_bytes(buf: usize): i32 {
 }
 
 function __map_free_key_cell(buf: usize, k: usize): void {
-  var cellBytes: i32 = __map_key_cell_bytes(buf);
+  let cellBytes: i32 = __map_key_cell_bytes(buf);
   if (cellBytes == 0) {
     return;
   }
@@ -728,7 +736,7 @@ function __map_free_key_cell(buf: usize, k: usize): void {
 }
 
 function __map_free_val_cell(buf: usize, v: usize): void {
-  var cellBytes: i32 = __map_val_cell_bytes(buf);
+  let cellBytes: i32 = __map_val_cell_bytes(buf);
   if (cellBytes == 0) {
     return;
   }
@@ -778,7 +786,7 @@ function __map_str_val_cell_bytes(buf: usize): i32 {
 // whose column is walked by the IR-generated __drop_map_str_values instead.
 // Widening that guard would free every value twice.
 function __map_dec_value(buf: usize, v: usize): void {
-  var vk: i32 = __map_val_kind(buf);
+  let vk: i32 = __map_val_kind(buf);
   if (vk == 0) {
     __map_free_val_cell(buf, v);
     return;
@@ -793,7 +801,7 @@ function __map_dec_value(buf: usize, v: usize): void {
     // The dead cell then goes back at the size boxIntoCell allocated it
     // with; a single-word column reads 0 and has no cell to free.
     __fern_str_dec(v as string);
-    var cellBytes: i32 = __map_str_val_cell_bytes(buf);
+    let cellBytes: i32 = __map_str_val_cell_bytes(buf);
     if (cellBytes != 0) {
       __free(v, cellBytes);
     }
@@ -802,7 +810,7 @@ function __map_dec_value(buf: usize, v: usize): void {
   if (vk != 2 && vk != 3) {
     return;
   }
-  var stride: i32 = __map_val_stride(buf);
+  let stride: i32 = __map_val_stride(buf);
   if (vk == 3) {
     __fern_drop_arr_ptr(v, stride);
   } else {
@@ -822,7 +830,7 @@ function __map_dec_value(buf: usize, v: usize): void {
 // two-word target the slot holds an unrefcounted cell whose rc word is not
 // the string's. Inc'ing here would double-retain every read.
 function __map_retain_val(buf: usize, v: usize): usize {
-  var vk: i32 = __map_val_kind(buf);
+  let vk: i32 = __map_val_kind(buf);
   if (vk >= 2 && vk != 5) {
     return __fern_rc_inc(v);
   }
@@ -834,15 +842,15 @@ function __map_retain_val(buf: usize, v: usize): usize {
 // get / get_or / lookup_val in BOTH key families (#4388 item 1's safe
 // piece — the probe-loop collapse itself is blocked on #5042).
 function __map_val_at(m: usize, idx: i32): usize {
-  var buf: usize = __load_ptr(m);
-  var cap: i32 = __load_i32(buf);
-  var ptrW: i32 = __ptr_width();
-  var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+  let buf: usize = __load_ptr(m);
+  let cap: i32 = __load_i32(buf);
+  let ptrW: i32 = __ptr_width();
+  let entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
   return __load_ptr(entriesBase + idx * (2 * ptrW) + ptrW);
 }
 
 pub function __map_get_impl(m: usize, k: usize): Option[usize] {
-  var idx: i32 = __map_lookup(m, k);
+  let idx: i32 = __map_lookup(m, k);
   if (idx == 0 - 1) {
     return None;
   }
@@ -854,7 +862,7 @@ pub function __map_get_impl(m: usize, k: usize): Option[usize] {
 // (a no-op for the scalar / non-reclaimed kinds __map_retain_val ignores), so
 // the IR can end a fresh fallback temp unconditionally after the call.
 pub function __map_get_or_impl(m: usize, k: usize, fallback: usize): usize {
-  var idx: i32 = __map_lookup(m, k);
+  let idx: i32 = __map_lookup(m, k);
   if (idx == 0 - 1) {
     return __map_retain_val(__load_ptr(m), fallback);
   }
@@ -869,7 +877,7 @@ pub function __map_get_or_impl(m: usize, k: usize, fallback: usize): usize {
 // kinds. No retain: the returned pointer is consumed by the deep-drop,
 // not handed to the program.
 pub function __map_lookup_val(m: usize, k: usize): usize {
-  var idx: i32 = __map_lookup(m, k);
+  let idx: i32 = __map_lookup(m, k);
   if (idx == 0 - 1) {
     return 0;
   }
@@ -880,7 +888,7 @@ pub function __map_lookup_val(m: usize, k: usize): usize {
 // existing entry into the new bucket array (details: __map_grow_keyed,
 // the single implementation). Dispatcher over the builtin key kinds.
 pub function __map_grow(m: usize): usize {
-  var keyKind: i32 = __load_i32(__load_ptr(m) + 8);
+  let keyKind: i32 = __load_i32(__load_ptr(m) + 8);
   if (keyKind == 0) {
     return __map_grow_keyed(m, __map_hash_scalar);
   }
@@ -895,7 +903,7 @@ pub function __map_grow(m: usize): usize {
 // overwrite-dec of a replaced array value). Dispatcher over the builtin
 // key kinds.
 pub function __map_set_impl(m: usize, k: usize, v: usize): usize {
-  var keyKind: i32 = __load_i32(__load_ptr(m) + 8);
+  let keyKind: i32 = __load_i32(__load_ptr(m) + 8);
   if (keyKind == 0) {
     return __map_set_keyed_impl(m, k, v, __map_hash_scalar, __map_eq_scalar);
   }
@@ -922,13 +930,13 @@ pub function __map_set_impl(m: usize, k: usize, v: usize): usize {
 // __map_string_column or __map_ptr_column.
 //
 pub function __map_i32_column(m: usize, kvOffset: i32): i32[] {
-  var buf: usize = __load_ptr(m);
-  var cap: i32 = __load_i32(buf);
-  var len_: i32 = __load_i32(buf + 4);
-  var entryStride: i32 = 2 * __ptr_width();
-  var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let buf: usize = __load_ptr(m);
+  let cap: i32 = __load_i32(buf);
+  let len_: i32 = __load_i32(buf + 4);
+  let entryStride: i32 = 2 * __ptr_width();
+  let entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < len_) {
     out = out.append(__load_i32(entriesBase + i * entryStride + kvOffset));
     i = i + 1;
@@ -943,7 +951,7 @@ pub function __map_i32_column(m: usize, kvOffset: i32): i32[] {
 // boxes with __map_cell, reads back with __map_cell_load, and returns a cell
 // no column took with __map_cell_free.
 pub function __map_cell(v: i64): usize {
-  var c: usize = __alloc(8);
+  let c: usize = __alloc(8);
   __store_i64(c, v);
   return c;
 }
@@ -960,7 +968,7 @@ pub function __map_cell_free(c: usize): usize {
 // __map_get_cell_impl is __map_get_impl for a cell-boxed value column, which
 // answers the value out of the cell rather than the cell.
 pub function __map_get_cell_impl(m: usize, k: usize): Option[i64] {
-  var idx: i32 = __map_lookup(m, k);
+  let idx: i32 = __map_lookup(m, k);
   if (idx == 0 - 1) {
     return None;
   }
@@ -968,7 +976,24 @@ pub function __map_get_cell_impl(m: usize, k: usize): Option[i64] {
 }
 
 pub function __map_get_cell_f64_impl(m: usize, k: usize): Option[f64] {
-  var idx: i32 = __map_lookup(m, k);
+  let idx: i32 = __map_lookup(m, k);
+  if (idx == 0 - 1) {
+    return None;
+  }
+  return Some(f64_from_bits(__load_i64(__map_val_at(m, idx))));
+}
+
+// The cell reads for a keyed key column.
+pub function __map_get_cell_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): Option[i64] {
+  let idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
+  if (idx == 0 - 1) {
+    return None;
+  }
+  return Some(__load_i64(__map_val_at(m, idx)));
+}
+
+pub function __map_get_cell_f64_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): Option[f64] {
+  let idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
   if (idx == 0 - 1) {
     return None;
   }
@@ -978,13 +1003,13 @@ pub function __map_get_cell_f64_impl(m: usize, k: usize): Option[f64] {
 // __map_cell_column / __map_cell_f64_column snapshot a cell-boxed column into
 // a fresh typed array, built in the reading compiler's own layout.
 pub function __map_cell_column(m: usize, kvOffset: i32): i64[] {
-  var buf: usize = __load_ptr(m);
-  var cap: i32 = __load_i32(buf);
-  var len_: i32 = __load_i32(buf + 4);
-  var entryStride: i32 = 2 * __ptr_width();
-  var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-  var out: i64[] = [];
-  var i: i32 = 0;
+  let buf: usize = __load_ptr(m);
+  let cap: i32 = __load_i32(buf);
+  let len_: i32 = __load_i32(buf + 4);
+  let entryStride: i32 = 2 * __ptr_width();
+  let entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+  let out: i64[] = [];
+  let i: i32 = 0;
   while (i < len_) {
     out = out.append(__load_i64(__load_ptr(entriesBase + i * entryStride + kvOffset)));
     i = i + 1;
@@ -993,13 +1018,13 @@ pub function __map_cell_column(m: usize, kvOffset: i32): i64[] {
 }
 
 pub function __map_cell_f64_column(m: usize, kvOffset: i32): f64[] {
-  var buf: usize = __load_ptr(m);
-  var cap: i32 = __load_i32(buf);
-  var len_: i32 = __load_i32(buf + 4);
-  var entryStride: i32 = 2 * __ptr_width();
-  var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-  var out: f64[] = [];
-  var i: i32 = 0;
+  let buf: usize = __load_ptr(m);
+  let cap: i32 = __load_i32(buf);
+  let len_: i32 = __load_i32(buf + 4);
+  let entryStride: i32 = 2 * __ptr_width();
+  let entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+  let out: f64[] = [];
+  let i: i32 = 0;
   while (i < len_) {
     out = out.append(f64_from_bits(__load_i64(__load_ptr(entriesBase + i * entryStride + kvOffset))));
     i = i + 1;
@@ -1008,13 +1033,13 @@ pub function __map_cell_f64_column(m: usize, kvOffset: i32): f64[] {
 }
 
 pub function __map_bool_column(m: usize, kvOffset: i32): boolean[] {
-  var buf: usize = __load_ptr(m);
-  var cap: i32 = __load_i32(buf);
-  var len_: i32 = __load_i32(buf + 4);
-  var entryStride: i32 = 2 * __ptr_width();
-  var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-  var out: boolean[] = [];
-  var i: i32 = 0;
+  let buf: usize = __load_ptr(m);
+  let cap: i32 = __load_i32(buf);
+  let len_: i32 = __load_i32(buf + 4);
+  let entryStride: i32 = 2 * __ptr_width();
+  let entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+  let out: boolean[] = [];
+  let i: i32 = 0;
   while (i < len_) {
     out = out.append(__load_i32(entriesBase + i * entryStride + kvOffset) != 0);
     i = i + 1;
@@ -1035,15 +1060,15 @@ pub function __map_bool_column(m: usize, kvOffset: i32): boolean[] {
 // there is no callable byte-store shim, and `.with` on a sole-owner buffer is
 // the in-place write the IR already lowers for an array element.
 pub function __map_u8_column(m: usize, kvOffset: i32): u8[] {
-  var buf: usize = __load_ptr(m);
-  var cap: i32 = __load_i32(buf);
-  var len_: i32 = __load_i32(buf + 4);
-  var entryStride: i32 = 2 * __ptr_width();
-  var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-  var out: u8[] = __alloc_u8(len_);
-  var i: i32 = 0;
+  let buf: usize = __load_ptr(m);
+  let cap: i32 = __load_i32(buf);
+  let len_: i32 = __load_i32(buf + 4);
+  let entryStride: i32 = 2 * __ptr_width();
+  let entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+  let out: u8[] = __alloc_u8(len_);
+  let i: i32 = 0;
   while (i < len_) {
-    var v32: i32 = __load_i32(entriesBase + i * entryStride + kvOffset);
+    let v32: i32 = __load_i32(entriesBase + i * entryStride + kvOffset);
     out = out.with(i, v32 as u8);
     i = i + 1;
   }
@@ -1059,8 +1084,8 @@ pub function __map_u8_column(m: usize, kvOffset: i32): u8[] {
 // Use keys()/values() only when a materialised K[]/V[] is actually needed
 // (sort / index / outlive the map). #2688; snapshot-free general protocol: #2686.
 pub function __map_keys_impl(m: usize): usize {
-  var buf: usize = __load_ptr(m);
-  var keyKind: i32 = __load_i32(buf + 8);
+  let buf: usize = __load_ptr(m);
+  let keyKind: i32 = __load_i32(buf + 8);
   if (keyKind == 1) {
     return __map_string_column(m, 0);
   }
@@ -1072,14 +1097,14 @@ pub function __map_keys_impl(m: usize): usize {
   if (keyKind == 3) {
     return __map_ptr_column(m, 0, 1);
   }
-  var col: i32[] = __map_i32_column(m, 0);
+  let col: i32[] = __map_i32_column(m, 0);
   return __fern_rc_inc(col as usize);
 }
 
 pub function __map_values_impl(m: usize): usize {
-  var buf: usize = __load_ptr(m);
-  var valKind: i32 = __map_val_kind(buf);
-  var ptrW: i32 = __ptr_width();
+  let buf: usize = __load_ptr(m);
+  let valKind: i32 = __map_val_kind(buf);
+  let ptrW: i32 = __ptr_width();
   // Array values (valKind 2/3) are single heap pointers, so the
   // snapshot must be a pointer-stride array (ptrW) — NOT a
   // string-shaped one. string_column lays out two-word string
@@ -1097,7 +1122,7 @@ pub function __map_values_impl(m: usize): usize {
   if (valKind == 1 || valKind == 5) {
     return __map_string_column(m, ptrW);
   }
-  var col: i32[] = __map_i32_column(m, ptrW);
+  let col: i32[] = __map_i32_column(m, ptrW);
   return __fern_rc_inc(col as usize);
 }
 
@@ -1115,20 +1140,20 @@ pub function __map_values_impl(m: usize): usize {
 // rc so the snapshot co-owns storage the map will free; the
 // snapshot's drop balances that.
 pub function __map_ptr_column(m: usize, kvOffset: i32, retainVals: i32): usize {
-  var buf: usize = __load_ptr(m);
-  var cap: i32 = __load_i32(buf);
-  var len_: i32 = __load_i32(buf + 4);
-  var ptrW: i32 = __ptr_width();
-  var entryStride: i32 = 2 * ptrW;
-  var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-  var base: usize = __alloc(16 + len_ * ptrW);
+  let buf: usize = __load_ptr(m);
+  let cap: i32 = __load_i32(buf);
+  let len_: i32 = __load_i32(buf + 4);
+  let ptrW: i32 = __ptr_width();
+  let entryStride: i32 = 2 * ptrW;
+  let entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+  let base: usize = __alloc(16 + len_ * ptrW);
   __store_i32(base + 4, len_);  // cap   (= data - 12)
   __store_i32(base + 8, 1);  // rc=1  (= data - 8)
   __store_i32(base + 12, len_);  // len   (= data - 4)
-  var data: usize = base + 16;
-  var i: i32 = 0;
+  let data: usize = base + 16;
+  let i: i32 = 0;
   while (i < len_) {
-    var vp: usize = __load_ptr(entriesBase + i * entryStride + kvOffset);
+    let vp: usize = __load_ptr(entriesBase + i * entryStride + kvOffset);
     if (retainVals == 1) {
       vp = __fern_rc_inc(vp);
     }
@@ -1148,17 +1173,17 @@ pub function __map_ptr_column(m: usize, kvOffset: i32, retainVals: i32): usize {
 // IR computes for `string[]` on this target (8 bytes on
 // wasm32, 16 on flipped arm64, 8 on legacy native).
 pub function __map_string_column(m: usize, kvOffset: i32): usize {
-  var buf: usize = __load_ptr(m);
-  var cap: i32 = __load_i32(buf);
-  var len_: i32 = __load_i32(buf + 4);
-  var ptrW: i32 = __ptr_width();
-  var entryStride: i32 = 2 * ptrW;
-  var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-  var out: string[] = [];
-  var i: i32 = 0;
+  let buf: usize = __load_ptr(m);
+  let cap: i32 = __load_i32(buf);
+  let len_: i32 = __load_i32(buf + 4);
+  let ptrW: i32 = __ptr_width();
+  let entryStride: i32 = 2 * ptrW;
+  let entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < len_) {
-    var cellPtr: usize = __load_ptr(entriesBase + i * entryStride + kvOffset);
-    var s: string = cellPtr as string;
+    let cellPtr: usize = __load_ptr(entriesBase + i * entryStride + kvOffset);
+    let s: string = cellPtr as string;
     out = out.append(s);
     i = i + 1;
   }
@@ -1175,13 +1200,13 @@ pub function __map_string_column(m: usize, kvOffset: i32): usize {
 // takes this compiler's own array layout, unlike __map_ptr_column's
 // hand-written header.
 pub function __map_box_column(m: usize, kvOffset: i32): usize {
-  var buf: usize = __load_ptr(m);
-  var cap: i32 = __load_i32(buf);
-  var len_: i32 = __load_i32(buf + 4);
-  var entryStride: i32 = 2 * __ptr_width();
-  var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-  var out: usize[] = [];
-  var i: i32 = 0;
+  let buf: usize = __load_ptr(m);
+  let cap: i32 = __load_i32(buf);
+  let len_: i32 = __load_i32(buf + 4);
+  let entryStride: i32 = 2 * __ptr_width();
+  let entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+  let out: usize[] = [];
+  let i: i32 = 0;
   while (i < len_) {
     out = out.append(__fern_rc_inc(__load_ptr(entriesBase + i * entryStride + kvOffset)));
     i = i + 1;
@@ -1220,8 +1245,8 @@ pub function __map_drop_values(m: usize): usize {
   if (__load_i32(m - 8) != 1) {
     return m;
   }
-  var buf: usize = __load_ptr(m);
-  var vk0: i32 = __map_val_kind(buf);
+  let buf: usize = __load_ptr(m);
+  let vk0: i32 = __map_val_kind(buf);
   // Only array values (2/3) and boxed wide-scalar cells are reclaimed
   // here. Struct values (kind 4) are deep-dropped by the IR-generated
   // __drop_map_struct_<T> at the map LOCAL's drop; a struct-valued map
@@ -1236,12 +1261,12 @@ pub function __map_drop_values(m: usize): usize {
   if (vk0 != 2 && vk0 != 3 && __map_val_cell_bytes(buf) == 0) {
     return m;
   }
-  var cap: i32 = __load_i32(buf);
-  var len_: i32 = __load_i32(buf + 4);
-  var ptrW: i32 = __ptr_width();
-  var entryStride: i32 = 2 * ptrW;
-  var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-  var i: i32 = 0;
+  let cap: i32 = __load_i32(buf);
+  let len_: i32 = __load_i32(buf + 4);
+  let ptrW: i32 = __ptr_width();
+  let entryStride: i32 = 2 * ptrW;
+  let entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+  let i: i32 = 0;
   while (i < len_) {
     __map_dec_value(buf, __load_ptr(entriesBase + i * entryStride + ptrW));
     i = i + 1;
@@ -1263,7 +1288,7 @@ pub function __map_drop_impl(m: usize): usize {
     __fern_rc_dec(m);
     return m;
   }
-  var buf: usize = __load_ptr(m);
+  let buf: usize = __load_ptr(m);
   if (buf != 0) {
     __free(buf, __map_buf_bytes(__load_i32(buf), __map_hdr(buf)));
   }
@@ -1274,13 +1299,48 @@ pub function __map_drop_impl(m: usize): usize {
 // __map_key_of returns the key slot the column holds for a key equal to `k`,
 // or 0 when there is none — the unit a delete drops from the column.
 pub function __map_key_of(m: usize, k: usize): usize {
-  var idx: i32 = __map_lookup(m, k);
+  let idx: i32 = __map_lookup(m, k);
   if (idx == 0 - 1) {
     return 0;
   }
-  var buf: usize = __load_ptr(m);
-  var entriesBase: usize = buf + __map_hdr(buf) + __load_i32(buf) * 4;
+  let buf: usize = __load_ptr(m);
+  let entriesBase: usize = buf + __map_hdr(buf) + __load_i32(buf) * 4;
   return __load_ptr(entriesBase + idx * (2 * __ptr_width()));
+}
+
+// __map_key_of_keyed is __map_key_of for a keyed column: the key slot the
+// column holds for a key equal to `k` under `eq_fn`, or 0.
+pub function __map_key_of_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
+  let idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
+  if (idx == 0 - 1) {
+    return 0;
+  }
+  let buf: usize = __load_ptr(m);
+  let entriesBase: usize = buf + __map_hdr(buf) + __load_i32(buf) * 4;
+  return __load_ptr(entriesBase + idx * (2 * __ptr_width()));
+}
+
+// __map_drop_keyed_impl is __map_drop_impl for a counted keyed column
+// (keyKind 4): the last reference hands every live key to `key_release` and
+// every live value to `val_release`, before the buffer and the handle go.
+pub function __map_drop_keyed_impl(m: usize, key_release: (usize) => usize, val_release: (usize) => usize): usize {
+  if (m == 0) {
+    return m;
+  }
+  if (__load_i32(m - 8) == 1) {
+    let buf: usize = __load_ptr(m);
+    let len_: i32 = __load_i32(buf + 4);
+    let ptrW: i32 = __ptr_width();
+    let entriesBase: usize = buf + __map_hdr(buf) + __load_i32(buf) * 4;
+    let i: i32 = 0;
+    while (i < len_) {
+      let slot: usize = entriesBase + i * (2 * ptrW);
+      key_release(__load_ptr(slot));
+      val_release(__load_ptr(slot + ptrW));
+      i = i + 1;
+    }
+  }
+  return __map_drop_impl(m);
 }
 
 // __map_drop_strcols_impl is __map_drop_impl for a map whose columns own what
@@ -1293,15 +1353,15 @@ pub function __map_drop_strcols_impl(m: usize): usize {
     return m;
   }
   if (__load_i32(m - 8) == 1) {
-    var buf: usize = __load_ptr(m);
-    var keys: boolean = __load_i32(buf + 8) == 1;
-    var vals: boolean = __map_val_kind(buf) == 5;
-    var len_: i32 = __load_i32(buf + 4);
-    var ptrW: i32 = __ptr_width();
-    var entriesBase: usize = buf + __map_hdr(buf) + __load_i32(buf) * 4;
-    var i: i32 = 0;
+    let buf: usize = __load_ptr(m);
+    let keys: boolean = __load_i32(buf + 8) == 1;
+    let vals: boolean = __map_val_kind(buf) == 5;
+    let len_: i32 = __load_i32(buf + 4);
+    let ptrW: i32 = __ptr_width();
+    let entriesBase: usize = buf + __map_hdr(buf) + __load_i32(buf) * 4;
+    let i: i32 = 0;
     while (i < len_) {
-      var slot: usize = entriesBase + i * (2 * ptrW);
+      let slot: usize = entriesBase + i * (2 * ptrW);
       if (keys) {
         __fern_str_dec(__load_ptr(slot) as string);
       } else {
@@ -1328,14 +1388,14 @@ pub function __map_drop_boxes_impl(m: usize, release: (usize) => usize): usize {
     return m;
   }
   if (__load_i32(m - 8) == 1) {
-    var buf: usize = __load_ptr(m);
-    var keys: boolean = __load_i32(buf + 8) == 1;
-    var len_: i32 = __load_i32(buf + 4);
-    var ptrW: i32 = __ptr_width();
-    var entriesBase: usize = buf + __map_hdr(buf) + __load_i32(buf) * 4;
-    var i: i32 = 0;
+    let buf: usize = __load_ptr(m);
+    let keys: boolean = __load_i32(buf + 8) == 1;
+    let len_: i32 = __load_i32(buf + 4);
+    let ptrW: i32 = __ptr_width();
+    let entriesBase: usize = buf + __map_hdr(buf) + __load_i32(buf) * 4;
+    let i: i32 = 0;
     while (i < len_) {
-      var slot: usize = entriesBase + i * (2 * ptrW);
+      let slot: usize = entriesBase + i * (2 * ptrW);
       if (keys) {
         __fern_str_dec(__load_ptr(slot) as string);
       } else {
@@ -1354,7 +1414,7 @@ pub function __map_drop_boxes_impl(m: usize, release: (usize) => usize): usize {
 // __map_delete_keyed_impl, the single implementation. Dispatcher over
 // the builtin key kinds.
 pub function __map_delete_impl(m: usize, k: usize): boolean {
-  var keyKind: i32 = __load_i32(__load_ptr(m) + 8);
+  let keyKind: i32 = __load_i32(__load_ptr(m) + 8);
   if (keyKind == 0) {
     return __map_delete_keyed_impl(m, k, __map_hash_scalar, __map_eq_scalar);
   }
@@ -1365,18 +1425,18 @@ pub function __map_delete_impl(m: usize, k: usize): boolean {
 }
 
 pub function __map_clear_impl(m: usize): void {
-  var buf: usize = __load_ptr(m);
-  var cap: i32 = __load_i32(buf);
+  let buf: usize = __load_ptr(m);
+  let cap: i32 = __load_i32(buf);
   // The loop below frees the key cell as well as the value cell, so it has
   // to run when EITHER column boxes. Gating on the value alone stranded
   // every key cell of a Map[string, scalar] on the targets where a string
   // key IS a cell (#8634).
   if (__map_val_cell_bytes(buf) != 0 || __map_key_cell_bytes(buf) != 0) {
-    var len_: i32 = __load_i32(buf + 4);
-    var ptrW: i32 = __ptr_width();
-    var entryStride: i32 = 2 * ptrW;
-    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-    var i: i32 = 0;
+    let len_: i32 = __load_i32(buf + 4);
+    let ptrW: i32 = __ptr_width();
+    let entryStride: i32 = 2 * ptrW;
+    let entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+    let i: i32 = 0;
     while (i < len_) {
       __map_free_val_cell(buf, __load_ptr(entriesBase + i * entryStride + ptrW));
       __map_free_key_cell(buf, __load_ptr(entriesBase + i * entryStride));
@@ -1407,11 +1467,11 @@ pub function __map_clear_impl(m: usize): void {
 //     used to be eight near-verbatim body twins of this family).
 
 function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): i32 {
-  var buf: usize = __load_ptr(m);
-  var cap: i32 = __load_i32(buf);
-  var mask: i32 = cap - 1;
-  var entryStride: i32 = 2 * __ptr_width();
-  var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+  let buf: usize = __load_ptr(m);
+  let cap: i32 = __load_i32(buf);
+  let mask: i32 = cap - 1;
+  let entryStride: i32 = 2 * __ptr_width();
+  let entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
 
   // Small maps skip hashing entirely and scan the entry array.
   //
@@ -1428,11 +1488,11 @@ function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: 
   // it must not extend to sizes where the probe's O(1) wins. Eight keeps it
   // to at most eight comparisons and matches the size where a table this
   // small is dominated by the fixed cost of hashing anyway.
-  var len_: i32 = __load_i32(buf + 4);
+  let len_: i32 = __load_i32(buf + 4);
   if (len_ <= 8) {
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < len_) {
-      var scanK: usize = __load_ptr(entriesBase + j * entryStride);
+      let scanK: usize = __load_ptr(entriesBase + j * entryStride);
       if (eq_fn(scanK, k)) {
         return j;
       }
@@ -1449,13 +1509,13 @@ function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: 
   // walk at one full sweep, so a table holding only full + tombstone buckets
   // (constructible at cap 4, which the load factor keeps to 2 live entries)
   // terminates instead of cycling.
-  var h: i32 = __map_bucket_hash(k, hash_fn, __map_seed(buf));
-  var bucket: i32 = h & mask;
+  let h: i32 = __map_bucket_hash(k, hash_fn, __map_seed(buf));
+  let bucket: i32 = h & mask;
   // Home-bucket fast path: at the 75% load ceiling most probes end at their
   // first bucket, where the group machinery costs more than the one compare
   // it replaces (measured +14% retired on the map_int bench without this).
   // The group scan below is for the chains that continue past home.
-  var homeB: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
+  let homeB: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
   if (homeB == 0 - 1) {
     return 0 - 1;
   }
@@ -1464,27 +1524,27 @@ function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: 
       return homeB;
     }
   }
-  var ctrlBase: usize = __map_ctrl_base(buf, cap);
-  var lo: u64 = __map_swar_lo();
-  var hi: u64 = __map_swar_hi();
-  var all: u64 = __map_swar_all();
-  var h2b: u64 = __map_h2(h) as u64 * lo;
-  var eb: u64 = 128 as u64 * lo;
-  var probed: i32 = 0;
+  let ctrlBase: usize = __map_ctrl_base(buf, cap);
+  let lo: u64 = __map_swar_lo();
+  let hi: u64 = __map_swar_hi();
+  let all: u64 = __map_swar_all();
+  let h2b: u64 = __map_h2(h) as u64 * lo;
+  let eb: u64 = 128 as u64 * lo;
+  let probed: i32 = 0;
   while (probed < cap) {
-    var w: u64 = __load_i64(ctrlBase + bucket) as u64;
-    var x: u64 = w ^ h2b;
-    var hits: u64 = x - lo & (x ^ all) & hi;
+    let w: u64 = __load_i64(ctrlBase + bucket) as u64;
+    let x: u64 = w ^ h2b;
+    let hits: u64 = x - lo & (x ^ all) & hi;
     while (hits != 0 as u64) {
-      var pos: i32 = bucket + (__ctz64(hits) >> 3) & mask;
-      var b: i32 = __load_i32(buf + __map_hdr(buf) + pos * 4);
-      var entryK: usize = __load_ptr(entriesBase + b * entryStride);
+      let pos: i32 = bucket + (__ctz64(hits) >> 3) & mask;
+      let b: i32 = __load_i32(buf + __map_hdr(buf) + pos * 4);
+      let entryK: usize = __load_ptr(entriesBase + b * entryStride);
       if (eq_fn(entryK, k)) {
         return b;
       }
       hits = hits & hits - 1 as u64;
     }
-    var y: u64 = w ^ eb;
+    let y: u64 = w ^ eb;
     if ((y - lo & (y ^ all) & hi) != 0 as u64) {
       return 0 - 1;
     }
@@ -1499,7 +1559,7 @@ pub function __map_has_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, e
 }
 
 pub function __map_get_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): Option[usize] {
-  var idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
+  let idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
   if (idx == 0 - 1) {
     return None;
   }
@@ -1507,7 +1567,7 @@ pub function __map_get_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, e
 }
 
 pub function __map_get_or_keyed_impl(m: usize, k: usize, fallback: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
-  var idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
+  let idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
   if (idx == 0 - 1) {
     return __map_retain_val(__load_ptr(m), fallback);
   }
@@ -1515,7 +1575,7 @@ pub function __map_get_or_keyed_impl(m: usize, k: usize, fallback: usize, hash_f
 }
 
 pub function __map_lookup_val_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
-  var idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
+  let idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
   if (idx == 0 - 1) {
     return 0;
   }
@@ -1523,22 +1583,22 @@ pub function __map_lookup_val_keyed(m: usize, k: usize, hash_fn: (usize) => i32,
 }
 
 function __map_grow_keyed(m: usize, hash_fn: (usize) => i32): usize {
-  var oldBuf: usize = __load_ptr(m);
-  var seed: i32 = __map_seed(oldBuf);
-  var oldCap: i32 = __load_i32(oldBuf);
-  var oldLen: i32 = __load_i32(oldBuf + 4);
-  var oldKK: i32 = __load_i32(oldBuf + 8);
-  var oldVK: i32 = __load_i32(oldBuf + 12);
-  var hdr: i32 = __map_hdr_bytes(oldKK);
-  var ptrW: i32 = __ptr_width();
-  var entryStride: i32 = 2 * ptrW;
-  var oldEntries: usize = oldBuf + hdr + oldCap * 4;
-  var newCap: i32 = 4;
+  let oldBuf: usize = __load_ptr(m);
+  let seed: i32 = __map_seed(oldBuf);
+  let oldCap: i32 = __load_i32(oldBuf);
+  let oldLen: i32 = __load_i32(oldBuf + 4);
+  let oldKK: i32 = __load_i32(oldBuf + 8);
+  let oldVK: i32 = __load_i32(oldBuf + 12);
+  let hdr: i32 = __map_hdr_bytes(oldKK);
+  let ptrW: i32 = __ptr_width();
+  let entryStride: i32 = 2 * ptrW;
+  let oldEntries: usize = oldBuf + hdr + oldCap * 4;
+  let newCap: i32 = 4;
   if (oldCap != 0) {
     newCap = oldCap << 1;
   }
-  var newMask: i32 = newCap - 1;
-  var newBuf: usize = __alloc(__map_buf_bytes(newCap, hdr));
+  let newMask: i32 = newCap - 1;
+  let newBuf: usize = __alloc(__map_buf_bytes(newCap, hdr));
   __store_i32(newBuf, newCap);
   __store_i32(newBuf + 4, oldLen);
   __store_i32(newBuf + 8, oldKK);
@@ -1546,21 +1606,21 @@ function __map_grow_keyed(m: usize, hash_fn: (usize) => i32): usize {
   __store_i32(newBuf + 16, seed);  // a grow must not change the map's hash
   __store_i32(newBuf + 20, __load_i32(oldBuf + 20));
   __memset(newBuf + hdr, 255, newCap * 4);
-  var newCtrl: usize = __map_ctrl_base(newBuf, newCap);
+  let newCtrl: usize = __map_ctrl_base(newBuf, newCap);
   __memset(newCtrl, 128, newCap + 8);
-  var newEntries: usize = newBuf + hdr + newCap * 4;
-  var i: i32 = 0;
+  let newEntries: usize = newBuf + hdr + newCap * 4;
+  let i: i32 = 0;
   while (i < oldLen) {
-    var key: usize = __load_ptr(oldEntries + i * entryStride);
-    var val: usize = __load_ptr(oldEntries + i * entryStride + ptrW);
+    let key: usize = __load_ptr(oldEntries + i * entryStride);
+    let val: usize = __load_ptr(oldEntries + i * entryStride + ptrW);
     __store_ptr(newEntries + i * entryStride, key);
     __store_ptr(newEntries + i * entryStride + ptrW, val);
     // Scalar first-empty placement: the fresh table has no tombstones,
     // and the position it picks is exactly where the group probe looks.
-    var h: i32 = __map_bucket_hash(key, hash_fn, seed);
-    var bucket: i32 = h & newMask;
+    let h: i32 = __map_bucket_hash(key, hash_fn, seed);
+    let bucket: i32 = h & newMask;
     while (true) {
-      var b: i32 = __load_i32(newBuf + hdr + bucket * 4);
+      let b: i32 = __load_i32(newBuf + hdr + bucket * 4);
       if (b == 0 - 1) {
         __store_i32(newBuf + hdr + bucket * 4, i);
         __map_ctrl_set(newCtrl, newCap, bucket, __map_h2(h));
@@ -1577,36 +1637,36 @@ function __map_grow_keyed(m: usize, hash_fn: (usize) => i32): usize {
 
 pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
   m = __map_cow_inplace(m);
-  var buf: usize = __load_ptr(m);
-  var cap: i32 = __load_i32(buf);
-  var len_: i32 = __load_i32(buf + 4);
+  let buf: usize = __load_ptr(m);
+  let cap: i32 = __load_i32(buf);
+  let len_: i32 = __load_i32(buf + 4);
   if ((len_ + 1) * 4 >= cap * 3) {
     __map_grow_keyed(m, hash_fn);
     buf = __load_ptr(m);
     cap = __load_i32(buf);
     len_ = __load_i32(buf + 4);
   }
-  var mask: i32 = cap - 1;
-  var ptrW: i32 = __ptr_width();
-  var entryStride: i32 = 2 * ptrW;
-  var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+  let mask: i32 = cap - 1;
+  let ptrW: i32 = __ptr_width();
+  let entryStride: i32 = 2 * ptrW;
+  let entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
   // Group probe (see __map_lookup_keyed). insertSlot is the first dead
   // (tombstone or empty) position in probe order — the same slot the scalar
   // probe chose — found via the ctz of the combined dead mask; the probe
   // still runs to the first EMPTY so an existing key anywhere on the path is
   // seen and overwritten. The load factor guarantees a dead slot inside one
   // sweep, so insertSlot is always set when the loop exits.
-  var h: i32 = __map_bucket_hash(k, hash_fn, __map_seed(buf));
-  var bucket: i32 = h & mask;
-  var h2: i32 = __map_h2(h);
-  var ctrlBase: usize = __map_ctrl_base(buf, cap);
-  var insertSlot: i32 = 0 - 1;
+  let h: i32 = __map_bucket_hash(k, hash_fn, __map_seed(buf));
+  let bucket: i32 = h & mask;
+  let h2: i32 = __map_h2(h);
+  let ctrlBase: usize = __map_ctrl_base(buf, cap);
+  let insertSlot: i32 = 0 - 1;
   // Home-bucket fast path (see __map_lookup_keyed): an empty home bucket is
   // a fresh insert, a home-bucket key match is an overwrite; both replicate
   // the scalar probe's first iteration exactly. A tombstone or a foreign key
   // at home falls into the group scan, whose dead-mask logic picks the same
   // slot the scalar probe would have.
-  var homeB: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
+  let homeB: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
   if (homeB == 0 - 1) {
     insertSlot = bucket;
   } else if (homeB >= 0 && eq_fn(__load_ptr(entriesBase + homeB * entryStride), k)) {
@@ -1614,22 +1674,22 @@ pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)
     __store_ptr(entriesBase + homeB * entryStride + ptrW, v);
     return m;
   }
-  var lo: u64 = __map_swar_lo();
-  var hi: u64 = __map_swar_hi();
-  var all: u64 = __map_swar_all();
-  var h2b: u64 = h2 as u64 * lo;
-  var eb: u64 = 128 as u64 * lo;
-  var tb: u64 = 254 as u64 * lo;
-  var probed: i32 = 0;
-  var done: boolean = insertSlot != 0 - 1;
+  let lo: u64 = __map_swar_lo();
+  let hi: u64 = __map_swar_hi();
+  let all: u64 = __map_swar_all();
+  let h2b: u64 = h2 as u64 * lo;
+  let eb: u64 = 128 as u64 * lo;
+  let tb: u64 = 254 as u64 * lo;
+  let probed: i32 = 0;
+  let done: boolean = insertSlot != 0 - 1;
   while (!done && probed < cap) {
-    var w: u64 = __load_i64(ctrlBase + bucket) as u64;
-    var x: u64 = w ^ h2b;
-    var hits: u64 = x - lo & (x ^ all) & hi;
+    let w: u64 = __load_i64(ctrlBase + bucket) as u64;
+    let x: u64 = w ^ h2b;
+    let hits: u64 = x - lo & (x ^ all) & hi;
     while (hits != 0 as u64) {
-      var pos: i32 = bucket + (__ctz64(hits) >> 3) & mask;
-      var b: i32 = __load_i32(buf + __map_hdr(buf) + pos * 4);
-      var entryK: usize = __load_ptr(entriesBase + b * entryStride);
+      let pos: i32 = bucket + (__ctz64(hits) >> 3) & mask;
+      let b: i32 = __load_i32(buf + __map_hdr(buf) + pos * 4);
+      let entryK: usize = __load_ptr(entriesBase + b * entryStride);
       if (eq_fn(entryK, k)) {
         __map_dec_value(buf, __load_ptr(entriesBase + b * entryStride + ptrW));
         __store_ptr(entriesBase + b * entryStride + ptrW, v);
@@ -1637,11 +1697,11 @@ pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)
       }
       hits = hits & hits - 1 as u64;
     }
-    var y: u64 = w ^ eb;
-    var empty: u64 = y - lo & (y ^ all) & hi;
+    let y: u64 = w ^ eb;
+    let empty: u64 = y - lo & (y ^ all) & hi;
     if (insertSlot == 0 - 1) {
-      var z: u64 = w ^ tb;
-      var dead: u64 = empty | z - lo & (z ^ all) & hi;
+      let z: u64 = w ^ tb;
+      let dead: u64 = empty | z - lo & (z ^ all) & hi;
       if (dead != 0 as u64) {
         insertSlot = bucket + (__ctz64(dead) >> 3) & mask;
       }
@@ -1662,28 +1722,28 @@ pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)
 }
 
 pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): boolean {
-  var buf: usize = __load_ptr(m);
-  var seed: i32 = __map_seed(buf);
-  var cap: i32 = __load_i32(buf);
-  var len_: i32 = __load_i32(buf + 4);
-  var mask: i32 = cap - 1;
-  var ptrW: i32 = __ptr_width();
-  var entryStride: i32 = 2 * ptrW;
-  var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+  let buf: usize = __load_ptr(m);
+  let seed: i32 = __map_seed(buf);
+  let cap: i32 = __load_i32(buf);
+  let len_: i32 = __load_i32(buf + 4);
+  let mask: i32 = cap - 1;
+  let ptrW: i32 = __ptr_width();
+  let entryStride: i32 = 2 * ptrW;
+  let entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
   // Group probe (see __map_lookup_keyed), tracking the bucket POSITION of
   // the hit as well as the entry index, since the hit bucket is what gets
   // tombstoned.
-  var h: i32 = __map_bucket_hash(k, hash_fn, seed);
-  var bucket: i32 = h & mask;
-  var ctrlBase: usize = __map_ctrl_base(buf, cap);
-  var foundBucket: i32 = 0 - 1;
-  var idx: i32 = 0;
+  let h: i32 = __map_bucket_hash(k, hash_fn, seed);
+  let bucket: i32 = h & mask;
+  let ctrlBase: usize = __map_ctrl_base(buf, cap);
+  let foundBucket: i32 = 0 - 1;
+  let idx: i32 = 0;
   // Home-bucket fast path (see __map_lookup_keyed).
-  var homeB: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
+  let homeB: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
   if (homeB == 0 - 1) {
     return false;
   }
-  var done: boolean = false;
+  let done: boolean = false;
   if (homeB >= 0) {
     if (eq_fn(__load_ptr(entriesBase + homeB * entryStride), k)) {
       foundBucket = bucket;
@@ -1691,20 +1751,20 @@ pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32
       done = true;
     }
   }
-  var lo: u64 = __map_swar_lo();
-  var hi: u64 = __map_swar_hi();
-  var all: u64 = __map_swar_all();
-  var h2b: u64 = __map_h2(h) as u64 * lo;
-  var eb: u64 = 128 as u64 * lo;
-  var probed: i32 = 0;
+  let lo: u64 = __map_swar_lo();
+  let hi: u64 = __map_swar_hi();
+  let all: u64 = __map_swar_all();
+  let h2b: u64 = __map_h2(h) as u64 * lo;
+  let eb: u64 = 128 as u64 * lo;
+  let probed: i32 = 0;
   while (!done && probed < cap) {
-    var w: u64 = __load_i64(ctrlBase + bucket) as u64;
-    var x: u64 = w ^ h2b;
-    var hits: u64 = x - lo & (x ^ all) & hi;
+    let w: u64 = __load_i64(ctrlBase + bucket) as u64;
+    let x: u64 = w ^ h2b;
+    let hits: u64 = x - lo & (x ^ all) & hi;
     while (hits != 0 as u64) {
-      var pos: i32 = bucket + (__ctz64(hits) >> 3) & mask;
-      var b: i32 = __load_i32(buf + __map_hdr(buf) + pos * 4);
-      var entryK: usize = __load_ptr(entriesBase + b * entryStride);
+      let pos: i32 = bucket + (__ctz64(hits) >> 3) & mask;
+      let b: i32 = __load_i32(buf + __map_hdr(buf) + pos * 4);
+      let entryK: usize = __load_ptr(entriesBase + b * entryStride);
       if (eq_fn(entryK, k)) {
         foundBucket = pos;
         idx = b;
@@ -1715,7 +1775,7 @@ pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32
       }
     }
     if (!done) {
-      var y: u64 = w ^ eb;
+      let y: u64 = w ^ eb;
       if ((y - lo & (y ^ all) & hi) != 0 as u64) {
         done = true;
       } else {
@@ -1731,18 +1791,18 @@ pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32
   __map_free_key_cell(buf, __load_ptr(entriesBase + idx * entryStride));
   __store_i32(buf + __map_hdr(buf) + foundBucket * 4, 0 - 2);
   __map_ctrl_set(ctrlBase, cap, foundBucket, 254);
-  var last: i32 = len_ - 1;
+  let last: i32 = len_ - 1;
   if (idx != last) {
     // Swap-with-last (keyKind-3 twin of __map_delete_impl) —
     // breaks insertion-order iteration after a delete, same
     // as the scalar path. See the module header's "Iteration
     // order" contract (#4388).
-    var lastKey: usize = __load_ptr(entriesBase + last * entryStride);
-    var lastBucket: i32 = __map_bucket_hash(lastKey, hash_fn, seed) & mask;
+    let lastKey: usize = __load_ptr(entriesBase + last * entryStride);
+    let lastBucket: i32 = __map_bucket_hash(lastKey, hash_fn, seed) & mask;
     while (__load_i32(buf + __map_hdr(buf) + lastBucket * 4) != last) {
       lastBucket = lastBucket + 1 & mask;
     }
-    var lastVal: usize = __load_ptr(entriesBase + last * entryStride + ptrW);
+    let lastVal: usize = __load_ptr(entriesBase + last * entryStride + ptrW);
     __store_ptr(entriesBase + idx * entryStride, lastKey);
     __store_ptr(entriesBase + idx * entryStride + ptrW, lastVal);
     __store_i32(buf + __map_hdr(buf) + lastBucket * 4, idx);
@@ -1763,26 +1823,26 @@ pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32
 // that owns the cursor frees it at its last use; the returned `it` is
 // base + 8, and every `__mapiter_*` access is an offset from `it`.
 pub function __map_iter_impl(m: usize): usize {
-  var base: usize = __alloc(24);
+  let base: usize = __alloc(24);
   __store_i32(base, 1);
-  var it: usize = base + 8;
+  let it: usize = base + 8;
   __store_ptr(it, __load_ptr(m));  // data ptr
   __store_i32(it + 8, 0);  // cursor
   return it;
 }
 
 pub function __mapiter_has_next_impl(it: usize): boolean {
-  var buf: usize = __load_ptr(it);
-  var i: i32 = __load_i32(it + 8);
+  let buf: usize = __load_ptr(it);
+  let i: i32 = __load_i32(it + 8);
   return i < __load_i32(buf + 4);
 }
 
 // Shared address arithmetic for MapIter.key() / .value().
 pub function __mapiter_entry_addr(it: usize): usize {
-  var buf: usize = __load_ptr(it);
-  var cap: i32 = __load_i32(buf);
-  var i: i32 = __load_i32(it + 8);
-  var entryStride: i32 = 2 * __ptr_width();
+  let buf: usize = __load_ptr(it);
+  let cap: i32 = __load_i32(buf);
+  let i: i32 = __load_i32(it + 8);
+  let entryStride: i32 = 2 * __ptr_width();
   return buf + __map_hdr(buf) + cap * 4 + i * entryStride;
 }
 
@@ -1831,7 +1891,7 @@ pub function __mapiter_drop_impl(it: usize): usize {
 // per-key `get()` (or driving the `iter()` cursor by hand). Empty map
 // → empty array.
 pub function (m: Map[K, V]) entries(): (K, V)[] {
-  var out: (K, V)[] = [];
+  let out: (K, V)[] = [];
   // Use the MapIter cursor (`for (k, v) in m`) rather than snapshotting
   // `keys()` and re-`get()`ing each key: the cursor visits the columns in
   // the same storage order with NO per-call `K[]` snapshot and no per-key
@@ -1848,7 +1908,7 @@ pub function (m: Map[K, V]) entries(): (K, V)[] {
 // semantics, matching a left-to-right `insert` fold). Neither input is
 // mutated.
 pub function (m: Map[K, V]) merge(other: Map[K, V]): Map[K, V] {
-  var out: Map[K, V] = m;
+  let out: Map[K, V] = m;
   // Same cursor rewrite as `entries()`: fold `other`'s pairs in storage
   // order off the MapIter cursor rather than a `keys()` snapshot + per-key
   // `get()`. Left-to-right order preserved, so other-wins semantics are
@@ -1871,7 +1931,7 @@ pub function (m: Map[K, V]) extend(other: Map[K, V]): Map[K, V] {
 // than `Map::from` until associated-function namespacing lands, #2700;
 // call it qualified: `map.from(pairs)`.)
 pub function from[K, V](pairs: (K, V)[]): Map[K, V] {
-  var m: Map[K, V] = map_new(pairs.len());
+  let m: Map[K, V] = map_new(pairs.len());
   for p in pairs {
     m = m.insert(p.0, p.1);
   }
@@ -1885,7 +1945,7 @@ pub function from[K, V](pairs: (K, V)[]): Map[K, V] {
 // `fallback` is inserted and returned. Threading the map back out keeps
 // the map's value semantics (`insert` yields a fresh map) explicit:
 //
-//     var (m2, n) = counts.get_or_insert(key, 0);
+//     let (m2, n) = counts.get_or_insert(key, 0);
 //     m = m2.insert(key, n + 1);
 pub function (m: Map[K, V]) get_or_insert(k: K, fallback: V): (Map[K, V], V) {
   match (m.get(k)) {
@@ -1893,7 +1953,7 @@ pub function (m: Map[K, V]) get_or_insert(k: K, fallback: V): (Map[K, V], V) {
       return (m, v);
     },
     None => {
-      var m2: Map[K, V] = m.insert(k, fallback);
+      let m2: Map[K, V] = m.insert(k, fallback);
       return (m2, fallback);
     }
   }
@@ -1907,7 +1967,7 @@ pub function (m: Map[K, V]) get_or_insert(k: K, fallback: V): (Map[K, V], V) {
 //
 //     for w in words { counts = counts.update(w, 0, (c: i32): i32 => { return c + 1; }); }
 pub function (m: Map[K, V]) update(k: K, init: V, fn: (V) => V): Map[K, V] {
-  var cur: V = m.get_or(k, init);
+  let cur: V = m.get_or(k, init);
   return m.insert(k, fn(cur));
 }
 

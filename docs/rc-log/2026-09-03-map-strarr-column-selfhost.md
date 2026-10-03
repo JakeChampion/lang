@@ -26,7 +26,7 @@ Isolation (x86-64):
 | insert, `match (m.get(i))` | 900/600 **18400** | 900/900 `0` |
 | LITERAL map, `get_or(1, []).len()` | 1000/400 25600 | 1000/1000 `0` |
 | `Map[i32, i32[]]`, `get_or(i, []).len()` | — | 800/800 `0` |
-| insert, `var v: string[] = m.get_or(i, [])` | 1000/600 **20800** | 1000/802 **14256** |
+| insert, `let v: string[] = m.get_or(i, [])` | 1000/600 **20800** | 1000/802 **14256** |
 
 ## The column: refused because one dec is not a string[]'s whole release
 
@@ -66,7 +66,7 @@ struct literal its field drop.
 
 ## Not moved
 
-- `var v: string[] = m.get_or(i, [])` — the BOUND read (1000/802 above): the
+- `let v: string[] = m.get_or(i, [])` — the BOUND read (1000/802 above): the
   binding's read-side retain and its sweep do not net to zero for a string[]
   value; native reclaims it after its get_or-ownership change, the self-host's
   "counted read" model is the slice that would.

@@ -43,8 +43,8 @@ function set_response(out: own ResponseOutparam, disc: i32, resp: own OutgoingRe
 
 @export("wasi:http/incoming-handler@0.2.0", "handle")
 function on_request(request: own IncomingRequest, response_out: own ResponseOutparam): void {
-	var headers: own Fields = fields_new();
-	var resp: own OutgoingResponse = response_new(headers);
+	let headers: own Fields = fields_new();
+	let resp: own OutgoingResponse = response_new(headers);
 	set_response(response_out, 0, resp, 0, 0 as i64, 0, 0, 0, 0);
 	return;
 }`

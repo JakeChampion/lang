@@ -11,7 +11,7 @@ func TestSelfHostStrSliceRcBoxIRX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 
 	// "hello"[1:4] = "ell", copied into an owned string: len 3.
-	if _, exit := cli.exitOf(t, `function main(): i32 { var s: string = "hello"; var t: string = slice_unchecked(s, 1, 4) + ""; return t.len(); }
+	if _, exit := cli.exitOf(t, `function main(): i32 { let s: string = "hello"; let t: string = slice_unchecked(s, 1, 4) + ""; return t.len(); }
 `, "x86-64-linux"); exit != 3 {
 		t.Errorf("slice copy exited %d, want 3", exit)
 	}
@@ -20,19 +20,19 @@ func TestSelfHostStrSliceRcBoxIRX86_64(t *testing.T) {
 	// an over-release ticks __rc_underflow_count() -> 99.
 	const churn = `import "std/string";
 function churn(n: i32): i32 {
-    var s: string = "  mid  ";
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let s: string = "  mid  ";
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var r: str = s.trim();
+        let r: str = s.trim();
         if (r.len() != 3) { bad = 1; }
-        var sl: str = slice_unchecked(s, 2, 5);
+        let sl: str = slice_unchecked(s, 2, 5);
         if (sl.len() != 3) { bad = 1; }
         i = i + 1;
     }
     return bad;
 }
-function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return v; }
+function main(): i32 { let v: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return v; }
 `
 	stderr, exit := cli.exitOf(t, churn, "x86-64-linux", "FERN_LEAKCHECK=1")
 	if exit != 0 {

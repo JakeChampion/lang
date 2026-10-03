@@ -2,7 +2,7 @@ package e2eselfhost
 
 import "testing"
 
-// tupleDestructureStrIRCases pin tuple destructuring (`var (a, b) = E` /
+// tupleDestructureStrIRCases pin tuple destructuring (`let (a, b) = E` /
 // `let (a, b) = E`) where at least one element is a POINTER-shaped value
 // (`string`) on the self-host IR path (x86-64 + wasm). The existing
 // tuple-destructure pin (self_host_tuple_destructure_ir_test) deliberately stays
@@ -27,17 +27,17 @@ var tupleDestructureStrIRCases = []struct {
 	want int
 }{
 	// scalar + string element: 5 + len("hi") = 7.
-	{"scalar-then-str", `var (a, s) = mk2(); return a + s.len();`, 7},
+	{"scalar-then-str", `let (a, s) = mk2(); return a + s.len();`, 7},
 	// string-first tuple: len("abc") + 9 = 12.
-	{"str-then-scalar", `var (s, n) = mkStrFirst(); return s.len() + n;`, 12},
+	{"str-then-scalar", `let (s, n) = mkStrFirst(); return s.len() + n;`, 12},
 	// three-element mixed tuple: 1 + len("xy") + 2 = 5.
-	{"three-mixed", `var (a, s, b) = mk3(); return a + s.len() + b;`, 5},
+	{"three-mixed", `let (a, s, b) = mk3(); return a + s.len() + b;`, 5},
 	// both elements pointer-shaped: len("ab") + len("cde") = 5.
-	{"two-strings", `var (p, q) = mk2str(); return p.len() + q.len();`, 5},
+	{"two-strings", `let (p, q) = mk2str(); return p.len() + q.len();`, 5},
 	// the `let` binder form with a string element: 5 + len("hi") = 7.
 	{"let-scalar-str", `let (a, s) = mk2(); return a + s.len();`, 7},
 	// bind only the string element (the i32 slot is still read past).
-	{"str-only-use", `var (a, s) = mk2(); return s.len();`, 2},
+	{"str-only-use", `let (a, s) = mk2(); return s.len();`, 2},
 }
 
 func tupleDestructureStrIRSrc(mainBody string) string {

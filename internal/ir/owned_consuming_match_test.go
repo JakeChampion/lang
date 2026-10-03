@@ -58,7 +58,7 @@ func TestOwnedConsumingMatchFires(t *testing.T) {
 func TestOwnedConsumingMatchBlockedInLoop(t *testing.T) {
 	src := `enum List { Cons(i32, List), Nil }
 function step(l: List): List {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 1) {
         i = i + 1;
         match (l) {
@@ -83,7 +83,7 @@ function main(): i32 { return 0; }`
 func TestOwnedConsumingMatchBlockedByLaterUse(t *testing.T) {
 	src := `enum List { Cons(i32, List), Nil }
 function peek(l: List): List {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (l) {
         Cons(h, t) => { n = h; },
         Nil => { n = 0; },

@@ -149,7 +149,7 @@ function u16_at(bs: u8[], off: i32): i32 {
 // `short`s and `who -d` prints them with %d, so a wait status with the
 // high bit set is a negative number there.
 function i16_at(bs: u8[], off: i32): i32 {
-  var v: i32 = u16_at(bs, off);
+  let v: i32 = u16_at(bs, off);
   if (v > 32767) {
     return v - 65536;
   }
@@ -158,7 +158,7 @@ function i16_at(bs: u8[], off: i32): i32 {
 
 // A little-endian signed 32-bit field.
 function i32_at(bs: u8[], off: i32): i32 {
-  var v: i64 = bs[off] as i64 + bs[off + 1] as i64 * (256 as i64) + bs[off + 2] as i64 * (65536 as i64) + bs[off + 3] as i64 * (16777216 as i64);
+  let v: i64 = bs[off] as i64 + bs[off + 1] as i64 * (256 as i64) + bs[off + 2] as i64 * (65536 as i64) + bs[off + 3] as i64 * (16777216 as i64);
   if (v > 2147483647 as i64) {
     v = v - 4294967296 as i64;
   }
@@ -167,8 +167,8 @@ function i32_at(bs: u8[], off: i32): i32 {
 
 // A little-endian signed 64-bit field.
 function i64_at(bs: u8[], off: i32): i64 {
-  var v: i64 = 0 as i64;
-  var i: i32 = 7;
+  let v: i64 = 0 as i64;
+  let i: i32 = 7;
   while (i >= 0) {
     v = v * (256 as i64) + bs[off + i] as i64;
     i = i - 1;
@@ -179,12 +179,12 @@ function i64_at(bs: u8[], off: i32): i64 {
 // A NUL-padded fixed-width char field, cut at the first NUL or at the
 // field's end, whichever comes first.
 function field_at(bs: u8[], off: i32, width: i32): string {
-  var n: i32 = 0;
+  let n: i32 = 0;
   while (n < width && bs[off + n] as i32 != 0) {
     n = n + 1;
   }
-  var out: u8[] = [];
-  var i: i32 = 0;
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(bs[off + i]);
     i = i + 1;
@@ -204,7 +204,7 @@ pub function read_all(path: string): Entry[] {
       return entries;
     },
     Err(_) => {
-      var none: Entry[] = [];
+      let none: Entry[] = [];
       return none;
     }
   }
@@ -214,10 +214,10 @@ pub function read_all(path: string): Entry[] {
 // it: `uptime` has no boot time when the database cannot be read, and
 // names the errno of the failed open in that diagnostic.
 pub function read_all_result(path: string): Result[Entry[], IoError] {
-  var out: Entry[] = [];
+  let out: Entry[] = [];
   match (read_file_bytes(path)) {
     Ok(bs) => {
-      var off: i32 = 0;
+      let off: i32 = 0;
       while (off + record_bytes() <= bs.len()) {
         out = out.append(entry_at(bs, off));
         off = off + record_bytes();
@@ -238,7 +238,7 @@ pub function (e: Entry) is_login(): boolean {
 
 // The entry's user name with trailing spaces removed.
 pub function (e: Entry) name(): string {
-  var n: i32 = e.user.len();
+  let n: i32 = e.user.len();
   while (n > 0 && e.user[n - 1] as i32 == 32) {
     n = n - 1;
   }
@@ -250,9 +250,9 @@ pub function (e: Entry) name(): string {
 
 // Every logged-in user's entry in `path`, in file order.
 pub function read_logins(path: string): Entry[] {
-  var all: Entry[] = read_all(path);
-  var out: Entry[] = [];
-  var i: i32 = 0;
+  let all: Entry[] = read_all(path);
+  let out: Entry[] = [];
+  let i: i32 = 0;
   while (i < all.len()) {
     if (all[i].is_login()) {
       out = out.append(all[i]);
@@ -313,8 +313,8 @@ pub function terminal_line(): Option[string] {
 // first USER_PROCESS record whose ut_line is that terminal, with a
 // non-empty name. `line` carries no `/dev/` prefix, matching the field.
 pub function user_on_line(path: string, line: string): Option[string] {
-  var entries: Entry[] = read_all(path);
-  var i: i32 = 0;
+  let entries: Entry[] = read_all(path);
+  let i: i32 = 0;
   while (i < entries.len()) {
     if (entries[i].kind == user_process() && entries[i].line == line && entries[i].user.len() > 0) {
       return Some(entries[i].user);

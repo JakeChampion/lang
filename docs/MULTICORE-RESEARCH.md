@@ -393,11 +393,11 @@ import "std/worker";
 function render(own job: Job): Report { ... }   // ordinary code
 
 function main(): i32 {
-    var w: worker.Worker[Report] = worker.spawn(own function (): Report {
+    let w: worker.Worker[Report] = worker.spawn(own function (): Report {
         return render(job);        // captures checked send-safe, copied in
     });
-    var local = do_other_work();   // overlaps with w, incl. async.gather
-    var r: Report = w.join()?;     // own result, copied into this heap
+    let local = do_other_work();   // overlaps with w, incl. async.gather
+    let r: Report = w.join()?;     // own result, copied into this heap
     return combine(local, r);
 }
 ```

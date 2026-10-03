@@ -32,8 +32,8 @@ var annotateScopeCases = []struct {
 	{"for_f64_method", `struct V { x: f64 }
 function (v: V) scaled(): f64 { return v.x * 2.0; }
 function main(): i32 {
-    var vs: V[] = [V { x: 1.5 }, V { x: 0.375 }];
-    var t: f64 = 0.0;
+    let vs: V[] = [V { x: 1.5 }, V { x: 0.375 }];
+    let t: f64 = 0.0;
     for v in vs { t = t + v.scaled(); }
     return t as i32;
 }`}, // 3.0 + 0.75 = 3.75 -> 3
@@ -42,8 +42,8 @@ function main(): i32 {
 	{"for_u64_method", `struct W { v: u64 }
 function (w: W) bits(): u64 { return w.v; }
 function main(): i32 {
-    var ws: W[] = [W { v: 18000000000000000000 as u64 }];
-    var t: i32 = 0;
+    let ws: W[] = [W { v: 18000000000000000000 as u64 }];
+    let t: i32 = 0;
     for w in ws { t = t + ((w.bits() >> 40) as i32); }
     return t;
 }`}, // 216
@@ -51,8 +51,8 @@ function main(): i32 {
 	{"for_str_method", `struct B { n: i32 }
 function (b: B) label(): string { return "abc"; }
 function main(): i32 {
-    var bs: B[] = [B { n: 7 }];
-    var t: i32 = 0;
+    let bs: B[] = [B { n: 7 }];
+    let t: i32 = 0;
     for b in bs { t = t + b.label().len(); }
     return t;
 }`}, // 3
@@ -60,15 +60,15 @@ function main(): i32 {
 	{"for_tuple_method", `struct P { a: i32, b: i32 }
 function (p: P) pair(): (i32, i32) { return (p.a, p.b); }
 function main(): i32 {
-    var ps: P[] = [P { a: 3, b: 4 }];
-    var t: i32 = 0;
+    let ps: P[] = [P { a: 3, b: 4 }];
+    let t: i32 = 0;
     for p in ps { t = t + p.pair().0 * 10 + p.pair().1; }
     return t;
 }`}, // 34
 	// range-form loop variable: bound i32, so the call over it annotates.
 	{"for_range_var", `function dbl(n: i32): i32 { return n * 2; }
 function main(): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for i in 0..4 { t = t + dbl(i); }
     return t;
 }`}, // 2*(0+1+2+3) = 12
@@ -77,8 +77,8 @@ function main(): i32 {
 function (q: Q) twice(): Q { return Q { n: q.n * 2 }; }
 enum E { A(Q), B(i32) }
 function main(): i32 {
-    var e: E = E.A(Q { n: 5 });
-    var t: i32 = 0;
+    let e: E = E.A(Q { n: 5 });
+    let t: i32 = 0;
     match (e) {
         E.A(q) => { t = q.twice().n; },
         E.B(k) => { t = k; }
@@ -91,8 +91,8 @@ function main(): i32 {
 function (v: V) scaled(): f64 { return v.x * 2.0; }
 enum E { A(V), B(i32) }
 function main(): i32 {
-    var e: E = E.A(V { x: 1.5 });
-    var t: f64 = 0.5;
+    let e: E = E.A(V { x: 1.5 });
+    let t: f64 = 0.5;
     match (e) {
         E.A(v) => { t = t + v.scaled(); },
         E.B(k) => { t = 1.5; }
@@ -105,8 +105,8 @@ function main(): i32 {
 function (v: V) scaled(): f64 { return v.x * 4.0; }
 enum E { A(V), B(i32) }
 function main(): i32 {
-    var e: E = E.A(V { x: 1.25 });
-    var t: f64 = 0.0;
+    let e: E = E.A(V { x: 1.25 });
+    let t: f64 = 0.0;
     match (e) {
         E.A(v) when v.scaled() > 2.0 => { t = v.scaled(); },
         E.A(v) => { t = 0.5; },
@@ -117,7 +117,7 @@ function main(): i32 {
 }
 
 // TestSelfHostAnnotateScopeIR_X86_64 pins the for-loop / match-arm bindings
-// threaded through the annotate pass, feeding irlower's type predicates through
+// threaded through the annotate pass, feeding the lowering through
 // the self-host x86-64 IR path (#5520 / #5531).
 func TestSelfHostAnnotateScopeIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)

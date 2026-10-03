@@ -240,7 +240,7 @@ func TestInterpOracleRunsGenericBodies(t *testing.T) {
 	src := `import "core/cmp" as cmp;
 function same[T: cmp.Eq](a: T, b: T): boolean { return a.eq(b); }
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (same(1, 1)) { r = r + 1; }
     if (!same(2, 3)) { r = r + 2; }
     if (same("a", "a")) { r = r + 4; }

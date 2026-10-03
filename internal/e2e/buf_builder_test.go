@@ -19,7 +19,7 @@ import (
 // the wrong pointer, or an arm64 two-word return whose second word was
 // dropped, still reports a plausible length.
 const bufBuilderProbe = `function main(): i32 {
-    var b: usize = buf_new(8);
+    let b: usize = buf_new(8);
     if (buf_len(b) != 0) { return 1; }
     buf_push(b, "hello");
     if (buf_len(b) != 5) { return 2; }
@@ -30,7 +30,7 @@ const bufBuilderProbe = `function main(): i32 {
     if (buf_len(b) != 35) { return 4; }
     buf_push_range(b, "xyz", 0, 2);
     if (buf_len(b) != 37) { return 5; }
-    var s: string = buf_take(b);
+    let s: string = buf_take(b);
     if (s.len() != 37) { return 6; }
     if (buf_len(b) != 0) { return 7; }
     if (s[0] != 104) { return 8; }
@@ -43,10 +43,10 @@ const bufBuilderProbe = `function main(): i32 {
     buf_push(b, "tail");
     if (buf_take(b) != "tail") { return 15; }
     if (buf_take(b).len() != 0) { return 16; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 1000) { buf_push(b, "0123456789"); i = i + 1; }
     if (buf_len(b) != 10000) { return 17; }
-    var big: string = buf_take(b);
+    let big: string = buf_take(b);
     if (big.len() != 10000) { return 18; }
     if (big[0] != 48) { return 19; }
     if (big[9999] != 57) { return 20; }
@@ -58,8 +58,8 @@ const bufBuilderProbe = `function main(): i32 {
 // bufTwoBuildersProbe is the property the singleton strbuf cannot have: two
 // builders accumulating at once, interleaved, each keeping its own bytes.
 const bufTwoBuildersProbe = `function main(): i32 {
-    var a: usize = buf_new(16);
-    var c: usize = buf_new(16);
+    let a: usize = buf_new(16);
+    let c: usize = buf_new(16);
     buf_push(a, "AAA");
     buf_push(c, "BB");
     buf_push(a, "A");
@@ -79,24 +79,24 @@ const bufTwoBuildersProbe = `function main(): i32 {
 // second thing the singleton forbids, and it is the shape every stdlib writer
 // built on the builder will take.
 const bufNestedProbe = `function join(parts: string[], sep: string): string {
-    var inner: usize = buf_new(32);
-    var i: i32 = 0;
+    let inner: usize = buf_new(32);
+    let i: i32 = 0;
     while (i < parts.len()) {
         if (i > 0) { buf_push(inner, sep); }
         buf_push(inner, parts[i]);
         i = i + 1;
     }
-    var out: string = buf_take(inner);
+    let out: string = buf_take(inner);
     buf_free(inner);
     return out;
 }
 
 function main(): i32 {
-    var outer: usize = buf_new(16);
+    let outer: usize = buf_new(16);
     buf_push(outer, "[");
     buf_push(outer, join(["a", "bb", "ccc"], ", "));
     buf_push(outer, "]");
-    var s: string = buf_take(outer);
+    let s: string = buf_take(outer);
     buf_free(outer);
     if (s != "[a, bb, ccc]") { return 1; }
     return 0;
@@ -109,21 +109,21 @@ function main(): i32 {
 // value that is computed rather than a literal, interleaving with the byte and
 // string pushes, and growth past the reserve.
 const bufPushU64Probe = `function main(): i32 {
-    var b: usize = buf_new(8);
+    let b: usize = buf_new(8);
     buf_push_u64(b, 0x0807060504030201);
     if (buf_len(b) != 8) { return 1; }
-    var s: string = buf_take(b);
-    var i: i32 = 0;
+    let s: string = buf_take(b);
+    let i: i32 = 0;
     while (i < 8) {
         if (s[i] as i32 != i + 1) { return 10 + i; }
         i = i + 1;
     }
     buf_push_u64(b, 0xff00000000000080);
-    var t: string = buf_take(b);
+    let t: string = buf_take(b);
     if (t.len() != 8) { return 2; }
     if (t[0] != 128) { return 20; }
     if (t[7] != 255) { return 21; }
-    var z: i32 = 1;
+    let z: i32 = 1;
     while (z < 7) {
         if (t[z] != 0) { return 30 + z; }
         z = z + 1;
@@ -132,22 +132,22 @@ const bufPushU64Probe = `function main(): i32 {
     buf_push_u64(b, 0x1111111111111111);
     buf_push(b, "z");
     if (buf_len(b) != 10) { return 3; }
-    var mixed: string = buf_take(b);
+    let mixed: string = buf_take(b);
     if (mixed[0] != 65) { return 40; }
     if (mixed[1] != 17) { return 41; }
     if (mixed[8] != 17) { return 42; }
     if (mixed[9] != 122) { return 43; }
-    var v: u64 = 1;
-    var k: i32 = 0;
+    let v: u64 = 1;
+    let k: i32 = 0;
     while (k < 40) { v = v * 2; k = k + 1; }
     buf_push_u64(b, v);
-    var pow: string = buf_take(b);
+    let pow: string = buf_take(b);
     if (pow[5] != 1) { return 50; }
     if (pow[4] != 0) { return 51; }
-    var n: i32 = 0;
+    let n: i32 = 0;
     while (n < 1000) { buf_push_u64(b, 0x0201010101010101); n = n + 1; }
     if (buf_len(b) != 8000) { return 4; }
-    var big: string = buf_take(b);
+    let big: string = buf_take(b);
     if (big.len() != 8000) { return 5; }
     if (big[7999] != 2) { return 60; }
     if (big[7992] != 1) { return 61; }

@@ -15,12 +15,12 @@ import (
 // lift_callee_param_is_fn, which looks the callee up among MODULE functions. A
 // nested local function is not there: hoist_local_funcs_module only rewrites a
 // body containing a SELF-RECURSIVE local, so a plain nested function stays a
-// statement (a `var helper = <lambda>` binding) and never reaches `mfuncs`. The
+// statement (a `let helper = <lambda>` binding) and never reaches `mfuncs`. The
 // lift therefore judged "callee param is not fn-typed", passed the value RAW,
 // and the callee — which dispatches env-first, reading slot 0 of an assumed
 // [funcval, caps…] box — dereferenced a bare code address.
 //
-// irlower's own comment in lift_inline_closures_stmts describes the same
+// The AST lowering's own comment in lift_inline_closures_stmts described the same
 // failure for the sibling case it already handled: "an UNBOXED reassigned value
 // (a bare lambda / fn pointer) in that slot would env-first-dispatch a non-box
 // and crash."
@@ -44,14 +44,14 @@ function main(): i32 {
 	// An inline lambda as the argument — the shape fernsmith generates.
 	{"lambda-to-nested-fn", `function main(): i32 {
     function helper(f: (i32) => i32): i32 { return f(3i32); }
-    var v: i32 = helper(((x: i32) => 481i32));
+    let v: i32 = helper(((x: i32) => 481i32));
     return v & 63i32;
 }`, 33},
 	// Control: the same call with the fn value bound to a LOCAL first. That
 	// path already boxed the value, so it answered correctly before the fix.
 	{"via-local-control", `function main(): i32 {
     function helper(f: (i32) => i32): i32 { return f(3i32); }
-    var g: (i32) => i32 = ((x: i32) => 481i32);
+    let g: (i32) => i32 = ((x: i32) => 481i32);
     return helper(g) & 63i32;
 }`, 33},
 	// Control: the same call with the helper at TOP LEVEL, where
@@ -59,7 +59,7 @@ function main(): i32 {
 	// the bug was the callee's nesting, not the argument.
 	{"top-level-callee-control", `function helper(f: (i32) => i32): i32 { return f(3i32); }
 function main(): i32 {
-    var v: i32 = helper(((x: i32) => 481i32));
+    let v: i32 = helper(((x: i32) => 481i32));
     return v & 63i32;
 }`, 33},
 }

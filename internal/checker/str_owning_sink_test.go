@@ -11,13 +11,13 @@ import (
 func TestStrIntoAStoringBuiltinIsRefused(t *testing.T) {
 	const hint = "add `.to_owned()`"
 	bad := []struct{ name, body, want string }{
-		{"append", `var out: string[] = []; out = out.append(slice_unchecked(s, 0, 1)); return out.len();`,
+		{"append", `let out: string[] = []; out = out.append(slice_unchecked(s, 0, 1)); return out.len();`,
 			"argument 2: expected string, got str"},
-		{"with", `var out: string[] = ["x"]; out = out.with(0, slice_unchecked(s, 0, 1)); return out.len();`,
+		{"with", `let out: string[] = ["x"]; out = out.with(0, slice_unchecked(s, 0, 1)); return out.len();`,
 			"argument 3: expected string, got str"},
-		{"map key", `var m: Map[string, i32] = map_new(2); m = m.insert(slice_unchecked(s, 0, 1), 1); return m.len();`,
+		{"map key", `let m: Map[string, i32] = map_new(2); m = m.insert(slice_unchecked(s, 0, 1), 1); return m.len();`,
 			"argument 2: expected string, got str"},
-		{"map value", `var m: Map[string, string] = map_new(2); m = m.insert("k", slice_unchecked(s, 0, 1)); return m.len();`,
+		{"map value", `let m: Map[string, string] = map_new(2); m = m.insert("k", slice_unchecked(s, 0, 1)); return m.len();`,
 			"argument 3: expected string, got str"},
 	}
 	for _, c := range bad {
@@ -33,9 +33,9 @@ func TestStrIntoAStoringBuiltinIsRefused(t *testing.T) {
 	}
 
 	good := []struct{ name, src string }{
-		{"owned copy", `function f(s: string): i32 { var out: string[] = []; out = out.append(slice_unchecked(s, 0, 1) + ""); return out.len(); }
+		{"owned copy", `function f(s: string): i32 { let out: string[] = []; out = out.append(slice_unchecked(s, 0, 1) + ""); return out.len(); }
 function main(): i32 { return f("ab"); }`},
-		{"str array", `function f(s: string): i32 { var out: str[] = []; out = out.append(slice_unchecked(s, 0, 1)); return out.len(); }
+		{"str array", `function f(s: string): i32 { let out: str[] = []; out = out.append(slice_unchecked(s, 0, 1)); return out.len(); }
 function main(): i32 { return f("ab"); }`},
 		{"borrowed string parameter", `function n(x: string): i32 { return x.len(); }
 function f(s: string): i32 { return n(slice_unchecked(s, 0, 1)); }

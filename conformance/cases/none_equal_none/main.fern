@@ -1,6 +1,6 @@
 function main(): i32 {
-    var a: Option[i32] = None;
-    var b: Option[i32] = None;
+    let a: Option[i32] = None;
+    let b: Option[i32] = None;
     // Both are sentinels — heap-pointer equality (cmp rdi, rsi)
     // sees identical addresses, so a == b via match works.
     match (a) {

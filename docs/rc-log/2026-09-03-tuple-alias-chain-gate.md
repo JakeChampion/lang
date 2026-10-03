@@ -7,7 +7,7 @@ This one instruments it.
 
 ## What the trace says
 
-`var t: (i32, i32[]) = (i, [i, i+1]); var v = t; var u = v; return u.1.len() +
+`let t: (i32, i32[]) = (i, [i, i+1]); let v = t; let u = v; return u.1.len() +
 u.0;`, ONE round, self-host x86-64 built with the bare chain credit,
 `FERN_RC_TRACE=1 FERN_LEAKCHECK=1`:
 

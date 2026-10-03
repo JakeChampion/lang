@@ -31,12 +31,12 @@ func TestStructUpdateParamSpreadReuse(t *testing.T) {
 		// a stays 5, n increments per call → 3*10 + 5 = 35.
 		{"carry", `struct T { a: i32, n: i32 }
 function inc(p: T): T { p = T { ...p, n: p.n + 1 }; return p; }
-function main(): i32 { var x: T = T { a: 5, n: 0 }; x = inc(x); x = inc(x); x = inc(x); return x.n * 10 + x.a; }`, 35},
+function main(): i32 { let x: T = T { a: 5, n: 0 }; x = inc(x); x = inc(x); x = inc(x); return x.n * 10 + x.a; }`, 35},
 		// Two sequential self-overwrite spreads of the parameter; the second
 		// reads a field the first did not touch. After two calls a=20, n=2.
 		{"two-spreads", `struct T { a: i32, n: i32 }
 function emit(p: T): T { p = T { ...p, a: p.a + 10 }; p = T { ...p, n: p.n + 1 }; return p; }
-function main(): i32 { var x: T = T { a: 0, n: 0 }; x = emit(x); x = emit(x); return x.a + x.n; }`, 22},
+function main(): i32 { let x: T = T { a: 0, n: 0 }; x = emit(x); x = emit(x); return x.a + x.n; }`, 22},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

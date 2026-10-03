@@ -26,14 +26,14 @@ func checkInterpByteIO(t *testing.T, command func(...string) *exec.Cmd, stdlib s
 		{"pipeline_empty", e2eharness.BytePipelineProgram, "", ""},
 		{"pipeline_bytes", e2eharness.BytePipelineProgram, pipelineInput, pipelineInput},
 		{"builder", `function main(): i32 {
-    var h: usize = buf_new(1);
-    var empty: u8[] = buf_take_bytes(h);
+    let h: usize = buf_new(1);
+    let empty: u8[] = buf_take_bytes(h);
     if (empty.len() != 0) { return 1; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 256) { buf_push_byte(h, i); i = i + 1; }
-    var data: u8[] = buf_take_bytes(h);
+    let data: u8[] = buf_take_bytes(h);
     buf_push_byte(h, 255);
-    var next: u8[] = buf_take_bytes(h);
+    let next: u8[] = buf_take_bytes(h);
     buf_free(h);
     if (data.len() != 256 || next.len() != 1 || next[0] != 255) { return 2; }
     i = 0;

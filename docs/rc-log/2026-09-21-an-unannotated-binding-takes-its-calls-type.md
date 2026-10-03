@@ -1,7 +1,7 @@
 # 2026-09-21 — an unannotated binding takes its call's type
 
 `semsource.declare` reads a binding's type out of the checker's
-post-declaration scope. For `var m = s.map(f)` on a generic receiver the
+post-declaration scope. For `let m = s.map(f)` on a generic receiver the
 checker has nothing to give: the type is settled by the instance the call
 resolves, which the checker does not carry, so the scope holds
 `TypeUnknown { reason: "not yet checked" }` and the declaration refuses —

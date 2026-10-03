@@ -4,6 +4,6 @@
 // program still spelling one is told what to write instead of being
 // parsed as something else.
 function main(): i32 {
-    var f = function (x: i32): i32 { return x + 1; };
+    let f = function (x: i32): i32 { return x + 1; };
     return f(41);
 }
