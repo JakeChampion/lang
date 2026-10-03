@@ -4487,6 +4487,8 @@ function builtin_sigs(): string[] {
     "create_link(string, string): Result[void, IoError]",
     "create_symlink(string, string): Result[void, IoError]",
     "rename_noreplace(string, string): Result[void, IoError]",
+    "getxattr(string, string): Result[string, IoError]",
+    "lgetxattr(string, string): Result[string, IoError]",
     "rename_exchange(string, string): Result[void, IoError]",
     "env(string): Option[string]",
     "config_get(string): Option[string]",

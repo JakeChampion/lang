@@ -419,6 +419,8 @@ var providedSigs = map[string]providedSig{
 	"create_link":                      {4, rWord},
 	"create_symlink":                   {4, rWord},
 	"read_link":                        {2, rWord},
+	"getxattr":                         {4, rWord},
+	"lgetxattr":                        {4, rWord},
 	"rename":                           {4, rWord},
 	"rename_noreplace":                 {4, rWord},
 	"rename_exchange":                  {4, rWord},

@@ -7153,6 +7153,8 @@ function fs_op_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Contr
     ssasem.Contract { name: "access", params: [t_string(), t_i32()], modes: [b, v], result: done },
     ssasem.Contract { name: "rename", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "rename_noreplace", params: [t_string(), t_string()], modes: [b, b], result: done },
+    ssasem.Contract { name: "getxattr", params: [t_string(), t_string()], modes: [b, b], result: t_io_result(t_string()) },
+    ssasem.Contract { name: "lgetxattr", params: [t_string(), t_string()], modes: [b, b], result: t_io_result(t_string()) },
     ssasem.Contract { name: "rename_exchange", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "create_link", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "create_symlink", params: [t_string(), t_string()], modes: [b, b], result: done },

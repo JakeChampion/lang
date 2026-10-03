@@ -1426,6 +1426,8 @@ func New() *Interp {
 	i.Builtins["create_link"] = &Builtin{Fn: builtinCreateLink}
 	i.Builtins["create_symlink"] = &Builtin{Fn: builtinCreateSymlink}
 	i.Builtins["read_link"] = &Builtin{Fn: builtinReadLink}
+	i.Builtins["getxattr"] = &Builtin{Fn: builtinGetxattr}
+	i.Builtins["lgetxattr"] = &Builtin{Fn: builtinLgetxattr}
 	i.Builtins["umask"] = &Builtin{Fn: builtinUmask}
 	i.Builtins["priority"] = &Builtin{Fn: builtinPriority}
 	i.Builtins["set_priority"] = &Builtin{Fn: builtinSetPriority}
@@ -4235,6 +4237,28 @@ func builtinReadLink(_ *Interp, args []Value) (Value, error) {
 		}
 	}
 	return resultErr(ioErrorOther(p[0], syscall.ENAMETOOLONG)), nil
+}
+
+// builtinGetxattr reads an extended attribute's value, following a final
+// symlink; builtinLgetxattr asks about the link itself.
+func builtinGetxattr(_ *Interp, args []Value) (Value, error) {
+	return xattrResult("getxattr", args, true)
+}
+
+func builtinLgetxattr(_ *Interp, args []Value) (Value, error) {
+	return xattrResult("lgetxattr", args, false)
+}
+
+func xattrResult(name string, args []Value, follow bool) (Value, error) {
+	p, err := pathArgs(name, args, 2)
+	if err != nil {
+		return nil, err
+	}
+	v, err := getxattrBytes(p[0], p[1], follow)
+	if err != nil {
+		return resultErr(classifyIoError(p[0], err)), nil
+	}
+	return resultOk(String(v)), nil
 }
 
 // builtinRename moves a directory entry. Nothing is copied and an

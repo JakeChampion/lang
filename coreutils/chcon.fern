@@ -5,8 +5,8 @@
 //   chcon [OPTION]... --reference=RFILE FILE...
 //
 // The SELinux security context of a file is an extended attribute, and
-// Fern has no primitive that reads or writes one — no `getxattr` (#9098),
-// no `setxattr` (#9154). So the step this utility exists for is
+// Fern can read one (`getxattr`) but has no primitive that writes one — no
+// `setxattr` (#9154). So the step this utility exists for is
 // REFUSED, and everything up to it is exact. What "up to it" covers is
 // most of chcon: the option grammar, the three mutually exclusive ways
 // of naming a context, the operand-count rules, the `-R` traversal with
@@ -72,6 +72,7 @@ import "std/string";
 import "std/array";
 import "./lib/fts";
 import "./lib/gnu";
+import "./lib/selinux";
 
 function opt_recursive(): i32 {
   return 1;
@@ -193,22 +194,33 @@ function help_text(): string {
   return out;
 }
 
-// What a diagnostic says where GNU prints the errno of the libselinux
-// call it could make and this build cannot.
+// What a diagnostic says where GNU prints the errno of setfilecon(3), the
+// one libselinux call this build cannot make (#9154).
 function no_set(): string {
   return "setting a security context is not supported on this system";
 }
 
-function no_get(): string {
-  return "reading a security context is not supported on this system";
-}
-
-struct Settings { recursive: boolean, preserve_root: boolean, verbose: boolean, walk: i32, deref: i32, referent: boolean, context: string, component: boolean }
+// `comps` / `set` are the component options, indexed user 0, role 1, type 2,
+// range 3 as `selinux.merge_context` reads them.
+struct Settings { recursive: boolean, preserve_root: boolean, verbose: boolean, walk: i32, deref: i32, referent: boolean, context: string, component: boolean, comps: string[], set: boolean[] }
 
 struct St { out: gnu.Stdio, status: i32 }
 
 function fail(st: St, msg: string): St {
   return St { out: st.out.report(msg), status: 1 };
+}
+
+function component_index(id: i32): i32 {
+  if (id == opt_user()) {
+    return 0;
+  }
+  if (id == opt_role()) {
+    return 1;
+  }
+  if (id == opt_type()) {
+    return 2;
+  }
+  return 3;
 }
 
 // The option scan. `-H` / `-L` / `-P` and `-h` / `--dereference` are both
@@ -231,7 +243,7 @@ function scan_options(): (Settings, string[], boolean, string) {
   opts = opts.append(gnu.flag("L", "", opt_logical()));
   opts = opts.append(gnu.flag("P", "", opt_physical()));
   let g: gnu.Getopt = gnu.getopt_new(args(), opts, "chcon", help_text(), 1);
-  let s: Settings = Settings { recursive: false, preserve_root: false, verbose: false, walk: walk_physical(), deref: 0 - 1, referent: true, context: "", component: false };
+  let s: Settings = Settings { recursive: false, preserve_root: false, verbose: false, walk: walk_physical(), deref: 0 - 1, referent: true, context: "", component: false, comps: ["", "", "", ""], set: [false, false, false, false] };
   let has_reference: boolean = false;
   let reference: string = "";
   while (true) {
@@ -261,7 +273,8 @@ function scan_options(): (Settings, string[], boolean, string) {
           has_reference = true;
           reference = m.value;
         } else if (m.id == opt_user() || m.id == opt_role() || m.id == opt_type() || m.id == opt_range()) {
-          s = Settings { ...s, component: true };
+          let k: i32 = component_index(m.id);
+          s = Settings { ...s, component: true, comps: s.comps.with(k, m.value), set: s.set.with(k, true) };
         }
       },
       None => {
@@ -322,18 +335,49 @@ function is_dir_mode(m: u32): boolean {
 }
 
 // ---- one entry -------------------------------------------------------------
-// The one step with no primitive behind it. `shown` is the name fts would
-// hand libselinux, which is the path relative to the directory fts is
-// sitting in; `path` is the whole one, which is what this process needs.
+// The component forms read the file's context first and rebuild it; an
+// unchanged result is success without a write. The write itself has no
+// primitive behind it. `shown` is the name fts would hand libselinux, which
+// is the path relative to the directory fts is sitting in; `path` is the
+// whole one, which is what this process needs.
 function change_one(st0: St, s: Settings, path: string, shown: string): St {
   let st: St = st0;
   if (s.verbose) {
     st = St { ...st, out: st.out.fwrite("changing security context of " + gnu.quotea(path) + "\n") };
   }
+  let target: string = s.context;
   if (s.component) {
-    return fail(st, "failed to get security context of " + gnu.quotea(shown) + ": " + no_get());
+    let cur: string = "";
+    match (selinux.file_context(path, s.referent)) {
+      Ok(c) => {
+        cur = c;
+      },
+      Err(e) => {
+        // ENODATA is a file with no label, which GNU will not complete
+        // from a partial context.
+        let why: string = gnu.io_error_text(e);
+        if (why == "No data available") {
+          return fail(st, "can't apply partial context to unlabeled file " + gnu.quotea(shown));
+        }
+        return fail(st, "failed to get security context of " + gnu.quotea(shown) + ": " + why);
+      }
+    }
+    match (selinux.merge_context(cur, s.comps, s.set)) {
+      Ok(c) => {
+        target = c;
+      },
+      Err(msgs) => {
+        for m in msgs {
+          st = fail(st, m);
+        }
+        return st;
+      }
+    }
+    if (target == cur) {
+      return st;
+    }
   }
-  return fail(st, "failed to change context of " + gnu.quotea(shown) + " to " + gnu.quote(s.context) + ": " + no_set());
+  return fail(st, "failed to change context of " + gnu.quotea(shown) + " to " + gnu.quote(target) + ": " + no_set());
 }
 
 // ---- the walk --------------------------------------------------------------
@@ -404,13 +448,19 @@ pub function main(): i32 {
   }
 
   if (has_reference) {
-    // getfilecon(3) of RFILE. There is no primitive for it, and GNU exits
-    // here on failure, so the conflicting-specifiers check below is
-    // unreachable on a machine with no SELinux.
-    gnu.error("failed to get security context of " + gnu.quotea(reference) + ": " + no_get());
-    return 1;
-  }
-  if (!s.component) {
+    // getfilecon(3) of RFILE. GNU exits here on failure, so the
+    // conflicting-specifiers check below is unreachable on a machine with
+    // no SELinux.
+    match (selinux.file_context(reference, true)) {
+      Ok(c) => {
+        s = Settings { ...s, context: c };
+      },
+      Err(e) => {
+        gnu.error("failed to get security context of " + gnu.quotea(reference) + ": " + gnu.io_error_text(e));
+        return 1;
+      }
+    }
+  } else if (!s.component) {
     s = Settings { ...s, context: operands[0] };
     operands = array.slice(operands, 1, operands.len());
   }
