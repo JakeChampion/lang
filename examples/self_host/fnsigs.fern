@@ -13273,6 +13273,9 @@ function strarr_visible_producers(fn: parser.FuncDecl, producers: string[], pix:
       hides = true;
     }
   }
+  if (pix.has(fn.receiver_name)) {
+    hides = true;
+  }
   if (!hides) {
     return producers;
   }
