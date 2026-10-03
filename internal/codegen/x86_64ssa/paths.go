@@ -313,6 +313,27 @@ func emitRenameHelper(w func(string, ...any)) {
 	})(w)
 }
 
+// emitRenameNoreplaceHelper and emitRenameExchangeHelper write
+// renameat2(AT_FDCWD, from, AT_FDCWD, to, flags) with RENAME_NOREPLACE (1)
+// or RENAME_EXCHANGE (2): the condition held in the same call as the rename.
+func emitRenameNoreplaceHelper(w func(string, ...any)) {
+	emitRenameFlagsHelper(w, "rename_noreplace", "rnnr", 1)
+}
+
+func emitRenameExchangeHelper(w func(string, ...any)) {
+	emitRenameFlagsHelper(w, "rename_exchange", "rnex", 2)
+}
+
+func emitRenameFlagsHelper(w func(string, ...any), name, tag string, flags int) {
+	ssaPathOpHelper(name, tag, 316, 2, 0, func(w func(string, ...any)) {
+		ssaAtFdcwd(w, "edi")
+		w("\tmov rsi, r12")
+		ssaAtFdcwd(w, "edx")
+		w("\tmov r10, r14")
+		w("\tmov r8d, %d", flags)
+	})(w)
+}
+
 // emitChmodHelper writes chmod(path, mode) -> Result[(), IoError]:
 // fchmodat(AT_FDCWD, path, mode). The umask is not consulted — it filters a
 // creation, and this is not one — so the low twelve bits land verbatim.

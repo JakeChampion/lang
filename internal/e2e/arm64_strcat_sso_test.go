@@ -12,12 +12,12 @@ import "testing"
 // strings at the same boundaries, and each program is held to its answer and
 // a balanced census.
 
-// strcatInlineFormSrc builds results of 8, 14 and 15 bytes from a
+// strcatBoundarySrc builds results of 8, 14 and 15 bytes from a
 // runtime-selected operand (so nothing folds), then reads them back through
 // every consumer. Those were the native inline form's boundaries: a full data
 // word, bytes in the len word, and the cap. The literals it compares against
 // are read-only, so equality crosses a built string and a literal.
-const strcatInlineFormSrc = `function pick(i: i32): string { if (i % 2 == 0) { return "abcde"; } return "vwxyz"; }
+const strcatBoundarySrc = `function pick(i: i32): string { if (i % 2 == 0) { return "abcde"; } return "vwxyz"; }
 function main(): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
@@ -46,7 +46,7 @@ function main(): i32 {
     return t % 83;
 }`
 
-func TestArm64StrcatInlineFormRoundTrips(t *testing.T) {
+func TestArm64StrcatBoundariesRoundTrip(t *testing.T) {
 	want := 0
 	for i := 0; i < 100; i++ {
 		first := int('a')
@@ -56,7 +56,7 @@ func TestArm64StrcatInlineFormRoundTrips(t *testing.T) {
 		want = (want + 15 + first) % 101
 	}
 	want %= 83
-	stdout, stderr, code := runLeakCheckArm64(t, strcatInlineFormSrc)
+	stdout, stderr, code := runLeakCheckArm64(t, strcatBoundarySrc)
 	if code != want {
 		t.Fatalf("exit code %d, want %d (a nonzero code below 11 names the failing check)", code, want)
 	}
@@ -64,8 +64,8 @@ func TestArm64StrcatInlineFormRoundTrips(t *testing.T) {
 		t.Errorf("stdout = %q, want %q", stdout, "abcdefgh\n")
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	if allocs != frees || live != 0 {
-		t.Errorf("got allocs=%d frees=%d live=%d, want balanced / 0", allocs, frees, live)
+	if allocs == 0 || allocs != frees || live != 0 {
+		t.Errorf("got allocs=%d frees=%d live=%d, want at least one allocation, balanced / 0", allocs, frees, live)
 	}
 }
 
@@ -142,8 +142,8 @@ function main(): i32 {
 		t.Errorf("exit = %d, want 104 (4 + 'd'; 1 means the appended bytes were wrong)", code)
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	if allocs != frees || live != 0 {
-		t.Errorf("got allocs=%d frees=%d live=%d, want balanced / 0", allocs, frees, live)
+	if allocs == 0 || allocs != frees || live != 0 {
+		t.Errorf("got allocs=%d frees=%d live=%d, want at least one allocation, balanced / 0", allocs, frees, live)
 	}
 }
 

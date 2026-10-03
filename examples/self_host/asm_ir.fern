@@ -2243,7 +2243,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
     "stat", "lstat", "statfs", "access", "read_file",
     "read_file_bytes", "read_file_bytes_u8", "remove_file", "create_dir_all", "create_dir",
-    "remove_dir", "create_link", "create_symlink", "rename", "chmod", "chmod_at",
+    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
     "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
@@ -2262,7 +2262,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "str_read_line", "strbuf", "buf", "reader",
     "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "temp_dir",
     "read_dir", "read_dir_all", "remove_file", "create_dir_all", "create_dir",
-    "remove_dir", "create_link", "create_symlink", "rename", "chmod", "chmod_at",
+    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups",
     "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs",
@@ -5686,7 +5686,7 @@ function emit_mismatch_x86(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-  if (o.kind_tag == 225 || o.kind_tag == 356) {  // memchr / memchr_bytes
+  if (o.kind_tag == 225 || o.kind_tag == 358) {  // memchr / memchr_bytes
     // operand stack [box, byte, from] (from on top) -> i32 index or -1.
     //
     // The needle is splat across xmm1 and broadcast to ymm1; then 32
@@ -5725,7 +5725,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let l_avx_done: string = mlo9.name;
     s = mlo9.state;
     s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
-    if (o.kind_tag == 356) {
+    if (o.kind_tag == 358) {
       s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
     } else {
       s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
@@ -5737,7 +5737,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // both ends: a negative arrives as a huge unsigned and fails it too.
     // Checked once here, so neither loop needs a per-iteration guard.
     s = s.write("    cmpq $255, %rcx\n    ja " + l_none + "\n");
-    if (o.kind_tag == 356 && !ir.is_packed(o)) {
+    if (o.kind_tag == 358 && !ir.is_packed(o)) {
       s = s.write(l_tail + ":\n    cmpq %r8, %rdx\n    jge " + l_none + "\n");
       s = s.write("    movzbq (%rax,%rdx,8), %r9\n    cmpq %rcx, %r9\n    je " + l_done + "\n");
       s = s.write("    addq $1, %rdx\n    jmp " + l_tail + "\n");
@@ -9125,6 +9125,12 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_rename\n    addq $16, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("rename");
+  } else if (o.kind_tag == 356 || o.kind_tag == 357) {  // rename_noreplace, rename_exchange
+    let op: string = ir.kind_name(o.kind_tag);
+    s = s.write("    popq %rsi\n    popq %rdi\n");
+    s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_" + op + "\n    addq $16, %rsp\n    pushq %rax\n");
+    s = s.need("heap");
+    s = s.need(op);
   } else if (o.kind_tag == 263) {  // create_symlink
     s = s.write("    popq %rsi\n    popq %rdi\n");
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_create_symlink\n    addq $16, %rsp\n    pushq %rax\n");
@@ -11482,6 +11488,12 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("rename")) {
       fs_src = fs_src + " " + asmcore.rt_src_rename("x86_64");
+    }
+    if (s.has_need("rename_noreplace")) {
+      fs_src = fs_src + " " + asmcore.rt_src_rename_noreplace("x86_64");
+    }
+    if (s.has_need("rename_exchange")) {
+      fs_src = fs_src + " " + asmcore.rt_src_rename_exchange("x86_64");
     }
     if (s.has_need("chmod")) {
       fs_src = fs_src + " " + asmcore.rt_src_chmod("x86_64");

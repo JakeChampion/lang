@@ -6894,7 +6894,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
 // arm emits -- wrong code that looks plausible. asm_ir carries the same guard
 // for the same reason.
 function emit_str_op_wat(o: ir.Op): string {
-  if (o.kind_tag == 356) {
+  if (o.kind_tag == 358) {
     return "    call $__fern_memchr_bytes\n";
   }
   if (o.kind_tag == 97) {  // str_len

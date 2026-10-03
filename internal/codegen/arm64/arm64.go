@@ -189,7 +189,10 @@ var linuxDarwinSysno = map[string][2]int{
 	// takes three arguments where Darwin's takes four, and the helper
 	// passes a zero fourth that Linux ignores, so one body serves both.
 	"renameat": {38, 465},
-	"fchmodat": {53, 467},
+	// renameat2(2) — Linux 276; Darwin's equivalent is renameatx_np, BSD
+	// 488, with the same five arguments and its own flag values.
+	"renameat2": {276, 488},
+	"fchmodat":  {53, 467},
 	// truncate(2) — Linux asm-generic 45, Darwin BSD 200. The PATH
 	// form. Same (path, off_t) shape on both, and off_t is one 64-bit
 	// register on arm64 either way.
@@ -662,7 +665,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
 		g.usesCreateDir || g.usesChdir || g.usesChroot || g.usesRemoveDir || g.usesCreateLink ||
 		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs ||
-		g.usesRename || g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
+		g.usesRename || g.usesRenameNoreplace || g.usesRenameExchange ||
+		g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt {
 		g.usesAlloc = true
 		g.usesMemcpy = true
@@ -694,7 +698,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesCreateLink || g.usesCreateSymlink || g.usesReadLink || g.usesTempDir ||
 		g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat || g.usesStatfs || g.usesAccess ||
 		g.usesRemoveDirAll ||
-		g.usesRename || g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
+		g.usesRename || g.usesRenameNoreplace || g.usesRenameExchange ||
+		g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt || g.usesReaderWriter {
 		g.usesFree = true
 	}
@@ -1092,6 +1097,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesRename {
 		g.emitRenameRuntime()
+	}
+	if g.usesRenameNoreplace {
+		g.emitRenameFlagsRuntime("__fern_rename_noreplace", "rnnr", true)
+	}
+	if g.usesRenameExchange {
+		g.emitRenameFlagsRuntime("__fern_rename_exchange", "rnex", false)
 	}
 	if g.usesChmod {
 		g.emitChmodRuntime()
@@ -12310,6 +12321,27 @@ func (g *generator) emitRenameRuntime() {
 	})
 }
 
+// emitRenameFlagsRuntime emits `name(from, to)` — renameat2(AT_FDCWD,
+// from, AT_FDCWD, to, flags), or renameatx_np on Darwin, whose flag
+// values differ: RENAME_NOREPLACE 1 / RENAME_EXCHANGE 2 on Linux,
+// RENAME_EXCL 4 / RENAME_SWAP 2 on Darwin.
+func (g *generator) emitRenameFlagsRuntime(name, tag string, noreplace bool) {
+	flags := 2
+	if noreplace {
+		flags = 1
+		if g.darwin {
+			flags = 4
+		}
+	}
+	g.emitPathOpRuntime(name, tag, "renameat2", 2, 0, func() {
+		g.atFdcwd("x0")
+		g.emit("mov x1, x21")
+		g.atFdcwd("x2")
+		g.emit("mov x3, x23")
+		g.emit("mov x4, #%d", flags)
+	})
+}
+
 // emitChmodRuntime emits `__fern_chmod(path, mode)` —
 // fchmodat(AT_FDCWD, path, mode, 0). The umask is not consulted: it
 // filters a creation, and this is not one. The zero fourth argument is
@@ -16100,6 +16132,9 @@ type generator struct {
 	usesRename       bool
 	usesChmod        bool
 	usesSetFileTimes bool
+	// renameat2 (Darwin: renameatx_np) with a no-replace or exchange flag.
+	usesRenameNoreplace bool
+	usesRenameExchange  bool
 	// fchmodat / fchmodat2 over a path, a mode and a follow flag.
 	usesChmodAt bool
 	// truncate(2) over a path and a length.
@@ -21056,6 +21091,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// renameat, which replaces an existing `to`.
 			target = "__fern_rename"
 			g.usesRename = true
+		case "rename_noreplace":
+			target = "__fern_rename_noreplace"
+			g.usesRenameNoreplace = true
+		case "rename_exchange":
+			target = "__fern_rename_exchange"
+			g.usesRenameExchange = true
 		case "chmod":
 			// chmod(path, mode): Result[void, IoError] —
 			// fchmodat on an entry that already exists.

@@ -414,6 +414,8 @@ var providedSigs = map[string]providedSig{
 	"create_symlink":                   {4, rWord},
 	"read_link":                        {2, rWord},
 	"rename":                           {4, rWord},
+	"rename_noreplace":                 {4, rWord},
+	"rename_exchange":                  {4, rWord},
 	"chmod":                            {3, rWord},
 	"chmod_at":                         {4, rWord},
 	"set_file_times":                   {7, rWord},

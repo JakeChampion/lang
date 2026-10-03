@@ -1,161 +1,81 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/ast"
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// --- Heap event tracer (#6068) ------------------------------------
+// --- Running a program under the heap tracer (#6068) ------------------------
 //
-// ast.RcTrace (FERN_RC_TRACE=1) makes __fern_alloc and __fern_free each
-// write one line to stderr:
+// FERN_RC_TRACE=1 makes the self-host's x86-64 runtime write one stderr line
+// per alloc and free:
 //
 //	rctrace <a|f> <ptr> <size> <site> <caller>
 //
-// three fixed-width 16-hex-digit numbers, where `site` is the caller's
-// return address — the code that asked for or released the memory.
-//
-// It is to FERN_LEAKCHECK what FERN_RC_UNDERFLOW_TRAP is to the
-// underflow counter: leakcheck says a leak happened, this says which
-// alloc site it came from. So the essential properties these tests
-// pin are (1) the two agree, exactly, on every number they both
-// report, (2) sites are per-call-site rather than a constant, and
-// (3) allocs pair with frees by pointer on a balanced program.
-//
-// x86-64 only, like RcFreeDebug and RcUnderflowTrap.
-
-// emitRcTrace compiles src with ast.RcTrace (and optionally
-// ast.LeakCheckEnabled) toggled on, returning the asm text. Mirrors
-// emitLeakCheck's pipeline.
-func emitRcTrace(t *testing.T, src string, rcTrace, leakCheck bool) string {
-	t.Helper()
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	prevFree, prevLc, prevTrace := ast.RcFreeEnabled, ast.LeakCheckEnabled, ast.RcTrace
-	t.Cleanup(func() {
-		ast.RcFreeEnabled, ast.LeakCheckEnabled, ast.RcTrace = prevFree, prevLc, prevTrace
-	})
-	ast.RcFreeEnabled = true
-	ast.LeakCheckEnabled = leakCheck
-	ast.RcTrace = rcTrace
-	asm, emitErr := x86_64.Emit(prog, info)
-	ast.RcFreeEnabled, ast.LeakCheckEnabled, ast.RcTrace = prevFree, prevLc, prevTrace
-	if emitErr != nil {
-		t.Fatalf("x86_64 emit: %v", emitErr)
-	}
-	return asm
-}
-
-// runRcTraceX86_64 compiles src with the tracer on and runs it,
-// returning stdout, stderr and the exit code separately (the tracer's
-// contract is "stderr only, stdout untouched").
-func runRcTraceX86_64(t *testing.T, src string, leakCheck bool) (string, string, int) {
-	t.Helper()
-	gcc, runner := x86_64Tooling(t)
-	asm := emitRcTrace(t, src, true, leakCheck)
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(binPath)
-	} else {
-		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), binPath)...)
-	}
-	return runSplit(t, cmd)
-}
+// four fixed-width 16-hex-digit numbers. Pairing the `a` lines against the
+// `f` lines by pointer leaves the blocks the program never gave back. The
+// tracer's own properties (pairing, per-call-site sites, the caller frame,
+// agreement with FERN_LEAKCHECK, a flag-off build carrying nothing) are pinned
+// in internal/e2eselfhost/self_host_rctrace_test.go; the helpers here serve
+// the leak censuses in this package.
 
 var rcTraceLineRe = regexp.MustCompile(`^rctrace ([af]) ([0-9a-f]{16}) ([0-9a-f]{16}) ([0-9a-f]{16}) ([0-9a-f]{16})$`)
 
-// rcTraceEvent is one parsed `rctrace` line.
-type rcTraceEvent struct {
-	kind       string // "a" | "f"
-	ptr        uint64
-	size, site uint64
-
-	// caller is one frame above site: the return address in whoever
-	// called the function `site` names. It is what separates a producer
-	// from a place code was inlined INTO — `site` alone credited 133
-	// allocations to a 1043-line function containing one construction,
-	// and named `__fern_alloc_rc1` for 1689 blocks whose real producer
-	// is its caller.
-	//
-	// Best-effort: it is read through the frame pointer, so it is only
-	// meaningful where the caller kept one. A frameless caller yields
-	// an address that resolves to nothing, which is why the resolver
-	// side must tolerate an unresolvable value rather than trust it.
-	caller uint64
-}
-
-// parseRcTrace pulls every well-formed rctrace line out of stderr.
-// Lines that are not rctrace records (e.g. a leakcheck summary, when
-// both flags are on) are returned separately rather than ignored, so a
-// test can assert on them too and a malformed trace line can't hide as
-// "some other output".
-func parseRcTrace(t *testing.T, stderr string) ([]rcTraceEvent, []string) {
-	t.Helper()
-	var evs []rcTraceEvent
-	var other []string
-	for _, line := range strings.Split(strings.TrimSuffix(stderr, "\n"), "\n") {
-		if line == "" {
-			continue
-		}
-		m := rcTraceLineRe.FindStringSubmatch(line)
-		if m == nil {
-			if strings.HasPrefix(line, "rctrace") {
-				t.Fatalf("malformed rctrace line: %q", line)
-			}
-			other = append(other, line)
-			continue
-		}
-		ptr, _ := strconv.ParseUint(m[2], 16, 64)
-		size, _ := strconv.ParseUint(m[3], 16, 64)
-		site, _ := strconv.ParseUint(m[4], 16, 64)
-		caller, _ := strconv.ParseUint(m[5], 16, 64)
-		evs = append(evs, rcTraceEvent{kind: m[1], ptr: ptr, size: size, site: site, caller: caller})
+// buildTracedX86_64 compiles entry for x86-64 with the tracer on, writing the
+// binary into dir. A failure is returned rather than reported, so a census
+// worker can record the program as unmeasured.
+func buildTracedX86_64(t *testing.T, entry, dir string) (string, error) {
+	bin := filepath.Join(dir, "prog")
+	cmd := e2eharness.SelfHostCompileCmd(t, e2eharness.TargetX86_64Linux, entry, bin)
+	cmd.Env = e2eharness.ChildEnv("FERN_RC_TRACE=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("self-host compile: %v\n%s", err, out)
 	}
-	return evs, other
+	return bin, nil
 }
 
-// rcTraceBalancedSrc: 40 paired __alloc/__free of one class, plus a
-// print so stdout preservation is observable. Every block is released,
-// so allocs and frees must pair exactly.
-const rcTraceBalancedSrc = `function main(): i32 {
+// runTracedX86_64 compiles src with the tracer on and runs it, returning
+// stdout, stderr and the exit code.
+func runTracedX86_64(t *testing.T, src string) (string, string, int) {
+	t.Helper()
+	_, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	entry := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(entry, []byte(src), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	bin, err := buildTracedX86_64(t, entry, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return runSplit(t, runX86_64Bin(runner, bin))
+}
+
+// unpairedAllocs runs src under the tracer and counts the allocations that
+// never got a matching free.
+func unpairedAllocs(t *testing.T, src string) int {
+	t.Helper()
+	_, stderr, exit := runTracedX86_64(t, src)
+	if exit == -1 {
+		t.Fatal("the program was killed by a signal")
+	}
+	n, _, err := pairRcTrace(stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// The trace belongs on stderr: a traced program prints what it prints and
+// exits with main's result.
+func TestRcTraceX86_64LeavesStdoutAndExit(t *testing.T) {
+	const src = `function main(): i32 {
     let i: i32 = 0;
     while (i < 40) {
         let a: usize = __alloc(64);
@@ -165,319 +85,21 @@ const rcTraceBalancedSrc = `function main(): i32 {
     print("done");
     return 7;
 }`
-
-// rcTraceTwoSitesSrc allocates from two distinct functions, one of
-// whose buffers stays live to process exit. The dropped one is
-// released each iteration; the kept one never is.
-const rcTraceTwoSitesSrc = `function make_kept(): i32[] { return [1, 2, 3, 4]; }
-function make_dropped(): i32 { let t: i32[] = [9, 9]; return t.len(); }
-function main(): i32 {
-    let keep: i32[] = make_kept();
-    let n: i32 = 0;
-    let i: i32 = 0;
-    while (i < 3) { n = n + make_dropped(); i = i + 1; }
-    return keep.len() + n - 10;
-}`
-
-func TestRcTraceX86_64PairsAllocsWithFrees(t *testing.T) {
-	stdout, stderr, code := runRcTraceX86_64(t, rcTraceBalancedSrc, false)
+	stdout, stderr, code := runTracedX86_64(t, src)
 	if code != 7 {
-		t.Errorf("exit code = %d, want 7 (the tracer must not disturb the exit code)", code)
+		t.Errorf("exit code = %d, want 7", code)
 	}
 	if stdout != "done\n" {
-		t.Errorf("stdout = %q, want %q — the trace belongs on stderr only", stdout, "done\n")
+		t.Errorf("stdout = %q, want %q", stdout, "done\n")
 	}
-	evs, other := parseRcTrace(t, stderr)
-	if len(other) != 0 {
-		t.Errorf("unexpected non-rctrace stderr lines: %q", other)
-	}
-	if len(evs) == 0 {
-		t.Fatal("no rctrace events; expected an alloc/free pair per iteration")
-	}
-	// Every block handed out is handed back: pointer multiset of allocs
-	// equals that of frees, and the two sides report the same size for
-	// the same block.
-	live := map[uint64]uint64{}
-	for _, e := range evs {
-		switch e.kind {
-		case "a":
-			live[e.ptr] = e.size
-		case "f":
-			sz, ok := live[e.ptr]
-			if !ok {
-				t.Fatalf("free of %016x was never traced as an alloc", e.ptr)
-			}
-			if sz != e.size {
-				t.Errorf("block %016x: alloc size %d != free size %d — the two hooks must report the same 16-rounded size", e.ptr, sz, e.size)
-			}
-			delete(live, e.ptr)
-		}
-	}
-	if len(live) != 0 {
-		t.Errorf("%d block(s) never freed in a fully paired program: %v", len(live), live)
-	}
-}
-
-func TestRcTraceX86_64SiteIsPerCallSite(t *testing.T) {
-	_, stderr, _ := runRcTraceX86_64(t, rcTraceTwoSitesSrc, false)
-	evs, _ := parseRcTrace(t, stderr)
-	sites := map[uint64]int{}
-	for _, e := range evs {
-		if e.kind == "a" {
-			sites[e.site]++
-		}
-	}
-	if len(sites) < 2 {
-		t.Fatalf("alloc sites = %d (%v), want >= 2 — two different functions allocate here, so a constant site means the return address isn't being captured", len(sites), sites)
-	}
-	// The kept buffer is allocated once, the dropped one three times:
-	// site attribution should reflect that asymmetry rather than
-	// splitting evenly.
-	var counts []int
-	for _, n := range sites {
-		counts = append(counts, n)
-	}
-	if len(counts) == 2 && counts[0] == counts[1] {
-		t.Errorf("both alloc sites fired %d times; want 1 (make_kept) and 3 (make_dropped)", counts[0])
-	}
-}
-
-// rcTraceOneProducerTwoCallersSrc: ONE allocating helper, reached from
-// two different functions. Every allocation therefore shares a `site`,
-// and only `caller` can tell the two apart — which is the whole reason
-// the second frame exists.
-const rcTraceOneProducerTwoCallersSrc = `struct Bx { s: string, n: i32 }
-
-@noinline
-function mk(i: i32, pad: string): Bx { return Bx { s: pad + "0123456789abcdef", n: i }; }
-
-@noinline
-function alpha(pad: string): i32 { let b: Bx = mk(1, pad); return b.n; }
-
-@noinline
-function beta(pad: string): i32 { let b: Bx = mk(2, pad); return b.n; }
-
-function main(): i32 {
-    let pad: string = "wxyz";
-    return alpha(pad) + beta(pad) - 3;
-}`
-
-// The property `site` alone cannot supply: one producer, two callers.
-//
-// `site` names the code that asked for the memory, which conflates a
-// producer with a function code was INLINED INTO — over the self-host
-// driver it credited 133 allocations to a 1043-line function holding
-// exactly one construction. `caller` is one frame further out, so the
-// same producer reached from two places reports two callers.
-func TestRcTraceX86_64CallerSeparatesTwoCallersOfOneProducer(t *testing.T) {
-	_, stderr, _ := runRcTraceX86_64(t, rcTraceOneProducerTwoCallersSrc, false)
-	evs, _ := parseRcTrace(t, stderr)
-
-	// The struct box: allocated inside mk, once per call, from two
-	// different callers. Group callers by site.
-	callersBySite := map[uint64]map[uint64]bool{}
-	for _, e := range evs {
-		if e.kind != "a" {
-			continue
-		}
-		if callersBySite[e.site] == nil {
-			callersBySite[e.site] = map[uint64]bool{}
-		}
-		callersBySite[e.site][e.caller] = true
-	}
-	if len(callersBySite) == 0 {
-		t.Fatal("no alloc events")
-	}
-	split := false
-	for site, callers := range callersBySite {
-		if len(callers) >= 2 {
-			split = true
-		}
-		for c := range callers {
-			if c == site {
-				t.Errorf("site %016x reports caller == site; the second frame is not being read", site)
-			}
-		}
-	}
-	if !split {
-		t.Errorf("no alloc site reports two distinct callers (%v) — mk is reached from both alpha and beta, "+
-			"so a site with one caller means the frame above is not being captured", callersBySite)
-	}
-}
-
-// A caller of zero would mean the frame-pointer read produced nothing
-// at all, which is the failure mode that would make the field look
-// present while carrying no information.
-func TestRcTraceX86_64CallerIsNeverZero(t *testing.T) {
-	_, stderr, _ := runRcTraceX86_64(t, rcTraceOneProducerTwoCallersSrc, false)
-	evs, _ := parseRcTrace(t, stderr)
-	for _, e := range evs {
-		if e.caller == 0 {
-			t.Fatalf("%s event at site %016x has caller 0", e.kind, e.site)
-		}
-	}
-}
-
-// TestRcTraceX86_64AgreesWithLeakCheck is the cross-check that makes
-// the tracer trustworthy: with both flags on, the trace's own tallies
-// must reproduce every number leakcheck reports independently. They
-// share the rounding but not the counting path — leakcheck ticks BSS
-// counters inside the helpers, the tracer prints from the call
-// boundary — so agreement is real evidence, not a tautology.
-func TestRcTraceX86_64AgreesWithLeakCheck(t *testing.T) {
-	_, stderr, _ := runRcTraceX86_64(t, rcTraceTwoSitesSrc, true)
-	evs, other := parseRcTrace(t, stderr)
-	if len(other) != 1 {
-		t.Fatalf("want exactly one non-rctrace line (the leakcheck summary), got %q", other)
-	}
-	m := leakCheckLineRe.FindStringSubmatch(other[0] + "\n")
-	if m == nil {
-		t.Fatalf("not a leakcheck report line: %q", other[0])
-	}
-	lcAllocs, _ := strconv.ParseInt(m[1], 10, 64)
-	lcFrees, _ := strconv.ParseInt(m[2], 10, 64)
-	lcLive, _ := strconv.ParseInt(m[3], 10, 64)
-
-	var allocs, frees int64
-	var allocBytes, freeBytes uint64
-	for _, e := range evs {
-		if e.kind == "a" {
-			allocs++
-			allocBytes += e.size
-		} else {
-			frees++
-			freeBytes += e.size
-		}
-	}
-	if allocs != lcAllocs {
-		t.Errorf("traced allocs = %d, leakcheck allocs = %d", allocs, lcAllocs)
-	}
-	if frees != lcFrees {
-		t.Errorf("traced frees = %d, leakcheck frees = %d", frees, lcFrees)
-	}
-	if live := int64(allocBytes) - int64(freeBytes); live != lcLive {
-		t.Errorf("traced live_bytes = %d, leakcheck live_bytes = %d", live, lcLive)
-	}
-}
-
-// TestRcTraceX86_64OffEmitsNothing is the cheap proxy for the
-// byte-identical-when-off guarantee: a flag-off build must not contain
-// a single tracer symbol, string or call.
-func TestRcTraceX86_64OffEmitsNothing(t *testing.T) {
-	off := emitRcTrace(t, rcTraceTwoSitesSrc, false, false)
-	for _, needle := range []string{"__fern_rct_ev", ".Lrct_str_pre", ".Lrct_wrhex", "rctrace "} {
-		if strings.Contains(off, needle) {
-			t.Errorf("flag-off asm contains %q; the tracer must leave nothing behind", needle)
-		}
-	}
-	on := emitRcTrace(t, rcTraceTwoSitesSrc, true, false)
-	for _, needle := range []string{"__fern_rct_ev", ".Lrct_str_pre", ".Lrct_wrhex"} {
-		if !strings.Contains(on, needle) {
-			t.Errorf("flag-on asm is missing %q", needle)
-		}
-	}
-}
-
-// --- The inc/dec events ------------------------------------------------------
-//
-// The a/f pair says a block was never given back; i/d say why. They are
-// deliberately NOT matched by rcTraceLineRe: `pairRcTrace` reads that
-// regex and treats every non-`a` match as a free, so widening it to
-// [afid] would make each inc silently decrement the leak census's
-// counts. The narrow regex is required — this one is separate.
-var rcTraceRcLineRe = regexp.MustCompile(`^rctrace ([id]) ([0-9a-f]{16}) ([0-9a-f]{16}) ([0-9a-f]{16}) ([0-9a-f]{16})$`)
-
-func TestRcTraceX86_64EmitsIncAndDecEvents(t *testing.T) {
-	// Three aliases of one array, all released at exit: whatever the
-	// counts are, the incs and decs must balance per pointer.
-	const src = `
-function main(): i32 {
-    let a: u8[] = [1, 2, 3];
-    let b: u8[] = a;
-    let c: u8[] = a;
-    return b.len() + c.len();
-}
-`
-	_, stderr, _ := runRcTraceX86_64(t, src, false)
-	net := map[string]int{}
-	var incs, decs int
-	for _, line := range strings.Split(stderr, "\n") {
-		m := rcTraceRcLineRe.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		if m[3] != "0000000000000000" {
-			t.Errorf("i/d line carries a non-zero size field %q; it is documented as unused "+
-				"because the writer's 16-rounding destroys any count put through it", m[3])
-		}
-		if m[1] == "i" {
-			incs++
-			net[m[2]]++
-		} else {
-			decs++
-			net[m[2]]--
-		}
-	}
-	if incs == 0 || decs == 0 {
-		t.Fatalf("got %d inc and %d dec events; the hook is not firing", incs, decs)
-	}
-	for ptr, n := range net {
-		if n != 0 {
-			t.Errorf("pointer %s nets %+d over its inc/dec events, but every alias here is "+
-				"released before exit", ptr, n)
-		}
-	}
-}
-
-// The i/d pointers name the object; the a/f pointers name the block. For
-// an array those differ by a 16-byte header, so a reader pairing across
-// kinds without the offset concludes a block was never retained.
-//
-// ONE allocation only, deliberately. The obvious form of this test —
-// "no i pointer is also an a pointer" — passes or fails on whether two
-// live blocks happen to sit 16 bytes apart, and an earlier version of it
-// reported the offset did not exist for exactly that reason.
-func TestRcTraceX86_64IncPointerIsTheObjectNotTheBlock(t *testing.T) {
-	const src = `
-function main(): i32 {
-    let a: u8[] = [1, 2, 3];
-    let b: u8[] = a;
-    let c: u8[] = a;
-    let d: u8[] = a;
-    return b.len() + c.len() + d.len();
-}
-`
-	_, stderr, _ := runRcTraceX86_64(t, src, false)
-	var allocs, incs []string
-	for _, line := range strings.Split(stderr, "\n") {
-		if m := rcTraceLineRe.FindStringSubmatch(line); m != nil && m[1] == "a" {
-			allocs = append(allocs, m[2])
-		}
-		if m := rcTraceRcLineRe.FindStringSubmatch(line); m != nil && m[1] == "i" {
-			incs = append(incs, m[2])
-		}
-	}
-	if len(allocs) != 1 {
-		t.Fatalf("this test needs exactly one allocation to compare against, got %d: %v",
-			len(allocs), allocs)
-	}
-	if len(incs) == 0 {
-		t.Fatal("no inc events; the hook is not firing")
-	}
-	block, err := strconv.ParseUint(allocs[0], 16, 64)
+	n, _, err := pairRcTrace(stderr)
 	if err != nil {
-		t.Fatalf("alloc pointer %q: %v", allocs[0], err)
+		t.Fatal(err)
 	}
-	const arrayHeader = 16
-	for _, h := range incs {
-		obj, err := strconv.ParseUint(h, 16, 64)
-		if err != nil {
-			t.Fatalf("inc pointer %q: %v", h, err)
-		}
-		if obj != block+arrayHeader {
-			t.Errorf("inc names %#x and the one allocation is %#x; expected the block plus a "+
-				"%d-byte array header. If the layout changed, ast.RcTrace's cross-kind warning "+
-				"needs the new offset", obj, block, arrayHeader)
-		}
+	if n != 0 {
+		t.Errorf("%d unpaired allocation(s) in a program that frees every block", n)
+	}
+	if first, _, _ := strings.Cut(stderr, "\n"); !rcTraceLineRe.MatchString(first) {
+		t.Errorf("stderr does not open with an rctrace line: %q", first)
 	}
 }

@@ -425,10 +425,10 @@ in the list at all:
 - **Over-retention**: measured under `FERN_LEAKCHECK=1` and pinned per case.
   The self-host-versus-native gap #6127 opened is closed — that grid
   (`internal/e2eselfhost/testdata/selfhost-leak-matrix.txt`) reads clean on
-  x86-64 and arm64. What
-  remains is shared with native: 80 non-zero rows in
-  `internal/e2e/testdata/conformance-leak-census.txt`, and 24 of 272 rc-corpus
-  cases in `internal/e2e/rc_leak_gate_test.go`.
+  x86-64 and arm64. The two leak pins measure the self-host and are clean:
+  `internal/e2e/testdata/conformance-leak-census.txt` has one non-zero row (a
+  block live when a bounds check aborts), and
+  `internal/e2e/rc_leak_gate_test.go` pins no rc-corpus case.
 - **The rc==1 append cliff**: `__arr_push_shared_count()` /
   `__arr_push_shared_bytes()`. And the lesson attached to it — **rank by the
   weighted figure, never the count**. A whole-module compile crosses the cliff

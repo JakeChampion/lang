@@ -358,7 +358,7 @@ function emit_mismatch_arm64(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-  if (o.kind_tag == 225 || o.kind_tag == 356) {  // memchr / memchr_bytes
+  if (o.kind_tag == 225 || o.kind_tag == 358) {  // memchr / memchr_bytes
     // operand stack [box, byte, from] (from on top) -> i32 index or -1.
     //
     // NEON, 16 bytes an iteration, the same kernel the native arm64
@@ -390,7 +390,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let l_done: string = mlo7.name;
     s = mlo7.state;
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    if (o.kind_tag == 356) {
+    if (o.kind_tag == 358) {
       s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
     } else {
       s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
@@ -401,7 +401,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // above the range in a single test. Checked once, so neither loop
     // below needs a per-iteration guard.
     s = s.write("    cmp x1, #255\n    b.hi " + l_none + "\n");
-    if (o.kind_tag == 356 && !ir.is_packed(o)) {
+    if (o.kind_tag == 358 && !ir.is_packed(o)) {
       s = s.write(l_tail + ":\n    cmp x2, x3\n    b.ge " + l_none + "\n");
       s = s.write("    add x5, x0, x2, lsl #3\n    ldrb w4, [x5]\n    cmp x4, x1\n    b.eq " + l_done + "\n");
       s = s.write("    add x2, x2, #1\n    b " + l_tail + "\n");
@@ -3424,6 +3424,11 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("heap");
     s = s.need("rename");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_rename\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == 356 || o.kind_tag == 357) {  // rename_noreplace, rename_exchange
+    let op: string = ir.kind_name(o.kind_tag);
+    s = s.need("heap");
+    s = s.need(op);
+    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_" + op + "\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 263) {  // create_symlink
     s = s.need("heap");
     s = s.need("create_symlink");
@@ -10197,6 +10202,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("rename")) {
       fs_src = fs_src + " " + asmcore.rt_src_rename(tgt);
     }
+    if (s.has_need("rename_noreplace")) {
+      fs_src = fs_src + " " + asmcore.rt_src_rename_noreplace(tgt);
+    }
+    if (s.has_need("rename_exchange")) {
+      fs_src = fs_src + " " + asmcore.rt_src_rename_exchange(tgt);
+    }
     if (s.has_need("chmod")) {
       fs_src = fs_src + " " + asmcore.rt_src_chmod(tgt);
     }
@@ -11480,7 +11491,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
     "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec",
     "remove_file", "create_dir_all", "create_dir", "remove_dir",
-    "create_link", "create_symlink", "rename", "chmod", "chmod_at", "truncate",
+    "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "chmod", "chmod_at", "truncate",
     "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times", "read_link",
     "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
     "temp_dir", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",
