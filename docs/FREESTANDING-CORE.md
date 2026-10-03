@@ -59,6 +59,7 @@ costs a silent failure on the first target that lacks it.
 | `fs` | `read_file`, `write_file`, `open_reader`, … | a filesystem |
 | `fsmode` | `write_file_exec`, `access`, `chmod`, `chmod_at`, `umask` | permission bits on a filesystem entry, and the mask a creation keeps them through |
 | `fsinfo` | `statfs` | a filesystem with a size and a name-length limit, rather than files on one |
+| `fsrename` | `rename_noreplace`, `rename_exchange` | a rename the kernel conditions in one step: refuse an existing destination, or swap the two names |
 | `fsnode` | `mknod` | a filesystem entry that is neither a file nor a directory: a FIFO, or a character or block device node |
 | `tty` | `window_size`, `set_window_size`, `termios_get`, `termios_set` | a terminal with a size and line settings, where `isatty` only asks whether there is one |
 | `userid` | `geteuid`, `getegid` | a user the process can be |

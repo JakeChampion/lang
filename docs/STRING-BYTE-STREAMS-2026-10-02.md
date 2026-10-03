@@ -1,7 +1,8 @@
 # Byte input for tee, head and tail
 
-The October 3 publication refresh integrates raw-line checkpoint `cb3250699`, including
-checked stdin, compact short reads and the completed D8 implementation.
+The October 3 publication refresh integrates main `b97441b32`, including
+merged raw-line PR #11207, the two rename operations and the retirement of
+`dyn_downcast`. The byte scans use distinct IDs 358, 359 and 360.
 
 `tee`, `head` and `tail` now read and write raw byte arrays. `head` and
 `tail` also retain and scan bytes directly. Binary input, malformed UTF-8
@@ -33,14 +34,15 @@ Neither allocates or constructs text.
 
 This integration bounds retained short reads and releases WASI seek scratch.
 The opcode registry and SSA
-admission drivers pass through the primary compiler: 336 registered
+admission drivers pass through the primary compiler: 337 registered
 operations, with the same three unsupported operations as the parent.
 
 The pinned bootstrap produces identical stage-2 and stage-3 binaries of
-12,415,009 bytes, SHA-256
-`77a0383ae034529035948938d3dd889ef19d6a61743b55e217c213649c0a1771`.
+12,464,657 bytes, SHA-256
+`65d53b3533843bdd2f723e8fc9d4d1bf8ae2ef9f59571b7999d5b3305b76d1ac`.
 Stage 1 differs because the published seed predates generator changes.
-The three builds take 32, 26 and 23 seconds.
+The three builds take 33, 29 and 25 seconds. The reproduced stage-2 compiler
+also passes the complete registry golden and lift-admission census exactly.
 
 The actual stage-2 compiler passes the three byte-scan fixtures, the buffered
 writer fixture, 124 head/tail cases and six tee cases across Darwin and core
@@ -50,13 +52,13 @@ primary interpreter; those runs establish behavior, not a component census.
 The refreshed Linux target matrix and every lint gate pass from the immutable
 source snapshot. The full unit suite passed at the earlier prepared checkpoint;
 the publication integration still requires its full CI suite. Darwin's primary
-byte-I/O tests, GNU corpus and primary utility parity pass in 38.736, 32.940
-and 32.352 seconds.
+byte-I/O tests, including the native rename operations, and GNU corpus pass
+in 40.827 and 34.563 seconds. Primary utility parity passes in 33.419 seconds.
 
 The integration corrects the prepared count/reverse WASM helpers' obsolete
 four-byte element stride. Both now use packed byte offsets. Focused WASM
-scans pass in 24.853 seconds, the Go target matrix in 28.470 seconds, GNU
-parity in 23.731 seconds, and primary target/registry checks in 83.918 seconds.
+scans pass in 21.936 seconds, the Go target matrix in 28.901 seconds, GNU
+parity in 23.753 seconds, and primary target/registry checks in 85.248 seconds.
 These durations are validation evidence, not performance comparisons.
 
 The GNU corpus covers all byte values, LF/NUL records, long malformed
@@ -90,17 +92,17 @@ sent to a sink. Peak resident memory is measured separately.
 
 | Long-record pipe workload, 8 MiB | Before migration: peak resident bytes | Byte version: peak resident bytes |
 | --- | ---: | ---: |
-| head, all but the final line | 55,967,744 | 10,485,760 |
-| tail, final line | 56,000,512 | 10,534,912 |
+| head, all but the final line | 55,984,128 | 10,485,760 |
+| tail, final line | 56,000,512 | 10,518,528 |
 
 These are native Darwin measurements with instrumentation removed. The two
 versions were built by the same final compiler, and all task-owned compiler
-and test jobs had stopped. Desktop activity remained. Four timing sample
-ranges overlap. For the long-record pipe cases, head ranges from
-39.098-43.088 ms before and 37.916-38.586 ms after; tail ranges from
-39.698-40.676 ms before and 36.652-38.201 ms after. Those two ranges do not
-overlap in this run. The evidence supports the memory reduction and these
-specific timing improvements, without a general throughput claim.
+and test jobs had stopped. Desktop activity remained. Five timing sample
+ranges overlap, including long-record head: 39.516-63.258 ms before and
+38.086-40.177 ms after. Long-record tail ranges from 40.014-40.833 ms before
+and 36.534-37.916 ms after. Those tail ranges do not overlap in this run.
+The evidence supports the memory reduction and this specific tail timing
+improvement, without a general throughput claim.
 
 At the earlier prepared checkpoint, a separate instrumented tee probe reads a regular file through stdin and
 writes identical arbitrary bytes to stdout and two files. Both versions
@@ -111,20 +113,20 @@ because read boundaries vary between executions.
 ## Measured size
 
 The same final stage-2 compiler builds both sides. The comparison baseline
-is raw-line parent `cb3250699`, built with the same compiler.
+is main `b97441b32`, built with the same compiler.
 
 | Utility | Before file bytes | After file bytes | Code growth | Unwind growth | Data growth |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| head | 132,913 | 149,425 | 4,796 | 1,016 | 0 |
+| head | 132,913 | 149,425 | 4,656 | 1,016 | 0 |
 | tail | 215,969 | 215,969 | 4,124 | 1,016 | 256 |
-| tee | 99,841 | 116,353 | 1,860 | 432 | 0 |
+| tee | 116,353 | 116,353 | 1,860 | 432 | 0 |
 
-Head and tee cross a 16,384-byte text-segment boundary and add 128 link-edit
+Head crosses a 16,384-byte text-segment boundary and adds 128 link-edit
 bytes. The added code implements retained block management, byte read and
-range output, ownership cleanup and compact short reads. Tail's additions
-fit within its existing file segments.
+range output, ownership cleanup and compact short reads. Tail and tee's
+additions fit within their existing file segments.
 
-The compiler grows from 12,414,881 to 12,415,009 file bytes. Code adds
-11,872 bytes for the byte-scan operations and target routing, unwind data
-adds 504, and data adds 2304. Both text and data file segments remain the
-same size; link-edit data adds 128 bytes. No size baseline changed.
+The compiler grows from 12,464,513 to 12,464,657 file bytes. Code adds
+11,864 bytes for the byte-scan operations and target routing, unwind data
+adds 504, and data adds 2048. Both text and data file segments remain the
+same size; link-edit data adds 144 bytes. No size baseline changed.

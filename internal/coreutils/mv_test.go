@@ -458,8 +458,7 @@ func mvCases(t *testing.T) []invocation {
 
 		// --exchange swaps the two names. Only the paths that SUCCEED are
 		// compared: GNU's failure line carries an errno nothing set
-		// (docs/COREUTILS.md), and the implementation here is three
-		// renames rather than one (#9784).
+		// (docs/COREUTILS.md).
 		{name: "exchange two files", args: []string{"--exchange", "-v", "a", "b"}, seedTree: mvBasic},
 		{name: "exchange without verbose", args: []string{"--exchange", "a", "b"}, seedTree: mvBasic},
 		{name: "exchange a directory and a file", args: []string{"--exchange", "-v", "d", "b"}, seedTree: mvBasic},

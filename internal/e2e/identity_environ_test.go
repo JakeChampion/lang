@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/e2eharness"
+
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/constfold"
@@ -139,9 +141,7 @@ func TestWasmEnviron(t *testing.T) {
 // is a different body and needs its own run. A preview-1 core module runs
 // directly under wasmtime, no adapter and no component.
 func TestWasmPreview1Environ(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Fatalf("wasmtime not on PATH — this leg needs it (mise.toml pins it; `eval \"$(scripts/toolchain-env)\"`)")
-	}
+	e2eharness.Wasmtime(t)
 	src := `function main(): i32 {
     let e: string[] = environ();
     let seen: i32 = 0;

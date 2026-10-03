@@ -110,8 +110,8 @@ struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: 
 		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function count(xs: dyn Shape[]): i32 { let n: i32 = 0; for x in xs { match (x as? Circle) { Some(c) => { n = n + 1; }, None => { } } } return n; } function main(): i32 { let xs: dyn Shape[] = [Circle { r: 3 }, Rect { w: 2, h: 5 }, Circle { r: 1 }]; return count(xs); }`, 2},
 
 	// --- MULTI-TRAIT `dyn A + B` downcast (docs/DYN-TRAITS.md §10). The
-	// self-host downcast is SHAPE-based (op_dyn_downcast compares the dyn
-	// value's runtime shape to T's interned shape) — it never looks at the
+	// self-host downcast is SHAPE-based (a variant_is test of the dyn
+	// value's runtime shape against T's interned shape) — it never looks at the
 	// trait set, so a multi-trait `dyn A + B` value (a heap pointer with a
 	// shape, exactly like a single-trait one) downcasts for free. These pin
 	// that it parses + lowers + runs.

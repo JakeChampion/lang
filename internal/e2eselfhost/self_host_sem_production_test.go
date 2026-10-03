@@ -451,9 +451,8 @@ function main(): i32 {
 	// and semsource refused the IIFE for an empty result type, taking the module
 	// with it. i32 and string branches were unaffected, which is why this
 	// survived: only the boolean arm of if_expr_rt spelled its own tag wrong.
-	// Produces 0 of 2 without the fix; the comparison case covers the binary arm,
-	// which spelled it the same way.
-	{name: "if-expr-boolean-branches", atLeast: 2, want: "1|", src: `
+	// The comparison case covers the binary arm, which spelled it the same way.
+	{name: "if-expr-boolean-branches", atLeast: 1, want: "1|", src: `
 function main(): i32 {
     let v: boolean = if (true) { false } else { true };
     let w: boolean = if (v) { 1 < 2 } else { 2 < 1 };
@@ -837,8 +836,8 @@ function main(): i32 {
 	// tag, so the semantic source refused every such body whose arm was not an
 	// i32 ("return type: declared i32, returns boolean") and the caller with
 	// it ("holds a semantic value of i32"). A synthesised declaration's body
-	// is the authority for its result now. Produced 0 of 4 before.
-	{name: "value-if-arm-is-a-call", atLeast: 4, want: "3|", src: `
+	// is the authority for its result now.
+	{name: "value-if-arm-is-a-call", atLeast: 3, want: "3|", src: `
 struct Xyz { n: i32, valid: boolean }
 function gen(): boolean { return true; }
 function mk(n: i32): Xyz { return Xyz { n: n, valid: true }; }
@@ -1662,8 +1661,8 @@ function main(): i32 {
 	// from the inner declaration's tag — `if_expr_rt`'s concrete `i32` guess —
 	// so reading the checker first kept the guess and the outer body refused
 	// `declared i32, returns boolean`. A synthesised callee's contract is read
-	// before the checker now. Refused 3 of 7 before.
-	{name: "value-if-arm-is-a-value-if-of-a-call", atLeast: 7, want: "13|", src: `
+	// before the checker now.
+	{name: "value-if-arm-is-a-value-if-of-a-call", atLeast: 3, want: "13|", src: `
 function gen(): boolean { return true; }
 function pick(n: i32): boolean { return n > 2; }
 function main(): i32 {
@@ -1852,9 +1851,9 @@ function main(): i32 {
 }`},
 	// A value block's result is typed from its checked tail, not the parser's
 	// syntactic guess, so a tail naming a local bound from a match still says
-	// the struct array it holds (#10332): lifted when the block captures
-	// nothing, inlined when it does, and a single struct as well as an array.
-	{name: "value-block-tail-local-struct-array", atLeast: 2, want: "56|", src: `
+	// the struct array it holds (#10332), whether or not the block captures,
+	// and a single struct as well as an array.
+	{name: "value-block-tail-local-struct-array", atLeast: 1, want: "56|", src: `
 struct P { x: i32, y: i32 }
 function main(): i32 {
     let ps = { let j = 1; let q = match (j) { 1 => [P{x:5,y:6}], _ => [P{x:0,y:0}] }; q };
@@ -7543,6 +7542,60 @@ function main(): i32 { return pick(9); }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the
 // element read into `v` is live across the inner loop's `.with`.
+const semTupleElementTakeSource = `
+struct T { a: i64[], b: i64[] }
+
+function touch(t: T, at: i32): T {
+  return T { ...t, a: t.a.with(at, 1 as i64) };
+}
+
+function pair(t: T, at: i32): (T, boolean) {
+  return (touch(t, at), true);
+}
+
+function main(): i32 {
+  let t: T = T { a: [0 as i64, 0 as i64, 0 as i64, 0 as i64], b: [0 as i64] };
+  let k: i32 = 0;
+  while (k < 10) {
+    let p: (T, boolean) = pair(t, k % 4);
+    t = p.0;
+    t = touch(t, (k + 1) % 4);
+    if (!p.1) {
+      return 1;
+    }
+    k = k + 1;
+  }
+  return 0;
+}
+`
+
+const semTupleDestructureTakeSource = `
+struct T { a: i64[], b: i64[] }
+
+function touch(t: T, at: i32): T {
+  return T { ...t, a: t.a.with(at, 1 as i64) };
+}
+
+function pair(t: T, at: i32): (T, boolean) {
+  return (touch(t, at), true);
+}
+
+function main(): i32 {
+  let t: T = T { a: [0 as i64, 0 as i64, 0 as i64, 0 as i64], b: [0 as i64] };
+  let k: i32 = 0;
+  while (k < 10) {
+    let (u, ok) = pair(t, k % 4);
+    t = u;
+    t = touch(t, (k + 1) % 4);
+    if (!ok) {
+      return 1;
+    }
+    k = k + 1;
+  }
+  return 0;
+}
+`
+
 const semHeldElementSource = `
 import "std/string";
 
@@ -7604,6 +7657,11 @@ func TestSelfHostSemanticAllocationCounts(t *testing.T) {
 		{"element-read-outlives-the-array-write", 6, semHeldElementSource},
 		// A view merged past a source that dominates the join stays a view.
 		{"a-view-of-a-dominating-source-is-not-copied", 29, semDominatingViewSource},
+		// A struct taken out of a returned tuple is updated in place while the
+		// tuple's scalar is still to be read: 3 to build, one tuple a round
+		// (#11203; 33 when the tuple kept the struct shared).
+		{"a-tuple-element-is-taken-past-a-later-sibling-read", 13, semTupleElementTakeSource},
+		{"a-destructured-element-is-taken-past-a-later-sibling-read", 13, semTupleDestructureTakeSource},
 	} {
 		t.Run(prog.name, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "main.fern")

@@ -284,6 +284,13 @@ pub function ebusy_text(): string {
   return "Device or resource busy";
 }
 
+pub function enxio_text(): string {
+  if (target_os() == "darwin") {
+    return "Device not configured";
+  }
+  return "No such device or address";
+}
+
 pub function edquot_text(): string {
   if (target_os() == "darwin") {
     return "Disc quota exceeded";

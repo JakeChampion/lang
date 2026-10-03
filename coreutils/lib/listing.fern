@@ -465,7 +465,7 @@ function six_months(): i64 {
 // `fsize` renders the SIZE column and `bsize` the `total` line and the
 // `-s` block counts, so `ls -lk` still prints a file size in bytes
 // while its total is in kibibytes. `--block-size` and `-h` set both.
-pub struct Cfg { format: i32, ignore_mode: i32, sort_key: i32, reverse: boolean, time_type: i32, deref: i32, immediate_dirs: boolean, recursive: boolean, inode: boolean, show_blocks: boolean, indicator: i32, qstyle: i32, qmark: boolean, qmark_newline: boolean, show_owner: boolean, show_group: boolean, show_author: boolean, numeric_ids: boolean, show_context: boolean, width: i64, tabsize: i64, ignores: string[], hides: string[], ignore_backups: boolean, dirs_first: boolean, dired: boolean, hyperlink: boolean, color: boolean, zero: boolean, fsize: blocks.Unit, bsize: blocks.Unit, nonrecent_fmt: string, recent_fmt: string, zone: tz.Zone, now: i64, colors: Palette }
+pub struct Cfg { format: i32, ignore_mode: i32, sort_key: i32, reverse: boolean, time_type: i32, deref: i32, immediate_dirs: boolean, recursive: boolean, inode: boolean, show_blocks: boolean, indicator: i32, qstyle: i32, qmark: boolean, qmark_newline: boolean, show_owner: boolean, show_group: boolean, show_author: boolean, numeric_ids: boolean, show_context: boolean, width: i64, tabsize: i64, ignores: string[], hides: string[], ignore_backups: boolean, dirs_first: boolean, dired: boolean, hyperlink: boolean, color: boolean, zero: boolean, fsize: blocks.Unit, bsize: blocks.Unit, nonrecent_fmt: timefmt.Format, recent_fmt: timefmt.Format, zone: tz.Zone, now: i64, colors: Palette }
 
 // `defaults(format, qstyle, qmark)` — the starting configuration the
 // three programs differ in and nothing else: off a terminal `ls` is
@@ -473,7 +473,7 @@ pub struct Cfg { format: i32, ignore_mode: i32, sort_key: i32, reverse: boolean,
 // vertical columns and escape, `vdir` is long and escape. On a terminal
 // `ls` starts from three different answers; see `ls()`.
 pub function defaults(format: i32, qstyle: i32, qmark: boolean): Cfg {
-  return Cfg { format: format, ignore_mode: ignore_default(), sort_key: sort_name(), reverse: false, time_type: time_mtime(), deref: deref_none(), immediate_dirs: false, recursive: false, inode: false, show_blocks: false, indicator: ind_none(), qstyle: qstyle, qmark: qmark, qmark_newline: false, show_owner: true, show_group: true, show_author: false, numeric_ids: false, show_context: false, width: 80 as i64, tabsize: 8 as i64, ignores: [], hides: [], ignore_backups: false, dirs_first: false, dired: false, hyperlink: false, color: false, zero: false, fsize: blocks.plain_unit(1 as u64), bsize: blocks.default_unit(), nonrecent_fmt: "%b %e  %Y", recent_fmt: "%b %e %H:%M", zone: tz.utc_zone(), now: 0 as i64, colors: palette_off() };
+  return Cfg { format: format, ignore_mode: ignore_default(), sort_key: sort_name(), reverse: false, time_type: time_mtime(), deref: deref_none(), immediate_dirs: false, recursive: false, inode: false, show_blocks: false, indicator: ind_none(), qstyle: qstyle, qmark: qmark, qmark_newline: false, show_owner: true, show_group: true, show_author: false, numeric_ids: false, show_context: false, width: 80 as i64, tabsize: 8 as i64, ignores: [], hides: [], ignore_backups: false, dirs_first: false, dired: false, hyperlink: false, color: false, zero: false, fsize: blocks.plain_unit(1 as u64), bsize: blocks.default_unit(), nonrecent_fmt: timefmt.compile("%b %e  %Y"), recent_fmt: timefmt.compile("%b %e %H:%M"), zone: tz.utc_zone(), now: 0 as i64, colors: palette_off() };
 }
 
 // ---- output -----------------------------------------------------------------
@@ -1715,8 +1715,8 @@ function block_text(c: Cfg, e: Ent): string {
 // is written as the format rendered it, since the format carries its
 // own alignment.
 function time_width(c: Cfg): i32 {
-  let a: i32 = timefmt.strftime(c.nonrecent_fmt, c.zone, c.now, 0 as i64).len();
-  let b: i32 = timefmt.strftime(c.recent_fmt, c.zone, c.now, 0 as i64).len();
+  let a: i32 = timefmt.format(c.nonrecent_fmt, c.zone, c.now, 0 as i64).len();
+  let b: i32 = timefmt.format(c.recent_fmt, c.zone, c.now, 0 as i64).len();
   if (b > a) {
     return b;
   }
@@ -1730,9 +1730,9 @@ function time_text(c: Cfg, e: Ent): string {
   let t: i64 = ent_time(c, e);
   let recent: boolean = c.now - six_months() < t && t <= c.now;
   if (recent) {
-    return timefmt.strftime(c.recent_fmt, c.zone, t, ent_nsec(c, e));
+    return timefmt.format(c.recent_fmt, c.zone, t, ent_nsec(c, e));
   }
-  return timefmt.strftime(c.nonrecent_fmt, c.zone, t, ent_nsec(c, e));
+  return timefmt.format(c.nonrecent_fmt, c.zone, t, ent_nsec(c, e));
 }
 
 function measure(c: Cfg, es: Ent[]): Widths {
@@ -2709,9 +2709,10 @@ function apply_time_style(c: Cfg, spec: string, from_env: boolean): Cfg {
       exit(status_usage());
     }
     if (parts.len() == 2) {
-      return Cfg { ...c, nonrecent_fmt: parts[0], recent_fmt: parts[1] };
+      return Cfg { ...c, nonrecent_fmt: timefmt.compile(parts[0]), recent_fmt: timefmt.compile(parts[1]) };
     }
-    return Cfg { ...c, nonrecent_fmt: body, recent_fmt: body };
+    let f: timefmt.Format = timefmt.compile(body);
+    return Cfg { ...c, nonrecent_fmt: f, recent_fmt: f };
   }
   let name: string = spec;
   if (name.starts_with("posix-")) {
@@ -2721,15 +2722,15 @@ function apply_time_style(c: Cfg, spec: string, from_env: boolean): Cfg {
     }
   }
   if (name == "full-iso") {
-    return Cfg { ...c, nonrecent_fmt: "%Y-%m-%d %H:%M:%S.%N %z", recent_fmt: "%Y-%m-%d %H:%M:%S.%N %z" };
+    return Cfg { ...c, nonrecent_fmt: timefmt.compile("%Y-%m-%d %H:%M:%S.%N %z"), recent_fmt: timefmt.compile("%Y-%m-%d %H:%M:%S.%N %z") };
   }
   if (name == "long-iso") {
-    return Cfg { ...c, nonrecent_fmt: "%Y-%m-%d %H:%M", recent_fmt: "%Y-%m-%d %H:%M" };
+    return Cfg { ...c, nonrecent_fmt: timefmt.compile("%Y-%m-%d %H:%M"), recent_fmt: timefmt.compile("%Y-%m-%d %H:%M") };
   }
   if (name == "iso") {
     // The trailing space is the alignment: it makes the non-recent
     // form exactly as wide as `%m-%d %H:%M`.
-    return Cfg { ...c, nonrecent_fmt: "%Y-%m-%d ", recent_fmt: "%m-%d %H:%M" };
+    return Cfg { ...c, nonrecent_fmt: timefmt.compile("%Y-%m-%d "), recent_fmt: timefmt.compile("%m-%d %H:%M") };
   }
   if (name == "locale") {
     return c;

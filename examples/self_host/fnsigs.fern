@@ -3955,7 +3955,7 @@ function fn_field_value_is_fresh(e: ast.Expr): boolean {
 // closure_value_is_counted: `e` hands whatever stores it a counted closure
 // box — a fresh one (fn_field_value_is_fresh), or the result of a call to a
 // closure-returning function (`closureset`, closure_ret_fns_of), whose return
-// retains any box it does not own (ret_closure_uncounted).
+// retains any box it does not own.
 function closure_value_is_counted(e: ast.Expr, closureset: string[]): boolean {
   if (fn_field_value_is_fresh(e)) {
     return true;
@@ -7931,7 +7931,7 @@ function payload_binding_escapes_arm(arm: ast.MatchArm, name: string, ft: string
 // clo_binding_other_uses: the mentions of closure binding `name` in `arm` that
 // are neither a direct call `name(args)`, nor a bare `name` argument at a
 // position `borrowable` says the callee only reads, nor, when `returns` is set,
-// a bare `return name` — which retains the box (ret_closure_uncounted). A
+// a bare `return name` — which retains the box. A
 // capture by a lambda counts.
 function clo_binding_other_uses(arm: ast.MatchArm, name: string, returns: boolean, borrowable: string[]): i32 {
   function at_expr(e: ast.Expr, own n: i32): i32 {
@@ -12384,7 +12384,7 @@ function clofld_scan_stmts(stmts: ast.Stmt[], structs: irtables.StructTab, cset:
         a = clofld_scan(ex.value, structs, cset, a);
       },
       ast.StmtReturn(r) => {
-        // `return b.f` retains the box for the caller (ret_closure_uncounted).
+        // `return b.f` retains the box for the caller.
         if let ast.ExprFieldAccess(rfa) = r.value {
           a = clofld_scan(rfa.obj, structs, cset, a);
         } else {

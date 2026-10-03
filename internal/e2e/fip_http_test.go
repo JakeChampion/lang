@@ -1,49 +1,14 @@
 package e2e
 
 import (
-	"encoding/json"
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// The HTTP/1.1 codec of #9853 (experiment 3) in its two memory disciplines:
-// the request parse and response serialise through `std/http` as a handler
-// uses them today, and the same parse and serialise as a strict `fip` data
-// plane over owned buffers. `docs/FIP-HTTP-CODEC.md` reports what they
-// measure; this pins the claims that would make that report false.
-//
-//  1. The `fip` variant allocates NOTHING in steady state, over 128,000
-//     requests, and the baseline does allocate. Without the second half the
-//     comparison is between two things that are the same.
-//  2. Both agree, request for request AND byte for byte: the same served and
-//     refused counts and the same digest over every response byte, so a
-//     variant that framed a different answer is caught rather than reporting
-//     a throughput win for doing less work.
-//  3. Every refusal class fires in the steady state. The workload corrupts
-//     every 17th request, cycling through all six, so the validation ladder
-//     is exercised by the thing being measured rather than by a separate
-//     test.
-
-type fipHttpReport struct {
-	Variant          string `json:"variant"`
-	Requests         int64  `json:"requests"`
-	Ok               int64  `json:"ok"`
-	Rejected         int64  `json:"rejected"`
-	BadRequestLine   int64  `json:"bad_request_line"`
-	NoVersion        int64  `json:"no_version"`
-	TransferEncoding int64  `json:"transfer_encoding"`
-	DuplicateLength  int64  `json:"duplicate_length"`
-	BadLength        int64  `json:"bad_length"`
-	Truncated        int64  `json:"truncated"`
-	Digest           int64  `json:"digest"`
-	ResponseBytes    int64  `json:"response_bytes"`
-	SteadyAllocs     int64  `json:"steady_allocs"`
-	P50              int64  `json:"round_p50_ns"`
-	P999             int64  `json:"round_p999_ns"`
-}
-
-func runFipHttp(t *testing.T, fern, dir, variant string, runner []string) fipHttpReport {
+func runFipHttp(t *testing.T, fern, dir, variant string, runner []string) e2eharness.FipHttpReport {
 	t.Helper()
 	src := langSrcAbs(t, filepath.Join("examples", "fip", "http_"+variant+".fern"))
 	bin := filepath.Join(dir, "http_"+variant)
@@ -54,69 +19,14 @@ func runFipHttp(t *testing.T, fern, dir, variant string, runner []string) fipHtt
 	if err != nil {
 		t.Fatalf("run %s: %v\n%s", variant, err, out)
 	}
-	var got fipHttpReport
-	if err := json.Unmarshal(out, &got); err != nil {
-		t.Fatalf("%s printed no report: %v\n%s", variant, err, out)
-	}
-	if got.Variant != variant {
-		t.Fatalf("report names variant %q, ran %q", got.Variant, variant)
-	}
-	if got.Requests == 0 {
-		t.Fatalf("%s reports no requests", variant)
-	}
-	return got
+	return e2eharness.ParseFipHttpReport(t, variant, out)
 }
 
+// The fip HTTP codec experiment (#9853), built by the Go compiler: see
+// e2eharness.CheckFipHttpReports for what it pins.
 func TestFipHttpCodecAgreesAndDoesNotAllocate(t *testing.T) {
 	runner := x86NativeRunner(t) // SKIPs if neither native amd64 nor qemu-x86_64
 	fern := buildFernCLI(t)
 	dir := t.TempDir()
-
-	baseline := runFipHttp(t, fern, dir, "baseline", runner)
-	fip := runFipHttp(t, fern, dir, "fip", runner)
-
-	// 1. The disciplined variant allocates nothing; the control allocates.
-	if fip.SteadyAllocs != 0 {
-		t.Errorf("fip: %d allocations over %d requests, want 0 — the steady state is no longer allocation-free",
-			fip.SteadyAllocs, fip.Requests)
-	}
-	if baseline.SteadyAllocs == 0 {
-		t.Errorf("baseline allocated nothing: the experiment has lost its control, and the fip variant's zero means nothing")
-	}
-
-	// 2. Both agree, request for request and byte for byte.
-	if fip.Requests != baseline.Requests || fip.Ok != baseline.Ok || fip.Rejected != baseline.Rejected {
-		t.Errorf("fip disagrees with the baseline:\n  fip: %+v\n  baseline: %+v", fip, baseline)
-	}
-	if fip.Digest != baseline.Digest || fip.ResponseBytes != baseline.ResponseBytes {
-		t.Errorf("fip framed different response bytes: digest %d over %d bytes, baseline %d over %d",
-			fip.Digest, fip.ResponseBytes, baseline.Digest, baseline.ResponseBytes)
-	}
-
-	// 3. Every refusal class fires, and together they are every refusal.
-	classes := []struct {
-		name string
-		n    int64
-	}{
-		{"bad_request_line", fip.BadRequestLine}, {"no_version", fip.NoVersion},
-		{"transfer_encoding", fip.TransferEncoding}, {"duplicate_length", fip.DuplicateLength},
-		{"bad_length", fip.BadLength}, {"truncated", fip.Truncated},
-	}
-	var sum int64
-	for _, c := range classes {
-		if c.n == 0 {
-			t.Errorf("no request was refused as %q: the malformed-input coverage is gone", c.name)
-		}
-		sum += c.n
-	}
-	if sum != fip.Rejected || fip.Ok == 0 {
-		t.Errorf("the six classes sum to %d refusals, the report says %d refused and %d served", sum, fip.Rejected, fip.Ok)
-	}
-
-	// 4. Both report a tail, so the latency half cannot silently go missing.
-	for _, r := range []fipHttpReport{baseline, fip} {
-		if r.P50 <= 0 || r.P999 < r.P50 {
-			t.Errorf("%s: round p50 %d ns, p99.9 %d ns — the latency report is not a report", r.Variant, r.P50, r.P999)
-		}
-	}
+	e2eharness.CheckFipHttpReports(t, runFipHttp(t, fern, dir, "baseline", runner), runFipHttp(t, fern, dir, "fip", runner))
 }

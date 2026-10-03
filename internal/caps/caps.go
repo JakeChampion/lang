@@ -94,6 +94,8 @@ var BuiltinCaps = map[string]string{
 	"create_symlink":   "fs",
 	"read_link":        "fs",
 	"rename":           "fs",
+	"rename_noreplace": "fs",
+	"rename_exchange":  "fs",
 	"chmod":            "fs",
 	"chmod_at":         "fs",
 	"set_file_times":   "fs",

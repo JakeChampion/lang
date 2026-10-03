@@ -123,23 +123,24 @@ implementation:
   accepted, that it refuses a value, and that it stands in the ambiguity
   list.
 - `cp --debug`'s second line is ours, for the same reason as `cksum
-  --debug`'s and no other. GNU's names ITS OWN syscall strategy —
-  measured, `copy offload: yes, reflink: unsupported, sparse detection:
-  no` for a dense file and `copy offload: unknown, …, sparse detection:
-  SEEK_HOLE` for a sparse one — which is `copy_file_range` offload and
-  `SEEK_HOLE` probing, neither of which has a Fern primitive. Claiming
-  either would say something untrue about our own code. Ours states what
-  the copy actually did, and the corpus holds `--debug` to its exit
-  status and stream rather than its bytes. Everything else about the
-  option IS byte-exact: that it implies `-v`, that the `'src' -> 'dest'`
-  lines it implies are identical, that a directory and a FIFO draw no
-  such line while a regular file does, and that it stands in the
-  ambiguity list between `--copy-contents` and `--dereference`.
+  --debug`'s and no other. GNU's names ITS OWN syscall strategy:
+  `copy offload: yes, reflink: unsupported, sparse detection: SEEK_HOLE`
+  for a sparse file, and for a dense one `sparse detection: no` or
+  `SEEK_HOLE` depending on the host (both measured from GNU 9.4 on
+  ext4). The sparse detection is ours too now — a sparse source is
+  walked by SEEK_DATA / SEEK_HOLE — but the offload is
+  `copy_file_range`, which has no Fern primitive, and claiming it would
+  say something untrue about our own code. Ours states what the copy
+  actually did. No corpus case copies under `--debug`; `TestCpDebug`
+  holds the exit status and the `'src' -> 'dest'` line it implies to
+  GNU's and pins the report line to ours. Everything else about the
+  option IS byte-exact in the corpus: that a skip under `-n` or
+  `--update=none` is named, and that it stands in the ambiguity list
+  between `--copy-contents` and `--dereference`.
 
   This one has a way out that `cksum --debug` does not: a
-  `copy_file_range` / `SEEK_HOLE` primitive would let the line be true
-  rather than ours. Until then it is an exemption, not a divergence to
-  fix in cp.
+  `copy_file_range` primitive would let the line be true rather than
+  ours. Until then it is an exemption, not a divergence to fix in cp.
 
 Exempt is not unchecked. `requireHelp` / `requireVersion` in the harness
 still require the exit status and the stream to match GNU's for each — so
@@ -3480,19 +3481,10 @@ LONGER file's line first whichever order the operands are given in. Within one
 file the tie-break is a real offset comparison and is compared in full; the
 one case that pairs two files gives them distinct words instead.
 
-**`mv --exchange` is three renames rather than one (#9784).** 9.5 added the
-option, and GNU does it in a single `renameat2 (…, RENAME_EXCHANGE)`. Fern's
-`rename` has no flag word — the checker's note on it records that a flag one
-target honours and two refuse belongs to the capability system — so
-`mv.fern` renames the source aside, the destination onto the source, and the
-aside name onto the destination, undoing the first when the second fails. The
-tree left behind is the same and every corpus case compares equal; what
-differs is that a crash between the renames can leave `.mv_exchange.N` behind,
-and that a filesystem GNU would refuse for want of `RENAME_EXCHANGE` support
-is one three plain renames do not need.
-
-GNU's own failure line on that path is unmatched, and it is a bug rather than
-a divergence invented here: `mv.c` sets `x.rename_errno` only when
+**`mv --exchange` reports a failure's real errno.** Both do the swap in one
+kernel call — `rename_exchange` is `renameat2 (…, RENAME_EXCHANGE)`, as GNU's
+is — but GNU's failure line on that path is a bug rather than a divergence
+invented here: `mv.c` sets `x.rename_errno` only when
 `n_files == 2 && !x.exchange`, so an `--exchange` that fails reports the `-1`
 sentinel — `cannot exchange 'a' and 'nosuch': Unknown error -1`, measured.
 Fern names the real errno, and no corpus case pairs `--exchange` with a
@@ -4371,9 +4363,11 @@ groups are the order of work. Each sub-issue names its group.
   SEEK_HOLE, symlink" was stale but for the clone. `--reflink=always`
   reports the failure GNU reports where the filesystem cannot clone,
   which is what ext4 and overlayfs answer and not what btrfs does:
-  FICLONE is the one primitive still missing. Holes are punched at
-  st_blksize granularity, which reproduces GNU's SEEK_HOLE result
-  without it. A recursive copy walks a directory's entries in
+  FICLONE is the one primitive still missing. A sparse source is walked
+  by SEEK_DATA / SEEK_HOLE, as GNU's lseek_copy does, so zeros that were
+  written stay written under `--sparse=auto`; `--sparse=always` and a
+  source that cannot be asked (WASI) fall back to punching zero blocks
+  at st_blksize granularity. A recursive copy walks a directory's entries in
   ascending INODE order — measured, and neither readdir order nor the
   names sorted nor directories first — so the engine stats each entry
   for the number readdir already had, which #9317 would give it back.

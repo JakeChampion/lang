@@ -148,6 +148,7 @@ jobs:
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
       - name: run isolated fern.fern driver tests (two workers, local cache)
         env:
+          FERN_REQUIRE_WASMTIME: "1"
           FERN_BUILD_MEM_BUDGET_MB: "6500"
         run: |
           set -euo pipefail
@@ -501,6 +502,7 @@ jobs:
           SHARD: "${{ matrix.shard }}"
           NSHARD: "${{ matrix.nshard }}"
           FERN_REQUIRE_ARM64_TOOLING: "${{ matrix.host == 'x86_64' && '1' || '' }}"
+          FERN_REQUIRE_WASMTIME: "1"
           FERN_BUILD_MEM_BUDGET_MB: "6500"
         run: |
           set -euo pipefail

@@ -202,6 +202,7 @@ function main(): i32 {
 	check(`is_other(other_a, 12345) && is_other(other_b, 12345) && !is_other(other_c, 12345)`)
 	check(`!is_other(addr_in_use, 12345) && !is_interrupted(addr_in_use)`)
 	check(`other_b.errno() == 12345 && net.error_from_errno(0).errno() == 0`)
+	check(`is_other(net.error_from_errno(0 - 2147483647 - 1), 2147483647) && roundtrips(net.error_from_errno(0 - 2147483647 - 1))`)
 	check(`other_a.eq(other_b) && !other_a.eq(other_c) && same(other_a, other_b)`)
 	check(`!addr_in_use.eq(addr_not_available) && !addr_in_use.eq(other_a) && !other_a.eq(addr_in_use)`)
 	check(`addr_in_use.message() == "Address already in use"`)
