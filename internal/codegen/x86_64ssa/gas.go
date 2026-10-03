@@ -2451,6 +2451,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"access":                           emitAccessHelper,
 	"getcwd":                           emitGetcwdHelper,
 	"read_link":                        emitReadLinkHelper,
+	"getxattr":                         emitGetxattrHelper("getxattr", "gxat", 191),
+	"lgetxattr":                        emitGetxattrHelper("lgetxattr", "lgxa", 192),
 	"chdir":                            emitChdirHelper,
 	"chroot":                           emitChrootHelper,
 	"setuid":                           emitCredSetHelper("setuid", "suid", 105),
@@ -2587,6 +2589,8 @@ var heapUsingHelpers = map[string]bool{
 	"access":                           true,
 	"getcwd":                           true,
 	"read_link":                        true,
+	"getxattr":                         true,
+	"lgetxattr":                        true,
 	"chdir":                            true,
 	"chroot":                           true,
 	"setuid":                           true,
@@ -2700,6 +2704,8 @@ var runtimeHelperDeps = map[string][]string{
 	"lstat":                            {"__fern_io_error", "__fern_rc_inc"},
 	"access":                           {"__fern_io_error", "__fern_rc_inc"},
 	"read_link":                        {"__fern_io_error", "__fern_rc_inc"},
+	"getxattr":                         {"__fern_io_error", "__fern_rc_inc"},
+	"lgetxattr":                        {"__fern_io_error", "__fern_rc_inc"},
 	"chdir":                            {"__fern_io_error", "__fern_rc_inc"},
 	"chroot":                           {"__fern_io_error", "__fern_rc_inc"},
 	"setuid":                           {"__fern_io_error"},
@@ -3404,6 +3410,8 @@ var bcopyUsingHelpers = map[string]bool{
 	"uname_field":                 true,
 	"getcwd":                      true,
 	"read_link":                   true,
+	"getxattr":                    true,
+	"lgetxattr":                   true,
 }
 
 // usesBcopy reports whether any referenced helper calls __ssa_bcopy.

@@ -93,6 +93,8 @@ var BuiltinCaps = map[string]string{
 	"create_link":      "fs",
 	"create_symlink":   "fs",
 	"read_link":        "fs",
+	"getxattr":         "fs",
+	"lgetxattr":        "fs",
 	"rename":           "fs",
 	"rename_noreplace": "fs",
 	"rename_exchange":  "fs",

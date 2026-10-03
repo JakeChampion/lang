@@ -2030,6 +2030,21 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"type-param-unbound-empty-array", "function first[T](own x: T, n: i32): i32 { return n; }\nfunction main(): i32 { return first([], 3); }\n", []string{"E040"}},
 		{"type-param-unbound-no-args", "function mk[T](): i32 { return 1; }\nfunction main(): i32 { return mk(); }\n", []string{"E040"}},
 		{"type-param-explicit", "function mk[T](): i32 { return 1; }\nfunction main(): i32 { return mk[i32](); }\n", nil},
+		// A receiver binds only the variables its declared type names, so on a
+		// concrete receiver the method's own parameter is unbound (#10991).
+		{"method-type-param-unbound-array", "function (xs: u8[]) count[T](values: T[]): i32 { return values.len() + xs.len(); }\nfunction main(): i32 { let b: u8[] = [1 as u8]; return b.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-view", "function (xs: [u8]) take[T](values: T[]): u8 { return xs[0]; }\nfunction main(): i32 { let b: [u8] = \"hi\".as_bytes(); return b.take([]) as i32; }\n", []string{"E040"}},
+		{"method-type-param-unbound-string", "function (s: string) count[T](values: T[]): i32 { return values.len() + s.len(); }\nfunction main(): i32 { let s: string = \"ab\"; return s.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-struct", "struct P { v: i32 }\nfunction (p: P) count[T](values: T[]): i32 { return values.len() + p.v; }\nfunction main(): i32 { let p: P = P { v: 5 }; return p.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-generic-receiver", "struct Box[U] { v: U }\nfunction (b: Box[U]) count[T](values: T[]): i32 { return values.len(); }\nfunction main(): i32 { let b: Box[i32] = Box { v: 1 }; return b.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-i32", "function (n: i32) count[T](values: T[]): i32 { return values.len(); }\nfunction main(): i32 { let x: i32 = 5; return x.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-i64", "function (n: i64) count[T](values: T[]): i32 { return values.len(); }\nfunction main(): i32 { let x: i64 = 5 as i64; return x.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-u8", "function (n: u8) count[T](values: T[]): i32 { return values.len(); }\nfunction main(): i32 { let x: u8 = 5 as u8; return x.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-f64", "function (n: f64) count[T](values: T[]): i32 { return values.len(); }\nfunction main(): i32 { let x: f64 = 2.5; return x.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-boolean", "function (n: boolean) count[T](values: T[]): i32 { return values.len(); }\nfunction main(): i32 { let x: boolean = true; return x.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-char", "function (n: char) count[T](values: T[]): i32 { return values.len(); }\nfunction main(): i32 { let x: char = 'a'; return x.count([]); }\n", []string{"E040"}},
+		{"method-type-param-bound-by-arg", "function (xs: u8[]) count[T](values: T[]): i32 { return values.len() + xs.len(); }\nfunction main(): i32 { let b: u8[] = [1 as u8]; return b.count([2 as u8]) + b.count[i32]([]); }\n", nil},
+		{"method-receiver-binds-its-own", "function (xs: T[]) first(): T { return xs[0]; }\nfunction main(): i32 { let b: u8[] = [7 as u8]; return b.first() as i32; }\n", nil},
 		{"type-param-later-arg-binds", "function fold[T](x: i32, own acc: T, f: (i32, own T) => T): T { return f(x, acc); }\nfunction add(x: i32, own acc: string[]): string[] { return acc.append(\"a\"); }\nfunction main(): i32 {\n    let r: string[] = fold(1, [], add);\n    return r.len();\n}\n", nil},
 		// A parameter only a bound names is bound through the impl, never by an
 		// argument, so the rule leaves it alone.

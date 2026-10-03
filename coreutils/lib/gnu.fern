@@ -241,7 +241,7 @@ pub function is_option(a: string): boolean {
 // ---- errno wording ---------------------------------------------------------
 //
 // GNU prints `strerror(3)`, so the words belong to the host libc, and
-// sixteen errnos read differently on Darwin. These are the six a
+// sixteen errnos read differently on Darwin. These are the eight a
 // utility spells out in a diagnostic of its own — the runtime's own
 // `IoError.Other` gets the same treatment from `internal/strerror`, and
 // `internal/coreutils/strerror_parity_test.go` pins these against that
@@ -296,6 +296,13 @@ pub function edquot_text(): string {
     return "Disc quota exceeded";
   }
   return "Disk quota exceeded";
+}
+
+pub function enodata_text(): string {
+  if (target_os() == "darwin") {
+    return "No message available on STREAM";
+  }
+  return "No data available";
 }
 
 // `io_error_text(e)` — the strerror text GNU prints for an IoError.

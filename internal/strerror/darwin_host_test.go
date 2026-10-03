@@ -43,6 +43,8 @@ var hostErrnos = map[string]syscall.Errno{
 	"ENOSYS":          syscall.ENOSYS,
 	"ENOTEMPTY":       syscall.ENOTEMPTY,
 	"ELOOP":           syscall.ELOOP,
+	"ENODATA":         syscall.ENODATA,
+	"ENOATTR":         syscall.ENOATTR,
 	"EOVERFLOW":       syscall.EOVERFLOW,
 	"EILSEQ":          syscall.EILSEQ,
 	"ENOTSOCK":        syscall.ENOTSOCK,

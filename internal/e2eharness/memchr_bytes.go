@@ -2,8 +2,8 @@ package e2eharness
 
 import "strings"
 
-// MemchrBytesSource enables allocation accounting only on compiled targets.
-// The primary interpreter does not implement __heap_alloc_count.
+// MemchrBytesSource checks __memchr_bytes against a scalar reference, with an
+// allocation probe when `allocations`.
 func MemchrBytesSource(allocations bool) string {
 	probe := ""
 	if allocations {
