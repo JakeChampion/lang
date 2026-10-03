@@ -930,6 +930,10 @@ GNU parity, ownership, size and native measurements are recorded in
 GNU parity, ownership, size and native measurements are recorded in
 [the tr report](STRING-TR-BYTES-2026-10-03.md).
 
+`cut` selects fields and byte ranges from raw records, accumulating long
+records in a byte builder. Evidence is recorded in
+[the cut report](STRING-CUT-BYTES-2026-10-03.md).
+
 `head` and `tail` use raw byte input, delimiter scans and output. Their
 shared hold retains input blocks with a 64-bit byte count and releases
 consumed blocks without repeatedly copying long records. Target checks and
