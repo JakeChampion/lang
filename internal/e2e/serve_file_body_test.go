@@ -50,3 +50,21 @@ func TestServeBinaryBodyInterp(t *testing.T) {
 	})
 	e2eharness.CheckBinaryBody(t, fmt.Sprintf("127.0.0.1:%d", port))
 }
+
+func TestServeResponseFieldsInterp(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	port := freeLoopbackPort(t)
+	srcPath := filepath.Join(t.TempDir(), "srv.fern")
+	if err := os.WriteFile(srcPath, []byte(e2eharness.ResponseFieldsServerSource(port)), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", srcPath)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start interp server: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+	e2eharness.CheckResponseFields(t, fmt.Sprintf("127.0.0.1:%d", port))
+}

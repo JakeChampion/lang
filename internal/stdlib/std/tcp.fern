@@ -460,7 +460,13 @@ function __clock_tick(clk: __Clock): __Clock {
 // producer is the tail under chunked transfer coding for an HTTP/1.1
 // client and close-delimited, the connection ending with it, for an
 // HTTP/1.0 one.
+// A response with a header or trailer that cannot be written as one field
+// line is answered 500 in its place, so no handler-supplied byte can end a
+// line or start another response.
 function __serve_wire(method: string, version: string, answer: HttpResponse, keep_alive: boolean, clk: __Clock): __Wire {
+  if (!http.http_fields_ok(answer.headers) || !http.http_fields_ok(answer.trailers)) {
+    return __serve_wire(method, version, http.internal_error(""), keep_alive, clk);
+  }
   let resp: HttpResponse = answer;
   if (resp.headers.get_all("date").len() == 0) {
     resp = answer.with_header("Date", clk.date);
