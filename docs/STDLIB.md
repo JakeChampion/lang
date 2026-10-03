@@ -829,7 +829,19 @@ Zero-config stderr wrappers plus a leveled logger (#2683).
 
 ### `std/io`
 
-- `read_all_stdin()` — read until EOF into a single string.
+- `read_all_stdin(): Result[string, IoError]`: consume and close stdin,
+  validating UTF-8 after collecting the complete input. Empty input is
+  `Ok("")`; malformed input is `Err(InvalidUtf8("stdin"))`. I/O errors are
+  propagated instead of returning partial text.
+- `read_input(path): Result[string, IoError]`: validated text from stdin for
+  `"-"` or `""`, otherwise from a file.
+- `read_all_bytes(reader): Result[u8[], IoError]`: collect raw bytes to EOF
+  without closing the caller's reader. A read failure returns an error.
+- `read_all_stdin_bytes(): Result[u8[], IoError]`: collect raw stdin and
+  close it, preserving a read error when closure also fails.
+- `read_input_bytes(path): Result[u8[], IoError]`: raw stdin for `"-"` or
+  `""`, otherwise the contents of a file. These byte APIs preserve malformed
+  UTF-8 and encodings split across read boundaries.
 
 ### `std/path`
 

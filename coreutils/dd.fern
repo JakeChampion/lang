@@ -44,17 +44,15 @@ function op_names(): string[] {
 // ---- conv= ------------------------------------------------------------------
 //
 // The flags are a SET: `conv=ucase,swab` is both, and a name that is
-// not one is `invalid conversion: 'NAME'`. `sparse` is not listed: it
-// needs a hole-punching write this build does not have yet. A charset
-// name carries the record conversion it implies — `ascii` unblocks,
+// not one is `invalid conversion: 'NAME'`. A charset name carries the record conversion it implies — `ascii` unblocks,
 // `ebcdic` and `ibm` block — so `conv=ascii,block` is the same refusal
 // as `conv=unblock,block`.
 function conv_names(): string[] {
-  return ["block", "unblock", "lcase", "ucase", "swab", "sync", "excl", "nocreat", "notrunc", "noerror", "fdatasync", "fsync", "ascii", "ebcdic", "ibm"];
+  return ["block", "unblock", "lcase", "ucase", "swab", "sync", "excl", "nocreat", "notrunc", "noerror", "fdatasync", "fsync", "ascii", "ebcdic", "ibm", "sparse"];
 }
 
 function conv_bits(): i32[] {
-  return [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096 | 2, 8192 | 1, 16384 | 1];
+  return [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096 | 2, 8192 | 1, 16384 | 1, 32768];
 }
 
 function conv_block(): i32 {
@@ -115,6 +113,10 @@ function conv_ebcdic(): i32 {
 
 function conv_ibm(): i32 {
   return 16384;
+}
+
+function conv_sparse(): i32 {
+  return 32768;
 }
 
 // ---- iflag= / oflag= --------------------------------------------------------
@@ -712,13 +714,50 @@ function apply_sync(piece: string, s: Settings): string {
 // A short write is not an error and not a second record: the loop
 // finishes the block, exactly as GNU's does, and only a failing write
 // reports `error writing 'NAME': <strerror>`.
-struct Sink { w: Writer, buf: usize, held: i32, obs: i32, name: string, c: Counts, ok: boolean }
+//
+// Under `conv=sparse` a block that is all NULs is a seek past it rather
+// than a write, and still counts as a record out. A handle that cannot
+// seek turns sparse off for the rest of the run, without a word. `seeked`
+// says the LAST block was a seek, which `settle_holes` needs.
+struct Sink { w: Writer, buf: usize, held: i32, obs: i32, name: string, c: Counts, ok: boolean, sparse: boolean, seeked: boolean }
 
-function sink_new(w: Writer, name: string, obs: i32, c: Counts): Sink {
-  return Sink { w: w, buf: buf_new(obs * 2), held: 0, obs: obs, name: name, c: c, ok: true };
+function sink_new(w: Writer, name: string, obs: i32, c: Counts, sparse: boolean): Sink {
+  return Sink { w: w, buf: buf_new(obs * 2), held: 0, obs: obs, name: name, c: c, ok: true, sparse: sparse, seeked: false };
 }
 
-function write_full(k: Sink, data: string, partial: boolean): Sink {
+function all_nul(data: string): boolean {
+  let i: i32 = 0;
+  while (i < data.len()) {
+    if (data[i] != 0 as u8) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function count_out(k: Sink, n: i32, partial: boolean): Sink {
+  let c: Counts = k.c;
+  if (partial) {
+    c = Counts { ...c, part_out: c.part_out + 1 as i64, bytes: c.bytes + n as i64 };
+  } else {
+    c = Counts { ...c, full_out: c.full_out + 1 as i64, bytes: c.bytes + n as i64 };
+  }
+  return Sink { ...k, c: c };
+}
+
+function write_full(k0: Sink, data: string, partial: boolean): Sink {
+  let k: Sink = Sink { ...k0, seeked: false };
+  if (k.sparse && all_nul(data)) {
+    match (k.w.seek(data.len() as i64, 1)) {
+      Ok(_) => {
+        return count_out(Sink { ...k, seeked: true }, data.len(), partial);
+      },
+      Err(_) => {
+        k = Sink { ...k, sparse: false };
+      }
+    }
+  }
   let off: i32 = 0;
   while (off < data.len()) {
     let piece: string = data;
@@ -739,13 +778,44 @@ function write_full(k: Sink, data: string, partial: boolean): Sink {
       }
     }
   }
-  let c: Counts = k.c;
-  if (partial) {
-    c = Counts { ...c, part_out: c.part_out + 1 as i64, bytes: c.bytes + data.len() as i64 };
-  } else {
-    c = Counts { ...c, full_out: c.full_out + 1 as i64, bytes: c.bytes + data.len() as i64 };
+  return count_out(k, data.len(), partial);
+}
+
+// A run whose last block was a seek has not set the file's length: the
+// hole only exists once something lies past it. On a regular file
+// shorter than the offset the seek reached, the file is extended to it.
+function settle_holes(k: Sink): boolean {
+  if (!k.seeked) {
+    return true;
   }
-  return Sink { ...k, c: c };
+  match (k.w.stat()) {
+    Err(e) => {
+      gnu.error("cannot fstat " + gnu.quote(k.name) + ": " + gnu.io_error_text(e));
+      return false;
+    },
+    Ok(st) => {
+      if (!st.is_file) {
+        return true;
+      }
+      match (k.w.seek(0 as i64, 1)) {
+        Err(_) => {
+          return true;
+        },
+        Ok(at) => {
+          if (st.size < at) {
+            match (k.w.truncate(at)) {
+              Some(e) => {
+                gnu.error("failed to truncate to " + at.to_string() + " bytes in output file " + gnu.quote(k.name) + ": " + gnu.io_error_text(e));
+                return false;
+              },
+              None => {}
+            }
+          }
+        }
+      }
+    }
+  }
+  return true;
 }
 
 // `sink_direct` is the `bs=` path: one write per input block, counted
@@ -968,7 +1038,7 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
     return Run { c: k.c, status: 1, progressed: progressed };
   }
   k = sink_flush(k);
-  if (!k.ok) {
+  if (!k.ok || !settle_holes(k)) {
     return Run { c: k.c, status: 1, progressed: progressed };
   }
   let c: Counts = Counts { ...k.c, truncated: st.trunc };
@@ -1335,6 +1405,7 @@ function help_text(): string {
   out = out + "  unblock   replace trailing spaces in cbs-size records with newline\n";
   out = out + "  lcase     change upper case to lower case\n";
   out = out + "  ucase     change lower case to upper case\n";
+  out = out + "  sparse    try to seek rather than write all-NUL output blocks\n";
   out = out + "  swab      swap every pair of input bytes\n";
   out = out + "  sync      pad every input block with NULs to ibs-size; when used\n";
   out = out + "            with block or unblock, pad with spaces rather than NULs\n";
@@ -1635,7 +1706,7 @@ pub function main(): i32 {
     exit(1);
   }
   let started: i64 = monotonic_ns();
-  let k: Sink = sink_new(w, s.out_name, s.obs as i32, counts_new());
+  let k: Sink = sink_new(w, s.out_name, s.obs as i32, counts_new(), (s.conv & conv_sparse()) != 0);
   let run: Run = copy(r, k, s, scan.bs_given, s.in_name, started);
   let status: i32 = run.status;
   // A `conv=fdatasync` the descriptor cannot answer becomes a full

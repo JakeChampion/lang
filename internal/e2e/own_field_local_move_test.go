@@ -10,10 +10,10 @@ import (
 // reads the field again. The local is then the array's only holder, so a
 // `.with` on it writes in place instead of copying the whole buffer.
 //
-// The two loops print how many allocations their 1000 updates made: none
-// for the `let` form, whose spread reuses the box, and one struct each for
-// the pattern form. Each copied the 256-element array as well before the
-// move. The shared case checks the other arm of the runtime test: with the
+// The two loops print how many allocations their 1000 updates made: none for
+// either form, since the `let` form's spread and the pattern form's
+// construction both reuse the box. Each copied the 256-element array as well
+// before the move. The shared case checks the other arm of the runtime test: with the
 // box aliased, the field is retained, not emptied, and the alias keeps its
 // values.
 const ownFieldLocalMoveSrc = `import "std/i64";
@@ -96,8 +96,8 @@ func TestOwnFieldLocalMove(t *testing.T) {
 				return
 			}
 			lines := strings.Fields(stdout)
-			if len(lines) != 2 || lines[0] != "0" || lines[1] != "1000" {
-				t.Errorf("allocations over 1000 updates = %q, want [0 1000]: the field was copied rather than moved", lines)
+			if len(lines) != 2 || lines[0] != "0" || lines[1] != "0" {
+				t.Errorf("allocations over 1000 updates = %q, want [0 0]: the field was copied rather than moved", lines)
 			}
 		})
 	}

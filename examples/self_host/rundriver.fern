@@ -19,8 +19,23 @@ import "./parser";
 // that warning. It is a no-op for an import-free program, which is what the
 // fixture corpus is almost entirely made of.
 pub function parse_stdin(driver: string): parser.Module {
-  let src: string = io.read_all_stdin();
+  let src: string = read_stdin(driver);
   let mod: parser.Module = parser.parse_module(lexer.tokenize(src));
   let _unresolved: boolean = parser.warn_unresolved_imports(mod, driver);
   return mod;
+}
+
+// Drivers require complete, valid source input. An I/O or decoding failure
+// must not be mistaken for an empty module.
+pub function read_stdin(driver: string): string {
+  match (io.read_all_stdin()) {
+    Ok(src) => {
+      return src;
+    },
+    Err(_) => {
+      eprint(driver + ": cannot read UTF-8 stdin");
+      exit(1);
+      return "";
+    }
+  }
 }

@@ -6,28 +6,61 @@
 //   $ echo hi | ./tee a.txt b.txt        # writes hi to stdout, a, b
 //   $ printf 'more\n' | ./tee -a a.txt    # appends to a.txt
 //
-// `tee` buffers all of stdin and then fans it out, so it uses the
-// one-shot `read_file` / `write_file` builtins rather than a
-// streaming Writer: append is just "read what's there, concatenate,
-// write it back". For a short-lived filter that's simpler and avoids
-// holding extra descriptors open.
+// `tee` buffers stdin as raw bytes, then writes the buffer to each output.
+// Append opens the file in append mode, preserving its existing bytes.
 //
 // Showcases: reading all of stdin, fanning one buffer out to stdout
-// plus N files, `read_file` + `write_file`, and reporting per-file
+// plus N files, raw Writer operations, and reporting per-file
 // errors without aborting the whole run.
-import "std/string";
 import "std/io";
 import "std/array";
 
-function existing(path: string): string {
-  match (read_file(path)) {
-    Ok(contents) => {
-      return contents;
+function open_output(path: string, append: boolean): Result[Writer, IoError] {
+  if (append) {
+    return open_appender(path);
+  }
+  return open_writer(path);
+}
+
+function write_output(path: string, append: boolean, bytes: u8[]): Option[IoError] {
+  match (open_output(path, append)) {
+    Err(e) => {
+      return Some(e);
     },
-    Err(_) => {
-      return "";
+    Ok(w) => {
+      let written: Option[IoError] = w.write_bytes(bytes);
+      let closed: Option[IoError] = w.close();
+      match (written) {
+        Some(e) => {
+          return Some(e);
+        },
+        None => {
+          return closed;
+        }
+      }
     }
   }
+}
+
+function copy_outputs(data: u8[], files: string[], append: boolean): i32 {
+  let status: i32 = 0;
+  match (stdout().write_bytes(data)) {
+    Some(_) => {
+      eprint("tee: cannot write stdout");
+      status = 1;
+    },
+    None => {}
+  }
+  for path in files {
+    match (write_output(path, append, data)) {
+      Some(_) => {
+        eprint("tee: " + path + ": cannot write");
+        status = 1;
+      },
+      None => {}
+    }
+  }
+  return status;
 }
 
 function main(): i32 {
@@ -46,26 +79,13 @@ function main(): i32 {
     i = i + 1;
   }
 
-  let data: string = io.read_all_stdin();
-  // Always echo to stdout first.
-  write(data);
-
-  let status: i32 = 0;
-  let j: i32 = 0;
-  while (j < files.len()) {
-    let path: string = files[j];
-    let payload: string = data;
-    if (append) {
-      payload = existing(path) + data;
+  match (io.read_all_stdin_bytes()) {
+    Err(_) => {
+      eprint("tee: cannot read stdin");
+      return 1;
+    },
+    Ok(data) => {
+      return copy_outputs(data, files, append);
     }
-    match (write_file(path, payload)) {
-      Err(_) => {
-        eprint("tee: " + path + ": cannot write");
-        status = 1;
-      },
-      Ok(_) => {}
-    }
-    j = j + 1;
   }
-  return status;
 }

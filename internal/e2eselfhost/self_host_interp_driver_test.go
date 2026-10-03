@@ -17,7 +17,8 @@ const interpDriverMod = "import \"std/io\";\n" +
 	"import \"./parser\";\n" +
 	"import \"./interp\";\n" +
 	"function main(): i32 {\n" +
-	"    let src: string = io.read_all_stdin();\n" +
+	"    let src: string = \"\";\n" +
+	"    match (io.read_all_stdin()) { Ok(text) => { src = text; }, Err(_) => { return 253; } }\n" +
 	"    let mod: parser.Module = parser.parse_module(lexer.tokenize(src));\n" +
 	"    let result: interp.Value = interp.eval_module(mod);\n" +
 	"    match (result) {\n" +

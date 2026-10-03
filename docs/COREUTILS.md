@@ -3699,13 +3699,20 @@ Conflicts are refused in a fixed order, the first group winning: two
 charsets, `block` and `unblock`, `lcase` and `ucase`, `excl` and
 `nocreat`.
 
+**`conv=sparse`** seeks past an output block that is all NULs instead of
+writing it, and the block still counts as a record out. A run whose LAST
+block was a seek has not set the file's length, so a regular file shorter
+than the offset is then extended to it. Over existing bytes
+(`conv=notrunc`) the seek leaves them in place, and under `oflag=append`
+the skipped blocks never land: the writes go to the end and only the
+final extension accounts for the seeks. A handle that cannot seek, a pipe,
+turns sparse off for the rest of the run without a diagnostic. The
+corpus compares block counts for these cases, the only place a hole shows.
+
 **What dd here does not do yet**, each an accepted-operand gap rather than a
 wrong answer — the name is refused as `invalid conversion` / `invalid
 input flag`, which is itself the divergence:
 
-- `conv=sparse` needs a write that punches a hole rather than writing NULs,
-  which is `w.seek` past the gap — the primitive is here, the accounting is
-  not (#9241);
 - `iflag`/`oflag` `direct`, `directory`, `dsync`, `sync`, `noatime`,
   `nocache`, `noctty` and `nofollow` are all open-time bits, and Fern's
   `open_reader_with` / `open_writer_with` flags word carries two: create

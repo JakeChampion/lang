@@ -51,6 +51,26 @@ func ddSeed(t *testing.T, dir string) {
 	}
 }
 
+// ddSparseSeed adds the `conv=sparse` inputs: NULs around a little data,
+// data then a NUL tail (the case where only the length records the
+// hole), all NULs, and a 20 KiB file of data for the cases that write
+// INTO something.
+func ddSparseSeed(t *testing.T, dir string) {
+	t.Helper()
+	ddSeed(t, dir)
+	nul := func(n int) string { return strings.Repeat("\x00", n) }
+	for name, content := range map[string]string{
+		"zmid":  nul(8192) + strings.Repeat("x", 100) + nul(8192),
+		"zend":  strings.Repeat("x", 10) + nul(20000),
+		"zall":  nul(20000),
+		"pre20": strings.Repeat("P", 20000),
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // ddCases is dd(1)'s corpus.
 //
 // Every case names `status=noxfer` or `status=none`, and that is not a
@@ -67,6 +87,10 @@ func ddCases(t *testing.T) []invocation {
 	var cases []invocation
 	add := func(name string, args ...string) {
 		cases = append(cases, invocation{name: name, args: args, seedTree: ddSeed})
+	}
+	// A hole reads back as NULs, so only the block count shows the seek.
+	addSparse := func(name string, args ...string) {
+		cases = append(cases, invocation{name: name, args: args, seedTree: ddSparseSeed, sparse: true})
 	}
 
 	// --- the report's two comparable lines ---------------------------------
@@ -212,6 +236,26 @@ func ddCases(t *testing.T) []invocation {
 	add("conv-ebcdic-sync-pads-ebcdic-space", "if=in10", "of=out", "ibs=4", "conv=ebcdic,sync", "cbs=20", "status=noxfer")
 	add("conv-ebcdic-sync-no-cbs", "if=in10", "of=out", "ibs=4", "conv=ebcdic,sync", "status=noxfer")
 	add("conv-ascii-with-block-no-cbs", "if=in10", "of=out", "conv=ascii,block", "status=noxfer")
+
+	// --- conv=sparse --------------------------------------------------------
+	//
+	// An all-NUL output block is a seek rather than a write, and still a
+	// record out. A run ENDING on a seek extends the file to the offset,
+	// so the length matches a dense copy. Over existing bytes a seek
+	// leaves them in place, and under `oflag=append` the skipped blocks
+	// vanish until the final extension.
+	addSparse("conv-sparse-middle", "if=zmid", "of=out", "bs=4096", "conv=sparse", "status=noxfer")
+	addSparse("conv-sparse-tail", "if=zend", "of=out", "bs=4096", "conv=sparse", "status=noxfer")
+	addSparse("conv-sparse-all-nul", "if=zall", "of=out", "bs=4096", "conv=sparse", "status=noxfer")
+	addSparse("conv-sparse-assembled", "if=zmid", "of=out", "ibs=1000", "obs=4096", "conv=sparse", "status=noxfer")
+	addSparse("conv-sparse-seek", "if=zall", "of=out", "bs=4096", "seek=2", "conv=sparse", "status=noxfer")
+	addSparse("conv-sparse-notrunc-keeps-bytes", "if=zmid", "of=pre20", "bs=4096", "conv=sparse,notrunc", "status=noxfer")
+	addSparse("conv-sparse-truncates", "if=zmid", "of=pre20", "bs=4096", "conv=sparse", "status=noxfer")
+	addSparse("conv-sparse-append", "if=zmid", "of=pre20", "bs=4096", "oflag=append", "conv=sparse,notrunc", "status=noxfer")
+	addSparse("conv-sparse-append-all-nul", "if=zall", "of=pre20", "bs=4096", "oflag=append", "conv=sparse,notrunc", "status=noxfer")
+	// Standard output is a pipe here, which cannot seek: sparse turns
+	// itself off and the NULs are written.
+	addSparse("conv-sparse-pipe", "if=zmid", "bs=4096", "conv=sparse", "status=noxfer")
 
 	// --- conversions that cannot combine -----------------------------------
 	//
