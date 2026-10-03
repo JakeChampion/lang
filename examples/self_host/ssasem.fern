@@ -3182,6 +3182,11 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
   if (d.kind_tag == 5) {
     return out;
   }
+  // A dyn may admit view-bearing alternatives while this particular box
+  // holds none. Its owned storage is not a source of returned views.
+  if (d.kind_tag == dyn_up() && d.args.len() == 1 && !holds_view(f, f.values[d.args[0]])) {
+    return out;
+  }
   if (d.kind_tag == 8) {
     for a in d.args {
       out = view_sources(f, defs, anchors, names, a, kind, out);
