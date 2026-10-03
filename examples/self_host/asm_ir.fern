@@ -6597,6 +6597,40 @@ function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): 
   return "";
 }
 
+// ssa_unary_from selects a width op or bit count that reads its operand from
+// register `src` and writes `d`, so an operand outside `d` needs no copy into
+// it first; "" for an op whose only form works in place.
+function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string): string {
+  if (what == "load_i32") {
+    return "    movslq (" + src + "), " + d + "\n";
+  }
+  if (what == "int_cast:i32" || (what == "int_extend" || what == "int_wrap") && !unsigned) {
+    return "    movslq " + ssa_r32(src) + ", " + d + "\n";
+  }
+  if (what == "u32_wrap" || what == "int_cast:u32" || what == "int_extend" || what == "int_wrap") {
+    return "    movl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
+  }
+  if (what == "clz:64") {
+    return "    lzcntq " + src + ", " + d + "\n";
+  }
+  if (what == "clz:32") {
+    return "    lzcntl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
+  }
+  if (what == "ctz:64") {
+    return "    tzcntq " + src + ", " + d + "\n";
+  }
+  if (what == "ctz:32") {
+    return "    tzcntl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
+  }
+  if (what == "popcount:64") {
+    return "    popcntq " + src + ", " + d + "\n";
+  }
+  if (what == "popcount:32") {
+    return "    popcntl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
+  }
+  return "";
+}
+
 // ssa_bits_asm is the bit counts on %rax at the width the name carries, as
 // the stack machine's arms select them; "" for any other op.
 function ssa_bits_asm(what: string, d: string): string {
@@ -7951,8 +7985,16 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     s = ssa_load(reg_of, ins.args[0], d, s);
     s = ssa_binary(ins, fr, lp, d, s);
   } else {
-    s = ssa_load(reg_of, ins.args[0], d, s);
-    s = s.write(ssa_unary_asm(ins.str, ins.imm == 1, lp + "u" + util.i32_to_string(ins.result), d));
+    let from: string = "";
+    if (reg_of[ins.args[0]] >= 0 && ssa_reg(reg_of[ins.args[0]]) != d) {
+      from = ssa_unary_from(ins.str, ins.imm == 1, ssa_reg(reg_of[ins.args[0]]), d);
+    }
+    if (from != "") {
+      s = s.write(from);
+    } else {
+      s = ssa_load(reg_of, ins.args[0], d, s);
+      s = s.write(ssa_unary_asm(ins.str, ins.imm == 1, lp + "u" + util.i32_to_string(ins.result), d));
+    }
   }
   return ssa_store(reg_of, ins.result, d, s);
 }
