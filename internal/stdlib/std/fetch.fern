@@ -215,10 +215,10 @@ pub function (e: FetchError) to_string(): string {
 }
 
 // A handler that fetches upstream fails with `?`: a timeout answers 504, a
-// method, header or body the handler wrote that cannot go on the wire 500,
-// and every other failure 502, an unparseable URL among them since it may
-// have come off the request being served. The message is not sent, since it
-// names upstream hosts and addresses.
+// method, header or body the handler wrote that cannot go on the wire
+// answers 500, and every other failure 502, an unparseable URL among them
+// since it may have come off the request being served. The message is not
+// sent, since it names upstream hosts and addresses.
 impl http.ToResponse for FetchError {
   function to_response(self: FetchError): HttpResponse {
     match (self) {
