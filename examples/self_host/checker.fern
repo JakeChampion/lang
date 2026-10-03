@@ -14191,6 +14191,21 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
     }
   }
   let elem: typeinfo.Type = array_elem_type_of(dest);
+  // A `str[]` destination types the literal too: each element is read at
+  // `str`, so a string literal widens beside a view (#10889).
+  if (is_str_view(elem)) {
+    if let ast.ExprArray(sa) = e {
+      let out: util.Diag[] = [];
+      for element in sa.elements {
+        out = util.append_diags(out, call_diags(element, s));
+        let et: typeinfo.Type = check_expr(element, s);
+        if (!is_unknown(et) && !coercible(et, elem, s)) {
+          out = out.append(dg_at("E034", "array element type " + type_label(et) + ", expected " + type_label(elem), expr_line(element), expr_col(element)));
+        }
+      }
+      return out;
+    }
+  }
   if (!is_unknown(elem) && !is_primitive_type(elem)) {
     if let ast.ExprArray(a) = e {
       let out: util.Diag[] = [];

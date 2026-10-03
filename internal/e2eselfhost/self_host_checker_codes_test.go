@@ -2007,6 +2007,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// An enum variant's name is no type (#10843).
 		{"variant-name-as-field-type", "enum X { P, Q }\nstruct H { f: P }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
 		{"variant-name-as-param-type", "enum X { P, Q }\nfunction g(p: P): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
+		// A str[] destination types its literal, so a string literal widens
+		// beside a view; with none the elements must still agree (#10889).
+		{"str-array-literal-mixed-ok", "function main(): i32 { let owned: string = \"ab\" + \"cd\"; let s: str = slice_unchecked(owned, 1, 3); let xs: str[] = [\"x\", s]; let ys: str[] = [s, \"y\"]; return xs.len() + ys.len(); }\n", nil},
+		{"str-array-literal-non-string", "function main(): i32 { let owned: string = \"ab\" + \"cd\"; let s: str = slice_unchecked(owned, 1, 3); let xs: str[] = [\"x\", 5]; return xs.len(); }\n", []string{"E034"}},
+		{"untyped-array-literal-mixed-str", "function main(): i32 { let owned: string = \"ab\" + \"cd\"; let s: str = slice_unchecked(owned, 1, 3); let xs = [\"x\", s]; return xs.len(); }\n", []string{"E034"}},
 		{"i32-min-literal-local-ok", "function main(): i32 { let k = -2147483648; return k + 2147483647 + 1; }\n", nil},
 		{"ctor-builtin-settles-ok", "function takes(o: Option[i64]): i32 { return 0; }\nfunction main(): i32 { return takes(Some(40)) + takes(Option.Some(1)); }\n", nil},
 		{"enum-non-reserved-ok", "enum Color { Red, Green }\nfunction main(): i32 { return 0; }\n", nil},
