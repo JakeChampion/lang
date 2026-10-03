@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #8502 — the `[T]` view header a call argument materialises had no owner.
@@ -169,9 +167,6 @@ func TestArm64ViewLendHeaderReclaim(t *testing.T) {
 // wasm has no leak counter, so it uses the __heap_bump_bytes() high-water
 // probe: flat under reclaim, linear under a leak.
 func TestWASMViewLendHeaderReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, viewLendBumpSrc("50"))
 	large := runWasm(t, viewLendBumpSrc("5000"))
 	if small != large {

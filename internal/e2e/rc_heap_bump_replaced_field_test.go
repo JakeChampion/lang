@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Replaced struct-field reclamation (RC-Perceus 5f). A self-overwrite
@@ -135,9 +133,6 @@ func TestArm64ReplacedFieldReclaim(t *testing.T) {
 }
 
 func TestWASMReplacedFieldReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, replacedFieldBumpSrc("50"))
 	large := runWasm(t, replacedFieldBumpSrc("5000"))
 	if small != large {

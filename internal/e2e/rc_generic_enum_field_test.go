@@ -3,8 +3,6 @@ package e2e
 import (
 	"fmt"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #8829 — a generic enum INSTANTIATION is deep-drop-wired, so a struct
@@ -116,9 +114,6 @@ const genericEnumFieldAliasWant = `0123456789abcdefghij
 // figure is one box and one whole-buffer copy per append, which is the
 // quadratic. The assertion is the invariant rather than the number.
 func TestX86_64GenericEnumFieldAppendAllocsBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, genericEnumFieldGrowSrc)
 	if code != 0 {
@@ -137,9 +132,6 @@ func TestX86_64GenericEnumFieldAppendAllocsBounded(t *testing.T) {
 // The aliased-box leg: the answers, and a balanced heap, which catches an
 // over-release from the newly-admitted deep drop as firmly as a leak.
 func TestX86_64GenericEnumFieldAliasedBoxIsNotMutated(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, genericEnumFieldAliasSrc)
 	if code != 0 {
@@ -159,9 +151,6 @@ func TestX86_64GenericEnumFieldAliasedBoxIsNotMutated(t *testing.T) {
 // exit sweep runs the deep drop this change newly admits. Balanced counts
 // here are the arm64 half of that.
 func TestArm64GenericEnumFieldDropsAreBalanced(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckArm64(t, genericEnumFieldGrowSrc)
 	if code != 0 {
@@ -174,9 +163,6 @@ func TestArm64GenericEnumFieldDropsAreBalanced(t *testing.T) {
 }
 
 func TestArm64GenericEnumFieldAliasedBoxIsNotMutated(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckArm64(t, genericEnumFieldAliasSrc)
 	if code != 0 {
@@ -191,9 +177,6 @@ func TestArm64GenericEnumFieldAliasedBoxIsNotMutated(t *testing.T) {
 // the deep drop this change admits releases two words per field rather than
 // one — the ABI half of the same question.
 func TestWASMGenericEnumFieldAppendCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	if code := runWasm(t, genericEnumFieldGrowSrc); code != 0 {
 		t.Errorf("wasm accumulator exited %d, want 0", code)
@@ -201,9 +184,6 @@ func TestWASMGenericEnumFieldAppendCorrect(t *testing.T) {
 }
 
 func TestWASMGenericEnumFieldAliasedBoxIsNotMutated(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	if got := runWasmCapturingStdout(t, genericEnumFieldAliasSrc); got != genericEnumFieldAliasWant {
 		t.Errorf("wasm aliased-box append =\n%q\nwant\n%q", got, genericEnumFieldAliasWant)
@@ -216,9 +196,6 @@ func TestWASMGenericEnumFieldAliasedBoxIsNotMutated(t *testing.T) {
 // pulled into a generated __drop_enum_ body on wasm), so admitting this shape
 // would hand the owned model a drop it cannot run.
 func TestOptionOfMapStaysOutOfTheOwnedModel(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	// The Map's own two allocations are stranded at exit (#8854) — identical on
 	// main, and one-time rather than per-append. Admitting Option[Map] to the

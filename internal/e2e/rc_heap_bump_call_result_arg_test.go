@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Owned call-RESULT passed as a borrowed arg (statement-temp stage-(b)
@@ -78,9 +76,6 @@ func TestArm64CallResultArgReclaim(t *testing.T) {
 }
 
 func TestWASMCallResultArgReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, c := range []struct {
 		name string
 		src  func(string) string

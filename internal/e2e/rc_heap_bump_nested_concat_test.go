@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Nested-concat temporary reclamation (RC-Perceus, statement-temporary
@@ -76,9 +74,6 @@ func TestArm64NestedConcatReclaim(t *testing.T) {
 }
 
 func TestWASMNestedConcatReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, nestedConcatBumpSrc("5000"))
 	large := runWasm(t, nestedConcatBumpSrc("50000"))
 	if small != large {

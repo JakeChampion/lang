@@ -13,8 +13,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // appendReturnPosBumpSrc threads an accumulator through a return-position
@@ -47,9 +45,6 @@ func TestX86_64AppendReturnPosBounded(t *testing.T) {
 }
 
 func TestWASMAppendReturnPosBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	n1 := runWasm(t, appendReturnPosBumpSrc("60"))
 	n2 := runWasm(t, appendReturnPosBumpSrc("120"))
 	assertSubQuadratic(t, "wasm32-wasi", n1, n2)

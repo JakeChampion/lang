@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Dead NAMED intermediate consumed by a borrowing call (#4357). In
@@ -57,9 +55,6 @@ func TestArm64IntermediateLocalReclaim(t *testing.T) {
 }
 
 func TestWASMIntermediateLocalReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, intermediateLocalFlat); got != 0 {
 		t.Errorf("intermediate-local flat (wasm): code=%d (98=bump grew → t leaked; 99=over-release; 97=value)", got)
 	}

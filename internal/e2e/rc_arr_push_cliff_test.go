@@ -125,12 +125,13 @@ function main(): i32 {
     return __arr_push_shared_count();
 }`
 
-// arrPushCliffPtrSharedSrc crosses on EVERY append but the first: `with_tag`
-// builds a second BOX holding the same element buffer, and it stays live across
-// the append, so the in-place grow would be observable through it. The first
-// append finds cap 0 and is genuine growth, so the count is 49, not 50 — which
-// is also what makes this a test of the tally's capacity check and not just of
-// the rc check.
+// arrPushCliffPtrSharedSrc copies on EVERY append: `with_tag` builds a second
+// BOX holding the same element buffer, and it stays live across the append, so
+// the in-place grow would be observable through it. Only a copy made while the
+// buffer had spare capacity crosses the cliff. Five of the fifty appends find
+// it full (the first, at cap 0, and four whose previous copy filled its size
+// class), so the count is 45, not 50 — which is also what makes this a test of
+// the tally's capacity check and not just of the rc check.
 //
 // This is the deleted AST lowering's `LowerState` shape reduced: a struct threaded by
 // functional update whose OTHER methods hand back a fresh box sharing the same
@@ -207,16 +208,16 @@ func TestX86_64ArrPushCliffCounter(t *testing.T) {
 	if _, got := compileAndRunX86_64FreeOn(t, arrPushCliffPtrHealthySrc); got != 0 {
 		t.Errorf("x86-64 pointer-element accumulator: __arr_push_shared_count() = %d, want 0", got)
 	}
-	if _, got := compileAndRunX86_64FreeOn(t, arrPushCliffPtrSharedSrc); got != 49 {
+	if _, got := compileAndRunX86_64FreeOn(t, arrPushCliffPtrSharedSrc); got != 45 {
 		t.Errorf("x86-64 pointer-element accumulator behind a live second box: "+
-			"__arr_push_shared_count() = %d, want 49 — the pointer grow helper is not "+
+			"__arr_push_shared_count() = %d, want 45 — the pointer grow helper is not "+
 			"tallying the cliff it crosses", got)
 	}
 	if _, got := compileAndRunX86_64FreeOn(t, arrPushCliffStrHealthySrc); got != 0 {
 		t.Errorf("x86-64 string-element accumulator: __arr_push_shared_count() = %d, want 0", got)
 	}
-	if _, got := compileAndRunX86_64FreeOn(t, arrPushCliffStrSharedSrc); got != 49 {
+	if _, got := compileAndRunX86_64FreeOn(t, arrPushCliffStrSharedSrc); got != 45 {
 		t.Errorf("x86-64 string-element accumulator behind a live second box: "+
-			"__arr_push_shared_count() = %d, want 49", got)
+			"__arr_push_shared_count() = %d, want 45", got)
 	}
 }

@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Match-on-fresh-enum-scrutinee reclamation (value-consuming-position sibling
@@ -157,9 +155,6 @@ func TestArm64MatchScrutineeReclaim(t *testing.T) {
 }
 
 func TestWASMMatchScrutineeReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, mk := range []func(string) string{matchScrutineeExprBumpSrc, matchScrutineeStmtBumpSrc, matchScrutineeLiteralBumpSrc} {
 		small := runWasm(t, mk("50"))
 		large := runWasm(t, mk("5000"))

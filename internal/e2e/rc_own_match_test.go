@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Consuming match on an `own` parameter — Perceus's main FBIP result: a
@@ -52,9 +50,6 @@ func TestArm64OwnConsumingMatch(t *testing.T) {
 }
 
 func TestWASMOwnConsumingMatch(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, ownMapSrc); got != 0 {
 		t.Errorf("recursive map_inc: got %d, want 0", got)
 	}
@@ -114,9 +109,6 @@ func TestArm64OwnTagOnlyMatchThenMatch(t *testing.T) {
 }
 
 func TestWASMOwnTagOnlyMatchThenMatch(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, ownTagOnlyThenMatchSrc); got != 96 {
 		t.Errorf("tag-only match then a payload match: got %d, want 96", got)
 	}

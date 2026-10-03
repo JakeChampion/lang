@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #7910 (a) — a map whose VALUES are `string[]`.
@@ -159,9 +157,6 @@ func TestArm64MapArrayValueColumnReclaim(t *testing.T) {
 }
 
 func TestWASMMapArrayValueColumnReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, mapArrayValueColumnBumpSrc("50"))
 	large := runWasm(t, mapArrayValueColumnBumpSrc("5000"))
 	if small != large {

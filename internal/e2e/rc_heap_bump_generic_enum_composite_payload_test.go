@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Composite-of-ParamType generic-enum payload reclamation (#2704 class 2
@@ -89,9 +87,6 @@ func TestArm64GenericEnumCompositePayloadReclaim(t *testing.T) {
 }
 
 func TestWASMGenericEnumCompositePayloadReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	// The wasm allocator's high-water stabilises late (~a page), so
 	// compare N=5000 vs N=50000 like the field-of-fresh wasm leg — the
 	// pre-fix leak (~96 B/iter) still separates them by megabytes.

@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Enum-payload-struct STRING-field reclamation (#4355): a local bound to a
@@ -188,9 +186,6 @@ function main(): i32 {
 }`
 
 func TestWASMEnumPayloadStructStrReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	// The LITERAL-field shape is fully bounded on wasm (boxes reclaim, the
 	// literal payload is static). The CONCAT-field shape keeps a documented
 	// sound string-field leak on wasm32 — see the WasmSound pin below.

@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #8530 lowered `a.with(i, v)`'s mutate-or-copy decision into the IR, so the
@@ -179,9 +177,6 @@ func TestArm64WithAliasedReceiverCopies(t *testing.T) {
 }
 
 func TestWASMWithAliasedReceiverCopies(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, c := range withAliasedCases() {
 		if got := runWasm(t, c.src); got != 0 {
 			t.Errorf("wasm %s: code=%d — 2/3/4 mean the write landed in a buffer a "+

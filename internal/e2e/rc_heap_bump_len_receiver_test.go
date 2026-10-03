@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Statement-temporary reclamation, stage (c): a value-consuming op whose
@@ -74,9 +72,6 @@ func TestArm64LenReceiverReclaim(t *testing.T) {
 }
 
 func TestWASMLenReceiverReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, lenRecvBumpSrc("5000"))
 	large := runWasm(t, lenRecvBumpSrc("50000"))
 	if small != large {
@@ -217,9 +212,6 @@ func TestArm64LenCallReceiverReclaim(t *testing.T) {
 }
 
 func TestWASMLenCallReceiverReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	// The wasm high-water plateaus only after a few thousand iterations
 	// (freelist size-class warm-up; verified flat 5000 -> 200000, vs the
 	// pre-fix ~131 B/iter linear growth), so the fixpoint compares

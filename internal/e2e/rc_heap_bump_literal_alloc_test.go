@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Literal-sized buffer reclamation (scalar-arg taint, docs/RC-PERCEUS-PLAN.md).
@@ -56,9 +54,6 @@ func TestArm64LiteralAllocReclaim(t *testing.T) {
 }
 
 func TestWASMLiteralAllocReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	s, l := runWasm(t, literalAllocBumpSrc("5000")), runWasm(t, literalAllocBumpSrc("50000"))
 	if s != l {
 		t.Errorf("literal-sized temp bump should be bounded: N=5000 -> %d, N=50000 -> %d", s, l)

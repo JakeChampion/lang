@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Slice 2c — owned-by-default for STRUCTS and TUPLES. A struct/tuple parameter
@@ -12,10 +10,7 @@ import (
 // exit), exactly like the enum case in 2a. Structs are mutated in place with no
 // copy-on-write, so the retain inc never disturbs a mutation made through the
 // parameter — these pin that key correctness point plus value + no over-release
-// across reader / aliased / mutating / nested / passthrough / tuple shapes. The
-// whole-corpus byte-identical proof is the differential gate
-// (Test{X86_64,Arm64,WASM}OwnedByDefaultMatchesBorrow); this is the focused
-// guard.
+// across reader / aliased / mutating / nested / passthrough / tuple shapes.
 
 var obdStructTupleCases = map[string]string{
 	// Reader reclaims a fresh argument (sole owner at the call).
@@ -43,9 +38,6 @@ var obdStructTupleCases = map[string]string{
 }
 
 func TestX86_64OwnedByDefaultStructTupleSound(t *testing.T) {
-	prev := ast.OwnedByDefault
-	ast.OwnedByDefault = true
-	defer func() { ast.OwnedByDefault = prev }()
 	for name, src := range obdStructTupleCases {
 		if _, code := compileAndRunX86_64FreeOn(t, src); code != 0 {
 			t.Errorf("%s: got %d, want 0 (100/101=value, >0=over-release)", name, code)
@@ -54,9 +46,6 @@ func TestX86_64OwnedByDefaultStructTupleSound(t *testing.T) {
 }
 
 func TestArm64OwnedByDefaultStructTupleSound(t *testing.T) {
-	prev := ast.OwnedByDefault
-	ast.OwnedByDefault = true
-	defer func() { ast.OwnedByDefault = prev }()
 	for name, src := range obdStructTupleCases {
 		if _, code := compileAndRunArm64FreeOn(t, src); code != 0 {
 			t.Errorf("%s: got %d, want 0", name, code)
@@ -65,11 +54,6 @@ func TestArm64OwnedByDefaultStructTupleSound(t *testing.T) {
 }
 
 func TestWASMOwnedByDefaultStructTupleSound(t *testing.T) {
-	prc := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	prev := ast.OwnedByDefault
-	ast.OwnedByDefault = true
-	defer func() { ast.OwnedByDefault = prev; ast.RcFreeEnabled = prc }()
 	for name, src := range obdStructTupleCases {
 		if got := runWasm(t, src); got != 0 {
 			t.Errorf("%s: got %d, want 0", name, got)
@@ -94,9 +78,6 @@ function main():i32{
 }
 
 func TestX86_64OwnedByDefaultStructBounded(t *testing.T) {
-	prev := ast.OwnedByDefault
-	ast.OwnedByDefault = true
-	defer func() { ast.OwnedByDefault = prev }()
 	small := mustRunX86_64FreeOn(t, obdStructBoundedSrc("50"))
 	large := mustRunX86_64FreeOn(t, obdStructBoundedSrc("5000"))
 	if small != large {
@@ -105,9 +86,6 @@ func TestX86_64OwnedByDefaultStructBounded(t *testing.T) {
 }
 
 func TestArm64OwnedByDefaultStructBounded(t *testing.T) {
-	prev := ast.OwnedByDefault
-	ast.OwnedByDefault = true
-	defer func() { ast.OwnedByDefault = prev }()
 	small := mustRunArm64FreeOn(t, obdStructBoundedSrc("50"))
 	large := mustRunArm64FreeOn(t, obdStructBoundedSrc("5000"))
 	if small != large {
@@ -116,11 +94,6 @@ func TestArm64OwnedByDefaultStructBounded(t *testing.T) {
 }
 
 func TestWASMOwnedByDefaultStructBounded(t *testing.T) {
-	prc := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	prev := ast.OwnedByDefault
-	ast.OwnedByDefault = true
-	defer func() { ast.OwnedByDefault = prev; ast.RcFreeEnabled = prc }()
 	small := runWasm(t, obdStructBoundedSrc("50"))
 	large := runWasm(t, obdStructBoundedSrc("5000"))
 	if small != large {

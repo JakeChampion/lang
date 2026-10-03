@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Self-append reclamation for POINTER-element arrays — `a = a.append(x)` over
@@ -111,19 +109,14 @@ func runArrayPushPtrElemChecks(t *testing.T, run func(*testing.T, string) int) {
 }
 
 func TestX86_64ArrayPushPtrElemReclaim(t *testing.T) {
-	ast.RcFreeEnabled = true
 	runArrayPushPtrElemChecks(t, mustRunX86_64FreeOn)
 }
 
 func TestArm64ArrayPushPtrElemReclaim(t *testing.T) {
-	ast.RcFreeEnabled = true
 	runArrayPushPtrElemChecks(t, mustRunArm64FreeOn)
 }
 
 func TestWASMArrayPushPtrElemReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	runArrayPushPtrElemChecks(t, func(t *testing.T, src string) int {
 		return runWasm(t, src)
 	})

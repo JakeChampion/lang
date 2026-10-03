@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Wide-scalar (i64 / f64) struct fields are reuse-eligible (#4356
@@ -57,9 +55,6 @@ func TestArm64WideFieldReuse(t *testing.T) {
 }
 
 func TestWASMWideFieldReuse(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, wideReuseSrc); got != 0 {
 		t.Errorf("wide-field reuse churn: got %d, want 0", got)
 	}

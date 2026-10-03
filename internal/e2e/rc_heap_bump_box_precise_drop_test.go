@@ -3,8 +3,6 @@ package e2e
 import (
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Perceus precise drops — slice 4: STRUCT + tuple box types. A dead owned
@@ -87,9 +85,6 @@ function main(): i32 {
 }
 
 func TestWASMBoxPreciseDrop(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if dead, live := runWasm(t, boxDead4Src()), runWasm(t, boxLive4Src()); dead >= live {
 		t.Errorf("precise drops should reclaim sequentially-dead struct boxes: dead4 %d should be < live4 %d", dead, live)
 	}

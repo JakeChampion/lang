@@ -14,8 +14,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // dynVtableParamSrc dispatches through the vtable twice per iteration: once on
@@ -43,36 +41,27 @@ function main(): i32 {
     return (acc - 116) + __rc_underflow_count();
 }`
 
-// TestDynVtableParamOwnership runs the dispatch under both ownership models.
-// Pre-fix the owned model (BorrowInferEnabled false) freed the receiver inside
-// the callee and the caller freed it again: `FERN_SANITIZE=1` reported a
-// use-after-free on both natives and wasm trapped with "pointer not aligned"
-// once the corrupted freelist handed back a misaligned block.
+// TestDynVtableParamOwnership: a receiver passed through a vtable call is
+// released once. When the callee freed it and the caller freed it again,
+// `FERN_SANITIZE=1` reported a use-after-free on both natives and wasm trapped
+// with "pointer not aligned" once the corrupted freelist handed back a
+// misaligned block.
 func TestDynVtableParamOwnership(t *testing.T) {
-	for _, borrow := range []bool{true, false} {
-		name := "borrow_infer_on"
-		if !borrow {
-			name = "owned_model"
+	t.Run("x86_64", func(t *testing.T) {
+		if _, code := compileAndRunX86_64FreeOn(t, dynVtableParamSrc); code != 0 {
+			t.Errorf("got exit %d, want 0 (wrong value or rc over-release)", code)
 		}
-		t.Run("x86_64/"+name, func(t *testing.T) {
-			defer withBorrowInfer(borrow)()
-			if _, code := compileAndRunX86_64FreeOn(t, dynVtableParamSrc); code != 0 {
-				t.Errorf("got exit %d, want 0 (wrong value or rc over-release)", code)
-			}
-		})
-		t.Run("arm64/"+name, func(t *testing.T) {
-			defer withBorrowInfer(borrow)()
-			if _, code := compileAndRunArm64FreeOn(t, dynVtableParamSrc); code != 0 {
-				t.Errorf("got exit %d, want 0 (wrong value or rc over-release)", code)
-			}
-		})
-		t.Run("wasm/"+name, func(t *testing.T) {
-			defer withBorrowInfer(borrow)()
-			if got := runWasm(t, dynVtableParamSrc); got != 0 {
-				t.Errorf("got %d, want 0 (wrong value or rc over-release)", got)
-			}
-		})
-	}
+	})
+	t.Run("arm64", func(t *testing.T) {
+		if _, code := compileAndRunArm64FreeOn(t, dynVtableParamSrc); code != 0 {
+			t.Errorf("got exit %d, want 0 (wrong value or rc over-release)", code)
+		}
+	})
+	t.Run("wasm", func(t *testing.T) {
+		if got := runWasm(t, dynVtableParamSrc); got != 0 {
+			t.Errorf("got %d, want 0 (wrong value or rc over-release)", got)
+		}
+	})
 }
 
 // dynVtableParamBumpSrc reports a VERDICT — 0 when a churn four times as long
@@ -105,35 +94,24 @@ function main(): i32 {
 }`
 }
 
-// TestDynVtableParamBoundedOwnedModel: the receiver is borrowed now, so the
-// caller is its only reclaimer — the loop must still be bump-bounded under the
-// owned model, i.e. borrowing did not turn the callee's free into a leak.
-func TestDynVtableParamBoundedOwnedModel(t *testing.T) {
+// TestDynVtableParamBounded: the caller is the receiver's only reclaimer, so
+// the loop must stay bump-bounded — borrowing did not turn the callee's free
+// into a leak.
+func TestDynVtableParamBounded(t *testing.T) {
 	src := dynVtableParamBumpSrc("500", "2000")
 	t.Run("x86_64", func(t *testing.T) {
-		defer withBorrowInfer(false)()
 		if _, code := compileAndRunX86_64FreeOn(t, src); code != 0 {
 			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
 		}
 	})
 	t.Run("arm64", func(t *testing.T) {
-		defer withBorrowInfer(false)()
 		if _, code := compileAndRunArm64FreeOn(t, src); code != 0 {
 			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
 		}
 	})
 	t.Run("wasm", func(t *testing.T) {
-		defer withBorrowInfer(false)()
 		if got := runWasm(t, src); got != 0 {
 			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", got)
 		}
 	})
-}
-
-// withBorrowInfer sets ast.BorrowInferEnabled for the duration of a sub-test
-// and returns the restore func.
-func withBorrowInfer(v bool) func() {
-	prev := ast.BorrowInferEnabled
-	ast.BorrowInferEnabled = v
-	return func() { ast.BorrowInferEnabled = prev }
 }

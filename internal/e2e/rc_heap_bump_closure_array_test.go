@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // closure[] element reclamation (RC-Perceus). A `(() => i32)[]` array holds
@@ -139,9 +137,6 @@ func TestArm64ClosureArrayReclaim(t *testing.T) {
 }
 
 func TestWASMClosureArrayReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	// wasm is the over-release arbiter: it heap-allocates the pairs + envs
 	// and __heap_bump_bytes measures the leak directly. Pre-fix this loop
 	// ramped unbounded (320064 at N=5000); post-fix it plateaus (freelist

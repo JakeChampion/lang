@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Cell[string] reclamation (#6885). A cell is a one-element array box, and
@@ -115,9 +113,6 @@ func TestArm64CellStringReclaimed(t *testing.T) {
 }
 
 func TestWASMCellStringReclaimed(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if code := runWasm(t, cellStrChurnSrc); code != 0 {
 		t.Errorf("Cell[string] churn is not flat on wasm: shape %d (%s)", code, cellStrVerdict(code))
 	}

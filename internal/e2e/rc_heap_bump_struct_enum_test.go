@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Struct / enum loop-body deep reclamation (RC-Perceus). Before this
@@ -103,9 +101,6 @@ func TestArm64StructEnumHeapBumpBounded(t *testing.T) {
 }
 
 func TestWASMStructEnumHeapBumpBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, src := range []func(string) string{structFieldBumpSrc, enumPayloadBumpSrc} {
 		small := runWasm(t, src("50"))
 		large := runWasm(t, src("5000"))

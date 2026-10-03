@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Nested-array (array-of-array) inner-buffer reclamation (RC-Perceus).
@@ -75,9 +73,6 @@ func TestArm64NestedArrayReclaim(t *testing.T) {
 }
 
 func TestWASMNestedArrayReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, nestedArrBumpSrc("50"))
 	large := runWasm(t, nestedArrBumpSrc("5000"))
 	if small != large {

@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // The struct/enum-key (keyKind-3) `get_or` path emitted both non-receiver
@@ -125,9 +123,6 @@ func TestArm64MapKeyedGetOrFallbackReclaim(t *testing.T) {
 }
 
 func TestWASMMapKeyedGetOrFallbackReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, keyedGetOrFallbackUnderflowSrc); got != 0 {
 		t.Errorf("keyed get_or: code=%d (99=wrong value, >0=over-release)", got)
 	}

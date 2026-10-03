@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // A PAIR-FORM match scrutinee's payload release was emitted only after the arm
@@ -113,9 +111,6 @@ func TestArm64PairFormReturningArmReclaim(t *testing.T) {
 }
 
 func TestWASMPairFormReturningArmReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, src := range []string{pairFormEarlyReturnArr, pairFormEarlyReturnUnused} {
 		if got := runWasm(t, src); got != 0 {
 			t.Errorf("pair-form early-return payload: code=%d (98=grows, 99=over-release, 97=value)", got)

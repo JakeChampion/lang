@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Union-of-structs array literals must wrap each element into the union, the
@@ -79,9 +77,6 @@ func TestArm64UnionArrayLiteralWrap(t *testing.T) {
 }
 
 func TestWASMUnionArrayLiteralWrap(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, unionArrMixed); got != 0 {
 		t.Errorf("mixed: %d (99=value mismatch / un-wrapped element)", got)
 	}

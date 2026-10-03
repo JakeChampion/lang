@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // `?`-consumed source-box reclamation (the try-operator sibling of the
@@ -239,9 +237,6 @@ func TestArm64TryScrutineeReclaim(t *testing.T) {
 }
 
 func TestWASMTryScrutineeReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	// The concat-payload string shape is bounded on natives only (pair-form
 	// wasm keeps the documented payload leak — see tryScrutStringBumpSrc);
 	// wasm asserts the literal-payload sibling for boundedness instead and
