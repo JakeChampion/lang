@@ -1983,6 +1983,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"ctor-shadowed-by-local-arg", "function takes(r: Result[i64, i32]): i32 { return 0; }\nfunction main(): i32 { let Err: (i64) => i32 = (v: i64) => 1; return takes(Err(5)); }\n", []string{"E038"}},
 		{"ctor-shadowed-by-local-init", "function main(): i32 { let Some = (v: i64): i32 => 1; let o: Option[i64] = Some(1); return 0; }\n", []string{"E003"}},
 		{"ctor-shadowed-by-function-ok", "function Some(n: i32): i32 { return n + 1; }\nfunction main(): i32 { let x: i32 = Some(5); return x - 6; }\n", nil},
+		// A generic call nested in another one's argument takes the reading
+		// position's width through both (#10508).
+		{"nested-generic-call-destination-ok", "function id[T](a: T): T { return a; }\nfunction main(): i32 { let z: i64 = id(id(5000000000)); return (z / 1000000000) as i32; }\n", nil},
+		{"nested-generic-call-argument-ok", "function id[T](a: T): T { return a; }\nfunction take(x: i64): i32 { return x as i32; }\nfunction main(): i32 { return take(id(id(1))); }\n", nil},
+		{"nested-generic-call-compare-ok", "function id[T](a: T): T { return a; }\nfunction main(): i32 { if (id(id(1)) == 4611686018427387904) { return 1; } return 0; }\n", nil},
+		{"nested-generic-call-out-of-range", "function id[T](a: T): T { return a; }\nfunction main(): i32 { let z: u8 = id(id(300)); return 0; }\n", []string{"E047"}},
 		{"ctor-builtin-settles-ok", "function takes(o: Option[i64]): i32 { return 0; }\nfunction main(): i32 { return takes(Some(40)) + takes(Option.Some(1)); }\n", nil},
 		{"enum-non-reserved-ok", "enum Color { Red, Green }\nfunction main(): i32 { return 0; }\n", nil},
 		// Generic functions: a concrete argument must NOT be flagged against

@@ -20867,7 +20867,7 @@ func (c *checker) settleGenericCallByHint(e ast.Expr, hint ast.Type) {
 				break
 			}
 			if pt, ok := p.Type.(ast.ParamType); ok && pt.Name == tp {
-				if !unsettledNumericShape(call.Args[j]) {
+				if !unsettledNumericShape(call.Args[j]) && !c.openGenericCall(call.Args[j]) {
 					pinned = true
 				}
 				bound = append(bound, call.Args[j])
@@ -20883,6 +20883,22 @@ func (c *checker) settleGenericCallByHint(e ast.Expr, hint ast.Type) {
 		}
 		call.TypeArgs[i] = want
 	}
+}
+
+// openGenericCall reports whether e reads a generic call whose width is still
+// open — a type argument only an unsuffixed literal bound — so a hint on an
+// outer generic call reaches through it: `id(id(1))` at an i64.
+func (c *checker) openGenericCall(e ast.Expr) bool {
+	call, _, _ := c.genericCallProjection(e)
+	if call == nil {
+		return false
+	}
+	for _, ta := range call.TypeArgs {
+		if isPolymorphicNumeric(ta) {
+			return true
+		}
+	}
+	return false
 }
 
 // genericCallProjection resolves e — a generic call, or a chain of tuple or

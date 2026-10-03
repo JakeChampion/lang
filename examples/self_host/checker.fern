@@ -24889,15 +24889,16 @@ function gcall_sig(c: ast.ExprCall, s: Scope): FuncSig {
 }
 
 // lit_bound_typevar: every argument declared as `tp` is an untyped integer
-// tree, and no parameter mentions `tp` inside another type (`T[]`,
-// `Option[T]`), which would pin it on its own.
+// tree or a generic call whose width is itself still open (`id(id(1))`), and
+// no parameter mentions `tp` inside another type (`T[]`, `Option[T]`), which
+// would pin it on its own.
 function lit_bound_typevar(sig: FuncSig, c: ast.ExprCall, tp: string, s: Scope): boolean {
   let n: i32 = 0;
   let k: i32 = 0;
   while (k < sig.param_type_names.len() && k < c.args.len()) {
     if (sig.param_type_names[k] == tp) {
       let (seed, ids) = lit_tree(c.args[k], s, []);
-      if (!seed && !int_literal_tree(c.args[k])) {
+      if (!seed && !int_literal_tree(c.args[k]) && !gcall_open(c.args[k], s)) {
         return false;
       }
       n = n + 1;
@@ -24961,7 +24962,9 @@ function gcall_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer):
 }
 
 // gcall_settle gives the arguments declared as `tp` the integer type `w`: a
-// literal local among them is fixed, and a literal is recorded for a suffix.
+// literal local among them is fixed, a literal is recorded for a suffix, and
+// a generic call among them is read at `w` in its turn, so `id(id(1))` reaches
+// the inner literal.
 function gcall_settle(c: ast.ExprCall, sig: FuncSig, tp: string, w: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
   let tag: string = typeinfo.spelling(w);
   let out: LitInfer = st;
@@ -24973,6 +24976,7 @@ function gcall_settle(c: ast.ExprCall, sig: FuncSig, tp: string, w: typeinfo.Typ
       if (int_literal_tree(c.args[k]) && (tag == "i32" || lit_suffix_spelled(tag))) {
         out = LitInfer { ...out, cargs: out.cargs.append(gcall_arg_key(c, k)), ctags: out.ctags.append(tag) };
       }
+      out = gcall_demand(c.args[k], w, s, out);
     }
     k = k + 1;
   }
