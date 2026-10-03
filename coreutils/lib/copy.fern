@@ -651,7 +651,7 @@ function put_extents(r: Reader, w: Writer, punch: boolean, total: i64, bs: i32):
         data = d;
       },
       Err(e) => {
-        if (gnu.io_error_text(e) != "No such device or address") {
+        if (gnu.io_error_text(e) != gnu.enxio_text()) {
           if (pos == 0 as i64) {
             return None;
           }
