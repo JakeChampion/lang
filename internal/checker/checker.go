@@ -19935,6 +19935,14 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				}
 				sl.TypeArgs = append([]ast.Type{}, hn.Args...)
 			}
+		} else if call, ok := e.(*ast.Call); ok && isCellNew(call) {
+			// `let c: Cell[i64] = cell_new(1)` reaches T through the
+			// destination, as a generic call's result does.
+			if hn.Name == "Cell" && len(hn.Args) == 1 && len(call.Args) == 1 && len(call.TypeArgs) == 1 &&
+				isPolymorphicNumeric(call.TypeArgs[0]) && unsettledNumericShape(call.Args[0]) {
+				c.settleNumeric(call.Args[0], hn.Args[0])
+				call.TypeArgs[0] = c.postSettleType(call.Args[0], call.TypeArgs[0])
+			}
 		} else if call, ok := e.(*ast.Call); ok {
 			// `let b: Box[u64] = box(1)` reaches T through the return type.
 			c.settleGenericCallByHint(call, hint)
@@ -20496,6 +20504,9 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 		// param of a multi-param generic (e.g. the `T` of
 		// `Result[T, E]` from `Ok(v)`) while preserving the
 		// other from the first-pass result.
+		if isCellNew(x) && len(x.TypeArgs) == 1 {
+			return ast.StructType{Name: "Cell", Args: []ast.Type{x.TypeArgs[0]}}
+		}
 		if et, ok := prior.(ast.EnumType); ok && len(et.Args) > 0 && isVariantCall(x) {
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				if vr, isVar, _ := c.resolveVariant(id.Name, id.EnumName); isVar {
@@ -20832,6 +20843,13 @@ func (c *checker) widenGenericCallByLiterals(call *ast.Call) ast.Type {
 // parameter type merely mentions it (`T[]`, `Option[T]`), is left to that
 // argument (#8722). A field read of the call's result — `both(1, 2).1` —
 // settles through the declared type of the field it reads (#10176).
+// isCellNew reports whether call is the `cell_new` constructor, which the
+// checker intercepts by name.
+func isCellNew(call *ast.Call) bool {
+	id, ok := call.Callee.(*ast.Ident)
+	return ok && id.Name == "cell_new"
+}
+
 func (c *checker) settleGenericCallByHint(e ast.Expr, hint ast.Type) {
 	call, fn, declared := c.genericCallProjection(e)
 	if call == nil {
