@@ -8128,9 +8128,7 @@ function fusion_on(): boolean {
 // backends, whose dispatch chains run over exactly these arms.
 // A method is an arm only on a type that implements the whole trait set: a
 // type with a same-named method of its own is never inside the dyn. A
-// monomorphised clone `base__…` implements what its generic base does. The
-// receiver is keyed by parser.receiver_base, as implements_traits keys the
-// impl list and decl_key names the arm, so a `str` receiver is `string`.
+// monomorphised clone `base__…` implements what its generic base does.
 pub function dyn_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], method: string, traits: string[]): string[] {
   let out: string[] = [];
   for fd in funcs {
