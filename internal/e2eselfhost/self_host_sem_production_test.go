@@ -7543,6 +7543,60 @@ function main(): i32 { return pick(9); }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the
 // element read into `v` is live across the inner loop's `.with`.
+const semTupleElementTakeSource = `
+struct T { a: i64[], b: i64[] }
+
+function touch(t: T, at: i32): T {
+  return T { ...t, a: t.a.with(at, 1 as i64) };
+}
+
+function pair(t: T, at: i32): (T, boolean) {
+  return (touch(t, at), true);
+}
+
+function main(): i32 {
+  let t: T = T { a: [0 as i64, 0 as i64, 0 as i64, 0 as i64], b: [0 as i64] };
+  let k: i32 = 0;
+  while (k < 10) {
+    let p: (T, boolean) = pair(t, k % 4);
+    t = p.0;
+    t = touch(t, (k + 1) % 4);
+    if (!p.1) {
+      return 1;
+    }
+    k = k + 1;
+  }
+  return 0;
+}
+`
+
+const semTupleDestructureTakeSource = `
+struct T { a: i64[], b: i64[] }
+
+function touch(t: T, at: i32): T {
+  return T { ...t, a: t.a.with(at, 1 as i64) };
+}
+
+function pair(t: T, at: i32): (T, boolean) {
+  return (touch(t, at), true);
+}
+
+function main(): i32 {
+  let t: T = T { a: [0 as i64, 0 as i64, 0 as i64, 0 as i64], b: [0 as i64] };
+  let k: i32 = 0;
+  while (k < 10) {
+    let (u, ok) = pair(t, k % 4);
+    t = u;
+    t = touch(t, (k + 1) % 4);
+    if (!ok) {
+      return 1;
+    }
+    k = k + 1;
+  }
+  return 0;
+}
+`
+
 const semHeldElementSource = `
 import "std/string";
 
@@ -7604,6 +7658,11 @@ func TestSelfHostSemanticAllocationCounts(t *testing.T) {
 		{"element-read-outlives-the-array-write", 6, semHeldElementSource},
 		// A view merged past a source that dominates the join stays a view.
 		{"a-view-of-a-dominating-source-is-not-copied", 29, semDominatingViewSource},
+		// A struct taken out of a returned tuple is updated in place while the
+		// tuple's scalar is still to be read: 3 to build, one tuple a round
+		// (#11203; 33 when the tuple kept the struct shared).
+		{"a-tuple-element-is-taken-past-a-later-sibling-read", 13, semTupleElementTakeSource},
+		{"a-destructured-element-is-taken-past-a-later-sibling-read", 13, semTupleDestructureTakeSource},
 	} {
 		t.Run(prog.name, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "main.fern")

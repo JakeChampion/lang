@@ -224,7 +224,9 @@ pub function plain(body: string): HttpResponse {
 // status text. std/json's `JsonError` answers 400 with where the text
 // broke, and a `string` error answers 500 with the status text alone —
 // the message is dropped, so log it before the `?` when it matters, or
-// fail with an `HttpError` to put it on the wire. A handler whose errors
+// fail with an `HttpError` to put it on the wire. std/fetch's `FetchError`
+// answers 504 for a timeout, 500 for an `InvalidRequest` and 502 for the
+// rest, without its message. A handler whose errors
 // are `dyn error.Error` is answered by `respond_error`, which logs each
 // message through the platform.
 

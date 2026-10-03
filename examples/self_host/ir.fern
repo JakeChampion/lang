@@ -1056,6 +1056,17 @@ pub function op_rename(): Op {
   return op0(267);
 }
 
+// `rename_noreplace` and `rename_exchange` take [old, new] like `rename`:
+// renameat2 with RENAME_NOREPLACE (an existing `new` is EEXIST) or
+// RENAME_EXCHANGE (the two names swap), in the same kernel call.
+pub function op_rename_noreplace(): Op {
+  return op0(356);
+}
+
+pub function op_rename_exchange(): Op {
+  return op0(357);
+}
+
 // `umask` takes one operand [mask] and pushes the mask it replaced —
 // umask(2), which sets and reads in one uninterruptible step. It cannot
 // fail. Native only: neither WASI preview has a file-mode creation mask.
@@ -4177,6 +4188,9 @@ function kind_id_len14(name: string): i32 {
 
 function kind_id_len15(name: string): i32 {
   let c: u8 = name[0];
+  if (c == b'r' && name == "rename_exchange") {
+    return 357;
+  }
   if (c == b'b' && name == "buf_push_mapped") {
     return 325;
   }
@@ -4211,6 +4225,9 @@ function kind_id_len15(name: string): i32 {
 }
 
 function kind_id_len16(name: string): i32 {
+  if (name == "rename_noreplace") {
+    return 356;
+  }
   if (name == "udp_sendto_bytes") {
     return 355;
   }
@@ -5321,6 +5338,12 @@ pub function kind_name(id: i32): string {
   if (id == 355) {
     return "udp_sendto_bytes";
   }
+  if (id == 356) {
+    return "rename_noreplace";
+  }
+  if (id == 357) {
+    return "rename_exchange";
+  }
   if (id == 353) {
     return "tcp_send_bytes";
   }
@@ -5486,6 +5509,7 @@ function pops2_io(t: i32): boolean {
   return t == 170 || t == 226 || t == 352  // write_file, write_file_exec, write_file_bytes
     || t == 237  // access (path, mode)
     || t == 260 || t == 262 || t == 263 || t == 267 || t == 268  // create_dir, create_link, create_symlink, rename, chmod
+    || t == 356 || t == 357  // rename_noreplace, rename_exchange
     || t == 273  // truncate (path, length)
     || t == 304 || t == 305  // open_reader_with, open_writer_with (path, flags)
     || t == 281  // writer_truncate (fd, length)
@@ -7974,7 +7998,7 @@ pub function op_allocates(tag: i32): boolean {
   // The single-step directory and link primitives, rename, set_file_times
   // and truncate box a Result and heap-build the NUL-terminated paths they
   // pass to the kernel; read_link boxes the target string as well.
-  if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 || tag == 267 || tag == 269 || tag == 273) {
+  if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 || tag == 267 || tag == 269 || tag == 273 || tag == 356 || tag == 357) {
     return true;
   }
   // read_dir / read_dir_all box a fresh string[] (the arr box + a string
