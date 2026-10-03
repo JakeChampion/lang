@@ -3899,6 +3899,11 @@ function dyn_conforms(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean
   if let typeinfo.TypeErased(_) = from {
     return true;
   }
+  // No array implements a trait (native refuses the impl, E021), and its base
+  // name is its element's, which may.
+  if (is_owned_array(from) || is_arr_view(from)) {
+    return false;
+  }
   let tn: string = util.base_type_name(type_label(from));
   if (tn.len() == 0) {
     return true;
@@ -19881,6 +19886,13 @@ function e021_has_impl(mod: parser.Module, trait_name: string, impl_type: string
 function e021_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   for im in mod.impls {
+    // An array, owned or a view, has no receiver name a trait's methods could
+    // hang on, as native's methodTypeName has none.
+    let ir: parser.TypeRef = parser.parse_type_ref(im.impl_type);
+    if (im.trait_name != "" && (ir.array_depth > 0 || ir.is_view)) {
+      out = out.append(dg("E021", "`impl … for " + im.impl_type + "`: type must be a struct, enum, or built-in type"));
+      continue;
+    }
     for trait_req in mod.trait_reqs {
       if (trait_req.trait_name == im.trait_name && trait_req.module == im.trait_module) {
         // Supertrait conformance: `impl B for T` where `trait B: A`
