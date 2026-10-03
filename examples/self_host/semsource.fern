@@ -736,9 +736,23 @@ function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
     return refused(s, "address literal past the immediate");
   }
   if (ssasem.text_constant(ty)) {
-    return define(s, 1, [], 0, n.text, ty);
+    return define(s, 1, [], 0, decimal_text(n.text), ty);
   }
   return define(s, 1, [], util.lit_to_i32(n.text), "", ty);
+}
+
+// decimal_text drops a plain decimal literal's leading zeros. The text reaches
+// assemblers that read a leading `0` as octal, where Fern's `010` is ten; a
+// radix literal (`0x1F`, `0b101`) keeps its prefix.
+function decimal_text(t: string): string {
+  if (t.len() < 2 || t[0] != b'0' || t[1] < b'0' || t[1] > b'9') {
+    return t;
+  }
+  let i: i32 = 0;
+  while (i + 1 < t.len() && t[i] == b'0') {
+    i = i + 1;
+  }
+  return slice_unchecked(t, i, t.len()) + "";
 }
 
 function boolean_value(b: boolean): i32 {
