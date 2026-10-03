@@ -289,6 +289,28 @@ function main(): i32 { return pick(true, 7) + pick(false, 9); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`testq (%r\w+), (%r\w+)`}, "arm64-linux": {`\bcbn?z x\d+,`}},
 		forbid: map[string][]string{"x86-64-linux": {`testq %r11, %r11`, `movq %r\w+, %r11`}, "arm64-linux": {`\bcbn?z x4,`, `mov x4, x`}}},
+	// A constant a phi merges is loaded on its edge, with no home of its own,
+	// so the `false` the first compare merges does not hold a callee-saved
+	// register across the call between; only the string the second compare
+	// reads does. A returned constant goes straight to the result register.
+	{name: "phi_constant_loads_on_edge", fn: "is_stream", exit: 1, src: `
+enum Ty { Named(string), Other(i32) }
+@noinline function is_stream(t: Ty): boolean {
+    if let Ty.Named(s) = t {
+        return s == "Reader" || s == "Writer";
+    }
+    return false;
+}
+function main(): i32 {
+    let n: i32 = 0;
+    if (is_stream(Ty.Named("Writer"))) { n = n + 1; }
+    if (is_stream(Ty.Other(3))) { n = n + 10; }
+    if (is_stream(Ty.Named("Wrote!"))) { n = n + 100; }
+    return n;
+}
+`,
+		want:   map[string][]string{"x86-64-linux": {`pushq %rbx`, `movl \$1, %eax`}, "arm64-linux": {`str x19, \[sp, #-16\]!`, `mov x0, #1\b`}},
+		forbid: map[string][]string{"x86-64-linux": {`pushq %r12`}, "arm64-linux": {`\bx20\b`}}},
 	// A multiply by a constant reads its operand from its home: x86-64's
 	// three-operand imul, with no copy into the destination first, whichever
 	// side the constant is written on. The forbid is the half that tells it

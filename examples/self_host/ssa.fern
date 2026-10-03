@@ -1073,8 +1073,8 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     }
     bi = bi + 1;
   }
-  // A value with no home has no interval; the extensions below leave it
-  // alone because it is never a phi operand and never live into a loop.
+  // A value with no home has no interval: the phi reads above are dropped
+  // with the rest, and the loop extension below leaves a value with none.
   i = 0;
   while (i < no_home.len() && i < f.nvals) {
     if (no_home[i]) {
@@ -1086,7 +1086,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
   hi = extend_loop_invariant_intervals(f, def_pos, hi);
   let cum: i32[] = calls_before(calls, total_pos);
   let cum_abi: i32[] = calls_before(abi_cl, total_pos);
-  let mates: Mates = phi_mates(f, def_pos);
+  let mates: Mates = phi_mates(f, def_pos, no_home);
   let weight: i32[] = spill_weights(f, at);
 
   let reg_of: i32[] = [];
@@ -1418,10 +1418,10 @@ function shares_operand_home(op: string): boolean {
 // parameter, which nothing defines, counts as one), `hint[a]` for an operand
 // a defined at or after its phi is the phi, and `carried[a]` marks that
 // second kind, whose interference with the phi is a question of paths rather
-// than positions.
+// than positions. An operand with no home pairs with nothing.
 struct Mates { hint: i32[], carried: boolean[] }
 
-function phi_mates(f: SFunc, def_pos: i32[]): Mates {
+function phi_mates(f: SFunc, def_pos: i32[], no_home: boolean[]): Mates {
   let hint: i32[] = [];
   let carried: boolean[] = [];
   let i: i32 = 0;
@@ -1435,7 +1435,7 @@ function phi_mates(f: SFunc, def_pos: i32[]): Mates {
     for ins in blk.insts {
       if (ins.kind_tag == 8 && ins.result >= 0 && ins.result < hint.len()) {
         for a in ins.args {
-          if (a < 0 || a >= hint.len()) {
+          if (a < 0 || a >= hint.len() || a < no_home.len() && no_home[a]) {
             continue;
           }
           if (def_pos[a] < pos) {
@@ -1704,7 +1704,9 @@ function free_slot(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32
 // qualifies when it lies in lo..hi and every use is a binary op reading it as
 // the right operand of an op named in `right`, or as the left operand of one
 // named in `left` (the commutative ops and the comparisons, which the emitter
-// turns round); a use anywhere else keeps it in a register. When both
+// turns round), a phi operand, which the edge's moves load into the phi's
+// home, or a returned value, loaded into the result register; a use anywhere
+// else keeps it in a register. When both
 // operands are constants (the optimiser's folds do not run here, so
 // `0i64 - 5i64` reaches the emitter) only the right one is an immediate, so
 // the op still has a register to compute in. `konst[v]` says v is an integer
@@ -1746,16 +1748,13 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
       let a: i32 = 0;
       while (a < ins.args.len()) {
         let v: i32 = ins.args[a];
-        if (v >= 0 && v < is_imm.len() && is_imm[v] && !imm_use(ins, a, konst, right, left)) {
+        if (v >= 0 && v < is_imm.len() && is_imm[v] && ins.kind_tag != 8 && !imm_use(ins, a, konst, right, left)) {
           is_imm = is_imm.with(v, false);
         }
         a = a + 1;
       }
     }
     let t: STerm = blk.term;
-    if (t.kind_tag == 1 && t.value >= 0 && t.value < is_imm.len()) {
-      is_imm = is_imm.with(t.value, false);
-    }
     if (t.kind_tag == 3 && t.cond >= 0 && t.cond < is_imm.len()) {
       is_imm = is_imm.with(t.cond, false);
     }

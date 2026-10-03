@@ -7927,7 +7927,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
 
 // ssa_phi_moves emits the copies of the edge from block `pred` into block
 // `succ`: each of succ's phis takes its operand for pred. A phi whose operand
-// already sits in its home, or which nothing reads, moves nothing.
+// already sits in its home, or which nothing reads, moves nothing. An
+// immediate operand has no location to copy, so it is loaded after the copies,
+// once nothing still reads the phi's home.
 function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, succ: i32, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   let ti: i32 = ssa_block_at(fr, succ);
@@ -7938,13 +7940,36 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
   let sl: i32 = ssa.pred_slot(tb, pred);
   let srcs: i32[] = [];
   let dsts: i32[] = [];
+  let imm_dsts: i32[] = [];
+  let imm_vals: i64[] = [];
   for ins in tb.insts {
-    if (ins.kind_tag == 8 && reg_of[ins.result] != 0 - 1 && reg_of[ins.args[sl]] != reg_of[ins.result]) {
+    if (ins.kind_tag != 8 || reg_of[ins.result] == 0 - 1) {
+      continue;
+    }
+    if (fr.imm.is_imm[ins.args[sl]]) {
+      imm_dsts = imm_dsts.append(reg_of[ins.result]);
+      imm_vals = imm_vals.append(fr.imm.value[ins.args[sl]]);
+    } else if (reg_of[ins.args[sl]] != reg_of[ins.result]) {
       srcs = srcs.append(reg_of[ins.args[sl]]);
       dsts = dsts.append(reg_of[ins.result]);
     }
   }
-  return ssa_parallel_moves(srcs, dsts, s);
+  s = ssa_parallel_moves(srcs, dsts, s);
+  let i: i32 = 0;
+  while (i < imm_dsts.len()) {
+    s = ssa_imm_to(imm_vals[i], imm_dsts[i], s);
+    i = i + 1;
+  }
+  return s;
+}
+
+// ssa_imm_to loads an immediate into a location: a register, or a frame slot,
+// which takes a sign-extended 32-bit immediate directly.
+function ssa_imm_to(c: i64, loc: i32, s: asmcore.EmitState): asmcore.EmitState {
+  if (loc >= 0) {
+    return ssa_const_reg(util.i64_to_string(c), false, ssa_reg(loc), s);
+  }
+  return s.write("    movq $" + util.i64_to_string(c) + ", " + ssa_loc(loc, s) + "\n");
 }
 
 // ssa_parallel_moves emits moves between locations (a register index or a
@@ -8168,7 +8193,11 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
 function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
   let t: ssa.STerm = blk.term;
   if (t.kind_tag == 1) {
-    s = ssa_load(reg_of, t.value, "%rax", s);
+    if (t.value >= 0 && fr.imm.is_imm[t.value]) {
+      s = ssa_const_reg(util.i64_to_string(fr.imm.value[t.value]), false, "%rax", s);
+    } else {
+      s = ssa_load(reg_of, t.value, "%rax", s);
+    }
     return s.write(fr.epilogue);
   }
   if (t.kind_tag == 2) {
