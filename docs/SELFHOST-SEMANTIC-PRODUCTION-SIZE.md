@@ -10,7 +10,7 @@ lowering introduced by #9321.
 | --- | ---: |
 | Baseline revision, rebuilt | 12,048,860 |
 | Current revision | 12,881,996 |
-| Current revision with only the CLI's substitution returning `ircore.no_sub()` | 12,317,724 |
+| Current revision with `semlower.target_substitution` returning `ircore.no_sub()` | 12,317,724 |
 | Semantic pipeline linkage, same-source difference | 564,272 |
 | Other growth since the baseline | 268,864 |
 
@@ -36,7 +36,8 @@ though they cannot select it. Commit `e42b99e05` moved the producer to the
 CLI and passed an `ircore.Sub` value into each backend. This repair is
 described in [the production consumer](SELFHOST-SEMANTIC-SOURCE.md#the-production-consumer).
 Backend entry points accept the value; the producer is
-`semlower.target_substitution`, which the CLI calls.
+`semlower.target_substitution`. The CLI and `playground_run.fern` call it
+directly, and the emitting drivers call it through `semlower.driven`.
 
 The current full fifteen-driver measurement and smoke run passes. Each of
 the fourteen partial drivers remains inside its existing baseline tolerance;

@@ -358,7 +358,7 @@ function emit_mismatch_arm64(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-  if (o.kind_tag == 225) {  // memchr
+  if (o.kind_tag == 225 || o.kind_tag == 358) {  // memchr / memchr_bytes
     // operand stack [box, byte, from] (from on top) -> i32 index or -1.
     //
     // NEON, 16 bytes an iteration, the same kernel the native arm64
@@ -390,13 +390,24 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let l_done: string = mlo7.name;
     s = mlo7.state;
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    if (o.kind_tag == 358) {
+      s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
+    } else {
+      s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    }
     s = s.write("    cmp x2, #0\n    b.ge " + l_clamped + "\n    mov x2, #0\n");
     s = s.write(l_clamped + ":\n");
     // Unsigned compare against 255 rejects both a negative byte and one
     // above the range in a single test. Checked once, so neither loop
     // below needs a per-iteration guard.
     s = s.write("    cmp x1, #255\n    b.hi " + l_none + "\n");
+    if (o.kind_tag == 358 && !ir.is_packed(o)) {
+      s = s.write(l_tail + ":\n    cmp x2, x3\n    b.ge " + l_none + "\n");
+      s = s.write("    add x5, x0, x2, lsl #3\n    ldrb w4, [x5]\n    cmp x4, x1\n    b.eq " + l_done + "\n");
+      s = s.write("    add x2, x2, #1\n    b " + l_tail + "\n");
+      s = s.write(l_none + ":\n    mov x2, #-1\n");
+      return s.write(l_done + ":\n    str x2, [sp, #-16]!\n");
+    }
     s = s.write("    cmp x2, x3\n    b.ge " + l_none + "\n");
     s = s.write("    add x5, x0, x2\n    add x6, x0, x3\n");
     s = s.write("    dup v1.16b, w1\n");
@@ -3215,7 +3226,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    bl __fn___fern_environ\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
     s = s.need("environ");
-  } else if (o.kind_tag == 189) {  // wasm_timer_pollable
+  } else if (o.kind_tag == 148) {  // wasm_timer_pollable
     // [ns] -> __fern_wasm_timer_pollable(x0=ns) -> -1 (native shim) in x0.
     s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_timer_pollable\n    str x0, [sp, #-16]!\n");
     s = s.need("wasm_timer_pollable");
@@ -3567,8 +3578,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = emit_arm64_op_map(o, i, lp, s);
   } else if (o.kind_tag == 146) {  // dyn_box
     s = emit_arm64_op_dyn_box(o, s);
-  } else if (o.kind_tag == 148) {  // dyn_downcast
-    s = emit_arm64_op_dyn_downcast(o, i, lp, s);
   } else {
     ircore.flat_arm_missing(o);
   }
@@ -4498,42 +4507,6 @@ function emit_arm64_op_dyn_box(o: ir.Op, own s: asmcore.EmitState): asmcore.Emit
   s = s.write("    str x2, [x0]\n");  // shape @0
   s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #8]\n");  // value @8
   s = s.write("    str x0, [sp, #-16]!\n");  // push cell ptr
-
-  return s;
-}
-
-function emit_arm64_op_dyn_downcast(o: ir.Op, i: i32, lp: string, own s: asmcore.EmitState): asmcore.EmitState {
-  // `e as? T` downcast (docs/DYN-TRAITS.md §9). The `dyn` value (a heap
-  // pointer carrying its concrete shape @0) is on top of the operand
-  // stack. Read its shape and compare to T's interned shape (the SAME
-  // .S label struct_make / dyn_dispatch use, so pointer identity
-  // holds): equal → Some(value) box [tag0@0, payload@8]; else → None
-  // box [tag1@0, 0@8] — the ordinary Option box `match` reads. The dyn
-  // value stays on the operand stack (which __fern_alloc preserves)
-  // across the alloc, so the hit path reloads it as the Some payload.
-  s = s.mark_heap();
-  let dcl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
-  s = dcl.state;
-  let dcmiss: string = lp + "dcmiss" + util.i32_to_string(i);
-  let dcend: string = lp + "dcend" + util.i32_to_string(i);
-  s = s.write("    ldr x0, [sp]\n");  // peek dyn ptr (left on stack)
-  s = s.write("    ldr x1, [x0]\n");  // shape @0
-  s = s.write("    adrp x2, " + dcl.label + "\n");
-  s = s.write("    add x2, x2, :lo12:" + dcl.label + "\n");
-  s = s.write("    cmp x1, x2\n    b.ne " + dcmiss + "\n");
-  // hit: Some(value) — alloc, tag 0, reload+store the dyn ptr payload.
-  s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
-  s = s.write("    mov x1, #0\n    str x1, [x0]\n");
-  s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #8]\n");
-  s = s.write("    str x0, [sp, #-16]!\n");
-  s = s.write("    b " + dcend + "\n");
-  // miss: None — discard the dyn ptr, build a payloadless tag-1 box.
-  s = s.write(dcmiss + ":\n");
-  s = s.write("    add sp, sp, #16\n");
-  s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
-  s = s.write("    mov x1, #1\n    str x1, [x0]\n    str xzr, [x0, #8]\n");
-  s = s.write("    str x0, [sp, #-16]!\n");
-  s = s.write(dcend + ":\n");
 
   return s;
 }
@@ -11539,20 +11512,24 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
 // that returns ahead of the type check lets an ill-typed module miscompile
 // silently.
 pub function emit_module_or_error_sub(mod: parser.Module, darwin: boolean, sub: ircore.Sub): string {
-  let parse_errs: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
-  if (parse_errs.len() > 0) {
-    eprint(util.format_diags(parse_errs));
-    exit(1);
-    return "";
+  if (!sub.checked) {
+    let parse_errs: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
+    if (parse_errs.len() > 0) {
+      eprint(util.format_diags(parse_errs));
+      exit(1);
+      return "";
+    }
   }
   // The checked boundary first, as asm_ir.emit_module_or_error_sub: asmcore's
   // Display gate reads the module the checker rewrote.
   let tm: parser.Module = checker.ensure_annotated(mod);
-  let check_errs: util.Diag[] = asmcore.entry_check_errors(tm);
-  if (check_errs.len() > 0) {
-    eprint(util.format_diags(check_errs));
-    exit(1);
-    return "";
+  if (!sub.checked) {
+    let check_errs: util.Diag[] = asmcore.entry_check_errors(tm);
+    if (check_errs.len() > 0) {
+      eprint(util.format_diags(check_errs));
+      exit(1);
+      return "";
+    }
   }
   let g: string = emit_module_ir_gated_sub(ircore.sub_lifted(sub, tm), darwin, sub);
   if (g != "") {

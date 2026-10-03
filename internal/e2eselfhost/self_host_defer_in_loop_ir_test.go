@@ -64,6 +64,12 @@ function main(): i32 { let a: Cell[i32] = cell_new(0); return f(a); }`, 13},
 	// string, bound at the top of f at its zero and replaced in the arm.
 	{"match_arm_in_loop_string", `function f(a: Cell[i32]): i32 { let i: i32 = 0; while (i < 3) { let o: Option[string] = if (i == 1) { None } else { Some("ab" + "c") }; match (o) { Some(v) => { defer a.set(a.get() * 10 + v.len()); }, None => { } } i = i + 1; } return a.get(); }
 function main(): i32 { let a: Cell[i32] = cell_new(0); return f(a); }`, 33},
+	// Two matches in one body, each deferring on its own arm binding, of two
+	// payload types: the typed path learns the second binding only by probing
+	// again after the first, so a single-pass learn reports 0 here (#10467).
+	// 3 + 40 in the first iteration, 3 in the second.
+	{"match_arms_two_escaping_bindings", `function f(a: Cell[i32]): i32 { let i: i32 = 0; while (i < 2) { let o: Option[string] = Some("ab" + "c"); let p: Option[i32] = if (i == 0) { Some(4) } else { None }; match (o) { Some(v) => { defer a.set(a.get() + v.len()); }, None => { } } match (p) { Some(w) => { defer a.set(a.get() + w * 10); }, None => { } } i = i + 1; } return a.get(); }
+function main(): i32 { let a: Cell[i32] = cell_new(0); return f(a); }`, 46},
 	// A struct-union MEMBER arm binds the member itself, so the slot the replay
 	// reads is the member type, not its first field's (#10466): 0 -> 5 -> 55,
 	// with i == 1 taking the other member's arm.
@@ -95,5 +101,25 @@ func TestSelfHostDeferInLoopIR(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestSelfHostDeferInLoopIRCensus holds the cases with a counted payload to a
+// balanced census: a replay that misses a release leaks without changing the
+// answer, which the exit code alone cannot see.
+func TestSelfHostDeferInLoopIRCensus(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	counted := map[string]bool{"match_arm_in_loop_string": true, "match_arm_in_loop_member": true, "match_arms_two_escaping_bindings": true}
+	for _, tc := range deferInLoopCases {
+		if !counted[tc.name] {
+			continue
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, tc.main+"\n", "x86-64-linux", "FERN_LEAKCHECK=1")
+			if code != tc.want {
+				t.Fatalf("exited %d, want %d\n%s", code, tc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
 	}
 }

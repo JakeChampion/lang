@@ -2,9 +2,10 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // A struct-array local reassigned from a producer call (#10360). The credit
@@ -143,9 +144,7 @@ func runLeakRowsArm64(t *testing.T, rows []leakRow) {
 }
 
 func runLeakRowsWasm(t *testing.T, rows []leakRow) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Fatal("wasmtime not on PATH")
-	}
+	e2eharness.Wasmtime(t)
 	interp := buildLangBinForInterp(t)
 	cli := buildSelfHostCLI(t)
 	for _, tc := range rows {

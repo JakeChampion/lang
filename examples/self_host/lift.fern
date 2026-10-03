@@ -276,12 +276,13 @@ function lift_call_arg(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
 }
 
 // lift_call_callee lifts a call's CALLEE, hoisting it as lift_call_arg does
-// except for one shape: a value-position desugar's IIFE nested inside another
-// IIFE's body. Hoisting that one splits a single desugar across the IR and AST
-// paths, and the outer form then refuses. Its body is still walked, so a user
-// lambda nested in the desugar is lifted either way.
+// except for a value-position desugar's IIFE, which the lowering inlines: its
+// statements run in the enclosing function, so a `return` in one leaves that
+// function, and hoisting it would make the `return` leave the hoisted body
+// instead (#10818). Its body is still walked, so a user lambda nested in the
+// desugar is lifted either way.
 function lift_call_callee(c: ast.ExprCall, acc: LiftAcc, gfns: string[]): LiftExpr {
-  if (parser.is_value_block(c) && lifting_inside_iife(gfns)) {
+  if (parser.is_value_block(c)) {
     match (c.callee) {
       ast.ExprLambda(lam) => {
         return lift_lambda_body_only(lam, acc, gfns);
@@ -334,25 +335,9 @@ function lift_capturing_iife(c: ast.ExprCall, lam: ast.ExprLambda, acc: LiftAcc,
   return LiftExpr { expr: ast.ExprCall { callee: ast.ExprIdent { name: nm, line: c.line, col: c.col, ty: "" }, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, acc: a };
 }
 
-// `$in_iife$` is stored in `gfns` to carry "already inside a desugar's IIFE body"
-// down the walk. `gfns` is only ever read as `index_of_str(gfns, <a used
-// identifier>)` by lambda_has_no_captures, so a `$`-prefixed name cannot change
-// that answer — the collision guarantee `$lamret$` and `$wc$` also rely on.
-function lifting_inside_iife(gfns: string[]): boolean {
-  return util.index_of_str(gfns, "$in_iife$") >= 0;
-}
-
-function mark_inside_iife(gfns: string[]): string[] {
-  if (lifting_inside_iife(gfns)) {
-    return gfns;
-  }
-  return gfns.append("$in_iife$");
-}
-
 // lift_lambda_body_only walks a lambda's body for lifts and returns the lambda
 // itself unchanged in shape — never hoisted to a top-level `__lam_N`.
-function lift_lambda_body_only(lam: ast.ExprLambda, acc: LiftAcc, gfns0: string[]): LiftExpr {
-  let gfns: string[] = mark_inside_iife(gfns0);
+function lift_lambda_body_only(lam: ast.ExprLambda, acc: LiftAcc, gfns: string[]): LiftExpr {
   let ba: LiftAcc = acc;
   let nb: ast.Stmt[] = [];
   let bi: i32 = 0;
