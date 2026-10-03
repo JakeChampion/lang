@@ -14,7 +14,9 @@ while [ "$i" -lt 10000 ]; do
 done
 printf 'date\ty\t{}\n'
 printf 'date -d fixed\ty\tTZ=UTC0 {} -d "2024-06-15 12:34:56" +%%F\\ %%T\n'
-printf 'date -d relative\ty\tTZ=America/New_York {} -d "TZ=\\"Asia/Tokyo\\" 12:34:56.5 next monday 3 months ago +0100"\n'
+# No numeric zone after the relative items: GNU refuses `… 3 months ago +0100`
+# as an invalid date, so with it the row timed two error exits.
+printf 'date -d relative\ty\tTZ=America/New_York {} -d "TZ=\\"Asia/Tokyo\\" 12:34:56.5 next monday 3 months ago"\n'
 printf 'date every conversion\ty\tTZ=Europe/Berlin {} -d @1718434196 +%%a%%A%%b%%B%%c%%C%%d%%D%%e%%F%%g%%G%%h%%H%%I%%j%%k%%l%%m%%M%%n%%N%%p%%P%%q%%r%%R%%s%%S%%t%%T%%u%%U%%V%%w%%W%%x%%X%%y%%Y%%z%%:z%%::z%%:::z%%Z%%%%\n'
 printf 'date -f 10000 lines\ty\tTZ=America/New_York {} -f %s/lines +%%F\\ %%T\\ %%N\\ %%z\n' "$d"
 printf 'date -u -R\ty\t{} -u -R -d @1718434196\n'

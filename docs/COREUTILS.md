@@ -3275,6 +3275,42 @@ what `psadbw` / `uaddlp` are for.
 The startup row is the static-binary margin, widened as it is for the seven:
 GNU dlopens libcrypto before it hashes a hundred bytes.
 
+### Both compilers, 2026-10-03, arm64-darwin (GNU coreutils 9.12, uutils 0.6.0) — the self-host build is now the faster one
+
+The whole corpus — 650 rows over 101 utilities, every utility the host's GNU
+tree provides — on Apple Silicon, `fern f9a9e3bf1`, both builds `-O`. The raw
+run is `docs/COREUTILS-BOTH-COMPILERS-2026-10-03.md`. The 2026-09-17 and
+2026-09-22 runs above were Linux x86-64, so only the direction carries across.
+
+| | native build | self-host build |
+|---|---|---|
+| rows faster than GNU | 417 / 628 | **452 / 628** |
+| rows faster than uutils | 485 / 620 | **530 / 620** |
+| median `fern / fern-sh` | — | **1.09x** |
+
+The self-host build is faster than the native build on 455 of 628 comparable
+rows, and the accumulation cliffs the 09-17 run recorded (`tsort` 751x, `tac`
+unfinished, `seq` 7.6x) are gone. So requirement 2 is met on this host: Fern
+built by the compiler that is becoming the default beats GNU on 72% of rows
+and uutils on 85%, more than the native build does.
+
+What is left, in the order it costs:
+
+- The self-host build is 1.3-2.8x slower than native on 29 rows, all small
+  file operations of a few milliseconds (`install one file`, `chown` by
+  number, `mknod`, `rm one file`, `cp 200 files`, `stty`, `timeout`, `env`) —
+  a fixed cost per process or per syscall, not a loop (#11333).
+- Both builds lose to GNU's digest and base-encoder kernels (0.07-0.4x), to
+  `fmt` (0.4-0.8x) and to the directory walks of `du` / `ls` / `dir`
+  (0.6-0.9x), as before.
+- On this host specifically: `stat` with user and group names over 4000
+  operands resolves the names per operand (0.13x), `who` over 4000 logins is
+  0.24x, `sync -f` over 200 files is a 56 ms full flush per operand (0.01x),
+  and `hostid` resolves the hostname through NSS (0.07x) (#11335).
+- 22 rows did not run on Darwin under either compiler (`df`, `install -d`,
+  `groups`, `logname`, `tty`, `yes`, and `nice`, which dies with SIGSYS —
+  #11334).
+
 ## The primitives group C is built on
 
 A utility here is blocked on a builtin far more often than on anything about
