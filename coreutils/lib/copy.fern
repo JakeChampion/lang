@@ -506,10 +506,6 @@ function wants_holes(cfg: Cfg, src: Info): boolean {
   return src.blocks * 512 < src.size;
 }
 
-function all_zero(data: string): boolean {
-  return __count_byte(data, 0) == data.len();
-}
-
 struct Bytes { ok: boolean, err: string, wrote_hole: boolean }
 
 // The granularity a hole is punched at. A hole is only a hole once it
@@ -530,44 +526,41 @@ function hole_block(src: Info): i32 {
 // One run of the read buffer: `[from, to)`, all zero or not.
 struct Run { to: i32, zero: boolean }
 
-function next_run(data: string, from: i32, bs: i32): Run {
-  let zero: boolean = run_is_zero(data, from, bs);
+function next_run(data: u8[], from: i32, bs: i32, zeros: u8[]): Run {
+  let zero: boolean = run_is_zero(data, from, bs, zeros);
   let at: i32 = from + piece_len(data, from, bs);
-  while (at < data.len() && run_is_zero(data, at, bs) == zero) {
+  while (at < data.len() && run_is_zero(data, at, bs, zeros) == zero) {
     at = at + piece_len(data, at, bs);
   }
   return Run { to: at, zero: zero };
 }
 
-function piece_len(data: string, from: i32, bs: i32): i32 {
+function piece_len(data: u8[], from: i32, bs: i32): i32 {
   if (data.len() - from < bs) {
     return data.len() - from;
   }
   return bs;
 }
 
-function run_is_zero(data: string, from: i32, bs: i32): boolean {
-  let end: i32 = from + piece_len(data, from, bs);
-  let piece: string = slice_unchecked(data, from, end) + "";
-  return __count_byte(piece, 0) == piece.len();
+function run_is_zero(data: u8[], from: i32, bs: i32, zeros: u8[]): boolean {
+  let n: i32 = piece_len(data, from, bs);
+  return __mismatch_bytes(data, from, zeros, 0, n) == n;
 }
 
-function write_all(w: Writer, data: string, from: i32, to: i32): string {
-  let off: i32 = from;
-  while (off < to) {
-    let piece: string = slice_unchecked(data, off, to) + "";
-    match (w.write_some(piece)) {
-      Err(e) => {
-        return gnu.io_error_text(e);
-      },
-      Ok(n) => {
-        if (n == 0 as i64) {
-          off = to;
-        } else {
-          off = off + n as i32;
-        }
-      }
-    }
+function write_all(w: Writer, data: u8[], from: i32, to: i32): string {
+  let piece: u8[] = data;
+  if (from != 0 || to != data.len()) {
+    let h: usize = buf_new(to - from);
+    buf_push_bytes_range(h, data, from, to);
+    piece = buf_take_bytes(h);
+    buf_free(h);
+  }
+  // The writer retries short writes while borrowing the same byte array.
+  match (w.write_bytes(piece)) {
+    Some(e) => {
+      return gnu.io_error_text(e);
+    },
+    None => {}
   }
   return "";
 }
@@ -578,8 +571,17 @@ function write_all(w: Writer, data: string, from: i32, to: i32): string {
 function write_data(r: Reader, w: Writer, holes: boolean, total: i64, bs: i32): Bytes {
   let wrote_hole: boolean = false;
   let ended_in_hole: boolean = false;
+  // Reuse one zero block for bounded vector comparisons across all reads.
+  let zeros: u8[] = [];
+  if (holes) {
+    let n: i32 = bs;
+    if (n > chunk_size()) {
+      n = chunk_size();
+    }
+    zeros = __alloc_u8(n);
+  }
   while (true) {
-    match (r.read_chunk(chunk_size())) {
+    match (r.read_chunk_bytes(chunk_size())) {
       Err(e) => {
         return Bytes { ok: false, err: gnu.io_error_text(e), wrote_hole: wrote_hole };
       },
@@ -596,7 +598,7 @@ function write_data(r: Reader, w: Writer, holes: boolean, total: i64, bs: i32): 
         } else {
           let at: i32 = 0;
           while (at < data.len()) {
-            let run: Run = next_run(data, at, bs);
+            let run: Run = next_run(data, at, bs, zeros);
             if (run.zero) {
               match (w.seek((run.to - at) as i64, 1)) {
                 Err(e2) => {
