@@ -1534,10 +1534,12 @@ stays silent, and with the A and AAAA queries together.
   `close`, since the close follows it.
 - `tcp_serve_opts(port, opts, handler)` — `tcp_serve` with
   `ServeOptions { backlog, reuse_port, recv_deadline, min_data_rate,
-  data_rate_grace, keep_alive_idle, keep_alive_requests,
-  max_connections, max_connections_per_ip }` (`serve_options()` is 128,
-  one listener per port, the 10 s deadline, 240 bytes per second after
-  5 s, 130 s, 1000, 1024 and 100): the accept queue
+  data_rate_grace, response_min_data_rate, response_data_rate_grace,
+  keep_alive_idle, keep_alive_requests, max_connections,
+  max_connections_per_ip }` (`serve_options()` is 128, one listener per
+  port, the 10 s deadline, 240 bytes per second after 5 s for a request
+  body and the same for a response, 130 s, 1000, 1024 and 100): the
+  accept queue
   depth, port sharing between listeners (`SO_REUSEPORT`, ignored on
   wasm; under `tcp_serve_supervised_opts` each worker then binds a
   listener of its own instead of inheriting the supervisor's, the group
@@ -1546,14 +1548,15 @@ stays silent, and with the A and AAAA queries together.
   unaccepted when the worker dies is lost with it unless the kernel
   migrates it, `net.ipv4.tcp_migrate_req=1`, where the inherited
   listener keeps it for the next worker; a listener handed in through
-  `LISTEN_FDS` stays the shared one), the read deadline, the least rate a request body must keep
-  arriving at once its header block is in and a response must keep
-  being drained at once a write came up short (after the grace, the body
-  may take as long as its bytes buy at that rate beyond the read
-  deadline, so a large upload that keeps flowing is read and a trickle
-  is closed; a response the peer keeps taking above the rate goes out
-  whole however long that takes, and one the peer stops reading is cut
-  off after the grace; 0 turns the rate off), how long an idle persistent connection waits for
+  `LISTEN_FDS` stays the shared one), the read deadline, the least rate a
+  request body must keep arriving at once its header block is in (after
+  the grace, the body may take as long as its bytes buy at that rate
+  beyond the read deadline, so a large upload that keeps flowing is read
+  and a trickle is closed), the least rate a response must keep being
+  drained at once a write came up short, under a grace of its own (a
+  response the peer keeps taking above the rate goes out whole however
+  long that takes, and one the peer stops reading is cut off after the
+  grace; 0 turns either rate off), how long an idle persistent connection waits for
   its next request, how many requests one connection may carry before
   its last response says `Connection: close` (a value below 1 behaves as
   1), how many connections the loop holds open at once (a value below 1
