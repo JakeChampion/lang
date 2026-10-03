@@ -308,9 +308,9 @@ struct Opts {
   incr: i64,
   join_blank: i64,
   renumber: boolean,
-  del1: string,
-  del2: string,
-  del3: string,
+  del1: u8[],
+  del2: u8[],
+  del3: u8[],
   // Padding cut from these rather than built per line: `pad` is
   // `width` spaces, `zeros` is `width` zeros, and `blank` is what an
   // unnumbered line carries in place of the number and the separator.
@@ -402,7 +402,7 @@ function kind_of(s: State, o: Opts): i32 {
 // `check_section(buf, lo, hi, o)` — which delimiter the line `buf[lo, hi)`
 // is, exactly: -1 for an ordinary line, else the section it starts. The
 // match is on the WHOLE line, so `\:\:\:x` is text.
-function check_section(buf: string, lo: i32, hi: i32, o: Opts): i32 {
+function check_section(buf: u8[], lo: i32, hi: i32, o: Opts): i32 {
   // Every delimiter starts with the same byte, so an ordinary line is
   // told apart by its first byte before any whole-line comparison.
   if (o.del1.len() == 0 || hi == lo || buf[lo] as i32 != o.del1[0] as i32) {
@@ -421,14 +421,14 @@ function check_section(buf: string, lo: i32, hi: i32, o: Opts): i32 {
 }
 
 // Whether `buf[lo, hi)` is `s`.
-function span_is(buf: string, lo: i32, hi: i32, s: string): boolean {
+function span_is(buf: u8[], lo: i32, hi: i32, s: u8[]): boolean {
   let n: i32 = hi - lo;
-  return n == s.len() && __mismatch(buf, lo, s, 0, n) == n;
+  return n == s.len() && __mismatch_bytes(buf, lo, s, 0, n) == n;
 }
 
 // `numbered(buf, lo, hi, st, sty, o)` — whether the line `buf[lo, hi)`
 // takes a number, and the blank-line run -l is counting carried forward.
-function numbered(buf: string, lo: i32, hi: i32, st: State, sty: Style, o: Opts): (boolean, i64) {
+function numbered(buf: u8[], lo: i32, hi: i32, st: State, sty: Style, o: Opts): (boolean, i64) {
   if (sty.kind == style_none()) {
     return (false, st.blanks);
   }
@@ -436,7 +436,7 @@ function numbered(buf: string, lo: i32, hi: i32, st: State, sty: Style, o: Opts)
     return (hi > lo, st.blanks);
   }
   if (sty.kind == style_regex()) {
-    return (sty.re.search_range(buf, lo, hi), st.blanks);
+    return (sty.re.search_range_bytes(buf, lo, hi), st.blanks);
   }
   // style_all with -l: a run of `join_blank` empty lines is numbered
   // once, at its last line.
@@ -454,7 +454,7 @@ function numbered(buf: string, lo: i32, hi: i32, st: State, sty: Style, o: Opts)
 }
 
 // `numbered` under the current section's style.
-function numbered_here(buf: string, lo: i32, hi: i32, st: State, o: Opts): (boolean, i64) {
+function numbered_here(buf: u8[], lo: i32, hi: i32, st: State, o: Opts): (boolean, i64) {
   if (st.section == section_header()) {
     return numbered(buf, lo, hi, st, o.header, o);
   }
@@ -468,7 +468,7 @@ function numbered_here(buf: string, lo: i32, hi: i32, st: State, o: Opts): (bool
 struct Emit { st: State, w: io_buffered.BufWriter }
 
 // The line `buf[lo, hi)`, without its newline.
-function proc_line(buf: string, lo: i32, hi: i32, st0: State, o: Opts, w0: io_buffered.BufWriter): Emit {
+function proc_line(buf: u8[], lo: i32, hi: i32, st0: State, o: Opts, w0: io_buffered.BufWriter): Emit {
   let st: State = st0;
   let w: io_buffered.BufWriter = w0;
   let sec: i32 = check_section(buf, lo, hi, o);
@@ -484,7 +484,7 @@ function proc_line(buf: string, lo: i32, hi: i32, st0: State, o: Opts, w0: io_bu
   if (!r.0) {
     let hb: usize = w.handle();
     buf_push(hb, o.blank);
-    buf_push_range(hb, buf, lo, hi);
+    buf_push_bytes_range(hb, buf, lo, hi);
     buf_push_byte(hb, 10);
     return Emit { st: st, w: gnu.settle(w) };
   }
@@ -499,7 +499,7 @@ function proc_line(buf: string, lo: i32, hi: i32, st0: State, o: Opts, w0: io_bu
   let h: usize = w.handle();
   push_lineno(h, st.line_no, o);
   buf_push(h, o.sep);
-  buf_push_range(h, buf, lo, hi);
+  buf_push_bytes_range(h, buf, lo, hi);
   buf_push_byte(h, 10);
   w = gnu.settle(w);
   match (st.line_no.checked_add(o.incr)) {
@@ -524,14 +524,14 @@ function fast_style(kind: i32, o: Opts): boolean {
 }
 
 // Whether the current section's regexp matches the line `buf[lo, hi)`.
-function matches_here(buf: string, lo: i32, hi: i32, st: State, o: Opts): boolean {
+function matches_here(buf: u8[], lo: i32, hi: i32, st: State, o: Opts): boolean {
   if (st.section == section_header()) {
-    return o.header.re.search_range(buf, lo, hi);
+    return o.header.re.search_range_bytes(buf, lo, hi);
   }
   if (st.section == section_footer()) {
-    return o.footer.re.search_range(buf, lo, hi);
+    return o.footer.re.search_range_bytes(buf, lo, hi);
   }
-  return o.body.re.search_range(buf, lo, hi);
+  return o.body.re.search_range_bytes(buf, lo, hi);
 }
 
 // `Field` — the parts of the line-number field shared by the hundred
@@ -573,7 +573,7 @@ function next_line_no(n: i64, incr: i64): (boolean, i64) {
 // possible delimiter, a style that counts -l runs, a number about to
 // overflow) or at the end of the complete lines, and answers where it
 // stopped.
-function fast_lines(buf: string, pos0: i32, st: State, o: Opts, w0: io_buffered.BufWriter): (i32, State, io_buffered.BufWriter) {
+function fast_lines(buf: u8[], pos0: i32, st: State, o: Opts, w0: io_buffered.BufWriter): (i32, State, io_buffered.BufWriter) {
   let w: io_buffered.BufWriter = w0;
   let h: usize = w.handle();
   let kind: i32 = kind_of(st, o);
@@ -590,7 +590,7 @@ function fast_lines(buf: string, pos0: i32, st: State, o: Opts, w0: io_buffered.
   let base: i64 = 0 as i64;
   let pos: i32 = pos0;
   while (true) {
-    let j: i32 = __memchr(buf, 10, pos);
+    let j: i32 = __memchr_bytes(buf, 10, pos);
     if (j < 0 || j > pos && buf[pos] as i32 == d0) {
       break;
     }
@@ -616,7 +616,7 @@ function fast_lines(buf: string, pos0: i32, st: State, o: Opts, w0: io_buffered.
       }
       line_no = nx.1;
     }
-    buf_push_range(h, buf, pos, j + 1);
+    buf_push_bytes_range(h, buf, pos, j + 1);
     pos = j + 1;
   }
   return (pos, State { ...st, line_no: line_no, blanks: 0 as i64 }, gnu.settle(w));
@@ -630,15 +630,14 @@ function read_size(): i32 {
 function proc_reader(r: Reader, name: string, st0: State, o: Opts, w0: io_buffered.BufWriter): Emit {
   let st: State = st0;
   let w: io_buffered.BufWriter = w0;
-  let buf: string = "";
+  let buf: u8[] = [];
   let pos: i32 = 0;
-  let eof: boolean = false;
   while (true) {
     let f: (i32, State, io_buffered.BufWriter) = fast_lines(buf, pos, st, o, w);
     pos = f.0;
     st = f.1;
     w = f.2;
-    let j: i32 = __memchr(buf, 10, pos);
+    let j: i32 = __memchr_bytes(buf, 10, pos);
     if (j >= 0) {
       let e: Emit = proc_line(buf, pos, j, st, o, w);
       st = e.st;
@@ -646,28 +645,55 @@ function proc_reader(r: Reader, name: string, st0: State, o: Opts, w0: io_buffer
       pos = j + 1;
       continue;
     }
-    if (eof) {
-      if (pos < buf.len()) {
-        let e: Emit = proc_line(buf, pos, buf.len(), st, o, w);
-        st = e.st;
-        w = e.w;
-      }
-      return Emit { st: st, w: w };
+    // Only a line crossing a read boundary needs a carry buffer. Grow it
+    // until the first newline, then resume directly in the new read chunk.
+    let carry: usize = 0 as usize;
+    if (pos < buf.len()) {
+      carry = buf_new(read_size());
+      buf_push_bytes_range(carry, buf, pos, buf.len());
     }
-    let rest: string = slice_unchecked(buf, pos, buf.len()) + "";
-    match (r.read_chunk(read_size())) {
-      Ok(chunk) => {
-        if (chunk.len() == 0) {
-          buf = rest;
-          eof = true;
-        } else {
-          buf = rest + chunk;
+    let ready: boolean = false;
+    while (!ready) {
+      match (r.read_chunk_bytes(read_size())) {
+        Ok(chunk) => {
+          if (chunk.len() == 0) {
+            if (carry != 0 as usize) {
+              let last: u8[] = buf_take_bytes(carry);
+              buf_free(carry);
+              let e: Emit = proc_line(last, 0, last.len(), st, o, w);
+              st = e.st;
+              w = e.w;
+            }
+            return Emit { st: st, w: w };
+          }
+          if (carry == 0 as usize) {
+            buf = chunk;
+            pos = 0;
+            ready = true;
+          } else {
+            let end: i32 = __memchr_bytes(chunk, 10, 0);
+            if (end < 0) {
+              buf_push_bytes_range(carry, chunk, 0, chunk.len());
+            } else {
+              buf_push_bytes_range(carry, chunk, 0, end);
+              let line: u8[] = buf_take_bytes(carry);
+              buf_free(carry);
+              let e: Emit = proc_line(line, 0, line.len(), st, o, w);
+              st = e.st;
+              w = e.w;
+              buf = chunk;
+              pos = end + 1;
+              ready = true;
+            }
+          }
+        },
+        Err(err) => {
+          if (carry != 0 as usize) {
+            buf_free(carry);
+          }
+          w = gnu.error_out(w, gnu.quotef(name) + ": " + gnu.io_error_text(err));
+          return Emit { st: State { ...st, status: 1 }, w: w };
         }
-        pos = 0;
-      },
-      Err(err) => {
-        w = gnu.error_out(w, gnu.quotef(name) + ": " + gnu.io_error_text(err));
-        return Emit { st: State { ...st, status: 1 }, w: w };
       }
     }
   }
@@ -695,12 +721,12 @@ function proc_file(path: string, st: State, o: Opts, w: io_buffered.BufWriter): 
 // `delimiters(cc)` — the three page delimiters. One character implies a
 // second `:`, the empty string turns section matching off, and anything
 // longer is taken whole (a GNU extension).
-function delimiters(cc: string): (string, string, string) {
+function delimiters(cc: string): (u8[], u8[], u8[]) {
   let d: string = cc;
   if (d.len() == 1) {
     d = d + ":";
   }
-  return (d, d + d, d + d + d);
+  return (d.bytes(), (d + d).bytes(), (d + d + d).bytes());
 }
 
 pub function main(): i32 {
@@ -718,7 +744,7 @@ pub function main(): i32 {
   opts = opts.append(gnu.valued("n", "number-format", opt_format()));
   opts = opts.append(gnu.valued("d", "section-delimiter", opt_delim()));
 
-  let dels: (string, string, string) = delimiters("\\:");
+  let dels: (u8[], u8[], u8[]) = delimiters("\\:");
   let o: Opts = Opts { header: empty_style(style_none()), body: empty_style(style_nonempty()), footer: empty_style(style_none()), sep: "\t", fmt: fmt_rn(), width: 6, start: 1 as i64, incr: 1 as i64, join_blank: 1 as i64, renumber: true, del1: dels.0, del2: dels.1, del3: dels.2, pad: "", zeros: "", blank: "" };
 
   let g: gnu.Getopt = gnu.getopt_new(argv, opts, "nl", help_text(), 1);
@@ -756,7 +782,7 @@ pub function main(): i32 {
             gnu.die_usage("invalid line numbering format: " + gnu.quote(m.value), 1);
           }
         } else if (m.id == opt_delim()) {
-          let d: (string, string, string) = delimiters(m.value);
+          let d: (u8[], u8[], u8[]) = delimiters(m.value);
           o = Opts { ...o, del1: d.0, del2: d.1, del3: d.2 };
         }
       },

@@ -938,6 +938,10 @@ records in a byte builder. Evidence is recorded in
 scan for its selected mode. Evidence is recorded in
 [the fold report](STRING-FOLD-BYTES-2026-10-03.md).
 
+`nl` numbers raw records and applies byte BRE matching without constructing
+text from input bytes. Evidence is recorded in
+[the nl report](STRING-NL-BYTES-2026-10-03.md).
+
 `head` and `tail` use raw byte input, delimiter scans and output. Their
 shared hold retains input blocks with a 64-bit byte count and releases
 consumed blocks without repeatedly copying long records. Target checks and
