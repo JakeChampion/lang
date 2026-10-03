@@ -8874,6 +8874,8 @@ function emit_function_via_ir_named(r: irtables.LowerResult, label_name: string,
   // allocation pressure and crashed the arm64-compiled driver. The inline read
   // (matching the op-emission loop below, which never binds `.kind` to its own
   // local) keeps the string a transient the comparison consumes immediately.
+  // Once the heap is needed, no later op can add to that.
+  let heap: boolean = s.has_need("heap");
   let dop: i32 = 0;
   while (dop < r.ops.len()) {
     let dopop: ir.Op = r.ops[dop];
@@ -8893,8 +8895,9 @@ function emit_function_via_ir_named(r: irtables.LowerResult, label_name: string,
     if ((dopop.kind_tag == 131 || dopop.kind_tag == 132) && dopop.i32_imm != 1) {
       s = s.need("maps");
     }
-    if (ir.op_needs_heap(dopop)) {
+    if (!heap && ir.op_needs_heap(dopop)) {
       s = s.need("heap");
+      heap = true;
     }
     dop = dop + 1;
   }
