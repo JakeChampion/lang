@@ -619,3 +619,28 @@ func TestWorkspace_FormattingFormatsTheDocument(t *testing.T) {
 		t.Errorf("newText = %q, want %q", edits[0].NewText, want)
 	}
 }
+
+// A clean workspace document publishes an empty diagnostics array: the spec's
+// member is an array, and null is what a client is not written to expect.
+func TestWorkspace_CleanDocumentPublishesEmptyArray(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fern")
+	src := "function main(): i32 { return 0; }\n"
+	writeFile(t, path, src)
+	s := NewServer()
+	s.EnableWorkspace()
+	var published []string
+	s.SetPublisher(func(method string, params any) {
+		b, _ := json.Marshal(params)
+		published = append(published, string(b))
+	})
+	open, _ := json.Marshal(message{
+		Jsonrpc: "2.0",
+		Method:  "textDocument/didOpen",
+		Params:  jsonRaw(didOpenParams{TextDocument: textDocumentItem{URI: pathToURI(path), LanguageID: "fern", Text: src}}),
+	})
+	s.HandleMessage(open)
+	if len(published) != 1 || !strings.Contains(published[0], `"diagnostics":[]`) {
+		t.Errorf("published %q, want one notification with an empty diagnostics array", published)
+	}
+}

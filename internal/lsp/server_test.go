@@ -42,7 +42,7 @@ func TestRunDiagnostics_ParserError(t *testing.T) {
 			t.Errorf("diagnostic severity = %d, want %d", d.Severity, severityError)
 		}
 		if d.Source != "fern" {
-			t.Errorf("diagnostic source = %q, want %q", d.Source, "lang")
+			t.Errorf("diagnostic source = %q, want %q", d.Source, "fern")
 		}
 		if d.Message == "" {
 			t.Errorf("diagnostic message is empty")
@@ -157,7 +157,7 @@ func TestHandleMessage_InitializeReturnsCapabilities(t *testing.T) {
 	if got.Capabilities.TextDocumentSync != syncKindFull {
 		t.Errorf("textDocumentSync = %d, want %d", got.Capabilities.TextDocumentSync, syncKindFull)
 	}
-	if got.ServerInfo == nil || got.ServerInfo.Name != "lang-lsp" {
+	if got.ServerInfo == nil || got.ServerInfo.Name != "fern-lsp" {
 		t.Errorf("serverInfo = %+v", got.ServerInfo)
 	}
 }
