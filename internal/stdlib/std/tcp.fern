@@ -455,11 +455,7 @@ function __clock_tick(clk: __Clock): __Clock {
 // as the loop writes it: the handler's `Date` when it set one, the
 // clock's otherwise, and no body where the request's method or the
 // status says none. A body held whole goes behind the head byte for byte,
-// under its byte length; a file is opened here and streamed as the tail
-// under its size, or answered 404 when it cannot be opened; a chunk
-// producer is the tail under chunked transfer coding for an HTTP/1.1
-// client and close-delimited, the connection ending with it, for an
-// HTTP/1.0 one.
+// under its byte length.
 // A response with a header or trailer that cannot be written as one field
 // line is answered 500 in its place, so no handler-supplied byte can end a
 // line or start another response.
@@ -474,44 +470,10 @@ function __serve_wire(method: string, version: string, answer: HttpResponse, kee
   let headless: boolean = http.http_bodiless(resp.status) || method == "HEAD";
   match (resp.body) {
     BodyFile(path) => {
-      match (open_reader(path)) {
-        Ok(r) => {
-          let size: i64 = 0 - 1 as i64;
-          match (r.stat()) {
-            Ok(st) => {
-              size = st.size;
-            },
-            Err(e) => {}
-          }
-          if (size < 0 as i64) {
-            r.close();
-            return __serve_wire(method, version, http.not_found(), keep_alive, clk);
-          }
-          let head: string = http.http_serialize_response_head(resp, keep_alive, "Content-Length: " + size.to_string() + "\r\n");
-          if (headless || size == 0 as i64) {
-            r.close();
-            return __Wire { head: head, tail: NoTail, keep: keep_alive };
-          }
-          return __Wire { head: head, tail: FileTail(r, size), keep: keep_alive };
-        },
-        Err(e) => {
-          return __serve_wire(method, version, http.not_found(), keep_alive, clk);
-        }
-      }
-      return __Wire { head: "", tail: NoTail, keep: false };
+      return __wire_file(method, version, resp, path, headless, keep_alive, clk);
     },
     BodyChunks(producer) => {
-      if (headless) {
-        return __Wire { head: http.http_serialize_response_head(resp, keep_alive, ""), tail: NoTail, keep: keep_alive };
-      }
-      if (version == "HTTP/1.0") {
-        return __Wire { head: http.http_serialize_response_head(resp, false, ""), tail: ChunkTail(producer, 0, ""), keep: false };
-      }
-      let framing: string = "Transfer-Encoding: chunked\r\n";
-      if (resp.trailers.names.len() > 0) {
-        framing = framing + "Trailer: " + resp.trailers.names.join(", ") + "\r\n";
-      }
-      return __Wire { head: http.http_serialize_response_head(resp, keep_alive, framing), tail: ChunkTail(producer, 0, "0\r\n" + http.http_serialize_fields(resp.trailers) + "\r\n"), keep: keep_alive };
+      return __wire_chunks(version, resp, producer, headless, keep_alive);
     },
     BodyText(s) => {
       return __Wire { head: http.http_serialize_response_to(method, resp, keep_alive), tail: NoTail, keep: keep_alive };
@@ -521,6 +483,55 @@ function __serve_wire(method: string, version: string, answer: HttpResponse, kee
     }
   }
   return __Wire { head: "", tail: NoTail, keep: false };
+}
+
+// __wire_file(method, version, resp, path, headless, keep_alive, clk) — a
+// file body opened here and streamed as the tail under its size, or
+// answered 404 when it cannot be opened.
+function __wire_file(method: string, version: string, resp: HttpResponse, path: string, headless: boolean, keep_alive: boolean, clk: __Clock): __Wire {
+  match (open_reader(path)) {
+    Ok(r) => {
+      let size: i64 = 0 - 1 as i64;
+      match (r.stat()) {
+        Ok(st) => {
+          size = st.size;
+        },
+        Err(e) => {}
+      }
+      if (size < 0 as i64) {
+        r.close();
+        return __serve_wire(method, version, http.not_found(), keep_alive, clk);
+      }
+      let head: string = http.http_serialize_response_head(resp, keep_alive, "Content-Length: " + size.to_string() + "\r\n");
+      if (headless || size == 0 as i64) {
+        r.close();
+        return __Wire { head: head, tail: NoTail, keep: keep_alive };
+      }
+      return __Wire { head: head, tail: FileTail(r, size), keep: keep_alive };
+    },
+    Err(e) => {
+      return __serve_wire(method, version, http.not_found(), keep_alive, clk);
+    }
+  }
+  return __Wire { head: "", tail: NoTail, keep: false };
+}
+
+// __wire_chunks(version, resp, producer, headless, keep_alive) — a chunk
+// producer as the tail: under chunked transfer coding for an HTTP/1.1
+// client, close-delimited for an HTTP/1.0 one, the connection ending with
+// it.
+function __wire_chunks(version: string, resp: HttpResponse, producer: ChunkProducer, headless: boolean, keep_alive: boolean): __Wire {
+  if (headless) {
+    return __Wire { head: http.http_serialize_response_head(resp, keep_alive, ""), tail: NoTail, keep: keep_alive };
+  }
+  if (version == "HTTP/1.0") {
+    return __Wire { head: http.http_serialize_response_head(resp, false, ""), tail: ChunkTail(producer, 0, ""), keep: false };
+  }
+  let framing: string = "Transfer-Encoding: chunked\r\n";
+  if (resp.trailers.names.len() > 0) {
+    framing = framing + "Trailer: " + resp.trailers.names.join(", ") + "\r\n";
+  }
+  return __Wire { head: http.http_serialize_response_head(resp, keep_alive, framing), tail: ChunkTail(producer, 0, "0\r\n" + http.http_serialize_fields(resp.trailers) + "\r\n"), keep: keep_alive };
 }
 
 // __in_flight(c, at) — whether a response is still going out on the

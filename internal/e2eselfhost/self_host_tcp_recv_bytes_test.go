@@ -18,10 +18,10 @@ import (
 // other socket tests are; the arm64 and wasm helpers are covered by their
 // own tcp e2e suites.
 func TestSelfHostTcpRecvBytesX86_64(t *testing.T) {
-	cli := buildSelfHostCLI(t)
-	if len(cli.runner) != 0 {
+	if _, runner := x86_64Tooling(t); len(runner) != 0 {
 		t.Skip("tcp_recv byte test runs host-native only")
 	}
+	cli := buildSelfHostCLI(t)
 
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
