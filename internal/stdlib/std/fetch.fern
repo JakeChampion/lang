@@ -22,8 +22,13 @@
 // followed, ten hops by default, the credentials dropped when a hop
 // leaves the origin; an idempotent request the peer resets before
 // answering is sent once more. No TLS where the client dials (`https`
-// fails with `Tls`), no pool: each request is one connection sent with
-// `Connection: close`. A `wasm32-wasi-http` build dials nothing: the
+// fails with `Tls`). A connection whose response was framed and that the
+// peer did not ask to close is kept in the transport's `Idle` pool, and
+// the next idempotent request to the same host and port takes it rather
+// than dialling; `send` and `plat.http` keep a pool for the one call (so a
+// redirect back to the same origin reuses its connection) and close it
+// after, and a caller holding a `Sockets` across `send_on` calls keeps one
+// across them. A `wasm32-wasi-http` build dials nothing: the
 // request goes to the host's wasi:http/outgoing-handler (std/wasi_http),
 // which resolves the name, connects and speaks TLS, and everything above
 // the transport is the same. Where the client dials, it reaches the
@@ -485,7 +490,7 @@ function __head(req: Request, t: __Target, body_len: i32): string {
     out = out + fields.names[i] + ": " + fields.values[i] + "\r\n";
     i = i + 1;
   }
-  return out + "Connection: close\r\n\r\n";
+  return out + "\r\n";
 }
 
 // `__sent_fields(req, t, body_len)` — the fields a request carries
@@ -528,7 +533,9 @@ function __asks_gzip(req: Request): boolean {
 // is the last refusal, and none connected within the bound is `TimedOut`.
 // `read` answers within `wait_ms`: a chunk, an empty chunk at the end of
 // the stream, or `None` when the wait passed with nothing. `write` answers
-// the bytes taken, or a negated errno.
+// the bytes taken, or a negated errno. `idle` is the transport's pool of
+// connections kept for reuse; the client decides what goes in and comes
+// out of it.
 pub trait Transport {
   function now_ns(self: Self): i64;
   function lookup(self: Self, host: string, checked: boolean): Result[Lookup, dns.DnsError];
@@ -536,6 +543,149 @@ pub trait Transport {
   function write(self: Self, conn: i32, data: string): i32;
   function read(self: Self, conn: i32, max: i32, wait_ms: i64): Option[u8[]];
   function close(self: Self, conn: i32): i32;
+  function idle(self: Self): Idle;
+}
+
+// `Idle` — the connections a transport keeps for the next request to the
+// same place: at most `max` of them, none reused once idle for `idle_ms`.
+// A cell holds only a scalar or a string, so `rows` is the table, a
+// connection a line of its key, number and the nanosecond it went idle.
+pub struct Idle { rows: Cell[string], max: i32, idle_ms: i32 }
+
+// `idle()` — an empty pool keeping up to 64 connections, each for 90 s
+// (Go's `IdleConnTimeout`).
+pub function idle(): Idle {
+  return idle_limited(64, 90000);
+}
+
+// `idle_limited(max, idle_ms)` — an empty pool keeping up to `max`
+// connections, each for `idle_ms`; a `max` of 0 keeps none.
+pub function idle_limited(max: i32, idle_ms: i32): Idle {
+  return Idle { rows: cell_new(""), max: max, idle_ms: idle_ms };
+}
+
+// `close_idle(tr)` — every connection `tr` keeps for reuse closed.
+pub function close_idle[T: Transport](tr: T): void {
+  let pool: Idle = tr.idle();
+  for row in __idle_rows(pool) {
+    tr.close(__idle_conn(row));
+  }
+  pool.rows.set("");
+}
+
+// `__pool_key(t, guard)` — where a connection reaches: the host and port
+// dialled, and whether the block list judged the addresses, so a
+// connection the open route made is never handed to the guarded one.
+function __pool_key(t: __Target, guard: boolean): string {
+  let route: string = "open ";
+  if (guard) {
+    route = "global ";
+  }
+  return route + t.host + " " + int.int_to_string(t.port);
+}
+
+// `__take_idle(tr, key)` — the connection to `key` kept last, taken out
+// of the pool, or -1; any connection idle past the pool's bound is closed
+// on the way.
+function __take_idle[T: Transport](tr: T, key: string): i32 {
+  let rows: string[] = __live_rows(tr);
+  let pick: i32 = 0 - 1;
+  let i: i32 = 0;
+  while (i < rows.len()) {
+    if (__idle_key(rows[i]) == key) {
+      pick = i;
+    }
+    i = i + 1;
+  }
+  if (pick < 0) {
+    return 0 - 1;
+  }
+  tr.idle().rows.set(__idle_joined(rows, pick));
+  return __idle_conn(rows[pick]);
+}
+
+// `__park(tr, key, conn)` — `conn` kept for the next request to `key`, the
+// longest-idle connections closed while the pool holds more than its
+// `max`.
+function __park[T: Transport](tr: T, key: string, conn: i32): void {
+  let rows: string[] = __live_rows(tr).append(key + "\t" + int.int_to_string(conn) + "\t" + tr.now_ns().to_string());
+  let from: i32 = 0;
+  while (rows.len() - from > tr.idle().max) {
+    tr.close(__idle_conn(rows[from]));
+    from = from + 1;
+  }
+  let kept: string[] = [];
+  while (from < rows.len()) {
+    kept = kept.append(rows[from]);
+    from = from + 1;
+  }
+  tr.idle().rows.set(__idle_joined(kept, 0 - 1));
+}
+
+// `__live_rows(tr)` — the pool's connections still inside its idle bound,
+// oldest first; the rest closed and dropped from the pool.
+function __live_rows[T: Transport](tr: T): string[] {
+  let pool: Idle = tr.idle();
+  let now: i64 = tr.now_ns();
+  let bound: i64 = pool.idle_ms as i64 * 1000000;
+  let out: string[] = [];
+  for row in __idle_rows(pool) {
+    if (now - __idle_since(row) > bound) {
+      tr.close(__idle_conn(row));
+    } else {
+      out = out.append(row);
+    }
+  }
+  pool.rows.set(__idle_joined(out, 0 - 1));
+  return out;
+}
+
+function __idle_rows(pool: Idle): string[] {
+  let out: string[] = [];
+  for row in pool.rows.get().split("\n") {
+    if (row.len() > 0) {
+      out = out.append(row);
+    }
+  }
+  return out;
+}
+
+// `__idle_joined(rows, skip)` — `rows` as the pool's table, row `skip`
+// left out.
+function __idle_joined(rows: string[], skip: i32): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < rows.len()) {
+    if (i != skip) {
+      out = out + rows[i] + "\n";
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function __idle_key(row: string): string {
+  return row.split("\t")[0];
+}
+
+function __idle_conn(row: string): i32 {
+  match (int.parse_int_radix(row.split("\t")[1], 10)) {
+    Some(n) => {
+      return n;
+    },
+    None => {
+      return 0 - 1;
+    }
+  }
+  return 0 - 1;
+}
+
+function __idle_since(row: string): i64 {
+  let v: i64 = 0;
+  for b in row.split("\t")[2].bytes() {
+    v = v * 10 + (b as i64 - 48);
+  }
+  return v;
 }
 
 // `Lookup` — a name's addresses: `dial` the ones to connect to, and, when
@@ -545,12 +695,20 @@ pub trait Transport {
 pub struct Lookup { dial: net.IpAddr[], named: net.IpAddr[], judged: net.IpAddr[] }
 
 // `Sockets` — the machine's transport: the system resolver, raced
-// connects (`dns.connect_race`), and TCP sockets read under a deadline.
-pub struct Sockets {  }
+// connects (`dns.connect_race`), TCP sockets read under a deadline, and
+// the pool of the ones kept for reuse.
+pub struct Sockets { pool: Idle }
 
-// `sockets()` — the machine's transport.
+// `sockets()` — the machine's transport with an empty `idle()` pool;
+// `close_idle` closes what it kept.
 pub function sockets(): Sockets {
-  return Sockets {  };
+  return sockets_with(idle());
+}
+
+// `sockets_with(pool)` — the machine's transport keeping connections in
+// `pool`.
+pub function sockets_with(pool: Idle): Sockets {
+  return Sockets { pool: pool };
 }
 
 impl Transport for Sockets {
@@ -590,6 +748,9 @@ impl Transport for Sockets {
     tcp_close(conn);
     return 0;
   }
+  function idle(self: Sockets): Idle {
+    return self.pool;
+  }
 }
 
 // `send(req)` — the request sent and its response read, as the module
@@ -597,7 +758,22 @@ impl Transport for Sockets {
 // `req.redirects` hops, all under the one total bound. Blocking: every
 // connection is closed before it answers.
 pub function send(req: Request): Result[HttpResponse, FetchError] {
-  return send_on(sockets(), req, Policy { public_only: false, proxies: __proxies() });
+  return __send_closing(Policy { public_only: false, proxies: __proxies() }, req);
+}
+
+// `__send_closing(policy, req)` — `req` sent over the machine's transport
+// with a pool for this one call, closed once it answers. On wasi-http the
+// host dials and nothing is kept; the `else` arm is what the fold drops,
+// so that build reaches no socket.
+function __send_closing(policy: Policy, req: Request): Result[HttpResponse, FetchError] {
+  let tr: Sockets = sockets();
+  if (target_os() == "wasi-http") {
+    return send_on(tr, req, policy);
+  } else {
+    let answer: Result[HttpResponse, FetchError] = send_on(tr, req, policy);
+    close_idle(tr);
+    return answer;
+  }
 }
 
 // `__proxies()` — the environment's proxy configuration where this
@@ -776,7 +952,8 @@ function __send_once[T: Transport](tr: T, req: Request, started: i64, policy: Po
 // then sent and its response read, and sent once more when the peer
 // reset the connection before any response byte and the method is
 // idempotent (RFC 9110 §9.2.2): a reset before an answer says nothing
-// happened.
+// happened, which is also how a kept connection the peer has since closed
+// answers.
 function __send_dialled[T: Transport](tr: T, req: Request, t: __Target, started: i64, policy: Policy): Result[HttpResponse, FetchError] {
   __origin_checked(tr, t, policy)?;
   let guard: boolean = policy.public_only && t.direct;
@@ -821,11 +998,21 @@ function __reset(e: FetchError): boolean {
   return false;
 }
 
-// `__attempt(tr, req, t, started, guard)` — one connection: opened (only
-// to a global address when `guard`), the request written, the response
-// read, and closed.
+// `__attempt(tr, req, t, started, guard)` — one connection: a kept one to
+// the same place when the method is idempotent (one that is not may have
+// been acted on by the time a closed kept connection shows itself, so it
+// never risks one), else one opened (only to a global address when
+// `guard`); the request written, the response read, and the connection
+// kept when the response left it reusable, closed otherwise.
 function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64, guard: boolean): Result[HttpResponse, FetchError] {
-  let conn: i32 = __connect(tr, t, req.timeouts, guard)?;
+  let key: string = __pool_key(t, guard);
+  let conn: i32 = 0 - 1;
+  if (http.http_method_idempotent(req.method)) {
+    conn = __take_idle(tr, key);
+  }
+  if (conn < 0) {
+    conn = __connect(tr, t, req.timeouts, guard)?;
+  }
   let body: u8[] = req.body.bytes();
   let sent: Result[void, FetchError] = __send_all(tr, conn, __head(req, t, body.len()) + string_from_bytes_unchecked(body));
   match (sent) {
@@ -835,9 +1022,21 @@ function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64,
       return Err(e);
     }
   }
-  let answer: Result[HttpResponse, FetchError] = __read_response(tr, conn, req, started);
-  tr.close(conn);
-  return answer;
+  match (__read_response(tr, conn, req, started)) {
+    Ok(read) => {
+      if (read.keep) {
+        __park(tr, key, conn);
+      } else {
+        tr.close(conn);
+      }
+      return __decoded(read.response, req);
+    },
+    Err(e) => {
+      tr.close(conn);
+      return Err(e);
+    }
+  }
+  return Err(Protocol("unreachable"));
 }
 
 // `__connect(tr, t, timeouts, guard)` — a connection to the host,
@@ -1076,6 +1275,18 @@ function __host_late_code(code: i32): FetchError {
   return Host("error code " + int.int_to_string(code));
 }
 
+// `__Read` — a final response as it came off the connection, and whether
+// the connection outlives it: the peer did not ask to close (`Connection:
+// close`, or an HTTP/1.0 response without `keep-alive`), the body was
+// framed rather than ended by the close, and nothing followed it.
+struct __Read { response: HttpResponse, keep: boolean }
+
+// `__reusable(framed, from, read, eof)` — whether the connection outlives
+// the final response `framed`, which began at `from` of the `read` bytes.
+function __reusable(framed: http.HttpResponseFramed, from: i32, read: i32, eof: boolean): boolean {
+  return framed.keep_alive && !eof && from + framed.len == read;
+}
+
 // `__send_all(tr, conn, payload)` — every byte of `payload` written, or
 // the failure as the transport reported it. The payload is handed over as
 // the bytes it holds; a body is not text, and never read as one.
@@ -1100,7 +1311,7 @@ function __send_all[T: Transport](tr: T, conn: i32, payload: string): Result[voi
 // Continue` for as long as the timeout allows), and handed back with its
 // hop-by-hop fields stripped. The buffer is uniquely owned and grows in
 // place, so the read stays linear in the response.
-function __read_response[T: Transport](tr: T, conn: i32, req: Request, started: i64): Result[HttpResponse, FetchError] {
+function __read_response[T: Transport](tr: T, conn: i32, req: Request, started: i64): Result[__Read, FetchError] {
   let buf: u8[] = [];
   let from: i32 = 0;
   let eof: boolean = false;
@@ -1109,7 +1320,8 @@ function __read_response[T: Transport](tr: T, conn: i32, req: Request, started: 
       Complete(framed) => {
         let next: i32 = __after_interim(framed, from, req.limits)?;
         if (next < 0) {
-          return __decoded(HttpResponse { ...framed.response, headers: http.http_end_to_end(framed.response.headers) }, req);
+          let response: HttpResponse = HttpResponse { ...framed.response, headers: http.http_end_to_end(framed.response.headers) };
+          return Ok(__Read { response: response, keep: __reusable(framed, from, buf.len(), eof) });
         }
         from = next;
         continue;
@@ -1334,7 +1546,7 @@ function __rejected(code: i32): FetchError {
 // what a real request gives for a host that is not listening.
 pub function (plat: Platform) http(req: Request): Result[HttpResponse, FetchError] {
   if (!plat.is_mock()) {
-    return send_on(sockets(), req, Policy { public_only: true, proxies: __proxies() });
+    return __send_closing(Policy { public_only: true, proxies: __proxies() }, req);
   }
   let summary: string = req.method + " " + req.url;
   plat.record("http", summary);

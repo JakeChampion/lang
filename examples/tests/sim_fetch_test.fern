@@ -361,6 +361,119 @@ function test_body_past_cap(): test.TestOutcome {
   return test.assert_eq(__message(got), "response body past its limit");
 }
 
+// A kept connection carries the next request to the same origin: one
+// connect for two requests, the second at no connect cost, and the
+// connection open in the pool until `close_idle`.
+function test_pool_reuses_kept(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reply(200, "two").kept()]);
+  let first: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  let second: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(first) != "one" || __body(second) != "two") {
+    return test.fail(__body(first) + " then " + __body(second));
+  }
+  if (n.connects() != 1 || d.now_ns() != 5 * MS) {
+    return test.fail("connects " + n.connects().to_string() + " at " + d.now_ns().to_string());
+  }
+  if (n.open() != 1) {
+    return test.fail("the kept connection is not in the pool");
+  }
+  fetch.close_idle(n);
+  return test.assert_eq(n.open(), 0);
+}
+
+// A response that announces `Connection: close` is never kept.
+function test_announced_close_not_kept(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one"), sim_fetch.reply(200, "two")]);
+  let first: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  let second: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(second) != "two" || n.open() != 0) {
+    return test.fail(__body(second) + ", open " + n.open().to_string());
+  }
+  return test.assert_eq(n.connects(), 2);
+}
+
+// A redirect back to the same origin is followed on the connection that
+// carried it.
+function test_redirect_reuses(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.redirect(302, "http://example.test/next").kept()]).route(ORIGIN, 80, "/next", [sim_fetch.reply(200, "there")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(got) != "there") {
+    return test.fail(__body(got));
+  }
+  return test.assert_eq(n.connects(), 1);
+}
+
+// A kept connection the origin has since closed answers the next request
+// with a close before any byte, and the request is sent again on a new
+// connection.
+function test_closed_kept_redialled(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reset(), sim_fetch.reply(200, "fresh")]);
+  let first: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  let second: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(second) != "fresh") {
+    return test.fail(__message(second));
+  }
+  return test.assert_eq(n.connects(), 2);
+}
+
+// A POST never takes a kept connection: one the origin had closed would
+// fail it after it may have been acted on, and it is not sent twice.
+function test_post_dials_fresh(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reply(200, "posted")]);
+  let first: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  let posted: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.request("POST", "http://example.test/").with_text("x"), __open());
+  if (__body(posted) != "posted") {
+    return test.fail(__message(posted));
+  }
+  return test.assert_eq(n.connects(), 2);
+}
+
+// A connection idle past the pool's bound (90 s) is closed rather than
+// reused.
+function test_idle_expired_closed(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reply(200, "two")]);
+  let first: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  d.clock_ns.set(d.now_ns() + 90001 * MS);
+  let second: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(second) != "two" || n.connects() != 2) {
+    return test.fail(__body(second) + ", connects " + n.connects().to_string());
+  }
+  return test.assert_eq(n.open(), 0);
+}
+
+// A pool past its `max` closes the connection idle longest.
+function test_pool_cap(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let other: string = "93.184.216.35";
+  let n: sim_fetch.Net = __net(d).host("other.test", [other]).listen(other, 80, 5).pooling(fetch.idle_limited(1, 90000)).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "a").kept()]).route(other, 80, "/", [sim_fetch.reply(200, "b").kept()]);
+  let a: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  let b: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://other.test/"), __open());
+  if (n.open() != 1) {
+    return test.fail("open " + n.open().to_string());
+  }
+  let again: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  return test.assert_eq(n.connects(), 3);
+}
+
+// A connection the open route dialled is never handed to the public
+// route, whose block list judged none of its addresses.
+function test_routes_pool_apart(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reply(200, "two").kept()]);
+  let open: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  let guarded: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __public());
+  if (__body(guarded) != "two") {
+    return test.fail(__message(guarded));
+  }
+  return test.assert_eq(n.connects(), 2);
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/sim_fetch");
   r = r.it("answers at its virtual time and closes", test_answer_at_its_time);
@@ -384,5 +497,13 @@ function main(): i32 {
   r = r.it("decodes the gzip it asked for", test_gzip_decoded);
   r = r.it("caps what decoding produces", test_decoded_past_cap);
   r = r.it("caps the response body", test_body_past_cap);
+  r = r.it("reuses a kept connection", test_pool_reuses_kept);
+  r = r.it("does not keep a connection the response closes", test_announced_close_not_kept);
+  r = r.it("follows a same-origin redirect on its connection", test_redirect_reuses);
+  r = r.it("redials when a kept connection was closed", test_closed_kept_redialled);
+  r = r.it("dials a POST fresh", test_post_dials_fresh);
+  r = r.it("closes a connection idle past the bound", test_idle_expired_closed);
+  r = r.it("closes the longest-idle connection past the cap", test_pool_cap);
+  r = r.it("keeps the routes' connections apart", test_routes_pool_apart);
   return r.finish();
 }
