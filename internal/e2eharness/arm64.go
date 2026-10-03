@@ -141,7 +141,7 @@ func compileArm64BinOpts(t *testing.T, src string, opts arm64codegen.Options) (b
 	if opts.HighHeapProbe {
 		env = []string{"FERN_HIGH_HEAP=1"}
 	}
-	return compileSelfHostProgram(t, TargetArm64Linux, src, env), qemu
+	return CompileSelfHostSource(t, TargetArm64Linux, src, env), qemu
 }
 
 // finishArm64Run turns a completed run into (stdout, exit code), failing

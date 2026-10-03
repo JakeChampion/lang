@@ -123,11 +123,15 @@ func TestValueBlockDynCoercionIsRetained(t *testing.T) {
 		name, src string
 		want      int
 	}{
+		// side() keeps the Square off the static aggregates, so the census
+		// has its box to count.
 		{"issue-10529", `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
+@noinline
+function side(): i32 { return 3; }
 function main(): i32 {
-    let s: Square = Square { side: 3 };
+    let s: Square = Square { side: side() };
     let d: dyn Shape = { let q = s; q };
     return d.area();
 }`, 9},

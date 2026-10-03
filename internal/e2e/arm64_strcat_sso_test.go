@@ -2,52 +2,21 @@ package e2e
 
 import "testing"
 
-// --- arm64 concat and the two-word inline form (#7446) ------------------
+// --- arm64 concat across the old inline cap (#7446) ---------------------
 //
-// arm64 runs the two-word string ABI with a 15-byte inline cap, and
-// __fern_strcat is the first arm64 producer of non-empty inline strings:
-// every literal is heap-form .rodata, so before it the only inline value in
-// an arm64 program was the empty string. These tests pin both halves of
-// that: the leak census is the instrument that says a short concat
-// allocated nothing (an inline value has no block to leak), and the
-// consumers that must decode the packed form (len, byte index, equality
-// against a heap literal, slice, as_bytes, print) are driven with the
-// bytes placed on both sides of the data/len word boundary.
+// The native arm64 backend packed a string of 15 bytes or fewer inline in its
+// two words, and these programs drove every consumer that had to decode that
+// form (len, byte index, equality against a heap literal, slice, as_bytes,
+// print) with the bytes on both sides of the data/len word boundary. A
+// self-host string is never inline, so the lengths are now ordinary heap
+// strings at the same boundaries, and each program is held to its answer and
+// a balanced census.
 
-// strcatSsoIssueReproSrc is #7446's repro: two concats of 2 and 3 bytes per
-// round, rebound in one local. x86-64 measures allocs=0 through its
-// single-word SSO; arm64 measured allocs=200 while its concat was heap-only.
-const strcatSsoIssueReproSrc = `function mkstr(a: string): string { return a + "!"; }
-function round(i: i32): i32 {
-    let t: i32 = 0;
-    let x: string = mkstr("x");
-    x = mkstr("yz");
-    t = (t + x.len()) % 101;
-    return t;
-}
-function main(): i32 {
-    let acc: i32 = 0; let i: i32 = 0;
-    while (i < 100) { acc = acc + round(i); i = i + 1; }
-    if (__rc_underflow_count() != 0) { return 99; }
-    return acc % 83;
-}`
-
-func TestArm64StrcatShortResultIsInline(t *testing.T) {
-	_, stderr, code := runLeakCheckArm64(t, strcatSsoIssueReproSrc)
-	if code != 51 {
-		t.Fatalf("exit code %d, want 51", code)
-	}
-	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	if allocs != 0 || frees != 0 || live != 0 {
-		t.Errorf("got allocs=%d frees=%d live=%d, want 0/0/0: a concat result of 15 bytes or fewer must stay inline on arm64 as it does on x86-64", allocs, frees, live)
-	}
-}
-
-// strcatInlineFormSrc builds inline results of 8, 14 and 15 bytes from a
+// strcatInlineFormSrc builds results of 8, 14 and 15 bytes from a
 // runtime-selected operand (so nothing folds), then reads them back through
-// every decoding consumer. 8 bytes fills the data word exactly; 14 and 15
-// put bytes in the len word, 15 being the cap. The literals it compares
-// against are heap-form, so equality crosses the two encodings.
+// every consumer. Those were the native inline form's boundaries: a full data
+// word, bytes in the len word, and the cap. The literals it compares against
+// are read-only, so equality crosses a built string and a literal.
 const strcatInlineFormSrc = `function pick(i: i32): string { if (i % 2 == 0) { return "abcde"; } return "vwxyz"; }
 function main(): i32 {
     let t: i32 = 0;
@@ -95,8 +64,8 @@ func TestArm64StrcatInlineFormRoundTrips(t *testing.T) {
 		t.Errorf("stdout = %q, want %q", stdout, "abcdefgh\n")
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	if allocs != 0 || frees != 0 || live != 0 {
-		t.Errorf("got allocs=%d frees=%d live=%d, want 0/0/0: every string here fits the inline cap", allocs, frees, live)
+	if allocs != frees || live != 0 {
+		t.Errorf("got allocs=%d frees=%d live=%d, want balanced / 0", allocs, frees, live)
 	}
 }
 
@@ -175,8 +144,8 @@ function main(): i32 {
 		t.Errorf("exit = %d, want 104 (4 + 'd'; 1 means the appended bytes were wrong)", code)
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	if allocs != 1 || frees != 1 || live != 0 {
-		t.Errorf("got allocs=%d frees=%d live=%d, want 1/1/0: only strbuf_take's buffer allocates", allocs, frees, live)
+	if allocs != frees || live != 0 {
+		t.Errorf("got allocs=%d frees=%d live=%d, want balanced / 0", allocs, frees, live)
 	}
 }
 

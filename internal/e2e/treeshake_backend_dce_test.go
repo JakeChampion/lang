@@ -35,7 +35,7 @@ func emitBackendBundle(t *testing.T, files map[string]string) string {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	return e2eharness.EmitAsmWithSelfHost(t, e2eharness.SelfHostCLI(t), e2eharness.TargetX86_64Linux, filepath.Join(dir, "main.fern"))
+	return e2eharness.EmitAsmWithSelfHost(t, e2eharness.SelfHostCLI(t), e2eharness.TargetX86_64Linux, filepath.Join(dir, "main.fern"), nil)
 }
 
 // assertBackends checks that every marker for `present` is in the asm and
