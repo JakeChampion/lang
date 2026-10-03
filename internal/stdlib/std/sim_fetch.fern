@@ -1,0 +1,501 @@
+// std/sim_fetch — a scripted network for std/fetch's client, in virtual
+// time.
+//
+// A `Net` is a `fetch.Transport`: `fetch.send_on(n, req, policy)` runs the
+// whole client (lookup, the block list, connect and read bounds, retrying
+// a reset, redirects, decoding) against names, listeners and answers a
+// test scripts, on the clock of a `sim.Sim`. Nothing waits: a read that
+// would block moves the clock to the moment the scripted bytes arrive, or
+// by the whole wait when nothing does, so a bound that passes passes at
+// its exact virtual time.
+//
+//   let d: sim.Sim = sim.new(1);
+//   let n: sim_fetch.Net = sim_fetch.net(d)
+//       .host("example.test", ["93.184.216.34"])
+//       .listen("93.184.216.34", 80, 5)
+//       .route("93.184.216.34", 80, "/", [sim_fetch.reply(200, "hi").after(20)]);
+//   let got = fetch.send_on(n, fetch.get("http://example.test/"), policy);
+//   // d.now_ns() is 25 ms: 5 to connect, 20 to the first byte.
+//
+// A name resolves to the addresses `host` gives it, or to itself when it
+// is an IP literal; any other name is `NoSuchName`. The addresses are
+// raced as `dns.connect_race` races them: each attempt starts the
+// fallback delay after the one before, or at once when that one was
+// refused, an address with no `listen`er on the port refusing at once;
+// the first to finish its connect time wins, and none finishing within
+// the client's bound is a timeout at the bound. A bound of zero has
+// passed before any attempt starts, so it times out even where every
+// address refuses. The request
+// written on a connection picks its route by address, port and request
+// target (`*` matches any target), and the n-th request a route takes is
+// answered with its n-th `Answer`, the last repeating; a request no route
+// takes is answered 404. A connection answers one request.
+//
+// The module is std/sim's sibling rather than part of it so that std/sim,
+// which reaches nothing but the clock and randomness, does not import the
+// client and everything it reaches.
+
+import "std/sim";
+import "std/fetch";
+import "std/net";
+import "std/dns";
+import "std/i64";
+import "core/int";
+
+// `Answer` — one scripted response: `bytes` on the wire, the first of
+// them `first_ms` after the request was written, then `chunk` bytes at a
+// time (all at once when 0) every `chunk_ms`; once all are read the
+// connection closes, or stays open and silent when `close` is false.
+pub struct Answer { bytes: u8[], first_ms: i64, chunk_ms: i64, chunk: i32, close: boolean }
+
+// `reply(status, body)` — a response with `status`, a `Content-Length`
+// and `body`, written at once and followed by a close.
+pub function reply(status: i32, body: string): Answer {
+  return raw("HTTP/1.1 " + int.int_to_string(status) + " Status\r\nContent-Length: " + int.int_to_string(body.len()) + "\r\n\r\n" + body);
+}
+
+// `redirect(status, location)` — a 3xx sending the client to `location`.
+pub function redirect(status: i32, location: string): Answer {
+  return raw("HTTP/1.1 " + int.int_to_string(status) + " Status\r\nLocation: " + location + "\r\nContent-Length: 0\r\n\r\n");
+}
+
+// `raw(text)` — `text` on the wire as written, then a close.
+pub function raw(text: string): Answer {
+  return raw_bytes(text.bytes());
+}
+
+// `raw_bytes(bytes)` — `bytes` on the wire as given, then a close.
+pub function raw_bytes(bytes: u8[]): Answer {
+  return Answer { bytes: bytes, first_ms: 0, chunk_ms: 0, chunk: 0, close: true };
+}
+
+// `reset()` — the connection closed before any byte of an answer.
+pub function reset(): Answer {
+  let none: u8[] = [];
+  return raw_bytes(none);
+}
+
+// `silent()` — no byte, and no close: the client's bounds end the wait.
+pub function silent(): Answer {
+  return Answer { ...reset(), close: false };
+}
+
+// `a.after(ms)` — `a` with its first byte `ms` after the request.
+pub function (a: Answer) after(ms: i64): Answer {
+  return Answer { ...a, first_ms: ms };
+}
+
+// `a.in_chunks(size, every_ms)` — `a` delivered `size` bytes at a time,
+// one chunk every `every_ms` after the first.
+pub function (a: Answer) in_chunks(size: i32, every_ms: i64): Answer {
+  return Answer { ...a, chunk: size, chunk_ms: every_ms };
+}
+
+// `a.held()` — `a` with the connection left open after its last byte.
+pub function (a: Answer) held(): Answer {
+  return Answer { ...a, close: false };
+}
+
+// `Name` — a host name and the addresses it resolves to, in order.
+pub struct Name { host: string, addrs: string[] }
+
+// `Listener` — an address and port that accepts after `connect_ms`.
+pub struct Listener { addr: string, port: i32, connect_ms: i64 }
+
+// `Route` — the answers an address and port give a request target, in
+// the order requests reach it.
+pub struct Route { addr: string, port: i32, path: string, answers: Answer[] }
+
+// `Net` — the scripted network, on `drv`'s clock. The builders return a
+// new `Net` sharing the same state cells, so a value built once and
+// handed to the client records what the client did: the connections
+// table, how many requests each route took, and every request written.
+pub struct Net { drv: sim.Sim, names: Name[], listeners: Listener[], routes: Route[], conns: Cell[string], hits: Cell[string], sent: Cell[string], next: Cell[i32] }
+
+// `net(drv)` — an empty network on `drv`'s clock: every name unknown and
+// every address refusing.
+pub function net(drv: sim.Sim): Net {
+  let names: Name[] = [];
+  let listeners: Listener[] = [];
+  let routes: Route[] = [];
+  return Net { drv: drv, names: names, listeners: listeners, routes: routes, conns: cell_new(""), hits: cell_new(""), sent: cell_new(""), next: cell_new(1) };
+}
+
+// `n.host(name, addrs)` — `name` resolving to `addrs`.
+pub function (n: Net) host(name: string, addrs: string[]): Net {
+  return Net { ...n, names: n.names.append(Name { host: name, addrs: addrs }) };
+}
+
+// `n.listen(addr, port, connect_ms)` — `addr:port` accepting after
+// `connect_ms`.
+pub function (n: Net) listen(addr: string, port: i32, connect_ms: i64): Net {
+  return Net { ...n, listeners: n.listeners.append(Listener { addr: __canon(addr), port: port, connect_ms: connect_ms }) };
+}
+
+// `n.route(addr, port, path, answers)` — the answers `addr:port` gives
+// requests for `path` (`*` for any).
+pub function (n: Net) route(addr: string, port: i32, path: string, answers: Answer[]): Net {
+  return Net { ...n, routes: n.routes.append(Route { addr: __canon(addr), port: port, path: path, answers: answers }) };
+}
+
+// `n.connects()` — how many connections the client opened.
+pub function (n: Net) connects(): i32 {
+  return n.next.get() - 1;
+}
+
+// `n.open()` — how many of them the client has not closed.
+pub function (n: Net) open(): i32 {
+  let count: i32 = 0;
+  for row in __rows(n.conns.get()) {
+    if (row[7] == "1") {
+      count = count + 1;
+    }
+  }
+  return count;
+}
+
+// `n.sent_count()` — how many requests the client wrote.
+pub function (n: Net) sent_count(): i32 {
+  return __sent_all(n).len();
+}
+
+// `n.sent(i)` — the `i`-th request the client wrote, as written: request
+// line, fields and body.
+pub function (n: Net) sent(i: i32): string {
+  let all: string[] = __sent_all(n);
+  if (i < 0 || i >= all.len()) {
+    return "";
+  }
+  return all[i];
+}
+
+impl fetch.Transport for Net {
+  function now_ns(self: Net): i64 {
+    return self.drv.clock_ns.get();
+  }
+  function lookup(self: Net, host: string, checked: boolean): Result[fetch.Lookup, dns.DnsError] {
+    let found: net.IpAddr[] = __addrs_of(self, host);
+    if (found.len() == 0) {
+      return Err(dns.NoSuchName);
+    }
+    let none: net.IpAddr[] = [];
+    if (!checked) {
+      return Ok(fetch.Lookup { dial: found, named: none, judged: none });
+    }
+    return Ok(fetch.Lookup { dial: found, named: found, judged: found });
+  }
+  function connect(self: Net, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError] {
+    let fallback_ms: i64 = dns.dial_options().fallback_ms as i64;
+    let start_ms: i64 = 0;
+    let best_ms: i64 = 0 - 1;
+    let best: string = "";
+    for a in addrs {
+      let key: string = a.to_string();
+      let delay: i64 = __connect_ms(self, key, port);
+      if (delay >= 0) {
+        let done_ms: i64 = start_ms + delay;
+        if (best_ms < 0 || done_ms < best_ms) {
+          best_ms = done_ms;
+          best = key;
+        }
+        start_ms = start_ms + fallback_ms;
+      }
+    }
+    if (timeout_ms <= 0) {
+      return Err(net.TimedOut);
+    }
+    if (best_ms < 0) {
+      return Err(net.ConnectionRefused);
+    }
+    if (best_ms > timeout_ms as i64) {
+      __advance(self, self.drv.clock_ns.get() + timeout_ms as i64 * 1000000);
+      return Err(net.TimedOut);
+    }
+    __advance(self, self.drv.clock_ns.get() + best_ms * 1000000);
+    let id: i32 = self.next.get();
+    self.next.set(id + 1);
+    self.conns.set(self.conns.get() + __row(id, best, port, 0 - 1, 0, 0, 0, 1));
+    return Ok(id);
+  }
+  function write(self: Net, conn: i32, data: string): i32 {
+    let row: string[] = __conn(self, conn);
+    if (row.len() == 0 || row[7] != "1") {
+      return 0 - 9;
+    }
+    self.sent.set(self.sent.get() + int.int_to_string(data.len()) + ":" + data);
+    if (__field(row, 3) != 0 - 1) {
+      return data.len();
+    }
+    let port: i32 = __field(row, 2);
+    let target: string = __target(data);
+    let route: i32 = 0 - 2;
+    let answer: i32 = 0;
+    let i: i32 = 0;
+    while (i < self.routes.len()) {
+      let r: Route = self.routes[i];
+      if (r.addr == row[1] && r.port == port && (r.path == target || r.path == "*")) {
+        route = i;
+        answer = __took(self, i);
+        break;
+      }
+      i = i + 1;
+    }
+    let first_ms: i64 = 0;
+    if (route >= 0) {
+      first_ms = __answer(self, route, answer).first_ms;
+    }
+    __set_conn(self, conn, __row(conn, row[1], port, route, answer, 0, self.drv.clock_ns.get() + first_ms * 1000000, 1));
+    return data.len();
+  }
+  function read(self: Net, conn: i32, max: i32, wait_ms: i64): Option[u8[]] {
+    let row: string[] = __conn(self, conn);
+    let now: i64 = self.drv.clock_ns.get();
+    let deadline: i64 = now + wait_ms * 1000000;
+    let route: i32 = __field(row, 3);
+    if (row.len() == 0 || route == 0 - 1) {
+      __advance(self, deadline);
+      return None;
+    }
+    let a: Answer = __answer(self, route, __field(row, 4));
+    let offset: i32 = __field(row, 5);
+    if (offset >= a.bytes.len()) {
+      if (a.close) {
+        let none: u8[] = [];
+        return Some(none);
+      }
+      __advance(self, deadline);
+      return None;
+    }
+    let ready: i64 = __field64(row, 6);
+    if (ready > deadline) {
+      __advance(self, deadline);
+      return None;
+    }
+    __advance(self, ready);
+    let size: i32 = a.bytes.len() - offset;
+    if (a.chunk > 0 && a.chunk < size) {
+      size = a.chunk;
+    }
+    if (max < size) {
+      size = max;
+    }
+    let out: u8[] = [];
+    let k: i32 = 0;
+    while (k < size) {
+      out = out.append(a.bytes[offset + k]);
+      k = k + 1;
+    }
+    __set_conn(self, conn, __row(conn, row[1], __field(row, 2), route, __field(row, 4), offset + size, self.drv.clock_ns.get() + a.chunk_ms * 1000000, 1));
+    return Some(out);
+  }
+  function close(self: Net, conn: i32): i32 {
+    let row: string[] = __conn(self, conn);
+    if (row.len() > 0) {
+      __set_conn(self, conn, __row(conn, row[1], __field(row, 2), __field(row, 3), __field(row, 4), __field(row, 5), __field64(row, 6), 0));
+    }
+    return 0;
+  }
+}
+
+// `__canon(addr)` — `addr` in the one spelling `IpAddr.to_string` gives
+// it, so a listener written `::1` matches the address the client dials.
+function __canon(addr: string): string {
+  match (net.ip_parse(addr)) {
+    Some(a) => {
+      return a.to_string();
+    },
+    None => {
+      return addr;
+    }
+  }
+  return addr;
+}
+
+// `__connect_ms(n, addr, port)` — the connect time of the listener on
+// `addr:port`, or -1 when none listens there.
+function __connect_ms(n: Net, addr: string, port: i32): i64 {
+  for l in n.listeners {
+    if (l.addr == addr && l.port == port) {
+      return l.connect_ms;
+    }
+  }
+  return 0 - 1;
+}
+
+// `__addrs_of(n, host)` — `host` itself when it is an IP literal, else the
+// addresses `n` names it.
+function __addrs_of(n: Net, host: string): net.IpAddr[] {
+  let out: net.IpAddr[] = [];
+  match (net.ip_parse(host)) {
+    Some(a) => {
+      return out.append(a);
+    },
+    None => {}
+  }
+  for name in n.names {
+    if (name.host == host) {
+      for s in name.addrs {
+        match (net.ip_parse(s)) {
+          Some(a) => {
+            out = out.append(a);
+          },
+          None => {}
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// `__advance(n, to_ns)` — the clock moved forward to `to_ns`, never back.
+function __advance(n: Net, to_ns: i64): i32 {
+  if (to_ns > n.drv.clock_ns.get()) {
+    n.drv.clock_ns.set(to_ns);
+  }
+  return 0;
+}
+
+// `__target(data)` — the request target of the request line `data` starts
+// with.
+function __target(data: string): string {
+  let line: string = data.split("\r\n")[0];
+  let parts: string[] = line.split(" ");
+  if (parts.len() < 2) {
+    return "";
+  }
+  return parts[1];
+}
+
+// `__took(n, route)` — the count of requests `route` had taken before this
+// one, counting this one.
+function __took(n: Net, route: i32): i32 {
+  let counts: string[] = n.hits.get().split(",");
+  let out: string = "";
+  let before: i32 = 0;
+  let i: i32 = 0;
+  while (i < n.routes.len()) {
+    let c: i32 = 0;
+    if (i < counts.len()) {
+      c = __int(counts[i]);
+    }
+    if (i == route) {
+      before = c;
+      c = c + 1;
+    }
+    out = out + int.int_to_string(c) + ",";
+    i = i + 1;
+  }
+  n.hits.set(out);
+  return before;
+}
+
+// `__answer(n, route, i)` — the answer to `route`'s `i`-th request, the
+// last repeating; a 404 when no route took the request.
+function __answer(n: Net, route: i32, i: i32): Answer {
+  if (route < 0) {
+    return reply(404, "");
+  }
+  let answers: Answer[] = n.routes[route].answers;
+  if (answers.len() == 0) {
+    return reply(404, "");
+  }
+  if (i >= answers.len()) {
+    return answers[answers.len() - 1];
+  }
+  return answers[i];
+}
+
+// The connections table: one `;`-ended row per connection, its fields
+// split on `|` (an IPv6 address holds `:`): id, address, port, route
+// (-1 before a request, -2 when none took it), answer, bytes read, when
+// the next bytes are ready (ns), open.
+function __row(id: i32, addr: string, port: i32, route: i32, answer: i32, offset: i32, ready_ns: i64, open: i32): string {
+  return int.int_to_string(id) + "|" + addr + "|" + int.int_to_string(port) + "|" + int.int_to_string(route) + "|" + int.int_to_string(answer) + "|" + int.int_to_string(offset) + "|" + ready_ns.to_string() + "|" + int.int_to_string(open) + ";";
+}
+
+function __rows(table: string): string[][] {
+  let rows: string[][] = [];
+  for entry in table.split(";") {
+    if (entry.len() > 0) {
+      rows = rows.append(entry.split("|"));
+    }
+  }
+  return rows;
+}
+
+function __conn(n: Net, id: i32): string[] {
+  for row in __rows(n.conns.get()) {
+    if (__field(row, 0) == id) {
+      return row;
+    }
+  }
+  let none: string[] = [];
+  return none;
+}
+
+function __set_conn(n: Net, id: i32, row: string): i32 {
+  let out: string = "";
+  for r in __rows(n.conns.get()) {
+    if (__field(r, 0) == id) {
+      out = out + row;
+    } else {
+      out = out + __row(__field(r, 0), r[1], __field(r, 2), __field(r, 3), __field(r, 4), __field(r, 5), __field64(r, 6), __field(r, 7));
+    }
+  }
+  n.conns.set(out);
+  return 0;
+}
+
+function __field(row: string[], i: i32): i32 {
+  if (i >= row.len()) {
+    return 0;
+  }
+  return __int(row[i]);
+}
+
+function __int(s: string): i32 {
+  if (s.len() > 0 && s.bytes()[0] == 45 as u8) {
+    return 0 - __int(s.split("-")[1]);
+  }
+  match (int.parse_int_radix(s, 10)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+// `__field64(row, i)` — a non-negative decimal field as an i64.
+function __field64(row: string[], i: i32): i64 {
+  let v: i64 = 0;
+  if (i >= row.len()) {
+    return v;
+  }
+  for b in row[i].bytes() {
+    v = v * 10 + (b as i64 - 48);
+  }
+  return v;
+}
+
+// `__sent_all(n)` — every request written, in order. The log holds each
+// as its length, `:`, and its bytes.
+function __sent_all(n: Net): string[] {
+  let log: string = n.sent.get();
+  let bs: u8[] = log.bytes();
+  let out: string[] = [];
+  let at: i32 = 0;
+  while (at < bs.len()) {
+    let len: i32 = 0;
+    while (at < bs.len() && bs[at] != 58 as u8) {
+      len = len * 10 + (bs[at] as i32 - 48);
+      at = at + 1;
+    }
+    at = at + 1;
+    out = out.append(slice_unchecked(log, at, at + len).to_owned());
+    at = at + len;
+  }
+  return out;
+}

@@ -135,9 +135,15 @@ pub function serve(request: i32, response_out: i32, handle: (HttpRequest, Platfo
   // are read after, and the request is dropped last, once its children —
   // the fields and the finished body — are gone.
   let fields: i32 = req_headers(request);
-  let data: u8[] = read_body(request);
+  let (data, how) = read_body(request);
   let headers: HeaderMap = headers_of(fields);
   req_drop(request);
+  // A body past the serve loop's cap is refused as the socket server
+  // refuses it, before the handler runs (#11102).
+  if (how == READ_PAST_CAP) {
+    send(response_out, http.text(413, ""));
+    return;
+  }
   // The body's trailers are a future the host settles after the body is
   // finished; nothing reads it yet, so the request's are empty.
   let req: HttpRequest = HttpRequest { method: method, path: path, body: Stream { data: data, pos: 0 }, headers: headers, trailers: HeaderMap { names: [], values: [] } };
@@ -181,17 +187,17 @@ function method_name(m: WasiHttpMethod): string {
   return "";
 }
 
-// read_body drains the request body whole. A request the host refuses to
-// consume reads as empty.
-function read_body(request: i32): u8[] {
+// read_body drains the request body up to the serve loop's body cap
+// (`http.http_limits`), and says how the read ended. A request the host
+// refuses to consume reads as empty.
+function read_body(request: i32): (u8[], i32) {
   match (req_consume(request)) {
     Ok(body) => {
-      let (data, how) = drain(body, None);
-      return data;
+      return drain(body, Some(http.http_limits().body));
     },
     Err(e) => {}
   }
-  return [];
+  return ([], READ_WHOLE);
 }
 
 // How a body read ended: closed with every byte read; stopped at the cap;

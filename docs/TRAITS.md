@@ -1060,12 +1060,15 @@ regressing the self-host gates. It needs traits in two slices:
   impl_tps, impl_tbs)` — exactly the desugaring a written method gets.
   The bounds reach that call through `ImplInfo`, which is why they are
   recorded on the struct rather than kept as a local (#7224). Mirrors the
-  Go checker's `synthesizeTraitDefaults`. **Same-module only**: a trait
-  and an impl in *different* modules don't yet inherit (the synthesis runs
-  per `parse_module`, before `merge_module`); cross-module defaults are a
-  follow-up. Tested on x86-64 + wasm IR
-  (`internal/e2e/self_host_default_method_ir_test.go`): inherited,
-  overridden, default-calls-abstract, and two-impls-inherit-independently.
+  Go checker's `synthesizeTraitDefaults`. That covers a trait the impl's
+  own module declares. For a trait from another module the bundler does
+  the same once every module is renamed (`flatten.inherit_trait_defaults`):
+  each default body is renamed in the trait's module first, so it calls
+  that module's functions wherever the impl is (#8484). Tested on x86-64 +
+  wasm IR (`internal/e2eselfhost/self_host_default_method_ir_test.go`):
+  inherited, overridden, default-calls-abstract, and
+  two-impls-inherit-independently; across modules by
+  `internal/e2e/trait_default_module_test.go`.
 
 ## 7b. The `std/test` collapse (landed)
 

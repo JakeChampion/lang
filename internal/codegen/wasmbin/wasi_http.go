@@ -154,6 +154,27 @@ func buildCabiReallocBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
+// httpBodyCap is std/http's `http_limits().body`, the request body a serve
+// loop accepts before it answers 413.
+const httpBodyCap = 1 << 20
+
+// synthResponse stores a fresh HttpResponse with `status`, no body and no
+// headers into local 18.
+func synthResponse(body []byte, alloc uint32, status int32) []byte {
+	body = inst.InstI32Const(body, 12)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 18)
+	body = inst.InstI32Const(body, status)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 18)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 4)
+	body = inst.InstLocalGet(body, 18)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 8)
+	return body
+}
+
 // buildHttpEntryBody assembles `__http_entry`, the wrapper
 // exported as `wasi:http/incoming-handler@0.2.0#handle`.
 //
@@ -248,6 +269,7 @@ func buildCabiReallocBody(idxs map[string]uint32) []byte {
 //	48: $tr_values
 //	44: $req_body_arr
 //	45: $req_body_stream
+//	49: $past_cap (the body would pass httpBodyCap)
 //
 // TODO: emit a method-name br_table that pins the
 // common HTTP verbs to pre-interned inline-form string constants
@@ -441,6 +463,22 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 				body = numeric.InstI32Add(body)
 				body = memory.InstI32Load(body, 2, 0)
 				body = inst.InstLocalSet(body, 11) // host_ptr
+
+				// A body past std/http's serve cap (http_limits().body)
+				// stops the read and is refused with 413 below, as the
+				// socket server refuses it (#11102).
+				body = inst.InstLocalGet(body, 15)
+				body = inst.InstLocalGet(body, 12)
+				body = numeric.InstI32Add(body)
+				body = inst.InstI32Const(body, httpBodyCap)
+				body = numeric.InstI32GtU(body)
+				body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+				{
+					body = inst.InstI32Const(body, 1)
+					body = inst.InstLocalSet(body, 49) // past_cap
+					body = inst.InstBr(body, 2)
+				}
+				body = inst.InstEnd(body)
 
 				// Grow body_buf until body_cur + host_len fits.
 				body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
@@ -757,10 +795,21 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	}
 
 	if hasHandle {
-		body = inst.InstLocalGet(body, 17)
-		body = inst.InstLocalGet(body, 25)
-		body = inst.InstCall(body, handleFn)
-		body = inst.InstLocalSet(body, 18)
+		// A body past the cap never reaches the handler: the response is
+		// a 413 with no body and no headers.
+		body = inst.InstLocalGet(body, 49)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = synthResponse(body, alloc, 413)
+		}
+		body = inst.InstElse(body)
+		{
+			body = inst.InstLocalGet(body, 17)
+			body = inst.InstLocalGet(body, 25)
+			body = inst.InstCall(body, handleFn)
+			body = inst.InstLocalSet(body, 18)
+		}
+		body = inst.InstEnd(body)
 	} else {
 		// No user `handle`: synthesise a 500 response struct. Same
 		// fallback shape as the WAT path. status@+0=500; body and
@@ -780,13 +829,23 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalSet(body, 19)
 	if hasHandle && hasBodyBytes {
-		body = inst.InstLocalGet(body, 18)
-		body = inst.InstCall(body, bodyBytes)
-		body = inst.InstLocalTee(body, 7) // packed u8[] data pointer
-		body = inst.InstI32Const(body, 4)
-		body = numeric.InstI32Sub(body)
-		body = memory.InstI32Load(body, 2, 0) // length at data-4
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 7)
+		body = inst.InstI32Const(body, 0)
 		body = inst.InstLocalSet(body, 8)
+		body = inst.InstLocalGet(body, 49)
+		body = numeric.InstI32Eqz(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstLocalGet(body, 18)
+			body = inst.InstCall(body, bodyBytes)
+			body = inst.InstLocalTee(body, 7) // packed u8[] data pointer
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32Sub(body)
+			body = memory.InstI32Load(body, 2, 0) // length at data-4
+			body = inst.InstLocalSet(body, 8)
+		}
+		body = inst.InstEnd(body)
 	} else {
 		body = inst.InstI32Const(body, 0)
 		body = inst.InstLocalSet(body, 7)
@@ -1014,11 +1073,11 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, idxs["__fern_arr_dec"])
 	body = inst.InstDrop(body)
 
-	// 47 i32 locals after the 2 params (slots 2..48). Slot 24
+	// 48 i32 locals after the 2 params (slots 2..49). Slot 24
 	// (formerly $arena_handle) is now unused: per-request memory
 	// is reclaimed by reference counting, not a bump-cursor reset.
 	// Kept allocated to avoid renumbering slots 25..48.
-	locals := inst.PutLocalsOneGroup(nil, 47, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 48, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

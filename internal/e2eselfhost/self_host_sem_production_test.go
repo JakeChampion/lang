@@ -6214,6 +6214,20 @@ function main(): i32 {
     return 0;
 }
 `},
+	// With `str` the only implementer, the dyn call's one arm is the impl on
+	// `str`, keyed `string` like every other receiver (#11155).
+	{name: "a-dyn-whose-only-implementer-is-str-is-produced", atLeast: 2, want: "0|1073 1043\n", src: `
+import "std/i32";
+trait Size { function size(self: Self): i32; }
+impl Size for str { function size(self: str): i32 { return 1000 + self.len() * 10 + (self[0] as i32) - 97; } }
+function pick(n: i32): dyn Size { if (n > 0) { return "x" + "yz"; } return "ab"; }
+function main(): i32 {
+    let d: dyn Size = pick(1);
+    let lit: dyn Size = "xy";
+    print((d.size() + lit.size() - 1023).to_string() + " " + lit.size().to_string());
+    return 0;
+}
+`},
 	// A 64-bit integer and a float are boxed at their own width, which wasm's
 	// box stores and unboxes by the primitive's name (#10098): an i64 above
 	// 2^32 keeps its high half, and an f64 its fraction. The AST lowering

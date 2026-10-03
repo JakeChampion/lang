@@ -31,7 +31,6 @@ import "./ir";
 import "./irtables";
 import "./fnsigs";
 import "./lift";
-import "./irverify";
 import "./irverifygate";
 import "./asmcore";
 import "./astwalk";
@@ -3433,7 +3432,7 @@ function no_preopen_p2(): string {
 pub function readfile_func_p2(): string {
   let o: string = "";
   o = o + "  (func $__fern_read_file (param $np i32) (result i32)\n";
-  o = o + "    (local $ra i32) (local $fd i32) (local $strm i32) (local $buf i32) (local $off i32) (local $cp i32) (local $cl i32) (local $tmp i32) (local $cap i32) (local $grown i32)\n";
+  o = o + "    (local $ra i32) (local $fd i32) (local $strm i32) (local $buf i32) (local $off i32) (local $cp i32) (local $cl i32) (local $tmp i32) (local $cap i32) (local $grown i32) (local $failed i32)\n";
   o = o + "    (local.set $fd (call $__fern_preopen_p2))\n";
   o = o + no_preopen_p2();
   o = o + "    (local.set $ra (call $__fern_alloc (i32.const 32)))\n";
@@ -3460,7 +3459,7 @@ pub function readfile_func_p2(): string {
   o = o + "    (local.set $off (i32.const 0))\n";
   o = o + "    (block $rd (loop $rc\n";
   o = o + "      (call $blocking_read (local.get $strm) (i64.const 4096) (local.get $ra))\n";
-  o = o + "      (br_if $rd (i32.ne (i32.load8_u (local.get $ra)) (i32.const 0)))\n";
+  o = o + read_stop_p2();
   o = o + "      (local.set $cp (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
   o = o + "      (local.set $cl (i32.load (i32.add (local.get $ra) (i32.const 8))))\n";
   o = o + "      (br_if $rd (i32.eqz (local.get $cl)))\n";
@@ -3474,6 +3473,7 @@ pub function readfile_func_p2(): string {
   o = o + "    (call $in_strm_drop (local.get $strm))\n";
   o = o + "    (call $desc_drop (local.get $fd))\n";
   o = o + "    (call $__fern_raw_free (local.get $ra) (i32.const 32))\n";
+  o = o + read_failed("(local.get $failed)", "$buf", "(i32.const 29)");
   o = o + "    (i32.store (local.get $buf) (local.get $off))\n";
   // D9 gate (#5714): errno 25 (ilseq) is synthetic — no wasi call produces it.
   o = o + "    (if (i32.eqz (call $__fern_utf8_valid (i32.add (local.get $buf) (i32.const 4)) (local.get $off))) (then\n";
@@ -3496,7 +3496,7 @@ pub function readfile_func_p2(): string {
 pub function readfile_bytes_func_p2(): string {
   let o: string = "";
   o = o + "  (func $__fern_read_file_bytes (param $np i32) (result i32)\n";
-  o = o + "    (local $ra i32) (local $fd i32) (local $strm i32) (local $off i32) (local $cp i32) (local $cl i32) (local $tmp i32) (local $arr i32) (local $cap i32) (local $grown i32)\n";
+  o = o + "    (local $ra i32) (local $fd i32) (local $strm i32) (local $off i32) (local $cp i32) (local $cl i32) (local $tmp i32) (local $arr i32) (local $cap i32) (local $grown i32) (local $failed i32)\n";
   o = o + "    (local.set $fd (call $__fern_preopen_p2))\n";
   o = o + no_preopen_p2();
   o = o + "    (local.set $ra (call $__fern_alloc (i32.const 32)))\n";
@@ -3522,7 +3522,7 @@ pub function readfile_bytes_func_p2(): string {
   o = o + "    (local.set $off (i32.const 0))\n";
   o = o + "    (block $rd (loop $rc\n";
   o = o + "      (call $blocking_read (local.get $strm) (i64.const 4096) (local.get $ra))\n";
-  o = o + "      (br_if $rd (i32.ne (i32.load8_u (local.get $ra)) (i32.const 0)))\n";
+  o = o + read_stop_p2();
   o = o + "      (local.set $cp (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
   o = o + "      (local.set $cl (i32.load (i32.add (local.get $ra) (i32.const 8))))\n";
   o = o + "      (br_if $rd (i32.eqz (local.get $cl)))\n";
@@ -3534,12 +3534,37 @@ pub function readfile_bytes_func_p2(): string {
   o = o + "    (call $in_strm_drop (local.get $strm))\n";
   o = o + "    (call $desc_drop (local.get $fd))\n";
   o = o + "    (call $__fern_raw_free (local.get $ra) (i32.const 32))\n";
+  o = o + read_failed("(local.get $failed)", "$arr", "(i32.const 29)");
   o = o + "    (i32.store (local.get $arr) (local.get $off))\n";
   o = o + "    (i32.store offset=4 (local.get $arr) (local.get $cap))\n";
   o = o + "    (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $tmp) (i32.const 0))\n";
   o = o + "    (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $arr))\n";
   o = o + "    (local.get $tmp))\n";
+  return o;
+}
+
+// read_stop_p2 ends a whole-file read loop on a blocking-read error. A
+// closed stream is the end of the file; a failed read hands back an error
+// resource, which is dropped, and sets $failed.
+function read_stop_p2(): string {
+  let o: string = "      (if (i32.load8_u (local.get $ra)) (then\n";
+  o = o + "        (if (i32.eqz (i32.load8_u offset=4 (local.get $ra))) (then\n";
+  o = o + "          (call $io_error_drop (i32.load offset=8 (local.get $ra)))\n";
+  o = o + "          (local.set $failed (i32.const 1))))\n";
+  o = o + "        (br $rd)))\n";
+  return o;
+}
+
+// read_failed answers Err(errno) from a whole-file read when `failed` holds,
+// releasing the bytes read so far in `buf`. A failed preview-2 read is EIO.
+function read_failed(failed: string, buf: string, errno: string): string {
+  let o: string = "    (if " + failed + " (then\n";
+  o = o + "      (drop (call $__fern_arr_dec (local.get " + buf + ")))\n";
+  o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
+  o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
+  o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error " + errno + " (call $__fern_rc_inc (local.get $np))))\n";
+  o = o + "      (return (local.get $tmp))))\n";
   return o;
 }
 
@@ -3609,11 +3634,12 @@ pub function writefile_func_p2(): string {
   // blocking-write-and-flush(stream, content+4+cur, chunk, ra)
   o = o + "      (call $bwf (local.get $strm) (i32.add (i32.add (local.get $cp) (i32.const 4)) (local.get $cur)) (local.get $chunk) (local.get $ra))\n";
   o = o + "      (if (i32.ne (i32.load8_u (local.get $ra)) (i32.const 0)) (then\n";
+  o = o + "        (if (i32.eqz (i32.load8_u offset=4 (local.get $ra))) (then (call $io_error_drop (i32.load offset=8 (local.get $ra)))))\n";
   o = o + "        (call $out_strm_drop (local.get $strm))\n";
   o = o + "        (call $desc_drop (local.get $fd))\n";
   o = o + "        (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o = o + "        (i32.store (local.get $tmp) (i32.const 1))\n";
-  o = o + "        (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2() + ")\n";
+  o = o + "        (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 29) (call $__fern_rc_inc (local.get $np))))\n";
   o = o + "        (call $__fern_raw_free (local.get $ra) (i32.const 32))\n";
   o = o + "        (return (local.get $tmp))))\n";
   o = o + "      (local.set $cur (i32.add (local.get $cur) (local.get $chunk)))\n";
@@ -6193,7 +6219,7 @@ function emit_dyn_dispatch_wat(o: ir.Op, structs: irtables.StructTab, funcs: par
 // their equivalent in the shared asmcore (EmitState); there is no wasmcore, so
 // it lives here.
 //
-// NOT carried: fd, r and vsigs. The audit proposed bundling all nine of
+// NOT carried: fd, r and vgate. The audit proposed bundling all nine of
 // emit_function_ir's params, but the op dispatch reads none of those three --
 // every apparent hit is inside a comment, where "fd 0"/"fd 3" is the WASI file
 // descriptor and "r.read_chunk" is a Reader method.
@@ -6982,7 +7008,7 @@ function emit_str_op_wat(o: ir.Op): string {
 // the RC-consistency bug (#5509). Consuming the cached `r` makes it one lowering
 // by construction. `fd` supplies the func wrapper (name / receiver / ret); the
 // ~13 ret-fn / borrow side-tables that only fed lower_func are gone.
-function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDecl, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vsigs: irverify.NameIndex): string {
+function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDecl, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
   // Methods get the receiver-type-qualified name `$<Type>.<name>` (matching
   // the lowering's call_direct dispatch); free functions stay `$<name>`. WAT idents
   // allow `.`. r.n_params already counts the receiver as the first param.
@@ -6990,7 +7016,7 @@ function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDe
   if (fd.receiver_type.len() > 0) {
     fn_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
   }
-  return emit_function_ir_named(ns, r, fn_name, decl_result_wat(fd, structs), str_vals, cagg_vals, structs, fn_table, funcs, vsigs);
+  return emit_function_ir_named(ns, r, fn_name, decl_result_wat(fd, structs), str_vals, cagg_vals, structs, fn_table, funcs, vgate);
 }
 
 // decl_result_wat is the WAT result clause a DECLARATION's return type asks for.
@@ -7051,7 +7077,7 @@ function fallthrough_filler(result_wat: string): string {
 // register twins are asm_ir / asm_arm64_ir's emit_function_via_ir_named.
 // fern-lint: allow cyclomatic-complexity
 // The wasm half of the same op table as asm_ir.fern: one guard per op.
-function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: string, result_wat: string, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vsigs: irverify.NameIndex): string {
+function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: string, result_wat: string, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
   let arrtmp: i32 = r.n_locals;
   let eltmp: i32 = r.n_locals + 1;
   // f64tmp: an f64-typed scratch local for reordering 64-bit struct field
@@ -7067,7 +7093,7 @@ function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: st
   // i32 path already parks the value in eltmp, so the index needs its own home.
   let bctmp: i32 = r.n_locals + 4;
   ircore.lower_failed_refuse(fn_name, r);
-  irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vsigs);
+  irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
   let parts: string[] = [];
   parts = parts.append("  (func $" + fn_name);
   let p: i32 = 0;
@@ -7164,7 +7190,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
   // The IR verify gate's callee-arity index: built once for the whole
   // program, not per function, which is what keeps a ~3000-declaration
   // lookup out of the emit loop's inner cost.
-  let vsigs: irverify.NameIndex = irtables.fn_sig_index(all_funcs);
+  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(all_funcs), pops: ir.pops_by_kind() };
   let parts: string[] = [];
   let fi: i32 = 0;
   while (fi < mod.funcs.len()) {
@@ -7181,7 +7207,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
     // A template the substitution superseded has no body of its own here
     // either: its instances are on the cache tail.
     if (mod.funcs[fi].import_iface.len() == 0 && !cache[fi].superseded) {
-      parts = parts.append(emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, cagg_vals, all_structs, ft, all_funcs, vsigs));
+      parts = parts.append(emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, cagg_vals, all_structs, ft, all_funcs, vgate));
     }
     fi = fi + 1;
   }
@@ -7189,7 +7215,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
   // naming the symbol it defines and the shape of the value it returns.
   let xi: i32 = mod.funcs.len();
   while (xi < cache.len()) {
-    parts = parts.append(emit_function_ir_named(ns, cache[xi], cache[xi].name, produced_result_wat(cache[xi]), str_vals, cagg_vals, all_structs, ft, all_funcs, vsigs));
+    parts = parts.append(emit_function_ir_named(ns, cache[xi], cache[xi].name, produced_result_wat(cache[xi]), str_vals, cagg_vals, all_structs, ft, all_funcs, vgate));
     xi = xi + 1;
   }
   return util.str_join_chunks(parts);
@@ -10684,12 +10710,14 @@ pub function readfile_func(): string {
   o = o + read_room("$blk", false, "(i32.const 1)");
   o = o + "      (i32.store (i32.const 0) (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $off)))\n";
   o = o + "      (i32.store (i32.const 4) (i32.sub (local.get $cap) (local.get $off)))\n";
-  o = o + "      (if (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)) (then (i32.store (i32.const 8) (i32.const 0))))\n";
+  o = o + "      (local.set $err (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+  o = o + "      (br_if $rd (local.get $err))\n";
   o = o + "      (local.set $n (i32.load (i32.const 8)))\n";
   o = o + "      (br_if $rd (i32.eqz (local.get $n)))\n";
   o = o + "      (local.set $off (i32.add (local.get $off) (local.get $n)))\n";
   o = o + "      (br $rc)))\n";
   o = o + "    (drop (call $fd_close (local.get $fd)))\n";
+  o = o + read_failed("(local.get $err)", "$blk", "(local.get $err)");
   o = o + "    (i32.store (local.get $blk) (local.get $off))\n";
   // D9 gate (#5714): errno 25 (ilseq) is synthetic — no wasi call produces it.
   o = o + "    (if (i32.eqz (call $__fern_utf8_valid (i32.add (local.get $blk) (i32.const 4)) (local.get $off))) (then\n";
@@ -10727,12 +10755,14 @@ pub function readfile_bytes_func(): string {
   o = o + read_room("$arr", true, "(i32.const 1)");
   o = o + "      (i32.store (i32.const 0) (i32.add (i32.add (local.get $arr) (i32.const 8)) (local.get $off)))\n";
   o = o + "      (i32.store (i32.const 4) (i32.sub (local.get $cap) (local.get $off)))\n";
-  o = o + "      (if (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)) (then (i32.store (i32.const 8) (i32.const 0))))\n";
+  o = o + "      (local.set $err (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+  o = o + "      (br_if $rd (local.get $err))\n";
   o = o + "      (local.set $n (i32.load (i32.const 8)))\n";
   o = o + "      (br_if $rd (i32.eqz (local.get $n)))\n";
   o = o + "      (local.set $off (i32.add (local.get $off) (local.get $n)))\n";
   o = o + "      (br $rc)))\n";
   o = o + "    (drop (call $fd_close (local.get $fd)))\n";
+  o = o + read_failed("(local.get $err)", "$arr", "(local.get $err)");
   o = o + "    (i32.store (local.get $arr) (local.get $off))\n";
   o = o + "    (i32.store offset=4 (local.get $arr) (local.get $cap))\n";
   o = o + "    (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
