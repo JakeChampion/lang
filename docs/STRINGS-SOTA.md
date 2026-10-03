@@ -8,7 +8,8 @@ alongside (byte views, scalar/char, paths, symbols, builders).
 
 ## Migration audit, October 2026
 
-Epic #5626 and prerequisite #5714 remain open. D9 requires every observable
+Epic #5626 is closed, but prerequisite #5714 remains open and its acceptance
+work is incomplete. D9 requires every observable
 `string` to be well-formed UTF-8. The boundaries below have been migrated,
 but the remaining producers listed after the table still prevent that
 invariant from holding across the stdlib.
@@ -50,8 +51,8 @@ closing D9. Regex keeps byte-oriented matching: replacing `.` in `é` can
 split its encoding, so the checked text result is `None` while the byte
 variant returns the exact output.
 
-Two things sit outside the invariant on purpose, both recorded rather
-than pending:
+The OS text contract remains a deliberate exception, while the sink migration
+is still incomplete:
 
 - **`args()`, `environ()`, `env(name)` and `read_line()` are assumed
   UTF-8, not validated** — the D10 position, extended from paths to the
@@ -60,11 +61,12 @@ than pending:
   end-of-file), and a CLI that trapped on a stray byte in its own
   arguments would be worse than one that passed it through. Their
   builtin signatures say so.
-- **The byte sinks take `string`** (#10948): `tcp_send`, `udp_sendto`,
-  `write_file` and wasi's `stream_write` have no `u8[]` form, so the
-  stdlib builds an unchecked string to feed them a byte-domain body or a
-  DNS packet. Those strings never reach a caller. The `u8[]` siblings are
-  the mirror of the source-side split and their own slice.
+- **Byte sinks now have raw forms, but some callers still construct text**
+  (#10948): `tcp_send_bytes`, `udp_sendto_bytes` and `write_file_bytes` are
+  available; wasi's `stream_write` takes `u8[]`, and Writer's byte methods
+  borrow `[u8]`. DNS uses the raw send path. The remaining unchecked
+  conversions in `std/tcp` and `std/fetch` still need migration. Having byte
+  entry points does not establish the invariant for their callers.
 
 Written because #5552 ("stdlib case ops are ASCII-only — add a Unicode
 `std/unicode`") asked a question the codebase can't answer from first
@@ -961,7 +963,7 @@ unchecked pending migration of its binary consumers. The new method does not
 establish the string invariant by itself.
 
 `Writer.write_bytes(bytes): Option[IoError]` and
-`Writer.write_some_bytes(bytes): Result[i64, IoError]` borrow an owned `u8[]`
+`Writer.write_some_bytes(bytes): Result[i64, IoError]` borrow a byte view `[u8]`
 without changing or retaining it. The former completes short writes and
 reports an I/O error on zero progress; the latter returns the count from one
 host write, which may be zero. Empty writes preserve host errors, and closed
@@ -971,8 +973,10 @@ and primary compiled target coverage as the raw reader. The primary
 interpreter bridges raw stdin reads and stdout/stderr writes through these
 host methods, preserving arrays, counts and I/O errors. It also supports text
 writes on those stdio handles. File-handle opening in that interpreter remains
-outside this bridge. They never construct an unchecked string. Borrowed views
-must be materialized before calling this owned-array signature.
+outside this bridge. They never construct an unchecked string. Owned arrays
+lend automatically; string and `str` byte views are accepted directly.
+Primary byte-view slicing still copies, so this input contract alone does
+not remove the cost of constructing a partial byte range.
 
 `BufWriter.flush()` extracts an owned byte array and releases it after writing.
 Byte writes, mappings and ranges can therefore flush arbitrary bytes or partial

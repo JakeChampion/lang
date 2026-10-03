@@ -3478,7 +3478,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("heap");
     s = s.need("rename");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_rename\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 356 || o.kind_tag == 357) {  // rename_noreplace, rename_exchange
+  } else if (o.kind_tag == 356 || o.kind_tag == 357 || o.kind_tag == 362 || o.kind_tag == 363) {  // rename_noreplace, rename_exchange, getxattr, lgetxattr
     let op: string = ir.kind_name(o.kind_tag);
     s = s.need("heap");
     s = s.need(op);
@@ -3544,7 +3544,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    bl __fn___fern_umask\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 270) {  // statfs
     // [pathbox] IS param[0]; same stack ABI as stat, pushing a fresh
-    // Result[FsStat, IoError] whose shape label is pre-interned below.
+    // Result[FsStat, IoError].
     s = s.need("heap");
     s = s.need("statfs");
     s = s.write("    bl __fn___fern_statfs\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
@@ -4863,14 +4863,12 @@ function emit_named_bodies(cache: irtables.LowerResult[], from: i32, s: asmcore.
 
 // emit_ir_runtime_fern_fn emits a runtime helper written in Fern (an
 // asmcore.rt_src_* body) from its typed lowering (EmitState.rt_lower), the
-// arm64 sibling of asm_ir.emit_ir_runtime_fern_fn.
+// arm64 sibling of asm_ir.emit_ir_runtime_fern_fn. The literals, shapes and
+// constants it interns are written by the pool emit_ir_runtime ends with.
 pub function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.EmitState {
   let m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
   let fns: parser.FuncDecl[] = m.funcs;
   let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(fns), pops: s.kinds.pops };
-  let lit0: i32 = s.string_lits.len();
-  let agg0: i32 = s.const_aggs.len();
-  let sh0: i32 = s.shape_lits.len();
   let bodies: irtables.LowerResult[] = s.rt_lower(src);
   let i: i32 = 0;
   while (i < fns.len()) {
@@ -4878,30 +4876,7 @@ pub function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore
     i = i + 1;
   }
   // Past the declarations: the drop helpers the typed lowering defines.
-  s = emit_named_bodies(bodies, fns.len(), s, vgate);
-  // The unit's pools, still to come, carry whatever the helper interned.
-  if (!s.pools_written) {
-    return s;
-  }
-  if (s.shape_lits.len() > sh0) {
-    s = asmcore.emit_shape_lits_from(s, sh0);
-    s = s.write("    .text\n");
-  }
-  if (s.const_aggs.len() > agg0) {
-    s = asmcore.emit_const_agg_data_from(s, agg0);
-    s = s.write("    .text\n");
-  }
-  if (s.string_lits.len() > lit0) {
-    s = s.write("    .section .rodata\n");
-    let li: i32 = lit0;
-    while (li < s.string_lits.len()) {
-      s = s.write(asmcore.str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
-      li = li + 1;
-    }
-    s = asmcore.emit_str_box_data_from(s, lit0);
-    s = s.write("    .text\n");
-  }
-  return s;
+  return emit_named_bodies(bodies, fns.len(), s, vgate);
 }
 
 // emit_arm64_reclaim_drop_bodies emits this unit's per-type __field_reclaim_<T>
@@ -5510,7 +5485,7 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asm
   // — its label then is not a text label, and the `bl` at its call site fails
   // to resolve rather than mis-linking silently.
   s = s.write("    .text\n");
-  return asmcore.EmitState { ...s, pools_written: true };
+  return s;
 }
 
 // emit_rt_clock_and_print emits the FFI call shims, the stdio leaves, and the clock / sleep helpers
@@ -5945,12 +5920,6 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
   // `strb w1, [sp, #-16]!` hazard of #6083: the in-process assembler has no
   // byte-store encoder for that pre-index writeback, so it dropped the `!`, left sp
   // unchanged, and the paired `add sp, sp, #16` then raised sp by 16.
-  // Pre-intern "FileStat" so the __fern_stat runtime helper (emitted
-  // after this pool, inside the needs_heap block) can reference its
-  // shape-name label. The helper's own add_string_lit dedups to this
-  // slot; without the early intern the label would be undefined for
-  // programs that never mention stat() themselves. Same for the
-  // __fern_subprocess helper's "ProcessResult" shape name.
   return s;
 }
 
@@ -8957,8 +8926,8 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   // __fern_stat is a Fern runtime function now (#2649): asmcore.rt_src_stat,
   // emitted in the fs bundle. It unifies on the 4-arg fstatat family and reads
   // st_mode / st_size at asmcore.statoff offsets, so Linux and Darwin share
-  // one body — no `darwin` fork, and no hand-interned FileStat shape (the
-  // pre-intern below still runs; the lowering dedups to it).
+  // one body — no `darwin` fork, and no hand-interned FileStat shape: the
+  // pool emit_ir_runtime ends with writes every shape the lowering interns.
   // __fern_read_dir and __fern_remove_dir_all are Fern runtime functions now
   // (#2649): asmcore.rt_src_read_dir / rt_src_remove_dir_all, emitted in the
   // fs bundle above rather than here. They were the last two entries on the
@@ -9401,27 +9370,6 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
 }
 
 function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-  if (s.has_need("heap")) {
-    let fsPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "FileStat");
-    s = fsPre.state;
-    let prPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "ProcessResult");
-    s = prPre.state;
-    if (s.has_need("statfs")) {
-      let fvPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "FsStat");
-      s = fvPre.state;
-    }
-    // WinSize for __fern_window_size's shape label, gated the way FsStat is.
-    if (s.has_need("window_size")) {
-      let wsPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "WinSize");
-      s = wsPre.state;
-    }
-  }
-  // .rodata: emit each interned string literal as a
-  // labelled `.ascii` directive. GAS interprets the escape
-  // sequences in the quoted string, so a `\n` byte in the
-  // source string lands as a single LF in the resulting
-  // .rodata bytes.
-  s = emit_rodata_pools_arm64(s, darwin);
   // Heap allocator (arm64): 1 MiB .bss buffer + bump pointer.
   // Same shape as the x86-64 backend; instructions translated
   // to aarch64. Sets x0 = old ptr (return), advances the
@@ -10228,6 +10176,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     }
     if (s.has_need("rename")) {
       fs_src = fs_src + " " + asmcore.rt_src_rename(tgt);
+    }
+    if (s.has_need("getxattr")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr(tgt, true);
+    }
+    if (s.has_need("lgetxattr")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr(tgt, false);
     }
     if (s.has_need("rename_noreplace")) {
       fs_src = fs_src + " " + asmcore.rt_src_rename_noreplace(tgt);
@@ -11518,7 +11472,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
     "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec",
     "remove_file", "create_dir_all", "create_dir", "remove_dir",
-    "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "chmod", "chmod_at", "truncate",
+    "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "chmod", "chmod_at", "truncate",
     "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times", "read_link",
     "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
     "temp_dir", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",
@@ -11556,7 +11510,9 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
   s = emit_rt_io_and_string(s);
   s = emit_rt_heap(s, darwin);
   s = emit_rt_collections_and_proc(s, darwin);
-  return s;
+  // Last, so the pool holds every literal, shape and constant the helpers
+  // above interned, inside the regions emit_ir_reloc walks.
+  return emit_rodata_pools_arm64(s, darwin);
 }
 
 // ===================== IR MODULE FRAMERS =====================

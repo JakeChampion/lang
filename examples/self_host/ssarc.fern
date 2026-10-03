@@ -5843,6 +5843,12 @@ function fs_op_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "rename") {
     return Lowered { found: true, r: emit(r, ir.op_rename()) };
   }
+  if (ins.str == "getxattr") {
+    return Lowered { found: true, r: emit(r, ir.op_getxattr()) };
+  }
+  if (ins.str == "lgetxattr") {
+    return Lowered { found: true, r: emit(r, ir.op_lgetxattr()) };
+  }
   if (ins.str == "rename_noreplace") {
     return Lowered { found: true, r: emit(r, ir.op_rename_noreplace()) };
   }

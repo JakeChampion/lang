@@ -154,6 +154,57 @@ func emitReadLinkHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// emitGetxattrHelper returns the emitter for name(path, attr) ->
+// Result[string, IoError]: getxattr(2) (191) or lgetxattr(2) (192) into a
+// stack buffer of XATTR_SIZE_MAX, the largest value Linux stores, and the
+// value copied out into a fresh string. The IoError names the path.
+//
+// rbx = path, r12 = pathz then the buffer, r15 = attr, r14 = attrz then the
+// value length.
+func emitGetxattrHelper(name, tag string, sysno int) func(func(string, ...any)) {
+	const xattrSizeMax = 65536
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tpush rbx")
+		w("\tpush r12")
+		w("\tpush r13")
+		w("\tpush r14")
+		w("\tpush r15")
+		w("\tmov rbx, rdi")
+		w("\tmov r15, rsi")
+		ssaPathz(w, tag+"1")
+		ssaPathzInto(w, tag+"2", "r15", "r14", "r13")
+		// Five pushes leave rsp 16-aligned, and the buffer keeps it so.
+		w("\tsub rsp, %d", xattrSizeMax)
+		w("\tmov rdi, r12")
+		w("\tmov rsi, r14")
+		w("\tmov rdx, rsp")
+		w("\tmov r10d, %d", xattrSizeMax)
+		w("\tmov eax, %d", sysno)
+		w("\tsyscall")
+		w("\ttest rax, rax")
+		w("\tjs .Lssa_%s_err", tag)
+		w("\tmov r14, rax") // value length
+		w("\tmov r12, rsp")
+		ssaStrFromBytes(w, "r12", "r14")
+		w("\tmov r12, rax")
+		ssaOptionBox(w, 0, "r12")
+		w("\tjmp .Lssa_%s_ret", tag)
+		w(".Lssa_%s_err:", tag)
+		w("\tneg rax")
+		ssaIoErr(w)
+		w(".Lssa_%s_ret:", tag)
+		w("\tadd rsp, %d", xattrSizeMax)
+		w("\tpop r15")
+		w("\tpop r14")
+		w("\tpop r13")
+		w("\tpop r12")
+		w("\tpop rbx")
+		w("\tret")
+	}
+}
+
 // ssaPathOpHelper returns the emitter for the family of helpers that name one
 // or two paths, make a single syscall over them, and answer Result[(),
 // IoError]: the *at forms of mkdir, rmdir, link, symlink, rename, chmod,

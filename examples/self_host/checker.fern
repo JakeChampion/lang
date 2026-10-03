@@ -1630,7 +1630,7 @@ pub struct StructSig { name: string, field_names: string[], field_types: typeinf
 // is implicit at the call site (`obj.name(a, b)`) so it's
 // stored separately from param_types. Plain functions live
 // in the FuncSig table; the two tables don't overlap.
-pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[] }
+pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[], type_bounds: string[] }
 
 // UnionSig: nominal handle for a declared type alias —
 // `pub type Shape = Circle | Square`. Variants are captured
@@ -2980,7 +2980,7 @@ function (s: Scope) array_recv_method(field: string, view: boolean): MethodSig {
     i = s.methods.next[i];
   }
   let empty_pt: typeinfo.Type[] = [];
-  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such array method"), ret_type_name: "", param_type_names: [], all_type_params: [] };
+  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such array method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_bounds: [] };
 }
 
 // has_array_method reports whether an auto-discovered std/array method
@@ -3456,7 +3456,7 @@ function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
     i = s.methods.next[i];
   }
   let empty_pt: typeinfo.Type[] = [];
-  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such method"), ret_type_name: "", param_type_names: [], all_type_params: [] };
+  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_bounds: [] };
 }
 
 // has_method answers lookup_method's question without building the sentinel
@@ -4435,8 +4435,8 @@ function builtin_sigs(): string[] {
     "__method_Reader_isatty(Reader): boolean",
     "__method_Reader_read_chunk(Reader, i32): Result[string, IoError]",
     "__method_Reader_read_chunk_bytes(Reader, i32): Result[u8[], IoError]",
-    "__method_Writer_write_bytes(Writer, u8[]): Option[IoError]",
-    "__method_Writer_write_some_bytes(Writer, u8[]): Result[i64, IoError]",
+    "__method_Writer_write_bytes(Writer, [u8]): Option[IoError]",
+    "__method_Writer_write_some_bytes(Writer, [u8]): Result[i64, IoError]",
     "__method_Reader_read_line(Reader): Option[string]",
     "__method_Reader_seek(Reader, i64, i32): Result[i64, IoError]",
     "__method_Reader_set_window_size(Reader, i32, i32): Result[void, IoError]",
@@ -4487,6 +4487,8 @@ function builtin_sigs(): string[] {
     "create_link(string, string): Result[void, IoError]",
     "create_symlink(string, string): Result[void, IoError]",
     "rename_noreplace(string, string): Result[void, IoError]",
+    "getxattr(string, string): Result[string, IoError]",
+    "lgetxattr(string, string): Result[string, IoError]",
     "rename_exchange(string, string): Result[void, IoError]",
     "env(string): Option[string]",
     "config_get(string): Option[string]",
@@ -5365,8 +5367,28 @@ function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name
   let ret: parser.TypeRef = parser.parse_type_ref(sig.ret_type_name);
   for tp in sig.all_type_params {
     let (named, all_empty) = empty_array_positions(sig.param_type_names, c.args, tp);
-    if (util.index_of_str(bn, tp) < 0 && !type_ref_names_any(ret, [tp]) && !bound_names_tp(sig, tp) && all_empty) {
+    if (util.index_of_str(bn, tp) < 0 && !type_ref_names_any(ret, [tp]) && !bound_names_tp(sig.type_bounds, tp) && all_empty) {
       out = out.append(dg_at("E040", "could not infer type parameter " + tp + " for " + name + " — supply it explicitly at the call site (e.g. " + name + "[i32](...)) or annotate the binding", c.line, c.col));
+    }
+  }
+  return out;
+}
+
+// uninferred_method_diags is uninferred_call_diags for a receiver method,
+// labelled `recv`.`method` as native labels it. The receiver binds exactly the
+// variables its declared type names, so a concrete receiver (`u8[]`, `[u8]`,
+// `string`) binds none of the method's own (#10991).
+function uninferred_method_diags(c: ast.ExprCall, recv: string, method: string, msig: MethodSig): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (c.type_args.len() > 0 || msig.name.len() == 0 || c.args.len() != msig.param_type_names.len()) {
+    return out;
+  }
+  let rref: parser.TypeRef = parser.parse_type_ref(msig.receiver_type);
+  let ret: parser.TypeRef = parser.parse_type_ref(msig.ret_type_name);
+  for tp in msig.all_type_params {
+    let (named, all_empty) = empty_array_positions(msig.param_type_names, c.args, tp);
+    if (!type_ref_names_any(rref, [tp]) && !type_ref_names_any(ret, [tp]) && !bound_names_tp(msig.type_bounds, tp) && all_empty) {
+      out = out.append(dg_at("E040", "could not infer type parameter " + tp + " for " + recv + "." + method + " — supply it explicitly at the call site (e.g. ." + method + "[i32](...)) or annotate the binding", c.line, c.col));
     }
   }
   return out;
@@ -5407,10 +5429,10 @@ function binds_nothing(e: ast.Expr): boolean {
   return false;
 }
 
-// bound_names_tp: a bound on one of `sig`'s type parameters spells `tp`, so
-// bound_bindings may be what binds it.
-function bound_names_tp(sig: FuncSig, tp: string): boolean {
-  for b in sig.type_bounds {
+// bound_names_tp: one of `bounds` spells `tp`, so bound_bindings may be what
+// binds it.
+function bound_names_tp(bounds: string[], tp: string): boolean {
+  for b in bounds {
     for entry in parser.split_plus_bounds(b) {
       if (type_ref_names_any(parser.parse_type_ref(entry), [tp])) {
         return true;
@@ -7348,7 +7370,7 @@ function collect_method_sigs(funcs: parser.FuncDecl[], tn: TypeNames): MethodSig
         pts = pts.append(param_decl_type(param, fd.type_params, tn));
         ptn = ptn.append(param.type_name);
       }
-      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, tn), ret_type_name: fd.ret_type, param_type_names: ptn, all_type_params: fd.all_type_params });
+      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, tn), ret_type_name: fd.ret_type, param_type_names: ptn, all_type_params: fd.all_type_params, type_bounds: fd.bound_traits });
     }
   }
   return out;
@@ -13102,11 +13124,16 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(dg_at("E043", s.unknown_method_advice(int_label(it), mfa.field, recv), mfa.line, mfa.col));
           }
+          out = util.append_diags(out, uninferred_method_diags(c, int_label(it), mfa.field, s.lookup_method(mfa.field, int_label(it))));
         },
         typeinfo.TypeFloat(f) => {
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(dg_at("E043", s.unknown_method_advice(float_label(f), mfa.field, recv), mfa.line, mfa.col));
           }
+          out = util.append_diags(out, uninferred_method_diags(c, float_label(f), mfa.field, s.lookup_method(mfa.field, float_label(f))));
+        },
+        typeinfo.TypeBool(_) => {
+          out = util.append_diags(out, uninferred_method_diags(c, "boolean", mfa.field, s.lookup_method(mfa.field, "boolean")));
         },
         typeinfo.TypeString(_) => {
           // E043: a string carries exactly two builtin methods
@@ -13129,6 +13156,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if ((mfa.field == "len" || mfa.field == "as_bytes") && c.args.len() != 0 && s.lookup_method(mfa.field, "string").name.len() == 0) {
             out = out.append(dg_at("E004", "method \"" + mfa.field + "\" expects 0 argument(s), got " + util.i32_to_string(c.args.len()), c.line, c.col));
           }
+          out = util.append_diags(out, uninferred_method_diags(c, "string", mfa.field, s.lookup_method(mfa.field, "string")));
         },
         typeinfo.TypeArray(ar) => {
           // E038: a built-in array method whose argument must
@@ -13171,6 +13199,11 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(dg_at("E043", s.unknown_method_advice("Array", mfa.field, recv), mfa.line, mfa.col));
           }
+          let arr_label: string = "Array";
+          if (ar.view) {
+            arr_label = "slice";
+          }
+          out = util.append_diags(out, uninferred_method_diags(c, arr_label, mfa.field, s.array_recv_method(mfa.field, ar.view)));
           // E004 (array builtin arity): the three unconditional array
           // builtins take a fixed number of arguments — `len()` none,
           // `append(x)` one, `with(i, v)` two — so an over- or
@@ -13255,6 +13288,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
                   mi = mi + 1;
                 }
                 out = util.append_diags(out, method_type_arg_diags(c, mfa.field, msig, sn.args, s));
+                out = util.append_diags(out, uninferred_method_diags(c, sn.name, mfa.field, msig));
               }
             } else {
               // A call `obj.m(...)` on a known struct with no
@@ -13302,6 +13336,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           let umsig: MethodSig = s.lookup_method(mfa.field, un.name);
           if (umsig.name.len() > 0 && c.args.len() == umsig.param_types.len()) {
             out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, un.args, s));
+            out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig));
           }
         },
         _ => {

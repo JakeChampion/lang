@@ -16496,6 +16496,24 @@ func (b *builder) callBody(n *ast.Call) error {
 	dropMark := len(b.pendingDrops)
 	for ai, a := range n.Args {
 		toOwnParam := ownedByCalleeAt(ai)
+		// A copying builtin cannot retain the view or its source. Preserve a
+		// fresh source until the call finishes, using the same temp ownership
+		// and exit cleanup as an owned argument. Automatic array lending must
+		// not hide that argument from the existing reclaim path.
+		if !toOwnParam && copyingBuiltinArg(id.Name, ai) {
+			view, slot, tt, ok, err := b.stashCopyingViewSource(a)
+			if err != nil {
+				return err
+			}
+			if ok {
+				a = view
+				argTempSlots = append(argTempSlots, slot)
+				argTempTypes = append(argTempTypes, tt)
+				argTempGuarded = append(argTempGuarded, false)
+				argTempIdentityDec = append(argTempIdentityDec, false)
+				b.pushOperandDrop(slot, tt)
+			}
+		}
 		// A view is a borrow, so the checker refuses it at an `own` position
 		// and ownedByDefaultTypeIn does not admit one — but both would want
 		// the retain/move handling below rather than this free, so fall
@@ -16892,6 +16910,47 @@ func (b *builder) emitByteScanCall(n *ast.Call, op Op) error {
 	b.emit(op)
 	b.emitArgTempDrops(slots, types)
 	return nil
+}
+
+// stashCopyingViewSource stages the owned source of an immediate view without
+// changing the checked expression or extending its ownership analysis. Only
+// callers with the existing copyingBuiltinArg contract may reclaim this source
+// after the call: a general callee could return a view into it.
+func (b *builder) stashCopyingViewSource(a ast.Expr) (ast.Expr, int32, ast.Type, bool, error) {
+	var source ast.Expr
+	switch x := a.(type) {
+	case *ast.SliceExpr:
+		if x.IsString || x.SourceIsSlice {
+			return a, 0, nil, false, nil
+		}
+		source = x.Source
+	case *ast.Call:
+		if !makesFreshViewHeader(x) || len(x.Args) != 1 {
+			return a, 0, nil, false, nil
+		}
+		source = x.Args[0]
+	default:
+		return a, 0, nil, false, nil
+	}
+	slot, tt, ok, err := b.stashOwnedArgTemp(source)
+	if err != nil || !ok {
+		return a, slot, tt, ok, err
+	}
+	// stashOwnedArgTemp leaves a copy on the stack for an ordinary argument.
+	// Here the view constructor reloads that value from its typed scratch slot.
+	b.emit(Op{Kind: OpDrop, Width: b.discardWidth(source)})
+	ref := &ast.Ident{Name: fmt.Sprintf("__argtmp_%d", slot)}
+	switch x := a.(type) {
+	case *ast.SliceExpr:
+		view := *x
+		view.Source = ref
+		return &view, slot, tt, true, nil
+	case *ast.Call:
+		view := *x
+		view.Args = []ast.Expr{ref}
+		return &view, slot, tt, true, nil
+	}
+	panic("unreachable view source")
 }
 
 func (b *builder) stashOwnedArgTemp(a ast.Expr) (int32, ast.Type, bool, error) {

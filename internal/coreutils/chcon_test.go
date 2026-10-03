@@ -3,6 +3,7 @@ package coreutils
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -11,10 +12,10 @@ func init() {
 }
 
 // chcon(1) is the one utility in the corpus whose SUBJECT has no
-// primitive behind it: a security context is an extended attribute and
-// Fern has no getxattr or setxattr. So `coreutils/chcon.fern` refuses
-// that one step and is exact everywhere else, and this corpus holds
-// exactly the invocations that never reach it.
+// primitive behind it: a security context is an extended attribute, and
+// Fern can read one (getxattr) but not write one (setxattr). So
+// `coreutils/chcon.fern` refuses that one step and is exact everywhere
+// else, and this corpus holds exactly the invocations that never reach it.
 //
 // The boundary is not a matter of taste — it is where GNU itself stops
 // being predictable. On a machine with no SELinux every context change
@@ -24,8 +25,7 @@ func init() {
 // `Operation not permitted` from the kernel where it was configured with
 // it and the caller may not write `security.*`. Nothing a Fern binary
 // can compute predicts that byte. docs/COREUTILS.md records the
-// divergence; #9154 is the primitive that closes it, and #9098 the one
-// the --reference and component forms additionally need.
+// divergence; #9154 is the primitive that closes it.
 //
 // What that leaves is most of chcon's observable surface, and it is
 // worth the file:
@@ -50,11 +50,12 @@ func init() {
 //   - The root failsafe, every spelling. `//` is not `/` and says so,
 //     which is the case a shared trailing-slash trim got wrong.
 //
-// Deliberately absent: any operand that exists and is reachable, since
-// that is the refusal. `--reference` past the operand count, for the
-// same reason — GNU reads RFILE's context there and exits on the
-// failure, which also makes `conflicting security context specifiers
-// given` unreachable on every machine this runs on.
+// The READ side is comparable: `--reference` and the component options
+// read a context before they could write one, and on a kernel with no
+// SELinux every file is unlabeled. GNU (built with libselinux, as the
+// /usr/bin oracle is) reports that ENODATA, and so does this build.
+// Deliberately absent: a bare CONTEXT on an operand that exists, since
+// that goes straight to the write.
 
 // chconTree is the fixture. The unreadable directory is the point of it:
 // it is the only way a case can name a real path and still stay on the
@@ -211,7 +212,33 @@ func chconCases(t *testing.T) []invocation {
 	} else {
 		t.Logf("running as a caller a mode-000 directory does not stop, so chcon's `cannot read directory` cases are not in this run")
 	}
+
+	// The read side. A kernel WITH SELinux labels every file, and the
+	// component forms would then reach the refused write.
+	if !hostHasSELinux() {
+		for _, c := range []invocation{
+			{name: "reference to a file", args: []string{"--reference=f", "f"}},
+			{name: "reference that is missing", args: []string{"--reference=nosuchz", "f"}},
+			{name: "reference through a link", args: []string{"--reference=sym", "f"}},
+			{name: "reference beside a component", args: []string{"--reference=f", "-u", "u", "f"}},
+			{name: "a user on an unlabeled file", args: []string{"-u", "u", "f"}},
+			{name: "two components verbosely", args: []string{"-v", "-t", "t", "-r", "r", "f"}},
+			{name: "a component through a link", args: []string{"-u", "u", "sym"}},
+			{name: "a component on the link itself", args: []string{"-h", "-u", "u", "sym"}},
+			{name: "a component on a dangling link", args: []string{"-h", "-u", "u", "dangle"}},
+			{name: "a component down a tree", args: []string{"-R", "-u", "u", "d"}},
+		} {
+			c.seedTree = chconTree
+			cases = append(cases, c)
+		}
+	}
 	return cases
+}
+
+// hostHasSELinux is libselinux's is_selinux_enabled(): a selinuxfs mount.
+func hostHasSELinux() bool {
+	b, err := os.ReadFile("/proc/self/mounts")
+	return err == nil && strings.Contains(string(b), " selinuxfs ")
 }
 
 // dirIsUnreadable reports whether a mode-000 directory stops THIS process.
