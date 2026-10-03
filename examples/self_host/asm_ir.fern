@@ -1255,9 +1255,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
       s = s.write("    leaq .Lsan_df(%rip), %rsi\n");
       s = s.write("    movq $46, %rdx\n");
       s = s.write("    call .Lhev_w\n");
-      s = s.write("    movq $124, %rdi\n");
-      s = s.write("    movq $60, %rax\n");
-      s = s.write("    syscall\n");
+      s = s.write(san_report_exit());
     }
   }
   return s;
@@ -1293,9 +1291,96 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $2, %rdi\n");
   s = s.write("    movq $1, %rax\n");
   s = s.write("    syscall\n");
-  s = s.write("    movq $124, %rdi\n");
+  s = s.write(san_report_exit());
+  if (asmcore.backtrace_on()) {
+    s = emit_bt_exit(s);
+  }
+  return s;
+}
+
+// san_report_exit ends a sanitizer report: exit 124, through the backtrace
+// walk unless FERN_BACKTRACE=0.
+function san_report_exit(): string {
+  if (asmcore.backtrace_on()) {
+    return "    movq $124, %r15\n    jmp __fern_bt_exit\n";
+  }
+  return "    movq $124, %rdi\n    movq $60, %rax\n    syscall\n";
+}
+
+// emit_bt_exit emits __fern_bt_exit: "backtrace:" and then each return
+// address up the frame-pointer chain as "  0x<16 hex>", the native backends'
+// format, and exit with the status in %r15. Bounded to 64 frames, and a frame
+// pointer that is not above the stack pointer, not 8-aligned, or not climbing
+// ends the walk rather than faulting the report, as does a return address in
+// the low 64 KiB, which is _start's frame reading the initial stack's argc. Emitted with the quarantine's
+// report, which every sanitizer build carries.
+function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .section .rodata\n");
+  s = s.write(".Lsan_bt:\n    .ascii \"backtrace:\\n\"\n");
+  s = s.write("    .section .text\n");
+  s = s.write("    .globl __fern_bt_exit\n");
+  s = s.write("__fern_bt_exit:\n");
+  s = s.write("    andq $-16, %rsp\n");
+  s = s.write("    movq %rsp, %r13\n");
+  s = s.write("    leaq .Lsan_bt(%rip), %rsi\n");
+  s = s.write("    movq $11, %rdx\n");
+  s = s.write("    movq $2, %rdi\n");
+  s = s.write("    movq $1, %rax\n");
+  s = s.write("    syscall\n");
+  s = s.write("    movq %rbp, %rbx\n");
+  s = s.write("    movl $64, %r14d\n");
+  s = s.write(".Lbt_loop:\n");
+  s = s.write("    testl %r14d, %r14d\n");
+  s = s.write("    jz .Lbt_done\n");
+  s = s.write("    cmpq %r13, %rbx\n");
+  s = s.write("    jbe .Lbt_done\n");
+  s = s.write("    testq $7, %rbx\n");
+  s = s.write("    jnz .Lbt_done\n");
+  s = s.write("    movq 8(%rbx), %rsi\n");
+  s = s.write("    cmpq $0x10000, %rsi\n");
+  s = s.write("    jb .Lbt_done\n");
+  s = s.write("    call .Lbt_hex\n");
+  s = s.write("    movq %rbx, %r13\n");
+  s = s.write("    movq (%rbx), %rbx\n");
+  s = s.write("    decl %r14d\n");
+  s = s.write("    jmp .Lbt_loop\n");
+  s = s.write(".Lbt_done:\n");
+  s = s.write("    movq %r15, %rdi\n");
   s = s.write("    movq $60, %rax\n");
   s = s.write("    syscall\n");
+  // .Lbt_hex(%rsi = value): one "  0x<16 hex>\n" line on stderr, nibbles
+  // written right to left.
+  s = s.write(".Lbt_hex:\n");
+  s = s.write("    subq $32, %rsp\n");
+  s = s.write("    movb $32, (%rsp)\n");
+  s = s.write("    movb $32, 1(%rsp)\n");
+  s = s.write("    movb $48, 2(%rsp)\n");
+  s = s.write("    movb $120, 3(%rsp)\n");
+  s = s.write("    movb $10, 20(%rsp)\n");
+  s = s.write("    movl $16, %ecx\n");
+  s = s.write("    leaq 19(%rsp), %rdi\n");
+  s = s.write(".Lbt_hloop:\n");
+  s = s.write("    movq %rsi, %rax\n");
+  s = s.write("    andl $15, %eax\n");
+  s = s.write("    cmpb $10, %al\n");
+  s = s.write("    jb .Lbt_hdec\n");
+  s = s.write("    addb $87, %al\n");
+  s = s.write("    jmp .Lbt_hput\n");
+  s = s.write(".Lbt_hdec:\n");
+  s = s.write("    addb $48, %al\n");
+  s = s.write(".Lbt_hput:\n");
+  s = s.write("    movb %al, (%rdi)\n");
+  s = s.write("    decq %rdi\n");
+  s = s.write("    shrq $4, %rsi\n");
+  s = s.write("    decl %ecx\n");
+  s = s.write("    jnz .Lbt_hloop\n");
+  s = s.write("    movq $1, %rax\n");
+  s = s.write("    movq $2, %rdi\n");
+  s = s.write("    movq %rsp, %rsi\n");
+  s = s.write("    movq $21, %rdx\n");
+  s = s.write("    syscall\n");
+  s = s.write("    addq $32, %rsp\n");
+  s = s.write("    ret\n");
   return s;
 }
 

@@ -3,8 +3,7 @@
 This slice integrates main at `db7e240f2`. The publication refresh on
 2026-10-03 reproduces the compiler and reruns the byte and text probes,
 size comparisons and native benchmarks. Targeted Linux tests, browser
-tests and lint pass. The broader semantic matrix and full CI suite remain
-pending at publication.
+tests, lint and the broader semantic matrix pass. Full CI remains pending.
 
 `io.read_all_stdin()` returns `Result[string, IoError]`. It collects raw
 chunks and validates the complete input, so a UTF-8 scalar can cross a read
@@ -119,3 +118,21 @@ after. Independent-name ranges also overlap: 28.107-30.559 ms before and
 25.148-29.114 ms after. These workloads do not establish a general
 throughput improvement. Peak memory increases with the representation that
 retains input bytes, name spans and collision links.
+## Assembly text follow-up
+
+This follow-up incorporates main at `d7903e7d4`.
+
+The standalone assembler drivers validate UTF-8 input. Assembly data
+directives now spell non-ASCII bytes as three-digit octal escapes, preserving
+arbitrary embedded data while keeping the emitted assembly valid text.
+Decoder comparisons retain their exact byte expectations, including invalid
+UTF-8 payloads and Unicode text; a separate test checks the actual x86-64
+and ARM64 emitters' UTF-8 output and octal byte sequence.
+
+The follow-up passes targeted Linux tests and all lint gates. A fresh
+bootstrap takes 32 seconds for stage 1, 26 for stage 2 and 22 for stage 3.
+Stages 2 and 3 are identical at 12,398,273 bytes, SHA-256
+`748dcae74c7c0b079e074910873cbc98801f4151bc74a97796c864875902ad45`.
+That compiler passes all 96 native/core checked-input cases and 48 component
+cases. Its native assembler preserves the octal-encoded bytes and rejects
+malformed UTF-8 assembly input. Full current-head CI remains required.

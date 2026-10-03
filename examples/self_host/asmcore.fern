@@ -293,14 +293,8 @@ pub function new_state(): EmitState {
 // ast.SanitizeEnabled (#5545). One opt-in surface over the heap detectors,
 // so you can reach for it before knowing which check will fire: each
 // backend's leak census (its leak_check_on folds it in), the rc over-release
-// report, and the use-after-free quarantine below.
-//
-// One gap versus the native backends, a declared subset rather than
-// silently-different behaviour:
-//
-//   - No backtrace under either report. Native routes through __fern_report,
-//     which walks the frame-pointer chain; there is no such helper here, so
-//     the message is the whole diagnostic.
+// report, and the use-after-free quarantine below. Both reports end in the
+// native backends' frame-pointer backtrace (backtrace_on).
 //
 // It deliberately does NOT imply FERN_RC_TRACE: per-heap-event output is a
 // probe you point at a reduced repro, not a standing mode.
@@ -311,6 +305,20 @@ pub function sanitize_on(): boolean {
     },
     None => {
       return false;
+    }
+  }
+}
+
+// backtrace_on reports whether a sanitizer report walks the frame-pointer
+// chain under its cause line: on unless FERN_BACKTRACE=0, as
+// ast.BacktraceEnabled.
+pub function backtrace_on(): boolean {
+  match (env("FERN_BACKTRACE")) {
+    Some(v) => {
+      return v != "0";
+    },
+    None => {
+      return true;
     }
   }
 }
@@ -8075,7 +8083,8 @@ pub function escape_for_ascii(s: string): string {
   // on every compile (including the self-host build, whose sources carry long
   // literal helper bodies), so the quadratic was pure compile-time overhead.
   // Every append targets the local `out`, growing it in place (amortized O(1)).
-  // Byte-for-byte identical escaping. (`92`='\', `34`='"', `110`='n',
+  // The assembly stays ASCII even for arbitrary embedded bytes.
+  // (`92`='\', `34`='"', `110`='n',
   // `116`='t', `114`='r'; octal digits are `48 + oN`.)
   let out: u8[] = [];
   let i: i32 = 0;
@@ -8096,7 +8105,7 @@ pub function escape_for_ascii(s: string): string {
     } else if (b == 13) {  // \r
       out = out.append(92 as u8);
       out = out.append(114 as u8);
-    } else if (b < 32 || b == 127) {
+    } else if (b < 32 || b >= 127) {
       // 3-digit octal: \<o2><o1><o0>.
       let o0: i32 = b % 8;
       let o1: i32 = b / 8 % 8;

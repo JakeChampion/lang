@@ -15,11 +15,8 @@ import (
 //
 // This backend's half of the mode is the leak census, the rc
 // over-release report, and the use-after-free quarantine (the
-// RcFreeDebug port — self_host_uaf_quarantine_test.go). One deliberate
-// gap versus native, an acknowledged subset rather than silently-different
-// behaviour: no backtrace under the report (there is no __fern_report
-// equivalent here, so the message is the whole diagnostic). Recorded on
-// sanitize_on in asm_ir.fern.
+// RcFreeDebug port — self_host_uaf_quarantine_test.go). Each report ends in
+// the native backends' frame-pointer backtrace unless FERN_BACKTRACE=0.
 //
 // What must NOT differ is the text and the exit status: a
 // `fern-sanitizer:` line must not tell you which compiler built the
@@ -244,6 +241,42 @@ func TestSelfHostSanitizeBoxFreeIsQuarantined(t *testing.T) {
 				stderr, code := cli.exitOf(t, tc.src, target, "FERN_SANITIZE=1")
 				if code != sanExitStatus || !strings.Contains(stderr, tc.finding) {
 					t.Errorf("exit=%d stderr=%q, want exit %d naming %q", code, stderr, sanExitStatus, tc.finding)
+				}
+			})
+		}
+	}
+}
+
+// sanBacktraceRe is the walk's output: the header, then at least one return
+// address in the native backends' "  0x<16 hex>" form.
+var sanBacktraceRe = regexp.MustCompile(`backtrace:\n(  0x[0-9a-f]{16}\n)+`)
+
+// Both reports end in the frame-pointer backtrace, and FERN_BACKTRACE=0 drops
+// it without changing the cause line or the exit status.
+func TestSelfHostSanitizeReportCarriesBacktrace(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	cases := []struct{ name, src, finding string }{
+		{"use-after-free", sanMapDoubleDropSrc, "fern-sanitizer: use-after-free (touched a quarantined block)\n"},
+		{"over-release", sanMapOverReleaseSrc, "fern-sanitizer: rc over-release (double free)\n"},
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		for _, tc := range cases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				stderr, code := cli.exitOf(t, tc.src, target, "FERN_SANITIZE=1")
+				if code != sanExitStatus || !strings.Contains(stderr, tc.finding) {
+					t.Fatalf("exit=%d stderr=%q, want exit %d naming %q", code, stderr, sanExitStatus, tc.finding)
+				}
+				if !sanBacktraceRe.MatchString(stderr) {
+					t.Errorf("no backtrace under the report: %q", stderr)
+				}
+			})
+			t.Run(target+"/"+tc.name+"/FERN_BACKTRACE=0", func(t *testing.T) {
+				stderr, code := cli.exitOf(t, tc.src, target, "FERN_SANITIZE=1", "FERN_BACKTRACE=0")
+				if code != sanExitStatus || !strings.Contains(stderr, tc.finding) {
+					t.Fatalf("exit=%d stderr=%q, want exit %d naming %q", code, stderr, sanExitStatus, tc.finding)
+				}
+				if strings.Contains(stderr, "backtrace:") {
+					t.Errorf("FERN_BACKTRACE=0 still walked: %q", stderr)
 				}
 			})
 		}
