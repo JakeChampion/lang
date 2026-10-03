@@ -1,13 +1,13 @@
 package e2e
 
 import (
-	"fmt"
-	"net"
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
-	"time"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // The redesign's main benefit (docs/ASYNC-REDESIGN.md): two parallel
@@ -24,48 +24,8 @@ import (
 // connects to the host upstream).
 func TestAsyncFetchFutureFanout(t *testing.T) {
 	bin := buildFernCLI(t)
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("no free TCP port: %v", err)
-	}
-	defer ln.Close()
-	port := ln.Addr().(*net.TCPAddr).Port
-	go func() {
-		for {
-			conn, aerr := ln.Accept()
-			if aerr != nil {
-				return
-			}
-			go func(c net.Conn) {
-				defer c.Close()
-				_ = c.SetDeadline(time.Now().Add(3 * time.Second))
-				b := make([]byte, 256)
-				_, _ = c.Read(b)
-				fmt.Fprint(c, "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nhello-world")
-			}(conn)
-		}
-	}()
-
-	// 127.0.0.1 in network byte order: 127 | (1 << 24).
-	const host = 127 | (1 << 24)
-	src := fmt.Sprintf(`import "std/async";
-import "std/fetch";
-import "std/utf8";
-
-function main(): i32 {
-    let none: u8[] = [];
-    let f1: async.Future[u8[]] = fetch.fetch_future(%d, %d, "/1");
-    let f2: async.Future[u8[]] = fetch.fetch_future(%d, %d, "/2");
-    let fs: async.Future[u8[]][] = [f1, f2];
-    let bodies: u8[][] = async.gather(fs, none);
-    let b0: boolean = false;
-    let b1: boolean = false;
-    match (utf8.from_bytes(bodies[0])) { Some(t) => { b0 = t == "hello-world"; }, None => {}, }
-    match (utf8.from_bytes(bodies[1])) { Some(t) => { b1 = t == "hello-world"; }, None => {}, }
-    if (b0 && b1) { return 42; }
-    return 85;
-}`, host, port, host, port)
+	port := e2eharness.StartBodyUpstream(t, []byte("hello-world"))
+	src := e2eharness.FetchFutureFanoutSource(port)
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "fetch_future_fanout.fern")
@@ -105,47 +65,9 @@ function main(): i32 {
 // length. Guest checks the body length == 10000 → exit 42.
 func TestAsyncFetchFutureLargeBody(t *testing.T) {
 	bin := buildFernCLI(t)
-
 	const bodyLen = 10000
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("no free TCP port: %v", err)
-	}
-	defer ln.Close()
-	port := ln.Addr().(*net.TCPAddr).Port
-	body := make([]byte, bodyLen)
-	for i := range body {
-		body[i] = 'A'
-	}
-	go func() {
-		for {
-			conn, aerr := ln.Accept()
-			if aerr != nil {
-				return
-			}
-			go func(c net.Conn) {
-				defer c.Close()
-				_ = c.SetDeadline(time.Now().Add(3 * time.Second))
-				b := make([]byte, 256)
-				_, _ = c.Read(b)
-				fmt.Fprintf(c, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s", bodyLen, body)
-			}(conn)
-		}
-	}()
-
-	const host = 127 | (1 << 24)
-	src := fmt.Sprintf(`import "std/async";
-import "std/fetch";
-
-function main(): i32 {
-    let none: u8[] = [];
-    let f: async.Future[u8[]] = fetch.fetch_future(%d, %d, "/big");
-    let fs: async.Future[u8[]][] = [f];
-    let bodies: u8[][] = async.gather(fs, none);
-    if (bodies[0].len() == %d) { return 42; }
-    return bodies[0].len() & 127;  // distinct small code on a truncated read
-}`, host, port, bodyLen)
-
+	port := e2eharness.StartBodyUpstream(t, bytes.Repeat([]byte("A"), bodyLen))
+	src := e2eharness.FetchFutureLargeBodySource(port, bodyLen)
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "fetch_future_big.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {

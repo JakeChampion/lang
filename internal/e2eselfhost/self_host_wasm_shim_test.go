@@ -76,7 +76,7 @@ function main(): i32 {
 // suffix generator (wat_component.fern's component_suffix, which runs the
 // native composer's lower() Phases B-H + cli/run finish() over an import
 // list). A self-test asserts the generated suffixes for three shapes —
-// stdout (479B), eprint (545B), exit (531B) — match the native compiler's
+// stdout (534B), eprint (600B), exit (586B) — match the native compiler's
 // bytes exactly. Check ids: 1/2 stdout, 3/4 eprint, 5/6 exit (len/bytes).
 // (fs_read's byte-identity to native is gated by TestSelfHostWasmComponentFullIOFS,
 // which byte-compares the whole fs component against the Go reference.)

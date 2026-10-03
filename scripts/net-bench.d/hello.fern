@@ -1,13 +1,28 @@
-// The hello server scripts/net-bench measures: one static body, no
-// allocation of note per request, so the loop's own cost is what the
-// load generator sees. The caps are lifted for the generator, which is
-// one client holding thousands of connections.
+// The Fern server the net-nightly lane runs. scripts/net-bench loads it
+// with bodiless GETs, answered with one static body and no allocation of
+// note, so the loop's own cost is what the load generator sees.
+// scripts/net-interop also uploads to it: a request with a body is
+// answered with the body's length and text, so an upload sent chunked or
+// behind `Expect: 100-continue` shows whether it arrived whole. The caps
+// are lifted for the load generator, which is one client holding
+// thousands of connections.
 import "std/http";
 import "std/tcp";
 import "core/int";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-  return http.ok("hello");
+  if (req.body_len() == 0) {
+    return http.ok("hello");
+  }
+  match (req.body_string()) {
+    Ok(text) => {
+      return http.ok("len=" + int.int_to_string(text.len()) + " " + text);
+    },
+    Err(e) => {
+      return http.ok("len=" + int.int_to_string(req.body_len()) + " <not text>");
+    }
+  }
+  return http.ok("");
 }
 
 function port(): i32 {

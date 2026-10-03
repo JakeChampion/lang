@@ -181,6 +181,7 @@ func runParityPreview2(t *testing.T, src string, o parityOpts) {
 }
 
 // runParitySelfHostCore runs src as the self-host's preview-1 core module.
+// maxResources does not apply: preview 1 has no resource table to cap.
 func runParitySelfHostCore(t *testing.T, src string, o parityOpts) {
 	t.Helper()
 	stdout, stderr, ec := runComponent(t, buildComponent(t, src), runOpts{workDir: o.runDir(t), stdinFile: o.stdin})
