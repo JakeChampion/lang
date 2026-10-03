@@ -4486,7 +4486,7 @@ function append_push(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
   // grows it in place and reclaims it on a realloc.
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_load_local(ins.args[1]));
-  r = emit(r, arr_push_op(elem));
+  r = emit(r, ir.Op { ...arr_push_op(elem), i32_imm: 1 });
   r = emit(r, ir.op_store_local(res));
   r = emit(r, ir.op_else());
   // Shared: the NON-consuming push un-shares, which is the same copy

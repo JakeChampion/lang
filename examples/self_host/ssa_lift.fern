@@ -591,6 +591,15 @@ function mark_packed(lv: LiftVals, op: ir.Op): LiftVals {
   return LiftVals { ...lv, insts: lv.insts.with(last, ssa.SInst { ...lv.insts[last], str: "u8" }) };
 }
 
+// unique_push is 1 on an owned push whose receiver the lowering tested
+// unique (ir.op_arr_push_owned), else 0; it rides in the instruction's imm.
+function unique_push(k: string, op: ir.Op): i32 {
+  if (util.str_has_prefix(k, "arr_push_owned") && op.i32_imm == 1) {
+    return 1;
+  }
+  return 0;
+}
+
 function prod_call_kind(k: string): i32 {
   if (k == "alloc" || k == "alloc_u8" || k == "raw_alloc" || util.str_has_prefix(k, "arr_push")) {
     return 50;
@@ -642,7 +651,7 @@ function lift_prod_mem(kt: KindTable, tag: i32, k: string, op: ir.Op, nvals: i32
     return lift_call_indirect_prod(op, lv);
   }
   if (kt.argc[tag] > 0) {
-    return lift_pop_push(lv, kt.argc[tag], prod_call_kind(k), 0, k + packed_suffix(op));
+    return lift_pop_push(lv, kt.argc[tag], prod_call_kind(k), unique_push(k, op), k + packed_suffix(op));
   }
   let made: LiftVals = lift_prod_make(k, op, lv);
   if (made.ok || made.stack.len() != lv.stack.len()) {

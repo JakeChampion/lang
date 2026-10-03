@@ -7878,9 +7878,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = s.write("    addq $24, %rdi\n");
   }
   if (util.str_has_suffix(ins.str, "_u8") && util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
-    s = s.write(arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result)));
+    s = s.write(arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result), ins.imm == 1));
   } else if (util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
-    s = s.write(arr_push_inline(sym, lp + "apush" + util.i32_to_string(ins.result)));
+    s = s.write(arr_push_inline(sym, lp + "apush" + util.i32_to_string(ins.result), ins.imm == 1));
   } else {
     s = s.write("    call " + sym + "\n");
   }
@@ -7892,10 +7892,10 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
 
 // arr_push_inline is arr_push_fast at the call site, calling `sym` only when
 // the receiver has no free slot or is shared.
-function arr_push_inline(sym: string, l: string): string {
+// `unique` drops the count test: the receiver was just tested unique.
+function arr_push_inline(sym: string, l: string, unique: boolean): string {
   return "    movq (%rdi), %rdx\n    cmpq -16(%rdi), %rdx\n    jge " + l + "s\n"
-    + "    movl -8(%rdi), %ecx\n    cmpl $1, %ecx\n    je " + l + "o\n"
-    + "    testl %ecx, %ecx\n    jns " + l + "s\n"
+    + push_count_test(unique, l)
     + l + "o:\n    movq %rsi, 8(%rdi,%rdx,8)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
     + "    movq %rdi, %rax\n    jmp " + l + "e\n"
     + l + "s:\n    call " + sym + "\n" + l + "e:\n";
@@ -7903,13 +7903,22 @@ function arr_push_inline(sym: string, l: string): string {
 
 // arr_push_inline_u8 is arr_push_inline for a packed byte array: its
 // capacity is in 8-byte words, so the room test is against cap * 8.
-function arr_push_inline_u8(sym: string, l: string): string {
+function arr_push_inline_u8(sym: string, l: string, unique: boolean): string {
   return "    movq (%rdi), %rdx\n    movq -16(%rdi), %rcx\n    shlq $3, %rcx\n    cmpq %rcx, %rdx\n    jge " + l + "s\n"
-    + "    movl -8(%rdi), %ecx\n    cmpl $1, %ecx\n    je " + l + "o\n"
-    + "    testl %ecx, %ecx\n    jns " + l + "s\n"
+    + push_count_test(unique, l)
     + l + "o:\n    movb %sil, 8(%rdi,%rdx)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
     + "    movq %rdi, %rax\n    jmp " + l + "e\n"
     + l + "s:\n    call " + sym + "\n" + l + "e:\n";
+}
+
+// push_count_test sends a shared receiver (count above 1, not immortal) to the
+// slow path; a receiver already tested unique needs no test.
+function push_count_test(unique: boolean, l: string): string {
+  if (unique) {
+    return "";
+  }
+  return "    movl -8(%rdi), %ecx\n    cmpl $1, %ecx\n    je " + l + "o\n"
+    + "    testl %ecx, %ecx\n    jns " + l + "s\n";
 }
 
 // ssa_is_rt_call is a kind-50 call that ssa_rt_call emits: neither a

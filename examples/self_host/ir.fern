@@ -392,6 +392,8 @@ pub function op_arr_push(): Op {
 // the dominant self-host-emitted leak that OOMed the per-module self-compile of
 // the large modules (#3452 / #3425). Register-backend only difference from
 // arr_push is the helper called; element width is unchanged (8-byte slot).
+// An i32_imm of 1 on any owned push says the receiver was just tested unique,
+// so the push needs no count test of its own.
 pub function op_arr_push_owned(): Op {
   return op0(93);
 }
