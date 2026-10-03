@@ -153,6 +153,25 @@ pub function (b: BufWriter) write_bytes_range(bytes: u8[], lo: i32, hi: i32): Bu
   return b.settle();
 }
 
+// Translate raw bytes through table[c], keeping bytes past the table's end.
+pub function (b: BufWriter) write_bytes_mapped(bytes: u8[], table: u8[]): BufWriter {
+  buf_push_bytes_mapped(b.buf, bytes, table);
+  return b.settle();
+}
+
+// Drop raw bytes with a nonzero table entry; missing entries keep the byte.
+pub function (b: BufWriter) write_bytes_filtered(bytes: u8[], drop: u8[]): BufWriter {
+  buf_push_bytes_filtered(b.buf, bytes, drop);
+  return b.settle();
+}
+
+// Expand raw bytes through complete eight-entry records at table[c * 8].
+// The first entry is a length clamped to seven; incomplete records keep c.
+pub function (b: BufWriter) write_bytes_expanded(bytes: u8[], table: u8[]): BufWriter {
+  buf_push_bytes_expanded(b.buf, bytes, table);
+  return b.settle();
+}
+
 // `(b).write_range(s, lo, hi)` — append `s[lo:hi]` without building the
 // substring first. The shape every line-oriented utility's output loop is
 // made of, and the reason the builder carries a range push at all.

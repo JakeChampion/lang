@@ -1110,7 +1110,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// The string builder. Its callees come from
 					// unconditionalHelperCalls below.
 					needs.add(op.Str)
-				case "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte",
+				case "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_bytes_mapped", "buf_push_filtered", "buf_push_bytes_filtered", "buf_push_expanded", "buf_push_bytes_expanded", "buf_push_byte",
 					"buf_push_u64", "buf_len", "buf_take", "buf_take_bytes", "buf_free":
 					// The capacity-carrying builder, same shape: its
 					// callees come from unconditionalHelperCalls.
@@ -1343,27 +1343,30 @@ var unconditionalHelperCalls = map[string][]string{
 		// emitStrNormalize, for outgoing header names and values.
 		"__fern_str_len", "__fern_str_byte",
 	},
-	"__bytes_to_lang_string": {"__fern_alloc"},
-	"__fern_str_dec":         {"__fern_box_free"},
-	"__fern_str_rc_dec":      {"__fern_rc_dec"},
-	"__fern_box_free":        {"__free"},
-	"__fern_alloc_box":       {"__fern_alloc"},
-	"__fern_alloc_rc1":       {"__fern_alloc"},
-	"strbuf_append":          {"__fern_str_len", "__fern_str_byte", "__fern_alloc"},
-	"strbuf_take":            {"__fern_alloc_rc1"},
-	"buf_new":                {"__fern_alloc_rc1"},
-	"buf_take":               {"__fern_alloc_rc1"},
-	"buf_take_bytes":         {"__fern_alloc"},
-	"__fern_buf_reserve":     {"__fern_alloc_rc1", "__fern_box_free"},
-	"buf_push":               {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
-	"buf_push_range":         {"__fern_str_byte", "__fern_buf_reserve"},
-	"buf_push_bytes_range":   {"__fern_buf_reserve"},
-	"buf_push_mapped":        {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
-	"buf_push_filtered":      {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
-	"buf_push_expanded":      {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
-	"buf_push_byte":          {"__fern_buf_reserve"},
-	"buf_push_u64":           {"__fern_buf_reserve"},
-	"buf_free":               {"__fern_box_free"},
+	"__bytes_to_lang_string":  {"__fern_alloc"},
+	"__fern_str_dec":          {"__fern_box_free"},
+	"__fern_str_rc_dec":       {"__fern_rc_dec"},
+	"__fern_box_free":         {"__free"},
+	"__fern_alloc_box":        {"__fern_alloc"},
+	"__fern_alloc_rc1":        {"__fern_alloc"},
+	"strbuf_append":           {"__fern_str_len", "__fern_str_byte", "__fern_alloc"},
+	"strbuf_take":             {"__fern_alloc_rc1"},
+	"buf_new":                 {"__fern_alloc_rc1"},
+	"buf_take":                {"__fern_alloc_rc1"},
+	"buf_take_bytes":          {"__fern_alloc"},
+	"__fern_buf_reserve":      {"__fern_alloc_rc1", "__fern_box_free"},
+	"buf_push":                {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_range":          {"__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_bytes_range":    {"__fern_buf_reserve"},
+	"buf_push_bytes_mapped":   {"buf_push_mapped"},
+	"buf_push_mapped":         {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_bytes_filtered": {"buf_push_filtered"},
+	"buf_push_filtered":       {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_bytes_expanded": {"buf_push_expanded"},
+	"buf_push_expanded":       {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_byte":           {"__fern_buf_reserve"},
+	"buf_push_u64":            {"__fern_buf_reserve"},
+	"buf_free":                {"__fern_box_free"},
 	// The slice header is an rc1 block; as_bytes also promotes an inline
 	// string's bytes through the bare allocator.
 	"__slice_make":             {"__fern_alloc_rc1"},
@@ -2340,6 +2343,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: nil,
 		body:    buildBufPushBytesRangeBody,
 	},
+	"buf_push_bytes_mapped": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    func(idxs map[string]uint32) []byte { return buildBufPushBytesTableBody(idxs, "buf_push_mapped") },
+	},
 	"buf_push_mapped": {
 		// (h, data, len, table) → (). Each byte through a u8[] table.
 		params: []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
@@ -2347,12 +2355,22 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: nil,
 		body:    buildBufPushMappedBody,
 	},
+	"buf_push_bytes_filtered": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    func(idxs map[string]uint32) []byte { return buildBufPushBytesTableBody(idxs, "buf_push_filtered") },
+	},
 	"buf_push_filtered": {
 		// (h, data, len, drop) → (). The bytes a u8[] table does not drop.
 		params: []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
 			encode.ValtypeI32},
 		results: nil,
 		body:    buildBufPushFilteredBody,
+	},
+	"buf_push_bytes_expanded": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    func(idxs map[string]uint32) []byte { return buildBufPushBytesTableBody(idxs, "buf_push_expanded") },
 	},
 	"buf_push_expanded": {
 		// (h, data, len, table) → (). Each byte through an 8-byte record.
@@ -5564,11 +5582,24 @@ func buildBufPushRangeBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32), body)
 }
 
+// Raw arrays carry the same byte payload as a heap string. Pass the known
+// array length to the existing kernel without constructing a string value.
+func buildBufPushBytesTableBody(idxs map[string]uint32, kernel string) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, idxs[kernel])
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
 // buildBufPushMappedBody assembles wasm bytes for buf_push_mapped.
-//
-// Signature: (h, data, len, table i32) → (). Each byte c of the string is
-// appended as table[c], or unchanged when c is past the table's end (its
-// length at table - 4).
+// Signature: (h, data, len, table i32) -> (). Each byte c is appended as
+// table[c], or unchanged when c is past the table's length at table - 4.
 func buildBufPushMappedBody(idxs map[string]uint32) []byte {
 	strLen := idxs["__fern_str_len"]
 	strByte := idxs["__fern_str_byte"]

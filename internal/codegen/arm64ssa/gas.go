@@ -1560,8 +1560,11 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"buf_push":                        emitBufPushHelper,
 	"buf_push_range":                  emitBufPushRangeHelper,
 	"buf_push_bytes_range":            emitBufPushBytesRangeHelper,
+	"buf_push_bytes_mapped":           emitBufPushBytesMappedHelper,
 	"buf_push_mapped":                 emitBufPushMappedHelper,
+	"buf_push_bytes_filtered":         emitBufPushBytesFilteredHelper,
 	"buf_push_filtered":               emitBufPushFilteredHelper,
+	"buf_push_bytes_expanded":         emitBufPushBytesExpandedHelper,
 	"buf_push_expanded":               emitBufPushExpandedHelper,
 	"buf_push_byte":                   emitBufPushByteHelper,
 	"buf_push_u64":                    emitBufPushU64Helper,
@@ -4263,6 +4266,9 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_count_runs_bytes":          {"__fern_count_runs"},
 	"__fern_rmemchr_bytes":             {"__fern_rmemchr"},
 	"__fern_mismatch_bytes":            {"__fern_mismatch"},
+	"buf_push_bytes_mapped":            {"buf_push_mapped"},
+	"buf_push_bytes_filtered":          {"buf_push_filtered"},
+	"buf_push_bytes_expanded":          {"buf_push_expanded"},
 	"buf_push_mapped":                  {"__fern_buf_reserve"},
 	"buf_push_filtered":                {"__fern_buf_reserve"},
 	"buf_push_expanded":                {"__fern_buf_reserve"},
@@ -9868,6 +9874,11 @@ func emitBufPushRangeHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+func emitBufPushBytesMappedHelper(w func(string, ...any)) {
+	w("%s:", fnLabel("buf_push_bytes_mapped"))
+	w("\tb %s", fnLabel("buf_push_mapped"))
+}
+
 // emitBufPushMappedHelper writes buf_push_mapped(H, s, table): append
 // table[c] for each byte c of s, or c itself when it is past the table's end.
 // A table covering every byte value takes the loop with no length check.
@@ -9923,6 +9934,11 @@ func emitBufPushMappedHelper(w func(string, ...any)) {
 	w(".Lssa_bufmap_none:")
 	w("\tmov x0, xzr")
 	w("\tret")
+}
+
+func emitBufPushBytesFilteredHelper(w func(string, ...any)) {
+	w("%s:", fnLabel("buf_push_bytes_filtered"))
+	w("\tb %s", fnLabel("buf_push_filtered"))
 }
 
 // emitBufPushFilteredHelper writes buf_push_filtered(H, s, drop): append each
@@ -9988,6 +10004,11 @@ func emitBufPushFilteredHelper(w func(string, ...any)) {
 	w(".Lssa_buffilt_none:")
 	w("\tmov x0, xzr")
 	w("\tret")
+}
+
+func emitBufPushBytesExpandedHelper(w func(string, ...any)) {
+	w("%s:", fnLabel("buf_push_bytes_expanded"))
+	w("\tb %s", fnLabel("buf_push_expanded"))
 }
 
 // emitBufPushExpandedHelper writes buf_push_expanded(H, s, table): append each

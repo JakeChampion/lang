@@ -2267,6 +2267,19 @@ pub function op_buf_push_expanded(): Op {
   return op0(328);
 }
 
+// Raw counterparts borrow [handle, u8[], table] with the same table contracts.
+pub function op_buf_push_bytes_mapped(): Op {
+  return op0(364);
+}
+
+pub function op_buf_push_bytes_filtered(): Op {
+  return op0(365);
+}
+
+pub function op_buf_push_bytes_expanded(): Op {
+  return op0(366);
+}
+
 pub function op_buf_push_byte(): Op {
   return op0(294);
 }
@@ -3042,6 +3055,9 @@ pub function kind_id(name: string): i32 {
   }
   if (n == 21) {
     return kind_id_len21(name);
+  }
+  if (n == 23) {
+    return kind_id_len23(name);
   }
   return 0;
 }
@@ -4353,7 +4369,20 @@ function kind_id_len19(name: string): i32 {
   return 0;
 }
 
+function kind_id_len23(name: string): i32 {
+  if (name == "buf_push_bytes_filtered") {
+    return 365;
+  }
+  if (name == "buf_push_bytes_expanded") {
+    return 366;
+  }
+  return 0;
+}
+
 function kind_id_len21(name: string): i32 {
+  if (name == "buf_push_bytes_mapped") {
+    return 364;
+  }
   let c: u8 = name[0];
   if (c == b'a' && name == "arr_push_shared_count") {
     return 216;
@@ -5378,6 +5407,15 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 364) {
+    return "buf_push_bytes_mapped";
+  }
+  if (id == 365) {
+    return "buf_push_bytes_filtered";
+  }
+  if (id == 366) {
+    return "buf_push_bytes_expanded";
+  }
   if (id == 354) {
     return "udp_send_bytes";
   }
@@ -5629,7 +5667,7 @@ function pops_buf(t: i32): i32 {
   if (t == 306) {
     return 2;
   }
-  if (t == 325 || t == 326 || t == 328) {  // buf_push_mapped / _filtered / _expanded: handle + string + table
+  if (t == 325 || t == 326 || t == 328 || t == 364 || t == 365 || t == 366) {  // buf_push_mapped / _filtered / _expanded: handle + string + table
     return 3;
   }
   if (t < 291 || t > 297) {

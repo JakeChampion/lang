@@ -647,8 +647,11 @@ func New() *Interp {
 	i.Builtins["buf_push"] = &Builtin{Fn: builtinBufPush}
 	i.Builtins["buf_push_range"] = &Builtin{Fn: builtinBufPushRange}
 	i.Builtins["buf_push_bytes_range"] = &Builtin{Fn: builtinBufPushBytesRange}
+	i.Builtins["buf_push_bytes_mapped"] = &Builtin{Fn: func(i *Interp, args []Value) (Value, error) { return builtinBufPushBytesTable(i, args, "mapped") }}
 	i.Builtins["buf_push_mapped"] = &Builtin{Fn: builtinBufPushMapped}
+	i.Builtins["buf_push_bytes_filtered"] = &Builtin{Fn: func(i *Interp, args []Value) (Value, error) { return builtinBufPushBytesTable(i, args, "filtered") }}
 	i.Builtins["buf_push_filtered"] = &Builtin{Fn: builtinBufPushFiltered}
+	i.Builtins["buf_push_bytes_expanded"] = &Builtin{Fn: func(i *Interp, args []Value) (Value, error) { return builtinBufPushBytesTable(i, args, "expanded") }}
 	i.Builtins["buf_push_expanded"] = &Builtin{Fn: builtinBufPushExpanded}
 	i.Builtins["buf_push_byte"] = &Builtin{Fn: builtinBufPushByte}
 	i.Builtins["buf_push_u64"] = &Builtin{Fn: builtinBufPushU64}
@@ -5713,6 +5716,75 @@ func builtinBufPushRange(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("buf_push_range [%d:%d] out of range for length %d", low, high, slen)
 	}
 	i.bufs[h] = append(b, string(s)[low:high]...)
+	return Void{}, nil
+}
+
+// The raw table pushes read array elements directly; no string is created.
+func builtinBufPushBytesTable(i *Interp, args []Value, mode string) (Value, error) {
+	name := "buf_push_bytes_" + mode
+	if len(args) != 3 {
+		return nil, fmt.Errorf("%s: expected 3 arguments", name)
+	}
+	h, b, err := bufHandle(i, name, args[0])
+	if err != nil {
+		return nil, err
+	}
+	src, ok := args[1].(Array)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected a byte array", name)
+	}
+	table, ok := args[2].(Array)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected a byte table", name)
+	}
+	entry := func(k int) (byte, error) {
+		v, ok := table.E[k].(Number)
+		if !ok {
+			return 0, fmt.Errorf("%s: table element %d is not a byte", name, k)
+		}
+		return byte(int64(v)), nil
+	}
+	for at, value := range src.E {
+		v, ok := value.(Number)
+		if !ok {
+			return nil, fmt.Errorf("%s: input element %d is not a byte", name, at)
+		}
+		c := byte(int64(v))
+		if mode == "expanded" {
+			start := int(c) * 8
+			if start+8 <= len(table.E) {
+				n, err := entry(start)
+				if err != nil {
+					return nil, err
+				}
+				if n > 7 {
+					n = 7
+				}
+				for k := 1; k <= int(n); k++ {
+					x, err := entry(start + k)
+					if err != nil {
+						return nil, err
+					}
+					b = append(b, x)
+				}
+				continue
+			}
+		} else if int(c) < len(table.E) {
+			x, err := entry(int(c))
+			if err != nil {
+				return nil, err
+			}
+			if mode == "filtered" {
+				if x != 0 {
+					continue
+				}
+			} else {
+				c = x
+			}
+		}
+		b = append(b, c)
+	}
+	i.bufs[h] = b
 	return Void{}, nil
 }
 

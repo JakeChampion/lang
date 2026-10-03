@@ -3816,7 +3816,7 @@ function is_buf_builtin(name: string): boolean {
   if (name == "buf_new" || name == "buf_push" || name == "buf_push_range") {
     return true;
   }
-  if (name == "buf_push_byte" || name == "buf_push_u64" || name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
+  if (name == "buf_push_byte" || name == "buf_push_u64" || name == "buf_push_bytes_mapped" || name == "buf_push_bytes_filtered" || name == "buf_push_bytes_expanded" || name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
     return true;
   }
   return name == "buf_len" || name == "buf_take" || name == "buf_take_bytes" || name == "buf_free";
@@ -4125,19 +4125,24 @@ function call_buf_push_table(name: string, h: usize, args: Value[]): Value {
   if (args.len() != 3) {
     return v_err(name + ": expected 3 args (b, s, table)");
   }
-  if (!is_string_arg(args[1])) {
-    return v_err(name + ": expected string arg");
-  }
   match (args[2]) {
     VArr(tv) => {
-      let table: i32[] = [];
-      for e in tv.elements {
-        table = table.append(vint_bits(e) & 255);
+      if (name == "buf_push_bytes_mapped" || name == "buf_push_bytes_filtered" || name == "buf_push_bytes_expanded") {
+        if let VArr(src) = args[1] {
+          for e in src.elements {
+            push_table_byte(name, h, vint_bits(e) & 255, tv.elements);
+          }
+          return v_void();
+        }
+        return v_err(name + ": expected u8[] arg");
+      }
+      if (!is_string_arg(args[1])) {
+        return v_err(name + ": expected string arg");
       }
       let s: string = vstr_of(args[1]);
       let i: i32 = 0;
       while (i < s.len()) {
-        push_table_byte(name, h, s[i] as i32, table);
+        push_table_byte(name, h, s[i] as i32, tv.elements);
         i = i + 1;
       }
       return v_void();
@@ -4149,19 +4154,19 @@ function call_buf_push_table(name: string, h: usize, args: Value[]): Value {
 }
 
 // push_table_byte appends what one of those kernels makes of byte `c`.
-function push_table_byte(name: string, h: usize, c: i32, table: i32[]): void {
-  if (name == "buf_push_expanded") {
+function push_table_byte(name: string, h: usize, c: i32, table: Value[]): void {
+  if (name == "buf_push_expanded" || name == "buf_push_bytes_expanded") {
     if (c * 8 + 8 > table.len()) {
       buf_push_byte(h, c);
       return;
     }
-    let n: i32 = table[c * 8];
+    let n: i32 = vint_bits(table[c * 8]) & 255;
     if (n > 7) {
       n = 7;
     }
     let k: i32 = 1;
     while (k <= n) {
-      buf_push_byte(h, table[c * 8 + k]);
+      buf_push_byte(h, vint_bits(table[c * 8 + k]) & 255);
       k = k + 1;
     }
     return;
@@ -4170,13 +4175,13 @@ function push_table_byte(name: string, h: usize, c: i32, table: i32[]): void {
     buf_push_byte(h, c);
     return;
   }
-  if (name == "buf_push_filtered") {
-    if (table[c] == 0) {
+  if (name == "buf_push_filtered" || name == "buf_push_bytes_filtered") {
+    if ((vint_bits(table[c]) & 255) == 0) {
       buf_push_byte(h, c);
     }
     return;
   }
-  buf_push_byte(h, table[c]);
+  buf_push_byte(h, vint_bits(table[c]) & 255);
 }
 
 // The three whole-argument appends: a string's bytes, the low byte of a
@@ -4266,7 +4271,7 @@ function call_buf_builtin(name: string, args: Value[]): Value {
   if (name == "buf_push_bytes_range") {
     return call_buf_push_bytes_range(h, args);
   }
-  if (name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
+  if (name == "buf_push_bytes_mapped" || name == "buf_push_bytes_filtered" || name == "buf_push_bytes_expanded" || name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
     return call_buf_push_table(name, h, args);
   }
   if (name == "buf_push" || name == "buf_push_byte" || name == "buf_push_u64") {

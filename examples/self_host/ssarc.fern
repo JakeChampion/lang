@@ -5861,11 +5861,20 @@ function builder_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowe
   if (ins.str == "buf_push_bytes_range") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_bytes_range())) };
   }
+  if (ins.str == "buf_push_bytes_mapped") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_bytes_mapped())) };
+  }
   if (ins.str == "buf_push_mapped") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_mapped())) };
   }
+  if (ins.str == "buf_push_bytes_filtered") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_bytes_filtered())) };
+  }
   if (ins.str == "buf_push_filtered") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_filtered())) };
+  }
+  if (ins.str == "buf_push_bytes_expanded") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_bytes_expanded())) };
   }
   if (ins.str == "buf_push_expanded") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_expanded())) };

@@ -2434,8 +2434,11 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"buf_push":                         emitBufPushHelper,
 	"buf_push_range":                   emitBufPushRangeHelper,
 	"buf_push_bytes_range":             emitBufPushBytesRangeHelper,
+	"buf_push_bytes_mapped":            emitBufPushBytesMappedHelper,
 	"buf_push_mapped":                  emitBufPushMappedHelper,
+	"buf_push_bytes_filtered":          emitBufPushBytesFilteredHelper,
 	"buf_push_filtered":                emitBufPushFilteredHelper,
+	"buf_push_bytes_expanded":          emitBufPushBytesExpandedHelper,
 	"buf_push_expanded":                emitBufPushExpandedHelper,
 	"buf_push_byte":                    emitBufPushByteHelper,
 	"buf_push_u64":                     emitBufPushU64Helper,
@@ -2775,6 +2778,9 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_count_runs_bytes":          {"__fern_count_runs"},
 	"__fern_rmemchr_bytes":             {"__fern_rmemchr"},
 	"__fern_mismatch_bytes":            {"__fern_mismatch"},
+	"buf_push_bytes_mapped":            {"buf_push_mapped"},
+	"buf_push_bytes_filtered":          {"buf_push_filtered"},
+	"buf_push_bytes_expanded":          {"buf_push_expanded"},
 	"buf_push_mapped":                  {"__fern_buf_reserve"},
 	"buf_push_filtered":                {"__fern_buf_reserve"},
 	"buf_push_expanded":                {"__fern_buf_reserve"},
@@ -4904,6 +4910,11 @@ func emitBufPushRangeHelper(w func(string, ...any)) {
 	w("\tjmp .Lssa_bufrange_fits")
 }
 
+func emitBufPushBytesMappedHelper(w func(string, ...any)) {
+	w("%s:", fnLabel("buf_push_bytes_mapped"))
+	w("\tjmp %s", fnLabel("buf_push_mapped"))
+}
+
 // emitBufPushMappedHelper writes buf_push_mapped(H, s, table): append
 // table[c] for each byte c of s, or c itself when it is past the table's end.
 // A table covering every byte value takes a loop with no length check, four
@@ -4990,6 +5001,11 @@ func emitBufPushMappedHelper(w func(string, ...any)) {
 	w("\tjmp .Lssa_bufmap_fits")
 }
 
+func emitBufPushBytesFilteredHelper(w func(string, ...any)) {
+	w("%s:", fnLabel("buf_push_bytes_filtered"))
+	w("\tjmp %s", fnLabel("buf_push_filtered"))
+}
+
 // emitBufPushFilteredHelper writes buf_push_filtered(H, s, drop): append each
 // byte c of s whose entry drop[c] is zero, or that is past the table's end.
 // Room for all of s is reserved; the full-table loop stores every byte and
@@ -5059,6 +5075,11 @@ func emitBufPushFilteredHelper(w func(string, ...any)) {
 	w("\tpop r12")
 	w("\tpop rbx")
 	w("\tjmp .Lssa_buffilt_fits")
+}
+
+func emitBufPushBytesExpandedHelper(w func(string, ...any)) {
+	w("%s:", fnLabel("buf_push_bytes_expanded"))
+	w("\tjmp %s", fnLabel("buf_push_expanded"))
 }
 
 // emitBufPushExpandedHelper writes buf_push_expanded(H, s, table): append each

@@ -2173,7 +2173,7 @@ func (g *generator) recordUse(target string) {
 	case "buf_push_bytes_range":
 		g.usesBufPushBytesRange = true
 		fallthrough
-	case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
+	case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_bytes_mapped", "buf_push_filtered", "buf_push_bytes_filtered", "buf_push_expanded", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
 		g.usesStrBuilder = true
 		// Every entry point but buf_len can reach the allocator, the
 		// copier and the freelist through __fern_buf_reserve, so pull the
@@ -4054,10 +4054,16 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_buf_push_range"
 		case "buf_push_bytes_range":
 			target = "__fern_buf_push_bytes_range"
+		case "buf_push_bytes_mapped":
+			target = "__fern_buf_push_bytes_mapped"
 		case "buf_push_mapped":
 			target = "__fern_buf_push_mapped"
+		case "buf_push_bytes_filtered":
+			target = "__fern_buf_push_bytes_filtered"
 		case "buf_push_filtered":
 			target = "__fern_buf_push_filtered"
+		case "buf_push_bytes_expanded":
+			target = "__fern_buf_push_bytes_expanded"
 		case "buf_push_expanded":
 			target = "__fern_buf_push_expanded"
 		case "buf_push_byte":
@@ -13261,6 +13267,9 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.line("")
 	g.line(".globl __fern_buf_push_mapped")
 	g.line(".type __fern_buf_push_mapped, @function")
+	g.line(".globl __fern_buf_push_bytes_mapped")
+	g.line(".type __fern_buf_push_bytes_mapped, @function")
+	g.label("__fern_buf_push_bytes_mapped")
 	g.label("__fern_buf_push_mapped")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
@@ -13348,6 +13357,9 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.line("")
 	g.line(".globl __fern_buf_push_filtered")
 	g.line(".type __fern_buf_push_filtered, @function")
+	g.line(".globl __fern_buf_push_bytes_filtered")
+	g.line(".type __fern_buf_push_bytes_filtered, @function")
+	g.label("__fern_buf_push_bytes_filtered")
 	g.label("__fern_buf_push_filtered")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
@@ -13422,6 +13434,9 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.line("")
 	g.line(".globl __fern_buf_push_expanded")
 	g.line(".type __fern_buf_push_expanded, @function")
+	g.line(".globl __fern_buf_push_bytes_expanded")
+	g.line(".type __fern_buf_push_bytes_expanded, @function")
+	g.label("__fern_buf_push_bytes_expanded")
 	g.label("__fern_buf_push_expanded")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")

@@ -484,6 +484,18 @@ Use this path for binary output. It never constructs a string; text callers
 can validate the returned bytes with `std/utf8.from_bytes`. The older
 `buf_take` API still needs a separate validity-contract migration for D9.
 
+The table-based pushes also accept raw arrays:
+`buf_push_bytes_mapped`, `buf_push_bytes_filtered`, and
+`buf_push_bytes_expanded` borrow both their input and lookup table.
+`BufWriter.write_bytes_mapped`, `.write_bytes_filtered`, and
+`.write_bytes_expanded` add the same operations with buffered output and
+write-error handling. Missing map entries preserve the byte, nonzero filter
+entries drop it, and expansion uses complete eight-entry records with a
+length clamped to seven. These operations remove the text conversion from
+binary translation and display loops. Target, allocation, compiler-size
+and native measurements are recorded in
+[the builder-transform report](STRING-BYTE-BUILDER-MAPS-2026-10-03.md).
+
 ---
 
 ## 3. What the field has converged on

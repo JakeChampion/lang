@@ -507,6 +507,15 @@ pub function dedupe_weak_defs(asm_text: string): string {
 // The register-ABI helper a buffer-builder op calls (#8773), and how many
 // operands it takes, in argument-register order; "" and 0 for any other op.
 pub function buf_helper(kind: i32): string {
+  if (kind == 366) {
+    return "__fern_buf_push_bytes_expanded";
+  }
+  if (kind == 365) {
+    return "__fern_buf_push_bytes_filtered";
+  }
+  if (kind == 364) {
+    return "__fern_buf_push_bytes_mapped";
+  }
   if (kind == 347) {
     return "__fern_buf_take_bytes";
   }
@@ -557,7 +566,7 @@ pub function buf_table_helper(kind: i32, packed: boolean): string {
   if (packed && kind == 351) {
     return "__fern_buf_push_bytes_range_u8";
   }
-  if (packed && (kind == 325 || kind == 326 || kind == 328)) {
+  if (packed && (kind == 325 || kind == 326 || kind == 328 || kind == 364 || kind == 365 || kind == 366)) {
     return buf_helper(kind) + "_u8";
   }
   return buf_helper(kind);
@@ -567,7 +576,7 @@ pub function buf_arity(kind: i32): i32 {
   if (kind == 293 || kind == 351) {
     return 4;
   }
-  if (kind == 325 || kind == 326 || kind == 328) {
+  if (kind == 325 || kind == 326 || kind == 328 || kind == 364 || kind == 365 || kind == 366) {
     return 3;
   }
   if (kind == 292 || kind == 294 || kind == 306) {
@@ -7931,7 +7940,7 @@ pub function runtime_need_deps(name: string): string[] {
     let du8: string[] = ["arr_push", "heap"];
     return du8;
   }
-  if (name == "buf_u8") {
+  if (name == "buf_u8" || name == "buf_bytes" || name == "buf_bytes_u8") {
     // The packed-table pushes append into the buffer bundle's handle.
     let dbu8: string[] = ["buf", "heap"];
     return dbu8;
@@ -9832,13 +9841,13 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_strbuf_reset", "__fern_strbuf_take",
     // The capacity-carrying string builder (#8773). __fern_buf_reserve is
     // internal to the bundle — no call crosses a unit boundary to it.
-    "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_push_mapped", "__fern_buf_push_filtered", "__fern_buf_push_expanded",
+    "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_push_mapped", "__fern_buf_push_bytes_mapped", "__fern_buf_push_bytes_filtered", "__fern_buf_push_filtered", "__fern_buf_push_expanded", "__fern_buf_push_bytes_expanded",
     "__fern_buf_push_byte", "__fern_buf_push_u64", "__fern_buf_len", "__fern_buf_take",
     "__fern_buf_free",
     "__fern_buf_take_bytes", "__fern_buf_take_bytes_u8",
     "__fern_buf_push_bytes_range", "__fern_buf_push_bytes_range_u8",
     // crash-only supervision (#5686): the entry owns fork / wait4.
-    "__fn___fern_proc_fork", "__fn___fern_proc_waitpid",
+    "__fern_buf_push_bytes_mapped_u8", "__fern_buf_push_bytes_filtered_u8", "__fern_buf_push_bytes_expanded_u8", "__fn___fern_proc_fork", "__fn___fern_proc_waitpid",
     "__fn___fern_proc_waitpid_nohang", "__fn___fern_proc_exec",
     "__fn___fern_proc_exec_as",
     // one pid's liveness, delivering a signal to one, and this

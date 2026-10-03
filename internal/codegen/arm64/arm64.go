@@ -7212,6 +7212,14 @@ func (g *generator) emitStrBuilderRuntime() {
 	// end. A table covering every byte value takes the loop with no length
 	// check. Frame 80: fp/lr, x19..x24, spill at [x29 + 64].
 	g.line("")
+	g.line(".global __fern_buf_push_bytes_mapped")
+	g.typeDirective("__fern_buf_push_bytes_mapped")
+	g.label("__fern_buf_push_bytes_mapped")
+	g.emit("mov x3, x2")
+	g.emit("ldur w2, [x1, #-4]")
+	g.emit("b __fern_buf_push_mapped")
+	g.sizeDirective("__fern_buf_push_bytes_mapped")
+
 	g.line(".global __fern_buf_push_mapped")
 	g.typeDirective("__fern_buf_push_mapped")
 	g.label("__fern_buf_push_mapped")
@@ -7277,6 +7285,14 @@ func (g *generator) emitStrBuilderRuntime() {
 	// byte and advances the kept count only past a kept one. Frame 80:
 	// fp/lr, x19..x24, spill at [x29 + 64].
 	g.line("")
+	g.line(".global __fern_buf_push_bytes_filtered")
+	g.typeDirective("__fern_buf_push_bytes_filtered")
+	g.label("__fern_buf_push_bytes_filtered")
+	g.emit("mov x3, x2")
+	g.emit("ldur w2, [x1, #-4]")
+	g.emit("b __fern_buf_push_filtered")
+	g.sizeDirective("__fern_buf_push_bytes_filtered")
+
 	g.line(".global __fern_buf_push_filtered")
 	g.typeDirective("__fern_buf_push_filtered")
 	g.label("__fern_buf_push_filtered")
@@ -7350,6 +7366,14 @@ func (g *generator) emitStrBuilderRuntime() {
 	// record is copied as one eight-byte store. Frame 80: fp/lr, x19..x24,
 	// spill at [x29 + 64].
 	g.line("")
+	g.line(".global __fern_buf_push_bytes_expanded")
+	g.typeDirective("__fern_buf_push_bytes_expanded")
+	g.label("__fern_buf_push_bytes_expanded")
+	g.emit("mov x3, x2")
+	g.emit("ldur w2, [x1, #-4]")
+	g.emit("b __fern_buf_push_expanded")
+	g.sizeDirective("__fern_buf_push_bytes_expanded")
+
 	g.line(".global __fern_buf_push_expanded")
 	g.typeDirective("__fern_buf_push_expanded")
 	g.label("__fern_buf_push_expanded")
@@ -20745,7 +20769,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesAllocU8 = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
-		case "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
+		case "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_bytes_mapped", "buf_push_filtered", "buf_push_bytes_filtered", "buf_push_expanded", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
 			if target == "buf_push_bytes_range" {
 				g.usesBufPushBytesRange = true
 			}

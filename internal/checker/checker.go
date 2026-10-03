@@ -1589,11 +1589,19 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{bufH, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.VoidType{},
 	}
+	c.info.FuncSigs["buf_push_bytes_mapped"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.VoidType{},
+	}
 	// buf_push_filtered(h, s, drop) appends each byte b of s whose entry
 	// drop[b] is zero; a byte at or past the table's length is kept. tr -d's
 	// deletion is one call per read.
 	c.info.FuncSigs["buf_push_filtered"] = &ast.FuncType{
 		Params: []ast.Type{bufH, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["buf_push_bytes_filtered"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.VoidType{},
 	}
 	// buf_push_expanded(h, s, table) appends each byte b of s as the record
@@ -1602,6 +1610,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// unchanged. cat -v / -T / -E is one call per read.
 	c.info.FuncSigs["buf_push_expanded"] = &ast.FuncType{
 		Params: []ast.Type{bufH, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["buf_push_bytes_expanded"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.VoidType{},
 	}
 	c.info.FuncSigs["buf_push_byte"] = &ast.FuncType{

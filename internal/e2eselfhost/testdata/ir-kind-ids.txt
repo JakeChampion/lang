@@ -339,3 +339,6 @@ scan_set_bytes=360
 count_runs_bytes=361
 sum_bytes_array=362
 bsd_sum_bytes=363
+buf_push_bytes_mapped=364
+buf_push_bytes_filtered=365
+buf_push_bytes_expanded=366
