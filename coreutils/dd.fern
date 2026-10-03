@@ -1498,21 +1498,16 @@ function open_output(s: Settings): (Writer, boolean) {
   if (!s.have_out) {
     return (stdout(), true);
   }
-  if ((s.conv & conv_excl()) != 0) {
-    match (open_exclusive(s.out_name)) {
-      Err(e) => {
-        gnu.error("failed to open " + gnu.quote(s.out_name) + ": " + gnu.io_error_text(e));
-        return (stdout(), false);
-      },
-      Ok(w) => {
-        return (w, true);
-      }
-    }
-  }
-  if ((s.oflag & flag_append()) != 0) {
+  if ((s.oflag & flag_append()) != 0 && (s.conv & conv_excl()) == 0) {
     return open_out_appending(s);
   }
+  // `conv=excl` is the exclusive create at the mode every other `of=`
+  // gets, 0666 through the umask; `open_exclusive` fixes 0600 for the
+  // temporary file it exists for and is not this open (#9237).
   let flags: i32 = 1;
+  if ((s.conv & conv_excl()) != 0) {
+    flags = flags | 4;
+  }
   if ((s.conv & conv_nocreat()) != 0) {
     flags = 0;
   }

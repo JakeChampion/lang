@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -40,9 +41,13 @@ func openWithSource(dir string) string {
     match (mknod(%[3]q, %[4]d, 0, 0)) { Ok(_) => {}, Err(_) => { return 12; } }
     match (open_reader_with(%[3]q, 2)) { Ok(r) => { r.close(); }, Err(_) => { return 13; } }
     match (open_writer_with(%[3]q, 2)) { Ok(w) => { w.close(); return 14; }, Err(e) => { match (e) { NotFound(_) => { return 15; }, _ => {} } } }
+    // Bit 2 with bit 0 is the exclusive create: a fresh name is created at
+    // 0666 through the umask (checked from Go), a taken one is AlreadyExists.
+    match (open_writer_with(%[5]q, 5)) { Ok(w) => { w.write("x"); w.close(); }, Err(_) => { return 16; } }
+    match (open_writer_with(%[5]q, 5)) { Ok(w) => { w.close(); return 17; }, Err(e) => { match (e) { AlreadyExists(_) => {}, _ => { return 18; } } } }
     return 0;
 }
-`, p("w.txt"), p("missing.txt"), p("fifo"), mknodFifo0666)
+`, p("w.txt"), p("missing.txt"), p("fifo"), mknodFifo0666, p("excl.txt"))
 }
 
 // openWithCheckTree reads the tree back through Go: the bytes the two
@@ -66,6 +71,30 @@ func openWithCheckTree(t *testing.T, dir string) {
 	}
 	if _, err := os.Lstat(filepath.Join(dir, "missing.txt")); !os.IsNotExist(err) {
 		t.Errorf("missing.txt exists (lstat err = %v) — an open without the create bit created it", err)
+	}
+	checkExclusiveCreate(t, dir)
+}
+
+// checkExclusiveCreate reads back the file the exclusive open made: its
+// byte, and its mode, which is the create bit's 0666 through the umask and
+// not open_exclusive's 0600 — the distinction #9237 exists for.
+func checkExclusiveCreate(t *testing.T, dir string) {
+	t.Helper()
+	got, err := os.ReadFile(filepath.Join(dir, "excl.txt"))
+	if err != nil {
+		t.Fatalf("read excl.txt: %v", err)
+	}
+	if string(got) != "x" {
+		t.Errorf("excl.txt = %q, want %q", got, "x")
+	}
+	fi, err := os.Stat(filepath.Join(dir, "excl.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mask := syscall.Umask(0)
+	syscall.Umask(mask)
+	if want := os.FileMode(0o666 &^ mask); fi.Mode().Perm() != want {
+		t.Errorf("excl.txt mode = %o, want %o (0666 through the umask %o)", fi.Mode().Perm(), want, mask)
 	}
 }
 
@@ -123,6 +152,8 @@ const openWithWasmSrc = `function main(): i32 {
         },
         Err(_) => { return 9; }
     }
+    match (open_writer_with("excl.txt", 5)) { Ok(w) => { w.write("x"); w.close(); }, Err(_) => { return 10; } }
+    match (open_writer_with("excl.txt", 5)) { Ok(w) => { w.close(); return 11; }, Err(e) => { match (e) { AlreadyExists(_) => {}, _ => { return 12; } } } }
     return 0;
 }`
 
@@ -159,5 +190,8 @@ func openWithWasmCheckTree(t *testing.T, dir string) {
 	}
 	if _, err := os.Lstat(filepath.Join(dir, "missing.txt")); !os.IsNotExist(err) {
 		t.Errorf("missing.txt exists (lstat err = %v) — an open without the create bit created it", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "excl.txt")); err != nil || string(got) != "x" {
+		t.Errorf("excl.txt = %q, %v — the exclusive create did not land", got, err)
 	}
 }

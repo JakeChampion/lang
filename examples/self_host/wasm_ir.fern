@@ -10992,16 +10992,18 @@ pub function open_file_func(): string {
 
 // open_with_func emits $__fern_open_with(np, flags, write) → the same
 // Result[Reader|Writer, IoError] box as $__fern_open_file, under Fern's flags
-// word: bit 0 is preview 1's own CREATE oflag, bit 1 shifted up is its
-// NONBLOCK fdflag, and the access word picks the rights (read+seek 6,
-// write+seek 68). Never TRUNCATE, never APPEND.
+// word: bits 0 and 2 ARE preview 1's own CREATE and EXCL oflags, so
+// `flags & 5` is the oflags word (path_open_shim carries the same bits to
+// preview 2's open-flags), bit 1 shifted up is its NONBLOCK fdflag, and the
+// access word picks the rights (read+seek 6, write+seek 68). Never
+// TRUNCATE, never APPEND.
 pub function open_with_func(): string {
   let o: string = "";
   o = o + "  (func $__fern_open_with (param $np i32) (param $flags i32) (param $write i32) (result i32)\n";
   o = o + "    (local $err i32) (local $rights i64) (local $res i32)\n";
   o = o + "    (local.set $rights (i64.const 6))\n";
   o = o + "    (if (local.get $write) (then (local.set $rights (i64.const 68))))\n";
-  o = o + "    (local.set $err (call $path_open (i32.const 3) (i32.const 1) (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (i32.and (local.get $flags) (i32.const 1)) (local.get $rights) (i64.const 0) (i32.shl (i32.and (local.get $flags) (i32.const 2)) (i32.const 1)) (i32.const 16)))\n";
+  o = o + "    (local.set $err (call $path_open (i32.const 3) (i32.const 1) (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (i32.and (local.get $flags) (i32.const 5)) (local.get $rights) (i64.const 0) (i32.shl (i32.and (local.get $flags) (i32.const 2)) (i32.const 1)) (i32.const 16)))\n";
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o = o + "      (i32.store (local.get $res) (i32.const 1))\n";

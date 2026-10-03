@@ -4733,7 +4733,8 @@ func builtinOpenExclusive(i *Interp, args []Value) (Value, error) {
 
 // builtinOpenReaderWith / builtinOpenWriterWith open under Fern's own
 // flags word: bit 1 creates (0666 through the umask), bit 2 is
-// O_NONBLOCK. The writer is O_WRONLY with neither O_TRUNC nor O_APPEND.
+// O_NONBLOCK, bit 4 is O_EXCL. The writer is O_WRONLY with neither O_TRUNC
+// nor O_APPEND.
 func builtinOpenReaderWith(i *Interp, args []Value) (Value, error) {
 	return openWithHelper(i, args, "Reader", os.O_RDONLY)
 }
@@ -4756,6 +4757,9 @@ func openWithHelper(i *Interp, args []Value, structName string, access int) (Val
 	}
 	if int(flags)&2 != 0 {
 		flag |= oNonblock
+	}
+	if int(flags)&4 != 0 {
+		flag |= os.O_EXCL
 	}
 	return openHelper(i, args[:1], structName, flag, 0o666)
 }

@@ -14694,9 +14694,9 @@ func (g *generator) emitReaderWriterRuntime() {
 	// forms take Fern's flags word after the path: bit 0 is O_CREAT and
 	// bit 1 O_NONBLOCK, each in the target's own spelling (64 / 2048 on
 	// Linux, 0x200 / 0x4 on XNU), on top of the access mode in `flags`.
-	oCreat, oNonblock := 64, 2048
+	oCreat, oNonblock, oExcl := 64, 2048, 128
 	if g.darwin {
-		oCreat, oNonblock = 0x200, 0x4
+		oCreat, oNonblock, oExcl = 0x200, 0x4, 0x800
 	}
 	twoWord := ast.UseTwoWordStrings(8)
 	for _, e := range []struct {
@@ -14725,6 +14725,9 @@ func (g *generator) emitReaderWriterRuntime() {
 			g.emit("tbz %s, #1, %s", reg, ".Lorw_nb_"+e.sym)
 			g.emit("orr w2, w2, #%d", oNonblock)
 			g.label(".Lorw_nb_" + e.sym)
+			g.emit("tbz %s, #2, %s", reg, ".Lorw_nx_"+e.sym)
+			g.emit("orr w2, w2, #%d", oExcl)
+			g.label(".Lorw_nx_" + e.sym)
 		}
 		g.line("")
 		g.line(".global " + e.sym)

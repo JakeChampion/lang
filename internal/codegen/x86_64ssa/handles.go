@@ -284,6 +284,10 @@ func emitOpenWithHelper(name, lbl string, access int) func(w func(string, ...any
 		w("\tjz .Lssa_%s_nb", lbl)
 		w("\tor edx, 2048") // O_NONBLOCK
 		w(".Lssa_%s_nb:", lbl)
+		w("\ttest r14b, 4")
+		w("\tjz .Lssa_%s_nx", lbl)
+		w("\tor edx, 128") // O_EXCL
+		w(".Lssa_%s_nx:", lbl)
 		w("\tmov r10d, 438")
 		w("\tmov eax, 257")
 		w("\tsyscall")

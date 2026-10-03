@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -33,9 +34,11 @@ func selfHostOpenWithSource(dir string) string {
     match (mknod(%[3]q, 4534, 0, 0)) { Ok(_) => {}, Err(_) => { return 12; } }
     match (open_reader_with(%[3]q, 2)) { Ok(r) => { r.close(); }, Err(_) => { return 13; } }
     match (open_writer_with(%[3]q, 2)) { Ok(w) => { w.close(); return 14; }, Err(e) => { match (e) { NotFound(_) => { return 15; }, _ => {} } } }
+    match (open_writer_with(%[4]q, 5)) { Ok(w) => { w.write("x"); w.close(); }, Err(_) => { return 16; } }
+    match (open_writer_with(%[4]q, 5)) { Ok(w) => { w.close(); return 17; }, Err(e) => { match (e) { AlreadyExists(_) => {}, _ => { return 18; } } } }
     return 0;
 }
-`, p("w.txt"), p("missing.txt"), p("fifo"))
+`, p("w.txt"), p("missing.txt"), p("fifo"), p("excl.txt"))
 }
 
 // The wasm leg has no FIFO to open; it is the file half under the preopen.
@@ -51,6 +54,8 @@ const selfHostOpenWithWasmSource = `function main(): i32 {
         },
         Err(_) => { return 9; }
     }
+    match (open_writer_with("excl.txt", 5)) { Ok(w) => { w.write("x"); w.close(); }, Err(_) => { return 10; } }
+    match (open_writer_with("excl.txt", 5)) { Ok(w) => { w.close(); return 11; }, Err(e) => { match (e) { AlreadyExists(_) => {}, _ => { return 12; } } } }
     return 0;
 }
 `
@@ -74,6 +79,24 @@ func selfHostOpenWithTree(t *testing.T, dir string, fifo bool) {
 		}
 		if fi.Mode()&os.ModeNamedPipe == 0 {
 			t.Errorf("fifo is not a named pipe: %v", fi.Mode())
+		}
+	}
+	// The exclusive create's file: its byte, and on a native target its
+	// mode, the create bit's 0666 through the umask rather than
+	// open_exclusive's 0600 (#9237).
+	got, err = os.ReadFile(filepath.Join(dir, "excl.txt"))
+	if err != nil || string(got) != "x" {
+		t.Errorf("excl.txt = %q, %v — the exclusive create did not land", got, err)
+	}
+	if fifo {
+		fi, err := os.Stat(filepath.Join(dir, "excl.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		mask := syscall.Umask(0)
+		syscall.Umask(mask)
+		if want := os.FileMode(0o666 &^ mask); fi.Mode().Perm() != want {
+			t.Errorf("excl.txt mode = %o, want %o (0666 through the umask %o)", fi.Mode().Perm(), want, mask)
 		}
 	}
 }

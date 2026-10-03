@@ -1678,9 +1678,9 @@ func buildOpenBody(idxs map[string]uint32, oflags int32, rights int64, fdflags i
 }
 
 // buildOpenWithBody is buildOpenBody for open_reader_with /
-// open_writer_with, whose flags word is the third param: bit 0 is
-// preview 1's own CREATE oflag, and bit 1 shifted up is its NONBLOCK
-// fdflag, so both translate without a branch. Locals are buildOpenBody's
+// open_writer_with, whose flags word is the third param: bits 0 and 2 are
+// preview 1's own CREATE and EXCL oflags, and bit 1 shifted up is its
+// NONBLOCK fdflag, so all three translate without a branch. Locals are buildOpenBody's
 // shifted up one for the extra param (slots 3..11).
 func buildOpenWithBody(idxs map[string]uint32, write bool) []byte {
 	alloc := idxs["__fern_alloc"]
@@ -1702,8 +1702,8 @@ func buildOpenWithBody(idxs map[string]uint32, write bool) []byte {
 	body = inst.InstI32Const(body, 1)
 	body = inst.InstLocalGet(body, 9)
 	body = inst.InstLocalGet(body, 10)
-	body = inst.InstLocalGet(body, 2) // oflags = flags & CREATE
-	body = inst.InstI32Const(body, wasiOflagCreate)
+	body = inst.InstLocalGet(body, 2) // oflags = flags & (CREATE|EXCL): Fern's bits 1 and 4 are preview 1's own
+	body = inst.InstI32Const(body, wasiOflagCreate|wasiOflagExclusive)
 	body = numeric.InstI32And(body)
 	body = inst.InstI64Const(body, rights)
 	body = inst.InstI64Const(body, rights)
@@ -1805,8 +1805,8 @@ func buildOpenReaderWithBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 1)
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 5)
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstI32Const(body, wasiP2OpenFlagCreate)
+	body = inst.InstLocalGet(body, 2) // open-flags = flags & (create|exclusive): preview 2 shares preview 1's bit values
+	body = inst.InstI32Const(body, wasiP2OpenFlagCreate|wasiP2OpenFlagExclusive)
 	body = numeric.InstI32And(body)
 	body = inst.InstI32Const(body, 1) // descriptor-flags: read
 	body = inst.InstLocalGet(body, 3)
@@ -1879,8 +1879,8 @@ func buildOpenWriterWithBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 1)
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 5)
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstI32Const(body, wasiP2OpenFlagCreate)
+	body = inst.InstLocalGet(body, 2) // open-flags = flags & (create|exclusive): preview 2 shares preview 1's bit values
+	body = inst.InstI32Const(body, wasiP2OpenFlagCreate|wasiP2OpenFlagExclusive)
 	body = numeric.InstI32And(body)
 	body = inst.InstI32Const(body, wasiP2DescFlagWrite)
 	body = inst.InstLocalGet(body, 3)

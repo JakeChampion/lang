@@ -265,9 +265,9 @@ rather than discovering:
     preopen. A kernel's `EXDEV` has no counterpart here; the failure is
     `ENOTCAPABLE` for the operand that left.
   - **`open_reader_with` / `open_writer_with` carry their flags word across
-    too**: the create bit is preview 1's own CREATE oflag and preview 2's
-    `create` open-flag, and the non-blocking bit is preview 1's NONBLOCK
-    fdflag. Preview 2 has no spelling for it and the bit is not read there:
+    too**: the create and exclusive bits are preview 1's own CREATE and EXCL
+    oflags and preview 2's `create` and `exclusive` open-flags, and the
+    non-blocking bit is preview 1's NONBLOCK fdflag. Preview 2 has no spelling for it and the bit is not read there:
     its streams do not block the way a preview-1 descriptor can, and the
     FIFO the bit exists for cannot be created on either preview (`mknod`
     is refused, above).

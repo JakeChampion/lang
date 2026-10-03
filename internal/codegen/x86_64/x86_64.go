@@ -19393,7 +19393,8 @@ func (g *generator) emitReaderWriterRuntime() {
 
 	// open_reader / open_writer / open_appender / open_exclusive, and the
 	// two `_with` forms whose flags word arrives in esi: bit 0 is O_CREAT
-	// (64), bit 1 O_NONBLOCK (2048), on top of the access mode in `flags`.
+	// (64), bit 1 O_NONBLOCK (2048), bit 2 O_EXCL (128), on top of the
+	// access mode in `flags`.
 	for _, e := range []struct {
 		sym       string
 		flags     int
@@ -19458,6 +19459,10 @@ func (g *generator) emitReaderWriterRuntime() {
 			g.emit("jz .Lorw_nb_" + e.sym)
 			g.emit("or edx, 2048") // O_NONBLOCK
 			g.label(".Lorw_nb_" + e.sym)
+			g.emit("test eax, 4")
+			g.emit("jz .Lorw_nx_" + e.sym)
+			g.emit("or edx, 128") // O_EXCL
+			g.label(".Lorw_nx_" + e.sym)
 		}
 		g.emit(fmt.Sprintf("mov r10d, %d", e.mode))
 		g.emitSyscall(257)

@@ -7,7 +7,7 @@ import (
 
 // open_reader_with / open_writer_with translate Fern's flags word at run
 // time, so the words they OR in are the target's: O_CREAT is 64 on Linux
-// and 0x200 on XNU, O_NONBLOCK 2048 and 0x4. Textual for the same reason
+// and 0x200 on XNU, O_NONBLOCK 2048 and 0x4, O_EXCL 128 and 0x800. Textual for the same reason
 // as darwin_open_flags_test.go: the Linux words are legal, different
 // modes on XNU, so a wrong one opens rather than fails.
 
@@ -29,9 +29,10 @@ func TestArm64OpenWithFlagWords(t *testing.T) {
 		opts  Options
 		creat string
 		nb    string
+		excl  string
 	}{
-		{"linux", Options{}, "orr w2, w2, #64", "orr w2, w2, #2048"},
-		{"darwin", Options{Darwin: true}, "orr w2, w2, #512", "orr w2, w2, #4"},
+		{"linux", Options{}, "orr w2, w2, #64", "orr w2, w2, #2048", "orr w2, w2, #128"},
+		{"darwin", Options{Darwin: true}, "orr w2, w2, #512", "orr w2, w2, #4", "orr w2, w2, #2048"},
 	} {
 		asm := compile(t, openWithSrc, tc.opts)
 		for _, sym := range []string{"__fern_open_reader_with", "__fern_open_writer_with"} {
@@ -39,7 +40,7 @@ func TestArm64OpenWithFlagWords(t *testing.T) {
 			if body == "" {
 				t.Fatalf("%s: %s not emitted; the test cannot guard a helper that is absent", tc.name, sym)
 			}
-			for _, want := range []string{tc.creat, tc.nb} {
+			for _, want := range []string{tc.creat, tc.nb, tc.excl} {
 				if !strings.Contains(body, want) {
 					t.Errorf("%s %s lacks %q", tc.name, sym, want)
 				}

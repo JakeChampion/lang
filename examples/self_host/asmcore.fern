@@ -1972,6 +1972,9 @@ function oflag_darwin(name: string): string {
   if (name == "nonblock") {
     return "4";
   }
+  if (name == "excl") {
+    return "2048";
+  }
   return "0";
 }
 
@@ -1997,6 +2000,9 @@ function oflag_x86_64(name: string): string {
   if (name == "nonblock") {
     return "2048";
   }
+  if (name == "excl") {
+    return "128";
+  }
   return "0";
 }
 
@@ -2021,6 +2027,9 @@ function oflag_arm64(name: string): string {
   }
   if (name == "nonblock") {
     return "2048";
+  }
+  if (name == "excl") {
+    return "128";
   }
   return "0";
 }
@@ -2151,7 +2160,7 @@ pub function rt_src_open_res(t: string): string {
 // fixed words and passes this one through. Mode 0666, never O_TRUNC or
 // O_APPEND.
 pub function rt_src_open_with(t: string): string {
-  return "function __fern_open_with(path: string, flags: i32, write: i32): Result[i32, IoError] { let f: i32 = 0; if (write != 0) { f = 1; } if ((flags & 1) != 0) { f = f | " + oflag(t, "creat") + "; } if ((flags & 2) != 0) { f = f | " + oflag(t, "nonblock") + "; } return __fern_open_res(path, f, 438); }";
+  return "function __fern_open_with(path: string, flags: i32, write: i32): Result[i32, IoError] { let f: i32 = 0; if (write != 0) { f = 1; } if ((flags & 1) != 0) { f = f | " + oflag(t, "creat") + "; } if ((flags & 2) != 0) { f = f | " + oflag(t, "nonblock") + "; } if ((flags & 4) != 0) { f = f | " + oflag(t, "excl") + "; } return __fern_open_res(path, f, 438); }";
 }
 
 // rt_src_writer_write backs `w.write(s)` (#4372, #2649 syscall-leaf) →

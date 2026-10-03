@@ -3715,16 +3715,12 @@ input flag`, which is itself the divergence:
 
 - `iflag`/`oflag` `direct`, `directory`, `dsync`, `sync`, `noatime`,
   `nocache`, `noctty` and `nofollow` are all open-time bits, and Fern's
-  `open_reader_with` / `open_writer_with` flags word carries two: create
-  and non-blocking (#9242);
+  `open_reader_with` / `open_writer_with` flags word carries three: create,
+  exclusive and non-blocking (#9242);
 - the SIGUSR1 report mid-copy needs a signal a program can OBSERVE, and
   Fern has only the three disposition calls (`signal_send`,
   `signal_ignore`, `signal_default`) — nothing that runs or records on
   delivery (#9243);
-- `conv=excl` that CREATES its output leaves mode 0600 where GNU leaves
-  0666 through the umask, since Fern's exclusive open fixes the mode;
-  #9237 is the flags-word bit that closes it, and it is why the corpus
-  holds only the taken-name half of that case.
 
 **`expr`'s capture registers follow glibc's own construction, not a branch
 order.** glibc prefers the non-empty branch of an alternation everywhere,

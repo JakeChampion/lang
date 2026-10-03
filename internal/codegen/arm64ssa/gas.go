@@ -3428,7 +3428,8 @@ func emitOpenExclusiveHelper(w func(string, ...any)) {
 // emitOpenWithHelper writes open_reader_with / open_writer_with(path, flags)
 // -> Result[Reader|Writer, IoError]: emitOpenHandleHelper with the flags word
 // arriving in x1 rather than baked in — bit 0 is O_CREAT (64), bit 1
-// O_NONBLOCK (2048), on top of `access` (O_RDONLY 0 / O_WRONLY 1), mode 0666.
+// O_NONBLOCK (2048), bit 2 O_EXCL (128), on top of `access` (O_RDONLY 0 /
+// O_WRONLY 1), mode 0666.
 // The word sits in x21 across the path copy. x0=path, x1=flags.
 func emitOpenWithHelper(w func(string, ...any), name, lbl string, access int) {
 	w("")
@@ -3451,6 +3452,9 @@ func emitOpenWithHelper(w func(string, ...any), name, lbl string, access int) {
 	w("\ttbz x21, #1, .Lssa_%s_nb", lbl)
 	w("\torr x2, x2, #2048") // O_NONBLOCK
 	w(".Lssa_%s_nb:", lbl)
+	w("\ttbz x21, #2, .Lssa_%s_nx", lbl)
+	w("\torr x2, x2, #128") // O_EXCL
+	w(".Lssa_%s_nx:", lbl)
 	w("\tmov x3, #438")
 	w("\tmov x8, #56") // openat
 	w("\tsvc #0")

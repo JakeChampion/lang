@@ -273,12 +273,11 @@ func ddCases(t *testing.T) []invocation {
 	add("no-such-input", "if=nosuch", "of=out", "status=noxfer")
 	add("input-is-a-directory", "if=d", "of=out", "status=noxfer")
 	add("output-is-a-directory", "if=in10", "of=d", "status=noxfer")
-	// `conv=excl` on a name that is TAKEN is here; the case that
-	// CREATES one is not, and that is a gap rather than a preference:
-	// Fern's exclusive open fixes the mode at 0600 where GNU's is 0666
-	// through the umask, so the file dd leaves behind differs by its
-	// mode alone. #9237 is the flags-word bit that closes it.
+	// `conv=excl` on a name that is TAKEN refuses; on a fresh one it
+	// creates, and the tree compare holds the mode to GNU's 0666 through
+	// the umask, which the exclusive bit of the flags word gives (#9237).
 	add("conv-excl-exists", "if=in10", "of=pre", "conv=excl", "status=noxfer")
+	add("conv-excl-fresh", "if=in10", "of=fresh", "conv=excl", "status=noxfer")
 	add("conv-nocreat-missing", "if=in10", "of=nosuch2", "conv=nocreat", "status=noxfer")
 	add("conv-nocreat-exists", "if=in10", "of=pre", "conv=nocreat", "status=noxfer")
 	add("conv-fsync", "if=in10", "of=out", "conv=fsync", "status=noxfer")
