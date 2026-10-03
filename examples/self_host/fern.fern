@@ -20,6 +20,7 @@
 //     fern -doc <module.fern | DIR>         Markdown reference pages
 //     fern -add NAME SPEC <ABS-DIR>         declare a dependency
 //     fern -vendor <ABS-DIR>                flatten the dep graph into vendor/
+//     fern -lsp [stdlib]                    a language server on stdin/stdout
 //
 // A target is `<isa>-<environment>` (#6529 / #6635): the ISA half picks the
 // backend, the environment half says what the host provides, and neither is
@@ -83,6 +84,7 @@ import "./ircore";
 import "./emitforms";
 import "./semlower";
 import "./cover";
+import "./lsp";
 
 // blank_line_map marks the 1-based source lines that hold nothing but
 // whitespace, indexed by line number so the formatter can ask about one in
@@ -115,10 +117,14 @@ function fmt_output_is_readable(formatted: string): boolean {
   if (util.contains(formatted, "/*unknown")) {
     return false;
   }
-  let flex: lexer.LexResult = lexer.tokenize_full(formatted);
+  return format_source(formatted) == formatted;
+}
+
+// format_source is what `-fmt` writes for a file's text.
+function format_source(src: string): string {
+  let flex: lexer.LexResult = lexer.tokenize_full(src);
   let pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
-  let again: string = printer.format_parsed(pf, flex.comments, blank_line_map(formatted));
-  return again == formatted;
+  return printer.format_parsed(pf, flex.comments, blank_line_map(src));
 }
 
 // read_failure is the one-line report for a file that could not be read:
@@ -146,9 +152,7 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
       return 1;
     }
   }
-  let flex: lexer.LexResult = lexer.tokenize_full(esrc);
-  let pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
-  let formatted: string = printer.format_parsed(pf, flex.comments, blank_line_map(esrc));
+  let formatted: string = format_source(esrc);
   if (fmt_diff) {
     let d: string = printer.unified_diff(esrc, formatted, path, path);
     if (d.len() == 0) {
@@ -506,6 +510,7 @@ function usage(): i32 {
   eprint("       fern -doc <DIR> -o OUTDIR                    (one page per module under DIR)");
   eprint("       fern -add NAME SPEC <ABS-DIR>                (declare a dependency: path:DIR | workspace)");
   eprint("       fern -vendor <ABS-DIR>                       (flatten the dependency graph into vendor/)");
+  eprint("       fern -lsp [-target T] [-embed DIR] [stdlib-root]  (language server on stdin/stdout: -check's diagnostics, -fmt)");
   return 2;
 }
 
@@ -2128,6 +2133,194 @@ function check_file(entry_path: string, root: string, target: string, target_giv
   return 1;
 }
 
+// Server is `-lsp`'s state: what every document is checked against, as
+// `-check` takes it, and the text of each document the editor has open with
+// the diagnostics last published for it ("" before the first), by URI.
+struct Server {
+  root: string,
+  target: string,
+  target_given: boolean,
+  embed_dir: string,
+  uris: string[],
+  srcs: string[],
+  published: string[],
+  shutdown: boolean,
+}
+
+// serve_lsp is `fern -lsp [stdlib-root]`.
+function serve_lsp(pos: string[], target: string, target_given: boolean, embed_dir: string): i32 {
+  if (pos.len() > 1) {
+    return usage();
+  }
+  let root: string = "";
+  if (pos.len() == 1) {
+    root = pos[0];
+  }
+  return run_lsp(Server { root: root, target: target, target_given: target_given, embed_dir: embed_dir, uris: [], srcs: [], published: [], shutdown: false });
+}
+
+// run_lsp is a language server on stdin and stdout (lsp.fern is the wire),
+// until the client sends `exit` or hangs up. It publishes `-check`'s findings
+// for a document whenever the editor opens or changes it, and formats one as
+// `-fmt` would. The exit code is the spec's: 0 for an `exit` after
+// `shutdown`, 1 for one without, and 2 for a stream that could not be framed.
+function run_lsp(s: Server): i32 {
+  let inp: lsp.Input = lsp.stdin_input();
+  while (true) {
+    let f: lsp.Frame = lsp.read_frame(inp);
+    inp = f.inp;
+    if (f.done) {
+      if (f.err.len() > 0) {
+        eprint("fern -lsp: " + f.err);
+        return 2;
+      }
+      return 0;
+    }
+    match (lsp.parse_message(f.body)) {
+      Some(m) => {
+        if (m.method == "exit") {
+          if (s.shutdown) {
+            return 0;
+          }
+          return 1;
+        }
+        s = lsp_handle(s, m);
+      },
+      None => {}
+    }
+  }
+  return 0;
+}
+
+// lsp_handle answers one message. A request for a method this server does
+// not implement is answered with the spec's error.
+function lsp_handle(s: Server, m: lsp.Message): Server {
+  if (m.id.len() == 0) {
+    return lsp_notification(s, m);
+  }
+  if (m.method == "initialize") {
+    lsp.send(lsp.response(m.id, lsp.initialize_result()));
+  } else if (m.method == "shutdown") {
+    s = Server { ...s, shutdown: true };
+    lsp.send(lsp.response(m.id, "null"));
+  } else if (m.method == "textDocument/formatting") {
+    lsp.send(lsp.response(m.id, lsp_formatting(s, lsp.document_uri(m.params))));
+  } else {
+    lsp.send(lsp.method_not_found(m.id, m.method));
+  }
+  return s;
+}
+
+// lsp_notification applies a notification: the editor opened, changed or
+// closed a document. Any other (`initialized`, `$/cancelRequest`, …) asks
+// nothing of this server.
+function lsp_notification(s: Server, m: lsp.Message): Server {
+  let uri: string = lsp.document_uri(m.params);
+  if (m.method == "textDocument/didOpen") {
+    return lsp_update(s, uri, lsp.get_string(lsp.get_value(m.params, "textDocument"), "text"));
+  }
+  if (m.method == "textDocument/didChange") {
+    match (lsp.changed_text(m.params)) {
+      Some(text) => {
+        return lsp_update(s, uri, text);
+      },
+      None => {}
+    }
+    return s;
+  }
+  if (m.method == "textDocument/didClose") {
+    return lsp_close(s, uri);
+  }
+  return s;
+}
+
+// lsp_update records a document's new text and publishes its diagnostics when
+// they differ from the last ones published for it. Text the server already
+// has — some editors resend it on focus — is no change at all.
+function lsp_update(s: Server, uri: string, src: string): Server {
+  let i: i32 = util.index_of_str(s.uris, uri);
+  if (i >= 0 && s.srcs[i] == src) {
+    return s;
+  }
+  if (i < 0) {
+    s = Server { ...s, uris: s.uris.append(uri), srcs: s.srcs.append(src), published: s.published.append("") };
+    i = s.uris.len() - 1;
+  } else {
+    s = Server { ...s, srcs: s.srcs.with(i, src) };
+  }
+  let ds: string = lsp.json_array(lsp_diagnostics(s, uri, src));
+  if (ds == s.published[i]) {
+    return s;
+  }
+  lsp.send(lsp.publish_diagnostics(uri, ds));
+  return Server { ...s, published: s.published.with(i, ds) };
+}
+
+// lsp_close forgets a document and clears its diagnostics, so the editor
+// keeps no stale ones for a file it is no longer showing.
+function lsp_close(s: Server, uri: string): Server {
+  let uris: string[] = [];
+  let srcs: string[] = [];
+  let published: string[] = [];
+  let i: i32 = 0;
+  while (i < s.uris.len()) {
+    if (s.uris[i] != uri) {
+      uris = uris.append(s.uris[i]);
+      srcs = srcs.append(s.srcs[i]);
+      published = published.append(s.published[i]);
+    }
+    i = i + 1;
+  }
+  lsp.send(lsp.publish_diagnostics(uri, "[]"));
+  return Server { ...s, uris: uris, srcs: srcs, published: published };
+}
+
+// lsp_diagnostics is `-check` on a document's text, as LSP diagnostics. A
+// file:// document is checked as the file it names, so its imports resolve
+// beside it; any other is checked as stdin is, against the working directory.
+// A finding in an imported module stays with that module, as native's
+// workspace mode keeps it; one with no position lands on the document.
+function lsp_diagnostics(s: Server, uri: string, src: string): string[] {
+  let path: string = lsp.uri_path(uri);
+  if (path.len() == 0) {
+    path = "-";
+  }
+  let c: Checked = check_source(path, src, s.root, s.target, s.target_given, s.embed_dir);
+  let out: string[] = [];
+  for f in c.findings {
+    if (f.diag.line < util.line_base(0)) {
+      out = out.append(lsp.diagnostic(src, f.diag.line, f.diag.col, f.diag.code, lsp_message(f.diag.message), f.warning));
+    }
+  }
+  return out;
+}
+
+// lsp_message is a finding's message as an editor shows it: a refusal is the
+// line `-check` prints, and its `fern: ` is the diagnostic's `source`.
+function lsp_message(msg: string): string {
+  if (msg.len() > 6 && slice_unchecked(msg, 0, 6) == "fern: ") {
+    return slice_unchecked(msg, 6, msg.len()) + "";
+  }
+  return msg;
+}
+
+// lsp_formatting is a formatting request's answer: one edit replacing the
+// document with what `-fmt` writes for it, or none when that is the text it
+// already has, or when the formatted text would fail `-fmt -w`'s safety net —
+// a format the editor applies is a write-back.
+function lsp_formatting(s: Server, uri: string): string {
+  let i: i32 = util.index_of_str(s.uris, uri);
+  if (i < 0) {
+    return "[]";
+  }
+  let src: string = s.srcs[i];
+  let formatted: string = format_source(src);
+  if (formatted == src || !fmt_output_is_readable(formatted)) {
+    return "[]";
+  }
+  return "[" + lsp.whole_document_edit(src, formatted) + "]";
+}
+
 // root_pkg is the entry's own package: its manifest's [package] name, or
 // `(root)` when nothing governs the program. It is never enforced or warned —
 // grants restrict DEPENDENCIES, and the program's author is trusting
@@ -2248,6 +2441,7 @@ function run(): i32 {
   let mode_doc: boolean = false;
   let mode_add: boolean = false;
   let mode_vendor: boolean = false;
+  let mode_lsp: boolean = false;
   // Every non-flag argument, in order. The compile modes read the first two
   // (entry, stdlib root); `-add` takes three of its own.
   let pos: string[] = [];
@@ -2325,6 +2519,8 @@ function run(): i32 {
       // Flatten the transitive dependency graph into <root>/vendor/.
       // Like -resolve it reads manifests, so it takes a directory.
       mode_vendor = true;
+    } else if (a == "-lsp") {
+      mode_lsp = true;
     } else if (a == "-resolve") {
       // Version resolution (MVS) over the manifest's [package] index,
       // writing fern.lock. It reads manifests, not sources, so it takes
@@ -2424,6 +2620,26 @@ function run(): i32 {
     return run_add(pos);
   }
 
+  if (!platforms.for_target(target).known) {
+    // One eprint, not one per name: eprint appends its own newline, so a
+    // loop of them prints the target list down the left margin.
+    let msg: string = "fern: unknown -target: " + target + " (want one of:";
+    let tn: string[] = platforms.targets();
+    let ti: i32 = 0;
+    while (ti < tn.len()) {
+      msg = msg + " " + tn[ti];
+      ti = ti + 1;
+    }
+    eprint(msg + ")");
+    return 2;
+  }
+
+  // `-lsp` checks the documents an editor sends, so its one positional is
+  // the stdlib root.
+  if (mode_lsp) {
+    return serve_lsp(pos, target, target_given, embed_dir);
+  }
+
   // `-check` and `-interp` with no path read the program from stdin, as
   // native's do. Every other mode wants a file: `-fmt` writes back over one,
   // and a compile names its output after one.
@@ -2442,19 +2658,6 @@ function run(): i32 {
     return check_dir(entry_path, root, target, target_given, embed_dir);
   }
 
-  if (!platforms.for_target(target).known) {
-    // One eprint, not one per name: eprint appends its own newline, so a
-    // loop of them prints the target list down the left margin.
-    let msg: string = "fern: unknown -target: " + target + " (want one of:";
-    let tn: string[] = platforms.targets();
-    let ti: i32 = 0;
-    while (ti < tn.len()) {
-      msg = msg + " " + tn[ti];
-      ti = ti + 1;
-    }
-    eprint(msg + ")");
-    return 2;
-  }
   if (cover_on && mode_interp) {
     eprint("fern: -cover instruments compiled code; -interp does not lower, so it has no coverage to report");
     return 2;
