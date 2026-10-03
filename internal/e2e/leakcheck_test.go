@@ -927,8 +927,8 @@ const ctorRetainedContainerReadSrc = `function main(): i32 {
     return s % 251;
 }`
 
-// Same retain through an ENUM payload rather than a tuple — the
-// EnumRcPayloads inc site, the fourth routing computeCtorAliasInced covers.
+// Same retain through an ENUM payload rather than a tuple — emitEnumNew's
+// inc site, the fourth routing computeCtorAliasInced covers.
 const ctorRetainedEnumPayloadSrc = `function main(): i32 {
     let s: i32 = 0;
     let k: i32 = 0;

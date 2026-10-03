@@ -307,12 +307,12 @@ func (b *builder) ownedByDefaultShape(t ast.Type) bool {
 func ownedByDefaultShapeIn(info *checker.Info, t ast.Type) bool {
 	switch ty := t.(type) {
 	case ast.EnumType:
-		// Boxes are rc-counted (enumRcPayloadsEligible). The layout need not
+		// Boxes are rc-counted (emitEnumNew). The layout need not
 		// be uniform: the exit sweep's tag switch frees each variant at its
 		// own size, and a consuming match knows its arm's variant
 		// statically (enumVariantBoxSize); only the TRMC cell free still
 		// wants one size and checks for it itself (trmcShapeConsumeSafe).
-		return enumRcPayloadsEligibleIn(info, ty.Name) && deepDropWired(info, t)
+		return deepDropWired(info, t)
 	case ast.StructType:
 		// A real StructDecl (runtime handles — Map / Reader / Writer / MapIter
 		// — have none and are rejected by typeDeepDropWired anyway); the box
@@ -367,40 +367,21 @@ func typeMemo(info *checker.Info, key string, compute func() bool) bool {
 	return v
 }
 
-// enumRcPayloadsEligible reports whether the Slice-1b EnumRcPayloads model
-// applies to enum `enumName`: payloads are retained at construction and the
-// deep drop releases them.
-func (b *builder) enumRcPayloadsEligible(enumName string) bool {
-	return enumRcPayloadsEligibleIn(b.info, enumName)
-}
-
-// enumRcPayloadsEligibleIn is enumRcPayloadsEligible for a pass that runs
-// before any builder exists (inferParamCountedRetain).
-func enumRcPayloadsEligibleIn(info *checker.Info, enumName string) bool {
-	return ast.EnumRcPayloads
-}
-
-// enumRcPayloadsEligibleForValue is the expression form: true when `e` is a
-// variant constructor (`Cons(..)`) or enum literal of an rc-eligible enum.
-func (b *builder) enumRcPayloadsEligibleForValue(e ast.Expr) bool {
-	var name string
+// isVariantConstruction reports whether `e` is a variant constructor
+// (`Cons(..)`) or an enum literal.
+func (b *builder) isVariantConstruction(e ast.Expr) bool {
 	switch x := e.(type) {
 	case *ast.Call:
 		id, ok := x.Callee.(*ast.Ident)
 		if !ok {
 			return false
 		}
-		en, _, _, isVar := b.lookupVariantOn(id.Name, id.EnumName)
-		if !isVar {
-			return false
-		}
-		name = en
+		_, _, _, isVar := b.lookupVariantOn(id.Name, id.EnumName)
+		return isVar
 	case *ast.EnumLit:
-		name = x.EnumName
-	default:
-		return false
+		return true
 	}
-	return b.enumRcPayloadsEligible(name)
+	return false
 }
 
 // enumNeedsDrop reports whether a concrete enum has a heap box worth

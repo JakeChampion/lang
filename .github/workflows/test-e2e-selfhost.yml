@@ -388,6 +388,7 @@ jobs:
         include:
           - { leg: wasm, test: TestFernFixturesSelfHostWasm, wasmtime: "true", job-minutes: 45, go-timeout: 43m }
           - { leg: x86-64, test: TestFernFixturesSelfHostX86_64, wasmtime: "false", job-minutes: 45, go-timeout: 43m }
+          - { leg: x86-64-quarantine, test: TestFernFixturesSelfHostX86_64Quarantine, wasmtime: "false", job-minutes: 45, go-timeout: 43m }
           - { leg: arm64, test: TestFernFixturesSelfHostArm64, wasmtime: "false", qemu: "true", job-minutes: 45, go-timeout: 43m }
     steps:
       - uses: actions/checkout@v7

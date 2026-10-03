@@ -48,8 +48,8 @@ pub struct TypeFloat { width: i32, polymorphic: boolean }
 // in inference contexts because it can't infer a concrete elem
 // type.
 // `view` marks a `[T]` window (a slice, a `[T]` binding or return). It is a
-// checker-only fact: the self-host copies a slice into an owned array, so every
-// lowering stage, `spelling` and semtypes.equal ignore it.
+// semantic distinction even while physical lowering copies array slices.
+// Exact identity preserves it; lending an owned array is an explicit operation.
 pub struct TypeArray { elem: Type, view: boolean }
 
 // TypeStruct references a user-declared struct by name. The

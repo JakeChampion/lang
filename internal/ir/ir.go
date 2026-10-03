@@ -6870,12 +6870,12 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 		if err := b.expr(a); err != nil {
 			return err
 		}
-		// Slice 1b (EnumRcPayloads): rc-count pointer payloads exactly like
+		// Rc-count pointer payloads exactly like
 		// StructLit fields — an aliased payload (`Cons(0, t)`, t live elsewhere)
 		// is inc'd so the box co-owns its reference, a moved last-use owned-local
 		// payload (b.rc.moveSites, markConstructionMoves' enum case) skips the inc.
 		// Consuming-match reuse stores moved-out bindings back, so it's excluded.
-		if b.enumRcPayloadsEligible(enumName) && !b.rc.consumingMatchReuse[callNode] &&
+		if !b.rc.consumingMatchReuse[callNode] &&
 			needsRcIncOnAlias(a, b) && !b.rc.moveSites[a] {
 			b.emitAliasInc(a)
 		}
@@ -6905,7 +6905,7 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 			if err := payloadIntoSlot(i); err != nil {
 				return err
 			}
-			if i < len(payloadTypes) && b.enumRcPayloadsEligible(enumName) {
+			if i < len(payloadTypes) {
 				b.pushOperandDrop(valSlots[i], payloadTypes[i])
 			}
 		}
@@ -18004,7 +18004,7 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 		if err := b.expr(a); err != nil {
 			return true, err
 		}
-		if b.enumRcPayloadsEligible(enumName) && !b.rc.consumingMatchReuse[call] &&
+		if !b.rc.consumingMatchReuse[call] &&
 			needsRcIncOnAlias(a, b) && !b.rc.moveSites[a] {
 			b.emitAliasInc(a)
 		}
@@ -19776,18 +19776,11 @@ func (b *builder) assign(n *ast.Assign) error {
 				} else {
 					release()
 				}
-			} else if !b.enumRcPayloadsEligibleForValue(n.Value) && b.constructionMovesIdent(n.Value, t.Name) {
-				// `x = Ctor(.., x, ..)` (e.g. `acc = Cons(1, acc)`): under the
-				// move model the old `x` is MOVED into the new box's payload —
-				// its ownership transferred without a retaining inc, so it must
-				// NOT be dropped here (the normal overwrite dec would push that
-				// payload to rc 0, which a later consuming-match free under-counts
-				// — its is_unique gate misses rc 0 and dec's to -1). No drop.
-				//
-				// Under EnumRcPayloads the payload is INC'd at construction, so
-				// the overwrite dec is REQUIRED to balance that inc — this skip
-				// is disabled there and the normal enum-overwrite drop below
-				// fires.
+			} else if !b.isVariantConstruction(n.Value) && b.constructionMovesIdent(n.Value, t.Name) {
+				// `x = (.., x, ..)` / `x = S { f: x }`: the old `x` is MOVED
+				// into the new container, so it must NOT be dropped here. A
+				// variant constructor INC's its payload instead, so the
+				// normal enum-overwrite drop below balances that inc.
 			} else if b.callConsumesIdent(n.Value, t.Name) {
 				// `s = f(.., s, ..)` where f takes s by `own`: s is MOVED into f,
 				// which deep-drops it at its own exit. Dropping it here too frees

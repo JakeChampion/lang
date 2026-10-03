@@ -75,7 +75,7 @@ function is_array_type(t: string): boolean {
 // is exact: any OTHER __fern_* / __rc_* call is NOT provided here, so
 // gate refuses the module rather than emitting a call with no body.
 pub function is_fern_helper(name: string): boolean {
-  return is_rc_helper(name)
+  return name == "__fern_oob_abort" || is_rc_helper(name)
     || is_release_helper(name)
     || is_map_release_helper(name)
     || is_boxed_key_map_release_helper(name)
@@ -328,6 +328,9 @@ pub function is_c_call(name: string): boolean {
 // maps to __fn___fern_arr_dec — the array release that frees at rc==1 via the
 // size-class freelist.
 pub function ir_helper_symbol(name: string): string {
+  if (name == "__fern_oob_abort") {
+    return "__fern_oob_abort";
+  }
   if (name == "__fern_rc_inc") {
     return "__fn___fern_rc_inc";
   }
@@ -1199,7 +1202,11 @@ pub function unit_cache_key(parts: flatten.PerModule[], u: Units, k: UnitKeys, i
   if (key.len() == 0) {
     return "";
   }
-  return key + "|ir" + lowered_digest(u.caches[idx]) + ":" + k.view;
+  // Runtime layouts can change without changing a unit's source or lowered
+  // operations. Old native slice bodies create immortal descriptors; they
+  // must not be reused with callers that depend on counted view descriptors.
+  // Literal alignment also changes the relative offsets in cached wasm units.
+  return key + "|ir" + lowered_digest(u.caches[idx]) + ":" + k.view + "|runtime=counted-string-views-1,wasm-string-align4-1,tagged-byte-views-1";
 }
 
 // struct_table_text spells every struct decl in table order, with each part

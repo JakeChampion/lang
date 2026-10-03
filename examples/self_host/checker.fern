@@ -3003,7 +3003,7 @@ function (s: Scope) has_array_method(field: string, view: boolean): boolean {
 function (s: Scope) array_method_ret_type(recv_ty: typeinfo.Type, field: string): typeinfo.Type {
   match (recv_ty) {
     typeinfo.TypeArray(array) => {
-      if (field == "append" || field == "with") {
+      if (!array.view && (field == "append" || field == "with")) {
         return recv_ty;
       }
       // `xs.len()` — the method spelling of the `len(xs)` builtin. It
@@ -3683,12 +3683,28 @@ function push_str_unique_sorted(xs: string[], v: string): string[] {
 function (s: Scope) unknown_method_message(ns: string, method: string, label: string, recv: typeinfo.Type): string {
   let base: string = "no method \"" + method + "\" on " + label;
   let repl: string = retired_collection_spelling(ns, method);
+  let view: boolean = false;
+  if let typeinfo.TypeArray(a) = recv {
+    view = a.view;
+  }
+  if (view) {
+    repl = "";
+  }
   if (repl.len() > 0) {
     return base + " — the in-place spelling was removed; use \"" + repl
       + "\", which returns the updated " + ns + " (assign the result back)";
   }
   let exact: boolean = s.namespace_is_exact(ns);
   let names: string[] = s.methods_in_namespace(ns);
+  if (view) {
+    exact = true;
+    names = ["len"];
+    for candidate in s.methods.methods {
+      if (parser.spelling_is_view(candidate.receiver_type)) {
+        names = push_str_unique_sorted(names, candidate.name);
+      }
+    }
+  }
   if (exact) {
     let did: string = util.suggest(method, names);
     if (did.len() > 0) {
@@ -3882,6 +3898,11 @@ function dyn_conforms(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean
   }
   if let typeinfo.TypeErased(_) = from {
     return true;
+  }
+  // No array implements a trait (native refuses the impl, E021), and its base
+  // name is its element's, which may.
+  if (is_owned_array(from) || is_arr_view(from)) {
+    return false;
   }
   let tn: string = util.base_type_name(type_label(from));
   if (tn.len() == 0) {
@@ -13028,14 +13049,14 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // per-argument mismatch. An unknown element type
           // (uninferred receiver) or unknown arg is skipped. Both store the
           // element, so a `str` view is not lent here: native's storesArgument.
-          if (mfa.field == "append" && c.args.len() == 1 && !is_unknown(ar.elem)) {
+          if (!ar.view && mfa.field == "append" && c.args.len() == 1 && !is_unknown(ar.elem)) {
             let aat: typeinfo.Type = check_expr(c.args[0], s);
             out = util.append_diags(out, int_dest_range_diags(c.args[0], ar.elem));
             if (!is_unknown(aat) && !settles_to(c.args[0], ar.elem, s) && !coercible(aat, ar.elem, s)) {
               out = out.append(dg_at("E038", "argument 1 to \"append\": expected " + type_label(ar.elem) + ", got " + type_label(aat) + str_copy_hint(aat, ar.elem), expr_line(c.args[0]), expr_col(c.args[0])));
             }
           }
-          if (mfa.field == "with" && c.args.len() == 2 && !is_unknown(ar.elem)) {
+          if (!ar.view && mfa.field == "with" && c.args.len() == 2 && !is_unknown(ar.elem)) {
             let wvt: typeinfo.Type = check_expr(c.args[1], s);
             out = util.append_diags(out, int_dest_range_diags(c.args[1], ar.elem));
             if (!is_unknown(wvt) && !settles_to(c.args[1], ar.elem, s) && !coercible(wvt, ar.elem, s)) {
@@ -13075,10 +13096,10 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if (mfa.field == "len") {
             abw = 0;
           }
-          if (mfa.field == "append") {
+          if (!ar.view && mfa.field == "append") {
             abw = 1;
           }
-          if (mfa.field == "with") {
+          if (!ar.view && mfa.field == "with") {
             abw = 2;
           }
           if (abw >= 0 && c.args.len() != abw) {
@@ -14002,8 +14023,8 @@ function e055_diag(e: ast.Expr, s: Scope): util.Diag[] {
             typeinfo.TypeMap(_) => {
               is_coll = true;
             },
-            typeinfo.TypeArray(_) => {
-              is_coll = true;
+            typeinfo.TypeArray(array) => {
+              is_coll = !array.view;
             },
             _ => {}
           }
@@ -14122,7 +14143,8 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
       return field != "len" && field != "as_bytes" && s.lookup_method(field, "string").name.len() == 0;
     },
     typeinfo.TypeArray(array) => {
-      return field != "append" && field != "with" && field != "len" && !s.has_array_method(field, array.view);
+      let builtin: boolean = field == "len" || !array.view && (field == "append" || field == "with");
+      return !builtin && !s.has_array_method(field, array.view);
     },
     typeinfo.TypeMap(_) => {
       return !util.has_str(s.methods_in_namespace("Map"), field);
@@ -15558,8 +15580,9 @@ pub struct OwnFunc { name: string, flags: boolean[], arr: boolean[] }
 // OwnFuncs is the module's own-taking free functions with a name index over
 // them, one entry per row in order, beside the module's declared type names:
 // `structs` holds every struct name and every enum that owns one, `decls` the
-// enum and union-alias names only a whole module carries.
-pub struct OwnFuncs { rows: OwnFunc[], names: util.NameIndex, structs: util.NameIndex, decls: util.NameIndex }
+// enum and union-alias names only a whole module carries, and `ctors` every
+// declared struct or variant, a call to which is a fresh construction.
+pub struct OwnFuncs { rows: OwnFunc[], names: util.NameIndex, structs: util.NameIndex, decls: util.NameIndex, ctors: util.NameIndex }
 
 struct MovedEntry { mname: string, mline: i32 }
 
@@ -15745,17 +15768,6 @@ function ow_variant_known(structs: parser.StructDecl[], name: string, owner: str
   return false;
 }
 
-// ow_struct_known reports whether `name` is a declared struct/variant — a
-// call to one is a fresh (owned) construction.
-function ow_struct_known(structs: parser.StructDecl[], name: string): boolean {
-  for sd in structs {
-    if (sd.name == name) {
-      return true;
-    }
-  }
-  return false;
-}
-
 // ow_is_owned_expr: a value the caller owns and may transfer into an `own`
 // parameter — a fresh construction (struct/tuple/array literal, string
 // concat), another owned parameter, a variant-constructor call, or a local at
@@ -15786,10 +15798,7 @@ function ow_scalar_literal(e: ast.Expr): boolean {
 function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
   if let ast.ExprCall(c) = e {
     if let ast.ExprIdent(cid) = c.callee {
-      if (ow_struct_known(ctx.structs, cid.name)) {
-        return true;
-      }
-      if (ow_variant_known(ctx.structs, cid.name, "")) {
+      if (ctx.ofuncs.ctors.has(cid.name)) {
         return true;
       }
       return util.has_str(ctx.fresh_scrut, cid.name);
@@ -15840,7 +15849,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
     ast.ExprCall(c) => {
       match (c.callee) {
         ast.ExprIdent(cid) => {
-          return ow_struct_known(ctx.structs, cid.name) || util.has_str(ctx.fresh, cid.name);
+          return ctx.ofuncs.ctors.has(cid.name) || util.has_str(ctx.fresh, cid.name);
         },
         ast.ExprFieldAccess(mfa) => {
           // A method is reached through its SPELLING here, because the
@@ -17218,8 +17227,10 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
     }
   }
   let structs: string[] = [];
+  let ctors: string[] = [];
   for sd in mod.structs {
     structs = structs.append(sd.name);
+    ctors = ctors.append(sd.name);
     if (sd.enum_owner.len() > 0) {
       structs = structs.append(sd.enum_owner);
     }
@@ -17231,7 +17242,7 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
   for alias in mod.aliases {
     decls = decls.append(alias.name);
   }
-  return OwnFuncs { rows: out, names: util.name_index(names), structs: util.name_index(structs), decls: util.name_index(decls) };
+  return OwnFuncs { rows: out, names: util.name_index(names), structs: util.name_index(structs), decls: util.name_index(decls), ctors: util.name_index(ctors) };
 }
 
 // ow_type_is_pointer reports whether a declared type SPELLING is
@@ -17315,12 +17326,9 @@ function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: Own
 // function answers from `borrows`; a builtin from the fresh list below. A
 // method is reached through a receiver this walk does not resolve, so it is
 // assumed to be able to.
-function ow_call_may_borrow(c: ast.ExprCall, mod: parser.Module, borrows: util.NameIndex, builtins: util.NameIndex): boolean {
+function ow_call_may_borrow(c: ast.ExprCall, ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   if let ast.ExprIdent(cid) = c.callee {
-    if (ow_struct_known(mod.structs, cid.name)) {
-      return false;
-    }
-    if (ow_variant_known(mod.structs, cid.name, "")) {
+    if (ofuncs.ctors.has(cid.name)) {
       return false;
     }
     if (builtins.has(cid.name)) {
@@ -17334,7 +17342,7 @@ function ow_call_may_borrow(c: ast.ExprCall, mod: parser.Module, borrows: util.N
 // ow_expr_borrows reports whether `e` can alias one of `borrowed`.
 // Pessimistic by construction: a shape that is not a construction and not a
 // path this walk follows is assumed to be able to.
-function ow_expr_borrows(e: ast.Expr, mod: parser.Module, borrowed: string[], locals: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
+function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], locals: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   match (e) {
     ast.ExprNumber(_) => {
       return false;
@@ -17379,20 +17387,20 @@ function ow_expr_borrows(e: ast.Expr, mod: parser.Module, borrowed: string[], lo
       return util.has_str(borrowed, id.name) || util.has_str(locals, id.name);
     },
     ast.ExprFieldAccess(fa) => {
-      return ow_expr_borrows(fa.obj, mod, borrowed, locals, borrows, builtins);
+      return ow_expr_borrows(fa.obj, ofuncs, borrowed, locals, borrows, builtins);
     },
     ast.ExprIndex(ix) => {
-      return ow_expr_borrows(ix.array, mod, borrowed, locals, borrows, builtins);
+      return ow_expr_borrows(ix.array, ofuncs, borrowed, locals, borrows, builtins);
     },
     ast.ExprSlice(sl) => {
-      return ow_expr_borrows(sl.array, mod, borrowed, locals, borrows, builtins);
+      return ow_expr_borrows(sl.array, ofuncs, borrowed, locals, borrows, builtins);
     },
     ast.ExprCall(c) => {
-      if (!ow_call_may_borrow(c, mod, borrows, builtins)) {
+      if (!ow_call_may_borrow(c, ofuncs, borrows, builtins)) {
         return false;
       }
       for a in c.args {
-        if (ow_expr_borrows(a, mod, borrowed, locals, borrows, builtins)) {
+        if (ow_expr_borrows(a, ofuncs, borrowed, locals, borrows, builtins)) {
           return true;
         }
       }
@@ -17404,7 +17412,7 @@ function ow_expr_borrows(e: ast.Expr, mod: parser.Module, borrowed: string[], lo
 // ow_borrowed_locals names the locals that can hold a borrow of one of
 // `borrowed`. Settled to a fixed point rather than read once, so a value that
 // only becomes a borrow on a loop's second iteration is still seen.
-function ow_borrowed_locals(spine: ast.Stmt[], mod: parser.Module, borrowed: string[], borrows: util.NameIndex, builtins: util.NameIndex): string[] {
+function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], borrows: util.NameIndex, builtins: util.NameIndex): string[] {
   let locals: string[] = [];
   let changed: boolean = true;
   while (changed) {
@@ -17423,7 +17431,7 @@ function ow_borrowed_locals(spine: ast.Stmt[], mod: parser.Module, borrowed: str
       if (name.len() == 0 || util.has_str(locals, name)) {
         continue;
       }
-      if (ow_expr_borrows(init, mod, borrowed, locals, borrows, builtins)) {
+      if (ow_expr_borrows(init, ofuncs, borrowed, locals, borrows, builtins)) {
         locals = locals.append(name);
         changed = true;
       }
@@ -17440,10 +17448,10 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
     return false;
   }
   let spine: ast.Stmt[] = ow_spine_stmts(fn.body);
-  let locals: string[] = ow_borrowed_locals(spine, mod, borrowed, borrows, builtins);
+  let locals: string[] = ow_borrowed_locals(spine, ofuncs, borrowed, borrows, builtins);
   for st in spine {
     if let ast.StmtReturn(r) = st {
-      if (ow_expr_borrows(r.value, mod, borrowed, locals, borrows, builtins)) {
+      if (ow_expr_borrows(r.value, ofuncs, borrowed, locals, borrows, builtins)) {
         return true;
       }
     }
@@ -19878,6 +19886,13 @@ function e021_has_impl(mod: parser.Module, trait_name: string, impl_type: string
 function e021_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   for im in mod.impls {
+    // An array, owned or a view, has no receiver name a trait's methods could
+    // hang on, as native's methodTypeName has none.
+    let ir: parser.TypeRef = parser.parse_type_ref(im.impl_type);
+    if (im.trait_name != "" && (ir.array_depth > 0 || ir.is_view)) {
+      out = out.append(dg("E021", "`impl … for " + im.impl_type + "`: type must be a struct, enum, or built-in type"));
+      continue;
+    }
     for trait_req in mod.trait_reqs {
       if (trait_req.trait_name == im.trait_name && trait_req.module == im.trait_module) {
         // Supertrait conformance: `impl B for T` where `trait B: A`
