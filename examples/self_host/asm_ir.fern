@@ -7770,6 +7770,9 @@ function sym_addr_need(sym: string): string {
   if (sym == "__fern_splice_pipe") {
     return "raw_splice_pipe";
   }
+  if (sym == "__fern_cov_counters") {
+    return "raw_cover";
+  }
   return "";
 }
 
@@ -11609,6 +11612,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.any_need(["reader_splice", "raw_splice_pipe"])) {
     s = s.write("    .section .bss\n    .align 8\n__fern_splice_pipe: .quad 0, 0\n    .text\n");
+  }
+  if (s.has_need("raw_cover")) {
+    s = s.write("    .section .bss\n    .align 8\n__fern_cov_counters: .quad 0\n    .text\n");
   }
   // The stdout/stderr leaves (#2649) — plain write(2) calls, allocation-free, so
   // they sit with the clocks rather than in the heap runtime: a program that only

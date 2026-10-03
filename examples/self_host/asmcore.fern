@@ -7119,6 +7119,8 @@ function builtin_i32_names(): string[] {
     "__raw_environ",
     // The splice helper's pipe word, its fds kept between calls.
     "__raw_splice_pipe",
+    // The word holding the `-cover` counter table's address.
+    "__raw_cover",
     // Fixed static scratch buffer for syscall leaves (timespec /
     // stat) — reused, never freed. Returns the buffer ptr as i32.
     "__raw_scratch",

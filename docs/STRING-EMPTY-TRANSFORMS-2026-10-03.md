@@ -93,3 +93,14 @@ Its actual Darwin/core-WASM transform probes remain balanced and both
 overflow guards pass. The original size table continues to isolate this
 runtime fix; later compiler sizes include upstream changes. Current-head CI
 and review remain merge requirements.
+
+The PR branch then advanced externally to `b6fa32476`, adding newer compiler
+coverage and SSA changes. The combined tree preserves those changes and
+passes the transform matrix (73.298 seconds), timezone matrix (22.376
+seconds), every lint gate and Darwin regression (39.501 seconds). A fresh
+bootstrap takes 36, 29 and 15 seconds; stages 2 and 3 match at 12,861,377
+bytes, SHA-256
+`44f78472a119fc30239f5d6babf96fc54cbfe2d83cb1d3836e7045dfc510fb89`.
+Actual transform alias/value probes remain balanced and both overflow guards
+pass. The full integrated unit and target suite is pending CI on this newer
+base; the preceding full local pass applies to `d46426a01` integration.

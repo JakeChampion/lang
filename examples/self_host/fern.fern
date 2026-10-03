@@ -82,6 +82,7 @@ import "./elf";
 import "./ircore";
 import "./emitforms";
 import "./semlower";
+import "./cover";
 
 // blank_line_map marks the 1-based source lines that hold nothing but
 // whitespace, indexed by line number so the formatter can ask about one in
@@ -2272,6 +2273,15 @@ function run(): i32 {
   // compiler — that runs on every build.
   let optimize: boolean = false;
   let emit_syms: boolean = false;
+  // `-cover` (or FERN_COVER=1) instruments the program with line and branch
+  // counters it reports to stderr at exit (cover.fern).
+  let cover_on: boolean = false;
+  match (env("FERN_COVER")) {
+    Some(v) => {
+      cover_on = v == "1";
+    },
+    None => {}
+  }
   let have_entry: boolean = false;
   // Whether -target was given, as distinct from the default above. It only
   // matters to `-check`: native type-checks against a capability set only
@@ -2298,6 +2308,8 @@ function run(): i32 {
         return usage();
       }
       backend = av[i];
+    } else if (a == "-cover") {
+      cover_on = true;
     } else if (a == "-g") {
       // Emit a static .symtab into the native binary (#6637). x86-64
       // Linux only for now: arm64 links through arm64_gas_link's W^X
@@ -2450,6 +2462,14 @@ function run(): i32 {
       ti = ti + 1;
     }
     eprint(msg + ")");
+    return 2;
+  }
+  if (cover_on && mode_interp) {
+    eprint("fern: -cover instruments compiled code; -interp does not lower, so it has no coverage to report");
+    return 2;
+  }
+  if (cover_on && !mode_check && target != "x86-64-linux" && target != "arm64-linux") {
+    eprint("fern: -cover: -target " + target + " has no coverage instrumentation — build for x86-64-linux or arm64-linux, or drop -cover");
     return 2;
   }
   if (emit.len() > 0 && emit != "asm" && emit != "core-module") {
@@ -2691,6 +2711,13 @@ function run(): i32 {
   // the runtime error intact — so it changes only the shape of the emitted
   // code, which is why it needs no flag.
   merged = constfold.fold_module(merged);
+
+  // After every gate, so diagnostics and the capability checks see the
+  // program as written; before the shake, so a function nothing calls keeps
+  // its counters and reports 0.
+  if (cover_on) {
+    merged = cover.instrument(merged, b.files, entry_path);
+  }
 
   // typed-IR (#5531): stamp each call expression with its checker-inferred
   // result type so the IR lowering READS the type instead of re-deriving it

@@ -1331,7 +1331,8 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     }
     oi = oi + 1;
   }
-  return assign_spill_slots(lo, hi, def_pos, reg_of, slot_hints(f, at, blk_start, def_blk, def_pos, reg_of, mates));
+  let shape: SlotShape = SlotShape { at: at, blk_start: blk_start, def_blk: def_blk, def_pos: def_pos, def_a: def_a, def_b: def_b };
+  return assign_spill_slots(f, shape, lo, hi, reg_of, slot_hints(f, at, blk_start, def_blk, def_pos, reg_of, mates));
 }
 
 // A spilled value keeps its phi mate's hint for a slot, a loop-carried one
@@ -1707,21 +1708,38 @@ function index_of_reg(a: i32[], x: i32): i32 {
 // stored on entry, so it is live from position 0. A value takes the slot of
 // `hints.hint[v]`, its phi mate, before any other: when the slot is free, or
 // when the mate still holds it and `hints.take_over[v]` says the two were
-// found not to interfere. The edge between them then moves nothing. A value
-// with no such slot passes over a free one whose last holder is the mate of a
-// value not placed yet: a block's phis start one after another, but every
-// operand arriving from before them dies at the edge, so the first phi would
-// otherwise take the slot a later one wants.
-function assign_spill_slots(lo: i32[], hi: i32[], def_pos: i32[], reg_of: i32[], hints: SlotHints): i32[] {
+// found not to interfere. The edge between them then moves nothing. Failing
+// that it takes the slot of one of the values it reads (a phi's operands, or
+// the operands a two-address op computes over) when no value in that slot is
+// live where it is defined, nor it where they are (path_slot), although their
+// intervals meet: an else-if chain inside a loop merges each arm's value with
+// the loop header's phi, whose interval covers the whole body when it is read
+// after the loop. A value with no such slot passes over a free one whose last
+// holder is the mate of a value not placed yet: a block's phis start one after
+// another, but every operand arriving from before them dies at the edge, so
+// the first phi would otherwise take the slot a later one wants.
+function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], reg_of: i32[], hints: SlotHints): i32[] {
+  let def_pos: i32[] = shape.def_pos;
   let from: i32[] = spill_starts(lo, def_pos);
   let wanted_by: i32[] = mates_wanted(hi, reg_of, hints.hint);
   let slot_end: i32[] = [];
   let holder: i32[] = [];
+  let occupants: i32[][] = [];
+  let sites: ReadSites = ReadSites { start: [], blk: [], pos: [], succ: [] };
+  let built: boolean = false;
   for v in order_by_lo(reg_of.len(), from) {
     if (hi[v] < 0 || reg_of[v] >= 0) {
       continue;
     }
     let s: i32 = hinted_slot(slot_end, holder, reg_of, hints.hint[v], from[v], hints.take_over[v]);
+    if (s < 0 && def_pos[v] >= 0) {
+      let reads: i32[] = slot_operands(f, shape, reg_of, v);
+      if (reads.len() > 0 && !built) {
+        sites = read_sites(f, shape.at, shape.blk_start);
+        built = true;
+      }
+      s = path_slot(sites, shape, reads, slot_end, holder, occupants, wanted_by, reg_of, hi, from[v], v);
+    }
     if (s < 0) {
       s = free_slot(slot_end, holder, wanted_by, reg_of, from[v], v);
     }
@@ -1732,13 +1750,211 @@ function assign_spill_slots(lo: i32[], hi: i32[], def_pos: i32[], reg_of: i32[],
     if (s == slot_end.len()) {
       slot_end = slot_end.append(end);
       holder = holder.append(v);
+      occupants = occupants.append([v]);
     } else {
       slot_end = slot_end.with(s, end);
       holder = holder.with(s, v);
+      occupants = occupants.with(s, still_in(occupants[s], hi, from[v]).append(v));
     }
     reg_of = reg_of.with(v, spill_code(s));
   }
   return reg_of;
+}
+
+// SlotShape is what slot sharing reads of a function's numbering.
+struct SlotShape { at: i32[], blk_start: i32[], def_blk: i32[], def_pos: i32[], def_a: i32[], def_b: i32[] }
+
+// slot_operands lists the spilled values v reads whose slot it could share:
+// a phi's operands, or the two a two-address op computes over.
+function slot_operands(f: SFunc, shape: SlotShape, reg_of: i32[], v: i32): i32[] {
+  let out: i32[] = [];
+  let bi: i32 = shape.def_blk[v];
+  let ins: SInst = f.blocks[bi].insts[shape.def_pos[v] - shape.blk_start[bi]];
+  let cands: i32[] = [shape.def_a[v], shape.def_b[v]];
+  if (ins.kind_tag == 8) {
+    cands = ins.args;
+  }
+  for c in cands {
+    if (c >= 0 && reg_of[c] < 0 - 1) {
+      out = out.append(c);
+    }
+  }
+  return out;
+}
+
+// path_slot is the slot of the first of `reads` whose occupants still live at
+// `from` are none of them live where v is defined, nor v where they are, and
+// which, when free, no other value's phi mate is keeping; -1 when there is
+// none.
+function path_slot(sites: ReadSites, shape: SlotShape, reads: i32[], slot_end: i32[], holder: i32[], occupants: i32[][], wanted_by: i32[], reg_of: i32[], hi: i32[], from: i32, v: i32): i32 {
+  for c in reads {
+    let cs: i32 = spill_slot(reg_of[c]);
+    let ok: boolean = true;
+    for w in occupants[cs] {
+      if (ok && hi[w] >= from && (live_at_def(sites, w, v, shape.def_blk, shape.def_pos) || shape.def_pos[w] >= 0 && live_at_def(sites, v, w, shape.def_blk, shape.def_pos))) {
+        ok = false;
+      }
+    }
+    if (ok && (slot_end[cs] >= from || !kept_for_mate(wanted_by, reg_of, holder[cs], v))) {
+      return cs;
+    }
+  }
+  return 0 - 1;
+}
+
+// still_in keeps the occupants whose intervals reach `from`.
+function still_in(occ: i32[], hi: i32[], from: i32): i32[] {
+  let out: i32[] = [];
+  for w in occ {
+    if (hi[w] >= from) {
+      out = out.append(w);
+    }
+  }
+  return out;
+}
+
+// ReadSites lists where each value is read, as the block position and the
+// instruction position of each read: a terminator reads at the position after
+// its block's last instruction, and a phi reads its operand there in the
+// predecessor it arrives from. Value v's reads are entries start[v] up to
+// start[v + 1]. `succ` lists each block's successor positions.
+struct ReadSites { start: i32[], blk: i32[], pos: i32[], succ: i32[][] }
+
+function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
+  let count: i32[] = zeros(f.nvals + 1);
+  let succ: i32[][] = [];
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    succ = succ.append(successor_positions(f, at, bi));
+    bi = bi + 1;
+  }
+  let pass: i32 = 0;
+  let start: i32[] = [];
+  let blk: i32[] = [];
+  let pos: i32[] = [];
+  while (pass < 2) {
+    let fill: i32[] = start;
+    bi = 0;
+    while (bi < f.blocks.len()) {
+      let b: SBlock = f.blocks[bi];
+      let k: i32 = 0;
+      while (k < b.insts.len()) {
+        let ins: SInst = b.insts[k];
+        let sl: i32 = 0;
+        while (sl < ins.args.len()) {
+          let a: i32 = ins.args[sl];
+          let rb: i32 = bi;
+          let rp: i32 = blk_start[bi] + k;
+          if (ins.kind_tag == 8) {
+            rb = 0 - 1;
+            if (sl < b.preds.len()) {
+              rb = position_of(at, b.preds[sl]);
+            }
+            if (rb >= 0) {
+              rp = blk_start[rb] + f.blocks[rb].insts.len();
+            }
+          }
+          if (a >= 0 && a < f.nvals && rb >= 0) {
+            if (pass == 0) {
+              count = count.with(a + 1, count[a + 1] + 1);
+            } else {
+              blk = blk.with(fill[a], rb);
+              pos = pos.with(fill[a], rp);
+              fill = fill.with(a, fill[a] + 1);
+            }
+          }
+          sl = sl + 1;
+        }
+        k = k + 1;
+      }
+      let tv: i32 = 0 - 1;
+      if (b.term.kind_tag == 1) {
+        tv = b.term.value;
+      }
+      if (b.term.kind_tag == 3) {
+        tv = b.term.cond;
+      }
+      if (tv >= 0 && tv < f.nvals) {
+        if (pass == 0) {
+          count = count.with(tv + 1, count[tv + 1] + 1);
+        } else {
+          blk = blk.with(fill[tv], bi);
+          pos = pos.with(fill[tv], blk_start[bi] + b.insts.len());
+          fill = fill.with(tv, fill[tv] + 1);
+        }
+      }
+      bi = bi + 1;
+    }
+    if (pass == 0) {
+      let v: i32 = 1;
+      while (v < count.len()) {
+        count = count.with(v, count[v] + count[v - 1]);
+        v = v + 1;
+      }
+      start = count;
+      blk = zeros(count[f.nvals]);
+      pos = zeros(count[f.nvals]);
+    }
+    pass = pass + 1;
+  }
+  return ReadSites { start: start, blk: blk, pos: pos, succ: succ };
+}
+
+// live_at_def says r is live where a is defined: some read of r is reachable
+// from there without passing r's definition. The read at a's own definition
+// comes before the write and does not count; one in a's block after it does,
+// unless r is defined between. A value with no definition, a parameter, is
+// defined before every block.
+function live_at_def(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i32[]): boolean {
+  let ab: i32 = def_blk[a];
+  if (r < 0 || ab < 0) {
+    return true;
+  }
+  let rb: i32 = def_blk[r];
+  if (rb == ab && def_pos[r] > def_pos[a]) {
+    return false;
+  }
+  let first: i32 = sites.start[r];
+  let last: i32 = sites.start[r + 1];
+  let far: boolean = false;
+  let i: i32 = first;
+  while (i < last) {
+    if (sites.blk[i] == ab && sites.pos[i] > def_pos[a]) {
+      return true;
+    }
+    far = far || sites.blk[i] != ab || rb != ab;
+    i = i + 1;
+  }
+  if (!far) {
+    return false;
+  }
+  let seen: boolean[] = [];
+  i = 0;
+  while (i < sites.succ.len()) {
+    seen = seen.append(false);
+    i = i + 1;
+  }
+  let work: i32[] = sites.succ[ab];
+  let next: i32 = 0;
+  while (next < work.len()) {
+    let b: i32 = work[next];
+    next = next + 1;
+    if (b < 0 || b == rb || seen[b]) {
+      continue;
+    }
+    seen = seen.with(b, true);
+    i = first;
+    while (i < last) {
+      if (sites.blk[i] == b) {
+        return true;
+      }
+      i = i + 1;
+    }
+    for s in sites.succ[b] {
+      work = work.append(s);
+    }
+  }
+  return false;
 }
 
 function spill_starts(lo: i32[], def_pos: i32[]): i32[] {

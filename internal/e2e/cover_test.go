@@ -11,25 +11,20 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
-	"github.com/jakechampion/lang/internal/checker"
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // --- Line coverage, `fern -cover` (#5548) ------------------------------
 //
-// ast.CoverEnabled instruments every executable source line with a counter
-// and dumps the whole table to stderr at BOTH exit seams (the _start
-// epilogue and the exit() builtin's __fern_exit):
+// The self-host's `-cover` (examples/self_host/cover.fern) instruments every
+// executable source line with a counter and dumps the whole table to stderr
+// at BOTH exit seams (main's return and each exit() call):
 //
 //	fern-cover: <file>:<line> <count>
 //
 // The distinction these pin is the one the feature exists for: a line the
 // run never reached reports 0 while a line it reached reports its hit
-// count, on both natives, with the program's own stdout and exit code
+// count, on x86-64 and arm64, with the program's own stdout and exit code
 // untouched. A report that said 0 everywhere, or omitted the zeros
 // entirely, would look like a working coverage tool and measure nothing.
 
@@ -54,63 +49,49 @@ function main(): i32 {
 }
 `
 
-// emitCover compiles src with ast.CoverEnabled toggled per the flag,
-// returning the asm text and the entry file's path (the coverage report
-// names it, so a test that asserts on lines has to know it).
-func emitCover(t *testing.T, backend, src string, cover bool) (string, string) {
+// coverCompile runs the self-host CLI on src for target with -cover when
+// `cover` says so, adding `args`, and returns the entry file's path (the
+// coverage report names it, so a test that asserts on lines has to know it).
+func coverCompile(t *testing.T, target, src string, cover bool, out string, args ...string) string {
 	t.Helper()
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
+	srcPath := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
+	argv := []string{"-target", target}
+	if cover {
+		argv = append(argv, "-cover")
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
+	argv = append(append(argv, args...), "-o", out, srcPath, e2eharness.SelfHostStdlibRoot(t))
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), argv...)
+	cmd.Env = e2eharness.ChildEnv()
+	if msg, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("self-host %v: %v\n%s", argv, err, msg)
 	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	prev := ast.CoverEnabled
-	t.Cleanup(func() { ast.CoverEnabled = prev })
-	ast.CoverEnabled = cover
-	var asm string
-	var emitErr error
-	if backend == "arm64-linux" {
-		asm, emitErr = arm64codegen.Emit(prog, info)
-	} else {
-		asm, emitErr = x86_64.Emit(prog, info)
-	}
-	ast.CoverEnabled = prev
-	if emitErr != nil {
-		t.Fatalf("%s emit: %v", backend, emitErr)
-	}
-	return asm, srcPath
+	return srcPath
 }
 
-// runCoverX86_64 compiles src flag-on and runs it, returning stdout,
+// emitCover returns src's assembly for target, with -cover per the flag, and
+// the entry file's path.
+func emitCover(t *testing.T, target, src string, cover bool) (string, string) {
+	t.Helper()
+	asmPath := filepath.Join(t.TempDir(), "prog.s")
+	srcPath := coverCompile(t, target, src, cover, asmPath, "-emit", "asm")
+	asm, err := os.ReadFile(asmPath)
+	if err != nil {
+		t.Fatalf("read asm: %v", err)
+	}
+	return string(asm), srcPath
+}
+
+// runCoverX86_64 compiles src with -cover and runs it, returning stdout,
 // stderr, the exit code, and the entry path. The report contract is
 // "stderr only, stdout untouched", so combined output won't do.
 func runCoverX86_64(t *testing.T, src string) (string, string, int, string) {
 	t.Helper()
-	gcc, runner := x86_64Tooling(t)
-	asm, srcPath := emitCover(t, "x86_64", src, true)
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
+	_, runner := x86_64Tooling(t)
+	binPath := filepath.Join(t.TempDir(), "prog")
+	srcPath := coverCompile(t, e2eharness.TargetX86_64Linux, src, true, binPath)
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
 		cmd = exec.Command(binPath)
@@ -125,17 +106,9 @@ func runCoverX86_64(t *testing.T, src string) (string, string, int, string) {
 // toolchain — runs in CI).
 func runCoverArm64(t *testing.T, src string) (string, string, int, string) {
 	t.Helper()
-	gcc, qemu := arm64Tooling(t)
-	asm, srcPath := emitCover(t, "arm64-linux", src, true)
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
+	_, qemu := arm64Tooling(t)
+	binPath := filepath.Join(t.TempDir(), "prog")
+	srcPath := coverCompile(t, e2eharness.TargetArm64Linux, src, true, binPath)
 	stdout, stderr, code := runSplit(t, runArm64Bin(qemu, binPath))
 	return stdout, stderr, code, srcPath
 }
@@ -174,7 +147,7 @@ func parseCoverLines(t *testing.T, stderr, srcPath string) map[int]uint64 {
 	return hits
 }
 
-// assertCoverReport is the shared body of the two backends' checks: the
+// assertCoverReport is the shared body of the two targets' checks: the
 // counts the coverSrc program's control flow forces, plus the "stdout and
 // exit code untouched" half of the contract.
 func assertCoverReport(t *testing.T, stdout, stderr string, code int, srcPath string) {
@@ -223,9 +196,9 @@ func TestCoverReportArm64(t *testing.T) {
 	assertCoverReport(t, stdout, stderr, code, srcPath)
 }
 
-// exit() leaves through __fern_exit, not the _start epilogue. Report there
-// too, or a program that ends with an explicit exit — every CLI, and the
-// TAP runner — measures nothing.
+// exit() leaves without returning from main. Report there too, or a program
+// that ends with an explicit exit — every CLI, and the TAP runner — measures
+// nothing.
 const coverExitSrc = `function main(): i32 {
     print("bye");
     exit(3);
@@ -270,13 +243,13 @@ func TestCoverReportRunsAtTheExitBuiltinArm64(t *testing.T) {
 
 // The cheap proxy for "an ordinary build is byte-identical to one from a
 // compiler without the feature": a flag-off build mentions no coverage
-// symbol at all, on either native.
+// symbol at all, on either target.
 func TestCoverFlagOffEmitsNoCoverageSymbols(t *testing.T) {
-	for _, backend := range []string{"x86_64", "arm64-linux"} {
-		asm, _ := emitCover(t, backend, coverSrc, false)
+	for _, target := range []string{e2eharness.TargetX86_64Linux, e2eharness.TargetArm64Linux} {
+		asm, _ := emitCover(t, target, coverSrc, false)
 		for _, sym := range []string{"__fern_cov_counters", "__fern_cov_table", "__fern_cov_report", ast.CoverLinePrefix} {
 			if strings.Contains(asm, sym) {
-				t.Errorf("%s: flag-off build mentions %q", backend, sym)
+				t.Errorf("%s: flag-off build mentions %q", target, sym)
 			}
 		}
 	}
@@ -285,17 +258,17 @@ func TestCoverFlagOffEmitsNoCoverageSymbols(t *testing.T) {
 // And the flag-on build carries all three — a gate that only checked the
 // off side would pass on a feature that never emitted anything.
 func TestCoverFlagOnEmitsCoverageSymbols(t *testing.T) {
-	for _, backend := range []string{"x86_64", "arm64-linux"} {
-		asm, srcPath := emitCover(t, backend, coverSrc, true)
+	for _, target := range []string{e2eharness.TargetX86_64Linux, e2eharness.TargetArm64Linux} {
+		asm, srcPath := emitCover(t, target, coverSrc, true)
 		for _, sym := range []string{"__fern_cov_counters", "__fern_cov_table", "__fern_cov_report"} {
 			if !strings.Contains(asm, sym) {
-				t.Errorf("%s: flag-on build is missing %q", backend, sym)
+				t.Errorf("%s: flag-on build is missing %q", target, sym)
 			}
 		}
 		// The report text is baked into .rodata, so the untaken branch's
 		// line is nameable in the asm itself.
 		if want := fmt.Sprintf("%s%s:3 ", ast.CoverLinePrefix, srcPath); !strings.Contains(asm, want) {
-			t.Errorf("%s: flag-on build has no report literal for line 3 (%q)", backend, want)
+			t.Errorf("%s: flag-on build has no report literal for line 3 (%q)", target, want)
 		}
 	}
 }
@@ -386,7 +359,7 @@ func edgesAt(t *testing.T, edges map[[2]int]*coverEdges, line int) *coverEdges {
 	return found[0]
 }
 
-// assertCoverBranchReport is the shared body of the two backends' checks.
+// assertCoverBranchReport is the shared body of the two targets' checks.
 func assertCoverBranchReport(t *testing.T, stdout, stderr string, code int, srcPath string) {
 	t.Helper()
 	if stdout != "ran\n" {
@@ -454,7 +427,7 @@ func TestCoverBranchReportArm64(t *testing.T) {
 	assertCoverBranchReport(t, stdout, stderr, code, srcPath)
 }
 
-// A program's coverage output must not depend on which native built it —
+// A program's coverage output must not depend on which target it was built for —
 // the reader is one parser, and a divergence here would be invisible
 // until someone compared two runs.
 func TestCoverBranchReportIdenticalAcrossNatives(t *testing.T) {

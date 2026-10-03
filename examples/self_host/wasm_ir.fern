@@ -1940,7 +1940,7 @@ function is_raw_floor_builtin(name: string): boolean {
   if (name == "__raw_alloc") {
     return true;
   }
-  if (name == "__raw_string" || name == "__raw_scratch" || name == "__raw_environ" || name == "__raw_splice_pipe") {
+  if (name == "__raw_string" || name == "__raw_scratch" || name == "__raw_environ" || name == "__raw_splice_pipe" || name == "__raw_cover") {
     return true;
   }
   if (name == "__raw_addr" || name == "__raw_arr_box") {
