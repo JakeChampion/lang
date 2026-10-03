@@ -84,6 +84,9 @@ pub struct EmitState {
   // interned once, so the first hit is its only index.
   slit_head: i32[],
   slit_next: i32[],
+  // pools_written: the unit's literal / constant / shape pools are out, so data
+  // interned past this point needs a flush of its own.
+  pools_written: boolean,
   // needed: the set of runtime-library helpers this module
   // requests, by name. Populated via need() / the mark_*
   // wrappers; emit_module consults has_need() to decide which
@@ -306,6 +309,7 @@ pub function new_state(): EmitState {
     string_lits: sl,
     slit_head: slit_empty_buckets(),
     slit_next: [],
+    pools_written: false,
     needed: nd,
     struct_decls: irtables.struct_tab_empty(),
     loop_exit_labels: lex,
