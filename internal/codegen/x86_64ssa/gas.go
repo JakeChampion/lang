@@ -2364,6 +2364,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_memchr":                    emitMemchrHelper,
 	"__fern_count_byte_bytes":          emitCountByteBytesHelper,
 	"__fern_memchr_bytes":              emitMemchrBytesHelper,
+	"__fern_scan_set_bytes":            emitScanSetBytesHelper,
 	"__fern_rmemchr_bytes":             emitRmemchrBytesHelper,
 	"__fern_mismatch":                  emitMismatchHelper,
 	"__fern_rmemchr":                   emitRmemchrHelper,
@@ -2450,6 +2451,10 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"access":                           emitAccessHelper,
 	"getcwd":                           emitGetcwdHelper,
 	"read_link":                        emitReadLinkHelper,
+	"getxattr":                         emitGetxattrHelper("getxattr", "gxat", 191),
+	"lgetxattr":                        emitGetxattrHelper("lgetxattr", "lgxa", 192),
+	"setxattr":                         emitSetxattrHelper("setxattr", "sxat", 188),
+	"lsetxattr":                        emitSetxattrHelper("lsetxattr", "lsxa", 189),
 	"chdir":                            emitChdirHelper,
 	"chroot":                           emitChrootHelper,
 	"setuid":                           emitCredSetHelper("setuid", "suid", 105),
@@ -2586,6 +2591,10 @@ var heapUsingHelpers = map[string]bool{
 	"access":                           true,
 	"getcwd":                           true,
 	"read_link":                        true,
+	"getxattr":                         true,
+	"lgetxattr":                        true,
+	"setxattr":                         true,
+	"lsetxattr":                        true,
 	"chdir":                            true,
 	"chroot":                           true,
 	"setuid":                           true,
@@ -2699,6 +2708,10 @@ var runtimeHelperDeps = map[string][]string{
 	"lstat":                            {"__fern_io_error", "__fern_rc_inc"},
 	"access":                           {"__fern_io_error", "__fern_rc_inc"},
 	"read_link":                        {"__fern_io_error", "__fern_rc_inc"},
+	"getxattr":                         {"__fern_io_error", "__fern_rc_inc"},
+	"lgetxattr":                        {"__fern_io_error", "__fern_rc_inc"},
+	"setxattr":                         {"__fern_io_error", "__fern_rc_inc"},
+	"lsetxattr":                        {"__fern_io_error", "__fern_rc_inc"},
 	"chdir":                            {"__fern_io_error", "__fern_rc_inc"},
 	"chroot":                           {"__fern_io_error", "__fern_rc_inc"},
 	"setuid":                           {"__fern_io_error"},
@@ -2770,6 +2783,7 @@ var runtimeHelperDeps = map[string][]string{
 	"buf_push_bytes_range":             {"buf_push_range"},
 	"__fern_count_byte_bytes":          {"__fern_count_byte"},
 	"__fern_memchr_bytes":              {"__fern_memchr"},
+	"__fern_scan_set_bytes":            {"__fern_scan_set"},
 	"__fern_rmemchr_bytes":             {"__fern_rmemchr"},
 	"buf_push_mapped":                  {"__fern_buf_reserve"},
 	"buf_push_filtered":                {"__fern_buf_reserve"},
@@ -3402,6 +3416,8 @@ var bcopyUsingHelpers = map[string]bool{
 	"uname_field":                 true,
 	"getcwd":                      true,
 	"read_link":                   true,
+	"getxattr":                    true,
+	"lgetxattr":                   true,
 }
 
 // usesBcopy reports whether any referenced helper calls __ssa_bcopy.
@@ -3953,6 +3969,11 @@ func emitCountByteBytesHelper(w func(string, ...any)) {
 func emitMemchrBytesHelper(w func(string, ...any)) {
 	w("%s:", fnLabel("__fern_memchr_bytes"))
 	w("\tjmp %s", fnLabel("__fern_memchr"))
+}
+
+func emitScanSetBytesHelper(w func(string, ...any)) {
+	w("%s:", fnLabel("__fern_scan_set_bytes"))
+	w("\tjmp %s", fnLabel("__fern_scan_set"))
 }
 
 func emitRmemchrBytesHelper(w func(string, ...any)) {

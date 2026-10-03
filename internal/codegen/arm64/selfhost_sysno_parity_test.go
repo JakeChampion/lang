@@ -33,8 +33,9 @@ const selfHostSysnoSrc = "../../../examples/self_host/asmcore.fern"
 // they never reach `sysno` at all.
 var handAsmOnly = map[string]bool{"exit_group": true, "mmap": true}
 
-// selfHostSysnoTables returns `sysno`'s arm64-darwin and arm64-linux rows.
-// The x86-64 rows are that backend's business and are skipped here.
+// selfHostSysnoTables returns the rows of `sysno`'s arm64-darwin and
+// arm64-linux tables. The x86-64 table is that backend's business and is
+// skipped here.
 func selfHostSysnoTables(t *testing.T) (darwin, linux map[string]int) {
 	t.Helper()
 	b, err := os.ReadFile(selfHostSysnoSrc)
@@ -42,25 +43,21 @@ func selfHostSysnoTables(t *testing.T) (darwin, linux map[string]int) {
 		t.Fatalf("reading %s: %v", selfHostSysnoSrc, err)
 	}
 	src := string(b)
-	body := src[strings.Index(src, "pub function sysno("):]
-	if !strings.HasPrefix(body, "pub function sysno(") {
-		t.Fatalf("no `pub function sysno(` in %s — the extraction has gone stale, "+
-			"which would make this test vacuous", selfHostSysnoSrc)
-	}
-	// Each per-target table ends in its own `return "-1";`, and the arm64
-	// tables are the second and third: x86-64 first, then arm64-darwin, then
-	// arm64-linux as the fall-through.
-	miss := `return "-1";`
-	cut := func(from int) (string, int) {
-		end := strings.Index(body[from:], miss)
-		if end < 0 {
-			t.Fatalf("fewer than three `%s` misses in sysno — the table layout changed", miss)
+	// Each table is its own function, ending at its own `return "-1";`.
+	table := func(fn string) string {
+		head := "function " + fn + "(name: string): string {"
+		i := strings.Index(src, head)
+		if i < 0 {
+			t.Fatalf("no `%s` in %s — the extraction has gone stale, which would make this test vacuous", head, selfHostSysnoSrc)
 		}
-		return body[from : from+end], from + end + len(miss)
+		body := src[i+len(head):]
+		end := strings.Index(body, `return "-1";`)
+		if end < 0 {
+			t.Fatalf("`%s` has no `return \"-1\";` miss — the table layout changed", fn)
+		}
+		return body[:end]
 	}
-	_, next := cut(0)            // x86-64
-	darwinSrc, next := cut(next) // arm64-darwin
-	linuxSrc, _ := cut(next)     // arm64-linux (the fall-through)
+	darwinSrc, linuxSrc := table("sysno_arm64_darwin"), table("sysno_arm64_linux")
 	row := regexp.MustCompile(`name == "([a-z0-9_]+)"\)\s*\{\s*return "(-?\d+)";\s*\}`)
 	read := func(what, s string) map[string]int {
 		out := map[string]int{}

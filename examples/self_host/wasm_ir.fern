@@ -443,6 +443,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_emits_op_cached(cache, "rmemchr_bytes")) {
     out = out.append("@uses_rmemchr_bytes");
   }
+  if (module_emits_op_cached(cache, "scan_set_bytes")) {
+    out = out.append("@uses_scan_set_bytes");
+  }
   if (module_uses_rmemchr(cache)) {
     out = out.append("@uses_rmemchr");
   }
@@ -6913,6 +6916,9 @@ function emit_str_op_wat(o: ir.Op): string {
   if (o.kind_tag == 360) {
     return "    call $__fern_rmemchr_bytes\n";
   }
+  if (o.kind_tag == 361) {
+    return "    call $__fern_scan_set_bytes\n";
+  }
   if (o.kind_tag == 97) {  // str_len
     // stack: block ptr -> i32.load(ptr)  (len @ +0)
     return "    i32.load\n";
@@ -9259,6 +9265,27 @@ pub function scan_set_helper(): string {
   return o;
 }
 
+// scan_set_bytes_helper is scan_set_helper over a packed u8[] block,
+// [len@0][cap@4][bytes@8], in place of a string's.
+pub function scan_set_bytes_helper(): string {
+  let o: string = "";
+  o = o + "  (func $__fern_scan_set_bytes (param $a i32) (param $from i32) (param $set i32) (result i32)\n";
+  o = o + "    (local $len i32) (local $i i32) (local $n i32) (local $b i32)\n";
+  o = o + "    (local.set $len (i32.load (local.get $a)))\n";
+  o = o + "    (local.set $n (i32.load (local.get $set)))\n";
+  o = o + "    (local.set $i (local.get $from))\n";
+  o = o + "    (if (i32.lt_s (local.get $i) (i32.const 0)) (then (local.set $i (i32.const 0))))\n";
+  o = o + "    (block $d (loop $c\n";
+  o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
+  o = o + "      (local.set $b (i32.load8_u (i32.add (i32.add (local.get $a) (i32.const 8)) (local.get $i))))\n";
+  o = o + "      (if (i32.lt_u (local.get $b) (local.get $n)) (then\n";
+  o = o + "        (if (i32.load8_u (i32.add (i32.add (local.get $set) (i32.const 8)) (local.get $b))) (then (return (local.get $i))))))\n";
+  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+  o = o + "      (br $c)))\n";
+  o = o + "    (local.get $len))\n";
+  return o;
+}
+
 pub function sum_bytes_helper(): string {
   let o: string = "";
   o = o + "  (func $__fern_sum_bytes (param $s i32) (result i32)\n";
@@ -9483,6 +9510,8 @@ pub function str_repeat_helper(): string {
   o = o + "    (local.set $total (i32.wrap_i64 (local.get $t64)))\n";
   o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $total))))\n";
   o = o + "    (i32.store (local.get $p) (local.get $total))\n";
+  // Empty input must not walk a possibly enormous repeat count.
+  o = o + "    (if (i32.eqz (local.get $total)) (then (return (local.get $p))))\n";
   o = o + "    (local.set $k (i32.const 0))\n";
   o = o + "    (block $dk (loop $ck\n";
   o = o + "      (br_if $dk (i32.ge_s (local.get $k) (local.get $n)))\n";
@@ -9607,7 +9636,7 @@ pub function str_replace_helper(): string {
   o = o + "      (br $cd)))\n";
   o = o + "    (local.get $p))\n";
   o = o + "  (func $__fern_str_replace (param $h i32) (param $old i32) (param $new i32) (result i32)\n";
-  o = o + "    (local $lh i32) (local $lo i32) (local $ln i32) (local $cnt i32) (local $i i32) (local $j i32) (local $match i32) (local $total i32) (local $p i32) (local $w i32)\n";
+  o = o + "    (local $lh i32) (local $lo i32) (local $ln i32) (local $cnt i32) (local $i i32) (local $j i32) (local $match i32) (local $total i32) (local $p i32) (local $w i32) (local $t64 i64)\n";
   o = o + "    (local.set $lo (i32.load (local.get $old)))\n";
   o = o + "    (if (i32.eqz (local.get $lo)) (then (return (call $__fern_str_dup (local.get $h)))))\n";
   o = o + "    (local.set $lh (i32.load (local.get $h)))\n";
@@ -9626,7 +9655,11 @@ pub function str_replace_helper(): string {
   o = o + "      (if (local.get $match) (then (local.set $cnt (i32.add (local.get $cnt) (i32.const 1))) (local.set $i (i32.add (local.get $i) (local.get $lo)))) (else (local.set $i (i32.add (local.get $i) (i32.const 1)))))\n";
   o = o + "      (br $cc)))\n";
   o = o + "    (if (i32.eqz (local.get $cnt)) (then (return (call $__fern_str_dup (local.get $h)))))\n";
-  o = o + "    (local.set $total (i32.add (local.get $lh) (i32.mul (local.get $cnt) (i32.sub (local.get $ln) (local.get $lo)))))\n";
+  // Check the full result before narrowing or allocating, reserving the
+  // same string header and allocator headroom as str_repeat_helper.
+  o = o + "    (local.set $t64 (i64.add (i64.extend_i32_u (local.get $lh)) (i64.mul (i64.extend_i32_u (local.get $cnt)) (i64.sub (i64.extend_i32_u (local.get $ln)) (i64.extend_i32_u (local.get $lo))))))\n";
+  o = o + "    (if (i64.gt_u (local.get $t64) (i64.const 2147483639)) (then (unreachable)))\n";
+  o = o + "    (local.set $total (i32.wrap_i64 (local.get $t64)))\n";
   o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $total))))\n";
   o = o + "    (i32.store (local.get $p) (local.get $total))\n";
   o = o + "    (local.set $i (i32.const 0))\n";
@@ -11083,7 +11116,8 @@ pub function writer_write_func(): string {
 // scratch 8. Zero is a real answer rather than an error — a stream with no
 // room right now has written none of them — and the Ok payload is the i64 the
 // Result box carries, as reader_seek's offset is.
-// The bytes go to fd_write straight from the packed u8[].
+// Decode the borrowed view once: packed array bytes begin at +8, while a
+// tagged string view names a length-prefixed string with bytes at +4.
 //
 // `p2` is the component core, whose writes go to a blocking-write-and-flush
 // that takes a whole chunk or fails: one write there moves at most 4096
@@ -11102,10 +11136,14 @@ pub function writer_bytes_func(all: boolean, p2: boolean): string {
   }
   let o: string = "";
   o = o + "  (func $__fern_writer_" + name + " (param $fd i32) (param $bytes i32) (result i32)\n";
-  o = o + "    (local $n i32) (local $at i32) (local $count i32) (local $err i32) (local $res i32) (local $path i32)\n";
+  o = o + "    (local $n i32) (local $data i32) (local $at i32) (local $count i32) (local $err i32) (local $res i32) (local $path i32)\n";
+  o = o + "    (if (i32.and (local.get $bytes) (i32.const 2)) (then\n";
+  o = o + "      (local.set $bytes (i32.sub (local.get $bytes) (i32.const 2)))\n";
+  o = o + "      (local.set $data (i32.add (local.get $bytes) (i32.const 4))))\n";
+  o = o + "    (else (local.set $data (i32.add (local.get $bytes) (i32.const 8)))))\n";
   o = o + "    (local.set $n (i32.load (local.get $bytes)))\n";
   o = o + "    (block $done (loop $write\n";
-  o = o + "      (i32.store (i32.const 0) (i32.add (i32.add (local.get $bytes) (i32.const 8)) (local.get $at)))\n";
+  o = o + "      (i32.store (i32.const 0) (i32.add (local.get $data) (local.get $at)))\n";
   o = o + "      (i32.store (i32.const 4) " + p2_chunk(p2, "(i32.sub (local.get $n) (local.get $at))") + ")\n";
   o = o + "      (local.set $err (call $fd_write (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
   o = o + "      (br_if $done (local.get $err))\n";
@@ -14018,6 +14056,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "@uses_scan_set")) {
     parts = parts.append(scan_set_helper());
+  }
+  if (need(needs, "@uses_scan_set_bytes")) {
+    parts = parts.append(scan_set_bytes_helper());
   }
   if (need(needs, "@uses_count_runs")) {
     parts = parts.append(count_runs_helper());

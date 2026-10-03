@@ -192,6 +192,15 @@ var linuxDarwinSysno = map[string][2]int{
 	// renameat2(2) — Linux 276; Darwin's equivalent is renameatx_np, BSD
 	// 488, with the same five arguments and its own flag values.
 	"renameat2": {276, 488},
+	// getxattr(2) / lgetxattr(2) — Linux 8 / 9. Darwin has one call, BSD
+	// 234, taking a position and an options word whose XATTR_NOFOLLOW (1)
+	// is lgetxattr.
+	"getxattr":  {8, 234},
+	"lgetxattr": {9, 234},
+	// setxattr(2) / lsetxattr(2) — Linux 5 / 6. Darwin's one call is BSD
+	// 236, with getxattr's position and options words.
+	"setxattr":  {5, 236},
+	"lsetxattr": {6, 236},
 	"fchmodat":  {53, 467},
 	// truncate(2) — Linux asm-generic 45, Darwin BSD 200. The PATH
 	// form. Same (path, off_t) shape on both, and off_t is one 64-bit
@@ -666,6 +675,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesCreateDir || g.usesChdir || g.usesChroot || g.usesRemoveDir || g.usesCreateLink ||
 		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs ||
 		g.usesRename || g.usesRenameNoreplace || g.usesRenameExchange ||
+		g.usesGetxattr || g.usesLgetxattr || g.usesSetxattr || g.usesLsetxattr ||
 		g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt {
 		g.usesAlloc = true
@@ -699,6 +709,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat || g.usesStatfs || g.usesAccess ||
 		g.usesRemoveDirAll ||
 		g.usesRename || g.usesRenameNoreplace || g.usesRenameExchange ||
+		g.usesGetxattr || g.usesLgetxattr || g.usesSetxattr || g.usesLsetxattr ||
 		g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt || g.usesReaderWriter {
 		g.usesFree = true
@@ -1100,6 +1111,18 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesRenameNoreplace {
 		g.emitRenameFlagsRuntime("__fern_rename_noreplace", "rnnr", true)
+	}
+	if g.usesGetxattr {
+		g.emitGetxattrRuntime("__fern_getxattr", "gxat", "getxattr", false)
+	}
+	if g.usesLgetxattr {
+		g.emitGetxattrRuntime("__fern_lgetxattr", "lgxa", "lgetxattr", true)
+	}
+	if g.usesSetxattr {
+		g.emitSetxattrRuntime("__fern_setxattr", "sxat", "setxattr", false)
+	}
+	if g.usesLsetxattr {
+		g.emitSetxattrRuntime("__fern_lsetxattr", "lsxa", "lsetxattr", true)
 	}
 	if g.usesRenameExchange {
 		g.emitRenameFlagsRuntime("__fern_rename_exchange", "rnex", false)
@@ -5002,6 +5025,15 @@ func (g *generator) emitRmemchrRuntime() {
 // byte value; a shorter set takes the loop that checks each byte against
 // its length first.
 func (g *generator) emitScanSetRuntime() {
+	// Adapt the packed array's payload and length to the string kernel.
+	if g.usesScanSetBytes {
+		g.line(".global __fern_scan_set_bytes")
+		g.label("__fern_scan_set_bytes")
+		g.emit("mov x3, x2")
+		g.emit("mov w2, w1")
+		g.emit("ldur w1, [x0, #-4]")
+		g.emit("b __fern_scan_set")
+	}
 	g.line("")
 	g.line(".global __fern_scan_set")
 	g.typeDirective("__fern_scan_set")
@@ -12384,6 +12416,169 @@ func (g *generator) emitReadLinkRuntime() {
 	g.line(".ltorg")
 }
 
+// xattrSizeMax is XATTR_SIZE_MAX, the largest value Linux stores, so a
+// buffer of it always holds the whole answer; a longer Darwin value is
+// ERANGE.
+const xattrSizeMax = 65536
+
+// emitGetxattrRuntime emits `name(path, attr) → Result[string, IoError]` —
+// getxattr(2) or lgetxattr(2) into a heap buffer of xattrSizeMax, the value
+// copied out into a fresh string. The IoError names `path`. On Darwin the
+// one call takes a position (0) and an options word, XATTR_NOFOLLOW for the
+// `l` form; Linux ignores the two extra registers.
+func (g *generator) emitGetxattrRuntime(name, tag, sysname string, nofollow bool) {
+	g.line("")
+	g.line(".global " + name)
+	g.typeDirective(name)
+	g.label(name)
+	// Frame: fp/lr (16) + x19..x26 (64) + 16-byte inline-spill
+	// scratch at [x29+80] = 96.
+	g.emit("stp x29, x30, [sp, #-96]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("stp x25, x26, [sp, #64]")
+	g.emit("mov x19, x0") // path_data
+	g.emit("mov x20, x1") // path_len
+	g.emit("mov x25, x2") // attr_data
+	g.emit("mov x26, x3") // attr_len
+	g.emitStrDataPtr2W("x21", "x19", "x20", 80)
+	g.emitNulTermPath2W("x21", "x21", "x20")
+	g.emitStrDataPtr2W("x23", "x25", "x26", 80)
+	g.emitNulTermPath2W("x23", "x23", "x26")
+	g.emit("mov x0, #%d", xattrSizeMax)
+	g.emit("bl __fern_alloc")
+	g.emit("mov x24, x0") // the value buffer
+	g.emit("mov x0, x21")
+	g.emit("mov x1, x23")
+	g.emit("mov x2, x24")
+	g.emit("mov x3, #%d", xattrSizeMax)
+	g.emit("mov x4, #0") // position
+	options := 0
+	if nofollow && g.darwin {
+		options = 1
+	}
+	g.emit("mov x5, #%d", options)
+	g.syscall(sysname)
+	g.emit("mov x22, x0") // length, or -errno
+	g.emitFreeNulTermPath2W("x21", "x20")
+	g.emitFreeNulTermPath2W("x23", "x26")
+	g.emit("tbnz x22, #63, .L%s_err", tag)
+	g.emit("mov x0, x22")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x21, x0") // data ptr
+	g.emit("mov x1, x24")
+	g.emit("mov x2, x22")
+	g.emit("bl __fern_memcpy")
+	g.emitFreeScratch2W("x24", xattrSizeMax)
+	// Result.Ok(string): 24-byte box — {tag@0, pad@4, data@8, len@16}.
+	g.emit("mov x0, #24")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]")      // tag = 0 (Ok)
+	g.emit("str x21, [x0, #8]")  // payload data
+	g.emit("str x22, [x0, #16]") // payload len
+	g.emit("b .L%s_return", tag)
+
+	g.label(fmt.Sprintf(".L%s_err", tag))
+	g.emitFreeScratch2W("x24", xattrSizeMax)
+	g.emit("neg x0, x22") // errno
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0") // stash the IoError box across the alloc
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(fmt.Sprintf(".L%s_return", tag))
+	g.emit("ldp x25, x26, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #96")
+	g.emit("ret")
+	g.sizeDirective(name)
+	g.line(".ltorg")
+}
+
+// emitSetxattrRuntime emits `name(path, attr, value) → Result[void,
+// IoError]` — setxattr(2) or lsetxattr(2) with no flags, so the attribute
+// is created or replaced. The IoError names `path`. On Darwin the one call
+// takes a position (0) and an options word, XATTR_NOFOLLOW for the `l`
+// form; Linux reads x4 as its flags word and ignores x5.
+func (g *generator) emitSetxattrRuntime(name, tag, sysname string, nofollow bool) {
+	g.line("")
+	g.line(".global " + name)
+	g.typeDirective(name)
+	g.label(name)
+	// Frame: fp/lr (16) + x19..x26 (64) + 16-byte inline-spill
+	// scratch at [x29+80] = 96.
+	g.emit("stp x29, x30, [sp, #-96]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("stp x25, x26, [sp, #64]")
+	g.emit("mov x19, x0") // path_data
+	g.emit("mov x20, x1") // path_len
+	g.emit("mov x25, x2") // attr_data
+	g.emit("mov x26, x3") // attr_len
+	g.emit("mov x24, x4") // value_data
+	g.emit("mov x22, x5") // value_len
+	g.emitStrDataPtr2W("x21", "x19", "x20", 80)
+	g.emitNulTermPath2W("x21", "x21", "x20")
+	g.emitStrDataPtr2W("x23", "x25", "x26", 80)
+	g.emitNulTermPath2W("x23", "x23", "x26")
+	// The value is read in place; an inline one is spilled to the scratch.
+	g.emitStrDataPtr2W("x24", "x24", "x22", 80)
+	g.emitStrLen2W("w3", "x22")
+	g.emit("mov x0, x21")
+	g.emit("mov x1, x23")
+	g.emit("mov x2, x24")
+	g.emit("mov x4, #0") // flags (Linux) / position (Darwin)
+	options := 0
+	if nofollow && g.darwin {
+		options = 1
+	}
+	g.emit("mov x5, #%d", options)
+	g.syscall(sysname)
+	g.emit("mov x22, x0") // 0, or -errno
+	g.emitFreeNulTermPath2W("x21", "x20")
+	g.emitFreeNulTermPath2W("x23", "x26")
+	g.emit("tbnz x22, #63, .L%s_err", tag)
+	// Result.Ok(()): 16-byte box, tag=0, unit payload @+8.
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
+	g.emit("str xzr, [x0, #8]") // unit payload
+	g.emit("b .L%s_return", tag)
+
+	g.label(fmt.Sprintf(".L%s_err", tag))
+	g.emit("neg x0, x22") // errno
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0") // stash the IoError box across the alloc
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(fmt.Sprintf(".L%s_return", tag))
+	g.emit("ldp x25, x26, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #96")
+	g.emit("ret")
+	g.sizeDirective(name)
+	g.line(".ltorg")
+}
+
 // emitRenameRuntime emits `__fern_rename(from, to)` —
 // renameat(AT_FDCWD, from, AT_FDCWD, to). An existing `to` of a
 // compatible type is replaced atomically; a rename across filesystems is
@@ -15746,6 +15941,8 @@ type generator struct {
 	usesCountByte bool
 	// usesScanSet gates the byte-set scan kernel (__fern_scan_set).
 	usesScanSet bool
+	// usesScanSetBytes adds its u8[] entry, __fern_scan_set_bytes.
+	usesScanSetBytes bool
 	// usesCountRuns gates the run-count kernel (__fern_count_runs).
 	usesCountRuns bool
 	// usesBsdSum gates the BSD checksum kernel (__fern_bsd_sum).
@@ -16247,7 +16444,13 @@ type generator struct {
 	usesSetFileTimes bool
 	// renameat2 (Darwin: renameatx_np) with a no-replace or exchange flag.
 	usesRenameNoreplace bool
-	usesRenameExchange  bool
+	// getxattr / lgetxattr over a path and an attribute name.
+	usesGetxattr  bool
+	usesLgetxattr bool
+	// setxattr / lsetxattr over a path, an attribute name and a value.
+	usesSetxattr       bool
+	usesLsetxattr      bool
+	usesRenameExchange bool
 	// fchmodat / fchmodat2 over a path, a mode and a follow flag.
 	usesChmodAt bool
 	// truncate(2) over a path and a length.
@@ -20465,6 +20668,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesCountByte = true
 		case "__fern_scan_set":
 			g.usesScanSet = true
+		case "__fern_scan_set_bytes":
+			g.usesScanSetBytes = true
+			g.usesScanSet = true
 		case "__fern_count_runs":
 			g.usesCountRuns = true
 		case "__fern_bsd_sum":
@@ -21213,6 +21419,18 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "rename_noreplace":
 			target = "__fern_rename_noreplace"
 			g.usesRenameNoreplace = true
+		case "getxattr":
+			target = "__fern_getxattr"
+			g.usesGetxattr = true
+		case "lgetxattr":
+			target = "__fern_lgetxattr"
+			g.usesLgetxattr = true
+		case "setxattr":
+			target = "__fern_setxattr"
+			g.usesSetxattr = true
+		case "lsetxattr":
+			target = "__fern_lsetxattr"
+			g.usesLsetxattr = true
 		case "rename_exchange":
 			target = "__fern_rename_exchange"
 			g.usesRenameExchange = true

@@ -4489,6 +4489,15 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 			}
 		}
 		return true
+	case *ast.MapLit:
+		// A fresh map_new filled by one insert per entry.
+		for _, en := range x.Entries {
+			if !exprNoParamEscape(en.Key, x.KeyType, info, variantPayloads, q, freshLocals) ||
+				!exprNoParamEscape(en.Value, x.ValueType, info, variantPayloads, q, freshLocals) {
+				return false
+			}
+		}
+		return true
 	case *ast.ArrayLit:
 		for _, el := range x.Elems {
 			if !exprNoParamEscape(el, x.ElemType, info, variantPayloads, q, freshLocals) {
@@ -4577,6 +4586,23 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 			}
 			return exprNoParamEscape(x.Args[0], slot, info, variantPayloads, q, freshLocals) &&
 				exprNoParamEscape(x.Args[1], elem, info, variantPayloads, q, freshLocals)
+		}
+		// `m.insert(k, v)` / `m.cleared()` are push's map siblings: the
+		// receiver's own handle or a fresh copy of it, holding whatever key
+		// and value it was handed.
+		if (id.Name == "__method_Map_set" && len(x.Args) == 3) || (id.Name == "__method_Map_clear" && len(x.Args) == 1) {
+			if !exprNoParamEscape(x.Args[0], slot, info, variantPayloads, q, freshLocals) {
+				return false
+			}
+			if len(x.Args) == 1 {
+				return true
+			}
+			var kt, vt ast.Type
+			if len(x.TypeArgs) >= 2 {
+				kt, vt = x.TypeArgs[0], x.TypeArgs[1]
+			}
+			return exprNoParamEscape(x.Args[1], kt, info, variantPayloads, q, freshLocals) &&
+				exprNoParamEscape(x.Args[2], vt, info, variantPayloads, q, freshLocals)
 		}
 		// User function / method call: its result can't contain OUR args iff the
 		// callee itself never lets a param escape. Builtins / locals / unknowns
@@ -15252,6 +15278,9 @@ func (b *builder) callBody(n *ast.Call) error {
 	if !ok {
 		return fmt.Errorf("ir: indirect call from non-identifier expression")
 	}
+	if b.mapReadReleasesReceiver(id.Name, n) {
+		return b.withStashedMapReceiver(n)
+	}
 	// Variant constructor: lower to a heap-allocated tagged-union
 	// object [tag, payload0, payload1, ...]. The checker already
 	// type-checked the args; we just emit the storage.
@@ -15462,11 +15491,6 @@ func (b *builder) callBody(n *ast.Call) error {
 	// the vector lifetime must stay inside one emitted body).
 	if id.Name == "__memchr" && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
 			// ArgTypes is essential, not decoration. Under the
 			// two-word string ABI (arm64, wasm) a `string` argument
 			// occupies TWO operand-stack slots, so a backend that pops
@@ -15477,45 +15501,26 @@ func (b *builder) callBody(n *ast.Call) error {
 			// shape. Without it this segfaults on arm64 and is fine on
 			// x86-64, which is exactly the kind of divergence that
 			// survives a green x86-64 suite.
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_memchr", Width: ResNarrow, I32: 3,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_memchr", Width: ResNarrow, I32: 3,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
-			return nil
 		}
 	}
 	if id.Name == "__count_byte_bytes" && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_count_byte_bytes", Width: ResNarrow, I32: 2,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_count_byte_bytes", Width: ResNarrow, I32: 2,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}}}})
-			return nil
 		}
 	}
 	if id.Name == "__memchr_bytes" && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_memchr_bytes", Width: ResNarrow, I32: 3,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_memchr_bytes", Width: ResNarrow, I32: 3,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.NumberType{}}}})
-			return nil
 		}
 	}
 	if id.Name == "__rmemchr_bytes" && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_rmemchr_bytes", Width: ResNarrow, I32: 3,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_rmemchr_bytes", Width: ResNarrow, I32: 3,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.NumberType{}}}})
-			return nil
 		}
 	}
 	// __rmemchr(s, byte, from) — __memchr's backward sibling, same
@@ -15525,14 +15530,8 @@ func (b *builder) callBody(n *ast.Call) error {
 	// the data pointer.
 	if id.Name == "__rmemchr" && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_rmemchr", Width: ResNarrow, I32: 3,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_rmemchr", Width: ResNarrow, I32: 3,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
-			return nil
 		}
 	}
 	// __count_byte(s, byte) — the same runtime-helper-call shape, and
@@ -15540,14 +15539,8 @@ func (b *builder) callBody(n *ast.Call) error {
 	// `string` is two operand slots on arm64 and wasm and one on x86-64.
 	if id.Name == "__count_byte" && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_count_byte", Width: ResNarrow, I32: 2,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_count_byte", Width: ResNarrow, I32: 2,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}}}})
-			return nil
 		}
 	}
 	// __sum_bytes(s) — the same runtime-helper-call shape, with one argument
@@ -15556,12 +15549,8 @@ func (b *builder) callBody(n *ast.Call) error {
 	// on x86-64, so a backend popping I32=1 reads the length as the result.
 	if id.Name == "__sum_bytes" && len(n.Args) == 1 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			if err := b.expr(n.Args[0]); err != nil {
-				return err
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_sum_bytes", Width: ResNarrow, I32: 1,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_sum_bytes", Width: ResNarrow, I32: 1,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}}}})
-			return nil
 		}
 	}
 	// __scale_f64(xs, k) — the same runtime-helper-call shape over an ARRAY:
@@ -15588,14 +15577,8 @@ func (b *builder) callBody(n *ast.Call) error {
 	// incoming CRC as a pointer.
 	if id.Name == "__crc32_cksum" && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_crc32_cksum", Width: ResNarrow, I32: 2,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_crc32_cksum", Width: ResNarrow, I32: 2,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.NumberType{}, ast.StringType{}}}})
-			return nil
 		}
 	}
 	// __ascii_run(s, from) — the same runtime-helper-call shape as __memchr
@@ -15603,54 +15586,36 @@ func (b *builder) callBody(n *ast.Call) error {
 	// is two operand slots on arm64 and wasm, one on x86-64.
 	if id.Name == "__ascii_run" && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_ascii_run", Width: ResNarrow, I32: 2,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_ascii_run", Width: ResNarrow, I32: 2,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}}}})
-			return nil
 		}
 	}
 	// __scan_set(s, from, set) — the same runtime-helper-call shape, with a
 	// u8[] third operand: one pointer slot everywhere, the string one or two.
 	if id.Name == "__scan_set" && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_scan_set", Width: ResNarrow, I32: 3,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_scan_set", Width: ResNarrow, I32: 3,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
-			return nil
+		}
+	}
+	if id.Name == "__scan_set_bytes" && len(n.Args) == 3 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_scan_set_bytes", Width: ResNarrow, I32: 3,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
 		}
 	}
 	// __bsd_sum(s, sum) — __count_byte's operand shape.
 	if id.Name == "__bsd_sum" && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_bsd_sum", Width: ResNarrow, I32: 2,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_bsd_sum", Width: ResNarrow, I32: 2,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}}}})
-			return nil
 		}
 	}
 	// __count_runs(s, inside, set) — __scan_set's operand shape.
 	if id.Name == "__count_runs" && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_count_runs", Width: ResNarrow, I32: 3,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_count_runs", Width: ResNarrow, I32: 3,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
-			return nil
 		}
 	}
 	// __mismatch(a, ao, b, bo, n) — the same runtime-helper-call shape as its
@@ -15660,14 +15625,8 @@ func (b *builder) callBody(n *ast.Call) error {
 	// second string's length as `n`.
 	if id.Name == "__mismatch" && len(n.Args) == 5 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_mismatch", Width: ResNarrow, I32: 5,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_mismatch", Width: ResNarrow, I32: 5,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
-			return nil
 		}
 	}
 	// __heap_mark() / __heap_release_to(mark) — the one-level arena
@@ -16537,6 +16496,24 @@ func (b *builder) callBody(n *ast.Call) error {
 	dropMark := len(b.pendingDrops)
 	for ai, a := range n.Args {
 		toOwnParam := ownedByCalleeAt(ai)
+		// A copying builtin cannot retain the view or its source. Preserve a
+		// fresh source until the call finishes, using the same temp ownership
+		// and exit cleanup as an owned argument. Automatic array lending must
+		// not hide that argument from the existing reclaim path.
+		if !toOwnParam && copyingBuiltinArg(id.Name, ai) {
+			view, slot, tt, ok, err := b.stashCopyingViewSource(a)
+			if err != nil {
+				return err
+			}
+			if ok {
+				a = view
+				argTempSlots = append(argTempSlots, slot)
+				argTempTypes = append(argTempTypes, tt)
+				argTempGuarded = append(argTempGuarded, false)
+				argTempIdentityDec = append(argTempIdentityDec, false)
+				b.pushOperandDrop(slot, tt)
+			}
+		}
 		// A view is a borrow, so the checker refuses it at an `own` position
 		// and ownedByDefaultTypeIn does not admit one — but both would want
 		// the retain/move handling below rather than this free, so fall
@@ -16907,6 +16884,75 @@ func (b *builder) dynCoercedArg(a ast.Expr) bool {
 	return ok
 }
 
+// emitByteScanCall lowers a call to a byte-scan runtime helper (__memchr,
+// __scan_set and their siblings): each reads its string or byte arrays and
+// answers a scalar, retaining nothing. An argument that is a fresh owned
+// temporary is held in a slot and released once the helper returns; without
+// that, `__scan_set(s, 0, [..])` or `__memchr(a + b, ..)` stranded the
+// temporary on every call.
+func (b *builder) emitByteScanCall(n *ast.Call, op Op) error {
+	var slots []int32
+	var types []ast.Type
+	for _, a := range n.Args {
+		slot, tt, ok, err := b.stashOwnedArgTemp(a)
+		if err != nil {
+			return err
+		}
+		if ok {
+			slots = append(slots, slot)
+			types = append(types, tt)
+			continue
+		}
+		if err := b.expr(a); err != nil {
+			return err
+		}
+	}
+	b.emit(op)
+	b.emitArgTempDrops(slots, types)
+	return nil
+}
+
+// stashCopyingViewSource stages the owned source of an immediate view without
+// changing the checked expression or extending its ownership analysis. Only
+// callers with the existing copyingBuiltinArg contract may reclaim this source
+// after the call: a general callee could return a view into it.
+func (b *builder) stashCopyingViewSource(a ast.Expr) (ast.Expr, int32, ast.Type, bool, error) {
+	var source ast.Expr
+	switch x := a.(type) {
+	case *ast.SliceExpr:
+		if x.IsString || x.SourceIsSlice {
+			return a, 0, nil, false, nil
+		}
+		source = x.Source
+	case *ast.Call:
+		if !makesFreshViewHeader(x) || len(x.Args) != 1 {
+			return a, 0, nil, false, nil
+		}
+		source = x.Args[0]
+	default:
+		return a, 0, nil, false, nil
+	}
+	slot, tt, ok, err := b.stashOwnedArgTemp(source)
+	if err != nil || !ok {
+		return a, slot, tt, ok, err
+	}
+	// stashOwnedArgTemp leaves a copy on the stack for an ordinary argument.
+	// Here the view constructor reloads that value from its typed scratch slot.
+	b.emit(Op{Kind: OpDrop, Width: b.discardWidth(source)})
+	ref := &ast.Ident{Name: fmt.Sprintf("__argtmp_%d", slot)}
+	switch x := a.(type) {
+	case *ast.SliceExpr:
+		view := *x
+		view.Source = ref
+		return &view, slot, tt, true, nil
+	case *ast.Call:
+		view := *x
+		view.Args = []ast.Expr{ref}
+		return &view, slot, tt, true, nil
+	}
+	panic("unreachable view source")
+}
+
 func (b *builder) stashOwnedArgTemp(a ast.Expr) (int32, ast.Type, bool, error) {
 	tt, ok := b.freshOwnedRcTempType(a)
 	if !ok {
@@ -17028,6 +17074,67 @@ func (b *builder) emitArgTempDrop(slot int32, t ast.Type) {
 		return
 	}
 	b.emitOwnedSlotDrop(slot, t)
+}
+
+// mapReadReleasesReceiver reports a map read whose receiver is a temp this
+// expression alone owns (`mk().get(k)`) and whose result cannot hold a
+// reference into the map uncounted, so the receiver dies with the call. `has`
+// answers a boolean, and `keys` / `values` snapshot a column that retains
+// each element it copies. `get` / `get_or` hand back a value, which is a copy
+// when it is a scalar; `get_or` on a counted value column retains it
+// (mapGetHandsCountedValue).
+func (b *builder) mapReadReleasesReceiver(name string, n *ast.Call) bool {
+	if !ast.RcFreeEnabled || len(n.Args) == 0 || len(n.TypeArgs) < 2 {
+		return false
+	}
+	vt := n.TypeArgs[1]
+	switch name {
+	case "__method_Map_has", "__method_Map_keys", "__method_Map_values":
+	case "__method_Map_get":
+		if !isDefinitelyScalar(vt) {
+			return false
+		}
+	case "__method_Map_get_or":
+		_, isStr := vt.(ast.StringType)
+		if !isDefinitelyScalar(vt) && (isStr || !b.mapGetHandsCountedValue(vt)) {
+			return false
+		}
+	default:
+		return false
+	}
+	if _, ok := b.freshOwnedRcTempType(n.Args[0]); ok {
+		return true
+	}
+	_, ok := b.ownedCallResultType(n.Args[0])
+	return ok
+}
+
+// withStashedMapReceiver lowers n with its receiver parked in a slot, then
+// releases the receiver. The receiver is swapped for a local naming that slot
+// for the call's own lowering, so every map path reads it like a binding, and
+// restored after: analyses keyed on the call node still see it unchanged.
+func (b *builder) withStashedMapReceiver(n *ast.Call) error {
+	recv := n.Args[0]
+	slot, t, ok, err := b.stashOwnedArgTemp(recv)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("ir: map receiver temp not stashable (compiler bug)")
+	}
+	b.emit(Op{Kind: OpDrop})
+	name := fmt.Sprintf("__maprecv_%d", slot)
+	b.locals[name] = slot
+	n.Args[0] = &ast.Ident{P: recv.Pos(), Name: name}
+	pop := b.pushPendingDrop(func() { b.emitArgTempDrop(slot, t) })
+	err = b.callBody(n)
+	n.Args[0] = recv
+	pop()
+	if err != nil {
+		return err
+	}
+	b.emitArgTempDrop(slot, t)
+	return nil
 }
 
 // emitArgTempDropsGuarded is emitArgTempDrops plus the identity guard a

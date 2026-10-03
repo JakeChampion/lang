@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
@@ -196,6 +197,57 @@ func TestFormatCorpusIdempotent(t *testing.T) {
 		}
 		if once != twice {
 			t.Errorf("%s: -fmt is not idempotent\n%s", rel, FirstShapeDiff(once, twice))
+		}
+	}
+}
+
+// TestFormatCorpusPreservesCommentAnchor is TestFormatPreservesCommentAttachment
+// over every corpus file rather than its fixture rows: no comment moves to a
+// different line of code. A formatter change that hoisted late imports kept
+// native/self-host byte parity and its own fixed point across 478 files
+// (#10870); this is the property that fails on it.
+func TestFormatCorpusPreservesCommentAnchor(t *testing.T) {
+	root := corpusRoot(t)
+	for _, rel := range corpusFiles(t, root) {
+		src, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := formatSource(string(src))
+		if err != nil {
+			continue
+		}
+		want, have := commentAnchors(string(src)), commentAnchors(got)
+		if len(want) != len(have) {
+			t.Errorf("%s: comment count changed: %d -> %d", rel, len(want), len(have))
+			continue
+		}
+		for i := range want {
+			if want[i] != have[i] {
+				t.Errorf("%s: comment %q attached to %q in the source, %q formatted", rel, want[i].text, want[i].anchor, have[i].anchor)
+				break
+			}
+		}
+	}
+}
+
+// TestFormatCorpusPreservesCommentBlanks holds the blank-line shape of every
+// comment run across Format: a gap between two comments survives, which the
+// anchor property cannot see (#10885).
+func TestFormatCorpusPreservesCommentBlanks(t *testing.T) {
+	root := corpusRoot(t)
+	for _, rel := range corpusFiles(t, root) {
+		src, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := formatSource(string(src))
+		if err != nil {
+			continue
+		}
+		want, have := commentRunShapes(string(src)), commentRunShapes(got)
+		if strings.Join(want, ",") != strings.Join(have, ",") {
+			t.Errorf("%s: a blank line inside a comment run did not survive -fmt\n%s", rel, FirstShapeDiff(string(src), got))
 		}
 	}
 }
