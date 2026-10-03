@@ -217,7 +217,7 @@ function take(b: Box[i32, string]): i32 {
 	// constructor, reached only while the type is still incomplete. Completing
 	// it from the contradicting destination answered `Result[i32, i32]` and
 	// turned the return into a type error (the interp oracle of
-	// TestSelfHostOptMakeI64IRWasm, which is where this showed up).
+	// TestSelfHostOptMakeI64IR, which is where this showed up).
 	widening := `function g(n: i32): Result[i64, i32] { return Ok(n); }
 function main(): i32 { match (g(40)) { Ok(v) => { return (v / 8) as i32; }, Err(e) => { return e; } } }`
 	if err := checkSource(t, widening); err != nil {

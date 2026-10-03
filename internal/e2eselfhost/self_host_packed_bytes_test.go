@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // A u8[] the typed lowering builds is packed a byte an element on every
@@ -145,7 +147,6 @@ function main(): i32 {
     b = b.write_expanded("a,b,c\n", exp);
     b = b.write_mapped("abc\n", [0 as u8, 1 as u8]);
     b = b.flush();
-    buf_free(b.handle());
     let ws: u8[] = table(256, (c: i32) => { if (c == 32 || c == 10) { return 1; } return 0; });
     let line: string = "one two  three\nfour";
     print("scan " + __scan_set(line, 0, ws).to_string() + " " + __scan_set(line, 4, ws).to_string() + " " + __scan_set(line, 15, ws).to_string());
@@ -273,9 +274,7 @@ func TestSelfHostPackedBytes(t *testing.T) {
 		})
 	}
 	t.Run("component", func(t *testing.T) {
-		if _, err := exec.LookPath("wasmtime"); err != nil {
-			t.Fatal("wasmtime not on PATH")
-		}
+		e2eharness.Wasmtime(t)
 		dir := t.TempDir()
 		in := filepath.Join(dir, "main.fern")
 		if err := os.WriteFile(in, []byte(packedBytesComponentSrc), 0o644); err != nil {

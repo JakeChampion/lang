@@ -255,6 +255,14 @@ function main(): i32 {
     return n + rows[0][0].len() + last[0].len() + rows.len();
 }
 `, 10},
+	// A tuple-typed PARAMETER holding a nested array, read back out of the
+	// parameter, so the run exercises the parameter's own mark site (#10477).
+	{"param_tuple_nested", `function peek(t: (i32, i32[][])): i32 { return t.0 + t.1[0][0] + t.1[1][1] + t.1.len(); }
+function main(): i32 {
+    let src: (i32, i32[][]) = (3, [[3, 1], [2, 3]]);
+    return peek(src) + src.0;
+}
+`, 14},
 	// Extracting the element to a new owner: never a second free.
 	{"refused_elem_extracted", `function main(): i32 {
     let r: Rec = Rec { n: 2, xs: ["ab", "cd"] };

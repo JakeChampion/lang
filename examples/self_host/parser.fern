@@ -21667,8 +21667,14 @@ function rta_skip_stmt(st: ast.Stmt, own acc: boolean): boolean {
 function rta_index_call_of(e: ast.Expr, own acc: boolean): boolean {
   if let ast.ExprCall(c) = e {
     if let ast.ExprIndex(ix) = c.callee {
-      if let ast.ExprIdent(_) = ix.index {
-        return true;
+      match (ix.index) {
+        ast.ExprIdent(_) => {
+          return true;
+        },
+        ast.ExprIndex(_) => {
+          return true;
+        },
+        _ => {}
       }
     }
   }
@@ -21698,17 +21704,35 @@ function rta_call_of(x: ast.Expr, generics: string[], types: string[], shadow: s
       return x;
     }
     if let ast.ExprIndex(ix) = c.callee {
-      if let ast.ExprIdent(tid) = ix.index {
-        if (util.has_str(types, tid.name) && !util.has_str(shadow, tid.name)) {
-          let fname: string = rta_callee_name(ix.array, shadow);
-          if (fname.len() > 0 && util.has_str(generics, fname)) {
-            return ast.ExprCall { ...c, callee: ix.array, type_args: [tid.name] };
-          }
+      let targ: string = rta_type_spelling(ix.index, types, shadow);
+      if (targ.len() > 0) {
+        let fname: string = rta_callee_name(ix.array, shadow);
+        if (fname.len() > 0 && util.has_str(generics, fname)) {
+          return ast.ExprCall { ...c, callee: ix.array, type_args: [targ] };
         }
       }
     }
   }
   return x;
+}
+
+// rta_type_spelling is the type an index operand spells — a type name, or a
+// generic one instantiated the same way (`W[Q]`) — or "" when it is a value.
+function rta_type_spelling(e: ast.Expr, types: string[], shadow: string[]): string {
+  if let ast.ExprIdent(id) = e {
+    if (util.has_str(types, id.name) && !util.has_str(shadow, id.name)) {
+      return id.name;
+    }
+    return "";
+  }
+  if let ast.ExprIndex(ix) = e {
+    let head: string = rta_type_spelling(ix.array, types, shadow);
+    let arg: string = rta_type_spelling(ix.index, types, shadow);
+    if (head.len() > 0 && arg.len() > 0) {
+      return head + "[" + arg + "]";
+    }
+  }
+  return "";
 }
 
 // rta_callee_name is the declaration name an indexed callee would resolve

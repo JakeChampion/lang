@@ -904,11 +904,14 @@ pub struct Sub {
   // The record declarations the produced bodies build beyond the module's own
   // (semlower.instance_records), for the emit to append to its struct table.
   records: parser.StructDecl[],
+  // The emit entry's checks already passed on the module this was built for
+  // (semlower.driven_annotated), so the entry does not run them again.
+  checked: boolean,
 }
 
 pub function no_sub(): Sub {
   let none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [] };
-  return Sub { bodies: [], extra: [], sigs: fnsigs.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [] };
+  return Sub { bodies: [], extra: [], sigs: fnsigs.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false };
 }
 
 // The register emit's lambda-lifted module: the producer's, erased, when it
