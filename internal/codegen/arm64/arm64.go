@@ -8633,6 +8633,10 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	for _, w := range fdlibm.TwoOverPiBits {
 		g.line(fmt.Sprintf("\t.quad 0x%016x", w))
 	}
+	g.label(".Lfc_logtab")
+	for _, w := range fdlibm.LogData() {
+		g.line(fmt.Sprintf("\t.quad 0x%016x", w))
+	}
 	g.line(".text")
 
 	// retBits leaves a literal bit pattern in d0 and returns — an
@@ -8955,93 +8959,132 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.emit("ret")
 	g.sizeDirective("__fern_exp_f64")
 
-	// __fern_log_f64(d0=x) → ln x (x>0). x = 2^k·m, m normalised to
-	// [sqrt2/2, sqrt2); f = m-1; s = f/(2+f).
-	//   R = t1+t2 over two INDEPENDENT chains in w = z², z = s², so they
-	//   issue in parallel instead of as one 7-deep Horner.
-	//   ln x = k·ln2_hi - ((hfsq - (s·(hfsq+R) + k·ln2_lo)) - f)
+	// __fern_log_f64(d0=x) → ln x, the table-driven kernel
+	// internal/fdlibm/logtab.go documents. x9 holds .Lfc_logtab's address
+	// throughout, x12 the coefficient table's.
 	fn("__fern_log_f64")
+	logMain, logNear1, logSpecial := g.freshLabel("logMain"), g.freshLabel("logNear1"), g.freshLabel("logSpecial")
 	logRet, logNaN, logNegInf := g.freshLabel("logRet"), g.freshLabel("logNaN"), g.freshLabel("logNegInf")
-	logNoScale := g.freshLabel("logNoScale")
-	// Domain guards. The bit-twiddling below extracts an exponent
-	// from 0 or +Inf and carries on, so log(0) returned -709.09 and
-	// log(+Inf) returned 709.78 — finite garbage. log(-0) == log(0) ==
-	// -Inf, which the equality branch covers.
-	nanGuard(logRet)
-	g.emit("fmov d1, xzr")
-	g.emit("fcmp d0, d1")
-	g.emit("b.lt %s", logNaN)
-	g.emit("b.eq %s", logNegInf)
-	g.loadImm64("x14", 0x7ff0000000000000)
-	g.emit("fmov d1, x14")
-	g.emit("fcmp d0, d1")
-	g.emit("b.eq %s", logRet) // x == +Inf → itself
 	base()
-	// A subnormal stores exponent 0 — its magnitude is in the mantissa's
-	// leading zeros — so the field below reports the smallest normal
-	// exponent for every one of them. Scale into the normal range and take
-	// the 54 back off k. x13 carries the adjustment; it is dead until the
-	// mantissa mask below.
-	g.emit("mov x13, #0")
-	ldc("d1", "minnorm")
-	g.emit("fcmp d0, d1")
-	g.emit("b.ge %s", logNoScale)
-	ldc("d1", "two54")
-	g.emit("fmul d0, d0, d1")
-	g.emit("mov x13, #54")
-	g.label(logNoScale)
+	g.adrpAdd("x9", ".Lfc_logtab")
 	g.emit("fmov x10, d0")
+	g.loadImm64("x11", fdlibm.LogNear1Lo)
+	g.emit("sub x11, x10, x11")
+	g.loadImm64("x13", fdlibm.LogNear1Hi-fdlibm.LogNear1Lo)
+	g.emit("cmp x11, x13")
+	g.emit("b.lo %s", logNear1)
 	g.emit("lsr x11, x10, #52")
-	g.emit("and x11, x11, #0x7ff")
-	g.emit("sub x11, x11, #1023") // k
-	g.emit("sub x11, x11, x13")
-	g.emit("mov x13, #1")
-	g.emit("lsl x13, x13, #52")
-	g.emit("sub x13, x13, #1")
-	g.emit("and x10, x10, x13") // mantissa
-	g.emit("mov x14, #1023")
-	g.emit("lsl x14, x14, #52")
-	g.emit("orr x10, x10, x14")
-	g.emit("fmov d1, x10") // m in [1,2)
-	noAdj := g.freshLabel("logNoAdj")
-	ldc("d2", "sqrt2")
-	g.emit("fcmp d1, d2")
-	g.emit("b.lt %s", noAdj)
-	ldc("d3", "half")
-	g.emit("fmul d1, d1, d3")
-	g.emit("add x11, x11, #1")
-	g.label(noAdj)
-	ldc("d4", "one")
-	g.emit("fsub d1, d1, d4") // f
-	ldc("d2", "two")
-	g.emit("fadd d2, d2, d1") // 2+f
-	g.emit("fdiv d3, d1, d2") // s
-	g.emit("fmul d4, d3, d3") // z
-	g.emit("fmul d5, d4, d4") // w
-	ldc("d6", "lg6")
-	horner("d6", "d5", "lg4")
-	horner("d6", "d5", "lg2")
-	g.emit("fmul d6, d6, d5") // t1
-	ldc("d7", "lg7")
-	horner("d7", "d5", "lg5")
-	horner("d7", "d5", "lg3")
-	horner("d7", "d5", "lg1")
-	g.emit("fmul d7, d7, d4") // t2
-	g.emit("fadd d6, d6, d7") // R
-	g.emit("fmul d2, d1, d1")
+	g.emit("sub x11, x11, #1")
+	g.emit("cmp x11, #0x7fe")
+	g.emit("b.hs %s", logSpecial) // zero, subnormal, negative, Inf or NaN
+	g.label(logMain)
+	g.loadImm64("x13", fdlibm.LogOff)
+	g.emit("sub x13, x10, x13") // tmp
+	g.emit("asr x15, x13, #52")
+	g.emit("scvtf d4, x15")              // k
+	g.emit("sub x10, x10, x15, lsl #52") // bits(z)
+	g.emit("lsr x14, x13, #%d", 52-fdlibm.LogTableBits)
+	g.emit("and x14, x14, #%d", 1<<fdlibm.LogTableBits-1)
+	g.emit("add x14, x14, x14, lsl #1")
+	g.emit("add x14, x9, x14, lsl #3") // the row, less LogRowsOff
+	g.emit("fmov d0, x10")             // z
+	g.emit("lsr x10, x10, #%d", 51-fdlibm.LogTableBits)
+	g.emit("orr x10, x10, #1")
+	g.emit("lsl x10, x10, #%d", 51-fdlibm.LogTableBits)
+	g.emit("fmov d1, x10") // c
+	g.emit("fsub d0, d0, d1")
+	g.emit("ldr d1, [x14, #%d]", fdlibm.LogRowsOff)
+	g.emit("fmul d0, d0, d1") // r
+	ldc("d2", "ln2hi")
+	g.emit("fmul d2, d4, d2")
+	g.emit("ldr d3, [x14, #%d]", fdlibm.LogRowsOff+8)
+	g.emit("fadd d2, d2, d3") // w
+	g.emit("fadd d3, d2, d0") // hi
+	g.emit("fsub d2, d2, d3")
+	g.emit("fadd d2, d2, d0")
+	ldc("d5", "ln2lo")
+	g.emit("fmul d4, d4, d5")
+	g.emit("ldr d5, [x14, #%d]", fdlibm.LogRowsOff+16)
+	g.emit("fadd d4, d4, d5")
+	g.emit("fadd d2, d2, d4") // lo
+	g.emit("fmul d5, d0, d0") // r2
+	g.emit("ldp d16, d17, [x9]")
+	g.emit("ldp d18, d19, [x9, #16]")
+	g.emit("fmul d6, d0, d17")
+	g.emit("fadd d6, d6, d16")
+	g.emit("fmul d7, d0, d19")
+	g.emit("fadd d7, d7, d18")
+	g.emit("fmul d7, d7, d5")
+	g.emit("fadd d6, d6, d7") // p
 	ldc("d16", "half")
-	g.emit("fmul d2, d2, d16") // hfsq
-	g.emit("scvtf d0, x11")    // kf
-	ldc("d16", "ln2lo")
-	g.emit("fmul d5, d0, d16") // k·ln2_lo
-	g.emit("fadd d6, d6, d2")  // hfsq+R
-	g.emit("fmul d6, d6, d3")  // s·(hfsq+R)
-	g.emit("fadd d6, d6, d5")
-	g.emit("fsub d2, d2, d6") // hfsq - (…)
-	g.emit("fsub d2, d2, d1") // - f
-	ldc("d16", "ln2hi")
-	g.emit("fmul d0, d0, d16")
-	g.emit("fsub d0, d0, d2")
+	g.emit("fmul d7, d5, d16")
+	g.emit("fsub d2, d2, d7")
+	g.emit("fmul d5, d0, d5")
+	g.emit("fmul d5, d5, d6")
+	g.emit("fadd d2, d2, d5")
+	g.emit("fadd d0, d2, d3")
+	g.emit("ret")
+	// log1p(r) for r = x - 1, which is exact here.
+	g.label(logNear1)
+	ldc("d1", "one")
+	g.emit("fsub d0, d0, d1") // r
+	g.emit("fmul d1, d0, d0") // r2
+	g.emit("fmul d2, d0, d1") // r3
+	g.emit("add x11, x9, #%d", fdlibm.LogNear1Off)
+	// p = ((B[a] + r*B[a+1]) + r2*B[a+2]) + r3*tail, innermost first.
+	for _, a := range []int{6, 3, 0} {
+		g.emit("ldp d16, d17, [x11, #%d]", 8*a)
+		g.emit("ldr d18, [x11, #%d]", 8*(a+2))
+		g.emit("fmul d4, d0, d17")
+		g.emit("fadd d4, d4, d16")
+		g.emit("fmul d5, d1, d18")
+		g.emit("fadd d4, d4, d5")
+		if a == 6 {
+			g.emit("ldr d19, [x11, #%d]", 8*9)
+			g.emit("fmul d3, d2, d19")
+		} else {
+			g.emit("fmul d3, d3, d2")
+		}
+		g.emit("fadd d3, d3, d4")
+	}
+	g.emit("fmul d3, d3, d2") // y
+	g.loadImm64("x13", 0x41a0000000000000)
+	g.emit("fmov d1, x13")
+	g.emit("fmul d1, d1, d0") // r·2^27
+	g.emit("fadd d4, d0, d1")
+	g.emit("fsub d4, d4, d1") // rhi
+	g.emit("fsub d5, d0, d4") // rlo
+	ldc("d16", "half")
+	g.emit("fmul d6, d4, d4")
+	g.emit("fmul d6, d6, d16") // h
+	g.emit("fsub d7, d0, d6")  // hi
+	g.emit("fsub d1, d0, d7")
+	g.emit("fsub d1, d1, d6") // lo
+	g.emit("fadd d4, d4, d0")
+	g.emit("fmul d5, d5, d16")
+	g.emit("fmul d5, d5, d4")
+	g.emit("fsub d1, d1, d5")
+	g.emit("fadd d3, d3, d1")
+	g.emit("fadd d0, d3, d7")
+	g.emit("ret")
+	// x10 = bits(x), x11 = top-1 with top the sign and exponent.
+	g.label(logSpecial)
+	g.emit("lsl x13, x10, #1")
+	g.emit("cbz x13, %s", logNegInf) // ±0
+	nanGuard(logRet)
+	g.emit("cmp x10, #0")
+	g.emit("b.lt %s", logNaN)
+	g.emit("cmp x11, #0x7fe")
+	g.emit("b.eq %s", logRet) // +Inf
+	// Subnormal: scale into the normal range, then take the 52 back off
+	// the exponent field so the reduction's k comes out right.
+	g.loadImm64("x13", 0x4330000000000000)
+	g.emit("fmov d1, x13")
+	g.emit("fmul d0, d0, d1")
+	g.emit("fmov x10, d0")
+	g.loadImm64("x13", 0x0340000000000000)
+	g.emit("sub x10, x10, x13")
+	g.emit("b %s", logMain)
 	g.label(logRet)
 	g.emit("ret")
 	g.label(logNaN)
