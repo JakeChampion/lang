@@ -1225,9 +1225,9 @@ function do_file(o: io_buffered.BufWriter, pieces: Piece[], device_pieces: Piece
       }
       let it: Item = Item { name: name, st: st, link: link, is_link: is_link, deref: deref };
       let empty_fs: FsItem = FsItem { name: name, fs: fsstat_zero() };
-      let fmt: u32 = st.mode & (61440 as u32);
+      let fmt: u32 = st.mode & 61440 as u32;
       let layout: Piece[] = pieces;
-      if (fmt == (8192 as u32) || fmt == (24576 as u32)) {
+      if (fmt == 8192 as u32 || fmt == 24576 as u32) {
         layout = device_pieces;
       }
       let rendered: (io_buffered.BufWriter, boolean, Quoting) = render_pieces(w, layout, false, it, empty_fs, z, qi);
