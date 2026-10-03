@@ -5002,6 +5002,15 @@ func (g *generator) emitRmemchrRuntime() {
 // byte value; a shorter set takes the loop that checks each byte against
 // its length first.
 func (g *generator) emitScanSetRuntime() {
+	// Adapt the packed array's payload and length to the string kernel.
+	if g.usesScanSetBytes {
+		g.line(".global __fern_scan_set_bytes")
+		g.label("__fern_scan_set_bytes")
+		g.emit("mov x3, x2")
+		g.emit("mov w2, w1")
+		g.emit("ldur w1, [x0, #-4]")
+		g.emit("b __fern_scan_set")
+	}
 	g.line("")
 	g.line(".global __fern_scan_set")
 	g.typeDirective("__fern_scan_set")
@@ -15746,6 +15755,8 @@ type generator struct {
 	usesCountByte bool
 	// usesScanSet gates the byte-set scan kernel (__fern_scan_set).
 	usesScanSet bool
+	// usesScanSetBytes adds its u8[] entry, __fern_scan_set_bytes.
+	usesScanSetBytes bool
 	// usesCountRuns gates the run-count kernel (__fern_count_runs).
 	usesCountRuns bool
 	// usesBsdSum gates the BSD checksum kernel (__fern_bsd_sum).
@@ -20464,6 +20475,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__fern_count_byte":
 			g.usesCountByte = true
 		case "__fern_scan_set":
+			g.usesScanSet = true
+		case "__fern_scan_set_bytes":
+			g.usesScanSetBytes = true
 			g.usesScanSet = true
 		case "__fern_count_runs":
 			g.usesCountRuns = true

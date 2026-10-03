@@ -47,12 +47,14 @@ function main(): i32 {
 var movIntoRax = regexp.MustCompile(`^movq %r\w+, %rax$`)
 
 // lastBeforeRet is the instruction a function body runs last before each
-// ret, past the labels, unwind notes and register restores between them.
+// ret, past the labels, unwind notes, register restores and frame teardown
+// between them.
 func lastBeforeRet(body string) []string {
 	var lines []string
 	for _, l := range strings.Split(body, "\n") {
 		l = strings.TrimSpace(l)
-		if l == "" || strings.HasPrefix(l, ".") || strings.HasSuffix(l, ":") || strings.HasPrefix(l, "popq") {
+		if l == "" || strings.HasPrefix(l, ".") || strings.HasSuffix(l, ":") || strings.HasPrefix(l, "popq") ||
+			l == "leave" || strings.Contains(l, "%rbp") || strings.Contains(l, "%rsp") {
 			continue
 		}
 		lines = append(lines, l)

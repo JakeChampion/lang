@@ -3900,6 +3900,35 @@ function call_memchr_bytes(args: Value[]): Value {
   return v_err("__memchr_bytes: first arg must be a byte array");
 }
 
+// __scan_set over a byte array: the first byte at or after `from` whose
+// entry in `set` is nonzero, or the array's length.
+function call_scan_set_bytes(args: Value[]): Value {
+  if (args.len() != 3) {
+    return v_err("__scan_set_bytes: expected 3 args (bytes, from, set)");
+  }
+  if (!is_i32_arg(args[1])) {
+    return v_err("__scan_set_bytes: from must be an integer");
+  }
+  if let VArr(a) = args[0] {
+    if let VArr(set) = args[2] {
+      let at: i32 = vint_bits(args[1]);
+      if (at < 0) {
+        at = 0;
+      }
+      while (at < a.elements.len()) {
+        let b: i32 = vint_bits(a.elements[at]);
+        if (b < set.elements.len() && vint_bits(set.elements[b]) != 0) {
+          return v_int(at);
+        }
+        at = at + 1;
+      }
+      return v_int(a.elements.len());
+    }
+    return v_err("__scan_set_bytes: set must be a u8[]");
+  }
+  return v_err("__scan_set_bytes: first arg must be a byte array");
+}
+
 function call_rmemchr_bytes(args: Value[]): Value {
   if (args.len() != 3) {
     return v_err("__rmemchr_bytes: expected 3 args (bytes, byte, from)");
@@ -4316,6 +4345,9 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   }
   if (name == "__rmemchr_bytes") {
     return call_rmemchr_bytes(args);
+  }
+  if (name == "__scan_set_bytes") {
+    return call_scan_set_bytes(args);
   }
   // `__memchr(s, byte, from)` / `__ascii_run(s, from)` — the two scan
   // kernels the compiled backends vectorise, and the byte-search floor
