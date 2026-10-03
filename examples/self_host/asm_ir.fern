@@ -484,8 +484,6 @@ function str_grow_census(s: asmcore.EmitState): asmcore.EmitState {
 function emit_ir_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl: string, elem: string): asmcore.EmitState {
   s = s.write("__fn___fern_" + sym + ":\n");
   s = s.write("    movq 8(%rsp), %rax\n");  // arr
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .L" + lbl + "_ret\n");
   s = s.write("    cmpq $0x10000, %rax\n");  // low-addr guard
   s = s.write("    jb .L" + lbl + "_ret\n");
   s = s.write("    movl -8(%rax), %ecx\n");  // rc
@@ -555,8 +553,7 @@ function emit_ir_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl: s
 // shared box (rc>1) skips the payload — another owner still reads it — and the
 // box's own arr_dec does the decrement.
 function optarrarr_elem(): string {
-  let e: string = "    testq %rax, %rax\n    jz .Loaf_next\n";
-  e = e + "    cmpq $0x10000, %rax\n    jb .Loaf_next\n";
+  let e: string = "    cmpq $0x10000, %rax\n    jb .Loaf_next\n";
   e = e + "    pushq %rax\n    call __fn___fern_rc_is_unique\n    addq $8, %rsp\n";
   e = e + "    testq %rax, %rax\n    jz .Loaf_box\n";
   e = e + "    movq 8(%rbx,%r13,8), %rax\n";  // reload e
@@ -600,8 +597,6 @@ function map_free_block(s: asmcore.EmitState, box: string): asmcore.EmitState {
 function emit_ir_map_free_variant(s: asmcore.EmitState, suffix: string, kfree: string, vfree: string, lbl: string): asmcore.EmitState {
   s = s.write("__fn___fern_map_free" + suffix + ":\n");
   s = s.write("    movq 8(%rsp), %rax\n");  // box
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .L" + lbl + "_ret\n");
   s = s.write("    cmpq $0x10000, %rax\n");  // low-addr guard
   s = s.write("    jb .L" + lbl + "_ret\n");
   s = map_free_shared_guard(s, "%rax", lbl);
@@ -650,8 +645,6 @@ function emit_ir_map_free_fn_variant(s: asmcore.EmitState, suffix: string, krel:
   }
   s = s.write("__fn___fern_map_free" + suffix + ":\n");
   s = s.write("    movq " + util.i32_to_string(8 * nargs) + "(%rsp), %rax\n");  // box
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .L" + lbl + "_ret\n");
   s = s.write("    cmpq $0x10000, %rax\n");  // low-addr guard
   s = s.write("    jb .L" + lbl + "_ret\n");
   s = map_free_shared_guard(s, "%rax", lbl);
@@ -3026,12 +3019,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    addq $8, %rax\n");  // box = base+8 = data-16
   s = s.write("    ret\n");
   // RC helpers — stack-arg ABI (arg at 8(%rsp)); rc is the 32-bit field at
-  // data-8. Guard chain: null / SSO inline tag / low-address / static
-  // sentinel. __fn___fern_arr_dec frees (size-class freelist) at rc==1.
+  // data-8. Guard chain: SSO inline tag / low-address (null included) /
+  // static sentinel. __fn___fern_arr_dec frees (size-class freelist) at rc==1.
   s = s.write("__fn___fern_rc_inc:\n");
   s = s.write("    movq 8(%rsp), %rax\n");
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .Lshrcinc_ret\n");
   s = s.write("    testb $1, %al\n");
   s = s.write("    jnz .Lshrcinc_ret\n");
   s = s.write("    cmpq $0x10000, %rax\n");
@@ -3159,8 +3150,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fn___fern_arr_dec:\n");
   s = s.write("    movq 8(%rsp), %rax\n");
   s = s.write("__fn___fern_arr_dec.r:\n");
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .Larrdec_ret\n");
   s = s.write("    cmpq $0x10000, %rax\n");
   s = s.write("    jb .Larrdec_ret\n");
   s = s.write("    movl -8(%rax), %ecx\n");
@@ -3216,8 +3205,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fn___fern_str_free:\n");
   s = s.write("    movq 8(%rsp), %rax\n");  // box
   s = s.write("__fn___fern_str_free.r:\n");
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .Lstrfree_ret\n");
   s = s.write("    testb $1, %al\n");  // tagged / SSO sentinel (defensive)
   s = s.write("    jnz .Lstrfree_ret\n");
   s = s.write("    cmpq $0x10000, %rax\n");  // low-addr guard
@@ -3337,8 +3324,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // `.data` blocks, neither of which is in the arena.
   s = s.write("__fn___fern_str_view_free:\n");
   s = s.write("    movq 8(%rsp), %rax\n");  // box
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .Lstrvfree_ret\n");
   s = s.write("    testb $1, %al\n");  // tagged / SSO sentinel (defensive)
   s = s.write("    jnz .Lstrvfree_ret\n");
   s = s.write("    cmpq $0x10000, %rax\n");  // low-addr guard
@@ -3508,8 +3493,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fn___fern_rc_is_unique:\n");
   s = s.write("    movq 8(%rsp), %rcx\n");
   s = s.write("    movq $0, %rax\n");
-  s = s.write("    testq %rcx, %rcx\n");
-  s = s.write("    jz .Lshuniq_ret\n");
   s = s.write("    testb $1, %cl\n");
   s = s.write("    jnz .Lshuniq_ret\n");
   s = s.write("    cmpq $0x10000, %rcx\n");
@@ -3539,8 +3522,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fn___fern_arr_inc_elems:\n");
     s = s.write("    movq 8(%rsp), %rax\n");  // arr (also the result)
     s = s.write("__fn___fern_arr_inc_elems.r:\n");
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jz .Laie_ret\n");
     s = s.write("    cmpq $0x10000, %rax\n");
     s = s.write("    jb .Laie_ret\n");
     s = s.write("    movl -8(%rax), %ecx\n");  // rc
@@ -7173,7 +7154,21 @@ function ssa_release_entry(r: irtables.LowerResult, lp: string, s: asmcore.EmitS
   s = s.write("    cmpl $0, -8(%rax)\n    jns " + slow + "\n");
   s = s.write(kept + ":\n    xorl %eax, %eax\n    ret\n");
   s = s.write(dec + ":\n    subl $1, -8(%rax)\n    xorl %eax, %eax\n    ret\n");
-  return s.write(slow + ":\n");
+  s = s.write(slow + ":\n");
+  // A named type's sole owner runs its drop and frees the box with the box
+  // held on the stack, which also aligns both calls; a count of zero takes
+  // the body, whose helper reports the underflow.
+  let drop: string = ircore.nominal_release_drop(r);
+  if (drop == "" || !irtables.sig_reg_has_exact(s.reg_entries, asmcore.sanitize_label(drop))) {
+    return s;
+  }
+  let body: string = lp + "release_body";
+  s = helper_call_needs("__fern_rc_dec", s);
+  s = s.write("    cmpl $1, -8(%rax)\n    jne " + body + "\n");
+  s = s.write("    pushq %rax\n    call __fn_" + asmcore.sanitize_label(drop) + ".r\n");
+  s = s.write("    movq (%rsp), %rax\n    call " + ircore.ir_helper_symbol("__fern_rc_dec") + ".r\n");
+  s = s.write("    popq %rax\n    xorl %eax, %eax\n    ret\n");
+  return s.write(body + ":\n");
 }
 
 // ssa_mem_inst selects the production lift's memory kinds (ssa.fern 40..44)
