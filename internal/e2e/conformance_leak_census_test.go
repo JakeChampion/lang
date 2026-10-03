@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -13,13 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/ast"
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/e2eharness"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
 )
 
 // --- Which conformance fixtures leak, and where ------------------------------
@@ -30,7 +23,7 @@ import (
 // from, "neither runs as part of any gate — you have to go looking".
 //
 // This goes looking, over the whole conformance corpus. Each fixture is
-// emitted with the heap tracer on, run, and its `rctrace` records paired by
+// compiled by the self-host with the heap tracer on, run, and its `rctrace` records paired by
 // pointer; an alloc with no matching free is memory the program never gave
 // back on the path it took.
 //
@@ -41,8 +34,7 @@ import (
 // What is pinned is the COUNT, not the sites. A `site` is a runtime return
 // address, so it moves with any codegen change and would make the file churn
 // for reasons unrelated to reference counting. The sites are printed on
-// failure instead, where they are the actionable half — `-g` plus addr2line
-// turns one into a source line.
+// failure instead, where they are the actionable half.
 //
 // Regenerate with FERN_LEAK_CENSUS_DUMP=1, the same convention as
 // FERN_LEAK_MATRIX_DUMP.
@@ -62,10 +54,10 @@ func TestConformanceLeakCensusX86_64(t *testing.T) {
 	if testing.Short() {
 		t.Skip("compiles and runs the whole conformance corpus; not a -short test")
 	}
-	gcc, runner, ok := e2eharness.LookupX86_64Tooling()
-	if !ok {
-		t.Skip("no x86-64 toolchain")
-	}
+	_, runner := x86_64Tooling(t)
+	// Built here, not in a worker: a first build that fails reports through t.
+	e2eharness.SelfHostCLI(t)
+	e2eharness.SelfHostStdlibRoot(t)
 	cases := runnableFixtures(t)
 	if len(cases) < 300 {
 		t.Fatalf("found %d runnable fixtures; the corpus glob is wrong", len(cases))
@@ -84,7 +76,7 @@ func TestConformanceLeakCensusX86_64(t *testing.T) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			n, top, err := traceOneFixture(t, gcc, runner, c)
+			n, top, err := traceOneFixture(t, runner, c)
 			mu.Lock()
 			defer mu.Unlock()
 			if errors.Is(err, errCrashed) {
@@ -158,7 +150,7 @@ func TestConformanceLeakCensusX86_64(t *testing.T) {
 		}
 		if r.unpaired > w {
 			t.Errorf("%s: %d unpaired alloc(s), pinned at %d — this fixture leaks more than it did. "+
-				"Top alloc site(s): %s (addr2line on a -g build names the source line)",
+				"Top alloc site(s): %s",
 				r.name, r.unpaired, w, sites[r.name])
 		}
 		if r.unpaired >= 0 && w > 0 && r.unpaired < w {
@@ -198,51 +190,22 @@ func runnableFixtures(t *testing.T) []string {
 	return out
 }
 
-// traceOneFixture emits dir/main.fern with the heap tracer on, runs it, and
-// returns how many allocs never got a matching free.
-// It runs the load/check/monomorph chain itself rather than through
-// e2eharness.LoadCheckMono: that helper reports failures with t.Fatalf,
-// which is illegal from the worker goroutines below, and a fixture this
-// pass cannot build has to be recorded as unmeasured rather than end the
-// run.
-func traceOneFixture(t *testing.T, gcc string, runner []string, dir string) (int, string, error) {
-	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
-	if err != nil {
-		return 0, "", err
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		return 0, "", err
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		return 0, "", err
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		return 0, "", err
-	}
-	asm, err := emitWithTracer(prog, info)
-	if err != nil {
-		return 0, "", err
-	}
-
+// traceOneFixture compiles dir/main.fern with the heap tracer on, runs it,
+// and returns how many allocs never got a matching free. Every failure is
+// returned rather than reported: t.Fatalf is illegal from the worker
+// goroutines below, and a fixture this pass cannot build has to be recorded
+// as unmeasured rather than end the run.
+func traceOneFixture(t *testing.T, runner []string, dir string) (int, string, error) {
 	tmp, err := os.MkdirTemp("", "census")
 	if err != nil {
 		return 0, "", err
 	}
 	defer os.RemoveAll(tmp)
-	asmPath, binPath := filepath.Join(tmp, "p.s"), filepath.Join(tmp, "p")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+	bin, err := buildTracedX86_64(t, filepath.Join(dir, "main.fern"), tmp)
+	if err != nil {
 		return 0, "", err
 	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		return 0, "", fmt.Errorf("gcc: %v\n%s", err, out)
-	}
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(binPath)
-	} else {
-		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), binPath)...)
-	}
+	cmd := runX86_64Bin(runner, bin)
 	_, stderr, exit := runSplit(t, cmd)
 	// A fixture killed by a signal is a CRASH, not a verdict. Go reports
 	// that as exit code -1; an ordinary non-zero status is just the
@@ -270,18 +233,6 @@ func traceOneFixture(t *testing.T, gcc string, runner []string, dir string) (int
 		return 0, "", errCrashed
 	}
 	return pairRcTrace(stderr)
-}
-
-// emitTracerMu serialises the emit, which toggles package-level ast flags.
-var emitTracerMu sync.Mutex
-
-func emitWithTracer(prog *ast.Program, info *checker.Info) (string, error) {
-	emitTracerMu.Lock()
-	defer emitTracerMu.Unlock()
-	prevFree, prevTrace := ast.RcFreeEnabled, ast.RcTrace
-	defer func() { ast.RcFreeEnabled, ast.RcTrace = prevFree, prevTrace }()
-	ast.RcFreeEnabled, ast.RcTrace = true, true
-	return x86_64.Emit(prog, info)
 }
 
 // pairRcTrace counts allocs with no matching free, and names the alloc sites
