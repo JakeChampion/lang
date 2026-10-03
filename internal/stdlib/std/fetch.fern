@@ -22,11 +22,19 @@
 // followed, ten hops by default, the credentials dropped when a hop
 // leaves the origin; an idempotent request the peer resets before
 // answering is sent once more. No TLS where the client dials (`https`
-// fails with `Tls`), no pool: each request is one connection sent with
-// `Connection: close`. A `wasm32-wasi-http` build dials nothing: the
+// fails with `Tls`). A connection whose response was framed and that the
+// peer did not ask to close is kept in the transport's `Idle` pool, and
+// the next idempotent request to the same host and port takes it rather
+// than dialling; `send` and `plat.http` keep a pool for the one call (so a
+// redirect back to the same origin reuses its connection) and close it
+// after, and a caller holding a `Sockets` across `send_on` calls keeps one
+// across them. A `wasm32-wasi-http` build dials nothing: the
 // request goes to the host's wasi:http/outgoing-handler (std/wasi_http),
 // which resolves the name, connects and speaks TLS, and everything above
-// the transport is the same.
+// the transport is the same. Where the client dials, it reaches the
+// network only through `Transport`: `send` and `plat.http` use the
+// machine's (`sockets()`), and `send_on(tr, req, policy)` any other, which
+// is how std/sim_fetch runs this client in virtual time.
 // The client asks for `gzip` unless the caller wrote an `Accept-Encoding`
 // of their own, and undoes the coding it asked for, so a caller sees the
 // bytes the origin meant: the body cap bounds what the decoder may
@@ -331,7 +339,7 @@ struct __Target { host: string, port: i32, target: string, host_field: string, p
 // cannot be: through the proxy the environment names for it, as the
 // absolute-form target a proxy forwards (RFC 9112 §3.2.2), else straight
 // to the origin.
-function __target_of(raw: string, policy: __Policy): Result[__Target, FetchError] {
+function __target_of(raw: string, policy: Policy): Result[__Target, FetchError] {
   let u: Url = __http_url(raw)?;
   let port: i32 = __effective_port(u);
   let tls: boolean = u.scheme == "https";
@@ -482,7 +490,7 @@ function __head(req: Request, t: __Target, body_len: i32): string {
     out = out + fields.names[i] + ": " + fields.values[i] + "\r\n";
     i = i + 1;
   }
-  return out + "Connection: close\r\n\r\n";
+  return out + "\r\n";
 }
 
 // `__sent_fields(req, t, body_len)` — the fields a request carries
@@ -512,12 +520,260 @@ function __asks_gzip(req: Request): boolean {
   return req.decoding.depth > 0 && !__holds(req.headers.names, "accept-encoding");
 }
 
+// `Transport` — the I/O the dialled route does, behind one seam: the
+// clock its bounds are measured on, name lookup, connecting, and reading
+// and writing a connection by the number `connect` handed out. `Sockets`
+// is the machine's; std/sim_fetch scripts one in virtual time. Every
+// policy the client applies (the block list, the bounds, retrying a
+// reset, following a redirect, decoding) stays above the seam, so a
+// scripted transport exercises exactly what a real one would.
+//
+// `connect` races `addrs` as `dns.connect_race` does: a bound that has
+// already passed is `TimedOut` before any attempt, every address refusing
+// is the last refusal, and none connected within the bound is `TimedOut`.
+// `read` answers within `wait_ms`: a chunk, an empty chunk at the end of
+// the stream, or `None` when the wait passed with nothing. `write` answers
+// the bytes taken, or a negated errno. `idle` is the transport's pool of
+// connections kept for reuse; the client decides what goes in and comes
+// out of it.
+pub trait Transport {
+  function now_ns(self: Self): i64;
+  function lookup(self: Self, host: string, checked: boolean): Result[Lookup, dns.DnsError];
+  function connect(self: Self, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError];
+  function write(self: Self, conn: i32, data: string): i32;
+  function read(self: Self, conn: i32, max: i32, wait_ms: i64): Option[u8[]];
+  function close(self: Self, conn: i32): i32;
+  function idle(self: Self): Idle;
+}
+
+// `Idle` — the connections a transport keeps for the next request to the
+// same place: at most `max` of them, none reused once idle past `idle_ms`.
+// A cell holds only a scalar or a string, so `rows` is the table, a
+// connection a line of its key, number and the nanosecond it went idle.
+pub struct Idle { rows: Cell[string], max: i32, idle_ms: i32 }
+
+// `idle()` — an empty pool keeping up to 64 connections, each for 90 s
+// (Go's `IdleConnTimeout`).
+pub function idle(): Idle {
+  return idle_limited(64, 90000);
+}
+
+// `idle_limited(max, idle_ms)` — an empty pool keeping up to `max`
+// connections, each for `idle_ms`; a `max` of 0 keeps none.
+pub function idle_limited(max: i32, idle_ms: i32): Idle {
+  return Idle { rows: cell_new(""), max: max, idle_ms: idle_ms };
+}
+
+// `close_idle(tr)` — every connection `tr` keeps for reuse closed.
+pub function close_idle[T: Transport](tr: T): void {
+  let pool: Idle = tr.idle();
+  for row in __idle_rows(pool) {
+    tr.close(__idle_conn(row));
+  }
+  pool.rows.set("");
+}
+
+// `__pool_key(t, guard)` — where a connection reaches: the host and port
+// dialled, and whether the block list judged the addresses, so a
+// connection the open route made is never handed to the guarded one.
+function __pool_key(t: __Target, guard: boolean): string {
+  let route: string = "open ";
+  if (guard) {
+    route = "global ";
+  }
+  return route + t.host + " " + int.int_to_string(t.port);
+}
+
+// `__take_idle(tr, key)` — the connection to `key` kept last, taken out
+// of the pool, or -1; any connection idle past the pool's bound is closed
+// on the way.
+function __take_idle[T: Transport](tr: T, key: string): i32 {
+  let rows: string[] = __live_rows(tr);
+  let pick: i32 = 0 - 1;
+  let i: i32 = 0;
+  while (i < rows.len()) {
+    if (__idle_key(rows[i]) == key) {
+      pick = i;
+    }
+    i = i + 1;
+  }
+  if (pick < 0) {
+    return 0 - 1;
+  }
+  tr.idle().rows.set(__idle_joined(rows, pick));
+  return __idle_conn(rows[pick]);
+}
+
+// `__park(tr, key, conn)` — `conn` kept for the next request to `key`, the
+// longest-idle connections closed while the pool holds more than its
+// `max`.
+function __park[T: Transport](tr: T, key: string, conn: i32): void {
+  let rows: string[] = __live_rows(tr).append(key + "\t" + int.int_to_string(conn) + "\t" + tr.now_ns().to_string());
+  let from: i32 = 0;
+  while (rows.len() - from > tr.idle().max) {
+    tr.close(__idle_conn(rows[from]));
+    from = from + 1;
+  }
+  let kept: string[] = [];
+  while (from < rows.len()) {
+    kept = kept.append(rows[from]);
+    from = from + 1;
+  }
+  tr.idle().rows.set(__idle_joined(kept, 0 - 1));
+}
+
+// `__live_rows(tr)` — the pool's connections still inside its idle bound,
+// oldest first; the rest closed and dropped from the pool.
+function __live_rows[T: Transport](tr: T): string[] {
+  let pool: Idle = tr.idle();
+  let now: i64 = tr.now_ns();
+  let bound: i64 = pool.idle_ms as i64 * 1000000;
+  let out: string[] = [];
+  for row in __idle_rows(pool) {
+    if (now - __idle_since(row) > bound) {
+      tr.close(__idle_conn(row));
+    } else {
+      out = out.append(row);
+    }
+  }
+  pool.rows.set(__idle_joined(out, 0 - 1));
+  return out;
+}
+
+function __idle_rows(pool: Idle): string[] {
+  let out: string[] = [];
+  for row in pool.rows.get().split("\n") {
+    if (row.len() > 0) {
+      out = out.append(row);
+    }
+  }
+  return out;
+}
+
+// `__idle_joined(rows, skip)` — `rows` as the pool's table, row `skip`
+// left out.
+function __idle_joined(rows: string[], skip: i32): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < rows.len()) {
+    if (i != skip) {
+      out = out + rows[i] + "\n";
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function __idle_key(row: string): string {
+  return row.split("\t")[0];
+}
+
+function __idle_conn(row: string): i32 {
+  match (int.parse_int_radix(row.split("\t")[1], 10)) {
+    Some(n) => {
+      return n;
+    },
+    None => {
+      return 0 - 1;
+    }
+  }
+  return 0 - 1;
+}
+
+function __idle_since(row: string): i64 {
+  let v: i64 = 0;
+  for b in row.split("\t")[2].bytes() {
+    v = v * 10 + (b as i64 - 48);
+  }
+  return v;
+}
+
+// `Lookup` — a name's addresses: `dial` the ones to connect to, and, when
+// the lookup is `checked` for the block list, `named` the ones the network
+// returned with `judged[i]` the address `named[i]` carries (itself, or
+// the IPv4 one under a NAT64 prefix), which the block list judges.
+pub struct Lookup { dial: net.IpAddr[], named: net.IpAddr[], judged: net.IpAddr[] }
+
+// `Sockets` — the machine's transport: the system resolver, raced
+// connects (`dns.connect_race`), TCP sockets read under a deadline, and
+// the pool of the ones kept for reuse.
+pub struct Sockets { pool: Idle }
+
+// `sockets()` — the machine's transport with an empty `idle()` pool;
+// `close_idle` closes what it kept.
+pub function sockets(): Sockets {
+  return sockets_with(idle());
+}
+
+// `sockets_with(pool)` — the machine's transport keeping connections in
+// `pool`.
+pub function sockets_with(pool: Idle): Sockets {
+  return Sockets { pool: pool };
+}
+
+impl Transport for Sockets {
+  function now_ns(self: Sockets): i64 {
+    return monotonic_ns();
+  }
+  function lookup(self: Sockets, host: string, checked: boolean): Result[Lookup, dns.DnsError] {
+    let none: net.IpAddr[] = [];
+    if (!checked) {
+      let found: net.IpAddr[] = dns.resolve(host)?;
+      return Ok(Lookup { dial: found, named: none, judged: none });
+    }
+    let plain: net.IpAddr[] = dns.resolve_plain(host)?;
+    let carried: net.IpAddr[] = [];
+    for a in plain {
+      match (dns.nat64_carried(a)) {
+        Some(v4) => {
+          carried = carried.append(v4);
+        },
+        None => {
+          carried = carried.append(a);
+        }
+      }
+    }
+    return Ok(Lookup { dial: dns.synthesized(plain), named: plain, judged: carried });
+  }
+  function connect(self: Sockets, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError] {
+    return dns.connect_race(addrs, port, dns.DialOptions { ...dns.dial_options(), timeout_ms: timeout_ms });
+  }
+  function write(self: Sockets, conn: i32, data: string): i32 {
+    return tcp_send(conn, data);
+  }
+  function read(self: Sockets, conn: i32, max: i32, wait_ms: i64): Option[u8[]] {
+    return tcp.tcp_recv_deadline(conn, max, time.duration_millis(wait_ms));
+  }
+  function close(self: Sockets, conn: i32): i32 {
+    tcp_close(conn);
+    return 0;
+  }
+  function idle(self: Sockets): Idle {
+    return self.pool;
+  }
+}
+
 // `send(req)` — the request sent and its response read, as the module
 // comment says: a 3xx with a `Location` is followed up to
 // `req.redirects` hops, all under the one total bound. Blocking: every
 // connection is closed before it answers.
 pub function send(req: Request): Result[HttpResponse, FetchError] {
-  return __send_as(req, __Policy { public_only: false, proxies: __proxies() });
+  return __send_closing(Policy { public_only: false, proxies: __proxies() }, req);
+}
+
+// `__send_closing(policy, req)` — `req` sent over the machine's transport
+// with a pool for this one call, closed once it answers. On wasi-http the
+// host dials and nothing is kept; the `else` arm is what the fold drops,
+// so that build reaches no socket.
+function __send_closing(policy: Policy, req: Request): Result[HttpResponse, FetchError] {
+  let tr: Sockets = sockets();
+  if (target_os() == "wasi-http") {
+    return send_on(tr, req, policy);
+  } else {
+    let answer: Result[HttpResponse, FetchError] = send_on(tr, req, policy);
+    close_idle(tr);
+    return answer;
+  }
 }
 
 // `__proxies()` — the environment's proxy configuration where this
@@ -532,18 +788,23 @@ function __proxies(): ProxyEnv {
   }
 }
 
-// `__Policy` — what a route may reach: `public_only` refuses a host that
+// `Policy` — what a route may reach: `public_only` refuses a host that
 // resolves to an address `net.is_global` does not admit; `proxies` is the
-// environment's proxy configuration, read once per `send`.
-struct __Policy { public_only: boolean, proxies: ProxyEnv }
+// proxy configuration, which `send` and `plat.http` read from the
+// environment once per request.
+pub struct Policy { public_only: boolean, proxies: ProxyEnv }
 
-// `__send_as(req, policy)` — `send` under a route's policy.
-function __send_as(req: Request, policy: __Policy): Result[HttpResponse, FetchError] {
-  let started: i64 = monotonic_ns();
+// `send_on(tr, req, policy)` — `send` over the transport `tr` under
+// `policy`: every connection, read and clock reading of the dialled route
+// is `tr`'s, so a scripted transport (std/sim_fetch) runs the whole client
+// in virtual time. A wasi-http build hands the request to the host and
+// never asks `tr`.
+pub function send_on[T: Transport](tr: T, req: Request, policy: Policy): Result[HttpResponse, FetchError] {
+  let started: i64 = tr.now_ns();
   let cur: Request = req;
   let hops: i32 = 0;
   while (true) {
-    let resp: HttpResponse = __send_once(cur, started, policy)?;
+    let resp: HttpResponse = __send_once(tr, cur, started, policy)?;
     if (!__redirects(resp.status) || req.redirects == 0) {
       return Ok(resp);
     }
@@ -663,13 +924,13 @@ function __effective_port(u: Url): i32 {
   return 80;
 }
 
-// `__send_once(req, started, policy)` — one hop: the request validated,
+// `__send_once(tr, req, started, policy)` — one hop: the request validated,
 // then sent by the transport the target has. A wasi-http build has no
 // sockets and hands the request to the host's client; every other
 // target dials the origin itself. The branch is on the target's name, a
 // literal by the time anything is emitted, so each build carries one
 // transport.
-function __send_once(req: Request, started: i64, policy: __Policy): Result[HttpResponse, FetchError] {
+function __send_once[T: Transport](tr: T, req: Request, started: i64, policy: Policy): Result[HttpResponse, FetchError] {
   let t: __Target = __target_of(req.url, policy)?;
   match (__request_ok(req)) {
     Ok(_) => {},
@@ -680,26 +941,28 @@ function __send_once(req: Request, started: i64, policy: __Policy): Result[HttpR
   if (target_os() == "wasi-http") {
     return __send_hosted(req, t);
   } else {
-    return __send_dialled(req, t, started, policy);
+    return __send_dialled(tr, req, t, started, policy);
   }
 }
 
-// `__send_dialled(req, t, started, policy)` — the request on a
+// `__send_dialled(tr, req, t, started, policy)` — the request on a
 // connection this client opens: its origin resolved and checked when the
 // route reaches global addresses only and a proxy carries the request
 // (the proxy's address is the deployment's choice and goes unchecked),
-// then sent and its response read, and sent once more when the peer
-// reset the connection before any response byte and the method is
-// idempotent (RFC 9110 §9.2.2): a reset before an answer says nothing
-// happened.
-function __send_dialled(req: Request, t: __Target, started: i64, policy: __Policy): Result[HttpResponse, FetchError] {
-  __origin_checked(t, policy)?;
+// then sent and its response read, and sent once more on a new
+// connection when the peer reset the connection before any response byte
+// and the method is idempotent (RFC 9110 §9.2.2): a reset before an
+// answer says nothing happened, which is also how a kept connection the
+// peer has since closed answers, and another kept connection to the same
+// place is as likely closed.
+function __send_dialled[T: Transport](tr: T, req: Request, t: __Target, started: i64, policy: Policy): Result[HttpResponse, FetchError] {
+  __origin_checked(tr, t, policy)?;
   let guard: boolean = policy.public_only && t.direct;
-  let first: Result[HttpResponse, FetchError] = __attempt(req, t, started, guard);
+  let first: Result[HttpResponse, FetchError] = __attempt(tr, req, t, started, guard, true);
   match (first) {
     Err(e) => {
       if (__reset(e) && http.http_method_idempotent(req.method)) {
-        return __attempt(req, t, started, guard);
+        return __attempt(tr, req, t, started, guard, false);
       }
       return Err(e);
     },
@@ -710,13 +973,13 @@ function __send_dialled(req: Request, t: __Target, started: i64, policy: __Polic
   return first;
 }
 
-// `__origin_checked(t, policy)` — on the route that reaches global
+// `__origin_checked(tr, t, policy)` — on the route that reaches global
 // addresses only, the origin a proxy will reach for `t` resolved and
 // checked, as `__connect` checks a host it dials itself; nothing when
 // the origin is dialled directly or the route has no such rule.
-function __origin_checked(t: __Target, policy: __Policy): Result[void, FetchError] {
+function __origin_checked[T: Transport](tr: T, t: __Target, policy: Policy): Result[void, FetchError] {
   if (policy.public_only && !t.direct) {
-    let checked: net.IpAddr[] = __resolve(t.origin, true)?;
+    let checked: net.IpAddr[] = __resolve(tr, t.origin, true)?;
   }
   return Ok(());
 }
@@ -736,34 +999,55 @@ function __reset(e: FetchError): boolean {
   return false;
 }
 
-// `__attempt(req, t, started, guard)` — one connection: opened (only to
-// a global address when `guard`), the request written, the response
-// read, and closed.
-function __attempt(req: Request, t: __Target, started: i64, guard: boolean): Result[HttpResponse, FetchError] {
-  let sock: i32 = __connect(t, req.timeouts, guard)?;
+// `__attempt(tr, req, t, started, guard, reuse)` — one connection: a kept
+// one to the same place when `reuse` and the method is idempotent (one
+// that is not may have been acted on by the time a closed kept connection
+// shows itself, so it never risks one), else one opened (only to a global
+// address when `guard`); the request written, the response read, and the
+// connection kept when the response left it reusable, closed otherwise.
+function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64, guard: boolean, reuse: boolean): Result[HttpResponse, FetchError] {
+  let key: string = __pool_key(t, guard);
+  let conn: i32 = 0 - 1;
+  if (reuse && http.http_method_idempotent(req.method)) {
+    conn = __take_idle(tr, key);
+  }
+  if (conn < 0) {
+    conn = __connect(tr, t, req.timeouts, guard)?;
+  }
   let body: u8[] = req.body.bytes();
-  let sent: Result[void, FetchError] = __send_all(sock, __head(req, t, body.len()) + string_from_bytes_unchecked(body));
+  let sent: Result[void, FetchError] = __send_all(tr, conn, __head(req, t, body.len()) + string_from_bytes_unchecked(body));
   match (sent) {
     Ok(_) => {},
     Err(e) => {
-      tcp_close(sock);
+      tr.close(conn);
       return Err(e);
     }
   }
-  let answer: Result[HttpResponse, FetchError] = __read_response(sock, req, started);
-  tcp_close(sock);
-  return answer;
+  match (__read_response(tr, conn, req, started)) {
+    Ok(read) => {
+      if (read.keep) {
+        __park(tr, key, conn);
+      } else {
+        tr.close(conn);
+      }
+      return __decoded(read.response, req);
+    },
+    Err(e) => {
+      tr.close(conn);
+      return Err(e);
+    }
+  }
+  return Err(Protocol("unreachable"));
 }
 
-// `__connect(t, timeouts, guard)` — a connection to the host, resolved
-// and raced under the connect bound; with `guard`, refused before the
-// race when any address resolved is not a global one.
-function __connect(t: __Target, timeouts: Timeouts, guard: boolean): Result[i32, FetchError] {
-  let addrs: net.IpAddr[] = __resolve(t.host, guard)?;
-  let opts: dns.DialOptions = dns.DialOptions { ...dns.dial_options(), timeout_ms: __connect_bound(timeouts) };
-  match (dns.connect_race(addrs, t.port, opts)) {
-    Ok(sock) => {
-      return Ok(sock);
+// `__connect(tr, t, timeouts, guard)` — a connection to the host,
+// resolved and raced under the connect bound; with `guard`, refused
+// before the race when any address resolved is not a global one.
+function __connect[T: Transport](tr: T, t: __Target, timeouts: Timeouts, guard: boolean): Result[i32, FetchError] {
+  let addrs: net.IpAddr[] = __resolve(tr, t.host, guard)?;
+  match (tr.connect(addrs, t.port, __connect_bound(timeouts))) {
+    Ok(conn) => {
+      return Ok(conn);
     },
     Err(e) => {
       if (e.eq(net.TimedOut)) {
@@ -783,24 +1067,16 @@ function __connect_bound(timeouts: Timeouts): i32 {
   return timeouts.connect_ms;
 }
 
-// `__resolve(host, guard)` — the addresses of `host` as this machine
-// reaches them; with `guard`, refused as `Blocked` when any of them, as
-// the network names it before NAT64 synthesis, is not a global address.
-function __resolve(host: string, guard: boolean): Result[net.IpAddr[], FetchError] {
-  if (!guard) {
-    match (dns.resolve(host)) {
-      Ok(found) => {
-        return Ok(found);
-      },
-      Err(e) => {
-        return Err(Dns(e));
+// `__resolve(tr, host, guard)` — the addresses of `host` as `tr` reaches
+// them; with `guard`, refused as `Blocked` when any of them, as the
+// network names it before NAT64 synthesis, is not a global address.
+function __resolve[T: Transport](tr: T, host: string, guard: boolean): Result[net.IpAddr[], FetchError] {
+  match (tr.lookup(host, guard)) {
+    Ok(found) => {
+      if (guard) {
+        __global_only(found)?;
       }
-    }
-  }
-  match (dns.resolve_plain(host)) {
-    Ok(plain) => {
-      __global_only(plain)?;
-      return Ok(dns.synthesized(plain));
+      return Ok(found.dial);
     },
     Err(e) => {
       return Err(Dns(e));
@@ -809,21 +1085,16 @@ function __resolve(host: string, guard: boolean): Result[net.IpAddr[], FetchErro
   return Err(Dns(dns.NoData));
 }
 
-// `__global_only(addrs)` — the refusal naming the first of `addrs` that
-// is not a global address, when there is one; an address under a NAT64
-// prefix the nameservers reveal is judged by the address it carries.
-function __global_only(addrs: net.IpAddr[]): Result[void, FetchError] {
-  for a in addrs {
-    let seen: net.IpAddr = a;
-    match (dns.nat64_carried(a)) {
-      Some(v4) => {
-        seen = v4;
-      },
-      None => {}
+// `__global_only(found)` — the refusal naming the first address the
+// network named that is not a global one, judged by the address it
+// carries when it sits under a NAT64 prefix.
+function __global_only(found: Lookup): Result[void, FetchError] {
+  let i: i32 = 0;
+  while (i < found.named.len()) {
+    if (!found.judged[i].is_global()) {
+      return Err(Blocked(found.named[i].to_string() + " is not a global address"));
     }
-    if (!seen.is_global()) {
-      return Err(Blocked(a.to_string() + " is not a global address"));
-    }
+    i = i + 1;
   }
   return Ok(());
 }
@@ -1005,13 +1276,25 @@ function __host_late_code(code: i32): FetchError {
   return Host("error code " + int.int_to_string(code));
 }
 
-// `__send_all(sock, payload)` — every byte of `payload` written, or the
-// failure as the kernel reported it. The payload is handed to `tcp_send`
-// as the bytes it holds; a body is not text, and never read as one.
-function __send_all(sock: i32, payload: string): Result[void, FetchError] {
+// `__Read` — a final response as it came off the connection, and whether
+// the connection outlives it: the peer did not ask to close (`Connection:
+// close`, or an HTTP/1.0 response without `keep-alive`), the body was
+// framed rather than ended by the close, and nothing followed it.
+struct __Read { response: HttpResponse, keep: boolean }
+
+// `__reusable(framed, from, read, eof)` — whether the connection outlives
+// the final response `framed`, which began at `from` of the `read` bytes.
+function __reusable(framed: http.HttpResponseFramed, from: i32, read: i32, eof: boolean): boolean {
+  return framed.keep_alive && !eof && from + framed.len == read;
+}
+
+// `__send_all(tr, conn, payload)` — every byte of `payload` written, or
+// the failure as the transport reported it. The payload is handed over as
+// the bytes it holds; a body is not text, and never read as one.
+function __send_all[T: Transport](tr: T, conn: i32, payload: string): Result[void, FetchError] {
   let at: i32 = 0;
   while (at < payload.len()) {
-    let n: i32 = tcp_send(sock, slice_unchecked(payload, at, payload.len()).to_owned());
+    let n: i32 = tr.write(conn, slice_unchecked(payload, at, payload.len()).to_owned());
     if (n < 0) {
       return Err(Io(net.error_from_errno(0 - n)));
     }
@@ -1023,13 +1306,13 @@ function __send_all(sock: i32, payload: string): Result[void, FetchError] {
   return Ok(());
 }
 
-// `__read_response(sock, req, started)` — the response read under the
+// `__read_response(tr, conn, req, started)` — the response read under the
 // inactivity and total bounds, interim 1xx responses stepped over (within
 // one header budget for all of them, so a peer cannot stream `100
 // Continue` for as long as the timeout allows), and handed back with its
 // hop-by-hop fields stripped. The buffer is uniquely owned and grows in
 // place, so the read stays linear in the response.
-function __read_response(sock: i32, req: Request, started: i64): Result[HttpResponse, FetchError] {
+function __read_response[T: Transport](tr: T, conn: i32, req: Request, started: i64): Result[__Read, FetchError] {
   let buf: u8[] = [];
   let from: i32 = 0;
   let eof: boolean = false;
@@ -1038,7 +1321,8 @@ function __read_response(sock: i32, req: Request, started: i64): Result[HttpResp
       Complete(framed) => {
         let next: i32 = __after_interim(framed, from, req.limits)?;
         if (next < 0) {
-          return __decoded(HttpResponse { ...framed.response, headers: http.http_end_to_end(framed.response.headers) }, req);
+          let response: HttpResponse = HttpResponse { ...framed.response, headers: http.http_end_to_end(framed.response.headers) };
+          return Ok(__Read { response: response, keep: __reusable(framed, from, buf.len(), eof) });
         }
         from = next;
         continue;
@@ -1052,7 +1336,7 @@ function __read_response(sock: i32, req: Request, started: i64): Result[HttpResp
         return Err(__rejected(code));
       }
     }
-    let chunk: u8[] = __recv_bounded(sock, req.timeouts, started)?;
+    let chunk: u8[] = __recv_bounded(tr, conn, req.timeouts, started)?;
     if (chunk.len() == 0) {
       eof = true;
     } else {
@@ -1207,12 +1491,12 @@ function __interim(status: i32): boolean {
   return status >= 100 && status < 200;
 }
 
-// `__recv_bounded(sock, timeouts, started)` — the next chunk of the
+// `__recv_bounded(tr, conn, timeouts, started)` — the next chunk of the
 // response within the tighter of the inactivity bound and what is left
 // of the total, or the bound that passed.
-function __recv_bounded(sock: i32, timeouts: Timeouts, started: i64): Result[u8[], FetchError] {
+function __recv_bounded[T: Transport](tr: T, conn: i32, timeouts: Timeouts, started: i64): Result[u8[], FetchError] {
   let ns_per_ms: i64 = 1000000;
-  let left_ms: i64 = timeouts.total_ms as i64 - (monotonic_ns() - started) / ns_per_ms;
+  let left_ms: i64 = timeouts.total_ms as i64 - (tr.now_ns() - started) / ns_per_ms;
   if (left_ms <= 0) {
     return Err(Timeout(Total));
   }
@@ -1222,7 +1506,7 @@ function __recv_bounded(sock: i32, timeouts: Timeouts, started: i64): Result[u8[
     wait_ms = left_ms;
     bound = Total;
   }
-  match (tcp.tcp_recv_deadline(sock, 65536, time.duration_millis(wait_ms))) {
+  match (tr.read(conn, 65536, wait_ms)) {
     Some(chunk) => {
       return Ok(chunk);
     },
@@ -1263,7 +1547,7 @@ function __rejected(code: i32): FetchError {
 // what a real request gives for a host that is not listening.
 pub function (plat: Platform) http(req: Request): Result[HttpResponse, FetchError] {
   if (!plat.is_mock()) {
-    return __send_as(req, __Policy { public_only: true, proxies: __proxies() });
+    return __send_closing(Policy { public_only: true, proxies: __proxies() }, req);
   }
   let summary: string = req.method + " " + req.url;
   plat.record("http", summary);

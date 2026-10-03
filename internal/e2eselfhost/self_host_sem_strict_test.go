@@ -13,7 +13,7 @@ import (
 // `FERN_SEM_IR:` line naming each refusal. Every compile here runs with no
 // FERN_ variable of the caller's (childEnv).
 func TestSelfHostSemIRStrict(t *testing.T) {
-	gcc, _ := x86_64Tooling(t)
+	gcc, runner := x86_64Tooling(t)
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatal(err)
@@ -27,7 +27,7 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		cmd := exec.Command(fernBin, "-target", target, path, stdlibRoot, "-o", filepath.Join(t.TempDir(), "prog"))
+		cmd := runX86_64Bin(runner, fernBin, "-target", target, path, stdlibRoot, "-o", filepath.Join(t.TempDir(), "prog"))
 		cmd.Env = childEnv(env...)
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
@@ -59,13 +59,13 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 		t.Fatal(err)
 	}
 	strTraitBin := filepath.Join(strTrait, "prog")
-	strTraitBuild := exec.Command(fernBin, "-target", "x86-64-linux", filepath.Join(strTrait, "main.fern"), stdlibRoot, "-o", strTraitBin)
+	strTraitBuild := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", filepath.Join(strTrait, "main.fern"), stdlibRoot, "-o", strTraitBin)
 	strTraitBuild.Env = childEnv()
 	if out, err := strTraitBuild.CombinedOutput(); err != nil {
 		t.Fatalf("an imported trait method on str: %v\n%s", err, out)
 	}
 	var strTraitExit *exec.ExitError
-	if err := exec.Command(strTraitBin).Run(); !errors.As(err, &strTraitExit) || strTraitExit.ExitCode() != 3 {
+	if err := runX86_64Bin(runner, strTraitBin).Run(); !errors.As(err, &strTraitExit) || strTraitExit.ExitCode() != 3 {
 		t.Fatalf("an imported trait method on str: %v, want exit 3", err)
 	}
 	async := "async function compute(): i32 { return 7; }\nfunction main(): i32 { return compute(); }\n"
@@ -106,13 +106,13 @@ function main(): i32 {
 		t.Fatal(err)
 	}
 	viewBin := filepath.Join(t.TempDir(), "prog")
-	viewBuild := exec.Command(fernBin, "-target", "x86-64-linux", viewSrc, stdlibRoot, "-o", viewBin)
+	viewBuild := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", viewSrc, stdlibRoot, "-o", viewBin)
 	viewBuild.Env = childEnv()
 	if out, err := viewBuild.CombinedOutput(); err != nil {
 		t.Fatalf("a view map value read: %v, want the typed lowering's compile\n%s", err, out)
 	}
 	var viewExit *exec.ExitError
-	if err := exec.Command(viewBin).Run(); !errors.As(err, &viewExit) || viewExit.ExitCode() != 4 {
+	if err := runX86_64Bin(runner, viewBin).Run(); !errors.As(err, &viewExit) || viewExit.ExitCode() != 4 {
 		t.Fatalf("a view map value read: %v, want exit 4", err)
 	}
 
@@ -128,13 +128,13 @@ function main(): i32 {
 			t.Fatal(err)
 		}
 		bin := filepath.Join(t.TempDir(), "prog")
-		build := exec.Command(fernBin, "-target", "x86-64-linux", path, stdlibRoot, "-o", bin)
+		build := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", path, stdlibRoot, "-o", bin)
 		build.Env = childEnv()
 		if out, err := build.CombinedOutput(); err != nil {
 			t.Fatalf("compile: %v\n%s", err, out)
 		}
 		var exit *exec.ExitError
-		if err := exec.Command(bin).Run(); !errors.As(err, &exit) || exit.ExitCode() != want {
+		if err := runX86_64Bin(runner, bin).Run(); !errors.As(err, &exit) || exit.ExitCode() != want {
 			t.Fatalf("run: %v, want exit %d", err, want)
 		}
 	}
@@ -189,7 +189,7 @@ function main(): i32 { return hold(pick(1)) + hold((): string => "x"); }
 		t.Fatal(err)
 	}
 	pickAsm := filepath.Join(t.TempDir(), "prog.s")
-	emit := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", pickSrc, stdlibRoot, "-o", pickAsm)
+	emit := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", pickSrc, stdlibRoot, "-o", pickAsm)
 	emit.Env = childEnv()
 	if out, err := emit.CombinedOutput(); err != nil {
 		t.Fatalf("a generic callee's function result: %v\n%s", err, out)
@@ -366,7 +366,7 @@ function main(): i32 {
 				t.Fatal(err)
 			}
 			for _, target := range []string{"x86-64-sanitize", "arm64-linux", "wasm32-wasi"} {
-				got, report, leak := semCompileRun(t, gcc, nil, fernBin, stdlibRoot, src, target, "")
+				got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, "")
 				if got != c.want {
 					t.Fatalf("%s: answered %q, want %q\n%s", target, got, c.want, report)
 				}

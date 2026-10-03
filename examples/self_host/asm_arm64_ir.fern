@@ -27,7 +27,6 @@ import "./util";
 import "./ir";
 import "./irtables";
 import "./fnsigs";
-import "./irverify";
 import "./irverifygate";
 import "./lexer";
 import "./ircore";
@@ -1386,6 +1385,42 @@ function ssa_unary_asm(what: string, unsigned: boolean, d: string): string {
   return "";
 }
 
+// ssa_unary_from selects a width op, `not` or bit count that reads its operand
+// from register `src` and writes `d`, so an operand outside `d` needs no copy
+// into it first; "" for an op this does not cover.
+function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string): string {
+  let w: string = ssa_wreg(d);
+  let ws: string = ssa_wreg(src);
+  if (what == "load_i32") {
+    return "    ldrsw " + d + ", [" + src + "]\n";
+  }
+  if (what == "!") {
+    return "    cmp " + src + ", #0\n    cset " + d + ", eq\n";
+  }
+  if (what == "int_cast:i32" || (what == "int_extend" || what == "int_wrap") && !unsigned) {
+    return "    sxtw " + d + ", " + ws + "\n";
+  }
+  if (what == "u32_wrap" || what == "int_cast:u32" || what == "int_extend" || what == "int_wrap") {
+    return "    mov " + w + ", " + ws + "\n";
+  }
+  if (what == "int_cast:u8") {
+    return "    and " + d + ", " + src + ", #255\n";
+  }
+  if (what == "clz:64") {
+    return "    clz " + d + ", " + src + "\n";
+  }
+  if (what == "clz:32") {
+    return "    clz " + w + ", " + ws + "\n";
+  }
+  if (what == "ctz:64") {
+    return "    rbit " + d + ", " + src + "\n    clz " + d + ", " + d + "\n";
+  }
+  if (what == "ctz:32") {
+    return "    rbit " + w + ", " + ws + "\n    clz " + w + ", " + w + "\n";
+  }
+  return "";
+}
+
 // ssa_bits_asm is the bit counts on `d` at the width the name carries, as the
 // stack machine's arms select them; "" for any other op.
 function ssa_bits_asm(what: string, d: string): string {
@@ -1602,13 +1637,18 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
   }
   let guard: string = "    tbnz " + p + ", #0, " + done + "\n"
     + "    cmp " + p + ", #16, lsl #12\n    blo " + done + "\n";
+  let base: string = p;
+  if (ins.imm != 4) {
+    guard = guard + "    and x7, " + p + ", #0xfffffffffffffffd\n";
+    base = "x7";
+  }
   if (ins.str == "__fern_rc_is_unique") {
     let d: string = ssa_dst(reg_of, ins.result);
     s = s.write("    mov x6, #0\n" + guard);
     // w7 rather than the arm's own x4/x5/x6: p, the count and the 0/1
     // answer hold all three across the compare, and x7 is not in the home
     // pool (x0, x9..x15, x19..x28), so the check can borrow it.
-    s = s.write("    ldur w5, [" + p + ", #-8]\n");
+    s = s.write("    ldur w5, [" + base + ", #-8]\n");
     s = s.write(san_poison_check("w5", "w7", done + "us", s.rc_free_debug));
     s = s.write("    cmp w5, #1\n    bne " + done + "\n");
     s = s.write("    mov x6, #1\n" + done + ":\n");
@@ -1616,10 +1656,10 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     return ssa_store(reg_of, ins.result, d, s);
   }
   s = s.write(guard);
-  s = s.write("    ldur w5, [" + p + ", #-8]\n");
+  s = s.write("    ldur w5, [" + base + ", #-8]\n");
   s = s.write(san_poison_check("w5", "w6", done + "sl", s.rc_free_debug));
   s = s.write("    tbnz w5, #31, " + done + "\n");
-  s = s.write("    add w5, w5, #1\n    stur w5, [" + p + ", #-8]\n");
+  s = s.write("    add w5, w5, #1\n    stur w5, [" + base + ", #-8]\n");
   s = s.write(done + ":\n");
   // rc_inc hands the pointer back; a result with no home stores nothing.
   return ssa_store(reg_of, ins.result, p, s);
@@ -2138,8 +2178,8 @@ function ssa_view_count(views: i32[]): i32 {
 }
 
 // ssa_str_view is the string slice kernel of emit_str_op with register
-// operands: the two bounds checks, then the {rc -1, data + lo, hi - lo} box
-// either in the frame words this site owns or freshly allocated. The operands
+// operands: the two bounds checks, then the {header, data + lo, hi - lo} box
+// either immortal in this frame or counted with borrowed data on the heap. The operands
 // are read before the allocation and carried across it on the machine stack,
 // since the call clobbers every register they could live in.
 function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.EmitState): asmcore.EmitState {
@@ -2150,10 +2190,14 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
   s = s.write("    sub x2, x2, x1\n    ldr x3, [x0]\n    add x1, x3, x1\n");
   if (ins.imm == 1) {
     s = fr_sub_imm(s, "x0", "x29", 0 - base_off);
+    s = s.write("    mov x3, #-1\n    str x3, [x0]\n");
   } else {
     s = s.write("    stp x1, x2, [sp, #-16]!\n    mov x0, #24\n    bl __fern_alloc\n    ldp x1, x2, [sp], #16\n");
+    s = s.write("    mov w3, #1\n    str w3, [x0]\n");
+    s = mov_borrowed_marker(s, "w3");
+    s = s.write("    str w3, [x0, #4]\n");
   }
-  s = s.write("    mov x3, #-1\n    str x3, [x0]\n    str x1, [x0, #8]\n    str x2, [x0, #16]\n    add x0, x0, #8\n");
+  s = s.write("    str x1, [x0, #8]\n    str x2, [x0, #16]\n    add x0, x0, #8\n");
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
@@ -2170,10 +2214,10 @@ struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave:
 // edge when it is. An inline uniqueness test of `a` fuses as `unique`: its
 // guards leave the flags an equality compare would. n is 0 when the block
 // ends some other way.
-struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean }
+struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean }
 
 function ssa_no_fuse(): SsaFuse {
-  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false };
+  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false, aligned: false };
 }
 
 // ssa_fuse finds the compare a block's brif can read as flags: the block's
@@ -2193,7 +2237,7 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
   let n: i32 = 1;
   let inverted: boolean = false;
   if (last.kind_tag == 10 && last.str == "!") {
-    let value_test: SsaFuse = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false };
+    let value_test: SsaFuse = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false };
     if (blk.insts.len() < 2) {
       return value_test;
     }
@@ -2208,15 +2252,15 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
     inverted = true;
   }
   if (ssa_unique_test(cmp)) {
-    return SsaFuse { n: n, tag: ir.kind_id("eq"), inverted: inverted, a: cmp.args[0], b: 0, unique: true };
+    return SsaFuse { n: n, tag: ir.kind_id("eq"), inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4 };
   }
   if (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) {
     return ssa_no_fuse();
   }
   if (fr.imm.is_imm[cmp.args[0]]) {
-    return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false };
+    return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false };
   }
-  return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false };
+  return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
 }
 
 // ssa_join is the label a block's fused test joins at; a rotated latch
@@ -2392,15 +2436,25 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
       s = s.write(ir_bin_asm(ir.kind_id(ins.str), ins.imm, "x4", "x5", "x6"));
     }
   } else {
-    s = ssa_load(reg_of, ins.args[0], d, s);
-    s = s.write(ssa_unary_asm(ins.str, ins.imm == 1, d));
+    let from: string = "";
+    if (reg_of[ins.args[0]] >= 0 && ssa_reg(reg_of[ins.args[0]]) != d) {
+      from = ssa_unary_from(ins.str, ins.imm == 1, ssa_reg(reg_of[ins.args[0]]), d);
+    }
+    if (from != "") {
+      s = s.write(from);
+    } else {
+      s = ssa_load(reg_of, ins.args[0], d, s);
+      s = s.write(ssa_unary_asm(ins.str, ins.imm == 1, d));
+    }
   }
   return ssa_store(reg_of, ins.result, d, s);
 }
 
 // ssa_phi_moves emits the copies of the edge from block `pred` into block
 // `succ`: each of succ's phis takes its operand for pred. A phi whose operand
-// already sits in its home, or which nothing reads, moves nothing.
+// already sits in its home, or which nothing reads, moves nothing. An
+// immediate operand has no location to copy, so it is loaded after the copies,
+// once nothing still reads the phi's home.
 function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, succ: i32, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   let ti: i32 = ssa_block_at(fr, succ);
@@ -2411,13 +2465,37 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
   let sl: i32 = ssa.pred_slot(tb, pred);
   let srcs: i32[] = [];
   let dsts: i32[] = [];
+  let imm_dsts: i32[] = [];
+  let imm_vals: i64[] = [];
   for ins in tb.insts {
-    if (ins.kind_tag == 8 && reg_of[ins.result] != 0 - 1 && reg_of[ins.args[sl]] != reg_of[ins.result]) {
+    if (ins.kind_tag != 8 || reg_of[ins.result] == 0 - 1) {
+      continue;
+    }
+    if (fr.imm.is_imm[ins.args[sl]]) {
+      imm_dsts = imm_dsts.append(reg_of[ins.result]);
+      imm_vals = imm_vals.append(fr.imm.value[ins.args[sl]]);
+    } else if (reg_of[ins.args[sl]] != reg_of[ins.result]) {
       srcs = srcs.append(reg_of[ins.args[sl]]);
       dsts = dsts.append(reg_of[ins.result]);
     }
   }
-  return ssa_parallel_moves(srcs, dsts, s);
+  s = ssa_parallel_moves(srcs, dsts, s);
+  let i: i32 = 0;
+  while (i < imm_dsts.len()) {
+    s = ssa_imm_to(imm_vals[i], imm_dsts[i], s);
+    i = i + 1;
+  }
+  return s;
+}
+
+// ssa_imm_to loads an immediate into a location: a register, or a frame slot
+// through x5.
+function ssa_imm_to(c: i64, loc: i32, s: asmcore.EmitState): asmcore.EmitState {
+  if (loc >= 0) {
+    return ssa_const_reg(util.i64_to_string(c), ssa_reg(loc), s);
+  }
+  s = ssa_const_reg(util.i64_to_string(c), "x5", s);
+  return ssa_loc_str(loc, "x5", s);
 }
 
 // ssa_parallel_moves emits moves between locations (a register index or a
@@ -2587,7 +2665,7 @@ function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, 
     return s;
   }
   if (fu.unique) {
-    return ssa_unique_flags(reg_of, fu.a, join, s);
+    return ssa_unique_flags(reg_of, fu.a, fu.aligned, join, s);
   }
   s = ssa_read(reg_of, fu.a, "x4", s);
   s = ssa_read_rhs(fr, reg_of, fu.b, "x5", s);
@@ -2598,12 +2676,17 @@ function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, 
 // when the count is exactly one. Each guard's early exit already leaves Z
 // clear (a set tag bit; a pointer below, so unequal to, the floor), which is
 // why the tag test is a tst rather than the tbnz that sets no flags.
-function ssa_unique_flags(reg_of: i32[], v: i32, join: string, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_unique_flags(reg_of: i32[], v: i32, aligned: boolean, join: string, s: asmcore.EmitState): asmcore.EmitState {
   s = helper_call_needs("__fern_rc_is_unique", s);
   s = ssa_read(reg_of, v, "x4", s);
   let p: string = ssa_src(reg_of, v, "x4");
   s = s.write("    tst " + p + ", #1\n    b.ne " + join + "\n    cmp " + p + ", #16, lsl #12\n    b.lo " + join + "\n");
-  s = s.write("    ldur w5, [" + p + ", #-8]\n" + san_poison_check("w5", "w7", join + "us", s.rc_free_debug) + "    cmp w5, #1\n" + join + ":\n");
+  let base: string = p;
+  if (!aligned) {
+    s = s.write("    and x7, " + p + ", #0xfffffffffffffffd\n");
+    base = "x7";
+  }
+  s = s.write("    ldur w5, [" + base + ", #-8]\n" + san_poison_check("w5", "w7", join + "us", s.rc_free_debug) + "    cmp w5, #1\n" + join + ":\n");
   return s;
 }
 
@@ -2639,7 +2722,11 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
 function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
   let t: ssa.STerm = blk.term;
   if (t.kind_tag == 1) {
-    s = ssa_load(reg_of, t.value, "x0", s);
+    if (t.value >= 0 && fr.imm.is_imm[t.value]) {
+      s = ssa_const_reg(util.i64_to_string(fr.imm.value[t.value]), "x0", s);
+    } else {
+      s = ssa_load(reg_of, t.value, "x0", s);
+    }
     return s.write(fr.epilogue);
   }
   if (t.kind_tag == 2) {
@@ -2865,25 +2952,25 @@ function emit_ssa_function(r: irtables.LowerResult, label_name: string, s: asmco
 // emit_function_via_ir_pre emits declaration `fd`'s lowered body `r` through
 // the register path, as arm64: x29 frame pointer, params read from the
 // caller's rt-stack at [x29, #16+i*16], the result in x0.
-pub function emit_function_via_ir_pre(r: irtables.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
+pub function emit_function_via_ir_pre(r: irtables.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   // Methods get the receiver-type-qualified label `__fn_<Type>.<name>`.
   let label_name: string = fd.name;
   if (fd.receiver_type.len() > 0) {
     label_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
   }
-  return emit_function_via_ir_named(r, label_name, false, s, vsigs);
+  return emit_function_via_ir_named(r, label_name, false, s, vgate);
 }
 
 // emit_function_via_ir_named is the body above with the label supplied rather
 // than read from a declaration, so a body the semantic pipeline produced — which
 // carries its own name — emits through the same path. The x86 twin is
 // asm_ir.emit_function_via_ir_named.
-pub function emit_function_via_ir_named(r: irtables.LowerResult, label_name: string, weak: boolean, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
+pub function emit_function_via_ir_named(r: irtables.LowerResult, label_name: string, weak: boolean, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   if (weak) {
     s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n");
   }
   ircore.lower_failed_refuse(label_name, r);
-  irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vsigs);
+  irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vgate);
   return emit_ssa_function(r, label_name, s);
 }
 
@@ -3930,7 +4017,8 @@ function emit_arm64_op_map_read(o: ir.Op, i: i32, lp: string, s: asmcore.EmitSta
   } else if (o.kind_tag == 133) {  // map_iter
     // m.iter() -> a two-slot array box [map_ptr@8, cursor@16] off the data
     // pointer, so it carries an rc header and the typed lowering's release
-    // (__fern_arr_dec) frees it. arm64 has no central op_allocates heap
+    // (__fern_arr_dec) frees it. map_ptr is the unit of the map the cursor
+    // took, which that release drops first. arm64 has no central op_allocates heap
     // gate, so mark_heap explicitly.
     s = s.mark_heap();
     s = s.write("    mov x0, #2\n    bl __fern_arr_box\n");
@@ -4642,7 +4730,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
   s = asmcore.with_funcs(s, mod.funcs);
   s = s.write("    .globl _start\n");
   s = s.write("    .text\n");
-  let vsigs: irverify.NameIndex = irtables.fn_sig_index(mod.funcs);
+  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(mod.funcs), pops: s.kinds.pops };
   ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), cache);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, 0, mod.funcs.len(), cache)), leaves: asmcore.unit_leaves(mod, 0, mod.funcs.len(), cache) };
   let fi: i32 = 0;
@@ -4651,13 +4739,13 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
     // A template the substitution superseded has no body: its instances
     // are on the cache tail.
     if (!r.superseded) {
-      s = emit_function_via_ir_pre(r, mod.funcs[fi], s, vsigs);
+      s = emit_function_via_ir_pre(r, mod.funcs[fi], s, vgate);
     }
     fi = fi + 1;
   }
   // Cache entries past the declarations are bodies with no FuncDecl, each
   // naming the symbol it defines.
-  s = emit_named_bodies(cache, mod.funcs.len(), s, vsigs);
+  s = emit_named_bodies(cache, mod.funcs.len(), s, vgate);
   // Ahead of _start, which gates its envp save on the heap need. close_needs
   // is what turns a root like str_concat into that heap need, so reading it
   // first would leave __fern_envp null in a program that still gets the heap
@@ -4678,23 +4766,21 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
 // the cost is a per-call frame, not per byte, and no Fern body avoids one.
 //
 // The __fn_ stack convention on arm64 uses 16-byte operand slots and the caller
-// pushes b then a, so after `stp x29, x30` the arguments are at [x29, #16] and
-// [x29, #32]. A string box is [data ptr, length]; the result goes in x0.
+// pushes b then a, so on entry the arguments are at [sp] and [sp, #16]. A
+// string box is [data ptr, length]; the result goes in x0.
 //
-// x29/x30 are saved even though nothing else needs a frame: __fern_report walks
-// the frame chain to print a backtrace.
+// A leaf that calls nothing and never touches x29 needs no frame of its own,
+// so it builds none.
 function rt_arm64_str_eq(): string {
   // The stack entry loads both boxes into x0/x9, where the register entry
   // `.r` takes them; equality is symmetric, so their order is not.
   let s: string = "__fn___fern_str_eq:\n";
   s = s + "    ldr x0, [sp]\n    ldr x9, [sp, #16]\n";
   s = s + "__fn___fern_str_eq.r:\n";
-  s = s + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
-  s = s + "    mov x2, x0\n    mov x3, x9\n";
   // Same box: interned literals, which is most of what a compiler compares.
-  s = s + "    cmp x2, x3\n    b.eq .Lseq_yes\n";
-  s = s + "    ldr x4, [x2, #8]\n    ldr x5, [x3, #8]\n    cmp x4, x5\n    b.ne .Lseq_no\n";
-  s = s + "    ldr x2, [x2]\n    ldr x3, [x3]\n";
+  s = s + "    cmp x0, x9\n    b.eq .Lseq_yes\n";
+  s = s + "    ldr x4, [x0, #8]\n    ldr x5, [x9, #8]\n    cmp x4, x5\n    b.ne .Lseq_no\n";
+  s = s + "    ldr x2, [x0]\n    ldr x3, [x9]\n";
   // Same buffer, equal length: a slice and its source compare equal here.
   s = s + "    cmp x2, x3\n    b.eq .Lseq_yes\n";
   s = s + "    add x6, x2, x4\n    add x7, x3, x4\n";
@@ -4724,19 +4810,19 @@ function rt_arm64_str_eq(): string {
   s = s + "    ldrb w0, [x6]\n    ldrb w1, [x7]\n    cmp w0, w1\n    b.ne .Lseq_no\n";
   s = s + "    cmp x4, #3\n    b.lo .Lseq_yes\n";
   s = s + "    ldrb w0, [x2, #1]\n    ldrb w1, [x3, #1]\n    cmp w0, w1\n    b.ne .Lseq_no\n";
-  s = s + ".Lseq_yes:\n    mov x0, #1\n    ldp x29, x30, [sp], #16\n    ret\n";
-  s = s + ".Lseq_no:\n    mov x0, #0\n    ldp x29, x30, [sp], #16\n    ret\n";
+  s = s + ".Lseq_yes:\n    mov x0, #1\n    ret\n";
+  s = s + ".Lseq_no:\n    mov x0, #0\n    ret\n";
   s = s + ".size __fn___fern_str_eq, .-__fn___fern_str_eq\n";
   return s;
 }
 
 // Bodies with no FuncDecl, each naming the symbol it defines; `.weak`, so a
 // sibling unit emitting the same one co-links, and once per file.
-function emit_named_bodies(cache: irtables.LowerResult[], from: i32, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
+function emit_named_bodies(cache: irtables.LowerResult[], from: i32, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   let xi: i32 = from;
   while (xi < cache.len()) {
     if (!s.has_named(cache[xi].name)) {
-      s = emit_function_via_ir_named(cache[xi], cache[xi].name, true, s, vsigs).with_named(cache[xi].name);
+      s = emit_function_via_ir_named(cache[xi], cache[xi].name, true, s, vgate).with_named(cache[xi].name);
     }
     xi = xi + 1;
   }
@@ -4749,18 +4835,18 @@ function emit_named_bodies(cache: irtables.LowerResult[], from: i32, s: asmcore.
 pub function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.EmitState {
   let m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
   let fns: parser.FuncDecl[] = m.funcs;
-  let vsigs: irverify.NameIndex = irtables.fn_sig_index(fns);
+  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(fns), pops: s.kinds.pops };
   let lit0: i32 = s.string_lits.len();
   let agg0: i32 = s.const_aggs.len();
   let sh0: i32 = s.shape_lits.len();
   let bodies: irtables.LowerResult[] = s.rt_lower(src);
   let i: i32 = 0;
   while (i < fns.len()) {
-    s = emit_function_via_ir_pre(bodies[i], fns[i], s, vsigs);
+    s = emit_function_via_ir_pre(bodies[i], fns[i], s, vgate);
     i = i + 1;
   }
   // Past the declarations: the drop helpers the typed lowering defines.
-  s = emit_named_bodies(bodies, fns.len(), s, vsigs);
+  s = emit_named_bodies(bodies, fns.len(), s, vgate);
   if (s.shape_lits.len() > sh0) {
     s = asmcore.emit_shape_lits_from(s, sh0);
     s = s.write("    .text\n");
@@ -6297,6 +6383,24 @@ function lc_bump_alloc_add(s: asmcore.EmitState, addend: string, t1: string, t2:
   return s;
 }
 
+// RegTriple names three scratch registers a census helper may clobber.
+struct RegTriple { a: string, b: string, c: string }
+
+// lc_grow_bytes charges a block grown in place from `old` to `grown` words:
+// it is still one block, so only its live bytes move.
+function lc_grow_bytes(s: asmcore.EmitState, old: string, grown: string, t: RegTriple): asmcore.EmitState {
+  if (!leak_check_on()) {
+    return s;
+  }
+  s = s.write("    sub " + t.a + ", " + grown + ", " + old + "\n");
+  s = s.write("    adrp " + t.b + ", __fern_lc_alloc_bytes\n");
+  s = s.write("    add " + t.b + ", " + t.b + ", :lo12:__fern_lc_alloc_bytes\n");
+  s = s.write("    ldr " + t.c + ", [" + t.b + "]\n");
+  s = s.write("    add " + t.c + ", " + t.c + ", " + t.a + ", lsl #3\n");
+  s = s.write("    str " + t.c + ", [" + t.b + "]\n");
+  return s;
+}
+
 // lc_bump_free_add: count one freed block — count += 1, bytes += <addend>.
 // Emitted immediately BEFORE the site's freelist push / large_push handoff,
 // where t1/t2 — the push's own address and head registers — are still dead,
@@ -6666,6 +6770,12 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
 function mov_fused_marker(s: asmcore.EmitState, reg: string): asmcore.EmitState {
   s = s.write("    mov " + reg + ", #32781\n");  // 0x800D
   return s.write("    movk " + reg + ", #29519, lsl #16\n");  // 0x734F -> 0x734F800D
+}
+
+// BORR identifies a counted descriptor whose data remains borrowed.
+function mov_borrowed_marker(s: asmcore.EmitState, reg: string): asmcore.EmitState {
+  s = s.write("    mov " + reg + ", #0x5252\n");
+  return s.write("    movk " + reg + ", #0x424F, lsl #16\n");
 }
 
 function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
@@ -7632,12 +7742,15 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    mov x9, #0x10000\n");
   s = s.write("    cmp x0, x9\n");
   s = s.write("    blo .Lshrcinc_ret\n");  // low-address guard
+  // Preserve the tag in the returned value, masking only the header address.
+  s = s.write("    and x0, x0, #0xfffffffffffffffd\n");
   s = s.write("    ldur w1, [x0, #-8]\n");  // rc
   s = s.write(san_poison_check("w1", "w9", ".Lshrcinc_live", s.rc_free_debug));
   s = s.write("    tbnz w1, #31, .Lshrcinc_ret\n");  // static sentinel
   s = s.write("    add w1, w1, #1\n");
   s = s.write("    stur w1, [x0, #-8]\n");
   s = s.write(".Lshrcinc_ret:\n");
+  s = s.write("    ldr x0, [sp]\n");
   s = s.write("    ret\n");
   s = s.write("__fn___fern_rc_dec:\n");
   s = s.write("    ldr x0, [sp]\n");  // ptr (also return)
@@ -7673,6 +7786,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    mov x9, #0x10000\n");
   s = s.write("    cmp x2, x9\n");
   s = s.write("    blo .Lshuniq_ret\n");
+  s = s.write("    and x2, x2, #0xfffffffffffffffd\n");
   s = s.write("    ldur w3, [x2, #-8]\n");  // rc
   s = s.write(san_poison_check("w3", "w9", ".Lshuniq_live", s.rc_free_debug));
   s = s.write("    tbnz w3, #31, .Lshuniq_ret\n");  // sentinel => immortal
@@ -7723,8 +7837,8 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   }
   // __fern_str_grow(a@[sp,#16], b@[sp]) -> 1 once b is appended to a in
   // place, else 0 with nothing written: the arm64 sibling of the x86-64
-  // body, with the same fused, rc-1 and same-class tests. Under a leak-check
-  // build the growth counts as a free of the old size and an alloc of the new.
+  // body, with the same fused, rc-1 and same-class tests. The leak census sees
+  // one block that grew: its live bytes move and its counts do not.
   // __fern_getpwuid_name(uid@[sp]) -> the address of pw_name in the entry
   // libSystem's getpwuid(3) answers, or 0. Darwin keeps regular accounts in
   // Directory Services, which only libSystem can ask (#9815): the call goes
@@ -7800,8 +7914,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    cmp x6, x7\n");
     s = s.write("    b.hi .Lsg_no\n");
     s = s.write(".Lsg_fits:\n");
-    s = lc_bump_free_words(s, "x5", "x9", "x10");
-    s = lc_bump_alloc_add(s, "x6, lsl #3", "x9", "x10");
+    s = lc_grow_bytes(s, "x5", "x6", RegTriple { a: "x7", b: "x9", c: "x10" });
     s = s.write(".Lsg_copy:\n");
     s = s.write("    str x4, [x0, #8]\n");  // len = grown length
     s = s.write("    ldr x5, [x0]\n");
@@ -7815,8 +7928,8 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ret\n");
   }
   // __fern_str_own(s@[sp]) -> a string its holder owns a unit of, the arm64
-  // sibling of the x86-64 body: a counted string retained, a fresh box over
-  // an arena view's bytes, and any other view as is.
+  // sibling of the x86-64 body: a counted string or view retained, a fresh
+  // counted box over a legacy immortal arena view's bytes, and other views as is.
   if (s.has_need("str_own")) {
     s = s.write("__fn___fern_str_own:\n");
     s = s.write("    ldr x0, [sp]\n");
@@ -7849,8 +7962,9 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    mov x0, #24\n");
     s = s.write("    bl __fern_alloc\n");
     s = s.write("    ldp x1, x30, [sp], #16\n");  // the shared box
-    s = s.write("    mov x3, #-1\n");
-    s = s.write("    str x3, [x0]\n");
+    s = s.write("    mov w3, #1\n    str w3, [x0]\n");
+    s = mov_borrowed_marker(s, "w3");
+    s = s.write("    str w3, [x0, #4]\n");
     s = s.write("    ldr x2, [x1]\n");
     s = s.write("    str x2, [x0, #8]\n");  // data
     s = s.write("    ldr x2, [x1, #8]\n");
@@ -8129,7 +8243,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmp x0, x9\n");
   s = s.write("    blo .Lstrfree_ret\n");  // low-addr guard
   // rc word @ box-8 (#2649 Option A A1b rc-headered box): negative = immortal
-  // sentinel (skip); rc>1 decrements without freeing; rc==1 frees data + box;
+  // sentinel (skip); rc>1 decrements; rc==1 frees the box and any owned data;
   // rc==0 is a double-free, caught by __fern_rc_underflow (matching arr_dec)
   // rather than corrupting the heap. w4 holds rc across the free (x1/x2 = data/len).
   s = s.write("    ldur w4, [x0, #-8]\n");  // rc
@@ -8145,6 +8259,8 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = mov_fused_marker(s, "w3");
   s = s.write("    cmp w2, w3\n");
   s = s.write("    beq .Lstrfree_fused\n");
+  s = mov_borrowed_marker(s, "w3");
+  s = s.write("    cmp w2, w3\n    beq .Lstrfree_box\n");
   // rc==1: sole owner -> free data buffer (heap-guarded) then the 24-byte box.
   s = s.write("    ldr x1, [x0]\n");  // data = box[0]
   s = s.write("    ldr x2, [x0, #8]\n");  // len  = box[8]
@@ -8234,10 +8350,8 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ret\n");
   // __fern_str_view_free(box) — release a string result that may be a zero-copy
   // VIEW (#6544), the arm64 sibling of the x86-64 body in
-  // asm_ir.emit_ir_runtime. `s[a:b]` builds a 24-byte box over the SOURCE's
-  // bytes and stamps rc = -1, the immortal sentinel, precisely so no reclaim
-  // path frees the shared data — which leaves the box itself unreclaimable,
-  // one per call of every borrowing string method.
+  // asm_ir.emit_ir_runtime. Counted strings and borrowed-data descriptors
+  // use str_free; legacy immortal heap descriptors release only their box.
   //
   // An IMMORTAL rc frees the 24-byte box ALONE (class 3), data untouched; any
   // other rc tail-branches to __fn___fern_str_free (x30 flows through, as at
@@ -11436,7 +11550,7 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
   // hi<0 "to the end") is byte-identical to the unsharded emit; a partial
   // window lets an oversized module emit across separate processes without
   // any single emit's leak-mode heap crossing the arena ceiling.
-  let vsigs: irverify.NameIndex = irtables.fn_sig_index(all_funcs);
+  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(all_funcs), pops: s.kinds.pops };
   let hh: i32 = hi;
   if (hh < 0 || hh > mod.funcs.len()) {
     hh = mod.funcs.len();
@@ -11459,10 +11573,10 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
       }
       s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
     }
-    s = emit_function_via_ir_pre(r, mod.funcs[fi], s, vsigs);
+    s = emit_function_via_ir_pre(r, mod.funcs[fi], s, vgate);
     fi = fi + 1;
   }
-  s = emit_named_bodies(cache, mod.funcs.len(), s, vsigs);
+  s = emit_named_bodies(cache, mod.funcs.len(), s, vgate);
   // #4355: admit the replaced-STRING-field arm per type from the
   // WHOLE-PROGRAM read scan (all_funcs — see asm_ir.emit_module_ir_unit_flat's
   // sibling seeding and fnsigs.strfld_reclaim_ok_types_of).

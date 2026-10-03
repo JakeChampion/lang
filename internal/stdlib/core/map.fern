@@ -1811,7 +1811,10 @@ pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32
   return true;
 }
 
-// MapIter is a 16-byte heap object: [buf:8][cursor:4][pad:4].
+// MapIter is a 24-byte heap object: [buf:8][cursor:4][pad:4][map:8].
+// `map` is the handle whose buffer `buf` is; the self-host compiler hands the
+// cursor a unit of it and releases that unit (`__mapiter_map_impl`) when the
+// cursor's last one goes, so a cursor outlives the frame that made it.
 // The cursor lives at offset +8 (not +4) so the layout is the
 // same on wasm32 (where __store_ptr is 4 bytes and the high 4
 // bytes of the buf slot are wasted padding) and arm64 (where
@@ -1823,12 +1826,18 @@ pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32
 // that owns the cursor frees it at its last use; the returned `it` is
 // base + 8, and every `__mapiter_*` access is an offset from `it`.
 pub function __map_iter_impl(m: usize): usize {
-  let base: usize = __alloc(24);
+  let base: usize = __alloc(32);
   __store_i32(base, 1);
   let it: usize = base + 8;
   __store_ptr(it, __load_ptr(m));  // data ptr
   __store_i32(it + 8, 0);  // cursor
+  __store_ptr(it + 16, m);
   return it;
+}
+
+// The map handle the cursor `it` was made over.
+pub function __mapiter_map_impl(it: usize): usize {
+  return __load_ptr(it + 16);
 }
 
 pub function __mapiter_has_next_impl(it: usize): boolean {
@@ -1864,7 +1873,8 @@ pub function __mapiter_advance_impl(it: usize): void {
 }
 
 // __mapiter_drop_impl releases one reference to the cursor `it`; the last
-// frees its block. The cursor holds no reference to the map.
+// frees its block. The map's unit is released by the caller, which knows its
+// type.
 pub function __mapiter_drop_impl(it: usize): usize {
   if (it == 0) {
     return it;
@@ -1873,7 +1883,7 @@ pub function __mapiter_drop_impl(it: usize): usize {
     __fern_rc_dec(it);
     return it;
   }
-  __fern_box_free(it, 16);
+  __fern_box_free(it, 24);
   return it;
 }
 

@@ -1,0 +1,200 @@
+// Physical [u8] readers. A string-backed view is its descriptor plus bit 1;
+// an array-backed view keeps the packed array pointer. Both source layouts
+// are four-byte aligned. The typed source anchors keep borrowed bytes live,
+// while each counted view holds one unit of its descriptor or array.
+import "./ir";
+import "./irtables";
+
+pub function length_name(): string {
+  return "__sem_byte_view_len";
+}
+
+pub function get_name(unchecked: boolean): string {
+  if (unchecked) {
+    return "__sem_byte_view_get_nc";
+  }
+  return "__sem_byte_view_get";
+}
+
+// A temporary lowering annotation identifies the typed SSA value being read.
+// lower_reads consumes it before IR optimization, verification or caching;
+// ordinary helper calls (including slice's length read) have i64_imm == 0.
+pub function read(value: i32, indexed: boolean, unchecked: boolean): ir.Op {
+  let op: ir.Op = ir.op_call_direct(length_name(), 1);
+  if (indexed) {
+    op = ir.op_call_direct(get_name(unchecked), 2);
+  }
+  return ir.Op { ...op, i64_imm: value as i64 + 1 };
+}
+
+function read_value(op: ir.Op): i32 {
+  if (op.kind_tag == ir.kind_id("call_direct") && op.i64_imm > 0
+    && (op.str == length_name() || op.str == get_name(false) || op.str == get_name(true))) {
+    return (op.i64_imm - 1) as i32;
+  }
+  return 0 - 1;
+}
+
+// Decode each read view at its definition, including parameter entry and
+// every phi-edge assignment. These scalar locals hold no ownership unit.
+// The typed lifetime plan keeps the descriptor and backing bytes alive;
+// reads use the decoded data/length without redispatching inside loops.
+function decode(value: i32, base: i32): ir.Op[] {
+  return [
+    ir.op_load_local(value), ir.op_const_i32(2), ir.op_bin("and", 0, false), ir.op_if(0),
+    ir.op_load_local(value), ir.op_const_i32(0 - 2), ir.op_raw_addr(), ir.op_str_data(), ir.op_store_local(base),
+    ir.op_load_local(value), ir.op_const_i32(0 - 2), ir.op_raw_addr(), ir.op_str_len(), ir.op_store_local(base + 1),
+    ir.op_else(), ir.op_load_local(value), ir.op_const_i32(8), ir.op_raw_addr(), ir.op_store_local(base),
+    ir.op_load_local(value), ir.op_arr_len(), ir.op_store_local(base + 1), ir.op_end(),
+  ];
+}
+
+function decoded_read(op: ir.Op, base: i32, index: i32): ir.Op[] {
+  if (op.str == length_name()) {
+    return [ir.op_drop(), ir.op_load_local(base + 1)];
+  }
+  let ops: ir.Op[] = [ir.op_store_local(index), ir.op_drop()];
+  if (op.str == get_name(false)) {
+    ops = joined(ops, [ir.op_load_local(index), ir.op_const_i32(0), ir.op_bin("lt_s", 0, false)]);
+    ops = abort_if(ops);
+    ops = joined(ops, [ir.op_load_local(index), ir.op_load_local(base + 1), ir.op_bin("ge_s", 0, false)]);
+    ops = abort_if(ops);
+  }
+  return joined(ops, [ir.op_load_local(base), ir.op_load_local(index), ir.op_raw_load8()]);
+}
+
+pub function lower_reads(own r: irtables.LowerResult): irtables.LowerResult {
+  let reads: boolean = false;
+  for op in r.ops {
+    if (read_value(op) >= 0) {
+      reads = true;
+      break;
+    }
+  }
+  if (!reads) {
+    return r;
+  }
+  let slots: i32[] = [];
+  let i: i32 = 0;
+  while (i < r.n_locals) {
+    slots = slots.append(0 - 1);
+    i = i + 1;
+  }
+  let next: i32 = r.n_locals;
+  for op in r.ops {
+    let value: i32 = read_value(op);
+    if (value >= 0 && slots[value] < 0) {
+      slots = slots.with(value, next);
+      next = next + 2;
+    }
+  }
+  if (next == r.n_locals) {
+    return r;
+  }
+  let ops: ir.Op[] = [];
+  i = 0;
+  while (i < r.n_params) {
+    if (slots[i] >= 0) {
+      ops = joined(ops, decode(i, slots[i]));
+    }
+    i = i + 1;
+  }
+  for op in r.ops {
+    let value: i32 = read_value(op);
+    if (value >= 0) {
+      ops = joined(ops, decoded_read(op, slots[value], next));
+    } else {
+      ops = ops.append(op);
+      if ((op.kind_tag == ir.kind_id("store_local") || op.kind_tag == ir.kind_id("tee_local")) && slots[op.i32_imm] >= 0) {
+        ops = joined(ops, decode(op.i32_imm, slots[op.i32_imm]));
+      }
+    }
+  }
+  return irtables.LowerResult { ...r, ops: ops, n_locals: next + 1 };
+}
+
+pub function slice_name(): string {
+  return "__sem_byte_view_slice";
+}
+
+pub function release_name(): string {
+  return "__sem_byte_view_release";
+}
+
+function data_name(): string {
+  return "__sem_byte_view_data";
+}
+
+function body(name: string, params: i32, locals: i32, ops: ir.Op[]): irtables.LowerResult {
+  return irtables.LowerResult {
+    ok: true, why: "", ops: ops, n_locals: locals, n_params: params,
+    erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
+    f64_slots: [], str_slots: [], name: name, result_kind: irtables.result_i32(),
+  };
+}
+
+// Only the test narrows to i32. Pointer adjustment uses raw_addr, which
+// preserves native addresses above 4 GiB and is i32 addition on wasm.
+function tagged(): ir.Op[] {
+  return [ir.op_load_local(0), ir.op_const_i32(2), ir.op_bin("and", 0, false), ir.op_if(0)];
+}
+
+function string_base(): ir.Op[] {
+  return [ir.op_load_local(0), ir.op_const_i32(0 - 2), ir.op_raw_addr()];
+}
+
+function joined(own left: ir.Op[], right: ir.Op[]): ir.Op[] {
+  for op in right {
+    left = left.append(op);
+  }
+  return left;
+}
+
+function reader(name: string, string_ops: ir.Op[], array_ops: ir.Op[], params: i32): irtables.LowerResult {
+  let ops: ir.Op[] = joined(tagged(), string_base());
+  ops = joined(ops, string_ops);
+  ops = joined(ops, [ir.op_return(), ir.op_end(), ir.op_load_local(0)]);
+  ops = joined(ops, array_ops);
+  return body(name, params, params, ops.append(ir.op_return()));
+}
+
+function length(): irtables.LowerResult {
+  return reader(length_name(), [ir.op_str_len()], [ir.op_arr_len()], 1);
+}
+
+function data(): irtables.LowerResult {
+  // Packed arrays start their bytes at +8 on both native and wasm.
+  return reader(data_name(), [ir.op_str_data()], [ir.op_const_i32(8), ir.op_raw_addr()], 1);
+}
+
+function release(): irtables.LowerResult {
+  return reader(release_name(), [ir.op_call_direct("__fern_str_view_free", 1)], [ir.op_call_direct("__fern_rc_dec", 1)], 1);
+}
+
+function abort_if(own ops: ir.Op[]): ir.Op[] {
+  return joined(ops, [ir.op_if(0), ir.op_call_direct("__fern_oob_abort", 0), ir.op_drop(), ir.op_end()]);
+}
+
+// Slicing retains the existing copying contract: validate all bounds before
+// allocating, then copy exactly the selected bytes into one packed array.
+// No string descriptor is allocated for the temporary window.
+function slice(): irtables.LowerResult {
+  let ops: ir.Op[] = [ir.op_load_local(1), ir.op_const_i32(0), ir.op_bin("lt_s", 0, false)];
+  ops = abort_if(ops);
+  ops = joined(ops, [ir.op_load_local(2), ir.op_load_local(1), ir.op_bin("lt_s", 0, false)]);
+  ops = abort_if(ops);
+  ops = joined(ops, [ir.op_load_local(2), ir.op_load_local(0), ir.op_call_direct(length_name(), 1), ir.op_bin("gt_s", 0, false)]);
+  ops = abort_if(ops);
+  ops = joined(ops, [
+    ir.op_load_local(2), ir.op_load_local(1), ir.op_bin("sub", 0, false), ir.op_store_local(3),
+    ir.op_load_local(3), ir.packed(ir.op_alloc_u8()), ir.op_store_local(4),
+    ir.op_load_local(4), ir.op_const_i32(8), ir.op_raw_addr(),
+    ir.op_load_local(0), ir.op_call_direct(data_name(), 1), ir.op_load_local(1), ir.op_raw_addr(),
+    ir.op_load_local(3), ir.op_memcpy(), ir.op_drop(), ir.op_load_local(4), ir.op_return(),
+  ]);
+  return body(slice_name(), 3, 5, ops);
+}
+
+pub function helpers(): irtables.LowerResult[] {
+  return [length(), data(), slice(), release()];
+}

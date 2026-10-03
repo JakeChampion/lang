@@ -1639,6 +1639,11 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
     if (caps_violated) {
       return 1;
     }
+    let view_diags: util.Diag[] = semlower.view_escape_diags(merged);
+    if (view_diags.len() > 0) {
+      eprint_diags(view_diags, b.files);
+      return 1;
+    }
     return 0;
   }
   // The module is ill-typed but produced no coded diagnostic — an

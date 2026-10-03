@@ -4,7 +4,7 @@ import "./typeinfo";
 pub function equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(x) = a {
     if let typeinfo.TypeArray(y) = b {
-      return equal(x.elem, y.elem);
+      return x.view == y.view && equal(x.elem, y.elem);
     }
   }
   if let typeinfo.TypeTuple(x) = a {
@@ -18,6 +18,17 @@ pub function equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
     }
   }
   return named_equal(a, b) || numeric_equal(a, b) || atomic_equal(a, b);
+}
+
+// Lending an owned array changes its semantic type without changing its
+// elements. Keep this conversion distinct from exact type identity.
+pub function lends_array(from: typeinfo.Type, to: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = from {
+    if let typeinfo.TypeArray(b) = to {
+      return !a.view && b.view && equal(a.elem, b.elem);
+    }
+  }
+  return false;
 }
 
 function numeric_equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
@@ -348,48 +359,6 @@ pub function is_map_iter(t: typeinfo.Type): boolean {
   return false;
 }
 
-// A cursor inside a type, through every constructor that can carry one out of
-// a frame: an array element, a tuple element, a cell's element, a map's key or
-// value, and a union's argument. A result carries the cursor out of the frame
-// whose map it reads, and a container result carries it just as far as the
-// cursor itself does.
-//
-// Two shapes are deliberately not here. A cursor in a RECORD FIELD is refused
-// by the schema walk, which has no layout to record for one. `dyn Trait`
-// carries no type argument at all, so there is nothing to walk. Neither is a
-// gap this predicate is papering over — both refuse before a body is produced.
-pub function holds_map_iter(t: typeinfo.Type): boolean {
-  if (is_map_iter(t)) {
-    return true;
-  }
-  if let typeinfo.TypeArray(a) = t {
-    return holds_map_iter(a.elem);
-  }
-  if let typeinfo.TypeTuple(tup) = t {
-    for e in tup.elements {
-      if (holds_map_iter(e)) {
-        return true;
-      }
-    }
-    return false;
-  }
-  if (is_cell(t)) {
-    return holds_map_iter(cell_elem(t));
-  }
-  if let typeinfo.TypeMap(m) = t {
-    return holds_map_iter(m.key) || holds_map_iter(m.value);
-  }
-  if let typeinfo.TypeUnion(u) = t {
-    for a in u.args {
-      if (holds_map_iter(a)) {
-        return true;
-      }
-    }
-    return false;
-  }
-  return false;
-}
-
 // The key and value a cursor answers, read off the nominal's arguments.
 pub function map_iter_key(t: typeinfo.Type): typeinfo.Type {
   if let typeinfo.TypeStruct(s) = t {
@@ -398,6 +367,11 @@ pub function map_iter_key(t: typeinfo.Type): typeinfo.Type {
     }
   }
   return typeinfo.unchecked();
+}
+
+// The map a cursor of type `t` holds a unit of.
+pub function map_iter_map(t: typeinfo.Type): typeinfo.Type {
+  return typeinfo.TypeMap { key: map_iter_key(t), value: map_iter_value(t) };
 }
 
 pub function map_iter_value(t: typeinfo.Type): typeinfo.Type {

@@ -1,0 +1,122 @@
+# net-lib — the harness scripts/net-bench and scripts/net-interop share,
+# sourced (`. scripts/net-lib`) from the repository root: the target the
+# host builds for, bin/fern built, a work directory removed on exit, servers run in a
+# session of their own and stopped with their whole process group, a free
+# loopback port, and the lane's h2o configuration.
+# shellcheck shell=bash
+
+case "$(uname -m)" in
+  x86_64)          ARCH=x86_64;  TARGET=x86-64-linux ;;
+  aarch64 | arm64) ARCH=aarch64; TARGET=arm64-linux ;;
+  *) echo "$(basename "$0"): unsupported host $(uname -m)" >&2; exit 2 ;;
+esac
+
+go build -o bin/fern ./cmd/fern
+
+work="$(mktemp -d)"
+# nginx's workers drop to an unprivileged user and read the files here.
+chmod 755 "$work"
+server_pgid=""
+
+# start_server LOG CMD... — CMD in a session of its own, so a supervisor
+# and every worker it forks form one process group, logging to LOG. The
+# group is the one the new session's first process reports from inside
+# it: `$!` names it only when the calling shell has job control off,
+# since with job control on `setsid` forks and `$!` is a parent that has
+# already exited.
+start_server() {
+  local log="$1"
+  shift
+  rm -f "$work/pgid"
+  # shellcheck disable=SC2016
+  setsid sh -c 'echo $$ > "$0"; exec "$@"' "$work/pgid" "$@" > "$log" 2>&1 &
+  local tries=0
+  until [ -s "$work/pgid" ]; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge 50 ]; then
+      echo "$(basename "$0"): $1 did not start" >&2
+      exit 1
+    fi
+    sleep 0.1
+  done
+  server_pgid="$(cat "$work/pgid")"
+}
+
+# stop_server — the group start_server began, sent SIGTERM and then, if it
+# is still there, SIGKILL. The Fern server drains for its shutdown grace
+# after SIGTERM, so the group gets a few seconds before SIGKILL.
+stop_server() {
+  if [ -n "$server_pgid" ]; then
+    kill -TERM -- "-$server_pgid" 2>/dev/null || true
+    local waited=0
+    while kill -0 -- "-$server_pgid" 2>/dev/null && [ "$waited" -lt 25 ]; do
+      sleep 0.2
+      waited=$((waited + 1))
+    done
+    kill -KILL -- "-$server_pgid" 2>/dev/null || true
+    server_pgid=""
+  fi
+}
+trap 'stop_server; rm -rf "$work"' EXIT
+
+# await_server NAME PORT LOG — once the server answers on PORT, or the
+# run fails with its log.
+await_server() {
+  local tries=0
+  until curl -s -m 1 -o /dev/null "http://127.0.0.1:$2/"; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge 50 ]; then
+      echo "$(basename "$0"): $1 did not answer on port $2" >&2
+      cat "$3" >&2
+      exit 1
+    fi
+    sleep 0.2
+  done
+}
+
+free_port() {
+  python3 -c 'import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])'
+}
+
+# The body the interop origins code on /gzip.
+GZIP_TEXT="$(python3 -c 'print("hello gzip " * 30, end="")')"
+
+# h2o_config PORT — the lane's h2o origin on PORT, written to
+# $work/h2o.conf: "hello" on every path net-bench loads, and the targets
+# scripts/net-interop reads on paths of their own, so the hello path
+# stays the one net-bench measures. /gzip alone is coded on the fly.
+h2o_config() {
+  cat > "$work/h2o.conf" <<EOF
+listen:
+  host: 127.0.0.1
+  port: $1
+num-threads: $(nproc)
+hosts:
+  default:
+    paths:
+      /redirect:
+        mruby.handler: |
+          Proc.new do |env|
+            [302, {"location" => "/hello"}, []]
+          end
+      /port:
+        mruby.handler: |
+          Proc.new do |env|
+            [200, {"content-type" => "text/plain"}, [env["REMOTE_PORT"].to_s]]
+          end
+      /gzip:
+        compress: ON
+        mruby.handler: |
+          Proc.new do |env|
+            [200, {"content-type" => "text/plain"}, ["$GZIP_TEXT"]]
+          end
+      /:
+        mruby.handler: |
+          Proc.new do |env|
+            [200, {"content-type" => "text/plain; charset=utf-8"}, ["hello"]]
+          end
+EOF
+}

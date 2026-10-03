@@ -30,7 +30,9 @@ import "./semfuse";
 // `analysis` is the semantic analysis of `func` as it stands, kept from the
 // anchoring that verified it so the planner reads it rather than analysing the
 // same graph again: None before that, and again once a rewrite moves the graph.
-pub struct Produced { ok: boolean, why: string, func: ssasem.Func, modes: i32[], template: boolean, key: string, requests: Request[], bodyless: boolean, analysis: Option[ssasem.Analysis] }
+// view_escape carries a definite typed source escape (1 array, 2 string).
+// Other refusals and callers refused transitively leave it at zero.
+pub struct Produced { ok: boolean, why: string, func: ssasem.Func, modes: i32[], template: boolean, key: string, requests: Request[], bodyless: boolean, analysis: Option[ssasem.Analysis], view_escape: i32 }
 
 // An instance a produced body asks for: the template's declaration key, the
 // instance's symbol, and the type each variable binds.
@@ -982,7 +984,8 @@ function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type)
     s = v.s;
     ids = ids.append(v.id);
   }
-  return define(s, ssasem.array_new(), ids, 0, "", ty);
+  let owned: typeinfo.Type = typeinfo.TypeArray { elem: elem, view: false };
+  return widen(define(s, ssasem.array_new(), ids, 0, "", owned), ty);
 }
 
 function tuple(e: ast.Expr, t: ast.ExprTuple, s: State, expected: typeinfo.Type): Value {
@@ -1115,8 +1118,8 @@ function slice_bound(t: SliceTree, left: i32, op: string, right: i32, sink: i32)
 // not. Every failing test leaves for one `None` block, so the whole check is
 // a decision tree with two sinks and the result joins as a single phi. The
 // length is read once and each bound evaluated once, before any test runs.
-// `xs[lo:hi]` on an array is a fresh copy of the window, the source's own
-// type, bounds-checked by the runtime rather than by a test here (the AST
+// `xs[lo:hi]` on an array has a view type. Physical lowering still makes a
+// fresh copy, bounds-checked by the runtime rather than by a test here (the AST
 // lowering traps the same way). The elements are copied as bare words, so a
 // counted element type is retained once per copied slot — the copy aliases
 // every one of them.
@@ -1137,7 +1140,7 @@ function array_slice(sl: ast.ExprSlice, src: Value, elem: typeinfo.Type, s: Stat
   if (!is_i32(s.values[lo.id]) || !is_i32(s.values[hi.id])) {
     return refused(s, "slice bound type");
   }
-  return define(s, ssasem.arr_slice(), [src.id, lo.id, hi.id], 0, "", s.values[src.id]);
+  return define(s, ssasem.arr_slice(), [src.id, lo.id, hi.id], 0, "", typeinfo.TypeArray { elem: elem, view: true });
 }
 
 function slice_expr(e: ast.Expr, sl: ast.ExprSlice, s: State): Value {
@@ -2515,7 +2518,10 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: 
     return builtin_length(recv, s);
   }
   if ((fa.field == "bytes" || fa.field == "as_bytes") && c.args.len() == 0 && ssasem.is_text(s.values[recv.id])) {
-    return define(s, ssasem.str_bytes(), [recv.id], 0, "", typeinfo.TypeArray { elem: t_u8(), view: fa.field == "as_bytes" });
+    if (fa.field == "as_bytes") {
+      return define(s, ssasem.str_byte_view(), [recv.id], 0, "", typeinfo.TypeArray { elem: t_u8(), view: true });
+    }
+    return define(s, ssasem.str_bytes(), [recv.id], 0, "", typeinfo.TypeArray { elem: t_u8(), view: false });
   }
   if (fa.field == "append" && c.args.len() == 1) {
     return builtin_append(c, recv, s);
@@ -3518,6 +3524,8 @@ function invoke_method(recv: Value, args: ast.Expr[], contract: ssasem.Contract,
   if (!bound.ok) {
     return refused(s, bound.why);
   }
+  v = widen(v, ssasem.substitute(contract.params[0], bound));
+  s = v.s;
   if (!semtypes.equal(ssasem.substitute(contract.params[0], bound), s.values[v.id])) {
     return refused(s, "call receiver type");
   }
@@ -3547,6 +3555,8 @@ function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: 
     if (!bound.ok) {
       return refused(s, bound.why);
     }
+    v = widen(v, ssasem.substitute(contract.params[at], bound));
+    s = v.s;
     if (!semtypes.equal(ssasem.substitute(contract.params[at], bound), s.values[v.id])) {
       return refused(s, "call argument type");
     }
@@ -3598,7 +3608,7 @@ function request(s: State, key: string, name: string, b: ssasem.Binding): State 
 }
 
 // A union-typed destination accepts any of its members, and a view-typed one
-// accepts an owned string, whose box it borrows. Each widening is a verified
+// accepts an owned string or array, whose box it borrows. Each widening is a verified
 // operation, not an implicit reinterpretation: the value carries exactly the
 // type the destination declared, and every obligation site keeps its
 // exact-type rule.
@@ -3606,6 +3616,9 @@ function widen(v: Value, expected: typeinfo.Type): Value {
   let s: State = v.s;
   if (semtypes.equal(s.values[v.id], expected)) {
     return v;
+  }
+  if (semtypes.lends_array(s.values[v.id], expected)) {
+    return define(s, ssasem.array_lend(), [v.id], 0, "", expected);
   }
   if (ssasem.is_view(expected) && ssasem.is_string(s.values[v.id])) {
     return define(s, ssasem.str_as(), [v.id], 0, "", expected);
@@ -5477,7 +5490,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
   let graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-  return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None };
+  return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0 };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: util.NameIndex, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): State {
@@ -5795,7 +5808,7 @@ function type_holds_view(t: typeinfo.Type, views: string[], impls: parser.ImplIn
     return st.tag == 1;
   }
   if let typeinfo.TypeArray(a) = t {
-    return type_holds_view(a.elem, views, impls);
+    return a.view || type_holds_view(a.elem, views, impls);
   }
   if let typeinfo.TypeTuple(tup) = t {
     return types_hold_view(tup.elements, views, impls);
@@ -6530,7 +6543,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo)
   // Before the verifier in anchor_module, so the rewritten graph is the one
   // it checks, and before anything downstream plans ownership over it (#9692).
   f = ssasem.tail_recursion(f, name);
-  return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false, analysis: None }, memo: table.memo };
+  return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false, analysis: None, view_escape: 0 }, memo: table.memo };
 }
 
 // unresolved_result_spelling names what the refusal failed ON. A type that did
@@ -6562,14 +6575,6 @@ function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Cont
   let s: State = initial(fd, scope, contracts, binding, name, handers, shadows, views, funcs, impls);
   if (!semtypes.concrete(s.result, true)) {
     return Made { p: refuse("unresolved result type: " + unresolved_result_spelling(fd, s)), memo: memo };
-  }
-  // A cursor escapes the same way, and worse: it is anchored to a map this
-  // frame may own, so a returned one outlives the columns it reads. The
-  // anchor keeps the map live only within the frame that holds it, and a
-  // container carries the cursor exactly as far, so the whole result shape
-  // is what has to be clear of one.
-  if (semtypes.holds_map_iter(s.result)) {
-    return Made { p: refuse("cursor result escapes its map"), memo: memo };
   }
   let body: ast.Stmt[] = parser.elide_len_bounded_body(fd.body);
   s = learn_body(fd, body, s);
@@ -7558,7 +7563,7 @@ function close_module(all: Produced[], names: util.NameIndex): Produced[] {
 // Every body then carries the whole table, which is what anchors a call's
 // result in the caller's graph, and is verified only then: unanchored, a call
 // result is its own root, which a loop phi it flows back into cannot depend on.
-function anchor_module(all: Produced[], names: string[]): Produced[] {
+function anchor_module(all: Produced[], names: string[], verify: boolean): Produced[] {
   let anchors: ssasem.Anchor[] = [];
   let copied: boolean = true;
   while (copied) {
@@ -7598,9 +7603,10 @@ function anchor_module(all: Produced[], names: string[]): Produced[] {
   while (i < all.len()) {
     let p: Produced = all[i];
     if (p.ok && ssasem.holds_view(p.func, p.func.result) && !ssasem.anchored(anchors, names[i])) {
-      p = Produced { ...refuse("view result escapes its source"), key: p.key };
+      let source: ssasem.ResultAnchor = ssasem.result_anchor(p.func, anchors, names);
+      p = Produced { ...refuse("view result escapes its source"), key: p.key, view_escape: source.escape_kind };
     }
-    if (p.ok && !p.template) {
+    if (verify && p.ok && !p.template) {
       p = Produced { ...p, func: ssasem.Func { ...p.func, anchors: anchors } };
       let plan: ssasem.MergePlan = ssasem.merge_copies(p.func);
       if (plan.why != "") {
@@ -7976,6 +7982,17 @@ function infer_ownership(all: Produced[], names: string[], table: ssasem.Contrac
 }
 
 pub function build_module(mod: parser.Module): Built {
+  return produce_module(mod, true);
+}
+
+// Source diagnostics need the production view-anchor fixed point, but no
+// merge-copy planning, ownership verification, inlining or fusion. Keeping
+// those stages out also preserves the source bodies for diagnostic evidence.
+pub function check_views(mod: parser.Module): util.Diag[] {
+  return view_escape_diags(mod, produce_module(mod, false));
+}
+
+function produce_module(mod: parser.Module, verify: boolean): Built {
   let scopes: checker.Scope[] = checker.module_scopes(mod);
   let table: ssasem.Contracts = contracts(mod, scopes);
   let handed_back: util.NameIndex = handers(mod);
@@ -8019,7 +8036,10 @@ pub function build_module(mod: parser.Module): Built {
     names = names.append(r.name);
     at = at + 1;
   }
-  let all: Produced[] = fuse_pipelines(inline_leaves(anchor_module(close_module(util.append_all(decls, instances), util.name_index(names)), names), names, mod.funcs), names);
+  let all: Produced[] = anchor_module(close_module(util.append_all(decls, instances), util.name_index(names)), names, verify);
+  if (verify) {
+    all = fuse_pipelines(inline_leaves(all, names, mod.funcs), names);
+  }
   decls = [];
   instances = [];
   i = 0;
@@ -8039,6 +8059,54 @@ pub function build_module(mod: parser.Module): Built {
     i = i + 1;
   }
   return Built { decls: decls, instances: instances, contracts: table, names: names, dyn_arms: dispatched_arms(util.append_all(decls, instances)) };
+}
+
+// Translate proven source escapes while the original declaration still
+// supplies its location. Instances name their template's declaration; one
+// bad instantiation reports it once, without diagnostics on refused callers.
+pub function view_escape_diags(mod: parser.Module, built: Built): util.Diag[] {
+  let kinds: i32[] = [];
+  let names: string[] = [];
+  let i: i32 = 0;
+  while (i < mod.funcs.len()) {
+    kinds = kinds.append(built.decls[i].view_escape);
+    names = names.append(parser.decl_key(mod.funcs[i]));
+    i = i + 1;
+  }
+  for p in built.instances {
+    let at: i32 = util.index_of_str(names, p.key);
+    if (p.view_escape > 0 && at >= 0 && kinds[at] == 0) {
+      kinds = kinds.with(at, p.view_escape);
+    }
+  }
+  let out: util.Diag[] = [];
+  i = 0;
+  while (i < kinds.len()) {
+    if (kinds[i] > 0) {
+      let code: string = "E063";
+      if (kinds[i] == 2) {
+        code = "E065";
+      }
+      let fd: parser.FuncDecl = mod.funcs[i];
+      // Annotation can already have expanded a generic into concrete
+      // declarations. Those clones keep the source declaration's position.
+      let reported: boolean = false;
+      for d in out {
+        if (fd.line > 0 && d.code == code && d.line == fd.line && d.col == fd.col) {
+          reported = true;
+        }
+      }
+      if (!reported) {
+        out = out.append(util.Diag {
+          code: code,
+          message: "the returned view's source cannot be kept alive beyond this function: return owned storage or a view of a parameter instead",
+          line: fd.line, col: fd.col,
+        });
+      }
+    }
+    i = i + 1;
+  }
+  return out;
 }
 
 // Tiny scalar leaves spliced into their callers (seminline). A declaration
@@ -8128,7 +8196,9 @@ function fusion_on(): boolean {
 // backends, whose dispatch chains run over exactly these arms.
 // A method is an arm only on a type that implements the whole trait set: a
 // type with a same-named method of its own is never inside the dyn. A
-// monomorphised clone `base__…` implements what its generic base does.
+// monomorphised clone `base__…` implements what its generic base does. The
+// receiver is keyed by parser.receiver_base, as implements_traits keys the
+// impl list and decl_key names the arm, so a `str` receiver is `string`.
 pub function dyn_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], method: string, traits: string[]): string[] {
   let out: string[] = [];
   for fd in funcs {

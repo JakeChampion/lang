@@ -31,7 +31,6 @@ import "./ir";
 import "./irtables";
 import "./fnsigs";
 import "./lift";
-import "./irverify";
 import "./irverifygate";
 import "./asmcore";
 import "./astwalk";
@@ -586,11 +585,14 @@ pub function tid_globals_section(structs: irtables.StructTab): string {
   return util.str_join_chunks(parts);
 }
 
+// Every literal starts on a four-byte boundary. Applying the same padding
+// within each unit and in the linked region preserves relative offsets, and
+// leaves the low two pointer bits available to distinguish byte-view storage.
 pub function str_offset(vals: string[], idx: i32): i32 {
   let off: i32 = str_region_base();
   let i: i32 = 0;
   while (i < idx) {
-    off = off + 4 + vals[i].len();
+    off = (off + 4 + vals[i].len() + 3) / 4 * 4;
     i = i + 1;
   }
   return off;
@@ -1172,6 +1174,9 @@ function slot_in_list(list: i32[], x: i32): boolean {
 // $__fern_arr_dec (the array release that frees at rc==1 via the size-class
 // freelist), so the wasm IR path reclaims exactly as wasm.fern's AST path.
 function wasm_helper_symbol(name: string): string {
+  if (name == "__fern_oob_abort") {
+    return "$__fern_oob_abort";
+  }
   // A wasm view is a counted block of its own bytes, so its unit is a retain.
   if (name == "__fern_rc_inc" || name == "__fern_str_own") {
     return "$__fern_rc_inc";
@@ -5682,7 +5687,7 @@ function is_map_op_kind(tag: i32): boolean {
 function emit_map_op_wat(o: ir.Op, cx: WasmOpCtx): string {
   let parts: string[] = [];
   if (o.kind_tag == 133) {  // map_iter
-    // m.iter() -> a 12-byte rc-headed iterator box [keys@0, vals@4, cursor@8],
+    // m.iter() -> a 16-byte rc-headed iterator box [keys@0, vals@4, map@8, cursor@12],
     // released through $__fern_mapiter_free, which frees the snapshots too.
     // $__fern_map_iter materializes the live keys/values (map snapshots)
     // and boxes them. An 8-byte VALUE column (i64_imm != 0, #5253) snapshots
@@ -6220,7 +6225,7 @@ function emit_dyn_dispatch_wat(o: ir.Op, structs: irtables.StructTab, funcs: par
 // their equivalent in the shared asmcore (EmitState); there is no wasmcore, so
 // it lives here.
 //
-// NOT carried: fd, r and vsigs. The audit proposed bundling all nine of
+// NOT carried: fd, r and vgate. The audit proposed bundling all nine of
 // emit_function_ir's params, but the op dispatch reads none of those three --
 // every apparent hit is inside a comment, where "fd 0"/"fd 3" is the WASI file
 // descriptor and "r.read_chunk" is a Reader method.
@@ -6619,6 +6624,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == 345) {  // str_data
     // stack: block ptr -> its bytes, which follow the length at +0.
     parts = parts.append("    i32.const 4\n    i32.add\n");
+  } else if (o.kind_tag == 223) {  // raw_addr
+    // Physical byte-view lowering adjusts a linear-memory pointer. Both
+    // operands have the target's pointer width here, so this wraps at i32.
+    parts = parts.append("    i32.add\n");
   } else if (o.kind_tag == 18) {  // load_local
     parts = parts.append("    local.get " + util.i32_to_string(o.i32_imm) + "\n");
   } else if (o.kind_tag == 19) {  // store_local
@@ -7009,7 +7018,7 @@ function emit_str_op_wat(o: ir.Op): string {
 // the RC-consistency bug (#5509). Consuming the cached `r` makes it one lowering
 // by construction. `fd` supplies the func wrapper (name / receiver / ret); the
 // ~13 ret-fn / borrow side-tables that only fed lower_func are gone.
-function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDecl, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vsigs: irverify.NameIndex): string {
+function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDecl, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
   // Methods get the receiver-type-qualified name `$<Type>.<name>` (matching
   // the lowering's call_direct dispatch); free functions stay `$<name>`. WAT idents
   // allow `.`. r.n_params already counts the receiver as the first param.
@@ -7017,7 +7026,7 @@ function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDe
   if (fd.receiver_type.len() > 0) {
     fn_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
   }
-  return emit_function_ir_named(ns, r, fn_name, decl_result_wat(fd, structs), str_vals, cagg_vals, structs, fn_table, funcs, vsigs);
+  return emit_function_ir_named(ns, r, fn_name, decl_result_wat(fd, structs), str_vals, cagg_vals, structs, fn_table, funcs, vgate);
 }
 
 // decl_result_wat is the WAT result clause a DECLARATION's return type asks for.
@@ -7078,7 +7087,7 @@ function fallthrough_filler(result_wat: string): string {
 // register twins are asm_ir / asm_arm64_ir's emit_function_via_ir_named.
 // fern-lint: allow cyclomatic-complexity
 // The wasm half of the same op table as asm_ir.fern: one guard per op.
-function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: string, result_wat: string, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vsigs: irverify.NameIndex): string {
+function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: string, result_wat: string, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
   let arrtmp: i32 = r.n_locals;
   let eltmp: i32 = r.n_locals + 1;
   // f64tmp: an f64-typed scratch local for reordering 64-bit struct field
@@ -7094,7 +7103,7 @@ function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: st
   // i32 path already parks the value in eltmp, so the index needs its own home.
   let bctmp: i32 = r.n_locals + 4;
   ircore.lower_failed_refuse(fn_name, r);
-  irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vsigs);
+  irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
   let parts: string[] = [];
   parts = parts.append("  (func $" + fn_name);
   let p: i32 = 0;
@@ -7191,7 +7200,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
   // The IR verify gate's callee-arity index: built once for the whole
   // program, not per function, which is what keeps a ~3000-declaration
   // lookup out of the emit loop's inner cost.
-  let vsigs: irverify.NameIndex = irtables.fn_sig_index(all_funcs);
+  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(all_funcs), pops: ir.pops_by_kind() };
   let parts: string[] = [];
   let fi: i32 = 0;
   while (fi < mod.funcs.len()) {
@@ -7208,7 +7217,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
     // A template the substitution superseded has no body of its own here
     // either: its instances are on the cache tail.
     if (mod.funcs[fi].import_iface.len() == 0 && !cache[fi].superseded) {
-      parts = parts.append(emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, cagg_vals, all_structs, ft, all_funcs, vsigs));
+      parts = parts.append(emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, cagg_vals, all_structs, ft, all_funcs, vgate));
     }
     fi = fi + 1;
   }
@@ -7216,7 +7225,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
   // naming the symbol it defines and the shape of the value it returns.
   let xi: i32 = mod.funcs.len();
   while (xi < cache.len()) {
-    parts = parts.append(emit_function_ir_named(ns, cache[xi], cache[xi].name, produced_result_wat(cache[xi]), str_vals, cagg_vals, all_structs, ft, all_funcs, vsigs));
+    parts = parts.append(emit_function_ir_named(ns, cache[xi], cache[xi].name, produced_result_wat(cache[xi]), str_vals, cagg_vals, all_structs, ft, all_funcs, vgate));
     xi = xi + 1;
   }
   return util.str_join_chunks(parts);
@@ -8730,8 +8739,9 @@ function rda_refusal(): string {
 // gaps, so instead the iterator MATERIALIZES the live entries up front via the
 // existing $__fern_map_keys / $__fern_map_values (which $__fern_map_snapshot
 // compacts in matching slot order, so keys[j] pairs with values[j]). The
-// iterator box is [keys@0, vals@4, cursor@8] (12 bytes); has_next compares the
-// cursor to keys.len (len @ keys+0), key/value index the snapshot arrays (elems
+// iterator box is [keys@0, vals@4, map@8, cursor@12] (16 bytes), the map at
+// element 0 where every backend's cursor holds the unit of it the typed
+// lowering hands over and releases; has_next compares the cursor to keys.len (len @ keys+0), key/value index the snapshot arrays (elems
 // @ arr+8, 4-byte slots — i32 or string pointer alike), and advance bumps the
 // stored cursor in place (the box is re-read each loop turn). Reuses map_helpers
 // (emitted for any map module), so it pulls in no new structural runtime.
@@ -8739,20 +8749,21 @@ pub function map_iter_helpers(): string {
   let o: string = "";
   o = o + "  (func $__fern_map_iter (param $map i32) (result i32)\n";
   o = o + "    (local $box i32)\n";
-  o = o + "    (local.set $box (call $__fern_arr_box (i32.const 12)))\n";
+  o = o + "    (local.set $box (call $__fern_arr_box (i32.const 16)))\n";
   o = o + "    (i32.store (local.get $box) (call $__fern_map_keys (local.get $map)))\n";
   o = o + "    (i32.store (i32.add (local.get $box) (i32.const 4)) (call $__fern_map_values (local.get $map)))\n";
-  o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (i32.const 0))\n";
+  o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (local.get $map))\n";
+  o = o + "    (i32.store (i32.add (local.get $box) (i32.const 12)) (i32.const 0))\n";
   o = o + "    (local.get $box))\n";
-  // has_next: cursor (box@8) < keys.len (len @ keys+0, keys = box@0)
+  // has_next: cursor (box@12) < keys.len (len @ keys+0, keys = box@0)
   o = o + "  (func $__fern_mapiter_has_next (param $box i32) (result i32)\n";
-  o = o + "    (i32.lt_s (i32.load (i32.add (local.get $box) (i32.const 8))) (i32.load (i32.load (local.get $box)))))\n";
+  o = o + "    (i32.lt_s (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.load (i32.load (local.get $box)))))\n";
   // key: keys[cursor] — keys = box@0, element at keys + 8 + cursor*4
   o = o + "  (func $__fern_mapiter_key (param $box i32) (result i32)\n";
-  o = o + "    (i32.load (i32.add (i32.add (i32.load (local.get $box)) (i32.const 8)) (i32.mul (i32.load (i32.add (local.get $box) (i32.const 8))) (i32.const 4)))))\n";
+  o = o + "    (i32.load (i32.add (i32.add (i32.load (local.get $box)) (i32.const 8)) (i32.mul (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.const 4)))))\n";
   // value: values[cursor] — values = box@4
   o = o + "  (func $__fern_mapiter_value (param $box i32) (result i32)\n";
-  o = o + "    (i32.load (i32.add (i32.add (i32.load (i32.add (local.get $box) (i32.const 4))) (i32.const 8)) (i32.mul (i32.load (i32.add (local.get $box) (i32.const 8))) (i32.const 4)))))\n";
+  o = o + "    (i32.load (i32.add (i32.add (i32.load (i32.add (local.get $box) (i32.const 4))) (i32.const 8)) (i32.mul (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.const 4)))))\n";
   // free: the cursor owns its key and value snapshots, so its last unit
   // releases both before the rc-headed box itself.
   o = o + "  (func $__fern_mapiter_free (param $it i32) (result i32)\n";
@@ -8760,9 +8771,9 @@ pub function map_iter_helpers(): string {
   o = o + "      (drop (call $__fern_arr_dec (i32.load (local.get $it))))\n";
   o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $it) (i32.const 4)))))))\n";
   o = o + "    (call $__fern_arr_dec (local.get $it)))\n";
-  // advance: box@8 += 1; push a dummy (the statement drops it)
+  // advance: box@12 += 1; push a dummy (the statement drops it)
   o = o + "  (func $__fern_mapiter_advance (param $box i32) (result i32)\n";
-  o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (i32.add (i32.load (i32.add (local.get $box) (i32.const 8))) (i32.const 1)))\n";
+  o = o + "    (i32.store (i32.add (local.get $box) (i32.const 12)) (i32.add (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.const 1)))\n";
   o = o + "    (i32.const 0))\n";
   return o;
 }
@@ -12307,6 +12318,9 @@ pub function arr_dec_ptr2_func(heap_base: i32): string {
 pub function rc_runtime_helpers(heap_base: i32): string {
   let lo: string = util.i32_to_string(heap_base);
   let o: string = "";
+  // Match the native bounds abort without routing 134 through WASI's
+  // command-exit status, whose permitted range excludes it.
+  o = o + "  (func $__fern_oob_abort (result i32) (unreachable))\n";
   // ($__fern_rc_underflow is defined in heap_alloc_helpers, emitted first.)
   // __alloc(n) -> ptr: forward to the bump allocator.
   o = o + "  (func $__alloc (param $n i32) (result i32)\n";
@@ -12324,12 +12338,14 @@ pub function rc_runtime_helpers(heap_base: i32): string {
   // __fern_rc_inc(p) -> p: retain.
   o = o + "  (func $__fern_rc_inc (param $p i32) (result i32)\n";
   o = o + "    (local $rc i32)\n";
+  o = o + "    (local $base i32)\n";
   o = o + "    (if (i32.eqz (local.get $p)) (then (return (local.get $p))))\n";
   o = o + "    (if (i32.and (local.get $p) (i32.const 1)) (then (return (local.get $p))))\n";
   o = o + "    (if (i32.lt_u (local.get $p) (i32.const " + lo + ")) (then (return (local.get $p))))\n";
-  o = o + "    (local.set $rc (i32.load (i32.sub (local.get $p) (i32.const 8))))\n";
+  o = o + "    (local.set $base (i32.and (local.get $p) (i32.const -3)))\n";
+  o = o + "    (local.set $rc (i32.load (i32.sub (local.get $base) (i32.const 8))))\n";
   o = o + "    (if (i32.lt_s (local.get $rc) (i32.const 0)) (then (return (local.get $p))))\n";
-  o = o + "    (i32.store (i32.sub (local.get $p) (i32.const 8)) (i32.add (local.get $rc) (i32.const 1)))\n";
+  o = o + "    (i32.store (i32.sub (local.get $base) (i32.const 8)) (i32.add (local.get $rc) (i32.const 1)))\n";
   o = o + "    (local.get $p))\n";
   // __fern_rc_dec(p) -> p: release; over-release bumps the detector.
   o = o + "  (func $__fern_rc_dec (param $p i32) (result i32)\n";
@@ -12349,6 +12365,7 @@ pub function rc_runtime_helpers(heap_base: i32): string {
   o = o + "    (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))\n";
   o = o + "    (if (i32.and (local.get $p) (i32.const 1)) (then (return (i32.const 0))))\n";
   o = o + "    (if (i32.lt_u (local.get $p) (i32.const " + lo + ")) (then (return (i32.const 0))))\n";
+  o = o + "    (local.set $p (i32.and (local.get $p) (i32.const -3)))\n";
   o = o + "    (local.set $rc (i32.load (i32.sub (local.get $p) (i32.const 8))))\n";
   o = o + "    (if (i32.lt_s (local.get $rc) (i32.const 0)) (then (return (i32.const 0))))\n";
   o = o + "    (if (i32.eq (local.get $rc) (i32.const 1)) (then (return (i32.const 1))))\n";
@@ -12525,20 +12542,21 @@ pub function map_k64_helpers(): string {
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o = o + "      (br $c)))\n";
   o = o + "    (local.get $arr))\n";
-  // $__fern_map_iter_k64(map) → a MapIter box [keys@0][values@4][cursor@8]
+  // $__fern_map_iter_k64(map) → a MapIter box [keys@0][values@4][map@8][cursor@12]
   // whose KEY snapshot is the fresh i64[] above; the value snapshot is the
   // narrow one.
   o = o + "  (func $__fern_map_iter_k64 (param $map i32) (result i32)\n";
   o = o + "    (local $box i32)\n";
-  o = o + "    (local.set $box (call $__fern_arr_box (i32.const 12)))\n";
+  o = o + "    (local.set $box (call $__fern_arr_box (i32.const 16)))\n";
   o = o + "    (i32.store (local.get $box) (call $__fern_map_keys_k64 (local.get $map)))\n";
   o = o + "    (i32.store (i32.add (local.get $box) (i32.const 4)) (call $__fern_map_values (local.get $map)))\n";
-  o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (i32.const 0))\n";
+  o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (local.get $map))\n";
+  o = o + "    (i32.store (i32.add (local.get $box) (i32.const 12)) (i32.const 0))\n";
   o = o + "    (local.get $box))\n";
   // $__fern_mapiter_key_w64(box) → keys[cursor] as an 8-byte i64 (keys = a
   // $__fern_map_keys_k64 snapshot, elements at keys + 8 + cursor*8).
   o = o + "  (func $__fern_mapiter_key_w64 (param $box i32) (result i64)\n";
-  o = o + "    (i64.load (i32.add (i32.add (i32.load (local.get $box)) (i32.const 8)) (i32.mul (i32.load (i32.add (local.get $box) (i32.const 8))) (i32.const 8)))))\n";
+  o = o + "    (i64.load (i32.add (i32.add (i32.load (local.get $box)) (i32.const 8)) (i32.mul (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.const 8)))))\n";
   return o;
 }
 
@@ -12576,10 +12594,11 @@ pub function map_k64w64_helpers(): string {
   // and the i64[] value snapshot.
   o = o + "  (func $__fern_map_iter_k64w64 (param $map i32) (result i32)\n";
   o = o + "    (local $box i32)\n";
-  o = o + "    (local.set $box (call $__fern_arr_box (i32.const 12)))\n";
+  o = o + "    (local.set $box (call $__fern_arr_box (i32.const 16)))\n";
   o = o + "    (i32.store (local.get $box) (call $__fern_map_keys_k64 (local.get $map)))\n";
   o = o + "    (i32.store (i32.add (local.get $box) (i32.const 4)) (call $__fern_map_values_w64 (local.get $map)))\n";
-  o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (i32.const 0))\n";
+  o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (local.get $map))\n";
+  o = o + "    (i32.store (i32.add (local.get $box) (i32.const 12)) (i32.const 0))\n";
   o = o + "    (local.get $box))\n";
   return o;
 }
@@ -12644,20 +12663,21 @@ pub function map_w64_helpers(): string {
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o = o + "      (br $c)))\n";
   o = o + "    (local.get $arr))\n";
-  // $__fern_map_iter_w64(map) → a MapIter box [keys@0][values@4][cursor@8] whose
+  // $__fern_map_iter_w64(map) → a MapIter box [keys@0][values@4][map@8][cursor@12] whose
   // VALUE snapshot is a fresh i64[] (values dereferenced from the cells). Mirrors
   // $__fern_map_iter but swaps $__fern_map_values → $__fern_map_values_w64.
   o = o + "  (func $__fern_map_iter_w64 (param $map i32) (result i32)\n";
   o = o + "    (local $box i32)\n";
-  o = o + "    (local.set $box (call $__fern_arr_box (i32.const 12)))\n";
+  o = o + "    (local.set $box (call $__fern_arr_box (i32.const 16)))\n";
   o = o + "    (i32.store (local.get $box) (call $__fern_map_keys (local.get $map)))\n";
   o = o + "    (i32.store (i32.add (local.get $box) (i32.const 4)) (call $__fern_map_values_w64 (local.get $map)))\n";
-  o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (i32.const 0))\n";
+  o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (local.get $map))\n";
+  o = o + "    (i32.store (i32.add (local.get $box) (i32.const 12)) (i32.const 0))\n";
   o = o + "    (local.get $box))\n";
   // $__fern_mapiter_value_w64(box) → values[cursor] as an 8-byte i64 (values =
   // box@4 is an i64[]; element at values + 8 + cursor*8).
   o = o + "  (func $__fern_mapiter_value_w64 (param $box i32) (result i64)\n";
-  o = o + "    (i64.load (i32.add (i32.add (i32.load (i32.add (local.get $box) (i32.const 4))) (i32.const 8)) (i32.mul (i32.load (i32.add (local.get $box) (i32.const 8))) (i32.const 8)))))\n";
+  o = o + "    (i64.load (i32.add (i32.add (i32.load (i32.add (local.get $box) (i32.const 4))) (i32.const 8)) (i32.mul (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.const 8)))))\n";
   return o;
 }
 

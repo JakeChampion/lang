@@ -289,6 +289,56 @@ function main(): i32 { return pick(true, 7) + pick(false, 9); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`testq (%r\w+), (%r\w+)`}, "arm64-linux": {`\bcbn?z x\d+,`}},
 		forbid: map[string][]string{"x86-64-linux": {`testq %r11, %r11`, `movq %r\w+, %r11`}, "arm64-linux": {`\bcbn?z x4,`, `mov x4, x`}}},
+	// A constant a phi merges is loaded on its edge, with no home of its own,
+	// so the `false` the first compare merges does not hold a callee-saved
+	// register across the call between; only the string the second compare
+	// reads does. A returned constant goes straight to the result register.
+	{name: "phi_constant_loads_on_edge", fn: "is_stream", exit: 1, src: `
+enum Ty { Named(string), Other(i32) }
+@noinline function is_stream(t: Ty): boolean {
+    if let Ty.Named(s) = t {
+        return s == "Reader" || s == "Writer";
+    }
+    return false;
+}
+function main(): i32 {
+    let n: i32 = 0;
+    if (is_stream(Ty.Named("Writer"))) { n = n + 1; }
+    if (is_stream(Ty.Other(3))) { n = n + 10; }
+    if (is_stream(Ty.Named("Wrote!"))) { n = n + 100; }
+    return n;
+}
+`,
+		want:   map[string][]string{"x86-64-linux": {`pushq %rbx`, `movl \$1, %eax`}, "arm64-linux": {`str x19, \[sp, #-16\]!`, `mov x0, #1\b`}},
+		forbid: map[string][]string{"x86-64-linux": {`pushq %r12`}, "arm64-linux": {`\bx20\b`}}},
+	// A multiply by a constant reads its operand from its home: x86-64's
+	// three-operand imul, with no copy into the destination first, whichever
+	// side the constant is written on. The forbid is the half that tells it
+	// from main, and it holds only while each product has a register home.
+	{name: "imul_reads_operand_in_place", fn: "poly", exit: 87, src: `
+@noinline function poly(s: string): i32 {
+    let h: i32 = 7;
+    let i: i32 = 0;
+    while (i < s.len()) { h = h * 1000003 + s[i] as i32; i = i + 1; }
+    if (h < 0) { h = 0 - h; }
+    return h % 101;
+}
+function main(): i32 { return poly("pack my box with five dozen liquor jugs"); }
+`,
+		want:   map[string][]string{"x86-64-linux": {`imulq \$1000003, %\w+, %\w+`}},
+		forbid: map[string][]string{"x86-64-linux": {`movq %r\w+, %r\w+\n\s+imulq \$1000003`}}},
+	{name: "imul_left_constant_reads_operand_in_place", fn: "poly", exit: 87, src: `
+@noinline function poly(s: string): i32 {
+    let h: i32 = 7;
+    let i: i32 = 0;
+    while (i < s.len()) { h = 1000003 * h + s[i] as i32; i = i + 1; }
+    if (h < 0) { h = 0 - h; }
+    return h % 101;
+}
+function main(): i32 { return poly("pack my box with five dozen liquor jugs"); }
+`,
+		want:   map[string][]string{"x86-64-linux": {`imulq \$1000003, %\w+, %\w+`}},
+		forbid: map[string][]string{"x86-64-linux": {`movq %r\w+, %r\w+\n\s+imulq \$1000003`}}},
 	// A 32-bit value read only by further 32-bit arithmetic keeps no sign
 	// extension: the product feeds the sum without one, and the sum is
 	// extended once, where the comparison and the division read it. The roll
@@ -305,6 +355,43 @@ function main(): i32 { return roll("the quick brown fox jumps over the lazy dog"
 `,
 		want:   map[string][]string{"x86-64-linux": {`\bmovslq %\w+, %r\w+`}, "arm64-linux": {`\bsxtw x\d+, w\d+\b`}},
 		forbid: map[string][]string{"x86-64-linux": {`imulq \$1000003, %\w+, (%\w+)\n\s+movslq`}, "arm64-linux": {`\bmul (x\d+), x\d+, x\d+\n\s+sxtw`}}},
+	// A loop counter stepped by one under `i < n` cannot overflow, so its
+	// step keeps no sign extension even though the test reads it whole.
+	{name: "counter_step_unwrapped", fn: "count_odd", exit: 21, src: `
+@noinline function count_odd(xs: i32[]): i32 {
+    let n: i32 = 0;
+    let i: i32 = 0;
+    while (i < xs.len()) { if ((xs[i] & 1) == 1) { n = n + xs[i]; } i = i + 1; }
+    return n;
+}
+function main(): i32 { return count_odd([1, 2, 3, 4, 5, 6, 12]) + 12; }
+`,
+		forbid: map[string][]string{"x86-64-linux": {`addq \$1, %(\w+)\n\s+movslq`}, "arm64-linux": {`\badd (x\d+), x\d+, #1\n\s+sxtw`}}},
+	// Under `<=` the step can pass INT32_MAX, so it keeps its wrap, and the
+	// counter still turns negative where it overflows.
+	{name: "counter_le_keeps_wrap", fn: "climb", exit: 3, src: `
+@noinline function climb(start: i32): i32 {
+    let i: i32 = start;
+    let steps: i32 = 0;
+    while (i <= 2147483647) { i = i + 1; steps = steps + 1; if (i < 0) { return steps; } }
+    return 0;
+}
+function main(): i32 { return climb(2147483645); }
+`,
+		want: map[string][]string{"x86-64-linux": {`addq \$1, %(\w+)\n\s+movslq`}, "arm64-linux": {`\badd (x\d+), x\d+, #1\n\s+sxtw`}}},
+	// A body the header's other test also enters is not below `n` on every
+	// path, so its step keeps the wrap: the first test's successor does not
+	// dominate it.
+	{name: "counter_two_entries_keeps_wrap", fn: "mix", exit: 65, src: `
+@noinline function mix(n: i32): i32 {
+    let i: i32 = 0;
+    let acc: i32 = 0;
+    while (i < n || acc < 1000) { acc = acc + i; i = i + 1; }
+    return acc % 97;
+}
+function main(): i32 { return mix(10); }
+`,
+		want: map[string][]string{"x86-64-linux": {`addq \$1, %(\w+)\n\s+movslq`}, "arm64-linux": {`\badd (x\d+), x\d+, #1\n\s+sxtw`}}},
 	// A multiply by a power of two is a shift.
 	{name: "strength_mul_pow2", fn: "times8", exit: 40, src: `
 @noinline function times8(x: i32): i32 { return x * 8; }
@@ -343,6 +430,19 @@ function main(): i32 { return add3(3, 4, 5); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`\bmovslq %(\w+)d?, %\w+`}, "arm64-linux": {`\bsxtw x(\d+), w\d+`}},
 		forbid: map[string][]string{"arm64-linux": {`\bsxtw x4, w4\b`}}},
+	// A wrap whose operand sits in another register reads it there: one
+	// extension into the destination, not a copy and an extension in place.
+	{name: "wrap_reads_its_source", fn: "sum", exit: 15, src: `
+@noinline function sum(xs: i32[]): i32 {
+    let s: i32 = 0;
+    let i: i32 = 0;
+    while (i < xs.len()) { s = s + xs[i]; i = i + 1; }
+    return s;
+}
+function main(): i32 { return sum([3, 5, 7]); }
+`,
+		want:   map[string][]string{"x86-64-linux": {`\bmovslq %r\w+, %r\w+`}, "arm64-linux": {`\bsxtw x\d+, w\d+`}},
+		forbid: map[string][]string{"x86-64-linux": {`movq %r\w+, %r\w+\n\s+movslq`}, "arm64-linux": {`\bmov x\d+, x\d+\n\s+sxtw`}}},
 }
 
 func TestSelfHostOptimisationShapes(t *testing.T) {

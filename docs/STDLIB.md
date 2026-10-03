@@ -1676,10 +1676,10 @@ answer is `Result[HttpResponse, FetchError]`.
   and every header against `std/http`'s `http_method_ok` /
   `http_target_ok` / `http_field_name_ok` / `http_field_value_ok`, so a
   CRLF in a URL or a field cannot split the request on the wire. It
-  writes `Host`,
-  `Content-Length` and `Connection: close` itself and strips hop-by-hop
-  fields from what it sends. No TLS where the client dials (`https` fails
-  with `Tls`), no pool. On `wasm32-wasi-http` the client dials nothing:
+  writes `Host` and
+  `Content-Length` itself and strips hop-by-hop fields from what it sends.
+  No TLS where the client dials (`https` fails with `Tls`). On
+  `wasm32-wasi-http` the client dials nothing:
   the request goes to the host's wasi:http/outgoing-handler (`std/wasi_http`),
   which resolves the name, connects, speaks TLS (so `https` works there)
   and HTTP/2 where it can, under the connect and inactivity bounds as
@@ -1790,6 +1790,31 @@ answer is `Result[HttpResponse, FetchError]`.
   `timeouts()` gives 10 s / 30 s / 60 s. The connect bound covers the
   whole address race; inactivity is the longest wait for the next byte
   of the response; total runs from the start to the last byte read.
+- **Transport:** the dialled route reaches the network only through
+  `trait Transport` (`now_ns`, `lookup`, `connect`, `write`, `read` under
+  a wait, `close`, and `idle`, its pool), and `send_on(tr, req, policy)` is
+  `send` over any transport under a `Policy { public_only, proxies }`.
+  `sockets()` is the machine's (the system resolver, `dns.connect_race`,
+  `tcp_recv_deadline`), which `send` and `plat.http` use; `std/sim_fetch`
+  scripts one in virtual time.
+- **Pool:** a connection whose response was framed (a length or chunked,
+  not ended by the close), that the peer did not ask to close, and that
+  nothing followed is kept in the transport's `Idle` pool under its host,
+  port and route (the open route's connections are never handed to the
+  guarded one). The next idempotent request to the same place takes the
+  connection kept last; a POST always dials, since a kept connection the
+  peer has closed shows itself only after the request is written, and an
+  idempotent request that finds it closed is sent once more on a new one.
+  `idle()` keeps up to 64 connections for 90 s each, `idle_limited(max,
+  idle_ms)` sets both, and `sockets_with(pool)` dials with a given pool.
+  `send` and `plat.http` keep a pool for the one call (so a redirect back
+  to the same origin is followed on its connection) and close it after; a
+  caller that holds a `Sockets` across `send_on` calls reuses across them
+  and closes what is left with `close_idle(tr)`. Every rule above (the block list, the bounds, the retry,
+  redirects, decoding) stays above the seam, so a scripted transport
+  exercises the same client a real one does. `lookup` answers a `Lookup`:
+  the addresses to dial and, when asked to be judged, the addresses the
+  network named with the ones they carry, which the block list reads.
 - **Awaitable:** `fetch_future(host_be, port, path):
   async.Future[u8[]]` resolves to the response body (empty on any
   failure, a `path` that `http_target_ok` refuses included, which never
@@ -1955,6 +1980,49 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
   (`random`).
 - `(plat).http(req)` lives in `std/fetch`, next to the sockets that
   implement it.
+
+### `std/sim_fetch`
+
+A scripted network for `std/fetch`'s client, in virtual time. A
+`sim_fetch.Net` is a `fetch.Transport`, so `fetch.send_on(n, req, policy)`
+runs the whole client against names, listeners and answers the test
+scripts, on a `sim.Sim`'s clock:
+
+```fern
+let d: sim.Sim = sim.new(1);
+let n: sim_fetch.Net = sim_fetch.net(d)
+    .host("example.test", ["93.184.216.34"])
+    .listen("93.184.216.34", 80, 5)
+    .route("93.184.216.34", 80, "/", [sim_fetch.reply(200, "hi").after(20)]);
+let got = fetch.send_on(n, fetch.get("http://example.test/"), policy);
+// d.now_ns() is 25 ms: 5 to connect, 20 to the first byte.
+```
+
+Nothing waits: a read that would block moves the clock to when the
+scripted bytes arrive, or by the whole wait when none do, so each bound
+passes at its exact virtual time. `host(name, addrs)` names addresses (an
+IP literal resolves to itself, anything else is `NoSuchName`);
+`listen(addr, port, connect_ms)` accepts after a delay, and an address
+with no listener refuses at once. A name's addresses are raced as
+`dns.connect_race` races them, each attempt starting the fallback delay
+after the one before (at once after a refusal), the first to connect
+winning and none within the client's connect bound a timeout at it; a
+bound of zero times out before any attempt, refusing addresses included.
+`route(addr, port, path, answers)` answers the
+n-th request for `path` (`*` for any) with its n-th `Answer`, the last
+repeating; an unrouted request gets a 404. Answers: `reply(status, body)`,
+`redirect(status, location)`, `raw(text)` / `raw_bytes(bytes)` for
+anything else on the wire, `reset()` (closed before a byte) and `silent()`
+(never answers), shaped by `.after(ms)`, `.in_chunks(size, every_ms)`,
+`.held()` (left open after the last byte) and `.kept()` (no `Connection:
+close`, and the connection takes the next request). `reply` and
+`redirect` announce the close that follows them. The client's pool is the
+net's own, `fetch.idle()` unless `.pooling(pool)` gives another. The net
+records what the client
+did: `connects()`, `open()`, `sent_count()` and `sent(i)`, the i-th request
+as written. A sibling of `std/sim` rather than part of it, so `std/sim`
+keeps the clock and randomness alone; `examples/tests/sim_fetch_test.fern`
+is the client's parity suite.
 
 ### `std/mock_platform`
 
