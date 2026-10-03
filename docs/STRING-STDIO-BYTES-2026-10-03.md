@@ -36,12 +36,22 @@ The source-built Darwin primary test passes in 36.586 seconds. The earlier full 
 belongs to the preceding Stdio snapshot; the Writer repair separately passes
 the full suite, and full integrated CI remains a merge gate.
 
+The next integration includes main `26b82ea7c` and the borrowed-map alias
+repair `80d197eb8`. Linux Go and primary fixture groups pass in 0.650 and
+39.734 seconds; GNU consumers and primary/native comparisons pass in 5.409
+and 20.489 seconds. The full unit suite and all lint gates pass. All 5,928
+Go/Fern files match the frozen snapshot. Darwin Go and primary tests pass,
+and the actual reproduced compiler passes all 179 fixture cases on native
+Darwin and core WASM with balanced allocation counts in 3.263 seconds.
+The 208 primary compiler and standard-library source files match that
+compiler's reproduced source tree exactly.
+
 ## Controlled measurements
 
 Both versions use the reproduced primary compiler with SHA-256
-`fc15892a54e9f5d5017cd0b3ad748b31b6eb30b012237d136d6e6ac2b6e7ec1a`
+`571e6324d7055bdb7782ec768a8543b7715140a669a054498db01db3d3e2b450`
 and its matching standard library. The before module is `coreutils/lib/gnu.fern`
-at `68623a892`; the after module is this byte-buffer implementation. No other
+at `26b82ea7c`; the after module is this byte-buffer implementation. No other
 source differs. Task-owned heavy jobs were idle; the desktop was not isolated.
 
 The program creates one Stdio, repeatedly writes the same string, then closes
@@ -54,20 +64,21 @@ uses two warmups and seven samples in alternating order.
 
 | Piece | Before median | After median | Before allocations | After allocations |
 | --- | ---: | ---: | ---: | ---: |
-| 7 ASCII bytes | 38.193 ms | 27.638 ms | 1,469,763 | 11,588 |
-| 7 Unicode bytes | 37.963 ms | 27.198 ms | 1,469,763 | 11,588 |
-| 4096 ASCII bytes | 3.519 ms | 4.203 ms | 7,205 | 6,180 |
-| 65536 ASCII bytes | 3.216 ms | 3.436 ms | 1,059 | 1,183 |
+| 7 ASCII bytes | 38.501 ms | 26.638 ms | 1,469,763 | 11,588 |
+| 7 Unicode bytes | 38.119 ms | 26.677 ms | 1,469,763 | 11,588 |
+| 4096 ASCII bytes | 3.158 ms | 3.448 ms | 7,205 | 6,180 |
+| 65536 ASCII bytes | 2.687 ms | 3.014 ms | 1,059 | 1,183 |
 
-Only the Unicode sample ranges are disjoint: 37.089-40.852 ms before and
-25.694-28.338 ms after. The other ranges overlap. The larger-write medians
-are worse, and this measurement does not establish a general speedup. The
-small-write allocation reduction is exact; large writes still pay for copied
-partial ranges and byte-buffer construction.
+The small-write ranges are disjoint: ASCII takes 37.863-39.767 ms before and
+25.935-27.409 ms after; Unicode takes 37.461-39.071 and 26.039-28.272 ms.
+The 4096-byte case is slower with disjoint ranges, 3.038-3.217 versus
+3.373-3.542 ms. The 65536-byte ranges overlap. This is not a general speedup:
+large writes still pay for partial-range copies, byte-buffer construction
+and Writer view dispatch. The small-write allocation reduction is exact.
 
-Both native benchmark files occupy 83,073 bytes. Code grows from 41,552 to
-42,344 bytes and unwind data from 7,276 to 7,492 bytes; data remains 4,536
-bytes. The extra paths support raw input, range handling and byte buffering.
+Both native benchmark files occupy 83,073 bytes. Code grows from 41,488 to
+42,272 bytes and unwind data from 7,276 to 7,492 bytes; data grows from 4,144
+to 4,168 bytes. The extra paths support raw input, range handling and byte buffering.
 No size baseline changes are needed.
 
 This enables byte-oriented consumers such as dircolors. It does not complete

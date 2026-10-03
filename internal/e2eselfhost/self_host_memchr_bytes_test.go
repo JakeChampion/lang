@@ -11,10 +11,22 @@ import (
 )
 
 func TestSelfHostMemchrBytes(t *testing.T) {
+	selfHostRunOnEveryTarget(t, e2eharness.MemchrBytesSource(true))
+}
+
+func TestSelfHostScanSetBytes(t *testing.T) {
+	selfHostRunOnEveryTarget(t, e2eharness.ScanSetBytesSource(true))
+}
+
+// selfHostRunOnEveryTarget compiles src with the self-host CLI under the
+// strict IR path, the sanitizer and the leak census, for each target, and
+// requires a clean exit and a balanced census.
+func selfHostRunOnEveryTarget(t *testing.T, src string) {
+	t.Helper()
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
-			stderr, code := cli.exitOf(t, e2eharness.MemchrBytesSource(true), target, "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			stderr, code := cli.exitOf(t, src, target, "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 			if code != 0 {
 				t.Fatalf("exit = %d\n%s", code, stderr)
 			}
