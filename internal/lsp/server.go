@@ -268,7 +268,7 @@ func (s *Server) handleInitialize() initializeResult {
 			DocumentFormattingProvider: true,
 			CodeActionProvider:         true,
 		},
-		ServerInfo: &serverInfo{Name: "lang-lsp"},
+		ServerInfo: &serverInfo{Name: "fern-lsp"},
 	}
 }
 
@@ -596,9 +596,6 @@ func (s *Server) updateDoc(uri, src string) []string {
 					continue
 				}
 				newDiags := diagsByFile[otherPath]
-				if newDiags == nil {
-					newDiags = []Diagnostic{}
-				}
 				if !diagnosticsEqual(doc.diags, newDiags) {
 					doc.diags = newDiags
 					affected = append(affected, otherURI)
@@ -686,9 +683,15 @@ func (s *Server) publishDiagnostics(uri string) {
 		return
 	}
 	s.lastDiags[uri] = state.diags
+	// The spec's diagnostics member is an array, and a document with none
+	// can hold a nil slice, which marshals as null.
+	ds := state.diags
+	if ds == nil {
+		ds = []Diagnostic{}
+	}
 	s.publish("textDocument/publishDiagnostics", publishDiagnosticsParams{
 		URI:         uri,
-		Diagnostics: state.diags,
+		Diagnostics: ds,
 	})
 }
 
