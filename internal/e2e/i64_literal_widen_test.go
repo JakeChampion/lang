@@ -330,6 +330,23 @@ function main(): i32 {
 }
 `
 
+// shiftLiteralReadsCountWidthProgram: an unsuffixed literal on the left of a
+// shift reads at the count's width, so `1 << k` with an i64 k is an i64 and
+// keeps bit 40. The self-host checker typed it at the i32 default and refused
+// the i64 argument as E038. A correct run exits 7.
+const shiftLiteralReadsCountWidthProgram = `
+function wide(v: i64): i64 { return v; }
+function main(): i32 {
+  let k: i64 = 40;
+  let n: i32 = 3;
+  let c = 0;
+  if ((1 << k) == 1099511627776) { c = c + 1; }
+  if (wide(0x200000 >> n as i64) == 262144) { c = c + 2; }
+  if (wide(1 - (1 << k)) == -1099511627775) { c = c + 4; }
+  return c;
+}
+`
+
 func TestInterpUnannotatedBigLiteralWidens(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	run := func(src string, want int, what string) {
@@ -356,6 +373,7 @@ func TestInterpUnannotatedBigLiteralWidens(t *testing.T) {
 	run(genericStructLocalBigLiteralProgram, 31, "generic struct local with a wide literal field")
 	run(genericStructLocalOneWidthProgram, 31, "generic struct local takes its first use's width")
 	run(typedFieldBindsAheadOfLiteralProgram, 127, "typed value binds ahead of an earlier literal")
+	run(shiftLiteralReadsCountWidthProgram, 7, "shifted literal reads at the count's width")
 }
 
 func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
@@ -400,6 +418,9 @@ func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
 	}
 	if _, code := compileAndRunX86_64(t, typedFieldBindsAheadOfLiteralProgram); code != 127 {
 		t.Errorf("x86-64 typed value binds ahead of an earlier literal: exit = %d, want 127", code)
+	}
+	if _, code := compileAndRunX86_64(t, shiftLiteralReadsCountWidthProgram); code != 7 {
+		t.Errorf("x86-64 shifted literal reads at the count's width: exit = %d, want 7", code)
 	}
 }
 
@@ -446,6 +467,9 @@ func TestArm64UnannotatedBigLiteralWidens(t *testing.T) {
 	if _, code := compileAndRunArm64(t, typedFieldBindsAheadOfLiteralProgram); code != 127 {
 		t.Errorf("arm64 typed value binds ahead of an earlier literal: exit = %d, want 127", code)
 	}
+	if _, code := compileAndRunArm64(t, shiftLiteralReadsCountWidthProgram); code != 7 {
+		t.Errorf("arm64 shifted literal reads at the count's width: exit = %d, want 7", code)
+	}
 }
 
 func TestWASMUnannotatedBigLiteralWidens(t *testing.T) {
@@ -490,5 +514,8 @@ func TestWASMUnannotatedBigLiteralWidens(t *testing.T) {
 	}
 	if code := runWasm(t, typedFieldBindsAheadOfLiteralProgram); code != 127 {
 		t.Errorf("wasm typed value binds ahead of an earlier literal: exit = %d, want 127", code)
+	}
+	if code := runWasm(t, shiftLiteralReadsCountWidthProgram); code != 7 {
+		t.Errorf("wasm shifted literal reads at the count's width: exit = %d, want 7", code)
 	}
 }

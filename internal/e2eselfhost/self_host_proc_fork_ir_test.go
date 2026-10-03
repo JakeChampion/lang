@@ -9,7 +9,7 @@ import (
 // procForkPrograms are the two shapes that pin `proc_fork()` / `proc_waitpid(pid)`
 // on the self-host IR path (#5686). Both carry their expected exit code rather
 // than asking the interpreter: its `proc_fork` never forks (it answers -ENOSYS
-// so `tcp_serve_supervised` degrades to single-process serving), so it cannot
+// so `serve.supervise` degrades to single-process serving), so it cannot
 // judge a real fork.
 //
 //   - normal-exit: the child exits 17, the parent reaps it and checks the
@@ -55,7 +55,7 @@ function main(): i32 {
 // lowers on the self-host x86-64 IR path. Before this they had no IR op and no
 // emitter interception at all, so a call fell through to the generic user-call
 // path and emitted `call __fn_proc_fork` against a symbol nothing defines —
-// which is why `std/tcp` (whose `tcp_serve_supervised` calls both) could not be
+// which is why `std/serve` (whose `serve.supervise` calls both) could not be
 // self-host compiled. Because they are real ops now, a fork-using module is
 // IR-ELIGIBLE rather than bailing.
 func TestSelfHostProcForkIRX86_64(t *testing.T) {

@@ -9239,6 +9239,13 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
   // Perceus reuse extends the buffer in place and the cost is linear.
   let a: Arm64Asm = p.asm;
   p = Arm64GasProg { ...p, asm: arm64_asm_new() };
+  // The @PAGE / @PAGEOFF fixup queue is threaded the same way, for the same
+  // reason: `p` is handed to helpers and reassigned from their results, so
+  // the analysis cannot prove its box unowned elsewhere, and an append
+  // through its field copied the whole queue per fixup line.
+  let pf_sites: i32[] = [];
+  let pf_syms: string[] = [];
+  let pf_kinds: i32[] = [];
   let section: i32 = 0;  // 0 = .text, 1 = data (__const / __data)
   let nl_cnt: i32[] = [];  // definitions seen per numeric local label
   let srcn: i32 = src.len();
@@ -9416,9 +9423,9 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
     // assembles directly into .text.
     if (mnem == "adrp") {
       a = Arm64Asm { ...a, code: arm64_adrp(a.code, arm64_gas_reg(ops[0]), 0) };
-      p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
-      p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_at(ops[1])) };
-      p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(0) };
+      pf_sites = pf_sites.append(a.code.len() - 4);
+      pf_syms = pf_syms.append(arm64_gas_strip_at(ops[1]));
+      pf_kinds = pf_kinds.append(0);
       continue;
     }
     // `adr Xd, sym` — PC-relative like adrp but byte-granular (±1 MB),
@@ -9430,9 +9437,9 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         continue;
       }
       a = Arm64Asm { ...a, code: arm64_adr(a.code, arm64_gas_reg(ops[0]), 0) };
-      p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
-      p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_trim(ops[1])) };
-      p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(3) };
+      pf_sites = pf_sites.append(a.code.len() - 4);
+      pf_syms = pf_syms.append(arm64_gas_trim(ops[1]));
+      pf_kinds = pf_kinds.append(3);
       continue;
     }
     if (mnem == "ldr" && arm64_str_indexof(rest, "@PAGEOFF") >= 0) {
@@ -9443,16 +9450,16 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
       let rb: i32 = arm64_str_indexof(linner, "]");
       let lparts: string[] = arm64_gas_operands(slice_unchecked(linner, lb + 1, rb));
       a = Arm64Asm { ...a, code: arm64_ldr(a.code, arm64_gas_reg(ops[0]), lm.base, 0, arm64_gas_is_w(ops[0])) };
-      p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
-      p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_at(lparts[1])) };
-      p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(1) };
+      pf_sites = pf_sites.append(a.code.len() - 4);
+      pf_syms = pf_syms.append(arm64_gas_strip_at(lparts[1]));
+      pf_kinds = pf_kinds.append(1);
       continue;
     }
     if (mnem == "add" && arm64_str_indexof(rest, "@PAGEOFF") >= 0) {
       a = Arm64Asm { ...a, code: arm64_addimm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), 0, false) };
-      p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
-      p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_at(ops[2])) };
-      p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(2) };
+      pf_sites = pf_sites.append(a.code.len() - 4);
+      pf_syms = pf_syms.append(arm64_gas_strip_at(ops[2]));
+      pf_kinds = pf_kinds.append(2);
       continue;
     }
     // Linux/ELF low-12-bits add: `add Xd, Xn, :lo12:sym` — the GAS
@@ -9461,9 +9468,9 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
     // `adrp Xd, sym` is handled by the adrp branch above (bare symbol).
     if (mnem == "add" && arm64_str_indexof(rest, ":lo12:") >= 0) {
       a = Arm64Asm { ...a, code: arm64_addimm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), 0, false) };
-      p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
-      p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_lo12(ops[2])) };
-      p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(2) };
+      pf_sites = pf_sites.append(a.code.len() - 4);
+      pf_syms = pf_syms.append(arm64_gas_strip_lo12(ops[2]));
+      pf_kinds = pf_kinds.append(2);
       continue;
     }
     // `and Xd, Xn, #imm` (logical immediate) needs a verified bitmask
@@ -9583,7 +9590,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
     p = Arm64GasProg { ...p, unknown: p.unknown.append("branch out of range: " + a.oor[oi]) };
     oi = oi + 1;
   }
-  return Arm64GasProg { ...p, asm: a, cfi: cfi };
+  return Arm64GasProg { ...p, asm: a, cfi: cfi, pf_sites: pf_sites, pf_syms: pf_syms, pf_kinds: pf_kinds };
 }
 
 // Arm64SymAddr / arm64_gas_sym_addr resolve a symbol to its final address at

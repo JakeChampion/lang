@@ -690,6 +690,12 @@ pub function op_raw_splice_pipe(): Op {
   return op0(331);
 }
 
+// raw_cover: pops nothing → the address of __fern_cov_counters, the word
+// holding the `-cover` counter table's address (zero before the first hit).
+pub function op_raw_cover(): Op {
+  return op0(287);
+}
+
 // syscall5 (#2649 syscall sub-floor): the 5-arg sibling. Three helpers need it
 // and none can be reached without it — arm64 Linux has no `poll` or `fork`, only
 // `ppoll` and `clone`, and XNU has no `nanosleep`, only `select`. All three take
@@ -1181,7 +1187,7 @@ pub function op_set_file_times(): Op {
 }
 
 // `open_reader_with` / `open_writer_with` take [path, flags] — Fern's flags
-// word, 1 create and 2 non-blocking, translated per target by the runtime
+// word, 1 create, 2 non-blocking and 4 exclusive, translated per target by the runtime
 // rather than baked into an immediate — and push the same
 // Result[Reader|Writer, IoError] box op_open_file does.
 pub function op_open_reader_with(): Op {
@@ -2945,7 +2951,7 @@ pub function kind_count(): i32 {
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 287..290, then 311 — 281
+// NEXT FREE EXTENSION ID: 288..290, then 311 — 281
 // (writer_truncate) and 285 (signal_send) were each taken out of order by a
 // branch in flight, as 275..280 and 291..297 were, and the sync family took
 // the 298..301 block reserved for it (re-grep rather than trusting this line
@@ -3731,6 +3737,9 @@ function kind_id_len9_r(name: string): i32 {
   }
   if (name == "read_link") {
     return 264;
+  }
+  if (name == "raw_cover") {
+    return 287;
   }
   return 0;
 }
@@ -5029,6 +5038,9 @@ function kind_name_4(id: i32): string {
   if (id == 331) {
     return "raw_splice_pipe";
   }
+  if (id == 287) {
+    return "raw_cover";
+  }
   if (id == 208) {
     return "udp_send";
   }
@@ -5442,6 +5454,7 @@ function pops0(t: i32): boolean {
     || t == 186  // random_i32
     || t == 207 || t == 211  // raw_environ, proc_fork
     || t == 331  // raw_splice_pipe
+    || t == 287  // raw_cover
     || t == 216 || t == 217 || t == 218  // arr_push_shared_*, const_struct
     || t == 222  // map_hash_seed
     || t == 238 || t == 239 || t == 240  // geteuid, getegid, hostname
@@ -7162,10 +7175,13 @@ function licm_header_end(ops: Op[], loop_idx: i32): i32 {
   let k_else: i32 = kind_id("else");
   let k_loop: i32 = kind_id("loop");
   let k_end: i32 = kind_id("end");
+  let k_return: i32 = kind_id("return");
+  let k_br: i32 = kind_id("br");
+  let k_exit: i32 = kind_id("exit");
   let j: i32 = loop_idx + 1;
   while (j < ops.len()) {
     let t: i32 = ops[j].kind_tag;
-    if (is_terminator_kind(t) || t == k_brif || t == k_if || t == k_else
+    if (t == k_return || t == k_br || t == k_exit || t == k_brif || t == k_if || t == k_else
       || t == k_loop || t == k_end) {
       return j;
     }

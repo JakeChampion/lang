@@ -23,5 +23,8 @@ func fsStatFields(path string) (rawFsStat, error) {
 		filesFree:   int64(st.Ffree),
 		nameMax:     int64(st.Namelen),
 		pathMax:     linuxPathMax,
+		fsType:      int64(st.Type),
+		fsid:        fsidWord(st.Fsid.X__val),
+		fragSize:    int64(st.Frsize),
 	}, nil
 }

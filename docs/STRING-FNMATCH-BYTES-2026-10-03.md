@@ -62,3 +62,30 @@ Both native files occupy 49,761 bytes. Code shrinks from 18,380 to 17,544
 bytes; unwind data grows from 3,156 to 3,660 bytes; data remains 832 bytes.
 No size baseline changes. This prepares raw `dircolors` parsing; it does not
 complete that consumer's conversion or the remaining #5714 acceptance work.
+
+## Integration with current main
+
+After integrating `09ffd368f`, the Go target group passes in 1.388 seconds,
+the primary group in 26.197 seconds, and GNU and primary consumer groups in
+2.517 and 14.033 seconds. All lint gates pass. Darwin Go/interpreter and
+primary native/interpreter groups pass in 2.702 and 36.748 seconds. The
+earlier full unit pass belongs to the original implementation base; full
+integrated CI is still required before merge.
+
+Actual native, core-WASM and interpreter probes also pass with the reproduced
+compiler SHA-256
+`fc15892a54e9f5d5017cd0b3ad748b31b6eb30b012237d136d6e6ac2b6e7ec1a`.
+Both checked targets again report 4,675 allocations and frees, with zero live
+bytes. Rebuilding both benchmark variants with that compiler preserves the
+file sizes, section sizes and allocation counts above. The same pilot/full
+counts and sampling method give these full-run timings:
+
+| Workload | Before median | After median | Before range | After range |
+| --- | ---: | ---: | ---: | ---: |
+| Literal | 24.186 ms | 20.760 ms | 23.609-42.411 ms | 20.212-36.833 ms |
+| Star | 87.666 ms | 88.449 ms | 86.606-88.009 ms | 87.946-89.506 ms |
+| Classes | 120.504 ms | 89.340 ms | 118.665-122.448 ms | 87.606-90.535 ms |
+| Invalid class | 45.569 ms | 30.124 ms | 44.932-46.075 ms | 29.568-30.329 ms |
+
+Class and invalid-class ranges remain disjoint. Literal and star ranges
+overlap in this run, so it does not establish a speedup for either case.

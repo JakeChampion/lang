@@ -15,7 +15,7 @@ import (
 func BinaryBodyServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/stream";
-import "std/tcp";
+import "std/serve";
 function payload(): u8[] {
     return [0 as u8, 255 as u8, 128 as u8, 10 as u8, 65 as u8];
 }
@@ -25,7 +25,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return tcp.tcp_serve(%d, handle);
+    return serve.run(%d, serve.config(), handle);
 }
 `, port)
 }

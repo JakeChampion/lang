@@ -91,17 +91,119 @@ const (
 // truncate bit3 — so the words match across the two ABIs.
 const (
 	wasiP2OpenFlagCreate    int32 = 0x01
+	wasiP2OpenFlagDirectory int32 = 0x02
 	wasiP2OpenFlagExclusive int32 = 0x04
 	wasiP2OpenFlagTruncate  int32 = 0x08
 
-	wasiP2DescFlagWrite int32 = 0x02
+	wasiP2DescFlagRead              int32 = 0x01
+	wasiP2DescFlagWrite             int32 = 0x02
+	wasiP2DescFlagFileIntegritySync int32 = 0x04
+	wasiP2DescFlagDataIntegritySync int32 = 0x08
 )
 
 // WASI preview-1 `fdflags` bits for path_open.
 const (
 	wasiFdflagAppend   int32 = 0x01
+	wasiFdflagDsync    int32 = 0x02
 	wasiFdflagNonblock int32 = 0x04
+	wasiFdflagSync     int32 = 0x10
 )
+
+// openWithRefused is the part of the open_*_with flags word neither
+// preview can spell — O_DIRECT (8), O_NOATIME (128) and O_NOCTTY (256) —
+// and so refuses as Unsupported rather than drops (the checker's
+// open_reader_with comment is the contract).
+const openWithRefused int32 = 8 | 128 | 256
+
+// emitOpenWithOflags leaves preview 1's oflags for the flags word in local
+// `flags` on the stack: Fern's create (1) and exclusive (4) are the oflags'
+// own bits, and its directory (16) is their bit 1. Preview 2's open-flags
+// share the layout.
+func emitOpenWithOflags(body []byte, flags uint32) []byte {
+	body = inst.InstLocalGet(body, flags)
+	body = inst.InstI32Const(body, 1|4)
+	body = numeric.InstI32And(body)
+	body = inst.InstLocalGet(body, flags)
+	body = inst.InstI32Const(body, 3)
+	body = numeric.InstI32ShrU(body)
+	body = inst.InstI32Const(body, wasiOflagDirectory)
+	body = numeric.InstI32And(body)
+	body = numeric.InstI32Or(body)
+	return body
+}
+
+// emitOpenWithLookupflags leaves preview 1's lookupflags (preview 2's
+// path-flags) on the stack: symlink-follow unless Fern's nofollow (512)
+// is set.
+func emitOpenWithLookupflags(body []byte, flags uint32) []byte {
+	body = inst.InstLocalGet(body, flags)
+	body = inst.InstI32Const(body, 9)
+	body = numeric.InstI32ShrU(body)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32And(body)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Xor(body)
+	return body
+}
+
+// emitOpenWithFdflags leaves preview 1's fdflags on the stack: Fern's
+// non-blocking (2), dsync (32) and sync (64) become NONBLOCK, DSYNC and
+// SYNC.
+func emitOpenWithFdflags(body []byte, flags uint32) []byte {
+	body = inst.InstLocalGet(body, flags)
+	body = inst.InstI32Const(body, 2)
+	body = numeric.InstI32And(body)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Shl(body)
+	body = inst.InstLocalGet(body, flags)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32ShrU(body)
+	body = inst.InstI32Const(body, wasiFdflagDsync)
+	body = numeric.InstI32And(body)
+	body = numeric.InstI32Or(body)
+	body = inst.InstLocalGet(body, flags)
+	body = inst.InstI32Const(body, 2)
+	body = numeric.InstI32ShrU(body)
+	body = inst.InstI32Const(body, wasiFdflagSync)
+	body = numeric.InstI32And(body)
+	body = numeric.InstI32Or(body)
+	return body
+}
+
+// emitOpenWithDescFlags leaves preview 2's descriptor-flags on the stack:
+// `access` (read or write) plus data-integrity-sync for Fern's dsync (32)
+// and file-integrity-sync for its sync (64). Non-blocking has no spelling
+// there and is not read.
+func emitOpenWithDescFlags(body []byte, flags uint32, access int32) []byte {
+	body = inst.InstI32Const(body, access)
+	body = inst.InstLocalGet(body, flags)
+	body = inst.InstI32Const(body, 2)
+	body = numeric.InstI32ShrU(body)
+	body = inst.InstI32Const(body, wasiP2DescFlagDataIntegritySync)
+	body = numeric.InstI32And(body)
+	body = numeric.InstI32Or(body)
+	body = inst.InstLocalGet(body, flags)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32ShrU(body)
+	body = inst.InstI32Const(body, wasiP2DescFlagFileIntegritySync)
+	body = numeric.InstI32And(body)
+	body = numeric.InstI32Or(body)
+	return body
+}
+
+// emitOpenWithRefusal is the `if` that answers a refused bit: it leaves
+// ENOTSUP in `errnoLocal` and runs `err`, which builds the Err box and
+// returns.
+func emitOpenWithRefusal(body []byte, flags, errnoLocal uint32, err func([]byte) []byte) []byte {
+	body = inst.InstLocalGet(body, flags)
+	body = inst.InstI32Const(body, openWithRefused)
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, errnoNoTsup)
+	body = inst.InstLocalSet(body, errnoLocal)
+	body = err(body)
+	return inst.InstEnd(body)
+}
 
 // buildBuildIoErrorBody assembles __build_io_error, closed over the
 // data-segment interner because the Other variant's message is a
@@ -1678,10 +1780,10 @@ func buildOpenBody(idxs map[string]uint32, oflags int32, rights int64, fdflags i
 }
 
 // buildOpenWithBody is buildOpenBody for open_reader_with /
-// open_writer_with, whose flags word is the third param: bit 0 is
-// preview 1's own CREATE oflag, and bit 1 shifted up is its NONBLOCK
-// fdflag, so both translate without a branch. Locals are buildOpenBody's
-// shifted up one for the extra param (slots 3..11).
+// open_writer_with, whose flags word is the third param, spread over
+// path_open's lookupflags, oflags and fdflags (the emitOpenWith* helpers);
+// the bits preview 1 cannot spell are refused first. Locals are
+// buildOpenBody's shifted up one for the extra param (slots 3..11).
 func buildOpenWithBody(idxs map[string]uint32, write bool) []byte {
 	alloc := idxs["__fern_alloc"]
 	allocRc1 := idxs["__fern_alloc_rc1"]
@@ -1698,22 +1800,24 @@ func buildOpenWithBody(idxs map[string]uint32, write bool) []byte {
 	body = inst.InstLocalSet(body, 3)
 	body = emitStrNormalize(body, idxs, 0, 1, 9, 10, 11)
 
+	// errno = refused bit ? ENOTSUP : path_open(...)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, openWithRefused)
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, encode.ValtypeI32)
+	body = inst.InstI32Const(body, errnoNoTsup)
+	body = inst.InstElse(body)
 	body = inst.InstI32Const(body, preopenDirfd)
-	body = inst.InstI32Const(body, 1)
+	body = emitOpenWithLookupflags(body, 2)
 	body = inst.InstLocalGet(body, 9)
 	body = inst.InstLocalGet(body, 10)
-	body = inst.InstLocalGet(body, 2) // oflags = flags & CREATE
-	body = inst.InstI32Const(body, wasiOflagCreate)
-	body = numeric.InstI32And(body)
+	body = emitOpenWithOflags(body, 2)
 	body = inst.InstI64Const(body, rights)
 	body = inst.InstI64Const(body, rights)
-	body = inst.InstLocalGet(body, 2) // fdflags = (flags & 2) << 1 = NONBLOCK
-	body = inst.InstI32Const(body, 2)
-	body = numeric.InstI32And(body)
-	body = inst.InstI32Const(body, 1)
-	body = numeric.InstI32Shl(body)
+	body = emitOpenWithFdflags(body, 2)
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstCall(body, pathOpen)
+	body = inst.InstEnd(body)
 	body = inst.InstLocalTee(body, 4)
 
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
@@ -1776,8 +1880,9 @@ func buildOpenWriterWithBody(idxs map[string]uint32) []byte { return buildOpenWi
 
 // buildOpenReaderWithBodyP2 / buildOpenWriterWithBodyP2 are the preview-2
 // open_reader_with / open_writer_with: the reader and writer chains above
-// with the create bit read from the flags param (preview 2's open-flags
-// CREATE is bit 0 too). Preview 2 has no non-blocking spelling, so bit 1
+// with the flags param spread over open-at's path-flags, open-flags and
+// descriptor-flags (the emitOpenWith* helpers), the bits preview 2 cannot
+// spell refused first. Preview 2 has no non-blocking spelling, so bit 1
 // is not read: its streams do not block the way a preview-1 fd can.
 // Locals leave 13 and 15 to buildReadFileErr: 3=rb, 4=path_buf,
 // 5=path_byte_len, 6=preopen, 7=fd, 8=stream, 9=box data, 10=Ok box,
@@ -1801,14 +1906,15 @@ func buildOpenReaderWithBodyP2(idxs map[string]uint32) []byte {
 		b = setErrnoNoEnt(b, 12)
 		return buildReadFileErr(b, idxs, buildIoErr, allocRc1, 12)
 	})
+	body = emitOpenWithRefusal(body, 2, 12, func(b []byte) []byte {
+		return buildReadFileErr(b, idxs, buildIoErr, allocRc1, 12)
+	})
 	body = inst.InstLocalGet(body, 6)
-	body = inst.InstI32Const(body, 1)
+	body = emitOpenWithLookupflags(body, 2)
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 5)
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstI32Const(body, wasiP2OpenFlagCreate)
-	body = numeric.InstI32And(body)
-	body = inst.InstI32Const(body, 1) // descriptor-flags: read
+	body = emitOpenWithOflags(body, 2)
+	body = emitOpenWithDescFlags(body, 2, wasiP2DescFlagRead)
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstCall(body, openAt)
 	body = inst.InstLocalGet(body, 3)
@@ -1875,14 +1981,15 @@ func buildOpenWriterWithBodyP2(idxs map[string]uint32) []byte {
 		b = setErrnoNoEnt(b, 12)
 		return buildReadFileErr(b, idxs, buildIoErr, allocRc1, 12)
 	})
+	body = emitOpenWithRefusal(body, 2, 12, func(b []byte) []byte {
+		return buildReadFileErr(b, idxs, buildIoErr, allocRc1, 12)
+	})
 	body = inst.InstLocalGet(body, 6)
-	body = inst.InstI32Const(body, 1)
+	body = emitOpenWithLookupflags(body, 2)
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 5)
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstI32Const(body, wasiP2OpenFlagCreate)
-	body = numeric.InstI32And(body)
-	body = inst.InstI32Const(body, wasiP2DescFlagWrite)
+	body = emitOpenWithOflags(body, 2)
+	body = emitOpenWithDescFlags(body, 2, wasiP2DescFlagWrite)
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstCall(body, openAt)
 	body = inst.InstLocalGet(body, 3)

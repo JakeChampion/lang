@@ -10,6 +10,8 @@ import "syscall"
 //
 // Not constants. APFS and HFS+ both answer 255 today, but a mounted FAT or
 // SMB volume does not, and `pathchk` is the caller that would notice.
+//
+// The record has no fundamental block size either, so `frag_size` is f_bsize.
 func fsStatFields(path string) (rawFsStat, error) {
 	const (
 		pcNameMax = 4
@@ -36,5 +38,8 @@ func fsStatFields(path string) (rawFsStat, error) {
 		filesFree:   int64(st.Ffree),
 		nameMax:     int64(nameMax),
 		pathMax:     int64(pathMax),
+		fsType:      int64(st.Type),
+		fsid:        fsidWord(st.Fsid.Val),
+		fragSize:    int64(st.Bsize),
 	}, nil
 }

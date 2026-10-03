@@ -191,8 +191,8 @@ test("every example runs cleanly via Run (interp)", async ({ page }) => {
   const names = await readExampleNames(page);
   expect(names.length).toBeGreaterThan(3);
   for (const name of names) {
-    // The http example transitively imports std/tcp; its auto-injected
-    // main calls blocking tcp_serve, which the playground locks out
+    // The http example transitively imports std/serve; its auto-injected
+    // main calls blocking serve.run, which the playground locks out
     // for the wasi-http world. Exercised via Run (wasm) instead, in
     // its own dedicated test above.
     if (name === "http") continue;
@@ -240,7 +240,7 @@ test("Run (interp) is disabled in the wasi-http world", async ({ page }) => {
   // Pins the lockup fix directly rather than only via a hang-timeout:
   // toggling the world should flip the run button's disabled state in
   // both directions. (A handler's auto-synthesised main calls blocking
-  // tcp_serve; running it through the interp would never return.)
+  // serve.run; running it through the interp would never return.)
   await expect(page.locator("#run")).toBeEnabled();
   await page.locator("#worldSelect").selectOption("wasm32-wasi-http");
   await expect(page.locator("#run")).toBeDisabled();

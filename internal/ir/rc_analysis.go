@@ -3655,6 +3655,11 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 			return false
 		}
 		return tainted[x.Name]
+	case *ast.CastExpr:
+		// A scalar result holds no buffer, like the scalar name above. A cast
+		// to a counted type views whatever the address points at without
+		// taking a reference (`cellPtr as string`), so it is borrowed.
+		return ast.IsPointerType(x.Target)
 	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.CharLit:
 		// A scalar literal aliases nothing, so a fresh owned result whose only
 		// "borrowed" input is a literal arg is reclaimable — e.g.
@@ -9258,8 +9263,17 @@ func (b *builder) computeOwnedArgMoves() map[*ast.Ident]bool {
 	}
 	varLocal := map[string]bool{}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
-		if v, ok := n.(*ast.Var); ok && !isParam[v.Name] {
-			varLocal[v.Name] = true
+		switch v := n.(type) {
+		case *ast.Var:
+			if !isParam[v.Name] {
+				varLocal[v.Name] = true
+			}
+		case *ast.Destructure:
+			for _, name := range v.Names {
+				if !isParam[name] {
+					varLocal[name] = true
+				}
+			}
 		}
 		return true
 	})

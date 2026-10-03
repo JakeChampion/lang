@@ -1,5 +1,8 @@
-// coreutils/lib/tz.fern — the local time zone, as glibc's tzset finds
-// it, for the utilities that print a timestamp.
+// std/tz — the local time zone as glibc's tzset finds it: a TZif file
+// (RFC 8536) or a POSIX TZ rule, answering the UTC offset and the
+// abbreviation in force at an instant. `std/time` models a zone as a
+// fixed offset; this is the function from instant to that offset, and
+// `at` is the bridge between the two.
 //
 // `who` and `pinky` both render a login time as local wall-clock, which
 // is localtime(3), which is tzset(3) plus a lookup. tzset has two
@@ -239,6 +242,14 @@ pub function (z: Zone) entry_at(sec: i64): Entry {
 // `(z: Zone) abbrev_at(sec)` — the zone designation in force at that
 // instant: the table's own string, or the name the footer rule gives
 // the side of the year `sec` falls on.
+// `at(sec)` — the fixed offset in force at `sec` as the `TimeZone` every
+// `std/time` operation takes, named by the abbreviation in force then. A
+// zone is a function from instant to offset; this is one evaluation of it.
+pub function (z: Zone) at(sec: i64): TimeZone {
+  let e: Entry = z.entry_at(sec);
+  return TimeZone { name: e.abbrev, offset_seconds: e.off };
+}
+
 pub function (z: Zone) abbrev_at(sec: i64): string {
   let i: i32 = z.index_at(sec);
   if (i == 0 - 1) {

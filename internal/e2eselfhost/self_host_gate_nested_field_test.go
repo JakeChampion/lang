@@ -41,6 +41,65 @@ function main(): i32 {
 }
 `
 
+// The same method-on-a-field shape through a user variant's payload binding.
+// The gate never bound `ix`, so `ix.names` fell to the by-name scan and typed
+// as `Rows.names: string` (E003 on `at`). The binding is typed from the
+// variant's declaration now, and an object the gate cannot type reads as
+// unknown rather than as whichever struct spells the field first.
+const gateVariantPayloadFieldSrc = `struct Rows { names: string }
+
+struct Keys { items: string[] }
+
+function (k: Keys) find(name: string): i32 {
+  let i: i32 = 0;
+  while (i < k.items.len()) {
+    if (k.items[i] == name) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function (s: string) find(needle: string): Option[i32] {
+  if (s == needle) {
+    return Some(0);
+  }
+  return None;
+}
+
+struct Index { names: Keys }
+
+enum Holder { Named(Index), Plain }
+
+function lookup(h: Holder, name: string): i32 {
+  match (h) {
+    Holder.Named(ix) => {
+      let at: i32 = ix.names.find(name);
+      return at;
+    },
+    Holder.Plain => {
+      return 0 - 2;
+    }
+  }
+}
+
+function main(): i32 {
+  let h: Holder = Holder.Named(Index { names: Keys { items: ["a", "b", "c"] } });
+  return lookup(h, "c");
+}
+`
+
+func TestSelfHostGateFieldThroughVariantPayload(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	if code := compileAndRunSelfHostIR(t, gcc, runner, dir, driverBin, "variant_payload_field", gateVariantPayloadFieldSrc); code != 2 {
+		t.Errorf("ix.names.find(\"c\") through a Holder.Named payload exited %d, want 2 (the index of \"c\" in Keys.items)", code)
+	}
+}
+
 func TestSelfHostGateFieldThroughStructField(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

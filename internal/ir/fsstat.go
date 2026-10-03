@@ -13,6 +13,7 @@ type FsStatLayout struct {
 	BlockSize, Blocks, BlocksFree, BlocksAvail int32
 	Files, FilesFree                           int32
 	NameMax, PathMax                           int32
+	FsType, Fsid, FragSize                     int32
 	Bytes                                      int32
 }
 
@@ -37,6 +38,9 @@ func fsStatLayout(ptrW int) FsStatLayout {
 		FilesFree:   offs["files_free"],
 		NameMax:     offs["name_max"],
 		PathMax:     offs["path_max"],
+		FsType:      offs["fs_type"],
+		Fsid:        offs["fsid"],
+		FragSize:    offs["frag_size"],
 		Bytes:       size,
 	}
 }

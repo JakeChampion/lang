@@ -16,7 +16,7 @@
 //
 // Two known gaps, both from the runtime rather than the design:
 //
-//   * `tcp_serve` does not surface the peer address, so `client.ip` comes
+//   * `serve.run` does not surface the peer address, so `client.ip` comes
 //     from `X-Forwarded-For` when the request carries one and is
 //     127.0.0.1 otherwise. An ACL on `client.ip` is therefore only as
 //     trustworthy as that header — which is to say, not, unless something
@@ -32,7 +32,7 @@ import "std/i32";
 import "std/i64";
 import "std/io";
 import "std/http";
-import "std/tcp";
+import "std/serve";
 import "std/fetch";
 import "std/headers";
 import "./ast";
@@ -185,7 +185,7 @@ function serve(decls: ast.Decl[], port: i32): i32 {
     cache.set(store.encode(o.cache));
     return to_response(o);
   };
-  return tcp.tcp_serve(port, handler);
+  return serve.run(port, serve.config(), handler);
 }
 
 function main(): i32 {
