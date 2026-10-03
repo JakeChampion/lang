@@ -993,6 +993,11 @@ and release their lookup tables after successful runs. GNU error-prefix
 corrections, target checks, size and native measurements are recorded in
 [the base encoding report](STRING-BASE-BYTES-2026-10-03.md).
 
+`factor` scans raw tokens and quotes invalid bytes without decoding them.
+Only validated ASCII digits become text for big-integer parsing. Token
+carry uses a byte builder; correctness and measurements are recorded in
+[the factor report](STRING-FACTOR-BYTES-2026-10-03.md).
+
 `head` and `tail` use raw byte input, delimiter scans and output. Their
 shared hold retains input blocks with a 64-bit byte count and releases
 consumed blocks without repeatedly copying long records. Target checks and
