@@ -4879,6 +4879,10 @@ pub function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore
   }
   // Past the declarations: the drop helpers the typed lowering defines.
   s = emit_named_bodies(bodies, fns.len(), s, vgate);
+  // The unit's pools, still to come, carry whatever the helper interned.
+  if (!s.pools_written) {
+    return s;
+  }
   if (s.shape_lits.len() > sh0) {
     s = asmcore.emit_shape_lits_from(s, sh0);
     s = s.write("    .text\n");
@@ -5506,7 +5510,7 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asm
   // — its label then is not a text label, and the `bl` at its call site fails
   // to resolve rather than mis-linking silently.
   s = s.write("    .text\n");
-  return s;
+  return asmcore.EmitState { ...s, pools_written: true };
 }
 
 // emit_rt_clock_and_print emits the FFI call shims, the stdio leaves, and the clock / sleep helpers
