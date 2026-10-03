@@ -1275,12 +1275,35 @@ pub function __map_drop_values(m: usize): usize {
 }
 
 // __map_drop_impl releases one reference to the handle `m` and returns it.
-// The last reference frees the kv buffer and then the 16-byte handle cell;
+// The last reference frees every boxed scalar key cell (a string key column
+// is __drop_map_str_keys'), the kv buffer and then the 16-byte handle cell;
 // anything else is an ordinary rc decrement. It runs after the value / key
 // column walks (__map_drop_values and its siblings), which read the same
 // rc==1 test before this frees what they walk.
 pub function __map_drop_impl(m: usize): usize {
   // A null test only, no address floor, for __map_drop_values' reason.
+  if (m == 0) {
+    return m;
+  }
+  if (__load_i32(m - 8) == 1) {
+    let buf: usize = __load_ptr(m);
+    if (buf != 0 && __load_i32(buf + 8) != 1 && __map_key_cell_bytes(buf) != 0) {
+      let len_: i32 = __load_i32(buf + 4);
+      let entryStride: i32 = 2 * __ptr_width();
+      let entriesBase: usize = buf + __map_hdr(buf) + __load_i32(buf) * 4;
+      let i: i32 = 0;
+      while (i < len_) {
+        __map_free_key_cell(buf, __load_ptr(entriesBase + i * entryStride));
+        i = i + 1;
+      }
+    }
+  }
+  return __map_free_table(m);
+}
+
+// __map_free_table is __map_drop_impl once every column has been released:
+// the last reference frees the kv buffer and the handle.
+function __map_free_table(m: usize): usize {
   if (m == 0) {
     return m;
   }
@@ -1340,7 +1363,7 @@ pub function __map_drop_keyed_impl(m: usize, key_release: (usize) => usize, val_
       i = i + 1;
     }
   }
-  return __map_drop_impl(m);
+  return __map_free_table(m);
 }
 
 // __map_drop_strcols_impl is __map_drop_impl for a map whose columns own what
@@ -1375,7 +1398,7 @@ pub function __map_drop_strcols_impl(m: usize): usize {
       i = i + 1;
     }
   }
-  return __map_drop_impl(m);
+  return __map_free_table(m);
 }
 
 // __map_drop_boxes_impl is __map_drop_impl for a map whose value column holds
@@ -1405,7 +1428,7 @@ pub function __map_drop_boxes_impl(m: usize, release: (usize) => usize): usize {
       i = i + 1;
     }
   }
-  return __map_drop_impl(m);
+  return __map_free_table(m);
 }
 
 // Delete by key: tombstone the bucket, swap-with-last in the entries
