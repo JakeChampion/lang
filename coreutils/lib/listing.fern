@@ -1586,95 +1586,35 @@ function is_device(e: Ent): boolean {
   return filetype.is_blk(e.st.mode) || filetype.is_chr(e.st.mode);
 }
 
-// `pwdb`'s own header says the lookups that take a path re-read the
-// whole file, and that this is "quadratic for one asking per entry" —
-// which a long listing is, twice over. So the two databases are read
-// ONCE and every id resolved against the text, with the answers
-// remembered: a listing of four thousand files has one owner and one
-// group in practice, so the cache is a short linear scan and the parse
-// happens once per DISTINCT id rather than once per entry.
-//
-// It is built only when a name is going to be printed. `-n` renders the
-// number and reads nothing at all.
-struct IdNames { passwd: string, group: string, uids: i64[], users: string[], gids: i64[], groups: string[] }
-
-function id_names_new(c: Cfg): IdNames {
-  let empty: IdNames = IdNames { passwd: "", group: "", uids: [], users: [], gids: [], groups: [] };
+// The owner and group columns come from one `pwdb.Names`: the two
+// databases read once, every id remembered. Built only when a name is
+// going to be printed; `-n` renders the number and reads nothing.
+function id_names_new(c: Cfg): pwdb.Names {
   if (c.format != fmt_long() || c.numeric_ids) {
-    return empty;
+    return pwdb.names_new(false, false);
   }
-  let want_user: boolean = c.show_owner || c.show_author;
-  if (!want_user && !c.show_group) {
-    return empty;
-  }
-  let text: string = "";
-  if (want_user) {
-    text = pwdb.passwd_text();
-  }
-  let groups: string = "";
-  if (c.show_group) {
-    groups = pwdb.group_text();
-  }
-  return IdNames { ...empty, passwd: text, group: groups };
-}
-
-function owner_of(n: IdNames, uid: u32): (string, IdNames) {
-  let key: i64 = uid as i64;
-  let i: i32 = 0;
-  while (i < n.uids.len()) {
-    if (n.uids[i] == key) {
-      return (n.users[i], n);
-    }
-    i = i + 1;
-  }
-  let name: string = uid.to_string();
-  match (pwdb.user_name_in(n.passwd, key)) {
-    Some(found) => {
-      name = found;
-    },
-    None => {}
-  }
-  return (name, IdNames { ...n, uids: n.uids.append(key), users: n.users.append(name) });
-}
-
-function group_of(n: IdNames, gid: u32): (string, IdNames) {
-  let key: i64 = gid as i64;
-  let i: i32 = 0;
-  while (i < n.gids.len()) {
-    if (n.gids[i] == key) {
-      return (n.groups[i], n);
-    }
-    i = i + 1;
-  }
-  let name: string = gid.to_string();
-  match (pwdb.group_name_in(n.group, key)) {
-    Some(g) => {
-      name = g;
-    },
-    None => {}
-  }
-  return (name, IdNames { ...n, gids: n.gids.append(key), groups: n.groups.append(name) });
+  return pwdb.names_new(c.show_owner || c.show_author, c.show_group);
 }
 
 // The two columns an entry prints, resolved once at gather time so that
 // the width pass and the line pass read a string rather than ask again.
-function resolve_ids(c: Cfg, n: IdNames, e: Ent): (Ent, IdNames) {
+function resolve_ids(c: Cfg, n: pwdb.Names, e: Ent): (Ent, pwdb.Names) {
   if (c.format != fmt_long() || !e.stated) {
     return (e, n);
   }
   if (c.numeric_ids) {
     return (Ent { ...e, owner: e.st.uid.to_string(), group: e.st.gid.to_string() }, n);
   }
-  let names: IdNames = n;
+  let names: pwdb.Names = n;
   let owner: string = "";
   if (c.show_owner || c.show_author) {
-    let u: (string, IdNames) = owner_of(names, e.st.uid);
+    let u: (string, pwdb.Names) = names.user(e.st.uid as i64);
     owner = u.0;
     names = u.1;
   }
   let group: string = "";
   if (c.show_group) {
-    let g: (string, IdNames) = group_of(names, e.st.gid);
+    let g: (string, pwdb.Names) = names.group(e.st.gid as i64);
     group = g.0;
     names = g.1;
   }
@@ -2472,7 +2412,7 @@ function attach(dir: string, name: string): string {
   return gnu.join_path(dir, name);
 }
 
-function dir_entries(c: Cfg, o: Out, path: string, seed: IdNames): (Ent[], Out, IdNames) {
+function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names): (Ent[], Out, pwdb.Names) {
   let out: Out = o;
   let names: string[] = [];
   let failed: boolean = false;
@@ -2515,7 +2455,7 @@ function dir_entries(c: Cfg, o: Out, path: string, seed: IdNames): (Ent[], Out, 
   if (!needs_stat(c)) {
     return (list, out, seed);
   }
-  let ids: IdNames = seed;
+  let ids: pwdb.Names = seed;
   let filled: Ent[] = [];
   let k: i32 = 0;
   while (k < list.len()) {
@@ -2533,7 +2473,7 @@ function dir_entries(c: Cfg, o: Out, path: string, seed: IdNames): (Ent[], Out, 
         Err(_) => {}
       }
     }
-    let r2: (Ent, IdNames) = resolve_ids(c, ids, e);
+    let r2: (Ent, pwdb.Names) = resolve_ids(c, ids, e);
     filled = filled.append(r2.0);
     ids = r2.1;
     k = k + 1;
@@ -2547,14 +2487,14 @@ function dir_entries(c: Cfg, o: Out, path: string, seed: IdNames): (Ent[], Out, 
 // its grandchild `tree/bdir/nested` and not `nested`.
 struct Pending { path: string }
 
-struct State { out: Out, paint: Paint, wrote: boolean, queue: Pending[], names: IdNames }
+struct State { out: Out, paint: Paint, wrote: boolean, queue: Pending[], names: pwdb.Names }
 
 // One directory: its header, its `total` when the format asks for one,
 // and its entries. `-R` pushes each subdirectory it found, in the
 // sorted order, so the walk is depth first through the listing's own
 // order rather than readdir's.
 function list_dir(c: Cfg, st: State, p: Pending, header: boolean): State {
-  let r: (Ent[], Out, IdNames) = dir_entries(c, st.out, p.path, st.names);
+  let r: (Ent[], Out, pwdb.Names) = dir_entries(c, st.out, p.path, st.names);
   let es: Ent[] = r.0;
   let out: Out = r.1;
   let state: State = State { ...st, out: out, names: r.2 };
@@ -2608,7 +2548,7 @@ function run_operands(c: Cfg, o: Out, operands: string[]): Out {
   let every: Ent[] = [];
   let dirs: Pending[] = [];
   let out: Out = o;
-  let ids: IdNames = id_names_new(c);
+  let ids: pwdb.Names = id_names_new(c);
   let explicit: boolean = operands.len() > 0;
   let args: string[] = operands;
   if (!explicit) {
@@ -2624,7 +2564,7 @@ function run_operands(c: Cfg, o: Out, operands: string[]): Out {
       i = i + 1;
       continue;
     }
-    let got0: (Ent, IdNames) = resolve_ids(c, ids, r.0);
+    let got0: (Ent, pwdb.Names) = resolve_ids(c, ids, r.0);
     every = every.append(got0.0);
     ids = got0.1;
     i = i + 1;
