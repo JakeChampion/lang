@@ -73,6 +73,237 @@ function arm64_le32(buf: i32[], v: i64): i32[] {
   return buf;
 }
 
+// arm64_word_bytes appends the instruction word an emitter recorded at
+// `at` in `words`, whose low four bytes are already little-endian.
+// ---- record forms ----
+//
+// An emitter writing a binary hands the assembler encoded words for the shapes
+// generated code writes most. Each arm64_rec_* takes the operands as the text
+// form spells them and returns the word that text assembles to, or -1 when
+// they fall outside the shapes it covers; the caller then writes the text, so
+// anything the text path would refuse is still refused.
+
+// arm64_rec_gpr decodes x0..x30 or w0..w30, exactly as spelled, or -1.
+function arm64_rec_gpr(tok: string): i32 {
+  let n: i32 = tok.len();
+  if (n < 2 || n > 3 || tok[0] != b'x' && tok[0] != b'w') {
+    return 0 - 1;
+  }
+  let v: i32 = 0;
+  let k: i32 = 1;
+  while (k < n) {
+    let c: i32 = tok[k] as i32;
+    if (c < 48 || c > 57) {
+      return 0 - 1;
+    }
+    v = v * 10 + (c - 48);
+    k = k + 1;
+  }
+  if (v > 30) {
+    return 0 - 1;
+  }
+  return v;
+}
+
+// arm64_rec_mov is `mov dst, src` between two registers of one width.
+pub function arm64_rec_mov(dst: string, src: string): i64 {
+  let rd: i32 = arm64_rec_gpr(dst);
+  let rm: i32 = arm64_rec_gpr(src);
+  if (rd < 0 || rm < 0 || dst[0] != src[0]) {
+    return 0 - 1;
+  }
+  return arm64_movreg_sized_word(rd, rm, dst[0] == b'w');
+}
+
+// arm64_rec_addsub_imm is `add|sub|adds|subs d, n, #imm`, or with d "" the
+// cmp/cmn form writing the zero register of n's width. A negative imm is the
+// opposite op carrying the magnitude, as arm64_gas_emit_addsub encodes it.
+pub function arm64_rec_addsub_imm(is_sub: boolean, sets: boolean, d: string, n: string, imm: i64): i64 {
+  let rn: i32 = arm64_rec_gpr(n);
+  let rd: i32 = 31;
+  if (d != "") {
+    rd = arm64_rec_gpr(d);
+    if (rd >= 0 && d[0] != n[0]) {
+      return 0 - 1;
+    }
+  }
+  if (rn < 0 || rd < 0 || imm < 0 - 4095 || imm > 4095) {
+    return 0 - 1;
+  }
+  let mag: i32 = imm as i32;
+  if (imm < 0) {
+    is_sub = !is_sub;
+    mag = 0 - mag;
+  }
+  return arm64_addsub_imm_word(is_sub, sets, n[0] == b'w', rd, rn, mag);
+}
+
+// arm64_rec_addsub_reg is the register form of arm64_rec_addsub_imm.
+pub function arm64_rec_addsub_reg(is_sub: boolean, sets: boolean, d: string, n: string, m: string): i64 {
+  let rn: i32 = arm64_rec_gpr(n);
+  let rm: i32 = arm64_rec_gpr(m);
+  let rd: i32 = 31;
+  if (d != "") {
+    rd = arm64_rec_gpr(d);
+    if (rd >= 0 && d[0] != n[0]) {
+      return 0 - 1;
+    }
+  }
+  if (rn < 0 || rm < 0 || rd < 0 || n[0] != m[0]) {
+    return 0 - 1;
+  }
+  return arm64_addsub_reg_word(is_sub, sets, n[0] == b'w', rd, rn, rm, 0, 0);
+}
+
+// arm64_rec_label reports whether a branch target can travel as a record:
+// a symbol name, never a numeric local (`1f`), which the text path resolves.
+pub function arm64_rec_label(name: string): boolean {
+  if (name.len() == 0 || name[0] >= b'0' && name[0] <= b'9') {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < name.len()) {
+    let c: u8 = name[i];
+    if (c <= b' ' || c == b',' || c == b'/' || c == b';' || c == b'@' || c == b'#') {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// arm64_rec_b is `b` or, linking, `bl` with the displacement left for the
+// label's fixup.
+pub function arm64_rec_b(link: boolean): i64 {
+  if (link) {
+    return arm64_bl_word(0);
+  }
+  return arm64_b_word(0);
+}
+
+// arm64_rec_bcond is a conditional branch spelled `b.<cond>` or `b<cond>`.
+pub function arm64_rec_bcond(mnem: string): i64 {
+  if (!arm64_gas_is_bcond(mnem)) {
+    return 0 - 1;
+  }
+  let cond: i32 = arm64_gas_cond(arm64_gas_bcond_suffix(mnem));
+  if (cond < 0) {
+    return 0 - 1;
+  }
+  return arm64_bcond_word(cond, 0);
+}
+
+// arm64_rec_cbz is `cbz` or, nonzero, `cbnz` on a register.
+pub function arm64_rec_cbz(nonzero: boolean, rt: string): i64 {
+  let r: i32 = arm64_rec_gpr(rt);
+  if (r < 0) {
+    return 0 - 1;
+  }
+  let w: i64 = arm64_cbz_word(r, 0);
+  if (nonzero) {
+    w = arm64_cbnz_word(r, 0);
+  }
+  if (rt[0] == b'w') {
+    w = w & 0x7fffffff;
+  }
+  return w;
+}
+
+// arm64_rec_tbz is `tbz` or, nonzero, `tbnz` testing one bit of a register.
+pub function arm64_rec_tbz(nonzero: boolean, rt: string, bit: i32): i64 {
+  let r: i32 = arm64_rec_gpr(rt);
+  let top: i32 = 63;
+  if (r >= 0 && rt[0] == b'w') {
+    top = 31;
+  }
+  if (r < 0 || bit < 0 || bit > top) {
+    return 0 - 1;
+  }
+  if (nonzero) {
+    return arm64_tbnz_word(r, bit, 0);
+  }
+  return arm64_tbz_word(r, bit, 0);
+}
+
+// arm64_rec_cmp_shifted is `cmp n, #imm, lsl #12`.
+pub function arm64_rec_cmp_shifted(n: string, imm: i32): i64 {
+  let rn: i32 = arm64_rec_gpr(n);
+  if (rn < 0 || imm < 0 || imm > 4095) {
+    return 0 - 1;
+  }
+  return arm64_addsub_imm_word_sh(true, true, n[0] == b'w', 31, rn, imm, true);
+}
+
+// arm64_rec_unscaled is `ldur|stur rt, [base, #off]`.
+pub function arm64_rec_unscaled(load: boolean, rt: string, base: string, off: i32): i64 {
+  let t: i32 = arm64_rec_gpr(rt);
+  let rn: i32 = arm64_rec_base(base);
+  if (t < 0 || rn < 0 || off < 0 - 256 || off > 255) {
+    return 0 - 1;
+  }
+  if (load) {
+    return arm64_unscaled_word(0xf8400000, t, rn, off, rt[0] == b'w');
+  }
+  return arm64_unscaled_word(0xf8000000, t, rn, off, rt[0] == b'w');
+}
+
+// arm64_rec_ldst is `ldr|str rt, [base, #off]` with base sp or an x-register:
+// the scaled form when off is a non-negative multiple of the access size in
+// range, otherwise ldur/stur for -256..255, the choice arm64_gas_emit_ldst makes.
+pub function arm64_rec_ldst(load: boolean, rt: string, base: string, off: i32): i64 {
+  let t: i32 = arm64_rec_gpr(rt);
+  let rn: i32 = arm64_rec_base(base);
+  let w: boolean = t >= 0 && rt[0] == b'w';
+  let size: i32 = 8;
+  if (w) {
+    size = 4;
+  }
+  if (t < 0 || rn < 0 || off < 0 || off % size != 0 || off / size > 4095) {
+    return arm64_rec_unscaled(load, rt, base, off);
+  }
+  if (load) {
+    if (w) {
+      return arm64_ldr_word_w(t, rn, off);
+    }
+    return arm64_ldr_word(t, rn, off);
+  }
+  if (w) {
+    return arm64_str_word_w(t, rn, off);
+  }
+  return arm64_str_word(t, rn, off);
+}
+
+// arm64_rec_base decodes a load/store base, sp or an x-register, or -1.
+function arm64_rec_base(base: string): i32 {
+  if (base == "sp") {
+    return 31;
+  }
+  if (base.len() == 0 || base[0] != b'x') {
+    return 0 - 1;
+  }
+  return arm64_rec_gpr(base);
+}
+
+// arm64_branch_kind is the fixup kind of a label branch from its top byte:
+// 0 for b/bl (imm26), 2 for tbz/tbnz (imm14), 1 for b.cond/cbz/cbnz (imm19).
+function arm64_branch_kind(top: u8): i32 {
+  if ((top & 0x7c) == 0x14) {
+    return 0;
+  }
+  if ((top & 0x7e) == 0x36) {
+    return 2;
+  }
+  return 1;
+}
+
+function arm64_word_bytes(buf: i32[], words: u8[], at: i32): i32[] {
+  buf = buf.append(words[at] as i32);
+  buf = buf.append(words[at + 1] as i32);
+  buf = buf.append(words[at + 2] as i32);
+  buf = buf.append(words[at + 3] as i32);
+  return buf;
+}
+
 // ---- move-wide family ----
 
 // arm64_movz_word encodes `movz Xd, #imm16, lsl #shift` (move-wide-zero):
@@ -310,11 +541,17 @@ function arm64_subreg(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
 }
 
 function arm64_movreg(buf: i32[], rd: i32, rm: i32, w: boolean): i32[] {
+  return arm64_le32(buf, arm64_movreg_sized_word(rd, rm, w));
+}
+
+// arm64_movreg_sized_word is `mov Rd, Rm` at either width: the W form clears
+// the sf bit of the X form's `orr`.
+function arm64_movreg_sized_word(rd: i32, rm: i32, w: boolean): i64 {
   let word: i64 = arm64_movreg_word(rd, rm);
-  if (w) {  // orr 0xaa.. -> 0x2a..
+  if (w) {
     word = word & 0x7fffffff;
   }
-  return arm64_le32(buf, word);
+  return word;
 }
 
 // ---- system / control ----
@@ -1221,21 +1458,20 @@ function arm64_ldst_regext(buf: i32[], size: i32, load: boolean, rt: i32, rn: i3
 // 0xf8400000 -> 0xb8400000 and 0xf8000000 -> 0xb8000000. Verified vs clang:
 // ldur w1,[x0,#-8] = 0xb85f8001, stur w1,[x0,#-16] = 0xb81f0001.
 function arm64_ldur(buf: i32[], rt: i32, rn: i32, off: i32, w32: boolean): i32[] {
-  let base: i64 = 0xf8400000;
-  if (w32) {
-    base = 0xb8400000;
-  }
-  let w: i64 = base | (off & 0x1ff) as i64 << 12 | (rn & 31) as i64 << 5 | (rt & 31) as i64;
-  return arm64_le32(buf, w);
+  return arm64_le32(buf, arm64_unscaled_word(0xf8400000, rt, rn, off, w32));
 }
 
 function arm64_stur(buf: i32[], rt: i32, rn: i32, off: i32, w32: boolean): i32[] {
-  let base: i64 = 0xf8000000;
+  return arm64_le32(buf, arm64_unscaled_word(0xf8000000, rt, rn, off, w32));
+}
+
+// arm64_unscaled_word is the X-form ldur/stur `base` at either width: the W
+// form clears bit 30 of the size field.
+function arm64_unscaled_word(base: i64, rt: i32, rn: i32, off: i32, w32: boolean): i64 {
   if (w32) {
-    base = 0xb8000000;
+    base = base & 0xbfffffff;
   }
-  let w: i64 = base | (off & 0x1ff) as i64 << 12 | (rn & 31) as i64 << 5 | (rt & 31) as i64;
-  return arm64_le32(buf, w);
+  return base | (off & 0x1ff) as i64 << 12 | (rn & 31) as i64 << 5 | (rt & 31) as i64;
 }
 
 // arm64_ldst_unscaled is the size-general ldur/stur (0=b, 1=h — the w/x
@@ -9220,6 +9456,14 @@ function arm64_gas_ltorg(p: Arm64GasProg, own aw: Arm64Asm): Arm64Asm {
 // for arm64_gas_link). The first .text label must sit at offset 0, since
 // macho.fern enters at the first text byte.
 pub function arm64_gas_program(src: string): Arm64GasProg {
+  return arm64_gas_program_words(src, []);
+}
+
+// arm64_gas_program_words assembles `src` with the instruction words an
+// emitter encoded itself, eight bytes a word in `words`, the low four the
+// instruction. A line starting \x01 takes the next word; one starting \x02
+// takes the next word as a branch to the label the rest of the line names.
+pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
   let p: Arm64GasProg = arm64_gas_prog_new();
   // The CFI recorder is threaded as its own uniquely-held local and folded
   // into `p` on return, for the same reason `a` is (below): recording through
@@ -9250,7 +9494,26 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
   let nl_cnt: i32[] = [];  // definitions seen per numeric local label
   let srcn: i32 = src.len();
   let pos: i32 = 0;
+  let wi: i32 = 0;
   while (pos <= srcn) {
+    let mark: u8 = 0;
+    if (pos < srcn) {
+      mark = src[pos];
+    }
+    if (mark == 1 || mark == 2) {
+      let end: i32 = arm64_gas_line_end(src, pos + 1);
+      if (section != 0 || wi + 8 > words.len()) {
+        p = Arm64GasProg { ...p, unknown: p.unknown.append("word record outside .text or past the words") };
+      } else {
+        a = Arm64Asm { ...a, code: arm64_word_bytes(a.code, words, wi) };
+        if (mark == 2) {
+          a = arm64_asm_fixup_or_patch(a, slice_unchecked(src, pos + 1, end) + "", arm64_branch_kind(words[wi + 3]));
+        }
+        wi = wi + 8;
+      }
+      pos = end + 1;
+      continue;
+    }
     // One scan per line finds the comment cut, and for the lines that have
     // no comment — nearly all of them — the newline that ends the line too.
     let cut: i32 = arm64_gas_line_cut(src, pos);
@@ -9568,6 +9831,9 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
       continue;
     }
     a = arm64_gas_emit(a, mnem, ops, lmem);
+  }
+  if (wi != words.len()) {
+    p = Arm64GasProg { ...p, unknown: p.unknown.append("words left over past the last word record") };
   }
   if (arm64_lit_pool_far(p, a.code.len()) > arm64_lit_reach()) {
     p = Arm64GasProg { ...p, unknown: p.unknown.append("ltorg:range") };

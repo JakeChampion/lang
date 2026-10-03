@@ -6,3 +6,6 @@ import "syscall"
 
 // getxattrBytes has no system call to make on this platform.
 func getxattrBytes(string, string, bool) ([]byte, error) { return nil, syscall.ENOSYS }
+
+// setxattrBytes has no system call to make on this platform.
+func setxattrBytes(string, string, []byte, bool) error { return syscall.ENOSYS }

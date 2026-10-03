@@ -11,24 +11,15 @@ func init() {
 	registerCorpus("chcon", chconCases)
 }
 
-// chcon(1) is the one utility in the corpus whose SUBJECT has no
-// primitive behind it: a security context is an extended attribute, and
-// Fern can read one (getxattr) but not write one (setxattr). So
-// `coreutils/chcon.fern` refuses that one step and is exact everywhere
-// else, and this corpus holds exactly the invocations that never reach it.
+// chcon(1) changes a file's `security.selinux` extended attribute. The
+// oracle is a GNU built against libselinux (Ubuntu's /usr/bin/chcon on the
+// Linux lane), so it makes the same getxattr / setxattr calls this build
+// does and gets the same answer from the same kernel: on a kernel with no
+// SELinux, `Operation not permitted` for a caller who may not write
+// `security.*`, and success for one who may. Whichever the caller is, both
+// sides see it.
 //
-// The boundary is not a matter of taste — it is where GNU itself stops
-// being predictable. On a machine with no SELinux every context change
-// FAILS, and which errno it fails with belongs to how the reference was
-// built and to who is running it: `Operation not supported` from
-// gnulib's stub where coreutils was configured without libselinux, and
-// `Operation not permitted` from the kernel where it was configured with
-// it and the caller may not write `security.*`. Nothing a Fern binary
-// can compute predicts that byte. docs/COREUTILS.md records the
-// divergence; #9154 is the primitive that closes it.
-//
-// What that leaves is most of chcon's observable surface, and it is
-// worth the file:
+// Beyond the change itself the corpus holds:
 //
 //   - The option grammar. Fourteen options, four of them valued, a
 //     four-way ambiguity on `--r`, and the ambiguity lists are in GNU's
@@ -44,18 +35,12 @@ func init() {
 //     names `f`.
 //   - The walk's own diagnostics: `cannot access` for an operand that
 //     is not there and `cannot read directory` for one that cannot be
-//     listed. The second is reachable with a real directory because fts
-//     reports it INSTEAD of yielding the visit the context change hangs
-//     off, so no libselinux call happens.
+//     listed.
 //   - The root failsafe, every spelling. `//` is not `/` and says so,
 //     which is the case a shared trailing-slash trim got wrong.
-//
-// The READ side is comparable: `--reference` and the component options
-// read a context before they could write one, and on a kernel with no
-// SELinux every file is unlabeled. GNU (built with libselinux, as the
-// /usr/bin oracle is) reports that ENODATA, and so does this build.
-// Deliberately absent: a bare CONTEXT on an operand that exists, since
-// that goes straight to the write.
+//   - The read side: `--reference` and the component options read a
+//     context before they write one, and on a kernel with no SELinux
+//     every file is unlabeled, which GNU reports as ENODATA.
 
 // chconTree is the fixture. The unreadable directory is the point of it:
 // it is the only way a case can name a real path and still stay on the
@@ -191,12 +176,11 @@ func chconCases(t *testing.T) []invocation {
 	// here names a path that exists, so each gets the fixture.
 	//
 	// They need a caller that a mode-000 directory actually stops. Root
-	// bypasses the check, descends, and reaches the context change --
-	// which is the refused step, so the comparison would be about the
-	// refusal rather than about the walk. The repo's own Linux container
-	// runs as root, so this is a real environment and not a hypothetical
-	// one; the cases are omitted there rather than failing, and the log
-	// says the coverage was not taken.
+	// bypasses the check and descends, so there is no `cannot read
+	// directory` to compare. The repo's own Linux container runs as root,
+	// so this is a real environment and not a hypothetical one; the cases
+	// are omitted there rather than failing, and the log says the coverage
+	// was not taken.
 	if dirIsUnreadable(t) {
 		for _, c := range []invocation{
 			{name: "an unreadable directory", args: []string{"-R", ctx, "noperm"}},
@@ -213,10 +197,12 @@ func chconCases(t *testing.T) []invocation {
 		t.Logf("running as a caller a mode-000 directory does not stop, so chcon's `cannot read directory` cases are not in this run")
 	}
 
-	// The read side. A kernel WITH SELinux labels every file, and the
-	// component forms would then reach the refused write.
+	// The read side and the change. A kernel WITH SELinux labels every
+	// file and has a policy that decides which contexts are valid, so what
+	// each of these prints there is the policy's answer.
 	if !hostHasSELinux() {
 		for _, c := range []invocation{
+
 			{name: "reference to a file", args: []string{"--reference=f", "f"}},
 			{name: "reference that is missing", args: []string{"--reference=nosuchz", "f"}},
 			{name: "reference through a link", args: []string{"--reference=sym", "f"}},
@@ -231,8 +217,67 @@ func chconCases(t *testing.T) []invocation {
 			c.seedTree = chconTree
 			cases = append(cases, c)
 		}
+		// The change itself, with what each side stored compared.
+		for _, c := range []invocation{
+			{name: "a context on a file", args: []string{ctx, "f"}},
+			{name: "verbosely", args: []string{"-v", ctx, "f"}},
+			{name: "on two files", args: []string{ctx, "f", "d"}},
+			{name: "through a link", args: []string{ctx, "sym"}},
+			{name: "on the link itself", args: []string{"-h", ctx, "sym"}},
+			{name: "on a dangling link", args: []string{ctx, "dangle"}},
+			{name: "down a tree", args: []string{"-R", "-v", ctx, "d"}},
+			{name: "an empty context on a file", args: []string{"", "f"}},
+			{name: "a file, then a missing one", args: []string{ctx, "f", "nosuchz"}},
+		} {
+			c.seedTree = chconTree
+			c.context = true
+			cases = append(cases, c)
+		}
+		// A labeled file, which only a caller allowed to write `security.*`
+		// can make: the component forms rebuild its context, and the
+		// conflicting-specifiers check is reachable once the reference read
+		// succeeds.
+		if canLabel(t) {
+			for _, c := range []invocation{
+				{name: "a user on a labeled file", args: []string{"-u", "bob", "f"}},
+				{name: "a range with colons", args: []string{"-v", "-l", "s0:c1,c2", "f"}},
+				{name: "the type it already has", args: []string{"-t", "etc_t", "f"}},
+				{name: "every component", args: []string{"-u", "u", "-r", "r", "-t", "t", "-l", "l", "f"}},
+				{name: "a component through a link to it", args: []string{"-t", "t", "sym"}},
+				{name: "reference to a labeled file", args: []string{"--reference=f", "d"}},
+				{name: "reference beside a component, read", args: []string{"--reference=f", "-u", "u", "d"}},
+			} {
+				c.seedTree = chconLabeledTree
+				c.context = true
+				cases = append(cases, c)
+			}
+		} else {
+			t.Logf("this caller may not write security.selinux, so chcon's labeled-file cases are not in this run")
+		}
 	}
 	return cases
+}
+
+const chconLabel = "system_u:object_r:etc_t:s0"
+
+// chconLabeledTree is chconTree with `f` carrying a context.
+func chconLabeledTree(t *testing.T, dir string) {
+	t.Helper()
+	chconTree(t, dir)
+	if err := setEntryContext(filepath.Join(dir, "f"), chconLabel); err != nil {
+		t.Fatalf("label f: %v", err)
+	}
+}
+
+// canLabel reports whether this process may write `security.selinux` on a
+// file it owns, which the kernel decides by capability and by LSM.
+func canLabel(t *testing.T) bool {
+	t.Helper()
+	f := filepath.Join(t.TempDir(), "probe")
+	if err := os.WriteFile(f, nil, 0o644); err != nil {
+		t.Fatalf("write probe: %v", err)
+	}
+	return setEntryContext(f, chconLabel) == nil
 }
 
 // hostHasSELinux is libselinux's is_selinux_enabled(): a selinuxfs mount.
