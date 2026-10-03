@@ -1752,17 +1752,3 @@ func rewriteBlockTypes(b *ast.Block, info *checker.Info, into map[instKey][]ast.
 		return true
 	})
 }
-
-// walkBlock invokes fn on every Call expression reachable from the block —
-// generic call sites, the only thing the monomorph pass rewrites.
-func walkBlock(b *ast.Block, fn func(*ast.Call)) {
-	if b == nil {
-		return
-	}
-	ast.Walk(b, func(n ast.Node) bool {
-		if c, ok := n.(*ast.Call); ok {
-			fn(c)
-		}
-		return true
-	})
-}
