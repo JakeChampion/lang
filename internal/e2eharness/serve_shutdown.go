@@ -24,33 +24,39 @@ import (
 // signal to its workers and waits for them; and a listener handed in
 // through LISTEN_FDS is served instead of a fresh one.
 
-// ServeShutdownSource is a server on `port` whose /slow burns for well
-// over a second, whose readiness path is /healthz and which answers
+// ServeShutdownSource is a server on `port` whose /slow burns pure work
+// until 1.5 s of the bag's monotonic clock has passed, so the checks' 100 ms
+// head start lands mid-request on any runner, whose readiness path is
+// /healthz and which answers
 // everything else at once, with a 300 ms grace and `drainMs` to drain.
 // `entry` is the serve call, a format with one %d for the port that reads
 // `opts`.
 func ServeShutdownSource(port, drainMs int, entry string) string {
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 import "std/time";
-function burn(n: i32): i32 {
+import "std/platform";
+function burn(plat: Platform, ns: i64): i32 {
     let x: i32 = 12345;
-    let i: i32 = 0;
-    while (i < n) {
-        x = (x * 1103515245 + 12345) & 2147483647;
-        i = i + 1;
+    let until: i64 = plat.elapsed_ns() + ns;
+    while (plat.elapsed_ns() < until) {
+        let i: i32 = 0;
+        while (i < 100000) {
+            x = (x * 1103515245 + 12345) & 2147483647;
+            i = i + 1;
+        }
     }
     return x;
 }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/slow") {
-        if (burn(400000000) == 0 - 1) { return http.ok("never"); }
+        if (burn(plat, 1500000000 as i64) == 0 - 1) { return http.ok("never"); }
         return http.ok("slow");
     }
     return http.ok("ok");
 }
 function main(): i32 {
-    let opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), shutdown_grace: time.duration_millis(300 as i64), readiness_path: "/healthz", drain_deadline: time.duration_millis(%d as i64) };
+    let opts: serve.Config = serve.Config { ...serve.config(), shutdown_grace: time.duration_millis(300 as i64), readiness_path: "/healthz", drain_deadline: time.duration_millis(%d as i64) };
     return %s;
 }
 `, drainMs, fmt.Sprintf(entry, port))

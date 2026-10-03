@@ -22,7 +22,7 @@ func CompileAndRunWasmbinMain(t *testing.T, src string) int {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
-	core := compileSelfHostProgram(t, TargetWasm32Wasi, src, nil)
+	core := CompileSelfHostSource(t, TargetWasm32Wasi, src, nil)
 	cmd := RunWasmCore(t, core)
 	// main's i32 is read from the invoke's stdout: a WASI exit carries only
 	// 0..125, and the differential's programs return any byte.

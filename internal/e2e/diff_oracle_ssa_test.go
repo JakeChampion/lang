@@ -335,4 +335,22 @@ func TestRunBoundedClassifiesTimeout(t *testing.T) {
 	if timedOut, err := runBounded(exec.Command("sleep", "30"), 100*time.Millisecond); !timedOut || err != nil {
 		t.Errorf("outlived the wall: timedOut=%v err=%v, want true and nil", timedOut, err)
 	}
+	// A grandchild holding the child's stdout pipe keeps Wait from returning
+	// until the whole group is killed (#10806). The outer bound turns a
+	// regression into a red test rather than a hang.
+	held := exec.Command("sh", "-c", "sleep 30 & sleep 30")
+	held.Stdout = &bytes.Buffer{}
+	result := make(chan bool, 1)
+	go func() {
+		timedOut, _ := runBounded(held, 100*time.Millisecond)
+		result <- timedOut
+	}()
+	select {
+	case timedOut := <-result:
+		if !timedOut {
+			t.Errorf("forked holder of stdout: timedOut=false, want true")
+		}
+	case <-time.After(10 * time.Second):
+		t.Errorf("forked holder of stdout: runBounded did not return 10 s after a 100 ms wall; the group kill left the pipe open")
+	}
 }

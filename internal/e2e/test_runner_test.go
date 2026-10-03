@@ -85,6 +85,25 @@ func TestRunnerArithmeticExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/tz_test.fern` is std/tz without a clock or the host's
+// zoneinfo: POSIX rules evaluated across their transitions, a TZif v2
+// file built byte by byte (whose v1 block disagrees, so a reader on the
+// wrong table fails), its footer governing the future, and the malformed
+// inputs that must parse to None.
+func TestRunnerTzExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/tz_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: tz", "1..13", "# pass 13", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/runner_lazy_test.fern` pins the contract that makes
 // the runner's own controls real: `it(name, body)` takes the case
 // UNEVALUATED, so a case the runner drops never runs. The fixture bumps
@@ -872,24 +891,6 @@ func TestRunnerTimeHttpDateExamplePasses(t *testing.T) {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
 	for _, w := range []string{"# Suite: std/time http-date", "# pass 12", "# fail 0", "1..12"} {
-		if !strings.Contains(out, w) {
-			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
-		}
-	}
-}
-
-// `examples/tests/time_timezone_test.fern` covers std/time's zone lookup
-// (timezone_iana standard-time offsets, incl. the half-hour Kolkata
-// offset and the unknown-zone None) and the DST-awareness predicate
-// timezone_observes_dst (#4388 item 5). Passing → exit 0.
-func TestRunnerTimeTimezoneExamplePasses(t *testing.T) {
-	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/time_timezone_test.fern")
-	code, out, errOut := runLangInterp(t, bin, src)
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
-	}
-	for _, w := range []string{"# Suite: std/time timezone", "# pass 6", "# fail 0", "1..6"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -3969,8 +3970,8 @@ func TestRunnerMockPlatformCannedExample(t *testing.T) {
 // `examples/tests/http_respond_test.fern` pins the error side of a handler
 // (#9854): helpers that fail with `?` over `HttpError`, `http.respond`
 // answering the failure as an RFC 9457 problem, `http.problem`'s body,
-// the `ToResponse` impls for `JsonError` and `string`, and `respond_with`
-// keeping the state beside the answer.
+// the `ToResponse` impls for `JsonError`, `string` and `fetch.FetchError`,
+// and `respond_with` keeping the state beside the answer.
 func TestRunnerHttpRespondExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/http_respond_test.fern")
@@ -3978,7 +3979,7 @@ func TestRunnerHttpRespondExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: HTTP respond", "# pass 10", "# fail 0", "1..10"} {
+	for _, w := range []string{"# Suite: HTTP respond", "# pass 14", "# fail 0", "1..14"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

@@ -3,8 +3,6 @@ package e2e
 import (
 	"os/exec"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Regression for #4425: dropping a value of a Map-transitively-containing enum
@@ -18,7 +16,7 @@ import (
 // __map_drop_values" build error (and native "undefined label").
 //
 // Fix: the enum drop skips the Map payload reclaim (a documented safe leak —
-// the enum is already excluded from EnumRcPayloads, ir.go ~9085), across both
+// the enum's Map payload is not reclaimed), across both
 // enum-drop paths (genEnumDropFn and emitEnumSlotDrop's inline variant plan).
 // The map's buffer + values leak; nothing dangles. These pin that the affected
 // shapes BUILD and run correctly on both the native x86-64 and wasm backends.
@@ -45,9 +43,6 @@ var mapInEnumDropCases = []struct {
 }
 
 func TestX86_64MapInEnumDropBuilds(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, tc := range mapInEnumDropCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// A prior bug made this fail at assemble time ("undefined label
@@ -64,9 +59,6 @@ func TestWASMMapInEnumDropBuilds(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm map-in-enum drop e2e")
 	}
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, tc := range mapInEnumDropCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// buildComponent (inside runWasm) t.Fatal's on the "unknown callee

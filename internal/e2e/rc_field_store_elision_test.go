@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Field-store elision (Perceus reuse specialization) on the struct
@@ -74,9 +72,6 @@ func TestArm64FieldStoreElision(t *testing.T) {
 }
 
 func TestWASMFieldStoreElision(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, fieldElisionPtrCarriedSrc); got != 0 {
 		t.Errorf("carried pointer field: got %d", got)
 	}

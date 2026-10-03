@@ -189,7 +189,15 @@ var linuxDarwinSysno = map[string][2]int{
 	// takes three arguments where Darwin's takes four, and the helper
 	// passes a zero fourth that Linux ignores, so one body serves both.
 	"renameat": {38, 465},
-	"fchmodat": {53, 467},
+	// renameat2(2) — Linux 276; Darwin's equivalent is renameatx_np, BSD
+	// 488, with the same five arguments and its own flag values.
+	"renameat2": {276, 488},
+	// getxattr(2) / lgetxattr(2) — Linux 8 / 9. Darwin has one call, BSD
+	// 234, taking a position and an options word whose XATTR_NOFOLLOW (1)
+	// is lgetxattr.
+	"getxattr":  {8, 234},
+	"lgetxattr": {9, 234},
+	"fchmodat":  {53, 467},
 	// truncate(2) — Linux asm-generic 45, Darwin BSD 200. The PATH
 	// form. Same (path, off_t) shape on both, and off_t is one 64-bit
 	// register on arm64 either way.
@@ -662,7 +670,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
 		g.usesCreateDir || g.usesChdir || g.usesChroot || g.usesRemoveDir || g.usesCreateLink ||
 		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs ||
-		g.usesRename || g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
+		g.usesRename || g.usesRenameNoreplace || g.usesRenameExchange ||
+		g.usesGetxattr || g.usesLgetxattr ||
+		g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt {
 		g.usesAlloc = true
 		g.usesMemcpy = true
@@ -694,7 +704,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesCreateLink || g.usesCreateSymlink || g.usesReadLink || g.usesTempDir ||
 		g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat || g.usesStatfs || g.usesAccess ||
 		g.usesRemoveDirAll ||
-		g.usesRename || g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
+		g.usesRename || g.usesRenameNoreplace || g.usesRenameExchange ||
+		g.usesGetxattr || g.usesLgetxattr ||
+		g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt || g.usesReaderWriter {
 		g.usesFree = true
 	}
@@ -1092,6 +1104,18 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesRename {
 		g.emitRenameRuntime()
+	}
+	if g.usesRenameNoreplace {
+		g.emitRenameFlagsRuntime("__fern_rename_noreplace", "rnnr", true)
+	}
+	if g.usesGetxattr {
+		g.emitGetxattrRuntime("__fern_getxattr", "gxat", "getxattr", false)
+	}
+	if g.usesLgetxattr {
+		g.emitGetxattrRuntime("__fern_lgetxattr", "lgxa", "lgetxattr", true)
+	}
+	if g.usesRenameExchange {
+		g.emitRenameFlagsRuntime("__fern_rename_exchange", "rnex", false)
 	}
 	if g.usesChmod {
 		g.emitChmodRuntime()
@@ -5006,6 +5030,7 @@ func (g *generator) emitRmemchrRuntime() {
 // byte value; a shorter set takes the loop that checks each byte against
 // its length first.
 func (g *generator) emitScanSetRuntime() {
+	// Adapt the packed array's payload and length to the string kernel.
 	if g.usesScanSetBytes {
 		g.line(".global __fern_scan_set_bytes")
 		g.label("__fern_scan_set_bytes")
@@ -9828,7 +9853,7 @@ type statfsField struct{ box, src, width int32 }
 // linuxStatfsFields — Linux's 120-byte record, every member a 64-bit
 // word on both supported ISAs: f_type 0, f_bsize 8, f_blocks 16,
 // f_bfree 24, f_bavail 32, f_files 40, f_ffree 48, f_fsid 56,
-// f_namelen 64, f_frsize 72.
+// f_namelen 64, f_frsize 72. f_fsid is joined separately (statfsFsid).
 var linuxStatfsFields = []statfsField{
 	{ir.FsStat.BlockSize, 8, 8},
 	{ir.FsStat.Blocks, 16, 8},
@@ -9837,11 +9862,15 @@ var linuxStatfsFields = []statfsField{
 	{ir.FsStat.Files, 40, 8},
 	{ir.FsStat.FilesFree, 48, 8},
 	{ir.FsStat.NameMax, 64, 8},
+	{ir.FsStat.FsType, 0, 8},
+	{ir.FsStat.FragSize, 72, 8},
 }
 
 // darwinStatfsFields — Darwin's 2168-byte record: f_bsize is a u32 at 0
-// (f_iosize takes 4..7), then five u64 counts. There is no name-length
-// member at all, which is why the Darwin path asks pathconf(2) instead.
+// (f_iosize takes 4..7), then five u64 counts, f_fsid at 48 and the u32
+// f_type at 60. There is no name-length member at all, which is why the
+// Darwin path asks pathconf(2) instead, and no fundamental block size, so
+// `frag_size` is f_bsize.
 var darwinStatfsFields = []statfsField{
 	{ir.FsStat.BlockSize, 0, 4},
 	{ir.FsStat.Blocks, 8, 8},
@@ -9849,6 +9878,17 @@ var darwinStatfsFields = []statfsField{
 	{ir.FsStat.BlocksAvail, 24, 8},
 	{ir.FsStat.Files, 32, 8},
 	{ir.FsStat.FilesFree, 40, 8},
+	{ir.FsStat.FsType, 60, 4},
+	{ir.FsStat.FragSize, 0, 4},
+}
+
+// statfsFsid is the offset of `f_fsid` in each record: two 32-bit words that
+// FsStat joins into one, first word high, as GNU `stat -f` prints it.
+func statfsFsid(darwin bool) int32 {
+	if darwin {
+		return 48
+	}
+	return 56
 }
 
 // emitStatfsRuntime emits `__fern_statfs(path) → Result[FsStat, IoError]`
@@ -9924,6 +9964,11 @@ func (g *generator) emitStatfsRuntime() {
 		}
 		g.emit("str x9, [x0, #%d]", f.box)
 	}
+	fsid := 96 + statfsFsid(g.darwin)
+	g.emit("ldr w9, [x29, #%d]", fsid)
+	g.emit("ldr w10, [x29, #%d]", fsid+4)
+	g.emit("orr x9, x10, x9, lsl #32")
+	g.emit("str x9, [x0, #%d]", ir.FsStat.Fsid)
 	if g.darwin {
 		g.emit("str x24, [x0, #%d]", ir.FsStat.NameMax)
 		g.emit("str x25, [x0, #%d]", ir.FsStat.PathMax)
@@ -11780,6 +11825,48 @@ func (g *generator) oflagWrite(k oflagKind) int {
 	return 577
 }
 
+// openWithWord is one bit of the open_*_with flags word and the target's
+// word for it; a zero word is a bit the target cannot honour, refused as
+// Unsupported (the checker's open_reader_with comment is the contract).
+type openWithWord struct {
+	bit  int
+	word int
+	name string // the label suffix
+	flag string
+}
+
+// openWithWords is the flags word in Linux arm64's spelling, or XNU's.
+// XNU has no O_DIRECT (its F_NOCACHE is a request made after the open)
+// and no O_NOATIME.
+func openWithWords(darwin bool) []openWithWord {
+	if darwin {
+		return []openWithWord{
+			{0, 0x200, "nc", "O_CREAT"},
+			{1, 0x4, "nb", "O_NONBLOCK"},
+			{2, 0x800, "nx", "O_EXCL"},
+			{3, 0, "nd", "O_DIRECT"},
+			{4, 0x100000, "ndir", "O_DIRECTORY"},
+			{5, 0x400000, "nds", "O_DSYNC"},
+			{6, 0x80, "ns", "O_SYNC"},
+			{7, 0, "na", "O_NOATIME"},
+			{8, 0x20000, "nt", "O_NOCTTY"},
+			{9, 0x100, "nf", "O_NOFOLLOW"},
+		}
+	}
+	return []openWithWord{
+		{0, 64, "nc", "O_CREAT"},
+		{1, 2048, "nb", "O_NONBLOCK"},
+		{2, 128, "nx", "O_EXCL"},
+		{3, 0x10000, "nd", "O_DIRECT"},
+		{4, 0x4000, "ndir", "O_DIRECTORY"},
+		{5, 0x1000, "nds", "O_DSYNC"},
+		{6, 0x101000, "ns", "O_SYNC"},
+		{7, 0x40000, "na", "O_NOATIME"},
+		{8, 0x100, "nt", "O_NOCTTY"},
+		{9, 0x8000, "nf", "O_NOFOLLOW"},
+	}
+}
+
 // emitODirectory materialises the platform O_DIRECTORY flag into
 // reg: 0o40000 = 16384 on arm64 Linux (an arch-specific override
 // — x86-64's 65536 is O_DIRECT here), 0x100000 on Darwin.
@@ -12385,6 +12472,94 @@ func (g *generator) emitReadLinkRuntime() {
 	g.line(".ltorg")
 }
 
+// xattrSizeMax is XATTR_SIZE_MAX, the largest value Linux stores, so a
+// buffer of it always holds the whole answer; a longer Darwin value is
+// ERANGE.
+const xattrSizeMax = 65536
+
+// emitGetxattrRuntime emits `name(path, attr) → Result[string, IoError]` —
+// getxattr(2) or lgetxattr(2) into a heap buffer of xattrSizeMax, the value
+// copied out into a fresh string. The IoError names `path`. On Darwin the
+// one call takes a position (0) and an options word, XATTR_NOFOLLOW for the
+// `l` form; Linux ignores the two extra registers.
+func (g *generator) emitGetxattrRuntime(name, tag, sysname string, nofollow bool) {
+	g.line("")
+	g.line(".global " + name)
+	g.typeDirective(name)
+	g.label(name)
+	// Frame: fp/lr (16) + x19..x26 (64) + 16-byte inline-spill
+	// scratch at [x29+80] = 96.
+	g.emit("stp x29, x30, [sp, #-96]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("stp x25, x26, [sp, #64]")
+	g.emit("mov x19, x0") // path_data
+	g.emit("mov x20, x1") // path_len
+	g.emit("mov x25, x2") // attr_data
+	g.emit("mov x26, x3") // attr_len
+	g.emitStrDataPtr2W("x21", "x19", "x20", 80)
+	g.emitNulTermPath2W("x21", "x21", "x20")
+	g.emitStrDataPtr2W("x23", "x25", "x26", 80)
+	g.emitNulTermPath2W("x23", "x23", "x26")
+	g.emit("mov x0, #%d", xattrSizeMax)
+	g.emit("bl __fern_alloc")
+	g.emit("mov x24, x0") // the value buffer
+	g.emit("mov x0, x21")
+	g.emit("mov x1, x23")
+	g.emit("mov x2, x24")
+	g.emit("mov x3, #%d", xattrSizeMax)
+	g.emit("mov x4, #0") // position
+	options := 0
+	if nofollow && g.darwin {
+		options = 1
+	}
+	g.emit("mov x5, #%d", options)
+	g.syscall(sysname)
+	g.emit("mov x22, x0") // length, or -errno
+	g.emitFreeNulTermPath2W("x21", "x20")
+	g.emitFreeNulTermPath2W("x23", "x26")
+	g.emit("tbnz x22, #63, .L%s_err", tag)
+	g.emit("mov x0, x22")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x21, x0") // data ptr
+	g.emit("mov x1, x24")
+	g.emit("mov x2, x22")
+	g.emit("bl __fern_memcpy")
+	g.emitFreeScratch2W("x24", xattrSizeMax)
+	// Result.Ok(string): 24-byte box — {tag@0, pad@4, data@8, len@16}.
+	g.emit("mov x0, #24")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]")      // tag = 0 (Ok)
+	g.emit("str x21, [x0, #8]")  // payload data
+	g.emit("str x22, [x0, #16]") // payload len
+	g.emit("b .L%s_return", tag)
+
+	g.label(fmt.Sprintf(".L%s_err", tag))
+	g.emitFreeScratch2W("x24", xattrSizeMax)
+	g.emit("neg x0, x22") // errno
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0") // stash the IoError box across the alloc
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(fmt.Sprintf(".L%s_return", tag))
+	g.emit("ldp x25, x26, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #96")
+	g.emit("ret")
+	g.sizeDirective(name)
+	g.line(".ltorg")
+}
+
 // emitRenameRuntime emits `__fern_rename(from, to)` —
 // renameat(AT_FDCWD, from, AT_FDCWD, to). An existing `to` of a
 // compatible type is replaced atomically; a rename across filesystems is
@@ -12396,6 +12571,27 @@ func (g *generator) emitRenameRuntime() {
 		g.emit("mov x1, x21")
 		g.atFdcwd("x2")
 		g.emit("mov x3, x23")
+	})
+}
+
+// emitRenameFlagsRuntime emits `name(from, to)` — renameat2(AT_FDCWD,
+// from, AT_FDCWD, to, flags), or renameatx_np on Darwin, whose flag
+// values differ: RENAME_NOREPLACE 1 / RENAME_EXCHANGE 2 on Linux,
+// RENAME_EXCL 4 / RENAME_SWAP 2 on Darwin.
+func (g *generator) emitRenameFlagsRuntime(name, tag string, noreplace bool) {
+	flags := 2
+	if noreplace {
+		flags = 1
+		if g.darwin {
+			flags = 4
+		}
+	}
+	g.emitPathOpRuntime(name, tag, "renameat2", 2, 0, func() {
+		g.atFdcwd("x0")
+		g.emit("mov x1, x21")
+		g.atFdcwd("x2")
+		g.emit("mov x3, x23")
+		g.emit("mov x4, #%d", flags)
 	})
 }
 
@@ -14733,13 +14929,11 @@ func (g *generator) emitReaderWriterRuntime() {
 	// Result[Reader|Writer, IoError].
 	// Each is a thin wrapper around `openat` + handle alloc + the
 	// Result-box build. Flags + mode differ per kind. The two `_with`
-	// forms take Fern's flags word after the path: bit 0 is O_CREAT and
-	// bit 1 O_NONBLOCK, each in the target's own spelling (64 / 2048 on
-	// Linux, 0x200 / 0x4 on XNU), on top of the access mode in `flags`.
-	oCreat, oNonblock := 64, 2048
-	if g.darwin {
-		oCreat, oNonblock = 0x200, 0x4
-	}
+	// forms take Fern's flags word after the path, each bit becoming the
+	// target's own word (openWithWords) on top of the access mode in
+	// `flags`; a bit XNU has no word for is refused as Unsupported before
+	// the path is copied.
+	words := openWithWords(g.darwin)
 	twoWord := ast.UseTwoWordStrings(8)
 	for _, e := range []struct {
 		sym, name string
@@ -14756,17 +14950,47 @@ func (g *generator) emitReaderWriterRuntime() {
 	} {
 		_ = e.name
 		// The flags word lives in a callee-saved register (x22 two-word,
-		// x21 one-word) across the path copy and becomes w2 here.
+		// x21 one-word) across the path copy and becomes w2 here. A
+		// multi-bit word (Linux's O_SYNC) goes in one `orr` per bit, since
+		// `orr` takes only a bitmask immediate.
 		emitWithFlags := func(reg string) {
 			if !e.withFlags {
 				return
 			}
-			g.emit("tbz %s, #0, %s", reg, ".Lorw_nc_"+e.sym)
-			g.emit("orr w2, w2, #%d", oCreat)
-			g.label(".Lorw_nc_" + e.sym)
-			g.emit("tbz %s, #1, %s", reg, ".Lorw_nb_"+e.sym)
-			g.emit("orr w2, w2, #%d", oNonblock)
-			g.label(".Lorw_nb_" + e.sym)
+			for _, b := range words {
+				if b.word == 0 {
+					continue
+				}
+				g.emit("tbz %s, #%d, %s", reg, b.bit, ".Lorw_"+b.name+"_"+e.sym)
+				for w := b.word; w != 0; w &= w - 1 {
+					g.emit("orr w2, w2, #%d // %s", w&-w, b.flag)
+				}
+				g.label(".Lorw_" + b.name + "_" + e.sym)
+			}
+		}
+		// emitRefusals branches to `unsup` on any bit the target has no
+		// word for; emitUnsupported writes `unsup`, which builds the
+		// Unsupported box and joins the Err path at `wrap`.
+		emitRefusals := func(reg, unsup string) {
+			if !e.withFlags {
+				return
+			}
+			for _, b := range words {
+				if b.word == 0 {
+					g.emit("tbnz %s, #%d, %s", reg, b.bit, unsup)
+				}
+			}
+		}
+		emitUnsupported := func(unsup, wrap string) {
+			if !e.withFlags || !g.darwin {
+				return
+			}
+			g.emit("b %s", wrap) // the errno path's IoError is in x0
+			g.label(unsup)
+			g.emit("mov x0, #8")
+			g.emit("bl __fern_alloc_box")
+			g.emit("mov w1, #5") // IoError::Unsupported
+			g.emit("str w1, [x0]")
 		}
 		g.line("")
 		g.line(".global " + e.sym)
@@ -14785,6 +15009,7 @@ func (g *generator) emitReaderWriterRuntime() {
 			if e.withFlags {
 				g.emit("mov w22, w2") // the flags word
 			}
+			emitRefusals("w22", ".Lorw2w_unsup_"+e.sym)
 			g.emitStrDataPtr2W("x21", "x19", "x20", 48) // x21 = byte ptr; scratch [x29+48]
 			// NUL-terminate for openat (see emitNulTermPath2W).
 			g.emitNulTermPath2W("x21", "x21", "x20")
@@ -14825,6 +15050,8 @@ func (g *generator) emitReaderWriterRuntime() {
 			g.emit("mov x1, x19")
 			g.emit("mov x2, x20")
 			g.emit("bl __fern_io_error")
+			emitUnsupported(".Lorw2w_unsup_"+e.sym, ".Lorw2w_wrap_"+e.sym)
+			g.label(".Lorw2w_wrap_" + e.sym)
 			g.emit("mov x21, x0")
 			g.emit("mov x0, #16")
 			g.emit("bl __fern_alloc_rc1")
@@ -14847,6 +15074,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		if e.withFlags {
 			g.emit("mov w21, w1") // the flags word
 		}
+		emitRefusals("w21", ".Lorw_unsup_"+e.sym)
 		g.emit("mov x0, #%d", g.atFdCwd()) // AT_FDCWD
 		g.emit("mov x1, x19")
 		g.emit("mov w2, #%d", e.flags)
@@ -14882,6 +15110,8 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("mov x0, x20")
 		g.emit("mov x1, x19") // path
 		g.emit("bl __fern_io_error")
+		emitUnsupported(".Lorw_unsup_"+e.sym, ".Lorw_wrap_"+e.sym)
+		g.label(".Lorw_wrap_" + e.sym)
 		g.emit("mov x19, x0") // stash IoError ptr (callee-save)
 		g.emit("mov x0, #16")
 		g.emit("bl __fern_alloc_rc1")
@@ -15695,7 +15925,8 @@ type generator struct {
 	// usesCountByte gates the byte-tally kernel (__fern_count_byte).
 	usesCountByte bool
 	// usesScanSet gates the byte-set scan kernel (__fern_scan_set).
-	usesScanSet      bool
+	usesScanSet bool
+	// usesScanSetBytes adds its u8[] entry, __fern_scan_set_bytes.
 	usesScanSetBytes bool
 	// usesCountRuns gates the run-count kernel (__fern_count_runs).
 	usesCountRuns      bool
@@ -16197,6 +16428,12 @@ type generator struct {
 	usesRename       bool
 	usesChmod        bool
 	usesSetFileTimes bool
+	// renameat2 (Darwin: renameatx_np) with a no-replace or exchange flag.
+	usesRenameNoreplace bool
+	// getxattr / lgetxattr over a path and an attribute name.
+	usesGetxattr       bool
+	usesLgetxattr      bool
+	usesRenameExchange bool
 	// fchmodat / fchmodat2 over a path, a mode and a follow flag.
 	usesChmodAt bool
 	// truncate(2) over a path and a length.
@@ -21177,6 +21414,18 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// renameat, which replaces an existing `to`.
 			target = "__fern_rename"
 			g.usesRename = true
+		case "rename_noreplace":
+			target = "__fern_rename_noreplace"
+			g.usesRenameNoreplace = true
+		case "getxattr":
+			target = "__fern_getxattr"
+			g.usesGetxattr = true
+		case "lgetxattr":
+			target = "__fern_lgetxattr"
+			g.usesLgetxattr = true
+		case "rename_exchange":
+			target = "__fern_rename_exchange"
+			g.usesRenameExchange = true
 		case "chmod":
 			// chmod(path, mode): Result[void, IoError] —
 			// fchmodat on an entry that already exists.

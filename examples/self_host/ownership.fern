@@ -38,7 +38,7 @@ import "./util";
 // One row per produced symbol: whether each parameter leaves the frame.
 // `lends` says a slot the row leaves uncounted may still be kept as a borrow in
 // what the callee returns (lent_values); a builtin whose result holds no
-// reference cannot keep one. `cycle` is the row's quiet cycle (`cycles`), -1
+// reference cannot keep one, and a produced function's is inferred (`lends`). `cycle` is the row's quiet cycle (`cycles`), -1
 // on none.
 pub struct Escapes { name: string, bits: boolean[], lends: boolean, cycle: i32 }
 
@@ -448,6 +448,29 @@ function lent_out(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index
     }
   }
   return out;
+}
+
+// Whether `f`'s result may keep an uncounted borrow of a parameter, the
+// `lends` of its row: a parameter is lent to a callee that lends, or the frame
+// returns a view, which counts nothing it reads.
+pub function lends(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean {
+  if (!a.ok) {
+    return true;
+  }
+  let lent: boolean[] = lent_out(f, a, rows, ix);
+  let i: i32 = 0;
+  while (i < f.params.len() && i < lent.len()) {
+    if (lent[i]) {
+      return true;
+    }
+    i = i + 1;
+  }
+  for b in f.graph.blocks {
+    if (b.term.kind_tag == 1 && b.term.value >= 0 && ssasem.is_view(f.values[b.term.value])) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // The values this frame lets out, under the current round's answers. A

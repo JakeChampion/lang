@@ -300,7 +300,7 @@ function main(): i32 {
 	}
 
 	// A stream handle's `fd` is the handle's own descriptor, read as the i32
-	// through a parameter, a local and an enum payload binding alike (std/tcp
+	// through a parameter, a local and an enum payload binding alike (std/serve
 	// hands a file body's fd to tcp_sendfile). It was an unsupported
 	// projection: a handle wears a record's nominal but has no schema.
 	handleFd := `enum Tail { NoTail, FileTail(Reader, i64) }

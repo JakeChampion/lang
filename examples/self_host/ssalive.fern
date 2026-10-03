@@ -275,6 +275,12 @@ pub function compute(f: ssa.SFunc, dependencies: i32[][]): Flow {
   if (why != "") {
     return failed(why);
   }
+  return compute_checked(f, dependencies);
+}
+
+// compute_checked is compute over a graph and dependencies input_error has
+// already passed.
+pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
   let words: i32 = (f.nvals + 63) / 64;
   let nb: i32 = f.blocks.len();
   let at: i32[] = position_of(f);
@@ -305,13 +311,26 @@ pub function compute(f: ssa.SFunc, dependencies: i32[][]): Flow {
   let live_in: i64[] = words_of(nb * words);
   let live_out: i64[] = words_of(nb * words);
   // row holds the block being recomputed, so a pass updates live_out in
-  // place instead of copying the whole table for each block.
+  // place instead of copying the whole table for each block. A block is
+  // recomputed only while `dirty`: at first, and again after a successor's
+  // live_in grows.
   let row: i64[] = words_of(words);
-  let changed: boolean = true;
-  while (changed) {
-    changed = false;
+  let dirty: boolean[] = [];
+  bi = 0;
+  while (bi < nb) {
+    dirty = dirty.append(true);
+    bi = bi + 1;
+  }
+  let pending: i32 = nb;
+  while (pending > 0) {
     bi = nb - 1;
     while (bi >= 0) {
+      if (!dirty[bi]) {
+        bi = bi - 1;
+        continue;
+      }
+      dirty = dirty.with(bi, false);
+      pending = pending - 1;
       let b: ssa.SBlock = f.blocks[bi];
       let base: i32 = bi * words;
       let w: i32 = 0;
@@ -341,18 +360,27 @@ pub function compute(f: ssa.SFunc, dependencies: i32[][]): Flow {
         }
         si = si + 1;
       }
+      let grew: boolean = false;
       w = 0;
       while (w < words) {
         if (row[w] != live_out[base + w]) {
           live_out = live_out.with(base + w, row[w]);
-          changed = true;
         }
         let inw: i64 = uses[base + w] | row[w] & (defs[base + w] ^ 0i64 - 1i64);
         if (inw != live_in[base + w]) {
           live_in = live_in.with(base + w, inw);
-          changed = true;
+          grew = true;
         }
         w = w + 1;
+      }
+      if (grew) {
+        for pid in b.preds {
+          let p: i32 = at[pid];
+          if (!dirty[p]) {
+            dirty = dirty.with(p, true);
+            pending = pending + 1;
+          }
+        }
       }
       bi = bi - 1;
     }

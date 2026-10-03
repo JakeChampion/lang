@@ -1178,7 +1178,7 @@ TestSelfHostServeLimits 4
 TestSelfHostServeListenFailure 9
 TestSelfHostServeMaxConnectionsFloor 5
 TestSelfHostServeNoDelay 5
-TestSelfHostServeOptions 5
+TestSelfHostServeConfig 5
 TestSelfHostServePerIPCap 5
 TestSelfHostServeRecvDeadline 5
 TestSelfHostServeResponseRateCutsStalledReader 7

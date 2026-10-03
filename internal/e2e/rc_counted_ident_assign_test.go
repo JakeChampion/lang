@@ -113,6 +113,8 @@ function main(): i32 {
     while (i < 50) { t = t + round(i); i = i + 1; }
     return t % 100;
 }`},
+	// The append builds `p` on the heap: a constant literal is a static
+	// aggregate, which leaves the census nothing to count.
 	{"copy_of_a_borrowed_parameter", countedIdentAssignPrelude + `
 @noinline
 function from_param(p: u8[]): i32 {
@@ -126,6 +128,7 @@ function main(): i32 {
     let i: i32 = 0;
     while (i < 50) {
         let p: u8[] = [1, 2, 3, 4];
+        p = p.append(5 as u8);
         t = t + from_param(p) + p.len() + p[3] as i32;
         i = i + 1;
     }

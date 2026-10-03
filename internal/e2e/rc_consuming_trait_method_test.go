@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Consuming trait method (`own self` declared on the trait + impl) returning the
@@ -48,9 +46,6 @@ func TestArm64ConsumingTraitMethod(t *testing.T) {
 }
 
 func TestWASMConsumingTraitMethod(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, consumingTraitMethodSrc); got != 0 {
 		t.Errorf("consuming trait method: got %d, want 0", got)
 	}

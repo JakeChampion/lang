@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -45,7 +46,7 @@ func selfHostFreePort(t *testing.T) int {
 
 func TestSelfHostServeShutdownDrainsAndExitsClean(t *testing.T) {
 	port := selfHostFreePort(t)
-	bin, runner := selfHostShutdownServer(t, port, 5000, "tcp.tcp_serve_opts(%d, opts, handle)")
+	bin, runner := selfHostShutdownServer(t, port, 5000, "serve.run(%d, opts, handle)")
 	cmd := binCmd(runner, bin)
 	e2eharness.StartServerProcess(t, cmd)
 	e2eharness.CheckShutdownDrains(t, cmd, fmt.Sprintf("127.0.0.1:%d", port))
@@ -53,7 +54,7 @@ func TestSelfHostServeShutdownDrainsAndExitsClean(t *testing.T) {
 
 func TestSelfHostServeShutdownAbortsAtDrainDeadline(t *testing.T) {
 	port := selfHostFreePort(t)
-	bin, runner := selfHostShutdownServer(t, port, 400, "tcp.tcp_serve_opts(%d, opts, handle)")
+	bin, runner := selfHostShutdownServer(t, port, 400, "serve.run(%d, opts, handle)")
 	cmd := binCmd(runner, bin)
 	e2eharness.StartServerProcess(t, cmd)
 	e2eharness.CheckShutdownAbortsAtDrainDeadline(t, cmd, fmt.Sprintf("127.0.0.1:%d", port))
@@ -61,14 +62,14 @@ func TestSelfHostServeShutdownAbortsAtDrainDeadline(t *testing.T) {
 
 func TestSelfHostSupervisedServeForwardsShutdown(t *testing.T) {
 	port := selfHostFreePort(t)
-	bin, runner := selfHostShutdownServer(t, port, 5000, "tcp.tcp_serve_supervised_opts(%d, tcp.ServeOptions { ...opts, workers: 2 }, handle)")
+	bin, runner := selfHostShutdownServer(t, port, 5000, "serve.supervise(%d, serve.Config { ...opts, workers: 2 }, handle)")
 	cmd := binCmd(runner, bin)
 	stderrPath := e2eharness.StartServerProcess(t, cmd)
 	e2eharness.CheckSupervisedShutdown(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
 
 func TestSelfHostServeInheritsListenFds(t *testing.T) {
-	bin, runner := selfHostShutdownServer(t, 0, 5000, "tcp.tcp_serve_opts(%d, opts, handle)")
+	bin, runner := selfHostShutdownServer(t, 0, 5000, "serve.run(%d, opts, handle)")
 	addr, file := e2eharness.InheritedListener(t)
 	cmd := binCmd(runner, bin)
 	cmd.Env = append(cmd.Environ(), "LISTEN_FDS=1")
@@ -200,7 +201,7 @@ func TestSelfHostSupervisedServeTrapThenShutdownExitsClean(t *testing.T) {
 	e2eharness.CheckTrapThenShutdownExitsClean(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
 
-func TestSelfHostServeOptions(t *testing.T) {
+func TestSelfHostServeConfig(t *testing.T) {
 	port := selfHostFreePort(t)
 	bin, runner := selfHostServer(t, e2eharness.ReusePortServerSource(port))
 	e2eharness.StartServerProcess(t, binCmd(runner, bin))
@@ -220,6 +221,15 @@ func TestSelfHostServeMaxConnectionsFloor(t *testing.T) {
 func TestSelfHostServeInitProvidedState(t *testing.T) {
 	port := selfHostFreePort(t)
 	bin, runner := selfHostServer(t, e2eharness.InitStateServerSource())
+	cmd := binCmd(runner, bin)
+	cmd.Env = append(cmd.Environ(), fmt.Sprintf("PORT=%d", port))
+	e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckInitState(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestSelfHostServeInitConfigAliased(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.InitStateAliasedServerSource())
 	cmd := binCmd(runner, bin)
 	cmd.Env = append(cmd.Environ(), fmt.Sprintf("PORT=%d", port))
 	e2eharness.StartServerProcess(t, cmd)
@@ -274,7 +284,7 @@ func TestSelfHostServeStatefulResultHandler(t *testing.T) {
 // A target without processes gets the single-process serve loop from the
 // synthesised main, as native's TestHandlerKindsMatchWhatTheCompilerAccepts
 // pins: the wasm32-wasi build of a handle-only program reaches
-// `tcp_serve_opts` and never the supervisor.
+// `serve.run` and never the supervisor.
 func TestSelfHostWasiCliHandlerProgramBuilds(t *testing.T) {
 	cli, stdlib := witSelfHostCLI(t)
 	dir := t.TempDir()
@@ -290,8 +300,8 @@ func TestSelfHostWasiCliHandlerProgramBuilds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(text), "tcp__tcp_serve_opts") || strings.Contains(string(text), "__supervise") {
-		t.Fatal("the wasm32-wasi handler program does not serve through tcp_serve_opts alone")
+	if !regexp.MustCompile(`serve__run\b`).Match(text) || strings.Contains(string(text), "__supervise") {
+		t.Fatal("the wasm32-wasi handler program does not serve through serve.run alone")
 	}
 }
 
@@ -329,6 +339,20 @@ func TestSelfHostServeFileBody(t *testing.T) {
 	bin, runner := selfHostServer(t, e2eharness.FileBodyServerSource(port, path))
 	e2eharness.StartServerProcess(t, binCmd(runner, bin))
 	e2eharness.CheckFileBody(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestSelfHostServeBinaryBody(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.BinaryBodyServerSource(port))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckBinaryBody(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestSelfHostServeResponseFields(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.ResponseFieldsServerSource(port))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckResponseFields(t, fmt.Sprintf("127.0.0.1:%d", port))
 }
 
 func TestSelfHostServeStreamingBody(t *testing.T) {

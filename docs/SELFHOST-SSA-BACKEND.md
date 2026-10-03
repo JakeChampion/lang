@@ -37,7 +37,14 @@ lowered function it:
    callee's, so the splice keeps every retain and release the call made;
 3. turns `(x >> n) | (x << (W - n))`, Fern's only spelling of a rotate, into
    one `rotr:W:n` unary on x at either width (`ssa.fuse_rotates`; a u32's
-   left half is recognised through the zero extension that follows it), then
+   left half is recognised through the zero extension that follows it),
+   replaces a signed 32-bit wrap by its operand where nothing reads the high
+   half of its result (`ssa.drop_low_wraps`: a sum, difference, product,
+   bitwise op or left shift reads only its operands' low halves, so the wrap
+   after each 32-bit op stays only where the value reaches a comparison, a
+   division, a right shift, a call, a store, a branch or a return; a loop
+   counter's `i + 1` loses its wrap even there, when it runs only after the
+   loop's own `i < n` test, since it cannot pass INT32_MAX), then
    drops what nothing reads (`ssa.prune_dead`), which is the rotate's shifts,
    most of the zeros the lift gives declared locals and the loop-header phis
    nothing reads (the lift gives a header a phi only for the slots the loop's
@@ -106,7 +113,9 @@ indirect and dyn-dispatch calls, and a call across per-module units — so a
 callee the registry does not name is still called correctly. The pool is the
 argument order because it is also where the allocator homes caller-saved
 values: `ssa_arg_prefs` asks for a parameter's arrival register and an
-argument's departure register, and a call's result may keep `%rax` when its
+argument's departure register. The allocator asks the result register for a
+returned value, and a phi hands whatever register it asks for to the values
+it merges (`ssa.return_prefs`). A call's result may keep `%rax` when its
 dying first argument was there, so `s = f(s, …)` moves nothing when `s` does
 not live across another call.
 
@@ -223,31 +232,48 @@ home and reads operands from theirs (`ssa_dst`, `ssa_src`): the integer
 add, subtract, multiply, and, or, xor and the compares compute into the
 home with only a spilled operand passing through a scratch
 (`ssa_bin_in_place`; on x86-64 the operands swap, or a comparison flips,
-when the right one lives in the destination), and a compare read only by
-its block's branch is consumed as flags straight from the homes. A
+when the right one lives in the destination, and a spilled right operand
+is read from its frame slot rather than a scratch), and a compare read only
+by its block's branch is consumed as flags straight from the homes, a
+spilled operand on x86-64 straight from its slot (`ssa_fused_test`). A
 constant those ops alone read is an immediate operand and is never
 materialised (`ssa.imm_operands`: any i32 on x86-64, 0 to 4,095 on arm64
 for add, sub and the compares; a constant on the left swaps or flips the
 same way, and an op whose operands are both constants keeps them in
-registers). A value defined by a phi, one of those ops or a unary takes
+registers). A constant a phi merges or a block returns is an immediate
+too: the edge's moves load it into the phi's home after the copies, and a
+return loads it into the result register. A value defined by a phi, one of those ops or a unary takes
 the register of its phi mate or of an operand of its definition when that
 register is free or its holder dies at the definition, and a loop-carried
 operand takes its phi's register whenever no use of the phi is reachable
 from the operand's definition without passing the header
-(`ssa.phi_mates`, `ssa.mate_interferes`), so `sum = sum + i` computes into
-`sum`'s register and the back edge moves nothing. With no register free, the
+(`ssa.phi_mates`, `ssa.live_at_def`), so `sum = sum + i` computes into
+`sum`'s register and the back edge moves nothing. A phi whose operand from
+before it outlives it, as the loop header's phi does at each merge of an
+else-if chain inside the loop, is mated with the first operand that dies by
+the merge instead. With no register free, the
 value spilled is the one read least per position its interval covers, each
 read weighted 8 per enclosing loop (`ssa.cheapest_active`): a value that sits
 across a whole loop body frees more by leaving than a temporary read on the
 next line, and taking that rule instead of the lowest raw weight made the
-`std/crypto` digests 1.3x to 4x faster (#10615). A spilled value takes its
+`std/crypto` digests 1.3x to 4x faster (#10615). The eviction spills the
+values that shared the register only where their intervals still reach the
+evicting value; one that ended keeps it (`ssa.still_holds`). A spilled value takes its
 phi mate's frame slot by the same rule (`ssa.assign_spill_slots`), so a loop
 with more carried values than registers does not copy slot to slot on its
 back edge: the whole compiler's x86-64 text is 3.8% shorter for it, and a
 self-host `uniq` runs 5% fewer instructions. A phi also takes its entry
 operand's slot when no use of the operand is reachable from the phi, and a
 free slot another phi is waiting for is passed over, so entering an inner
-loop does not copy either. A phi reads its operand
+loop does not copy either. A value read only by its phi mate, when the
+mate is already spilled, takes the mate's slot rather than a register it
+would only be stored from on the edge (`ssa.sole_readers`), so a value a
+loop changes on some iterations is not loaded and stored back on the others.
+A spilled phi, or a two-address result, whose mate's slot is taken shares
+the slot of one of its operands when no value in that slot is live where it
+is defined, nor it where they are (`ssa.path_slot`): the merges of an else-if
+chain inside a loop then keep each local in its loop header phi's slot,
+though that phi's interval covers the whole body. A phi reads its operand
 on the edge, at the predecessor's terminator, not inside the header, and
 a loop-carried operand's interval ends at that edge. Empty blocks holding
 only a branch are skipped by every edge into them and dropped, a phi loses

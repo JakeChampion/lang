@@ -3,8 +3,6 @@ package e2e
 import (
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // A borrowed array parameter owns no reference until its first replacement.
@@ -61,10 +59,6 @@ function churn(): i32 {
 }
 
 func TestOwnArrayBorrowedForwardLifetime(t *testing.T) {
-	previous := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = previous }()
-
 	cases := []struct {
 		name string
 		src  string

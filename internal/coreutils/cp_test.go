@@ -70,10 +70,10 @@ import (
 //     an absent one. The dangling-symlink destination below is the part
 //     of the family that IS reachable, so it is covered.
 //
-// `--debug` is held to its exit status and stream shape rather than its
-// bytes, and docs/COREUTILS.md says why: GNU's second line names its own
-// copy_file_range offload and SEEK_HOLE probing, which is a mechanism
-// this copy does not use.
+// `--debug`'s report line names GNU's own copy_file_range offload, which
+// this copy does not use, so no corpus case copies under `--debug`:
+// TestCpDebug holds the rest of the output to GNU's and pins the report
+// line to ours. docs/COREUTILS.md has the reasoning.
 
 // cpBasic is the main fixture: two plain files with different modes, a
 // directory with a nested one inside it, an empty directory to copy
@@ -212,6 +212,26 @@ func cpSparse(t *testing.T, dir string) {
 	// A dense file of the same length, so a copy that made everything
 	// sparse would fail here rather than pass everywhere.
 	seedWrite(t, dir, "dense", "abcdefghij")
+	// Zeros that were WRITTEN, between two blocks of data and ahead of a
+	// hole: `--sparse=auto` copies a data run as it stands, so only
+	// `always` turns those zeros into a hole.
+	mixed, err := os.Create(filepath.Join(dir, "mixed"))
+	if err != nil {
+		t.Fatalf("create mixed: %v", err)
+	}
+	block := strings.Repeat("A", 4096) + strings.Repeat("\x00", 8192) + strings.Repeat("B", 4096)
+	if _, err := mixed.WriteString(block); err != nil {
+		t.Fatalf("write mixed: %v", err)
+	}
+	if _, err := mixed.WriteAt([]byte("tail"), 1<<20); err != nil {
+		t.Fatalf("write mixed tail: %v", err)
+	}
+	if err := mixed.Truncate(2 << 20); err != nil {
+		t.Fatalf("truncate mixed: %v", err)
+	}
+	if err := mixed.Close(); err != nil {
+		t.Fatalf("close mixed: %v", err)
+	}
 }
 
 // cpGroup is the hard-link fixture: one inode under two names inside a
@@ -597,6 +617,9 @@ func cpCases(t *testing.T) []invocation {
 		{"sparse-dense-default", []string{"dense", "out"}},
 		{"sparse-dense-always", []string{"--sparse=always", "dense", "out"}},
 		{"sparse-into-directory", []string{"sp", "dense", "out"}},
+		{"sparse-written-zeros-auto", []string{"mixed", "out"}},
+		{"sparse-written-zeros-always", []string{"--sparse=always", "mixed", "out"}},
+		{"sparse-written-zeros-never", []string{"--sparse=never", "mixed", "out"}},
 	} {
 		inv := invocation{name: c.name, args: c.args, seedTree: cpSparse, sparse: true}
 		if c.name == "sparse-into-directory" {
@@ -1192,4 +1215,41 @@ func treePaths(t *testing.T, root string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// `--debug` on a real copy: the exit status and the `-v` line it implies
+// are GNU's, and the report line is ours, naming the sparse detection the
+// copy used — SEEK_HOLE for a source the filesystem stored with a hole,
+// none otherwise. Whether the fixture's hole survives is the filesystem's
+// call (APFS on the macOS runner allocates it), so the expectation is read
+// off the seeded source rather than assumed.
+func TestCpDebug(t *testing.T) {
+	for _, src := range []string{"dense", "sp"} {
+		t.Run(src, func(t *testing.T) {
+			want := "copy offload: no, reflink: unsupported, sparse detection: no"
+			run := func(bin string) []string {
+				dir := t.TempDir()
+				cpSparse(t, dir)
+				var st syscall.Stat_t
+				if err := syscall.Stat(filepath.Join(dir, src), &st); err != nil {
+					t.Fatal(err)
+				}
+				if st.Blocks*512 < st.Size {
+					want = "copy offload: no, reflink: unsupported, sparse detection: SEEK_HOLE"
+				}
+				return strings.Split(strings.TrimSuffix(runCpIn(t, bin, dir, "--debug", src, "out"), "\n"), "\n")
+			}
+			gnu := run(referenceBin(t, "cp"))
+			ours := run(fernBin(t, "cp"))
+			if len(ours) != 3 || len(gnu) != 3 {
+				t.Fatalf("--debug printed\n gnu: %q\nfern: %q\nwant the exit line plus two", gnu, ours)
+			}
+			if ours[0] != gnu[0] || ours[1] != gnu[1] {
+				t.Errorf("--debug differs from GNU before the report line\n gnu: %q\nfern: %q", gnu[:2], ours[:2])
+			}
+			if ours[2] != want {
+				t.Errorf("--debug's report is %q, want %q", ours[2], want)
+			}
+		})
+	}
 }

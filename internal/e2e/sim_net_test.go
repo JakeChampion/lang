@@ -1,11 +1,10 @@
 package e2e
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // SimNet (docs/DST-PLATFORM-BRIEF.md slice 2) is std/sim's scripted
@@ -36,92 +35,8 @@ func TestRunnerSimNetExamplePasses(t *testing.T) {
 	}
 }
 
-// simNetNativeProgram exercises the same SimNet contracts as the TAP
-// suite without std/test (whose fs assertion helpers keep every TAP
-// file interp/self-host-gated — #5372). Exit 42 iff every check holds.
-const simNetNativeProgram = `import "std/async";
-import "std/time";
-import "std/sim";
-
-function main(): i32 {
-    let d: sim.Sim = sim.new(1);
-    let n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/k", "primary", time.duration_nanos(30000000 as i64));
-    n = n.serve(2, 80, "/k", "cache", time.duration_nanos(10000000 as i64));
-    n = n.serve(3, 80, "/k", "mirror", time.duration_nanos(20000000 as i64));
-    let fs: async.Future[string][] = [
-        n.fetch_future(1, 80, "/k"),
-        n.fetch_future(2, 80, "/k"),
-        n.fetch_future(3, 80, "/k"),
-        n.fetch_future(9, 80, "/k")
-    ];
-    let got: string[] = async.gather_on(d, fs, "!");
-    if (got[0] != "primary" || got[1] != "cache" || got[2] != "mirror") { return 1; }
-    if (got[3] != "") { return 2; }
-    if (d.now_ns() != 30000000) { return 3; }
-    if (n.hits(2, 80, "/k") != 1) { return 4; }
-    if (n.hits(9, 80, "/k") != 0) { return 5; }
-
-    let rd: sim.Sim = sim.new(1);
-    let rn: sim.Net = sim.net(rd);
-    rn = rn.serve(1, 80, "/k", "slow", time.duration_nanos(40000000 as i64));
-    rn = rn.serve(2, 80, "/k", "fast", time.duration_nanos(10000000 as i64));
-    let rf: async.Future[string][] = [
-        rn.fetch_future(1, 80, "/k"),
-        rn.fetch_future(2, 80, "/k")
-    ];
-    let (w, v) = async.race_on(rd, rf, "!");
-    if (w != 1 || v != "fast") { return 6; }
-    if (rd.now_ns() != 10000000) { return 7; }
-
-    let dd: sim.Sim = sim.new(7);
-    let dn: sim.Net = sim.net(dd);
-    dn = dn.serve(1, 80, "/k", "late", time.duration_nanos(40000000 as i64));
-    dn = dn.serve(2, 80, "/k", "early", time.duration_nanos(10000000 as i64));
-    let df: async.Future[string][] = [
-        dn.fetch_future(1, 80, "/k"),
-        dn.fetch_future(2, 80, "/k")
-    ];
-    let dl: Option[string][] = async.with_deadline_on(dd, time.duration_millis(25), df);
-    match (dl[0]) { Some(x) => { return 8; }, None => { } }
-    match (dl[1]) { Some(x) => { if (x != "early") { return 9; } }, None => { return 10; } }
-    if (dd.now_ns() != 25000000) { return 11; }
-
-    let cd: sim.Sim = sim.new(1);
-    let cn: sim.Net = sim.net(cd);
-    cn = cn.serve_chunked(1, 80, "/big", "abcdefghij", time.duration_nanos(5000000 as i64), time.duration_nanos(5000000 as i64), sim.chunks_of(10, 4));
-    let cf: async.Future[string][] = [cn.fetch_future(1, 80, "/big")];
-    let cb: string[] = async.gather_on(cd, cf, "!");
-    if (cb[0] != "abcdefghij") { return 12; }
-    if (cd.now_ns() != 15000000) { return 13; }
-    return 42;
-}
-`
-
-// SimNet programs are pure computation (no fds, no clock syscalls), so
-// the identical program must produce the identical run on every backend
-// — the determinism contract is cross-backend, not just cross-run.
-func TestSimNetNativeX86_64(t *testing.T) {
-	bin := buildFernCLI(t)
-	qemu := x86QemuOrEmpty(t)
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "simnet.fern")
-	if err := os.WriteFile(srcPath, []byte(simNetNativeProgram), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	out := filepath.Join(dir, "simnet.bin")
-	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", out, srcPath).CombinedOutput(); err != nil {
-		t.Fatalf("x86-64 build of a SimNet program failed: %v\n%s", err, o)
-	}
-	cmd := runX86Bin(qemu, out)
-	_ = cmd.Run()
-	if code := cmd.ProcessState.ExitCode(); code != 42 {
-		t.Errorf("native SimNet exit = %d, want 42 (failing check index)", code)
-	}
-}
-
 func TestWASMSimNet(t *testing.T) {
-	if code := runWasmNative(t, simNetNativeProgram); code != 42 {
+	if code := runWasmNative(t, e2eharness.SimNetProgram); code != 42 {
 		t.Errorf("wasm SimNet exit = %d, want 42 (failing check index)", code)
 	}
 }

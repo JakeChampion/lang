@@ -1259,7 +1259,7 @@ func runInterp(srcPath string, argv []string) (int, error) {
 // stdlib wrappers don't trip gates: this mirrors each backend's own
 // pre-shake (same dyn-dispatch roots + -shared exports; backends
 // re-shake idempotently), including wasi-http's drop of the synthesised
-// tcp_serve `main` (see internal/codegen/wasmbin/build.go).
+// serve `main` (see internal/codegen/wasmbin/build.go).
 //
 // Returns nil when the target has no descriptor or nothing violates its
 // capability set. NOTE this mutates prog by tree-shaking it.
@@ -1512,7 +1512,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	// first so unused imported stdlib wrappers don't trip gates: this
 	// mirrors each backend's own pre-shake (same dyn-dispatch roots +
 	// -shared exports; backends re-shake idempotently), including
-	// wasi-http's drop of the synthesised tcp_serve `main` (see
+	// wasi-http's drop of the synthesised serve `main` (see
 	// internal/codegen/wasmbin/build.go). Targets without a descriptor
 	// skip enforcement.
 	if errs := enforceTargetCapabilities(srcPath, prog, info, target, shared, export); errs != nil {

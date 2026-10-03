@@ -602,7 +602,7 @@ func builtinStructDecls() []*ast.StructDecl {
 				// wins).
 				{Name: "headers", Type: ast.StructType{Name: "HeaderMap"}},
 				// `trailers` follow a chunked body's last chunk
-				// (std/tcp's serve loop); a body with a length has
+				// (std/serve's serve loop); a body with a length has
 				// nowhere to carry them, and the wasi-http wrapper
 				// finishes the outgoing body without them.
 				{Name: "trailers", Type: ast.StructType{Name: "HeaderMap"}},
@@ -633,7 +633,7 @@ func builtinStructDecls() []*ast.StructDecl {
 		// driver) lives behind this handle rather than in the bag.
 		//
 		// Every construction goes through the synthesised
-		// `__fern_platform_new`, std/tcp's `__host_platform`, or
+		// `__fern_platform_new`, std/serve's `__host_platform`, or
 		// std/platform; nothing builds this struct out of raw
 		// memory.
 		{
@@ -907,6 +907,13 @@ func builtinStructDecls() []*ast.StructDecl {
 		// path resolves on — which is exactly what
 		// `pathconf(path, _PC_NAME_MAX)` means — and a caller that has
 		// paid for the lookup should not pay again for the other half.
+		//
+		// `fs_type` is the kernel's filesystem type number: Linux's
+		// magic (`0xef53` for ext4) or Darwin's VFS type index, which
+		// share no namespace. `fsid` is `f_fsid`'s two 32-bit words as
+		// one number, first word high, the way GNU `stat -f` prints it.
+		// `frag_size` is `f_frsize`; Darwin has none and reports
+		// `f_bsize`.
 		{
 			Name: "FsStat",
 			Fields: []ast.Param{
@@ -918,6 +925,9 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "files_free", Type: ast.NumberType{Width: 64, Signed: true}},
 				{Name: "name_max", Type: ast.NumberType{Width: 64, Signed: true}},
 				{Name: "path_max", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "fs_type", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "fsid", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "frag_size", Type: ast.NumberType{Width: 64, Signed: true}},
 			},
 		},
 		// WinSize — `window_size(fd)` shape: how large the terminal
@@ -972,8 +982,8 @@ func builtinStructDecls() []*ast.StructDecl {
 		// `it.advance()` which all stay i32-shaped on the
 		// wasm side (Key / Value are reinterpreted via the
 		// type-system substitution path). The fields spell core/map's
-		// __map_iter_impl box, [buf:8][cursor:4][pad:4] on every target,
-		// which is the size its drop frees.
+		// __map_iter_impl box, [buf:8][cursor:4][pad:4][map:8] on every
+		// target, which is the size its drop frees.
 		{
 			Name:       "MapIter",
 			TypeParams: []string{"K", "V"},
@@ -981,6 +991,7 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "data", Type: ast.NumberType{Width: 64}},
 				{Name: "i", Type: ast.NumberType{}},
 				{Name: "pad", Type: ast.NumberType{}},
+				{Name: "map", Type: ast.NumberType{Width: 64}},
 			},
 		},
 		// Cell[T] — a single-slot mutable heap box, the sanctioned
@@ -2479,8 +2490,25 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// the same two handles opened under a flags word of Fern's own,
 	// translated by each backend into the kernel's:
 	//
-	//	1  create the file when it is missing, mode 0666 through the umask
-	//	2  do not wait on the open (O_NONBLOCK)
+	//	1    create the file when it is missing, mode 0666 through the umask
+	//	2    do not wait on the open (O_NONBLOCK)
+	//	4    fail when the file already exists (O_EXCL), with 1: the exclusive
+	//	     create at the same 0666 — `open_exclusive` keeps its 0600 for the
+	//	     temporary file it was made for, this is the one `dd conv=excl` has
+	//	8    bypass the page cache (O_DIRECT)
+	//	16   fail unless the path is a directory (O_DIRECTORY)
+	//	32   every write waits for the data to reach the device (O_DSYNC)
+	//	64   likewise, and for the metadata (O_SYNC)
+	//	128  do not update the access time (O_NOATIME)
+	//	256  never become the controlling terminal (O_NOCTTY)
+	//	512  fail when the last component is a symlink (O_NOFOLLOW)
+	//
+	// A bit the target has no spelling for is a REFUSAL, `Unsupported`,
+	// never a silent no-op: XNU has no O_DIRECT (its F_NOCACHE is a
+	// different request, made after the open) and no O_NOATIME, and WASI
+	// has neither of those nor O_NOCTTY. The caller asked for a guarantee
+	// the open cannot give, and `dd iflag=directory` that quietly opened a
+	// regular file would be worse than the error.
 	//
 	// The writer never truncates and never appends: it is the plain
 	// O_WRONLY open a `touch` or a `dd` wants, where open_writer's
@@ -2577,7 +2605,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// or a negative errno on failure. Capability-gated (`proc`,
 	// native targets only — E066 elsewhere). The interpreter cannot
 	// bare-fork (Go's runtime is threaded) and returns -38 (ENOSYS);
-	// callers like `tcp_serve_supervised` treat that as "supervision
+	// callers like `serve.supervise` treat that as "supervision
 	// unavailable" and degrade to single-process serving.
 	c.info.FuncSigs["proc_fork"] = &ast.FuncType{
 		Params: []ast.Type{},
@@ -3281,6 +3309,28 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// getxattr(path, name): Result[string, IoError] — the value of the
+	// extended attribute `name` on `path`, `getxattr(2)`. The value is
+	// the attribute's bytes verbatim: an SELinux context keeps the NUL
+	// the kernel stores after it. An absent attribute is ENODATA
+	// (Darwin's ENOATTR), a filesystem without attributes EOPNOTSUPP,
+	// and the Err carries which. lgetxattr is the same question about
+	// a final symlink itself, the way `lstat` is. Native only: neither
+	// WASI preview has extended attributes (capability `xattr`).
+	c.info.FuncSigs["getxattr"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	c.info.FuncSigs["lgetxattr"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// rename(from, to): Result[void, IoError] — move the directory
 	// entry `from` to `to`, `renameat(AT_FDCWD, from, AT_FDCWD, to)`.
 	// Nothing is copied: the inode keeps its mode, its times and every
@@ -3300,11 +3350,33 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// when `to` is under `from`. The `IoError` names `to`, the operand
 	// the failure is about.
 	//
-	// There is no no-replace or exchange flag. `renameat2` is Linux's
-	// alone — Darwin spells the pair `renameatx_np` and WASI has
-	// neither — and a flag one target honours and two refuse belongs to
-	// the capability system, not to an argument.
+	// The no-replace and exchange forms are the two builtins below,
+	// not a flag here: WASI has neither, and E066 refuses them there
+	// (capability `fsrename`) while this one stays on `fs`.
 	c.info.FuncSigs["rename"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// rename_noreplace(from, to): Result[void, IoError] — `rename`
+	// that refuses an existing `to` with EEXIST, in the same kernel
+	// call rather than a stat before it: Linux's renameat2 with
+	// RENAME_NOREPLACE, Darwin's renameatx_np with RENAME_EXCL.
+	c.info.FuncSigs["rename_noreplace"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// rename_exchange(a, b): Result[void, IoError] — swap the two
+	// names atomically; both must exist. Linux's renameat2 with
+	// RENAME_EXCHANGE, Darwin's renameatx_np with RENAME_SWAP. A
+	// filesystem without the operation answers EINVAL (Linux) or
+	// ENOTSUP (Darwin), and that is the Err. The IoError names `b`.
+	c.info.FuncSigs["rename_exchange"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
 			ast.VoidType{},
@@ -3993,7 +4065,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	writeSomeResult := ast.EnumType{Name: "Result", Args: []ast.Type{
 		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
 	registerStructMethod("Writer", "write_some", []ast.Type{ast.StringType{}}, writeSomeResult)
-	bytes := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	bytes := ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}
 	registerStructMethod("Writer", "write_bytes", []ast.Type{bytes}, optionIoErr)
 	registerStructMethod("Writer", "write_some_bytes", []ast.Type{bytes}, writeSomeResult)
 	registerStructMethod("Writer", "close", nil, optionIoErr)
@@ -5213,8 +5285,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// Auto-main from handle: when the user defines
 	// `function handle(req: HttpRequest, plat: Platform):
 	// HttpResponse` but no `main()`, synthesise a minimal main
-	// that calls `tcp_serve(port, handle)` after reading PORT
-	// from the environment (default 8080). tcp_serve constructs
+	// that calls `serve.supervise(port, serve.config(), handle)` after reading PORT
+	// from the environment (default 8080). The serve loop constructs
 	// a Platform per request and threads it through. The same
 	// source then
 	// compiles for arm64 (CLI-mode native server), wasm
@@ -10607,6 +10679,8 @@ func storesArgument(name string, i int) bool {
 		return i == 2
 	case "__method_Map_set":
 		return i == 1 || i == 2
+	case "__method_Cell_set":
+		return i == 1
 	}
 	return false
 }
@@ -10698,6 +10772,9 @@ func assignHint(want, got ast.Type) string {
 // conversion has to be written out — otherwise the checker accepts an
 // assignment no backend lowers (#8446). Empty for any other pair.
 func dynElemHint(want, got ast.Type) string {
+	if _, direct := want.(ast.DynTraitType); direct {
+		return ""
+	}
 	pos, ok := dynElemMismatch(want, got)
 	if !ok {
 		return ""
@@ -11256,6 +11333,19 @@ func hoistReceiver(fn *ast.FuncDecl) {
 	fn.Receiver = nil
 }
 
+// receiverDeclares reports whether the hoisted generic method `name` takes
+// type parameter tp from its receiver. A concrete receiver (`u8[]`,
+// `Box[i32]`) declares none, so the receiver's arguments a dispatch stamps
+// must not bind the method's own parameters. True for anything that is not
+// a generic method, which keeps the receiver stamp as it was.
+func (c *checker) receiverDeclares(name, tp string) bool {
+	fn, ok := c.info.GenericFuncs[name]
+	if !ok || fn.MethodRecv == "" || len(fn.Params) == 0 {
+		return true
+	}
+	return typeMentionsParam(fn.Params[0].Type, tp)
+}
+
 // elemDispatchable reports whether an array/slice receiver with this element
 // type can be dispatched to. Call-site dispatch binds the receiver's element
 // in one step, so a nested `T[][]` / `[T][]` element binds T to the INNER
@@ -11276,15 +11366,20 @@ func elemDispatchable(elem ast.Type) bool {
 // list by the rewrite, so reporting it as "argument 1" describes a slot the
 // reader never wrote. It is an unresolved method on that receiver — the same
 // thing E043 reports when no method of the name exists at all — and the
-// declared receiver type is what says why, so name it.
+// declared receiver type is what says why, so name it. The written arguments
+// are numbered from the first one after the receiver.
 func (c *checker) errArgMismatch(n *ast.Call, i int, recvIsArg0 bool, expected, at ast.Type) {
 	if recvIsArg0 && i == 0 && n.Method != nil {
 		c.errfCode(n.Method.FieldPos, "E043", "no method %q on %s — %q is declared for %s",
 			n.Method.Field, at, n.Method.Field, expected)
 		return
 	}
+	num := i + 1
+	if recvIsArg0 {
+		num = i
+	}
 	c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s%s",
-		i+1, expected, at, assignHint(expected, at))
+		num, expected, at, assignHint(expected, at))
 }
 
 // moduleAlreadyImports reports whether the module being checked names `mod`
@@ -16307,25 +16402,46 @@ func (c *checker) retagIndexAsTypeArgs(n *ast.Call, s *scope) {
 	if !ok || !c.calleeIsGenericFunc(fn, s) {
 		return
 	}
-	arg, ok := ix.Idx.(*ast.Ident)
+	params := c.typeParamsInScope()
+	t, ok := c.indexAsType(ix.Idx, params, s)
 	if !ok {
 		return
 	}
-	if _, bound := c.identValueBinding(arg.Name, s); bound {
-		return
-	}
-	params := c.typeParamsInScope()
-	_, isStruct := c.info.Structs[arg.Name]
-	_, isEnum := c.info.Enums[arg.Name]
-	_, isResource := c.info.Resources[arg.Name]
-	if !params[arg.Name] && !isStruct && !isEnum && !isResource {
-		return
-	}
-	var t ast.Type = ast.StructType{Name: arg.Name}
-	c.resolveType(&t, params, arg.P)
+	c.resolveType(&t, params, ix.Idx.Pos())
 	n.Callee = fn
 	n.TypeArgs = []ast.Type{t}
 	n.TypeArgsWritten = true
+}
+
+// indexAsType reads an index operand as the type it spells: a type name, or a
+// generic one instantiated the same way (`W[Q]`), which the parser cannot tell
+// from indexing.
+func (c *checker) indexAsType(e ast.Expr, params map[string]bool, s *scope) (ast.Type, bool) {
+	switch x := e.(type) {
+	case *ast.Ident:
+		if _, bound := c.identValueBinding(x.Name, s); bound {
+			return nil, false
+		}
+		_, isStruct := c.info.Structs[x.Name]
+		_, isEnum := c.info.Enums[x.Name]
+		_, isResource := c.info.Resources[x.Name]
+		if !params[x.Name] && !isStruct && !isEnum && !isResource {
+			return nil, false
+		}
+		return ast.StructType{Name: x.Name}, true
+	case *ast.Index:
+		head, ok := c.indexAsType(x.Array, params, s)
+		if !ok {
+			return nil, false
+		}
+		arg, ok := c.indexAsType(x.Idx, params, s)
+		if !ok {
+			return nil, false
+		}
+		st := head.(ast.StructType)
+		return ast.StructType{Name: st.Name, Args: append(st.Args, arg)}, true
+	}
+	return nil, false
 }
 
 // errE040GenericFuncAsValue reports a generic function named where a value
@@ -17104,6 +17220,18 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			n.ElemType = eu
 			return ast.ArrayType{Elem: eu}
 		}
+		// A `str[]` destination types the literal: each element is read at
+		// `str`, so a string literal widens beside a view as it does at any
+		// other `str` destination (#10889).
+		if _, ok := elemExpected.(ast.StrType); ok {
+			for _, el := range n.Elems {
+				if t := checkElem(el); t != nil && !c.assignable(elemExpected, t) {
+					c.errfCode(el.Pos(), "E034", "array element type %s, expected %s", t, elemExpected)
+				}
+			}
+			n.ElemType = elemExpected
+			return ast.ArrayType{Elem: elemExpected}
+		}
 		elemT := checkElem(n.Elems[0])
 		for _, el := range n.Elems[1:] {
 			t := checkElem(el)
@@ -17836,7 +17964,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if len(typeParams) == len(n.TypeArgs) {
 					sub := make(map[string]ast.Type, len(typeParams))
 					for i, tp := range typeParams {
-						sub[tp] = n.TypeArgs[i]
+						if c.receiverDeclares(id.Name, tp) {
+							sub[tp] = n.TypeArgs[i]
+						}
 					}
 					substitutedParams := make([]ast.Type, len(ft.Params))
 					for i, p := range ft.Params {
@@ -17919,7 +18049,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					}
 					// The receiver's arguments are the LEADING parameters.
 					for i, ta := range recvArgs {
-						if i < len(fn.TypeParams) {
+						if i < len(fn.TypeParams) && c.receiverDeclares(id.Name, fn.TypeParams[i]) {
 							sub[fn.TypeParams[i]] = ta
 						}
 					}
@@ -19805,11 +19935,11 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				c.settleNumeric(to.Inner, wrapped)
 			}
 		}
-		// Stamp `to.Type` so postSettleType / IR sees the
-		// resolved payload width — `to.Type` was set by the
-		// original checkExpr from the source's pre-settle
-		// `srcEnum.Args[0]`.
-		to.Type = hint
+		// `to.Type` is the source's payload, which the IR lays the box out
+		// by: only a literal payload the hint just settled takes its width.
+		if to.Type == nil || isPolymorphicNumeric(to.Type) {
+			to.Type = hint
+		}
 	}
 	if fa, ok := e.(*ast.FieldAccess); ok {
 		if hn, ok := hint.(ast.NumberType); ok && !hn.Polymorphic {
@@ -19986,6 +20116,14 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 					}
 				}
 				sl.TypeArgs = append([]ast.Type{}, hn.Args...)
+			}
+		} else if call, ok := e.(*ast.Call); ok && isCellNew(call) {
+			// `let c: Cell[i64] = cell_new(1)` reaches T through the
+			// destination, as a generic call's result does.
+			if hn.Name == "Cell" && len(hn.Args) == 1 && len(call.Args) == 1 && len(call.TypeArgs) == 1 &&
+				isPolymorphicNumeric(call.TypeArgs[0]) && unsettledNumericShape(call.Args[0]) {
+				c.settleNumeric(call.Args[0], hn.Args[0])
+				call.TypeArgs[0] = c.postSettleType(call.Args[0], call.TypeArgs[0])
 			}
 		} else if call, ok := e.(*ast.Call); ok {
 			// `let b: Box[u64] = box(1)` reaches T through the return type.
@@ -20548,6 +20686,9 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 		// param of a multi-param generic (e.g. the `T` of
 		// `Result[T, E]` from `Ok(v)`) while preserving the
 		// other from the first-pass result.
+		if isCellNew(x) && len(x.TypeArgs) == 1 {
+			return ast.StructType{Name: "Cell", Args: []ast.Type{x.TypeArgs[0]}}
+		}
 		if et, ok := prior.(ast.EnumType); ok && len(et.Args) > 0 && isVariantCall(x) {
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				if vr, isVar, _ := c.resolveVariant(id.Name, id.EnumName); isVar {
@@ -20884,6 +21025,13 @@ func (c *checker) widenGenericCallByLiterals(call *ast.Call) ast.Type {
 // parameter type merely mentions it (`T[]`, `Option[T]`), is left to that
 // argument (#8722). A field read of the call's result — `both(1, 2).1` —
 // settles through the declared type of the field it reads (#10176).
+// isCellNew reports whether call is the `cell_new` constructor, which the
+// checker intercepts by name.
+func isCellNew(call *ast.Call) bool {
+	id, ok := call.Callee.(*ast.Ident)
+	return ok && id.Name == "cell_new"
+}
+
 func (c *checker) settleGenericCallByHint(e ast.Expr, hint ast.Type) {
 	call, fn, declared := c.genericCallProjection(e)
 	if call == nil {
@@ -20901,7 +21049,7 @@ func (c *checker) settleGenericCallByHint(e ast.Expr, hint ast.Type) {
 				break
 			}
 			if pt, ok := p.Type.(ast.ParamType); ok && pt.Name == tp {
-				if !unsettledNumericShape(call.Args[j]) {
+				if !unsettledNumericShape(call.Args[j]) && !c.openGenericCall(call.Args[j]) {
 					pinned = true
 				}
 				bound = append(bound, call.Args[j])
@@ -20917,6 +21065,22 @@ func (c *checker) settleGenericCallByHint(e ast.Expr, hint ast.Type) {
 		}
 		call.TypeArgs[i] = want
 	}
+}
+
+// openGenericCall reports whether e reads a generic call whose width is still
+// open — a type argument only an unsuffixed literal bound — so a hint on an
+// outer generic call reaches through it: `id(id(1))` at an i64.
+func (c *checker) openGenericCall(e ast.Expr) bool {
+	call, _, _ := c.genericCallProjection(e)
+	if call == nil {
+		return false
+	}
+	for _, ta := range call.TypeArgs {
+		if isPolymorphicNumeric(ta) {
+			return true
+		}
+	}
+	return false
 }
 
 // genericCallProjection resolves e — a generic call, or a chain of tuple or
@@ -21388,19 +21552,20 @@ func initTakesPlatformOnly(init *ast.FuncDecl) bool {
 	return ok && st.Name == "Platform"
 }
 
-// isServeOptionsType reports whether `t` is std/tcp's `ServeOptions`,
-// under its bare name (flat loads) or a module prefix (`tcp__ServeOptions`).
-func isServeOptionsType(t ast.Type) bool {
+// isServeConfigType reports whether `t` is std/serve's `Config`. modload
+// gives a stdlib module its bare prefix and moves a user module that
+// collides with it, so `serve__Config` names that struct and no other.
+func isServeConfigType(t ast.Type) bool {
 	st, ok := t.(ast.StructType)
-	return ok && (st.Name == "ServeOptions" || strings.HasSuffix(st.Name, "__ServeOptions"))
+	return ok && st.Name == "serve__Config"
 }
 
 // initReturnShape reports what a handler program's `init` answers: the
-// serve options, a state for the handler to carry, both as
-// `(ServeOptions, S)`, or neither.
+// serve config, a state for the handler to carry, both as
+// `(serve.Config, S)`, or neither.
 //
 //	function init(): S
-//	function init(plat: Platform): (ServeOptions, S)
+//	function init(plat: Platform): (serve.Config, S)
 //	function handle(state: S, req: HttpRequest, plat: Platform): (S, HttpResponse)
 //
 // The state pair is the two-phase lifecycle of docs/PLATFORM-RESEARCH.md
@@ -21419,10 +21584,10 @@ func initReturnShape(init *ast.FuncDecl) (opts, state bool) {
 	if init == nil || isVoidReturn(init.ReturnType) {
 		return false, false
 	}
-	if isServeOptionsType(init.ReturnType) {
+	if isServeConfigType(init.ReturnType) {
 		return true, false
 	}
-	if tt, ok := init.ReturnType.(ast.TupleType); ok && len(tt.Elems) == 2 && isServeOptionsType(tt.Elems[0]) {
+	if tt, ok := init.ReturnType.(ast.TupleType); ok && len(tt.Elems) == 2 && isServeConfigType(tt.Elems[0]) {
 		return true, true
 	}
 	return false, true
@@ -21547,7 +21712,7 @@ const platformCtorName = "__fern_platform_new"
 // wrapper (internal/codegen/wasmbin/wasi_http.go) is the caller that matters:
 // it is hand-written wasm, and it used to allocate the struct and store the
 // field itself, which is a copy of the layout that goes stale the day the bag
-// grows a capability. std/tcp's accept loop still writes the literal — it is
+// grows a capability. std/serve's accept loop still writes the literal — it is
 // Fern source the checker re-checks, so it cannot drift silently.
 //
 // The `mode`/`sink` fields carry the mock seam (Rec §6): this is the host
@@ -21580,74 +21745,55 @@ func synthesisePlatformCtor() *ast.FuncDecl {
 
 // synthesiseHandleMain builds the main of a handler-shaped program: the
 // handler served under the supervisor (docs/CRASH-ONLY-SERVE.md) on
-// `PORT`, with `init`'s options and state where it answers them —
+// `PORT`, with `init`'s config and state where it answers them —
 //
 //	function main(): i32 {
-//	    return tcp_serve_supervised_opts(__port_from_env("PORT", 8080), serve_options(), handle);
+//	    return serve.supervise(serve.__port_from_env("PORT", 8080), serve.config(), handle);
 //	}
 //
-// or, for `init(plat: Platform): (ServeOptions, S)` beside a handler
+// or, for `init(plat: Platform): (serve.Config, S)` beside a handler
 // threading `S` and a `shutdown(reason, state)` hook:
 //
 //	function main(): i32 {
-//	    let (__fern_opts, __fern_state) = init(__init_platform());
-//	    return tcp_serve_supervised_with_shutdown(__port_from_env("PORT", 8080), __fern_opts, __fern_state, handle, shutdown);
+//	    let (__fern_opts, __fern_state) = init(serve.__init_platform());
+//	    return serve.supervise_with_shutdown(serve.__port_from_env("PORT", 8080), __fern_opts, __fern_state, handle, shutdown);
 //	}
 //
 // An `init` answering only the state goes as the state argument, one
-// answering only the options as the options argument, and a void one
+// answering only the config as the config argument, and a void one
 // runs as a statement before the serve call. Where the target has no
 // processes (`supervised` false: wasm32-wasi) the single-process entries
-// of the same arity serve instead — `tcp_serve_opts`, `tcp_serve_with_opts`
-// and their `_shutdown` twins.
+// of the same arity serve instead — `serve.run`, `serve.run_with` and
+// their `_shutdown` twins.
 //
 // The wasi-http target has its own `wasi:http/incoming-handler.handle`
 // export wrapper that invokes the user's `handle` directly and drops
 // this main before the tree-shake.
 //
-// Loaded flat via `LoadStdlibFlat` (e.g. in tests), the std/tcp entries
-// live at their bare names (no mangling). Loaded via modload with
-// `import "std/tcp";` they get the `tcp__` prefix instead. We probe
-// `prog.Funcs` for whichever name exists and stamp the Ident accordingly
-// so the synthesised main resolves cleanly through both load paths.
+// The calls name std/serve's entries as modload mangles them; a program
+// that does not import std/serve is told they are undefined.
 func synthesiseHandleMain(prog *ast.Program, supervised bool) *ast.FuncDecl {
 	pos := ast.Position{}
-	resolve := func(bare, mangled string) string {
-		for _, fn := range prog.Funcs {
-			if fn.Name == bare {
-				return bare
-			}
-		}
-		for _, fn := range prog.Funcs {
-			if fn.Name == mangled {
-				return mangled
-			}
-		}
-		// Neither variant present — the bare name still gives
-		// the cleanest "undefined identifier" diagnostic when
-		// the program forgot to import std/tcp.
-		return bare
-	}
-	tcpCall := func(bare string, args ...ast.Expr) *ast.Call {
-		return &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: resolve(bare, "tcp__"+bare)}, Args: args}
+	serveRef := func(name string, args ...ast.Expr) *ast.Call {
+		return &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "serve__" + name}, Args: args}
 	}
 	ident := func(name string) *ast.Ident { return &ast.Ident{P: pos, Name: name} }
-	portCall := tcpCall("__port_from_env", &ast.StringLit{P: pos, Value: "PORT"}, &ast.NumberLit{P: pos, Value: 8080})
+	portCall := serveRef("__port_from_env", &ast.StringLit{P: pos, Value: "PORT"}, &ast.NumberLit{P: pos, Value: 8080})
 	// `init` is the BARE name; if a module import qualifies it, modload
 	// rewrites the call separately. It is handed the platform when it
 	// takes one.
 	init := findDecl(prog, "init")
 	initCall := &ast.Call{P: pos, Callee: ident("init")}
 	if init != nil && len(init.Params) == 1 {
-		initCall.Args = []ast.Expr{tcpCall("__init_platform")}
+		initCall.Args = []ast.Expr{serveRef("__init_platform")}
 	}
 	initOpts, initState := initReturnShape(init)
 
 	var stmts []ast.Stmt
-	// The options are `init`'s when it answers them, else the defaults;
-	// the state is `init`'s value, destructured from beside the options
+	// The config is `init`'s when it answers one, else the defaults;
+	// the state is `init`'s value, destructured from beside the config
 	// when it answers both.
-	var opts ast.Expr = tcpCall("serve_options")
+	var opts ast.Expr = serveRef("config")
 	var state ast.Expr = initCall
 	switch {
 	case initOpts && initState:
@@ -21673,13 +21819,13 @@ func synthesiseHandleMain(prog *ast.Program, supervised bool) *ast.FuncDecl {
 	var serveCall *ast.Call
 	switch {
 	case initState && hasShutdown:
-		serveCall = tcpCall(entry("tcp_serve_supervised_with_shutdown", "tcp_serve_with_shutdown"), portCall, opts, state, ident("handle"), ident("shutdown"))
+		serveCall = serveRef(entry("supervise_with_shutdown", "run_with_shutdown"), portCall, opts, state, ident("handle"), ident("shutdown"))
 	case initState:
-		serveCall = tcpCall(entry("tcp_serve_supervised_with", "tcp_serve_with_opts"), portCall, opts, state, ident("handle"))
+		serveCall = serveRef(entry("supervise_with", "run_with"), portCall, opts, state, ident("handle"))
 	case hasShutdown:
-		serveCall = tcpCall(entry("tcp_serve_supervised_shutdown", "tcp_serve_shutdown"), portCall, opts, ident("handle"), ident("shutdown"))
+		serveCall = serveRef(entry("supervise_shutdown", "run_shutdown"), portCall, opts, ident("handle"), ident("shutdown"))
 	default:
-		serveCall = tcpCall(entry("tcp_serve_supervised_opts", "tcp_serve_opts"), portCall, opts, ident("handle"))
+		serveCall = serveRef(entry("supervise", "run"), portCall, opts, ident("handle"))
 	}
 	stmts = append(stmts, &ast.Return{P: pos, Value: serveCall})
 	return &ast.FuncDecl{

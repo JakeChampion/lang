@@ -24,14 +24,14 @@ import (
 // its read, parse, handler or serialization path. The parent owns fd 3.
 func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(root, "internal/stdlib/std/tcp.fern"))
+	data, err := os.ReadFile(filepath.Join(root, "internal/stdlib/std/serve.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	src := string(data)
 	const async = "import \"std/async\";"
 	if strings.Count(src, async) != 1 {
-		t.Fatal("std/tcp's imports changed; update its bounded census fixture")
+		t.Fatal("std/serve's imports changed; update its bounded census fixture")
 	}
 	src = strings.Replace(src, async, "import \"std/platform\";\n"+async, 1)
 	start := strings.Index(src, "function __serve_loop(")
@@ -87,7 +87,7 @@ function census_handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_millis(300 as i64), data_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200, max_connections: 2 }, (reason: string): void => {});
+    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), Config { ...config(), recv_deadline: time.duration_millis(300 as i64), data_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200, max_connections: 2 }, (reason: string): void => {});
 }
 `
 }
@@ -630,7 +630,7 @@ func httpHandlerCensusRequests(t *testing.T, addr string, rounds int) {
 func WasiHTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	t.Helper()
 	src := HTTPHandlerCensusSource(t, root, rounds)
-	const original = "    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_millis(300 as i64), data_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200, max_connections: 2 }, (reason: string): void => {});"
+	const original = "    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), Config { ...config(), recv_deadline: time.duration_millis(300 as i64), data_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200, max_connections: 2 }, (reason: string): void => {});"
 	if strings.Count(src, original) != 1 {
 		t.Fatal("bounded HTTP entry changed")
 	}
@@ -639,7 +639,7 @@ func WasiHTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
     let port: i32 = tcp_local_port(listener);
     if (port <= 0) { return 91; }
     print(int.int_to_string(port));
-    let result: i32 = __serve_loop(listener, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_millis(300 as i64), data_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200, max_connections: 2 }, (reason: string): void => {});
+    let result: i32 = __serve_loop(listener, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), Config { ...config(), recv_deadline: time.duration_millis(300 as i64), data_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200, max_connections: 2 }, (reason: string): void => {});
     if (tcp_close(listener) != 0) { return 92; }
     return result;`
 	return strings.Replace(src, original, entry, 1)

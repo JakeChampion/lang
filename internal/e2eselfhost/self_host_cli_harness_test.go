@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // selfHostCLI is the self-host front end (fern.fern) built once per test, for
@@ -62,7 +64,7 @@ func (c *selfHostCLI) x86Binary(t *testing.T, src string, env ...string) string 
 // stderr (where the leakcheck census lands) and exit code.
 func runWasmCensus(t *testing.T, wat string, args ...string) (string, int) {
 	t.Helper()
-	cmd := exec.Command("wasmtime", append([]string{"run", wat}, args...)...)
+	cmd := exec.Command(e2eharness.Wasmtime(t), append([]string{"run", wat}, args...)...)
 	var eb bytes.Buffer
 	cmd.Stderr = &eb
 	_ = cmd.Run()
@@ -107,10 +109,7 @@ func (c *selfHostCLI) exitOfFile(t *testing.T, src, target string, stdin []byte,
 		_ = cmd.Run()
 		return eb.String(), cmd.ProcessState.ExitCode()
 	case "wasm32-wasi":
-		if _, err := exec.LookPath("wasmtime"); err != nil {
-			t.Fatal("wasmtime not on PATH")
-		}
-		cmd := exec.Command("wasmtime", "run", c.emit(t, src, target, env...))
+		cmd := exec.Command(e2eharness.Wasmtime(t), "run", c.emit(t, src, target, env...))
 		cmd.Stdin = bytes.NewReader(stdin)
 		var eb bytes.Buffer
 		cmd.Stderr = &eb

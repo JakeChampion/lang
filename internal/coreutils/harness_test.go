@@ -2246,6 +2246,8 @@ func treeDiff(want, got []treeEntry, wantWho, gotWho string) string {
 			lines = append(lines, fmt.Sprintf("  %s: %s hard-link group %d, %s hard-link group %d", n, wantWho, we.group, gotWho, ge.group))
 		case we.owner != ge.owner:
 			lines = append(lines, fmt.Sprintf("  %s: %s owner %s, %s owner %s", n, wantWho, we.owner, gotWho, ge.owner))
+		case we.blocks != ge.blocks:
+			lines = append(lines, fmt.Sprintf("  %s: %s %d blocks, %s %d blocks", n, wantWho, we.blocks, gotWho, ge.blocks))
 		}
 		if len(lines) == 8 {
 			lines = append(lines, "  … more")

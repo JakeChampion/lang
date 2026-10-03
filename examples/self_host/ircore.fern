@@ -59,6 +59,31 @@ pub function counted_release_body(r: irtables.LowerResult): boolean {
     && r.ops[n - 1].kind_tag == ir.op_return().kind_tag;
 }
 
+// nominal_release_drop is the drop helper a counted release runs on a unique
+// box when its body is exactly that call and the box's own release, the shape
+// a named type's release takes; "" for any other body.
+pub function nominal_release_drop(r: irtables.LowerResult): string {
+  if (!counted_release_body(r) || r.ops.len() != 12) {
+    return "";
+  }
+  let o: ir.Op[] = r.ops;
+  let k_load: i32 = ir.op_load_local(0).kind_tag;
+  let k_call: i32 = ir.op_call_direct("", 1).kind_tag;
+  if (o[0].kind_tag != k_load || o[0].i32_imm != 0 || o[3].kind_tag != k_load || o[3].i32_imm != 0) {
+    return "";
+  }
+  if (o[1].kind_tag != k_call || o[1].str != "__fern_rc_is_unique" || o[2].kind_tag != ir.op_if(0).kind_tag) {
+    return "";
+  }
+  if (o[4].kind_tag != k_call || o[4].i32_imm != 1 || !util.str_has_prefix(o[4].str, "__sem_drop_")) {
+    return "";
+  }
+  if (o[5].kind_tag != ir.op_drop().kind_tag || o[6].kind_tag != ir.op_end().kind_tag) {
+    return "";
+  }
+  return o[4].str;
+}
+
 // is_array_type reports whether a type string denotes an array (ends "[]").
 function is_array_type(t: string): boolean {
   let n: i32 = t.len();
@@ -337,8 +362,8 @@ pub function ir_helper_symbol(name: string): string {
   if (name == "__fern_rc_dec") {
     return "__fn___fern_arr_dec";
   }
-  // A map cursor is a two-slot array box that owns nothing; wasm's also owns
-  // its snapshots and has a release of its own.
+  // A map cursor is a two-slot array box whose map the typed lowering
+  // releases; wasm's also owns its snapshots and has a release of its own.
   if (name == "__fern_mapiter_free") {
     return "__fn___fern_arr_dec";
   }
@@ -749,13 +774,14 @@ pub function all_runtime_need_roots(): string[] {
     // The platform helpers. These were absent for as long as the list
     // existed, which made the "closed set" claim above false: the
     // bootstrap compiler marks none of them, so nothing noticed until a
-    // per-module build of a REAL program — the std/http + std/tcp
+    // per-module build of a REAL program — the std/http + std/serve
     // edge-handler — linked its library units against undefined
     // __fern_tcp_listen / __fern_tcp_send / __fern_poll / … (#5686).
     // Filesystem + process:
     "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
     "write_file_bytes", "write_file_bytes_u8",
     "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
+    "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr",
     "chmod", "chmod_at", "set_file_times", "truncate", "mknod", "chown_at",
     "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_dup_onto",
     "termios_get", "termios_set",
@@ -903,11 +929,14 @@ pub struct Sub {
   // The record declarations the produced bodies build beyond the module's own
   // (semlower.instance_records), for the emit to append to its struct table.
   records: parser.StructDecl[],
+  // The emit entry's checks already passed on the module this was built for
+  // (semlower.driven_annotated), so the entry does not run them again.
+  checked: boolean,
 }
 
 pub function no_sub(): Sub {
   let none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [] };
-  return Sub { bodies: [], extra: [], sigs: fnsigs.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [] };
+  return Sub { bodies: [], extra: [], sigs: fnsigs.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false };
 }
 
 // The register emit's lambda-lifted module: the producer's, erased, when it
@@ -1206,7 +1235,7 @@ pub function unit_cache_key(parts: flatten.PerModule[], u: Units, k: UnitKeys, i
   // operations. Old native slice bodies create immortal descriptors; they
   // must not be reused with callers that depend on counted view descriptors.
   // Literal alignment also changes the relative offsets in cached wasm units.
-  return key + "|ir" + lowered_digest(u.caches[idx]) + ":" + k.view + "|runtime=counted-string-views-1,wasm-string-align4-1,tagged-byte-views-1";
+  return key + "|ir" + lowered_digest(u.caches[idx]) + ":" + k.view + "|runtime=counted-string-views-1,wasm-string-align4-1,tagged-byte-views-1,writer-byte-views-1,byte-consumer-ops-371-1";
 }
 
 // struct_table_text spells every struct decl in table order, with each part

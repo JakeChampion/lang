@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Nested-call owned-temp reclamation. A fresh owned temporary passed as a
@@ -57,9 +55,6 @@ func TestArm64NestedCallTemp(t *testing.T) {
 }
 
 func TestWASMNestedCallTemp(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, src := range []string{nestedFreeSrc, nestedMethodSrc} {
 		if got := runWasm(t, src); got != 0 {
 			t.Errorf("nested-call temp: got %d, want 0", got)

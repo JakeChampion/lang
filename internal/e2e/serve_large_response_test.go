@@ -10,17 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// A response larger than a socket's send buffer on a non-blocking
-// connection (#9853, the write side), on the native backend and the
-// interpreter; the scenario is e2eharness's, shared with the self-host
-// twin.
-func TestServeLargeResponseX86_64(t *testing.T) {
-	port := freeLoopbackPort(t)
-	bin, runner := buildSupervisedServeBin(t, e2eharness.LargeResponseServerSource(port))
-	startSupervisedServer(t, bin, runner)
-	e2eharness.CheckLargeResponse(t, fmt.Sprintf("127.0.0.1:%d", port))
-}
-
 func TestServeLargeResponseInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	port := freeLoopbackPort(t)

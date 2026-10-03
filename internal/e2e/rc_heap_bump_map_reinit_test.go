@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Map loop-var reclamation (RC-Perceus). A `let m = map_new(8)`
@@ -80,9 +78,6 @@ func TestArm64MapReinitReclaim(t *testing.T) {
 }
 
 func TestWASMMapReinitReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, mapReinitBumpSrc("50"))
 	large := runWasm(t, mapReinitBumpSrc("5000"))
 	if small != large {

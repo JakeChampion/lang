@@ -123,23 +123,24 @@ implementation:
   accepted, that it refuses a value, and that it stands in the ambiguity
   list.
 - `cp --debug`'s second line is ours, for the same reason as `cksum
-  --debug`'s and no other. GNU's names ITS OWN syscall strategy —
-  measured, `copy offload: yes, reflink: unsupported, sparse detection:
-  no` for a dense file and `copy offload: unknown, …, sparse detection:
-  SEEK_HOLE` for a sparse one — which is `copy_file_range` offload and
-  `SEEK_HOLE` probing, neither of which has a Fern primitive. Claiming
-  either would say something untrue about our own code. Ours states what
-  the copy actually did, and the corpus holds `--debug` to its exit
-  status and stream rather than its bytes. Everything else about the
-  option IS byte-exact: that it implies `-v`, that the `'src' -> 'dest'`
-  lines it implies are identical, that a directory and a FIFO draw no
-  such line while a regular file does, and that it stands in the
-  ambiguity list between `--copy-contents` and `--dereference`.
+  --debug`'s and no other. GNU's names ITS OWN syscall strategy:
+  `copy offload: yes, reflink: unsupported, sparse detection: SEEK_HOLE`
+  for a sparse file, and for a dense one `sparse detection: no` or
+  `SEEK_HOLE` depending on the host (both measured from GNU 9.4 on
+  ext4). The sparse detection is ours too now — a sparse source is
+  walked by SEEK_DATA / SEEK_HOLE — but the offload is
+  `copy_file_range`, which has no Fern primitive, and claiming it would
+  say something untrue about our own code. Ours states what the copy
+  actually did. No corpus case copies under `--debug`; `TestCpDebug`
+  holds the exit status and the `'src' -> 'dest'` line it implies to
+  GNU's and pins the report line to ours. Everything else about the
+  option IS byte-exact in the corpus: that a skip under `-n` or
+  `--update=none` is named, and that it stands in the ambiguity list
+  between `--copy-contents` and `--dereference`.
 
   This one has a way out that `cksum --debug` does not: a
-  `copy_file_range` / `SEEK_HOLE` primitive would let the line be true
-  rather than ours. Until then it is an exemption, not a divergence to
-  fix in cp.
+  `copy_file_range` primitive would let the line be true rather than
+  ours. Until then it is an exemption, not a divergence to fix in cp.
 
 Exempt is not unchecked. `requireHelp` / `requireVersion` in the harness
 still require the exit status and the stream to match GNU's for each — so
@@ -507,14 +508,15 @@ coreutils/
                     1, which is 384 bytes on x86-64, and uses a `long`
                     and a real struct timeval where it is 0, which is
                     400 on arm64
-  lib/tz.fern       the local zone as tzset(3) finds it — the TZif file
+  std/tz            the local zone as tzset(3) finds it, now a stdlib
+                    module (docs/STDLIB.md) — the TZif file
                     $TZ names (absolute, or under $TZDIR), the POSIX
                     rule in its footer past the transition table, and
                     the rule string itself when no file answers — with
                     the offset AND the abbreviation (`EST`, `+0545`) in
                     force at an instant
   lib/timefmt.fern  C-locale nstrftime over the broken-down LOCAL time
-                    lib/tz.fern resolves: gnulib's `-` `_` `0` `^` `#`
+                    std/tz resolves: gnulib's `-` `_` `0` `^` `#`
                     flags, an optional field width, the `E` / `O`
                     modifiers the C locale has no alternative for, and
                     the `:` repetitions of `%z`, with an unknown
@@ -3480,19 +3482,10 @@ LONGER file's line first whichever order the operands are given in. Within one
 file the tie-break is a real offset comparison and is compared in full; the
 one case that pairs two files gives them distinct words instead.
 
-**`mv --exchange` is three renames rather than one (#9784).** 9.5 added the
-option, and GNU does it in a single `renameat2 (…, RENAME_EXCHANGE)`. Fern's
-`rename` has no flag word — the checker's note on it records that a flag one
-target honours and two refuse belongs to the capability system — so
-`mv.fern` renames the source aside, the destination onto the source, and the
-aside name onto the destination, undoing the first when the second fails. The
-tree left behind is the same and every corpus case compares equal; what
-differs is that a crash between the renames can leave `.mv_exchange.N` behind,
-and that a filesystem GNU would refuse for want of `RENAME_EXCHANGE` support
-is one three plain renames do not need.
-
-GNU's own failure line on that path is unmatched, and it is a bug rather than
-a divergence invented here: `mv.c` sets `x.rename_errno` only when
+**`mv --exchange` reports a failure's real errno.** Both do the swap in one
+kernel call — `rename_exchange` is `renameat2 (…, RENAME_EXCHANGE)`, as GNU's
+is — but GNU's failure line on that path is a bug rather than a divergence
+invented here: `mv.c` sets `x.rename_errno` only when
 `n_files == 2 && !x.exchange`, so an `--exchange` that fails reports the `-1`
 sentinel — `cannot exchange 'a' and 'nosuch': Unknown error -1`, measured.
 Fern names the real errno, and no corpus case pairs `--exchange` with a
@@ -3674,8 +3667,9 @@ the four is stated precisely in the man page:
   siblings;
 - a piece that is a single `0` in front of an `x` is WARNED about rather
   than refused (`warning: '0x' is a zero multiplier; use '00x' if that is
-  intended`), once per piece, and the zero still wins — which for a block
-  size is then the invalid `bs=0`;
+  intended`), once per operand however many such pieces it has (9.4 said
+  it once per piece), and the zero still wins — which for a block size is
+  then the invalid `bs=0`;
 - a value past INTMAX_MAX is a different line from a value that is not a
   number: `invalid number: '1x': Value too large for defined data type`
   against a bare `invalid number: 'q'`.
@@ -3690,27 +3684,48 @@ saying it has no such call rather than a failure, so GNU promotes the
 request to a full `fsync` and reports THAT one's errno. /dev/null is where
 it shows.
 
+**The charsets** `conv=ascii`, `ebcdic` and `ibm` are 256-entry tables,
+measured from the GNU binary over every byte; `ascii` is exactly the
+inverse of `ebcdic`, and `ibm` differs from `ebcdic` in five entries and is
+not a permutation. Each implies a record conversion — `ascii` unblocks,
+the other two block — which a `cbs` turns on, so under `ebcdic` a line
+ends at the EBCDIC newline (0x25) and is padded with the EBCDIC space
+(0x40). The order the stages run in is fixed whatever order `conv=` names
+them: `sync` pads first (with a space only when a record conversion is
+on, which needs a `cbs`), then one combined table translates (`ascii`,
+then the case, then `ebcdic` / `ibm`), then `swab` pairs bytes, then the
+record conversion. Without a `cbs` the record flags are dropped before
+anything else looks at them, so `conv=block,unblock` alone is accepted.
+Conflicts are refused in a fixed order, the first group winning: two
+charsets, `block` and `unblock`, `lcase` and `ucase`, `excl` and
+`nocreat`.
+
+**`conv=sparse`** seeks past an output block that is all NULs instead of
+writing it, and the block still counts as a record out. A run whose LAST
+block was a seek has not set the file's length, so a regular file shorter
+than the offset is then extended to it. Over existing bytes
+(`conv=notrunc`) the seek leaves them in place, and under `oflag=append`
+the skipped blocks never land: the writes go to the end and only the
+final extension accounts for the seeks. A handle that cannot seek, a pipe,
+turns sparse off for the rest of the run without a diagnostic. The
+corpus compares block counts for these cases, the only place a hole shows.
+
 **What dd here does not do yet**, each an accepted-operand gap rather than a
 wrong answer — the name is refused as `invalid conversion` / `invalid
 input flag`, which is itself the divergence:
 
-- `conv=ascii`, `conv=ebcdic` and `conv=ibm` need the two EBCDIC tables
-  (#9240);
-- `conv=sparse` needs a write that punches a hole rather than writing NULs,
-  which is `w.seek` past the gap — the primitive is here, the accounting is
-  not (#9241);
-- `iflag`/`oflag` `direct`, `directory`, `dsync`, `sync`, `noatime`,
-  `nocache`, `noctty` and `nofollow` are all open-time bits, and Fern's
-  `open_reader_with` / `open_writer_with` flags word carries two: create
-  and non-blocking (#9242);
+- `iflag=nocache` / `oflag=nocache` is not an open-time bit at all but a
+  `posix_fadvise(POSIX_FADV_DONTNEED)` made against the open descriptor as
+  the copy proceeds, and Fern has no call for it (#9242 for the seven open
+  bits, which are done; the fadvise is its own item);
+- `oflag=append` together with another open-time flag (`oflag=append,sync`)
+  opens through `open_appender`, which takes no flags word, so the second
+  flag is dropped there — append is the one open-time bit the
+  `open_writer_with` word does not carry;
 - the SIGUSR1 report mid-copy needs a signal a program can OBSERVE, and
   Fern has only the three disposition calls (`signal_send`,
   `signal_ignore`, `signal_default`) — nothing that runs or records on
   delivery (#9243);
-- `conv=excl` that CREATES its output leaves mode 0600 where GNU leaves
-  0666 through the umask, since Fern's exclusive open fixes the mode;
-  #9237 is the flags-word bit that closes it, and it is why the corpus
-  holds only the taken-name half of that case.
 
 **`expr`'s capture registers follow glibc's own construction, not a branch
 order.** glibc prefers the non-empty branch of an alternation everywhere,
@@ -3751,9 +3766,11 @@ the one where GNU warns (`--context=CTX`, once per occurrence) or says nothing
 (`-Z`, a bare `--context`) and carries on.
 
 **`chcon` refuses the context change itself, and there is no answer that
-would not.** A security context is an extended attribute; there is no
-`getxattr` (#9098) or `setxattr` (#9154), so the one step it exists for
-cannot happen. What makes this a divergence rather than a gap is that GNU
+would not.** A security context is an extended attribute; Fern reads one
+(`getxattr`) but has no `setxattr` (#9154), so the one step it exists for
+cannot happen. The reads before it are real: `--reference` and the component
+options report ENODATA ("can't apply partial context to unlabeled file") as a
+libselinux build of GNU does. What makes this a divergence rather than a gap is that GNU
 does not refuse either: on a machine with no SELinux it calls
 `setfilecon(3)` and reports whatever the call failed with, and WHICH errno
 that is belongs to the build and to the caller rather than to chcon —
@@ -3764,17 +3781,17 @@ can predict that byte. So GNU's frame is kept and our own sentence sits in
 the errno slot: `failed to change context of 'f' to 'ctx': setting a
 security context is not supported on this system`, exit 1, nothing changed
 — which is the same outcome in kind, since on such a machine GNU changes
-nothing either. `--reference` and the `-u -r -t -l` component form need the
-READ side of the same attribute and are refused the same way.
+nothing either.
 
-The corpus is therefore the 96 invocations that never reach the call: the
+The corpus is therefore the invocations that never reach the call: the
+read side, which on a kernel with no SELinux ends at an unlabeled file, the
 whole option grammar, the two `-R` traversal combinations GNU rejects
 outright, the operand counts, `cannot access`, `cannot read directory` —
 reachable with a real directory, because fts reports it INSTEAD of yielding
 the visit the change hangs off — and every spelling of the root failsafe.
-`conflicting security context specifiers given` is unreachable on such a
-machine: GNU checks it AFTER reading the reference file, which has already
-failed. `chcon.fern` keeps that order rather than tidying it.
+`conflicting security context specifiers given` is reached only once the
+reference file has been read, and on such a machine that read fails first.
+`chcon.fern` keeps that order rather than tidying it.
 
 **`mkdir`'s post-creation chmod failing is the one wording in the utility the
 reference binary has never been made to print.** A directory this process just
@@ -3838,22 +3855,29 @@ Darwin answers all three from `getfsstat(2)`, whose `struct statfs` carries
 `f_fstypename`. #9104 is that primitive, shaped as a list rather than a lookup
 because df deduplicates by device across the whole table.
 
-**`stat` cannot report a birth time, a file's SELinux context, or three of
-statfs's fields.** `stat` and `lstat` lower to `newfstatat(2)`, whose `struct
-stat` has no birth time (#9096); a file's context is an extended attribute and
-there is no `getxattr` (#9098); and `statfs` reads `f_type`, `f_fsid` and
-`f_frsize` and then drops them (#9097). That is `%w`, `%W`, `%C` and `-f`'s
-`%t`, `%T`, `%i`, `%S` — and the DEFAULT multi-line block, `--terse`, `-f` and
-`-t -f` all carry one of them, so all four are refused with a diagnostic naming
-the field and exit 1. The refusal comes only after the operand has been read,
+**`stat` cannot report a birth time or — on Darwin — a file system's type
+name.** `stat` and `lstat` lower to `newfstatat(2)`, whose `struct stat` has no
+birth time (#9096), and Darwin's `%T` is `f_fstypename`, a string `FsStat` does
+not carry (#11255). That is `%w`, `%W` and Darwin's `-f %T` — and the DEFAULT
+multi-line block and `--terse` carry one of them, as does `-f` on Darwin, so
+those are refused with a diagnostic naming the field and exit 1. On Linux `%T` is GNU's name for the `f_type`
+magic, from `coreutils/lib/fstype.fern`, and `-f` and `-t -f` are answered. The refusal comes only after the operand has been read,
 so `stat nosuch` still reports `cannot statx` exactly as GNU does.
+
+`%C` reads the file's `security.selinux` attribute the way a libselinux build of
+GNU does, so a kernel with no SELinux answers `?` and ENODATA ("No data
+available"). The 9.12 oracle is built `--without-selinux`, where gnulib's stub
+answers ENOTSUP for every file whatever it carries, so `%C` is pinned by
+`TestStatFileContext` against the host's own `lgetxattr(2)` rather than by the
+corpus.
 
 Printing GNU's own "unknown" rendering instead — `-` and `0` for a birth time,
 a zeroed magic number — was the tempting shape and is the one thing that must
 not happen: ext4 on every machine the gate runs on DOES report a birth time,
 so those bytes would be an invention and the corpus would be measuring it. The
-corpus therefore holds 414 cases over the format engine and none over the four
-layouts; they arrive with the primitives, and #8366 stays open until they do.
+corpus covers the format engine and the two file-system layouts, which it
+measures on `/proc` because every count there is a fixed zero; the file layouts
+arrive with their primitives.
 
 `QUOTING_STYLE` reaches `%N` and nothing else, and only when the format as
 written holds the two bytes `%N`: `%-N`, an octal-escaped `%` and the default
@@ -3968,7 +3992,7 @@ applies that file's transition times with the TZ string's offsets
 substituted and a correction that moves the spring change by the
 difference between the two standard offsets, and past the file's own table
 (2037) it abandons the TZ string entirely — `TZ=ABC1DEF date -d @2147483647`
-prints `EST -0500`, not the `ABC` the string names. `lib/tz.fern` applies
+prints `EST -0500`, not the `ABC` the string names. `std/tz` applies
 the POSIX default dates instead, the United States rule in force since
 2007, which is what glibc itself uses on a system with no posixrules file.
 The two agree on every date between those dates and 2037 and differ
@@ -4335,7 +4359,7 @@ groups are the order of work. Each sub-issue names its group.
   family needed NO new primitive: utmp is `read_file_bytes`, who's
   message-status and idle columns are `stat`, and the local timestamp
   `who` and `pinky` print is `read_file` plus `env`, which is
-  `lib/tz.fern`), `printenv` (done) `env` (the whole
+  `std/tz`), `printenv` (done) `env` (the whole
   environ, exec), `ln`
   (link, symlink, readlink; `link`, `unlink`, `readlink` and `realpath`
   are done on `read_link()` from #8883, leaving `ln`),
@@ -4349,9 +4373,11 @@ groups are the order of work. Each sub-issue names its group.
   SEEK_HOLE, symlink" was stale but for the clone. `--reflink=always`
   reports the failure GNU reports where the filesystem cannot clone,
   which is what ext4 and overlayfs answer and not what btrfs does:
-  FICLONE is the one primitive still missing. Holes are punched at
-  st_blksize granularity, which reproduces GNU's SEEK_HOLE result
-  without it. A recursive copy walks a directory's entries in
+  FICLONE is the one primitive still missing. A sparse source is walked
+  by SEEK_DATA / SEEK_HOLE, as GNU's lseek_copy does, so zeros that were
+  written stay written under `--sparse=auto`; `--sparse=always` and a
+  source that cannot be asked (WASI) fall back to punching zero blocks
+  at st_blksize granularity. A recursive copy walks a directory's entries in
   ascending INODE order — measured, and neither readdir order nor the
   names sorted nor directories first — so the engine stats each entry
   for the number readdir already had, which #9317 would give it back.
@@ -4426,7 +4452,7 @@ groups are the order of work. Each sub-issue names its group.
   every diagnostic before the context change; the change itself has no
   primitive, see the divergence above), `stat` `ls` `dir` `vdir` `du` `df`
   (full stat, statfs, d_type), `dircolors` (done — it needed none of
-  those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (done — the grammar behind `-d`, `-f` and `touch -d` is `lib/datetime.fern`, a port of gnulib's parse_datetime with its mktime emulation and the `--debug` trace, over `lib/tz.fern`; the `-s` and `MMDDhhmm` forms parse as GNU does and then report `cannot set date`, because no builtin sets the system clock — see the divergence below), `nice` (done, on the
+  those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (done — the grammar behind `-d`, `-f` and `touch -d` is `lib/datetime.fern`, a port of gnulib's parse_datetime with its mktime emulation and the `--debug` trace, over `std/tz`; the `-s` and `MMDDhhmm` forms parse as GNU does and then report `cannot set date`, because no builtin sets the system clock — see the divergence below), `nice` (done, on the
   new `priority()` / `set_priority(n)` pair under the `sched` target
   capability — and on `gnu.exec_command`, which `env` moved its own
   execvp emulation into so the PATH search and the `/bin/sh` retry for a
@@ -4460,7 +4486,7 @@ groups are the order of work. Each sub-issue names its group.
   its own behaviour, and the glibc verdict layer its two failure messages come
   from, are in the divergences below), `uptime` (done — no new primitive: the boot time and the
   session count are the utmp database `read_file_bytes` already reads, the
-  clock is `lib/tz.fern` plus `lib/timefmt.fern`, and the load averages are
+  clock is `std/tz` plus `lib/timefmt.fern`, and the load averages are
   `read_file` of /proc/loadavg), `pathchk` (done — it needed no new primitive:
   `lstat` is the whole of the default mode and `statfs` from #9062 carries
   the per-directory `name_max` its component walk holds a name to, which is

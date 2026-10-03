@@ -993,10 +993,13 @@ function __net_error_at_high(i: i32, errno: i32): NetError {
 // `error_from_errno(n)` — the variant for errno `n` on the compile
 // target. Takes the negated form the builtins return (`-98`) as well as
 // the plain number; anything the table does not name is `Other(n)` with
-// the sign dropped.
+// the sign dropped. i32::MIN, whose magnitude no i32 holds, saturates to
+// i32::MAX rather than negating back to itself.
 pub function error_from_errno(errno: i32): NetError {
   let e: i32 = errno;
-  if (e < 0) {
+  if (e == 0 - 2147483647 - 1) {
+    e = 2147483647;
+  } else if (e < 0) {
     e = 0 - e;
   }
   let table: i32[] = __net_errnos();
@@ -1219,7 +1222,7 @@ pub function send_queue(sock: i32): Result[i32, NetError] {
 // (the first octet in the low byte), a v4-mapped IPv6 address its IPv4
 // one, any other IPv6 address the two words of its first eight bytes
 // XORed, so the peers of one /64 share a key. What a per-client
-// connection cap counts by (`ServeOptions.max_connections_per_ip`).
+// connection cap counts by (`serve.Config.max_connections_per_ip`).
 pub function peer_key(sock: i32): Option[i32] {
   let k: i32 = tcp_socket_ctl(sock, 7, 0);
   if (k == 0) {

@@ -592,6 +592,13 @@ function settled_payload(t: typeinfo.Type): typeinfo.Type {
   return settled(t);
 }
 
+function is_none_only(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeUnion(u) = t {
+    return u.name == "Option" && u.args.len() == 1 && semtypes.equal(u.args[0], t_void());
+  }
+  return false;
+}
+
 // ---- expressions ------------------------------------------------------------
 
 function checked(e: ast.Expr, s: State): typeinfo.Type {
@@ -736,9 +743,23 @@ function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
     return refused(s, "address literal past the immediate");
   }
   if (ssasem.text_constant(ty)) {
-    return define(s, 1, [], 0, n.text, ty);
+    return define(s, 1, [], 0, decimal_text(n.text), ty);
   }
   return define(s, 1, [], util.lit_to_i32(n.text), "", ty);
+}
+
+// decimal_text drops a plain decimal literal's leading zeros. The text reaches
+// assemblers that read a leading `0` as octal, where Fern's `010` is ten; a
+// radix literal (`0x1F`, `0b101`) keeps its prefix.
+function decimal_text(t: string): string {
+  if (t.len() < 2 || t[0] != b'0' || t[1] < b'0' || t[1] > b'9') {
+    return t;
+  }
+  let i: i32 = 0;
+  while (i + 1 < t.len() && t[i] == b'0') {
+    i = i + 1;
+  }
+  return slice_unchecked(t, i, t.len()) + "";
 }
 
 function boolean_value(b: boolean): i32 {
@@ -1777,7 +1798,7 @@ function shift_count(op: string, count: Value, value: typeinfo.Type): Value {
 // operand through it; a cast names its own destination and passes none on.
 function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
   if (u.op == "try_") {
-    return try_expr(u, s);
+    return try_expr(u, s, expected);
   }
   if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
     return downcast(e, u, s);
@@ -1817,13 +1838,22 @@ function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type)
 // order the tag test relies on (docs/TRY.md). Native's E078 has already
 // enforced both the shape and the `@try` opt-in before any of this runs, so
 // this re-derives only what the lowering needs rather than re-policing them.
-function try_expr(u: ast.ExprUnary, s: State): Value {
+function try_expr(u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
   // The checker refuses this shape; a pipeline that lowers without checking
   // first (asm_modload_run) reaches it.
   if (s.replaying) {
     return refused(s, "`?` inside a defer action (E079)");
   }
-  let v: Value = expr(u.operand, s, typeinfo.unchecked());
+  // `Some(lit)?` reads its literal at the width the `?` is read at.
+  let want: typeinfo.Type = typeinfo.unchecked();
+  if let ast.ExprCall(c) = u.operand {
+    if let ast.ExprIdent(cn) = c.callee {
+      if (cn.name == "Some" && semtypes.concrete(expected, false)) {
+        want = typeinfo.TypeUnion { name: "Option", args: [expected] };
+      }
+    }
+  }
+  let v: Value = expr(u.operand, s, want);
   s = v.s;
   if (!s.ok) {
     return v;
@@ -3617,6 +3647,11 @@ function widen(v: Value, expected: typeinfo.Type): Value {
   if (semtypes.equal(s.values[v.id], expected)) {
     return v;
   }
+  // An Option with a void payload is only ever None, so it reads as the None
+  // of any Option the destination names.
+  if (is_none_only(s.values[v.id]) && union_name(expected) == "Option" && semtypes.concrete(expected, false)) {
+    return define(s, ssasem.variant_new(), [], 0, "None", expected);
+  }
   if (semtypes.lends_array(s.values[v.id], expected)) {
     return define(s, ssasem.array_lend(), [v.id], 0, "", expected);
   }
@@ -3944,6 +3979,11 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
   // expectation and takes the value's type as the binding's.
   if (!semtypes.concrete(ty, false) && is_call(v.init)) {
     return declare_from_call(v, s, after);
+  }
+  // `let o = None;` names no payload either, so the binding settles as a
+  // bare None payload does.
+  if (!semtypes.concrete(ty, true)) {
+    ty = settled_payload(ty);
   }
   if (!semtypes.concrete(ty, true)) {
     return fail(s, "unresolved type of binding " + v.name + ": " + type_detail(ty));
@@ -6576,14 +6616,6 @@ function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Cont
   if (!semtypes.concrete(s.result, true)) {
     return Made { p: refuse("unresolved result type: " + unresolved_result_spelling(fd, s)), memo: memo };
   }
-  // A cursor escapes the same way, and worse: it is anchored to a map this
-  // frame may own, so a returned one outlives the columns it reads. The
-  // anchor keeps the map live only within the frame that holds it, and a
-  // container carries the cursor exactly as far, so the whole result shape
-  // is what has to be clear of one.
-  if (semtypes.holds_map_iter(s.result)) {
-    return Made { p: refuse("cursor result escapes its map"), memo: memo };
-  }
   let body: ast.Stmt[] = parser.elide_len_bounded_body(fd.body);
   s = learn_body(fd, body, s);
   s = stmts(body, prebind(parameters(fd, s)));
@@ -6960,8 +6992,8 @@ function handle_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "Reader.read_chunk_bytes", params: [reader, t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_io_result(typeinfo.TypeArray { elem: t_u8(), view: false }) },
     ssasem.Contract { name: "Reader.close", params: [reader], modes: value, result: io_error },
     ssasem.Contract { name: "Writer.close", params: [writer], modes: value, result: io_error },
-    ssasem.Contract { name: "Writer.write_bytes", params: [writer, typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: io_error },
-    ssasem.Contract { name: "Writer.write_some_bytes", params: [writer, typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: t_io_result(t_i64()) },
+    ssasem.Contract { name: "Writer.write_bytes", params: [writer, typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: io_error },
+    ssasem.Contract { name: "Writer.write_some_bytes", params: [writer, typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: t_io_result(t_i64()) },
     ssasem.Contract { name: "Writer.write", params: [writer, t_string()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: io_error },
   ];
   for c in opens {
@@ -7120,6 +7152,10 @@ function fs_op_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Contr
     ssasem.Contract { name: "chmod", params: [t_string(), t_i32()], modes: [b, v], result: done },
     ssasem.Contract { name: "access", params: [t_string(), t_i32()], modes: [b, v], result: done },
     ssasem.Contract { name: "rename", params: [t_string(), t_string()], modes: [b, b], result: done },
+    ssasem.Contract { name: "rename_noreplace", params: [t_string(), t_string()], modes: [b, b], result: done },
+    ssasem.Contract { name: "getxattr", params: [t_string(), t_string()], modes: [b, b], result: t_io_result(t_string()) },
+    ssasem.Contract { name: "lgetxattr", params: [t_string(), t_string()], modes: [b, b], result: t_io_result(t_string()) },
+    ssasem.Contract { name: "rename_exchange", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "create_link", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "create_symlink", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "tcp_connect", params: [t_i32(), t_i32()], modes: [v, v], result: t_i32() },
@@ -7939,7 +7975,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
   let i: i32 = 0;
   while (i < all.len() && i < names.len()) {
     if (all[i].ok && !all[i].template && !closure_body_produced(all[i]) && !ownership.names_has(taken, names[i])) {
-      rows = rows.append(ownership.Escapes { name: names[i], bits: seed_bits(all[i].func.params.len()), lends: true, cycle: 0 - 1 });
+      rows = rows.append(ownership.Escapes { name: names[i], bits: seed_bits(all[i].func.params.len()), lends: false, cycle: 0 - 1 });
       analyses = analyses.append(row_analysis(all[i]));
     } else {
       analyses = analyses.append(ssasem.refused_analysis("not produced"));
@@ -7973,8 +8009,9 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
       let at: i32 = own_row[i];
       if (all[i].ok && !all[i].template && at >= 0 && !closure_body_produced(all[i])) {
         let next: boolean[] = ownership.escaping(all[i].func, analyses[i], rows, ix);
-        if (!same_bits(rows[at].bits, next)) {
-          rows = rows.with(at, ownership.Escapes { ...rows[at], bits: next });
+        let lends: boolean = rows[at].lends || ownership.lends(all[i].func, analyses[i], rows, ix);
+        if (!same_bits(rows[at].bits, next) || lends != rows[at].lends) {
+          rows = rows.with(at, ownership.Escapes { ...rows[at], bits: next, lends: lends });
           changed = true;
         }
       }
@@ -8216,7 +8253,9 @@ function fusion_on(): boolean {
 // backends, whose dispatch chains run over exactly these arms.
 // A method is an arm only on a type that implements the whole trait set: a
 // type with a same-named method of its own is never inside the dyn. A
-// monomorphised clone `base__…` implements what its generic base does.
+// monomorphised clone `base__…` implements what its generic base does. The
+// receiver is keyed by parser.receiver_base, as implements_traits keys the
+// impl list and decl_key names the arm, so a `str` receiver is `string`.
 pub function dyn_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], method: string, traits: string[]): string[] {
   let out: string[] = [];
   for fd in funcs {
@@ -8227,7 +8266,7 @@ pub function dyn_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], method
     if (!arm_receiver_implements(impls, parser.receiver_base(fd.receiver_type), traits)) {
       continue;
     }
-    if (parser.dyn_arm_matches(fd, traits, method, funcs)) {
+    if (parser.dyn_arm_matches(fd, traits, method)) {
       out = out.append(parser.decl_key(fd));
     }
   }

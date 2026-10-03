@@ -14,7 +14,8 @@ func builtinWriterWriteSomeBytes(i *Interp, args []Value) (Value, error) {
 	return writerBytes(i, args, false)
 }
 
-// Borrow the Fern array. Copying into the host byte buffer keeps writes from
+// Borrow the Fern byte view, represented as an Array by the interpreter.
+// Copying into the host byte buffer keeps writes from
 // exposing its mutable storage to an injected io.Writer.
 func writerBytes(i *Interp, args []Value, all bool) (Value, error) {
 	if len(args) != 2 {
@@ -22,7 +23,7 @@ func writerBytes(i *Interp, args []Value, all bool) (Value, error) {
 	}
 	a, ok := args[1].(Array)
 	if !ok {
-		return nil, fmt.Errorf("byte write: content must be a byte array")
+		return nil, fmt.Errorf("byte write: content must be a byte view")
 	}
 	b := make([]byte, len(a.E))
 	for n, v := range a.E {
@@ -34,13 +35,6 @@ func writerBytes(i *Interp, args []Value, all bool) (Value, error) {
 			return optionSome(v)
 		}
 		return resultErr(v)
-	}
-	fd, err := streamFd(args[0])
-	if err != nil {
-		return nil, err
-	}
-	if i.closedStd[fd] {
-		return failure(syscall.EBADF), nil
 	}
 	f, err := streamFile(i, args[0])
 	if errors.Is(err, errClosedHandle) {

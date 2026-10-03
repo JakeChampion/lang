@@ -45,9 +45,6 @@ func TestArm64OwnedByDefaultMatchesBorrow(t *testing.T) {
 
 func TestWASMOwnedByDefaultMatchesBorrow(t *testing.T) {
 	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
-		prev := ast.RcFreeEnabled
-		defer func() { ast.RcFreeEnabled = prev }()
-		ast.RcFreeEnabled = true
 		po := ast.OwnedByDefault
 		defer func() { ast.OwnedByDefault = po }()
 		ast.OwnedByDefault = false
@@ -66,9 +63,6 @@ func TestWASMOwnedByDefaultMatchesBorrow(t *testing.T) {
 // passthrough that returns its owned parameter. Consuming methods + iterative
 // build (which lean on explicit `own`, untouched by this slice) stay sound too.
 func TestX86_64OwnedByDefaultSound(t *testing.T) {
-	prev := ast.OwnedByDefault
-	ast.OwnedByDefault = true
-	defer func() { ast.OwnedByDefault = prev }()
 	cases := map[string]string{
 		"read-fresh": `enum L{C(i32,L),N} function sum(l:L):i32{match(l){C(h,t)=>{return h+sum(t);},N=>{return 0;}}} function build(n:i32):L{if(n==0){return N;}return C(n,build(n-1));} function main():i32{if(sum(build(5))!=15){return 100;}return __rc_underflow_count();}`,
 		"read-twice": `enum L{C(i32,L),N} function len(l:L):i32{match(l){C(h,t)=>{return 1+len(t);},N=>{return 0;}}} function build(n:i32):L{if(n==0){return N;}return C(n,build(n-1));} function main():i32{let e:L=build(4);if(len(e)+len(e)!=8){return 100;}return __rc_underflow_count();}`,

@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,16 +9,7 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// Deploy-time configuration (#9855): `plat.config` and `plat.secret` read
-// the environment on a target that has one.
-func TestPlatformConfigFromEnvX86_64(t *testing.T) {
-	port := freeLoopbackPort(t)
-	bin, runner := buildSupervisedServeBin(t, e2eharness.ConfigHandlerSource())
-	startSupervisedServer(t, bin, runner, append([]string{fmt.Sprintf("PORT=%d", port)}, e2eharness.ConfigHandlerEnv...)...)
-	e2eharness.CheckConfigHandler(t, fmt.Sprintf("127.0.0.1:%d", port))
-}
-
-// The proxy world has no environment: the same handler, built for
+// The proxy world has no environment: the config handler, built for
 // wasm32-wasi-http, reads wasi:config/store, which `wasmtime serve` fills
 // from its config-var flags.
 func TestPlatformConfigFromWasiConfig(t *testing.T) {

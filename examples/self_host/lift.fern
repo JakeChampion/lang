@@ -260,7 +260,7 @@ function lift_call_arg(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
       if (irtables.lambda_has_no_captures(lam, gfns)) {
         let nm: string = "__lam_" + util.i32_to_string(acc.counter);
         let tp: string[] = [];
-        let nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "" };
+        let nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [] };
         let nacc: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
         return LiftExpr { expr: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, acc: nacc };
       }
@@ -276,12 +276,13 @@ function lift_call_arg(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
 }
 
 // lift_call_callee lifts a call's CALLEE, hoisting it as lift_call_arg does
-// except for one shape: a value-position desugar's IIFE nested inside another
-// IIFE's body. Hoisting that one splits a single desugar across the IR and AST
-// paths, and the outer form then refuses. Its body is still walked, so a user
-// lambda nested in the desugar is lifted either way.
+// except for a value-position desugar's IIFE, which the lowering inlines: its
+// statements run in the enclosing function, so a `return` in one leaves that
+// function, and hoisting it would make the `return` leave the hoisted body
+// instead (#10818). Its body is still walked, so a user lambda nested in the
+// desugar is lifted either way.
 function lift_call_callee(c: ast.ExprCall, acc: LiftAcc, gfns: string[]): LiftExpr {
-  if (parser.is_value_block(c) && lifting_inside_iife(gfns)) {
+  if (parser.is_value_block(c)) {
     match (c.callee) {
       ast.ExprLambda(lam) => {
         return lift_lambda_body_only(lam, acc, gfns);
@@ -320,7 +321,7 @@ function lift_capturing_iife(c: ast.ExprCall, lam: ast.ExprLambda, acc: LiftAcc,
     capargs = capargs.append(ast.ExprIdent { name: cap.name, line: 0, col: 0, ty: "" });
   }
   let nm: string = "__lam_" + util.i32_to_string(acc.counter);
-  let nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: [], params: params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "" };
+  let nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: [], params: params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [] };
   let a: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
   let nargs: ast.Expr[] = [];
   for arg in c.args {
@@ -334,25 +335,9 @@ function lift_capturing_iife(c: ast.ExprCall, lam: ast.ExprLambda, acc: LiftAcc,
   return LiftExpr { expr: ast.ExprCall { callee: ast.ExprIdent { name: nm, line: c.line, col: c.col, ty: "" }, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, acc: a };
 }
 
-// `$in_iife$` is stored in `gfns` to carry "already inside a desugar's IIFE body"
-// down the walk. `gfns` is only ever read as `index_of_str(gfns, <a used
-// identifier>)` by lambda_has_no_captures, so a `$`-prefixed name cannot change
-// that answer — the collision guarantee `$lamret$` and `$wc$` also rely on.
-function lifting_inside_iife(gfns: string[]): boolean {
-  return util.index_of_str(gfns, "$in_iife$") >= 0;
-}
-
-function mark_inside_iife(gfns: string[]): string[] {
-  if (lifting_inside_iife(gfns)) {
-    return gfns;
-  }
-  return gfns.append("$in_iife$");
-}
-
 // lift_lambda_body_only walks a lambda's body for lifts and returns the lambda
 // itself unchanged in shape — never hoisted to a top-level `__lam_N`.
-function lift_lambda_body_only(lam: ast.ExprLambda, acc: LiftAcc, gfns0: string[]): LiftExpr {
-  let gfns: string[] = mark_inside_iife(gfns0);
+function lift_lambda_body_only(lam: ast.ExprLambda, acc: LiftAcc, gfns: string[]): LiftExpr {
   let ba: LiftAcc = acc;
   let nb: ast.Stmt[] = [];
   let bi: i32 = 0;
@@ -947,7 +932,7 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
   if (lam.origin == ast.ORIGIN_NESTED_FN) {
     lbody = desugar_lambda_returns(lbody, 0, ret_sig_of(lam.ret_type, lam.ret_fn_ret, lam.ret_fn_param_types)).body;
   }
-  let newfn: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "" };
+  let newfn: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [] };
   let capargs: ast.Expr[] = [];
   let ca: i32 = 0;
   while (ca < caps.len()) {
@@ -1183,7 +1168,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     bk = bk + 1;
   }
   let notp: string[] = [];
-  let clo: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: fd.module };
+  let clo: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: fd.module, impl_trait: "", dyn_traits: [] };
   return HoistResult { func: clo, ok: true };
 }
 
@@ -1280,7 +1265,7 @@ function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.Fu
     pj = pj + 1;
   }
   let notp: string[] = [];
-  return parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "" };
+  return parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [] };
 }
 
 // make_wrap_named_func builds the env-taking trampoline for a BARE FN-NAME field
@@ -1290,7 +1275,7 @@ function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.Fu
 // up by name in `mfuncs`). Declines (ok:false) if no receiver-less function of
 // that name is found — the field then stays as-is and the module bails.
 function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs): HoistResult {
-  let none: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  let none: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [] };
   let fi: i32 = 0;
   while (fi < mfuncs.decls.len()) {
     if (mfuncs.decls[fi].name == fnname && mfuncs.decls[fi].receiver_type.len() == 0) {
@@ -1320,7 +1305,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
       }
       let bd: ast.Stmt[] = [body];
       let notp: string[] = [];
-      return HoistResult { func: parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types, is_package: false, module: "" }, ok: true };
+      return HoistResult { func: parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [] }, ok: true };
     }
     fi = fi + 1;
   }
@@ -2970,7 +2955,7 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
     fnptys = armptys;
   }
   let dlr: DesugarRet = desugar_lambda_returns(lam.body, 0, ret_sig_of("fn", fnret, fnptys));
-  let nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys, is_package: false, module: fd.module };
+  let nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys, is_package: false, module: fd.module, impl_trait: "", dyn_traits: [] };
   let ncall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_args: [], ty: "" };
   return InlineCloRes { expr: ncall, funcs: funcs.append(nf), counter: counter + 1 };
 }

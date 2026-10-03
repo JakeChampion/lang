@@ -12,11 +12,13 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// The self-host twin of internal/e2e's TestHeldConnectionsHeapBoundX86_64:
-// the serve loop compiled by the production self-host driver, with
-// complete semantic lowering required, holds 64 idle connections, then
-// 64 more, and the bump allocator's growth the second batch cost must be
-// under 1 KiB per connection.
+// The per-held-connection bound of #9853 and #9854: the serve loop
+// compiled by the production self-host driver, with complete semantic
+// lowering required, holds 64 idle connections, then 64 more, and the bump
+// allocator's growth the second batch cost must be under 1 KiB per
+// connection. "accepted" holds connections that never send a request;
+// "kept" holds connections each left on keep-alive after one served
+// request, each shape on a server of its own.
 func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires the Linux x86-64 native target")
@@ -39,7 +41,28 @@ func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, shape := range []struct {
+		name   string
+		served bool
+	}{{"accepted", false}, {"kept", true}} {
+		t.Run(shape.name, func(t *testing.T) {
+			addr := startHeldConnectionsServer(t, driver, stdlib)
+			per, first, second := e2eharness.MeasureHeldConnections(t, addr, shape.served)
+			t.Logf("%s connections: first batch of %d grew the heap by %d bytes, second by %d (%d per connection)",
+				shape.name, e2eharness.HeldConnectionsBatch, first, second, per)
+			if per >= e2eharness.HeldConnectionsBytesPerConnection {
+				t.Fatalf("holding %d more %s connections grew the heap by %d bytes per connection, want under %d",
+					e2eharness.HeldConnectionsBatch, shape.name, per, e2eharness.HeldConnectionsBytesPerConnection)
+			}
+		})
+	}
+}
 
+// startHeldConnectionsServer compiles HeldConnectionsServerSource with the
+// self-host driver on a free port, starts it, and answers its address.
+func startHeldConnectionsServer(t *testing.T, driver, stdlib string) string {
+	t.Helper()
+	dir := t.TempDir()
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("no free TCP port: %v", err)
@@ -64,14 +87,6 @@ func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start server: %v", err)
 	}
-	defer func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() }()
-
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	per, first, second := e2eharness.MeasureHeldConnections(t, addr)
-	t.Logf("held connections: first batch of %d grew the heap by %d bytes, second by %d (%d per connection)",
-		e2eharness.HeldConnectionsBatch, first, second, per)
-	if per >= e2eharness.HeldConnectionsBytesPerConnection {
-		t.Fatalf("holding %d more connections grew the heap by %d bytes per connection, want under %d",
-			e2eharness.HeldConnectionsBatch, per, e2eharness.HeldConnectionsBytesPerConnection)
-	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
+	return fmt.Sprintf("127.0.0.1:%d", port)
 }

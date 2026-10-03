@@ -68,7 +68,8 @@ Real, and the reason this is opt-in:
 
 With the flag **off**, none of this exists: every check is unemitted and the
 asm is byte-identical to a build from a compiler that never had the feature.
-`TestSanitizeOffEmitsNoSymbols` pins the cheap proxy for that.
+`TestSelfHostSanitizeOffEmitsNoSymbolsX86_64` and `TestSelfHostOverReleaseReportArm64`
+pin the cheap proxy for that.
 
 The wasm census is the cheap end of all this: two counters and one line, with
 the freelist still recycling, because the quarantine that carries the rest of
@@ -80,9 +81,10 @@ the cost is not built there.
 | --- | --- | --- | --- |
 | x86-64 (native) | ✅ | ✅ | ✅ |
 | arm64 (native) | ✅ | ✅ | ✅ |
-| x86-64 (self-host) | ✅ | ✅ (no backtrace) | ✅ (no backtrace) |
-| wasm | ✅ | — | — |
-| arm64 / wasm (self-host), every SSA backend | — | — | — |
+| x86-64 (self-host) | ✅ | ✅ | ✅ |
+| arm64 (self-host) | ✅ | ✅ | ✅ |
+| wasm, native and self-host | ✅ | — | — |
+| the Go SSA backends | — | — | — |
 
 Every row above emits the **same** message text and the same exit status — a
 `fern-sanitizer:` line does not tell you which compiler produced the binary,
@@ -120,11 +122,9 @@ compiler process, not to the program it produces:
 FERN_SANITIZE=1 bin/fern-selfhost -target x86-64-linux /ABS/prog.fern $PWD/internal/stdlib -o prog.s
 ```
 
-Its one gap versus native is an honest subset, not a silent difference: no
-backtrace under a report, because there is no `__fern_report` equivalent in
-that runtime, so the message is the whole diagnostic. This matters because the
-self-host compiler is precisely the long-running, allocation-heavy program the
-mode was argued for.
+Its reports carry the same frame-pointer backtrace as native's, suppressed by
+`FERN_BACKTRACE=0`. This matters because the self-host compiler is precisely
+the long-running, allocation-heavy program the mode was argued for.
 
 Its quarantine also moves one diagnosis: the `__alloc_u8` + double-`__rc_dec`
 probe reports **use-after-free** there and **over-release** on native, because

@@ -3955,7 +3955,7 @@ function fn_field_value_is_fresh(e: ast.Expr): boolean {
 // closure_value_is_counted: `e` hands whatever stores it a counted closure
 // box — a fresh one (fn_field_value_is_fresh), or the result of a call to a
 // closure-returning function (`closureset`, closure_ret_fns_of), whose return
-// retains any box it does not own (ret_closure_uncounted).
+// retains any box it does not own.
 function closure_value_is_counted(e: ast.Expr, closureset: string[]): boolean {
   if (fn_field_value_is_fresh(e)) {
     return true;
@@ -7931,7 +7931,7 @@ function payload_binding_escapes_arm(arm: ast.MatchArm, name: string, ft: string
 // clo_binding_other_uses: the mentions of closure binding `name` in `arm` that
 // are neither a direct call `name(args)`, nor a bare `name` argument at a
 // position `borrowable` says the callee only reads, nor, when `returns` is set,
-// a bare `return name` — which retains the box (ret_closure_uncounted). A
+// a bare `return name` — which retains the box. A
 // capture by a lambda counts.
 function clo_binding_other_uses(arm: ast.MatchArm, name: string, returns: boolean, borrowable: string[]): i32 {
   function at_expr(e: ast.Expr, own n: i32): i32 {
@@ -11776,14 +11776,15 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: irtab
   if (has_strarr_fld) {
     arr_unsafe = strarrfld_borrowed_elem_marks(funcs, structs, arr_str_fresh, arr_producers, arr_unsafe);
   }
+  let arr_ix: util.NameIndex = util.name_index(arr_unsafe);
   for sd in structs.decls {
     let at: string = sd.name;
     if (struct_has_strarr_field(structs, at)) {
       let aok: boolean = true;
       for fld in sd.fields {
         if (fld.type_name == "string[]"
-          && (util.index_of_str(arr_unsafe, at + "." + fld.name) >= 0
-          || util.index_of_str(arr_unsafe, fld.name) >= 0)) {
+          && (arr_ix.has(at + "." + fld.name)
+          || arr_ix.has(fld.name))) {
           aok = false;
         }
       }
@@ -11801,7 +11802,7 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: irtab
       let abufok: boolean = true;
       for fld in sd.fields {
         if (fld.type_name == "string[]"
-          && util.index_of_str(arr_unsafe, "store:" + at + "." + fld.name) >= 0) {
+          && arr_ix.has("store:" + at + "." + fld.name)) {
           abufok = false;
         }
       }
@@ -11832,8 +11833,8 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: irtab
       for fld in sd.fields {
         let saft: string = fld.type_name;
         if ((irtables.is_struct_array_field_type(structs, saft) || irtables.is_enum_array_field_type(structs, saft))
-          && (util.index_of_str(arr_unsafe, at + "." + fld.name) >= 0
-          || util.index_of_str(arr_unsafe, fld.name) >= 0)) {
+          && (arr_ix.has(at + "." + fld.name)
+          || arr_ix.has(fld.name))) {
           saok = false;
         }
       }
@@ -11853,13 +11854,14 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: irtab
   for fn in funcs {
     clo_unsafe = clofld_scan_stmts(fn.body, structs, cloret, clo_unsafe);
   }
+  let clo_ix: util.NameIndex = util.name_index(clo_unsafe);
   for sd in structs.decls {
     let ct: string = sd.name;
     if (struct_has_clo_field(structs, ct)) {
       let cok: boolean = true;
       for fld in sd.fields {
         if (fld.type_name == "fn"
-          && util.index_of_str(clo_unsafe, fld.name) >= 0) {
+          && clo_ix.has(fld.name)) {
           cok = false;
         }
       }
@@ -12275,11 +12277,10 @@ pub function struct_has_clo_field(structs: irtables.StructTab, sty: string): boo
 //     retains it, but `let g = b.f` binds an uncounted alias the drop would
 //     dangle.
 // Runs on the PRE-lift AST (fn-field values are still lambdas/idents there).
-function clofld_scan(e: ast.Expr, structs: irtables.StructTab, cset: string[], acc: string[]): string[] {
-  let a: string[] = acc;
+function clofld_scan(e: ast.Expr, structs: irtables.StructTab, cset: string[], own a: string[]): string[] {
   match (e) {
     ast.ExprFieldAccess(fa) => {
-      a = push_str_unique(a, fa.field);
+      a = a.append(fa.field);
       return clofld_scan(fa.obj, structs, cset, a);
     },
     ast.ExprCall(c) => {
@@ -12306,16 +12307,20 @@ function clofld_scan(e: ast.Expr, structs: irtables.StructTab, cset: string[], a
       return a;
     },
     ast.ExprBinary(b) => {
-      return clofld_scan(b.right, structs, cset, clofld_scan(b.left, structs, cset, a));
+      a = clofld_scan(b.left, structs, cset, a);
+      return clofld_scan(b.right, structs, cset, a);
     },
     ast.ExprUnary(u) => {
       return clofld_scan(u.operand, structs, cset, a);
     },
     ast.ExprIndex(ix) => {
-      return clofld_scan(ix.index, structs, cset, clofld_scan(ix.array, structs, cset, a));
+      a = clofld_scan(ix.array, structs, cset, a);
+      return clofld_scan(ix.index, structs, cset, a);
     },
     ast.ExprSlice(sl) => {
-      return clofld_scan(sl.end, structs, cset, clofld_scan(sl.start, structs, cset, clofld_scan(sl.array, structs, cset, a)));
+      a = clofld_scan(sl.array, structs, cset, a);
+      a = clofld_scan(sl.start, structs, cset, a);
+      return clofld_scan(sl.end, structs, cset, a);
     },
     ast.ExprStructLit(sl2) => {
       if (sl2.has_base) {
@@ -12326,7 +12331,7 @@ function clofld_scan(e: ast.Expr, structs: irtables.StructTab, cset: string[], a
         while (sdi >= 0) {
           for fld in structs.decls[sdi].fields {
             if (fld.type_name == "fn") {
-              a = push_str_unique(a, fld.name);
+              a = a.append(fld.name);
             }
           }
           sdi = irtables.stab_next(structs, sdi, sl2.type_name);
@@ -12336,7 +12341,7 @@ function clofld_scan(e: ast.Expr, structs: irtables.StructTab, cset: string[], a
       while (i < sl2.field_names.len()) {
         if (irtables.decl_field_type(structs, sl2.type_name, sl2.field_names[i]) == "fn"
           && !closure_value_is_counted(sl2.field_values[i], cset) && ident_name_or_empty(sl2.field_values[i]).len() == 0) {
-          a = push_str_unique(a, sl2.field_names[i]);
+          a = a.append(sl2.field_names[i]);
         }
         a = clofld_scan(sl2.field_values[i], structs, cset, a);
         i = i + 1;
@@ -12366,8 +12371,7 @@ function clofld_scan(e: ast.Expr, structs: irtables.StructTab, cset: string[], a
   }
 }
 
-function clofld_scan_stmts(stmts: ast.Stmt[], structs: irtables.StructTab, cset: string[], acc: string[]): string[] {
-  let a: string[] = acc;
+function clofld_scan_stmts(stmts: ast.Stmt[], structs: irtables.StructTab, cset: string[], own a: string[]): string[] {
   for stmt in stmts {
     match (stmt) {
       ast.StmtVar(v) => {
@@ -12380,7 +12384,7 @@ function clofld_scan_stmts(stmts: ast.Stmt[], structs: irtables.StructTab, cset:
         a = clofld_scan(ex.value, structs, cset, a);
       },
       ast.StmtReturn(r) => {
-        // `return b.f` retains the box for the caller (ret_closure_uncounted).
+        // `return b.f` retains the box for the caller.
         if let ast.ExprFieldAccess(rfa) = r.value {
           a = clofld_scan(rfa.obj, structs, cset, a);
         } else {
@@ -12533,11 +12537,10 @@ function strarrfld_elem_read(e: ast.Expr, structs: irtables.StructTab, binds: st
 // `x.f[i]` there is read once and never bound — the transient position
 // strarr_expr_unsafe grants a string[] local's `xs[i]` — so only the index and
 // the holder are walked.
-function strarrfld_scan_operand(e: ast.Expr, structs: irtables.StructTab, binds: string[], str_fresh: string[], strarr_producers: string[], forwarders: string[], acc: string[]): string[] {
+function strarrfld_scan_operand(e: ast.Expr, structs: irtables.StructTab, binds: string[], str_fresh: string[], strarr_producers: string[], forwarders: string[], own a: string[]): string[] {
   if (!strarrfld_elem_read(e, structs, binds)) {
-    return strarrfld_scan(e, structs, binds, str_fresh, strarr_producers, forwarders, acc);
+    return strarrfld_scan(e, structs, binds, str_fresh, strarr_producers, forwarders, a);
   }
-  let a: string[] = acc;
   if let ast.ExprIndex(ix) = e {
     a = strarrfld_scan(ix.index, structs, binds, str_fresh, strarr_producers, forwarders, a);
     if let ast.ExprFieldAccess(ffa) = ix.array {
@@ -12759,12 +12762,11 @@ function strarrfld_fwd_marks(c: ast.ExprCall, structs: irtables.StructTab, binds
 // is a counted reference whose own release keeps the elements alive past the
 // holder's field reclaim (#9187). An element read off it is not, exactly as
 // `h.xs[0]` is not.
-function strarrfld_elem_src_marks(e: ast.Expr, structs: irtables.StructTab, binds: string[], forwarders: string[], acc: string[]): string[] {
-  let a: string[] = acc;
+function strarrfld_elem_src_marks(e: ast.Expr, structs: irtables.StructTab, binds: string[], forwarders: string[], own a: string[]): string[] {
   match (e) {
     ast.ExprCall(c) => {
       for m in strarrfld_fwd_marks(c, structs, binds, forwarders) {
-        a = push_str_unique(a, m);
+        a = a.append(m);
       }
     },
     _ => {}
@@ -12800,15 +12802,14 @@ function strarrfld_ret_is_fwd(e: ast.Expr, structs: irtables.StructTab, binds: s
   return false;
 }
 
-function strarrfld_scan(e: ast.Expr, structs: irtables.StructTab, binds: string[], str_fresh: string[], strarr_producers: string[], forwarders: string[], acc: string[]): string[] {
-  let a: string[] = acc;
+function strarrfld_scan(e: ast.Expr, structs: irtables.StructTab, binds: string[], str_fresh: string[], strarr_producers: string[], forwarders: string[], own a: string[]): string[] {
   match (e) {
     ast.ExprFieldAccess(fa) => {
       let oty: string = fnfld_obj_type(fa.obj, structs, binds);
       if (oty.len() > 0) {
-        a = push_str_unique(a, oty + "." + fa.field);
+        a = a.append(oty + "." + fa.field);
       } else {
-        a = push_str_unique(a, fa.field);
+        a = a.append(fa.field);
       }
       return strarrfld_scan(fa.obj, structs, binds, str_fresh, strarr_producers, forwarders, a);
     },
@@ -12853,18 +12854,22 @@ function strarrfld_scan(e: ast.Expr, structs: irtables.StructTab, binds: string[
       return a;
     },
     ast.ExprBinary(b) => {
-      return strarrfld_scan_operand(b.right, structs, binds, str_fresh, strarr_producers, forwarders, strarrfld_scan_operand(b.left, structs, binds, str_fresh, strarr_producers, forwarders, a));
+      a = strarrfld_scan_operand(b.left, structs, binds, str_fresh, strarr_producers, forwarders, a);
+      return strarrfld_scan_operand(b.right, structs, binds, str_fresh, strarr_producers, forwarders, a);
     },
     ast.ExprUnary(u) => {
       return strarrfld_scan(u.operand, structs, binds, str_fresh, strarr_producers, forwarders, a);
     },
     ast.ExprIndex(ix) => {
       a = strarrfld_elem_src_marks(ix.array, structs, binds, forwarders, a);
-      return strarrfld_scan(ix.index, structs, binds, str_fresh, strarr_producers, forwarders, strarrfld_scan(ix.array, structs, binds, str_fresh, strarr_producers, forwarders, a));
+      a = strarrfld_scan(ix.array, structs, binds, str_fresh, strarr_producers, forwarders, a);
+      return strarrfld_scan(ix.index, structs, binds, str_fresh, strarr_producers, forwarders, a);
     },
     ast.ExprSlice(sl) => {
       a = strarrfld_elem_src_marks(sl.array, structs, binds, forwarders, a);
-      return strarrfld_scan(sl.end, structs, binds, str_fresh, strarr_producers, forwarders, strarrfld_scan(sl.start, structs, binds, str_fresh, strarr_producers, forwarders, strarrfld_scan(sl.array, structs, binds, str_fresh, strarr_producers, forwarders, a)));
+      a = strarrfld_scan(sl.array, structs, binds, str_fresh, strarr_producers, forwarders, a);
+      a = strarrfld_scan(sl.start, structs, binds, str_fresh, strarr_producers, forwarders, a);
+      return strarrfld_scan(sl.end, structs, binds, str_fresh, strarr_producers, forwarders, a);
     },
     ast.ExprStructLit(sl2) => {
       if (sl2.has_base) {
@@ -12878,7 +12883,7 @@ function strarrfld_scan(e: ast.Expr, structs: irtables.StructTab, binds: string[
         while (sdi >= 0) {
           for fld in structs.decls[sdi].fields {
             if (fld.type_name == "string[]") {
-              a = push_str_unique(a, "store:" + sl2.type_name + "." + fld.name);
+              a = a.append("store:" + sl2.type_name + "." + fld.name);
             }
           }
           sdi = irtables.stab_next(structs, sdi, sl2.type_name);
@@ -12901,7 +12906,7 @@ function strarrfld_scan(e: ast.Expr, structs: irtables.StructTab, binds: string[
         // double free.
         if (irtables.is_struct_array_field_type(structs, fkt) || irtables.is_enum_array_field_type(structs, fkt)) {
           if (!boxarr_lit_all_elems_fresh(sl2.field_values[i], structs, slice_unchecked(fkt, 0, fkt.len() - 2), irtables.is_enum_array_field_type(structs, fkt))) {
-            a = push_str_unique(a, sl2.type_name + "." + sl2.field_names[i]);
+            a = a.append(sl2.type_name + "." + sl2.field_names[i]);
           }
         }
         if (fkt == "string[]") {
@@ -12986,7 +12991,7 @@ function strarrfld_scan(e: ast.Expr, structs: irtables.StructTab, binds: string[
             _ => {}
           }
           if (!store_ok) {
-            a = push_str_unique(a, sl2.type_name + "." + sl2.field_names[i]);
+            a = a.append(sl2.type_name + "." + sl2.field_names[i]);
             // The STORE half on its own, under an inert prefixed
             // spelling. The plain mark above is pushed for a bad
             // store AND for an unsafe READ, and the two gate
@@ -12994,7 +12999,7 @@ function strarrfld_scan(e: ast.Expr, structs: irtables.StructTab, binds: string[
             // walk, a store hazard costs the BUFFER dec as well,
             // because the stored value is then an uncounted alias
             // the construction never retained.
-            a = push_str_unique(a, "store:" + sl2.type_name + "." + sl2.field_names[i]);
+            a = a.append("store:" + sl2.type_name + "." + sl2.field_names[i]);
           }
         }
         // The admitted share is NOT walked as a read: marking it would
@@ -13166,8 +13171,7 @@ function strarrfld_bind_read(v: ast.StmtVar, stmts: ast.Stmt[], structs: irtable
   return v.init;
 }
 
-function strarrfld_scan_stmts(stmts: ast.Stmt[], structs: irtables.StructTab, binds: string[], str_fresh: string[], strarr_producers: string[], forwarders: string[], fwd_exempt: string, acc: string[]): string[] {
-  let a: string[] = acc;
+function strarrfld_scan_stmts(stmts: ast.Stmt[], structs: irtables.StructTab, binds: string[], str_fresh: string[], strarr_producers: string[], forwarders: string[], fwd_exempt: string, own a: string[]): string[] {
   let b: string[] = binds;
   for stmt in stmts {
     match (stmt) {
@@ -13259,7 +13263,7 @@ function strarrfld_program_has_field(structs: irtables.StructTab): boolean {
 
 // strarr_visible_producers: the whole-array producers `fn` can call by name —
 // a local or parameter of a producer's name holds an unknown body, not the
-// registered declaration.
+// registered declaration, and a receiver of one is a struct value.
 function strarr_visible_producers(fn: parser.FuncDecl, producers: string[], pix: util.NameIndex): string[] {
   let bound: string[] = astwalk.collect_bound_stmts(fn.body, []);
   let hides: boolean = false;
@@ -13272,6 +13276,9 @@ function strarr_visible_producers(fn: parser.FuncDecl, producers: string[], pix:
     if (pix.has(p.name)) {
       hides = true;
     }
+  }
+  if (pix.has(fn.receiver_name)) {
+    hides = true;
   }
   if (!hides) {
     return producers;
@@ -13372,11 +13379,11 @@ function strarr_decl_count_step(st: ast.Stmt, own acc: StrarrDeclCount): StrarrD
 // StrarrOwnFrame is what strarrfld_borrowed_elem_marks knows about one body:
 // `params` is aligned with the function's parameters, naming each one whose
 // value is the caller's argument for the whole body ("" otherwise); `owned`
-// (in `src`) holds the locals whose every element is theirs. `stores` is the second pass's
-// parameter-store registry, empty on the first.
-// store_keys indexes `stores` by the key before each row's '|', so a call
-// asks whether a parameter position has a store without a prefix scan.
-struct StrarrOwnFrame { fnkey: string, params: string[], src: StrarrOwnSrc, stores: string[], store_keys: util.NameIndex, store_fns: string[] }
+// (in `src`) holds the locals whose every element is theirs. On the second
+// pass, store_keys holds the key before each '|' of the parameter-store
+// registry and store_fns the functions owning a storing parameter; both are
+// empty on the first.
+struct StrarrOwnFrame { fnkey: string, params: string[], src: StrarrOwnSrc, store_keys: util.NameIndex, store_fns: util.NameIndex }
 
 function strarr_store_keys(stores: string[]): util.NameIndex {
   let keys: string[] = [];
@@ -13390,7 +13397,7 @@ function strarr_store_keys(stores: string[]): util.NameIndex {
   return util.name_index(keys);
 }
 
-function strarr_own_frame_of(fn: parser.FuncDecl, structs: irtables.StructTab, str_fresh: string[], producers: string[], pix: util.NameIndex, stores: string[], store_keys: util.NameIndex, store_fns: string[]): StrarrOwnFrame {
+function strarr_own_frame_of(fn: parser.FuncDecl, structs: irtables.StructTab, str_fresh: string[], producers: string[], pix: util.NameIndex, no_keys: util.NameIndex): StrarrOwnFrame {
   let vis: string[] = strarr_visible_producers(fn, producers, pix);
   let bound: string[] = astwalk.collect_bound_stmts(fn.body, []);
   let assigned: string[] = irtables.body_assign_targets(fn.body);
@@ -13404,7 +13411,7 @@ function strarr_own_frame_of(fn: parser.FuncDecl, structs: irtables.StructTab, s
   }
   let src: StrarrOwnSrc = StrarrOwnSrc { str_fresh: str_fresh, producers: vis, owned: [], binds: strarr_frame_binds(fn, structs), structs: structs };
   src = StrarrOwnSrc { ...src, owned: strarr_owned_locals(fn, bound, src) };
-  return StrarrOwnFrame { fnkey: fn.name, params: params, src: src, stores: stores, store_keys: store_keys, store_fns: store_fns };
+  return StrarrOwnFrame { fnkey: fn.name, params: params, src: src, store_keys: no_keys, store_fns: no_keys };
 }
 
 // strarr_frame_binds: strarrfld_fn_binds plus every struct-typed local of `fn`,
@@ -13522,25 +13529,31 @@ function strarr_callee_key(c: ast.ExprCall): string {
 function strarr_own_node(e: ast.Expr, own st: StrarrOwnAcc): StrarrOwnAcc {
   let fr: StrarrOwnFrame = st.fr;
   let a: string[] = st.out;
-  if let ast.ExprStructLit(sl) = e {
-    a = strarr_own_struct_lit(sl, fr, a);
-  }
-  if let ast.ExprCall(c) = e {
-    a = strarr_own_call(c, fr, a);
-  }
-  if let ast.ExprIdent(id) = e {
-    if (fr.store_fns.len() > 0 && util.has_str(fr.store_fns, id.name)) {
+  match (e) {
+    ast.ExprStructLit(sl) => {
+      a = strarr_own_struct_lit(sl, fr, a);
+    },
+    ast.ExprCall(c) => {
+      a = strarr_own_call(c, fr, a);
+    },
+    ast.ExprIdent(id) => {
+      if (!fr.store_fns.has(id.name)) {
+        return st;
+      }
       a = a.append("id:" + id.name);
+    },
+    ast.ExprLambda(lm) => {
+      a = strarr_own_stmts(lm.body, StrarrOwnFrame { ...fr, fnkey: "", params: [], src: StrarrOwnSrc { ...fr.src, owned: [], binds: [] } }, a);
+    },
+    _ => {
+      return st;
     }
-  }
-  if let ast.ExprLambda(lm) = e {
-    a = strarr_own_stmts(lm.body, StrarrOwnFrame { ...fr, fnkey: "", params: [], src: StrarrOwnSrc { ...fr.src, owned: [], binds: [] } }, a);
   }
   return StrarrOwnAcc { fr: fr, out: a };
 }
 
 function strarr_own_struct_lit(sl: ast.ExprStructLit, fr: StrarrOwnFrame, own a: string[]): string[] {
-  if (fr.store_fns.len() > 0) {
+  if (fr.store_fns.names.len() > 0) {
     return a;
   }
   let i: i32 = 0;
@@ -13565,21 +13578,31 @@ function strarr_own_call(c: ast.ExprCall, fr: StrarrOwnFrame, own a: string[]): 
   if (k.len() == 0) {
     return a;
   }
-  if (fr.store_fns.len() > 0 && util.has_str(fr.store_fns, ident_name_or_empty(c.callee))) {
+  if (fr.store_fns.names.len() == 0) {
+    let i: i32 = 0;
+    while (i < c.args.len()) {
+      let pk: string = strarr_frame_param_key(c.args[i], fr);
+      if (pk.len() > 0) {
+        a = a.append("ln:" + k + "#" + util.i32_to_string(i) + "|" + pk);
+      }
+      i = i + 1;
+    }
+    return a;
+  }
+  if (fr.store_fns.has(ident_name_or_empty(c.callee))) {
     a = a.append("cl:" + k);
   }
-  let i: i32 = 0;
-  while (i < c.args.len()) {
-    let ck: string = k + "#" + util.i32_to_string(i);
-    let pk: string = strarr_frame_param_key(c.args[i], fr);
-    if (fr.store_fns.len() == 0) {
-      if (pk.len() > 0) {
-        a = a.append("ln:" + ck + "|" + pk);
-      }
-    } else if (pk.len() == 0 && !strarr_owned_value(c.args[i], fr.src) && fr.store_keys.has(ck)) {
+  // A store key is "<fn>#<j>", so a callee no row names has none.
+  if (!fr.store_fns.has(k)) {
+    return a;
+  }
+  let j: i32 = 0;
+  while (j < c.args.len()) {
+    let ck: string = k + "#" + util.i32_to_string(j);
+    if (strarr_frame_param_key(c.args[j], fr).len() == 0 && !strarr_owned_value(c.args[j], fr.src) && fr.store_keys.has(ck)) {
       a = a.append("bd:" + ck);
     }
-    i = i + 1;
+    j = j + 1;
   }
   return a;
 }
@@ -13653,37 +13676,42 @@ function strarr_param_stores(direct: string[], links: string[]): string[] {
 // parameter at every call site, so its verdict moves there as a forwarder's does.
 // Each mark is the READ half only: the retained buffer still goes back through
 // "arrbuf:".
-function strarrfld_borrowed_elem_marks(funcs: parser.FuncDecl[], structs: irtables.StructTab, str_fresh: string[], producers: string[], acc: string[]): string[] {
+function strarrfld_borrowed_elem_marks(funcs: parser.FuncDecl[], structs: irtables.StructTab, str_fresh: string[], producers: string[], own a: string[]): string[] {
   let none: string[] = [];
   let no_keys: util.NameIndex = util.name_index(none);
   let pix: util.NameIndex = util.name_index(producers);
   let first: string[] = [];
+  let frames: StrarrOwnFrame[] = [];
   for fn in funcs {
-    first = strarr_own_stmts(fn.body, strarr_own_frame_of(fn, structs, str_fresh, producers, pix, none, no_keys, none), first);
+    let fr: StrarrOwnFrame = strarr_own_frame_of(fn, structs, str_fresh, producers, pix, no_keys);
+    first = strarr_own_stmts(fn.body, fr, first);
+    frames = frames.append(fr);
   }
   let stores: string[] = strarr_param_stores(strarr_keyed_values(first, "st:"), strarr_keyed_values(first, "ln:"));
   let store_keys: util.NameIndex = strarr_store_keys(stores);
-  let a: string[] = acc;
   for tf in strarr_keyed_values(first, "mk:") {
-    a = push_str_unique(a, tf);
+    a = a.append(tf);
   }
   if (stores.len() == 0) {
     return a;
   }
   let store_fns: string[] = strarr_store_fns(stores);
+  let store_ix: util.NameIndex = util.name_index(store_fns);
   let second: string[] = [];
-  for fn in funcs {
-    second = strarr_own_stmts(fn.body, strarr_own_frame_of(fn, structs, str_fresh, producers, pix, stores, store_keys, store_fns), second);
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    second = strarr_own_stmts(funcs[i].body, StrarrOwnFrame { ...frames[i], store_keys: store_keys, store_fns: store_ix }, second);
+    i = i + 1;
   }
   for bk in strarr_keyed_values(second, "bd:") {
     for tf in strarr_keyed_values(stores, bk + "|") {
-      a = push_str_unique(a, tf);
+      a = a.append(tf);
     }
   }
   for fname in store_fns {
     if (strarr_count_of(second, "id:" + fname) > strarr_count_of(second, "cl:" + fname)) {
       for pf in strarr_keyed_values(stores, fname + "#") {
-        a = push_str_unique(a, strarr_after_bar(pf));
+        a = a.append(strarr_after_bar(pf));
       }
     }
   }
@@ -14132,8 +14160,8 @@ function payload_type_at(structs: irtables.StructTab, ptype: string, variant: st
 //
 // A prime count keeps unrelated hash strides from aliasing onto the same bucket.
 // Sized to the table: the compiler's own registry holds some 11 k keys across
-// its tiers, and a lookup walks its bucket's records byte by byte, so 251
-// buckets cost about 9.7 k instructions per lookup.
+// its tiers, and a lookup walks its bucket's records byte by byte, so 4093
+// buckets keep a bucket to a few records.
 function borrow_reg_buckets(): i32 {
   return 4093;
 }

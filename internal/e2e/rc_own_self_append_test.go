@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // `own` array parameters that self-append in a loop — `p = p.append(x)` — and
@@ -58,9 +56,6 @@ func TestArm64OwnSelfAppend(t *testing.T) {
 }
 
 func TestWASMOwnSelfAppend(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, ownSelfAppendSrc); got != 0 {
 		t.Errorf("own-param self-append: got %d, want 0", got)
 	}

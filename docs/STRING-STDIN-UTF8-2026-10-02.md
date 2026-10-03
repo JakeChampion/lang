@@ -1,8 +1,9 @@
 # Whole-input bytes and checked stdin text
 
-This slice integrates completed byte-view and diagnostic checkpoint
-`730a790e0`. Target tests, browser tests, bootstrap, actual stage-2 probes,
-the full unit suite and all lint gates pass.
+This slice integrates main at `db7e240f2`. The publication refresh on
+2026-10-03 reproduces the compiler and reruns the byte and text probes,
+size comparisons and native benchmarks. Targeted Linux tests, browser
+tests, lint and the broader semantic matrix pass. Full CI remains pending.
 
 `io.read_all_stdin()` returns `Result[string, IoError]`. It collects raw
 chunks and validates the complete input, so a UTF-8 scalar can cross a read
@@ -32,19 +33,24 @@ integer-keyed map.
 
 ## Validation
 
-The integrated Linux run passes partial-input I/O faults for valid,
-malformed and multi-chunk prefixes, the bootstrap compiler's target matrix,
-GNU `env`/`tsort` parity, and primary text, raw-reader, example-`tee`,
-`tsort`, unused-map-method and compiler-driver regressions. The partial-read
-pilot takes 0.070 seconds, the bootstrap target matrix 36.033 seconds,
-GNU parity 1.167 seconds and the primary matrix 107.775 seconds. The full
-unit suite and all lint gates pass. All nine browser shim tests pass with
-no skips. Test durations are not performance comparisons.
+The publication gate covers partial-input I/O faults for valid, malformed
+and multi-chunk prefixes, the bootstrap compiler's target matrix, GNU
+`env`/`tsort` parity, and primary text, raw-reader, example-`tee`, `tsort`,
+unused-map-method and compiler-driver regressions. These pass, including
+the primary component cases. All nine browser shim tests pass on Node 22,
+as do all lint gates. The container's initial Node 18 run stopped at module
+loading; CI specifies Node 22.
 
-The pinned-seed bootstrap completes in 33, 26 and 23 seconds. Stages two
-and three are identical: 12,480,129 bytes, SHA-256
-`f8b7ea0eded0b223510efb0912396d4b2ae8b0f3ac675e3f542660b84745ce2b`.
-They also match the completed D8 compiler byte for byte.
+The combined primary run exceeded its aggregate 20-minute limit during a
+component test, without an earlier assertion failure. Splitting the run
+preserves coverage: the API/component group passes in 371.571 seconds;
+the broader semantic matrix runs separately and remains pending. The full
+unit suite passed at the earlier checkpoint; this publication's full suite
+will run in CI under the project's early-publication policy.
+
+The pinned-seed bootstrap completes in 33, 24 and 22 seconds. Stages two
+and three are identical: 12,414,337 bytes, SHA-256
+`a8fe015fcfa458866324ae69b450307408d3c6d57aa61edf5ebe4de8f7b2dccb`.
 
 That exact stage-2 compiler passes 96 text cases on Darwin and core WASM:
 three APIs and 16 inputs per target. Cases include empty input, NUL,
@@ -54,61 +60,79 @@ cases covering binary names, cycles, unsigned ordering, NUL truncation,
 odd token counts and distinct names sharing an FNV hash. Allocation and
 free counts balance throughout.
 
-Bootstrap Preview 2 tests pass. Primary Preview 2 stdin remains unsupported:
-the unchanged compiler refuses both the old `read_chunk` and the new
-`read_chunk_bytes` because its component framing has no Reader imports.
-Primary core-WASM results do not establish Preview 2 support. Adding that
-framing remains separate target work.
+Current main includes Preview 2 Reader framing. The reproduced primary
+compiler now passes all 48 checked-text cases as components, including
+malformed input and every tested scalar split. The permanent suite also
+covers component raw collection and borrowed-reader lifecycle behavior.
+Components check behavior; native and core-WASM runs additionally require
+balanced allocation censuses.
 
 ## Size
 
 The same final stage-2 compiler built a program that reads stdin and prints
-its byte length, using the D8 checkpoint's stdlib and the new stdlib.
+its byte length, using current main's stdlib and the new stdlib.
 Empty, NUL-containing, multi-chunk ASCII and Unicode inputs produce the
 expected length on both versions.
 
 | Artifact | Before | After |
 | --- | ---: | ---: |
 | Darwin executable | 50,001 bytes | 66,513 bytes |
-| Darwin code section | 26,264 bytes | 28,636 bytes |
+| Darwin code section | 25,744 bytes | 28,108 bytes |
 | Darwin unwind section | 4,060 bytes | 4,676 bytes |
 | Darwin data section | 4,376 bytes | 4,400 bytes |
-| Core WASM | 15,423 bytes | 16,734 bytes |
+| Core WASM | 15,353 bytes | 16,692 bytes |
 
-Native code increases by 2,372 bytes. Checked decoding and error cleanup
+Native code increases by 2,364 bytes. Checked decoding and error cleanup
 cross a segment alignment boundary, increasing the text segment from
 32,768 to 49,152 bytes. Unwind data grows by 616 bytes and data by 24 bytes.
 No size baseline changes.
 
 Both native `tsort` executables remain 149,329 bytes. Code decreases from
-111,968 to 110,392 bytes; unwind data increases from 15,180 to 15,468 bytes.
+109,176 to 107,752 bytes; unwind data increases from 15,228 to 15,516 bytes.
 The data section remains 6,328 bytes.
 
 ## Native tsort comparison
 
 Measured on arm64 macOS with the same final stage-2 compiler for both Fern
-versions, GNU coreutils 9.12 and Rust uutils 0.0.29. The pipeline first
+versions, GNU coreutils 9.12 and Rust uutils 0.12.0. The pipeline first
 checks 1,000 pairs, then changes only the pair count to 100,000. Each larger
 input is 2,000,000 bytes. Two warmups precede seven timed rounds with
 alternating command order; every output is checked. Peak RSS is measured
-separately. Sanitizers and local compiler/test jobs are absent. Ordinary OS
-background services, including indexing, were active around the run.
+separately. Sanitizers and local compiler/test jobs are absent.
 
 The executable SHA-256 hashes are
-`4249a24a838a94d205fc8f995f3fafbb569d63cd471b2b8be9f90efd7e840b6c`
+`13ec910afe2cb0dbcd9e98e80cbc6328b0656b8c2023a0f4400f3923a90b99bd`
 before and
-`45ce6841d7808d6d8f14aeb119a803fa7e0a1936a028d7aee3886bf3e880539a`
+`c975d54084f8ef8554c6e47e7a4f2135c45ccb3488b37f598870493460a9a73c`
 after.
 
 | Workload | Previous Fern | Byte-based Fern | GNU | uutils |
 | --- | ---: | ---: | ---: | ---: |
-| Reversed chain, median | 25.427 ms | 25.489 ms | 47.287 ms | 146.808 ms |
-| Independent names, median | 29.291 ms | 26.683 ms | 43.168 ms | 144.995 ms |
-| Chain, peak RSS | 30,310,400 B | 34,390,016 B | 10,944,512 B | 28,459,008 B |
-| Independent names, peak RSS | 29,556,736 B | 33,587,200 B | 9,306,112 B | 22,233,088 B |
+| Reversed chain, median | 25.125 ms | 25.721 ms | 47.941 ms | 14.141 ms |
+| Independent names, median | 28.857 ms | 26.291 ms | 45.108 ms | 14.878 ms |
+| Chain, peak RSS | 30,310,400 B | 34,390,016 B | 10,944,512 B | 18,153,472 B |
+| Independent names, peak RSS | 29,556,736 B | 33,587,200 B | 9,306,112 B | 14,909,440 B |
 
-Chain timing ranges overlap: 24.616-25.910 ms before and 24.751-26.616 ms
-after. Independent-name samples are separated in this run: 28.469-29.941 ms
-before and 25.935-27.597 ms after. These workloads do not establish a general
+Chain timing ranges overlap: 24.673-28.636 ms before and 24.444-29.356 ms
+after. Independent-name ranges also overlap: 28.107-30.559 ms before and
+25.148-29.114 ms after. These workloads do not establish a general
 throughput improvement. Peak memory increases with the representation that
 retains input bytes, name spans and collision links.
+## Assembly text follow-up
+
+This follow-up incorporates main at `d7903e7d4`.
+
+The standalone assembler drivers validate UTF-8 input. Assembly data
+directives now spell non-ASCII bytes as three-digit octal escapes, preserving
+arbitrary embedded data while keeping the emitted assembly valid text.
+Decoder comparisons retain their exact byte expectations, including invalid
+UTF-8 payloads and Unicode text; a separate test checks the actual x86-64
+and ARM64 emitters' UTF-8 output and octal byte sequence.
+
+The follow-up passes targeted Linux tests and all lint gates. A fresh
+bootstrap takes 32 seconds for stage 1, 26 for stage 2 and 22 for stage 3.
+Stages 2 and 3 are identical at 12,398,273 bytes, SHA-256
+`748dcae74c7c0b079e074910873cbc98801f4151bc74a97796c864875902ad45`.
+That compiler passes all 96 native/core checked-input cases and 48 component
+cases. Its native assembler preserves the octal-encoded bytes and rejects
+malformed UTF-8 assembly input. Full current-head CI remains required.

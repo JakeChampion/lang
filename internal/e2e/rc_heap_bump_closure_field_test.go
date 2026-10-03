@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // A closure stored in a struct FIELD is reclaimed with the struct (#6443).
@@ -73,9 +71,6 @@ func TestArm64ClosureInStructFieldRecycles(t *testing.T) {
 }
 
 func TestWASMClosureInStructFieldRecycles(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, closureFieldChurnSrc); got != 0 {
 		t.Errorf("closure-in-struct-field churn: got exit %d, want 0", got)
 	}

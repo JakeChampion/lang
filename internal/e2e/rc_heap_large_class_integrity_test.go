@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Large-block size-class integrity. The large tier rounds a >2048 B request up
@@ -42,7 +40,6 @@ function main(): i32 {
 }`
 
 func TestX86_64LargeClassIntegrity(t *testing.T) {
-	ast.RcFreeEnabled = true
 	if got := mustRunX86_64FreeOn(t, largeClassIntegritySrc); got != 0 {
 		t.Errorf("large-tier size-class integrity violated: got %d (expected 0; a non-zero result means a reused block was too small / mis-binned)", got)
 	}

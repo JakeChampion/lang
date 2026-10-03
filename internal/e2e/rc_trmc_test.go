@@ -6,8 +6,6 @@ import (
 	"runtime"
 	"syscall"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Tail-recursion-modulo-cons (ast.TrmcEnabled). A `map`-shaped function —
@@ -15,9 +13,9 @@ import (
 // tail-recursive (the constructor wraps the recursive call), so ordinary
 // lowering grows the stack O(n). TRMC rewrites it into a hole-passing loop:
 // O(1) stack, single pass. These pin (1) value-correctness + no rc
-// over-release on all three backends, (2) TRMC-on == TRMC-off byte-identical
-// (the gate that makes the optimisation invisible), and (3) the actual O(1)
-// stack win — a deep list that overflows without TRMC succeeds with it.
+// over-release on all three backends, (2) agreement with the interpreter,
+// which has no TRMC (the gate that makes the optimisation invisible), and
+// (3) the actual O(1) stack win — a deep list succeeds under a 16 MiB stack.
 
 const trmcMapSrc = `enum List { Cons(i32, List), Nil }
 function inc_all(xs: List): List {
@@ -58,52 +56,20 @@ func TestArm64Trmc(t *testing.T) {
 }
 
 func TestWASMTrmc(t *testing.T) {
-	withTrmc(true, func() {
-		if got := runWasm(t, trmcMapSrc); got != 0 {
-			t.Errorf("trmc map: got %d, want 0", got)
-		}
-	})
-}
-
-// withTrmc runs fn with ast.TrmcEnabled forced to v, restoring it after. (The
-// native compileAndRun*FreeOn helpers don't toggle it; these wrap codegen.)
-func withTrmc(v bool, fn func()) {
-	prev := ast.TrmcEnabled
-	ast.TrmcEnabled = v
-	defer func() { ast.TrmcEnabled = prev }()
-	fn()
-}
-
-// --- TRMC-on == TRMC-off (the optimisation must be invisible) -------------
-
-func TestX86_64TrmcMatchesNoTrmc(t *testing.T) {
-	var on, off int
-	withTrmc(true, func() { _, on = compileAndRunX86_64FreeOn(t, trmcMapSrc) })
-	withTrmc(false, func() { _, off = compileAndRunX86_64FreeOn(t, trmcMapSrc) })
-	if on != off || on != 0 {
-		t.Errorf("TRMC on=%d off=%d, want both 0", on, off)
+	if got := runWasm(t, trmcMapSrc); got != 0 {
+		t.Errorf("trmc map: got %d, want 0", got)
 	}
 }
 
-func TestArm64TrmcMatchesNoTrmc(t *testing.T) {
-	var on, off int
-	withTrmc(true, func() { _, on = compileAndRunArm64FreeOn(t, trmcMapSrc) })
-	withTrmc(false, func() { _, off = compileAndRunArm64FreeOn(t, trmcMapSrc) })
-	if on != off || on != 0 {
-		t.Errorf("TRMC on=%d off=%d, want both 0", on, off)
+// The interpreter does not rewrite the recursion, so agreeing with it is what
+// makes the transform invisible.
+func TestInterpTrmc(t *testing.T) {
+	if got := runInterpExit(t, trmcMapSrc); got != 0 {
+		t.Errorf("trmc map under the interpreter: got %d, want 0", got)
 	}
 }
 
-func TestWASMTrmcMatchesNoTrmc(t *testing.T) {
-	var on, off int
-	withTrmc(true, func() { on = runWasm(t, trmcMapSrc) })
-	withTrmc(false, func() { off = runWasm(t, trmcMapSrc) })
-	if on != off || on != 0 {
-		t.Errorf("TRMC on=%d off=%d, want both 0", on, off)
-	}
-}
-
-// --- O(1) stack: deep list overflows without TRMC, succeeds with it -------
+// --- O(1) stack: a deep list succeeds under a bounded stack ---------------
 
 const trmcDeepSrc = `enum List { Cons(i32, List), Nil }
 function inc_all(xs: List): List {
@@ -117,13 +83,9 @@ function main(): i32 {
 }`
 
 // runWithStackLimit executes bin under an explicit RLIMIT_STACK soft limit
-// (in KiB) and returns its exit code. The deep-stack contract is only
-// meaningful inside a stack-size window: the TRMC-on leg still drops its
-// 300k-deep result through the recursive __drop_enum_List glue (~10 MB of
-// frames — drop specialisation hasn't loop-ified drop glue yet), while the
-// TRMC-off leg's inc_all recursion needs ~24 MB. A host soft limit of 8 MB
-// fails the "on" leg, unlimited passes the "off" leg — so pin 16 MB instead
-// of inheriting whatever the host happens to use.
+// (in KiB) and returns its exit code, so a deep-stack test measures against a
+// fixed stack rather than whatever soft limit the host happens to use. With
+// expectOverflow it requires the stack overflow's SIGSEGV.
 func runWithStackLimit(t *testing.T, kib int, bin string, expectOverflow bool) int {
 	t.Helper()
 	script := fmt.Sprintf("ulimit -S -s %d && exec \"$1\"", kib)
@@ -150,19 +112,8 @@ func runWithStackLimit(t *testing.T, kib int, bin string, expectOverflow bool) i
 }
 
 func TestX86_64TrmcDeepStack(t *testing.T) {
-	var on, off int
-	withTrmc(true, func() {
-		bin, _ := compileX86_64FreeOn(t, trmcDeepSrc)
-		on = runWithStackLimit(t, 16*1024, bin, false)
-	})
-	withTrmc(false, func() {
-		bin, _ := compileX86_64FreeOn(t, trmcDeepSrc)
-		off = runWithStackLimit(t, 16*1024, bin, true)
-	})
-	if on != 0 {
-		t.Errorf("TRMC on: deep map should succeed, got %d", on)
-	}
-	if off == 0 {
-		t.Errorf("TRMC off: deep map should overflow the stack, but got 0 (TRMC may not be the reason on succeeds)")
+	bin, _ := compileX86_64FreeOn(t, trmcDeepSrc)
+	if code := runWithStackLimit(t, 16*1024, bin, false); code != 0 {
+		t.Errorf("deep map should succeed in a 16 MiB stack, got %d", code)
 	}
 }

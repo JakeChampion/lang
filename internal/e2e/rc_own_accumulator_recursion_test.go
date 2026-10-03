@@ -3,8 +3,6 @@ package e2e
 import (
 	"strconv"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // An `own` array accumulator threaded through RECURSION — `acc = into(l,
@@ -119,9 +117,6 @@ func ownAccBumpSrc(body string, rounds int) string {
 }
 
 func TestWASMOwnAccumulatorRecursionBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, tc := range []struct {
 		name string
 		body string

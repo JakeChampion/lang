@@ -80,3 +80,72 @@ and mv corpora retain the same failures as the unchanged parent: backup
 suffixes, reflink requests, copy traversal order and trailing-slash handling.
 Their existing CI exceptions are unchanged. This migration does not claim
 to resolve those platform differences.
+
+## Integration with extent-aware copying
+
+The compiler integration retains the newer copy engine's SEEK_DATA/SEEK_HOLE
+walk, fallback streaming and debug reports. Raw reads and byte writes apply
+to both paths. One zero block is reused across all extents and reads.
+
+Darwin validation exposed a platform bug in the extent walk: Linux uses
+SEEK_DATA=3 and SEEK_HOLE=4, while Darwin uses 4 and 3. `Reader.seek` passes
+these values directly to the OS. With the Linux values, a dense file could
+be treated as a hole and an all-hole file could fail with ENXIO. The copy
+engine now selects the values for its target.
+
+The local Darwin SDK defines those constants, and a direct syscall probe
+confirms their behavior. For a 256-byte dense file, whence 3 returns offset
+256 and whence 4 returns 0. For a 262,145-byte all-hole file, whence 3 returns
+0 and whence 4 returns errno 6, "Device not configured". The corrected native
+pilot copies both inputs exactly under never/auto/always, with balanced
+allocation counts in all six cases.
+
+The refreshed Linux GNU/raw copy group passed, as did the primary compiler's
+copy targets, the full unit suite and all lint gates. Darwin passed both
+the reproduced compiler's cp/install corpus and the independently built
+primary compiler's copy corpus, with balanced allocation counts.
+
+The compiler reaches a byte-identical stage2/stage3 fixed point:
+12,911,681 bytes, SHA-256
+`695f250b4565aa43106a0ccebf8b800355e4abfc7869cb603d802439cf1de031`.
+Only the copy utility changed after that reproduction; compiler and stdlib
+sources are unchanged. All 6,048 Go/Fern files match the final frozen source.
+
+The text baseline below is `862f331be`'s copy module with the same Darwin
+constant correction. Both versions use the reproduced compiler and the
+same libraries. The 8,192-byte pilot and 8,388,608-byte run verify exact
+contents before timing. Two warmups precede seven alternating samples;
+allocation census and peak RSS are separate runs. Other task-owned compiler
+and container jobs were idle; this does not claim desktop-wide isolation.
+
+| Workload | Implementation | Median ms | Range ms | Peak RSS bytes | Allocations |
+| --- | --- | ---: | ---: | ---: | ---: |
+| dense | text | 8.469 | 4.669-9.386 | 1,622,016 | 428 |
+| dense | bytes | 7.207 | 4.034-10.542 | 1,490,944 | 363 |
+| dense | GNU 9.12 | 6.089 | 5.511-10.774 | 1,523,712 | |
+| zeros | text | 3.145 | 2.987-3.355 | 1,474,560 | 2,481 |
+| zeros | bytes | 2.796 | 2.678-4.307 | 1,490,944 | 433 |
+| zeros | GNU 9.12 | 4.448 | 4.260-4.735 | 1,523,712 | |
+| mixed | text | 6.373 | 5.599-6.455 | 1,474,560 | 2,737 |
+| mixed | bytes | 6.303 | 4.728-8.383 | 1,490,944 | 753 |
+| mixed | GNU 9.12 | 7.173 | 6.326-10.086 | 1,474,560 | |
+| sparse_auto | text | 8.272 | 6.501-10.057 | 1,654,784 | 428 |
+| sparse_auto | bytes | 8.780 | 5.178-9.518 | 1,490,944 | 363 |
+| sparse_auto | GNU 9.12 | 6.593 | 6.233-11.668 | 1,474,560 | |
+| sparse_auto | uutils 0.12.0 | 11.268 | 9.278-15.199 | 2,310,144 | |
+
+Every parent/candidate timing range overlaps. The allocation reduction is
+measured, and all Fern census runs balance; these timings do not establish
+a speed improvement. Each input occupies 16,384 blocks on this host, including
+the seek-seeded mixed file, so the auto timing is not a sparse-input claim.
+All-zero outputs occupy zero blocks. uutils rejects the explicit never/always
+modes on Darwin and is excluded from those timings.
+
+| Utility | Code delta | Unwind delta | Static data delta | File bytes, both versions |
+| --- | ---: | ---: | ---: | ---: |
+| cp | +1,512 | +264 | 0 | 249,121 |
+| install | +84 | -56 | 0 | 282,097 |
+| mv | +1,512 | +264 | 0 | 248,961 |
+
+The byte-reading, comparison and writing paths account for the added code;
+the aligned files do not grow in this integration. No size baseline changed.

@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Consuming match generalises beyond lists to arbitrary recursive ADTs: a TREE
@@ -51,9 +49,6 @@ func TestArm64OwnTreeMatch(t *testing.T) {
 }
 
 func TestWASMOwnTreeMatch(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, ownTreeSrc); got != 0 {
 		t.Errorf("tree inc: got %d, want 0", got)
 	}

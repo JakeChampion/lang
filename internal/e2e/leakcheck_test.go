@@ -3,21 +3,13 @@ package e2e
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/ast"
-	"github.com/jakechampion/lang/internal/checker"
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // --- Leak detector, slice 1 (#5362) -------------------------------
@@ -34,80 +26,23 @@ import (
 // free. These tests pin the report's numbers on deterministic
 // __alloc/__free shapes and on an rc-driven drop-everything loop (the
 // heap-bump flat-heap shape, which rc_heap_bump_test.go already proves
-// frees every iteration's buffer), pin exit-code and stdout
-// preservation, and pin that a flag-off build emits no __fern_lc_
-// symbol at all (the byte-identical guarantee's cheap proxy).
+// frees every iteration's buffer), and pin exit-code and stdout
+// preservation. That a flag-off build emits no __fern_lc_ symbol is
+// internal/e2eselfhost's (TestSelfHostHeapEventFlagOffX86_64,
+// TestSelfHostArm64LeakcheckOffEmitsNothing).
 
-// emitLeakCheck compiles src with ast.LeakCheckEnabled (and the
-// freelist) toggled per the flags, returning the asm text. Follows the
-// compileX86_64FreeOn pipeline; monomorph is included so the arm64 leg
-// can share it.
-func emitLeakCheck(t *testing.T, backend, src string, leakCheck bool) string {
-	t.Helper()
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	prevFree, prevLc := ast.RcFreeEnabled, ast.LeakCheckEnabled
-	t.Cleanup(func() { ast.RcFreeEnabled, ast.LeakCheckEnabled = prevFree, prevLc })
-	ast.RcFreeEnabled = true
-	ast.LeakCheckEnabled = leakCheck
-	var asm string
-	var emitErr error
-	if backend == "arm64-linux" {
-		asm, emitErr = arm64codegen.Emit(prog, info)
-	} else {
-		asm, emitErr = x86_64.Emit(prog, info)
-	}
-	ast.RcFreeEnabled, ast.LeakCheckEnabled = prevFree, prevLc
-	if emitErr != nil {
-		t.Fatalf("%s emit: %v", backend, emitErr)
-	}
-	return asm
-}
-
-// runLeakCheckX86_64 compiles src flag-on and runs it, returning
+// runLeakCheckX86_64 compiles src with the leak census on and runs it, returning
 // stdout, stderr, and the exit code separately (the report contract is
 // "stderr only, stdout untouched", so combined output won't do).
 func runLeakCheckX86_64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
-	gcc, runner := x86_64Tooling(t)
-	asm := emitLeakCheck(t, "x86_64", src, true)
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(binPath)
-	} else {
-		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), binPath)...)
-	}
-	return runSplit(t, cmd)
+	runner := e2eharness.X86_64Runner(t)
+	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetX86_64Linux, src, []string{"FERN_LEAKCHECK=1"})
+	return runSplit(t, runX86_64Bin(runner, bin))
 }
 
-// runLeakCheckArm64 is the arm64 sibling (qemu; SKIPs without the
-// aarch64 toolchain — runs in CI).
+// runLeakCheckArm64 is the arm64 sibling (qemu; SKIPs without qemu-aarch64 —
+// runs in CI).
 func runLeakCheckArm64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
 	return runLeakCheckArm64Args(t, src)
@@ -117,18 +52,9 @@ func runLeakCheckArm64(t *testing.T, src string) (string, string, int) {
 // as its argv[1..].
 func runLeakCheckArm64Args(t *testing.T, src string, args ...string) (string, string, int) {
 	t.Helper()
-	gcc, qemu := arm64Tooling(t)
-	asm := emitLeakCheck(t, "arm64-linux", src, true)
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
-	return runSplit(t, runArm64Bin(qemu, binPath, args...))
+	qemu := e2eharness.Arm64Runner(t)
+	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetArm64Linux, src, []string{"FERN_LEAKCHECK=1"})
+	return runSplit(t, runArm64Bin(qemu, bin, args...))
 }
 
 func runSplit(t *testing.T, cmd *exec.Cmd) (string, string, int) {
@@ -204,25 +130,13 @@ const leakCheckLeakySrc = `function main(): i32 {
 // leakCheckExitBuiltinSrc: the exit() builtin bypasses the _start
 // epilogue, so __fern_exit must report too — with the exit code (7)
 // preserved and stdout (the print) clean of the report. alloc(100)
-// rounds to 112 live bytes.
+// rounds to 104 live bytes, the 8-byte class above it.
 const leakCheckExitBuiltinSrc = `function main(): i32 {
     let a: usize = __alloc(100);
     print("hello");
     exit(7);
     return 0;
 }`
-
-// Flag-off, the emitted asm must not contain any leak-detector symbol
-// at all — instrumentation, counters, report, and literals are all
-// behind the flag (the flag-off byte-identical guarantee).
-func TestLeakCheckOffEmitsNoSymbols(t *testing.T) {
-	for _, backend := range []string{"x86_64", "arm64-linux"} {
-		asm := emitLeakCheck(t, backend, leakCheckLeakySrc, false)
-		if strings.Contains(asm, "__fern_lc_") || strings.Contains(asm, ".Llc_") {
-			t.Errorf("%s: flag-off asm contains leak-detector symbols", backend)
-		}
-	}
-}
 
 func TestX86_64LeakCheckBalanced(t *testing.T) {
 	stdout, stderr, code := runLeakCheckX86_64(t, leakCheckBalancedSrc)
@@ -272,8 +186,8 @@ func TestX86_64LeakCheckExitBuiltinReports(t *testing.T) {
 		t.Errorf("stdout=%q, want %q", stdout, "hello\n")
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	if allocs != 1 || frees != 0 || live != 112 {
-		t.Errorf("got allocs=%d frees=%d live=%d, want 1/0/112", allocs, frees, live)
+	if allocs != 1 || frees != 0 || live != 104 {
+		t.Errorf("got allocs=%d frees=%d live=%d, want 1/0/104", allocs, frees, live)
 	}
 }
 
@@ -312,8 +226,8 @@ func TestArm64LeakCheckExitBuiltinReports(t *testing.T) {
 		t.Errorf("stdout=%q, want %q", stdout, "hello\n")
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	if allocs != 1 || frees != 0 || live != 112 {
-		t.Errorf("got allocs=%d frees=%d live=%d, want 1/0/112", allocs, frees, live)
+	if allocs != 1 || frees != 0 || live != 104 {
+		t.Errorf("got allocs=%d frees=%d live=%d, want 1/0/104", allocs, frees, live)
 	}
 }
 
@@ -578,11 +492,13 @@ const loopConstructionFreshSrc = `function main(): i32 {
 // The hazard the move must NOT reach: `a1` aliases a loop-OUTER array
 // without an inc. Moving it would let the first iteration's release free a
 // buffer later iterations still read — a use-after-free, not a leak. Pinned by
-// exit code as well as balance, since an over-release corrupts the read.
+// exit code as well as balance, since an over-release corrupts the read. The
+// append builds `a0` on the heap; a constant literal is a static aggregate,
+// which no release can free.
 const loopAliasNoIncSrc = `function main(): i32 {
     let s: i32 = 0;
     let k: i32 = 0;
-    let a0: i32[] = [1, 2, 3];
+    let a0: i32[] = [1, 2, 3].append(4);
     while (k < 20) {
         let a1: i32[] = a0;
         s = s + a1[2];
@@ -927,8 +843,8 @@ const ctorRetainedContainerReadSrc = `function main(): i32 {
     return s % 251;
 }`
 
-// Same retain through an ENUM payload rather than a tuple — the
-// EnumRcPayloads inc site, the fourth routing computeCtorAliasInced covers.
+// Same retain through an ENUM payload rather than a tuple — emitEnumNew's
+// inc site, the fourth routing computeCtorAliasInced covers.
 const ctorRetainedEnumPayloadSrc = `function main(): i32 {
     let s: i32 = 0;
     let k: i32 = 0;
@@ -972,9 +888,10 @@ const ctorOuterAliasSrc = `function main(): i32 {
 // to rc 1, and then `xs`'s own flat dec at the sweep took the rc to zero
 // without freeing anything — the buffer leaked, on plain top-level code with
 // no loop and no nested block in sight. retainsCtorAliasedSource keeps such a
-// container on the exit sweep.
+// container on the exit sweep. The append builds `xs` on the heap, as
+// loopAliasNoIncSrc's does.
 const ctorRetainedDropOrderSrc = `function main(): i32 {
-    let xs: i32[] = [4, 5, 6];
+    let xs: i32[] = [4, 5, 6].append(7);
     let o = (xs, 9);
     let s: i32 = xs[1] + o.1;
     return s % 251;
@@ -1525,35 +1442,5 @@ func TestX86_64OpenPathCopyFreed(t *testing.T) {
 	_, _, liveLong := parseLeakCheckLine(t, errLong)
 	if liveShort != liveLong {
 		t.Errorf("live_bytes short=%d long=%d: the open helper's NUL-terminated path copy is not returned after openat (%d bytes over %d opens)", liveShort, liveLong, liveLong-liveShort, n)
-	}
-}
-
-// Every IoError box __fern_io_error builds on x86-64 must carry the rc
-// header (__fern_alloc_box), whichever variant it is: the enum drop reads
-// the rc at data-8 and frees from there, so a bare __fern_alloc block makes
-// the drop read the preceding block's tail as a refcount and, when that
-// word happens to be 1, free 24 bytes inside a live block. The with-path
-// arm (NotFound / PermissionDenied / AlreadyExists / EILSEQ) did exactly
-// that; arm64 always boxed. The layout dependence makes the crash a matter
-// of which allocations preceded the open, so the invariant is pinned on the
-// emitted helper rather than on a run.
-func TestX86_64IoErrorBoxesAreHeadered(t *testing.T) {
-	asm := emitLeakCheck(t, "x86_64", `function main(): i32 {
-    match (open_reader("/nonexistent/path")) { Ok(r) => { r.close(); return 1; }, Err(e) => { return 0; } }
-}`, false)
-	start := strings.Index(asm, "__fern_io_error:")
-	if start < 0 {
-		t.Fatal("no __fern_io_error in the emitted asm")
-	}
-	body := asm[start:]
-	if end := strings.Index(body, "\tret\n"); end >= 0 {
-		// The helper's own return; the itoa / copy loops before it hold no ret.
-		body = body[:end]
-	}
-	if n := strings.Count(body, "call __fern_alloc\n"); n != 0 {
-		t.Errorf("__fern_io_error allocates %d IoError box(es) with bare __fern_alloc — every variant must go through __fern_alloc_box so the box has an rc header at data-8", n)
-	}
-	if !strings.Contains(body, "call __fern_alloc_box") {
-		t.Errorf("__fern_io_error has no __fern_alloc_box call at all; the helper's shape changed under this test")
 	}
 }

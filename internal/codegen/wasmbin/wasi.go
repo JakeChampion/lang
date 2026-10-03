@@ -2146,9 +2146,6 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	}
 	if helpers.set["__fern_write_file"] || helpers.set["__fern_write_file_bytes"] {
 		if opts.Preview2WASI {
-			if helpers.set["__fern_write_file_bytes"] {
-				in.add("wasi_io_error_drop")
-			}
 			in.add("wasi_get_directories_p2")
 			in.add("wasi_descriptor_open_at_p2")
 			in.add("wasi_descriptor_write_via_stream_p2")
@@ -2383,9 +2380,6 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	if helpers.set["__fern_reader_read_chunk"] || helpers.set["__fern_reader_read_chunk_bytes"] {
 		if opts.Preview2WASI {
 			in.add("wasi_io_blocking_read")
-			if helpers.set["__fern_reader_read_chunk_bytes"] {
-				in.add("wasi_io_error_drop")
-			}
 		} else {
 			in.add("wasi_fd_read")
 		}
@@ -2442,9 +2436,6 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		} else {
 			in.add("wasi_fd_filestat_set_size")
 		}
-	}
-	if opts.Preview2WASI && (helpers.set["__fern_writer_write_bytes"] || helpers.set["__fern_writer_write_some_bytes"]) {
-		in.add("wasi_io_error_drop")
 	}
 	if helpers.set["__fern_writer_write"] || helpers.set["__fern_writer_write_some"] || helpers.set["__fern_writer_write_bytes"] || helpers.set["__fern_writer_write_some_bytes"] {
 		if opts.Preview2WASI {
@@ -2564,11 +2555,9 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	}
 	if helpers.set["__fern_tcp_recv"] {
 		in.add("wasi_io_blocking_read")
-		in.add("wasi_io_error_drop")
 	}
 	if helpers.set["__fern_tcp_send"] || helpers.set["__fern_tcp_send_bytes"] {
 		in.add("wasi_blocking_write_and_flush_p2")
-		in.add("wasi_io_error_drop")
 	}
 	if helpers.set["__fern_tcp_listen"] || helpers.set["__fern_tcp_connect_with"] || helpers.set["__fern_tcp_close"] {
 		in.add("wasi_sockets_tcp_socket_drop")
@@ -2647,6 +2636,11 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_blocking_write_and_flush_p2")
 		in.add("wasi_io_input_stream_drop")
 		in.add("wasi_io_output_stream_drop")
+	}
+	// A failed blocking read or write hands back an io/error the caller
+	// owns, so every body that makes either call can drop one.
+	if in.set["wasi_io_blocking_read"] || in.set["wasi_blocking_write_and_flush_p2"] {
+		in.add("wasi_io_error_drop")
 	}
 	return in
 }
@@ -2945,18 +2939,8 @@ func buildLcReportBodyP2(idxs map[string]uint32) []byte {
 	getHandle := idxs["wasi_get_stderr_p2"]
 	write := idxs["wasi_blocking_write_and_flush_p2"]
 	emit := func(b []byte) []byte {
-		// if !init { mem[stderrHandleAddr] = get-stderr(); init = 1 }
-		b = inst.InstI32Const(b, stderrInitAddr)
-		b = memory.InstI32Load(b, 2, 0)
-		b = numeric.InstI32Eqz(b)
-		b = inst.InstIfStart(b, inst.BlocktypeEmpty)
-		b = inst.InstI32Const(b, stderrHandleAddr)
-		b = inst.InstCall(b, getHandle)
-		b = memory.InstI32Store(b, 2, 0)
-		b = inst.InstI32Const(b, stderrInitAddr)
-		b = inst.InstI32Const(b, 1)
-		b = memory.InstI32Store(b, 2, 0)
-		b = inst.InstEnd(b)
+		// A program that closed stderr gets no report.
+		b = emitStdioHandleP2(b, getHandle, stderrInitAddr, stderrHandleAddr, inst.InstReturn)
 		// blocking-write-and-flush(handle, line, cursor - line, retbuf)
 		b = inst.InstI32Const(b, stderrHandleAddr)
 		b = memory.InstI32Load(b, 2, 0)
@@ -3170,19 +3154,8 @@ func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool, getHandleSym
 	free := idxs["__free"]
 	getHandle := idxs[getHandleSym]
 	write := idxs["wasi_blocking_write_and_flush_p2"]
-	var body []byte
-	// If !init: call get-<handle>, cache it, set init=1.
-	body = inst.InstI32Const(body, initAddr)
-	body = memory.InstI32Load(body, 2, 0)
-	body = numeric.InstI32Eqz(body)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = inst.InstI32Const(body, handleAddr)
-	body = inst.InstCall(body, getHandle)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstI32Const(body, initAddr)
-	body = inst.InstI32Const(body, 1)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstEnd(body)
+	// A closed stream takes nothing, as a write to a closed fd does.
+	body := emitStdioHandleP2(nil, getHandle, initAddr, handleAddr, inst.InstReturn)
 	// L = __fern_str_len(data, len)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstLocalGet(body, 1)
@@ -3274,7 +3247,10 @@ func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool, getHandleSym
 	body = inst.InstCall(body, write)
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstI32Load8U(body, 0, 0)
-	body = inst.InstBrIf(body, 1)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = emitStreamErrorDrop(body, idxs, 5)
+	body = inst.InstBr(body, 2)
+	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 6)
 	body = numeric.InstI32Add(body)
@@ -4234,6 +4210,13 @@ func buildReadByteBodyP2(idxs map[string]uint32) []byte {
 	blockingRead := idxs["wasi_io_blocking_read"]
 	free := idxs["__free"]
 	var body []byte
+	// A closed stdin has nothing to read.
+	body = inst.InstI32Const(body, stdinClosedAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, -1)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
 	// $handle: load cached (handle+1); if 0, fetch + cache, else
 	// decode by subtracting 1. Both branches leave $0 = handle.
 	body = inst.InstI32Const(body, readByteScratchAddr)
@@ -4272,6 +4255,7 @@ func buildReadByteBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 1)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = emitStreamErrorDrop(body, idxs, 1)
 	body = inst.InstI32Const(body, -1)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
@@ -4370,19 +4354,7 @@ func buildPutcharBodyP2(idxs map[string]uint32) []byte {
 	free := idxs["__free"]
 	getStdout := idxs["wasi_get_stdout_p2"]
 	write := idxs["wasi_blocking_write_and_flush_p2"]
-	var body []byte
-	// If !init: cache the stdout handle.
-	body = inst.InstI32Const(body, stdoutInitAddr)
-	body = memory.InstI32Load(body, 2, 0)
-	body = numeric.InstI32Eqz(body)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = inst.InstI32Const(body, stdoutHandleAddr)
-	body = inst.InstCall(body, getStdout)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstI32Const(body, stdoutInitAddr)
-	body = inst.InstI32Const(body, 1)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstEnd(body)
+	body := emitStdioHandleP2(nil, getStdout, stdoutInitAddr, stdoutHandleAddr, inst.InstReturn)
 	// $buf = __fern_alloc(1); mem[$buf] = $b (low byte).
 	body = inst.InstI32Const(body, 1)
 	body = inst.InstCall(body, alloc)
@@ -4399,6 +4371,12 @@ func buildPutcharBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 2)
 	body = inst.InstCall(body, write)
+	// A failed write is ignored, but the error it owns is dropped.
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = emitStreamErrorDrop(body, idxs, 2)
+	body = inst.InstEnd(body)
 	// Release the byte buffer and the result area — a putchar loop is
 	// the shape most likely to make a per-call leak visible.
 	body = inst.InstLocalGet(body, 2)

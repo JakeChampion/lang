@@ -24,18 +24,11 @@ import (
 //
 // # Why a pinned baseline rather than a flat zero
 //
-// 14 of 309 cases leak on x86-64 today and 13 on arm64: the map drop
-// path, and closure and string residuals around it, do not fully
-// reclaim, which is the same list the corpus header names. A flat zero
-// assertion could not land without fixing all of that first, and
-// deleting the leg until then is how the direction stays unwatched for
-// another year.
+// Each leaking case is pinned at its exact byte count and everything else
+// must be zero. What that buys:
 //
-// So each leaking case is pinned at its exact byte count and everything
-// else must be zero. What that buys, which nothing had before:
-//
-//   - the 295 (x86-64) / 296 (arm64) clean cases are now GATED. A change
-//     that starts leaking in any of them fails here.
+//   - every clean case is GATED. A change that starts leaking in any of
+//     them fails here.
 //   - a new corpus case that leaks fails, because absent from the table
 //     means zero. Joining the leaking set is a deliberate act.
 //   - a pinned case that leaks MORE fails.
@@ -47,71 +40,15 @@ import (
 // hides a new leak behind a fixed one, and the point of the leg is that
 // leaks stop being invisible.
 //
-// The two backends are pinned separately because they genuinely differ,
-// and the difference is itself a finding rather than noise — see
-// docs/rc-log/2026-08-29-arm64-string-map-leak-divergence.md.
-var rcCorpusLeakBaselineX86_64 = map[string]int64{
-	"cell_string_read_aliased": 32,
-	// A deliberate refusal pin, not a regression: a fresh temp handed to a
-	// REFUSED parameter has no owner left to free it — the residual class
-	// #7867 tracks. This one watches the #7914 push credit's refusal half.
-	"string_pushed_then_returned_bare_stays_refused": 320,
-	"closure_call_arg_handed_back_is_not_reclaimed":  1920,
-	// The `m.without(k)` shapes, split out of one case so a fix to one
-	// can bank its own zero (#8276). They are NOT four times the old single
-	// entry gone wrong: each now runs its own 500-round loop over its own map,
-	// so the totals are not comparable with the one body that shared a map
-	// across all of them. What IS comparable is shape against shape, which is
-	// the point. All of them now reclaim completely, so none of them appears
-	// in these tables at all (absent means zero) and #8434 is closed. The
-	// call-argument projection joined them as a case rather than a pin: it
-	// leaked only the undropped tuple box, which no fixture had ever covered.
-	"stdlib_json_cursor_idiom": 272,
-	"stdlib_json_roundtrip":    496,
-	// The hand-back half of the guarded arg-temp release: the callee
-	// returned the temp unchanged, so the guard declined the drop and the
-	// result's own reference keeps rhsTainted's conservative call-result
-	// taint. 256 B before the release landed.
-}
+// The x86-64 and arm64 legs compile with the self-host compiler, and no case
+// leaks on either, so their tables are empty: a case that starts leaking
+// fails until it is fixed or pinned here on purpose.
+var rcCorpusLeakBaselineX86_64 = map[string]int64{}
 
-var rcCorpusLeakBaselineArm64 = map[string]int64{
-	// See the x86-64 twin — the pushed-then-returned-bare pin is the same
-	// deliberate refusal class; the own-string case is clean here (the
-	// two-word ABI reclaims it).
-	"string_pushed_then_returned_bare_stays_refused": 448,
-	"closure_call_arg_handed_back_is_not_reclaimed":  1920,
-	// The `m.without(k)` shapes, split out of one case so a fix to one
-	// can bank its own zero (#8276). They are NOT four times the old single
-	// entry gone wrong: each now runs its own 500-round loop over its own map,
-	// so the totals are not comparable with the one body that shared a map
-	// across all of them. What IS comparable is shape against shape, which is
-	// the point. All of them now reclaim completely, so none of them appears
-	// in these tables at all (absent means zero) and #8434 is closed. The
-	// call-argument projection joined them as a case rather than a pin: it
-	// leaked only the undropped tuple box, which no fixture had ever covered.
-	"stdlib_json_cursor_idiom": 288,
-	"stdlib_json_roundtrip":    576,
-	// See the x86-64 twin — the same guarded hand-back, byte for byte.
-}
+var rcCorpusLeakBaselineArm64 = map[string]int64{}
 
-// The wasm table (#7912). Same corpus, same families — the map and
-// closure drop paths — but its own numbers, and the differences are
-// findings rather than noise, exactly as the x86-64/arm64 split is. Two
-// of them are worth naming because they point in OPPOSITE directions:
-//
-//   - `cell_string_read_aliased` leaks on x86-64 and reclaims here: a
-//     single-word-string shape, and this backend does not carry that ABI.
-//     `copying_builtin_own_param_not_double_freed` used to sit beside it
-//     for the same reason and no longer does — #8804 gave the single-word
-//     ABI the `own`-param release the two-word ones already had, so it is
-//     clean on all three and pinned nowhere.
-//   - `map_keys_values_header_churn_free` leaks HERE ONLY, and not for
-//     the reason its name suggests: `keys()` / `values()` are clean on
-//     every backend. Its `Map[i64, i64]` is what leaks — wasm32 is the
-//     only ABI that boxes a WIDE key into a cell, and the key column's
-//     drop does not free those, so it strands one cell per entry. Its
-//     three former neighbours were the OVERWRITE hole and are gone from
-//     this table and arm64's — see the pre-drop in internal/ir/ir.go.
+// The wasm table (#7912). This leg still compiles with the native wasm
+// backend, and its residuals are the closure drop paths and the json stdlib.
 //
 // Cases the correctness corpus skips on wasm (`skipWasm`) are skipped
 // here too — a case that cannot run cannot be weighed.
@@ -126,7 +63,6 @@ var rcCorpusLeakBaselineWasm = map[string]int64{
 	// in these tables at all (absent means zero) and #8434 is closed. The
 	// call-argument projection joined them as a case rather than a pin: it
 	// leaked only the undropped tuple box, which no fixture had ever covered.
-	"map_keys_values_header_churn_free":              16000,
 	"stdlib_json_cursor_idiom":                       256,
 	"stdlib_json_roundtrip":                          448,
 	"string_pushed_then_returned_bare_stays_refused": 320,

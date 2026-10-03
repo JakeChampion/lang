@@ -59,6 +59,8 @@ costs a silent failure on the first target that lacks it.
 | `fs` | `read_file`, `write_file`, `open_reader`, … | a filesystem |
 | `fsmode` | `write_file_exec`, `access`, `chmod`, `chmod_at`, `umask` | permission bits on a filesystem entry, and the mask a creation keeps them through |
 | `fsinfo` | `statfs` | a filesystem with a size and a name-length limit, rather than files on one |
+| `fsrename` | `rename_noreplace`, `rename_exchange` | a rename the kernel conditions in one step: refuse an existing destination, or swap the two names |
+| `xattr` | `getxattr`, `lgetxattr` | an entry's extended attributes |
 | `fsnode` | `mknod` | a filesystem entry that is neither a file nor a directory: a FIFO, or a character or block device node |
 | `tty` | `window_size`, `set_window_size`, `termios_get`, `termios_set` | a terminal with a size and line settings, where `isatty` only asks whether there is one |
 | `userid` | `geteuid`, `getegid` | a user the process can be |
@@ -264,12 +266,22 @@ rather than discovering:
     preopen. A kernel's `EXDEV` has no counterpart here; the failure is
     `ENOTCAPABLE` for the operand that left.
   - **`open_reader_with` / `open_writer_with` carry their flags word across
-    too**: the create bit is preview 1's own CREATE oflag and preview 2's
-    `create` open-flag, and the non-blocking bit is preview 1's NONBLOCK
-    fdflag. Preview 2 has no spelling for it and the bit is not read there:
-    its streams do not block the way a preview-1 descriptor can, and the
-    FIFO the bit exists for cannot be created on either preview (`mknod`
-    is refused, above).
+    too**, each bit in the preview's own spelling: create, exclusive and
+    directory are preview 1's CREATE, EXCL and DIRECTORY oflags and preview
+    2's `create`, `exclusive` and `directory` open-flags; dsync and sync are
+    preview 1's DSYNC and SYNC fdflags and preview 2's `data-integrity-sync`
+    and `file-integrity-sync` descriptor-flags; nofollow clears preview 1's
+    `symlink-follow` lookupflag and preview 2's path-flag of the same name.
+    wasmtime (46) refuses either sync flag on an open with ENOTSUP, so on
+    that host dsync and sync come back `Unsupported` — the host's own
+    refusal, not a dropped bit. The non-blocking bit is preview 1's NONBLOCK fdflag. Preview 2 has no
+    spelling for it and the bit is not read there: its streams do not block
+    the way a preview-1 descriptor can, and the FIFO the bit exists for
+    cannot be created on either preview (`mknod` is refused, above). The
+    three bits neither preview can spell — direct, noatime, noctty — are
+    refused as `Unsupported` at the call, never dropped: a caller that asked
+    for `O_DIRECTORY` and got a regular file would be worse off than one
+    that got the error.
   - **The omit, now and nofollow flags are honoured**, each in the preview's
     own spelling: preview 1 clears an `fstflags` bit or sets its `*_NOW`
     sibling and passes `lookupflags` 0, preview 2 passes the `new-timestamp`

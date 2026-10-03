@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Statement-temporary reclamation, stage (b): a FRESH owned rc temporary
@@ -126,9 +124,6 @@ func TestArm64CallArgTempReclaim(t *testing.T) {
 }
 
 func TestWASMCallArgTempReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, callArgTempBumpSrc("50"))
 	large := runWasm(t, callArgTempBumpSrc("5000"))
 	if small != large {

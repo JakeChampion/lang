@@ -4489,6 +4489,15 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 			}
 		}
 		return true
+	case *ast.MapLit:
+		// A fresh map_new filled by one insert per entry.
+		for _, en := range x.Entries {
+			if !exprNoParamEscape(en.Key, x.KeyType, info, variantPayloads, q, freshLocals) ||
+				!exprNoParamEscape(en.Value, x.ValueType, info, variantPayloads, q, freshLocals) {
+				return false
+			}
+		}
+		return true
 	case *ast.ArrayLit:
 		for _, el := range x.Elems {
 			if !exprNoParamEscape(el, x.ElemType, info, variantPayloads, q, freshLocals) {
@@ -4577,6 +4586,23 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 			}
 			return exprNoParamEscape(x.Args[0], slot, info, variantPayloads, q, freshLocals) &&
 				exprNoParamEscape(x.Args[1], elem, info, variantPayloads, q, freshLocals)
+		}
+		// `m.insert(k, v)` / `m.cleared()` are push's map siblings: the
+		// receiver's own handle or a fresh copy of it, holding whatever key
+		// and value it was handed.
+		if (id.Name == "__method_Map_set" && len(x.Args) == 3) || (id.Name == "__method_Map_clear" && len(x.Args) == 1) {
+			if !exprNoParamEscape(x.Args[0], slot, info, variantPayloads, q, freshLocals) {
+				return false
+			}
+			if len(x.Args) == 1 {
+				return true
+			}
+			var kt, vt ast.Type
+			if len(x.TypeArgs) >= 2 {
+				kt, vt = x.TypeArgs[0], x.TypeArgs[1]
+			}
+			return exprNoParamEscape(x.Args[1], kt, info, variantPayloads, q, freshLocals) &&
+				exprNoParamEscape(x.Args[2], vt, info, variantPayloads, q, freshLocals)
 		}
 		// User function / method call: its result can't contain OUR args iff the
 		// callee itself never lets a param escape. Builtins / locals / unknowns
@@ -5198,7 +5224,7 @@ func (b *builder) emitPairFormPayloadRetain(payload ast.Expr) {
 	if payload == nil {
 		return
 	}
-	if needsRcIncOnAlias(payload, b) && !b.rc.moveSites[payload] {
+	if b.aliasOwesInc(payload) && !b.rc.moveSites[payload] {
 		b.emitAliasInc(payload)
 	}
 }
@@ -6870,13 +6896,13 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 		if err := b.expr(a); err != nil {
 			return err
 		}
-		// Slice 1b (EnumRcPayloads): rc-count pointer payloads exactly like
+		// Rc-count pointer payloads exactly like
 		// StructLit fields — an aliased payload (`Cons(0, t)`, t live elsewhere)
 		// is inc'd so the box co-owns its reference, a moved last-use owned-local
 		// payload (b.rc.moveSites, markConstructionMoves' enum case) skips the inc.
 		// Consuming-match reuse stores moved-out bindings back, so it's excluded.
-		if b.enumRcPayloadsEligible(enumName) && !b.rc.consumingMatchReuse[callNode] &&
-			needsRcIncOnAlias(a, b) && !b.rc.moveSites[a] {
+		if !b.rc.consumingMatchReuse[callNode] &&
+			b.aliasOwesInc(a) && !b.rc.moveSites[a] {
 			b.emitAliasInc(a)
 		}
 		valSlots[i] = b.allocSlot()
@@ -6905,7 +6931,7 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 			if err := payloadIntoSlot(i); err != nil {
 				return err
 			}
-			if i < len(payloadTypes) && b.enumRcPayloadsEligible(enumName) {
+			if i < len(payloadTypes) {
 				b.pushOperandDrop(valSlots[i], payloadTypes[i])
 			}
 		}
@@ -9350,7 +9376,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpEnd})
 			b.emit(Op{Kind: OpLoadLocal, I32: newSlot})
 		}
-		if needsRcIncOnAlias(n.Value, b) && !aliasInced {
+		if b.aliasOwesInc(n.Value) && !aliasInced {
 			// Transfer inc so the caller owns the returned alias and
 			// the callee's exit-sweep dec is balanced. A returned
 			// closure-via-Ident already took the move-on-return path
@@ -9465,8 +9491,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// Dead-alias cancellation (#4402 opt 1): a proven borrowed-view
 		// alias skips the transfer inc — its exit-sweep dec is equally
 		// elided (emitRcDecLocalsAtExitExcept), a net-zero pair.
-		if needsRcIncOnAlias(n.Init, b) && !b.rc.moveSites[n] && !b.rc.borrowedAliasSites[n] &&
-			!b.isOwnedContainerRead(n.Init) {
+		if b.aliasOwesInc(n.Init) && !b.rc.moveSites[n] && !b.rc.borrowedAliasSites[n] {
 			if fa, isField := n.Init.(*ast.FieldAccess); isField && b.rc.fieldOwnMoves[fa] {
 				b.emitFieldOwnMove(fa)
 			} else {
@@ -11694,7 +11719,7 @@ func (b *builder) expr(e ast.Expr) error {
 			if err := b.expr(el); err != nil {
 				return err
 			}
-			if needsRcIncOnAlias(el, b) && !b.rc.moveSites[el] {
+			if b.aliasOwesInc(el) && !b.rc.moveSites[el] {
 				b.emitAliasInc(el)
 			}
 			return nil
@@ -11842,7 +11867,7 @@ func (b *builder) expr(e ast.Expr) error {
 			if err := b.expr(elem); err != nil {
 				return err
 			}
-			if needsRcIncOnAlias(elem, b) && !b.rc.moveSites[elem] {
+			if b.aliasOwesInc(elem) && !b.rc.moveSites[elem] {
 				b.emitAliasInc(elem)
 			}
 			return nil
@@ -11963,7 +11988,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// markConstructionMoves), skip the inc — the local's
 			// reference is moved into the field and its exit-sweep dec is
 			// skipped to match.
-			if needsRcIncOnAlias(f.Value, b) && !b.rc.moveSites[f.Value] {
+			if b.aliasOwesInc(f.Value) && !b.rc.moveSites[f.Value] {
 				b.emitAliasInc(f.Value)
 			}
 			// Issue #2763: a Map-typed field initialised by a COW mutator
@@ -15253,6 +15278,9 @@ func (b *builder) callBody(n *ast.Call) error {
 	if !ok {
 		return fmt.Errorf("ir: indirect call from non-identifier expression")
 	}
+	if b.mapReadReleasesReceiver(id.Name, n) {
+		return b.withStashedMapReceiver(n)
+	}
 	// Variant constructor: lower to a heap-allocated tagged-union
 	// object [tag, payload0, payload1, ...]. The checker already
 	// type-checked the args; we just emit the storage.
@@ -15463,11 +15491,6 @@ func (b *builder) callBody(n *ast.Call) error {
 	// the vector lifetime must stay inside one emitted body).
 	if id.Name == "__memchr" && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
 			// ArgTypes is essential, not decoration. Under the
 			// two-word string ABI (arm64, wasm) a `string` argument
 			// occupies TWO operand-stack slots, so a backend that pops
@@ -15478,45 +15501,32 @@ func (b *builder) callBody(n *ast.Call) error {
 			// shape. Without it this segfaults on arm64 and is fine on
 			// x86-64, which is exactly the kind of divergence that
 			// survives a green x86-64 suite.
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_memchr", Width: ResNarrow, I32: 3,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_memchr", Width: ResNarrow, I32: 3,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
-			return nil
 		}
 	}
-	if (id.Name == "__count_byte_bytes" || id.Name == "__bsd_sum_bytes") && len(n.Args) == 2 {
+	if id.Name == "__count_byte_bytes" && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_" + strings.TrimPrefix(id.Name, "__"), Width: ResNarrow, I32: 2,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_count_byte_bytes", Width: ResNarrow, I32: 2,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}}}})
-			return nil
 		}
 	}
 	if id.Name == "__memchr_bytes" && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_memchr_bytes", Width: ResNarrow, I32: 3,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_memchr_bytes", Width: ResNarrow, I32: 3,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.NumberType{}}}})
-			return nil
 		}
 	}
 	if id.Name == "__rmemchr_bytes" && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_rmemchr_bytes", Width: ResNarrow, I32: 3,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_rmemchr_bytes", Width: ResNarrow, I32: 3,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.NumberType{}}}})
-			return nil
+		}
+	}
+	if id.Name == "__bsd_sum_bytes" && len(n.Args) == 2 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_bsd_sum_bytes", Width: ResNarrow, I32: 2,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}}}})
 		}
 	}
 	// __rmemchr(s, byte, from) — __memchr's backward sibling, same
@@ -15526,14 +15536,8 @@ func (b *builder) callBody(n *ast.Call) error {
 	// the data pointer.
 	if id.Name == "__rmemchr" && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_rmemchr", Width: ResNarrow, I32: 3,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_rmemchr", Width: ResNarrow, I32: 3,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
-			return nil
 		}
 	}
 	// __count_byte(s, byte) — the same runtime-helper-call shape, and
@@ -15541,14 +15545,8 @@ func (b *builder) callBody(n *ast.Call) error {
 	// `string` is two operand slots on arm64 and wasm and one on x86-64.
 	if id.Name == "__count_byte" && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_count_byte", Width: ResNarrow, I32: 2,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_count_byte", Width: ResNarrow, I32: 2,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}}}})
-			return nil
 		}
 	}
 	// __sum_bytes(s) — the same runtime-helper-call shape, with one argument
@@ -15557,16 +15555,12 @@ func (b *builder) callBody(n *ast.Call) error {
 	// on x86-64, so a backend popping I32=1 reads the length as the result.
 	if (id.Name == "__sum_bytes" || id.Name == "__sum_bytes_array") && len(n.Args) == 1 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			if err := b.expr(n.Args[0]); err != nil {
-				return err
-			}
 			var operand ast.Type = ast.StringType{}
 			if id.Name == "__sum_bytes_array" {
 				operand = ast.ArrayType{Elem: ast.NumberType{Width: 8}}
 			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_" + strings.TrimPrefix(id.Name, "__"), Width: ResNarrow, I32: 1,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_" + strings.TrimPrefix(id.Name, "__"), Width: ResNarrow, I32: 1,
 				Ext: &OpExt{ArgTypes: []ast.Type{operand}}})
-			return nil
 		}
 	}
 	// __scale_f64(xs, k) — the same runtime-helper-call shape over an ARRAY:
@@ -15593,18 +15587,12 @@ func (b *builder) callBody(n *ast.Call) error {
 	// incoming CRC as a pointer.
 	if (id.Name == "__crc32_cksum" || id.Name == "__crc32_cksum_array") && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
 			var operand ast.Type = ast.StringType{}
 			if id.Name == "__crc32_cksum_array" {
 				operand = ast.ArrayType{Elem: ast.NumberType{Width: 8}}
 			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_" + strings.TrimPrefix(id.Name, "__"), Width: ResNarrow, I32: 2,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_" + strings.TrimPrefix(id.Name, "__"), Width: ResNarrow, I32: 2,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.NumberType{}, operand}}})
-			return nil
 		}
 	}
 	// __ascii_run(s, from) — the same runtime-helper-call shape as __memchr
@@ -15612,66 +15600,42 @@ func (b *builder) callBody(n *ast.Call) error {
 	// is two operand slots on arm64 and wasm, one on x86-64.
 	if id.Name == "__ascii_run" && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_ascii_run", Width: ResNarrow, I32: 2,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_ascii_run", Width: ResNarrow, I32: 2,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}}}})
-			return nil
 		}
 	}
 	// __scan_set(s, from, set) — the same runtime-helper-call shape, with a
 	// u8[] third operand: one pointer slot everywhere, the string one or two.
 	if (id.Name == "__scan_set" || id.Name == "__scan_set_bytes") && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
 			var operand ast.Type = ast.StringType{}
 			helper := "__fern_scan_set"
 			if id.Name == "__scan_set_bytes" {
 				operand = ast.ArrayType{Elem: ast.NumberType{Width: 8}}
 				helper = "__fern_scan_set_bytes"
 			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: helper, Width: ResNarrow, I32: 3,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: helper, Width: ResNarrow, I32: 3,
 				Ext: &OpExt{ArgTypes: []ast.Type{operand, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
-			return nil
 		}
 	}
 	// __bsd_sum(s, sum) — __count_byte's operand shape.
 	if id.Name == "__bsd_sum" && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_bsd_sum", Width: ResNarrow, I32: 2,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_bsd_sum", Width: ResNarrow, I32: 2,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}}}})
-			return nil
 		}
 	}
 	// __count_runs(s, inside, set) — __scan_set's operand shape.
 	if (id.Name == "__count_runs" || id.Name == "__count_runs_bytes") && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
 			var operand ast.Type = ast.StringType{}
 			helper := "__fern_count_runs"
 			if id.Name == "__count_runs_bytes" {
 				operand = ast.ArrayType{Elem: ast.NumberType{Width: 8}}
 				helper = "__fern_count_runs_bytes"
 			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: helper, Width: ResNarrow, I32: 3,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: helper, Width: ResNarrow, I32: 3,
 				Ext: &OpExt{ArgTypes: []ast.Type{operand, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
-			return nil
 		}
 	}
 	// __mismatch(a, ao, b, bo, n) — the same runtime-helper-call shape as its
@@ -15681,20 +15645,14 @@ func (b *builder) callBody(n *ast.Call) error {
 	// second string's length as `n`.
 	if (id.Name == "__mismatch" || id.Name == "__mismatch_bytes") && len(n.Args) == 5 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
-			}
 			var operand ast.Type = ast.StringType{}
 			helper := "__fern_mismatch"
 			if id.Name == "__mismatch_bytes" {
 				operand = ast.ArrayType{Elem: ast.NumberType{Width: 8}}
 				helper = "__fern_mismatch_bytes"
 			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: helper, Width: ResNarrow, I32: 5,
+			return b.emitByteScanCall(n, Op{Kind: OpCallDirect, Runtime: true, Str: helper, Width: ResNarrow, I32: 5,
 				Ext: &OpExt{ArgTypes: []ast.Type{operand, ast.NumberType{}, operand, ast.NumberType{}, ast.NumberType{}}}})
-			return nil
 		}
 	}
 	// __heap_mark() / __heap_release_to(mark) — the one-level arena
@@ -16564,6 +16522,24 @@ func (b *builder) callBody(n *ast.Call) error {
 	dropMark := len(b.pendingDrops)
 	for ai, a := range n.Args {
 		toOwnParam := ownedByCalleeAt(ai)
+		// A copying builtin cannot retain the view or its source. Preserve a
+		// fresh source until the call finishes, using the same temp ownership
+		// and exit cleanup as an owned argument. Automatic array lending must
+		// not hide that argument from the existing reclaim path.
+		if !toOwnParam && copyingBuiltinArg(id.Name, ai) {
+			view, slot, tt, ok, err := b.stashCopyingViewSource(a)
+			if err != nil {
+				return err
+			}
+			if ok {
+				a = view
+				argTempSlots = append(argTempSlots, slot)
+				argTempTypes = append(argTempTypes, tt)
+				argTempGuarded = append(argTempGuarded, false)
+				argTempIdentityDec = append(argTempIdentityDec, false)
+				b.pushOperandDrop(slot, tt)
+			}
+		}
 		// A view is a borrow, so the checker refuses it at an `own` position
 		// and ownedByDefaultTypeIn does not admit one — but both would want
 		// the retain/move handling below rather than this free, so fall
@@ -16934,6 +16910,75 @@ func (b *builder) dynCoercedArg(a ast.Expr) bool {
 	return ok
 }
 
+// emitByteScanCall lowers a call to a byte-scan runtime helper (__memchr,
+// __scan_set and their siblings): each reads its string or byte arrays and
+// answers a scalar, retaining nothing. An argument that is a fresh owned
+// temporary is held in a slot and released once the helper returns; without
+// that, `__scan_set(s, 0, [..])` or `__memchr(a + b, ..)` stranded the
+// temporary on every call.
+func (b *builder) emitByteScanCall(n *ast.Call, op Op) error {
+	var slots []int32
+	var types []ast.Type
+	for _, a := range n.Args {
+		slot, tt, ok, err := b.stashOwnedArgTemp(a)
+		if err != nil {
+			return err
+		}
+		if ok {
+			slots = append(slots, slot)
+			types = append(types, tt)
+			continue
+		}
+		if err := b.expr(a); err != nil {
+			return err
+		}
+	}
+	b.emit(op)
+	b.emitArgTempDrops(slots, types)
+	return nil
+}
+
+// stashCopyingViewSource stages the owned source of an immediate view without
+// changing the checked expression or extending its ownership analysis. Only
+// callers with the existing copyingBuiltinArg contract may reclaim this source
+// after the call: a general callee could return a view into it.
+func (b *builder) stashCopyingViewSource(a ast.Expr) (ast.Expr, int32, ast.Type, bool, error) {
+	var source ast.Expr
+	switch x := a.(type) {
+	case *ast.SliceExpr:
+		if x.IsString || x.SourceIsSlice {
+			return a, 0, nil, false, nil
+		}
+		source = x.Source
+	case *ast.Call:
+		if !makesFreshViewHeader(x) || len(x.Args) != 1 {
+			return a, 0, nil, false, nil
+		}
+		source = x.Args[0]
+	default:
+		return a, 0, nil, false, nil
+	}
+	slot, tt, ok, err := b.stashOwnedArgTemp(source)
+	if err != nil || !ok {
+		return a, slot, tt, ok, err
+	}
+	// stashOwnedArgTemp leaves a copy on the stack for an ordinary argument.
+	// Here the view constructor reloads that value from its typed scratch slot.
+	b.emit(Op{Kind: OpDrop, Width: b.discardWidth(source)})
+	ref := &ast.Ident{Name: fmt.Sprintf("__argtmp_%d", slot)}
+	switch x := a.(type) {
+	case *ast.SliceExpr:
+		view := *x
+		view.Source = ref
+		return &view, slot, tt, true, nil
+	case *ast.Call:
+		view := *x
+		view.Args = []ast.Expr{ref}
+		return &view, slot, tt, true, nil
+	}
+	panic("unreachable view source")
+}
+
 func (b *builder) stashOwnedArgTemp(a ast.Expr) (int32, ast.Type, bool, error) {
 	tt, ok := b.freshOwnedRcTempType(a)
 	if !ok {
@@ -17055,6 +17100,67 @@ func (b *builder) emitArgTempDrop(slot int32, t ast.Type) {
 		return
 	}
 	b.emitOwnedSlotDrop(slot, t)
+}
+
+// mapReadReleasesReceiver reports a map read whose receiver is a temp this
+// expression alone owns (`mk().get(k)`) and whose result cannot hold a
+// reference into the map uncounted, so the receiver dies with the call. `has`
+// answers a boolean, and `keys` / `values` snapshot a column that retains
+// each element it copies. `get` / `get_or` hand back a value, which is a copy
+// when it is a scalar; `get_or` on a counted value column retains it
+// (mapGetHandsCountedValue).
+func (b *builder) mapReadReleasesReceiver(name string, n *ast.Call) bool {
+	if !ast.RcFreeEnabled || len(n.Args) == 0 || len(n.TypeArgs) < 2 {
+		return false
+	}
+	vt := n.TypeArgs[1]
+	switch name {
+	case "__method_Map_has", "__method_Map_keys", "__method_Map_values":
+	case "__method_Map_get":
+		if !isDefinitelyScalar(vt) {
+			return false
+		}
+	case "__method_Map_get_or":
+		_, isStr := vt.(ast.StringType)
+		if !isDefinitelyScalar(vt) && (isStr || !b.mapGetHandsCountedValue(vt)) {
+			return false
+		}
+	default:
+		return false
+	}
+	if _, ok := b.freshOwnedRcTempType(n.Args[0]); ok {
+		return true
+	}
+	_, ok := b.ownedCallResultType(n.Args[0])
+	return ok
+}
+
+// withStashedMapReceiver lowers n with its receiver parked in a slot, then
+// releases the receiver. The receiver is swapped for a local naming that slot
+// for the call's own lowering, so every map path reads it like a binding, and
+// restored after: analyses keyed on the call node still see it unchanged.
+func (b *builder) withStashedMapReceiver(n *ast.Call) error {
+	recv := n.Args[0]
+	slot, t, ok, err := b.stashOwnedArgTemp(recv)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("ir: map receiver temp not stashable (compiler bug)")
+	}
+	b.emit(Op{Kind: OpDrop})
+	name := fmt.Sprintf("__maprecv_%d", slot)
+	b.locals[name] = slot
+	n.Args[0] = &ast.Ident{P: recv.Pos(), Name: name}
+	pop := b.pushPendingDrop(func() { b.emitArgTempDrop(slot, t) })
+	err = b.callBody(n)
+	n.Args[0] = recv
+	pop()
+	if err != nil {
+		return err
+	}
+	b.emitArgTempDrop(slot, t)
+	return nil
 }
 
 // emitArgTempDropsGuarded is emitArgTempDrops plus the identity guard a
@@ -17723,7 +17829,7 @@ func (b *builder) emitStructUpdateReuse(sl *ast.StructLit, sd *ast.StructDecl, t
 		if err := b.expr(f.Value); err != nil {
 			return err
 		}
-		if isPtr && needsRcIncOnAlias(f.Value, b) && !b.rc.moveSites[f.Value] {
+		if isPtr && b.aliasOwesInc(f.Value) && !b.rc.moveSites[f.Value] {
 			b.emitAliasInc(f.Value)
 		}
 		// Issue #2763's clone, which the fresh-alloc StructLit lowering
@@ -18066,8 +18172,8 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 		if err := b.expr(a); err != nil {
 			return true, err
 		}
-		if b.enumRcPayloadsEligible(enumName) && !b.rc.consumingMatchReuse[call] &&
-			needsRcIncOnAlias(a, b) && !b.rc.moveSites[a] {
+		if !b.rc.consumingMatchReuse[call] &&
+			b.aliasOwesInc(a) && !b.rc.moveSites[a] {
 			b.emitAliasInc(a)
 		}
 		ts := b.allocSlot()
@@ -19173,6 +19279,13 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 	b.emit(Op{Kind: OpDrop})
 }
 
+// aliasOwesInc reports whether a new owner taking `e` must retain it: an
+// alias of a counted value does, and a read out of a fresh owned container
+// does not — it arrives holding a reference of its own.
+func (b *builder) aliasOwesInc(e ast.Expr) bool {
+	return needsRcIncOnAlias(e, b) && !b.isOwnedContainerRead(e)
+}
+
 // isOwnedContainerRead reports whether `e` reads an rc-tracked value out
 // of a FRESH owned container — `mk_box().items`, `mk_strs()[0]`. Both
 // lowerings retain the loaded value and deep-drop the container (#6401 for the
@@ -19634,8 +19747,7 @@ func (b *builder) assign(n *ast.Assign) error {
 		// fresh owned container: that lowering already retained what it
 		// loaded before deep-dropping the container, so this would be a
 		// second retain nothing balances (isOwnedContainerRead).
-		if needsRcIncOnAlias(n.Value, b) && !b.rc.moveSites[n] &&
-			!b.isOwnedContainerRead(n.Value) {
+		if b.aliasOwesInc(n.Value) && !b.rc.moveSites[n] {
 			b.emitAliasInc(n.Value)
 		}
 		// dec the old value of `y` before
@@ -19838,18 +19950,11 @@ func (b *builder) assign(n *ast.Assign) error {
 				} else {
 					release()
 				}
-			} else if !b.enumRcPayloadsEligibleForValue(n.Value) && b.constructionMovesIdent(n.Value, t.Name) {
-				// `x = Ctor(.., x, ..)` (e.g. `acc = Cons(1, acc)`): under the
-				// move model the old `x` is MOVED into the new box's payload —
-				// its ownership transferred without a retaining inc, so it must
-				// NOT be dropped here (the normal overwrite dec would push that
-				// payload to rc 0, which a later consuming-match free under-counts
-				// — its is_unique gate misses rc 0 and dec's to -1). No drop.
-				//
-				// Under EnumRcPayloads the payload is INC'd at construction, so
-				// the overwrite dec is REQUIRED to balance that inc — this skip
-				// is disabled there and the normal enum-overwrite drop below
-				// fires.
+			} else if !b.isVariantConstruction(n.Value) && b.constructionMovesIdent(n.Value, t.Name) {
+				// `x = (.., x, ..)` / `x = S { f: x }`: the old `x` is MOVED
+				// into the new container, so it must NOT be dropped here. A
+				// variant constructor INC's its payload instead, so the
+				// normal enum-overwrite drop below balances that inc.
 			} else if b.callConsumesIdent(n.Value, t.Name) {
 				// `s = f(.., s, ..)` where f takes s by `own`: s is MOVED into f,
 				// which deep-drops it at its own exit. Dropping it here too frees
@@ -20321,11 +20426,19 @@ func isSelfCowRebind(value ast.Expr, targetName string) bool {
 }
 
 // selfMapMutationReceiverSlot is the slot of the Map ident a returned
-// `m.insert(..)` / `m.clear()` mutates, when the frame holds one.
+// `m.insert(..)` / `m.clear()`, or a chain of them, mutates, when the frame
+// holds one.
 func (b *builder) selfMapMutationReceiverSlot(value ast.Expr) (int32, bool) {
 	call, ok := value.(*ast.Call)
 	if !ok || !ast.RcFreeEnabled || len(call.Args) == 0 {
 		return 0, false
+	}
+	for {
+		inner, chained := call.Args[0].(*ast.Call)
+		if !chained || !isMapSetOrClear(inner) {
+			break
+		}
+		call = inner
 	}
 	recv, ok := call.Args[0].(*ast.Ident)
 	if !ok || !isSelfMapMutation(value, recv.Name) {
@@ -20340,46 +20453,45 @@ func (b *builder) selfMapMutationReceiverSlot(value ast.Expr) (int32, bool) {
 
 // isSelfMapMutation reports whether `value` is a value-returning
 // map mutator called on the ident `targetName` — i.e. the RHS of
-// a `m = m.set(...)` / `m = m.clear()` reassignment. The checker
-// has already rewritten the source `m.set(k, v)` into a Call whose
-// Callee is the `__method_Map_set` ident and whose Args[0] is the
-// receiver. Used by `b.assign` to switch the dec-on-overwrite to a
-// COW-AWARE form: the map mutators cow in place without bumping rc,
-// so on a uniquely-held map the call returns the same handle the
-// slot already holds (no reference released → no dec), while on an
-// aliased map it returns a fresh copy (old handle released → dec).
-// b.assign distinguishes the two at runtime by comparing the old
-// and new handles. (delete is excluded — it returns a tuple and is
-// bound via destructuring, not a bare `m = ...` reassignment.)
+// a `m = m.set(...)` / `m = m.clear()` reassignment — or a chain of them
+// rooted there (`m.set(a, 1).set(b, 2)`), whose outer links write the handle
+// the innermost one hands them. The checker has already rewritten the source
+// `m.set(k, v)` into a Call whose Callee is the `__method_Map_set` ident and
+// whose Args[0] is the receiver. Used by `b.assign` to switch the
+// dec-on-overwrite to a COW-AWARE form: the map mutators cow in place
+// without bumping rc, so on a uniquely-held map the call returns the same
+// handle the slot already holds (no reference released → no dec), while on
+// an aliased map it returns a fresh copy (old handle released → dec).
+// b.assign distinguishes the two at runtime by comparing the old and new
+// handles. (delete is excluded — it returns a tuple and is bound via
+// destructuring, not a bare `m = ...` reassignment.) A chain whose outer link
+// reads `targetName` is excluded, as in selfArraySetRoot.
 func isSelfMapMutation(value ast.Expr, targetName string) bool {
-	call, ok := value.(*ast.Call)
-	if !ok {
+	c, ok := value.(*ast.Call)
+	if !ok || !isMapSetOrClear(c) {
 		return false
 	}
-	callee, ok := call.Callee.(*ast.Ident)
-	if !ok {
-		return false
+	for {
+		inner, chained := c.Args[0].(*ast.Call)
+		if !chained || !isMapSetOrClear(inner) {
+			break
+		}
+		for _, arg := range c.Args[1:] {
+			if exprMentionsIdent(arg, targetName) {
+				return false
+			}
+		}
+		c = inner
 	}
-	// `__method_Array_set` is `arr.with(i, v)` — like the map mutators it
-	// goes through a `*_cow_inplace` helper that returns the SAME handle on
-	// rc==1 (no reference released) and a fresh copy on rc>1. So `arr =
-	// arr.with(...)` needs the same COW-aware dec (dec the old handle iff a
-	// copy happened) as `m = m.set(...)`; an unconditional dec over-releases
-	// the in-place handle (the rc-underflow / unbounded-leak the wasm
-	// OwnInplaceSort + LiteralAllocReclaim tests caught).
-	//
-	// A consumed-threaded ARRAY PARAM is the one receiver this cannot serve,
-	// and the assign lowering peels it off before reaching here: its
-	// ownership is a runtime bit, so "did the pointer change" cannot say
-	// whether a dec is owed. See the isSelfArraySetReassign branch (#6057).
-	if callee.Name != "__method_Map_set" && callee.Name != "__method_Map_clear" {
-		return false
-	}
-	if len(call.Args) == 0 {
-		return false
-	}
-	recv, ok := call.Args[0].(*ast.Ident)
+	recv, ok := c.Args[0].(*ast.Ident)
 	return ok && recv.Name == targetName
+}
+
+// isMapSetOrClear reports whether c is `m.insert(k, v)` or `m.cleared()`,
+// the map mutators that return the map itself.
+func isMapSetOrClear(c *ast.Call) bool {
+	callee, ok := c.Callee.(*ast.Ident)
+	return ok && (callee.Name == "__method_Map_set" || callee.Name == "__method_Map_clear") && len(c.Args) > 0
 }
 
 // isSelfArraySetReassign reports whether `value` is `name.with(i, v)` — the
@@ -23649,7 +23761,7 @@ func mapSlotArgType(name string, ai int, typeArgs []ast.Type) ast.Type {
 		if ai == 2 {
 			return typeArgs[1]
 		}
-	case "__method_Map_has", "__method_Map_get", "__method_Map_delete":
+	case "__method_Map_has":
 	default:
 		return nil
 	}

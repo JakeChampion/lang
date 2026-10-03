@@ -110,15 +110,9 @@ func buildReaderReadChunkBytesBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 0)
 	body = numeric.InstI32LtS(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = err(body, 28) // WASI EINVAL
+	body = err(body, errnoInval)
 	body = inst.InstEnd(body)
-	body = inst.InstLocalGet(body, 0)
-	body = memory.InstI64Load(body, 3, readerPosOff)
-	body = inst.InstI64Const(body, -1)
-	body = numeric.InstI64Eq(body)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = err(body, 8) // WASI EBADF, before using a dropped resource
-	body = inst.InstEnd(body)
+	body = emitClosedErrP2(body, idxs, 0, 8, 7, 6)
 	body = inst.InstI32Const(body, writerScratchAddr)
 	body = inst.InstLocalSet(body, 2)
 	body = inst.InstLocalGet(body, 0)
@@ -138,7 +132,7 @@ func buildReaderReadChunkBytesBodyP2(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Eqz(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = emitStreamErrorDrop(body, idxs, 2)
-	body = err(body, 29) // WASI EIO
+	body = err(body, errnoIo)
 	body = inst.InstEnd(body)
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstCall(body, idxs["__alloc_u8"])

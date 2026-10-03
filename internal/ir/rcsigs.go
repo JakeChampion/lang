@@ -351,6 +351,15 @@ var rcInertBuiltins = map[string]bool{
 	// (path, mode, follow) → Result: `chmod` with a follow flag, the
 	// same shape plus one value. Native-only for the same reason.
 	"chmod_at": true,
+	// (from, to) → Result: `rename` with the kernel holding a condition.
+	// Native-only — E066 refuses both on the wasm worlds (`fsrename`).
+	"rename_noreplace": true,
+	"rename_exchange":  true,
+	// (path, name) → Result[string]: two borrowed strings in, a fresh
+	// value out. Native-only — E066 refuses both on the wasm worlds
+	// (`xattr`).
+	"getxattr":  true,
+	"lgetxattr": true,
 	// (pid, sig) → Result. Two scalars in and nothing retained.
 	// Native-only — E066 refuses it on both wasm worlds, which have no
 	// process table to name a target in — so it is classified here under

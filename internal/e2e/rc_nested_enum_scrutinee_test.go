@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #7910 (d) — a NESTED enum payload consumed straight off a call.
@@ -137,9 +135,6 @@ func TestArm64NestedEnumScrutineeReclaim(t *testing.T) {
 }
 
 func TestWASMNestedEnumScrutineeReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, nestedEnumScrutineeBumpSrc("50"))
 	large := runWasm(t, nestedEnumScrutineeBumpSrc("5000"))
 	if small != large {
@@ -156,15 +151,10 @@ func TestWASMNestedEnumScrutineeReclaim(t *testing.T) {
 // The ALIASED-payload half of the same rule, which the table above cannot see
 // — every payload there is freshly built inside the producer.
 //
-// `Some(Some(pre))` over a live local stores `pre` uncounted unless the enum
-// is EnumRcPayloads-eligible, and the outer join's reclaim is a DEEP drop that
-// reaches the inner box through the generated __drop_enum_. Admitting the
-// nested scrutinee without checking that countedness freed the caller's array
-// under the move model: the post-loop read returned garbage (exit 226 on
-// x86-64) where the production model exited 0, which is what
-// TestX86_64EnumRcPayloadsMatchesMove caught on audit_std_json.
-//
-// Both models must exit 0. The in-arm `xs[0].len()` pins the payload still
+// `Some(Some(pre))` over a live local counts `pre` into the inner box, and
+// the outer join's reclaim is a DEEP drop that reaches the inner box through
+// the generated __drop_enum_, so that drop must release only the count the
+// construction took. The in-arm `xs[0].len()` pins the payload still
 // readable through the copy, and the post-loop `pre[0].len()` pins the
 // caller's array surviving every round.
 const nestedEnumScrutineeAliasedPayloadSrc = `@noinline
@@ -188,36 +178,19 @@ function main(): i32 {
 }`
 
 func TestX86_64NestedEnumScrutineeAliasedPayload(t *testing.T) {
-	prev := ast.EnumRcPayloads
-	defer func() { ast.EnumRcPayloads = prev }()
-	for _, on := range []bool{true, false} {
-		ast.EnumRcPayloads = on
-		if _, code := compileAndRunX86_64FreeOn(t, nestedEnumScrutineeAliasedPayloadSrc); code != 0 {
-			t.Errorf("EnumRcPayloads=%v: code=%d (99=wrong sum, 98=caller's array freed, >0=over-release)", on, code)
-		}
+	if _, code := compileAndRunX86_64FreeOn(t, nestedEnumScrutineeAliasedPayloadSrc); code != 0 {
+		t.Errorf("code=%d (99=wrong sum, 98=caller's array freed, >0=over-release)", code)
 	}
 }
 
 func TestArm64NestedEnumScrutineeAliasedPayload(t *testing.T) {
-	prev := ast.EnumRcPayloads
-	defer func() { ast.EnumRcPayloads = prev }()
-	for _, on := range []bool{true, false} {
-		ast.EnumRcPayloads = on
-		if _, code := compileAndRunArm64FreeOn(t, nestedEnumScrutineeAliasedPayloadSrc); code != 0 {
-			t.Errorf("EnumRcPayloads=%v: code=%d (99=wrong sum, 98=caller's array freed, >0=over-release)", on, code)
-		}
+	if _, code := compileAndRunArm64FreeOn(t, nestedEnumScrutineeAliasedPayloadSrc); code != 0 {
+		t.Errorf("code=%d (99=wrong sum, 98=caller's array freed, >0=over-release)", code)
 	}
 }
 
 func TestWASMNestedEnumScrutineeAliasedPayload(t *testing.T) {
-	prevFree := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	prev := ast.EnumRcPayloads
-	defer func() { ast.RcFreeEnabled = prevFree; ast.EnumRcPayloads = prev }()
-	for _, on := range []bool{true, false} {
-		ast.EnumRcPayloads = on
-		if got := runWasm(t, nestedEnumScrutineeAliasedPayloadSrc); got != 0 {
-			t.Errorf("EnumRcPayloads=%v: code=%d (99=wrong sum, 98=caller's array freed, >0=over-release)", on, got)
-		}
+	if got := runWasm(t, nestedEnumScrutineeAliasedPayloadSrc); got != 0 {
+		t.Errorf("code=%d (99=wrong sum, 98=caller's array freed, >0=over-release)", got)
 	}
 }

@@ -82,6 +82,7 @@ import "./elf";
 import "./ircore";
 import "./emitforms";
 import "./semlower";
+import "./cover";
 
 // blank_line_map marks the 1-based source lines that hold nothing but
 // whitespace, indexed by line number so the formatter can ask about one in
@@ -1345,6 +1346,8 @@ function is_vendorable(name: string): boolean {
 // when a module could not be read — the diagnostic is already printed.
 struct Bundle {
   entry: parser.Module,
+  entry_ident: string,
+  root: string,
   loaded: flatten.LoadedModule[],
   merged: parser.Module,
   pkgs: caps.Pkg[],
@@ -1446,7 +1449,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
           bad = rm.err_path;
         }
         eprint("fern: " + modloader.unresolved_import(ipath, importer, bad, rm.err));
-        return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
+        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
       }
       let mdir: string = rm.dir;
       let m: parser.Module = parser.parse_module(lexer.tokenize_from(rm.src, util.line_base(files.len()) + 1));
@@ -1466,9 +1469,15 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
   }
   if (q.unrooted.len() > 0) {
     eprint("fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file");
-    return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
   }
-  let merged: parser.Module = flatten.bundle(flatten.resolve_imports(entry_mod, dir_slash, root), loaded, target);
+  let entry_r: parser.Module = flatten.resolve_imports(entry_mod, dir_slash, root);
+  let cycle: i32 = flatten.import_cycle(entry_r, loaded, root);
+  if (cycle >= 0) {
+    eprint("fern: import cycle detected including " + files[cycle]);
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
+  }
+  let merged: parser.Module = flatten.bundle(entry_r, loaded, target);
   // Fill omitted trailing args from default parameter values up front, so the
   // checker, SSA, and interpreter all see complete calls.
   merged = parser.fill_default_args_module(merged);
@@ -1476,7 +1485,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
   // settle against until the bundle exists; parse_module resolved the
   // same-module ones already, and the pass is idempotent.
   merged = parser.resolve_variant_fields_module(merged);
-  return Bundle { entry: entry_mod, loaded: loaded, merged: merged, pkgs: pkgs, files: files, ok: true };
+  return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, ok: true };
 }
 
 // bundle_visibility_diags reports cross-module visibility errors (#6714): a
@@ -1486,7 +1495,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
 // well as `-check` — native REFUSES TO BUILD such a program, and accepting it
 // here is the divergence. True means the program is refused.
 function bundle_visibility_diags(b: Bundle): boolean {
-  let vis_diags: util.Diag[] = visibility.export_diags(b.entry, b.loaded);
+  let vis_diags: util.Diag[] = visibility.export_diags(b.entry, b.entry_ident, b.loaded, b.root);
   let vi: i32 = 0;
   while (vi < vis_diags.len()) {
     let vd: util.Diag = vis_diags[vi];
@@ -2264,6 +2273,15 @@ function run(): i32 {
   // compiler — that runs on every build.
   let optimize: boolean = false;
   let emit_syms: boolean = false;
+  // `-cover` (or FERN_COVER=1) instruments the program with line and branch
+  // counters it reports to stderr at exit (cover.fern).
+  let cover_on: boolean = false;
+  match (env("FERN_COVER")) {
+    Some(v) => {
+      cover_on = v == "1";
+    },
+    None => {}
+  }
   let have_entry: boolean = false;
   // Whether -target was given, as distinct from the default above. It only
   // matters to `-check`: native type-checks against a capability set only
@@ -2290,6 +2308,8 @@ function run(): i32 {
         return usage();
       }
       backend = av[i];
+    } else if (a == "-cover") {
+      cover_on = true;
     } else if (a == "-g") {
       // Emit a static .symtab into the native binary (#6637). x86-64
       // Linux only for now: arm64 links through arm64_gas_link's W^X
@@ -2442,6 +2462,14 @@ function run(): i32 {
       ti = ti + 1;
     }
     eprint(msg + ")");
+    return 2;
+  }
+  if (cover_on && mode_interp) {
+    eprint("fern: -cover instruments compiled code; -interp does not lower, so it has no coverage to report");
+    return 2;
+  }
+  if (cover_on && !mode_check && target != "x86-64-linux" && target != "arm64-linux") {
+    eprint("fern: -cover: -target " + target + " has no coverage instrumentation — build for x86-64-linux or arm64-linux, or drop -cover");
     return 2;
   }
   if (emit.len() > 0 && emit != "asm" && emit != "core-module") {
@@ -2683,6 +2711,13 @@ function run(): i32 {
   // the runtime error intact — so it changes only the shape of the emitted
   // code, which is why it needs no flag.
   merged = constfold.fold_module(merged);
+
+  // After every gate, so diagnostics and the capability checks see the
+  // program as written; before the shake, so a function nothing calls keeps
+  // its counters and reports 0.
+  if (cover_on) {
+    merged = cover.instrument(merged, b.files, entry_path);
+  }
 
   // typed-IR (#5531): stamp each call expression with its checker-inferred
   // result type so the IR lowering READS the type instead of re-deriving it

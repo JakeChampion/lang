@@ -3,7 +3,6 @@ package ir_test
 import (
 	"testing"
 
-	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
 )
 
@@ -165,10 +164,8 @@ function main(): i32 { return 0; }`)
 }
 
 // A scalar enum rebuilt from a scalar local (`s = Fwd(i)`) reuses its box in
-// place under BOTH models. The scalar carries no buffer, so it taints nothing
-// (rhsTainted) and the binding stays free-eligible: the move model reuses
-// because there is no payload to release, and the rc model because the enum
-// counts its payloads.
+// place. The scalar carries no buffer, so it taints nothing (rhsTainted) and
+// the binding stays free-eligible.
 func TestEnumReuseScalarPayload(t *testing.T) {
 	const src = `enum Step { Fwd(i32), Bwd(i32) }
 function churn(n: i32): i32 {
@@ -181,21 +178,8 @@ function churn(n: i32): i32 {
     return 0;
 }
 function main(): i32 { return churn(3); }`
-	prev := ast.EnumRcPayloads
-	defer func() { ast.EnumRcPayloads = prev }()
-
-	// Move model: nothing in the box needs releasing, so the self-overwrite
-	// reuses it.
-	ast.EnumRcPayloads = false
-	if got := allocReuseCount(funcByName(lowerForTest(t, src), "churn")); got == 0 {
-		t.Errorf("move model: expected the scalar-payload enum to reuse its box, got 0")
-	}
-
-	// EnumRcPayloads (Slice 1b): the enum now rc-counts its payloads, becoming
-	// free-eligible, so `s = Fwd(i)` reuses its box in place each iteration —
-	// the FBIP win the model unblocks. Sound: the byte-identical differential
-	// gate pins rc-on == move-model output.
-	ast.EnumRcPayloads = true
+	// The enum rc-counts its payloads, so it is free-eligible and
+	// `s = Fwd(i)` reuses its box in place each iteration.
 	if got := allocReuseCount(funcByName(lowerForTest(t, src), "churn")); got == 0 {
 		t.Errorf("rc model: expected the eligible enum to reuse its box, got 0")
 	}

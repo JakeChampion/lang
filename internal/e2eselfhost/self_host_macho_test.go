@@ -322,6 +322,9 @@ function main(): i32 { let e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
       if (fs.name_max <= (0 as i64)) { return 8; }
       if (fs.name_max > (4096 as i64)) { return 9; }
       if (fs.path_max <= (0 as i64)) { return 10; }
+      // Darwin has no f_frsize; the fundamental block size is f_bsize.
+      if (fs.frag_size != fs.block_size) { return 13; }
+      if (fs.fs_type <= (0 as i64)) { return 14; }
       match (statfs("`+filepath.Join(dir, "no_such_statfs_zzz", "x")+`")) { Ok(g) => { return 11; }, Err(e) => {} }
       return 7;
     },

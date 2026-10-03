@@ -36,8 +36,42 @@ func ddSeed(t *testing.T, dir string) {
 	// for the case conversions: in the C locale neither is a letter, so
 	// both have to reach the output untouched.
 	write("mixed", "caf\xc3\xa9 A\xffz Z\n")
+	// Every byte once, for the charset tables, and `ab  cd  ` in EBCDIC
+	// (0x81 0x82 are `ab`, 0x40 is the space) for the records `ascii`
+	// unblocks.
+	all := make([]byte, 256)
+	for i := range all {
+		all[i] = byte(i)
+	}
+	write("all256", string(all))
+	write("erecs", "\x81\x82\x40\x40\x83\x84\x40\x40")
+	write("in5", "abcde")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
+	}
+	// A symlink to the ten bytes, for the `nofollow` flag.
+	if err := os.Symlink("in10", filepath.Join(dir, "lnk")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ddSparseSeed adds the `conv=sparse` inputs: NULs around a little data,
+// data then a NUL tail (the case where only the length records the
+// hole), all NULs, and a 20 KiB file of data for the cases that write
+// INTO something.
+func ddSparseSeed(t *testing.T, dir string) {
+	t.Helper()
+	ddSeed(t, dir)
+	nul := func(n int) string { return strings.Repeat("\x00", n) }
+	for name, content := range map[string]string{
+		"zmid":  nul(8192) + strings.Repeat("x", 100) + nul(8192),
+		"zend":  strings.Repeat("x", 10) + nul(20000),
+		"zall":  nul(20000),
+		"pre20": strings.Repeat("P", 20000),
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -58,6 +92,10 @@ func ddCases(t *testing.T) []invocation {
 	add := func(name string, args ...string) {
 		cases = append(cases, invocation{name: name, args: args, seedTree: ddSeed})
 	}
+	// A hole reads back as NULs, so only the block count shows the seek.
+	addSparse := func(name string, args ...string) {
+		cases = append(cases, invocation{name: name, args: args, seedTree: ddSparseSeed, sparse: true})
+	}
 
 	// --- the report's two comparable lines ---------------------------------
 	//
@@ -75,6 +113,9 @@ func ddCases(t *testing.T) []invocation {
 	add("count-bytes", "if=in5000", "of=out", "bs=1024", "count=100", "iflag=count_bytes", "status=noxfer")
 	add("count-multiplied", "if=in10", "of=out", "bs=1", "count=2x3", "status=noxfer")
 	add("bs-multiplied", "if=in10", "of=out", "bs=1kx2", "count=1", "status=noxfer")
+	// `bs=` overrides `ibs=` and `obs=` wherever they appear.
+	add("bs-overrides-later-obs", "if=in10", "of=out", "bs=3", "obs=7", "status=noxfer")
+	add("bs-overrides-later-ibs", "if=lines", "of=out", "bs=3", "ibs=5", "status=noxfer")
 
 	// --- skip and seek -----------------------------------------------------
 	add("skip-and-seek", "if=in10", "of=out", "bs=1", "skip=3", "seek=2", "status=noxfer")
@@ -89,6 +130,25 @@ func ddCases(t *testing.T) []invocation {
 	add("seek-notrunc", "if=in10", "of=pre", "bs=1", "seek=2", "count=3", "conv=notrunc", "status=noxfer")
 	add("notrunc-shorter", "if=in10", "of=pre", "bs=1", "count=3", "conv=notrunc", "status=noxfer")
 	add("append", "if=in10", "of=pre", "oflag=append", "conv=notrunc", "status=noxfer")
+
+	// --- the open-time flags (#9242) ---------------------------------------
+	//
+	// Each is one bit of open_reader_with / open_writer_with's flags word,
+	// so both sides issue the same open(2) and the kernel's verdict is the
+	// comparable part: `directory` on a regular file, `nofollow` on a
+	// symlink. `direct` and `noatime` are not here because their answer is
+	// the filesystem's (O_DIRECT is EINVAL on an older tmpfs) and the mount
+	// option's; the e2e suites pin their words. `fullblock` is an input
+	// flag only, as GNU takes it.
+	add("iflag-directory-regular", "if=in10", "of=out", "iflag=directory", "status=noxfer")
+	add("iflag-directory-dir", "if=d", "of=out", "iflag=directory", "status=noxfer")
+	add("iflag-nofollow-symlink", "if=lnk", "of=out", "iflag=nofollow", "status=noxfer")
+	add("iflag-nofollow-regular", "if=in10", "of=out", "iflag=nofollow", "status=noxfer")
+	add("iflag-sync-flags", "if=in10", "of=out", "iflag=dsync,sync,noctty", "status=noxfer")
+	add("oflag-sync-flags", "if=in10", "of=out", "oflag=dsync,sync,noctty,nofollow", "status=noxfer")
+	add("oflag-directory-regular", "if=in10", "of=pre", "oflag=directory", "conv=notrunc", "status=noxfer")
+	add("oflag-nofollow-symlink", "if=in10", "of=lnk", "oflag=nofollow", "conv=notrunc", "status=noxfer")
+	add("oflag-fullblock-invalid", "if=in10", "oflag=fullblock")
 
 	// --- iseek and oseek ---------------------------------------------------
 	//
@@ -138,7 +198,7 @@ func ddCases(t *testing.T) []invocation {
 	add("number-overflow-product", "if=in10", "count=9223372036854775807x9223372036854775807")
 	add("number-at-intmax", "if=in10", "of=out", "count=9223372036854775807", "status=noxfer")
 	// `0x` is a warning rather than a refusal, since a reader may have
-	// meant hexadecimal — one per piece, and the zero still wins.
+	// meant hexadecimal — one per operand, and the zero still wins.
 	add("zero-multiplier", "if=in10", "of=out", "count=0x3", "status=noxfer")
 	add("zero-multiplier-twice", "if=in10", "of=out", "count=0x0x3", "status=noxfer")
 	add("zero-multiplier-spelled-out", "if=in10", "of=out", "count=00x3", "status=noxfer")
@@ -171,17 +231,76 @@ func ddCases(t *testing.T) []invocation {
 	add("conv-unblock", "if=recs", "of=out", "conv=unblock", "cbs=4", "status=noxfer")
 	add("conv-unblock-partial", "if=recs", "of=out", "conv=unblock", "cbs=5", "status=noxfer")
 	add("conv-block-and-unblock", "if=lines", "of=out", "conv=block,unblock", "cbs=4", "status=noxfer")
+	// Without a `cbs` the flags are dropped before the conflict check.
+	add("conv-block-and-unblock-no-cbs", "if=lines", "of=out", "conv=block,unblock", "status=noxfer")
+	// The sync pad is a space only when a record conversion is ON.
+	add("conv-block-sync-no-cbs", "if=in10", "of=out", "ibs=4", "conv=block,sync", "status=noxfer")
+	// A byte swab is holding at the end still goes through the record
+	// conversion, after the line it is holding.
+	add("conv-swab-unblock-held-byte", "if=in5", "of=out", "conv=swab,unblock", "cbs=3", "status=noxfer")
+	// sync pads BEFORE swab pairs, so the last byte pairs with a pad.
+	add("conv-swab-sync-order", "if=in5", "of=out", "ibs=4", "conv=swab,sync", "status=noxfer")
+
+	// --- the charsets ------------------------------------------------------
+	//
+	// Each is a 256-entry table, so a run over every byte pins all of it.
+	// `ascii` unblocks and `ebcdic` / `ibm` block, which a `cbs` turns on;
+	// a case conversion runs after `ascii` and before `ebcdic` / `ibm`,
+	// whichever order the names come in.
+	add("conv-ascii-all-bytes", "if=all256", "of=out", "conv=ascii", "status=noxfer")
+	add("conv-ebcdic-all-bytes", "if=all256", "of=out", "conv=ebcdic", "status=noxfer")
+	add("conv-ibm-all-bytes", "if=all256", "of=out", "conv=ibm", "status=noxfer")
+	add("conv-ascii-unblocks", "if=erecs", "of=out", "conv=ascii", "cbs=4", "status=noxfer")
+	add("conv-ebcdic-blocks", "if=lines", "of=out", "conv=ebcdic", "cbs=4", "status=noxfer")
+	add("conv-ibm-blocks-truncates", "if=lines", "of=out", "conv=ibm", "cbs=2", "status=noxfer")
+	add("conv-ucase-ascii", "if=all256", "of=out", "conv=ucase,ascii", "status=noxfer")
+	add("conv-ebcdic-lcase", "if=all256", "of=out", "conv=ebcdic,lcase", "status=noxfer")
+	add("conv-ibm-ucase-swab", "if=mixed", "of=out", "bs=3", "conv=ibm,ucase,swab", "status=noxfer")
+	add("conv-ebcdic-sync-pads-ebcdic-space", "if=in10", "of=out", "ibs=4", "conv=ebcdic,sync", "cbs=20", "status=noxfer")
+	add("conv-ebcdic-sync-no-cbs", "if=in10", "of=out", "ibs=4", "conv=ebcdic,sync", "status=noxfer")
+	add("conv-ascii-with-block-no-cbs", "if=in10", "of=out", "conv=ascii,block", "status=noxfer")
+
+	// --- conv=sparse --------------------------------------------------------
+	//
+	// An all-NUL output block is a seek rather than a write, and still a
+	// record out. A run ENDING on a seek extends the file to the offset,
+	// so the length matches a dense copy. Over existing bytes a seek
+	// leaves them in place, and under `oflag=append` the skipped blocks
+	// vanish until the final extension.
+	addSparse("conv-sparse-middle", "if=zmid", "of=out", "bs=4096", "conv=sparse", "status=noxfer")
+	addSparse("conv-sparse-tail", "if=zend", "of=out", "bs=4096", "conv=sparse", "status=noxfer")
+	addSparse("conv-sparse-all-nul", "if=zall", "of=out", "bs=4096", "conv=sparse", "status=noxfer")
+	addSparse("conv-sparse-assembled", "if=zmid", "of=out", "ibs=1000", "obs=4096", "conv=sparse", "status=noxfer")
+	addSparse("conv-sparse-seek", "if=zall", "of=out", "bs=4096", "seek=2", "conv=sparse", "status=noxfer")
+	addSparse("conv-sparse-notrunc-keeps-bytes", "if=zmid", "of=pre20", "bs=4096", "conv=sparse,notrunc", "status=noxfer")
+	addSparse("conv-sparse-truncates", "if=zmid", "of=pre20", "bs=4096", "conv=sparse", "status=noxfer")
+	addSparse("conv-sparse-append", "if=zmid", "of=pre20", "bs=4096", "oflag=append", "conv=sparse,notrunc", "status=noxfer")
+	addSparse("conv-sparse-append-all-nul", "if=zall", "of=pre20", "bs=4096", "oflag=append", "conv=sparse,notrunc", "status=noxfer")
+	// Standard output is a pipe here, which cannot seek: sparse turns
+	// itself off and the NULs are written.
+	addSparse("conv-sparse-pipe", "if=zmid", "bs=4096", "conv=sparse", "status=noxfer")
+
+	// --- conversions that cannot combine -----------------------------------
+	//
+	// Checked in a fixed order — charsets, records, case, opens — so a
+	// set with several conflicts reports the first group.
+	add("conv-ascii-and-ebcdic", "if=in10", "conv=ascii,ebcdic")
+	add("conv-ebcdic-and-ibm", "if=in10", "conv=ebcdic,ibm")
+	add("conv-ascii-and-block", "if=in10", "conv=ascii,block", "cbs=4")
+	add("conv-lcase-and-ucase", "if=in10", "conv=lcase,ucase")
+	add("conv-excl-and-nocreat", "if=in10", "conv=excl,nocreat")
+	add("conv-records-before-case", "if=in10", "conv=lcase,ucase,block,unblock", "cbs=4")
+	add("conv-charsets-first", "if=in10", "conv=ascii,ebcdic,lcase,ucase,block", "cbs=4")
 
 	// --- the opens ---------------------------------------------------------
 	add("no-such-input", "if=nosuch", "of=out", "status=noxfer")
 	add("input-is-a-directory", "if=d", "of=out", "status=noxfer")
 	add("output-is-a-directory", "if=in10", "of=d", "status=noxfer")
-	// `conv=excl` on a name that is TAKEN is here; the case that
-	// CREATES one is not, and that is a gap rather than a preference:
-	// Fern's exclusive open fixes the mode at 0600 where GNU's is 0666
-	// through the umask, so the file dd leaves behind differs by its
-	// mode alone. #9237 is the flags-word bit that closes it.
+	// `conv=excl` on a name that is TAKEN refuses; on a fresh one it
+	// creates, and the tree compare holds the mode to GNU's 0666 through
+	// the umask, which the exclusive bit of the flags word gives (#9237).
 	add("conv-excl-exists", "if=in10", "of=pre", "conv=excl", "status=noxfer")
+	add("conv-excl-fresh", "if=in10", "of=fresh", "conv=excl", "status=noxfer")
 	add("conv-nocreat-missing", "if=in10", "of=nosuch2", "conv=nocreat", "status=noxfer")
 	add("conv-nocreat-exists", "if=in10", "of=pre", "conv=nocreat", "status=noxfer")
 	add("conv-fsync", "if=in10", "of=out", "conv=fsync", "status=noxfer")

@@ -139,9 +139,13 @@ type unitCase struct{ name, setup, check, mutate, want string }
 
 func unitCases() []unitCase {
 	base := []unitCase{
+		// The counted tuple's array element is taken at its read (#11203), so
+		// the tuple is released after its other element's read and the array
+		// at the return, where the element chain borrowing it ends.
 		{"nested-projections", "", `
+if (!p.payloads[2] || !drops(find(p, 7, 7, 0 - 1), [0])) { return 10; }
 let r = find(p, 7, ssaunits.return_point(), 0 - 1);
-if (!supply(r, 0, 5, 0, ssaunits.retain_unit()) || !drops(r, [0])) { return 11; }
+if (!supply(r, 0, 5, 0, ssaunits.retain_unit()) || !drops(r, [2])) { return 11; }
 let created = find(p, 7, 6, 0 - 1);
 if (!supply(created, 0, 5, 0, ssaunits.retain_unit()) || !drops(created, [6])) { return 12; }
 if (!drops(find(p, 7, 9, 0 - 1), [8])) { return 13; }
@@ -187,7 +191,7 @@ if (!supply(find(p, 27, ssaunits.edge_point(), 17), 0, 4, 0, ssaunits.retain_uni
 		{"double-move", unitDuplicate, "", `let s = find(p, 7, 1, 0 - 1); let a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 2 }, s.supplies[1]] });`, "move without counted unit"},
 		{"borrowed-move", unitDuplicate + "modes = [2];", "", `let s = find(p, 7, 1, 0 - 1); let a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 2 }, s.supplies[1]] });`, "move without counted unit"},
 		{"invalid-mode", unitDuplicate, "", `let s = find(p, 7, 1, 0 - 1); let a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 0 }, s.supplies[1]] });`, "invalid unit supply mode"},
-		{"premature-parent-drop", "", "", `let s = find(p, 7, 2, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [0] });`, "borrow outlives container unit"},
+		{"premature-parent-drop", "", "", `let s = find(p, 7, 3, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [2] });`, "borrow outlives container unit"},
 		{"leaked-parent", "", "", `let s = find(p, 7, ssaunits.return_point(), 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [] });`, "counted unit leaks at return"},
 		{"drop-moved-value", unitDuplicate, "", `let s = find(p, 7, 1, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [0] });`, "drop without counted unit"},
 		{"missing-return", unitDuplicate, "", `let steps: ssaunits.Step[] = []; for s in p.steps { if (s.point != ssaunits.return_point()) { steps = steps.append(s); } } p = ssaunits.Plan { ...p, steps: steps };`, "missing or duplicate return step"},
@@ -255,23 +259,23 @@ func unitSource(indices []int) (string, string) {
 		fmt.Fprintf(&source, "function unit_case_%d(): i32 {\n%s\nlet modes: i32[] = [3, 1];\n%s\n", i, semanticFixture, tc.setup)
 		source.WriteString(`
 let f = ssasem.Func { envs: [], anchors: anchors, dyns: [], shadows: [], finalizers: [], map_module: true, graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls };
-let p = ssaunits.plan(f, modes);
+let p = ssaunits.plan(f, modes, ssaunits.no_view());
 if (!p.ok) { print(p.why); return 1; }
 `)
 		if i == 0 {
 			source.WriteString(`
-let bad = ssaunits.plan(f, []);
+let bad = ssaunits.plan(f, [], ssaunits.no_view());
 if (bad.ok || bad.steps.len() != 0 || bad.why != "parameter mode dimensions") { return 31; }
-bad = ssaunits.plan(f, [1, 1]);
+bad = ssaunits.plan(f, [1, 1], ssaunits.no_view());
 if (bad.ok || bad.steps.len() != 0 || bad.why != "reference parameter mode") { return 32; }
-bad = ssaunits.plan(f, [3, 3]);
+bad = ssaunits.plan(f, [3, 3], ssaunits.no_view());
 if (bad.ok || bad.steps.len() != 0 || bad.why != "scalar parameter mode") { return 33; }
 let opaque_types: typeinfo.Type[] = [typeinfo.TypeStruct { name: "Box", args: [] }];
 for opaque in opaque_types {
     let g = ssa.SFunc { name: "opaque", nparams: 1, nvals: 1, entry: 7, takes_env: false, blocks: [
         ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }
     ] };
-    bad = ssaunits.plan(ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, graph: g, values: [opaque], params: [opaque], result: opaque, records: semrecords.no_records(), enums: [], calls: [] }, [3]);
+    bad = ssaunits.plan(ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, graph: g, values: [opaque], params: [opaque], result: opaque, records: semrecords.no_records(), enums: [], calls: [] }, [3], ssaunits.no_view());
     if (bad.ok || bad.steps.len() != 0 || bad.why != "unsupported counted-unit type") { return 34; }
 }
 `)

@@ -77,11 +77,11 @@ func readFileString(path string) string {
 }
 
 // ThreadedStateServerSource serves with a Map threaded through the
-// handler (`tcp_serve_with`): the count of each path's requests, which
+// handler (`serve.run_with`): the count of each path's requests, which
 // only threading can carry from one request to the next.
 func ThreadedStateServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 import "core/int";
 
 function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], HttpResponse) {
@@ -96,7 +96,7 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[
 
 function main(): i32 {
     let init: Map[string, i32] = map_new(8);
-    return tcp.tcp_serve_with(%d, init, handle);
+    return serve.run_with(%d, serve.config(), init, handle);
 }
 `, port)
 }
@@ -129,12 +129,12 @@ const LargeResponseBytes = 1500000
 func LargeResponseServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/string";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("x".repeat(%d));
 }
 function main(): i32 {
-    return tcp.tcp_serve(%d, handle);
+    return serve.run(%d, serve.config(), handle);
 }
 `, LargeResponseBytes, port)
 }
@@ -178,12 +178,12 @@ func CheckLargeResponse(t *testing.T, addr string) {
 func RecvDeadlineServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/time";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return tcp.tcp_serve_deadline(%d, handle, time.duration_millis(400));
+    return serve.run(%d, serve.Config { ...serve.config(), recv_deadline: time.duration_millis(400) }, handle);
 }
 `, port)
 }
@@ -223,7 +223,7 @@ func CheckRecvDeadline(t *testing.T, addr string) {
 // /boom.
 func TrappingServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 import "core/int";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/boom") {
@@ -235,7 +235,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return tcp.tcp_serve_supervised_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), workers: 1 }, handle);
+    return serve.supervise(%d, serve.Config { ...serve.config(), workers: 1 }, handle);
 }
 `, port)
 }
@@ -260,18 +260,18 @@ func CheckSurvivesHandlerTrap(t *testing.T, addr, stderrPath string) {
 	}
 }
 
-// ReusePortServerSource serves through tcp_serve_opts with a backlog of
+// ReusePortServerSource serves through serve.run with a backlog of
 // 4 and SO_REUSEPORT on the listener, in place of tcp_listen's fixed
 // 128 and one listener per port.
 func ReusePortServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    let opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), backlog: 4, reuse_port: true };
-    return tcp.tcp_serve_opts(%d, opts, handle);
+    let opts: serve.Config = serve.Config { ...serve.config(), backlog: 4, reuse_port: true };
+    return serve.run(%d, opts, handle);
 }
 `, port)
 }
@@ -305,12 +305,14 @@ func CheckReusePortReachesListener(t *testing.T, port int) {
 	}
 }
 
-// StalledSurvivorServerSource is TrappingServerSource over two workers
-// sharing the supervisor's listener, with /stall holding its worker in
-// the handler for a minute: the worker the crash loop never reaches.
+// StalledSurvivorServerSource is WorkersServerSource with /stall holding its
+// worker in the handler for a minute, through the bag's clock as /slow does
+// (a handler may not reach `sleep_ms` around its bag, E080): the worker the
+// crash loop never reaches.
 func StalledSurvivorServerSource(port int) string {
-	src := strings.Replace(TrappingServerSource(port), "workers: 1 }", "workers: 2 }", 1)
-	return strings.Replace(src, `    return http.ok("ok");`, `    if (req.path == "/stall") { sleep_ms(60000 as i64); }
+	return strings.Replace(WorkersServerSource(port), `    return http.ok("ok");`, `    if (req.path == "/stall") {
+        if (burn(plat, 60000000000 as i64) == 0 - 1) { return http.ok("never"); }
+    }
     return http.ok("ok");`, 1)
 }
 
@@ -402,12 +404,12 @@ func CheckTrapThenShutdownExitsClean(t *testing.T, cmd *exec.Cmd, addr, stderrPa
 // connection is held, so requests one at a time are answered.
 func MaxConnectionsFloorServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return tcp.tcp_serve_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), max_connections: 0 }, handle);
+    return serve.run(%d, serve.Config { ...serve.config(), max_connections: 0 }, handle);
 }
 `, port)
 }
@@ -430,7 +432,7 @@ func CheckMaxConnectionsFloor(t *testing.T, addr string) {
 // once.
 func WorkersServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 import "std/platform";
 import "core/int";
 function burn(plat: Platform, ns: i64): i32 {
@@ -459,7 +461,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return tcp.tcp_serve_supervised_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), workers: 2 }, handle);
+    return serve.supervise(%d, serve.Config { ...serve.config(), workers: 2 }, handle);
 }
 `, port)
 }
@@ -523,15 +525,25 @@ func CheckWorkersServeSideBySide(t *testing.T, addr, stderrPath string) {
 // compilers synthesise a main for, which serves on `PORT` under the
 // supervisor and hands init()'s value to the loop rather than building
 // the state per request or dropping it. `init` takes the platform and
-// answers the serve options beside the state: one worker, so the count
+// answers the serve config beside the state: one worker, so the count
 // every request sees is the one the request before it left.
 func InitStateServerSource() string {
-	return `import "std/http";
-import "std/tcp";
+	return initStateServerSource(`import "std/serve";`, "serve")
+}
+
+// InitStateAliasedServerSource is InitStateServerSource importing std/serve
+// as `web`: the config is known by its module, not by the qualifier.
+func InitStateAliasedServerSource() string {
+	return initStateServerSource(`import "std/serve" as web;`, "web")
+}
+
+func initStateServerSource(importLine, qual string) string {
+	return strings.NewReplacer("IMPORT", importLine, "QUAL", qual).Replace(`import "std/http";
+IMPORT
 import "core/int";
 
-function init(plat: Platform): (tcp.ServeOptions, Map[string, i32]) {
-    return (tcp.ServeOptions { ...tcp.serve_options(), workers: 1 }, map_new(8));
+function init(plat: Platform): (QUAL.Config, Map[string, i32]) {
+    return (QUAL.Config { ...QUAL.config(), workers: 1 }, map_new(8));
 }
 
 function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], HttpResponse) {
@@ -543,14 +555,14 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[
     return (hits.insert(req.path, n),
             http.ok(req.path + "=" + int.int_to_string(n)));
 }
-`
+`)
 }
 
 // HandleOnlyServerSource is a handler program with neither `init` nor
 // `main`: the synthesised main serves `handle` on `PORT`.
 func HandleOnlyServerSource() string {
 	return `import "std/http";
-import "std/tcp";
+import "std/serve";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("path=" + req.path);
@@ -587,7 +599,7 @@ func CheckHandleOnly(t *testing.T, addr string) {
 // compilers wrap it so the failure is answered as a problem.
 func ResultHandlerServerSource() string {
 	return `import "std/http";
-import "std/tcp";
+import "std/serve";
 
 function lookup(path: string): Result[string, http.HttpError] {
     if (path == "/items/1") { return Ok("first"); }
@@ -617,7 +629,7 @@ func DynErrorHandlerAliasedServerSource() string {
 
 func dynErrorHandlerSource(imp, q string) string {
 	return `import "std/http";
-import "std/tcp";
+import "std/serve";
 ` + imp + `
 
 struct NotFound { path: string }
@@ -672,11 +684,11 @@ func CheckDynErrorHandler(t *testing.T, addr, stderrPath string) {
 // a failure is answered as a problem and the state survives it.
 func StatefulResultHandlerServerSource() string {
 	return `import "std/http";
-import "std/tcp";
+import "std/serve";
 import "core/int";
 
-function init(plat: Platform): (tcp.ServeOptions, Map[string, i32]) {
-    return (tcp.ServeOptions { ...tcp.serve_options(), workers: 1 }, map_new(8));
+function init(plat: Platform): (serve.Config, Map[string, i32]) {
+    return (serve.Config { ...serve.config(), workers: 1 }, map_new(8));
 }
 
 function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], Result[HttpResponse, http.HttpError]) {
@@ -732,11 +744,11 @@ func CheckStatefulResultHandler(t *testing.T, addr string) {
 // request left it, and the hook reports both on stderr.
 func ShutdownHookServerSource() string {
 	return `import "std/http";
-import "std/tcp";
+import "std/serve";
 import "core/int";
 
-function init(plat: Platform): (tcp.ServeOptions, i32) {
-    return (tcp.ServeOptions { ...tcp.serve_options(), workers: 1 }, 0);
+function init(plat: Platform): (serve.Config, i32) {
+    return (serve.Config { ...serve.config(), workers: 1 }, 0);
 }
 
 function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
@@ -837,19 +849,19 @@ func CheckHandlerStallsItsWorker(t *testing.T, addr string) {
 }
 
 // ListenFailureServerSource serves on `port` through the single loop
-// (`tcp_serve_opts`) or the supervisor (`tcp_serve_supervised_opts`).
+// (`serve.run`) or the supervisor (`serve.supervise`).
 func ListenFailureServerSource(port int, supervised bool) string {
-	entry := "tcp_serve_opts"
+	entry := "run"
 	if supervised {
-		entry = "tcp_serve_supervised_opts"
+		entry = "supervise"
 	}
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return tcp.%s(%d, tcp.serve_options(), handle);
+    return serve.%s(%d, serve.config(), handle);
 }
 `, entry, port)
 }
@@ -972,16 +984,16 @@ func CheckFetchDeadline(t *testing.T, cmd *exec.Cmd) {
 }
 
 // LimitsServerSource serves with the parser's caps lowered through
-// `ServeOptions.limits`: a 16-byte body and three header fields.
+// `serve.Config.limits`: a 16-byte body and three header fields.
 func LimitsServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
     let limits: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 16, header_fields: 3 };
-    return tcp.tcp_serve_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), limits: limits }, handle);
+    return serve.run(%d, serve.Config { ...serve.config(), limits: limits }, handle);
 }
 `, port)
 }

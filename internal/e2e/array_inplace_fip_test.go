@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // The `fip` half of #9733, end to end: a same-shape `map` over an `own`
@@ -73,9 +71,6 @@ func TestArm64FipOwnedMapZeroAllocAndSharedDonorImmutable(t *testing.T) {
 }
 
 func TestWASMFipOwnedMapZeroAllocAndSharedDonorImmutable(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, fipOwnedMapSrc); got != 0 {
 		t.Errorf("fip owned map on wasm: got %d, want 0", got)
 	}

@@ -44,15 +44,16 @@ function op_names(): string[] {
 // ---- conv= ------------------------------------------------------------------
 //
 // The flags are a SET: `conv=ucase,swab` is both, and a name that is
-// not one is `invalid conversion: 'NAME'`. Only the ones a caller can
-// observe here are listed; the EBCDIC pair and `sparse` need tables and
-// a hole-punching write that this build does not have yet.
+// not one is `invalid conversion: 'NAME'`. A charset name carries the
+// record conversion it implies — `ascii` unblocks, `ebcdic` and `ibm`
+// block — so `conv=ascii,block` is the same refusal as
+// `conv=unblock,block`.
 function conv_names(): string[] {
-  return ["block", "unblock", "lcase", "ucase", "swab", "sync", "excl", "nocreat", "notrunc", "noerror", "fdatasync", "fsync"];
+  return ["block", "unblock", "lcase", "ucase", "swab", "sync", "excl", "nocreat", "notrunc", "noerror", "fdatasync", "fsync", "ascii", "ebcdic", "ibm", "sparse"];
 }
 
 function conv_bits(): i32[] {
-  return [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048];
+  return [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096 | 2, 8192 | 1, 16384 | 1, 32768];
 }
 
 function conv_block(): i32 {
@@ -103,18 +104,59 @@ function conv_fsync(): i32 {
   return 2048;
 }
 
+function conv_ascii(): i32 {
+  return 4096;
+}
+
+function conv_ebcdic(): i32 {
+  return 8192;
+}
+
+function conv_ibm(): i32 {
+  return 16384;
+}
+
+function conv_sparse(): i32 {
+  return 32768;
+}
+
 // ---- iflag= / oflag= --------------------------------------------------------
 //
 // The three `_bytes` flags reinterpret `count`, `skip` and `seek` as
 // byte counts rather than block counts, and `fullblock` makes a short
-// read keep reading instead of counting as a partial record. `append`
-// is the one that changes the OPEN.
-function flag_names(): string[] {
-  return ["append", "count_bytes", "fullblock", "nonblock", "seek_bytes", "skip_bytes"];
+// read keep reading instead of counting as a partial record; GNU takes
+// it as an input flag only. The rest change the OPEN: `append` through
+// `open_appender`, the others as bits of `open_reader_with` /
+// `open_writer_with`'s flags word (open_flags). `nocache` is not an
+// open flag and is not taken (#9242).
+function iflag_names(): string[] {
+  return ["append", "count_bytes", "fullblock", "nonblock", "seek_bytes", "skip_bytes", "direct", "directory", "dsync", "sync", "noatime", "noctty", "nofollow"];
 }
 
-function flag_bits(): i32[] {
-  return [1, 2, 4, 8, 16, 32];
+function iflag_bits(): i32[] {
+  return [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+}
+
+function oflag_names(): string[] {
+  return ["append", "count_bytes", "nonblock", "seek_bytes", "skip_bytes", "direct", "directory", "dsync", "sync", "noatime", "noctty", "nofollow"];
+}
+
+function oflag_bits(): i32[] {
+  return [1, 2, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+}
+
+// open_flags is the open-time part of an iflag/oflag word as
+// `open_reader_with` / `open_writer_with` spell it: non-blocking 2,
+// direct 8, directory 16, dsync 32, sync 64, noatime 128, noctty 256,
+// nofollow 512. A bit the target cannot honour comes back from the open
+// as Unsupported, which the caller reports like any other open failure.
+function open_flags(f: i32): i32 {
+  let out: i32 = 0;
+  if ((f & flag_nonblock()) != 0) {
+    out = out | 2;
+  }
+  out = out | f >> 3 & 1016;
+  return out;
 }
 
 function flag_append(): i32 {
@@ -393,6 +435,7 @@ function bytes_bit(n: Num, bit: i32): i32 {
 function scan_operands(argv: string[]): Scan {
   let s: Settings = settings_new();
   let bs_given: boolean = false;
+  let bs: i64 = 0 as i64;
   let i: i32 = 1;
   while (i < argv.len()) {
     let a: string = argv[i];
@@ -413,7 +456,7 @@ function scan_operands(argv: string[]): Scan {
       s = Settings { ...s, out_name: value, have_out: true };
     } else if (name == "bs") {
       let b: Num = number_operand(value, true);
-      s = Settings { ...s, ibs: b.value, obs: b.value };
+      bs = b.value;
       bs_given = true;
     } else if (name == "ibs") {
       let ib: Num = number_operand(value, true);
@@ -436,13 +479,17 @@ function scan_operands(argv: string[]): Scan {
     } else if (name == "conv") {
       s = Settings { ...s, conv: s.conv | parse_set(value, conv_names(), conv_bits(), "conversion") };
     } else if (name == "iflag") {
-      s = Settings { ...s, iflag: s.iflag | parse_set(value, flag_names(), flag_bits(), "input flag") };
+      s = Settings { ...s, iflag: s.iflag | parse_set(value, iflag_names(), iflag_bits(), "input flag") };
     } else if (name == "oflag") {
-      s = Settings { ...s, oflag: s.oflag | parse_set(value, flag_names(), flag_bits(), "output flag") };
+      s = Settings { ...s, oflag: s.oflag | parse_set(value, oflag_names(), oflag_bits(), "output flag") };
     } else {
       s = Settings { ...s, status: status_operand(value) };
     }
     i = i + 1;
+  }
+  // `bs=` overrides `ibs=` and `obs=` wherever each appears.
+  if (bs_given) {
+    s = Settings { ...s, ibs: bs, obs: bs };
   }
   return Scan { s: s, bs_given: bs_given };
 }
@@ -487,19 +534,36 @@ function counts_new(): Counts {
 // letter in this locale and reaches the output as it stands, invalid
 // UTF-8 included — a Unicode case mapping would rewrite `é` and replace
 // a stray 0xFF with U+FFFD, and for a utility whose whole job is to copy
-// BYTES that is corruption. Built once per run, since a table per record
-// is what made this the slowest thing in the program.
-function case_table(conv: i32): u8[] {
+// BYTES that is corruption.
+//
+// The charsets are byte-for-byte tables too, and compose with the case
+// as GNU fixes it whatever order the names were given in: `ascii`
+// translates EBCDIC to ASCII BEFORE the case, `ebcdic` and `ibm`
+// translate ASCII to EBCDIC AFTER it. So everything is one table, built
+// once per run, since a table per record is what made this the slowest
+// thing in the program.
+function translation_table(conv: i32): u8[] {
   let t: u8[] = __alloc_u8(256);
   let up: boolean = (conv & conv_ucase()) != 0;
   let down: boolean = (conv & conv_lcase()) != 0;
+  let from_ebcdic: u8[] = [];
+  if ((conv & conv_ascii()) != 0) {
+    from_ebcdic = to_ascii_table();
+  }
+  let to_ebcdic: u8[] = output_charset(conv);
   let i: i32 = 0;
   while (i < 256) {
     let b: i32 = i;
-    if (up && i >= 97 && i <= 122) {
-      b = i - 32;
-    } else if (down && i >= 65 && i <= 90) {
-      b = i + 32;
+    if (from_ebcdic.len() == 256) {
+      b = from_ebcdic[b] as i32;
+    }
+    if (up && b >= 97 && b <= 122) {
+      b = b - 32;
+    } else if (down && b >= 65 && b <= 90) {
+      b = b + 32;
+    }
+    if (to_ebcdic.len() == 256) {
+      b = to_ebcdic[b] as i32;
     }
     t = t.with(i, b as u8);
     i = i + 1;
@@ -507,8 +571,12 @@ function case_table(conv: i32): u8[] {
   return t;
 }
 
-function apply_case(piece: string, tab: u8[], conv: i32): string {
-  if ((conv & (conv_ucase() | conv_lcase())) == 0) {
+function translates(conv: i32): boolean {
+  return (conv & (conv_ucase() | conv_lcase() | conv_ascii() | conv_ebcdic() | conv_ibm())) != 0;
+}
+
+function apply_translation(piece: string, tab: u8[], conv: i32): string {
+  if (!translates(conv)) {
     return piece;
   }
   let b: usize = buf_new(piece.len());
@@ -516,6 +584,73 @@ function apply_case(piece: string, tab: u8[], conv: i32): string {
   let out: string = buf_take(b);
   buf_free(b);
   return out;
+}
+
+// The ASCII-to-EBCDIC tables, indexed by the ASCII byte and measured
+// from GNU dd 9.4 over all 256 bytes (docs/COREUTILS.md, "Nothing is
+// copied from GNU"). `ibm` differs from `ebcdic` in five entries and is
+// not a permutation: two pairs of bytes share an EBCDIC code.
+function ebcdic_hex(): string {
+  return "00010203372d2e2f1605250b0c0d0e0f101112133c3d322618193f271c1d1e1f"
+    + "405a7f7b5b6c507d4d5d5c4e6b604b61f0f1f2f3f4f5f6f7f8f97a5e4c7e6e6f"
+    + "7cc1c2c3c4c5c6c7c8c9d1d2d3d4d5d6d7d8d9e2e3e4e5e6e7e8e9ade0bd9a6d"
+    + "79818283848586878889919293949596979899a2a3a4a5a6a7a8a9c04fd05f07"
+    + "202122232415061728292a2b2c090a1b30311a333435360838393a3b04143ee1"
+    + "4142434445464748495152535455565758596263646566676869707172737475"
+    + "767778808a8b8c8d8e8f906a9b9c9d9e9fa0aaabac4aaeafb0b1b2b3b4b5b6b7"
+    + "b8b9babbbca1bebfcacbcccdcecfdadbdcdddedfeaebecedeeeffafbfcfdfeff";
+}
+
+function ibm_hex(): string {
+  return "00010203372d2e2f1605250b0c0d0e0f101112133c3d322618193f271c1d1e1f"
+    + "405a7f7b5b6c507d4d5d5c4e6b604b61f0f1f2f3f4f5f6f7f8f97a5e4c7e6e6f"
+    + "7cc1c2c3c4c5c6c7c8c9d1d2d3d4d5d6d7d8d9e2e3e4e5e6e7e8e9ade0bd5f6d"
+    + "79818283848586878889919293949596979899a2a3a4a5a6a7a8a9c04fd0a107"
+    + "202122232415061728292a2b2c090a1b30311a333435360838393a3b04143ee1"
+    + "4142434445464748495152535455565758596263646566676869707172737475"
+    + "767778808a8b8c8d8e8f909a9b9c9d9e9fa0aaabacadaeafb0b1b2b3b4b5b6b7"
+    + "b8b9babbbcbdbebfcacbcccdcecfdadbdcdddedfeaebecedeeeffafbfcfdfeff";
+}
+
+function hex_nibble(c: u8): i32 {
+  if (c >= b'a') {
+    return c as i32 - 87;
+  }
+  return c as i32 - 48;
+}
+
+function decode_table(hex: string): u8[] {
+  let t: u8[] = __alloc_u8(256);
+  let i: i32 = 0;
+  while (i < 256) {
+    t = t.with(i, (hex_nibble(hex[2 * i]) * 16 + hex_nibble(hex[2 * i + 1])) as u8);
+    i = i + 1;
+  }
+  return t;
+}
+
+// The table `ebcdic` or `ibm` translates the output through, or an empty
+// one when the output stays ASCII.
+function output_charset(conv: i32): u8[] {
+  if ((conv & conv_ebcdic()) != 0) {
+    return decode_table(ebcdic_hex());
+  }
+  if ((conv & conv_ibm()) != 0) {
+    return decode_table(ibm_hex());
+  }
+  return [];
+}
+
+// `ascii` is the exact inverse of `ebcdic`.
+function to_ascii_table(): u8[] {
+  let e: u8[] = decode_table(ebcdic_hex());
+  let t: u8[] = __alloc_u8(256);
+  let i: i32 = 0;
+  while (i < 256) {
+    t = t.with(e[i] as i32, i as u8);
+    i = i + 1;
+  }
+  return t;
 }
 
 // conv=swab exchanges every pair of bytes, and it pairs them across the
@@ -572,14 +707,16 @@ function apply_swab(sw: Swab, data: string, last: boolean): (Swab, string) {
 
 // conv=sync pads a short read out to `ibs`, with NULs normally and with
 // SPACES when a record conversion is in play — a block of spaces is a
-// short line there, where a block of NULs would be a line of them.
+// short line there, where a block of NULs would be a line of them. The
+// flag without a `cbs` converts nothing, so it pads with NULs. The pad
+// is ASCII and goes through the translation like the bytes it follows.
 function apply_sync(piece: string, s: Settings): string {
   if (piece.len() as i64 >= s.ibs) {
     return piece;
   }
   let pad: i32 = (s.ibs - piece.len() as i64) as i32;
   let fill: u8 = 0 as u8;
-  if ((s.conv & (conv_block() | conv_unblock())) != 0) {
+  if (records_wanted(s)) {
     fill = 32 as u8;
   }
   let h: usize = buf_new(piece.len() + pad);
@@ -603,13 +740,43 @@ function apply_sync(piece: string, s: Settings): string {
 // A short write is not an error and not a second record: the loop
 // finishes the block, exactly as GNU's does, and only a failing write
 // reports `error writing 'NAME': <strerror>`.
-struct Sink { w: Writer, buf: usize, held: i32, obs: i32, name: string, c: Counts, ok: boolean }
+//
+// Under `conv=sparse` a block that is all NULs is a seek past it rather
+// than a write, and still counts as a record out. A handle that cannot
+// seek turns sparse off for the rest of the run, without a word. `seeked`
+// says the LAST block was a seek, which `settle_holes` needs.
+struct Sink { w: Writer, buf: usize, held: i32, obs: i32, name: string, c: Counts, ok: boolean, sparse: boolean, seeked: boolean }
 
-function sink_new(w: Writer, name: string, obs: i32, c: Counts): Sink {
-  return Sink { w: w, buf: buf_new(obs * 2), held: 0, obs: obs, name: name, c: c, ok: true };
+function sink_new(w: Writer, name: string, obs: i32, c: Counts, sparse: boolean): Sink {
+  return Sink { w: w, buf: buf_new(obs * 2), held: 0, obs: obs, name: name, c: c, ok: true, sparse: sparse, seeked: false };
 }
 
-function write_full(k: Sink, data: string, partial: boolean): Sink {
+function all_nul(data: string): boolean {
+  return __count_byte(data, 0) == data.len();
+}
+
+function count_out(k: Sink, n: i32, partial: boolean): Sink {
+  let c: Counts = k.c;
+  if (partial) {
+    c = Counts { ...c, part_out: c.part_out + 1 as i64, bytes: c.bytes + n as i64 };
+  } else {
+    c = Counts { ...c, full_out: c.full_out + 1 as i64, bytes: c.bytes + n as i64 };
+  }
+  return Sink { ...k, c: c };
+}
+
+function write_full(k0: Sink, data: string, partial: boolean): Sink {
+  let k: Sink = Sink { ...k0, seeked: false };
+  if (k.sparse && all_nul(data)) {
+    match (k.w.seek(data.len() as i64, 1)) {
+      Ok(_) => {
+        return count_out(Sink { ...k, seeked: true }, data.len(), partial);
+      },
+      Err(_) => {
+        k = Sink { ...k, sparse: false };
+      }
+    }
+  }
   let off: i32 = 0;
   while (off < data.len()) {
     let piece: string = data;
@@ -630,13 +797,44 @@ function write_full(k: Sink, data: string, partial: boolean): Sink {
       }
     }
   }
-  let c: Counts = k.c;
-  if (partial) {
-    c = Counts { ...c, part_out: c.part_out + 1 as i64, bytes: c.bytes + data.len() as i64 };
-  } else {
-    c = Counts { ...c, full_out: c.full_out + 1 as i64, bytes: c.bytes + data.len() as i64 };
+  return count_out(k, data.len(), partial);
+}
+
+// A run whose last block was a seek has not set the file's length: the
+// hole only exists once something lies past it. On a regular file
+// shorter than the offset the seek reached, the file is extended to it.
+function settle_holes(k: Sink): boolean {
+  if (!k.seeked) {
+    return true;
   }
-  return Sink { ...k, c: c };
+  match (k.w.stat()) {
+    Err(e) => {
+      gnu.error("cannot fstat " + gnu.quote(k.name) + ": " + gnu.io_error_text(e));
+      return false;
+    },
+    Ok(st) => {
+      if (!st.is_file) {
+        return true;
+      }
+      match (k.w.seek(0 as i64, 1)) {
+        Err(_) => {
+          return true;
+        },
+        Ok(at) => {
+          if (st.size < at) {
+            match (k.w.truncate(at)) {
+              Some(e) => {
+                gnu.error("failed to truncate to " + at.to_string() + " bytes in output file " + gnu.quote(k.name) + ": " + gnu.io_error_text(e));
+                return false;
+              },
+              None => {}
+            }
+          }
+        }
+      }
+    }
+  }
+  return true;
 }
 
 // `sink_direct` is the `bs=` path: one write per input block, counted
@@ -771,7 +969,7 @@ function progress_line(bytes: i64, sec: i64): void {
 
 function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: string, started: i64): Run {
   let k: Sink = k0;
-  let st: Rec = rec_new(s.cbs as i32);
+  let st: Rec = rec_new(s.cbs as i32, s.conv);
   let sw: Swab = swab_new();
   let records: i64 = 0 as i64;
   let bytes_left: i64 = s.count;
@@ -779,7 +977,7 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
   let status: i32 = 0;
   let last_tick: i64 = started;
   let progressed: boolean = false;
-  let tab: u8[] = case_table(s.conv);
+  let tab: u8[] = translation_table(s.conv);
   while (true) {
     if (s.have_count) {
       if (count_bytes) {
@@ -840,27 +1038,26 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
     }
   }
   // The byte a `conv=swab` is holding when the input ends has nothing
-  // to pair with, and reaches the output as it stands.
+  // to pair with, and reaches the record conversion as it stands.
+  let rest: string = "";
   if (sw.held) {
     let tailsw: (Swab, string) = apply_swab(sw, "", true);
     sw = tailsw.0;
-    k = sink_push(k, tailsw.1);
-    if (!k.ok) {
-      return Run { c: k.c, status: 1, progressed: progressed };
-    }
+    rest = tailsw.1;
   }
   // The line a record conversion is still holding when the input ends
   // is a record too, so the flush comes before the last short write.
   if (records_wanted(s)) {
-    let tail: (Rec, string) = apply_records(st, "", s, true);
+    let tail: (Rec, string) = apply_records(st, rest, s, true);
     st = tail.0;
-    k = sink_push(k, tail.1);
-    if (!k.ok) {
-      return Run { c: k.c, status: 1, progressed: progressed };
-    }
+    rest = tail.1;
+  }
+  k = sink_push(k, rest);
+  if (!k.ok) {
+    return Run { c: k.c, status: 1, progressed: progressed };
   }
   k = sink_flush(k);
-  if (!k.ok) {
+  if (!k.ok || !settle_holes(k)) {
     return Run { c: k.c, status: 1, progressed: progressed };
   }
   let c: Counts = Counts { ...k.c, truncated: st.trunc };
@@ -868,19 +1065,20 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
 }
 
 // The conversions that rewrite a record's bytes, in GNU's order: the
-// byte pairs first, then the case, then the padding that makes a short
-// record a whole one.
+// padding that makes a short record a whole one, then the translation,
+// then the byte pairs — so `ibs=4 conv=swab,sync` over `abcde` pairs the
+// `e` with a pad byte, `badc` then `\0e\0\0`.
 function convert_record(sw: Swab, tab: u8[], data: string, s: Settings, last: boolean): (Swab, string) {
   let out: string = data;
   let state: Swab = sw;
+  if ((s.conv & conv_sync()) != 0) {
+    out = apply_sync(out, s);
+  }
+  out = apply_translation(out, tab, s.conv);
   if ((s.conv & conv_swab()) != 0) {
     let swapped: (Swab, string) = apply_swab(state, out, last);
     state = swapped.0;
     out = swapped.1;
-  }
-  out = apply_case(out, tab, s.conv);
-  if ((s.conv & conv_sync()) != 0) {
-    out = apply_sync(out, s);
   }
   return (state, out);
 }
@@ -902,10 +1100,20 @@ function convert_record(sw: Swab, tab: u8[], data: string, s: Settings, last: bo
 //
 // Neither is on unless `cbs` was given: `conv=block` alone copies the
 // bytes through, which is what GNU does with it.
-struct Rec { pend: usize, len: i32, drop: boolean, cbs: i32, trunc: i64 }
+//
+// Both run after the translation, so under `ebcdic` and `ibm` a line ends
+// at the EBCDIC newline and is padded with the EBCDIC space.
+struct Rec { pend: usize, len: i32, drop: boolean, cbs: i32, trunc: i64, nl: u8, sp: u8 }
 
-function rec_new(cbs: i32): Rec {
-  return Rec { pend: buf_new(cbs + 1), len: 0, drop: false, cbs: cbs, trunc: 0 as i64 };
+function rec_new(cbs: i32, conv: i32): Rec {
+  let nl: u8 = b'\n';
+  let sp: u8 = b' ';
+  let cs: u8[] = output_charset(conv);
+  if (cs.len() == 256) {
+    nl = cs[10];
+    sp = cs[32];
+  }
+  return Rec { pend: buf_new(cbs + 1), len: 0, drop: false, cbs: cbs, trunc: 0 as i64, nl: nl, sp: sp };
 }
 
 // One line out: the bytes held, padded with spaces to `cbs`.
@@ -915,7 +1123,7 @@ function rec_emit_block(st: Rec, out: usize): Rec {
   let pad: i32 = st.cbs - line.len();
   let i: i32 = 0;
   while (i < pad) {
-    buf_push_byte(out, 32);
+    buf_push_byte(out, st.sp as i32);
     i = i + 1;
   }
   return Rec { ...st, len: 0, drop: false };
@@ -926,7 +1134,7 @@ function conv_block_apply(rc: Rec, data: string, last: boolean): (Rec, string) {
   let st: Rec = rc;
   let i: i32 = 0;
   while (i < data.len()) {
-    if (data[i] == b'\n') {
+    if (data[i] == st.nl) {
       st = rec_emit_block(st, out);
     } else if (st.drop) {
       st = st;
@@ -949,11 +1157,11 @@ function conv_block_apply(rc: Rec, data: string, last: boolean): (Rec, string) {
 function rec_emit_unblock(st: Rec, out: usize): Rec {
   let record: string = buf_take(st.pend);
   let end: i32 = record.len();
-  while (end > 0 && record[end - 1] == b' ') {
+  while (end > 0 && record[end - 1] == st.sp) {
     end = end - 1;
   }
   buf_push_range(out, record, 0, end);
-  buf_push_byte(out, 10);
+  buf_push_byte(out, st.nl as i32);
   return Rec { ...st, len: 0 };
 }
 
@@ -981,17 +1189,17 @@ function conv_unblock_apply(rc: Rec, data: string, last: boolean): (Rec, string)
 // the output goes through the obs assembly instead and the records OUT
 // stay obs-sized. That is why `bs=3 conv=swab` over ten bytes reports
 // `3+1 records out` rather than the `1+3` a per-record write gives. The
-// case conversions are NOT here: they rewrite bytes one for one, so a
+// translations are NOT here: they rewrite bytes one for one, so a
 // per-record write gives the same counts and saves the assembly copy.
 function rewrites_bytes(s: Settings): boolean {
   let mask: i32 = conv_swab() | conv_sync() | conv_block() | conv_unblock();
   return (s.conv & mask) != 0;
 }
 
-// Whether a record conversion is in play at all, which needs both the
-// flag and a `cbs` to convert to.
+// Whether a record conversion is in play at all. `main` has already
+// dropped the flags when there is no `cbs` to convert to.
 function records_wanted(s: Settings): boolean {
-  return s.cbs > 0 as i64 && (s.conv & (conv_block() | conv_unblock())) != 0;
+  return (s.conv & (conv_block() | conv_unblock())) != 0;
 }
 
 function apply_records(st: Rec, data: string, s: Settings, last: boolean): (Rec, string) {
@@ -1209,10 +1417,14 @@ function help_text(): string {
   out = out + "\n";
   out = out + "Each CONV symbol may be:\n";
   out = out + "\n";
+  out = out + "  ascii     from EBCDIC to ASCII\n";
+  out = out + "  ebcdic    from ASCII to EBCDIC\n";
+  out = out + "  ibm       from ASCII to alternate EBCDIC\n";
   out = out + "  block     pad newline-terminated records with spaces to cbs-size\n";
   out = out + "  unblock   replace trailing spaces in cbs-size records with newline\n";
   out = out + "  lcase     change upper case to lower case\n";
   out = out + "  ucase     change lower case to upper case\n";
+  out = out + "  sparse    try to seek rather than write all-NUL output blocks\n";
   out = out + "  swab      swap every pair of input bytes\n";
   out = out + "  sync      pad every input block with NULs to ibs-size; when used\n";
   out = out + "            with block or unblock, pad with spaces rather than NULs\n";
@@ -1226,11 +1438,18 @@ function help_text(): string {
   out = out + "Each FLAG symbol may be:\n";
   out = out + "\n";
   out = out + "  append    append mode (makes sense only for output; conv=notrunc suggested)\n";
-  out = out + "  count_bytes  treat 'count=N' as a byte count (iflag only)\n";
+  out = out + "  direct    use direct I/O for data\n";
+  out = out + "  directory  fail unless a directory\n";
+  out = out + "  dsync     use synchronized I/O for data\n";
+  out = out + "  sync      likewise, but also for metadata\n";
   out = out + "  fullblock  accumulate full blocks of input (iflag only)\n";
   out = out + "  nonblock  use non-blocking I/O\n";
-  out = out + "  seek_bytes  treat 'seek=N' as a byte count (oflag only)\n";
+  out = out + "  noatime   do not update access time\n";
+  out = out + "  noctty    do not assign controlling terminal from file\n";
+  out = out + "  nofollow  do not follow symlinks\n";
+  out = out + "  count_bytes  treat 'count=N' as a byte count (iflag only)\n";
   out = out + "  skip_bytes  treat 'skip=N' as a byte count (iflag only)\n";
+  out = out + "  seek_bytes  treat 'seek=N' as a byte count (oflag only)\n";
   out = out + "\n";
   out = out + "Options are:\n";
   out = out + "\n";
@@ -1292,11 +1511,7 @@ function open_input(s: Settings): (Reader, boolean) {
   if (!s.have_in) {
     return (stdin(), true);
   }
-  let flags: i32 = 0;
-  if ((s.iflag & flag_nonblock()) != 0) {
-    flags = 2;
-  }
-  match (open_reader_with(s.in_name, flags)) {
+  match (open_reader_with(s.in_name, open_flags(s.iflag))) {
     Err(e) => {
       gnu.error("failed to open " + gnu.quote(s.in_name) + ": " + gnu.io_error_text(e));
       return (stdin(), false);
@@ -1311,28 +1526,20 @@ function open_output(s: Settings): (Writer, boolean) {
   if (!s.have_out) {
     return (stdout(), true);
   }
-  if ((s.conv & conv_excl()) != 0) {
-    match (open_exclusive(s.out_name)) {
-      Err(e) => {
-        gnu.error("failed to open " + gnu.quote(s.out_name) + ": " + gnu.io_error_text(e));
-        return (stdout(), false);
-      },
-      Ok(w) => {
-        return (w, true);
-      }
-    }
-  }
-  if ((s.oflag & flag_append()) != 0) {
+  if ((s.oflag & flag_append()) != 0 && (s.conv & conv_excl()) == 0) {
     return open_out_appending(s);
   }
+  // `conv=excl` is the exclusive create at the mode every other `of=`
+  // gets, 0666 through the umask; `open_exclusive` fixes 0600 for the
+  // temporary file it exists for and is not this open (#9237).
   let flags: i32 = 1;
+  if ((s.conv & conv_excl()) != 0) {
+    flags = flags | 4;
+  }
   if ((s.conv & conv_nocreat()) != 0) {
     flags = 0;
   }
-  if ((s.oflag & flag_nonblock()) != 0) {
-    flags = flags | 2;
-  }
-  match (open_writer_with(s.out_name, flags)) {
+  match (open_writer_with(s.out_name, flags | open_flags(s.oflag))) {
     Err(e) => {
       gnu.error("failed to open " + gnu.quote(s.out_name) + ": " + gnu.io_error_text(e));
       return (stdout(), false);
@@ -1470,16 +1677,32 @@ function seek_output(w: Writer, s: Settings, name: string): boolean {
   return true;
 }
 
+// A conv= set naming more than one flag of `group` exits 1, checked in
+// GNU's order so the first conflicting group is the one reported.
+function refuse_combined(conv: i32, group: i32, what: string): void {
+  let both: i32 = conv & group;
+  if ((both & both - 1) != 0) {
+    gnu.error("cannot combine " + what);
+    exit(1);
+  }
+}
+
 // ---- main -------------------------------------------------------------------
 pub function main(): i32 {
   let argv: string[] = args();
   scan_options(argv);
   let scan: Scan = scan_operands(argv);
   let s: Settings = scan.s;
-  if ((s.conv & conv_block()) != 0 && (s.conv & conv_unblock()) != 0) {
-    gnu.error("cannot combine block and unblock");
-    exit(1);
+  // Without a `cbs` the record conversions are not on at all, so
+  // `conv=block,unblock` alone is no conflict and copies the bytes.
+  if (s.cbs == 0 as i64) {
+    let records: i32 = conv_block() | conv_unblock();
+    s = Settings { ...s, conv: s.conv - (s.conv & records) };
   }
+  refuse_combined(s.conv, conv_ascii() | conv_ebcdic() | conv_ibm(), "any two of {ascii,ebcdic,ibm}");
+  refuse_combined(s.conv, conv_block() | conv_unblock(), "block and unblock");
+  refuse_combined(s.conv, conv_lcase() | conv_ucase(), "lcase and ucase");
+  refuse_combined(s.conv, conv_excl() | conv_nocreat(), "excl and nocreat");
   let ri: (Reader, boolean) = open_input(s);
   if (!ri.1) {
     exit(1);
@@ -1497,7 +1720,7 @@ pub function main(): i32 {
     exit(1);
   }
   let started: i64 = monotonic_ns();
-  let k: Sink = sink_new(w, s.out_name, s.obs as i32, counts_new());
+  let k: Sink = sink_new(w, s.out_name, s.obs as i32, counts_new(), (s.conv & conv_sparse()) != 0);
   let run: Run = copy(r, k, s, scan.bs_given, s.in_name, started);
   let status: i32 = run.status;
   // A `conv=fdatasync` the descriptor cannot answer becomes a full

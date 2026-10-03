@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // `?`-consumed source-box reclamation (the try-operator sibling of the
@@ -14,7 +12,6 @@ import (
 //
 //   - HEAP-FORM inner (a pointer payload forces a real box, as does a variant
 //     literal): gated by reclaimableTryScrutinee (freshOwnedBoxType +
-//     EnumRcPayloads-eligible +
 //     scalar-or-string payload) and freed by emitTryBoxFree — is_unique-gated
 //     shallow box_free with the SUCCESS variant's exact size (tag==0 proven on
 //     the path). A STRING payload's reference MOVES to the extracted value,
@@ -170,7 +167,7 @@ function main(): i32 {
 }`
 
 // CRITICAL soundness 2: Ok(keep) stores an ALIASED payload (the caller's live
-// string, inc'd at construction under EnumRcPayloads). The `?` binding takes
+// string, inc'd at construction). The `?` binding takes
 // one counted reference; keep must remain readable after every iteration and
 // nothing may double-free.
 const tryScrutAliasedPayloadSafe = `function mk(pre: string): Result[string, i32] { return Ok(pre); }
@@ -240,9 +237,6 @@ func TestArm64TryScrutineeReclaim(t *testing.T) {
 }
 
 func TestWASMTryScrutineeReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	// The concat-payload string shape is bounded on natives only (pair-form
 	// wasm keeps the documented payload leak — see tryScrutStringBumpSrc);
 	// wasm asserts the literal-payload sibling for boundedness instead and

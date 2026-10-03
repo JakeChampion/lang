@@ -49,10 +49,20 @@ func (c *checker) checkPatternForEach(fe *ast.ForEach, parent *scope) ast.Stmt {
 		// Entries come off a cursor (`m.iter()` / `has_next()` / `key()` /
 		// `value()` / `advance()`), so the walk is insertion-ordered and
 		// allocates nothing per entry.
+		// The cursor holds no count on its map, so a map the iterand
+		// builds is bound first: the binding owns it for the loop and
+		// releases it after.
+		recv := fe.Iter
+		if _, named := fe.Iter.(*ast.Ident); !named {
+			mapName := iterName + "_map"
+			stmts = append(stmts, &ast.Var{P: fe.P, Name: mapName, Init: fe.Iter})
+			recv = &ast.Ident{P: fe.P, Name: mapName}
+		}
 		declIter := &ast.Var{P: fe.P, Name: iterName, Init: &ast.Call{P: fe.P,
-			Callee: &ast.FieldAccess{P: fe.P, Target: fe.Iter, Field: "iter", FieldPos: fe.P},
+			Callee: &ast.FieldAccess{P: fe.P, Target: recv, Field: "iter", FieldPos: fe.P},
 		}}
-		stmts = append([]ast.Stmt{declIter}, ast.ForEachMapLoop(fe, iterName)...)
+		stmts = append(stmts, declIter)
+		stmts = append(stmts, ast.ForEachMapLoop(fe, iterName)...)
 	} else {
 		declIter := &ast.Var{P: fe.P, Name: iterName, Init: fe.Iter}
 		stmts = append([]ast.Stmt{declIter}, ast.ForEachArrayLoop(fe, iterName)...)

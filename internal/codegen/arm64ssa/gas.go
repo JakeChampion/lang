@@ -1456,10 +1456,14 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"create_link":                      emitCreateLinkHelper,
 	"create_symlink":                   emitCreateSymlinkHelper,
 	"read_link":                        emitReadLinkHelper,
+	"getxattr":                         emitGetxattrHelper("getxattr", "gxat", 8),
+	"lgetxattr":                        emitGetxattrHelper("lgetxattr", "lgxa", 9),
 	"umask":                            emitUmaskHelper,
 	"priority":                         emitPriorityHelper,
 	"set_priority":                     emitSetPriorityHelper,
 	"rename":                           emitRenameHelper,
+	"rename_noreplace":                 emitRenameNoreplaceHelper,
+	"rename_exchange":                  emitRenameExchangeHelper,
 	"chmod":                            emitChmodHelper,
 	"chmod_at":                         emitChmodAtHelper,
 	"truncate":                         emitTruncateHelper,
@@ -3434,9 +3438,31 @@ func emitOpenExclusiveHelper(w func(string, ...any)) {
 
 // emitOpenWithHelper writes open_reader_with / open_writer_with(path, flags)
 // -> Result[Reader|Writer, IoError]: emitOpenHandleHelper with the flags word
-// arriving in x1 rather than baked in — bit 0 is O_CREAT (64), bit 1
-// O_NONBLOCK (2048), on top of `access` (O_RDONLY 0 / O_WRONLY 1), mode 0666.
+// arriving in x1 rather than baked in, each bit becoming its Linux arm64
+// word (ssaOpenWithWords) on top of `access` (O_RDONLY 0 / O_WRONLY 1),
+// mode 0666. Linux has a word for every bit, so nothing is refused here.
 // The word sits in x21 across the path copy. x0=path, x1=flags.
+// ssaOpenWithWords is the open_*_with flags word, bit by bit, as Linux
+// arm64 spells each (the checker's open_reader_with comment is the
+// contract).
+var ssaOpenWithWords = []struct {
+	bit  int
+	word int
+	name string // the label suffix
+	flag string
+}{
+	{0, 64, "nc", "O_CREAT"},
+	{1, 2048, "nb", "O_NONBLOCK"},
+	{2, 128, "nx", "O_EXCL"},
+	{3, 0x10000, "nd", "O_DIRECT"},
+	{4, 0x4000, "ndir", "O_DIRECTORY"},
+	{5, 0x1000, "nds", "O_DSYNC"},
+	{6, 0x101000, "ns", "O_SYNC"},
+	{7, 0x40000, "na", "O_NOATIME"},
+	{8, 0x100, "nt", "O_NOCTTY"},
+	{9, 0x8000, "nf", "O_NOFOLLOW"},
+}
+
 func emitOpenWithHelper(w func(string, ...any), name, lbl string, access int) {
 	w("")
 	w("%s:", fnLabel(name))
@@ -3452,12 +3478,15 @@ func emitOpenWithHelper(w func(string, ...any), name, lbl string, access int) {
 	w("\tneg x0, x0")
 	w("\tmov x1, x20")
 	w("\tmov x2, #%d", access)
-	w("\ttbz x21, #0, .Lssa_%s_nc", lbl)
-	w("\torr x2, x2, #64") // O_CREAT
-	w(".Lssa_%s_nc:", lbl)
-	w("\ttbz x21, #1, .Lssa_%s_nb", lbl)
-	w("\torr x2, x2, #2048") // O_NONBLOCK
-	w(".Lssa_%s_nb:", lbl)
+	for _, b := range ssaOpenWithWords {
+		w("\ttbz x21, #%d, .Lssa_%s_%s", b.bit, lbl, b.name)
+		// One `orr` per set bit: the immediate form takes a bitmask, and
+		// O_SYNC is two bits apart.
+		for word := b.word; word != 0; word &= word - 1 {
+			w("\torr x2, x2, #%d // %s", word&-word, b.flag)
+		}
+		w(".Lssa_%s_%s:", lbl, b.name)
+	}
 	w("\tmov x3, #438")
 	w("\tmov x8, #56") // openat
 	w("\tsvc #0")
@@ -4315,7 +4344,11 @@ var runtimeHelperDeps = map[string][]string{
 	"create_link":                      {"__fern_io_error", "__fern_rc_inc"},
 	"create_symlink":                   {"__fern_io_error", "__fern_rc_inc"},
 	"read_link":                        {"__fern_io_error", "__fern_rc_inc"},
+	"getxattr":                         {"__fern_io_error", "__fern_rc_inc"},
+	"lgetxattr":                        {"__fern_io_error", "__fern_rc_inc"},
 	"rename":                           {"__fern_io_error", "__fern_rc_inc"},
+	"rename_noreplace":                 {"__fern_io_error", "__fern_rc_inc"},
+	"rename_exchange":                  {"__fern_io_error", "__fern_rc_inc"},
 	"chmod":                            {"__fern_io_error", "__fern_rc_inc"},
 	"chmod_at":                         {"__fern_io_error", "__fern_rc_inc"},
 	"signal_send":                      {"__fern_io_error"},
@@ -4430,7 +4463,11 @@ var heapUsingHelpers = map[string]bool{
 	"create_link":                      true,
 	"create_symlink":                   true,
 	"read_link":                        true,
+	"getxattr":                         true,
+	"lgetxattr":                        true,
 	"rename":                           true,
+	"rename_noreplace":                 true,
+	"rename_exchange":                  true,
 	"chmod":                            true,
 	"chmod_at":                         true,
 	"signal_send":                      true,
@@ -7326,6 +7363,75 @@ func emitReadLinkHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// emitGetxattrHelper returns the emitter for name(path, attr) ->
+// Result[string, IoError]: getxattr(2) (8) or lgetxattr(2) (9) into a stack
+// buffer of XATTR_SIZE_MAX, the largest value Linux stores, and the value
+// copied out into a fresh string. The IoError names the path.
+//
+// x19 = path, x20 = pathz, x21 = attr then the value length, x22 = attrz
+// then the value's data.
+func emitGetxattrHelper(name, tag string, sysno int) func(func(string, ...any)) {
+	const xattrSizeMax = 65536
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tstp x29, x30, [sp, #-64]!")
+		w("\tmov x29, sp")
+		w("\tstp x19, x20, [sp, #16]")
+		w("\tstp x21, x22, [sp, #32]")
+		w("\tsub sp, sp, #%d", xattrSizeMax)
+		w("\tmov x19, x0") // path
+		w("\tmov x21, x1") // attr
+		emitSsaPathz(w, "x20", "x19", tag+"p")
+		emitSsaPathz(w, "x22", "x21", tag+"n")
+		w("\tmov x0, x20")
+		w("\tmov x1, x22")
+		w("\tmov x2, sp")
+		w("\tmov x3, #%d", xattrSizeMax)
+		w("\tmov x8, #%d", sysno)
+		w("\tsvc #0")
+		// Rewinding the first copy releases the second, made after it.
+		emitSsaPathzRewind(w, "x20")
+		w("\ttbnz x0, #63, .Lssa_%s_err", tag)
+		w("\tmov x21, x0") // value length
+		// The value in its own rc block: {rc@0, len@4, data@8},
+		// NUL-terminated so a C consumer can read it back.
+		emitAllocBlock(w, "x4", "x21", strBlockBytes)
+		w("\tmov w6, #1")
+		w("\tstr w6, [x4]")      // rc = 1
+		w("\tstr w21, [x4, #4]") // len
+		w("\tadd x22, x4, #8")   // data
+		w("\tmov w7, #0")
+		w(".Lssa_%s_cp:", tag)
+		w("\tcmp w7, w21")
+		w("\tb.hs .Lssa_%s_cpd", tag)
+		w("\tldrb w8, [sp, x7]")
+		w("\tstrb w8, [x22, x7]")
+		w("\tadd w7, w7, #1")
+		w("\tb .Lssa_%s_cp", tag)
+		w(".Lssa_%s_cpd:", tag)
+		w("\tstrb wzr, [x22, x21]")
+		emitSsaResultBox(w)
+		w("\tstr wzr, [x0]")     // tag = 0 (Ok)
+		w("\tstr x22, [x0, #8]") // the value
+		w("\tb .Lssa_%s_ret", tag)
+		w(".Lssa_%s_err:", tag)
+		w("\tneg x0, x0")
+		emitIoErrorOwningPath(w, "x19")
+		w("\tmov x19, x0")
+		emitSsaResultBox(w)
+		w("\tmov w6, #1")
+		w("\tstr w6, [x0]") // tag = 1 (Err)
+		w("\tstr x19, [x0, #8]")
+		w(".Lssa_%s_ret:", tag)
+		w("\tadd sp, sp, #%d", xattrSizeMax)
+		w("\tldp x21, x22, [sp, #32]")
+		w("\tldp x19, x20, [sp, #16]")
+		w("\tldp x29, x30, [sp], #64")
+		w("\tret")
+	}
+}
+
 // emitRenameHelper writes rename(from, to) -> Result[void, IoError]:
 // renameat(AT_FDCWD, from, AT_FDCWD, to). An existing `to` of a
 // compatible type is replaced atomically, and a rename across
@@ -7338,6 +7444,29 @@ func emitRenameHelper(w func(string, ...any)) {
 		w("\tmov x2, #100")
 		w("\tneg x2, x2")
 		w("\tmov x3, x22")
+	})(w)
+}
+
+// emitRenameNoreplaceHelper and emitRenameExchangeHelper write
+// renameat2(AT_FDCWD, from, AT_FDCWD, to, flags) with RENAME_NOREPLACE (1)
+// or RENAME_EXCHANGE (2): the condition held in the same call as the rename.
+func emitRenameNoreplaceHelper(w func(string, ...any)) {
+	emitRenameFlagsHelper(w, "rename_noreplace", "rnnr", 1)
+}
+
+func emitRenameExchangeHelper(w func(string, ...any)) {
+	emitRenameFlagsHelper(w, "rename_exchange", "rnex", 2)
+}
+
+func emitRenameFlagsHelper(w func(string, ...any), name, tag string, flags int) {
+	emitPathOpHelper(name, tag, 276, 2, 0, func(w func(string, ...any)) {
+		w("\tmov x0, #100")
+		w("\tneg x0, x0")
+		w("\tmov x1, x20")
+		w("\tmov x2, #100")
+		w("\tneg x2, x2")
+		w("\tmov x3, x22")
+		w("\tmov x4, #%d", flags)
 	})(w)
 }
 
@@ -8997,7 +9126,8 @@ func emitNulTermPathInline(w func(string, ...any), lp string) {
 //
 // `path_max` is not in the record. Linux has no pathconf syscall and PATH_MAX
 // is the kernel's own 4096 for every filesystem it mounts, so the helper
-// stores that constant.
+// stores that constant. f_fsid's two 32-bit words are joined into one, first
+// word high, as GNU `stat -f` prints it.
 var linuxStatfsFields = []struct{ box, src int32 }{
 	{ir.FsStat.BlockSize, 8},
 	{ir.FsStat.Blocks, 16},
@@ -9006,7 +9136,11 @@ var linuxStatfsFields = []struct{ box, src int32 }{
 	{ir.FsStat.Files, 40},
 	{ir.FsStat.FilesFree, 48},
 	{ir.FsStat.NameMax, 64},
+	{ir.FsStat.FsType, 0},
+	{ir.FsStat.FragSize, 72},
 }
+
+const linuxStatfsFsid = 56
 
 // emitStatfsHelper writes statfs(path) -> Result[FsStat, IoError]: the
 // geometry and the length limits of the filesystem the path resolves on.
@@ -9053,6 +9187,10 @@ func emitStatfsHelper(w func(string, ...any)) {
 	}
 	w("\tmov x9, #%d", pathMax)
 	w("\tstr x9, [x23, #%d]", ir.FsStat.PathMax)
+	w("\tldr w9, [sp, #%d]", 64+linuxStatfsFsid)
+	w("\tldr w10, [sp, #%d]", 64+linuxStatfsFsid+4)
+	w("\torr x9, x10, x9, lsl #32")
+	w("\tstr x9, [x23, #%d]", ir.FsStat.Fsid)
 	// Result.Ok(FsStat): box {rc=1, tag=0, fsstat@+8}.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)

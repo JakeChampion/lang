@@ -10,7 +10,7 @@
 //
 // Phase 2: replace the buffer with a host-side reader that
 // pulls bytes on demand (wasi:http/incoming-body for
-// wasi-http; TCP socket for tcp_serve). The lang-side API
+// wasi-http; TCP socket for std/serve). The lang-side API
 // shape stays identical — handler code written against the
 // Phase 1 surface keeps working under Phase 2 without
 // changes.

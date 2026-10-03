@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // The first kernel an std/ndarray shape lowers to (#9735): `a.map(x => x * k)`
@@ -83,9 +81,6 @@ func TestArm64NdarrayScaleKernelMatchesTheScalarWalk(t *testing.T) {
 }
 
 func TestWASMNdarrayScaleKernelMatchesTheScalarWalk(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, ndarrayScaleSrc); got != 0 {
 		t.Errorf("ndarray scale on wasm: got %d, want 0", got)
 	}

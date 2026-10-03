@@ -347,6 +347,10 @@ type Generator struct {
 	// initial zero value is tI32, which is harmless because
 	// `?` only fires when currentReturnType == tOptI32.
 	currentReturnType gtype
+	// ctrlCounter numbers the control-flow statements' private bindings
+	// (`__if`, `__lb`, `__il`, `__le`, `__td`) so a nested one never
+	// shadows an outer one.
+	ctrlCounter int
 	// optBindCounter names match-arm payload bindings the
 	// generator introduces (`__opt_x0`, `__opt_x1`, …). The
 	// `__opt_` prefix keeps these out of any path that the
@@ -852,6 +856,9 @@ func (g *Generator) MainProgram() string {
 		if g.maybeEmitLoopReadBeforeWith(&b, sc) {
 			continue
 		}
+		if g.maybeEmitControlStmt(&b, sc, tI32) {
+			continue
+		}
 		// Main's vars are drawn from the deterministic-across-
 		// backends subset (no floats, no strings whose
 		// observation needs a print channel). Composite types
@@ -934,6 +941,9 @@ func (g *Generator) MainPrintableProgram() string {
 			continue
 		}
 		if g.maybeEmitLoopReadBeforeWith(&b, sc) {
+			continue
+		}
+		if g.maybeEmitControlStmt(&b, sc, tI32) {
 			continue
 		}
 		vt := g.pickMainVarType()
@@ -1480,6 +1490,9 @@ func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
 			continue
 		}
 		if g.maybeEmitLoopReadBeforeWith(b, sc) {
+			continue
+		}
+		if g.maybeEmitControlStmt(b, sc, retT) {
 			continue
 		}
 		vt := g.pickType()
@@ -3278,4 +3291,221 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// maybeEmitControlStmt is the statement-level control flow the loops above
+// do not cover: an `if` / `else` STATEMENT, a `loop` that leaves through
+// `break`, a tuple destructure, `if let`, and `let … else`. Each is its own
+// production with its own gate, tried in the order written; the first that
+// fires wins the slot. Returns true when one wrote a statement.
+//
+// Every gate is spelled so that the exhausted choice emits nothing, the
+// counts are `intN` (zero once exhausted), and every body is a few
+// `let` declarations in an inner scope exactly as the loops' bodies are —
+// so chopping bytes off a corpus collapses these the way it collapses a
+// `while`. The shrink property (TestGenBytesShrinkIsMonotonicAndValid)
+// is what holds that, not this comment.
+func (g *Generator) maybeEmitControlStmt(b *strings.Builder, sc *scope, retT gtype) bool {
+	if g.maybeEmitLoopBreak(b, sc) {
+		return true
+	}
+	if g.maybeEmitIfElseStmt(b, sc) {
+		return true
+	}
+	if g.maybeEmitIfLet(b, sc) {
+		return true
+	}
+	if g.maybeEmitLetElse(b, sc, retT) {
+		return true
+	}
+	return g.maybeEmitTupleDestructure(b, sc)
+}
+
+// innerStmts writes up to `max` statements into an inner scope: the
+// bounded loops the body may nest, else a typed `let`. The names carry
+// `prefix` so a block's locals never collide with the enclosing body's.
+func (g *Generator) innerStmts(b *strings.Builder, inner *scope, prefix string, max int) {
+	n := g.ch.intN(max)
+	for i := 0; i < n; i++ {
+		if g.maybeEmitWhile(b, inner) {
+			continue
+		}
+		if g.maybeEmitForEach(b, inner) {
+			continue
+		}
+		vt := g.pickType()
+		vname := fmt.Sprintf("%s_%d", prefix, i)
+		fmt.Fprintf(b, "let %s: %s = ", vname, g.typeName(vt))
+		g.expr(b, inner, vt, 0)
+		b.WriteString("; ")
+		inner.declare(vt, vname)
+	}
+}
+
+// maybeEmitIfElseStmt emits
+//
+//	if (<bool>) { <stmts> } else { <stmts> }
+//
+// the statement form, whose two blocks are scopes of their own and whose
+// condition is any boolean expression over the enclosing scope. The
+// if-EXPRESSION production in expr() yields a value; this one does not,
+// which is the shape a lowering has to join without a result slot.
+func (g *Generator) maybeEmitIfElseStmt(b *strings.Builder, sc *scope) bool {
+	// Exhaustion convention: `true` here = no statement (smaller output).
+	if g.flip(0.9) {
+		return false
+	}
+	idx := g.ctrlCounter
+	g.ctrlCounter++
+	b.WriteString("if (")
+	g.boolExpr(b, sc, 0)
+	b.WriteString(") { ")
+	g.innerStmts(b, newScope(sc), fmt.Sprintf("__if%d_t", idx), 3)
+	b.WriteString("} else { ")
+	g.innerStmts(b, newScope(sc), fmt.Sprintf("__if%d_e", idx), 3)
+	b.WriteString("} ")
+	return true
+}
+
+// maybeEmitLoopBreak emits a `loop` that leaves through `break`, and may
+// skip an iteration through `continue`:
+//
+//	let __lb<N>: i32 = 0i32;
+//	loop {
+//	    if (__lb<N> >= <K>i32) { break; }
+//	    if (<bool>) { __lb<N> = __lb<N> + 1i32; continue; }   // sometimes
+//	    <stmts>
+//	    __lb<N> = __lb<N> + 1i32;
+//	}
+//
+// The counter is bumped on every path that goes round again, so the loop
+// runs at most K times whatever the body does, as the `while` production's
+// does. `break` and `continue` out of a nested `if` are the two edges a
+// lowering's loop-exit bookkeeping has to get right.
+func (g *Generator) maybeEmitLoopBreak(b *strings.Builder, sc *scope) bool {
+	if g.loopDepth >= maxInt(g.cfg.MaxLoopDepth, 0) {
+		return false
+	}
+	// Exhaustion convention: `true` here = no loop (smaller output).
+	if g.flip(0.9) {
+		return false
+	}
+	idx := g.ctrlCounter
+	g.ctrlCounter++
+	g.loopDepth++
+	defer func() { g.loopDepth-- }()
+	counter := fmt.Sprintf("__lb%d", idx)
+	iters := 1 + g.ch.intN(maxInt(g.cfg.MaxLoopIters, 1))
+	fmt.Fprintf(b, "let %s: i32 = 0i32; loop { if (%s >= %di32) { break; } ", counter, counter, iters)
+	// `true` — the exhausted choice — is no `continue`.
+	if !g.flip(0.6) {
+		b.WriteString("if (")
+		g.boolExpr(b, sc, 0)
+		fmt.Fprintf(b, ") { %s = %s + 1i32; continue; } ", counter, counter)
+	}
+	g.innerStmts(b, newScope(sc), fmt.Sprintf("__lb%d", idx), 3)
+	fmt.Fprintf(b, "%s = %s + 1i32; } ", counter, counter)
+	return true
+}
+
+// maybeEmitTupleDestructure emits
+//
+//	let (__td<N>_a, __td<N>_b) = <(i32, i64)>;
+//
+// and declares both halves, so later expressions can read a tuple's
+// elements through a binding rather than a projection.
+func (g *Generator) maybeEmitTupleDestructure(b *strings.Builder, sc *scope) bool {
+	// Exhaustion convention: `true` here = no statement (smaller output).
+	if g.flip(0.9) {
+		return false
+	}
+	idx := g.ctrlCounter
+	g.ctrlCounter++
+	a := fmt.Sprintf("__td%d_a", idx)
+	c := fmt.Sprintf("__td%d_b", idx)
+	fmt.Fprintf(b, "let (%s, %s) = ", a, c)
+	g.expr(b, sc, tTupI32I64, 0)
+	b.WriteString("; ")
+	sc.declare(tI32, a)
+	sc.declare(tI64, c)
+	return true
+}
+
+// maybeEmitIfLet emits the one-arm match over an Option or a Result:
+//
+//	if let Some(__il<N>) = <Option[i32]> { <stmts> } else { <stmts> }
+//	if let Ok(__il<N>) = <Result[i32, i32]> { <stmts> } else { <stmts> }
+//
+// The binding is in scope for the then-block only. The scrutinee is an
+// in-scope VARIABLE of the type, as the match productions' are: a bare
+// `Err(…)` or `Some(id(…))` has an unresolved type parameter with no
+// annotation to settle it, and the binding would inherit that
+// (docs/GENERIC-VARIANT-FN-PAYLOAD-INFERENCE-GAP.md). No such variable, no
+// statement.
+func (g *Generator) maybeEmitIfLet(b *strings.Builder, sc *scope) bool {
+	opts := sc.inScope(tOptI32)
+	ress := sc.inScope(tResI32I32)
+	if len(opts) == 0 && len(ress) == 0 {
+		return false
+	}
+	// Exhaustion convention: `true` here = no statement (smaller output).
+	if g.flip(0.9) {
+		return false
+	}
+	idx := g.ctrlCounter
+	g.ctrlCounter++
+	bind := fmt.Sprintf("__il%d", idx)
+	then := newScope(sc)
+	then.declare(tI32, bind)
+	// `true` — the exhausted choice — is the Option form when one is there.
+	if len(opts) > 0 && (len(ress) == 0 || g.flip(0.5)) {
+		fmt.Fprintf(b, "if let Some(%s) = %s", bind, opts[g.ch.intN(len(opts))])
+	} else {
+		fmt.Fprintf(b, "if let Ok(%s) = %s", bind, ress[g.ch.intN(len(ress))])
+	}
+	b.WriteString(" { ")
+	g.innerStmts(b, then, fmt.Sprintf("__il%d_t", idx), 3)
+	b.WriteString("} else { ")
+	g.innerStmts(b, newScope(sc), fmt.Sprintf("__il%d_e", idx), 3)
+	b.WriteString("} ")
+	return true
+}
+
+// maybeEmitLetElse emits the refutable binding whose miss leaves the
+// function:
+//
+//	let Some(__le<N>) = <Option[i32] variable> else { return <retT>; };
+//
+// and declares the binding for the rest of the block, which the parser
+// makes the match's success arm. The scrutinee is an in-scope variable
+// for the reason maybeEmitIfLet's is. Not in the printable profile, whose
+// observations have to run for its oracle to see them; a runnable
+// main masks the early return to a byte as its own return does.
+func (g *Generator) maybeEmitLetElse(b *strings.Builder, sc *scope, retT gtype) bool {
+	if g.profile == ProfilePrintable {
+		return false
+	}
+	opts := sc.inScope(tOptI32)
+	if len(opts) == 0 {
+		return false
+	}
+	// Exhaustion convention: `true` here = no statement (smaller output).
+	if g.flip(0.92) {
+		return false
+	}
+	idx := g.ctrlCounter
+	g.ctrlCounter++
+	bind := fmt.Sprintf("__le%d", idx)
+	fmt.Fprintf(b, "let Some(%s) = %s", bind, opts[g.ch.intN(len(opts))])
+	if retT == tI32 {
+		b.WriteString(" else { return (")
+		g.expr(b, sc, tI32, 0)
+		b.WriteString(" & 255i32); }; ")
+	} else {
+		b.WriteString(" else { return ")
+		g.expr(b, sc, retT, 0)
+		b.WriteString("; }; ")
+	}
+	sc.declare(tI32, bind)
+	return true
 }

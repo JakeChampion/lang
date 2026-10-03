@@ -1281,16 +1281,6 @@ var RcFreeEnabled = true
 // baseline. Turning it off only DISABLES the optimisation (every reuse site
 // falls back to a fresh alloc + the normal drop), so it can never change
 // observable behaviour — that invariant is exactly what the gate asserts.
-// EnumRcPayloads (Slice 1b, docs/OWNERSHIP-INFERENCE-PLAN.md) makes enum
-// construction rc-count its pointer payloads exactly like StructLit/TupleLit —
-// an aliased payload is inc'd (box co-owns), a moved last-use OWNED-LOCAL
-// payload is move-marked; an own-PARAM payload is inc'd and balanced by the
-// exit-sweep dec (same as a struct field). This gives enum boxes counted
-// payload references, which dissolves the escape-taint + preciseDroppable
-// exclusions that block FBIP enum precise drops. On; the differential gate
-// pins on==off byte-identical.
-var EnumRcPayloads = true
-
 // OwnedByDefault (Slice 2, docs/OWNERSHIP-INFERENCE-PLAN.md) flips parameter
 // ownership toward the Koka/Perceus model: a parameter is OWNED by the callee
 // (the caller retains it with an inc at the call site, the callee reclaims it
@@ -3890,12 +3880,12 @@ type FuncDecl struct {
 	// IsSynthesisedHandlerMain marks the auto-`main()` the
 	// checker emits for handler-shaped programs (a top-level
 	// `handle(req: HttpRequest): HttpResponse` with no
-	// user-defined main). The body is `return tcp_serve(
-	// __port_from_env("PORT", 8080), handle);` — exactly what
+	// user-defined main). The body is `return serve.supervise(
+	// serve.__port_from_env("PORT", 8080), serve.config(), handle);` — exactly what
 	// arm64 / wasm-CLI need for a CLI HTTP server. The wasi-
 	// http codegen path uses the existing `wasi:http/incoming
 	// -handler.handle` export wrapper instead, so it drops the
-	// synthesised main (and the tcp_serve transitive imports)
+	// synthesised main (and the serve loop's transitive imports)
 	// before tree-shake runs.
 	IsSynthesisedHandlerMain bool
 	// Captures is filled by the checker for IsLocal functions: each

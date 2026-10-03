@@ -203,11 +203,17 @@ func (f *formatter) blankBefore(line int) bool {
 }
 
 // drainLeading emits every still-pending comment whose source line
-// is strictly before `line` as its own indented line. Used before
-// each statement / declaration to cover comments written above it
-// in the source. Same-line comments stay queued for emitTrailing.
+// is strictly before `line` as its own indented line, keeping a blank
+// line the source had between two of them. Used before each statement /
+// declaration to cover comments written above it in the source.
+// Same-line comments stay queued for emitTrailing.
 func (f *formatter) drainLeading(line, depth int) {
+	last := 0
 	for f.ci < len(f.comments) && f.comments[f.ci].Pos.Line < line {
+		if last > 0 && f.blanks[f.comments[f.ci].Pos.Line-1] {
+			f.b.WriteByte('\n')
+		}
+		last = f.comments[f.ci].Pos.Line
 		f.indent(depth)
 		f.b.WriteString("//")
 		f.b.WriteString(f.comments[f.ci].Text)
@@ -417,12 +423,16 @@ func (f *formatter) writeListLines(n int, line func(int) int, write func(int), c
 	f.b.WriteString(closer)
 }
 
-// drainAll flushes every remaining comment at the supplied indent.
-// Used at end-of-file to catch trailing comments past the last
-// declaration, and inside blocks to flush comments between the
-// last statement and the closing brace.
+// drainAll flushes every remaining comment at the supplied indent: the
+// comments past the last declaration at end-of-file. A blank line the
+// source had above one of them is kept, unless nothing precedes it.
 func (f *formatter) drainAll(depth int) {
+	last := 0
 	for f.ci < len(f.comments) {
+		if f.blanks[f.comments[f.ci].Pos.Line-1] && (last > 0 || f.b.Len() > 0) {
+			f.b.WriteByte('\n')
+		}
+		last = f.comments[f.ci].Pos.Line
 		f.indent(depth)
 		f.b.WriteString("//")
 		f.b.WriteString(f.comments[f.ci].Text)

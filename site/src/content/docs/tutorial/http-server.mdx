@@ -19,7 +19,7 @@ Define a function named `handle` that takes an `HttpRequest` and a
 
 ```fern
 import "std/http";
-import "std/tcp";
+import "std/serve";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("hello, world");
@@ -50,7 +50,7 @@ echoes a POST body, and sets a response header.
 
 <FernPlayground
   code={`import "std/http";
-import "std/tcp";
+import "std/serve";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
@@ -161,7 +161,7 @@ collects both into a `string[]`.
 
 ```fern
 import "std/http";
-import "std/tcp";
+import "std/serve";
 import "std/url";
 import "std/json";
 import "core/map";
@@ -197,16 +197,16 @@ between requests — comes from `init`, not from a top-level variable
 to every request and the value the handler returns is what the next one
 sees.
 
-`init` may also take the platform and answer the serve options beside
+`init` may also take the platform and answer the serve config beside
 the state. This one asks for a single worker, so there is one counter:
 
 ```fern
 import "std/http";
-import "std/tcp";
+import "std/serve";
 import "core/int";
 
-function init(plat: Platform): (tcp.ServeOptions, Map[string, i32]) {
-    return (tcp.ServeOptions { ...tcp.serve_options(), workers: 1 },
+function init(plat: Platform): (serve.Config, Map[string, i32]) {
+    return (serve.Config { ...serve.config(), workers: 1 },
             map_new(8));
 }
 
@@ -236,11 +236,18 @@ one starting from `init`'s value again, not from where the dead one left
 off. Anything that must be shared across workers or outlive a crash
 belongs in a store the handler reaches through `plat`, not in the state.
 
+A worker is also the unit of concurrency. Each worker runs one handler at
+a time to completion, so a handler that blocks, sleeping or waiting on a
+slow upstream, holds every other connection on that worker until it
+returns. Add workers rather than connections to absorb slow handlers;
+multiplexing many waiting handlers on one worker is planned work
+([#9857](https://github.com/JakeChampion/lang/issues/9857)).
+
 A handler compiled for `wasm32-wasi-http` cannot take a state at all,
 because that world builds a fresh instance per request. An `init`
 returning nothing is still useful — it runs before the first request,
 which is where a start-up log line or an env-var read goes; one
-returning only `tcp.ServeOptions` tunes the server for a stateless
+returning only `serve.Config` tunes the server for a stateless
 handler.
 
 ## Compile and serve
@@ -270,7 +277,7 @@ linked with no runtime.
 - The repository's [`examples/wasm/`][wasm] directory has full handlers:
   a URL router, a CSV-to-JSON converter, an echo server, and more.
 - The [Standard library reference](../../stdlib/) documents `std/http`,
-  `std/url`, `std/json`, and `std/tcp`.
+  `std/url`, `std/json`, and `std/serve`.
 - Wrap up the tutorial with [Testing →](../testing/).
 
 [wasm]: https://github.com/JakeChampion/lang/tree/main/examples/wasm

@@ -1,14 +1,14 @@
 package e2e
 
 import (
-	"bytes"
-	"encoding/binary"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // TestArm64DarwinGetpwuidName asserts that `__getpwuid_name` reaches
@@ -53,7 +53,7 @@ function main(): i32 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bindsSymbol(img, "_getpwuid") {
+	if !e2eharness.MachOBindsSymbol(img, "_getpwuid") {
 		t.Fatalf("the image's LC_DYLD_INFO_ONLY bind stream does not name _getpwuid")
 	}
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
@@ -70,28 +70,4 @@ function main(): i32 {
 	if want := me.Username + "\nnone\n"; string(got) != want {
 		t.Errorf("getpwuid answered %q, want %q", got, want)
 	}
-}
-
-// bindsSymbol reports whether a Mach-O image's LC_DYLD_INFO_ONLY bind stream
-// names `sym` (BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM carries it inline).
-func bindsSymbol(img []byte, sym string) bool {
-	if len(img) < 32 {
-		return false
-	}
-	ncmds := binary.LittleEndian.Uint32(img[16:])
-	off := 32
-	for i := uint32(0); i < ncmds && off+8 <= len(img); i++ {
-		cmd := binary.LittleEndian.Uint32(img[off:])
-		size := int(binary.LittleEndian.Uint32(img[off+4:]))
-		if cmd == 0x80000022 && off+24 <= len(img) {
-			bindOff := int(binary.LittleEndian.Uint32(img[off+16:]))
-			bindLen := int(binary.LittleEndian.Uint32(img[off+20:]))
-			if bindLen == 0 || bindOff+bindLen > len(img) {
-				return false
-			}
-			return bytes.Contains(img[bindOff:bindOff+bindLen], append([]byte(sym), 0))
-		}
-		off += size
-	}
-	return false
 }

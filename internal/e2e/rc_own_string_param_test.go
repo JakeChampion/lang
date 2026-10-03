@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #8804: `own` on a STRING parameter was balanced on no backend, and the two
@@ -72,9 +70,6 @@ func TestArm64OwnStringParamBalanced(t *testing.T) {
 }
 
 func TestWASMOwnStringParamBalanced(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, ownStringParamSrc); got != 0 {
 		t.Errorf("own string param: got %d, want 0 (97=length, 98=bytes scale with rounds, 99=over-release)", got)
 	}

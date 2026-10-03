@@ -6,6 +6,7 @@ import (
 
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // A Map handle is released by core/map's __map_drop_impl, which hands the
@@ -52,8 +53,7 @@ func TestX86_64SanitizeMapHandleOverRelease(t *testing.T) {
 
 // Unsanitized, the over-release is counted rather than fatal.
 func TestX86_64MapHandleOverReleaseCounted(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	_, stderr, code := buildAndRunSanitized(t, gcc, runner, emitSanitize(t, "x86_64", mapOverReleaseSrc, false), false)
+	_, stderr, code := runPlain(t, e2eharness.TargetX86_64Linux, mapOverReleaseSrc)
 	if code != 1 || stderr != "" {
 		t.Errorf("exit=%d stderr=%q, want exit 1 (one over-release counted) and no report", code, stderr)
 	}

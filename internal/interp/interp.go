@@ -501,9 +501,11 @@ type Interp struct {
 	openFiles map[int64]*os.File
 	nextFd    int64
 	// closedStd records which of fd 0/1/2 the program has closed.
-	// The interpreter never closes the host's own stdio, but it has
-	// to answer a SECOND close the way the kernel does — see
-	// closeFile.
+	// The interpreter never closes the host's own stdio, but from then
+	// on it answers for the stream the way the kernel answers for a
+	// closed fd: handle methods and a second close fail with EBADF,
+	// print / write / eprint / putchar write nothing, and read_line()
+	// reads nothing.
 	closedStd map[int64]bool
 	// deferStack is a per-call list of expressions to evaluate at
 	// function exit, in LIFO order. callFunc / callClosure push
@@ -1304,45 +1306,6 @@ func New() *Interp {
 		}
 		return Number(runs), nil
 	}}
-	i.Builtins["__scan_set_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
-		if len(args) != 3 {
-			return nil, fmt.Errorf("__scan_set_bytes: expected 3 args, got %d", len(args))
-		}
-		s, ok := args[0].(Array)
-		if !ok {
-			return nil, fmt.Errorf("__scan_set_bytes: expected a byte array, got %T", args[0])
-		}
-		fn, ok := args[1].(Number)
-		if !ok {
-			return nil, fmt.Errorf("__scan_set_bytes: expected an integer start, got %T", args[1])
-		}
-		set, ok := args[2].(Array)
-		if !ok {
-			return nil, fmt.Errorf("__scan_set_bytes: expected a u8[] set, got %T", args[2])
-		}
-		from := int(int64(fn))
-		if from < 0 {
-			from = 0
-		}
-		for idx := from; idx < len(s.E); idx++ {
-			n, ok := s.E[idx].(Number)
-			if !ok {
-				return nil, fmt.Errorf("__scan_set_bytes: element %d is %T, not u8", idx, s.E[idx])
-			}
-			c := int(uint8(n))
-			if c >= len(set.E) {
-				continue
-			}
-			e, ok := set.E[c].(Number)
-			if !ok {
-				return nil, fmt.Errorf("__scan_set_bytes: set element %d is %T, not a byte", c, set.E[c])
-			}
-			if int64(e) != 0 {
-				return Number(idx), nil
-			}
-		}
-		return Number(len(s.E)), nil
-	}}
 	i.Builtins["__scan_set"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("__scan_set: expected 3 args, got %d", len(args))
@@ -1351,33 +1314,25 @@ func New() *Interp {
 		if !ok {
 			return nil, fmt.Errorf("__scan_set: expected a string, got %T", args[0])
 		}
-		fn, ok := args[1].(Number)
+		return scanSet("__scan_set", []byte(string(s)), args[1], args[2])
+	}}
+	i.Builtins["__scan_set_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("__scan_set_bytes: expected 3 args, got %d", len(args))
+		}
+		arr, ok := args[0].(Array)
 		if !ok {
-			return nil, fmt.Errorf("__scan_set: expected an integer start, got %T", args[1])
+			return nil, fmt.Errorf("__scan_set_bytes: expected an array, got %T", args[0])
 		}
-		set, ok := args[2].(Array)
-		if !ok {
-			return nil, fmt.Errorf("__scan_set: expected a u8[] set, got %T", args[2])
-		}
-		from := int(int64(fn))
-		if from < 0 {
-			from = 0
-		}
-		b := []byte(string(s))
-		for idx := from; idx < len(b); idx++ {
-			c := int(b[idx])
-			if c >= len(set.E) {
-				continue
-			}
-			e, ok := set.E[c].(Number)
+		b := make([]byte, len(arr.E))
+		for at, e := range arr.E {
+			n, ok := e.(Number)
 			if !ok {
-				return nil, fmt.Errorf("__scan_set: set element %d is %T, not a byte", c, set.E[c])
+				return nil, fmt.Errorf("__scan_set_bytes: element %d is %T, not u8", at, e)
 			}
-			if int64(e) != 0 {
-				return Number(idx), nil
-			}
+			b[at] = byte(n)
 		}
-		return Number(len(b)), nil
+		return scanSet("__scan_set_bytes", b, args[1], args[2])
 	}}
 	// __sum_bytes(s): the wrapped 32-bit sum of every byte of `s`. The oracle
 	// for the sixth fused kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3).
@@ -1604,10 +1559,14 @@ func New() *Interp {
 	i.Builtins["create_link"] = &Builtin{Fn: builtinCreateLink}
 	i.Builtins["create_symlink"] = &Builtin{Fn: builtinCreateSymlink}
 	i.Builtins["read_link"] = &Builtin{Fn: builtinReadLink}
+	i.Builtins["getxattr"] = &Builtin{Fn: builtinGetxattr}
+	i.Builtins["lgetxattr"] = &Builtin{Fn: builtinLgetxattr}
 	i.Builtins["umask"] = &Builtin{Fn: builtinUmask}
 	i.Builtins["priority"] = &Builtin{Fn: builtinPriority}
 	i.Builtins["set_priority"] = &Builtin{Fn: builtinSetPriority}
 	i.Builtins["rename"] = &Builtin{Fn: builtinRename}
+	i.Builtins["rename_noreplace"] = &Builtin{Fn: builtinRenameNoreplace}
+	i.Builtins["rename_exchange"] = &Builtin{Fn: builtinRenameExchange}
 	i.Builtins["chmod"] = &Builtin{Fn: builtinChmod}
 	i.Builtins["chmod_at"] = &Builtin{Fn: builtinChmodAt}
 	i.Builtins["truncate"] = &Builtin{Fn: builtinTruncate}
@@ -3103,9 +3062,10 @@ func builtinSliceUnchecked(_ *Interp, args []Value) (Value, error) {
 
 // `__method_string_bytes` / `__method_string_as_bytes` —
 // String → Array<Number> conversion, one Number per UTF-8
-// byte. Sidesteps the stdlib's `__memcpy(out as i32,
-// s.as_bytes() as i32, n)` path which can't be modelled
-// without a flat byte address space.
+// byte. Sidesteps the stdlib's body, which copies with
+// `__memcpy(out as usize, data, n)` from the address
+// `__str_bytes(s, 0 as usize)` answers: the value-tree heap
+// has no flat byte address space to give it.
 func builtinStringBytes(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("__method_string_bytes: expected 1 arg (s), got %d", len(args))
@@ -3370,7 +3330,7 @@ func builtinSleepNS(_ *Interp, args []Value) (Value, error) {
 // fork(2) in a multithreaded process leaves the child with every
 // lock/state snapshot but only one thread — undefined behaviour.
 // So the interp's answer is a permanent -38 (ENOSYS). Callers
-// (std/tcp's tcp_serve_supervised) detect it and degrade to
+// (std/serve's supervise) detect it and degrade to
 // plain single-process serving, keeping the function runnable
 // under `fern -interp` and on any future fork-less target.
 func builtinProcFork(_ *Interp, args []Value) (Value, error) {
@@ -3583,6 +3543,9 @@ func streamFile(i *Interp, v Value) (*os.File, error) {
 	fd, err := streamFd(v)
 	if err != nil {
 		return nil, err
+	}
+	if i.closedStd[fd] {
+		return nil, errClosedHandle
 	}
 	var s any
 	switch fd {
@@ -4106,6 +4069,9 @@ func builtinStatfs(_ *Interp, args []Value) (Value, error) {
 			"files_free":   Number(raw.filesFree),
 			"name_max":     Number(raw.nameMax),
 			"path_max":     Number(raw.pathMax),
+			"fs_type":      Number(raw.fsType),
+			"fsid":         Number(raw.fsid),
+			"frag_size":    Number(raw.fragSize),
 		},
 	}), nil
 }
@@ -4406,6 +4372,28 @@ func builtinReadLink(_ *Interp, args []Value) (Value, error) {
 	return resultErr(ioErrorOther(p[0], syscall.ENAMETOOLONG)), nil
 }
 
+// builtinGetxattr reads an extended attribute's value, following a final
+// symlink; builtinLgetxattr asks about the link itself.
+func builtinGetxattr(_ *Interp, args []Value) (Value, error) {
+	return xattrResult("getxattr", args, true)
+}
+
+func builtinLgetxattr(_ *Interp, args []Value) (Value, error) {
+	return xattrResult("lgetxattr", args, false)
+}
+
+func xattrResult(name string, args []Value, follow bool) (Value, error) {
+	p, err := pathArgs(name, args, 2)
+	if err != nil {
+		return nil, err
+	}
+	v, err := getxattrBytes(p[0], p[1], follow)
+	if err != nil {
+		return resultErr(classifyIoError(p[0], err)), nil
+	}
+	return resultOk(String(v)), nil
+}
+
 // builtinRename moves a directory entry. Nothing is copied and an
 // existing destination is replaced atomically; a rename across
 // filesystems stays EXDEV rather than becoming a copy here.
@@ -4417,6 +4405,25 @@ func builtinRename(_ *Interp, args []Value) (Value, error) {
 	// The IoError names the destination: EXDEV, ENOTEMPTY and EISDIR
 	// are all properties of where the entry was going.
 	return ioResult(p[1], syscall.Rename(p[0], p[1])), nil
+}
+
+// builtinRenameNoreplace is rename that refuses an existing destination
+// with EEXIST, in the same kernel call.
+func builtinRenameNoreplace(_ *Interp, args []Value) (Value, error) {
+	p, err := pathArgs("rename_noreplace", args, 2)
+	if err != nil {
+		return nil, err
+	}
+	return ioResult(p[1], renameNoReplace(p[0], p[1])), nil
+}
+
+// builtinRenameExchange swaps two existing names atomically.
+func builtinRenameExchange(_ *Interp, args []Value) (Value, error) {
+	p, err := pathArgs("rename_exchange", args, 2)
+	if err != nil {
+		return nil, err
+	}
+	return ioResult(p[1], renameExchangeNames(p[0], p[1])), nil
 }
 
 // builtinChmod sets the permission bits of an existing entry. The umask
@@ -4878,8 +4885,12 @@ func builtinOpenExclusive(i *Interp, args []Value) (Value, error) {
 }
 
 // builtinOpenReaderWith / builtinOpenWriterWith open under Fern's own
-// flags word: bit 1 creates (0666 through the umask), bit 2 is
-// O_NONBLOCK. The writer is O_WRONLY with neither O_TRUNC nor O_APPEND.
+// flags word (the checker's open_reader_with comment has the table):
+// bit 1 creates (0666 through the umask), the rest are the kernel's
+// O_NONBLOCK, O_EXCL, O_DIRECT, O_DIRECTORY, O_DSYNC, O_SYNC, O_NOATIME,
+// O_NOCTTY and O_NOFOLLOW in the host's spelling. A bit the host has no
+// word for is refused as Unsupported. The writer is O_WRONLY with
+// neither O_TRUNC nor O_APPEND.
 func builtinOpenReaderWith(i *Interp, args []Value) (Value, error) {
 	return openWithHelper(i, args, "Reader", os.O_RDONLY)
 }
@@ -4900,8 +4911,22 @@ func openWithHelper(i *Interp, args []Value, structName string, access int) (Val
 	if int(flags)&1 != 0 {
 		flag |= os.O_CREATE
 	}
-	if int(flags)&2 != 0 {
-		flag |= oNonblock
+	if int(flags)&4 != 0 {
+		flag |= os.O_EXCL
+	}
+	for _, b := range []struct{ bit, word int }{
+		{2, oNonblock}, {8, oDirect}, {16, oDirectory}, {32, oDsync},
+		{64, oSync}, {128, oNoatime}, {256, oNoctty}, {512, oNofollow},
+	} {
+		if int(flags)&b.bit == 0 {
+			continue
+		}
+		// Non-blocking is the one bit a host without it may keep: the
+		// FIFO it exists for cannot be made there either.
+		if b.word == 0 && b.bit != 2 {
+			return resultErr(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
+		}
+		flag |= b.word
 	}
 	return openHelper(i, args[:1], structName, flag, 0o666)
 }
@@ -4938,13 +4963,16 @@ func readerStream(i *Interp, v Value) (io.Reader, error) {
 	if err != nil {
 		return nil, err
 	}
+	if i.closedStd[fd] {
+		return nil, errClosedHandle
+	}
 	switch fd {
 	case 0:
 		return i.Stdin, nil
 	}
 	f, ok := i.openFiles[fd]
 	if !ok {
-		return nil, fmt.Errorf("Reader with fd=%d not registered (closed already?)", fd)
+		return nil, errClosedHandle
 	}
 	return f, nil
 }
@@ -4954,6 +4982,9 @@ func writerStream(i *Interp, v Value) (io.Writer, error) {
 	if err != nil {
 		return nil, err
 	}
+	if i.closedStd[fd] {
+		return nil, errClosedHandle
+	}
 	switch fd {
 	case 1:
 		return i.Stdout, nil
@@ -4962,7 +4993,7 @@ func writerStream(i *Interp, v Value) (io.Writer, error) {
 	}
 	f, ok := i.openFiles[fd]
 	if !ok {
-		return nil, fmt.Errorf("Writer with fd=%d not registered (closed already?)", fd)
+		return nil, errClosedHandle
 	}
 	return f, nil
 }
@@ -4984,6 +5015,9 @@ func builtinReaderReadLine(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("Reader.read_line: expected 1 arg")
 	}
 	r, err := readerStream(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return optionNone(), nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -5015,6 +5049,9 @@ func builtinReadLine(i *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("read_line: expected 0 args")
 	}
+	if i.closedStd[0] {
+		return optionNone(), nil
+	}
 	var buf []byte
 	one := make([]byte, 1)
 	for {
@@ -5039,6 +5076,9 @@ func builtinReaderReadChunk(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("Reader.read_chunk: expected 2 args")
 	}
 	r, err := readerStream(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return resultErr(ioErrorOther("", syscall.EBADF)), nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -5067,14 +5107,10 @@ func builtinReaderReadChunkBytes(i *Interp, args []Value) (Value, error) {
 	if size < 0 {
 		return resultErr(classifyIoError("", syscall.EINVAL)), nil
 	}
-	fd, err := streamFd(args[0])
-	if err != nil {
-		return nil, err
-	}
-	if i.closedStd[fd] || (fd != 0 && i.openFiles[fd] == nil) {
+	r, err := readerStream(i, args[0])
+	if errors.Is(err, errClosedHandle) {
 		return resultErr(classifyIoError("", syscall.EBADF)), nil
 	}
-	r, err := readerStream(i, args[0])
 	if err != nil {
 		return nil, err
 	}
@@ -5142,6 +5178,9 @@ func builtinWriterWrite(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("Writer.write: expected 2 args")
 	}
 	w, err := writerStream(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return optionSome(ioErrorOther("", syscall.EBADF)), nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -5372,7 +5411,7 @@ func builtinWrite(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("write: expected string arg, got %T", args[0])
 	}
-	fmt.Fprint(i.Stdout, string(s))
+	fmt.Fprint(i.stdOut(1), string(s))
 	return Void{}, nil
 }
 
@@ -5384,7 +5423,7 @@ func builtinEprint(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("eprint: expected string arg, got %T", args[0])
 	}
-	fmt.Fprintln(i.Stderr, string(s))
+	fmt.Fprintln(i.stdOut(2), string(s))
 	return Void{}, nil
 }
 
@@ -5420,7 +5459,7 @@ func builtinPrint(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("print: expected string arg, got %T", args[0])
 	}
-	fmt.Fprintln(i.Stdout, string(s))
+	fmt.Fprintln(i.stdOut(1), string(s))
 	return Void{}, nil
 }
 
@@ -5438,8 +5477,21 @@ func builtinPutchar(i *Interp, args []Value) (Value, error) {
 	// anything above 127 came out as its multi-byte UTF-8 form — putchar(233)
 	// wrote c3 a9 where the backends write e9 — and a value outside a rune's
 	// range wrote U+FFFD rather than wrapping.
-	i.Stdout.Write([]byte{byte(int64(n))})
+	i.stdOut(1).Write([]byte{byte(int64(n))})
 	return Void{}, nil
+}
+
+// stdOut is where print / write / eprint / putchar send fd 1 or 2: the
+// stream, or nowhere once the program has closed it, as a write to a
+// closed fd lands nowhere.
+func (i *Interp) stdOut(fd int64) io.Writer {
+	if i.closedStd[fd] {
+		return io.Discard
+	}
+	if fd == 2 {
+		return i.Stderr
+	}
+	return i.Stdout
 }
 
 // builtinPoll is the interpreter's stub for the `poll(fds, timeout_ms)` readiness
@@ -8646,4 +8698,32 @@ func asBool(v Value) bool {
 		return x != 0
 	}
 	return false
+}
+
+// scanSet is __scan_set's reference semantics over bytes: the index of the
+// first byte at or after `from` whose entry in `set` is nonzero, or len(b).
+func scanSet(name string, b []byte, fromArg, setArg Value) (Value, error) {
+	fn, ok := fromArg.(Number)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected an integer start, got %T", name, fromArg)
+	}
+	set, ok := setArg.(Array)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected a u8[] set, got %T", name, setArg)
+	}
+	from := max(int(int64(fn)), 0)
+	for idx := from; idx < len(b); idx++ {
+		c := int(b[idx])
+		if c >= len(set.E) {
+			continue
+		}
+		e, ok := set.E[c].(Number)
+		if !ok {
+			return nil, fmt.Errorf("%s: set element %d is %T, not a byte", name, c, set.E[c])
+		}
+		if int64(e) != 0 {
+			return Number(idx), nil
+		}
+	}
+	return Number(len(b)), nil
 }

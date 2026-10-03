@@ -1,22 +1,15 @@
 package e2e
 
 import (
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
-	"github.com/jakechampion/lang/internal/checker"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // --- Sanitizer mode (#5545) ---------------------------------------
@@ -40,80 +33,40 @@ import (
 //     reason the two detectors can be on at once; account at the
 //     release and every correctly-freed array would otherwise read as
 //     a leak.
-//   - Flag off, no sanitizer symbol is emitted at all (the cheap proxy
-//     for the byte-identical release guarantee).
-
-// emitSanitize compiles src with the sanitizer toggled per `on`,
-// returning the asm text. Mirrors emitLeakCheck (leakcheck_test.go) but
-// drives the flag through ast.ApplySanitize, so the test exercises the
-// same fold-down the CLI's -sanitize uses rather than setting the
-// component flags by hand.
-func emitSanitize(t *testing.T, backend, src string, on bool) string {
-	t.Helper()
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-
-	prevFree, prevSan := ast.RcFreeEnabled, ast.SanitizeEnabled
-	prevLc, prevTrap, prevDbg := ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug
-	restore := func() {
-		ast.RcFreeEnabled, ast.SanitizeEnabled = prevFree, prevSan
-		ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug = prevLc, prevTrap, prevDbg
-	}
-	t.Cleanup(restore)
-	ast.RcFreeEnabled = true
-	ast.SanitizeEnabled = on
-	// ApplySanitize only ever turns flags ON, so an ambient FERN_*
-	// setting in the developer's environment would leak into the
-	// flag-OFF leg and make it lie. Clear them first.
-	ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug = false, false, false
-	ast.ApplySanitize()
-
-	var asm string
-	var emitErr error
-	if backend == "arm64-linux" {
-		asm, emitErr = arm64codegen.Emit(prog, info)
-	} else {
-		asm, emitErr = x86_64.Emit(prog, info)
-	}
-	restore()
-	if emitErr != nil {
-		t.Fatalf("%s emit: %v", backend, emitErr)
-	}
-	return asm
-}
+//
+// Flag off, no sanitizer symbol is emitted at all and a defect runs
+// silently; internal/e2eselfhost pins both (TestSelfHostSanitizeOff*,
+// the *AsmContract* and *SilentWithout* tests).
 
 // runSanitizeX86_64 compiles src with the sanitizer on and runs it,
 // returning stdout, stderr and the exit code separately (the report
 // contract is "stderr only, stdout untouched").
 func runSanitizeX86_64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
-	gcc, runner := x86_64Tooling(t)
-	return buildAndRunSanitized(t, gcc, runner, emitSanitize(t, "x86_64", src, true), false)
+	runner := e2eharness.X86_64Runner(t)
+	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetX86_64Linux, src, []string{"FERN_SANITIZE=1"})
+	return runSplit(t, runX86_64Bin(runner, bin))
 }
 
-// runSanitizeArm64 is the arm64 sibling (qemu; SKIPs without the
-// aarch64 toolchain — runs in CI).
+// runSanitizeArm64 is the arm64 sibling (qemu; SKIPs without qemu-aarch64 —
+// runs in CI).
 func runSanitizeArm64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
-	gcc, qemu := arm64Tooling(t)
-	return buildAndRunSanitized(t, gcc, []string{qemu}, emitSanitize(t, "arm64-linux", src, true), true)
+	qemu := e2eharness.Arm64Runner(t)
+	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetArm64Linux, src, []string{"FERN_SANITIZE=1"})
+	return runSplit(t, runArm64Bin(qemu, bin))
+}
+
+// runPlain compiles src for target with no detector on and runs it on the
+// target's runner, splitting stdout, stderr and the exit code.
+func runPlain(t *testing.T, target, src string) (string, string, int) {
+	t.Helper()
+	if target == e2eharness.TargetArm64Linux {
+		qemu := e2eharness.Arm64Runner(t)
+		return runSplit(t, runArm64Bin(qemu, e2eharness.CompileSelfHostSource(t, target, src, nil)))
+	}
+	runner := e2eharness.X86_64Runner(t)
+	return runSplit(t, runX86_64Bin(runner, e2eharness.CompileSelfHostSource(t, target, src, nil)))
 }
 
 // checkSanitizedBalanced runs src under the sanitizer and asserts the answer,
@@ -131,33 +84,6 @@ func checkSanitizedBalanced(t *testing.T, src string, want int, run func(*testin
 	if allocs == 0 || allocs != frees || live != 0 {
 		t.Errorf("census: allocs=%d frees=%d live_bytes=%d, want balanced / 0", allocs, frees, live)
 	}
-}
-
-func buildAndRunSanitized(t *testing.T, gcc string, runner []string, asm string, arm64 bool) (string, string, int) {
-	t.Helper()
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	args := []string{"-static", "-nostdlib", asmPath, "-o", binPath}
-	if !arm64 {
-		args = append([]string{"-no-pie"}, args...)
-	}
-	if out, err := exec.Command(gcc, args...).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
-	if arm64 {
-		return runSplit(t, runArm64Bin(runner[0], binPath))
-	}
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(binPath)
-	} else {
-		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), binPath)...)
-	}
-	return runSplit(t, cmd)
 }
 
 // sanCleanSrc is the rc-driven drop-everything loop: every row is
@@ -186,11 +112,11 @@ const sanLeakSrc = `function main(): i32 {
     return 42;
 }`
 
-// sanDoubleFreeSrc over-releases deliberately: __alloc_u8 hands back an
-// rc==1 buffer, the first __rc_dec takes it to 0, and the second sees a
-// non-positive count — the exact shape __rc_underflow_count() was built
-// to notice. Under the sanitizer that stops being a counter nobody
-// reads and becomes a fatal, named report.
+// sanDoubleFreeSrc releases a buffer twice. On the self-host __rc_dec is the
+// freeing dec, so the first call reclaims the block and poisons its rc word
+// and the second touches the poison: a use-after-free report. Native's
+// __rc_dec never frees, so its leg (TestArm64DarwinSanitize) reads rc 0 and
+// reports the over-release instead (docs/SANITIZER.md).
 const sanDoubleFreeSrc = `function main(): i32 {
     let a: u8[] = __alloc_u8(16);
     __rc_dec(a);
@@ -215,28 +141,26 @@ const sanQuarantineSrc = `function main(): i32 {
     return (b / 1024) as i32;
 }`
 
-// sanRcHelpersSrc calls both rc builtins so __fern_rc_inc and
-// __fern_rc_dec are both emitted — they carry the use-after-free poison
-// check, and a program that touches neither doesn't get either helper.
-const sanRcHelpersSrc = `function main(): i32 {
-    let a: u8[] = __alloc_u8(16);
-    __rc_inc(a);
-    __rc_dec(a);
-    return 0;
-}`
-
-// sanUseAfterFreeSrc builds a real dangling reference. The plain
-// __rc_dec builtin never frees on native (it reads rc 0 and reports an
-// over-release instead), so the block has to go through the FREEING dec:
-// __fern_arr_dec on the data pointer takes the rc==1 buffer to zero,
-// poisons its rc word and hands the block to __fern_free, which under
-// the sanitizer accounts the release and declines to recycle it. The
-// retained raw address then reaches __fern_rc_inc, which reads the
-// poison. Perceus's own drop of `a` at scope exit is never reached.
+// sanUseAfterFreeSrc builds a real dangling reference on native, whose
+// plain __rc_dec never frees: __fern_arr_dec on the data pointer takes the
+// rc==1 buffer to zero, poisons its rc word and frees the block, and the
+// retained raw address then reaches __fern_rc_inc, which reads the poison.
+// Native's Darwin leg (TestArm64DarwinSanitize) runs it.
 const sanUseAfterFreeSrc = `function main(): i32 {
     let a: u8[] = __alloc_u8(16);
     let p: usize = a as usize;
     __fern_arr_dec(p, 1);
+    __fern_rc_inc(p);
+    return 0;
+}`
+
+// sanStaleTouchSrc is the same dangling reference on the self-host, where
+// __fern_arr_dec is core/map's no-op array release and __rc_dec is the
+// freeing dec. Perceus's own drop of `a` at scope exit is never reached.
+const sanStaleTouchSrc = `function main(): i32 {
+    let a: u8[] = __alloc_u8(16);
+    let p: usize = a as usize;
+    __rc_dec(a);
     __fern_rc_inc(p);
     return 0;
 }`
@@ -270,79 +194,6 @@ func TestApplySanitizeFoldsIntoComponentFlags(t *testing.T) {
 	}
 	if ast.RcTrace {
 		t.Error("ApplySanitize enabled RcTrace: per-heap-event output is a targeted probe, not a standing mode")
-	}
-}
-
-// Flag off, the emitted asm must carry no sanitizer symbol at all —
-// message, label, or verdict text. The cheap proxy for "a release build
-// is byte-identical to one from a compiler without the feature".
-func TestSanitizeOffEmitsNoSymbols(t *testing.T) {
-	needles := []string{"fern-sanitizer", "__fern_msg_san_", ".Lsan_"}
-	for _, backend := range []string{"x86_64", "arm64-linux"} {
-		asm := emitSanitize(t, backend, sanCleanSrc, false)
-		for _, n := range needles {
-			if strings.Contains(asm, n) {
-				t.Errorf("%s: flag-off asm contains sanitizer symbol %q", backend, n)
-			}
-		}
-	}
-}
-
-// The runtime legs below prove the use-after-free report fires; this
-// pins the wiring the asm has to carry for that on both backends: each
-// rc helper compares the rc word against RcPoison and routes a match to
-// the named diagnostic through __fern_report, and no bare trap is left
-// as a silent death anywhere.
-func TestSanitizeWiresUseAfterFreeReport(t *testing.T) {
-	for _, tc := range []struct {
-		backend string
-		// poison is how RcPoison reaches a comparison on this
-		// backend: an immediate operand on x86-64, a movz/movk pair
-		// into a scratch register on arm64 (the value needs two
-		// halves, so there is no single-instruction form).
-		poison []string
-		// silentTraps are the die-without-a-message instructions this
-		// backend used to reach for; none may survive.
-		silentTraps []string
-	}{
-		{
-			backend:     "x86_64",
-			poison:      []string{fmt.Sprintf("cmp ecx, %d", ast.RcPoison)},
-			silentTraps: []string{"ud2"},
-		},
-		{
-			backend: "arm64-linux",
-			poison: []string{
-				fmt.Sprintf("movz w2, #%d", ast.RcPoison&0xffff),
-				fmt.Sprintf("movk w2, #%d, lsl #16", (ast.RcPoison>>16)&0xffff),
-			},
-			silentTraps: []string{"udf", "brk "},
-		},
-	} {
-		t.Run(tc.backend, func(t *testing.T) {
-			asm := emitSanitize(t, tc.backend, sanRcHelpersSrc, true)
-			for _, p := range tc.poison {
-				if !strings.Contains(asm, p) {
-					t.Errorf("no RcPoison check materialised (%q missing)", p)
-				}
-			}
-			for _, want := range []string{"__fern_msg_san_uaf", "fern-sanitizer: use-after-free"} {
-				if !strings.Contains(asm, want) {
-					t.Errorf("sanitized asm missing %q", want)
-				}
-			}
-			// Every poison match must reach the reporter. Both
-			// backends spell the tail jump differently, so assert on
-			// the shared destination.
-			if !strings.Contains(asm, "__fern_report") {
-				t.Error("the use-after-free check does not route to __fern_report")
-			}
-			for _, trap := range tc.silentTraps {
-				if strings.Contains(asm, trap) {
-					t.Errorf("sanitized asm still contains a bare %q: a check that dies without a message is what this mode replaces", trap)
-				}
-			}
-		})
 	}
 }
 
@@ -390,7 +241,7 @@ func TestX86_64SanitizeDoubleFreeReported(t *testing.T) {
 	if code != x86_64.ExitSanitizer {
 		t.Errorf("exit=%d, want %d (a sanitizer finding is fatal and has its own status)", code, x86_64.ExitSanitizer)
 	}
-	if !strings.Contains(stderr, "fern-sanitizer: rc over-release (double free)") {
+	if !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)") {
 		t.Errorf("stderr does not name the finding: %q", stderr)
 	}
 	if !strings.Contains(stderr, "backtrace:") {
@@ -398,24 +249,8 @@ func TestX86_64SanitizeDoubleFreeReported(t *testing.T) {
 	}
 }
 
-// Without the sanitizer the same over-release only bumps a counter and
-// the program runs to completion — the "test-only oracle" state #5545
-// set out to promote. Pins that the promotion is opt-in, not a change
-// to the default build.
-func TestX86_64DoubleFreeSilentWithoutSanitize(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	asm := emitSanitize(t, "x86_64", sanDoubleFreeSrc, false)
-	_, stderr, code := buildAndRunSanitized(t, gcc, runner, asm, false)
-	if code != 0 {
-		t.Errorf("exit=%d, want 0 (an unsanitized build must not abort)", code)
-	}
-	if stderr != "" {
-		t.Errorf("stderr=%q, want empty (an unsanitized build must not report)", stderr)
-	}
-}
-
 func TestX86_64SanitizeUseAfterFreeReported(t *testing.T) {
-	_, stderr, code := runSanitizeX86_64(t, sanUseAfterFreeSrc)
+	_, stderr, code := runSanitizeX86_64(t, sanStaleTouchSrc)
 	if code != x86_64.ExitSanitizer {
 		t.Errorf("exit=%d, want %d", code, x86_64.ExitSanitizer)
 	}
@@ -430,26 +265,9 @@ func TestX86_64SanitizeUseAfterFreeReported(t *testing.T) {
 	}
 }
 
-// Flag off, the same stale touch recycles the block and bumps a
-// recycled rc word: silent corruption, exit 0, nothing on stderr. Pins
-// that the quarantine is opt-in rather than a change to the default
-// build.
-func TestX86_64UseAfterFreeSilentWithoutSanitize(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	asm := emitSanitize(t, "x86_64", sanUseAfterFreeSrc, false)
-	_, stderr, code := buildAndRunSanitized(t, gcc, runner, asm, false)
-	if code != 0 {
-		t.Errorf("exit=%d, want 0 (an unsanitized build must not abort)", code)
-	}
-	if stderr != "" {
-		t.Errorf("stderr=%q, want empty (an unsanitized build must not report)", stderr)
-	}
-}
-
 func TestX86_64SanitizeQuarantinesFreedBlocks(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	_, sanErr, sanKiB := buildAndRunSanitized(t, gcc, runner, emitSanitize(t, "x86_64", sanQuarantineSrc, true), false)
-	_, _, plainKiB := buildAndRunSanitized(t, gcc, runner, emitSanitize(t, "x86_64", sanQuarantineSrc, false), false)
+	_, sanErr, sanKiB := runSanitizeX86_64(t, sanQuarantineSrc)
+	_, _, plainKiB := runPlain(t, e2eharness.TargetX86_64Linux, sanQuarantineSrc)
 
 	// 200 rows × 32 B ≈ 6 KiB if nothing is recycled; near zero if the
 	// freelist hands the same block back every round.
@@ -461,7 +279,7 @@ func TestX86_64SanitizeQuarantinesFreedBlocks(t *testing.T) {
 	}
 	// Quarantined, but still counted: the census must not read the
 	// un-recycled blocks as leaks.
-	allocs, frees, live := parseLeakCheckLine(t, strings.TrimPrefix(sanErr, ""))
+	allocs, frees, live := parseLeakCheckLine(t, sanErr)
 	if allocs != frees || live != 0 {
 		t.Errorf("got allocs=%d frees=%d live=%d, want balanced / 0", allocs, frees, live)
 	}
@@ -512,9 +330,8 @@ func TestArm64SanitizeLeakVerdict(t *testing.T) {
 }
 
 func TestArm64SanitizeQuarantinesFreedBlocks(t *testing.T) {
-	gcc, qemu := arm64Tooling(t)
-	_, sanErr, sanKiB := buildAndRunSanitized(t, gcc, []string{qemu}, emitSanitize(t, "arm64-linux", sanQuarantineSrc, true), true)
-	_, _, plainKiB := buildAndRunSanitized(t, gcc, []string{qemu}, emitSanitize(t, "arm64-linux", sanQuarantineSrc, false), true)
+	_, sanErr, sanKiB := runSanitizeArm64(t, sanQuarantineSrc)
+	_, _, plainKiB := runPlain(t, e2eharness.TargetArm64Linux, sanQuarantineSrc)
 
 	if sanKiB < 4 {
 		t.Errorf("sanitized bump high-water = %d KiB, want >= 4 (freed blocks must not be recycled)", sanKiB)
@@ -533,7 +350,7 @@ func TestArm64SanitizeDoubleFreeReported(t *testing.T) {
 	if code != arm64codegen.ExitSanitizer {
 		t.Errorf("exit=%d, want %d", code, arm64codegen.ExitSanitizer)
 	}
-	if !strings.Contains(stderr, "fern-sanitizer: rc over-release (double free)") {
+	if !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)") {
 		t.Errorf("stderr does not name the finding: %q", stderr)
 	}
 	if !strings.Contains(stderr, "backtrace:") {
@@ -542,7 +359,7 @@ func TestArm64SanitizeDoubleFreeReported(t *testing.T) {
 }
 
 func TestArm64SanitizeUseAfterFreeReported(t *testing.T) {
-	_, stderr, code := runSanitizeArm64(t, sanUseAfterFreeSrc)
+	_, stderr, code := runSanitizeArm64(t, sanStaleTouchSrc)
 	if code != arm64codegen.ExitSanitizer {
 		t.Errorf("exit=%d, want %d", code, arm64codegen.ExitSanitizer)
 	}
@@ -554,17 +371,5 @@ func TestArm64SanitizeUseAfterFreeReported(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "backtrace:") {
 		t.Errorf("stderr carries no #5538 backtrace: %q", stderr)
-	}
-}
-
-func TestArm64UseAfterFreeSilentWithoutSanitize(t *testing.T) {
-	gcc, qemu := arm64Tooling(t)
-	asm := emitSanitize(t, "arm64-linux", sanUseAfterFreeSrc, false)
-	_, stderr, code := buildAndRunSanitized(t, gcc, []string{qemu}, asm, true)
-	if code != 0 {
-		t.Errorf("exit=%d, want 0 (an unsanitized build must not abort)", code)
-	}
-	if stderr != "" {
-		t.Errorf("stderr=%q, want empty (an unsanitized build must not report)", stderr)
 	}
 }

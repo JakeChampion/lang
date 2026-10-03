@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #8785 — the in-place string append through a STRUCT FIELD. The lowering
@@ -103,9 +101,6 @@ function main(): i32 {
 // fails if the in-place field append is gated on anything but the box's own
 // runtime uniqueness.
 func TestX86_64StrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strFieldAppendAliasSrc)
 	if code != 0 {
@@ -123,9 +118,6 @@ func TestX86_64StrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
 // The two-word (wasm) sibling. strAppendAvailable covers ptrW==4, so the
 // field load fans out to (data, len) and the helper consumes both words.
 func TestWASMStrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	if got := runWasmCapturingStdout(t, strFieldAppendAliasSrc); got != strFieldAppendAliasWant {
 		t.Errorf("wasm aliased-box field append =\n%q\nwant\n%q", got, strFieldAppendAliasWant)
@@ -134,9 +126,6 @@ func TestWASMStrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
 
 // The two-word NATIVE sibling, where the pair is carried in registers.
 func TestArm64StrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckArm64(t, strFieldAppendAliasSrc)
 	if code != 0 {
@@ -151,26 +140,24 @@ func TestArm64StrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
 	}
 }
 
-// TestX86_64StrFieldAppendAllocsBounded pins the collapse. Measured on this
-// program: 8022 allocations before, 275 after — the before figure is one box
-// and one whole-buffer copy per append, which is the quadratic.
+// TestX86_64StrFieldAppendAllocsBounded pins the collapse: 2265 allocations,
+// one array per update for `xs` plus the size-class steps of `buf`. A fresh
+// box and one whole-buffer copy per append, the quadratic, cost 8022.
 //
 // The assertions are the invariants rather than the exact numbers: well under
 // one allocation per append, and a balanced heap at exit, which catches an
 // over-release as firmly as a leak.
 func TestX86_64StrFieldAppendAllocsBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strFieldAppendGrowSrc)
 	if code != 0 {
 		t.Fatalf("field-append accumulator exited %d (a check inside it failed); stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	// 2000 appends over 4000 bytes cross ~250 16-byte classes; the 2000
-	// boxes collapse to one reused box. Anything near 4000 means the site
-	// went back to a fresh box and a full copy per update.
+	// 2000 appends over 4000 bytes cross ~250 size classes, `xs` costs one
+	// array per update, and the 2000 boxes collapse to one reused box.
+	// Anything near 4000 means the site went back to a fresh box and a full
+	// copy per update.
 	if allocs > 3000 {
 		t.Errorf("allocs = %d for 2000 field appends, want well under 3000; the in-place field append is not firing", allocs)
 	}
@@ -183,9 +170,6 @@ func TestX86_64StrFieldAppendAllocsBounded(t *testing.T) {
 // site was not placeable at all, so every update allocated a fresh box AND
 // copied the whole buffer.
 func TestArm64StrFieldAppendAllocsBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckArm64(t, strFieldAppendGrowSrc)
 	if code != 0 {
@@ -202,9 +186,6 @@ func TestArm64StrFieldAppendAllocsBounded(t *testing.T) {
 
 // The same program on wasm, for the answers rather than the counts.
 func TestWASMStrFieldAppendCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	if code := runWasm(t, strFieldAppendGrowSrc); code != 0 {
 		t.Errorf("wasm field-append accumulator exited %d, want 0", code)
@@ -269,9 +250,6 @@ ab-ab`
 // frees > allocs. The aliased-box and aliased-buffer lines are the ones that
 // separate a correct fold from one that grew a buffer someone else reads.
 func TestX86_64StrFieldAppendChainCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strFieldAppendChainSrc)
 	if code != 0 {
@@ -287,9 +265,6 @@ func TestX86_64StrFieldAppendChainCorrect(t *testing.T) {
 
 // TestArm64StrFieldAppendChainCorrect is the two-word NATIVE sibling.
 func TestArm64StrFieldAppendChainCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckArm64(t, strFieldAppendChainSrc)
 	if code != 0 {
@@ -305,9 +280,6 @@ func TestArm64StrFieldAppendChainCorrect(t *testing.T) {
 
 // TestWASMStrFieldAppendChainCorrect is the wasm sibling.
 func TestWASMStrFieldAppendChainCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	want := strFieldAppendChainWant
 	if got := runWasmCapturingStdout(t, strFieldAppendChainSrc); got != want {
@@ -330,22 +302,19 @@ function main(): i32 {
     return 0;
 }`
 
-// TestX86_64StrFieldAppendChainAllocsBounded pins the collapse: allocs=130
-// frees=130 live_bytes=0, the same as the single-join form over the same 3000
-// bytes. Only the leftmost join used to grow the field, so the two above it
-// allocated and copied the accumulator every iteration and cost 1128 here.
+// TestX86_64StrFieldAppendChainAllocsBounded pins the collapse: allocs=256
+// frees=256 live_bytes=0, one per size-class step over the 3000 bytes. A
+// join that copied the accumulator instead would cost one allocation per
+// join, 1500 here.
 func TestX86_64StrFieldAppendChainAllocsBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strFieldAppendChainAllocSrc)
 	if code != 0 {
 		t.Fatalf("chained field append loop exited %d (want 0 — the accumulated length was wrong); stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	if allocs > 250 {
-		t.Errorf("allocs = %d for 500 three-join iterations, want <= 250 (~one per size-class step); a join is allocating and copying instead of growing", allocs)
+	if allocs > 300 {
+		t.Errorf("allocs = %d for 500 three-join iterations, want <= 300 (~one per size-class step); a join is allocating and copying instead of growing", allocs)
 	}
 	if allocs != frees || live != 0 {
 		t.Errorf("heap unbalanced after the chained field append: allocs=%d frees=%d live_bytes=%d, want allocs==frees and live_bytes==0", allocs, frees, live)

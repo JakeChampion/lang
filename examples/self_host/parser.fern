@@ -74,7 +74,12 @@ struct ParamDestr { names: string, marker: string, synth: string, line: i32, col
 // already carry, recorded through the same non-consuming lookahead and read
 // through the same rules, so a call through a returned fn value and a call
 // through a parameter cannot disagree about the signature (#5986).
-pub struct FuncDecl { no_inline: boolean, name: string, receiver_name: string, receiver_type: string, type_params: string[], params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], line: i32, col: i32, import_iface: string, import_wit: string, all_type_params: string[], bound_traits: string[], fip: boolean, fbip: boolean, fip_allowance: i32, async: boolean, is_const: boolean, is_pub: boolean, is_package: boolean, ret_fn_ret: string, ret_fn_param_types: string, module: string }
+// impl_trait is the simple name of the trait a method was written for: an impl
+// method or inherited default (claim_method_name), or a derived method; "" for a
+// free function and an inherent method. dyn_traits is every trait, by simple
+// name, whose `dyn` dispatch on this method's receiver type calls this method
+// (resolve_dyn_traits); dyn_arm_matches selects arms by it.
+pub struct FuncDecl { no_inline: boolean, name: string, receiver_name: string, receiver_type: string, type_params: string[], params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], line: i32, col: i32, import_iface: string, import_wit: string, all_type_params: string[], bound_traits: string[], fip: boolean, fbip: boolean, fip_allowance: i32, async: boolean, is_const: boolean, is_pub: boolean, is_package: boolean, ret_fn_ret: string, ret_fn_param_types: string, module: string, impl_trait: string, dyn_traits: string[] }
 
 // Top-level struct decl: `struct Name { field1: T1, field2: T2 }`.
 // Same simplifying assumption as FuncDecl: type names are
@@ -1385,6 +1390,31 @@ function s_unknown_at(kind: string, line: i32, col: i32): ast.Stmt {
   return ast.StmtUnknown { kind: kind, line: line, col: col };
 }
 
+// tok_spelling is a token as an "expected …, got X" diagnostic quotes it.
+function tok_spelling(t: lexer.Token): string {
+  match (t) {
+    lexer.TokPunct(x) => {
+      return x.text;
+    },
+    lexer.TokIdent(x) => {
+      return x.name;
+    },
+    lexer.TokKeyword(x) => {
+      return x.name;
+    },
+    lexer.TokNumber(x) => {
+      return x.text;
+    },
+    lexer.TokString(x) => {
+      return x.value;
+    },
+    _ => {
+      return "";
+    }
+  }
+  return "";
+}
+
 function s_defer(action: ast.Stmt): ast.Stmt {
   return ast.StmtDefer { action: action, on_error: 0, line: 0 };
 }
@@ -1583,14 +1613,17 @@ pub function resolve_labels_module(mod: Module): Module {
 // the flat `fn` tag (#6773). Only `-fmt` sets it: those canonicalisations are
 // what every downstream `== "fn"` dispatch site reads, and the formatter is
 // the one consumer that parses without compiling.
-struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], verbatim: boolean, depth: i32 }
+// type_errs holds a `decl:` sentinel for each type position whose token
+// starts no type (native's P001 "expected type"); parse_module_flagged reports
+// them with the top-level statements.
+struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], verbatim: boolean, depth: i32, type_errs: ast.Stmt[] }
 
 // scan_struct_names walks the token stream for `struct N` / `pub struct N`
 // declarations and returns the names. A shape scan, not a parse: `struct` is a
 // keyword, so the ident that follows one is always a declared struct name.
 function scan_struct_names(toks: lexer.Token[]): string[] {
   let out: string[] = [];
-  let q: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: out, verbatim: false, depth: 0 };
+  let q: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: out, verbatim: false, depth: 0, type_errs: [] };
   while (!q.at_end()) {
     if (q.peek_keyword() != "struct") {
       q = q.advance();
@@ -1695,17 +1728,23 @@ function (p: Par) peek_col(): i32 {
 }
 
 function (p: Par) advance(): Par {
-  return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth };
+  return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs };
 }
 
 // with_no_struct returns a cursor with the struct-literal-suppression
 // flag set as given (position unchanged).
+// expected_type records that the cursor's token starts no type, where one is
+// required: native's P001 "expected type, got X".
+function (p: Par) expected_type(): Par {
+  return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected type, got \"" + tok_spelling(p.peek()) + "\"")) };
+}
+
 function (p: Par) with_no_struct(v: boolean): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth };
+  return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs };
 }
 
 function (p: Par) with_map_kind(v: i32): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth };
+  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs };
 }
 
 // MAX_NEST_DEPTH bounds recursive descent. Past it the parse stops with a
@@ -1731,7 +1770,7 @@ const MAX_NEST_DEPTH: i32 = 5000;
 const BLOCK_NEST_UNITS: i32 = 8;
 
 function (p: Par) with_depth(v: i32): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: v };
+  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: v, type_errs: p.type_errs };
 }
 
 // too_deep reports whether entering one more recursive-descent level would
@@ -1754,7 +1793,7 @@ function (p: Par) bail(): Par {
   if (last < p.pos) {
     last = p.pos;
   }
-  return Par { toks: p.toks, pos: last, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth };
+  return Par { toks: p.toks, pos: last, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs };
 }
 
 // Token-shape queries: each returns "" when the token isn't of
@@ -3041,7 +3080,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
 // before parsing and every node the parse produces names the file.
 function parse_expr_from_text(text: string, base_line: i32, base_col: i32): ast.Expr {
   let toks: lexer.Token[] = lexer.rebase_tokens(lexer.tokenize(text), base_line, base_col);
-  let sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0 };
+  let sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0, type_errs: [] };
   let (r_expr, r_p) = parse_expr(sub);
   return r_expr;
 }
@@ -7816,7 +7855,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
 }
 
 pub function parse_program(toks: lexer.Token[]): ast.Stmt[] {
-  let p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0 };
+  let p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0, type_errs: [] };
   let out: ast.Stmt[] = [];
   while (!p.at_end()) {
     let (r_stmt, r_p) = parse_stmt(p);
@@ -8073,6 +8112,11 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
   let top_comma: boolean = false;
   let tprev_word: boolean = false;
   let tprev_dyn: boolean = false;
+  // telem_empty: no type has been read since the last `(` or `,`, so a `,`
+  // here leaves an element empty, which native refuses; so does a `)` after a
+  // `,`. A `)` right after `(` is a function type's empty parameter list.
+  let telem_empty: boolean = true;
+  let telem_after_comma: boolean = false;
   while (!p.at_end()) {
     let tpk: string = p.peek_punct();
     // A unit ELEMENT of a tuple type — `((), i32)`. The head `()` never
@@ -8083,10 +8127,13 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       p = p.advance();
       tprev_word = false;
       tprev_dyn = false;
+      telem_empty = false;
       continue;
     }
     if (tpk == "(") {
       td = td + 1;
+      telem_empty = true;
+      telem_after_comma = false;
       tbuf = tbuf + "(";
       p = p.advance();
       tprev_word = false;
@@ -8094,6 +8141,10 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       continue;
     }
     if (tpk == ")") {
+      if (telem_empty && telem_after_comma) {
+        p = p.expected_type();
+      }
+      telem_empty = false;
       td = td - 1;
       tbuf = tbuf + ")";
       p = p.advance();
@@ -8105,6 +8156,11 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       continue;
     }
     if (tpk == ",") {
+      if (telem_empty) {
+        p = p.expected_type();
+      }
+      telem_empty = true;
+      telem_after_comma = true;
       if (td == 1) {
         top_comma = true;
       }
@@ -8133,6 +8189,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       p = p.advance();
       tprev_word = false;
       tprev_dyn = false;
+      telem_empty = true;
       continue;
     }
     // Multi-trait object `dyn A + B` as a tuple element — join with ` + `
@@ -8143,6 +8200,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       p = p.advance();
       tprev_word = false;
       tprev_dyn = false;
+      telem_empty = true;
       continue;
     }
     if (tpk.len() > 0) {
@@ -8150,6 +8208,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       p = p.advance();
       tprev_word = false;
       tprev_dyn = false;
+      telem_empty = false;
       continue;
     }
     let tseg: string = p.peek_ident();
@@ -8157,7 +8216,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       tseg = p.peek_keyword();
     }
     if (tseg.len() == 0) {
-      p = p.advance();
+      p = p.expected_type().advance();
       continue;
     }
     // Two adjacent word tokens have no separator of their own, so
@@ -8173,6 +8232,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
     tbuf = tbuf + tseg;
     tprev_word = true;
     tprev_dyn = tseg == "dyn";
+    telem_empty = false;
     p = p.advance();
   }
   // Parenthesized function type `(… => …)` → coarse "fn", plus any
@@ -8412,7 +8472,7 @@ function parse_type_punct_led(p: Par): (string, string, Par) {
     let (suffixed, sp) = parse_array_suffixes(p, "[" + bracketed_name + "]");
     return (suffixed, "", sp);
   }
-  return ("", "", p);
+  return ("", "", p.expected_type());
 }
 
 // parse_type_ident_led handles the identifier-led forms: a qualified
@@ -9145,7 +9205,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
   }
   let name: string = p.peek_member_name();
   if (name.len() == 0) {
-    return (FuncDecl { no_inline: false, name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" }, p);
+    return (FuncDecl { no_inline: false, name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [] }, p);
   }
   p = p.advance();
   // Generic type parameters written AFTER the name (`name[T: Bound, U]`).
@@ -9168,7 +9228,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     tpi0 = tpi0 + 1;
   }
   if (p.peek_punct() != "(") {
-    return (FuncDecl { no_inline: false, name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: all_tps, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" }, p);
+    return (FuncDecl { no_inline: false, name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: all_tps, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [] }, p);
   }
   p = p.advance();
   let params: ast.ParamDecl[] = [];
@@ -9181,7 +9241,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         let (tpr_param, tpr_destr, tpr_p) = parse_pattern_param(p);
         p = tpr_p;
         if (tpr_destr.names.len() == 0) {
-          return (FuncDecl { no_inline: false, name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" }, p);
+          return (FuncDecl { no_inline: false, name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [] }, p);
         }
         params = params.append(tpr_param);
         pd = pd.append(tpr_destr);
@@ -9429,9 +9489,9 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     // param has nothing to bind into, so degrade to the empty-name
     // FuncDecl the caller treats as a parse failure.
     if (pd.len() > 0) {
-      return (FuncDecl { no_inline: false, name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" }, p);
+      return (FuncDecl { no_inline: false, name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [] }, p);
     }
-    return (FuncDecl { no_inline: false, name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: all_tps, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: fn_ret_fn_ret, ret_fn_param_types: fn_ret_fn_ptys, is_package: false, module: "" }, p);
+    return (FuncDecl { no_inline: false, name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: all_tps, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: fn_ret_fn_ret, ret_fn_param_types: fn_ret_fn_ptys, is_package: false, module: "", impl_trait: "", dyn_traits: [] }, p);
   }
   let (blk_body, blk_p) = parse_block(p);
   p = blk_p;
@@ -9496,7 +9556,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
       }
     }
   }
-  return (FuncDecl { no_inline: false, name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: fbody, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: all_tps, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: fn_ret_fn_ret, ret_fn_param_types: fn_ret_fn_ptys, is_package: false, module: "" }, p);
+  return (FuncDecl { no_inline: false, name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: fbody, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: all_tps, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: fn_ret_fn_ret, ret_fn_param_types: fn_ret_fn_ptys, is_package: false, module: "", impl_trait: "", dyn_traits: [] }, p);
 }
 
 function parse_struct_field(p: Par): (StructFieldDecl, Par) {
@@ -9921,7 +9981,7 @@ function parse_const_decl(p: Par): (FuncDecl, Par) {
   body = body.append(s_return(er_expr));
   let noparams: ast.ParamDecl[] = [];
   let notp: string[] = [];
-  return (FuncDecl { no_inline: false, name: name, receiver_name: "", receiver_type: "", type_params: notp, params: noparams, ret_type: ty, body: body, line: cline, col: ccol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: true, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" }, p);
+  return (FuncDecl { no_inline: false, name: name, receiver_name: "", receiver_type: "", type_params: notp, params: noparams, ret_type: ty, body: body, line: cline, col: ccol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: true, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [] }, p);
 }
 
 // struct_declared reports whether `structs` already contains a struct
@@ -9985,8 +10045,8 @@ pub function builtin_function_names(): string[] {
     "print", "write", "eprint", "putchar",
     "exit", "args", "env", "config_get", "subprocess",
     // Crash-only supervision (docs/CRASH-ONLY-SERVE.md D2'): fork the
-    // process / exec into another program / reap a child. std/tcp's
-    // tcp_serve_supervised is the stdlib caller of the first and last;
+    // process / exec into another program / reap a child. std/serve's
+    // supervise is the stdlib caller of the first and last;
     // asm_modload_run's batched per-module orchestrator uses all three.
     "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "proc_exec",
     // exec with BOTH vectors given verbatim: argv[0] as typed rather
@@ -10027,6 +10087,10 @@ pub function builtin_function_names(): string[] {
     // the single-step directory and link primitives, each one syscall
     // with nothing folded away
     "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
+    // the rename the kernel conditions: refuse an existing destination, or swap
+    "rename_noreplace", "rename_exchange",
+    // an entry's extended attribute, following a final symlink or not
+    "getxattr", "lgetxattr",
     // the metadata writes on an entry that already exists: its permission
     // bits (with and without following a final symlink) and its two
     // timestamps
@@ -10171,6 +10235,9 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     fvf = fvf.append(StructFieldDecl { name: "files_free", type_name: "i64", fn_ret: "", fn_param_types: "" });
     fvf = fvf.append(StructFieldDecl { name: "name_max", type_name: "i64", fn_ret: "", fn_param_types: "" });
     fvf = fvf.append(StructFieldDecl { name: "path_max", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "fs_type", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "fsid", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "frag_size", type_name: "i64", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "FsStat", fields: fvf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   // WinSize: the builtin struct returned by window_size(fd) — how many rows
@@ -10246,10 +10313,10 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   }
   // Platform — the capability bag threaded as every handler's second
   // parameter, and so a component of every `(HttpRequest, Platform) =>
-  // HttpResponse` signature in std/tcp. builtins.fern declares it for the
+  // HttpResponse` signature in std/serve. builtins.fern declares it for the
   // import-driven driver; this entry covers the paths that never read that
   // file (asm_load_run's stdlib-root loading), where its absence made
-  // std/tcp's __serve_loop bail — and the AST emitter it then fell to could
+  // std/serve's __serve_loop bail — and the AST emitter it then fell to could
   // not emit tcp_listen / poll, so the failure surfaced as a link error
   // (#5686).
   // Fields mirror internal/checker/checker.go: `version` is the bag's ABI
@@ -10661,36 +10728,45 @@ pub function split_top_commas(s: string): string[] {
   return out;
 }
 
-// is_serve_options_type reports whether the type text is std/tcp's
-// `ServeOptions`: bare (a flat load), qualified as the entry imports the
-// module (`tcp.ServeOptions`), or mangled once the bundle has run
-// (`tcp__ServeOptions`).
-pub function is_serve_options_type(t: string): boolean {
+// std_qualifier is the name `mod` refers to `std/<name>` by: the import's
+// alias, else `name`; "" when it does not import the module.
+pub function std_qualifier(mod: Module, name: string): string {
+  let want: string = "std/" + name;
+  for imp in mod.imports {
+    let p: string = imp.path;
+    if (p == want || p.len() > want.len() + 1 && slice_unchecked(p, p.len() - want.len() - 1, p.len()) + "" == "/" + want) {
+      if (imp.alias.len() > 0) {
+        return imp.alias;
+      }
+      return name;
+    }
+  }
+  return "";
+}
+
+// is_serve_config_type reports whether the type text is std/serve's
+// `Config`: qualified as the entry imports the module (`qual`, from
+// `std_qualifier`), or mangled once the bundle has run (`serve__Config`).
+pub function is_serve_config_type(t: string, qual: string): boolean {
   let s: string = strip_type_spaces(t);
-  if (s == "ServeOptions") {
-    return true;
-  }
-  let n: i32 = s.len();
-  if (n > 13 && slice_unchecked(s, n - 13, n) + "" == ".ServeOptions") {
-    return true;
-  }
-  return n > 14 && slice_unchecked(s, n - 14, n) + "" == "__ServeOptions";
+  return s == "serve__Config" || qual.len() > 0 && s == qual + ".Config";
 }
 
 // init_return_kind classifies what a handler program's `init` answers, by
 // its return type text: 0 nothing, 1 a state for the handler to carry, 2
-// the serve options, 3 the serve options beside a state (`(ServeOptions, S)`).
-pub function init_return_kind(rt: string): i32 {
+// the serve config, 3 the serve config beside a state (`(serve.Config, S)`).
+// `qual` is what the program imports std/serve as.
+pub function init_return_kind(rt: string, qual: string): i32 {
   let s: string = strip_type_spaces(rt);
   if (s.len() == 0 || s == "void") {
     return 0;
   }
-  if (is_serve_options_type(s)) {
+  if (is_serve_config_type(s, qual)) {
     return 2;
   }
   if (s.len() > 2 && s[0] == b'(' && s[s.len() - 1] == b')') {
     let parts: string[] = split_top_commas(slice_unchecked(s, 1, s.len() - 1) + "");
-    if (parts.len() == 2 && is_serve_options_type(parts[0])) {
+    if (parts.len() == 2 && is_serve_config_type(parts[0], qual)) {
       return 3;
     }
   }
@@ -14034,7 +14110,7 @@ pub function register_array_method_generics(mod: Module): Module {
         body: fd.body, line: fd.line, col: fd.col,
         import_iface: fd.import_iface, import_wit: fd.import_wit, all_type_params: tps, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
         is_pub: true,
-        is_const: false, ret_fn_ret: fd.ret_fn_ret, ret_fn_param_types: fd.ret_fn_param_types, is_package: false, module: fd.module,
+        is_const: false, ret_fn_ret: fd.ret_fn_ret, ret_fn_param_types: fd.ret_fn_param_types, is_package: false, module: fd.module, impl_trait: fd.impl_trait, dyn_traits: fd.dyn_traits,
       });
     } else {
       out = out.append(fd);
@@ -14154,7 +14230,7 @@ pub function register_map_method_generics(mod: Module): Module {
         body: fd.body, line: fd.line, col: fd.col,
         import_iface: fd.import_iface, import_wit: fd.import_wit, all_type_params: tps, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
         is_pub: true,
-        is_const: false, ret_fn_ret: fd.ret_fn_ret, ret_fn_param_types: fd.ret_fn_param_types, is_package: false, module: fd.module,
+        is_const: false, ret_fn_ret: fd.ret_fn_ret, ret_fn_param_types: fd.ret_fn_param_types, is_package: false, module: fd.module, impl_trait: fd.impl_trait, dyn_traits: fd.dyn_traits,
       });
     } else {
       out = out.append(fd);
@@ -14412,7 +14488,7 @@ pub function register_struct_method_generics(mod: Module): Module {
         body: fd.body, line: fd.line, col: fd.col,
         import_iface: fd.import_iface, import_wit: fd.import_wit, all_type_params: tps, bound_traits: bnames, fip: false, fbip: false, fip_allowance: 0, async: fd.async,
         is_pub: true,
-        is_const: fd.is_const, ret_fn_ret: fd.ret_fn_ret, ret_fn_param_types: fd.ret_fn_param_types, is_package: false, module: fd.module,
+        is_const: fd.is_const, ret_fn_ret: fd.ret_fn_ret, ret_fn_param_types: fd.ret_fn_param_types, is_package: false, module: fd.module, impl_trait: fd.impl_trait, dyn_traits: fd.dyn_traits,
       });
     } else {
       out = out.append(fd);
@@ -19163,7 +19239,7 @@ function hl_rewrite(stmts: ast.Stmt[], outer: HlScope, hoisted: FuncDecl[]): (as
                 body: lifted_body, line: v.line, col: v.col,
                 import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
                 is_pub: true,
-                is_const: false, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "",
+                is_const: false, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [],
               });
               if (caps.len() > 0) {
                 acc_lifts = acc_lifts.append(CapLift { name: v.name, caps: caps });
@@ -20367,7 +20443,7 @@ pub function lower_defers_prepass_module(mod: Module): Module {
       type_params: no_tp, params: hp, ret_type: "void", body: no_body,
       line: 0, col: 0, import_iface: iface2, import_wit: "[resource-drop]" + wit2, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
       is_pub: true,
-      is_const: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "",
+      is_const: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [],
     }));
     k = k + 1;
   }
@@ -21660,8 +21736,14 @@ function rta_skip_stmt(st: ast.Stmt, own acc: boolean): boolean {
 function rta_index_call_of(e: ast.Expr, own acc: boolean): boolean {
   if let ast.ExprCall(c) = e {
     if let ast.ExprIndex(ix) = c.callee {
-      if let ast.ExprIdent(_) = ix.index {
-        return true;
+      match (ix.index) {
+        ast.ExprIdent(_) => {
+          return true;
+        },
+        ast.ExprIndex(_) => {
+          return true;
+        },
+        _ => {}
       }
     }
   }
@@ -21691,17 +21773,35 @@ function rta_call_of(x: ast.Expr, generics: string[], types: string[], shadow: s
       return x;
     }
     if let ast.ExprIndex(ix) = c.callee {
-      if let ast.ExprIdent(tid) = ix.index {
-        if (util.has_str(types, tid.name) && !util.has_str(shadow, tid.name)) {
-          let fname: string = rta_callee_name(ix.array, shadow);
-          if (fname.len() > 0 && util.has_str(generics, fname)) {
-            return ast.ExprCall { ...c, callee: ix.array, type_args: [tid.name] };
-          }
+      let targ: string = rta_type_spelling(ix.index, types, shadow);
+      if (targ.len() > 0) {
+        let fname: string = rta_callee_name(ix.array, shadow);
+        if (fname.len() > 0 && util.has_str(generics, fname)) {
+          return ast.ExprCall { ...c, callee: ix.array, type_args: [targ] };
         }
       }
     }
   }
   return x;
+}
+
+// rta_type_spelling is the type an index operand spells — a type name, or a
+// generic one instantiated the same way (`W[Q]`) — or "" when it is a value.
+function rta_type_spelling(e: ast.Expr, types: string[], shadow: string[]): string {
+  if let ast.ExprIdent(id) = e {
+    if (util.has_str(types, id.name) && !util.has_str(shadow, id.name)) {
+      return id.name;
+    }
+    return "";
+  }
+  if let ast.ExprIndex(ix) = e {
+    let head: string = rta_type_spelling(ix.array, types, shadow);
+    let arg: string = rta_type_spelling(ix.index, types, shadow);
+    if (head.len() > 0 && arg.len() > 0) {
+      return head + "[" + arg + "]";
+    }
+  }
+  return "";
 }
 
 // rta_callee_name is the declaration name an indexed callee would resolve
@@ -22357,10 +22457,12 @@ pub function infer_ret_types_module(mod: Module): Module {
 // ===================================================================
 // #4380 lever 3: syntactic bounds-check elision for len-bounded loops.
 //
-// A purely syntactic pass (mirroring internal/parser/bounds_elide.go) that
-// marks array-index READS `arr[i]` inside a `while (i < arr.len())` loop as
-// Unchecked, so the lowering drops the per-iteration bounds check + the per-access
-// `len` reload (op_arr_get_nc). No type info is
+// A purely syntactic pass that marks array-index READS `arr[i]` inside a loop
+// guarded by `i < arr.len()` as Unchecked, so the lowering drops the
+// per-iteration bounds check + the per-access `len` reload (op_arr_get_nc).
+// internal/parser/bounds_elide.go is the native pass it grew from; the
+// self-host one also takes a field path, a length bound to a local, and a
+// guard that is one conjunct of the condition. No type info is
 // consulted: the IR honours the flag ONLY on the true array path, so marking a
 // string / map index is a harmless no-op there.
 //
@@ -22378,22 +22480,33 @@ pub function infer_ret_types_module(mod: Module): Module {
 //     a lambda, which cannot touch the outer bindings).
 //
 // An access is marked only when `0 <= i < arr.len()` is syntactically provable:
-//   - the guard is exactly `i < arr.len()` (strict `<`, both operands bare
-//     idents) — the upper bound;
-//   - `i` starts at a non-negative integer literal in the statement immediately
-//     before the loop, and every assignment to `i` in the body is
+//   - one top-level `&&` conjunct of the guard is `i < P.len()` or `i < n`
+//     (strict `<`, `i` and `n` bare idents, `P` a field path such as `xs` or
+//     `r.items` rooted at an ident other than `i`) — the upper bound. A bare `n`
+//     counts only when the nearest earlier statement at the same level binding
+//     it is `let n = P.len()`, and nothing between that and the loop assigns or
+//     rebinds `n` or `P`'s root;
+//   - `i` starts at a non-negative integer literal in an earlier statement at
+//     the same level that nothing between it and the loop assigns or rebinds,
+//     and every assignment to `i` in the body is
 //     `i = i + <non-negative int literal>` — so `i` is monotonic non-decreasing
 //     and never drops below 0 (the check also guards NEGATIVE indices);
-//   - `arr` is never reassigned and neither `i` nor `arr` is rebound (shadowed)
-//     in the body — so `arr.len()` and the binding stay invariant;
+//   - `P`'s root is never reassigned and none of `i`, `n` or the root is
+//     rebound (shadowed) in the body — so the length and the binding stay
+//     invariant. Fields and elements are immutable after construction (E048,
+//     E056), so reassigning the root is the only way to change `P`;
 //   - the access precedes the first statement that assigns `i` (a read after an
-//     increment could reach `arr.len()`).
+//     increment could reach the length), or sits in the guard to the right of
+//     the bounding conjunct, which it is evaluated only after.
 // Accesses inside a lambda / defer body are never marked: that code runs later,
 // when `i` may have advanced past `len`.
 
-struct LenLoopMatch { ok: boolean, idx: string, arr: string }
+// arr is the bounded path and root the ident it is rooted at; bound names the
+// local holding its length instead, when the guard does not call `.len()`.
+struct LenLoopMatch { ok: boolean, idx: string, arr: string, root: string, bound: string }
 
-struct LenArrRef { ok: boolean, name: string }
+// LenPath is the `P` of a `P.len()`: its spelling and the ident it is rooted at.
+struct LenPath { path: string, root: string }
 
 // elide_len_bounded_body is the pass entry: it rewrites a function body,
 // returning a copy with in-bounds `arr[i]` reads marked. Called where
@@ -22402,8 +22515,8 @@ struct LenArrRef { ok: boolean, name: string }
 // clobbers the flag and the transform sites all default it to false.
 pub function elide_len_bounded_body(stmts: ast.Stmt[]): ast.Stmt[] {
   // Recurse into nested statement lists first, so inner loops are handled in
-  // place; then elide while-loops at THIS level (each needs its preceding
-  // statement as the source of `i`'s start value).
+  // place; then elide while-loops at THIS level (each reads its preceding
+  // statements for `i`'s start value and a cached length).
   let lowered: ast.Stmt[] = [];
   let i: i32 = 0;
   while (i < stmts.len()) {
@@ -22416,9 +22529,7 @@ pub function elide_len_bounded_body(stmts: ast.Stmt[]): ast.Stmt[] {
     let st: ast.Stmt = lowered[p];
     match (st) {
       ast.StmtWhile(w) => {
-        if (p > 0) {
-          st = elb_try_while(w, lowered[p - 1]);
-        }
+        st = elb_try_while(w, lowered, p);
       },
       _ => {}
     }
@@ -22462,25 +22573,33 @@ function elb_recurse_stmt(st: ast.Stmt): ast.Stmt {
   return st;
 }
 
-// elb_try_while checks the invariants for one while-loop and, when they hold,
-// returns the loop with its qualifying body-prefix reads marked. `prev` is the
-// statement immediately before the loop (the source of `i`'s start value).
-function elb_try_while(w: ast.StmtWhile, prev: ast.Stmt): ast.Stmt {
+// elb_try_while checks the invariants for the while-loop at stmts[p] and, when
+// they hold, returns the loop with its qualifying reads marked. The statements
+// before it are where `i`'s start value and a cached length come from.
+function elb_try_while(w: ast.StmtWhile, stmts: ast.Stmt[], p: i32): ast.Stmt {
+  let same: ast.Stmt = ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
   let m: LenLoopMatch = elb_loop_match(w.cond);
   if (!m.ok) {
-    return ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
+    return same;
   }
-  if (elb_assigns_stmts(w.body, m.arr)) {
-    return ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
+  let lp: LenPath = LenPath { path: m.arr, root: m.root };
+  if (m.bound != "") {
+    lp = elb_len_local(stmts, p, m.bound);
+    if (lp.path == "" || elb_assigns_stmts(w.body, m.bound) || elb_binds_stmts(w.body, m.bound)) {
+      return same;
+    }
   }
-  if (elb_binds_stmts(w.body, m.idx) || elb_binds_stmts(w.body, m.arr)) {
-    return ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
+  if (lp.root == m.idx || elb_assigns_stmts(w.body, lp.root)) {
+    return same;
+  }
+  if (elb_binds_stmts(w.body, m.idx) || elb_binds_stmts(w.body, lp.root)) {
+    return same;
   }
   if (!elb_idx_monotonic_stmts(w.body, m.idx)) {
-    return ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
+    return same;
   }
-  if (!elb_starts_nonneg(prev, m.idx)) {
-    return ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
+  if (!elb_starts_nonneg(stmts, p, m.idx)) {
+    return same;
   }
   let nb: ast.Stmt[] = [];
   let i: i32 = 0;
@@ -22491,25 +22610,41 @@ function elb_try_while(w: ast.StmtWhile, prev: ast.Stmt): ast.Stmt {
       stop = true;
     }
     if (!stop) {
-      st = elb_mark_stmt(st, m.idx, m.arr);
+      st = elb_mark_stmt(st, m.idx, lp.path);
     }
     nb = nb.append(st);
     i = i + 1;
   }
-  return ast.StmtWhile { cond: w.cond, body: nb, label: w.label, line: w.line, is_loop: w.is_loop };
+  let cond: ast.Expr = elb_mark_cond(w.cond, m, lp.path).e;
+  return ast.StmtWhile { cond: cond, body: nb, label: w.label, line: w.line, is_loop: w.is_loop };
 }
 
-// elb_loop_match matches `IDX < ARR.len()` (strict `<`, both operands bare
-// idents, IDX != ARR) and returns (IDX, ARR).
+// elb_loop_match finds the bounding conjunct `IDX < P.len()` or `IDX < N` along
+// the top-level `&&` chain of a loop guard and returns (IDX, P) or (IDX, N).
 function elb_loop_match(cond: ast.Expr): LenLoopMatch {
   match (cond) {
     ast.ExprBinary(b) => {
+      if (b.op == "&&") {
+        let l: LenLoopMatch = elb_loop_match(b.left);
+        if (l.ok) {
+          return l;
+        }
+        return elb_loop_match(b.right);
+      }
       if (b.op == "<") {
         match (b.left) {
           ast.ExprIdent(li) => {
-            let la: LenArrRef = elb_len_array(b.right);
-            if (la.ok && la.name != li.name) {
-              return LenLoopMatch { ok: true, idx: li.name, arr: la.name };
+            let lp: LenPath = elb_len_path(b.right);
+            if (lp.path != "") {
+              return LenLoopMatch { ok: true, idx: li.name, arr: lp.path, root: lp.root, bound: "" };
+            }
+            match (b.right) {
+              ast.ExprIdent(ni) => {
+                if (ni.name != li.name) {
+                  return LenLoopMatch { ok: true, idx: li.name, arr: "", root: "", bound: ni.name };
+                }
+              },
+              _ => {}
             }
           },
           _ => {}
@@ -22518,24 +22653,19 @@ function elb_loop_match(cond: ast.Expr): LenLoopMatch {
     },
     _ => {}
   }
-  return LenLoopMatch { ok: false, idx: "", arr: "" };
+  return LenLoopMatch { ok: false, idx: "", arr: "", root: "", bound: "" };
 }
 
-// elb_len_array returns the array-ident of a `A.len()` length expression, where
-// A is a bare ident. Fern has no free `len(A)` function (that idiom is E001), so
-// only the method form is matched.
-function elb_len_array(e: ast.Expr): LenArrRef {
+// elb_len_path returns the path of a `P.len()` length expression, or an empty
+// one. Fern has no free `len(A)` function (that idiom is E001), so only the
+// method form is matched.
+function elb_len_path(e: ast.Expr): LenPath {
   match (e) {
     ast.ExprCall(c) => {
       match (c.callee) {
         ast.ExprFieldAccess(fa) => {
           if (fa.field == "len" && c.args.len() == 0) {
-            match (fa.obj) {
-              ast.ExprIdent(id) => {
-                return LenArrRef { ok: true, name: id.name };
-              },
-              _ => {}
-            }
+            return LenPath { path: elb_path(fa.obj), root: elb_path_root(fa.obj) };
           }
         },
         _ => {}
@@ -22543,25 +22673,96 @@ function elb_len_array(e: ast.Expr): LenArrRef {
     },
     _ => {}
   }
-  return LenArrRef { ok: false, name: "" };
+  return LenPath { path: "", root: "" };
 }
 
-// elb_starts_nonneg proves `idx`'s entry value is a non-negative integer literal
-// from the immediately-preceding `let idx = v` / `idx = v` statement (nothing
-// runs between it and the guard).
-function elb_starts_nonneg(prev: ast.Stmt, idx: string): boolean {
-  match (prev) {
-    ast.StmtVar(v) => {
-      if (v.name == idx) {
-        return elb_is_nonneg_int(v.init);
-      }
+// elb_path spells a field path rooted at a bare ident (`xs`, `r.items`), or ""
+// for any other expression.
+function elb_path(e: ast.Expr): string {
+  match (e) {
+    ast.ExprIdent(id) => {
+      return id.name;
     },
-    ast.StmtAssign(a) => {
-      if (a.target == idx) {
-        return elb_is_nonneg_int(a.value);
+    ast.ExprFieldAccess(fa) => {
+      let base: string = elb_path(fa.obj);
+      if (base != "") {
+        return base + "." + fa.field;
       }
     },
     _ => {}
+  }
+  return "";
+}
+
+function elb_path_root(e: ast.Expr): string {
+  match (e) {
+    ast.ExprIdent(id) => {
+      return id.name;
+    },
+    ast.ExprFieldAccess(fa) => {
+      return elb_path_root(fa.obj);
+    },
+    _ => {}
+  }
+  return "";
+}
+
+// elb_len_local resolves a loop bound `n` to the path of the nearest earlier
+// statement at this level binding it, when that is `let n = P.len()` and no
+// statement between it and the loop at stmts[p] assigns `n` or assigns or
+// rebinds `P`'s root.
+function elb_len_local(stmts: ast.Stmt[], p: i32, n: string): LenPath {
+  let none: LenPath = LenPath { path: "", root: "" };
+  let q: i32 = p - 1;
+  while (q >= 0) {
+    match (stmts[q]) {
+      ast.StmtVar(v) => {
+        if (v.name == n) {
+          let lp: LenPath = elb_len_path(v.init);
+          if (lp.path == "") {
+            return none;
+          }
+          let k: i32 = q + 1;
+          while (k < p) {
+            if (elb_assigns_stmt(stmts[k], n) || elb_assigns_stmt(stmts[k], lp.root) || elb_binds_stmts([stmts[k]], lp.root)) {
+              return none;
+            }
+            k = k + 1;
+          }
+          return lp;
+        }
+      },
+      _ => {}
+    }
+    q = q - 1;
+  }
+  return none;
+}
+
+// elb_starts_nonneg proves `idx`'s entry value is a non-negative integer
+// literal: the nearest earlier statement at this level that binds or assigns
+// `idx` is `let idx = v` / `idx = v` with v such a literal.
+function elb_starts_nonneg(stmts: ast.Stmt[], p: i32, idx: string): boolean {
+  let q: i32 = p - 1;
+  while (q >= 0) {
+    let st: ast.Stmt = stmts[q];
+    match (st) {
+      ast.StmtVar(v) => {
+        if (v.name == idx) {
+          return elb_is_nonneg_int(v.init);
+        }
+      },
+      ast.StmtAssign(a) => {
+        if (a.target == idx) {
+          return elb_is_nonneg_int(a.value);
+        }
+      },
+      _ => {}
+    }
+    if (elb_assigns_stmt(st, idx) || elb_binds_stmts([st], idx)) {
+      return false;
+    }
+    q = q - 1;
   }
   return false;
 }
@@ -22678,7 +22879,8 @@ function elb_is_monotonic_incr(v: ast.Expr, idx: string): boolean {
 }
 
 // elb_mark_stmt / elb_mark_stmts / elb_mark_expr rebuild the subtree, setting
-// `unchecked` on every `arr[idx]` read (both operands the exact idents). They do
+// `unchecked` on every `arr[idx]` read (`idx` the exact ident, the array the
+// exact path `arr`). They do
 // NOT descend into lambda bodies or defer actions — that code runs later, when
 // idx may have advanced past len.
 function elb_mark_stmts(stmts: ast.Stmt[], idx: string, arr: string): ast.Stmt[] {
@@ -22731,19 +22933,38 @@ function elb_mark_stmt(st: ast.Stmt, idx: string, arr: string): ast.Stmt {
   return st;
 }
 
+// elb_mark_cond marks the reads a loop guard makes once its bounding conjunct
+// has held: everything to the right of that conjunct along the `&&` chain.
+// `past` reports whether the conjunct has been evaluated, and held, by the time
+// the expression yields true.
+struct CondMark { e: ast.Expr, past: boolean }
+
+function elb_mark_cond(c: ast.Expr, m: LenLoopMatch, arr: string): CondMark {
+  match (c) {
+    ast.ExprBinary(b) => {
+      if (b.op == "&&") {
+        let l: CondMark = elb_mark_cond(b.left, m, arr);
+        if (l.past) {
+          return CondMark { e: ast.ExprBinary { op: b.op, left: l.e, right: elb_mark_expr(b.right, m.idx, arr), line: b.line, col: b.col, ty: b.ty }, past: true };
+        }
+        let r: CondMark = elb_mark_cond(b.right, m, arr);
+        return CondMark { e: ast.ExprBinary { op: b.op, left: b.left, right: r.e, line: b.line, col: b.col, ty: b.ty }, past: r.past };
+      }
+    },
+    _ => {}
+  }
+  let g: LenLoopMatch = elb_loop_match(c);
+  return CondMark { e: c, past: g.ok && g.idx == m.idx && g.arr == m.arr && g.bound == m.bound };
+}
+
 function elb_mark_expr(e: ast.Expr, idx: string, arr: string): ast.Expr {
   match (e) {
     ast.ExprIndex(ix) => {
       let mark: boolean = ix.unchecked;
-      match (ix.array) {
-        ast.ExprIdent(aid) => {
-          match (ix.index) {
-            ast.ExprIdent(iid) => {
-              if (aid.name == arr && iid.name == idx) {
-                mark = true;
-              }
-            },
-            _ => {}
+      match (ix.index) {
+        ast.ExprIdent(iid) => {
+          if (iid.name == idx && elb_path(ix.array) == arr) {
+            mark = true;
           }
         },
         _ => {}
@@ -23683,11 +23904,14 @@ struct MethodClaim { fn: FuncDecl, keys: string[], traits: string[] }
 // trait (`P.B.scale`), mirroring native's mangleMethodName. A second provider
 // from the SAME trait, and an inherent redeclaration, keep the colliding name
 // so the checker still reports E006. `keys` / `traits` run parallel: the key,
-// and the trait that claimed it ("" for an inherent method).
-function claim_method_name(fd: FuncDecl, tname: string, keys: string[], traits: string[]): MethodClaim {
-  if (fd.receiver_type.len() == 0) {
-    return MethodClaim { fn: fd, keys: keys, traits: traits };
+// and the trait that claimed it ("" for an inherent method). Every receiver
+// method leaves with `impl_trait` set to `tname`, renamed or not, so a later
+// rename (flatten's `<ns>.<m>` interposition) cannot lose which trait it is for.
+function claim_method_name(fd0: FuncDecl, tname: string, keys: string[], traits: string[]): MethodClaim {
+  if (fd0.receiver_type.len() == 0) {
+    return MethodClaim { fn: fd0, keys: keys, traits: traits };
   }
+  let fd: FuncDecl = FuncDecl { ...fd0, impl_trait: tname };
   let base: string = util.base_type_name(fd.receiver_type);
   let key: string = base + "." + fd.name;
   let at: i32 = util.index_of_str(keys, key);
@@ -23706,14 +23930,130 @@ function claim_method_name(fd: FuncDecl, tname: string, keys: string[], traits: 
   return MethodClaim { fn: renamed_fd, keys: keys.append(rkey), traits: traits.append(tname) };
 }
 
-// ---- reading claim_method_name's namespace back ----
+// ---- which method a `dyn` call reaches ----
 //
-// These three are the INVERSE of claim_method_name: given the traits a `dyn`
-// spans and the method a call names, they say which of the flat symbols the
-// claim table produced is the one that call means. Every dispatcher needs the
+// resolve_dyn_traits records on each method the traits whose `dyn` dispatch
+// calls it, and dyn_arm_matches reads that back. Every dispatcher needs the
 // same answer — the compiled backends through the arms semsource.dyn_arms
 // picks, the AST interpreter through dyn_provider_name — so the rule lives
-// beside the renaming it undoes rather than once per engine.
+// here once rather than once per engine.
+
+// resolve_dyn_traits recomputes every method's dyn_traits. A method answers the
+// trait it was written for. An impl of trait T for a type also routes T's
+// dispatch, for each method T or a supertrait of T declares, to the type's
+// method written for the declaring trait, or else to its inherent method of
+// that name: that is how `impl Display for i32 {}` adopts `i32.to_string`, and
+// how `dyn Num` reaches the `add` of `impl Add for i32`. It runs on each parsed
+// module and again on the bundle, where an impl can adopt a method another
+// module declares.
+pub function resolve_dyn_traits(mod: Module): Module {
+  let bases: string[] = [];
+  let served: string[][] = [];
+  for fd in mod.funcs {
+    let own: string[] = [];
+    let base: string = "";
+    if (fd.receiver_name.len() > 0 && !ends_with_array_brackets(fd.receiver_type)) {
+      base = receiver_base(fd.receiver_type);
+      if (fd.impl_trait.len() > 0) {
+        own = own.append(fd.impl_trait);
+      }
+    }
+    bases = bases.append(base);
+    served = served.append(own);
+  }
+  let ix: util.NameIndex = util.name_index(bases);
+  for im in mod.impls {
+    if (im.trait_name.len() > 0 && !ends_with_array_brackets(im.impl_type)) {
+      let bn: string = receiver_base(im.impl_type);
+      for ri in trait_closure(mod.trait_reqs, im.trait_name, im.trait_module) {
+        let req: TraitReq = mod.trait_reqs[ri];
+        for m in req.provided {
+          let at: i32 = answering_method(mod.funcs, ix, bn, m, req.trait_name);
+          if (at >= 0 && !str_list_contains(served[at], im.trait_name)) {
+            served = served.with(at, served[at].append(im.trait_name));
+          }
+        }
+      }
+    }
+  }
+  let out: FuncDecl[] = [];
+  let i: i32 = 0;
+  while (i < mod.funcs.len()) {
+    let fd: FuncDecl = mod.funcs[i];
+    if (fd.dyn_traits.len() > 0 || served[i].len() > 0) {
+      fd = FuncDecl { ...fd, dyn_traits: served[i] };
+    }
+    out = out.append(fd);
+    i = i + 1;
+  }
+  return Module { ...mod, funcs: out };
+}
+
+function ends_with_array_brackets(t: string): boolean {
+  let n: i32 = t.len();
+  return n >= 2 && slice_unchecked(t, n - 2, n) == "[]";
+}
+
+// answering_method is the index of the method receiver base `bn` answers `m`
+// with for trait `tn`: the one written for `tn`, else the inherent one, else -1.
+// A method's name may carry the `<Trait>.` or `<ns>.` prefix a claim gave it.
+function answering_method(funcs: FuncDecl[], ix: util.NameIndex, bn: string, m: string, tn: string): i32 {
+  let inherent: i32 = 0 - 1;
+  let i: i32 = ix.chain(bn);
+  while (i >= 0) {
+    if (ix.names[i] == bn && derive_simple_name(funcs[i].name) == m) {
+      if (funcs[i].impl_trait == tn) {
+        return i;
+      }
+      if (funcs[i].impl_trait.len() == 0 && inherent < 0) {
+        inherent = i;
+      }
+    }
+    i = ix.next[i];
+  }
+  return inherent;
+}
+
+// trait_closure is the index in `reqs` of trait `tn` and of every trait it
+// extends, transitively. A trait with no record contributes nothing.
+function trait_closure(reqs: TraitReq[], tn: string, module: string): i32[] {
+  let out: i32[] = [];
+  let first: i32 = trait_req_index(reqs, tn, module);
+  if (first >= 0) {
+    out = out.append(first);
+  }
+  let k: i32 = 0;
+  while (k < out.len()) {
+    let r: TraitReq = reqs[out[k]];
+    for sup in r.supertraits {
+      let at: i32 = trait_req_index(reqs, util.base_type_name(sup), r.module);
+      if (at >= 0 && util.index_of_i32(out, at) < 0) {
+        out = out.append(at);
+      }
+    }
+    k = k + 1;
+  }
+  return out;
+}
+
+// trait_req_index finds trait `tn`'s record, preferring the one `module`
+// declares when two modules declare a trait of that simple name.
+function trait_req_index(reqs: TraitReq[], tn: string, module: string): i32 {
+  let any: i32 = 0 - 1;
+  let i: i32 = 0;
+  while (i < reqs.len()) {
+    if (reqs[i].trait_name == tn) {
+      if (reqs[i].module == module) {
+        return i;
+      }
+      if (any < 0) {
+        any = i;
+      }
+    }
+    i = i + 1;
+  }
+  return any;
+}
 
 // dyn_trait_set splits a `dyn Trait` type spelling into its trait names:
 // "dyn B" -> ["B"], "dyn A + B" -> ["A", "B"]. Non-dyn spellings yield none.
@@ -23747,47 +24087,38 @@ pub function dyn_trait_set(ty: string): string[] {
 }
 
 // dyn_arm_matches reports whether `fd` is the definition a `dyn` dispatch on
-// `method`, over a trait object spanning `traits`, must call for fd's OWN
-// receiver type. The search is keyed on the method name, and two traits
-// providing one method for one type produce two definitions: the first claimant
-// keeps the bare `<m>` and the later one is emitted as `<Trait>.<m>`. So a
-// receiver whose provider for one of the dyn's traits was interposed must match
-// THAT definition, and its bare namesake — a different trait's method — must
-// not answer for it.
+// `method`, over a trait object spanning `traits`, calls for fd's own receiver
+// type: a method of that name which answers one of the traits (dyn_traits). Its
+// flat name may carry the `<Trait>.` or `<ns>.` prefix a claim gave it, so a
+// same-named method another trait or no trait owns is never an arm. With no
+// trait set (the lowerer could not resolve one) every receiver method of that
+// name matches.
 //
 // An ASSOCIATED function is never an arm — it has no receiver to dispatch on.
 // finalize_impl_method still gives it the impl type as its receiver_type and
 // only leaves receiver_name empty, so the receiver NAME is what excludes it
 // (#7398).
-pub function dyn_arm_matches(fd: FuncDecl, traits: string[], method: string, funcs: FuncDecl[]): boolean {
+pub function dyn_arm_matches(fd: FuncDecl, traits: string[], method: string): boolean {
   if (fd.receiver_name.len() == 0) {
     return false;
   }
-  let ti: i32 = 0;
-  while (ti < traits.len()) {
-    if (fd.name == derive_simple_name(traits[ti]) + "." + method) {
-      return true;
-    }
-    ti = ti + 1;
+  if (traits.len() == 0) {
+    return fd.name == method;
   }
-  if (fd.name != method) {
+  if (derive_simple_name(fd.name) != method) {
     return false;
   }
-  let bn: string = util.base_type_name(fd.receiver_type);
-  let tj: i32 = 0;
-  while (tj < traits.len()) {
-    if (method_decl_index(funcs, bn, derive_simple_name(traits[tj]) + "." + method) >= 0) {
-      return false;
+  for t in traits {
+    if (str_list_contains(fd.dyn_traits, derive_simple_name(util.base_type_name(t)))) {
+      return true;
     }
-    tj = tj + 1;
   }
-  return true;
+  return false;
 }
 
 // dyn_provider_name names the flat symbol a `recv_type` receiver answers `method`
-// with when it is reached through a trait object spanning `traits` — the
-// interposed `<Trait>.<m>` where that trait's provider lost the bare name, and
-// `method` itself otherwise (including for every non-colliding receiver).
+// with when it is reached through a trait object spanning `traits`, and `method`
+// itself when no definition matches.
 pub function dyn_provider_name(funcs: FuncDecl[], recv_type: string, traits: string[], method: string): string {
   if (recv_type.len() == 0) {
     return method;
@@ -23796,26 +24127,12 @@ pub function dyn_provider_name(funcs: FuncDecl[], recv_type: string, traits: str
   while (i < funcs.len()) {
     let fd: FuncDecl = funcs[i];
     if (util.base_type_name(fd.receiver_type) == recv_type
-      && dyn_arm_matches(fd, traits, method, funcs)) {
+      && dyn_arm_matches(fd, traits, method)) {
       return fd.name;
     }
     i = i + 1;
   }
   return method;
-}
-
-// method_decl_index returns the index of the method named `name` on receiver
-// base type `bn`, or -1.
-function method_decl_index(funcs: FuncDecl[], bn: string, name: string): i32 {
-  let i: i32 = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].receiver_type.len() > 0 && funcs[i].name == name
-      && util.base_type_name(funcs[i].receiver_type) == bn) {
-      return i;
-    }
-    i = i + 1;
-  }
-  return 0 - 1;
 }
 
 // str_list_contains reports whether `xs` holds `want`.
@@ -23896,7 +24213,7 @@ function synth_struct_display(sd: StructDecl): FuncDecl {
   let body: ast.Stmt[] = [s_return(expr)];
   let notp: string[] = [];
   let noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "to_string", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "to_string", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Display", dyn_traits: [] };
 }
 
 // dv_debug_render builds the Debug rendering of a single value of static
@@ -23950,7 +24267,7 @@ function synth_struct_debug(sd: StructDecl): FuncDecl {
   let body: ast.Stmt[] = [s_return(expr)];
   let notp: string[] = [];
   let noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "to_debug", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "to_debug", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Debug", dyn_traits: [] };
 }
 
 // synth_struct_eq: field-wise `<f-eq> && …` (true for an empty struct),
@@ -23971,7 +24288,7 @@ function synth_struct_eq(sd: StructDecl): FuncDecl {
   let body: ast.Stmt[] = [s_return(expr)];
   let notp: string[] = [];
   let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
-  return FuncDecl { no_inline: false, name: "eq", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "eq", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Eq", dyn_traits: [] };
 }
 
 // synth_struct_ord: lexicographic `cmp` — first non-zero field cmp wins.
@@ -23995,7 +24312,7 @@ function synth_struct_ord(sd: StructDecl): FuncDecl {
   stmts = stmts.append(s_return(e_number("0", "", false)));
   let notp: string[] = [];
   let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
-  return FuncDecl { no_inline: false, name: "cmp", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "cmp", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Ord", dyn_traits: [] };
 }
 
 // synth_struct_hash: field-wise `h = h * 31 + self.f.hash()` fold from a
@@ -24017,7 +24334,7 @@ function synth_struct_hash(sd: StructDecl): FuncDecl {
   stmts = stmts.append(s_return(e_ident("__h")));
   let notp: string[] = [];
   let noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "hash", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "hash", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Hash", dyn_traits: [] };
 }
 
 // synth_struct_json: field-wise `to_json` rendering a struct as a JSON
@@ -24039,7 +24356,7 @@ function synth_struct_json(sd: StructDecl): FuncDecl {
   let body: ast.Stmt[] = [s_return(expr)];
   let notp: string[] = [];
   let noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "to_json", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "to_json", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Json", dyn_traits: [] };
 }
 
 // fromjson_container names the container a FromJson field's type is —
@@ -24121,7 +24438,7 @@ function synth_from_json_value(sd: StructDecl): FuncDecl {
   }
   let params: ast.ParamDecl[] = [ast.ParamDecl { name: "v", type_name: "JsonValue", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   let notp: string[] = [];
-  return FuncDecl { no_inline: false, name: "from_json_value", receiver_name: "", receiver_type: sd.name, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "from_json_value", receiver_name: "", receiver_type: sd.name, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "FromJson", dyn_traits: [] };
 }
 
 // synth_from_json_text builds the derived `from_json(s: string):
@@ -24143,7 +24460,7 @@ function synth_from_json_text(sd: StructDecl): FuncDecl {
   let call: ast.Expr = ast.ExprCall { callee: e_field_access(e_ident("json"), "decode"), args: [e_ident("s")], line: 0, col: 0, type_args: [self_ty], ty: "" };
   let params: ast.ParamDecl[] = [ast.ParamDecl { name: "s", type_name: "string", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   let notp: string[] = [];
-  return FuncDecl { no_inline: false, name: "from_json", receiver_name: "", receiver_type: sd.name, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: [s_return(call)], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "from_json", receiver_name: "", receiver_type: sd.name, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: [s_return(call)], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "FromJson", dyn_traits: [] };
 }
 
 // synth_enum_display: variant-wise `to_string` rendering `Variant(p, …)`,
@@ -24186,7 +24503,7 @@ function synth_enum_display(ename: string, variants: StructDecl[]): FuncDecl {
   let body: ast.Stmt[] = [s_match(e_ident("self"), arms), s_return(e_string(""))];
   let notp: string[] = [];
   let noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "to_string", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "to_string", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Display", dyn_traits: [] };
 }
 
 // synth_enum_debug: `to_debug` rendering `Variant` / `Variant(<debug
@@ -24221,7 +24538,7 @@ function synth_enum_debug(ename: string, variants: StructDecl[]): FuncDecl {
   let body: ast.Stmt[] = [s_match(e_ident("self"), arms), s_return(e_string(""))];
   let notp: string[] = [];
   let noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "to_debug", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "to_debug", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Debug", dyn_traits: [] };
 }
 
 // synth_enum_eq: match self, then match other — same variant compares
@@ -24255,7 +24572,7 @@ function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
   let body: ast.Stmt[] = [s_match(e_ident("self"), arms), s_return(e_bool(false))];
   let notp: string[] = [];
   let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
-  return FuncDecl { no_inline: false, name: "eq", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "eq", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Eq", dyn_traits: [] };
 }
 
 // synth_enum_ord: variant-wise `cmp` — a variant declared earlier sorts
@@ -24313,7 +24630,7 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
   let body: ast.Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
   let notp: string[] = [];
   let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
-  return FuncDecl { no_inline: false, name: "cmp", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "cmp", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Ord", dyn_traits: [] };
 }
 
 // synth_enum_hash: variant-wise `hash` — seed the accumulator with the
@@ -24345,7 +24662,7 @@ function synth_enum_hash(ename: string, variants: StructDecl[]): FuncDecl {
   let body: ast.Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
   let notp: string[] = [];
   let noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "hash", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "hash", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Hash", dyn_traits: [] };
 }
 
 // synth_enum_json: variant-wise `to_json` — a unit variant renders as
@@ -24386,7 +24703,7 @@ function synth_enum_json(ename: string, variants: StructDecl[]): FuncDecl {
   let body: ast.Stmt[] = [s_match(e_ident("self"), arms), s_return(e_string(""))];
   let notp: string[] = [];
   let noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "to_json", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "to_json", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Json", dyn_traits: [] };
 }
 
 // enum_default_derivable reports whether an enum has a derivable default: it
@@ -24428,7 +24745,7 @@ function synth_enum_default(ename: string, variants: StructDecl[]): FuncDecl {
   let body: ast.Stmt[] = [s_return(value)];
   let notp: string[] = [];
   let noparams: ast.ParamDecl[] = [];
-  return FuncDecl { no_inline: false, name: "default", receiver_name: "", receiver_type: ename, type_params: notp, params: noparams, ret_type: ename, body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "default", receiver_name: "", receiver_type: ename, type_params: notp, params: noparams, ret_type: ename, body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Default", dyn_traits: [] };
 }
 
 // synth_enum_derives appends the derivable enum methods. Display, Eq,
@@ -24687,7 +25004,7 @@ function synth_struct_default(sd: StructDecl): FuncDecl {
   // monomorphiser clones it per instantiation and substitutes `T` using the
   // STRUCT's type params (clone_struct_method) — so a generic body's
   // `T.default()` becomes `Concrete.default()`.
-  return FuncDecl { no_inline: false, name: "default", receiver_name: "", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: sd.name, body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
+  return FuncDecl { no_inline: false, name: "default", receiver_name: "", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: sd.name, body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Default", dyn_traits: [] };
 }
 
 // synth_derives appends the synthesised methods for each derivable trait
@@ -25715,7 +26032,7 @@ pub function subst_self(ty: string, impl_type: string): string {
   return out;
 }
 
-function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[], impl_tbs: string[]): FuncDecl {
+pub function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[], impl_tbs: string[]): FuncDecl {
   let rt: string = subst_self(m.ret_type, impl_type);
   let mtps: string[] = m.type_params;
   // bound_traits is allowed to run short of type_params — a promoted unbounded
@@ -26786,7 +27103,7 @@ function record_field_lines(acc: FieldLines[], verbatim: boolean, name: string, 
 }
 
 function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, TraitDecl[], ImplDecl[], FieldLines[], FunctionInlineHint[]) {
-  let p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim, depth: 0 };
+  let p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim, depth: 0, type_errs: [] };
   let funcs: FuncDecl[] = [];
   let trait_defaults: TraitDefault[] = [];
   let trait_reqs: TraitReq[] = [];
@@ -27263,7 +27580,8 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   // each impl, every default of its trait that the impl did not provide
   // becomes a receiver method on the impl type — the same desugaring a
   // written method gets. Self-host parity with the Go checker's
-  // synthesizeTraitDefaults (see docs/TRAITS.md); same-module only.
+  // synthesizeTraitDefaults (see docs/TRAITS.md). A trait from another module
+  // is flatten.inherit_trait_defaults' job, once that module is renamed.
   let iii: i32 = 0;
   while (iii < impl_infos.len() && !verbatim) {
     let info: ImplInfo = impl_infos[iii];
@@ -27293,6 +27611,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   // resolve_assoc_projections runs FIRST of the module passes: settle_module
   // and the variant-field resolver both read declared type spellings, and a
   // `Self::Item` left unresolved would reach them as an unknown nominal.
+  for te in p.type_errs {
+    top_stmts = top_stmts.append(te);
+  }
   let parsed: Module = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, inferred_consts: [] };
   if (!verbatim) {
     let inferred: string[] = unannotated_const_names(funcs);
@@ -27303,7 +27624,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   }
   let settled: Module = settle_module(resolve_variant_fields_module(resolve_labels_module(resolve_assoc_projections(parsed))));
   if (!verbatim) {
-    settled = rename_type_vars_module(settled);
+    settled = resolve_dyn_traits(rename_type_vars_module(settled));
   }
   return (settled, traits, impl_decls, flines, inline_hints);
 }

@@ -44,14 +44,11 @@ var cliffBytesCases = []cliffBytesCase{
 	// grow path — it would report bytes here while the count stays 0.
 	{"clean_self_append", `function g(a: i32[], v: i32): i32[] { a = a.append(v); return a; }`, 1, 0, 0},
 
-	// Crossing: the #6036 residual shape (probe K) — a second append on a
-	// temporary that was never rebound into the param slot, so the caller's
-	// live reference makes every one of them copy. Six crossings over seven
-	// calls, copying 2+4+6+8+10+12 elements at a 4-byte stride = 192 bytes.
-	// Both numbers are exact and backend-independent: the stride is 4 on
-	// wasm32 and on both 64-bit natives (i32 elements), and the crossing
-	// sequence is fixed by the driver.
-	{"two_calls_via_local", `function g(b: i32[], v: i32): i32[] { let t: i32[] = f(b, v); return f(t, v + 1); }`, 2, 6, 192},
+	// Crossing: an alias of the incoming buffer is read after the append, so
+	// the alias genuinely observes the old contents and every append that
+	// had spare capacity must copy instead: four of the seven calls on the
+	// self-host's size classes, 240 bytes between them.
+	{"live_alias_append", `function g(b: i32[], v: i32): i32[] { let k: i32[] = b; let r: i32[] = b.append(v); if (k.len() + 1 != r.len()) { return k; } return r.append(v + 1); }`, 2, 4, 240},
 }
 
 // src builds the driver. `probe` is the expression whose value becomes the

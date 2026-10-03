@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Phase 5h — loop-body local drops. A `let` re-declared inside a loop
@@ -125,9 +123,6 @@ func TestArm64LoopVarReclaim(t *testing.T) {
 }
 
 func TestWASMLoopVarReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, c := range loopVarReuseCases {
 		c := c
 		t.Run(c.name, func(t *testing.T) {

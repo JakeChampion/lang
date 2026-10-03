@@ -987,6 +987,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"str-into-dyn-array-element", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nfunction main(): i32 { let s: string = \"abc\"; let v: str = slice_unchecked(s, 0, 2); let ds: dyn Size[] = [s, v]; return ds.len(); }\n", []string{"E034"}},
 		{"str-into-dyn-field", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nstruct H { d: dyn Size }\nfunction main(): i32 { let s: string = \"abc\"; let v: str = slice_unchecked(s, 0, 2); let h: H = H { d: v }; return h.d.size(); }\n", []string{"E043"}},
 		{"str-into-dyn-payload", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nenum W { One(dyn Size), Zero }\nfunction main(): i32 { let s: string = \"abc\"; let v: str = slice_unchecked(s, 0, 2); let w: W = One(v); return 0; }\n", []string{"E036"}},
+		{"array-view-into-dyn-var", "trait Size { function size(self: Self): i32; }\nimpl Size for i32 { function size(self: i32): i32 { return self; } }\nfunction boxit(v: [i32]): i32 { let d: dyn Size = v; return d.size(); }\nfunction main(): i32 { let xs: i32[] = [1, 2]; return boxit(xs); }\n", []string{"E003"}},
+		{"array-view-into-dyn-assign", "trait Size { function size(self: Self): i32; }\nimpl Size for i32 { function size(self: i32): i32 { return self; } }\nfunction boxit(v: [i32]): i32 { let d: dyn Size = 1; d = v; return d.size(); }\nfunction main(): i32 { let xs: i32[] = [1, 2]; return boxit(xs); }\n", []string{"E003"}},
+		{"array-view-into-dyn-argument", "trait Size { function size(self: Self): i32; }\nimpl Size for i32 { function size(self: i32): i32 { return self; } }\nfunction take(d: dyn Size): i32 { return d.size(); }\nfunction boxit(v: [i32]): i32 { return take(v); }\nfunction main(): i32 { let xs: i32[] = [1, 2]; return boxit(xs); }\n", []string{"E038"}},
+		{"array-view-into-dyn-return", "trait Size { function size(self: Self): i32; }\nimpl Size for i32 { function size(self: i32): i32 { return self; } }\nfunction box(v: [i32]): dyn Size { return v; }\nfunction main(): i32 { let xs: i32[] = [1, 2]; return box(xs).size(); }\n", []string{"E002"}},
+		{"owned-array-into-dyn-var", "trait Size { function size(self: Self): i32; }\nimpl Size for i32 { function size(self: i32): i32 { return self; } }\nfunction main(): i32 { let xs: i32[] = [1, 2]; let d: dyn Size = xs; return d.size(); }\n", []string{"E003"}},
+		{"owned-array-into-dyn-assign", "trait Size { function size(self: Self): i32; }\nimpl Size for i32 { function size(self: i32): i32 { return self; } }\nfunction main(): i32 { let xs: i32[] = [1, 2]; let d: dyn Size = 1; d = xs; return d.size(); }\n", []string{"E003"}},
+		{"owned-array-into-dyn-argument", "trait Size { function size(self: Self): i32; }\nimpl Size for i32 { function size(self: i32): i32 { return self; } }\nfunction take(d: dyn Size): i32 { return d.size(); }\nfunction main(): i32 { let xs: i32[] = [1, 2]; return take(xs); }\n", []string{"E038"}},
+		{"owned-array-into-dyn-return", "trait Size { function size(self: Self): i32; }\nimpl Size for i32 { function size(self: i32): i32 { return self; } }\nfunction box(xs: i32[]): dyn Size { return xs; }\nfunction main(): i32 { let xs: i32[] = [1, 2]; return box(xs).size(); }\n", []string{"E002"}},
+		{"impl-for-owned-array", "trait Size { function size(self: Self): i32; }\nimpl Size for i32[] { function size(self: i32[]): i32 { return self.len() as i32; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"impl-for-array-view", "trait Size { function size(self: Self): i32; }\nstruct P { v: i32 }\nimpl Size for [P] { function size(self: [P]): i32 { return self.len() as i32; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"dyn-object-safe-ok", "trait T { function m(self: Self): i32; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { let base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},
@@ -1937,9 +1947,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// method table nor the struct table and the ordinary method path
 		// resolved nothing — a call was accepted whatever it was handed,
 		// a lambda included (#9518). Arity counts the RECEIVER, matching
-		// native, which models these as functions carrying the cell: a bad
-		// value on `set` is "argument 2", and `c.set()` is one argument of
-		// the two it wants.
+		// native, which models these as functions carrying the cell, so
+		// `c.set()` is one argument of the two it wants; a bad value on
+		// `set` is numbered among the written arguments, "argument 1".
 		{"cell-set-wrong-type", "function f(c: Cell[i32]): i32 { c.set(\"hi\"); return 0; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E038"}},
 		{"cell-set-lambda-arg", "function f(c: Cell[i32]): i32 { c.set((x: i32) => x + 1); return 0; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E038"}},
 		{"cell-set-too-few", "function f(c: Cell[i32]): i32 { c.set(); return 0; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E004"}},
@@ -1966,6 +1976,44 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// A reserved name is reserved whatever kind takes it (#10855).
 		{"enum-takes-builtin-struct-name", "import \"std/string\";\nenum Span { Empty, Wide(f64, string) }\nfunction f(s: Span): i32 {\n  match (s) { Wide(d, t) => { return (d * 4.0) as i32 + t.len(); }, Empty => { return 0; } }\n}\nfunction main(): i32 { return f(Wide(1.0, \"ab\")); }\n", []string{"E010"}},
 		{"struct-takes-builtin-enum-name", "struct Option { n: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
+		// A binding or a top-level function named like a builtin constructor
+		// shadows it, so the call is a call of that and its result is judged
+		// against the destination like any other (#10394).
+		{"ctor-shadowed-by-function-arg", "function Some(n: i32): i32 { return n; }\nfunction takes(o: Option[i64]): i32 { return 0; }\nfunction main(): i32 { return takes(Some(5)); }\n", []string{"E038"}},
+		{"ctor-shadowed-by-local-arg", "function takes(r: Result[i64, i32]): i32 { return 0; }\nfunction main(): i32 { let Err: (i64) => i32 = (v: i64) => 1; return takes(Err(5)); }\n", []string{"E038"}},
+		{"ctor-shadowed-by-local-init", "function main(): i32 { let Some = (v: i64): i32 => 1; let o: Option[i64] = Some(1); return 0; }\n", []string{"E003"}},
+		{"ctor-shadowed-by-function-ok", "function Some(n: i32): i32 { return n + 1; }\nfunction main(): i32 { let x: i32 = Some(5); return x - 6; }\n", nil},
+		// A generic call nested in another one's argument takes the reading
+		// position's width through both (#10508).
+		{"nested-generic-call-destination-ok", "function id[T](a: T): T { return a; }\nfunction main(): i32 { let z: i64 = id(id(5000000000)); return (z / 1000000000) as i32; }\n", nil},
+		{"nested-generic-call-argument-ok", "function id[T](a: T): T { return a; }\nfunction take(x: i64): i32 { return x as i32; }\nfunction main(): i32 { return take(id(id(1))); }\n", nil},
+		{"nested-generic-call-compare-ok", "function id[T](a: T): T { return a; }\nfunction main(): i32 { if (id(id(1)) == 4611686018427387904) { return 1; } return 0; }\n", nil},
+		{"nested-generic-call-out-of-range", "function id[T](a: T): T { return a; }\nfunction main(): i32 { let z: u8 = id(id(300)); return 0; }\n", []string{"E047"}},
+		// A literal local beside a wide literal settles at the reading
+		// position, and defaults to i64 with none (#10595); i32-min is i32.
+		{"wide-literal-local-at-param-ok", "function wide(n: u64): u64 { return n / 1000000000u64; }\nfunction main(): i32 { let k = 3; let w: u64 = wide(k * 3000000000); return w as i32; }\n", nil},
+		{"wide-literal-local-block-tail-ok", "function wide(n: u64): u64 { return n / 1000000000u64; }\nfunction main(): i32 { let w: u64 = wide({ let k = 3; k * 3000000000 }); return w as i32; }\n", nil},
+		{"wide-literal-local-default-i64", "function main(): i32 { let k = 3; let x = k * 3000000000; let y: i32 = x; return 0; }\n", []string{"E003"}},
+		{"wide-literal-local-at-i32-param", "function f(n: i32): i32 { return n; }\nfunction main(): i32 { let k = 3; return f(k * 3000000000); }\n", []string{"E047"}},
+		// `Some(lit)?` reads its literal at the `?`'s destination, as native's
+		// settleNumeric TryOp arm does (#10614).
+		{"try-some-literal-settles-ok", "function h(): Option[i32] { let v: u8 = Some(200)?; let w: i64 = Some(5)?; let f: f32 = Some(3.5)?; return Some(v as i32 + w as i32 + f as i32); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"try-some-literal-out-of-range", "function h(): Option[i32] { let v: u8 = Some(300)?; return Some(v as i32); }\nfunction main(): i32 { return 0; }\n", []string{"E047"}},
+		{"try-some-typed-payload", "function h(): Option[i32] { let x: i32 = 4; let v: f32 = Some(x)?; return Some(1); }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
+		// Cell.set keeps its argument, so a str view is not lent (#10702).
+		{"cell-set-str-view", "function main(): i32 { let b: string = \"abcdefgh\"; let u: str = slice_unchecked(b, 0, 8); let c: Cell[string] = cell_new(b); c.set(u); return c.get().len(); }\n", []string{"E038"}},
+		// A return type naming no declared type takes no value (#10842).
+		{"unknown-return-type-mismatch", "function g(): Undef { return 1; }\nfunction main(): i32 { return 0; }\n", []string{"E002", "E064"}},
+		// An enum variant's name is no type (#10843).
+		{"variant-name-as-field-type", "enum X { P, Q }\nstruct H { f: P }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
+		{"variant-name-as-param-type", "enum X { P, Q }\nfunction g(p: P): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
+		// A str[] destination types its literal, so a string literal widens
+		// beside a view; with none the elements must still agree (#10889).
+		{"str-array-literal-mixed-ok", "function main(): i32 { let owned: string = \"ab\" + \"cd\"; let s: str = slice_unchecked(owned, 1, 3); let xs: str[] = [\"x\", s]; let ys: str[] = [s, \"y\"]; return xs.len() + ys.len(); }\n", nil},
+		{"str-array-literal-non-string", "function main(): i32 { let owned: string = \"ab\" + \"cd\"; let s: str = slice_unchecked(owned, 1, 3); let xs: str[] = [\"x\", 5]; return xs.len(); }\n", []string{"E034"}},
+		{"untyped-array-literal-mixed-str", "function main(): i32 { let owned: string = \"ab\" + \"cd\"; let s: str = slice_unchecked(owned, 1, 3); let xs = [\"x\", s]; return xs.len(); }\n", []string{"E034"}},
+		{"i32-min-literal-local-ok", "function main(): i32 { let k = -2147483648; return k + 2147483647 + 1; }\n", nil},
+		{"ctor-builtin-settles-ok", "function takes(o: Option[i64]): i32 { return 0; }\nfunction main(): i32 { return takes(Some(40)) + takes(Option.Some(1)); }\n", nil},
 		{"enum-non-reserved-ok", "enum Color { Red, Green }\nfunction main(): i32 { return 0; }\n", nil},
 		// Generic functions: a concrete argument must NOT be flagged against
 		// the opaque type parameter (E038 false-positive guard).
@@ -1982,6 +2030,21 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"type-param-unbound-empty-array", "function first[T](own x: T, n: i32): i32 { return n; }\nfunction main(): i32 { return first([], 3); }\n", []string{"E040"}},
 		{"type-param-unbound-no-args", "function mk[T](): i32 { return 1; }\nfunction main(): i32 { return mk(); }\n", []string{"E040"}},
 		{"type-param-explicit", "function mk[T](): i32 { return 1; }\nfunction main(): i32 { return mk[i32](); }\n", nil},
+		// A receiver binds only the variables its declared type names, so on a
+		// concrete receiver the method's own parameter is unbound (#10991).
+		{"method-type-param-unbound-array", "function (xs: u8[]) count[T](values: T[]): i32 { return values.len() + xs.len(); }\nfunction main(): i32 { let b: u8[] = [1 as u8]; return b.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-view", "function (xs: [u8]) take[T](values: T[]): u8 { return xs[0]; }\nfunction main(): i32 { let b: [u8] = \"hi\".as_bytes(); return b.take([]) as i32; }\n", []string{"E040"}},
+		{"method-type-param-unbound-string", "function (s: string) count[T](values: T[]): i32 { return values.len() + s.len(); }\nfunction main(): i32 { let s: string = \"ab\"; return s.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-struct", "struct P { v: i32 }\nfunction (p: P) count[T](values: T[]): i32 { return values.len() + p.v; }\nfunction main(): i32 { let p: P = P { v: 5 }; return p.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-generic-receiver", "struct Box[U] { v: U }\nfunction (b: Box[U]) count[T](values: T[]): i32 { return values.len(); }\nfunction main(): i32 { let b: Box[i32] = Box { v: 1 }; return b.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-i32", "function (n: i32) count[T](values: T[]): i32 { return values.len(); }\nfunction main(): i32 { let x: i32 = 5; return x.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-i64", "function (n: i64) count[T](values: T[]): i32 { return values.len(); }\nfunction main(): i32 { let x: i64 = 5 as i64; return x.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-u8", "function (n: u8) count[T](values: T[]): i32 { return values.len(); }\nfunction main(): i32 { let x: u8 = 5 as u8; return x.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-f64", "function (n: f64) count[T](values: T[]): i32 { return values.len(); }\nfunction main(): i32 { let x: f64 = 2.5; return x.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-boolean", "function (n: boolean) count[T](values: T[]): i32 { return values.len(); }\nfunction main(): i32 { let x: boolean = true; return x.count([]); }\n", []string{"E040"}},
+		{"method-type-param-unbound-char", "function (n: char) count[T](values: T[]): i32 { return values.len(); }\nfunction main(): i32 { let x: char = 'a'; return x.count([]); }\n", []string{"E040"}},
+		{"method-type-param-bound-by-arg", "function (xs: u8[]) count[T](values: T[]): i32 { return values.len() + xs.len(); }\nfunction main(): i32 { let b: u8[] = [1 as u8]; return b.count([2 as u8]) + b.count[i32]([]); }\n", nil},
+		{"method-receiver-binds-its-own", "function (xs: T[]) first(): T { return xs[0]; }\nfunction main(): i32 { let b: u8[] = [7 as u8]; return b.first() as i32; }\n", nil},
 		{"type-param-later-arg-binds", "function fold[T](x: i32, own acc: T, f: (i32, own T) => T): T { return f(x, acc); }\nfunction add(x: i32, own acc: string[]): string[] { return acc.append(\"a\"); }\nfunction main(): i32 {\n    let r: string[] = fold(1, [], add);\n    return r.len();\n}\n", nil},
 		// A parameter only a bound names is bound through the impl, never by an
 		// argument, so the rule leaves it alone.
@@ -3368,6 +3431,15 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"e051-last-use-unpack", lastUsePrelude + "function f(): i32 { let p: Pair = mkp(1); let x: W = p.a; let r: i32 = eat(x); return r; }\n"},
 		{"e051-last-use-unpack-twice", lastUsePrelude + "function f(): i32 { let p: Pair = mkp(1); let x: W = p.a; let r: i32 = eat(x); return r + p.a.n; }\n"},
 		{"e051-last-use-rename-param", lastUsePrelude + "function f(w0: W): i32 { let w: W = w0; let r: i32 = eat(w); return r; }\n"},
+		// A destructured binding is fresh when the value it unpacks is (#11120).
+		{"e051-last-use-destructure", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(): i32 { let (x, k) = pw(1); let r: i32 = eat(x); return r + k; }\n"},
+		{"e051-last-use-destructure-ret", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(): i32 { let (x, k) = pw(1); return eat(x) + k; }\n"},
+		{"e051-last-use-destructure-read-again", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(): i32 { let (x, k) = pw(1); let r: i32 = eat(x); return r + k + x.n; }\n"},
+		{"e051-last-use-destructure-at", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(): i32 { let t @ (x, k) = pw(1); let r: i32 = eat(x); return r + t.1; }\n"},
+		{"e051-last-use-destructure-nested", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction pw2(n: i32): (i32, (W, i32)) { return (n, pw(n)); }\nfunction f(): i32 { let (k, (x, j)) = pw2(1); let r: i32 = eat(x); return r + k + j; }\n"},
+		{"e051-last-use-destructure-redeclared", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(c: boolean): i32 { let (x, k) = pw(1); if (c) { let x: W = mkw(2); return x.n; } let r: i32 = eat(x); return r + k; }\n"},
+		{"e051-last-use-struct-destructure", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(): i32 { let Pair { a, b } = mkp(1); let r: i32 = eat(a); return r + b.n; }\n"},
+		{"e051-last-use-struct-destructure-param", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(p: Pair): i32 { let Pair { a, b } = p; let r: i32 = eat(a); return r + b.n; }\n"},
 		{"e051-last-use-method-chain", lastUsePrelude + "function f(): i32 { let w: W = mkw(1); let v: W = w.bump(1); let u: W = v.bump(2); return eat(u); }\n"},
 		{"e051-last-use-field-arg-local", lastUsePrelude + "function f(): i32 { let w: W = mkw(1); return keep(w.d, 1); }\n"},
 		{"e051-last-use-if-expr", lastUsePrelude + "function f(c: boolean): i32 { let a: i32[] = mk(1); let r: i32 = if (c) { keep(a, 1) } else { 0 }; return r; }\n"},

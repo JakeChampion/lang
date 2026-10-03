@@ -88,6 +88,7 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
   let probs: irverify.Problem[] = [];
   let calls: i32 = 0;
   let cov: irverifystack.Coverage = irverifystack.coverage_new();
+  let pops: i32[] = ir.pops_by_kind();
   let k: i32 = 0;
   while (k < names.len()) {
     let r: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn(names[k], bodies[k], ix);
@@ -95,7 +96,7 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
     for p in r.problems {
       probs = probs.append(p);
     }
-    cov = irverifystack.coverage_add(cov, names[k], irverifystack.verify_stack_fn(names[k], bodies[k]).bail);
+    cov = irverifystack.coverage_add(cov, names[k], irverifystack.verify_stack_fn(names[k], bodies[k], pops).bail);
     k = k + 1;
   }
   let checked: i32 = names.len();
@@ -1059,8 +1060,7 @@ function main(): i32 {
       if (asmcore.refuse_decl_names(parsed)) {
         return 1;
       }
-      // -verifyprovided reports on any module, the diag_* corpus included.
-      if (!vprovided && asmcore.refuse_parse_unknowns(parsed)) {
+      if (asmcore.refuse_parse_unknowns(parsed)) {
         return 1;
       }
       if (pm_mode.len() > 0) {

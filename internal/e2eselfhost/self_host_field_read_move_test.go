@@ -3,10 +3,11 @@ package e2eselfhost
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // fieldReadMoveCases pin #10482: a local bound from a field read of an `own`
@@ -14,13 +15,10 @@ import (
 // struct or tuple literal at its last use is not a move. The construction has
 // to retain it, because the parameter's exit drop releases the field. #10414's
 // pass had this shape in strarr_own_node, and the gen1 compiler segfaulted
-// there.
-//
-// balanced marks the rows whose census reads zero.
+// there. Every row's census must read zero.
 var fieldReadMoveCases = []struct {
-	name     string
-	src      string
-	balanced bool
+	name string
+	src  string
 }{
 	{"struct-field-from-own-param", `struct Frame { key: string, n: i32 }
 struct Acc { fr: Frame, m: i32 }
@@ -33,7 +31,7 @@ function main(): i32 {
     let i: i32 = 0;
     while (i < 5) { acc = step(i, acc); i = i + 1; }
     return acc.m + acc.fr.key.len() + acc.fr.n;
-}`, true},
+}`},
 	{"string-field-from-own-param", `struct Acc { key: string, m: i32 }
 function step(n: i32, own st: Acc): Acc {
     let k: string = st.key;
@@ -46,7 +44,7 @@ function main(): i32 {
     let i: i32 = 0;
     while (i < 5) { acc = step(i, acc); i = i + 1; }
     return acc.m + acc.key.len();
-}`, true},
+}`},
 	{"tuple-field-from-own-param", `struct Acc { t: (i32[], i32), m: i32 }
 function step(n: i32, own st: Acc): Acc {
     let t: (i32[], i32) = st.t;
@@ -59,7 +57,7 @@ function main(): i32 {
     let i: i32 = 0;
     while (i < 5) { acc = step(i, acc); i = i + 1; }
     return acc.m + acc.t.0.len();
-}`, true},
+}`},
 	{"tuple-element-from-own-param", `struct Frame { key: string, n: i32 }
 struct Acc { fr: Frame, m: i32 }
 function step(n: i32, own st: Acc): (Frame, i32) {
@@ -75,7 +73,7 @@ function main(): i32 {
         i = i + 1;
     }
     return acc.m + acc.fr.key.len() + acc.fr.n;
-}`, true},
+}`},
 	// A view replaced by a fresh value at the top level owns that value when
 	// it moves, so the literal takes it without a retain (#10482's guard
 	// retained every moved local no sweep releases, and leaked here).
@@ -94,7 +92,7 @@ function main(): i32 {
     let i: i32 = 0;
     while (i < 5) { acc = step(i, acc); i = i + 1; }
     return acc.m + acc.fr.key.len() + acc.fr.n;
-}`, true},
+}`},
 	// Replaced on one branch only: the other still holds the view.
 	{"view-rebound-in-branch", `struct Frame { key: string, n: i32 }
 struct Acc { fr: Frame, m: i32 }
@@ -110,7 +108,22 @@ function main(): i32 {
     let i: i32 = 0;
     while (i < 5) { acc = step(i, acc); i = i + 1; }
     return acc.m + acc.fr.key.len() + acc.fr.n;
-}`, true},
+}`},
+	// The view is introduced inside the branch, so the even path's literal
+	// takes the field from st and must retain it (#10542).
+	{"view-introduced-in-branch", `struct Frame { key: string, n: i32 }
+struct Acc { fr: Frame, m: i32 }
+function step(n: i32, own st: Acc): Acc {
+    let fr: Frame = Frame { key: "z" + "", n: 0 };
+    if (n % 2 == 0) { fr = st.fr; }
+    return Acc { fr: fr, m: st.m + n };
+}
+function main(): i32 {
+    let acc: Acc = Acc { fr: Frame { key: "k" + "", n: 1 }, m: 0 };
+    let i: i32 = 0;
+    while (i < 5) { acc = step(i, acc); i = i + 1; }
+    return acc.m + acc.fr.key.len() + acc.fr.n;
+}`},
 	// A string element of an array field, bound and moved into a literal (#10540).
 	{"string-elem-from-own-param-array-field", `struct Bag { keys: string[], n: i32 }
 struct Acc { key: string, m: i32 }
@@ -127,7 +140,7 @@ function main(): i32 {
         i = i + 1;
     }
     return total;
-}`, true},
+}`},
 }
 
 // TestSelfHostFieldReadMove compiles each row with the emit drivers the
@@ -138,9 +151,7 @@ function main(): i32 {
 func TestSelfHostFieldReadMove(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	arm64gcc, qemu := arm64Tooling(t)
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Fatal("wasmtime not on PATH")
-	}
+	e2eharness.Wasmtime(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern", "wasm_ir_run.fern")
@@ -156,7 +167,7 @@ func TestSelfHostFieldReadMove(t *testing.T) {
 				if code != want {
 					t.Errorf("%s: exited %d, want %d (interp oracle)\n%s", leg, code, want, stderr)
 				}
-				if tc.balanced && !strings.Contains(stderr, "live_bytes=0") {
+				if !strings.Contains(stderr, "live_bytes=0") {
 					t.Errorf("%s: census not balanced\n%s", leg, stderr)
 				}
 			}

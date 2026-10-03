@@ -95,7 +95,7 @@ func buildWriterWriteSomeBodyP2(idxs map[string]uint32) []byte {
 	buildIoErr := idxs["__build_io_error"]
 	blockingWrite := idxs["wasi_blocking_write_and_flush_p2"]
 
-	var body []byte
+	body := emitClosedErrP2(nil, idxs, 0, 8, 8, 9)
 	body = inst.InstI32Const(body, writerScratchAddr)
 	body = inst.InstLocalSet(body, 3)
 	body = inst.InstLocalGet(body, 0)
@@ -138,6 +138,7 @@ func buildWriterWriteSomeBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
+		body = emitStreamErrorDrop(body, idxs, 3)
 		body = inst.InstI32Const(body, 0)
 		body = inst.InstLocalSet(body, 8)
 		body = emitHandleResultErr(body, buildIoErr, allocRc1, 8, 8, 9)

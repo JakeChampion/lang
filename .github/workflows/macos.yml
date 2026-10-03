@@ -106,10 +106,10 @@ jobs:
         if: matrix.shard == 1
         run: go vet ./internal/codegen/arm64/... ./internal/e2e/... ./internal/interp/...
 
-      - name: go test (Darwin interpreter timestamps)
+      - name: go test (Darwin interpreter timestamps, renames and xattrs)
         if: matrix.shard == 1 && steps.gate.outputs.signed != 'true'
         run: |
-          gotestsum --format standard-verbose -- -run '^(TestSetFileTimesDarwin.*|TestInterpFsMetaPrimitives)$' ./internal/interp/ ./internal/e2e/
+          gotestsum --format standard-verbose -- -run '^(TestSetFileTimesDarwin.*|TestInterpFsMetaPrimitives|TestInterpRenameFlagsPrimitives|TestInterpXattrPrimitives)$' ./internal/interp/ ./internal/e2e/
 
       # internal/strerror checks its table against the HOST libc, so the
       # Darwin half of that check only means anything on this runner. Every

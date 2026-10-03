@@ -75,9 +75,11 @@ func x86ShapeHarness(t *testing.T) (func(t *testing.T, src string) string, func(
 }
 
 // shapeFnBody returns the emitted body of `__fn_<name>`, up to its `ret`.
+// Keep the last instruction's newline: a leaf without a frame epilogue can
+// end with the very instruction that a line-anchored shape check examines.
 func shapeFnBody(t *testing.T, asm, name string) string {
 	t.Helper()
-	re := regexp.MustCompile(`(?s)\n__fn_` + regexp.QuoteMeta(name) + `:\n(.*?)\n    ret\n`)
+	re := regexp.MustCompile(`(?s)\n__fn_` + regexp.QuoteMeta(name) + `:\n(.*?\n)    ret\n`)
 	m := re.FindStringSubmatch(asm)
 	if m == nil {
 		t.Fatalf("__fn_%s not found in emitted asm:\n%s", name, asm)

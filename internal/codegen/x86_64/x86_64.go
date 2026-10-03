@@ -293,7 +293,12 @@ const (
 	// (452), which `chmod_at` issues for its nofollow case so the
 	// kernel's own answer — EOPNOTSUPP, since a symlink has no mode
 	// here — reaches the caller.
-	sysRenameat  = 264
+	sysRenameat = 264
+	// renameat2(2) 316: renameat plus a flags word.
+	sysRenameat2 = 316
+	// getxattr(2) 191 / lgetxattr(2) 192: an extended attribute's value.
+	sysGetxattr  = 191
+	sysLgetxattr = 192
 	sysFchmodat  = 268
 	sysFchmodat2 = 452
 	sysUtimensat = 280
@@ -698,7 +703,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		g.usesRemoveDirAll || g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir ||
 		g.usesRemoveDir || g.usesCreateLink || g.usesCreateSymlink || g.usesTempDir ||
 		g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink ||
-		g.usesRename || g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
+		g.usesRename || g.usesRenameNoreplace || g.usesRenameExchange ||
+		g.usesGetxattr || g.usesLgetxattr ||
+		g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt {
 		g.usesFree = true
 	}
@@ -1101,6 +1108,18 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesRename {
 		g.emitRenameRuntime()
 	}
+	if g.usesRenameNoreplace {
+		g.emitRenameFlagsRuntime("__fern_rename_noreplace", "rnnr", renameNoreplace)
+	}
+	if g.usesGetxattr {
+		g.emitGetxattrRuntime("__fern_getxattr", "gxat", sysGetxattr)
+	}
+	if g.usesLgetxattr {
+		g.emitGetxattrRuntime("__fern_lgetxattr", "lgxa", sysLgetxattr)
+	}
+	if g.usesRenameExchange {
+		g.emitRenameFlagsRuntime("__fern_rename_exchange", "rnex", renameExchange)
+	}
 	if g.usesChmod {
 		g.emitChmodRuntime()
 	}
@@ -1351,7 +1370,8 @@ type generator struct {
 	// usesCountByte gates the byte-tally kernel (__fern_count_byte).
 	usesCountByte bool
 	// usesScanSet gates the byte-set scan kernel (__fern_scan_set).
-	usesScanSet      bool
+	usesScanSet bool
+	// usesScanSetBytes adds its u8[] entry, __fern_scan_set_bytes.
 	usesScanSetBytes bool
 	// usesCountRuns gates the run-count kernel (__fern_count_runs).
 	usesCountRuns      bool
@@ -1817,6 +1837,12 @@ type generator struct {
 	usesRename       bool
 	usesChmod        bool
 	usesSetFileTimes bool
+	// renameat2 with RENAME_NOREPLACE / RENAME_EXCHANGE.
+	usesRenameNoreplace bool
+	usesRenameExchange  bool
+	// getxattr / lgetxattr over a path and an attribute name.
+	usesGetxattr  bool
+	usesLgetxattr bool
 	// fchmodat / fchmodat2 over a path, a mode and a follow flag.
 	usesChmodAt bool
 	// truncate(2) over a path and a length.
@@ -2514,6 +2540,24 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "rename":
 		g.usesRename = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "rename_noreplace":
+		g.usesRenameNoreplace = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "getxattr":
+		g.usesGetxattr = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+		g.usesIoError = true
+	case "lgetxattr":
+		g.usesLgetxattr = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+		g.usesIoError = true
+	case "rename_exchange":
+		g.usesRenameExchange = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "chmod":
@@ -4250,6 +4294,14 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_set_priority"
 		case "rename":
 			target = "__fern_rename"
+		case "rename_noreplace":
+			target = "__fern_rename_noreplace"
+		case "getxattr":
+			target = "__fern_getxattr"
+		case "lgetxattr":
+			target = "__fern_lgetxattr"
+		case "rename_exchange":
+			target = "__fern_rename_exchange"
 		case "chmod":
 			target = "__fern_chmod"
 		case "chmod_at":
@@ -12006,8 +12058,9 @@ func (g *generator) emitRmemchrRuntime() {
 // byte value; a shorter set takes the loop that checks each byte against
 // its length first.
 func (g *generator) emitScanSetRuntime() {
+	// A packed u8[] is laid out as a heap string is.
 	if g.usesScanSetBytes {
-		g.line(".global __fern_scan_set_bytes")
+		g.line(".globl __fern_scan_set_bytes")
 		g.label("__fern_scan_set_bytes")
 		g.emit("jmp __fern_scan_set")
 	}
@@ -14964,7 +15017,8 @@ func (g *generator) emitTimerFdRuntime() {
 //
 // `path_max` is absent from the record and is stored separately: Linux
 // has no pathconf syscall, and PATH_MAX is the kernel's own 4096 for
-// every filesystem it mounts.
+// every filesystem it mounts. `fsid` is not a row either: see
+// LinuxStatfsFsid.
 // LinuxStatfsField is one projection: Box is the offset in the FsStat box,
 // Src the offset in the kernel's record.
 type LinuxStatfsField struct{ Box, Src int32 }
@@ -14977,7 +15031,13 @@ var LinuxStatfsFields = []LinuxStatfsField{
 	{ir.FsStat.Files, 40},
 	{ir.FsStat.FilesFree, 48},
 	{ir.FsStat.NameMax, 64},
+	{ir.FsStat.FsType, 0},
+	{ir.FsStat.FragSize, 72},
 }
+
+// LinuxStatfsFsid is the offset of `f_fsid`, two 32-bit words that FsStat
+// joins into one, first word high, as GNU `stat -f` prints it.
+const LinuxStatfsFsid = 56
 
 // LinuxPathMax is PATH_MAX, the longest pathname the Linux kernel will
 // resolve. A constant rather than a lookup because Linux has no
@@ -15047,6 +15107,11 @@ func (g *generator) emitStatfsRuntime() {
 	}
 	g.emit(fmt.Sprintf("mov r9d, %d", LinuxPathMax))
 	g.emit(fmt.Sprintf("mov [rax + %d], r9", ir.FsStat.PathMax))
+	g.emit(fmt.Sprintf("mov r9d, [rsp + %d]", LinuxStatfsFsid))
+	g.emit("shl r9, 32")
+	g.emit(fmt.Sprintf("mov r10d, [rsp + %d]", LinuxStatfsFsid+4))
+	g.emit("or r9, r10")
+	g.emit(fmt.Sprintf("mov [rax + %d], r9", ir.FsStat.Fsid))
 	g.emit("mov r13, rax")
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_rc1")
@@ -16575,6 +16640,28 @@ const (
 	oflagCreatExcl   = 193  // O_WRONLY|O_CREAT|O_EXCL
 )
 
+// openWithWords is the open_*_with flags word, bit by bit, as Linux
+// x86-64 spells each (the checker's open_reader_with comment is the
+// contract). Every bit has a word here; the refusals are XNU's and
+// WASI's.
+var openWithWords = []struct {
+	bit  int
+	word int
+	name string // the label suffix
+	flag string
+}{
+	{1, 64, "nc", "O_CREAT"},
+	{2, 2048, "nb", "O_NONBLOCK"},
+	{4, 128, "nx", "O_EXCL"},
+	{8, 0x4000, "nd", "O_DIRECT"},
+	{16, 0x10000, "ndir", "O_DIRECTORY"},
+	{32, 0x1000, "nds", "O_DSYNC"},
+	{64, 0x101000, "ns", "O_SYNC"},
+	{128, 0x40000, "na", "O_NOATIME"},
+	{256, 0x100, "nt", "O_NOCTTY"},
+	{512, 0x20000, "nf", "O_NOFOLLOW"},
+}
+
 // emitWriteFileRuntime emits `__fern_write_file(path, content)
 // → Option[IoError]`. Pipeline: openat(AT_FDCWD, path,
 // O_WRONLY|O_CREAT|O_TRUNC, 0644) → write-loop → close →
@@ -17605,6 +17692,125 @@ func (g *generator) emitRenameRuntime() {
 		g.emit("mov rsi, rbx")
 		g.emit("mov edx, -100")
 		g.emit("mov r10, r14")
+	})
+}
+
+// xattrSizeMax is XATTR_SIZE_MAX, the largest value Linux stores, so a
+// buffer of it always holds the whole answer.
+const xattrSizeMax = 65536
+
+// emitGetxattrRuntime emits `name(path, attr) → Result[string, IoError]` —
+// getxattr(2) or lgetxattr(2) into a heap buffer of xattrSizeMax, the value
+// copied out into a fresh string. The IoError names `path`.
+//
+// System V: rdi = path string value, rsi = attribute name string value.
+func (g *generator) emitGetxattrRuntime(name, tag string, sysno int) {
+	g.line("")
+	g.line(".globl " + name)
+	g.line(".type " + name + ", @function")
+	g.label(name)
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // pathz
+	g.emit("push r12") // copy scratch
+	g.emit("push r13") // lengths / errno / boxes
+	g.emit("push r14") // namez
+	g.emit("push r15") // syscall result
+	// 6 pushes ⇒ rsp≡8 mod 16; sub 72 realigns. Slots:
+	//   [rbp-48] emitStrDataPtr inline-spill scratch
+	//   [rbp-56] path string value
+	//   [rbp-64] attribute name string value
+	//   [rbp-72] path len
+	//   [rbp-80] name len
+	//   [rbp-88] the value buffer
+	g.emit("sub rsp, 72")
+	g.emit("mov [rbp - 56], rdi")
+	g.emit("mov [rbp - 64], rsi")
+	g.emitPathzCopy("rbx", "[rbp - 56]", "[rbp - 48]", tag+"1")
+	g.emit("mov [rbp - 72], r13")
+	g.emitPathzCopy("r14", "[rbp - 64]", "[rbp - 48]", tag+"2")
+	g.emit("mov [rbp - 80], r13")
+	g.emit(fmt.Sprintf("mov edi, %d", xattrSizeMax))
+	g.emit("call __fern_alloc")
+	g.emit("mov [rbp - 88], rax")
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, r14")
+	g.emit("mov rdx, rax")
+	g.emit(fmt.Sprintf("mov r10d, %d", xattrSizeMax))
+	g.emitSyscall(sysno)
+	g.emit("mov r15, rax")
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, [rbp - 72]")
+	g.emit("add rsi, 1")
+	g.emit("call __fern_free")
+	g.emit("mov rdi, r14")
+	g.emit("mov rsi, [rbp - 80]")
+	g.emit("add rsi, 1")
+	g.emit("call __fern_free")
+	g.emit("test r15, r15")
+	g.emit("js .L" + tag + "_err")
+	// L2 rc-header layout: payload = N data bytes + 1 NUL.
+	g.emit("lea edi, [r15 + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rdi, rax")
+	g.emitStrLenStore("r15d", "rdi")
+	g.emit("mov byte ptr [rdi + r15], 0")
+	g.emit("mov rsi, [rbp - 88]")
+	g.emit("mov rdx, r15")
+	g.emit("call __fern_memcpy") // rax = dst
+	g.emit("mov r13, rax")
+	g.emit("mov rdi, [rbp - 88]")
+	g.emit(fmt.Sprintf("mov esi, %d", xattrSizeMax))
+	g.emit("call __fern_free")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0") // tag = 0 (Ok)
+	g.emit("mov [rax + 8], r13")
+	g.emit("jmp .L" + tag + "_ret")
+
+	g.label(".L" + tag + "_err")
+	g.emit("mov rdi, [rbp - 88]")
+	g.emit(fmt.Sprintf("mov esi, %d", xattrSizeMax))
+	g.emit("call __fern_free")
+	g.emit("mov rax, r15")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("mov rsi, [rbp - 56]")
+	g.emit("call __fern_io_error")
+	g.emit("mov r13, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
+	g.emit("mov [rax + 8], r13")
+
+	g.label(".L" + tag + "_ret")
+	g.emit("add rsp, 72")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size " + name + ", .-" + name)
+}
+
+// Linux's renameat2 flags.
+const (
+	renameNoreplace = 1
+	renameExchange  = 2
+)
+
+// emitRenameFlagsRuntime emits `name(from, to)` — renameat2(AT_FDCWD,
+// from, AT_FDCWD, to, flags), the condition held by the kernel in the
+// same step as the rename.
+func (g *generator) emitRenameFlagsRuntime(name, tag string, flags int) {
+	g.emitPathOpRuntime(name, tag, sysRenameat2, 2, 0, func() {
+		g.emit("mov edi, -100") // AT_FDCWD
+		g.emit("mov rsi, rbx")
+		g.emit("mov edx, -100")
+		g.emit("mov r10, r14")
+		g.emit(fmt.Sprintf("mov r8d, %d", flags))
 	})
 }
 
@@ -19419,8 +19625,8 @@ func (g *generator) emitReaderWriterRuntime() {
 	}
 
 	// open_reader / open_writer / open_appender / open_exclusive, and the
-	// two `_with` forms whose flags word arrives in esi: bit 0 is O_CREAT
-	// (64), bit 1 O_NONBLOCK (2048), on top of the access mode in `flags`.
+	// two `_with` forms whose flags word arrives in esi, each bit becoming
+	// its Linux word (openWithWords) on top of the access mode in `flags`.
 	for _, e := range []struct {
 		sym       string
 		flags     int
@@ -19477,14 +19683,12 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit(fmt.Sprintf("mov edx, %d", e.flags))
 		if e.withFlags {
 			g.emit("mov eax, [rbp - 56]")
-			g.emit("test eax, 1")
-			g.emit("jz .Lorw_nc_" + e.sym)
-			g.emit("or edx, 64") // O_CREAT
-			g.label(".Lorw_nc_" + e.sym)
-			g.emit("test eax, 2")
-			g.emit("jz .Lorw_nb_" + e.sym)
-			g.emit("or edx, 2048") // O_NONBLOCK
-			g.label(".Lorw_nb_" + e.sym)
+			for _, b := range openWithWords {
+				g.emit(fmt.Sprintf("test eax, %d", b.bit))
+				g.emit(fmt.Sprintf("jz .Lorw_%s_%s", b.name, e.sym))
+				g.emit(fmt.Sprintf("or edx, %d", b.word)) // b.flag
+				g.label(fmt.Sprintf(".Lorw_%s_%s", b.name, e.sym))
+			}
 		}
 		g.emit(fmt.Sprintf("mov r10d, %d", e.mode))
 		g.emitSyscall(257)

@@ -50,6 +50,11 @@ enum E { A, B }
 @noinline function two_args(n: i32): i32 { let x: W = mkw(n); let y: W = mkw(2); return both(x, y); }
 @noinline function after_peek(n: i32): i32 { let x: W = mkw(n); let k: i32 = peek(x); return eat(x) + k; }
 @noinline function tuple_rebind(n: i32): i32 { let a: i32[] = mk(n); let (b, k) = pr(a); a = b; return a.len() + k; }
+// Bound by a destructure of a fresh tuple or struct, and threaded back (#11120).
+@noinline function pw(own w: W): (W, i32) { return (regrow(w, 1), 1); }
+@noinline function destructured(n: i32): i32 { let (x, k) = pw(mkw(n)); let r: i32 = eat(x); return r + k; }
+@noinline function struct_destructured(n: i32): i32 { let Pair { a, b } = mkp(n); return eat(a) + b.n; }
+@noinline function destructure_threaded(n: i32): i32 { let w: W = mkw(n); let (next, k) = pw(w); w = regrow(next, k); return w.n + w.d.len(); }
 
 function main(): i32 {
     let total: i32 = 0;
@@ -60,6 +65,7 @@ function main(): i32 {
         total = total + path_last(i) + unpack(i) + rename_param(w) + w.n + rename_call(i) + method_init(i) + method_chain(i);
         total = total + self_reassign(i) + if_expr(i) + match_arm(A) + match_arm(B) + match_expr(A) + match_expr(B);
         total = total + shadow_inner(i) + two_args(i) + after_peek(i) + tuple_rebind(i);
+        total = total + destructured(i) + struct_destructured(i) + destructure_threaded(i);
         i = i + 1;
     }
     if (__rc_underflow_count() != 0) { return 99; }

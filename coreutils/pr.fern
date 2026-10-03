@@ -33,7 +33,7 @@ import "std/io_buffered";
 import "std/time";
 import "./lib/gnu";
 import "./lib/timefmt";
-import "./lib/tz";
+import "std/tz";
 
 // ---- options ----------------------------------------------------------------
 //
@@ -207,7 +207,7 @@ function help_text(): string {
 }
 
 // ---- configuration ----------------------------------------------------------
-struct Cfg { columns: i32, across: boolean, merge: boolean, ctrl: boolean, nonprint: boolean, double_space: boolean, date_fmt: string, has_date: boolean, untabify: boolean, in_tab: i32, in_tab_width: i32, tabify: boolean, out_tab: i32, out_tab_width: i32, form_feed: boolean, header: string, has_header: boolean, page_length: i32, numbering: boolean, num_sep: string, num_digits: i32, num_width: i32, first_line: i32, has_first_line: boolean, offset: i32, nowarn: boolean, sep: string, omit_header: boolean, omit_pagination: boolean, page_width: i32, zone: tz.Zone, truncate: boolean, tab_literal: boolean, num_prefix: i32, first_page: u64, last_page: u64, chars_per_column: i32 }
+struct Cfg { columns: i32, across: boolean, merge: boolean, ctrl: boolean, nonprint: boolean, double_space: boolean, date_fmt: timefmt.Format, untabify: boolean, in_tab: i32, in_tab_width: i32, tabify: boolean, out_tab: i32, out_tab_width: i32, form_feed: boolean, header: string, has_header: boolean, page_length: i32, numbering: boolean, num_sep: string, num_digits: i32, num_width: i32, first_line: i32, has_first_line: boolean, offset: i32, nowarn: boolean, sep: string, omit_header: boolean, omit_pagination: boolean, page_width: i32, zone: tz.Zone, truncate: boolean, tab_literal: boolean, num_prefix: i32, first_page: u64, last_page: u64, chars_per_column: i32 }
 
 function tab_stop(): i32 {
   return 8;
@@ -594,7 +594,7 @@ function parse_range(arg: string, what: string): (u64, u64, i32) {
 
 // ---- the header date --------------------------------------------------------
 //
-// The header carries `timefmt.strftime(-D or "%Y-%m-%d %H:%M", localtime(t))`,
+// The header carries `timefmt.format(-D or "%Y-%m-%d %H:%M", localtime(t))`,
 // where `t` is the FILE's modification time — the wall clock reaches it
 // only for standard input and for -m, which have no one file to ask.
 // The zone is `coreutils/lib/tz.fern`, which is tzset(3): the TZif file
@@ -617,15 +617,19 @@ function header_width(s: string): i32 {
   return w;
 }
 
+// The header date's format, compiled once for every page.
+function header_date_format(has_date: boolean, fmt: string): timefmt.Format {
+  if (has_date) {
+    return timefmt.compile(fmt);
+  }
+  return timefmt.compile("%Y-%m-%d %H:%M");
+}
+
 // `header_text(c, name, t, nsec, page)` — date, name and `Page N` with
 // the name centred between them. Each gap keeps a space of its own when
 // the three do not fit, so a narrow page OVERFLOWS rather than shrinks.
 function header_text(c: Cfg, name: string, t: i64, nsec: i64, page: u64): string {
-  let fmt: string = "%Y-%m-%d %H:%M";
-  if (c.has_date) {
-    fmt = c.date_fmt;
-  }
-  let date: string = timefmt.strftime(fmt, c.zone, t, nsec);
+  let date: string = timefmt.format(c.date_fmt, c.zone, t, nsec);
   let nm: string = name;
   if (c.has_header) {
     nm = c.header;
@@ -1657,7 +1661,7 @@ pub function main(): i32 {
   // input's own tabs are left alone as well.
   let tab_literal: boolean = !truncate && sep == "\t";
 
-  let c: Cfg = Cfg { columns: columns, across: across, merge: merge, ctrl: ctrl, nonprint: nonprint, double_space: double_space, date_fmt: date_fmt, has_date: has_date, untabify: untabify, in_tab: in_tab, in_tab_width: in_tab_width, tabify: want_tabify || columns > 1, out_tab: out_tab, out_tab_width: out_tab_width, form_feed: form_feed, header: header, has_header: has_header, page_length: page_length, numbering: numbering, num_sep: num_sep, num_digits: num_digits, num_width: num_width, first_line: first_line, has_first_line: has_first_line, offset: offset, nowarn: nowarn, sep: sep, omit_header: omit_header, omit_pagination: omit_pagination, page_width: page_width, zone: tz.local_zone(), truncate: truncate, tab_literal: tab_literal, num_prefix: num_prefix, first_page: first_page, last_page: last_page, chars_per_column: chars_per_column };
+  let c: Cfg = Cfg { columns: columns, across: across, merge: merge, ctrl: ctrl, nonprint: nonprint, double_space: double_space, date_fmt: header_date_format(has_date, date_fmt), untabify: untabify, in_tab: in_tab, in_tab_width: in_tab_width, tabify: want_tabify || columns > 1, out_tab: out_tab, out_tab_width: out_tab_width, form_feed: form_feed, header: header, has_header: has_header, page_length: page_length, numbering: numbering, num_sep: num_sep, num_digits: num_digits, num_width: num_width, first_line: first_line, has_first_line: has_first_line, offset: offset, nowarn: nowarn, sep: sep, omit_header: omit_header, omit_pagination: omit_pagination, page_width: page_width, zone: tz.local_zone(), truncate: truncate, tab_literal: tab_literal, num_prefix: num_prefix, first_page: first_page, last_page: last_page, chars_per_column: chars_per_column };
 
   let o: io_buffered.BufWriter = gnu.out_new();
   let ok: boolean = true;

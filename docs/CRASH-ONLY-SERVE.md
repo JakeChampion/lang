@@ -23,7 +23,7 @@ Per target:
   kills that request's component instance; the host answers 500
   and keeps serving. Nothing to build; this is the primary edge
   target and it is already correct.
-- **native `tcp_serve`** (`std/tcp.fern`) — the accept loop and
+- **native `serve.run`** (`std/serve`) — the accept loop and
   the handler share one process; any trap in handler code (or in
   parsing hostile input) kills the listener with it. One bad
   request = total outage until an operator restarts.
@@ -96,29 +96,29 @@ consumer, not before.
   fork(2) in a multithreaded process is UB in the child), so its
   `proc_fork` returns **-38 (ENOSYS)** permanently (and
   `proc_waitpid` -10/ECHILD — no child can exist).
-  `tcp_serve_supervised` detects the -38, logs one
+  `serve.supervise` detects the -38, logs one
   "supervision unavailable; serving single-process" line to
   stderr, and runs the plain accept loop — graceful degradation,
   so the function is runnable under `-interp` (and on any future
   fork-less target) with the same observable serving behaviour,
   minus isolation. The interp builtins are deliberately NOT
   capability-gated (Enforce only runs for compiled targets).
-- `std/tcp` grows `tcp_serve_supervised(port, handler): i32` —
+- `std/serve` has `supervise(port, cfg, handler): i32` —
   parent creates the listener (so the backlog survives worker
   deaths), then the fork/waitpid/backoff loop above; the child
   runs the existing accept loop (factored as `__serve_loop`,
-  which takes the listener fd — `tcp_serve` now calls it too)
-  against the inherited listener fd. `tcp_serve` itself stays
+  which takes the listener fd — `run` calls it too)
+  against the inherited listener fd. `run` itself stays
   exactly as-is behaviourally (single-process, dev-friendly,
   debuggable).
 - The synthesised handler `main` serves under the supervisor
-  (`tcp_serve_supervised_opts` and its `_with` / `_shutdown` twins,
-  #9854); `tcp_serve` is for a `main` you write yourself.
+  (`serve.supervise` and its `_with` / `_shutdown` twins,
+  #9854); `serve.run` is for a `main` you write yourself.
 
 ## Test bar (D2' exit criteria)
 
 An e2e test (native x86-64, mirroring the tcp e2e harness) that:
-1. serves with `tcp_serve_supervised` and a handler that traps
+1. serves with `serve.supervise` and a handler that traps
    (array out-of-bounds) when the path is `/boom`;
 2. sends `/boom` — observes connection reset / no response and
    the worker-death log line on stderr;
@@ -137,8 +137,8 @@ the native supervised path and the interp fallback.
 ## Deliberately deferred
 
 - fork-per-request — needs a real workload to justify. Prefork
-  workers exist (#9854): `tcp_serve_supervised_opts` forks
-  `ServeOptions.workers` workers, one per processing unit by default,
+  workers exist (#9854): `serve.supervise` forks
+  `serve.Config.workers` workers, one per processing unit by default,
   over the one inherited listener, each watching it with epoll's
   `EPOLLEXCLUSIVE` (the driver's interest bit 4) so a connection wakes
   one worker rather than all (the listener is non-blocking, so a worker
@@ -147,8 +147,8 @@ the native supervised path and the interp fallback.
   (`proc_waitpid(-1)`, the dead one found by a non-blocking probe of
   each) and forks its replacement under the same backoff and
   fast-death count. The accept distribution the one-listener shape
-  gives is measured (`TestServeAcceptDistributionX86_64` and its
-  self-host twin, `docs/benchmarks/net-hello-2026-09-29.md`): 4,096
+  gives is measured (`TestSelfHostServeAcceptDistribution`,
+  `docs/benchmarks/net-hello-2026-09-29.md`): 4,096
   connections dialled in a burst from one client over four workers land
   on every worker, but unevenly, the busiest taking 44 to 48 percent
   and the idlest 2 to 8 percent on the Go compiler's build, since the
@@ -164,5 +164,5 @@ the native supervised path and the interp fallback.
 - Windows — no native Windows target exists.
 - Self-host compiler support for `proc_fork`/`proc_waitpid` —
   native serve supervision is a native-target runtime feature and
-  the self-host compiler doesn't compile std/tcp servers in its
+  the self-host compiler doesn't compile std/serve servers in its
   test corpus; wire it when (if) that changes.

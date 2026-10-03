@@ -33,12 +33,15 @@ import (
 //   - `std/http` calls one capability itself, `log`, through the platform
 //     `respond_error` is handed; the other five arrive with std/platform's
 //     methods it never calls, the same module-granular reach as the
-//     `std/mock_platform` entry below, and reach std/tcp and std/test
+//     `std/mock_platform` entry below, and reach std/serve and std/test
 //     through their import of it.
 //   - `std/jni` is hosted on `cabi` alone. It touches no OS surface at
 //     all; what it needs is a C calling convention to hand a JNIEnv
 //     method pointer to, which is a property of the target and not of
 //     anything above it.
+//   - `std/sim_fetch` reaches what `std/fetch` does, which it imports for
+//     the `Transport` trait it implements; it is std/sim's sibling rather
+//     than part of it so that `std/sim` keeps the clock and randomness alone.
 //   - `std/mock_platform` and `std/fetch` reach what `std/platform` reaches,
 //     because both import it for the recording seam — `.is_mock` / `.record`
 //     sit on the bag next to the capability methods. Neither CALLS a
@@ -62,7 +65,7 @@ var stdModuleReach = map[string]string{
 	"std/dns":           "fs,host,now,random,reactor,tcp,unix",
 	"std/dotenv":        "",
 	"std/error":         "",
-	"std/fetch":         "config,env,fs,host,log,now,proc,random,reactor,sysinfo,tcp,unix",
+	"std/fetch":         "config,env,fs,host,log,now,random,reactor,tcp,unix",
 	"std/float":         "",
 	"std/format":        "",
 	"std/fuzz":          "config,env,fs,log,now,random",
@@ -96,18 +99,21 @@ var stdModuleReach = map[string]string{
 	"std/regex":         "",
 	"std/result":        "",
 	"std/semver":        "",
+	"std/serve":         "config,env,fs,log,now,proc,random,reactor,sysinfo,tcp,unix",
 	"std/set":           "",
 	"std/signal":        "signal",
 	"std/sim":           "now,random,reactor",
+	"std/sim_fetch":     "config,env,fs,host,log,now,random,reactor,tcp,unix",
 	"std/sort":          "",
 	"std/strdist":       "",
 	"std/stream":        "",
 	"std/string":        "",
 	"std/table":         "",
-	"std/tcp":           "config,env,fs,log,now,proc,random,reactor,sysinfo,tcp,unix",
+	"std/tcp":           "now,tcp",
 	"std/test":          "config,env,fs,log,now,random",
 	"std/textwrap":      "",
 	"std/time":          "now",
+	"std/tz":            "env,fs,now",
 	"std/u32":           "",
 	"std/u64":           "",
 	"std/unicode":       "",

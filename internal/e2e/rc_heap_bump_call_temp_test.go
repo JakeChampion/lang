@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Call-result reclamation at BORROWING string consumers (RC-Perceus,
@@ -118,9 +116,6 @@ func TestArm64CallTempConsumerReclaim(t *testing.T) {
 }
 
 func TestWASMCallTempConsumerReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, callTempConsumerBumpSrc); got != 0 {
 		t.Errorf("call-temp bump should be flat after warm-up: got %d (1=concat 2=compare 3=index 4=slice)", got)
 	}

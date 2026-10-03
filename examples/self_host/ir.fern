@@ -690,6 +690,12 @@ pub function op_raw_splice_pipe(): Op {
   return op0(331);
 }
 
+// raw_cover: pops nothing → the address of __fern_cov_counters, the word
+// holding the `-cover` counter table's address (zero before the first hit).
+pub function op_raw_cover(): Op {
+  return op0(287);
+}
+
 // syscall5 (#2649 syscall sub-floor): the 5-arg sibling. Three helpers need it
 // and none can be reached without it — arm64 Linux has no `poll` or `fork`, only
 // `ppoll` and `clone`, and XNU has no `nanosleep`, only `select`. All three take
@@ -748,46 +754,46 @@ pub function op_memchr(): Op {
 
 // Count matching bytes in a borrowed array; no allocation or text conversion.
 pub function op_count_byte_bytes(): Op {
-  return op0(357);
+  return op0(359);
 }
 
 // Borrowed raw-array reductions; packed() selects native byte storage.
 pub function op_sum_bytes_array(): Op {
-  return op0(362);
+  return op0(366);
 }
 
 pub function op_bsd_sum_bytes(): Op {
-  return op0(363);
+  return op0(367);
 }
 
 // Continue the CRC over a borrowed array. packed() selects byte storage.
 pub function op_crc32_cksum_array(): Op {
-  return op0(367);
+  return op0(371);
 }
 
 // Borrowed byte-array scan; packed() selects packed native byte storage.
 pub function op_memchr_bytes(): Op {
-  return op0(356);
+  return op0(358);
 }
 
 // Reverse borrowed-array scan; from clamps down to the final index.
 pub function op_rmemchr_bytes(): Op {
-  return op0(358);
+  return op0(360);
 }
 
 // Borrowed byte-array set scan; packed() selects native byte storage.
 pub function op_count_runs_bytes(): Op {
-  return op0(361);
+  return op0(365);
 }
 
 // Borrowed byte-array set scan; packed() selects native byte storage.
 pub function op_scan_set_bytes(): Op {
-  return op0(360);
+  return op0(361);
 }
 
 // Borrowed byte-range comparison, with the same clamps as mismatch.
 pub function op_mismatch_bytes(): Op {
-  return op0(359);
+  return op0(364);
 }
 
 // rmemchr (docs/ATLAS-PLATFORM-PLAN.md §3.3, memchr's nominated sibling):
@@ -1100,6 +1106,28 @@ pub function op_rename(): Op {
   return op0(267);
 }
 
+// `rename_noreplace` and `rename_exchange` take [old, new] like `rename`:
+// renameat2 with RENAME_NOREPLACE (an existing `new` is EEXIST) or
+// RENAME_EXCHANGE (the two names swap), in the same kernel call.
+// `getxattr` / `lgetxattr` take [path, name] and push Result[string,
+// IoError]: the attribute's value, following a final symlink or not.
+// Native only: neither WASI preview has extended attributes.
+pub function op_getxattr(): Op {
+  return op0(362);
+}
+
+pub function op_lgetxattr(): Op {
+  return op0(363);
+}
+
+pub function op_rename_noreplace(): Op {
+  return op0(356);
+}
+
+pub function op_rename_exchange(): Op {
+  return op0(357);
+}
+
 // `umask` takes one operand [mask] and pushes the mask it replaced —
 // umask(2), which sets and reads in one uninterruptible step. It cannot
 // fail. Native only: neither WASI preview has a file-mode creation mask.
@@ -1199,7 +1227,7 @@ pub function op_set_file_times(): Op {
 }
 
 // `open_reader_with` / `open_writer_with` take [path, flags] — Fern's flags
-// word, 1 create and 2 non-blocking, translated per target by the runtime
+// word, 1 create, 2 non-blocking and 4 exclusive, translated per target by the runtime
 // rather than baked into an immediate — and push the same
 // Result[Reader|Writer, IoError] box op_open_file does.
 pub function op_open_reader_with(): Op {
@@ -1284,7 +1312,7 @@ pub function op_rlimit_nofile(): Op {
 // is -1 (no pollable; deadlines use poll(2)'s timeout arg); on wasm it is a
 // real wasi timer pollable. Portability shim for std/async's with_deadline.
 pub function op_wasm_timer_pollable(): Op {
-  return op0(189);
+  return op0(148);
 }
 
 // `wasm_pollable_drop` takes one operand [p] and pushes an i32 (0 on native — a
@@ -2274,15 +2302,15 @@ pub function op_buf_push_expanded(): Op {
 
 // Raw counterparts borrow [handle, u8[], table] with the same table contracts.
 pub function op_buf_push_bytes_mapped(): Op {
-  return op0(364);
+  return op0(368);
 }
 
 pub function op_buf_push_bytes_filtered(): Op {
-  return op0(365);
+  return op0(369);
 }
 
 pub function op_buf_push_bytes_expanded(): Op {
-  return op0(366);
+  return op0(370);
 }
 
 pub function op_buf_push_byte(): Op {
@@ -2946,7 +2974,7 @@ pub function op_return(): Op {
 // slot rather than leaving a gap; the moved op's membership in every id-keyed
 // classifier below has to move with it, or it lands in the wrong emitter.
 pub function kind_count(): i32 {
-  return 189;
+  return 188;
 }
 
 // kind_id maps an op-kind tag to its stable integer id (0 = KIND_INVALID for
@@ -2964,10 +2992,11 @@ pub function kind_count(): i32 {
 // tcp_pollable is 112, not 197: it took the slot str_chars freed (#7231), and
 // tcp_send / tcp_recv / tcp_close are 114..116, the slots the string search
 // predicates freed (#9848), tcp_connect is 110, the slot str_reverse freed,
-// and wasm_pollable_drop / wasm_block / wasm_poll are 161 / 162 / 167, the
-// slots print_int / print_i64 / read_int freed. The 1..kind_count() sweep
-// requires the id space to stay dense, and moving the last entry into the hole
-// beats renumbering every id above it.
+// wasm_pollable_drop / wasm_block / wasm_poll are 161 / 162 / 167, the
+// slots print_int / print_i64 / read_int freed, and wasm_timer_pollable is
+// 148, the slot dyn_downcast freed when the AST lowering that emitted it
+// retired. The 1..kind_count() sweep requires the id space to stay dense, and
+// moving the last entry into the hole beats renumbering every id above it.
 //
 // Extension tags beyond kind_count() (struct_copy=198 … buf_free=297): not
 // in the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately
@@ -2975,7 +3004,7 @@ pub function kind_count(): i32 {
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 287..290, then 311 — 281
+// NEXT FREE EXTENSION ID: 288..290, then 311 — 281
 // (writer_truncate) and 285 (signal_send) were each taken out of order by a
 // branch in flight, as 275..280 and 291..297 were, and the sync family took
 // the 298..301 block reserved for it (re-grep rather than trusting this line
@@ -3513,6 +3542,9 @@ function kind_id_len8(name: string): i32 {
   if (c == b'f' && name == "f64_bits") {
     return 16;
   }
+  if (c == b'g' && name == "getxattr") {
+    return 362;
+  }
   if (c == b'h' && name == "hostname") {
     return 240;
   }
@@ -3693,6 +3725,9 @@ function kind_id_len9(name: string): i32 {
   if (c == b'h' && name == "heap_mark") {
     return 229;
   }
+  if (c == b'l' && name == "lgetxattr") {
+    return 363;
+  }
   if (c == b'o' && name == "open_file") {
     return 203;
   }
@@ -3764,6 +3799,9 @@ function kind_id_len9_r(name: string): i32 {
   }
   if (name == "read_link") {
     return 264;
+  }
+  if (name == "raw_cover") {
+    return 287;
   }
   return 0;
 }
@@ -4055,7 +4093,7 @@ function kind_id_len11_s(name: string): i32 {
 
 function kind_id_len12(name: string): i32 {
   if (name == "memchr_bytes") {
-    return 356;
+    return 358;
   }
   let c: u8 = name[0];
   if (c == b'a' && name == "arr_push_i64") {
@@ -4075,9 +4113,6 @@ function kind_id_len12(name: string): i32 {
   }
   if (c == b'd' && name == "dyn_dispatch") {
     return 147;
-  }
-  if (c == b'd' && name == "dyn_downcast") {
-    return 148;
   }
   if (c == b'm' && name == "monotonic_ns") {
     return 182;
@@ -4149,10 +4184,10 @@ function kind_id_len12_s(name: string): i32 {
 
 function kind_id_len13(name: string): i32 {
   if (name == "bsd_sum_bytes") {
-    return 363;
+    return 367;
   }
   if (name == "rmemchr_bytes") {
-    return 358;
+    return 360;
   }
   let c: u8 = name[0];
   if (c == b'c' && name == "call_indirect") {
@@ -4199,7 +4234,7 @@ function kind_id_len13(name: string): i32 {
 
 function kind_id_len14(name: string): i32 {
   if (name == "scan_set_bytes") {
-    return 360;
+    return 361;
   }
   if (name == "udp_send_bytes") {
     return 354;
@@ -4208,7 +4243,7 @@ function kind_id_len14(name: string): i32 {
     return 353;
   }
   if (name == "mismatch_bytes") {
-    return 359;
+    return 364;
   }
   if (name == "buf_take_bytes") {
     return 347;
@@ -4252,9 +4287,12 @@ function kind_id_len14(name: string): i32 {
 
 function kind_id_len15(name: string): i32 {
   if (name == "sum_bytes_array") {
-    return 362;
+    return 366;
   }
   let c: u8 = name[0];
+  if (c == b'r' && name == "rename_exchange") {
+    return 357;
+  }
   if (c == b'b' && name == "buf_push_mapped") {
     return 325;
   }
@@ -4290,7 +4328,10 @@ function kind_id_len15(name: string): i32 {
 
 function kind_id_len16(name: string): i32 {
   if (name == "count_runs_bytes") {
-    return 361;
+    return 365;
+  }
+  if (name == "rename_noreplace") {
+    return 356;
   }
   if (name == "udp_sendto_bytes") {
     return 355;
@@ -4299,7 +4340,7 @@ function kind_id_len16(name: string): i32 {
     return 352;
   }
   if (name == "count_byte_bytes") {
-    return 357;
+    return 359;
   }
   if (name == "write_some_bytes") {
     return 350;
@@ -4331,7 +4372,7 @@ function kind_id_len16(name: string): i32 {
 
 function kind_id_len17(name: string): i32 {
   if (name == "crc32_cksum_array") {
-    return 367;
+    return 371;
   }
   let c: u8 = name[0];
   if (c == b's' && name == "set_process_group") {
@@ -4372,24 +4413,24 @@ function kind_id_len19(name: string): i32 {
     return 151;
   }
   if (c == b'w' && name == "wasm_timer_pollable") {
-    return 189;
+    return 148;
   }
   return 0;
 }
 
 function kind_id_len23(name: string): i32 {
   if (name == "buf_push_bytes_filtered") {
-    return 365;
+    return 369;
   }
   if (name == "buf_push_bytes_expanded") {
-    return 366;
+    return 370;
   }
   return 0;
 }
 
 function kind_id_len21(name: string): i32 {
   if (name == "buf_push_bytes_mapped") {
-    return 364;
+    return 368;
   }
   let c: u8 = name[0];
   if (c == b'a' && name == "arr_push_shared_count") {
@@ -4856,7 +4897,7 @@ function kind_name_3(id: i32): string {
     return "dyn_dispatch";
   }
   if (id == 148) {
-    return "dyn_downcast";
+    return "wasm_timer_pollable";
   }
   if (id == 149) {
     return "call_direct";
@@ -5000,9 +5041,6 @@ function kind_name_4(id: i32): string {
   if (id == 188) {
     return "timer_fd";
   }
-  if (id == 189) {
-    return "wasm_timer_pollable";
-  }
   if (id == 198) {
     return "struct_copy";
   }
@@ -5092,6 +5130,9 @@ function kind_name_4(id: i32): string {
   }
   if (id == 331) {
     return "raw_splice_pipe";
+  }
+  if (id == 287) {
+    return "raw_cover";
   }
   if (id == 208) {
     return "udp_send";
@@ -5415,16 +5456,16 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
-  if (id == 367) {
+  if (id == 371) {
     return "crc32_cksum_array";
   }
-  if (id == 364) {
+  if (id == 368) {
     return "buf_push_bytes_mapped";
   }
-  if (id == 365) {
+  if (id == 369) {
     return "buf_push_bytes_filtered";
   }
-  if (id == 366) {
+  if (id == 370) {
     return "buf_push_bytes_expanded";
   }
   if (id == 354) {
@@ -5433,13 +5474,19 @@ pub function kind_name(id: i32): string {
   if (id == 355) {
     return "udp_sendto_bytes";
   }
+  if (id == 356) {
+    return "rename_noreplace";
+  }
+  if (id == 357) {
+    return "rename_exchange";
+  }
   if (id == 353) {
     return "tcp_send_bytes";
   }
-  if (id == 362) {
+  if (id == 366) {
     return "sum_bytes_array";
   }
-  if (id == 363) {
+  if (id == 367) {
     return "bsd_sum_bytes";
   }
   if (id == 352) {
@@ -5451,22 +5498,28 @@ pub function kind_name(id: i32): string {
   if (id == 351) {
     return "buf_push_bytes_range";
   }
-  if (id == 357) {
+  if (id == 359) {
     return "count_byte_bytes";
   }
-  if (id == 356) {
+  if (id == 358) {
     return "memchr_bytes";
   }
-  if (id == 358) {
+  if (id == 360) {
     return "rmemchr_bytes";
   }
   if (id == 361) {
-    return "count_runs_bytes";
-  }
-  if (id == 360) {
     return "scan_set_bytes";
   }
-  if (id == 359) {
+  if (id == 362) {
+    return "getxattr";
+  }
+  if (id == 363) {
+    return "lgetxattr";
+  }
+  if (id == 365) {
+    return "count_runs_bytes";
+  }
+  if (id == 364) {
     return "mismatch_bytes";
   }
   if (id <= 40) {
@@ -5527,6 +5580,7 @@ function pops0(t: i32): boolean {
     || t == 186  // random_i32
     || t == 207 || t == 211  // raw_environ, proc_fork
     || t == 331  // raw_splice_pipe
+    || t == 287  // raw_cover
     || t == 216 || t == 217 || t == 218  // arr_push_shared_*, const_struct
     || t == 222  // map_hash_seed
     || t == 238 || t == 239 || t == 240  // geteuid, getegid, hostname
@@ -5553,7 +5607,7 @@ function pops1_mem(t: i32): boolean {
     || t == 81 || t == 205 || t == 224  // raw_alloc, raw_scratch, raw_arr_box
     || t == 90 || t == 91  // arr_len, arr_rc
     || t == 97 || t == 103 || t == 104 || t == 345  // str_len, str_from_bytes, str_bytes, str_data
-    || t == 253 || t == 362  // sum_bytes / sum_bytes_array
+    || t == 253 || t == 366  // sum_bytes / sum_bytes_array
     || t == 106 || t == 107 || t == 109  // str_to_upper/lower, str_trim
     || t == 113  // str_lines
     || t == 118  // strbuf_append
@@ -5562,7 +5616,7 @@ function pops1_mem(t: i32): boolean {
     || t == 126 || t == 131 || t == 132 || t == 133  // map_len, map_keys, map_values, map_iter
     || t == 134 || t == 135 || t == 136 || t == 137  // mapiter_*
     || t == 139 || t == 141 || t == 143 || t == 145  // struct_get, struct_set_shape, tuple_get, variant_is
-    || t == 146 || t == 148 || t == 198;  // dyn_box, dyn_downcast, struct_copy
+    || t == 146 || t == 198;  // dyn_box, struct_copy
 }
 
 function pops1_io(t: i32): boolean {
@@ -5588,7 +5642,7 @@ function pops1_io(t: i32): boolean {
     || t == 276 || t == 312  // window_size, termios_get
     || t == 185 || t == 212  // random_bytes, proc_waitpid
     || t == 286  // proc_waitpid_nohang
-    || t == 188 || t == 189 || t == 161 || t == 162 || t == 167  // timer_fd, wasm_*
+    || t == 188 || t == 148 || t == 161 || t == 162 || t == 167  // timer_fd, wasm_*
     || t == 116 || t == 112 || t == 200 || t == 201 || t == 203  // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
     || t == 320  // tcp_local_port
     || t == 230  // heap_release_to
@@ -5602,7 +5656,7 @@ function pops2_arith(t: i32): boolean {
 }
 
 function pops2_mem(t: i32): boolean {
-  return t == 357 || t == 72 || t == 73 || t == 199  // store_i32, store_ptr, store_i64
+  return t == 359 || t == 72 || t == 73 || t == 199  // store_i32, store_ptr, store_i64
     || t == 78  // free (ptr, size)
     || t == 83 || t == 85 || t == 86 || t == 223  // raw_load8, raw_load_ptr, raw_string, raw_addr
     || t == 88  // arr_get
@@ -5611,8 +5665,8 @@ function pops2_mem(t: i32): boolean {
     || t == 105 || t == 108  // str_split, str_repeat
     || t == 227  // ascii_run
     || t == 235  // count_byte
-    || t == 329 || t == 363  // bsd_sum / bsd_sum_bytes
-    || t == 309 || t == 367  // crc32_cksum / crc32_cksum_array
+    || t == 329 || t == 367  // bsd_sum / bsd_sum_bytes
+    || t == 309 || t == 371  // crc32_cksum / crc32_cksum_array
     || t == 322  // scale_f64
     || t == 127 || t == 128 || t == 130  // map_get, map_has, map_delete
     || t == 140 || t == 144;  // struct_set, tuple_set
@@ -5622,6 +5676,8 @@ function pops2_io(t: i32): boolean {
   return t == 170 || t == 226 || t == 352  // write_file, write_file_exec, write_file_bytes
     || t == 237  // access (path, mode)
     || t == 260 || t == 262 || t == 263 || t == 267 || t == 268  // create_dir, create_link, create_symlink, rename, chmod
+    || t == 356 || t == 357  // rename_noreplace, rename_exchange
+    || t == 362 || t == 363  // getxattr, lgetxattr (path, name)
     || t == 273  // truncate (path, length)
     || t == 304 || t == 305  // open_reader_with, open_writer_with (path, flags)
     || t == 281  // writer_truncate (fd, length)
@@ -5636,7 +5692,7 @@ function pops2_io(t: i32): boolean {
 }
 
 function pops3(t: i32): boolean {
-  return t == 360 || t == 361 || t == 358 || t == 356 || t == 74 || t == 75  // memchr_bytes, memcpy, memset
+  return t == 365 || t == 361 || t == 360 || t == 358 || t == 74 || t == 75  // scan_set_bytes, rmemchr_bytes, memchr_bytes, memcpy, memset
     || t == 82 || t == 84  // raw_store8, raw_store_ptr
     || t == 89 || t == 96 || t == 102 || t == 111  // arr_set, arr_slice, str_slice, str_replace
     || t == 125 || t == 129  // map_set, map_get_or
@@ -5654,13 +5710,6 @@ function pops3(t: i32): boolean {
     || t == 327;  // count_runs (str, inside, set)
 }
 
-// op_pops is how many operand slots `o` consumes, or -1 when the op is not
-// modelled at all — callers must treat that as "stop tracking", never as zero.
-//
-// `load` (67) and `store` (68) are deliberately unmodelled rather than given
-// native's arities: no self-host backend emits them and the lowering never
-// constructs one, so an occurrence is already a bug, and bailing says so
-// where a guessed arity would quietly proceed.
 // pops_buf is the operand count of one of the capacity-carrying string
 // builder's ops (#8773), or -1 when the tag is not one of them. The family sits
 // in its own contiguous block of ids and spans three different arities, so it
@@ -5678,7 +5727,7 @@ function pops_buf(t: i32): i32 {
   if (t == 306) {
     return 2;
   }
-  if (t == 325 || t == 326 || t == 328 || t == 364 || t == 365 || t == 366) {  // buf_push_mapped / _filtered / _expanded: handle + string + table
+  if (t == 325 || t == 326 || t == 328 || t == 368 || t == 369 || t == 370) {  // buf_push_mapped / _filtered / _expanded: handle + string + table
     return 3;
   }
   if (t < 291 || t > 297) {
@@ -5693,8 +5742,62 @@ function pops_buf(t: i32): i32 {
   return 1;  // buf_new, buf_len, buf_take, buf_free
 }
 
+// op_pops is how many operand slots `o` consumes, or -1 when the op is not
+// modelled at all — callers must treat that as "stop tracking", never as zero.
+//
+// `load` (67) and `store` (68) are deliberately unmodelled rather than given
+// native's arities: no self-host backend emits them and the lowering never
+// constructs one, so an occurrence is already a bug, and bailing says so
+// where a guessed arity would quietly proceed.
 pub function op_pops(o: Op): i32 {
+  return pops_of(kind_pops(o.kind_tag), o);
+}
+
+// op_pops_by is op_pops reading the fixed counts from `by_kind`, a
+// pops_by_kind table, so a pass asking per op reads one entry.
+pub function op_pops_by(by_kind: i32[], o: Op): i32 {
   let t: i32 = o.kind_tag;
+  if (t < 0 || t >= by_kind.len()) {
+    return op_pops(o);
+  }
+  return pops_of(by_kind[t], o);
+}
+
+// pops_by_kind is kind_pops for every id below 1024, the range the kind
+// registry's census walks.
+pub function pops_by_kind(): i32[] {
+  let out: i32[] = [];
+  let t: i32 = 0;
+  while (t < 1024) {
+    out = out.append(kind_pops(t));
+    t = t + 1;
+  }
+  return out;
+}
+
+// pops_of is `fixed`, the kind's kind_pops, unless that is -1 and the kind
+// is variadic: arr_make / struct_make / tuple_make pop their elements and
+// call_direct its arguments, the count being the immediate.
+function pops_of(fixed: i32, o: Op): i32 {
+  if (fixed >= 0) {
+    return fixed;
+  }
+  let t: i32 = o.kind_tag;
+  if (t == 87 || t == 138 || t == 142 || t == 149) {
+    return o.i32_imm;
+  }
+  // call_indirect pops its arguments AND the funcref, which the lowering
+  // pushes last — `op_call_indirect(args.len() + 1)` at a closure call site
+  // already counts the environment among the arguments.
+  if (t == 150) {
+    return o.i32_imm + 1;
+  }
+  return 0 - 1;
+}
+
+// kind_pops is how many operand slots an op of kind `t` consumes when that
+// does not depend on the op, else -1.
+function kind_pops(t: i32): i32 {
   let bufn: i32 = pops_buf(t);
   if (bufn >= 0) {
     return bufn;
@@ -5726,7 +5829,7 @@ pub function op_pops(o: Op): i32 {
   if (t == 206) {  // syscall4
     return 5;
   }
-  if (t == 245 || t == 359) {  // mismatch: a, ao, b, bo, n
+  if (t == 245 || t == 364) {  // mismatch: a, ao, b, bo, n
     return 5;
   }
   if (t == 228) {  // syscall5
@@ -5746,17 +5849,6 @@ pub function op_pops(o: Op): i32 {
   }
   if (t == 321) {  // chmod_at: path + mode + follow
     return 3;
-  }
-  // Variadic: the immediate is the count. arr_make / struct_make /
-  // tuple_make pop their elements; call_direct pops its arguments.
-  if (t == 87 || t == 138 || t == 142 || t == 149) {
-    return o.i32_imm;
-  }
-  // call_indirect pops its arguments AND the funcref, which the lowering
-  // pushes last — `op_call_indirect(args.len() + 1)` at a closure call site
-  // already counts the environment among the arguments.
-  if (t == 150) {
-    return o.i32_imm + 1;
   }
   return 0 - 1;
 }
@@ -7210,10 +7302,13 @@ function licm_header_end(ops: Op[], loop_idx: i32): i32 {
   let k_else: i32 = kind_id("else");
   let k_loop: i32 = kind_id("loop");
   let k_end: i32 = kind_id("end");
+  let k_return: i32 = kind_id("return");
+  let k_br: i32 = kind_id("br");
+  let k_exit: i32 = kind_id("exit");
   let j: i32 = loop_idx + 1;
   while (j < ops.len()) {
     let t: i32 = ops[j].kind_tag;
-    if (is_terminator_kind(t) || t == k_brif || t == k_if || t == k_else
+    if (t == k_return || t == k_br || t == k_exit || t == k_brif || t == k_if || t == k_else
       || t == k_loop || t == k_end) {
       return j;
     }
@@ -8073,8 +8168,8 @@ pub function op_allocates(tag: i32): boolean {
   }
   // The single-step directory and link primitives, rename, set_file_times
   // and truncate box a Result and heap-build the NUL-terminated paths they
-  // pass to the kernel; read_link boxes the target string as well.
-  if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 || tag == 267 || tag == 269 || tag == 273) {
+  // pass to the kernel; read_link and the xattr reads box a string as well.
+  if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 || tag == 267 || tag == 269 || tag == 273 || tag == 356 || tag == 357 || tag == 362 || tag == 363) {
     return true;
   }
   // read_dir / read_dir_all box a fresh string[] (the arr box + a string
@@ -8135,9 +8230,8 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 111 || tag == 113) {
     return true;
   }
-  // dyn_box allocates the 16-byte primitive `dyn` cell; dyn_downcast allocates
-  // the Some/None Option box (docs/DYN-TRAITS.md §4.2.3, §9).
-  if (tag == 146 || tag == 148) {
+  // dyn_box allocates the 16-byte primitive `dyn` cell (docs/DYN-TRAITS.md §4.2.3).
+  if (tag == 146) {
     return true;
   }
   // heap_bump_bytes does NOT allocate, but it reads the heap runtime's cursor
@@ -8181,7 +8275,7 @@ pub function op_allocates(tag: i32): boolean {
 // than logic: every `||` is one row of a table, there is no path through it to
 // get wrong, and the only way to lower the number is to carry fewer string ops.
 pub function is_str_op_kind(tag: i32): boolean {
-  return tag == 367 || tag == 362 || tag == 363 || tag == 360 || tag == 361 || tag == 359 || tag == 358 || tag == 357 || tag == 356 || tag == 97 || tag == 101 || tag == 102
+  return tag == 371 || tag == 366 || tag == 367 || tag == 361 || tag == 365 || tag == 364 || tag == 360 || tag == 359 || tag == 358 || tag == 97 || tag == 101 || tag == 102
     || tag == 104 || tag == 105 || tag == 106
     || tag == 107 || tag == 108 || tag == 109
     || tag == 111 || tag == 113 || tag == 98

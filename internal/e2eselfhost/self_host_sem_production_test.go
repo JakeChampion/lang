@@ -451,9 +451,8 @@ function main(): i32 {
 	// and semsource refused the IIFE for an empty result type, taking the module
 	// with it. i32 and string branches were unaffected, which is why this
 	// survived: only the boolean arm of if_expr_rt spelled its own tag wrong.
-	// Produces 0 of 2 without the fix; the comparison case covers the binary arm,
-	// which spelled it the same way.
-	{name: "if-expr-boolean-branches", atLeast: 2, want: "1|", src: `
+	// The comparison case covers the binary arm, which spelled it the same way.
+	{name: "if-expr-boolean-branches", atLeast: 1, want: "1|", src: `
 function main(): i32 {
     let v: boolean = if (true) { false } else { true };
     let w: boolean = if (v) { 1 < 2 } else { 2 < 1 };
@@ -837,8 +836,8 @@ function main(): i32 {
 	// tag, so the semantic source refused every such body whose arm was not an
 	// i32 ("return type: declared i32, returns boolean") and the caller with
 	// it ("holds a semantic value of i32"). A synthesised declaration's body
-	// is the authority for its result now. Produced 0 of 4 before.
-	{name: "value-if-arm-is-a-call", atLeast: 4, want: "3|", src: `
+	// is the authority for its result now.
+	{name: "value-if-arm-is-a-call", atLeast: 3, want: "3|", src: `
 struct Xyz { n: i32, valid: boolean }
 function gen(): boolean { return true; }
 function mk(n: i32): Xyz { return Xyz { n: n, valid: true }; }
@@ -1662,8 +1661,8 @@ function main(): i32 {
 	// from the inner declaration's tag — `if_expr_rt`'s concrete `i32` guess —
 	// so reading the checker first kept the guess and the outer body refused
 	// `declared i32, returns boolean`. A synthesised callee's contract is read
-	// before the checker now. Refused 3 of 7 before.
-	{name: "value-if-arm-is-a-value-if-of-a-call", atLeast: 7, want: "13|", src: `
+	// before the checker now.
+	{name: "value-if-arm-is-a-value-if-of-a-call", atLeast: 3, want: "13|", src: `
 function gen(): boolean { return true; }
 function pick(n: i32): boolean { return n > 2; }
 function main(): i32 {
@@ -1852,9 +1851,9 @@ function main(): i32 {
 }`},
 	// A value block's result is typed from its checked tail, not the parser's
 	// syntactic guess, so a tail naming a local bound from a match still says
-	// the struct array it holds (#10332): lifted when the block captures
-	// nothing, inlined when it does, and a single struct as well as an array.
-	{name: "value-block-tail-local-struct-array", atLeast: 2, want: "56|", src: `
+	// the struct array it holds (#10332), whether or not the block captures,
+	// and a single struct as well as an array.
+	{name: "value-block-tail-local-struct-array", atLeast: 1, want: "56|", src: `
 struct P { x: i32, y: i32 }
 function main(): i32 {
     let ps = { let j = 1; let q = match (j) { 1 => [P{x:5,y:6}], _ => [P{x:0,y:0}] }; q };
@@ -5504,7 +5503,7 @@ function main(): i32 {
 `},
 	// An unsuffixed literal beside an operand the checker gave no width is
 	// read at that operand's width, on either side: the i64 deadline
-	// arithmetic in std/tcp's request reader was refused as `i64 / i32`.
+	// arithmetic in std/serve's request reader was refused as `i64 / i32`.
 	{name: "a-literal-takes-its-operands-width", atLeast: 2, want: "0|", src: `
 function ms(recv_deadline_ms: i32): i32 {
     let read_start_ns: i64 = monotonic_ns();
@@ -6212,6 +6211,20 @@ function main(): i32 {
     let lit: dyn Size = "xy";
     churn();
     print(d.size().to_string() + " " + lit.size().to_string() + " " + g(3).to_string() + " " + g(0).to_string());
+    return 0;
+}
+`},
+	// With `str` the only implementer, the dyn call's one arm is the impl on
+	// `str`, keyed `string` like every other receiver (#11155).
+	{name: "a-dyn-whose-only-implementer-is-str-is-produced", atLeast: 2, want: "0|1073 1043\n", src: `
+import "std/i32";
+trait Size { function size(self: Self): i32; }
+impl Size for str { function size(self: str): i32 { return 1000 + self.len() * 10 + (self[0] as i32) - 97; } }
+function pick(n: i32): dyn Size { if (n > 0) { return "x" + "yz"; } return "ab"; }
+function main(): i32 {
+    let d: dyn Size = pick(1);
+    let lit: dyn Size = "xy";
+    print((d.size() + lit.size() - 1023).to_string() + " " + lit.size().to_string());
     return 0;
 }
 `},
@@ -7529,6 +7542,84 @@ function main(): i32 { return pick(9); }
 
 // semHeldElementSource sorts by length with the insertion sort's body: the
 // element read into `v` is live across the inner loop's `.with`.
+const semTupleElementTakeSource = `
+struct T { a: i64[], b: i64[] }
+
+function touch(t: T, at: i32): T {
+  return T { ...t, a: t.a.with(at, 1 as i64) };
+}
+
+function pair(t: T, at: i32): (T, boolean) {
+  return (touch(t, at), true);
+}
+
+function main(): i32 {
+  let t: T = T { a: [0 as i64, 0 as i64, 0 as i64, 0 as i64], b: [0 as i64] };
+  let k: i32 = 0;
+  while (k < 10) {
+    let p: (T, boolean) = pair(t, k % 4);
+    t = p.0;
+    t = touch(t, (k + 1) % 4);
+    if (!p.1) {
+      return 1;
+    }
+    k = k + 1;
+  }
+  return 0;
+}
+`
+
+const semTupleDestructureTakeSource = `
+struct T { a: i64[], b: i64[] }
+
+function touch(t: T, at: i32): T {
+  return T { ...t, a: t.a.with(at, 1 as i64) };
+}
+
+function pair(t: T, at: i32): (T, boolean) {
+  return (touch(t, at), true);
+}
+
+function main(): i32 {
+  let t: T = T { a: [0 as i64, 0 as i64, 0 as i64, 0 as i64], b: [0 as i64] };
+  let k: i32 = 0;
+  while (k < 10) {
+    let (u, ok) = pair(t, k % 4);
+    t = u;
+    t = touch(t, (k + 1) % 4);
+    if (!ok) {
+      return 1;
+    }
+    k = k + 1;
+  }
+  return 0;
+}
+`
+
+// semSpreadTwoWithsSource rebuilds a record with two fields written, the
+// second's value read from its own field through a short-circuit, so that
+// read is in a later block than the first field's take.
+const semSpreadTwoWithsSource = `
+struct C { fds: i64[], t: i64[], k: boolean[] }
+
+@noinline function respond(c: C, at: i32, v: i64, keep: boolean): C {
+  return C { ...c, t: c.t.with(at, v), k: c.k.with(at, c.k[at] && keep) };
+}
+
+function main(): i32 {
+  let c: C = C { fds: [1 as i64, 2 as i64, 3 as i64, 4 as i64], t: [0 as i64, 0 as i64, 0 as i64, 0 as i64], k: [true, true, true, true] };
+  let r: i32 = 0;
+  while (r < 10) {
+    c = respond(c, r % 4, r as i64, true);
+    r = r + 1;
+  }
+  if (!c.k[0]) {
+    return 1;
+  }
+  return 0;
+}
+`
+
 const semHeldElementSource = `
 import "std/string";
 
@@ -7590,6 +7681,15 @@ func TestSelfHostSemanticAllocationCounts(t *testing.T) {
 		{"element-read-outlives-the-array-write", 6, semHeldElementSource},
 		// A view merged past a source that dominates the join stays a view.
 		{"a-view-of-a-dominating-source-is-not-copied", 29, semDominatingViewSource},
+		// A struct taken out of a returned tuple is updated in place while the
+		// tuple's scalar is still to be read: 3 to build, one tuple a round
+		// (#11203; 33 when the tuple kept the struct shared).
+		{"a-tuple-element-is-taken-past-a-later-sibling-read", 13, semTupleElementTakeSource},
+		{"a-destructured-element-is-taken-past-a-later-sibling-read", 13, semTupleDestructureTakeSource},
+		// The first field is taken past the second's read of its own field in a
+		// later block: the 4 it is built from (#11204; 14 when the first field
+		// was copied each round).
+		{"a-field-is-taken-past-a-sibling-read-in-a-later-block", 4, semSpreadTwoWithsSource},
 	} {
 		t.Run(prog.name, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "main.fern")

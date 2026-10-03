@@ -2,7 +2,7 @@ package arm64
 
 import "github.com/jakechampion/lang/internal/ast"
 
-// Byte arrays remain borrowed throughout each syscall and short-write retry.
+// Byte views remain borrowed throughout each syscall and short-write retry.
 func (g *generator) emitWriterBytesRuntime(all bool) {
 	name := "__fern_writer_write_some_bytes"
 	prefix := ".Lwwsomebytes"
@@ -18,8 +18,8 @@ func (g *generator) emitWriterBytesRuntime(all bool) {
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("ldr w19, [x0]")
-	g.emit("mov x20, x1")
-	g.emit("ldur w22, [x20, #-4]")
+	g.emit("ldr x20, [x1]")
+	g.emit("ldr w22, [x1, #8]")
 	g.emit("mov x21, #0")
 	g.label(prefix + "_loop")
 	g.emit("mov w0, w19")

@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Array-of-(rc-inner-array) reclamation (RC-Perceus). The string[][]
@@ -96,9 +94,6 @@ func TestArm64ArrayOfRcReclaim(t *testing.T) {
 }
 
 func TestWASMArrayOfRcReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	runArrOfRc(t, runWasm, true)
 	if got := runWasm(t, arrOfRcUnderflowSrc); got != 0 {
 		t.Errorf("array-of-rc reclaim: got %d", got)

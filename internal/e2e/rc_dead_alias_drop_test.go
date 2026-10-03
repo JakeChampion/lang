@@ -6,17 +6,16 @@
 //
 // For an alias of an accumulator that is exactly the rc==1 append cliff
 // (#6024). `let keep = acc` takes an alias inc, so `acc` sits at rc 2, and
-// __fern_arr_push_grow mutates in place only at rc 1 — every subsequent
-// append copies the whole buffer. 200 appends behind a binding that nothing
-// reads again cost 199 full-buffer copies, identically on x86-64, arm64 and
-// wasm. computeNestedDrops releases `keep` at its last read, which restores
-// rc 1 and lets the appends run in place.
+// the append grows in place only at rc 1 — every subsequent append copies the
+// whole buffer. Releasing `keep` at its last read restores rc 1 and lets the
+// appends run in place.
 //
 // Both halves are pinned: the DEAD alias must reach 0 copies, and the LIVE
 // alias (the same program with the read moved after the append) must still
-// report 199 — there the alias genuinely observes the buffer and the copy is
-// mandatory, so a "fix" that took it to 0 would be a use-after-free, not a
-// win.
+// copy on every append — there the alias genuinely observes the buffer and the
+// copy is mandatory, so a "fix" that took it to 0 would be a use-after-free,
+// not a win. The counter tallies only copies made with spare capacity, and
+// seven of the 200 appends find the buffer full, so the live alias reads 193.
 package e2e
 
 import (
@@ -59,8 +58,8 @@ func TestX86_64DeadAliasAppendNoCopy(t *testing.T) {
 		t.Errorf("x86-64 dead alias: __arr_push_shared_count() = %d, want 0 — "+
 			"a loop-body binding nothing reads again is still forcing a full buffer copy per append", got)
 	}
-	if _, got := compileAndRunX86_64FreeOn(t, liveAliasAppendSrc); got != 199 {
-		t.Errorf("x86-64 live alias: __arr_push_shared_count() = %d, want 199 — "+
+	if _, got := compileAndRunX86_64FreeOn(t, liveAliasAppendSrc); got != 193 {
+		t.Errorf("x86-64 live alias: __arr_push_shared_count() = %d, want 193 — "+
 			"the alias is read after the append, so every copy is mandatory", got)
 	}
 }

@@ -26,14 +26,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
-	"github.com/jakechampion/lang/internal/parser"
-	"github.com/jakechampion/lang/internal/symname"
 )
 
 // `function main(): i32 { return N; }` is the smallest
@@ -522,20 +514,18 @@ func TestX86_64Transcendentals(t *testing.T) {
 // End-to-end x86-64 HTTP handler. Same shape as
 // `TestArm64HttpHandler` — compiles a tiny `handle` program
 // (no manual main; the checker synthesises one calling
-// `tcp_serve(__port_from_env("PORT", 8080), handle)`),
+// `serve.supervise(serve.__port_from_env("PORT", 8080), serve.config(), handle)`),
 // spawns the resulting binary on a Go-picked free port,
 // sends two requests on separate connections, asserts both
 // bodies round-trip. The second request validates that the
 // first request's allocations are reclaimed (by reference
-// counting) inside `tcp_serve` — a leak there would either
+// counting) inside `serve.run` — a leak there would either
 // OOM or scramble state between requests; both pass cleanly.
 //
 // Together with `TestArm64HttpHandler` this brings the two
 // native backends to observable parity for the
 // edge-handler use case the language is targeting.
 func TestX86_64HttpHandler(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("no free TCP port: %v", err)
@@ -545,53 +535,12 @@ func TestX86_64HttpHandler(t *testing.T) {
 
 	src := `
 import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("method=" + req.method + " path=" + req.path + " body-len=" + req.body_len().to_string());
 }`
 
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	// modload (not bare parser.Parse) so the handler's std/http +
-	// std/tcp imports resolve under no-prelude.
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	// Monomorphise generic functions before codegen — the production
-	// driver (cmd/fern) always runs this, and x86_64.Emit documents that
-	// it expects a checked + monomorphised program. This harness was
-	// missing the pass (the arm64 sibling compileAndRunArm64 already runs
-	// it). Feeding Emit an un-monomorphised program leaves generic
-	// instantiations unspecialised; that latent gap only surfaced as a
-	// wrong differential result once a heap-layout shift (the core/int
-	// to_string rewrite) perturbed it into view. Mirrors compileAndRunArm64.
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
-	}
+	binPath, runner := compileX86_64Bin(t, src)
 
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
@@ -708,8 +657,6 @@ func TestX86_64Print(t *testing.T) {
 // count and (b) the user args show up on stdout. argv[0]
 // is the binary path so we only check the trailing three.
 func TestX86_64Args(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-
 	src := `function main(): i32 {
     let a: string[] = args();
     let i: i32 = 0;
@@ -719,33 +666,7 @@ func TestX86_64Args(t *testing.T) {
     }
     return a.len();
 }`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
+	binPath, runner := compileX86_64Bin(t, src)
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
 		cmd = exec.Command(binPath, "alpha", "beta", "gamma")
@@ -764,25 +685,10 @@ func TestX86_64Args(t *testing.T) {
 	}
 }
 
-// Tail-call optimisation. `ir.TailCallOptimize` rewrites
-// every `OpCallDirect <self> ; OpReturn` pair in a function
-// into a parameter rebind + `OpBr` back to a synthetic
-// outer loop, so self-recursive functions run in O(1)
-// stack depth. x86-64 is the first consumer of the pass —
-// see the inline note in `EmitWithOptions`.
-//
-// Two assertions:
-//
-//  1. The asm has no `call <self>` instruction inside the
-//     tail-recursive function. The only `call <self>`
-//     left in the program is the kick-off from `main`.
-//  2. A recursion depth that would overflow the kernel-
-//     default 8 MiB stack (~10^5 frames * 16 bytes/frame
-//     = 1.6 MiB) returns cleanly. Without TCO this would
-//     segfault long before completing.
+// Tail-call optimisation: a self-recursive tail call runs in O(1) stack
+// depth, so a recursion depth that would overflow the kernel-default 8 MiB
+// stack returns cleanly. Without it this segfaults long before completing.
 func TestX86_64TailCall(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-
 	src := `function sum_to(n: i32, acc: i32): i32 {
     if (n == 0) { return acc; }
     return sum_to(n - 1, acc + n);
@@ -790,40 +696,7 @@ func TestX86_64TailCall(t *testing.T) {
 function main(): i32 {
     return sum_to(100000, 0);
 }`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	// Exactly one `call sum_to` survives — the one in
-	// `main` — and the recursive site became `jmp <loop
-	// top>`. If TCO didn't fire we'd see two.
-	if call := "call " + symname.Fn("sum_to"); strings.Count(asm, call) != 1 {
-		t.Errorf("`%s` appearances = %d, want 1 (only from main); TCO didn't fire", call, strings.Count(asm, call))
-	}
-
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
+	binPath, runner := compileX86_64Bin(t, src)
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
 		cmd = exec.Command(binPath)
@@ -921,8 +794,6 @@ func TestX86_64StringAsBytes(t *testing.T) {
 // Mirrors `TestArm64DarwinBuilds/read_line` for the same
 // Option[string] payload-at-+8 layout.
 func TestX86_64ReadLine(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-
 	src := `function main(): i32 {
     match (stdin().read_line()) {
         Some(_) => { return 1; },
@@ -930,33 +801,7 @@ func TestX86_64ReadLine(t *testing.T) {
     }
     return -1;
 }`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
+	binPath, runner := compileX86_64Bin(t, src)
 
 	runCase := func(stdin string, want int) {
 		t.Helper()
@@ -981,8 +826,6 @@ func TestX86_64ReadLine(t *testing.T) {
 // receiver-aware __fern_reader_read_line). Same .bss buffer +
 // byte loop + Some/None wrap.
 func TestX86_64ReadLineBuiltin(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-
 	src := `function main(): i32 {
     match (read_line()) {
         Some(_) => { return 1; },
@@ -990,33 +833,7 @@ func TestX86_64ReadLineBuiltin(t *testing.T) {
     }
     return -1;
 }`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
+	binPath, runner := compileX86_64Bin(t, src)
 
 	runCase := func(stdin string, want int) {
 		t.Helper()
@@ -1879,45 +1696,14 @@ function main(): i32 {
 // arm64's compileArm64InDir.
 func compileX86_64InDir(t *testing.T, src string, seed map[string]string) (stdout string, exitCode int, dir string) {
 	t.Helper()
-	gcc, runner := x86_64Tooling(t)
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
+	binPath, runner := compileX86_64Bin(t, src)
 	dir = t.TempDir()
 	for name, content := range seed {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 			t.Fatalf("seed %s: %v", name, err)
 		}
 	}
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(binPath)
-	} else {
-		cmd = exec.Command(runner[0], append(runner[1:], binPath)...)
-	}
+	cmd := runX86_64Bin(runner, binPath)
 	cmd.Dir = dir
 	out, _ := cmd.CombinedOutput()
 	return string(out), cmd.ProcessState.ExitCode(), dir

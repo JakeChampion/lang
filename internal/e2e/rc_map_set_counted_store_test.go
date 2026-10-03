@@ -26,8 +26,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // mapSetCountedSrcs are the insert-only shapes: one fresh key / value
@@ -260,9 +258,6 @@ func TestArm64MapSetCountedStoreBalanced(t *testing.T) {
 }
 
 func TestWasmMapSetCountedStoreBalanced(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, mapSetCountedBumpSrc("50"))
 	large := runWasm(t, mapSetCountedBumpSrc("5000"))
 	// Flat: the pre-change baseline grew 32 B per call here.

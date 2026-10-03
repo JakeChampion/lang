@@ -1146,10 +1146,10 @@ pub function main(): i32 {
   let pats: Pat[] = parse_patterns(ops);
   let settings: Settings = Settings { prefix: prefix, fmt: fmt, keep: keep, elide: elide, suppress: suppress, quiet: quiet };
 
-  // No piece is open yet. The inactive writer owns no buffer; out_open
-  // installs one before any write and out_close checks the open flag.
-  let inactive: io_buffered.BufWriter = io_buffered.BufWriter { w: stdout(), buf: 0 as usize, cap: 0, err: None };
-  let st: St = St { r: r0, buf: empty_bytes(), wpos: 0, soff: 0, wline: 1 as i64, sline: 1 as i64, eof: false, back: max_back(pats), out: inactive, open: false, name: "", written: 0 as i64, created: 0, so: gnu.out_new(), s: settings };
+  // Until a piece is open, share stdout's buffer as the inactive writer.
+  // out_open replaces it before any piece write; out_close checks open.
+  let so: io_buffered.BufWriter = gnu.out_new();
+  let st: St = St { r: r0, buf: empty_bytes(), wpos: 0, soff: 0, wline: 1 as i64, sline: 1 as i64, eof: false, back: max_back(pats), out: so, open: false, name: "", written: 0 as i64, created: 0, so: so, s: settings };
 
   let i: i32 = 0;
   while (i < pats.len()) {

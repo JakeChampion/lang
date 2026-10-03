@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Generic-enum-array (`Option[T][]` / `Result[T,E][]`) element reclamation
@@ -75,9 +73,6 @@ func TestArm64GenericEnumArrayReclaim(t *testing.T) {
 }
 
 func TestWASMGenericEnumArrayReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, genEnumArrBumpSrc("50"))
 	large := runWasm(t, genEnumArrBumpSrc("5000"))
 	if small != large {

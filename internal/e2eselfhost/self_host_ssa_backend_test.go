@@ -1448,9 +1448,11 @@ function main(): i32 {
 
 // String equality compares the two length words inline and calls the
 // helper's register entry only when they match, so the stack-ABI call and its
-// pushed operands are gone. The program covers each way the inline answer and
-// the helper's can go: unequal lengths, equal lengths with differing bytes,
-// equal strings on both sides of the 8-byte word loop, and the empty string.
+// pushed operands are gone. The helper is a leaf and builds no frame, and on
+// x86-64 the operands reach %rax / %rsi without passing through %rdx / %rcx.
+// The program covers each way the inline answer and the helper's can go:
+// unequal lengths, equal lengths with differing bytes, equal strings on both
+// sides of the 8-byte word loop, and the empty string.
 func TestSelfHostSSAStrEqComparesLengthsInline(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -1475,11 +1477,13 @@ function main(): i32 {
 	shapes := map[string]struct {
 		lengths    *regexp.Regexp // the inline compare of the two length words
 		entry, abi string         // the register-entry call and the stack-ABI call
+		frame      string         // the frame setup the helper must not build
+		route      string         // a copy through a scratch on the way to the entry, or ""
 	}{
 		"x86-64-linux": {regexp.MustCompile(`(?m)^\s+cmpq 8\(%r\w+\), %rdx$`),
-			"call __fn___fern_str_eq.r\n", "call __fn___fern_str_eq\n"},
+			"call __fn___fern_str_eq.r\n", "call __fn___fern_str_eq\n", "pushq %rbp", "movq %rdx, %rax\n    movq %rcx, %rsi\n"},
 		"arm64-linux": {regexp.MustCompile(`(?m)^\s+ldr x7, \[x\d+, #8\]\n\s+cmp x6, x7$`),
-			"bl __fn___fern_str_eq.r\n", "bl __fn___fern_str_eq\n"},
+			"bl __fn___fern_str_eq.r\n", "bl __fn___fern_str_eq\n", "stp x29, x30", ""},
 	}
 	for _, tg := range h.targets {
 		shape, ok := shapes[tg.target]
@@ -1505,6 +1509,19 @@ function main(): i32 {
 		}
 		if strings.Contains(fn, shape.abi) {
 			t.Errorf("%s: main still makes the stack-ABI call:\n%s", tg.target, fn)
+		}
+		if shape.route != "" && strings.Contains(fn, shape.route) {
+			t.Errorf("%s: main passes an operand through a scratch on the way to the helper:\n%s", tg.target, fn)
+		}
+		helper := functionListing(string(asm), "__fn___fern_str_eq")
+		if end := strings.Index(helper, ".size __fn___fern_str_eq"); end >= 0 {
+			helper = helper[:end]
+		}
+		if helper == "" {
+			t.Fatalf("%s: no __fn___fern_str_eq in the listing", tg.target)
+		}
+		if strings.Contains(helper, shape.frame) {
+			t.Errorf("%s: the helper builds a frame:\n%s", tg.target, helper)
 		}
 		bin := filepath.Join(dir, "streq-"+tg.target)
 		h.compileWith(t, tg, src, bin, "-backend", "ssa")

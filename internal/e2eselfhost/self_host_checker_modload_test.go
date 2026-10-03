@@ -231,3 +231,73 @@ func TestSelfHostCheckerModloadEmptyImplMangledX86_64(t *testing.T) {
 		t.Errorf("checker driver exited %d, want 0 (no diagnostics)", code)
 	}
 }
+
+// TestSelfHostCheckerModloadTraitSigMangledX86_64 pins that a library trait's
+// requirement signatures are mangled with the module's other decls, so E021
+// compares a requirement with its impl method in one spelling. flatten
+// rewrote every function's parameter and return types (`Local` ->
+// `lib__Local`) but passed the requirements through, so every method of a
+// library trait whose signature named a struct or enum, the trait's own
+// module's or another's, read as a wrong signature. A real mismatch still
+// reports.
+func TestSelfHostCheckerModloadTraitSigMangledX86_64(t *testing.T) {
+	_, runner, driverBin := buildCheckerModloadDriverX86(t)
+	bsrc, err := os.ReadFile("../../examples/self_host/builtins.fern")
+	if err != nil {
+		t.Fatalf("read builtins.fern: %v", err)
+	}
+	other := "pub struct Item { n: i32 }\npub enum Fault { Bad, Worse }\n"
+	trait := "import \"./other\";\n" +
+		"pub struct Local { n: i32 }\n" +
+		"pub trait Tr {\n" +
+		"    function a(self: Self, x: other.Item): i32;\n" +
+		"    function b(self: Self, x: i32): Result[i32, other.Fault];\n" +
+		"    function c(self: Self, x: other.Item[]): i32;\n" +
+		"    function d(self: Self, x: i32): Local;\n" +
+		"}\n" +
+		"pub struct Impl {}\n"
+	matching := "impl Tr for Impl {\n" +
+		"    function a(self: Impl, x: other.Item): i32 { return x.n; }\n" +
+		"    function b(self: Impl, x: i32): Result[i32, other.Fault] { return Ok(x); }\n" +
+		"    function c(self: Impl, x: other.Item[]): i32 { return x.len(); }\n" +
+		"    function d(self: Impl, x: i32): Local { return Local { n: x }; }\n" +
+		"}\n"
+	mismatched := "impl Tr for Impl {\n" +
+		"    function a(self: Impl, x: other.Item): i32 { return x.n; }\n" +
+		"    function b(self: Impl, x: i32): Result[i32, other.Fault] { return Ok(x); }\n" +
+		"    function c(self: Impl, x: other.Item[]): i32 { return x.len(); }\n" +
+		"    function d(self: Impl, x: i32): other.Item { return other.Item { n: x }; }\n" +
+		"}\n"
+	main := "import \"./lib\";\nimport \"./other\";\n" +
+		"function main(): i32 { let i: lib.Impl = lib.Impl {}; return i.a(other.Item { n: 0 }); }\n"
+	for _, tc := range []struct {
+		name, impl, want string
+	}{
+		{"matching", matching, ""},
+		{"mismatched", mismatched, "E021"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			progDir := t.TempDir()
+			for name, src := range map[string]string{
+				"builtins.fern": string(bsrc),
+				"other.fern":    other,
+				"lib.fern":      trait + tc.impl,
+				"main.fern":     main,
+			} {
+				if err := os.WriteFile(filepath.Join(progDir, name), []byte(src), 0o644); err != nil {
+					t.Fatalf("write %s: %v", name, err)
+				}
+			}
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(driverBin, filepath.Join(progDir, "main.fern"))
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], driverBin, filepath.Join(progDir, "main.fern"))...)
+			}
+			out, _ := cmd.Output()
+			if got := strings.TrimSpace(string(out)); got != tc.want {
+				t.Errorf("checker driver codes = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

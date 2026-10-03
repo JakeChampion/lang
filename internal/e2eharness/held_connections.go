@@ -12,10 +12,12 @@ import (
 	"time"
 )
 
-// The per-held-connection heap bound of #9853: a serve loop holding N idle
-// connections must grow the heap by under 1 KiB per connection, measured
-// by holding N and then 2N and reading the bump allocator's high-water
-// mark through the server's own handler.
+// The per-held-connection heap bound of #9853 and #9854: a serve loop
+// holding N idle connections must grow the heap by under 1 KiB per
+// connection, measured by holding N and then 2N and reading the bump
+// allocator's high-water mark through the server's own handler. A
+// connection is held in one of two shapes: accepted and never used, or
+// kept alive after one served request.
 
 // HeldConnectionsBytesPerConnection is the bound: the bump-allocator growth
 // the second batch of held connections may cost, per connection.
@@ -31,25 +33,28 @@ const HeldConnectionsBatch = 64
 func HeldConnectionsServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/time";
-import "std/tcp";
+import "std/serve";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok(__heap_bump_bytes().to_string());
 }
 
 function main(): i32 {
-    let opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), recv_deadline: time.duration_seconds(120 as i64), max_connections_per_ip: 0 };
-    return tcp.tcp_serve_opts(%d, opts, handle);
+    let opts: serve.Config = serve.Config { ...serve.config(), recv_deadline: time.duration_seconds(120 as i64), max_connections_per_ip: 0 };
+    return serve.run(%d, opts, handle);
 }
 `, port)
 }
 
 // MeasureHeldConnections holds two batches of idle connections to the
 // server at addr and answers the bump-allocator growth the second batch
-// cost, per connection. The first batch's growth includes whatever the
-// connection table and the loop allocate once (the first accept, the
-// table's first growth), which is why the bound is on the second.
-func MeasureHeldConnections(t *testing.T, addr string) (perConnection int64, first, second int64) {
+// cost, per connection. With served, each connection carries one request
+// and its response before it is left idle, so it is held as a kept-alive
+// connection; without, it is accepted and never used. The first batch's
+// growth includes whatever the connection table and the loop allocate
+// once (the first accept, the table's first growth), which is why the
+// bound is on the second.
+func MeasureHeldConnections(t *testing.T, addr string, served bool) (perConnection int64, first, second int64) {
 	t.Helper()
 	held := make([]net.Conn, 0, 2*HeldConnectionsBatch)
 	defer func() {
@@ -64,6 +69,9 @@ func MeasureHeldConnections(t *testing.T, addr string) (perConnection int64, fir
 				t.Fatalf("dial %d: %v", len(held), err)
 			}
 			held = append(held, c)
+			if served {
+				serveOnce(t, c, len(held))
+			}
 		}
 	}
 	// Settle: the loop has accepted the batch once a request through it
@@ -76,6 +84,26 @@ func MeasureHeldConnections(t *testing.T, addr string) (perConnection int64, fir
 	first = after1 - before
 	second = after2 - after1
 	return second / HeldConnectionsBatch, first, second
+}
+
+// serveOnce sends one request on c and reads its response whole, leaving
+// the connection open on keep-alive.
+func serveOnce(t *testing.T, c net.Conn, n int) {
+	t.Helper()
+	_ = c.SetDeadline(time.Now().Add(10 * time.Second))
+	if _, err := io.WriteString(c, "GET / HTTP/1.1\r\nHost: x\r\n\r\n"); err != nil {
+		t.Fatalf("request on connection %d: %v", n, err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+	if err != nil {
+		t.Fatalf("response on connection %d: %v", n, err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Close {
+		t.Fatalf("connection %d answered %d, close=%v: want a 200 kept alive", n, resp.StatusCode, resp.Close)
+	}
+	_ = c.SetDeadline(time.Time{})
 }
 
 // heapBumpBytes asks the server for its bump allocator's high-water mark.
@@ -124,12 +152,12 @@ func heapBumpBytes(t *testing.T, addr string) int64 {
 // with room for 5000 requests on one connection.
 func BumpPerRequestServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok(__heap_bump_bytes().to_string());
 }
 function main(): i32 {
-    return tcp.tcp_serve_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), keep_alive_requests: 5000 }, handle);
+    return serve.run(%d, serve.Config { ...serve.config(), keep_alive_requests: 5000 }, handle);
 }
 `, port)
 }

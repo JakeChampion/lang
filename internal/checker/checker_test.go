@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/parser"
@@ -217,7 +218,7 @@ function take(b: Box[i32, string]): i32 {
 	// constructor, reached only while the type is still incomplete. Completing
 	// it from the contradicting destination answered `Result[i32, i32]` and
 	// turned the return into a type error (the interp oracle of
-	// TestSelfHostOptMakeI64IRWasm, which is where this showed up).
+	// TestSelfHostOptMakeI64IR, which is where this showed up).
 	widening := `function g(n: i32): Result[i64, i32] { return Ok(n); }
 function main(): i32 { match (g(40)) { Ok(v) => { return (v / 8) as i32; }, Err(e) => { return e; } } }`
 	if err := checkSource(t, widening); err != nil {
@@ -4413,20 +4414,21 @@ func TestCheckContextBackgroundBehavesLikeOldCheck(t *testing.T) {
 	}
 }
 
-// serveStubDecls stands in for std/tcp's supervised entries and the
-// helpers the synthesised main of a handler program calls.
-const serveStubDecls = `struct ServeOptions { backlog: i32 }
-function serve_options(): ServeOptions { return ServeOptions { backlog: 128 }; }
-function __init_platform(): Platform { return Platform { version: 3, mode: 0, sink: cell_new(""), handle: 0 }; }
-function tcp_serve_supervised_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
-function tcp_serve_supervised_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
-function tcp_serve_supervised_with[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
-function tcp_serve_supervised_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
-function tcp_serve_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
-function tcp_serve_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
-function tcp_serve_with_opts[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
-function tcp_serve_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
-function __port_from_env(name: string, def: i32): i32 { return def; }
+// serveStubDecls stands in for std/serve's entries and the helpers the
+// synthesised main of a handler program calls, under the names modload
+// gives them.
+const serveStubDecls = `struct serve__Config { backlog: i32 }
+function serve__config(): serve__Config { return serve__Config { backlog: 128 }; }
+function serve____init_platform(): Platform { return Platform { version: 3, mode: 0, sink: cell_new(""), handle: 0 }; }
+function serve__supervise(port: i32, opts: serve__Config, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
+function serve__supervise_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
+function serve__supervise_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
+function serve__supervise_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
+function serve__run(port: i32, opts: serve__Config, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
+function serve__run_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
+function serve__run_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
+function serve__run_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
+function serve____port_from_env(name: string, def: i32): i32 { return def; }
 `
 
 // A target without processes (wasm32-wasi) gets the single-process entries
@@ -4434,14 +4436,14 @@ function __port_from_env(name: string, def: i32): i32 { return def; }
 func TestSynthesisedHandleMainFollowsTargetProcesses(t *testing.T) {
 	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }`
 	cases := []struct{ name, src, target, entry string }{
-		{"stateless on wasi", serveStubDecls + `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }`, "wasm32-wasi", "tcp_serve_opts"},
+		{"stateless on wasi", serveStubDecls + `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }`, "wasm32-wasi", "serve__run"},
 		{"stateful hook on wasi", serveStubDecls + `function init(): i32 { return 7; }
 function handle(n: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (n, ` + response + `); }
-function shutdown(reason: string, n: i32): void { print(reason); }`, "wasm32-wasi", "tcp_serve_with_shutdown"},
+function shutdown(reason: string, n: i32): void { print(reason); }`, "wasm32-wasi", "serve__run_with_shutdown"},
 		{"stateful on linux", serveStubDecls + `function init(): i32 { return 7; }
-function handle(n: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (n, ` + response + `); }`, "x86-64-linux", "tcp_serve_supervised_with"},
+function handle(n: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (n, ` + response + `); }`, "x86-64-linux", "serve__supervise_with"},
 		{"stateless hook on darwin", serveStubDecls + `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }
-function shutdown(reason: string): void { print(reason); }`, "arm64-darwin", "tcp_serve_supervised_shutdown"},
+function shutdown(reason: string): void { print(reason); }`, "arm64-darwin", "serve__supervise_shutdown"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -4507,7 +4509,7 @@ func TestConfigGetFollowsTheTargetsEnvironment(t *testing.T) {
 // docs/PLATFORM-RESEARCH.md Rec §3 init() ordering: when the
 // program defines both `handle` and `init`, the auto-main
 // synthesis prepends a call to `init()` BEFORE the
-// `tcp_serve` accept loop.
+// serve accept loop.
 func TestSynthesisedHandleMainRunsInitFirst(t *testing.T) {
 	prog, err := parser.Parse(serveStubDecls + `function init(): void { print("starting"); }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
@@ -4548,7 +4550,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 
 // TestSynthesisedHandleMainNoInitElidesPrepend — backward
 // compat: programs without init() still get the original
-// single-stmt synth main (just the tcp_serve return).
+// single-stmt synth main (just the serve return).
 func TestSynthesisedHandleMainNoInitElidesPrepend(t *testing.T) {
 	prog, err := parser.Parse(serveStubDecls + `function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } };
@@ -4576,7 +4578,7 @@ func TestSynthesisedHandleMainNoInitElidesPrepend(t *testing.T) {
 
 // A value-returning `init` paired with a state-taking `handle` is the
 // two-phase lifecycle of docs/PLATFORM-RESEARCH.md Rec §3: the
-// synthesised main hands `init()`'s result to `tcp_serve_supervised_with`,
+// synthesised main hands `init()`'s result to `serve.supervise_with`,
 // which owns it in each worker's loop frame and threads it through every
 // request. No `init();` statement of its own — the value IS the call.
 func TestSynthesisedHandleMainThreadsInitState(t *testing.T) {
@@ -4613,11 +4615,11 @@ function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse
 		t.Fatalf("returned expression = %T, want *ast.Call", ret.Value)
 	}
 	id, ok := call.Callee.(*ast.Ident)
-	if !ok || id.Name != "tcp_serve_supervised_with" {
-		t.Fatalf("synth main calls %v, want tcp_serve_supervised_with", call.Callee)
+	if !ok || id.Name != "serve__supervise_with" {
+		t.Fatalf("synth main calls %v, want serve__supervise_with", call.Callee)
 	}
 	if len(call.Args) != 4 {
-		t.Fatalf("tcp_serve_supervised_with call has %d args, want 4 (port, serve_options(), init(), handle)", len(call.Args))
+		t.Fatalf("serve__supervise_with call has %d args, want 4 (port, config(), init(), handle)", len(call.Args))
 	}
 	initArg, ok := call.Args[2].(*ast.Call)
 	if !ok {
@@ -4634,7 +4636,7 @@ function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse
 func TestSynthesisedHandleMainTakesInitOptions(t *testing.T) {
 	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }`
 	t.Run("options beside the state", func(t *testing.T) {
-		prog, err := parser.Parse(serveStubDecls + `function init(plat: Platform): (ServeOptions, i32) { return (serve_options(), 7); }
+		prog, err := parser.Parse(serveStubDecls + `function init(plat: Platform): (serve__Config, i32) { return (serve__config(), 7); }
 function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (hits + 1, ` + response + `); }
 function shutdown(reason: string, hits: i32): void { print(reason); }`)
 		if err != nil {
@@ -4657,12 +4659,12 @@ function shutdown(reason: string, hits: i32): void { print(reason); }`)
 		}
 		if plat, ok := initCall.Args[0].(*ast.Call); !ok {
 			t.Fatalf("init's argument = %T, want the __init_platform() call", initCall.Args[0])
-		} else if id, ok := plat.Callee.(*ast.Ident); !ok || id.Name != "__init_platform" {
-			t.Fatalf("init's argument calls %v, want __init_platform", plat.Callee)
+		} else if id, ok := plat.Callee.(*ast.Ident); !ok || id.Name != "serve____init_platform" {
+			t.Fatalf("init's argument calls %v, want serve____init_platform", plat.Callee)
 		}
 		call := main.Body.Stmts[1].(*ast.Return).Value.(*ast.Call)
-		if id, ok := call.Callee.(*ast.Ident); !ok || id.Name != "tcp_serve_supervised_with_shutdown" {
-			t.Fatalf("synth main calls %v, want tcp_serve_supervised_with_shutdown", call.Callee)
+		if id, ok := call.Callee.(*ast.Ident); !ok || id.Name != "serve__supervise_with_shutdown" {
+			t.Fatalf("synth main calls %v, want serve__supervise_with_shutdown", call.Callee)
 		}
 		if opts, ok := call.Args[1].(*ast.Ident); !ok || opts.Name != "__fern_opts" {
 			t.Fatalf("the options argument is %#v, want __fern_opts", call.Args[1])
@@ -4672,7 +4674,7 @@ function shutdown(reason: string, hits: i32): void { print(reason); }`)
 		}
 	})
 	t.Run("options alone", func(t *testing.T) {
-		prog, err := parser.Parse(serveStubDecls + `function init(): ServeOptions { return ServeOptions { backlog: 4 }; }
+		prog, err := parser.Parse(serveStubDecls + `function init(): serve__Config { return serve__Config { backlog: 4 }; }
 function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }`)
 		if err != nil {
 			t.Fatalf("parse: %v", err)
@@ -4685,13 +4687,54 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + res
 			t.Fatalf("want a synthesised main of 1 statement, got %v", main)
 		}
 		call := main.Body.Stmts[0].(*ast.Return).Value.(*ast.Call)
-		if id, ok := call.Callee.(*ast.Ident); !ok || id.Name != "tcp_serve_supervised_opts" {
-			t.Fatalf("synth main calls %v, want tcp_serve_supervised_opts", call.Callee)
+		if id, ok := call.Callee.(*ast.Ident); !ok || id.Name != "serve__supervise" {
+			t.Fatalf("synth main calls %v, want serve__supervise", call.Callee)
 		}
 		if opts, ok := call.Args[1].(*ast.Call); !ok {
 			t.Fatalf("the options argument is %T, want the init() call", call.Args[1])
 		} else if id, ok := opts.Callee.(*ast.Ident); !ok || id.Name != "init" || len(opts.Args) != 0 {
 			t.Fatalf("the options argument calls %v with %d args, want init()", opts.Callee, len(opts.Args))
+		}
+	})
+	// std/serve's Config is known by its module: under an alias it is
+	// still the config, and a struct of the program's own named Config is
+	// a state like any other.
+	t.Run("the config under an alias", func(t *testing.T) {
+		prog, _, err := modload.LoadSource(`import "std/http";
+import "std/serve" as web;
+function init(plat: Platform): (web.Config, i32) { return (web.Config { ...web.config(), workers: 1 }, 7); }
+function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (hits + 1, http.ok("ok")); }`)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if err := constfold.Fold(prog, nil); err != nil {
+			t.Fatalf("constfold: %v", err)
+		}
+		if _, err := Check(prog); err != nil {
+			t.Fatalf("check: %v", err)
+		}
+		main := findDecl(prog, "main")
+		if main == nil || len(main.Body.Stmts) != 2 {
+			t.Fatalf("want a synthesised main of 2 statements (the destructure, the return), got %v", main)
+		}
+		if _, ok := main.Body.Stmts[0].(*ast.Destructure); !ok {
+			t.Fatalf("first statement = %T, want the (config, state) destructure", main.Body.Stmts[0])
+		}
+	})
+	t.Run("a Config of the program's own", func(t *testing.T) {
+		prog, err := parser.Parse(serveStubDecls + `struct Config { n: i32 }
+function init(): Config { return Config { n: 1 }; }
+function handle(c: Config, req: HttpRequest, plat: Platform): (Config, HttpResponse) { return (c, ` + response + `); }`)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if _, err := Check(prog); err != nil {
+			t.Fatalf("check: %v", err)
+		}
+		main := findDecl(prog, "main")
+		call := main.Body.Stmts[len(main.Body.Stmts)-1].(*ast.Return).Value.(*ast.Call)
+		if opts, ok := call.Args[1].(*ast.Call); !ok || opts.Callee.(*ast.Ident).Name != "serve__config" {
+			t.Fatalf("the config argument is %#v, want the serve__config() defaults", call.Args[1])
 		}
 	})
 	for name, src := range map[string]string{
@@ -4720,10 +4763,10 @@ func TestSynthesisedHandleMainWiresShutdown(t *testing.T) {
 	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }`
 	cases := []struct{ name, src, entry, message string }{
 		{"stateless", decls + `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }
-function shutdown(reason: string): void { print(reason); }`, "tcp_serve_supervised_shutdown", ""},
+function shutdown(reason: string): void { print(reason); }`, "serve__supervise_shutdown", ""},
 		{"stateful", decls + `function init(): i32 { return 7; }
 function handle(n: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (n, ` + response + `); }
-function shutdown(reason: string, n: i32): void { print(reason); }`, "tcp_serve_supervised_with_shutdown", ""},
+function shutdown(reason: string, n: i32): void { print(reason); }`, "serve__supervise_with_shutdown", ""},
 		{"state hook without init", decls + `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }
 function shutdown(reason: string, n: i32): void { print(reason); }`, "", "`shutdown` takes a state parameter, but no `init` produces the state to hand it"},
 		{"stateless hook drops the state", decls + `function init(): i32 { return 7; }
@@ -4759,9 +4802,9 @@ function shutdown(reason: string): void { print(reason); }`, "", "`shutdown` tak
 				t.Fatalf("the last argument is %v, want the shutdown hook", call.Args[len(call.Args)-1])
 			}
 			if opts, ok := call.Args[1].(*ast.Call); !ok {
-				t.Fatalf("the second argument is %T, want the serve_options() call", call.Args[1])
-			} else if id, ok := opts.Callee.(*ast.Ident); !ok || id.Name != "serve_options" {
-				t.Fatalf("the second argument calls %v, want serve_options", opts.Callee)
+				t.Fatalf("the second argument is %T, want the config() call", call.Args[1])
+			} else if id, ok := opts.Callee.(*ast.Ident); !ok || id.Name != "serve__config" {
+				t.Fatalf("the second argument calls %v, want serve__config", opts.Callee)
 			}
 		})
 	}

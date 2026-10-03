@@ -345,11 +345,6 @@
 # the checker's function-typed value local add the last ~8 KB. The other
 # eleven rows moved +1.9-4.2% of drift in the same run and keep their rows.
 # Number pasted from driver-sizes' own report.
-# 2026-09-27 — fern.fern alone, 12968425 -> 13654985 (+5.3%). Main's own
-# drift since the last refresh is about +4.4%; the rest is the parser's
-# type-variable respelling pass and its printer inverse (#9577). The other
-# rows keep their numbers. Measured with FERN_WARM_DRIVER=fern.fern
-# FERN_DRIVER_SIZE_REPORT on the merged tree.
 # 2026-09-28 — fern.fern alone, 13753865 -> 14118057 (+2.65%, inside the
 # band). The CLI links the WIT decoder and composer and the embedded proxy
 # world for `-target wasm32-wasi-http` (wit_decode, wit_compose,
@@ -434,7 +429,12 @@
 # instructions where each record or union release was one call); fern.fern,
 # which the pin builds, stays inside 5%. Number pasted from driver-sizes' own
 # report on run 37063932061 (#11147, which adds 0.06% of its own).
-fern.fern/stage2 11565456
+# 2026-10-03 — fern.fern/stage2 11565456 -> 10946736 (-5.3%): main shrank
+# it 4.7% since that refresh (291a39cf's shared release guards), and a
+# constant a phi merges or a block returns now loads on its edge with no home
+# of its own, a further 0.7%. Measured with TestSelfHostWarmStockDriver, the
+# gate's own path; fern.fern, which the pin builds, stays inside 5%.
+fern.fern/stage2 10946736
 fern.fern 10737128
 asm_load_run.fern 8721320
 asm_modload_run.fern 7618432

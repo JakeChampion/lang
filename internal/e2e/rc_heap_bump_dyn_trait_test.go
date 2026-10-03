@@ -15,8 +15,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // dynTraitBumpGrowthSrc creates + drops a `dyn Shape` over a struct that
@@ -51,9 +49,6 @@ function main(): i32 {
 // (otherwise the per-iteration String buffer alone would grow the
 // high-water unboundedly).
 func TestWASMDynTraitHeapBumpBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, dynTraitBumpGrowthSrc("50"))
 	large := runWasm(t, dynTraitBumpGrowthSrc("5000"))
 	if small != large {
@@ -68,9 +63,6 @@ func TestWASMDynTraitHeapBumpBounded(t *testing.T) {
 // double-free of the box or the inner String between the dyn drop and any
 // other reference). __rc_underflow_count() must be 0.
 func TestWASMDynTraitNoUnderflow(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	src := `import "std/i32";
 trait Shape {
     function area(self: Self): i32;
@@ -99,9 +91,6 @@ function main(): i32 {
 // 3 here: a1, b1, b2). The loop must stay bump-bounded, proving the drop
 // slot is read at the right merged offset.
 func TestWASMDynTraitMultiTraitDrop(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	src := func(n string) string {
 		return `import "std/i32";
 trait A { function a1(self: Self): i32; }
@@ -141,9 +130,6 @@ function main(): i32 {
 // caller's value (and the loop's bump would diverge). The caller still
 // reclaims its own `dyn` local each iteration, so the loop stays bounded.
 func TestWASMDynTraitBorrowedParamNoDrop(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	mk := func(tail string) string {
 		return `import "std/i32";
 trait Shape {

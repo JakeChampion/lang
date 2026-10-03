@@ -3,8 +3,6 @@ package e2e
 import (
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #5637 option 3 — end-to-end benefit and safety of the in-place string
@@ -46,9 +44,6 @@ const strSelfAppendLoopSrc = `function main(): i32 {
 // and a balanced heap at exit (allocs == frees, live_bytes == 0) — the latter
 // is what catches an over-release just as firmly as a leak.
 func TestX86_64StrSelfAppendAllocsBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strSelfAppendLoopSrc)
 	if code != 0 {
@@ -124,9 +119,6 @@ abababababababababababababababababababababababababababababababab`
 // ABI, where the in-place path returns (a_data, la+lb) with the buffer's rc
 // left at 1.
 func TestWASMStrSelfAppendCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	if got := runWasmCapturingStdout(t, strSelfAppendCorrectnessSrc); got != strSelfAppendWant {
 		t.Errorf("wasm string self-append output =\n%q\nwant\n%q", got, strSelfAppendWant)
@@ -139,9 +131,6 @@ func TestWASMStrSelfAppendCorrect(t *testing.T) {
 // over-release probe: a buffer freed while still aliased would show up as
 // frees > allocs (or as corrupted output).
 func TestX86_64StrSelfAppendCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strSelfAppendCorrectnessSrc)
 	if code != 0 {
@@ -159,9 +148,6 @@ func TestX86_64StrSelfAppendCorrect(t *testing.T) {
 // carried in registers, the in-place path returns (a_data, la+lb), and
 // [data-4] — the payload size __fern_str_dec frees at — is left alone.
 func TestArm64StrSelfAppendCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckArm64(t, strSelfAppendCorrectnessSrc)
 	if code != 0 {
@@ -192,32 +178,28 @@ const strConcatChainSrc = `function main(): i32 {
 }`
 
 // TestX86_64StrConcatChainAllocsBounded pins #5637's follow-up on this exact
-// program: allocs=129 frees=129 live_bytes=0.
+// program: allocs=255 frees=255 live_bytes=0.
 //
 // Allocations are bounded because no join copies. Each join above the leftmost
 // grows the previous join's intermediate instead of allocating a fresh buffer
 // and freeing it; the leftmost grows the accumulator itself, so the only
-// allocations left are the size-class steps 3000 bytes of growth crosses. An
-// unfused leftmost join allocated and copied the whole accumulator every
-// iteration and cost 627 here.
+// allocations left are the size-class steps 3000 bytes of growth crosses. A
+// join that copied instead would cost one allocation per join, 1500 here.
 //
 // live_bytes is zero because the accumulator's reclaim routes through
 // __fern_str_dec (which frees at rc==1) rather than __fern_rc_dec (which
 // decrements to zero and stops).
 func TestX86_64StrConcatChainAllocsBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strConcatChainSrc)
 	if code != 0 {
 		t.Fatalf("chained concat loop exited %d (want 0 — the accumulated length was wrong); stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	// 3000 bytes of growth crosses ~129 size classes. Anything near the
-	// iteration count means a join is copying rather than growing.
-	if allocs > 250 {
-		t.Errorf("allocs = %d for 500 three-join iterations, want <= 250 (~one per size-class step); a join is allocating and copying instead of growing", allocs)
+	// 3000 bytes of growth crosses ~255 size classes. Anything near the
+	// join count means a join is copying rather than growing.
+	if allocs > 300 {
+		t.Errorf("allocs = %d for 500 three-join iterations, want <= 300 (~one per size-class step); a join is allocating and copying instead of growing", allocs)
 	}
 	if allocs != frees || live != 0 {
 		t.Errorf("heap unbalanced after the chain loop: allocs=%d frees=%d live_bytes=%d, want allocs==frees and live_bytes==0 (the accumulator's overwrite must FREE, not just decrement)", allocs, frees, live)
@@ -265,9 +247,6 @@ qrqrqrqr/qrqrqrqrqr
 abcdefghi!`
 
 func TestWASMStrConcatChainCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	if got := runWasmCapturingStdout(t, strConcatChainCorrectnessSrc); got != strConcatChainWant {
 		t.Errorf("wasm chained concat output =\n%q\nwant\n%q", got, strConcatChainWant)
@@ -275,9 +254,6 @@ func TestWASMStrConcatChainCorrect(t *testing.T) {
 }
 
 func TestX86_64StrConcatChainCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strConcatChainCorrectnessSrc)
 	if code != 0 {
@@ -318,52 +294,43 @@ const strAppendClassBoundarySrc = `function main(): i32 {
 }`
 
 // The in-place grow's guard asks whether the grown request still lands in the
-// block the old one reserved. That is ONE capacity computation — `req_new <=
-// cap(req_old)` — where it used to be two compared for equality; the algebra
-// is proved in internal/codegen/x86_64/sizeclass_cap_test.go, and this is the
-// emitted code agreeing with it.
+// block the old one reserved: ONE capacity computation, `req_new <=
+// cap(req_old)`.
 //
 // The allocation COUNT is the assertion, because the count is the guard's
-// decision sequence: 2100 appends against 132 allocations means the guard said
-// "grow in place" 1968 times and "allocate" 132 times, at exactly the lengths
-// the size classes fall on. A predicate that differed anywhere across the
-// 0..4200 span — including at the 2048 tier change — moves this number. A
+// decision sequence: 2100 appends against 258 allocations means the guard said
+// "grow in place" 1842 times and "allocate" 258 times, at exactly the lengths
+// the size classes fall on — the 8-byte classes below 2 KiB, then the
+// three-significant-bit ones. A predicate that differed anywhere across the
+// 0..4200 span — including at the 2 KiB tier change — moves this number. A
 // change that legitimately moves it (a different rounding, a different header)
 // should re-bank it rather than loosen it.
 func TestX86_64StrAppendClassBoundary(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strAppendClassBoundarySrc)
 	if code != 0 {
 		t.Fatalf("exited %d, want 0 (1 = wrong length, 2 = a byte at the wrong position, 3/4 = a boundary slice); stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	if allocs != 132 {
-		t.Errorf("allocs = %d for 2100 appends across the 2048 tier change, want 132 — the in-place guard fires at different lengths than the size classes fall on", allocs)
+	if allocs != 258 {
+		t.Errorf("allocs = %d for 2100 appends across the 2048 tier change, want 258 — the in-place guard fires at different lengths than the size classes fall on", allocs)
 	}
 	if allocs != frees || live != 0 {
 		t.Errorf("heap unbalanced: allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
 	}
 }
 
-// TestArm64StrAppendClassBoundary is the two-word NATIVE sibling. Two more
-// allocations than x86-64: a two-word string is __fern_alloc_rc1(len) where
-// the single-word one asks for len+1 (its trailing NUL), so the 16-byte class
-// steps fall two lengths apart across the same 0..4200 span.
+// TestArm64StrAppendClassBoundary is the arm64 sibling. A string box has the
+// same layout on both targets, so the guard decides at the same lengths.
 func TestArm64StrAppendClassBoundary(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckArm64(t, strAppendClassBoundarySrc)
 	if code != 0 {
 		t.Fatalf("exited %d, want 0 (1 = wrong length, 2 = a byte at the wrong position, 3/4 = a boundary slice); stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	if allocs != 134 {
-		t.Errorf("allocs = %d for 2100 appends across the 2048 tier change, want 134 — the in-place guard fires at different lengths than the size classes fall on", allocs)
+	if allocs != 258 {
+		t.Errorf("allocs = %d for 2100 appends across the 2048 tier change, want 258 — the in-place guard fires at different lengths than the size classes fall on", allocs)
 	}
 	if allocs != frees || live != 0 {
 		t.Errorf("heap unbalanced: allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
@@ -375,9 +342,6 @@ func TestArm64StrAppendClassBoundary(t *testing.T) {
 // computation. One more allocation than the natives: wasm has no inline
 // small-string form, so the first append heap-allocates where x86-64 packs.
 func TestWASMStrAppendClassBoundary(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	_, stderr, code := runLeakCheckWasm(t, strAppendClassBoundarySrc, false)
 	if code != 0 {
@@ -418,9 +382,6 @@ const strChainAliasWant = "ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab
 // answer stays right, and the heap stays balanced, when the spine declines to
 // fuse. Under the leak detector so an over-release shows as frees > allocs.
 func TestX86_64StrSelfAppendChainAliasIsNotFused(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strChainAliasSrc)
 	if code != 0 {
@@ -436,9 +397,6 @@ func TestX86_64StrSelfAppendChainAliasIsNotFused(t *testing.T) {
 
 // TestArm64StrSelfAppendChainAliasIsNotFused is the two-word NATIVE sibling.
 func TestArm64StrSelfAppendChainAliasIsNotFused(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckArm64(t, strChainAliasSrc)
 	if code != 0 {
@@ -454,9 +412,6 @@ func TestArm64StrSelfAppendChainAliasIsNotFused(t *testing.T) {
 
 // TestWASMStrSelfAppendChainAliasIsNotFused is the wasm sibling.
 func TestWASMStrSelfAppendChainAliasIsNotFused(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	if got := runWasmCapturingStdout(t, strChainAliasSrc); got != strings.TrimSuffix(strChainAliasWant, "\n") {
 		t.Errorf("wasm aliased chain output =\n%q\nwant\n%q", got, strChainAliasWant)

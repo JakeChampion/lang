@@ -40,7 +40,7 @@ import "std/io_buffered";
 import "core/map";
 import "./lib/gnu";
 import "./lib/timefmt";
-import "./lib/tz";
+import "std/tz";
 import "./lib/blocks";
 
 function opt_null(): i32 {
@@ -185,7 +185,7 @@ function time_ctime(): i32 {
 // rounding UP). `suffix` is what a bare `-BK` prints after each number,
 // derived from the final divisor rather than echoed from the spec —
 // which is why `--inodes -BKiB` prints `B` and not `KiB`.
-pub struct Conf { all: boolean, apparent: boolean, block_size: u64, suffix: string, human: u64, total: boolean, deref: i32, max_depth: u64, inodes: boolean, count_links: boolean, separate_dirs: boolean, threshold: i64, has_threshold: boolean, time_kind: i32, time_format: string, zone: tz.Zone, excludes: string[], one_file_system: boolean, terminator: string }
+pub struct Conf { all: boolean, apparent: boolean, block_size: u64, suffix: string, human: u64, total: boolean, deref: i32, max_depth: u64, inodes: boolean, count_links: boolean, separate_dirs: boolean, threshold: i64, has_threshold: boolean, time_kind: i32, time_format: timefmt.Format, zone: tz.Zone, excludes: string[], one_file_system: boolean, terminator: string }
 
 function help_text(): string {
   let out: string = "";
@@ -537,7 +537,7 @@ function wants_line(c: Conf, depth: i32, is_dir: boolean): boolean {
 function emit(c: Conf, o: io_buffered.BufWriter, size: u64, tsec: i64, tnsec: i64, display: string): io_buffered.BufWriter {
   let line: string = blocks.format_size(size, c.block_size, c.suffix, c.human) + "\t";
   if (c.time_kind != time_none()) {
-    line = line + timefmt.strftime(c.time_format, c.zone, tsec, tnsec) + "\t";
+    line = line + timefmt.format(c.time_format, c.zone, tsec, tnsec) + "\t";
   }
   return o.write_string(line + display + c.terminator);
 }
@@ -1098,7 +1098,7 @@ pub function main(): i32 {
   let argv: string[] = args();
   let opts: gnu.Opt[] = declare_options();
 
-  let c: Conf = Conf { all: false, apparent: false, block_size: 1024 as u64, suffix: "", human: 0 as u64, total: false, deref: deref_none(), max_depth: 0 as u64 - 1 as u64, inodes: false, count_links: false, separate_dirs: false, threshold: 0 as i64, has_threshold: false, time_kind: time_none(), time_format: "%Y-%m-%d %H:%M", zone: tz.utc_zone(), excludes: [], one_file_system: false, terminator: "\n" };
+  let c: Conf = Conf { all: false, apparent: false, block_size: 1024 as u64, suffix: "", human: 0 as u64, total: false, deref: deref_none(), max_depth: 0 as u64 - 1 as u64, inodes: false, count_links: false, separate_dirs: false, threshold: 0 as i64, has_threshold: false, time_kind: time_none(), time_format: timefmt.compile("%Y-%m-%d %H:%M"), zone: tz.utc_zone(), excludes: [], one_file_system: false, terminator: "\n" };
   let unit: blocks.Unit = blocks.default_unit();
   let summarize: boolean = false;
   let depth_text: string = "";
@@ -1228,11 +1228,11 @@ pub function main(): i32 {
     // time should not pay for either.
     c = Conf { ...c, zone: tz.local_zone() };
     if (have_style) {
-      c = Conf { ...c, time_format: style_format(style) };
+      c = Conf { ...c, time_format: timefmt.compile(style_format(style)) };
     } else {
       match (env("TIME_STYLE")) {
         Some(v) => {
-          c = Conf { ...c, time_format: env_style(v) };
+          c = Conf { ...c, time_format: timefmt.compile(env_style(v)) };
         },
         None => {}
       }
