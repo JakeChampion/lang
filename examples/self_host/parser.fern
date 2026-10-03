@@ -22362,10 +22362,12 @@ pub function infer_ret_types_module(mod: Module): Module {
 // ===================================================================
 // #4380 lever 3: syntactic bounds-check elision for len-bounded loops.
 //
-// A purely syntactic pass (mirroring internal/parser/bounds_elide.go) that
-// marks array-index READS `arr[i]` inside a `while (i < arr.len())` loop as
-// Unchecked, so the lowering drops the per-iteration bounds check + the per-access
-// `len` reload (op_arr_get_nc). No type info is
+// A purely syntactic pass that marks array-index READS `arr[i]` inside a loop
+// guarded by `i < arr.len()` as Unchecked, so the lowering drops the
+// per-iteration bounds check + the per-access `len` reload (op_arr_get_nc).
+// internal/parser/bounds_elide.go is the native pass it grew from; the
+// self-host one also takes a field path, a length bound to a local, and a
+// guard that is one conjunct of the condition. No type info is
 // consulted: the IR honours the flag ONLY on the true array path, so marking a
 // string / map index is a harmless no-op there.
 //
@@ -22383,22 +22385,33 @@ pub function infer_ret_types_module(mod: Module): Module {
 //     a lambda, which cannot touch the outer bindings).
 //
 // An access is marked only when `0 <= i < arr.len()` is syntactically provable:
-//   - the guard is exactly `i < arr.len()` (strict `<`, both operands bare
-//     idents) — the upper bound;
-//   - `i` starts at a non-negative integer literal in the statement immediately
-//     before the loop, and every assignment to `i` in the body is
+//   - one top-level `&&` conjunct of the guard is `i < P.len()` or `i < n`
+//     (strict `<`, `i` and `n` bare idents, `P` a field path such as `xs` or
+//     `r.items` rooted at an ident other than `i`) — the upper bound. A bare `n`
+//     counts only when the nearest earlier statement at the same level binding
+//     it is `let n = P.len()`, and nothing between that and the loop assigns or
+//     rebinds `n` or `P`'s root;
+//   - `i` starts at a non-negative integer literal in an earlier statement at
+//     the same level that nothing between it and the loop assigns or rebinds,
+//     and every assignment to `i` in the body is
 //     `i = i + <non-negative int literal>` — so `i` is monotonic non-decreasing
 //     and never drops below 0 (the check also guards NEGATIVE indices);
-//   - `arr` is never reassigned and neither `i` nor `arr` is rebound (shadowed)
-//     in the body — so `arr.len()` and the binding stay invariant;
+//   - `P`'s root is never reassigned and none of `i`, `n` or the root is
+//     rebound (shadowed) in the body — so the length and the binding stay
+//     invariant. Fields and elements are immutable after construction (E048,
+//     E056), so reassigning the root is the only way to change `P`;
 //   - the access precedes the first statement that assigns `i` (a read after an
-//     increment could reach `arr.len()`).
+//     increment could reach the length), or sits in the guard to the right of
+//     the bounding conjunct, which it is evaluated only after.
 // Accesses inside a lambda / defer body are never marked: that code runs later,
 // when `i` may have advanced past `len`.
 
-struct LenLoopMatch { ok: boolean, idx: string, arr: string }
+// arr is the bounded path and root the ident it is rooted at; bound names the
+// local holding its length instead, when the guard does not call `.len()`.
+struct LenLoopMatch { ok: boolean, idx: string, arr: string, root: string, bound: string }
 
-struct LenArrRef { ok: boolean, name: string }
+// LenPath is the `P` of a `P.len()`: its spelling and the ident it is rooted at.
+struct LenPath { path: string, root: string }
 
 // elide_len_bounded_body is the pass entry: it rewrites a function body,
 // returning a copy with in-bounds `arr[i]` reads marked. Called where
@@ -22407,8 +22420,8 @@ struct LenArrRef { ok: boolean, name: string }
 // clobbers the flag and the transform sites all default it to false.
 pub function elide_len_bounded_body(stmts: ast.Stmt[]): ast.Stmt[] {
   // Recurse into nested statement lists first, so inner loops are handled in
-  // place; then elide while-loops at THIS level (each needs its preceding
-  // statement as the source of `i`'s start value).
+  // place; then elide while-loops at THIS level (each reads its preceding
+  // statements for `i`'s start value and a cached length).
   let lowered: ast.Stmt[] = [];
   let i: i32 = 0;
   while (i < stmts.len()) {
@@ -22421,9 +22434,7 @@ pub function elide_len_bounded_body(stmts: ast.Stmt[]): ast.Stmt[] {
     let st: ast.Stmt = lowered[p];
     match (st) {
       ast.StmtWhile(w) => {
-        if (p > 0) {
-          st = elb_try_while(w, lowered[p - 1]);
-        }
+        st = elb_try_while(w, lowered, p);
       },
       _ => {}
     }
@@ -22467,25 +22478,33 @@ function elb_recurse_stmt(st: ast.Stmt): ast.Stmt {
   return st;
 }
 
-// elb_try_while checks the invariants for one while-loop and, when they hold,
-// returns the loop with its qualifying body-prefix reads marked. `prev` is the
-// statement immediately before the loop (the source of `i`'s start value).
-function elb_try_while(w: ast.StmtWhile, prev: ast.Stmt): ast.Stmt {
+// elb_try_while checks the invariants for the while-loop at stmts[p] and, when
+// they hold, returns the loop with its qualifying reads marked. The statements
+// before it are where `i`'s start value and a cached length come from.
+function elb_try_while(w: ast.StmtWhile, stmts: ast.Stmt[], p: i32): ast.Stmt {
+  let same: ast.Stmt = ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
   let m: LenLoopMatch = elb_loop_match(w.cond);
   if (!m.ok) {
-    return ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
+    return same;
   }
-  if (elb_assigns_stmts(w.body, m.arr)) {
-    return ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
+  let lp: LenPath = LenPath { path: m.arr, root: m.root };
+  if (m.bound != "") {
+    lp = elb_len_local(stmts, p, m.bound);
+    if (lp.path == "" || elb_assigns_stmts(w.body, m.bound) || elb_binds_stmts(w.body, m.bound)) {
+      return same;
+    }
   }
-  if (elb_binds_stmts(w.body, m.idx) || elb_binds_stmts(w.body, m.arr)) {
-    return ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
+  if (lp.root == m.idx || elb_assigns_stmts(w.body, lp.root)) {
+    return same;
+  }
+  if (elb_binds_stmts(w.body, m.idx) || elb_binds_stmts(w.body, lp.root)) {
+    return same;
   }
   if (!elb_idx_monotonic_stmts(w.body, m.idx)) {
-    return ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
+    return same;
   }
-  if (!elb_starts_nonneg(prev, m.idx)) {
-    return ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
+  if (!elb_starts_nonneg(stmts, p, m.idx)) {
+    return same;
   }
   let nb: ast.Stmt[] = [];
   let i: i32 = 0;
@@ -22496,25 +22515,41 @@ function elb_try_while(w: ast.StmtWhile, prev: ast.Stmt): ast.Stmt {
       stop = true;
     }
     if (!stop) {
-      st = elb_mark_stmt(st, m.idx, m.arr);
+      st = elb_mark_stmt(st, m.idx, lp.path);
     }
     nb = nb.append(st);
     i = i + 1;
   }
-  return ast.StmtWhile { cond: w.cond, body: nb, label: w.label, line: w.line, is_loop: w.is_loop };
+  let cond: ast.Expr = elb_mark_cond(w.cond, m, lp.path).e;
+  return ast.StmtWhile { cond: cond, body: nb, label: w.label, line: w.line, is_loop: w.is_loop };
 }
 
-// elb_loop_match matches `IDX < ARR.len()` (strict `<`, both operands bare
-// idents, IDX != ARR) and returns (IDX, ARR).
+// elb_loop_match finds the bounding conjunct `IDX < P.len()` or `IDX < N` along
+// the top-level `&&` chain of a loop guard and returns (IDX, P) or (IDX, N).
 function elb_loop_match(cond: ast.Expr): LenLoopMatch {
   match (cond) {
     ast.ExprBinary(b) => {
+      if (b.op == "&&") {
+        let l: LenLoopMatch = elb_loop_match(b.left);
+        if (l.ok) {
+          return l;
+        }
+        return elb_loop_match(b.right);
+      }
       if (b.op == "<") {
         match (b.left) {
           ast.ExprIdent(li) => {
-            let la: LenArrRef = elb_len_array(b.right);
-            if (la.ok && la.name != li.name) {
-              return LenLoopMatch { ok: true, idx: li.name, arr: la.name };
+            let lp: LenPath = elb_len_path(b.right);
+            if (lp.path != "") {
+              return LenLoopMatch { ok: true, idx: li.name, arr: lp.path, root: lp.root, bound: "" };
+            }
+            match (b.right) {
+              ast.ExprIdent(ni) => {
+                if (ni.name != li.name) {
+                  return LenLoopMatch { ok: true, idx: li.name, arr: "", root: "", bound: ni.name };
+                }
+              },
+              _ => {}
             }
           },
           _ => {}
@@ -22523,24 +22558,19 @@ function elb_loop_match(cond: ast.Expr): LenLoopMatch {
     },
     _ => {}
   }
-  return LenLoopMatch { ok: false, idx: "", arr: "" };
+  return LenLoopMatch { ok: false, idx: "", arr: "", root: "", bound: "" };
 }
 
-// elb_len_array returns the array-ident of a `A.len()` length expression, where
-// A is a bare ident. Fern has no free `len(A)` function (that idiom is E001), so
-// only the method form is matched.
-function elb_len_array(e: ast.Expr): LenArrRef {
+// elb_len_path returns the path of a `P.len()` length expression, or an empty
+// one. Fern has no free `len(A)` function (that idiom is E001), so only the
+// method form is matched.
+function elb_len_path(e: ast.Expr): LenPath {
   match (e) {
     ast.ExprCall(c) => {
       match (c.callee) {
         ast.ExprFieldAccess(fa) => {
           if (fa.field == "len" && c.args.len() == 0) {
-            match (fa.obj) {
-              ast.ExprIdent(id) => {
-                return LenArrRef { ok: true, name: id.name };
-              },
-              _ => {}
-            }
+            return LenPath { path: elb_path(fa.obj), root: elb_path_root(fa.obj) };
           }
         },
         _ => {}
@@ -22548,25 +22578,96 @@ function elb_len_array(e: ast.Expr): LenArrRef {
     },
     _ => {}
   }
-  return LenArrRef { ok: false, name: "" };
+  return LenPath { path: "", root: "" };
 }
 
-// elb_starts_nonneg proves `idx`'s entry value is a non-negative integer literal
-// from the immediately-preceding `let idx = v` / `idx = v` statement (nothing
-// runs between it and the guard).
-function elb_starts_nonneg(prev: ast.Stmt, idx: string): boolean {
-  match (prev) {
-    ast.StmtVar(v) => {
-      if (v.name == idx) {
-        return elb_is_nonneg_int(v.init);
-      }
+// elb_path spells a field path rooted at a bare ident (`xs`, `r.items`), or ""
+// for any other expression.
+function elb_path(e: ast.Expr): string {
+  match (e) {
+    ast.ExprIdent(id) => {
+      return id.name;
     },
-    ast.StmtAssign(a) => {
-      if (a.target == idx) {
-        return elb_is_nonneg_int(a.value);
+    ast.ExprFieldAccess(fa) => {
+      let base: string = elb_path(fa.obj);
+      if (base != "") {
+        return base + "." + fa.field;
       }
     },
     _ => {}
+  }
+  return "";
+}
+
+function elb_path_root(e: ast.Expr): string {
+  match (e) {
+    ast.ExprIdent(id) => {
+      return id.name;
+    },
+    ast.ExprFieldAccess(fa) => {
+      return elb_path_root(fa.obj);
+    },
+    _ => {}
+  }
+  return "";
+}
+
+// elb_len_local resolves a loop bound `n` to the path of the nearest earlier
+// statement at this level binding it, when that is `let n = P.len()` and no
+// statement between it and the loop at stmts[p] assigns `n` or assigns or
+// rebinds `P`'s root.
+function elb_len_local(stmts: ast.Stmt[], p: i32, n: string): LenPath {
+  let none: LenPath = LenPath { path: "", root: "" };
+  let q: i32 = p - 1;
+  while (q >= 0) {
+    match (stmts[q]) {
+      ast.StmtVar(v) => {
+        if (v.name == n) {
+          let lp: LenPath = elb_len_path(v.init);
+          if (lp.path == "") {
+            return none;
+          }
+          let k: i32 = q + 1;
+          while (k < p) {
+            if (elb_assigns_stmt(stmts[k], n) || elb_assigns_stmt(stmts[k], lp.root) || elb_binds_stmts([stmts[k]], lp.root)) {
+              return none;
+            }
+            k = k + 1;
+          }
+          return lp;
+        }
+      },
+      _ => {}
+    }
+    q = q - 1;
+  }
+  return none;
+}
+
+// elb_starts_nonneg proves `idx`'s entry value is a non-negative integer
+// literal: the nearest earlier statement at this level that binds or assigns
+// `idx` is `let idx = v` / `idx = v` with v such a literal.
+function elb_starts_nonneg(stmts: ast.Stmt[], p: i32, idx: string): boolean {
+  let q: i32 = p - 1;
+  while (q >= 0) {
+    let st: ast.Stmt = stmts[q];
+    match (st) {
+      ast.StmtVar(v) => {
+        if (v.name == idx) {
+          return elb_is_nonneg_int(v.init);
+        }
+      },
+      ast.StmtAssign(a) => {
+        if (a.target == idx) {
+          return elb_is_nonneg_int(a.value);
+        }
+      },
+      _ => {}
+    }
+    if (elb_assigns_stmt(st, idx) || elb_binds_stmts([st], idx)) {
+      return false;
+    }
+    q = q - 1;
   }
   return false;
 }
@@ -22683,7 +22784,8 @@ function elb_is_monotonic_incr(v: ast.Expr, idx: string): boolean {
 }
 
 // elb_mark_stmt / elb_mark_stmts / elb_mark_expr rebuild the subtree, setting
-// `unchecked` on every `arr[idx]` read (both operands the exact idents). They do
+// `unchecked` on every `arr[idx]` read (`idx` the exact ident, the array the
+// exact path `arr`). They do
 // NOT descend into lambda bodies or defer actions — that code runs later, when
 // idx may have advanced past len.
 function elb_mark_stmts(stmts: ast.Stmt[], idx: string, arr: string): ast.Stmt[] {
@@ -22736,19 +22838,38 @@ function elb_mark_stmt(st: ast.Stmt, idx: string, arr: string): ast.Stmt {
   return st;
 }
 
+// elb_mark_cond marks the reads a loop guard makes once its bounding conjunct
+// has held: everything to the right of that conjunct along the `&&` chain.
+// `past` reports whether the conjunct has been evaluated, and held, by the time
+// the expression yields true.
+struct CondMark { e: ast.Expr, past: boolean }
+
+function elb_mark_cond(c: ast.Expr, m: LenLoopMatch, arr: string): CondMark {
+  match (c) {
+    ast.ExprBinary(b) => {
+      if (b.op == "&&") {
+        let l: CondMark = elb_mark_cond(b.left, m, arr);
+        if (l.past) {
+          return CondMark { e: ast.ExprBinary { op: b.op, left: l.e, right: elb_mark_expr(b.right, m.idx, arr), line: b.line, col: b.col, ty: b.ty }, past: true };
+        }
+        let r: CondMark = elb_mark_cond(b.right, m, arr);
+        return CondMark { e: ast.ExprBinary { op: b.op, left: b.left, right: r.e, line: b.line, col: b.col, ty: b.ty }, past: r.past };
+      }
+    },
+    _ => {}
+  }
+  let g: LenLoopMatch = elb_loop_match(c);
+  return CondMark { e: c, past: g.ok && g.idx == m.idx && g.arr == m.arr && g.bound == m.bound };
+}
+
 function elb_mark_expr(e: ast.Expr, idx: string, arr: string): ast.Expr {
   match (e) {
     ast.ExprIndex(ix) => {
       let mark: boolean = ix.unchecked;
-      match (ix.array) {
-        ast.ExprIdent(aid) => {
-          match (ix.index) {
-            ast.ExprIdent(iid) => {
-              if (aid.name == arr && iid.name == idx) {
-                mark = true;
-              }
-            },
-            _ => {}
+      match (ix.index) {
+        ast.ExprIdent(iid) => {
+          if (iid.name == idx && elb_path(ix.array) == arr) {
+            mark = true;
           }
         },
         _ => {}
