@@ -29,9 +29,6 @@ import (
 // with a leak check; this one covers the path the CLI actually takes.
 func TestSelfHostSemanticProduction(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("the CLI driver takes host filesystem paths as argv")
-	}
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatal(err)
@@ -3182,33 +3179,29 @@ function main(): i32 {
 }
 `},
 
-	// A reference cast to `usize`. The address is the box's own slot, so the
-	// cast converts nothing and owns nothing — and the array's LAST typed use
-	// is the cast itself, so without the anchor the planner releases the box
-	// there and __memcpy reads freed bytes. This is the shape std/string's
-	// `bytes()` is written in.
-	//
-	// WHICH address the cast answers is #8799's open question — native gives
-	// the data pointer and the self-host the box — so this case compares the
-	// two lowerings of ONE compiler and settles nothing about that.
+	// The primary compiler's reference-to-usize cast preserves the value's
+	// representation. Read an owned array's length header through the raw
+	// address after its last typed use, so sanitizer catches a missing anchor.
+	// A byte view's opaque slot may be tagged: check identity across a call,
+	// without treating that slot as a data pointer or overwriting box headers.
 	{name: "a-reference-cast-to-an-address", atLeast: 2, want: "0|", src: `
-function copy_bytes(s: string): i32 {
+import "std/string";
+@noinline function keep_slot(p: usize): usize { return p; }
+function check_slot(s: string): i32 {
     let n: i32 = s.len();
-    let out: u8[] = __alloc_u8(n);
-    if (n > 0) {
-        __memcpy(out as usize, s.as_bytes() as usize, n);
-    }
-    let t: i32 = 0;
-    let i: i32 = 0;
-    while (i < out.len()) { t = t + (out[i] as i32); i = i + 1; }
-    return t;
+    let address: usize = s.bytes() as usize;
+    if (__raw_load_ptr(address, 0) != n as usize) { return 1; }
+    let view: [u8] = s.as_bytes();
+    let slot: usize = keep_slot(view as usize);
+    if (slot != view as usize) { return 2; }
+    return 0;
 }
 
 function main(): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
-    while (i < 50) { t = t + copy_bytes("abc"); i = i + 1; }
-    return t % 7;
+    while (i < 50) { t = t + check_slot("abc"); i = i + 1; }
+    return t;
 }
 `},
 
@@ -6176,6 +6169,13 @@ function main(): i32 {
     print(d.size().to_string() + " " + e.size().to_string());
     return 0;
 }
+`},
+	// With no other implementer, a missing str/string dispatch arm must fail
+	// compilation instead of being masked by an unrelated record's arm.
+	{name: "a-str-only-dyn-implementation-is-produced", atLeast: 2, want: "0|", src: `
+trait Size { function size(self: Self): i32; }
+impl Size for str { function size(self: str): i32 { return self.len(); } }
+function main(): i32 { let d: dyn Size = "abc"; return d.size() - 3; }
 `},
 	// An impl on `str` is the impl on `string`, so a counted string boxes into
 	// the dyn through it, owned by the box: returned from a local, and merged

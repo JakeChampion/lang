@@ -80,6 +80,10 @@ func (up *FetchUpstream) serve(c net.Conn) {
 		return
 	}
 	method, target := parts[0], parts[1]
+	if target == "/kept" || target == "/kept-redir" {
+		serveKept(c, target)
+		return
+	}
 	host := headerValue(head, "Host")
 	redirect := func(status int, location string) []byte {
 		return []byte(fmt.Sprintf("HTTP/1.1 %d Elsewhere\r\nLocation: %s\r\nContent-Length: 0\r\n\r\n", status, location))
@@ -214,6 +218,32 @@ func (up *FetchUpstream) serve(c net.Conn) {
 	_, _ = c.Write(resp)
 }
 
+// serveKept answers /kept and /kept-redir on one connection for as long
+// as the client sends them, never asking it to close: /kept-redir
+// redirects to /kept, and /kept answers how many requests the connection
+// has carried.
+func serveKept(c net.Conn, target string) {
+	for served := 1; ; served++ {
+		resp := "HTTP/1.1 302 Found\r\nLocation: /kept\r\nContent-Length: 0\r\n\r\n"
+		if target == "/kept" {
+			text := fmt.Sprintf("req=%d", served)
+			resp = fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s", len(text), text)
+		}
+		if _, err := c.Write([]byte(resp)); err != nil {
+			return
+		}
+		head, _, ok := readRequest(c)
+		if !ok {
+			return
+		}
+		parts := strings.Split(strings.SplitN(head, "\r\n", 2)[0], " ")
+		if len(parts) < 3 || (parts[1] != "/kept" && parts[1] != "/kept-redir") {
+			return
+		}
+		target = parts[1]
+	}
+}
+
 // echoLine is what the /echo target answers: the request as the origin
 // saw it.
 func echoLine(method, target, host, body, trace, auth, cookie, accept string) string {
@@ -308,7 +338,10 @@ func headerValue(head, name string) string {
 // relative Location resolved, a 303 and a 302-after-POST rewritten to
 // GET, a 307 keeping the POST, credentials dropped across origins and
 // kept within one; the reset cases pin the one retry of an idempotent
-// request and none of a POST. The policy cases pin `plat.http` refusing
+// request and none of a POST. The pool cases pin a held `Sockets`
+// carrying two requests on one connection and a one-shot `send`
+// following a same-origin redirect on the connection that carried it.
+// The policy cases pin `plat.http` refusing
 // a loopback origin that `send` reaches, the numeric host forms refused
 // before any lookup, and the proxy SetFetchProxy names taking every
 // request for a host that is not loopback (through `send` and through
@@ -457,6 +490,12 @@ function main(): i32 {
     show("sameorigin", fetch.send(fetch.get(base() + "/sameorigin").with_header("Authorization", "Bearer t").with_header("Cookie", "a=1")));
     show("reset", fetch.send(fetch.get(base() + "/reset")));
     show("resetpost", fetch.send(fetch.request("POST", base() + "/reset-post").with_text("x")));
+    let kept: fetch.Sockets = fetch.sockets();
+    let open: fetch.Policy = fetch.Policy { public_only: false, proxies: fetch.proxy_env() };
+    show("kept1", fetch.send_on(kept, fetch.get(base() + "/kept"), open));
+    show("kept2", fetch.send_on(kept, fetch.get(base() + "/kept"), open));
+    fetch.close_idle(kept);
+    show("keptredir", fetch.send(fetch.get(base() + "/kept-redir")));
     match (fetch.send(fetch.get(base() + "/nothing"))) {
         Ok(resp) => {
             match (resp.ok_or_status()) {
@@ -747,6 +786,9 @@ xorigin: 201 [XORIGIN] headers: content-length=XORIGINLEN trailers:
 sameorigin: 201 [SAMEORIGIN] headers: content-length=SAMEORIGINLEN trailers:
 reset: 200 [retried] headers: content-length=7 trailers:
 resetpost: error i/o: Connection reset by peer
+kept1: 200 [req=1] headers: content-length=5 trailers:
+kept2: 200 [req=2] headers: content-length=5 trailers:
+keptredir: 200 [req=2] headers: content-length=5 trailers:
 status: 404
 `
 
