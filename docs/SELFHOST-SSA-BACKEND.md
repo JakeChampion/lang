@@ -244,12 +244,17 @@ register is free or its holder dies at the definition, and a loop-carried
 operand takes its phi's register whenever no use of the phi is reachable
 from the operand's definition without passing the header
 (`ssa.phi_mates`, `ssa.mate_interferes`), so `sum = sum + i` computes into
-`sum`'s register and the back edge moves nothing. With no register free, the
+`sum`'s register and the back edge moves nothing. A phi whose operand from
+before it outlives it, as the loop header's phi does at each merge of an
+else-if chain inside the loop, is mated with the first operand that dies by
+the merge instead. With no register free, the
 value spilled is the one read least per position its interval covers, each
 read weighted 8 per enclosing loop (`ssa.cheapest_active`): a value that sits
 across a whole loop body frees more by leaving than a temporary read on the
 next line, and taking that rule instead of the lowest raw weight made the
-`std/crypto` digests 1.3x to 4x faster (#10615). A spilled value takes its
+`std/crypto` digests 1.3x to 4x faster (#10615). The eviction spills the
+values that shared the register only where their intervals still reach the
+evicting value; one that ended keeps it (`ssa.still_holds`). A spilled value takes its
 phi mate's frame slot by the same rule (`ssa.assign_spill_slots`), so a loop
 with more carried values than registers does not copy slot to slot on its
 back edge: the whole compiler's x86-64 text is 3.8% shorter for it, and a
