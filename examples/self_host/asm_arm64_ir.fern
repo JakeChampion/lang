@@ -3483,6 +3483,14 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("heap");
     s = s.need(op);
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_" + op + "\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == 364 || o.kind_tag == 365) {  // setxattr, lsetxattr
+    // [pathbox, namebox, valuebox] with the value on top.
+    let op: string = ir.kind_name(o.kind_tag);
+    s = s.need("heap");
+    s = s.need(op);
+    s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+    s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_" + op + "\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 263) {  // create_symlink
     s = s.need("heap");
     s = s.need("create_symlink");
@@ -10183,6 +10191,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("lgetxattr")) {
       fs_src = fs_src + " " + asmcore.rt_src_getxattr(tgt, false);
     }
+    if (s.has_need("setxattr")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr(tgt, true);
+    }
+    if (s.has_need("lsetxattr")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr(tgt, false);
+    }
     if (s.has_need("rename_noreplace")) {
       fs_src = fs_src + " " + asmcore.rt_src_rename_noreplace(tgt);
     }
@@ -11472,7 +11486,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
     "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec",
     "remove_file", "create_dir_all", "create_dir", "remove_dir",
-    "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "chmod", "chmod_at", "truncate",
+    "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "setxattr", "lsetxattr", "chmod", "chmod_at", "truncate",
     "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times", "read_link",
     "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
     "temp_dir", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",

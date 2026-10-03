@@ -34,3 +34,31 @@ func getxattrBytes(path, name string, follow bool) ([]byte, error) {
 	}
 	return buf[:r], nil
 }
+
+// setxattrBytes is setxattr(2), BSD 236: (path, name, value, size,
+// position, options), with XATTR_NOFOLLOW for the `l` form.
+func setxattrBytes(path, name string, value []byte, follow bool) error {
+	const sysSetxattr = 236
+	p, err := syscall.BytePtrFromString(path)
+	if err != nil {
+		return err
+	}
+	n, err := syscall.BytePtrFromString(name)
+	if err != nil {
+		return err
+	}
+	var options uintptr
+	if !follow {
+		options = 1
+	}
+	var v unsafe.Pointer
+	if len(value) > 0 {
+		v = unsafe.Pointer(&value[0])
+	}
+	_, _, errno := syscall.Syscall6(sysSetxattr, uintptr(unsafe.Pointer(p)), uintptr(unsafe.Pointer(n)),
+		uintptr(v), uintptr(len(value)), 0, options)
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}
