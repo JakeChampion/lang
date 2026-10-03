@@ -9998,7 +9998,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // The register entries of the helpers that have one (ssa_reg_helper),
     // called from every unit like the stack entries they sit beside.
     "__fn___fern_arr_dec.r", "__fn___fern_str_free.r",
-    "__fn___fern_str_eq.r", "__fn___fern_arr_inc_elems.r",
+    "__fn___fern_str_eq.r", "__fn___fern_arr_inc_elems.r", "__fn___fern_alloc_reuse.r",
   ];
   let i: i32 = 0;
   while (i < names.len()) {
