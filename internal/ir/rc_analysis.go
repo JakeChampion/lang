@@ -3656,12 +3656,10 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		}
 		return tainted[x.Name]
 	case *ast.CastExpr:
-		// A scalar result holds no buffer, like the scalar name above; what a
-		// raw address keeps alive is the CastExpr escape taint's business.
-		if !ast.IsPointerType(x.Target) {
-			return false
-		}
-		return b.rhsTainted(x.Inner, tainted)
+		// A scalar result holds no buffer, like the scalar name above. A cast
+		// to a counted type views whatever the address points at without
+		// taking a reference (`cellPtr as string`), so it is borrowed.
+		return ast.IsPointerType(x.Target)
 	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.CharLit:
 		// A scalar literal aliases nothing, so a fresh owned result whose only
 		// "borrowed" input is a literal arg is reclaimable — e.g.
