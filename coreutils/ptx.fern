@@ -444,8 +444,8 @@ function in_list(list: string[], word: string, fold: boolean): boolean {
 }
 
 // ---- numeric options --------------------------------------------------------
-// xstrtoimax in base 0 — decimal, `0` octal, `0x` hex and this glibc's
-// `0b` binary — and the value must be positive and inside intmax_t.
+// Numeric options accept decimal, leading-zero octal and 0x hexadecimal.
+// The value must be positive and fit intmax_t.
 function parse_num(v: string, what: string): i64 {
   let i: i32 = 0;
   while (i < v.len() && gnu.is_blank(v[i] as i32)) {
@@ -459,9 +459,6 @@ function parse_num(v: string, what: string): i64 {
   let base: i32 = 10;
   if (i + 1 < v.len() && v[i] as i32 == 48 && (v[i + 1] as i32 == 120 || v[i + 1] as i32 == 88)) {
     base = 16;
-    i = i + 2;
-  } else if (i + 1 < v.len() && v[i] as i32 == 48 && (v[i + 1] as i32 == 98 || v[i + 1] as i32 == 66)) {
-    base = 2;
     i = i + 2;
   } else if (i < v.len() && v[i] as i32 == 48) {
     base = 8;
