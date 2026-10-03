@@ -6271,9 +6271,95 @@ function emit_san_abort(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x0, #2\n");
   s = s.write("    mov x8, #64\n");
   s = s.write("    svc #0\n");
-  s = s.write("    mov x0, #124\n");
+  s = s.write(san_report_exit());
+  return s;
+}
+
+// san_report_exit ends a sanitizer report: exit 124, through the backtrace
+// walk unless FERN_BACKTRACE=0.
+function san_report_exit(): string {
+  if (asmcore.backtrace_on()) {
+    return "    mov x19, #124\n    b __fern_bt_exit\n";
+  }
+  return "    mov x0, #124\n    mov x8, #93\n    svc #0\n";
+}
+
+// emit_bt_exit emits __fern_bt_exit: "backtrace:" and then each return
+// address up the frame-pointer chain as "  0x<16 hex>", the native backends'
+// format, and exit with the status in x19. Bounded to 64 frames, and a frame
+// pointer that is not above the stack pointer, not 8-aligned, or not climbing
+// ends the walk rather than faulting the report, as does a return address in
+// the low 64 KiB, which is _start's frame reading the initial stack. Emitted with the quarantine's
+// report, which every sanitizer build carries.
+function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .section .rodata\n");
+  s = s.write(".Lsan_bt:\n    .ascii \"backtrace:\\n\"\n");
+  s = s.write("    .text\n");
+  s = s.write("    .globl __fern_bt_exit\n");
+  s = s.write("__fern_bt_exit:\n");
+  s = s.write("    adrp x1, .Lsan_bt\n");
+  s = s.write("    add x1, x1, :lo12:.Lsan_bt\n");
+  s = s.write("    mov x2, #11\n");
+  s = s.write("    mov x0, #2\n");
+  s = s.write("    mov x8, #64\n");
+  s = s.write("    svc #0\n");
+  s = s.write("    mov x20, x29\n");
+  s = s.write("    mov x21, #64\n");
+  s = s.write("    mov x22, sp\n");
+  s = s.write(".Lbt_loop:\n");
+  s = s.write("    cbz x21, .Lbt_done\n");
+  s = s.write("    cmp x20, x22\n");
+  s = s.write("    b.ls .Lbt_done\n");
+  s = s.write("    and x23, x20, #7\n");
+  s = s.write("    cbnz x23, .Lbt_done\n");
+  s = s.write("    ldr x1, [x20, #8]\n");
+  s = s.write("    cmp x1, #16, lsl #12\n");
+  s = s.write("    b.lo .Lbt_done\n");
+  s = s.write("    bl .Lbt_hex\n");
+  s = s.write("    mov x22, x20\n");
+  s = s.write("    ldr x20, [x20]\n");
+  s = s.write("    sub x21, x21, #1\n");
+  s = s.write("    b .Lbt_loop\n");
+  s = s.write(".Lbt_done:\n");
+  s = s.write("    mov x0, x19\n");
   s = s.write("    mov x8, #93\n");
   s = s.write("    svc #0\n");
+  // .Lbt_hex(x1 = value): one "  0x<16 hex>\n" line on stderr, nibbles
+  // written right to left.
+  s = s.write(".Lbt_hex:\n");
+  s = s.write("    sub sp, sp, #32\n");
+  s = s.write("    mov w2, #32\n");
+  s = s.write("    strb w2, [sp]\n");
+  s = s.write("    strb w2, [sp, #1]\n");
+  s = s.write("    mov w2, #48\n");
+  s = s.write("    strb w2, [sp, #2]\n");
+  s = s.write("    mov w2, #120\n");
+  s = s.write("    strb w2, [sp, #3]\n");
+  s = s.write("    mov w2, #10\n");
+  s = s.write("    strb w2, [sp, #20]\n");
+  s = s.write("    mov x3, #16\n");
+  s = s.write("    add x4, sp, #19\n");
+  s = s.write(".Lbt_hloop:\n");
+  s = s.write("    and x2, x1, #15\n");
+  s = s.write("    cmp x2, #10\n");
+  s = s.write("    b.lo .Lbt_hdec\n");
+  s = s.write("    add x2, x2, #87\n");
+  s = s.write("    b .Lbt_hput\n");
+  s = s.write(".Lbt_hdec:\n");
+  s = s.write("    add x2, x2, #48\n");
+  s = s.write(".Lbt_hput:\n");
+  s = s.write("    strb w2, [x4]\n");
+  s = s.write("    sub x4, x4, #1\n");
+  s = s.write("    lsr x1, x1, #4\n");
+  s = s.write("    subs x3, x3, #1\n");
+  s = s.write("    b.ne .Lbt_hloop\n");
+  s = s.write("    mov x0, #2\n");
+  s = s.write("    mov x1, sp\n");
+  s = s.write("    mov x2, #21\n");
+  s = s.write("    mov x8, #64\n");
+  s = s.write("    svc #0\n");
+  s = s.write("    add sp, sp, #32\n");
+  s = s.write("    ret\n");
   return s;
 }
 
@@ -6297,9 +6383,10 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x0, #2\n");
   s = s.write("    mov x8, #64\n");
   s = s.write("    svc #0\n");
-  s = s.write("    mov x0, #124\n");
-  s = s.write("    mov x8, #93\n");
-  s = s.write("    svc #0\n");
+  s = s.write(san_report_exit());
+  if (asmcore.backtrace_on()) {
+    s = emit_bt_exit(s);
+  }
   return s;
 }
 
