@@ -282,6 +282,60 @@ function import_graph(imports: LoadedModule[], ids: string[], pfxs: string[]): I
   return ImportGraph { starts: starts, edges: edges };
 }
 
+// import_cycle returns the index in `imports` of the first module the
+// entry's imports reach again while it is still being loaded — an import
+// cycle, which native refuses — or -1 when there is none. A cycle inside the
+// stdlib (under `root`) is allowed, as native allows it: std/string and
+// std/i32 import each other.
+pub function import_cycle(entry: parser.Module, imports: LoadedModule[], root: string): i32 {
+  let ids: string[] = module_ids(imports);
+  let pfxs: string[] = assign_prefixes(imports);
+  let g: ImportGraph = import_graph(imports, ids, pfxs);
+  let state: i32[] = [];
+  while (state.len() < imports.len()) {
+    state = state.append(0);
+  }
+  for p in import_prefixes(entry, ids, pfxs) {
+    let t: i32 = index_of_str(p, pfxs);
+    if (t >= 0 && state[t] == 0) {
+      let (found, st) = cycle_from(t, g, ids, root, state);
+      if (found >= 0) {
+        return found;
+      }
+      state = st;
+    }
+  }
+  return 0 - 1;
+}
+
+// cycle_from walks module k depth-first. `state` is 0 for a module not yet
+// reached, 1 for one on the walk's path, 2 for one finished.
+function cycle_from(k: i32, g: ImportGraph, ids: string[], root: string, state: i32[]): (i32, i32[]) {
+  let st: i32[] = state.with(k, 1);
+  let e: i32 = g.starts[k];
+  while (e < g.starts[k + 1]) {
+    let t: i32 = g.edges[e];
+    if (t >= 0 && st[t] == 1 && !under_root(ids[t], root)) {
+      return (t, st);
+    }
+    if (t >= 0 && st[t] == 0) {
+      let (found, st2) = cycle_from(t, g, ids, root, st);
+      if (found >= 0) {
+        return (found, st2);
+      }
+      st = st2;
+    }
+    e = e + 1;
+  }
+  return (0 - 1, st.with(k, 2));
+}
+
+// under_root reports whether the module identity `ident` lies under the
+// stdlib root `root`.
+pub function under_root(ident: string, root: string): boolean {
+  return root.len() > 0 && ident.len() > root.len() && slice_unchecked(ident, 0, root.len() + 1) == root + "/";
+}
+
 // variant_scope is the prefix of every module `mod` reaches through its
 // imports and theirs, `pub use` included: the modules whose enum variants it
 // may name bare. It is native's import closure (modload.importClosures), which

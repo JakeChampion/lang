@@ -1471,6 +1471,11 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
     return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
   }
   let entry_r: parser.Module = flatten.resolve_imports(entry_mod, dir_slash, root);
+  let cycle: i32 = flatten.import_cycle(entry_r, loaded, root);
+  if (cycle >= 0) {
+    eprint("fern: import cycle detected including " + files[cycle]);
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
+  }
   let merged: parser.Module = flatten.bundle(entry_r, loaded, target);
   // Fill omitted trailing args from default parameter values up front, so the
   // checker, SSA, and interpreter all see complete calls.
