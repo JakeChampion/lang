@@ -6209,8 +6209,13 @@ function operator_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo
     }
     return t_unknown("bitwise operands must both be integers");
   }
+  // A shift keeps its left operand's type, except that an unsuffixed literal
+  // there reads at the right's width, as in native's commonIntegerWidth.
   if (b.op == "<<" || b.op == ">>") {
     if (is_integer(lt) && is_integer(rt)) {
+      if (int_literal_tree(b.left) && !int_literal_tree(b.right) || unsettled_int_literal(b.left)) {
+        return rt;
+      }
       return lt;
     }
     let sovt: typeinfo.Type = s.binop_overload_ret(b.op, lt);
