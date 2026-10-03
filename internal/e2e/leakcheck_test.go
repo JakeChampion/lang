@@ -87,13 +87,13 @@ func emitLeakCheck(t *testing.T, backend, src string, leakCheck bool) string {
 // "stderr only, stdout untouched", so combined output won't do).
 func runLeakCheckX86_64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
-	_, runner := x86_64Tooling(t)
+	runner := e2eharness.X86_64Runner(t)
 	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetX86_64Linux, src, []string{"FERN_LEAKCHECK=1"})
 	return runSplit(t, runX86_64Bin(runner, bin))
 }
 
-// runLeakCheckArm64 is the arm64 sibling (qemu; SKIPs without the
-// aarch64 toolchain — runs in CI).
+// runLeakCheckArm64 is the arm64 sibling (qemu; SKIPs without qemu-aarch64 —
+// runs in CI).
 func runLeakCheckArm64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
 	return runLeakCheckArm64Args(t, src)
@@ -103,7 +103,7 @@ func runLeakCheckArm64(t *testing.T, src string) (string, string, int) {
 // as its argv[1..].
 func runLeakCheckArm64Args(t *testing.T, src string, args ...string) (string, string, int) {
 	t.Helper()
-	_, qemu := arm64Tooling(t)
+	qemu := e2eharness.Arm64Runner(t)
 	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetArm64Linux, src, []string{"FERN_LEAKCHECK=1"})
 	return runSplit(t, runArm64Bin(qemu, bin, args...))
 }

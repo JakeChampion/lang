@@ -69,8 +69,9 @@ func TestArm64StrcatInlineFormRoundTrips(t *testing.T) {
 	}
 }
 
-// strcatCapCrossingSrc makes a 16-byte result, one past the cap, once per
-// round. It must heap-allocate, and the round's exit sweep must free it.
+// strcatCapCrossingSrc makes a 16-byte result, one past the old cap, once per
+// round. Each concat heap-allocates, so 100 rounds are 100 allocations, and
+// each round's exit sweep frees its own.
 const strcatCapCrossingSrc = `function pick(i: i32): string { if (i % 2 == 0) { return "abcdefgh"; } return "ABCDEFGH"; }
 function round(i: i32): i32 {
     let s: string = pick(i) + "ijklmnop";
@@ -84,23 +85,22 @@ function main(): i32 {
     return acc % 83;
 }`
 
-func TestArm64StrcatPastCapAllocatesAndFrees(t *testing.T) {
+func TestArm64StrcatAllocatesOncePerRound(t *testing.T) {
 	_, stderr, code := runLeakCheckArm64(t, strcatCapCrossingSrc)
 	if want := (100 * int('p')) % 83; code != want {
 		t.Fatalf("exit code %d, want %d", code, want)
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
 	if allocs != 100 {
-		t.Errorf("allocs=%d, want 100: a 16-byte concat result is one past the inline cap and must heap-allocate", allocs)
+		t.Errorf("allocs=%d, want 100: one concat result per round", allocs)
 	}
 	if frees != allocs || live != 0 {
 		t.Errorf("got allocs=%d frees=%d live=%d, want every round's buffer freed", allocs, frees, live)
 	}
 }
 
-// An inline string has no address, so a slice header cannot alias it:
-// as_bytes copies the bytes out first. 12 + 'a' + 'l' = 217.
-func TestArm64StrcatInlineAsBytes(t *testing.T) {
+// as_bytes over a built string and over the empty one. 12 + 'a' + 'l' = 217.
+func TestArm64StrcatAsBytes(t *testing.T) {
 	_, _, code := runLeakCheckArm64(t, `function main(): i32 {
     let e: string = "";
     if (e.as_bytes().len() != 0) { return 1; }
@@ -113,9 +113,8 @@ func TestArm64StrcatInlineAsBytes(t *testing.T) {
 	}
 }
 
-// __str_slice reads the base's length and then materialises its bytes; on
-// an inline base both must see the packed len word.
-func TestArm64StrcatInlineSlice(t *testing.T) {
+// __str_slice reads a built base's length and then materialises its bytes.
+func TestArm64StrcatSlice(t *testing.T) {
 	_, _, code := runLeakCheckArm64(t, `function main(): i32 {
     let s: string = "abcde" + "fghijklmn";
     match (s[8:12]) {
@@ -129,9 +128,8 @@ func TestArm64StrcatInlineSlice(t *testing.T) {
 	}
 }
 
-// __fern_strbuf_append reads the string's bytes; an inline argument must be
-// spilled before its len word is untagged. 4 + 'd' = 104.
-func TestArm64StrcatInlineStrbufAppend(t *testing.T) {
+// __fern_strbuf_append reads a built argument's bytes. 4 + 'd' = 104.
+func TestArm64StrcatStrbufAppend(t *testing.T) {
 	_, stderr, code := runLeakCheckArm64(t, `function pick(i: i32): string { if (i == 0) { return "ab"; } return "AB"; }
 function main(): i32 {
     strbuf_reset();

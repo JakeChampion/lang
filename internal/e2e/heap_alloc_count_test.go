@@ -43,7 +43,7 @@ func emitAllocCount(t *testing.T, target, src string) string {
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	return e2eharness.EmitAsmWithSelfHost(t, e2eharness.SelfHostCLI(t), target, srcPath, nil)
+	return e2eharness.EmitAsmWithSelfHost(t, e2eharness.SelfHostCLI(t), target, srcPath)
 }
 
 var allocCountTargets = []string{e2eharness.TargetX86_64Linux, e2eharness.TargetArm64Linux}

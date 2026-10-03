@@ -56,11 +56,11 @@ func onlyArm(t *testing.T, target, emitted, live string) {
 func TestTargetOSBranchKeepsOnlyTheLiveArm(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	t.Run("x86-64-linux", func(t *testing.T) {
-		asm := e2eharness.EmitAsmWithSelfHost(t, cli, e2eharness.TargetX86_64Linux, targetOSSource(t), nil)
+		asm := e2eharness.EmitAsmWithSelfHost(t, cli, e2eharness.TargetX86_64Linux, targetOSSource(t))
 		onlyArm(t, "x86-64-linux", asm, "hosted arm")
 	})
 	t.Run("arm64-darwin", func(t *testing.T) {
-		asm := e2eharness.EmitAsmWithSelfHost(t, cli, e2eharness.TargetArm64Darwin, targetOSSource(t), nil)
+		asm := e2eharness.EmitAsmWithSelfHost(t, cli, e2eharness.TargetArm64Darwin, targetOSSource(t))
 		onlyArm(t, "arm64-darwin", asm, "darwin arm")
 	})
 	t.Run("wasm32-wasi", func(t *testing.T) {
