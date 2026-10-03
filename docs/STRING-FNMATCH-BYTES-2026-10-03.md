@@ -40,6 +40,11 @@ and scales from 16,384 to 1,048,576 calls. Task-owned heavy jobs were idle;
 the rest of the desktop was not isolated. Allocation counts are collected
 separately from timed binaries.
 
+The pattern/input pairs are `terminal` / `terminal`, `*term*color` /
+`xterm-truecolor`, `[[:alpha:]][[:digit:]][[:space:]]` / `a5` followed by a
+space, and `[![:unknown:]]` / `a`. The first three must match; the last
+must fail on every iteration.
+
 | Workload | Before median | After median | Before allocations | After allocations |
 | --- | ---: | ---: | ---: | ---: |
 | Literal | 22.700 ms | 19.784 ms | 1,048,583 | 7 |
