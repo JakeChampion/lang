@@ -10550,6 +10550,8 @@ func storesArgument(name string, i int) bool {
 		return i == 2
 	case "__method_Map_set":
 		return i == 1 || i == 2
+	case "__method_Cell_set":
+		return i == 1
 	}
 	return false
 }

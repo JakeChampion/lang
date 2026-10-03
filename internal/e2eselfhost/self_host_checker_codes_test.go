@@ -2000,6 +2000,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-some-literal-settles-ok", "function h(): Option[i32] { let v: u8 = Some(200)?; let w: i64 = Some(5)?; let f: f32 = Some(3.5)?; return Some(v as i32 + w as i32 + f as i32); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"try-some-literal-out-of-range", "function h(): Option[i32] { let v: u8 = Some(300)?; return Some(v as i32); }\nfunction main(): i32 { return 0; }\n", []string{"E047"}},
 		{"try-some-typed-payload", "function h(): Option[i32] { let x: i32 = 4; let v: f32 = Some(x)?; return Some(1); }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
+		// Cell.set keeps its argument, so a str view is not lent (#10702).
+		{"cell-set-str-view", "function main(): i32 { let b: string = \"abcdefgh\"; let u: str = slice_unchecked(b, 0, 8); let c: Cell[string] = cell_new(b); c.set(u); return c.get().len(); }\n", []string{"E038"}},
 		{"i32-min-literal-local-ok", "function main(): i32 { let k = -2147483648; return k + 2147483647 + 1; }\n", nil},
 		{"ctor-builtin-settles-ok", "function takes(o: Option[i64]): i32 { return 0; }\nfunction main(): i32 { return takes(Some(40)) + takes(Option.Some(1)); }\n", nil},
 		{"enum-non-reserved-ok", "enum Color { Red, Green }\nfunction main(): i32 { return 0; }\n", nil},
