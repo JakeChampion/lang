@@ -296,6 +296,9 @@ const (
 	sysRenameat = 264
 	// renameat2(2) 316: renameat plus a flags word.
 	sysRenameat2 = 316
+	// getxattr(2) 191 / lgetxattr(2) 192: an extended attribute's value.
+	sysGetxattr  = 191
+	sysLgetxattr = 192
 	sysFchmodat  = 268
 	sysFchmodat2 = 452
 	sysUtimensat = 280
@@ -701,6 +704,7 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		g.usesRemoveDir || g.usesCreateLink || g.usesCreateSymlink || g.usesTempDir ||
 		g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink ||
 		g.usesRename || g.usesRenameNoreplace || g.usesRenameExchange ||
+		g.usesGetxattr || g.usesLgetxattr ||
 		g.usesChmod || g.usesChmodAt || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt {
 		g.usesFree = true
@@ -1106,6 +1110,12 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesRenameNoreplace {
 		g.emitRenameFlagsRuntime("__fern_rename_noreplace", "rnnr", renameNoreplace)
+	}
+	if g.usesGetxattr {
+		g.emitGetxattrRuntime("__fern_getxattr", "gxat", sysGetxattr)
+	}
+	if g.usesLgetxattr {
+		g.emitGetxattrRuntime("__fern_lgetxattr", "lgxa", sysLgetxattr)
 	}
 	if g.usesRenameExchange {
 		g.emitRenameFlagsRuntime("__fern_rename_exchange", "rnex", renameExchange)
@@ -1825,6 +1835,9 @@ type generator struct {
 	// renameat2 with RENAME_NOREPLACE / RENAME_EXCHANGE.
 	usesRenameNoreplace bool
 	usesRenameExchange  bool
+	// getxattr / lgetxattr over a path and an attribute name.
+	usesGetxattr  bool
+	usesLgetxattr bool
 	// fchmodat / fchmodat2 over a path, a mode and a follow flag.
 	usesChmodAt bool
 	// truncate(2) over a path and a length.
@@ -2512,6 +2525,16 @@ func (g *generator) recordUse(target string) {
 	case "rename_noreplace":
 		g.usesRenameNoreplace = true
 		g.usesAlloc = true
+		g.usesIoError = true
+	case "getxattr":
+		g.usesGetxattr = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+		g.usesIoError = true
+	case "lgetxattr":
+		g.usesLgetxattr = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
 		g.usesIoError = true
 	case "rename_exchange":
 		g.usesRenameExchange = true
@@ -4247,6 +4270,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_rename"
 		case "rename_noreplace":
 			target = "__fern_rename_noreplace"
+		case "getxattr":
+			target = "__fern_getxattr"
+		case "lgetxattr":
+			target = "__fern_lgetxattr"
 		case "rename_exchange":
 			target = "__fern_rename_exchange"
 		case "chmod":
@@ -17605,6 +17632,106 @@ func (g *generator) emitRenameRuntime() {
 		g.emit("mov edx, -100")
 		g.emit("mov r10, r14")
 	})
+}
+
+// xattrSizeMax is XATTR_SIZE_MAX, the largest value Linux stores, so a
+// buffer of it always holds the whole answer.
+const xattrSizeMax = 65536
+
+// emitGetxattrRuntime emits `name(path, attr) → Result[string, IoError]` —
+// getxattr(2) or lgetxattr(2) into a heap buffer of xattrSizeMax, the value
+// copied out into a fresh string. The IoError names `path`.
+//
+// System V: rdi = path string value, rsi = attribute name string value.
+func (g *generator) emitGetxattrRuntime(name, tag string, sysno int) {
+	g.line("")
+	g.line(".globl " + name)
+	g.line(".type " + name + ", @function")
+	g.label(name)
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // pathz
+	g.emit("push r12") // copy scratch
+	g.emit("push r13") // lengths / errno / boxes
+	g.emit("push r14") // namez
+	g.emit("push r15") // syscall result
+	// 6 pushes ⇒ rsp≡8 mod 16; sub 72 realigns. Slots:
+	//   [rbp-48] emitStrDataPtr inline-spill scratch
+	//   [rbp-56] path string value
+	//   [rbp-64] attribute name string value
+	//   [rbp-72] path len
+	//   [rbp-80] name len
+	//   [rbp-88] the value buffer
+	g.emit("sub rsp, 72")
+	g.emit("mov [rbp - 56], rdi")
+	g.emit("mov [rbp - 64], rsi")
+	g.emitPathzCopy("rbx", "[rbp - 56]", "[rbp - 48]", tag+"1")
+	g.emit("mov [rbp - 72], r13")
+	g.emitPathzCopy("r14", "[rbp - 64]", "[rbp - 48]", tag+"2")
+	g.emit("mov [rbp - 80], r13")
+	g.emit(fmt.Sprintf("mov edi, %d", xattrSizeMax))
+	g.emit("call __fern_alloc")
+	g.emit("mov [rbp - 88], rax")
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, r14")
+	g.emit("mov rdx, rax")
+	g.emit(fmt.Sprintf("mov r10d, %d", xattrSizeMax))
+	g.emitSyscall(sysno)
+	g.emit("mov r15, rax")
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, [rbp - 72]")
+	g.emit("add rsi, 1")
+	g.emit("call __fern_free")
+	g.emit("mov rdi, r14")
+	g.emit("mov rsi, [rbp - 80]")
+	g.emit("add rsi, 1")
+	g.emit("call __fern_free")
+	g.emit("test r15, r15")
+	g.emit("js .L" + tag + "_err")
+	// L2 rc-header layout: payload = N data bytes + 1 NUL.
+	g.emit("lea edi, [r15 + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rdi, rax")
+	g.emitStrLenStore("r15d", "rdi")
+	g.emit("mov byte ptr [rdi + r15], 0")
+	g.emit("mov rsi, [rbp - 88]")
+	g.emit("mov rdx, r15")
+	g.emit("call __fern_memcpy") // rax = dst
+	g.emit("mov r13, rax")
+	g.emit("mov rdi, [rbp - 88]")
+	g.emit(fmt.Sprintf("mov esi, %d", xattrSizeMax))
+	g.emit("call __fern_free")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0") // tag = 0 (Ok)
+	g.emit("mov [rax + 8], r13")
+	g.emit("jmp .L" + tag + "_ret")
+
+	g.label(".L" + tag + "_err")
+	g.emit("mov rdi, [rbp - 88]")
+	g.emit(fmt.Sprintf("mov esi, %d", xattrSizeMax))
+	g.emit("call __fern_free")
+	g.emit("mov rax, r15")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("mov rsi, [rbp - 56]")
+	g.emit("call __fern_io_error")
+	g.emit("mov r13, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
+	g.emit("mov [rax + 8], r13")
+
+	g.label(".L" + tag + "_ret")
+	g.emit("add rsp, 72")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size " + name + ", .-" + name)
 }
 
 // Linux's renameat2 flags.

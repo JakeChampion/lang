@@ -53,10 +53,9 @@
 // NOT used — `indent` above is its own rule and a stop table cannot
 // express it; `lib/filetype.fern` for the mode string and the kinds.
 //
-// `-Z` reports `?` for every file, which is what GNU reports on a
-// kernel with no SELinux: it short-circuits on `is_selinux_enabled()`
-// before asking for a context. On a kernel that HAS SELinux the answer
-// needs `getxattr` (#9098), the same gap `stat %C` has.
+// `-Z`'s context is `lib/selinux.fern`'s `file_context`, the reading
+// `stat %C` shares. Like GNU there is no is_selinux_enabled() gate: the
+// attribute is the answer, and a file without one prints `?`.
 import "std/string";
 import "std/array";
 import "std/i64";
@@ -958,14 +957,14 @@ function wrap_seq(p: Palette, code: string): string {
 // the entry outright: `--group-directories-first` counts a link to a
 // directory as a directory, and `ln=target` colours a link as its
 // referent.
-struct Ent { name: string, path: string, st: FileStat, stated: boolean, target: string, has_target: boolean, link_mode: u32, link_ok: boolean, owner: string, group: string }
+struct Ent { name: string, path: string, st: FileStat, stated: boolean, followed: boolean, target: string, has_target: boolean, link_mode: u32, link_ok: boolean, owner: string, group: string, context: string }
 
 function blank_stat(): FileStat {
   return FileStat { is_file: false, is_dir: false, size: 0 as i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64, atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, ctime: 0 as i64, ctime_nsec: 0 as i64 };
 }
 
 function ent_new(name: string, path: string): Ent {
-  return Ent { name: name, path: path, st: blank_stat(), stated: false, target: "", has_target: false, link_mode: 0 as u32, link_ok: false, owner: "", group: "" };
+  return Ent { name: name, path: path, st: blank_stat(), stated: false, followed: false, target: "", has_target: false, link_mode: 0 as u32, link_ok: false, owner: "", group: "", context: "?" };
 }
 
 // Whether the listing needs a stat(2) per entry at all. A plain `ls`
@@ -1002,16 +1001,25 @@ function needs_link_mode(c: Cfg): boolean {
   return c.colors.link_target || cap_on(c.colors, cap_or()) || cap_on(c.colors, cap_mi());
 }
 
-// `stat_entry(c, e, cmdline)` — the entry with its record filled in.
-// The link target is read whenever the entry IS a link and something
-// will print or judge it.
+// `stat_entry(c, e, cmdline)` — the entry with its record filled in, and
+// under `-Z` its context.
 function stat_entry(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
+  let r: (Ent, boolean, string) = stat_record(c, e, cmdline);
+  if (!r.1 || !c.show_context) {
+    return r;
+  }
+  return (Ent { ...r.0, context: context_of(r.0) }, true, "");
+}
+
+// `stat_record(c, e, cmdline)` — the entry's record. The link target is
+// read whenever the entry IS a link and something will print or judge it.
+function stat_record(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
   let follow: boolean = c.deref == deref_all() || cmdline && c.deref == deref_cmd();
   let out: Ent = e;
   if (follow) {
     match (stat(e.path)) {
       Ok(s) => {
-        return (Ent { ...out, st: s, stated: true }, true, "");
+        return (Ent { ...out, st: s, stated: true, followed: true }, true, "");
       },
       Err(err) => {
         return (out, false, gnu.io_error_text(err));
@@ -1036,7 +1044,7 @@ function stat_entry(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
     match (stat(e.path)) {
       Ok(s) => {
         if (filetype.is_dir(s.mode)) {
-          return (Ent { ...out, st: s }, true, "");
+          return (Ent { ...out, st: s, followed: true }, true, "");
         }
       },
       Err(_) => {}
@@ -1681,12 +1689,20 @@ function resolve_ids(c: Cfg, n: IdNames, e: Ent): (Ent, IdNames) {
   return (Ent { ...e, owner: owner, group: group }, names);
 }
 
-// `-Z` on a kernel with no SELinux is `?` for every file, which is
-// exactly what GNU prints: it asks `is_selinux_enabled()` first and
-// never reaches the attribute. With SELinux the answer is a `getxattr`
-// away (#9098).
-function context_text(): string {
-  return "?";
+// `-Z`'s column: the file's context, asked of the same name the record
+// was — getfilecon where it was stat'ed, lgetfilecon where lstat'ed. GNU
+// prints `?` for a file it cannot get one for, and only reports an errno
+// other than ENOTSUP and ENODATA; neither reaches a kernel whose files
+// carry labels.
+function context_of(e: Ent): string {
+  match (selinux.file_context(e.path, e.followed)) {
+    Ok(ctx) => {
+      return ctx;
+    },
+    Err(_) => {
+      return "?";
+    }
+  }
 }
 
 // A unit letter is printed only when the SPEC named one with no count:
@@ -1756,7 +1772,7 @@ function measure(c: Cfg, es: Ent[]): Widths {
       w = Widths { ...w, blocks: max_i32(w.blocks, blk.len()) };
     }
     if (c.show_context) {
-      w = Widths { ...w, context: max_i32(w.context, context_text().len()) };
+      w = Widths { ...w, context: max_i32(w.context, e.context.len()) };
     }
     if (c.format == fmt_long()) {
       let nl: string = "?";
@@ -1840,7 +1856,7 @@ function frills(c: Cfg, w: Widths, e: Ent): string {
     out = out + pad_left(blk, w.blocks) + " ";
   }
   if (c.show_context && c.format != fmt_long()) {
-    out = out + pad_right(context_text(), w.context) + " ";
+    out = out + pad_right(e.context, w.context) + " ";
   }
   return out;
 }
@@ -1878,7 +1894,7 @@ function long_prefix(c: Cfg, w: Widths, e: Ent): string {
   }
   if (c.show_context) {
     buf_push(h, " ");
-    push_right(h, context_text(), w.context);
+    push_right(h, e.context, w.context);
   }
   buf_push(h, " ");
   buf_push(h, size_field(c, w, e));

@@ -3766,9 +3766,11 @@ the one where GNU warns (`--context=CTX`, once per occurrence) or says nothing
 (`-Z`, a bare `--context`) and carries on.
 
 **`chcon` refuses the context change itself, and there is no answer that
-would not.** A security context is an extended attribute; there is no
-`getxattr` (#9098) or `setxattr` (#9154), so the one step it exists for
-cannot happen. What makes this a divergence rather than a gap is that GNU
+would not.** A security context is an extended attribute; Fern reads one
+(`getxattr`) but has no `setxattr` (#9154), so the one step it exists for
+cannot happen. The reads before it are real: `--reference` and the component
+options report ENODATA ("can't apply partial context to unlabeled file") as a
+libselinux build of GNU does. What makes this a divergence rather than a gap is that GNU
 does not refuse either: on a machine with no SELinux it calls
 `setfilecon(3)` and reports whatever the call failed with, and WHICH errno
 that is belongs to the build and to the caller rather than to chcon —
@@ -3779,17 +3781,17 @@ can predict that byte. So GNU's frame is kept and our own sentence sits in
 the errno slot: `failed to change context of 'f' to 'ctx': setting a
 security context is not supported on this system`, exit 1, nothing changed
 — which is the same outcome in kind, since on such a machine GNU changes
-nothing either. `--reference` and the `-u -r -t -l` component form need the
-READ side of the same attribute and are refused the same way.
+nothing either.
 
-The corpus is therefore the 96 invocations that never reach the call: the
+The corpus is therefore the invocations that never reach the call: the
+read side, which on a kernel with no SELinux ends at an unlabeled file, the
 whole option grammar, the two `-R` traversal combinations GNU rejects
 outright, the operand counts, `cannot access`, `cannot read directory` —
 reachable with a real directory, because fts reports it INSTEAD of yielding
 the visit the change hangs off — and every spelling of the root failsafe.
-`conflicting security context specifiers given` is unreachable on such a
-machine: GNU checks it AFTER reading the reference file, which has already
-failed. `chcon.fern` keeps that order rather than tidying it.
+`conflicting security context specifiers given` is reached only once the
+reference file has been read, and on such a machine that read fails first.
+`chcon.fern` keeps that order rather than tidying it.
 
 **`mkdir`'s post-creation chmod failing is the one wording in the utility the
 reference binary has never been made to print.** A directory this process just
@@ -3853,16 +3855,21 @@ Darwin answers all three from `getfsstat(2)`, whose `struct statfs` carries
 `f_fstypename`. #9104 is that primitive, shaped as a list rather than a lookup
 because df deduplicates by device across the whole table.
 
-**`stat` cannot report a birth time, a file's SELinux context, or — on Darwin —
-a file system's type name.** `stat` and `lstat` lower to `newfstatat(2)`, whose
-`struct stat` has no birth time (#9096); a file's context is an extended
-attribute and there is no `getxattr` (#9098); and Darwin's `%T` is
-`f_fstypename`, a string `FsStat` does not carry (#11255). That is `%w`, `%W`,
-`%C` and Darwin's `-f %T` — and the DEFAULT multi-line block and `--terse` carry
-one of them, as does `-f` on Darwin, so those are refused with a diagnostic
-naming the field and exit 1. On Linux `%T` is GNU's name for the `f_type`
+**`stat` cannot report a birth time or — on Darwin — a file system's type
+name.** `stat` and `lstat` lower to `newfstatat(2)`, whose `struct stat` has no
+birth time (#9096), and Darwin's `%T` is `f_fstypename`, a string `FsStat` does
+not carry (#11255). That is `%w`, `%W` and Darwin's `-f %T` — and the DEFAULT
+multi-line block and `--terse` carry one of them, as does `-f` on Darwin, so
+those are refused with a diagnostic naming the field and exit 1. On Linux `%T` is GNU's name for the `f_type`
 magic, from `coreutils/lib/fstype.fern`, and `-f` and `-t -f` are answered. The refusal comes only after the operand has been read,
 so `stat nosuch` still reports `cannot statx` exactly as GNU does.
+
+`%C` reads the file's `security.selinux` attribute the way a libselinux build of
+GNU does, so a kernel with no SELinux answers `?` and ENODATA ("No data
+available"). The 9.12 oracle is built `--without-selinux`, where gnulib's stub
+answers ENOTSUP for every file whatever it carries, so `%C` is pinned by
+`TestStatFileContext` against the host's own `lgetxattr(2)` rather than by the
+corpus.
 
 Printing GNU's own "unknown" rendering instead — `-` and `0` for a birth time,
 a zeroed magic number — was the tempting shape and is the one thing that must
