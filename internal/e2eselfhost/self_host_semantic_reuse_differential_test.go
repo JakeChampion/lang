@@ -489,9 +489,9 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 
 	// An update that keeps its carried-over fields in place releases only the
 	// field it replaces at the reuse, so the record's children-drop helper is
-	// called by the program's final drop alone; before, the update's reuse
-	// called it too.
-	keptDropCalls := map[string]int{"update-keeps-fields": 1, "update-keeps-field-read-later": 1}
+	// called from its release helper alone; before, the update's reuse called
+	// it too.
+	keptDropCases := map[string]bool{"update-keeps-fields": true, "update-keeps-field-read-later": true}
 
 	for _, tc := range semanticReuseCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -500,9 +500,13 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 			if !strings.Contains(report, "declarations") {
 				t.Fatalf("%s: module did not produce whole on the typed path:\n%s", tc.name, report)
 			}
-			if want, ok := keptDropCalls[tc.name]; ok {
-				if got := strings.Count(asmOn, "call __fn___sem_drop_Acc"); got != want {
-					t.Errorf("%s: %d calls to the children-drop helper, want %d — the update's reuse released the fields it keeps", tc.name, got, want)
+			if keptDropCases[tc.name] {
+				inside, outside := splitFunction(asmOn, "__fn___sem_release_Acc:\n")
+				if got := strings.Count(outside, "call __fn___sem_drop_Acc"); got != 0 {
+					t.Errorf("%s: %d calls to the children-drop helper outside its release helper, want 0 — the update's reuse released the fields it keeps", tc.name, got)
+				}
+				if !strings.Contains(inside, "call __fn___sem_drop_Acc") {
+					t.Errorf("%s: the release helper never calls the children-drop helper", tc.name)
 				}
 			}
 			asmOff, _ := emit(t, proj, tc.src, "off", "FERN_SELFHOST_NO_REUSE=1")
@@ -549,4 +553,18 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 			}
 		})
 	}
+}
+
+// splitFunction cuts the function opening at label out of an assembly
+// listing, through its .cfi_endproc, answering the function and the rest.
+func splitFunction(asm, label string) (inside, outside string) {
+	at := strings.Index(asm, label)
+	if at < 0 {
+		return "", asm
+	}
+	end := strings.Index(asm[at:], ".cfi_endproc")
+	if end < 0 {
+		return asm[at:], asm[:at]
+	}
+	return asm[at : at+end], asm[:at] + asm[at+end:]
 }
