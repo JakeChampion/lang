@@ -57,7 +57,7 @@ import "std/array";
 import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/timefmt";
-import "./lib/tz";
+import "std/tz";
 import "./lib/utmp";
 
 function help_text(): string {

@@ -10178,6 +10178,9 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     fvf = fvf.append(StructFieldDecl { name: "files_free", type_name: "i64", fn_ret: "", fn_param_types: "" });
     fvf = fvf.append(StructFieldDecl { name: "name_max", type_name: "i64", fn_ret: "", fn_param_types: "" });
     fvf = fvf.append(StructFieldDecl { name: "path_max", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "fs_type", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "fsid", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fvf = fvf.append(StructFieldDecl { name: "frag_size", type_name: "i64", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "FsStat", fields: fvf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   // WinSize: the builtin struct returned by window_size(fd) — how many rows

@@ -3942,6 +3942,9 @@ func builtinStatfs(_ *Interp, args []Value) (Value, error) {
 			"files_free":   Number(raw.filesFree),
 			"name_max":     Number(raw.nameMax),
 			"path_max":     Number(raw.pathMax),
+			"fs_type":      Number(raw.fsType),
+			"fsid":         Number(raw.fsid),
+			"frag_size":    Number(raw.fragSize),
 		},
 	}), nil
 }

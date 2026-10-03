@@ -14918,7 +14918,8 @@ func (g *generator) emitTimerFdRuntime() {
 //
 // `path_max` is absent from the record and is stored separately: Linux
 // has no pathconf syscall, and PATH_MAX is the kernel's own 4096 for
-// every filesystem it mounts.
+// every filesystem it mounts. `fsid` is not a row either: see
+// LinuxStatfsFsid.
 // LinuxStatfsField is one projection: Box is the offset in the FsStat box,
 // Src the offset in the kernel's record.
 type LinuxStatfsField struct{ Box, Src int32 }
@@ -14931,7 +14932,13 @@ var LinuxStatfsFields = []LinuxStatfsField{
 	{ir.FsStat.Files, 40},
 	{ir.FsStat.FilesFree, 48},
 	{ir.FsStat.NameMax, 64},
+	{ir.FsStat.FsType, 0},
+	{ir.FsStat.FragSize, 72},
 }
+
+// LinuxStatfsFsid is the offset of `f_fsid`, two 32-bit words that FsStat
+// joins into one, first word high, as GNU `stat -f` prints it.
+const LinuxStatfsFsid = 56
 
 // LinuxPathMax is PATH_MAX, the longest pathname the Linux kernel will
 // resolve. A constant rather than a lookup because Linux has no
@@ -15001,6 +15008,11 @@ func (g *generator) emitStatfsRuntime() {
 	}
 	g.emit(fmt.Sprintf("mov r9d, %d", LinuxPathMax))
 	g.emit(fmt.Sprintf("mov [rax + %d], r9", ir.FsStat.PathMax))
+	g.emit(fmt.Sprintf("mov r9d, [rsp + %d]", LinuxStatfsFsid))
+	g.emit("shl r9, 32")
+	g.emit(fmt.Sprintf("mov r10d, [rsp + %d]", LinuxStatfsFsid+4))
+	g.emit("or r9, r10")
+	g.emit(fmt.Sprintf("mov [rax + %d], r9", ir.FsStat.Fsid))
 	g.emit("mov r13, rax")
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_rc1")

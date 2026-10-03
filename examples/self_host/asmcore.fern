@@ -4584,9 +4584,12 @@ pub function scratch_size(t: string, needs_statfs: boolean): string {
 //	f_files 40, f_ffree 48, f_fsid 56, f_namelen 64, f_frsize 72
 //
 // Darwin — the 64-bit-inode record, 2168 bytes: f_bsize is a u32 at 0 with
-// f_iosize sharing its word at 4, then five u64 counts. There is NO
-// name-length member, which is why `name_max` has no row here and the Darwin
-// body asks pathconf instead.
+// f_iosize sharing its word at 4, then five u64 counts, f_fsid at 48 and the
+// u32 f_type at 60. There is NO name-length member, which is why `name_max`
+// has no row here and the Darwin body asks pathconf instead, and no
+// fundamental block size, so `frag_size` reads f_bsize.
+//
+// `fsid` is two 32-bit words on both kernels, joined by statfs_fsid_i64.
 //
 // The 4-byte Darwin f_bsize is the trap: read 64 bits wide it drags f_iosize
 // into the high half, which is a plausible-looking multi-gigabyte block size
@@ -4622,6 +4625,13 @@ function statfsoff_linux(name: string): string {
   if (name == "name_max") {
     return "64";
   }
+  if (name == "fsid") {
+    return "56";
+  }
+  if (name == "frag_size") {
+    return "72";
+  }
+  // f_type is the record's first member.
   return "0";
 }
 
@@ -4645,24 +4655,47 @@ function statfsoff_darwin(name: string): string {
   if (name == "files_free") {
     return "40";
   }
+  if (name == "fsid") {
+    return "48";
+  }
+  if (name == "fs_type") {
+    return "60";
+  }
+  // block_size, and frag_size, which this record does not have.
   return "0";
 }
 
 // statfs_field_i64 reads one record field into its i64 FsStat slot. Darwin's
-// f_bsize is the only sub-64-bit member either kernel has here, and it is
-// UNSIGNED, so it widens by masking the 32-bit load rather than by sign
-// extension — `as i64` on the register backends sign-extends, which would make
-// a block size with the top bit set arrive negative.
+// f_bsize and f_type are the only sub-64-bit members either kernel has here,
+// and both are UNSIGNED, so they widen by masking the 32-bit load rather than
+// by sign extension — `as i64` on the register backends sign-extends, which
+// would make a block size with the top bit set arrive negative.
 function statfs_field_i64(t: string, name: string): string {
+  if (name == "fsid") {
+    return statfs_fsid_i64(t);
+  }
   let addr: string = "__raw_addr(buf, " + statfsoff(t, name) + ")";
-  if (t == "arm64-darwin" && name == "block_size") {
-    return "(__load_i32(" + addr + ") as i64) & (4294967295 as i64)";
+  if (t == "arm64-darwin" && name != "blocks" && name != "blocks_free" && name != "blocks_avail" && name != "files" && name != "files_free") {
+    return statfs_u32(addr);
   }
   return "__load_i64(" + addr + ")";
 }
 
-// statfs_counts_src is the six count fields of the FsStat literal — the part
-// both targets read straight out of the record.
+function statfs_u32(addr: string): string {
+  return "((__load_i32(" + addr + ") as i64) & (4294967295 as i64))";
+}
+
+// statfs_fsid_i64 joins f_fsid's two 32-bit words into one, first word high,
+// as GNU `stat -f` prints it.
+function statfs_fsid_i64(t: string): string {
+  let off: string = statfsoff(t, "fsid");
+  let hi: string = statfs_u32("__raw_addr(buf, " + off + ")");
+  let lo: string = statfs_u32("__raw_addr(buf, " + off + " + 4)");
+  return "((" + hi + " << (32 as i64)) | " + lo + ")";
+}
+
+// statfs_counts_src is the FsStat literal's fields both targets read straight
+// out of the record: everything but the two length limits.
 function statfs_counts_src(t: string): string {
   let o: string = "block_size: " + statfs_field_i64(t, "block_size");
   o = o + ", blocks: " + statfs_field_i64(t, "blocks");
@@ -4670,6 +4703,9 @@ function statfs_counts_src(t: string): string {
   o = o + ", blocks_avail: " + statfs_field_i64(t, "blocks_avail");
   o = o + ", files: " + statfs_field_i64(t, "files");
   o = o + ", files_free: " + statfs_field_i64(t, "files_free");
+  o = o + ", fs_type: " + statfs_field_i64(t, "fs_type");
+  o = o + ", fsid: " + statfs_field_i64(t, "fsid");
+  o = o + ", frag_size: " + statfs_field_i64(t, "frag_size");
   return o;
 }
 
@@ -5362,22 +5398,6 @@ pub function field_type_tag_in(struct_name: string, field: string, s: EmitState)
         fi = fi + 1;
       }
       return ty_unknown();
-    }
-    di = di + 1;
-  }
-  return ty_unknown();
-}
-
-pub function field_type_tag(field: string, s: EmitState): Ty {
-  let di: i32 = 0;
-  while (di < s.struct_decls.decls.len()) {
-    let sd: parser.StructDecl = s.struct_decls.decls[di];
-    let fi: i32 = 0;
-    while (fi < sd.fields.len()) {
-      if (sd.fields[fi].name == field) {
-        return ty_from_name(sd.fields[fi].type_name);
-      }
-      fi = fi + 1;
     }
     di = di + 1;
   }
@@ -7737,9 +7757,9 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
       return src;
     },
     ast.ExprFieldAccess(fa) => {
-      // Resolve within the receiver's struct when its type is a
-      // known struct name (match-bound variant payloads); else
-      // fall back to the first-match field scan. See asm.fern.
+      // Resolve within the receiver's struct when its type is a known
+      // struct name; an object the gate cannot type reads as unknown, never
+      // as the first struct that happens to spell the field (#11066).
       let frt: Ty = infer_expr_type(fa.obj, s);
       let di: i32 = 0;
       while (di < s.struct_decls.decls.len()) {
@@ -7748,7 +7768,7 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
         }
         di = di + 1;
       }
-      return field_type_tag(fa.field, s);
+      return ty_unknown();
     },
     ast.ExprUnknown(_) => {
       return ty_unknown();
@@ -8945,6 +8965,8 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
                 ),
                 diags: ctx.diags,
               };
+            } else {
+              actx = CheckCtx { st: bind_variant_payloads(pv, ctx.st), diags: ctx.diags };
             }
           },
           ast.PatWildcard(_) => {}
@@ -8961,6 +8983,65 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
     }
   }
   return ctx;
+}
+
+// bind_variant_payloads binds a user variant pattern's names at the types
+// its declaration gives them — each payload position's type, or the member
+// struct itself for a struct-union arm — so a field read through one
+// resolves within that struct (#11066). A variant the table cannot settle
+// to one declaration (a name two enums share with no owner spelled, a
+// module-qualified head, a mismatched arity) binds its names unknown.
+function bind_variant_payloads(pv: ast.PatVariant, st: EmitState): EmitState {
+  let name: string = pv.type_name;
+  let owner: string = "";
+  let dot: i32 = util.index_of_sub(name, ".");
+  if (dot >= 0) {
+    owner = slice_unchecked(name, 0, dot) + "";
+    name = slice_unchecked(name, dot + 1, name.len()) + "";
+  }
+  let di: i32 = 0 - 1;
+  if (owner.len() > 0) {
+    di = irtables.variant_decl_index(st.struct_decls, name, owner);
+  } else {
+    di = irtables.stab_first(st.struct_decls, name);
+    if (di >= 0 && irtables.stab_next(st.struct_decls, di, name) >= 0) {
+      di = 0 - 1;
+    }
+  }
+  let names: string[] = [];
+  if (pv.binding.len() > 0 && pv.binding != "_") {
+    names = names.append(pv.binding);
+  }
+  for extra in pv.extra_bindings {
+    if (extra.len() > 0 && extra != "_") {
+      names = names.append(extra);
+    }
+  }
+  let out: EmitState = st;
+  if (di < 0 || st.struct_decls.decls[di].enum_owner.len() == 0) {
+    for nm in names {
+      out = out.bind_local_typed(nm, ty_unknown());
+    }
+    return out;
+  }
+  let sd: parser.StructDecl = st.struct_decls.decls[di];
+  let payloaded: boolean = sd.fields.len() > 0 && sd.fields[0].name == "__ev";
+  if (!payloaded) {
+    for nm in names {
+      out = out.bind_local_typed(nm, struct_local_tag(sd.name, st));
+    }
+    return out;
+  }
+  let k: i32 = 0;
+  while (k < names.len()) {
+    if (names.len() == sd.fields.len()) {
+      out = out.bind_local_typed(names[k], struct_local_tag(sd.fields[k].type_name, st));
+    } else {
+      out = out.bind_local_typed(names[k], ty_unknown());
+    }
+    k = k + 1;
+  }
+  return out;
 }
 
 pub function check_stmts(stmts: ast.Stmt[], want: Ty, fname: string, ctx: CheckCtx): CheckCtx {
