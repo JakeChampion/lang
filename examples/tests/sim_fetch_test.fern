@@ -447,6 +447,46 @@ function test_idle_expired_closed(): test.TestOutcome {
   return test.assert_eq(n.open(), 0);
 }
 
+// A connection idle for exactly the bound is still reused.
+function test_idle_at_bound_reused(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "one").kept(), sim_fetch.reply(200, "two")]);
+  let first: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  d.clock_ns.set(d.now_ns() + 90000 * MS);
+  let second: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(second) != "two") {
+    return test.fail(__message(second));
+  }
+  return test.assert_eq(n.connects(), 1);
+}
+
+// The one retry after a reset dials rather than drawing again: a second
+// kept connection to the same place (here the POST's) is as likely
+// closed as the first.
+function test_retry_dials_fresh(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "get").kept(), sim_fetch.reply(200, "post").kept(), sim_fetch.reset(), sim_fetch.reply(200, "fresh").kept()]);
+  let get: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  let post: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.request("POST", "http://example.test/").with_text("x"), __open());
+  let again: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(again) != "fresh") {
+    return test.fail(__message(again));
+  }
+  return test.assert_eq(n.connects(), 3);
+}
+
+// A connection with bytes past the response it carried is not kept: they
+// belong to no request the client sent.
+function test_trailing_bytes_not_kept(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.raw("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhiHTTP/1.1 200 OK\r\n\r\n").held()]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(got) != "hi") {
+    return test.fail(__message(got));
+  }
+  return test.assert_eq(n.open(), 0);
+}
+
 // A pool past its `max` closes the connection idle longest.
 function test_pool_cap(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
@@ -503,6 +543,9 @@ function main(): i32 {
   r = r.it("redials when a kept connection was closed", test_closed_kept_redialled);
   r = r.it("dials a POST fresh", test_post_dials_fresh);
   r = r.it("closes a connection idle past the bound", test_idle_expired_closed);
+  r = r.it("reuses a connection idle for exactly the bound", test_idle_at_bound_reused);
+  r = r.it("dials the retry after a reset", test_retry_dials_fresh);
+  r = r.it("does not keep a connection with bytes past the response", test_trailing_bytes_not_kept);
   r = r.it("closes the longest-idle connection past the cap", test_pool_cap);
   r = r.it("keeps the routes' connections apart", test_routes_pool_apart);
   return r.finish();

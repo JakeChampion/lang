@@ -547,7 +547,7 @@ pub trait Transport {
 }
 
 // `Idle` — the connections a transport keeps for the next request to the
-// same place: at most `max` of them, none reused once idle for `idle_ms`.
+// same place: at most `max` of them, none reused once idle past `idle_ms`.
 // A cell holds only a scalar or a string, so `rows` is the table, a
 // connection a line of its key, number and the nanosecond it went idle.
 pub struct Idle { rows: Cell[string], max: i32, idle_ms: i32 }
@@ -949,19 +949,20 @@ function __send_once[T: Transport](tr: T, req: Request, started: i64, policy: Po
 // connection this client opens: its origin resolved and checked when the
 // route reaches global addresses only and a proxy carries the request
 // (the proxy's address is the deployment's choice and goes unchecked),
-// then sent and its response read, and sent once more when the peer
-// reset the connection before any response byte and the method is
-// idempotent (RFC 9110 §9.2.2): a reset before an answer says nothing
-// happened, which is also how a kept connection the peer has since closed
-// answers.
+// then sent and its response read, and sent once more on a new
+// connection when the peer reset the connection before any response byte
+// and the method is idempotent (RFC 9110 §9.2.2): a reset before an
+// answer says nothing happened, which is also how a kept connection the
+// peer has since closed answers, and another kept connection to the same
+// place is as likely closed.
 function __send_dialled[T: Transport](tr: T, req: Request, t: __Target, started: i64, policy: Policy): Result[HttpResponse, FetchError] {
   __origin_checked(tr, t, policy)?;
   let guard: boolean = policy.public_only && t.direct;
-  let first: Result[HttpResponse, FetchError] = __attempt(tr, req, t, started, guard);
+  let first: Result[HttpResponse, FetchError] = __attempt(tr, req, t, started, guard, true);
   match (first) {
     Err(e) => {
       if (__reset(e) && http.http_method_idempotent(req.method)) {
-        return __attempt(tr, req, t, started, guard);
+        return __attempt(tr, req, t, started, guard, false);
       }
       return Err(e);
     },
@@ -998,16 +999,16 @@ function __reset(e: FetchError): boolean {
   return false;
 }
 
-// `__attempt(tr, req, t, started, guard)` — one connection: a kept one to
-// the same place when the method is idempotent (one that is not may have
-// been acted on by the time a closed kept connection shows itself, so it
-// never risks one), else one opened (only to a global address when
-// `guard`); the request written, the response read, and the connection
-// kept when the response left it reusable, closed otherwise.
-function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64, guard: boolean): Result[HttpResponse, FetchError] {
+// `__attempt(tr, req, t, started, guard, reuse)` — one connection: a kept
+// one to the same place when `reuse` and the method is idempotent (one
+// that is not may have been acted on by the time a closed kept connection
+// shows itself, so it never risks one), else one opened (only to a global
+// address when `guard`); the request written, the response read, and the
+// connection kept when the response left it reusable, closed otherwise.
+function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64, guard: boolean, reuse: boolean): Result[HttpResponse, FetchError] {
   let key: string = __pool_key(t, guard);
   let conn: i32 = 0 - 1;
-  if (http.http_method_idempotent(req.method)) {
+  if (reuse && http.http_method_idempotent(req.method)) {
     conn = __take_idle(tr, key);
   }
   if (conn < 0) {
