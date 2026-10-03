@@ -102,10 +102,10 @@ function check_result(r: Result[i32, i32]): i32;
 @import("local:test/sink@0.1.0", "peek-option")
 function peek_option(o: Option[i32]): i32;
 function main(): i32 {
-    var ok: Result[i32, i32] = Ok(42);
-    var err: Result[i32, i32] = Err(5);
-    var some: Option[i32] = Some(7);
-    var none: Option[i32] = None;
+    let ok: Result[i32, i32] = Ok(42);
+    let err: Result[i32, i32] = Err(5);
+    let some: Option[i32] = Some(7);
+    let none: Option[i32] = None;
     if (check_result(ok) == 42 && check_result(err) == 0 - 5 && peek_option(some) == 7 && peek_option(none) == 0 - 1) {
         write("` + want + `");
     } else {

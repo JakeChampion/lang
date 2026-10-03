@@ -18,19 +18,19 @@ import (
 
 const semsourcePrintFixture = `
 function alias(xs: i32[][], own ys: i32[]): i32[] {
-    var a: i32[] = xs[0];
-    var b: i32[] = a;
+    let a: i32[] = xs[0];
+    let b: i32[] = a;
     if (ys[0] > 0) { b = ys; }
     return b;
 }
 function shadow(n: i32): i32 {
-    var n: i32 = n + 1;
-    { var n: i32 = n * 2; }
+    let n: i32 = n + 1;
+    { let n: i32 = n * 2; }
     return n;
 }
 function loop_phi(limit: i32): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < limit) {
         i = i + 1;
         if (i == 3) { continue; }
@@ -43,8 +43,8 @@ function short_circuit(a: boolean, b: i32): boolean {
     return a && b > 0 || !a;
 }
 function nested(rows: i32[][]): (i32, i32[]) {
-    var t: (i32, i32[]) = (rows[0][1], rows[1]);
-    var e: i32[] = [];
+    let t: (i32, i32[]) = (rows[0][1], rows[1]);
+    let e: i32[] = [];
     if (t.0 == 0) { return (0, e); }
     return t;
 }
@@ -57,7 +57,7 @@ function window(s: string, lo: i32, hi: i32): Option[str] { return s[lo:hi]; }
 // e? is control flow rather than an operator: the failure edge RETURNS the
 // same failure rebuilt at this body's own result type, so nothing joins and
 // the value is the success payload on the edge left open.
-function unwrapped(o: Option[i32]): Option[i32] { var v: i32 = o?; return Some(v + 1); }
+function unwrapped(o: Option[i32]): Option[i32] { let v: i32 = o?; return Some(v + 1); }
 function refused_call(n: i32): i32 { return abs(n); }
 function float_literal(): f64 { return 1.5; }
 // The unsigned widths: the u64 occupies the i64's slot and the u32 the i32's, and
@@ -84,19 +84,19 @@ function ordered(a: string, b: str): i32 {
 // checking it, and the live end is the unreachable terminator a checked
 // body's desugared total match leaves behind.
 function ends_unreachable(n: i32): i32 { if (n > 0) { return 1; } }
-function destructure(): i32 { var (a, b) = (1, 2); return a + b; }
-function split_pair(p: (i32, i32[])): i32 { var (_, xs) = p; var (n, ys) = p; return n + xs.len() + ys.len(); }
-function nested_destructure(): i32 { var (a, (b, c)) = (1, (2, 3)); return a + b + c; }
-function struct_destructure(b: Bag): i32 { var whole @ Bag { tag, .. } = b; return tag.len() + whole.items.len(); }
-function for_pair(xs: (i32, i32)[]): i32 { var t: i32 = 0; for (a, b) in xs { t = t + a * b; } return t; }
+function destructure(): i32 { let (a, b) = (1, 2); return a + b; }
+function split_pair(p: (i32, i32[])): i32 { let (_, xs) = p; let (n, ys) = p; return n + xs.len() + ys.len(); }
+function nested_destructure(): i32 { let (a, (b, c)) = (1, (2, 3)); return a + b + c; }
+function struct_destructure(b: Bag): i32 { let whole @ Bag { tag, .. } = b; return tag.len() + whole.items.len(); }
+function for_pair(xs: (i32, i32)[]): i32 { let t: i32 = 0; for (a, b) in xs { t = t + a * b; } return t; }
 function halve(n: i32): i32 { return n / 2; }
 function refused_global(): i32 { return loop_phi(2); }
 const LIMIT: i32 = 7;
 function limit_ref(): i32 { return LIMIT + 1; }
 function callee(xs: i32[], own ys: i32[]): i32[] { return ys; }
 function caller(n: i32): i32[] {
-    var a: i32[] = [n];
-    var b: i32[] = callee(a, [n, n]);
+    let a: i32[] = [n];
+    let b: i32[] = callee(a, [n, n]);
     callee(b, a);
     return callee(b, b);
 }
@@ -106,9 +106,9 @@ function void_call(): i32 { noop(); return 1; }
 // read a string, reset and take own nothing, the byte search reads its
 // string; a void call stands only as a statement.
 function shout(s: string): i32 { print(s); eprint(s); return s.len(); }
-function built(s: string): i32 { strbuf_reset(); strbuf_append("ab"); strbuf_append(s); var t: string = strbuf_take(); return t.len(); }
+function built(s: string): i32 { strbuf_reset(); strbuf_append("ab"); strbuf_append(s); let t: string = strbuf_take(); return t.len(); }
 function find_byte(s: string, b: i32): i32 { return __memchr(s, b, 1); }
-function refused_void_value(): i32 { var n: i32 = noop(); return n; }
+function refused_void_value(): i32 { let n: i32 = noop(); return n; }
 function array_length(xs: i32[]): i32 { return xs.len(); }
 // A borrowed receiver's box is not this function's to grow: the push takes a
 // unit the plan retains at the call and hands back a copy, where the counted
@@ -119,7 +119,7 @@ function borrowed_append(xs: i32[]): i32[] { return xs.append(1); }
 // after it. An advance moved below the body would still pass every value test
 // and hang on the first continue.
 function loop_sum(xs: i32[]): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for x in xs { t = t + x; }
     return t;
 }
@@ -131,7 +131,7 @@ struct G[T] { v: T }
 function make(n: i32): P { return P { n: n, xs: [n, n + 1] }; }
 function wrap(own p: P, tag: string): Q { return Q { name: tag + "!", p: p }; }
 function unwrap(q: Q): i32 {
-    var p: P = q.p;
+    let p: P = q.p;
     if (q.name == "x!") { return p.xs[0]; }
     return p.n;
 }
@@ -142,7 +142,7 @@ function zero_n(p: P): P { return P { ...p, n: 0 }; }
 // placement: the array is built first because it is written first, and the
 // record_new still takes the i32 before it.
 function out_of_order(n: i32): P { return P { xs: [n, n + 1], n: n }; }
-function refused_generic_record(n: i32): i32 { var g: G[i32] = G { v: n }; return g.v; }
+function refused_generic_record(n: i32): i32 { let g: G[i32] = G { v: n }; return g.v; }
 // A value-position block is a zero-argument call of a zero-parameter lambda,
 // which every backend INLINES. The if-EXPRESSION desugar puts one if there
 // whose arms each RETURN the block's value, so the arms are produced as a
@@ -152,14 +152,14 @@ function refused_generic_record(n: i32): i32 { var g: G[i32] = G { v: n }; retur
 // block with leading statements — a general block body, a match expression
 // the tuple desugar routes through a value local — runs them in the enclosing
 // block and takes its trailing return's value.
-function if_expr(n: i32): i32 { var k: i32 = if (n > 0) { 1 } else { 0 }; return k + n; }
-function if_expr_chain(n: i32): i32 { var k: i32 = if (n > 2) { 2 } else if (n > 0) { 1 } else { 0 }; return k; }
-function if_expr_ref(n: i32): i32[] { var xs: i32[] = if (n > 0) { [n] } else { [n, n] }; return xs; }
-function if_expr_local(n: i32): i32 { var k: i32 = if (n > 0) { var d: i32 = n * 2; d + 1 } else { 0 }; return k; }
-function match_expr(n: i32): i32 { var k: i32 = match (n) { 1 => 5, _ => 0 }; return k; }
-function block_expr(n: i32): i32 { var k: i32 = { var m: i32 = n + 1; m * 2 }; return k; }
+function if_expr(n: i32): i32 { let k: i32 = if (n > 0) { 1 } else { 0 }; return k + n; }
+function if_expr_chain(n: i32): i32 { let k: i32 = if (n > 2) { 2 } else if (n > 0) { 1 } else { 0 }; return k; }
+function if_expr_ref(n: i32): i32[] { let xs: i32[] = if (n > 0) { [n] } else { [n, n] }; return xs; }
+function if_expr_local(n: i32): i32 { let k: i32 = if (n > 0) { let d: i32 = n * 2; d + 1 } else { 0 }; return k; }
+function match_expr(n: i32): i32 { let k: i32 = match (n) { 1 => 5, _ => 0 }; return k; }
+function block_expr(n: i32): i32 { let k: i32 = { let m: i32 = n + 1; m * 2 }; return k; }
 struct Bag { items: i32[], tag: string }
-function mapped(xs: i32[], f: (i32) => i32): i32[] { var out: i32[] = []; for x in xs { out = out.append(f(x)); } return out; }
+function mapped(xs: i32[], f: (i32) => i32): i32[] { let out: i32[] = []; for x in xs { out = out.append(f(x)); } return out; }
 // The lift replaces a function-value argument with the closure box it builds,
 // and the checker reads that box's type off the hoisted body: without it the
 // box types to unknown and the literal holding the call collapses, so the
@@ -221,7 +221,7 @@ function (h: Holder[T]) tagged[U](u: U): i32 { return h.item.len(); }
 // spells; a call instantiates it through the receiver's type.
 function (o: Option[T]) has_it(): boolean { match (o) { Some(_) => { return true; }, None => { return false; } } }
 function (o: Option[T]) or_val(fallback: T): T { match (o) { Some(x) => { return x; }, None => { return fallback; } } }
-function opt_calls(n: i32): i32 { var o: Option[i32] = Some(n); if (o.has_it()) { return o.or_val(0); } return 0 - 1; }
+function opt_calls(n: i32): i32 { let o: Option[i32] = Some(n); if (o.has_it()) { return o.or_val(0); } return 0 - 1; }
 function (n: i32) doubled(): i32 { return n * 2; }
 function via_arrm(a: i32[]): i32 { return a.second_or(0); }
 function via_smm(h: Holder[string]): i32 { return h.tagged(true); }
@@ -256,7 +256,7 @@ function scanned_text(s: string, p: string): i32 {
 // accumulator is a plain i32 in one instance and a plain string[] in another.
 // The accumulator is threaded by REPLACEMENT, the astwalk fold shape.
 function fold_two[T](a: T, visit: (i32, T) => T): T {
-    var acc: T = visit(1, a);
+    let acc: T = visit(1, a);
     acc = visit(2, acc);
     return acc;
 }
@@ -282,26 +282,26 @@ function reread_ints(): i32 { return reread_own(5, add_at, join_at); }
 // knows its type; a template never had one to drop.
 function abandon[T](own a: T, own b: T): T { return b; }
 function abandon_words(): i32 {
-    var x: string[] = ["x"];
-    var y: string[] = ["y", "z"];
+    let x: string[] = ["x"];
+    let y: string[] = ["y", "z"];
     return abandon(x, y).len();
 }
 // The variable bound to a REFERENCE through a LENDING visitor: the instance
 // borrows its accumulator as the declaration says, and each step's result is
 // a unit of its own, released when the next step supersedes it.
 function add_word(n: i32, a: string[]): string[] { return a.append("x"); }
-function ref_acc(): i32 { var w: string[] = []; return fold_two(w, add_word).len(); }
+function ref_acc(): i32 { let w: string[] = []; return fold_two(w, add_word).len(); }
 // And through a CONSUMING one, own in the function type: the caller hands
 // its unit over at each step and takes back the one the call returns.
 function fold_own[T](own a: T, visit: (i32, own T) => T): T {
-    var acc: T = visit(1, a);
+    let acc: T = visit(1, a);
     acc = visit(2, acc);
     return acc;
 }
 function own_word(n: i32, own a: string[]): string[] { return a.append("x"); }
 function owned_ref_acc(): i32 { return fold_own(["seed"], own_word).len(); }
 function opt_len(name: string): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (env(name)) {
         Some(v) => { n = v.len(); },
         None => { n = 0; }
@@ -324,7 +324,7 @@ function measure(s: Shape): i32 {
         Pair(_, ys) => { return ys[0]; },
         _ => {}
     }
-    var total: i32 = 1;
+    let total: i32 = 1;
     if let Full(xs) = s { total = total + xs[0]; }
     return total;
 }
@@ -387,8 +387,8 @@ function scalar_match(n: i32): i32 {
 // An unsuffixed literal takes the width of what it sits beside, on EITHER side
 // of the operator — v3 and v5 below are bytes, not i32s.
 function byte_ops(s: string, i: i32): i32 {
-    var b: u8 = s[i];
-    var next: u8 = b + 1;
+    let b: u8 = s[i];
+    let next: u8 = b + 1;
     if (b == b'a' || 122 > next) { return next as i32; }
     return b as i32;
 }
@@ -401,7 +401,7 @@ function hex_mask(n: i32): i32 { return (n & 0x00ff00ff) | 0x2A; }
 // rather than an immediate that cannot hold it, the operators run at width 64,
 // and the conversions across the boundary are an extend and a wrap.
 function wide_ops(n: i32): i32 {
-    var big: i64 = (n as i64) * 1000000007i64;
+    let big: i64 = (n as i64) * 1000000007i64;
     if (big > 0i64) { return (big >> 32) as i32; }
     return (0i64 - big) as i32;
 }
@@ -415,9 +415,9 @@ function refused_mixed_width(b: u8, n: i32): i32 { return b + n; }
 // float form. The narrower float occupies the same slot rounded to single
 // precision, so its operator is the f64's with the rounding after it.
 function float_ops(x: f64, n: i32): i32 {
-    var y: f64 = x * 2.5 + (n as f64);
+    let y: f64 = x * 2.5 + (n as f64);
     if (y > 10.0 || -y == x) { return (y / 2.0) as i32; }
-    var w: i64 = (y - x) as i64;
+    let w: i64 = (y - x) as i64;
     return (w as f64 + 0.5) as i32;
 }
 function refused_float_rem(x: f64): f64 { return x % 2.0; }
@@ -431,16 +431,16 @@ function narrow_float(x: f32): f32 { return x + 1.0; }
 // the same way.
 function view_len(v: str): i32 { return v.len(); }
 function view_of(s: string): i32 {
-    var v: str = slice_unchecked(s, 1, 3);
-    var w: str = s;
-    var inner: str = slice_unchecked(w, 0, 1);
+    let v: str = slice_unchecked(s, 1, 3);
+    let w: str = s;
+    let inner: str = slice_unchecked(w, 0, 1);
     if (v == w || inner != "a") { return v[0] as i32; }
     return v.len() + view_len(s) + string_length(v) + inner.len();
 }
 function copy_view(v: str): string { return v + ""; }
 function view_result(s: string): str { return slice_unchecked(s, 0, 1); }
 function copied_view_of_a_local(t: string): str {
-    var s: string = t + "x";
+    let s: string = t + "x";
     return slice_unchecked(s, 0, 1);
 }
 function view_of_either(a: string, b: string, c: boolean): str {
@@ -452,7 +452,7 @@ function option_of_either(a: string, b: string, c: boolean): Option[str] {
     return b[0:1];
 }
 function view_element(s: string): i32 {
-    var xs: str[] = [];
+    let xs: str[] = [];
     xs = xs.append(slice_unchecked(s, 0, 1));
     return xs.len();
 }
@@ -467,15 +467,15 @@ function with_view(own vs: str[], s: string): str[] { return vs.with(0, slice_un
 // from zero binds an i64 with no conversion, and a literal beside a wide
 // operand is that operand's width.
 function wide_literal_tree(n: i64): i64 {
-    var x: i64 = 0 - 1;
-    var y: i64 = n + 1;
+    let x: i64 = 0 - 1;
+    let y: i64 = n + 1;
     if (y < 0 - 2) { return x * 2; }
     return y;
 }
 
 // A byte loop over a string: each step reads one u8 of the borrowed text.
 function count_byte(s: string, b: u8): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for c in s { if (c == b) { n = n + 1; } }
     return n;
 }
@@ -484,11 +484,11 @@ function count_byte(s: string, b: u8): i32 {
 // the tuple or array declares rather than the literal being typed by its
 // elements and refused at the binding.
 function leaf_pair(n: i32): (Node, i32) {
-    var p: (Node, i32) = (Leaf { n: n }, n);
+    let p: (Node, i32) = (Leaf { n: n }, n);
     return p;
 }
 function leaves(n: i32): Node[] {
-    var xs: Node[] = [Leaf { n: n }, Twig { xs: [n] }];
+    let xs: Node[] = [Leaf { n: n }, Twig { xs: [n] }];
     return xs;
 }
 
@@ -510,17 +510,17 @@ function bit_round(x: f64): f64 { return f64_from_bits(f64_bits(x)); }
 // expression reading it has a type. A record or variant literal over the
 // element takes that type, and an unannotated binding is inferred from it.
 function bump_each(ps: P[]): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for p in ps {
-        var q: P = P { ...p, n: p.n + 1 };
-        var d = q.n + p.xs.len();
+        let q: P = P { ...p, n: p.n + 1 };
+        let d = q.n + p.xs.len();
         t = t + d + q.xs.len();
     }
     return t;
 }
 function line_each(ns: i32[]): i32 {
-    var t: i32 = 0;
-    for k in ns { var s: Shape = Line(k + 1); t = t + measure(s); }
+    let t: i32 = 0;
+    for k in ns { let s: Shape = Line(k + 1); t = t + measure(s); }
     return t;
 }
 
@@ -541,8 +541,8 @@ function shift_by(k: i32, n: i32): i32 { return apply_int((x: i32): i32 => { ret
 function inferred_plain(n: i32): i32 { return apply_int((x: i32) => x + 1, n); }
 // A float binding with no annotation settles at the f64 an unsuffixed
 // literal is.
-function float_binding(n: i32): i32 { var f = 2.5; var g = f + 1.5; if (g > 3.0) { return n; } return 0; }
-function inferred_ret(k: i32, n: i32): i32 { return apply_int((x: i32) => { var m: i32 = x * k; return m + 1; }, n); }
+function float_binding(n: i32): i32 { let f = 2.5; let g = f + 1.5; if (g > 3.0) { return n; } return 0; }
+function inferred_ret(k: i32, n: i32): i32 { return apply_int((x: i32) => { let m: i32 = x * k; return m + 1; }, n); }
 // An own function value is this frame's to release, from a box another
 // frame built (#10958).
 function own_fn(own f: (i32) => i32, n: i32): i32 { return f(n); }
@@ -551,21 +551,21 @@ function own_fn(own f: (i32) => i32, n: i32): i32 { return f(n); }
 // here and a local closure below, and neither is a special case.
 function via_capture(f: (i32) => i32, n: i32): i32 { return apply_int((x: i32): i32 => { return f(x) + 1; }, n); }
 function capture_local(n: i32): i32 {
-    var g: (i32) => i32 = (x: i32): i32 => { return x + n; };
+    let g: (i32) => i32 = (x: i32): i32 => { return x + n; };
     return apply_int((x: i32): i32 => { return g(x) + 1; }, n);
 }
-function bound_fn(n: i32): i32 { var g: (i32) => i32 = twice_it; return g(n) + g(1); }
+function bound_fn(n: i32): i32 { let g: (i32) => i32 = twice_it; return g(n) + g(1); }
 function head_of_arr(xs: i32[]): i32 { return xs[0]; }
 function apply_arr(f: (i32[]) => i32, xs: i32[]): i32 { return f(xs) + f([9, 8]); }
-function lend_array(n: i32): i32 { var a: i32[] = [n, n + 1]; return apply_arr(head_of_arr, a); }
+function lend_array(n: i32): i32 { let a: i32[] = [n, n + 1]; return apply_arr(head_of_arr, a); }
 function pick_shift(k: i32, n: i32): i32 {
-    var g: (i32) => i32 = (x: i32): i32 => { return x + k; };
+    let g: (i32) => i32 = (x: i32): i32 => { return x + k; };
     if (n > 2) { g = (x: i32): i32 => { return x - k; }; }
     return g(n) + g(0);
 }
 function shift_loop(k: i32, n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + apply_int((x: i32): i32 => { return x * k; }, i); i = i + 1; }
     return t;
 }
@@ -574,14 +574,14 @@ function apply_text(f: (string) => i32, s: string): i32 { return f(s); }
 function refused_own_value(s: string): i32 { return apply_text(eat_text, s); }
 function text_capture(w: string, n: i32): i32 { return apply_int((x: i32): i32 => { return x + w.len(); }, n); }
 function words_capture(n: i32): i32 {
-    var ws: string[] = ["ab"];
-    var f: (i32) => i32 = (x: i32): i32 => { return x + ws.len(); };
+    let ws: string[] = ["ab"];
+    let f: (i32) => i32 = (x: i32): i32 => { return x + ws.len(); };
     return f(n) + f(1);
 }
 function pick_capture(k: i32, n: i32): i32 {
-    var ws: string[] = ["ab"];
-    var w: string = "xyz";
-    var g: (i32) => i32 = (x: i32): i32 => { return x + ws.len(); };
+    let ws: string[] = ["ab"];
+    let w: string = "xyz";
+    let g: (i32) => i32 = (x: i32): i32 => { return x + ws.len(); };
     if (k > 0) { g = (x: i32): i32 => { return x + w.len(); }; }
     return g(n);
 }
@@ -601,7 +601,7 @@ function scan_words(x: i32, f: string): i32 {
 }
 function wide_sig(f: (i64) => i64, n: i64): i64 { return f(n); }
 function fn_result_named(): (i32) => i32 { return twice_it; }
-function fn_element_array(n: i32): i32 { var fs: ((i32) => i32)[] = [twice_it]; return fs.len(); }
+function fn_element_array(n: i32): i32 { let fs: ((i32) => i32)[] = [twice_it]; return fs.len(); }
 
 // A free builtin whose result the checker types is a value like any other, so
 // the record literal, array or operator written around the call keeps its own
@@ -631,18 +631,18 @@ function cell_payload(own b: Crate): i32 {
     }
     return 0 - 1;
 }
-function cell_round(n: i32): i32 { var c: Cell[i32] = cell_new(n); c.set(c.get() + 1); return c.get(); }
+function cell_round(n: i32): i32 { let c: Cell[i32] = cell_new(n); c.set(c.get() + 1); return c.get(); }
 function cell_text(s: string): i32 {
-    var c: Cell[string] = cell_new(s);
-    var first: string = c.get();
+    let c: Cell[string] = cell_new(s);
+    let first: string = c.get();
     c.set(first + "!");
     return first.len() + c.get().len();
 }
-function refused_cell_value(n: i32): i32 { var c: Cell[i32] = cell_new(n); var k: i32 = c.set(n); return k; }
+function refused_cell_value(n: i32): i32 { let c: Cell[i32] = cell_new(n); let k: i32 = c.set(n); return k; }
 // The 32-bit float occupies the f64's slot at single precision: a conversion
 // into it, a literal of it and an operator's result at it are each rounded
 // where they are made, and the bit pair reads and writes that rounded value.
-function narrow_bits(x: f64): i32 { var y: f32 = x as f32; return f32_bits(y); }
+function narrow_bits(x: f64): i32 { let y: f32 = x as f32; return f32_bits(y); }
 function widened(b: i32): f64 { return (f32_from_bits(b)) as f64; }
 function narrow_sum(a: f32, b: f32): f32 { return a + b * 0.5; }
 // The pointer-width integer is an address: it converts to and from every
@@ -652,10 +652,10 @@ function narrow_sum(a: f32, b: f32): f32 { return a + b * 0.5; }
 function handle_out(h: usize): i64 { return h as i64; }
 function handle_in(n: i64): usize { return n as usize; }
 function built(n: i32): string {
-    var b: usize = buf_new(n);
+    let b: usize = buf_new(n);
     buf_push(b, "ab");
     buf_push_byte(b, 99);
-    var s: string = buf_take(b);
+    let s: string = buf_take(b);
     buf_free(b);
     return s;
 }
@@ -676,7 +676,7 @@ function float_as_address(x: f64): usize { return x as usize; }
 function handle_sum(h: usize, k: usize): usize { return h + k; }
 function handle_narrow(h: usize): i32 { return h as i32; }
 function handle_byte(h: usize): u8 { return h as u8; }
-function handle_lit(): usize { var p: usize = 16; return p; }
+function handle_lit(): usize { let p: usize = 16; return p; }
 // The outcome of a write is a Result whose Ok carries void: a payload that is
 // no payload, so the arm's binding names nothing and the box is a tag with a
 // zero word behind it.
@@ -708,16 +708,16 @@ function saved_exec(path: string, text: string): i32 {
 // the key's, which the key column owns until the map is released; has and
 // get_or borrow both and answer a scalar.
 function seen_twice(a: string, b: string): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert(a, 1);
     m = m.insert(b, m.get_or(a, 0) + 1);
     if (m.has(b)) { return m.get_or(b, 0); }
     return 0;
 }
 function flagged(ws: string[]): i32 {
-    var m: Map[string, boolean] = map_new(ws.len() + 1);
+    let m: Map[string, boolean] = map_new(ws.len() + 1);
     for w in ws { m = m.insert(w, true); }
-    var n: i32 = 0;
+    let n: i32 = 0;
     for w in ws { if (m.has(w)) { n = n + 1; } }
     return n;
 }
@@ -725,10 +725,10 @@ function flagged(ws: string[]): i32 {
 // the record's own drop when the map is released and on the entry an insert
 // supersedes; a get retains the payload of the Option it answers.
 function keyed_recs(a: string, n: i32): i32 {
-    var m: Map[string, Q] = map_new(2);
+    let m: Map[string, Q] = map_new(2);
     m = m.insert(a, Q { name: a, p: P { n: n, xs: [n] } });
     m = m.insert(a, Q { name: a + a, p: P { n: n + 1, xs: [] } });
-    var t: i32 = 0;
+    let t: i32 = 0;
     if let Some(q) = m.get(a) { t = q.p.n; }
     return t + m.len();
 }
@@ -743,21 +743,21 @@ function map_value(m: Map[string, string], k: string): i32 { return m.get_or(k, 
 // trampolines. Only __alloc_u8 hands back a reference — a fresh zeroed
 // buffer the caller owns — so it is the one whose unit this frame drops.
 function measured(x: f64, k: u32): i32 {
-    var root: f64 = __sqrt_f64(x);
-    var raised: f64 = __pow_f64(root, 2.0);
+    let root: f64 = __sqrt_f64(x);
+    let raised: f64 = __pow_f64(root, 2.0);
     return (__floor_f64(raised) as i32) + __popcount32(k) + __clz64(1u64);
 }
 function scanned(text: string, byte: i32): i32 {
     return __count_byte(text, byte) + __memchr(text, byte, 0) + __ascii_run(text, 0) + __sum_bytes(text);
 }
 function buffered(n: i32): i32 {
-    var buf: u8[] = __alloc_u8(n);
+    let buf: u8[] = __alloc_u8(n);
     return buf.len() + __ptr_width();
 }
 function poked(): i32 {
-    var block: usize = __alloc(16);
+    let block: usize = __alloc(16);
     __store_i32(block, 7);
-    var read: i32 = __load_i32(block);
+    let read: i32 = __load_i32(block);
     __free(block, 16);
     return read;
 }
@@ -782,12 +782,12 @@ function int_map_key(m: Map[i32, i32], n: i32): i32 { return m.get_or(n, 0); }
 function map_get_line(m: Map[i32, i32], k: i32): i32 { match (m.get(k)) { Some(v) => { return v; }, None => { return 0; } } }
 // A literal's map_new(n).insert(k, v) chain takes the destination's shape
 // through the chain, since an insert hands its receiver back.
-function map_lit(n: i32): i32 { var m: Map[i32, i32] = Map { 1: n, 2: n + 1 }; return m.get_or(2, 0); }
+function map_lit(n: i32): i32 { let m: Map[i32, i32] = Map { 1: n, 2: n + 1 }; return m.get_or(2, 0); }
 // A generic array method with a variable of its own: the parser's instance
 // at the element keeps U for the lambda argument to bind.
-function map_to[T, U](xs: T[], f: (T) => U): U[] { var out: U[] = []; for x in xs { out = out.append(f(x)); } return out; }
+function map_to[T, U](xs: T[], f: (T) => U): U[] { let out: U[] = []; for x in xs { out = out.append(f(x)); } return out; }
 function (xs: T[]) map_to[U](f: (T) => U): U[] { return map_to(xs, f); }
-function mapped_to(xs: i32[]): i32 { var ws: string[] = xs.map_to((x: i32): string => "s"); return ws.len(); }
+function mapped_to(xs: i32[]): i32 { let ws: string[] = xs.map_to((x: i32): string => "s"); return ws.len(); }
 // A void method in statement position is a call like a void function's.
 function (b: Bag) log(): void { print(b.tag); }
 function (o: Option[T]) note(): void { print("n"); }
@@ -795,18 +795,18 @@ function log_bag(b: Bag, o: Option[i32]): i32 { b.log(); o.note(); return b.item
 // A labelled exit leaves the loop the label names and every loop inside it;
 // a parameter with a default is an ordinary parameter, the parser having
 // filled the call sites.
-function labelled(n: i32): i32 { var t: i32 = 0; var i: i32 = 0; outer: while (i < n) { i = i + 1; var j: i32 = 0; while (j < 3) { j = j + 1; if (j == i) { continue outer; } if (j == 2) { break outer; } t = t + 1; } } return t; }
+function labelled(n: i32): i32 { let t: i32 = 0; let i: i32 = 0; outer: while (i < n) { i = i + 1; let j: i32 = 0; while (j < 3) { j = j + 1; if (j == i) { continue outer; } if (j == 2) { break outer; } t = t + 1; } } return t; }
 function with_default(n: i32, by: i32 = 1): i32 { return n + by; }
 // A value block is typed by its destination: the checker reads the type the
 // desugar guessed from the arms' syntax, which calls an empty array arm an
 // i32. A match on a Some the destination does not name is typed from its
 // payload.
-function vb_empty(k: i32): i32[] { var o: Option[i32] = Some(k); return (match (o) { Some(v) => [v, v], None => [] }); }
+function vb_empty(k: i32): i32[] { let o: Option[i32] = Some(k); return (match (o) { Some(v) => [v, v], None => [] }); }
 function vb_bare(k: i32): i32 { return (match (Some(k)) { Some(v) => v + 1, None => 0 }); }
 // A match expression the tuple desugar routes through a value local: the
 // block's leading statements run in the enclosing block and its trailing
 // return reads the local.
-function tm_line(k: i32): i32 { var t = (k, 2); return match (t) { (1, b) => b * 10, (a, _) => a }; }
+function tm_line(k: i32): i32 { let t = (k, 2); return match (t) { (1, b) => b * 10, (a, _) => a }; }
 // An address has no saturating or checked operator: the clamp is at a width
 // the type names, which is the target's, and the native checker refuses it.
 function refused_usize_sat(a: usize, b: usize): usize { return a +| b; }
@@ -827,36 +827,36 @@ function flipped(m: Swap): Swap { match (m) { Front(n, k) => { return Back(k, fl
 `
 
 const semsourcePrintDriver = `import "./semsource"; import "./ssa"; import "./ssaunits"; import "./typeinfo";
-import "./parser"; import "./lexer"; import "./util"; import "./irlower";
+import "./parser"; import "./lexer"; import "./util"; import "./lift";
 function show(p: semsource.Produced): void {
     if (!p.ok) { print("refused " + p.why); return; }
     if (p.template) { print("template instantiated"); return; }
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < p.func.values.len()) {
         if (i > 0) { out = out + " "; }
         out = out + "v" + util.i32_to_string(i) + ":" + typeinfo.spelling(p.func.values[i]);
         i = i + 1;
     }
-    var modes: string = "";
+    let modes: string = "";
     for m in p.modes { modes = modes + " " + util.i32_to_string(m); }
     print("modes" + modes + " result " + typeinfo.spelling(p.func.result));
     print(out);
-    var plan = ssaunits.plan(p.func, p.modes);
+    let plan = ssaunits.plan(p.func, p.modes);
     if (!plan.ok) { print("plan " + plan.why); }
     print(ssa.print_func(p.func.graph));
 }
 function main(): i32 {
-    var src: string = "";
+    let src: string = "";
     match (read_file(args()[1])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
-    var parsed = parser.parse_module(lexer.tokenize(src));
+    let parsed = parser.parse_module(lexer.tokenize(src));
     // The production pipeline injects the front end's own enum variants
     // (IoError, JsonValue) as declarations before the lambda lift runs;
     // without them a Result's error arm names a union nothing declares.
-    var mod = irlower.lift_lambdas_typed(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
+    let mod = lift.lift_lambdas_typed(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
     // Every declaration in order, then every instance the templates were
     // produced at.
-    var built = semsource.build_module(mod);
+    let built = semsource.build_module(mod);
     for p in built.decls { show(p); }
     for p in built.instances { show(p); }
     return 0;
@@ -881,7 +881,7 @@ function same(a: Ty, b: Ty): boolean {
 }
 function same_all(xs: Ty[], ys: Ty[]): boolean {
     if (xs.len() != ys.len()) { return false; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) {
         if (!same(xs[i], ys[i])) { return false; }
         i = i + 1;
@@ -920,23 +920,23 @@ function keep_after(n: i32, t: Ty): Holder {
     return Holder { kept: t };
 }
 function main(): i32 {
-    var h: Holder = keep(Nm { name: "a" });
+    let h: Holder = keep(Nm { name: "a" });
     if (same(h.kept, Nm { name: "a" })) { return 0; }
     return 1;
 }
 `
 
 const semsourceInferDriver = `import "./semsource"; import "./util";
-import "./parser"; import "./lexer"; import "./irlower";
+import "./parser"; import "./lexer"; import "./lift";
 function main(): i32 {
-    var src: string = "";
+    let src: string = "";
     match (read_file(args()[1])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
-    var parsed = parser.parse_module(lexer.tokenize(src));
-    var mod = irlower.lift_lambdas_typed(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
-    var built = semsource.with_inferred_modes(semsource.build_module(mod));
-    var i: i32 = 0;
+    let parsed = parser.parse_module(lexer.tokenize(src));
+    let mod = lift.lift_lambdas_typed(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
+    let built = semsource.with_inferred_modes(semsource.build_module(mod));
+    let i: i32 = 0;
     while (i < built.decls.len()) {
-        var line: string = built.names[i];
+        let line: string = built.names[i];
         if (!built.decls[i].ok) { line = line + " refused " + built.decls[i].why; }
         for m in built.decls[i].modes { line = line + " " + util.i32_to_string(m); }
         print(line);
@@ -1035,9 +1035,9 @@ func goldenDiff(want, got string) string {
 const semsourceRCProgram = `import "core/map";
 import "std/string";
 @noinline function pick(k: i32): i32[] {
-    var rows: i32[][] = [[1, 2], [3, 4], [5, 6]];
-    var chosen: i32[] = rows[0];
-    var i: i32 = 1;
+    let rows: i32[][] = [[1, 2], [3, 4], [5, 6]];
+    let chosen: i32[] = rows[0];
+    let i: i32 = 1;
     while (i <= k) {
         if (i == 2) { chosen = rows[i]; break; }
         chosen = rows[1];
@@ -1046,34 +1046,34 @@ import "std/string";
     return chosen;
 }
 @noinline function pair(n: i32, flag: boolean): i32[] {
-    var xs: i32[] = [n, 0];
-    var count: i32 = 0;
-    var t: (i32, i32[]) = (n, xs);
+    let xs: i32[] = [n, 0];
+    let count: i32 = 0;
+    let t: (i32, i32[]) = (n, xs);
     if (flag && n > 2 || n == 0) {
-        var n: i32 = -n;
+        let n: i32 = -n;
         t = (n * 2, [n, n + 1]);
         count = t.1[0];
     } else {
         count = t.0 + 1;
     }
-    var swapped: (i32, i32[]) = (count, t.1);
+    let swapped: (i32, i32[]) = (count, t.1);
     return [swapped.0, swapped.1[1], swapped.1[0]];
 }
 @noinline function boxed(n: i32): (i32, i32[]) { return (n, [n, n + 1]); }
 @noinline function boxed_local(n: i32): (i32, i32[]) {
-    var xs: i32[] = [n];
-    var t: (i32, i32[]) = (n, xs);
-    var c: i32 = t.1[0];
-    if (c < 0) { var e: i32[] = []; return (0, e); }
+    let xs: i32[] = [n];
+    let t: (i32, i32[]) = (n, xs);
+    let c: i32 = t.1[0];
+    if (c < 0) { let e: i32[] = []; return (0, e); }
     return t;
 }
 @noinline function boxed_carry(n: i32): (i32[], boolean) {
-    var xs: i32[] = [n, n * 2];
+    let xs: i32[] = [n, n * 2];
     return (xs, n > 0);
 }
 @noinline function carry(limit: i32): i32[] {
-    var last: i32[] = [7];
-    var i: i32 = 0;
+    let last: i32[] = [7];
+    let i: i32 = 0;
     while (i < limit) {
         last = [i];
         if (i == 1) { break; }
@@ -1082,14 +1082,14 @@ import "std/string";
     return last;
 }
 @noinline function count_even(limit: i32): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
-    var odd: boolean = false;
+    let total: i32 = 0;
+    let i: i32 = 0;
+    let odd: boolean = false;
     while (i < limit) {
         i = i + 1;
         odd = !odd;
         if (odd) { continue; }
-        var j: i32 = 0;
+        let j: i32 = 0;
         while (true) {
             if (j >= 2) { break; }
             total = total + i;
@@ -1099,7 +1099,7 @@ import "std/string";
     return total;
 }
 @noinline function fill(n: i32): i32[] {
-    var out: i32[] = [n, n + 1, n + 2];
+    let out: i32[] = [n, n + 1, n + 2];
     return out;
 }
 @noinline function first_of(xs: i32[]): i32 { return xs[0]; }
@@ -1108,21 +1108,21 @@ import "std/string";
     return [k];
 }
 @noinline function chain(n: i32): i32[] {
-    var a: i32[] = fill(n);
-    var b: i32[] = keep(a, n);
-    var c: i32[] = keep(fill(n + 1), 0);
+    let a: i32[] = fill(n);
+    let b: i32[] = keep(a, n);
+    let c: i32[] = keep(fill(n + 1), 0);
     return [first_of(b) + first_of(c), b[0]];
 }
 @noinline function twice(n: i32): i32 {
-    var a: i32[] = fill(n);
-    var held: i32[] = a;
-    var x: i32 = first_of(held) + first_of(keep(a, 1)) + first_of(held);
+    let a: i32[] = fill(n);
+    let held: i32[] = a;
+    let x: i32 = first_of(held) + first_of(keep(a, 1)) + first_of(held);
     fill(x);
     return x;
 }
 @noinline function grow(limit: i32): i32[] {
-    var cur: i32[] = [0];
-    var i: i32 = 0;
+    let cur: i32[] = [0];
+    let i: i32 = 0;
     while (i < limit) {
         cur = keep(fill(i), i);
         i = i + 1;
@@ -1146,20 +1146,20 @@ struct Counter { n: i32, m: i32 }
 // The method CALL is what this exercises: twice_total is itself lowered
 // through the boundary, so the call is produced rather than handed to the AST.
 @noinline function twice_total(n: i32): i32 {
-    var c: Counter = make_counter(n);
+    let c: Counter = make_counter(n);
     return c.total() + c.total();
 }
 @noinline function mk_s2(n: i32): S2 { return S2 { a: n, b: n + 1 }; }
 @noinline function proj(q: W): S2 { return q.s; }
 @noinline function unwrap(q: Q): i32 {
-    var p: P = q.p;
+    let p: P = q.p;
     if (q.name == "x!") { return p.xs[0]; }
     return p.n + p.xs[1];
 }
 @noinline function tally(n: i32): i32 {
-    var q: Q = wrap(make(n), "x");
-    var r: Q = wrap(make(n + 1), "y");
-    var keep: Q = q;
+    let q: Q = wrap(make(n), "x");
+    let r: Q = wrap(make(n + 1), "y");
+    let keep: Q = q;
     if (n > 3) { keep = r; }
     return unwrap(q) + unwrap(keep) + unwrap(r);
 }
@@ -1193,11 +1193,11 @@ enum Chain { End, Link(i32, Chain) }
     return 0;
 }
 @noinline function build_sum(n: i32): i32 {
-    var a: Tree = leaf(n);
-    var b: Tree = leaf(n + 1);
-    var t: Tree = fork(a, b);
-    var c: Tree = leaf(n + 2);
-    var u: Tree = fork(t, c);
+    let a: Tree = leaf(n);
+    let b: Tree = leaf(n + 1);
+    let t: Tree = fork(a, b);
+    let c: Tree = leaf(n + 2);
+    let u: Tree = fork(t, c);
     return tree_sum(u) + tree_sum(t);
 }
 @noinline function chain_len(c: Chain): i32 {
@@ -1205,17 +1205,17 @@ enum Chain { End, Link(i32, Chain) }
     return 0;
 }
 @noinline function chain_build(n: i32): i32 {
-    var c: Chain = End;
-    var d: Chain = Link(n, c);
-    var e: Chain = Link(n + 1, d);
+    let c: Chain = End;
+    let d: Chain = Link(n, c);
+    let e: Chain = Link(n + 1, d);
     return chain_len(e) + chain_len(d);
 }
 @noinline function node_sum(limit: i32): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
-    var kept: Node = Leaf { n: 0 };
+    let total: i32 = 0;
+    let i: i32 = 0;
+    let kept: Node = Leaf { n: 0 };
     while (i < limit) {
-        var nd: Node = mk_node(i);
+        let nd: Node = mk_node(i);
         total = total + node_size(nd);
         if (i == 1) { kept = nd; }
         i = i + 1;
@@ -1238,11 +1238,11 @@ enum Chain { End, Link(i32, Chain) }
     return 0 - 1;
 }
 @noinline function sum_shapes(limit: i32): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
-    var last: Shape = Dot;
+    let total: i32 = 0;
+    let i: i32 = 0;
+    let last: Shape = Dot;
     while (i < limit) {
-        var s: Shape = shape(i);
+        let s: Shape = shape(i);
         match (s) {
             Line(n) => { total = total + n * 10; },
             _ => { total = total + measure(s); }
@@ -1258,7 +1258,7 @@ enum Chain { End, Link(i32, Chain) }
 }
 @noinline function boxed_shape(n: i32): i32 { return consume(shape(n)) + consume(Full([n])); }
 @noinline function hold(n: i32): i32 {
-    var h: Holder = Holder { s: shape(n), n: n };
+    let h: Holder = Holder { s: shape(n), n: n };
     return measure(h.s) + h.n;
 }
 @noinline function shape_code(s: Shape): i32 {
@@ -1287,8 +1287,8 @@ enum Chain { End, Link(i32, Chain) }
     return shape_code(shape(3)) + eat_shape(shape(2)) + node_tag(mk_node(n));
 }
 @noinline function shape_codes(limit: i32): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < limit) {
         total = total + shape_code(shape(i)) + eat_shape(shape(i));
         i = i + 1;
@@ -1303,8 +1303,8 @@ enum Chain { End, Link(i32, Chain) }
 @noinline function text_size(s: string): i32 { return s.len(); }
 @noinline function inner_size(p: P): i32 { return p.xs.len(); }
 @noinline function sum_all(xs: i32[]): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { total = total + xs[i]; i = i + 1; }
     return total;
 }
@@ -1312,8 +1312,8 @@ enum Chain { End, Link(i32, Chain) }
 // same box when the push fits, a fresh one when it grew. grow_to crosses the
 // capacity doublings repeatedly, so the reclaim-on-grow path runs.
 @noinline function grow_to(n: i32): i32[] {
-    var xs: i32[] = [];
-    var i: i32 = 0;
+    let xs: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { xs = xs.append(i); i = i + 1; }
     return xs;
 }
@@ -1325,7 +1325,7 @@ enum Chain { End, Link(i32, Chain) }
 // the lowering's. grow_to(9) leaves spare capacity, which is where an in-place
 // grow would also show up in the caller's own length.
 @noinline function borrow_acc(xs: i32[], n: i32): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { xs = xs.append(100 + i); i = i + 1; }
     return xs.len();
 }
@@ -1338,23 +1338,23 @@ enum Chain { End, Link(i32, Chain) }
 @noinline function push_borrowed(xs: i32[], v: i32): i32[] { return xs.append(v); }
 @noinline function set_borrowed(xs: i32[], i: i32, v: i32): i32[] { return xs.with(i, v); }
 @noinline function push_field_len(p: P, v: i32): i32 {
-    var q: P = P { ...p, xs: p.xs.append(v) };
+    let q: P = P { ...p, xs: p.xs.append(v) };
     return q.xs.len() * 10 + p.xs.len();
 }
 @noinline function set_field_at(p: P, i: i32, v: i32): i32 {
-    var q: P = P { ...p, xs: p.xs.with(i, v) };
+    let q: P = P { ...p, xs: p.xs.with(i, v) };
     return q.xs[i] * 10 + p.xs[i];
 }
 @noinline function push_elem_len(rs: i32[][], v: i32): i32 {
-    var ys: i32[] = rs[0].append(v);
+    let ys: i32[] = rs[0].append(v);
     return ys.len() * 10 + rs[0].len();
 }
 @noinline function elem_push(v: i32): i32 {
-    var rs: i32[][] = [[1, 2], [3, 4]];
+    let rs: i32[][] = [[1, 2], [3, 4]];
     return push_elem_len(rs, v);
 }
 @noinline function push_kept(own xs: i32[], v: i32): i32 {
-    var ys: i32[] = xs.append(v);
+    let ys: i32[] = xs.append(v);
     return ys.len() * 10 + xs.len();
 }
 // A field append whose record this frame reads no further through that field
@@ -1374,20 +1374,20 @@ struct Tags { list: Tag[], n: i32 }
     return Acc { ...a, xs: a.xs.append(v + 1) };
 }
 @noinline function acc_fill(n: i32): i32 {
-    var a: Acc = Acc { xs: [], tag: "t" };
-    var i: i32 = 0;
+    let a: Acc = Acc { xs: [], tag: "t" };
+    let i: i32 = 0;
     while (i < n) { a = acc_push(a, i); i = i + 1; }
     return a.xs.len() * 10 + a.tag.len();
 }
 @noinline function acc_kept(v: i32): i32 {
-    var a: Acc = Acc { xs: [1, 2], tag: "kept" };
-    var b: Acc = acc_push(a, v);
-    var c: Acc = acc_push_own(Acc { ...a, tag: "own" }, v);
+    let a: Acc = Acc { xs: [1, 2], tag: "kept" };
+    let b: Acc = acc_push(a, v);
+    let c: Acc = acc_push_own(Acc { ...a, tag: "own" }, v);
     return a.xs.len() * 100 + b.xs.len() * 10 + c.xs.len();
 }
 @noinline function acc_loop(n: i32): i32 {
-    var a: Acc = Acc { xs: [], tag: "" };
-    var i: i32 = 0;
+    let a: Acc = Acc { xs: [], tag: "" };
+    let i: i32 = 0;
     while (i < n) { a = Acc { ...a, xs: a.xs.append(i * i) }; i = i + 1; }
     return a.xs[n - 1];
 }
@@ -1402,24 +1402,24 @@ struct Tags { list: Tag[], n: i32 }
 }
 @noinline function acc_via(a: Acc, size: i32): Acc { return Acc { ...a, xs: acc_osz(a.xs, size) }; }
 @noinline function acc_via_fill(n: i32): i32 {
-    var a: Acc = Acc { xs: [], tag: "v" };
-    var i: i32 = 0;
+    let a: Acc = Acc { xs: [], tag: "v" };
+    let i: i32 = 0;
     while (i < n) { a = acc_via(a, 16); i = i + 1; }
     return a.xs.len() * 10 + a.tag.len();
 }
 @noinline function acc_via_kept(v: i32): i32 {
-    var a: Acc = Acc { xs: [v], tag: "kept" };
-    var b: Acc = acc_via(a, 16);
-    var c: Acc = acc_via(a, 32);
+    let a: Acc = Acc { xs: [v], tag: "kept" };
+    let b: Acc = acc_via(a, 16);
+    let c: Acc = acc_via(a, 32);
     return a.xs.len() * 100 + b.xs.len() * 10 + c.xs.len();
 }
 // A record with a second holder this frame cannot see: the handed field is
 // gated on the record's count, so the callee copies and held[0] keeps its
 // length.
 @noinline function acc_via_shared(v: i32): i32 {
-    var a: Acc = Acc { xs: [v], tag: "s" };
-    var held: Acc[] = [a];
-    var b: Acc = acc_via(a, 16);
+    let a: Acc = Acc { xs: [v], tag: "s" };
+    let held: Acc[] = [a];
+    let b: Acc = acc_via(a, 16);
     return held[0].xs.len() * 10 + b.xs.len();
 }
 // A record field handed into a COUNTED slot from a record this frame owns:
@@ -1434,27 +1434,27 @@ struct Threaded { acc: Acc, labels: i32[], why: string }
     return Threaded { ...c, acc: acc_push_own(c.acc, v), labels: c.labels.append(v) };
 }
 @noinline function thread_run(n: i32): i32 {
-    var before: i32 = __arr_push_shared_count();
-    var c: Threaded = Threaded { acc: Acc { xs: [], tag: "c" }, labels: [], why: "" };
-    var i: i32 = 0;
+    let before: i32 = __arr_push_shared_count();
+    let c: Threaded = Threaded { acc: Acc { xs: [], tag: "c" }, labels: [], why: "" };
+    let i: i32 = 0;
     while (i < n) { c = thread_step(c, i); i = i + 1; }
     return (c.acc.xs.len() + c.labels.len()) * 10 + (__arr_push_shared_count() - before);
 }
 @noinline function thread_shared(v: i32): i32 {
-    var c: Threaded = Threaded { acc: Acc { xs: [v], tag: "c" }, labels: [], why: "" };
-    var held: Threaded[] = [c];
-    var d: Threaded = thread_step(Threaded { ...c, why: "s" }, 5);
+    let c: Threaded = Threaded { acc: Acc { xs: [v], tag: "c" }, labels: [], why: "" };
+    let held: Threaded[] = [c];
+    let d: Threaded = thread_step(Threaded { ...c, why: "s" }, 5);
     return held[0].acc.xs.len() * 10 + d.acc.xs.len();
 }
 // An empty literal has room for its first push, so an array built from one
 // and appended to once is one allocation, not a throwaway empty box and then
 // the real one: ten arrays, ten allocations, their first elements 0..9.
 @noinline function empty_push(n: i32): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var a: i32[] = [];
+        let a: i32[] = [];
         a = a.append(i);
         t = t + a[0];
         i = i + 1;
@@ -1474,15 +1474,15 @@ struct Threaded { acc: Acc, labels: i32[], why: string }
     return b.append((v >> 24) & 255);
 }
 @noinline function chain_fill(n: i32): i32 {
-    var before: i32 = __arr_push_shared_count();
-    var out: i32[] = [];
-    var i: i32 = 0;
+    let before: i32 = __arr_push_shared_count();
+    let out: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { out = chain_le32(out, i); i = i + 1; }
     return out.len() * 10 + (__arr_push_shared_count() - before);
 }
 @noinline function chain_kept(v: i32): i32 {
-    var a: i32[] = [1, 2];
-    var b: i32[] = chain_le32(a, v);
+    let a: i32[] = [1, 2];
+    let b: i32[] = chain_le32(a, v);
     return a.len() * 100 + b.len() * 10 + a[1];
 }
 @noinline function chain_words(b: string[], w: string): string[] {
@@ -1491,21 +1491,21 @@ struct Threaded { acc: Acc, labels: i32[], why: string }
     return b.append("x" + w);
 }
 @noinline function chain_words_run(n: i32): i32 {
-    var ws: string[] = [];
-    var i: i32 = 0;
+    let ws: string[] = [];
+    let i: i32 = 0;
     while (i < n) { ws = chain_words(ws, "ab"); i = i + 1; }
-    var held: string[] = ws;
-    var more: string[] = chain_words(ws, "c");
+    let held: string[] = ws;
+    let more: string[] = chain_words(ws, "c");
     return more.len() * 1000 + held.len() * 10 + more[more.len() - 1].len();
 }
 @noinline function chain_tail(b: i32[], v: i32): i32 {
     b = b.append(v);
     b = b.append(v + 1);
-    var c: i32[] = b;
+    let c: i32[] = b;
     return c.len() * 100 + c[c.len() - 1];
 }
 @noinline function chain_tail_run(v: i32): i32 {
-    var t: i32[] = [1, 2, 3];
+    let t: i32[] = [1, 2, 3];
     return chain_tail(t, v) * 10 + t.len();
 }
 // A push onto a borrowed parameter the frame reads again must not grow the
@@ -1513,23 +1513,23 @@ struct Threaded { acc: Acc, labels: i32[], why: string }
 // The caller hands over a box with spare capacity and no binding of its own,
 // so only this frame's later reads can tell.
 @noinline function reread_one(b: i32[]): i32 {
-    var c: i32[] = b.append(9);
+    let c: i32[] = b.append(9);
     return b.len() * 10 + c.len();
 }
 @noinline function reread_chain(b: i32[]): i32 {
-    var c: i32[] = b.append(9);
-    var d: i32[] = c.append(8);
+    let c: i32[] = b.append(9);
+    let d: i32[] = c.append(8);
     return b.len() * 100 + d.len() * 10 + b[b.len() - 1];
 }
 // The same read reached around a loop, where only the header carries it.
 @noinline function reread_loop(b: i32[]): i32 {
-    var i: i32 = 0;
-    while (i < 2) { var c: i32[] = b.append(9); i = i + 1; }
+    let i: i32 = 0;
+    while (i < 2) { let c: i32[] = b.append(9); i = i + 1; }
     return b.len() * 10;
 }
 @noinline function spare(n: i32): i32[] {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = a.append(i); i = i + 1; }
     return a;
 }
@@ -1540,27 +1540,27 @@ struct Threaded { acc: Acc, labels: i32[], why: string }
 // loop_early returns the untouched parameter on one path, and loop_drop
 // discards the accumulator, which leaves it an ordinary owned value.
 @noinline function loop_raw(out: u8[], s: string): u8[] {
-    var bs: u8[] = out;
-    var i: i32 = 0;
+    let bs: u8[] = out;
+    let i: i32 = 0;
     while (i < s.len()) { bs = bs.append(s[i]); i = i + 1; }
     return bs;
 }
 @noinline function loop_fill(n: i32): i32 {
-    var before: i32 = __arr_push_shared_count();
-    var out: u8[] = [];
-    var i: i32 = 0;
+    let before: i32 = __arr_push_shared_count();
+    let out: u8[] = [];
+    let i: i32 = 0;
     while (i < n) { out = loop_raw(out, "abcd"); i = i + 1; }
     out = loop_raw(out, "");
     return out.len() * 10 + (__arr_push_shared_count() - before);
 }
 @noinline function loop_kept(n: i32): i32 {
-    var out: u8[] = loop_raw([], "abc");
-    var held: u8[] = out;
+    let out: u8[] = loop_raw([], "abc");
+    let held: u8[] = out;
     out = loop_raw(out, "de");
     return held.len() * 100 + out.len() * 10 + (held[held.len() - 1] as i32) - 99;
 }
 @noinline function loop_early(b: string[], n: i32): string[] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         if (i == 2) { return b; }
         b = b.append("w");
@@ -1569,14 +1569,14 @@ struct Threaded { acc: Acc, labels: i32[], why: string }
     return b.append("end");
 }
 @noinline function loop_early_run(n: i32): i32 {
-    var ws: string[] = [];
-    var i: i32 = 0;
+    let ws: string[] = [];
+    let i: i32 = 0;
     while (i < n) { ws = loop_early(ws, i % 4); i = i + 1; }
     return ws.len() * 10 + ws[ws.len() - 1].len();
 }
 @noinline function loop_drop(b: i32[], n: i32): i32 {
-    var i: i32 = 0;
-    var t: i32 = 0;
+    let i: i32 = 0;
+    let t: i32 = 0;
     while (i < n) { b = b.append(i); t = t + b.len(); i = i + 1; }
     return t;
 }
@@ -1585,37 +1585,37 @@ struct Threaded { acc: Acc, labels: i32[], why: string }
 // on a path that never grows it. One read inside the loop keeps the box
 // whole instead, so loop_inside reads the caller's 5 on every turn.
 @noinline function loop_pre(b: i32[], n: i32): i32[] {
-    var base: i32 = b.len();
-    var i: i32 = 0;
+    let base: i32 = b.len();
+    let i: i32 = 0;
     while (i < n) { b = b.append(base + i); i = i + 1; }
     return b;
 }
 @noinline function loop_pre_fill(n: i32): i32 {
-    var before: i32 = __arr_push_shared_count();
-    var out: i32[] = [];
-    var i: i32 = 0;
+    let before: i32 = __arr_push_shared_count();
+    let out: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { out = loop_pre(out, 2); i = i + 1; }
     return out.len() * 10 + (__arr_push_shared_count() - before);
 }
 @noinline function loop_skip(b: string[], s: string): string[] {
     if (s.len() == 0) { return b; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 2) { b = b.append(s); i = i + 1; }
     return b;
 }
 @noinline function loop_skip_run(n: i32): i32 {
-    var ws: string[] = [];
-    var i: i32 = 0;
+    let ws: string[] = [];
+    let i: i32 = 0;
     while (i < n) { ws = loop_skip(ws, "ab"); ws = loop_skip(ws, ""); i = i + 1; }
-    var held: string[] = ws;
+    let held: string[] = ws;
     ws = loop_skip(ws, "c");
     return ws.len() * 100 + held.len();
 }
 @noinline function loop_inside(b: i32[], n: i32): i32 {
-    var bs: i32[] = b;
-    var i: i32 = 0;
+    let bs: i32[] = b;
+    let i: i32 = 0;
     while (i < n) { bs = bs.append(b.len()); i = i + 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for x in bs { t = t + x; }
     return t;
 }
@@ -1625,19 +1625,19 @@ struct Threaded { acc: Acc, labels: i32[], why: string }
 enum Shade { Dark, Light }
 struct Tagged { n: i32, tag: string }
 @noinline function vb_words(k: i32): i32 {
-    var o: Option[i32] = Some(k);
-    var words: string[] = (match (o) { Some(v) => ["a" + "b", "c"], None => [] });
-    var sh: Shade = Dark;
-    var tag: string = (match (sh) { Dark => "d" + "k", Light => "l" });
-    var ot: Option[string] = Some(tag);
-    var cell: Tagged = (match (ot) { Some(t) => Tagged { n: k, tag: t }, None => Tagged { n: 0, tag: "" } });
-    var pair: (i32, string) = (if (k > 1) { (k, cell.tag) } else { (0, "z") });
+    let o: Option[i32] = Some(k);
+    let words: string[] = (match (o) { Some(v) => ["a" + "b", "c"], None => [] });
+    let sh: Shade = Dark;
+    let tag: string = (match (sh) { Dark => "d" + "k", Light => "l" });
+    let ot: Option[string] = Some(tag);
+    let cell: Tagged = (match (ot) { Some(t) => Tagged { n: k, tag: t }, None => Tagged { n: 0, tag: "" } });
+    let pair: (i32, string) = (if (k > 1) { (k, cell.tag) } else { (0, "z") });
     return words.len() * 100 + tag.len() * 10 + cell.tag.len() + pair.1.len();
 }
 @noinline function vb_rows(k: i32): i32 {
-    var rows: i32[] = (if (k > 0) { [k, k] } else { [k] });
-    var orows: Option[i32[]] = Some(rows);
-    var picked: i32[] = (match (orows) { Some(r) => r, None => [0 - 1] });
+    let rows: i32[] = (if (k > 0) { [k, k] } else { [k] });
+    let orows: Option[i32[]] = Some(rows);
+    let picked: i32[] = (match (orows) { Some(r) => r, None => [0 - 1] });
     return rows.len() * 10 + picked.len();
 }
 // The saturating and checked operators: the checked ones answer an Option
@@ -1645,7 +1645,7 @@ struct Tagged { n: i32, tag: string }
 // wide one and unsigned.
 @noinline function sat_mix(a: i32, b: i32): i32 { return (a +| b) + (a -| b) + ((a *| b) >> 16) + (a <<| b); }
 @noinline function chk_count(a: i32, b: i32): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (a +? b) { Some(v) => { n = n + 1; }, None => { n = n + 0; } }
     match (a *? b) { Some(v) => { n = n + 2; }, None => { n = n + 0; } }
     match (a /? b) { Some(v) => { n = n + 4; }, None => { n = n + 0; } }
@@ -1662,39 +1662,39 @@ struct Tagged { n: i32, tag: string }
 struct Lit { text: string, neg: boolean }
 @noinline function lit_of(text: string, neg: boolean): Lit { return Lit { text: text, neg: neg }; }
 @noinline function lit_int(n: i32): Lit {
-    var s: string = "-" + grown(n);
+    let s: string = "-" + grown(n);
     if (n < 0) { return lit_of(s, false); }
     return lit_of(slice_unchecked(s, 1, s.len()), true);
 }
 @noinline function churn(n: i32): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
+    let out: string[] = [];
+    let i: i32 = 0;
     while (i < n) { out = out.append("zz" + grown(i % 5)); i = i + 1; }
     return out;
 }
 @noinline function lit_bytes(n: i32): i32 {
-    var a: Lit = lit_int(n);
-    var junk: string[] = churn(64);
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let a: Lit = lit_int(n);
+    let junk: string[] = churn(64);
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < a.text.len()) { t = t + (a.text[i] as i32); i = i + 1; }
     if (a.neg) { t = t + 1000; }
     return t + junk.len() - 64;
 }
 @noinline function tags_add(ts: Tags, s: string): Tags { return Tags { ...ts, list: ts.list.append(Tag { name: s + "!" }), n: ts.n + 1 }; }
 @noinline function tags_total(k: i32): i32 {
-    var words: string[] = ["alpha-long-word", "beta-long-word", "gamma-long-word", "delta-long-word"];
-    var ts: Tags = Tags { list: [], n: 0 };
-    var i: i32 = 0;
+    let words: string[] = ["alpha-long-word", "beta-long-word", "gamma-long-word", "delta-long-word"];
+    let ts: Tags = Tags { list: [], n: 0 };
+    let i: i32 = 0;
     while (i < k) { ts = tags_add(ts, words[i % 4]); i = i + 1; }
-    var held: Tags = tags_add(ts, "extra-word");
-    var total: i32 = 0;
+    let held: Tags = tags_add(ts, "extra-word");
+    let total: i32 = 0;
     for t in ts.list { total = total + t.name.len(); }
     return total * 100 + held.list.len() * 10 + ts.n;
 }
 @noinline function build_rows(n: i32): i32 {
-    var p: P = P { n: 0, xs: [] };
-    var i: i32 = 0;
+    let p: P = P { n: 0, xs: [] };
+    let i: i32 = 0;
     while (i < n) { p = P { ...p, xs: p.xs.append(i) }; i = i + 1; }
     return p.xs.len() * 10 + p.xs[n - 1];
 }
@@ -1703,40 +1703,40 @@ struct Lit { text: string, neg: boolean }
 // replaces gives back the one it held.
 @noinline function push_word(ws: string[], w: string): string[] { return ws.append(w + ""); }
 @noinline function word_lens(n: i32): i32 {
-    var ws: string[] = ["ab", "cd"];
-    var vs: string[] = push_word(ws, "xyz");
+    let ws: string[] = ["ab", "cd"];
+    let vs: string[] = push_word(ws, "xyz");
     return vs.len() * 100 + vs[2].len() * 10 + ws.len() + n;
 }
 @noinline function set_word_borrowed(ws: string[], w: string): string[] { return ws.with(0, w + ""); }
 @noinline function word_set(n: i32): i32 {
-    var ws: string[] = ["ab", "cd"];
-    var vs: string[] = set_word_borrowed(ws, "wxyz");
+    let ws: string[] = ["ab", "cd"];
+    let vs: string[] = set_word_borrowed(ws, "wxyz");
     return vs[0].len() * 10 + ws[0].len() + n;
 }
 // A reference element: the array takes the value's unit, string or array.
 @noinline function words(n: i32): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
+    let out: string[] = [];
+    let i: i32 = 0;
     while (i < n) { out = out.append("w" + "x"); i = i + 1; }
     return out;
 }
 @noinline function word_bytes(n: i32): i32 {
-    var ws: string[] = words(n);
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let ws: string[] = words(n);
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < ws.len()) { total = total + ws[i].len(); i = i + 1; }
     return total;
 }
 @noinline function rows(n: i32): i32[][] {
-    var out: i32[][] = [];
-    var i: i32 = 0;
+    let out: i32[][] = [];
+    let i: i32 = 0;
     while (i < n) { out = out.append(fill(i)); i = i + 1; }
     return out;
 }
 @noinline function row_total(n: i32): i32 {
-    var rs: i32[][] = rows(n);
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let rs: i32[][] = rows(n);
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < rs.len()) { total = total + rs[i][0]; i = i + 1; }
     return total;
 }
@@ -1744,17 +1744,17 @@ struct Lit { text: string, neg: boolean }
 // so skip_two's continue — which branches to the header — re-runs the advance
 // instead of skipping it and spinning forever.
 @noinline function sum_for(xs: i32[]): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for x in xs { t = t + x; }
     return t;
 }
 @noinline function skip_two(xs: i32[]): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for x in xs { if (x == 2) { continue; } t = t + x; }
     return t;
 }
 @noinline function until_two_for(xs: i32[]): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for x in xs { if (x == 2) { break; } t = t + x; }
     return t;
 }
@@ -1764,21 +1764,21 @@ struct Lit { text: string, neg: boolean }
 }
 // The loop binding shadows an outer name, which the exit must restore.
 @noinline function shadow_for(xs: i32[]): i32 {
-    var x: i32 = 100;
-    var t: i32 = 0;
+    let x: i32 = 100;
+    let t: i32 = 0;
     for x in xs { t = t + x; }
     return t + x;
 }
 // A counted temporary iterable: produced once, released after the exit.
 @noinline function temp_for(n: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for x in fill(n) { t = t + x; }
     return t;
 }
 // Nested loops, with continue and break in the inner one, over a reference
 // element borrowed from the outer container.
 @noinline function nested_for(n: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for r in rows(n) {
         for v in r { if (v == 1) { continue; } if (v == 4) { break; } t = t + v; }
     }
@@ -1788,7 +1788,7 @@ struct Lit { text: string, neg: boolean }
 // boundary: an AST caller holding a string[] result would hit the documented
 // caller_sigs leak floor, which has nothing to do with this loop.
 @noinline function copy_words(n: i32): i32 {
-    var out: string[] = [];
+    let out: string[] = [];
     for w in words(n) { out = out.append(w); }
     return out.len() + out[0].len();
 }
@@ -1799,14 +1799,14 @@ struct Lit { text: string, neg: boolean }
 // temp_slice's source is a temporary whose only use is the slice.
 @noinline function head_of(s: string, n: i32): i32 { return slice_unchecked(s, 0, n).len(); }
 @noinline function mid_of(n: i32): i32 {
-    var s: string = grown(n);
-    var v: str = slice_unchecked(s, 1, 4);
+    let s: string = grown(n);
+    let v: str = slice_unchecked(s, 1, 4);
     return v.len() + s.len();
 }
 @noinline function temp_slice(n: i32): i32 { return slice_unchecked(grown(n), 0, 3).len(); }
 @noinline function scan_slices(s: string): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < s.len()) { t = t + slice_unchecked(s, i, i + 1).len(); i = i + 1; }
     return t;
 }
@@ -1826,7 +1826,7 @@ struct Lit { text: string, neg: boolean }
     }
 }
 @noinline function checked_mid(n: i32): i32 {
-    var s: string = grown(n);
+    let s: string = grown(n);
     match (s[1:4]) {
         Some(v) => { return v.len() + s.len(); },
         None => { return 0; }
@@ -1839,15 +1839,15 @@ struct Lit { text: string, neg: boolean }
     }
 }
 @noinline function checked_miss(n: i32): i32 {
-    var s: string = grown(n);
+    let s: string = grown(n);
     match (s[2:99]) {
         Some(v) => { return v.len(); },
         None => { return s.len(); }
     }
 }
 @noinline function checked_split(n: i32): i32 {
-    var s: string = "héllo";
-    var i: i32 = 0;
+    let s: string = "héllo";
+    let i: i32 = 0;
     while (i < n) { s = s + "!"; i = i + 1; }
     match (s[1:2]) {
         Some(v) => { return v.len(); },
@@ -1864,7 +1864,7 @@ struct Lit { text: string, neg: boolean }
     return "abcdef";
 }
 @noinline function open_window(): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (open_base()[2:]) {
         Some(v) => { t = t + v.len(); },
         None => { t = t + 70; }
@@ -1893,7 +1893,7 @@ struct Lit { text: string, neg: boolean }
     return None;
 }
 @noinline function try_quarter(n: i32): Option[i32] {
-    var h: i32 = try_even(n)?;
+    let h: i32 = try_even(n)?;
     return try_even(h);
 }
 @noinline function try_opt(n: i32): i32 {
@@ -1903,7 +1903,7 @@ struct Lit { text: string, neg: boolean }
     }
 }
 @noinline function try_head(s: string): Option[i32] {
-    var v: str = s[0:3]?;
+    let v: str = s[0:3]?;
     return Some(v.len() + s.len());
 }
 @noinline function try_view(s: string): i32 {
@@ -1917,12 +1917,12 @@ struct Lit { text: string, neg: boolean }
     return Tr.Bad(grown(n + 3));
 }
 @noinline function try_msg(n: i32): Tr {
-    var v: i32 = try_parse(n)?;
+    let v: i32 = try_parse(n)?;
     return Tr.Fine(v * 2);
 }
 @noinline function try_loop(k: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0 - 2;
+    let t: i32 = 0;
+    let i: i32 = 0 - 2;
     while (i < k) {
         match (try_msg(i)) {
             Fine(v) => { t = t + v; },
@@ -1933,8 +1933,8 @@ struct Lit { text: string, neg: boolean }
     return t;
 }
 @noinline function checked_scan(s: string): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < s.len()) {
         match (s[i:i + 1]) {
             Some(v) => { t = t + v.len(); },
@@ -1945,20 +1945,20 @@ struct Lit { text: string, neg: boolean }
     return t;
 }
 @noinline function grown(n: i32): string {
-    var s: string = "abcdef";
-    var i: i32 = 0;
+    let s: string = "abcdef";
+    let i: i32 = 0;
     while (i < n) { s = s + "gh"; i = i + 1; }
     return s;
 }
 @noinline function grown_size(n: i32): i32 {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s.len();
 }
 @noinline function greet(n: i32): i32 {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     if (s == "abcc") { return 1; }
     if (s != "ab") { return 2; }
@@ -1969,17 +1969,17 @@ struct Lit { text: string, neg: boolean }
 // unit of every reference field, so a copied-through field is retained and the
 // base is released after the box is built, not before.
 @noinline function bump(p: P): i32 {
-    var q: P = P { ...p, n: p.n + 1 };
+    let q: P = P { ...p, n: p.n + 1 };
     return q.n + q.xs.len() + p.xs.len();
 }
 @noinline function pure_copy(p: P): i32 {
-    var q: P = P { ...p };
+    let q: P = P { ...p };
     return q.n + q.xs.len();
 }
 // Overrides written out of declaration order, which the checker permits and
 // this boundary has to place by name rather than by position.
 @noinline function reorder(p: P): i32 {
-    var q: P = P { ...p, xs: [9, 9, 9], n: 4 };
+    let q: P = P { ...p, xs: [9, 9, 9], n: 4 };
     return q.n + q.xs.len();
 }
 // A literal whose fields are written out of declaration order. Evaluation stays
@@ -1987,23 +1987,23 @@ struct Lit { text: string, neg: boolean }
 // construction is still positional, so each value has to reach the slot its
 // NAME selects rather than the one its position would.
 @noinline function out_of_order(n: i32): i32 {
-    var q: Q = Q { p: P { xs: [n, n + 1], n: n }, name: "ab" };
+    let q: Q = Q { p: P { xs: [n, n + 1], n: n }, name: "ab" };
     return q.p.n + q.p.xs[1] + q.name.len();
 }
 // A base that is a temporary: owned and dead at the construction, so its unit
 // is moved and the copied field still needs one of its own.
 @noinline function from_temp(n: i32): i32 {
-    var q: P = P { ...make(n), n: n + 1 };
+    let q: P = P { ...make(n), n: n + 1 };
     return q.n + q.xs.len();
 }
 // An owned base carrying a record field, replaced by a string the caller owns.
 @noinline function retag(own q: Q, tag: string): i32 {
-    var r: Q = Q { ...q, name: tag };
+    let r: Q = Q { ...q, name: tag };
     return r.name.len() + r.p.xs.len();
 }
 // The base is itself a projection, so the update reads fields off a borrow.
 @noinline function nested_up(w: W): i32 {
-    var v: W = W { s: S2 { ...w.s, a: 7 } };
+    let v: W = W { s: S2 { ...w.s, a: 7 } };
     return v.s.a + v.s.b + w.s.a;
 }
 // One byte of a string, typed u8 the way the checker types it and widened to
@@ -2017,13 +2017,13 @@ struct Lit { text: string, neg: boolean }
 @noinline function first_last(s: string): i32 { return (s[0] as i32) + (s[s.len() - 1] as i32); }
 @noinline function temp_byte(n: i32): i32 { return grown(n)[1] as i32; }
 @noinline function outlives(n: i32): i32 {
-    var b: i32 = 0;
-    { var s: string = grown(n); b = s[0] as i32; }
+    let b: i32 = 0;
+    { let s: string = grown(n); b = s[0] as i32; }
     return b;
 }
 @noinline function checksum(s: string): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < s.len()) { t = t + (s[i] as i32); i = i + 1; }
     return t;
 }
@@ -2057,55 +2057,55 @@ struct Lit { text: string, neg: boolean }
 // half answers differently rather than identically: 1i64 << 40 is 0 in the low
 // word where a 32-bit shift would mask the count to 8 and give 256.
 @noinline function wide_shift(k: i32): i32 {
-    var big: i64 = 1i64 << 40;
+    let big: i64 = 1i64 << 40;
     return (big >> (k as i64)) as i32;
 }
 @noinline function wide_product(n: i32): i32 {
-    var b: i64 = (n as i64) * 1000000007i64;
+    let b: i64 = (n as i64) * 1000000007i64;
     return (b >> 32) as i32;
 }
 @noinline function wide_low(n: i32): i32 {
-    var b: i64 = (n as i64) * 1000000007i64;
+    let b: i64 = (n as i64) * 1000000007i64;
     return (b & 255i64) as i32;
 }
 // The two narrowing casts out of the wide domain: to the i32 it wraps to, and
 // through that to a byte.
 @noinline function wide_byte(n: i32): i32 {
-    var b: i64 = (n as i64) * 1000000007i64;
+    let b: i64 = (n as i64) * 1000000007i64;
     return (b as u8) as i32;
 }
 @noinline function wide_narrow(n: i32): i32 {
-    var b: i64 = (n as i64) * 1000000007i64;
+    let b: i64 = (n as i64) * 1000000007i64;
     return b as i32;
 }
 // Negation is a zero-minus, and the zero has to be pushed at the operand's own
 // width or the subtraction's two sides disagree.
 @noinline function wide_neg(n: i32): i32 {
-    var b: i64 = (n as i64) * 1000000007i64;
-    var a: i64 = -b;
+    let b: i64 = (n as i64) * 1000000007i64;
+    let a: i64 = -b;
     if (a < 0i64) { return (0i64 - a >> 32) as i32; }
     return 0 - 1;
 }
 // A wide value carried across a loop as a phi, and one written in hexadecimal.
 @noinline function wide_count(limit: i32): i32 {
-    var t: i64 = 0;
-    var i: i32 = 0;
+    let t: i64 = 0;
+    let i: i32 = 0;
     while (i < limit) { t = t + 4294967296i64; i = i + 1; }
     return (t >> 32) as i32;
 }
 @noinline function wide_hex(): i32 {
-    var m: i64 = 0x100000000i64;
+    let m: i64 = 0x100000000i64;
     return (m >> 32) as i32;
 }
 @noinline function wide_cmp(n: i32): i32 {
-    var a: i64 = (n as i64) * 1000000007i64;
-    var b: i64 = 5000000035i64;
+    let a: i64 = (n as i64) * 1000000007i64;
+    let b: i64 = 5000000035i64;
     if (a < b) { return 1; }
     if (a == b) { return 2; }
     return 3;
 }
 @noinline function wide_div(n: i32): i32 {
-    var b: i64 = (n as i64) * 1000000007i64;
+    let b: i64 = (n as i64) * 1000000007i64;
     return (b / 1000000000i64) as i32 + (b % 1000000000i64) as i32;
 }
 // A wide value crossing a produced-to-produced call, as a result and then as a
@@ -2139,20 +2139,20 @@ struct Lit { text: string, neg: boolean }
 @noinline function u32_of_f64(x: f64): i32 { return ((x as u32) >> 8) as i32; }
 // The same at 64 bits, where the value also needs a slot of its own.
 @noinline function u64_cmp(): i32 {
-    var m: u64 = 1u64 << 63;
+    let m: u64 = 1u64 << 63;
     if (m > 1u64) { return 1; }
     return 0;
 }
 @noinline function u64_div(): i32 {
-    var m: u64 = 1u64 << 63;
+    let m: u64 = 1u64 << 63;
     return (m / 1000000000000000u64) as i32;
 }
 @noinline function u64_rem(): i32 {
-    var m: u64 = 1u64 << 63;
+    let m: u64 = 1u64 << 63;
     return (m % 1000000000u64) as i32;
 }
 @noinline function u64_shift(): i32 {
-    var m: u64 = 1u64 << 63;
+    let m: u64 = 1u64 << 63;
     return (m >> 60) as i32;
 }
 // A widening extends by the SOURCE's signedness: an i32 fills the high half
@@ -2160,11 +2160,11 @@ struct Lit { text: string, neg: boolean }
 @noinline function u64_from_i32(n: i32): i32 { return ((n as u64) >> 60) as i32; }
 @noinline function u64_from_u32(n: u32): i32 { return ((n as u64) >> 24) as i32; }
 @noinline function u64_narrow(): i32 {
-    var m: u64 = (1u64 << 63) + 12345u64;
+    let m: u64 = (1u64 << 63) + 12345u64;
     return ((m as u32) >> 4) as i32;
 }
 @noinline function u64_float(): i32 {
-    var m: u64 = 1u64 << 63;
+    let m: u64 = 1u64 << 63;
     return ((m as f64) / 1000000000000000.0) as i32;
 }
 @noinline function u64_of_f64(x: f64): i32 { return ((x as u64) >> 32) as i32; }
@@ -2172,7 +2172,7 @@ struct Lit { text: string, neg: boolean }
 // zero, blind to which box holds the bytes: an owned string, a view of one,
 // and a temporary this function owns and has to release all order the same.
 @noinline function ord_bits(a: string, b: string): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     if (a < b) { n = n + 1; }
     if (a <= b) { n = n + 2; }
     if (a > b) { n = n + 4; }
@@ -2180,8 +2180,8 @@ struct Lit { text: string, neg: boolean }
     return n;
 }
 @noinline function ord_view(s: string): i32 {
-    var head: str = slice_unchecked(s, 0, 1);
-    var tail: str = slice_unchecked(s, 1, 2);
+    let head: str = slice_unchecked(s, 0, 1);
+    let tail: str = slice_unchecked(s, 1, 2);
     if (head < tail) { return 1; }
     return 0;
 }
@@ -2201,7 +2201,7 @@ struct Lit { text: string, neg: boolean }
 // answer leaves as an i32 through a truncation.
 @noinline function scale(x: f64, n: i32): f64 { return x * (n as f64) + 0.5; }
 @noinline function ratio(a: i32, b: i32): i32 {
-    var q: f64 = (a as f64) / (b as f64);
+    let q: f64 = (a as f64) / (b as f64);
     if (q < 0.0) { q = -q; }
     return (q * 100.0) as i32;
 }
@@ -2211,14 +2211,14 @@ struct Lit { text: string, neg: boolean }
     return 1;
 }
 @noinline function float_loop(n: i32): i32 {
-    var acc: f64 = 0.0;
-    var i: i32 = 0;
+    let acc: f64 = 0.0;
+    let i: i32 = 0;
     while (i < n) { acc = acc + 0.25; i = i + 1; }
     return (acc * 4.0) as i32;
 }
 @noinline function float_call(n: i32): i32 { return (scale(1.5, n) * 2.0) as i32; }
 @noinline function wide_float(n: i64): i32 {
-    var d: f64 = n as f64;
+    let d: f64 = n as f64;
     if ((d as i64) != n) { return 0 - 1; }
     return (d / 1000000.0) as i32;
 }
@@ -2227,7 +2227,7 @@ struct Lit { text: string, neg: boolean }
 // or i64 field from a pointer in the low half of its slot.
 struct WideRec { d: f64, n: i64, s: string }
 @noinline function wide_fields(own w: WideRec): i32 {
-    var d: f64 = w.d;
+    let d: f64 = w.d;
     return (d * 2.0) as i32 + (w.n >> 32) as i32 + w.s.len();
 }
 @noinline function span_wide(own sp: Extent): i32 {
@@ -2242,11 +2242,11 @@ struct WideRec { d: f64, n: i64, s: string }
 // or i64 written here is read back whole by the AST-lowered and the produced
 // readers alike.
 @noinline function mk_wide(d: f64, n: i64, s: string): i32 {
-    var w: WideRec = WideRec { d: d, n: n, s: s };
+    let w: WideRec = WideRec { d: d, n: n, s: s };
     return wide_fields(w);
 }
 @noinline function mk_span(d: f64): i32 {
-    var sp: Extent = Wide(d, "abc");
+    let sp: Extent = Wide(d, "abc");
     return span_wide(sp);
 }
 // A 64-bit ARRAY element. Each element op carries its own slot width, so what
@@ -2256,8 +2256,8 @@ struct WideRec { d: f64, n: i64, s: string }
 // share the eight-byte stride and differ in the load and the store.
 @noinline function wide_lit(n: i64): i64[] { return [n, n * 3i64, n + 1i64]; }
 @noinline function wide_sum(own xs: i64[]): i64 {
-    var total: i64 = 0i64;
-    var i: i32 = 0;
+    let total: i64 = 0i64;
+    let i: i32 = 0;
     while (i < xs.len()) { total = total + xs[i]; i = i + 1; }
     return total;
 }
@@ -2268,13 +2268,13 @@ struct WideRec { d: f64, n: i64, s: string }
 // as something other than what went into it, which a balanced allocation count
 // alone would not report.
 @noinline function wide_pushes(n: i64, k: i32): i64[] {
-    var xs: i64[] = [];
-    var i: i32 = 0;
+    let xs: i64[] = [];
+    let i: i32 = 0;
     while (i < k) { xs = xs.append(n + (i as i64)); i = i + 1; }
     return xs;
 }
 @noinline function wide_grow(n: i64, k: i32): i32 {
-    var xs: i64[] = wide_pushes(n, k);
+    let xs: i64[] = wide_pushes(n, k);
     if (xs.len() != k) { return 0 - 1; }
     if (k > 0 && xs[0] != n) { return 0 - 2; }
     return (wide_sum(xs) >> 32) as i32;
@@ -2284,9 +2284,9 @@ struct WideRec { d: f64, n: i64, s: string }
 // the donor keeps the element it had.
 @noinline function wide_triple(a: i64, b: i64, c: i64): i64[] { return [a, b, c]; }
 @noinline function wide_copy_set(a: i64, b: i64, c: i64, v: i64): i32 {
-    var donor: i64[] = wide_triple(a, b, c);
-    var xs: i64[] = donor;
-    var ys: i64[] = wide_set(donor, 1, v);
+    let donor: i64[] = wide_triple(a, b, c);
+    let xs: i64[] = donor;
+    let ys: i64[] = wide_set(donor, 1, v);
     if (ys[1] != v) { return 0 - 1; }
     if (xs[1] == v) { return 0 - 2; }
     return ((ys[1] + xs[1]) >> 32) as i32;
@@ -2296,20 +2296,20 @@ struct WideRec { d: f64, n: i64, s: string }
 // so a 32-bit slot loses the whole high word and the readback reports it.
 @noinline function uwide_lit(n: u64): u64[] { return [n, n * 3u64, n + 1u64]; }
 @noinline function uwide_sum(own xs: u64[]): u64 {
-    var total: u64 = 0u64;
-    var i: i32 = 0;
+    let total: u64 = 0u64;
+    let i: i32 = 0;
     while (i < xs.len()) { total = total + xs[i]; i = i + 1; }
     return total;
 }
 @noinline function uwide_lit_sum(n: u64): i32 { return (uwide_sum(uwide_lit(n)) >> 32u64) as i32; }
 @noinline function uwide_pushes(n: u64, k: i32): u64[] {
-    var xs: u64[] = [];
-    var i: i32 = 0;
+    let xs: u64[] = [];
+    let i: i32 = 0;
     while (i < k) { xs = xs.append(n + (i as u64)); i = i + 1; }
     return xs;
 }
 @noinline function uwide_grow(n: u64, k: i32): i32 {
-    var xs: u64[] = uwide_pushes(n, k);
+    let xs: u64[] = uwide_pushes(n, k);
     if (xs.len() != k) { return 0 - 1; }
     if (k > 0 && xs[0] != n) { return 0 - 2; }
     return (uwide_sum(xs) >> 32u64) as i32;
@@ -2317,9 +2317,9 @@ struct WideRec { d: f64, n: i64, s: string }
 @noinline function uwide_set(own xs: u64[], i: i32, v: u64): u64[] { return xs.with(i, v); }
 @noinline function uwide_triple(a: u64, b: u64, c: u64): u64[] { return [a, b, c]; }
 @noinline function uwide_copy_set(a: u64, b: u64, c: u64, v: u64): i32 {
-    var donor: u64[] = uwide_triple(a, b, c);
-    var xs: u64[] = donor;
-    var ys: u64[] = uwide_set(donor, 1, v);
+    let donor: u64[] = uwide_triple(a, b, c);
+    let xs: u64[] = donor;
+    let ys: u64[] = uwide_set(donor, 1, v);
     if (ys[1] != v) { return 0 - 1; }
     if (xs[1] == v) { return 0 - 2; }
     return ((ys[1] + xs[1]) >> 32u64) as i32;
@@ -2332,30 +2332,30 @@ struct WideRec { d: f64, n: i64, s: string }
 // string element beside the wide one puts the drop walk over the same box.
 @noinline function wide_pair(n: i64): (i64, i32) { return (n * 3i64, 7); }
 @noinline function wide_pair_sum(n: i64): i32 {
-    var p: (i64, i32) = wide_pair(n);
+    let p: (i64, i32) = wide_pair(n);
     return ((p.0 >> 32) as i32) + p.1;
 }
 @noinline function float_pair(x: f64): (f64, string) { return (x * 2.0, "ab"); }
 @noinline function float_pair_sum(x: f64): i32 {
-    var p: (f64, string) = float_pair(x);
+    let p: (f64, string) = float_pair(x);
     return (p.0 as i32) + p.1.len();
 }
 @noinline function float_arr(x: f64): f64[] { return [x, x * 2.0, x + 1.0]; }
 @noinline function float_sum(own ds: f64[]): f64 {
-    var total: f64 = 0.0;
-    var i: i32 = 0;
+    let total: f64 = 0.0;
+    let i: i32 = 0;
     while (i < ds.len()) { total = total + ds[i]; i = i + 1; }
     return total;
 }
 @noinline function float_lit_sum(x: f64): i32 { return (float_sum(float_arr(x)) * 10.0) as i32; }
 @noinline function float_pushes(x: f64, k: i32): f64[] {
-    var ds: f64[] = [];
-    var i: i32 = 0;
+    let ds: f64[] = [];
+    let i: i32 = 0;
     while (i < k) { ds = ds.append(x + (i as f64)); i = i + 1; }
     return ds;
 }
 @noinline function float_grow(x: f64, k: i32): i32 {
-    var ds: f64[] = float_pushes(x, k);
+    let ds: f64[] = float_pushes(x, k);
     if (ds.len() != k) { return 0 - 1; }
     if (ds[0] != x) { return 0 - 2; }
     ds = ds.with(0, x * 4.0);
@@ -2366,8 +2366,8 @@ struct WideRec { d: f64, n: i64, s: string }
 // element type retains the copy's elements and releases the one replaced.
 @noinline function set_at(own xs: i32[], i: i32, v: i32): i32[] { return xs.with(i, v); }
 @noinline function fill_squares(n: i32): i32 {
-    var xs: i32[] = [];
-    var i: i32 = 0;
+    let xs: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { xs = xs.append(0); i = i + 1; }
     i = 0;
     while (i < n) { xs = xs.with(i, i * i); i = i + 1; }
@@ -2375,9 +2375,9 @@ struct WideRec { d: f64, n: i64, s: string }
 }
 @noinline function int_pair(a: i32, b: i32): i32[] { return [a, b]; }
 @noinline function copy_set(a: i32, b: i32): i32 {
-    var donor: i32[] = int_pair(a, b);
-    var xs: i32[] = donor;
-    var ys: i32[] = set_at(donor, 0, 7);
+    let donor: i32[] = int_pair(a, b);
+    let xs: i32[] = donor;
+    let ys: i32[] = set_at(donor, 0, 7);
     return ys[0] + xs[0];
 }
 // A with on a record FIELD the frame reads no further through — the
@@ -2388,42 +2388,42 @@ struct WideRec { d: f64, n: i64, s: string }
 // keeps its value. A string element replaced in place is released.
 @noinline function set_kept(own p: P, i: i32, v: i32): P { return P { ...p, xs: p.xs.with(i, v) }; }
 @noinline function fill_field(n: i32): i32 {
-    var p: P = P { n: n, xs: [] };
-    var i: i32 = 0;
+    let p: P = P { n: n, xs: [] };
+    let i: i32 = 0;
     while (i < n) { p = P { ...p, xs: p.xs.append(0) }; i = i + 1; }
     i = 0;
     while (i < n) { p = set_kept(p, i, i * 3); i = i + 1; }
     return p.xs[n - 1] * 10 + p.xs.len();
 }
 @noinline function set_shared_field(n: i32): i32 {
-    var p: P = P { n: n, xs: [1, 2, 3] };
-    var ys: i32[] = p.xs;
+    let p: P = P { n: n, xs: [1, 2, 3] };
+    let ys: i32[] = p.xs;
     p = set_kept(p, 0, 9);
     return p.xs[0] * 100 + ys[0] * 10 + p.n;
 }
 @noinline function set_word_field(own w: Words, s: string): Words { return Words { ...w, ws: w.ws.with(1, s) }; }
 @noinline function word_field_set(n: i32): i32 {
-    var w: Words = Words { ws: ["ab", "cde"], k: n };
+    let w: Words = Words { ws: ["ab", "cde"], k: n };
     w = set_word_field(w, "fghij" + "");
-    var held: string[] = w.ws;
+    let held: string[] = w.ws;
     w = set_word_field(w, "z" + "");
     return w.ws[1].len() * 100 + held[1].len() * 10 + w.k;
 }
 @noinline function set_word(own ws: string[], w: string): string[] { return ws.with(1, w); }
 @noinline function word_swap(n: i32): i32 {
-    var ws: string[] = ["ab", "cde"];
+    let ws: string[] = ["ab", "cde"];
     ws = set_word(ws, "fghi");
     return ws[1].len() + n;
 }
 @noinline function two_words(a: string, b: string): string[] { return [a, b]; }
 @noinline function shared_word(n: i32): i32 {
-    var donor: string[] = two_words("ab", "c");
-    var ws: string[] = donor;
-    var vs: string[] = set_word(donor, "z");
+    let donor: string[] = two_words("ab", "c");
+    let ws: string[] = donor;
+    let vs: string[] = set_word(donor, "z");
     return vs[1].len() * 10 + ws[1].len() + n;
 }
 @noinline function set_p(own ps: P[], p: P): i32 {
-    var qs: P[] = ps.with(0, p);
+    let qs: P[] = ps.with(0, p);
     return qs[0].n + qs[0].xs.len() + qs.len();
 }
 // A tuple destructure: each name is a projection of the one initializer
@@ -2431,16 +2431,16 @@ struct WideRec { d: f64, n: i64, s: string }
 // read follows.
 @noinline function halves(n: i32): (i32, i32[]) { return (n, [n, n]); }
 @noinline function unpack(n: i32): i32 {
-    var (k, xs) = halves(n);
+    let (k, xs) = halves(n);
     return k + xs.len();
 }
 @noinline function unpack_discard(n: i32): i32 {
-    var (_, xs) = halves(n);
-    var (m, _) = halves(n + 1);
+    let (_, xs) = halves(n);
+    let (m, _) = halves(n + 1);
     return xs[0] + m;
 }
 @noinline function unpack_words(s: string): i32 {
-    var (w, count) = (s, s.len());
+    let (w, count) = (s, s.len());
     return w.len() + count;
 }
 // A nested tuple position is projected and destructured again, a struct
@@ -2448,24 +2448,24 @@ struct WideRec { d: f64, n: i64, s: string }
 struct Dp { k: i32, name: string, tail: i32[] }
 @noinline function mk_dp(n: i32): Dp { return Dp { k: n, name: "dp" + "!", tail: [n, n, n] }; }
 @noinline function struct_unpack(n: i32): i32 {
-    var Dp { k, name: nm, .. } = mk_dp(n);
+    let Dp { k, name: nm, .. } = mk_dp(n);
     return k + nm.len();
 }
 @noinline function at_unpack(n: i32): i32 {
-    var whole @ Dp { tail, .. } = mk_dp(n);
+    let whole @ Dp { tail, .. } = mk_dp(n);
     return tail.len() + whole.name.len() + whole.k;
 }
 @noinline function nested_unpack(n: i32): i32 {
-    var (a, (w, xs)) = (n, ("ab" + "c", [n, n]));
+    let (a, (w, xs)) = (n, ("ab" + "c", [n, n]));
     return a + w.len() + xs.len();
 }
 // A for header takes the same pattern a declaration does, destructuring
 // each element.
 @noinline function for_pairs(n: i32): i32 {
-    var xs: (i32, string)[] = [(n, "a" + "b"), (n + 1, "c")];
-    var total: i32 = 0;
+    let xs: (i32, string)[] = [(n, "a" + "b"), (n + 1, "c")];
+    let total: i32 = 0;
     for (k, w) in xs { total = total + k + w.len(); }
-    var deep: ((i32, i32), string)[] = [((n, 2), "x" + "y")];
+    let deep: ((i32, i32), string)[] = [((n, 2), "x" + "y")];
     for ((a, b), s) in deep { total = total + a * b + s.len(); }
     return total;
 }
@@ -2486,15 +2486,15 @@ const TAG: string = "ab";
     strbuf_reset();
     strbuf_append("ab");
     strbuf_append(s);
-    var t: string = strbuf_take();
+    let t: string = strbuf_take();
     return t.len();
 }
 @noinline function find_byte(s: string, b: i32): i32 { return __memchr(s, b, 1); }
 @noinline function scan_views(s: string): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i + 2 <= s.len()) {
-        var w: str = slice_unchecked(s, i, i + 2);
+        let w: str = slice_unchecked(s, i, i + 2);
         if (w == "cd") { t = t + 100; }
         t = t + w.len() + view_len(w) + text_size(w) + (w[0] as i32);
         i = i + 1;
@@ -2502,24 +2502,24 @@ const TAG: string = "ab";
     return t;
 }
 @noinline function lent_views(n: i32): i32 {
-    var s: string = grown(n);
-    var v: str = s;
-    var u: str = v;
-    var inner: str = slice_unchecked(v, 1, 3);
-    var o: string = inner.copied();
-    var p: string = u.copied() + o;
+    let s: string = grown(n);
+    let v: str = s;
+    let u: str = v;
+    let inner: str = slice_unchecked(v, 1, 3);
+    let o: string = inner.copied();
+    let p: string = u.copied() + o;
     return v.len() + u.len() + inner.len() + o.len() + p.len() + view_len(s);
 }
 // The source is a temporary whose only use is the slice; the view of a view
 // keeps both alive across its reads.
 @noinline function view_of_temp(n: i32): i32 {
-    var v: str = slice_unchecked(grown(n), 0, 2);
-    var w: str = slice_unchecked(v, 1, 2);
+    let v: str = slice_unchecked(grown(n), 0, 2);
+    let w: str = slice_unchecked(v, 1, 2);
     if (w != "b") { return 0 - 1; }
     return v.copied().len() + w.len();
 }
 @noinline function upper(s: string, i: i32): i32 {
-    var c: u8 = s[i];
+    let c: u8 = s[i];
     if (c >= b'a' && c <= b'z') { c = c - 32; }
     return c as i32;
 }
@@ -2552,30 +2552,30 @@ enum Extent { Empty, Wide(f64, string) }
     return 0 - 1;
 }
 function wide_literal_tree(n: i64): i32 {
-    var x: i64 = 0 - 1;
-    var y: i64 = n + 1;
+    let x: i64 = 0 - 1;
+    let y: i64 = n + 1;
     if (y < 0 - 2) { return (x * 2) as i32; }
     return (y - 4999999990i64) as i32;
 }
 function count_byte(s: string, b: u8): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for c in s { if (c == b) { n = n + 1; } }
     return n;
 }
 function leaf_pair(n: i32): (Node, i32) {
-    var p: (Node, i32) = (Leaf { n: n }, n);
+    let p: (Node, i32) = (Leaf { n: n }, n);
     return p;
 }
 function leaves(n: i32): Node[] {
-    var xs: Node[] = [Leaf { n: n }, Twig { xs: [n, n + 1] }];
+    let xs: Node[] = [Leaf { n: n }, Twig { xs: [n, n + 1] }];
     return xs;
 }
 function leaf_pair_size(n: i32): i32 {
-    var p: (Node, i32) = leaf_pair(n);
+    let p: (Node, i32) = leaf_pair(n);
     return node_size(p.0) + p.1;
 }
 function leaves_size(n: i32): i32 {
-    var xs: Node[] = leaves(n);
+    let xs: Node[] = leaves(n);
     return xs.len() + node_size(xs[1]);
 }
 function shift_wide(n: i64, k: i32): i32 { return ((n << k) + (n >> 3)) as i32; }
@@ -2591,25 +2591,25 @@ function bit_round(x: f64): i32 { return f64_from_bits(f64_bits(x)) as i32; }
 // reference field it copies through, and the element itself stays borrowed
 // from the container for the step.
 @noinline function bump_each(n: i32): i32 {
-    var ps: P[] = [make(n), make(n + 1)];
-    var t: i32 = 0;
+    let ps: P[] = [make(n), make(n + 1)];
+    let t: i32 = 0;
     for p in ps {
-        var q: P = P { ...p, n: p.n + 1 };
-        var d = q.n + p.xs.len();
+        let q: P = P { ...p, n: p.n + 1 };
+        let d = q.n + p.xs.len();
         t = t + d + q.xs.len();
     }
     return t;
 }
 @noinline function line_each(n: i32): i32 {
-    var t: i32 = 0;
-    for k in fill(n) { var s: Shape = Line(k + 1); t = t + measure(s); }
+    let t: i32 = 0;
+    for k in fill(n) { let s: Shape = Line(k + 1); t = t + measure(s); }
     return t;
 }
 @noinline function word_recs(n: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for w in words(n) {
-        var q: Q = Q { name: w, p: P { n: w.len(), xs: [n] } };
-        var m = q.p.n + w.len();
+        let q: Q = Q { name: w, p: P { n: w.len(), xs: [n] } };
+        let m = q.p.n + w.len();
         t = t + q.name.len() + m + q.p.xs[0];
     }
     return t;
@@ -2647,11 +2647,11 @@ enum Out2 { Pr(In2, In2), Qn(i32) }
     return Qn(4);
 }
 @noinline function nested_case(k: i32): i32 {
-    var v: Out2 = mk_out(k);
+    let v: Out2 = mk_out(k);
     return nested_arms(v);
 }
 @noinline function guarded_pick(n: i32): i32 {
-    var o: Option[i32] = Some(n);
+    let o: Option[i32] = Some(n);
     match (o) {
         Some(k) when k > 5 => { return k * 2; },
         Some(k) => { return k; },
@@ -2659,11 +2659,11 @@ enum Out2 { Pr(In2, In2), Qn(i32) }
     }
 }
 @noinline function guarded_words(short: boolean, min: i32): i32 {
-    var ws: string[] = ["ab", "cdef", "g"];
+    let ws: string[] = ["ab", "cdef", "g"];
     if (short) { ws = ["ab"]; }
-    var total: i32 = 0;
+    let total: i32 = 0;
     for w in ws {
-        var o: Option[string] = Some(w + "");
+        let o: Option[string] = Some(w + "");
         match (o) {
             Some(s) when s.len() >= min => { total = total + s.len(); },
             _ => { total = total + 1; },
@@ -2674,7 +2674,7 @@ enum Out2 { Pr(In2, In2), Qn(i32) }
 // A guard that short-circuits ends in a block of its own, and the next arm's
 // test lists that block, not the arm's, among its predecessors.
 @noinline function guarded_and(k: i32, w: string): i32 {
-    var o: Option[string] = Some(w + "");
+    let o: Option[string] = Some(w + "");
     match (o) {
         Some(s) when k > 0 && s.len() > 2 => { return s.len() * 10; },
         Some(s) => { return s.len(); },
@@ -2689,10 +2689,10 @@ trait Qmk { function make(n: i32): Self; }
 struct Qp { v: i32, tag: string }
 impl Qmk for Qp { function make(n: i32): Self { return Qp { v: n * 2, tag: "q" }; } }
 @noinline function qualified_pick(k: i32): i32 {
-    var e: Qe = Qe.Qb;
+    let e: Qe = Qe.Qb;
     if (k > 0) { e = Qe.Qa("abc" + "d"); }
-    var o: Option[i32] = Option.Some(k);
-    var n: i32 = 0;
+    let o: Option[i32] = Option.Some(k);
+    let n: i32 = 0;
     match (o) { Some(m) => { n = m; }, None => { n = 0 - 1; } }
     match (e) {
         Qe.Qa(s) => { return s.len() + n; },
@@ -2700,51 +2700,51 @@ impl Qmk for Qp { function make(n: i32): Self { return Qp { v: n * 2, tag: "q" }
     }
 }
 @noinline function assoc_make(k: i32): i32 {
-    var p: Qp = Qp.make(k);
+    let p: Qp = Qp.make(k);
     return p.v + p.tag.len();
 }
 // A match expression the tuple or struct desugar routes through a value
 // local: the block declares the local, runs the done-flag chain in the
 // enclosing block, and its trailing return reads the local.
 @noinline function tm_word(k: i32): string {
-    var t: (string, i32) = ("elem", k);
+    let t: (string, i32) = ("elem", k);
     return match (t) {
         (q, 4) => q + "!",
         (q, n) => q
     };
 }
 @noinline function tm_sum(n: i32): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var p = (i, n - i);
+        let p = (i, n - i);
         total = total + match (p) { (0, b) => b * 10, (a, b) when a == b => a + b, (a, _) => a };
         i = i + 1;
     }
     return total;
 }
 @noinline function tm_words(n: i32): i32 {
-    var ws: string[] = ["ab", "", "cde"];
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let ws: string[] = ["ab", "", "cde"];
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var pair = (ws[i % 3], ws[i % 3].len());
-        var s: string = match (pair) { (t, 0) => "empty", (t, _) => t + "." };
+        let pair = (ws[i % 3], ws[i % 3].len());
+        let s: string = match (pair) { (t, 0) => "empty", (t, _) => t + "." };
         acc = acc + s.len();
         i = i + 1;
     }
     return acc;
 }
-@noinline function tm_show(k: i32): i32 { var s: string = tm_word(k); print(s); return s.len(); }
+@noinline function tm_show(k: i32): i32 { let s: string = tm_word(k); print(s); return s.len(); }
 struct Pt2 { x: i32, y: i32, tag: string }
 @noinline function sm_pick(k: i32): string {
-    var p: Pt2 = Pt2 { x: k, y: k * 2, tag: "pt" };
+    let p: Pt2 = Pt2 { x: k, y: k * 2, tag: "pt" };
     return match (p) {
         Pt2 { x: 1, y, tag } => tag + ":" + tag,
         Pt2 { x, y, tag } => tag
     };
 }
-@noinline function sm_show(k: i32): i32 { var s: string = sm_pick(k); print(s); return s.len(); }
+@noinline function sm_show(k: i32): i32 { let s: string = sm_pick(k); print(s); return s.len(); }
 @noinline function slot_n(own s: Slot): i32 { return s.n; }
 @noinline function note_n(own t: Note): i32 { return t.n; }
 @noinline function held_n(own h: Held): i32 {
@@ -2756,46 +2756,46 @@ struct Pt2 { x: i32, y: i32, tag: string }
 }
 @noinline function slot_share(s: Slot): i32 { return slot_n(Slot { c: s.c, n: s.n + 1 }); }
 @noinline function note_share(t: Note): i32 { return note_n(Note { w: t.w, n: t.n + 2 }); }
-@noinline function slot_pair(own s: Slot): i32 { var k: i32 = slot_share(s); return k + slot_n(s); }
-@noinline function note_pair(own t: Note): i32 { var k: i32 = note_share(t); return k + note_n(t); }
-@noinline function slot_held(own s: Slot): i32 { var cc: Cell[i32] = s.c; return held_n(Celled(cc, s.n)); }
+@noinline function slot_pair(own s: Slot): i32 { let k: i32 = slot_share(s); return k + slot_n(s); }
+@noinline function note_pair(own t: Note): i32 { let k: i32 = note_share(t); return k + note_n(t); }
+@noinline function slot_held(own s: Slot): i32 { let cc: Cell[i32] = s.c; return held_n(Celled(cc, s.n)); }
 // The cell's own vocabulary: a write is seen by every holder of the box, a
 // read of a reference element is a unit of its own that outlives the write
 // that replaces it, and a wide element uses the slot's own width.
 @noinline function cell_count(n: i32): i32 {
-    var c: Cell[i32] = cell_new(n);
-    var i: i32 = 0;
+    let c: Cell[i32] = cell_new(n);
+    let i: i32 = 0;
     while (i < 3) { c.set(c.get() + 2); i = i + 1; }
     return c.get();
 }
 @noinline function cell_share(n: i32): i32 {
-    var c: Cell[i32] = cell_new(n);
-    var s: Slot = Slot { c: c, n: 1 };
+    let c: Cell[i32] = cell_new(n);
+    let s: Slot = Slot { c: c, n: 1 };
     c.set(n + 5);
     return s.c.get() + s.n;
 }
 @noinline function cell_words(w: string): i32 {
-    var c: Cell[string] = cell_new(w + "a");
-    var first: string = c.get();
+    let c: Cell[string] = cell_new(w + "a");
+    let first: string = c.get();
     c.set(first + "b");
-    var churn: string[] = [];
-    var i: i32 = 0;
+    let churn: string[] = [];
+    let i: i32 = 0;
     while (i < 12) { churn = churn.append("junk"); i = i + 1; }
     return first.len() + c.get().len() + churn.len() - 12;
 }
 @noinline function cell_wide(n: i64): i32 {
-    var c: Cell[i64] = cell_new(n);
+    let c: Cell[i64] = cell_new(n);
     c.set(c.get() + 1);
     return c.get() as i32;
 }
 @noinline function cell_float(x: f64): i32 {
-    var c: Cell[f64] = cell_new(x);
+    let c: Cell[f64] = cell_new(x);
     c.set(c.get() * 2.0);
     return c.get() as i32;
 }
 @noinline function cell_closure(n: i32): i32 {
-    var c: Cell[i32] = cell_new(n);
-    var bump: () => i32 = (): i32 => { c.set(c.get() + 1); return c.get(); };
+    let c: Cell[i32] = cell_new(n);
+    let bump: () => i32 = (): i32 => { c.set(c.get() + 1); return c.get(); };
     bump();
     bump();
     return c.get();
@@ -2805,31 +2805,31 @@ struct Pt2 { x: i32, y: i32, tag: string }
 // declared field of it carry the same rounding, which the bit pattern shows.
 struct Half { v: f32, n: i32 }
 @noinline function f32_round_int(x: f64): i32 { return ((f32_from_bits(f32_bits(x as f32))) as f64) as i32; }
-@noinline function f32_lit_bits(): i32 { var y: f32 = 0.1f32; return f32_bits(y); }
+@noinline function f32_lit_bits(): i32 { let y: f32 = 0.1f32; return f32_bits(y); }
 @noinline function f32_sum_bits(a: f32, b: f32): i32 { return f32_bits(a + b); }
-@noinline function f32_field(x: f64): i32 { var h: Half = Half { v: x as f32, n: 1 }; return f32_bits(h.v) + h.n; }
+@noinline function f32_field(x: f64): i32 { let h: Half = Half { v: x as f32, n: 1 }; return f32_bits(h.v) + h.n; }
 @noinline function f32_cmp(a: f32, b: f32): i32 { if (a < b) { return 1; } return 0; }
 @noinline function f32_from_int(n: i32): i32 { return f32_bits(n as f32); }
 // The string builder through its pointer-width handle: the handle round-trips
 // through an i64 and back, the whole address on a register backend, and the
 // bytes come back as a string of this function's own.
 @noinline function buf_text(k: i32): i32 {
-    var b: usize = buf_new(8);
-    var i: i32 = 0;
+    let b: usize = buf_new(8);
+    let i: i32 = 0;
     while (i < k) { buf_push(b, "ab"); i = i + 1; }
     buf_push_range(b, "xyz", 1, 3);
     buf_push_byte(b, 33);
-    var n: i32 = buf_len(b);
-    var s: string = buf_take(b);
+    let n: i32 = buf_len(b);
+    let s: string = buf_take(b);
     buf_free(b);
     return n + s.len();
 }
 @noinline function buf_handle_round(k: i32): i32 {
-    var b: usize = buf_new(4);
-    var w: i64 = b as i64;
-    var back: usize = w as usize;
+    let b: usize = buf_new(4);
+    let w: i64 = b as i64;
+    let back: usize = w as usize;
     buf_push(b, "q");
-    var n: i32 = buf_len(back);
+    let n: i32 = buf_len(back);
     buf_free(back);
     return n + k;
 }
@@ -2853,20 +2853,20 @@ struct Half { v: f32, n: i32 }
     return 0;
 }
 @noinline function addr_walk(n: i32): i32 {
-    var base: usize = buf_new(64);
-    var fwd: usize = base + n;
-    var neg: i32 = 0 - 3;
-    var back: usize = base + neg;
-    var wide: usize = base - 5i64;
-    var byte: u8 = 7;
-    var up: usize = base + byte;
-    var nested: usize = base + n + n * 2;
-    var d: i32 = (fwd as i32) - (base as i32);
+    let base: usize = buf_new(64);
+    let fwd: usize = base + n;
+    let neg: i32 = 0 - 3;
+    let back: usize = base + neg;
+    let wide: usize = base - 5i64;
+    let byte: u8 = 7;
+    let up: usize = base + byte;
+    let nested: usize = base + n + n * 2;
+    let d: i32 = (fwd as i32) - (base as i32);
     d = d + ((back as i32) - (base as i32));
     d = d + ((wide as i32) - (base as i32));
     d = d + ((up as i32) - (base as i32));
     d = d + ((nested as i32) - (base as i32));
-    var lit: usize = 300;
+    let lit: usize = 300;
     d = d + ((lit as u8) as i32);
     buf_free(base);
     return d;
@@ -2881,11 +2881,11 @@ struct Half { v: f32, n: i32 }
 // above it. On wasm both answer true and must, since the address is the i32
 // there and the two widenings are the same value.
 @noinline function addr_order(n: i32): i32 {
-    var base: usize = buf_new(16);
-    var k: i32 = 0;
+    let base: usize = buf_new(16);
+    let k: i32 = 0;
     if (base > n) { k = k + 1; }
     if (n < base) { k = k + 2; }
-    var neg: i32 = 0 - 3;
+    let neg: i32 = 0 - 3;
     if (base + neg < base) { k = k + 4; }
     buf_free(base);
     return k;
@@ -2895,12 +2895,12 @@ struct Half { v: f32, n: i32 }
 // arm the branch took, and an arm handing over the function's own counted
 // parameter leaves the other arm to release it — from both sides, since the
 // arms supply the phi in written order.
-@noinline function pick_len(n: i32): i32 { var xs: i32[] = if (n > 1) { [n, n + 1] } else { [n] }; return xs.len() + xs[0]; }
-@noinline function pick_word(n: i32): string { var w: string = if (n > 0) { "ab" + "c" } else { "d" }; return w; }
+@noinline function pick_len(n: i32): i32 { let xs: i32[] = if (n > 1) { [n, n + 1] } else { [n] }; return xs.len() + xs[0]; }
+@noinline function pick_word(n: i32): string { let w: string = if (n > 0) { "ab" + "c" } else { "d" }; return w; }
 @noinline function pick_word_len(n: i32): i32 { return pick_word(n).len(); }
-@noinline function pick_kept(n: i32, own ys: i32[]): i32 { var zs: i32[] = if (n > 0) { ys } else { [0, 0, 0] }; return zs.len(); }
-@noinline function pick_flip(n: i32, own ys: i32[]): i32 { var zs: i32[] = if (n <= 0) { [0, 0, 0] } else { ys }; return zs.len(); }
-@noinline function pick_nested(n: i32): i32 { var k: i32 = if (n > 2) { 2 } else if (n > 0) { var d: i32 = n + 4; d } else { 0 }; return k; }
+@noinline function pick_kept(n: i32, own ys: i32[]): i32 { let zs: i32[] = if (n > 0) { ys } else { [0, 0, 0] }; return zs.len(); }
+@noinline function pick_flip(n: i32, own ys: i32[]): i32 { let zs: i32[] = if (n <= 0) { [0, 0, 0] } else { ys }; return zs.len(); }
+@noinline function pick_nested(n: i32): i32 { let k: i32 = if (n > 2) { 2 } else if (n > 0) { let d: i32 = n + 4; d } else { 0 }; return k; }
 // Function values and the calls through them. A value is the environment box
 // the lambda lift builds: a bare name reaches its callee through a trampoline
 // that ignores the box, a capturing lambda through one carrying its captures
@@ -2918,8 +2918,8 @@ struct Half { v: f32, n: i32 }
 // takes the array's unit and borrows the function's, so the array is released
 // with the box and the function value with the caller's own.
 @noinline function via_cap(f: (i32) => i32, n: i32): i32 {
-    var ws: string[] = ["alpha", "beta"];
-    var r: i32 = apply_int((x: i32): i32 => { return f(x) + ws.len(); }, n);
+    let ws: string[] = ["alpha", "beta"];
+    let r: i32 = apply_int((x: i32): i32 => { return f(x) + ws.len(); }, n);
     return r + ws[1].len();
 }
 // The bare function names reach the borrowed slot from PRODUCED code, so both
@@ -2931,19 +2931,19 @@ struct Half { v: f32, n: i32 }
 // and array elements, and one of them is inserted twice so an overwrite
 // releases the key it supersedes.
 @noinline function map_tally(a: string, b: string): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert(a, 1);
     m = m.insert(a + b, 2);
     m = m.insert(a, m.get_or(a, 0) + 10);
-    var n: i32 = m.get_or(a, 0) + m.get_or(a + b, 0);
+    let n: i32 = m.get_or(a, 0) + m.get_or(a + b, 0);
     if (m.has(b)) { n = n + 100; }
     return n;
 }
 @noinline function map_words(a: string, b: string): i32 {
-    var ws: string[] = [a, b, a + b, a];
-    var m: Map[string, boolean] = map_new(ws.len() + 1);
+    let ws: string[] = [a, b, a + b, a];
+    let m: Map[string, boolean] = map_new(ws.len() + 1);
     for w in ws { m = m.insert(w, true); }
-    var n: i32 = 0;
+    let n: i32 = 0;
     for w in ws { if (m.has(w + "")) { n = n + 1; } }
     return n;
 }
@@ -2956,12 +2956,12 @@ struct Half { v: f32, n: i32 }
 // nothing of it, so a fresh one handed to a scan dies here rather than in the
 // map's column.
 @noinline function alloc_bytes(n: i32): i32 {
-    var buf: u8[] = __alloc_u8(n);
-    var second: u8[] = __alloc_u8(n + 1);
+    let buf: u8[] = __alloc_u8(n);
+    let second: u8[] = __alloc_u8(n + 1);
     return buf.len() + second.len();
 }
 @noinline function scan_temp(a: string, b: string): i32 {
-    var joined: string = a + b;
+    let joined: string = a + b;
     return __count_byte(joined, 97) + __sum_bytes(joined) + __ascii_run(joined, 0);
 }
 @noinline function float_bits(x: f64): i32 {
@@ -2972,13 +2972,13 @@ struct Half { v: f32, n: i32 }
 // it would strand a box and one that consumed it would leave the next call
 // reading freed bytes.
 @noinline function text_methods(a: string, b: string): i32 {
-    var joined: string = a + b;
-    var up: string = joined.to_ascii_upper();
-    var parts: string[] = joined.split(a);
+    let joined: string = a + b;
+    let up: string = joined.to_ascii_upper();
+    let parts: string[] = joined.split(a);
     return up.len() + parts.len() + joined.trim().len() + joined.repeat(2).len();
 }
 @noinline function map_hand(k: string): i32 {
-    var m: Map[string, i32] = map_new(2);
+    let m: Map[string, i32] = map_new(2);
     m = m.insert(k, 7);
     return map_eat(m, k);
 }
@@ -2988,26 +2988,26 @@ struct Half { v: f32, n: i32 }
 function (o: Option[T]) has_it(): boolean { match (o) { Some(_) => { return true; }, None => { return false; } } }
 function (o: Option[T]) or_val(fallback: T): T { match (o) { Some(x) => { return x; }, None => { return fallback; } } }
 @noinline function opt_has(n: i32): i32 {
-    var o: Option[i32] = Some(n);
-    var none: Option[i32] = None;
-    var t: i32 = 0;
+    let o: Option[i32] = Some(n);
+    let none: Option[i32] = None;
+    let t: i32 = 0;
     if (o.has_it()) { t = t + o.or_val(0); }
     if (!none.has_it()) { t = t + none.or_val(100); }
     return t;
 }
 @noinline function opt_words(w: string): i32 {
-    var o: Option[string] = Some(w + "!");
-    var none: Option[string] = None;
-    var a: string = o.or_val("none");
-    var b: string = none.or_val("no" + "ne");
+    let o: Option[string] = Some(w + "!");
+    let none: Option[string] = None;
+    let a: string = o.or_val("none");
+    let b: string = none.or_val("no" + "ne");
     return a.len() * 10 + b.len();
 }
 // A get answers an Option in a box of the frame's own, released as any
 // Option is; the value column is narrow, so the payload is a copy.
 @noinline function map_get_hit(n: i32): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("k" + "1", n);
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (m.get("k" + "1")) {
         Some(v) => { t = v; },
         None => { t = 0 - 1; },
@@ -3016,13 +3016,13 @@ function (o: Option[T]) or_val(fallback: T): T { match (o) { Some(x) => { return
     return t;
 }
 @noinline function labelled_sum(n: i32): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     outer: while (i < n) {
         i = i + 1;
-        var j: i32 = 0;
+        let j: i32 = 0;
         while (j < 5) {
-            var w: string = "a" + "b";
+            let w: string = "a" + "b";
             j = j + 1;
             if (j == i) { total = total + w.len(); continue outer; }
             if (j == 4) { break outer; }
@@ -3034,15 +3034,15 @@ function (o: Option[T]) or_val(fallback: T): T { match (o) { Some(x) => { return
 @noinline function inc_by(n: i32, by: i32 = 1): i32 { return n + by; }
 @noinline function inc_calls(n: i32): i32 { return inc_by(n, 1) + inc_by(n, 5); }
 function (p: Pt2) show(): void { print(p.tag + "!"); }
-@noinline function show_pt(k: i32): i32 { var p: Pt2 = Pt2 { x: k, y: 1, tag: "p" + "t" }; p.show(); return p.x; }
+@noinline function show_pt(k: i32): i32 { let p: Pt2 = Pt2 { x: k, y: 1, tag: "p" + "t" }; p.show(); return p.x; }
 @noinline function map_lit_words(n: i32): i32 {
-    var m: Map[string, i32] = Map { "a" + "b": n, "c": 2 };
+    let m: Map[string, i32] = Map { "a" + "b": n, "c": 2 };
     return m.get_or("ab", 0) * 10 + m.get_or("c", 0);
 }
 @noinline function map_get_int(n: i32): i32 {
-    var m: Map[i32, i32] = map_new(4);
+    let m: Map[i32, i32] = map_new(4);
     m = m.insert(n, n * 3);
-    var t: i32 = 0;
+    let t: i32 = 0;
     if let Some(v) = m.get(n) { t = t + v; }
     if let Some(v) = m.get(n + 1) { t = t + 1000; }
     return t;
@@ -3051,17 +3051,17 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
 // overwrite has to release what it supersedes and the read has to hand back a
 // unit of its own rather than the column's.
 @noinline function map_vstr(a: string, b: string): i32 {
-    var m: Map[string, string] = map_new(4);
+    let m: Map[string, string] = map_new(4);
     m = m.insert(a + "", a + b);
     m = m.insert(a + "", b + a + b);
     m = m.insert(b + "", a + "");
-    var got: string = m.get_or(a + "", "");
+    let got: string = m.get_or(a + "", "");
     return got.len() + m.get_or(b + "", "").len() + m.get_or("absent", "xy").len();
 }
 // The same over a column of string ARRAYS, whose release walks each value's
 // elements as well as its buffer.
 @noinline function map_vwords(a: string, b: string): i32 {
-    var m: Map[string, string[]] = map_new(4);
+    let m: Map[string, string[]] = map_new(4);
     m = m.insert(a + "", [a + b, b + ""]);
     m = m.insert(a + "", [b + a]);
     return m.get_or(a + "", []).len() + m.get_or("absent", [a + ""]).len();
@@ -3070,18 +3070,18 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
 // __fern_map_free; a string value column beside it is still counted, released
 // on overwrite and with the map.
 @noinline function map_ints(n: i32): i32 {
-    var m: Map[i32, i32] = map_new(4);
-    var i: i32 = 0;
+    let m: Map[i32, i32] = map_new(4);
+    let i: i32 = 0;
     while (i < n) { m = m.insert(i, i * i); i = i + 1; }
     m = m.insert(2, m.get_or(2, 0) + 100);
-    var t: i32 = 0;
+    let t: i32 = 0;
     i = 0;
     while (i < n + 2) { t = t + m.get_or(i, 0 - 1); i = i + 1; }
     if (m.has(n)) { t = t + 1000; }
     return t + m.len() * 10000;
 }
 @noinline function map_int_words(a: string, b: string): i32 {
-    var m: Map[i32, string] = map_new(4);
+    let m: Map[i32, string] = map_new(4);
     m = m.insert(1, a + b);
     m = m.insert(1, b + a + b);
     m = m.insert(2, a + "");
@@ -3089,31 +3089,31 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
 }
 @noinline function head_of_arr(xs: i32[]): i32 { return xs[0]; }
 @noinline function apply_arr(f: (i32[]) => i32, xs: i32[]): i32 { return f(xs) + f([9, 8]); }
-@noinline function lend_array(n: i32): i32 { var a: i32[] = [n, n + 1]; return apply_arr(head_of_arr, a); }
+@noinline function lend_array(n: i32): i32 { let a: i32[] = [n, n + 1]; return apply_arr(head_of_arr, a); }
 @noinline function text_len(s: string): i32 { return s.len(); }
 @noinline function apply_text(f: (string) => i32, s: string): i32 { return f(s); }
 @noinline function lam_inferred(n: i32): i32 { return apply_int((x: i32) => x * 3, n); }
-@noinline function float_bound(n: i32): i32 { var f = 2.5; var g = f + 1.5; var h = g * 2.0; if (h > 7.5) { return n; } return 0; }
+@noinline function float_bound(n: i32): i32 { let f = 2.5; let g = f + 1.5; let h = g * 2.0; if (h > 7.5) { return n; } return 0; }
 @noinline function lam_text(w: string): i32 { return apply_text((s: string) => (s + "!").len(), w); }
-@noinline function lend_text(n: i32): i32 { var t: string = "ab" + "cd"; return apply_text(text_len, t) + n; }
+@noinline function lend_text(n: i32): i32 { let t: string = "ab" + "cd"; return apply_text(text_len, t) + n; }
 @noinline function boxed_of(n: i32): i32[] { return [n, n + 1]; }
-@noinline function apply_box(f: (i32) => i32[], n: i32): i32 { var xs: i32[] = f(n); return xs[1]; }
+@noinline function apply_box(f: (i32) => i32[], n: i32): i32 { let xs: i32[] = f(n); return xs[1]; }
 @noinline function drop_box(f: (i32) => i32[], n: i32): i32 { f(n); return n; }
 @noinline function box_via(n: i32): i32 { return apply_box(boxed_of, n) + drop_box(boxed_of, n); }
 @noinline function pick_fn(n: i32): i32 {
-    var g: (i32) => i32 = dbl;
+    let g: (i32) => i32 = dbl;
     if (n > 2) { g = negate; }
     return g(n);
 }
 @noinline function shift_by(k: i32, n: i32): i32 { return apply_int((x: i32): i32 => { return x + k; }, n); }
 @noinline function shift_loop(k: i32, n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + apply_int((x: i32): i32 => { return x * k; }, i); i = i + 1; }
     return t;
 }
 @noinline function pick_shift(k: i32, n: i32): i32 {
-    var g: (i32) => i32 = (x: i32): i32 => { return x + k; };
+    let g: (i32) => i32 = (x: i32): i32 => { return x + k; };
     if (n > 2) { g = (x: i32): i32 => { return x - k; }; }
     return g(n) + g(0);
 }
@@ -3121,7 +3121,7 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
 // the caller receives owns every part of itself, so an arm binding a payload
 // only borrows it and the box's own release walks whatever no arm took.
 @noinline function env_len(name: string): i32 {
-    var n: i32 = 0 - 1;
+    let n: i32 = 0 - 1;
     match (env(name)) {
         Some(v) => { n = v.len(); },
         None => { n = 0; }
@@ -3130,7 +3130,7 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
 }
 @noinline function touch_env(name: string): i32 { env(name); return name.len(); }
 @noinline function line_len(): i32 {
-    var n: i32 = 0 - 1;
+    let n: i32 = 0 - 1;
     match (read_line()) {
         Some(l) => { n = l.len(); },
         None => { n = 0; }
@@ -3138,7 +3138,7 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
     return n;
 }
 @noinline function read_len(path: string): i32 {
-    var n: i32 = 0 - 1;
+    let n: i32 = 0 - 1;
     match (read_file(path)) {
         Ok(text) => { n = text.len(); },
         Err(e) => { n = 0; }
@@ -3146,7 +3146,7 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
     return n;
 }
 @noinline function dir_count(path: string): i32 {
-    var n: i32 = 0 - 1;
+    let n: i32 = 0 - 1;
     match (read_dir(path)) {
         Ok(names) => { n = names.len(); },
         Err(e) => { n = 0; }
@@ -3157,8 +3157,8 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
 // function owns, so the box takes that unit and gives it back when it dies.
 // The second one is never read at all, so only the box's release frees it.
 @noinline function wrapped_len(s: string): i32 {
-    var o: Option[string] = Some(s + "!");
-    var n: i32 = 0;
+    let o: Option[string] = Some(s + "!");
+    let n: i32 = 0;
     match (o) {
         Some(v) => { n = v.len(); },
         None => { n = 0; }
@@ -3166,16 +3166,16 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
     return n;
 }
 @noinline function drop_opt(s: string): i32 {
-    var o: Option[string] = Some(s + "!");
+    let o: Option[string] = Some(s + "!");
     return s.len();
 }
 // Replaced once per step, so every superseded box is released before the
 // header phi takes the next one.
 @noinline function pick_opt(n: i32): i32 {
-    var o: Option[string] = None;
-    var i: i32 = 0;
+    let o: Option[string] = None;
+    let i: i32 = 0;
     while (i < n) { o = Some("ab"); i = i + 1; }
-    var len: i32 = 0 - 1;
+    let len: i32 = 0 - 1;
     match (o) {
         Some(v) => { len = v.len(); },
         None => { len = 0; }
@@ -3186,9 +3186,9 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
 // the IoError, which owns a string of its own, and the branch that replaces
 // the Ok box releases it.
 @noinline function mk_result(n: i32, path: string): i32 {
-    var r: Result[string, IoError] = Ok(path + "!");
+    let r: Result[string, IoError] = Ok(path + "!");
     if (n == 0) { r = Err(NotFound(path + "?")); }
-    var len: i32 = 0;
+    let len: i32 = 0;
     match (r) {
         Ok(t) => { len = t.len(); },
         Err(e) => { len = 0 - 1; }
@@ -3197,7 +3197,7 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
 }
 // The builtins whose result owns nothing but the argument array.
 @noinline function has_args(): i32 {
-    var av: string[] = args();
+    let av: string[] = args();
     if (av.len() > 0) { return 1; }
     return 0;
 }
@@ -3205,7 +3205,7 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
 @noinline function bits_to_int(b: i32): i32 { return (f32_from_bits(b) * 2.0) as i32; }
 @noinline function underflow_now(): i32 { return __rc_underflow_count(); }
 @noinline function bytes_len(path: string): i32 {
-    var n: i32 = 0 - 1;
+    let n: i32 = 0 - 1;
     match (read_file_bytes(path)) {
         Ok(bytes) => { n = bytes.len(); },
         Err(e) => { n = 0; }
@@ -3213,7 +3213,7 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
     return n;
 }
 @noinline function stat_seen(path: string): i32 {
-    var n: i32 = 0 - 1;
+    let n: i32 = 0 - 1;
     match (stat(path)) {
         Ok(st) => { n = 1; },
         Err(e) => { n = 0; }
@@ -3221,7 +3221,7 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
     return n;
 }
 @noinline function lstat_seen(path: string): i32 {
-    var n: i32 = 0 - 1;
+    let n: i32 = 0 - 1;
     match (lstat(path)) {
         Ok(st) => { n = 1; },
         Err(e) => { n = 0; }
@@ -3231,7 +3231,7 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
 // The two shared-append totals are a measurement of the run, so the value is
 // not the same on every target; that they are readable and non-negative is.
 @noinline function shared_pushes(): i32 {
-    var seen: i32 = __arr_push_shared_count() + (__arr_push_shared_bytes() as i32);
+    let seen: i32 = __arr_push_shared_count() + (__arr_push_shared_bytes() as i32);
     if (seen < 0) { return 1; }
     return 0;
 }
@@ -3243,7 +3243,7 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
 @noinline function add_at(n: i32, a: i32): i32 { return a + n; }
 @noinline function or_over(n: i32, a: boolean): boolean { return a || n > 1; }
 @noinline function fold_acc[T](a: T, visit: (i32, T) => T): T {
-    var acc: T = visit(1, a);
+    let acc: T = visit(1, a);
     acc = visit(2, acc);
     return acc;
 }
@@ -3254,8 +3254,8 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
 }
 // The accumulator carried through a loop PHI, replaced once per step.
 @noinline function fold_loop[T](a: T, n: i32, visit: (i32, T) => T): T {
-    var acc: T = a;
-    var i: i32 = 0;
+    let acc: T = a;
+    let i: i32 = 0;
     while (i < n) { acc = visit(i, acc); i = i + 1; }
     return acc;
 }
@@ -3268,10 +3268,10 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
 // array and answers the sentinel rather than the length, so a wrong ANSWER —
 // not a balanced allocation count — is what a mistake here shows as.
 @noinline function held_across(n: i32): i32 {
-    var xs: string[] = ["alpha", "beta", "gamma"];
-    var t: i32 = fold_loop(n, 4, add_at);
-    var churn: string[] = [];
-    var i: i32 = 0;
+    let xs: string[] = ["alpha", "beta", "gamma"];
+    let t: i32 = fold_loop(n, 4, add_at);
+    let churn: string[] = [];
+    let i: i32 = 0;
     while (i < 12) { churn = churn.append("junk"); i = i + 1; }
     if (xs.len() != 3) { return 0 - 1; }
     if (xs[2].len() != 5) { return 0 - 2; }
@@ -3287,21 +3287,21 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
 @noinline function keep_words(n: i32, own a: string[]): string[] { return a; }
 @noinline function add_word(n: i32, own a: string[]): string[] { return a.append("w"); }
 @noinline function fold_words[T](own a: T, n: i32, visit: (i32, own T) => T): T {
-    var acc: T = a;
-    var i: i32 = 0;
+    let acc: T = a;
+    let i: i32 = 0;
     while (i < n) { acc = visit(i, acc); i = i + 1; }
     return acc;
 }
 @noinline function words_kept(n: i32): i32 {
-    var out: string[] = fold_words(["a", "b"], n, keep_words);
+    let out: string[] = fold_words(["a", "b"], n, keep_words);
     return out.len();
 }
 @noinline function words_grown(n: i32): i32 {
-    var out: string[] = fold_words(["a"], n, add_word);
+    let out: string[] = fold_words(["a"], n, add_word);
     return out.len();
 }
 @noinline function words_lambda(n: i32): i32 {
-    var out: string[] = fold_words(["a"], n, (i: i32, own a: string[]): string[] => { return a.append("x"); });
+    let out: string[] = fold_words(["a"], n, (i: i32, own a: string[]): string[] => { return a.append("x"); });
     return out.len();
 }
 // A heap value held across the reference fold and read back after churn that
@@ -3309,10 +3309,10 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
 // reads a short array and answers the sentinel, so the mistake shows as a
 // wrong ANSWER rather than as a balanced allocation count.
 @noinline function words_held(n: i32): i32 {
-    var held: string[] = ["alpha", "beta", "gamma"];
-    var out: string[] = fold_words(["a"], n, add_word);
-    var churn: string[] = [];
-    var i: i32 = 0;
+    let held: string[] = ["alpha", "beta", "gamma"];
+    let out: string[] = fold_words(["a"], n, add_word);
+    let churn: string[] = [];
+    let i: i32 = 0;
     while (i < 12) { churn = churn.append("junk"); i = i + 1; }
     if (held.len() != 3) { return 0 - 1; }
     if (held[2].len() != 5) { return 0 - 2; }
@@ -3326,22 +3326,22 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
 // is read back after churn so an over-release answers the sentinel.
 @noinline function cap_text(w: string, n: i32): i32 { return apply_int((x: i32): i32 => { return x + w.len(); }, n); }
 @noinline function cap_words(n: i32): i32 {
-    var ws: string[] = ["ab", "cde"];
-    var f: (i32) => i32 = (x: i32): i32 => { return x + ws.len() + ws[1].len(); };
+    let ws: string[] = ["ab", "cde"];
+    let f: (i32) => i32 = (x: i32): i32 => { return x + ws.len() + ws[1].len(); };
     return f(n) + f(1);
 }
 @noinline function cap_pick(k: i32, n: i32): i32 {
-    var ws: string[] = ["ab"];
-    var w: string = "xyz";
-    var g: (i32) => i32 = (x: i32): i32 => { return x + ws.len(); };
+    let ws: string[] = ["ab"];
+    let w: string = "xyz";
+    let g: (i32) => i32 = (x: i32): i32 => { return x + ws.len(); };
     if (k > 0) { g = (x: i32): i32 => { return x + w.len(); }; }
     return g(n);
 }
 @noinline function cap_loop(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var ws: string[] = ["a"];
+        let ws: string[] = ["a"];
         ws = ws.append("bc");
         t = t + apply_int((x: i32): i32 => { return x * ws[1].len(); }, i);
         i = i + 1;
@@ -3349,17 +3349,17 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
     return t;
 }
 @noinline function cap_held(n: i32): i32 {
-    var ws: string[] = ["alpha", "beta"];
-    var r: i32 = apply_int((x: i32): i32 => { return x + ws.len(); }, n);
-    var churn: string[] = [];
-    var i: i32 = 0;
+    let ws: string[] = ["alpha", "beta"];
+    let r: i32 = apply_int((x: i32): i32 => { return x + ws.len(); }, n);
+    let churn: string[] = [];
+    let i: i32 = 0;
     while (i < 12) { churn = churn.append("junk"); i = i + 1; }
     if (ws[1].len() != 4) { return 0 - 1; }
     return r + churn.len();
 }
 @noinline function cap_rec(n: i32): i32 {
-    var q: Q = Q { name: "abcd", p: P { n: n, xs: [1, 2, 3] } };
-    var f: (i32) => i32 = (x: i32): i32 => { return x + q.name.len() + q.p.xs.len(); };
+    let q: Q = Q { name: "abcd", p: P { n: n, xs: [1, 2, 3] } };
+    let f: (i32) => i32 = (x: i32): i32 => { return x + q.name.len() + q.p.xs.len(); };
     return f(1);
 }
 // ---- the outcome of a write ----------------------------------------------
@@ -3385,16 +3385,16 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
     return 0 - 1;
 }
 @noinline function points(n: i32): i32 {
-    var out: char[] = [];
+    let out: char[] = [];
     out = out.append(n as char);
     out = out.append((n + 1) as char);
-    var total: i32 = 0;
+    let total: i32 = 0;
     for c in out { total = total + (c as i32); }
     return total;
 }
 @noinline function point_eq(n: i32): i32 {
-    var a: char = n as char;
-    var b: char = (n + 1) as char;
+    let a: char = n as char;
+    let b: char = (n + 1) as char;
     if (a == b) { return 1; }
     if (a != b) { return 2; }
     return 0;
@@ -3433,23 +3433,23 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
 struct MV { name: string, n: i32 }
 enum MS { One(MV), Two(MV, MV), Zero }
 @noinline function map_vrec(a: string, n: i32): i32 {
-    var m: Map[string, MV] = map_new(4);
+    let m: Map[string, MV] = map_new(4);
     m = m.insert(a + "", MV { name: a + "x", n: n });
     m = m.insert(a + "", MV { name: a + "yy", n: n + 1 });
     m = m.insert("z", MV { name: "", n: 7 });
-    var d: MV = MV { name: "", n: 0 };
-    var got: MV = m.get_or(a + "", d);
-    var t: i32 = got.name.len() * 10 + got.n + m.get_or("q", d).n;
+    let d: MV = MV { name: "", n: 0 };
+    let got: MV = m.get_or(a + "", d);
+    let t: i32 = got.name.len() * 10 + got.n + m.get_or("q", d).n;
     if let Some(v) = m.get(a + "") { t = t + v.n; }
     if let Some(v) = m.get("nope") { t = t + 1000; }
     return t + m.len();
 }
 @noinline function map_venum(a: string): i32 {
-    var m: Map[i32, MS] = map_new(2);
+    let m: Map[i32, MS] = map_new(2);
     m = m.insert(1, MS.One(MV { name: a + "", n: 1 }));
     m = m.insert(2, MS.Two(MV { name: a + a, n: 2 }, MV { name: "", n: 3 }));
     m = m.insert(1, MS.Zero);
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (m.get_or(2, MS.Zero)) {
         MS.One(p) => { t = p.n; },
         MS.Two(p, q) => { t = p.name.len() + q.n; },
@@ -3464,11 +3464,11 @@ enum MS { One(MV), Two(MV, MV), Zero }
     return t * 10 + m.len();
 }
 @noinline function map_varr(n: i32): i32 {
-    var m: Map[string, i32[]] = map_new(2);
+    let m: Map[string, i32[]] = map_new(2);
     m = m.insert("a", [n, n + 1]);
     m = m.insert("a", [n * 2]);
     m = m.insert("b", [1, 2, 3]);
-    var e: i32[] = [];
+    let e: i32[] = [];
     return m.get_or("a", e)[0] + m.get_or("b", e).len() + m.get_or("c", e).len();
 }
 // napped is the fixture's sleep caller. One microsecond, so the fixture pays
@@ -3488,32 +3488,32 @@ enum MS { One(MV), Two(MV, MV), Zero }
 // #9481's unguarded wasm struct-drop fault: nothing else in this program
 // leaves a large word in the low scratch a null box could read as a pointer.
 @noinline function tick_ns(n: i32): i32 {
-    var t: i64 = monotonic_ns();
+    let t: i64 = monotonic_ns();
     if (t > 0 as i64) { return n; }
     return 0;
 }
 struct Reused { tag: string, cells: i32[], n: i32 }
 @noinline function reused_step(seed: i32): Reused {
-    var a: Reused = Reused { tag: "aa", cells: [seed, seed + 1], n: seed };
-    var s: i32 = a.n + a.cells[0] + a.cells[1] + a.tag.len();
+    let a: Reused = Reused { tag: "aa", cells: [seed, seed + 1], n: seed };
+    let s: i32 = a.n + a.cells[0] + a.cells[1] + a.tag.len();
     return Reused { tag: "bbb", cells: [s, s + 2], n: s };
 }
 @noinline function reuse_loop(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var r: Reused = reused_step(i);
+        let r: Reused = reused_step(i);
         t = t + r.n + r.cells[0] + r.tag.len();
         i = i + 1;
     }
     return t;
 }
 @noinline function reuse_shared(n: i32): i32 {
-    var keep: Reused[] = [];
-    var a: Reused = Reused { tag: "dd", cells: [n], n: n };
+    let keep: Reused[] = [];
+    let a: Reused = Reused { tag: "dd", cells: [n], n: n };
     keep = keep.append(a);
-    var s: i32 = a.n + a.cells[0];
-    var b: Reused = Reused { tag: "cc", cells: [s], n: s };
+    let s: i32 = a.n + a.cells[0];
+    let b: Reused = Reused { tag: "cc", cells: [s], n: s };
     return keep[0].n + b.n + b.tag.len();
 }
 // The donor and the recipient of a pairing need not share a TYPE: a box is
@@ -3536,13 +3536,13 @@ struct Trio { a: string, b: i32[], c: i32 }
     return 0 - 1;
 }
 @noinline function cross_step(seed: i32): Sigil {
-    var a: Mote = Mote { text: "nn", k: seed };
-    var s: i32 = a.k + a.text.len();
+    let a: Mote = Mote { text: "nn", k: seed };
+    let s: i32 = a.k + a.text.len();
     return Glyph { xs: [s, s + 1], k: s };
 }
 @noinline function cross_back(seed: i32): Sigil {
-    var a: Glyph = Glyph { xs: [seed], k: seed };
-    var s: i32 = a.k + a.xs[0];
+    let a: Glyph = Glyph { xs: [seed], k: seed };
+    let s: i32 = a.k + a.xs[0];
     return Mote { text: "mm", k: s };
 }
 // An AST-lowered caller handing a produced callee's union result straight to
@@ -3550,15 +3550,15 @@ struct Trio { a: string, b: i32[], c: i32 }
 // enum shapes already route around — so the hand-off happens in produced code.
 @noinline function cross_back_code(seed: i32): i32 { return sigil_code(cross_back(seed)); }
 @noinline function cross_loop(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + sigil_code(cross_step(i)); i = i + 1; }
     return t;
 }
 @noinline function cross_wide(n: i32): i32 {
-    var p: Mote = Mote { text: "pp", k: n };
-    var s: i32 = p.k + p.text.len();
-    var w: Trio = Trio { a: "qq", b: [s], c: s };
+    let p: Mote = Mote { text: "pp", k: n };
+    let s: i32 = p.k + p.text.len();
+    let w: Trio = Trio { a: "qq", b: [s], c: s };
     return w.c + w.b[0] + w.a.len();
 }
 // A tuple box is one word per element and no shape word, so it is storage a
@@ -3570,30 +3570,30 @@ struct Trio { a: string, b: i32[], c: i32 }
 // the two agree at three slots and not at two.
 struct Parcel { a: string, b: i32 }
 @noinline function tuple_step(seed: i32): (i32, string) {
-    var a: (string, i32[]) = ("aa", [seed, seed + 1]);
-    var s: i32 = a.1[0] + a.1[1] + a.0.len();
+    let a: (string, i32[]) = ("aa", [seed, seed + 1]);
+    let s: i32 = a.1[0] + a.1[1] + a.0.len();
     return (s, "bb");
 }
 @noinline function tuple_loop(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var p: (i32, string) = tuple_step(i);
+        let p: (i32, string) = tuple_step(i);
         t = t + p.0 + p.1.len();
         i = i + 1;
     }
     return t;
 }
 @noinline function tuple_from_rec(n: i32): i32 {
-    var d: Parcel = Parcel { a: "cc", b: n };
-    var s: i32 = d.b + d.a.len();
-    var q: (i32, string, i32) = (s, "dd", s + 1);
+    let d: Parcel = Parcel { a: "cc", b: n };
+    let s: i32 = d.b + d.a.len();
+    let q: (i32, string, i32) = (s, "dd", s + 1);
     return q.0 + q.1.len() + q.2;
 }
 @noinline function rec_from_tuple(n: i32): i32 {
-    var d: (string, i32, i32) = ("ee", n, n + 1);
-    var s: i32 = d.1 + d.2 + d.0.len();
-    var q: Parcel = Parcel { a: "ff", b: s };
+    let d: (string, i32, i32) = ("ee", n, n + 1);
+    let s: i32 = d.1 + d.2 + d.0.len();
+    let q: Parcel = Parcel { a: "ff", b: s };
     return q.b + q.a.len();
 }
 function print_int(n: i32): i32 {
@@ -3608,32 +3608,32 @@ function print_int(n: i32): i32 {
     return 0;
 }
 function main(): i32 {
-    var a: i32[] = pick(0);
-    var b: i32[] = pick(1);
-    var c: i32[] = pick(5);
+    let a: i32[] = pick(0);
+    let b: i32[] = pick(1);
+    let c: i32[] = pick(5);
     print_int(a[0]); print(""); print_int(b[1]); print(""); print_int(c[0]); print("");
-    var p: i32[] = pair(3, true);
-    var q: i32[] = pair(1, false);
-    var r: i32[] = pair(0, false);
+    let p: i32[] = pair(3, true);
+    let q: i32[] = pair(1, false);
+    let r: i32[] = pair(0, false);
     print_int(p[0]); print(""); print_int(p[1]); print(""); print_int(q[0]); print("");
     print_int(q[1]); print(""); print_int(r[1]); print("");
-    var m: (i32, i32[]) = boxed(4);
+    let m: (i32, i32[]) = boxed(4);
     print_int(m.1[1]); print("");
-    var ml: (i32, i32[]) = boxed_local(5);
-    var mc: (i32[], boolean) = boxed_carry(6);
+    let ml: (i32, i32[]) = boxed_local(5);
+    let mc: (i32[], boolean) = boxed_carry(6);
     print_int(ml.1[0]); print(""); print_int(mc.0[1]); print("");
     boxed_local(1);
     boxed_carry(2);
     print_int(carry(2)[0]); print("");
-    var d: i32[] = carry(5);
-    var e: i32[] = carry(0);
+    let d: i32[] = carry(5);
+    let e: i32[] = carry(0);
     print_int(d[0] + e[0]); print("");
     print_int(count_even(5)); print(""); print_int(count_even(0)); print("");
-    var rc: i32[] = chain(3);
+    let rc: i32[] = chain(3);
     print_int(rc[0]); print(""); print_int(rc[1]); print("");
     print_int(twice(2)); print(""); print_int(count_down(4)); print("");
-    var g: i32[] = grow(3);
-    var h: i32[] = grow(0);
+    let g: i32[] = grow(3);
+    let h: i32[] = grow(0);
     print_int(g[0]); print(""); print_int(h[0]); print("");
     print_int(tally(1)); print(""); print_int(tally(5)); print("");
     print_int(greet(2)); print(""); print_int(greet(0)); print(""); print_int(greet(1)); print("");
@@ -3642,30 +3642,30 @@ function main(): i32 {
     print_int(node_sum(3)); print(""); print_int(node_sum(1)); print("");
     print_int(build_sum(1)); print(""); print_int(build_sum(0)); print("");
     print_int(chain_build(2)); print(""); print_int(chain_build(0)); print("");
-    var s2: S2 = mk_s2(4);
+    let s2: S2 = mk_s2(4);
     print_int(s2.a); print("");
     // A box-only result that is SHARED: proj hands back a retain over w's own
     // field box, so the row's release must be the box dec alone and the reuse
     // demand below must fork rather than write through to w.
-    var w: W = W { s: S2 { a: 1, b: 2 } };
-    var dp: S2 = proj(w);
-    var cp: S2 = S2 { ...dp, a: 5 };
+    let w: W = W { s: S2 { a: 1, b: 2 } };
+    let dp: S2 = proj(w);
+    let cp: S2 = S2 { ...dp, a: 5 };
     print_int(w.s.a + cp.a + dp.b); print("");
     // A METHOD lowered through this boundary: its receiver is parameter 0 and
     // it borrows, so the box main owns is still main's to release.
-    var ct: Counter = make_counter(6);
+    let ct: Counter = make_counter(6);
     print_int(ct.total()); print("");
     print_int(twice_total(3)); print("");
     // .len() over every ownership the receiver can have: a borrow, a counted
     // local, a temporary whose only use is the read, a literal, a field
     // projection, a loop-carried read, and a string built by concatenation.
-    var lens: i32[] = fill(2);
+    let lens: i32[] = fill(2);
     print_int(size_of(lens)); print(""); print_int(sum_all(lens)); print("");
     print_int(fresh_size(1)); print(""); print_int(eat_size(fill(5))); print("");
     print_int(text_size("hello")); print(""); print_int(grown_size(3)); print("");
-    var lp: P = P { n: 1, xs: [1, 2] };
+    let lp: P = P { n: 1, xs: [1, 2] };
     print_int(grown_size(0)); print(""); print_int(inner_size(lp)); print("");
-    var gt: i32[] = grow_to(9);
+    let gt: i32[] = grow_to(9);
     print_int(gt.len()); print(""); print_int(sum_all(gt)); print("");
     print_int(borrow_acc(gt, 3)); print(""); print_int(gt.len()); print("");
     print_int(sum_all(grow_to(0))); print(""); print_int(push_temp(1)); print("");
@@ -3687,11 +3687,11 @@ function main(): i32 {
     print_int(div_of(int_min(), 0 - 1)); print(""); print_int(rem_of(int_min(), 0 - 1)); print("");
     print_int(bit_ops(12, 10)); print(""); print_int(shifts(1, 3)); print("");
     print_int(shifts(0 - 8, 33)); print(""); print_int(ratio_of(lens)); print("");
-    var up: P = P { n: 1, xs: [1, 2] };
+    let up: P = P { n: 1, xs: [1, 2] };
     print_int(bump(up)); print(""); print_int(pure_copy(up)); print("");
     print_int(reorder(up)); print(""); print_int(from_temp(3)); print("");
     print_int(retag(wrap(make(1), "x"), "zz")); print("");
-    var uw: W = W { s: S2 { a: 1, b: 2 } };
+    let uw: W = W { s: S2 { a: 1, b: 2 } };
     print_int(nested_up(uw)); print(""); print_int(out_of_order(3)); print("");
     print_int(byte_at("abc", 1)); print(""); print_int(first_last("abc")); print("");
     print_int(temp_byte(0)); print(""); print_int(temp_byte(1)); print("");
@@ -3740,8 +3740,8 @@ function main(): i32 {
     print_int(pick_fn(3)); print(""); print_int(pick_fn(1)); print("");
     print_int(shift_by(4, 5)); print(""); print_int(shift_loop(3, 4)); print("");
     print_int(pick_shift(2, 3)); print(""); print_int(pick_shift(2, 1)); print("");
-    var bxs: i32[] = fill(2);
-    var bp: P = P { n: 1, xs: [1, 2] };
+    let bxs: i32[] = fill(2);
+    let bp: P = P { n: 1, xs: [1, 2] };
     print_int(sum_all(push_borrowed(bxs, 9))); print(""); print_int(bxs.len()); print("");
     print_int(sum_all(set_borrowed(bxs, 0, 9))); print(""); print_int(bxs[0]); print("");
     print_int(push_field_len(bp, 5)); print(""); print_int(set_field_at(bp, 0, 7)); print("");
@@ -3984,10 +3984,10 @@ const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n
 const semsourceRCDriver = `import "./parser"; import "./lexer"; import "./checker"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir"; import "./util";
 import "./modloader"; import "./flatten"; import "./treeshake"; import "./semlower";
 function main(): i32 {
-    var av = args();
-    var src: string = "";
+    let av = args();
+    let src: string = "";
     match (read_file(av[2])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
-    var entry = parser.parse_module(lexer.tokenize(src));
+    let entry = parser.parse_module(lexer.tokenize(src));
     // The program's imports resolve against the stdlib staged beside it, merge
     // in and are tree-shaken as the CLI does them: a routed map calls
     // core/map's functions, which the program has to carry.
@@ -3995,22 +3995,22 @@ function main(): i32 {
     if (modloader.report_unresolved(missing, "semsource_rc")) {
         return 2;
     }
-    var merged = flatten.bundle(entry, loaded, "");
+    let merged = flatten.bundle(entry, loaded, "");
     // Gate on the checker as the CLI does, so the fixture cannot hold a
     // program the language rejects.
-    var gated: util.Diag[] = checker.build_gate_diags(merged);
+    let gated: util.Diag[] = checker.build_gate_diags(merged);
     if (gated.len() > 0) {
         eprint(util.format_diags(gated));
         return 8;
     }
     // The pipeline the CLI runs: tree-shaken, then the typed lowering of the
     // whole program through the target's emit entry. A refusal exits 3.
-    var shaken = treeshake.treeshake(checker.annotate_module(merged));
-    var v = semlower.verdict_annotated(shaken, av[1]);
+    let shaken = treeshake.treeshake(checker.annotate_module(merged));
+    let v = semlower.verdict_annotated(shaken, av[1]);
     for row in v.rows {
         if (row.state == "produced") { eprint("produced " + row.name + "\n"); }
     }
-    var d = semlower.driven_annotated(shaken, av[1]);
+    let d = semlower.driven_annotated(shaken, av[1]);
     if (av[1] == "x86-64-linux") {
         print(asm_ir.emit_module_or_error_sub(d.full, d.sub));
     } else if (av[1] == "arm64-linux") {

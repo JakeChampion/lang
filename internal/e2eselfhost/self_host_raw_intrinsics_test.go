@@ -12,19 +12,19 @@ import "testing"
 // round-trips to 0 so the exit code is exactly s.len() + s[0] = 3 + 72 = 75 —
 // any miscompiled load/store/box shifts it off 75.
 const rawIntrinsicsProg = `function build_str(): string {
-    var p: usize = __raw_alloc(3);
+    let p: usize = __raw_alloc(3);
     __raw_store8(p, 0, 72);
     __raw_store8(p, 1, 105);
     __raw_store8(p, 2, 33);
     return __raw_string(p, 3);
 }
 function main(): i32 {
-    var s: string = build_str();
-    var p2: usize = __raw_alloc(16);
+    let s: string = build_str();
+    let p2: usize = __raw_alloc(16);
     __raw_store_ptr(p2, 0, 1234 as usize);
     __raw_store8(p2, 8, 200);
-    var w: usize = __raw_load_ptr(p2, 0);
-    var b: i32 = __raw_load8(p2, 8);
+    let w: usize = __raw_load_ptr(p2, 0);
+    let b: i32 = __raw_load8(p2, 8);
     return s.len() + (s[0] as i32) + ((w as i32) - 1234) + (b - 200);
 }`
 

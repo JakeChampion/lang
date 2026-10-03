@@ -119,10 +119,10 @@ func TestSelfHostWasmIRPoll(t *testing.T) {
 	// report index 0 as ready.
 	t.Run("blocks_until_ready", func(t *testing.T) {
 		out, elapsed := build(t, "poll_block", `function main(): i32 {
-    var d: i64 = 400000000i64;
-    var p: i32 = wasm_timer_pollable(d);
-    var ps: i32[] = [p];
-    var i: i32 = wasm_poll(ps);
+    let d: i64 = 400000000i64;
+    let p: i32 = wasm_timer_pollable(d);
+    let ps: i32[] = [p];
+    let i: i32 = wasm_poll(ps);
     write("idx="); print_int(i); write("\n");
     return 0;
 }`)
@@ -145,12 +145,12 @@ func TestSelfHostWasmIRPoll(t *testing.T) {
 		{
 			name: "fast_first_returns_0",
 			src: `function main(): i32 {
-    var fast: i64 = 10000000i64;
-    var slow: i64 = 3000000000i64;
-    var a: i32 = wasm_timer_pollable(fast);
-    var b: i32 = wasm_timer_pollable(slow);
-    var ps: i32[] = [a, b];
-    var i: i32 = wasm_poll(ps);
+    let fast: i64 = 10000000i64;
+    let slow: i64 = 3000000000i64;
+    let a: i32 = wasm_timer_pollable(fast);
+    let b: i32 = wasm_timer_pollable(slow);
+    let ps: i32[] = [a, b];
+    let i: i32 = wasm_poll(ps);
     write("idx="); print_int(i); write("\n");
     return 0;
 }`,
@@ -159,12 +159,12 @@ func TestSelfHostWasmIRPoll(t *testing.T) {
 		{
 			name: "fast_second_returns_1",
 			src: `function main(): i32 {
-    var slow: i64 = 3000000000i64;
-    var fast: i64 = 10000000i64;
-    var a: i32 = wasm_timer_pollable(slow);
-    var b: i32 = wasm_timer_pollable(fast);
-    var ps: i32[] = [a, b];
-    var i: i32 = wasm_poll(ps);
+    let slow: i64 = 3000000000i64;
+    let fast: i64 = 10000000i64;
+    let a: i32 = wasm_timer_pollable(slow);
+    let b: i32 = wasm_timer_pollable(fast);
+    let ps: i32[] = [a, b];
+    let i: i32 = wasm_poll(ps);
     write("idx="); print_int(i); write("\n");
     return 0;
 }`,

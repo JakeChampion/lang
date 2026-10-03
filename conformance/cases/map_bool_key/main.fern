@@ -21,7 +21,7 @@ import "core/map";
 // Every surface a key column is consumed by: len, has, get, get_or, the
 // materialised keys() array, and pair iteration.
 function main(): i32 {
-    var m: Map[boolean, i32] = map_new(2);
+    let m: Map[boolean, i32] = map_new(2);
     m = m.insert(false, 7);
     m = m.insert(true, 5);
     if (m.len() != 2) { return 1; }
@@ -30,7 +30,7 @@ function main(): i32 {
     if (m.get_or(true, 0) != 5) { return 4; }
     if (m.get_or(false, 0) != 7) { return 5; }
 
-    var ks: boolean[] = m.keys();
+    let ks: boolean[] = m.keys();
     if (ks.len() != 2) { return 6; }
     if (ks[0]) { return 7; }
     if (!ks[1]) { return 8; }
@@ -39,8 +39,8 @@ function main(): i32 {
     if (m.get_or(ks[0], 0) != 7) { return 9; }
     if (m.get_or(ks[1], 0) != 5) { return 10; }
 
-    var trues: i32 = 0;
-    var sum: i32 = 0;
+    let trues: i32 = 0;
+    let sum: i32 = 0;
     for (k, v) in m {
         if (k) { trues = trues + 1; }
         sum = sum + v;

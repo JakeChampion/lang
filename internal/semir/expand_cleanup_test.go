@@ -13,7 +13,7 @@ import (
 func pendingCleanupFunc(t *testing.T) *Func {
 	t.Helper()
 	return pendingCleanupSource(t, `function pilot(flag: boolean): string {
-  var items = ["saved"];
+  let items = ["saved"];
   defer { if (flag) { items = ["yes"] } else { items = ["no"] } }
   defer items = ["first"];
   return items[0];
@@ -47,12 +47,12 @@ func unverifiedCleanupSource(t *testing.T, source string) *Func {
 func TestCleanupAdmissionUsesCompleteTypedCFG(t *testing.T) {
 	for _, source := range []string{
 		`function pilot(flag: boolean): string {
-  if (flag) { var items = ["local"]; defer items = ["changed"]; }
+  if (flag) { let items = ["local"]; defer items = ["changed"]; }
   return "done";
 }`,
 		`function pilot(flag: boolean): string {
   loop {
-    if (flag) { var items = ["local"]; defer items = ["changed"]; }
+    if (flag) { let items = ["local"]; defer items = ["changed"]; }
     break;
   }
   return "done";
@@ -198,7 +198,7 @@ func TestCleanupExpansionRejectsInvalidSitesBeforeMutation(t *testing.T) {
 
 func TestCleanupExpansionPreservesContinuationPhiOrder(t *testing.T) {
 	f := pendingCleanupSource(t, `function pilot(flag: boolean): string {
-  var i = 0i32;
+  let i = 0i32;
   while (i < 2i32) {
     defer { if (flag) { i = i + 1i32 } else { i = i + 2i32 } }
   }

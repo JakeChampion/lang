@@ -4,12 +4,12 @@
 import "core/map";
 
 function main(): i32 {
-    var m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
+    let m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
 
-    var with_trailing: i32 = 0;
+    let with_trailing: i32 = 0;
     for (k, v,) in m { with_trailing = with_trailing + v + k.len(); }
 
-    var without: i32 = 0;
+    let without: i32 = 0;
     for (k, v) in m { without = without + v + k.len(); }
 
     // The comma is punctuation, so both loops must agree: 6 + 3 = 9 each.

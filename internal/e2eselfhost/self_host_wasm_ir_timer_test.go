@@ -52,8 +52,8 @@ func TestSelfHostWasmIRTimerPollable(t *testing.T) {
 	// typed i64 local (a direct i64 literal in argument position mis-infers to
 	// i32 — a separate pre-existing lowering quirk, unrelated to this op).
 	const src = `function main(): i32 {
-    var d: i64 = 200000000i64;
-    var p: i32 = wasm_timer_pollable(d);
+    let d: i64 = 200000000i64;
+    let p: i32 = wasm_timer_pollable(d);
     wasm_pollable_drop(p);
     return 0;
 }`

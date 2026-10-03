@@ -34,8 +34,8 @@ or explicitly counted-exempt. The third shape separates them:
 ```
 function stash(acc: string[], s: string): string[] { return acc.append(s); }
 function f(): i32 {
-    var v: string = "hi" + "!";
-    var xs: string[] = [];
+    let v: string = "hi" + "!";
+    let xs: string[] = [];
     xs = stash(xs, v);
     return xs.len();
 }

@@ -39,17 +39,17 @@ func TestPollDrivenTcpServerX86_64(t *testing.T) {
 	// accept, poll the connection for the request, recv, respond, exit
 	// 42. Distinct small codes localise a failed step.
 	src := fmt.Sprintf(`function main(): i32 {
-    var fd: i32 = tcp_listen(%d);
+    let fd: i32 = tcp_listen(%d);
     if (fd < 0) { return 91; }
-    var lfds: i32[] = [fd];
+    let lfds: i32[] = [fd];
     if (poll(lfds, 10000) < 0) { return 95; }
-    var c: i32 = tcp_accept(fd);
+    let c: i32 = tcp_accept(fd);
     if (c < 0) { return 92; }
-    var cfds: i32[] = [c];
+    let cfds: i32[] = [c];
     if (poll(cfds, 10000) < 0) { return 96; }
-    var req: u8[] = tcp_recv(c, 4096);
+    let req: u8[] = tcp_recv(c, 4096);
     if (req.len() == 0) { return 93; }
-    var n: i32 = tcp_send(c, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello");
+    let n: i32 = tcp_send(c, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello");
     tcp_close(c);
     tcp_close(fd);
     if (n < 0) { return 94; }

@@ -32,7 +32,7 @@ import (
 // makes the other three distinguishable, and chmod because access has to be
 // asked something whose answer depends on the mode it was handed.
 const x86SSAPathQuerySrc = `function main(): i32 {
-    var cwd: string = getcwd();
+    let cwd: string = getcwd();
     if (cwd.len() < 1) { return 10; }
     if (cwd[0] != 47) { return 11; }
 
@@ -72,7 +72,7 @@ const x86SSAPathQuerySrc = `function main(): i32 {
 // plain file is the same change as its follow form: the flag only matters at
 // a final symlink, and chmod_at_test.go has those.
 const x86SSAPathOpSrc = `function main(): i32 {
-    var base: string = getcwd();
+    let base: string = getcwd();
 
     match (create_dir(base + "/d", 493)) { Ok(_) => {}, Err(e) => { return 10; } }
     match (create_dir(base + "/d", 493)) { Ok(_) => { return 11; }, Err(e) => {} }

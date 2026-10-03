@@ -27,17 +27,17 @@ function desc(a: i32, b: i32): i32 { return b - a; }
 
 function main(): i32 {
     // zip: positional pairing, truncated to the shorter input.
-    var z: (i32, string)[] = array.zip([1, 2, 3], ["a", "b"]);
+    let z: (i32, string)[] = array.zip([1, 2, 3], ["a", "b"]);
     if (z.len() != 2) { return 1; }
     if (z[0].0 != 1 || z[1].0 != 2) { return 2; }
     // zip receiver-method form.
-    var z2: (i32, i32)[] = [10, 20].zip([1, 2, 3]);
+    let z2: (i32, i32)[] = [10, 20].zip([1, 2, 3]);
     if (z2.len() != 2 || z2[1].0 != 20 || z2[1].1 != 2) { return 3; }
 
     // flat_map: map each element to a U[], then flatten.
-    var fm: i32[] = array.flat_map([1, 2, 3], dup);
+    let fm: i32[] = array.flat_map([1, 2, 3], dup);
     if (fm.len() != 6 || fm[0] != 1 || fm[5] != 3) { return 4; }
-    var fm2: i32[] = [4, 5].flat_map(dup);
+    let fm2: i32[] = [4, 5].flat_map(dup);
     if (fm2.len() != 4 || fm2[2] != 5) { return 5; }
 
     // reduce: seedless fold; Some on non-empty, None on empty.
@@ -49,7 +49,7 @@ function main(): i32 {
         Some(v) => { if (v != 9) { return 8; } },
         None => { return 9; }
     }
-    var empty: i32[] = [];
+    let empty: i32[] = [];
     match (array.reduce(empty, maxi)) {
         Some(_) => { return 10; },
         None => {}
@@ -58,12 +58,12 @@ function main(): i32 {
     // sort_by: comparator-driven stable sort, ascending and descending.
     // (The std/array xs.sort_by(cmp) method delegates to std/sort's generic
     // sort_by; the free function lives in std/sort, not std/array -- #5348.)
-    var sa: i32[] = [3, 1, 2].sort_by(asc);
+    let sa: i32[] = [3, 1, 2].sort_by(asc);
     if (sa[0] != 1 || sa[1] != 2 || sa[2] != 3) { return 11; }
-    var sd: i32[] = [3, 1, 2].sort_by(desc);
+    let sd: i32[] = [3, 1, 2].sort_by(desc);
     if (sd[0] != 3 || sd[1] != 2 || sd[2] != 1) { return 12; }
     // sort_by leaves an already-sorted run alone and handles duplicates.
-    var sdup: i32[] = [2, 1, 2, 1].sort_by(asc);
+    let sdup: i32[] = [2, 1, 2, 1].sort_by(asc);
     if (sdup[0] != 1 || sdup[1] != 1 || sdup[2] != 2 || sdup[3] != 2) { return 13; }
 
     return 0;

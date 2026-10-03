@@ -18,8 +18,8 @@ import "./util";
 // render joins an op list into one line, so a case's whole shape is a single
 // comparable string.
 function render(ops: ir.Op[]): string {
-  var s: string = "";
-  var i: i32 = 0;
+  let s: string = "";
+  let i: i32 = 0;
   while (i < ops.len()) {
     if (i > 0) {
       s = s + " ; ";
@@ -53,12 +53,12 @@ function base(): ir.Op {
 
 // case_bin renders reduce_strength over `load_local 0 ; const k ; <kind@width>`.
 function case_bin(label: string, k: i32, kind: string, width: i32): string {
-  var ops: ir.Op[] = [base(), ir.op_const_i32(k), ir.op_bin(kind, width, false)];
+  let ops: ir.Op[] = [base(), ir.op_const_i32(k), ir.op_bin(kind, width, false)];
   return label + ": " + render(ir.reduce_strength(ops)) + "\n";
 }
 
 function main(): i32 {
-  var out: string = "";
+  let out: string = "";
 
   // 1. Multiplication.
   out = out + case_bin("mul_1", 1, "mul", 0);
@@ -106,14 +106,14 @@ function main(): i32 {
   // 6. Literal shapes. A source literal lowers to const_i32_text, which
   //    qualifies only when its text is a plain decimal i32 — a hex literal
   //    reads as 0 through digits_to_i32 and must not be mistaken for `* 0`.
-  var textdec: ir.Op[] = [base(), ir.op_const_i32_text("8"), ir.op_bin("mul", 0, false)];
+  let textdec: ir.Op[] = [base(), ir.op_const_i32_text("8"), ir.op_bin("mul", 0, false)];
   out = out + "mul_text_8: " + render(ir.reduce_strength(textdec)) + "\n";
-  var texthex: ir.Op[] = [base(), ir.op_const_i32_text("0x10"), ir.op_bin("mul", 0, false)];
+  let texthex: ir.Op[] = [base(), ir.op_const_i32_text("0x10"), ir.op_bin("mul", 0, false)];
   out = out + "mul_text_hex: " + render(ir.reduce_strength(texthex)) + "\n";
 
   // 7. A chain reduces in a single walk: the rewrite's output is appended
   //    rather than rescanned, but the remaining input still is.
-  var chain: ir.Op[] = [
+  let chain: ir.Op[] = [
     base(), ir.op_const_i32(4), ir.op_bin("mul", 0, false),
     ir.op_const_i32(2), ir.op_bin("mul", 0, false),
   ];
@@ -121,7 +121,7 @@ function main(): i32 {
 
   // 8. optimize_ops — folding feeds strength: `2 + 2` collapses to 4, which
   //    is then a power of two.
-  var fold_then: ir.Op[] = [
+  let fold_then: ir.Op[] = [
     base(), ir.op_const_i32(2), ir.op_const_i32(2),
     ir.op_bin("add", 0, false), ir.op_bin("mul", 0, false),
   ];
@@ -129,16 +129,16 @@ function main(): i32 {
 
   // 9. optimize_ops — strength feeds folding: `* 0` leaves a `const_i32 0`
   //    next to the constant that followed, which the next fold round collapses.
-  var strength_then: ir.Op[] = [
+  let strength_then: ir.Op[] = [
     base(), ir.op_const_i32(0), ir.op_bin("mul", 0, false),
     ir.op_const_i32(5), ir.op_bin("add", 0, false),
   ];
-  var once: ir.Op[] = optimize(strength_then);
+  let once: ir.Op[] = optimize(strength_then);
   out = out + "strength_then_fold: " + render(once) + "\n";
 
   // 10. Idempotence: the fixpoint is a fixpoint.
-  var twice: ir.Op[] = optimize(once);
-  var stable: i32 = 0;
+  let twice: ir.Op[] = optimize(once);
+  let stable: i32 = 0;
   if (render(twice) == render(once)) {
     stable = 1;
   }
@@ -150,22 +150,22 @@ function main(): i32 {
   //     backend input that is still well-formed and no longer the program.
   // 11a. The lowering's own shape: a match arm's `return` followed by the
   //      `br` that would have left the arm block.
-  var arm: ir.Op[] = [ir.op_block(0), ir.op_const_i32(1), ir.op_return(), ir.op_br(1), ir.op_end()];
+  let arm: ir.Op[] = [ir.op_block(0), ir.op_const_i32(1), ir.op_return(), ir.op_br(1), ir.op_end()];
   out = out + "dce_arm: " + render(ir.eliminate_dead_code(arm)) + "\n";
 
   // 11b. A `br` kills the rest of ITS scope; the scope's end revives.
-  var afterbr: ir.Op[] = [
+  let afterbr: ir.Op[] = [
     ir.op_block(0), ir.op_br(0), ir.op_const_i32(1), ir.op_drop(), ir.op_end(),
     ir.op_const_i32(2), ir.op_drop(),
   ];
   out = out + "dce_after_br: " + render(ir.eliminate_dead_code(afterbr)) + "\n";
 
   // 11c. `brif` is conditional and kills nothing.
-  var afterbrif: ir.Op[] = [ir.op_block(0), ir.op_brif(0), ir.op_const_i32(1), ir.op_drop(), ir.op_end()];
+  let afterbrif: ir.Op[] = [ir.op_block(0), ir.op_brif(0), ir.op_const_i32(1), ir.op_drop(), ir.op_end()];
   out = out + "dce_after_brif: " + render(ir.eliminate_dead_code(afterbrif)) + "\n";
 
   // 11d. `else` revives: the then-arm's dead tail goes, the else-arm stays.
-  var arms: ir.Op[] = [
+  let arms: ir.Op[] = [
     ir.op_if(0), ir.op_return(), ir.op_const_i32(1), ir.op_drop(),
     ir.op_else(), ir.op_const_i32(2), ir.op_drop(), ir.op_end(),
   ];
@@ -174,7 +174,7 @@ function main(): i32 {
   // 11e. A scope OPENED inside a dead region goes with it, and its `end`
   //      does not close the dead region early — the depth has to be tracked
   //      through ops that are being dropped.
-  var nested: ir.Op[] = [
+  let nested: ir.Op[] = [
     ir.op_const_i32(1), ir.op_return(),
     ir.op_block(0), ir.op_const_i32(2), ir.op_drop(), ir.op_end(),
     ir.op_const_i32(3), ir.op_drop(),
@@ -185,17 +185,17 @@ function main(): i32 {
   //      counts it: every backend emits it as a call plus a dummy result
   //      that the following `drop` consumes, so dropping what follows would
   //      leave the scope one operand high.
-  var ex: ir.Op[] = [ir.op_const_i32(3), ir.op_exit(), ir.op_drop(), ir.op_const_i32(0), ir.op_return()];
+  let ex: ir.Op[] = [ir.op_const_i32(3), ir.op_exit(), ir.op_drop(), ir.op_const_i32(0), ir.op_return()];
   out = out + "dce_exit_kept: " + render(ir.eliminate_dead_code(ex)) + "\n";
 
   // 11g. Nothing to drop: a live stream is returned unchanged.
-  var live: ir.Op[] = [ir.op_load_local(0), ir.op_const_i32(1), ir.op_bin("add", 0, false), ir.op_return()];
+  let live: ir.Op[] = [ir.op_load_local(0), ir.op_const_i32(1), ir.op_bin("add", 0, false), ir.op_return()];
   out = out + "dce_live: " + render(ir.eliminate_dead_code(live)) + "\n";
 
   // 11h. Idempotent by construction — it only removes.
-  var dce_once: ir.Op[] = ir.eliminate_dead_code(arm);
-  var dce_twice: ir.Op[] = ir.eliminate_dead_code(dce_once);
-  var dce_stable: i32 = 0;
+  let dce_once: ir.Op[] = ir.eliminate_dead_code(arm);
+  let dce_twice: ir.Op[] = ir.eliminate_dead_code(dce_once);
+  let dce_stable: i32 = 0;
   if (render(dce_twice) == render(dce_once)) {
     dce_stable = 1;
   }
@@ -203,7 +203,7 @@ function main(): i32 {
 
   // 11i. optimize_ops runs it last: the fold collapses `2 + 2` to a
   //      constant and the dead tail after the return still goes.
-  var both: ir.Op[] = [
+  let both: ir.Op[] = [
     ir.op_const_i32(2), ir.op_const_i32(2), ir.op_bin("add", 0, false),
     ir.op_return(), ir.op_const_i32(9), ir.op_drop(),
   ];
@@ -213,31 +213,31 @@ function main(): i32 {
   //     `tee_local X`. wasm turns that into a single `local.tee`; the
   //     register backends peek the operand-stack top instead of popping
   //     and re-pushing it.
-  var tee_hit: ir.Op[] = [ir.op_const_i32(5), ir.op_store_local(0), ir.op_load_local(0), ir.op_return()];
+  let tee_hit: ir.Op[] = [ir.op_const_i32(5), ir.op_store_local(0), ir.op_load_local(0), ir.op_return()];
   out = out + "tee_fused: " + render(ir.fuse_tee(tee_hit)) + "\n";
 
   // 12a. A DIFFERENT slot is not a tee — the value stored and the value
   //      loaded are unrelated.
-  var tee_slot: ir.Op[] = [ir.op_const_i32(5), ir.op_store_local(0), ir.op_load_local(1)];
+  let tee_slot: ir.Op[] = [ir.op_const_i32(5), ir.op_store_local(0), ir.op_load_local(1)];
   out = out + "tee_other_slot: " + render(ir.fuse_tee(tee_slot)) + "\n";
 
   // 12b. NON-ADJACENT is refused even when nothing between them can touch
   //      the slot. Widening that is copy propagation's job, not a peephole's.
-  var tee_gap: ir.Op[] = [ir.op_const_i32(5), ir.op_store_local(0), ir.op_const_i32(1), ir.op_drop(), ir.op_load_local(0)];
+  let tee_gap: ir.Op[] = [ir.op_const_i32(5), ir.op_store_local(0), ir.op_const_i32(1), ir.op_drop(), ir.op_load_local(0)];
   out = out + "tee_gap: " + render(ir.fuse_tee(tee_gap)) + "\n";
 
   // 12c. The reversed adjacency is a plain read-then-write, not a tee.
-  var tee_rev: ir.Op[] = [ir.op_load_local(0), ir.op_store_local(0)];
+  let tee_rev: ir.Op[] = [ir.op_load_local(0), ir.op_store_local(0)];
   out = out + "tee_reversed: " + render(ir.fuse_tee(tee_rev)) + "\n";
 
   // 12d. Two pairs in a row both fuse — consuming the load must not make
   //      the walk skip the next store.
-  var tee_two: ir.Op[] = [ir.op_store_local(0), ir.op_load_local(0), ir.op_store_local(1), ir.op_load_local(1)];
+  let tee_two: ir.Op[] = [ir.op_store_local(0), ir.op_load_local(0), ir.op_store_local(1), ir.op_load_local(1)];
   out = out + "tee_two: " + render(ir.fuse_tee(tee_two)) + "\n";
 
   // 12e. Idempotent: a tee_local matches neither arm of the pattern.
-  var tee_once: ir.Op[] = ir.fuse_tee(tee_hit);
-  var tee_stable: i32 = 0;
+  let tee_once: ir.Op[] = ir.fuse_tee(tee_hit);
+  let tee_stable: i32 = 0;
   if (render(ir.fuse_tee(tee_once)) == render(tee_once)) {
     tee_stable = 1;
   }
@@ -245,40 +245,40 @@ function main(): i32 {
 
   // 12f. optimize_ops runs it LAST, after the dead-code walk — so a pair the
   //      DCE exposes is still fused.
-  var tee_opt: ir.Op[] = [ir.op_const_i32(4), ir.op_store_local(0), ir.op_load_local(0), ir.op_return()];
+  let tee_opt: ir.Op[] = [ir.op_const_i32(4), ir.op_store_local(0), ir.op_load_local(0), ir.op_return()];
   out = out + "tee_in_optimize: " + render(optimize(tee_opt)) + "\n";
 
   // 13. propagate_copies (#6638): a tee whose slot NOTHING else touches is
   //     identity — pop then push — so it goes.
-  var cp_dead: ir.Op[] = [ir.op_const_i32(7), ir.op_tee_local(0), ir.op_const_i32(2), ir.op_bin("mul", 0, false)];
+  let cp_dead: ir.Op[] = [ir.op_const_i32(7), ir.op_tee_local(0), ir.op_const_i32(2), ir.op_bin("mul", 0, false)];
   out = out + "cp_dead_tee: " + render(ir.propagate_copies(cp_dead)) + "\n";
 
   // 13a. A slot with a real READ elsewhere keeps its tee — that load would
   //      observe the value the tee wrote.
-  var cp_read: ir.Op[] = [ir.op_const_i32(7), ir.op_tee_local(0), ir.op_load_local(0), ir.op_bin("add", 0, false)];
+  let cp_read: ir.Op[] = [ir.op_const_i32(7), ir.op_tee_local(0), ir.op_load_local(0), ir.op_bin("add", 0, false)];
   out = out + "cp_live_read: " + render(ir.propagate_copies(cp_read)) + "\n";
 
   // 13b. A second STORE to the slot keeps it too: something later reassigns it,
   //      so the slot is real state rather than a round trip.
-  var cp_store: ir.Op[] = [ir.op_const_i32(7), ir.op_tee_local(0), ir.op_const_i32(1), ir.op_store_local(0)];
+  let cp_store: ir.Op[] = [ir.op_const_i32(7), ir.op_tee_local(0), ir.op_const_i32(1), ir.op_store_local(0)];
   out = out + "cp_live_store: " + render(ir.propagate_copies(cp_store)) + "\n";
 
   // 13c. TWO tees of the same slot both stay — neither is the sole toucher, and
   //      dropping either changes what the other's slot holds.
-  var cp_two: ir.Op[] = [ir.op_const_i32(7), ir.op_tee_local(0), ir.op_const_i32(8), ir.op_tee_local(0)];
+  let cp_two: ir.Op[] = [ir.op_const_i32(7), ir.op_tee_local(0), ir.op_const_i32(8), ir.op_tee_local(0)];
   out = out + "cp_two_tees: " + render(ir.propagate_copies(cp_two)) + "\n";
 
   // 13d. A plain store_local is LEFT ALONE. Rewriting a dead store to a drop
   //      needs slot types this pass does not have: a `dyn Trait` slot is TWO
   //      operand-stack values, so one drop strands one of them — measured as a
   //      rejected wasm module and a segfault on the register backends.
-  var cp_st: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(3)];
+  let cp_st: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(3)];
   out = out + "cp_store_kept: " + render(ir.propagate_copies(cp_st)) + "\n";
 
   // 13e. The native worked example end to end, through optimize_ops: the inline
   //      round trip fuses to a tee, the tee is dead, and the fold then has an
   //      adjacent const pair to collapse.
-  var cp_pipeline: ir.Op[] = [
+  let cp_pipeline: ir.Op[] = [
     ir.op_const_i32(7), ir.op_store_local(0), ir.op_load_local(0),
     ir.op_const_i32(2), ir.op_bin("mul", 0, false), ir.op_return(),
   ];
@@ -286,7 +286,7 @@ function main(): i32 {
 
   // 14. const_propagate (#6638): a store and load that are NOT adjacent, which
   //     fuse_tee structurally cannot reach.
-  var kp_far: ir.Op[] = [
+  let kp_far: ir.Op[] = [
     ir.op_const_i32(7), ir.op_store_local(0), ir.op_call_direct("side", 0), ir.op_drop(),
     ir.op_load_local(0), ir.op_const_i32(3), ir.op_bin("add", 0, false),
   ];
@@ -296,7 +296,7 @@ function main(): i32 {
   //      rule kills what a scope COULD have written, and this if writes nothing.
   //      Each case below is asserted in both directions, because a merge rule
   //      that keeps one binding too many is a miscompile the backends cannot see.
-  var kp_cf: ir.Op[] = [
+  let kp_cf: ir.Op[] = [
     ir.op_const_i32(7), ir.op_store_local(0), ir.op_const_i32(1), ir.op_if(0), ir.op_end(),
     ir.op_load_local(0),
   ];
@@ -304,7 +304,7 @@ function main(): i32 {
 
   // 14a-i. The refusal twin: the arm writes the slot, so the load after the `end`
   //        cannot assume either value — the arm may not have run.
-  var kp_if_w: ir.Op[] = [
+  let kp_if_w: ir.Op[] = [
     ir.op_const_i32(7), ir.op_store_local(0), ir.op_const_i32(1), ir.op_if(0),
     ir.op_call_direct("side", 0), ir.op_store_local(0), ir.op_end(),
     ir.op_load_local(0),
@@ -313,7 +313,7 @@ function main(): i32 {
 
   // 14a-ii. A write in the ELSE arm kills it just the same, and the then-arm's
   //         own binding does not leak across the `else` into it.
-  var kp_else_w: ir.Op[] = [
+  let kp_else_w: ir.Op[] = [
     ir.op_const_i32(7), ir.op_store_local(0), ir.op_const_i32(1), ir.op_if(0),
     ir.op_load_local(0), ir.op_drop(), ir.op_else(),
     ir.op_call_direct("side", 0), ir.op_store_local(0), ir.op_end(),
@@ -323,7 +323,7 @@ function main(): i32 {
 
   // 14a-iii. A `block` nothing branches to runs straight through, so a binding
   //          MADE inside it holds after its end.
-  var kp_blk: ir.Op[] = [
+  let kp_blk: ir.Op[] = [
     ir.op_block(0), ir.op_const_i32(7), ir.op_store_local(0), ir.op_end(),
     ir.op_load_local(0),
   ];
@@ -331,7 +331,7 @@ function main(): i32 {
 
   // 14a-iv. The refusal twin: a `br` to that block can skip the store, so the
   //         same binding must not survive it.
-  var kp_blk_br: ir.Op[] = [
+  let kp_blk_br: ir.Op[] = [
     ir.op_block(0), ir.op_const_i32(1), ir.op_brif(0),
     ir.op_const_i32(7), ir.op_store_local(0), ir.op_end(),
     ir.op_load_local(0),
@@ -341,7 +341,7 @@ function main(): i32 {
   // 14a-v. A loop body cannot change this slot, so the binding is assumed INSIDE
   //        the body — the one place this rule is finer than native's, which drops
   //        the whole table at a loop — and after it.
-  var kp_loop: ir.Op[] = [
+  let kp_loop: ir.Op[] = [
     ir.op_const_i32(7), ir.op_store_local(0), ir.op_loop(0),
     ir.op_load_local(0), ir.op_drop(), ir.op_end(),
     ir.op_load_local(0),
@@ -350,7 +350,7 @@ function main(): i32 {
 
   // 14a-vi. The refusal twin: the body writes the slot, so the back-edge re-enters
   //         with what the body left and NEITHER load may be rewritten.
-  var kp_loop_w: ir.Op[] = [
+  let kp_loop_w: ir.Op[] = [
     ir.op_const_i32(7), ir.op_store_local(0), ir.op_loop(0),
     ir.op_load_local(0), ir.op_drop(),
     ir.op_call_direct("side", 0), ir.op_store_local(0), ir.op_end(),
@@ -360,7 +360,7 @@ function main(): i32 {
 
   // 14a-vii. A constant reaches a load nested TWO scopes deep, which is the shape
   //          the barrier version could never see.
-  var kp_deep: ir.Op[] = [
+  let kp_deep: ir.Op[] = [
     ir.op_const_i32(7), ir.op_store_local(0), ir.op_const_i32(1), ir.op_if(0),
     ir.op_block(0), ir.op_load_local(0), ir.op_const_i32(3),
     ir.op_bin("add", 0, false), ir.op_drop(), ir.op_end(), ir.op_end(),
@@ -370,7 +370,7 @@ function main(): i32 {
 
   // 14b. A store of a NON-constant kills the binding — the slot now holds
   //      whatever the call returned.
-  var kp_kill: ir.Op[] = [
+  let kp_kill: ir.Op[] = [
     ir.op_const_i32(7), ir.op_store_local(0), ir.op_call_direct("side", 0),
     ir.op_store_local(0), ir.op_load_local(0),
   ];
@@ -379,7 +379,7 @@ function main(): i32 {
   // 14c. The SOURCE-TEXT constant shape is tracked too — that is the one a
   //      literal actually lowers to — via the same const_i32_readable predicate
   //      the fold and strength peepholes use.
-  var kp_text: ir.Op[] = [
+  let kp_text: ir.Op[] = [
     ir.op_const_i32_text("7"), ir.op_store_local(0), ir.op_call_direct("side", 0),
     ir.op_drop(), ir.op_load_local(0),
   ];
@@ -387,16 +387,16 @@ function main(): i32 {
 
   // 14d. A non-decimal text constant is REFUSED by that same predicate, so it
   //      is never propagated as though it were its own digits.
-  var kp_hex: ir.Op[] = [
+  let kp_hex: ir.Op[] = [
     ir.op_const_i32_text("0x10"), ir.op_store_local(0), ir.op_call_direct("side", 0),
     ir.op_drop(), ir.op_load_local(0),
   ];
   out = out + "kp_hex_refused: " + render(ir.const_propagate(kp_hex)) + "\n";
 
   // 14e. The binding source is the REWRITTEN list, so a load this pass just
-  //      replaced is itself a constant source — `var b = a; return b` carries the
+  //      replaced is itself a constant source — `let b = a; return b` carries the
   //      value two slots along in one walk.
-  var kp_chain: ir.Op[] = [
+  let kp_chain: ir.Op[] = [
     ir.op_const_i32(7), ir.op_store_local(0), ir.op_load_local(0),
     ir.op_store_local(1), ir.op_load_local(1), ir.op_return(),
   ];
@@ -405,15 +405,15 @@ function main(): i32 {
   // 14e-i. str_slice_frame is the one op that writes locals without being a store
   //        — three consecutive slots at `i32_imm - 1` — so a binding on any of
   //        them ends there. The heap form (immediate 0) writes none and is left
-  //        alone. No program reaches this today, because irlower names those slots
-  //        `!view!` and no store can name them; pinning it keeps the pass sound on
+  //        alone. No program reaches this today, because the lowering reserves those
+  //        slots for the view and no store can name them; pinning it keeps the pass sound on
   //        its own reasoning rather than on that convention.
-  var kp_view: ir.Op[] = [
+  let kp_view: ir.Op[] = [
     ir.op_const_i32(7), ir.op_store_local(1), ir.op_str_slice_frame(1),
     ir.op_drop(), ir.op_load_local(1),
   ];
   out = out + "kp_frame_write: " + render(ir.const_propagate(kp_view)) + "\n";
-  var kp_heap: ir.Op[] = [
+  let kp_heap: ir.Op[] = [
     ir.op_const_i32(7), ir.op_store_local(1), ir.op_str_slice(),
     ir.op_drop(), ir.op_load_local(1),
   ];
@@ -422,7 +422,7 @@ function main(): i32 {
   // 14e-ii. The loop's body scan is the other half of that model, so a frame write
   //         inside a body ends the binding for the whole loop — including the load
   //         that PRECEDES it, which the back-edge reaches after the write.
-  var kp_view_loop: ir.Op[] = [
+  let kp_view_loop: ir.Op[] = [
     ir.op_const_i32(7), ir.op_store_local(1), ir.op_loop(0),
     ir.op_load_local(1), ir.op_drop(), ir.op_str_slice_frame(1),
     ir.op_drop(), ir.op_end(), ir.op_load_local(1),
@@ -431,8 +431,8 @@ function main(): i32 {
 
   // 14f. Idempotent: the second walk has no load left to rewrite. A merge rule
   //      that kept growing its own output would loop inside optimize_ops.
-  var kp_once: ir.Op[] = ir.const_propagate(kp_deep);
-  var kp_stable: i32 = 0;
+  let kp_once: ir.Op[] = ir.const_propagate(kp_deep);
+  let kp_stable: i32 = 0;
   if (render(ir.const_propagate(kp_once)) == render(kp_once)) {
     kp_stable = 1;
   }
@@ -440,7 +440,7 @@ function main(): i32 {
 
   // 14g. Through the whole pipeline: the constant crosses the if, the fold then
   //      collapses the arithmetic, and the dead store goes.
-  var kp_opt: ir.Op[] = [
+  let kp_opt: ir.Op[] = [
     ir.op_const_i32(7), ir.op_store_local(0), ir.op_const_i32(1), ir.op_if(0),
     ir.op_load_local(0), ir.op_const_i32(3), ir.op_bin("add", 0, false),
     ir.op_drop(), ir.op_end(), ir.op_return(),
@@ -451,43 +451,43 @@ function main(): i32 {
   //     `not` is LOGICAL in this IR — i32.eqz on wasm, setz on x86, cset eq on
   //     arm64, bool_not in eval_ops — so zero folds to 1 and everything else to 0.
   //     There is no bitwise complement in the vocabulary to confuse it with.
-  var nf_zero: ir.Op[] = [ir.op_const_i32(0), ir.op_bin("not", 0, false)];
+  let nf_zero: ir.Op[] = [ir.op_const_i32(0), ir.op_bin("not", 0, false)];
   out = out + "nf_zero: " + render(ir.fold_const_binaries(nf_zero)) + "\n";
-  var nf_nonzero: ir.Op[] = [ir.op_const_i32(7), ir.op_bin("not", 0, false)];
+  let nf_nonzero: ir.Op[] = [ir.op_const_i32(7), ir.op_bin("not", 0, false)];
   out = out + "nf_nonzero: " + render(ir.fold_const_binaries(nf_nonzero)) + "\n";
 
   // 15a. The source-text shape folds too, and the non-decimal one is refused by
   //      the same shared predicate the binary fold uses.
-  var nf_text: ir.Op[] = [ir.op_const_i32_text("0"), ir.op_bin("not", 0, false)];
+  let nf_text: ir.Op[] = [ir.op_const_i32_text("0"), ir.op_bin("not", 0, false)];
   out = out + "nf_text: " + render(ir.fold_const_binaries(nf_text)) + "\n";
-  var nf_hex: ir.Op[] = [ir.op_const_i32_text("0x10"), ir.op_bin("not", 0, false)];
+  let nf_hex: ir.Op[] = [ir.op_const_i32_text("0x10"), ir.op_bin("not", 0, false)];
   out = out + "nf_hex_refused: " + render(ir.fold_const_binaries(nf_hex)) + "\n";
 
   // 15b. An opaque operand is left alone — the fold is not a rewrite of `not`.
-  var nf_opaque: ir.Op[] = [ir.op_load_local(0), ir.op_bin("not", 0, false)];
+  let nf_opaque: ir.Op[] = [ir.op_load_local(0), ir.op_bin("not", 0, false)];
   out = out + "nf_opaque_refused: " + render(ir.fold_const_binaries(nf_opaque)) + "\n";
 
   // 15c. The shape this actually pays off on, and the two folds compose on it:
   //      `while (true)` lowers its exit test to `const_i32 1 ; not ; brif`, the
   //      unary fold decides the condition, and the brif arm then removes the whole
   //      test — an empty list, because a loop that never exits needs no exit check.
-  var nf_while: ir.Op[] = [ir.op_const_i32(1), ir.op_bin("not", 0, false), ir.op_brif(1)];
+  let nf_while: ir.Op[] = [ir.op_const_i32(1), ir.op_bin("not", 0, false), ir.op_brif(1)];
   out = out + "nf_while_true_test_gone: " + render(ir.fold_const_binaries(nf_while)) + "\n";
 
   // 15d. Folding at the very END of the list, where the three-op window cannot
   //      reach — the restructure that made room for a two-op window.
-  var nf_tail: ir.Op[] = [ir.op_load_local(0), ir.op_drop(), ir.op_const_i32(0), ir.op_bin("not", 0, false)];
+  let nf_tail: ir.Op[] = [ir.op_load_local(0), ir.op_drop(), ir.op_const_i32(0), ir.op_bin("not", 0, false)];
   out = out + "nf_at_tail: " + render(ir.fold_const_binaries(nf_tail)) + "\n";
 
   // 16. Constant-branch pruning (#6638, native fold.go's pruneConstIf + the
   //     const-brif arm). A decided `if` keeps the arm that runs and drops the
   //     condition, the scope and the other arm.
-  var pi_true: ir.Op[] = [
+  let pi_true: ir.Op[] = [
     ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(7), ir.op_drop(),
     ir.op_else(), ir.op_const_i32(8), ir.op_drop(), ir.op_end(), ir.op_return(),
   ];
   out = out + "pi_true_arm: " + render(ir.fold_const_binaries(pi_true)) + "\n";
-  var pi_false: ir.Op[] = [
+  let pi_false: ir.Op[] = [
     ir.op_const_i32(0), ir.op_if(0), ir.op_const_i32(7), ir.op_drop(),
     ir.op_else(), ir.op_const_i32(8), ir.op_drop(), ir.op_end(), ir.op_return(),
   ];
@@ -495,7 +495,7 @@ function main(): i32 {
 
   // 16a. No else and a false condition: the whole construct is removed. `const`
   //      pushes one and `if` pops it, so the pair is stack-neutral to remove.
-  var pi_none: ir.Op[] = [
+  let pi_none: ir.Op[] = [
     ir.op_const_i32(0), ir.op_if(0), ir.op_const_i32(7), ir.op_drop(),
     ir.op_end(), ir.op_return(),
   ];
@@ -504,7 +504,7 @@ function main(): i32 {
   // 16b. An arm holding an ESCAPING branch keeps a scope of its own, or every
   //      relative depth in it would shift by one when the if goes. This is the
   //      common case in real lowered code — every `break` inside an `if` is one.
-  var pi_esc: ir.Op[] = [
+  let pi_esc: ir.Op[] = [
     ir.op_block(0), ir.op_const_i32(1), ir.op_if(0),
     ir.op_br(1), ir.op_end(), ir.op_end(), ir.op_return(),
   ];
@@ -513,7 +513,7 @@ function main(): i32 {
   // 16c. An arm-LOCAL branch does not: the `brif 0` targets the arm's own block,
   //      so splicing it bare keeps its depth correct. Depth counting is what
   //      separates this from the case above.
-  var pi_local: ir.Op[] = [
+  let pi_local: ir.Op[] = [
     ir.op_const_i32(1), ir.op_if(0), ir.op_block(0), ir.op_const_i32(1),
     ir.op_brif(0), ir.op_end(), ir.op_end(), ir.op_return(),
   ];
@@ -523,33 +523,33 @@ function main(): i32 {
   //      NON-VOID if, which would carry a value out of its end that deleting the
   //      scope would strand. Nothing in this lowering emits one; the guard is what
   //      keeps that true rather than assumed.
-  var pi_hex: ir.Op[] = [
+  let pi_hex: ir.Op[] = [
     ir.op_const_i32_text("0x10"), ir.op_if(0), ir.op_const_i32(7),
     ir.op_drop(), ir.op_end(),
   ];
   out = out + "pi_hex_refused: " + render(ir.fold_const_binaries(pi_hex)) + "\n";
-  var pi_typed: ir.Op[] = [ir.op_const_i32(1), ir.op_if(1), ir.op_const_i32(7), ir.op_end()];
+  let pi_typed: ir.Op[] = [ir.op_const_i32(1), ir.op_if(1), ir.op_const_i32(7), ir.op_end()];
   out = out + "pi_typed_refused: " + render(ir.fold_const_binaries(pi_typed)) + "\n";
 
   // 16e. An unbalanced list is left alone rather than half-rewritten.
-  var pi_open: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(7), ir.op_drop()];
+  let pi_open: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(7), ir.op_drop()];
   out = out + "pi_unclosed_refused: " + render(ir.fold_const_binaries(pi_open)) + "\n";
 
   // 16f. The decided `brif`, both ways: zero leaves only the fall-through, and
   //      nonzero becomes the unconditional branch.
-  var pb_zero: ir.Op[] = [
+  let pb_zero: ir.Op[] = [
     ir.op_block(0), ir.op_const_i32(0), ir.op_brif(0),
     ir.op_const_i32(7), ir.op_drop(), ir.op_end(),
   ];
   out = out + "pb_zero_dropped: " + render(ir.fold_const_binaries(pb_zero)) + "\n";
-  var pb_one: ir.Op[] = [
+  let pb_one: ir.Op[] = [
     ir.op_block(0), ir.op_const_i32(1), ir.op_brif(0),
     ir.op_const_i32(7), ir.op_drop(), ir.op_end(),
   ];
   out = out + "pb_one_becomes_br: " + render(ir.fold_const_binaries(pb_one)) + "\n";
 
   // 16g. Nested pruning cascades in one call, since the fold self-iterates.
-  var pi_nest: ir.Op[] = [
+  let pi_nest: ir.Op[] = [
     ir.op_const_i32(1), ir.op_if(0),
     ir.op_const_i32(0), ir.op_if(0), ir.op_const_i32(7), ir.op_drop(),
     ir.op_else(), ir.op_const_i32(2), ir.op_const_i32(3),
@@ -561,13 +561,13 @@ function main(): i32 {
   // 16h. Idempotent, and through the whole pipeline: `while (true)`'s exit test
   //      lowers to `const_i32 1 ; not ; brif`, so the unary fold decides it and
   //      the brif arm removes the test altogether.
-  var pi_once: ir.Op[] = ir.fold_const_binaries(pi_nest);
-  var pi_stable: i32 = 0;
+  let pi_once: ir.Op[] = ir.fold_const_binaries(pi_nest);
+  let pi_stable: i32 = 0;
   if (render(ir.fold_const_binaries(pi_once)) == render(pi_once)) {
     pi_stable = 1;
   }
   out = out + "pi_idempotent=" + util.i32_to_string(pi_stable) + "\n";
-  var pw_loop: ir.Op[] = [
+  let pw_loop: ir.Op[] = [
     ir.op_loop(0), ir.op_const_i32(1), ir.op_bin("not", 0, false),
     ir.op_brif(1), ir.op_const_i32(7), ir.op_drop(), ir.op_br(0),
     ir.op_end(), ir.op_return(),
@@ -581,7 +581,7 @@ function main(): i32 {
   //     it. `1 + 2 * 3` is the shape: without this the pass folds the `mul`,
   //     then stops on `const 1 ; const 6 ; int_cast ; add` and ships a
   //     runtime add of two constants.
-  var wc_nested: ir.Op[] = [
+  let wc_nested: ir.Op[] = [
     ir.op_const_i32(1), ir.op_const_i32(2), ir.op_const_i32(3),
     ir.op_bin("mul", 0, false), ir.op_int_cast("i32"),
     ir.op_bin("add", 0, false), ir.op_int_cast("i32"),
@@ -590,39 +590,39 @@ function main(): i32 {
 
   // 17a. `as u8` masks rather than merely disappearing — a u8 arithmetic
   //      result folds to the value the interpreter's per-width wrap gives.
-  var wc_u8: ir.Op[] = [ir.op_const_i32(300), ir.op_int_cast("u8")];
+  let wc_u8: ir.Op[] = [ir.op_const_i32(300), ir.op_int_cast("u8")];
   out = out + "wc_u8_masks: " + render(ir.fold_const_binaries(wc_u8)) + "\n";
 
   // 17b. `as u32` / u32_wrap zero-extend, so a NEGATIVE constant is refused:
   //      the result is 2^32 + v, which no i32 constant carries. u32's max
   //      lowers as exactly this pair (`const_i32 -1 ; u32_wrap`), so a fold
   //      here would turn it into -1.
-  var wc_u32: ir.Op[] = [ir.op_const_i32(9), ir.op_int_cast("u32")];
+  let wc_u32: ir.Op[] = [ir.op_const_i32(9), ir.op_int_cast("u32")];
   out = out + "wc_u32: " + render(ir.fold_const_binaries(wc_u32)) + "\n";
-  var wc_u32_neg: ir.Op[] = [ir.op_const_i32(0 - 1), ir.op_int_cast("u32")];
+  let wc_u32_neg: ir.Op[] = [ir.op_const_i32(0 - 1), ir.op_int_cast("u32")];
   out = out + "wc_u32_neg_refused: " + render(ir.fold_const_binaries(wc_u32_neg)) + "\n";
-  var wc_wrap: ir.Op[] = [ir.op_const_i32(9), ir.op_u32_wrap()];
+  let wc_wrap: ir.Op[] = [ir.op_const_i32(9), ir.op_u32_wrap()];
   out = out + "wc_u32_wrap: " + render(ir.fold_const_binaries(wc_wrap)) + "\n";
-  var wc_wrap_neg: ir.Op[] = [ir.op_const_i32(0 - 1), ir.op_u32_wrap()];
+  let wc_wrap_neg: ir.Op[] = [ir.op_const_i32(0 - 1), ir.op_u32_wrap()];
   out = out + "wc_u32_wrap_neg_refused: " + render(ir.fold_const_binaries(wc_wrap_neg)) + "\n";
 
   // 17c. int_extend / int_wrap CHANGE the width: on wasm they change the
   //      value's type (i64.extend_i32_s / i32.wrap_i64). An extend folds into
   //      an i64 constant, never into the i32 it started as; a wrap of an i32
   //      is not a shape the lowering makes, and is left alone.
-  var wc_ext: ir.Op[] = [ir.op_const_i32(9), ir.op_int_extend(false)];
+  let wc_ext: ir.Op[] = [ir.op_const_i32(9), ir.op_int_extend(false)];
   out = out + "wc_int_extend: " + render(ir.fold_const_binaries(wc_ext)) + "\n";
-  var wc_narrow: ir.Op[] = [ir.op_const_i32(9), ir.op_int_wrap(false)];
+  let wc_narrow: ir.Op[] = [ir.op_const_i32(9), ir.op_int_wrap(false)];
   out = out + "wc_int_wrap_refused: " + render(ir.fold_const_binaries(wc_narrow)) + "\n";
 
   // 17d. The shared readability predicate still gates it: a hex text constant
   //      is not folded through a cast any more than through a binary.
-  var wc_hex: ir.Op[] = [ir.op_const_i32_text("0x10"), ir.op_int_cast("i32")];
+  let wc_hex: ir.Op[] = [ir.op_const_i32_text("0x10"), ir.op_int_cast("i32")];
   out = out + "wc_hex_refused: " + render(ir.fold_const_binaries(wc_hex)) + "\n";
 
   // 17e. An opaque operand keeps its cast — this folds constants, it does not
   //      delete width normalisation.
-  var wc_opaque: ir.Op[] = [ir.op_load_local(0), ir.op_int_cast("i32")];
+  let wc_opaque: ir.Op[] = [ir.op_load_local(0), ir.op_int_cast("i32")];
   out = out + "wc_opaque_refused: " + render(ir.fold_const_binaries(wc_opaque)) + "\n";
 
   // 18. Zero-slot uniqueness guards (native internal/ir/zeroslot.go). Lowering
@@ -635,7 +635,7 @@ function main(): i32 {
   //     drop, which is a use-after-free the moment the surviving owner reads it.
   //     The drop body's own `load_local 1 ; call_direct __fern_arr_dec/1` is the
   //     other half of the shape — only the rc_is_unique callee is a guard.
-  var zg_body: ir.Op[] = [
+  let zg_body: ir.Op[] = [
     ir.op_load_local(1), ir.op_call_direct("__fern_rc_is_unique", 1),
     ir.op_if(0), ir.op_load_local(1), ir.op_call_direct("__fern_arr_dec", 1),
     ir.op_drop(), ir.op_end(), ir.op_return(),
@@ -649,13 +649,13 @@ function main(): i32 {
   // 18b. Inside a loop the order argument fails: the back-edge is the one way a
   //      write LATER in op order reaches an earlier read. The twin puts the same
   //      guard after the loop closes, which is what proves the scope stack pops.
-  var zg_loop: ir.Op[] = [
+  let zg_loop: ir.Op[] = [
     ir.op_loop(0), ir.op_load_local(1),
     ir.op_call_direct("__fern_rc_is_unique", 1), ir.op_if(0),
     ir.op_end(), ir.op_br(0), ir.op_end(),
   ];
   out = out + "zg_in_loop_refused: " + render(ir.prune_zero_slot_guards(zg_loop, 0)) + "\n";
-  var zg_past_loop: ir.Op[] = [
+  let zg_past_loop: ir.Op[] = [
     ir.op_loop(0), ir.op_br(0), ir.op_end(), ir.op_load_local(1),
     ir.op_call_direct("__fern_rc_is_unique", 1),
   ];
@@ -665,12 +665,12 @@ function main(): i32 {
   //      AFTER it does not — that is the whole point, and the case const_propagate
   //      structurally cannot reach, since its slot table has been cleared by every
   //      conditional scope the guard sits behind.
-  var zg_written: ir.Op[] = [
+  let zg_written: ir.Op[] = [
     ir.op_call_direct("mk", 0), ir.op_store_local(1),
     ir.op_load_local(1), ir.op_call_direct("__fern_rc_is_unique", 1),
   ];
   out = out + "zg_written_refused: " + render(ir.prune_zero_slot_guards(zg_written, 0)) + "\n";
-  var zg_late: ir.Op[] = [
+  let zg_late: ir.Op[] = [
     ir.op_load_local(1), ir.op_call_direct("__fern_rc_is_unique", 1),
     ir.op_if(0), ir.op_end(), ir.op_call_direct("mk", 0),
     ir.op_store_local(1),
@@ -679,7 +679,7 @@ function main(): i32 {
 
   // 18d. A store fed by `const_i32 0` re-zeroes the slot rather than filling it —
   //      the lowering emits one after a free — so it is not a write that blocks.
-  var zg_rezero: ir.Op[] = [
+  let zg_rezero: ir.Op[] = [
     ir.op_const_i32(0), ir.op_store_local(1), ir.op_load_local(1),
     ir.op_call_direct("__fern_rc_is_unique", 1),
   ];
@@ -687,9 +687,9 @@ function main(): i32 {
 
   // 18e. str_slice's frame form writes three consecutive slots without being a
   //      store, so a guard on one of them is refused — the same write model
-  //      const_propagate carries, kept here rather than inherited from irlower's
-  //      `!view!` naming convention.
-  var zg_frame: ir.Op[] = [
+  //      const_propagate carries, kept here rather than inherited from the lowering's
+  //      slot-reservation convention.
+  let zg_frame: ir.Op[] = [
     ir.op_str_slice_frame(1), ir.op_drop(), ir.op_load_local(1),
     ir.op_call_direct("__fern_rc_is_unique", 1),
   ];
@@ -702,8 +702,8 @@ function main(): i32 {
   out = out + "zg_in_optimize: " + render(optimize(zg_body)) + "\n";
 
   // 18g. Idempotent: the rewritten pair is a constant, which matches nothing.
-  var zg_once: ir.Op[] = ir.prune_zero_slot_guards(zg_body, 0);
-  var zg_stable: i32 = 0;
+  let zg_once: ir.Op[] = ir.prune_zero_slot_guards(zg_body, 0);
+  let zg_stable: i32 = 0;
   if (render(ir.prune_zero_slot_guards(zg_once, 0)) == render(zg_once)) {
     zg_stable = 1;
   }
@@ -712,66 +712,66 @@ function main(): i32 {
   // 20. 64-bit folds (native fold.go's foldBinary64 and width-conversion
   //     arms): a negative i64 literal is `0 - k` at width 64, and
   //     `(100 as u64)` is `const_i32 100 ; int_extend`.
-  var f64_neg: ir.Op[] = [ir.op_const_i64_text("0"), ir.op_const_i64_text("3"), ir.op_bin("sub", 64, false)];
+  let f64_neg: ir.Op[] = [ir.op_const_i64_text("0"), ir.op_const_i64_text("3"), ir.op_bin("sub", 64, false)];
   out = out + "f64_neg: " + render(ir.fold_const_binaries(f64_neg)) + "\n";
-  var f64_mul: ir.Op[] = [ir.op_const_i64_text("4294967296"), ir.op_const_i64_text("4294967296"), ir.op_bin("mul", 64, false)];
+  let f64_mul: ir.Op[] = [ir.op_const_i64_text("4294967296"), ir.op_const_i64_text("4294967296"), ir.op_bin("mul", 64, false)];
   out = out + "f64_mul_wraps: " + render(ir.fold_const_binaries(f64_mul)) + "\n";
-  var f64_cmp: ir.Op[] = [ir.op_const_i64_text("5000000000"), ir.op_const_i64_text("7"), ir.op_bin("gt_s", 64, false)];
+  let f64_cmp: ir.Op[] = [ir.op_const_i64_text("5000000000"), ir.op_const_i64_text("7"), ir.op_bin("gt_s", 64, false)];
   out = out + "f64_cmp: " + render(ir.fold_const_binaries(f64_cmp)) + "\n";
-  var f64_div0: ir.Op[] = [ir.op_const_i64_text("7"), ir.op_const_i64_text("0"), ir.op_bin("div_s", 64, false)];
+  let f64_div0: ir.Op[] = [ir.op_const_i64_text("7"), ir.op_const_i64_text("0"), ir.op_bin("div_s", 64, false)];
   out = out + "f64_div_zero_refused: " + render(ir.fold_const_binaries(f64_div0)) + "\n";
-  var f64_min: ir.Op[] = [ir.op_const_i64_text("-9223372036854775808"), ir.op_const_i64_text("-1"), ir.op_bin("div_s", 64, false)];
+  let f64_min: ir.Op[] = [ir.op_const_i64_text("-9223372036854775808"), ir.op_const_i64_text("-1"), ir.op_bin("div_s", 64, false)];
   out = out + "f64_min_div_refused: " + render(ir.fold_const_binaries(f64_min)) + "\n";
-  var f64_minr: ir.Op[] = [ir.op_const_i64_text("-9223372036854775808"), ir.op_const_i64_text("-1"), ir.op_bin("rem_s", 64, false)];
+  let f64_minr: ir.Op[] = [ir.op_const_i64_text("-9223372036854775808"), ir.op_const_i64_text("-1"), ir.op_bin("rem_s", 64, false)];
   out = out + "f64_min_rem: " + render(ir.fold_const_binaries(f64_minr)) + "\n";
-  var f64_uns: ir.Op[] = [ir.op_const_i64_text("-8"), ir.op_const_i64_text("1"), ir.op_bin("shr_s", 64, true)];
+  let f64_uns: ir.Op[] = [ir.op_const_i64_text("-8"), ir.op_const_i64_text("1"), ir.op_bin("shr_s", 64, true)];
   out = out + "f64_unsigned_refused: " + render(ir.fold_const_binaries(f64_uns)) + "\n";
-  var f64_hex: ir.Op[] = [ir.op_const_i64_text("0x10"), ir.op_const_i64_text("1"), ir.op_bin("add", 64, false)];
+  let f64_hex: ir.Op[] = [ir.op_const_i64_text("0x10"), ir.op_const_i64_text("1"), ir.op_bin("add", 64, false)];
   out = out + "f64_hex_refused: " + render(ir.fold_const_binaries(f64_hex)) + "\n";
-  var f64_ext: ir.Op[] = [ir.op_const_i32(-1), ir.op_int_extend(false)];
+  let f64_ext: ir.Op[] = [ir.op_const_i32(-1), ir.op_int_extend(false)];
   out = out + "f64_extend_s: " + render(ir.fold_const_binaries(f64_ext)) + "\n";
-  var f64_extu: ir.Op[] = [ir.op_const_i32(-1), ir.op_int_extend(true)];
+  let f64_extu: ir.Op[] = [ir.op_const_i32(-1), ir.op_int_extend(true)];
   out = out + "f64_extend_u: " + render(ir.fold_const_binaries(f64_extu)) + "\n";
-  var f64_extp: ir.Op[] = [ir.op_const_i32(100), ir.op_int_extend_ptr()];
+  let f64_extp: ir.Op[] = [ir.op_const_i32(100), ir.op_int_extend_ptr()];
   out = out + "f64_extend_ptr_refused: " + render(ir.fold_const_binaries(f64_extp)) + "\n";
-  var f64_wrap: ir.Op[] = [ir.op_const_i64_text("4294967297"), ir.op_int_wrap(false)];
+  let f64_wrap: ir.Op[] = [ir.op_const_i64_text("4294967297"), ir.op_int_wrap(false)];
   out = out + "f64_wrap: " + render(ir.fold_const_binaries(f64_wrap)) + "\n";
-  var f64_wrapu: ir.Op[] = [ir.op_const_i64_text("3000000000"), ir.op_int_wrap(true)];
+  let f64_wrapu: ir.Op[] = [ir.op_const_i64_text("3000000000"), ir.op_int_wrap(true)];
   out = out + "f64_wrap_u32_high_refused: " + render(ir.fold_const_binaries(f64_wrapu)) + "\n";
-  var f64_wrapu_lo: ir.Op[] = [ir.op_const_i64_text("7"), ir.op_int_wrap(true)];
+  let f64_wrapu_lo: ir.Op[] = [ir.op_const_i64_text("7"), ir.op_int_wrap(true)];
   out = out + "f64_wrap_u32: " + render(ir.fold_const_binaries(f64_wrapu_lo)) + "\n";
 
   // 19. Magic-number reciprocals (ir.derive_magic_s / derive_magic_u,
   //     native internal/ir/magic.go). The Go test renders the same divisors
   //     through native's derivation, so this is a parity check, not a golden.
-  var mds: i32[] = [3, 7, -7, 97, 4093, -4093, 641, 1000000, 715827883, -1234567, 10, 100, 2147483647, -2147483647, 5, -5];
-  var mi: i32 = 0;
+  let mds: i32[] = [3, 7, -7, 97, 4093, -4093, 641, 1000000, 715827883, -1234567, 10, 100, 2147483647, -2147483647, 5, -5];
+  let mi: i32 = 0;
   while (mi < mds.len()) {
-    var ms: ir.MagicS = ir.derive_magic_s(mds[mi] as i64, 32);
+    let ms: ir.MagicS = ir.derive_magic_s(mds[mi] as i64, 32);
     out = out + "magic_s " + util.i32_to_string(mds[mi]) + ": m=" + util.i64_to_string(ms.m)
       + " s=" + util.i32_to_string(ms.s) + " add=" + bool_word(ms.add) + " sub=" + bool_word(ms.sub) + "\n";
     mi = mi + 1;
   }
-  var mus: u32[] = [3u32, 7u32, 97u32, 641u32, 1000000u32, 2147483649u32, 2863311531u32, 4294967291u32, 4294967295u32, 10u32, 100u32, 5u32, 4093u32];
+  let mus: u32[] = [3u32, 7u32, 97u32, 641u32, 1000000u32, 2147483649u32, 2863311531u32, 4294967291u32, 4294967295u32, 10u32, 100u32, 5u32, 4093u32];
   mi = 0;
   while (mi < mus.len()) {
-    var mu: ir.MagicU = ir.derive_magic_u(mus[mi] as u64, 32);
+    let mu: ir.MagicU = ir.derive_magic_u(mus[mi] as u64, 32);
     out = out + "magic_u " + util.i64_to_string(mus[mi] as i64) + ": m=" + util.i64_to_string(mu.m as i64)
       + " s=" + util.i32_to_string(mu.s) + " add=" + bool_word(mu.add) + "\n";
     mi = mi + 1;
   }
-  var mds64: i64[] = [3i64, 7i64, -7i64, 10i64, 100i64, 641i64, -1000000007i64, 1000000000000i64, 6148914691236517205i64, -6148914691236517205i64, 9223372036854775807i64, -9223372036854775807i64];
+  let mds64: i64[] = [3i64, 7i64, -7i64, 10i64, 100i64, 641i64, -1000000007i64, 1000000000000i64, 6148914691236517205i64, -6148914691236517205i64, 9223372036854775807i64, -9223372036854775807i64];
   mi = 0;
   while (mi < mds64.len()) {
-    var ms64: ir.MagicS = ir.derive_magic_s(mds64[mi], 64);
+    let ms64: ir.MagicS = ir.derive_magic_s(mds64[mi], 64);
     out = out + "magic_s64 " + util.i64_to_string(mds64[mi]) + ": m=" + util.i64_to_string(ms64.m)
       + " s=" + util.i32_to_string(ms64.s) + " add=" + bool_word(ms64.add) + " sub=" + bool_word(ms64.sub) + "\n";
     mi = mi + 1;
   }
-  var mus64: u64[] = [3u64, 7u64, 10u64, 100u64, 641u64, 1000000007u64, 9223372036854775809u64, 12297829382473034411u64, 18446744073709551557u64, 18446744073709551615u64];
+  let mus64: u64[] = [3u64, 7u64, 10u64, 100u64, 641u64, 1000000007u64, 9223372036854775809u64, 12297829382473034411u64, 18446744073709551557u64, 18446744073709551615u64];
   mi = 0;
   while (mi < mus64.len()) {
-    var mu64: ir.MagicU = ir.derive_magic_u(mus64[mi], 64);
+    let mu64: ir.MagicU = ir.derive_magic_u(mus64[mi], 64);
     out = out + "magic_u64 " + util.i64_to_string(mus64[mi] as i64) + ": m=" + util.i64_to_string(mu64.m as i64)
       + " s=" + util.i32_to_string(mu64.s) + " add=" + bool_word(mu64.add) + "\n";
     mi = mi + 1;
@@ -779,14 +779,14 @@ function main(): i32 {
 
   // const_i32_readable / const_i64_readable answer from the text alone, and
   // have to agree with the rendering round trip they stand for.
-  var texts: string[] = ["0", "7", "-7", "007", "-0", "", "-", "0x10", "7u8", "+5", "2147483647", "2147483648", "-2147483648", "-2147483649", "4294967296", "9223372036854775807", "9223372036854775808", "-9223372036854775808", "-9223372036854775809", "99999999999999999999"];
-  var ti: i32 = 0;
+  let texts: string[] = ["0", "7", "-7", "007", "-0", "", "-", "0x10", "7u8", "+5", "2147483647", "2147483648", "-2147483648", "-2147483649", "4294967296", "9223372036854775807", "9223372036854775808", "-9223372036854775808", "-9223372036854775809", "99999999999999999999"];
+  let ti: i32 = 0;
   while (ti < texts.len()) {
-    var t: string = texts[ti];
-    var r32: boolean = ir.const_i32_readable(ir.op_const_i32_text(t));
-    var r64: boolean = ir.const_i64_readable(ir.op_const_i64_text(t));
-    var a32: boolean = r32 == (util.i32_to_string(util.digits_to_i32(t)) == t);
-    var a64: boolean = r64 == (util.i64_to_string(util.digits_to_i64(t)) == t);
+    let t: string = texts[ti];
+    let r32: boolean = ir.const_i32_readable(ir.op_const_i32_text(t));
+    let r64: boolean = ir.const_i64_readable(ir.op_const_i64_text(t));
+    let a32: boolean = r32 == (util.i32_to_string(util.digits_to_i32(t)) == t);
+    let a64: boolean = r64 == (util.i64_to_string(util.digits_to_i64(t)) == t);
     out = out + "readable " + t + ": i32=" + bool_word(r32) + " i64=" + bool_word(r64) + " agree=" + bool_word(a32 && a64) + "\n";
     ti = ti + 1;
   }

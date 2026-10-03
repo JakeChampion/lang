@@ -14,7 +14,7 @@ function build(items: S[]): S[] { items = add(items, "a"); items = add(items, "b
 (#3456 slice 2). The assign path then asked
 
 ```
-var snty: string = s.struct_type_of_slot(slot);
+let snty: string = s.struct_type_of_slot(slot);
 if (s.struct_routes_field_reclaim(snty)) { return emit_field_reclaim_store(se, slot, snty, snsl); }
 ```
 

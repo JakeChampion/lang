@@ -5,10 +5,10 @@
 // coverage and protected nothing. The self-host gap is pinned where it
 // lives instead.
 function main(): i32 {
-    var i: i64 = 0 - 1i64;
-    var u: u64 = i as u64;
-    var f: f64 = u as f64;
-    var threshold: f64 = 10000000000000000000.0f64;
+    let i: i64 = 0 - 1i64;
+    let u: u64 = i as u64;
+    let f: f64 = u as f64;
+    let threshold: f64 = 10000000000000000000.0f64;
     if (f > threshold) { return 0; }
     return 1;
 }

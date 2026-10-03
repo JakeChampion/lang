@@ -18,8 +18,8 @@ import "std/i64" as i64m;
 import "std/u32" as u32m;
 import "std/u64" as u64m;
 function main(): i32 {
-    var i32min: i32 = 0 - 2147483647 - 1;
-    var i64min: i64 = (0 as i64) - 9223372036854775807 - 1;
+    let i32min: i32 = 0 - 2147483647 - 1;
+    let i64min: i64 = (0 as i64) - 9223372036854775807 - 1;
     // i32: bit 0 -> bit 31 (== MIN), the involution, a nibble reversal, the
     // all-ones fixpoint, and an arbitrary round-trip.
     if ((1).reverse_bits() != i32min) { return 1; }

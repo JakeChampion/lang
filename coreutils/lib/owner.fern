@@ -132,14 +132,14 @@ function is_space(c: i32): boolean {
 // skipped because strtoul skips it; trailing whitespace is a fault because
 // the caller checks it consumed the whole string.
 pub function parse_number(s: string): Option[i64] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len() && is_space(s[i] as i32)) {
     i = i + 1;
   }
-  var v: i64 = 0;
-  var digits: i32 = 0;
+  let v: i64 = 0;
+  let digits: i32 = 0;
   while (i < s.len()) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c < 48 || c > 57) {
       return None;
     }
@@ -252,7 +252,7 @@ function login_group(db: Db, sp: Spec): Option[Spec] {
 
 // Split at the first occurrence of `sep`, or None when there is none.
 function split_first(s: string, sep: i32): Option[(string, string)] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     if (s[i] as i32 == sep) {
       return Some((slice_unchecked(s, 0, i) + "", slice_unchecked(s, i + 1, s.len()) + ""));
@@ -266,13 +266,13 @@ function split_first(s: string, sep: i32): Option[(string, string)] {
 // with nothing after it, which is the login-group form rather than an empty
 // group.
 function parse_split(db: Db, user_tok: string, group_tok: string): Parsed {
-  var sp: Spec = spec_none();
+  let sp: Spec = spec_none();
   // A separator with nothing after it is the login-group form, and EVERY way
   // it can fail is `invalid spec` — including a user half that does not
   // resolve. `nosuchuser:` is a spec fault, where `nosuchuser:g` is a user
   // one, because the trailing form is a different request rather than the
   // same one with an empty group.
-  var trailing: boolean = group_tok.len() == 0 && user_tok.len() > 0;
+  let trailing: boolean = group_tok.len() == 0 && user_tok.len() > 0;
   if (user_tok.len() > 0) {
     match (resolve_user(db, user_tok, sp)) {
       Some(next) => {
@@ -312,7 +312,7 @@ function parse_split(db: Db, user_tok: string, group_tok: string): Parsed {
 
 // The whole string as a user name and nothing else.
 function parse_user_only(db: Db, spec: string): Parsed {
-  var sp: Spec = spec_none();
+  let sp: Spec = spec_none();
   if (spec.len() == 0) {
     return Parsed { ok: true, spec: sp, kind: err_none(), warn_dot: false };
   }
@@ -336,14 +336,14 @@ pub function parse(db: Db, spec: string): Parsed {
   }
   match (split_first(spec, 46)) {
     Some(parts) => {
-      var dotted: Parsed = parse_split(db, parts.0, parts.1);
+      let dotted: Parsed = parse_split(db, parts.0, parts.1);
       if (dotted.ok) {
         return Parsed { ...dotted, warn_dot: true };
       }
       // The dot was not a separator after all. Whatever went wrong in the
       // split is discarded: what is reported is the failure of the retry,
       // which is always a user one.
-      var whole: Parsed = parse_user_only(db, spec);
+      let whole: Parsed = parse_user_only(db, spec);
       if (whole.ok) {
         return whole;
       }
@@ -357,7 +357,7 @@ pub function parse(db: Db, spec: string): Parsed {
 // `chgrp`'s operand. The whole thing is one group token: no split, so a
 // colon or a dot in it is part of the name and fails as one.
 pub function parse_group_only(db: Db, spec: string): Parsed {
-  var sp: Spec = spec_none();
+  let sp: Spec = spec_none();
   if (spec.len() == 0) {
     return Parsed { ok: true, spec: sp, kind: err_none(), warn_dot: false };
   }
@@ -412,7 +412,7 @@ pub function (sp: Spec) render(chgrp_mode: boolean): string {
     if (chgrp_mode) {
       return sp.gname;
     }
-    var u: string = "";
+    let u: string = "";
     if (sp.has_uname) {
       u = sp.uname;
     }
@@ -443,9 +443,9 @@ pub function (sp: Spec) names_group(): boolean {
 // An id as the -v line shows it: the database's name for it, or the number
 // when nothing claims it.
 pub function user_label(db: Db, uid: i64): string {
-  match (pwdb.user_by_uid_in(db.pw, uid)) {
-    Some(u) => {
-      return u.name;
+  match (pwdb.user_name_in(db.pw, uid)) {
+    Some(name) => {
+      return name;
     },
     None => {
       return uid.to_string();

@@ -159,7 +159,7 @@ rounding error.
 
 One thing that is *not* a term: the bounds check. `internal/parser/bounds_elide.go`
 recognises `while (i < xs.len())` syntactically, and a loop bounded by a
-separate local — `var n = xs.len(); while (i < n)`, the reflex optimisation —
+separate local — `let n = xs.len(); while (i < n)`, the reflex optimisation —
 keeps the check. The two spellings emit visibly different code and cost the
 same: over a 100,000-element sum repeated 50 times, 117,001,246 retired
 instructions for the hoisted-and-checked form against 116,997,604 for the
@@ -208,12 +208,11 @@ Two things worth having measured rather than assumed:
 **Superseded by #9733's second half.** E053 now admits `xs.map(f)` on an
 `own` receiver and E068 verifies R7 wrote it through the donor, so `fip
 function via_map_own(own xs)` passes on the native compiler and allocates
-nothing (`internal/e2e/array_inplace_fip_test.go`). The example file keeps
-`via_map_own` unannotated because `scripts/array-pipeline-baseline` builds it
-with BOTH compilers, and the self-hosted one — which has no in-place map —
-refuses the claim with an E068 naming that, which is the honest half of the
-contract rather than a defect. (Its wasm route does not get that far over an
-`i64` element: #9838.) What follows is what was found before.
+nothing (`internal/e2e/array_inplace_fip_test.go`); the self-hosted compiler
+writes the same shape in place since #11073. The example file keeps
+`via_map_own` unannotated because the gate also builds it with
+`FERN_NO_ARRAY_INPLACE=1`, under which the claim is false. What follows is
+what was found before.
 
 #9728 asks whether `fip` on the third pipeline passes E068. It could not get
 that far when this was measured:

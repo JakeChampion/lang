@@ -34,7 +34,7 @@ func TestSelfHostMapAllocPtrWidthIRProbeX86_64(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	const prog = "import \"core/map\";\nfunction main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert(\"a\", 5); return m.get_or(\"a\", 0); }\n"
+	const prog = "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert(\"a\", 5); return m.get_or(\"a\", 0); }\n"
 	proj := t.TempDir()
 	mainPath := filepath.Join(proj, "main.fern")
 	if err := os.WriteFile(mainPath, []byte(prog), 0o644); err != nil {

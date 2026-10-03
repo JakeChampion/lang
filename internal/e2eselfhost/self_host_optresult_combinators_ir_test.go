@@ -24,8 +24,8 @@ pub function (o: Option[T]) map_or[U](fallback: U, f: (T) => U): U {
 }
 function inc(x: i32): i32 { return x + 1; }
 function main(): i32 {
-    var a: Option[i32] = Some(10);
-    var n: Option[i32] = None;
+    let a: Option[i32] = Some(10);
+    let n: Option[i32] = None;
     return a.map_or(0, inc) + n.map_or(7, inc);   // 11 + 7 = 18
 }`},
 	{"opt-or-and", `
@@ -39,8 +39,8 @@ pub function (o: Option[T]) unwrap_or(fallback: T): T {
     match (o) { Some(x) => { return x; }, None => { return fallback; } }
 }
 function main(): i32 {
-    var a: Option[i32] = Some(5);
-    var n: Option[i32] = None;
+    let a: Option[i32] = Some(5);
+    let n: Option[i32] = None;
     return n.or(Some(40)).unwrap_or(0) + a.and(Some(2)).unwrap_or(0);   // 40 + 2 = 42
 }`},
 	{"opt-is_some_and", `
@@ -49,9 +49,9 @@ pub function (o: Option[T]) is_some_and(pred: (T) => boolean): boolean {
 }
 function pos(x: i32): boolean { return x > 0; }
 function main(): i32 {
-    var a: Option[i32] = Some(7);
-    var n: Option[i32] = None;
-    var r: i32 = 0;
+    let a: Option[i32] = Some(7);
+    let n: Option[i32] = None;
+    let r: i32 = 0;
     if (a.is_some_and(pos)) { r = r + 100; }
     if (n.is_some_and(pos)) { r = r + 1; }    // None short-circuits to false
     return r;                                  // 100
@@ -68,9 +68,9 @@ pub function (r: Result[T, E]) r_unwrap_or(fallback: T): T {
 }
 function inc(x: i32): i32 { return x + 1; }
 function main(): i32 {
-    var ok: Result[i32, i32] = Ok(20);
-    var er: Result[i32, i32] = Err(3);
-    var f: Result[i32, i32] = Ok(5);
+    let ok: Result[i32, i32] = Ok(20);
+    let er: Result[i32, i32] = Err(3);
+    let f: Result[i32, i32] = Ok(5);
     return ok.map_or(0, inc) + er.or(f).r_unwrap_or(0);   // 21 + 5 = 26
 }`},
 	{"res-is_ok_and-is_err_and", `
@@ -82,9 +82,9 @@ pub function (r: Result[T, E]) is_err_and(pred: (E) => boolean): boolean {
 }
 function pos(x: i32): boolean { return x > 0; }
 function main(): i32 {
-    var ok: Result[i32, i32] = Ok(8);
-    var er: Result[i32, i32] = Err(9);
-    var r: i32 = 0;
+    let ok: Result[i32, i32] = Ok(8);
+    let er: Result[i32, i32] = Err(9);
+    let r: i32 = 0;
     if (ok.is_ok_and(pos)) { r = r + 10; }
     if (er.is_err_and(pos)) { r = r + 5; }
     return r;                                  // 15
@@ -97,9 +97,9 @@ pub function (o: Option[T]) is_none_or(pred: (T) => boolean): boolean {
 }
 function pos(x: i32): boolean { return x > 0; }
 function main(): i32 {
-    var a: Option[i32] = Some(7);
-    var n: Option[i32] = None;
-    var r: i32 = 0;
+    let a: Option[i32] = Some(7);
+    let n: Option[i32] = None;
+    let r: i32 = 0;
     if (a.is_none_or(pos)) { r = r + 10; }
     if (n.is_none_or(pos)) { r = r + 32; }
     return r;
@@ -116,10 +116,10 @@ pub function (o: Option[Result[T, E]]) transpose[T, E](): Result[Option[T], E] {
     }
 }
 function main(): i32 {
-    var a: Option[Result[i32, i32]] = Some(Ok(5));
-    var b: Option[Result[i32, i32]] = Some(Err(9));
-    var c: Option[Result[i32, i32]] = None;
-    var r: i32 = 0;
+    let a: Option[Result[i32, i32]] = Some(Ok(5));
+    let b: Option[Result[i32, i32]] = Some(Err(9));
+    let c: Option[Result[i32, i32]] = None;
+    let r: i32 = 0;
     match (a.transpose()) { Ok(inner) => { match (inner) { Some(x) => { r = r + x; }, None => { r = r + 50; } } }, Err(e) => { r = r + 60; } }
     match (b.transpose()) { Ok(inner) => { r = r + 70; }, Err(e) => { r = r + e; } }
     match (c.transpose()) { Ok(inner) => { match (inner) { Some(x) => { r = r + 80; }, None => { r = r + 100; } } }, Err(e) => { r = r + 90; } }
@@ -136,10 +136,10 @@ pub function (r: Result[Option[T], E]) transpose[T, E](): Option[Result[T, E]] {
     }
 }
 function main(): i32 {
-    var a: Result[Option[i32], i32] = Ok(Some(3));
-    var b: Result[Option[i32], i32] = Err(7);
-    var c: Result[Option[i32], i32] = Ok(None);
-    var r: i32 = 0;
+    let a: Result[Option[i32], i32] = Ok(Some(3));
+    let b: Result[Option[i32], i32] = Err(7);
+    let c: Result[Option[i32], i32] = Ok(None);
+    let r: i32 = 0;
     match (a.transpose()) { Some(inner) => { match (inner) { Ok(x) => { r = r + x; }, Err(e) => { r = r + 40; } } }, None => { r = r + 50; } }
     match (b.transpose()) { Some(inner) => { match (inner) { Ok(x) => { r = r + 60; }, Err(e) => { r = r + e; } } }, None => { r = r + 70; } }
     match (c.transpose()) { Some(inner) => { r = r + 80; }, None => { r = r + 100; } }

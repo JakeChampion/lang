@@ -14,8 +14,8 @@ assembly:
 
 ```
 function main(): i32 {
-  var a: i32 = 10;
-  var g: (i32) => i32 = (n: i32): i32 => n + a;   // captures a
+  let a: i32 = 10;
+  let g: (i32) => i32 = (n: i32): i32 => n + a;   // captures a
   return g(5);
 }
 ```

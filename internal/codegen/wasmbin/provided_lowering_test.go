@@ -280,13 +280,13 @@ func TestBufBuilderOnlyProgramIsValidWasm(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	src := `function main(): i32 {
-    var b: usize = buf_new(8);
+    let b: usize = buf_new(8);
     buf_push(b, "a longer piece, past the inline form");
     buf_push(b, "ab");
     buf_push_byte(b, 33);
     buf_push_u64(b, 0x0807060504030201);
     buf_push_range(b, "0123456789", 2, 5);
-    var n: i32 = buf_len(b) + buf_take(b).len();
+    let n: i32 = buf_len(b) + buf_take(b).len();
     buf_free(b);
     return n;
 }`

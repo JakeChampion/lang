@@ -46,11 +46,11 @@ func tupMixedAnnCases() []tupMixedAnnCase {
 			// no class at all — neither the box nor the retained buffer was freed.
 			name: "compound_scalar_elem",
 			src: `function round(i: i32): i32 {
-    var ys: i32[] = [i, i + 1, i + 2, i + 3];
-    var u: (i32, i32[]) = (i + 1, ys);
+    let ys: i32[] = [i, i + 1, i + 2, i + 3];
+    let u: (i32, i32[]) = (i + 1, ys);
     return u.1[1];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 75,
 		},
 		{
@@ -58,13 +58,13 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x +
 			// given back by the element walk; scope exit covers the final value.
 			name: "assign_rebind",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var ys: i32[] = [i + 2, i + 3];
-    var t: (i32, i32[]) = (i, xs);
+    let xs: i32[] = [i, i + 1];
+    let ys: i32[] = [i + 2, i + 3];
+    let t: (i32, i32[]) = (i, xs);
     t = (i + 1, ys);
     return t.1[0];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 8,
 		},
 		{
@@ -74,12 +74,12 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x +
 			// scalar was the actual denial, not the sharing.
 			name: "two_tuples_one_ident",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32, i32[]) = (i, xs);
-    var u: (i32, i32[]) = (i + 1, xs);
+    let xs: i32[] = [i, i + 1];
+    let t: (i32, i32[]) = (i, xs);
+    let u: (i32, i32[]) = (i + 1, xs);
     return t.1[0] + u.1[1];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 39,
 		},
 		{
@@ -87,13 +87,13 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x +
 			// guard and null handling must leave the original value alone.
 			name: "branch_rebind",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var ys: i32[] = [i + 2, i + 3];
-    var t: (i32, i32[]) = (i, xs);
+    let xs: i32[] = [i, i + 1];
+    let ys: i32[] = [i + 2, i + 3];
+    let t: (i32, i32[]) = (i, xs);
     if (i % 2 == 0) { t = (i + 1, ys); }
     return t.1[0];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 75,
 		},
 		{
@@ -102,13 +102,13 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x +
 			// still see live bytes — the case a source-releasing walk corrupts.
 			name: "old_elem_read_after_rebind",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var ys: i32[] = [i + 2, i + 3];
-    var t: (i32, i32[]) = (i, xs);
+    let xs: i32[] = [i, i + 1];
+    let ys: i32[] = [i + 2, i + 3];
+    let t: (i32, i32[]) = (i, xs);
     t = (i + 1, ys);
     return t.1[0] + xs[1];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 83,
 		},
 		{
@@ -116,12 +116,12 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x +
 			// the tuple — the exit release runs after every use.
 			name: "elem_read_after",
 			src: `function round(i: i32): i32 {
-    var ys: i32[] = [i, i + 1, i + 2, i + 3];
-    var u: (i32, i32[]) = (i + 1, ys);
-    var s: i32 = u.1[1];
+    let ys: i32[] = [i, i + 1, i + 2, i + 3];
+    let u: (i32, i32[]) = (i + 1, ys);
+    let s: i32 = u.1[1];
     return s + ys[0];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 39,
 		},
 	}
@@ -191,11 +191,11 @@ func TestSelfHostTupleMixedAnnHazardsX86_64(t *testing.T) {
 			// element release for a widened tuple exactly as for an all-ident one.
 			name: "elem_extracted_escaping",
 			src: `function keep(i: i32): i32[] {
-    var ys: i32[] = [i, i + 1];
-    var u: (i32, i32[]) = (i + 1, ys);
+    let ys: i32[] = [i, i + 1];
+    let u: (i32, i32[]) = (i + 1, ys);
     return u.1;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { var k: i32[] = keep(r); x = x + k[0]; r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { let k: i32[] = keep(r); x = x + k[0]; r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 53,
 		},
 		{
@@ -204,10 +204,10 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { var k: 
 			// dec the recorded #7226 negative result measured.
 			name: "rc_literal_child_stays_tuprc",
 			src: `function round(i: i32): i32 {
-    var u: (i32, i32[]) = (i + 1, [i, i + 2]);
+    let u: (i32, i32[]) = (i + 1, [i, i + 2]);
     return u.1[0];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 53,
 		},
 	} {

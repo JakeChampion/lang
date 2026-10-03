@@ -69,8 +69,8 @@ func TestSelfHostArm64DarwinMmapFlags(t *testing.T) {
 	srcPath := filepath.Join(dir, "mmapflags.fern")
 	// The concat forces the arena runtime in; open_writer pulls in
 	// __fern_open_res, whose openat FLAGS are the same class of per-OS constant
-	// (irlower hands it Linux 577 / 1089 target-agnostically).
-	src := "function main(): i32 { var s: string = \"a\" + \"b\"; var w = open_writer(s); return 0; }\n"
+	// (the lowering hands it Linux 577 / 1089 target-agnostically).
+	src := "function main(): i32 { let s: string = \"a\" + \"b\"; let w = open_writer(s); return 0; }\n"
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}

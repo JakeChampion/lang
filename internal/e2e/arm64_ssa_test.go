@@ -76,8 +76,8 @@ function main(): i32 { if (g()) { return 1; } return 42; }`,
   return fib(n - 1) + fib(n - 2);
 }
 function main(): i32 {
-  var i: i32 = 0;
-  var s: i32 = 0;
+  let i: i32 = 0;
+  let s: i32 = 0;
   while (i < 10) { s = s + i; i = i + 1; }
   return s + fib(8);
 }`,
@@ -86,8 +86,8 @@ function main(): i32 {
 		{
 			name: "div_rem_shift",
 			src: `function main(): i32 {
-  var a: i32 = 47;
-  var b: i32 = 5;
+  let a: i32 = 47;
+  let b: i32 = 5;
   return (a / b) * 10 + (a % b) + (1 << 3);
 }`,
 			want: 100, // 9*10 + 2 + 8
@@ -95,7 +95,7 @@ function main(): i32 {
 		{
 			name: "string_len",
 			src: `function main(): i32 {
-  var s: string = "Hello";
+  let s: string = "Hello";
   return s.len();
 }`,
 			want: 5,
@@ -143,8 +143,8 @@ function main(): i32 { return addf(90.0f32, 6.55f32) as i32; }`,
 			// and the harness fails on the compile.
 			name: "try_in_array_literal",
 			src: `function f(): Option[i32] {
-    var v: Option[i32] = Some(184i32);
-    var arr: i32[] = [(v?)];
+    let v: Option[i32] = Some(184i32);
+    let arr: i32[] = [(v?)];
     return v;
 }
 function main(): i32 { return match (f()) { Some(x) => x - 142, None => 1 }; }`,
@@ -154,8 +154,8 @@ function main(): i32 { return match (f()) { Some(x) => x - 142, None => 1 }; }`,
 			// The tuple-literal form of the same shape.
 			name: "try_in_tuple_literal",
 			src: `function f(): Option[i32] {
-    var v: Option[i32] = Some(184i32);
-    var t: (i32, i32) = ((v?), 7i32);
+    let v: Option[i32] = Some(184i32);
+    let t: (i32, i32) = ((v?), 7i32);
     return v;
 }
 function main(): i32 { return match (f()) { Some(x) => x - 142, None => 1 }; }`,
@@ -167,9 +167,9 @@ function main(): i32 { return match (f()) { Some(x) => x - 142, None => 1 }; }`,
 			// unlike the variant that RETURNS the sum.
 			name: "try_in_array_literal_read_back",
 			src: `function f(): Option[i32] {
-    var v: Option[i32] = Some(184i32);
-    var arr: i32[] = [(v?), 7i32];
-    var s: i32 = arr[0] + arr[1];
+    let v: Option[i32] = Some(184i32);
+    let arr: i32[] = [(v?), 7i32];
+    let s: i32 = arr[0] + arr[1];
     return v;
 }
 function main(): i32 { return match (f()) { Some(x) => x - 142, None => 1 }; }`,
@@ -181,8 +181,8 @@ function main(): i32 { return match (f()) { Some(x) => x - 142, None => 1 }; }`,
 			// that runs), but pins that the fix didn't break the exit itself.
 			name: "try_in_array_literal_none",
 			src: `function f(): Option[i32] {
-    var v: Option[i32] = None;
-    var arr: i32[] = [(v?)];
+    let v: Option[i32] = None;
+    let arr: i32[] = [(v?)];
     return v;
 }
 function main(): i32 { return match (f()) { Some(x) => 99, None => 7 }; }`,
@@ -242,13 +242,13 @@ function main(): i32 {
 			// 201 vs 224, so the exit code discriminates.
 			name: "float32_precision",
 			src: `function main(): i32 {
-  var a: f32 = 73.46f32;
-  var b: f32 = 12.68f32;
-  var c: f32 = 34.42f32;
-  var d: f32 = 99.49f32;
-  var e: f32 = 27.06f32;
-  var g: f32 = 27.89f32;
-  var h: f32 = 91.90f32;
+  let a: f32 = 73.46f32;
+  let b: f32 = 12.68f32;
+  let c: f32 = 34.42f32;
+  let d: f32 = 99.49f32;
+  let e: f32 = 27.06f32;
+  let g: f32 = 27.89f32;
+  let h: f32 = 91.90f32;
   return ((((a - b) * c) * (d * (e * (g - h)))) as i32) & 255;
 }`,
 			want: 224,
@@ -264,9 +264,9 @@ function main(): i32 {
 			name: "float_to_int_saturates",
 			src: `function scale(x: f32): f32 { return x * 1000000000.0f32; }
 function main(): i32 {
-  var a: f32 = 91.23f32;
-  var z: f32 = 0.0f32;
-  var n: i32 = 0;
+  let a: f32 = 91.23f32;
+  let z: f32 = 0.0f32;
+  let n: i32 = 0;
   if ((scale(a) as i32) == 2147483647) { n = n + 1; }
   if (((z / z) as i32) == 0) { n = n + 2; }
   if (((z - scale(a)) as i32) == ((0 - 2147483647) - 1)) { n = n + 4; }
@@ -287,12 +287,12 @@ function main(): i32 {
 			name: "float32_multi_slot_aggregates",
 			src: `enum Sh { Tri(f32, f32) }
 function main(): i32 {
-  var xs: f32[] = [1.5f32, 2.25f32, 3.125f32];
-  var n: i32 = 0;
+  let xs: f32[] = [1.5f32, 2.25f32, 3.125f32];
+  let n: i32 = 0;
   if (xs[0] == 1.5f32) { n = n + 1; }
   if (xs[1] == 2.25f32) { n = n + 2; }
   if (xs[2] == 3.125f32) { n = n + 4; }
-  var s: Sh = Tri(4 as f32, 2.5 as f32);
+  let s: Sh = Tri(4 as f32, 2.5 as f32);
   match (s) {
     Tri(b, h) => { n = n + ((b * h) as i32); }
   }
@@ -309,9 +309,9 @@ function main(): i32 {
 			name: "float64_nan_payloads_are_distinct_constants",
 			src: `function mant(x: f64): i64 { return f64_bits(x) & 4503599627370495; }
 function main(): i32 {
-  var q: f64 = f64_from_bits(9221120237041090560);
-  var s: f64 = f64_from_bits(9218868437227405313);
-  var n: i32 = 0;
+  let q: f64 = f64_from_bits(9221120237041090560);
+  let s: f64 = f64_from_bits(9218868437227405313);
+  let n: i32 = 0;
   if (mant(q) == 2251799813685248) { n = n + 1; }
   if (mant(s) == 1) { n = n + 2; }
   return n;
@@ -328,12 +328,12 @@ function main(): i32 {
 			src: `function widen(n: i32): f32 { return n as f32; }
 function widenu(n: u64): f32 { return n as f32; }
 function main(): i32 {
-  var n: i32 = 0;
-  var c: i32 = 16777217;
+  let n: i32 = 0;
+  let c: i32 = 16777217;
   if (((c as f32) as i32) == 16777216) { n = n + 1; }
-  var k: i32 = 16777217;
+  let k: i32 = 16777217;
   if ((widen(k) as i32) == 16777216) { n = n + 2; }
-  var u: u64 = 16777217;
+  let u: u64 = 16777217;
   if ((widenu(u) as i32) == 16777216) { n = n + 4; }
   return n;
 }`,
@@ -348,9 +348,9 @@ function main(): i32 {
 			// `!=` contributes, hence 1.
 			name: "float_nan_compare",
 			src: `function main(): i32 {
-  var z: f32 = 0.0f32;
-  var nan: f32 = z / z;
-  var n: i32 = 0;
+  let z: f32 = 0.0f32;
+  let nan: f32 = z / z;
+  let n: i32 = 0;
   if (nan == 1.0f32) { n = n + 1; }
   if (nan != 1.0f32) { n = n + 1; }
   if (nan < 1.0f32) { n = n + 1; }
@@ -377,8 +377,8 @@ function main(): i32 {
 			// object rather than faulting.
 			name: "closure_scalar_then_pointer_capture",
 			src: `function main(): i32 {
-  var v1: i32 = 1;
-  var o: Option[i32] = Some(7);
+  let v1: i32 = 1;
+  let o: Option[i32] = Some(7);
   function f(): i32 { return v1 + (match (o) { Some(e) => 1, None => 2 }); }
   return 32;
 }`,
@@ -410,8 +410,8 @@ function main(): i32 { return match (half(7)) { Some(v) => v, None => 99 }; }`,
 			// addBase captures base=100; addBase(23) = 123.
 			name: "closure_capture",
 			src: `function main(): i32 {
-  var base: i32 = 100;
-  var addBase = (x: i32) => x + base;
+  let base: i32 = 100;
+  let addBase = (x: i32) => x + base;
   return addBase(23);
 }`,
 			want: 123,
@@ -422,9 +422,9 @@ function main(): i32 { return match (half(7)) { Some(v) => v, None => 99 }; }`,
 			name: "higher_order_closure",
 			src: `function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
 function main(): i32 {
-  var a: i32 = 10;
-  var b: i32 = 5;
-  var g = (x: i32) => x + a + b;
+  let a: i32 = 10;
+  let b: i32 = 5;
+  let g = (x: i32) => x + a + b;
   return apply(g, 100);
 }`,
 			want: 115,
@@ -440,8 +440,8 @@ function main(): i32 {
 			// in the wrong register — SIGSEGV the moment it touched a capture.
 			name: "closure_array_construct_and_drop",
 			src: `function main(): i32 {
-  var v0: i32 = 1;
-  var v2: ((i32) => i32)[] = [((a: i32) => (v0 & a)), ((b: i32) => b)];
+  let v0: i32 = 1;
+  let v2: ((i32) => i32)[] = [((a: i32) => (v0 & a)), ((b: i32) => b)];
   return 0;
 }`,
 			want: 0,
@@ -453,8 +453,8 @@ function main(): i32 {
 			// slot corrupts the result, a bad drop slot faults at scope exit.
 			name: "closure_array_dispatch_and_drop",
 			src: `function main(): i32 {
-  var base: i32 = 40;
-  var fs: ((i32) => i32)[] = [((a: i32) => a + base), ((b: i32) => b)];
+  let base: i32 = 40;
+  let fs: ((i32) => i32)[] = [((a: i32) => a + base), ((b: i32) => b)];
   return fs[0](1) + fs[1](1);
 }`,
 			want: 42,
@@ -465,7 +465,7 @@ function main(): i32 {
 			name: "bare_enum",
 			src: `enum Color { Red, Green, Blue }
 function main(): i32 {
-  var c: Color = Color.Green;
+  let c: Color = Color.Green;
   return match (c) { Red => 1, Green => 2, Blue => 3 };
 }`,
 			want: 2,
@@ -482,8 +482,8 @@ function main(): i32 {
 			// loop, then indexed. a[7] = 7*7 = 49.
 			name: "array_append",
 			src: `function main(): i32 {
-  var a: i32[] = [];
-  var i: i32 = 0;
+  let a: i32[] = [];
+  let i: i32 = 0;
   while (i < 10) { a = a.append(i * i); i = i + 1; }
   return a[7];
 }`,
@@ -493,10 +493,10 @@ function main(): i32 {
 			// Append then iterate: sum of [1..5] appended one at a time = 15.
 			name: "array_append_sum",
 			src: `function main(): i32 {
-  var a: i32[] = [];
-  var i: i32 = 0;
+  let a: i32[] = [];
+  let i: i32 = 0;
   while (i < 5) { a = a.append(i + 1); i = i + 1; }
-  var s: i32 = 0;
+  let s: i32 = 0;
   for x in a { s = s + x; }
   return s;
 }`,
@@ -506,7 +506,7 @@ function main(): i32 {
 			// An 8-byte-stride array (i64) — exercises __arr_idx_8. a[1] = 200.
 			name: "i64_array_index",
 			src: `function main(): i32 {
-  var a: i64[] = [100, 200, 300];
+  let a: i64[] = [100, 200, 300];
   return (a[1]) as i32;
 }`,
 			want: 200,
@@ -517,14 +517,14 @@ function main(): i32 {
 			// is pulled in. abs(-3.5) as i32 = 3.
 			name: "stdlib_float_abs",
 			src: `import "std/float";
-function main(): i32 { var x: f64 = 0.0 - 3.5; return (x.abs()) as i32; }`,
+function main(): i32 { let x: f64 = 0.0 - 3.5; return (x.abs()) as i32; }`,
 			want: 3,
 		},
 		{
 			// Likewise sqrt — DFE keeps only __sqrt_f64. sqrt(16) = 4.
 			name: "stdlib_float_sqrt",
 			src: `import "std/float";
-function main(): i32 { var x: f64 = 16.0; return (x.sqrt()) as i32; }`,
+function main(): i32 { let x: f64 = 16.0; return (x.sqrt()) as i32; }`,
 			want: 4,
 		},
 		{
@@ -534,7 +534,7 @@ function main(): i32 { var x: f64 = 16.0; return (x.sqrt()) as i32; }`,
 			name: "stdlib_float_exp",
 			src: `import "std/float";
 function main(): i32 {
-  var e = (1.0).exp();
+  let e = (1.0).exp();
   return if ((e - 2.718281828459045).abs() < 0.001) { 1 } else { 0 };
 }`,
 			want: 1,
@@ -546,7 +546,7 @@ function main(): i32 {
 			name: "stdlib_float_log",
 			src: `import "std/float";
 function main(): i32 {
-  var l = (2.718281828459045).log();
+  let l = (2.718281828459045).log();
   return if ((l - 1.0).abs() < 0.001) { 1 } else { 0 };
 }`,
 			want: 1,
@@ -558,7 +558,7 @@ function main(): i32 {
 			name: "stdlib_float_pow",
 			src: `import "std/float";
 function main(): i32 {
-  var p = (2.0).pow(10.0);
+  let p = (2.0).pow(10.0);
   return if (p == 1024.0) { 1 } else { 0 };
 }`,
 			want: 1,
@@ -572,11 +572,11 @@ function main(): i32 {
 			name: "stdlib_float_domain",
 			src: `import "std/float";
 function main(): i32 {
-  var r: i32 = 0;
+  let r: i32 = 0;
   if ((1000.0).exp() > 1.0e308) { r = r + 1; }
   if ((0.0 - 1000.0).exp() == 0.0) { r = r + 2; }
   if ((0.0).log() < (0.0 - 1.0e308)) { r = r + 4; }
-  var n = (0.0 - 1.0).log();
+  let n = (0.0 - 1.0).log();
   if (n != n) { r = r + 8; }
   return r;
 }`,
@@ -589,7 +589,7 @@ function main(): i32 {
 			name: "stdlib_float_sin",
 			src: `import "std/float";
 function main(): i32 {
-  var s = (1.5707963267948966).sin();
+  let s = (1.5707963267948966).sin();
   return if ((s - 1.0).abs() < 0.001) { 1 } else { 0 };
 }`,
 			want: 1,
@@ -600,7 +600,7 @@ function main(): i32 {
 			name: "stdlib_float_cos",
 			src: `import "std/float";
 function main(): i32 {
-  var c = (3.141592653589793).cos();
+  let c = (3.141592653589793).cos();
   return if ((c + 1.0).abs() < 0.001) { 1 } else { 0 };
 }`,
 			want: 1,
@@ -609,21 +609,21 @@ function main(): i32 {
 			// random_i32 — a single getrandom(2) read into a stack slot. The value is
 			// nondeterministic, so the test only asserts it lowers and runs (r == r).
 			name: "random_i32_call",
-			src:  `function main(): i32 { var r = random_i32(); return if (r == r) { 7 } else { 0 }; }`,
+			src:  `function main(): i32 { let r = random_i32(); return if (r == r) { 7 } else { 0 }; }`,
 			want: 7,
 		},
 		{
 			// random_bytes(n) — a fresh single-word rc u8[] box of n CSPRNG bytes; the
 			// length is deterministic (n) even though the contents aren't. len = 16.
 			name: "random_bytes_len",
-			src:  `function main(): i32 { var b: u8[] = random_bytes(16); return b.len(); }`,
+			src:  `function main(): i32 { let b: u8[] = random_bytes(16); return b.len(); }`,
 			want: 16,
 		},
 		{
 			// random_bytes(0) edge — an empty u8[] box (getrandom is a no-op); the
 			// header is still written, with no trailing NUL. len = 0, +5 = 5.
 			name: "random_bytes_zero",
-			src:  `function main(): i32 { var b: u8[] = random_bytes(0); return b.len() + 5; }`,
+			src:  `function main(): i32 { let b: u8[] = random_bytes(0); return b.len() + 5; }`,
 			want: 5,
 		},
 		{
@@ -633,9 +633,9 @@ function main(): i32 {
 			// through). A non-negative fd means success; then tcp_close it.
 			name: "tcp_listen_close",
 			src: `function main(): i32 {
-  var fd = tcp_listen(0);
+  let fd = tcp_listen(0);
   if (fd < 0) { return 99; }
-  var c = tcp_close(fd);
+  let c = tcp_close(fd);
   return if (fd >= 0) { 1 } else { 0 };
 }`,
 			want: 1,
@@ -655,20 +655,20 @@ function main(): i32 {
 			// a hint the guest can still lose the race for.
 			name: "tcp_connect_loopback_roundtrip",
 			src: `function main(): i32 {
-  var l = tcp_listen(0);
+  let l = tcp_listen(0);
   if (l < 0) { return 90; }
-  var port: i32 = tcp_local_port(l);
+  let port: i32 = tcp_local_port(l);
   if (port <= 0) { return 91; }
-  var loopback: i32 = 127 + (1 << 24);
-  var c = tcp_connect(loopback, port);
+  let loopback: i32 = 127 + (1 << 24);
+  let c = tcp_connect(loopback, port);
   if (c < 0) { return 92; }
-  var s = tcp_accept(l);
+  let s = tcp_accept(l);
   if (s < 0) { return 93; }
-  var sent = tcp_send(c, "ping!");
-  var got: u8[] = tcp_recv(s, 16);
-  var closed = tcp_close(c) + tcp_close(s) + tcp_close(l);
+  let sent = tcp_send(c, "ping!");
+  let got: u8[] = tcp_recv(s, 16);
+  let closed = tcp_close(c) + tcp_close(s) + tcp_close(l);
   if (closed != 0) { return 94; }
-  var refused = tcp_connect(loopback, port);
+  let refused = tcp_connect(loopback, port);
   if (refused >= 0) { return 95; }
   return sent + got.len();
 }`,
@@ -685,7 +685,7 @@ function main(): i32 {
 			// tcp_recv on a bad fd → read(2) returns -EBADF, which the helper clamps to
 			// an empty u8[]. Exercises the recv alloc + read + len-clamp path.
 			name: "tcp_recv_badfd",
-			src:  `function main(): i32 { var s = tcp_recv(999, 10); return s.len(); }`,
+			src:  `function main(): i32 { let s = tcp_recv(999, 10); return s.len(); }`,
 			want: 0,
 		},
 		{
@@ -693,10 +693,10 @@ function main(): i32 {
 			// write(2) / accept(2) syscall paths and the negative-errno passthrough.
 			name: "tcp_send_accept_badfd",
 			src: `function main(): i32 {
-  var s = tcp_send(999, "hi");
-  var a = tcp_accept(999);
-  var sn: i32 = if (s < 0) { 1 } else { 0 };
-  var an: i32 = if (a < 0) { 1 } else { 0 };
+  let s = tcp_send(999, "hi");
+  let a = tcp_accept(999);
+  let sn: i32 = if (s < 0) { 1 } else { 0 };
+  let an: i32 = if (a < 0) { 1 } else { 0 };
   return sn + an;
 }`,
 			want: 2,
@@ -705,7 +705,7 @@ function main(): i32 {
 			// poll on an empty fd set short-circuits to -1 (nothing to wait on).
 			// Exercises the nfds == 0 guard.
 			name: "poll_empty",
-			src:  `function main(): i32 { var fds: i32[] = []; var r = poll(fds, 0); return if (r == -1) { 1 } else { 0 }; }`,
+			src:  `function main(): i32 { let fds: i32[] = []; let r = poll(fds, 0); return if (r == -1) { 1 } else { 0 }; }`,
 			want: 1,
 		},
 		{
@@ -714,10 +714,10 @@ function main(): i32 {
 			// pollfd[] marshal, the ppoll(2) syscall, and the revents scan.
 			name: "poll_listener_not_ready",
 			src: `function main(): i32 {
-  var fd = tcp_listen(0);
-  var fds: i32[] = [fd];
-  var r = poll(fds, 0);
-  var c = tcp_close(fd);
+  let fd = tcp_listen(0);
+  let fds: i32[] = [fd];
+  let r = poll(fds, 0);
+  let c = tcp_close(fd);
   return if (r == -1) { 3 } else { 0 };
 }`,
 			want: 3,
@@ -727,7 +727,7 @@ function main(): i32 {
 			// the deadline is poll(2)'s timeout arg). Lets std/async's with_deadline
 			// stay portable across native + wasm.
 			name: "wasm_timer_pollable_stub",
-			src:  `function main(): i32 { var t = wasm_timer_pollable(1000000); return if (t == -1) { 1 } else { 0 }; }`,
+			src:  `function main(): i32 { let t = wasm_timer_pollable(1000000); return if (t == -1) { 1 } else { 0 }; }`,
 			want: 1,
 		},
 		{
@@ -741,7 +741,7 @@ function main(): i32 {
 			// wasm_poll is -1 on native (no real pollables; readiness uses poll(2)),
 			// ignoring its array arg. On wasm it's the real wasi:io/poll.poll.
 			name: "wasm_poll_stub",
-			src:  `function main(): i32 { var ps: i32[] = [3, 7]; var i = wasm_poll(ps); return if (i == -1) { 5 } else { 0 }; }`,
+			src:  `function main(): i32 { let ps: i32[] = [3, 7]; let i = wasm_poll(ps); return if (i == -1) { 5 } else { 0 }; }`,
 			want: 5,
 		},
 		{
@@ -752,7 +752,7 @@ function main(): i32 {
 			// Option[IoError] None boxes.
 			name: "writer_roundtrip",
 			src: `function main(): i32 {
-  var wr = match (open_writer("/tmp/fern_ssa_e2e_wpath.txt")) {
+  let wr = match (open_writer("/tmp/fern_ssa_e2e_wpath.txt")) {
     Ok(w) => match (w.write("hello")) {
       Some(e) => 30,
       None => match (w.close()) { Some(e) => 40, None => 0 }
@@ -783,7 +783,7 @@ function main(): i32 {
 			// and both Result[T, IoError] Ok boxes.
 			name: "reader_roundtrip",
 			src: `function main(): i32 {
-  var w = write_file("/tmp/fern_ssa_e2e_rdr.txt", "abcdefg");
+  let w = write_file("/tmp/fern_ssa_e2e_rdr.txt", "abcdefg");
   return match (open_reader("/tmp/fern_ssa_e2e_rdr.txt")) {
     Ok(r) => match (r.read_chunk(4)) {
       Ok(s) => match (r.close()) { Some(e) => 40, None => s.len() },
@@ -799,7 +799,7 @@ function main(): i32 {
 			// read == 0 branch of the Result[string, IoError] box.
 			name: "reader_read_chunk_eof",
 			src: `function main(): i32 {
-  var w = write_file("/tmp/fern_ssa_e2e_rdeof.txt", "");
+  let w = write_file("/tmp/fern_ssa_e2e_rdeof.txt", "");
   return match (open_reader("/tmp/fern_ssa_e2e_rdeof.txt")) {
     Ok(r) => match (r.read_chunk(8)) { Ok(s) => 7 + s.len(), Err(e) => 1 },
     Err(e) => 50
@@ -852,7 +852,7 @@ function main(): i32 {
 			// deterministic empty starting point, so the final length is 4 ("ABCD").
 			name: "read_line_two_lines",
 			src: `function main(): i32 {
-  var t = write_file("/tmp/fern_ssa_e2e_rl.txt", "abc\nde\n");
+  let t = write_file("/tmp/fern_ssa_e2e_rl.txt", "abc\nde\n");
   return match (open_reader("/tmp/fern_ssa_e2e_rl.txt")) {
     Ok(r) => match (r.read_line()) {
       Some(l1) => match (r.read_line()) { Some(l2) => l1.len() + l2.len(), None => 80 },
@@ -870,7 +870,7 @@ function main(): i32 {
 			// first-read-returns-0 -> None branch.
 			name: "read_line_eof_none",
 			src: `function main(): i32 {
-  var t = write_file("/tmp/fern_ssa_e2e_rl2.txt", "x\n");
+  let t = write_file("/tmp/fern_ssa_e2e_rl2.txt", "x\n");
   return match (open_reader("/tmp/fern_ssa_e2e_rl2.txt")) {
     Ok(r) => match (r.read_line()) {
       Some(l1) => match (r.read_line()) { Some(l2) => 1, None => 9 },
@@ -884,12 +884,12 @@ function main(): i32 {
 		{
 			name: "open_appender_accumulates",
 			src: `function main(): i32 {
-  var t = write_file("/tmp/fern_ssa_e2e_app.txt", "");
-  var w1 = match (open_appender("/tmp/fern_ssa_e2e_app.txt")) {
+  let t = write_file("/tmp/fern_ssa_e2e_app.txt", "");
+  let w1 = match (open_appender("/tmp/fern_ssa_e2e_app.txt")) {
     Ok(w) => match (w.write("AB")) { Some(e) => 9, None => match (w.close()) { Some(e2) => 8, None => 0 } },
     Err(e) => 7
   };
-  var w2 = match (open_appender("/tmp/fern_ssa_e2e_app.txt")) {
+  let w2 = match (open_appender("/tmp/fern_ssa_e2e_app.txt")) {
     Ok(w) => match (w.write("CD")) { Some(e) => 9, None => match (w.close()) { Some(e2) => 8, None => 0 } },
     Err(e) => 7
   };
@@ -905,12 +905,12 @@ function main(): i32 {
 			// "created then refused" answer; the file still holds "AB".
 			name: "open_exclusive_refuses_existing",
 			src: `function main(): i32 {
-  var t = remove_file("/tmp/fern_ssa_e2e_excl.txt");
-  var w1 = match (open_exclusive("/tmp/fern_ssa_e2e_excl.txt")) {
+  let t = remove_file("/tmp/fern_ssa_e2e_excl.txt");
+  let w1 = match (open_exclusive("/tmp/fern_ssa_e2e_excl.txt")) {
     Ok(w) => match (w.write("AB")) { Some(e) => 9, None => match (w.close()) { Some(e2) => 8, None => 0 } },
     Err(e) => 7
   };
-  var w2 = match (open_exclusive("/tmp/fern_ssa_e2e_excl.txt")) {
+  let w2 = match (open_exclusive("/tmp/fern_ssa_e2e_excl.txt")) {
     Ok(w) => 50,
     Err(e) => match (e) { AlreadyExists(p) => 0, _ => 40 }
   };
@@ -940,7 +940,7 @@ function main(): i32 { return (123456).to_string().len(); }`,
 			// + a byte load). "abc"[1] = 'b' = 98.
 			name: "string_index",
 			src: `function main(): i32 {
-  var s: string = "abc";
+  let s: string = "abc";
   return s[1] as i32;
 }`,
 			want: 98,
@@ -951,9 +951,9 @@ function main(): i32 { return (123456).to_string().len(); }`,
 			// under a loop with a per-iteration bounds check.
 			name: "string_index_loop",
 			src: `function main(): i32 {
-  var s: string = "hello";
-  var sum: i32 = 0;
-  var i: i32 = 0;
+  let s: string = "hello";
+  let sum: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) { sum = sum + (s[i] as i32); i = i + 1; }
   return sum % 256;
 }`,
@@ -964,7 +964,7 @@ function main(): i32 { return (123456).to_string().len(); }`,
 			// len(slice_unchecked("hello world", 6, 11)) = len("world") = 5.
 			name: "string_slice_len",
 			src: `function main(): i32 {
-  var s: string = "hello world";
+  let s: string = "hello world";
   return slice_unchecked(s, 6, 11).len();
 }`,
 			want: 5,
@@ -975,8 +975,8 @@ function main(): i32 { return (123456).to_string().len(); }`,
 			// just the length) are correct.
 			name: "string_slice_content",
 			src: `function main(): i32 {
-  var s: string = "hello world";
-  var w: str = slice_unchecked(s, 6, 11);
+  let s: string = "hello world";
+  let w: str = slice_unchecked(s, 6, 11);
   return w[0] as i32;
 }`,
 			want: 119,
@@ -987,7 +987,7 @@ function main(): i32 { return (123456).to_string().len(); }`,
 			// miscompile. The checked `s[a:b]` answers None instead, so the
 			// trap is only reachable through the unchecked producer.
 			name: "string_slice_oob_trap",
-			src:  `function main(): i32 { var s: string = "abc"; return slice_unchecked(s, 1, 9).len(); }`,
+			src:  `function main(): i32 { let s: string = "abc"; return slice_unchecked(s, 1, 9).len(); }`,
 			want: 134,
 		},
 		{
@@ -998,8 +998,8 @@ function main(): i32 { return (123456).to_string().len(); }`,
 			// miscompiled SHA-256 gave 0xF2 = 242.) HARDCODED want, so it catches a
 			// regression even if the model oracle regressed in lockstep.
 			name: "u32_shr_call_result",
-			src: `function mk(): u32 { var a: u32 = 2415919104; return a; }
-function main(): i32 { var v: u32 = mk(); return ((v >> 3) >> 24) as i32; }`,
+			src: `function mk(): u32 { let a: u32 = 2415919104; return a; }
+function main(): i32 { let v: u32 = mk(); return ((v >> 3) >> 24) as i32; }`,
 			want: 18,
 		},
 		{
@@ -1011,7 +1011,7 @@ function main(): i32 { var v: u32 = mk(); return ((v >> 3) >> 24) as i32; }`,
 			name: "sha256_first_char",
 			src: `import "std/crypto";
 function main(): i32 {
-  var h: string = crypto.sha256_hex("abc");
+  let h: string = crypto.sha256_hex("abc");
   return h[0] as i32;
 }`,
 			want: 98, // 'b'
@@ -1028,9 +1028,9 @@ function main(): i32 {
 			name: "string_memchr_paths",
 			src: `import "std/string";
 function main(): i32 {
-    var hit = "hello world".index_of("o");
-    var miss = "hello".index_of("z");
-    var later = "hello world".index_of("w");
+    let hit = "hello world".index_of("o");
+    let miss = "hello".index_of("z");
+    let later = "hello world".index_of("w");
     return hit + (miss + 2) + later;
 }`,
 			want: 11,
@@ -1048,9 +1048,9 @@ function main(): i32 {
 			// hit at a nonzero start. 3 + 5 + 4 = 12.
 			name: "string_ascii_run_paths",
 			src: `function main(): i32 {
-    var hit = __ascii_run("abcéx", 0);
-    var miss = __ascii_run("plain", 0);
-    var later = __ascii_run("abééz", 4);
+    let hit = __ascii_run("abcéx", 0);
+    let miss = __ascii_run("plain", 0);
+    let later = __ascii_run("abééz", 4);
     return hit + miss + later;
 }`,
 			want: 12,
@@ -1060,7 +1060,7 @@ function main(): i32 {
 			// "a,b,c".split(",") has 3 parts -> len 3.
 			name: "string_split_len",
 			src: `import "std/string";
-function main(): i32 { var p = "a,b,c".split(","); return p.len(); }`,
+function main(): i32 { let p = "a,b,c".split(","); return p.len(); }`,
 			want: 3,
 		},
 		{
@@ -1070,8 +1070,8 @@ function main(): i32 { var p = "a,b,c".split(","); return p.len(); }`,
 			name: "string_split_iterate",
 			src: `import "std/string";
 function main(): i32 {
-  var parts = "alpha,beta,gamma".split(",");
-  var total: i32 = 0;
+  let parts = "alpha,beta,gamma".split(",");
+  let total: i32 = 0;
   for p in parts { total = total + p.len(); }
   return total;
 }`,
@@ -1084,11 +1084,11 @@ function main(): i32 {
 			// 140000, exit 140000&0xFF = 224. A 32-bit-narrowed conversion gave 1.
 			name: "f64_to_i64_width",
 			src: `function main(): i32 {
-  var frac: f64 = 0.14;
-  var mult: f64 = 1.0;
-  var i: i32 = 0;
+  let frac: f64 = 0.14;
+  let mult: f64 = 1.0;
+  let i: i32 = 0;
   while (i < 15) { mult = mult * 10.0; i = i + 1; }
-  var fracInt: i64 = (frac * mult) as i64;
+  let fracInt: i64 = (frac * mult) as i64;
   return (fracInt / 1000000000) as i32;
 }`,
 			want: 224,
@@ -1100,7 +1100,7 @@ function main(): i32 {
 			// truncated to 32 bits.
 			name: "f64_to_string_frac",
 			src: `import "std/float";
-function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
+function main(): i32 { let x: f64 = 3.14; return x.to_string().len(); }`,
 			want: 4,
 		},
 		{
@@ -1116,7 +1116,7 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			// (out is under an absolute t.TempDir()), so its first byte is '/' = 47.
 			// Confirms the per-arg string bytes are copied, not just the count.
 			name: "args_first_char",
-			src:  `function main(): i32 { var a = args(); return a[0][0] as i32; }`,
+			src:  `function main(): i32 { let a = args(); return a[0][0] as i32; }`,
 			want: 47,
 		},
 		{
@@ -1151,7 +1151,7 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			// A conditional exit from inside a loop: bail with the counter at 4.
 			name: "exit_in_loop",
 			src: `function main(): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 10) { if (i == 4) { exit(i); } i = i + 1; }
   return 88;
 }`,
@@ -1163,9 +1163,9 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			name: "strbuf_grows",
 			src: `function main(): i32 {
   strbuf_reset();
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 100000) { strbuf_append("0123456789"); i = i + 1; }
-  var s: string = strbuf_take();
+  let s: string = strbuf_take();
   if (s.len() != 1000000) { return 1; }
   if (s[0] != 48 || s[999999] != 57) { return 2; }
   strbuf_append("tail");
@@ -1194,12 +1194,12 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			name: "strbuf_reuse",
 			src: `function main(): i32 {
   strbuf_reset();
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 5) { strbuf_append("ab"); i = i + 1; }
-  var s = strbuf_take();
+  let s = strbuf_take();
   strbuf_reset();
   strbuf_append("xyz");
-  var t = strbuf_take();
+  let t = strbuf_take();
   return s.len() * 100 + t.len();
 }`,
 			want: 235,
@@ -1245,7 +1245,7 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			// Result[string, IoError] Ok box, and pairs with write_file.
 			name: "read_file_roundtrip",
 			src: `function main(): i32 {
-  var w = write_file("/tmp/fern_ssa_e2e_rf.txt", "abcde");
+  let w = write_file("/tmp/fern_ssa_e2e_rf.txt", "abcde");
   return match (read_file("/tmp/fern_ssa_e2e_rf.txt")) { Ok(s) => s.len(), Err(e) => 0 };
 }`,
 			want: 5,
@@ -1269,7 +1269,7 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			// pointer.
 			name: "read_file_bytes_roundtrip",
 			src: `function main(): i32 {
-  var w = write_file("/tmp/fern_ssa_e2e_rfb.txt", "abcde");
+  let w = write_file("/tmp/fern_ssa_e2e_rfb.txt", "abcde");
   return match (read_file_bytes("/tmp/fern_ssa_e2e_rfb.txt")) {
     Ok(b) => b.len() + (b[0] as i32),
     Err(e) => 0
@@ -1294,9 +1294,9 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			// the None (tag 1) path of the Option[IoError] box.
 			name: "remove_file_ok",
 			src: `function main(): i32 {
-  var w = write_file("/tmp/fern_ssa_e2e_rmf.txt", "gone");
-  var r = match (remove_file("/tmp/fern_ssa_e2e_rmf.txt")) { Err(e) => 1, Ok(_) => 5 };
-  var g = match (read_file("/tmp/fern_ssa_e2e_rmf.txt")) { Ok(s) => 0, Err(e) => 2 };
+  let w = write_file("/tmp/fern_ssa_e2e_rmf.txt", "gone");
+  let r = match (remove_file("/tmp/fern_ssa_e2e_rmf.txt")) { Err(e) => 1, Ok(_) => 5 };
+  let g = match (read_file("/tmp/fern_ssa_e2e_rmf.txt")) { Ok(s) => 0, Err(e) => 2 };
   return r + g;
 }`,
 			want: 7,
@@ -1356,8 +1356,8 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			src: `function main(): i32 {
   return match (temp_dir("fern_rd")) {
     Ok(d) => {
-      var a = write_file(d + "/a.txt", "x");
-      var b = write_file(d + "/b.txt", "y");
+      let a = write_file(d + "/a.txt", "x");
+      let b = write_file(d + "/b.txt", "y");
       match (read_dir(d)) { Ok(es) => es.len(), Err(e) => 100 }
     },
     Err(e) => 200
@@ -1373,7 +1373,7 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			src: `function main(): i32 {
   return match (temp_dir("fern_rd")) {
     Ok(d) => {
-      var a = write_file(d + "/hello.txt", "z");
+      let a = write_file(d + "/hello.txt", "z");
       match (read_dir(d)) { Ok(es) => es[0].len(), Err(e) => 100 }
     },
     Err(e) => 200
@@ -1390,8 +1390,8 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			src: `function main(): i32 {
   return match (temp_dir("fern_rda_all")) {
     Ok(d) => {
-      var a = write_file(d + "/a.txt", "x");
-      var b = write_file(d + "/b.txt", "y");
+      let a = write_file(d + "/a.txt", "x");
+      let b = write_file(d + "/b.txt", "y");
       match (read_dir_all(d)) { Ok(es) => es.len(), Err(e) => 100 }
     },
     Err(e) => 200
@@ -1409,9 +1409,9 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			src: `function main(): i32 {
   return match (temp_dir("fern_rda_pair")) {
     Ok(d) => {
-      var a = write_file(d + "/a.txt", "x");
-      var n = match (read_dir_all(d)) { Ok(es) => es.len(), Err(e) => 100 };
-      var r = match (remove_dir_all(d)) { Err(e) => 40, Ok(_) => 0 };
+      let a = write_file(d + "/a.txt", "x");
+      let n = match (read_dir_all(d)) { Ok(es) => es.len(), Err(e) => 100 };
+      let r = match (remove_dir_all(d)) { Err(e) => 40, Ok(_) => 0 };
       n + r
     },
     Err(e) => 60
@@ -1450,10 +1450,10 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			src: `function main(): i32 {
   return match (temp_dir("fern_rda")) {
     Ok(d) => {
-      var a = write_file(d + "/a.txt", "x");
-      var b = write_file(d + "/b.txt", "y");
-      var r = match (remove_dir_all(d)) { Err(e) => 40, Ok(_) => 0 };
-      var g = match (read_dir(d)) { Ok(es) => 50, Err(e) => 0 };
+      let a = write_file(d + "/a.txt", "x");
+      let b = write_file(d + "/b.txt", "y");
+      let r = match (remove_dir_all(d)) { Err(e) => 40, Ok(_) => 0 };
+      let g = match (read_dir(d)) { Ok(es) => 50, Err(e) => 0 };
       r + g + 5
     },
     Err(e) => 60
@@ -1467,10 +1467,10 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			// gone afterward.
 			name: "remove_dir_all_missing_and_file",
 			src: `function main(): i32 {
-  var m = match (remove_dir_all("/no_such_ssa_rda_dir")) { Err(e) => 1, Ok(_) => 0 };
-  var t = write_file("/tmp/fern_ssa_e2e_rda_file.txt", "z");
-  var f = match (remove_dir_all("/tmp/fern_ssa_e2e_rda_file.txt")) { Err(e) => 2, Ok(_) => 0 };
-  var g = match (read_file("/tmp/fern_ssa_e2e_rda_file.txt")) { Ok(s) => 4, Err(e) => 0 };
+  let m = match (remove_dir_all("/no_such_ssa_rda_dir")) { Err(e) => 1, Ok(_) => 0 };
+  let t = write_file("/tmp/fern_ssa_e2e_rda_file.txt", "z");
+  let f = match (remove_dir_all("/tmp/fern_ssa_e2e_rda_file.txt")) { Err(e) => 2, Ok(_) => 0 };
+  let g = match (read_file("/tmp/fern_ssa_e2e_rda_file.txt")) { Ok(s) => 4, Err(e) => 0 };
   return m + f + g + 7;
 }`,
 			want: 7,
@@ -1489,8 +1489,8 @@ struct Pair { a: i32, b: i32 }
 impl Producer for Pair { function get(self: Self): i32 { return self.a + self.b; } }
 function sum(p: dyn Producer): i32 { return p.get(); }
 function main(): i32 {
-  var x: dyn Producer = IntBox { v: 40 };
-  var y: dyn Producer = Pair { a: 1, b: 1 };
+  let x: dyn Producer = IntBox { v: 40 };
+  let y: dyn Producer = Pair { a: 1, b: 1 };
   return sum(x) + sum(y);
 }`,
 			want: 42,
@@ -1517,8 +1517,8 @@ impl Shape for Rect {
 }
 function describe(s: dyn Shape): i32 { return s.area() + s.scaled(3); }
 function main(): i32 {
-  var a: dyn Shape = Square { side: 5 };
-  var b: dyn Shape = Rect { w: 2, h: 4 };
+  let a: dyn Shape = Square { side: 5 };
+  let b: dyn Shape = Rect { w: 2, h: 4 };
   return describe(a) + describe(b);
 }`,
 			want: 66,
@@ -1540,8 +1540,8 @@ function main(): i32 {
 			src: `import "core/map";
 import "std/i32";
 function main(): i32 {
-  var m: Map[string, i32] = map_new(4);
-  var i: i32 = 0;
+  let m: Map[string, i32] = map_new(4);
+  let i: i32 = 0;
   // Past the 75% load factor of a cap-4 table, so this grows several times
   // (__map_grow_keyed → __alloc + __memcpy + __memset + __free).
   while (i < 40) { m = m.insert("k" + i.to_string(), i * 2); i = i + 1; }
@@ -1549,13 +1549,13 @@ function main(): i32 {
   if (m.get_or("k7", 0 - 1) != 14) { return 2; }
   if (!m.has("k39")) { return 3; }
   if (m.has("nope")) { return 4; }
-  var (m2, ok) = m.without("k7");
+  let (m2, ok) = m.without("k7");
   if (!ok) { return 5; }
   m = m2;
   if (m.len() != 39) { return 6; }
   if (m.has("k7")) { return 7; }
   // Iteration (__map_iter_impl + the __mapiter_* cursor).
-  var sum: i32 = 0;
+  let sum: i32 = 0;
   for (k, v) in m { sum = sum + v; }
   if (sum != 1546) { return 8; }   // 2*(0+..+39) - 14
   return 42;
@@ -1566,7 +1566,7 @@ function main(): i32 {
 			name: "map_scalar_keys",
 			src: `import "core/map";
 function main(): i32 {
-  var n: Map[i32, i32] = map_new(8);
+  let n: Map[i32, i32] = map_new(8);
   n = n.insert(3, 30);
   n = n.insert(4, 40);
   if (n.get_or(3, 0) != 30) { return 1; }
@@ -1589,8 +1589,8 @@ function main(): i32 {
 			name: "with_ptr_elements",
 			src: `struct P { v: i32 }
 function main(): i32 {
-  var a: P[] = [P { v: 1 }, P { v: 2 }, P { v: 3 }];
-  var b: P[] = a;
+  let a: P[] = [P { v: 1 }, P { v: 2 }, P { v: 3 }];
+  let b: P[] = a;
   a = a.with(1, P { v: 9 });
   return a[1].v + b[1].v;
 }`,
@@ -1604,15 +1604,15 @@ function main(): i32 {
 			// bounds check returns, and a sub-slice of a slice.
 			name: "slice_construction",
 			src: `function main(): i32 {
-  var a: u8[] = [1u8, 2u8, 3u8, 4u8];
-  var sa: [u8] = a[1:4];
-  var b: i32[] = [10, 20, 30];
-  var sb: [i32] = b[1:3];
-  var c: i64[] = [100i64, 200i64];
-  var sc: [i64] = c[1:2];
-  var d: string[] = ["ab", "cde"];
-  var sd: [string] = d[1:2];
-  var sub: [u8] = sa[1:3];
+  let a: u8[] = [1u8, 2u8, 3u8, 4u8];
+  let sa: [u8] = a[1:4];
+  let b: i32[] = [10, 20, 30];
+  let sb: [i32] = b[1:3];
+  let c: i64[] = [100i64, 200i64];
+  let sc: [i64] = c[1:2];
+  let d: string[] = ["ab", "cde"];
+  let sd: [string] = d[1:2];
+  let sub: [u8] = sa[1:3];
   return (sa[0] as i32) + sb[0] + (sc[0] as i32) + sd[0].len()
        + sa.len() + sub.len() + (sub[0] as i32);
 }`,
@@ -1628,19 +1628,19 @@ function main(): i32 {
 			// so the reserve's free of the outgrown block is exercised too.
 			name: "buf_builder",
 			src: `function main(): i32 {
-  var b: usize = buf_new(8);
+  let b: usize = buf_new(8);
   buf_push(b, "hello");
   buf_push_byte(b, 44);
   buf_push(b, "abcdefghijklmnopqrstuvwxyz");
   buf_push_range(b, "0123456789", 2, 5);
-  var s: string = buf_take(b);
+  let s: string = buf_take(b);
   if (s.len() != 35) { return 1; }
   if (s[0] != 104) { return 2; }
   if (s[5] != 44) { return 3; }
   if (s[34] != 52) { return 4; }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 500) { buf_push(b, "0123456789"); i = i + 1; }
-  var big: string = buf_take(b);
+  let big: string = buf_take(b);
   if (big.len() != 5000) { return 5; }
   if (big[4999] != 57) { return 6; }
   buf_free(b);
@@ -1654,22 +1654,22 @@ function main(): i32 {
 			// growth, on the backend whose helper is its own copy.
 			name: "buf_push_u64",
 			src: `function main(): i32 {
-  var b: usize = buf_new(8);
+  let b: usize = buf_new(8);
   buf_push_u64(b, 0x0807060504030201);
   buf_push_byte(b, 9);
-  var s: string = buf_take(b);
+  let s: string = buf_take(b);
   if (s.len() != 9) { return 1; }
   if (s[0] != 1) { return 2; }
   if (s[7] != 8) { return 3; }
   if (s[8] != 9) { return 4; }
   buf_push_u64(b, 0xff00000000000080);
-  var t: string = buf_take(b);
+  let t: string = buf_take(b);
   if (t[0] != 128) { return 5; }
   if (t[3] != 0) { return 6; }
   if (t[7] != 255) { return 7; }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 500) { buf_push_u64(b, 0x0202020202020202); i = i + 1; }
-  var big: string = buf_take(b);
+  let big: string = buf_take(b);
   if (big.len() != 4000) { return 8; }
   if (big[3999] != 2) { return 9; }
   buf_free(b);
@@ -1747,7 +1747,7 @@ func TestArm64SSAConstAddressWidth(t *testing.T) {
 	src := `import "std/i32";
 struct Pair { fst: i32, snd: i32 }
 function main(): i32 {
-    var p: Pair = Pair { fst: (651 - 870), snd: 3 };
+    let p: Pair = Pair { fst: (651 - 870), snd: 3 };
     print((0).to_string());
     print((p.fst).to_string());
     return 0;
@@ -1797,7 +1797,7 @@ func TestArm64SSACoverageGapErrors(t *testing.T) {
 	}
 
 	srcPath := filepath.Join(dir, "sub.fern")
-	src := `function main(): i32 { var p = subprocess("echo", [], ""); return p.exit_code; }`
+	src := `function main(): i32 { let p = subprocess("echo", [], ""); return p.exit_code; }`
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}

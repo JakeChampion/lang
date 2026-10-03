@@ -6,7 +6,7 @@ of #5338. The lead `2026-08-27-str-rebind-producer-call.md` left.
 ## The cells
 
 ```fern
-var x: string[] = [mkstr("x")];
+let x: string[] = [mkstr("x")];
 x = [mkstr("y"), mkstr("z")];
 ```
 
@@ -22,7 +22,7 @@ before this change:
 
 | probe | self-host | native |
 |---|---|---|
-| `var x = [mk("x")]` (single bind) | 300/300 clean | 100/100 |
+| `let x = [mk("x")]` (single bind) | 300/300 clean | 100/100 |
 | `x = x.append(mk("y"))` | 600/600 clean | 200/200 |
 | `x = [mk("y"), mk("z")]` | **800/200** | 200/200 |
 | `x = mkarr(i)` | **1200/400** | 400/400 |
@@ -47,12 +47,12 @@ The emit says why. Two stores land in the slot:
 
 | store | helper emitted |
 |---|---|
-| the declaration (`var x = …`) | `__fern_str_arr_free` — deep |
+| the declaration (`let x = …`) | `__fern_str_arr_free` — deep |
 | the rebind (`x = …`) | **`__fern_arr_dec`** — shallow |
 
 `lower_stmt_assign` had no branch for the class at all, so a rebound reclaimable
 `string[]` fell through to `emit_arr_store`'s shallow dec: the buffer is freed
-and its element pointers are dropped on the floor. The `var` re-declaration has
+and its element pointers are dropped on the floor. The `let` re-declaration has
 driven `emit_strarr_reclaim_store` since #4355; the assign path is the sibling
 the rc-tuple and rc-enum rebinds each had to open for themselves, one element
 kind over — and the comment above the rc-tuple branch describes this exact

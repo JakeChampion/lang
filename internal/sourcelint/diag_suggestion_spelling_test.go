@@ -401,7 +401,7 @@ func TestEmitsDiagnosticsSeparatesCopyFromFixtures(t *testing.T) {
 	// mentioning a code on another line. The two must not combine into a
 	// match — that is what a `[^"]*` spanning newlines did.
 	fixture := "// the E053 no-allocation walk\n" +
-		"var src: string = \"@derive(Eq)\\nstruct Pt { x: i32 }\";\n"
+		"let src: string = \"@derive(Eq)\\nstruct Pt { x: i32 }\";\n"
 	if emitsDiagnostics(fixture) {
 		t.Error("emitsDiagnostics matched a fixture across lines — the scan would judge formatter input as advice")
 	}

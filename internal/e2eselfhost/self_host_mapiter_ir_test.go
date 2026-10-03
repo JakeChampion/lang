@@ -36,12 +36,12 @@ func TestSelfHostMapIterIRWasm(t *testing.T) {
 
 	// 3 entries; sum of key+value = (1+10)+(2+20)+(3+30) = 66, order-independent.
 	const src = `function main(): i32 {
-    var m: Map[i32, i32] = map_new(4);
+    let m: Map[i32, i32] = map_new(4);
     m = m.insert(1, 10);
     m = m.insert(2, 20);
     m = m.insert(3, 30);
-    var it: MapIter[i32, i32] = m.iter();
-    var sum: i32 = 0;
+    let it: MapIter[i32, i32] = m.iter();
+    let sum: i32 = 0;
     while (it.has_next()) {
         sum = sum + it.key() + it.value();
         it.advance();

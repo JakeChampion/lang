@@ -64,8 +64,8 @@ func checkPollScratch(t *testing.T, target, qemu, backend string) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "probe.fern")
 			src := fmt.Sprintf(`function exercise(): i32 {
-    var fds: i32[] = %s;
-    var i: i32 = 0;
+    let fds: i32[] = %s;
+    let i: i32 = 0;
     while (i < %d) {
         if (poll(fds, %d) != %d) { return 1; }
         i = i + 1;
@@ -73,7 +73,7 @@ func checkPollScratch(t *testing.T, target, qemu, backend string) {
     return 0;
 }
 function main(): i32 {
-    var result: i32 = exercise();
+    let result: i32 = exercise();
     if (__rc_underflow_count() != 0) { return 99; }
     return result;
 }

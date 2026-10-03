@@ -4,12 +4,12 @@
 refused functions are built on the same four lines:
 
 ```fern
-var spec: str = "";
+let spec: str = "";
 …
 if (j < n) { spec = slice_unchecked(fmt, i + 1, j); }
 ```
 
-`__format_apply_spec` opens with `var fill: str = " ";` and rebinds it from
+`__format_apply_spec` opens with `let fill: str = " ";` and rebinds it from
 `slice_unchecked(spec, p, p + fw)` — the same shape, the same refusal:
 `a view is lent, never retained`. Between them they held three whole
 programs to the AST lowering: `examples/tests/format_test` (238 declarations),
@@ -68,7 +68,7 @@ declaration is the helper this change introduces.
 ## What this does not reach
 
 `examples/cli/fold`'s `fold_line` still refuses on the same rule: its
-`var rest: str = line;` is a retag of a borrowed `string` PARAMETER, rebound in
+`let rest: str = line;` is a retag of a borrowed `string` PARAMETER, rebound in
 a loop, and a borrow has no unit to move. Closing that one means making the
 retag a rename outright — the operand's unit becomes the retag's, so the edge
 retains the COUNTED string rather than the view — which is a change to
@@ -94,7 +94,7 @@ parser erases `str` to `string` at the parse boundary, and only `StmtVar` and
 `ParamDecl` carry the `is_str` sidecar that puts it back, so a struct FIELD or a
 tuple ELEMENT declared `str` is a `string` to the whole checker. It shows as an
 E043 that fires in the opposite direction from native's, and as
-`var p: (str, i32) = ("abc", 4); p.0.len() + p.1` answering 60 where native
+`let p: (str, i32) = ("abc", 4); p.0.len() + p.1` answering 60 where native
 answers 7 with no diagnostic on any leg. Both are outside this change: the typed
 path already refuses the tuple shape, and a field sidecar is a parser + AST +
 checker change of its own.

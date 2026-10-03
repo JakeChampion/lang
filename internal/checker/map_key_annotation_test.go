@@ -14,9 +14,9 @@ import (
 // segfaulted the self-host (#9973).
 var mapKeyAnnotationCases = []struct{ name, src, want string }{
 	{
-		"var annotation",
+		"let annotation",
 		`import "core/map";
-function main(): i32 { var m: Map[f64, i32] = map_new(2); return 0; }`,
+function main(): i32 { let m: Map[f64, i32] = map_new(2); return 0; }`,
 		"map key type f64 is not yet supported",
 	},
 	{
@@ -64,7 +64,7 @@ function main(): i32 { return 0; }`,
 	{
 		"empty literal with an annotation",
 		`import "core/map";
-function main(): i32 { var m: Map[f64, i32] = Map {}; return 0; }`,
+function main(): i32 { let m: Map[f64, i32] = Map {}; return 0; }`,
 		"map key type f64 is not yet supported",
 	},
 	{
@@ -87,7 +87,7 @@ function main(): i32 { return 0; }`,
 	{
 		"tuple key in a literal",
 		`import "core/map";
-function main(): i32 { var m = Map { (1, "a"): 5 }; return m.len(); }`,
+function main(): i32 { let m = Map { (1, "a"): 5 }; return m.len(); }`,
 		"",
 	},
 	{
@@ -121,7 +121,7 @@ function main(): i32 { return 0; }`,
 		"boolean key",
 		`import "core/map";
 function main(): i32 {
-    var m: Map[boolean, i32] = map_new(8);
+    let m: Map[boolean, i32] = map_new(8);
     m = m.insert(true, 5);
     return m.get_or(true, 0);
 }`,
@@ -130,14 +130,14 @@ function main(): i32 {
 	{
 		"boolean key in a literal",
 		`import "core/map";
-function main(): i32 { var m = Map { true: 1 }; return m.len(); }`,
+function main(): i32 { let m = Map { true: 1 }; return m.len(); }`,
 		"",
 	},
 	{
 		"borrowed string key",
 		`import "core/map";
 function main(): i32 {
-    var m: Map[str, i32] = map_new(8);
+    let m: Map[str, i32] = map_new(8);
     m = m.insert("ab", 5);
     return m.get_or("ab", 0);
 }`,
@@ -158,14 +158,14 @@ import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
 struct K { a: i32 }
 function take(m: Map[K, i32]): i32 { return m.len(); }
-function main(): i32 { var m: Map[K, i32] = map_new(2); return take(m); }`,
+function main(): i32 { let m: Map[K, i32] = map_new(2); return take(m); }`,
 		"",
 	},
 	{
 		"narrow integer and string keys",
 		`import "core/map";
 function take(a: Map[u8, i32], b: Map[string, i32], c: Map[u32, i32]): i32 { return 0; }
-function main(): i32 { var m: Map[u8, i32] = map_new(2); return take(m, map_new(1), map_new(1)); }`,
+function main(): i32 { let m: Map[u8, i32] = map_new(2); return take(m, map_new(1), map_new(1)); }`,
 		"",
 	},
 	{
@@ -212,17 +212,17 @@ func TestMapKeyTypeIsReportedOnce(t *testing.T) {
 		{
 			"annotation and a non-empty literal",
 			`import "core/map";
-function main(): i32 { var m: Map[f64, i32] = Map { 1.5: 7 }; return 0; }`,
+function main(): i32 { let m: Map[f64, i32] = Map { 1.5: 7 }; return 0; }`,
 		},
 		{
 			"annotation and an empty literal",
 			`import "core/map";
-function main(): i32 { var m: Map[f64, i32] = Map {}; return 0; }`,
+function main(): i32 { let m: Map[f64, i32] = Map {}; return 0; }`,
 		},
 		{
 			"annotation alone",
 			`import "core/map";
-function main(): i32 { var m: Map[f64, i32] = map_new(2); return 0; }`,
+function main(): i32 { let m: Map[f64, i32] = map_new(2); return 0; }`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

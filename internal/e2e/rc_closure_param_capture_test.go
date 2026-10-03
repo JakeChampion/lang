@@ -12,32 +12,32 @@ func TestClosureCapturingAParameterReboundInALoop(t *testing.T) {
 	}{
 		{"fresh_string",
 			`function make(s: string): (i32) => i32 { return (x: i32): i32 => { return x + s.len(); }; }`,
-			`var f: (i32) => i32 = make("a" + "b");
+			`let f: (i32) => i32 = make("a" + "b");
         t = t + f(i);`, 27},
 		{"live_record",
 			`struct Box { name: string }
 function make(b: Box): (i32) => i32 { return (x: i32): i32 => { return x + b.name.len(); }; }`,
-			`var x: Box = Box { name: "b" + "c" };
-        var f: (i32) => i32 = make(x);
+			`let x: Box = Box { name: "b" + "c" };
+        let f: (i32) => i32 = make(x);
         t = t + f(i) + x.name.len();`, 39},
 		{"fresh_array",
 			`function make(xs: i32[]): (i32) => i32 { return (x: i32): i32 => { return x + xs[1]; }; }`,
-			`var f: (i32) => i32 = make([i, i + 1]);
+			`let f: (i32) => i32 = make([i, i + 1]);
         t = t + f(0);`, 21},
 		{"dyn",
 			`trait Label { function a(self: Self): i32; }
 struct Box { name: string }
 impl Label for Box { function a(self: Self): i32 { return self.name.len(); } }
 function make(l: dyn Label): (i32) => i32 { return (x: i32): i32 => { return x + l.a(); }; }`,
-			`var x: Box = Box { name: "b" + "c" };
-        var f: (i32) => i32 = make(x);
+			`let x: Box = Box { name: "b" + "c" };
+        let f: (i32) => i32 = make(x);
         t = t + f(i);`, 27},
 	}
 	for _, c := range cases {
 		src := c.decls + `
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
         ` + c.body + `
         i = i + 1;

@@ -14,6 +14,6 @@ function tree_sum(t: Tree): i32 {
 }
 
 function main(): i32 {
-    var t: Tree = Node { left: Leaf { v: 40 }, right: Leaf { v: 2 } };
+    let t: Tree = Node { left: Leaf { v: 40 }, right: Leaf { v: 2 } };
     return tree_sum(t);
 }

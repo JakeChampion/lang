@@ -18,8 +18,8 @@ var builtinEnumCases = []struct {
 	src  string
 	exit int
 }{
-	{"ioerror-payload", "function classify(e: IoError): i32 { match (e) { NotFound(p) => { return 5; }, Interrupted => { return 1; }, _ => { return 0; } } return 9; } function main(): i32 { var e: IoError = NotFound(\"/x\"); return classify(e); }", 5},
-	{"ioerror-unit", "function classify(e: IoError): i32 { match (e) { NotFound(p) => { return 5; }, Interrupted => { return 1; }, _ => { return 0; } } return 9; } function main(): i32 { var e: IoError = Interrupted; return classify(e); }", 1},
+	{"ioerror-payload", "function classify(e: IoError): i32 { match (e) { NotFound(p) => { return 5; }, Interrupted => { return 1; }, _ => { return 0; } } return 9; } function main(): i32 { let e: IoError = NotFound(\"/x\"); return classify(e); }", 5},
+	{"ioerror-unit", "function classify(e: IoError): i32 { match (e) { NotFound(p) => { return 5; }, Interrupted => { return 1; }, _ => { return 0; } } return 9; } function main(): i32 { let e: IoError = Interrupted; return classify(e); }", 1},
 	// A payload variant reached with NO IoError-typed context to resolve
 	// it against — returned as the function's result, and nested inside
 	// an `Err(...)`. The checker read every IoError variant as a unit

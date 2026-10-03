@@ -38,10 +38,10 @@ func TestWithOnBorrowedReceiverYieldsFreeEligibleResult(t *testing.T) {
 			// binds the updated copy.
 			name: "borrowed array param receiver",
 			src: `function probe(xs: i32[]): i32 {
-    var w: i32[] = xs.with(0, 99);
+    let w: i32[] = xs.with(0, 99);
     return w[0];
 }
-function main(): i32 { var a: i32[] = [1, 2, 3]; return probe(a); }`,
+function main(): i32 { let a: i32[] = [1, 2, 3]; return probe(a); }`,
 			pos: "2:27", forcedInc: true, eligible: true,
 		},
 		{
@@ -52,13 +52,13 @@ function main(): i32 { var a: i32[] = [1, 2, 3]; return probe(a); }`,
 			src: `function probe(o: Option[i32[]]): i32 {
     match (o) {
         Some(xs) => {
-            var w: i32[] = xs.with(0, 99);
+            let w: i32[] = xs.with(0, 99);
             return w[0];
         },
         None => { return 0; }
     }
 }
-function main(): i32 { var a: i32[] = [1, 2, 3]; return probe(Some(a)); }`,
+function main(): i32 { let a: i32[] = [1, 2, 3]; return probe(Some(a)); }`,
 			pos: "4:35", forcedInc: true, eligible: true,
 		},
 		{
@@ -69,11 +69,11 @@ function main(): i32 { var a: i32[] = [1, 2, 3]; return probe(Some(a)); }`,
 			// would free the caller's array. The taint stays.
 			name: "local aliasing a borrowed param is refused",
 			src: `function probe(xs: i32[]): i32 {
-    var ys: i32[] = xs;
-    var w: i32[] = ys.with(0, 99);
+    let ys: i32[] = xs;
+    let w: i32[] = ys.with(0, 99);
     return w[0];
 }
-function main(): i32 { var a: i32[] = [1, 2, 3]; return probe(a); }`,
+function main(): i32 { let a: i32[] = [1, 2, 3]; return probe(a); }`,
 			pos: "3:27", forcedInc: false, eligible: false,
 		},
 	} {

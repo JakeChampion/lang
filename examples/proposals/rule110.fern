@@ -21,8 +21,8 @@ import "std/i32";
 struct World { cells: boolean[], rule: i32 }
 
 function world_new(width: i32, rule: i32): World {
-  var c: boolean[] = [];
-  var i: i32 = 0;
+  let c: boolean[] = [];
+  let i: i32 = 0;
   while (i < width) {
     c = c.append(false);
     i = i + 1;
@@ -32,21 +32,21 @@ function world_new(width: i32, rule: i32): World {
 
 // A single live cell at the far right — the classic rule-110 seed.
 function seeded_right(width: i32, rule: i32): World {
-  var w: World = world_new(width, rule);
+  let w: World = world_new(width, rule);
   return World { ...w, cells: w.cells.with(width - 1, true) };
 }
 
 function seeded_middle(width: i32, rule: i32): World {
-  var w: World = world_new(width, rule);
+  let w: World = world_new(width, rule);
   return World { ...w, cells: w.cells.with(width / 2, true) };
 }
 
 // The neighbourhood index: left<<2 | self<<1 | right, on a ring.
 function neighbourhood(w: World, i: i32): i32 {
-  var n: i32 = w.cells.len();
-  var left: i32 = 0;
-  var self_: i32 = 0;
-  var right: i32 = 0;
+  let n: i32 = w.cells.len();
+  let left: i32 = 0;
+  let self_: i32 = 0;
+  let right: i32 = 0;
   if (w.cells[(i + n - 1) % n]) {
     left = 1;
   }
@@ -66,8 +66,8 @@ function rule_bit(rule: i32, k: i32): boolean {
 }
 
 function step(w: World): World {
-  var next: boolean[] = [];
-  var i: i32 = 0;
+  let next: boolean[] = [];
+  let i: i32 = 0;
   while (i < w.cells.len()) {
     next = next.append(rule_bit(w.rule, neighbourhood(w, i)));
     i = i + 1;
@@ -76,8 +76,8 @@ function step(w: World): World {
 }
 
 function render(w: World): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < w.cells.len()) {
     if (w.cells[i]) {
       out = out + "#";
@@ -90,8 +90,8 @@ function render(w: World): string {
 }
 
 function live_count(w: World): i32 {
-  var n: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = 0;
+  let i: i32 = 0;
   while (i < w.cells.len()) {
     if (w.cells[i]) {
       n = n + 1;
@@ -107,13 +107,13 @@ function live_count(w: World): i32 {
 // every neighbourhood from arithmetic and check the automaton agrees —
 // an oracle that owes nothing to the implementation.
 function test_rule_table_matches_the_number(): test.TestOutcome {
-  var rules: i32[] = [0, 30, 90, 110, 184, 255];
+  let rules: i32[] = [0, 30, 90, 110, 184, 255];
   for r in 0..rules.len() {
-    var rule: i32 = rules[r];
+    let rule: i32 = rules[r];
     for k in 0..8 {
       // Build a 3-cell world whose middle neighbourhood is exactly k.
-      var w: World = world_new(3, rule);
-      var cells: boolean[] = w.cells;
+      let w: World = world_new(3, rule);
+      let cells: boolean[] = w.cells;
       if (k >= 4) {
         cells = cells.with(0, true);
       }
@@ -130,8 +130,8 @@ function test_rule_table_matches_the_number(): test.TestOutcome {
           + k.to_string() + ": got "
           + neighbourhood(w, 1).to_string());
       }
-      var want: boolean = rule / pow2(k) % 2 == 1;
-      var got: boolean = step(w).cells[1];
+      let want: boolean = rule / pow2(k) % 2 == 1;
+      let got: boolean = step(w).cells[1];
       if (got != want) {
         return test.fail("rule " + rule.to_string() + " neighbourhood "
           + k.to_string() + ": got " + bool_str(got)
@@ -143,8 +143,8 @@ function test_rule_table_matches_the_number(): test.TestOutcome {
 }
 
 function pow2(k: i32): i32 {
-  var v: i32 = 1;
-  var i: i32 = 0;
+  let v: i32 = 1;
+  let i: i32 = 0;
   while (i < k) {
     v = v * 2;
     i = i + 1;
@@ -162,11 +162,11 @@ function bool_str(b: boolean): string {
 // Rule 0 kills everything in one step, whatever the input. Rule 255
 // fills everything. Two closed forms the automaton must reproduce.
 function test_degenerate_rules(): test.TestOutcome {
-  var dead: World = seeded_middle(16, 0);
+  let dead: World = seeded_middle(16, 0);
   if (live_count(step(dead)) != 0) {
     return test.fail("rule 0 should leave nothing alive");
   }
-  var full: World = world_new(16, 255);
+  let full: World = world_new(16, 255);
   if (live_count(step(full)) != 16) {
     return test.fail("rule 255 should fill every cell");
   }
@@ -184,15 +184,15 @@ function test_degenerate_rules(): test.TestOutcome {
 // Checking against that closed form catches a wrong bit order, which is
 // the classic way to get an elementary automaton subtly wrong.
 function test_rule_90_is_left_xor_right(): test.TestOutcome {
-  var w: World = seeded_middle(32, 90);
+  let w: World = seeded_middle(32, 90);
   for t in 0..12 {
-    var before: World = w;
-    var after: World = step(w);
-    var n: i32 = before.cells.len();
+    let before: World = w;
+    let after: World = step(w);
+    let n: i32 = before.cells.len();
     for i in 0..n {
-      var l: boolean = before.cells[(i + n - 1) % n];
-      var r: boolean = before.cells[(i + 1) % n];
-      var want: boolean = l != r;
+      let l: boolean = before.cells[(i + n - 1) % n];
+      let r: boolean = before.cells[(i + 1) % n];
+      let want: boolean = l != r;
       if (after.cells[i] != want) {
         return test.fail("rule 90 at step " + t.to_string()
           + " cell " + i.to_string() + " is not left XOR right");
@@ -206,15 +206,15 @@ function test_rule_90_is_left_xor_right(): test.TestOutcome {
 // Rule 110 with a single right-hand cell must not die out — it is the
 // rule's defining behaviour, and a wrong bit order usually kills it.
 function test_rule_110_stays_alive_and_grows_left(): test.TestOutcome {
-  var w: World = seeded_right(48, 110);
-  var start: i32 = live_count(w);
+  let w: World = seeded_right(48, 110);
+  let start: i32 = live_count(w);
   if (start != 1) {
     return test.fail("seed should have exactly one cell");
   }
-  var min_seen: i32 = 999;
+  let min_seen: i32 = 999;
   for t in 0..40 {
     w = step(w);
-    var live: i32 = live_count(w);
+    let live: i32 = live_count(w);
     if (live == 0) {
       return test.fail("rule 110 died out at step " + t.to_string());
     }
@@ -232,16 +232,16 @@ function test_rule_110_stays_alive_and_grows_left(): test.TestOutcome {
 // Rendering is total and width-preserving: one character per cell, and
 // only the two characters the renderer defines.
 function test_render_is_total_and_width_preserving(): test.TestOutcome {
-  var w: World = seeded_middle(24, 110);
+  let w: World = seeded_middle(24, 110);
   for t in 0..10 {
-    var s: string = render(w);
+    let s: string = render(w);
     if (s.len() != 24) {
       return test.fail("render width " + s.len().to_string()
         + " at step " + t.to_string());
     }
-    var live: i32 = 0;
+    let live: i32 = 0;
     for i in 0..s.len() {
-      var b: i32 = s[i] as i32;
+      let b: i32 = s[i] as i32;
       if (b != 35 && b != 46) {
         return test.fail("render emitted an unexpected byte");
       }
@@ -262,10 +262,10 @@ function test_render_is_total_and_width_preserving(): test.TestOutcome {
 // stepped twice gives the same answer, and stepping does not mutate its
 // input.
 function test_step_is_pure(): test.TestOutcome {
-  var w: World = seeded_middle(20, 110);
-  var before: string = render(w);
-  var a: World = step(w);
-  var b: World = step(w);
+  let w: World = seeded_middle(20, 110);
+  let before: string = render(w);
+  let a: World = step(w);
+  let b: World = step(w);
   if (render(a) != render(b)) {
     return test.fail("stepping the same world twice differed");
   }
@@ -279,14 +279,14 @@ function test_step_is_pure(): test.TestOutcome {
 
 function main(): i32 {
   eprint("rule110 — an elementary cellular automaton");
-  var w: World = seeded_right(64, 110);
+  let w: World = seeded_right(64, 110);
   for t in 0..12 {
     eprint("  " + render(w));
     w = step(w);
   }
   eprint("  (rule 110, 64 cells, single seed at the right edge)");
 
-  var r: test.TestRunner = test.test_new("rule110");
+  let r: test.TestRunner = test.test_new("rule110");
   r = r.it("rule table matches the number", test_rule_table_matches_the_number);
   r = r.it("degenerate rules", test_degenerate_rules);
   r = r.it("rule 90 is left XOR right", test_rule_90_is_left_xor_right);

@@ -6,7 +6,7 @@ per 100 rounds.
 
 ## The asymmetry
 
-The cell's `var o: Option[string] = Some(mk("abc"))` needs four conjuncts for
+The cell's `let o: Option[string] = Some(mk("abc"))` needs four conjuncts for
 its `OPTSTR:` credit; three held. The plan side (`opt_unmatched_esc_ok`,
 routed 08-24) grants the call-arg escape; the refusal was
 `unmatched_optstr_init_is_fresh`'s Some/Ok payload arm asking only the

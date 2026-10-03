@@ -39,31 +39,31 @@ var selfHostLiftSupersedeCases = []struct {
 	// The reported shape: lift, supersede through a spread, move the local into
 	// an `own` parameter, write it back. 8 rounds, so a compiler that loses the
 	// lift answers 1.
-	{"lift-supersede-own", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: CfiState = a.cfi;\n    a = Asm { ...a, cfi: CfiState { bad: [], open: false } };\n    st = directive(st, v);\n    return Asm { ...a, cfi: st };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    var i: i32 = 0;\n    while (i < 8) { a = step(a, i); i = i + 1; }\n    if (!a.cfi.open) { return 70; }\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"lift-supersede-own", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    let st: CfiState = a.cfi;\n    a = Asm { ...a, cfi: CfiState { bad: [], open: false } };\n    st = directive(st, v);\n    return Asm { ...a, cfi: st };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    let i: i32 = 0;\n    while (i < 8) { a = step(a, i); i = i + 1; }\n    if (!a.cfi.open) { return 70; }\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
 	// The same, with the supersede written as a full literal instead of a
 	// spread. Both spellings lower to the same reclaim, and pinning both is
 	// what says the fix is in the release rather than in one literal form.
-	{"lift-supersede-own-full-literal", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: CfiState = a.cfi;\n    a = Asm { cfi: CfiState { bad: [], open: false }, n: a.n };\n    st = directive(st, v);\n    return Asm { ...a, cfi: st };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    var i: i32 = 0;\n    while (i < 8) { a = step(a, i); i = i + 1; }\n    if (!a.cfi.open) { return 70; }\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"lift-supersede-own-full-literal", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    let st: CfiState = a.cfi;\n    a = Asm { cfi: CfiState { bad: [], open: false }, n: a.n };\n    st = directive(st, v);\n    return Asm { ...a, cfi: st };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    let i: i32 = 0;\n    while (i < 8) { a = step(a, i); i = i + 1; }\n    if (!a.cfi.open) { return 70; }\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
 	// Straight-line, no loop: two calls, expecting 2. The loop is not what
 	// carries the defect, and a row that says so keeps a future fix from being
 	// written as a loop-rotation special case.
-	{"lift-supersede-own-straightline", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: CfiState = a.cfi;\n    a = Asm { ...a, cfi: CfiState { bad: [], open: false } };\n    st = directive(st, v);\n    return Asm { ...a, cfi: st };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"lift-supersede-own-straightline", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    let st: CfiState = a.cfi;\n    a = Asm { ...a, cfi: CfiState { bad: [], open: false } };\n    st = directive(st, v);\n    return Asm { ...a, cfi: st };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
 	// Control: no supersede — the rebind carries the same `cfi` pointer, so the
 	// plain carried compare already spared it. Correct before the fix as well
 	// as after; it pins that the uniq arm did not disturb the carried path.
-	{"carried-field-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: CfiState = a.cfi;\n    a = Asm { ...a, n: a.n + 1 };\n    st = directive(st, v);\n    return Asm { ...a, cfi: st };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    var i: i32 = 0;\n    while (i < 8) { a = step(a, i); i = i + 1; }\n    if (!a.cfi.open) { return 70; }\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"carried-field-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    let st: CfiState = a.cfi;\n    a = Asm { ...a, n: a.n + 1 };\n    st = directive(st, v);\n    return Asm { ...a, cfi: st };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    let i: i32 = 0;\n    while (i < 8) { a = step(a, i); i = i + 1; }\n    if (!a.cfi.open) { return 70; }\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
 	// Control: the callee BORROWS the field instead of owning it, so no box is
 	// reused in place and old.f / new.f cannot coincide this way. Correct
 	// before the fix too — the `own` position is half of what it takes.
-	{"borrowed-callee-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: CfiState = a.cfi;\n    a = Asm { ...a, cfi: CfiState { bad: [], open: false } };\n    st = directive(st, v);\n    return Asm { ...a, cfi: st };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    var i: i32 = 0;\n    while (i < 8) { a = step(a, i); i = i + 1; }\n    if (!a.cfi.open) { return 70; }\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"borrowed-callee-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    let st: CfiState = a.cfi;\n    a = Asm { ...a, cfi: CfiState { bad: [], open: false } };\n    st = directive(st, v);\n    return Asm { ...a, cfi: st };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    let i: i32 = 0;\n    while (i < 8) { a = step(a, i); i = i + 1; }\n    if (!a.cfi.open) { return 70; }\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
 	// Control: no call at all — the field is rebuilt inline, so nothing can
 	// reuse its box. The other half of the pair.
-	{"no-call-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: CfiState = a.cfi;\n    a = Asm { ...a, cfi: CfiState { bad: [], open: false } };\n    st = CfiState { ...st, bad: st.bad.append(v), open: true };\n    return Asm { ...a, cfi: st };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    var i: i32 = 0;\n    while (i < 8) { a = step(a, i); i = i + 1; }\n    if (!a.cfi.open) { return 70; }\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"no-call-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    let st: CfiState = a.cfi;\n    a = Asm { ...a, cfi: CfiState { bad: [], open: false } };\n    st = CfiState { ...st, bad: st.bad.append(v), open: true };\n    return Asm { ...a, cfi: st };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    let i: i32 = 0;\n    while (i < 8) { a = step(a, i); i = i + 1; }\n    if (!a.cfi.open) { return 70; }\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 }
 
 // TestSelfHostLiftSupersedeOwnX86_64 — the production x86-64 IR path against
@@ -72,7 +72,7 @@ func TestSelfHostLiftSupersedeOwnX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range selfHostLiftSupersedeCases {
@@ -105,7 +105,7 @@ func TestSelfHostLiftSupersedeOwnArm64(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range selfHostLiftSupersedeCases {
@@ -136,7 +136,7 @@ func TestSelfHostLiftSupersedeOwnWasmIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	for _, tc := range selfHostLiftSupersedeCases {

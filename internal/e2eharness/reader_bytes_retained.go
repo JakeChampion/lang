@@ -11,11 +11,11 @@ func ReaderBytesRetainedProgram(request, slotBytes, reads int, sanitize bool) st
 		bound = ""
 	}
 	return fmt.Sprintf(`function main(): i32 {
-  var r: Reader = match (open_reader("input")) {
+  let r: Reader = match (open_reader("input")) {
     Ok(reader) => { reader }, Err(_) => { return 1; }
   };
-  var chunks: u8[][] = [];
-  var before = __heap_bump_bytes();
+  let chunks: u8[][] = [];
+  let before = __heap_bump_bytes();
   for i in 0..%d {
     match (r.seek(0 as i64, 0)) { Ok(_) => {}, Err(_) => { return 2; } }
     match (r.read_chunk_bytes(%d)) {
@@ -23,7 +23,7 @@ func ReaderBytesRetainedProgram(request, slotBytes, reads int, sanitize bool) st
       Err(_) => { return 3; }
     }
   }
-  var growth = __heap_bump_bytes() - before;
+  let growth = __heap_bump_bytes() - before;
   for chunk in chunks {
     if (chunk.len() != 1024) { return 4; }
     for j in 0..1024 { if (chunk[j] != (j %% 256) as u8) { return 5; } }

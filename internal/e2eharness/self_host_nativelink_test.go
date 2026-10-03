@@ -31,13 +31,13 @@ func TestNativeLinkX86MatchesGccLink(t *testing.T) {
 	// native path only (TestEncodeAluImmSize pins the encoding; this pins
 	// the behaviour end-to-end).
 	src := `function main(): i32 {
-    var parts: string[] = ["fern", "native", "link"];
-    var joined: string = "";
+    let parts: string[] = ["fern", "native", "link"];
+    let joined: string = "";
     for p in parts {
         joined = joined + p + ".";
     }
     print(joined);
-    var total: i32 = 0;
+    let total: i32 = 0;
     for i in 0..10 {
         total = total + i;
     }
@@ -80,7 +80,7 @@ function qword(x: i32): i32 { return x + 4; }
 function mod(x: i32): i32 { return x + 5; }
 function __fern_alloc(x: i32): i32 { return x + 1; }
 function main(): i32 {
-    var a: i32[] = [1, 2, 3];
+    let a: i32[] = [1, 2, 3];
     return cs(1) + gs(1) + r16(1) + qword(1) + mod(1) + __fern_alloc(a.len() + 38);
 }
 `
@@ -163,13 +163,13 @@ func TestNativeLinkArm64MatchesGccLink(t *testing.T) {
 	t.Parallel()
 	gcc, qemu := Arm64Tooling(t) // skips when the aarch64 toolchain is absent
 	src := `function main(): i32 {
-    var parts: string[] = ["fern", "native", "link"];
-    var joined: string = "";
+    let parts: string[] = ["fern", "native", "link"];
+    let joined: string = "";
     for p in parts {
         joined = joined + p + ".";
     }
     print(joined);
-    var total: i32 = 0;
+    let total: i32 = 0;
     for i in 0..10 {
         total = total + i;
     }

@@ -6,7 +6,7 @@ below already.
 ```fern
 t = t + slen(if (j > 1) { s } else { s + "x" });
 t = t + px(if (j > 1) { p } else { P { x: 3, y: j } });
-var b = if (j > 1) { s } else { s + "x" };
+let b = if (j > 1) { s } else { s + "x" };
 ```
 
 An if, match or block arm retained an array local it yielded and nothing
@@ -35,8 +35,8 @@ which keeps the retain a superset of what the binding credits below accept.
   its `DYN:` credit names. They now walk each arm body
   (`cond_yield_arms`), so #10438's "a block's tail local moves out" rule
   applies to an arm's tail local as well
-  (`else { var z: dyn Shape = Square { … }; z }`). An alias initializer
-  (`{ var q = s; q }`) is refused: that block hands `s`'s box on uncounted.
+  (`else { let z: dyn Shape = Square { … }; z }`). An alias initializer
+  (`{ let q = s; q }`) is refused: that block hands `s`'s box on uncounted.
 - **The yielded local keeps its credit.** The string (`STR:`, both families),
   dyn (`DYN:`) and plan-off struct escape gates read
   `cond_leaf_credit_view`: the body with every retained yield of that name
@@ -90,5 +90,5 @@ holds the five new programs to the interpreter's answer on both lowerings.
 - A string-fielded struct passed as an argument is still not stashed, so the
   last row above leaks its fresh arms (the #10438 stash gate).
 - A string alias declared in a loop body over a string declared outside it
-  (`var keep = s;`) loses both credits: 1 / 0 on the base as well. Unrelated
+  (`let keep = s;`) loses both credits: 1 / 0 on the base as well. Unrelated
   to conditionals.

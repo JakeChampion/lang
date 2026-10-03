@@ -6,8 +6,8 @@
 // leaks, only to how visible the leak is. The straight-line form of the same
 // reassignment, and a literal array, both reclaim correctly:
 //
-//   var xs: i32[] = [1, 2, 3];                      -> allocs=4  frees=4   ok
-//   var xs: i32[] = []; xs = xs.append(1);          -> allocs=8  frees=8   ok
+//   let xs: i32[] = [1, 2, 3];                      -> allocs=4  frees=4   ok
+//   let xs: i32[] = []; xs = xs.append(1);          -> allocs=8  frees=8   ok
 //   while (i < 1) { xs = xs.append(i); i = i + 1; } -> allocs=8  frees=4   LEAK
 //
 // Measure exactly with the built-in leak detector rather than RSS (RSS hides
@@ -24,8 +24,8 @@
 // out.append(tok)` in a `while (true)`), which is ~69% of the per-load leak.
 
 function build(n: i32): i32 {
-  var xs: i32[] = [];
-  var i: i32 = 0;
+  let xs: i32[] = [];
+  let i: i32 = 0;
   while (i < n) {
     xs = xs.append(i);
     i = i + 1;
@@ -34,8 +34,8 @@ function build(n: i32): i32 {
 }
 
 function main(): i32 {
-  var acc: i32 = 0;
-  var r: i32 = 0;
+  let acc: i32 = 0;
+  let r: i32 = 0;
   while (r < 4) {
     acc = acc + build(1000);
     r = r + 1;

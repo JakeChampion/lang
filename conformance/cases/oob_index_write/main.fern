@@ -16,8 +16,8 @@ function put(xs: i32[], i: i32, v: i32): i32[] {
 }
 
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var ys: i32[] = put(xs, 7, 9);
+    let xs: i32[] = [1, 2, 3];
+    let ys: i32[] = put(xs, 7, 9);
     print(ys.len().to_string());
     return 0;
 }

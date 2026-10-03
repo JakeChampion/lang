@@ -10,10 +10,10 @@ No append, no `.with`. An alias, and a spread that overrides an rc array field:
 ```fern
 struct S { ops: i32[], n: i32 }
 function run(x: i32): i32 {
-    var s: S = S { ops: [1, 2, 3], n: 0 };
-    var i: i32 = 0;
+    let s: S = S { ops: [1, 2, 3], n: 0 };
+    let i: i32 = 0;
     while (i < 200) {
-        var prev: S = s;
+        let prev: S = s;
         s = S { ...s, ops: [4, 5, 6], n: s.n + 1 };
         i = i + 1;
     }
@@ -66,7 +66,7 @@ rests on:
 > reference (`__fern_rc_dec`) so **the surviving owner reaches rc 1 and does the
 > deep work**
 
-Here the surviving owner is `var prev: S = s;`, a LOOP-SCOPED binding. Hoisting
+Here the surviving owner is `let prev: S = s;`, a LOOP-SCOPED binding. Hoisting
 it to function scope and reassigning it, changing nothing else:
 
 | alias scope | self-host | native |
@@ -89,8 +89,8 @@ per-call cost of a different origin, unchased.
 
 The probe's shape does not literally occur in the compiler. Walking each
 function in `irlower.fern` with real brace tracking finds **zero** loop-scoped
-`var X: LowerState = <ident>;` bindings. The 77 a first, sloppier pass reported
-were function-scope state threading — `function f(s: LowerState) { var st = s; … }`
+`let X: LowerState = <ident>;` bindings. The 77 a first, sloppier pass reported
+were function-scope state threading — `function f(s: LowerState) { let st = s; … }`
 — mis-attributed because an earlier function's `while` left the loop stack
 non-empty. Verifying two by eye is what caught it.
 

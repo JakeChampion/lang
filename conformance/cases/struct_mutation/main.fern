@@ -4,7 +4,7 @@
 struct Counter { n: i32 }
 
 function main(): i32 {
-    var c: Counter = Counter { n: 0 };
+    let c: Counter = Counter { n: 0 };
     c.n = c.n + 40;
     c.n = c.n + 2;
     return c.n;

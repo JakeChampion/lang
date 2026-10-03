@@ -13,7 +13,7 @@
 // instead of [true,false]. A BARE boolean was always fine; only the element
 // path was wrong, which is why no fixture caught it: none had a boolean[].
 //
-// NOT covered here, deliberately: a boolean SCALAR local (`var ok = true;
+// NOT covered here, deliberately: a boolean SCALAR local (`let ok = true;
 // ok.to_json()`) and the `for b in bs` loop variable, which is one. Those
 // dispatch as i32 on the self-host path for a different, pre-existing reason —
 // there is no per-slot flag for a scalar boolean, only for the array — so
@@ -24,12 +24,12 @@ import "std/json";
 struct Bag { ints: i32[], strs: string[], floats: f64[], bigs: i64[], flags: boolean[] }
 
 // A boolean[] PARAMETER, which reaches the slot through the param table rather
-// than a var binding — a separate wiring from the local, and the one a stdlib
+// than a let binding — a separate wiring from the local, and the one a stdlib
 // helper would take.
 function render(bs: boolean[]): string { return bs.to_json(); }
 
 function main(): i32 {
-    var b: Bag = Bag { ints: [1, 2, 3], strs: ["a", "b"], floats: [1.5], bigs: [7], flags: [true, false] };
+    let b: Bag = Bag { ints: [1, 2, 3], strs: ["a", "b"], floats: [1.5], bigs: [7], flags: [true, false] };
 
     // Through the derive, which is where this surfaced.
     if (b.to_json() != "{\"ints\":[1,2,3],\"strs\":[\"a\",\"b\"],\"floats\":[1.5],\"bigs\":[7],\"flags\":[true,false]}") { return 1; }
@@ -37,20 +37,20 @@ function main(): i32 {
     // Directly on the field, and — the contrast that localises it — the same
     // array bound to a local first, which always worked.
     if (b.ints.to_json() != "[1,2,3]") { return 2; }
-    var xs = b.ints;
+    let xs = b.ints;
     if (xs.to_json() != "[1,2,3]") { return 3; }
     if (b.strs.to_json() != "[\"a\",\"b\"]") { return 4; }
 
     // An empty scalar-array field still renders as an empty JSON array.
-    var e: Bag = Bag { ints: [], strs: [], floats: [], bigs: [], flags: [] };
+    let e: Bag = Bag { ints: [], strs: [], floats: [], bigs: [], flags: [] };
     if (e.ints.to_json() != "[]") { return 5; }
 
     // #6117, every position the boolean[] element kind has to survive: the
     // annotated local, an alias of it, the field, a parameter, a bare literal
     // receiver, and an empty one.
-    var bs: boolean[] = [true, false, true];
+    let bs: boolean[] = [true, false, true];
     if (bs.to_json() != "[true,false,true]") { return 6; }
-    var alias = bs;
+    let alias = bs;
     if (alias.to_json() != "[true,false,true]") { return 7; }
     if (b.flags.to_json() != "[true,false]") { return 8; }
     if (render(bs) != "[true,false,true]") { return 9; }

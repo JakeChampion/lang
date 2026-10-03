@@ -1,13 +1,13 @@
 # A struct local reassigned from an alias reclaimed nothing — killer-drops slice 15
 
 ```
-var p: P = P { xs: [7, 8] };
-var keep: P = P { xs: [0] };
+let p: P = P { xs: [7, 8] };
+let keep: P = P { xs: [0] };
 keep = p;
 ```
 
 Four blocks a round, **80 allocs / 0 frees** over 20 rounds against native's 80/80.
-Not one of them freed. The BIND form (`var keep: P = p;`) has been at parity all
+Not one of them freed. The BIND form (`let keep: P = p;`) has been at parity all
 along, so the split is REASSIGN vs BIND.
 
 ## Two refusals, both deliberate, both with their reason on record

@@ -214,15 +214,15 @@ const probeSrc = ".intel_syntax noprefix\n" +
 // aliased element store (the copy-on-write clone), string ordering and
 // float→u64.
 const adoptSrc = `function main(): i32 {
-  var xs: string[] = [];
+  let xs: string[] = [];
   xs = xs.append("a" + "b");
   xs = xs.append("c");
-  var ys: string[] = xs;
+  let ys: string[] = xs;
   ys = ys.append("d");
   ys = ys.with(0, "z");
-  var lt: boolean = xs[0] < ys[1];
-  var f: f64 = 3.5;
-  var u: u64 = f as u64;
+  let lt: boolean = xs[0] < ys[1];
+  let f: f64 = 3.5;
+  let u: u64 = f as u64;
   if (lt && u == 3u64) { return xs.len(); }
   return 1;
 }`

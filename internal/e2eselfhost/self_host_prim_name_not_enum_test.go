@@ -15,7 +15,7 @@ import (
 // The shapes here are the ones the conformance corpus does not carry. What the
 // corpus does cover, and so is not repeated: `int_checked_div` /
 // `match_expr_arm_width` (u32 / u64 Option payloads), `string_slice_option`
-// (a `str` payload), `char_cast_receiver` (a `var c: char` receiver) and the
+// (a `str` payload), `char_cast_receiver` (a `let c: char` receiver) and the
 // whole `core/bigint` `(u64[], u64)` return chain — every one of them reached
 // the IR path only through the over-match, and they are gated by
 // `TestFernFixturesSelfHostX86_64` under FERN_SELFHOST_FIXTURES=1.
@@ -29,19 +29,19 @@ var primNameNotEnumCases = []struct {
 	// kind — so the destructured array's `a[1]` read its low 32 bits. This
 	// case exits 4 on the compiler before the fix and 0 after; the tuple
 	// element is now admitted as the leak-safe 8-byte array it is
-	// (mark_i64arr + mark_u64, like an annotated `var xs: u64[]`).
+	// (mark_i64arr + mark_u64, like an annotated `let xs: u64[]`).
 	{"u64-array-tuple-element", "function mk(): (u64[], u64) {\n" +
-		"    var q: u64[] = [];\n    q = q.append(18446744073709551615 as u64);\n    q = q.append(4294967296 as u64);\n" +
+		"    let q: u64[] = [];\n    q = q.append(18446744073709551615 as u64);\n    q = q.append(4294967296 as u64);\n" +
 		"    return (q, 4294967297 as u64);\n}\n" +
 		"function main(): i32 {\n" +
-		"    var t: (u64[], u64) = mk();\n" +
+		"    let t: (u64[], u64) = mk();\n" +
 		"    if (t.0[1] != (4294967296 as u64)) { return 1; }\n" +
 		"    if (t.0[0] != (18446744073709551615 as u64)) { return 2; }\n" +
 		"    if (t.1 != (4294967297 as u64)) { return 3; }\n" +
-		"    var (a, b) = mk();\n" +
+		"    let (a, b) = mk();\n" +
 		"    if (a[1] != (4294967296 as u64)) { return 4; }\n" +
 		"    if (b != (4294967297 as u64)) { return 5; }\n" +
-		"    var xs: u64[] = t.0;\n" +
+		"    let xs: u64[] = t.0;\n" +
 		"    if (xs[1] != (4294967296 as u64)) { return 6; }\n" +
 		"    return 0;\n}"},
 	// A `u64[]` ENUM PAYLOAD. is_enum_array_field_type said "array of enum",
@@ -54,7 +54,7 @@ var primNameNotEnumCases = []struct {
 	// annotations, which the stdin driver does not run.
 	{"u64-array-enum-payload", "enum E { Xs(u64[]), N }\n" +
 		"function main(): i32 {\n" +
-		"    var e: E = Xs([18446744073709551615 as u64, 5 as u64]);\n" +
+		"    let e: E = Xs([18446744073709551615 as u64, 5 as u64]);\n" +
 		"    match (e) { Xs(v) => { return v.len() - 2; }, N => { return 3; } }\n" +
 		"    return 9;\n}"},
 	// The plain `struct Q { us: u64[] }` construction from the issue. It is
@@ -63,7 +63,7 @@ var primNameNotEnumCases = []struct {
 	// narrowing did not disturb it, not a repro.
 	{"u64-array-struct-field", "struct Q { us: u64[] }\n" +
 		"function main(): i32 {\n" +
-		"    var q: Q = Q { us: [18446744073709551615 as u64, 2 as u64] };\n" +
+		"    let q: Q = Q { us: [18446744073709551615 as u64, 2 as u64] };\n" +
 		"    if (q.us[0] != (18446744073709551615 as u64)) { return 1; }\n" +
 		"    if (q.us[1] != (2 as u64)) { return 2; }\n" +
 		"    return 0;\n}"},
@@ -72,7 +72,7 @@ var primNameNotEnumCases = []struct {
 	// is covered by is_leaksafe_array_field with i32[] / u32[] / u8[].
 	{"char-array-struct-field", "struct C { cs: char[] }\n" +
 		"function main(): i32 {\n" +
-		"    var c: C = C { cs: [97 as char, 98 as char] };\n" +
+		"    let c: C = C { cs: [97 as char, 98 as char] };\n" +
 		"    if ((c.cs[0] as i32) != 97) { return 1; }\n" +
 		"    if ((c.cs[1] as i32) != 98) { return 2; }\n" +
 		"    return 0;\n}"},
@@ -84,7 +84,7 @@ func TestSelfHostPrimNameNotEnumX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range primNameNotEnumCases {
@@ -121,9 +121,9 @@ func TestSelfHostUsizeArrayFieldRefused(t *testing.T) {
 
 	const src = `struct U { ps: usize[] }
 function main(): i32 {
-    var n: i32 = 0;
-    var r: i32 = 0;
-    while (r < 50) { var u: U = U { ps: [r as usize, 4294967300 as usize] }; n = n + ((u.ps[1] - 4294967296 as usize) as i32) + (u.ps[0] as i32) + u.ps.len(); r = r + 1; }
+    let n: i32 = 0;
+    let r: i32 = 0;
+    while (r < 50) { let u: U = U { ps: [r as usize, 4294967300 as usize] }; n = n + ((u.ps[1] - 4294967296 as usize) as i32) + (u.ps[0] as i32) + u.ps.len(); r = r + 1; }
     return n % 256;
 }
 `

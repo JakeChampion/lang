@@ -1,9 +1,9 @@
 package e2eselfhost
 
 const semanticRecord = `
-var recordType: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [i32t] };
-var wideRecord: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [i64t] };
-var record = semrecords.Record { views: false, ty: recordType, fields: [
+let recordType: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [i32t] };
+let wideRecord: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [i64t] };
+let record = semrecords.Record { views: false, ty: recordType, fields: [
     semrecords.Field { name: "xs", ty: ia }, semrecords.Field { name: "n", ty: i32t }
 ] };
 records = [record];
@@ -21,7 +21,7 @@ func semanticRecordCases() []struct{ name, change, want string } {
 	cases := []struct{ name, change, want string }{
 		{"record-replacement", "", ""},
 		{"record-generic-instances", `records = records.append(semrecords.Record { views: false, ty: wideRecord, fields: [semrecords.Field { name: "xs", ty: typeinfo.TypeArray { elem: i64t, view: false } }, semrecords.Field { name: "n", ty: i64t }] });`, ""},
-		{"record-recursive-schema", `var node: typeinfo.Type = typeinfo.TypeStruct { name: "Node", args: [] }; records = records.append(semrecords.Record { views: false, ty: node, fields: [semrecords.Field { name: "children", ty: typeinfo.TypeArray { elem: node, view: false } }] });`, ""},
+		{"record-recursive-schema", `let node: typeinfo.Type = typeinfo.TypeStruct { name: "Node", args: [] }; records = records.append(semrecords.Record { views: false, ty: node, fields: [semrecords.Field { name: "children", ty: typeinfo.TypeArray { elem: node, view: false } }] });`, ""},
 		{"record-missing-schema", "records = [];", "missing record projection schema"},
 		{"record-duplicate-schema", "records = records.append(record);", "duplicate record schema"},
 		{"record-duplicate-schema-apart", `records = records.append(semrecords.Record { views: false, ty: typeinfo.TypeStruct { name: "Other", args: [] }, fields: [record.fields[1]] }); records = records.append(record);`, "duplicate record schema"},
@@ -52,7 +52,7 @@ func semanticRecordCases() []struct{ name, change, want string } {
 }
 
 const unitRecordDuplicate = `
-var recordType: typeinfo.Type = typeinfo.TypeStruct { name: "Pair", args: [] };
+let recordType: typeinfo.Type = typeinfo.TypeStruct { name: "Pair", args: [] };
 records = [semrecords.Record { views: false, ty: recordType, fields: [
     semrecords.Field { name: "left", ty: sa }, semrecords.Field { name: "right", ty: sa }
 ] }];
@@ -68,7 +68,7 @@ func unitRecordCases() []unitCase {
 		// field's unit: the record is dropped there and the field after the
 		// element read.
 		{"record-borrowed-replacement", semanticRecord + "modes = [2];", `
-var created = find(p, 7, 3, 0 - 1);
+let created = find(p, 7, 3, 0 - 1);
 if (!supply(created, 0, 1, 0, ssaunits.retain_unit()) || !drops(created, [])) { return 40; }
 if (!drops(find(p, 7, 4, 0 - 1), [3]) || !drops(find(p, 7, 6, 0 - 1), [4])) { return 41; }
 `, "", ""},
@@ -76,7 +76,7 @@ if (!drops(find(p, 7, 4, 0 - 1), [3]) || !drops(find(p, 7, 6, 0 - 1), [4])) { re
 		// released there and the field moves into the new record.
 		{"record-counted-replacement", semanticRecord + "modes = [3];", `
 if (!drops(find(p, 7, 1, 0 - 1), [0])) { return 42; }
-var created = find(p, 7, 3, 0 - 1);
+let created = find(p, 7, 3, 0 - 1);
 if (!supply(created, 0, 1, 0, ssaunits.move_unit()) || !drops(created, [])) { return 43; }
 if (!drops(find(p, 7, 4, 0 - 1), [3]) || !drops(find(p, 7, 6, 0 - 1), [4])) { return 50; }
 `, "", ""},
@@ -94,18 +94,18 @@ records = [semrecords.Record { views: false, ty: recordType, fields: [] }];
 params = []; types = [recordType]; modes = [];
 graph = ssa.SFunc { ...graph, nparams: 0, nvals: 1, blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(ssasem.record_new(), 0, [], 0)], term: ret(0) }] };
 `, `if (!supply(find(p, 7, ssaunits.return_point(), 0 - 1), 0, 0, 0, ssaunits.move_unit())) { return 49; }`, "", ""},
-		{"record-leaked-replacement", semanticRecord + "modes = [2];", "", `var s = find(p, 7, 6, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [] });`, "counted unit leaks at return"},
-		{"record-missing-borrowed-supply", semanticRecord + "modes = [2];", "", `var s = find(p, 7, 3, 0 - 1); p = replace(p, ssaunits.Step { ...s, supplies: [] });`, "unit supply arity"},
+		{"record-leaked-replacement", semanticRecord + "modes = [2];", "", `let s = find(p, 7, 6, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [] });`, "counted unit leaks at return"},
+		{"record-missing-borrowed-supply", semanticRecord + "modes = [2];", "", `let s = find(p, 7, 3, 0 - 1); p = replace(p, ssaunits.Step { ...s, supplies: [] });`, "unit supply arity"},
 		{"record-duplicate-stores", unitRecordDuplicate, `
-var s = find(p, 7, 1, 0 - 1);
+let s = find(p, 7, 1, 0 - 1);
 if (!supply(s, 0, 0, 0, ssaunits.retain_unit()) || !supply(s, 1, 0, 1, ssaunits.move_unit())) { return 44; }
 `, "", ""},
 		{"record-duplicate-borrowed-stores", unitRecordDuplicate + "modes = [2];", `
-var s = find(p, 7, 1, 0 - 1);
+let s = find(p, 7, 1, 0 - 1);
 if (!supply(s, 0, 0, 0, ssaunits.retain_unit()) || !supply(s, 1, 0, 1, ssaunits.retain_unit())) { return 45; }
 `, "", ""},
-		{"record-double-move", unitRecordDuplicate, "", `var s = find(p, 7, 1, 0 - 1); var a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 2 }, s.supplies[1]] });`, "move without counted unit"},
-		{"record-borrowed-move", unitRecordDuplicate + "modes = [2];", "", `var s = find(p, 7, 1, 0 - 1); var a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 2 }, s.supplies[1]] });`, "move without counted unit"},
-		{"record-changed-schema", unitRecordDuplicate, "", `var r = f.records.list[0]; f = ssasem.Func { ...f, records: semrecords.records_of([semrecords.Record { ...r, fields: [r.fields[0]] }]) };`, "record construction arity"},
+		{"record-double-move", unitRecordDuplicate, "", `let s = find(p, 7, 1, 0 - 1); let a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 2 }, s.supplies[1]] });`, "move without counted unit"},
+		{"record-borrowed-move", unitRecordDuplicate + "modes = [2];", "", `let s = find(p, 7, 1, 0 - 1); let a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 2 }, s.supplies[1]] });`, "move without counted unit"},
+		{"record-changed-schema", unitRecordDuplicate, "", `let r = f.records.list[0]; f = ssasem.Func { ...f, records: semrecords.records_of([semrecords.Record { ...r, fields: [r.fields[0]] }]) };`, "record construction arity"},
 	}
 }

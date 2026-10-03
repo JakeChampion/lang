@@ -36,10 +36,10 @@ func TestNumericLiteralErrorsCarryCode(t *testing.T) {
 	// a magnitude no double can hold is P002, not a silent +Inf. The
 	// self-host front end has to agree, which is what #6842 was about, so both
 	// sides of the boundary are pinned here as well as there.
-	if c := codeOf(`function main(): i32 { var x: f64 = 1e309; return 0; }`); c != "P002" {
+	if c := codeOf(`function main(): i32 { let x: f64 = 1e309; return 0; }`); c != "P002" {
 		t.Errorf("out-of-range float literal: code = %q, want P002", c)
 	}
-	if c := codeOf(`function main(): i32 { var x: f32 = 1e400f32; return 0; }`); c != "P002" {
+	if c := codeOf(`function main(): i32 { let x: f32 = 1e400f32; return 0; }`); c != "P002" {
 		t.Errorf("out-of-range suffixed float literal: code = %q, want P002", c)
 	}
 	// The accepted side. The boundary is decided by round-to-nearest, so the
@@ -47,11 +47,11 @@ func TestNumericLiteralErrorsCarryCode(t *testing.T) {
 	// both valid; UNDERFLOW is not a range error at all (strconv returns a
 	// subnormal / ±0 with no error); and f32's range does not gate a literal.
 	for _, src := range []string{
-		`function main(): i32 { var x: f64 = 1.7976931348623157e308; return 0; }`,
-		`function main(): i32 { var x: f64 = 1.7976931348623158e308; return 0; }`,
-		`function main(): i32 { var x: f64 = 1e-400; return 0; }`,
-		`function main(): i32 { var x: f64 = 5e-324; return 0; }`,
-		`function main(): i32 { var x: f32 = 3.5e38; return 0; }`,
+		`function main(): i32 { let x: f64 = 1.7976931348623157e308; return 0; }`,
+		`function main(): i32 { let x: f64 = 1.7976931348623158e308; return 0; }`,
+		`function main(): i32 { let x: f64 = 1e-400; return 0; }`,
+		`function main(): i32 { let x: f64 = 5e-324; return 0; }`,
+		`function main(): i32 { let x: f32 = 3.5e38; return 0; }`,
 	} {
 		if _, err := Parse(src); err != nil {
 			t.Errorf("%s: unexpected parse error: %v", src, err)
@@ -106,7 +106,7 @@ func TestParseDeferAndErrDefer(t *testing.T) {
 // self-host parser. No trailing `;` follows the closing brace.
 func TestParseDeferBlockForm(t *testing.T) {
 	prog, err := Parse(`function f(): Result[i32, i32] {
-		var x: i32 = 0;
+		let x: i32 = 0;
 		defer { x = x + 1; }
 		errdefer { x = x + 2; }
 		return Ok(x);
@@ -204,7 +204,7 @@ func TestParseAssertDesugar(t *testing.T) {
 
 	// `assert` is only special in statement position with a following `(`;
 	// as an ordinary identifier it still parses fine.
-	if _, err := Parse(`function main(): i32 { var assert: i32 = 5; return assert; }`); err != nil {
+	if _, err := Parse(`function main(): i32 { let assert: i32 = 5; return assert; }`); err != nil {
 		t.Errorf("`assert` as an identifier should still parse: %v", err)
 	}
 }
@@ -324,7 +324,7 @@ func TestBitwiseLooserThanCompare(t *testing.T) {
 }
 
 func TestArrayLitAndIndex(t *testing.T) {
-	prog, err := Parse("function f(): i32 { var a: i32[] = [1,2,3]; return a[1]; }")
+	prog, err := Parse("function f(): i32 { let a: i32[] = [1,2,3]; return a[1]; }")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +359,7 @@ func TestIfElse(t *testing.T) {
 // `for` produces a real For node (so `continue` can target the step).
 func TestForProducesForNode(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-		for (var i = 0; i < 3; i = i + 1) { i; }
+		for (let i = 0; i < 3; i = i + 1) { i; }
 		return 0;
 	}`)
 	if err != nil {
@@ -378,12 +378,12 @@ func TestForProducesForNode(t *testing.T) {
 }
 
 // `for x in arr { body }` desugars to a Block containing a few
-// synthetic `var` declarations and a For loop (not a While, so
+// synthetic `let` declarations and a For loop (not a While, so
 // `continue` advances the index via the For's step slot rather
 // than skipping it).
 func TestForEachOverArrayDesugars(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-		var sum: i32 = 0;
+		let sum: i32 = 0;
 		for x in [1, 2, 3] {
 			sum = sum + x;
 		}
@@ -417,8 +417,8 @@ func TestForEachOverArrayDesugars(t *testing.T) {
 func TestForEachOverStructFieldDesugars(t *testing.T) {
 	prog, err := Parse(`struct Bag { items: i32[] }
 	function f(): i32 {
-		var b = Bag { items: [1, 2, 3] };
-		var sum: i32 = 0;
+		let b = Bag { items: [1, 2, 3] };
+		let sum: i32 = 0;
 		for x in b.items {
 			sum = sum + x;
 		}
@@ -444,12 +444,12 @@ func TestForEachOverStructFieldDesugars(t *testing.T) {
 }
 
 // `for i in LOW..HIGH { body }` desugars to a Block of `{ var
-// __range_hi = HIGH; for (var i = LOW; i < __range_hi; i = i + 1)
+// __range_hi = HIGH; for (let i = LOW; i < __range_hi; i = i + 1)
 // { body } }` — HIGH bound once, a For (not While) so `continue`
 // advances via the step.
 func TestForInRangeDesugars(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-		var sum: i32 = 0;
+		let sum: i32 = 0;
 		for i in 0..5 {
 			sum = sum + i;
 		}
@@ -483,11 +483,11 @@ func TestForInRangeDesugars(t *testing.T) {
 // `for i in LOW..=HIGH { body }` is the inclusive (closed-interval) range. It
 // cannot test `i <= hi` after the step — at the type's maximum the step wraps
 // and the loop never ends (#10359) — so it runs on a flag the step clears when
-// i reaches HIGH: `{ var hi = HIGH; var i = LOW; var go = i <= hi;
+// i reaches HIGH: `{ let hi = HIGH; let i = LOW; let go = i <= hi;
 // for (; go; { go = i != hi; i = i + 1; }) { body } }`.
 func TestForInInclusiveRangeDesugars(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-		var sum: i32 = 0;
+		let sum: i32 = 0;
 		for i in 0..=5 {
 			sum = sum + i;
 		}
@@ -507,7 +507,7 @@ func TestForInInclusiveRangeDesugars(t *testing.T) {
 	iv, ok2 := blk.Stmts[1].(*ast.Var)
 	gv, ok3 := blk.Stmts[2].(*ast.Var)
 	if !ok1 || !ok2 || !ok3 || iv.Name != "i" {
-		t.Fatalf("expected `var hi; var i; var go`, got %T %T %T", blk.Stmts[0], blk.Stmts[1], blk.Stmts[2])
+		t.Fatalf("expected `let hi; let i; let go`, got %T %T %T", blk.Stmts[0], blk.Stmts[1], blk.Stmts[2])
 	}
 	if b, ok := gv.Init.(*ast.Binary); !ok || b.Op != "<=" {
 		t.Errorf("go flag should start as `i <= hi` (empty when LOW > HIGH), got %T", gv.Init)
@@ -517,7 +517,7 @@ func TestForInInclusiveRangeDesugars(t *testing.T) {
 		t.Fatalf("fourth stmt should be a For (so continue runs the step), got %T", blk.Stmts[3])
 	}
 	if loop.Init != nil {
-		t.Errorf("the loop var is declared before the go flag, not in Init; got %T", loop.Init)
+		t.Errorf("the loop let is declared before the go flag, not in Init; got %T", loop.Init)
 	}
 	if id, ok := loop.Cond.(*ast.Ident); !ok || id.Name != gv.Name {
 		t.Errorf("inclusive range loop cond should be the go flag %q, got %T", gv.Name, loop.Cond)
@@ -541,7 +541,7 @@ func TestForInInclusiveRangeDesugars(t *testing.T) {
 // diverging without pattern-matching a literal-true While condition.
 func TestLoopParsesToCanonicalLoopNode(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-		var i: i32 = 0;
+		let i: i32 = 0;
 		loop { i = i + 1; if (i >= 3) { break; } }
 		return i;
 	}`)
@@ -608,7 +608,7 @@ func labelOf(s ast.Stmt) string {
 // indexing, so the desugar applies identically.
 func TestForEachOverStringDesugars(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-		var sum: i32 = 0;
+		let sum: i32 = 0;
 		for c in "abc" {
 			sum = sum + c;
 		}
@@ -627,7 +627,7 @@ func TestForEachOverStringDesugars(t *testing.T) {
 // loop can't shadow the outer's iterator / length / index.
 func TestForEachNestedHasUniqueSlots(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-		var s: i32 = 0;
+		let s: i32 = 0;
 		for a in [1, 2] {
 			for b in [3, 4] {
 				s = s + a + b;
@@ -668,7 +668,7 @@ func TestForEachNestedHasUniqueSlots(t *testing.T) {
 }
 
 // A destructuring `for` header parses through the SAME pattern grammar as
-// `var (a, b) = e;` and stays un-lowered: which loop it becomes depends on the
+// `let (a, b) = e;` and stays un-lowered: which loop it becomes depends on the
 // iterand's type, which only the checker knows (#6096). The node is wrapped in
 // a Block whose Sugar is the loop, so `-fmt` and the checker's swap both find
 // it in a statement slot.
@@ -688,7 +688,7 @@ func TestForEachPatternHeaderParses(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			prog, err := Parse("function f(): i32 {\n var sum: i32 = 0;\n" + tc.src + "\n return sum;\n}")
+			prog, err := Parse("function f(): i32 {\n let sum: i32 = 0;\n" + tc.src + "\n return sum;\n}")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -718,8 +718,8 @@ func TestForEachPatternHeaderParses(t *testing.T) {
 // opens with; the two are told apart by what follows the MATCHING `)`.
 func TestForHeaderParenDisambiguation(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-		var sum: i32 = 0;
-		for (var i: i32 = 0; i < 3; i = i + 1) { sum = sum + i; }
+		let sum: i32 = 0;
+		for (let i: i32 = 0; i < 3; i = i + 1) { sum = sum + i; }
 		return sum;
 	}`)
 	if err != nil {
@@ -729,7 +729,7 @@ func TestForHeaderParenDisambiguation(t *testing.T) {
 		t.Errorf("C-style for should still parse to *ast.For, got %T", prog.Funcs[0].Body.Stmts[1])
 	}
 	// A one-element parenthesised binder is not a tuple pattern, and says so
-	// in the same words `var (x) = e;` does.
+	// in the same words `let (x) = e;` does.
 	_, err = Parse(`function f(): i32 { for (x) in xs { } return 0; }`)
 	if err == nil || !strings.Contains(err.Error(), "tuple pattern needs at least 2 elements") {
 		t.Errorf("for (x) in xs should report the shared tuple-pattern error, got %v", err)
@@ -740,7 +740,7 @@ func TestForHeaderParenDisambiguation(t *testing.T) {
 // while loop — same semantics as a hand-written index loop.
 func TestForEachBreakContinue(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-		var sum: i32 = 0;
+		let sum: i32 = 0;
 		for x in [1, 2, 3, 4] {
 			if (x == 2) { continue; }
 			if (x == 4) { break; }
@@ -758,7 +758,7 @@ func TestForEachBreakContinue(t *testing.T) {
 
 func TestForWithExprInit(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-		var i = 0;
+		let i = 0;
 		for (i = 0; i < 3; i = i + 1) {}
 		return 0;
 	}`)
@@ -771,7 +771,7 @@ func TestForWithExprInit(t *testing.T) {
 func TestForEmptyInitAndStep(t *testing.T) {
 	// `for (; cond; ) body` — no init, no step.
 	prog, err := Parse(`function f(): i32 {
-		var i = 0;
+		let i = 0;
 		for (; i < 3 ;) { i = i + 1; }
 		return i;
 	}`)
@@ -813,8 +813,8 @@ func TestNullaryFunctionType(t *testing.T) {
 // run reports every problem, not just the first.
 func TestRecoversAndReportsMultiplePerStatement(t *testing.T) {
 	src := `function f(): i32 {
-		var x = ;
-		var y = 1 +;
+		let x = ;
+		let y = 1 +;
 		return 0;
 	}`
 	prog, err := Parse(src)
@@ -870,7 +870,7 @@ func TestFloatLiteralAndType(t *testing.T) {
 // FloatType{Width:64, Spelling:"float"}. A `float.`-qualified name
 // stays a module struct reference.
 func TestFloatAliasType(t *testing.T) {
-	prog, err := Parse(`function f(x: float): float { var xs: float[] = [x]; return xs[0] as float; }`)
+	prog, err := Parse(`function f(x: float): float { let xs: float[] = [x]; return xs[0] as float; }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -886,7 +886,7 @@ func TestFloatAliasType(t *testing.T) {
 	}
 	at, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Var).Type.(ast.ArrayType)
 	if !ok || at.Elem.(ast.FloatType).Width != 64 {
-		t.Errorf("var type = %#v, want float[] with f64 elem", prog.Funcs[0].Body.Stmts[0].(*ast.Var).Type)
+		t.Errorf("let type = %#v, want float[] with f64 elem", prog.Funcs[0].Body.Stmts[0].(*ast.Var).Type)
 	}
 
 	prog, err = Parse(`function g(v: float.Vec): i32 { return 0; }`)
@@ -900,7 +900,7 @@ func TestFloatAliasType(t *testing.T) {
 }
 
 func TestCompoundAssignDesugars(t *testing.T) {
-	prog, err := Parse(`function f(): i32 { var x: i32 = 1; x += 2; return x; }`)
+	prog, err := Parse(`function f(): i32 { let x: i32 = 1; x += 2; return x; }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -923,7 +923,7 @@ func TestCompoundAssignDesugars(t *testing.T) {
 // allowing only Ident/Index targets rejects a field lvalue with P003 even
 // though plain `=` accepts it.
 func TestCompoundAssignFieldDesugars(t *testing.T) {
-	prog, err := Parse(`struct A { v: i32 } function f(): i32 { var a: A = A { v: 1 }; a.v += 2; return a.v; }`)
+	prog, err := Parse(`struct A { v: i32 } function f(): i32 { let a: A = A { v: 1 }; a.v += 2; return a.v; }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -970,7 +970,7 @@ func TestNonLvalueAssignTargetsRejected(t *testing.T) {
 		`function f(): i32 { 1 = 2; return 0; }`,
 		`function g(): i32 { return 0; } function f(): i32 { g() = 2; return 0; }`,
 		`function f(): i32 { "s" = "t"; return 0; }`,
-		`function f(): i32 { var a: i32 = 1; a.b.c() = 2; return a; }`,
+		`function f(): i32 { let a: i32 = 1; a.b.c() = 2; return a; }`,
 	} {
 		_, err := Parse(src)
 		if err == nil {
@@ -1074,7 +1074,7 @@ func TestIfExpr(t *testing.T) {
 // Kind, so at parse time we just verify the shape.
 func TestTryOpParses(t *testing.T) {
 	prog, err := Parse(`function f(m: Map[i32, i32]): Option[i32] {
-		var v: i32 = m.get(7)?;
+		let v: i32 = m.get(7)?;
 		return Some(v + 1);
 	}`)
 	if err != nil {
@@ -1257,7 +1257,7 @@ func TestMatchExprParses(t *testing.T) {
 // a *ast.BlockExpr whose Stmts hold the statements and Tail the value.
 func TestBlockExprIfBranch(t *testing.T) {
 	prog, err := Parse(`function f(e: i32): i32 {
-		return if (e > 0) { var k = e + 1; k } else { 0 };
+		return if (e > 0) { let k = e + 1; k } else { 0 };
 	}`)
 	if err != nil {
 		t.Fatal(err)
@@ -1307,7 +1307,7 @@ func TestBlockExprSingleExprUnchanged(t *testing.T) {
 // it's used in value position).
 func TestBlockExprNoTail(t *testing.T) {
 	prog, err := Parse(`function f(b: boolean): i32 {
-		return if (b) { var k = 1; } else { 0 };
+		return if (b) { let k = 1; } else { 0 };
 	}`)
 	if err != nil {
 		t.Fatal(err)
@@ -1329,7 +1329,7 @@ func TestBlockExprNoTail(t *testing.T) {
 // nested IfExpr lives in the outer's Else slot.
 func TestBlockExprElseIfChain(t *testing.T) {
 	prog, err := Parse(`function f(n: i32): i32 {
-		return if (n == 1) { var a = 10; a } else if (n == 2) { 20 } else { 30 };
+		return if (n == 1) { let a = 10; a } else if (n == 2) { 20 } else { 30 };
 	}`)
 	if err != nil {
 		t.Fatal(err)
@@ -1349,7 +1349,7 @@ func TestBlockExprElseIfChain(t *testing.T) {
 func TestBlockExprMatchArm(t *testing.T) {
 	prog, err := Parse(`function f(tag: i32): i32 {
 		return match (tag) {
-			0 => { var s = tag + 5; s },
+			0 => { let s = tag + 5; s },
 			_ => 99
 		};
 	}`)
@@ -1386,7 +1386,7 @@ func TestStructDecl(t *testing.T) {
 func TestStructLitAndFieldAccess(t *testing.T) {
 	prog, err := Parse(`struct P { x: i32 }
 		function main(): i32 {
-			var p: P = P { x: 5 };
+			let p: P = P { x: 5 };
 			return p.x;
 		}`)
 	if err != nil {
@@ -1409,8 +1409,8 @@ func TestStructLitAndFieldAccess(t *testing.T) {
 func TestStructUpdateLitParses(t *testing.T) {
 	prog, err := Parse(`struct P { x: i32, y: i32 }
 		function main(): i32 {
-			var a: P = P { x: 1, y: 2 };
-			var b: P = P { ...a, y: 9 };
+			let a: P = P { x: 1, y: 2 };
+			let b: P = P { ...a, y: 9 };
 			return b.y;
 		}`)
 	if err != nil {
@@ -1437,8 +1437,8 @@ func TestStructUpdateLitParses(t *testing.T) {
 func TestStructUpdateLitPureCopyParses(t *testing.T) {
 	prog, err := Parse(`struct P { x: i32, y: i32 }
 		function main(): i32 {
-			var a: P = P { x: 1, y: 2 };
-			var b: P = P { ...a };
+			let a: P = P { x: 1, y: 2 };
+			let b: P = P { ...a };
 			return b.x;
 		}`)
 	if err != nil {
@@ -1480,7 +1480,7 @@ func TestStructLitTypeArgsParse(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			prog, err := Parse(`function main(): i32 { var v = ` + tc.init + `; return 0; }`)
+			prog, err := Parse(`function main(): i32 { let v = ` + tc.init + `; return 0; }`)
 			if err != nil {
 				t.Fatalf("parse %s: %v", tc.init, err)
 			}
@@ -1516,10 +1516,10 @@ func TestStructLitTypeArgsParse(t *testing.T) {
 // `Ident { … }` form uses.
 func TestStructLitTypeArgsDoNotClaimIndexing(t *testing.T) {
 	prog, err := Parse(`function main(): i32 {
-			var xs = [1, 2, 3];
-			var n = 0;
+			let xs = [1, 2, 3];
+			let n = 0;
 			while (xs[0] > 0) { n = n + 1; }
-			var y = xs[1];
+			let y = xs[1];
 			return y + n;
 		}`)
 	if err != nil {
@@ -1553,7 +1553,7 @@ func TestCallTypeArgsShapes(t *testing.T) {
 		{`fs[m.k](a)`, nil},
 	}
 	for _, tc := range cases {
-		prog, err := Parse(`function main(): i32 { var v = ` + tc.call + `; return 0; }`)
+		prog, err := Parse(`function main(): i32 { let v = ` + tc.call + `; return 0; }`)
 		if err != nil {
 			t.Fatalf("parse %s: %v", tc.call, err)
 		}
@@ -1685,7 +1685,7 @@ pub(package) const K: i32 = 3;`)
 // `pub var` (or any other kind of decl) should be rejected with a
 // clear message rather than silently swallowed.
 func TestPubBeforeUnsupportedKindIsError(t *testing.T) {
-	_, err := Parse(`pub var x: i32 = 1;`)
+	_, err := Parse(`pub let x: i32 = 1;`)
 	if err == nil {
 		t.Fatal("expected parse error for `pub var`")
 	}
@@ -1958,7 +1958,7 @@ function f(p: P): i32 {
 func TestMatchStmtParses(t *testing.T) {
 	prog, err := Parse(`enum E { A, B(i32) }
 function f(): i32 {
-	var e: E = A;
+	let e: E = A;
 	match (e) {
 		A => { return 1; },
 		B(n) => { return n; }
@@ -2296,7 +2296,7 @@ func TestTupleDestructureSingleNameError(t *testing.T) {
 func TestStructDestructureParses(t *testing.T) {
 	prog, err := Parse(`struct Point { x: i32, y: i32, z: i32 }
 	function f(): i32 {
-		var p: Point = Point { x: 1, y: 2, z: 3 };
+		let p: Point = Point { x: 1, y: 2, z: 3 };
 		let Point { x, y: b, .. } = p;
 		return x + b;
 	}`)
@@ -2319,12 +2319,12 @@ func TestStructDestructureParses(t *testing.T) {
 	}
 }
 
-// `var Point { x, y } = p;` parses the same way via the `var` keyword.
+// `let Point { x, y } = p;` parses the same way via the `let` keyword.
 func TestStructDestructureVarKeyword(t *testing.T) {
 	prog, err := Parse(`struct Point { x: i32, y: i32 }
 	function f(): i32 {
-		var p: Point = Point { x: 1, y: 2 };
-		var Point { x, y } = p;
+		let p: Point = Point { x: 1, y: 2 };
+		let Point { x, y } = p;
 		return x + y;
 	}`)
 	if err != nil {
@@ -2379,8 +2379,8 @@ func TestTupleParamDestructureParses(t *testing.T) {
 // same body-prelude desugar as named functions.
 func TestTupleParamDestructureLambdas(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-		var g = ((x, y): (i32, i32)): i32 => { return x * y; };
-		var h = ((lo, hi): (i32, i32)) => hi - lo;
+		let g = ((x, y): (i32, i32)): i32 => { return x * y; };
+		let h = ((lo, hi): (i32, i32)) => hi - lo;
 		return g((2, 3)) + h((1, 5));
 	}`)
 	if err != nil {
@@ -2533,7 +2533,7 @@ func TestTupleElemVariantIsRefutableAtBindingSites(t *testing.T) {
 // TestNestedTuplePatternParses.)
 func TestTupleMatchPatternErrors(t *testing.T) {
 	if _, err := Parse(`function f(p: (i32, i32)): i32 {
-		var v = match (p) { (0, y) => y, (a, b) => a };
+		let v = match (p) { (0, y) => y, (a, b) => a };
 		return v;
 	}`); err != nil {
 		t.Fatalf("expr-form tuple pattern should parse: %v", err)
@@ -2776,13 +2776,13 @@ function main(): i32 { return 0; }`)
 // reclaimed by reference counting. So bare `arena` parses as an
 // ordinary identifier.
 func TestArenaIsNotReserved(t *testing.T) {
-	prog, err := Parse("function f(): i32 { var arena: i32 = 5; return arena; }")
+	prog, err := Parse("function f(): i32 { let arena: i32 = 5; return arena; }")
 	if err != nil {
 		t.Fatalf("`arena` should parse as an ordinary identifier: %v", err)
 	}
 	v, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Var)
 	if !ok || v.Name != "arena" {
-		t.Fatalf("expected `var arena`, got %T", prog.Funcs[0].Body.Stmts[0])
+		t.Fatalf("expected `let arena`, got %T", prog.Funcs[0].Body.Stmts[0])
 	}
 }
 
@@ -2846,9 +2846,9 @@ func TestTraitDefaultMethodParses(t *testing.T) {
 // `Type::method(args)`, `mod::func()`, and `mod::CONST` all work. See #2700.
 func TestPathSepParse(t *testing.T) {
 	prog, err := Parse(`function main(): i32 {
-    var a: i32 = Point::origin().x;
-    var b: i32 = helpers::add5(10);
-    var c: i32 = helpers::BONUS;
+    let a: i32 = Point::origin().x;
+    let b: i32 = helpers::add5(10);
+    let c: i32 = helpers::BONUS;
     return a + b + c;
 }`)
 	if err != nil {
@@ -3421,7 +3421,7 @@ impl T for Self { function f(self: Self): void {} }`); err == nil {
 	}
 }
 
-// A `var` declaration MUST carry an initializer — the grammar requires `=`
+// A `let` declaration MUST carry an initializer — the grammar requires `=`
 // after the (optionally-typed) binding, so an uninitialized declaration is a
 // parse error, never an implicit zero. (`let` is the separate refutable
 // let-else binding, not a plain declaration.) This is what closes
@@ -3431,22 +3431,22 @@ impl T for Self { function f(self: Self): void {} }`); err == nil {
 // pinned separately by the checker's E052 tests.)
 func TestVarDeclRequiresInitializer(t *testing.T) {
 	rejected := []string{
-		`function main(): i32 { var x: i32; return x; }`, // typed, no init
-		`function main(): i32 { var x; return 0; }`,      // untyped, no init
+		`function main(): i32 { let x: i32; return x; }`, // typed, no init
+		`function main(): i32 { let x; return 0; }`,      // untyped, no init
 	}
 	for _, src := range rejected {
 		if _, err := Parse(src); err == nil {
-			t.Errorf("var declaration without initializer should be a parse error:\n%s", src)
+			t.Errorf("let declaration without initializer should be a parse error:\n%s", src)
 		}
 	}
 	// The initialized forms still parse — the requirement is an initializer,
 	// not a ban on the annotation.
 	for _, src := range []string{
-		`function main(): i32 { var x: i32 = 0; return x; }`,
-		`function main(): i32 { var x = 0; return x; }`,
+		`function main(): i32 { let x: i32 = 0; return x; }`,
+		`function main(): i32 { let x = 0; return x; }`,
 	} {
 		if _, err := Parse(src); err != nil {
-			t.Errorf("initialized var declaration should parse: %v\n%s", err, src)
+			t.Errorf("initialized let declaration should parse: %v\n%s", err, src)
 		}
 	}
 }
@@ -3649,12 +3649,12 @@ func TestOpaqueStructParses(t *testing.T) {
 		t.Errorf("expected public opaque struct, got %+v", prog.Structs[0])
 	}
 	// `opaque` not followed by `struct` is an ordinary identifier.
-	p2, err := Parse(`function f(): i32 { var opaque: i32 = 5; return opaque; }`)
+	p2, err := Parse(`function f(): i32 { let opaque: i32 = 5; return opaque; }`)
 	if err != nil {
 		t.Fatalf("`opaque` should be a valid identifier: %v", err)
 	}
 	if v, ok := p2.Funcs[0].Body.Stmts[0].(*ast.Var); !ok || v.Name != "opaque" {
-		t.Fatalf("expected `var opaque`, got %T", p2.Funcs[0].Body.Stmts[0])
+		t.Fatalf("expected `let opaque`, got %T", p2.Funcs[0].Body.Stmts[0])
 	}
 }
 
@@ -3668,12 +3668,12 @@ func TestOpaqueStructParses(t *testing.T) {
 // one — so the function-typed forms below, which parse today, are unchanged.
 func TestArrowLambdaTupleReturnType(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-  var tup = (n: i32): (string, i32) => { return ("ab", n); };
-  var arr = (): (string, i32)[] => { return [("a", 1)]; };
-  var group = (): (i32) => { return 7; };
-  var fnParen = (): ((i32) => i32) => { return (x: i32): i32 => x; };
-  var fnBare = (): (i32) => i32 => { return (x: i32): i32 => x; };
-  var fnTupleResult = (): ((i32) => (i32, i32)) => { return (x: i32): (i32, i32) => (x, x); };
+  let tup = (n: i32): (string, i32) => { return ("ab", n); };
+  let arr = (): (string, i32)[] => { return [("a", 1)]; };
+  let group = (): (i32) => { return 7; };
+  let fnParen = (): ((i32) => i32) => { return (x: i32): i32 => x; };
+  let fnBare = (): (i32) => i32 => { return (x: i32): i32 => x; };
+  let fnTupleResult = (): ((i32) => (i32, i32)) => { return (x: i32): (i32, i32) => (x, x); };
   return 0;
 }`)
 	if err != nil {
@@ -3719,10 +3719,10 @@ func TestArrowLambdaTupleReturnType(t *testing.T) {
 // See #2701.
 func TestArrowLambdaParse(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-  var g: (i32, i32) => i32 = (a: i32, b: i32): i32 => a + b;
-  var h: () => i32 = (): i32 => 42;
-  var grouped: i32 = (1 + 2) * 3;
-  var pair: (i32, i32) = (4, 5);
+  let g: (i32, i32) => i32 = (a: i32, b: i32): i32 => a + b;
+  let h: () => i32 = (): i32 => 42;
+  let grouped: i32 = (1 + 2) * 3;
+  let pair: (i32, i32) = (4, 5);
   return g(grouped, pair.0) + h();
 }`)
 	if err != nil {
@@ -3761,7 +3761,7 @@ func TestArrowLambdaParse(t *testing.T) {
 	}
 }
 
-// Array.build desugars to a unique-local IIFE: a `var b: T[] = []`, the
+// Array.build desugars to a unique-local IIFE: a `let b: T[] = []`, the
 // body with statement-position `b.append(x);` rewritten to `b = b.append(x)`,
 // and a trailing `return b`. ArrayBuilder[T] is surface-only — it never
 // survives the desugar. See docs/ARRAY-BUILDER-PLAN.md.
@@ -3785,10 +3785,10 @@ func TestArrayBuildDesugars(t *testing.T) {
 		t.Fatalf("IIFE callee should be a zero-arg Lambda, got %T with %d args", call.Callee, len(call.Args))
 	}
 	stmts := lam.Body.Stmts
-	// First: `var b: i32[] = []`.
+	// First: `let b: i32[] = []`.
 	v, ok := stmts[0].(*ast.Var)
 	if !ok || v.Name != "b" {
-		t.Fatalf("first stmt should be `var b`, got %T", stmts[0])
+		t.Fatalf("first stmt should be `let b`, got %T", stmts[0])
 	}
 	if at, ok := v.Type.(ast.ArrayType); !ok {
 		t.Fatalf("b should be typed T[], got %v", v.Type)
@@ -3830,12 +3830,12 @@ func TestArrayBuildMalformed(t *testing.T) {
 	}
 }
 
-// Map.build desugars to a unique-local IIFE: `var b: Map[K,V] = map_new(8)`,
+// Map.build desugars to a unique-local IIFE: `let b: Map[K,V] = map_new(8)`,
 // the body with `b.insert(k,v);` rewritten to `b = b.insert(k,v)`, and a
 // trailing `return b`. See docs/ARRAY-BUILDER-PLAN.md.
 func TestMapBuildDesugars(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-  var m = Map.build((b: MapBuilder[i32, i32]): void => {
+  let m = Map.build((b: MapBuilder[i32, i32]): void => {
     b.insert(1, 2);
   });
   return 0;
@@ -3852,10 +3852,10 @@ func TestMapBuildDesugars(t *testing.T) {
 	if !ok || len(call.Args) != 0 {
 		t.Fatalf("IIFE callee should be a zero-arg Lambda, got %T", call.Callee)
 	}
-	// First: `var b: Map[i32,i32] = map_new(8)`.
+	// First: `let b: Map[i32,i32] = map_new(8)`.
 	bv, ok := lam.Body.Stmts[0].(*ast.Var)
 	if !ok || bv.Name != "b" {
-		t.Fatalf("first stmt should be `var b`, got %T", lam.Body.Stmts[0])
+		t.Fatalf("first stmt should be `let b`, got %T", lam.Body.Stmts[0])
 	}
 	if st, ok := bv.Type.(ast.StructType); !ok || st.Name != "Map" || len(st.Args) != 2 {
 		t.Fatalf("b should be typed Map[K,V], got %v", bv.Type)
@@ -3937,7 +3937,7 @@ func TestNamedArgs(t *testing.T) {
 // while plain `e as T` stays a CastExpr (numeric cast / ascription).
 // docs/DYN-TRAITS.md §9.
 func TestParseDowncastVsCast(t *testing.T) {
-	prog, err := Parse(`function f(s: dyn Shape): i32 { var c: Option[Circle] = s as? Circle; return 0; }`)
+	prog, err := Parse(`function f(s: dyn Shape): i32 { let c: Option[Circle] = s as? Circle; return 0; }`)
 	if err != nil {
 		t.Fatalf("parse downcast: %v", err)
 	}
@@ -3971,8 +3971,8 @@ func TestParseDowncastVsCast(t *testing.T) {
 // while `Ident { … }` stays a struct literal and a loop/if HEADER's trailing
 // `{` still opens the body (not a block-expr) — the disambiguation contract.
 func TestParseValuePositionBlockExpr(t *testing.T) {
-	// Bare `{ stmts; tail }` on a `var` RHS → *ast.BlockExpr.
-	prog, err := Parse(`function f(): i32 { var n: i32 = { var k = 3; k * 2 }; return n; }`)
+	// Bare `{ stmts; tail }` on a `let` RHS → *ast.BlockExpr.
+	prog, err := Parse(`function f(): i32 { let n: i32 = { let k = 3; k * 2 }; return n; }`)
 	if err != nil {
 		t.Fatalf("parse value-position block: %v", err)
 	}
@@ -3986,7 +3986,7 @@ func TestParseValuePositionBlockExpr(t *testing.T) {
 	}
 
 	// `Ident { … }` in the same position stays a struct literal.
-	prog2, err := Parse(`struct P { x: i32 } function g(): i32 { var p: P = P { x: 1 }; return p.x; }`)
+	prog2, err := Parse(`struct P { x: i32 } function g(): i32 { let p: P = P { x: 1 }; return p.x; }`)
 	if err != nil {
 		t.Fatalf("parse struct lit: %v", err)
 	}
@@ -3997,11 +3997,11 @@ func TestParseValuePositionBlockExpr(t *testing.T) {
 
 	// A `for … in expr {` header's `{` opens the loop body, not a block-expr —
 	// the noStructLit gate keeps the new rule out of loop/if headers.
-	if _, err := Parse(`function h(xs: i32[]): i32 { var s = 0; for x in xs { s = s + x; } return s; }`); err != nil {
+	if _, err := Parse(`function h(xs: i32[]): i32 { let s = 0; for x in xs { s = s + x; } return s; }`); err != nil {
 		t.Fatalf("for-in header must still parse (its `{` is the body): %v", err)
 	}
 	// Single-expr `{ e }` stays a bare expression (branch-form passthrough).
-	prog3, err := Parse(`function k(): i32 { var n: i32 = { 7 }; return n; }`)
+	prog3, err := Parse(`function k(): i32 { let n: i32 = { 7 }; return n; }`)
 	if err != nil {
 		t.Fatalf("parse single-expr block: %v", err)
 	}
@@ -4016,7 +4016,7 @@ func TestParseValuePositionBlockExpr(t *testing.T) {
 // carry control flow without breaking `{ …; if (c) { a } else { b } }`.
 func TestParseControlFlowInBlockExpr(t *testing.T) {
 	// else-less `if` in a value block → a leading *ast.If statement + a tail.
-	prog, err := Parse(`function f(e: i32): i32 { var x: i32 = { if (e < 0) { return 9; } e + 1 }; return x; }`)
+	prog, err := Parse(`function f(e: i32): i32 { let x: i32 = { if (e < 0) { return 9; } e + 1 }; return x; }`)
 	if err != nil {
 		t.Fatalf("parse control-flow block: %v", err)
 	}
@@ -4036,7 +4036,7 @@ func TestParseControlFlowInBlockExpr(t *testing.T) {
 
 	// An `if` WITH `else` as the tail stays a value expression (an *ast.IfExpr
 	// tail, not a statement) — unchanged behaviour.
-	prog2, err := Parse(`function g(c: boolean): i32 { var x: i32 = if (c) { 1 } else { 2 }; return x; }`)
+	prog2, err := Parse(`function g(c: boolean): i32 { let x: i32 = if (c) { 1 } else { 2 }; return x; }`)
 	if err != nil {
 		t.Fatalf("parse if-expr branch: %v", err)
 	}
@@ -4052,7 +4052,7 @@ func TestParseControlFlowInBlockExpr(t *testing.T) {
 // keep working.
 func TestParseStrViewType(t *testing.T) {
 	prog, err := Parse(`function f(v: str, vs: str[]): str {
-    var w: str = v;
+    let w: str = v;
     return w;
 }`)
 	if err != nil {
@@ -4077,7 +4077,7 @@ func TestParseStrViewType(t *testing.T) {
 	}
 
 	// Expression position is untouched: `str` as a plain local identifier.
-	if _, err := Parse(`function g(): i32 { var str: i32 = 2; return str; }`); err != nil {
+	if _, err := Parse(`function g(): i32 { let str: i32 = 2; return str; }`); err != nil {
 		t.Errorf("`str` as an identifier: %v", err)
 	}
 	// A module-qualified struct reference `str.Foo` stays on the nominal

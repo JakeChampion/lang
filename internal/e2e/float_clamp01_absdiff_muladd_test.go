@@ -10,7 +10,7 @@ import "testing"
 // each leg skips itself when its toolchain is absent.
 const floatClamp01AbsDiffMulAddProg = `
 import "std/float" as float;
-function approx(a: f64, b: f64): boolean { var d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
+function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
 function main(): i32 {
     if (!approx((0.5).clamp01(), 0.5)) { return 1; }
     if (!approx((0.0 - 0.3).clamp01(), 0.0)) { return 2; }          // below 0 -> 0

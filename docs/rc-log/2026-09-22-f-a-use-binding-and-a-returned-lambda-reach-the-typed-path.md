@@ -39,7 +39,7 @@ as `fn` with its sidecars (`decltypes.fn_param_from_type`); a type with no
 declaration spelling leaves the binding as written. (`SELFHOST-CHECKER-PORT.md`,
 same date, has the pass.)
 
-`irlower.desugar_lifted_lambda_returns` runs at the top of the worklist drain,
+`lift.desugar_lifted_lambda_returns` runs at the top of the worklist drain,
 so every lifted body gets the `$lamret$N` rewrite a source function got before
 it: a no-op for a source function, whose pass already ran. A CAPTURING tail
 lambda stays for `hoist_escaping_closure`: given the slot instead, the AST
@@ -67,7 +67,7 @@ as `mk2()(i)`, 5 of 5) and `block-bodied-lambda-with-a-use-binding` (5 of 5).
 
 ## What it does not reach
 
-A capturing lambda returned from a lambda (`var curry = (a: i32) => { return
+A capturing lambda returned from a lambda (`let curry = (a: i32) => { return
 (b: i32): i32 => a + b; }`) keeps the AST lowering: the hoist route stays for
 the reason above, and its caller's `curry(1)(2)` is refused anyway, since the
 checker types a lambda's function-valued result as nothing ("sidecars a

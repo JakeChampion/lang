@@ -1,0 +1,1931 @@
+// examples/self_host/irtables.fern — the tables the typed lowering (semsource ->
+// ssaunits -> ssarc, `semlower`) and the emitters share:
+//   - LowerResult, one lowered function, and its result kinds;
+//   - StructTab and the declaration / field-type lookups over it, and the
+//     layout predicates the backends read;
+//   - SigReg, the bucketed name registry;
+//   - the op builders ssarc calls (sat_binary_ops, chk_binary_ops, map_fbinop,
+//     f64_math_builtin_kind);
+//   - the AST predicates fnsigs and lift both use.
+
+import "./ast";
+import "./ir";
+import "./irverify";
+import "./parser";
+import "./util";
+import "./astwalk";
+import "./typeinfo";
+
+// SigReg is a module-wide signature registry: the "<name>" / "<name>|<value>"
+// rows, plus a bucket index over each row's KEY — the text before its first
+// '|'. A probe walks one bucket instead of the whole registry, which matters
+// because these are whole-module lists (the compiler's own largest is ~4,900
+// rows) consulted per call argument and per local slot.
+//
+// head[b] is the first row index in bucket b (-1 when empty) and next[i] chains
+// to the next row in the same bucket, ASCENDING — so a bucket walk visits rows
+// in registration order and a duplicated name still resolves to its first row,
+// as the linear scan did.
+pub struct SigReg {
+  rows: string[],
+  head: i32[],
+  next: i32[],
+}
+
+// sig_bucket_count is the bucket count for an `n`-row registry: a prime above
+// n, so a registry averages about one row per bucket and unrelated hash
+// strides do not alias onto one bucket.
+pub function sig_bucket_count(n: i32): i32 {
+  if (n == 0) {
+    return 1;
+  }
+  if (n <= 8) {
+    return 13;
+  }
+  if (n <= 40) {
+    return 61;
+  }
+  if (n <= 160) {
+    return 251;
+  }
+  if (n <= 640) {
+    return 1021;
+  }
+  if (n <= 2560) {
+    return 4093;
+  }
+  return 16381;
+}
+
+// sig_key_bucket hashes the KEY of `a` followed by `b` — their concatenation
+// truncated at the first '|', which is the registries' key/value separator.
+// The two pieces fold in order so a probe for "<pfx><name>" never builds the
+// joined string. Folded by the modulus at every step, so the accumulator stays
+// small and the hash needs no wrapping arithmetic.
+function sig_key_bucket(a: string, b: string, nb: i32): i32 {
+  let h: i32 = 0;
+  let i: i32 = 0;
+  while (i < a.len()) {
+    if (a[i] == b'|') {
+      return h;
+    }
+    h = (h * 131 + a[i] as i32) % nb;
+    i = i + 1;
+  }
+  let j: i32 = 0;
+  while (j < b.len()) {
+    if (b[j] == b'|') {
+      return h;
+    }
+    h = (h * 131 + b[j] as i32) % nb;
+    j = j + 1;
+  }
+  return h;
+}
+
+// sig_reg_of indexes `rows`. The chain is built by walking BACKWARD and pushing
+// each row onto the front of its bucket, which leaves every chain in ascending
+// row order without needing a per-bucket tail.
+pub function sig_reg_of(rows: string[]): SigReg {
+  let nb: i32 = sig_bucket_count(rows.len());
+  let head: i32[] = [];
+  let b: i32 = 0;
+  while (b < nb) {
+    head = head.append(0 - 1);
+    b = b + 1;
+  }
+  let next: i32[] = [];
+  let j: i32 = 0;
+  while (j < rows.len()) {
+    next = next.append(0 - 1);
+    j = j + 1;
+  }
+  let k: i32 = rows.len() - 1;
+  while (k >= 0) {
+    let bk: i32 = sig_key_bucket(rows[k], "", nb);
+    next = next.with(k, head[bk]);
+    head = head.with(bk, k);
+    k = k - 1;
+  }
+  return SigReg { rows: rows, head: head, next: next };
+}
+
+// sig_reg_has_exact: the registry holds `name` as a whole row. The bucket key
+// stops at the first '|' on both sides, so a "<name>|<value>" row shares the
+// bucket of the bare name and the exact compare here still rejects it.
+pub function sig_reg_has_exact(r: SigReg, name: string): boolean {
+  let i: i32 = r.head[sig_key_bucket(name, "", r.head.len())];
+  while (i >= 0) {
+    if (r.rows[i] == name) {
+      return true;
+    }
+    i = r.next[i];
+  }
+  return false;
+}
+
+// csv_nth returns the Nth comma-separated field of `enc` (0-based), or "". The
+// split is depth-aware (counting `(`/`[` … `)`/`]`) so a nested tuple element tag
+// — `(i32,i32),i64` → field 0 is `(i32,i32)`, field 1 is `i64` — is recovered
+// whole. A flat encoding never exceeds depth 0, so its behaviour is unchanged.
+pub function csv_nth(enc: string, n: i32): string {
+  if (enc.len() == 0) {
+    return "";
+  }
+  let depth: i32 = 0;
+  let idx: i32 = 0;
+  let start: i32 = 0;
+  let k: i32 = 0;
+  while (k <= enc.len()) {
+    if (k == enc.len() || depth == 0 && enc[k] == b',') {  // end, or top-level ','
+      if (idx == n) {
+        return slice_unchecked(enc, start, k) + "";
+      }
+      idx = idx + 1;
+      start = k + 1;
+    } else {
+      let ch: u8 = enc[k];
+      if (ch == b'[' || ch == b'(') {
+        depth = depth + 1;
+      } else if (ch == b']' || ch == b')') {
+        depth = depth - 1;
+      }
+    }
+    k = k + 1;
+  }
+  return "";
+}
+
+// variant_decl_index returns the index in `structs` of the variant `name`
+// declared by enum `owner`, or -1. Two enums may declare the same variant
+// name, so a qualified `Enum.Variant` has to ask whether such a decl EXISTS
+// rather than whether the first decl of that name happens to be the right
+// one — the flat, bare-keyed table cannot answer the latter correctly. The
+// index is what callers then read fields through, since the by-name
+// accessors are first-match too.
+pub function variant_decl_index(structs: StructTab, name: string, owner: string): i32 {
+  let vi: i32 = stab_first(structs, name);
+  while (vi >= 0) {
+    if (structs.decls[vi].enum_owner == owner) {
+      return vi;
+    }
+    vi = stab_next(structs, vi, name);
+  }
+  return 0 - 1;
+}
+
+// ---- struct decl helpers -----------------------------------------------
+// The core lookups take the decl table directly.
+// decl_field_index returns a field's position in DECL order (-1 if absent);
+// decl_is_struct reports whether `name` is a declared struct.
+
+// StructTab is the module's struct decls plus two name indexes over them. Every
+// by-name lookup below used to scan the whole array — ~560,000 queries over
+// ~400 decls per self-compile, 11.9% of the instructions retired lowering
+// checker.fern (#8178) — so the table carries the index the queries need.
+//
+// Both indexes are CHAINS and not single slots: enum VARIANT decls are keyed by
+// their BARE name, two enums may declare one variant name, and a by-name lookup
+// answers with the FIRST such decl (variant_enum_owner's contract). A caller
+// that acts on EVERY decl of a name walks the chain with stab_first/stab_next.
+pub struct StructTab {
+  decls: parser.StructDecl[],
+  // head[b] is the lowest decls index in name-bucket b (-1 when empty); next[i]
+  // chains to the next index in the same bucket, ascending — the order the
+  // linear scan visited, so a chain walk and a scan pick the same decl.
+  // head.len() IS the bucket count, so a lookup cannot hash against a
+  // different modulus than the build did. ehead / enext index
+  // decls[i].enum_owner the same way.
+  head: i32[],
+  next: i32[],
+  ehead: i32[],
+  enext: i32[],
+}
+
+// stab_buckets is the bucket count of both indexes. Prime, so unrelated hash
+// strides do not alias onto one bucket, and sized for a whole-compiler module's
+// struct decls plus its enum-variant decls at roughly one per bucket.
+function stab_buckets(): i32 {
+  return 2053;
+}
+
+// struct_tab indexes `decls` by name and by enum_owner. Built by walking
+// BACKWARD and pushing each entry onto the front of its bucket, which leaves
+// every chain in ascending index order without a per-bucket tail. Mirrors
+// mfuncs_table.
+pub function struct_tab(decls: parser.StructDecl[]): StructTab {
+  let nb: i32 = stab_buckets();
+  let head: i32[] = [];
+  let ehead: i32[] = [];
+  let b: i32 = 0;
+  while (b < nb) {
+    head = head.append(0 - 1);
+    ehead = ehead.append(0 - 1);
+    b = b + 1;
+  }
+  let next: i32[] = [];
+  let enext: i32[] = [];
+  let j: i32 = 0;
+  while (j < decls.len()) {
+    next = next.append(0 - 1);
+    enext = enext.append(0 - 1);
+    j = j + 1;
+  }
+  let k: i32 = decls.len() - 1;
+  while (k >= 0) {
+    let bk: i32 = util.hash_bucket(decls[k].name, nb);
+    next = next.with(k, head[bk]);
+    head = head.with(bk, k);
+    let eb: i32 = util.hash_bucket(decls[k].enum_owner, nb);
+    enext = enext.with(k, ehead[eb]);
+    ehead = ehead.with(eb, k);
+    k = k - 1;
+  }
+  return StructTab { decls: decls, head: head, next: next, ehead: ehead, enext: enext };
+}
+
+// struct_tab_empty is the table of NO decls — what the analyses that ask their
+// predicates about a unit with no struct decls in scope pass. Its indexes are
+// zero-length, which the two lookups read as "no decl of any name".
+pub function struct_tab_empty(): StructTab {
+  return StructTab { decls: [], head: [], next: [], ehead: [], enext: [] };
+}
+
+// stab_first / stab_next walk the decls named `name`, lowest index first.
+pub function stab_first(structs: StructTab, name: string): i32 {
+  if (structs.head.len() == 0) {
+    return 0 - 1;
+  }
+  return stab_skip(structs, structs.head[util.hash_bucket(name, structs.head.len())], name);
+}
+
+// stab_struct_first is the STRUCT namespace's entry point: the first decl
+// named `name` that no enum owns, or, when only variants carry the name, the
+// first of those. A plain struct and a variant may share a bare name and both
+// land in one bucket, so a reader that wants the struct — a literal, a field
+// read on a value of that type, a layout question — asks here rather than
+// taking whichever registered first (#9968). A reader that wants the variant
+// asks variant_decl_index with the enum it already knows, or unit_decl_index.
+pub function stab_struct_first(structs: StructTab, name: string): i32 {
+  let i: i32 = stab_first(structs, name);
+  let j: i32 = i;
+  while (j >= 0) {
+    if (structs.decls[j].enum_owner == "") {
+      return j;
+    }
+    j = stab_next(structs, j, name);
+  }
+  return i;
+}
+
+pub function stab_next(structs: StructTab, i: i32, name: string): i32 {
+  return stab_skip(structs, structs.next[i], name);
+}
+
+function stab_skip(structs: StructTab, from: i32, name: string): i32 {
+  let j: i32 = from;
+  while (j >= 0) {
+    if (structs.decls[j].name == name) {
+      return j;
+    }
+    j = structs.next[j];
+  }
+  return 0 - 1;
+}
+
+// stab_enum_first / stab_enum_next are the same walk over decls whose
+// enum_owner is `owner` — the variants of enum `owner`, lowest index first.
+pub function stab_enum_first(structs: StructTab, owner: string): i32 {
+  if (structs.ehead.len() == 0) {
+    return 0 - 1;
+  }
+  return stab_enum_skip(structs, structs.ehead[util.hash_bucket(owner, structs.ehead.len())], owner);
+}
+
+pub function stab_enum_next(structs: StructTab, i: i32, owner: string): i32 {
+  return stab_enum_skip(structs, structs.enext[i], owner);
+}
+
+function stab_enum_skip(structs: StructTab, from: i32, owner: string): i32 {
+  let j: i32 = from;
+  while (j >= 0) {
+    if (structs.decls[j].enum_owner == owner) {
+      return j;
+    }
+    j = structs.enext[j];
+  }
+  return 0 - 1;
+}
+
+pub function decl_is_struct(structs: StructTab, name: string): boolean {
+  return stab_first(structs, name) >= 0;
+}
+
+// dyn_arm_matches reports whether `fd` is one of the arms an op_dyn_dispatch
+// `tag` carries.
+pub function dyn_arm_matches(fd: parser.FuncDecl, tag: string): boolean {
+  return util.index_of_str(ir.dyn_dispatch_arms(tag), parser.decl_key(fd)) >= 0;
+}
+
+// decl_is_enum reports whether `name` is a declared enum — i.e. some decl records
+// it as its enum_owner (the variants of `name` are stored in `structs` with
+// enum_owner == name). Precise (unlike the loose syntactic is_enum_like_name): it
+// cannot misfire on a primitive / struct / generic, and a bracketed Option[T] /
+// Result[T] field spelling never equals a bare enum_owner. False in the standalone
+// bootstrap where imported enums aren't loaded → the field is treated leak-only
+// (no construction inc, no drop) → balanced/sound. #4297 A2: drives the direct
+// enum-field exit-reclaim (gate + construction inc + the k_enum struct-drop arm).
+pub function decl_is_enum(structs: StructTab, name: string): boolean {
+  if (name.len() == 0) {
+    return false;
+  }
+  return stab_enum_first(structs, name) >= 0;
+}
+
+// decl_is_leaksafe reports whether every field is leak-safe in the IR path.
+// Leak-only fields need no reference counting; Reader/Writer are bare fd handles
+// and likewise carry no heap reference.
+// is_scalar_array_type reports whether `t` is a scalar-element array (i32[] /
+// boolean[]) — leak-only-safe as a struct field: indexing yields an i32, and the
+// array (a fresh literal at construction) leaks with the struct (never freed),
+// so no reference counting is needed. String / struct element arrays need
+// element tracking (their elements are heap values), so they stay deferred.
+pub function is_scalar_array_type(t: string): boolean {
+  return t == "i32[]" || t == "boolean[]";
+}
+
+pub function is_leaksafe_array_field(t: string): boolean {
+  return is_scalar_array_type(t) || is_float_array_type_name(t) || t == "i64[]" || t == "u64[]" || t == "u32[]"
+    || t == "char[]" || is_subword_array_type(t);
+}
+
+// is_float_array_type_name reports whether the declared type name `t` is a
+// FLOAT array — one whose elements use the 8-byte-stride f64 layout that
+// mark_f64arr tracks. Both `f64[]` and `f32[]` do: a scalar `f32` lowers to a
+// wasm f64, and the array-literal / Cell element paths already fold `f32` in
+// with `f64` (`celt == "f64" || celt == "f32"`). Spelling the pair once keeps
+// the declaration-driven sites from drifting apart, which is how `f32[]` came
+// to be classified as no array kind at all (#6175).
+pub function is_float_array_type_name(t: string): boolean {
+  return t == "f64[]" || t == "f32[]";
+}
+
+// is_subword_array_type reports whether `t` is a sub-32-bit integer-element
+// array (u8[]). This uses the SAME 4-byte-slot element
+// representation as i32[]: the self-host IR (like the AST emitter) stores each
+// element in a full 32-bit slot — op_arr_push / op_arr_get(32) round-trip the
+// value at 32-bit width, and the sub-word value is wrapped to its range by the
+// cast at the producing site BEFORE the push (the `b as u8` idiom), so the
+// stored slot already holds the in-range value. A read yields that same i32
+// (the consumer `data[i] as i32` is a no-op zero-extend). So as a struct field
+// it is leak-safe exactly like i32[] / u32[] — the buffer is a pointer in
+// the field slot, owned by the struct, deep-dropped on reclamation. This admits
+// byte-buffer structs (BytesWriter, Stream readers) onto the IR path.
+pub function is_subword_array_type(t: string): boolean {
+  return t == "u8[]";
+}
+
+// is_struct_array_field_type: a `X[]` where X is a leaf-safe struct (array-of-
+// struct field). Admitted to the IR path (construction + `f[i].field` read) but
+// NOT deep-dropped yet — the array and its struct elements leak with the struct (a
+// recursive-drop follow-up); aliasing it (bind / return / assign) bails, like the
+// scalar-array fields, so the leak-only IR never creates a dangling second owner.
+pub function is_struct_array_field_type(structs: StructTab, t: string): boolean {
+  let n: i32 = t.len();
+  if (n < 3) {
+    return false;
+  }
+  if (slice_unchecked(t, n - 2, n) != "[]") {
+    return false;
+  }
+  // Element leaf-safety is guaranteed by the leaksafe gate (decl_is_leaksafe_d,
+  // depth-bounded) before any struct admitting this field reaches the IR path, so
+  // this only needs to recognise the struct-array shape (no recursion → no cycle).
+  return decl_is_struct(structs, slice_unchecked(t, 0, n - 2));
+}
+
+// is_enum_array_field_type: a `C[]` where C is a (nominal) enum (array-of-enum
+// field). Like the array-of-struct field it is admitted to the IR path in leak
+// mode (the array + its enum boxes leak with the struct) and bailed in the
+// alias-creating positions (bind / return / assign), so the leak-only IR never
+// creates a dangling second owner.
+pub function is_enum_array_field_type(structs: StructTab, t: string): boolean {
+  let n: i32 = t.len();
+  if (n < 3) {
+    return false;
+  }
+  if (slice_unchecked(t, n - 2, n) != "[]") {
+    return false;
+  }
+  return is_enum_like_name(slice_unchecked(t, 0, n - 2), structs);
+}
+
+// is_nested_array_field_type: a `T[][]` whose ELEMENT `T[]` is itself an
+// admitted array field type (scalar / struct / enum element). Its elements are
+// array POINTERS, so the outer buffer uses the same 4-byte-slot layout as an
+// i32[] and needs no element-width dispatch.
+//
+// ONE level of nesting, matching decl_is_leaksafe_at_d's own admission (which
+// calls this): a `T[][][]` field keeps its whole struct off the IR path, so
+// recognising it here would classify a receiver that can never be reached.
+pub function is_nested_array_field_type(structs: StructTab, t: string): boolean {
+  let n: i32 = t.len();
+  if (n < 5) {
+    return false;
+  }
+  if (slice_unchecked(t, n - 2, n) != "[]") {
+    return false;
+  }
+  let elt: str = slice_unchecked(t, 0, n - 2);
+  return is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt)
+    || is_enum_array_field_type(structs, elt);
+}
+
+// is_row_array_field_type: a field whose elements are counted array buffers —
+// a nested array, or `string[][]`, which is_nested_array_field_type does not
+// reach. __struct_drop_<T> releases each row and then the outer buffer, under
+// the same sole-owner gate as a struct-array field's element walk.
+pub function is_row_array_field_type(structs: StructTab, t: string): boolean {
+  return t == "string[][]" || is_nested_array_field_type(structs, t);
+}
+
+// tuple_type_elem_tag parses a tuple type string "(t0, t1, …)" → element n's tag,
+// or "" if not a tuple / n is out of range. Decodes via the structured TypeRef
+// (SH-021, docs/SELF-HOST-AUDIT.md T2) instead of a hand-rolled depth-tracking
+// top-level-comma scan; parse_type_ref already splits the elements without letting
+// a nested generic's or tuple's inner commas confuse the split. A tuple-ARRAY
+// ("(a, b)[]", array_depth > 0) is a value of array type, not a tuple, so it
+// returns "" — matching the former scan, whose ")"-suffix test failed on the
+// trailing "]".
+pub function tuple_type_elem_tag(t: string, n: i32): string {
+  let r: parser.TypeRef = parser.parse_type_ref(t);
+  if (r.array_depth != 0 || !r.is_tuple) {
+    return "";
+  }
+  if (n < 0 || n >= r.args.len()) {
+    return "";
+  }
+  let rt: string = parser.render_type_ref(r.args[n]);
+  // A declared fn-typed element holds a closure BOX at runtime (the lift
+  // pass wraps every fn-valued tuple element into a `__mkclo$…` env box),
+  // so tag it "clo" for the env-first `t.N(args)` dispatch.
+  //
+  // The element keeps its SIGNATURE now (#7961: coarsening it to the bare tag
+  // threw away the result type the checker needs to type `t.N()`), so the
+  // arrow form is what arrives here. The bare tag still can — a type
+  // parameter substituted with `fn` spells one — so both answer "clo".
+  if (rt == "fn" || parser.ref_is_fn_value(r.args[n])) {
+    return "clo";
+  }
+  return rt;
+}
+
+// is_enum_like_name reports whether type name `t` denotes a (nominal) enum:
+// not a primitive, struct, array, or bracketed/tuple generic. Mirrors the AST
+// emitter's is_enum_recv heuristic (asmcore.is_enum_recv) — a bare nominal that
+// isn't anything else is an enum. Used to carry an enum-typed local / param /
+// receiver's type name in local_struct_type, so `x.method()` on an enum value
+// dispatches to `<Enum>.<method>` (the enum-receiver-method path).
+//
+// It stays SYNTACTIC rather than asking decl_is_enum: at the leak-safety and
+// param/receiver gates the enum's variant decls are frequently not in the
+// `structs` handed down, so decl_is_enum answers false for a genuine enum
+// (ast.Expr, typeinfo.Type, lexer.Token) and the gate would bail every module
+// that names one. A bare type VARIABLE (`T`) still over-matches; the sites that
+// care exclude it themselves.
+pub function is_enum_like_name(t: string, structs: StructTab): boolean {
+  if (t.len() == 0) {
+    return false;
+  }
+  if (typeinfo.is_primitive_type_name(t)) {
+    return false;
+  }
+  // "clo" is the compiler's closure-BOX tag spelling (a boxed fn-valued
+  // tuple element / Option payload) — never a user enum name. Without this
+  // exclusion an Option[clo] payload's match bind was claimed by the enum
+  // branch (mark_struct_type("clo")) before the closure-local mark could
+  // fire, so `f(args)` bare-called the box pointer → SIGSEGV. ("fn" is NOT
+  // excluded: existing struct-field / enum-payload machinery relies on the
+  // coarse "fn" spelling reading as enum-like in its dispatch gates.)
+  if (t == "clo") {
+    return false;
+  }
+  if (decl_is_struct(structs, t)) {
+    return false;
+  }
+  if (is_array_type_name(t)) {
+    return false;
+  }
+  // A bracketed generic (Option[..]/Result[..]/Map[..]/Box[..]) or a tuple
+  // "(..)" is not a bare enum.
+  let ci: i32 = 0;
+  while (ci < t.len()) {
+    if (t[ci] == b'[') {
+      return false;
+    }
+    ci = ci + 1;
+  }
+  if (slice_unchecked(t, 0, 1) == "(") {
+    return false;
+  }
+  return true;
+}
+
+// decl_is_prim_recv reports whether a method-receiver type spelling names a
+// PRIMITIVE / `string` type (one of prim_type_ids) — the receivers
+// `impl Trait for <prim>` can name, whose `dyn` values are heap-boxed at
+// coercion (docs/DYN-TRAITS.md §4.2.3). Not a struct, not an enum, not an
+// array. Mirrors asmcore.is_prim_recv_name for the wasm backend, which works on
+// (structs) inputs rather than EmitState.
+pub function decl_is_prim_recv(structs: StructTab, name: string): boolean {
+  return !decl_is_struct(structs, name) && util.index_of_str(prim_type_ids(), name) >= 0;
+}
+
+// prim_type_ids is the canonical ordered list of primitive receiver type names
+// used to assign a dyn-box shape id on wasm (the natives use the interned
+// type-name string). The id is structs.decls.len() + index, so it never collides with
+// a struct's type id (its index in `structs`). The order is fixed for
+// deterministic codegen (docs/DYN-TRAITS.md §4.2.3 — fixpoint determinism).
+pub function prim_type_ids(): string[] {
+  return ["i32", "boolean", "bool", "i64", "u32", "u64", "usize", "f64", "f32", "float", "string", "u8", "char"];
+}
+
+// prim_type_id maps a primitive receiver type name to its wasm dyn-box shape id
+// (structs.decls.len() + its index in prim_type_ids), or -1 if not a primitive. Both
+// op_dyn_box (store @0) and op_dyn_dispatch (compare) key off this, so a boxed
+// value's offset-0 id matches the dispatch arm. bool/boolean and f32/f64/float
+// share spellings but each maps to its own slot; that is harmless (an impl names
+// exactly one spelling, used at both box and dispatch).
+pub function prim_type_id(structs: StructTab, name: string): i32 {
+  let names: string[] = prim_type_ids();
+  let i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] == name) {
+      return structs.decls.len() + i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// decl_field_type returns the declared type name of `field` in `struct_name`
+// ("" if absent) — used to track a string-typed field's reads as strings.
+pub function decl_field_type(structs: StructTab, struct_name: string, field: string): string {
+  let si: i32 = stab_struct_first(structs, struct_name);
+  if (si < 0) {
+    return "";
+  }
+  for fld in structs.decls[si].fields {
+    if (fld.name == field) {
+      return fld.type_name;
+    }
+  }
+  return "";
+}
+
+// decl_index_of returns the index in `structs` of the decl named `name` in the
+// struct namespace — the plain struct when one carries the name, else the first
+// variant decl — or -1. Enum VARIANT decls are keyed by their bare name, so two
+// enums declaring one variant name give two decls this cannot tell apart;
+// resolve those through variant_pattern_decl_index instead.
+pub function decl_index_of(structs: StructTab, name: string): i32 {
+  return stab_struct_first(structs, name);
+}
+
+// The decl accessors come in pairs: an `_at` form taking an already-resolved
+// decl index, and a by-name form that resolves first-wins and delegates. A
+// variant name two enums share has two decls, so anywhere the owning enum is
+// known the `_at` form is the correct one — the by-name form silently answers
+// for whichever enum was declared first.
+
+// decl_at_field_type returns the type of field `index` (decl order) of the decl
+// at `decl_index`, or "".
+pub function decl_at_field_type(structs: StructTab, decl_index: i32, index: i32): string {
+  if (decl_index < 0 || decl_index >= structs.decls.len()) {
+    return "";
+  }
+  if (index < 0 || index >= structs.decls[decl_index].fields.len()) {
+    return "";
+  }
+  return structs.decls[decl_index].fields[index].type_name;
+}
+
+// decl_field_type_at returns the type of field `index` (decl order) in struct
+// `struct_name`, or "".
+pub function decl_field_type_at(structs: StructTab, struct_name: string, index: i32): string {
+  return decl_at_field_type(structs, decl_index_of(structs, struct_name), index);
+}
+
+// decl_at_field_count returns the field count of the decl at `decl_index`.
+pub function decl_at_field_count(structs: StructTab, decl_index: i32): i32 {
+  if (decl_index < 0 || decl_index >= structs.decls.len()) {
+    return 0;
+  }
+  return structs.decls[decl_index].fields.len();
+}
+
+pub function decl_field_count(structs: StructTab, struct_name: string): i32 {
+  return decl_at_field_count(structs, stab_struct_first(structs, struct_name));
+}
+
+// elem_ty_is_f64slot: element type `t` occupies the 8-byte float slot. f32
+// shares it: the self-host carries every float 8-byte wide (ir.fern's `f64`
+// immediate), so an `f32[]` strides 8 here where native strides 4 — the
+// slot-width divergence #4366 tracks separately.
+pub function elem_ty_is_f64slot(t: string): boolean {
+  return t == "f64" || t == "f32" || t == "float";
+}
+
+// sat_binary_ops is the saturating shape over SLOTS: the two operands already
+// stored in `lslot` / `rslot`, the result left in `oslot` and loaded last,
+// `hslot` the shifted value `<<|` rounds back through and `sslot` the wrapped
+// product signed `*|` divides back, -1 where the operator needs neither.
+// `kind` names the operand width and signedness (i32 / u32 / u8 / i64 / u64).
+pub function sat_binary_ops(op: string, kind: string, wide: boolean, lslot: i32, rslot: i32, oslot: i32, hslot: i32, sslot: i32): ir.Op[] {
+  let uns: boolean = kind == "u8" || kind == "u32" || kind == "u64";
+  let w: i32 = 0;
+  if (wide) {
+    w = 64;
+  }
+  let ops: ir.Op[] = [];
+
+  if (op == "<<|") {
+    let back: string = "shr_s";
+    if (uns) {
+      back = "shr_u";
+    }
+    if (hslot >= 0) {
+      ops = sat_load(lslot, ops);
+      ops = sat_load(rslot, ops);
+      ops = sat_arith("shl", kind, w, ops);
+      ops = ops.append(ir.op_store_local(hslot));
+    }
+    ops = sat_temp(hslot, "shl", false, kind, w, lslot, rslot, ops);
+    ops = sat_load(rslot, ops);
+    ops = ops.append(ir.op_bin(back, w, false));
+    ops = sat_load(lslot, ops);
+    ops = ops.append(ir.op_bin("eq", w, false));
+    ops = ops.append(ir.op_if(0));
+    ops = sat_temp(hslot, "shl", false, kind, w, lslot, rslot, ops);
+    ops = ops.append(ir.op_store_local(oslot));
+    ops = ops.append(ir.op_else());
+    if (uns) {
+      ops = sat_const(kind, "max", ops);
+      ops = ops.append(ir.op_store_local(oslot));
+      ops = ops.append(ir.op_end());
+      ops = sat_load(oslot, ops);
+      return ops;
+    }
+    ops = sat_load(lslot, ops);
+    ops = sat_const(kind, "zero", ops);
+    ops = ops.append(ir.op_bin("lt_s", w, false));
+    ops = ops.append(ir.op_if(0));
+    ops = sat_const(kind, "min", ops);
+    ops = ops.append(ir.op_store_local(oslot));
+    ops = ops.append(ir.op_else());
+    ops = sat_const(kind, "max", ops);
+    ops = ops.append(ir.op_store_local(oslot));
+    ops = ops.append(ir.op_end());
+    ops = ops.append(ir.op_end());
+    ops = sat_load(oslot, ops);
+    return ops;
+  }
+
+  if (uns) {
+    if (op == "+|") {
+      ops = sat_load(lslot, ops);
+      ops = sat_const(kind, "max", ops);
+      ops = sat_load(rslot, ops);
+      ops = sat_arith("sub", kind, w, ops);
+      ops = ops.append(ir.op_bin("gt_u", w, false));
+      ops = ops.append(ir.op_if(0));
+      ops = sat_const(kind, "max", ops);
+      ops = ops.append(ir.op_store_local(oslot));
+      ops = ops.append(ir.op_else());
+      ops = sat_load(lslot, ops);
+      ops = sat_load(rslot, ops);
+      ops = sat_arith("add", kind, w, ops);
+      ops = ops.append(ir.op_store_local(oslot));
+      ops = ops.append(ir.op_end());
+      ops = sat_load(oslot, ops);
+      return ops;
+    }
+    if (op == "-|") {
+      ops = sat_load(lslot, ops);
+      ops = sat_load(rslot, ops);
+      ops = ops.append(ir.op_bin("lt_u", w, false));
+      ops = ops.append(ir.op_if(0));
+      ops = sat_const(kind, "zero", ops);
+      ops = ops.append(ir.op_store_local(oslot));
+      ops = ops.append(ir.op_else());
+      ops = sat_load(lslot, ops);
+      ops = sat_load(rslot, ops);
+      ops = sat_arith("sub", kind, w, ops);
+      ops = ops.append(ir.op_store_local(oslot));
+      ops = ops.append(ir.op_end());
+      ops = sat_load(oslot, ops);
+      return ops;
+    }
+    ops = sat_load(lslot, ops);
+    ops = sat_const(kind, "zero", ops);
+    ops = ops.append(ir.op_bin("ne", w, false));
+    ops = sat_load(rslot, ops);
+    ops = sat_const(kind, "max", ops);
+    ops = sat_load(lslot, ops);
+    ops = sat_arith("div_u", kind, w, ops);
+    ops = ops.append(ir.op_bin("gt_u", w, false));
+    ops = ops.append(ir.op_bin("and", 0, false));
+    ops = ops.append(ir.op_if(0));
+    ops = sat_const(kind, "max", ops);
+    ops = ops.append(ir.op_store_local(oslot));
+    ops = ops.append(ir.op_else());
+    ops = sat_load(lslot, ops);
+    ops = sat_load(rslot, ops);
+    ops = sat_arith("mul", kind, w, ops);
+    ops = ops.append(ir.op_store_local(oslot));
+    ops = ops.append(ir.op_end());
+    ops = sat_load(oslot, ops);
+    return ops;
+  }
+
+  if (op == "+|" || op == "-|") {
+    // `adj` reaches the guard bound (MAX ∓ b) — the inverse of the
+    // arithmetic; `act` is the arithmetic itself. The sign test on b
+    // that selects the clamp direction flips with the operator too.
+    let act: string = "add";
+    let adj: string = "sub";
+    let hicmp: string = "gt_s";
+    let locmp: string = "lt_s";
+    if (op == "-|") {
+      act = "sub";
+      adj = "add";
+      hicmp = "lt_s";
+      locmp = "gt_s";
+    }
+    ops = sat_load(rslot, ops);
+    ops = sat_const(kind, "zero", ops);
+    ops = ops.append(ir.op_bin(hicmp, w, false));
+    ops = sat_load(lslot, ops);
+    ops = sat_const(kind, "max", ops);
+    ops = sat_load(rslot, ops);
+    ops = sat_arith(adj, kind, w, ops);
+    ops = ops.append(ir.op_bin("gt_s", w, false));
+    ops = ops.append(ir.op_bin("and", 0, false));
+    ops = ops.append(ir.op_if(0));
+    ops = sat_const(kind, "max", ops);
+    ops = ops.append(ir.op_store_local(oslot));
+    ops = ops.append(ir.op_else());
+    ops = sat_load(rslot, ops);
+    ops = sat_const(kind, "zero", ops);
+    ops = ops.append(ir.op_bin(locmp, w, false));
+    ops = sat_load(lslot, ops);
+    ops = sat_const(kind, "min", ops);
+    ops = sat_load(rslot, ops);
+    ops = sat_arith(adj, kind, w, ops);
+    ops = ops.append(ir.op_bin("lt_s", w, false));
+    ops = ops.append(ir.op_bin("and", 0, false));
+    ops = ops.append(ir.op_if(0));
+    ops = sat_const(kind, "min", ops);
+    ops = ops.append(ir.op_store_local(oslot));
+    ops = ops.append(ir.op_else());
+    ops = sat_load(lslot, ops);
+    ops = sat_load(rslot, ops);
+    ops = sat_arith(act, kind, w, ops);
+    ops = ops.append(ir.op_store_local(oslot));
+    ops = ops.append(ir.op_end());
+    ops = ops.append(ir.op_end());
+    ops = sat_load(oslot, ops);
+    return ops;
+  }
+
+  // Signed `*|`: stash the wrapped product, then the division round-trip.
+  if (sslot >= 0) {
+    ops = sat_load(lslot, ops);
+    ops = sat_load(rslot, ops);
+    ops = sat_arith("mul", kind, w, ops);
+    ops = ops.append(ir.op_store_local(sslot));
+  }
+  ops = sat_load(lslot, ops);
+  ops = sat_const(kind, "zero", ops);
+  ops = ops.append(ir.op_bin("ne", w, false));
+  ops = sat_temp(sslot, "mul", false, kind, w, lslot, rslot, ops);
+  ops = sat_load(lslot, ops);
+  ops = sat_arith("div_s", kind, w, ops);
+  ops = sat_load(rslot, ops);
+  ops = ops.append(ir.op_bin("ne", w, false));
+  ops = sat_load(lslot, ops);
+  ops = sat_const(kind, "negone", ops);
+  ops = ops.append(ir.op_bin("eq", w, false));
+  ops = sat_load(rslot, ops);
+  ops = sat_const(kind, "min", ops);
+  ops = ops.append(ir.op_bin("eq", w, false));
+  ops = ops.append(ir.op_bin("and", 0, false));
+  ops = ops.append(ir.op_bin("or", 0, false));
+  ops = ops.append(ir.op_bin("and", 0, false));
+  ops = ops.append(ir.op_if(0));
+  ops = sat_load(lslot, ops);
+  ops = sat_const(kind, "zero", ops);
+  ops = ops.append(ir.op_bin("lt_s", w, false));
+  ops = sat_load(rslot, ops);
+  ops = sat_const(kind, "zero", ops);
+  ops = ops.append(ir.op_bin("lt_s", w, false));
+  ops = ops.append(ir.op_bin("xor", 0, false));
+  ops = ops.append(ir.op_if(0));
+  ops = sat_const(kind, "min", ops);
+  ops = ops.append(ir.op_store_local(oslot));
+  ops = ops.append(ir.op_else());
+  ops = sat_const(kind, "max", ops);
+  ops = ops.append(ir.op_store_local(oslot));
+  ops = ops.append(ir.op_end());
+  ops = ops.append(ir.op_else());
+  ops = sat_temp(sslot, "mul", false, kind, w, lslot, rslot, ops);
+  ops = ops.append(ir.op_store_local(oslot));
+  ops = ops.append(ir.op_end());
+  ops = sat_load(oslot, ops);
+  return ops;
+}
+
+// sat_load / sat_const / sat_arith are the width-aware emit primitives the
+// saturating lowering is written against.
+//
+// `sat_const` pushes one of the four constants the lowering needs ("min" /
+// "max" / "zero" / "negone") at the operand type's width. A 64-bit constant
+// goes through op_const_i64_TEXT: every IR backend splices the literal text
+// into its 64-bit immediate (movabsq / ldr =N / i64.const) and never reads
+// op_const_i64's parsed i64_imm. An unsigned MAX is stored as its all-ones bit
+// pattern (-1), which the operand-width unsigned compares read back as 2^W-1;
+// a u32 one is re-zero-extended so the register backends hold it as 0xFFFFFFFF
+// rather than a sign-extended -1.
+//
+// `sat_arith` re-applies the width normalisation the ordinary binary path
+// applies after add/sub/mul/shl: the register backends hold a u32 zero-extended and
+// an i32 sign-extended in a 64-bit register, so a 32-bit product must be
+// narrowed before the signed `*|` division round-trip can detect its overflow.
+function sat_load(slot: i32, own ops: ir.Op[]): ir.Op[] {
+  return ops.append(ir.op_load_local(slot));
+}
+
+// An intermediate the shape reads more than once: loaded from `slot` where
+// the caller spilled it (the AST lowering, a fresh local per intermediate),
+// recomputed from the operands where it did not (`slot` -1: the semantic
+// lowering, whose slots are its values and which spills nothing).
+function sat_temp(slot: i32, k: string, norm: boolean, kind: string, w: i32, lslot: i32, rslot: i32, own ops: ir.Op[]): ir.Op[] {
+  if (slot >= 0) {
+    return sat_load(slot, ops);
+  }
+  ops = sat_load(lslot, ops);
+  ops = sat_load(rslot, ops);
+  ops = sat_arith(k, kind, w, ops);
+  if (norm) {
+    return chk_norm(kind, ops);
+  }
+  return ops;
+}
+
+function sat_const(kind: string, which: string, own ops: ir.Op[]): ir.Op[] {
+  if (kind == "i64" || kind == "u64") {
+    let t: string = "0";
+    if (which == "negone") {
+      t = "-1";
+    }
+    if (which == "max") {
+      if (kind == "u64") {
+        t = "-1";
+      } else {
+        t = "9223372036854775807";
+      }
+    }
+    if (which == "min" && kind == "i64") {
+      t = "-9223372036854775808";
+    }
+    return ops.append(ir.op_const_i64_text(t));
+  }
+  let v: i32 = 0;
+  if (which == "negone") {
+    v = 0 - 1;
+  }
+  if (which == "max") {
+    if (kind == "u8") {
+      v = 255;
+    } else if (kind == "u32") {
+      v = 0 - 1;
+    } else {
+      v = 2147483647;
+    }
+  }
+  if (which == "min" && kind == "i32") {
+    v = 0 - 2147483647 - 1;
+  }
+  ops = ops.append(ir.op_const_i32(v));
+  if (kind == "u32") {
+    return ops.append(ir.op_u32_wrap());
+  }
+  return ops;
+}
+
+function sat_arith(k: string, kind: string, w: i32, own ops: ir.Op[]): ir.Op[] {
+  ops = ops.append(ir.op_bin(k, w, false));
+  if (k != "add" && k != "sub" && k != "mul" && k != "shl") {
+    return ops;
+  }
+  if (kind == "u32") {
+    return ops.append(ir.op_u32_wrap());
+  }
+  if (kind == "i32") {
+    return ops.append(ir.op_int_cast("i32"));
+  }
+  if (kind == "u8") {
+    return ops.append(ir.op_int_cast("u8"));
+  }
+  return ops;
+}
+
+// chk_overflow pushes the overflow boolean for a checked binary. It is the
+// SAME clamp condition lower_sat_binary tests (so it inherits that shape's
+// per-backend proof), OR'd across the two saturation directions for
+// signed add / sub because a checked op only cares that it overflowed at
+// all, not which way:
+//
+//     unsigned +?  l > MAX - r
+//     unsigned -?  l < r
+//     unsigned *?  l != 0 && r > MAX / l
+//     signed   +?  (r > 0 && l > MAX - r) || (r < 0 && l < MIN - r)
+//     signed   -?  (r < 0 && l > MAX + r) || (r > 0 && l < MIN + r)
+//     signed   *?  l != 0 && (s / l != r || (l == -1 && r == MIN))   (s = l * r wrapped)
+// chk_norm masks a value to the operand width — the same normalisation
+// sat_arith applies after add/sub/mul, reused for the `<<?` result (which
+// sat_arith leaves un-masked).
+function chk_norm(kind: string, own ops: ir.Op[]): ir.Op[] {
+  if (kind == "u32") {
+    return ops.append(ir.op_u32_wrap());
+  }
+  if (kind == "i32") {
+    return ops.append(ir.op_int_cast("i32"));
+  }
+  if (kind == "u8") {
+    return ops.append(ir.op_int_cast("u8"));
+  }
+  return ops;
+}
+
+function chk_overflow(op: string, kind: string, uns: boolean, w: i32, lslot: i32, rslot: i32, sslot: i32, own ops: ir.Op[]): ir.Op[] {
+  // Checked shift: fail on an out-of-range count — `>= width` (spelled
+  // `> width-1` so gt_u / gt_s suffice) and, for signed operands, `< 0`.
+  if (op == "<<?" || op == ">>?") {
+    let wm1: i32 = 31;
+    if (kind == "u8") {
+      wm1 = 7;
+    } else if (w == 64) {
+      wm1 = 63;
+    }
+    ops = sat_load(rslot, ops);
+    if (w == 64) {
+      ops = ops.append(ir.op_const_i64_text("63"));
+    } else {
+      ops = ops.append(ir.op_const_i32(wm1));
+    }
+    if (uns) {
+      return ops.append(ir.op_bin("gt_u", w, false));
+    }
+    ops = ops.append(ir.op_bin("gt_s", w, false));  // r > width-1
+    ops = sat_load(rslot, ops);
+    ops = sat_const(kind, "zero", ops);
+    ops = ops.append(ir.op_bin("lt_s", w, false));  // r < 0
+    return ops.append(ir.op_bin("or", 0, false));
+  }
+  // Checked divide / remainder: fail on a zero divisor, and for signed
+  // operands also on `MIN / -1` (the one overflowing division). Same
+  // condition for `/?` and `%?`.
+  if (op == "/?" || op == "%?") {
+    ops = sat_load(rslot, ops);
+    ops = sat_const(kind, "zero", ops);
+    ops = ops.append(ir.op_bin("eq", w, false));  // r == 0
+    if (uns) {
+      return ops;
+    }
+    ops = sat_load(lslot, ops);
+    ops = sat_const(kind, "min", ops);
+    ops = ops.append(ir.op_bin("eq", w, false));  // l == MIN
+    ops = sat_load(rslot, ops);
+    ops = sat_const(kind, "negone", ops);
+    ops = ops.append(ir.op_bin("eq", w, false));  // r == -1
+    ops = ops.append(ir.op_bin("and", 0, false));
+    return ops.append(ir.op_bin("or", 0, false));  // (r==0) || (l==MIN && r==-1)
+  }
+  if (uns) {
+    if (op == "+?") {
+      ops = sat_load(lslot, ops);
+      ops = sat_const(kind, "max", ops);
+      ops = sat_load(rslot, ops);
+      ops = sat_arith("sub", kind, w, ops);
+      return ops.append(ir.op_bin("gt_u", w, false));
+    }
+    if (op == "-?") {
+      ops = sat_load(lslot, ops);
+      ops = sat_load(rslot, ops);
+      return ops.append(ir.op_bin("lt_u", w, false));
+    }
+    // *?  l != 0 && r > MAX / l
+    ops = sat_load(lslot, ops);
+    ops = sat_const(kind, "zero", ops);
+    ops = ops.append(ir.op_bin("ne", w, false));
+    ops = sat_load(rslot, ops);
+    ops = sat_const(kind, "max", ops);
+    ops = sat_load(lslot, ops);
+    ops = sat_arith("div_u", kind, w, ops);
+    ops = ops.append(ir.op_bin("gt_u", w, false));
+    return ops.append(ir.op_bin("and", 0, false));
+  }
+  if (op == "+?" || op == "-?") {
+    let rsign_hi: string = "gt_s";
+    let rsign_lo: string = "lt_s";
+    let adj: string = "sub";
+    if (op == "-?") {
+      rsign_hi = "lt_s";
+      rsign_lo = "gt_s";
+      adj = "add";
+    }
+    // hi = (r <rsign_hi> 0) && (l > MAX <adj> r)
+    ops = sat_load(rslot, ops);
+    ops = sat_const(kind, "zero", ops);
+    ops = ops.append(ir.op_bin(rsign_hi, w, false));
+    ops = sat_load(lslot, ops);
+    ops = sat_const(kind, "max", ops);
+    ops = sat_load(rslot, ops);
+    ops = sat_arith(adj, kind, w, ops);
+    ops = ops.append(ir.op_bin("gt_s", w, false));
+    ops = ops.append(ir.op_bin("and", 0, false));
+    // lo = (r <rsign_lo> 0) && (l < MIN <adj> r)
+    ops = sat_load(rslot, ops);
+    ops = sat_const(kind, "zero", ops);
+    ops = ops.append(ir.op_bin(rsign_lo, w, false));
+    ops = sat_load(lslot, ops);
+    ops = sat_const(kind, "min", ops);
+    ops = sat_load(rslot, ops);
+    ops = sat_arith(adj, kind, w, ops);
+    ops = ops.append(ir.op_bin("lt_s", w, false));
+    ops = ops.append(ir.op_bin("and", 0, false));
+    return ops.append(ir.op_bin("or", 0, false));
+  }
+  // signed *?  l != 0 && (s / l != r || (l == -1 && r == MIN))
+  ops = sat_load(lslot, ops);
+  ops = sat_const(kind, "zero", ops);
+  ops = ops.append(ir.op_bin("ne", w, false));
+  ops = sat_temp(sslot, "mul", false, kind, w, lslot, rslot, ops);
+  ops = sat_load(lslot, ops);
+  ops = sat_arith("div_s", kind, w, ops);
+  ops = sat_load(rslot, ops);
+  ops = ops.append(ir.op_bin("ne", w, false));
+  ops = sat_load(lslot, ops);
+  ops = sat_const(kind, "negone", ops);
+  ops = ops.append(ir.op_bin("eq", w, false));
+  ops = sat_load(rslot, ops);
+  ops = sat_const(kind, "min", ops);
+  ops = ops.append(ir.op_bin("eq", w, false));
+  ops = ops.append(ir.op_bin("and", 0, false));
+  ops = ops.append(ir.op_bin("or", 0, false));
+  return ops.append(ir.op_bin("and", 0, false));
+}
+
+// chk_binary_ops is the checked shape over SLOTS: operands in `lslot` /
+// `rslot`, the wrapped result in `sslot` (a width-marked slot), the Option in
+// `oslot` (a pointer slot) and loaded last.
+pub function chk_binary_ops(op: string, kind: string, wide: boolean, lslot: i32, rslot: i32, sslot: i32, oslot: i32): ir.Op[] {
+  let uns: boolean = kind == "u8" || kind == "u32" || kind == "u64";
+  let w: i32 = 0;
+  if (wide) {
+    w = 64;
+  }
+  let ops: ir.Op[] = [];
+
+  let basek: string = "add";
+  if (op == "-?") {
+    basek = "sub";
+  }
+  if (op == "*?") {
+    basek = "mul";
+  }
+  if (op == "/?") {
+    if (uns) {
+      basek = "div_u";
+    } else {
+      basek = "div_s";
+    }
+  }
+  if (op == "%?") {
+    if (uns) {
+      basek = "rem_u";
+    } else {
+      basek = "rem_s";
+    }
+  }
+  if (op == "<<?") {
+    basek = "shl";
+  }
+  if (op == ">>?") {
+    if (uns) {
+      basek = "shr_u";
+    } else {
+      basek = "shr_s";
+    }
+  }
+  // The wrapped result `s`. `+?` / `-?` / `*?` compute it UP FRONT — signed
+  // `*?`'s overflow check divides it back. `/?` / `%?` must NOT: a `84 /? 0`
+  // would divide by zero here, which traps on the wasm IR path (op_bin div is
+  // the raw, un-guarded division). Their overflow check needs only l / r, so
+  // the division is deferred into the Some branch below, where the divisor is
+  // provably non-zero (and not the signed `MIN / -1`) and so can't trap.
+  let is_divrem: boolean = op == "/?" || op == "%?";
+  if (!is_divrem && sslot >= 0) {
+    ops = sat_load(lslot, ops);
+    ops = sat_load(rslot, ops);
+    ops = sat_arith(basek, kind, w, ops);
+    // `<<?`'s value can exceed the type width (`255u8 <<? 1 == 254`);
+    // sat_arith doesn't mask a `shl` result (only add/sub/mul), so wrap
+    // it to the operand width here — matching Fern's ordinary `<<` and
+    // the native desugar. `>>?` never grows the value, so it needs none.
+    if (op == "<<?") {
+      ops = chk_norm(kind, ops);
+    }
+    ops = ops.append(ir.op_store_local(sslot));
+  }
+  ops = chk_overflow(op, kind, uns, w, lslot, rslot, sslot, ops);
+  ops = ops.append(ir.op_if(0));
+  ops = ops.append(ir.op_opt_none());
+  ops = ops.append(ir.op_store_local(oslot));
+  ops = ops.append(ir.op_else());
+  if (is_divrem) {
+    ops = sat_load(lslot, ops);
+    ops = sat_load(rslot, ops);
+    ops = sat_arith(basek, kind, w, ops);
+  } else {
+    ops = sat_temp(sslot, basek, op == "<<?", kind, w, lslot, rslot, ops);
+  }
+  if (wide) {
+    ops = ops.append(ir.op_opt_make_w(0, 64, true));
+  } else {
+    ops = ops.append(ir.op_opt_make(0));
+  }
+  ops = ops.append(ir.op_store_local(oslot));
+  ops = ops.append(ir.op_end());
+  ops = sat_load(oslot, ops);
+  return ops;
+}
+
+// to_unsigned_kind maps a signed IR op kind to its unsigned variant, for u64
+// operands (#2904): comparisons, shift-right, and div/rem. Sign-agnostic kinds
+// (add/sub/mul/and/or/xor/shl/eq/ne) pass through unchanged.
+pub function to_unsigned_kind(kind: string): string {
+  if (kind == "lt_s") {
+    return "lt_u";
+  }
+  if (kind == "gt_s") {
+    return "gt_u";
+  }
+  if (kind == "le_s") {
+    return "le_u";
+  }
+  if (kind == "ge_s") {
+    return "ge_u";
+  }
+  if (kind == "shr_s") {
+    return "shr_u";
+  }
+  if (kind == "div_s") {
+    return "div_u";
+  }
+  if (kind == "rem_s") {
+    return "rem_u";
+  }
+  return kind;
+}
+
+// map_fbinop maps a source operator to its f64 IR opcode (arithmetic yields an
+// f64; a compare yields an i32 0/1). "" for operators with no float form (`%`,
+// bitwise, shifts — those bail on float operands).
+pub function map_fbinop(op: string): string {
+  if (op == "+") {
+    return "fadd";
+  }
+  if (op == "-") {
+    return "fsub";
+  }
+  if (op == "*") {
+    return "fmul";
+  }
+  if (op == "/") {
+    return "fdiv";
+  }
+  if (op == "==") {
+    return "feq";
+  }
+  if (op == "!=") {
+    return "fne";
+  }
+  if (op == "<") {
+    return "flt";
+  }
+  if (op == "<=") {
+    return "fle";
+  }
+  if (op == ">") {
+    return "fgt";
+  }
+  if (op == ">=") {
+    return "fge";
+  }
+  return "";
+}
+
+// f64_math_builtin_kind maps a std/float math builtin name to its op_funary
+// opcode, or "" if `name` is not one. Most are a single hardware instruction:
+// __sqrt_f64 (sqrtsd / fsqrt / f64.sqrt), __floor_f64 / __ceil_f64 / __trunc_f64
+// (roundsd $1/$2/$3 / frintm/p/z / f64.floor/ceil/trunc), and __abs_f64 (sign-bit
+// mask / fabs / f64.abs). __round_f64 (round-half-away, Go's math.Round) is one
+// instruction on arm64 (frinta) but on x86 (roundsd has no ties-away mode) and
+// wasm (f64.nearest is ties-to-even, not -away) it is emulated as trunc plus an
+// exact fractional-part test — see ir_fround / emit_wasm_fround.
+// The libm transcendentals log/exp/sin/cos lower here too; `pow`, the only
+// two-argument one, lowers as an `fpow` fbin instead (the __pow_f64 call case).
+pub function f64_math_builtin_kind(name: string): string {
+  if (name == "__sqrt_f64") {
+    return "fsqrt";
+  }
+  if (name == "__floor_f64") {
+    return "ffloor";
+  }
+  if (name == "__ceil_f64") {
+    return "fceil";
+  }
+  if (name == "__trunc_f64") {
+    return "ftrunc";
+  }
+  if (name == "__abs_f64") {
+    return "fabs";
+  }
+  if (name == "__round_f64") {
+    return "fround";
+  }
+  // The libm transcendentals. No target has an instruction for these, so every
+  // backend calls the same-named runtime helper its emitter emits —
+  // `__fern_<op>_f64` on the two register backends, `$__fern_<op>_f64` on wasm.
+  if (name == "__sin_f64") {
+    return "fsin";
+  }
+  if (name == "__cos_f64") {
+    return "fcos";
+  }
+  if (name == "__exp_f64") {
+    return "fexp";
+  }
+  if (name == "__log_f64") {
+    return "flog";
+  }
+  return "";
+}
+
+// nested_field_deep_drop_ok reports whether a DIRECT nested-struct field of type
+// `sty` is safe to DEEP-drop — i.e. its drop site may recursively release `sty`'s
+// OWN rc fields (via __struct_drop_<sty>) before freeing the inner box, instead of
+// the shallow box-only free. True iff `sty`'s nested-struct-field closure is
+// ACYCLIC and reaches at least one rc-ARRAY field to reclaim.
+//
+// ACYCLICITY is the CYCLE-SAFETY guarantee: __struct_drop_<sty>'s emitted body
+// recurses `call __struct_drop_<fdt>` for each nested-struct field fdt admitted by
+// THIS predicate, so the emitted call graph edge sty→fdt exists iff fdt is itself
+// deep-drop-ok. If every type's nested-struct closure is acyclic, that call graph
+// is a DAG and the runtime recursion terminates (bounded by the number of distinct
+// struct types — a type cannot recur on the chain without a cycle). A back-edge
+// (sty reachable from fdt) poisons the whole ancestor chain: nddo_reach returns the
+// CYCLIC sentinel, so the field stays SHALLOW — a self-referential / mutually-
+// recursive struct (tree / linked list, admitted leak-safe by decl_is_leaksafe's
+// back-edge rule) keeps the existing one-level box-only reclaim, leak-safe.
+//
+// This generalises the former LEAF-only rule (depth-1, no nested-struct field) to
+// arbitrary acyclic depth: `A { b: B }` / `B { c: C }` / `C { xs: i32[] }` now
+// deep-drops all the way down (A's drop releases B's box AND, transitively, C's xs
+// buffer), reusing the per-level rc_is_unique guard the leaf case already applied.
+// A `string` field counts as reclaimable (#4297 A2), and so does an enum field
+// whose payloads `__struct_drop_`'s deep_enum_drop walks (enum_arr_elems_walk_ok,
+// #8692). Option / tuple inner fields are not reclaimed, so a struct reaching
+// only those returns false.
+pub function nested_field_deep_drop_ok(structs: StructTab, sty: string): boolean {
+  if (sty.len() == 0) {
+    return false;
+  }
+  let visiting: string[] = [];
+  return nddo_reach(structs, sty, visiting) == 1;
+}
+
+// nddo_reach is the cycle-detecting DFS behind nested_field_deep_drop_ok. It returns
+//   -1  a cycle is reachable from `sty` (a back-edge to a struct on the current path,
+//       or the depth backstop) — UNSAFE to deep-drop, and poisons every ancestor;
+//    1  `sty`'s closure is acyclic AND reaches a RECLAIMABLE field — an rc-ARRAY or,
+//       since #4297 A2, a `string` field (deep-drop-worthy);
+//    0  `sty`'s closure is acyclic but reaches nothing reclaimable.
+// `visiting` is the set of struct types on the current recursion path (the same
+// back-edge mechanism as decl_is_leaksafe_d). A direct rc-array / string field sets
+// the reclaimable flag; a nested-struct field recurses (its cycle poisons via -1,
+// its reclaimable content propagates up). Deep-dropping a nested string-only struct
+// is sound: the deep-drop is rc_is_unique-gated, so a SHARED nested struct skips it
+// (no over-release), and a uniquely-owned one runs its own __struct_drop whose k_str
+// arm reclaims the string exactly as at top level (the construction alias-inc
+// balances a non-fresh field; a fresh field is freed).
+function nddo_reach(structs: StructTab, sty: string, visiting: string[]): i32 {
+  if (util.has_str(visiting, sty)) {  // back-edge → cycle → unsafe
+    return 0 - 1;
+  }
+  if (visiting.len() > 16) {  // depth backstop → treat as unsafe
+    return 0 - 1;
+  }
+  let nv: string[] = visiting.append(sty);
+  let n: i32 = decl_field_count(structs, sty);
+  let has_arr: boolean = false;
+  let fi: i32 = 0;
+  while (fi < n) {
+    let fdt: string = decl_field_type_at(structs, sty, fi);
+    if (decl_is_struct(structs, fdt)) {
+      let r: i32 = nddo_reach(structs, fdt, nv);
+      if (r < 0) {  // a cycle below poisons this struct too
+        return 0 - 1;
+      }
+      if (r == 1) {
+        has_arr = true;
+      }
+    } else if (is_leaksafe_array_field(fdt) || is_struct_array_field_type(structs, fdt) || is_enum_array_field_type(structs, fdt)
+      || is_row_array_field_type(structs, fdt)) {
+      has_arr = true;
+    } else if (fdt == "string") {
+      has_arr = true;  // #4297 A2: a string field is reclaimable (k_str drop)
+    } else if (decl_is_enum(structs, fdt) && enum_arr_elems_walk_ok(structs, fdt)) {
+      has_arr = true;  // deep_enum_drop walks its payloads
+    }
+    fi = fi + 1;
+  }
+  if (has_arr) {
+    return 1;
+  }
+  return 0;
+}
+
+// reuse_layer_disabled: the #4350 §6.5 differential switch. When the
+// FERN_SELFHOST_NO_REUSE env let is "1" in the COMPILER's environment, every
+// donor-based box-reuse pairing (self-overwrite / cross-struct / cross-tuple /
+// enum-donor / enum-cross / in-arm) and the ENUMRE in-place reassign upgrade
+// are suppressed: constructions allocate fresh boxes, donors take their normal
+// frees (nothing is suppressed on their behalf), and the ENUMRE reassign falls
+// back to emit_enum_reclaim_store's free+alloc — mirroring native
+// ast.RcReuseEnabled=false. Reuse-on vs reuse-off must be OBSERVATIONALLY
+// IDENTICAL (the differential gate in self_host_reuse_differential_test.go
+// asserts it); OFF trades only alloc count / peak heap. Read per ssarc.lower
+// entry (an env scan — no allocation on the None path).
+pub function reuse_layer_disabled(): boolean {
+  match (env("FERN_SELFHOST_NO_REUSE")) {
+    Some(v) => {
+      return v == "1";
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// LowerResult is one function's lowered body (ssarc.lower, or the entry
+// semlower records for a declined or bodyless one): the lowered op stream,
+// the local-slot count (operand-frame size for the interpreter / a backend —
+// the count ir.optimize_ops returns, which a slot-allocating pass grows past
+// the lowering's own), and ok.
+pub struct LowerResult {
+  ok: boolean,
+  ops: ir.Op[],
+  n_locals: i32,
+  n_params: i32,
+  // erased_wide: the body passes a 64-bit or f64 value to a BARE-TYPEVAR
+  // (erased-generic) param, or consumes such a call's mirrored 64-bit
+  // return. The register backends lower it (8-byte slots); the wasm
+  // backend types erased param locals i32, so wasm_ir_deferrals_ok refuses
+  // the module (an f64 through an erased param previously emitted
+  // type-INVALID WAT the wasmtime loader rejects).
+  erased_wide: boolean,
+  // superseded: a template's erased body whose produced instances stand
+  // for it in a module produced whole. No emit writes it and no gate judges
+  // it: nothing calls it, since every produced caller calls an instance.
+  superseded: boolean,
+  // arr_slots: the local slots holding arrays. Read only by
+  // ircore.lowered_digest; entry-zeroing covers the whole body range regardless.
+  arr_slots: i32[],
+  // i64_slots: the local slots holding i64 values — the wasm backend declares
+  // these (local i64); the register backends ignore it (i64 shares the 64-bit
+  // slot with i32).
+  i64_slots: i32[],
+  // f64_slots: the local slots holding f64 values; the wasm backend declares
+  // these (local f64). The register backends ignore it (f64 shares the slot).
+  f64_slots: i32[],
+  // str_slots: the local slots holding strings. Carried for the verifier
+  // (#6639), not for emission — a string is one operand slot on the
+  // registers and two on wasm32, so a stack model needs the distinction.
+  str_slots: i32[],
+  // why: why this function did not lower. Empty when ok. Read only by
+  // ircore.lower_failed_refuse, the backends' per-function backstop.
+  why: string,
+  // name: the symbol this body defines, for a lowering that has no
+  // declaration to take one from. Empty for a body lowered from a
+  // parser.FuncDecl, whose own name the emit path reads.
+  name: string,
+  // result_kind: the scalar class of the value this body returns, for the
+  // same declaration-less case. A backend whose calling convention gives
+  // every value one machine word ignores it; wasm has to spell the result
+  // in the function's type, and guessing is what this replaces.
+  result_kind: i32,
+}
+
+// result_from_decl marks a body whose return type is read from its
+// parser.FuncDecl. The produced shapes are the three scalar slot classes the
+// physical RC boundary admits; a backend refuses any other value rather than
+// assuming one, so a new shape cannot be forgotten.
+pub function result_from_decl(): i32 {
+  return 0;
+}
+
+pub function result_i32(): i32 {
+  return 1;
+}
+
+pub function result_i64(): i32 {
+  return 2;
+}
+
+pub function result_f64(): i32 {
+  return 3;
+}
+
+// is_array_type_name reports whether a type string denotes an array (ends
+// with "[]", e.g. "i32[]").
+pub function is_array_type_name(t: string): boolean {
+  let n: i32 = t.len();
+  if (n < 2) {
+    return false;
+  }
+  return slice_unchecked(t, n - 2, n) == "[]";
+}
+
+// is_f64_scalar_type_name reports whether a declared SCALAR type is an 8-byte
+// IEEE float — f64 or f32 (Fern represents f32 as an f64 internally: f32<->f64
+// casts are no-ops and every float op runs at double width). The two spell the
+// same runtime value, so a slot of either is marked local_is_f64 and a function
+// returning either is registered f64-returning. (Arrays f64[]/f32[] are tracked
+// separately via local_is_f64arr; this is the scalar classifier only.)
+pub function is_f64_scalar_type_name(t: string): boolean {
+  return t == "f64" || t == "f32" || t == "float";
+}
+
+// --- Binding-SITE keys for the tuple class credits (#7272 / #7253 step 1) ---
+//
+// The class credits are collected from the AST, before any slot exists, so their
+// key has always been the variable NAME — and a name has no scope. Two `let t`
+// in sibling blocks are two slots under one key, and when they are not the same
+// class the table hands each slot BOTH credits: the box takes the "TUP:" shallow
+// dec AND the "TUPRCS:" deep free, and is released twice. Measured as exit 99
+// (rc underflow) against 10 on native and interp, with `live_bytes=0` throughout
+// — only the underflow counter reports it. Renaming one of the two locals, and
+// nothing else, made it correct.
+//
+// A `StmtVar` carries line and col, so `name@line:col` names the BINDING rather
+// than the name, and the two blocks stop colliding. bind_var_slot records it on
+// the slot, so every consumer resolves the credit its own binding earned.
+//
+// The families converted so far: tuple (#7272), "STR:" (#7292), "SARR:" /
+// "SARRB:" and "ARRARR:" / "ARRARRS:" (#7253, #7335), the bare-name struct
+// credit and its "NODEEP:" / "FLDCHECKED:" markers (#7349), and the whole
+// Option family. The rest of the ~70 namespaces multiplexed into
+// reclaimable_names are keyed on the site too as of the final-eight conversion,
+// which retired `reclaim_slot_name` outright — this is the only credit key now.
+pub function reclaim_site_key_of(name: string, line: i32, col: i32): string {
+  return name + "@" + util.i32_to_string(line) + ":" + util.i32_to_string(col);
+}
+
+// local_decl_count: how many `let name` declarations `stmts` contains, nested
+// blocks included.
+// Over astwalk's binder walk, for the reason body_declares_name is — and here it
+// was a live miscompile rather than a latent one. The copy this replaces counted
+// `let` declarations only: it did not read `for` binders, match payload binders,
+// or the comma-joined destructure form. try_lift_binding uses the count to
+// refuse the lambda lift when a name means two things, and subst_fcall_expr
+// rewrites `f(…)` inside `for` and `match` bodies — so a `for f in fns` over a
+// lifted `f` counted 1, the lift proceeded, and every element's call was
+// rewritten to the hoisted body. Measured 35 against the interpreter's 99.
+pub function local_decl_count(stmts: ast.Stmt[], name: string): i32 {
+  let bound: string[] = astwalk.collect_bound_stmts(stmts, []);
+  let n: i32 = 0;
+  let i: i32 = 0;
+  while (i < bound.len()) {
+    if (bound[i] == name) {
+      n = n + 1;
+    }
+    i = i + 1;
+  }
+  return n;
+}
+
+// is_scalar_type_name reports whether `t` names a flat scalar type
+// (i32 / i64 / f64 / boolean / u32 / u64) — a value that is COPIED, not
+// rc-tracked, so a shallow box free needs no element walk and never entangles a
+// bound payload's lifetime.
+pub function is_scalar_type_name(t: string): boolean {
+  return t == "i32" || t == "i64" || t == "f64" || t == "boolean" || t == "u32" || t == "u64";
+}
+
+// enum_walk_payload_field: a payload the element walk releases with one
+// rc-guarded arr_dec — a LEAK-SAFE scalar array, or a closure's env box.
+function enum_walk_payload_field(ft: string): boolean {
+  return is_leaksafe_array_field(ft) || ft == "fn";
+}
+
+// enum_arr_elems_walk_ok: the enum-ARRAY element walk (__enum_arr_elems_drop_<E>)
+// may release payloads for enum E — every variant's payload fields are scalars
+// or enum_walk_payload_field, and some variant actually carries one. Only those
+// kinds' counting is guaranteed at construction (the variant ctor incs a
+// bare-ident array payload — the #3720 dup — and any closure that does not
+// arrive counted, and a fresh literal is owned), so the walk's rc-guarded
+// arr_dec balances either way; a string / nested-box payload can reach the box
+// uncounted and keeps the enum outside the walk.
+pub function enum_arr_elems_walk_ok(structs: StructTab, ename: string): boolean {
+  if (!decl_is_enum(structs, ename)) {
+    return false;
+  }
+  let any_walked: boolean = false;
+  for sd in structs.decls {
+    if (sd.enum_owner == ename) {
+      let n: i32 = decl_field_count(structs, sd.name);
+      let fi: i32 = 0;
+      while (fi < n) {
+        let ft: string = decl_field_type_at(structs, sd.name, fi);
+        if (enum_walk_payload_field(ft)) {
+          any_walked = true;
+        } else if (!is_scalar_type_name(ft)) {
+          return false;
+        }
+        fi = fi + 1;
+      }
+    }
+  }
+  return any_walked;
+}
+
+// enum_walk_payload_offsets: for one variant, the byte offsets of its
+// enum_walk_payload_field payloads ((k+1)*8 — shape@0, fields@8+), for the
+// element-walk emitters.
+pub function enum_walk_payload_offsets(structs: StructTab, vname: string): i32[] {
+  let out: i32[] = [];
+  let n: i32 = decl_field_count(structs, vname);
+  let fi: i32 = 0;
+  while (fi < n) {
+    if (enum_walk_payload_field(decl_field_type_at(structs, vname, fi))) {
+      out = out.append((fi + 1) * 8);
+    }
+    fi = fi + 1;
+  }
+  return out;
+}
+
+// erased_expr_uses_any: does `e` reference any of the (erased-param) names?
+function erased_expr_uses_any(e: ast.Expr, names: string[]): boolean {
+  let ids: string[] = astwalk.collect_idents_expr(e, []);
+  let i: i32 = 0;
+  while (i < ids.len()) {
+    if (util.index_of_str(names, ids[i]) >= 0) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// erased_return_value_ok: is the returned expression a SAFE erased sink — a bare
+// erased-param ident (scalar pass-through), or a TUPLE literal whose elements are
+// each such (a tuple pass-through `pair(k,v):(K,V) { return (k,v); }`), or an
+// expression that doesn't touch the erased params at all? A wasm tuple uses a
+// uniform 8-byte-per-element box, so widening each element to i64 and reading it
+// back at the concrete per-element width is layout-safe (#5464 tuple slice). A
+// non-tuple compound (a call/closure/arith/Some(k)/[k]) is NOT a safe sink here.
+function erased_return_value_ok(e: ast.Expr, names: string[]): boolean {
+  match (e) {
+    ast.ExprIdent(rid) => {
+      if (util.index_of_str(names, rid.name) >= 0) {
+        return true;
+      }
+    },
+    ast.ExprTuple(t) => {
+      for el in t.elements {
+        if (!erased_return_value_ok(el, names)) {
+          return false;
+        }
+      }
+      return true;
+    },
+    _ => {}
+  }
+  return !erased_expr_uses_any(e, names);
+}
+
+// erased_uses_only_returned: is every use of an erased-param name confined to a
+// `return <that-param>` (or `return (<params…>)` tuple) position? This is the
+// body-safety gate for the #5464 erased-wide widening: widening a param to i64 is
+// sound ONLY when the opaque value merely FLOWS OUT via return. The moment it is
+// bound to a local, passed to a (concrete-typed) closure/function, used in
+// arithmetic, or placed in a non-tuple container, its i64 spelling collides with
+// the concrete type the sink expects — e.g.
+// `fold[T,A](init:A, f:(A,T)=>A): A { let acc = init; acc = f(acc,..); return acc }`
+// passes `A` to a closure typed at the concrete `A`, so init must NOT widen.
+// Conservative: any unrecognised statement, or any non-return use, fails safe.
+function erased_uses_only_returned(stmts: ast.Stmt[], names: string[]): boolean {
+  for stmt in stmts {
+    match (stmt) {
+      ast.StmtReturn(r) => {
+        // The returned value must be a safe erased sink: a bare erased param,
+        // a tuple of such, or an expression not touching the erased params.
+        if (!erased_return_value_ok(r.value, names)) {
+          return false;
+        }
+      },
+      ast.StmtIf(iff) => {
+        if (erased_expr_uses_any(iff.cond, names)) {
+          return false;
+        }
+        if (!erased_uses_only_returned(iff.then_body, names)) {
+          return false;
+        }
+        if (!erased_uses_only_returned(iff.else_body, names)) {
+          return false;
+        }
+      },
+      ast.StmtWhile(w) => {
+        if (erased_expr_uses_any(w.cond, names)) {
+          return false;
+        }
+        if (!erased_uses_only_returned(w.body, names)) {
+          return false;
+        }
+      },
+      ast.StmtFor(fo) => {
+        if (erased_expr_uses_any(fo.iter, names)) {
+          return false;
+        }
+        if (!erased_uses_only_returned(fo.body, names)) {
+          return false;
+        }
+      },
+      ast.StmtMatch(m) => {
+        if (erased_expr_uses_any(m.scrutinee, names)) {
+          return false;
+        }
+        for arm in m.arms {
+          if (arm.has_guard && erased_expr_uses_any(arm.guard, names)) {
+            return false;
+          }
+          if (!erased_uses_only_returned(arm.body, names)) {
+            return false;
+          }
+        }
+      },
+      ast.StmtVar(v) => {
+        if (erased_expr_uses_any(v.init, names)) {
+          return false;
+        }
+      },
+      ast.StmtAssign(a) => {
+        if (erased_expr_uses_any(a.value, names)) {
+          return false;
+        }
+      },
+      ast.StmtExpr(ex) => {
+        if (erased_expr_uses_any(ex.value, names)) {
+          return false;
+        }
+      },
+      ast.StmtDefer(d) => {
+        if (!erased_uses_only_returned([d.action], names)) {
+          return false;
+        }
+      },
+      _ => {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// erased_passthrough_safe: is `fn` a free erased-generic fn that returns a bare
+// typevar and merely passes its erased param(s) through to `return` — the shape
+// the wasm backend widens to the uniform i64 slot (#5464)? Everything else (a
+// container/concrete return, or a body that USES the erased value) is refused
+// here (a wide instantiation defers via erased_wide; a narrow one is
+// unaffected).
+pub function erased_passthrough_safe(fn: parser.FuncDecl): boolean {
+  if (!declares_typevars(fn)) {
+    return false;
+  }
+  if (fn.receiver_type.len() != 0) {
+    return false;
+  }
+  if (!parser.looks_type_var(fn.ret_type)) {
+    return false;
+  }
+  let enames: string[] = [];
+  let i: i32 = 0;
+  while (i < fn.params.len()) {
+    if (parser.looks_type_var(fn.params[i].type_name)) {
+      enames = enames.append(fn.params[i].name);
+    }
+    i = i + 1;
+  }
+  if (enames.len() == 0) {
+    return false;
+  }
+  return erased_uses_only_returned(fn.body, enames);
+}
+
+// declares_typevars reports whether `fn` DECLARES the type variables its
+// signature spells. A hoisted `<fn>$wrapN` trampoline copies a lambda's
+// parameter and return spellings verbatim, so it can read as a bare-typevar
+// pass-through while being an ordinary non-generic function — and its ABI is
+// fixed by the arity-keyed indirect-call table, not by erasure. Widening one
+// gave it `(param i64) (result i64)` against an all-i32 `call_indirect` type on
+// wasm: `indirect call type mismatch` at the first call.
+function declares_typevars(fn: parser.FuncDecl): boolean {
+  return fn.type_params.len() > 0 || fn.all_type_params.len() > 0;
+}
+
+// fn_sig_index records every declared function's parameter count under the
+// name a `call_direct` op spells it with — `<BaseType>.<method>` for a
+// receiver method, the bare name otherwise, the same key lower_module stores an
+// ir.LoweredFn under. It is what lets the IR verifier's call-arity check and its
+// callee-resolution pass look a callee up without scanning the declaration
+// list per call op.
+//
+// The arity counts the receiver, because the lowering does: the receiver is
+// param slot 0 of a method, and the call site pushes it as the first argument.
+// DECLARED functions, not lowered ones — a function whose lowering bailed and
+// a generic monomorphised under another name are both absent from the lowered
+// set while being perfectly well declared.
+pub function fn_sig_index(funcs: parser.FuncDecl[]): irverify.NameIndex {
+  let sigs: irverify.FnSig[] = [];
+  for fn in funcs {
+    let nm: string = fn.name;
+    if (fn.receiver_type.len() > 0) {
+      nm = util.base_type_name(fn.receiver_type) + "." + fn.name;
+    }
+    let np: i32 = fn.params.len();
+    if (fn.receiver_name.len() > 0) {
+      np = np + 1;
+    }
+    sigs = sigs.append(irverify.FnSig { name: nm, n_params: np });
+  }
+  return irverify.sig_index(sigs);
+}
+
+// lambda_has_no_captures: every identifier the body uses must be one of the
+// lambda's params, a local it binds, a global function, or a literal keyword —
+// nothing from the enclosing scope. (A conservative check: a false "captures"
+// only costs a fallback to AST, never correctness.)
+// gfns_visible_in drops from the module-function list every name THIS function
+// also binds — the receiver, a parameter, or any binder in its body.
+//
+// lambda_has_no_captures forgives a free ident that names a module function, on
+// the reasoning that it is a call target rather than a capture. That holds only
+// while the name still MEANS the module function. Where the enclosing function
+// binds it too, the lambda is reading a local, and hoisting its body to a
+// top-level `__lam_N` re-resolves the name against the module.
+//
+// This is the exclusion #6191 removed from `lambda_captures`, whose doc records
+// why: "a name that is BOTH an enclosing local and a module function is
+// shadowed, so it must be captured, and the gfns exclusion said the opposite."
+// The sibling predicate kept it. Filtering the LIST once per function fixes
+// every consumer without threading fd through the lift, and costs one walk of
+// the body.
+pub function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], gset: SigReg): string[] {
+  let bound: string[] = [];
+  if (fd.receiver_name.len() > 0) {
+    bound = bound.append(fd.receiver_name);
+  }
+  let pi: i32 = 0;
+  while (pi < fd.params.len()) {
+    bound = bound.append(fd.params[pi].name);
+    pi = pi + 1;
+  }
+  let b: i32 = 0;
+  while (b < fd.body.len()) {
+    bound = astwalk.collect_bound_stmt(fd.body[b], bound);
+    b = b + 1;
+  }
+  if (bound.len() == 0) {
+    return gfns;
+  }
+  // Ask the SHADOWING question the cheap way round: a frame binds a few dozen
+  // names and the module has thousands of functions, so test each binder
+  // against the module-fn set and return the list unchanged when none of them
+  // shadows one — the overwhelmingly common case. Scanning the whole list
+  // against every binder is the same answer at O(gfns x bound).
+  let shadows: boolean = false;
+  let bi: i32 = 0;
+  while (bi < bound.len()) {
+    if (sig_reg_has_exact(gset, bound[bi])) {
+      shadows = true;
+      bi = bound.len();
+    } else {
+      bi = bi + 1;
+    }
+  }
+  if (!shadows) {
+    return gfns;
+  }
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < gfns.len()) {
+    if (util.index_of_str(bound, gfns[i]) < 0) {
+      out = out.append(gfns[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+pub function lambda_has_no_captures(lam: ast.ExprLambda, gfns: string[]): boolean {
+  let used: string[] = astwalk.collect_lambda_idents(lam, []);
+  let ui: i32 = 0;
+  while (ui < used.len()) {
+    let u: string = used[ui];
+    if (util.index_of_str(gfns, u) < 0
+      && u != "None" && u != "true" && u != "false") {
+      return false;
+    }
+    ui = ui + 1;
+  }
+  return true;
+}
+
+// body_assign_targets collects the names reassigned (`x = …`) anywhere in a body
+// (recursing control flow + match arms). Every consumer uses it the same way —
+// to withhold a credit, a reuse or a lift from a name whose slot does not hold
+// one value for the scope's life.
+pub function body_assign_targets(stmts: ast.Stmt[]): string[] {
+  return assign_targets_into([], stmts);
+}
+
+// assign_targets_into threads ONE accumulator through astwalk's statement
+// spine. It is a hot path — a statement at depth d sits in the body of every
+// block above it — so every consumer takes the set as a PARAMETER and each
+// scope folds it once (#6911).
+// assign_target_into captures nothing, so the fold allocates nothing per call.
+function assign_targets_into(out: string[], stmts: ast.Stmt[]): string[] {
+  for stmt in stmts {
+    out = astwalk.fold_stmt_spine(stmt, out, assign_target_into);
+  }
+  return out;
+}
+
+// lambda_write_targets is body_assign_targets reaching into nested lambda
+// bodies as well: a nested lambda's write to a name free in `stmts` writes that
+// same binding (lexical resolution makes every binding's name distinct).
+pub function lambda_write_targets(stmts: ast.Stmt[]): string[] {
+  let out: string[] = [];
+  for stmt in stmts {
+    out = astwalk.fold_stmt_nodes(stmt, out, assign_target_into, keep_targets, astwalk.descend_all);
+  }
+  return out;
+}
+
+function keep_targets(e: ast.Expr, own acc: string[]): string[] {
+  return acc;
+}
+
+function assign_target_into(st: ast.Stmt, own acc: string[]): string[] {
+  match (st) {
+    ast.StmtAssign(a) => {
+      return acc.append(a.target);
+    },
+    _ => {
+      return acc;
+    }
+  }
+  return acc;
+}
+
+// is_iife_callee reports whether `c` is an immediately-invoked zero-param
+// lambda — `(<lambda>)()`, the shape the parser builds for `if` / `match` in
+// value position and for the array / map comprehension desugars.
+pub function is_iife_callee(c: ast.ExprCall): boolean {
+  if (c.args.len() != 0) {
+    return false;
+  }
+  match (c.callee) {
+    ast.ExprLambda(lm) => {
+      return lm.params.len() == 0;
+    },
+    _ => {
+      return false;
+    }
+  }
+}

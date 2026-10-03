@@ -15,10 +15,10 @@ var x86SSAFloatMathCases = []struct {
 		name: "rounding_family_abs_and_sqrt",
 		src: `import "std/float";
 function main(): i32 {
-  var xs: f64[] = [2.5, -2.5, 0.49, -0.5, 1.75, -1.75, 6.25, 0.0 - 0.0];
-  var i: i32 = 0;
+  let xs: f64[] = [2.5, -2.5, 0.49, -0.5, 1.75, -1.75, 6.25, 0.0 - 0.0];
+  let i: i32 = 0;
   while (i < xs.len()) {
-    var x = xs[i];
+    let x = xs[i];
     stdout().write(x.to_string_prec(2) + " floor=" + x.floor().to_string_prec(2)
       + " ceil=" + x.ceil().to_string_prec(2) + " trunc=" + x.trunc().to_string_prec(2)
       + " round=" + x.round().to_string_prec(2) + " abs=" + x.abs().to_string_prec(2)
@@ -32,10 +32,10 @@ function main(): i32 {
 		name: "transcendentals_are_the_same_bits",
 		src: `import "std/float";
 function main(): i32 {
-  var xs: f64[] = [0.0, 0.5, 1.0, 2.0, 3.75, 10.0, 100.0, 0.0 - 1.0, 1000000.5];
-  var i: i32 = 0;
+  let xs: f64[] = [0.0, 0.5, 1.0, 2.0, 3.75, 10.0, 100.0, 0.0 - 1.0, 1000000.5];
+  let i: i32 = 0;
   while (i < xs.len()) {
-    var x = xs[i];
+    let x = xs[i];
     stdout().write(x.to_string_prec(2) + " exp=" + x.exp().to_string_prec(12)
       + " sin=" + x.sin().to_string_prec(12) + " cos=" + x.cos().to_string_prec(12)
       + " tan=" + x.tan().to_string_prec(12) + "\n");
@@ -46,10 +46,10 @@ function main(): i32 {
     }
     i = i + 1;
   }
-  var neg: f64 = 0.0 - 2.0;
+  let neg: f64 = 0.0 - 2.0;
   stdout().write("pow(-2,3)=" + neg.pow(3.0).to_string_prec(6) + " pow(-2,0.5)_nan=" + neg.pow(0.5).is_nan().to_string() + "\n");
-  var one: f64 = 1.0;
-  var zero: f64 = 0.0;
+  let one: f64 = 1.0;
+  let zero: f64 = 0.0;
   stdout().write("log(0)_inf=" + zero.log().is_inf().to_string() + " exp(1000)_inf=" + (one * 1000.0).exp().is_inf().to_string() + "\n");
   return 0;
 }`,
@@ -60,10 +60,10 @@ function main(): i32 {
 		name: "string_bytes_owned_copy",
 		src: `import "std/string";
 function main(): i32 {
-  var s: string = "hello, memcpy";
-  var b: u8[] = s.bytes();
-  var total: i32 = 0;
-  var i: i32 = 0;
+  let s: string = "hello, memcpy";
+  let b: u8[] = s.bytes();
+  let total: i32 = 0;
+  let i: i32 = 0;
   while (i < b.len()) { total = total + (b[i] as i32); i = i + 1; }
   stdout().write(s + "\n");
   stdout().write(string_from_bytes_unchecked(b) + "\n");

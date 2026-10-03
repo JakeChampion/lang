@@ -17,8 +17,8 @@ var genericReturnLocalCases = []struct {
 	{"local_from_identity", `enum Tree[T] { Leaf(T), Node(Tree[T], Tree[T]) }
 function whole[C](c: C): C { return c; }
 function main(): i32 {
-    var t: Tree[string] = Leaf("xy");
-    var w = whole(t);
+    let t: Tree[string] = Leaf("xy");
+    let w = whole(t);
     match (w) {
         Leaf(v) => { return v.len() * 10; },
         Node(l, r) => { return 90; }
@@ -27,7 +27,7 @@ function main(): i32 {
 	{"scrutinee_is_identity_call", `enum Tree[T] { Leaf(T), Node(Tree[T], Tree[T]) }
 function whole[C](c: C): C { return c; }
 function main(): i32 {
-    var t: Tree[string] = Leaf("xyz");
+    let t: Tree[string] = Leaf("xyz");
     match (whole(t)) {
         Leaf(v) => { return v.len() * 10; },
         Node(l, r) => { return 90; }
@@ -36,8 +36,8 @@ function main(): i32 {
 	{"second_of_two_params", `enum Pair[A, B] { Both(A, B), Neither }
 function second[X, Y](x: X, y: Y): Y { return y; }
 function main(): i32 {
-    var p: Pair[string, boolean] = Both("abcd", true);
-    var q = second(7, p);
+    let p: Pair[string, boolean] = Both("abcd", true);
+    let q = second(7, p);
     match (q) {
         Both(s, b) => { if (b) { return s.len(); } return 8; },
         Neither => { return 50; }
@@ -46,8 +46,8 @@ function main(): i32 {
 	{"for_over_identity_call", `enum Tree[T] { Leaf(T), Node(Tree[T], Tree[T]) }
 function whole[C](c: C): C { return c; }
 function main(): i32 {
-    var ts: Tree[string][] = [Leaf("ab"), Leaf("cde")];
-    var n: i32 = 0;
+    let ts: Tree[string][] = [Leaf("ab"), Leaf("cde")];
+    let n: i32 = 0;
     for t in whole(ts) {
         match (t) {
             Leaf(v) => { n = n + v.len(); },
@@ -59,8 +59,8 @@ function main(): i32 {
 	{"nested_identity_then_inner_match", `enum Tree[T] { Leaf(T), Node(Tree[T], Tree[T]) }
 function whole[C](c: C): C { return c; }
 function main(): i32 {
-    var t: Tree[string] = Node(Leaf("a"), Leaf("bcd"));
-    var w = whole(whole(t));
+    let t: Tree[string] = Node(Leaf("a"), Leaf("bcd"));
+    let w = whole(whole(t));
     match (w) {
         Leaf(v) => { return 90; },
         Node(l, r) => {
@@ -74,8 +74,8 @@ function main(): i32 {
 	{"tuple_element_of_generic_return", `enum Tree[T] { Leaf(T), Node(Tree[T], Tree[T]) }
 function dup[C](c: C): (C, C) { return (c, c); }
 function main(): i32 {
-    var t: Tree[string] = Leaf("abcdef");
-    var d = dup(t);
+    let t: Tree[string] = Leaf("abcdef");
+    let d = dup(t);
     match (d.1) {
         Leaf(v) => { return v.len(); },
         Node(l, r) => { return 90; }

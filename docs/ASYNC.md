@@ -43,7 +43,7 @@ async function body(): stream[u8];
 
 ```fern
 async function handle(): i32 {
-    var bytes: u8[] = body();   // drains the stream to EOF, returns the array
+    let bytes: u8[] = body();   // drains the stream to EOF, returns the array
     return bytes.len();
 }
 ```
@@ -53,7 +53,7 @@ memory, no full buffer):
 
 ```fern
 async function sum(): i32 {
-    var total = 0;
+    let total = 0;
     for x in body() {           // pulls one element per turn
         total = total + (x as i32);
     }
@@ -99,10 +99,10 @@ import "std/async";
 import "std/fetch";
 
 function handle(): i32 {
-    var cache: i32   = fetch.ipv4(10, 0, 0, 1);
-    var primary: i32 = fetch.ipv4(10, 0, 0, 2);
-    var none: u8[] = [];
-    var bodies: u8[][] = async.gather([
+    let cache: i32   = fetch.ipv4(10, 0, 0, 1);
+    let primary: i32 = fetch.ipv4(10, 0, 0, 2);
+    let none: u8[] = [];
+    let bodies: u8[][] = async.gather([
         fetch.fetch_future(cache,   80, "/key"),
         fetch.fetch_future(primary, 80, "/key"),
     ], none);                     // the fallback for a future that can't complete
@@ -127,12 +127,12 @@ import "std/async";
 import "std/fetch";
 
 function fastest(a: i32, b: i32): u8[] {
-    var none: u8[] = [];
-    var fs: async.Future[u8[]][] = [
+    let none: u8[] = [];
+    let fs: async.Future[u8[]][] = [
         fetch.fetch_future(a, 80, "/k"),
         fetch.fetch_future(b, 80, "/k"),
     ];
-    var (winner, body) = async.race(fs, none);
+    let (winner, body) = async.race(fs, none);
     // `winner` is the index that finished first; `body` its result.
     return body;
 }
@@ -151,7 +151,7 @@ whatever answers within `deadline` (a `Duration`, built with
 stragglers (their slots come back `None`).
 
 ```fern
-var bodies: Option[u8[]][] = async.with_deadline(time.duration_millis(250), [
+let bodies: Option[u8[]][] = async.with_deadline(time.duration_millis(250), [
     fetch.fetch_future(cache,   80, "/k"),
     fetch.fetch_future(primary, 80, "/k"),
 ]);   // any upstream slower than 250ms lands as None
@@ -180,12 +180,12 @@ sleeps:
 import "std/async";
 import "std/sim";
 
-var d: sim.Sim = sim.new(7);
-var fs: async.Future[string][] = [
+let d: sim.Sim = sim.new(7);
+let fs: async.Future[string][] = [
     sim.future_at(d, 40000000, "late"),   // ready at 40ms of virtual time
     sim.future_at(d, 10000000, "early")   // ready at 10ms
 ];
-var got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
+let got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
 // got == [None, Some("early")], and d.now_ns() == exactly 25000000
 ```
 
@@ -211,17 +211,17 @@ a scripted body is a program value, well-formed by construction, and the
 combinator timing this exists to pin reads better against text.
 
 ```fern
-var d: sim.Sim = sim.new(1);
-var n: sim.Net = sim.net(d);
+let d: sim.Sim = sim.new(1);
+let n: sim.Net = sim.net(d);
 n = n.serve(1, 80, "/k", "primary", 30000000);          // one chunk at 30ms
 n = n.serve_chunked(2, 80, "/big", "abcdefghij",
         5000000, 5000000, sim.chunks_of(10, 4));        // [4,4,2] at 5/10/15ms
-var fs: async.Future[string][] = [
+let fs: async.Future[string][] = [
     n.fetch_future(1, 80, "/k"),
     n.fetch_future(2, 80, "/big"),
     n.fetch_future(9, 80, "/k")                          // unregistered -> Ready("")
 ];
-var got: string[] = async.gather_on(d, fs, "");
+let got: string[] = async.gather_on(d, fs, "");
 // got == ["primary", "abcdefghij", ""], d.now_ns() == exactly 30000000,
 // n.hits(1, 80, "/k") == 1
 ```

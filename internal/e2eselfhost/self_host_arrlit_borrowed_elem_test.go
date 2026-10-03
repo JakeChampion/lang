@@ -21,48 +21,48 @@ var arrlitBorrowedElemCases = []struct {
 	{"struct_param_in_field_array", `struct Pt { x: i32, tag: i32[] }
 struct Bag { n: i32, pts: Pt[] }
 function mk(p: Pt, k: i32): i32 {
-    var r: Bag = Bag { n: k, pts: [p, Pt { x: 2, tag: [2] }] };
+    let r: Bag = Bag { n: k, pts: [p, Pt { x: 2, tag: [2] }] };
     return r.n;
 }
 function main(): i32 {
-    var p0: Pt = Pt { x: 1, tag: [7, 8] };
+    let p0: Pt = Pt { x: 1, tag: [7, 8] };
     mk(p0, 1);
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 8) { var junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 8) { let junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
     return p0.tag[1] + acc - 72;
 }
 `, 8},
 	{"struct_param_self_append", `struct Pt { x: i32, tag: i32[] }
 struct Bag { n: i32, pts: Pt[] }
 function mk(p: Pt, k: i32): i32 {
-    var xs: Pt[] = [Pt { x: 2, tag: [2] }];
+    let xs: Pt[] = [Pt { x: 2, tag: [2] }];
     xs = xs.append(p);
-    var r: Bag = Bag { n: k, pts: xs };
+    let r: Bag = Bag { n: k, pts: xs };
     return r.n;
 }
 function main(): i32 {
-    var p0: Pt = Pt { x: 1, tag: [7, 8] };
+    let p0: Pt = Pt { x: 1, tag: [7, 8] };
     mk(p0, 1);
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 8) { var junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 8) { let junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
     return p0.tag[1] + acc - 72;
 }
 `, 8},
 	{"enum_param_in_field_array", `enum Flag { On(i32[]), Off }
 struct Flags { n: i32, fs: Flag[] }
 function mk(f: Flag, k: i32): i32 {
-    var r: Flags = Flags { n: k, fs: [f, Flag.Off] };
+    let r: Flags = Flags { n: k, fs: [f, Flag.Off] };
     return r.n;
 }
 function main(): i32 {
-    var f0: Flag = Flag.On([4, 6]);
+    let f0: Flag = Flag.On([4, 6]);
     mk(f0, 1);
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 8) { var junk: Flag = Flag.On([9, 9]); match (junk) { Flag.On(z) => { acc = acc + z[0]; }, Flag.Off => {} } k = k + 1; }
-    var g: i32 = 0;
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 8) { let junk: Flag = Flag.On([9, 9]); match (junk) { Flag.On(z) => { acc = acc + z[0]; }, Flag.Off => {} } k = k + 1; }
+    let g: i32 = 0;
     match (f0) { Flag.On(q) => { g = q[1]; }, Flag.Off => {} }
     return g + acc - 72;
 }
@@ -70,18 +70,18 @@ function main(): i32 {
 	{"enum_param_self_append", `enum Flag { On(i32[]), Off }
 struct Flags { n: i32, fs: Flag[] }
 function mk(f: Flag, k: i32): i32 {
-    var xs: Flag[] = [Flag.Off];
+    let xs: Flag[] = [Flag.Off];
     xs = xs.append(f);
-    var r: Flags = Flags { n: k, fs: xs };
+    let r: Flags = Flags { n: k, fs: xs };
     return r.n;
 }
 function main(): i32 {
-    var f0: Flag = Flag.On([4, 6]);
+    let f0: Flag = Flag.On([4, 6]);
     mk(f0, 1);
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 8) { var junk: Flag = Flag.On([9, 9]); match (junk) { Flag.On(z) => { acc = acc + z[0]; }, Flag.Off => {} } k = k + 1; }
-    var g: i32 = 0;
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 8) { let junk: Flag = Flag.On([9, 9]); match (junk) { Flag.On(z) => { acc = acc + z[0]; }, Flag.Off => {} } k = k + 1; }
+    let g: i32 = 0;
     match (f0) { Flag.On(q) => { g = q[1]; }, Flag.Off => {} }
     return g + acc - 72;
 }
@@ -89,15 +89,15 @@ function main(): i32 {
 	{"indexed_elem_in_field_array", `struct Pt { x: i32, tag: i32[] }
 struct Bag { n: i32, pts: Pt[] }
 function mk(ps: Pt[], k: i32): i32 {
-    var r: Bag = Bag { n: k, pts: [ps[0], Pt { x: 2, tag: [2] }] };
+    let r: Bag = Bag { n: k, pts: [ps[0], Pt { x: 2, tag: [2] }] };
     return r.n;
 }
 function main(): i32 {
-    var ps: Pt[] = [Pt { x: 1, tag: [7, 8] }];
+    let ps: Pt[] = [Pt { x: 1, tag: [7, 8] }];
     mk(ps, 1);
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 8) { var junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 8) { let junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
     return ps[0].tag[1] + acc - 72;
 }
 `, 8},
@@ -108,16 +108,16 @@ struct Bag { n: i32, pts: Pt[] }
 enum Flag { On(i32[]), Off }
 struct Flags { n: i32, fs: Flag[] }
 function mk(p: Pt, k: i32): i32 {
-    var r: Bag = Bag { n: k, pts: [p, Pt { x: 2, tag: [2] }] };
+    let r: Bag = Bag { n: k, pts: [p, Pt { x: 2, tag: [2] }] };
     return r.n + r.pts.len();
 }
 function mka(f: Flag, k: i32): i32 {
-    var r: Flags = Flags { n: k, fs: [f, Flag.Off] };
+    let r: Flags = Flags { n: k, fs: [f, Flag.Off] };
     return r.n + r.fs.len();
 }
 function main(): i32 {
-    var s: i32 = 0;
-    var i: i32 = 0;
+    let s: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
         s = s + mk(Pt { x: i, tag: [i, i] }, i);
         s = s + mka(Flag.On([i]), i);
@@ -132,16 +132,16 @@ function main(): i32 {
 struct Flags { n: i32, fs: Flag[] }
 function (h: Flags) mk(f: Flag): Flags { return Flags { n: h.n + 1, fs: h.fs.append(f) }; }
 function round(i: i32): i32 {
-    var h: Flags = Flags { n: 0, fs: [] };
+    let h: Flags = Flags { n: 0, fs: [] };
     h = h.mk(Flag.On([i, 4]));
     h = h.mk(Flag.Off);
-    var v: i32 = 0;
+    let v: i32 = 0;
     match (h.fs[0]) { Flag.On(q) => { v = q[1] + h.n; }, Flag.Off => {} }
     return v;
 }
 function main(): i32 {
-    var s: i32 = 0;
-    var i: i32 = 0;
+    let s: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) { s = s + round(i); i = i + 1; }
     return s;
 }

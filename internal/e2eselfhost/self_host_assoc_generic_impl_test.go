@@ -46,7 +46,7 @@ impl[T] Carrier for Box[T] {
     function get(self: Self): Self::Ok { return self.v; }
 }
 function main(): i32 {
-    var b: Box[string] = Box { v: "hello" };
+    let b: Box[string] = Box { v: "hello" };
     return b.get().len();
 }`, 5},
 	// The same binding read through a bounded generic rather than directly.
@@ -61,7 +61,7 @@ impl[T] Carrier for Box[T] {
 }
 function unwrap[C: Carrier](c: C): C::Ok { return c.get(); }
 function main(): i32 {
-    var b: Box[i32] = Box { v: 20 };
+    let b: Box[i32] = Box { v: 20 };
     return b.get() + unwrap(b);
 }`, 40},
 	// A projection written on a CONCRETE base, which is what makes the
@@ -79,7 +79,7 @@ impl[T] Carrier for Box[T] {
 }
 function twice(x: Box[i32]::Ok): i32 { return x + x; }
 function main(): i32 {
-    var b: Box[i32] = Box { v: 21 };
+    let b: Box[i32] = Box { v: 21 };
     return twice(b.get());
 }`, 42},
 	// A binding that is a COMPOSITE of the parameter rather than the bare
@@ -94,8 +94,8 @@ impl[T] Holder for Box[T] {
     function take(self: Self): Self::Item { return Some(self.v); }
 }
 function main(): i32 {
-    var b: Box[i32] = Box { v: 41 };
-    var o: Option[i32] = b.take();
+    let b: Box[i32] = Box { v: 41 };
+    let o: Option[i32] = b.take();
     match (o) { Some(v) => { return v + 1; }, None => { return 0; } }
 }`, 42},
 	// Two parameters, each bound to the OTHER one's associated type, so a
@@ -114,7 +114,7 @@ impl[X, Y] Two for P[X, Y] {
     function snd(self: Self): Self::B { return self.a; }
 }
 function main(): i32 {
-    var p: P[string, i32] = P { a: "hi", b: 40 };
+    let p: P[string, i32] = P { a: "hi", b: 40 };
     return p.fst() + p.snd().len();
 }`, 42},
 }

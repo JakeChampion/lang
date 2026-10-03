@@ -70,7 +70,7 @@ const signalSendSelfHostSource = `function main(): i32 {
 
     // Delivery. The child sleeps far past anything the parent needs, so the
     // only way it reaches the parent's waitpid is the signal.
-    var kid: i32 = proc_fork();
+    let kid: i32 = proc_fork();
     if (kid == 0) {
         sleep_ms(60000 as i64);
         exit(70);
@@ -81,7 +81,7 @@ const signalSendSelfHostSource = `function main(): i32 {
         Err(e) => { return 10; }
     }
     // proc_waitpid reports a signal death as 128+signal.
-    var status: i32 = proc_waitpid(kid);
+    let status: i32 = proc_waitpid(kid);
     if (status != 137) { return 11; }
     return 0;
 }`

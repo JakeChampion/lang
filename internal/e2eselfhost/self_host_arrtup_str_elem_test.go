@@ -7,7 +7,7 @@ import (
 
 // --- Arrays of tuples with string elements, and the erased-generic call (#7910 (c)) --
 //
-// Two refusals sat on `var ps: (i32, string)[] = [(i, w(i)), …]`, and the
+// Two refusals sat on `let ps: (i32, string)[] = [(i, w(i)), …]`, and the
 // call through `count[T](xs: T[])` the issue named was only the second.
 //
 // The first is the element admission: the array-of-tuples credit ("ARRTUP:")
@@ -29,38 +29,38 @@ import (
 // (native oracle, sanitize leg); this file is the wasm leg, which asserts a
 // balanced census and the interpreter's exit code.
 
-const arrTupStrLiteralLenSrc = `function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+const arrTupStrLiteralLenSrc = `function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function round(i: i32): i32 {
-    var ps: (i32, string)[] = [(i, w(i)), (i + 1, w(i + 1))];
+    let ps: (i32, string)[] = [(i, w(i)), (i + 1, w(i + 1))];
     return ps.len() + i % 3;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `
 
-const arrTupStrErasedGenericSrc = `function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+const arrTupStrErasedGenericSrc = `function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function count[T](xs: T[]): i32 { return xs.len(); }
 function round(i: i32): i32 {
-    var ps: (i32, string)[] = [(i, w(i)), (i + 1, w(i + 1))];
+    let ps: (i32, string)[] = [(i, w(i)), (i + 1, w(i + 1))];
     return count(ps) + i % 3;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `
 
 const arrTupArrErasedGenericSrc = `function count[T](xs: T[]): i32 { return xs.len(); }
 function round(i: i32): i32 {
-    var ps: (i32, i32[])[] = [(i, [i, i + 1]), (i + 1, [i + 2])];
+    let ps: (i32, i32[])[] = [(i, [i, i + 1]), (i + 1, [i + 2])];
     return count(ps) + i % 3;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `
 
-const arrTupMixedErasedGenericSrc = `function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+const arrTupMixedErasedGenericSrc = `function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function count[T](xs: T[]): i32 { return xs.len(); }
 function round(i: i32): i32 {
-    var ps: (i32, string, i32[])[] = [(i, w(i), [i]), (i + 1, w(i + 1), [i + 1])];
+    let ps: (i32, string, i32[])[] = [(i, w(i), [i]), (i + 1, w(i + 1), [i + 1])];
     return count(ps) + i % 3;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `
 
 func TestSelfHostArrTupStrElemWasmIR(t *testing.T) {

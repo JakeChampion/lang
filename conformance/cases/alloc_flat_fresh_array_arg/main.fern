@@ -26,7 +26,7 @@ struct Node { name: string, deps: string[], mtime: i32 }
 function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 
 function deps_of(n: i32): string[] {
-    var out: string[] = [];
+    let out: string[] = [];
     for i in 0..3 { out = out.append(wide(n + i)); }
     return out;
 }
@@ -36,16 +36,16 @@ function node(name: string, deps: string[], mtime: i32): Node {
 }
 
 function round(n: i32): i32 {
-    var fresh: Node = node(wide(n), deps_of(n), n);
-    var live: string[] = deps_of(n + 7);
-    var aliased: Node = node(wide(n), live, n);
+    let fresh: Node = node(wide(n), deps_of(n), n);
+    let live: string[] = deps_of(n + 7);
+    let aliased: Node = node(wide(n), live, n);
     return fresh.deps.len() + fresh.deps[0].len()
         + aliased.deps.len() + aliased.deps[2].len()
         + live.len() + live[1].len();
 }
 
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     for i in 0..n {
         acc = acc + round(i);
     }
@@ -53,11 +53,11 @@ function rounds(n: i32): i32 {
 }
 
 function main(): i32 {
-    var b0: i64 = __heap_bump_bytes();
-    var x: i32 = rounds(50);
-    var b1: i64 = __heap_bump_bytes();
-    var y: i32 = rounds(100);
-    var b2: i64 = __heap_bump_bytes();
+    let b0: i64 = __heap_bump_bytes();
+    let x: i32 = rounds(50);
+    let b1: i64 = __heap_bump_bytes();
+    let y: i32 = rounds(100);
+    let b2: i64 = __heap_bump_bytes();
 
     print(x.to_string());
     print(y.to_string());

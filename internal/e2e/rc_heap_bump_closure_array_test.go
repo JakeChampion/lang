@@ -32,12 +32,12 @@ import (
 // scalarCapClosureArrSrc: a `(() => i32)[]` of scalar-capture closures.
 func scalarCapClosureArrSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
-        var a: i32 = i;
-        var fs: (() => i32)[] = [(): i32 => { return a + 1; }, (): i32 => { return a + 2; }];
+        let a: i32 = i;
+        let fs: (() => i32)[] = [(): i32 => { return a + 1; }, (): i32 => { return a + 2; }];
         acc = acc + fs[0]() + fs[1]();
         i = i + 1;
     }
@@ -50,12 +50,12 @@ func scalarCapClosureArrSrc(n string) string {
 // reclaims the captured array) is exercised through the drop-fn pointer.
 func ptrCapClosureArrSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
-        var xs: i32[] = [i, i + 1, i + 2];
-        var fs: (() => i32)[] = [(): i32 => { return xs[0]; }, (): i32 => { return xs[2]; }];
+        let xs: i32[] = [i, i + 1, i + 2];
+        let fs: (() => i32)[] = [(): i32 => { return xs[0]; }, (): i32 => { return xs[2]; }];
         acc = acc + fs[0]() + fs[1]();
         i = i + 1;
     }
@@ -63,16 +63,16 @@ func ptrCapClosureArrSrc(n string) string {
 }`
 }
 
-// aliasClosureArrSrc: the closure array is aliased (`var gs = fs` → rc>1), so
+// aliasClosureArrSrc: the closure array is aliased (`let gs = fs` → rc>1), so
 // the per-element env free must NOT fire while another holder is live.
 // Returns 0 iff value-correct AND 0 over-releases.
 const aliasClosureArrSrc = `function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
-        var a: i32 = i;
-        var fs: (() => i32)[] = [(): i32 => { return a + 1; }, (): i32 => { return a + 2; }];
-        var gs: (() => i32)[] = fs;
+        let a: i32 = i;
+        let fs: (() => i32)[] = [(): i32 => { return a + 1; }, (): i32 => { return a + 2; }];
+        let gs: (() => i32)[] = fs;
         acc = acc + fs[0]() + gs[1]();
         i = i + 1;
     }
@@ -86,12 +86,12 @@ const aliasClosureArrSrc = `function main(): i32 {
 // per-element is_unique gate must skip the env free until the genuine last
 // reference. Returns 0 iff value-correct AND 0 over-releases.
 const sharedElemClosureArrSrc = `function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
-        var xs: i32[] = [i, i + 1, i + 2];
-        var f: (() => i32) = (): i32 => { return xs[1]; };
-        var fs: (() => i32)[] = [f, f];
+        let xs: i32[] = [i, i + 1, i + 2];
+        let f: (() => i32) = (): i32 => { return xs[1]; };
+        let fs: (() => i32)[] = [f, f];
         acc = acc + fs[0]() + fs[1]() + f();
         i = i + 1;
     }

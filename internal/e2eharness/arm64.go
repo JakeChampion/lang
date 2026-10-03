@@ -123,9 +123,8 @@ func CompileAndRunArm64HighHeap(t *testing.T, src string) (stdout string, exitCo
 	return finishArm64Run(t, cmd, out)
 }
 
-// CompileArm64Bin compiles src with the arm64 backend and links it
-// (gcc, or the native backend under FERN_NATIVE_ASM=1), returning the
-// binary path and the qemu runner ("" on native arm64 hosts). Callers
+// CompileArm64Bin compiles src with the self-host compiler for arm64-linux,
+// returning the binary path and the qemu runner ("" on native arm64 hosts). Callers
 // exec it via RunArm64Bin — with extra argv when the test needs it
 // (e.g. the args()-rc regression gate).
 func CompileArm64Bin(t *testing.T, src string) (binPath, qemu string) {

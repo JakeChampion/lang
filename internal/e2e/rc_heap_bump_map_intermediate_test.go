@@ -6,8 +6,8 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 )
 
-// A map RETURNED FROM A CALL — `var m = mk(i)` / a discarded `mk(i);` where
-// `mk` is the canonical cow-threaded builder (`var m = map_new(8); m =
+// A map RETURNED FROM A CALL — `let m = mk(i)` / a discarded `mk(i);` where
+// `mk` is the canonical cow-threaded builder (`let m = map_new(8); m =
 // m.insert(..); return m;`) — leaked its handle + buffer every iteration on
 // both compilers (#4357's map-intermediate slice), while the same map built
 // INLINE in the loop bounded (rc_heap_bump_map_reinit_test.go).
@@ -28,22 +28,22 @@ import (
 func mapIntermediateBoundBumpSrc(n string) string {
 	return `import "core/map";
 function mk(k: i32): Map[i32, i32] {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(k, k * 2);
     m = m.insert(k + 1, k * 3);
     return m;
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
-        var m: Map[i32, i32] = mk(i);
+        let m: Map[i32, i32] = mk(i);
         acc = acc + m.get_or(i, 0);
         i = i + 1;
     }
     if (acc < 0) { return 121; }
-    var g: i32 = (__heap_bump_bytes() as i32) - before;
+    let g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -52,15 +52,15 @@ function main(): i32 {
 func mapIntermediateDiscardBumpSrc(n string) string {
 	return `import "core/map";
 function mk(k: i32): Map[i32, i32] {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(k, k * 2);
     return m;
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) { mk(i); i = i + 1; }
-    var g: i32 = (__heap_bump_bytes() as i32) - before;
+    let g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -70,16 +70,16 @@ function main(): i32 {
 // must have carried the right entries, and the underflow detector must stay 0.
 const mapIntermediateUnderflowSrc = `import "core/map";
 function mk(k: i32): Map[i32, i32] {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(k, k * 2);
     m = m.insert(k + 1, k * 3);
     return m;
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 300) {
-        var m: Map[i32, i32] = mk(i);
+        let m: Map[i32, i32] = mk(i);
         acc = acc + m.get_or(i, 0) + m.get_or(i + 1, 0);
         i = i + 1;
     }
@@ -98,12 +98,12 @@ function grow(m: Map[i32, i32], k: i32): Map[i32, i32] {
     return m;
 }
 function main(): i32 {
-    var base: Map[i32, i32] = map_new(8);
+    let base: Map[i32, i32] = map_new(8);
     base = base.insert(1, 11);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 300) {
-        var g: Map[i32, i32] = grow(base, i + 2);
+        let g: Map[i32, i32] = grow(base, i + 2);
         acc = acc + g.get_or(1, 0);
         i = i + 1;
     }
@@ -124,12 +124,12 @@ function grow(m: Map[i32, i32], k: i32): Map[i32, i32] {
     return m;
 }
 function main(): i32 {
-    var base: Map[i32, i32] = map_new(8);
+    let base: Map[i32, i32] = map_new(8);
     base = base.insert(1, 11);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 300) {
-        var g: Map[i32, i32] = grow(base, 2);
+        let g: Map[i32, i32] = grow(base, 2);
         acc = acc + g.get_or(1, 0);
         i = i + 1;
     }
@@ -145,17 +145,17 @@ function main(): i32 {
 // type) rejects the bare param ident; `keep` must survive every iteration.
 const mapIntermediatePtrValueParamSrc = `import "core/map";
 function mk(xs: i32[], k: i32): Map[i32, i32[]] {
-    var m: Map[i32, i32[]] = map_new(8);
+    let m: Map[i32, i32[]] = map_new(8);
     m = m.insert(k, xs);
     return m;
 }
 function main(): i32 {
-    var keep: i32[] = [7, 8, 9];
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let keep: i32[] = [7, 8, 9];
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 300) {
-        var t: Map[i32, i32[]] = mk(keep, i);
-        var got: i32[] = t.get_or(i, []);
+        let t: Map[i32, i32[]] = mk(keep, i);
+        let got: i32[] = t.get_or(i, []);
         acc = acc + got.len();
         i = i + 1;
     }

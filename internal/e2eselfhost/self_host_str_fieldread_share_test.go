@@ -10,7 +10,7 @@ import (
 
 // --- The FIELD-READ spelling of the STRING counted share ---------------------
 //
-// `var p: P = P { f: q.f, … }` off a live sibling holder, string flavour — the
+// `let p: P = P { f: q.f, … }` off a live sibling holder, string flavour — the
 // construction matrix's str__fieldread cell (400 allocs / 200 frees against
 // native's 300/300). The read lowers through struct_get to the SOURCE box's
 // buffer, so the new box co-owns it.
@@ -25,7 +25,7 @@ import (
 //	inline spelling:  NODEEP:p      NODEEP:q
 //	hoisted spelling: FLDCHECKED:p  FLDCHECKED:q
 //
-// Hoisting the read to a local (`var t = q.f; P { f: t }`) was already clean —
+// Hoisting the read to a local (`let t = q.f; P { f: t }`) was already clean —
 // strfld_safe_operand forgives a direct field-read init and the #4768 read-side
 // retain counts it. The two spellings are the same program and return the same
 // answer; only the inline one leaked.
@@ -59,12 +59,12 @@ import (
 
 const strFieldReadDecl = `struct P { f: string, n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
-function mkv(i: i32): string { var s: string = w("k"); return s; }
+function mkv(i: i32): string { let s: string = w("k"); return s; }
 `
 
 const strFieldReadMain = `
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
@@ -82,9 +82,9 @@ func strFieldReadCases() []strFieldReadCase {
 			// The matrix cell: two live holders over one string box.
 			name: "basic",
 			src: strFieldReadDecl + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var t: i32 = 0;
-    var p: P = P { f: q.f, n: i };
+    let q: P = P { f: mkv(i), n: i };
+    let t: i32 = 0;
+    let p: P = P { f: q.f, n: i };
     t = p.f.len() + p.n;
     return (t + q.n + q.f.len()) % 101;
 }` + strFieldReadMain,
@@ -97,9 +97,9 @@ func strFieldReadCases() []strFieldReadCase {
 			// and this row leaks while `basic` stays clean.
 			name: "blockscoped",
 			src: strFieldReadDecl + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var t: i32 = 0;
-    if (i >= 0) { var p: P = P { f: q.f, n: i }; t = p.f.len() + p.n; }
+    let q: P = P { f: mkv(i), n: i };
+    let t: i32 = 0;
+    if (i >= 0) { let p: P = P { f: q.f, n: i }; t = p.f.len() + p.n; }
     return (t + q.n + q.f.len()) % 101;
 }` + strFieldReadMain,
 			want: 10,
@@ -109,9 +109,9 @@ func strFieldReadCases() []strFieldReadCase {
 			// source's own walk with no co-owner at all.
 			name: "conditional",
 			src: strFieldReadDecl + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var t: i32 = 0;
-    if (i % 2 == 0) { var p: P = P { f: q.f, n: i }; t = p.f.len() + p.n; }
+    let q: P = P { f: mkv(i), n: i };
+    let t: i32 = 0;
+    if (i % 2 == 0) { let p: P = P { f: q.f, n: i }; t = p.f.len() + p.n; }
     return (t + q.n + q.f.len() + 7) % 101;
 }` + strFieldReadMain,
 			want: 76,
@@ -122,9 +122,9 @@ func strFieldReadCases() []strFieldReadCase {
 			name: "holder_escapes",
 			src: strFieldReadDecl + `function keepit(p: P): i32 { return p.f.len() + p.n; }
 function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var p: P = P { f: q.f, n: i + 1 };
-    var t: i32 = keepit(p);
+    let q: P = P { f: mkv(i), n: i };
+    let p: P = P { f: q.f, n: i + 1 };
+    let t: i32 = keepit(p);
     return (t + q.n + q.f.len()) % 101;
 }` + strFieldReadMain,
 			want: 9,
@@ -134,9 +134,9 @@ function round(i: i32): i32 {
 			// hand off down to whichever finds rc 1.
 			name: "chain",
 			src: strFieldReadDecl + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var p: P = P { f: q.f, n: i + 1 };
-    var z: P = P { f: p.f, n: i + 2 };
+    let q: P = P { f: mkv(i), n: i };
+    let p: P = P { f: q.f, n: i + 1 };
+    let z: P = P { f: p.f, n: i + 2 };
     return (q.f.len() + p.f.len() + z.f.len() + z.n) % 101;
 }` + strFieldReadMain,
 			want: 59,
@@ -146,9 +146,9 @@ function round(i: i32): i32 {
 			// declined and the pre-existing leak stands.
 			name: "respread",
 			src: strFieldReadDecl + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var p: P = P { f: q.f, n: i + 1 };
-    var z: P = P { ...p, n: i + 2 };
+    let q: P = P { f: mkv(i), n: i };
+    let p: P = P { f: q.f, n: i + 1 };
+    let z: P = P { ...p, n: i + 2 };
     return (p.f.len() + z.n + q.n + z.f.len()) % 101;
 }` + strFieldReadMain,
 			want: 8,
@@ -157,10 +157,10 @@ function round(i: i32): i32 {
 			// The move-elided shape (#6726) — no bind, so no marker flip.
 			name: "moved_ret",
 			src: strFieldReadDecl + `function hold(i: i32): P {
-    var q: P = P { f: mkv(i), n: i };
+    let q: P = P { f: mkv(i), n: i };
     return P { f: q.f, n: i };
 }
-function round(i: i32): i32 { var p: P = hold(i); return (p.f.len() + p.n) % 101; }` + strFieldReadMain,
+function round(i: i32): i32 { let p: P = hold(i); return (p.f.len() + p.n) % 101; }` + strFieldReadMain,
 			want: 40,
 		},
 		{
@@ -169,24 +169,24 @@ function round(i: i32): i32 { var p: P = hold(i); return (p.f.len() + p.n) % 101
 			// reuse anything freed early. 31 = len("k") + the 30-char suffix.
 			name: "source_uaf",
 			src: strFieldReadDecl + `function churn(i: i32): i32 {
-    var a: string = w("chunkA");
-    var b: string = w("chunkB");
+    let a: string = w("chunkA");
+    let b: string = w("chunkB");
     return a.len() + b.len() + i;
 }
 function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var t: i32 = 0;
+    let q: P = P { f: mkv(i), n: i };
+    let t: i32 = 0;
     if (i % 2 == 0) {
-        var p: P = P { f: q.f, n: i };
+        let p: P = P { f: q.f, n: i };
         t = p.f.len() + p.n;
     }
-    var junk: i32 = churn(i * 7 + 3);
+    let junk: i32 = churn(i * 7 + 3);
     if (q.f.len() != 31) { return 0 - 1; }
     return (t + q.n + junk) % 101;
 }
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
-    while (i < 200) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
+    let t: i32 = 0; let i: i32 = 0; let bad: i32 = 0;
+    while (i < 200) { let r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;

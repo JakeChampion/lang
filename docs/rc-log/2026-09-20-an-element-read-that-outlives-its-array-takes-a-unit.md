@@ -5,9 +5,9 @@ self-host, and only through the typed lowering: the AST lowering and native
 are level. The shape is `__cmp_insertion`'s in `core/cmp`:
 
 ```fern
-var v: T = a[i];
+let v: T = a[i];
 while (moving) {
-    var o: i32 = a[j].cmp(v);
+    let o: i32 = a[j].cmp(v);
     if (o > 0) { a = a.with(j + 1, a[j]); ... }
 }
 a = a.with(j + 1, v);

@@ -128,7 +128,7 @@ func TestTodoUsableAsIdentifier(t *testing.T) {
 	// intercepted — `todo` as a variable name, in expressions, and as an
 	// assignment target must keep parsing as an ordinary identifier.
 	prog, err := Parse(`function f(): i32 {
-    var todo: i32 = 5;
+    let todo: i32 = 5;
     todo = todo + 1;
     return todo * 2;
 }`)

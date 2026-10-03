@@ -1,11 +1,11 @@
 # A match-binding alias takes a count nothing returns
 
-#9923. `var y = c` inside a match arm, where `c` is the arm's BINDING, stranded
+#9923. `let y = c` inside a match arm, where `c` is the arm's BINDING, stranded
 one reference per arm execution.
 
 ```fern
 match (r) {
-    Some(c) => { var kept: u8[] = c; total = total + kept.len(); },
+    Some(c) => { let kept: u8[] = c; total = total + kept.len(); },
     None => { },
 }
 ```
@@ -47,16 +47,16 @@ time.** Both defects in this area so far have been that.
 
 | shape | before | after |
 | --- | --- | --- |
-| bound scrutinee, `var` read only | 200 / 160, 1280 B | 200 / 200, 0 |
-| DIRECT call scrutinee, `var` read only | 150 / 110, 1280 B | 150 / 150, 0 |
-| arm `var` aliasing an outer local (control) | balanced | balanced |
+| bound scrutinee, `let` read only | 200 / 160, 1280 B | 200 / 200, 0 |
+| DIRECT call scrutinee, `let` read only | 150 / 110, 1280 B | 150 / 150, 0 |
+| arm `let` aliasing an outer local (control) | balanced | balanced |
 
 The second row is the other half. `docs/rc-log/2026-09-21-a-counted-escape-is-
-not-an-escape.md` had to leave a `var` init OUT of `bindingUsesExcused`,
+not-an-escape.md` had to leave a `let` init OUT of `bindingUsesExcused`,
 because an uncancelled init takes a real inc and admitting it would have let
 the join release a payload the var still counted. Cancelling that inc is
 exactly the precondition that was missing, so the var init is now an excused
-use and the #8003 reclaim reaches an arm that binds through a `var`.
+use and the #8003 reclaim reaches an arm that binds through a `let`.
 
 The same predicate decides both: refusing to TAKE a count and giving one BACK
 need the same fact, that every escape is counted. `bindingReleasableInArm`
@@ -68,7 +68,7 @@ be skipped.
 An arm alias that escapes into an outer POINTER local still leaks:
 
 ```fern
-Some(c) => { var kept: u8[] = c; chunk = kept; }
+Some(c) => { let kept: u8[] = c; chunk = kept; }
 ```
 
 2080 B before, 800 B after. The payload half reclaims; the 50 × 16 B that

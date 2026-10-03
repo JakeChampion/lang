@@ -12,7 +12,7 @@ import (
 // transcendentalProgram touches all five helpers, so emitting it pulls in the
 // whole bundle and its coefficient table.
 const transcendentalProgram = `function main(): i32 {
-    var r: f64 = __sin_f64(1.0) + __cos_f64(1.0) + __exp_f64(1.0) + __log_f64(2.0) + __pow_f64(2.0, 3.0);
+    let r: f64 = __sin_f64(1.0) + __cos_f64(1.0) + __exp_f64(1.0) + __log_f64(2.0) + __pow_f64(2.0, 3.0);
     return r as i32;
 }`
 

@@ -13,7 +13,7 @@ return a.get();
 
 The defer desugar arms a flag in the arm and replays the action behind it on
 every edge out of the iteration, and again at every `return` of the function.
-Both replays sit after the arm has closed. For a `var` the action names, the
+Both replays sit after the arm has closed. For a `let` the action names, the
 desugar lifts the declaration to the top of the function at the zero of its
 written type. It cannot lift a pattern binding: it runs before the checker,
 and the binding has no written type. The typed path refused the function

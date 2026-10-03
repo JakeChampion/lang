@@ -60,16 +60,16 @@ function own2(s: string): string { return s + ""; }
 // produces.
 func viewBorrowHeap(body string) string {
 	return viewBorrowPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
+    let base: string = w(pre);
 ` + body + `
 }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -85,7 +85,7 @@ var strViewBorrowReleaseCases = []struct {
 	{"str-view-borrow-len-receiver", viewBorrowHeap(`    return slice_unchecked(base, 4, base.len()).len();`), 0},
 	{"str-view-borrow-comparison", viewBorrowHeap(`    if (slice_unchecked(base, 4, base.len()) == "nope") { return 1; }
     return 0;`), 0},
-	{"str-view-borrow-concat-operand", viewBorrowHeap(`    var t: string = slice_unchecked(base, 4, base.len()) + "-tail";
+	{"str-view-borrow-concat-operand", viewBorrowHeap(`    let t: string = slice_unchecked(base, 4, base.len()) + "-tail";
     return t.len();`), 0},
 	{"str-view-borrow-index-base", viewBorrowHeap(`    return (slice_unchecked(base, 4, base.len())[0] as i32);`), 0},
 	// A slice OF a slice: the inner one is the outer op's operand. On wasm the
@@ -96,16 +96,16 @@ var strViewBorrowReleaseCases = []struct {
 	// read afterwards behind decoy allocations that would be handed the freed
 	// block if a release had landed too early.
 	{"str-view-borrow-all-positions-live", viewBorrowPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var n: i32 = slice_unchecked(base, 4, base.len()).len();
-    var eq: boolean = slice_unchecked(base, 4, base.len()) == "nope";
-    var lt: boolean = slice_unchecked(base, 4, base.len()) < "zzzz";
-    var cat: string = slice_unchecked(base, 4, base.len()) + "-tail";
-    var ch: i32 = (slice_unchecked(base, 4, base.len())[0] as i32);
-    var sub: string = own2(slice_unchecked(slice_unchecked(base, 4, base.len()), 1, 5));
-    var p1: string = w("XXXXXXXX");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("ZZZZZZZZ");
+    let base: string = w(pre);
+    let n: i32 = slice_unchecked(base, 4, base.len()).len();
+    let eq: boolean = slice_unchecked(base, 4, base.len()) == "nope";
+    let lt: boolean = slice_unchecked(base, 4, base.len()) < "zzzz";
+    let cat: string = slice_unchecked(base, 4, base.len()) + "-tail";
+    let ch: i32 = (slice_unchecked(base, 4, base.len())[0] as i32);
+    let sub: string = own2(slice_unchecked(slice_unchecked(base, 4, base.len()), 1, 5));
+    let p1: string = w("XXXXXXXX");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("ZZZZZZZZ");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 1; }
     if (has_sub(base, "XXXX")) { return 0 - 2; }
@@ -118,7 +118,7 @@ var strViewBorrowReleaseCases = []struct {
     if (sub != "fgh-") { return 0 - 9; }
     return n;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 102) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 3000) { let r: i32 = round(pre); if (r != 102) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
 // TestSelfHostStrViewBorrowReleaseIRX86_64 is the x86-64 leg. Every case here
@@ -185,7 +185,7 @@ func TestSelfHostStrViewBorrowReleaseWasmIR(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	for _, tc := range strViewBorrowReleaseCases {

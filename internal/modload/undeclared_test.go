@@ -50,7 +50,7 @@ pub function shown_fn(): i32 { return 1; }
 	}{
 		{
 			name:       "undeclared type",
-			src:        `import "./lib";` + "\n" + `function main(): i32 { var q: lib.NoSuchType = 0; return 0; }`,
+			src:        `import "./lib";` + "\n" + `function main(): i32 { let q: lib.NoSuchType = 0; return 0; }`,
 			wantSubstr: `module "lib" has no type "NoSuchType"`,
 			notSubstr:  "is not exported",
 		},
@@ -62,7 +62,7 @@ pub function shown_fn(): i32 { return 1; }
 		},
 		{
 			name:       "private type still reports not exported",
-			src:        `import "./lib";` + "\n" + `function main(): i32 { var q: lib.Hidden = 0; return 0; }`,
+			src:        `import "./lib";` + "\n" + `function main(): i32 { let q: lib.Hidden = 0; return 0; }`,
 			wantSubstr: "lib.Hidden is not exported",
 			notSubstr:  "has no type",
 		},
@@ -115,7 +115,7 @@ pub struct Shown { v: i32 }
 		},
 		{
 			name: "near-miss type",
-			src:  `import "./lib";` + "\n" + `function main(): i32 { var q: lib.Shwon = 0; return 0; }`,
+			src:  `import "./lib";` + "\n" + `function main(): i32 { let q: lib.Shwon = 0; return 0; }`,
 			want: `did you mean "Shown"?`,
 		},
 	}

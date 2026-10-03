@@ -5,7 +5,7 @@ package checker
 // marked `@must_consume` must be CONSUMED at least once on every
 // control-flow path before its binding leaves scope. Consuming uses:
 // passing it as a call argument, returning it, matching on it
-// (destructure), binding it to another local (`var y = x` — the
+// (destructure), binding it to another local (`let y = x` — the
 // obligation transfers to y, which is itself tracked), or storing it
 // into another @must_consume container. Field reads and method calls
 // are neutral. The checker is an OBLIGATION checker, not a memory-
@@ -61,7 +61,7 @@ func (c *checker) checkMustConsume(fn *ast.FuncDecl) {
 	c.mcWalkBlock(fn, fn.Body)
 }
 
-// mcWalkBlock finds marked-type `var` bindings at every block depth
+// mcWalkBlock finds marked-type `let` bindings at every block depth
 // and checks each against the remainder of ITS block (its scope).
 func (c *checker) mcWalkBlock(fn *ast.FuncDecl, b *ast.Block) {
 	if b == nil {
@@ -246,7 +246,7 @@ func (c *checker) mcStmtConsumesImpl(s ast.Stmt, name, typeName string, report b
 	case *ast.ExprStmt:
 		return c.mcExprConsumes(x.Expr, name, typeName, report)
 	case *ast.Var:
-		// `var y = x;` — the obligation transfers to y (tracked at
+		// `let y = x;` — the obligation transfers to y (tracked at
 		// its own binding site when its type is marked).
 		if c.mcIsBinding(x.Init, name) {
 			return true

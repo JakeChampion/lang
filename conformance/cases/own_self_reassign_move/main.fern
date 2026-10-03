@@ -11,20 +11,20 @@ struct Box {
 }
 
 function push_box(own b: Box, x: i32): Box {
-    var ys: i32[] = b.xs.append(x);
+    let ys: i32[] = b.xs.append(x);
     return Box { xs: ys };
 }
 
 function main(): i32 {
-    var a: Box = Box { xs: [] };
-    var i: i32 = 0;
+    let a: Box = Box { xs: [] };
+    let i: i32 = 0;
     while (i < 500) {
         a = push_box(a, i);
         i = i + 1;
     }
-    var n: i32 = a.xs.len();
-    var first: i32 = a.xs[0];
-    var last: i32 = a.xs[499];
+    let n: i32 = a.xs.len();
+    let first: i32 = a.xs[0];
+    let last: i32 = a.xs[499];
     if (n != 500) { print("BAD len"); return 1; }
     if (first != 0) { print("BAD first"); return 2; }
     if (last != 499) { print("BAD last"); return 3; }

@@ -12,7 +12,7 @@ import (
 // TestSelfHostClosureX86IR is the x86-64 gate for closures slice 3a: first-class
 // (escaping) capturing closures — a `return (x) => { … cap … }` returned as
 // a value, bound to a local, and called. lift_lambdas hoists the body to
-// `<fn>$clo(__env, params…)`; irlower lowers the lambda to an i32[] env box
+// `<fn>$clo(__env, params…)`; the lowering lowers the lambda to an i32[] env box
 // [funcval, caps…] (make_closure via const_func + arr_make), and a call through
 // the closure local loads box[0] and dispatches env-first via call_indirect.
 // i32 captures only. Each case asserts the oracle exit code AND that the IR path
@@ -66,9 +66,9 @@ func TestSelfHostClosureX86IR(t *testing.T) {
 		src      string
 		expected int
 	}{
-		{"adder", `function make_adder(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; } function main(): i32 { var add5 = make_adder(5); return add5(3); }`, 8},
-		{"multi-capture", `function make(a: i32, b: i32): (i32) => i32 { return (x: i32): i32 => { return x * a + b; }; } function main(): i32 { var f = make(3, 7); return f(5); }`, 22},
-		{"called-twice", `function make(a: i32, b: i32): (i32) => i32 { return (x: i32): i32 => { return x * a + b; }; } function main(): i32 { var f = make(2, 1); return f(3) + f(4); }`, 16},
+		{"adder", `function make_adder(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; } function main(): i32 { let add5 = make_adder(5); return add5(3); }`, 8},
+		{"multi-capture", `function make(a: i32, b: i32): (i32) => i32 { return (x: i32): i32 => { return x * a + b; }; } function main(): i32 { let f = make(3, 7); return f(5); }`, 22},
+		{"called-twice", `function make(a: i32, b: i32): (i32) => i32 { return (x: i32): i32 => { return x * a + b; }; } function main(): i32 { let f = make(2, 1); return f(3) + f(4); }`, 16},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

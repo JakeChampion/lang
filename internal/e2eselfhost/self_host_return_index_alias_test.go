@@ -7,7 +7,7 @@ import (
 
 // returnIndexAliasCases pin the return-transfer retain for `return xs[i]`
 // where the element is itself an rc-counted array (native: needsRcIncOnAlias's
-// Index arm; self-host: irlower's index_read_is_arr return branch). The callee
+// Index arm; self-host: the lowering's return branch). The callee
 // hands the caller an ALIAS of an element the container still owns; without
 // the retain the caller's exit sweep decs a count the container holds, so the
 // element's box is freed under the live container and reused by the next
@@ -27,15 +27,15 @@ var returnIndexAliasCases = []struct {
     return seeds[i % seeds.len()];
 }
 function main(): i32 {
-    var seeds: i32[][] = [[7], [1, 2, 3, 4, 5]];
-    var k: i32 = 0;
+    let seeds: i32[][] = [[7], [1, 2, 3, 4, 5]];
+    let k: i32 = 0;
     while (k < 4) {
-        var seed: i32[] = pick(seeds, k);
+        let seed: i32[] = pick(seeds, k);
         if (seed.len() == 0) { return 80; }
         k = k + 1;
     }
-    var junk: i32[] = [9, 9, 9, 9, 9, 9, 9, 9];
-    var junk2: i32[] = [8, 8, 8, 8, 8, 8, 8, 8];
+    let junk: i32[] = [9, 9, 9, 9, 9, 9, 9, 9];
+    let junk2: i32[] = [8, 8, 8, 8, 8, 8, 8, 8];
     if (seeds[0].len() != 1) { return 90; }
     if (seeds[0][0] != 7) { return 91; }
     if (seeds[1].len() != 5) { return 92; }
@@ -49,14 +49,14 @@ function main(): i32 {
     return m[i];
 }
 function main(): i32 {
-    var m: string[][] = [["a", "b"], ["c", "d", "e"]];
-    var k: i32 = 0;
+    let m: string[][] = [["a", "b"], ["c", "d", "e"]];
+    let k: i32 = 0;
     while (k < 4) {
-        var row: string[] = pickrow(m, k % 2);
+        let row: string[] = pickrow(m, k % 2);
         if (row.len() == 0) { return 80; }
         k = k + 1;
     }
-    var junk: i32[] = [9, 9, 9, 9, 9, 9, 9, 9];
+    let junk: i32[] = [9, 9, 9, 9, 9, 9, 9, 9];
     if (m[0].len() != 2) { return 90; }
     if (m[1].len() != 3) { return 91; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -65,14 +65,14 @@ function main(): i32 {
 	// Negative balance check: a LOCAL container swept at exit must not
 	// over-release the escaping element the retain now covers.
 	{"local-container", `function first_row(): i32[] {
-    var m: i32[][] = [[1, 2], [3, 4, 5]];
+    let m: i32[][] = [[1, 2], [3, 4, 5]];
     return m[0];
 }
 function main(): i32 {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < 4) {
-        var r: i32[] = first_row();
-        var junk: i32[] = [9, 9, 9, 9];
+        let r: i32[] = first_row();
+        let junk: i32[] = [9, 9, 9, 9];
         if (r.len() != 2) { return 90; }
         if (r[1] != 2) { return 91; }
         k = k + 1;
@@ -87,7 +87,7 @@ function main(): i32 {
 func TestSelfHostReturnIndexAliasX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range returnIndexAliasCases {
@@ -112,12 +112,12 @@ func TestSelfHostReturnIndexAliasX86_64(t *testing.T) {
 }
 
 // TestSelfHostReturnIndexAliasArm64 — arm64 counterpart; the retain is shared
-// irlower analysis, so both register backends inherit it.
+// lowering analysis, so both register backends inherit it.
 func TestSelfHostReturnIndexAliasArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range returnIndexAliasCases {

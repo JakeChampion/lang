@@ -39,12 +39,12 @@ var rcCorpus = []struct {
 		name: "array_with_inplace_loop_read_before_with",
 		src: `
 function main(): i32 {
-    var xs: i32[] = [1, 2];
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let xs: i32[] = [1, 2];
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 2) {
         acc = acc + xs[0];
-        var ys: i32[] = xs.with(0, 9);
+        let ys: i32[] = xs.with(0, 9);
         i = i + 1;
     }
     return (acc - 2) + __rc_underflow_count();
@@ -60,12 +60,12 @@ function main(): i32 {
 		name: "array_with_inplace_receiver_alias_in_loop",
 		src: `
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var xs: i32[] = [1, 2, 3];
-        var y: i32[] = xs;
-        var zs: i32[] = xs.with(0, 9);
+        let xs: i32[] = [1, 2, 3];
+        let y: i32[] = xs;
+        let zs: i32[] = xs.with(0, 9);
         acc = acc + y[0] + zs[0];
         i = i + 1;
     }
@@ -82,18 +82,18 @@ function main(): i32 {
 		name: "array_with_inplace_receiver_alias_scalar_elems",
 		src: `
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var y: i32[] = xs;
-    var zs: i32[] = xs.with(0, 9);
-    var c: i32 = y[0];
-    var d: i32 = zs[0];
+    let xs: i32[] = [1, 2, 3];
+    let y: i32[] = xs;
+    let zs: i32[] = xs.with(0, 9);
+    let c: i32 = y[0];
+    let d: i32 = zs[0];
     return (c - 1) + (d - 9) + __rc_underflow_count();
 }`,
 	},
 	{
 		// `.with` on a bare-ident receiver at its LAST use takes
 		// __fern_arr_cow_inplace's rc == 1 branch and mutates the buffer in
-		// place. An alias of that receiver (`var y = xs`) is a borrow
+		// place. An alias of that receiver (`let y = xs`) is a borrow
 		// candidate for the #4402 dead-alias cancellation, and cancelling its
 		// transfer inc is what leaves the buffer at rc 1 — so the in-place
 		// mutation becomes visible through the alias and array value semantics
@@ -109,11 +109,11 @@ function main(): i32 {
 		src: `
 function mkstr(p: string): string { return p + "!"; }
 function main(): i32 {
-    var xs: string[] = [mkstr("aaaaaaaaaa"), mkstr("b")];
-    var y: string[] = xs;
-    var zs: string[] = xs.with(0, mkstr("zz"));
-    var c: i32 = y[0].len();
-    var d: i32 = zs[0].len();
+    let xs: string[] = [mkstr("aaaaaaaaaa"), mkstr("b")];
+    let y: string[] = xs;
+    let zs: string[] = xs.with(0, mkstr("zz"));
+    let c: i32 = y[0].len();
+    let d: i32 = zs[0].len();
     return (c - 11) + (d - 3) + __rc_underflow_count();
 }`,
 	},
@@ -133,14 +133,14 @@ function main(): i32 {
 struct S { name: string, fields: string[] }
 function mkstr(p: string): string { return p + "!"; }
 function scan(): i32 {
-    var xs: S[] = [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] },
+    let xs: S[] = [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] },
                    S{ name: mkstr(""), fields: [mkstr("")] }];
-    var n: i32 = 0;
+    let n: i32 = 0;
     for sd in xs { n = n + sd.name.len() + sd.fields.len(); }
     return n;
 }
 function main(): i32 {
-    var c: i32 = scan();
+    let c: i32 = scan();
     return (c - 14) + __rc_underflow_count();
 }`,
 	},
@@ -156,7 +156,7 @@ function main(): i32 {
 struct S { name: string, fields: string[] }
 function mkstr(p: string): string { return p + "!"; }
 function scan_early(xs: S[]): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for sd in xs {
         n = n + sd.name.len() + sd.fields.len();
         if (n > 11) { return n; }
@@ -164,7 +164,7 @@ function scan_early(xs: S[]): i32 {
     return n;
 }
 function main(): i32 {
-    var c: i32 = scan_early([S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] },
+    let c: i32 = scan_early([S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] },
                              S{ name: mkstr("b"), fields: [] }]);
     return (c - 12) + __rc_underflow_count();
 }`,
@@ -194,9 +194,9 @@ function mks(): S[] { return [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")]
     return S{ name: mkstr("z"), fields: [] };
 }
 function use_owned(): i32 {
-    var hit: S = pick_owned();
-    var churn: S[] = [S{ name: mkstr("zzzzzzzzzz"), fields: [mkstr("g")] }];
-    var ok: i32 = 0;
+    let hit: S = pick_owned();
+    let churn: S[] = [S{ name: mkstr("zzzzzzzzzz"), fields: [mkstr("g")] }];
+    let ok: i32 = 0;
     if (hit.name == "aaaaaaaaaa!") { ok = 1; }
     return ok + churn.len() - 1;
 }
@@ -228,16 +228,16 @@ function pick(xs: S[]): S {
     return S{ name: mkstr("z"), fields: [] };
 }
 function use_returned(): i32 {
-    var src: S[] = [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] }];
-    var hit: S = pick(src);
+    let src: S[] = [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] }];
+    let hit: S = pick(src);
     src = [];
-    var churn: S[] = [S{ name: mkstr("zzzzzzzzzz"), fields: [mkstr("g")] }];
-    var ok: i32 = 0;
+    let churn: S[] = [S{ name: mkstr("zzzzzzzzzz"), fields: [mkstr("g")] }];
+    let ok: i32 = 0;
     if (hit.name == "aaaaaaaaaa!") { ok = 1; }
     return ok + churn.len() - 1;
 }
 function main(): i32 {
-    var c: i32 = use_returned();
+    let c: i32 = use_returned();
     return (c - 1) + __rc_underflow_count();
 }`,
 	},
@@ -264,10 +264,10 @@ function mks(): S[] { return [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")]
     return mkstr("z");
 }
 function use_name(): i32 {
-    var hit: string = pick_name();
-    var churn: S[] = [S{ name: mkstr("zzzzzzzzzz"), fields: [mkstr("g")] },
+    let hit: string = pick_name();
+    let churn: S[] = [S{ name: mkstr("zzzzzzzzzz"), fields: [mkstr("g")] },
                       S{ name: mkstr("y"), fields: [] }];
-    var ok: i32 = 0;
+    let ok: i32 = 0;
     if (hit == "aaaaaaaaaa!") { ok = 1; }
     return ok + churn.len() - 2;
 }
@@ -294,10 +294,10 @@ function mks(): S[] { return [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("ffff
     return [];
 }
 function use_fields(): i32 {
-    var hit: string[] = pick_fields();
-    var churn: S[] = [S{ name: mkstr("zzzzzzzzzz"), fields: [mkstr("gggggggggg")] },
+    let hit: string[] = pick_fields();
+    let churn: S[] = [S{ name: mkstr("zzzzzzzzzz"), fields: [mkstr("gggggggggg")] },
                       S{ name: mkstr("y"), fields: [] }];
-    var ok: i32 = 0;
+    let ok: i32 = 0;
     if (hit.len() == 1 && hit[0] == "ffffffffff!") { ok = 1; }
     return ok + churn.len() - 2;
 }
@@ -323,7 +323,7 @@ function mks(): S[] { return [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")]
     return 0 - 1;
 }
 function main(): i32 {
-    var c: i32 = count_fields(11) + count_fields(2) + count_fields(99);
+    let c: i32 = count_fields(11) + count_fields(2) + count_fields(99);
     return (c - 0) + __rc_underflow_count();
 }`,
 	},
@@ -341,21 +341,21 @@ function main(): i32 {
 struct S { name: string, fields: string[] }
 function mkstr(p: string): string { return p + "!"; }
 function collect(): i32 {
-    var xs: S[] = [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] },
+    let xs: S[] = [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] },
                    S{ name: mkstr("b"), fields: [] }];
-    var acc: S[] = [];
+    let acc: S[] = [];
     for sd in xs {
         if (sd.fields.len() == 1) { acc = acc.append(sd); }
     }
     xs = [];
-    var churn: S[] = [S{ name: mkstr("zzzzzzzzzz"), fields: [mkstr("y")] },
+    let churn: S[] = [S{ name: mkstr("zzzzzzzzzz"), fields: [mkstr("y")] },
                       S{ name: mkstr("xxxxxxxxxx"), fields: [mkstr("w")] }];
-    var ok: i32 = 0;
+    let ok: i32 = 0;
     if (acc[0].name == "aaaaaaaaaa!") { ok = 1; }
     return ok + churn.len() - 2;
 }
 function main(): i32 {
-    var c: i32 = collect();
+    let c: i32 = collect();
     return (c - 1) + __rc_underflow_count();
 }`,
 	},
@@ -373,8 +373,8 @@ function main(): i32 {
 		src: `
 function mkstr(p: string): string { return p + "!"; }
 function snap(): i32 {
-    var xs: string[] = [mkstr("aaaaaaaaaa"), mkstr("")];
-    var n: i32 = 0;
+    let xs: string[] = [mkstr("aaaaaaaaaa"), mkstr("")];
+    let n: i32 = 0;
     for s in xs {
         n = n + s.len();
         xs = xs.with(0, mkstr("zz"));
@@ -382,7 +382,7 @@ function snap(): i32 {
     return (n - 12) + (xs[0].len() - 3);
 }
 function main(): i32 {
-    var c: i32 = snap();
+    let c: i32 = snap();
     return c + __rc_underflow_count();
 }`,
 	},
@@ -397,10 +397,10 @@ function main(): i32 {
 import "core/int";
 import "std/string";
 function cat(a: string, b: string): string { return a + b; }
-function suml(arr: string[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < arr.len()) { s = s + arr[i].len(); i = i + 1; } return s; }
+function suml(arr: string[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < arr.len()) { s = s + arr[i].len(); i = i + 1; } return s; }
 function main(): i32 {
-    var s: string = cat("ab", "cd");
-    var arr: string[] = [s, s];
+    let s: string = cat("ab", "cd");
+    let arr: string[] = [s, s];
     return (suml(arr) + s.len() - 12) + __rc_underflow_count();
 }`,
 	},
@@ -419,8 +419,8 @@ function main(): i32 {
 import "core/int";
 import "std/i32";
 function main(): i32 {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < 50) { s = f"{i}-iteration"; i = i + 1; }
     return (s.len() - 12) + __rc_underflow_count();
 }`,
@@ -438,10 +438,10 @@ import "std/string";
 function cat(a: string, b: string): string { return a + b; }
 function callit(f: () => i32): i32 { return f(); }
 function main(): i32 {
-    var s: string = cat("ab", "cd");
-    var f: () => i32 = () => s.len();
-    var x: i32 = callit(f);
-    var y: i32 = s.len();
+    let s: string = cat("ab", "cd");
+    let f: () => i32 = () => s.len();
+    let x: i32 = callit(f);
+    let y: i32 = s.len();
     return (x + y - 8) + __rc_underflow_count();
 }`,
 	},
@@ -458,9 +458,9 @@ import "std/string";
 function cat(a: string, b: string): string { return a + b; }
 function use2(p: (string, i32), q: (string, i32)): i32 { return p.0.len() + q.0.len(); }
 function main(): i32 {
-    var s: string = cat("ab", "cd");
-    var a: (string, i32) = (s, 1);
-    var b: (string, i32) = (s, 2);
+    let s: string = cat("ab", "cd");
+    let a: (string, i32) = (s, 1);
+    let b: (string, i32) = (s, 2);
     return (use2(a, b) + s.len() - 12) + __rc_underflow_count();
 }`,
 	},
@@ -476,9 +476,9 @@ import "std/string";
 function cat(a: string, b: string): string { return a + b; }
 function unwrap(o: Option[string]): i32 { match (o) { Some(v) => { return v.len(); }, None => { return 0; } } }
 function main(): i32 {
-    var s: string = cat("ab", "cd");
-    var a: Option[string] = Some(s);
-    var b: Option[string] = Some(s);
+    let s: string = cat("ab", "cd");
+    let a: Option[string] = Some(s);
+    let b: Option[string] = Some(s);
     return (unwrap(a) + unwrap(b) + s.len() - 12) + __rc_underflow_count();
 }`,
 	},
@@ -495,8 +495,8 @@ import "core/int";
 import "std/string";
 function consume(s: string): i32 { return s.len(); }
 function build(a: string): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) { acc = acc + consume(a + "cd"); i = i + 1; }
     return acc;
 }
@@ -517,10 +517,10 @@ struct H { name: string, n: i32 }
 function cat(a: string, b: string): string { return a + b; }
 function use2(p: H, q: H): i32 { return p.name.len() + q.name.len(); }
 function main(): i32 {
-    var s: string = cat("abc", "defgh");
-    var a: H = H { name: s, n: 1 };
-    var b: H = H { name: s, n: 2 };
-    var total: i32 = use2(a, b) + s.len();
+    let s: string = cat("abc", "defgh");
+    let a: H = H { name: s, n: 1 };
+    let b: H = H { name: s, n: 2 };
+    let total: i32 = use2(a, b) + s.len();
     return (total - 24) + __rc_underflow_count();
 }`,
 	},
@@ -531,7 +531,7 @@ function main(): i32 {
 import "core/int";
 struct P { x: i32, y: i32 }
 function main(): i32 {
-    var ps: P[] = [P{x: 1, y: 2}, P{x: 3, y: 4}];
+    let ps: P[] = [P{x: 1, y: 2}, P{x: 3, y: 4}];
     return (ps[1].y - 4) + __rc_underflow_count();
 }`,
 	},
@@ -542,9 +542,9 @@ function main(): i32 {
 import "core/int";
 struct Holder { a: i32[], b: i32[] }
 function main(): i32 {
-    var h1: Holder = Holder { a: [1, 2], b: [3, 4, 5] };
-    var h2: Holder = h1;
-    var sum: i32 = h2.a[1] + h2.b[2];
+    let h1: Holder = Holder { a: [1, 2], b: [3, 4, 5] };
+    let h2: Holder = h1;
+    let sum: i32 = h2.a[1] + h2.b[2];
     return (sum - 7) + __rc_underflow_count();
 }`,
 	},
@@ -554,7 +554,7 @@ function main(): i32 {
 		src: `
 import "core/int";
 function main(): i32 {
-    var cube: i32[][][] = [[[1, 2], [3]], [[4, 5, 6]]];
+    let cube: i32[][][] = [[[1, 2], [3]], [[4, 5, 6]]];
     return (cube[1][0][2] - 6) + __rc_underflow_count();
 }`,
 	},
@@ -569,8 +569,8 @@ struct VArr { v: i32[] }
 type Value = VInt | VArr;
 function wrap(xs: i32[]): Value { return VArr { v: xs }; }
 function main(): i32 {
-    var a: Value = wrap([10, 20, 30]);
-    var got: i32 = 0;
+    let a: Value = wrap([10, 20, 30]);
+    let got: i32 = 0;
     match (a) {
         VInt(n) => { got = n.v; },
         VArr(arr) => { got = arr.v.len(); }
@@ -587,9 +587,9 @@ import "core/int";
 import "std/string";
 enum E { Arr(i32[]), Num(i32) }
 function main(): i32 {
-    var e: E = Arr([1, 2, 3, 4]);
-    var n: E = Num(99);
-    var got: i32 = 0;
+    let e: E = Arr([1, 2, 3, 4]);
+    let n: E = Num(99);
+    let got: i32 = 0;
     match (e) { Arr(a) => { got = a.len(); }, Num(_) => { got = 0; } }
     return (got - 4) + __rc_underflow_count();
 }`,
@@ -601,9 +601,9 @@ function main(): i32 {
 		src: `
 import "core/int";
 function main(): i32 {
-    var xs: i32[] = [5, 6, 7];
-    var f = (d: i32): i32 => { return xs[2] + d; };
-    var got: i32 = f(0);
+    let xs: i32[] = [5, 6, 7];
+    let f = (d: i32): i32 => { return xs[2] + d; };
+    let got: i32 = f(0);
     return (got - 7) + __rc_underflow_count();
 }`,
 	},
@@ -613,8 +613,8 @@ function main(): i32 {
 		src: `
 import "core/int";
 function main(): i32 {
-    var k: i32 = 42;
-    var f = (x: i32): i32 => { return x + k; };
+    let k: i32 = 42;
+    let f = (x: i32): i32 => { return x + k; };
     return (f(0) - 42) + __rc_underflow_count();
 }`,
 	},
@@ -627,11 +627,11 @@ function main(): i32 {
 		src: `
 import "core/int";
 function main(): i32 {
-    var sum: i32 = 0;
-    var i: i32 = 0;
+    let sum: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var base: i32 = i;
-        var f = (x: i32): i32 => { return base + x; };
+        let base: i32 = i;
+        let f = (x: i32): i32 => { return base + x; };
         sum = sum + f(1);
         i = i + 1;
     }
@@ -651,7 +651,7 @@ function makeAdder(n: i32): (i32) => i32 {
     return add;
 }
 function main(): i32 {
-    var f = makeAdder(10);
+    let f = makeAdder(10);
     return (f(5) - 15) + __rc_underflow_count();
 }`,
 	},
@@ -665,11 +665,11 @@ function main(): i32 {
 		src: `
 import "core/int";
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var xs: i32[] = [i, i + 1, i + 2];
-        var f = (d: i32): i32 => { return xs[2] + d; };
+        let xs: i32[] = [i, i + 1, i + 2];
+        let f = (d: i32): i32 => { return xs[2] + d; };
         acc = acc + f(0);
         i = i + 1;
     }
@@ -686,9 +686,9 @@ function main(): i32 {
 		src: `
 import "core/int";
 function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
-    var outer = (a: i32): i32 => {
-        var inner = (b: i32): i32 => { return xs[2] + a + b; };
+    let xs: i32[] = [10, 20, 30];
+    let outer = (a: i32): i32 => {
+        let inner = (b: i32): i32 => { return xs[2] + a + b; };
         return inner(1);
     };
     return (outer(0) - 31) + __rc_underflow_count();
@@ -702,10 +702,10 @@ import "core/int";
 import "core/map";
 import "std/string";
 function main(): i32 {
-    var m: Map[string, string] = map_new(8);
+    let m: Map[string, string] = map_new(8);
     m = m.insert("hello", "world");
     m = m.insert("foo", "bar");
-    var v: string = m.get_or("hello", "missing");
+    let v: string = m.get_or("hello", "missing");
     return (v.len() - 5) + __rc_underflow_count();
 }`,
 	},
@@ -719,8 +719,8 @@ import "std/array";
 import "std/string";
 struct Node { id: i32 }
 function main(): i32 {
-    var ns: Node[] = [];
-    var i: i32 = 0;
+    let ns: Node[] = [];
+    let i: i32 = 0;
     while (i < 8) {
         ns = ns.append(Node { id: i });
         i = i + 1;
@@ -735,7 +735,7 @@ function main(): i32 {
 import "core/int";
 import "std/string";
 function main(): i32 {
-    var xs: i32[] = [1];
+    let xs: i32[] = [1];
     xs = [2, 2];
     xs = [3, 3, 3];
     return (xs.len() - 3) + __rc_underflow_count();
@@ -749,9 +749,9 @@ function main(): i32 {
 import "core/int";
 function sum3(a: i32[]): i32 { return a[0] + a[1] + a[2]; }
 function main(): i32 {
-    var xs: i32[] = [4, 5, 6];
-    var s: i32 = sum3(xs);
-    var t: i32 = sum3(xs);
+    let xs: i32[] = [4, 5, 6];
+    let s: i32 = sum3(xs);
+    let t: i32 = sum3(xs);
     return (s - 15) + (t - 15) + __rc_underflow_count();
 }`,
 	},
@@ -765,7 +765,7 @@ import "std/string";
 struct Row { cells: i32[] }
 struct Grid { rows: Row[] }
 function main(): i32 {
-    var g: Grid = Grid { rows: [Row { cells: [1, 2] }, Row { cells: [3, 4, 5] }] };
+    let g: Grid = Grid { rows: [Row { cells: [1, 2] }, Row { cells: [3, 4, 5] }] };
     return (g.rows[1].cells[2] - 5) + (g.rows.len() - 2) + __rc_underflow_count();
 }`,
 	},
@@ -779,10 +779,10 @@ function main(): i32 {
 import "core/int";
 struct P { x: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 64) {
-        var ps: P[] = [P{x: i}, P{x: i + 1}];
+        let ps: P[] = [P{x: i}, P{x: i + 1}];
         acc = acc + ps[1].x;
         i = i + 1;
     }
@@ -804,11 +804,11 @@ type Value = VInt | VArr;
 function vi(n: i32): Value { return VInt { v: n }; }
 function va(xs: i32[]): Value { return VArr { v: xs }; }
 function main(): i32 {
-    var vs: Value[] = [];
+    let vs: Value[] = [];
     vs = vs.append(vi(1));
     vs = vs.append(va([2, 3]));
     vs = vs.append(vi(4));
-    var got: i32 = 0;
+    let got: i32 = 0;
     match (vs[1]) { VInt(n) => { got = n.v; }, VArr(a) => { got = a.v[1]; } }
     return (got - 3) + (vs.len() - 3) + __rc_underflow_count();
 }`,
@@ -824,7 +824,7 @@ struct VArr { v: i32[] }
 type Value = VInt | VArr;
 struct Box { tag: Value, data: i32[] }
 function main(): i32 {
-    var b: Box = Box { tag: VArr { v: [9, 9] }, data: [1, 2, 3] };
+    let b: Box = Box { tag: VArr { v: [9, 9] }, data: [1, 2, 3] };
     return (b.data.len() - 3) + __rc_underflow_count();
 }`,
 	},
@@ -836,8 +836,8 @@ function main(): i32 {
 import "core/int";
 struct S { v: i32 }
 function main(): i32 {
-    var s: S = S { v: 21 };
-    var f = (d: i32): i32 => { return s.v + d; };
+    let s: S = S { v: 21 };
+    let f = (d: i32): i32 => { return s.v + d; };
     return (f(0) - 21) + __rc_underflow_count();
 }`,
 	},
@@ -847,9 +847,9 @@ function main(): i32 {
 		src: `
 import "core/int";
 function main(): i32 {
-    var base: i32[] = [10, 20, 30];
-    var f = (i: i32): i32 => { return base[i]; };
-    var g = (i: i32): i32 => { return base[i] + 1; };
+    let base: i32[] = [10, 20, 30];
+    let f = (i: i32): i32 => { return base[i]; };
+    let g = (i: i32): i32 => { return base[i] + 1; };
     return (f(2) - 30) + (g(0) - 11) + __rc_underflow_count();
 }`,
 	},
@@ -865,7 +865,7 @@ function pick(xs: i32[]): Option[i32[]] {
     return None;
 }
 function main(): i32 {
-    var got: i32 = 0;
+    let got: i32 = 0;
     match (pick([7, 8, 9])) { Some(a) => { got = a[2]; }, None => { got = 0; } }
     return (got - 9) + __rc_underflow_count();
 }`,
@@ -888,8 +888,8 @@ function main(): i32 {
 import "core/int";
 enum Holder[T] { Has(T), Empty }
 function mk(n: i32): i32[] {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = a.append(i); i = i + 1; }
     return a;
 }
@@ -897,11 +897,11 @@ function probe(h: Holder[i32[]]): i32 {
     match (h) { Has(xs) => { return xs[1]; }, Empty => { return 0; } }
 }
 function main(): i32 {
-    var got: i32 = 0;
-    var r: i32 = 0;
+    let got: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) {
         got = got + probe(Has(mk(8)));
-        var bound: Holder[i32[]] = Has(mk(8));
+        let bound: Holder[i32[]] = Has(mk(8));
         got = got + probe(bound);
         r = r + 1;
     }
@@ -916,8 +916,8 @@ function main(): i32 {
 		src: `
 import "core/int";
 function mk(n: i32): i32[] {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = a.append(i); i = i + 1; }
     return a;
 }
@@ -928,8 +928,8 @@ function res(r: Result[i32[], i32]): i32 {
     match (r) { Ok(xs) => { return xs[1]; }, Err(e) => { return e; } }
 }
 function main(): i32 {
-    var got: i32 = 0;
-    var r: i32 = 0;
+    let got: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) {
         got = got + opt(Some(mk(8)));
         got = got + res(Ok(mk(8)));
@@ -944,7 +944,7 @@ function main(): i32 {
 		src: `
 import "core/int";
 function main(): i32 {
-    var t: (i32[], i32[]) = ([1, 2], [3, 4, 5]);
+    let t: (i32[], i32[]) = ([1, 2], [3, 4, 5]);
     return (t.0[1] - 2) + (t.1[2] - 5) + __rc_underflow_count();
 }`,
 	},
@@ -963,15 +963,15 @@ function main(): i32 {
 import "core/int";
 import "std/string";
 function mk(seed: i32): i32 {
-    var pre: string = "v";
-    var s: string = pre + "x";
-    var n: i32 = s.len();
-    var s2: string = s;
+    let pre: string = "v";
+    let s: string = pre + "x";
+    let n: i32 = s.len();
+    let s2: string = s;
     return n + s2.len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 300) { total = total + mk(k); k = k + 1; }
     return (total - 1200) + __rc_underflow_count();
 }`,
@@ -987,15 +987,15 @@ function main(): i32 {
 		// .len() = 2; 250*(2+2+2)=1500.
 		name: "string_alias_shared_buffer_churn_free",
 		src: `function mk(seed: i32): i32 {
-    var pre: string = "a";
-    var s: string = pre + "b";
-    var s2: string = s;
-    var s3: string = s2;
+    let pre: string = "a";
+    let s: string = pre + "b";
+    let s2: string = s;
+    let s3: string = s2;
     return s.len() + s2.len() + s3.len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 250) { total = total + mk(k); k = k + 1; }
     return (total - 1500) + __rc_underflow_count();
 }`,
@@ -1012,14 +1012,14 @@ function main(): i32 {
 		name: "string_struct_field_churn_free",
 		src: `struct Holder { name: string }
 function mk(seed: i32): i32 {
-    var pre: string = "v";
-    var s: string = pre + "x";
-    var h: Holder = Holder { name: s };
+    let pre: string = "v";
+    let s: string = pre + "x";
+    let h: Holder = Holder { name: s };
     return h.name.len() + s.len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 300) { total = total + mk(k); k = k + 1; }
     return (total - 1200) + __rc_underflow_count();
 }`,
@@ -1034,12 +1034,12 @@ function main(): i32 {
 		name: "string_struct_field_literal_churn",
 		src: `struct Holder { name: string }
 function mk(seed: i32): i32 {
-    var h: Holder = Holder { name: "a literal value" };
+    let h: Holder = Holder { name: "a literal value" };
     return h.name.len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 3000) + __rc_underflow_count();
 }`,
@@ -1054,15 +1054,15 @@ function main(): i32 {
 		name: "string_struct_field_escapes_into_array",
 		src: `struct Holder { name: string }
 function main(): i32 {
-    var arr: Holder[] = [];
-    var k: i32 = 0;
+    let arr: Holder[] = [];
+    let k: i32 = 0;
     while (k < 50) {
-        var pre: string = "x";
-        var s: string = pre + "y";
+        let pre: string = "x";
+        let s: string = pre + "y";
         arr = arr.append(Holder { name: s });
         k = k + 1;
     }
-    var got: i32 = arr[10].name.len();
+    let got: i32 = arr[10].name.len();
     return (got - 2) + __rc_underflow_count();
 }`,
 	},
@@ -1071,21 +1071,21 @@ function main(): i32 {
 		// string element is retained on construction (alias-inc), dup'd
 		// when destructured (so the binding co-owns), and freed once by the
 		// tuple's deep-drop __fern_str_dec after the binding + source also
-		// dec. Exercises both projection paths (destructure `var (a,_)` and
+		// dec. Exercises both projection paths (destructure `let (a,_)` and
 		// direct `t.0`). 100x churn; a double-free / UAF / underflow on the
 		// element buffer trips the checksum or underflow detector.
 		// a.len()=2 + t.0.len()=2 + s.len()=2 = 6; 100*6=600.
 		name: "string_tuple_elem_churn_free",
 		src: `function mk(seed: i32): i32 {
-    var pre: string = "v";
-    var s: string = pre + "x";
-    var t: (string, i32) = (s, seed);
-    var (a, b) = t;
+    let pre: string = "v";
+    let s: string = pre + "x";
+    let t: (string, i32) = (s, seed);
+    let (a, b) = t;
     return a.len() + t.0.len() + s.len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 100) { total = total + mk(k); k = k + 1; }
     return (total - 600) + __rc_underflow_count();
 }`,
@@ -1100,14 +1100,14 @@ function main(): i32 {
 		// arr[0].len()+arr[1].len() = 2+2 = 4; 200*4=800.
 		name: "string_array_elem_churn_free",
 		src: `function mk(seed: i32): i32 {
-    var a: string = "a" + "x";
-    var b: string = "b" + "y";
-    var arr: string[] = [a, b];
+    let a: string = "a" + "x";
+    let b: string = "b" + "y";
+    let arr: string[] = [a, b];
     return arr[0].len() + arr[1].len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 800) + __rc_underflow_count();
 }`,
@@ -1120,18 +1120,18 @@ function main(): i32 {
 		// 5 pushes/iter, arr[3].len()=2; 100x. 100*2=200.
 		name: "string_array_push_churn_free",
 		src: `function mk(seed: i32): i32 {
-    var arr: string[] = [];
-    var k: i32 = 0;
+    let arr: string[] = [];
+    let k: i32 = 0;
     while (k < 5) {
-        var s: string = "v" + "x";
+        let s: string = "v" + "x";
         arr = arr.append(s);
         k = k + 1;
     }
     return arr[3].len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var j: i32 = 0;
+    let total: i32 = 0;
+    let j: i32 = 0;
     while (j < 100) { total = total + mk(j); j = j + 1; }
     return (total - 200) + __rc_underflow_count();
 }`,
@@ -1147,14 +1147,14 @@ function main(): i32 {
 		name: "string_enum_payload_churn_free",
 		src: `enum Msg { Text(string), Code(i32) }
 function mk(seed: i32): i32 {
-    var m: Msg = Text("hello" + "world");
-    var out: string = "";
+    let m: Msg = Text("hello" + "world");
+    let out: string = "";
     match (m) { Text(t) => { out = t; }, Code(c) => { out = "z"; } }
     return out.len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 2000) + __rc_underflow_count();
 }`,
@@ -1169,16 +1169,16 @@ function main(): i32 {
 		// "ab"+"cd" = 4. 200*4=800.
 		name: "string_closure_capture_churn_free",
 		src: `function make_box(seed: i32): () => i32 {
-    var s: string = "ab" + "cd";
+    let s: string = "ab" + "cd";
     return (): i32 => { return s.len(); };
 }
 function mk(seed: i32): i32 {
-    var f: () => i32 = make_box(seed);
+    let f: () => i32 = make_box(seed);
     return f();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 800) + __rc_underflow_count();
 }`,
@@ -1195,18 +1195,18 @@ function main(): i32 {
 		src: `
 import "core/int";
 function mk(seed: i32): i32 {
-    var t: (i32, i32) = (seed, seed + 1);
+    let t: (i32, i32) = (seed, seed + 1);
     return t.0 + t.1;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 40000) + __rc_underflow_count();
 }`,
 	},
 	{
-		// Destructure temp box reclamation: `var (a, b) = (i, i+1)`
+		// Destructure temp box reclamation: `let (a, b) = (i, i+1)`
 		// builds a tuple box, extracts the elements, and the box is pure
 		// overhead afterward. The temp is an owned tuple local, so its
 		// box frees at scope exit — extracting a/b (scalar here) doesn't
@@ -1215,10 +1215,10 @@ function main(): i32 {
 		src: `
 import "core/int";
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var (a, b) = (i, i + 1);
+        let (a, b) = (i, i + 1);
         acc = acc + a + b;
         i = i + 1;
     }
@@ -1236,14 +1236,14 @@ function main(): i32 {
 import "core/int";
 function mk(n: i32): (i32, i32) { return (n, n + 1); }
 function main(): i32 {
-    var t: (i32, i32) = mk(7);
-    var c: i32 = 0;
-    while (c < 200) { var junk: i32[] = [c, c]; c = c + 1; }
+    let t: (i32, i32) = mk(7);
+    let c: i32 = 0;
+    while (c < 200) { let junk: i32[] = [c, c]; c = c + 1; }
     return (t.0 + t.1 - 15) + __rc_underflow_count();
 }`,
 	},
 	{
-		// Tuple-to-tuple alias, both live: `var t2 = t1` inc's the box
+		// Tuple-to-tuple alias, both live: `let t2 = t1` inc's the box
 		// (needsRcIncOnAlias), so the two exit decs free it exactly once
 		// (the first sees rc==2 and just dec's; the second sees rc==1 and
 		// box_free's). Without the alias inc this double-frees.
@@ -1252,19 +1252,19 @@ function main(): i32 {
 		src: `
 import "core/int";
 function mk(seed: i32): i32 {
-    var t1: (i32, i32) = (seed, seed + 1);
-    var t2: (i32, i32) = t1;
+    let t1: (i32, i32) = (seed, seed + 1);
+    let t2: (i32, i32) = t1;
     return t1.0 + t2.1;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 40000) + __rc_underflow_count();
 }`,
 	},
 	{
-		// Destructure-of-arrays that ESCAPES: `var (a, b) = (...)` extracts
+		// Destructure-of-arrays that ESCAPES: `let (a, b) = (...)` extracts
 		// element ARRAY pointers from the tuple box; dup-on-projection
 		// gives `a` its own counted reference. `return a` takes
 		// move-on-return (no inc, sweep-excluded), and the tuple's
@@ -1276,14 +1276,14 @@ function main(): i32 {
 		src: `
 import "core/int";
 function mk(): i32[] {
-    var (a, b) = ([10, 20], [30, 40, 50]);
+    let (a, b) = ([10, 20], [30, 40, 50]);
     return a;
 }
 function main(): i32 {
-    var got: i32 = 0;
-    var k: i32 = 0;
+    let got: i32 = 0;
+    let k: i32 = 0;
     while (k < 100) {
-        var r: i32[] = mk();
+        let r: i32[] = mk();
         got = got + r[1];
         k = k + 1;
     }
@@ -1291,7 +1291,7 @@ function main(): i32 {
 }`,
 	},
 	{
-		// Destructure of an ALIASED tuple local: `var (a, b) = t` copies
+		// Destructure of an ALIASED tuple local: `let (a, b) = t` copies
 		// t's box pointer into the destructure temp. Both t and the temp
 		// are owned tuple locals that box_free at exit, so the temp store
 		// must inc the box — else the two frees double-free it (a
@@ -1301,19 +1301,19 @@ function main(): i32 {
 		src: `
 import "core/int";
 function mk(seed: i32): i32 {
-    var t: (i32, i32) = (seed, seed + 1);
-    var (a, b) = t;
+    let t: (i32, i32) = (seed, seed + 1);
+    let (a, b) = t;
     return a + b;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 40000) + __rc_underflow_count();
 }`,
 	},
 	{
-		// Nested-tuple destructure: `var (a, b) = t; var (c, d) = b` where
+		// Nested-tuple destructure: `let (a, b) = t; var (c, d) = b` where
 		// b is an inner tuple extracted from t. Each destructure temp
 		// aliases a distinct box (t's outer, b's inner), so each needs its
 		// own alias inc; a missing inc double-frees the outer or inner box
@@ -1323,20 +1323,20 @@ function main(): i32 {
 		src: `
 import "core/int";
 function mk(seed: i32): i32 {
-    var t: (i32, (i32, i32)) = (seed, (seed + 1, seed + 2));
-    var (a, b) = t;
-    var (c, d) = b;
+    let t: (i32, (i32, i32)) = (seed, (seed + 1, seed + 2));
+    let (a, b) = t;
+    let (c, d) = b;
     return a + c + d;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 60300) + __rc_underflow_count();
 }`,
 	},
 	{
-		// Destructured ARRAY bindings reclaim their buffers. `var (a, b) =
+		// Destructured ARRAY bindings reclaim their buffers. `let (a, b) =
 		// ([..], [..])` extracts two array pointers; dup-on-projection
 		// makes a/b owned array locals that arr_dec-free their buffers at
 		// scope exit, while the tuple's deep-drop dec's its own element
@@ -1348,12 +1348,12 @@ function main(): i32 {
 		src: `
 import "core/int";
 function mk(k: i32): i32 {
-    var (a, b) = ([k, k + 1], [k + 2, k + 3, k + 4]);
+    let (a, b) = ([k, k + 1], [k + 2, k + 3, k + 4]);
     return a[1] + b[2];
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { total = total + mk(i); i = i + 1; }
     return (total - 40800) + __rc_underflow_count();
 }`,
@@ -1366,10 +1366,10 @@ import "core/int";
 import "core/map";
 import "std/string";
 function main(): i32 {
-    var m: Map[i32, i32[]] = map_new(8);
+    let m: Map[i32, i32[]] = map_new(8);
     m = m.insert(1, [10, 20]);
     m = m.insert(2, [30, 40, 50]);
-    var v: i32[] = m.get_or(2, []);
+    let v: i32[] = m.get_or(2, []);
     return (v.len() - 3) + __rc_underflow_count();
 }`,
 	},
@@ -1388,15 +1388,15 @@ import "core/int";
 import "core/map";
 struct Item { xs: i32[] }
 function mk(seed: i32): i32 {
-    var m: Map[i32, Item] = map_new(8);
+    let m: Map[i32, Item] = map_new(8);
     m = m.insert(seed, Item { xs: [seed, seed + 1] });
     m = m.insert(seed + 1, Item { xs: [seed + 2] });
-    var it: Item = m.get_or(seed, Item { xs: [0] });
+    let it: Item = m.get_or(seed, Item { xs: [0] });
     return it.xs[1];
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 20100) + __rc_underflow_count();
 }`,
@@ -1412,15 +1412,15 @@ import "core/int";
 import "core/map";
 struct Item { xs: i32[] }
 function mk(n: i32): Item {
-    var m: Map[i32, Item] = map_new(4);
+    let m: Map[i32, Item] = map_new(4);
     m = m.insert(0, Item { xs: [n, n + 1] });
     return m.get_or(0, Item { xs: [0] });
 }
 function main(): i32 {
-    var got: i32 = 0;
-    var c: i32 = 0;
+    let got: i32 = 0;
+    let c: i32 = 0;
     while (c < 200) {
-        var it: Item = mk(c);
+        let it: Item = mk(c);
         got = got + it.xs[1];
         c = c + 1;
     }
@@ -1442,16 +1442,16 @@ struct VI { v: i32[] }
 struct VA { v: i32[] }
 type Value = VI | VA;
 function mk(seed: i32): i32 {
-    var m: Map[i32, Value] = map_new(8);
+    let m: Map[i32, Value] = map_new(8);
     m = m.insert(seed, VI { v: [seed, seed + 1] });
-    var v: Value = m.get_or(seed, VA { v: [0] });
-    var got: i32 = 0;
+    let v: Value = m.get_or(seed, VA { v: [0] });
+    let got: i32 = 0;
     match (v) { VI(a) => { got = a.v[1]; }, VA(b) => { got = b.v[0]; } }
     return got;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 20100) + __rc_underflow_count();
 }`,
@@ -1469,14 +1469,14 @@ import "core/int";
 import "core/map";
 struct Item { xs: i32[] }
 function mk(seed: i32): i32 {
-    var m: Map[i32, Item[]] = map_new(8);
+    let m: Map[i32, Item[]] = map_new(8);
     m = m.insert(seed, [Item { xs: [seed, seed + 1] }, Item { xs: [seed + 2] }]);
-    var vs: Item[] = m.get_or(seed, []);
+    let vs: Item[] = m.get_or(seed, []);
     return vs[0].xs[1];
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 20100) + __rc_underflow_count();
 }`,
@@ -1494,16 +1494,16 @@ import "core/int";
 import "core/map";
 struct Item { xs: i32[] }
 function mk(seed: i32): i32 {
-    var m: Map[i32, Option[Item]] = map_new(8);
+    let m: Map[i32, Option[Item]] = map_new(8);
     m = m.insert(seed, Some(Item { xs: [seed, seed + 1] }));
-    var o: Option[Item] = m.get_or(seed, None);
-    var got: i32 = 0;
+    let o: Option[Item] = m.get_or(seed, None);
+    let got: i32 = 0;
     match (o) { Some(it) => { got = it.xs[1]; }, None => { got = 0; } }
     return got;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 20100) + __rc_underflow_count();
 }`,
@@ -1522,16 +1522,16 @@ import "core/int";
 import "core/map";
 struct Item { xs: i32[] }
 function mk(seed: i32): i32 {
-    var m: Map[i32, Item] = map_new(8);
+    let m: Map[i32, Item] = map_new(8);
     m = m.insert(0, Item { xs: [seed, seed + 1] });
     m = m.insert(0, Item { xs: [seed + 2, seed + 3] });
     m = m.insert(0, Item { xs: [seed + 4] });
-    var it: Item = m.get_or(0, Item { xs: [0] });
+    let it: Item = m.get_or(0, Item { xs: [0] });
     return it.xs[0];
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 300) { total = total + mk(k); k = k + 1; }
     return (total - 46050) + __rc_underflow_count();
 }`,
@@ -1549,18 +1549,18 @@ import "core/int";
 import "core/map";
 import "std/string";
 function add_pair(m: Map[i32, i32[]], k: i32): Map[i32, i32[]] {
-    var arr: i32[] = [k * 10, k * 10 + 1];
+    let arr: i32[] = [k * 10, k * 10 + 1];
     return m.insert(k, arr);
 }
 function main(): i32 {
-    var m: Map[i32, i32[]] = map_new(8);
+    let m: Map[i32, i32[]] = map_new(8);
     m = add_pair(m, 7);
-    var c: i32 = 0;
+    let c: i32 = 0;
     while (c < 64) {
-        var junk: i32[] = [c, c];
+        let junk: i32[] = [c, c];
         c = c + junk.len();
     }
-    var v: i32[] = m.get_or(7, []);
+    let v: i32[] = m.get_or(7, []);
     return (v.len() - 2) + (v[0] - 70) + (v[1] - 71) + __rc_underflow_count();
 }`,
 	},
@@ -1580,17 +1580,17 @@ import "core/int";
 import "core/map";
 import "std/string";
 function mk(seed: i32): i32 {
-    var m: Map[i32, string] = map_new(8);
+    let m: Map[i32, string] = map_new(8);
     m = m.insert(1, "first" + "val");
     m = m.insert(2, "other" + "entry");
     m = m.insert(1, "second" + "value");
-    var out: string = "";
+    let out: string = "";
     match (m.get(1)) { Some(v) => { out = v; }, None => { out = "z"; } }
     return out.len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 2200) + __rc_underflow_count();
 }`,
@@ -1633,20 +1633,20 @@ function main(): i32 {
 		src: `
 import "core/map";
 function round(n: i32): i32 {
-    var m: Map[string, i32] = map_new(16);
-    var a: string = "alpha" + "-longer-than-sso";
-    var b: string = "beta" + "-longer-than-sso";
+    let m: Map[string, i32] = map_new(16);
+    let a: string = "alpha" + "-longer-than-sso";
+    let b: string = "beta" + "-longer-than-sso";
     m = m.insert(a, n);
     m = m.insert(b, n + 1);
     m = m.insert("gamma" + "-longer-than-sso", n + 2);
     m = m.insert("delta" + "-longer-than-sso", n + 3);
-    var before: i32 = m.len();
-    var c: Map[string, i32] = m.cleared();
+    let before: i32 = m.len();
+    let c: Map[string, i32] = m.cleared();
     return before + c.len();
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) { t = t + round(i); i = i + 1; }
     return (t - 200) + __rc_underflow_count();
 }`,
@@ -1658,20 +1658,20 @@ import "core/int";
 import "core/map";
 import "std/string";
 function mk(seed: i32): i32 {
-    var m: Map[string, string] = map_new(8);
-    var key: string = "k" + "ey";
+    let m: Map[string, string] = map_new(8);
+    let key: string = "k" + "ey";
     m = m.insert(key, "va" + "lue");
     m = m.insert("other" + "k", "x" + "yz");
     m = m.insert(key, "val" + "ue");
-    var out: string = "";
+    let out: string = "";
     match (m.get(key)) { Some(v) => { out = v; }, None => { out = "zz"; } }
-    var other: string = "";
+    let other: string = "";
     match (m.get("otherk")) { Some(v) => { other = v; }, None => { other = "q"; } }
     return out.len() + key.len() + other.len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 2200) + __rc_underflow_count();
 }`,
@@ -1703,19 +1703,19 @@ function main(): i32 {
 		src: `
 import "core/map";
 function mk(seed: i32): i32 {
-    var stem: string = "a";
-    var m: Map[string, string] = map_new(8);
-    var key: string = stem + "-key-well-past-seven-bytes";
+    let stem: string = "a";
+    let m: Map[string, string] = map_new(8);
+    let key: string = stem + "-key-well-past-seven-bytes";
     m = m.insert(key, stem + "-value-well-past-seven-bytes");
-    var n: i32 = 0;
+    let n: i32 = 0;
     if (m.get_or(key, "") == "a-value-well-past-seven-bytes") { n = n + 1; }
     if (m.has(key)) { n = n + 2; }
     match (m.get(key)) { Some(v) => { if (v == "a-value-well-past-seven-bytes") { n = n + 4; } }, None => {} }
     return n;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 1400) + __rc_underflow_count();
 }`,
@@ -1739,11 +1739,11 @@ function main(): i32 {
 import "core/map";
 import "std/string";
 function mk(): i32 {
-    var m: Map[string, i32] = map_new(8);
-    var key: string = "ke" + "y";
+    let m: Map[string, i32] = map_new(8);
+    let key: string = "ke" + "y";
     m = m.insert(key, 7);
     m = m.insert("ot" + "her", 3);
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     acc = acc + m.get_or(key, 0);
     acc = acc + m.get_or("ke" + "y", 0);
     if (m.has("ke" + "y")) { acc = acc + 1; }
@@ -1753,8 +1753,8 @@ function mk(): i32 {
     return acc + key.len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 16500) + __rc_underflow_count();
 }`,
@@ -1784,20 +1784,20 @@ import "core/int";
 import "core/map";
 import "std/string";
 function mk(): i32 {
-    var acc: i32 = 0;
-    var sm: Map[string, i32] = map_new(8);
+    let acc: i32 = 0;
+    let sm: Map[string, i32] = map_new(8);
     sm = sm.insert("ke" + "y", 7);
     sm = sm.insert("ot" + "her", 3);
     sm = sm.insert("th" + "ird", 10);
-    var st = sm.without("ke" + "y");
+    let st = sm.without("ke" + "y");
     sm = st.0;
     if (st.1) { acc = acc + 2; }
     acc = acc + sm.get_or("ot" + "her", 0);
     return acc;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 2500) + __rc_underflow_count();
 }`,
@@ -1814,8 +1814,8 @@ import "core/int";
 import "core/map";
 import "std/string";
 function mk(): i32 {
-    var acc: i32 = 0;
-    var sm: Map[string, i32] = map_new(8);
+    let acc: i32 = 0;
+    let sm: Map[string, i32] = map_new(8);
     sm = sm.insert("ke" + "y", 7);
     sm = sm.insert("ot" + "her", 3);
     sm = sm.insert("th" + "ird", 10);
@@ -1824,8 +1824,8 @@ function mk(): i32 {
     return acc;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 1500) + __rc_underflow_count();
 }`,
@@ -1845,16 +1845,16 @@ import "core/map";
 import "std/string";
 function sizeof(m: Map[string, i32]): i32 { return m.len(); }
 function mk(): i32 {
-    var acc: i32 = 0;
-    var sm: Map[string, i32] = map_new(8);
+    let acc: i32 = 0;
+    let sm: Map[string, i32] = map_new(8);
     sm = sm.insert("ke" + "y", 7);
     sm = sm.insert("ot" + "her", 3);
     acc = acc + sizeof(sm.without("ke" + "y").0);
     return acc;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 500) + __rc_underflow_count();
 }`,
@@ -1870,20 +1870,20 @@ import "core/int";
 import "core/map";
 import "std/string";
 function mk(): i32 {
-    var acc: i32 = 0;
-    var sm: Map[string, i32] = map_new(8);
+    let acc: i32 = 0;
+    let sm: Map[string, i32] = map_new(8);
     sm = sm.insert("ke" + "y", 7);
     sm = sm.insert("ot" + "her", 3);
     sm = sm.insert("th" + "ird", 10);
-    var sm2 = sm.without("zz" + "zz");
+    let sm2 = sm.without("zz" + "zz");
     sm = sm2.0;
     if (sm2.1) { acc = acc + 100; }
     acc = acc + sm.get_or("ot" + "her", 0);
     return acc;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 1500) + __rc_underflow_count();
 }`,
@@ -1900,20 +1900,20 @@ import "core/int";
 import "core/map";
 import "std/string";
 function mk(): i32 {
-    var acc: i32 = 0;
-    var sm: Map[string, i32] = map_new(8);
+    let acc: i32 = 0;
+    let sm: Map[string, i32] = map_new(8);
     sm = sm.insert("ke" + "y", 7);
     sm = sm.insert("ot" + "her", 3);
     sm = sm.insert("th" + "ird", 10);
-    var (m2, ok) = sm.without("ke" + "y");
+    let (m2, ok) = sm.without("ke" + "y");
     sm = m2;
     if (ok) { acc = acc + 2; }
     acc = acc + sm.get_or("ot" + "her", 0);
     return acc;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 2500) + __rc_underflow_count();
 }`,
@@ -1928,22 +1928,22 @@ function main(): i32 {
 import "core/int";
 import "core/map";
 function mk(): i32 {
-    var acc: i32 = 0;
-    var im: Map[i32, i32] = map_new(8);
+    let acc: i32 = 0;
+    let im: Map[i32, i32] = map_new(8);
     im = im.insert(1, 4);
     im = im.insert(2, 6);
-    var it = im.without(1);
+    let it = im.without(1);
     im = it.0;
     if (it.1) { acc = acc + 2; }
-    var im2 = im.without(9);
+    let im2 = im.without(9);
     im = im2.0;
     if (im2.1) { acc = acc + 100; }
     acc = acc + im.get_or(2, 0);
     return acc;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 4000) + __rc_underflow_count();
 }`,
@@ -1952,7 +1952,7 @@ function main(): i32 {
 		// Map.get reboxes the helper's Option[usize] into a user-shaped
 		// Option[V]. That box must carry the 8-byte rc header (rc=1 at
 		// [base+0], data = base+8) like a Some(..) literal — without it
-		// the scope-exit drop of an UNUSED `var o = m.get(k)` reads heap
+		// the scope-exit drop of an UNUSED `let o = m.get(k)` reads heap
 		// metadata at [data-8] as the rc and underflows. Consumed /
 		// discarded gets avoided it, so it stayed hidden. Exercises every
 		// rebox arm left unused-and-dropped: Some + None, i32 / string
@@ -1965,25 +1965,25 @@ import "core/int";
 import "core/map";
 import "std/string";
 function mk(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 5);
     m = m.insert(2, 9);
-    var hit = m.get(1);              // unused Some(i32), dropped at exit
-    var miss = m.get(99);            // unused None, dropped at exit
-    var sm: Map[string, i32] = map_new(8);
+    let hit = m.get(1);              // unused Some(i32), dropped at exit
+    let miss = m.get(99);            // unused None, dropped at exit
+    let sm: Map[string, i32] = map_new(8);
     sm = sm.insert("a" + "a", 3);
-    var shit = sm.get("a" + "a");    // unused Some, string key
-    var smiss = sm.get("z" + "z");   // unused None, string key
-    var vm: Map[i32, string] = map_new(8);
+    let shit = sm.get("a" + "a");    // unused Some, string key
+    let smiss = sm.get("z" + "z");   // unused None, string key
+    let vm: Map[i32, string] = map_new(8);
     vm = vm.insert(1, "hi" + "there");
-    var vhit = vm.get(1);            // unused Some(string): str_inc must balance
-    var acc: i32 = 0;
+    let vhit = vm.get(1);            // unused Some(string): str_inc must balance
+    let acc: i32 = 0;
     match (m.get(2)) { Some(x) => { acc = x; }, None => {} } // anchored read: 9
     return acc;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 4500) + __rc_underflow_count();
 }`,
@@ -2005,23 +2005,23 @@ function main(): i32 {
 import "core/int";
 import "core/map";
 function mk(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10);
     m = m.insert(2, 20);
     m = m.insert(3, 30);
-    var ks = m.keys();      // unused i32[] snapshot, dropped at exit
-    var vs = m.values();    // unused i32[] snapshot, dropped at exit
-    var wm: Map[i64, i64] = map_new(8);
+    let ks = m.keys();      // unused i32[] snapshot, dropped at exit
+    let vs = m.values();    // unused i32[] snapshot, dropped at exit
+    let wm: Map[i64, i64] = map_new(8);
     wm = wm.insert(5, 50);
     wm = wm.insert(6, 60);
-    var wks = wm.keys();    // unused i64[] (IR wide path), dropped at exit
-    var wvs = wm.values();  // unused i64[] (IR wide path), dropped at exit
-    var ks2 = m.keys();     // consumed snapshot anchors the value
+    let wks = wm.keys();    // unused i64[] (IR wide path), dropped at exit
+    let wvs = wm.values();  // unused i64[] (IR wide path), dropped at exit
+    let ks2 = m.keys();     // consumed snapshot anchors the value
     return ks2.len() + ks2[0] + ks2[1] + ks2[2];
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 4500) + __rc_underflow_count();
 }`,
@@ -2045,16 +2045,16 @@ import "core/int";
 import "core/map";
 import "std/string";
 function mk(): i32 {
-    var m: Map[string, string] = map_new(8);
+    let m: Map[string, string] = map_new(8);
     m = m.insert("longkeyaaaaaaaaaaaaaaaa1", "longvalbbbbbbbbbbbbbbbb1");
     m = m.insert("longkeyaaaaaaaaaaaaaaaa2", "longvalbbbbbbbbbbbbbbbb2");
-    var vs = m.values();    // unused string[] snapshot, dropped at exit
-    var ks = m.keys();      // consumed snapshot anchors the value
+    let vs = m.values();    // unused string[] snapshot, dropped at exit
+    let ks = m.keys();      // consumed snapshot anchors the value
     return ks.len() + ks[0].len() + ks[1].len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 25000) + __rc_underflow_count();
 }`,
@@ -2077,22 +2077,22 @@ import "core/int";
 import "core/map";
 import "std/string";
 function mk(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("longkeyaaaaaaaaaaaaaa1", 10);
     m = m.insert("longkeyaaaaaaaaaaaaaa2", 20);
-    var keys_acc: string[] = [];
-    var vsum: i32 = 0;
+    let keys_acc: string[] = [];
+    let vsum: i32 = 0;
     for (k, v) in m { keys_acc = keys_acc.append(k); vsum = vsum + v; }
-    var am: Map[i32, i32[]] = map_new(8);
+    let am: Map[i32, i32[]] = map_new(8);
     am = am.insert(1, [100, 200]);
-    var outer: i32[][] = [];
-    var it = am.iter();
+    let outer: i32[][] = [];
+    let it = am.iter();
     while (it.has_next()) { outer = outer.append(it.value()); it.advance(); }
     return keys_acc.len() + vsum + outer[0][0];
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 66000) + __rc_underflow_count();
 }`,
@@ -2121,19 +2121,19 @@ import "core/int";
 import "core/map";
 import "std/string";
 function mk(): i32 {
-    var shared: string = "value-aaaaaaaaaaaaaaaaaaaa-shared";
-    var m: Map[i32, string] = map_new(8);
+    let shared: string = "value-aaaaaaaaaaaaaaaaaaaa-shared";
+    let m: Map[i32, string] = map_new(8);
     m = m.insert(1, shared);                              // aliased set
     m = m.insert(2, shared);                              // second alias
     m = m.insert(3, "value-bbbbbbbbbbbbbbbbbbbb-fresh"); // fresh value (moves in)
-    var got: Option[string] = m.get(1);                // get retains
-    var got_len: i32 = 0;
+    let got: Option[string] = m.get(1);                // get retains
+    let got_len: i32 = 0;
     match (got) { Some(s) => { got_len = s.len(); }, None => {} }
     return shared.len() + got_len;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 33000) + __rc_underflow_count();
 }`,
@@ -2157,16 +2157,16 @@ import "core/int";
 import "core/map";
 import "std/string";
 function mk(): i32 {
-    var key: string = "key-aaaaaaaaaaaaaaaaaaaa-shared";
-    var m: Map[string, i32] = map_new(8);
+    let key: string = "key-aaaaaaaaaaaaaaaaaaaa-shared";
+    let m: Map[string, i32] = map_new(8);
     m = m.insert(key, 1);                                // aliased key
     m = m.insert(key, 2);                                // re-set same key (overwrite)
     m = m.insert("key-bbbbbbbbbbbbbbbbbbbb-fresh", 3);   // fresh key (moves in)
     return key.len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 15500) + __rc_underflow_count();
 }`,
@@ -2189,17 +2189,17 @@ import "core/int";
 import "core/map";
 import "std/string";
 function mk(): i32 {
-    var src: string = "a=hi";
-    var short_key: str = slice_unchecked(src, 0, 1);   // inline (1 byte, tagged)
-    var short_val: str = slice_unchecked(src, 2, 4);   // inline (2 bytes, tagged)
-    var m: Map[string, string] = map_new(8);
+    let src: string = "a=hi";
+    let short_key: str = slice_unchecked(src, 0, 1);   // inline (1 byte, tagged)
+    let short_val: str = slice_unchecked(src, 2, 4);   // inline (2 bytes, tagged)
+    let m: Map[string, string] = map_new(8);
     m = m.insert(short_key.to_owned(), short_val.to_owned());    // inline K + V — retains must skip tagged
-    var n = m.len();
+    let n = m.len();
     return short_key.len() + short_val.len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 1500) + __rc_underflow_count();
 }`,
@@ -2220,14 +2220,14 @@ import "core/int";
 import "core/map";
 import "std/string";
 function get_value(): string {
-    var m: Map[i32, string] = map_new(8);
+    let m: Map[i32, string] = map_new(8);
     m = m.insert(1, "value-aaaaaaaaaaaaaaaaaaaa-1");
-    var v: string = m.get_or(1, "fallback-aaaaaaaaaaaaaaa");
+    let v: string = m.get_or(1, "fallback-aaaaaaaaaaaaaaa");
     return v;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + get_value().len(); k = k + 1; }
     return (total - 14000) + __rc_underflow_count();
 }`,
@@ -2249,29 +2249,29 @@ import "core/int";
 import "core/map";
 import "std/string";
 function collect_values(): string[] {
-    var m: Map[i32, string] = map_new(8);
+    let m: Map[i32, string] = map_new(8);
     m = m.insert(1, "value-aaaaaaaaaaaaaaaaaaaa-1");
     m = m.insert(2, "value-aaaaaaaaaaaaaaaaaaaa-2");
-    var out: string[] = [];
-    var it = m.iter();
+    let out: string[] = [];
+    let it = m.iter();
     while (it.has_next()) { out = out.append(it.value()); it.advance(); }
     return out;
 }
 function collect_keys(): string[] {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("key-aaaaaaaaaaaaaaaaaaaa-1", 10);
     m = m.insert("key-aaaaaaaaaaaaaaaaaaaa-2", 20);
-    var out: string[] = [];
-    var it = m.iter();
+    let out: string[] = [];
+    let it = m.iter();
     while (it.has_next()) { out = out.append(it.key()); it.advance(); }
     return out;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 300) {
-        var vs = collect_values();
-        var ks = collect_keys();
+        let vs = collect_values();
+        let ks = collect_keys();
         total = total + vs[0].len() + ks[0].len();
         k = k + 1;
     }
@@ -2294,15 +2294,15 @@ import "core/int";
 import "core/map";
 import "std/string";
 function mk(): i32 {
-    var m: Map[i32, string] = map_new(8);
+    let m: Map[i32, string] = map_new(8);
     m = m.insert(1, "value-aaaaaaaaaaaaaaaaaaaa-A");
     m = m.insert(1, "value-aaaaaaaaaaaaaaaaaaaa-B");
     m = m.insert(1, "value-aaaaaaaaaaaaaaaaaaaa-C");
     return m.len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 500) + __rc_underflow_count();
 }`,
@@ -2322,12 +2322,12 @@ function main(): i32 {
 import "core/int";
 import "std/string";
 function mk(): i32 {
-    var s: string = "value-aaaaaaaaaaaaaaaaaaaa-" + "1";
+    let s: string = "value-aaaaaaaaaaaaaaaaaaaa-" + "1";
     return s.len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 14000) + __rc_underflow_count();
 }`,
@@ -2348,12 +2348,12 @@ function main(): i32 {
 import "core/int";
 import "std/string";
 function mk(): i32 {
-    var arr: string[] = ["value-aaaaaaaaaaaaaaaa-" + "1", "value-aaaaaaaaaaaaaaaa-" + "2"];
+    let arr: string[] = ["value-aaaaaaaaaaaaaaaa-" + "1", "value-aaaaaaaaaaaaaaaa-" + "2"];
     return arr[0].len() + arr[1].len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 24000) + __rc_underflow_count();
 }`,
@@ -2371,12 +2371,12 @@ import "core/int";
 import "std/string";
 struct Item { name: string, count: i32 }
 function mk(): i32 {
-    var it: Item = Item { name: "value-aaaaaaaaaaaaaaaaaa-" + "1", count: 7 };
+    let it: Item = Item { name: "value-aaaaaaaaaaaaaaaaaa-" + "1", count: 7 };
     return it.name.len() + it.count;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 16500) + __rc_underflow_count();
 }`,
@@ -2395,15 +2395,15 @@ import "core/int";
 import "std/string";
 enum Msg { Text(string), Number(i32) }
 function mk(): i32 {
-    var m: Msg = Msg.Text("value-aaaaaaaaaaaaaaaaaa-" + "1");
+    let m: Msg = Msg.Text("value-aaaaaaaaaaaaaaaaaa-" + "1");
     match (m) {
         Text(s) => { return s.len(); },
         Number(n) => { return n; }
     }
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 13000) + __rc_underflow_count();
 }`,
@@ -2421,13 +2421,13 @@ function main(): i32 {
 import "core/int";
 import "std/string";
 function mk(): i32 {
-    var s: string = "value-aaaaaaaaaaaaaaaaaa-" + "1";
-    var f = (): i32 => { return s.len(); };
+    let s: string = "value-aaaaaaaaaaaaaaaaaa-" + "1";
+    let f = (): i32 => { return s.len(); };
     return f();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 13000) + __rc_underflow_count();
 }`,
@@ -2442,13 +2442,13 @@ function main(): i32 {
 import "core/int";
 import "std/string";
 function mk(): i32 {
-    var t: (string, i32) = ("value-aaaaaaaaaaaaaaaaaa-" + "1", 7);
-    var (s, n) = t;
+    let t: (string, i32) = ("value-aaaaaaaaaaaaaaaaaa-" + "1", 7);
+    let (s, n) = t;
     return s.len() + n;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 16500) + __rc_underflow_count();
 }`,
@@ -2468,12 +2468,12 @@ function main(): i32 {
 import "core/int";
 import "std/string";
 function mk(): i32 {
-    var a: (string, i32)[] = [("value-aaaaaaaaaaaaaaaaaa-" + "1", 7)];
+    let a: (string, i32)[] = [("value-aaaaaaaaaaaaaaaaaa-" + "1", 7)];
     return a[0].0.len() + a[0].1;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 16500) + __rc_underflow_count();
 }`,
@@ -2495,14 +2495,14 @@ import "std/string";
 enum Wrap { Pair((string, i32)), Empty }
 struct Holder { w: Wrap }
 function mk(): i32 {
-    var h: Holder = Holder { w: Pair(("value-aaaaaaaaaaaaaaaaaa-" + "1", 7)) };
-    var r: i32 = 0;
+    let h: Holder = Holder { w: Pair(("value-aaaaaaaaaaaaaaaaaa-" + "1", 7)) };
+    let r: i32 = 0;
     match (h.w) { Pair(q) => { r = q.0.len() + q.1; }, Empty => { r = 0; } }
     return r;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 16500) + __rc_underflow_count();
 }`,
@@ -2518,13 +2518,13 @@ function main(): i32 {
 import "core/int";
 import "std/string";
 function mk(): i32 {
-    var p: (string, i32) = ("value-aaaaaaaaaaaaaaaaaa-" + "1", 7);
-    var f: () => i32 = (): i32 => { return p.0.len() + p.1; };
+    let p: (string, i32) = ("value-aaaaaaaaaaaaaaaaaa-" + "1", 7);
+    let f: () => i32 = (): i32 => { return p.0.len() + p.1; };
     return f();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 16500) + __rc_underflow_count();
 }`,
@@ -2546,12 +2546,12 @@ import "core/int";
 import "std/string";
 struct Box { items: (string, i32) }
 function mk(): i32 {
-    var b: Box = Box { items: ("value-aaaaaaaaaaaaaaaaaa-" + "1", 7) };
+    let b: Box = Box { items: ("value-aaaaaaaaaaaaaaaaaa-" + "1", 7) };
     return b.items.0.len() + b.items.1;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 16500) + __rc_underflow_count();
 }`,
@@ -2566,14 +2566,14 @@ import "core/int";
 import "std/string";
 struct Box { items: i32[] }
 function mk(n: i32): Box {
-    var arr: i32[] = [n, n + 1, n + 2];
+    let arr: i32[] = [n, n + 1, n + 2];
     return Box { items: arr };
 }
 function main(): i32 {
-    var b: Box = mk(5);
-    var c: i32 = 0;
+    let b: Box = mk(5);
+    let c: i32 = 0;
     while (c < 90) {
-        var junk: i32[] = [c, c, c];
+        let junk: i32[] = [c, c, c];
         c = c + junk.len();
     }
     return (b.items.len() - 3) + (b.items[2] - 7) + __rc_underflow_count();
@@ -2593,17 +2593,17 @@ import "core/int";
 import "std/string";
 enum Wrap { Arr(i32[]), Empty }
 function mk(n: i32): Wrap {
-    var arr: i32[] = [n, n + 1, n + 2, n + 3];
+    let arr: i32[] = [n, n + 1, n + 2, n + 3];
     return Arr(arr);
 }
 function main(): i32 {
-    var w: Wrap = mk(1000);
-    var c: i32 = 0;
+    let w: Wrap = mk(1000);
+    let c: i32 = 0;
     while (c < 300) {
-        var junk: i32[] = [c, c, c, c];
+        let junk: i32[] = [c, c, c, c];
         c = c + 1;
     }
-    var got: i32 = 0;
+    let got: i32 = 0;
     match (w) {
         Arr(a) => { got = (a.len() - 4) + (a[0] - 1000) + (a[3] - 1003); },
         Empty => { got = 100; }
@@ -2622,19 +2622,19 @@ import "core/int";
 import "std/array";
 import "std/string";
 function add_row(grid: i32[][], n: i32): i32[][] {
-    var row: i32[] = [n, n + 1, n + 2, n + 3];
+    let row: i32[] = [n, n + 1, n + 2, n + 3];
     return grid.append(row);
 }
 function main(): i32 {
-    var grid: i32[][] = [];
+    let grid: i32[][] = [];
     grid = add_row(grid, 5000);
-    var c: i32 = 0;
+    let c: i32 = 0;
     while (c < 300) {
-        var junk: i32[] = [c, c, c, c];
+        let junk: i32[] = [c, c, c, c];
         c = c + 1;
     }
     if (grid.len() != 1) { return 90; }
-    var r: i32[] = grid[0];
+    let r: i32[] = grid[0];
     return (r.len() - 4) + (r[0] - 5000) + (r[3] - 5003) + __rc_underflow_count();
 }`,
 	},
@@ -2647,15 +2647,15 @@ function main(): i32 {
 		src: `
 import "core/int";
 function main(): i32 {
-    var row: i32[] = [6000, 6001, 6002, 6003];
-    var grid: i32[][] = [[0, 0, 0, 0]];
-    var grid2: i32[][] = grid.with(0, row);
-    var c: i32 = 0;
+    let row: i32[] = [6000, 6001, 6002, 6003];
+    let grid: i32[][] = [[0, 0, 0, 0]];
+    let grid2: i32[][] = grid.with(0, row);
+    let c: i32 = 0;
     while (c < 300) {
-        var junk: i32[] = [c, c, c, c];
+        let junk: i32[] = [c, c, c, c];
         c = c + 1;
     }
-    var r: i32[] = grid2[0];
+    let r: i32[] = grid2[0];
     return (r[0] - 6000) + (r[3] - 6003) + __rc_underflow_count();
 }`,
 	},
@@ -2671,15 +2671,15 @@ function main(): i32 {
 import "core/int";
 struct Box { items: i32[] }
 function fill(b: Box, n: i32): Box {
-    var arr: i32[] = [n, n + 1, n + 2, n + 3];
+    let arr: i32[] = [n, n + 1, n + 2, n + 3];
     return Box { ...b, items: arr };
 }
 function main(): i32 {
-    var b: Box = Box { items: [0, 0, 0, 0] };
+    let b: Box = Box { items: [0, 0, 0, 0] };
     b = fill(b, 7000);
-    var c: i32 = 0;
+    let c: i32 = 0;
     while (c < 300) {
-        var junk: i32[] = [c, c, c, c];
+        let junk: i32[] = [c, c, c, c];
         c = c + 1;
     }
     return (b.items[0] - 7000) + (b.items[3] - 7003) + __rc_underflow_count();
@@ -2696,17 +2696,17 @@ function main(): i32 {
 import "core/int";
 import "core/map";
 function build(seed: i32): i32 {
-    var m: Map[i32, i32] = map_new(8);
-    var i: i32 = 0;
+    let m: Map[i32, i32] = map_new(8);
+    let i: i32 = 0;
     while (i < 16) { m = m.insert(i, seed + i); i = i + 1; }
-    var sum: i32 = 0;
-    var j: i32 = 0;
+    let sum: i32 = 0;
+    let j: i32 = 0;
     while (j < 16) { sum = sum + m.get_or(j, -1); j = j + 1; }
     return sum;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 50) { total = total + build(k); k = k + 1; }
     return (total - 25600) + __rc_underflow_count();
 }`,
@@ -2722,16 +2722,16 @@ function main(): i32 {
 import "core/int";
 import "core/map";
 function make_map(n: i32): Map[i32, i32] {
-    var m: Map[i32, i32] = map_new(4);
+    let m: Map[i32, i32] = map_new(4);
     m = m.insert(1, n);
     m = m.insert(2, n * 2);
     return m;
 }
 function main(): i32 {
-    var got: i32 = 0;
-    var k: i32 = 0;
+    let got: i32 = 0;
+    let k: i32 = 0;
     while (k < 50) {
-        var m: Map[i32, i32] = make_map(k);
+        let m: Map[i32, i32] = make_map(k);
         got = got + m.get_or(1, -1) + m.get_or(2, -1);
         k = k + 1;
     }
@@ -2752,13 +2752,13 @@ import "core/int";
 struct Pair { a: i32, b: i32 }
 struct Holder { xs: i32[], n: i32 }
 function mk(seed: i32): i32 {
-    var p: Pair = Pair { a: seed, b: seed + 1 };
-    var h: Holder = Holder { xs: [seed, seed + 1, seed + 2], n: seed };
+    let p: Pair = Pair { a: seed, b: seed + 1 };
+    let h: Holder = Holder { xs: [seed, seed + 1, seed + 2], n: seed };
     return p.a + p.b + h.xs[2] + h.n;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 80200) + __rc_underflow_count();
 }`,
@@ -2774,14 +2774,14 @@ function main(): i32 {
 import "core/int";
 struct Holder { xs: i32[], n: i32 }
 function make_holder(k: i32): Holder {
-    var h: Holder = Holder { xs: [k, k + 1], n: k };
+    let h: Holder = Holder { xs: [k, k + 1], n: k };
     return h;
 }
 function main(): i32 {
-    var got: i32 = 0;
-    var k: i32 = 0;
+    let got: i32 = 0;
+    let k: i32 = 0;
     while (k < 50) {
-        var h: Holder = make_holder(k);
+        let h: Holder = make_holder(k);
         got = got + h.xs[1] + h.n;
         k = k + 1;
     }
@@ -2799,8 +2799,8 @@ function main(): i32 {
 import "core/int";
 enum Wrap { A(i32[]), B(i32[]) }
 function mk(seed: i32): i32 {
-    var w: Wrap = A([seed, seed + 1, seed + 2]);
-    var got: i32 = 0;
+    let w: Wrap = A([seed, seed + 1, seed + 2]);
+    let got: i32 = 0;
     match (w) {
         A(xs) => { got = xs[2]; },
         B(xs) => { got = xs[0]; }
@@ -2808,8 +2808,8 @@ function mk(seed: i32): i32 {
     return got;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 20300) + __rc_underflow_count();
 }`,
@@ -2824,14 +2824,14 @@ function main(): i32 {
 import "core/int";
 enum Wrap { A(i32[]), B(i32[]) }
 function make_w(k: i32): Wrap {
-    var w: Wrap = A([k, k + 1, k + 2]);
+    let w: Wrap = A([k, k + 1, k + 2]);
     return w;
 }
 function main(): i32 {
-    var got: i32 = 0;
-    var k: i32 = 0;
+    let got: i32 = 0;
+    let k: i32 = 0;
     while (k < 50) {
-        var w: Wrap = make_w(k);
+        let w: Wrap = make_w(k);
         match (w) {
             A(xs) => { got = got + xs[1]; },
             B(xs) => { got = got + xs[0]; }
@@ -2853,16 +2853,16 @@ function main(): i32 {
 import "core/int";
 enum V { I(i32), A(i32[]) }
 function mk(seed: i32): i32 {
-    var v: V = A([seed, seed + 1]);
-    var w: V = I(seed);
-    var got: i32 = 0;
+    let v: V = A([seed, seed + 1]);
+    let w: V = I(seed);
+    let got: i32 = 0;
     match (v) { I(n) => { got = n; }, A(xs) => { got = xs[1]; } }
     match (w) { I(n) => { got = got + n; }, A(xs) => { got = got + xs[0]; } }
     return got;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 40000) + __rc_underflow_count();
 }`,
@@ -2879,8 +2879,8 @@ import "core/map";
 import "std/string";
 import "std/url";
 function main(): i32 {
-    var bad: i32 = 0;
-    var m: Map[string, string[]] = url.query_parse("a=1&b=2&tag=x&tag=y");
+    let bad: i32 = 0;
+    let m: Map[string, string[]] = url.query_parse("a=1&b=2&tag=x&tag=y");
     if (m.len() != 3) { bad = bad + 1; }
     match (m.get("tag")) {
         Some(arr) => { if (arr.len() != 2) { bad = bad + 10; } },
@@ -2904,7 +2904,7 @@ import "core/int";
 import "std/json";
 import "std/string";
 function main(): i32 {
-    var bad: i32 = 0;
+    let bad: i32 = 0;
     match (json.json_parse("{\"a\":[1,2,3],\"b\":\"hi\"}")) {
         Some(v) => {
             match (v) {
@@ -2914,7 +2914,7 @@ function main(): i32 {
         },
         None => { bad = bad + 100; }
     }
-    var arr: JsonValue[] = [JNumber("1"), JBool(true)];
+    let arr: JsonValue[] = [JNumber("1"), JBool(true)];
     if (json.json_encode(JArray(arr)) != "[1,true]") { bad = bad + 1000; }
     return bad + __rc_underflow_count();
 }`,
@@ -2936,7 +2936,7 @@ import "core/int";
 import "std/json";
 import "std/string";
 function main(): i32 {
-    var bad: i32 = 0;
+    let bad: i32 = 0;
     // nested arrays + objects + \uXXXX escape round-trip
     match (json.json_parse("{\"nums\":[-1,2.5,3e2],\"k\":\"a\\u0041b\",\"o\":{\"d\":[true,null,false]}}")) {
         Some(v) => {
@@ -2974,11 +2974,11 @@ function main(): i32 {
 import "core/int";
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(4);
-    var i: i32 = 0;
+    let m: Map[i32, i32] = map_new(4);
+    let i: i32 = 0;
     while (i < 100) { m = m.insert(i, i * 2); i = i + 1; }
-    var sum: i32 = 0;
-    var j: i32 = 0;
+    let sum: i32 = 0;
+    let j: i32 = 0;
     while (j < 100) { sum = sum + m.get_or(j, -1); j = j + 1; }
     return (sum - 9900) + __rc_underflow_count();
 }`,
@@ -2993,11 +2993,11 @@ function main(): i32 {
 import "core/int";
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32[]] = map_new(4);
+    let m: Map[i32, i32[]] = map_new(4);
     m = m.insert(1, [10, 20, 30]);
     m = m.insert(2, [40, 50]);
-    var v1: i32[] = m.get_or(1, []);
-    var v2: i32[] = m.get_or(2, []);
+    let v1: i32[] = m.get_or(1, []);
+    let v2: i32[] = m.get_or(2, []);
     return (v1[2] + v2[0] - 70) + __rc_underflow_count();
 }`,
 	},
@@ -3012,9 +3012,9 @@ import "core/int";
 import "core/map";
 import "std/string";
 function main(): i32 {
-    var m: Map[string, string[]] = map_new(4);
+    let m: Map[string, string[]] = map_new(4);
     m = m.insert("a", ["x", "yy", "zzz"]);
-    var v: string[] = m.get_or("a", []);
+    let v: string[] = m.get_or("a", []);
     return (v[2].len() - 3) + __rc_underflow_count();
 }`,
 	},
@@ -3029,9 +3029,9 @@ import "core/int";
 import "core/map";
 import "std/string";
 function main(): i32 {
-    var m: Map[i32, i32[][]] = map_new(4);
+    let m: Map[i32, i32[][]] = map_new(4);
     m = m.insert(1, [[1, 2], [3, 4, 5]]);
-    var v: i32[][] = m.get_or(1, []);
+    let v: i32[][] = m.get_or(1, []);
     return (v[1].len() + v[0][1] - 5) + __rc_underflow_count();
 }`,
 	},
@@ -3044,10 +3044,10 @@ function main(): i32 {
 import "core/int";
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32[]] = map_new(4);
-    var arr: i32[] = [7, 8, 9];
+    let m: Map[i32, i32[]] = map_new(4);
+    let arr: i32[] = [7, 8, 9];
     m = m.insert(5, arr);
-    var v: i32[] = m.get_or(5, []);
+    let v: i32[] = m.get_or(5, []);
     return (v[1] - 8) + __rc_underflow_count();
 }`,
 	},
@@ -3064,9 +3064,9 @@ function lookup(m: Map[i32, i32[]], k: i32): i32[] {
     return m.get_or(k, []);
 }
 function main(): i32 {
-    var m: Map[i32, i32[]] = map_new(4);
+    let m: Map[i32, i32[]] = map_new(4);
     m = m.insert(1, [100, 200]);
-    var got: i32[] = lookup(m, 1);
+    let got: i32[] = lookup(m, 1);
     return (got[1] - 200) + __rc_underflow_count();
 }`,
 	},
@@ -3083,13 +3083,13 @@ import "core/map";
 import "std/array";
 import "std/string";
 function main(): i32 {
-    var m: Map[i32, i32[]] = map_new(4);
+    let m: Map[i32, i32[]] = map_new(4);
     m = m.insert(1, [10]);
     match (m.get(1)) {
         Some(cur) => { m = m.insert(1, cur.append(20)); },
         None => {}
     }
-    var v: i32[] = m.get_or(1, []);
+    let v: i32[] = m.get_or(1, []);
     return (v.len() - 2) + (v[1] - 20) + __rc_underflow_count();
 }`,
 	},
@@ -3103,10 +3103,10 @@ function main(): i32 {
 import "core/int";
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32[]] = map_new(4);
-    var i: i32 = 0;
+    let m: Map[i32, i32[]] = map_new(4);
+    let i: i32 = 0;
     while (i < 200) { m = m.insert(7, [i, i + 1, i + 2]); i = i + 1; }
-    var v: i32[] = m.get_or(7, []);
+    let v: i32[] = m.get_or(7, []);
     return (v[2] - 201) + __rc_underflow_count();
 }`,
 	},
@@ -3120,12 +3120,12 @@ function main(): i32 {
 import "core/int";
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32[]] = map_new(4);
+    let m: Map[i32, i32[]] = map_new(4);
     m = m.insert(1, [10, 11]);
-    var borrow: i32[] = m.get_or(1, []);
+    let borrow: i32[] = m.get_or(1, []);
     m = m.insert(1, [20, 21]);
-    var x: i32 = borrow[1];
-    var y: i32 = m.get_or(1, [])[0];
+    let x: i32 = borrow[1];
+    let y: i32 = m.get_or(1, [])[0];
     return (x + y - 31) + __rc_underflow_count();
 }`,
 	},
@@ -3139,12 +3139,12 @@ import "core/int";
 import "core/map";
 import "std/string";
 function main(): i32 {
-    var m: Map[i32, i32[]] = map_new(4);
+    let m: Map[i32, i32[]] = map_new(4);
     m = m.insert(1, [3, 4]);
     m = m.insert(2, [5, 6, 7]);
-    var vs: i32[][] = m.values();
-    var sum: i32 = 0;
-    var i: i32 = 0;
+    let vs: i32[][] = m.values();
+    let sum: i32 = 0;
+    let i: i32 = 0;
     while (i < vs.len()) { sum = sum + vs[i].len(); i = i + 1; }
     return (sum - 5) + __rc_underflow_count();
 }`,
@@ -3162,15 +3162,15 @@ import "core/int";
 import "core/map";
 import "std/string";
 function main(): i32 {
-    var m: Map[i32, i32[]] = map_new(4);
+    let m: Map[i32, i32[]] = map_new(4);
     m = m.insert(1, [3, 4]);
     m = m.insert(2, [5, 6, 7]);
-    var vs: i32[][] = m.values();
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let vs: i32[][] = m.values();
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < vs.len()) {
-        var inner: i32[] = vs[i];
-        var j: i32 = 0;
+        let inner: i32[] = vs[i];
+        let j: i32 = 0;
         while (j < inner.len()) { acc = acc + inner[j]; j = j + 1; }
         i = i + 1;
     }
@@ -3193,10 +3193,10 @@ import "core/int";
 struct Inner { vals: i32[] }
 struct Outer { inner: Inner, tag: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var o: Outer = Outer { inner: Inner { vals: [i, i + 1, i + 2] }, tag: i };
+        let o: Outer = Outer { inner: Inner { vals: [i, i + 1, i + 2] }, tag: i };
         acc = acc + o.inner.vals[2];
         i = i + 1;
     }
@@ -3219,10 +3219,10 @@ struct VArr { v: i32[] }
 type Value = VInt | VArr;
 function mk(n: i32): Value { return VInt { v: [n, n + 1] }; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var x: Value = mk(i);
+        let x: Value = mk(i);
         match (x) { VInt(a) => { acc = acc + a.v[1]; }, VArr(b) => { acc = acc + b.v[0]; } }
         i = i + 1;
     }
@@ -3243,10 +3243,10 @@ struct Inner { vals: i32[] }
 struct Outer { inner: Inner }
 function mk(n: i32): Outer { return Outer { inner: Inner { vals: [n, n + 1] } }; }
 function main(): i32 {
-    var o: Outer = mk(42);
-    var c: i32 = 0;
+    let o: Outer = mk(42);
+    let c: i32 = 0;
     while (c < 200) {
-        var junk: i32[] = [c, c];
+        let junk: i32[] = [c, c];
         c = c + 1;
     }
     return (o.inner.vals[0] - 42) + (o.inner.vals[1] - 43) + __rc_underflow_count();
@@ -3264,11 +3264,11 @@ import "core/int";
 struct Inner { vals: i32[] }
 struct Outer { inner: Inner }
 function main(): i32 {
-    var shared: Inner = Inner { vals: [7, 8, 9] };
-    var a: Outer = Outer { inner: shared };
-    var b: Outer = Outer { inner: shared };
-    var first: i32 = a.inner.vals[2];
-    var second: i32 = b.inner.vals[2];
+    let shared: Inner = Inner { vals: [7, 8, 9] };
+    let a: Outer = Outer { inner: shared };
+    let b: Outer = Outer { inner: shared };
+    let first: i32 = a.inner.vals[2];
+    let second: i32 = b.inner.vals[2];
     return (first - 9) + (second - 9) + __rc_underflow_count();
 }`,
 	},
@@ -3291,13 +3291,13 @@ import "std/string";
 struct Inner { vals: i32[] }
 struct Outer { inner: Inner }
 function main(): i32 {
-    var shared: Inner = Inner { vals: [1, 2, 3] };
-    var keep: Outer[] = [];
-    var o: Outer = Outer { inner: shared };
+    let shared: Inner = Inner { vals: [1, 2, 3] };
+    let keep: Outer[] = [];
+    let o: Outer = Outer { inner: shared };
     keep = keep.append(o);
-    var c: i32 = 0;
+    let c: i32 = 0;
     while (c < 200) {
-        var junk: i32[] = [c, c, c];
+        let junk: i32[] = [c, c, c];
         c = c + 1;
     }
     return (keep[0].inner.vals[1] - 2) + (keep.len() - 1) + __rc_underflow_count();
@@ -3318,10 +3318,10 @@ function main(): i32 {
 import "core/int";
 struct Item { tags: i32[] }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var items: Item[] = [Item { tags: [i, i + 1] }, Item { tags: [i + 2] }];
+        let items: Item[] = [Item { tags: [i, i + 1] }, Item { tags: [i + 2] }];
         acc = acc + items[0].tags[1] + items[1].tags[0];
         i = i + 1;
     }
@@ -3339,10 +3339,10 @@ function main(): i32 {
 import "core/int";
 struct P { x: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var ps: P[] = [P { x: i }, P { x: i + 1 }];
+        let ps: P[] = [P { x: i }, P { x: i + 1 }];
         acc = acc + ps[1].x;
         i = i + 1;
     }
@@ -3360,14 +3360,14 @@ import "core/int";
 import "std/string";
 struct Item { tags: i32[] }
 function mk(n: i32): Item[] {
-    var xs: Item[] = [Item { tags: [n, n + 1] }, Item { tags: [n + 2] }];
+    let xs: Item[] = [Item { tags: [n, n + 1] }, Item { tags: [n + 2] }];
     return xs;
 }
 function main(): i32 {
-    var keep: Item[] = mk(7);
-    var c: i32 = 0;
+    let keep: Item[] = mk(7);
+    let c: i32 = 0;
     while (c < 200) {
-        var junk: i32[] = [c, c];
+        let junk: i32[] = [c, c];
         c = c + 1;
     }
     return (keep[0].tags[1] - 8) + (keep[1].tags[0] - 9) + (keep.len() - 2) + __rc_underflow_count();
@@ -3384,10 +3384,10 @@ function main(): i32 {
 import "core/int";
 struct Pt { xs: i32[], y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var p: Pt = Pt { xs: [i, i + 1], y: i };
+        let p: Pt = Pt { xs: [i, i + 1], y: i };
         acc = acc + p.xs[1];
         i = i + 1;
     }
@@ -3406,11 +3406,11 @@ function main(): i32 {
 import "core/int";
 struct Pt { xs: i32[], y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var v0: Pt = Pt { xs: [i, i + 1], y: i };
-        var v1: Pt = if (i < 50) { v0 } else { v0 };
+        let v0: Pt = Pt { xs: [i, i + 1], y: i };
+        let v1: Pt = if (i < 50) { v0 } else { v0 };
         acc = acc + v1.xs[1] + v0.y;
         i = i + 1;
     }
@@ -3429,11 +3429,11 @@ function pick_arr(o: Option[i32], a0: i32[]): i32[] {
     return match (o) { Some(x) => a0, None => a0 };
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var a0: i32[] = [i, i + 1, i + 2];
-        var a1: i32[] = match (Some(i)) { Some(x) => a0, None => a0 };
+        let a0: i32[] = [i, i + 1, i + 2];
+        let a1: i32[] = match (Some(i)) { Some(x) => a0, None => a0 };
         acc = acc + a1[2] + a0[0];
         i = i + 1;
     }
@@ -3455,10 +3455,10 @@ struct Item { tags: i32[] }
 enum Node { Leaf(Item), Branch(i32) }
 function mk(n: i32): Node { return Leaf(Item { tags: [n, n + 1] }); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var nd: Node = mk(i);
+        let nd: Node = mk(i);
         match (nd) { Leaf(it) => { acc = acc + it.tags[1]; }, Branch(b) => { acc = acc + b; } }
         i = i + 1;
     }
@@ -3480,14 +3480,14 @@ import "std/string";
 struct Item { tags: i32[] }
 enum Node { Leaf(Item), Branch(i32) }
 function main(): i32 {
-    var keep: Node[] = [];
+    let keep: Node[] = [];
     keep = keep.append(Leaf(Item { tags: [5, 6] }));
-    var c: i32 = 0;
+    let c: i32 = 0;
     while (c < 200) {
-        var junk: i32[] = [c, c];
+        let junk: i32[] = [c, c];
         c = c + 1;
     }
-    var got: i32 = 0;
+    let got: i32 = 0;
     match (keep[0]) { Leaf(it) => { got = it.tags[1]; }, Branch(b) => { got = b; } }
     return (got - 6) + (keep.len() - 1) + __rc_underflow_count();
 }`,
@@ -3505,10 +3505,10 @@ import "core/int";
 struct Pt { x: i32, y: i32 }
 struct Outer { inner: Pt, tag: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var o: Outer = Outer { inner: Pt { x: i, y: i + 1 }, tag: i };
+        let o: Outer = Outer { inner: Pt { x: i, y: i + 1 }, tag: i };
         acc = acc + o.inner.y;
         i = i + 1;
     }
@@ -3526,10 +3526,10 @@ struct Pt { x: i32, y: i32 }
 struct Outer { inner: Pt, tag: i32 }
 function mk(n: i32): Outer { return Outer { inner: Pt { x: n, y: n + 1 }, tag: n }; }
 function main(): i32 {
-    var o: Outer = mk(42);
-    var c: i32 = 0;
+    let o: Outer = mk(42);
+    let c: i32 = 0;
     while (c < 200) {
-        var junk: i32[] = [c, c];
+        let junk: i32[] = [c, c];
         c = c + 1;
     }
     return (o.inner.y - 43) + (o.tag - 42) + __rc_underflow_count();
@@ -3547,11 +3547,11 @@ function main(): i32 {
 import "core/int";
 struct Item { tags: i32[] }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var it: Item = Item { tags: [i, i + 1] };
-        var f = (d: i32): i32 => { return it.tags[1] + d; };
+        let it: Item = Item { tags: [i, i + 1] };
+        let f = (d: i32): i32 => { return it.tags[1] + d; };
         acc = acc + f(0);
         i = i + 1;
     }
@@ -3569,11 +3569,11 @@ import "core/int";
 import "std/string";
 struct Item { tags: i32[] }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var items: Item[] = [Item { tags: [i, i + 1] }, Item { tags: [i + 2] }];
-        var f = (d: i32): i32 => { return items.len() + d; };
+        let items: Item[] = [Item { tags: [i, i + 1] }, Item { tags: [i + 2] }];
+        let f = (d: i32): i32 => { return items.len() + d; };
         acc = acc + f(0);
         i = i + 1;
     }
@@ -3597,10 +3597,10 @@ struct VArr { v: i32[] }
 type Value = VInt | VArr;
 function mk(n: i32): Value { return VInt { v: [n, n + 1] }; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var x: Value = mk(i);
+        let x: Value = mk(i);
         match (x) { VInt(a) => { acc = acc + a.v[1]; }, VArr(b) => { acc = acc + b.v[0]; } }
         i = i + 1;
     }
@@ -3619,13 +3619,13 @@ struct VArr { v: i32[] }
 type Value = VInt | VArr;
 function mk(n: i32): Value { return VArr { v: [n, n + 1, n + 2] }; }
 function main(): i32 {
-    var x: Value = mk(9);
-    var c: i32 = 0;
+    let x: Value = mk(9);
+    let c: i32 = 0;
     while (c < 200) {
-        var junk: i32[] = [c, c];
+        let junk: i32[] = [c, c];
         c = c + 1;
     }
-    var got: i32 = 0;
+    let got: i32 = 0;
     match (x) { VInt(a) => { got = a.v[1]; }, VArr(b) => { got = b.v[2]; } }
     return (got - 11) + __rc_underflow_count();
 }`,
@@ -3644,12 +3644,12 @@ import "core/map";
 import "std/string";
 struct Req { headers: Map[string, string], n: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var m: Map[string, string] = map_new(8);
+        let m: Map[string, string] = map_new(8);
         m = m.insert("k", "v");
-        var r: Req = Req { headers: m, n: i };
+        let r: Req = Req { headers: m, n: i };
         acc = acc + r.headers.get_or("k", "x").len();
         i = i + 1;
     }
@@ -3667,15 +3667,15 @@ import "core/map";
 import "std/string";
 struct Req { headers: Map[string, string], n: i32 }
 function mk(): Req {
-    var m: Map[string, string] = map_new(8);
+    let m: Map[string, string] = map_new(8);
     m = m.insert("k", "vv");
     return Req { headers: m, n: 1 };
 }
 function main(): i32 {
-    var r: Req = mk();
-    var c: i32 = 0;
+    let r: Req = mk();
+    let c: i32 = 0;
     while (c < 100) {
-        var junk: i32[] = [c, c];
+        let junk: i32[] = [c, c];
         c = c + 1;
     }
     return (r.headers.get_or("k", "x").len() - 2) + __rc_underflow_count();
@@ -3696,10 +3696,10 @@ import "core/int";
 struct Item { tags: i32[] }
 function mk(n: i32): Option[Item] { return Some(Item { tags: [n, n + 1] }); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var o: Option[Item] = mk(i);
+        let o: Option[Item] = mk(i);
         match (o) { Some(it) => { acc = acc + it.tags[1]; }, None => { acc = acc + 0; } }
         i = i + 1;
     }
@@ -3715,10 +3715,10 @@ function main(): i32 {
 		src: `
 import "core/int";
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var o: Option[i32] = Some(i);
+        let o: Option[i32] = Some(i);
         match (o) { Some(n) => { acc = acc + n; }, None => { acc = acc + 0; } }
         i = i + 1;
     }
@@ -3735,13 +3735,13 @@ import "core/int";
 struct Item { tags: i32[] }
 function mk(n: i32): Option[Item] { return Some(Item { tags: [n, n + 1] }); }
 function main(): i32 {
-    var o: Option[Item] = mk(7);
-    var c: i32 = 0;
+    let o: Option[Item] = mk(7);
+    let c: i32 = 0;
     while (c < 200) {
-        var junk: i32[] = [c, c];
+        let junk: i32[] = [c, c];
         c = c + 1;
     }
-    var got: i32 = 0;
+    let got: i32 = 0;
     match (o) { Some(it) => { got = it.tags[1]; }, None => { got = 0; } }
     return (got - 8) + __rc_underflow_count();
 }`,
@@ -3764,10 +3764,10 @@ import "core/int";
 struct Item { xs: i32[] }
 struct Holder { b: Option[Item], n: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var h: Holder = Holder { b: Some(Item { xs: [i, i + 1] }), n: i };
+        let h: Holder = Holder { b: Some(Item { xs: [i, i + 1] }), n: i };
         match (h.b) { Some(it) => { acc = acc + it.xs[1]; }, None => { acc = acc + 0; } }
         i = i + 1;
     }
@@ -3786,13 +3786,13 @@ struct Item { xs: i32[] }
 struct Holder { b: Option[Item], n: i32 }
 function mk(n: i32): Holder { return Holder { b: Some(Item { xs: [n, n + 1] }), n: n }; }
 function main(): i32 {
-    var h: Holder = mk(9);
-    var c: i32 = 0;
+    let h: Holder = mk(9);
+    let c: i32 = 0;
     while (c < 200) {
-        var junk: i32[] = [c, c];
+        let junk: i32[] = [c, c];
         c = c + 1;
     }
-    var got: i32 = 0;
+    let got: i32 = 0;
     match (h.b) { Some(it) => { got = it.xs[1]; }, None => { got = 0; } }
     return (got - 10) + __rc_underflow_count();
 }`,
@@ -3810,10 +3810,10 @@ import "core/int";
 struct Row { cells: i32[] }
 struct Grid { rows: Row[], tag: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var g: Grid = Grid { rows: [Row { cells: [i, i + 1] }, Row { cells: [i + 2] }], tag: i };
+        let g: Grid = Grid { rows: [Row { cells: [i, i + 1] }, Row { cells: [i + 2] }], tag: i };
         acc = acc + g.rows[0].cells[1];
         i = i + 1;
     }
@@ -3832,10 +3832,10 @@ struct Row { cells: i32[] }
 struct Grid { rows: Row[], tag: i32 }
 function mk(n: i32): Grid { return Grid { rows: [Row { cells: [n, n + 1] }], tag: n }; }
 function main(): i32 {
-    var g: Grid = mk(9);
-    var c: i32 = 0;
+    let g: Grid = mk(9);
+    let c: i32 = 0;
     while (c < 200) {
-        var junk: i32[] = [c, c];
+        let junk: i32[] = [c, c];
         c = c + 1;
     }
     return (g.rows[0].cells[1] - 10) + (g.rows.len() - 1) + __rc_underflow_count();
@@ -3856,10 +3856,10 @@ struct VArr { v: i32[] }
 type Value = VInt | VArr;
 struct Holder { val: Value, n: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var h: Holder = Holder { val: VInt { v: [i, i + 1] }, n: i };
+        let h: Holder = Holder { val: VInt { v: [i, i + 1] }, n: i };
         match (h.val) { VInt(a) => { acc = acc + a.v[1]; }, VArr(b) => { acc = acc + b.v[0]; } }
         i = i + 1;
     }
@@ -3878,13 +3878,13 @@ type Value = VInt | VArr;
 struct Holder { val: Value, n: i32 }
 function mk(n: i32): Holder { return Holder { val: VArr { v: [n, n + 1] }, n: n }; }
 function main(): i32 {
-    var h: Holder = mk(9);
-    var c: i32 = 0;
+    let h: Holder = mk(9);
+    let c: i32 = 0;
     while (c < 200) {
-        var junk: i32[] = [c, c];
+        let junk: i32[] = [c, c];
         c = c + 1;
     }
-    var got: i32 = 0;
+    let got: i32 = 0;
     match (h.val) { VInt(a) => { got = a.v[0]; }, VArr(b) => { got = b.v[1]; } }
     return (got - 10) + __rc_underflow_count();
 }`,
@@ -3901,10 +3901,10 @@ function main(): i32 {
 import "core/int";
 struct Buf { data: i32[], n: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var b: Buf = Buf { data: [i, i + 1, i + 2], n: i };
+        let b: Buf = Buf { data: [i, i + 1, i + 2], n: i };
         acc = acc + b.data[1];
         i = i + 1;
     }
@@ -3920,10 +3920,10 @@ function main(): i32 {
 import "core/int";
 struct Mat { rows: i32[][], n: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var m: Mat = Mat { rows: [[i, i + 1], [i + 2]], n: i };
+        let m: Mat = Mat { rows: [[i, i + 1], [i + 2]], n: i };
         acc = acc + m.rows[0][1];
         i = i + 1;
     }
@@ -3940,10 +3940,10 @@ import "std/string";
 struct Buf { data: i32[], n: i32 }
 function mk(n: i32): Buf { return Buf { data: [n, n + 1, n + 2], n: n }; }
 function main(): i32 {
-    var b: Buf = mk(7);
-    var c: i32 = 0;
+    let b: Buf = mk(7);
+    let c: i32 = 0;
     while (c < 200) {
-        var junk: i32[] = [c, c];
+        let junk: i32[] = [c, c];
         c = c + 1;
     }
     return (b.data[2] - 9) + (b.data.len() - 3) + __rc_underflow_count();
@@ -3962,10 +3962,10 @@ function main(): i32 {
 import "core/int";
 function mk(n: i32): Option[i32[]] { return Some([n, n + 1]); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var o: Option[i32[]] = mk(i);
+        let o: Option[i32[]] = mk(i);
         match (o) { Some(a) => { acc = acc + a[1]; }, None => { acc = acc + 0; } }
         i = i + 1;
     }
@@ -3983,10 +3983,10 @@ import "core/int";
 enum E { A(i32[]), B(i32[]) }
 function mk(n: i32): E { return A([n, n + 1]); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var e: E = mk(i);
+        let e: E = mk(i);
         match (e) { A(a) => { acc = acc + a[1]; }, B(b) => { acc = acc + b[0]; } }
         i = i + 1;
     }
@@ -4001,13 +4001,13 @@ function main(): i32 {
 import "core/int";
 function mk(n: i32): Option[i32[]] { return Some([n, n + 1, n + 2]); }
 function main(): i32 {
-    var o: Option[i32[]] = mk(7);
-    var c: i32 = 0;
+    let o: Option[i32[]] = mk(7);
+    let c: i32 = 0;
     while (c < 200) {
-        var junk: i32[] = [c, c];
+        let junk: i32[] = [c, c];
         c = c + 1;
     }
-    var got: i32 = 0;
+    let got: i32 = 0;
     match (o) { Some(a) => { got = a[2]; }, None => { got = 0; } }
     return (got - 9) + __rc_underflow_count();
 }`,
@@ -4024,10 +4024,10 @@ function main(): i32 {
 		src: `
 import "core/int";
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var c = cell_new(i);
+        let c = cell_new(i);
         c.set(c.get() + 1);
         acc = acc + c.get();
         i = i + 1;
@@ -4049,13 +4049,13 @@ function main(): i32 {
 		src: `
 import "std/string";
 function main(): i32 {
-    var n: i32 = 0;
-    var base: string = "hello";
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let base: string = "hello";
+    let i: i32 = 0;
     while (i < 100) {
-        var c = cell_new(base + "_a");
+        let c = cell_new(base + "_a");
         c.set(base + "_bb");
-        var s = c.get();
+        let s = c.get();
         n = n + s.len();
         i = i + 1;
     }
@@ -4081,32 +4081,32 @@ import "std/string";
 function two(a: string, b: string): string { return a + b; }
 function eat(s: string): i32 { if (s == "abcdefgh") { return 1; } return 0; }
 function escapes(): string {
-    var c: Cell[string] = cell_new(two("abcd", "efgh"));
+    let c: Cell[string] = cell_new(two("abcd", "efgh"));
     return c.get();
 }
 function main(): i32 {
-    var ok: i32 = 0;
-    var s: string = two("abcd", "efgh");
-    var c: Cell[string] = cell_new(s);
+    let ok: i32 = 0;
+    let s: string = two("abcd", "efgh");
+    let c: Cell[string] = cell_new(s);
     if (c.get() == "abcdefgh") { ok = ok + 1; }
     ok = ok + eat(c.get());
     if (c.get() + "!" == "abcdefgh!") { ok = ok + 1; }
     if (s == "abcdefgh") { ok = ok + 1; }
     if (escapes() == "abcdefgh") { ok = ok + 1; }
-    var arr: string[] = [c.get()];
+    let arr: string[] = [c.get()];
     if (arr[0] == "abcdefgh") { ok = ok + 1; }
-    var back: string = c.get();
+    let back: string = c.get();
     c.set(back);
     if (c.get() == "abcdefgh") { ok = ok + 1; }
     if (back == "abcdefgh") { ok = ok + 1; }
-    var d: Cell[string] = c;
+    let d: Cell[string] = c;
     d.set(two("wxyz", "1234"));
     if (c.get() == "wxyz1234") { ok = ok + 1; }
-    var lit: Cell[string] = cell_new("a-literal-past-the-inline-threshold");
+    let lit: Cell[string] = cell_new("a-literal-past-the-inline-threshold");
     if (lit.get().len() == 35) { ok = ok + 1; }
-    var sso: Cell[string] = cell_new("abc");
+    let sso: Cell[string] = cell_new("abc");
     if (sso.get() == "abc") { ok = ok + 1; }
-    var mt: Cell[string] = cell_new("");
+    let mt: Cell[string] = cell_new("");
     if (mt.get().len() == 0) { ok = ok + 1; }
     return (12 - ok) + __rc_underflow_count();
 }`,
@@ -4124,8 +4124,8 @@ function main(): i32 {
 		name: "nested_array_with_borrowed_element",
 		src: `
 function main(): i32 {
-    var a: i32[][] = [[1, 2], [3, 4]];
-    var r: i32[] = a[0].with(0, 9);
+    let a: i32[][] = [[1, 2], [3, 4]];
+    let r: i32[] = a[0].with(0, 9);
     return (r[0] + a[0][0] - 10) + __rc_underflow_count();
 }`,
 	},
@@ -4136,8 +4136,8 @@ function main(): i32 {
 		src: `
 struct S { xs: i32[] }
 function main(): i32 {
-    var s: S = S { xs: [1, 2, 3] };
-    var r: i32[] = s.xs.with(0, 9);
+    let s: S = S { xs: [1, 2, 3] };
+    let r: i32[] = s.xs.with(0, 9);
     return (r[0] + s.xs[0] - 10) + __rc_underflow_count();
 }`,
 	},
@@ -4154,8 +4154,8 @@ function main(): i32 {
 		src: `
 function bump(xs: i32[]): i32[] { return xs.with(0, 99); }
 function main(): i32 {
-    var a: i32[] = [1, 2];
-    var b: i32[] = bump(a);
+    let a: i32[] = [1, 2];
+    let b: i32[] = bump(a);
     return (b[0] + a[0] - 100) + __rc_underflow_count();
 }`,
 	},
@@ -4167,14 +4167,14 @@ function main(): i32 {
 		src: `
 function bump(xs: i32[]): i32[] { xs = xs.with(0, 99); return xs; }
 function main(): i32 {
-    var a: i32[] = [1, 2];
-    var b: i32[] = bump(a);
+    let a: i32[] = [1, 2];
+    let b: i32[] = bump(a);
     return (b[0] + a[0] - 100) + __rc_underflow_count();
 }`,
 	},
 	{
 		// The case above with ONE line changed at the caller — `a = bump(a)`
-		// instead of `var b = bump(a)` — and that line was the whole gap
+		// instead of `let b = bump(a)` — and that line was the whole gap
 		// (#6057). The callee's `.with` self-reassign released the receiver a
 		// second time (__fern_arr_cow_inplace decs its own source on the copy
 		// branch, unlike __map_cow_inplace, whose policy the shared code path
@@ -4190,7 +4190,7 @@ function main(): i32 {
 		src: `
 function bump(xs: i32[]): i32[] { xs = xs.with(0, 99); return xs; }
 function main(): i32 {
-    var a: i32[] = [1, 2];
+    let a: i32[] = [1, 2];
     a = bump(a);
     return (a[0] - 99) + (a[1] - 2) + __rc_underflow_count();
 }`,
@@ -4204,10 +4204,10 @@ function main(): i32 {
 		src: `
 function bump(own a: i32[]): i32[] { return a.with(0, a[0] + 1); }
 function main(): i32 {
-    var a: i32[] = [5, 2];
+    let a: i32[] = [5, 2];
     a = bump(a);
-    var b: i32[] = [7, 1];
-    var c: i32[] = b.with(1, b[0] + b[1]);
+    let b: i32[] = [7, 1];
+    let c: i32[] = b.with(1, b[0] + b[1]);
     return (a[0] - 6) + (a[1] - 2) + (b[1] - 1) + (c[1] - 8) + __rc_underflow_count();
 }`,
 	},
@@ -4234,10 +4234,10 @@ function leaf(n: N, idx: i32): i32 {
     }
 }
 function main(): i32 {
-    var t: N = B(0, [L(1), L(2), L(3)]);
-    var i: i32 = 0;
+    let t: N = B(0, [L(1), L(2), L(3)]);
+    let i: i32 = 0;
     while (i < 40) { t = bump(t, i % 3, i); i = i + 1; }
-    var snap: N = t;
+    let snap: N = t;
     t = bump(t, 0, 100);
     return (leaf(snap, 0) + leaf(t, 0) - 139) + __rc_underflow_count();
 }`,
@@ -4258,8 +4258,8 @@ function bump(n: N, v: i32): N {
     }
 }
 function main(): i32 {
-    var t: N = B(0, [L(1), L(2), L(3)]);
-    var i: i32 = 0;
+    let t: N = B(0, [L(1), L(2), L(3)]);
+    let i: i32 = 0;
     while (i < 3) { t = bump(t, i); i = i + 1; }
     match (t) { L(x) => { return 7; }, B(c, k) => { return c - 3 + __rc_underflow_count(); } }
 }`,
@@ -4281,12 +4281,12 @@ function grow(m: Map[i32, i32], k: i32): Map[i32, i32] {
     return m;
 }
 function main(): i32 {
-    var base: Map[i32, i32] = map_new(8);
+    let base: Map[i32, i32] = map_new(8);
     base = base.insert(1, 11);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 40) {
-        var g: Map[i32, i32] = grow(base, 2);
+        let g: Map[i32, i32] = grow(base, 2);
         acc = acc + g.get_or(1, 0) + g.get_or(2, 0);
         i = i + 1;
     }
@@ -4309,8 +4309,8 @@ function main(): i32 {
 		name: "with_reassign_local_alias_threaded",
 		src: `
 function collect(depth: i32, acc: string[]): string[] {
-    var a: string[] = acc;
-    var i: i32 = 0;
+    let a: string[] = acc;
+    let i: i32 = 0;
     while (i < 3) {
         if (a.len() > 0) { a = a.with(0, "x"); }
         a = a.append("n");
@@ -4320,7 +4320,7 @@ function collect(depth: i32, acc: string[]): string[] {
     return a;
 }
 function main(): i32 {
-    var s: string[] = [];
+    let s: string[] = [];
     s = collect(3, s);
     if (s.len() < 1) { return 91; }
     return __rc_underflow_count();
@@ -4345,14 +4345,14 @@ function upd(r: R, i: i32, v: i32): R {
     return R { ops: r.ops.with(i, Op2 { a: v, c: 7 }), p: r.p };
 }
 function main(): i32 {
-    var ops: Op2[] = [];
-    var k: i32 = 0;
+    let ops: Op2[] = [];
+    let k: i32 = 0;
     while (k < 40) { ops = ops.append(Op2 { a: 0, c: 0 }); k = k + 1; }
-    var r: R = R { ops: ops, p: 0 };
-    var i: i32 = 0;
+    let r: R = R { ops: ops, p: 0 };
+    let i: i32 = 0;
     while (i < 40) { r = upd(r, i, i * 3); i = i + 1; }
-    var s: i32 = 0;
-    var j: i32 = 0;
+    let s: i32 = 0;
+    let j: i32 = 0;
     while (j < 40) { s = s + r.ops[j].a; j = j + 1; }
     return (s - 2340) + __rc_underflow_count();
 }`,
@@ -4368,10 +4368,10 @@ function main(): i32 {
 		src: `
 struct Op2 { a: i32, c: i32 }
 function main(): i32 {
-    var a: Op2[] = [Op2 { a: 10, c: 0 }, Op2 { a: 20, c: 0 }, Op2 { a: 30, c: 0 }];
-    var b: Op2[] = a.with(0, Op2 { a: 99, c: 0 });
-    var i: i32 = 0;
-    while (i < 30) { var z: Op2[] = [Op2 { a: i, c: i }]; i = i + 1; }
+    let a: Op2[] = [Op2 { a: 10, c: 0 }, Op2 { a: 20, c: 0 }, Op2 { a: 30, c: 0 }];
+    let b: Op2[] = a.with(0, Op2 { a: 99, c: 0 });
+    let i: i32 = 0;
+    while (i < 30) { let z: Op2[] = [Op2 { a: i, c: i }]; i = i + 1; }
     return (a[0].a - 10) + (a[1].a - 20) + (b[0].a - 99) + (b[1].a - 20) + __rc_underflow_count();
 }`,
 	},
@@ -4390,14 +4390,14 @@ function upd(r: R, i: i32, v: i32): R {
     return R { ops: r.ops.with(i, Op { a: v, b: "y" }), p: r.p };
 }
 function main(): i32 {
-    var ops: Op[] = [];
-    var k: i32 = 0;
+    let ops: Op[] = [];
+    let k: i32 = 0;
     while (k < 30) { ops = ops.append(Op { a: 0, b: "x" }); k = k + 1; }
-    var r: R = R { ops: ops, p: 0 };
-    var i: i32 = 0;
+    let r: R = R { ops: ops, p: 0 };
+    let i: i32 = 0;
     while (i < 30) { r = upd(r, i, i); i = i + 1; }
-    var s: i32 = 0;
-    var j: i32 = 0;
+    let s: i32 = 0;
+    let j: i32 = 0;
     while (j < 30) { s = s + r.ops[j].a; j = j + 1; }
     return (s - 435) + __rc_underflow_count();
 }`,
@@ -4411,10 +4411,10 @@ function main(): i32 {
 		name: "with_array_elem_forced_copy",
 		src: `
 function main(): i32 {
-    var g: i32[][] = [[1, 1], [2, 2], [3, 3]];
-    var h: i32[][] = g.with(0, [9, 9]);
-    var i: i32 = 0;
-    while (i < 30) { var z: i32[] = [i, i, i]; i = i + 1; }
+    let g: i32[][] = [[1, 1], [2, 2], [3, 3]];
+    let h: i32[][] = g.with(0, [9, 9]);
+    let i: i32 = 0;
+    while (i < 30) { let z: i32[] = [i, i, i]; i = i + 1; }
     return (g[0][0] - 1) + (g[1][0] - 2) + (h[0][0] - 9) + (h[1][0] - 2) + __rc_underflow_count();
 }`,
 	},
@@ -4438,18 +4438,18 @@ function need(s: St, name: string): St {
     return St { needed: s.needed.append(name), n: s.n + 1 };
 }
 function main(): i32 {
-    var s: St = St { needed: [], n: 0 };
-    var base: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN";
-    var i: i32 = 0;
+    let s: St = St { needed: [], n: 0 };
+    let base: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN";
+    let i: i32 = 0;
     while (i < 40) {
-        var piece: str = slice_unchecked(base, 0, 20 + (i - (i / 30) * 30));
+        let piece: str = slice_unchecked(base, 0, 20 + (i - (i / 30) * 30));
         s = need(s, "structdroptestprefix:" + piece);
         i = i + 1;
     }
-    var bad: i32 = 0;
-    var j: i32 = 0;
+    let bad: i32 = 0;
+    let j: i32 = 0;
     while (j < 40) {
-        var want: i32 = 21 + 20 + (j - (j / 30) * 30);
+        let want: i32 = 21 + 20 + (j - (j / 30) * 30);
         if (s.needed[j].len() != want) { bad = bad + 1; }
         if (slice_unchecked(s.needed[j], 0, 20) != "structdroptestprefix") { bad = bad + 1; }
         j = j + 1;
@@ -4479,19 +4479,19 @@ function push_tok(p: Par, t: Tok): Par {
     return Par { toks: p.toks.append(t), pos: p.pos + 1 };
 }
 function main(): i32 {
-    var p: Par = Par { toks: [], pos: 0 };
-    var base: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN";
-    var i: i32 = 0;
+    let p: Par = Par { toks: [], pos: 0 };
+    let base: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN";
+    let i: i32 = 0;
     while (i < 40) {
-        var t: Tok = Tok { kind: i, text: "tokentextprefixvalue:" + slice_unchecked(base, 0, 20 + (i - (i / 30) * 30)) };
+        let t: Tok = Tok { kind: i, text: "tokentextprefixvalue:" + slice_unchecked(base, 0, 20 + (i - (i / 30) * 30)) };
         p = push_tok(p, t);
         i = i + 1;
     }
-    var bad: i32 = 0;
-    var j: i32 = 0;
+    let bad: i32 = 0;
+    let j: i32 = 0;
     while (j < 40) {
         if (p.toks[j].kind != j) { bad = bad + 1; }
-        var want: i32 = 21 + 20 + (j - (j / 30) * 30);
+        let want: i32 = 21 + 20 + (j - (j / 30) * 30);
         if (p.toks[j].text.len() != want) { bad = bad + 1; }
         j = j + 1;
     }
@@ -4519,10 +4519,10 @@ function build(c: Cur, depth: i32): (T, Cur) {
     if (depth == 0) {
         return (Leaf { x: 1 }, Cur { pos: c.pos + 1 });
     }
-    var kids: T[] = [];
-    var i: i32 = 0;
+    let kids: T[] = [];
+    let i: i32 = 0;
     while (i < 3) {
-        var (k, c2) = build(c, depth - 1);
+        let (k, c2) = build(c, depth - 1);
         c = c2;
         kids = kids.append(k);
         i = i + 1;
@@ -4533,8 +4533,8 @@ function count(t: T): i32 {
     match (t) {
         Leaf(l) => { return l.x; },
         Node(n) => {
-            var s: i32 = 0;
-            var i: i32 = 0;
+            let s: i32 = 0;
+            let i: i32 = 0;
             while (i < n.kids.len()) {
                 s = s + count(n.kids[i]);
                 i = i + 1;
@@ -4545,10 +4545,10 @@ function count(t: T): i32 {
     return 0;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var r: i32 = 0;
+    let total: i32 = 0;
+    let r: i32 = 0;
     while (r < 20) {
-        var (t, c2) = build(Cur { pos: 0 }, 5);
+        let (t, c2) = build(Cur { pos: 0 }, 5);
         total = total + count(t);
         r = r + 1;
     }
@@ -4566,10 +4566,10 @@ function main(): i32 {
 		src: `
 struct P { tag: string, n: i32 }
 function strs(k: string): i32 {
-    var a: string = "s" + k;
-    var b: string = "";
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let a: string = "s" + k;
+    let b: string = "";
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
         b = a;
         a = b + "x";
@@ -4579,10 +4579,10 @@ function strs(k: string): i32 {
     return total;
 }
 function arms(k: string): i32 {
-    var a: string = "t" + k;
-    var b: string = "";
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let a: string = "t" + k;
+    let b: string = "";
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
         b = a;
         if (i % 2 == 0) {
@@ -4596,9 +4596,9 @@ function arms(k: string): i32 {
     return total;
 }
 function arrs(k: string): i32 {
-    var a: i32[] = [k.len()];
-    var b: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [k.len()];
+    let b: i32[] = [];
+    let i: i32 = 0;
     while (i < 50) {
         b = a;
         a = b.append(i);
@@ -4607,9 +4607,9 @@ function arrs(k: string): i32 {
     return b.len() + a.len();
 }
 function structs(k: string): i32 {
-    var a: P = P { tag: "p" + k, n: 0 };
-    var b: P = P { tag: "", n: 0 };
-    var i: i32 = 0;
+    let a: P = P { tag: "p" + k, n: 0 };
+    let b: P = P { tag: "", n: 0 };
+    let i: i32 = 0;
     while (i < 50) {
         b = a;
         a = P { tag: b.tag + "q", n: b.n + 1 };
@@ -4618,9 +4618,9 @@ function structs(k: string): i32 {
     return a.n + b.tag.len();
 }
 function early(k: string, stop: i32): i32 {
-    var a: string = "e" + k;
-    var b: string = "";
-    var i: i32 = 0;
+    let a: string = "e" + k;
+    let b: string = "";
+    let i: i32 = 0;
     while (i < 50) {
         b = a;
         if (i == stop) {
@@ -4632,9 +4632,9 @@ function early(k: string, stop: i32): i32 {
     return a.len();
 }
 function broken(k: string): i32 {
-    var a: string = "b" + k;
-    var b: string = "";
-    var i: i32 = 0;
+    let a: string = "b" + k;
+    let b: string = "";
+    let i: i32 = 0;
     while (i < 50) {
         b = a;
         if (i == 40) {
@@ -4646,7 +4646,7 @@ function broken(k: string): i32 {
     return a.len() + b.len();
 }
 function main(): i32 {
-    var bad: i32 = 0;
+    let bad: i32 = 0;
     if (strs("7") != 1325) { bad = bad + 1; }
     if (arms("7") != 125) { bad = bad + 2; }
     if (arrs("7") != 101) { bad = bad + 4; }
@@ -4666,12 +4666,12 @@ function main(): i32 {
 		name: "scope_dead_move",
 		src: `
 function body(k: string): i32 {
-    var b: string = "";
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let b: string = "";
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
         i = i + 1;
-        var a: string = "d" + k + b;
+        let a: string = "d" + k + b;
         b = a;
         if (b.len() > 30) {
             b = "";
@@ -4685,11 +4685,11 @@ function body(k: string): i32 {
     return total + b.len();
 }
 function arm(k: string): i32 {
-    var cur: string = "";
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let cur: string = "";
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var line: string = "l" + k;
+        let line: string = "l" + k;
         if (i % 3 == 0) {
             line = line + cur;
             cur = line;
@@ -4704,11 +4704,11 @@ function arm(k: string): i32 {
     return total;
 }
 function arrs(k: string): i32 {
-    var b: i32[] = [];
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let b: i32[] = [];
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var a: i32[] = b.append(k.len());
+        let a: i32[] = b.append(k.len());
         b = a;
         total = total + b.len();
         i = i + 1;
@@ -4716,10 +4716,10 @@ function arrs(k: string): i32 {
     return total;
 }
 function early(k: string, stop: i32): i32 {
-    var b: string = "";
-    var i: i32 = 0;
+    let b: string = "";
+    let i: i32 = 0;
     while (i < 50) {
-        var a: string = "e" + k + b;
+        let a: string = "e" + k + b;
         b = a;
         if (i == stop) {
             return b.len();
@@ -4729,22 +4729,22 @@ function early(k: string, stop: i32): i32 {
     return b.len();
 }
 function viewed(k: string): i32 {
-    var prev: i32[] = [];
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let prev: i32[] = [];
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var src: i32[] = [k.len(), 2, 3];
-        var v: i32[] = src;
+        let src: i32[] = [k.len(), 2, 3];
+        let v: i32[] = src;
         prev = src;
         prev = [k.len()];
-        var w: i32[] = [100, 200, 300];
+        let w: i32[] = [100, 200, 300];
         n = n + v[0] + prev.len() + w.len();
         i = i + 1;
     }
     return n;
 }
 function main(): i32 {
-    var bad: i32 = 0;
+    let bad: i32 = 0;
     if (body("7") != 662) { bad = bad + 1; }
     if (arm("7") != 100) { bad = bad + 2; }
     if (arrs("7") != 1275) { bad = bad + 4; }
@@ -4786,10 +4786,10 @@ function parse_one(p: Par): (i32, Par) {
     return (1, p);
 }
 function parse_many(p: Par): (i32, Par) {
-    var n: i32 = 0;
-    var guard: i32 = 0;
+    let n: i32 = 0;
+    let guard: i32 = 0;
     while (guard < 200) {
-        var (s, p2) = parse_one(p);
+        let (s, p2) = parse_one(p);
         p = p2;
         n = n + s;
         guard = guard + 1;
@@ -4797,11 +4797,11 @@ function parse_many(p: Par): (i32, Par) {
     return (n, p);
 }
 function main(): i32 {
-    var t0: Tok[] = [Tok { k: 1 }, Tok { k: 2 }];
-    var total: i32 = 0;
-    var r: i32 = 0;
+    let t0: Tok[] = [Tok { k: 1 }, Tok { k: 2 }];
+    let total: i32 = 0;
+    let r: i32 = 0;
     while (r < 30) {
-        var (n, pf) = parse_many(Par { toks: t0, pos: 0 });
+        let (n, pf) = parse_many(Par { toks: t0, pos: 0 });
         total = total + n + pf.pos % 7;
         r = r + 1;
     }
@@ -4842,18 +4842,18 @@ function walk_stmt(st: S, acc: string[]): string[] {
     return acc;
 }
 function work(body: S[]): i32 {
-    var none: string[] = [];
-    var k: i32 = 0;
-    var t: i32 = 0;
+    let none: string[] = [];
+    let k: i32 = 0;
+    let t: i32 = 0;
     while (k < body.len()) {
-        var r: string[] = walk_stmt(body[k], none);
+        let r: string[] = walk_stmt(body[k], none);
         t = t + r.len();
         k = k + 1;
     }
     return t + none.len();
 }
 function main(): i32 {
-    var d: i32 = work([Node(1), Leaf(2)]);
+    let d: i32 = work([Node(1), Leaf(2)]);
     return (d - 2) + __rc_underflow_count();
 }`,
 	},
@@ -4871,13 +4871,13 @@ function main(): i32 {
 struct Ctx { f: (string) => i32, n: i32 }
 function step(ctx: Ctx): Ctx { return Ctx { f: ctx.f, n: ctx.n + 1 }; }
 function steps(ctx: Ctx, k: i32): Ctx {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < k) { ctx = step(ctx); i = i + 1; }
     return ctx;
 }
 function main(): i32 {
-    var bias: i32 = 2;
-    var ctx: Ctx = Ctx { f: (s: string) => s.len() + bias, n: 0 };
+    let bias: i32 = 2;
+    let ctx: Ctx = Ctx { f: (s: string) => s.len() + bias, n: 0 };
     ctx = steps(ctx, 3);
     ctx = steps(ctx, 0);
     return (ctx.n - 3) + (ctx.f("x") - 3) + __rc_underflow_count();
@@ -4891,8 +4891,8 @@ function main(): i32 {
 		name: "closure_tuple_local_reclaimed",
 		src: `
 function main(): i32 {
-    var bias: i32 = 2;
-    var ctx: ((string) => i32, i32) = ((s: string) => s.len() + bias, 0);
+    let bias: i32 = 2;
+    let ctx: ((string) => i32, i32) = ((s: string) => s.len() + bias, 0);
     return ctx.1 + (ctx.0("x") - 3) + __rc_underflow_count();
 }`,
 	},
@@ -4908,8 +4908,8 @@ function steps(ctx: ((string) => i32, i32)): ((string) => i32, i32) {
     return ctx;
 }
 function main(): i32 {
-    var bias: i32 = 2;
-    var ctx: ((string) => i32, i32) = ((s: string) => s.len() + bias, 0);
+    let bias: i32 = 2;
+    let ctx: ((string) => i32, i32) = ((s: string) => s.len() + bias, 0);
     ctx = steps(ctx);
     return (ctx.1 - 1) + (ctx.0("x") - 3) + __rc_underflow_count();
 }`,
@@ -4927,8 +4927,8 @@ function steps(ctx: Ctx): Ctx {
     return ctx;
 }
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
-    var ctx: Ctx = Ctx { m: m.insert("a", 1), n: 0 };
+    let m: Map[string, i32] = map_new(4);
+    let ctx: Ctx = Ctx { m: m.insert("a", 1), n: 0 };
     ctx = steps(ctx);
     return (ctx.n - 1) + (ctx.m.len() - 1) + __rc_underflow_count();
 }`,
@@ -4942,8 +4942,8 @@ function main(): i32 {
 		// reach first, so one arm's value is released with the other's drop
 		// plan.
 		//
-		// The self-host compiler's irlower.alias_names_in_stmt is this shape
-		// verbatim (`parser.StmtAssign(a)` beside `var a: string[]` in the
+		// The AST lowering's alias_names_in_stmt was this shape
+		// verbatim (`parser.StmtAssign(a)` beside `let a: string[]` in the
 		// StmtIf / StmtMatch arms), which cost one over-release per ASSIGNMENT
 		// STATEMENT in every program it compiled — the largest single
 		// contributor to the driver's over-release count after #6021.
@@ -4958,7 +4958,7 @@ function walk(st: St, acc: string[]): string[] {
         SVar(v) => { return vals(v.k, acc); },
         SAssign(a) => { return vals(a.k, acc); },
         SIf(n) => {
-            var a: string[] = acc;
+            let a: string[] = acc;
             a = vals(n, a);
             return a;
         }
@@ -4966,13 +4966,13 @@ function walk(st: St, acc: string[]): string[] {
     return acc;
 }
 function work(body: St[]): i32 {
-    var acc: string[] = [];
-    var i: i32 = 0;
+    let acc: string[] = [];
+    let i: i32 = 0;
     while (i < body.len()) { acc = walk(body[i], acc); i = i + 1; }
     return acc.len();
 }
 function main(): i32 {
-    var n: i32 = work([SVar(Vr{k:1}), SAssign(Asg{k:2}), SIf(3)]);
+    let n: i32 = work([SVar(Vr{k:1}), SAssign(Asg{k:2}), SIf(3)]);
     return (n - 3) + __rc_underflow_count();
 }`,
 	},
@@ -4988,9 +4988,9 @@ function main(): i32 {
 		name: "shadowed_tuple_destructure_keeps_its_slot",
 		src: `
 function f(): i32 {
-    var a: i32 = 1;
+    let a: i32 = 1;
     {
-        var (a, b) = (20, 3);
+        let (a, b) = (20, 3);
         return a + b;
     }
 }
@@ -5010,9 +5010,9 @@ function main(): i32 { return f() - 23 + __rc_underflow_count(); }`,
 		src: `
 struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var x: i32 = 1;
-    var f = (Point { x, y }: Point): i32 => { return x * 10 + y; };
-    var g = ((x, y): (i32, i32)): i32 => { return x + y; };
+    let x: i32 = 1;
+    let f = (Point { x, y }: Point): i32 => { return x * 10 + y; };
+    let g = ((x, y): (i32, i32)): i32 => { return x + y; };
     return f(Point { x: 3, y: 4 }) + g((2, 3)) - 39 + x - 1 + __rc_underflow_count();
 }`,
 	},
@@ -5029,12 +5029,12 @@ import "core/int";
 import "std/i32";
 struct H { f: (i32) => i32 }
 function main(): i32 {
-    var n: i32 = 7;
-    var h: (i32) => i32 = (x: i32) => x + n;
-    var keep: H = H { f: h };
-    var a: i32 = h(1);
-    var b: i32 = (keep.f)(2);
-    var c: i32 = h(3);
+    let n: i32 = 7;
+    let h: (i32) => i32 = (x: i32) => x + n;
+    let keep: H = H { f: h };
+    let a: i32 = h(1);
+    let b: i32 = (keep.f)(2);
+    let c: i32 = h(3);
     return (a + b + c - 27) + __rc_underflow_count();
 }`,
 	},
@@ -5056,15 +5056,15 @@ import "core/int";
 import "std/i32";
 struct Hold { xs: i32[] }
 function main(): i32 {
-    var idf: (i32[]) => i32[] = (xs: i32[]) => xs;
-    var wrap: (i32[]) => Hold = (xs: i32[]) => Hold { xs: xs };
-    var nest: (i32[]) => i32[][] = (xs: i32[]) => [xs];
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let idf: (i32[]) => i32[] = (xs: i32[]) => xs;
+    let wrap: (i32[]) => Hold = (xs: i32[]) => Hold { xs: xs };
+    let nest: (i32[]) => i32[][] = (xs: i32[]) => [xs];
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 20) {
-        var a: i32[] = idf([1, 2, 3]);
-        var b: Hold = wrap([4, 5, 6]);
-        var c: i32[][] = nest([7, 8, 9]);
+        let a: i32[] = idf([1, 2, 3]);
+        let b: Hold = wrap([4, 5, 6]);
+        let c: i32[][] = nest([7, 8, 9]);
         t = t + a[0] + a[2] + b.xs[1] + c[0][2];
         r = r + 1;
     }
@@ -5082,11 +5082,11 @@ function main(): i32 {
 import "core/int";
 import "std/i32";
 function main(): i32 {
-    var len: (i32[]) => i32 = (xs: i32[]) => xs.len();
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let len: (i32[]) => i32 = (xs: i32[]) => xs.len();
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 20) {
-        var a: i32[] = [1, 2, 3];
+        let a: i32[] = [1, 2, 3];
         t = t + len(a) + len(a) + a[1];
         r = r + 1;
     }
@@ -5116,12 +5116,12 @@ struct P { a: i32, b: i32 }
 struct Box { items: P[], tag: i32 }
 function pick(b: Box): Box { return b; }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 20) {
-        var bx: Box = Box { items: [P { a: 1, b: 2 }, P { a: 3, b: 4 }], tag: 5 };
-        var a: P[] = pick(bx).items;
-        var c: P[] = pick(bx).items;
+        let bx: Box = Box { items: [P { a: 1, b: 2 }, P { a: 3, b: 4 }], tag: 5 };
+        let a: P[] = pick(bx).items;
+        let c: P[] = pick(bx).items;
         t = t + a[0].a + c[1].b + bx.items[1].a + bx.tag;
         r = r + 1;
     }
@@ -5147,12 +5147,12 @@ function mk(i: i32): Box {
     return Box { items: [P { a: i, b: i + 1 }, P { a: i + 2, b: i + 3 }], tag: i, name: "boxed-name-" + i.to_string() };
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 20) {
-        var a: P[] = mk(r).items;
-        var s: string = mk(r).name;
-        var g: i32 = mk(r).tag;
+        let a: P[] = mk(r).items;
+        let s: string = mk(r).name;
+        let g: i32 = mk(r).tag;
         t = t + a[0].a + a[1].b + s.len() + g;
         r = r + 1;
     }
@@ -5173,13 +5173,13 @@ import "std/string";
 struct P { name: string, f: (i32) => i32 }
 function mkP(n: i32): P { return P { name: "provider" + n.to_string(), f: (x: i32) => x + n }; }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 20) {
-        var ps: P[] = [];
-        var i: i32 = 0;
+        let ps: P[] = [];
+        let i: i32 = 0;
         while (i < 4) { ps = ps.append(mkP(i)); i = i + 1; }
-        var j: i32 = 0;
+        let j: i32 = 0;
         while (j < ps.len()) { t = t + (ps[j].f)(1) + ps[j].name.len(); j = j + 1; }
         r = r + 1;
     }
@@ -5208,17 +5208,17 @@ import "std/i32";
 import "std/string";
 function swap0(a: string[]): string[] { return a.with(0, a[1]); }
 function mks(n: i32): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
+    let out: string[] = [];
+    let i: i32 = 0;
     while (i < n) { out = out.append("kkkkkkkkkk" + i.to_string()); i = i + 1; }
     return out;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 20) {
-        var a: string[] = mks(6);
-        var b: string[] = swap0(a);
+        let a: string[] = mks(6);
+        let b: string[] = swap0(a);
         t = t + a[2].len() + b[0].len();
         r = r + 1;
     }
@@ -5240,9 +5240,9 @@ import "core/int";
 import "std/string";
 function cat(a: string, b: string): string { return a + b; }
 function main(): i32 {
-    var fresh: string = cat("aaaaaaaaa", "bbbbbbbb");
-    var a: string[] = [fresh, "ccccccccccccccccc"];
-    var keep: string = a[0];
+    let fresh: string = cat("aaaaaaaaa", "bbbbbbbb");
+    let a: string[] = [fresh, "ccccccccccccccccc"];
+    let keep: string = a[0];
     a = a.with(0, "ddddddddddddddddd");
     return (keep.len() + a[0].len() - 34) + __rc_underflow_count();
 }`,
@@ -5281,10 +5281,10 @@ function sum(l: List): i32 {
     match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } }
 }
 function main(): i32 {
-    var shared: List = build(3);
-    var ys: List = inc_all(Cons(7, shared));
-    var a: i32 = sum(ys);
-    var b: i32 = sum(shared);
+    let shared: List = build(3);
+    let ys: List = inc_all(Cons(7, shared));
+    let a: i32 = sum(ys);
+    let b: i32 = sum(shared);
     return (a - 17) + (b - 6) + __rc_underflow_count();
 }`,
 	},
@@ -5312,11 +5312,11 @@ function sum(l: List): i32 {
     match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } }
 }
 function main(): i32 {
-    var shared: List = build(4);
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let shared: List = build(4);
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 20) {
-        var ys: List = inc_all(Cons(9, shared));
+        let ys: List = inc_all(Cons(9, shared));
         t = t + sum(ys) + sum(shared);
         r = r + 1;
     }
@@ -5337,9 +5337,9 @@ function main(): i32 {
 import "core/int";
 struct Val { kind: i32, kids: i32[] }
 function build(n: i32): i32 {
-    var vals: Val[] = [];
-    var v: Val = Val { kind: 7, kids: [1] };
-    var i: i32 = 0;
+    let vals: Val[] = [];
+    let v: Val = Val { kind: 7, kids: [1] };
+    let i: i32 = 0;
     while (i < n) {
         if (i == 9999) { continue; }
         vals = vals.append(v);
@@ -5358,12 +5358,12 @@ function main(): i32 { return (build(4) - 18) + __rc_underflow_count(); }`,
 import "core/int";
 struct Val { kind: i32, kids: i32[] }
 function build(n: i32): i32 {
-    var a: Val[] = [];
-    var b: Val[] = [];
-    var i: i32 = 0;
+    let a: Val[] = [];
+    let b: Val[] = [];
+    let i: i32 = 0;
     while (i < n) {
         if (i == 9999) { break; }
-        var v: Val = Val { kind: i, kids: [i] };
+        let v: Val = Val { kind: i, kids: [i] };
         a = a.append(v);
         b = b.append(v);
         i = i + 1;
@@ -5381,10 +5381,10 @@ function main(): i32 { return (build(4) - 10) + __rc_underflow_count(); }`,
 import "core/int";
 struct Val { kind: i32, kids: i32[] }
 function build(n: i32): Val {
-    var vals: Val[] = [];
-    var i: i32 = 0;
+    let vals: Val[] = [];
+    let i: i32 = 0;
     while (i < n) {
-        var v: Val = Val { kind: i, kids: [i] };
+        let v: Val = Val { kind: i, kids: [i] };
         vals = vals.append(v);
         if (i == 2) { return v; }
         i = i + 1;
@@ -5392,7 +5392,7 @@ function build(n: i32): Val {
     return Val { kind: -1, kids: [] };
 }
 function main(): i32 {
-    var got: Val = build(5);
+    let got: Val = build(5);
     return (got.kind + got.kids[0] - 4) + __rc_underflow_count();
 }`,
 	},
@@ -5405,11 +5405,11 @@ function main(): i32 {
 import "core/int";
 struct Val { kind: i32, kids: i32[] }
 function build(n: i32): i32 {
-    var vals: Val[] = [];
-    var stop: i32 = 0;
-    var i: i32 = 0;
+    let vals: Val[] = [];
+    let stop: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var v: Val = Val { kind: i, kids: [i] };
+        let v: Val = Val { kind: i, kids: [i] };
         if (i == 3) { stop = 1; break; }
         vals = vals.append(v);
         i = i + 1;
@@ -5430,13 +5430,13 @@ function main(): i32 { return (build(5) - 4) + __rc_underflow_count(); }`,
 import "core/int";
 struct Val { kind: i32, kids: i32[] }
 function build(n: i32): i32 {
-    var vals: Val[] = [];
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let vals: Val[] = [];
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         i = i + 1;
         if (i % 2 == 0) { continue; }
-        var v: Val = Val { kind: i, kids: [i] };
+        let v: Val = Val { kind: i, kids: [i] };
         vals = vals.append(v);
         total = total + vals.len() + vals[vals.len() - 1].kids[0];
     }
@@ -5453,16 +5453,16 @@ function main(): i32 { return (build(6) - 15) + __rc_underflow_count(); }`,
 import "core/int";
 struct Val { kind: i32, kids: i32[] }
 function build(n: i32): i32 {
-    var vals: Val[] = [];
-    var i: i32 = 0;
+    let vals: Val[] = [];
+    let i: i32 = 0;
     while (i < n) {
         if (i == 3) { break; }
-        var v: Val = Val { kind: i, kids: [i] };
+        let v: Val = Val { kind: i, kids: [i] };
         vals = vals.append(v);
         i = i + 1;
     }
-    var sum: i32 = 0;
-    var k: i32 = 0;
+    let sum: i32 = 0;
+    let k: i32 = 0;
     while (k < vals.len()) { sum = sum + vals[k].kids[0]; k = k + 1; }
     return vals.len() + sum;
 }
@@ -5479,10 +5479,10 @@ function main(): i32 { return (build(9) - 6) + __rc_underflow_count(); }`,
 import "core/map";
 import "std/string";
 function main(): i32 {
-    var index: Map[string, string] = map_new(64);
+    let index: Map[string, string] = map_new(64);
     index = index.insert("k", "a-heap-string-value-past-sso");
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
         match (index.get("k")) { Some(s) => { acc = acc + s.len(); }, None => { return 998; } }
         i = i + 1;
@@ -5499,22 +5499,22 @@ function main(): i32 {
 		name: "accumulator_seeded_from_array_element",
 		src: `
 function build(words: string[]): string {
-    var line: string = words[0];
-    var g: i32 = 1;
+    let line: string = words[0];
+    let g: i32 = 1;
     while (g < words.len()) { line = line + "  " + words[g]; g = g + 1; }
     return line;
 }
 function main(): i32 {
-    var words: string[] = ["alpha", "beta", "gamma", "delta"];
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let words: string[] = ["alpha", "beta", "gamma", "delta"];
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) { acc = acc + build(words).len(); i = i + 1; }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < words.len()) { acc = acc + words[j].len(); j = j + 1; }
     return (acc - 5019) + __rc_underflow_count();
 }`,
 	},
-	// #6877 — a loop-body `var` whose LAST use is a consuming `.with`
+	// #6877 — a loop-body `let` whose LAST use is a consuming `.with`
 	// receiver. __fern_arr_cow_inplace takes that reference over, so the
 	// next iteration's re-declaration must not release the slot as well;
 	// it did, and the freed buffer was the one the RESULT still pointed at.
@@ -5528,10 +5528,10 @@ struct P { a: i32, b: i32 }
 struct Box { items: P[], tag: i32 }
 function mk_box(): Box { return Box { items: [P{a:0,b:0}, P{a:1,b:1}], tag: 0 }; }
 function f(n: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for i in 0..n {
-        var it: P[] = mk_box().items;
-        var a: P[] = it.with(0, P{a:i,b:i});
+        let it: P[] = mk_box().items;
+        let a: P[] = it.with(0, P{a:i,b:i});
         t = t + a[0].a;
     }
     return t;
@@ -5548,10 +5548,10 @@ function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
 struct P { a: i32, b: i32 }
 function mk_arr(): P[] { return [P{a:0,b:0}, P{a:1,b:1}]; }
 function f(n: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for i in 0..n {
-        var it: P[] = mk_arr();
-        var a: P[] = it.with(0, P{a:i,b:i});
+        let it: P[] = mk_arr();
+        let a: P[] = it.with(0, P{a:i,b:i});
         t = t + a[0].a;
     }
     return t;
@@ -5567,11 +5567,11 @@ struct P { a: i32, b: i32 }
 struct Box { items: P[], tag: i32 }
 function mk_box(): Box { return Box { items: [P{a:0,b:0}, P{a:1,b:1}], tag: 0 }; }
 function f(n: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for i in 0..n {
-        var bx: Box = mk_box();
-        var it: P[] = bx.items;
-        var a: P[] = it.with(0, P{a:i,b:i});
+        let bx: Box = mk_box();
+        let it: P[] = bx.items;
+        let a: P[] = it.with(0, P{a:i,b:i});
         t = t + a[0].a;
     }
     return t;
@@ -5588,10 +5588,10 @@ function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
 		src: `
 function mk_ints(): i32[] { return [0, 1]; }
 function f(n: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for i in 0..n {
-        var it: i32[] = mk_ints();
-        var a: i32[] = it.with(0, i);
+        let it: i32[] = mk_ints();
+        let a: i32[] = it.with(0, i);
         t = t + a[0];
     }
     return t;
@@ -5607,10 +5607,10 @@ function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
 struct P { a: i32, b: i32 }
 function mk_arr(): P[] { return [P{a:0,b:0}, P{a:1,b:1}]; }
 function f(n: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for i in 0..n {
-        var it: P[] = mk_arr();
-        var a: P[] = it.with(0, P{a:i,b:i});
+        let it: P[] = mk_arr();
+        let a: P[] = it.with(0, P{a:i,b:i});
         t = t + a[0].a + it[1].b;
     }
     return t;
@@ -5625,10 +5625,10 @@ function main(): i32 { return (f(20) - 210) + __rc_underflow_count(); }`,
 struct P { a: i32, b: i32 }
 function mk_arr(): P[] { return [P{a:0,b:0}, P{a:1,b:1}]; }
 function f(n: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for i in 0..n {
-        var it: P[] = mk_arr();
-        var a: P[] = it.append(P{a:i,b:i});
+        let it: P[] = mk_arr();
+        let a: P[] = it.append(P{a:i,b:i});
         t = t + a[2].a;
     }
     return t;
@@ -5643,9 +5643,9 @@ function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
 struct P { a: i32, b: i32 }
 function mk_arr(): P[] { return [P{a:0,b:0}, P{a:1,b:1}]; }
 function f(n: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for i in 0..n {
-        var a: P[] = mk_arr().with(0, P{a:i,b:i});
+        let a: P[] = mk_arr().with(0, P{a:i,b:i});
         t = t + a[0].a;
     }
     return t;
@@ -5666,21 +5666,21 @@ function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
 struct S { xs: i32[], tag: i32 }
 function mk(): S { return S { xs: [1, 2], tag: 0 }; }
 function borrowed_field(s: S): i32 {
-    var b: i32[] = s.xs.with(0, 99);
+    let b: i32[] = s.xs.with(0, 99);
     return b[0] + s.xs[0];
 }
 function borrowed_elem(a: i32[][]): i32 {
-    var b: i32[] = a[0].with(0, 99);
+    let b: i32[] = a[0].with(0, 99);
     return b[0] + a[0][0];
 }
 function fresh_field(): i32 {
-    var b: i32[] = mk().xs.with(0, 99);
+    let b: i32[] = mk().xs.with(0, 99);
     return b[0] + b[1];
 }
 function main(): i32 {
-    var s: S = mk();
-    var aa: i32[][] = [[1, 2], [3, 4]];
-    var t: i32 = 0;
+    let s: S = mk();
+    let aa: i32[][] = [[1, 2], [3, 4]];
+    let t: i32 = 0;
     t = t + borrowed_field(s) - 100;
     t = t + borrowed_elem(aa) - 100;
     t = t + fresh_field() - 101;
@@ -5704,8 +5704,8 @@ function pick(i: i64): i32 {
     match (make(i)) { Ok(v) => { return (v as i32) + 1; }, Err(_) => { return 0; } }
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { t = t + pick(i as i64); i = i + 1; }
     return (t - 10000) + __rc_underflow_count();
 }`,
@@ -5718,8 +5718,8 @@ function make(i: i64): Result[i64, i64] {
     return Err(i);
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
         match (make(i as i64)) { Ok(v) => { t = t + (v as i32) + 1; }, Err(_) => { i = i + 1; continue; } }
         i = i + 1;
@@ -5737,12 +5737,12 @@ function make(i: i64): Result[i64, i64] {
     return Err(i);
 }
 function pick(i: i64): i32 {
-    var r: i32 = match (make(i)) { Ok(v) => { return (v as i32) + 1; }, Err(_) => 0 };
+    let r: i32 = match (make(i)) { Ok(v) => { return (v as i32) + 1; }, Err(_) => 0 };
     return r;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { t = t + pick(i as i64); i = i + 1; }
     return (t - 10000) + __rc_underflow_count();
 }`,
@@ -5757,10 +5757,10 @@ function pick(m: Map[string, string], k: string): i32 {
     match (m.get(k)) { Some(v) => { return v.len(); }, None => { return 0; } }
 }
 function main(): i32 {
-    var m: Map[string, string] = map_new(8);
+    let m: Map[string, string] = map_new(8);
     m = m.insert("a", "xy" + "zw");
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { t = t + pick(m, "a"); i = i + 1; }
     return (t - 800) + m.get_or("a", "").len() - 4 + __rc_underflow_count();
 }`,
@@ -5779,8 +5779,8 @@ function pick(i: i64): Result[i64, i64] {
     match (make(i)) { whole @ Ok(v) => { return whole; }, Err(_) => { return Err(0i64); } }
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
         match (pick(i as i64)) { Ok(v) => { t = t + (v as i32) + 1; }, Err(_) => { } }
         i = i + 1;
@@ -5801,12 +5801,12 @@ import "core/int";
 import "std/string";
 function cat(a: string, b: string): string { return a + b; }
 function main(): i32 {
-    var s: string = cat("ab", "cd");
-    var inner: string[] = [s, s];
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let s: string = cat("ab", "cd");
+    let inner: string[] = [s, s];
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
-        var outer: string[][] = [inner, [s]];
+        let outer: string[][] = [inner, [s]];
         acc = acc + outer[0][1].len() + outer[1][0].len();
         i = i + 1;
     }
@@ -5828,24 +5828,24 @@ import "std/string";
 struct W { name: string, n: i32 }
 struct Acc { last: string, total: i32 }
 function mk(k: i32): W {
-    var s: string = "payload-string-" + k.to_string();
+    let s: string = "payload-string-" + k.to_string();
     return W { name: s, n: k };
 }
 function step(a: Acc, k: i32): Acc {
-    var s: string = "acc-payload-" + k.to_string();
+    let s: string = "acc-payload-" + k.to_string();
     return Acc { last: s, total: a.total + k };
 }
 function keep(k: i32): i32 {
-    var s: string = "kept-payload-" + k.to_string();
-    var w: W = W { name: s, n: k };
+    let s: string = "kept-payload-" + k.to_string();
+    let w: W = W { name: s, n: k };
     return w.name.len() + s.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var a: Acc = Acc { last: "", total: 0 };
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let a: Acc = Acc { last: "", total: 0 };
+    let i: i32 = 0;
     while (i < 200) {
-        var w: W = mk(i % 8);
+        let w: W = mk(i % 8);
         a = step(a, i % 8);
         acc = acc + w.name.len() + a.last.len();
         i = i + 1;
@@ -5869,7 +5869,7 @@ import "std/string";
 struct Box { tag: string, n: i32 }
 function (s: string) tail(n: i32): str {
     if (n <= 0) { return s; }
-    var sLen: i32 = s.len();
+    let sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
     return slice_unchecked(s, n, sLen);
 }
@@ -5878,13 +5878,13 @@ function (b: Box) relabel(t: string): Box {
     return Box { tag: t, n: b.n };
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var base: string = "long-enough-payload-" + (i % 8).to_string();
+        let base: string = "long-enough-payload-" + (i % 8).to_string();
         acc = acc + base.tail(3).len() + base.tail(1).to_owned().len();
         acc = acc + base.tail(0).len() + base.len();
-        var b: Box = Box { tag: "start-tag-value", n: i % 8 };
+        let b: Box = Box { tag: "start-tag-value", n: i % 8 };
         acc = acc + b.relabel("").tag.len() + b.tag.len();
         i = i + 1;
     }
@@ -5907,11 +5907,11 @@ struct E { key: string, value: string }
 function cat(a: string, b: string): string { return a + b; }
 function take(e: E): i32 { return e.key.len(); }
 function main(): i32 {
-    var s: string = cat("abcd", "efgh");
-    var es: E[] = [E { key: s, value: s }];
-    var a: E = es[0];
-    var n: i32 = a.key.len() + a.value.len() + take(es[0]);
-    var ok: i32 = 0;
+    let s: string = cat("abcd", "efgh");
+    let es: E[] = [E { key: s, value: s }];
+    let a: E = es[0];
+    let n: i32 = a.key.len() + a.value.len() + take(es[0]);
+    let ok: i32 = 0;
     if (s == "abcdefgh") { ok = ok + 1; }
     if (es[0].value == "abcdefgh") { ok = ok + 1; }
     return (n - 24) + (2 - ok) + __rc_underflow_count();
@@ -5936,30 +5936,30 @@ import "std/string";
 function two(a: string, b: string): string { return a + b; }
 function take(s: string): i32 { if (s == "abcdefgh") { return 1; } return 0; }
 function escapes(): string {
-    var t: (string, i32) = (two("abcd", "efgh"), 1);
+    let t: (string, i32) = (two("abcd", "efgh"), 1);
     return t.0;
 }
 function main(): i32 {
-    var ok: i32 = 0;
-    var s: string = two("abcd", "efgh");
-    var t: (string, i32) = (s, 1);
-    var u: string = t.0;
+    let ok: i32 = 0;
+    let s: string = two("abcd", "efgh");
+    let t: (string, i32) = (s, 1);
+    let u: string = t.0;
     if (t.0 == "abcdefgh") { ok = ok + 1; }
     if (s == "abcdefgh") { ok = ok + 1; }
     if (u == "abcdefgh") { ok = ok + 1; }
     ok = ok + take(t.0);
     if (escapes() == "abcdefgh") { ok = ok + 1; }
-    var d: (string, string) = (s, s);
+    let d: (string, string) = (s, s);
     if (d.0 == "abcdefgh") { ok = ok + 1; }
     if (d.1 == "abcdefgh") { ok = ok + 1; }
-    var arr: (string, i32)[] = [t];
+    let arr: (string, i32)[] = [t];
     if (arr[0].0 == "abcdefgh") { ok = ok + 1; }
     if (t.0 == "abcdefgh") { ok = ok + 1; }
-    var lit: (string, i32) = ("a-literal-past-the-inline-threshold", 2);
+    let lit: (string, i32) = ("a-literal-past-the-inline-threshold", 2);
     if (lit.0.len() == 35) { ok = ok + 1; }
-    var sso: (string, i32) = ("abc", 3);
+    let sso: (string, i32) = ("abc", 3);
     if (sso.0 == "abc") { ok = ok + 1; }
-    var mt: (string, i32) = ("", 4);
+    let mt: (string, i32) = ("", 4);
     if (mt.0.len() == 0) { ok = ok + 1; }
     return (12 - ok) + __rc_underflow_count();
 }`,
@@ -5982,11 +5982,11 @@ function node(name: string, deps: i32[], mtime: i32): Node {
     return Node { name: name, deps: deps, mtime: mtime };
 }
 function main(): i32 {
-    var fresh: Node = node("a", two(1, 2), 7);
-    var live: i32[] = two(3, 4);
-    var aliased: Node = node("b", live, 8);
-    var t: i32 = fresh.deps[0] + fresh.deps[1] + aliased.deps[0] + aliased.deps[1];
-    var u: i32 = live[0] + live[1] + fresh.deps.len() + aliased.deps.len();
+    let fresh: Node = node("a", two(1, 2), 7);
+    let live: i32[] = two(3, 4);
+    let aliased: Node = node("b", live, 8);
+    let t: i32 = fresh.deps[0] + fresh.deps[1] + aliased.deps[0] + aliased.deps[1];
+    let u: i32 = live[0] + live[1] + fresh.deps.len() + aliased.deps.len();
     return (t - 10) + (u - 11) + __rc_underflow_count();
 }`,
 	},
@@ -6006,16 +6006,16 @@ function main(): i32 {
 		name: "append_result_consumed_by_call",
 		src: `
 import "core/int";
-function sink(xs: i32[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }
+function sink(xs: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }
 function inplace(path: i32[]): i32 { return sink(path.append(99)); }
 function main(): i32 {
-    var full: i32[] = [1, 2];
-    var roomy: i32[] = [];
+    let full: i32[] = [1, 2];
+    let roomy: i32[] = [];
     roomy = roomy.append(3);
-    var xs: i32[][] = [[6], [7]];
-    var a: i32 = sink(full.append(10)) + inplace(roomy);
-    var b: i32 = sink(full) + sink(roomy) + sink(xs[0].append(30)) + sink(xs[1]);
-    var c: i32 = inplace(roomy) + sink(xs[0]) + full.len() + roomy.len() + xs[0].len();
+    let xs: i32[][] = [[6], [7]];
+    let a: i32 = sink(full.append(10)) + inplace(roomy);
+    let b: i32 = sink(full) + sink(roomy) + sink(xs[0].append(30)) + sink(xs[1]);
+    let c: i32 = inplace(roomy) + sink(xs[0]) + full.len() + roomy.len() + xs[0].len();
     return (a - 115) + (b - 49) + (c - 112) + __rc_underflow_count();
 }`,
 	},
@@ -6036,14 +6036,14 @@ trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
 function main(): i32 {
-    var s0: Square = Square { side: 3 };
-    var d0: dyn Shape = s0;
-    var flat: i32 = d0.area();
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let s0: Square = Square { side: 3 };
+    let d0: dyn Shape = s0;
+    let flat: i32 = d0.area();
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var s: Square = Square { side: 3 };
-        var d: dyn Shape = s;
+        let s: Square = Square { side: 3 };
+        let d: dyn Shape = s;
         acc = acc + d.area() + s.side;
         i = i + 1;
     }
@@ -6072,11 +6072,11 @@ impl Shape for Square {
     function scaled(self: Self, by: Factor): i32 { return self.side * by.k; }
 }
 function main(): i32 {
-    var f: Factor = Factor { k: 5 };
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let f: Factor = Factor { k: 5 };
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var d: dyn Shape = Square { side: 3 };
+        let d: dyn Shape = Square { side: 3 };
         acc = acc + d.area() + d.scaled(f) + f.k;
         i = i + 1;
     }
@@ -6102,16 +6102,16 @@ function mk(n: i32): Option[i32[]] {
     if (n == 0) { return None; }
     return Some([n, n + 1, n + 2]);
 }
-function total(a: i32[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }
+function total(a: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }
 function ident(a: i32[]): i32[] { return a; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         match (mk(1)) { Some(x) => { t = t + x.len() + total(x); }, None => { }, }
         i = i + 1;
     }
-    var alias: i32[] = [];
+    let alias: i32[] = [];
     i = 0;
     while (i < 4) {
         match (mk(2)) { Some(x) => { alias = ident(x); }, None => { }, }
@@ -6161,19 +6161,19 @@ function unwrap(o: Option[i32[]]): i32[] {
     match (o) { Some(a) => { return a; }, None => { return [0]; }, }
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 8) { t = t + fac(mk(1)) + facs(mks(2)); i = i + 1; }
-    var live: i32[] = [7, 8, 9];
+    let live: i32[] = [7, 8, 9];
     i = 0;
     while (i < 8) { t = t + fac(wrap(live, 1)); i = i + 1; }
     t = t + live[0] + live.len();
-    var out: i32[][] = [];
+    let out: i32[][] = [];
     i = 0;
     while (i < 8) { out = keep(mk(3), out); i = i + 1; }
     i = 0;
     while (i < out.len()) { t = t + out[i][0]; i = i + 1; }
-    var got: i32[] = [];
+    let got: i32[] = [];
     i = 0;
     while (i < 8) { got = unwrap(mk(4)); t = t + got[0]; i = i + 1; }
     t = t + got[1];
@@ -6210,15 +6210,15 @@ function passthru(b: Box): Box { return b; }
 function sink(ps: P[]): i32 { return ps.len(); }
 function sinks(ns: string[]): i32 { return ns.len(); }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         t = t + sink(mk_box(1).items) + sinks(mk_sbox(1).names);
         t = t + mk_box(2).items[0].a + mk_sbox(3).names[1].len();
         t = t + mk_outer(4).inner.vals[1];
         i = i + 1;
     }
-    var live: Box = mk_box(9);
+    let live: Box = mk_box(9);
     i = 0;
     while (i < 4) {
         t = t + sink(passthru(live).items) + passthru(live).items[0].a;
@@ -6239,23 +6239,23 @@ function main(): i32 {
 		src: `
 struct Holder { a: i32[], b: i32[] }
 function escaping(i: i32): (i32[], i32[]) {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32[], i32[]) = (xs, [i + 2, i + 3]);
-    var guard: i32 = xs[1];
+    let xs: i32[] = [i, i + 1];
+    let t: (i32[], i32[]) = (xs, [i + 2, i + 3]);
+    let guard: i32 = xs[1];
     if (guard < 0) { return (xs, xs); }
     return t;
 }
 function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
+    let xs: i32[] = [i, i + 1];
     (xs, [i + 2, i + 3]);
     Holder { a: xs, b: [i + 2, i + 3] };
-    var bound: Holder = Holder { a: xs, b: [i + 2, i + 3] };
-    var esc: (i32[], i32[]) = escaping(i);
+    let bound: Holder = Holder { a: xs, b: [i + 2, i + 3] };
+    let esc: (i32[], i32[]) = escaping(i);
     return xs[0] + xs[1] + bound.a[0] - bound.a[0] + esc.0[0] - esc.0[0];
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) { acc = acc + round(i); i = i + 1; }
     return (acc - 16) + __rc_underflow_count();
 }`,
@@ -6286,30 +6286,30 @@ function ignoreRet(s: string): string { return "z"; }
 function eat(s: string): i32 { return s.len(); }
 function ignoreArr(a: i32[]): i32 { return 7; }
 function main(): i32 {
-    var n: i32 = 0;
-    var s1: string = two("abcd", "efgh");
+    let n: i32 = 0;
+    let s1: string = two("abcd", "efgh");
     n = n + ignore(s1);
-    var s2: string = two("abcd", "efgh");
-    var s3: string = two("ijkl", "mnop");
+    let s2: string = two("abcd", "efgh");
+    let s3: string = two("ijkl", "mnop");
     n = n + ignore2(s2, s3);
-    var s4: string = two("abcd", "efgh");
-    var s5: string = two("ijkl", "mnop");
+    let s4: string = two("abcd", "efgh");
+    let s5: string = two("ijkl", "mnop");
     n = n + halfUse(s4, s5);
-    var s6: string = two("abcd", "efgh");
-    var r: string = ignoreRet(s6);
+    let s6: string = two("abcd", "efgh");
+    let r: string = ignoreRet(s6);
     n = n + r.len();
-    var s7: string = two("abcd", "efgh");
+    let s7: string = two("abcd", "efgh");
     n = n + ignore(s7) + ignore(s7);
-    var s8: string = two("abcd", "efgh");
+    let s8: string = two("abcd", "efgh");
     n = n + eat(s8);
     n = n + ignore(two("abcd", "efgh"));
-    var a1: i32[] = [1, 2, 3];
+    let a1: i32[] = [1, 2, 3];
     n = n + ignoreArr(a1);
-    var s9: string = two("abcd", "efgh");
-    var t9: string = s9;
+    let s9: string = two("abcd", "efgh");
+    let t9: string = s9;
     n = n + t9.len();
-    var s10: string = two("abcd", "efgh");
-    var arr: string[] = [s10];
+    let s10: string = two("abcd", "efgh");
+    let arr: string[] = [s10];
     n = n + arr.len();
     if (n < 0) { return 1; }
     return __rc_underflow_count();
@@ -6346,15 +6346,15 @@ function mkop(i: i32, pad: string): Op { return Op { a: i, s: pad + "0123456789a
 function emit(s: St, o: Op): St { return St { ops: s.ops.append(o) }; }
 
 function main(): i32 {
-    var pad: string = "xyzw";
-    var st: St = St { ops: [] };
-    var i: i32 = 0;
+    let pad: string = "xyzw";
+    let st: St = St { ops: [] };
+    let i: i32 = 0;
     while (i < 3) {
         st = emit(st, mkop(i, pad));
         i = i + 1;
     }
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < st.ops.len()) {
         t = t * 10 + st.ops[k].a + (st.ops[k].s.len() - 20);
         k = k + 1;
@@ -6383,14 +6383,14 @@ function mkop(i: i32): Op { return Op { a: i, b: i * 2 }; }
 function emit(s: St, o: Op): St { return St { ops: s.ops.append(o) }; }
 
 function main(): i32 {
-    var st: St = St { ops: [] };
-    var i: i32 = 0;
+    let st: St = St { ops: [] };
+    let i: i32 = 0;
     while (i < 3) {
         st = emit(st, mkop(i));
         i = i + 1;
     }
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < st.ops.len()) {
         t = t * 10 + st.ops[k].a;
         k = k + 1;
@@ -6420,10 +6420,10 @@ function mkop(i: i32): Op { return Op { a: i, s: "keep" }; }
 function keepf(o: Op): Op { return o; }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var r: Op = keepf(mkop(i));
+        let r: Op = keepf(mkop(i));
         t = t + r.a + r.s.len();
         i = i + 1;
     }
@@ -6455,10 +6455,10 @@ function mkop(i: i32): Op { return Op { a: i, s: "wrap" }; }
 function wrapf(o: Op, k: i32): Box { return Box { o: o, n: k }; }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var r: Box = wrapf(mkop(i), i * 2);
+        let r: Box = wrapf(mkop(i), i * 2);
         t = t + r.o.a + r.n + r.o.s.len();
         i = i + 1;
     }
@@ -6491,10 +6491,10 @@ function t_i32(): Ty { return Ty.I32(32); }
 function mknode(t: Ty, n: i32): Node { return Node { ty: t, n: n }; }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var nd: Node = mknode(t_i32(), i);
+        let nd: Node = mknode(t_i32(), i);
         acc = acc + nd.n;
         i = i + 1;
     }
@@ -6518,10 +6518,10 @@ function t_i32(): (i32, string) { return (32, "x"); }
 function mknode(t: (i32, string), n: i32): Node { return Node { ty: t, n: n }; }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var nd: Node = mknode(t_i32(), i);
+        let nd: Node = mknode(t_i32(), i);
         acc = acc + nd.n;
         i = i + 1;
     }
@@ -6547,10 +6547,10 @@ function t_i32(): Ty { return Ty { w: 32, s: "x" }; }
 function mknode(t: Ty, n: i32): Node { return Node { ty: t, n: n }; }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var nd: Node = mknode(t_i32(), i);
+        let nd: Node = mknode(t_i32(), i);
         acc = acc + nd.n;
         i = i + 1;
     }
@@ -6580,8 +6580,8 @@ function width(t: Ty): i32 {
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         acc = acc + width(t_str());
         i = i + 1;
@@ -6615,10 +6615,10 @@ function main(): i32 {
 function eat(s: str): i32 { return s.len(); }
 
 function main(): i32 {
-    var pad: string = "wxyz";
-    var line: string = pad + "0123456789abcdef0123456789";
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let pad: string = "wxyz";
+    let line: string = pad + "0123456789abcdef0123456789";
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         t = t + eat(slice_unchecked(line, 4, 8));
         i = i + 1;
@@ -6647,10 +6647,10 @@ function main(): i32 {
 function eat(s: str): i32 { return s.len(); }
 
 function main(): i32 {
-    var pad: string = "wxyz";
-    var line: string = pad + "0123456789abcdef0123456789";
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let pad: string = "wxyz";
+    let line: string = pad + "0123456789abcdef0123456789";
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         t = t + eat(slice_unchecked(line, 4, 20));
         i = i + 1;
@@ -6683,9 +6683,9 @@ function scan(s: St, text: string): St {
 }
 
 function main(): i32 {
-    var pad: string = "xyzw";
-    var st: St = St { tag: pad + "tagtagtagtag", n: 0 };
-    var i: i32 = 0;
+    let pad: string = "xyzw";
+    let st: St = St { tag: pad + "tagtagtagtag", n: 0 };
+    let i: i32 = 0;
     while (i < 4) {
         st = scan(st, mk(pad, i));
         i = i + 1;
@@ -6707,11 +6707,11 @@ function main(): i32 {
 function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
 
 function main(): i32 {
-    var pad: string = "xyzw";
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let pad: string = "xyzw";
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var msg: string = mk(pad, i);
+        let msg: string = mk(pad, i);
         t = t + __memchr(msg, 97, 0);
         i = i + 1;
     }
@@ -6737,14 +6737,14 @@ function wr(s: St, text: string): St { strbuf_append(text); return s; }
 
 function main(): i32 {
     strbuf_reset();
-    var pad: string = "xyzw";
-    var st: St = St { n: 0 };
-    var i: i32 = 0;
+    let pad: string = "xyzw";
+    let st: St = St { n: 0 };
+    let i: i32 = 0;
     while (i < 4) {
         st = wr(st, mk(pad, i));
         i = i + 1;
     }
-    var got: string = strbuf_take();
+    let got: string = strbuf_take();
     return (got.len() - 80) + __rc_underflow_count();
 }
 `,
@@ -6774,19 +6774,19 @@ function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
 
 @noinline
 function keep(p: string): string[] {
-    var n: i32 = __count_byte(p, 97);
-    var out: string[] = [];
+    let n: i32 = __count_byte(p, 97);
+    let out: string[] = [];
     out = out.append(p);
     if (n < 0) { return []; }
     return out;
 }
 
 function main(): i32 {
-    var pad: string = "xyzw";
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let pad: string = "xyzw";
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var xs: string[] = keep(mk(pad, i));
+        let xs: string[] = keep(mk(pad, i));
         t = t + xs[0].len();
         i = i + 1;
     }
@@ -6807,18 +6807,18 @@ function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
 
 @noinline
 function keep(xs: string[], nm: string): string {
-    var ys: string[] = xs.append(nm);
+    let ys: string[] = xs.append(nm);
     if (ys.len() > 99) { return "x"; }
     return nm;
 }
 
 function main(): i32 {
-    var pad: string = "xyzw";
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let pad: string = "xyzw";
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var base: string[] = [];
-        var got: string = keep(base, mk(pad, i));
+        let base: string[] = [];
+        let got: string = keep(base, mk(pad, i));
         t = t + got.len();
         i = i + 1;
     }
@@ -6851,19 +6851,19 @@ function visit(st: string, acc: string[]): string[] { return acc.append(st); }
 
 @noinline
 function fold_all(out: string[], items: string[]): string[] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < items.len()) { out = visit(items[i], out); i = i + 1; }
     return out;
 }
 
 function main(): i32 {
-    var items: string[] = ["alpha-item-one", "beta-item-two", "gamma-item-three"];
-    var empty: string[] = [];
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let items: string[] = ["alpha-item-one", "beta-item-two", "gamma-item-three"];
+    let empty: string[] = [];
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 8) {
-        var got: string[] = fold_all([], items);
-        var none: string[] = fold_all([], empty);
+        let got: string[] = fold_all([], items);
+        let none: string[] = fold_all([], empty);
         t = t + got.len() + none.len();
         i = i + 1;
     }
@@ -6890,7 +6890,7 @@ function main(): i32 {
 		src: `
 @noinline
 function mk(pad: string, n: i32): string[] {
-    var o: string[] = [];
+    let o: string[] = [];
     o = o.append(pad + "-0123456789abcdef");
     return o;
 }
@@ -6899,13 +6899,13 @@ function mk(pad: string, n: i32): string[] {
 function via_with(a: string[], v: string): string[] { return a.with(0, v); }
 
 function main(): i32 {
-    var pad: string = "wxyz";
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let pad: string = "wxyz";
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var a: string[] = mk(pad, i);
+        let a: string[] = mk(pad, i);
         a = mk(pad, i + 1);
-        var b: string[] = mk(pad, i);
+        let b: string[] = mk(pad, i);
         b = via_with(b, pad + "-fedcba9876543210");
         t = t + a[0].len() + b[0].len();
         i = i + 1;
@@ -6927,18 +6927,18 @@ function put(xs: string[], v: string): string[] { return xs.with(0, v); }
 
 @noinline
 function mk(pad: string): string[] {
-    var o: string[] = [];
+    let o: string[] = [];
     o = o.append(pad + "-0123456789abcdef");
     return o;
 }
 
 function main(): i32 {
-    var pad: string = "wxyz";
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let pad: string = "wxyz";
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var a: string[] = mk(pad);
-        var b: string[] = put(a, pad + "-fedcba9876543210");
+        let a: string[] = mk(pad);
+        let b: string[] = put(a, pad + "-fedcba9876543210");
         t = t + b[0].len();
         i = i + 1;
     }
@@ -6968,15 +6968,15 @@ function put(reg: string[], key: string, flags: string): string[] {
 }
 
 function main(): i32 {
-    var keys: string[] = ["alpha-key-one", "beta-key-two", "gamma-key-three"];
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let keys: string[] = ["alpha-key-one", "beta-key-two", "gamma-key-three"];
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var reg: string[] = [];
-        var k: i32 = 0;
+        let reg: string[] = [];
+        let k: i32 = 0;
         while (k < keys.len()) {
-            var flags: string = "";
-            var f: i32 = 0;
+            let flags: string = "";
+            let f: i32 = 0;
             while (f < 12) { flags = flags + "1"; f = f + 1; }
             reg = put(reg, keys[k], flags);
             k = k + 1;
@@ -7004,28 +7004,28 @@ function main(): i32 {
 		src: `
 @noinline
 function put(reg: string[], key: string, flags: string): string[] {
-    var b: i32 = key.len() % reg.len();
+    let b: i32 = key.len() % reg.len();
     return reg.with(b, reg[b] + key + "|" + flags);
 }
 
 @noinline
 function newreg(): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
+    let out: string[] = [];
+    let i: i32 = 0;
     while (i < 8) { out = out.append(""); i = i + 1; }
     return out;
 }
 
 function main(): i32 {
-    var keys: string[] = ["alpha-key-one", "beta-key-two", "gamma-key-three"];
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let keys: string[] = ["alpha-key-one", "beta-key-two", "gamma-key-three"];
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var reg: string[] = newreg();
-        var k: i32 = 0;
+        let reg: string[] = newreg();
+        let k: i32 = 0;
         while (k < keys.len()) {
-            var flags: string = "";
-            var f: i32 = 0;
+            let flags: string = "";
+            let f: i32 = 0;
             while (f < 12) { flags = flags + "1"; f = f + 1; }
             reg = put(reg, keys[k], flags);
             k = k + 1;
@@ -7052,9 +7052,9 @@ function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
 function eat(own text: string): i32 { return __count_byte(text, 97); }
 
 function main(): i32 {
-    var pad: string = "xyzw";
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let pad: string = "xyzw";
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         t = t + eat(pad + "0123456789abcdef");
         i = i + 1;
@@ -7082,14 +7082,14 @@ function mk(i: i32): Option[i32[]] { if (i % 2 == 0) { return None; } return Som
 
 @noinline
 function round(i: i32): i32 {
-    var o: Option[i32[]] = mk(i);
+    let o: Option[i32[]] = mk(i);
     match (o) { Some(a) => { return a.len(); }, None => { return 2; } }
     return 0;
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) { t = t + round(i); i = i + 1; }
     return (t - 12) + __rc_underflow_count();
 }
@@ -7112,9 +7112,9 @@ struct ModuleTypes { diags: Diag[], names: string[], count: i32 }
 
 @noinline
 function check_module(n: i32, pad: string): ModuleTypes {
-    var ds: Diag[] = [];
-    var ns: string[] = [];
-    var i: i32 = 0;
+    let ds: Diag[] = [];
+    let ns: string[] = [];
+    let i: i32 = 0;
     while (i < n) {
         ds = ds.append(Diag { msg: pad + "diagnostic message", line: i });
         ns = ns.append(pad + "name_of_something");
@@ -7125,8 +7125,8 @@ function check_module(n: i32, pad: string): ModuleTypes {
 
 @noinline
 function filter_gate(ds: Diag[]): Diag[] {
-    var out: Diag[] = [];
-    var i: i32 = 0;
+    let out: Diag[] = [];
+    let i: i32 = 0;
     while (i < ds.len()) {
         if (ds[i].line % 2 == 0) { out = out.append(ds[i]); }
         i = i + 1;
@@ -7135,11 +7135,11 @@ function filter_gate(ds: Diag[]): Diag[] {
 }
 
 function main(): i32 {
-    var pad: string = "xyzw";
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let pad: string = "xyzw";
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 3) {
-        var gated: Diag[] = filter_gate(check_module(8, pad).diags);
+        let gated: Diag[] = filter_gate(check_module(8, pad).diags);
         t = t + gated.len();
         r = r + 1;
     }
@@ -7166,15 +7166,15 @@ function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-
 
 @noinline
 function build(n: i32): Tbl {
-    var m: Map[string, i32] = map_new(8);
-    var i: i32 = 0;
+    let m: Map[string, i32] = map_new(8);
+    let i: i32 = 0;
     while (i < n) { m = m.insert(w("k") + i.to_string(), i * 3); i = i + 1; }
     return Tbl { m: m, count: n };
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 3) { t = t + build(8).count; r = r + 1; }
     return (t - 24) + __rc_underflow_count();
 }
@@ -7198,16 +7198,16 @@ function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-
 
 @noinline
 function round(n: i32): i32 {
-    var m: Map[string, i32] = map_new(8);
-    var i: i32 = 0;
+    let m: Map[string, i32] = map_new(8);
+    let i: i32 = 0;
     while (i < n) { m = m.insert(w("k") + i.to_string(), i * 3); i = i + 1; }
-    var t: Tbl = Tbl { m: m, count: n };
+    let t: Tbl = Tbl { m: m, count: n };
     return t.count + m.len() + m.get_or(w("k") + "0", 7);
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 3) { t = t + round(8); r = r + 1; }
     return (t - 48) + __rc_underflow_count();
 }
@@ -7231,8 +7231,8 @@ function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-
 
 @noinline
 function build(n: i32): Tbl {
-    var m: Map[string, Pt] = map_new(8);
-    var i: i32 = 0;
+    let m: Map[string, Pt] = map_new(8);
+    let i: i32 = 0;
     while (i < n) {
         m = m.insert(w("k") + i.to_string(), Pt { xs: [i, i + 1], tag: w("t") + i.to_string() });
         i = i + 1;
@@ -7241,8 +7241,8 @@ function build(n: i32): Tbl {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 3) { t = t + build(6).count; r = r + 1; }
     return (t - 18) + __rc_underflow_count();
 }
@@ -7273,7 +7273,7 @@ function (e: Env) child(nm: string): Env {
 @noinline
 function walk(e: Env, d: i32): i32 {
     if (d == 0) { return e.depth + e.t.n + e.names.len(); }
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     acc = acc + walk(e.child(w("a")), d - 1);
     acc = acc + walk(e.child(w("b")), d - 1);
     return acc + e.depth;
@@ -7281,13 +7281,13 @@ function walk(e: Env, d: i32): i32 {
 
 @noinline
 function round(i: i32): i32 {
-    var tab: Tab = Tab { xs: [i, i + 1, i + 2], n: i };
-    var root: Env = Env { names: [], t: tab, depth: 0 };
+    let tab: Tab = Tab { xs: [i, i + 1, i + 2], n: i };
+    let root: Env = Env { names: [], t: tab, depth: 0 };
     return walk(root, 3) % 97;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 50) { t = t + round(r); r = r + 1; }
     return (t % 89) - 15 + __rc_underflow_count();
 }
@@ -7325,19 +7325,19 @@ function (b: Bag) via(i: i32): Slot { return b.at(i); }
 
 @noinline
 function round(r: i32): i32 {
-    var cs: Slot[] = [];
-    var i: i32 = 0;
+    let cs: Slot[] = [];
+    let i: i32 = 0;
     while (i < 3) { cs = cs.append(Slot { n: r + i, tag: i }); i = i + 1; }
-    var b: Bag = Bag { cells: cs, k: r };
-    var c: Slot = b.at(r);
-    var d: Slot = b.via(r + 1);
-    var everything: Slot[] = b.all();
+    let b: Bag = Bag { cells: cs, k: r };
+    let c: Slot = b.at(r);
+    let d: Slot = b.via(r + 1);
+    let everything: Slot[] = b.all();
     return c.n + d.tag + everything.len();
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 40) { t = t + round(r); r = r + 1; }
     if (t != 979) { return 1; }
     return __rc_underflow_count();
@@ -7359,8 +7359,8 @@ struct Reg { names: string[] }
 
 @noinline
 function label(prefix: string, k: i32): string {
-    var s: string = prefix + "-";
-    var j: i32 = 0;
+    let s: string = prefix + "-";
+    let j: i32 = 0;
     while (j < k) { s = s + "xyzw"; j = j + 1; }
     return s;
 }
@@ -7372,14 +7372,14 @@ function pick(r: Reg, i: i32): string {
 }
 
 function main(): i32 {
-    var ns: string[] = [];
-    var b: i32 = 0;
+    let ns: string[] = [];
+    let b: i32 = 0;
     while (b < 3) { ns = ns.append(label("name", b + 4)); b = b + 1; }
-    var r: Reg = Reg { names: ns };
-    var i: i32 = 0;
-    var n: i32 = 0;
+    let r: Reg = Reg { names: ns };
+    let i: i32 = 0;
+    let n: i32 = 0;
     while (i < 60) {
-        var s: string = pick(r, i);
+        let s: string = pick(r, i);
         n = n + s.len();
         i = i + 1;
     }
@@ -7419,8 +7419,8 @@ function ins(t: Node, k: i32, v: i32): Node {
     match (t) {
         Tip => { return Bin(Tip, k, v, Tip, 1); },
         Bin(l, nk, nv, r, s) => {
-            if (k < nk) { var nl: Node = ins(l, k, v); return Bin(nl, nk, nv, r, s + 1); }
-            if (k > nk) { var nr: Node = ins(r, k, v); return Bin(l, nk, nv, nr, s + 1); }
+            if (k < nk) { let nl: Node = ins(l, k, v); return Bin(nl, nk, nv, r, s + 1); }
+            if (k > nk) { let nr: Node = ins(r, k, v); return Bin(l, nk, nv, nr, s + 1); }
             return Bin(l, k, v, r, s);
         }
     }
@@ -7438,10 +7438,10 @@ function (b: Box) update(k: i32, f: (i32) => i32): Box {
 function apply(x: i32, f: (i32) => i32): i32 { return f(x); }
 
 function main(): i32 {
-    var b: Box = Box { root: Tip };
-    var i: i32 = 0;
+    let b: Box = Box { root: Tip };
+    let i: i32 = 0;
     while (i < 16) { b = Box { root: ins(b.root, i, i) }; i = i + 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     i = 0;
     while (i < 16) {
         b = b.update(i, (v: i32) => v + i);
@@ -7478,21 +7478,21 @@ function g(c: i32): Result[i32, i32] {
 
 @noinline
 function aliased(c: i32): Result[i32, i32] {
-    var x: i32[] = [1, 2, 3];
-    var r: i32 = g(c)?;
-    var y: i32[] = x;
+    let x: i32[] = [1, 2, 3];
+    let r: i32 = g(c)?;
+    let y: i32[] = x;
     return Ok(y[0] + r);
 }
 
 @noinline
 function owned(own a: i32[], c: i32): Result[i32, i32] {
-    var r: i32 = g(c)?;
+    let r: i32 = g(c)?;
     return Ok(take(a) + r);
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
         match (aliased(0)) {
             Ok(v) => { acc = acc + 1000; },
@@ -7540,39 +7540,39 @@ function mk(c: i32): i32[] { return [c, c + 1, c + 2]; }
 
 @noinline
 function field_temp(c: i32): Result[i32, i32] {
-    var p: Pair = Pair { a: [1, 2, 3], b: g(c)? };
+    let p: Pair = Pair { a: [1, 2, 3], b: g(c)? };
     return Ok(p.a[0] + p.b);
 }
 
 @noinline
 function field_moved_before(c: i32): Result[i32, i32] {
-    var x: i32[] = mk(c);
-    var p: Pair = Pair { a: x, b: g(c)? };
+    let x: i32[] = mk(c);
+    let p: Pair = Pair { a: x, b: g(c)? };
     return Ok(p.a[0] + p.b);
 }
 
 @noinline
 function field_moved_after(c: i32): Result[i32, i32] {
-    var x: i32[] = mk(c);
-    var p: Pair = Pair { b: g(c)?, a: x };
+    let x: i32[] = mk(c);
+    let p: Pair = Pair { b: g(c)?, a: x };
     return Ok(p.a[0] + p.b);
 }
 
 @noinline
 function array_elem(c: i32): Result[i32, i32] {
-    var xs: i32[][] = [mk(c), [g(c)?]];
+    let xs: i32[][] = [mk(c), [g(c)?]];
     return Ok(xs[0][0] + xs[1][0]);
 }
 
 @noinline
 function tuple_elem(c: i32): Result[i32, i32] {
-    var t: (i32[], i32) = (mk(c), g(c)?);
+    let t: (i32[], i32) = (mk(c), g(c)?);
     return Ok(t.0[0] + t.1);
 }
 
 @noinline
 function enum_payload(c: i32): Result[i32, i32] {
-    var e: Two = Both(mk(c), g(c)?);
+    let e: Two = Both(mk(c), g(c)?);
     match (e) {
         Both(a, b) => { return Ok(a[0] + b); },
         Neither => { return Ok(0); }
@@ -7581,10 +7581,10 @@ function enum_payload(c: i32): Result[i32, i32] {
 
 @noinline
 function in_loop(c: i32): Result[i32, i32] {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var p: Pair = Pair { a: mk(i), b: g(c)? };
+        let p: Pair = Pair { a: mk(i), b: g(c)? };
         acc = acc + p.a[0] + p.b;
         i = i + 1;
     }
@@ -7592,7 +7592,7 @@ function in_loop(c: i32): Result[i32, i32] {
 }
 
 function run(k: i32, c: i32): i32 {
-    var r: Result[i32, i32] = Err(0);
+    let r: Result[i32, i32] = Err(0);
     if (k == 0) { r = field_temp(c); }
     if (k == 1) { r = field_moved_before(c); }
     if (k == 2) { r = field_moved_after(c); }
@@ -7607,10 +7607,10 @@ function run(k: i32, c: i32): i32 {
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 20) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 7) {
             acc = acc + run(k, i % 2);
             k = k + 1;
@@ -7669,18 +7669,18 @@ function borrowed_temp(c: i32): Result[i32, i32] {
 
 @noinline
 function closure_temp(c: i32): Result[i32, i32] {
-    var f: (i32[], i32) => i32 = (a: i32[], r: i32): i32 => { return a[0] + r; };
+    let f: (i32[], i32) => i32 = (a: i32[], r: i32): i32 => { return a[0] + r; };
     return Ok(f(mk(c), g(c)?));
 }
 
 @noinline
 function nested(c: i32): Result[i32, i32] {
-    var xs: i32[][] = [mk(c), [take(mk(c), g(c)?)]];
+    let xs: i32[][] = [mk(c), [take(mk(c), g(c)?)]];
     return Ok(xs[0][0] + xs[1][0]);
 }
 
 function run(k: i32, c: i32): i32 {
-    var r: Result[i32, i32] = Err(0);
+    let r: Result[i32, i32] = Err(0);
     if (k == 0) { r = own_temp(c); }
     if (k == 1) { r = own_param_before(mk(c), c); }
     if (k == 2) { r = own_param_after(mk(c), c); }
@@ -7694,10 +7694,10 @@ function run(k: i32, c: i32): i32 {
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 20) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 6) {
             acc = acc + run(k, i % 2);
             k = k + 1;
@@ -7738,19 +7738,19 @@ function mks(c: i32): string { return c.to_string() + " is also past the inline 
 
 @noinline
 function string_field(c: i32): Result[i32, i32] {
-    var n: Named = Named { s: mks(c), b: g(c)? };
+    let n: Named = Named { s: mks(c), b: g(c)? };
     return Ok(n.s.len() + n.b);
 }
 
 @noinline
 function concat_left(c: i32): Result[i32, i32] {
-    var s: string = mks(c) + gs(c)?;
+    let s: string = mks(c) + gs(c)?;
     return Ok(s.len());
 }
 
 @noinline
 function concat_chain(c: i32): Result[i32, i32] {
-    var s: string = mks(c) + "-" + gs(c)?;
+    let s: string = mks(c) + "-" + gs(c)?;
     return Ok(s.len());
 }
 
@@ -7761,7 +7761,7 @@ function compare(c: i32): Result[i32, i32] {
 }
 
 function run(k: i32, c: i32): i32 {
-    var r: Result[i32, i32] = Err(0);
+    let r: Result[i32, i32] = Err(0);
     if (k == 0) { r = string_field(c); }
     if (k == 1) { r = concat_left(c); }
     if (k == 2) { r = concat_chain(c); }
@@ -7773,10 +7773,10 @@ function run(k: i32, c: i32): i32 {
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 20) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
             acc = acc + run(k, i % 2);
             k = k + 1;
@@ -7803,9 +7803,9 @@ import "core/int";
 import "std/i32";
 import "std/string";
 function main(): i32 {
-    var s: string = "";
-    var f: () => i32 = (): i32 => { return s.len(); };
-    var i: i32 = 0;
+    let s: string = "";
+    let f: () => i32 = (): i32 => { return s.len(); };
+    let i: i32 = 0;
     while (i < 500) { s = i.to_string() + "-iteration"; i = i + 1; }
     return (f() - 13) + __rc_underflow_count();
 }`,
@@ -7839,10 +7839,10 @@ import "std/string";
 @noinline
 function mk(n: i32): string { return "captured-payload-" + n.to_string(); }
 function main(): i32 {
-    var a: string = mk(7);
-    var s: string = "";
-    var f: () => i32 = (): i32 => { return s.len(); };
-    var i: i32 = 0;
+    let a: string = mk(7);
+    let s: string = "";
+    let f: () => i32 = (): i32 => { return s.len(); };
+    let i: i32 = 0;
     while (i < 500) {
         s = a;
         s = mk(i);
@@ -7865,8 +7865,8 @@ enum L { Nil, Cons(i32, L) }
 enum T { Leaf, Node(T, i32, T) }
 @noinline
 function build(n: i32): L {
-    var l: L = Nil;
-    var i: i32 = 0;
+    let l: L = Nil;
+    let i: i32 = 0;
     while (i < n) { l = Cons(i, l); i = i + 1; }
     return l;
 }
@@ -7879,11 +7879,11 @@ function mid(t: T): i32 {
     match (t) { Node(a, v, b) => { return v; }, Leaf => { return 0 - 1; } }
 }
 function main(): i32 {
-    var shared: L = build(1000);
-    var a: L = Cons(7, shared);
-    var b: L = Cons(9, shared);
-    var long: L = build(300000);
-    var tr: T = Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Node(Leaf, 4, Leaf)));
+    let shared: L = build(1000);
+    let a: L = Cons(7, shared);
+    let b: L = Cons(9, shared);
+    let long: L = build(300000);
+    let tr: T = Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Node(Leaf, 4, Leaf)));
     return (head(a) - 7) + (head(b) - 9) + (head(shared) - 999) + (head(long) - 299999) + (mid(tr) - 2) + __rc_underflow_count();
 }`,
 	},
@@ -7900,12 +7900,12 @@ function (h: H) grow(s: string): H {
     return H { ...h, buf: h.buf + s, n: h.n + 1 };
 }
 function main(): i32 {
-    var mm: Map[string, i32] = map_new(8);
+    let mm: Map[string, i32] = map_new(8);
     mm = mm.insert("k", 3);
-    var h: H = H { buf: "", m: Some(mm), n: 0 };
-    var i: i32 = 0;
+    let h: H = H { buf: "", m: Some(mm), n: 0 };
+    let i: i32 = 0;
     while (i < 50) { h = h.grow("cccc"); i = i + 1; }
-    var got: i32 = 0;
+    let got: i32 = 0;
     match (h.m) { Some(m) => { got = m.len(); }, None => { got = 9; } }
     return (got - 1) + (h.n - 50) + __rc_underflow_count();
 }`,
@@ -7921,14 +7921,14 @@ import "core/map";
 import "std/i32";
 struct P { name: string, n: i32 }
 function main(): i32 {
-    var ms: Map[string, string][] = [];
-    var ps: Map[i32, P][] = [];
-    var i: i32 = 0;
+    let ms: Map[string, string][] = [];
+    let ps: Map[i32, P][] = [];
+    let i: i32 = 0;
     while (i < 5) {
-        var m: Map[string, string] = map_new(2);
+        let m: Map[string, string] = map_new(2);
         m = m.insert("k" + i.to_string(), "v" + i.to_string());
         ms = ms.append(m);
-        var q: Map[i32, P] = map_new(2);
+        let q: Map[i32, P] = map_new(2);
         q = q.insert(i, P { name: "p" + i.to_string(), n: i });
         ps = ps.append(q);
         i = i + 1;
@@ -7962,20 +7962,20 @@ function put(a: Acc, k: i32): Acc {
 @noinline
 function wrap(k: i32): Result[i32, E] {
     match (mk(k)) {
-        Err(e) => { var r: Result[i32, E] = Err(e); return r; },
+        Err(e) => { let r: Result[i32, E] = Err(e); return r; },
         Ok(v) => { return Ok(v + 1); }
     }
 }
 function main(): i32 {
-    var a: Acc = Acc { n: 0, last: None };
-    var m: i32 = 0;
-    var i: i32 = 0;
+    let a: Acc = Acc { n: 0, last: None };
+    let m: i32 = 0;
+    let i: i32 = 0;
     while (i < 60) {
         a = put(a, i);
         match (wrap(i)) { Err(e) => { m = m + e.msg.len(); }, Ok(v) => { m = m + v; } }
         i = i + 1;
     }
-    var tail: i32 = 0;
+    let tail: i32 = 0;
     match (a.last) { Some(e) => { tail = e.msg.len(); }, None => {} }
     return (a.n - 1200) + (m - 1336) + (tail - 5) + __rc_underflow_count();
 }`,
@@ -8005,9 +8005,9 @@ function main(): i32 {
 		src: `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
-    var f: () => i32 = (): i32 => { return m.len(); };
-    var i: i32 = 0;
+    let m: Map[string, i32] = map_new(4);
+    let f: () => i32 = (): i32 => { return m.len(); };
+    let i: i32 = 0;
     while (i < 50) {
         m = map_new(4);
         m = m.insert("k", i);
@@ -8030,9 +8030,9 @@ import "core/map";
 @noinline
 function idm(x: Map[string, i32]): Map[string, i32] { return x; }
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
-    var f: () => i32 = (): i32 => { return m.len(); };
-    var i: i32 = 0;
+    let m: Map[string, i32] = map_new(4);
+    let f: () => i32 = (): i32 => { return m.len(); };
+    let i: i32 = 0;
     while (i < 50) {
         m = idm(m);
         m = map_new(4);
@@ -8051,9 +8051,9 @@ function main(): i32 {
 		name: "closure_capture_rebind_append_in_place_still_released",
 		src: `
 function main(): i32 {
-    var a: i32[] = [1, 2, 3];
-    var f: () => i32 = (): i32 => { return a.len(); };
-    var i: i32 = 0;
+    let a: i32[] = [1, 2, 3];
+    let f: () => i32 = (): i32 => { return a.len(); };
+    let i: i32 = 0;
     while (i < 50) {
         a = a.append(i);
         i = i + 1;
@@ -8074,13 +8074,13 @@ function main(): i32 {
 		src: `
 @noinline
 function each(n: i32, f: (i32) => i32): void {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { f(i); i = i + 1; }
 }
 
 @noinline
 function run_named(): i32 {
-    var seen: i32 = 0;
+    let seen: i32 = 0;
     function visit(x: i32): i32 {
         seen = seen * 10 + x;
         return seen;
@@ -8091,15 +8091,15 @@ function run_named(): i32 {
 
 @noinline
 function run_lambda_local(): i32 {
-    var seen: i32 = 0;
-    var visit: (i32) => i32 = (x: i32) => { seen = seen * 10 + x; seen };
+    let seen: i32 = 0;
+    let visit: (i32) => i32 = (x: i32) => { seen = seen * 10 + x; seen };
     each(3, visit);
     return seen;
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) { t = t + run_named() + run_lambda_local(); i = i + 1; }
     return (t - 96) + __rc_underflow_count();
 }
@@ -8125,30 +8125,30 @@ function run(f: (i32) => void, v: i32): void { f(v); }
 
 @noinline
 function returning(): i32 {
-    var sink: i32 = 3;
-    var add = (x: i32) => sink + x;
+    let sink: i32 = 3;
+    let add = (x: i32) => sink + x;
     return apply(add, 4) - 4;
 }
 
 @noinline
 function statement(): i32 {
-    var sink: i32 = 0;
-    var log = (x: i32) => { sink = sink + x * 2; };
+    let sink: i32 = 0;
+    let log = (x: i32) => { sink = sink + x * 2; };
     run(log, 4);
     return sink - 8;
 }
 
 @noinline
 function direct(): i32 {
-    var sink: i32 = 0;
-    var log = (x: i32) => { sink = sink + x * 2; };
+    let sink: i32 = 0;
+    let log = (x: i32) => { sink = sink + x * 2; };
     log(4);
     return sink - 8;
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) { t = t + returning() + statement() + direct(); i = i + 1; }
     return (t - 12) + __rc_underflow_count();
 }
@@ -8185,8 +8185,8 @@ function ins(t: Node, k: i32, v: i32): Node {
     match (t) {
         Tip => { return Bin(Tip, k, v, Tip, 1); },
         Bin(l, nk, nv, r, s) => {
-            if (k < nk) { var nl: Node = ins(l, k, v); return mk(nl, nk, nv, r); }
-            if (k > nk) { var nr: Node = ins(r, k, v); return mk(l, nk, nv, nr); }
+            if (k < nk) { let nl: Node = ins(l, k, v); return mk(nl, nk, nv, r); }
+            if (k > nk) { let nr: Node = ins(r, k, v); return mk(l, nk, nv, nr); }
             return Bin(l, k, v, r, s);
         }
     }
@@ -8197,7 +8197,7 @@ function insert_min(k: i32, v: i32, t: Node): Node {
     match (t) {
         Tip => { return Bin(Tip, k, v, Tip, 1); },
         Bin(l, nk, nv, r, s) => {
-            var nl: Node = insert_min(k, v, l);
+            let nl: Node = insert_min(k, v, l);
             return mk(nl, nk, nv, r);
         }
     }
@@ -8216,8 +8216,8 @@ function filter(t: Node, keep_even: boolean): Node {
     match (t) {
         Tip => { return t; },
         Bin(l, k, v, r, s) => {
-            var fl: Node = filter(l, keep_even);
-            var fr: Node = filter(r, keep_even);
+            let fl: Node = filter(l, keep_even);
+            let fr: Node = filter(r, keep_even);
             if (k % 2 == 0) {
                 return join(fl, k, v, fr);
             }
@@ -8227,10 +8227,10 @@ function filter(t: Node, keep_even: boolean): Node {
 }
 
 function main(): i32 {
-    var t: Node = Tip;
-    var i: i32 = 0;
+    let t: Node = Tip;
+    let i: i32 = 0;
     while (i < 64) { t = ins(t, (i * 37) % 64, i); i = i + 1; }
-    var f: Node = filter(t, true);
+    let f: Node = filter(t, true);
     return (size(f) - 64) + __rc_underflow_count();
 }
 `,
@@ -8250,8 +8250,8 @@ struct Vec { len: i32, tail: i32[] }
 
 @noinline
 function mk(n: i32): Vec {
-    var xs: i32[] = [];
-    var i: i32 = 0;
+    let xs: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { xs = xs.append(i); i = i + 1; }
     return Vec { len: n, tail: xs };
 }
@@ -8269,17 +8269,17 @@ function (v: Vec) append(x: i32): Vec {
 
 @noinline
 function (v: Vec) concat(other: Vec): Vec {
-    var out: Vec = v;
-    var i: i32 = 0;
+    let out: Vec = v;
+    let i: i32 = 0;
     while (i < other.len) { out = out.append(other.get_or(i, other.tail[0])); i = i + 1; }
     return out;
 }
 
 function main(): i32 {
-    var s: Vec = mk(3);
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < 4) { var c: Vec = s.concat(mk(2)); t = t + c.len; i = i + 1; }
+    let s: Vec = mk(3);
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) { let c: Vec = s.concat(mk(2)); t = t + c.len; i = i + 1; }
     return (t - 20) + __rc_underflow_count();
 }
 `,
@@ -8298,9 +8298,9 @@ enum N { E, L(i32[]), B(N[]) }
 function with_in(node: N, shift: i32, i: i32, x: i32): N {
     match (node) {
         B(kids) => {
-            var sub: i32 = i >> shift & 31;
-            var child: N = kids[sub];
-            var rest: N[] = kids.with(sub, E);
+            let sub: i32 = i >> shift & 31;
+            let child: N = kids[sub];
+            let rest: N[] = kids.with(sub, E);
             child = with_in(child, shift - 5, i, x);
             return B(rest.with(sub, child));
         },
@@ -8316,11 +8316,11 @@ function get(node: N, shift: i32, i: i32): i32 {
     }
 }
 function build(): N {
-    var kids: N[] = [];
-    var a: i32 = 0;
+    let kids: N[] = [];
+    let a: i32 = 0;
     while (a < 4) {
-        var xs: i32[] = [];
-        var b: i32 = 0;
+        let xs: i32[] = [];
+        let b: i32 = 0;
         while (b < 32) { xs = xs.append(a * 32 + b); b = b + 1; }
         kids = kids.append(L(xs));
         a = a + 1;
@@ -8328,15 +8328,15 @@ function build(): N {
     return B(kids);
 }
 function main(): i32 {
-    var t: N = build();
-    var r: i32 = 0;
+    let t: N = build();
+    let r: i32 = 0;
     while (r < 40) {
-        var j: i32 = 0;
+        let j: i32 = 0;
         while (j < 128) { t = with_in(t, 5, j, j + r); j = j + 1; }
         r = r + 1;
     }
-    var sum: i32 = 0;
-    var i: i32 = 0;
+    let sum: i32 = 0;
+    let i: i32 = 0;
     while (i < 128) { sum = sum + get(t, 5, i); i = i + 1; }
     return (sum - 13120) + __rc_underflow_count();
 }`,
@@ -8351,9 +8351,9 @@ enum N { E, L(i32[]), B(N[]) }
 function with_in(node: N, shift: i32, i: i32, x: i32): N {
     match (node) {
         B(kids) => {
-            var sub: i32 = i >> shift & 31;
-            var child: N = kids[sub];
-            var rest: N[] = kids.with(sub, E);
+            let sub: i32 = i >> shift & 31;
+            let child: N = kids[sub];
+            let rest: N[] = kids.with(sub, E);
             child = with_in(child, shift - 5, i, x);
             return B(rest.with(sub, child));
         },
@@ -8369,11 +8369,11 @@ function get(node: N, shift: i32, i: i32): i32 {
     }
 }
 function build(): N {
-    var kids: N[] = [];
-    var a: i32 = 0;
+    let kids: N[] = [];
+    let a: i32 = 0;
     while (a < 4) {
-        var xs: i32[] = [];
-        var b: i32 = 0;
+        let xs: i32[] = [];
+        let b: i32 = 0;
         while (b < 32) { xs = xs.append(a * 32 + b); b = b + 1; }
         kids = kids.append(L(xs));
         a = a + 1;
@@ -8381,17 +8381,17 @@ function build(): N {
     return B(kids);
 }
 function main(): i32 {
-    var t: N = build();
-    var snap: N = t;
-    var j: i32 = 0;
+    let t: N = build();
+    let snap: N = t;
+    let j: i32 = 0;
     while (j < 128) { t = with_in(t, 5, j, j + 7); j = j + 1; }
-    var snap2: N = t;
+    let snap2: N = t;
     j = 0;
     while (j < 128) { t = with_in(t, 5, j, j + 9); j = j + 1; }
-    var sum: i32 = 0;
-    var s1: i32 = 0;
-    var s2: i32 = 0;
-    var i: i32 = 0;
+    let sum: i32 = 0;
+    let s1: i32 = 0;
+    let s2: i32 = 0;
+    let i: i32 = 0;
     while (i < 128) {
         sum = sum + get(t, 5, i);
         s1 = s1 + get(snap, 5, i);
@@ -8419,14 +8419,14 @@ function ins(n: H, h: i32, shift: i32, k: CK, v: i32): H {
         E => { return L(h, k, v); },
         L(lh, lk, lv) => {
             if (lh == h && ck_eq(lk, k)) { return L(h, k, v); }
-            var kids: H[] = [L(lh, lk, lv), L(h, k, v)];
+            let kids: H[] = [L(lh, lk, lv), L(h, k, v)];
             return Br(0, kids);
         },
         Br(bm, kids) => {
-            var idx: i32 = h >> shift & 3;
+            let idx: i32 = h >> shift & 3;
             if (idx >= kids.len()) { return Br(bm, kids.append(L(h, k, v))); }
-            var child: H = kids[idx];
-            var rest: H[] = kids.with(idx, E);
+            let child: H = kids[idx];
+            let rest: H[] = kids.with(idx, E);
             child = ins(child, h, shift + 2, k, v);
             return Br(bm, rest.with(idx, child));
         }
@@ -8437,29 +8437,29 @@ function find(n: H, h: i32, shift: i32, k: CK): i32 {
         E => { return -1; },
         L(lh, lk, lv) => { if (ck_eq(lk, k)) { return lv; } return -1; },
         Br(bm, kids) => {
-            var idx: i32 = h >> shift & 3;
+            let idx: i32 = h >> shift & 3;
             if (idx >= kids.len()) { return -1; }
             return find(kids[idx], h, shift + 2, k);
         }
     }
 }
 function (m: PM) insert(k: CK, v: i32): PM {
-    var root: H = m.root;
+    let root: H = m.root;
     m = PM { ...m, root: E };
     root = ins(root, k.bucket, 0, k, v);
     return PM { ...m, root: root };
 }
 function main(): i32 {
-    var c: PM = PM { root: E };
-    var i: i32 = 0;
+    let c: PM = PM { root: E };
+    let i: i32 = 0;
     while (i < 64) { c = c.insert(CK { bucket: i, id: i }, i); i = i + 1; }
-    var r: i32 = 0;
+    let r: i32 = 0;
     while (r < 5) {
-        var j: i32 = 0;
+        let j: i32 = 0;
         while (j < 64) { c = c.insert(CK { bucket: j, id: j }, j + r); j = j + 1; }
         r = r + 1;
     }
-    var sum: i32 = 0;
+    let sum: i32 = 0;
     i = 0;
     while (i < 64) { sum = sum + find(c.root, i, 0, CK { bucket: i, id: i }); i = i + 1; }
     return (sum - 2272) + __rc_underflow_count();
@@ -8484,10 +8484,10 @@ function len_of(s: S): i32 {
     }
 }
 function main(): i32 {
-    var s: S = A("x", 0);
-    var i: i32 = 0;
+    let s: S = A("x", 0);
+    let i: i32 = 0;
     while (i < 200) { s = bump(s, "y"); i = i + 1; }
-    var snap: S = s;
+    let snap: S = s;
     s = bump(s, "zz");
     if (len_of(snap) != 401) { return 1; }
     return (len_of(s) - 404) + __rc_underflow_count();
@@ -8514,14 +8514,14 @@ function count(n: N): i32 {
     }
 }
 function main(): i32 {
-    var ks: N[] = [];
+    let ks: N[] = [];
     ks = ks.append(L(1));
     ks = ks.append(L(2));
     ks = ks.append(L(3));
-    var a: N = B(0, ks);
-    var before: i32 = count(a);
-    var c: N = grow(a, 4);
-    var after: i32 = count(a);
+    let a: N = B(0, ks);
+    let before: i32 = count(a);
+    let c: N = grow(a, 4);
+    let after: i32 = count(a);
     return (before * 10 + after - 33) + __rc_underflow_count();
 }`,
 	},
@@ -8534,19 +8534,19 @@ function main(): i32 {
 struct Box { xs: i32[] }
 struct Holder { b: Box }
 function push(b: Box, x: i32): Box {
-    var ys: i32[] = b.xs.append(x);
+    let ys: i32[] = b.xs.append(x);
     return Box { xs: ys };
 }
 function size(b: Box): i32 { return b.xs.len(); }
 function main(): i32 {
-    var xs: i32[] = [];
+    let xs: i32[] = [];
     xs = xs.append(1);
     xs = xs.append(2);
     xs = xs.append(3);
-    var h: Holder = Holder { b: Box { xs: xs } };
-    var before: i32 = size(h.b);
-    var c: Box = push(h.b, 4);
-    var after: i32 = size(h.b);
+    let h: Holder = Holder { b: Box { xs: xs } };
+    let before: i32 = size(h.b);
+    let c: Box = push(h.b, 4);
+    let after: i32 = size(h.b);
     return (before * 10 + after - 33) + __rc_underflow_count();
 }`,
 	},
@@ -8560,7 +8560,7 @@ function main(): i32 {
 		src: `
 enum N { L(i32), B(i32, N[]) }
 function mk(c: i32, flag: boolean): N {
-    var ks: N[] = [];
+    let ks: N[] = [];
     ks = ks.append(L(1));
     ks = ks.append(L(2));
     if (flag) { return L(c); }
@@ -8573,10 +8573,10 @@ function count(n: N): i32 {
     }
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var n: N = mk(i, i % 2 == 0);
+        let n: N = mk(i, i % 2 == 0);
         total = total + count(n);
         i = i + 1;
     }
@@ -8584,7 +8584,7 @@ function main(): i32 {
 }`,
 	},
 	{
-		// The tree-walk read path (`var cur = root; cur = kids[..]`) taints
+		// The tree-walk read path (`let cur = root; cur = kids[..]`) taints
 		// `root` through the alias, which used to keep an owned parameter's
 		// count forever: one whole trie stranded per lookup. An owned
 		// parameter now spends its count unless it ESCAPED into an uncounted
@@ -8594,9 +8594,9 @@ function main(): i32 {
 enum N { E, L(i32[]), B(N[]) }
 struct PV { len: i32, root: N, tail: i32[] }
 function leaf_for(root: N, shift: i32, i: i32): i32[] {
-    var cur: N = root;
-    var level: i32 = shift;
-    var descending: boolean = true;
+    let cur: N = root;
+    let level: i32 = shift;
+    let descending: boolean = true;
     while (descending) {
         match (cur) {
             B(kids) => { cur = kids[i >> level & 31]; level = level - 5; },
@@ -8604,39 +8604,39 @@ function leaf_for(root: N, shift: i32, i: i32): i32[] {
             E => { descending = false; }
         }
     }
-    var none: i32[] = [];
+    let none: i32[] = [];
     return none;
 }
 function (v: PV) get_or(i: i32, fallback: i32): i32 {
     if (i < 0 || i >= v.len) { return fallback; }
-    var leaf: i32[] = leaf_for(v.root, 5, i);
+    let leaf: i32[] = leaf_for(v.root, 5, i);
     return leaf[i & 31];
 }
 function build(): PV {
-    var kids: N[] = [];
-    var a: i32 = 0;
+    let kids: N[] = [];
+    let a: i32 = 0;
     while (a < 4) {
-        var xs: i32[] = [];
-        var b: i32 = 0;
+        let xs: i32[] = [];
+        let b: i32 = 0;
         while (b < 32) { xs = xs.append(a * 32 + b); b = b + 1; }
         kids = kids.append(L(xs));
         a = a + 1;
     }
-    var t: i32[] = [];
+    let t: i32[] = [];
     t = t.append(7);
     return PV { len: 128, root: B(kids), tail: t };
 }
 function main(): i32 {
-    var v: PV = build();
-    var sum: i32 = 0;
-    var i: i32 = 0;
+    let v: PV = build();
+    let sum: i32 = 0;
+    let i: i32 = 0;
     while (i < 128) { sum = sum + v.get_or(i, -1); i = i + 1; }
     return (sum - 8128) + __rc_underflow_count();
 }`,
 	},
 	{
 		// `root = ins(root, .., k, v)` carries k into root, which is
-		// returned: the escape analysis followed only `var` initialisers,
+		// returned: the escape analysis followed only `let` initialisers,
 		// so k read as borrowable and the caller's fresh key temp was never
 		// released (one key box per insert). Leak-only.
 		name: "param_escapes_through_assignment",
@@ -8651,14 +8651,14 @@ function ins(n: H, k: CK, v: i32): H {
     }
 }
 function (m: PM) insert(k: CK, v: i32): PM {
-    var root: H = m.root;
+    let root: H = m.root;
     m = PM { ...m, root: E };
     root = ins(root, k, v);
     return PM { ...m, root: root };
 }
 function main(): i32 {
-    var c: PM = PM { root: E };
-    var i: i32 = 0;
+    let c: PM = PM { root: E };
+    let i: i32 = 0;
     while (i < 50) { c = c.insert(CK { bucket: i, id: i }, i); i = i + 1; }
     match (c.root) {
         E => { return 1; },
@@ -8676,21 +8676,21 @@ struct Ctx { decls: string[] }
 struct Txn { headers: string[] }
 struct Out { ctx: Ctx, txn: Txn, n: i32 }
 function run_sub(ctx: Ctx, t: Txn, name: string): Out {
-    var hs: string[] = t.headers.append(name);
+    let hs: string[] = t.headers.append(name);
     return Out { ctx: ctx, txn: Txn { headers: hs }, n: hs.len() };
 }
 function driver(decls: string[]): (string, Txn) => Out {
-    var ctx: Ctx = Ctx { decls: decls };
-    var runner: (string, Txn) => Out = (name: string, t: Txn): Out => { return run_sub(ctx, t, name); };
+    let ctx: Ctx = Ctx { decls: decls };
+    let runner: (string, Txn) => Out = (name: string, t: Txn): Out => { return run_sub(ctx, t, name); };
     return runner;
 }
 function main(): i32 {
-    var run: (string, Txn) => Out = driver(["a", "b"]);
-    var t: Txn = Txn { headers: ["h"] };
-    var i: i32 = 0;
-    var total: i32 = 0;
+    let run: (string, Txn) => Out = driver(["a", "b"]);
+    let t: Txn = Txn { headers: ["h"] };
+    let i: i32 = 0;
+    let total: i32 = 0;
     while (i < 4) {
-        var out: Out = run("s", t);
+        let out: Out = run("s", t);
         t = out.txn;
         total = total + out.n + out.ctx.decls.len();
         i = i + 1;
@@ -8721,19 +8721,19 @@ function acc_s(xs: string[], s: string): string[] { return xs.append(s); }
 @noinline
 function acc_chain(xs: i32[], s: i32): i32[] { return xs.append(s).append(s + 1); }
 @noinline
-function seed(): i32[] { var s: i32[] = []; s = s.append(1); return s; }
+function seed(): i32[] { let s: i32[] = []; s = s.append(1); return s; }
 
 function main(): i32 {
-    var pad: string = "wide-payload-";
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let pad: string = "wide-payload-";
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 8) {
-        var ys: i32[] = acc_i([], i);
-        var zs: i32[] = acc_i([1, 2], i);
-        var ss: string[] = acc_s([], pad + "x");
-        var ws: string[] = acc_s([pad + "a", pad + "b"], pad + "y");
-        var ch: i32[] = acc_chain([], i);
-        var sd: i32[] = acc_i(seed(), i);
+        let ys: i32[] = acc_i([], i);
+        let zs: i32[] = acc_i([1, 2], i);
+        let ss: string[] = acc_s([], pad + "x");
+        let ws: string[] = acc_s([pad + "a", pad + "b"], pad + "y");
+        let ch: i32[] = acc_chain([], i);
+        let sd: i32[] = acc_i(seed(), i);
         if (sd[0] != 1) { return 90; }
         if (sd[1] != i) { return 91; }
         if (ch[1] != i + 1) { return 92; }
@@ -8761,16 +8761,16 @@ function acc_i(xs: i32[], s: i32): i32[] { return xs.append(s); }
 function acc_chain(xs: i32[], s: i32): i32[] { return xs.append(s).append(s + 1); }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 8) {
-        var g: i32[] = [];
+        let g: i32[] = [];
         g = g.append(1);
         g = g.append(2);
         g = g.append(3);
-        var a: i32[] = acc_i(g, i);
-        var b: i32[] = acc_i(g, i + 1);
-        var c: i32[] = acc_chain(g, i);
+        let a: i32[] = acc_i(g, i);
+        let b: i32[] = acc_i(g, i + 1);
+        let c: i32[] = acc_chain(g, i);
         if (g.len() != 3) { return 90; }
         if (a[3] != i) { return 91; }
         if (b[3] != i + 1) { return 92; }
@@ -8798,15 +8798,15 @@ function main(): i32 {
 function mk(p: string): string[] { return [p + "seed"]; }
 
 function main(): i32 {
-    var pad: string = "wide-payload-";
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let pad: string = "wide-payload-";
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 8) {
-        var x: i32[] = [];
-        var k: i32 = 0;
+        let x: i32[] = [];
+        let k: i32 = 0;
         while (k < 6) { x = x.append(k).append(k + 1); k = k + 1; }
-        var a: i32[] = [7].append(i);
-        var b: string[] = mk(pad).append(pad + "lit").append(pad + "more");
+        let a: i32[] = [7].append(i);
+        let b: string[] = mk(pad).append(pad + "lit").append(pad + "more");
         if (x[11] != 6) { return 90; }
         if (a[0] != 7) { return 91; }
         if (a[1] != i) { return 92; }
@@ -8849,12 +8849,12 @@ function mkreg(seed: string[], pad: string): Reg {
 function widen(r: Reg): i32 { return r.names.len() + r.tag.len() + r.n; }
 
 function main(): i32 {
-    var pad: string = "xyzw";
-    var seed: string[] = [pad + "0123456789abcdef"];
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let pad: string = "xyzw";
+    let seed: string[] = [pad + "0123456789abcdef"];
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var r: Reg = Reg { ...mkreg(seed, pad), tag: pad + "fedcba9876543210" };
+        let r: Reg = Reg { ...mkreg(seed, pad), tag: pad + "fedcba9876543210" };
         t = t + widen(r);
         i = i + 1;
     }
@@ -8877,16 +8877,16 @@ struct Reg2 { names: string[], tag: string, n: i32 }
 function thread(r: Reg2): Reg2 { return r; }
 
 function main(): i32 {
-    var pad: string = "xyzw";
-    var base: Reg2 = Reg2 { names: [pad + "0123456789abcdef"], tag: pad + "0123456789abcdef", n: 1 };
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let pad: string = "xyzw";
+    let base: Reg2 = Reg2 { names: [pad + "0123456789abcdef"], tag: pad + "0123456789abcdef", n: 1 };
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var r: Reg2 = Reg2 { ...thread(base), tag: pad + "fedcba9876543210" };
+        let r: Reg2 = Reg2 { ...thread(base), tag: pad + "fedcba9876543210" };
         t = t + r.names.len() + r.tag.len() + base.names.len() + base.tag.len();
         i = i + 1;
     }
-    var last: i32 = base.names[0].len() + base.tag.len();
+    let last: i32 = base.names[0].len() + base.tag.len();
     return (t - 126) + (last - 40) + __rc_underflow_count();
 }`,
 	},
@@ -8911,14 +8911,14 @@ function step(own a: Asm, v: i32): Asm {
 }
 function step_ret(own a: Asm, v: i32): Asm { return Asm { ...a, cfi: record(a.cfi, v) }; }
 function shared(v: i32): i32 {
-    var a: Asm = Asm { code: [], cfi: Cfi { rules: [1, 2], n: 2 } };
-    var keep: Asm = a;
+    let a: Asm = Asm { code: [], cfi: Cfi { rules: [1, 2], n: 2 } };
+    let keep: Asm = a;
     a = Asm { ...a, cfi: record(a.cfi, v) };
     return keep.cfi.n * 100 + a.cfi.n + keep.cfi.rules.len() * 1000;
 }
 function local_form(n: i32): i32 {
-    var a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
-    var i: i32 = 0;
+    let a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
+    let i: i32 = 0;
     while (i < n) {
         a = Asm { ...a, cfi: record(a.cfi, i) };
         i = i + 1;
@@ -8926,14 +8926,14 @@ function local_form(n: i32): i32 {
     return a.cfi.n + a.cfi.rules[n - 1];
 }
 function main(): i32 {
-    var a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
-    var i: i32 = 0;
+    let a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
+    let i: i32 = 0;
     while (i < 200) {
         a = step(a, i);
         a = step_ret(a, i);
         i = i + 1;
     }
-    var bad: i32 = 0;
+    let bad: i32 = 0;
     if (a.cfi.n != 400) { bad = bad + 1; }
     if (a.cfi.rules.len() != 400) { bad = bad + 2; }
     if (a.code.len() != 200) { bad = bad + 4; }
@@ -8957,32 +8957,32 @@ function main(): i32 {
 		src: `
 import "std/string";
 function sum_view(b: [u8]): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < b.len()) { t = t + (b[i] as i32); i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var s: string = "hello world, this is a heap string";
-    var want_sum: i32 = 0;
-    var k: i32 = 0;
+    let s: string = "hello world, this is a heap string";
+    let want_sum: i32 = 0;
+    let k: i32 = 0;
     while (k < s.len()) { want_sum = want_sum + (s[k] as i32); k = k + 1; }
-    var per: i32 = (s[0] as i32) + want_sum + s.len() + (s[1] as i32) + (s[1] as i32) + s.len();
-    var xs: i32[] = [10, 20, 30, 40, 50];
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let per: i32 = (s[0] as i32) + want_sum + s.len() + (s[1] as i32) + (s[1] as i32) + s.len();
+    let xs: i32[] = [10, 20, 30, 40, 50];
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 10000) {
-        var b: [u8] = s.as_bytes();
+        let b: [u8] = s.as_bytes();
         acc = acc + (b[0] as i32);
         acc = acc + sum_view(s.as_bytes());
         acc = acc + s.as_bytes().len();
         acc = acc + (s.as_bytes()[1] as i32);
-        var c: [u8] = b[1:3];
+        let c: [u8] = b[1:3];
         acc = acc + (c[0] as i32);
-        var copy: u8[] = s.bytes();
+        let copy: u8[] = s.bytes();
         acc = acc + copy.len();
-        var v: [i32] = xs[1:4];
-        var w: [i32] = v[1:2];
+        let v: [i32] = xs[1:4];
+        let w: [i32] = v[1:2];
         acc = acc + v[0] + w[0] + xs[2:5].len();
         i = i + 1;
     }
@@ -8999,24 +8999,24 @@ function main(): i32 {
 		name: "slice_sub_view_outlives_parent_header",
 		src: `
 function tail(s: string): [u8] {
-    var a: [u8] = s.as_bytes();
-    var b: [u8] = a[1:3];
+    let a: [u8] = s.as_bytes();
+    let b: [u8] = a[1:3];
     return b;
 }
 function main(): i32 {
-    var s: string = "hello world, this is a heap string";
-    var t: string = "another heap string, also long";
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let s: string = "hello world, this is a heap string";
+    let t: string = "another heap string, also long";
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 1000) {
-        var a: [u8] = s.as_bytes();
-        var b: [u8] = a[1:3];
+        let a: [u8] = s.as_bytes();
+        let b: [u8] = a[1:3];
         a = t.as_bytes();
         if (b.len() != 2 || (b[0] as i32) != 101 || (b[1] as i32) != 108) { bad = bad + 1; }
         if ((a[0] as i32) != 97) { bad = bad + 2; }
-        var r: [u8] = tail(s);
+        let r: [u8] = tail(s);
         if (r.len() != 2 || (r[1] as i32) != 108) { bad = bad + 4; }
-        var q: [u8] = s.as_bytes()[6:11];
+        let q: [u8] = s.as_bytes()[6:11];
         if (q.len() != 5 || (q[0] as i32) != 119) { bad = bad + 8; }
         i = i + 1;
     }
@@ -9039,15 +9039,15 @@ function main(): i32 {
 struct View { v: [u8], n: i32 }
 function first(v: View): i32 { return v.v[0] as i32; }
 function main(): i32 {
-    var s: string = "hello world, this is a heap string";
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let s: string = "hello world, this is a heap string";
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 2000) {
-        var b: [u8] = s.as_bytes();
-        var w: View = View { v: b, n: i };
-        var arr: [u8][] = [b, s.as_bytes()];
-        var pair: ([u8], i32) = (b, 7);
-        var c: [u8] = arr[1];
+        let b: [u8] = s.as_bytes();
+        let w: View = View { v: b, n: i };
+        let arr: [u8][] = [b, s.as_bytes()];
+        let pair: ([u8], i32) = (b, 7);
+        let c: [u8] = arr[1];
         if (first(w) != 104) { bad = bad + 1; }
         if (arr[1].len() != s.len() || c.len() != s.len()) { bad = bad + 2; }
         if (pair.0.len() != s.len() || pair.1 != 7) { bad = bad + 4; }
@@ -9077,26 +9077,26 @@ function (h: H) push_m(b: u8): H {
     return h;
 }
 function shared(): i32 {
-    var h: H = H { buf: __alloc_u8(4), n: 0, tag: 1 };
+    let h: H = H { buf: __alloc_u8(4), n: 0, tag: 1 };
     h = H { ...h, buf: h.buf.with(0, 5 as u8) };
-    var keep: H = h;
+    let keep: H = h;
     h = H { ...h, buf: h.buf.with(0, 9 as u8), n: 1 };
-    var callee_keep: H = keep.push_m(7 as u8);
+    let callee_keep: H = keep.push_m(7 as u8);
     return (keep.buf[0] as i32) * 100 + (h.buf[0] as i32) * 10 + (callee_keep.buf[0] as i32) + callee_keep.n * 1000 + keep.n * 10000;
 }
 function chain(): i32 {
-    var h: H = H { buf: __alloc_u8(4), n: 0, tag: 2 };
+    let h: H = H { buf: __alloc_u8(4), n: 0, tag: 2 };
     h = H { ...h, buf: h.buf.with(0, 1 as u8).with(1, 2 as u8), n: 2 };
     return (h.buf[0] as i32) + (h.buf[1] as i32) * 10;
 }
 function main(): i32 {
-    var h: H = H { buf: __alloc_u8(64), n: 0, tag: 0 };
-    var i: i32 = 0;
+    let h: H = H { buf: __alloc_u8(64), n: 0, tag: 0 };
+    let i: i32 = 0;
     while (i < 64) {
         if (i % 2 == 0) { h = push(h, (i * 3) as u8); } else { h = h.push_m((i * 3) as u8); }
         i = i + 1;
     }
-    var bad: i32 = 0;
+    let bad: i32 = 0;
     if (h.n != 64) { bad = bad + 1; }
     if ((h.buf[63] as i32) != 189) { bad = bad + 2; }
     if ((h.buf[10] as i32) != 30) { bad = bad + 4; }
@@ -9119,21 +9119,21 @@ import "std/i32";
 import "std/string";
 struct RefSet { names: string[], head: i32[], next: i32[] }
 function bucket_of(name: string, n: i32): i32 {
-    var h: i32 = 0;
-    var i: i32 = 0;
+    let h: i32 = 0;
+    let i: i32 = 0;
     while (i < name.len()) { h = h * 31 + (name[i] as i32); i = i + 1; }
     if (h < 0) { h = 0 - h; }
     return h % n;
 }
 function refset_add(rs: RefSet, name: string): RefSet {
-    var bk: i32 = bucket_of(name, rs.head.len());
-    var names: string[] = rs.names.append(name);
-    var next: i32[] = rs.next.append(rs.head[bk]);
-    var head: i32[] = rs.head.with(bk, names.len() - 1);
+    let bk: i32 = bucket_of(name, rs.head.len());
+    let names: string[] = rs.names.append(name);
+    let next: i32[] = rs.next.append(rs.head[bk]);
+    let head: i32[] = rs.head.with(bk, names.len() - 1);
     return RefSet { names: names, head: head, next: next };
 }
 function refset_has(rs: RefSet, name: string): boolean {
-    var i: i32 = rs.head[bucket_of(name, rs.head.len())];
+    let i: i32 = rs.head[bucket_of(name, rs.head.len())];
     while (i >= 0) {
         if (rs.names[i] == name) { return true; }
         i = rs.next[i];
@@ -9141,13 +9141,13 @@ function refset_has(rs: RefSet, name: string): boolean {
     return false;
 }
 function main(): i32 {
-    var rs: RefSet = RefSet { names: [], head: [0 - 1, 0 - 1, 0 - 1, 0 - 1], next: [] };
-    var i: i32 = 0;
+    let rs: RefSet = RefSet { names: [], head: [0 - 1, 0 - 1, 0 - 1, 0 - 1], next: [] };
+    let i: i32 = 0;
     while (i < 40) {
         rs = refset_add(rs, "sym" + i.to_string());
         i = i + 1;
     }
-    var bad: i32 = 0;
+    let bad: i32 = 0;
     if (rs.names.len() != 40) { bad = bad + 1; }
     if (!refset_has(rs, "sym0")) { bad = bad + 2; }
     if (!refset_has(rs, "sym39")) { bad = bad + 4; }
@@ -9170,11 +9170,11 @@ function setter(b: Box, i: i32, v: i32): i32[] {
     return b.xs.with(i, v);
 }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 30) {
-        var b: Box = Box { xs: [1, 2, 3], n: i };
-        var ys: i32[] = setter(b, 0, 9);
+        let b: Box = Box { xs: [1, 2, 3], n: i };
+        let ys: i32[] = setter(b, 0, 9);
         if (b.xs[0] != 1) { bad = bad + 1; }
         if (ys[0] != 9) { bad = bad + 2; }
         if (b.xs.len() != 3 || ys.len() != 3) { bad = bad + 4; }
@@ -9198,22 +9198,22 @@ import "std/i32";
 import "std/string";
 struct Box { xs: i32[], names: string[] }
 function build(n: i32): i32[] {
-    var b: Box = Box { xs: [0, 0, 0], names: [] };
-    var ys: i32[] = b.xs.with(0, n);
+    let b: Box = Box { xs: [0, 0, 0], names: [] };
+    let ys: i32[] = b.xs.with(0, n);
     return ys;
 }
 function build_str(n: i32): string[] {
-    var b: Box = Box { xs: [], names: ["a", "b"] };
-    var ns: string[] = b.names.with(0, "v" + n.to_string());
+    let b: Box = Box { xs: [], names: ["a", "b"] };
+    let ns: string[] = b.names.with(0, "v" + n.to_string());
     return ns;
 }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var ys: i32[] = build(i);
+        let ys: i32[] = build(i);
         if (ys[0] != i || ys[1] != 0 || ys.len() != 3) { bad = bad + 1; }
-        var ns: string[] = build_str(i);
+        let ns: string[] = build_str(i);
         if (ns[0] != "v" + i.to_string() || ns[1] != "b") { bad = bad + 2; }
         i = i + 1;
     }
@@ -9233,24 +9233,24 @@ function main(): i32 {
 struct Inner { xs: i32[] }
 struct Outer { inner: Inner, n: i32 }
 function loop_host(k: i32): i32 {
-    var b: Inner = Inner { xs: [1, 2, 3] };
-    var acc: i32 = 0;
-    var j: i32 = 0;
+    let b: Inner = Inner { xs: [1, 2, 3] };
+    let acc: i32 = 0;
+    let j: i32 = 0;
     while (j < k) {
-        var zs: i32[] = b.xs.with(0, j);
+        let zs: i32[] = b.xs.with(0, j);
         acc = acc + zs[0] + zs.len();
         j = j + 1;
     }
     return acc;
 }
 function alias_root(): i32 {
-    var o: Outer = Outer { inner: Inner { xs: [1, 2, 3] }, n: 0 };
-    var t: Inner = o.inner;
-    var ys: i32[] = t.xs.with(0, 9);
+    let o: Outer = Outer { inner: Inner { xs: [1, 2, 3] }, n: 0 };
+    let t: Inner = o.inner;
+    let ys: i32[] = t.xs.with(0, 9);
     return ys[0] + o.inner.xs[0];
 }
 function main(): i32 {
-    var bad: i32 = 0;
+    let bad: i32 = 0;
     if (loop_host(3) != 12) { bad = bad + 1; }
     if (alias_root() != 10) { bad = bad + 2; }
     return bad + __rc_underflow_count();
@@ -9270,20 +9270,20 @@ import "std/i32";
 import "std/string";
 struct S { xs: i32[], ys: string[], n: i32 }
 function grow(s: S, v: i32): S {
-    var k: i32 = s.xs.len();
-    var e: i32 = s.xs[0];
-    var zs: i32[] = s.xs.append(v + e);
-    var ws: string[] = s.ys.append("n" + k.to_string());
+    let k: i32 = s.xs.len();
+    let e: i32 = s.xs[0];
+    let zs: i32[] = s.xs.append(v + e);
+    let ws: string[] = s.ys.append("n" + k.to_string());
     return S { xs: zs, ys: ws, n: k };
 }
 function main(): i32 {
-    var s: S = S { xs: [7], ys: [], n: 0 };
-    var i: i32 = 0;
+    let s: S = S { xs: [7], ys: [], n: 0 };
+    let i: i32 = 0;
     while (i < 40) {
         s = grow(s, i);
         i = i + 1;
     }
-    var bad: i32 = 0;
+    let bad: i32 = 0;
     if (s.xs.len() != 41 || s.n != 40) { bad = bad + 1; }
     if (s.xs[0] != 7 || s.xs[40] != 46) { bad = bad + 2; }
     if (s.ys.len() != 40 || s.ys[39] != "n40") { bad = bad + 4; }
@@ -9295,7 +9295,7 @@ function main(): i32 {
 		// counted rc=1 block, so every site that consumes one releases it.
 		// The four shapes, all of which leaked one box a round before:
 		// the match scrutinee (the arm frees the box shallow once its
-		// payload is out), a `var` local, an argument temp, and a bare
+		// payload is out), a `let` local, an argument temp, and a bare
 		// discarded statement. `env` of a name nothing sets answers None
 		// every round, which is the arm whose box the runtime had been
 		// allocating BELOW the enum's uniform size — freeing that one at
@@ -9308,14 +9308,14 @@ function sink(o: Option[string]): i32 {
     match (o) { Some(_) => { return 1; }, None => { return 0; } }
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
         match (env("FERN_RC_CORPUS_NEVER_SET_A")) {
             Some(v) => { acc = acc + v.len(); },
             None => { acc = acc + 1; }
         }
-        var o: Option[string] = env("FERN_RC_CORPUS_NEVER_SET_B");
+        let o: Option[string] = env("FERN_RC_CORPUS_NEVER_SET_B");
         match (o) { Some(_) => { acc = acc + 1000; }, None => {} }
         acc = acc + sink(env("FERN_RC_CORPUS_NEVER_SET_C"));
         env("FERN_RC_CORPUS_NEVER_SET_D");
@@ -9341,19 +9341,19 @@ function main(): i32 {
 		// Both consumer shapes, because they differ on the operand stack
 		// where the post-call dec is spliced in: the match scrutinee sets
 		// suppressPairRebox and leaves the bare (tag, payload) there, while
-		// the `var` binding reboxes it into one heap pointer first.
+		// the `let` binding reboxes it into one heap pointer first.
 		name: "pair_form_call_arg_temp_reclaimed",
 		src: `
 import "std/string";
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
         match ("  12345678  ".trim().parse_int()) {
             Some(n) => { acc = acc + (n / 12345678); },
             None => { }
         }
-        var o: Option[i32] = "  87654321  ".trim().parse_int();
+        let o: Option[i32] = "  87654321  ".trim().parse_int();
         match (o) {
             Some(n) => { acc = acc + (n / 87654321); },
             None => { }
@@ -9378,8 +9378,8 @@ function main(): i32 {
 		name: "str_param_append_leaves_the_callers_string_alone",
 		src: `
 function mk(n: i32): string {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < n) { s = s + "abcde"; i = i + 1; }
     return s;
 }
@@ -9388,11 +9388,11 @@ function bump(a: string, s: string): i32 {
     return a.len();
 }
 function main(): i32 {
-    var base: string = mk(4);
-    var pre: i32 = base.len();
-    var got: i32 = bump(base, "XYZ");
-    var post: i32 = base.len();
-    var again: i32 = bump(base, "XYZ");
+    let base: string = mk(4);
+    let pre: i32 = base.len();
+    let got: i32 = bump(base, "XYZ");
+    let post: i32 = base.len();
+    let again: i32 = bump(base, "XYZ");
     if (pre != 20) { return 1; }
     if (post != 20) { return 2; }
     if (base.len() != 20) { return 3; }
@@ -9415,8 +9415,8 @@ function main(): i32 {
 		src: `
 struct Buf { buf: string, n: i32 }
 function mk(n: i32): string {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < n) { s = s + "abcde"; i = i + 1; }
     return s;
 }
@@ -9426,12 +9426,12 @@ function bump(a: string, s: string): i32 {
     return a.len();
 }
 function main(): i32 {
-    var b: Buf = Buf { buf: mk(4), n: 0 };
-    var alias: string = b.buf;
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let b: Buf = Buf { buf: mk(4), n: 0 };
+    let alias: string = b.buf;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 8) {
-        var pre: i32 = b.buf.len();
+        let pre: i32 = b.buf.len();
         acc = acc + bump(b.buf, "XYZ");
         if (b.buf.len() != pre) { return 1; }
         if (alias.len() != 20) { return 2; }
@@ -9453,8 +9453,8 @@ function main(): i32 {
 		name: "str_param_reassigned_to_a_fresh_value",
 		src: `
 function mk(n: i32): string {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < n) { s = s + "abcd"; i = i + 1; }
     return s;
 }
@@ -9464,9 +9464,9 @@ function pick(a: string, s: string, keep: boolean): string {
     return "fixed";
 }
 function main(): i32 {
-    var base: string = mk(4);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let base: string = mk(4);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 64) {
         acc = acc + pick(base, "12345678", true).len();
         acc = acc + pick(base, "12345678", false).len();
@@ -9487,14 +9487,14 @@ function main(): i32 {
 		// walk flagged in stdin_double / multiline_stdin.
 		name: "pair_form_callee_arg_temp_released",
 		src: `import "std/string";
-function mk(i: i32): string { var s: string = "abcdefghij"; return s + "k"; }
+function mk(i: i32): string { let s: string = "abcdefghij"; return s + "k"; }
 function classify(s: string): Option[i32] { if (s.len() > 3) { return Some(s.len()); } return None; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         match (classify(mk(i))) { Some(n) => { acc = acc + n; }, None => {} }
-        var line: string = "   " + "12345678" + "   ";
+        let line: string = "   " + "12345678" + "   ";
         match (line.trim().parse_int()) {
             Some(n) => { acc = acc + (n / 12345678); },
             None => { return 254; }
@@ -9519,8 +9519,8 @@ function bump(c: C): Result[C, string] {
     return Ok(C { value: c.value + 1 });
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
         match (bump(C { value: i })) { Ok(n) => { t = t + n.value; }, Err(e) => { return 251; } }
         i = i + 1;
@@ -9546,16 +9546,16 @@ function main(): i32 {
 		src: `
 function id[T](x: T): T { return x; }
 function capturing(p: i32): i32 {
-    var v: (i32) => i32 = id(((a: i32) => (a + p)));
+    let v: (i32) => i32 = id(((a: i32) => (a + p)));
     return v(1);
 }
 function non_capturing(): i32 {
-    var v: (i32) => i32 = id(((a: i32) => (a + 1)));
+    let v: (i32) => i32 = id(((a: i32) => (a + 1)));
     return v(1);
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { t = t + capturing(i) + non_capturing(); i = i + 1; }
     return (t - 5250) + __rc_underflow_count();
 }`,
@@ -9573,20 +9573,20 @@ function main(): i32 {
 struct Inner { xs: i32[] }
 struct Outer { inner: Inner, n: i32 }
 function mk(): Outer {
-    var b: i32[] = [];
-    var i: i32 = 0;
+    let b: i32[] = [];
+    let i: i32 = 0;
     while (i < 3) { b = b.append(i); i = i + 1; }
     return Outer { inner: Inner { xs: b }, n: 0 };
 }
 function through_field_read(): i32 {
-    var o: Outer = mk();
-    var t: Inner = o.inner;
-    var ys: i32[] = t.xs.append(9);
+    let o: Outer = mk();
+    let t: Inner = o.inner;
+    let ys: i32[] = t.xs.append(9);
     return ys.len() * 10 + o.inner.xs.len();
 }
 function through_fresh_call(): i32 {
-    var o: Outer = mk();
-    var ys: i32[] = o.inner.xs.append(9);
+    let o: Outer = mk();
+    let ys: i32[] = o.inner.xs.append(9);
     return ys.len();
 }
 function main(): i32 {
@@ -9620,13 +9620,13 @@ function main(): i32 {
 		name: "array_with_borrowed_receiver_result_reclaims",
 		src: `
 function mk(n: i32): i32[] {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = a.append(i); i = i + 1; }
     return a;
 }
 function via_param(xs: i32[]): i32 {
-    var w: i32[] = xs.with(0, 99);
+    let w: i32[] = xs.with(0, 99);
     if (w[0] != 99) { return 1000; }
     if (xs[0] != 0) { return 2000; }
     if (w[3] != 3) { return 3000; }
@@ -9635,7 +9635,7 @@ function via_param(xs: i32[]): i32 {
 function via_binding(o: Option[i32[]]): i32 {
     match (o) {
         Some(xs) => {
-            var w: i32[] = xs.with(1, 99);
+            let w: i32[] = xs.with(1, 99);
             if (w[1] != 99) { return 1000; }
             if (xs[1] != 1) { return 2000; }
             return 1;
@@ -9644,13 +9644,13 @@ function via_binding(o: Option[i32[]]): i32 {
     }
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 200) {
-        var buf: i32[] = mk(8);
+        let buf: i32[] = mk(8);
         t = t + via_param(buf);
         if (buf[0] != 0) { return 5000; }
-        var opt: Option[i32[]] = Some(mk(8));
+        let opt: Option[i32[]] = Some(mk(8));
         t = t + via_binding(opt);
         r = r + 1;
     }
@@ -9665,25 +9665,25 @@ function main(): i32 {
 		name: "returned_bare_param_kept_by_caller",
 		src: `
 @noinline
-function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "a-wide-payload-past-any-inline-threshold-" + t; }
+function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "a-wide-payload-past-any-inline-threshold-" + t; }
 @noinline
 function visible(gfns: string[], keep: boolean): string[] {
     if (keep) { return gfns; }
-    var out: string[] = [];
+    let out: string[] = [];
     return out;
 }
 function round(i: i32): i32 {
-    var gfns: string[] = [];
-    var k: i32 = 0;
+    let gfns: string[] = [];
+    let k: i32 = 0;
     while (k < 6) { gfns = gfns.append(w(i + k)); k = k + 1; }
-    var vis: string[] = visible(gfns, i % 2 == 0);
-    var t: i32 = 0;
+    let vis: string[] = visible(gfns, i % 2 == 0);
+    let t: i32 = 0;
     if (gfns[0] == w(i)) { t = t + 1; }
     return (t + vis.len() + gfns.len() + gfns.len()) % 97;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 120) { acc = acc + round(i); i = i + 1; }
     return (acc % 83 - 11) + __rc_underflow_count();
 }`,
@@ -9700,13 +9700,13 @@ struct Req { path: string, n: i32 }
 struct Holder { r: Req }
 function parse(i: i32): Option[Req] {
     if (i % 6 == 0) { return None; }
-    var p: string = "";
-    var j: i32 = 0;
+    let p: string = "";
+    let j: i32 = 0;
     while (j < 4) { p = p + "ab"; j = j + 1; }
     return Some(Req { path: p, n: i });
 }
 function round(i: i32, handler: (Req) => i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (parse(i)) {
         Some(req) => { t = handler(req); },
         None => { },
@@ -9714,7 +9714,7 @@ function round(i: i32, handler: (Req) => i32): i32 {
     return t;
 }
 function round_back(i: i32, handler: (Req) => Req): i32 {
-    var kept: Req = Req { path: "", n: 0 };
+    let kept: Req = Req { path: "", n: 0 };
     match (parse(i)) {
         Some(req) => { kept = handler(req); },
         None => { },
@@ -9722,7 +9722,7 @@ function round_back(i: i32, handler: (Req) => Req): i32 {
     return kept.path.len() + kept.n;
 }
 function round_store(i: i32, handler: (Req) => Holder): i32 {
-    var h: Holder = Holder { r: Req { path: "", n: 0 } };
+    let h: Holder = Holder { r: Req { path: "", n: 0 } };
     match (parse(i)) {
         Some(req) => { h = handler(req); },
         None => { },
@@ -9731,9 +9731,9 @@ function round_store(i: i32, handler: (Req) => Holder): i32 {
 }
 function handle(r: Req): i32 { return r.path.len() + r.n; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var base: string = "x" + "yz";
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let base: string = "x" + "yz";
+    let i: i32 = 0;
     while (i < 50) {
         acc = acc + round(i, handle);
         acc = acc + round(i, (r: Req): i32 => r.n);
@@ -9748,7 +9748,7 @@ function main(): i32 {
 	{
 		// #8003: what a call through a function value returns is the caller's
 		// once every address-taken function hands back a box of its own —
-		// bound in the arm (tcp_serve's `var resp = handler(req, plat)`) or
+		// bound in the arm (tcp_serve's `let resp = handler(req, plat)`) or
 		// passed straight on.
 		name: "indirect_call_result_released",
 		src: `
@@ -9756,19 +9756,19 @@ struct Req { path: string, n: i32 }
 struct Resp { body: string }
 function parse(i: i32): Option[Req] {
     if (i % 6 == 0) { return None; }
-    var p: string = "";
-    var j: i32 = 0;
+    let p: string = "";
+    let j: i32 = 0;
     while (j < 4) { p = p + "ab"; j = j + 1; }
     return Some(Req { path: p, n: i });
 }
 function send(r: Resp): i32 { return r.body.len(); }
 function serve(handler: (Req, i32) => Resp): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
         match (parse(i)) {
             Some(req) => {
-                var resp: Resp = handler(req, 1);
+                let resp: Resp = handler(req, 1);
                 t = t + send(resp) + send(handler(req, 2));
             },
             None => {}
@@ -9793,8 +9793,8 @@ struct Req { path: string, n: i32 }
 @noinline
 function parse(i: i32): Option[Req] {
     if (i % 6 == 0) { return None; }
-    var p: string = "";
-    var j: i32 = 0;
+    let p: string = "";
+    let j: i32 = 0;
     while (j < 4) { p = p + "ab"; j = j + 1; }
     return Some(Req { path: p, n: i });
 }
@@ -9807,8 +9807,8 @@ function read(i: i32): Option[Req] {
     return None;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
         match (read(i)) {
             Some(req) => { t = t + req.path.len(); },

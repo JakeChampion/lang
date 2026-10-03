@@ -1,7 +1,7 @@
 # The cross-block reuse pairing keyed its recipient by name
 
-`xblock_pending` carries the cross-block FBIP pairings: a `var d = T{…}` at a
-block's top level, dead by statement k, whose box a `var c = T{…}` at the top of
+`xblock_pending` carries the cross-block FBIP pairings: a `let d = T{…}` at a
+block's top level, dead by statement k, whose box a `let c = T{…}` at the top of
 a later if-arm reuses in place. The rows were `"<recipient name>|<donor>"`, and
 `xblock_donor_for` returned the donor of the **first** row whose pre-`|` half
 matched.
@@ -11,7 +11,7 @@ Two things make one spelling able to mint two rows:
 - `xblock_pairings_for` deliberately restarts the else arm from the same
   `consumed` set (#4402 opt 3), so both arms of one `if` are scanned
   independently; and
-- an if-arm's recipient is an ordinary block-scoped `var`, so sibling arms
+- an if-arm's recipient is an ordinary block-scoped `let`, so sibling arms
   naturally use the same name.
 
 Under the first-match read, one arm's recipient then resolved the other arm's

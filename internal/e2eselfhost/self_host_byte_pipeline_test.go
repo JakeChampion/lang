@@ -17,7 +17,7 @@ func TestSelfHostBytePipeline(t *testing.T) {
 	if err := os.WriteFile(src, []byte(e2eharness.BytePipelineProgram), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	env := []string{"FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1"}
+	env := []string{"FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1"}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			var binary string
@@ -57,7 +57,7 @@ func TestSelfHostArm64DarwinBytePipeline(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(cli, "-target", "arm64-darwin", src, e2eharness.SelfHostStdlibRoot(t), "-o", bin)
-	cmd.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, out)
 	}

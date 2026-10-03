@@ -149,7 +149,7 @@ are wired end-to-end:
   lowers it to a raw in-place store —
   `internal/ir/ir.go:9921-9956`: compute `base + field_offset`,
   evaluate the value, `payloadStoreOpFor(ft, ptrW)`. There is **no
-  mutability gate** (no `mut` keyword, no `let` vs `var`
+  mutability gate** (no `mut` keyword, no `let` vs `let`
   distinction on fields), **no rc check, and no copy-on-write** on
   this path — unlike `arr.push` / `arr[i] = v` / `Map.set`, which
   all route through CoW helpers. A struct field store mutates the
@@ -162,8 +162,8 @@ are wired end-to-end:
   ```fern
   struct Box { items: i32[] }
   function main(): i32 {
-      var a = Box { items: [10] };
-      var c = a;          // alias — same box
+      let a = Box { items: [10] };
+      let c = a;          // alias — same box
       a.items = [99];     // mutate through a
       return c.items[0];  // 99 (reference semantics), not 10
   }
@@ -211,8 +211,8 @@ struct Node {
 }
 
 function main(): i32 {
-    var a = Node { val: 1, next: [] };
-    var b = Node { val: 2, next: [] };
+    let a = Node { val: 1, next: [] };
+    let b = Node { val: 2, next: [] };
     a.next = [b];          // a -> b
     b.next = [a];          // b -> a   (closes the cycle)
     // a -> b -> a -> b : reading val proves the back-edge resolves
@@ -235,7 +235,7 @@ A single-node self-cycle works identically:
 ```fern
 struct Node { val: i32, link: Node[] }
 function main(): i32 {
-    var a = Node { val: 7, link: [] };
+    let a = Node { val: 7, link: [] };
     a.link = [a];                  // a points at itself
     return a.link[0].link[0].val;  // a -> a -> val == 7
 }

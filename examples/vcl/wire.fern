@@ -22,8 +22,8 @@ function hop_by_hop(): string[] {
 }
 
 function is_hop_by_hop(name: string): boolean {
-  var hops: string[] = hop_by_hop();
-  var i: i32 = 0;
+  let hops: string[] = hop_by_hop();
+  let i: i32 = 0;
   while (i < hops.len()) {
     if (name.eq_ignore_ascii_case(hops[i])) {
       return true;
@@ -38,18 +38,18 @@ function is_hop_by_hop(name: string): boolean {
 // the body as the policy left it, whose length the client recomputes
 // because a policy may have rewritten the body.
 pub function request_of(m: runtime.Msg, base: string): fetch.Request {
-  var method: string = m.method;
+  let method: string = m.method;
   if (method == "") {
     method = "GET";
   }
-  var url: string = m.url;
+  let url: string = m.url;
   if (url == "") {
     url = "/";
   }
-  var req: fetch.Request = fetch.request(method, base + url);
-  var i: i32 = 0;
+  let req: fetch.Request = fetch.request(method, base + url);
+  let i: i32 = 0;
   while (i < m.headers.names.len()) {
-    var n: string = m.headers.names[i];
+    let n: string = m.headers.names[i];
     if (!is_hop_by_hop(n)) {
       req = req.with_header(n, m.headers.values[i]);
     }
@@ -61,8 +61,8 @@ pub function request_of(m: runtime.Msg, base: string): fetch.Request {
 // headers_of turns a response's headers into the proxy's own, the last
 // value of a repeated field winning as `Headers.set` has it.
 pub function headers_of(h: HeaderMap): runtime.Headers {
-  var out: runtime.Headers = runtime.headers_new();
-  var i: i32 = 0;
+  let out: runtime.Headers = runtime.headers_new();
+  let i: i32 = 0;
   while (i < h.names.len()) {
     out = out.set(h.names[i], h.values[i]);
     i = i + 1;
@@ -72,10 +72,10 @@ pub function headers_of(h: HeaderMap): runtime.Headers {
 
 // leading_digits returns the run of ASCII digits at the start of `s`.
 function leading_digits(s: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < s.len()) {
-    var b: u8 = s[i];
+    let b: u8 = s[i];
     if (b < 48 || b > 57) {
       return out;
     }
@@ -89,15 +89,15 @@ function leading_digits(s: string): string {
 // origin says how long its answer may be kept. `no-store` and `no-cache`
 // answer 0, which the built-in caching rule then reads as uncacheable.
 pub function max_age(cc: string): Option[f64] {
-  var lower: string = cc.to_ascii_lower();
+  let lower: string = cc.to_ascii_lower();
   if (lower.contains("no-store") || lower.contains("no-cache") || lower.contains("private")) {
     return Some(0.0);
   }
-  var at: i32 = lower.index_of("max-age=");
+  let at: i32 = lower.index_of("max-age=");
   if (at < 0) {
     return None;
   }
-  var digits: string = leading_digits(slice_unchecked(lower, at + 8, lower.len()).to_owned());
+  let digits: string = leading_digits(slice_unchecked(lower, at + 8, lower.len()).to_owned());
   if (digits.len() == 0) {
     return None;
   }

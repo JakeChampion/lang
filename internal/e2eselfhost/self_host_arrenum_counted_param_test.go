@@ -66,7 +66,7 @@ import (
 const arrenumCountedDecl = `enum E { A(i32[]), B }
 struct P { f: E[], n: i32 }
 struct Q { e: E, n: i32 }
-function mkv(i: i32): E[] { var o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
+function mkv(i: i32): E[] { let o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
 function seed(): i32 { return 7; }
 `
 
@@ -77,8 +77,8 @@ function seed(): i32 { return 7; }
 func arrenumCountedMain(use string) string {
 	return `
 function main(): i32 {
-    var keep: E[] = mkv(seed());
-    var t: i32 = 0; var r: i32 = 0;
+    let keep: E[] = mkv(seed());
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + ` + use + `; r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -96,7 +96,7 @@ func arrenumCountedCases() []arrenumShareCase {
 			// the holder's field drop net to zero and the caller's claim is the
 			// only one left. 104/102 before, 104/104 now.
 			name: "counted_store",
-			src: mk(`function rd(src: E[], i: i32): i32 { var p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }`,
+			src: mk(`function rd(src: E[], i: i32): i32 { let p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }`,
 				"rd(keep, r)"),
 			want: 6, balance: true,
 		},
@@ -116,7 +116,7 @@ func arrenumCountedCases() []arrenumShareCase {
 			// callee — but the floor is a leak either way and widening it needs
 			// the arm-binding analysis.
 			name: "callee_extracts_element",
-			src: mk(`function rd(src: E[], i: i32): i32 { var e: E = src[0]; return (match (e) { E.A(xs) => xs.len(), E.B => 0 }) + i; }`,
+			src: mk(`function rd(src: E[], i: i32): i32 { let e: E = src[0]; return (match (e) { E.A(xs) => xs.len(), E.B => 0 }) + i; }`,
 				"rd(keep, r)"),
 			want: 9,
 		},
@@ -128,7 +128,7 @@ func arrenumCountedCases() []arrenumShareCase {
 			// the caller's element walk would then free a box the holder still
 			// references. Stays refused.
 			name: "callee_stores_element",
-			src: mk(`function rd(src: E[], i: i32): i32 { var q: Q = Q { e: src[0], n: i }; return (match (q.e) { E.A(xs) => xs.len(), E.B => 0 }) + q.n; }`,
+			src: mk(`function rd(src: E[], i: i32): i32 { let q: Q = Q { e: src[0], n: i }; return (match (q.e) { E.A(xs) => xs.len(), E.B => 0 }) + q.n; }`,
 				"rd(keep, r)"),
 			want: 9,
 		},

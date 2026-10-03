@@ -10,8 +10,8 @@ import (
 // takes the struct path only when the head names a struct declared in the same
 // file (is_struct_pattern_arm, #6676): it desugars `match (p) { Point { x,
 // y } => … }` at parse time (build_struct_match) into the `done`-flag chain
-// with per-field `var bind = tmp.field;` binds — the field reads + ifs lower
-// through the ordinary IR paths, no checker/irlower changes. These build the
+// with per-field `let bind = tmp.field;` binds — the field reads + ifs lower
+// through the ordinary IR paths, no checker/lowering changes. These build the
 // self-host x86-64 + arm64 IR drivers and check each program against the
 // native interpreter oracle.
 var selfHostStructMatchCases = []struct {
@@ -93,7 +93,7 @@ func TestSelfHostStructMatchX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range selfHostStructMatchCases {
@@ -124,7 +124,7 @@ func TestSelfHostStructMatchArm64(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range selfHostStructMatchCases {

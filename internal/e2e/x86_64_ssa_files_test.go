@@ -58,7 +58,7 @@ function main(): i32 {
 		name: "invalid_utf8_bytes_and_remove_file",
 		src: `import "std/i32";
 function main(): i32 {
-  var raw: u8[] = [104 as u8, 105 as u8, 255 as u8, 254 as u8];
+  let raw: u8[] = [104 as u8, 105 as u8, 255 as u8, 254 as u8];
   match (write_file("files_raw.bin", string_from_bytes_unchecked(raw))) {
     Ok(u) => {},
     Err(e) => { return 1; },
@@ -159,16 +159,16 @@ function main(): i32 {
 		// past 2023 in milliseconds, and a non-positive sleep returns.
 		name: "clocks_advance_and_sleep_ms_waits",
 		src: `function main(): i32 {
-  var a: i64 = monotonic_ns();
+  let a: i64 = monotonic_ns();
   sleep_ms(30);
-  var b: i64 = monotonic_ns();
+  let b: i64 = monotonic_ns();
   if (b >= a + 25000000) { stdout().write("slept\n"); } else { stdout().write("too-fast\n"); return 1; }
-  var c: i64 = monotonic_ns();
+  let c: i64 = monotonic_ns();
   sleep_ms(0);
   sleep_ms(0 - 5);
-  var d: i64 = monotonic_ns();
+  let d: i64 = monotonic_ns();
   if (d >= c && d < c + 1000000000) { stdout().write("prompt\n"); } else { return 2; }
-  var ms: i64 = now_unix_ms();
+  let ms: i64 = now_unix_ms();
   if (ms > 1700000000000 && ms < 4000000000000) { stdout().write("epoch-ms\n"); } else { return 3; }
   return 0;
 }`,
@@ -179,17 +179,17 @@ function main(): i32 {
 		name: "random_bytes_and_random_i32_fill_and_vary",
 		src: `import "std/i32";
 function main(): i32 {
-  var a: u8[] = random_bytes(64);
-  var b: u8[] = random_bytes(64);
-  var empty: u8[] = random_bytes(0);
+  let a: u8[] = random_bytes(64);
+  let b: u8[] = random_bytes(64);
+  let empty: u8[] = random_bytes(0);
   stdout().write("len=" + a.len().to_string() + " empty=" + empty.len().to_string() + "\n");
-  var same: i32 = 0;
-  var i: i32 = 0;
+  let same: i32 = 0;
+  let i: i32 = 0;
   while (i < 64) { if (a[i] == b[i]) { same = same + 1; } i = i + 1; }
   if (same < 64) { stdout().write("draws-differ\n"); } else { return 1; }
-  var x: i32 = random_i32();
-  var y: i32 = random_i32();
-  var z: i32 = random_i32();
+  let x: i32 = random_i32();
+  let y: i32 = random_i32();
+  let z: i32 = random_i32();
   if (x != y || y != z) { stdout().write("i32-draws-differ\n"); } else { return 2; }
   return 0;
 }`,

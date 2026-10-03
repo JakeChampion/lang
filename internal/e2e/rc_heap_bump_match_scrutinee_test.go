@@ -27,16 +27,16 @@ import (
 // allocates — ownedCallResultType excludes pair-form callees, so this feature
 // correctly leaves them to the pair-form machinery.
 
-// Expression-form scrutinee: `var r = match (mk(i)) { A(x) => x, … }`.
+// Expression-form scrutinee: `let r = match (mk(i)) { A(x) => x, … }`.
 func matchScrutineeExprBumpSrc(n string) string {
 	return `enum E3 { A(i32), B(i32), C }
 function mk(v: i32): E3 { return A(v); }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
-        var r: i32 = match (mk(i)) { A(x) => x, B(y) => y, C => 0 };
+        let r: i32 = match (mk(i)) { A(x) => x, B(y) => y, C => 0 };
         acc = acc + r;
         i = i + 1;
     }
@@ -50,9 +50,9 @@ func matchScrutineeStmtBumpSrc(n string) string {
 	return `enum E3 { A(i32), B(i32), C }
 function mk(v: i32): E3 { return A(v); }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
         match (mk(i)) {
             A(x) => { acc = acc + x; },
@@ -71,11 +71,11 @@ function main(): i32 {
 func matchScrutineeLiteralBumpSrc(n string) string {
 	return `enum E3 { A(i32), B(i32), C }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
-        var r: i32 = match (A(i)) { A(x) => x, B(y) => y, C => 0 };
+        let r: i32 = match (A(i)) { A(x) => x, B(y) => y, C => 0 };
         match (B(i)) { A(x) => { acc = acc + x; }, B(y) => { acc = acc + y; }, C => {}, }
         acc = acc + r;
         i = i + 1;
@@ -89,11 +89,11 @@ function main(): i32 {
 // reference construction counted, so keep survives every iteration.
 const matchScrutineeLiteralAliasedPayloadSafe = `enum S3 { P(string), Q(i32), R }
 function main(): i32 {
-    var keep: string = "abc" + "def";
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let keep: string = "abc" + "def";
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
-        var r: i32 = match (P(keep)) { P(s) => s.len(), Q(y) => y, R => 0 };
+        let r: i32 = match (P(keep)) { P(s) => s.len(), Q(y) => y, R => 0 };
         acc = acc + r;
         i = i + 1;
     }
@@ -110,15 +110,15 @@ function main(): i32 {
 const matchScrutineeAliasedSafe = `enum E3 { A(i32), B(i32), C }
 function pass(b: E3): E3 { return b; }
 function main(): i32 {
-    var b: E3 = A(7);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let b: E3 = A(7);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
-        var r: i32 = match (pass(b)) { A(x) => x, B(y) => y, C => 0 };
+        let r: i32 = match (pass(b)) { A(x) => x, B(y) => y, C => 0 };
         acc = acc + r;
         i = i + 1;
     }
-    var final: i32 = match (b) { A(x) => x, B(y) => y, C => 0 };
+    let final: i32 = match (b) { A(x) => x, B(y) => y, C => 0 };
     if (acc != 1400) { return 99; }
     if (final != 7) { return 88; }
     return __rc_underflow_count();

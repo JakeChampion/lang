@@ -24,11 +24,11 @@ import (
 // bump cursor advanced across an n-iteration build-and-discard loop.
 func heapBumpGrowthSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
-        var row: i32[] = [i, i + 1, i + 2];
+        let row: i32[] = [i, i + 1, i + 2];
         sum = sum + row[0];
         i = i + 1;
     }

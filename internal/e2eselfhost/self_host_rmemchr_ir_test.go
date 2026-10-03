@@ -38,7 +38,7 @@ import (
 const rmemchrIRProg = `function ref(s: string, b: i32, from: i32): i32 {
     if (b < 0) { return 0 - 1; }
     if (b > 255) { return 0 - 1; }
-    var i: i32 = from;
+    let i: i32 = from;
     if (i > s.len() - 1) { i = s.len() - 1; }
     while (i >= 0) {
         if ((s[i] as i32) == b) { return i; }
@@ -47,15 +47,15 @@ const rmemchrIRProg = `function ref(s: string, b: i32, from: i32): i32 {
     return 0 - 1;
 }
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     while (n <= 72) {
-        var base: string = "";
-        var k: i32 = 0;
+        let base: string = "";
+        let k: i32 = 0;
         while (k < n) { base = base + "a"; k = k + 1; }
         if (__rmemchr(base, 122, n) != ref(base, 122, n)) { return 1; }
-        var at: i32 = 0;
+        let at: i32 = 0;
         while (at < n) {
-            var s: string = slice_unchecked(base, 0, at) + "z" + slice_unchecked(base, at + 1, n);
+            let s: string = slice_unchecked(base, 0, at) + "z" + slice_unchecked(base, at + 1, n);
             if (__rmemchr(s, 122, n) != ref(s, 122, n)) { return 2; }
             if (__rmemchr(s, 122, at) != ref(s, 122, at)) { return 3; }
             if (__rmemchr(s, 122, at - 1) != ref(s, 122, at - 1)) { return 4; }

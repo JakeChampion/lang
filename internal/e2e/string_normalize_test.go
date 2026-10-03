@@ -24,8 +24,8 @@ import "std/utf8" as utf8;
 function cp(n: i32): string { return utf8.utf8_encode((n) as char); }
 
 function main(): i32 {
-    var nfc_e: string = cp(233);        // U+00E9, precomposed
-    var nfd_e: string = "e" + cp(769);  // e + COMBINING ACUTE
+    let nfc_e: string = cp(233);        // U+00E9, precomposed
+    let nfd_e: string = "e" + cp(769);  // e + COMBINING ACUTE
 
     // == is byte equality, by design. If this ever starts passing,
     // someone has made == normalize and the map-lookup cost came with it.

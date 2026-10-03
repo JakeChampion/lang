@@ -19,7 +19,7 @@ import "testing"
 const stringSplitEmptySepProg = `
 import "std/string";
 function main(): i32 {
-    var p: string[] = "abc".split("");
+    let p: string[] = "abc".split("");
     if (p.len() != 3) { return 1; }
     if (p[0] != "a") { return 2; }
     if (p[1] != "b") { return 3; }
@@ -29,11 +29,11 @@ function main(): i32 {
     if ("".split("").len() != 0) { return 5; }
 
     // One-byte haystack.
-    var one: string[] = "z".split("");
+    let one: string[] = "z".split("");
     if (one.len() != 1 || one[0] != "z") { return 6; }
 
     // splitn shares the empty-sep branch and caps the piece count.
-    var s2: string[] = "abcd".splitn("", 2);
+    let s2: string[] = "abcd".splitn("", 2);
     if (s2.len() != 2) { return 7; }
     if (s2[0] != "a") { return 8; }
     if (s2[1] != "bcd") { return 9; }
@@ -43,20 +43,20 @@ function main(): i32 {
 
     // Non-ASCII: one piece per codepoint, each piece its whole encoding.
     // "héllo" is 6 bytes, 5 characters.
-    var h: string[] = "héllo".split("");
+    let h: string[] = "héllo".split("");
     if ("héllo".len() != 6) { return 11; }
     if (h.len() != 5) { return 12; }
     if (h[1] != "é" || h[1].len() != 2) { return 13; }
     if (h[4] != "o") { return 14; }
 
     // A 4-byte codepoint stays one piece.
-    var e: string[] = "a😀b".split("");
+    let e: string[] = "a😀b".split("");
     if (e.len() != 3) { return 15; }
     if (e[1] != "😀" || e[1].len() != 4) { return 16; }
 
     // splitn's empty-sep branch steps in the same units: the tail keeps
     // the rest of the bytes intact.
-    var sn: string[] = "héllo".splitn("", 2);
+    let sn: string[] = "héllo".splitn("", 2);
     if (sn.len() != 2) { return 17; }
     if (sn[0] != "h" || sn[1] != "éllo") { return 18; }
 

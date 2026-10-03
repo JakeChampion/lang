@@ -19,6 +19,7 @@ import (
 // No trailing escape on the print: `print` ends the line itself, and adding
 // one makes the answer carry a blank line the expectation does not.
 const selfHostTailRecursionSource = `import "std/i32";
+import "std/string";
 
 function borrowed(s: string, i: i32): i32 {
     if (i == 0) { return s.len(); }
@@ -49,7 +50,7 @@ function serve(c: Cell[i32]): void {
 // keeps the anchor alive for the callee's frame; a jump re-enters the loop
 // with that anchor already dead, so this one must NOT become a loop — the
 // rewrite declines it, and the answer and the heap have to survive either
-// way. irlower.rc_consumed_drop_wired is this shape, and rewriting it
+// way. irlower.rc_consumed_drop_wired was this shape, and rewriting it
 // corrupted the heap of every compiler built through the path.
 function shrink(t: string, n: i32): i32 {
     if (t.len() <= 1) { return n; }
@@ -69,53 +70,69 @@ function view_walk(s: str, i: i32): i32 {
     return view_walk(s, i - 1);
 }
 
+// A str parameter recursing on a fresh view OF ITSELF (#9794). The view the
+// call passes is anchored only to the caller's bytes, which outlive the loop,
+// so the jump strands nothing; the loop owns each round's box and releases
+// the one it replaces. The entry edge passes a fresh box of the caller's view
+// rather than the view itself, so the phi is owned on every edge.
+function view_shrink(s: str, n: i32): i32 {
+    if (s.len() == 0) { return n; }
+    return view_shrink(slice_unchecked(s, 1, s.len()), n + 1);
+}
+
 function main(): i32 {
-    var t: string = "ab" + "cde";
-    var keep: i32[] = [7, 8];
+    let t: string = "ab" + "cde";
+    let keep: i32[] = [7, 8];
 
-    var a: i32 = borrowed(t, 400000);
-    var b: i32 = rebuilt(keep, 400000);
-    var c: i32 = both(t, [1], 200);
+    let a: i32 = borrowed(t, 400000);
+    let b: i32 = rebuilt(keep, 400000);
+    let c: i32 = both(t, [1], 200);
 
-    var ticks: Cell[i32] = cell_new(0);
+    let ticks: Cell[i32] = cell_new(0);
     serve(ticks);
 
-    var view: i32 = shrink("abcdefghij" + "klmnopqrst", 0);
+    let view: i32 = shrink("abcdefghij" + "klmnopqrst", 0);
 
-    var lent: string = "abcde" + "fghij";
-    var peek: str = slice_unchecked(lent, 0, 5);
-    var vw: i32 = view_walk(peek, 400000);
+    let lent: string = "abcde" + "fghij";
+    let peek: str = slice_unchecked(lent, 0, 5);
+    let vw: i32 = view_walk(peek, 400000);
     // Churn the allocator, so a box the loop released would be reissued
     // before the read below.
-    var churn: string[] = [];
-    var ci: i32 = 0;
+    let churn: string[] = [];
+    let ci: i32 = 0;
     while (ci < 200) { churn = churn.append("c" + ci.to_string()); ci = ci + 1; }
-    var still: i32 = peek.len();
+    let still: i32 = peek.len();
+
+    let long: string = "x".repeat(300000);
+    let whole: str = slice_unchecked(long, 0, long.len());
+    let vs: i32 = view_shrink(whole, 0);
+    let wlen: i32 = whole.len();
 
     // The lender reads its own values AFTER the loops had them.
-    var alive: i32 = t.len() + keep.len() + keep[0];
+    let alive: i32 = t.len() + keep.len() + keep[0];
 
     print("a=" + a.to_string() + " b=" + b.to_string() + " c=" + c.to_string()
         + " alive=" + alive.to_string()
         + " ticks=" + ticks.get().to_string()
         + " view=" + view.to_string()
         + " vw=" + vw.to_string() + " still=" + still.to_string()
+        + " vs=" + vs.to_string() + " wlen=" + wlen.to_string()
         + " underflow=" + __rc_underflow_count().to_string());
     return __rc_underflow_count();
 }
 `
 
-const selfHostTailRecursionWant = "0|a=5 b=3 c=206 alive=14 ticks=300000 view=19 vw=5 still=5 underflow=0\n"
+const selfHostTailRecursionWant = "0|a=5 b=3 c=206 alive=14 ticks=300000 view=19 vw=5 still=5 vs=300000 wlen=300000 underflow=0\n"
 
 // TestSelfHostSemanticTailRecursion is the reference-typed half of #9692.
 //
-// The AST lowering is NOT the oracle here, which is why this is a test of its
-// own rather than a row in semProductionPrograms. Its TCO
-// (`irlower.tco_self_tail`) matches an op-stream `call_direct f/N` immediately
+// It was a test of its own rather than a row in semProductionPrograms because
+// the deleted AST lowering could not be its oracle. That lowering's TCO
+// (`irlower.tco_self_tail`) matched an op-stream `call_direct f/N` immediately
 // followed by `return`, and once a parameter carries a unit the frame still
 // owes a release after the call returns — the emitted asm for the `rebuilt`
-// shape is `bl __fn_rebuilt` then `bl __fn___fern_arr_dec` then `ret`. So the
-// pair is not adjacent, the rewrite does not fire, and the AST leg dies on
+// shape was `bl __fn_rebuilt` then `bl __fn___fern_arr_dec` then `ret`. So the
+// pair was not adjacent, the rewrite did not fire, and the AST leg died on
 // these depths. Native does the same thing for the same reason (#9794).
 //
 // The graph rewrite has no such limit: it runs before the unit planner, so

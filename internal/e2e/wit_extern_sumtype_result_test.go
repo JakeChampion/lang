@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -125,13 +125,13 @@ function div_ext(a: i32, b: i32): Result[i32, i32];
 function half_ext(n: i32): Option[i32];
 
 function main(): i32 {
-	var okv: i32 = -9;
+	let okv: i32 = -9;
 	match (div_ext(20, 4)) { Ok(v) => { okv = v; }, Err(e) => { okv = -1; } }
-	var errv: i32 = -9;
+	let errv: i32 = -9;
 	match (div_ext(1, 0)) { Ok(v) => { errv = 99; }, Err(e) => { errv = 7; } }
-	var somev: i32 = -9;
+	let somev: i32 = -9;
 	match (half_ext(10)) { Some(v) => { somev = v; }, None => { somev = -1; } }
-	var nonev: i32 = -9;
+	let nonev: i32 = -9;
 	match (half_ext(3)) { Some(v) => { nonev = 99; }, None => { nonev = 8; } }
 	if (okv == 5 && errv == 7 && somev == 5 && nonev == 8) { write("` + want + `"); } else { write("res-bad"); }
 	return 0;
@@ -140,16 +140,7 @@ function main(): i32 {
 	if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
-	info, prog := loadCheckMono(t, mainPath)
-	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		PrintMainResult:    true,
-	})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
+	core := e2eharness.SelfHostComponentCore(t, mainPath)
 	if !bytes.Contains(core, []byte("local:test/src@0.1.0")) {
 		t.Fatalf("core is missing the custom extern import")
 	}

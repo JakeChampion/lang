@@ -20,10 +20,10 @@ import (
 // Expected: a*8 + b*4 + c*2 + d == 8 + 4 + 2 + 1 == 15.
 func TestSelfHostIRF64ArrayEligible(t *testing.T) {
 	progs := []string{
-		"function main(): i32 { var a: f64[] = [1.5, 2.5]; var x: f64 = a[0] + a[1]; if (x > 3.0) { return 7; } return 0; }",
-		"function main(): i32 { var a: f64[] = [1.0, 2.0]; a = a.with(1, 5.5); var x: f64 = a[0] + a[1]; if (x > 6.0) { return 8; } return 0; }",
-		"function sum(a: f64[]): f64 { return a[0] + a[1]; } function main(): i32 { var arr: f64[] = [2.5, 4.0]; var r: f64 = sum(arr); if (r > 6.0) { return 5; } return 0; }",
-		"function mk(): f64[] { return [1.5, 2.5]; } function main(): i32 { var a: f64[] = mk(); if (a[0] > 1.0) { return 4; } return 0; }",
+		"function main(): i32 { let a: f64[] = [1.5, 2.5]; let x: f64 = a[0] + a[1]; if (x > 3.0) { return 7; } return 0; }",
+		"function main(): i32 { let a: f64[] = [1.0, 2.0]; a = a.with(1, 5.5); let x: f64 = a[0] + a[1]; if (x > 6.0) { return 8; } return 0; }",
+		"function sum(a: f64[]): f64 { return a[0] + a[1]; } function main(): i32 { let arr: f64[] = [2.5, 4.0]; let r: f64 = sum(arr); if (r > 6.0) { return 5; } return 0; }",
+		"function mk(): f64[] { return [1.5, 2.5]; } function main(): i32 { let a: f64[] = mk(); if (a[0] > 1.0) { return 4; } return 0; }",
 	}
 	if got := eligBits(t, progs, []int{8, 4, 2, 1}); got != 15 {
 		t.Errorf("f64-array IR eligibility = %d, want 15 (literal/write/param/return all eligible)", got)

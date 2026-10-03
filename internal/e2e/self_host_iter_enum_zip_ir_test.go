@@ -27,12 +27,12 @@ impl Iterator[i32] for Range {
     }
 }
 pub function enumerate[T, I: Iterator[T]](it: I): (i32, T)[] {
-    var out: (i32, T)[] = []; var cur = it; var i = 0; var go = true;
+    let out: (i32, T)[] = []; let cur = it; let i = 0; let go = true;
     while (go) { match (cur.next()) { Some(t) => { out = out.append((i, t.0)); cur = t.1; i = i + 1; }, None => { go = false; }, } }
     return out;
 }
 pub function zip[T, U, I: Iterator[T], J: Iterator[U]](a: I, b: J): (T, U)[] {
-    var out: (T, U)[] = []; var ca = a; var cb = b; var go = true;
+    let out: (T, U)[] = []; let ca = a; let cb = b; let go = true;
     while (go) { match (ca.next()) { Some(ta) => { match (cb.next()) { Some(tb) => { out = out.append((ta.0, tb.0)); ca = ta.1; cb = tb.1; }, None => { go = false; }, } }, None => { go = false; }, } }
     return out;
 }
@@ -44,15 +44,15 @@ var iterEnumZipCases = []struct {
 	want int
 }{
 	// enumerate [10,11,12,13] -> [(0,10),(1,11),(2,12),(3,13)]; sum(i+v)=52, +len 4 = 56.
-	{"enumerate", `function main(): i32 { var e = enumerate(range(10, 14)); var s = 0; for p in e { s = s + p.0 + p.1; } return s + e.len(); }`, 56},
+	{"enumerate", `function main(): i32 { let e = enumerate(range(10, 14)); let s = 0; for p in e { s = s + p.0 + p.1; } return s + e.len(); }`, 56},
 	// enumerate over an empty range -> []; len 0 + 9 = 9.
-	{"enumerate-empty", `function main(): i32 { var e = enumerate(range(5, 5)); return e.len() + 9; }`, 9},
+	{"enumerate-empty", `function main(): i32 { let e = enumerate(range(5, 5)); return e.len() + 9; }`, 9},
 	// zip equal lengths: [(0,10),(1,11),(2,12)]; sum(p.0+p.1)=36, +len 3 = 39.
-	{"zip-equal", `function main(): i32 { var z = zip(range(0, 3), range(10, 13)); var s = 0; for p in z { s = s + p.0 + p.1; } return s + z.len(); }`, 39},
+	{"zip-equal", `function main(): i32 { let z = zip(range(0, 3), range(10, 13)); let s = 0; for p in z { s = s + p.0 + p.1; } return s + z.len(); }`, 39},
 	// zip stops at the shorter (first): [(0,10),(1,11)]; sum=22, +len 2 = 24.
-	{"zip-short-first", `function main(): i32 { var z = zip(range(0, 2), range(10, 99)); var s = 0; for p in z { s = s + p.0 + p.1; } return s + z.len(); }`, 24},
+	{"zip-short-first", `function main(): i32 { let z = zip(range(0, 2), range(10, 99)); let s = 0; for p in z { s = s + p.0 + p.1; } return s + z.len(); }`, 24},
 	// zip stops at the shorter (second): [(0,5),(1,6)]; sum=12, +len 2 = 14.
-	{"zip-short-second", `function main(): i32 { var z = zip(range(0, 99), range(5, 7)); var s = 0; for p in z { s = s + p.0 + p.1; } return s + z.len(); }`, 14},
+	{"zip-short-second", `function main(): i32 { let z = zip(range(0, 99), range(5, 7)); let s = 0; for p in z { s = s + p.0 + p.1; } return s + z.len(); }`, 14},
 }
 
 func iterEnumZipProg(mainBody string) string { return iterEnumZipPrelude + mainBody + "\n" }
@@ -93,10 +93,10 @@ func TestNativeIterEnumZipArm64(t *testing.T) {
 func TestNativeIterEnumZipModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
-    var e = iter.enumerate(iter.range(10, 14));                   // [(0,10),(1,11),(2,12),(3,13)]
-    var s = 0; for p in e { s = s + p.0 + p.1; }                  // 6 + 46 = 52
-    var z = iter.zip(iter.range(0, 4), iter.range(100, 102));     // [(0,100),(1,101)] (shorter wins)
-    var t = 0; for p in z { t = t + p.0; }                        // 0+1 = 1
+    let e = iter.enumerate(iter.range(10, 14));                   // [(0,10),(1,11),(2,12),(3,13)]
+    let s = 0; for p in e { s = s + p.0 + p.1; }                  // 6 + 46 = 52
+    let z = iter.zip(iter.range(0, 4), iter.range(100, 102));     // [(0,100),(1,101)] (shorter wins)
+    let t = 0; for p in z { t = t + p.0; }                        // 0+1 = 1
     return s + e.len() + z.len() + t;                             // 52+4+2+1 = 59
 }
 `

@@ -17,7 +17,7 @@ func TestSelfHostWasmReaderSeekReleasesScratch(t *testing.T) {
 	const program = `function main(): i32 {
   match (open_reader("input")) {
     Ok(r) => {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < 100) {
         match (r.seek(1 as i64, 0)) { Ok(n) => { if (n != 1 as i64) { return 1; } }, Err(_) => { return 2; } }
         match (r.seek(0 as i64, 1)) { Ok(n) => { if (n != 1 as i64) { return 3; } }, Err(_) => { return 4; } }

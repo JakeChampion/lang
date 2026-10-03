@@ -34,13 +34,13 @@ import "core/cmp";
 struct Coord { x: i32, y: i32 }
 
 function main(): i32 {
-    var m: Map[Coord, i32] = map_new(2);
-    var i: i32 = 0;
+    let m: Map[Coord, i32] = map_new(2);
+    let i: i32 = 0;
     while (i < 12) {
         m = m.insert(Coord { x: i, y: i * 2 }, i * 10);
         i = i + 1;
     }
-    var ks: Coord[] = m.keys();
+    let ks: Coord[] = m.keys();
     return m.len() + ks.len();
 }`, 24},
 	// The VALUE column, the same bug's other half: a column of record boxes.
@@ -49,13 +49,13 @@ function main(): i32 {
 struct Coord { x: i32, y: i32 }
 
 function main(): i32 {
-    var m: Map[i32, Coord] = map_new(2);
-    var i: i32 = 0;
+    let m: Map[i32, Coord] = map_new(2);
+    let i: i32 = 0;
     while (i < 12) {
         m = m.insert(i, Coord { x: i, y: i * 2 });
         i = i + 1;
     }
-    var vs: Coord[] = m.values();
+    let vs: Coord[] = m.values();
     return m.len() + vs.len();
 }`, 24},
 	// A raw CELL column must NOT take the retaining snapshot: rc-incing an i64
@@ -64,13 +64,13 @@ function main(): i32 {
 	{"i64-values-stay-raw", `import "core/map";
 
 function main(): i32 {
-    var m: Map[i32, i64] = map_new(2);
-    var i: i32 = 0;
+    let m: Map[i32, i64] = map_new(2);
+    let i: i32 = 0;
     while (i < 12) {
         m = m.insert(i, (i as i64) * 1000000000);
         i = i + 1;
     }
-    var vs: i64[] = m.values();
+    let vs: i64[] = m.values();
     return m.len() + vs.len();
 }`, 24},
 }

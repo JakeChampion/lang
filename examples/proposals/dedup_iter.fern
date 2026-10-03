@@ -23,8 +23,8 @@ import "std/i32";
 
 // Collapse runs of equal neighbours. Carries one element of state.
 function dedup_adjacent(xs: i32[]): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (i == 0 || xs[i] != xs[i - 1]) {
       out = out.append(xs[i]);
@@ -37,11 +37,11 @@ function dedup_adjacent(xs: i32[]): i32[] {
 // Keep the FIRST occurrence of every distinct value. Carries the whole
 // seen-set, which is the cost of not requiring sorted input.
 function dedup_all(xs: i32[]): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < xs.len()) {
-    var seen: boolean = false;
-    var j: i32 = 0;
+    let seen: boolean = false;
+    let j: i32 = 0;
     while (j < out.len()) {
       if (out[j] == xs[i]) {
         seen = true;
@@ -57,7 +57,7 @@ function dedup_all(xs: i32[]): i32[] {
 }
 
 function is_sorted(xs: i32[]): boolean {
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < xs.len()) {
     if (xs[i] < xs[i - 1]) {
       return false;
@@ -71,7 +71,7 @@ function eq(a: i32[], b: i32[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
@@ -82,9 +82,9 @@ function eq(a: i32[], b: i32[]): boolean {
 }
 
 function has_repeat(xs: i32[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len()) {
-    var j: i32 = i + 1;
+    let j: i32 = i + 1;
     while (j < xs.len()) {
       if (xs[i] == xs[j]) {
         return true;
@@ -101,7 +101,7 @@ function has_repeat(xs: i32[]): boolean {
 // The defining property of the cheap variant: it removes adjacent repeats
 // and nothing else, so a value that recurs non-adjacently survives.
 function test_adjacent_collapses_runs_only(): test.TestOutcome {
-  var got: i32[] = dedup_adjacent([1, 1, 2, 2, 2, 3, 1, 1]);
+  let got: i32[] = dedup_adjacent([1, 1, 2, 2, 2, 3, 1, 1]);
   if (!eq(got, [1, 2, 3, 1])) {
     return test.fail("wanted [1,2,3,1], got len " + got.len().to_string());
   }
@@ -109,7 +109,7 @@ function test_adjacent_collapses_runs_only(): test.TestOutcome {
 }
 
 function test_all_removes_every_repeat(): test.TestOutcome {
-  var got: i32[] = dedup_all([1, 1, 2, 2, 2, 3, 1, 1]);
+  let got: i32[] = dedup_all([1, 1, 2, 2, 2, 3, 1, 1]);
   if (!eq(got, [1, 2, 3])) {
     return test.fail("wanted [1,2,3], got len " + got.len().to_string());
   }
@@ -122,14 +122,14 @@ function test_all_removes_every_repeat(): test.TestOutcome {
 // The claim that the cheap variant is enough WHEN THE INPUT IS SORTED:
 // on sorted input the two strategies must agree exactly.
 function test_the_two_agree_on_sorted_input(): test.TestOutcome {
-  var inputs: i32[][] = [
+  let inputs: i32[][] = [
     [],
     [7],
     [1, 1, 1],
     [1, 2, 3],
     [1, 1, 2, 3, 3, 3, 9],
   ];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < inputs.len()) {
     if (!is_sorted(inputs[i])) {
       return test.fail("fixture " + i.to_string() + " is not sorted");
@@ -146,7 +146,7 @@ function test_the_two_agree_on_sorted_input(): test.TestOutcome {
 // ...and the converse, which is what makes the extra state necessary
 // rather than merely defensible.
 function test_the_two_differ_on_unsorted_input(): test.TestOutcome {
-  var xs: i32[] = [1, 2, 1, 2];
+  let xs: i32[] = [1, 2, 1, 2];
   if (eq(dedup_adjacent(xs), dedup_all(xs))) {
     return test.fail("strategies agreed on unsorted input, so the "
       + "seen-set would be unnecessary");
@@ -162,15 +162,15 @@ function test_the_two_differ_on_unsorted_input(): test.TestOutcome {
 
 // Both are idempotent, and both preserve first-seen order.
 function test_idempotent_and_order_preserving(): test.TestOutcome {
-  var xs: i32[] = [3, 3, 1, 2, 1, 3];
-  var once: i32[] = dedup_all(xs);
+  let xs: i32[] = [3, 3, 1, 2, 1, 3];
+  let once: i32[] = dedup_all(xs);
   if (!eq(dedup_all(once), once)) {
     return test.fail("dedup_all is not idempotent");
   }
   if (!eq(once, [3, 1, 2])) {
     return test.fail("dedup_all did not preserve first-seen order");
   }
-  var a1: i32[] = dedup_adjacent(xs);
+  let a1: i32[] = dedup_adjacent(xs);
   if (!eq(dedup_adjacent(a1), a1)) {
     return test.fail("dedup_adjacent is not idempotent");
   }
@@ -180,12 +180,12 @@ function test_idempotent_and_order_preserving(): test.TestOutcome {
 // Neither may invent or lose a value: every output element occurs in the
 // input, and every input element occurs in the output of dedup_all.
 function test_neither_invents_nor_loses_values(): test.TestOutcome {
-  var xs: i32[] = [5, 9, 5, 2, 9, 9, 7];
-  var all: i32[] = dedup_all(xs);
-  var i: i32 = 0;
+  let xs: i32[] = [5, 9, 5, 2, 9, 9, 7];
+  let all: i32[] = dedup_all(xs);
+  let i: i32 = 0;
   while (i < all.len()) {
-    var found: boolean = false;
-    var j: i32 = 0;
+    let found: boolean = false;
+    let j: i32 = 0;
     while (j < xs.len()) {
       if (xs[j] == all[i]) {
         found = true;
@@ -197,10 +197,10 @@ function test_neither_invents_nor_loses_values(): test.TestOutcome {
     }
     i = i + 1;
   }
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < xs.len()) {
-    var kept: boolean = false;
-    var m: i32 = 0;
+    let kept: boolean = false;
+    let m: i32 = 0;
     while (m < all.len()) {
       if (all[m] == xs[k]) {
         kept = true;
@@ -219,14 +219,14 @@ function test_neither_invents_nor_loses_values(): test.TestOutcome {
 
 function main(): i32 {
   eprint("dedup_iter — two dedup strategies, distinguished by state kept");
-  var sample: i32[] = [1, 1, 2, 2, 2, 3, 1, 1];
+  let sample: i32[] = [1, 1, 2, 2, 2, 3, 1, 1];
   eprint("input      len=" + sample.len().to_string());
   eprint("adjacent   len=" + dedup_adjacent(sample).len().to_string()
     + "  (remembers 1 element)");
   eprint("all        len=" + dedup_all(sample).len().to_string()
     + "  (remembers every distinct value)");
 
-  var r: test.TestRunner = test.test_new("dedup_iter");
+  let r: test.TestRunner = test.test_new("dedup_iter");
   r = r.it("adjacent collapses runs only", test_adjacent_collapses_runs_only);
   r = r.it("all removes every repeat", test_all_removes_every_repeat);
   r = r.it("the two agree on sorted input", test_the_two_agree_on_sorted_input);

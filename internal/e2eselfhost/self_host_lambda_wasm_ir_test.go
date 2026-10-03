@@ -10,7 +10,7 @@ import (
 
 // TestSelfHostLambdaWasmIR is the wasm gate for closures slice 2a (the x86
 // sibling is TestSelfHostLambdaX86IR): a no-capture lambda passed directly as a
-// call argument. irlower.lift_lambdas hoists it to a top-level __lam_<k> and the
+// call argument. lift.lift_lambdas hoists it to a top-level __lam_<k> and the
 // argument becomes a bare reference, so it lowers through slice 1's
 // const_func/call_indirect funcref table. Pinned to hardcoded oracle exit codes.
 func TestSelfHostLambdaWasmIR(t *testing.T) {
@@ -53,7 +53,7 @@ func TestSelfHostLambdaWasmIR(t *testing.T) {
 		expected int
 	}{
 		{"apply", `function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { return apply((x: i32): i32 => { return x + 1; }, 41); }`, 42},
-		{"predicate", `function count_if(arr: i32[], pred: (i32) => boolean): i32 { var c: i32 = 0; for x in arr { if (pred(x)) { c = c + 1; } } return c; } function main(): i32 { var a: i32[] = [5, 20, 8, 30, 15]; return count_if(a, (n: i32): boolean => { return n > 10; }); }`, 3},
+		{"predicate", `function count_if(arr: i32[], pred: (i32) => boolean): i32 { let c: i32 = 0; for x in arr { if (pred(x)) { c = c + 1; } } return c; } function main(): i32 { let a: i32[] = [5, 20, 8, 30, 15]; return count_if(a, (n: i32): boolean => { return n > 10; }); }`, 3},
 		{"calls-global", `function dbl(x: i32): i32 { return x * 2; } function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { return apply((x: i32): i32 => { return dbl(x) + 1; }, 20); }`, 41},
 		{"two-arg", `function run2(g: (i32, i32) => i32, p: i32, q: i32): i32 { return g(p, q); } function main(): i32 { return run2((x: i32, y: i32): i32 => { return x * 10 + y; }, 4, 2); }`, 42},
 	}

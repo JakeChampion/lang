@@ -161,7 +161,7 @@ flipped to the two-word `(data, len)` ABI:
     `emitMakeClosureFromIR` pops `(len, data)` for each
     string and stores at off+0 / off+4. CaptureRef load
     routes through `payloadLoadOpFor`.
-  - **State globals**: two i32 globals per string state var
+  - **State globals**: two i32 globals per string state let
     (`$state_<n>_data` / `$state_<n>_len`);
     `OpLoadGlobal` / `OpStoreGlobal` fan out via
     `stateVarIsString`; `exprType` consults `info.StateVars`.

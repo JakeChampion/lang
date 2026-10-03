@@ -18,7 +18,7 @@ import "std/u64";
 import "./lib/gnu";
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]...\n";
   out = out + "Print the number of processing units available to the current process,\n";
   out = out + "which may be less than the number of online processors\n";
@@ -56,7 +56,7 @@ function is_space(b: i32): boolean {
 // non-digit first byte, trailing junk — is 0, which means "not set" to
 // both callers.
 function parse_omp(name: string): u64 {
-  var raw: string = "";
+  let raw: string = "";
   match (env(name)) {
     Some(v) => {
       raw = v;
@@ -65,17 +65,17 @@ function parse_omp(name: string): u64 {
       return 0 as u64;
     }
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < raw.len() && is_space(raw[i] as i32)) {
     i = i + 1;
   }
   if (i >= raw.len() || !gnu.is_digit(raw[i] as i32)) {
     return 0 as u64;
   }
-  var v: u64 = 0 as u64;
-  var over: boolean = false;
+  let v: u64 = 0 as u64;
+  let over: boolean = false;
   while (i < raw.len() && gnu.is_digit(raw[i] as i32)) {
-    var d: u64 = (raw[i] as i32 - 48) as u64;
+    let d: u64 = (raw[i] as i32 - 48) as u64;
     match (v.checked_mul(10 as u64)) {
       Some(m) => {
         match (m.checked_add(d)) {
@@ -109,7 +109,7 @@ function parse_omp(name: string): u64 {
 // count. A kernel that will not say leaves the caller with 1, which is
 // what every implementation of this question falls back to.
 function available_count(): u64 {
-  var n: i32 = cpu_count();
+  let n: i32 = cpu_count();
   if (n <= 0) {
     return 1 as u64;
   }
@@ -123,7 +123,7 @@ function is_cpu_dir(name: string): boolean {
   if (!name.starts_with("cpu") || name.len() < 4) {
     return false;
   }
-  var i: i32 = 3;
+  let i: i32 = 3;
   while (i < name.len()) {
     if (!gnu.is_digit(name[i] as i32)) {
       return false;
@@ -141,8 +141,8 @@ function is_cpu_dir(name: string): boolean {
 function installed_count(): u64 {
   match (read_dir("/sys/devices/system/cpu")) {
     Ok(entries) => {
-      var n: i32 = 0;
-      var i: i32 = 0;
+      let n: i32 = 0;
+      let i: i32 = 0;
       while (i < entries.len()) {
         if (is_cpu_dir(entries[i])) {
           n = n + 1;
@@ -157,7 +157,7 @@ function installed_count(): u64 {
   }
   match (read_file("/proc/cpuinfo")) {
     Ok(text) => {
-      var n: i32 = count_processor_lines(text);
+      let n: i32 = count_processor_lines(text);
       if (n > 0) {
         return n as u64;
       }
@@ -171,10 +171,10 @@ function installed_count(): u64 {
 // name has to start the line, so a `model name` mentioning the word is
 // not counted.
 function count_processor_lines(text: string): i32 {
-  var word: string = "processor";
-  var n: i32 = 0;
-  var i: i32 = 0;
-  var at_line_start: boolean = true;
+  let word: string = "processor";
+  let n: i32 = 0;
+  let i: i32 = 0;
+  let at_line_start: boolean = true;
   while (i < text.len()) {
     if (at_line_start && starts_word(text, i, word)) {
       n = n + 1;
@@ -192,7 +192,7 @@ function starts_word(text: string, at: i32, word: string): boolean {
   if (at + word.len() > text.len()) {
     return false;
   }
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < word.len()) {
     if (text[at + k] != word[k]) {
       return false;
@@ -210,15 +210,15 @@ function min_u64(a: u64, b: u64): u64 {
 }
 
 pub function main(): i32 {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("", "all", opt_all()));
   opts = opts.append(gnu.valued("", "ignore", opt_ignore()));
 
-  var all: boolean = false;
-  var ignore: u64 = 0 as u64;
-  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "nproc", help_text(), 1);
+  let all: boolean = false;
+  let ignore: u64 = 0 as u64;
+  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "nproc", help_text(), 1);
   while (true) {
-    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
     match (res.0) {
       Some(m) => {
@@ -233,12 +233,12 @@ pub function main(): i32 {
       }
     }
   }
-  var operands: string[] = g.operands();
+  let operands: string[] = g.operands();
   if (operands.len() > 0) {
     gnu.die_usage("extra operand " + gnu.quote(operands[0]), 1);
   }
 
-  var n: u64 = count_for(all);
+  let n: u64 = count_for(all);
   if (ignore < n) {
     n = n - ignore;
   } else {
@@ -252,7 +252,7 @@ pub function main(): i32 {
 // gnulib's xdectoumax, which is NOT a usage error — it names the value
 // and exits without the `Try …` line.
 function parse_ignore(v: string): u64 {
-  var r: (u64, i32) = gnu.parse_number(v);
+  let r: (u64, i32) = gnu.parse_number(v);
   if (r.1 == 0) {
     return r.0;
   }
@@ -275,11 +275,11 @@ function count_for(all: boolean): u64 {
   if (all) {
     return installed_count();
   }
-  var limit: u64 = parse_omp("OMP_THREAD_LIMIT");
+  let limit: u64 = parse_omp("OMP_THREAD_LIMIT");
   if (limit == 0 as u64) {
     limit = ulong_max();
   }
-  var threads: u64 = parse_omp("OMP_NUM_THREADS");
+  let threads: u64 = parse_omp("OMP_NUM_THREADS");
   if (threads != 0 as u64) {
     return min_u64(threads, limit);
   }

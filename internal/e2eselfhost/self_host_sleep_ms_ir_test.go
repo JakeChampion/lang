@@ -74,10 +74,10 @@ func TestSelfHostSleepMsIRWasm(t *testing.T) {
 	// 50 ms sleep; require >= 40 ms elapsed (40_000_000 ns) so a no-op "sleep"
 	// fails. No upper bound — a slow runner sleeping longer is still correct.
 	const src = `function main(): i32 {
-    var t0: i64 = monotonic_ns();
+    let t0: i64 = monotonic_ns();
     sleep_ms(50);
-    var t1: i64 = monotonic_ns();
-    var elapsed: i64 = t1 - t0;
+    let t1: i64 = monotonic_ns();
+    let elapsed: i64 = t1 - t0;
     if (elapsed < 40000000) { return 1; }
     return 0;
 }`

@@ -16,10 +16,10 @@ import "testing"
 
 const boundPushSrc = `struct Val { kind: i32, kids: i32[] }
 function build(n: i32): i32 {
-    var vals: Val[] = [];
-    var total: i32 = 0;
+    let vals: Val[] = [];
+    let total: i32 = 0;
     for i in 0..n {
-        var v = Val { kind: i, kids: [] };
+        let v = Val { kind: i, kids: [] };
         vals = vals.append(v);
         total = total + vals.len();
     }
@@ -28,8 +28,8 @@ function build(n: i32): i32 {
 
 const inlinePushSrc = `struct Val { kind: i32, kids: i32[] }
 function build(n: i32): i32 {
-    var vals: Val[] = [];
-    var total: i32 = 0;
+    let vals: Val[] = [];
+    let total: i32 = 0;
     for i in 0..n {
         vals = vals.append(Val { kind: i, kids: [] });
         total = total + vals.len();
@@ -44,10 +44,10 @@ function build(n: i32): i32 {
 const nestedPushSrc = `struct Val { kind: i32, kids: i32[] }
 struct Doc { vals: Val[], root: i32 }
 function build(n: i32): i32 {
-    var d = Doc { vals: [], root: 0 };
-    var total: i32 = 0;
+    let d = Doc { vals: [], root: 0 };
+    let total: i32 = 0;
     for i in 0..n {
-        var v = Val { kind: i, kids: [] };
+        let v = Val { kind: i, kids: [] };
         d = Doc { ...d, vals: d.vals.append(v) };
         total = total + d.vals.len();
     }
@@ -57,8 +57,8 @@ function build(n: i32): i32 {
 const nestedInlinePushSrc = `struct Val { kind: i32, kids: i32[] }
 struct Doc { vals: Val[], root: i32 }
 function build(n: i32): i32 {
-    var d = Doc { vals: [], root: 0 };
-    var total: i32 = 0;
+    let d = Doc { vals: [], root: 0 };
+    let total: i32 = 0;
     for i in 0..n {
         d = Doc { ...d, vals: d.vals.append(Val { kind: i, kids: [] }) };
         total = total + d.vals.len();
@@ -93,9 +93,9 @@ func TestArrayPushBoundElemMovesLikeInline(t *testing.T) {
 func TestArrayPushOuterLocalElemNotMoved(t *testing.T) {
 	src := `struct Val { kind: i32, kids: i32[] }
 function build(n: i32): i32 {
-    var vals: Val[] = [];
-    var v = Val { kind: 7, kids: [] };
-    var total: i32 = 0;
+    let vals: Val[] = [];
+    let v = Val { kind: 7, kids: [] };
+    let total: i32 = 0;
     for i in 0..n {
         vals = vals.append(v);
         total = total + vals.len() + v.kind;

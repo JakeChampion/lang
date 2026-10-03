@@ -20,18 +20,18 @@ var nestedTupleIRCases = []struct {
 	main string
 }{
 	// Right-nested: element 1 is (i32, i32); read its element 1.
-	{"right-nest", `function main(): i32 { var t: (i32, (i32, i32)) = (1, (2, 3)); return t.1.1; }`},
+	{"right-nest", `function main(): i32 { let t: (i32, (i32, i32)) = (1, (2, 3)); return t.1.1; }`},
 	// Sum across the nesting boundary.
-	{"sum-across", `function main(): i32 { var t: (i32, (i32, i32)) = (1, (2, 3)); return t.0 + t.1.0 + t.1.1; }`},
+	{"sum-across", `function main(): i32 { let t: (i32, (i32, i32)) = (1, (2, 3)); return t.0 + t.1.0 + t.1.1; }`},
 	// Left-nested: element 0 is the inner tuple.
-	{"left-nest", `function main(): i32 { var t: ((i32, i32), i32) = ((4, 5), 6); return t.0.0 + t.0.1 + t.1; }`},
+	{"left-nest", `function main(): i32 { let t: ((i32, i32), i32) = ((4, 5), 6); return t.0.0 + t.0.1 + t.1; }`},
 	// Triple nesting: t.1.1.1.
-	{"triple-nest", `function main(): i32 { var t: (i32, (i32, (i32, i32))) = (1, (2, (3, 4))); return t.1.1.1; }`},
+	{"triple-nest", `function main(): i32 { let t: (i32, (i32, (i32, i32))) = (1, (2, (3, 4))); return t.1.1.1; }`},
 	// A string inside a nested tuple (pointer element) round-trips.
-	{"nest-with-string", `function main(): i32 { var t: (i32, (string, i32)) = (1, ("ab", 9)); return t.1.0.len() + t.1.1; }`},
+	{"nest-with-string", `function main(): i32 { let t: (i32, (string, i32)) = (1, ("ab", 9)); return t.1.0.len() + t.1.1; }`},
 	// An i64 sibling after a nested tuple element exercises the depth-aware kind
 	// decode (the nested element must not shift the i64's store width).
-	{"nest-then-i64", `function main(): i32 { var t: ((i32, i32), i64) = ((1, 2), 5000000000); return t.0.0 + t.0.1 + (t.1 / 1000000000) as i32; }`},
+	{"nest-then-i64", `function main(): i32 { let t: ((i32, i32), i64) = ((1, 2), 5000000000); return t.0.0 + t.0.1 + (t.1 / 1000000000) as i32; }`},
 }
 
 // TestSelfHostNestedTupleIR compiles each case with the self-host CLI for

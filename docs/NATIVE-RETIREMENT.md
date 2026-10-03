@@ -57,7 +57,7 @@ targets).
 | #10767 (closed by #10821 after this measurement) | checker: six rejections native accepts (E009, E015, E038 x2, E042, E064) | 12 |
 | #10756 (closed after this measurement: the mechanics landed in #10821, and the tests check the documented contract, each finalizer once at the value's death, rather than native's release timing) | typed lowering: `impl mem.Drop` finalizers never run | 8 |
 | #10760 (closed by #10821 after this measurement) | typed lowering: a declared `str[]` holds a `string[]` (`graphemes`, `words`) | 6 |
-| #10766 (closed by #10821 after this measurement) | parser: `@` binding with a braceless arm, braceless `if let`, `let … else` in a `var` | 6 |
+| #10766 (closed by #10821 after this measurement) | parser: `@` binding with a braceless arm, braceless `if let`, `let … else` in a `let` | 6 |
 | #10763 (closed by #10828 after this measurement) | typed lowering: empty array literal at a view parameter, `?` on a unit-payload success, a value block with no live edge, a `use` callback wrapper | 6 |
 | #10757 (closed by #10835 after this measurement; the checker typed a suffixed float literal f64) | typed lowering: f32 values typed f64 | 5 |
 | #10768 (closed by #10775 after this measurement) | wasm: the core module exports only `_start`, so a main result of 126 or more is unreadable | 5 |
@@ -81,20 +81,22 @@ The three fuzz differentials (`TestDifferential_LangsmithMain`,
 `TestDifferential_PrintableStdout`, `TestDropGuidedDifferential`,
 `TestNumericProperty_Differential`) are counted once each above, under the
 gap their seeds hit (#10768, #10757, #10767; on the 2026-10-01 re-measurement,
-#10927). Their native legs are not the
+#10927). Their native legs were not the
 gate for anything the self-host legs in `diff_oracle_selfhost_test.go` and
-its arm64 and wasm siblings do not already hold, and go with the backends;
-the seeds the self-host declines by design are that suite's documented
-floor, not a gap here.
+its arm64 and wasm siblings do not already hold: `TestDifferential_LangsmithMain`
+went in step 4, and the other three run every compiled leg through the
+self-host. The seeds the self-host declines by design are that suite's
+documented floor, not a gap here.
 
-## The 29 native-instrumentation tests
+## The native-instrumentation tests
 
 These asserted how the native RC implementation behaves, through probes the
 self-host either does not have or answers with its own figures. Every
-property they held has a self-host gate in `internal/e2eselfhost`, and they
-were deleted in the re-point (step 3). The x86-64 and wasm twins of the four
+property they held has a self-host gate in `internal/e2eselfhost`. The 29
+register-backend tests were deleted in the re-point (step 3), and 23 of
+their wasm twins with the `buildComponent` move. The x86-64 twins of the four
 cliff tests stay until the direct-caller PRs: they compile with the Go
-emitters (`compileAndRunX86_64FreeOn`, `runWasm`), not through the helpers.
+emitter (`compileAndRunX86_64FreeOn`), not through the helpers.
 
 | tests | probe | self-host gate |
 |---|---|---|
@@ -102,6 +104,8 @@ emitters (`compileAndRunX86_64FreeOn`, `runWasm`), not through the helpers.
 | `Test*RcUnderflowDetector` (2) | `__rc_underflow_count` answers 2 on the self-host where native answers 1 for the same double release | the self-host's own underflow rows (345 files read the counter); whether 1 or 2 is right for that program is #10771's neighbour and is decided there, not by keeping a native test |
 | `Test*ArrayPushInPlaceFastPath`, `Test*ArrayIndexSetInPlaceFastPath`, `TestX86_64StructFieldWithInPlaceFastPath` (5) | native's in-place fast path when `rc == 1` | the six `*InPlace*` tests in `internal/e2eselfhost` and the allocation gate's cliff column |
 | `TestArm64ArrPushCliffCounter`, `TestArm64CallResultMaterialiseCliff`, `TestArm64ArrPushCliffBytes`, `TestArm64DeadAliasAppendNoCopy` (4) | `__arr_push_shared_count` at native's figures | `TestSelfHostArrPushCliffIR*` and the alloc gate, which hold the self-host to its recorded figures (7 files) |
+| the wasm twins of the four rows above (15: `TestWASMRc*`, `TestWASMRcUnderflowDetector`, the two `TestWASM*InPlaceFastPath`, the four `TestWASM*Cliff*` / `TestWASMDeadAliasAppendNoCopy`) | the same probes | the same gates |
+| `TestWASMAllocReuse`, `TestWasmHeapBumpIsI64`, `TestWASMTupleHeapBumpBounded`, `TestWASMPreciseDrops`, `TestWASMControlFlowDrop`, `TestWASMGeneralReuse`, `TestWASMTrmcConsumePeakHalved`, `TestWASMVariantPayloadArgTempBounded` (8) | `__alloc_reuse` and bounds on `__heap_bump_bytes`, which on the self-host's wasm core is the native probe's figure for a different allocator | the `FERN_LEAKCHECK` census on each program (balanced on the self-host) and the reuse and heap-class tests: `TestSelfHostHeapClassReuse*`, `TestSelfHostLoopReuse*`, `TestSelfHostPreciseDrop*`, `TestSelfHostArm64DarwinTrmcConsume`, `TestSelfHostClosureVariantPayload*` |
 
 ## The direct Go-emitter callers
 
@@ -110,8 +114,10 @@ group is one PR, after the re-point.
 
 | files | what the Go call does | disposition |
 |---|---|---|
-| `fixture_test.go` (`TestFernFixtures`, four native legs plus the `FERN_NATIVE_ASM` leg in `test-e2e-x86_64.yml`) | runs the 335-fixture corpus through each backend | delete: `fixture_selfhost_test.go` runs the same corpus through the self-host on all three targets |
-| `diff_oracle_test.go` (`x86_64.Emit` leg) | the fuzz differential's native leg | delete: the self-host legs are the gate |
+| `fixture_test.go` (`TestFernFixtures`'s three compiled legs, the `FERN_NATIVE_ASM` leg in `test-e2e-x86_64.yml`, and `runFixtureX86_64` / `runFixtureArm64`, which 42 other test files call) | runs the 335-fixture corpus through each backend | DONE: the compiled legs and `FERN_NATIVE_ASM` went, since `fixture_selfhost_test.go` runs the same corpus through the self-host on all three targets; the interpreter leg stays as the oracle. The two runners compile with the self-host (`e2eharness.CompileSelfHostFile`). `runFixtureWasm` and `runFixture{X86_64,Arm64}Native` stay native for the rc flag differentials, which compare two native builds and belong to the instrumentation row |
+| `diff_oracle_test.go` (`x86_64.Emit` leg) | the fuzz differential's native leg | DONE: `TestDifferential_LangsmithMain` went with its `x86_64.Emit` and `arm64.Emit` legs and the leg-requirement check (`FERN_REQUIRE_DIFF_BACKENDS`); `TestDifferential_SelfHost{X86_64,Arm64,Wasm}` in the `diff-selfhost` job are the exit-byte gate. `FuzzGenerate_ExecutionAgrees` loses its wasmbin component leg, and the numeric and printable-stdout sweeps build their wasm leg with the self-host. |
+| `wasm_e2e_test.go`'s `buildComponent` / `buildComponentMulti`, behind `runWasm`, `invokeWasmtime` and their multi-file forms (287 files) | `wasmbin.BuildWithOptions` with `PrintMainResult`, so stdout ends with main's result | DONE: the self-host core run with `--invoke main`, which prints the same line. A test of preview-2 host behaviour builds a component with the self-host CLI (`buildCLIComponent`, `runCLIComponent`); 23 native-probe twins went, as in the instrumentation table, and the `__memcpy` / `__memset` tests now copy between raw `__alloc` blocks rather than `u8[]` addresses |
+| the async programs: `async_wasm_e2e`, `async_wasm_fetch_e2e`, `wasm_reactor`, the `sim_driver` / `sim_fault` / `sim_net` wasm legs and `TestSimProperty`'s wasm leg (13 tests and one leg) | `wasmbin.BuildWithOptions`, through the one native builder they share (`buildNativeComponent`, `runWasmNative`) | stays native until the wasm async decision on #4451: `std/async` and `std/sim` drive the poll host, which the self-host's wasm component does not import |
 | `rctrace`, `leakcheck`, `sanitizer`, `heap_alloc_count`, `iter_adapter_leak`, `conformance_leak_census`, `seccomp`, `rc_freelist`, `rc_heap_benchmark` | `x86_64.Emit` with the native instrumentation options (the heap tracer, leak census, sanitizer, seccomp filter) | per test: the self-host has `FERN_LEAKCHECK` and `-sanitize`; the conformance leak census and the seccomp corpus need a self-host run of the same corpus or a decision that the property is native-only, made in that PR |
 | `wit_*` (60 files) and `wasm_p3_*` (15) | `wasmbin.BuildWithOptions` (`Preview2WASI`, `SynthCliRun`, `PrintMainResult`) and `component.Compose*` | a second measurement: the same programs through `fern -target wasm32-wasi` (a component) and `wasm32-wasi-http`, which is the playground's path since #6636. Preview-3 async and streams are a question that measurement answers |
 | `arm64_ssa_differential`, `x86_64_ssa_differential`, `x86_64ssa_*`, `arm64_ssa_*`, `crc32_cksum_ssa`, `ssa_coreutils_coverage`, `f64_ulp` (the SSA legs) | the Go SSA backends | delete with `internal/codegen/{x86_64ssa,arm64ssa}` |
@@ -146,7 +152,7 @@ group is one PR, after the re-point.
 5. **The deletions.** `internal/codegen/{x86_64,arm64,wasmbin,x86_64ssa,arm64ssa}`,
    `internal/native/{x86_64,arm64}` (the assembler the tests link with;
    `internal/native/elf` and the Mach-O writer stay if `cmd/fern` keeps a
-   Go link path), `cmd/dump_arm64`, the `FERN_NATIVE_ASM` leg, and
+   Go link path), `cmd/dump_arm64`, and
    `internal/sourcelint`'s codegen-boundary population. `docs/TEST-GATES.md`
    loses its native rows and `docs/BACKEND-PARITY.md` its per-backend table.
 6. **What `cmd/fern` becomes** is decided on #4451: as thin as possible. Go
@@ -156,8 +162,8 @@ group is one PR, after the re-point.
 
 CI lanes keep their names: `test-e2e-x86_64`, `test-e2e-arm64` and
 `test-e2e-wasm` select by target prefix, which stays the right split when the
-target is compiled by the self-host. The "native test runners" wording, the
-`FERN_NATIVE_ASM` fixture leg go in step 5. Since step 3 every `internal/e2e`
+target is compiled by the self-host. The "native test runners" wording goes
+in step 5. Since step 3 every `internal/e2e`
 lane builds `fern.fern` once from the driver cache, and a self-host change
 runs them; `test-fernsmith` and `examples` never read the self-host and keep
 skipping a change to it.

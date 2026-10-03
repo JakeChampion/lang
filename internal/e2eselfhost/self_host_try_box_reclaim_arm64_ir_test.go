@@ -7,7 +7,7 @@ import (
 // TestSelfHostTryBoxReclaimIRArm64 is the arm64 port of the #4355
 // `?`-consumed source-box reclaim (x86 sibling:
 // TestSelfHostTryBoxReclaimIRX86_64). The heap stays flat across the `?`
-// churn: the typed lowering also reclaims the outer `var r = ...` box the
+// churn: the typed lowering also reclaims the outer `let r = ...` box the
 // caller matches on. Lighter churn under qemu.
 func TestSelfHostTryBoxReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
@@ -32,44 +32,44 @@ func TestSelfHostTryBoxReclaimIRArm64(t *testing.T) {
 
 	// SCALAR Result payload.
 	run(t, `function mk(pre: string): Result[i32, i32] { return Ok(pre.len()); }
-function innerT(pre: string): Result[i32, i32] { var v: i32 = mk(pre)?; return Ok(v + 1); }
-function innerB(pre: string): Result[i32, i32] { var t: i32 = 0; match (mk(pre)) { Ok(v) => { t = v + 1; }, Err(e) => { t = e; }, } return Ok(t); }
-function churnT(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var r = innerT(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
-function churnB(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var r = innerB(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
+function innerT(pre: string): Result[i32, i32] { let v: i32 = mk(pre)?; return Ok(v + 1); }
+function innerB(pre: string): Result[i32, i32] { let t: i32 = 0; match (mk(pre)) { Ok(v) => { t = v + 1; }, Err(e) => { t = e; }, } return Ok(t); }
+function churnT(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { let r = innerT(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
+function churnB(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { let r = innerB(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
 function main(): i32 {
-    var w: i32 = churnB(1500);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churnT(1500);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churnB(1500);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churnT(1500);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
-    var gt: i32 = b2 - b1;
+    let gt: i32 = b2 - b1;
     if (gt > 256) { return 98; }
     return 0;
 }`, "try-box-scalar-pin-arm64", 0)
 
 	// STRING payload — box and moved payload both recycle.
 	run(t, `function mk(pre: string): Result[string, i32] { return Ok(pre + "abc"); }
-function innerT(pre: string): Result[i32, i32] { var s: string = mk(pre)?; return Ok(s.len()); }
-function innerB(pre: string): Result[i32, i32] { var t: i32 = 0; match (mk(pre)) { Ok(s) => { t = s.len(); }, Err(e) => { t = e; }, } return Ok(t); }
-function churnT(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var r = innerT(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
-function churnB(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var r = innerB(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
+function innerT(pre: string): Result[i32, i32] { let s: string = mk(pre)?; return Ok(s.len()); }
+function innerB(pre: string): Result[i32, i32] { let t: i32 = 0; match (mk(pre)) { Ok(s) => { t = s.len(); }, Err(e) => { t = e; }, } return Ok(t); }
+function churnT(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { let r = innerT(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
+function churnB(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { let r = innerB(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
 function main(): i32 {
-    var w: i32 = churnB(1500);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churnT(1500);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churnB(1500);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churnT(1500);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
-    var gt: i32 = b2 - b1;
+    let gt: i32 = b2 - b1;
     if (gt > 256) { return 98; }
     return 0;
 }`, "try-box-string-pin-arm64", 0)
 
 	// ALIASED payload excluded — keep stays readable, detector 0.
 	run(t, `function mk(pre: string): Result[string, i32] { return Ok(pre); }
-function inner(pre: string): Result[i32, i32] { var s: string = mk(pre)?; return Ok(s.len()); }
-function go(pre: string): i32 { var r: i32 = 0; match (inner(pre)) { Ok(k) => { r = k; }, Err(e) => { r = e; }, } return r; }
-function main(): i32 { var keep: string = "abc" + "def"; var bad: i32 = 0; var i: i32 = 0; while (i < 500) { if (go(keep) != 6) { bad = 1; } i = i + 1; } if (keep.len() != 6) { return 88; } if (__rc_underflow_count() != 0) { return 99; } return bad; }`,
+function inner(pre: string): Result[i32, i32] { let s: string = mk(pre)?; return Ok(s.len()); }
+function go(pre: string): i32 { let r: i32 = 0; match (inner(pre)) { Ok(k) => { r = k; }, Err(e) => { r = e; }, } return r; }
+function main(): i32 { let keep: string = "abc" + "def"; let bad: i32 = 0; let i: i32 = 0; while (i < 500) { if (go(keep) != 6) { bad = 1; } i = i + 1; } if (keep.len() != 6) { return 88; } if (__rc_underflow_count() != 0) { return 99; } return bad; }`,
 		"try-aliased-payload-excluded-arm64", 0)
 }

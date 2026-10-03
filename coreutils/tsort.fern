@@ -32,7 +32,7 @@ import "core/map";
 import "./lib/gnu";
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION] [FILE]\n";
   out = out + "Write totally ordered list consistent with the partial ordering in FILE.\n";
   out = out + "\n";
@@ -56,7 +56,7 @@ impl cmp.Eq for Name {
     if (self.hi - self.lo != other.hi - other.lo) {
       return false;
     }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < self.hi - self.lo) {
       if (self.data[self.lo + i] != other.data[other.lo + i]) {
         return false;
@@ -69,12 +69,12 @@ impl cmp.Eq for Name {
 
 impl cmp.Ord for Name {
   function cmp(self: Name, other: Name): i32 {
-    var i: i32 = 0;
-    var n: i32 = self.hi - self.lo;
-    var m: i32 = other.hi - other.lo;
+    let i: i32 = 0;
+    let n: i32 = self.hi - self.lo;
+    let m: i32 = other.hi - other.lo;
     while (i < n && i < m) {
-      var a: u8 = self.data[self.lo + i];
-      var b: u8 = other.data[other.lo + i];
+      let a: u8 = self.data[self.lo + i];
+      let b: u8 = other.data[other.lo + i];
       if (a < b) {
         return -1;
       }
@@ -97,19 +97,19 @@ impl cmp.Ord for Name {
 // buckets; a collision chain compares complete spans before reusing an ID.
 // This uses the native hash-table path as well as the WASM hash table.
 function intern(text: u8[]): (Name[], i32[]) {
-  var names: Name[] = [];
-  var ids: i32[] = [];
-  var index: Map[i32, i32] = map_new(1024);
-  var next: i32[] = [];
-  var i: i32 = 0;
+  let names: Name[] = [];
+  let ids: i32[] = [];
+  let index: Map[i32, i32] = map_new(1024);
+  let next: i32[] = [];
+  let i: i32 = 0;
   while (i < text.len()) {
     if (is_separator(text[i] as i32)) {
       i = i + 1;
       continue;
     }
-    var j: i32 = i;
-    var end: i32 = -1;
-    var hash: u32 = 2166136261 as u32;
+    let j: i32 = i;
+    let end: i32 = -1;
+    let hash: u32 = 2166136261 as u32;
     while (j < text.len() && !is_separator(text[j] as i32)) {
       if (end < 0) {
         if (text[j] == 0 as u8) {
@@ -123,9 +123,9 @@ function intern(text: u8[]): (Name[], i32[]) {
     if (end < 0) {
       end = j;
     }
-    var name: Name = Name { data: text, lo: i, hi: end, id: names.len() };
-    var first: i32 = index.get_or(hash as i32, -1);
-    var found: i32 = first;
+    let name: Name = Name { data: text, lo: i, hi: end, id: names.len() };
+    let first: i32 = index.get_or(hash as i32, -1);
+    let found: i32 = first;
     while (found >= 0 && !names[found].eq(name)) {
       found = next[found];
     }
@@ -144,8 +144,8 @@ function intern(text: u8[]): (Name[], i32[]) {
 
 // The indices of names in unsigned byte order.
 function byte_order(names: Name[]): i32[] {
-  var order: i32[] = [];
-  var sorted: Name[] = cmp.sort(names);
+  let order: i32[] = [];
+  let sorted: Name[] = cmp.sort(names);
   for name in sorted {
     order = order.append(name.id);
   }
@@ -159,7 +159,7 @@ function put_name(out: io_buffered.BufWriter, name: Name): io_buffered.BufWriter
 }
 
 function error_name(name: Name): void {
-  var b: usize = buf_new(name.hi - name.lo + 32);
+  let b: usize = buf_new(name.hi - name.lo + 32);
   buf_push(b, gnu.prog() + ": ");
   buf_push_bytes_range(b, name.data, name.lo, name.hi);
   buf_push_byte(b, 10);
@@ -170,22 +170,22 @@ function error_name(name: Name): void {
 // The graph and both phases live in one function so every array is a
 // local the `.with` updates can take in place.
 function run(text: u8[], fname: string): i32 {
-  var interned: (Name[], i32[]) = intern(text);
-  var names: Name[] = interned.0;
-  var ids: i32[] = interned.1;
+  let interned: (Name[], i32[]) = intern(text);
+  let names: Name[] = interned.0;
+  let ids: i32[] = interned.1;
   if (ids.len() % 2 == 1) {
     gnu.error(fname + ": input contains an odd number of tokens");
     return 1;
   }
-  var n: i32 = names.len();
+  let n: i32 = names.len();
 
   // Successor lists: `head[v]` is v's most recent edge, `edge_next`
   // threads back through the earlier ones.
-  var count: i32[] = [];
-  var head: i32[] = [];
-  var chain_next: i32[] = [];
-  var inchain: i32[] = [];
-  var v: i32 = 0;
+  let count: i32[] = [];
+  let head: i32[] = [];
+  let chain_next: i32[] = [];
+  let inchain: i32[] = [];
+  let v: i32 = 0;
   while (v < n) {
     count = count.append(0);
     head = head.append(0 - 1);
@@ -193,12 +193,12 @@ function run(text: u8[], fname: string): i32 {
     inchain = inchain.append(0);
     v = v + 1;
   }
-  var edge_to: i32[] = [];
-  var edge_next: i32[] = [];
-  var t: i32 = 0;
+  let edge_to: i32[] = [];
+  let edge_next: i32[] = [];
+  let t: i32 = 0;
   while (t < ids.len()) {
-    var a: i32 = ids[t];
-    var b: i32 = ids[t + 1];
+    let a: i32 = ids[t];
+    let b: i32 = ids[t + 1];
     if (a != b) {
       edge_to = edge_to.append(b);
       edge_next = edge_next.append(head[a]);
@@ -210,7 +210,7 @@ function run(text: u8[], fname: string): i32 {
 
   // Only the seeds need sorting for the queue; the byte order of every
   // name is built the first time a loop has to be found.
-  var seeds: Name[] = [];
+  let seeds: Name[] = [];
   v = 0;
   while (v < n) {
     if (count[v] == 0) {
@@ -218,28 +218,28 @@ function run(text: u8[], fname: string): i32 {
     }
     v = v + 1;
   }
-  var sorted_seeds: Name[] = cmp.sort(seeds);
-  var queue: i32[] = [];
-  var qh: i32 = 0;
-  var s: i32 = 0;
+  let sorted_seeds: Name[] = cmp.sort(seeds);
+  let queue: i32[] = [];
+  let qh: i32 = 0;
+  let s: i32 = 0;
   while (s < sorted_seeds.len()) {
     queue = queue.append(sorted_seeds[s].id);
     s = s + 1;
   }
-  var order: i32[] = [];
+  let order: i32[] = [];
 
-  var remaining: i32 = n;
-  var status: i32 = 0;
-  var o: io_buffered.BufWriter = gnu.out_new();
+  let remaining: i32 = n;
+  let status: i32 = 0;
+  let o: io_buffered.BufWriter = gnu.out_new();
   while (remaining > 0) {
     while (qh < queue.len()) {
-      var w: i32 = queue[qh];
+      let w: i32 = queue[qh];
       qh = qh + 1;
       o = put_name(o, names[w]);
       remaining = remaining - 1;
-      var e: i32 = head[w];
+      let e: i32 = head[w];
       while (e >= 0) {
-        var to: i32 = edge_to[e];
+        let to: i32 = edge_to[e];
         count = count.with(to, count[to] - 1);
         if (count[to] == 0) {
           queue = queue.append(to);
@@ -256,12 +256,12 @@ function run(text: u8[], fname: string): i32 {
     if (order.len() == 0) {
       order = byte_order(names);
     }
-    var chain_head: i32 = 0 - 1;
-    var found: boolean = false;
+    let chain_head: i32 = 0 - 1;
+    let found: boolean = false;
     while (!found) {
-      var k: i32 = 0;
+      let k: i32 = 0;
       while (k < n && !found) {
-        var node: i32 = order[k];
+        let node: i32 = order[k];
         k = k + 1;
         if (count[node] == 0) {
           continue;
@@ -270,8 +270,8 @@ function run(text: u8[], fname: string): i32 {
           chain_head = node;
           continue;
         }
-        var e2: i32 = head[node];
-        var prev: i32 = 0 - 1;
+        let e2: i32 = head[node];
+        let prev: i32 = 0 - 1;
         while (e2 >= 0 && edge_to[e2] != chain_head) {
           prev = e2;
           e2 = edge_next[e2];
@@ -285,7 +285,7 @@ function run(text: u8[], fname: string): i32 {
           chain_head = node;
           continue;
         }
-        var c: i32 = chain_head;
+        let c: i32 = chain_head;
         while (true) {
           error_name(names[c]);
           if (c == node) {
@@ -307,9 +307,9 @@ function run(text: u8[], fname: string): i32 {
     }
     // The chain's links may form a cycle once the seed is pushed
     // twice; clearing each link as it is followed ends the walk.
-    var c2: i32 = chain_head;
+    let c2: i32 = chain_head;
     while (c2 >= 0) {
-      var nx: i32 = chain_next[c2];
+      let nx: i32 = chain_next[c2];
       chain_next = chain_next.with(c2, 0 - 1);
       inchain = inchain.with(c2, 0);
       c2 = nx;
@@ -320,16 +320,16 @@ function run(text: u8[], fname: string): i32 {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var operands: string[] = gnu.parse_standard_options_only(argv, "tsort", help_text(), 1);
+  let argv: string[] = args();
+  let operands: string[] = gnu.parse_standard_options_only(argv, "tsort", help_text(), 1);
   if (operands.len() > 1) {
     gnu.die_usage("extra operand " + gnu.quote(operands[1]), 1);
   }
-  var path: string = "-";
+  let path: string = "-";
   if (operands.len() == 1) {
     path = operands[0];
   }
-  var text: u8[] = [];
+  let text: u8[] = [];
   if (path == "-") {
     match (io.read_all_stdin_bytes()) {
       Ok(t) => {

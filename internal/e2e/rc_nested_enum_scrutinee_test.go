@@ -25,7 +25,7 @@ import (
 
 // The four nested positions the isolation table found leaking, each read
 // through a nested match statement with the payload confined to its arm.
-const nestedEnumScrutineeSrc = `function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+const nestedEnumScrutineeSrc = `function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 enum In { S(string[]), N }
 function mk_oo(i: i32): Option[Option[string[]]] { if (i % 3 == 0) { return None; } return Some(Some([w(i)])); }
 function mk_os(i: i32): Option[Option[string]] { return Some(Some(w(i))); }
@@ -33,7 +33,7 @@ function mk_oi(i: i32): Option[Option[i32]] { return Some(Some(i)); }
 function mk_oe(i: i32): Option[In] { if (i % 2 == 0) { return Some(In.N); } return Some(In.S([w(i)])); }
 function mk_ro(i: i32): Result[Option[string[]], string] { if (i % 2 == 0) { return Err(w(i)); } return Ok(Some([w(i)])); }
 function round(i: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (mk_oo(i)) { Some(o) => { match (o) { Some(xs) => { t = t + xs.len(); }, None => { t = t + 1; } } }, None => { t = t + 2; } }
     match (mk_os(i)) { Some(o) => { match (o) { Some(s) => { t = t + s.len(); }, None => { t = t + 1; } } }, None => { t = t + 2; } }
     match (mk_oi(i)) { Some(o) => { match (o) { Some(x) => { t = t + x; }, None => { t = t + 1; } } }, None => { t = t + 2; } }
@@ -42,21 +42,21 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (acc < 0) { return 1; }
     return 0;
 }`
 
 func nestedEnumScrutineeBumpSrc(n string) string {
-	return `function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+	return `function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function mk_oo(i: i32): Option[Option[string[]]] { if (i % 3 == 0) { return None; } return Some(Some([w(i)])); }
 function mk_ro(i: i32): Result[Option[string[]], string] { if (i % 2 == 0) { return Err(w(i)); } return Ok(Some([w(i)])); }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < ` + n + `) {
         match (mk_oo(i)) { Some(o) => { match (o) { Some(xs) => { t = t + xs.len(); }, None => { t = t + 1; } } }, None => { t = t + 2; } }
         match (mk_ro(i)) { Ok(o) => { match (o) { Some(xs) => { t = t + xs.len(); }, None => { t = t + 1; } } }, Err(e) => { t = t + e.len(); } }
@@ -72,12 +72,12 @@ function main(): i32 {
 // release each box exactly once — the direction leakcheck cannot see. The
 // inner match binding is read through a method AND indexed, so a premature
 // free of the inner box or its array would change the answer.
-const nestedEnumScrutineeUnderflowSrc = `function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+const nestedEnumScrutineeUnderflowSrc = `function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function mk_oo(i: i32): Option[Option[string[]]] { if (i % 3 == 0) { return None; } return Some(Some([w(i), w(i + 1)])); }
 function mk_ro(i: i32): Result[Option[string[]], string] { if (i % 2 == 0) { return Err(w(i)); } return Ok(Some([w(i)])); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 300) {
         match (mk_oo(i)) { Some(o) => { match (o) { Some(xs) => { acc = acc + xs.len() + xs[1].len(); }, None => { acc = acc + 1000; } } }, None => { acc = acc + 1; } }
         match (mk_ro(i)) { Ok(o) => { match (o) { Some(xs) => { acc = acc + xs[0].len(); }, None => { acc = acc + 1000; } } }, Err(e) => { acc = acc + e.len(); } }
@@ -87,7 +87,7 @@ function main(): i32 {
     // add 1; the 200 Some rounds add 2 + len(w(i + 1)), with i + 1 even on the
     // 100 odd non-multiples of 3 and odd on the 100 even ones. mk_ro: 150 Err
     // rounds (even i) add len(w(i)), 150 Ok rounds (odd i) add len(w(i)).
-    var want: i32 = 100 + 200 * 2 + 100 * 45 + 100 * 44 + 150 * 45 + 150 * 44;
+    let want: i32 = 100 + 200 * 2 + 100 * 45 + 100 * 44 + 150 * 45 + 150 * 44;
     if (acc != want) { return 99; }
     return __rc_underflow_count();
 }`
@@ -171,10 +171,10 @@ const nestedEnumScrutineeAliasedPayloadSrc = `@noinline
 function mk(pre: string[]): Option[Option[string[]]] { return Some(Some(pre)); }
 
 function main(): i32 {
-    var pad: string = "wxyz";
-    var pre: string[] = [pad + "0123456789abcdef0123456789"];
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let pad: string = "wxyz";
+    let pre: string[] = [pad + "0123456789abcdef0123456789"];
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
         match (mk(pre)) {
             Some(o) => { match (o) { Some(xs) => { t = t + xs[0].len(); }, None => { t = t + 1000; } } },

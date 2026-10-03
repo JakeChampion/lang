@@ -1355,7 +1355,7 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		}
 		f.b.WriteByte(';')
 	case *ast.Var:
-		f.b.WriteString("var ")
+		f.b.WriteString("let ")
 		f.b.WriteString(writtenName(x.Name))
 		if x.Type != nil {
 			f.b.WriteString(": ")

@@ -20,7 +20,7 @@ function opt(o: Option[i32], fb: i32): i32 {
 function main(): i32 {
     if (opt(array.find_map([1, 3, 4, 6], even_x10), -1) != 40) { return 1; }
     if (opt(array.find_map([1, 3, 5], even_x10), -99) != -99) { return 2; }
-    var empty: i32[] = [];
+    let empty: i32[] = [];
     if (opt(array.find_map(empty, even_x10), -99) != -99) { return 3; }
     if (opt(array.find_map([2, 4, 6], always_none), -99) != -99) { return 4; }
     if (opt(array.find_map([2, 4], even_x10), -1) != 20) { return 5; }

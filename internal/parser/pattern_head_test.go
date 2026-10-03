@@ -10,24 +10,24 @@ import (
 // atPatternHead is the one lookahead every irrefutable binding site asks
 // (#5356), so the same pattern head parses at all of them. Before it, each
 // site hand-rolled its own: a `for` header claimed only a leading `(`, and
-// neither `for` nor the `let` / `var` destructure claimed the `IDENT @` head a
+// neither `for` nor the `let` destructure claimed the `IDENT @` head a
 // destructured parameter already took.
 func TestPatternHeadAcceptedAtEverySite(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"for_struct", `struct P { x: i32, y: i32 }
-function f(ps: P[]): i32 { var acc = 0; for P { x, y } in ps { acc = acc + x + y; } return acc; }`},
+function f(ps: P[]): i32 { let acc = 0; for P { x, y } in ps { acc = acc + x + y; } return acc; }`},
 		{"for_struct_rename", `struct P { x: i32, y: i32 }
-function f(ps: P[]): i32 { var acc = 0; for P { x: a, y: b } in ps { acc = acc + a + b; } return acc; }`},
+function f(ps: P[]): i32 { let acc = 0; for P { x: a, y: b } in ps { acc = acc + a + b; } return acc; }`},
 		{"for_struct_rest", `struct P { x: i32, y: i32 }
-function f(ps: P[]): i32 { var acc = 0; for P { x, .. } in ps { acc = acc + x; } return acc; }`},
+function f(ps: P[]): i32 { let acc = 0; for P { x, .. } in ps { acc = acc + x; } return acc; }`},
 		{"for_at_struct", `struct P { x: i32, y: i32 }
-function f(ps: P[]): i32 { var acc = 0; for w @ P { x, y } in ps { acc = acc + w.x + x + y; } return acc; }`},
-		{"for_at_tuple", `function f(ts: (i32, i32)[]): i32 { var acc = 0; for w @ (a, b) in ts { acc = acc + w.0 + a + b; } return acc; }`},
+function f(ps: P[]): i32 { let acc = 0; for w @ P { x, y } in ps { acc = acc + w.x + x + y; } return acc; }`},
+		{"for_at_tuple", `function f(ts: (i32, i32)[]): i32 { let acc = 0; for w @ (a, b) in ts { acc = acc + w.0 + a + b; } return acc; }`},
 		{"var_at_struct", `struct P { x: i32, y: i32 }
-function f(p: P): i32 { var w @ P { x, y } = p; return w.x + x + y; }`},
+function f(p: P): i32 { let w @ P { x, y } = p; return w.x + x + y; }`},
 		{"let_at_struct", `struct P { x: i32, y: i32 }
 function f(p: P): i32 { let w @ P { x, y } = p; return w.x + x + y; }`},
-		{"var_at_tuple", `function f(t: (i32, i32)): i32 { var w @ (a, b) = t; return w.0 + a + b; }`},
+		{"var_at_tuple", `function f(t: (i32, i32)): i32 { let w @ (a, b) = t; return w.0 + a + b; }`},
 		{"param_at_struct", `struct P { x: i32, y: i32 }
 function f(w @ P { x, y }: P): i32 { return w.x + x + y; }`},
 	} {
@@ -46,7 +46,7 @@ function f(w @ P { x, y }: P): i32 { return w.x + x + y; }`},
 func TestPatternHeadAtBindingGetsAHolder(t *testing.T) {
 	t.Run("destructure", func(t *testing.T) {
 		prog, err := Parse(`struct P { x: i32, y: i32 }
-function f(p: P): i32 { var w @ P { x, y } = p; return w.x; }`)
+function f(p: P): i32 { let w @ P { x, y } = p; return w.x; }`)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -69,7 +69,7 @@ function f(ps: P[]): i32 { for w @ P { x, y } in ps { return w.x + x + y; } retu
 			t.Fatalf("first stmt should be *ast.ForEach; got %T", prog.Funcs[0].Body.Stmts[0])
 		}
 		if fe.Var != "w" {
-			t.Errorf("element var = %q, want the `@` binding %q", fe.Var, "w")
+			t.Errorf("element let = %q, want the `@` binding %q", fe.Var, "w")
 		}
 	})
 }
@@ -99,8 +99,8 @@ function f(e: E): i32 { let w @ A(n) = e; return n; }`)
 // matching `)` is followed by `in` opens a pattern, and nothing else does.
 func TestPatternHeadKeepsCStyleForApart(t *testing.T) {
 	for _, src := range []string{
-		`function f(): i32 { var s = 0; for (var i = 0; i < 3; i = i + 1) { s = s + i; } return s; }`,
-		`function f(): i32 { var s = 0; for (; false; ) { s = s + 1; } return s; }`,
+		`function f(): i32 { let s = 0; for (let i = 0; i < 3; i = i + 1) { s = s + i; } return s; }`,
+		`function f(): i32 { let s = 0; for (; false; ) { s = s + 1; } return s; }`,
 	} {
 		if _, err := Parse(src); err != nil {
 			t.Errorf("C-style for should still parse: %v\nsrc: %s", err, src)

@@ -20,7 +20,7 @@ func TestWeaveHTMLStructure(t *testing.T) {
 		"",
 		"```fern",
 		"<<body>>=",
-		`var s: string = "hi";`,
+		`let s: string = "hi";`,
 		"```",
 	}, "\n")
 	out := Parse(src).WeaveHTML()
@@ -123,9 +123,9 @@ func TestMarkdownFencedCodeBlock(t *testing.T) {
 }
 
 func TestHighlightFernEscapesAndSpans(t *testing.T) {
-	got := highlightFern(`var x: i32 = a < b; // note`)
+	got := highlightFern(`let x: i32 = a < b; // note`)
 	for _, w := range []string{
-		`<span class="k">var</span>`,
+		`<span class="k">let</span>`,
 		`<span class="t">i32</span>`,
 		`&lt;`, // the `<` is HTML-escaped, never a raw tag
 		`<span class="c">// note</span>`,

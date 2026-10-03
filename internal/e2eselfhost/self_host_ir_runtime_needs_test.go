@@ -48,7 +48,7 @@ func TestSelfHostIRRuntimeNeedsAggregation(t *testing.T) {
 		return string(out)
 	}
 
-	libSrc := "function bcat(): i32 { var a = \"ab\"; var b = a + a; return b.len(); }"
+	libSrc := "function bcat(): i32 { let a = \"ab\"; let b = a + a; return b.len(); }"
 	entrySrc := "function main(): i32 { return bcat(); }"
 
 	sigPath := filepath.Join(dir, "rn_lib.fern")

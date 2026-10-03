@@ -22,15 +22,15 @@ func WasiSocketStorageProbe(expr string, closeSocket bool) string {
 		close = "if (h >= 0) { result = tcp_close(h); }"
 	}
 	return `function main(): i32 {
-    var i: i32 = 0;
-    var stable: i64 = 0;
-    var result: i32 = 0;
+    let i: i32 = 0;
+    let stable: i64 = 0;
+    let result: i32 = 0;
     while (i < 32) {
-        var allocations: i64 = __heap_alloc_count();
-        var h: i32 = ` + expr + `;
+        let allocations: i64 = __heap_alloc_count();
+        let h: i32 = ` + expr + `;
         result = h;
         ` + close + `
-        var used: i64 = __heap_bump_bytes();
+        let used: i64 = __heap_bump_bytes();
         if (i == 0) { stable = used; }
         if (used != stable) { return -1000; }
         if (__heap_alloc_count() - allocations != 1) { return -1001; }
@@ -44,18 +44,18 @@ func WasiSocketStorageProbe(expr string, closeSocket bool) string {
 // buffers. Normalize successful byte counts for the host ownership oracle.
 func WasiUDPStorageProbe(host, data string) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var host: string = %q;
-    var data: string = %q;
-    var i: i32 = 0;
-    var stable: i64 = 0;
-    var result: i32 = 0;
+    let host: string = %q;
+    let data: string = %q;
+    let i: i32 = 0;
+    let stable: i64 = 0;
+    let result: i32 = 0;
     while (i < 32) {
         result = udp_send(host, 1, data);
         if (result >= 0) {
             if (result != data.len()) { return -1002; }
             result = 1;
         }
-        var used: i64 = __heap_bump_bytes();
+        let used: i64 = __heap_bump_bytes();
         if (i == 0) { stable = used; }
         if (used != stable) { return -1000; }
         if (host != %q || data != %q) { return -1003; }
@@ -71,8 +71,8 @@ func WasiStreamSendStorageProbe(data string) string {
 
 func WasiStreamRecvStorageProbe(max int) string {
 	return fmt.Sprintf(`function read(): i32 {
-    var data: u8[] = tcp_recv(0, %d);
-    var i: i32 = 0;
+    let data: u8[] = tcp_recv(0, %d);
+    let i: i32 = 0;
     while (i < data.len()) {
         if (data[i] != 120) { return -1002; }
         i = i + 1;
@@ -80,12 +80,12 @@ func WasiStreamRecvStorageProbe(max int) string {
     return data.len();
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var stable: i64 = 0;
-    var result: i32 = 0;
+    let i: i32 = 0;
+    let stable: i64 = 0;
+    let result: i32 = 0;
     while (i < 32) {
         result = read();
-        var used: i64 = __heap_bump_bytes();
+        let used: i64 = __heap_bump_bytes();
         if (i == 0) { stable = used; }
         if (used != stable) { return -1000; }
         i = i + 1;
@@ -202,6 +202,11 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 		// streams. The listener remains host-owned and must never be dropped.
 		borrowedListener = "(i32.store (i32.const 0) (i32.const 42))"
 	}
+	census := ""
+	if strings.Contains(wat, "(global $__fern_lc_alloc_count ") {
+		census = `(if (i64.ne (global.get $__fern_lc_alloc_count) (global.get $__fern_lc_free_count)) (then (return (i32.const 8))))
+    (if (i64.ne (global.get $__fern_lc_alloc_bytes) (global.get $__fern_lc_free_bytes)) (then (return (i32.const 9))))`
+	}
 	probe := allocator + fmt.Sprintf(`
   (global $fh_fail (mut i32) (i32.const 0))
   (global $fh_handle (mut i32) (i32.const 0))
@@ -226,8 +231,9 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
     (if (i32.ne (global.get $fh_out) (select (i32.const 0) (i32.const %d) (local.get $step))) (then (return (i32.const 5))))
     (if (global.get $fh_poll) (then (return (i32.const 6))))
     (if (global.get $fh_error) (then (return (i32.const 7))))
+    %s
     (i32.const 0))
-`, borrowedListener, export[1], errorResult, successFailure, socket, streams, streams)
+`, borrowedListener, export[1], errorResult, successFailure, socket, streams, streams, census)
 	end := strings.LastIndex(wat, ")")
 	path := filepath.Join(t.TempDir(), "socket-faults.wat")
 	if err := os.WriteFile(path, []byte(wat[:end]+probe+")"), 0o644); err != nil {
@@ -247,7 +253,7 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 					t.Fatal(err)
 				}
 				if strings.TrimSpace(string(got)) != "0" {
-					t.Errorf("fault probe returned %q (1=result, 2=success, 3=socket, 4=input, 5=output, 6=pollable, 7=error resource)", got)
+					t.Errorf("fault probe returned %q (1=result, 2=success, 3=socket, 4=input, 5=output, 6=pollable, 7=error resource, 8=allocation balance, 9=byte balance)", got)
 				}
 			})
 		}

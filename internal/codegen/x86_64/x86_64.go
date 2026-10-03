@@ -947,6 +947,16 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesProcessAlive {
 		g.emitProcessAliveRuntime()
 	}
+	if g.usesPwName {
+		// Linux keeps every account in the files the caller reads.
+		g.line("")
+		g.line(".globl __fern_getpwuid_name")
+		g.line(".type __fern_getpwuid_name, @function")
+		g.label("__fern_getpwuid_name")
+		g.emit("xor eax, eax")
+		g.emit("ret")
+		g.line(".size __fern_getpwuid_name, .-__fern_getpwuid_name")
+	}
 	if g.usesSignalSend {
 		g.emitSignalSendRuntime()
 	}
@@ -1446,6 +1456,9 @@ type generator struct {
 	// (ESRCH). A non-positive pid is 0 without a syscall: those spellings
 	// name a process group to kill(2), not a process.
 	usesProcessAlive bool
+	// usesPwName pulls in `__fern_getpwuid_name(uid)`, which answers 0 here:
+	// only arm64-darwin has an account database outside /etc/passwd.
+	usesPwName bool
 	// usesSignalSend pulls in `__fern_signal_send(pid, sig)` — kill(2),
 	// Result[void, IoError]. The pid reaches the kernel as written:
 	// non-positive spellings name process groups, which is what a sender
@@ -1549,7 +1562,7 @@ type generator struct {
 	// (arm64 parity — the arm64 backend carries the same field). Inlining
 	// expands each OpRcInc / OpRcDec / OpRcIsUnique from a single `call`
 	// into ~10 instructions; in the self-host compiler's largest lowering
-	// function (irlower__lower_expr, ~9.75M IR ops with ~1.66M rc ops) that
+	// function (the deleted AST lowering's lower_expr, ~9.75M IR ops with ~1.66M rc ops) that
 	// bloat balloons the emitted `.s` — the inlined rc sequences alone add
 	// hundreds of MB, and GNU `as` on the resulting ~1 GB driver `.s` peaks
 	// at ~11 GB RSS, which is what forced the swap file the test harness
@@ -2213,6 +2226,8 @@ func (g *generator) recordUse(target string) {
 		g.usesTimerFd = true
 	case "process_alive":
 		g.usesProcessAlive = true
+	case "__getpwuid_name":
+		g.usesPwName = true
 	case "signal_send":
 		g.usesSignalSend = true
 		g.usesIoError = true
@@ -2704,7 +2719,7 @@ func (g *generator) emitStartRuntime() {
 
 // rcInlineMaxOps is the per-function IR-op ceiling for the opt-2b inline rc
 // fast path (see the rcInlineOK field). Matches the arm64 backend's threshold
-// so both backends flip exactly the same function (irlower__lower_expr,
+// so both backends flip exactly the same functions (the deleted AST lowering's lower_expr was
 // ~9.75M ops) to the `call` form: 1M sits ~2× above the largest normal
 // self-host function (~0.5M ops) and ~10× below lower_expr, so every
 // user-scale function keeps the inline win. A var (not a const) only so the
@@ -4089,6 +4104,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_udp_connect"
 		case "udp_sendto":
 			target = "__fern_udp_sendto"
+		case "udp_sendto_bytes":
+			target = "__fern_udp_sendto_bytes"
 		case "udp_recvfrom":
 			target = "__fern_udp_recvfrom"
 		case "poll":
@@ -4097,6 +4114,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_timer_fd"
 		case "process_alive":
 			target = "__fern_process_alive"
+		case "__getpwuid_name":
+			target = "__fern_getpwuid_name"
 		case "signal_send":
 			target = "__fern_signal_send"
 		case "set_process_group":
@@ -4129,6 +4148,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_tcp_send_bytes"
 		case "udp_send":
 			target = "__fern_udp_send"
+		case "udp_send_bytes":
+			target = "__fern_udp_send_bytes"
 		case "tcp_connect":
 			target = "__fern_tcp_connect"
 		case "tcp_pollable":

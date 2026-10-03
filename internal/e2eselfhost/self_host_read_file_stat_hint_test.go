@@ -18,8 +18,8 @@ import (
 //
 // Exit 0 = both builtins reported the same non-zero length.
 const readFilePseudoSrc = `function main(): i32 {
-  var a: i32 = 0 - 1;
-  var b: i32 = 0 - 2;
+  let a: i32 = 0 - 1;
+  let b: i32 = 0 - 2;
   match (read_file("/proc/self/mounts")) { Ok(s) => { a = s.len(); }, Err(e) => { a = 0 - 3; } }
   match (read_file_bytes("/proc/self/mounts")) { Ok(v) => { b = v.len(); }, Err(e) => { b = 0 - 4; } }
   if (a <= 0) { return 1; }

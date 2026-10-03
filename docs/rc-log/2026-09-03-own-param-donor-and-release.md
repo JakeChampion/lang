@@ -27,7 +27,7 @@ toolchains measures the toolchain).
 | `sink(own p: P): i32 { return p.n + p.s.len(); }` | 300/300/0 | 300/100 live 12000 | **300/300/0** |
 | `sink_void(own p: P): void { … falls off the end }` | 300/300/0 | 300/100 live 12000 | **300/300/0** |
 | `id(own p: P): P { …; return p; }` | 300/300/0 | 300/100 live 12000 | **300/300/0** |
-| `f(i): void { var xs: i32[] = [i, i + 1]; … falls off }` | 100/100/0 | 100/0 live 4000 | **100/100/0** |
+| `f(i): void { let xs: i32[] = [i, i + 1]; … falls off }` | 100/100/0 | 100/0 live 4000 | **100/100/0** |
 | `relabel(own p: A, t)` over `A { xs: i32[], s: string, n: i32 }` (reuse refused) | 700/700/0 | 700/200 live 29600 | 700/300 live 24000 |
 
 The self-host pairs the `own` string and enum rows into the param's box, so its
@@ -38,7 +38,7 @@ argument TEMP is not.
 
 ## Four leaks, two of them over-releases in disguise
 
-**The call result.** Every row shares one cause: `var q = bump(…)` earned no
+**The call result.** Every row shares one cause: `let q = bump(…)` earned no
 strict-fresh credit, because `return_value_is_strictfresh_struct` refused any
 literal with a base. Yet every field a `T { ...base, … }` CARRIES reaches the
 new box counted — the base-copy path retains a nested-struct or enum field
@@ -160,7 +160,7 @@ only for a routed type, which is the one condition
 `cross_recipient_fields_fresh`, the gate every cross family shares.
 
 Admitted: `own_param_reuse_sites` (cross), `own_param_self_overwrite_sites`
-(`var c = T { ...own_d, f }`) and the return-position / self-assign update
+(`let c = T { ...own_d, f }`) and the return-position / self-assign update
 (`own_update_params_of`) for enum fields and routed string fields. Pinned by the
 eight `own-param-*-{string,enum}-field*` differential cases, the
 `aliased-string-own-override` / `unrouted-string-own-donor` exclusions, and
@@ -197,7 +197,7 @@ three census rows (each `fresh=0 paired=1`).
 ## Side finding, not fixed
 
 The self-host checker accepts
-`var p: P = P { s: w(i), n: i }; var q: P = bump(p);` where native rejects it
+`let p: P = P { s: w(i), n: i }; let q: P = bump(p);` where native rejects it
 with E051 (`ow_is_owned_expr` admits a local bound to a fresh construction;
 native admits only the construction itself or another `own` param). On the
 parent that program ran 300/300 by the same accident as the scalar control; now

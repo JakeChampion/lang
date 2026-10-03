@@ -35,9 +35,9 @@ func fsHelperBundleSrc(rounds int) string {
   return 0;
 }
 function main(): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < %d) {
-    var r: i32 = step();
+    let r: i32 = step();
     if (r != 0) { return r; }
     i = i + 1;
   }

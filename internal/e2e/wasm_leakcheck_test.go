@@ -114,9 +114,9 @@ func runLeakCheckWasm(t *testing.T, src string, sanitize bool) (string, string, 
 // fixture the natives' leakCheckBalancedSrc uses, so the two censuses
 // are comparable number for number.
 const wasmLeakBalancedSrc = `function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var a: usize = __alloc(64);
+        let a: usize = __alloc(64);
         __free(a, 64);
         i = i + 1;
     }
@@ -129,8 +129,8 @@ const wasmLeakBalancedSrc = `function main(): i32 {
 // whose exact size does not depend on the current state of rc
 // reclamation.
 const wasmLeakRawSrc = `function main(): i32 {
-    var a: usize = __alloc(64);
-    var b: usize = __alloc(64);
+    let a: usize = __alloc(64);
+    let b: usize = __alloc(64);
     if (a == 0 || b == 0) { return 1; }
     return 42;
 }`
@@ -141,9 +141,9 @@ const wasmLeakRawSrc = `function main(): i32 {
 // this is the leg that would go red if a reclamation path stopped
 // reaching __free.
 const wasmLeakRcDropSrc = `function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var row: i32[] = [i, i + 1, i + 2];
+        let row: i32[] = [i, i + 1, i + 2];
         if (row[0] != i) { return 1; }
         i = i + 1;
     }
@@ -244,7 +244,7 @@ func TestWASMSanitizeCleanRunIsSilent(t *testing.T) {
 // what keeps a census from being double-counted by a reader.
 func TestWASMLeakCheckReportsOnce(t *testing.T) {
 	src := `function main(): i32 {
-    var a: usize = __alloc(64);
+    let a: usize = __alloc(64);
     __free(a, 64);
     exit(0);
     return 1;
@@ -289,3 +289,9 @@ func parseWasmLeakCheckLine(t *testing.T, stderr string) (allocs, frees, live in
 
 // wasmLeakCheckLineRe matches the census line anywhere in stderr.
 var wasmLeakCheckLineRe = regexp.MustCompile(`leakcheck: allocs=(-?\d+) frees=(-?\d+) live_bytes=(-?\d+)\n`)
+
+// withResultPrinter imports core/int, whose int_to_string the native
+// PrintMainResult wrapper calls to print main's result.
+func withResultPrinter(src string) string {
+	return "import \"core/int\";\n" + src
+}

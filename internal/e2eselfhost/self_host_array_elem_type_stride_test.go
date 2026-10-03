@@ -34,23 +34,23 @@ var arrayElemTypeStrideCases = []struct {
 	// Free-function parameter: the destination the parser settle pass reaches
 	// but only stamped floats for — an i64[] literal stayed i32-strided.
 	{"free_fn_i64_param", map[string]string{"main.fern": `function pick(xs: i64[]): i64 { return xs[1]; }
-function main(): i32 { var v: i64 = pick([1, 2]); return (v as i32) + 10; }`}},
+function main(): i32 { let v: i64 = pick([1, 2]); return (v as i32) + 10; }`}},
 	// Struct-literal field.
 	{"struct_field_i64", map[string]string{"main.fern": `struct Holder { xs: i64[] }
-function main(): i32 { var h: Holder = Holder { xs: [1, 2] }; return (h.xs[1] as i32) + 10; }`}},
+function main(): i32 { let h: Holder = Holder { xs: [1, 2] }; return (h.xs[1] as i32) + 10; }`}},
 	// Method argument on an annotated receiver: nothing settled these at all,
 	// so the f64 case lowered integer elements into an f64-read array.
 	{"method_arg_f64", map[string]string{"main.fern": `struct Bag { tag: i32 }
 function (b: Bag) pick(xs: f64[]): f64 { return xs[1]; }
-function main(): i32 { var b: Bag = Bag { tag: 0 }; var v: f64 = b.pick([1, 2]); return (v as i32) + 10; }`}},
+function main(): i32 { let b: Bag = Bag { tag: 0 }; let v: f64 = b.pick([1, 2]); return (v as i32) + 10; }`}},
 	{"method_arg_i64", map[string]string{"main.fern": `struct Bag { tag: i32 }
 function (b: Bag) pick(xs: i64[]): i64 { return xs[1]; }
-function main(): i32 { var b: Bag = Bag { tag: 0 }; var v: i64 = b.pick([1, 2]); return (v as i32) + 10; }`}},
+function main(): i32 { let b: Bag = Bag { tag: 0 }; let v: i64 = b.pick([1, 2]); return (v as i32) + 10; }`}},
 	// Mixed `[1, 2.5]`: the unsettled integer element made the wasm module
 	// itself invalid (i32.store of an f64), not merely wrong.
 	{"method_arg_f64_mixed", map[string]string{"main.fern": `struct Bag { tag: i32 }
 function (b: Bag) pick(xs: f64[]): f64 { return xs[1]; }
-function main(): i32 { var b: Bag = Bag { tag: 0 }; var v: f64 = b.pick([1, 2.5]);
+function main(): i32 { let b: Bag = Bag { tag: 0 }; let v: f64 = b.pick([1, 2.5]);
     if (v > 2.4 && v < 2.6) { return 7; }
     return 1; }`}},
 	// Across a module boundary: at parse time the callee's signature is not in
@@ -60,8 +60,8 @@ function main(): i32 { var b: Bag = Bag { tag: 0 }; var v: f64 = b.pick([1, 2.5]
 pub function pickf(xs: f64[]): f64 { return xs[1]; }`,
 		"main.fern": `import "./lib64";
 function main(): i32 {
-    var v: i64 = lib64.pick([1, 2]);
-    var f: f64 = lib64.pickf([1, 2]);
+    let v: i64 = lib64.pick([1, 2]);
+    let f: f64 = lib64.pickf([1, 2]);
     return (v as i32) + (f as i32) * 10;
 }`}},
 	// The other element types the stamp now decides, in one program: u64 and
@@ -72,7 +72,7 @@ function ps(xs: string[]): string { return xs[1]; }
 function pl(xs: boolean[]): boolean { return xs[1]; }
 function pn(m: i64[][]): i64 { return m[1][0]; }
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (pu([1, 2]) == (2 as u64)) { r = r + 1; }
     if (pb([1, 2, 3]) == (3 as u8)) { r = r + 2; }
     if (ps(["a", "b"]) == "b") { r = r + 4; }
@@ -84,10 +84,10 @@ function main(): i32 {
 	// That is a footprint divergence, not a value one — this pins the values so
 	// the day the distinct f32 slot lands it cannot silently truncate them.
 	{"f32_values_roundtrip", map[string]string{"main.fern": `function main(): i32 {
-    var a: f32 = 16777216.0 as f32;
-    var b: f32 = 1.0 as f32;
-    var xs: f32[] = [a + b, b, a];
-    var r: i32 = 0;
+    let a: f32 = 16777216.0 as f32;
+    let b: f32 = 1.0 as f32;
+    let xs: f32[] = [a + b, b, a];
+    let r: i32 = 0;
     if (xs[0] == a) { r = r + 1; }
     if (xs[1] == b) { r = r + 2; }
     if (xs[2] == a) { r = r + 4; }
@@ -100,17 +100,17 @@ function main(): i32 {
 	// elements lower as doubles.
 	{"generic_param_falls_back_to_probe", map[string]string{"main.fern": `function first[T](xs: T[]): T { return xs[0]; }
 function main(): i32 {
-    var v: f64 = first([2.5, 1.5]);
-    var w: i64 = first([(7 as i64), (8 as i64)]);
+    let v: f64 = first([2.5, 1.5]);
+    let w: i64 = first([(7 as i64), (8 as i64)]);
     return (v as i32) + (w as i32) * 10;
 }`}},
 	// Controls: destinations that were already type-driven and must stay so.
 	{"annotated_var_i64", map[string]string{"main.fern": `function main(): i32 {
-    var xs: i64[] = [1, 2];
+    let xs: i64[] = [1, 2];
     return (xs[1] as i32) + 10;
 }`}},
 	{"return_position_i64", map[string]string{"main.fern": `function mk(): i64[] { return [1, 2]; }
-function main(): i32 { var xs: i64[] = mk(); return (xs[1] as i32) + 10; }`}},
+function main(): i32 { let xs: i64[] = mk(); return (xs[1] as i32) + 10; }`}},
 }
 
 // writeArrayElemCase writes a case's files into a fresh dir and returns the

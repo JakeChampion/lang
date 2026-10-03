@@ -5,7 +5,7 @@ or enum-array field read leaked the array's elements (#10326):
 
 ```fern
 function mk(k: i32): (i32, Pt[]) {
-    var r: Bag = Bag { n: k, pts: [Pt { x: k, tag: [k, k] }, Pt { x: 2, tag: [2] }] };
+    let r: Bag = Bag { n: k, pts: [Pt { x: k, tag: [k, k] }, Pt { x: 2, tag: [2] }] };
     return (r.n, r.pts);
 }
 ```
@@ -143,6 +143,6 @@ container (the #9187 floor above).
 
 ## Still leaking
 
-An unannotated `var p = (r.n, r.pts)` is not credited `TUP:`
+An unannotated `let p = (r.n, r.pts)` is not credited `TUP:`
 (`tuple_ann_admits_fresh_mixed` needs the annotation). It leaks the same
 248 bytes as on main.

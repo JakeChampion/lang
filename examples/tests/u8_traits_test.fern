@@ -15,9 +15,9 @@ import "std/test";
 import "core/cmp";
 
 function test_display(): test.TestOutcome {
-  var b: u8 = 65;
-  var zero: u8 = 0;
-  var high: u8 = 255;
+  let b: u8 = 65;
+  let zero: u8 = 0;
+  let high: u8 = 255;
   return test.assert_true(
     b.to_string() == "65"
       && zero.to_string() == "0"
@@ -26,17 +26,17 @@ function test_display(): test.TestOutcome {
 }
 
 function test_eq(): test.TestOutcome {
-  var a: u8 = 7;
-  var b: u8 = 7;
-  var c: u8 = 8;
+  let a: u8 = 7;
+  let b: u8 = 7;
+  let c: u8 = 8;
   return test.assert_true(a.eq(b) && !a.eq(c));
 }
 
 // cmp returns -1 / 0 / 1. The high byte matters: a byte is UNSIGNED, so 255
 // must order ABOVE 1 rather than below it the way a sign-extended i32 would.
 function test_ord(): test.TestOutcome {
-  var lo: u8 = 1;
-  var hi: u8 = 255;
+  let lo: u8 = 1;
+  let hi: u8 = 255;
   return test.assert_true(
     lo.cmp(hi) == 0 - 1
       && hi.cmp(lo) == 1
@@ -45,8 +45,8 @@ function test_ord(): test.TestOutcome {
 }
 
 function test_hash(): test.TestOutcome {
-  var a: u8 = 42;
-  var b: u8 = 43;
+  let a: u8 = 42;
+  let b: u8 = 43;
   // Distinct bytes should not collide under the standard mixer, and a
   // byte's hash must agree with the i32 it widens to.
   return test.assert_true(a.hash() != b.hash() && a.hash() == 42.hash());
@@ -61,8 +61,8 @@ function debug_of[T: cmp.Debug](x: T): string {
 }
 
 function test_debug(): test.TestOutcome {
-  var high: u8 = 200;
-  var zero: u8 = 0;
+  let high: u8 = 200;
+  let zero: u8 = 0;
   return test.assert_true(debug_of(high) == "200" && debug_of(zero) == "0");
 }
 
@@ -72,7 +72,7 @@ function test_debug(): test.TestOutcome {
 struct Pixel { r: u8, a: i32 }
 
 function test_derive_debug(): test.TestOutcome {
-  var p: Pixel = Pixel { r: 200, a: 7 };
+  let p: Pixel = Pixel { r: 200, a: 7 };
   return test.assert_eq(p.to_debug(), "Pixel { r: 200, a: 7 }");
 }
 
@@ -84,19 +84,19 @@ function test_derive_debug(): test.TestOutcome {
 struct Box[T] { v: T }
 
 function test_default(): test.TestOutcome {
-  var b: Box[u8] = Box.default();
+  let b: Box[u8] = Box.default();
   return test.assert_eq(b.v, 0 as u8);
 }
 
 // The reason the impls exist: a bare assert_eq on two bytes resolves through
 // the `[T: Eq + Display]` bound, so it only compiles when u8 satisfies them.
 function test_generic_bound(): test.TestOutcome {
-  var b: u8 = 65;
+  let b: u8 = 65;
   return test.assert_eq(b, 65 as u8);
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("core/cmp u8 impls");
+  let r: test.TestRunner = test.test_new("core/cmp u8 impls");
   r = r.it("Display", test_display);
   r = r.it("Eq", test_eq);
   r = r.it("Ord unsigned order", test_ord);

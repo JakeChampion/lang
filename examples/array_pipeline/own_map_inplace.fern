@@ -23,14 +23,12 @@
 // satisfiable by a `.with` that never copies for anyone, and the reuse would
 // not have been demonstrated to depend on ownership at all.
 //
-// `with_own` is annotated `fip`, so the native compiler's E068 pass is
-// asserting the space claim at compile time rather than the measurement
-// asserting it after the fact. `map_own` is NOT annotated, and could be on the
-// native compiler (internal/e2e/array_inplace_fip_test.go is that program):
-// scripts/array-pipeline-baseline builds this file with both compilers, and
-// the self-hosted one has no in-place map, so it refuses the claim with an
-// E068 saying so — which is the checked contract working, not a file that
-// should be made to compile around it.
+// `with_own` is annotated `fip`, so the E068 pass is asserting the space claim
+// at compile time rather than the measurement asserting it after the fact.
+// `map_own` is NOT annotated, though it could be on either compiler
+// (internal/e2e/array_inplace_fip_test.go is that program): the gate also
+// builds this file with `FERN_NO_ARRAY_INPLACE=1`, and under that switch the
+// claim is false and E068 would refuse it.
 import "core/cmp";
 import "std/bench";
 import "std/string";
@@ -48,8 +46,8 @@ fip function elem_f(x: i64): i64 {
 }
 
 function build_input(n: i32): i64[] {
-  var xs: i64[] = [];
-  var i: i32 = 0;
+  let xs: i64[] = [];
+  let i: i32 = 0;
   while (i < n) {
     xs = xs.append(i as i64 * (2654435761 as i64) % modulus());
     i = i + 1;
@@ -68,7 +66,7 @@ function via_map_own(own xs: i64[]): i64[] {
 // function allocates nothing at all, checked by E068 on the native compiler —
 // not a comment, and not something the benchmark has to discover.
 fip function via_with_own(own xs: i64[], n: i32): i64[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     xs = xs.with(i, elem_f(xs[i]));
     i = i + 1;
@@ -80,8 +78,8 @@ fip function via_with_own(own xs: i64[], n: i32): i64[] {
 // `.with` takes the copy-on-write path on the first write and the function
 // pays for a whole fresh buffer.
 function via_with_borrowed(xs: i64[], n: i32): i64[] {
-  var out: i64[] = xs;
-  var i: i32 = 0;
+  let out: i64[] = xs;
+  let i: i32 = 0;
   while (i < n) {
     out = out.with(i, elem_f(out[i]));
     i = i + 1;
@@ -103,8 +101,8 @@ function apply(variant: i32, own xs: i64[], n: i32): i64[] {
 }
 
 function digest(xs: i64[]): i64 {
-  var d: i64 = 0 as i64;
-  var i: i32 = 0;
+  let d: i64 = 0 as i64;
+  let i: i32 = 0;
   while (i < xs.len()) {
     d = (d * (31 as i64) + xs[i]) % modulus();
     i = i + 1;
@@ -113,12 +111,12 @@ function digest(xs: i64[]): i64 {
 }
 
 function main(): i32 {
-  var argv: string[] = args();
-  var name: string = "map_own";
+  let argv: string[] = args();
+  let name: string = "map_own";
   if (argv.len() > 1) {
     name = argv[1];
   }
-  var variant: i32 = 0;
+  let variant: i32 = 0;
   if (name == "with_own") {
     variant = 1;
   }
@@ -126,19 +124,19 @@ function main(): i32 {
     variant = 2;
   }
 
-  var n: i32 = 4096;
+  let n: i32 = 4096;
   if (argv.len() > 2) {
     n = argv[2].parse_int_or(4096);
   }
-  var rounds: i32 = 200;
+  let rounds: i32 = 200;
   if (argv.len() > 3) {
     rounds = argv[3].parse_int_or(200);
   }
 
-  var xs: i64[] = build_input(n);
+  let xs: i64[] = build_input(n);
 
-  var samples: i64[] = [];
-  var p: i32 = 0;
+  let samples: i64[] = [];
+  let p: i32 = 0;
   while (p < rounds) {
     samples = samples.append(0 as i64);
     p = p + 1;
@@ -152,29 +150,29 @@ function main(): i32 {
   // recycling the same blocks and the bump cursor never moves
   // (docs/ALLOCATION-OBSERVABLE.md: a reclaiming loop is flat in bytes and
   // linear in calls). This is the reading that answers "by how much".
-  var cold_a0: i64 = bench.alloc_count();
-  var cold_b0: i64 = bench.bump_bytes();
+  let cold_a0: i64 = bench.alloc_count();
+  let cold_b0: i64 = bench.bump_bytes();
   xs = apply(variant, xs, n);
-  var cold_allocs: i64 = bench.allocs_after(cold_a0);
-  var cold_fresh: i64 = bench.fresh_bytes_after(cold_b0);
+  let cold_allocs: i64 = bench.allocs_after(cold_a0);
+  let cold_fresh: i64 = bench.fresh_bytes_after(cold_b0);
 
-  var at_allocs: i64 = bench.alloc_count();
-  var at_fresh: i64 = bench.bump_bytes();
-  var started_ns: i64 = monotonic_ns();
-  var r: i32 = 0;
+  let at_allocs: i64 = bench.alloc_count();
+  let at_fresh: i64 = bench.bump_bytes();
+  let started_ns: i64 = monotonic_ns();
+  let r: i32 = 0;
   while (r < rounds) {
-    var t0: i64 = monotonic_ns();
+    let t0: i64 = monotonic_ns();
     xs = apply(variant, xs, n);
     samples = samples.with(r, monotonic_ns() - t0);
     r = r + 1;
   }
-  var elapsed_ns: i64 = monotonic_ns() - started_ns;
-  var allocs: i64 = bench.allocs_after(at_allocs);
-  var fresh: i64 = bench.fresh_bytes_after(at_fresh);
-  var checksum: i64 = digest(xs);
+  let elapsed_ns: i64 = monotonic_ns() - started_ns;
+  let allocs: i64 = bench.allocs_after(at_allocs);
+  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
+  let checksum: i64 = digest(xs);
 
-  var rep: bench.Report = bench.Report { name: name, iterations: rounds, wall_ns: elapsed_ns, samples_ns: cmp.sort(samples), allocs: allocs, fresh_bytes: fresh };
-  var elements: i64 = rounds as i64 * (n as i64);
+  let rep: bench.Report = bench.Report { name: name, iterations: rounds, wall_ns: elapsed_ns, samples_ns: cmp.sort(samples), allocs: allocs, fresh_bytes: fresh };
+  let elements: i64 = rounds as i64 * (n as i64);
   print("{\"program\":\"own_map_inplace\"" + ",\"variant\":\"" + name + "\"" + ",\"n\":" + n.to_string() + ",\"rounds\":" + rounds.to_string() + ",\"checksum\":" + checksum.to_string() + ",\"cold_allocs\":" + cold_allocs.to_string() + ",\"cold_fresh_bytes\":" + cold_fresh.to_string() + ",\"steady_allocs\":" + allocs.to_string() + ",\"steady_fresh_bytes\":" + fresh.to_string() + ",\"allocs_per_round_milli\":" + (allocs * (1000 as i64) / (rounds as i64)).to_string() + ",\"fresh_bytes_per_round\":" + (fresh / (rounds as i64)).to_string() + ",\"fresh_bytes_per_element_milli\":" + (fresh * (1000 as i64) / elements).to_string() + ",\"ns_per_round\":" + (elapsed_ns / (rounds as i64)).to_string() + ",\"ns_per_element_milli\":" + (elapsed_ns * (1000 as i64) / elements).to_string() + ",\"round_p50_ns\":" + rep.p50_ns().to_string() + ",\"round_p99_ns\":" + rep.p99_ns().to_string() + "}");
   return 0;
 }

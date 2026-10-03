@@ -54,13 +54,13 @@ func trimOwnedCases() []trimOwnedCase {
 			name: "returned_across_frame_with_recycler",
 			src: `import "std/string";
 function mk(a: string): string { return a + "abcdefghijklmnopqrstuvwxyz0123456789"; }
-function mkv(): str { var s: string = mk("  pad  "); return s.trim(); }
+function mkv(): str { let s: string = mk("  pad  "); return s.trim(); }
 function round(i: i32): i32 {
-    var v: str = mkv();
-    var clobber: string = mk("ZZZZZZZ");
+    let v: str = mkv();
+    let clobber: string = mk("ZZZZZZZ");
     return (v[0] as i32 + clobber.len() + i) % 101;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
 			want: 17, allocs: 400, frees: 400,
 		},
 		{
@@ -69,9 +69,9 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			name: "returned_across_frame_control",
 			src: `import "std/string";
 function mk(a: string): string { return a + "abcdefghijklmnopqrstuvwxyz0123456789"; }
-function mkv(): str { var s: string = mk("  pad  "); return s.trim(); }
+function mkv(): str { let s: string = mk("  pad  "); return s.trim(); }
 function main(): i32 {
-    var v: str = mkv();
+    let v: str = mkv();
     if (__rc_underflow_count() != 0) { return 99; }
     return (v[0] as i32) % 101;
 }`,
@@ -85,11 +85,11 @@ function main(): i32 {
 			src: `import "std/string";
 function mk(a: string): string { return a + "abcdefghijklmnopqrstuvwxyz0123456789"; }
 function round(i: i32): i32 {
-    var s: string = mk("  pad  ");
-    var v: str = s.trim();
+    let s: string = mk("  pad  ");
+    let v: str = s.trim();
     return (v[0] as i32 + s.len() + i) % 101;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
 			want: 17, allocs: 200, frees: 200,
 		},
 	}

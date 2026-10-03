@@ -12,7 +12,7 @@ import (
 // floatBitsIRCases pin the float<->int bit-reinterpret builtins — `f64_bits`,
 // `f64_from_bits`, `f32_bits`, `f32_from_bits` — on the IR path. Before #3513
 // these bailed the whole module to the legacy AST emitter (asm_pathprobe_run
-// reported "ast"); they now lower through irlower's lower_expr / lower_i64.
+// reported "ast"); they now lower through the typed lowering.
 // On the register backends f64_bits/f64_from_bits are no-op reinterprets (the
 // 8-byte slot already holds the IEEE-754 bits) while the f32 pair narrows /
 // widens between f64 and f32; wasm emits the typed reinterpret instructions
@@ -31,15 +31,15 @@ var floatBitsIRCases = []struct {
 	main string
 }{
 	// f64_bits: extract the biased exponent of 2.0 (1024) and subtract 1000.
-	{"f64-bits-exp", `function main(): i32 { var b: i64 = f64_bits(2.0); return ((b >> 52i64) as i32) - 1000; }`},
+	{"f64-bits-exp", `function main(): i32 { let b: i64 = f64_bits(2.0); return ((b >> 52i64) as i32) - 1000; }`},
 	// f64_bits then f64_from_bits round-trips 3.5 back to 3.5.
-	{"f64-roundtrip", `function main(): i32 { var b: i64 = f64_bits(3.5); var y: f64 = f64_from_bits(b); return (y * 10.0) as i32; }`},
+	{"f64-roundtrip", `function main(): i32 { let b: i64 = f64_bits(3.5); let y: f64 = f64_from_bits(b); return (y * 10.0) as i32; }`},
 	// f64_from_bits over a literal i64 bit pattern (0x4045000000000000 == 42.0).
-	{"f64-from-bits-lit", `function main(): i32 { var n: i64 = 4631107791820423168i64; var y: f64 = f64_from_bits(n); return y as i32; }`},
+	{"f64-from-bits-lit", `function main(): i32 { let n: i64 = 4631107791820423168i64; let y: f64 = f64_from_bits(n); return y as i32; }`},
 	// f32_bits: the i32 bit pattern of 1.5 is 0x3FC00000; >>23 == 0x7F (127).
-	{"f32-bits", `function main(): i32 { var fb: i32 = f32_bits(1.5); return (fb >> 23) - 100; }`},
+	{"f32-bits", `function main(): i32 { let fb: i32 = f32_bits(1.5); return (fb >> 23) - 100; }`},
 	// f32_bits then f32_from_bits round-trips 2.5 (×4 == 10).
-	{"f32-roundtrip", `function main(): i32 { var fb: i32 = f32_bits(2.5); return ((f32_from_bits(fb) as f64) * 4.0) as i32; }`},
+	{"f32-roundtrip", `function main(): i32 { let fb: i32 = f32_bits(2.5); return ((f32_from_bits(fb) as f64) * 4.0) as i32; }`},
 }
 
 // TestSelfHostFloatBitsIRX86_64 routes each case through the self-hosted x86-64

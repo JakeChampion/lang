@@ -125,7 +125,7 @@ function main(): i32 { return 0; }`
 function make_pair(a: i32, b: i32): (i32, i32);
 
 function main(): i32 {
-	var p: (i32, i32) = make_pair(10, 21);
+	let p: (i32, i32) = make_pair(10, 21);
 	if (p.0 == 11 && p.1 == 42) { write("` + want + `"); } else { write("tup-bad"); }
 	return 0;
 }`

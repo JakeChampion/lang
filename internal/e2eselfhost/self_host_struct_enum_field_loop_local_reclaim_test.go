@@ -8,7 +8,7 @@ import (
 )
 
 // #4357 (#4297 A2 follow-up): a reclaimable struct LOOP-LOCAL carrying a DIRECT enum
-// field (`while { var t: Tagged = Tagged { e: Poly([i, i+1]), n: i }; }`) leaked the
+// field (`while { let t: Tagged = Tagged { e: Poly([i, i+1]), n: i }; }`) leaked the
 // enum field's VARIANT PAYLOAD every iteration. The struct is admitted to the reclaim
 // set (struct_has_reclaim_array_field admits a direct enum field since #4297 A2), but
 // its loop-rebind routed through the array-only __field_reclaim path, which skips enum
@@ -34,10 +34,10 @@ func structEnumFieldLoopLocalSrc(n string) string {
 	return `enum Shape { Poly(i32[]), Dot }
 struct Tagged { e: Shape, n: i32 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < ` + n + `) {
-        var t: Tagged = Tagged { e: Poly([i, i + 1]), n: i };
+        let t: Tagged = Tagged { e: Poly([i, i + 1]), n: i };
         match (t.e) { Poly(xs) => { acc = acc + xs[0]; }, Dot => {} }
         i = i + 1;
     }
@@ -55,9 +55,9 @@ function main(): i32 {
 const structEnumFieldLoopLocalDetectorSrc = `enum Shape { Poly(i32[]), Dot }
 struct Tagged { e: Shape, n: i32 }
 function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
-        var t: Tagged = Tagged { e: Poly([i, i + 1, i + 2]), n: i };
+        let t: Tagged = Tagged { e: Poly([i, i + 1, i + 2]), n: i };
         match (t.e) { Poly(xs) => { acc = acc + xs[0] + xs[1] + xs[2]; }, Dot => {} }
         acc = acc + t.n;
         i = i + 1;
@@ -74,10 +74,10 @@ function main(): i32 {
 const structEnumFieldAliasSafetySrc = `enum Shape { Poly(i32[]), Dot }
 struct Tagged { e: Shape, n: i32 }
 function main(): i32 {
-    var shared: Shape = Poly([7, 8, 9]);
-    var i: i32 = 0; var acc: i32 = 0;
+    let shared: Shape = Poly([7, 8, 9]);
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 100) {
-        var t: Tagged = Tagged { e: shared, n: i };
+        let t: Tagged = Tagged { e: shared, n: i };
         match (t.e) { Poly(xs) => { acc = acc + xs[0]; }, Dot => {} }
         i = i + 1;
     }
@@ -96,10 +96,10 @@ function main(): i32 {
 const structEnumFieldStringPayloadAliasSrc = `enum Msg { Text(string), None }
 struct W { m: Msg, n: i32 }
 function main(): i32 {
-    var s: string = "hello";
-    var i: i32 = 0; var acc: i32 = 0;
+    let s: string = "hello";
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 100) {
-        var t: W = W { m: Text(s), n: i };
+        let t: W = W { m: Text(s), n: i };
         match (t.m) { Text(v) => { acc = acc + v.len(); }, None => {} }
         i = i + 1;
     }

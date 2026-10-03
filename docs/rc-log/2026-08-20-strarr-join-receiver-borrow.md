@@ -21,7 +21,7 @@ with one exception hard-coded inline: `len`. The default is the right way round
 lasting alias — but `join` belongs on the other side of it. `__fern_arr_str_join`
 walks the elements building a fresh accumulator with `+` and stores nothing, on
 every backend: the register one is Fern source (`asmcore.rt_src_arr_str_join`)
-written as `var r = ""` then concat *precisely so it cannot alias*, and wasm's
+written as `let r = ""` then concat *precisely so it cannot alias*, and wasm's
 `$__fern_str_join` copies bytes into a freshly boxed result.
 
 `strarr_borrowing_method` now names that set — `len` and `join` — as the
@@ -29,7 +29,7 @@ array-method sibling of `str_borrowing_method`.
 
 ## The half this does NOT do, and the unsound version of it
 
-What remains is the join RESULT: `var s = xs.join(sep)` is not credited as a
+What remains is the join RESULT: `let s = xs.join(sep)` is not credited as a
 fresh string, so the joined box leaks. Measured alone (array owned by the
 caller, so only the result can leak): 131200 on x86-64, 128000 on wasm — 328
 bytes per round for a 302-char result, which is exactly its box plus data.

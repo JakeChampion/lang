@@ -4,8 +4,8 @@ import "std/i64";
 // as a bare "-". The magnitude must be carried unsigned (#6050, the i64
 // sibling of the i32 case in int_wrap).
 function main(): i32 {
-    var n: i64 = 0 - 9223372036854775807 - 1;
-    var s: string = n.to_string();
+    let n: i64 = 0 - 9223372036854775807 - 1;
+    let s: string = n.to_string();
     if (s == "-9223372036854775808") { return 0; }
     return 1;
 }

@@ -30,21 +30,21 @@ var unionTupleElemReclaimCases = []struct {
 	want int
 }{
 	{"option-elem-box-reclaimed", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[], Option[i32]) = (i, [i, i + 1], Some(i));
-        var r: i32 = t.0 + t.1[0];
+        let t: (i32, i32[], Option[i32]) = (i, [i, i + 1], Some(i));
+        let r: i32 = t.0 + t.1[0];
         acc = (acc + r) % 91;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -52,21 +52,21 @@ function main(): i32 {
 	// Two union elements leaked two boxes; the release is per position, so this
 	// separates "the walk reached one element" from "the walk reached them all".
 	{"two-option-elems-reclaimed", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[], Option[i32], Option[i32]) = (i, [i, i + 1], Some(i), Some(i + 1));
-        var r: i32 = t.0 + t.1[0];
+        let t: (i32, i32[], Option[i32], Option[i32]) = (i, [i, i + 1], Some(i), Some(i + 1));
+        let r: i32 = t.0 + t.1[0];
         acc = (acc + r) % 91;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -76,21 +76,21 @@ function main(): i32 {
 	// where expr_opt_elem_tag matches the built-in Option shape.
 	{"user-enum-variant-elem-reclaimed", `enum Tag { Num(i32), Nil }
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[], Tag) = (i, [i, i + 1], Tag.Num(i));
-        var r: i32 = t.0 + t.1[0];
+        let t: (i32, i32[], Tag) = (i, [i, i + 1], Tag.Num(i));
+        let r: i32 = t.0 + t.1[0];
         acc = (acc + r) % 91;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -100,12 +100,12 @@ function main(): i32 {
 	// fresh, so this position must keep its skip — `o` is read after the tuple's
 	// reclaim point, and freeing it corrupts the read or ticks the detector.
 	{"ident-union-elem-alias-safe", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var o: Option[i32] = Some(i);
-        var t: (i32, i32[], Option[i32]) = (i, [i, i + 1], o);
-        var r: i32 = 0;
+        let o: Option[i32] = Some(i);
+        let t: (i32, i32[], Option[i32]) = (i, [i, i + 1], o);
+        let r: i32 = 0;
         match (o) { Some(v) => { r = t.0 + t.1[0] + v; }, None => {} }
         acc = (acc + r) % 91;
         i = i + 1;
@@ -113,8 +113,8 @@ function main(): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w;
@@ -123,11 +123,11 @@ function main(): i32 {
 	// read back through the tuple, so a shallow dec that wrongly took the
 	// payload with it would corrupt this or tick the detector.
 	{"union-payload-alias-safe", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[], Option[i32[]]) = (i, [i, i + 1], Some([i, i + 2]));
-        var r: i32 = 0;
+        let t: (i32, i32[], Option[i32[]]) = (i, [i, i + 1], Some([i, i + 2]));
+        let r: i32 = 0;
         match (t.2) { Some(v) => { r = t.0 + t.1[0] + v[1]; }, None => {} }
         acc = (acc + r) % 91;
         i = i + 1;
@@ -135,8 +135,8 @@ function main(): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w;

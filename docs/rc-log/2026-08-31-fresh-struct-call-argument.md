@@ -26,10 +26,10 @@ and 200 rounds:
 |---|---|---|
 | `Op { … }` literal | 200/200 clean | **200 allocs / 100 frees** |
 | `mkop(i)` producer call | **200/100** | **200/100** |
-| bound to a `var` first | clean | clean |
+| bound to a `let` first | clean | clean |
 
 Exactly 2.0x per doubling on every leaking cell — leaked per EVALUATION, so
-unbounded, not a bounded per-object loss. The `var`-bound row is the position
+unbounded, not a bounded per-object loss. The `let`-bound row is the position
 that already worked, which is what separates this from the construction-retain
 matrix: all of its cells bind first.
 

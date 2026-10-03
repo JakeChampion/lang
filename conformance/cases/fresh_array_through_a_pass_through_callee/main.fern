@@ -12,19 +12,19 @@ function pick(a: i32[], b: i32[], c: boolean): i32[] {
 }
 function id[T](x: T): T { return x; }
 function sum(xs: i32[]): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for v in xs { t = t + v; }
     return t;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var a: i32[] = first([1, 2]);
+        let a: i32[] = first([1, 2]);
         a = a.append(i);
-        var b: i32[] = or_default([4], i == 1);
-        var c: i32[] = pick([10], [20, 30], i == 2);
-        var d: i32[] = id([100, i]);
+        let b: i32[] = or_default([4], i == 1);
+        let c: i32[] = pick([10], [20, 30], i == 2);
+        let d: i32[] = id([100, i]);
         t = t + sum(a) + sum(b) + sum(c) + sum(d);
         i = i + 1;
     }

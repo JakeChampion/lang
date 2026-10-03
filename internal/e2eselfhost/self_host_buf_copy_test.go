@@ -15,7 +15,7 @@ import (
 // builder that starts at one byte, so each reserve copies too. It appends past
 // the string builder's first 64 KiB, then checks every byte it gets back.
 const bufCopyProg = `function matches(out: string, at: i32, alpha: string, lo: i32, n: i32): boolean {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         if (out[at + i] != alpha[lo + i]) { return false; }
         i = i + 1;
@@ -23,16 +23,16 @@ const bufCopyProg = `function matches(out: string, at: i32, alpha: string, lo: i
     return true;
 }
 function main(): i32 {
-    var alpha: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    var h: usize = buf_new(1);
-    var k: i32 = 0;
+    let alpha: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let h: usize = buf_new(1);
+    let k: i32 = 0;
     while (k <= 40) {
         buf_push_range(h, alpha, k % 7, k % 7 + k);
         buf_push(h, slice_unchecked(alpha, k % 5, k % 5 + k) + "");
         k = k + 1;
     }
-    var out: string = buf_take(h);
-    var at: i32 = 0;
+    let out: string = buf_take(h);
+    let at: i32 = 0;
     k = 0;
     while (k <= 40) {
         if (!matches(out, at, alpha, k % 7, k)) { return 1; }
@@ -42,12 +42,12 @@ function main(): i32 {
         k = k + 1;
     }
     if (at != out.len()) { return 3; }
-    var r: i32 = 0;
+    let r: i32 = 0;
     while (r < 5000) {
         strbuf_append(slice_unchecked(alpha, r % 11, r % 11 + r % 41) + "");
         r = r + 1;
     }
-    var big: string = strbuf_take();
+    let big: string = strbuf_take();
     at = 0;
     r = 0;
     while (r < 5000) {

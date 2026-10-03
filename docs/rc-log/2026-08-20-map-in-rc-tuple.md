@@ -1,6 +1,6 @@
 # A map local at a tuple element had no owner at all
 
-`var t: (i32, Map[K, V]) = (i, m)` cost `m` its whole reclaim, and nothing on
+`let t: (i32, Map[K, V]) = (i, m)` cost `m` its whole reclaim, and nothing on
 the tuple side took over. Measured on the TODO list's worst remaining parity gap
 (192 B/round self-host, 0 native).
 
@@ -10,7 +10,7 @@ the tuple side took over. Measured on the TODO list's worst remaining parity gap
 
 | shape | native | self-host before | self-host after |
 |---|---|---|---|
-| `var m = map_new(4); var t = (i, m); t.0 + t.1.get_or(..)` | 0 | 12 800 (64 B/round) | 64 (flat) |
+| `let m = map_new(4); let t = (i, m); t.0 + t.1.get_or(..)` | 0 | 12 800 (64 B/round) | 64 (flat) |
 | the same, plus `m = m.insert("k", i)` | 0 | 38 400 (192 B/round) | 12 928 (64 B/round) |
 | `(Map, Map)` — two maps | 0 | 25 600 | 128 (flat) |
 | `([i, i+1], Map)` — array element too | 0 | 12 880 | 144 (flat) |
@@ -49,7 +49,7 @@ the element release were both required; doing both here double-frees.
 
 `map_tuple_elem_borrow_only` overrides the two positional gates — and only those
 two — when every alias and every escape of the map is a bare-ident element of a
-tuple that cannot outlive it. A host qualifies when it is a `var`-bound local
+tuple that cannot outlive it. A host qualifies when it is a `let`-bound local
 (never an assignment: its target may be declared in an enclosing scope), is not
 reassigned, does not itself escape, carries a tuple ANNOTATION, and lets no
 NON-SCALAR position back out (`tuple_pos_borrow_only`: every `host.<i>` read is
@@ -62,7 +62,7 @@ It is asked only when the plain reading has already refused. It walks the body
 again, and the maps it can rescue are the minority that get that far.
 
 `used_only_as_tuple_elem` answers both gates with one walk, in the shape
-`body_unsafe_for_clo` already established — skip the host's `var` statement,
+`body_unsafe_for_clo` already established — skip the host's `let` statement,
 recurse through if / while / for / match before skipping those.
 
 The PRECISE drop keeps refusing, deliberately. Its drop point is the map's last
@@ -75,9 +75,9 @@ The first version overrode the alias/escape gates and nothing else. It made the
 headline shape flat and **segfaulted** two others:
 
 ```
-var t: (i32, Map[string, i32]) = (i, m);
+let t: (i32, Map[string, i32]) = (i, m);
 return t.1;                       // exit 139
-var keep: Map[string, i32] = t.1; return keep;   // exit 139
+let keep: Map[string, i32] = t.1; return keep;   // exit 139
 ```
 
 `t.1` is a field read on an ident, which `expr_unsafe_for` calls a borrow, so
@@ -145,10 +145,10 @@ counter instead.
 1. **The clone orphan — 64 B/round, the whole residue of the headline shape.**
    `m = m.insert(k, v)` takes `lower_map_clone_insert` whenever
    `is_aliased_name(m)`, and the clone abandons the receiver's old box with no
-   owner. It is NOT a tuple bug: `var q = m; m = m.insert(..)` with no tuple
+   owner. It is NOT a tuple bug: `let q = m; m = m.insert(..)` with no tuple
    anywhere leaks the same 192 B/round, unchanged by this work. Native does not
    clone at all here — it runs `__map_set_impl` in place and gets the same answer
-   (verified: `var n = m; m = m.insert("k", 7); n.get_or("k", 0)` is 1 on interp,
+   (verified: `let n = m; m = m.insert("k", 7); n.get_or("k", 0)` is 1 on interp,
    native and self-host alike), so native's copy-on-write is a RUNTIME rc check
    where the self-host's is a whole-body syntactic scan. Tracked as #7235.
 
@@ -167,11 +167,11 @@ counter instead.
    control at the same nesting is flat, so the residue is the box.
 3. **A fresh map declared in a match arm or a for body, in a function with no
    enclosing loop, is never swept** — pre-existing and nothing to do with
-   tuples: `round(i) { match (o) { Some(v) => { var m = map_new(4); … } } }`
+   tuples: `round(i) { match (o) { Some(v) => { let m = map_new(4); … } } }`
    leaks 64 B/round identically before and after, where the same map at the
    function's top level is flat.
 4. **A map METHOD at a tuple-element position bails the whole function** (#7213):
-   `var u = (m.len(), 5)` → `FERN_STRICT_IR: f (did not lower: tuple literal)`.
+   `let u = (m.len(), 5)` → `FERN_STRICT_IR: f (did not lower: tuple literal)`.
    `len`, `has`, `get`, `get_or` and `iter` all bail there; `keys`, `values` and
    `insert` lower. All eight lower outside a tuple, so this is
    `tuple_elem_ctor_eligible` branch (e) keying its `.len()` carve-out on

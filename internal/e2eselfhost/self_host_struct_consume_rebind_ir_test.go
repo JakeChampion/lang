@@ -10,7 +10,7 @@ import (
 
 // TestSelfHostStructConsumeRebindReclaimIRX86_64 covers the escaping-struct
 // reclaim slice (#3456): a LOCAL struct that is threaded through a
-// consume-rebind — `var s = S{...}; ... s = bump(s) ...` — is now reclaimable
+// consume-rebind — `let s = S{...}; ... s = bump(s) ...` — is now reclaimable
 // even though it appears as a call ARGUMENT / method RECEIVER, because
 // reclaimable_names_of switched from the crude walk_stmts_escapes to the
 // borrow-AWARE body_unsafe_for (a borrowable free-call arg and a method
@@ -43,8 +43,8 @@ func TestSelfHostStructConsumeRebindReclaimIRX86_64(t *testing.T) {
 	churn := `struct S { xs: i32[], n: i32 }
 function bump(s: S): S { return S { xs: [s.n], n: s.n + 1 }; }
 function main(): i32 {
-    var s: S = S { xs: [0], n: 0 };
-    var i: i32 = 0;
+    let s: S = S { xs: [0], n: 0 };
+    let i: i32 = 0;
     while (i < 4000000) { s = bump(s); i = i + 1; }
     return s.n - s.n;
 }`
@@ -76,11 +76,11 @@ function main(): i32 {
 	val := `struct B { xs: i32[], n: i32 }
 function push(b: B, v: i32): B { return B { xs: b.xs.append(v), n: b.n + 1 }; }
 function main(): i32 {
-    var b: B = B { xs: [], n: 0 };
-    var i: i32 = 0;
+    let b: B = B { xs: [], n: 0 };
+    let i: i32 = 0;
     while (i < 20) { b = push(b, i * 3); i = i + 1; }
-    var sum: i32 = 0;
-    var j: i32 = 0;
+    let sum: i32 = 0;
+    let j: i32 = 0;
     while (j < b.xs.len()) { sum = sum + b.xs[j]; j = j + 1; }
     return sum;
 }`

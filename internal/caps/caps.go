@@ -53,9 +53,11 @@ var BuiltinCaps = map[string]string{
 	"tcp_close":        "net",
 	"tcp_pollable":     "net",
 	"udp_send":         "net",
+	"udp_send_bytes":   "net",
 	"udp_bind":         "net",
 	"udp_connect":      "net",
 	"udp_sendto":       "net",
+	"udp_sendto_bytes": "net",
 	"udp_recvfrom":     "net",
 	"tcp_listen_with":  "net",
 	"tcp_socket_ctl":   "net",
@@ -237,16 +239,19 @@ var Ungated = map[string]bool{
 	// descriptors it may open reaches nothing it could not already
 	// reach. `internal/platforms` gates that one too, because there the
 	// question is whether the target has resource limits at all.
-	"geteuid":       true,
-	"getegid":       true,
-	"getuid":        true,
-	"getgid":        true,
-	"getgroups":     true,
-	"rlimit_nofile": true,
-	"target_os":     true,
-	"target_arch":   true,
-	"args":          true,
-	"exit":          true,
+	"geteuid": true,
+	"getegid": true,
+	"getuid":  true,
+	// The account database's name for a uid: the same question /etc/passwd
+	// answers, asked of Directory Services on Darwin (#9815).
+	"__getpwuid_name": true,
+	"getgid":          true,
+	"getgroups":       true,
+	"rlimit_nofile":   true,
+	"target_os":       true,
+	"target_arch":     true,
+	"args":            true,
+	"exit":            true,
 	// A signal disposition reconfigures how THIS process reacts to
 	// something delivered to it. It reaches nothing outside the
 	// process and confers no authority a dependency could escalate

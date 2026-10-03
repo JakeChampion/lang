@@ -53,8 +53,8 @@ function test_in_range_f64_above(): test.TestOutcome {
 }
 
 function test_in_range_f64_nan_fails(): test.TestOutcome {
-  var z: f64 = 0.0;
-  var nan: f64 = z / z;
+  let z: f64 = 0.0;
+  let nan: f64 = z / z;
   match (test.assert_in_range_f64(nan, 0.0, 1.0)) {
     Pass => {
       return test.fail("NaN should fail range check");
@@ -70,7 +70,7 @@ function test_sorted_i32_pass(): test.TestOutcome {
 }
 
 function test_sorted_i32_empty(): test.TestOutcome {
-  var empty: i32[] = [];
+  let empty: i32[] = [];
   return test.assert_sorted_asc(empty);
 }
 
@@ -157,12 +157,12 @@ function test_unique_string_duplicate_fails(): test.TestOutcome {
 }
 
 function test_unique_empty_is_vacuous(): test.TestOutcome {
-  var empty: i32[] = [];
+  let empty: i32[] = [];
   return test.assert_unique(empty);
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("sorted / unique / range");
+  let r: test.TestRunner = test.test_new("sorted / unique / range");
   r = r.it("in_range_f64 pass", test_in_range_f64_pass);
   r = r.it("in_range_f64 inclusive lo", test_in_range_f64_inclusive_lo);
   r = r.it("in_range_f64 inclusive hi", test_in_range_f64_inclusive_hi);

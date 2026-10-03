@@ -27,8 +27,10 @@
 // It also resolves `target_os()` and `target_arch()` to the two halves of
 // the compile target's name (Inputs.TargetOS / Inputs.TargetArch) when the
 // caller has them — a compile does, a bare `-check` does not. Each call
-// becomes a plain string literal, so a branch on one is a branch on a
-// constant by the time the IR folds.
+// becomes a plain string literal, and an `if` whose condition then folds
+// to a literal keeps only the arm it takes, so the capability gates and
+// the tree-shake see the program as built for this target: an arm that
+// reaches what one target lacks compiles for the other.
 package constfold
 
 import (
@@ -506,7 +508,7 @@ func foldFloatBinary(n *ast.Binary, l, r float64) (ast.Expr, error) {
 // is itself too wide for the type has already wrapped by the time the result
 // could be inspected. The walk mirrors the checker's settleIntSigned — the
 // sign lives on the enclosing unary, and arithmetic operands take the const's
-// type — so a `var` and a `const` refuse the same spellings with the same
+// type — so a `let` and a `const` refuse the same spellings with the same
 // E047.
 func checkLiteralRange(cd *ast.ConstDecl) []error {
 	declared, hasType := cd.Type.(ast.NumberType)
@@ -567,7 +569,7 @@ func walkIntLits(e ast.Expr, negated, typed bool, visit func(lit *ast.NumberLit,
 //
 // litType reports the DEFAULT reading of a literal (i32, f32), not the width
 // the declared type asks for, so a numeric const settles to its declaration
-// the way a `var` initialiser does rather than being compared against that
+// the way a `let` initialiser does rather than being compared against that
 // default. Stamping matters as much as accepting: the substituter inlines this
 // literal node at every reference, so without a width an i64 const would reach
 // the IR as an `i32.const` and an f64 one as an f32 (#5477).
@@ -790,6 +792,63 @@ func resolveAssets(c *ast.Call, assets *embed.Set) (ast.Expr, error) {
 	}, nil
 }
 
+// foldLiteralCond folds a condition built from string and bool literals
+// (`==`, `!=`, `&&`, `||`, `!`), the shape a branch on `target_os()` has
+// once the call is a literal. Any other operand leaves the condition as
+// it is: numbers keep their width semantics for the IR fold.
+func foldLiteralCond(e ast.Expr) ast.Expr {
+	switch x := e.(type) {
+	case *ast.Binary:
+		l := foldLiteralCond(x.Left)
+		r := foldLiteralCond(x.Right)
+		if isLiteralOperand(l) && isLiteralOperand(r) {
+			if v, err := foldBinary(x, intWidth{}, l, r); err == nil {
+				return v
+			}
+		}
+	case *ast.Unary:
+		o := foldLiteralCond(x.Operand)
+		if _, ok := o.(*ast.BoolLit); ok {
+			if v, err := foldUnary(x, intWidth{}, o); err == nil {
+				return v
+			}
+		}
+	}
+	return e
+}
+
+func isLiteralOperand(e ast.Expr) bool {
+	switch e.(type) {
+	case *ast.StringLit, *ast.BoolLit:
+		return true
+	}
+	return false
+}
+
+// pruneLiteralIf drops the arm an `if` on a literal never takes: the live
+// arm stays under `if (true)`, the shape the IR fold erases, so a block's
+// scope is kept and nothing is spliced into the enclosing one.
+func pruneLiteralIf(x *ast.If) {
+	b, ok := x.Cond.(*ast.BoolLit)
+	if !ok {
+		return
+	}
+	if b.Value {
+		x.Else = nil
+		return
+	}
+	x.Cond = &ast.BoolLit{P: b.P, Value: true}
+	switch live := x.Else.(type) {
+	case nil:
+		x.Then = &ast.Block{P: x.P}
+	case *ast.Block:
+		x.Then = live
+	default:
+		x.Then = &ast.Block{P: x.P, Stmts: []ast.Stmt{live}}
+	}
+	x.Else = nil
+}
+
 func (s *substituter) walkBlock(b *ast.Block) {
 	if b == nil {
 		return
@@ -807,6 +866,10 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 		s.walkBlock(x)
 	case *ast.If:
 		s.walkExpr(&x.Cond)
+		x.Cond = foldLiteralCond(x.Cond)
+		if !x.IsAssert {
+			pruneLiteralIf(x)
+		}
 		s.walkStmt(x.Then)
 		if x.Else != nil {
 			s.walkStmt(x.Else)
@@ -848,7 +911,7 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 			s.walkExpr(&x.Value)
 		}
 	case *ast.Var:
-		// The init is walked BEFORE the name binds: `var N = N;` reads the
+		// The init is walked BEFORE the name binds: `let N = N;` reads the
 		// const on its right-hand side and shadows it only afterwards.
 		s.walkExpr(&x.Init)
 		s.bind(x.Name)

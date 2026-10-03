@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -118,7 +118,7 @@ func TestExternListU8ParamCustomProvider(t *testing.T) {
 function sum_bytes(data: u8[]): u32;
 
 function main(): i32 {
-	var b: u8[] = [10u8, 20u8, 30u8];
+	let b: u8[] = [10u8, 20u8, 30u8];
 	if (sum_bytes(b) == 60u32) { write("` + want + `"); } else { write("sum-bad"); }
 	return 0;
 }`
@@ -126,16 +126,7 @@ function main(): i32 {
 	if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
-	info, prog := loadCheckMono(t, mainPath)
-	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		PrintMainResult:    true,
-	})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
+	core := e2eharness.SelfHostComponentCore(t, mainPath)
 	if !bytes.Contains(core, []byte("local:test/sink@0.1.0")) {
 		t.Fatalf("core is missing the custom extern import")
 	}

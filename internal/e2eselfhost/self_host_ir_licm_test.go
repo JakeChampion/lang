@@ -14,7 +14,7 @@ import (
 // (examples/self_host/ir.fern's hoist_loop_invariants — the op-list port of
 // native's internal/ir/licm.go, #8245) and the slot growth it depends on (#8247).
 //
-// The ir_licm_run driver builds the op list irlower emits for each `while`
+// The ir_licm_run driver builds the op list the lowering emits for each `while`
 // shape, runs the pass, and prints the ops AND the frame count. The lines
 // mirror the cases in internal/ir/licm_test.go, except the typed-lowering
 // rows: native's header still stops at `block`, so licm_typed_block_header is
@@ -84,21 +84,21 @@ var licmPrograms = []struct {
 	outside, inside int
 }{
 	{"while-cond",
-		`function scan(s: string): i32 { var i: i32 = 0; var n: i32 = 0; while (i < s.len()) { if (s[i] == b'#') { n = n + 1; } i = i + 1; } return n; } function main(): i32 { return scan("a#b##c"); }`,
+		`function scan(s: string): i32 { let i: i32 = 0; let n: i32 = 0; while (i < s.len()) { if (s[i] == b'#') { n = n + 1; } i = i + 1; } return n; } function main(): i32 { return scan("a#b##c"); }`,
 		3, 1, 0},
 	// The operand is reassigned in the body, so the length is re-read each
 	// iteration: the loop runs to the NEW string's length (3), not the old (2).
 	{"mutated-operand",
-		`function grow(a: string): i32 { var s: string = a; var i: i32 = 0; while (i < s.len()) { if (i == 0) { s = a + "x"; } i = i + 1; } return i; } function main(): i32 { return grow("ab"); }`,
+		`function grow(a: string): i32 { let s: string = a; let i: i32 = 0; while (i < s.len()) { if (i == 0) { s = a + "x"; } i = i + 1; } return i; } function main(): i32 { return grow("ab"); }`,
 		3, 0, 1},
 	{"body-only",
-		`function total(s: string, k: i32): i32 { var i: i32 = 0; var n: i32 = 0; while (i < k) { n = n + s.len(); i = i + 1; } return n; } function main(): i32 { return total("abc", 4); }`,
+		`function total(s: string, k: i32): i32 { let i: i32 = 0; let n: i32 = 0; while (i < k) { n = n + s.len(); i = i + 1; } return n; } function main(): i32 { return total("abc", 4); }`,
 		12, 0, 1},
 	{"two-slots",
-		`function f(s: string, t: string): i32 { var i: i32 = 0; while (i < s.len() + t.len()) { i = i + 1; } return i; } function main(): i32 { return f("abc", "de"); }`,
+		`function f(s: string, t: string): i32 { let i: i32 = 0; while (i < s.len() + t.len()) { i = i + 1; } return i; } function main(): i32 { return f("abc", "de"); }`,
 		5, 2, 0},
 	{"short-circuit",
-		`function f(a: string, b: string): i32 { var i: i32 = 0; while (i < a.len() && i < b.len()) { i = i + 1; } return i; } function main(): i32 { return f("abcd", "de"); }`,
+		`function f(a: string, b: string): i32 { let i: i32 = 0; while (i < a.len() && i < b.len()) { i = i + 1; } return i; } function main(): i32 { return f("abcd", "de"); }`,
 		2, 1, 1},
 }
 

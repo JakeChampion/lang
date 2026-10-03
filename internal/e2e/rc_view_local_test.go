@@ -14,25 +14,25 @@ import (
 // natives, 8 on wasm.
 //
 // The header is an rc1 block since #8406, so the binding's own release is the
-// exit sweep's and `var t = s` retains: both names are counted and the block
+// exit sweep's and `let t = s` retains: both names are counted and the block
 // goes at the second release, not the first. The aliased control below pins
 // that — it was written when a bespoke last-use free had to REFUSE an aliased
 // header, and it holds for the stronger reason now.
 
 const viewLocalSrc = `function mk(n: i32): i32[] {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = a.append(i); i = i + 1; }
     return a;
 }
 function round(i: i32): i32 {
-    var a: i32[] = mk(8);
-    var s: [i32] = a[1:4];
+    let a: i32[] = mk(8);
+    let s: [i32] = a[1:4];
     return s.len() + s[0];
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + round(i); i = i + 1; }
     if (acc != 200 * 4) { return 1; }
     return 0;
@@ -45,24 +45,24 @@ function main(): i32 {
 // the read lands on reused memory rather than on stale-but-intact bytes: the
 // difference between a test that fails and one that happens to pass.
 const viewLocalAliasedSrc = `function mk(n: i32): i32[] {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = a.append(i); i = i + 1; }
     return a;
 }
 function round(i: i32): i32 {
-    var a: i32[] = mk(8);
-    var s: [i32] = a[1:4];
-    var t: [i32] = s;
-    var u: i32 = s.len();
-    var b: i32[] = mk(4);
-    var v: i32 = t[0] + t.len();
+    let a: i32[] = mk(8);
+    let s: [i32] = a[1:4];
+    let t: [i32] = s;
+    let u: i32 = s.len();
+    let b: i32[] = mk(4);
+    let v: i32 = t[0] + t.len();
     if (b.len() != 4) { return 1; }
     return u + v;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + round(i); i = i + 1; }
     if (acc != 200 * 7) { return 2; }
     return __rc_underflow_count();
@@ -71,21 +71,21 @@ function main(): i32 {
 // A view over a PARAMETER may leave the frame — E063 only forbids a view of
 // function-LOCAL storage — so the header goes with it and must survive.
 const viewLocalEscapeSrc = `function mk(n: i32): i32[] {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = a.append(i); i = i + 1; }
     return a;
 }
 function window(b: i32[]): [i32] {
-    var s: [i32] = b[1:4];
+    let s: [i32] = b[1:4];
     return s;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var arr: i32[] = mk(8);
-        var v: [i32] = window(arr);
+        let arr: i32[] = mk(8);
+        let v: [i32] = window(arr);
         if (v.len() != 3) { return 1; }
         if (v[0] != 1) { return 2; }
         acc = acc + 1;
@@ -97,20 +97,20 @@ function main(): i32 {
 
 func viewLocalBumpSrc(n string) string {
 	return `function mk(n: i32): i32[] {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = a.append(i); i = i + 1; }
     return a;
 }
 function round(i: i32): i32 {
-    var a: i32[] = mk(8);
-    var s: [i32] = a[1:4];
+    let a: i32[] = mk(8);
+    let s: [i32] = a[1:4];
     return s.len() + s[0];
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < ` + n + `) { acc = acc + round(i); i = i + 1; }
     if (acc < 0) { return acc; }
     return (__heap_bump_bytes() as i32) - before;

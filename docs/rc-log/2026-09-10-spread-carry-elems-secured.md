@@ -57,7 +57,7 @@ segfaulted on `-per-module-func-counts`: crediting a spread copy credits its
 OVERRIDES too, and `LowerState { ...st, ops: st.ops.append(op) }` is a clone
 of a pointer-element field the new box then released deep, elements under
 `st`. The same shape with no spread was already an over-release on main —
-`var p: P = P { f: q.f.append(E.B), n: 1 }` in a branch, then `q.f[0]` read
+`let p: P = P { f: q.f.append(E.B), n: 1 }` in a branch, then `q.f[0]` read
 back: exit 99 (rc underflow) on main's compiler, the interpreter's 69 here.
 
 With that, `spread_copy_field_counted` counts every array kind, and the copy
@@ -79,7 +79,7 @@ spliced into its report and a hook onto the release helper for the quarantined
 pointer (the allocator is deterministic run to run), and the two pointed at
 two places.
 
-**A handed-back argument.** `irlower.lift_lambdas_view` returns
+**A handed-back argument.** `lift.lift_lambdas_view` returns
 `infer_ret_types_module(lower_defers_module(result))`; `lower_defers_module`
 rebuilds `funcs` by appending `lower_defers_func(mod.funcs[i])`, and that
 callee returns its parameter bare when the function has no defer. The append
@@ -171,7 +171,7 @@ its release stays the per-type routed one.
 
 The same append-through-copy shape with a `names: string[]` field leaks 3
 blocks a round here (900 / 600), against 900 / 300 on main. That is not the
-carry: with no spread anywhere, `var s = Sc { names: [] }; s = s.bind("a");
+carry: with no spread anywhere, `let s = Sc { names: [] }; s = s.bind("a");
 s = s.bind("b")` leaks 2 blocks a round (500 / 300) on main and here alike,
 and an explicit `Sc { names: s.names, depth: 0 }` holder measures 900 / 600
 on both. The string[] FIELD's rebind release is refused by `strarrfld_scan`

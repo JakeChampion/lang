@@ -71,23 +71,23 @@ function fib(n: i32): i32 {
 function double(n: i32): i32 { return n * 2; }
 function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
 function main(): i32 {
-    var xs: i32[] = [];
-    var i: i32 = 0;
+    let xs: i32[] = [];
+    let i: i32 = 0;
     while (i < 8) { xs = xs.append(fib(i)); i = i + 1; }
-    var rows: i32[][] = [];
+    let rows: i32[][] = [];
     rows = rows.append(xs);
-    var s: string = "";
-    var j: i32 = 0;
+    let s: string = "";
+    let j: i32 = 0;
     while (j < xs.len()) { s = s + "ab"; j = j + 1; }
-    var mid: string = slice_unchecked(s, 2, 6) + "";
+    let mid: string = slice_unchecked(s, 2, 6) + "";
     if (mid.len() != 4 || mid == "zzzz") { return 2; }
-    var f: f64 = 3.0;
-    var g: f64 = f * f + 4.0;
-    var h: f64 = g / 2.0 - 1.5;
-    var big: i64 = 1234567890123;
-    var q: i64 = big / 1000;
-    var r: i64 = big - q * 1000;
-    var doubled: i32 = apply(double, xs[5]);
+    let f: f64 = 3.0;
+    let g: f64 = f * f + 4.0;
+    let h: f64 = g / 2.0 - 1.5;
+    let big: i64 = 1234567890123;
+    let q: i64 = big / 1000;
+    let r: i64 = big - q * 1000;
+    let doubled: i32 = apply(double, xs[5]);
     if (h < 0.0 || r != 123 || doubled < 0) { return 3; }
     if (g > 12.5 && s.len() == 16 && rows[0].len() == 8) { return xs[7]; }
     return 1;

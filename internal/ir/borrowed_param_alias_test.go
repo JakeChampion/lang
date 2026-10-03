@@ -25,17 +25,17 @@ func TestBorrowedParamAliasTakesNoInc(t *testing.T) {
 		// `return piece.len()` hands out a scalar, so the mention inside
 		// the return is not the alias escaping — aliasReturnsConfined is
 		// what says so where a bare `returned[y]` test would refuse.
-		{"read through the alias", `var piece: string = data;
+		{"read through the alias", `let piece: string = data;
     return piece.len();`, 0},
 		// A borrowing call argument is a read too: write_some is a
 		// copying builtin, so handing it the alias keeps the credit.
-		{"alias handed to a copying builtin", `var piece: string = data;
-    var w: Writer = stdout();
+		{"alias handed to a copying builtin", `let piece: string = data;
+    let w: Writer = stdout();
     match (w.write_some(piece)) { Ok(_) => {}, Err(_) => { return 1; } }
     return piece.len();`, 0},
 		// Returning the alias WHOLE is the escape the cancellation must
 		// refuse: the caller receives it, so the reference has to be real.
-		{"alias returned whole", `var piece: string = data;
+		{"alias returned whole", `let piece: string = data;
     if (piece.len() == 0) { return ""; }
     return piece;`, 1},
 	} {
@@ -53,8 +53,8 @@ func TestBorrowedParamAliasTakesNoInc(t *testing.T) {
 			}
 			src := "function f(data: string): " + ret + " {\n    " + c.body + "\n}\n" +
 				`function main(): i32 {
-    var r: Reader = stdin();
-    var total: i32 = 0;
+    let r: Reader = stdin();
+    let total: i32 = 0;
     match (r.read_chunk(8)) {
         Ok(d) => { ` + use + ` },
         Err(_) => { return 1; }

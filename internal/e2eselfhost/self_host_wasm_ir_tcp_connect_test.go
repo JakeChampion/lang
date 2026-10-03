@@ -142,8 +142,8 @@ func TestSelfHostWasmIRTcpConnect(t *testing.T) {
 
 	t.Run("connects_to_open_port", func(t *testing.T) {
 		src := fmt.Sprintf(`function main(): i32 {
-    var host: i32 = %s;
-    var c: i32 = tcp_connect(host, %d);
+    let host: i32 = %s;
+    let c: i32 = tcp_connect(host, %d);
     if (c < 0) { write("refused\n"); return 0; }
     write("connected\n");
     tcp_close(c);
@@ -156,8 +156,8 @@ func TestSelfHostWasmIRTcpConnect(t *testing.T) {
 
 	t.Run("refused_on_closed_port_returns_negative", func(t *testing.T) {
 		src := fmt.Sprintf(`function main(): i32 {
-    var host: i32 = %s;
-    var c: i32 = tcp_connect(host, %d);
+    let host: i32 = %s;
+    let c: i32 = tcp_connect(host, %d);
     if (c < 0) { write("refused\n"); return 0; }
     write("connected\n");
     tcp_close(c);

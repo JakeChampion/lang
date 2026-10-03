@@ -7,12 +7,12 @@
 function id[T](x: T): T { return x; }
 
 function capturing(p: i32): i32 {
-    var v: (i32) => i32 = id(((a: i32) => (a + p)));
+    let v: (i32) => i32 = id(((a: i32) => (a + p)));
     return v(1);
 }
 
 function non_capturing(): i32 {
-    var v: (i32) => i32 = id(((a: i32) => (a + 1)));
+    let v: (i32) => i32 = id(((a: i32) => (a + 1)));
     return v(1);
 }
 

@@ -402,7 +402,7 @@ belongs to checked-source production; ownership must not rescan the AST.
 Captures identify bindings, not registration-time SSA values. For example:
 
 ```fern
-var items: i32[] = [2];
+let items: i32[] = [2];
 defer seen = items[0];
 defer items = [9];
 ```

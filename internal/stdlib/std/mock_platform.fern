@@ -5,8 +5,8 @@
 // bag is the whole test seam: hand `handle` a mock, run it, and read back
 // what it tried to do.
 //
-//     var m: MockPlatform = mock_platform_new();
-//     var resp: HttpResponse = handle(req, m.as_platform());
+//     let m: MockPlatform = mock_platform_new();
+//     let resp: HttpResponse = handle(req, m.as_platform());
 //
 //     assert_eq(resp.status, 200);
 //     assert_eq(m.call_count(), 2);
@@ -96,17 +96,17 @@ pub function (m: MockPlatform) http_set(method: string, url: string, status: i32
 // `(m: MockPlatform).calls()` — the recorded calls, in order; the canned
 // answers sharing the cell are not calls.
 pub function (m: MockPlatform) calls(): MockCall[] {
-  var out: MockCall[] = [];
-  var log: string = m.sink.get();
-  var lines: string[] = log.split("\n");
-  var i: i32 = 0;
+  let out: MockCall[] = [];
+  let log: string = m.sink.get();
+  let lines: string[] = log.split("\n");
+  let i: i32 = 0;
   while (i < lines.len()) {
-    var line: string = lines[i];
+    let line: string = lines[i];
     i = i + 1;
     if (line.len() == 0) {
       continue;
     }
-    var tab: i32 = line.index_of("\t");
+    let tab: i32 = line.index_of("\t");
     if (tab < 0) {
       out = out.append(MockCall { name: line, args: "" });
       continue;
@@ -131,7 +131,7 @@ pub function (m: MockPlatform) call_count(): i32 {
 // Mutates through the shared cell, so a bag already handed to a handler
 // keeps recording into the now-empty log rather than into a stale one.
 pub function (m: MockPlatform) reset(): void {
-  var kept: string = "";
+  let kept: string = "";
   for line in m.sink.get().split("\n") {
     if (line.len() > 7 && slice_unchecked(line, 0, 7) + "" == "canned\t") {
       kept = kept + line + "\n";
@@ -144,8 +144,8 @@ pub function (m: MockPlatform) reset(): void {
 // Less precise than indexing `calls()`, and the right question when the
 // test cares that something was reached, not when.
 pub function (m: MockPlatform) has_call(name: string): boolean {
-  var cs: MockCall[] = m.calls();
-  var i: i32 = 0;
+  let cs: MockCall[] = m.calls();
+  let i: i32 = 0;
   while (i < cs.len()) {
     if (cs[i].name == name) {
       return true;
@@ -158,8 +158,8 @@ pub function (m: MockPlatform) has_call(name: string): boolean {
 // `(m: MockPlatform).find_call(name)` — the first call with this name, for
 // a test that wants its arguments without pinning its position.
 pub function (m: MockPlatform) find_call(name: string): Option[MockCall] {
-  var cs: MockCall[] = m.calls();
-  var i: i32 = 0;
+  let cs: MockCall[] = m.calls();
+  let i: i32 = 0;
   while (i < cs.len()) {
     if (cs[i].name == name) {
       return Some(cs[i]);

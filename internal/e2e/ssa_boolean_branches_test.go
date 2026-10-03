@@ -9,16 +9,16 @@ import (
 // Keep loops and branch-selected values live across short-circuit joins.
 // Division by zero must stay skipped on both && and || paths.
 const ssaBooleanBranchesSource = `function main(): i32 {
-  var sum: i32 = 0;
-  var i: i32 = -2;
+  let sum: i32 = 0;
+  let i: i32 = -2;
   while (i < 7) {
     if ((i >= 0 && i < 4) || i == 5) { sum = sum + i; }
     i = i + 1;
   }
   if (sum != 11) { return 1; }
-  var n: i32 = -2;
+  let n: i32 = -2;
   while (n <= 2) {
-    var result: i32 = 0;
+    let result: i32 = 0;
     if (n != 0 && 100 / n > 0) { result = result + 1; }
     if (n == 0 || 100 / n > 0) { result = result + 2; }
     if (n == 0 && result != 2) { return 2; }

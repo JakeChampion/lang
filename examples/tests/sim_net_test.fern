@@ -15,7 +15,7 @@ import "std/time";
 // __three_upstreams — a net with three endpoints whose latencies are
 // deliberately out of input order (30ms / 10ms / 20ms).
 function __three_upstreams(d: sim.Sim): sim.Net {
-  var n: sim.Net = sim.net(d);
+  let n: sim.Net = sim.net(d);
   n = n.serve(1, 80, "/k", "primary", time.duration_nanos(30000000 as i64));
   n = n.serve(2, 80, "/k", "cache", time.duration_nanos(10000000 as i64));
   n = n.serve(3, 80, "/k", "mirror", time.duration_nanos(20000000 as i64));
@@ -26,14 +26,14 @@ function __three_upstreams(d: sim.Sim): sim.Net {
 // INPUT order (not readiness order), and the fan-out ends at the
 // slowest endpoint's time.
 function test_gather_input_order(): test.TestOutcome {
-  var d: sim.Sim = sim.new(1);
-  var n: sim.Net = __three_upstreams(d);
-  var fs: async.Future[string][] = [
+  let d: sim.Sim = sim.new(1);
+  let n: sim.Net = __three_upstreams(d);
+  let fs: async.Future[string][] = [
     n.fetch_future(1, 80, "/k"),
     n.fetch_future(2, 80, "/k"),
     n.fetch_future(3, 80, "/k"),
   ];
-  var got: string[] = async.gather_on(d, fs, "!");
+  let got: string[] = async.gather_on(d, fs, "!");
   if (got[0] != "primary" || got[1] != "cache" || got[2] != "mirror") {
     return test.fail("bodies not in input order");
   }
@@ -44,11 +44,11 @@ function test_gather_input_order(): test.TestOutcome {
 // virtual time — and abandoning the loser leaves the net fully usable
 // (its endpoint still answers a later fetch).
 function test_race_picks_fast(): test.TestOutcome {
-  var d: sim.Sim = sim.new(1);
-  var n: sim.Net = sim.net(d);
+  let d: sim.Sim = sim.new(1);
+  let n: sim.Net = sim.net(d);
   n = n.serve(1, 80, "/k", "slow", time.duration_nanos(40000000 as i64));
   n = n.serve(2, 80, "/k", "fast", time.duration_nanos(10000000 as i64));
-  var fs: async.Future[string][] = [
+  let fs: async.Future[string][] = [
     n.fetch_future(1, 80, "/k"),
     n.fetch_future(2, 80, "/k"),
   ];
@@ -62,8 +62,8 @@ function test_race_picks_fast(): test.TestOutcome {
   if (d.now_ns() != 10000000 as i64) {
     return test.fail("race did not end at the fast endpoint's time");
   }
-  var rest: async.Future[string][] = [n.fetch_future(1, 80, "/k")];
-  var again: string[] = async.gather_on(d, rest, "!");
+  let rest: async.Future[string][] = [n.fetch_future(1, 80, "/k")];
+  let again: string[] = async.gather_on(d, rest, "!");
   if (again[0] != "slow") {
     return test.fail("abandoned loser broke its endpoint");
   }
@@ -73,15 +73,15 @@ function test_race_picks_fast(): test.TestOutcome {
 // with_deadline drops ONLY the endpoint slower than the deadline, and
 // the clock lands exactly on the deadline.
 function test_deadline_drops_only_slow(): test.TestOutcome {
-  var d: sim.Sim = sim.new(7);
-  var n: sim.Net = sim.net(d);
+  let d: sim.Sim = sim.new(7);
+  let n: sim.Net = sim.net(d);
   n = n.serve(1, 80, "/k", "late", time.duration_nanos(40000000 as i64));
   n = n.serve(2, 80, "/k", "early", time.duration_nanos(10000000 as i64));
-  var fs: async.Future[string][] = [
+  let fs: async.Future[string][] = [
     n.fetch_future(1, 80, "/k"),
     n.fetch_future(2, 80, "/k"),
   ];
-  var got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
+  let got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
   match (got[0]) {
     Some(v) => {
       return test.fail("late endpoint resolved under a 25ms deadline");
@@ -105,11 +105,11 @@ function test_deadline_drops_only_slow(): test.TestOutcome {
 // virtual time: 10 bytes as [4,4,2] via chunks_of, first byte at 5ms,
 // then 5ms per chunk => done at 15ms.
 function test_chunked_accumulates(): test.TestOutcome {
-  var d: sim.Sim = sim.new(1);
-  var n: sim.Net = sim.net(d);
+  let d: sim.Sim = sim.new(1);
+  let n: sim.Net = sim.net(d);
   n = n.serve_chunked(1, 80, "/big", "abcdefghij", time.duration_nanos(5000000 as i64), time.duration_nanos(5000000 as i64), sim.chunks_of(10, 4));
-  var fs: async.Future[string][] = [n.fetch_future(1, 80, "/big")];
-  var got: string[] = async.gather_on(d, fs, "!");
+  let fs: async.Future[string][] = [n.fetch_future(1, 80, "/big")];
+  let got: string[] = async.gather_on(d, fs, "!");
   if (got[0] != "abcdefghij") {
     return test.fail("chunked body did not accumulate: " + got[0]);
   }
@@ -120,12 +120,12 @@ function test_chunked_accumulates(): test.TestOutcome {
 // Pending per chunk (the __fetch_drain shape), tokens on the scheduled
 // ready-at times, partial accumulation between wakes.
 function test_chunked_resuspends_per_chunk(): test.TestOutcome {
-  var d: sim.Sim = sim.new(1);
-  var n: sim.Net = sim.net(d);
+  let d: sim.Sim = sim.new(1);
+  let n: sim.Net = sim.net(d);
   n = n.serve_chunked(1, 80, "/big", "abcdefghij", time.duration_nanos(5000000 as i64), time.duration_nanos(5000000 as i64), sim.chunks_of(10, 4));
-  var f: async.Future[string] = n.fetch_future(1, 80, "/big");
-  var toks: i32[] = [];
-  var guard: i32 = 0;
+  let f: async.Future[string] = n.fetch_future(1, 80, "/big");
+  let toks: i32[] = [];
+  let guard: i32 = 0;
   while (guard < 10) {
     match (f) {
       Ready(v) => {
@@ -153,10 +153,10 @@ function test_chunked_resuspends_per_chunk(): test.TestOutcome {
 // An unregistered endpoint is a dead upstream: Ready("") immediately, no
 // suspension, and the clock does not move.
 function test_unregistered_is_ready_empty(): test.TestOutcome {
-  var d: sim.Sim = sim.new(1);
-  var n: sim.Net = sim.net(d);
+  let d: sim.Sim = sim.new(1);
+  let n: sim.Net = sim.net(d);
   n = n.serve(1, 80, "/k", "body", time.duration_nanos(10000000 as i64));
-  var f: async.Future[string] = n.fetch_future(9, 80, "/k");
+  let f: async.Future[string] = n.fetch_future(9, 80, "/k");
   match (f) {
     Ready(v) => {
       if (v != "") {
@@ -173,21 +173,21 @@ function test_unregistered_is_ready_empty(): test.TestOutcome {
 // Per-endpoint hits: each fetch bumps the matched endpoint's counter,
 // misses count nowhere, and a "" registration is a host:port wildcard.
 function test_hits_and_wildcard(): test.TestOutcome {
-  var d: sim.Sim = sim.new(1);
-  var n: sim.Net = sim.net(d);
+  let d: sim.Sim = sim.new(1);
+  let n: sim.Net = sim.net(d);
   n = n.serve(1, 80, "/k", "body", time.duration_nanos(10000000 as i64));
   n = n.serve(2, 80, "", "any", time.duration_nanos(10000000 as i64));
-  var f1: async.Future[string] = n.fetch_future(1, 80, "/k");
-  var f2: async.Future[string] = n.fetch_future(1, 80, "/k");
-  var f3: async.Future[string] = n.fetch_future(9, 80, "/k");
+  let f1: async.Future[string] = n.fetch_future(1, 80, "/k");
+  let f2: async.Future[string] = n.fetch_future(1, 80, "/k");
+  let f3: async.Future[string] = n.fetch_future(9, 80, "/k");
   if (n.hits(1, 80, "/k") != 2 as i64) {
     return test.fail("expected 2 hits");
   }
   if (n.hits(9, 80, "/k") != 0 as i64) {
     return test.fail("miss was counted");
   }
-  var wf: async.Future[string][] = [n.fetch_future(2, 80, "/whatever")];
-  var got: string[] = async.gather_on(d, wf, "!");
+  let wf: async.Future[string][] = [n.fetch_future(2, 80, "/whatever")];
+  let got: string[] = async.gather_on(d, wf, "!");
   if (got[0] != "any") {
     return test.fail("wildcard path did not match");
   }
@@ -198,7 +198,7 @@ function test_hits_and_wildcard(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/sim net");
+  let r: test.TestRunner = test.test_new("std/sim net");
   r = r.it("gather returns bodies in input order", test_gather_input_order);
   r = r.it("race picks the fast endpoint", test_race_picks_fast);
   r = r.it("with_deadline drops only the slow endpoint", test_deadline_drops_only_slow);

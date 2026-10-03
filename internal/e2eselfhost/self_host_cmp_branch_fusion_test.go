@@ -95,7 +95,7 @@ func cmpBranchMatrix(ty string, unsigned bool, pairs [][2]uint64) string {
 			fmt.Fprintf(&b, "function fe%d(a: %s, b: %s): i32 { if (%s) { return 1; } else { return 0; } }\n", id, ty, ty, cond)
 			// The body returns on its first pass, so the loop runs at most once
 			// however the guard resolves — the answer is the guard's initial value.
-			fmt.Fprintf(&b, "function fw%d(a: %s, b: %s): i32 { var n: i32 = 0; while (%s) { n = n + 1; if (n > 0) { return n; } } return 0; }\n", id, ty, ty, cond)
+			fmt.Fprintf(&b, "function fw%d(a: %s, b: %s): i32 { let n: i32 = 0; while (%s) { n = n + 1; if (n > 0) { return n; } } return 0; }\n", id, ty, ty, cond)
 			for _, p := range pairs {
 				want := 0
 				if cmpEval(op, p[0], p[1], unsigned) != (nots%2 == 1) {
@@ -109,7 +109,7 @@ func cmpBranchMatrix(ty string, unsigned bool, pairs [][2]uint64) string {
 			id++
 		}
 	}
-	b.WriteString("function main(): i32 {\n  var bad: i32 = 0;\n")
+	b.WriteString("function main(): i32 {\n  let bad: i32 = 0;\n")
 	for _, c := range checks {
 		fmt.Fprintf(&b, "  bad = bad + sq(%s);\n", c)
 	}
@@ -209,7 +209,7 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 			// its `br_if` through the lowering's own `not`, so the fusion has to
 			// see through it to the comparison.
 			name:    "loop-guard",
-			src:     "@noinline function f(n: i32): i32 { var i: i32 = 0; var c: i32 = 0; while (i < n) { c = c + 2; i = i + 1; } return c; }\nfunction main(): i32 { return f(3); }",
+			src:     "@noinline function f(n: i32): i32 { let i: i32 = 0; let c: i32 = 0; while (i < n) { c = c + 2; i = i + 1; } return c; }\nfunction main(): i32 { return f(3); }",
 			wantX86: []string{`cmpq %r[a-z0-9]+, %r[a-z0-9]+\n    jge `},
 			deadX86: []string{"setl", "setz"},
 			wantArm: []string{`cmp x[0-9]+, x[0-9]+\n    b.ge `},

@@ -3,8 +3,8 @@ struct IntSet { m: Map[i32, i32] }
 function (s: IntSet) insert(x: i32): IntSet { return IntSet { m: s.m.insert(x, 1) }; }
 function (s: IntSet) len(): i32 { return s.m.len(); }
 function main(): i32 {
-    var m0: Map[i32, i32] = map_new(4);
-    var s: IntSet = IntSet { m: m0 };
+    let m0: Map[i32, i32] = map_new(4);
+    let s: IntSet = IntSet { m: m0 };
     s = s.insert(10);
     return s.len();
 }

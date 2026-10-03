@@ -17,9 +17,9 @@ import (
 // emitStrNormalize, which is #8408 and not pinned here.
 func wasmWriterWriteSrc(writes int) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var w = stdout();
-    var s: string = "0123456789" + "abcdefghij";
-    var i: i32 = 0;
+    let w = stdout();
+    let s: string = "0123456789" + "abcdefghij";
+    let i: i32 = 0;
     while (i < %d) {
         match (w.write(s)) {
             Some(e) => { return 1; },

@@ -19,7 +19,7 @@ func TestStructFieldArrayReleaseDropsElements(t *testing.T) {
 struct Box { items: P[], tag: i32 }
 
 function churn(n: i32): i32 {
-    var b: Box = Box { items: [P { a: 0, b: 0 }], tag: 0 };
+    let b: Box = Box { items: [P { a: 0, b: 0 }], tag: 0 };
     for i in 0..n { b = Box { ...b, items: b.items.with(0, P { a: i, b: i }) }; }
     return b.items[0].a;
 }
@@ -61,21 +61,21 @@ func TestStructUpdateReleasesAFreshBase(t *testing.T) {
 function mk(): R { return R { tag: "base", n: 0 }; }
 
 function from_call(n: i32): i32 {
-    var t: i32 = 0;
-    for i in 0..n { var r: R = R { ...mk(), n: i }; t = t + r.n; }
+    let t: i32 = 0;
+    for i in 0..n { let r: R = R { ...mk(), n: i }; t = t + r.n; }
     return t;
 }
 
 function from_local(n: i32): i32 {
-    var b: R = mk();
-    var t: i32 = 0;
-    for i in 0..n { var r: R = R { ...b, n: i }; t = t + r.n; }
+    let b: R = mk();
+    let t: i32 = 0;
+    for i in 0..n { let r: R = R { ...b, n: i }; t = t + r.n; }
     return t;
 }
 
 function no_spread(n: i32): i32 {
-    var t: i32 = 0;
-    for i in 0..n { var r: R = R { tag: "x", n: i }; t = t + r.n; }
+    let t: i32 = 0;
+    for i in 0..n { let r: R = R { tag: "x", n: i }; t = t + r.n; }
     return t;
 }
 

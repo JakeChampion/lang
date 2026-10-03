@@ -22,8 +22,8 @@ struct Q { b: u32 }
 impl Pair[i32, u32] for P { function snd(self: Self): u32 { return self.s.len() as u32; } }
 impl Pair[i32, i32] for Q { function snd(self: Self): i32 { return self.b as i32; } }
 function main(): i32 {
-    var d: dyn Pair[i32, u32] = P { s: "abc" };
-    var e: dyn Pair[i32, i32] = Q { b: 4 as u32 };
+    let d: dyn Pair[i32, u32] = P { s: "abc" };
+    let e: dyn Pair[i32, i32] = Q { b: 4 as u32 };
     print(((d.snd() as i32) + e.snd()).to_string());
     return 0;
 }
@@ -39,19 +39,19 @@ struct Q { t: string, b: u32 }
 impl Pair[i32, u32] for P { function fst(self: Self): i32 { return self.a; } function snd(self: Self): u32 { return self.s.len() as u32; } }
 impl Pair[i32, i32] for Q { function fst(self: Self): i32 { return self.t.len(); } function snd(self: Self): i32 { return self.b as i32; } }
 function main(): i32 {
-    var m: Map[string, dyn Pair[i32, u32]] = Map {};
-    var n: Map[string, dyn Pair[i32, i32]] = Map {};
-    var i: i32 = 0;
+    let m: Map[string, dyn Pair[i32, u32]] = Map {};
+    let n: Map[string, dyn Pair[i32, i32]] = Map {};
+    let i: i32 = 0;
     while (i < 4) {
         m = m.insert("k" + (i % 3).to_string(), P { a: i, s: "p" + i.to_string() });
         n = n.insert("k" + i.to_string(), Q { t: "q" + i.to_string(), b: i as u32 });
         i = i + 1;
     }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for (k, v) in m { t = t + v.fst() + (v.snd() as i32); }
     for (k, v) in n { t = t + v.fst() + v.snd(); }
-    var ds: dyn Pair[i32, i32][] = [Q { t: "x" + "y", b: 1 as u32 }];
-    var flags: boolean[] = [true, false];
+    let ds: dyn Pair[i32, i32][] = [Q { t: "x" + "y", b: 1 as u32 }];
+    let flags: boolean[] = [true, false];
     t = t + ds[0].fst() + flags.len();
     print(t.to_string());
     return 0;
@@ -66,7 +66,7 @@ struct Q { }
 impl Conv[i32] for P { type Out = i32; function conv(self: Self, x: i32): i32 { return x + 1; } }
 impl Conv[u32] for Q { type Out = u32; function conv(self: Self, x: u32): u32 { return x + 2; } }
 function main(): i32 {
-    var d: dyn Conv[i32, Out = i32] = P { };
+    let d: dyn Conv[i32, Out = i32] = P { };
     print(((d.conv(1) as i32) + 10).to_string());
     return 0;
 }
@@ -81,7 +81,7 @@ struct B { v: u32 }
 impl Holder for A { type Item = i32; function get(self: Self): i32 { return self.v; } }
 impl Holder for B { type Item = u32; function get(self: Self): u32 { return self.v; } }
 function main(): i32 {
-    var d: dyn Holder[Item = i32] = A { v: 7 };
+    let d: dyn Holder[Item = i32] = A { v: 7 };
     print((d.get() + 10).to_string());
     return 0;
 }

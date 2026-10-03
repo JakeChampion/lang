@@ -583,8 +583,8 @@ dependency and no circularity**. `__fern_i32_pow` is the canonical example
 ```fern
 // emits as the symbol __fern_i32_pow; ABI: (base, exp) -> base^exp
 fn __fern_i32_pow(base: i32, exp: i32): i32 {
-    var r: i32 = 1;
-    var e: i32 = exp;
+    let r: i32 = 1;
+    let e: i32 = exp;
     while (e > 0) { r = r * base; e = e - 1; }
     return r;
 }

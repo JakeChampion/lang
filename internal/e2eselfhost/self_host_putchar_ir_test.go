@@ -26,7 +26,7 @@ var putcharIRCases = []struct {
 	{"newline", `function main(): i32 { putchar(10); return 0; }`, "\n"},
 	{"high-byte", `function main(): i32 { putchar(200); return 0; }`, "\xc8"},
 	{"const-expr", `function main(): i32 { putchar(60 + 5); return 0; }`, "A"},
-	{"computed", `function main(): i32 { var c: i32 = 60; putchar(c + 5); return 0; }`, "A"},
+	{"computed", `function main(): i32 { let c: i32 = 60; putchar(c + 5); return 0; }`, "A"},
 }
 
 // The wasm backend emits no putchar symbol, so pin the inlined sequence: stash

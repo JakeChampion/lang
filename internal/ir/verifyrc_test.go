@@ -16,7 +16,7 @@ const (
 	hdrLen = int32(8)
 )
 
-// selfHostReuse builds the shape the self-host compiler's irlower actually
+// selfHostReuse builds the shape the self-host compiler's lowering actually
 // emits, read off a `-dump-fn` of conformance/cases/general_reuse_struct:
 //
 //	load_local D; call __fern_rc_is_unique/1; tee_local u

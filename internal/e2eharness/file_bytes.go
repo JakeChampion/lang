@@ -10,13 +10,13 @@ import (
 
 const FileBytesProgram = `import "std/array";
 function main(): i32 {
-  var payload: u8[] = [];
-  var i: i32 = 0;
+  let payload: u8[] = [];
+  let i: i32 = 0;
   while (i < 8193) { payload = payload.append((i % 256) as u8); i = i + 1; }
   match (write_file_bytes("all.bin", payload)) { Err(_) => { return 1; }, Ok(_) => {} }
   match (write_file_bytes("again.bin", payload)) { Err(_) => { return 2; }, Ok(_) => {} }
   if (payload.len() != 8193 || payload[255] != 255 || payload[8192] != 0) { return 3; }
-  var empty: u8[] = [];
+  let empty: u8[] = [];
   match (write_file_bytes("empty.bin", empty)) { Err(_) => { return 4; }, Ok(_) => {} }
   match (write_file_bytes("temporary.bin", [255 as u8, 0 as u8, 128 as u8])) { Err(_) => { return 5; }, Ok(_) => {} }
   match (write_file("mode-reference.bin", "reference")) { Err(_) => { return 12; }, Ok(_) => {} }

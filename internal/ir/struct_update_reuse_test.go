@@ -17,8 +17,8 @@ import "testing"
 func TestStructUpdateSpreadSelfOverwriteReuses(t *testing.T) {
 	ip := lowerForTest(t, `struct S { xs: i32[], n: i32, m: i32 }
 function main(): i32 {
-    var s: S = S { xs: [1, 2, 3], n: 0, m: 7 };
-    var i: i32 = 0;
+    let s: S = S { xs: [1, 2, 3], n: 0, m: 7 };
+    let i: i32 = 0;
     while (i < 3) { s = S { ...s, n: s.n + 1 }; i = i + 1; }
     return s.n + s.m + s.xs.len();
 }`)
@@ -34,8 +34,8 @@ function main(): i32 {
 func TestStructUpdateSpreadForeignBaseDefers(t *testing.T) {
 	ip := lowerForTest(t, `struct S { xs: i32[], n: i32, m: i32 }
 function main(): i32 {
-    var a: S = S { xs: [1, 2, 3], n: 0, m: 7 };
-    var b: S = S { xs: [4], n: 1, m: 8 };
+    let a: S = S { xs: [1, 2, 3], n: 0, m: 7 };
+    let b: S = S { xs: [4], n: 1, m: 8 };
     b = S { ...a, n: 5 };
     return b.n + b.m + b.xs.len();
 }`)

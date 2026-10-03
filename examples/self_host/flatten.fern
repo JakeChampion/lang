@@ -36,7 +36,7 @@ import "./astwalk";
 import "./platforms";
 
 // `locals` lists the value-binding names in scope for the body being
-// rewritten (params + every `var` / `for` / match-arm binding in the
+// rewritten (params + every `let` / `for` / match-arm binding in the
 // function). A bare ident matching one of these is a LOCAL variable, so
 // it must NOT be mangled even when it shares a name with a module-level
 // decl (e.g. a local `range` shadowing the `range()` function). Without
@@ -76,13 +76,13 @@ function declname_buckets(n: i32): i32 {
 }
 
 // build_declname_head / _next index `names` by hash, as the head/next columns
-// the same shape treeshake.RefSet and irlower.CallDeps use. mangle_bare is the
+// the same shape treeshake.RefSet and fnsigs.CallDeps use. mangle_bare is the
 // only reader and it ran a full scan per bare name — 305 string compares a
 // call, 6.7 M over a checker.fern compile.
 function build_declname_head(names: string[]): i32[] {
-  var nb: i32 = declname_buckets(names.len());
-  var head: i32[] = [];
-  var b: i32 = 0;
+  let nb: i32 = declname_buckets(names.len());
+  let head: i32[] = [];
+  let b: i32 = 0;
   while (b < nb) {
     head = head.append(0 - 1);
     b = b + 1;
@@ -90,9 +90,9 @@ function build_declname_head(names: string[]): i32[] {
   // Backwards, so the bucket ends up holding its LOWEST index: the scan this
   // replaces returned the first match, and build_declname_next chains upward
   // from here.
-  var i: i32 = names.len() - 1;
+  let i: i32 = names.len() - 1;
   while (i >= 0) {
-    var k: i32 = util.hash_bucket(names[i], nb);
+    let k: i32 = util.hash_bucket(names[i], nb);
     head = head.with(k, i);
     i = i - 1;
   }
@@ -102,22 +102,22 @@ function build_declname_head(names: string[]): i32[] {
 // next[i] is the next-higher index sharing i's bucket, so walking from the head
 // visits a bucket in ascending index order and stops at the first match.
 function build_declname_next(names: string[]): i32[] {
-  var nb: i32 = declname_buckets(names.len());
-  var seen: i32[] = [];
-  var b: i32 = 0;
+  let nb: i32 = declname_buckets(names.len());
+  let seen: i32[] = [];
+  let b: i32 = 0;
   while (b < nb) {
     seen = seen.append(0 - 1);
     b = b + 1;
   }
-  var next: i32[] = [];
-  var z: i32 = 0;
+  let next: i32[] = [];
+  let z: i32 = 0;
   while (z < names.len()) {
     next = next.append(0 - 1);
     z = z + 1;
   }
-  var i: i32 = names.len() - 1;
+  let i: i32 = names.len() - 1;
   while (i >= 0) {
-    var k: i32 = util.hash_bucket(names[i], nb);
+    let k: i32 = util.hash_bucket(names[i], nb);
     next = next.with(i, seen[k]);
     seen = seen.with(k, i);
     i = i - 1;
@@ -130,7 +130,7 @@ function declname_index_of(name: string, ctx: RewriteCtx): i32 {
   if (ctx.dn_head.len() == 0) {
     return 0 - 1;
   }
-  var i: i32 = ctx.dn_head[util.hash_bucket(name, ctx.dn_head.len())];
+  let i: i32 = ctx.dn_head[util.hash_bucket(name, ctx.dn_head.len())];
   while (i >= 0) {
     if (ctx.declnames[i] == name) {
       return i;
@@ -183,8 +183,8 @@ pub function mangled_name(prefix: string, name: string): string {
 // build_mangled_names precomputes mangled_name(prefix, names[i]) for each name
 // — the shared mangled instances a bare own-decl reference resolves to.
 function build_mangled_names(prefix: string, names: string[]): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < names.len()) {
     out = out.append(mangled_name(prefix, names[i]));
     i = i + 1;
@@ -198,7 +198,7 @@ function build_mangled_names(prefix: string, names: string[]): string[] {
 // modnames[i] holds the qualifier and modprefixes[i] the basename. Falls back to
 // the qualifier itself when no parallel entry exists (identity, the old behaviour).
 function resolve_prefix(qualifier: string, ctx: RewriteCtx): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ctx.modnames.len()) {
     if (ctx.modnames[i] == qualifier) {
       if (i < ctx.modprefixes.len()) {
@@ -218,11 +218,11 @@ function resolve_prefix(qualifier: string, ctx: RewriteCtx): string {
 // re-exports (`a` re-exports `b`'s re-export of `c`) are followed to the
 // end; the bounded loop guards against a cyclic table. See bundle.
 function lookup_reexport(mangled: string, ctx: RewriteCtx): string {
-  var cur: string = mangled;
-  var steps: i32 = 0;
+  let cur: string = mangled;
+  let steps: i32 = 0;
   while (steps < ctx.reexport_keys.len() + 1) {
-    var i: i32 = 0;
-    var hit: boolean = false;
+    let i: i32 = 0;
+    let hit: boolean = false;
     while (i < ctx.reexport_keys.len()) {
       if (ctx.reexport_keys[i] == cur) {
         cur = ctx.reexport_targets[i];
@@ -246,7 +246,7 @@ function lookup_reexport(mangled: string, ctx: RewriteCtx): string {
 // program loads for an unrelated module's sake (std/net's `Other` beside
 // IoError's) must not capture a bare reference here.
 function lookup_ivar(name: string, ctx: RewriteCtx): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ctx.ivar_names.len()) {
     if (ctx.ivar_names[i] == name && ivar_visible(ctx.ivar_mangled[i], name, ctx)) {
       return ctx.ivar_mangled[i];
@@ -268,9 +268,9 @@ function ivar_visible(mangled: string, name: string, ctx: RewriteCtx): boolean {
 struct ImportGraph { starts: i32[], edges: i32[] }
 
 function import_graph(imports: LoadedModule[], ids: string[], pfxs: string[]): ImportGraph {
-  var starts: i32[] = [];
-  var edges: i32[] = [];
-  var k: i32 = 0;
+  let starts: i32[] = [];
+  let edges: i32[] = [];
+  let k: i32 = 0;
   while (k < imports.len()) {
     starts = starts.append(edges.len());
     for p in import_prefixes(imports[k].mod, ids, pfxs) {
@@ -287,24 +287,24 @@ function import_graph(imports: LoadedModule[], ids: string[], pfxs: string[]): I
 // may name bare. It is native's import closure (modload.importClosures), which
 // is what the checker's moduleSeesVariant consults.
 function variant_scope(mod: parser.Module, g: ImportGraph, ids: string[], pfxs: string[]): string[] {
-  var direct: string[] = import_prefixes(mod, ids, pfxs);
-  var seen: boolean[] = [];
+  let direct: string[] = import_prefixes(mod, ids, pfxs);
+  let seen: boolean[] = [];
   while (seen.len() < pfxs.len()) {
     seen = seen.append(false);
   }
-  var queue: i32[] = [];
+  let queue: i32[] = [];
   for p in direct {
-    var d: i32 = index_of_str(p, pfxs);
+    let d: i32 = index_of_str(p, pfxs);
     if (d >= 0 && !seen[d]) {
       seen = seen.with(d, true);
       queue = queue.append(d);
     }
   }
-  var qi: i32 = 0;
+  let qi: i32 = 0;
   while (qi < queue.len()) {
-    var e: i32 = g.starts[queue[qi]];
+    let e: i32 = g.starts[queue[qi]];
     while (e < g.starts[queue[qi] + 1]) {
-      var t: i32 = g.edges[e];
+      let t: i32 = g.edges[e];
       if (t >= 0 && !seen[t]) {
         seen = seen.with(t, true);
         queue = queue.append(t);
@@ -313,7 +313,7 @@ function variant_scope(mod: parser.Module, g: ImportGraph, ids: string[], pfxs: 
     }
     qi = qi + 1;
   }
-  var out: string[] = direct;
+  let out: string[] = direct;
   for q in queue {
     out = out.append(pfxs[q]);
   }
@@ -323,7 +323,7 @@ function variant_scope(mod: parser.Module, g: ImportGraph, ids: string[], pfxs: 
 // first_dot / first_bracket: byte index of the first '.' / '[' in s,
 // or -1. Used to split a type spelling into its qualifier / base.
 function first_dot(s: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     if (s[i] == b'.') {
       return i;
@@ -334,7 +334,7 @@ function first_dot(s: string): i32 {
 }
 
 function first_bracket(s: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     if (s[i] == b'[') {
       return i;
@@ -346,7 +346,7 @@ function first_bracket(s: string): i32 {
 
 // is_in reports membership of `name` in a string list.
 function is_in(name: string, list: string[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < list.len()) {
     if (list[i] == name) {
       return true;
@@ -359,8 +359,8 @@ function is_in(name: string, list: string[]): boolean {
 // basename strips a leading directory + `./` from an import path:
 // "./lexer" → "lexer", "std/i32" → "i32".
 function basename(path: string): string {
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i < path.len()) {
     if (path[i] == b'/') {
       start = i + 1;
@@ -372,8 +372,8 @@ function basename(path: string): string {
 
 // mod_names derives the imported-module name set from a module.
 pub function mod_names(mod: parser.Module): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < mod.imports.len()) {
     // The QUALIFIER used in source: the alias when `import "p" as alias`, else
     // the path basename. import_prefixes returns the parallel mangle prefixes.
@@ -407,14 +407,14 @@ pub function resolve_imports(mod: parser.Module, dir: string, root: string): par
   // Callers pass the directory with a trailing slash; resolve_path wants it
   // without. Checked rather than assumed: stripping the last byte of a path
   // that does not end in one would silently name a different directory.
-  var d: string = dir;
+  let d: string = dir;
   if (d.len() > 1 && d[d.len() - 1] == b'/') {
     d = slice_unchecked(d, 0, d.len() - 1) + "";
   }
-  var out: parser.Import[] = [];
-  var i: i32 = 0;
+  let out: parser.Import[] = [];
+  let i: i32 = 0;
   while (i < mod.imports.len()) {
-    var r: string = module_ident(util.resolve_path(mod.imports[i].path, d, root));
+    let r: string = module_ident(util.resolve_path(mod.imports[i].path, d, root));
     out = out.append(parser.Import { ...mod.imports[i], resolved: r });
     i = i + 1;
   }
@@ -431,7 +431,7 @@ pub function resolve_imports(mod: parser.Module, dir: string, root: string): par
 // or, for `init(plat: Platform): (tcp.ServeOptions, S)` beside a handler
 // threading `S` and a `shutdown(reason, state)` hook,
 //
-//     var (__fern_opts, __fern_state) = init(tcp.__init_platform());
+//     let (__fern_opts, __fern_state) = init(tcp.__init_platform());
 //     return tcp.tcp_serve_supervised_with_shutdown(port, __fern_opts, __fern_state, handle, shutdown);
 //
 // An `init` answering only the state goes as the state argument, one
@@ -455,14 +455,14 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
   if (platforms.for_target(target).environment == "wasi-http") {
     return entry;
   }
-  var hi: i32 = top_fn_index(entry, "handle");
+  let hi: i32 = top_fn_index(entry, "handle");
   if (hi < 0) {
     return entry;
   }
-  var ii: i32 = top_fn_index(entry, "init");
-  var init_kind: i32 = 0;
-  var init_args: ast.Expr[] = [];
-  var qual: string = std_qualifier(entry, "tcp");
+  let ii: i32 = top_fn_index(entry, "init");
+  let init_kind: i32 = 0;
+  let init_args: ast.Expr[] = [];
+  let qual: string = std_qualifier(entry, "tcp");
   if (ii >= 0) {
     init_kind = parser.init_return_kind(entry.funcs[ii].ret_type);
     if (entry.funcs[ii].params.len() > 1) {
@@ -472,29 +472,29 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
       if (entry.funcs[ii].params[0].type_name != "Platform") {
         return entry;
       }
-      var plat: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, "__init_platform"), args: [], line: 0, col: 0, type_args: [], ty: "" };
+      let plat: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, "__init_platform"), args: [], line: 0, col: 0, type_args: [], ty: "" };
       init_args = [plat];
     }
   }
-  var returns_state: boolean = init_kind == 1 || init_kind == 3;
-  var takes_state: boolean = entry.funcs[hi].params.len() == 3;
+  let returns_state: boolean = init_kind == 1 || init_kind == 3;
+  let takes_state: boolean = entry.funcs[hi].params.len() == 3;
   if (returns_state != takes_state) {
     return entry;
   }
-  var si: i32 = top_fn_index(entry, "shutdown");
+  let si: i32 = top_fn_index(entry, "shutdown");
   if (si >= 0 && entry.funcs[si].params.len() != 1 + bool_i32(takes_state)) {
     return entry;
   }
-  var port: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, "__port_from_env"), args: [ast.ExprString { value: "PORT", line: 0, col: 0 }, ast.ExprNumber { text: "8080", suffix: "", raw: "", is_float: false, line: 0, col: 0 }], line: 0, col: 0, type_args: [], ty: "" };
-  var handle: ast.Expr = ast.ExprIdent { name: "handle", line: 0, col: 0, ty: "" };
-  var init_call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "init", line: 0, col: 0, ty: "" }, args: init_args, line: 0, col: 0, type_args: [], ty: "" };
-  var hook: ast.Expr = ast.ExprIdent { name: "shutdown", line: 0, col: 0, ty: "" };
-  var body: ast.Stmt[] = [];
+  let port: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, "__port_from_env"), args: [ast.ExprString { value: "PORT", line: 0, col: 0 }, ast.ExprNumber { text: "8080", suffix: "", raw: "", is_float: false, line: 0, col: 0 }], line: 0, col: 0, type_args: [], ty: "" };
+  let handle: ast.Expr = ast.ExprIdent { name: "handle", line: 0, col: 0, ty: "" };
+  let init_call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "init", line: 0, col: 0, ty: "" }, args: init_args, line: 0, col: 0, type_args: [], ty: "" };
+  let hook: ast.Expr = ast.ExprIdent { name: "shutdown", line: 0, col: 0, ty: "" };
+  let body: ast.Stmt[] = [];
   // The options are `init`'s when it answers them, else the defaults;
   // the state is `init`'s value, destructured from beside the options
   // when it answers both.
-  var opts: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, "serve_options"), args: [], line: 0, col: 0, type_args: [], ty: "" };
-  var state: ast.Expr = init_call;
+  let opts: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, "serve_options"), args: [], line: 0, col: 0, type_args: [], ty: "" };
+  let state: ast.Expr = init_call;
   if (init_kind == 3) {
     body = body.append(ast.StmtVar { name: "__fern_opts,__fern_state", type_name: "", init: init_call, line: 0, col: 0, fn_ret: "", fn_param_types: "" });
     opts = ast.ExprIdent { name: "__fern_opts", line: 0, col: 0, ty: "" };
@@ -504,12 +504,12 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
   } else if (ii >= 0 && init_kind == 0) {
     body = body.append(ast.StmtExpr { value: init_call, line: 0 });
   }
-  var supervised: boolean = target.len() == 0 || platforms.has_capability(target, "proc");
-  var entry_name: string = "tcp_serve_opts";
+  let supervised: boolean = target.len() == 0 || platforms.has_capability(target, "proc");
+  let entry_name: string = "tcp_serve_opts";
   if (supervised) {
     entry_name = "tcp_serve_supervised_opts";
   }
-  var args: ast.Expr[] = [port, opts, handle];
+  let args: ast.Expr[] = [port, opts, handle];
   if (takes_state) {
     entry_name = "tcp_serve_with_opts";
     if (supervised) {
@@ -527,9 +527,9 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
     }
     args = args.append(hook);
   }
-  var serve: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, entry_name), args: args, line: 0, col: 0, type_args: [], ty: "" };
+  let serve: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, entry_name), args: args, line: 0, col: 0, type_args: [], ty: "" };
   body = body.append(ast.StmtReturn { value: serve, line: 0, col: 0 });
-  var main: parser.FuncDecl = parser.FuncDecl {
+  let main: parser.FuncDecl = parser.FuncDecl {
     no_inline: false,
     name: "main", receiver_name: "", receiver_type: "", type_params: [],
     params: [], ret_type: "i32", body: body, line: 0, col: 0,
@@ -550,7 +550,7 @@ function bool_i32(b: boolean): i32 {
 // top_fn_index is the position of the top-level function `name` (a method
 // of that name is not one), or -1.
 function top_fn_index(mod: parser.Module, name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (mod.funcs[i].name == name && mod.funcs[i].receiver_type.len() == 0) {
       return i;
@@ -576,14 +576,14 @@ function top_fn_index(mod: parser.Module, name: string): i32 {
 // `error_pfx` and `http_pfx` are the bundle prefixes of std/error and
 // std/http, "" for one the program does not load.
 pub function with_result_handler(entry: parser.Module, error_pfx: string, http_pfx: string): parser.Module {
-  var hi: i32 = top_fn_index(entry, "handle");
+  let hi: i32 = top_fn_index(entry, "handle");
   if (hi < 0) {
     return entry;
   }
-  var handle: parser.FuncDecl = entry.funcs[hi];
-  var ret: string = "";
-  var with_state: string = "";
-  var result: string = "";
+  let handle: parser.FuncDecl = entry.funcs[hi];
+  let ret: string = "";
+  let with_state: string = "";
+  let result: string = "";
   if (handle.params.len() == 2 && result_of_response(handle.ret_type)) {
     ret = "HttpResponse";
     result = handle.ret_type;
@@ -598,13 +598,13 @@ pub function with_result_handler(entry: parser.Module, error_pfx: string, http_p
   if (ret.len() == 0) {
     return entry;
   }
-  var args: ast.Expr[] = [];
+  let args: ast.Expr[] = [];
   for p in handle.params {
     args = args.append(ast.ExprIdent { name: p.name, line: 0, col: 0, ty: "" });
   }
-  var inner: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__fern_handle_result", line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_args: [], ty: "" };
-  var adapter: string = "respond" + with_state;
-  var adapter_args: ast.Expr[] = [inner];
+  let inner: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__fern_handle_result", line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_args: [], ty: "" };
+  let adapter: string = "respond" + with_state;
+  let adapter_args: ast.Expr[] = [inner];
   if (result_err_is_dyn_error(error_pfx, result)) {
     adapter = "respond_error" + with_state;
     adapter_args = adapter_args.append(ast.ExprIdent { name: handle.params[handle.params.len() - 1].name, line: 0, col: 0, ty: "" });
@@ -612,10 +612,10 @@ pub function with_result_handler(entry: parser.Module, error_pfx: string, http_p
   if (http_pfx.len() > 0) {
     adapter = mangled_name(http_pfx, adapter);
   }
-  var call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: adapter, line: 0, col: 0, ty: "" }, args: adapter_args, line: 0, col: 0, type_args: [], ty: "" };
-  var wrapper: parser.FuncDecl = parser.FuncDecl { ...handle, name: "handle", ret_type: ret, body: [ast.StmtReturn { value: call, line: 0, col: 0 }], type_params: [], all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, ret_fn_ret: "", ret_fn_param_types: "" };
-  var funcs: parser.FuncDecl[] = [];
-  var i: i32 = 0;
+  let call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: adapter, line: 0, col: 0, ty: "" }, args: adapter_args, line: 0, col: 0, type_args: [], ty: "" };
+  let wrapper: parser.FuncDecl = parser.FuncDecl { ...handle, name: "handle", ret_type: ret, body: [ast.StmtReturn { value: call, line: 0, col: 0 }], type_params: [], all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, ret_fn_ret: "", ret_fn_param_types: "" };
+  let funcs: parser.FuncDecl[] = [];
+  let i: i32 = 0;
   while (i < entry.funcs.len()) {
     if (i == hi) {
       funcs = funcs.append(parser.FuncDecl { ...handle, name: "__fern_handle_result" });
@@ -643,9 +643,9 @@ function result_err_is_dyn_error(error_pfx: string, result: string): boolean {
 // resolves no paths leaves `ident` empty, and then the module's name is
 // the best available answer, as everywhere else in the bundler.
 function loaded_prefix(imports: LoadedModule[], pfxs: string[], path: string): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < imports.len()) {
-    var hit: boolean = imports[i].name == util.module_name(path);
+    let hit: boolean = imports[i].name == util.module_name(path);
     if (imports[i].ident.len() > 0) {
       hit = path_is(imports[i].ident, path);
     }
@@ -664,21 +664,21 @@ function path_is(p: string, want: string): boolean {
 
 // result_of_response reports whether the type text is `Result[HttpResponse, E]`.
 function result_of_response(t: string): boolean {
-  var s: string = strip_spaces(t);
+  let s: string = strip_spaces(t);
   return s.len() > 20 && slice_unchecked(s, 0, 20) + "" == "Result[HttpResponse,";
 }
 
 // tuple_halves splits `(A, B)` at its top-level comma into A and B, or
 // answers ("", "") for another shape.
 function tuple_halves(t: string): (string, string) {
-  var s: string = strip_spaces(t);
+  let s: string = strip_spaces(t);
   if (s.len() < 4 || s[0] != b'(' || s[s.len() - 1] != b')') {
     return ("", "");
   }
-  var depth: i32 = 0;
-  var i: i32 = 1;
+  let depth: i32 = 0;
+  let i: i32 = 1;
   while (i < s.len() - 1) {
-    var ch: u8 = s[i];
+    let ch: u8 = s[i];
     if (ch == b'[' || ch == b'(') {
       depth = depth + 1;
     }
@@ -694,8 +694,8 @@ function tuple_halves(t: string): (string, string) {
 }
 
 function strip_spaces(t: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < t.len()) {
     if (t[i] != b' ') {
       out = out + slice_unchecked(t, i, i + 1);
@@ -729,7 +729,7 @@ function tcp_ref(qual: string, name: string): ast.Expr {
 
 // index_of_str returns the position of `want` in `list`, or -1.
 function index_of_str(want: string, list: string[]): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < list.len()) {
     if (list[i] == want) {
       return i;
@@ -749,10 +749,10 @@ function index_of_str(want: string, list: string[]): i32 {
 // Falls back to the basename when `resolved` is empty, which is every
 // single-file driver -- with one module there is nothing to collide with.
 function import_prefixes(mod: parser.Module, ids: string[], pfxs: string[]): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < mod.imports.len()) {
-    var k: i32 = 0 - 1;
+    let k: i32 = 0 - 1;
     if (mod.imports[i].resolved.len() > 0) {
       k = index_of_str(mod.imports[i].resolved, ids);
     }
@@ -769,15 +769,15 @@ function import_prefixes(mod: parser.Module, ids: string[], pfxs: string[]): str
 // assign_prefixes gives every loaded module its one mangle prefix, unique
 // across the bundle, parallel to the identities it returns them against.
 function assign_prefixes(imports: LoadedModule[]): string[] {
-  var pfxs: string[] = [];
-  var used: string[] = [];
-  var i: i32 = 0;
+  let pfxs: string[] = [];
+  let used: string[] = [];
+  let i: i32 = 0;
   while (i < imports.len()) {
-    var base: string = imports[i].name;
+    let base: string = imports[i].name;
     if (imports[i].ident.len() > 0) {
       base = basename(imports[i].ident);
     }
-    var pf: string = unique_prefix(util.mangle_prefix(base), used);
+    let pf: string = unique_prefix(util.mangle_prefix(base), used);
     used = used.append(pf);
     pfxs = pfxs.append(pf);
     i = i + 1;
@@ -787,8 +787,8 @@ function assign_prefixes(imports: LoadedModule[]): string[] {
 
 // module_ids returns each loaded module's identity, for import_prefixes.
 function module_ids(imports: LoadedModule[]): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < imports.len()) {
     out = out.append(imports[i].ident);
     i = i + 1;
@@ -801,14 +801,14 @@ function module_ids(imports: LoadedModule[]): string[] {
 function mangle_bare(name: string, ctx: RewriteCtx): string {
   // Own decl → its precomputed shared mangled instance, avoiding a fresh
   // concat per occurrence.
-  var di: i32 = declname_index_of(name, ctx);
+  let di: i32 = declname_index_of(name, ctx);
   if (di >= 0 && di < ctx.declnames_mangled.len()) {
     return ctx.declnames_mangled[di];
   }
   // A bare reference to one of this module's imported enum variants
   // resolves to its bundled (prefix-mangled) struct name. Checked
   // after own decls so a same-named local decl still wins.
-  var iv: string = lookup_ivar(name, ctx);
+  let iv: string = lookup_ivar(name, ctx);
   if (iv.len() > 0) {
     return iv;
   }
@@ -846,10 +846,10 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
   // ("(A, B)[]", array_depth > 0) is not a bare tuple, so it falls through to the
   // bracket/suffix logic below — matching the former guard, whose ")"-suffix test
   // failed on the trailing "]".
-  var tref: parser.TypeRef = parser.parse_type_ref(tn);
+  let tref: parser.TypeRef = parser.parse_type_ref(tn);
   if (tref.is_tuple && tref.array_depth == 0) {
-    var out: string = "(";
-    var ti: i32 = 0;
+    let out: string = "(";
+    let ti: i32 = 0;
     while (ti < tref.args.len()) {
       if (ti > 0) {
         out = out + ", ";
@@ -872,8 +872,8 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
   // the tuple elements get; the array suffix goes after the arrow, exactly as
   // render_type_ref spells it.
   if (tref.is_fn) {
-    var fout: string = "(";
-    var fi: i32 = 0;
+    let fout: string = "(";
+    let fi: i32 = 0;
     while (fi + 1 < tref.args.len()) {
       if (fi > 0) {
         fout = fout + ", ";
@@ -882,7 +882,7 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
       fi = fi + 1;
     }
     fout = fout + ") => " + rewrite_type_name(parser.render_type_ref(tref.args[tref.args.len() - 1]), ctx);
-    var fd: i32 = 0;
+    let fd: i32 = 0;
     while (fd < tref.array_depth) {
       fout = fout + "[]";
       fd = fd + 1;
@@ -904,8 +904,8 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
   // substring copy. An `args`-less spelling (`Flag[]`, a bare name) has
   // nothing to recurse into and falls through to the logic below unchanged.
   if (!tref.is_tuple && !tref.is_fn && tref.args.len() == 0 && parser.dyn_trait_set(tref.base).len() > 0) {
-    var dout: string = canon_dyn(tref.base, ctx);
-    var dd: i32 = 0;
+    let dout: string = canon_dyn(tref.base, ctx);
+    let dd: i32 = 0;
     while (dd < tref.array_depth) {
       dout = dout + "[]";
       dd = dd + 1;
@@ -913,8 +913,8 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
     return dout;
   }
   if (!tref.is_tuple && tref.args.len() > 0) {
-    var gout: string = rewrite_type_name(tref.base, ctx) + "[";
-    var gi: i32 = 0;
+    let gout: string = rewrite_type_name(tref.base, ctx) + "[";
+    let gi: i32 = 0;
     while (gi < tref.args.len()) {
       if (gi > 0) {
         gout = gout + ", ";
@@ -923,28 +923,28 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
       gi = gi + 1;
     }
     gout = gout + "]";
-    var gad: i32 = 0;
+    let gad: i32 = 0;
     while (gad < tref.array_depth) {
       gout = gout + "[]";
       gad = gad + 1;
     }
     return gout;
   }
-  var dot: i32 = first_dot(tn);
+  let dot: i32 = first_dot(tn);
   if (dot >= 0) {
-    var qual: str = slice_unchecked(tn, 0, dot);
+    let qual: str = slice_unchecked(tn, 0, dot);
     if (is_in(qual, ctx.modnames)) {
       // Resolve the qualifier to the module's mangle prefix (alias-aware).
-      var prefix: string = resolve_prefix(qual, ctx);
+      let prefix: string = resolve_prefix(qual, ctx);
       // Split any generic/array suffix off the base name so a
       // re-exported `facade.Point[]` redirects on `Point` and
       // re-attaches the `[]`.
-      var rest: str = slice_unchecked(tn, dot + 1, tn.len());
-      var rb: i32 = first_bracket(rest);
+      let rest: str = slice_unchecked(tn, dot + 1, tn.len());
+      let rb: i32 = first_bracket(rest);
       if (rb < 0) {
         return lookup_reexport(prefix + "__" + rest, ctx);
       }
-      var rbase: str = slice_unchecked(rest, 0, rb);
+      let rbase: str = slice_unchecked(rest, 0, rb);
       return lookup_reexport(prefix + "__" + rbase, ctx) + slice_unchecked(rest, rb, rest.len());
     }
     // `E.Wrap` where THIS module declares `enum E`: the qualifier names a
@@ -960,11 +960,11 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
   }
   // No qualifier — maybe a bare own-module type (possibly with a
   // generic / array suffix).
-  var br: i32 = first_bracket(tn);
+  let br: i32 = first_bracket(tn);
   if (br < 0) {
     return mangle_bare(tn, ctx);
   }
-  var base: str = slice_unchecked(tn, 0, br);
+  let base: str = slice_unchecked(tn, 0, br);
   if (is_in(base, ctx.declnames)) {
     return ctx.prefix + "__" + base + slice_unchecked(tn, br, tn.len());
   }
@@ -1009,7 +1009,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
             // spelling resolves under both. A runtime helper is not
             // public API, and matching native exactly is worth more
             // here than opening a spelling only this compiler takes.
-            var mangled: string = lookup_reexport(resolve_prefix(id.name, ctx) + "__" + fa.field, ctx);
+            let mangled: string = lookup_reexport(resolve_prefix(id.name, ctx) + "__" + fa.field, ctx);
             // `ty: ""` and not `id.ty`: the result names a module-qualified
             // FUNCTION, so the module ident's own tag says nothing about it.
             return ast.ExprIdent { name: mangled, line: id.line, col: id.col, ty: "" };
@@ -1042,13 +1042,13 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       };
     },
     ast.ExprCall(c) => {
-      var args: ast.Expr[] = [];
-      var i: i32 = 0;
+      let args: ast.Expr[] = [];
+      let i: i32 = 0;
       while (i < c.args.len()) {
         args = args.append(rewrite_expr(c.args[i], ctx));
         i = i + 1;
       }
-      var targs: string[] = [];
+      let targs: string[] = [];
       for ta in c.type_args {
         targs = targs.append(rewrite_type_name(ta, ctx));
       }
@@ -1084,8 +1084,8 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       };
     },
     ast.ExprTuple(t) => {
-      var elems: ast.Expr[] = [];
-      var i: i32 = 0;
+      let elems: ast.Expr[] = [];
+      let i: i32 = 0;
       while (i < t.elements.len()) {
         elems = elems.append(rewrite_expr(t.elements[i], ctx));
         i = i + 1;
@@ -1093,8 +1093,8 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       return ast.ExprTuple { elements: elems, line: t.line, col: t.col };
     },
     ast.ExprArray(a) => {
-      var elems: ast.Expr[] = [];
-      var i: i32 = 0;
+      let elems: ast.Expr[] = [];
+      let i: i32 = 0;
       while (i < a.elements.len()) {
         elems = elems.append(rewrite_expr(a.elements[i], ctx));
         i = i + 1;
@@ -1102,13 +1102,13 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       return ast.ExprArray { ...a, elements: elems };
     },
     ast.ExprStructLit(slit) => {
-      var fvs: ast.Expr[] = [];
-      var i: i32 = 0;
+      let fvs: ast.Expr[] = [];
+      let i: i32 = 0;
       while (i < slit.field_values.len()) {
         fvs = fvs.append(rewrite_expr(slit.field_values[i], ctx));
         i = i + 1;
       }
-      var new_base: ast.Expr = slit.base;
+      let new_base: ast.Expr = slit.base;
       if (slit.has_base) {
         new_base = rewrite_expr(slit.base, ctx);
       }
@@ -1143,10 +1143,10 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       // undefined `f64__unwrap_or` (the result_combinators
       // regression). Gate on prefix so the fix applies exactly
       // where a bare own-decl reference could be mis-mangled.
-      var lctx: RewriteCtx = ctx;
+      let lctx: RewriteCtx = ctx;
       if (ctx.prefix.len() > 0) {
-        var inner: string[] = ctx.locals;
-        var pi: i32 = 0;
+        let inner: string[] = ctx.locals;
+        let pi: i32 = 0;
         while (pi < lm.params.len()) {
           inner = inner.append(lm.params[pi].name);
           pi = pi + 1;
@@ -1176,8 +1176,8 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
 }
 
 pub function rewrite_block(stmts: ast.Stmt[], ctx: RewriteCtx): ast.Stmt[] {
-  var out: ast.Stmt[] = [];
-  var i: i32 = 0;
+  let out: ast.Stmt[] = [];
+  let i: i32 = 0;
   while (i < stmts.len()) {
     out = out.append(rewrite_stmt(stmts[i], ctx));
     i = i + 1;
@@ -1227,8 +1227,8 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
       };
     },
     ast.StmtMatch(m) => {
-      var arms: ast.MatchArm[] = [];
-      var i: i32 = 0;
+      let arms: ast.MatchArm[] = [];
+      let i: i32 = 0;
       while (i < m.arms.len()) {
         arms = arms.append(ast.MatchArm { pattern: rewrite_pattern(m.arms[i].pattern, ctx), body: rewrite_block(m.arms[i].body, ctx), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard, alt_cont: false });
         i = i + 1;
@@ -1248,8 +1248,8 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
 }
 
 function rewrite_params(params: ast.ParamDecl[], ctx: RewriteCtx): ast.ParamDecl[] {
-  var out: ast.ParamDecl[] = [];
-  var i: i32 = 0;
+  let out: ast.ParamDecl[] = [];
+  let i: i32 = 0;
   while (i < params.len()) {
     out = out.append(ast.ParamDecl {
       name: params[i].name,
@@ -1257,9 +1257,7 @@ function rewrite_params(params: ast.ParamDecl[], ctx: RewriteCtx): ast.ParamDecl
       own: params[i].own,
       has_default: params[i].has_default,
       default_value: params[i].default_value,
-      ret_arr: params[i].ret_arr,
       fn_ret: rewrite_type_name(params[i].fn_ret, ctx),
-      fn_param_dyn: params[i].fn_param_dyn,
       fn_param_types: rewrite_type_name_list(params[i].fn_param_types, ctx),
     });
     i = i + 1;
@@ -1274,9 +1272,9 @@ function rewrite_type_name_list(list: string, ctx: RewriteCtx): string {
   if (list.len() == 0) {
     return "";
   }
-  var parts: string[] = parser.split_top_commas(list);
-  var out: string = "";
-  var i: i32 = 0;
+  let parts: string[] = parser.split_top_commas(list);
+  let out: string = "";
+  let i: i32 = 0;
   while (i < parts.len()) {
     if (i > 0) {
       out = out + ",";
@@ -1292,7 +1290,7 @@ function rewrite_type_name_list(list: string, ctx: RewriteCtx): string {
 // so it stays bare), a qualified one by the prefix of the import it names. A
 // qualifier naming no import is left as written, and resolves nothing.
 function canon_trait(d: string, ctx: RewriteCtx): string {
-  var dot: i32 = d.len() - 1;
+  let dot: i32 = d.len() - 1;
   while (dot >= 0 && d[dot] != b'.') {
     dot = dot - 1;
   }
@@ -1302,18 +1300,18 @@ function canon_trait(d: string, ctx: RewriteCtx): string {
     }
     return ctx.prefix + "." + d;
   }
-  var k: i32 = util.index_of_str(ctx.modnames, slice_unchecked(d, 0, dot) + "");
+  let k: i32 = util.index_of_str(ctx.modnames, slice_unchecked(d, 0, dot) + "");
   if (k < 0) {
     return d;
   }
-  var name: string = slice_unchecked(d, dot + 1, d.len()) + "";
+  let name: string = slice_unchecked(d, dot + 1, d.len()) + "";
   // A trait reached through a `pub use` facade is the origin module's.
-  var origin: string = lookup_reexport(ctx.modprefixes[k] + "__" + name, ctx);
+  let origin: string = lookup_reexport(ctx.modprefixes[k] + "__" + name, ctx);
   return slice_unchecked(origin, 0, origin.len() - name.len() - 2) + "." + name;
 }
 
 function canon_derives(derives: string[], ctx: RewriteCtx): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   for d in derives {
     out = out.append(canon_trait(d, ctx));
   }
@@ -1326,12 +1324,12 @@ function trait_module_of(im: parser.ImplInfo, ctx: RewriteCtx): string {
   if (im.trait_name.len() == 0) {
     return "";
   }
-  var spelling: string = im.trait_spelling;
+  let spelling: string = im.trait_spelling;
   if (spelling.len() == 0) {
     spelling = im.trait_name;
   }
-  var canon: string = canon_trait(util.base_type_name(spelling), ctx);
-  var dot: i32 = canon.len() - 1;
+  let canon: string = canon_trait(util.base_type_name(spelling), ctx);
+  let dot: i32 = canon.len() - 1;
   while (dot >= 0 && canon[dot] != b'.') {
     dot = dot - 1;
   }
@@ -1344,13 +1342,13 @@ function trait_module_of(im: parser.ImplInfo, ctx: RewriteCtx): string {
 // canon_dyn spells each trait of a `dyn` set by canon_trait, keeping any
 // bracketed pin (`Iter[Item = i32]`) on the trait it follows.
 function canon_dyn(set: string, ctx: RewriteCtx): string {
-  var out: string = "dyn ";
-  var first: boolean = true;
+  let out: string = "dyn ";
+  let first: boolean = true;
   for tr in parser.dyn_trait_set(set) {
     if (!first) {
       out = out + " + ";
     }
-    var head: string = util.base_type_name(tr);
+    let head: string = util.base_type_name(tr);
     out = out + canon_trait(head, ctx) + slice_unchecked(tr, head.len(), tr.len());
     first = false;
   }
@@ -1358,8 +1356,8 @@ function canon_dyn(set: string, ctx: RewriteCtx): string {
 }
 
 function rewrite_struct_fields(fields: parser.StructFieldDecl[], ctx: RewriteCtx): parser.StructFieldDecl[] {
-  var out: parser.StructFieldDecl[] = [];
-  var i: i32 = 0;
+  let out: parser.StructFieldDecl[] = [];
+  let i: i32 = 0;
   while (i < fields.len()) {
     out = out.append(parser.StructFieldDecl {
       name: fields[i].name,
@@ -1375,11 +1373,11 @@ function rewrite_struct_fields(fields: parser.StructFieldDecl[], ctx: RewriteCtx
 // collect_local_names — all value-binding names in a function (receiver +
 // params + body bindings).
 function collect_local_names(fd: parser.FuncDecl): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   if (fd.receiver_name.len() > 0) {
     out = out.append(fd.receiver_name);
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < fd.params.len()) {
     out = out.append(fd.params[i].name);
     i = i + 1;
@@ -1393,10 +1391,10 @@ function collect_local_names(fd: parser.FuncDecl): string[] {
 // spellings + the receiver type, plus mangles each non-receiver
 // function name and struct/alias name when ctx.prefix is set.
 function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Module {
-  var funcs: parser.FuncDecl[] = [];
-  var i: i32 = 0;
+  let funcs: parser.FuncDecl[] = [];
+  let i: i32 = 0;
   while (i < mod.funcs.len()) {
-    var fd: parser.FuncDecl = mod.funcs[i];
+    let fd: parser.FuncDecl = mod.funcs[i];
     // Non-receiver functions get name-mangled; receiver methods
     // keep their name (dispatched by receiver type) but the
     // receiver type itself is rewritten. bound_traits carries
@@ -1407,13 +1405,13 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
     // mangled `mod__Foo` and pins nothing — the variable stays erased,
     // as it was before clone_bg pinned any. A VARIABLE argument, which
     // is the shape that matters, names no module.
-    var new_name: string = fd.name;
+    let new_name: string = fd.name;
     if (fd.receiver_type == "") {
       new_name = mangle_bare(fd.name, ctx);
     }
     // Body/params rewrite under a ctx that knows this function's local
     // bindings, so a local shadowing a module decl is left unmangled.
-    var bctx: RewriteCtx = RewriteCtx {
+    let bctx: RewriteCtx = RewriteCtx {
       modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix,
       declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: collect_local_names(fd),
       enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope,
@@ -1422,8 +1420,8 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
     funcs = funcs.append(parser.FuncDecl { ...fd, name: new_name, receiver_type: rewrite_type_name(fd.receiver_type, ctx), params: rewrite_params(fd.params, bctx), ret_type: rewrite_type_name(fd.ret_type, ctx), ret_fn_ret: rewrite_type_name(fd.ret_fn_ret, ctx), ret_fn_param_types: rewrite_type_name_list(fd.ret_fn_param_types, ctx), body: rewrite_block(fd.body, bctx), is_pub: true, module: ctx.prefix });
     i = i + 1;
   }
-  var structs: parser.StructDecl[] = [];
-  var j: i32 = 0;
+  let structs: parser.StructDecl[] = [];
+  let j: i32 = 0;
   while (j < mod.structs.len()) {
     structs = structs.append(parser.StructDecl {
       name: mangle_bare(mod.structs[j].name, ctx),
@@ -1440,16 +1438,16 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
     });
     j = j + 1;
   }
-  var aliases: parser.TypeAlias[] = [];
-  var k: i32 = 0;
+  let aliases: parser.TypeAlias[] = [];
+  let k: i32 = 0;
   while (k < mod.aliases.len()) {
-    var variants: string[] = [];
-    var v: i32 = 0;
+    let variants: string[] = [];
+    let v: i32 = 0;
     while (v < mod.aliases[k].variants.len()) {
       variants = variants.append(rewrite_type_name(mod.aliases[k].variants[v], ctx));
       v = v + 1;
     }
-    var vargs: string[] = [];
+    let vargs: string[] = [];
     for a in mod.aliases[k].variant_args {
       vargs = vargs.append(rewrite_type_name_list(a, ctx));
     }
@@ -1483,15 +1481,15 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
 // method names, none of which flatten mangles; trait_module names the module
 // that declares the trait, as canon_trait resolves it.
 function mangle_impls(impls: parser.ImplInfo[], ctx: RewriteCtx): parser.ImplInfo[] {
-  var out: parser.ImplInfo[] = [];
-  var i: i32 = 0;
+  let out: parser.ImplInfo[] = [];
+  let i: i32 = 0;
   while (i < impls.len()) {
-    var im: parser.ImplInfo = impls[i];
+    let im: parser.ImplInfo = impls[i];
     // An associated-type BINDING is a type name like any other, so it
     // mangles with the rest — an `impl Iterator for R { type Item = Node; }`
     // in a module must bind the module's mangled `Node`.
-    var mangled_vals: string[] = [];
-    var vi: i32 = 0;
+    let mangled_vals: string[] = [];
+    let vi: i32 = 0;
     while (vi < im.assoc_values.len()) {
       mangled_vals = mangled_vals.append(rewrite_type_name(im.assoc_values[vi], ctx));
       vi = vi + 1;
@@ -1523,12 +1521,12 @@ function mangle_impls(impls: parser.ImplInfo[], ctx: RewriteCtx): parser.ImplInf
 // generic enum matched inside the imported module bailed lower (the whole
 // merged program then routed AST). Slice 6 (end-to-end std/async).
 function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.EnumDecl[] {
-  var out: parser.EnumDecl[] = [];
-  var i: i32 = 0;
+  let out: parser.EnumDecl[] = [];
+  let i: i32 = 0;
   while (i < enums.len()) {
-    var e: parser.EnumDecl = enums[i];
-    var nvn: string[] = [];
-    var v: i32 = 0;
+    let e: parser.EnumDecl = enums[i];
+    let nvn: string[] = [];
+    let v: i32 = 0;
     while (v < e.variant_names.len()) {
       nvn = nvn.append(mangle_bare(e.variant_names[v], ctx));
       v = v + 1;
@@ -1553,8 +1551,8 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
 // (`mod.X` → `mod__X`) in a module — no own-decl mangling. Used on
 // the entry module (whose own decls keep their bare names).
 pub function flatten_qualified(mod: parser.Module, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
-  var empty: string[] = [];
-  var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), modprefixes: import_prefixes(mod, ids, pfxs), prefix: "", declnames: empty, declnames_mangled: empty, dn_head: [], dn_next: [], locals: empty, enumnames: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
+  let empty: string[] = [];
+  let ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), modprefixes: import_prefixes(mod, ids, pfxs), prefix: "", declnames: empty, declnames_mangled: empty, dn_head: [], dn_next: [], locals: empty, enumnames: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
   return rewrite_module_bodies(mod, ctx);
 }
 
@@ -1563,20 +1561,20 @@ pub function flatten_qualified(mod: parser.Module, ids: string[], pfxs: string[]
 // and type aliases. Receiver methods are excluded — they dispatch by
 // receiver type, not by a prefix-mangled name.
 pub function collect_decl_names(mod: parser.Module): string[] {
-  var names: string[] = [];
-  var i: i32 = 0;
+  let names: string[] = [];
+  let i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (mod.funcs[i].receiver_type == "") {
       names = names.append(mod.funcs[i].name);
     }
     i = i + 1;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < mod.structs.len()) {
     names = names.append(mod.structs[j].name);
     j = j + 1;
   }
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < mod.aliases.len()) {
     names = names.append(mod.aliases[k].name);
     k = k + 1;
@@ -1588,9 +1586,9 @@ pub function collect_decl_names(mod: parser.Module): string[] {
   // so monomorphization's bind_unify compared mismatched bases (`Fut` vs
   // `mod__Fut`) and couldn't recover a type param whose ONLY source is a
   // generic-enum argument (e.g. with_deadline(ms, fs: Future[T][]) — no bare-T
-  // param). Mangling the enum name makes param types, var annotations, and the
+  // param). Mangling the enum name makes param types, let annotations, and the
   // EnumDecl name agree. (slice 6b)
-  var en: i32 = 0;
+  let en: i32 = 0;
   while (en < mod.enums.len()) {
     names = names.append(mod.enums[en].name);
     en = en + 1;
@@ -1606,8 +1604,8 @@ pub function collect_decl_names(mod: parser.Module): string[] {
 // carries unless the qualifier is recognised as a type. Native asks the same
 // question of `ownEnums` (internal/modload).
 pub function collect_enum_names(mod: parser.Module): string[] {
-  var names: string[] = [];
-  var i: i32 = 0;
+  let names: string[] = [];
+  let i: i32 = 0;
   while (i < mod.enums.len()) {
     names = names.append(mod.enums[i].name);
     i = i + 1;
@@ -1622,8 +1620,8 @@ pub function collect_enum_names(mod: parser.Module): string[] {
 // definition silently wins. Suffixes match native's, so a program compiled by
 // either compiler carries the same symbols.
 function unique_prefix(base: string, used: string[]): string {
-  var cand: string = base;
-  var k: i32 = 1;
+  let cand: string = base;
+  let k: i32 = 1;
   while (is_in(cand, used)) {
     cand = base + "_" + util.i32_to_string(k);
     k = k + 1;
@@ -1635,8 +1633,8 @@ function unique_prefix(base: string, used: string[]): string {
 // `prefix__name` and rewrites every internal reference to match, plus
 // flattens any qualified refs it makes to other modules.
 pub function mangle_module(mod: parser.Module, prefix: string, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
-  var decls: string[] = collect_decl_names(mod);
-  var ctx: RewriteCtx = RewriteCtx {
+  let decls: string[] = collect_decl_names(mod);
+  let ctx: RewriteCtx = RewriteCtx {
     modnames: mod_names(mod),
     modprefixes: import_prefixes(mod, ids, pfxs),
     prefix: prefix,
@@ -1688,18 +1686,18 @@ struct MethodDedup { mod: parser.Module, keys: string[] }
 // share a key after claim_method_name are a genuine redeclaration, and renaming
 // one would hide the E006 the checker owes for it.
 function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[]): MethodDedup {
-  var out: parser.FuncDecl[] = [];
-  var added: string[] = [];
-  var i: i32 = 0;
+  let out: parser.FuncDecl[] = [];
+  let added: string[] = [];
+  let i: i32 = 0;
   while (i < mod.funcs.len()) {
-    var fd: parser.FuncDecl = mod.funcs[i];
+    let fd: parser.FuncDecl = mod.funcs[i];
     if (fd.receiver_type.len() == 0) {
       out = out.append(fd);
       i = i + 1;
       continue;
     }
-    var base: string = util.base_type_name(fd.receiver_type);
-    var key: string = base + "." + fd.name;
+    let base: string = util.base_type_name(fd.receiver_type);
+    let key: string = base + "." + fd.name;
     if (util.index_of_str(claimed, key) < 0) {
       if (util.index_of_str(added, key) < 0) {
         added = added.append(key);
@@ -1708,8 +1706,8 @@ function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[])
       i = i + 1;
       continue;
     }
-    var renamed: string = ns + "." + fd.name;
-    var rkey: string = base + "." + renamed;
+    let renamed: string = ns + "." + fd.name;
+    let rkey: string = base + "." + renamed;
     if (util.index_of_str(claimed, rkey) >= 0 || util.index_of_str(added, rkey) >= 0) {
       out = out.append(fd);
       i = i + 1;
@@ -1719,13 +1717,13 @@ function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[])
     out = out.append(parser.FuncDecl { ...fd, name: renamed });
     i = i + 1;
   }
-  var keys: string[] = claimed;
-  var k: i32 = 0;
+  let keys: string[] = claimed;
+  let k: i32 = 0;
   while (k < added.len()) {
     keys = keys.append(added[k]);
     k = k + 1;
   }
-  var deduped: parser.Module = parser.Module { ...mod, funcs: out };
+  let deduped: parser.Module = parser.Module { ...mod, funcs: out };
   return MethodDedup { mod: deduped, keys: keys };
 }
 
@@ -1740,16 +1738,16 @@ function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[])
 // a multi-module program — the compiler itself — lowers to a single
 // namespace and self-compiles.
 pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: string): parser.Module {
-  var entry: parser.Module = with_handler_main(entry0, target);
-  var funcs: parser.FuncDecl[] = [];
-  var structs: parser.StructDecl[] = [];
-  var aliases: parser.TypeAlias[] = [];
-  var enums: parser.EnumDecl[] = [];
-  var resources: parser.ResourceDecl[] = [];
-  var exports: parser.ExportBinding[] = [];
-  var impls: parser.ImplInfo[] = [];
-  var trait_reqs: parser.TraitReq[] = [];
-  var trait_decls: parser.TraitDecl[] = [];
+  let entry: parser.Module = with_handler_main(entry0, target);
+  let funcs: parser.FuncDecl[] = [];
+  let structs: parser.StructDecl[] = [];
+  let aliases: parser.TypeAlias[] = [];
+  let enums: parser.EnumDecl[] = [];
+  let resources: parser.ResourceDecl[] = [];
+  let exports: parser.ExportBinding[] = [];
+  let impls: parser.ImplInfo[] = [];
+  let trait_reqs: parser.TraitReq[] = [];
+  let trait_decls: parser.TraitDecl[] = [];
   // Build the imported-enum-variant → mangled-name map once, from
   // every import's parsed (pre-mangle) variant structs. A variant is
   // an enum-member struct decl (`enum_owner != ""`); its bundled name
@@ -1761,15 +1759,15 @@ pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: stri
   // enum-variant map, the re-export table, each module's own decls, and
   // every importer's references -- reads these rather than deriving a
   // prefix of its own (#9762).
-  var ids: string[] = module_ids(imports);
-  var pfxs: string[] = assign_prefixes(imports);
-  var ivar_names: string[] = [];
-  var ivar_mangled: string[] = [];
-  var iv: i32 = 0;
+  let ids: string[] = module_ids(imports);
+  let pfxs: string[] = assign_prefixes(imports);
+  let ivar_names: string[] = [];
+  let ivar_mangled: string[] = [];
+  let iv: i32 = 0;
   while (iv < imports.len()) {
-    var isd: i32 = 0;
+    let isd: i32 = 0;
     while (isd < imports[iv].mod.structs.len()) {
-      var sd: parser.StructDecl = imports[iv].mod.structs[isd];
+      let sd: parser.StructDecl = imports[iv].mod.structs[isd];
       if (sd.enum_owner.len() > 0) {
         ivar_names = ivar_names.append(sd.name);
         ivar_mangled = ivar_mangled.append(pfxs[iv] + "__" + sd.name);
@@ -1780,74 +1778,74 @@ pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: stri
   }
   // `pub use` re-export table: redirects a consumer's `facade.name`
   // (which mangles to `facade__name`) to the original `origin__name`.
-  var rx: ReexportTable = build_reexports(imports, ids, pfxs);
-  var graph: ImportGraph = import_graph(imports, ids, pfxs);
-  var inferred: string[] = mangled_inferred_consts(imports, pfxs, entry);
-  var mclaims: string[] = [];
-  var i: i32 = 0;
+  let rx: ReexportTable = build_reexports(imports, ids, pfxs);
+  let graph: ImportGraph = import_graph(imports, ids, pfxs);
+  let inferred: string[] = mangled_inferred_consts(imports, pfxs, entry);
+  let mclaims: string[] = [];
+  let i: i32 = 0;
   while (i < imports.len()) {
-    var pfx: string = pfxs[i];
-    var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ids, pfxs, variant_scope(imports[i].mod, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
+    let pfx: string = pfxs[i];
+    let md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ids, pfxs, variant_scope(imports[i].mod, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
     mclaims = md.keys;
-    var m: parser.Module = md.mod;
+    let m: parser.Module = md.mod;
     funcs = util.append_all(funcs, m.funcs);
     structs = util.append_all(structs, m.structs);
     aliases = util.append_all(aliases, m.aliases);
     enums = util.append_all(enums, m.enums);
-    var ri: i32 = 0;
+    let ri: i32 = 0;
     while (ri < m.resources.len()) {
       resources = resources.append(m.resources[ri]);
       ri = ri + 1;
     }
-    var mxi: i32 = 0;
+    let mxi: i32 = 0;
     while (mxi < m.exports.len()) {
       exports = exports.append(m.exports[mxi]);
       mxi = mxi + 1;
     }
-    var mii: i32 = 0;
+    let mii: i32 = 0;
     while (mii < m.impls.len()) {
       impls = impls.append(m.impls[mii]);
       mii = mii + 1;
     }
-    var mti: i32 = 0;
+    let mti: i32 = 0;
     while (mti < m.trait_reqs.len()) {
       trait_reqs = trait_reqs.append(parser.TraitReq { ...m.trait_reqs[mti], module: pfx });
       mti = mti + 1;
     }
-    var mdi: i32 = 0;
+    let mdi: i32 = 0;
     while (mdi < m.trait_decls.len()) {
       trait_decls = trait_decls.append(m.trait_decls[mdi]);
       mdi = mdi + 1;
     }
     i = i + 1;
   }
-  var flat: parser.Module = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets), loaded_prefix(imports, pfxs, "std/error"), loaded_prefix(imports, pfxs, "std/http"));
-  var e: parser.Module = disambiguate_methods(flat, "__entry", mclaims).mod;
+  let flat: parser.Module = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets), loaded_prefix(imports, pfxs, "std/error"), loaded_prefix(imports, pfxs, "std/http"));
+  let e: parser.Module = disambiguate_methods(flat, "__entry", mclaims).mod;
   funcs = util.append_all(funcs, e.funcs);
   structs = util.append_all(structs, e.structs);
   aliases = util.append_all(aliases, e.aliases);
   enums = util.append_all(enums, e.enums);
-  var rj: i32 = 0;
+  let rj: i32 = 0;
   while (rj < e.resources.len()) {
     resources = resources.append(e.resources[rj]);
     rj = rj + 1;
   }
-  var exj: i32 = 0;
+  let exj: i32 = 0;
   while (exj < e.exports.len()) {
     exports = exports.append(e.exports[exj]);
     exj = exj + 1;
   }
-  var eii: i32 = 0;
+  let eii: i32 = 0;
   while (eii < e.impls.len()) {
     impls = impls.append(e.impls[eii]);
     eii = eii + 1;
   }
-  var eti: i32 = 0;
+  let eti: i32 = 0;
   while (eti < e.trait_reqs.len()) {
     trait_reqs = trait_reqs.append(e.trait_reqs[eti]);
     eti = eti + 1;
   }
-  var edi: i32 = 0;
+  let edi: i32 = 0;
   while (edi < e.trait_decls.len()) {
     trait_decls = trait_decls.append(e.trait_decls[edi]);
     edi = edi + 1;
@@ -1858,9 +1856,9 @@ pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: stri
   // before they get here), and it is what tells the checker which stdlib
   // modules the program linked: the self-host's answer to native's
   // `prog.LoadedStdlibPaths`, which is what its E001 `core/map` rule reads.
-  var closure: parser.Import[] = [];
-  var closure_paths: string[] = [];
-  var ci: i32 = 0;
+  let closure: parser.Import[] = [];
+  let closure_paths: string[] = [];
+  let ci: i32 = 0;
   while (ci < entry.imports.len()) {
     if (index_of_str(entry.imports[ci].path, closure_paths) < 0) {
       closure_paths = closure_paths.append(entry.imports[ci].path);
@@ -1868,9 +1866,9 @@ pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: stri
     }
     ci = ci + 1;
   }
-  var cm: i32 = 0;
+  let cm: i32 = 0;
   while (cm < imports.len()) {
-    var cmi: i32 = 0;
+    let cmi: i32 = 0;
     while (cmi < imports[cm].mod.imports.len()) {
       if (index_of_str(imports[cm].mod.imports[cmi].path, closure_paths) < 0) {
         closure_paths = closure_paths.append(imports[cm].mod.imports[cmi].path);
@@ -1885,7 +1883,7 @@ pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: stri
   // `lib.f([1, 2])` reached an `f64[]`/`i64[]` parameter as unsettled i32
   // literals in a literal sized for i32 slots. settle_module is idempotent, so
   // this settles only what the merge newly reaches.
-  var merged: parser.Module = parser.Module {
+  let merged: parser.Module = parser.Module {
     funcs: funcs,
     structs: structs,
     aliases: aliases,
@@ -1906,8 +1904,8 @@ pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: stri
 // the bundle, by the name it has once merged. A reference from another module
 // is only resolvable after the merge, so parse left it to flatten.
 function mangled_inferred_consts(imports: LoadedModule[], pfxs: string[], entry: parser.Module): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < imports.len()) {
     for n in imports[i].mod.inferred_consts {
       out = out.append(mangled_name(pfxs[i], n));
@@ -1918,7 +1916,7 @@ function mangled_inferred_consts(imports: LoadedModule[], pfxs: string[], entry:
 }
 
 function merged_const_table(funcs: parser.FuncDecl[], inferred: string[]): parser.ConstTable {
-  var nothing: string[] = [];
+  let nothing: string[] = [];
   return parser.inferred_const_table(funcs, inferred, parser.ConstTable { names: nothing, values: [] });
 }
 
@@ -1937,27 +1935,27 @@ pub struct ReexportTable { keys: string[], targets: string[] }
 // the bundled program actually defines. Mirrors the native compiler's
 // modload.resolveReexports (see internal/modload/modload.go).
 pub function build_reexports(imports: LoadedModule[], ids: string[], pfxs: string[]): ReexportTable {
-  var keys: string[] = [];
-  var targets: string[] = [];
-  var i: i32 = 0;
+  let keys: string[] = [];
+  let targets: string[] = [];
+  let i: i32 = 0;
   while (i < imports.len()) {
-    var ns: string = pfxs[i];
-    var imps: parser.Import[] = imports[i].mod.imports;
-    var j: i32 = 0;
+    let ns: string = pfxs[i];
+    let imps: parser.Import[] = imports[i].mod.imports;
+    let j: i32 = 0;
     while (j < imps.len()) {
       if (imps[j].is_reexport) {
         // The re-export's ORIGIN is a module too, so it takes its
         // assigned prefix by identity like any other reference.
-        var ok: i32 = 0 - 1;
+        let ok: i32 = 0 - 1;
         if (imps[j].resolved.len() > 0) {
           ok = index_of_str(imps[j].resolved, ids);
         }
-        var origin: string = util.mangle_prefix(basename(imps[j].path));
+        let origin: string = util.mangle_prefix(basename(imps[j].path));
         if (ok >= 0) {
           origin = pfxs[ok];
         }
-        var names: string[] = imps[j].reexport_names;
-        var n: i32 = 0;
+        let names: string[] = imps[j].reexport_names;
+        let n: i32 = 0;
         while (n < names.len()) {
           keys = keys.append(ns + "__" + names[n]);
           targets = targets.append(origin + "__" + names[n]);
@@ -1990,20 +1988,20 @@ pub struct PerModule { ns: string, mod: parser.Module, is_entry: boolean }
 // imports → library units exposing their `.globl __fn_*`), and the units link
 // into one binary. The entry is the LAST element.
 pub function bundle_per_module(entry0: parser.Module, imports: LoadedModule[], target: string): PerModule[] {
-  var entry: parser.Module = with_handler_main(entry0, target);
+  let entry: parser.Module = with_handler_main(entry0, target);
   // One prefix authority for the whole bundle. Everything below -- the
   // enum-variant map, the re-export table, each module's own decls, and
   // every importer's references -- reads these rather than deriving a
   // prefix of its own (#9762).
-  var ids: string[] = module_ids(imports);
-  var pfxs: string[] = assign_prefixes(imports);
-  var ivar_names: string[] = [];
-  var ivar_mangled: string[] = [];
-  var iv: i32 = 0;
+  let ids: string[] = module_ids(imports);
+  let pfxs: string[] = assign_prefixes(imports);
+  let ivar_names: string[] = [];
+  let ivar_mangled: string[] = [];
+  let iv: i32 = 0;
   while (iv < imports.len()) {
-    var isd: i32 = 0;
+    let isd: i32 = 0;
     while (isd < imports[iv].mod.structs.len()) {
-      var sd: parser.StructDecl = imports[iv].mod.structs[isd];
+      let sd: parser.StructDecl = imports[iv].mod.structs[isd];
       if (sd.enum_owner.len() > 0) {
         ivar_names = ivar_names.append(sd.name);
         ivar_mangled = ivar_mangled.append(pfxs[iv] + "__" + sd.name);
@@ -2012,31 +2010,31 @@ pub function bundle_per_module(entry0: parser.Module, imports: LoadedModule[], t
     }
     iv = iv + 1;
   }
-  var rx: ReexportTable = build_reexports(imports, ids, pfxs);
-  var graph: ImportGraph = import_graph(imports, ids, pfxs);
-  var inferred: string[] = mangled_inferred_consts(imports, pfxs, entry);
-  var mods: parser.Module[] = [];
-  var all_funcs: parser.FuncDecl[] = [];
+  let rx: ReexportTable = build_reexports(imports, ids, pfxs);
+  let graph: ImportGraph = import_graph(imports, ids, pfxs);
+  let inferred: string[] = mangled_inferred_consts(imports, pfxs, entry);
+  let mods: parser.Module[] = [];
+  let all_funcs: parser.FuncDecl[] = [];
   // Same claim threading `bundle` does, in the same module order, so the
   // per-module units and the merged bundle agree on which definition owns a
   // `<Type>.<name>` symbol.
-  var mclaims: string[] = [];
-  var i: i32 = 0;
+  let mclaims: string[] = [];
+  let i: i32 = 0;
   while (i < imports.len()) {
-    var pfx: string = pfxs[i];
-    var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ids, pfxs, variant_scope(imports[i].mod, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
+    let pfx: string = pfxs[i];
+    let md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ids, pfxs, variant_scope(imports[i].mod, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
     mclaims = md.keys;
     mods = mods.append(md.mod);
     all_funcs = util.append_all(all_funcs, md.mod.funcs);
     i = i + 1;
   }
-  var flat: parser.Module = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets), loaded_prefix(imports, pfxs, "std/error"), loaded_prefix(imports, pfxs, "std/http"));
-  var e: parser.Module = disambiguate_methods(flat, "__entry", mclaims).mod;
+  let flat: parser.Module = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets), loaded_prefix(imports, pfxs, "std/error"), loaded_prefix(imports, pfxs, "std/http"));
+  let e: parser.Module = disambiguate_methods(flat, "__entry", mclaims).mod;
   all_funcs = util.append_all(all_funcs, e.funcs);
   // A unit reads a const another unit declares, so the table spans them all.
-  var table: parser.ConstTable = merged_const_table(all_funcs, inferred);
-  var out: PerModule[] = [];
-  var j: i32 = 0;
+  let table: parser.ConstTable = merged_const_table(all_funcs, inferred);
+  let out: PerModule[] = [];
+  let j: i32 = 0;
   while (j < imports.len()) {
     out = out.append(PerModule { ns: imports[j].name, mod: parser.substitute_const_refs(mods[j], table), is_entry: false });
     j = j + 1;
@@ -2046,24 +2044,24 @@ pub function bundle_per_module(entry0: parser.Module, imports: LoadedModule[], t
 }
 
 function flatten_source(src: string): parser.Module {
-  var none: string[] = [];
+  let none: string[] = [];
   return flatten_qualified(parser.parse_module(lexer.tokenize(src)), none, none, none, none, none, none, none);
 }
 
 function mangle_source(src: string, prefix: string): parser.Module {
-  var none: string[] = [];
+  let none: string[] = [];
   return mangle_module(parser.parse_module(lexer.tokenize(src)), prefix, none, none, none, none, none, none, none);
 }
 
 function main(): i32 {
   // --- Brick 1: qualified-reference flattening (entry module) ---
-  var src: string = "import \"./lexer\";"
+  let src: string = "import \"./lexer\";"
     + " function f(): i32 {"
-    + "   var t: lexer.Token = lexer.tokenize(\"x\");"
+    + "   let t: lexer.Token = lexer.tokenize(\"x\");"
     + "   match (t) { lexer.TokNumber(n) => { return 1; }, _ => { return 0; } }"
     + "   return 0;"
     + " }";
-  var mod: parser.Module = flatten_source(src);
+  let mod: parser.Module = flatten_source(src);
   if (mod.funcs.len() != 1) {
     return 1;
   }
@@ -2071,7 +2069,7 @@ function main(): i32 {
   if (mod.funcs[0].name != "f") {
     return 2;
   }
-  var body: ast.Stmt[] = mod.funcs[0].body;
+  let body: ast.Stmt[] = mod.funcs[0].body;
   match (body[0]) {
     ast.StmtVar(v) => {
       if (v.type_name != "lexer__Token") {
@@ -2117,7 +2115,7 @@ function main(): i32 {
     }
   }
   // Plain field access survives untouched.
-  var mod2: parser.Module = flatten_source(
+  let mod2: parser.Module = flatten_source(
     "import \"./lexer\"; function g(): i32 { return p.x; }",
   );
   match (mod2.funcs[0].body[0]) {
@@ -2151,11 +2149,11 @@ function main(): i32 {
   // --- Brick 2: own-module mangling ---
   // A module `m` with a struct, a method on it, and two free
   // functions where one calls the other and constructs the struct.
-  var msrc: string = "struct Box { v: i32 }"
+  let msrc: string = "struct Box { v: i32 }"
     + " function (b: Box) get(): i32 { return b.v; }"
     + " function make(n: i32): Box { return Box { v: n }; }"
-    + " function consume(): i32 { var b: Box = make(5); return b.get(); }";
-  var mm: parser.Module = mangle_source(msrc, "m");
+    + " function consume(): i32 { let b: Box = make(5); return b.get(); }";
+  let mm: parser.Module = mangle_source(msrc, "m");
 
   // Struct renamed.
   if (mm.structs.len() != 1) {
@@ -2206,7 +2204,7 @@ function main(): i32 {
     }
   }
 
-  // use's body: `var b: m__Box = m__make(5); return b.get();`
+  // use's body: `let b: m__Box = m__make(5); return b.get();`
   // — local type mangled, internal call to `make` mangled, method
   // call `b.get()` LEFT as a field-access dispatch (not mangled).
   match (mm.funcs[2].body[0]) {
@@ -2273,18 +2271,18 @@ function main(): i32 {
   }
 
   // rewrite_type_name spot-checks via a hand-built ctx.
-  var mn: string[] = [];
+  let mn: string[] = [];
   mn = mn.append("lexer");
   mn = mn.append("test");
-  var dn: string[] = [];
+  let dn: string[] = [];
   dn = dn.append("Token");
-  var ivn: string[] = [];
+  let ivn: string[] = [];
   ivn = ivn.append("Fail");
-  var ivm: string[] = [];
+  let ivm: string[] = [];
   ivm = ivm.append("test__Fail");
-  var rxk: string[] = [];
-  var rxt: string[] = [];
-  var ctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], enumnames: [], ivar_names: ivn, ivar_mangled: ivm, variant_scope: mn, reexport_keys: rxk, reexport_targets: rxt };
+  let rxk: string[] = [];
+  let rxt: string[] = [];
+  let ctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], enumnames: [], ivar_names: ivn, ivar_mangled: ivm, variant_scope: mn, reexport_keys: rxk, reexport_targets: rxt };
   if (rewrite_type_name("lexer.Token[]", ctx) != "lexer__Token[]") {
     return 90;
   }
@@ -2369,11 +2367,11 @@ function main(): i32 {
   // --- `pub use` re-export redirection (type position) ---
   // A facade re-exports lexer's Token; a consumer's `lexer.Token`
   // (which mangles to `lexer__Token`) redirects to `orig__Token`.
-  var rxk2: string[] = [];
+  let rxk2: string[] = [];
   rxk2 = rxk2.append("lexer__Token");
-  var rxt2: string[] = [];
+  let rxt2: string[] = [];
   rxt2 = rxt2.append("orig__Token");
-  var rctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], enumnames: [], ivar_names: ivn, ivar_mangled: ivm, variant_scope: mn, reexport_keys: rxk2, reexport_targets: rxt2 };
+  let rctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], enumnames: [], ivar_names: ivn, ivar_mangled: ivm, variant_scope: mn, reexport_keys: rxk2, reexport_targets: rxt2 };
   if (rewrite_type_name("lexer.Token", rctx) != "orig__Token") {
     return 97;
   }
@@ -2391,12 +2389,12 @@ function main(): i32 {
   // so the pattern lines up with the mangled EnumDecl mangle_enum_decls
   // produces. An imported module still wins a colliding qualifier, and an
   // enum-shaped spelling whose qualifier is not an own enum is left alone.
-  var edn: string[] = [];
+  let edn: string[] = [];
   edn = edn.append("E");
   edn = edn.append("Wrap");
-  var een: string[] = [];
+  let een: string[] = [];
   een = een.append("E");
-  var ectx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: edn, declnames_mangled: build_mangled_names("lx", edn), dn_head: build_declname_head(edn), dn_next: build_declname_next(edn), locals: [], enumnames: een, ivar_names: ivn, ivar_mangled: ivm, variant_scope: mn, reexport_keys: rxk, reexport_targets: rxt };
+  let ectx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: edn, declnames_mangled: build_mangled_names("lx", edn), dn_head: build_declname_head(edn), dn_next: build_declname_next(edn), locals: [], enumnames: een, ivar_names: ivn, ivar_mangled: ivm, variant_scope: mn, reexport_keys: rxk, reexport_targets: rxt };
   if (rewrite_type_name("E.Wrap", ectx) != "lx__E.lx__Wrap") {
     return 220;
   }
@@ -2414,15 +2412,15 @@ function main(): i32 {
   }
 
   // --- Brick 3: bundle (merge entry + mangled imports) ---
-  var amod: parser.Module = parser.parse_module(lexer.tokenize(
+  let amod: parser.Module = parser.parse_module(lexer.tokenize(
     "pub function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return 0; }",
   ));
-  var emod: parser.Module = parser.parse_module(lexer.tokenize(
+  let emod: parser.Module = parser.parse_module(lexer.tokenize(
     "import \"./a\"; function main(): i32 { return a.add(2, 3); }",
   ));
-  var loaded: LoadedModule[] = [];
+  let loaded: LoadedModule[] = [];
   loaded = loaded.append(LoadedModule { name: "a", ident: "", mod: amod });
-  var merged: parser.Module = bundle(emod, loaded, "");
+  let merged: parser.Module = bundle(emod, loaded, "");
 
   // a.add → a__add; a's own main → a__main (mangled, no collision);
   // entry's main kept. So merged funcs: a__add, a__main, main.
@@ -2475,22 +2473,22 @@ function main(): i32 {
   // helpers defines add5; facade re-exports it; entry calls facade.add5.
   // The qualified call must flatten to `helpers__add5` (the real decl),
   // NOT `facade__add5` (which has no decl).
-  var hmod: parser.Module = parser.parse_module(lexer.tokenize(
+  let hmod: parser.Module = parser.parse_module(lexer.tokenize(
     "pub function add5(n: i32): i32 { return n + 5; }",
   ));
-  var fmod: parser.Module = parser.parse_module(lexer.tokenize(
+  let fmod: parser.Module = parser.parse_module(lexer.tokenize(
     "pub use \"./helpers\".{add5};",
   ));
-  var rxmod: parser.Module = parser.parse_module(lexer.tokenize(
+  let rxmod: parser.Module = parser.parse_module(lexer.tokenize(
     "import \"./facade\"; function main(): i32 { return facade.add5(10); }",
   ));
-  var rxloaded: LoadedModule[] = [];
+  let rxloaded: LoadedModule[] = [];
   rxloaded = rxloaded.append(LoadedModule { name: "facade", ident: "", mod: fmod });
   rxloaded = rxloaded.append(LoadedModule { name: "helpers", ident: "", mod: hmod });
-  var rxmerged: parser.Module = bundle(rxmod, rxloaded, "");
+  let rxmerged: parser.Module = bundle(rxmod, rxloaded, "");
   // Find entry main and confirm its call resolved to helpers__add5.
-  var fi: i32 = 0;
-  var found_main: boolean = false;
+  let fi: i32 = 0;
+  let found_main: boolean = false;
   while (fi < rxmerged.funcs.len()) {
     if (rxmerged.funcs[fi].name == "main") {
       found_main = true;

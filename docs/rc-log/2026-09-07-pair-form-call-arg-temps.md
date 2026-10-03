@@ -80,5 +80,5 @@ not scale with the round count.
 already clean, which is the point above. The new rc corpus case
 `pair_form_call_arg_temp_reclaimed` carries both consumer shapes — the match
 scrutinee, which sets `suppressPairRebox` and leaves the bare pair on the stack,
-and the `var` binding, which reboxes it first — and leaks 6400 B (x86-64) /
+and the `let` binding, which reboxes it first — and leaks 6400 B (x86-64) /
 3200 B (arm64, wasm) without the change.

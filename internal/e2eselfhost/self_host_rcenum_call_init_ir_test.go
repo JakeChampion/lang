@@ -12,8 +12,8 @@ import (
 //
 //  1. CALL-INIT admission: the RCENUM enum-local reclaim (loop-rebind /
 //     consume deep-drop of a fresh, match-consumed enum local) only fired for
-//     DIRECT variant-ctor inits (`var b = Full([..])`). A factored constructor
-//     (`var e: E = mk(i)`) was never credited, so the whole chain (enum box +
+//     DIRECT variant-ctor inits (`let b = Full([..])`). A factored constructor
+//     (`let e: E = mk(i)`) was never credited, so the whole chain (enum box +
 //     payload struct box + its string/array fields) leaked per iteration.
 //     opt_fresh_ret_fns_of now emits "RCE:<name>|<Enum>" entries for functions
 //     whose every return is a fresh direct variant construction (with fresh
@@ -69,22 +69,22 @@ func TestSelfHostRcEnumCallInitIRX86_64(t *testing.T) {
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm + "x", n: n }, n); }
 function main(): i32 {
-    var base: string = "a";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let base: string = "a";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var e: E = mk(base, i);
+        let e: E = mk(base, i);
         match (e) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var e2: E = mk(base, j);
+        let e2: E = mk(base, j);
         match (e2) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -97,21 +97,21 @@ function main(): i32 {
 enum E { A(S, i32), B(i32, i32) }
 function mk(n: i32): E { return A(S { xs: [n, n + 1], n: n }, n); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var e: E = mk(i);
+        let e: E = mk(i);
         match (e) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var e2: E = mk(j);
+        let e2: E = mk(j);
         match (e2) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -126,21 +126,21 @@ function main(): i32 {
 enum E { A(S, i32), B(i32, i32) }
 function mk(n: i32): E { return A(S { m: n, n: n + 1 }, n); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var e: E = mk(i);
+        let e: E = mk(i);
         match (e) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var e2: E = mk(j);
+        let e2: E = mk(j);
         match (e2) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -154,11 +154,11 @@ function main(): i32 {
 	run(t, `struct S { m: i32, n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var s0: S = S { m: 7, n: 8 };
-        var e: E = A(s0, i);
+        let s0: S = S { m: 7, n: 8 };
+        let e: E = A(s0, i);
         match (e) { A(s, k) => { if (s.m != 7) { bad = 1; } }, B(x, y) => { bad = 1; } }
         if (s0.n != 8) { bad = 1; }
         i = i + 1;
@@ -176,11 +176,11 @@ function main(): i32 {
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm, n: n }, n); }
 function main(): i32 {
-    var keep: string = "aa" + "bb";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: string = "aa" + "bb";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var e: E = mk(keep, i);
+        let e: E = mk(keep, i);
         match (e) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         i = i + 1;
     }
@@ -196,14 +196,14 @@ function main(): i32 {
 	run(t, `struct Inner { items: i32[] }
 enum Box { Full(Inner), Empty }
 function readit(): i32 {
-    var b: Box = Full(Inner { items: [1,2,3,4] });
-    var r: i32 = 0;
+    let b: Box = Full(Inner { items: [1,2,3,4] });
+    let r: i32 = 0;
     match (b) { Full(inner) => { r = inner.items[0]; }, Empty => { r = 0; } }
     return r;
 }
 function main(): i32 {
-    var s: i32 = 0;
-    var f: i32 = 0;
+    let s: i32 = 0;
+    let f: i32 = 0;
     while (f < 2000) { s = s + readit(); f = f + 1; }
     if (s != 2000) { return 97; }
     return __rc_underflow_count();
@@ -215,10 +215,10 @@ function main(): i32 {
 	run(t, `struct S { name: string, n: i32 }
 enum E { A(S), Empty }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 2000) {
-        var e: E = A(S { name: "a" + "b", n: i });
+        let e: E = A(S { name: "a" + "b", n: i });
         match (e) { A(_) => { acc = acc + 1; }, Empty => { acc = acc + 0; } }
         i = i + 1;
     }

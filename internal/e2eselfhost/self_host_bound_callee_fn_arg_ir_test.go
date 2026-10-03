@@ -19,7 +19,7 @@ import (
 // binary segfaulted with no diagnostic. Binding the argument to a local first
 // dodged it, because that path boxes.
 //
-// A shadowing binding (`var withRes = taker;` under a module `withRes`) used to
+// A shadowing binding (`let withRes = taker;` under a module `withRes`) used to
 // hit the module function's signature by NAME and box by accident; once
 // bindings carry their own symbols (#8982) that accident stopped, which is how
 // `use x <- withRes();` in internal/e2e's shadowed-use case came to segfault
@@ -38,29 +38,29 @@ function main(): i32 { return call_it(taker); }`, 21},
 	// The callee is a local bound from a module function.
 	{"local-callee-fn-name-arg", `function taker(f: (string) => i32): i32 { return f("hi"); }
 function len_of(s: string): i32 { return s.len() + 19; }
-function g(): i32 { var t = taker; return t(len_of); }
+function g(): i32 { let t = taker; return t(len_of); }
 function main(): i32 { return g(); }`, 21},
 	// The same callee with an inline lambda argument.
 	{"local-callee-lambda-arg", `function taker(f: (string) => i32): i32 { return f("hi"); }
-function g(): i32 { var t = taker; return t((x: string) => x.len() + 20); }
+function g(): i32 { let t = taker; return t((x: string) => x.len() + 20); }
 function main(): i32 { return g(); }`, 22},
 	// An annotated fn-typed local as the callee.
 	{"annotated-local-callee", `function taker(f: (string) => i32): i32 { return f("hi"); }
 function g(): i32 {
-    var t: (((string) => i32)) => i32 = taker;
+    let t: (((string) => i32)) => i32 = taker;
     return t((x: string) => x.len() + 21);
 }
 function main(): i32 { return g(); }`, 23},
 	// A local aliased from another such local.
 	{"aliased-local-callee", `function taker(f: (string) => i32): i32 { return f("hi"); }
 function len_of(s: string): i32 { return s.len() + 22; }
-function g(): i32 { var t = taker; var u = t; return u(len_of); }
+function g(): i32 { let t = taker; let u = t; return u(len_of); }
 function main(): i32 { return g(); }`, 24},
 	// A `use` clause whose source call goes through a local: the desugared
 	// callback lambda is the argument.
 	{"use-through-local", `function taker(f: (string) => i32): i32 { return f("hi"); }
 function g(): i32 {
-    var t = taker;
+    let t = taker;
     use x <- t();
     if (x == "hi") { return 25; }
     return 0;
@@ -69,7 +69,7 @@ function main(): i32 { return g(); }`, 25},
 	// Control: the argument bound to a local first, the path that already boxed.
 	{"arg-via-local-control", `function taker(f: (string) => i32): i32 { return f("hi"); }
 function len_of(s: string): i32 { return s.len() + 24; }
-function g(): i32 { var t = taker; var l = len_of; return t(l); }
+function g(): i32 { let t = taker; let l = len_of; return t(l); }
 function main(): i32 { return g(); }`, 26},
 }
 
@@ -79,7 +79,7 @@ function main(): i32 { return g(); }`, 26},
 func TestSelfHostBoundCalleeFnArgIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range boundCalleeFnArgIRCases {
@@ -112,7 +112,7 @@ func TestSelfHostBoundCalleeFnArgIRArm64(t *testing.T) {
 		t.Skip("arm64 bound-callee-fn-arg gate needs a native x86 host to run the driver")
 	}
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range boundCalleeFnArgIRCases {

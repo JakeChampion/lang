@@ -27,8 +27,8 @@ function ok_step(c: Ctx): Result[Ctx, Fault] {
 
 // Propagation via `?`.
 function via_try(c: Ctx): Result[Ctx, Fault] {
-    var a: Ctx = ok_step(c)?;
-    var b: Ctx = failing(a)?;
+    let a: Ctx = ok_step(c)?;
+    let b: Ctx = failing(a)?;
     return Ok(b);
 }
 
@@ -53,8 +53,8 @@ function describe(r: Result[Ctx, Fault]): string {
 }
 
 function main(): i32 {
-    var t: string = describe(via_try(Ctx { value: 1 }));
-    var m: string = describe(via_match(Ctx { value: 1 }));
+    let t: string = describe(via_try(Ctx { value: 1 }));
+    let m: string = describe(via_match(Ctx { value: 1 }));
     print(t);
     print(m);
     if (t == m) { print("agree"); } else { print("differ"); }

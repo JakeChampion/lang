@@ -32,11 +32,11 @@ var unionPayloadReclaimCases = []struct {
 	want int
 }{
 	{"option-array-payload", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, Option[i32[]]) = (i, Some([i, i + 2]));
-        var r: i32 = t.0;
+        let t: (i32, Option[i32[]]) = (i, Some([i, i + 2]));
+        let r: i32 = t.0;
         match (t.1) { Some(v) => { r = r + v[0]; }, None => {} }
         acc = (acc + r) % 91;
         i = i + 1;
@@ -44,10 +44,10 @@ var unionPayloadReclaimCases = []struct {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -56,11 +56,11 @@ function main(): i32 {
 	// release that variant's rc payload fields, then free the box.
 	{"user-enum-array-payload", `enum Tag { Buf(i32[]), Nil }
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, Tag) = (i, Tag.Buf([i, i + 2]));
-        var r: i32 = t.0;
+        let t: (i32, Tag) = (i, Tag.Buf([i, i + 2]));
+        let r: i32 = t.0;
         match (t.1) { Buf(v) => { r = r + v[0]; }, Nil => {} }
         acc = (acc + r) % 91;
         i = i + 1;
@@ -68,10 +68,10 @@ function churn(n: i32): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -80,11 +80,11 @@ function main(): i32 {
 	// as constructions at all; this takes the remaining 40 — the payload — so the
 	// two together close it. 40 on the parent, native flat.
 	{"result-array-payload", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, Result[i32[], i32]) = (i, Ok([i, i + 2]));
-        var r: i32 = t.0;
+        let t: (i32, Result[i32[], i32]) = (i, Ok([i, i + 2]));
+        let r: i32 = t.0;
         match (t.1) { Ok(v) => { r = r + v[0]; }, Err(_) => {} }
         acc = (acc + r) % 91;
         i = i + 1;
@@ -92,10 +92,10 @@ function main(): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -109,20 +109,20 @@ function main(): i32 {
 	// coincidence. 40 on the parent.
 	{"user-enum-nondroppable-sibling", `enum E { Some(i32[]), Other(string[]) }
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, E) = (i, E.Some([i, i + 2]));
+        let t: (i32, E) = (i, E.Some([i, i + 2]));
         acc = (acc + t.0) % 91;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -132,11 +132,11 @@ function main(): i32 {
 	// __fern_str_free on a payload that must not be freed — the rc-aware free
 	// heap-guard-skips it, and an over-release would show as 99.
 	{"string-literal-payload", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, Option[string]) = (i, Some("vv"));
-        var r: i32 = t.0;
+        let t: (i32, Option[string]) = (i, Some("vv"));
+        let r: i32 = t.0;
         match (t.1) { Some(v) => { r = r + v.len(); }, None => {} }
         acc = (acc + r) % 91;
         i = i + 1;
@@ -144,10 +144,10 @@ function main(): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -157,11 +157,11 @@ function main(): i32 {
 	// because the escaping binding retains it and the element's dec is spending
 	// the tuple's own reference, not the last one.
 	{"carried-out-payload-reclaimed", `function churn(n: i32): i32 {
-    var keep: i32[] = [0, 0];
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: i32[] = [0, 0];
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[], Option[i32[]]) = (i, [i, i + 1], Some([i, i + 2]));
+        let t: (i32, i32[], Option[i32[]]) = (i, [i, i + 1], Some([i, i + 2]));
         match (t.2) { Some(v) => { keep = v; }, None => {} }
         acc = (acc + t.0) % 91;
         i = i + 1;
@@ -169,10 +169,10 @@ function main(): i32 {
     return (acc + keep[0] + keep[1]) % 91;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -182,20 +182,20 @@ function main(): i32 {
 	// that would be handed the payload's block if it had really been freed;
 	// `keep` still reads what it was given. 66 on native too.
 	{"carried-out-payload-still-valid", `function churn(n: i32): i32 {
-    var keep: i32[] = [0, 0];
-    var i: i32 = 0;
+    let keep: i32[] = [0, 0];
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[], Option[i32[]]) = (i, [i, i + 1], Some([i, i + 2]));
+        let t: (i32, i32[], Option[i32[]]) = (i, [i, i + 1], Some([i, i + 2]));
         match (t.2) { Some(v) => { keep = v; }, None => {} }
         i = i + 1;
     }
-    var d1: i32[] = [777, 888];
-    var d2: i32[] = [999, 555];
-    var d3: i32[] = [321, 654];
+    let d1: i32[] = [777, 888];
+    let d2: i32[] = [999, 555];
+    let d3: i32[] = [321, 654];
     return (keep[0] + keep[1] + d1[0] + d2[0] + d3[0]) % 9973;
 }
 function main(): i32 {
-    var w: i32 = churn(100);
+    let w: i32 = churn(100);
     if (__rc_underflow_count() != 0) { return 99; }
     return w % 97;
 }`, 66},
@@ -203,12 +203,12 @@ function main(): i32 {
 	// the tuple is built. It keeps its leak rather than its correctness — the
 	// value must be right and __rc_underflow_count() zero either way.
 	{"bare-ident-payload-safe", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var xs: i32[] = [i, i + 2];
-        var t: (i32, Option[i32[]]) = (i, Some(xs));
-        var r: i32 = t.0;
+        let xs: i32[] = [i, i + 2];
+        let t: (i32, Option[i32[]]) = (i, Some(xs));
+        let r: i32 = t.0;
         match (t.1) { Some(v) => { r = r + v[0]; }, None => {} }
         acc = (acc + r + xs[1]) % 91;
         i = i + 1;
@@ -216,8 +216,8 @@ function main(): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 91;

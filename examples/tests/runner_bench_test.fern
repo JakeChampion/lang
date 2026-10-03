@@ -16,8 +16,8 @@ import "std/test";
 // accurate.
 
 function workload_tiny(): void {
-  var i: i32 = 0;
-  var sum: i32 = 0;
+  let i: i32 = 0;
+  let sum: i32 = 0;
   while (i < 100) {
     sum = sum + i;
     i = i + 1;
@@ -25,8 +25,8 @@ function workload_tiny(): void {
 }
 
 function workload_string_build(): void {
-  var s: string = "";
-  var i: i32 = 0;
+  let s: string = "";
+  let i: i32 = 0;
   while (i < 50) {
     s = s + "x";
     i = i + 1;
@@ -34,7 +34,7 @@ function workload_string_build(): void {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("bench harness");
+  let r: test.TestRunner = test.test_new("bench harness");
 
   // No-regression bench — reports timing, always passes.
   r = r.bench("tiny arithmetic loop", 20, workload_tiny);

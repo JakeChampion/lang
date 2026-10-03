@@ -19,8 +19,8 @@ import "std/i64";
 import "std/string";
 
 function round(s: string): i32 {
-    var bs: u8[] = s.bytes();
-    var t: string = string_from_bytes_unchecked(bs);
+    let bs: u8[] = s.bytes();
+    let t: string = string_from_bytes_unchecked(bs);
     return t.len();
 }
 
@@ -29,7 +29,7 @@ function round_temp(s: string): i32 {
 }
 
 function rounds(s: string, n: i32): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     for i in 0..n {
         acc = acc + round(s) + round_temp(s);
     }
@@ -38,16 +38,16 @@ function rounds(s: string, n: i32): i32 {
 
 function main(): i32 {
     // Built by concatenation so both are heap strings on every backend.
-    var narrow: string = "abcdefgh" + "ijklmnop";
-    var wide: string = narrow.repeat(64);
-    var warm: i32 = rounds(narrow, 1);
-    var b0: i64 = __heap_bump_bytes();
-    var x: i32 = rounds(narrow, 50);
-    var b1: i64 = __heap_bump_bytes();
+    let narrow: string = "abcdefgh" + "ijklmnop";
+    let wide: string = narrow.repeat(64);
+    let warm: i32 = rounds(narrow, 1);
+    let b0: i64 = __heap_bump_bytes();
+    let x: i32 = rounds(narrow, 50);
+    let b1: i64 = __heap_bump_bytes();
     warm = warm + rounds(wide, 1);
-    var b2: i64 = __heap_bump_bytes();
-    var y: i32 = rounds(wide, 50);
-    var b3: i64 = __heap_bump_bytes();
+    let b2: i64 = __heap_bump_bytes();
+    let y: i32 = rounds(wide, 50);
+    let b3: i64 = __heap_bump_bytes();
 
     print(warm.to_string());
     print(x.to_string());

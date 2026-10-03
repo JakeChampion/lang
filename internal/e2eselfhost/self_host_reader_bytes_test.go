@@ -15,46 +15,44 @@ import (
 func TestSelfHostReaderBytes(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
-		for _, mode := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"default", "FERN_SEM_IR="}} {
-			t.Run(target+"/"+mode.name, func(t *testing.T) {
-				env := []string{mode.env}
-				if mode.name == "semantic" {
-					env = append(env, "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1")
-				}
-				stderr, code := cli.exitOfStdin(t, e2eharness.ReaderBytesProgram, target, e2eharness.ReaderBytesInput(), env...)
-				if code != 0 {
-					t.Fatalf("reader bytes: exit %d\n%s", code, stderr)
-				}
-			})
-		}
-	}
-}
-
-// Primary components do not yet provide stdin, including the existing text
-// Reader operations. Keep the refusal explicit until their Preview 2 imports
-// and resource lifecycle are implemented; core WASM execution is tested above.
-func testReaderBytesComponentRefusal(t *testing.T, compiler string, runner []string, stdlib string) {
-	t.Helper()
-	// Both legacy flag values must use production typed-IR ownership.
-	for _, mode := range []string{"0", "1"} {
-		t.Run("component/legacy-env="+mode, func(t *testing.T) {
-			dir := t.TempDir()
-			src, bin := filepath.Join(dir, "reader.fern"), filepath.Join(dir, "reader.wasm")
-			if err := os.WriteFile(src, []byte(e2eharness.ReaderBytesProgram), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			cmd := runX86_64Bin(runner, compiler, "-target", "wasm32-wasi", src, stdlib, "-o", bin)
-			cmd.Env = append(os.Environ(), "FERN_SEM_IR="+mode, "FERN_SEM_IR_STRICT="+mode, "FERN_STRICT_IR=1")
-			if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "read_chunk_bytes is not supported in a wasm component") {
-				t.Fatalf("expected explicit unsupported-component diagnostic: %v\n%s", err, out)
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOfStdin(t, e2eharness.ReaderBytesProgram, target, e2eharness.ReaderBytesInput(), "FERN_STRICT_IR=1")
+			if code != 0 {
+				t.Fatalf("reader bytes: exit %d\n%s", code, stderr)
 			}
 		})
 	}
 }
 
-func TestSelfHostReaderBytesComponentRefusal(t *testing.T) {
+// The same program as a preview-2 component, whose stdin() reads wasi:cli/stdin
+// through the component's handle table (#11110).
+func testReaderBytesComponent(t *testing.T, compiler string, runner []string, stdlib string) {
+	t.Helper()
+	t.Run("component", func(t *testing.T) {
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			t.Skip("requires wasmtime")
+		}
+		dir := t.TempDir()
+		src, bin := filepath.Join(dir, "reader.fern"), filepath.Join(dir, "reader.wasm")
+		if err := os.WriteFile(src, []byte(e2eharness.ReaderBytesProgram), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := runX86_64Bin(runner, compiler, "-target", "wasm32-wasi", src, stdlib, "-o", bin)
+		cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("component build: %v\n%s", err, out)
+		}
+		run := exec.Command("wasmtime", "run", bin)
+		run.Stdin = bytes.NewReader(e2eharness.ReaderBytesInput())
+		if out, err := run.CombinedOutput(); err != nil {
+			t.Fatalf("reader bytes component: %v\n%s", err, out)
+		}
+	})
+}
+
+func TestSelfHostReaderBytesComponent(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	testReaderBytesComponentRefusal(t, cli.bin, cli.runner, cli.stdlib)
+	testReaderBytesComponent(t, cli.bin, cli.runner, cli.stdlib)
 }
 
 func TestSelfHostReaderBytesOwnership(t *testing.T) {
@@ -62,7 +60,7 @@ func TestSelfHostReaderBytesOwnership(t *testing.T) {
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			// Require the production ownership lowering to release error payloads.
-			stderr, code := cli.exitOfStdin(t, e2eharness.ReaderBytesProgram, target, e2eharness.ReaderBytesInput(), "FERN_SANITIZE=1", "FERN_LEAKCHECK=1", "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1")
+			stderr, code := cli.exitOfStdin(t, e2eharness.ReaderBytesProgram, target, e2eharness.ReaderBytesInput(), "FERN_SANITIZE=1", "FERN_LEAKCHECK=1", "FERN_STRICT_IR=1")
 			if code != 0 || strings.Contains(stderr, "fern-sanitizer:") {
 				t.Fatalf("reader bytes: exit %d\n%s", code, stderr)
 			}
@@ -88,13 +86,13 @@ func TestSelfHostArm64DarwinReaderBytes(t *testing.T) {
 	if err := os.WriteFile(src, []byte(e2eharness.ReaderBytesProgram), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"default", "FERN_SEM_IR="}} {
-		t.Run(mode.name, func(t *testing.T) {
+	for _, checked := range []bool{true, false} {
+		t.Run(map[bool]string{true: "checked", false: "plain"}[checked], func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "reader")
 			compile := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin)
-			compile.Env = append(os.Environ(), mode.env)
-			if mode.name == "semantic" {
-				compile.Env = append(compile.Env, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1")
+			compile.Env = os.Environ()
+			if checked {
+				compile.Env = append(compile.Env, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1", "FERN_STRICT_IR=1")
 			}
 			if out, err := compile.CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, out)
@@ -105,10 +103,10 @@ func TestSelfHostArm64DarwinReaderBytes(t *testing.T) {
 			if err != nil || strings.Contains(string(out), "fern-sanitizer:") {
 				t.Fatalf("reader bytes: %v\n%s", err, out)
 			}
-			if mode.name == "semantic" {
+			if checked {
 				assertBalancedCensus(t, string(out))
 			}
 		})
 	}
-	testReaderBytesComponentRefusal(t, cli, nil, stdlib)
+	testReaderBytesComponent(t, cli, nil, stdlib)
 }

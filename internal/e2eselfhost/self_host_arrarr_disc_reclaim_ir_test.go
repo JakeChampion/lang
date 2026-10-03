@@ -24,13 +24,13 @@ var arrArrDiscReclaimCases = []struct {
 }{
 	// Core churn: discarded i32[][] literal rebuilt per iteration, heap bounded.
 	{"arrarr-disc-churn", `function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 200) { [[w, w + 1], [w]]; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < 5000) { [[i, i + 1], [i]]; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -39,13 +39,13 @@ var arrArrDiscReclaimCases = []struct {
 	// f64 inners are scalar-leaf too (value-copied elements are stored in the freed
 	// buffer) — reclaimed and bounded.
 	{"arrarr-disc-f64", `function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 200) { [[1.5, 2.5], [3.5]]; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < 5000) { [[1.5, 2.5], [3.5]]; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -55,13 +55,13 @@ var arrArrDiscReclaimCases = []struct {
 	// local the exit sweep also frees — the literal is excluded (leak-mode), the
 	// aliased row stays valid, no double-free (detector zero).
 	{"arrarr-disc-alias-safe", `function main(): i32 {
-    var inner: i32[] = [7, 8];
+    let inner: i32[] = [7, 8];
     [[9], inner];
-    var ok: i32 = inner[0] + inner[1];
+    let ok: i32 = inner[0] + inner[1];
     if (ok != 15) { return 97; }
-    var w: i32 = 0;
+    let w: i32 = 0;
     while (w < 100) { [[w], [w, w + 1]]; w = w + 1; }
-    var again: i32 = inner[0] + inner[1];
+    let again: i32 = inner[0] + inner[1];
     if (again != 15) { return 96; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -70,9 +70,9 @@ var arrArrDiscReclaimCases = []struct {
 	// (a first cut) and stays leak-safe on the plain drop — no crash, no
 	// double-free, values exact.
 	{"arrarr-disc-strinner-safe", `function main(): i32 {
-    var w: i32 = 0;
+    let w: i32 = 0;
     while (w < 100) { [["a" + "x"], ["b", "c"]]; w = w + 1; }
-    var chk: i32 = 42;
+    let chk: i32 = 42;
     if (chk != 42) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;

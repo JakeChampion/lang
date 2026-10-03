@@ -23,9 +23,9 @@ import "std/i64";
 function fid(x: f64): f64 { return x; }
 
 function main(): i32 {
-    var zero: f64 = fid(0.0);
-    var nan: f64 = zero / zero;
-    var inf: f64 = fid(1.0) / zero;
+    let zero: f64 = fid(0.0);
+    let nan: f64 = zero / zero;
+    let inf: f64 = fid(1.0) / zero;
 
     print((nan as i32).to_string());
     print((inf as i32).to_string());

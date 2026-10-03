@@ -16,41 +16,40 @@ import (
 func testComponentLongWrites(t *testing.T, compiler string, runner []string, stdlib string) {
 	t.Helper()
 	for _, stream := range []string{"stdout", "stderr"} {
-		for _, mode := range []string{"0", "1"} {
-			t.Run(stream+"/typed="+mode, func(t *testing.T) {
-				dir := t.TempDir()
-				src, bin := filepath.Join(dir, "write.fern"), filepath.Join(dir, "write.wasm")
-				source := `function main(): i32 {
-  var s = ""; var i = 0;
+		t.Run(stream, func(t *testing.T) {
+			dir := t.TempDir()
+			src, bin := filepath.Join(dir, "write.fern"), filepath.Join(dir, "write.wasm")
+			source := `function main(): i32 {
+  let s = ""; let i = 0;
   while (i < 8193) { s = s + "x"; i = i + 1; }
-  var w = ` + stream + `();
+  let w = ` + stream + `();
   match (w.write(s)) { Some(_) => { return 1; }, None => {} }
-  match (w.write_some(s)) { Err(_) => { return 2; }, Ok(n) => { if (n != 8193) { return 3; } } }
+  match (w.write_some(s)) { Err(_) => { return 2; }, Ok(n) => { if (n != 4096) { return 3; } } }
   return 0;
 }`
-				if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
-					t.Fatal(err)
-				}
-				cmd := runX86_64Bin(runner, compiler, "-target", "wasm32-wasi", src, stdlib, "-o", bin)
-				cmd.Env = append(os.Environ(), "FERN_SEM_IR="+mode, "FERN_SEM_IR_STRICT="+mode, "FERN_STRICT_IR=1")
-				if out, err := cmd.CombinedOutput(); err != nil {
-					t.Fatalf("compile: %v\n%s", err, out)
-				}
-				run := exec.Command("wasmtime", "run", bin)
-				var stdout, stderr bytes.Buffer
-				run.Stdout, run.Stderr = &stdout, &stderr
-				if err := run.Run(); err != nil {
-					t.Fatalf("run: %v\n%s", err, stderr.String())
-				}
-				data, empty := stdout.String(), stderr.String()
-				if stream == "stderr" {
-					data, empty = stderr.String(), stdout.String()
-				}
-				if data != strings.Repeat("x", 16386) || empty != "" {
-					t.Fatalf("output differs: data=%d other=%d", len(data), len(empty))
-				}
-			})
-		}
+			if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cmd := runX86_64Bin(runner, compiler, "-target", "wasm32-wasi", src, stdlib, "-o", bin)
+			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("compile: %v\n%s", err, out)
+			}
+			run := exec.Command("wasmtime", "run", bin)
+			var stdout, stderr bytes.Buffer
+			run.Stdout, run.Stderr = &stdout, &stderr
+			if err := run.Run(); err != nil {
+				t.Fatalf("run: %v\n%s", err, stderr.String())
+			}
+			data, empty := stdout.String(), stderr.String()
+			if stream == "stderr" {
+				data, empty = stderr.String(), stdout.String()
+			}
+			// write_some moves one 4096-byte chunk, as native's preview-2 body does.
+			if data != strings.Repeat("x", 8193+4096) || empty != "" {
+				t.Fatalf("output differs: data=%d other=%d", len(data), len(empty))
+			}
+		})
 	}
 }
 
@@ -77,7 +76,7 @@ func TestSelfHostArm64DarwinComponentWrites(t *testing.T) {
 	// failures that a successful wasmtime stdout cannot exercise.
 	src := filepath.Join(dir, "shim.fern")
 	if err := os.WriteFile(src, []byte(`import "./wasm_ir";
-function main(): i32 { write(wasm_ir.component_io_shims([], true)); return 0; }
+function main(): i32 { write(wasm_ir.component_io_shims([], true, false)); return 0; }
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}

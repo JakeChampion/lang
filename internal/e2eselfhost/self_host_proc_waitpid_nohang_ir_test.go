@@ -32,7 +32,7 @@ const procWaitpidNohangSelfHostSource = `function main(): i32 {
     // still running.
     if (proc_waitpid_nohang(0 - 1) != 0 - 10) { return 1; }
 
-    var kid: i32 = proc_fork();
+    let kid: i32 = proc_fork();
     if (kid < 0) { return 2; }
     if (kid == 0) {
         sleep_ms(400 as i64);
@@ -47,7 +47,7 @@ const procWaitpidNohangSelfHostSource = `function main(): i32 {
     if (proc_waitpid(0 - 1) != 7) { return 4; }
     if (proc_waitpid_nohang(kid) != 0 - 10) { return 5; }
 
-    var k2: i32 = proc_fork();
+    let k2: i32 = proc_fork();
     if (k2 < 0) { return 6; }
     if (k2 == 0) {
         sleep_ms(60000 as i64);
@@ -57,8 +57,8 @@ const procWaitpidNohangSelfHostSource = `function main(): i32 {
         Ok(_) => {},
         Err(e) => { return 7; }
     }
-    var tries: i32 = 0;
-    var got: i32 = 0 - 1;
+    let tries: i32 = 0;
+    let got: i32 = 0 - 1;
     while (tries < 5000) {
         got = proc_waitpid_nohang(k2);
         if (got != 0 - 1) { break; }

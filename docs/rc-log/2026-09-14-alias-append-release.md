@@ -1,6 +1,6 @@
 # An aliased `a = a.append(v)` releases the buffer it grew away from
 
-#9191, from the `.with` probe set: `var b = a; a = a.append(x)` read 2 / 1
+#9191, from the `.with` probe set: `let b = a; a = a.append(x)` read 2 / 1
 with 48 live bytes, the answer right and the census not.
 
 ## Cause
@@ -20,7 +20,7 @@ un-share copy and each doubling after it, 7 / 1 with 1,656 live bytes,
 where the sole-owner form reads 7 / 7.
 
 `for x in a { a = a.append(…) }` is the same pairing one step removed. The
-foreach binds a hidden snapshot `var $forit = a` (`lower_foreach_snapshot`),
+foreach binds a hidden snapshot `let $forit = a` (`lower_foreach_snapshot`),
 which the ordinary ladder retains, but the credit is computed from the
 source (`aliased_array_names_of`) and never saw the hidden bind, so the
 target took `arr_push_owned` at rc 2: the owned grow copies, sees the old
@@ -45,7 +45,7 @@ buffer is not sole-owned, and leaves it — 2 / 1 again.
   first cut had passed every targeted suite. Filed as #9209; until the
   copy retains its elements, every pointer-element class stays leak-only.
 - `lower_foreach_snapshot` credits the iterable as aliased
-  (`note_aliased_name`) before binding the snapshot: the hidden `var` is the
+  (`note_aliased_name`) before binding the snapshot: the hidden `let` is the
   alias the source scan describes, bound by the lowering instead.
 
 After the un-share the target is unique again and the plain push writes in
@@ -59,7 +59,7 @@ oracles (native balances every row):
 
 | shape | before | after |
 | --- | --- | --- |
-| `var b = a; a = a.append(40)` | 2 / 1, live 48 | 2 / 2 |
+| `let b = a; a = a.append(40)` | 2 / 1, live 48 | 2 / 2 |
 | the same, 100 appends | 7 / 1, live 1,656 | 7 / 7 |
 | both holders grow | 3 / 2, live 48 | 3 / 3 |
 | `i64[]` / `f64[]` | 2 / 1 each | 2 / 2 each |

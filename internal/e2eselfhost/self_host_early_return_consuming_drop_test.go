@@ -19,7 +19,7 @@ import (
 //
 // No alias, no nesting, no arm:
 //
-//	var src: Option[i32[]] = Some([i, i + 1]);
+//	let src: Option[i32[]] = Some([i, i + 1]);
 //	if (i >= 0) { return 5; }
 //	match (src) { Some(b) => { return b.len(); }, None => { return 2; } }
 //
@@ -32,7 +32,7 @@ import (
 // a slot credit whose exit sweep still runs on the return path, which is the same
 // asymmetry #7725 recorded.
 //
-// The fix arms the entry across the candidate's LIVE RANGE — after its `var`, up
+// The fix arms the entry across the candidate's LIVE RANGE — after its `let`, up
 // to and including its match — rather than at the match alone.
 //
 // TWO ROUND COUNTS ON THE ARRAY ROW, deliberately: the discriminator between this
@@ -54,14 +54,14 @@ type earlyReturnDropCase struct {
 }
 
 func earlyReturnDropMain(rounds string) string {
-	return "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
+	return "\nfunction main(): i32 { let t: i32 = 0; let i: i32 = 0; " +
 		"while (i < " + rounds + ") { t = t + round(i); i = i + 1; } " +
 		"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 }
 
 func earlyReturnDropCases() []earlyReturnDropCase {
 	const arrEarly = `function round(i: i32): i32 {
-    var src: Option[i32[]] = Some([i, i + 1]);
+    let src: Option[i32[]] = Some([i, i + 1]);
     if (i >= 0) { return 5; }
     match (src) { Some(b) => { return b.len(); }, None => { return 2; } }
     return 0;
@@ -85,8 +85,8 @@ func earlyReturnDropCases() []earlyReturnDropCase {
 			// drop is reached. Balanced before this change and after it.
 			name: "arr_return_after_match",
 			src: `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var src: Option[i32[]] = Some([i, i + 1]);
+    let t: i32 = 0;
+    let src: Option[i32[]] = Some([i, i + 1]);
     match (src) { Some(b) => { t = b.len(); }, None => { t = 2; } }
     if (i >= 0) { return t + 5; }
     return 0;
@@ -100,7 +100,7 @@ func earlyReturnDropCases() []earlyReturnDropCase {
 			name: "rcenum_early_return",
 			src: `enum E { Full(i32[]), None }
 function round(i: i32): i32 {
-    var src: E = E.Full([i, i + 1]);
+    let src: E = E.Full([i, i + 1]);
     if (i >= 0) { return 5; }
     match (src) { E.Full(b) => { return b.len(); }, E.None => { return 2; } }
     return 0;
@@ -113,7 +113,7 @@ function round(i: i32): i32 {
 			name: "scalar_enum_early_return",
 			src: `enum S { A(i32), B }
 function round(i: i32): i32 {
-    var src: S = S.A(i);
+    let src: S = S.A(i);
     if (i >= 0) { return 5; }
     match (src) { S.A(b) => { return b; }, S.B => { return 2; } }
     return 0;
@@ -128,7 +128,7 @@ function round(i: i32): i32 {
 			name: "str_early_return_unchanged",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var src: Option[string] = Some(w("ab"));
+    let src: Option[string] = Some(w("ab"));
     if (i >= 0) { return 5; }
     match (src) { Some(b) => { return b.len(); }, None => { return 2; } }
     return 0;
@@ -142,9 +142,9 @@ function round(i: i32): i32 {
 			// fires per round, which is the property the whole window rests on.
 			name: "early_return_conditional",
 			src: `function round(i: i32): i32 {
-    var src: Option[i32[]] = Some([i, i + 1]);
+    let src: Option[i32[]] = Some([i, i + 1]);
     if (i % 2 == 0) { return 5; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (src) { Some(b) => { t = b.len(); }, None => { t = 2; } }
     return t;
 }` + earlyReturnDropMain("100"),
@@ -156,10 +156,10 @@ function round(i: i32): i32 {
 			// pending set rather than owning it.
 			name: "early_return_inside_a_loop",
 			src: `function round(i: i32): i32 {
-    var src: Option[i32[]] = Some([i, i + 1]);
-    var k: i32 = 0;
+    let src: Option[i32[]] = Some([i, i + 1]);
+    let k: i32 = 0;
     while (k < 3) { if (k == 1) { return 5; } k = k + 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (src) { Some(b) => { t = b.len(); }, None => { t = 2; } }
     return t;
 }` + earlyReturnDropMain("100"),
@@ -171,7 +171,7 @@ function round(i: i32): i32 {
 			name: "nested_block_early_return",
 			src: `function round(i: i32): i32 {
     if (i >= 0) {
-        var src: Option[i32[]] = Some([i, i + 1]);
+        let src: Option[i32[]] = Some([i, i + 1]);
         if (i >= 0) { return 5; }
         match (src) { Some(b) => { return b.len(); }, None => { return 2; } }
     }
@@ -186,7 +186,7 @@ function round(i: i32): i32 {
 			name: "struct_payload_early_return",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var src: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let src: Option[P] = Some(P { xs: [i, i + 1], n: i });
     if (i >= 0) { return 5; }
     match (src) { Some(p) => { return p.n % 7; }, None => { return 2; } }
     return 0;

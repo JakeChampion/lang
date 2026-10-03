@@ -3,7 +3,7 @@
 2026-09-24. Both checkers.
 
 ```
-var out: string[] = [];
+let out: string[] = [];
 out = out.append(slice_unchecked(lower, start, i));
 ```
 
@@ -54,7 +54,7 @@ keeps it, so its arrays are `str[]` now.
 
 ## A `str[]` of literals on the typed path
 
-`var many: str[] = ["", "ab", "cde"];` in `a-string-literal-is-already-a-view`
+`let many: str[] = ["", "ab", "cde"];` in `a-string-literal-is-already-a-view`
 was produced only because the erasure read it as `string[]`. Typed as `str[]`
 (#10201), it was refused twice: once as an array literal storing a view, and
 once in `ssarc`, which had no physical type for an array of views.

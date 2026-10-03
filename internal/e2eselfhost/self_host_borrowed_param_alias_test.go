@@ -11,9 +11,9 @@ import (
 //
 // gcd is the shape that found it, in coreutils/factor.fern:
 //
-//	var x: BigInt = a;
-//	var y: BigInt = b;
-//	while (!y.is_zero()) { var t = bi_mod(x, y); x = y; y = t; }
+//	let x: BigInt = a;
+//	let y: BigInt = b;
+//	while (!y.is_zero()) { let t = bi_mod(x, y); x = y; y = t; }
 //
 // The second iteration's `x = y` freed the CALLER's number under it, so factor
 // printed a 2 for an odd input and its rho search never converged — twelve
@@ -27,19 +27,19 @@ import (
 const borrowedParamAliasSrc = `struct Box { v: i32, tag: string }
 function step(b: Box): Box { return Box { v: b.v - 1, tag: "s" }; }
 function walk(a: Box, b: Box): Box {
-    var x: Box = a;
-    var y: Box = b;
+    let x: Box = a;
+    let y: Box = b;
     while (y.v > 0) {
-        var t: Box = step(y);
+        let t: Box = step(y);
         x = y;
         y = t;
     }
     return x;
 }
 function main(): i32 {
-    var n: Box = Box { v: 3, tag: "n" };
-    var r: Box = walk(Box { v: 9, tag: "a" }, n);
-    var filler: Box = Box { v: 7, tag: "f" };
+    let n: Box = Box { v: 3, tag: "n" };
+    let r: Box = walk(Box { v: 9, tag: "a" }, n);
+    let filler: Box = Box { v: 7, tag: "f" };
     return n.v * 10 + r.v + filler.v;
 }`
 

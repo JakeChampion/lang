@@ -1,7 +1,7 @@
 # A literal settles through an arm and a constructor
 
-The self-host checker read `var x: i64 = if (c) { 5 } else { 9 };`,
-`var o: Option[i64] = Some(40);` and `return Err(40);` from a function
+The self-host checker read `let x: i64 = if (c) { 5 } else { 9 };`,
+`let o: Option[i64] = Some(40);` and `return Err(40);` from a function
 returning `Result[i32, i64]` as i32-into-i64 assignments (#10343); native
 accepts all three. `checker.settles_to`, the rule that reads an unsuffixed
 literal at its destination, now reaches through a value-position `if` /

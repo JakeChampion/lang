@@ -63,14 +63,14 @@ function inc_all(xs: List): List {
         Nil => { return Nil; },
     }
 }
-function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
-function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
+function build(n: i32): List { let acc: List = Nil; let i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
+function sum(l: List): i32 { let acc: i32 = 0; let cur: List = l; let go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
 function main(): i32 {
-    var warm: List = inc_all(build(10));
+    let warm: List = inc_all(build(10));
     if (sum(warm) != 20) { return 97; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var ys: List = inc_all(build(2000));
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let ys: List = inc_all(build(2000));
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (sum(ys) != 4000) { return 96; }
     if (__rc_underflow_count() != 0) { return 99; }
     if ((b2 - b1) / 1024 >= 140) { return 98; }
@@ -85,10 +85,10 @@ function inc_all(xs: List): List {
         Nil => { return Nil; },
     }
 }
-function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(i, acc); i = i + 1; } return acc; }
-function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
+function build(n: i32): List { let acc: List = Nil; let i: i32 = 0; while (i < n) { acc = Cons(i, acc); i = i + 1; } return acc; }
+function sum(l: List): i32 { let acc: i32 = 0; let cur: List = l; let go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
 function main(): i32 {
-    var ys: List = inc_all(build(50));
+    let ys: List = inc_all(build(50));
     if (sum(ys) != 1275) { return 96; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -104,11 +104,11 @@ function inc_all(xs: List): List {
         Nil => { return Nil; },
     }
 }
-function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
-function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
+function build(n: i32): List { let acc: List = Nil; let i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
+function sum(l: List): i32 { let acc: i32 = 0; let cur: List = l; let go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
 function main(): i32 {
-    var keep: List = build(30);
-    var ys: List = inc_all(keep);
+    let keep: List = build(30);
+    let ys: List = inc_all(keep);
     if (sum(ys) != 60) { return 96; }
     if (sum(keep) != 30) { return 95; }
     if (sum(ys) != 60) { return 94; }
@@ -124,12 +124,12 @@ function inc_all(xs: List): List {
         Nil => { return Nil; },
     }
 }
-function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
-function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
+function build(n: i32): List { let acc: List = Nil; let i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
+function sum(l: List): i32 { let acc: i32 = 0; let cur: List = l; let go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
 function main(): i32 {
-    var keep: List = build(20);
-    var a: List = inc_all(keep);
-    var b: List = inc_all(keep);
+    let keep: List = build(20);
+    let a: List = inc_all(keep);
+    let b: List = inc_all(keep);
     if (sum(a) != 40) { return 96; }
     if (sum(b) != 40) { return 95; }
     if (sum(keep) != 20) { return 94; }
@@ -146,10 +146,10 @@ function tag_all(xs: SList): SList {
         SNil => { return SNil; },
     }
 }
-function len_all(l: SList): i32 { var acc: i32 = 0; var cur: SList = l; var go: boolean = true; while (go) { match (cur) { SCons(h, t) => { acc = acc + h.len(); cur = t; }, SNil => { go = false; } } } return acc; }
+function len_all(l: SList): i32 { let acc: i32 = 0; let cur: SList = l; let go: boolean = true; while (go) { match (cur) { SCons(h, t) => { acc = acc + h.len(); cur = t; }, SNil => { go = false; } } } return acc; }
 function main(): i32 {
-    var xs: SList = SCons("ab", SCons("cde", SNil));
-    var ys: SList = tag_all(xs);
+    let xs: SList = SCons("ab", SCons("cde", SNil));
+    let ys: SList = tag_all(xs);
     if (len_all(ys) != 7) { return 96; }
     if (len_all(xs) != 5) { return 95; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -167,11 +167,11 @@ function inc_all(xs: List): List {
     }
 }
 function apply(f: (List) => List, l: List): List { return f(l); }
-function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
-function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
+function build(n: i32): List { let acc: List = Nil; let i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
+function sum(l: List): i32 { let acc: i32 = 0; let cur: List = l; let go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
 function main(): i32 {
-    var keep: List = build(20);
-    var ys: List = apply(inc_all, keep);
+    let keep: List = build(20);
+    let ys: List = apply(inc_all, keep);
     if (sum(ys) != 40) { return 96; }
     if (sum(keep) != 20) { return 95; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -186,10 +186,10 @@ function inc_all(xs: List): List {
         Nil => { return Nil; },
     }
 }
-function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
-function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
+function build(n: i32): List { let acc: List = Nil; let i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
+function sum(l: List): i32 { let acc: i32 = 0; let cur: List = l; let go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
 function main(): i32 {
-    var ys: List = inc_all(build(300000));
+    let ys: List = inc_all(build(300000));
     if (sum(ys) != 600000) { return 96; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;

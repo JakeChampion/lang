@@ -43,17 +43,17 @@ import (
 func strArrPushSrc(iters string) string {
 	return `
 function build(k: i32): string[] {
-    var a: string[] = [];
-    var i: i32 = 0;
+    let a: string[] = [];
+    let i: i32 = 0;
     while (i < k) { a = a.append("item"); i = i + 1; }
     return a;
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    var n: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    let n: i32 = 0;
     while (j < ` + iters + `) {
-        var a: string[] = build(300);
+        let a: string[] = build(300);
         n = n + a.len();
         j = j + 1;
     }
@@ -66,17 +66,17 @@ func structArrPushSrc(iters string) string {
 	return `
 struct Item { tag: i32 }
 function build(k: i32): Item[] {
-    var a: Item[] = [];
-    var i: i32 = 0;
+    let a: Item[] = [];
+    let i: i32 = 0;
     while (i < k) { a = a.append(Item { tag: i }); i = i + 1; }
     return a;
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    let sum: i32 = 0;
     while (j < ` + iters + `) {
-        var a: Item[] = build(300);
+        let a: Item[] = build(300);
         sum = sum + a[0].tag;
         j = j + 1;
     }

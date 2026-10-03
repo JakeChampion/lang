@@ -30,15 +30,15 @@ import (
 // release frees a payload something else still reads, not merely a box.
 
 const rcTupleRebindSrc = `function round(): i32 {
-    var p: (i32, string) = (0, "hello");
-    var i: i32 = 0;
+    let p: (i32, string) = (0, "hello");
+    let i: i32 = 0;
     while (i < 4) { p = (i, "hello"); i = i + 1; }
     return p.0;
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(); r = r + 1; }
     return t % 7;
 }`
@@ -111,12 +111,12 @@ func TestSelfHostRcTupleRebindHazardsX86_64(t *testing.T) {
 			// still points at — rctuple_payload_escapes is what refuses this.
 			name: "rc_element_extracted_to_local",
 			src: `function round(i: i32): i32 {
-    var p: (i32, i32[]) = (i, [i, i + 1]);
-    var keep: i32[] = p.1;
+    let p: (i32, i32[]) = (i, [i, i + 1]);
+    let keep: i32[] = p.1;
     p = (i + 1, [i + 2, i + 3]);
     return keep[0] + keep[1] + p.1[0];
 }
-function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
+function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
 			want: 18,
 		},
 		{
@@ -125,12 +125,12 @@ function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t +
 			// the assignment at hand would deep-drop `xs` underneath its owner.
 			name: "nonfresh_rebind_disqualifies",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var p: (i32, i32[]) = (i, [i, i + 2]);
+    let xs: i32[] = [i, i + 1];
+    let p: (i32, i32[]) = (i, [i, i + 2]);
     p = (i, xs);
     return p.1[0] + xs[1];
 }
-function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
+function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
 			want: 9,
 		},
 		{
@@ -138,16 +138,16 @@ function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t +
 			// chain is still reachable through the array.
 			name: "escapes_to_container",
 			src: `function round(i: i32): i32 {
-    var keep: (i32, i32[])[] = [];
-    var p: (i32, i32[]) = (0, [0, 0]);
-    var k: i32 = 0;
+    let keep: (i32, i32[])[] = [];
+    let p: (i32, i32[]) = (0, [0, 0]);
+    let k: i32 = 0;
     while (k < 3) { p = (k, [k, k + 1]); keep = keep.append(p); k = k + 1; }
-    var t: i32 = 0;
-    var j: i32 = 0;
+    let t: i32 = 0;
+    let j: i32 = 0;
     while (j < keep.len()) { t = t + keep[j].0 + keep[j].1[1]; j = j + 1; }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
+function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
 			want: 27,
 		},
 		{
@@ -155,13 +155,13 @@ function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t +
 			// the callee must not drop the chain it hands back.
 			name: "returned_to_caller",
 			src: `function mk(n: i32): (i32, i32[]) {
-    var p: (i32, i32[]) = (0, [0, 0]);
-    var k: i32 = 0;
+    let p: (i32, i32[]) = (0, [0, 0]);
+    let k: i32 = 0;
     while (k < 3) { p = (k, [k, n]); k = k + 1; }
     return p;
 }
-function round(n: i32): i32 { var t: (i32, i32[]) = mk(n); return t.0 + t.1[1]; }
-function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t + round(r % 3); r = r + 1; } return t % 97; }`,
+function round(n: i32): i32 { let t: (i32, i32[]) = mk(n); return t.0 + t.1[1]; }
+function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t + round(r % 3); r = r + 1; } return t % 97; }`,
 			want: 8,
 		},
 		{
@@ -171,13 +171,13 @@ function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t +
 			// live payload.
 			name: "string_element_read_after_rebind",
 			src: `function round(): i32 {
-    var p: (i32, string) = (0, "hello_there_world");
-    var i: i32 = 0;
+    let p: (i32, string) = (0, "hello_there_world");
+    let i: i32 = 0;
     while (i < 4) { p = (i, "hello_there_world"); i = i + 1; }
     if (p.1 != "hello_there_world") { return 1; }
     return p.0 + p.1.len();
 }
-function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t + round(); r = r + 1; } return t % 97; }`,
+function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t + round(); r = r + 1; } return t % 97; }`,
 			want: 60,
 		},
 	} {

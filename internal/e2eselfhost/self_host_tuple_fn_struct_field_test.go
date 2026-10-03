@@ -14,7 +14,7 @@ import (
 // 255) — silently miscompiling the call. emit_call now recognises an all-digit
 // field as a tuple-element call and invokes it via the closure convention (box
 // ptr, fn_addr = box[0]), the same shape as the ExprIndex closure-value arm.
-// Reading the element first (`var g = s.p.N; g()`) already worked; this is the
+// Reading the element first (`let g = s.p.N; g()`) already worked; this is the
 // direct-call sibling (cf. #5160 defect #1 for closure ARRAY elements).
 //
 // Found via differential probing (interpreter vs self-host-compiled binary).
@@ -25,17 +25,17 @@ var tupleFnStructFieldCases = []struct {
 	exit int
 }{
 	// Bare: fn is the 2nd tuple element, no-arg call.
-	{"bare", "struct S { p: (i32, () => i32) } function main(): i32 { var n: i32 = 4; var s = S { p: (1, () => n) }; return s.p.1(); }", 4},
+	{"bare", "struct S { p: (i32, () => i32) } function main(): i32 { let n: i32 = 4; let s = S { p: (1, () => n) }; return s.p.1(); }", 4},
 	// fn is the 1st tuple element and takes an argument.
-	{"arg-elem0", "struct S { p: ((i32) => i32, i32) } function main(): i32 { var n: i32 = 5; var s = S { p: ((x: i32) => x + n, 9) }; return s.p.0(10); }", 15},
+	{"arg-elem0", "struct S { p: ((i32) => i32, i32) } function main(): i32 { let n: i32 = 5; let s = S { p: ((x: i32) => x + n, 9) }; return s.p.0(10); }", 15},
 	// Two-arg fn element (pins the (args+1)-slot cleanup math).
-	{"two-arg", "struct S { p: (i32, (i32, i32) => i32) } function main(): i32 { var s = S { p: (0, (a: i32, b: i32) => a * b) }; return s.p.1(6, 7); }", 42},
+	{"two-arg", "struct S { p: (i32, (i32, i32) => i32) } function main(): i32 { let s = S { p: (0, (a: i32, b: i32) => a * b) }; return s.p.1(6, 7); }", 42},
 	// Regression: read the element into a local first, then call (the path
 	// that already worked) — must stay correct.
-	{"read-then-call", "struct S { p: (i32, () => i32) } function main(): i32 { var n: i32 = 4; var s = S { p: (1, () => n) }; var g = s.p.1; return g(); }", 4},
+	{"read-then-call", "struct S { p: (i32, () => i32) } function main(): i32 { let n: i32 = 4; let s = S { p: (1, () => n) }; let g = s.p.1; return g(); }", 4},
 	// Loop-churn: rebuild the struct + call each iteration, mod 256. Catches a
 	// stack-imbalance in the cleanup math the single-shot case can mask.
-	{"churn", "struct S { p: (i32, (i32) => i32) } function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 300) { var k: i32 = i % 7; var s = S { p: (k, (x: i32) => x + k) }; acc = (acc + s.p.1(2) + s.p.0) % 1000; i = i + 1; } return acc % 256; }", 138},
+	{"churn", "struct S { p: (i32, (i32) => i32) } function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 300) { let k: i32 = i % 7; let s = S { p: (k, (x: i32) => x + k) }; acc = (acc + s.p.1(2) + s.p.0) % 1000; i = i + 1; } return acc % 256; }", 138},
 }
 
 // TestSelfHostTupleFnStructFieldX86_64 — the x86-64 asm.fern fix, through the
@@ -43,7 +43,7 @@ var tupleFnStructFieldCases = []struct {
 func TestSelfHostTupleFnStructFieldX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range tupleFnStructFieldCases {
@@ -77,7 +77,7 @@ func TestSelfHostTupleFnStructFieldArm64(t *testing.T) {
 		t.Skip("arm64 tuple-fn-struct-field gate needs a native x86 host to run the driver")
 	}
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range tupleFnStructFieldCases {

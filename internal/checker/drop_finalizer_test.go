@@ -26,9 +26,9 @@ impl Drop for R { function drop(self: Self): void { } }
 `
 	for _, tc := range []struct{ name, src string }{
 		{"statement call", dropImpl +
-			`function main(): i32 { var r: R = R { n: 1 }; r.drop(); return r.n; }`},
+			`function main(): i32 { let r: R = R { n: 1 }; r.drop(); return r.n; }`},
 		{"call inside a nested block", dropImpl +
-			`function main(): i32 { var r: R = R { n: 1 }; if (r.n > 0) { r.drop(); } return 0; }`},
+			`function main(): i32 { let r: R = R { n: 1 }; if (r.n > 0) { r.drop(); } return 0; }`},
 		{"call on a parameter", dropImpl +
 			`function eat(r: R): i32 { r.drop(); return r.n; }
 			 function main(): i32 { return eat(R { n: 1 }); }`},
@@ -71,18 +71,18 @@ func TestOrdinaryDropMethodAccepted(t *testing.T) {
 		{"drop method, no Drop impl",
 			`struct Q { n: i32 }
 			 function (q: Q) drop(): i32 { return q.n; }
-			 function main(): i32 { var q: Q = Q { n: 3 }; return q.drop(); }`},
+			 function main(): i32 { let q: Q = Q { n: 3 }; return q.drop(); }`},
 		{"other method on a Drop type",
 			`trait Drop { function drop(self: Self): void; }
 			 struct R { n: i32 }
 			 impl Drop for R { function drop(self: Self): void { } }
 			 function (r: R) size(): i32 { return r.n; }
-			 function main(): i32 { var r: R = R { n: 4 }; return r.size(); }`},
+			 function main(): i32 { let r: R = R { n: 4 }; return r.size(); }`},
 		{"a Drop type never dropped by hand",
 			`trait Drop { function drop(self: Self): void; }
 			 struct R { n: i32 }
 			 impl Drop for R { function drop(self: Self): void { } }
-			 function main(): i32 { var r: R = R { n: 5 }; return r.n; }`},
+			 function main(): i32 { let r: R = R { n: 5 }; return r.n; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prog, err := parser.Parse(tc.src)

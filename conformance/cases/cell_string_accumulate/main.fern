@@ -16,13 +16,13 @@
 struct Bag { sink: Cell[string] }
 
 function main(): i32 {
-    var c: Cell[string] = cell_new("");
+    let c: Cell[string] = cell_new("");
     c.set(c.get() + "one;");
     c.set(c.get() + "two;");
     c.set(c.get() + "three;");
     if (c.get() != "one;two;three;") { return 1; }
 
-    var b: Bag = Bag { sink: cell_new("") };
+    let b: Bag = Bag { sink: cell_new("") };
     b.sink.set(b.sink.get() + "one;");
     b.sink.set(b.sink.get() + "two;");
     b.sink.set(b.sink.get() + "three;");
@@ -31,8 +31,8 @@ function main(): i32 {
     // The leading get() one level down the left spine: `get() + a + b`
     // parses as `((get() + a) + b)`, and it is still the cell's buffer the
     // innermost append grows.
-    var d: Cell[string] = cell_new("");
-    var piece: string = "x";
+    let d: Cell[string] = cell_new("");
+    let piece: string = "x";
     d.set(d.get() + piece + ";");
     d.set(d.get() + piece + ";");
     d.set(d.get() + piece + ";");

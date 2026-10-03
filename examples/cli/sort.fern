@@ -33,7 +33,7 @@ function slurp(path: string): string {
 }
 
 function leading_int(s: string): i32 {
-  var t: str = s.trim_start();
+  let t: str = s.trim_start();
   match (t.parse_int()) {
     Some(n) => {
       return n;
@@ -45,13 +45,13 @@ function leading_int(s: string): i32 {
 }
 
 function main(): i32 {
-  var argv: string[] = args();
-  var o: Opts = Opts { reverse: false, numeric: false, uniq: false, fold: false };
-  var inputs: string[] = [];
+  let argv: string[] = args();
+  let o: Opts = Opts { reverse: false, numeric: false, uniq: false, fold: false };
+  let inputs: string[] = [];
 
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a == "-r") {
       o = Opts { ...o, reverse: true };
     } else if (a == "-n") {
@@ -70,11 +70,11 @@ function main(): i32 {
   }
 
   // Gather every line from every input.
-  var lines: string[] = [];
-  var j: i32 = 0;
+  let lines: string[] = [];
+  let j: i32 = 0;
   while (j < inputs.len()) {
-    var ls: string[] = slurp(inputs[j]).lines();
-    var k: i32 = 0;
+    let ls: string[] = slurp(inputs[j]).lines();
+    let k: i32 = 0;
     while (k < ls.len()) {
       lines = lines.append(ls[k]);
       k = k + 1;
@@ -82,22 +82,22 @@ function main(): i32 {
     j = j + 1;
   }
 
-  var sorted: string[] = [];
+  let sorted: string[] = [];
   if (o.numeric) {
     // Key on the leading integer, but emit the original lines. We
     // do a simple selection by stably pairing keys to lines.
-    var keys: i32[] = [];
-    var m: i32 = 0;
+    let keys: i32[] = [];
+    let m: i32 = 0;
     while (m < lines.len()) {
       keys = keys.append(leading_int(lines[m]));
       m = m + 1;
     }
     // Insertion sort keeping lines in step with keys (stable).
-    var a: i32 = 1;
+    let a: i32 = 1;
     while (a < lines.len()) {
-      var kv: i32 = keys[a];
-      var lv: string = lines[a];
-      var b: i32 = a - 1;
+      let kv: i32 = keys[a];
+      let lv: string = lines[a];
+      let b: i32 = a - 1;
       while (b >= 0 && keys[b] > kv) {
         keys = keys.with(b + 1, keys[b]);
         lines = lines.with(b + 1, lines[b]);
@@ -118,11 +118,11 @@ function main(): i32 {
     sorted = sorted.reverse();
   }
 
-  var prev: string = "";
-  var have_prev: boolean = false;
-  var p: i32 = 0;
+  let prev: string = "";
+  let have_prev: boolean = false;
+  let p: i32 = 0;
   while (p < sorted.len()) {
-    var line: string = sorted[p];
+    let line: string = sorted[p];
     if (o.uniq && have_prev && line == prev) {
       p = p + 1;
       continue;

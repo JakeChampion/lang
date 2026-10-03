@@ -30,7 +30,7 @@ on a slot without a type; the fix is to give it one.
 The parser already promotes an unbounded parameter into the monomorphised set
 for four signature-shaped reasons (clauses a–c″ in `parse_func_decl`). This
 adds the first clause that reads the BODY: a bare-var parameter the body
-reassigns, or a `var x: T` local, is a value the frame binds without knowing
+reassigns, or a `let x: T` local, is a value the frame binds without knowing
 its type. Such a function is cloned per instantiation, the way a bounded
 generic is, so the clone's accumulator is a `string[]` the ownership flag
 applies to. Two constraints carried over from the existing clauses:
@@ -43,10 +43,10 @@ applies to. Two constraints carried over from the existing clauses:
 
 Two things the first attempt taught:
 
-**Mutual recursion.** `map_stmt_acc[T]` binds `var a: T` and calls
+**Mutual recursion.** `map_stmt_acc[T]` binds `let a: T` and calls
 `map_stmts_acc[T]`, which reassigns `acc` and calls back. Promoting one and not
 the other leaves an erased body calling a template the monomorphiser has
-dropped — an undefined reference. The `var` binding is the same blindness as
+dropped — an undefined reference. The `let` binding is the same blindness as
 the reassign, and including it promotes both.
 
 **Forwarders.** `fold_stmt_own[T](st, acc: T, v)` neither binds nor reassigns;
@@ -57,7 +57,7 @@ runs before instantiation and promotes, to a fixpoint, any erased generic that
 passes an erased-var-typed parameter to a bounded generic. After it no clone
 in the compiler is keyed on a variable.
 
-**Tuple destructures.** Inside the clones, `var (ns, na, nh) = visit_stmt(st,
+**Tuple destructures.** Inside the clones, `let (ns, na, nh) = visit_stmt(st,
 acc)` left `na` untyped in the monomorphiser's environment, so the recursive
 `map_stmts_acc(body, na, …)` could not bind its instantiation either. The
 StmtVar rewrite now types each comma-joined binder from the matching element
@@ -69,7 +69,7 @@ In the compiler itself: the eight `astwalk` fold and map walkers and
 `util.append_all`, 86 clones in all — `fold_stmt_nodes` at `string[]`,
 `ast.Expr[]`, `boolean`, `i32`, `string`, `checker.Annot[]`,
 `asmcore.UnkScan`, `parser.CFScan`; `map_*_acc` at `embed.FoldAcc` and
-`irlower.InlineCloAcc`. 6,050 functions against 5,997.
+`lift.InlineCloAcc`. 6,050 functions against 5,997.
 
 ## Measured
 

@@ -39,16 +39,8 @@
 # emits if-expressions everywhere, so a single missing branch in one classifier
 # was suppressing a tenth of the corpus.
 #
-# HOW TO READ A BAIL: just run it. `FERN_STRICT_IR=1` now names the innermost AST
-# node that refused, via LowerState.fail_why —
-#
-#   FERN_STRICT_IR: gen_f0 (did not lower: `return` of binary `|`)
-#
-# This replaces a gdb recipe that used to live here (build with -g, break on
-# LowerState.fail, read the caller's line). That recipe worked and is how the
-# census below was first built, but it is now strictly worse than reading the
-# message, so it has been deleted rather than left as a second way to do the
-# same thing.
+# HOW TO READ A BAIL: just run it. A typed-lowering refusal prints
+# `FERN_SEM_IR: <declaration>: <reason>` and the compile exits 3.
 #
 # CENSUS OF THE GAPS, so the next round is aimed rather than sampled. Every
 # remaining gap is the `<fn>$clo not defined` class (#6256); the
@@ -95,7 +87,7 @@
 #
 # s0393 left with the capture side, and it was a decline rather than a miss:
 # `cap_param_for` builds a hoisted IIFE's capture parameter only from an EXACT
-# signature, and `var v0: (i32) => i32 = pick(…)` is neither a lambda initialiser
+# signature, and `let v0: (i32) => i32 = pick(…)` is neither a lambda initialiser
 # nor a `__mkclo$` target. The signature was not unrecoverable, it was DROPPED —
 # the parser read the annotation's return into `v_fn_ret` and then kept only the
 # coarse "fn" tag on the StmtVar. `StmtVar.fn_ret` now carries it, and paired

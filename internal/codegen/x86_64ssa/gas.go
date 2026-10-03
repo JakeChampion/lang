@@ -2464,6 +2464,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"mknod":                            emitMknodHelper,
 	"chown_at":                         emitChownAtHelper,
 	"getuid":                           emitIdHelper("getuid", 102),
+	"__getpwuid_name":                  emitPwNameHelper,
 	"getgid":                           emitIdHelper("getgid", 104),
 	"geteuid":                          emitIdHelper("geteuid", 107),
 	"getegid":                          emitIdHelper("getegid", 108),

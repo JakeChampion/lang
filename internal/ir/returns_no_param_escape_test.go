@@ -63,14 +63,14 @@ function main(): i32 { return 0; }`)
 // taints.
 func TestReturnsNoParamEscapeByteCopy(t *testing.T) {
 	prog, err := parser.Parse(`function (s: string) bytes2(): u8[] {
-    var n: i32 = s.len();
-    var out: u8[] = __alloc_u8(n);
+    let n: i32 = s.len();
+    let out: u8[] = __alloc_u8(n);
     if (n > 0) { __memcpy(out as usize, s.as_bytes() as usize, n); }
     return out;
 }
-function zeroed(n: i32): u8[] { var out: u8[] = __alloc_u8(n); __memset(out as usize, 0, n); return out; }
-function ptrs(xs: string[]): string[] { var out: string[] = []; __memcpy(out as usize, xs as usize, 8); return out; }
-function rawout(n: i32): u8[] { var out: u8[] = __alloc_u8(n); var a: usize = out as usize; return out; }
+function zeroed(n: i32): u8[] { let out: u8[] = __alloc_u8(n); __memset(out as usize, 0, n); return out; }
+function ptrs(xs: string[]): string[] { let out: string[] = []; __memcpy(out as usize, xs as usize, 8); return out; }
+function rawout(n: i32): u8[] { let out: u8[] = __alloc_u8(n); let a: usize = out as usize; return out; }
 function main(): i32 { return 0; }`)
 	if err != nil {
 		t.Fatal(err)
@@ -100,12 +100,12 @@ func TestReturnsNoParamEscapeFreshLocals(t *testing.T) {
 	prog, err := parser.Parse(`enum List { Cons(i32, List), Nil }
 function build(n: i32): List { if (n == 0) { return Nil; } return Cons(n, build(n - 1)); }
 function sum(l: List): i32 { match (l) { Cons(h, t) => { return h; }, Nil => { return 0; } } }
-function freshlit(): List { var r: List = Cons(0, Nil); return r; }
-function freshcall(n: i32): List { var r: List = build(n); return r; }
-function embedfresh(n: i32): List { var r: List = build(n); return Cons(1, r); }
-function chainfresh(n: i32): List { var a: List = build(n); var b: List = build(n); return Cons(0, b); }
-function retparam(xs: List): List { var r: List = xs; return r; }
-function passthenret(xs: List): List { var r: List = build(2); var u: i32 = sum(r); return r; }
+function freshlit(): List { let r: List = Cons(0, Nil); return r; }
+function freshcall(n: i32): List { let r: List = build(n); return r; }
+function embedfresh(n: i32): List { let r: List = build(n); return Cons(1, r); }
+function chainfresh(n: i32): List { let a: List = build(n); let b: List = build(n); return Cons(0, b); }
+function retparam(xs: List): List { let r: List = xs; return r; }
+function passthenret(xs: List): List { let r: List = build(2); let u: i32 = sum(r); return r; }
 function main(): i32 { return 0; }`)
 	if err != nil {
 		t.Fatal(err)
@@ -116,11 +116,11 @@ function main(): i32 { return 0; }`)
 	}
 	q := findReturnsNoParamEscape(prog, info)
 	want := map[string]bool{
-		"freshlit":    true,  // var r = Cons(0, Nil); return r
-		"freshcall":   true,  // var r = build(n); return r
-		"embedfresh":  true,  // var r = build(n); return Cons(1, r)
+		"freshlit":    true,  // let r = Cons(0, Nil); return r
+		"freshcall":   true,  // let r = build(n); return r
+		"embedfresh":  true,  // let r = build(n); return Cons(1, r)
 		"chainfresh":  true,  // return Cons(0, b) where b is fresh
-		"retparam":    false, // var r = xs; return r — r aliases the param
+		"retparam":    false, // let r = xs; return r — r aliases the param
 		"passthenret": false, // r passed to a call before return — exposed to mutation
 	}
 	for name, exp := range want {

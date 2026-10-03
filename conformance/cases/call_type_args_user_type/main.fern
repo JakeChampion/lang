@@ -14,11 +14,11 @@ function pass[T](a: T): T { return lib.id[T](a); }
 function k(x: i32): i32 { return x + 1; }
 
 function main(): i32 {
-    var b: lib.Box = lib.Box { n: 5 };
-    var l: Loc = Loc { n: 2 };
-    var p: Pair[i32] = Pair[i32] { a: 7 };
-    var fs: ((i32) => i32)[] = [k, k];
-    var bs: Loc[] = [l];
+    let b: lib.Box = lib.Box { n: 5 };
+    let l: Loc = Loc { n: 2 };
+    let p: Pair[i32] = Pair[i32] { a: 7 };
+    let fs: ((i32) => i32)[] = [k, k];
+    let bs: Loc[] = [l];
     if (lib.id[lib.Box](b).n != 5) { return 1; }
     if (lib.id[Loc](l).n != 2) { return 2; }
     if (second[lib.Box, Loc](b, l).n != 2) { return 3; }
@@ -27,8 +27,8 @@ function main(): i32 {
     if (second[Loc, (i32, lib.Box)](l, (1, b)).1.n != 5) { return 6; }
     if (pass[Loc](l).n != 2) { return 7; }
     if (fs[lib.id[i32](1)](3) != 4) { return 8; }
-    var h: Holder[lib.Box] = Holder[lib.Box] { v: b };
-    var hl: Holder[Loc] = Holder[Loc] { v: l };
+    let h: Holder[lib.Box] = Holder[lib.Box] { v: b };
+    let hl: Holder[Loc] = Holder[Loc] { v: l };
     if (h.v.n + hl.v.n != 7) { return 9; }
     print("ok");
     return 0;

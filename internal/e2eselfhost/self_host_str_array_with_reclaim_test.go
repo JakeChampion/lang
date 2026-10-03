@@ -41,17 +41,17 @@ func strArrayWithChurnSrc(rounds int, with bool) string {
 import "std/string";
 
 function mks(): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
+    let out: string[] = [];
+    let i: i32 = 0;
     while (i < 8) { out = out.append("kkkkkkkkkkkkkkkkkkkk" + i.to_string()); i = i + 1; }
     return out;
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < %d) {
-        var a: string[] = mks();
+        let a: string[] = mks();
         %s
         t = t + a.len() + a[3].len();
         r = r + 1;
@@ -156,9 +156,9 @@ func TestSelfHostStrArrayWithReclaimWasm(t *testing.T) {
 	src += `
 function main(): i32 {
     if (churn() != 4) { return 88; }
-    var before: i32 = __heap_bump_bytes() as i32;
+    let before: i32 = __heap_bump_bytes() as i32;
     if (churn() != 4) { return 88; }
-    var after: i32 = __heap_bump_bytes() as i32;
+    let after: i32 = __heap_bump_bytes() as i32;
     if (__rc_underflow_count() != 0) { return 99; }
     if (after != before) { return 98; }
     return 0;

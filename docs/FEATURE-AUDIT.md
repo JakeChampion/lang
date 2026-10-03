@@ -110,11 +110,11 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | f-strings / interpolation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `f"...{e}..."` desugars (parser) to literal parts + `(e).to_string()` folded with `+`. Native: `TestWASMFStringInterpolation` + closure-capture f-string mirrors. Self-host IR pin (x86-64 + wasm): `TestSelfHostFStringIR` — i32 + string interpolants (the two `to_string` receivers the importless IR path lowers), literal/empty parts, byte offsets, equality |
 | Owned arrays `T[]` + indexing + `.with` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | index, `.len()`, `.with` (reassign idiom); **read-after-`.with` aliases on compiled backends, [#2832](https://github.com/JakeChampion/lang/issues/2832)** |
 | Slice views `[T]` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | borrowed window `a[i:j]`; `.len()`, indexing, `for x in s`, slice-of-slice, empty windows, `[string]` element slices — native `slice_views` fixture (4 backends) + self-host IR pin (x86-64 + wasm) |
-| Tuples `(T, U)` + destructuring | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `.0`/`.1` + `var (a,b) = …` |
+| Tuples `(T, U)` + destructuring | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `.0`/`.1` + `let (a,b) = …` |
 | `Map[K, V]` literal + ops | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `insert`/`get_or`/`has`/`len`/`keys`/`values`/`for (k,v)`, i32 + string keys; `without` (functional delete) now on the x86-64/arm64 IR path ([#2926](https://github.com/JakeChampion/lang/issues/2926)) — wasm `without` stays on the AST path (box-return ABI) |
 | Array literals | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | Function return annotations (required) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | every named function declares its return type — `: void` when it returns nothing. Omitting it is **E070**, not an inference request: a signature is the part of a function its callers read, so it is written, not derived. Return-type *inference* for unannotated named functions was removed (it previously covered plain non-generic free functions only; methods and generics already required an annotation). Lambdas are unaffected: `(x: T): R => e` may annotate, and `(x: T) => e` has R inferred from the body. Coverage: `TestMissingReturnTypeRejected` / `TestExplicitReturnTypeAccepted` (native) + the self-host `E070` rule in `collect_decl_diags`, held to the Go oracle by `TestSelfHostCheckerDifferentialX86_64` |
-| `var x: T = expr;` + type inference | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | inference (no `: T`) covers wider scalars (i64/u32/u8-wrap/f64/f32/bool/string), composites (tuple/struct/array/enum), and call-return inference — native `var_inference` fixture (4 backends) + self-host IR pin (x86-64 + wasm) |
+| `let x: T = expr;` + type inference | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | inference (no `: T`) covers wider scalars (i64/u32/u8-wrap/f64/f32/bool/string), composites (tuple/struct/array/enum), and call-return inference — native `var_inference` fixture (4 backends) + self-host IR pin (x86-64 + wasm) |
 | Compound assignment `+= -= *= …` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `+= -= *= /= %=`; read-modify-write is width-correct beyond i32 — i64/u32/u8-wrap/f64 + loop accumulation pinned via the self-host IR `compound_assign_wider` pin (x86-64 + wasm) + native fixture (array-element compound assign is E056: arrays are immutable, use `.with`) |
 | `if`/`else` statement | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | `if` as expression | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
@@ -684,7 +684,7 @@ This eliminates the i32-keyed-generic-map-method SIGSEGV documented below: the
 key is no longer dereferenced through the string default. A map op chained
 directly onto a Map-returning call (`a.merge(b).get_or(k,d)`) also dispatches now
 (the map-op receiver resolution recovers the call's Map return type, the post-fold
-`ExprIdent` sibling of the bound-var path).
+`ExprIdent` sibling of the bound-let path).
 
 Verified: `TestSelfHostMapVerbsIR` (new — `merge`/`extend`/`get_or_insert` + a
 chained `.get_or` + an `r.0` tuple-element-Map read decide `ir` and run to exit 0
@@ -795,7 +795,7 @@ emitter.
 Now lowers to dedicated ops — `op_map_iter` (the one allocating op: 16-byte box
 via `__fern_alloc`) + `op_mapiter_has_next` / `_key` / `_value` / `_advance`
 (pure loads / a cursor store) — transcribing the same parallel-array sequences
-the AST path emits. Type-threading: a `var it: MapIter[K,V] = m.iter()`
+the AST path emits. Type-threading: a `let it: MapIter[K,V] = m.iter()`
 annotation records the slot's MapIter type in the **same per-slot
 `local_map_type` column as `Map[K,V]`** (prefix-disjoint — `"MapIter["` vs
 `"Map["` — so neither dispatch sees the other), and the four method calls resolve
@@ -885,7 +885,7 @@ flipped to IR upstream.
   **monomorphiser self-instantiation artifact** (a trait-bounded generic cloned at
   its own bound's type-param), not a construct gap — fixing it is a monomorphiser
   correctness change.
-- **`map_verbs`** — two layers. (1) TYPING: `var r: (Map[K,V], V) =
+- **`map_verbs`** — two layers. (1) TYPING: `let r: (Map[K,V], V) =
   m.get_or_insert(..)` then `r.0.insert(..)` mis-dispatches `i32.<m>` because the
   StmtVar method-call arm only recovers tuple element tags via
   `expr_struct_type(recv)` (`""` for a `Map` receiver) with no tuple-annotation
@@ -955,7 +955,7 @@ Building directly on the `stat` struct-result work, with one new wrinkle: the
 `ProcessResult` struct is returned **BARE** (not `Result`-wrapped), so there's no
 match to establish its type. A new `expr_struct_type` case types
 `subprocess(..)` as `ProcessResult` directly — the struct-valued analog of
-`stat`'s `opt_ret_type` — so `var r = subprocess(..)` marks `r` and `r.stdout` /
+`stat`'s `opt_ret_type` — so `let r = subprocess(..)` marks `r` and `r.stdout` /
 `r.exit_code` resolve against the injected struct. (`ProcessResult` carries STRING
 fields, vs `FileStat`'s scalars — the reclaim analysis accepts it and routes IR.)
 The x86 runtime is transcribed verbatim from asm.fern with the shape via
@@ -1072,7 +1072,7 @@ for `array_hof`.
 BOUNDED params) rather than `type_param_count` (which counts unbounded ones too).
 An unbounded extra type variable (`U` / `A`) is ERASED by the self-host's uniform
 8-byte ABI exactly as it is in the free function: the result's element width is
-driven by the CALL SITE's annotation (`var ys: string[] = xs.map(f)`), not by
+driven by the CALL SITE's annotation (`let ys: string[] = xs.map(f)`), not by
 cloning the body. So the receiver alone still fixes the monomorphised `T`, and the
 folded `__arrm_map[T](xs, f)` body delegates to the free `map` — which already
 lowers on IR for any `U`/`A`, including a width-changing one (i32 → string,
@@ -1207,7 +1207,7 @@ this treeshake fix keeps the auto-discovered concrete helpers reachable; the
   `Map.iter()` cluster entry above): the 5 builtins lower to `op_map_iter` /
   `op_mapiter_*`; `json_roundtrip` flips to IR.
 - **Tuple-array-returning method element typing** — `map_verbs`
-  (`for e in m.entries()`: the snapshot var doesn't recover the `(i32,i32)[]`
+  (`for e in m.entries()`: the snapshot let doesn't recover the `(i32,i32)[]`
   element tuple tags; needs a tuple-array return-type recovery).
 - ~~**`stat`-returning fs assertions** — `batch7`~~ — **DONE** (see the `stat(path)`
   entry above): the first struct-RESULT builtin on the IR path; `batch7` flips to IR.
@@ -1383,7 +1383,7 @@ exhausted; what's left clusters into a few deeper root causes:
   `Map.iter()` cluster entry above): the 5 builtins lower to `op_map_iter` /
   `op_mapiter_*`; `json_roundtrip` flips to IR.
 - **Tuple-array-returning method element typing** — `map_verbs`
-  (`for e in m.entries()`: the snapshot var doesn't recover the `(i32,i32)[]`
+  (`for e in m.entries()`: the snapshot let doesn't recover the `(i32,i32)[]`
   element tuple tags; needs a tuple-array return-type recovery).
 - **Deeper / parallel-owned** — `io_buffered` (BytesWriter, RC), `async_concurrent`
   / `async_runtime` (async), `timing` (clock/sleep `BAIL lower`), `fuzz_corpus`
@@ -1460,7 +1460,7 @@ A tuple return type with an own-module struct element (`(string, TestRunner)`,
 std/test's `must_temp_dir`) was left UNMANGLED by `flatten.rewrite_type_name`:
 its bare/bracket logic treated the whole `( … )` spelling as one name, so the
 inner `TestRunner` never became `test__TestRunner`. A cross-module tuple
-destructure (`var (dir, rr) = test.must_temp_dir(…)`) then recovered the
+destructure (`let (dir, rr) = test.must_temp_dir(…)`) then recovered the
 unmangled `TestRunner` tag, marked `rr` as struct `TestRunner`, and dispatched a
 non-existent `TestRunner.it` (the real method is `test__TestRunner.it`) →
 `BAIL call[TestRunner.it]`, dragging the module to AST. `rewrite_type_name` now
@@ -1698,7 +1698,7 @@ One combinator — `find` — **segfaulted** with a NAMED-function predicate
 (`match (iter.find(iter.of(xs), named_fn)) { … }`) while a lambda predicate
 worked. Root-caused to a closure-conversion gap: the lift pass's statement walker
 (`lift_inline_closures_stmts`) env-boxed fn-value call ARGUMENTS in `if` / `while`
-/ `for` conditions and `var` / `return` / `assign` / `expr` positions, but had **no
+/ `for` conditions and `let` / `return` / `assign` / `expr` positions, but had **no
 `StmtMatch` arm** — so a fn-value arg to a call in MATCH-SCRUTINEE position was
 never wrapped. The callee (whose fn-param is a closure local, dispatched env-first
 via `[pred+8]`) then unpacked a closure box from a raw fn-pointer and crashed; a
@@ -1855,7 +1855,7 @@ socket calls (the stated edge-handler use case). 9 tests over the whole surface:
 and the fluent chained-build pattern
 (`bytes_writer_new().write_string(..).write_byte(..)`). Gated by
 `TestRunnerIoBufferedExamplePasses` (interp). (The `BytesWriter` struct is not
-`pub`, so the suite lets `var w = io.bytes_writer_new()` infer the type rather
+`pub`, so the suite lets `let w = io.bytes_writer_new()` infer the type rather
 than annotating it.)
 
 **Interp-gated, not self-host-gated** — and a clean new RC-drop-frontier data
@@ -1907,9 +1907,9 @@ off the differential gate; it flips onto the gate (and unblocks `crypto_test`)
 once u32 arithmetic truncates to 32 bits.
 ### 2026-06-23 — self-host IR: discarded fresh-ret-CALL local reclaim (Perceus, #3457 follow-up)
 
-`reclaimable_names_of` freed only fresh struct-LITERAL locals (`var x = S{..}`)
+`reclaimable_names_of` freed only fresh struct-LITERAL locals (`let x = S{..}`)
 that never escape. A struct local bound from a fresh-struct-returning CALL
-(`var r = mk()`) that is then READ (a field copy, `r.ops`) and goes dead without
+(`let r = mk()`) that is then READ (a field copy, `r.ops`) and goes dead without
 escaping was left to LEAK. This widens the reclaim to credit those discarded
 fresh-ret-call locals (non-reassigned — a reassigned one is the snapshot-LOCAL
 path's job), deep-dropped via `__struct_drop_<T>` at scope exit.
@@ -2376,8 +2376,8 @@ Differential probing through the self-host x86-64 loader isolated it to the
 copy tail both functions share:
 
 ```fern
-var scratch_ptr: usize = scratch as usize;
-var buf: u8[] = __alloc_u8(n_bytes);
+let scratch_ptr: usize = scratch as usize;
+let buf: u8[] = __alloc_u8(n_bytes);
 __memcpy(buf as usize, scratch_ptr + end, n_bytes);   // packed-byte copy
 return string_from_bytes_unchecked(buf);
 ```
@@ -2717,16 +2717,16 @@ the importless self-host driver doesn't resolve stdlib imports; routing-pinned
 to `ir`, oracle-checked, each result ≤ 120). Self-host fixpoint unaffected — the
 additions are new `pub` methods and the compiler imports neither module.
 
-### 2026-06-21 — self-host: a 0-arg fn in an array (`var fns = [mk]; fns[0]()`) no longer segfaults
+### 2026-06-21 — self-host: a 0-arg fn in an array (`let fns = [mk]; fns[0]()`) no longer segfaults
 
-The array analog of the 0-arg fn-value segfault below: `var fns = [mk]` (mk a
+The array analog of the 0-arg fn-value segfault below: `let fns = [mk]` (mk a
 0-arg fn, no annotation) const-CALLED each element through the generic array
 lowering — storing `mk()`'s result — so `fns[0]()` called an integer as a code
 pointer and crashed (an IR-path miscompile). The existing fn-pointer-array
 lowering (`irlower.fern`, gated on the `fn[]` annotation) already emits
-`const_func` per element, but only fired with an explicit `var fns: fn[]`
+`const_func` per element, but only fired with an explicit `let fns: fn[]`
 annotation. Fix: the `inline_callonly_fn_values` parser pass now also types a
-`var fns = [<bare 0-arg fn names>]` as `fn[]` when `fns` is used ONLY as indexed
+`let fns = [<bare 0-arg fn names>]` as `fn[]` when `fns` is used ONLY as indexed
 calls (`fns[i](...)`); a VALUE use of `fns` (e.g. `fns[0] + 1`) leaves it as the
 generic const-called `i32` array, so the const-call interpretation is unchanged.
 A `>0`-arg fn name already lowers to a fn value, so only the 0-arg array case
@@ -2734,20 +2734,20 @@ needed this. Coverage: `TestSelfHostZeroArgFnValueIRX86_64` gains `array_index_c
 `array_two_fns`, and `array_loop_call`, oracle-checked against native. Fixpoint
 stays byte-identical (the compiler source uses no such array bindings).
 
-### 2026-06-21 — self-host: a 0-arg fn-value (`var f = mk; f()`) no longer segfaults
+### 2026-06-21 — self-host: a 0-arg fn-value (`let f = mk; f()`) no longer segfaults
 
-`var f = mk` where `mk` is a **0-arg** function, then `f()`, **segfaulted** on the
+`let f = mk` where `mk` is a **0-arg** function, then `f()`, **segfaulted** on the
 self-host compiler (an IR-path miscompile for an i32 return — it even routed
 `ir` — and an AST one for a struct return). Root cause: the self-host's "a bare
 0-arg receiver-less fn name is a CALL to it" rule (the `const` rule, #2954)
-lowered `var f = mk` to `var f = mk()`, binding the RESULT, so the later `f()`
+lowered `let f = mk` to `let f = mk()`, binding the RESULT, so the later `f()`
 called a non-function. The native compiler treats it as a function value.
 Fix: a new parser pass `inline_callonly_fn_values` (run in `module_with_builtins`,
 so BOTH the IR and AST self-host paths get it) recognises a local bound to a bare
 0-arg fn name and used ONLY as a call target, and inlines it — drops the binding
 and rewrites every `f(args)` to `mk(args)` (a 0-arg fn-value called is exactly
 its direct call evaluated at each call site, matching native). A `const` (or any
-0-arg fn) bound to a var and used as a VALUE (`var f = K; f + 1`) is left as a
+0-arg fn) bound to a let and used as a VALUE (`let f = K; f + 1`) is left as a
 const-call, so const semantics are unchanged. Coverage:
 `TestSelfHostZeroArgFnValueIRX86_64` — i32 return, struct return, called-twice,
 loop-call, a >0-arg fn-value, and the const-as-value soundness case — each
@@ -2759,8 +2759,8 @@ returned capturing a closure param, #3445 — remain on the AST path.)
 
 ### 2026-06-21 — self-host IR: a closure that calls another local closure now lifts
 
-A local closure whose body CALLS another local closure — `var add = fn(a){…};
-var twice = fn(a){ add(add(a)) }; twice(1)` — bailed the whole module to the AST
+A local closure whose body CALLS another local closure — `let add = fn(a){…};
+let twice = fn(a){ add(add(a)) }; twice(1)` — bailed the whole module to the AST
 emitter; the native compiler runs it (a goal-1 IR-subset gap in the closure /
 fn-value family). Root cause: when `closure_lift_one` hoists `add` to a
 top-level `__lam_N`, `subst_fcall_expr` rewrote `add`'s call sites in the rest of
@@ -2788,7 +2788,7 @@ byte-identical (the transform is deterministic + self-consistent).
 
 Closes two follow-on miscompiles in the generic-enum monomorphiser (the same-day
 #3572 work below): the pass only recovered a `match` scrutinee's instantiation
-from a directly-annotated **ident** (`var o: Opt[i32]; match (o)`), so other
+from a directly-annotated **ident** (`let o: Opt[i32]; match (o)`), so other
 scrutinee shapes left their arm patterns un-mangled — and since the pass *drops*
 the generic variant structs, an un-mangled `Sm`/`Nn` pattern (or a unit-variant
 construction) dangled → wrong result or a segfault. Now `monomorphize_enums`
@@ -2797,7 +2797,7 @@ callee's declared return type), an **index** scrutinee (`match (xs[0])`), and a
 `for`-loop element (`for o in xs` over `Opt[i32][]` binds `o: Opt[i32]`), and an
 **array literal** flowing into `Opt[i32][]` propagates the element expected type
 to each element so a unit-variant element (`Nn`) still pins its instantiation. An
-unannotated `var o = wrap(4)` also records the init's recovered type for a later
+unannotated `let o = wrap(4)` also records the init's recovered type for a later
 `match (o)`. Coverage: four new `TestSelfHostGenericEnum{IRX86_64,WasmIR}` cases
 — call scrutinee, array-iter (unit element), index scrutinee, string-payload
 array method dispatch — all routing `ir` and oracle-checked against native.
@@ -2818,7 +2818,7 @@ generic enum per concrete instantiation (`Opt[i32]` → `Opt__i32` with
 `Sm__i32(i32)`), mangles the variant **construction** call sites, the `match` arm
 **patterns**, and the `Opt[i32]` **annotations** to the clone, and wires the
 cloned enums + variant structs into the returned `Module` (the generic originals
-are dropped). The instantiation key is inferred from a `var`/param/return
+are dropped). The instantiation key is inferred from a `let`/param/return
 annotation or, for a payloaded variant, the argument types unified against the
 variant's field types — exactly the way the struct pass infers a literal's key.
 Scope: a simple-nominal key (primitive / string / bare struct); an enum with any
@@ -2842,7 +2842,7 @@ call result** — `mk(10)(5)` where `mk` returns `(y) => k + y`, and the curried
 `(x) => (y) => x + y`. Found while sweeping the IR path for remaining AST
 fallbacks (it was the only common one left).
 
-The env/RC machinery already worked for the via-`var` form (`var f = mk(10);
+The env/RC machinery already worked for the via-`let` form (`let f = mk(10);
 f(5)` — `closure_ret_fns` marks `f` a closure local, the box is dispatched
 env-first). Only the **inline call-on-call** bailed: the `mk(..)(args)` lowering
 handled a callee returning a bare fn pointer (no-capture lambda) but explicitly
@@ -2855,7 +2855,7 @@ the same shape the `is_closure_local` call arm already uses.
 (`TestSelfHostModloadFixpointX86_64` / `TestSelfHostStage2FixedPoint`) stay
 green. Guarded by `TestSelfHostReturnClosureIR{X86_64,Wasm}` — 7 value-pinned
 cases (curry, param/local capture, two-arg, two-captures, plus no-capture and
-via-`var` regression guards), routing-pinned to `"ir"` and oracle-checked.
+via-`let` regression guards), routing-pinned to `"ir"` and oracle-checked.
 
 ### 2026-06-20 — `std/u32` self-host row → ✅ (the #2917 wasm unsigned-compare gap is closed)
 
@@ -2909,9 +2909,9 @@ is **true**, including `NaN != NaN`. A NaN is produced importlessly with
 Row flipped to ✅ (self-host column; the native I/X/A/W cells were already ✅
 for the ordered comparisons).
 
-### 2026-06-20 — `var` type inference (wider types) on the self-host IR path + native audit
+### 2026-06-20 — `let` type inference (wider types) on the self-host IR path + native audit
 
-Extended the `var x: T = expr + type inference` row from "i32 path; wider types
+Extended the `let x: T = expr + type inference` row from "i32 path; wider types
 pending" to full coverage. With no explicit `: T` annotation, the binding's
 type is inferred from its initializer; the inferred type then drives the
 arithmetic / field access / dispatch that follows, so a wrong inference would
@@ -3582,7 +3582,7 @@ interpreter, pinned to the `"ir"` path. No compiler change.
 i64[] / f64[] already rode the 8-byte-element path (`op_arr_make_i64` + the
 `is_i64arr` element-width mark); u64[] was deferred.
 
-- **irlower.** The `var xs: u64[] = [...]` literal binding takes the same dedicated
+- **irlower.** The `let xs: u64[] = [...]` literal binding takes the same dedicated
   8-byte branch as i64[] (`op_arr_make_i64`), and the binding annotation marks the
   slot `is_i64arr` (8-byte element reads). The slot is additionally marked `is_u64`
   so a read element gets UNSIGNED arithmetic (`is_arr && is_u64` — the only
@@ -3611,7 +3611,7 @@ i64[] / f64[] already rode the 8-byte-element path (`op_arr_make_i64` + the
 `B { peers: A[] }`) — the shape behind linked lists, trees, and ASTs — now route
 the self-host IR path. Previously a self-referential struct fell to the AST emitter.
 
-- **Root cause.** The leak-safety gate `irlower.decl_is_leaksafe_d` walks a
+- **Root cause.** The leak-safety gate `fnsigs.decl_is_leaksafe_d` walks a
   struct's field type graph to admit it to the IR path in *leak mode* (no RC; the
   boxes leak with the struct, matching the AST path's exit codes). It used a
   depth cap (`depth > 16`) purely to avoid looping on cyclic type graphs — but
@@ -3700,7 +3700,7 @@ Guarded by `TestSelfHost{Crypto,Path,Math}IR{X86_64,Wasm}` in
 
 A fully-matched `Option[Result[T, E]]` (outer `Some` bound, then the inner Result
 matched and its payload read) bailed the module to AST. Root cause in
-`some_opt_type`: for `var o: Option[Result[..]] = Some(Ok(x))` it inferred o's type
+`some_opt_type`: for `let o: Option[Result[..]] = Some(Ok(x))` it inferred o's type
 from the construction, and `elem_type_tag(Ok(x))` **defaults** an Ok/Err payload to
 `"i32"` (it doesn't recognise Ok/Err as Result constructions). So o was mis-recorded
 as `Option[i32]`, and that wrong inference preempted the authoritative annotation
@@ -3918,9 +3918,9 @@ stdlib modules — `std/hex` etc. — for self-host IR coverage.)
 ### 2026-06-14 — `dyn Trait[]` LOCAL element dispatch via the self-host IR path
 
 A `dyn Trait[]` PARAM recorded the coarse `"dyn Trait"` element type on its slot,
-so `for x in param` / `param[i].m()` dispatched dynamically — but the local-`var`
-path (`var xs: dyn Trait[] = [...]`) marked the slot `is_arr` with NO element type,
-so every method call on a dyn-array LOCAL element (`xs[i].m()`, `var e = xs[i];
+so `for x in param` / `param[i].m()` dispatched dynamically — but the local-`let`
+path (`let xs: dyn Trait[] = [...]`) marked the slot `is_arr` with NO element type,
+so every method call on a dyn-array LOCAL element (`xs[i].m()`, `let e = xs[i];
 e.m()`, `for x in xs { x.m() }`) bailed to the AST path. The local-decl now records
 the same coarse `"dyn Trait"` element type (strip the `[]`), mirroring the param
 path, so element receivers recover as `dyn Trait` and dispatch through
@@ -3995,7 +3995,7 @@ regression guard). Verified end-to-end on x86-64, wasm, and arm64 (qemu); x86-64
 
 Follow-up to the no-capture-lambda-return slice (#3088): calling the RESULT of a
 call — `mk()(args)`, where `mk` returns a function value — now lowers through the
-IR path. Binding first (`var g = mk(); g(args)`) and calling a fn-pointer array
+IR path. Binding first (`let g = mk(); g(args)`) and calling a fn-pointer array
 element (`fs[i](args)`) already lowered; only the inline call-on-call-result form
 bailed, because the `ExprCall`-callee dispatch had no arm for an `ExprCall`
 callee. The fix lowers the args, then the callee call (its returned fn pointer on
@@ -4475,7 +4475,7 @@ All pass on the self-hosted compiler.
 
 **Finding — `Array.with` in-place reuse is unsound when the receiver stays live
 ([#2832](https://github.com/JakeChampion/lang/issues/2832)):** for
-`var c = a.with(i, v)` followed by a read of the original `a`, the interpreter
+`let c = a.with(i, v)` followed by a read of the original `a`, the interpreter
 gives value semantics (`a` unchanged) while **all four compiled backends**
 (native x86-64 / arm64 / wasm + self-host) reuse `a`'s buffer in place, so `c`
 and `a` alias and the original is mutated. `fern -check` accepts the program. The

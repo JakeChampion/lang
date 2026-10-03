@@ -21,11 +21,11 @@ function emit(line: u8[]): i32 {
 
 func IOByteLinesProgram(term, chunkSize int) string {
 	return strings.NewReplacer("TERM", strconv.Itoa(term), "CHUNK", strconv.Itoa(chunkSize)).Replace(ioByteLinePrelude + `function main(): i32 {
-    var r: Reader = stdin();
-    var lr: io.ByteLineReader = io.byte_line_reader_new(r, TERM, CHUNK);
-    var held: u8[][] = [];
+    let r: Reader = stdin();
+    let lr: io.ByteLineReader = io.byte_line_reader_new(r, TERM, CHUNK);
+    let held: u8[][] = [];
     while (true) {
-        var next: (Option[u8[]], io.ByteLineReader) = lr.next_line_bytes();
+        let next: (Option[u8[]], io.ByteLineReader) = lr.next_line_bytes();
         lr = next.1;
         match (next.0) {
             Some(line) => {
@@ -36,10 +36,10 @@ func IOByteLinesProgram(term, chunkSize int) string {
         }
     }
     match (lr.error()) { Some(_) => { return 2; }, None => {} }
-    var again: (Option[u8[]], io.ByteLineReader) = lr.next_line_bytes();
+    let again: (Option[u8[]], io.ByteLineReader) = lr.next_line_bytes();
     match (again.0) { Some(_) => { return 3; }, None => {} }
     match (r.close()) { Some(_) => { return 4; }, None => {} }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < held.len()) {
         if (emit(held[i]) != 0) { return 5; }
         i = i + 1;
@@ -65,12 +65,12 @@ func IOByteLineCases() []IOByteLineCase {
 		})
 	}
 	cases = append(cases, IOByteLineCase{Name: "transitions", Source: ioByteLinePrelude + `function main(): i32 {
-    var r: Reader = stdin();
-    var lr: io.ByteLineReader = io.byte_line_reader_new(r, 10, 4);
-    var held: u8[][] = [];
-    var step: i32 = 0;
+    let r: Reader = stdin();
+    let lr: io.ByteLineReader = io.byte_line_reader_new(r, 10, 4);
+    let held: u8[][] = [];
+    let step: i32 = 0;
     while (step < 4) {
-        var next: (Option[u8[]], io.ByteLineReader) = (None, lr);
+        let next: (Option[u8[]], io.ByteLineReader) = (None, lr);
         if (step == 0 || step == 2) { next = lr.next_line_bytes(); }
         else { next = lr.next_chunk_bytes(); }
         lr = next.1;
@@ -80,12 +80,12 @@ func IOByteLineCases() []IOByteLineCase {
         }
         step = step + 1;
     }
-    var end: (Option[u8[]], io.ByteLineReader) = lr.next_chunk_bytes();
+    let end: (Option[u8[]], io.ByteLineReader) = lr.next_chunk_bytes();
     lr = end.1;
     match (end.0) { Some(_) => { return 3; }, None => {} }
     match (lr.error()) { Some(_) => { return 4; }, None => {} }
     match (r.close()) { Some(_) => { return 5; }, None => {} }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < held.len()) { if (emit(held[i]) != 0) { return 6; } i = i + 1; }
     return 0;
 }`, Check: func(t *testing.T, command func() *exec.Cmd, census bool) {
@@ -115,15 +115,15 @@ func IOByteLineReadErrorProgram(closed bool, chunk, length, value int) string {
 	return strings.NewReplacer("SETUP", setup, "CHUNK", strconv.Itoa(chunk), "LENGTH", strconv.Itoa(length),
 		"VALUE", strconv.Itoa(value), "CLOSE", closeAtEnd).Replace(`import "std/io_buffered" as io;
 function main(): i32 {
-    var r: Reader = stdin();
+    let r: Reader = stdin();
     SETUP
-    var lr: io.ByteLineReader = io.byte_line_reader_new(r, 10, CHUNK);
-    var first: (Option[u8[]], io.ByteLineReader) = lr.next_line_bytes();
+    let lr: io.ByteLineReader = io.byte_line_reader_new(r, 10, CHUNK);
+    let first: (Option[u8[]], io.ByteLineReader) = lr.next_line_bytes();
     lr = first.1;
     match (first.0) {
         Some(bytes) => {
             if (LENGTH == 0 || bytes.len() != LENGTH) { return 2; }
-            var i: i32 = 0;
+            let i: i32 = 0;
             while (i < bytes.len()) { if (bytes[i] as i32 != VALUE) { return 3; } i = i + 1; }
         },
         None => { if (LENGTH != 0) { return 4; } },
@@ -132,10 +132,10 @@ function main(): i32 {
         Some(e) => { match (e) { Other(_, _) => {}, _ => { return 5; } } },
         None => { return 6; },
     }
-    var again: (Option[u8[]], io.ByteLineReader) = lr.next_chunk_bytes();
+    let again: (Option[u8[]], io.ByteLineReader) = lr.next_chunk_bytes();
     lr = again.1;
     match (again.0) { Some(_) => { return 7; }, None => {} }
-    var last: (Option[u8[]], io.ByteLineReader) = lr.next_line_bytes();
+    let last: (Option[u8[]], io.ByteLineReader) = lr.next_line_bytes();
     match (last.0) { Some(_) => { return 8; }, None => {} }
     match (last.1.error()) { Some(_) => {}, None => { return 9; } }
     if (CLOSE) { match (r.close()) { Some(_) => { return 10; }, None => {} } }

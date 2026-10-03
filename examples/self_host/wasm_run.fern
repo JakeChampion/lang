@@ -29,16 +29,16 @@ function main(): i32 {
   // (self_host_x86_gas_test.go names wasm_run.fern while its programs are
   // x86), so an extraction sweep silently probes the wrong backend. This is
   // the wasm sibling of asm_pathprobe_run / `-ir-probe`.
-  var decide: boolean = false;
-  var av: string[] = args();
-  var ai: i32 = 1;
+  let decide: boolean = false;
+  let av: string[] = args();
+  let ai: i32 = 1;
   while (ai < av.len()) {
     if (av[ai] == "-decide") {
       decide = true;
     }
     ai = ai + 1;
   }
-  var mod: parser.Module = rundriver.parse_stdin("wasm_run");
+  let mod: parser.Module = rundriver.parse_stdin("wasm_run");
   if (asmcore.refuse_parse_unknowns([mod])) {
     return 1;
   }
@@ -46,7 +46,7 @@ function main(): i32 {
   // wasm emitter and miscompile where the Go compiler rejects with E004.
   // Checked on a default-filled COPY so omitted defaulted args don't read
   // as mismatches; the emit input stays untouched.
-  var arity_errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(mod));
+  let arity_errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(mod));
   // Bare-map_new chain gate (native E038/E003 parity) — same
   // reject-don't-miscompile rationale as the arity gate.
   arity_errs = util.append_diags(arity_errs, asmcore.check_map_new_chain(mod));
@@ -67,17 +67,17 @@ function main(): i32 {
   // the raw/syscall floor #6946). The emit below runs this same gate, but only
   // on the emit path: the `-decide` probe returns before it, and answering
   // "ir" or "refused" for a program neither path can compile would be wrong.
-  var unsupported: string = wasm_ir.wasm_unsupported_builtin(mod);
+  let unsupported: string = wasm_ir.wasm_unsupported_builtin(mod);
   if (unsupported.len() > 0) {
     eprint(wasm_ir.wasm_unsupported_message(unsupported));
     return 1;
   }
-  var d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
+  let d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
   if (decide) {
     // The same decision emit_module_mode_or_error_sub makes, in its default
     // (non-component) mode — reused from wasm_ir rather than restated, so
     // the probe cannot drift from the emitter it describes.
-    var plm: parser.Module = wasm_ir.route_normalized(d.full);
+    let plm: parser.Module = wasm_ir.route_normalized(d.full);
     if (wasm_ir.ir_route_ok(plm, false, false, d.sub)) {
       print("ir\n");
     } else {
@@ -85,7 +85,7 @@ function main(): i32 {
     }
     return 0;
   }
-  var emitted: string = wasm_ir.emit_module_mode_or_error_sub(d.full, false, false, d.sub);
+  let emitted: string = wasm_ir.emit_module_mode_or_error_sub(d.full, false, false, d.sub);
   write(emitted);
   return 0;
 }

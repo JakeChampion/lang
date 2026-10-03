@@ -9,7 +9,7 @@ import (
 )
 
 // A self-tail call becomes a branch back to the synthetic `loop` TCO wraps the
-// body in (irlower.tco_self_tail), and the `return seen` after the `if` is the
+// body in, and the `return seen` after the `if` is the
 // last thing in that loop — so the loop's final block reaches the wrapper's
 // `end` live and terminated.
 //

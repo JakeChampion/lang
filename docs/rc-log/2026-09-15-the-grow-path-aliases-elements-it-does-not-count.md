@@ -7,8 +7,8 @@ lowering takes 2 ms. Eight lines reproduce it:
 ```fern
 function push(buf: i32[], v: i32): i32[] { return buf.append(v); }
 function build(n: i32): i32[] {
-    var out: i32[] = [];
-    var i: i32 = 0;
+    let out: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { out = push(out, i); i = i + 1; }
     return out;
 }
@@ -43,8 +43,8 @@ caller that rebinds:
 struct Box { name: string }
 function add(acc: Box[], n: string): Box[] { return acc.append(Box { name: n }); }
 function build(n: i32): Box[] {
-    var out: Box[] = [];
-    var i: i32 = 0;
+    let out: Box[] = [];
+    let i: i32 = 0;
     while (i < n) { out = add(out, tag(i)); i = i + 1; }
     return out;
 }

@@ -76,7 +76,7 @@ function seeded(named: i64, outer: i64): i64 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION] NEWROOT [COMMAND [ARG]...]\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";
   out = out + "Run COMMAND with root directory set to NEWROOT.\n";
@@ -122,12 +122,12 @@ function is_old_root(dir: string): boolean {
 // is none. A split would give five and three, and the empty ones would each
 // be reported as an invalid group.
 function split_commas(s: string): string[] {
-  var out: string[] = [];
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let out: string[] = [];
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i <= s.len()) {
-    var at_end: boolean = i == s.len();
-    var is_comma: boolean = false;
+    let at_end: boolean = i == s.len();
+    let is_comma: boolean = false;
     if (!at_end) {
       is_comma = s[i] as i32 == 44;
     }
@@ -149,7 +149,7 @@ function is_space(c: i32): boolean {
 // `skip_spaces(s)` — `s` with its leading whitespace dropped, which is what
 // the reference's `while (isspace (*tmp)) tmp++` leaves behind.
 function skip_spaces(s: string): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     if (!is_space(s[i] as i32)) {
       break;
@@ -174,17 +174,17 @@ function skip_spaces(s: string): string {
 // The whole string must be consumed, so a TRAILING space is a fault where a
 // leading one is not.
 function parse_gid_number(tok: string): Option[i64] {
-  var t: string = skip_spaces(tok);
-  var i: i32 = 0;
+  let t: string = skip_spaces(tok);
+  let i: i32 = 0;
   if (i < t.len()) {
     if (t[i] as i32 == 43) {
       i = i + 1;
     }
   }
-  var v: i64 = 0;
-  var digits: i32 = 0;
+  let v: i64 = 0;
+  let digits: i32 = 0;
   while (i < t.len()) {
-    var c: i32 = t[i] as i32;
+    let c: i32 = t[i] as i32;
     if (c < 48 || c > 57) {
       return None;
     }
@@ -217,8 +217,8 @@ struct Gid { ok: boolean, value: i64 }
 function resolve_group_token(db: owner.Db, tok: string): Gid {
   match (parse_gid_number(tok)) {
     Some(v) => {
-      var trimmed: string = skip_spaces(tok);
-      var plus: boolean = false;
+      let trimmed: string = skip_spaces(tok);
+      let plus: boolean = false;
       if (trimmed.len() > 0) {
         plus = trimmed[0] as i32 == 43;
       }
@@ -255,10 +255,10 @@ function resolve_group_token(db: owner.Db, tok: string): Gid {
 // speculative: a group that does not exist out here may exist in the new
 // root, and reporting it would name a failure that has not happened yet.
 function parse_groups(db: owner.Db, spec: string, show_errors: boolean): Option[i64[]] {
-  var out: i64[] = [];
-  var bad: boolean = false;
+  let out: i64[] = [];
+  let bad: boolean = false;
   for tok in split_commas(spec) {
-    var g: Gid = resolve_group_token(db, tok);
+    let g: Gid = resolve_group_token(db, tok);
     if (!g.ok) {
       bad = true;
       if (show_errors) {
@@ -305,7 +305,7 @@ function fill_from_passwd(db: owner.Db, ids: Ids, has_groups: boolean, fatal: bo
   }
   match (pwdb.user_by_uid_in(db.pw, ids.uid)) {
     Some(u) => {
-      var gid: i64 = ids.gid;
+      let gid: i64 = ids.gid;
       if (!is_set(gid)) {
         gid = u.gid;
       }
@@ -367,9 +367,9 @@ function strip_trailing_colon(s: string): string {
 struct Scan { userspec: string, has_userspec: boolean, groups: string, has_groups: boolean, skip_chdir: boolean }
 
 function scan(g: gnu.Getopt): (Scan, gnu.Getopt) {
-  var s: Scan = Scan { userspec: "", has_userspec: false, groups: "", has_groups: false, skip_chdir: false };
+  let s: Scan = Scan { userspec: "", has_userspec: false, groups: "", has_groups: false, skip_chdir: false };
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -422,7 +422,7 @@ function lookup_groups(db: owner.Db, spec: string, has_groups: boolean, ids: Ids
 
 // The --groups source.
 function groups_from_spec(db: owner.Db, spec: string, prior: Supp, report: boolean): Supp {
-  var last: boolean = report && !prior.found;
+  let last: boolean = report && !prior.found;
   match (parse_groups(db, spec, last)) {
     Some(gs) => {
       return Supp { gids: gs, found: true };
@@ -440,7 +440,7 @@ function groups_from_spec(db: owner.Db, spec: string, prior: Supp, report: boole
 // The group-file source, which is xgetgroups: every group naming this user,
 // plus their primary one.
 function groups_from_passwd(db: owner.Db, ids: Ids, prior: Supp, report: boolean): Supp {
-  var gl: i64[] = pwdb.group_list_in(db.gr, ids.uname, ids.gid);
+  let gl: i64[] = pwdb.group_list_in(db.gr, ids.uname, ids.gid);
   if (gl.len() > 0) {
     return Supp { gids: gl, found: true };
   }
@@ -490,18 +490,18 @@ struct Creds { ids: Ids, supp: Supp }
 // would then read the same files. Every failure here is silent: what it
 // finds is a fallback for the pass that matters, not an answer of its own.
 function outer_pass(s: Scan, is_oldroot: boolean): Creds {
-  var c: Creds = Creds { ids: Ids { uid: id_unset(), gid: id_unset(), uname: "" }, supp: Supp { gids: [], found: false } };
+  let c: Creds = Creds { ids: Ids { uid: id_unset(), gid: id_unset(), uname: "" }, supp: Supp { gids: [], found: false } };
   if (is_oldroot) {
     return c;
   }
-  var db: owner.Db = owner.db_load();
+  let db: owner.Db = owner.db_load();
   if (s.has_userspec) {
-    var p: owner.Parsed = owner.parse(db, s.userspec);
+    let p: owner.Parsed = owner.parse(db, s.userspec);
     if (p.ok) {
       c = Creds { ...c, ids: Ids { uid: p.spec.uid, gid: p.spec.gid, uname: "" } };
     }
   }
-  var ids: Ids = fill_from_passwd(db, c.ids, s.has_groups, false);
+  let ids: Ids = fill_from_passwd(db, c.ids, s.has_groups, false);
   return Creds { ids: ids, supp: lookup_groups(db, s.groups, s.has_groups, ids, c.supp, false) };
 }
 
@@ -512,10 +512,10 @@ function outer_pass(s: Scan, is_oldroot: boolean): Creds {
 // run even when the outer pass resolved it, because the ids it found are the
 // outer root's and mean nothing in this one.
 function inner_pass(s: Scan, c: Creds): Creds {
-  var db: owner.Db = owner.db_load();
-  var ids: Ids = c.ids;
+  let db: owner.Db = owner.db_load();
+  let ids: Ids = c.ids;
   if (s.has_userspec) {
-    var p: owner.Parsed = owner.parse(db, s.userspec);
+    let p: owner.Parsed = owner.parse(db, s.userspec);
     if (!p.ok) {
       gnu.error(p.reason());
       exit(status_canceled());
@@ -540,8 +540,8 @@ function command_argv(rest: string[]): string[] {
   if (rest.len() <= 1) {
     return shell_argv();
   }
-  var argv: string[] = [];
-  var i: i32 = 1;
+  let argv: string[] = [];
+  let i: i32 = 1;
   while (i < rest.len()) {
     argv = argv.append(rest[i]);
     i = i + 1;
@@ -550,34 +550,34 @@ function command_argv(rest: string[]): string[] {
 }
 
 pub function main(): i32 {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("", "groups", opt_groups()));
   opts = opts.append(gnu.valued("", "userspec", opt_userspec()));
   opts = opts.append(gnu.flag("", "skip-chdir", opt_skip_chdir()));
   // in_order, so the scan stops at the first operand: the options after
   // NEWROOT belong to the command, and `chroot / ls --help` runs ls.
-  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "chroot", help_text(), status_canceled()).in_order();
-  var sr: (Scan, gnu.Getopt) = scan(g);
-  var s: Scan = sr.0;
-  var rest: string[] = sr.1.operands();
+  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "chroot", help_text(), status_canceled()).in_order();
+  let sr: (Scan, gnu.Getopt) = scan(g);
+  let s: Scan = sr.0;
+  let rest: string[] = sr.1.operands();
   if (rest.len() == 0) {
     gnu.die_usage("missing operand", status_canceled());
   }
 
-  var newroot: string = rest[0];
-  var is_oldroot: boolean = is_old_root(newroot);
+  let newroot: string = rest[0];
+  let is_oldroot: boolean = is_old_root(newroot);
   if (!is_oldroot && s.skip_chdir) {
     gnu.die_usage("option --skip-chdir only permitted if NEWROOT is old " + gnu.quotea("/"), status_canceled());
   }
 
-  var c: Creds = outer_pass(s, is_oldroot);
+  let c: Creds = outer_pass(s, is_oldroot);
 
   must(chroot(newroot), "cannot change root directory to " + gnu.quotea(newroot));
   if (!s.skip_chdir) {
     must(chdir("/"), "cannot chdir to root directory");
   }
 
-  var argv: string[] = command_argv(rest);
+  let argv: string[] = command_argv(rest);
   c = inner_pass(s, c);
   apply(c.ids, c.supp, s.has_groups);
 

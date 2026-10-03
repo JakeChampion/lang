@@ -34,7 +34,7 @@ impl Display for Point {
 }
 
 function main(): i32 {
-    var p: Point = Point { x: 3, y: 7 };
+    let p: Point = Point { x: 3, y: 7 };
     print(p.to_string());
     return 0;
 }
@@ -80,8 +80,8 @@ impl Named for i32 {
 }
 
 function main(): i32 {
-    var d: Dog = Dog { age: 2 };
-    var n: i32 = 5;
+    let d: Dog = Dog { age: 2 };
+    let n: i32 = 5;
     print(d.name());
     print(n.name());
     return 0;
@@ -135,7 +135,7 @@ function show[T: Display](v: T): string {
 }
 
 function main(): i32 {
-    var p: Point = Point { x: 9, y: 2 };
+    let p: Point = Point { x: 9, y: 2 };
     print(show(p));
     print(show(42));
     return 0;
@@ -196,7 +196,7 @@ func runFernInterp(t *testing.T, file string) (int, string) {
 func TestInterpCrossModuleTraitDirect(t *testing.T) {
 	dir := writeTraitProject(t, `import "./shapes";
 function main(): i32 {
-    var sq: shapes.Square = shapes.Square { side: 5 };
+    let sq: shapes.Square = shapes.Square { side: 5 };
     return sq.area();
 }
 `)
@@ -210,7 +210,7 @@ func TestInterpCrossModuleTraitBoundedGeneric(t *testing.T) {
 	dir := writeTraitProject(t, `import "./shapes";
 function describe[T: shapes.Area](v: T): i32 { return v.area(); }
 function main(): i32 {
-    var sq: shapes.Square = shapes.Square { side: 4 };
+    let sq: shapes.Square = shapes.Square { side: 4 };
     return describe(sq);
 }
 `)
@@ -271,16 +271,16 @@ struct Outer { a: Inner, tag: string }
 function show[T: cmp.Display](v: T): string { return v.to_string(); }
 
 function main(): i32 {
-    var a: Point = Point { x: 3, y: 7 };
-    var b: Point = Point { x: 3, y: 7 };
-    var c: Point = Point { x: 3, y: 9 };
+    let a: Point = Point { x: 3, y: 7 };
+    let b: Point = Point { x: 3, y: 7 };
+    let c: Point = Point { x: 3, y: 9 };
     print(show(a));
     if (a.eq(b)) { print("a-eq-b"); }
     if (!a.eq(c)) { print("a-neq-c"); }
     print(a.cmp(c).to_string());
     // Composition: Outer.eq recurses into Inner.eq.
-    var p: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
-    var q: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
+    let p: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
+    let q: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
     if (p.eq(q)) { print("outer-eq"); }
     print(p.to_string());
     return 0;
@@ -322,9 +322,9 @@ enum Shape {
 }
 
 function main(): i32 {
-    var a: Shape = Rect(3, 4);
-    var b: Shape = Rect(3, 4);
-    var c: Shape = Circle(5);
+    let a: Shape = Rect(3, 4);
+    let b: Shape = Rect(3, 4);
+    let c: Shape = Circle(5);
     print(a.to_string());
     print(c.to_string());
     print(Dot.to_string());
@@ -361,7 +361,7 @@ func TestInterpGenericArrayAsserts(t *testing.T) {
 	src := filepath.Join(dir, "prog.fern")
 	if err := os.WriteFile(src, []byte(`import "std/test";
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("arr");
+    let r: test.TestRunner = test.test_new("arr");
     r = r.it("eq i32[]", () => test.assert_eq_array([1, 2, 3], [1, 2, 3]));
     r = r.it("eq string[]", () => test.assert_eq_array(["a", "b"], ["a", "b"]));
     r = r.it("at", () => test.assert_at([10, 20, 30], 1, 20));
@@ -398,11 +398,11 @@ func TestInterpGenericMapAsserts(t *testing.T) {
 	if err := os.WriteFile(src, []byte(`import "core/map";
 import "std/test";
 function main(): i32 {
-    var a: Map[i32, i32] = map_new(4);
+    let a: Map[i32, i32] = map_new(4);
     a = a.insert(1, 10); a = a.insert(2, 20);
-    var s: Map[string, string] = map_new(4);
+    let s: Map[string, string] = map_new(4);
     s = s.insert("k", "v");
-    var r: test.TestRunner = test.test_new("map");
+    let r: test.TestRunner = test.test_new("map");
     r = r.it("len i32",       () => test.assert_map_len(a, 2));
     r = r.it("has i32",       () => test.assert_map_has(a, 1, 10));
     r = r.it("lacks i32",     () => test.assert_map_lacks(a, 9));
@@ -486,21 +486,21 @@ pub function (e: Email) domain(): string { return e.addr; }
 	}
 	// Legal: construct via factory, call method.
 	okMain := write("ok_main.fern", `import "./email";
-function main(): i32 { var e: email.Email = email.make("a@b.com"); print(e.domain()); return 0; }
+function main(): i32 { let e: email.Email = email.make("a@b.com"); print(e.domain()); return 0; }
 `)
 	if code, out := runFernInterp(t, okMain); code != 0 || !strings.Contains(out, "a@b.com") {
 		t.Errorf("legal opaque use failed: exit=%d out=%q", code, out)
 	}
 	// Illegal: field read from another module.
 	badField := write("bad_field.fern", `import "./email";
-function main(): i32 { var e: email.Email = email.make("x"); print(e.addr); return 0; }
+function main(): i32 { let e: email.Email = email.make("x"); print(e.addr); return 0; }
 `)
 	if code, out := runFernInterp(t, badField); code == 0 || !strings.Contains(out, "opaque type email.Email") {
 		t.Errorf("field read of opaque type should be rejected: exit=%d out=%q", code, out)
 	}
 	// Illegal: construction from another module.
 	badCtor := write("bad_ctor.fern", `import "./email";
-function main(): i32 { var e: email.Email = email.Email { addr: "x" }; return 0; }
+function main(): i32 { let e: email.Email = email.Email { addr: "x" }; return 0; }
 `)
 	if code, out := runFernInterp(t, badCtor); code == 0 || !strings.Contains(out, "construct opaque type") {
 		t.Errorf("construction of opaque type should be rejected: exit=%d out=%q", code, out)
@@ -512,21 +512,21 @@ function main(): i32 { var e: email.Email = email.Email { addr: "x" }; return 0;
 	patterns := []struct{ name, body string }{
 		{"bad_match.fern", `import "./email";
 function main(): i32 {
-    var e: email.Email = email.make("x");
+    let e: email.Email = email.make("x");
     match (e) { email.Email { addr } => { print(addr); return 0; } }
 }
 `},
 		{"bad_iflet.fern", `import "./email";
 function main(): i32 {
-    var e: email.Email = email.make("x");
+    let e: email.Email = email.make("x");
     if let email.Email { addr } = e { print(addr); }
     return 0;
 }
 `},
 		{"bad_match_expr.fern", `import "./email";
 function main(): i32 {
-    var e: email.Email = email.make("x");
-    var s: string = match (e) { email.Email { addr } => addr };
+    let e: email.Email = email.make("x");
+    let s: string = match (e) { email.Email { addr } => addr };
     print(s);
     return 0;
 }
@@ -542,7 +542,7 @@ function main(): i32 {
 	// access, and the defining module may of course destructure its own type.
 	okRest := write("ok_rest.fern", `import "./email";
 function main(): i32 {
-    var e: email.Email = email.make("x");
+    let e: email.Email = email.make("x");
     match (e) { email.Email { .. } => { print("ok"); return 0; } }
 }
 `)
@@ -552,7 +552,7 @@ function main(): i32 {
 	okInside := write("ok_inside.fern", `pub opaque struct Email { addr: string }
 pub function make(a: string): Email { return Email { addr: a }; }
 function main(): i32 {
-    var e: Email = make("a@b.com");
+    let e: Email = make("a@b.com");
     match (e) { Email { addr } => { print(addr); return 0; } }
 }
 `)
@@ -589,8 +589,8 @@ function describe(s: dyn Shape): string {
     return s.name() + "=" + s.area().to_string();
 }
 function main(): i32 {
-    var shapes: dyn Shape[] = [Circle { r: 2 }, Rect { w: 3, h: 4 }, Circle { r: 1 }];
-    var total: i32 = 0;
+    let shapes: dyn Shape[] = [Circle { r: 2 }, Rect { w: 3, h: 4 }, Circle { r: 1 }];
+    let total: i32 = 0;
     for s in shapes {
         print(describe(s));
         total = total + s.area();
@@ -661,10 +661,10 @@ function describe(d: dyn Show + Weigh): string {
 }
 function main(): i32 {
     // order-insensitive: dyn Weigh + Show is the same type
-    var one: dyn Weigh + Show = Apple { g: 150 };
+    let one: dyn Weigh + Show = Apple { g: 150 };
     print(describe(one));
-    var items: dyn Show + Weigh[] = [Apple { g: 120 }, Brick { kg: 2 }];
-    var total: i32 = 0;
+    let items: dyn Show + Weigh[] = [Apple { g: 120 }, Brick { kg: 2 }];
+    let total: i32 = 0;
     for it in items {
         print(describe(it));
         total = total + it.weight();
@@ -728,14 +728,14 @@ impl Shape for Circle { function area(self: Self): i32 { return self.r; } }
 impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } }
 function describe(s: dyn Shape): string {
     // hit binds the concrete value, usable as a Circle (reads .r)
-    var c: Option[Circle] = s as? Circle;
+    let c: Option[Circle] = s as? Circle;
     return match (c) {
         Some(x) => "circle r=" + x.r.to_string(),
         None => "other",
     };
 }
 function main(): i32 {
-    var shapes: dyn Shape[] = [Circle { r: 5 }, Rect { w: 2, h: 3 }, Circle { r: 9 }];
+    let shapes: dyn Shape[] = [Circle { r: 5 }, Rect { w: 2, h: 3 }, Circle { r: 9 }];
     for s in shapes {
         print(describe(s));
     }
@@ -792,8 +792,8 @@ func TestInterpDynTraitQualifiedTraitName(t *testing.T) {
 import "std/string";
 import "core/cmp";
 function render(args: dyn cmp.Display[]): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < args.len()) {
         out = out + args[i].to_string();
         if (i + 1 < args.len()) { out = out + ", "; }
@@ -802,7 +802,7 @@ function render(args: dyn cmp.Display[]): string {
     return out;
 }
 function main(): i32 {
-    var xs: dyn cmp.Display[] = [42, "hi", true];
+    let xs: dyn cmp.Display[] = [42, "hi", true];
     print(render(xs));
     return 0;
 }
@@ -850,8 +850,8 @@ impl[T: cmp.Eq] cmp.Eq for Box[T] {
 }
 
 function main(): i32 {
-    var a = Box { v: 42 };
-    var s = Box { v: "hi" };
+    let a = Box { v: 42 };
+    let s = Box { v: "hi" };
     print(a.to_string());
     print(s.to_string());
     if (a.eq(Box { v: 42 })) { print("a-eq"); }
@@ -890,7 +890,7 @@ impl[T: cmp.Display] cmp.Display for Box[T] {
     function to_string(self: Self): string { return self.v.to_string(); }
 }
 function main(): i32 {
-    var b = Box { v: NoDisp {} };
+    let b = Box { v: NoDisp {} };
     print(b.to_string());
     return 0;
 }
@@ -923,14 +923,14 @@ struct Twin[A, B] { a: A, b: B }
 function sign(n: i32): string { if (n < 0) { return "lt"; } if (n > 0) { return "gt"; } return "eq"; }
 
 function main(): i32 {
-    var t = Leaf(42);
+    let t = Leaf(42);
     print(t.to_string());
     print(Pair(1, 2).to_string());
     if (t.eq(Leaf(42))) { print("leaf-eq"); }
     if (!t.eq(Pair(1, 2))) { print("t-neq"); }
     print(sign(Leaf(1).cmp(Pair(0, 0)))); // lt (Leaf variant before Pair)
 
-    var p = Twin { a: 7, b: "x" };
+    let p = Twin { a: 7, b: "x" };
     print(p.to_string());
     if (p.eq(Twin { a: 7, b: "x" })) { print("twin-eq"); }
     return 0;
@@ -970,12 +970,12 @@ impl[T: cmp.Display] cmp.Display for Box[T] {
 enum Opt[T] { Has(T), Nil }
 
 function main(): i32 {
-    var a = Box { v: 5 };
-    var s = Box { v: "hi" };
+    let a = Box { v: 5 };
+    let s = Box { v: "hi" };
     print(a.to_string());
     print(s.to_string());
     print(Has(9).to_string());
-    var n: Opt[i32] = Nil;
+    let n: Opt[i32] = Nil;
     print(n.to_string());
     if (Has(9).eq(Has(9))) { print("has-eq"); }
     return 0;
@@ -1015,8 +1015,8 @@ impl Greet for Cat {
 function announce[T: Greet](x: T): string { return x.greeting(); }
 
 function main(): i32 {
-    var d: Dog = Dog { age: 3 };
-    var c: Cat = Cat { age: 5 };
+    let d: Dog = Dog { age: 3 };
+    let c: Cat = Cat { age: 5 };
     print(d.greeting());       // inherited default
     print(c.greeting());       // overridden
     print(announce(d));        // default via bound
@@ -1073,8 +1073,8 @@ impl Greet for Cat {
 }
 
 function main(): i32 {
-    var d: Dog = Dog { age: 3 };
-    var c: Cat = Cat { age: 5 };
+    let d: Dog = Dog { age: 3 };
+    let c: Cat = Cat { age: 5 };
     print(d.greeting());       // inherited default
     print(c.greeting());       // overridden
     return 0;
@@ -1146,8 +1146,8 @@ function rank[T: Ord](a: T, b: T): string {
 }
 
 function main(): i32 {
-    var p: P = P { x: 3 };
-    var q: P = P { x: 5 };
+    let p: P = P { x: 3 };
+    let q: P = P { x: 5 };
     print(rank(p, q));   // lt
     print(rank(q, p));   // gt
     print(rank(p, p));   // eq
@@ -1216,8 +1216,8 @@ impl Eq for P { function eq(self: Self, other: Self): boolean { return self.x ==
 impl Ord for P { function lt(self: Self, other: Self): boolean { return self.x < other.x; } }
 
 function main(): i32 {
-    var p: P = P { x: 3 };
-    var q: P = P { x: 5 };
+    let p: P = P { x: 3 };
+    let q: P = P { x: 5 };
     if (p.eq(q)) { print("eq"); } else { print("neq"); }   // neq
     if (p.lt(q)) { print("lt"); }                          // lt
     return 0;

@@ -167,7 +167,7 @@ self-compiled by the `asm_run` driver is **1100 MB before and after**
 this slice; a pure-i32 500×20 module is 662 MB, so strings account for
 ~438 MB — but that ~438 MB is **not** captured here. Two reasons, both
 upstream of the struct-field drop: (1) the dominant string locals are
-**bare `var s = …` locals**, which native does not drop at all yet (no
+**bare `let s = …` locals**, which native does not drop at all yet (no
 exit-sweep / reinit free — see "Remaining sites" below); and (2) the
 compiler's own `Op.kind` / `Op.str` fields live in `Op` structs that are
 **never dropped** in the self-compile — they sit in the cloned / threaded
@@ -225,7 +225,7 @@ arrays / tuples / enums / closure captures.
 > Unlike the struct field (which flows through the always-generated
 > `__drop_struct_<N>`), a bare native string *local* is **never tracked
 > for the exit sweep / reinit drop at all** — verified: even `function
-> f(x: string): i32 { var s = x + "yy"; return s.len(); }` emits **no**
+> f(x: string): i32 { let s = x + "yy"; return s.len(); }` emits **no**
 > string dec on native (`ptrW=8`). The eligibility gate
 > (`computeFreeEligible` / `rcTracked`) doesn't admit native string
 > locals, so the `b.ptrW == 8` arms in `emitDec` / `emitOwnedSlotDrop`
@@ -265,7 +265,7 @@ skips tainted / uncounted-alias sources — `rhsTainted` taints every
 `FreelistReuse`, and the underflow detector all pass, and the emitted asm
 gains the `__fern_str_dec` calls (baseline emits **zero** string decs for a
 bare local — confirming the "never dropped" observation). **But it produced
-NO peak-RSS reduction.** A 2M-iter `var s = base + "_payload…"` reinit-drop
+NO peak-RSS reduction.** A 2M-iter `let s = base + "_payload…"` reinit-drop
 loop stays at **~91 MB** (200k → 9 MB, 2M → 91 MB — linear, i.e. still
 leaking) both before and after.
 
@@ -344,7 +344,7 @@ All three fixes shipped: (1) size-class agreement (`str_dec` frees
 `length+1`, the four `+0` producers request `length+1`); (2)
 `computeFreeEligible` admits native string locals; (3) the nested-concat
 operand drop routes to the freeing `__fern_str_dec`, not the dec-only
-`__fern_rc_dec`. **General-purpose win confirmed:** a `var s = base + "…"`
+`__fern_rc_dec`. **General-purpose win confirmed:** a `let s = base + "…"`
 churn drops **91 MB → 128 KB**, and a nested `a + b + a + b` loop goes from a
 multi-MB bump to bounded (freed *and* recycled, gdb-verified address reuse).
 

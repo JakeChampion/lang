@@ -47,7 +47,7 @@ trait Hash { function hash(self: Self): i32; }
 impl Hash for bigish.Val { }
 
 function main(): i32 {
-    var v: bigish.Val = bigish.make(7);
+    let v: bigish.Val = bigish.make(7);
     if (v.n == 7) { return 0; }
     return 1;
 }

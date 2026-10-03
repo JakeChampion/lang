@@ -27,9 +27,9 @@ var ordEqArrayMethodIRCases = []struct {
 	// is_sorted: [1,2,3] sorted, [3,1,2] not — both checks pass → 3.
 	{"is_sorted", `import "std/array";
 function main(): i32 {
-    var a: i32[] = [1, 2, 3];
-    var b: i32[] = [3, 1, 2];
-    var r: i32 = 0;
+    let a: i32[] = [1, 2, 3];
+    let b: i32[] = [3, 1, 2];
+    let r: i32 = 0;
     if (a.is_sorted()) { r = r + 1; }
     if (!b.is_sorted()) { r = r + 2; }
     return r;
@@ -37,10 +37,10 @@ function main(): i32 {
 	// equal: structural element-wise equality over string[].
 	{"equal", `import "std/array";
 function main(): i32 {
-    var a: string[] = ["x", "y"];
-    var b: string[] = ["x", "y"];
-    var c: string[] = ["x", "z"];
-    var r: i32 = 0;
+    let a: string[] = ["x", "y"];
+    let b: string[] = ["x", "y"];
+    let c: string[] = ["x", "z"];
+    let r: i32 = 0;
     if (a.equal(b)) { r = r + 1; }
     if (!a.equal(c)) { r = r + 2; }
     return r;
@@ -48,10 +48,10 @@ function main(): i32 {
 	// starts_with over i32[].
 	{"starts_with", `import "std/array";
 function main(): i32 {
-    var a: i32[] = [1, 2, 3, 4];
-    var p: i32[] = [1, 2];
-    var q: i32[] = [2, 3];
-    var r: i32 = 0;
+    let a: i32[] = [1, 2, 3, 4];
+    let p: i32[] = [1, 2];
+    let q: i32[] = [2, 3];
+    let r: i32 = 0;
     if (a.starts_with(p)) { r = r + 1; }
     if (!a.starts_with(q)) { r = r + 2; }
     return r;
@@ -59,15 +59,15 @@ function main(): i32 {
 	// ends_with over string[].
 	{"ends_with", `import "std/array";
 function main(): i32 {
-    var a: string[] = ["a", "b", "c"];
-    var s: string[] = ["b", "c"];
+    let a: string[] = ["a", "b", "c"];
+    let s: string[] = ["b", "c"];
     if (a.ends_with(s)) { return 1; }
     return 0;
 }`},
 	// index_of_last: last index of 5 in [5,3,5,1] is 2.
 	{"index_of_last", `import "std/array";
 function main(): i32 {
-    var a: i32[] = [5, 3, 5, 1];
+    let a: i32[] = [5, 3, 5, 1];
     match (a.index_of_last(5)) { Some(i) => { return i; }, None => { return 99; } }
 }`},
 }

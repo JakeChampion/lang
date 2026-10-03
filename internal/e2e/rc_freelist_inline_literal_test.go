@@ -22,7 +22,7 @@ import "testing"
 // Note: this is unconditional (not gated on ast.RcFreeEnabled) — it reproduced
 // identically free-on and free-off. It is the same shape that made the
 // self-host lambda-lift's `[parser.StmtReturn{...}]` (a Stmt-union array in the
-// 2-field LiftStmts struct) read back corrupt; #2759's `var ns` workaround
+// 2-field LiftStmts struct) read back corrupt; #2759's `let ns` workaround
 // happens to fix it correctly by giving the element a typed binding.
 func TestInlineEnumVariantInStructArrayField(t *testing.T) {
 	src := `
@@ -35,7 +35,7 @@ function get(nd: Node): i32 {
     return 99;
 }
 function mk(): Wrap { return Wrap { items: [Leaf { x: 42 }], n: 7 }; }
-function main(): i32 { var w: Wrap = mk(); return get(w.items[0]); }
+function main(): i32 { let w: Wrap = mk(); return get(w.items[0]); }
 `
 	_, exit, _ := compileX86_64InDir(t, src, nil)
 	if exit != 42 {

@@ -55,34 +55,34 @@ const arm64GasWritebackSelfTestMain = `
 function main(): i32 {
     // The exact form __fern_eprint_str used: no byte-store writeback encoder,
     // so it must land in p.unknown rather than encode as a plain offset store.
-    var p1: Arm64GasProg = arm64_gas_program("strb w1, [sp, #-16]!\nret\n");
+    let p1: Arm64GasProg = arm64_gas_program("strb w1, [sp, #-16]!\nret\n");
     if (p1.unknown.len() == 0) { return 1; }
 
     // The load twin, and the half-word pair.
-    var p2: Arm64GasProg = arm64_gas_program("ldrb w1, [sp, #-16]!\nret\n");
+    let p2: Arm64GasProg = arm64_gas_program("ldrb w1, [sp, #-16]!\nret\n");
     if (p2.unknown.len() == 0) { return 2; }
-    var p3: Arm64GasProg = arm64_gas_program("strh w1, [sp, #-16]!\nret\n");
+    let p3: Arm64GasProg = arm64_gas_program("strh w1, [sp, #-16]!\nret\n");
     if (p3.unknown.len() == 0) { return 3; }
 
     // ldur/stur have only an immediate-offset encoder too.
-    var p4: Arm64GasProg = arm64_gas_program("stur x1, [sp, #-16]!\nret\n");
+    let p4: Arm64GasProg = arm64_gas_program("stur x1, [sp, #-16]!\nret\n");
     if (p4.unknown.len() == 0) { return 4; }
 
     // The forms that DO implement writeback must stay accepted — this is the
     // operand stack's own idiom, so a blanket refusal would reject every
     // function the emitter produces.
-    var p5: Arm64GasProg = arm64_gas_program("str x0, [sp, #-16]!\nret\n");
+    let p5: Arm64GasProg = arm64_gas_program("str x0, [sp, #-16]!\nret\n");
     if (p5.unknown.len() != 0) { return 5; }
-    var p6: Arm64GasProg = arm64_gas_program("stp x29, x30, [sp, #-16]!\nret\n");
+    let p6: Arm64GasProg = arm64_gas_program("stp x29, x30, [sp, #-16]!\nret\n");
     if (p6.unknown.len() != 0) { return 6; }
-    var p7: Arm64GasProg = arm64_gas_program("ldr x0, [sp], #16\nret\n");
+    let p7: Arm64GasProg = arm64_gas_program("ldr x0, [sp], #16\nret\n");
     if (p7.unknown.len() != 0) { return 7; }
 
     // A byte store with NO writeback is still fine — the refusal keys on the
     // marker, not on the mnemonic.
-    var p8: Arm64GasProg = arm64_gas_program("strb w1, [sp]\nret\n");
+    let p8: Arm64GasProg = arm64_gas_program("strb w1, [sp]\nret\n");
     if (p8.unknown.len() != 0) { return 8; }
-    var p9: Arm64GasProg = arm64_gas_program("ldrb w0, [x1, x2]\nret\n");
+    let p9: Arm64GasProg = arm64_gas_program("ldrb w0, [x1, x2]\nret\n");
     if (p9.unknown.len() != 0) { return 9; }
 
     return 0;

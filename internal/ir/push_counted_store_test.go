@@ -14,10 +14,10 @@ import (
 // __drop_arr_* walk instead of the never-freeing plain dec.
 func TestArrayPushProjectionSourceFreeEligible(t *testing.T) {
 	p := lowerSource(t, `function work(k: i32): i32 {
-    var src: i32[][] = [[k, k + 1], [k + 2]];
-    var out: i32[][] = [];
+    let src: i32[][] = [[k, k + 1], [k + 2]];
+    let out: i32[][] = [];
     out = out.append(src[0]);
-    var e: i32[] = out[0];
+    let e: i32[] = out[0];
     return e[0] + e[1];
 }`)
 	var work *Func
@@ -49,10 +49,10 @@ func TestArrayPushProjectionSourceFreeEligible(t *testing.T) {
 	// (markConstructionMoves): stored uninc'd, and dropped from the sweep, so
 	// the buffer alone releases it. The accumulator is unaffected.
 	p2 := lowerSource(t, `function keep(k: i32): i32 {
-    var row: i32[] = [k, k + 1];
-    var out: i32[][] = [];
+    let row: i32[] = [k, k + 1];
+    let out: i32[][] = [];
     out = out.append(row);
-    var e: i32[] = out[0];
+    let e: i32[] = out[0];
     return e[0];
 }`)
 	var keep *Func
@@ -88,10 +88,10 @@ func TestArrayPushProjectionSourceFreeEligible(t *testing.T) {
 // inc, no old-element drop), so their taint arm must survive unchanged.
 func TestArraySetProjectionSourceFreeEligible(t *testing.T) {
 	p := lowerSource(t, `function work(k: i32): i32 {
-    var src: i32[][] = [[k, k + 1], [k + 2]];
-    var out: i32[][] = [[k]];
+    let src: i32[][] = [[k, k + 1], [k + 2]];
+    let out: i32[][] = [[k]];
     out = out.with(0, src[0]);
-    var e: i32[] = out[0];
+    let e: i32[] = out[0];
     return e[0] + e[1];
 }`)
 	var work *Func
@@ -118,8 +118,8 @@ func TestArraySetProjectionSourceFreeEligible(t *testing.T) {
 	// counted-store machinery excludes them, so the source container must
 	// keep its never-freeing plain dec.
 	p2 := lowerSource(t, `function strs(): i32 {
-    var src: string[][] = [["a"], ["b"]];
-    var out: string[][] = [["c"]];
+    let src: string[][] = [["a"], ["b"]];
+    let out: string[][] = [["c"]];
     out = out.with(0, src[0]);
     return out[0].len();
 }`)
@@ -156,9 +156,9 @@ func TestArraySetProjectionSourceFreeEligible(t *testing.T) {
 // reclaimable and only slice-view yields keep the escape taint.
 func TestIfExprYieldSourceFreeEligible(t *testing.T) {
 	p := lowerSource(t, `function pick(c: boolean, k: i32): i32 {
-    var a: i32[][] = [[k]];
-    var b2: i32[][] = [[k + 1]];
-    var v: i32[][] = if (c) { a } else { b2 };
+    let a: i32[][] = [[k]];
+    let b2: i32[][] = [[k + 1]];
+    let v: i32[][] = if (c) { a } else { b2 };
     return v[0][0];
 }`)
 	var pick *Func
@@ -191,16 +191,16 @@ func TestIfExprYieldSourceFreeEligible(t *testing.T) {
 	}
 }
 
-// #4402 opt 1 — dead-alias dup/drop cancellation: `var y = x` with both
+// #4402 opt 1 — dead-alias dup/drop cancellation: `let y = x` with both
 // proven pure (x never reassigned/moved/matched-on, y never
 // reassigned/returned) elides y's transfer inc AND y's exit-sweep dec as a
 // net-zero pair; x stays exit-sweep-released and precise-drop/reuse-donor
 // excluded.
 func TestDeadAliasPairCancelled(t *testing.T) {
 	p := lowerSource(t, `function work(k: i32): i32 {
-    var x: i32[][] = [[k, k + 1]];
-    var y: i32[][] = x;
-    var e: i32[] = y[0];
+    let x: i32[][] = [[k, k + 1]];
+    let y: i32[][] = x;
+    let e: i32[] = y[0];
     return e[0] + x[0][1];
 }`)
 	var work *Func
@@ -233,11 +233,11 @@ func TestDeadAliasPairCancelled(t *testing.T) {
 		t.Errorf("want 2 deep-drop sites (x reinit + x sweep; y is a borrowed view), got %d:\n%s", deepDrops, p)
 	}
 	// Reassigned alias: cancellation must NOT fire (y is rebound), and
-	// since x is still used after `var y = x`, the move machinery doesn't
+	// since x is still used after `let y = x`, the move machinery doesn't
 	// claim the site either — y keeps its ordinary transfer inc.
 	p2 := lowerSource(t, `function keep(k: i32): i32 {
-    var x: i32[][] = [[k]];
-    var y: i32[][] = x;
+    let x: i32[][] = [[k]];
+    let y: i32[][] = x;
     y = [[k + 1]];
     return x[0][0] + y[0][0];
 }`)
@@ -259,7 +259,7 @@ func TestDeadAliasPairCancelled(t *testing.T) {
 	if kIncs < 1 {
 		t.Errorf("reassigned alias must keep its transfer inc, got %d incs:\n%s", kIncs, p2)
 	}
-	// (A returned alias needs no assertion here: `var y = x; return y`
+	// (A returned alias needs no assertion here: `let y = x; return y`
 	// is claimed by move-on-alias + move-on-return — zero incs, zero
 	// sweeps, fully transferred — and the borrowed-alias gates exclude
 	// returned names anyway.)

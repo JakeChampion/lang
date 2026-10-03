@@ -17,18 +17,18 @@ struct PS { node: Tok, pos: i32 }
 
 function parse_one(s: string, i: i32): PS {
     if (s[i] == 40) {
-        var inner: PS = parse_many(s, i + 1);
-        var pos: i32 = inner.pos;
+        let inner: PS = parse_many(s, i + 1);
+        let pos: i32 = inner.pos;
         if (pos < s.len() && s[pos] == 41) { pos = pos + 1; }
         return PS { node: inner.node, pos: pos };
     }
     return PS { node: One(s[i] as i32), pos: i + 1 };
 }
 function parse_many(s: string, i: i32): PS {
-    var items: Tok[] = [];
-    var pos: i32 = i;
+    let items: Tok[] = [];
+    let pos: i32 = i;
     while (pos < s.len() && s[pos] != 41) {
-        var p: PS = parse_one(s, pos);
+        let p: PS = parse_one(s, pos);
         items = items.append(p.node);
         pos = p.pos;
     }
@@ -38,7 +38,7 @@ function parse_many(s: string, i: i32): PS {
 function count(t: Tok): i32 {
     match (t) {
         One(_) => { return 1; },
-        Many(xs) => { var c: i32 = 0; var k: i32 = 0; while (k < xs.len()) { c = c + count(xs[k]); k = k + 1; } return c; }
+        Many(xs) => { let c: i32 = 0; let k: i32 = 0; while (k < xs.len()) { c = c + count(xs[k]); k = k + 1; } return c; }
     }
 }
 `
@@ -48,17 +48,17 @@ var recStructArrayEnumCases = []struct {
 	main string
 }{
 	// Group first, then a trailing atom: leaves a,b,c -> 3 (the canonical crash).
-	{"group-first", `function main(): i32 { var r: PS = parse_many("(ab)c", 0); return count(r.node); }`},
+	{"group-first", `function main(): i32 { let r: PS = parse_many("(ab)c", 0); return count(r.node); }`},
 	// Group only, inner is a 2-element Many: a,b -> 2.
-	{"group-only", `function main(): i32 { var r: PS = parse_many("(ab)", 0); return count(r.node); }`},
+	{"group-only", `function main(): i32 { let r: PS = parse_many("(ab)", 0); return count(r.node); }`},
 	// Single-element group (inner is a bare One, no Many wrapper): a -> 1.
-	{"single-group", `function main(): i32 { var r: PS = parse_many("(a)", 0); return count(r.node); }`},
+	{"single-group", `function main(): i32 { let r: PS = parse_many("(a)", 0); return count(r.node); }`},
 	// Group not first: z,a,b,c -> 4 (was fine before the fix; regression guard).
-	{"group-not-first", `function main(): i32 { var r: PS = parse_many("z(ab)c", 0); return count(r.node); }`},
+	{"group-not-first", `function main(): i32 { let r: PS = parse_many("z(ab)c", 0); return count(r.node); }`},
 	// No group at all: a,b,c -> 3.
-	{"no-group", `function main(): i32 { var r: PS = parse_many("abc", 0); return count(r.node); }`},
+	{"no-group", `function main(): i32 { let r: PS = parse_many("abc", 0); return count(r.node); }`},
 	// Nested groups: a,b,c -> 3 (deeper recursive struct returns).
-	{"nested-group", `function main(): i32 { var r: PS = parse_many("((ab)c)", 0); return count(r.node); }`},
+	{"nested-group", `function main(): i32 { let r: PS = parse_many("((ab)c)", 0); return count(r.node); }`},
 }
 
 // TestSelfHostRecStructArrayEnumIR compiles each case with the self-host CLI for

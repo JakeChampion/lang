@@ -2,7 +2,7 @@ package e2e
 
 import "testing"
 
-// `var s: S = src` where `src` is a PARAMETER is a borrow for the SEED and an
+// `let s: S = src` where `src` is a PARAMETER is a borrow for the SEED and an
 // owned value for every assignment after it. Ownership was one verdict per
 // local, so the seed's verdict governed the whole slot and each later value it
 // held was released with a plain dec that frees nothing — one leaked box per
@@ -26,69 +26,69 @@ struct P { a: i32, b: i32 }
 
 // The caller still owns src, and reads it after the call.
 function seed_then_reassign(src: P, n: i32): i32 {
-    var s: P = src;
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let s: P = src;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { s = P { a: s.a + 1, b: s.b }; acc = acc + s.a; i = i + 1; }
     return acc;
 }
 
 // An alias taken from the seed and read after the seed's slot moved on.
 function seed_alias(src: P): i32 {
-    var s: P = src;
-    var t: P = s;
+    let s: P = src;
+    let t: P = s;
     s = P { a: 99, b: 99 };
     return t.a + t.b + s.a;
 }
 
 // Escapes via return, on one path the seed survives.
 function seed_return(src: P, c: boolean): P {
-    var s: P = src;
+    let s: P = src;
     if (c) { s = P { a: 7, b: 7 }; }
     return s;
 }
 
 // Escapes into a container, on one path still holding the seed.
 function seed_into_container(src: P, c: boolean): i32 {
-    var s: P = src;
+    let s: P = src;
     if (c) { s = P { a: 5, b: 5 }; }
-    var box: P[] = [s];
+    let box: P[] = [s];
     return box[0].a + box[0].b;
 }
 
 function seed_cond(src: P, c: boolean): i32 {
-    var s: P = src;
+    let s: P = src;
     if (c) { s = P { a: 3, b: 4 }; }
     return s.a * 10 + s.b;
 }
 
 function seed_array(src: i32[], n: i32): i32 {
-    var s: i32[] = src;
-    var i: i32 = 0;
+    let s: i32[] = src;
+    let i: i32 = 0;
     while (i < n) { s = [i, i + 1]; i = i + 1; }
     return s.len() + src.len();
 }
 
 function seed_string(src: string, n: i32): i32 {
-    var s: string = src;
-    var i: i32 = 0;
+    let s: string = src;
+    let i: i32 = 0;
     while (i < n) { s = s + "x"; i = i + 1; }
     return s.len() + src.len();
 }
 
 function main(): i32 {
-    var p: P = P { a: 1, b: 2 };
+    let p: P = P { a: 1, b: 2 };
     if (seed_then_reassign(p, 50) != 1325) { return 1; }
     if (p.a * 100 + p.b != 102) { return 2; }
     if (seed_alias(p) != 102) { return 3; }
-    var q: P = seed_return(p, false);
-    var q2: P = seed_return(p, true);
+    let q: P = seed_return(p, false);
+    let q2: P = seed_return(p, true);
     if (q.a * 1000 + q.b * 100 + q2.a * 10 + q2.b != 1277) { return 4; }
     if (seed_into_container(p, false) + seed_into_container(p, true) != 13) { return 5; }
     if (seed_cond(p, false) + seed_cond(p, true) != 46) { return 6; }
-    var arr: i32[] = [8];
+    let arr: i32[] = [8];
     if (seed_array(arr, 3) + arr.len() != 4) { return 7; }
-    var s0: string = "ab";
+    let s0: string = "ab";
     if (seed_string(s0, 4) + s0.len() != 10) { return 8; }
     if (p.a * 10 + p.b != 12) { return 9; }
     if (__rc_underflow_count() != 0) { return 10; }
@@ -141,11 +141,11 @@ function pull(s: P): (i32, P) {
 }
 
 function thread(src: P, n: i32): i32 {
-    var acc: i32 = 0;
-    var s: P = src;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let s: P = src;
+    let i: i32 = 0;
     while (i < n) {
-        var p: (i32, P) = pull(s);
+        let p: (i32, P) = pull(s);
         s = p.1;
         acc = acc + p.0;
         i = i + 1;
@@ -156,10 +156,10 @@ function thread(src: P, n: i32): i32 {
 // The seed binding INSIDE the loop, so the slot is re-init'd every iteration
 // and the transfer inc and the re-init drop each run n times rather than once.
 function loop_seed(src: P, n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var s: P = src;
+        let s: P = src;
         s = P { a: s.a + i, b: s.b, pulls: s.pulls };
         acc = acc + s.a;
         i = i + 1;
@@ -169,20 +169,20 @@ function loop_seed(src: P, n: i32): i32 {
 
 function main(): i32 {
     if (thread(P { a: 0, b: 0, pulls: 0 }, 100) < 0) { return 1; }
-    var b1: i64 = __heap_bump_bytes();
+    let b1: i64 = __heap_bump_bytes();
     if (thread(P { a: 0, b: 0, pulls: 0 }, 200) < 0) { return 2; }
-    var b2: i64 = __heap_bump_bytes();
+    let b2: i64 = __heap_bump_bytes();
     if (thread(P { a: 0, b: 0, pulls: 0 }, 400) < 0) { return 3; }
-    var b3: i64 = __heap_bump_bytes();
+    let b3: i64 = __heap_bump_bytes();
     if ((b3 - b2) > (b2 - b1) * 3 / 2) { return 4; }
 
-    var seed: P = P { a: 1, b: 2, pulls: 0 };
+    let seed: P = P { a: 1, b: 2, pulls: 0 };
     if (loop_seed(seed, 100) < 0) { return 5; }
-    var c1: i64 = __heap_bump_bytes();
+    let c1: i64 = __heap_bump_bytes();
     if (loop_seed(seed, 200) < 0) { return 6; }
-    var c2: i64 = __heap_bump_bytes();
+    let c2: i64 = __heap_bump_bytes();
     if (loop_seed(seed, 400) < 0) { return 7; }
-    var c3: i64 = __heap_bump_bytes();
+    let c3: i64 = __heap_bump_bytes();
     if ((c3 - c2) > (c2 - c1) * 3 / 2) { return 8; }
     if (seed.a * 10 + seed.b != 12) { return 9; }
 

@@ -65,9 +65,9 @@ func statFieldsNativeSource(file, link, other string, euid, egid int) string {
         ctime: 0 as i64, ctime_nsec: 0 as i64 };
 }
 function main(): i32 {
-    var f: FileStat = st(%[1]q);
-    var l: FileStat = st(%[2]q);
-    var o: FileStat = st(%[3]q);
+    let f: FileStat = st(%[1]q);
+    let l: FileStat = st(%[2]q);
+    let o: FileStat = st(%[3]q);
     // chmod 0640 — the permission bits and the S_IFMT type bits, which is
     // what makes mode answer the kind predicates a shell test needs.
     if ((f.mode & (511 as u32)) != (416 as u32)) { return 1; }
@@ -191,7 +191,8 @@ func TestWASMStatFields(t *testing.T) {
 // itself and nothing there sets a time.
 //
 // main's return reaches us on STDOUT, not as the exit status: the harness
-// builds with PrintMainResult, so a component that returned 7 still exits 0.
+// runs the module with `--invoke main`, so a program that returned 7 still
+// exits 0.
 func runWasmStatProbe(t *testing.T, src string) (stdout, stderr string) {
 	t.Helper()
 	p := buildComponent(t, src)
@@ -211,7 +212,7 @@ func runWasmStatProbe(t *testing.T, src string) (stdout, stderr string) {
 	return s, e
 }
 
-// parseMainResult reads the integer PrintMainResult wrote to stdout.
+// parseMainResult reads main's integer result from the last line of stdout.
 func parseMainResult(t *testing.T, stdout string) int {
 	t.Helper()
 	for _, ln := range strings.Split(stdout, "\n") {

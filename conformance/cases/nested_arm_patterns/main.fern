@@ -97,7 +97,7 @@ function deep(w: One): i32 {
 
 // The expression form takes the same path, through a value local.
 function as_expression(v: Out): i32 {
-    var r = match (v) {
+    let r = match (v) {
         P(Ok2(a), Ok2(b)) => a + b,
         P(Ok2(a), _) => 100 + a,
         _ => 0,

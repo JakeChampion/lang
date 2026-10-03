@@ -20,8 +20,8 @@ import (
 func TestWASMFilesystemPreopenLookupIsCached(t *testing.T) {
 	src := `import "std/i32";
 function main(): i32 {
-    var i: i32 = 0;
-    var n: i32 = 0;
+    let i: i32 = 0;
+    let n: i32 = 0;
     while (i < 1000000) {
         match (stat("probe.txt")) { Ok(_) => { n = n + 1; }, Err(_) => {} }
         i = i + 1;

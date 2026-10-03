@@ -84,7 +84,7 @@ func TestAssetSubstitutedInFunctionBody(t *testing.T) {
 	set := assetSet(t, map[string]string{"html/index.html": "<h1>hi</h1>"})
 	prog := foldAssets(t, `
 function main(): i32 {
-  var page: string = __fern_asset("html/index.html");
+  let page: string = __fern_asset("html/index.html");
   return 0;
 }`, set)
 	if got := firstStringLit(t, prog); got != "<h1>hi</h1>" {
@@ -99,7 +99,7 @@ func TestAssetSubstitutedInConstInitialiser(t *testing.T) {
 	prog := foldAssets(t, `
 const PAGE: string = __fern_asset("page.html");
 function main(): i32 {
-  var p: string = PAGE;
+  let p: string = PAGE;
   return 0;
 }`, set)
 	if got := firstStringLit(t, prog); got != "<p>const</p>" {
@@ -114,7 +114,7 @@ func TestAssetFoldsIntoConstConcatenation(t *testing.T) {
 	prog := foldAssets(t, `
 const BOTH: string = __fern_asset("a.txt") + __fern_asset("b.txt");
 function main(): i32 {
-  var p: string = BOTH;
+  let p: string = BOTH;
   return 0;
 }`, set)
 	if got := firstStringLit(t, prog); got != "AAABBB" {
@@ -130,7 +130,7 @@ func TestAssetCarriesBinaryBytes(t *testing.T) {
 	set := assetSet(t, map[string]string{"blob.bin": blob})
 	prog := foldAssets(t, `
 function main(): i32 {
-  var b: string = __fern_asset("blob.bin");
+  let b: string = __fern_asset("blob.bin");
   return 0;
 }`, set)
 	if got := firstStringLit(t, prog); got != blob {
@@ -148,37 +148,37 @@ func TestAssetErrors(t *testing.T) {
 	}{
 		{
 			name: "unknown asset suggests the near miss",
-			src:  `function main(): i32 { var s: string = __fern_asset("html/index.htm"); return 0; }`,
+			src:  `function main(): i32 { let s: string = __fern_asset("html/index.htm"); return 0; }`,
 			set:  set,
 			want: `did you mean "html/index.html"`,
 		},
 		{
 			name: "unknown asset with no near miss lists what is available",
-			src:  `function main(): i32 { var s: string = __fern_asset("zzzzzzzzzz"); return 0; }`,
+			src:  `function main(): i32 { let s: string = __fern_asset("zzzzzzzzzz"); return 0; }`,
 			set:  set,
 			want: "embedded assets: html/index.html, style.css",
 		},
 		{
 			name: "no -embed at all",
-			src:  `function main(): i32 { var s: string = __fern_asset("a.txt"); return 0; }`,
+			src:  `function main(): i32 { let s: string = __fern_asset("a.txt"); return 0; }`,
 			set:  nil,
 			want: "no assets were embedded — pass -embed DIR",
 		},
 		{
 			name: "computed name is rejected",
-			src:  `function main(): i32 { var n: string = "a"; var s: string = __fern_asset(n); return 0; }`,
+			src:  `function main(): i32 { let n: string = "a"; let s: string = __fern_asset(n); return 0; }`,
 			set:  set,
 			want: "needs a string literal",
 		},
 		{
 			name: "wrong arity is rejected",
-			src:  `function main(): i32 { var s: string = __fern_asset("a", "b"); return 0; }`,
+			src:  `function main(): i32 { let s: string = __fern_asset("a", "b"); return 0; }`,
 			set:  set,
 			want: "takes exactly one argument, got 2",
 		},
 		{
 			name: "unknown asset in a const initialiser",
-			src:  `const P: string = __fern_asset("nope-not-here"); function main(): i32 { var s: string = P; return 0; }`,
+			src:  `const P: string = __fern_asset("nope-not-here"); function main(): i32 { let s: string = P; return 0; }`,
 			set:  set,
 			want: "no embedded asset",
 		},
@@ -247,7 +247,7 @@ func TestAssetsEnumeratesSortedWithContents(t *testing.T) {
 	})
 	prog := foldAssets(t, `
 function main(): i32 {
-  var xs = __fern_assets();
+  let xs = __fern_assets();
   return 0;
 }`, set)
 	want := [][2]string{{"a.txt", "AAA"}, {"c.bin", "C"}, {"sub/b.txt", "BB"}}
@@ -268,7 +268,7 @@ func TestAssetsInConst(t *testing.T) {
 	prog := foldAssets(t, `
 const XS: (string, string)[] = __fern_assets();
 function main(): i32 {
-  var xs = XS;
+  let xs = XS;
   return 0;
 }`, set)
 	want := [][2]string{{"a.txt", "AAA"}, {"b.txt", "BB"}}
@@ -283,7 +283,7 @@ function main(): i32 {
 func TestAssetsCarriesBinaryBytes(t *testing.T) {
 	blob := string([]byte{0x00, 0x80, 0xff, 0x00, 'z'})
 	set := assetSet(t, map[string]string{"blob.bin": blob})
-	prog := foldAssets(t, `function main(): i32 { var xs = __fern_assets(); return 0; }`, set)
+	prog := foldAssets(t, `function main(): i32 { let xs = __fern_assets(); return 0; }`, set)
 	got := tupleElems(t, prog)
 	if len(got) != 1 || got[0][1] != blob {
 		t.Fatalf("enumerated % x, want % x", got, blob)
@@ -295,7 +295,7 @@ func TestAssetsCarriesBinaryBytes(t *testing.T) {
 // annotation the user has no way to write.
 func TestAssetsEmptyBundleIsTypedNotBare(t *testing.T) {
 	set := assetSet(t, map[string]string{})
-	prog := foldAssets(t, `function main(): i32 { var xs = __fern_assets(); return 0; }`, set)
+	prog := foldAssets(t, `function main(): i32 { let xs = __fern_assets(); return 0; }`, set)
 	if got := tupleElems(t, prog); len(got) != 0 {
 		t.Fatalf("enumerated %v, want nothing", got)
 	}
@@ -321,13 +321,13 @@ func TestAssetsErrors(t *testing.T) {
 	}{
 		{
 			name: "no -embed at all",
-			src:  `function main(): i32 { var xs = __fern_assets(); return 0; }`,
+			src:  `function main(): i32 { let xs = __fern_assets(); return 0; }`,
 			set:  nil,
 			want: "no assets were embedded — pass -embed DIR",
 		},
 		{
 			name: "arguments are rejected",
-			src:  `function main(): i32 { var xs = __fern_assets("a.txt"); return 0; }`,
+			src:  `function main(): i32 { let xs = __fern_assets("a.txt"); return 0; }`,
 			set:  set,
 			want: "takes no arguments, got 1",
 		},

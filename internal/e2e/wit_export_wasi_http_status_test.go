@@ -48,8 +48,8 @@ function set_response_ok(out: own ResponseOutparam, resp: own OutgoingResponse):
 
 @export("wasi:http/incoming-handler@0.2.0", "handle")
 function on_request(request: own IncomingRequest, response_out: own ResponseOutparam): void {
-	var resp: own OutgoingResponse = new_response();
-	var ignore: i32 = set_status(resp, 404);
+	let resp: own OutgoingResponse = new_response();
+	let ignore: i32 = set_status(resp, 404);
 	set_response_ok(response_out, resp);
 	return;
 }`

@@ -61,7 +61,7 @@ that fully releases a scalar one.
 Two guards carry the soundness:
 
 * `opt_arg_is_direct_ctor` — the inner must be CONSTRUCTED here (`Some(x)` /
-  `Ok(x)` / `Err(x)` / `None`). `var inner0 = Some(i); Some(inner0)` aliases a
+  `Ok(x)` / `Err(x)` / `None`). `let inner0 = Some(i); Some(inner0)` aliases a
   local whose own scalar-Option reclaim already frees that box, and this drop
   would be the second.
 * `binding_escapes_arm_scrut` relaxes the SCRUTINEE position and nothing else,

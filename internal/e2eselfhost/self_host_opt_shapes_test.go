@@ -26,8 +26,8 @@ var optShapeCases = []optShapeCase{
 	// `while (i < xs.len())` with `i` counting up from 0 reads in bounds.
 	{name: "bce_while_len", fn: "sum_while", exit: 39, src: `
 @noinline function sum_while(xs: i32[]): i32 {
-    var s: i32 = 0;
-    var i: i32 = 0;
+    let s: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { s = s + xs[i]; i = i + 1; }
     return s;
 }
@@ -37,7 +37,7 @@ function main(): i32 { return sum_while([3, 5, 7, 11, 13]); }
 	// A for-in loop's index is below the length by construction.
 	{name: "bce_for_in", fn: "sum_for", exit: 39, src: `
 @noinline function sum_for(xs: i64[]): i64 {
-    var s: i64 = 0;
+    let s: i64 = 0;
     for x in xs { s = s + x; }
     return s;
 }
@@ -47,8 +47,8 @@ function main(): i32 { return sum_for([3, 5, 7, 11, 13]) as i32; }
 	// The same two shapes over a string's bytes.
 	{name: "bce_string", fn: "count_a", exit: 5, src: `
 @noinline function count_a(s: string): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < s.len()) { if (s[i] == 97u8) { n = n + 1; } i = i + 1; }
     for c in s { if (c == 97u8) { n = n + 1; } }
     return n;
@@ -60,8 +60,8 @@ function main(): i32 { return count_a("banana") - 1; }
 	// to the body, so no unconditional branch is left in the loop.
 	{name: "loop_rotation", fn: "sum_to", exit: 45, src: `
 @noinline function sum_to(n: i64): i64 {
-    var s: i64 = 0i64;
-    var i: i64 = 0i64;
+    let s: i64 = 0i64;
+    let i: i64 = 0i64;
     while (i < n) { s = s + i; i = i + 1i64; }
     return s;
 }
@@ -88,8 +88,8 @@ function main(): i32 { return sym("sub") + sym("x"); }
 	// retain.
 	{name: "literal_consumed_no_retain", fn: "pair", exit: 2, src: `
 @noinline function pair(): string[] {
-    var s: string = "x";
-    var out: string[] = [];
+    let s: string = "x";
+    let out: string[] = [];
     out = out.append(s);
     out = out.append(s);
     return out;
@@ -101,9 +101,9 @@ function main(): i32 { return pair().len(); }
 	// is not retained.
 	{name: "literal_phi_consumed_no_retain", fn: "pick2", exit: 2, src: `
 @noinline function pick2(c: boolean): string[] {
-    var s: string = "ab";
+    let s: string = "ab";
     if (c) { s = "abc"; }
-    var out: string[] = [];
+    let out: string[] = [];
     out = out.append(s);
     out = out.append(s);
     return out;
@@ -115,9 +115,9 @@ function main(): i32 { return pick2(true).len(); }
 	// while live, it is retained.
 	{name: "mixed_phi_consumed_retained", fn: "pick3", exit: 2, src: `
 @noinline function pick3(c: boolean, t: string): string[] {
-    var s: string = "a";
+    let s: string = "a";
     if (c) { s = t + t; }
-    var out: string[] = [];
+    let out: string[] = [];
     out = out.append(s);
     out = out.append(s);
     return out;
@@ -128,7 +128,7 @@ function main(): i32 { return pick3(true, "b").len(); }
 	// A phi of literals holds nothing, so its death releases nothing.
 	{name: "literal_phi_no_release", fn: "pick", exit: 3, src: `
 @noinline function pick(c: boolean): i32 {
-    var s: string = "ab";
+    let s: string = "ab";
     if (c) { s = "abc"; }
     return s.len();
 }
@@ -139,7 +139,7 @@ function main(): i32 { return pick(true); }
 	// the free calls __fern_arr_dec.
 	{name: "release_inline", fn: "grow", exit: 7, src: `
 @noinline function grow(xs: i32[]): i32 {
-    var ys: i32[] = xs.append(4);
+    let ys: i32[] = xs.append(4);
     return ys.len() + xs.len();
 }
 function main(): i32 { return grow([1, 2, 3]); }
@@ -149,8 +149,8 @@ function main(): i32 { return grow([1, 2, 3]); }
 	// place; only the grow or a shared receiver calls the helper.
 	{name: "push_inline", fn: "fill", exit: 3, src: `
 @noinline function fill(n: i32): i32[] {
-    var out: i32[] = [];
-    var i: i32 = 0;
+    let out: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { out = out.append(i); i = i + 1; }
     return out;
 }
@@ -161,8 +161,8 @@ function main(): i32 { return fill(3).len(); }
 struct Pt { x: i32, y: i32, tag: string }
 @noinline function bump(p: Pt): Pt { return Pt { ...p, x: p.x + 1 }; }
 function main(): i32 {
-    var p: Pt = Pt { x: 1, y: 2, tag: "a" };
-    var i: i32 = 0;
+    let p: Pt = Pt { x: 1, y: 2, tag: "a" };
+    let i: i32 = 0;
     while (i < 10) { p = bump(p); i = i + 1; }
     return p.x;
 }
@@ -175,7 +175,7 @@ function main(): i32 {
 struct Two { a: string, b: string }
 @noinline function twice(s: string): Two { return Two { a: s, b: s }; }
 function main(): i32 {
-    var t: Two = twice("hi");
+    let t: Two = twice("hi");
     return t.a.len() + t.b.len() + 1;
 }
 `,
@@ -185,12 +185,12 @@ function main(): i32 {
 	// through %r11 and %rcx first.
 	{name: "rt_call_args_direct", fn: "fill", exit: 37, src: `
 @noinline function fill(n: i32): i32[] {
-    var xs: i32[] = [];
-    var i: i32 = 0;
+    let xs: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { xs = xs.append(i * 3); i = i + 1; }
     return xs;
 }
-function main(): i32 { var xs: i32[] = fill(10); return xs[9] + xs.len(); }
+function main(): i32 { let xs: i32[] = fill(10); return xs[9] + xs.len(); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`call __fern_arr_push`}},
 		forbid: map[string][]string{"x86-64-linux": {`movq %r11, %rdi`, `movq %rcx, %rsi`}}},
@@ -200,13 +200,13 @@ function main(): i32 { var xs: i32[] = fill(10); return xs[9] + xs.len(); }
 	{name: "spill_the_cold_value", fn: "hot", exit: 56, src: `
 @noinline function g(x: i64): i64 { return x + 1i64; }
 @noinline function hot(n: i64): i64 {
-    var c1: i64 = g(n); var c2: i64 = g(c1); var c3: i64 = g(c2); var c4: i64 = g(c3);
-    var c5: i64 = g(c4); var c6: i64 = g(c5); var c7: i64 = g(c6); var c8: i64 = g(c7);
-    var c9: i64 = g(c8); var c10: i64 = g(c9); var c11: i64 = g(c10); var c12: i64 = g(c11);
-    var k: i64 = g(0i64);
-    var i: i64 = 0i64;
+    let c1: i64 = g(n); let c2: i64 = g(c1); let c3: i64 = g(c2); let c4: i64 = g(c3);
+    let c5: i64 = g(c4); let c6: i64 = g(c5); let c7: i64 = g(c6); let c8: i64 = g(c7);
+    let c9: i64 = g(c8); let c10: i64 = g(c9); let c11: i64 = g(c10); let c12: i64 = g(c11);
+    let k: i64 = g(0i64);
+    let i: i64 = 0i64;
     while (i < n) { k = g(k + i); i = i + 1i64; }
-    var t: i64 = g(c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8 + c9 + c10 + c11 + c12);
+    let t: i64 = g(c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8 + c9 + c10 + c11 + c12);
     return g(k) + t;
 }
 function main(): i32 { return (hot(5i64) % 100i64) as i32; }
@@ -223,12 +223,12 @@ function main(): i32 { return (hot(5i64) % 100i64) as i32; }
 	// for almost no span freed (#10615).
 	{name: "spill_the_long_value", fn: "mix", exit: 49, src: `
 @noinline function mix(xs: i64[], n: i32): i64 {
-    var h: i64 = 0i64;
-    var i: i32 = 0;
+    let h: i64 = 0i64;
+    let i: i32 = 0;
     while (i < n) {
-        var w0: i64 = xs[0]; var w1: i64 = xs[1]; var w2: i64 = xs[2]; var w3: i64 = xs[3];
-        var w4: i64 = xs[4]; var w5: i64 = xs[5]; var w6: i64 = xs[6]; var w7: i64 = xs[7];
-        var w8: i64 = xs[8]; var w9: i64 = xs[9]; var w10: i64 = xs[10]; var w11: i64 = xs[11];
+        let w0: i64 = xs[0]; let w1: i64 = xs[1]; let w2: i64 = xs[2]; let w3: i64 = xs[3];
+        let w4: i64 = xs[4]; let w5: i64 = xs[5]; let w6: i64 = xs[6]; let w7: i64 = xs[7];
+        let w8: i64 = xs[8]; let w9: i64 = xs[9]; let w10: i64 = xs[10]; let w11: i64 = xs[11];
         h = (h ^ (h >> 7i64)) + w0 + ((h << 3i64) ^ w11);
         h = (h ^ (h >> 5i64)) + w1 + ((h << 2i64) ^ w10);
         h = (h ^ (h >> 3i64)) + w2 + ((h << 4i64) ^ w9);
@@ -246,7 +246,7 @@ function main(): i32 { return (hot(5i64) % 100i64) as i32; }
     return h;
 }
 function main(): i32 {
-    var xs: i64[] = [1i64, 2i64, 3i64, 4i64, 5i64, 6i64, 7i64, 8i64, 9i64, 10i64, 11i64, 12i64];
+    let xs: i64[] = [1i64, 2i64, 3i64, 4i64, 5i64, 6i64, 7i64, 8i64, 9i64, 10i64, 11i64, 12i64];
     return (((mix(xs, 1000) % 100i64) + 100i64) % 100i64) as i32;
 }
 `,
@@ -269,13 +269,13 @@ function main(): i32 {
 	{name: "spill_slots_shared", fn: "two_phase", exit: 57, src: `
 @noinline function g(x: i64): i64 { return x + 1i64; }
 @noinline function two_phase(n: i64): i64 {
-    var a1: i64 = g(n); var a2: i64 = g(a1); var a3: i64 = g(a2); var a4: i64 = g(a3); var a5: i64 = g(a4);
-    var a6: i64 = g(a5); var a7: i64 = g(a6); var a8: i64 = g(a7); var a9: i64 = g(a8); var a10: i64 = g(a9);
-    var a11: i64 = g(a10); var a12: i64 = g(a11); var a13: i64 = g(a12);
-    var s: i64 = g(a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10 + a11 + a12 + a13);
-    var b1: i64 = g(s); var b2: i64 = g(b1); var b3: i64 = g(b2); var b4: i64 = g(b3); var b5: i64 = g(b4);
-    var b6: i64 = g(b5); var b7: i64 = g(b6); var b8: i64 = g(b7); var b9: i64 = g(b8); var b10: i64 = g(b9);
-    var b11: i64 = g(b10); var b12: i64 = g(b11); var b13: i64 = g(b12);
+    let a1: i64 = g(n); let a2: i64 = g(a1); let a3: i64 = g(a2); let a4: i64 = g(a3); let a5: i64 = g(a4);
+    let a6: i64 = g(a5); let a7: i64 = g(a6); let a8: i64 = g(a7); let a9: i64 = g(a8); let a10: i64 = g(a9);
+    let a11: i64 = g(a10); let a12: i64 = g(a11); let a13: i64 = g(a12);
+    let s: i64 = g(a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10 + a11 + a12 + a13);
+    let b1: i64 = g(s); let b2: i64 = g(b1); let b3: i64 = g(b2); let b4: i64 = g(b3); let b5: i64 = g(b4);
+    let b6: i64 = g(b5); let b7: i64 = g(b6); let b8: i64 = g(b7); let b9: i64 = g(b8); let b10: i64 = g(b9);
+    let b11: i64 = g(b10); let b12: i64 = g(b11); let b13: i64 = g(b12);
     return g(b1 + b2 + b3 + b4 + b5 + b6 + b7 + b8 + b9 + b10 + b11 + b12 + b13);
 }
 function main(): i32 { return (two_phase(1i64) % 100i64) as i32; }
@@ -383,9 +383,9 @@ const rotateShapesSrc = `
 @noinline function rot64(x: u64): u64 { return (x << 13u64) | (x >> 51u64); }
 @noinline function notrot(x: u32, y: i32, z: i64): u32 { return ((x >> 7u32) | (x << 24u32)) ^ (((y >> 3) | (y << 29)) as u32) ^ (((z >> 3i64) | (z << 61i64)) as u32); }
 function main(): i32 {
-    var a: u32 = rot32(2147483905u32);
-    var b: u64 = rot64(81985529216486895u64);
-    var c: u32 = notrot(3000000000u32, 0 - 12345, 0i64 - 9876543210i64);
+    let a: u32 = rot32(2147483905u32);
+    let b: u64 = rot64(81985529216486895u64);
+    let c: u32 = notrot(3000000000u32, 0 - 12345, 0i64 - 9876543210i64);
     return ((a % 97u32) as i32) + ((b % 89u64) as i32) + ((c % 83u32) as i32);
 }
 `

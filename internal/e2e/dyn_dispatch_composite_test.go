@@ -21,14 +21,14 @@ impl Error for NotFound { function message(self: Self): string { return self.wha
 
 // (a) receiver bound from a Result Err match arm
 const dynDispatchMatchArm = dynDispatchHdr + `function main(): i32 {
-    var r: Result[i32, dyn Error] = Err(NotFound { what: "ab" } as dyn Error);
+    let r: Result[i32, dyn Error] = Err(NotFound { what: "ab" } as dyn Error);
     return match (r) { Ok(v) => v, Err(e) => e.message().len() };
 }`
 
 // (b) receiver read from a struct field
 const dynDispatchField = dynDispatchHdr + `struct Box { e: dyn Error }
 function main(): i32 {
-    var b: Box = Box { e: NotFound { what: "ab" } as dyn Error };
+    let b: Box = Box { e: NotFound { what: "ab" } as dyn Error };
     return b.e.message().len();
 }`
 
@@ -38,13 +38,13 @@ function main(): i32 {
 // field like every other position; dispatch still reads "ab" (len 2).
 const dynDispatchFieldImplicit = dynDispatchHdr + `struct Box { e: dyn Error }
 function main(): i32 {
-    var b: Box = Box { e: NotFound { what: "ab" } };
+    let b: Box = Box { e: NotFound { what: "ab" } };
     return b.e.message().len();
 }`
 
 // (c) receiver read from an array element
 const dynDispatchArrayElem = dynDispatchHdr + `function main(): i32 {
-    var xs: dyn Error[] = [NotFound { what: "ab" } as dyn Error];
+    let xs: dyn Error[] = [NotFound { what: "ab" } as dyn Error];
     return xs[0].message().len();
 }`
 
@@ -54,7 +54,7 @@ const dynDispatchArrayElem = dynDispatchHdr + `function main(): i32 {
 // Now the concrete boxes into the payload; dispatch still reads "ab" (len 2).
 const dynDispatchEnumPayloadImplicit = dynDispatchHdr + `enum Wrapped { Wrap(dyn Error), Bare }
 function main(): i32 {
-    var w: Wrapped = Wrap(NotFound { what: "ab" });
+    let w: Wrapped = Wrap(NotFound { what: "ab" });
     return match (w) { Wrap(e) => e.message().len(), Bare => 0 };
 }`
 

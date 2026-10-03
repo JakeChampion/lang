@@ -31,17 +31,17 @@ import (
 func arrSelfReassignSrc(iters string) string {
 	return `
 function build(k: i32): i32[] {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < k) { a = a.append(i); i = i + 1; }
     return a;
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    let sum: i32 = 0;
     while (j < ` + iters + `) {
-        var a: i32[] = build(600);
+        let a: i32[] = build(600);
         sum = sum + a[0];
         j = j + 1;
     }

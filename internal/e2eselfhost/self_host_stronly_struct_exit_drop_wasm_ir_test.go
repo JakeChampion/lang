@@ -6,7 +6,7 @@ import (
 
 // TestSelfHostStrOnlyStructExitDropWasmIR is the wasm port of
 // TestSelfHostStrOnlyStructExitDropIRX86_64: the widened exit-sweep routing
-// lives in shared irlower.fern, and emit_wasm_struct_drop_body's string-field
+// lives in shared lowering, and emit_wasm_struct_drop_body's string-field
 // arm does the release (a wasm heap string is one inline rc-headered block, so
 // $__fern_arr_dec IS the string free). Case table shared with the x86-64 leg.
 func TestSelfHostStrOnlyStructExitDropWasmIR(t *testing.T) {

@@ -16,7 +16,7 @@ assembly with **no type-checking pass**. The production (Go) compiler
 already rejects type errors — e.g. `fern -check` on
 
 ```fern
-function main(): i32 { var xs: i32[] = [1,2,3]; return xs.max(); }
+function main(): i32 { let xs: i32[] = [1,2,3]; return xs.max(); }
 ```
 
 emits `error[E002]: return type mismatch: function returns i32 but
@@ -125,7 +125,7 @@ In `emit_module`, after the seeded state `s` is built and before the
 codegen loop:
 
 ```
-var errs: string = check_module(mod, s);
+let errs: string = check_module(mod, s);
 if (errs.len() > 0) { eprint(errs); exit(1); return ""; }
 ```
 
@@ -143,7 +143,7 @@ policy.
 ## Tests
 
 - **Negative (new):** a Go e2e case asserting the self-host compiler
-  *rejects* `function main(): i32 { var xs: i32[] = [1,2,3]; return
+  *rejects* `function main(): i32 { let xs: i32[] = [1,2,3]; return
   xs.max(); }` — non-zero exit + the `E002` message on stderr. Mirror for
   x86.
 - **Regression:** the existing `arr-i32-{min,max}*` cases (which unwrap via

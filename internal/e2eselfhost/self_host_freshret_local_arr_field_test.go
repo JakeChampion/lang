@@ -6,10 +6,10 @@ import (
 )
 
 // #6758: a struct factory that builds its array field in a LOCAL first —
-// `var xs: i32[] = [k, 8]; return Q { xs: xs, pos: 1 };` — was not strict-fresh,
+// `let xs: i32[] = [k, 8]; return Q { xs: xs, pos: 1 };` — was not strict-fresh,
 // because return_value_is_strictfresh_struct admitted only a direct array
 // LITERAL in the field. So the factory never entered return_fresh_struct_ret_fns,
-// every caller's `var q: Q = mkq(i)` earned no reclaim credit, and the box AND
+// every caller's `let q: Q = mkq(i)` earned no reclaim credit, and the box AND
 // its buffer leaked per call: 88 B/iteration on both register backends, 56 on
 // wasm, unbounded, where native is flat.
 //
@@ -35,18 +35,18 @@ var selfHostFreshRetLocalArrCases = []struct {
 	// The leak gate: two identical churns, bump delta across the second. 8800 B
 	// on the parent commit, under 256 after.
 	{"local-built-array-field", `struct Q { xs: i32[], pos: i32 }
-function mkq(k: i32): Q { var xs: i32[] = [k, 8]; return Q { xs: xs, pos: 1 }; }
+function mkq(k: i32): Q { let xs: i32[] = [k, 8]; return Q { xs: xs, pos: 1 }; }
 function churn(k: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < k) { var q: Q = mkq(i); t = t + q.pos + q.xs[1]; i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < k) { let q: Q = mkq(i); t = t + q.pos + q.xs[1]; i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var w: i32 = churn(100);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(100);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(100);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(100);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (w != 900 || x != 900) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 256) { return 98; }
@@ -56,22 +56,22 @@ function main(): i32 {
 	// the parent commit.
 	{"accumulator-producer", `struct Q { xs: i32[], pos: i32 }
 function build(n: i32): Q {
-    var xs: i32[] = [];
-    var i: i32 = 0;
+    let xs: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { xs = xs.append(i * 2); i = i + 1; }
     return Q { xs: xs, pos: n };
 }
 function churn(k: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < k) { var q: Q = build(4); t = t + q.xs[3] + q.pos; i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < k) { let q: Q = build(4); t = t + q.xs[3] + q.pos; i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var w: i32 = churn(100);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(100);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(100);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(100);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (w != 1000 || x != 1000) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 256) { return 98; }
@@ -84,19 +84,19 @@ function main(): i32 {
 	// caller as that buffer's only owner. 10400 B over the second churn on the
 	// parent commit (104 B/iteration), 0 after.
 	{"producer-call-array-field", `struct Q { xs: i32[], pos: i32 }
-function mk(n: i32): i32[] { var out: i32[] = []; var i: i32 = 0; while (i < 4) { out = out.append(n + i); i = i + 1; } return out; }
-function mkq(k: i32): Q { var xs: i32[] = mk(k); return Q { xs: xs, pos: 1 }; }
+function mk(n: i32): i32[] { let out: i32[] = []; let i: i32 = 0; while (i < 4) { out = out.append(n + i); i = i + 1; } return out; }
+function mkq(k: i32): Q { let xs: i32[] = mk(k); return Q { xs: xs, pos: 1 }; }
 function churn(k: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < k) { var q: Q = mkq(i); t = t + q.pos + q.xs[3]; i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < k) { let q: Q = mkq(i); t = t + q.pos + q.xs[3]; i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var w: i32 = churn(100);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(100);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(100);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(100);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (w != 5350 || x != 5350) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 256) { return 98; }
@@ -109,15 +109,15 @@ function main(): i32 {
 	// producer-call row rests on, so it is carried beside it.
 	{"passthru-producer-declined", `struct Q { xs: i32[], pos: i32 }
 function passthru(p: i32[]): i32[] { return p; }
-function mkq(p: i32[]): Q { var xs: i32[] = passthru(p); return Q { xs: xs, pos: 1 }; }
+function mkq(p: i32[]): Q { let xs: i32[] = passthru(p); return Q { xs: xs, pos: 1 }; }
 function work(k: i32): i32 {
-    var base: i32[] = [11, 22, 33];
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let base: i32[] = [11, 22, 33];
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < k) {
-        var q: Q = mkq(base);
+        let q: Q = mkq(base);
         t = t + q.pos;
-        var churn: i32[] = [i, i + 1, i + 2];
+        let churn: i32[] = [i, i + 1, i + 2];
         if (churn[0] != i) { return 96; }
         i = i + 1;
     }
@@ -136,13 +136,13 @@ function main(): i32 {
 	{"param-array-field-declined", `struct Q { xs: i32[], pos: i32 }
 function mk_from_param(p: i32[]): Q { return Q { xs: p, pos: 1 }; }
 function work(k: i32): i32 {
-    var base: i32[] = [11, 22, 33];
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let base: i32[] = [11, 22, 33];
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < k) {
-        var q: Q = mk_from_param(base);
+        let q: Q = mk_from_param(base);
         t = t + q.pos;
-        var churn: i32[] = [i, i + 1, i + 2];
+        let churn: i32[] = [i, i + 1, i + 2];
         if (churn[0] != i) { return 96; }
         i = i + 1;
     }
@@ -162,19 +162,19 @@ function main(): i32 {
 	// proof, one call further out: the callee is in the "ARR:" registry, so what
 	// it hands over is a buffer it allocated and nothing else names.
 	{"direct-producer-call-array-field", `struct Q { xs: i32[], pos: i32 }
-function nums_of(k: i32): i32[] { var out: i32[] = []; var i: i32 = 0; while (i < 4) { out = out.append(k + i); i = i + 1; } return out; }
+function nums_of(k: i32): i32[] { let out: i32[] = []; let i: i32 = 0; while (i < 4) { out = out.append(k + i); i = i + 1; } return out; }
 function mkq(k: i32): Q { return Q { xs: nums_of(k), pos: 1 }; }
 function churn(k: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < k) { var q: Q = mkq(i); t = t + q.pos + q.xs.len(); i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < k) { let q: Q = mkq(i); t = t + q.pos + q.xs.len(); i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var w: i32 = churn(100);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(100);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(100);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(100);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (w != 500 || x != 500) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 256) { return 98; }
@@ -186,20 +186,20 @@ function main(): i32 {
 	// its deep-free admission.
 	{"strarr-producer-call-array-field", `struct S { deps: string[], pos: i32 }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
-function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function mks(pre: string): S { return S { deps: deps_of(pre), pos: 1 }; }
 function churn(k: i32): i32 {
-    var pre: string = "ab";
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < k) { var s: S = mks(pre); t = (t + s.pos + s.deps.len()) % 251; i = i + 1; }
+    let pre: string = "ab";
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < k) { let s: S = mks(pre); t = (t + s.pos + s.deps.len()) % 251; i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var w0: i32 = churn(2000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(2000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w0: i32 = churn(2000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(2000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (w0 != x) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 256) { return 98; }
@@ -214,17 +214,17 @@ function main(): i32 {
 	// recycled before they run.
 	{"producer-call-param-field-retained", `struct P { deps: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
-function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
-function fill(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
+function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function fill(n: i32): string { let s: string = ""; let i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
 function mkp(deps: string[]): P { return P { deps: deps }; }
 function work(k: i32): i32 {
-    var pre: string = "ab";
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let pre: string = "ab";
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < k) {
-        var live: string[] = deps_of(pre);
-        var p: P = mkp(live);
-        var junk: string = fill(20);
+        let live: string[] = deps_of(pre);
+        let p: P = mkp(live);
+        let junk: string = fill(20);
         if (junk.len() < 0) { return 96; }
         if (p.deps.len() != 3) { return 94; }
         if (live[0].len() < 43) { return 93; }
@@ -244,16 +244,16 @@ function main(): i32 {
 	// admitted with a retain on those terms, not refused.
 	{"producer-name-shadowed-retained", `struct D { deps: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
-function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
-function fill(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
-function mkd(pre: string): D { var deps_of: string[] = [w(pre)]; return D { deps: deps_of }; }
+function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function fill(n: i32): string { let s: string = ""; let i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
+function mkd(pre: string): D { let deps_of: string[] = [w(pre)]; return D { deps: deps_of }; }
 function work(k: i32): i32 {
-    var pre: string = "ab";
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let pre: string = "ab";
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < k) {
-        var d: D = mkd(pre);
-        var junk: string = fill(20);
+        let d: D = mkd(pre);
+        let junk: string = fill(20);
         if (junk.len() < 0) { return 96; }
         if (d.deps.len() != 1) { return 94; }
         t = t + 1;
@@ -269,14 +269,14 @@ function main(): i32 {
 	// Negative: one local, two fields. The box carries a single rc and
 	// __struct_drop_Q would free the buffer once per field.
 	{"one-local-two-fields-declined", `struct Q { xs: i32[], ys: i32[], pos: i32 }
-function mk2(k: i32): Q { var xs: i32[] = [k, 8]; return Q { xs: xs, ys: xs, pos: 1 }; }
+function mk2(k: i32): Q { let xs: i32[] = [k, 8]; return Q { xs: xs, ys: xs, pos: 1 }; }
 function work(k: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < k) {
-        var q: Q = mk2(i);
+        let q: Q = mk2(i);
         t = t + q.xs[1] + q.ys[1];
-        var churn: i32[] = [i, i + 1, i + 2];
+        let churn: i32[] = [i, i + 1, i + 2];
         if (churn[0] != i) { return 96; }
         i = i + 1;
     }
@@ -295,7 +295,7 @@ function main(): i32 {
 func TestSelfHostFreshRetLocalArrFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range selfHostFreshRetLocalArrCases {
@@ -325,7 +325,7 @@ func TestSelfHostFreshRetLocalArrFieldIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range selfHostFreshRetLocalArrCases {

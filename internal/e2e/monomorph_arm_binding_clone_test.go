@@ -49,10 +49,10 @@ function bump(e: E, acc: i32): i32 { return acc + 1i32; }
 function tag(e: E, acc: string[]): string[] { return acc.append("t"); }
 
 function main(): i32 {
-    var e: E = Lit { has_base: true };
-    var n: i32 = fold(e, 0i32, bump);
-    var seed: string[] = [];
-    var ss: string[] = fold(e, seed, tag);
+    let e: E = Lit { has_base: true };
+    let n: i32 = fold(e, 0i32, bump);
+    let seed: string[] = [];
+    let ss: string[] = fold(e, seed, tag);
     return n + ss.len();
 }
 `
@@ -75,11 +75,11 @@ function bump(e: E, acc: i32): i32 { return acc + 1i32; }
 function tag(e: E, acc: string[]): string[] { return acc.append("t"); }
 
 function main(): i32 {
-    var lo: E = Lo { v: 1i32 };
-    var hi: E = Hi { v: 200i32 };
-    var n: i32 = fold(lo, 0i32, bump) + fold(hi, 0i32, bump);
-    var seed: string[] = [];
-    var ss: string[] = fold(hi, seed, tag);
+    let lo: E = Lo { v: 1i32 };
+    let hi: E = Hi { v: 200i32 };
+    let n: i32 = fold(lo, 0i32, bump) + fold(hi, 0i32, bump);
+    let seed: string[] = [];
+    let ss: string[] = fold(hi, seed, tag);
     return n * 10i32 + ss.len();
 }
 `

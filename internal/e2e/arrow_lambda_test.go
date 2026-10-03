@@ -16,8 +16,8 @@ import (
 const arrowLambdaSrc = `function apply(x: i32, f: (i32) => i32): i32 { return f(x); }
 function combine(a: i32, b: i32, f: (i32, i32) => i32): i32 { return f(a, b); }
 function main(): i32 {
-    var d: i32 = apply(10, (n: i32): i32 => n * 2);
-    var s: i32 = combine(3, 4, (x: i32, y: i32): i32 => x + y);
+    let d: i32 = apply(10, (n: i32): i32 => n * 2);
+    let s: i32 = combine(3, 4, (x: i32, y: i32): i32 => x + y);
     return d + s;
 }
 `

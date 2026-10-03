@@ -18,12 +18,12 @@ func TestWasmReactorTimerBlock(t *testing.T) {
 	// 1ms timer: subscribe, block until ready, then return 42 so the
 	// harness can read a non-zero sentinel proving the path ran.
 	src := `function main(): i32 {
-    var p: i32 = wasm_timer_pollable(1000000);
-    var r: i32 = wasm_block(p);
+    let p: i32 = wasm_timer_pollable(1000000);
+    let r: i32 = wasm_block(p);
     if (r != 0) { return 1; }
     return 42;
 }`
-	if got := runWasm(t, src); got != 42 {
+	if got := runWasmNative(t, src); got != 42 {
 		t.Errorf("wasm reactor timer: got %d, want 42", got)
 	}
 }
@@ -35,13 +35,13 @@ func TestWasmReactorTimerBlock(t *testing.T) {
 // composition clobbering or being clobbered by the io/streams union.
 func TestWasmReactorTimerWithStdout(t *testing.T) {
 	src := `function main(): i32 {
-    var p: i32 = wasm_timer_pollable(1000000);
+    let p: i32 = wasm_timer_pollable(1000000);
     wasm_block(p);
     print("tick\n");
     return 0;
 }`
 	// runWasmCapturingStdout trims the trailing newline + result line.
-	if got := runWasmCapturingStdout(t, src); got != "tick" {
+	if got := stripMainResult(runNativeStdout(t, src)); got != "tick" {
 		t.Errorf("wasm reactor timer + stdout: got %q, want %q", got, "tick")
 	}
 }
@@ -55,22 +55,22 @@ func TestWasmReactorTimerWithStdout(t *testing.T) {
 func TestWasmReactorPollFirstReady(t *testing.T) {
 	// Short timer at index 1 → poll returns 1.
 	idx1 := `function main(): i32 {
-    var a: i32 = wasm_timer_pollable(200000000);
-    var b: i32 = wasm_timer_pollable(10000000);
-    var ps: i32[] = [a, b];
+    let a: i32 = wasm_timer_pollable(200000000);
+    let b: i32 = wasm_timer_pollable(10000000);
+    let ps: i32[] = [a, b];
     return wasm_poll(ps);
 }`
-	if got := runWasm(t, idx1); got != 1 {
+	if got := runWasmNative(t, idx1); got != 1 {
 		t.Errorf("wasm_poll first-ready (short at idx 1): got %d, want 1", got)
 	}
 	// Short timer at index 0 → poll returns 0.
 	idx0 := `function main(): i32 {
-    var a: i32 = wasm_timer_pollable(10000000);
-    var b: i32 = wasm_timer_pollable(200000000);
-    var ps: i32[] = [a, b];
+    let a: i32 = wasm_timer_pollable(10000000);
+    let b: i32 = wasm_timer_pollable(200000000);
+    let ps: i32[] = [a, b];
     return wasm_poll(ps);
 }`
-	if got := runWasm(t, idx0); got != 0 {
+	if got := runWasmNative(t, idx0); got != 0 {
 		t.Errorf("wasm_poll first-ready (short at idx 0): got %d, want 0", got)
 	}
 }
@@ -81,12 +81,12 @@ func TestWasmReactorPollFirstReady(t *testing.T) {
 // avoid leaking fired timer pollables.
 func TestWasmReactorTimerBlockDrop(t *testing.T) {
 	src := `function main(): i32 {
-    var p: i32 = wasm_timer_pollable(1000000);
+    let p: i32 = wasm_timer_pollable(1000000);
     wasm_block(p);
     wasm_pollable_drop(p);
     return 42;
 }`
-	if got := runWasm(t, src); got != 42 {
+	if got := runWasmNative(t, src); got != 42 {
 		t.Errorf("wasm timer block drop: got %d, want 42", got)
 	}
 }

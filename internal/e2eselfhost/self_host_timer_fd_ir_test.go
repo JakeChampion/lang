@@ -35,24 +35,24 @@ func TestSelfHostTimerFdIRX86_64(t *testing.T) {
 		// A 1 ms one-shot timerfd is ready well within the 500 ms poll budget, so
 		// poll returns its index (0). Exercises timer_fd + a real-fd poll.
 		{"timerfd-ready", `function main(): i32 {
-    var fd: i32 = timer_fd(1);
-    var fds: i32[] = [fd];
+    let fd: i32 = timer_fd(1);
+    let fds: i32[] = [fd];
     return poll(fds, 500);
 }`, 0},
 		// wasm_timer_pollable(0) == -1, wasm_pollable_drop(-1) == 0 on native, so
 		// drop - pollable == 0 - (-1) == 1. No syscall; pins both shims' values.
 		{"shims", `function main(): i32 {
-    var p: i32 = wasm_timer_pollable(0);
-    var d: i32 = wasm_pollable_drop(p);
+    let p: i32 = wasm_timer_pollable(0);
+    let d: i32 = wasm_pollable_drop(p);
     return d - p;
 }`, 1},
 		// wasm_poll over a one-pollable array: -1 on native (no real pollables),
 		// and wasm_timer_pollable(0) is also -1, so idx - p == -1 - (-1) == 0. Pins
 		// the wasm_poll shim + its i32[]-arg lowering on the register IR path.
 		{"wasm-poll-shim", `function main(): i32 {
-    var p: i32 = wasm_timer_pollable(0);
-    var ps: i32[] = [p];
-    var idx: i32 = wasm_poll(ps);
+    let p: i32 = wasm_timer_pollable(0);
+    let ps: i32[] = [p];
+    let idx: i32 = wasm_poll(ps);
     return idx - p;
 }`, 0},
 	}

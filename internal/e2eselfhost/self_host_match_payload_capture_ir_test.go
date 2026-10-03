@@ -11,7 +11,7 @@ import (
 // TestSelfHostMatchPayloadCaptureIRX86_64 pins the Option/Result match-arm
 // payload binding capture resolution (cap_type_in_stmts' StmtMatch arm): a
 // lambda capturing a `Some(v)` / `Ok(v)` / `Err(v)` payload binding used to
-// resolve cap_type "" (the binding is not a `var`), so the closure lift
+// resolve cap_type "" (the binding is not a `let`), so the closure lift
 // declined and the whole module bailed — and on the AST emitter it then fell
 // to, a capturing lambda in a struct fn FIELD miscompiled (silent wrong values:
 // native 20 read back as 4). The binding resolves from the scrutinee's Option /
@@ -40,13 +40,13 @@ func TestSelfHostMatchPayloadCaptureIRX86_64(t *testing.T) {
 		want int
 	}{
 		{"option-i32-payload",
-			`struct H { f: (i32) => i32, id: i32 } function g(o: Option[i32]): i32 { var r: i32 = 0; match (o) { Some(v) => { var h: H = H { f: (x: i32): i32 => { return x + v; }, id: v }; r = h.f(10) + h.id; }, None => { r = 0; } } return r; } function main(): i32 { return g(Some(5)); }`,
+			`struct H { f: (i32) => i32, id: i32 } function g(o: Option[i32]): i32 { let r: i32 = 0; match (o) { Some(v) => { let h: H = H { f: (x: i32): i32 => { return x + v; }, id: v }; r = h.f(10) + h.id; }, None => { r = 0; } } return r; } function main(): i32 { return g(Some(5)); }`,
 			20},
 		{"result-ok-payload",
-			`struct H { f: (i32) => i32, id: i32 } function g(r: Result[i32, i32]): i32 { var acc: i32 = 0; match (r) { Ok(v) => { var h: H = H { f: (x: i32): i32 => { return x + v; }, id: v }; acc = h.f(10) + h.id; }, Err(e) => { acc = e; } } return acc; } function main(): i32 { return g(Ok(6)); }`,
+			`struct H { f: (i32) => i32, id: i32 } function g(r: Result[i32, i32]): i32 { let acc: i32 = 0; match (r) { Ok(v) => { let h: H = H { f: (x: i32): i32 => { return x + v; }, id: v }; acc = h.f(10) + h.id; }, Err(e) => { acc = e; } } return acc; } function main(): i32 { return g(Ok(6)); }`,
 			22},
 		{"option-string-payload",
-			`struct H { f: (i32) => i32, id: i32 } function g(o: Option[string]): i32 { var r: i32 = 0; match (o) { Some(s) => { var h: H = H { f: (x: i32): i32 => { return x + s.len(); }, id: 2 }; r = h.f(10) + h.id; }, None => { r = 0; } } return r; } function main(): i32 { return g(Some("abc")); }`,
+			`struct H { f: (i32) => i32, id: i32 } function g(o: Option[string]): i32 { let r: i32 = 0; match (o) { Some(s) => { let h: H = H { f: (x: i32): i32 => { return x + s.len(); }, id: 2 }; r = h.f(10) + h.id; }, None => { r = 0; } } return r; } function main(): i32 { return g(Some("abc")); }`,
 			15},
 		// USER-ENUM variant payloads (#5155): resolved via the enum decls now
 		// threaded into the lift pass (pat_variant_payload_field_s over the
@@ -55,28 +55,28 @@ func TestSelfHostMatchPayloadCaptureIRX86_64(t *testing.T) {
 		// astwalk.collect_bound_stmt extra-bindings collection (without which
 		// lambda_captures' encl gate dropped them and the lift declined).
 		{"user-enum-single-payload",
-			`enum E { One(i32), Two(string) } struct H { f: (i32) => i32, id: i32 } function g(e: E): i32 { var r: i32 = 0; match (e) { One(v) => { var h: H = H { f: (x: i32): i32 => { return x + v; }, id: v }; r = h.f(10) + h.id; }, Two(s) => { var h: H = H { f: (x: i32): i32 => { return x + s.len(); }, id: 2 }; r = h.f(10) + h.id; } } return r; } function main(): i32 { return g(One(5)) + g(Two("abcd")); }`,
+			`enum E { One(i32), Two(string) } struct H { f: (i32) => i32, id: i32 } function g(e: E): i32 { let r: i32 = 0; match (e) { One(v) => { let h: H = H { f: (x: i32): i32 => { return x + v; }, id: v }; r = h.f(10) + h.id; }, Two(s) => { let h: H = H { f: (x: i32): i32 => { return x + s.len(); }, id: 2 }; r = h.f(10) + h.id; } } return r; } function main(): i32 { return g(One(5)) + g(Two("abcd")); }`,
 			36},
 		{"user-enum-multi-payload",
-			`enum E { Tag(i32, i32), Empty } struct H { f: (i32) => i32, id: i32 } function g(e: E): i32 { var r: i32 = 0; match (e) { Tag(a, b) => { var h: H = H { f: (x: i32): i32 => { return x + a + b; }, id: a }; r = h.f(1) + h.id; }, Empty => { r = 0; } } return r; } function main(): i32 { return g(Tag(3, 4)); }`,
+			`enum E { Tag(i32, i32), Empty } struct H { f: (i32) => i32, id: i32 } function g(e: E): i32 { let r: i32 = 0; match (e) { Tag(a, b) => { let h: H = H { f: (x: i32): i32 => { return x + a + b; }, id: a }; r = h.f(1) + h.id; }, Empty => { r = 0; } } return r; } function main(): i32 { return g(Tag(3, 4)); }`,
 			11},
 		{"user-enum-three-payload",
-			`enum E { P(i32, i32, i32), Q } struct H { f: (i32) => i32, id: i32 } function g(e: E): i32 { var r: i32 = 0; match (e) { P(a, b, c) => { var h: H = H { f: (x: i32): i32 => { return x + a + b + c; }, id: b }; r = h.f(1) + h.id; }, Q => { r = 0; } } return r; } function main(): i32 { return g(P(3, 4, 5)); }`,
+			`enum E { P(i32, i32, i32), Q } struct H { f: (i32) => i32, id: i32 } function g(e: E): i32 { let r: i32 = 0; match (e) { P(a, b, c) => { let h: H = H { f: (x: i32): i32 => { return x + a + b + c; }, id: b }; r = h.f(1) + h.id; }, Q => { r = 0; } } return r; } function main(): i32 { return g(P(3, 4, 5)); }`,
 			17},
-		// TUPLE-DESTRUCTURE bindings (#5173): `var (a, b) = t` is encoded
+		// TUPLE-DESTRUCTURE bindings (#5173): `let (a, b) = t` is encoded
 		// comma-joined ("a,b"). collect_bound_stmt now splits it so each name
 		// is an enclosing local (lambda_captures' encl gate), and
 		// cap_type_in_stmts resolves each binding's type as the tuple element
 		// at its index (rc_fe_split_csv over tuple_elem_tags). Covers i32,
 		// string (captured `.len()`), and three-element destructures.
 		{"tuple-destructure-i32",
-			`struct H { f: (i32) => i32, id: i32 } function g(): i32 { var t: (i32, i32) = (3, 4); var (a, b) = t; var h: H = H { f: (x: i32): i32 => { return x + a + b; }, id: a }; return h.f(1) + h.id; } function main(): i32 { return g(); }`,
+			`struct H { f: (i32) => i32, id: i32 } function g(): i32 { let t: (i32, i32) = (3, 4); let (a, b) = t; let h: H = H { f: (x: i32): i32 => { return x + a + b; }, id: a }; return h.f(1) + h.id; } function main(): i32 { return g(); }`,
 			11},
 		{"tuple-destructure-string",
-			`struct H { f: (i32) => i32, id: i32 } function g(): i32 { var t: (string, i32) = ("abc", 5); var (s, n) = t; var h: H = H { f: (x: i32): i32 => { return x + s.len() + n; }, id: n }; return h.f(1) + h.id; } function main(): i32 { return g(); }`,
+			`struct H { f: (i32) => i32, id: i32 } function g(): i32 { let t: (string, i32) = ("abc", 5); let (s, n) = t; let h: H = H { f: (x: i32): i32 => { return x + s.len() + n; }, id: n }; return h.f(1) + h.id; } function main(): i32 { return g(); }`,
 			14},
 		{"tuple-destructure-three",
-			`struct H { f: (i32) => i32, id: i32 } function g(): i32 { var t: (i32, i32, i32) = (2, 3, 4); var (a, b, c) = t; var h: H = H { f: (x: i32): i32 => { return x + a + b + c; }, id: b }; return h.f(1) + h.id; } function main(): i32 { return g(); }`,
+			`struct H { f: (i32) => i32, id: i32 } function g(): i32 { let t: (i32, i32, i32) = (2, 3, 4); let (a, b, c) = t; let h: H = H { f: (x: i32): i32 => { return x + a + b + c; }, id: b }; return h.f(1) + h.id; } function main(): i32 { return g(); }`,
 			13},
 		// CALL SCRUTINEE (#5200): `match (pop(i)) { Some(v) => … }` — the arm
 		// binding's type comes from the callee's Option/Result return type,
@@ -85,10 +85,10 @@ func TestSelfHostMatchPayloadCaptureIRX86_64(t *testing.T) {
 		// A scrutinee type resolving "" makes the payload binding decline the
 		// lift, falling to the miscompiling AST path.
 		{"call-scrutinee-option-free-fn",
-			`struct H { f: (i32) => i32, id: i32 } function pop(i: i32): Option[i32] { if (i > 0) { return Some(i); } return None; } function g(i: i32): i32 { var r: i32 = 0; match (pop(i)) { Some(v) => { var h: H = H { f: (x: i32): i32 => { return x + v; }, id: v }; r = h.f(10) + h.id; }, None => { r = 0; } } return r; } function main(): i32 { return g(5); }`,
+			`struct H { f: (i32) => i32, id: i32 } function pop(i: i32): Option[i32] { if (i > 0) { return Some(i); } return None; } function g(i: i32): i32 { let r: i32 = 0; match (pop(i)) { Some(v) => { let h: H = H { f: (x: i32): i32 => { return x + v; }, id: v }; r = h.f(10) + h.id; }, None => { r = 0; } } return r; } function main(): i32 { return g(5); }`,
 			20},
 		{"call-scrutinee-result-method",
-			`struct B { v: i32 } function (b: B) take(): Result[i32, i32] { if (b.v > 0) { return Ok(b.v); } return Err(0 - 1); } struct H { f: (i32) => i32, id: i32 } function g(b: B): i32 { var acc: i32 = 0; match (b.take()) { Ok(v) => { var h: H = H { f: (x: i32): i32 => { return x + v; }, id: v }; acc = h.f(10) + h.id; }, Err(e) => { acc = e; } } return acc; } function main(): i32 { return g(B { v: 6 }); }`,
+			`struct B { v: i32 } function (b: B) take(): Result[i32, i32] { if (b.v > 0) { return Ok(b.v); } return Err(0 - 1); } struct H { f: (i32) => i32, id: i32 } function g(b: B): i32 { let acc: i32 = 0; match (b.take()) { Ok(v) => { let h: H = H { f: (x: i32): i32 => { return x + v; }, id: v }; acc = h.f(10) + h.id; }, Err(e) => { acc = e; } } return acc; } function main(): i32 { return g(B { v: 6 }); }`,
 			22},
 	}
 	for _, tc := range cases {

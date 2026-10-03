@@ -17,50 +17,50 @@ struct Outer { inner: Inner, n: i32 }
 enum Box { Some1(Inner), None1 }
 @noinline
 function mk(): Outer {
-    var b: i32[] = [];
-    var i: i32 = 0;
+    let b: i32[] = [];
+    let i: i32 = 0;
     while (i < 3) { b = b.append(i); i = i + 1; }
     return Outer { inner: Inner { xs: b }, n: 0 };
 }
 @noinline
 function same(o: Outer): Outer { return o; }
 function param_root(o: Inner, v: i32): i32 {
-    var ys: i32[] = o.xs.append(v);
+    let ys: i32[] = o.xs.append(v);
     return ys.len();
 }
 function literal_root(v: i32): i32 {
-    var t: Inner = Inner { xs: [1, 2] };
-    var ys: i32[] = t.xs.append(v);
+    let t: Inner = Inner { xs: [1, 2] };
+    let ys: i32[] = t.xs.append(v);
     return ys.len();
 }
 function fresh_call_root(v: i32): i32 {
-    var o: Outer = mk();
-    var ys: i32[] = o.inner.xs.append(v);
+    let o: Outer = mk();
+    let ys: i32[] = o.inner.xs.append(v);
     return ys.len();
 }
 function field_read_root(v: i32): i32 {
-    var o: Outer = mk();
-    var t: Inner = o.inner;
-    var ys: i32[] = t.xs.append(v);
+    let o: Outer = mk();
+    let t: Inner = o.inner;
+    let ys: i32[] = t.xs.append(v);
     return ys.len() * 10 + o.inner.xs.len();
 }
 function alias_root(v: i32): i32 {
-    var o: Outer = mk();
-    var u: Outer = o;
-    var ys: i32[] = u.inner.xs.append(v);
+    let o: Outer = mk();
+    let u: Outer = o;
+    let ys: i32[] = u.inner.xs.append(v);
     return ys.len() * 10 + o.inner.xs.len();
 }
 function passthrough_call_root(v: i32): i32 {
-    var o: Outer = mk();
-    var u: Outer = same(o);
-    var ys: i32[] = u.inner.xs.append(v);
+    let o: Outer = mk();
+    let u: Outer = same(o);
+    let ys: i32[] = u.inner.xs.append(v);
     return ys.len() * 10 + o.inner.xs.len();
 }
 function match_binding_root(v: i32): i32 {
-    var o: Outer = mk();
-    var bx: Box = Some1(o.inner);
+    let o: Outer = mk();
+    let bx: Box = Some1(o.inner);
     match (bx) {
-        Some1(t) => { var ys: i32[] = t.xs.append(v); return ys.len() * 10 + o.inner.xs.len(); },
+        Some1(t) => { let ys: i32[] = t.xs.append(v); return ys.len() * 10 + o.inner.xs.len(); },
         None1 => { return 0; }
     }
 }

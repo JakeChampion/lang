@@ -34,11 +34,11 @@ import "core/map";
 import "std/i32";
 
 function main(): i32 {
-    var a: Map[string, i32] = map_new(8);
+    let a: Map[string, i32] = map_new(8);
     a = a.insert("a-fairly-long-key-that-heap-allocates", 7);
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 8) {
-        var b = a;
+        let b = a;
         b = b.insert("x" + i.to_string(), i);
         // The copy sees the key it inherited...
         if (b.get_or("a-fairly-long-key-that-heap-allocates", 0 - 1) != 7) { return 1; }
@@ -52,11 +52,11 @@ function main(): i32 {
 
     // The same, one level up: an ARRAY value column (valKind 2) is counted
     // rather than boxed, so the claim is an inc per value instead of a rebox.
-    var v: Map[string, i32[]] = map_new(8);
+    let v: Map[string, i32[]] = map_new(8);
     v = v.insert("vk-a-fairly-long-key", [11, 22, 33]);
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < 8) {
-        var w = v;
+        let w = v;
         w = w.insert("y" + j.to_string(), [j, j]);
         if (w.get_or("vk-a-fairly-long-key", [0])[2] != 33) { return 5; }
         j = j + 1;
@@ -73,9 +73,9 @@ function main(): i32 {
 
     // The copy is independent, not just intact: mutating it must not be
     // visible through the source.
-    var s: Map[string, i32] = map_new(8);
+    let s: Map[string, i32] = map_new(8);
     s = s.insert("shared-key-that-heap-allocates", 1);
-    var c = s;
+    let c = s;
     c = c.insert("shared-key-that-heap-allocates", 2);
     if (s.get_or("shared-key-that-heap-allocates", 0 - 1) != 1) { return 7; }
     if (c.get_or("shared-key-that-heap-allocates", 0 - 1) != 2) { return 8; }
@@ -117,11 +117,11 @@ import "core/map";
 import "std/i32";
 
 function main(): i32 {
-    var a: Map[string, i32] = map_new(8);
+    let a: Map[string, i32] = map_new(8);
     a = a.insert("a-fairly-long-key-that-heap-allocates", 7);
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 16) {
-        var b = a;
+        let b = a;
         b = b.insert("x" + i.to_string(), i);
         i = i + 1;
     }
@@ -160,13 +160,13 @@ import "core/map";
 import "std/i32";
 
 function churn(rounds: i32): i32 {
-    var a: Map[string, i32] = map_new(16);
-    var s: i32 = 0;
+    let a: Map[string, i32] = map_new(16);
+    let s: i32 = 0;
     while (s < 6) { a = a.insert("seed-key-that-heap-allocates" + s.to_string(), s); s = s + 1; }
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < rounds) {
-        var b = a;
+        let b = a;
         b = b.insert("x" + i.to_string(), i);
         acc = (acc + b.len()) % 251;
         i = i + 1;
@@ -176,11 +176,11 @@ function churn(rounds: i32): i32 {
 
 function main(): i32 {
     if (churn(50) < 0) { return 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
+    let b1: i32 = (__heap_bump_bytes() as i32);
     if (churn(400) < 0) { return 2; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (churn(800) < 0) { return 3; }
-    var b3: i32 = (__heap_bump_bytes() as i32);
+    let b3: i32 = (__heap_bump_bytes() as i32);
     // Doubling the rounds must not double the high-water mark.
     if ((b3 - b2) > (b2 - b1) + 4096) { return 4; }
     return 42;
@@ -226,7 +226,7 @@ import "core/map";
 struct S { m: Map[string, i32], n: i32 }
 
 function ins(s: S, k: string, v: i32): S {
-    var m: Map[string, i32] = s.m;
+    let m: Map[string, i32] = s.m;
     m = m.insert(k, v);
     return S { m: m, n: s.n + 1 };
 }
@@ -236,8 +236,8 @@ function get(s: S, k: string): i32 {
 }
 
 function main(): i32 {
-    var m0: Map[string, i32] = map_new(4);
-    var s: S = S { m: m0, n: 0 };
+    let m0: Map[string, i32] = map_new(4);
+    let s: S = S { m: m0, n: 0 };
     s = ins(s, "alpha", 1);
     s = ins(s, "beta", 2);
     s = ins(s, "gamma", 3);
@@ -252,7 +252,7 @@ function main(): i32 {
     if (get(s, "a-key-far-past-the-inline-cap") != 4) { return 6; }
     if (get(s, "delta") != 5) { return 7; }
     if (get(s, "missing") != 0 - 1) { return 8; }
-    var keys: string[] = s.m.keys();
+    let keys: string[] = s.m.keys();
     if (keys.len() != 5) { return 9; }
     if (keys[0] != "alpha") { return 10; }
     if (keys[3] != "a-key-far-past-the-inline-cap") { return 11; }
@@ -294,17 +294,17 @@ import "std/i32";
 struct S { m: Map[string, i32], n: i32 }
 
 function ins(s: S, k: string, v: i32): S {
-    var m: Map[string, i32] = s.m;
+    let m: Map[string, i32] = s.m;
     m = m.insert(k, v);
     return S { m: m, n: s.n + 1 };
 }
 
 function main(): i32 {
-    var m0: Map[string, i32] = map_new(8);
-    var s: S = S { m: m0, n: 0 };
+    let m0: Map[string, i32] = map_new(8);
+    let s: S = S { m: m0, n: 0 };
     s = ins(s, "alpha", 1);
     s = ins(s, "beta", 2);
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 16) {
         s = ins(s, "k" + i.to_string(), i);
         i = i + 1;

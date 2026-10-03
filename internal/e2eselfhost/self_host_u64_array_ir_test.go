@@ -16,14 +16,14 @@ var u64ArrayIRCases = []struct {
 	name string
 	main string
 }{
-	{"len", `function main(): i32 { var xs: u64[] = [1 as u64, 2 as u64, 3 as u64]; return xs.len(); }`},
-	{"index", `function main(): i32 { var xs: u64[] = [10 as u64, 20 as u64, 30 as u64]; return xs[1] as i32; }`},
-	{"iterate", `function main(): i32 { var xs: u64[] = [1 as u64, 2 as u64, 3 as u64, 4 as u64]; var s: u64 = 0 as u64; for x in xs { s = s + x; } return s as i32; }`},
-	{"alias", `function main(): i32 { var xs: u64[] = [7 as u64, 8 as u64]; var ys: u64[] = xs; return ys[0] as i32; }`},
-	{"wide-value", `function main(): i32 { var xs: u64[] = [5000000007 as u64]; return (xs[0] % 1000 as u64) as i32; }`},
-	{"as-param", `function total(xs: u64[]): u64 { var s: u64 = 0 as u64; for x in xs { s = s + x; } return s; }
-function main(): i32 { var xs: u64[] = [5 as u64, 6 as u64, 7 as u64]; return total(xs) as i32; }`},
-	{"i64-regress", `function main(): i32 { var xs: i64[] = [10, 20, 30]; var s: i64 = 0; for x in xs { s = s + x; } return s as i32; }`},
+	{"len", `function main(): i32 { let xs: u64[] = [1 as u64, 2 as u64, 3 as u64]; return xs.len(); }`},
+	{"index", `function main(): i32 { let xs: u64[] = [10 as u64, 20 as u64, 30 as u64]; return xs[1] as i32; }`},
+	{"iterate", `function main(): i32 { let xs: u64[] = [1 as u64, 2 as u64, 3 as u64, 4 as u64]; let s: u64 = 0 as u64; for x in xs { s = s + x; } return s as i32; }`},
+	{"alias", `function main(): i32 { let xs: u64[] = [7 as u64, 8 as u64]; let ys: u64[] = xs; return ys[0] as i32; }`},
+	{"wide-value", `function main(): i32 { let xs: u64[] = [5000000007 as u64]; return (xs[0] % 1000 as u64) as i32; }`},
+	{"as-param", `function total(xs: u64[]): u64 { let s: u64 = 0 as u64; for x in xs { s = s + x; } return s; }
+function main(): i32 { let xs: u64[] = [5 as u64, 6 as u64, 7 as u64]; return total(xs) as i32; }`},
+	{"i64-regress", `function main(): i32 { let xs: i64[] = [10, 20, 30]; let s: i64 = 0; for x in xs { s = s + x; } return s as i32; }`},
 }
 
 // TestSelfHostU64ArrayIR compiles each case with the self-host CLI for

@@ -15,7 +15,7 @@ import (
 // truncated mean back to i32. The three elements sum to 2.4e9 — which overflows
 // i32 (> 2^31-1) and would wrap to a NEGATIVE mean under i32 accumulation — so
 // the program returns 7 ONLY if the i64 accumulation / division / narrowing all
-// lower correctly. This pins that the self-hosted IR path (irlower.lower_i64:
+// lower correctly. This pins that the self-hosted IR path (the lowering's
 // `as i64` widening of an i32 array element, i64 `+`, i64 `/`, `as i32`
 // narrowing) handles the shape the stdlib fix relies on, on every backend.
 //
@@ -24,10 +24,10 @@ import (
 // reduction returns a bare i32, so it stays on the IR path where the i64
 // arithmetic is exercised directly.
 const i64MeanReduceProgram = `function imean(arr: i32[]): i32 {
-    var n: i32 = arr.len();
+    let n: i32 = arr.len();
     if (n == 0) { return 0; }
-    var s: i64 = 0;
-    var i: i32 = 0;
+    let s: i64 = 0;
+    let i: i32 = 0;
     while (i < n) { s = s + (arr[i] as i64); i = i + 1; }
     return (s / (n as i64)) as i32;
 }

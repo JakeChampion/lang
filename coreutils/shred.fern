@@ -103,7 +103,7 @@ function how_wipesync(): i32 {
 struct Settings { force: boolean, passes: i32, size: i64, size_given: boolean, remove: boolean, how: i32, verbose: boolean, exact: boolean, zero: boolean, source: string, source_given: boolean }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... FILE...\n";
   out = out + "Overwrite the specified FILE(s) repeatedly, in order to make it harder\n";
   out = out + "for even very expensive hardware probing to recover the data.\n";
@@ -133,10 +133,10 @@ function help_text(): string {
 // the same list with the top bit of the first byte set, which is what
 // `flip_first` adds, so only the 22 bases are written down.
 function base_patterns(): i32[] {
-  var out: i32[] = [];
-  var n: i32 = 0;
+  let out: i32[] = [];
+  let n: i32 = 0;
   while (n < 16) {
-    var nib: i32 = n * 16 + n;
+    let nib: i32 = n * 16 + n;
     out = out.append(nib * 65536 + nib * 256 + nib);
     n = n + 1;
   }
@@ -171,8 +171,8 @@ function pattern_name(p: i32): string {
   if (p == random_pass()) {
     return "random";
   }
-  var bs: u8[] = [];
-  var shift: i32 = 20;
+  let bs: u8[] = [];
+  let shift: i32 = 20;
   while (shift >= 0) {
     bs = bs.append(hex_digit(p / pow16(shift) % 16));
     shift = shift - 4;
@@ -181,8 +181,8 @@ function pattern_name(p: i32): string {
 }
 
 function pow16(shift: i32): i32 {
-  var v: i32 = 1;
-  var i: i32 = 0;
+  let v: i32 = 1;
+  let i: i32 = 0;
   while (i < shift) {
     v = v * 2;
     i = i + 1;
@@ -198,21 +198,21 @@ function pow16(shift: i32): i32 {
 // vocabulary in a random order. A `-z` zero pass is appended and counts
 // toward the total `-v` prints.
 function schedule(passes: i32, zero: boolean): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   if (passes <= 3) {
     return all_random(passes, zero);
   }
   if (passes > 0) {
     out = out.append(random_pass());
   }
-  var vocab: i32[] = shuffled_vocab();
-  var middle: i32 = passes - 2;
-  var extra: i32 = 0 - 1;
+  let vocab: i32[] = shuffled_vocab();
+  let middle: i32 = passes - 2;
+  let extra: i32 = 0 - 1;
   if (passes >= 5) {
     extra = middle / 2;
   }
-  var i: i32 = 0;
-  var taken: i32 = 0;
+  let i: i32 = 0;
+  let taken: i32 = 0;
   while (i < middle) {
     if (i == extra) {
       out = out.append(random_pass());
@@ -232,8 +232,8 @@ function schedule(passes: i32, zero: boolean): i32[] {
 }
 
 function all_random(passes: i32, zero: boolean): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < passes) {
     out = out.append(random_pass());
     i = i + 1;
@@ -247,19 +247,19 @@ function all_random(passes: i32, zero: boolean): i32[] {
 // The 44 patterns in a random order: the bases and their flipped
 // halves, shuffled by a Fisher-Yates walk over `random_bytes`.
 function shuffled_vocab(): i32[] {
-  var all: i32[] = [];
-  var bases: i32[] = base_patterns();
-  var i: i32 = 0;
+  let all: i32[] = [];
+  let bases: i32[] = base_patterns();
+  let i: i32 = 0;
   while (i < bases.len()) {
     all = all.append(bases[i]);
     all = all.append(flip_first(bases[i]));
     i = i + 1;
   }
-  var rnd: u8[] = random_bytes(all.len() * 2);
-  var k: i32 = all.len() - 1;
+  let rnd: u8[] = random_bytes(all.len() * 2);
+  let k: i32 = all.len() - 1;
   while (k > 0) {
-    var j: i32 = (rnd[k * 2] as i32 * 256 + rnd[k * 2 + 1] as i32) % (k + 1);
-    var tmp: i32 = all[k];
+    let j: i32 = (rnd[k * 2] as i32 * 256 + rnd[k * 2 + 1] as i32) % (k + 1);
+    let tmp: i32 = all[k];
     all = all.with(k, all[j]);
     all = all.with(j, tmp);
     k = k - 1;
@@ -318,7 +318,7 @@ function rand_block(rnd: Rand, n: i32): (string, boolean) {
     rnd.st.set(rand.rng_fill(rnd.st.get(), rnd.block, n));
     return (buf_take(rnd.block), true);
   }
-  var out: string = "";
+  let out: string = "";
   while (out.len() < n) {
     match (rnd.r.read_chunk(n - out.len())) {
       Ok(s) => {
@@ -341,13 +341,13 @@ function rand_block(rnd: Rand, n: i32): (string, boolean) {
 // rather than a byte at a time, which is the difference between a pass
 // that costs what the write costs and one that costs six times it.
 function pattern_block(p: i32, n: i32): string {
-  var cycle: u8[] = [];
+  let cycle: u8[] = [];
   cycle = cycle.append((p / 65536 % 256) as u8);
   cycle = cycle.append((p / 256 % 256) as u8);
   cycle = cycle.append((p % 256) as u8);
-  var whole: string = string_from_bytes_unchecked(cycle).repeat(n / 3);
-  var rest: u8[] = [];
-  var i: i32 = 0;
+  let whole: string = string_from_bytes_unchecked(cycle).repeat(n / 3);
+  let rest: u8[] = [];
+  let i: i32 = 0;
   while (i < n % 3) {
     rest = rest.append(cycle[i]);
     i = i + 1;
@@ -441,16 +441,16 @@ function sync_pass(w: Writer, path: string): Option[PassFail] {
 // error: the pass stops there, which is what the native `w.write` loop
 // does with the same answer.
 function write_block(w: Writer, path: string, block: string, at: i64): (i64, Option[PassFail]) {
-  var n: i32 = block.len();
-  var off: i32 = 0;
+  let n: i32 = block.len();
+  let off: i32 = 0;
   while (off < n) {
-    var piece: string = block;
+    let piece: string = block;
     if (off > 0) {
       piece = slice_unchecked(block, off, n) + "";
     }
     match (w.write_some(piece)) {
       Err(e) => {
-        var at_byte: string = ": error writing at offset " + (at + off as i64).to_string() + ": ";
+        let at_byte: string = ": error writing at offset " + (at + off as i64).to_string() + ": ";
         return (at + off as i64, Some(PassFail { msg: path + at_byte + gnu.io_error_text(e), fatal: false }));
       },
       Ok(k) => {
@@ -466,21 +466,21 @@ function write_block(w: Writer, path: string, block: string, at: i64): (i64, Opt
 
 // The blocks of one pass, from wherever the handle stands.
 function write_blocks(w: Writer, path: string, len: i64, code: i32, rnd: Rand): Option[PassFail] {
-  var full: string = "";
+  let full: string = "";
   if (code != random_pass()) {
     full = pattern_block(code, block_bytes());
   }
-  var at: i64 = 0 as i64;
+  let at: i64 = 0 as i64;
   while (at < len) {
-    var n: i32 = block_bytes();
+    let n: i32 = block_bytes();
     if (len - at < block_bytes() as i64) {
       n = (len - at) as i32;
     }
-    var got: (string, boolean) = pass_chunk(code, n, full, rnd);
+    let got: (string, boolean) = pass_chunk(code, n, full, rnd);
     if (!got.1) {
       return Some(PassFail { msg: gnu.quote(rnd.name) + ": end of file", fatal: true });
     }
-    var moved: (i64, Option[PassFail]) = write_block(w, path, got.0, at);
+    let moved: (i64, Option[PassFail]) = write_block(w, path, got.0, at);
     match (moved.1) {
       Some(f) => {
         return Some(f);
@@ -522,7 +522,7 @@ function name_chars(): string {
 // are pasted back in front of a sibling's name and printed, and GNU
 // prints `renamed to 0` rather than `renamed to ./0`.
 function dir_prefix(path: string): string {
-  var cut: i32 = path.last_index_of("/");
+  let cut: i32 = path.last_index_of("/");
   if (cut < 0) {
     return "";
   }
@@ -532,16 +532,16 @@ function dir_prefix(path: string): string {
 // `next_free(prefix, len)` — the first name of `len` characters beside
 // `prefix` that nothing holds, stepping the last position first.
 function next_free(prefix: string, len: i32): string {
-  var chars: string = name_chars();
-  var idx: i32[] = [];
-  var i: i32 = 0;
+  let chars: string = name_chars();
+  let idx: i32[] = [];
+  let i: i32 = 0;
   while (i < len) {
     idx = idx.append(0);
     i = i + 1;
   }
-  var tries: i32 = 0;
+  let tries: i32 = 0;
   while (tries < 4096) {
-    var name: string = index_name(idx, chars);
+    let name: string = index_name(idx, chars);
     match (lstat(prefix + name)) {
       Err(_) => {
         return name;
@@ -555,8 +555,8 @@ function next_free(prefix: string, len: i32): string {
 }
 
 function index_name(idx: i32[], chars: string): string {
-  var cand: u8[] = [];
-  var k: i32 = 0;
+  let cand: u8[] = [];
+  let k: i32 = 0;
   while (k < idx.len()) {
     cand = cand.append(chars[idx[k]]);
     k = k + 1;
@@ -567,8 +567,8 @@ function index_name(idx: i32[], chars: string): string {
 // One step of the candidate counter: the last position moves first and
 // carries into the one before it.
 function step_index(idx: i32[], base: i32): i32[] {
-  var out: i32[] = idx;
-  var k: i32 = out.len() - 1;
+  let out: i32[] = idx;
+  let k: i32 = out.len() - 1;
   while (k >= 0) {
     if (out[k] + 1 < base) {
       return out.with(k, out[k] + 1);
@@ -583,11 +583,11 @@ function step_index(idx: i32[], base: i32): i32[] {
 // long as the name down to one character, reporting each step; the
 // path the entry ends up under comes back.
 function wipe_names(path: string, s: Settings): string {
-  var prefix: string = dir_prefix(path);
-  var current: string = path;
-  var len: i32 = gnu.base_name(path).len();
+  let prefix: string = dir_prefix(path);
+  let current: string = path;
+  let len: i32 = gnu.base_name(path).len();
   while (len >= 1) {
-    var cand: string = next_free(prefix, len);
+    let cand: string = next_free(prefix, len);
     if (cand.len() == 0) {
       return current;
     }
@@ -610,7 +610,7 @@ function remove_entry(path: string, s: Settings): boolean {
   if (s.verbose) {
     gnu.error(path + ": removing");
   }
-  var target: string = path;
+  let target: string = path;
   if (s.how != how_unlink()) {
     target = wipe_names(path, s);
   }
@@ -634,7 +634,7 @@ function remove_entry(path: string, s: Settings): boolean {
 // `failed to open for writing` rather than a fresh empty file.
 function shred_one(path: string, s: Settings, rnd: Rand): (boolean, boolean) {
   if (path == "-") {
-    var d: (Writer, boolean) = dash_handle();
+    let d: (Writer, boolean) = dash_handle();
     if (!d.1) {
       return (false, false);
     }
@@ -663,7 +663,7 @@ function shred_one(path: string, s: Settings, rnd: Rand): (boolean, boolean) {
 // place is not something it can be asked to do. #9219 is the primitive
 // this waited on.
 function dash_handle(): (Writer, boolean) {
-  var w: Writer = stdout();
+  let w: Writer = stdout();
   match (w.flags()) {
     Err(e) => {
       gnu.error("-: fcntl failed: " + gnu.io_error_text(e));
@@ -694,7 +694,7 @@ function unshreddable(mode: u32, tty: boolean): boolean {
   if (tty) {
     return true;
   }
-  var kind: u32 = mode & 61440 as u32;
+  let kind: u32 = mode & 61440 as u32;
   return kind == 4096 as u32 || kind == 49152 as u32;
 }
 
@@ -727,7 +727,7 @@ function shred_handle(w: Writer, path: string, s: Settings, rnd: Rand, is_dash: 
     }
     return (false, false);
   }
-  var sized: (Lengths, boolean) = shred_length(w, s);
+  let sized: (Lengths, boolean) = shred_length(w, s);
   if (!sized.1) {
     gnu.error(path + ": failed to stat");
     if (!is_dash) {
@@ -735,7 +735,7 @@ function shred_handle(w: Writer, path: string, s: Settings, rnd: Rand, is_dash: 
     }
     return (false, false);
   }
-  var wrote: (boolean, boolean) = write_passes(w, path, sized.0, s, rnd);
+  let wrote: (boolean, boolean) = write_passes(w, path, sized.0, s, rnd);
   if (!wrote.0) {
     if (!is_dash) {
       w.close();
@@ -776,7 +776,7 @@ function dash_remove(w: Writer, s: Settings): boolean {
 // diagnostic carries: a 444 file owned by someone else reports
 // `Operation not permitted`, not `Permission denied`.
 function open_for_shred(path: string, s: Settings): Result[Writer, IoError] {
-  var first: Result[Writer, IoError] = open_writer_with(path, 0);
+  let first: Result[Writer, IoError] = open_writer_with(path, 0);
   match (first) {
     Ok(_) => {
       return first;
@@ -835,7 +835,7 @@ function shred_length(w: Writer, s: Settings): (Lengths, boolean) {
       return (Lengths { first: 0 as i64, total: 0 as i64 }, false);
     },
     Ok(st) => {
-      var total: i64 = st.size;
+      let total: i64 = st.size;
       if (s.size_given) {
         total = s.size;
       } else if (!st.is_file) {
@@ -843,7 +843,7 @@ function shred_length(w: Writer, s: Settings): (Lengths, boolean) {
       } else if (!s.exact) {
         total = round_up(st.size, st.blksize);
       }
-      var first: i64 = 0 as i64;
+      let first: i64 = 0 as i64;
       if (st.is_file && total > st.size && st.size < st.blksize) {
         first = st.size;
       }
@@ -871,7 +871,7 @@ function round_up(size: i64, block: i64): i64 {
   if (block <= 0 as i64) {
     return size;
   }
-  var rem: i64 = size % block;
+  let rem: i64 = size % block;
   if (rem == 0 as i64) {
     return size;
   }
@@ -883,7 +883,7 @@ function round_up(size: i64, block: i64): i64 {
 // `-n 2 -z` says 1/3, 2/3, 3/3 — and the sweep at the file's own length
 // is silent.
 function write_sweep(w: Writer, path: string, len: i64, codes: i32[], announce: boolean, rnd: Rand): Option[PassFail] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < codes.len()) {
     if (announce) {
       gnu.error(path + ": pass " + (i + 1).to_string() + "/" + codes.len().to_string() + " (" + pattern_name(codes[i]) + ")...");
@@ -906,7 +906,7 @@ function write_passes(w: Writer, path: string, span: Lengths, s: Settings, rnd: 
   if (span.total <= 0 as i64) {
     return (true, false);
   }
-  var codes: i32[] = schedule(s.passes, s.zero);
+  let codes: i32[] = schedule(s.passes, s.zero);
   if (span.first > 0 as i64) {
     match (write_sweep(w, path, span.first, codes, false, rnd)) {
       Some(f) => {
@@ -932,7 +932,7 @@ function settings_new(): Settings {
 }
 
 function scan_options(): (Settings, string[]) {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("f", "force", opt_force()));
   opts = opts.append(gnu.valued("n", "iterations", opt_iterations()));
   opts = opts.append(gnu.valued("", "random-source", opt_random_source()));
@@ -943,10 +943,10 @@ function scan_options(): (Settings, string[]) {
   opts = opts.append(gnu.flag("x", "exact", opt_exact()));
   opts = opts.append(gnu.flag("z", "zero", opt_zero()));
 
-  var s: Settings = settings_new();
-  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "shred", help_text(), 1);
+  let s: Settings = settings_new();
+  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "shred", help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -992,7 +992,7 @@ function apply_option(s: Settings, m: gnu.OptMatch): Settings {
 // `x` multiplier `dd` does: `shred -n 1x2` is `invalid number of
 // passes: '1x2'`.
 function passes_of(v: string): i32 {
-  var r: (u64, i32) = gnu.parse_units(v);
+  let r: (u64, i32) = gnu.parse_units(v);
   if (r.1 != 0) {
     gnu.error("invalid number of passes: " + gnu.quote(v));
     exit(1);
@@ -1001,7 +1001,7 @@ function passes_of(v: string): i32 {
 }
 
 function size_of(v: string): i64 {
-  var r: (u64, i32) = gnu.parse_units(v);
+  let r: (u64, i32) = gnu.parse_units(v);
   if (r.1 != 0) {
     gnu.error("invalid file size: " + gnu.quote(v));
     exit(1);
@@ -1015,26 +1015,26 @@ function how_of(v: string): i32 {
   if (v.len() == 0) {
     return how_wipesync();
   }
-  var names: string[] = ["unlink", "wipe", "wipesync"];
+  let names: string[] = ["unlink", "wipe", "wipesync"];
   return gnu.argmatch(v, names, "--remove");
 }
 
 pub function main(): i32 {
-  var scanned: (Settings, string[]) = scan_options();
-  var s: Settings = scanned.0;
-  var operands: string[] = scanned.1;
+  let scanned: (Settings, string[]) = scan_options();
+  let s: Settings = scanned.0;
+  let operands: string[] = scanned.1;
   if (operands.len() == 0) {
     gnu.die_usage("missing file operand", 1);
   }
-  var opened: (Rand, boolean) = rand_open(s);
+  let opened: (Rand, boolean) = rand_open(s);
   if (!opened.1) {
     return 1;
   }
-  var rnd: Rand = opened.0;
-  var ok: boolean = true;
-  var i: i32 = 0;
+  let rnd: Rand = opened.0;
+  let ok: boolean = true;
+  let i: i32 = 0;
   while (i < operands.len()) {
-    var done: (boolean, boolean) = shred_one(operands[i], s, rnd);
+    let done: (boolean, boolean) = shred_one(operands[i], s, rnd);
     if (!done.0) {
       ok = false;
     }

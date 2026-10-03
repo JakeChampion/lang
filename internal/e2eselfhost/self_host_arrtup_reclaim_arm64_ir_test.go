@@ -7,7 +7,7 @@ import (
 // TestSelfHostArrTupReclaimIRArm64 is the arm64 port of
 // TestSelfHostArrTupReclaimIRX86_64: the ARRTUP class (admission + the counted
 // element-walk deep-free + the element-payload escape checker) lives in shared
-// irlower.fern and lowers through backend-common IR ops (block / loop / arr_len /
+// lowering and lowers through backend-common IR ops (block / loop / arr_len /
 // arr_get / __fern_rc_dec + emit_tuple_type_child_drops), all backend-complete.
 // Case table shared with the x86-64 leg.
 func TestSelfHostArrTupReclaimIRArm64(t *testing.T) {

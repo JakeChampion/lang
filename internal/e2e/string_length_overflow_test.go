@@ -24,8 +24,8 @@ import (
 // that refuses the size.
 const repeatPastCeilingSrc = `import "std/string";
 function main(): i32 {
-	var s: string = "0123456789abcdef";
-	var big: string = s.repeat(268435455);
+	let s: string = "0123456789abcdef";
+	let big: string = s.repeat(268435455);
 	return big.len();
 }`
 
@@ -51,7 +51,7 @@ func TestRepeatPastLengthCeilingAborts(t *testing.T) {
 		// to widen the product into: the backend checks the length instead and
 		// traps. A trap carries no cause line, so the exit status is the whole
 		// assertion here.
-		comp := buildNumComponent(t, repeatPastCeilingSrc)
+		comp := buildCLIComponent(t, repeatPastCeilingSrc)
 		stdout, _, code := runComponent(t, comp, runOpts{})
 		if code == 0 {
 			t.Fatalf("wasm did not trap on a length past the i32 ceiling (exit 0, stdout=%q)", stdout)
@@ -72,9 +72,9 @@ func TestAllocU8NegativeLengthAborts(t *testing.T) {
 	// 16 * 268435455 wraps to -16, the same product `repeat` produces, written
 	// so the constant folder cannot see it as a literal.
 	src := `function main(): i32 {
-	var width: i32 = 16;
-	var count: i32 = 268435455;
-	var bs: u8[] = __alloc_u8(width * count);
+	let width: i32 = 16;
+	let count: i32 = 268435455;
+	let bs: u8[] = __alloc_u8(width * count);
 	return bs.len();
 }`
 	t.Run("x86_64", func(t *testing.T) {
@@ -113,10 +113,10 @@ func assertLenOverflowAbort(t *testing.T, backend, out string, code int, wantMsg
 // from a zero-filled buffer rather than `repeat` so that the concat is the
 // first length arithmetic the program does.
 const concatPastCeilingSrc = `function main(): i32 {
-	var n: i32 = 1073741840;
-	var bs: u8[] = __alloc_u8(n);
-	var a: string = string_from_bytes_unchecked(bs);
-	var b: string = a + a;
+	let n: i32 = 1073741840;
+	let bs: u8[] = __alloc_u8(n);
+	let a: string = string_from_bytes_unchecked(bs);
+	let b: string = a + a;
 	return b.len();
 }`
 

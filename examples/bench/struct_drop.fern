@@ -11,28 +11,28 @@ import "std/i32";
 struct Frame { name: string, tags: string[], slots: i32[], depth: i32 }
 
 function mk(k: i32): Frame {
-  var t: string[] = [];
+  let t: string[] = [];
   t = t.append("tag_" + k.to_string());
-  var s: i32[] = [];
+  let s: i32[] = [];
   s = s.append(k);
   return Frame { name: "frame_" + k.to_string(), tags: t, slots: s, depth: k };
 }
 
 // Four locals live across five exits: the sweep runs at each one.
 function pick(k: i32): i32 {
-  var a: Frame = mk(k);
+  let a: Frame = mk(k);
   if (k == 1) {
     return a.depth;
   }
-  var b: Frame = mk(k + 1);
+  let b: Frame = mk(k + 1);
   if (k == 2) {
     return a.depth + b.depth;
   }
-  var c: Frame = mk(k + 2);
+  let c: Frame = mk(k + 2);
   if (k == 3) {
     return b.depth + c.depth;
   }
-  var d: Frame = mk(k + 3);
+  let d: Frame = mk(k + 3);
   if (k == 4) {
     return c.depth + d.depth;
   }
@@ -40,8 +40,8 @@ function pick(k: i32): i32 {
 }
 
 function main(): i32 {
-  var total: i64 = 0i64;
-  var i: i32 = 0;
+  let total: i64 = 0i64;
+  let i: i32 = 0;
   while (i < 120000) {
     total = total + pick(i % 6) as i64;
     i = i + 1;

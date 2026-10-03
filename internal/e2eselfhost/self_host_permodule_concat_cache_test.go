@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,11 +17,8 @@ import (
 // body-only edit that flips a borrow verdict its caller reads.
 func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("file-loading driver test runs only natively (argv paths)")
-	}
 	dir, mmr := buildConcatDriver(t, gcc)
-	entryPath, nMod := writeConcatFixture(t, dir)
+	entryPath, nMod := writeFlatConcatFixture(t, dir)
 	proj := filepath.Dir(entryPath)
 	cacheDir := filepath.Join(proj, "cache")
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
@@ -31,7 +27,7 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 
 	drive := func(args ...string) (string, string) {
 		t.Helper()
-		cmd := exec.Command(mmr, append([]string{entryPath}, args...)...)
+		cmd := runX86_64Bin(runner, mmr, append([]string{entryPath}, args...)...)
 		var errb strings.Builder
 		cmd.Stderr = &errb
 		out, err := cmd.Output()
@@ -117,13 +113,13 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 		t.Fatalf("write lib3: %v", err)
 	}
 	concat("keep")
-	edit("lib3.fern", "{ return xs.len(); }", "{ var h: i32[][] = [xs]; return h[0].len(); }")
+	edit("lib3.fern", "{ return xs.len(); }", "{ let h: i32[][] = [xs]; return h[0].len(); }")
 	hits, misses = concat("fact")
 	pmWantSets(t, "fact", hits, misses, reHits, []string{"__entry", "lib3"})
 
 	asm, _ := drive("-cache-dir", cacheDir)
 	bin := buildBin(t, gcc, dir, "concat_cache_prog", asm)
-	rc := exec.Command(bin)
+	rc := runX86_64Bin(runner, bin)
 	_ = rc.Run()
 	if code := rc.ProcessState.ExitCode(); code != 0 {
 		t.Fatalf("cached concat program exited %d, want 0", code)

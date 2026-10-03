@@ -40,9 +40,9 @@ function step(m: M, c: i32): M {
     }
 }
 function main(): i32 {
-    var s: string = "` + s + `";
-    var m: M = M { state: Between, words: 0, chars: 0 };
-    var i: i32 = 0;
+    let s: string = "` + s + `";
+    let m: M = M { state: Between, words: 0, chars: 0 };
+    let i: i32 = 0;
     while (i < s.len()) { m = step(m, s[i] as i32); i = i + 1; }
     return m.words * 10 + m.chars;
 }`

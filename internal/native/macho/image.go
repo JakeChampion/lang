@@ -30,14 +30,19 @@ func (m *image) name16(s string) {
 	m.off += 16
 }
 
-func (m *image) machHeader() {
+// An image that binds imports has undefined symbols, so it drops MH_NOUNDEFS.
+func (m *image) machHeader(imports bool) {
 	m.u32(mhMagic64)
 	m.u32(cpuArm64)
 	m.u32(cpuSubAll)
 	m.u32(mhExecute)
 	m.u32(0) // ncmds — patched in done()
 	m.u32(0) // sizeofcmds — patched in done()
-	m.u32(mhNoUndefs | mhDyldLink | mhTwoLevel | mhPIE)
+	flags := uint32(mhDyldLink | mhTwoLevel | mhPIE)
+	if !imports {
+		flags |= mhNoUndefs
+	}
+	m.u32(flags)
 	m.u32(0) // reserved
 	m.cmdsStart = m.off
 }
@@ -185,16 +190,21 @@ func (m *image) dysymtab(nlocal uint32) {
 	m.ncmds++
 }
 
-// dyldInfo writes LC_DYLD_INFO_ONLY. Only the rebase stream is populated: the
-// image imports nothing, exports nothing and binds nothing, so every other
-// off/size pair is zero.
-func (m *image) dyldInfo(rebaseOff, rebaseSize uint32) {
+// dyldInfo writes LC_DYLD_INFO_ONLY: the rebase stream and the non-lazy bind
+// stream. Nothing binds weakly or lazily and nothing is exported, so those
+// off/size pairs are zero.
+func (m *image) dyldInfo(rebaseOff, rebaseSize, bindOff, bindSize uint32) {
 	m.u32(lcDyldInfoOnly)
 	m.u32(dyldInfoCmdLen)
 	m.u32(rebaseOff)
 	m.u32(rebaseSize)
-	for i := 0; i < 8; i++ {
-		m.u32(0) // bind, weak_bind, lazy_bind, export
+	if bindSize == 0 {
+		bindOff = 0
+	}
+	m.u32(bindOff)
+	m.u32(bindSize)
+	for i := 0; i < 6; i++ {
+		m.u32(0) // weak_bind, lazy_bind, export
 	}
 	m.ncmds++
 }

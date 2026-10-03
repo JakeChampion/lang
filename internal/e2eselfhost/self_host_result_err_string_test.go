@@ -12,8 +12,8 @@ import (
 const resultErrLoop = `import "std/i32";
 import "std/result";
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
 BODY
         i = i + 1;
@@ -27,16 +27,16 @@ func resultErrLoopSrc(body string) string {
 }
 
 var resultErrStringRows = []leakRow{
-	{"string_ok", resultErrLoopSrc(`        var q: Result[string, string] = Err((i + 1000).to_string());
+	{"string_ok", resultErrLoopSrc(`        let q: Result[string, string] = Err((i + 1000).to_string());
         n = (n + q.unwrap_or("xyz").len()) % 101;`), true},
-	{"scalar_ok", resultErrLoopSrc(`        var q: Result[i32, string] = Err((i + 1000).to_string());
+	{"scalar_ok", resultErrLoopSrc(`        let q: Result[i32, string] = Err((i + 1000).to_string());
         n = (n + q.unwrap_or(3)) % 101;`), true},
-	{"bool_ok", resultErrLoopSrc(`        var q: Result[boolean, string] = Err((i + 1000).to_string());
+	{"bool_ok", resultErrLoopSrc(`        let q: Result[boolean, string] = Err((i + 1000).to_string());
         if (q.unwrap_or(true)) { n = n + 1; }`), true},
-	{"scalar_ok_built_ok", resultErrLoopSrc(`        var q: Result[i32, string] = Ok(i);
+	{"scalar_ok_built_ok", resultErrLoopSrc(`        let q: Result[i32, string] = Ok(i);
         n = (n + q.unwrap_or(3)) % 101;`), true},
 	{"unused", `function main(): i32 {
-    var q: Result[i32, string] = Err("a" + "b");
+    let q: Result[i32, string] = Err("a" + "b");
     return 7;
 }
 `, true},
@@ -44,10 +44,10 @@ var resultErrStringRows = []leakRow{
 import "std/result";
 function pick(q: Result[i32, string]): i32 { return q.unwrap_or(3); }
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var q: Result[i32, string] = Err((i + 1000).to_string());
+        let q: Result[i32, string] = Err((i + 1000).to_string());
         n = (n + pick(q)) % 101;
         i = i + 1;
     }
@@ -62,10 +62,10 @@ function parse(i: i32): Result[i32, string] {
     return Err((i + 1000).to_string());
 }
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var q: Result[i32, string] = parse(i);
+        let q: Result[i32, string] = parse(i);
         n = (n + q.unwrap_or(3)) % 101;
         i = i + 1;
     }
@@ -77,10 +77,10 @@ function main(): i32 {
 	{"result_outlives", `import "std/i32";
 import "std/result";
 function main(): i32 {
-    var s: Result[string, string] = Ok("x");
-    var i: i32 = 0;
+    let s: Result[string, string] = Ok("x");
+    let i: i32 = 0;
     while (i < 3) {
-        var r: Result[i32, string] = Err((i + 100).to_string());
+        let r: Result[i32, string] = Err((i + 100).to_string());
         if (i == 0) { s = r.and(Ok("vw")); }
         i = i + 1;
     }
@@ -93,10 +93,10 @@ function main(): i32 {
 	{"ok_result_outlives", `import "std/i32";
 import "std/result";
 function main(): i32 {
-    var s: Result[string, string] = Err("x");
-    var i: i32 = 0;
+    let s: Result[string, string] = Err("x");
+    let i: i32 = 0;
     while (i < 3) {
-        var r: Result[string, string] = Ok((i + 100).to_string());
+        let r: Result[string, string] = Ok((i + 100).to_string());
         if (i == 0) { s = r.or(Err("z")); }
         i = i + 1;
     }
@@ -108,11 +108,11 @@ function main(): i32 {
 	{"err_aliases_live", `import "std/i32";
 import "std/result";
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var e: string = (i + 1000).to_string();
-        var q: Result[i32, string] = Err(e);
+        let e: string = (i + 1000).to_string();
+        let q: Result[i32, string] = Err(e);
         n = (n + q.unwrap_or(3) + e.len()) % 101;
         i = i + 1;
     }

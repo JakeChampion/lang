@@ -488,7 +488,7 @@ Explicit polymorphism exists when needed:
 
 ```scala
 class Source[X^]:
-  private var listeners: Set[Listener^{X}] = Set.empty
+  private let listeners: Set[Listener^{X}] = Set.empty
   def register(x: Listener^{X}): Unit = listeners += x
 ```
 
@@ -1694,9 +1694,9 @@ Three specific costs, none of which show up in a GC'd language:
    when necessary."* Note the shape of the answer: **one-shot is constant time; multi-shot
    pays a copy.**
 3. **Local mutable state must be saved and restored per resumption strand.** Koka's tour
-   is explicit: *"`var` state is correctly saved and restored on resumptions (as part of
+   is explicit: *"`let` state is correctly saved and restored on resumptions (as part of
    the stack) and this is essential to the correct composition of effect handlers. If
-   `var` declarations were instead heap allocated or captured by reference, they would no
+   `let` declarations were instead heap allocated or captured by reference, they would no
    longer be local to their scope and side effects could 'leak' across different
    resumptions."* Fern's local variables are stack slots today; making them
    resumption-safe means either copying them with the continuation or forbidding
@@ -1789,7 +1789,7 @@ multi-core OCaml and Haskell use a generational tracing collector."*
 | Effect **tracking** (rows/sets on signatures) | **zero** — fully erased | do it |
 | **Tail-resumptive / linear** operations (dynamic dispatch to a handler) | one indirect call, ≈ virtual method | safe; the natural v2 |
 | General `ctl` handlers via monadic translation | allocation per operation; pervasive monadic bind in *all* effect-polymorphic code; interacts with Perceus insertion | expensive; defer |
-| Multi-shot resumption | continuation duplication under RC; local `var` save/restore; drop-chain on abandonment | avoid, or make it an opt-in `linear`-negative marker |
+| Multi-shot resumption | continuation duplication under RC; local `let` save/restore; drop-chain on abandonment | avoid, or make it an opt-in `linear`-negative marker |
 | Segmented stacks | new runtime, incompatible with WASI 0.2 and bare-metal | do not |
 
 ---

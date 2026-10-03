@@ -64,16 +64,16 @@ function test_body_stream_starts_at_the_beginning(): test.TestOutcome {
 }
 
 function test_empty_body_is_an_empty_stream(): test.TestOutcome {
-  var s: Stream = parsed("").body_stream();
+  let s: Stream = parsed("").body_stream();
   return test.assert_eq(s.len(), 0);
 }
 
 // The upload shape the migration is for: read one line at a time
 // rather than the whole body.
 function test_read_line_walks_the_body(): test.TestOutcome {
-  var s: Stream = parsed("alpha\nbeta\ngamma").body_stream();
-  var seen: string = "";
-  var n: i32 = 0;
+  let s: Stream = parsed("alpha\nbeta\ngamma").body_stream();
+  let seen: string = "";
+  let n: i32 = 0;
   while (n < 4) {
     let (line, next) = s.read_line();
     s = next;
@@ -103,19 +103,19 @@ function test_read_n_leaves_the_remainder(): test.TestOutcome {
 
 // The whole-body readers answer for the buffer, not the cursor.
 function test_body_string_ignores_a_partial_walk(): test.TestOutcome {
-  var req: HttpRequest = parsed("hello world");
+  let req: HttpRequest = parsed("hello world");
   let (head, rest) = req.body_stream().read_n(5);
   return test.assert_eq(body_text(req), "hello world");
 }
 
 function test_body_len_ignores_a_partial_walk(): test.TestOutcome {
-  var req: HttpRequest = parsed("hello world");
+  let req: HttpRequest = parsed("hello world");
   let (line, rest) = req.body_stream().read_line();
   return test.assert_eq(req.body_len(), 11);
 }
 
 function test_body_bytes_matches_body_len(): test.TestOutcome {
-  var req: HttpRequest = parsed("hello");
+  let req: HttpRequest = parsed("hello");
   return test.assert_eq(req.body_bytes().len(), req.body_len());
 }
 
@@ -136,9 +136,9 @@ function test_bodyless_request_reads_empty(): test.TestOutcome {
 // reads with U+FFFD in place of the bad byte (`read_line` has no arm to
 // refuse into), and `body_string` refuses.
 function test_ill_formed_bytes_read_as_replacement(): test.TestOutcome {
-  var fffd: string = utf8.utf8_encode(65533 as char);
-  var raw: string = string_from_bytes_unchecked([97 as u8, 255 as u8, 10 as u8, 98 as u8]);
-  var req: HttpRequest = parsed(raw);
+  let fffd: string = utf8.utf8_encode(65533 as char);
+  let raw: string = string_from_bytes_unchecked([97 as u8, 255 as u8, 10 as u8, 98 as u8]);
+  let req: HttpRequest = parsed(raw);
   let (line, rest) = req.body_stream().read_line();
   match (line) {
     Some(l) => {
@@ -173,7 +173,7 @@ function test_ill_formed_bytes_read_as_replacement(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("HttpRequest.body as a Stream");
+  let r: test.TestRunner = test.test_new("HttpRequest.body as a Stream");
   r = r.it("body_stream carries the body", test_body_stream_carries_the_body);
   r = r.it("body_stream starts at the beginning", test_body_stream_starts_at_the_beginning);
   r = r.it("an empty body is an empty stream", test_empty_body_is_an_empty_stream);

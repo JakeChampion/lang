@@ -23,12 +23,12 @@ func trmcConsumePeakSrc(n, div string) string {
 function inc_all(xs: List): List {
     match (xs) { Cons(h, t) => { return Cons(h + 1, inc_all(t)); }, Nil => { return Nil; } }
 }
-function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(i, acc); i = i + 1; } return acc; }
-function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
+function build(n: i32): List { let acc: List = Nil; let i: i32 = 0; while (i < n) { acc = Cons(i, acc); i = i + 1; } return acc; }
+function sum(l: List): i32 { let acc: i32 = 0; let cur: List = l; let go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var ys: List = inc_all(build(` + n + `));
-    var peak: i32 = (__heap_bump_bytes() as i32) - before;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let ys: List = inc_all(build(` + n + `));
+    let peak: i32 = (__heap_bump_bytes() as i32) - before;
     if (sum(ys) < 0) { return 255; }
     return peak / ` + div + `;
 }`
@@ -41,10 +41,10 @@ const trmcConsumeSoundSrc = `enum List { Cons(i32, List), Nil }
 function inc_all(xs: List): List {
     match (xs) { Cons(h, t) => { return Cons(h + 1, inc_all(t)); }, Nil => { return Nil; } }
 }
-function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(i, acc); i = i + 1; } return acc; }
+function build(n: i32): List { let acc: List = Nil; let i: i32 = 0; while (i < n) { acc = Cons(i, acc); i = i + 1; } return acc; }
 function sum(l: List): i32 { match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } } }
 function main(): i32 {
-    var ys: List = inc_all(build(100));      // sum(0..99)=4950, +100 = 5050
+    let ys: List = inc_all(build(100));      // sum(0..99)=4950, +100 = 5050
     if (sum(ys) != 5050) { return 100; }
     return __rc_underflow_count();
 }`
@@ -89,25 +89,5 @@ func TestArm64TrmcConsumePeakHalved(t *testing.T) {
 	assertConsumeHalves(t, "arm64-linux", on, off)
 	if _, code := compileAndRunArm64FreeOn(t, trmcConsumeSoundSrc); code != 0 {
 		t.Errorf("arm64 consume soundness: got %d, want 0", code)
-	}
-}
-
-func TestWASMTrmcConsumePeakHalved(t *testing.T) {
-	src := trmcConsumePeakSrc("2000", "1024")
-	prc := ast.RcFreeEnabled
-	defer func() { ast.RcFreeEnabled = prc }()
-	ast.RcFreeEnabled = true
-	prev := ast.OwnedByDefault
-	defer func() { ast.OwnedByDefault = prev }()
-	ast.OwnedByDefault = true
-	on := runWasm(t, src)
-	ast.OwnedByDefault = false
-	off := runWasm(t, src)
-	ast.RcFreeEnabled = prc
-	assertConsumeHalves(t, "wasm32-wasi", on, off)
-
-	ast.RcFreeEnabled = true
-	if got := runWasm(t, trmcConsumeSoundSrc); got != 0 {
-		t.Errorf("wasm consume soundness: got %d, want 0", got)
 	}
 }

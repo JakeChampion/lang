@@ -26,8 +26,8 @@
 // overwriting a donor's box after a first-match lookup resolved the wrong one;
 // it measured 0 on both sides over 200 rounds, because reaching the
 // destructive path needs a coincidence. Native funnels its three reuse
-// emitters through one emitReuseToken and is correct by construction; irlower
-// has several independent emitters (the struct, tuple, enum and cross-block
+// emitters through one emitReuseToken and is correct by construction; the self-host
+// lowering has several independent emitters (the struct, tuple, enum and cross-block
 // families), which is the shape that produces this class of bug. A check over
 // the emitted ops does not need the coincidence.
 //
@@ -58,21 +58,21 @@ pub struct RcResult {
 }
 
 pub function rc_result_new(): RcResult {
-  var no_p: irverify.Problem[] = [];
-  var no_s: string[] = [];
+  let no_p: irverify.Problem[] = [];
+  let no_s: string[] = [];
   return RcResult { problems: no_p, sites: 0, checked: 0, skips: no_s };
 }
 
 // rc_coverage_str renders the tally with the skip reasons grouped by cause,
 // the same shape irverifystack.coverage_str uses.
 pub function rc_coverage_str(r: RcResult): string {
-  var out: string = "reuse sites modelled " + util.i32_to_string(r.checked)
+  let out: string = "reuse sites modelled " + util.i32_to_string(r.checked)
     + "/" + util.i32_to_string(r.sites);
-  var seen: string[] = [];
-  var count: i32[] = [];
-  var i: i32 = 0;
+  let seen: string[] = [];
+  let count: i32[] = [];
+  let i: i32 = 0;
   while (i < r.skips.len()) {
-    var at: i32 = util.index_of_str(seen, r.skips[i]);
+    let at: i32 = util.index_of_str(seen, r.skips[i]);
     if (at < 0) {
       seen = seen.append(r.skips[i]);
       count = count.append(1);
@@ -81,7 +81,7 @@ pub function rc_coverage_str(r: RcResult): string {
     }
     i = i + 1;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < seen.len()) {
     out = out + "\n    skipped " + util.i32_to_string(count[j]) + ": " + seen[j];
     j = j + 1;
@@ -181,11 +181,11 @@ function generated_drop_names(): string[] {
 // name_has_prefix requires a non-empty suffix: a drop's suffix is the type
 // it drops, so a bare prefix names nothing and is not a drop.
 function name_has_prefix(name: string, prefix: string): boolean {
-  var m: i32 = prefix.len();
+  let m: i32 = prefix.len();
   if (name.len() <= m) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < m) {
     if (name[i] != prefix[i]) {
       return false;
@@ -196,7 +196,7 @@ function name_has_prefix(name: string, prefix: string): boolean {
 }
 
 function name_in(name: string, names: string[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < names.len()) {
     if (name == names[i]) {
       return true;
@@ -215,8 +215,8 @@ function releases_operand(name: string): boolean {
   if (name_in(name, generated_drop_names())) {
     return true;
   }
-  var prefixes: string[] = generated_drop_prefixes();
-  var i: i32 = 0;
+  let prefixes: string[] = generated_drop_prefixes();
+  let i: i32 = 0;
   while (i < prefixes.len()) {
     if (name_has_prefix(name, prefixes[i])) {
       return true;
@@ -245,11 +245,11 @@ struct IfSpan { ok: boolean, if_at: i32, else_at: i32, end_at: i32 }
 // match_if_backwards walks back from the `end` at end_at to the `if` it
 // closes, tracking nesting, and records the `else` at the scope's own depth.
 function match_if_backwards(ops: ir.Op[], end_at: i32): IfSpan {
-  var depth: i32 = 0;
-  var else_at: i32 = 0 - 1;
-  var i: i32 = end_at - 1;
+  let depth: i32 = 0;
+  let else_at: i32 = 0 - 1;
+  let i: i32 = end_at - 1;
   while (i >= 0) {
-    var k: i32 = ops[i].kind_tag;
+    let k: i32 = ops[i].kind_tag;
     if (k == ir.kind_id("end")) {
       depth = depth + 1;
     } else if (k == ir.kind_id("block") || k == ir.kind_id("loop")) {
@@ -293,11 +293,11 @@ function scope_delta(op: ir.Op): i32 {
 // reach the box base (`load_local D; const_i32 hdr; sub`), the self-host
 // stores the pointer as it is.
 function sole_token_source(ops: ir.Op[], from: i32, to: i32, token_slot: i32): SlotFind {
-  var found: SlotFind = SlotFind { ok: false, slot: 0, at: 0 };
-  var depth: i32 = 0;
-  var i: i32 = from;
+  let found: SlotFind = SlotFind { ok: false, slot: 0, at: 0 };
+  let depth: i32 = 0;
+  let i: i32 = from;
   while (i < to) {
-    var d: i32 = scope_delta(ops[i]);
+    let d: i32 = scope_delta(ops[i]);
     if (d != 0) {
       depth = depth + d;
       i = i + 1;
@@ -310,7 +310,7 @@ function sole_token_source(ops: ir.Op[], from: i32, to: i32, token_slot: i32): S
     if (found.ok) {
       return SlotFind { ok: false, slot: 0, at: 0 };
     }
-    var src: i32 = read_token_operand(ops, from, i);
+    let src: i32 = read_token_operand(ops, from, i);
     if (src < 0) {
       return SlotFind { ok: false, slot: 0, at: 0 };
     }
@@ -343,11 +343,11 @@ function read_token_operand(ops: ir.Op[], from: i32, at: i32): i32 {
 struct DeclineRead { ok: boolean, found: boolean, slot: i32, at: i32 }
 
 function sole_decline(ops: ir.Op[], from: i32, to: i32): DeclineRead {
-  var found: DeclineRead = DeclineRead { ok: true, found: false, slot: 0, at: 0 };
-  var depth: i32 = 0;
-  var i: i32 = from;
+  let found: DeclineRead = DeclineRead { ok: true, found: false, slot: 0, at: 0 };
+  let depth: i32 = 0;
+  let i: i32 = from;
   while (i < to) {
-    var d: i32 = scope_delta(ops[i]);
+    let d: i32 = scope_delta(ops[i]);
     if (d != 0) {
       depth = depth + d;
       i = i + 1;
@@ -389,7 +389,7 @@ function site_skip(why: string): Site {
 // token_arg_slot walks back over the allocator's trailing size constants to
 // the load that pushed its first argument, so the arity does not matter.
 function token_arg_slot(ops: ir.Op[], call: i32): i32 {
-  var j: i32 = call - 1;
+  let j: i32 = call - 1;
   while (j >= 0 && is_kind(ops[j], "const_i32")) {
     j = j - 1;
   }
@@ -403,7 +403,7 @@ function token_arg_slot(ops: ir.Op[], call: i32): i32 {
 // the donor-slot zeroing native emits between the select and the call and the
 // self-host does not.
 function select_end_at(ops: ir.Op[], token_at: i32): i32 {
-  var k: i32 = token_at - 1;
+  let k: i32 = token_at - 1;
   if (k >= 1 && is_kind(ops[k], "store_local")
     && is_kind(ops[k - 1], "const_i32") && ops[k - 1].i32_imm == 0) {
     k = k - 2;
@@ -436,7 +436,7 @@ struct GateRead { code: i32, slot: i32 }
 // In the last of those the donor is X, the slot the tee wrote, because that is
 // the slot the reuse arm loads for its token.
 function gate_slot(ops: ir.Op[], if_at: i32): GateRead {
-  var at: i32 = flag_source(ops, if_at);
+  let at: i32 = flag_source(ops, if_at);
   if (at < 0) {
     return GateRead { code: 2, slot: 0 };
   }
@@ -455,7 +455,7 @@ function gate_slot(ops: ir.Op[], if_at: i32): GateRead {
 // and returns the index the flag was produced at, or -1 when the select is
 // conditioned on something that is not a uniqueness flag.
 function flag_source(ops: ir.Op[], if_at: i32): i32 {
-  var at: i32 = if_at - 1;
+  let at: i32 = if_at - 1;
   if (at < 0) {
     return 0 - 1;
   }
@@ -486,7 +486,7 @@ function no_keep(): Site {
 // it, or null, into the token slot; it supplies the gate and the token
 // source, and the later select's else arm the decline release.
 function read_keep_site(ops: ir.Op[], call: i32, token_slot: i32): Site {
-  var at: i32 = call + 1;
+  let at: i32 = call + 1;
   if (at + 3 >= ops.len() || !is_kind(ops[at], "store_local") || !is_kind(ops[at + 1], "load_local")
     || !is_kind(ops[at + 2], "struct_set_shape") || !is_kind(ops[at + 3], "drop")) {
     return no_keep();
@@ -506,27 +506,27 @@ function read_keep_site(ops: ir.Op[], call: i32, token_slot: i32): Site {
     || !is_kind(ops[at + 3], "if")) {
     return no_keep();
   }
-  var span: IfSpan = match_if_forwards(ops, at + 3);
+  let span: IfSpan = match_if_forwards(ops, at + 3);
   if (!span.ok || span.else_at < 0) {
     return no_keep();
   }
-  var k: i32 = call - 1;
+  let k: i32 = call - 1;
   while (k >= 2) {
     if (is_kind(ops[k], "end") && is_kind(ops[k - 1], "store_local") && ops[k - 1].i32_imm == token_slot
       && is_kind(ops[k - 2], "const_i32") && ops[k - 2].i32_imm == 0) {
-      var sel: IfSpan = match_if_backwards(ops, k);
+      let sel: IfSpan = match_if_backwards(ops, k);
       if (!sel.ok || sel.else_at < 0) {
         return no_keep();
       }
-      var gate: GateRead = gate_slot(ops, sel.if_at);
+      let gate: GateRead = gate_slot(ops, sel.if_at);
       if (gate.code != 0) {
         return no_keep();
       }
-      var tok: SlotFind = sole_token_source(ops, sel.if_at + 1, sel.else_at, token_slot);
+      let tok: SlotFind = sole_token_source(ops, sel.if_at + 1, sel.else_at, token_slot);
       if (!tok.ok) {
         return no_keep();
       }
-      var dec: DeclineRead = sole_decline(ops, span.else_at + 1, span.end_at);
+      let dec: DeclineRead = sole_decline(ops, span.else_at + 1, span.end_at);
       if (!dec.ok) {
         return no_keep();
       }
@@ -543,9 +543,9 @@ function read_keep_site(ops: ir.Op[], call: i32, token_slot: i32): Site {
 // match_if_forwards walks from the `if` at if_at to the `end` closing it,
 // recording the `else` at the scope's own depth.
 function match_if_forwards(ops: ir.Op[], if_at: i32): IfSpan {
-  var else_at: i32 = 0 - 1;
-  var depth: i32 = 0;
-  var i: i32 = if_at + 1;
+  let else_at: i32 = 0 - 1;
+  let depth: i32 = 0;
+  let i: i32 = if_at + 1;
   while (i < ops.len()) {
     if (is_kind(ops[i], "block") || is_kind(ops[i], "loop") || is_kind(ops[i], "if")) {
       depth = depth + 1;
@@ -564,22 +564,22 @@ function match_if_forwards(ops: ir.Op[], if_at: i32): IfSpan {
 
 // read_site recognises the reuse site whose allocator call is at `call`.
 function read_site(ops: ir.Op[], call: i32): Site {
-  var tok_at: i32 = token_arg_slot(ops, call);
+  let tok_at: i32 = token_arg_slot(ops, call);
   if (tok_at < 0) {
     return site_skip("token argument is not a local load");
   }
-  var token_slot: i32 = ops[tok_at].i32_imm;
+  let token_slot: i32 = ops[tok_at].i32_imm;
 
-  var kept: Site = read_keep_site(ops, call, token_slot);
+  let kept: Site = read_keep_site(ops, call, token_slot);
   if (kept.ok) {
     return kept;
   }
-  var end_at: i32 = select_end_at(ops, tok_at);
+  let end_at: i32 = select_end_at(ops, tok_at);
   if (end_at < 0) {
     return site_skip("no token select before the reuse call");
   }
 
-  var span: IfSpan = match_if_backwards(ops, end_at);
+  let span: IfSpan = match_if_backwards(ops, end_at);
   if (!span.ok) {
     return site_skip("token select is not a well-formed if");
   }
@@ -587,7 +587,7 @@ function read_site(ops: ir.Op[], call: i32): Site {
     return site_skip("token select has no decline arm");
   }
 
-  var gate: GateRead = gate_slot(ops, span.if_at);
+  let gate: GateRead = gate_slot(ops, span.if_at);
   if (gate.code == 1) {
     return site_skip("no uniqueness gate before the token select");
   }
@@ -595,12 +595,12 @@ function read_site(ops: ir.Op[], call: i32): Site {
     return site_skip("token select is not conditioned on a local");
   }
 
-  var tok: SlotFind = sole_token_source(ops, span.if_at + 1, span.else_at, token_slot);
+  let tok: SlotFind = sole_token_source(ops, span.if_at + 1, span.else_at, token_slot);
   if (!tok.ok) {
     return site_skip("reuse arm does not derive the token from one local");
   }
 
-  var dec: DeclineRead = sole_decline(ops, span.else_at + 1, end_at);
+  let dec: DeclineRead = sole_decline(ops, span.else_at + 1, end_at);
   if (!dec.ok) {
     return site_skip("decline arm releases more than one local");
   }
@@ -622,7 +622,7 @@ function read_site(ops: ir.Op[], call: i32): Site {
 
 // site_problems is what one recognised site is wrong about, if anything.
 function site_problems(fn_name: string, call: i32, s: Site): irverify.Problem[] {
-  var out: irverify.Problem[] = [];
+  let out: irverify.Problem[] = [];
   if (s.gate != s.token) {
     out = out.append(irverify.Problem {
       fn_name: fn_name,
@@ -656,8 +656,8 @@ struct Claim { at: i32, donor: i32 }
 // skip_to_matching_end returns the index of the `end` closing the scope whose
 // `else` is at else_at, or -1 when the stream is unbalanced.
 function skip_to_matching_end(ops: ir.Op[], else_at: i32): i32 {
-  var depth: i32 = 0;
-  var i: i32 = else_at + 1;
+  let depth: i32 = 0;
+  let i: i32 = else_at + 1;
   while (i < ops.len()) {
     if (is_kind(ops[i], "block") || is_kind(ops[i], "loop") || is_kind(ops[i], "if")) {
       depth = depth + 1;
@@ -681,8 +681,8 @@ function skip_to_matching_end(ops: ir.Op[], else_at: i32): i32 {
 // `from` and is skipped. Everything after an enclosing `end` is reachable,
 // because control leaves the scope and continues.
 function reaches(ops: ir.Op[], from: i32, to: i32, donor: i32): boolean {
-  var depth: i32 = 0;
-  var i: i32 = from + 1;
+  let depth: i32 = 0;
+  let i: i32 = from + 1;
   while (i < to) {
     if (is_kind(ops[i], "return")) {
       // Only a return on this path ends reachability. A conditional return
@@ -698,7 +698,7 @@ function reaches(ops: ir.Op[], from: i32, to: i32, donor: i32): boolean {
       }
     } else if (is_kind(ops[i], "else")) {
       if (depth == 0) {
-        var j: i32 = skip_to_matching_end(ops, i);
+        let j: i32 = skip_to_matching_end(ops, i);
         if (j < 0) {
           return false;
         }
@@ -730,10 +730,10 @@ function reaches(ops: ir.Op[], from: i32, to: i32, donor: i32): boolean {
 // Sites the recogniser skipped carry no donor and cannot participate, so this
 // is bounded by the same coverage the rest of the pass reports.
 function double_claim_problems(fn_name: string, ops: ir.Op[], claims: Claim[]): irverify.Problem[] {
-  var out: irverify.Problem[] = [];
-  var i: i32 = 0;
+  let out: irverify.Problem[] = [];
+  let i: i32 = 0;
   while (i < claims.len()) {
-    var j: i32 = i + 1;
+    let j: i32 = i + 1;
     while (j < claims.len()) {
       if (claims[j].donor == claims[i].donor
         && reaches(ops, claims[i].at, claims[j].at, claims[i].donor)) {
@@ -757,18 +757,18 @@ function double_claim_problems(fn_name: string, ops: ir.Op[], claims: Claim[]): 
 // stack pass it never abandons a whole function: a site it cannot model costs
 // only that site's coverage.
 pub function verify_rc_fn(fn_name: string, ops: ir.Op[]): RcResult {
-  var r: RcResult = rc_result_new();
-  var claims: Claim[] = [];
-  var k_calld: i32 = ir.kind_id("call_direct");
-  var i: i32 = 0;
+  let r: RcResult = rc_result_new();
+  let claims: Claim[] = [];
+  let k_calld: i32 = ir.kind_id("call_direct");
+  let i: i32 = 0;
   while (i < ops.len()) {
     if (is_reuse_alloc(ops[i], k_calld)) {
       r = RcResult { ...r, sites: r.sites + 1 };
-      var s: Site = read_site(ops, i);
+      let s: Site = read_site(ops, i);
       if (s.ok) {
-        var ps: irverify.Problem[] = site_problems(fn_name, i, s);
-        var j: i32 = 0;
-        var acc: irverify.Problem[] = r.problems;
+        let ps: irverify.Problem[] = site_problems(fn_name, i, s);
+        let j: i32 = 0;
+        let acc: irverify.Problem[] = r.problems;
         while (j < ps.len()) {
           acc = acc.append(ps[j]);
           j = j + 1;
@@ -781,9 +781,9 @@ pub function verify_rc_fn(fn_name: string, ops: ir.Op[]): RcResult {
     }
     i = i + 1;
   }
-  var dp: irverify.Problem[] = double_claim_problems(fn_name, ops, claims);
-  var k: i32 = 0;
-  var all: irverify.Problem[] = r.problems;
+  let dp: irverify.Problem[] = double_claim_problems(fn_name, ops, claims);
+  let k: i32 = 0;
+  let all: irverify.Problem[] = r.problems;
   while (k < dp.len()) {
     all = all.append(dp[k]);
     k = k + 1;

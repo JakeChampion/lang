@@ -9,12 +9,12 @@ function half(x: i32): Option[i32] { if (x % 2 == 0) { return Some(x / 2); } ret
 function mk(x: i32): Pt { return Pt { x: x, y: x + 1 }; }
 
 function main(): i32 {
-    var o: Option[i32] = apply_o(half, 10);   // Some(5)
-    var p: Pt = apply_p(mk, 7);                // {7,8}
-    var r: i32 = 0;
+    let o: Option[i32] = apply_o(half, 10);   // Some(5)
+    let p: Pt = apply_p(mk, 7);                // {7,8}
+    let r: i32 = 0;
     match (o) { Some(v) => { r = r + v; }, None => { r = r + 100; } }   // 5
     r = r + p.x + p.y;                                                   // 15 -> 20
-    var none: Option[i32] = apply_o(half, 7);  // odd -> None
+    let none: Option[i32] = apply_o(half, 7);  // odd -> None
     match (none) { Some(v) => { r = r + v; }, None => { r = r + 1; } }   // 21
     return r;                                                            // 21
 }

@@ -28,16 +28,16 @@ struct Counts { lines: i32, words: i32, bytes: i32, chars: i32 }
 struct Show { lines: boolean, words: boolean, bytes: boolean, chars: boolean }
 
 function count(text: string): Counts {
-  var bytes: i32 = text.len();
+  let bytes: i32 = text.len();
   // Lines = number of '\n' bytes (wc counts newlines, so a final
   // line without a trailing '\n' isn't counted — matching wc(1)).
-  var lines: i32 = 0;
+  let lines: i32 = 0;
   // Characters = UTF-8 code points: count bytes that are not
   // continuation bytes (0b10xxxxxx, i.e. 0x80..0xBF).
-  var chars: i32 = 0;
-  var i: i32 = 0;
+  let chars: i32 = 0;
+  let i: i32 = 0;
   while (i < bytes) {
-    var b: i32 = text[i] as i32;
+    let b: i32 = text[i] as i32;
     if (b == 10) {
       lines = lines + 1;
     }
@@ -46,7 +46,7 @@ function count(text: string): Counts {
     }
     i = i + 1;
   }
-  var words: i32 = text.fields().len();
+  let words: i32 = text.fields().len();
   return Counts { lines: lines, words: words, bytes: bytes, chars: chars };
 }
 
@@ -55,7 +55,7 @@ function add(a: Counts, b: Counts): Counts {
 }
 
 function format_row(c: Counts, sh: Show, label: string): string {
-  var out: string = "";
+  let out: string = "";
   if (sh.lines) {
     out = out + c.lines.to_string().pad_start(7, " ");
   }
@@ -75,14 +75,14 @@ function format_row(c: Counts, sh: Show, label: string): string {
 }
 
 function main(): i32 {
-  var argv: string[] = args();
-  var sh: Show = Show { lines: false, words: false, bytes: false, chars: false };
-  var any_flag: boolean = false;
-  var inputs: string[] = [];
+  let argv: string[] = args();
+  let sh: Show = Show { lines: false, words: false, bytes: false, chars: false };
+  let any_flag: boolean = false;
+  let inputs: string[] = [];
 
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a == "-l") {
       sh = Show { ...sh, lines: true };
       any_flag = true;
@@ -107,19 +107,19 @@ function main(): i32 {
     inputs = inputs.append("-");
   }
 
-  var total: Counts = Counts { lines: 0, words: 0, bytes: 0, chars: 0 };
-  var nfiles: i32 = 0;
-  var status: i32 = 0;
+  let total: Counts = Counts { lines: 0, words: 0, bytes: 0, chars: 0 };
+  let nfiles: i32 = 0;
+  let status: i32 = 0;
 
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < inputs.len()) {
-    var label: string = inputs[j];
+    let label: string = inputs[j];
     if (label == "-") {
       label = "";
     }
     match (io.read_input(inputs[j])) {
       Ok(text) => {
-        var c: Counts = count(text);
+        let c: Counts = count(text);
         print(format_row(c, sh, label));
         total = add(total, c);
         nfiles = nfiles + 1;

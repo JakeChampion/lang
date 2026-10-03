@@ -46,14 +46,14 @@ func TestSelfHostNestedMatchBorrowX86_64(t *testing.T) {
 			// reclaimed. It is here so a regression on the OLD path fails too.
 			name: "match_at_top_level",
 			src: `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32[]] = Some([i, i + 1]);
+    let acc: i32 = 0;
+    let o: Option[i32[]] = Some([i, i + 1]);
     match (o) { Some(a) => { acc = a.len() + a[0]; }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -62,16 +62,16 @@ function main(): i32 {
 		{
 			name: "match_inside_an_if",
 			src: `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32[]] = Some([i, i + 1]);
+    let acc: i32 = 0;
+    let o: Option[i32[]] = Some([i, i + 1]);
     if (i >= 0) {
         match (o) { Some(a) => { acc = a.len() + a[0]; }, None => {} }
     }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -80,9 +80,9 @@ function main(): i32 {
 		{
 			name: "match_inside_a_while",
 			src: `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32[]] = Some([i, i + 1]);
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let o: Option[i32[]] = Some([i, i + 1]);
+    let k: i32 = 0;
     while (k < 1) {
         match (o) { Some(a) => { acc = a.len() + a[0]; }, None => {} }
         k = k + 1;
@@ -90,8 +90,8 @@ function main(): i32 {
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -102,16 +102,16 @@ function main(): i32 {
 			// plain dec, so it is a distinct emission and needs its own case.
 			name: "string_payload_inside_an_if",
 			src: `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[string] = Some("hello");
+    let acc: i32 = 0;
+    let o: Option[string] = Some("hello");
     if (i >= 0) {
         match (o) { Some(s) => { acc = s.len(); }, None => {} }
     }
     return acc + i;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -123,16 +123,16 @@ function main(): i32 {
 			name: "struct_payload_inside_an_if",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
     if (i >= 0) {
         match (o) { Some(p) => { acc = p.n + p.xs.len(); }, None => {} }
     }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -200,9 +200,9 @@ func TestSelfHostNestedMatchBorrowHazardsX86_64(t *testing.T) {
 			// Aliased in the same block as the match.
 			name: "aliased_beside_the_match",
 			src: `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var keep: Option[i32[]] = None;
-    var o: Option[i32[]] = Some([i, i + 1]);
+    let acc: i32 = 0;
+    let keep: Option[i32[]] = None;
+    let o: Option[i32[]] = Some([i, i + 1]);
     if (i >= 0) {
         keep = o;
         match (o) { Some(a) => { acc = a[0]; }, None => {} }
@@ -211,8 +211,8 @@ func TestSelfHostNestedMatchBorrowHazardsX86_64(t *testing.T) {
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -224,18 +224,18 @@ function main(): i32 {
 			// reference, so this is the one that would free a box still to be read.
 			name: "aliased_after_the_block",
 			src: `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32[]] = Some([i, i + 1]);
+    let acc: i32 = 0;
+    let o: Option[i32[]] = Some([i, i + 1]);
     if (i >= 0) {
         match (o) { Some(a) => { acc = a[0]; }, None => {} }
     }
-    var keep: Option[i32[]] = o;
+    let keep: Option[i32[]] = o;
     match (keep) { Some(b) => { acc = acc + b[1]; }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -246,20 +246,20 @@ function main(): i32 {
 			// Returned to the caller from the same function that matches it.
 			name: "returned_to_the_caller",
 			src: `function build(i: i32): Option[i32[]] {
-    var o: Option[i32[]] = Some([i, i + 1]);
+    let o: Option[i32[]] = Some([i, i + 1]);
     if (i >= 0) {
         match (o) { Some(a) => { if (a[0] < 0) { return None; } }, None => {} }
     }
     return o;
 }
 function round(i: i32): i32 {
-    var g: Option[i32[]] = build(i);
+    let g: Option[i32[]] = build(i);
     match (g) { Some(a) => { return a[0] + a[1]; }, None => {} }
     return 0;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -271,9 +271,9 @@ function main(): i32 {
 			name: "passed_to_a_callee_that_keeps_it",
 			src: `function keepit(o: Option[i32[]]): Option[i32[]] { return o; }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var held: Option[i32[]] = None;
-    var o: Option[i32[]] = Some([i, i + 1]);
+    let acc: i32 = 0;
+    let held: Option[i32[]] = None;
+    let o: Option[i32[]] = Some([i, i + 1]);
     if (i >= 0) {
         held = keepit(o);
         match (o) { Some(a) => { acc = a[0]; }, None => {} }
@@ -282,8 +282,8 @@ function round(i: i32): i32 {
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -294,17 +294,17 @@ function main(): i32 {
 			// The arm BINDING escapes to an outer local.
 			name: "arm_binding_escapes_to_an_outer_local",
 			src: `function round(i: i32): i32 {
-    var held: i32[] = [];
-    var acc: i32 = 0;
-    var o: Option[i32[]] = Some([i, i + 1]);
+    let held: i32[] = [];
+    let acc: i32 = 0;
+    let o: Option[i32[]] = Some([i, i + 1]);
     if (i >= 0) {
         match (o) { Some(a) => { held = a; acc = a[0]; }, None => {} }
     }
     return acc + held[1];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -316,17 +316,17 @@ function main(): i32 {
 			// match.
 			name: "arm_binding_escapes_into_a_container",
 			src: `function round(i: i32): i32 {
-    var keep: i32[][] = [];
-    var acc: i32 = 0;
-    var o: Option[i32[]] = Some([i, i + 1]);
+    let keep: i32[][] = [];
+    let acc: i32 = 0;
+    let o: Option[i32[]] = Some([i, i + 1]);
     if (i >= 0) {
         match (o) { Some(a) => { keep = keep.append(a); acc = a[0]; }, None => {} }
     }
     return acc + keep[0][1];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -377,13 +377,13 @@ func TestSelfHostNestedMatchBorrowNoUnderflowX86_64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	src := `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32[]] = Some([i, i + 1]);
+    let acc: i32 = 0;
+    let o: Option[i32[]] = Some([i, i + 1]);
     if (i >= 0) {
         match (o) { Some(a) => { acc = a.len() + a[0]; }, None => {} }
     }
-    var s: Option[string] = Some("hello");
-    var k: i32 = 0;
+    let s: Option[string] = Some("hello");
+    let k: i32 = 0;
     while (k < 1) {
         match (s) { Some(t) => { acc = acc + t.len(); }, None => {} }
         k = k + 1;
@@ -391,8 +391,8 @@ func TestSelfHostNestedMatchBorrowNoUnderflowX86_64(t *testing.T) {
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     if (x == 999999) { return 90; }
     return __rc_underflow_count();

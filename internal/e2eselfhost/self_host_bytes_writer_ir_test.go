@@ -16,14 +16,14 @@ var bytesWriterIRCases = []struct {
 	main string
 	want int
 }{
-	{"write-string-len", `var w = io.bytes_writer_new().write_string("hello"); return w.len();`, 5},
-	{"write-byte", `var w = io.bytes_writer_new().write_string("ab").write_byte(67); return w.len();`, 3},
-	{"write-bytes", `var w = io.bytes_writer_new().write_string("xy").write_bytes([1 as u8, 2 as u8]); return w.len();`, 4},
-	{"into-string", `var w = io.bytes_writer_new().write_string("ab").write_byte(67); match (w.into_string()) { Some(s) => { return s[0] as i32; }, None => { return 1; }, }`, 97},
-	{"into-string-tail", `var w = io.bytes_writer_new().write_string("ab").write_byte(67); match (w.into_string()) { Some(s) => { return s[s.len() - 1] as i32; }, None => { return 1; }, }`, 67},
-	{"invalid-string", `var w = io.bytes_writer_new().write_byte(255); match (w.into_string()) { Some(_) => { return 1; }, None => { return 42; }, }`, 42},
-	{"reset", `var w = io.bytes_writer_new().write_string("abc"); var w2 = w.reset(); return w2.len();`, 0},
-	{"is-empty", `var w = io.bytes_writer_new(); if (w.is_empty()) { return 1; } return 0;`, 1},
+	{"write-string-len", `let w = io.bytes_writer_new().write_string("hello"); return w.len();`, 5},
+	{"write-byte", `let w = io.bytes_writer_new().write_string("ab").write_byte(67); return w.len();`, 3},
+	{"write-bytes", `let w = io.bytes_writer_new().write_string("xy").write_bytes([1 as u8, 2 as u8]); return w.len();`, 4},
+	{"into-string", `let w = io.bytes_writer_new().write_string("ab").write_byte(67); match (w.into_string()) { Some(s) => { return s[0] as i32; }, None => { return 1; }, }`, 97},
+	{"into-string-tail", `let w = io.bytes_writer_new().write_string("ab").write_byte(67); match (w.into_string()) { Some(s) => { return s[s.len() - 1] as i32; }, None => { return 1; }, }`, 67},
+	{"invalid-string", `let w = io.bytes_writer_new().write_byte(255); match (w.into_string()) { Some(_) => { return 1; }, None => { return 42; }, }`, 42},
+	{"reset", `let w = io.bytes_writer_new().write_string("abc"); let w2 = w.reset(); return w2.len();`, 0},
+	{"is-empty", `let w = io.bytes_writer_new(); if (w.is_empty()) { return 1; } return 0;`, 1},
 }
 
 func bytesWriterIRSrc(mainBody string) string {

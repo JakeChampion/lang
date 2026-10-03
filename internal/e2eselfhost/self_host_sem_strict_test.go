@@ -13,7 +13,7 @@ import (
 // `FERN_SEM_IR:` line naming each refusal. Every compile here runs with no
 // FERN_ variable of the caller's (childEnv).
 func TestSelfHostSemIRStrict(t *testing.T) {
-	gcc, _ := x86_64Tooling(t)
+	gcc, runner := x86_64Tooling(t)
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatal(err)
@@ -27,7 +27,7 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		cmd := exec.Command(fernBin, "-target", target, path, stdlibRoot, "-o", filepath.Join(t.TempDir(), "prog"))
+		cmd := runX86_64Bin(runner, fernBin, "-target", target, path, stdlibRoot, "-o", filepath.Join(t.TempDir(), "prog"))
 		cmd.Env = childEnv(env...)
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
@@ -55,17 +55,17 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(strTrait, "leaf.fern"), []byte("pub trait Shout { function shout(self: Self): i32; }\nimpl Shout for str { function shout(self: Self): i32 { return self.len() + 1; } }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(strTrait, "main.fern"), []byte("import \"./leaf\";\nfunction main(): i32 { var s: str = \"ab\"; return s.shout(); }\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(strTrait, "main.fern"), []byte("import \"./leaf\";\nfunction main(): i32 { let s: str = \"ab\"; return s.shout(); }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	strTraitBin := filepath.Join(strTrait, "prog")
-	strTraitBuild := exec.Command(fernBin, "-target", "x86-64-linux", filepath.Join(strTrait, "main.fern"), stdlibRoot, "-o", strTraitBin)
+	strTraitBuild := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", filepath.Join(strTrait, "main.fern"), stdlibRoot, "-o", strTraitBin)
 	strTraitBuild.Env = childEnv()
 	if out, err := strTraitBuild.CombinedOutput(); err != nil {
 		t.Fatalf("an imported trait method on str: %v\n%s", err, out)
 	}
 	var strTraitExit *exec.ExitError
-	if err := exec.Command(strTraitBin).Run(); !errors.As(err, &strTraitExit) || strTraitExit.ExitCode() != 3 {
+	if err := runX86_64Bin(runner, strTraitBin).Run(); !errors.As(err, &strTraitExit) || strTraitExit.ExitCode() != 3 {
 		t.Fatalf("an imported trait method on str: %v, want exit 3", err)
 	}
 	async := "async function compute(): i32 { return 7; }\nfunction main(): i32 { return compute(); }\n"
@@ -76,8 +76,8 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 	// Each target spells the clock, id and termios helpers' sources on its own
 	// syscalls. termios_get calls the fs bundle's __fern_io_error.
 	helpers := `function main(): i32 {
-    var ids: u32 = geteuid() + getegid() + getuid() + getgid();
-    var t: i64 = monotonic_ns() + now_unix_ms() + now_ns();
+    let ids: u32 = geteuid() + getegid() + getuid() + getgid();
+    let t: i64 = monotonic_ns() + now_unix_ms() + now_ns();
     if (t < 0 || ids == 4294967295 as u32) { return 1; }
     match (termios_get(99)) {
         Ok(words) => { return words.len(); },
@@ -95,8 +95,8 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 	// own, so the typed lowering takes it (#10701).
 	viewRead := `import "core/map";
 function main(): i32 {
-    var b: string = "abcdefgh";
-    var m: Map[i32, str] = map_new(4);
+    let b: string = "abcdefgh";
+    let m: Map[i32, str] = map_new(4);
     m = m.insert(1, slice_unchecked(b, 2, 6));
     match (m.get(1)) { Some(v) => { return v.len(); }, None => { return 0; } }
 }
@@ -106,13 +106,13 @@ function main(): i32 {
 		t.Fatal(err)
 	}
 	viewBin := filepath.Join(t.TempDir(), "prog")
-	viewBuild := exec.Command(fernBin, "-target", "x86-64-linux", viewSrc, stdlibRoot, "-o", viewBin)
+	viewBuild := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", viewSrc, stdlibRoot, "-o", viewBin)
 	viewBuild.Env = childEnv()
 	if out, err := viewBuild.CombinedOutput(); err != nil {
 		t.Fatalf("a view map value read: %v, want the typed lowering's compile\n%s", err, out)
 	}
 	var viewExit *exec.ExitError
-	if err := exec.Command(viewBin).Run(); !errors.As(err, &viewExit) || viewExit.ExitCode() != 4 {
+	if err := runX86_64Bin(runner, viewBin).Run(); !errors.As(err, &viewExit) || viewExit.ExitCode() != 4 {
 		t.Fatalf("a view map value read: %v, want exit 4", err)
 	}
 
@@ -128,32 +128,32 @@ function main(): i32 {
 			t.Fatal(err)
 		}
 		bin := filepath.Join(t.TempDir(), "prog")
-		build := exec.Command(fernBin, "-target", "x86-64-linux", path, stdlibRoot, "-o", bin)
+		build := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", path, stdlibRoot, "-o", bin)
 		build.Env = childEnv()
 		if out, err := build.CombinedOutput(); err != nil {
 			t.Fatalf("compile: %v\n%s", err, out)
 		}
 		var exit *exec.ExitError
-		if err := exec.Command(bin).Run(); !errors.As(err, &exit) || exit.ExitCode() != want {
+		if err := runX86_64Bin(runner, bin).Run(); !errors.As(err, &exit) || exit.ExitCode() != want {
 			t.Fatalf("run: %v, want exit %d", err, want)
 		}
 	}
 	run(`struct Slot[T] { v: T }
 
 pub function hold[T](f: () => T): i32 {
-    var c: Slot[T] = Slot[T] { v: f() };
+    let c: Slot[T] = Slot[T] { v: f() };
     return 1;
 }
 
 function main(): i32 {
-    var fs: (() => i32)[] = [(): i32 => 7];
+    let fs: (() => i32)[] = [(): i32 => 7];
     return hold(fs[0]) + hold((): string => "x");
 }
 `, 2)
 	run(`struct Slot[T] { v: T }
 
 pub function hold[T](f: () => T): i32 {
-    var c: Slot[T] = Slot[T] { v: f() };
+    let c: Slot[T] = Slot[T] { v: f() };
     return 1;
 }
 
@@ -165,8 +165,8 @@ function main(): i32 { return wrap((): i32 => 7) + wrap((): string => "x"); }
 	// The same call from a top-level statement: the scan reads the module's
 	// statements as well as its functions.
 	run(`struct Slot[T] { v: T }
-pub function hold[T](f: () => T): i32 { var c: Slot[T] = Slot[T] { v: f() }; return 1; }
-var fs: (() => i32)[] = [(): i32 => 7];
+pub function hold[T](f: () => T): i32 { let c: Slot[T] = Slot[T] { v: f() }; return 1; }
+let fs: (() => i32)[] = [(): i32 => 7];
 return hold(fs[0]) + hold((): string => "x");
 `, 2)
 
@@ -177,7 +177,7 @@ return hold(fs[0]) + hold((): string => "x");
 pub function pick[K](x: K): () => K { return (): K => x; }
 
 pub function hold[T](f: () => T): i32 {
-    var c: Slot[T] = Slot[T] { v: f() };
+    let c: Slot[T] = Slot[T] { v: f() };
     return 1;
 }
 
@@ -189,7 +189,7 @@ function main(): i32 { return hold(pick(1)) + hold((): string => "x"); }
 		t.Fatal(err)
 	}
 	pickAsm := filepath.Join(t.TempDir(), "prog.s")
-	emit := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", pickSrc, stdlibRoot, "-o", pickAsm)
+	emit := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", pickSrc, stdlibRoot, "-o", pickAsm)
 	emit.Env = childEnv()
 	if out, err := emit.CombinedOutput(); err != nil {
 		t.Fatalf("a generic callee's function result: %v\n%s", err, out)
@@ -210,20 +210,20 @@ function main(): i32 { return hold(pick(1)) + hold((): string => "x"); }
 struct P { a: str }
 struct Holder { f: () => i32, n: i32 }
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function g(n: i32): i32 {
-    var h: Holder = Holder { f: () => 0, n: 0 };
+    let h: Holder = Holder { f: () => 0, n: 0 };
     if (n != 0) {
-        var s: string = mk(n);
-        var p: P = P { a: slice_unchecked(s, 1, 4) };
+        let s: string = mk(n);
+        let p: P = P { a: slice_unchecked(s, 1, 4) };
         h = Holder { f: () => p.a.len() * 10 + (p.a[0] as i32) - 97, n: n };
     }
-    var junk: string[] = [];
-    var i: i32 = 0;
+    let junk: string[] = [];
+    let i: i32 = 0;
     while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
     return h.f() * 10 + h.n;
 }
@@ -232,17 +232,17 @@ function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 
 		{"recursive-enum-merged", `import "std/i32";
 enum L { Cons(str, L), Nil }
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function two(s: string): L { return Cons(slice_unchecked(s, 0, 1), Cons(slice_unchecked(s, 1, 3), Nil)); }
 function count(l: L): i32 { match (l) { Cons(h, t) => { return h.len() + count(t); }, Nil => { return 0; } } return 0; }
 function g(n: i32): i32 {
-    var l: L = Nil;
+    let l: L = Nil;
     if (n != 0) {
-        var s: string = mk(n);
+        let s: string = mk(n);
         l = two(s);
     }
     return count(l);
@@ -251,21 +251,21 @@ function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 
 `, "FERN_SEM_IR: g: a value merged past its source has no copy: L holds itself, so its copy would recurse"},
 		{"closure-over-a-record-returned", `import "std/i32";
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 struct P { a: str }
 function viewer(n: i32): () => i32 {
-    var s: string = mk(n);
-    var p: P = P { a: slice_unchecked(s, 1, 4) };
+    let s: string = mk(n);
+    let p: P = P { a: slice_unchecked(s, 1, 4) };
     return () => p.a.len() * 10 + (p.a[0] as i32) - 97;
 }
 function main(): i32 {
-    var f: () => i32 = viewer(3);
-    var junk: string[] = [];
-    var i: i32 = 0;
+    let f: () => i32 = viewer(3);
+    let junk: string[] = [];
+    let i: i32 = 0;
     while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
     print(f().to_string());
     return 0;
@@ -273,20 +273,20 @@ function main(): i32 {
 `, "FERN_SEM_IR: viewer: view result escapes its source"},
 		{"closure-captures-a-view", `import "std/i32";
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function viewer(n: i32): () => i32 {
-    var s: string = mk(n);
-    var v: str = slice_unchecked(s, 1, 4);
+    let s: string = mk(n);
+    let v: str = slice_unchecked(s, 1, 4);
     return () => v.len() * 10 + (v[0] as i32) - 97;
 }
 function main(): i32 {
-    var f: () => i32 = viewer(3);
-    var junk: string[] = [];
-    var i: i32 = 0;
+    let f: () => i32 = viewer(3);
+    let junk: string[] = [];
+    let i: i32 = 0;
     while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
     print(f().to_string());
     return 0;
@@ -313,8 +313,8 @@ function fd_of(t: Tail): i32 {
 }
 function fd_direct(r: Reader): i32 { return r.fd; }
 function main(): i32 {
-    var w: Writer = stdout();
-    var t: Tail = FileTail(stdin(), 1 as i64);
+    let w: Writer = stdout();
+    let t: Tail = FileTail(stdin(), 1 as i64);
     return w.fd * 10 + fd_of(t) + fd_direct(stdin()) + 5;
 }
 `
@@ -333,14 +333,14 @@ import "std/i64";
 struct Slot[T] { v: T }
 struct Pair[T] { a: Slot[T], n: i32 }
 pub function keep[T](f: () => T): T {
-    var c: Slot[T] = Slot[T] { v: f() };
-    var p: Pair[T] = Pair[T] { a: c, n: 1 };
+    let c: Slot[T] = Slot[T] { v: f() };
+    let p: Pair[T] = Pair[T] { a: c, n: 1 };
     return p.a.v;
 }
 pub function wrap[U](g: () => U): U { return keep(g); }
 function main(): i32 {
-    var hs: (() => i64)[] = [(): i64 => 5000000000 as i64];
-    var ds: (() => f64)[] = [(): f64 => 2.5];
+    let hs: (() => i64)[] = [(): i64 => 5000000000 as i64];
+    let ds: (() => f64)[] = [(): f64 => 2.5];
     print(keep(hs[0]).to_string() + " " + ((keep(ds[0]) * 2.0) as i32).to_string() + " " + wrap((): i64 => 6000000000 as i64).to_string());
     return 0;
 }
@@ -348,13 +348,13 @@ function main(): i32 {
 		{"recursive", `import "std/i32";
 struct Node[T] { v: T, kids: Node[T][] }
 pub function first[T](f: () => T): T {
-    var leaf: Node[T] = Node[T] { v: f(), kids: [] };
-    var root: Node[T] = Node[T] { ...leaf, kids: [leaf, leaf] };
+    let leaf: Node[T] = Node[T] { v: f(), kids: [] };
+    let root: Node[T] = Node[T] { ...leaf, kids: [leaf, leaf] };
     return root.kids[1].v;
 }
 function main(): i32 {
-    var ss: (() => string)[] = [(): string => "q" + "r"];
-    var ns: (() => i32)[] = [(): i32 => 3];
+    let ss: (() => string)[] = [(): string => "q" + "r"];
+    let ns: (() => i32)[] = [(): i32 => 3];
     print(first(ss[0]) + first(ns[0]).to_string());
     return 0;
 }
@@ -366,7 +366,7 @@ function main(): i32 {
 				t.Fatal(err)
 			}
 			for _, target := range []string{"x86-64-sanitize", "arm64-linux", "wasm32-wasi"} {
-				got, report, leak := semCompileRun(t, gcc, nil, fernBin, stdlibRoot, src, target, "")
+				got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, "")
 				if got != c.want {
 					t.Fatalf("%s: answered %q, want %q\n%s", target, got, c.want, report)
 				}
@@ -390,17 +390,17 @@ func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const typed = "function __fern_chr(b: i32): string { var p: usize = __raw_alloc(1);"
+	const typed = "function __fern_chr(b: i32): string { let len: i32 = 1; if (b < 0 || b > 127) { len = 0; } let p: usize = __raw_alloc(len);"
 	if strings.Count(string(src), typed) != 1 {
 		t.Fatalf("asmcore.fern no longer spells rt_src_chr as %q", typed)
 	}
-	broken := strings.Replace(string(src), typed, "function __fern_chr(b: i32): string { var p: i32 = __raw_alloc(1);", 1)
+	broken := strings.Replace(string(src), typed, strings.Replace(typed, "let p: usize", "let p: i32", 1), 1)
 	if err := os.WriteFile(core, []byte(broken), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
-	const prog = "function main(): i32 { var s: string = chr(65); return s.len(); }\n"
+	const prog = "function main(): i32 { let s: string = chr(65); return s.len(); }\n"
 	emit := func() (string, int) {
 		var cmd *exec.Cmd
 		if len(runner) == 0 {

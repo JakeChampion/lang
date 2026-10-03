@@ -23,7 +23,7 @@ function lcg_next(state: i32): i32 {
 }
 
 function count_of(xs: string[], target: string): i32 {
-    var c: i32 = 0;
+    let c: i32 = 0;
     for x in xs {
         if (x == target) { c = c + 1; }
     }
@@ -31,7 +31,7 @@ function count_of(xs: string[], target: string): i32 {
 }
 
 function is_sorted_str(xs: string[]): boolean {
-    var i: i32 = 1;
+    let i: i32 = 1;
     while (i < xs.len()) {
         if (sort.string_cmp(xs[i - 1], xs[i]) > 0) { return false; }
         i = i + 1;
@@ -40,7 +40,7 @@ function is_sorted_str(xs: string[]): boolean {
 }
 
 function is_sorted_str_desc(xs: string[]): boolean {
-    var i: i32 = 1;
+    let i: i32 = 1;
     while (i < xs.len()) {
         if (sort.string_cmp(xs[i - 1], xs[i]) < 0) { return false; }
         i = i + 1;
@@ -49,7 +49,7 @@ function is_sorted_str_desc(xs: string[]): boolean {
 }
 
 function is_sorted_str_ci(xs: string[]): boolean {
-    var i: i32 = 1;
+    let i: i32 = 1;
     while (i < xs.len()) {
         if (sort.string_cmp_ci(xs[i - 1], xs[i]) > 0) { return false; }
         i = i + 1;
@@ -68,27 +68,27 @@ function permutation_of(a: string[], b: string[]): boolean {
 // Deterministic word list; LCG picks indices + case variants so the
 // corpus mixes duplicates, shared prefixes, empty strings, and case.
 function word_at(i: i32): string {
-    var words: string[] = ["apple", "Apple", "APPLE", "banana", "Ban",
+    let words: string[] = ["apple", "Apple", "APPLE", "banana", "Ban",
                            "banana-split", "cherry", "", "a", "aa",
                            "Zebra", "zebra", "date", "Date", "fig"];
     return words[i % words.len()];
 }
 
 function main(): i32 {
-    var state: i32 = 987654321;
-    var trial: i32 = 0;
+    let state: i32 = 987654321;
+    let trial: i32 = 0;
     while (trial < 60) {
         state = lcg_next(state);
-        var n: i32 = state % 40;
-        var arr: string[] = [];
-        var i: i32 = 0;
+        let n: i32 = state % 40;
+        let arr: string[] = [];
+        let i: i32 = 0;
         while (i < n) {
             state = lcg_next(state);
             arr = arr.append(word_at((state / 11) % 1000));
             i = i + 1;
         }
 
-        var asc: string[] = cmp.sort(arr);
+        let asc: string[] = cmp.sort(arr);
         if (!is_sorted_str(asc)) {
             print("asc ordering FAILED at trial " + trial.to_string());
             return 1;
@@ -98,7 +98,7 @@ function main(): i32 {
             return 1;
         }
 
-        var desc: string[] = cmp.sort_desc(arr);
+        let desc: string[] = cmp.sort_desc(arr);
         if (!is_sorted_str_desc(desc)) {
             print("desc ordering FAILED at trial " + trial.to_string());
             return 1;
@@ -108,7 +108,7 @@ function main(): i32 {
             return 1;
         }
 
-        var ci: string[] = sort.sort_strings_asc_ci(arr);
+        let ci: string[] = sort.sort_strings_asc_ci(arr);
         if (!is_sorted_str_ci(ci)) {
             print("ci ordering FAILED at trial " + trial.to_string());
             return 1;
@@ -121,13 +121,13 @@ function main(): i32 {
     }
 
     // n < 2: the return-borrowed-param early-out over pointer elements.
-    var empty: string[] = [];
+    let empty: string[] = [];
     if (cmp.sort(empty).len() != 0) {
         print("empty FAILED");
         return 1;
     }
-    var one: string[] = ["solo"];
-    var one_sorted: string[] = cmp.sort(one);
+    let one: string[] = ["solo"];
+    let one_sorted: string[] = cmp.sort(one);
     if (one_sorted.len() != 1) {
         print("singleton len FAILED");
         return 1;
@@ -142,7 +142,7 @@ function main(): i32 {
     }
 
     // ci stability: ci-equal keys keep input order.
-    var s: string[] = sort.sort_strings_asc_ci(["b", "A", "B", "a"]);
+    let s: string[] = sort.sort_strings_asc_ci(["b", "A", "B", "a"]);
     if (s[0] != "A" || s[1] != "a" || s[2] != "b" || s[3] != "B") {
         print("ci stability FAILED");
         return 1;

@@ -23,22 +23,22 @@ var mapW64IterIRCases = []struct {
 }{
 	// u64 2-var iteration, shift in the body: 62 (was 113).
 	{"forin-u64-shr", `import "core/map";
-function main(): i32 { var m: Map[i32, u64] = Map { 1: 18000000000000000000 as u64 }; var acc: i32 = 0; for (k, v) in m { acc = acc + ((v >> 58) as i32); } return acc; }`},
+function main(): i32 { let m: Map[i32, u64] = Map { 1: 18000000000000000000 as u64 }; let acc: i32 = 0; for (k, v) in m { acc = acc + ((v >> 58) as i32); } return acc; }`},
 	// i64 2-var iteration, wide values summed: 18 (was 146).
 	{"forin-i64-sum", `import "core/map";
-function main(): i32 { var m: Map[i32, i64] = Map { 1: 5000000007, 2: 6000000011 }; var acc: i64 = 0; for (k, v) in m { acc = acc + (v % 1000); } return acc as i32; }`},
+function main(): i32 { let m: Map[i32, i64] = Map { 1: 5000000007, 2: 6000000011 }; let acc: i64 = 0; for (k, v) in m { acc = acc + (v % 1000); } return acc as i32; }`},
 	// i64 single-var values() iteration: 7 (was 199).
 	{"forin-values-i64", `import "core/map";
-function main(): i32 { var m: Map[i32, i64] = Map { 1: 5000000007 }; var acc: i32 = 0; for v in m.values() { acc = acc + ((v % 1000) as i32); } return acc; }`},
-	// f64 2-var iteration: 5 (was 255).
+function main(): i32 { let m: Map[i32, i64] = Map { 1: 5000000007 }; let acc: i32 = 0; for v in m.values() { acc = acc + ((v % 1000) as i32); } return acc; }`},
+	// f64 2-let iteration: 5 (was 255).
 	{"forin-f64", `import "core/map";
-function main(): i32 { var m: Map[i32, f64] = Map { 1: 2.5 }; var acc: f64 = 0.0; for (k, v) in m { acc = acc + v; } return (acc * 2.0) as i32; }`},
+function main(): i32 { let m: Map[i32, f64] = Map { 1: 2.5 }; let acc: f64 = 0.0; for (k, v) in m { acc = acc + v; } return (acc * 2.0) as i32; }`},
 	// String-valued 2-var regression (pointer column path unchanged): 10.
 	{"forin-str-regress", `import "core/map";
-function main(): i32 { var m: Map[i32, string] = Map { 1: "hello", 2: "xy" }; var acc: i32 = 0; for (k, v) in m { acc = acc + v.len() + k; } return acc; }`},
+function main(): i32 { let m: Map[i32, string] = Map { 1: "hello", 2: "xy" }; let acc: i32 = 0; for (k, v) in m { acc = acc + v.len() + k; } return acc; }`},
 	// i32-valued 2-var + single-var keys() regression (snapshot column): 36.
 	{"forin-i32-regress", `import "core/map";
-function main(): i32 { var m: Map[i32, i32] = Map { 1: 10, 2: 20 }; var acc: i32 = 0; for (k, v) in m { acc = acc + v + k; } for k2 in m.keys() { acc = acc + k2; } return acc; }`},
+function main(): i32 { let m: Map[i32, i32] = Map { 1: 10, 2: 20 }; let acc: i32 = 0; for (k, v) in m { acc = acc + v + k; } for k2 in m.keys() { acc = acc + k2; } return acc; }`},
 }
 
 func TestSelfHostMapW64IterIR(t *testing.T) {

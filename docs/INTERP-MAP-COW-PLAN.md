@@ -14,12 +14,12 @@ The mechanism below is implemented in `internal/interp/interp.go`:
   only when no slot but the one being reassigned holds the map
   (`Interp.cowTarget`: `rc` no greater than the reassignments in flight on
   it), and `clone()` otherwise. A collection operation returns a new value
-  (E055), so `var n = m.insert(k, v)` leaves `m` as it was (#9834, #8764).
+  (E055), so `let n = m.insert(k, v)` leaves `m` as it was (#9834, #8764).
   A map parameter is an owned binding like any other, so a callee's insert
   never writes the caller's map.
 - `retain` / `release` (via `adjustRC`, which recurses through map
   keys/values so nested `Map[K, Map[…]]` counts flow through) are wired at
-  the value-flow hook points the table below lists: `var` bind + block-end
+  the value-flow hook points the table below lists: `let` bind + block-end
   scope exit, `=` reassignment of an ident / index / field slot
   (release-old + retain-new), and function param bind + return-escape.
 
@@ -68,8 +68,8 @@ compiled backend does **copy-on-write** (`core/map.fern`
 `__map_cow_inplace`). So:
 
 ```fern
-var m = map_new(8); m = m.set("a", 1);
-var n = m;                 // alias
+let m = map_new(8); m = m.set("a", 1);
+let n = m;                 // alias
 n = n.set("a", 999);       // mutate the alias
 m.get_or("a", -1)          // interp: 999   backend: 1
 ```
@@ -98,7 +98,7 @@ existing passing tests:
    1 — `TestInterpMapBasic` "len after set" and the `map_ops` case in
    `TestFeatureDifferential` rely on it, and the differential test
    passing proves the *backends* mutate in place here too (rc == 1).
-2. **Aliases are isolated.** After `var n = m`, a mutation through `n`
+2. **Aliases are isolated.** After `let n = m`, a mutation through `n`
    (or `m`) does not leak to the other (rc == 2 → copy). This is the case
    the interp currently gets wrong.
 
@@ -110,8 +110,8 @@ Each was checked against the contract and **introduces a new divergence**
 | Shortcut | Breaks |
 | --- | --- |
 | **Always-copy** in set/delete/clear (functional) | Loses bare-statement mutation: `m.set(1,10); m.len()` → 0 in interp, 1 on backend. Breaks `TestInterpMapBasic`. |
-| **Copy-on-assignment** (`var n = m` deep-copies) | Diverges on bare-set-after-alias: `var n=m; m.set("b",2); m.get_or("b",-1)` → interp 2 (m unshared copy, in-place), backend -1 (n still refs it, rc==2 → copy). |
-| **Sticky "shared" flag** (once aliased, always copy) | False copies after the alias dies: `{ var n=m; } m.set(1,10); m.len()` → interp 0 (still flagged shared), backend 1 (rc back to 1, in-place). |
+| **Copy-on-assignment** (`let n = m` deep-copies) | Diverges on bare-set-after-alias: `let n=m; m.set("b",2); m.get_or("b",-1)` → interp 2 (m unshared copy, in-place), backend -1 (n still refs it, rc==2 → copy). |
+| **Sticky "shared" flag** (once aliased, always copy) | False copies after the alias dies: `{ let n=m; } m.set(1,10); m.len()` → interp 0 (still flagged shared), backend 1 (rc back to 1, in-place). |
 
 The common thread: the backend's behavior depends on the **exact rc at
 the moment of the mutating call**, so the interp needs real reference
@@ -134,8 +134,8 @@ decremented when one dies.
 
 ### The hard part: move vs. alias
 
-`rc++` must fire on an **alias** (`var n = m;` while `m` stays live) but
-**not** on a **move** (`var m = map_new();` / `var m = m.set(...)` — the
+`rc++` must fire on an **alias** (`let n = m;` while `m` stays live) but
+**not** on a **move** (`let m = map_new();` / `let m = m.set(...)` — the
 producer's reference transfers to the new binding). The interpreter does
 not currently know which a binding is — that is exactly the affine
 information the checker computes for `own` params (E050 use-after-move)
@@ -154,7 +154,7 @@ Every place a `*Map` reference is created or destroyed (file refs in
 
 | Event | Location | Action |
 | --- | --- | --- |
-| `var x = <init>` | `*ast.Var` case → `env.declare` (1863) | inc **iff** `init` is an alias (Ident / field-read of a live map), not a move (call/literal). Also `*ast.Destructure`, match-arm bindings, `for` loop var, `let`/`if let`. |
+| `let x = <init>` | `*ast.Var` case → `env.declare` (1863) | inc **iff** `init` is an alias (Ident / field-read of a live map), not a move (call/literal). Also `*ast.Destructure`, match-arm bindings, `for` loop var, `let`/`if let`. |
 | `x = <v>` | `evalAssign` Ident/Index/FieldAccess (`env.set` 1852) | release old slot value (dec, **skip if old == new** — self-assign from in-place set), acquire new (inc iff alias). |
 | call `f(m)` | `callFunc` param bind (1894-1897) | inc each map arg (param is a new live ref); dec on function-scope exit. |
 | `return m` | `callFunc` (1916) | **escape**: the returned value transfers to the caller — must *not* be dec'd by the callee's scope-exit. |

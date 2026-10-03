@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -113,10 +113,10 @@ function check_result(r: Result[i32, i32]): i32;
 function peek_option(o: Option[i32]): i32;
 
 function main(): i32 {
-	var ok: Result[i32, i32] = Ok(42);
-	var err: Result[i32, i32] = Err(5);
-	var some: Option[i32] = Some(7);
-	var none: Option[i32] = None;
+	let ok: Result[i32, i32] = Ok(42);
+	let err: Result[i32, i32] = Err(5);
+	let some: Option[i32] = Some(7);
+	let none: Option[i32] = None;
 	if (check_result(ok) == 42 && check_result(err) == -5 && peek_option(some) == 7 && peek_option(none) == -1) {
 		write("` + want + `");
 	} else {
@@ -128,16 +128,7 @@ function main(): i32 {
 	if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
-	info, prog := loadCheckMono(t, mainPath)
-	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		PrintMainResult:    true,
-	})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
+	core := e2eharness.SelfHostComponentCore(t, mainPath)
 	if !bytes.Contains(core, []byte("local:test/sink@0.1.0")) {
 		t.Fatalf("core is missing the custom extern import")
 	}

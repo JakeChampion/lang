@@ -427,7 +427,7 @@ translator from C to Go. This let them:
 
 **Post-translation, the Go-in-Go compiler was hand-
 optimised** for Go idioms (the auto-translated code looks
-like C with `var` instead of declarations). This happened
+like C with `let` instead of declarations). This happened
 over 1.5 → 1.7.
 
 **Bootstrap chain post-1.5:** Building Go from source

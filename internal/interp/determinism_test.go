@@ -2,8 +2,8 @@ package interp
 
 // Determinism guard for the tree-walking interpreter.
 //
-// The interpreter is the differential oracle: TestDifferential_LangsmithMain
-// (internal/e2e) compares every backend's output against the value the
+// The interpreter is the differential oracle: the TestDifferential_* sweeps
+// (internal/e2e) compare every backend's output against the value the
 // interpreter produces for the same source. That comparison is only
 // sound if the interpreter is itself deterministic — if a program's
 // interpreted result or its stdout could vary run-to-run, the oracle
@@ -70,8 +70,8 @@ func runCapture(t *testing.T, src string) (val string, stdout string) {
 var determinismMatrix = map[string]string{
 	"arithmetic": `
 function main(): i32 {
-	var x: i32 = 6;
-	var y: i32 = 7;
+	let x: i32 = 6;
+	let y: i32 = 7;
 	return x * y + (y - x) / 2;
 }`,
 
@@ -79,21 +79,21 @@ function main(): i32 {
 struct Point { x: i32, y: i32 }
 function (p: Point) sum(): i32 { return p.x + p.y; }
 function main(): i32 {
-	var p: Point = Point { x: 3, y: 4 };
+	let p: Point = Point { x: 3, y: 4 };
 	return p.sum();
 }`,
 
 	"map_iteration": `
 function main(): i32 {
-	var m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
-	var total: i32 = 0;
+	let m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
+	let total: i32 = 0;
 	for (k, v) in m { total = total + v; }
 	return total;
 }`,
 
 	"map_print_order": `
 function main(): void {
-	var m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
+	let m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
 	for (k, v) in m { print(k); }
 }`,
 
@@ -102,15 +102,15 @@ function adder(n: i32): (i32) => i32 {
 	return (x: i32): i32 => { return x + n; };
 }
 function main(): i32 {
-	var f: (i32) => i32 = adder(10);
-	var g: (i32) => i32 = adder(20);
+	let f: (i32) => i32 = adder(10);
+	let g: (i32) => i32 = adder(20);
 	return f(1) + g(2);
 }`,
 
 	"string_build": `
 function main(): void {
-	var xs: string[] = ["a", "b", "c", "d"];
-	var out: string = "";
+	let xs: string[] = ["a", "b", "c", "d"];
+	let out: string = "";
 	for x in xs { out = out + x; }
 	print(out);
 }`,

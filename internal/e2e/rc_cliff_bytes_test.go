@@ -22,8 +22,6 @@ package e2e
 import (
 	"fmt"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // cliffBytesCase is one driver, run twice: once returning the crossing COUNT
@@ -53,7 +51,7 @@ var cliffBytesCases = []cliffBytesCase{
 	// Both numbers are exact and backend-independent: the stride is 4 on
 	// wasm32 and on both 64-bit natives (i32 elements), and the crossing
 	// sequence is fixed by the driver.
-	{"two_calls_via_local", `function g(b: i32[], v: i32): i32[] { var t: i32[] = f(b, v); return f(t, v + 1); }`, 2, 6, 192},
+	{"two_calls_via_local", `function g(b: i32[], v: i32): i32[] { let t: i32[] = f(b, v); return f(t, v + 1); }`, 2, 6, 192},
 }
 
 // src builds the driver. `probe` is the expression whose value becomes the
@@ -64,8 +62,8 @@ func (c cliffBytesCase) src(probe string) string {
 	return fmt.Sprintf(`function f(b: i32[], v: i32): i32[] { return b.append(v); }
 %s
 function main(): i32 {
-    var acc: i32[] = [];
-    var i: i32 = 0;
+    let acc: i32[] = [];
+    let i: i32 = 0;
     while (i < 7) { acc = g(acc, i); i = i + 1; }
     if (acc.len() != %d) { return 254; }
     return %s;
@@ -98,17 +96,6 @@ func TestX86_64ArrPushCliffBytes(t *testing.T) {
 			_, count := compileAndRunX86_64FreeOn(t, c.countSrc())
 			_, bytes := compileAndRunX86_64FreeOn(t, c.bytesSrc())
 			c.check(t, "x86-64-linux", count, bytes)
-		})
-	}
-}
-
-func TestWASMArrPushCliffBytes(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
-	for _, c := range cliffBytesCases {
-		t.Run(c.name, func(t *testing.T) {
-			c.check(t, "wasm32-wasi", runWasm(t, c.countSrc()), runWasm(t, c.bytesSrc()))
 		})
 	}
 }

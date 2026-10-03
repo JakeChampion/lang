@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -43,8 +43,8 @@ function set_response(out: own ResponseOutparam, disc: i32, resp: own OutgoingRe
 
 @export("wasi:http/incoming-handler@0.2.0", "handle")
 function on_request(request: own IncomingRequest, response_out: own ResponseOutparam): void {
-	var headers: own Fields = fields_new();
-	var resp: own OutgoingResponse = response_new(headers);
+	let headers: own Fields = fields_new();
+	let resp: own OutgoingResponse = response_new(headers);
 	set_response(response_out, 0, resp, 0, 0 as i64, 0, 0, 0, 0);
 	return;
 }`
@@ -111,11 +111,7 @@ func TestExportWasiHttpHandlerSetResponseComposes(t *testing.T) {
 	if err := os.WriteFile(mainPath, []byte(httpHandlerSetResponseProg), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
-	info, p := loadCheckMono(t, mainPath)
-	core, err := wasmbin.BuildWithOptions(p, info, wasmbin.BuildOptions{ForceMemorySection: true, Preview2WASI: true})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
+	core := e2eharness.SelfHostReactorCore(t, mainPath)
 	if !bytes.Contains(core, []byte("[static]response-outparam.set")) {
 		t.Fatalf("core missing the set import")
 	}
@@ -160,11 +156,7 @@ func buildHttpHandlerComponent(t *testing.T, dir, prog string) string {
 	if err := os.WriteFile(mainPath, []byte(prog), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
-	info, p := loadCheckMono(t, mainPath)
-	core, err := wasmbin.BuildWithOptions(p, info, wasmbin.BuildOptions{ForceMemorySection: true, Preview2WASI: true})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
+	core := e2eharness.SelfHostReactorCore(t, mainPath)
 	comp, err := component.ComposeExportsFromWorld(core, w)
 	if err != nil {
 		t.Fatalf("ComposeExportsFromWorld: %v", err)

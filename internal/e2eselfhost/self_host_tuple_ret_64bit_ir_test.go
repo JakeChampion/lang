@@ -56,15 +56,15 @@ func TestSelfHostTupleRet64bitIR(t *testing.T) {
 		expected int
 	}{
 		// Return (i64, i32); destructure binds a:i64. 2e10 > 1.5e10 -> 7
-		{"ret-i64-destructure", `function mk(): (i64, i32) { return (20000000000, 3); } function main(): i32 { var (a, b) = mk(); if (a > 15000000000) { return 7; } return b; }`, 7},
+		{"ret-i64-destructure", `function mk(): (i64, i32) { return (20000000000, 3); } function main(): i32 { let (a, b) = mk(); if (a > 15000000000) { return 7; } return b; }`, 7},
 		// Return (i64, i32); read .0 (i64) and .1 (i32) off the bound tuple.
-		{"ret-i64-dotaccess", `function mk(): (i64, i32) { return (9000000000, 4); } function main(): i32 { var t = mk(); if (t.0 > 8000000000) { return t.1; } return 0; }`, 4},
+		{"ret-i64-dotaccess", `function mk(): (i64, i32) { return (9000000000, 4); } function main(): i32 { let t = mk(); if (t.0 > 8000000000) { return t.1; } return 0; }`, 4},
 		// Return (f64, i32); destructure binds x:f64. 2.5 > 2.0 -> 6
-		{"ret-f64-destructure", `function mk(): (f64, i32) { return (2.5, 1); } function main(): i32 { var (x, n) = mk(); if (x > 2.0) { return 6; } return n; }`, 6},
+		{"ret-f64-destructure", `function mk(): (f64, i32) { return (2.5, 1); } function main(): i32 { let (x, n) = mk(); if (x > 2.0) { return 6; } return n; }`, 6},
 		// Mixed (i64, f64): both 8-byte elements in one tuple return.
-		{"ret-i64-f64-mixed", `function mk(): (i64, f64) { return (6000000000, 3.5); } function main(): i32 { var (a, x) = mk(); var ok = 0; if (a > 5000000000) { ok = ok + 5; } if (x > 3.0) { ok = ok + 4; } return ok; }`, 9},
+		{"ret-i64-f64-mixed", `function mk(): (i64, f64) { return (6000000000, 3.5); } function main(): i32 { let (a, x) = mk(); let ok = 0; if (a > 5000000000) { ok = ok + 5; } if (x > 3.0) { ok = ok + 4; } return ok; }`, 9},
 		// i64 tuple element flows into arithmetic after destructure.
-		{"ret-i64-arith", `function mk(): (i64, i64) { return (6000000000, 7000000000); } function main(): i32 { var (a, b) = mk(); var s: i64 = a + b; if (s > 12000000000) { return 8; } return 1; }`, 8},
+		{"ret-i64-arith", `function mk(): (i64, i64) { return (6000000000, 7000000000); } function main(): i32 { let (a, b) = mk(); let s: i64 = a + b; if (s > 12000000000) { return 8; } return 1; }`, 8},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

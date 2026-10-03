@@ -59,7 +59,7 @@ func TestSelfHostWasmComponent(t *testing.T) {
 		source string
 	}{
 		{"int", "function main(): i32 { return 42; }"},
-		{"struct", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; return p.x + p.y; }"},
+		{"struct", "struct P { x: i32, y: i32 } function main(): i32 { let p = P { x: 1, y: 2 }; return p.x + p.y; }"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(tc.source)))
@@ -109,9 +109,9 @@ const componentWrapDriver = `
 function main(): i32 {
     match (read_file("target.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var bytes: i32[] = component_wrap(core);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let bytes: i32[] = component_wrap(core);
+            let i: i32 = 0;
             while (i < bytes.len()) { print_int(bytes[i]); write("\n"); i = i + 1; }
             return 0;
         },
@@ -249,11 +249,11 @@ const componentFullDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var comp: i32[] = component_full(core);
-            var j: i32 = 0;
+            let comp: i32[] = component_full(core);
+            let j: i32 = 0;
             while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
             return 0;
         },
@@ -320,13 +320,13 @@ func TestSelfHostWasmComponentEndToEnd(t *testing.T) {
 	}{
 		{"return0", "function main(): i32 { return 0; }", true},
 		{"return42", "function main(): i32 { return 42; }", false},
-		{"compute-zero", "function main(): i32 { var x: i32 = 5; var y: i32 = 5; return x - y; }", true},
-		{"compute-nonzero", "function main(): i32 { var n: i32 = 3; return n * 7; }", false},
+		{"compute-zero", "function main(): i32 { let x: i32 = 5; let y: i32 = 5; return x - y; }", true},
+		{"compute-nonzero", "function main(): i32 { let n: i32 = 3; return n * 7; }", false},
 		// Allocating no-I/O programs: the mode-1 core carries the heap + RC
 		// runtime with no imports at all to reach it, the one shape where a
 		// missing allocator surfaces as a trap rather than a link error.
-		{"alloc-string", `function main(): i32 { var s: string = "ab" + "cd"; if (s.len() == 4) { return 0; } return 1; }`, true},
-		{"alloc-array", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var t: i32 = 0; var i: i32 = 0; while (i < xs.len()) { t = t + xs[i]; i = i + 1; } return t - 6; }", true},
+		{"alloc-string", `function main(): i32 { let s: string = "ab" + "cd"; if (s.len() == 4) { return 0; } return 1; }`, true},
+		{"alloc-array", "function main(): i32 { let xs: i32[] = [1, 2, 3]; let t: i32 = 0; let i: i32 = 0; while (i < xs.len()) { t = t + xs[i]; i = i + 1; } return t - 6; }", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// source -> preview2 core WAT
@@ -384,9 +384,9 @@ import "./parser";
 import "./wasm_ir";
 import "./semlower";
 function main(): i32 {
-    var src: string = "";
+    let src: string = "";
     match (io.read_all_stdin()) { Ok(text) => { src = text; }, Err(_) => { return 253; } }
-    var d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(src)), "wasm32-wasi");
+    let d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(src)), "wasm32-wasi");
     write(wasm_ir.emit_module_mode_or_error_sub(d.full, false, false, d.sub));
     return 0;
 }
@@ -399,9 +399,9 @@ import "./parser";
 import "./wasm_ir";
 import "./semlower";
 function main(): i32 {
-    var src: string = "";
+    let src: string = "";
     match (io.read_all_stdin()) { Ok(text) => { src = text; }, Err(_) => { return 253; } }
-    var d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(src)), "wasm32-wasi");
+    let d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(src)), "wasm32-wasi");
     write(wasm_ir.emit_module_mode_or_error_sub(d.full, true, false, d.sub));
     return 0;
 }
@@ -413,9 +413,9 @@ const componentCompileDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var comp: i32[] = component_full(core);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let comp: i32[] = component_full(core);
+            let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
         },
@@ -521,11 +521,11 @@ const componentFullIODriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var comp: i32[] = component_full_io(core);
-            var j: i32 = 0;
+            let comp: i32[] = component_full_io(core);
+            let j: i32 = 0;
             while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
             return 0;
         },
@@ -590,10 +590,10 @@ func TestSelfHostWasmComponentStdout(t *testing.T) {
 	}{
 		{"write", `function main(): i32 { write("hi"); return 0; }`, "hi", 0},
 		{"write-newline", `function main(): i32 { write("hello world\n"); return 0; }`, "hello world\n", 0},
-		{"multi-write", `function main(): i32 { var i: i32 = 0; while (i < 3) { write("ab"); i = i + 1; } return 0; }`, "ababab", 0},
+		{"multi-write", `function main(): i32 { let i: i32 = 0; while (i < 3) { write("ab"); i = i + 1; } return 0; }`, "ababab", 0},
 		{"err-path", `function main(): i32 { write("x"); return 5; }`, "x", 1},
 		{"putchar", `function main(): i32 { putchar(72); putchar(105); putchar(33); return 0; }`, "Hi!", 0},
-		{"putchar-loop", `function main(): i32 { var c: i32 = 97; while (c < 101) { putchar(c); c = c + 1; } return 0; }`, "abcd", 0},
+		{"putchar-loop", `function main(): i32 { let c: i32 = 97; while (c < 101) { putchar(c); c = c + 1; } return 0; }`, "abcd", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			coreWat := runCapture(t, gcc, runner, ioBin, []byte(withPrintInt(tc.source)))
@@ -641,9 +641,9 @@ import "./parser";
 import "./wasm_ir";
 import "./semlower";
 function main(): i32 {
-    var src: string = "";
+    let src: string = "";
     match (io.read_all_stdin()) { Ok(text) => { src = text; }, Err(_) => { return 253; } }
-    var d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(src)), "wasm32-wasi");
+    let d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(src)), "wasm32-wasi");
     write(wasm_ir.emit_module_mode_or_error_sub(d.full, true, true, d.sub));
     return 0;
 }
@@ -655,9 +655,9 @@ const componentCompileIODriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var comp: i32[] = component_full_io(core, true);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let comp: i32[] = component_full_io(core, true);
+            let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
         },
@@ -766,11 +766,11 @@ const componentFullIOFSDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var comp: i32[] = component_full_io_fs(core);
-            var j: i32 = 0;
+            let comp: i32[] = component_full_io_fs(core);
+            let j: i32 = 0;
             while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
             return 0;
         },
@@ -970,9 +970,9 @@ import "./parser";
 import "./wasm_ir";
 import "./semlower";
 function main(): i32 {
-    var src: string = "";
+    let src: string = "";
     match (io.read_all_stdin()) { Ok(text) => { src = text; }, Err(_) => { return 253; } }
-    var d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(src)), "wasm32-wasi");
+    let d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(src)), "wasm32-wasi");
     write(wasm_ir.emit_module_mode_or_error_sub(d.full, true, true, d.sub));
     return 0;
 }
@@ -984,9 +984,9 @@ const componentCompileIOFSDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var comp: i32[] = component_full_io_fs(core, true);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let comp: i32[] = component_full_io_fs(core, true);
+            let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
         },
@@ -1100,11 +1100,11 @@ const componentFullIOFSWriteDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var comp: i32[] = component_full_io_fs_write(core);
-            var j: i32 = 0;
+            let comp: i32[] = component_full_io_fs_write(core);
+            let j: i32 = 0;
             while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
             return 0;
         },
@@ -1223,7 +1223,7 @@ func TestSelfHostWasmComponentWriteFile(t *testing.T) {
 
 	t.Run("large-write-loop", func(t *testing.T) {
 		// 10000 bytes forces multiple <=4096-byte blocking-write chunks.
-		comp := build(t, `function main(): i32 { var s: string = ""; var i: i32 = 0; while (i < 10000) { s = s + "x"; i = i + 1; } match (write_file("big.txt", s)) { Err(_) => { return 1; }, Ok(_) => {} } return 0; }`)
+		comp := build(t, `function main(): i32 { let s: string = ""; let i: i32 = 0; while (i < 10000) { s = s + "x"; i = i + 1; } match (write_file("big.txt", s)) { Err(_) => { return 1; }, Ok(_) => {} } return 0; }`)
 		if _, err := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp).Output(); err != nil {
 			t.Fatalf("run: %v", err)
 		}
@@ -1243,9 +1243,9 @@ const componentCompileIOFSWriteDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var comp: i32[] = component_full_io_fs_write(core, true);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let comp: i32[] = component_full_io_fs_write(core, true);
+            let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
         },
@@ -1361,11 +1361,11 @@ const componentFullIOFSRWDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var comp: i32[] = component_full_io_fs_rw(core);
-            var j: i32 = 0;
+            let comp: i32[] = component_full_io_fs_rw(core);
+            let j: i32 = 0;
             while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
             return 0;
         },
@@ -1490,9 +1490,9 @@ const componentCompileIOFSRWDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var comp: i32[] = component_full_io_fs_rw(core, true);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let comp: i32[] = component_full_io_fs_rw(core, true);
+            let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
         },
@@ -1523,7 +1523,7 @@ func TestSelfHostWasmComponentFullIORandom(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { var b: u8[] = random_bytes(16); if (b.len() == 16) { write("ok\n"); return 0; } return 1; }`
+	src := `function main(): i32 { let b: u8[] = random_bytes(16); if (b.len() == 16) { write("ok\n"); return 0; } return 1; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -1596,11 +1596,11 @@ const componentFullIORandomDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var comp: i32[] = component_full_io_random(core);
-            var j: i32 = 0;
+            let comp: i32[] = component_full_io_random(core);
+            let j: i32 = 0;
             while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
             return 0;
         },
@@ -1685,7 +1685,7 @@ func TestSelfHostWasmComponentRandom(t *testing.T) {
 
 	t.Run("len", func(t *testing.T) {
 		// random_bytes(16) returns 16 elements; print the count.
-		comp := build(t, `function main(): i32 { var b: u8[] = random_bytes(16); print_int(b.len()); return 0; }`)
+		comp := build(t, `function main(): i32 { let b: u8[] = random_bytes(16); print_int(b.len()); return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", comp).Output()
 		if string(out) != "16" {
 			t.Errorf("len: stdout = %q, want %q", string(out), "16")
@@ -1694,7 +1694,7 @@ func TestSelfHostWasmComponentRandom(t *testing.T) {
 
 	t.Run("byte-range", func(t *testing.T) {
 		// Every drawn byte must be in 0..255 (the shift+mask is correct).
-		comp := build(t, `function main(): i32 { var b: u8[] = random_bytes(64); var i: i32 = 0; while (i < b.len()) { if ((b[i] as i32) < 0) { return 1; } if ((b[i] as i32) > 255) { return 2; } i = i + 1; } write("inrange\n"); return 0; }`)
+		comp := build(t, `function main(): i32 { let b: u8[] = random_bytes(64); let i: i32 = 0; while (i < b.len()) { if ((b[i] as i32) < 0) { return 1; } if ((b[i] as i32) > 255) { return 2; } i = i + 1; } write("inrange\n"); return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", comp).Output()
 		if string(out) != "inrange\n" {
 			t.Errorf("byte-range: stdout = %q, want %q", string(out), "inrange\n")
@@ -1703,7 +1703,7 @@ func TestSelfHostWasmComponentRandom(t *testing.T) {
 
 	t.Run("non-multiple-of-8", func(t *testing.T) {
 		// A length that isn't a multiple of 8 must still return exactly n.
-		comp := build(t, `function main(): i32 { var b: u8[] = random_bytes(13); print_int(b.len()); return 0; }`)
+		comp := build(t, `function main(): i32 { let b: u8[] = random_bytes(13); print_int(b.len()); return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", comp).Output()
 		if string(out) != "13" {
 			t.Errorf("non-multiple-of-8: stdout = %q, want %q", string(out), "13")
@@ -1717,9 +1717,9 @@ const componentCompileIORandomDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var comp: i32[] = component_full_io_random(core, true);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let comp: i32[] = component_full_io_random(core, true);
+            let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
         },
@@ -1824,11 +1824,11 @@ const componentFullIOEnvDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var comp: i32[] = component_full_io_env(core);
-            var j: i32 = 0;
+            let comp: i32[] = component_full_io_env(core);
+            let j: i32 = 0;
             while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
             return 0;
         },
@@ -1945,9 +1945,9 @@ const componentCompileIOEnvDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var comp: i32[] = component_full_io_env(core, true);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let comp: i32[] = component_full_io_env(core, true);
+            let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
         },
@@ -1978,7 +1978,7 @@ func TestSelfHostWasmComponentFullIOArgs(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { var a: string[] = args(); var i: i32 = 0; while (i < a.len()) { write(a[i]); write("\n"); i = i + 1; } return 0; }`
+	src := `function main(): i32 { let a: string[] = args(); let i: i32 = 0; while (i < a.len()) { write(a[i]); write("\n"); i = i + 1; } return 0; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -2052,11 +2052,11 @@ const componentFullIOArgsDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var comp: i32[] = component_full_io_args(core);
-            var j: i32 = 0;
+            let comp: i32[] = component_full_io_args(core);
+            let j: i32 = 0;
             while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
             return 0;
         },
@@ -2141,7 +2141,7 @@ func TestSelfHostWasmComponentArgs(t *testing.T) {
 
 	t.Run("count", func(t *testing.T) {
 		// argv[0] (program name) + 3 passed = 4.
-		comp := build(t, `function main(): i32 { var a: string[] = args(); print_int(a.len()); return 0; }`)
+		comp := build(t, `function main(): i32 { let a: string[] = args(); print_int(a.len()); return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", comp, "one", "two", "three").Output()
 		if string(out) != "4" {
 			t.Errorf("count: stdout = %q, want %q", string(out), "4")
@@ -2150,7 +2150,7 @@ func TestSelfHostWasmComponentArgs(t *testing.T) {
 
 	t.Run("values", func(t *testing.T) {
 		// Print every arg after argv[0] (the program name).
-		comp := build(t, `function main(): i32 { var a: string[] = args(); var i: i32 = 1; while (i < a.len()) { write(a[i]); write("|"); i = i + 1; } return 0; }`)
+		comp := build(t, `function main(): i32 { let a: string[] = args(); let i: i32 = 1; while (i < a.len()) { write(a[i]); write("|"); i = i + 1; } return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", comp, "x", "yy", "zzz").Output()
 		if string(out) != "x|yy|zzz|" {
 			t.Errorf("values: stdout = %q, want %q", string(out), "x|yy|zzz|")
@@ -2164,9 +2164,9 @@ const componentCompileIOArgsDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var comp: i32[] = component_full_io_args(core, true);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let comp: i32[] = component_full_io_args(core, true);
+            let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
         },
@@ -2197,7 +2197,7 @@ func TestSelfHostWasmComponentFullIOClock(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { var t: i64 = now_unix_ms(); if (t > 0) { write("ok\n"); return 0; } return 1; }`
+	src := `function main(): i32 { let t: i64 = now_unix_ms(); if (t > 0) { write("ok\n"); return 0; } return 1; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -2270,11 +2270,11 @@ const componentFullIOClockDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var comp: i32[] = component_full_io_clock(core);
-            var j: i32 = 0;
+            let comp: i32[] = component_full_io_clock(core);
+            let j: i32 = 0;
             while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
             return 0;
         },
@@ -2360,7 +2360,7 @@ func TestSelfHostWasmComponentClock(t *testing.T) {
 	t.Run("now-positive", func(t *testing.T) {
 		// now_unix_ms must be a large positive epoch-ms value (> year 2020
 		// in ms = 1577836800000), proving seconds*1000 + nanos/1e6 is right.
-		comp := build(t, `function main(): i32 { var t: i64 = now_unix_ms(); if (t > 1577836800000) { write("recent\n"); return 0; } write("bad\n"); return 1; }`)
+		comp := build(t, `function main(): i32 { let t: i64 = now_unix_ms(); if (t > 1577836800000) { write("recent\n"); return 0; } write("bad\n"); return 1; }`)
 		out, _ := exec.Command(wasmtime, "run", comp).Output()
 		if string(out) != "recent\n" {
 			t.Errorf("now-positive: stdout = %q, want %q", string(out), "recent\n")
@@ -2370,7 +2370,7 @@ func TestSelfHostWasmComponentClock(t *testing.T) {
 	t.Run("now-ns-bigger-than-ms", func(t *testing.T) {
 		// now_ns (seconds*1e9 + nanos) must exceed now_unix_ms by ~1e6x;
 		// a coarse check that the two wall-clock readings use distinct math.
-		comp := build(t, `function main(): i32 { var ns: i64 = now_ns(); var ms: i64 = now_unix_ms(); if (ns > ms) { write("ns>ms\n"); return 0; } return 1; }`)
+		comp := build(t, `function main(): i32 { let ns: i64 = now_ns(); let ms: i64 = now_unix_ms(); if (ns > ms) { write("ns>ms\n"); return 0; } return 1; }`)
 		out, _ := exec.Command(wasmtime, "run", comp).Output()
 		if string(out) != "ns>ms\n" {
 			t.Errorf("now-ns: stdout = %q, want %q", string(out), "ns>ms\n")
@@ -2384,9 +2384,9 @@ const componentCompileIOClockDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var comp: i32[] = component_full_io_clock(core, true);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let comp: i32[] = component_full_io_clock(core, true);
+            let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
         },
@@ -2417,7 +2417,7 @@ func TestSelfHostWasmComponentFullIOClockMono(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { var t: i64 = monotonic_ns(); if (t > 0) { write("ok\n"); return 0; } return 1; }`
+	src := `function main(): i32 { let t: i64 = monotonic_ns(); if (t > 0) { write("ok\n"); return 0; } return 1; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -2490,11 +2490,11 @@ const componentFullIOClockMonoDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var comp: i32[] = component_full_io_clock_mono(core);
-            var j: i32 = 0;
+            let comp: i32[] = component_full_io_clock_mono(core);
+            let j: i32 = 0;
             while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
             return 0;
         },
@@ -2580,7 +2580,7 @@ func TestSelfHostWasmComponentClockMono(t *testing.T) {
 	t.Run("monotonic-advances", func(t *testing.T) {
 		// Two monotonic reads with a busy loop between them: the second
 		// must be >= the first (monotonic never goes backwards).
-		comp := build(t, `function main(): i32 { var a: i64 = monotonic_ns(); var s: i64 = 0i64; var i: i32 = 0; while (i < 100000) { s = s + 1i64; i = i + 1; } var b: i64 = monotonic_ns(); if (b >= a) { write("monotonic\n"); return 0; } return 1; }`)
+		comp := build(t, `function main(): i32 { let a: i64 = monotonic_ns(); let s: i64 = 0i64; let i: i32 = 0; while (i < 100000) { s = s + 1i64; i = i + 1; } let b: i64 = monotonic_ns(); if (b >= a) { write("monotonic\n"); return 0; } return 1; }`)
 		out, _ := exec.Command(wasmtime, "run", comp).Output()
 		if string(out) != "monotonic\n" {
 			t.Errorf("monotonic-advances: stdout = %q, want %q", string(out), "monotonic\n")
@@ -2594,9 +2594,9 @@ const componentCompileIOClockMonoDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var comp: i32[] = component_full_io_clock_mono(core, true);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let comp: i32[] = component_full_io_clock_mono(core, true);
+            let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
         },
@@ -2705,11 +2705,11 @@ const componentFullIOFSReadEnvDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var comp: i32[] = component_full_io_fs_read_env(core);
-            var j: i32 = 0;
+            let comp: i32[] = component_full_io_fs_read_env(core);
+            let j: i32 = 0;
             while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
             return 0;
         },
@@ -2820,9 +2820,9 @@ const componentCompileIOFSReadEnvDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var comp: i32[] = component_full_io_fs_read_env(core, true);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let comp: i32[] = component_full_io_fs_read_env(core, true);
+            let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
         },
@@ -2853,7 +2853,7 @@ func TestSelfHostWasmComponentFullIOFSRWEnv(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { match (read_file("in.txt")) { Ok(cfg) => { var line: string = cfg; match (env("SUFFIX")) { Some(s) => { line = line + s; }, None => {} } match (write_file("out.txt", line)) { Err(e) => { return 1; }, Ok(_) => {} } write("done\n"); return 0; }, Err(e) => { write("ERR"); return 2; } } return 3; }`
+	src := `function main(): i32 { match (read_file("in.txt")) { Ok(cfg) => { let line: string = cfg; match (env("SUFFIX")) { Some(s) => { line = line + s; }, None => {} } match (write_file("out.txt", line)) { Err(e) => { return 1; }, Ok(_) => {} } write("done\n"); return 0; }, Err(e) => { write("ERR"); return 2; } } return 3; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -2936,11 +2936,11 @@ const componentFullIOFSRWEnvDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var comp: i32[] = component_full_io_fs_rw_env(core);
-            var j: i32 = 0;
+            let comp: i32[] = component_full_io_fs_rw_env(core);
+            let j: i32 = 0;
             while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
             return 0;
         },
@@ -3023,7 +3023,7 @@ func TestSelfHostWasmComponentReadWriteEnv(t *testing.T) {
 
 	t.Run("read-transform-write", func(t *testing.T) {
 		// Read in.txt, append env PREFIX-derived text, write out.txt, respond.
-		comp := build(t, `function main(): i32 { match (read_file("in.txt")) { Ok(c) => { var o: string = c; match (env("TAG")) { Some(tg) => { o = o + "[" + tg + "]"; }, None => { o = o + "[none]"; } } match (write_file("out.txt", o)) { Err(e) => { return 1; }, Ok(_) => {} } write("wrote\n"); return 0; }, Err(e) => { write("ERR"); return 2; } } return 3; }`)
+		comp := build(t, `function main(): i32 { match (read_file("in.txt")) { Ok(c) => { let o: string = c; match (env("TAG")) { Some(tg) => { o = o + "[" + tg + "]"; }, None => { o = o + "[none]"; } } match (write_file("out.txt", o)) { Err(e) => { return 1; }, Ok(_) => {} } write("wrote\n"); return 0; }, Err(e) => { write("ERR"); return 2; } } return 3; }`)
 		if err := os.WriteFile(filepath.Join(dir, "in.txt"), []byte("payload"), 0o644); err != nil {
 			t.Fatalf("write in.txt: %v", err)
 		}
@@ -3047,9 +3047,9 @@ const componentCompileIOFSRWEnvDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var comp: i32[] = component_full_io_fs_rw_env(core, true);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let comp: i32[] = component_full_io_fs_rw_env(core, true);
+            let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
         },
@@ -3081,7 +3081,7 @@ func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { var id: u8[] = random_bytes(8); match (write_file("id.bin", string_from_bytes_unchecked(id))) { Err(e) => { return 1; }, Ok(_) => {} } write("saved\n"); return 0; }`
+	src := `function main(): i32 { let id: u8[] = random_bytes(8); match (write_file("id.bin", string_from_bytes_unchecked(id))) { Err(e) => { return 1; }, Ok(_) => {} } write("saved\n"); return 0; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -3161,11 +3161,11 @@ const componentFullIORandomWriteDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var comp: i32[] = component_full_io_random_write(core);
-            var j: i32 = 0;
+            let comp: i32[] = component_full_io_random_write(core);
+            let j: i32 = 0;
             while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
             return 0;
         },
@@ -3248,7 +3248,7 @@ func TestSelfHostWasmComponentRandomWrite(t *testing.T) {
 
 	t.Run("gen-and-persist", func(t *testing.T) {
 		// Draw 16 random bytes (a u8[]), write them, report the count.
-		comp := build(t, `function main(): i32 { var id: u8[] = random_bytes(16); match (write_file("token.bin", string_from_bytes_unchecked(id))) { Err(e) => { return 1; }, Ok(_) => {} } print_int(id.len()); return 0; }`)
+		comp := build(t, `function main(): i32 { let id: u8[] = random_bytes(16); match (write_file("token.bin", string_from_bytes_unchecked(id))) { Err(e) => { return 1; }, Ok(_) => {} } print_int(id.len()); return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp).Output()
 		if string(out) != "16" {
 			t.Errorf("gen-and-persist: stdout = %q, want %q", string(out), "16")
@@ -3269,9 +3269,9 @@ const componentCompileIORandomWriteDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var comp: i32[] = component_full_io_random_write(core, true);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let comp: i32[] = component_full_io_random_write(core, true);
+            let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
         },
@@ -3381,11 +3381,11 @@ const componentFullIOEprintDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var comp: i32[] = component_full_io_eprint(core);
-            var j: i32 = 0;
+            let comp: i32[] = component_full_io_eprint(core);
+            let j: i32 = 0;
             while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
             return 0;
         },
@@ -3504,9 +3504,9 @@ const componentCompileIOEprintDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var comp: i32[] = component_full_io_eprint(core, true);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let comp: i32[] = component_full_io_eprint(core, true);
+            let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
         },
@@ -3614,11 +3614,11 @@ const componentFullIOExitDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var comp: i32[] = component_full_io_exit(core);
-            var j: i32 = 0;
+            let comp: i32[] = component_full_io_exit(core);
+            let j: i32 = 0;
             while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
             return 0;
         },
@@ -3734,9 +3734,9 @@ const componentCompileIOExitDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var comp: i32[] = component_full_io_exit(core, true);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let comp: i32[] = component_full_io_exit(core, true);
+            let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
         },
@@ -3767,7 +3767,7 @@ func TestSelfHostWasmComponentFullIOFSArgsRead(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { var a: string[] = args(); if (a.len() < 2) { write("usage\n"); return 1; } match (read_file(a[1])) { Ok(s) => { write(s); return 0; }, Err(e) => { write("ERR\n"); return 2; } } return 3; }`
+	src := `function main(): i32 { let a: string[] = args(); if (a.len() < 2) { write("usage\n"); return 1; } match (read_file(a[1])) { Ok(s) => { write(s); return 0; }, Err(e) => { write("ERR\n"); return 2; } } return 3; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -3843,11 +3843,11 @@ const componentFullIOFSArgsReadDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var comp: i32[] = component_full_io_fs_args_read(core);
-            var j: i32 = 0;
+            let comp: i32[] = component_full_io_fs_args_read(core);
+            let j: i32 = 0;
             while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
             return 0;
         },
@@ -3929,7 +3929,7 @@ func TestSelfHostWasmComponentArgsRead(t *testing.T) {
 	}
 
 	t.Run("cat-argv-file", func(t *testing.T) {
-		comp := build(t, `function main(): i32 { var a: string[] = args(); if (a.len() < 2) { write("usage\n"); return 1; } match (read_file(a[1])) { Ok(s) => { write(s); return 0; }, Err(e) => { write("ERR\n"); return 2; } } return 3; }`)
+		comp := build(t, `function main(): i32 { let a: string[] = args(); if (a.len() < 2) { write("usage\n"); return 1; } match (read_file(a[1])) { Ok(s) => { write(s); return 0; }, Err(e) => { write("ERR\n"); return 2; } } return 3; }`)
 		if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("contents via argv"), 0o644); err != nil {
 			t.Fatalf("write hello.txt: %v", err)
 		}
@@ -3940,7 +3940,7 @@ func TestSelfHostWasmComponentArgsRead(t *testing.T) {
 	})
 
 	t.Run("missing-arg-usage", func(t *testing.T) {
-		comp := build(t, `function main(): i32 { var a: string[] = args(); if (a.len() < 2) { write("usage\n"); return 1; } match (read_file(a[1])) { Ok(s) => { write(s); return 0; }, Err(e) => { write("ERR\n"); return 2; } } return 3; }`)
+		comp := build(t, `function main(): i32 { let a: string[] = args(); if (a.len() < 2) { write("usage\n"); return 1; } match (read_file(a[1])) { Ok(s) => { write(s); return 0; }, Err(e) => { write("ERR\n"); return 2; } } return 3; }`)
 		// argv[0] only (program name); the usage arm runs, exit 1.
 		cmd := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp)
 		out, _ := cmd.Output()
@@ -3959,9 +3959,9 @@ const componentCompileIOFSArgsReadDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var comp: i32[] = component_full_io_fs_args_read(core, true);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let comp: i32[] = component_full_io_fs_args_read(core, true);
+            let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
         },
@@ -3993,7 +3993,7 @@ func TestSelfHostWasmComponentFullIOFSRWArgs(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { var a: string[] = args(); if (a.len() < 3) { write("usage: tool IN OUT\n"); return 1; } match (read_file(a[1])) { Ok(s) => { match (write_file(a[2], s)) { Err(e) => { write("write err\n"); return 2; }, Ok(_) => {} } write("ok\n"); return 0; }, Err(e) => { write("read err\n"); return 3; } } return 4; }`
+	src := `function main(): i32 { let a: string[] = args(); if (a.len() < 3) { write("usage: tool IN OUT\n"); return 1; } match (read_file(a[1])) { Ok(s) => { match (write_file(a[2], s)) { Err(e) => { write("write err\n"); return 2; }, Ok(_) => {} } write("ok\n"); return 0; }, Err(e) => { write("read err\n"); return 3; } } return 4; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -4076,11 +4076,11 @@ const componentFullIOFSRWArgsDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = [];
-            var i: i32 = 0;
+            let core: i32[] = [];
+            let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            var comp: i32[] = component_full_io_fs_rw_args(core);
-            var j: i32 = 0;
+            let comp: i32[] = component_full_io_fs_rw_args(core);
+            let j: i32 = 0;
             while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
             return 0;
         },
@@ -4162,7 +4162,7 @@ func TestSelfHostWasmComponentArgsReadWrite(t *testing.T) {
 	}
 
 	t.Run("transform-in-to-out", func(t *testing.T) {
-		comp := build(t, `function main(): i32 { var a: string[] = args(); if (a.len() < 3) { write("usage\n"); return 1; } match (read_file(a[1])) { Ok(s) => { match (write_file(a[2], s)) { Err(e) => { return 2; }, Ok(_) => {} } write("done\n"); return 0; }, Err(e) => { write("ERR\n"); return 3; } } return 4; }`)
+		comp := build(t, `function main(): i32 { let a: string[] = args(); if (a.len() < 3) { write("usage\n"); return 1; } match (read_file(a[1])) { Ok(s) => { match (write_file(a[2], s)) { Err(e) => { return 2; }, Ok(_) => {} } write("done\n"); return 0; }, Err(e) => { write("ERR\n"); return 3; } } return 4; }`)
 		if err := os.WriteFile(filepath.Join(dir, "src.dat"), []byte("copy this payload"), 0o644); err != nil {
 			t.Fatalf("write src.dat: %v", err)
 		}
@@ -4186,9 +4186,9 @@ const componentCompileIOFSRWArgsDriver = `
 function main(): i32 {
     match (read_file("core.wat")) {
         Ok(wat) => {
-            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            var comp: i32[] = component_full_io_fs_rw_args(core, true);
-            var i: i32 = 0;
+            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            let comp: i32[] = component_full_io_fs_rw_args(core, true);
+            let i: i32 = 0;
             while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
             return 0;
         },

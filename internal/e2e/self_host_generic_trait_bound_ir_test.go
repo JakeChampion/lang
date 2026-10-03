@@ -28,19 +28,19 @@ var genericTraitBoundCases = []struct {
 struct IBox { v: i32 }
 impl Box[i32] for IBox { function get(self: Self): i32 { return self.v; } }
 function unwrap[B: Box[i32]](b: B): i32 { return b.get(); }
-function main(): i32 { var b = IBox { v: 42 }; return unwrap(b); }`, 42},
+function main(): i32 { let b = IBox { v: 42 }; return unwrap(b); }`, 42},
 	// generic trait, method returns Option[T], bound on Trait[i32]
 	{"generic-option", `pub trait Peek[T] { function peek(self: Self): Option[T]; }
 struct R { cur: i32, end: i32 }
 impl Peek[i32] for R { function peek(self: Self): Option[i32] { if (self.cur >= self.end) { return None; } return Some(self.cur); } }
 function head[P: Peek[i32]](p: P): i32 { match (p.peek()) { Some(v) => { return v + 8; }, None => { return 0; } } }
-function main(): i32 { var r = R { cur: 2, end: 5 }; return head(r); }`, 10},
+function main(): i32 { let r = R { cur: 2, end: 5 }; return head(r); }`, 10},
 	// full generic Iterator[T]: Option[(T, Self)] + a bounded-generic driver
 	{"generic-iterator-sum", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct RangeIter { cur: i32, end: i32 }
 impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
-function sum_it[I: Iterator[i32]](it: I): i32 { var total = 0; var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { total = total + t.0; cur = t.1; }, None => { go = false; }, } } return total; }
-function main(): i32 { var r = RangeIter { cur: 0, end: 5 }; return sum_it(r); }`, 10},
+function sum_it[I: Iterator[i32]](it: I): i32 { let total = 0; let cur = it; let go = true; while (go) { match (cur.next()) { Some(t) => { total = total + t.0; cur = t.1; }, None => { go = false; }, } } return total; }
+function main(): i32 { let r = RangeIter { cur: 0, end: 5 }; return sum_it(r); }`, 10},
 	// TWO impls of one generic trait driven by ONE bounded-generic function →
 	// two monomorphic clones, each dispatching to its own impl.
 	{"generic-two-impls", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
@@ -48,7 +48,7 @@ struct RangeIter { cur: i32, end: i32 }
 impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
 struct Single { v: i32, done: boolean }
 impl Iterator[i32] for Single { function next(self: Self): Option[(i32, Self)] { if (self.done) { return None; } return Some((self.v, Single { v: self.v, done: true })); } }
-function sum_it[I: Iterator[i32]](it: I): i32 { var total = 0; var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { total = total + t.0; cur = t.1; }, None => { go = false; }, } } return total; }
+function sum_it[I: Iterator[i32]](it: I): i32 { let total = 0; let cur = it; let go = true; while (go) { match (cur.next()) { Some(t) => { total = total + t.0; cur = t.1; }, None => { go = false; }, } } return total; }
 function main(): i32 { return sum_it(RangeIter { cur: 0, end: 5 }) + sum_it(Single { v: 7, done: false }); }`, 17},
 }
 

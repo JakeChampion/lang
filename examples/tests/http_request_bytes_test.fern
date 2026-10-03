@@ -51,7 +51,7 @@ function test_bytes_parse_keeps_the_request(): test.TestOutcome {
 }
 
 function test_text_and_bytes_agree(): test.TestOutcome {
-  var wire: string = wire_post();
+  let wire: string = wire_post();
   match (http.http_parse_request(wire)) {
     Some(a) => {
       match (http.http_parse_request_bytes(wire.bytes())) {
@@ -93,8 +93,8 @@ function test_bare_request_has_no_headers(): test.TestOutcome {
 
 // A header block with `n` fields, each `X-i: i`.
 function fields(n: i32): string {
-  var block: string = "";
-  var i: i32 = 0;
+  let block: string = "";
+  let i: i32 = 0;
   while (i < n) {
     block = block + "X-" + i.to_string() + ": " + i.to_string() + "\r\n";
     i = i + 1;
@@ -110,8 +110,8 @@ function repeat(s: string, n: i32): string {
   if (n <= 0) {
     return "";
   }
-  var out: string = s;
-  var len: i32 = 1;
+  let out: string = s;
+  let len: i32 = 1;
   while (len * 2 <= n) {
     out = out + out;
     len = len * 2;
@@ -131,7 +131,7 @@ function line_of(line_len: i32): string {
 // A request whose header block, request line included, is `block_len`
 // bytes before the CRLF CRLF that ends it.
 function block_of(block_len: i32): string {
-  var line: string = "GET / HTTP/1.1\r\nHost: h\r\n";
+  let line: string = "GET / HTTP/1.1\r\nHost: h\r\n";
   return line + "X: " + repeat("v", block_len - line.len() - 3) + "\r\n\r\n";
 }
 
@@ -186,14 +186,14 @@ function test_caps_admit_what_fits(): test.TestOutcome {
 
 // Every refusal the parser makes, on both entries.
 function refused(wire: string): boolean {
-  var text: boolean = true;
+  let text: boolean = true;
   match (http.http_parse_request(wire)) {
     Some(_) => {
       text = false;
     },
     None => {}
   }
-  var bytes: boolean = true;
+  let bytes: boolean = true;
   match (http.http_parse_request_bytes(wire.bytes())) {
     Some(_) => {
       bytes = false;
@@ -431,7 +431,7 @@ function test_chunked_body_is_decoded(): test.TestOutcome {
       return test.fail("a chunked request refused");
     }
   }
-  var wire: string = wire_chunked() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
+  let wire: string = wire_chunked() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
   match (framed(wire)) {
     Some(f) => {
       if (f.len != wire_chunked().len()) {
@@ -681,7 +681,7 @@ function test_refusal_statuses(): test.TestOutcome {
 // framed, one whose body is short says so, the field is read
 // case-insensitively, and an HTTP/1.0 request's expectation is ignored.
 function test_expect_continue(): test.TestOutcome {
-  var head: string = "POST / HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n";
+  let head: string = "POST / HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n";
   if (framing_of(head) != 3) {
     return test.fail("headers alone do not ask for 100");
   }
@@ -728,7 +728,7 @@ function framed(wire: string): Option[http.HttpFramed] {
 }
 
 function test_framed_length_covers_headers_and_body(): test.TestOutcome {
-  var wire: string = wire_post() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
+  let wire: string = wire_post() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
   match (framed(wire)) {
     Some(f) => {
       if (f.request.path != "/echo") {
@@ -744,7 +744,7 @@ function test_framed_length_covers_headers_and_body(): test.TestOutcome {
 }
 
 function test_framed_from_reads_the_request_behind(): test.TestOutcome {
-  var wire: string = wire_post() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
+  let wire: string = wire_post() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
   match (http.http_parse_request_framed_from(wire.bytes(), wire_post().len(), http.http_limits())) {
     http.Framed(f) => {
       if (f.request.path != "/next") {
@@ -781,7 +781,7 @@ function persists(wire: string): Option[boolean] {
 }
 
 function test_framed_persistence_follows_the_version_and_connection(): test.TestOutcome {
-  var cases: string[] = [
+  let cases: string[] = [
     "GET / HTTP/1.1\r\nHost: h\r\n\r\n",
     "GET / HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n",
     "GET / HTTP/1.1\r\nHost: h\r\nConnection: Keep-Alive, Upgrade\r\n\r\n",
@@ -795,8 +795,8 @@ function test_framed_persistence_follows_the_version_and_connection(): test.Test
     "GET / HTTP/1.0\r\nConnection: keep-alive\r\nConnection: close\r\n\r\n",
     "GET / HTTP/1.7\r\nHost: h\r\n\r\n",
   ];
-  var want: boolean[] = [true, false, true, false, true, false, true, false, false, false, false, true];
-  var i: i32 = 0;
+  let want: boolean[] = [true, false, true, false, true, false, true, false, false, false, false, true];
+  let i: i32 = 0;
   while (i < cases.len()) {
     match (persists(cases[i])) {
       Some(k) => {
@@ -814,12 +814,12 @@ function test_framed_persistence_follows_the_version_and_connection(): test.Test
 }
 
 function test_serialize_names_the_connection(): test.TestOutcome {
-  var r: HttpResponse = http.ok("ok");
-  var kept: string = http.http_serialize_response_conn(r, true);
+  let r: HttpResponse = http.ok("ok");
+  let kept: string = http.http_serialize_response_conn(r, true);
   if (!kept.contains("\r\nConnection: keep-alive\r\n")) {
     return test.fail("a persisting response did not say keep-alive: " + kept);
   }
-  var closed: string = http.http_serialize_response_conn(r, false);
+  let closed: string = http.http_serialize_response_conn(r, false);
   if (!closed.contains("\r\nConnection: close\r\n")) {
     return test.fail("a closing response did not say close: " + closed);
   }
@@ -827,14 +827,14 @@ function test_serialize_names_the_connection(): test.TestOutcome {
 }
 
 function test_parse_holds_no_view_into_the_wire(): test.TestOutcome {
-  var wire: u8[] = wire_post().bytes();
+  let wire: u8[] = wire_post().bytes();
   match (http.http_parse_request_bytes(wire)) {
     Some(req) => {
       // Overwrite the wire buffer after the parse: the request must
       // not see it. A counted alias would be copied on write and pass
       // here too, so what this pins is that no field is an uncounted
       // view (a `str`, a slice) into the wire.
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < wire.len()) {
         wire = wire.with(i, 120 as u8);
         i = i + 1;
@@ -1090,7 +1090,7 @@ function test_chunk_extension_grammar(): test.TestOutcome {
 // One empty line before the request line is ignored (RFC 9112 §2.2) and
 // counted in the framed length; a second is refused.
 function test_empty_line_before_the_request(): test.TestOutcome {
-  var wire: string = "\r\nGET /a HTTP/1.1\r\nHost: h\r\n\r\n";
+  let wire: string = "\r\nGET /a HTTP/1.1\r\nHost: h\r\n\r\n";
   match (http.http_parse_request_framed(wire.bytes())) {
     http.Framed(f) => {
       if (f.request.path != "/a") {
@@ -1148,11 +1148,11 @@ function header_of(wire: string, name: string): string {
 // A header value is text: obs-text that spells UTF-8 is kept as that
 // text, and a value whose bytes do not spell it is refused with 400.
 function test_header_value_must_be_utf8(): test.TestOutcome {
-  var accented: string = "GET / HTTP/1.1\r\nHost: h\r\nX-Name: José\r\n\r\n";
+  let accented: string = "GET / HTTP/1.1\r\nHost: h\r\nX-Name: José\r\n\r\n";
   if (header_of(accented, "x-name") != "José") {
     return test.fail("UTF-8 value: " + header_of(accented, "x-name"));
   }
-  var broken: string = "GET / HTTP/1.1\r\nHost: h\r\nX-Name: " + string_from_bytes_unchecked([74 as u8, 255 as u8]) + "\r\n\r\n";
+  let broken: string = "GET / HTTP/1.1\r\nHost: h\r\nX-Name: " + string_from_bytes_unchecked([74 as u8, 255 as u8]) + "\r\n\r\n";
   if (!refused(broken)) {
     return test.fail("an ill-formed value was accepted");
   }
@@ -1175,7 +1175,7 @@ function test_path_escapes_must_be_utf8(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("HTTP request bytes");
+  let r: test.TestRunner = test.test_new("HTTP request bytes");
   r = r.it("bytes parse keeps the request", test_bytes_parse_keeps_the_request);
   r = r.it("text and bytes agree", test_text_and_bytes_agree);
   r = r.it("bare request has no headers", test_bare_request_has_no_headers);

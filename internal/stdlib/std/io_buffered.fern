@@ -8,10 +8,10 @@
 //
 // Build a byte buffer without a host write for each piece:
 //
-//   var w: BytesWriter = bytes_writer_new();
+//   let w: BytesWriter = bytes_writer_new();
 //   w = w.write_string("header\n");
 //   w = w.write_bytes([0 as u8, 255 as u8]);
-//   var bytes: u8[] = w.into_bytes();
+//   let bytes: u8[] = w.into_bytes();
 //
 // `BufWriter` wraps an fd-backed Writer with a flush threshold so
 // per-write syscall overhead drops to per-block, and `LineReader`
@@ -23,7 +23,7 @@ import "std/utf8" as utf8;
 
 // `bytes_writer_new()` — fresh empty BytesWriter.
 pub function bytes_writer_new(): BytesWriter {
-  var empty: u8[] = [];
+  let empty: u8[] = [];
   return BytesWriter { data: empty };
 }
 
@@ -33,9 +33,9 @@ pub function (w: BytesWriter) write_string(s: string): BytesWriter {
   // A VIEW, not a copy: the loop below only reads bs, and the
   // view never outlives s (a live parameter), so `bytes()` here
   // would allocate and copy the whole string for nothing.
-  var bs: [u8] = s.as_bytes();
-  var data: u8[] = w.data;
-  var i: i32 = 0;
+  let bs: [u8] = s.as_bytes();
+  let data: u8[] = w.data;
+  let i: i32 = 0;
   while (i < bs.len()) {
     data = data.append(bs[i]);
     i = i + 1;
@@ -46,8 +46,8 @@ pub function (w: BytesWriter) write_string(s: string): BytesWriter {
 // `(w: BytesWriter).write_bytes(bs)` — append a byte slice
 // directly (no string round-trip).
 pub function (w: BytesWriter) write_bytes(bs: u8[]): BytesWriter {
-  var data: u8[] = w.data;
-  var i: i32 = 0;
+  let data: u8[] = w.data;
+  let i: i32 = 0;
   while (i < bs.len()) {
     data = data.append(bs[i]);
     i = i + 1;
@@ -89,7 +89,7 @@ pub function (w: BytesWriter) into_string(): Option[string] {
 // an empty buffer. Functional (immutable data structures): rebind
 // the result — `w = w.reset()`.
 pub function (w: BytesWriter) reset(): BytesWriter {
-  var empty: u8[] = [];
+  let empty: u8[] = [];
   return BytesWriter { ...w, data: empty };
 }
 
@@ -217,13 +217,13 @@ pub function buf_push_u64(h: usize, n: u64): void {
       buf_push_byte(h, 48 + n as i32);
       return;
     }
-    var k: i32 = n as i32 * 2;
+    let k: i32 = n as i32 * 2;
     buf_push_range(h, digit_pairs(), k, k + 2);
     return;
   }
-  var q: u64 = n / (100 as u64);
+  let q: u64 = n / (100 as u64);
   buf_push_u64(h, q);
-  var r: i32 = (n - q * (100 as u64)) as i32 * 2;
+  let r: i32 = (n - q * (100 as u64)) as i32 * 2;
   buf_push_range(h, digit_pairs(), r, r + 2);
 }
 
@@ -240,8 +240,8 @@ pub function buf_push_i64(h: usize, n: i64): void {
 // `buf_u64_len(n)` — how many bytes `buf_push_u64` writes for `n`, for a
 // caller that pads the number to a field.
 pub function buf_u64_len(n: u64): i32 {
-  var d: i32 = 1;
-  var p: u64 = 10 as u64;
+  let d: i32 = 1;
+  let p: u64 = 10 as u64;
   while (n >= p) {
     d = d + 1;
     if (d == 20) {
@@ -274,9 +274,9 @@ pub function (b: BufWriter) flush(): BufWriter {
 pub function (b: BufWriter) close(): Option[IoError] {
   // Read the pending count BEFORE the flush: the builder is shared between
   // `b` and `flushed`, so afterwards both report zero.
-  var pending: i32 = buf_len(b.buf);
-  var flushed: BufWriter = b.flush();
-  var closed: Option[IoError] = b.w.close();
+  let pending: i32 = buf_len(b.buf);
+  let flushed: BufWriter = b.flush();
+  let closed: Option[IoError] = b.w.close();
   buf_free(b.buf);
   match (closed) {
     Some(e) => {
@@ -374,8 +374,8 @@ pub function (lr: ByteLineReader) error(): Option[IoError] {
 }
 
 function copy_line_bytes(chunk: u8[], lo: i32, hi: i32): u8[] {
-  var out: u8[] = __alloc_u8(hi - lo);
-  var i: i32 = lo;
+  let out: u8[] = __alloc_u8(hi - lo);
+  let i: i32 = lo;
   while (i < hi) {
     out = out.with(i - lo, chunk[i]);
     i = i + 1;
@@ -384,7 +384,7 @@ function copy_line_bytes(chunk: u8[], lo: i32, hi: i32): u8[] {
 }
 
 function byte_line_end(chunk: u8[], pos: i32, term: i32): i32 {
-  var end: i32 = __memchr_bytes(chunk, term, pos);
+  let end: i32 = __memchr_bytes(chunk, term, pos);
   if (end < 0) {
     return chunk.len();
   }
@@ -392,19 +392,19 @@ function byte_line_end(chunk: u8[], pos: i32, term: i32): i32 {
 }
 
 pub function (lr: ByteLineReader) next_line_bytes(): (Option[u8[]], ByteLineReader) {
-  var s: ByteLineReader = lr;
+  let s: ByteLineReader = lr;
   // Allocate a builder only when a record spans chunks. Repeatedly copying
   // the accumulated prefix would make long records quadratic.
-  var b: usize = 0 as usize;
+  let b: usize = 0 as usize;
   while (true) {
-    var end: i32 = byte_line_end(s.chunk, s.pos, s.term);
+    let end: i32 = byte_line_end(s.chunk, s.pos, s.term);
     if (end < s.chunk.len()) {
       end = end + 1;
       if (b == 0 as usize) {
         return (Some(copy_line_bytes(s.chunk, s.pos, end)), ByteLineReader { ...s, pos: end });
       }
       buf_push_bytes_range(b, s.chunk, s.pos, end);
-      var line: u8[] = buf_take_bytes(b);
+      let line: u8[] = buf_take_bytes(b);
       buf_free(b);
       return (Some(line), ByteLineReader { ...s, pos: end });
     }
@@ -419,7 +419,7 @@ pub function (lr: ByteLineReader) next_line_bytes(): (Option[u8[]], ByteLineRead
       if (b == 0 as usize) {
         return (None, s);
       }
-      var tail: u8[] = buf_take_bytes(b);
+      let tail: u8[] = buf_take_bytes(b);
       buf_free(b);
       return (Some(tail), s);
     }
@@ -437,9 +437,9 @@ pub function (lr: ByteLineReader) next_line_bytes(): (Option[u8[]], ByteLineRead
 
 // Switch from records to raw chunks without discarding the unread suffix.
 pub function (lr: ByteLineReader) next_chunk_bytes(): (Option[u8[]], ByteLineReader) {
-  var s: ByteLineReader = lr;
+  let s: ByteLineReader = lr;
   if (s.pos < s.chunk.len()) {
-    var rest: u8[] = copy_line_bytes(s.chunk, s.pos, s.chunk.len());
+    let rest: u8[] = copy_line_bytes(s.chunk, s.pos, s.chunk.len());
     return (Some(rest), ByteLineReader { ...s, chunk: [], pos: 0 });
   }
   if (s.eof) {
@@ -472,7 +472,7 @@ pub function (lr: ByteLineReader) next_chunk_bytes(): (Option[u8[]], ByteLineRea
 // contract BufWriter has for writes, and the reason a directory
 // operand is distinguishable from an empty file (#8700).
 //
-// Cursor idiom (docs/CURSOR-IDIOM.md): `var (line, lr) = lr.next_line();`.
+// Cursor idiom (docs/CURSOR-IDIOM.md): `let (line, lr) = lr.next_line();`.
 pub struct LineReader { r: Reader, chunk: string, pos: i32, eof: boolean, term: i32, chunk_size: i32, err: Option[IoError] }
 
 // `line_reader_new(r, term, chunk_size)` — read lines from `r`
@@ -488,12 +488,12 @@ pub function (lr: LineReader) error(): Option[IoError] {
 
 // `(lr).next_line()` — the next line, or None at end of input.
 pub function (lr: LineReader) next_line(): (Option[string], LineReader) {
-  var s: LineReader = lr;
-  var tail: string = "";
+  let s: LineReader = lr;
+  let tail: string = "";
   while (true) {
-    var j: i32 = __memchr(s.chunk, s.term, s.pos);
+    let j: i32 = __memchr(s.chunk, s.term, s.pos);
     if (j >= 0) {
-      var line: string = tail + slice_unchecked(s.chunk, s.pos, j + 1);
+      let line: string = tail + slice_unchecked(s.chunk, s.pos, j + 1);
       return (Some(line), LineReader { ...s, pos: j + 1 });
     }
     if (s.pos < s.chunk.len()) {
@@ -527,9 +527,9 @@ pub function (lr: LineReader) next_line(): (Option[string], LineReader) {
 // and wants the remaining bytes as fast as they arrive. None at end
 // of input.
 pub function (lr: LineReader) next_chunk(): (Option[string], LineReader) {
-  var s: LineReader = lr;
+  let s: LineReader = lr;
   if (s.pos < s.chunk.len()) {
-    var rest: string = slice_unchecked(s.chunk, s.pos, s.chunk.len()) + "";
+    let rest: string = slice_unchecked(s.chunk, s.pos, s.chunk.len()) + "";
     return (Some(rest), LineReader { ...s, chunk: "", pos: 0 });
   }
   if (s.eof) {

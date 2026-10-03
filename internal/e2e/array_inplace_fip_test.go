@@ -26,8 +26,8 @@ fip function dbl(x: i64): i64 { return x * (2 as i64); }
 fip function twice(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => dbl(x)); }
 
 function build(n: i32): i64[] {
-	var xs: i64[] = [];
-	var i: i32 = 0;
+	let xs: i64[] = [];
+	let i: i32 = 0;
 	while (i < n) { xs = xs.append((i as i64) + (1 as i64)); i = i + 1; }
 	return xs;
 }
@@ -38,18 +38,18 @@ function churn(own xs: i64[], rounds: i32): i64[] {
 }
 
 function main(): i32 {
-	var xs: i64[] = build(64);
-	var before: i64 = __heap_bump_bytes();
+	let xs: i64[] = build(64);
+	let before: i64 = __heap_bump_bytes();
 	xs = churn(xs, 200);
-	var grew: i64 = __heap_bump_bytes() - before;
+	let grew: i64 = __heap_bump_bytes() - before;
 	if (xs.len() != 64) { return 90; }
 	if (xs[0] == 1 as i64) { return 91; }
 	if (grew != 0 as i64) { return 92; }
 
 	// a = twice(a) is the shape E051 admits for a local: it dies at the
 	// call. b still holds the buffer, so the donor reaches the guard shared.
-	var a: i64[] = build(4);
-	var b: i64[] = a;
+	let a: i64[] = build(4);
+	let b: i64[] = a;
 	a = twice(a);
 	if (b[0] != 1 as i64 || b[3] != 4 as i64) { return 93; }
 	if (a[0] != 2 as i64 || a[3] != 8 as i64) { return 94; }

@@ -15,7 +15,7 @@ import (
 // string box is the 24-byte `{rc@base, data@base+8, len@base+16}` block
 // `__fern_str_box` builds. Unlike the Reader leaves of #6921 — which leaked
 // because nothing ever dec'd them — `strbuf_take()` IS treated as a fresh owned
-// string (irlower's str-tracking), so a dropped result reaches
+// string (the lowering's str-tracking), so a dropped result reaches
 // `__fn___fern_str_free`, which reads the refcount at box-8. On a headerless box
 // that is the last word of the PRECEDING allocation, which here is the tail of
 // the text just copied out of the accumulator. The native backend has built this
@@ -34,7 +34,7 @@ func strbufTakeAsm(t *testing.T, target string) string {
 	const src = `function main(): i32 {
     strbuf_reset();
     strbuf_append("ab");
-    var s: string = strbuf_take();
+    let s: string = strbuf_take();
     return s.len();
 }`
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -109,7 +109,7 @@ func TestSelfHostStrbufNeedGatedArm64(t *testing.T) {
 
 	// Allocates (a heap string array) but never uses the string-builder.
 	const noStrbuf = `function main(): i32 {
-    var xs: string[] = ["a", "b"];
+    let xs: string[] = ["a", "b"];
     return xs.len() - 2;
 }`
 	asm := string(runCapture(t, x86gcc, x86runner, driverBin, []byte(noStrbuf+"\n"), "-target", "arm64-linux"))
@@ -154,13 +154,13 @@ func TestSelfHostStrbufTakeReclaimLoop(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	const src = `function main(): i32 {
-    var i: i32 = 0;
-    var last: i32 = 0;
+    let i: i32 = 0;
+    let last: i32 = 0;
     while (i < 5000) {
         strbuf_reset();
         strbuf_append("abcdefgh");
         strbuf_append("ijklmnop");
-        var s: string = strbuf_take();
+        let s: string = strbuf_take();
         last = s.len();
         i = i + 1;
     }
@@ -196,7 +196,7 @@ func TestSelfHostMapRuntimeNeedGatedArm64(t *testing.T) {
 	// Appends to an array AND compares two strings — the exact proxy condition
 	// the old gate keyed on — with no map anywhere.
 	const noMap = `function main(): i32 {
-    var xs: string[] = [];
+    let xs: string[] = [];
     xs = xs.append("a");
     xs = xs.append("b");
     if (xs[0] == xs[1]) { return 1; }

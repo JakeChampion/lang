@@ -53,7 +53,7 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	// arrives, and on wasm an open connection owns a heap record, so a
 	// loop that stopped on the count alone left the last one to the exit
 	// sweep and the census unbalanced.
-	body = strings.Replace(body, "while (true)", fmt.Sprintf("var completed: i32 = 0;\n    while (completed < %d || conns.fds.len() > 0)", rounds), 1)
+	body = strings.Replace(body, "while (true)", fmt.Sprintf("let completed: i32 = 0;\n    while (completed < %d || conns.fds.len() > 0)", rounds), 1)
 	body = strings.Replace(body, answered, answered+"\n                        completed = completed + 1;", 1)
 	// A handler may not sleep around its Platform bag (E080), so the slow
 	// paths burn pure work: 12M steps is 19 ms on wasm, 42 ms on x86-64
@@ -63,8 +63,8 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	// the client resets the connection.
 	return src[:start] + body + src[end:] + `
 function census_burn(n: i32): i32 {
-    var x: i32 = 12345;
-    var i: i32 = 0;
+    let x: i32 = 12345;
+    let i: i32 = 0;
     while (i < n) {
         x = (x * 1103515245 + 12345) & 2147483647;
         i = i + 1;
@@ -79,7 +79,7 @@ function census_handle(req: HttpRequest, plat: Platform): HttpResponse {
         }
     }
     if (req.path == "/nocontent") { return http.no_content(); }
-    var work: i32 = 0;
+    let work: i32 = 0;
     if (req.path.starts_with("/slow")) { work = 12000000; }
     if (req.path.starts_with("/gone")) { work = 60000000; }
     if (req.path == "/behind-a-failed-write") { plat.log("answered /behind-a-failed-write"); }
@@ -634,12 +634,12 @@ func WasiHTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	if strings.Count(src, original) != 1 {
 		t.Fatal("bounded HTTP entry changed")
 	}
-	const entry = `    var listener: i32 = tcp_listen(0);
+	const entry = `    let listener: i32 = tcp_listen(0);
     if (listener < 0) { return 90; }
-    var port: i32 = tcp_local_port(listener);
+    let port: i32 = tcp_local_port(listener);
     if (port <= 0) { return 91; }
     print(int.int_to_string(port));
-    var result: i32 = __serve_loop(listener, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_millis(300 as i64), data_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200, max_connections: 2 }, (reason: string): void => {});
+    let result: i32 = __serve_loop(listener, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_millis(300 as i64), data_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200, max_connections: 2 }, (reason: string): void => {});
     if (tcp_close(listener) != 0) { return 92; }
     return result;`
 	return strings.Replace(src, original, entry, 1)

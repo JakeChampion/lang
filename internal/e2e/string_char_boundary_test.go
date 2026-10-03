@@ -19,19 +19,19 @@ import "std/utf8" as utf8;
 
 // A(1) + e-acute(2) + euro(3) + grinning face(4) = 10 bytes.
 function mixed(): string {
-    var b: u8[] = [65 as u8, 195 as u8, 169 as u8, 226 as u8, 130 as u8,
+    let b: u8[] = [65 as u8, 195 as u8, 169 as u8, 226 as u8, 130 as u8,
         172 as u8, 240 as u8, 159 as u8, 152 as u8, 128 as u8];
     return string_from_bytes_unchecked(b);
 }
 
 function main(): i32 {
-    var s: string = mixed();
+    let s: string = mixed();
     if (s.len() != 10) { return 1; }
 
     // The boundary set is exactly {0, 1, 3, 6, 10}.
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i <= 10) {
-        var want: boolean = i == 0 || i == 1 || i == 3 || i == 6 || i == 10;
+        let want: boolean = i == 0 || i == 1 || i == 3 || i == 6 || i == 10;
         if (utf8.is_char_boundary(s, i) != want) { return 2; }
         i = i + 1;
     }
@@ -63,17 +63,17 @@ function main(): i32 {
     // index pair: a snapped result is a boundary, floor never grows
     // the index, ceil never shrinks it, and the snapped slice is
     // always valid UTF-8.
-    var a: i32 = 0;
+    let a: i32 = 0;
     while (a <= 10) {
-        var lo: i32 = utf8.floor_char_boundary(s, a);
-        var hi: i32 = utf8.ceil_char_boundary(s, a);
+        let lo: i32 = utf8.floor_char_boundary(s, a);
+        let hi: i32 = utf8.ceil_char_boundary(s, a);
         if (!utf8.is_char_boundary(s, lo)) { return 20; }
         if (!utf8.is_char_boundary(s, hi)) { return 21; }
         if (lo > a) { return 22; }
         if (hi < a) { return 23; }
-        var b: i32 = a;
+        let b: i32 = a;
         while (b <= 10) {
-            var cut: str = slice_unchecked(s, utf8.floor_char_boundary(s, a), utf8.ceil_char_boundary(s, b));
+            let cut: str = slice_unchecked(s, utf8.floor_char_boundary(s, a), utf8.ceil_char_boundary(s, b));
             if (!utf8.is_valid_utf8(cut.to_owned())) { return 24; }
             b = b + 1;
         }

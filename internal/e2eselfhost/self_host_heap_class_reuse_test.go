@@ -23,18 +23,18 @@ var heapClassReuseCases = []struct {
 	want      int // the result's length % 7 + 10
 }{
 	{"bare_local", `function main(): i32 {
-    var b0: i64 = __heap_bump_bytes();
-    var out: string = "";
-    var i: i32 = 0;
+    let b0: i64 = __heap_bump_bytes();
+    let out: string = "";
+    let i: i32 = 0;
     while (i < 40000) { out = out + "x"; i = i + 1; }
     if (__heap_bump_bytes() - b0 > 16777216) { return 1; }
     return out.len() % 7 + 10;
 }`, 40000%7 + 10},
 	{"through_a_call", `function put(a: string, s: string): string { return a + s; }
 function main(): i32 {
-    var b0: i64 = __heap_bump_bytes();
-    var acc: string = "";
-    var i: i32 = 0;
+    let b0: i64 = __heap_bump_bytes();
+    let acc: string = "";
+    let i: i32 = 0;
     while (i < 20000) { acc = put(acc, "12345678"); i = i + 1; }
     if (__heap_bump_bytes() - b0 > 16777216) { return 1; }
     return acc.len() % 7 + 10;

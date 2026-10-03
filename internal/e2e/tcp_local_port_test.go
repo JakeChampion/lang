@@ -23,20 +23,20 @@ import (
 //
 // Exit codes localise a failed step — 9x is setup, 42 is every step holding.
 const tcpLocalPortRoundTrip = `function main(): i32 {
-    var l: i32 = tcp_listen(0);
+    let l: i32 = tcp_listen(0);
     if (l < 0) { return 90; }
-    var port: i32 = tcp_local_port(l);
+    let port: i32 = tcp_local_port(l);
     if (port <= 0) { return 91; }
     if (port > 65535) { return 92; }
-    var loopback: i32 = 127 + (1 << 24);
-    var c: i32 = tcp_connect(loopback, port);
+    let loopback: i32 = 127 + (1 << 24);
+    let c: i32 = tcp_connect(loopback, port);
     if (c < 0) { return 93; }
-    var s: i32 = tcp_accept(l);
+    let s: i32 = tcp_accept(l);
     if (s < 0) { return 94; }
     // The accepted end is bound to the same listening port.
     if (tcp_local_port(s) != port) { return 95; }
-    var sent: i32 = tcp_send(c, "ping!");
-    var got: u8[] = tcp_recv(s, 16);
+    let sent: i32 = tcp_send(c, "ping!");
+    let got: u8[] = tcp_recv(s, 16);
     if (sent != 5) { return 96; }
     if (got.len() != 5) { return 97; }
     if (tcp_close(c) + tcp_close(s) + tcp_close(l) != 0) { return 98; }
@@ -112,9 +112,9 @@ func TestTcpLocalPortInterp(t *testing.T) {
 	// can run: an ephemeral listener reports a plausible port, and a handle
 	// that names no socket reports failure rather than a stale number.
 	src := `function main(): i32 {
-    var l: i32 = tcp_listen(0);
+    let l: i32 = tcp_listen(0);
     if (l < 0) { return 90; }
-    var port: i32 = tcp_local_port(l);
+    let port: i32 = tcp_local_port(l);
     if (port <= 0) { return 91; }
     if (port > 65535) { return 92; }
     if (tcp_local_port(4242) >= 0) { return 93; }
@@ -155,7 +155,7 @@ func TestTcpLocalPortErrno(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 	src := `function main(): i32 {
-    var p: i32 = tcp_local_port(0);
+    let p: i32 = tcp_local_port(0);
     if (p >= 0) { return 90; }
     return 42;
 }`

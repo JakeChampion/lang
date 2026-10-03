@@ -33,11 +33,11 @@ func TestTryOpRunsDefersOnErrorPath(t *testing.T) {
 }
 function inner(c: Cell[i32]): Result[i32, string] {
     defer c.set(42);
-    var x: i32 = fails()?;
+    let x: i32 = fails()?;
     return Ok(x);
 }
 function main(): i32 {
-    var c: Cell[i32] = cell_new(0);
+    let c: Cell[i32] = cell_new(0);
     inner(c);
     return c.get();
 }`, 42},
@@ -46,11 +46,11 @@ function main(): i32 {
 }
 function inner(c: Cell[i32]): Option[string] {
     defer c.set(9);
-    var x: string = maybe()?;
+    let x: string = maybe()?;
     return Some(x);
 }
 function main(): i32 {
-    var c: Cell[i32] = cell_new(0);
+    let c: Cell[i32] = cell_new(0);
     inner(c);
     return c.get();
 }`, 9},
@@ -60,11 +60,11 @@ function main(): i32 {
 function inner(c: Cell[i32]): Result[i32, string] {
     defer c.set(10);
     defer c.set(20);
-    var x: i32 = fails()?;
+    let x: i32 = fails()?;
     return Ok(x);
 }
 function main(): i32 {
-    var c: Cell[i32] = cell_new(0);
+    let c: Cell[i32] = cell_new(0);
     inner(c);
     return c.get();
 }`, 10},

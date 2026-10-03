@@ -31,16 +31,16 @@ func TestSelfHostClofldDropWasmIR(t *testing.T) {
 		wantWat string
 	}{
 		{"clofld-drop-fires",
-			`struct H { f: (i32) => i32, id: i32 } function main(): i32 { var h: H = H { f: (x: i32): i32 => { return x + 3; }, id: 1 }; var r: i32 = h.f(10); return r; }`,
+			`struct H { f: (i32) => i32, id: i32 } function main(): i32 { let h: H = H { f: (x: i32): i32 => { return x + 3; }, id: 1 }; let r: i32 = h.f(10); return r; }`,
 			13, "call $__sem_release_H"},
 		{"clofld-capture-churn-balanced",
-			`struct H { f: (i32) => i32, id: i32 } function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var k: i32 = i % 5; var h: H = H { f: (x: i32): i32 => { return x + k; }, id: i }; if (h.f(10) != 10 + k) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { var v: i32 = churn(200000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+			`struct H { f: (i32) => i32, id: i32 } function churn(n: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < n) { let k: i32 = i % 5; let h: H = H { f: (x: i32): i32 => { return x + k; }, id: i }; if (h.f(10) != 10 + k) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { let v: i32 = churn(200000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 			0, "call $__sem_release_H"},
 		{"clofld-ident-excluded",
-			`struct H { f: (i32) => i32, id: i32 } function main(): i32 { var g = (x: i32): i32 => { return x * 2; }; var h: H = H { f: g, id: 3 }; var r: i32 = h.f(5) + g(2) + h.id; if (r != 17) { return 90; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`,
+			`struct H { f: (i32) => i32, id: i32 } function main(): i32 { let g = (x: i32): i32 => { return x * 2; }; let h: H = H { f: g, id: 3 }; let r: i32 = h.f(5) + g(2) + h.id; if (r != 17) { return 90; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`,
 			0, ""},
 		{"clofld-base-copy-excluded",
-			`struct H { f: (i32) => i32, id: i32 } function main(): i32 { var h1: H = H { f: (x: i32): i32 => { return x + 1; }, id: 3 }; var h2: H = H { ...h1, id: 4 }; var r: i32 = h1.f(5) + h2.f(10) + h2.id; if (r != 21) { return 90; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`,
+			`struct H { f: (i32) => i32, id: i32 } function main(): i32 { let h1: H = H { f: (x: i32): i32 => { return x + 1; }, id: 3 }; let h2: H = H { ...h1, id: 4 }; let r: i32 = h1.f(5) + h2.f(10) + h2.id; if (r != 21) { return 90; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`,
 			0, ""},
 	}
 	for _, tc := range cases {

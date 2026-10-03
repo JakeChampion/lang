@@ -39,21 +39,21 @@ type optKeyCase struct {
 func optKeyCases() []optKeyCase {
 	return []optKeyCase{
 		{
-			// Two `var o` in sibling `if` arms: the first a fresh
+			// Two `let o` in sibling `if` arms: the first a fresh
 			// Some((..)), the second a bare alias of a local that outlives
 			// the block AND is released elsewhere.
 			name: "opttup_collide",
 			src: `
 function round(b: Option[(i32, i32[])], i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: Option[(i32, i32[])] = Some((i, [i, i + 1])); match (o) { Some(p) => { t = t + p.0; }, None => {} } }
-    if (i % 2 == 1) { var o: Option[(i32, i32[])] = b; match (o) { Some(p) => { t = t + p.0; }, None => {} } }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: Option[(i32, i32[])] = Some((i, [i, i + 1])); match (o) { Some(p) => { t = t + p.0; }, None => {} } }
+    if (i % 2 == 1) { let o: Option[(i32, i32[])] = b; match (o) { Some(p) => { t = t + p.0; }, None => {} } }
     return t;
 }
 
 function main(): i32 {
-    var b: Option[(i32, i32[])] = Some((7, [7, 8]));
-    var t: i32 = 0; var i: i32 = 0;
+    let b: Option[(i32, i32[])] = Some((7, [7, 8]));
+    let t: i32 = 0; let i: i32 = 0;
     while (i < 100) { t = t + round(b, i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
@@ -67,15 +67,15 @@ function main(): i32 {
 			name: "opttup_renamed",
 			src: `
 function round(b: Option[(i32, i32[])], i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: Option[(i32, i32[])] = Some((i, [i, i + 1])); match (o) { Some(p) => { t = t + p.0; }, None => {} } }
-    if (i % 2 == 1) { var u: Option[(i32, i32[])] = b; match (u) { Some(p) => { t = t + p.0; }, None => {} } }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: Option[(i32, i32[])] = Some((i, [i, i + 1])); match (o) { Some(p) => { t = t + p.0; }, None => {} } }
+    if (i % 2 == 1) { let u: Option[(i32, i32[])] = b; match (u) { Some(p) => { t = t + p.0; }, None => {} } }
     return t;
 }
 
 function main(): i32 {
-    var b: Option[(i32, i32[])] = Some((7, [7, 8]));
-    var t: i32 = 0; var i: i32 = 0;
+    let b: Option[(i32, i32[])] = Some((7, [7, 8]));
+    let t: i32 = 0; let i: i32 = 0;
     while (i < 100) { t = t + round(b, i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
@@ -87,15 +87,15 @@ function main(): i32 {
 			name: "optstruct_collide",
 			src: `struct P { xs: i32[] }
 function round(b: Option[P], i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: Option[P] = Some(P { xs: [i, i + 1] }); match (o) { Some(p) => { t = t + p.xs.len(); }, None => {} } }
-    if (i % 2 == 1) { var o: Option[P] = b; match (o) { Some(p) => { t = t + p.xs.len(); }, None => {} } }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: Option[P] = Some(P { xs: [i, i + 1] }); match (o) { Some(p) => { t = t + p.xs.len(); }, None => {} } }
+    if (i % 2 == 1) { let o: Option[P] = b; match (o) { Some(p) => { t = t + p.xs.len(); }, None => {} } }
     return t;
 }
 
 function main(): i32 {
-    var b: Option[P] = Some(P { xs: [7, 8] });
-    var t: i32 = 0; var i: i32 = 0;
+    let b: Option[P] = Some(P { xs: [7, 8] });
+    let t: i32 = 0; let i: i32 = 0;
     while (i < 100) { t = t + round(b, i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
@@ -107,15 +107,15 @@ function main(): i32 {
 			name: "optstruct_renamed",
 			src: `struct P { xs: i32[] }
 function round(b: Option[P], i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: Option[P] = Some(P { xs: [i, i + 1] }); match (o) { Some(p) => { t = t + p.xs.len(); }, None => {} } }
-    if (i % 2 == 1) { var u: Option[P] = b; match (u) { Some(p) => { t = t + p.xs.len(); }, None => {} } }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: Option[P] = Some(P { xs: [i, i + 1] }); match (o) { Some(p) => { t = t + p.xs.len(); }, None => {} } }
+    if (i % 2 == 1) { let u: Option[P] = b; match (u) { Some(p) => { t = t + p.xs.len(); }, None => {} } }
     return t;
 }
 
 function main(): i32 {
-    var b: Option[P] = Some(P { xs: [7, 8] });
-    var t: i32 = 0; var i: i32 = 0;
+    let b: Option[P] = Some(P { xs: [7, 8] });
+    let t: i32 = 0; let i: i32 = 0;
     while (i < 100) { t = t + round(b, i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
@@ -128,26 +128,26 @@ function main(): i32 {
 			// code (99).
 			name: "optaarr_collide",
 			src: `function round(i: i32): i32 {
-    var keep: Option[i32[]][] = [Some([7, 8]), None];
-    var t: i32 = 0;
-    if (i % 2 == 0) { var xs: Option[i32[]][] = [Some([i, i + 1]), None]; t = t + xs.len(); }
-    if (i % 2 == 1) { var xs: Option[i32[]][] = keep; t = t + xs.len(); }
+    let keep: Option[i32[]][] = [Some([7, 8]), None];
+    let t: i32 = 0;
+    if (i % 2 == 0) { let xs: Option[i32[]][] = [Some([i, i + 1]), None]; t = t + xs.len(); }
+    if (i % 2 == 1) { let xs: Option[i32[]][] = keep; t = t + xs.len(); }
     return t + keep.len();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 68, allocs: 500, frees: 500,
 		},
 		{
 			// Its pairwise control.
 			name: "optaarr_renamed",
 			src: `function round(i: i32): i32 {
-    var keep: Option[i32[]][] = [Some([7, 8]), None];
-    var t: i32 = 0;
-    if (i % 2 == 0) { var xs: Option[i32[]][] = [Some([i, i + 1]), None]; t = t + xs.len(); }
-    if (i % 2 == 1) { var ys: Option[i32[]][] = keep; t = t + ys.len(); }
+    let keep: Option[i32[]][] = [Some([7, 8]), None];
+    let t: i32 = 0;
+    if (i % 2 == 0) { let xs: Option[i32[]][] = [Some([i, i + 1]), None]; t = t + xs.len(); }
+    if (i % 2 == 1) { let ys: Option[i32[]][] = keep; t = t + ys.len(); }
     return t + keep.len();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 68, allocs: 500, frees: 500,
 		},
 		{
@@ -158,14 +158,14 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "optarrarr_collide",
 			src: `
 function round(i: i32): i32 {
-    var keep: Option[i32[][]] = Some([[7, 8], [9, 10]]);
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: Option[i32[][]] = Some([[i, i + 1], [i + 2, i + 3]]); match (o) { Some(p) => { t = t + p.len(); }, None => {} } }
-    if (i % 2 == 1) { var o: Option[i32[][]] = keep; match (o) { Some(p) => { t = t + p.len(); }, None => {} } }
+    let keep: Option[i32[][]] = Some([[7, 8], [9, 10]]);
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: Option[i32[][]] = Some([[i, i + 1], [i + 2, i + 3]]); match (o) { Some(p) => { t = t + p.len(); }, None => {} } }
+    if (i % 2 == 1) { let o: Option[i32[][]] = keep; match (o) { Some(p) => { t = t + p.len(); }, None => {} } }
     match (keep) { Some(q) => { t = t + q.len(); }, None => {} }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 68, allocs: 400, frees: 400,
 		},
 		{
@@ -173,14 +173,14 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "optarrarr_renamed",
 			src: `
 function round(i: i32): i32 {
-    var keep: Option[i32[][]] = Some([[7, 8], [9, 10]]);
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: Option[i32[][]] = Some([[i, i + 1], [i + 2, i + 3]]); match (o) { Some(p) => { t = t + p.len(); }, None => {} } }
-    if (i % 2 == 1) { var u: Option[i32[][]] = keep; match (u) { Some(p) => { t = t + p.len(); }, None => {} } }
+    let keep: Option[i32[][]] = Some([[7, 8], [9, 10]]);
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: Option[i32[][]] = Some([[i, i + 1], [i + 2, i + 3]]); match (o) { Some(p) => { t = t + p.len(); }, None => {} } }
+    if (i % 2 == 1) { let u: Option[i32[][]] = keep; match (u) { Some(p) => { t = t + p.len(); }, None => {} } }
     match (keep) { Some(q) => { t = t + q.len(); }, None => {} }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 68, allocs: 400, frees: 400,
 		},
 		{
@@ -188,14 +188,14 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "optarr_collide",
 			src: `
 function round(i: i32): i32 {
-    var keep: Option[i32[]] = Some([7, 8]);
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: Option[i32[]] = Some([i, i + 1]); t = t + 1; }
-    if (i % 2 == 1) { var o: Option[i32[]] = keep; t = t + 2; }
+    let keep: Option[i32[]] = Some([7, 8]);
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: Option[i32[]] = Some([i, i + 1]); t = t + 1; }
+    if (i % 2 == 1) { let o: Option[i32[]] = keep; t = t + 2; }
     match (keep) { Some(q) => { t = t + q[0]; }, None => {} }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 20, allocs: 200, frees: 200,
 		},
 		{
@@ -203,42 +203,42 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "optarr_renamed",
 			src: `
 function round(i: i32): i32 {
-    var keep: Option[i32[]] = Some([7, 8]);
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: Option[i32[]] = Some([i, i + 1]); t = t + 1; }
-    if (i % 2 == 1) { var u: Option[i32[]] = keep; t = t + 2; }
+    let keep: Option[i32[]] = Some([7, 8]);
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: Option[i32[]] = Some([i, i + 1]); t = t + 1; }
+    if (i % 2 == 1) { let u: Option[i32[]] = keep; t = t + 2; }
     match (keep) { Some(q) => { t = t + q[0]; }, None => {} }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 20, allocs: 200, frees: 200,
 		},
 		{
 			// The same shape on an Option of a string.
 			name: "optstr_collide",
 			src: `function round(i: i32): i32 {
-    var keep: Option[string] = Some("keeper");
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: Option[string] = Some("fresh"); t = t + 1; }
-    if (i % 2 == 1) { var o: Option[string] = keep; t = t + 2; }
+    let keep: Option[string] = Some("keeper");
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: Option[string] = Some("fresh"); t = t + 1; }
+    if (i % 2 == 1) { let o: Option[string] = keep; t = t + 2; }
     match (keep) { Some(q) => { t = t + q.len(); }, None => {} }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 3, allocs: 150, frees: 150,
 		},
 		{
 			// Its pairwise control.
 			name: "optstr_renamed",
 			src: `function round(i: i32): i32 {
-    var keep: Option[string] = Some("keeper");
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: Option[string] = Some("fresh"); t = t + 1; }
-    if (i % 2 == 1) { var u: Option[string] = keep; t = t + 2; }
+    let keep: Option[string] = Some("keeper");
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: Option[string] = Some("fresh"); t = t + 1; }
+    if (i % 2 == 1) { let u: Option[string] = keep; t = t + 2; }
     match (keep) { Some(q) => { t = t + q.len(); }, None => {} }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 3, allocs: 150, frees: 150,
 		},
 		{
@@ -248,12 +248,12 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			// of these must keep balancing at live_bytes 0.
 			name: "credited_opttup",
 			src: `function round(i: i32): i32 {
-    var o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
-    var t: i32 = 0;
+    let o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
+    let t: i32 = 0;
     match (o) { Some(p) => { t = t + p.0; }, None => {} }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 53, allocs: 300, frees: 300,
 		},
 		{
@@ -261,12 +261,12 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "credited_optstruct",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
-    var o: Option[P] = Some(P { xs: [i, i + 1] });
-    var t: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1] });
+    let t: i32 = 0;
     match (o) { Some(p) => { t = t + p.xs.len(); }, None => {} }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
@@ -274,57 +274,57 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			// allocation-volume divergence that is not this change's (#7351).
 			name: "credited_optaarr",
 			src: `function round(i: i32): i32 {
-    var xs: Option[i32[]][] = [Some([i, i + 1]), None];
+    let xs: Option[i32[]][] = [Some([i, i + 1]), None];
     return xs.len();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34, allocs: 400, frees: 400,
 		},
 		{
 			// Positive control.
 			name: "credited_optarrarr",
 			src: `function round(i: i32): i32 {
-    var o: Option[i32[][]] = Some([[i, i + 1], [i + 2, i + 3]]);
-    var t: i32 = 0;
+    let o: Option[i32[][]] = Some([[i, i + 1], [i + 2, i + 3]]);
+    let t: i32 = 0;
     match (o) { Some(p) => { t = t + p.len(); }, None => {} }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34, allocs: 400, frees: 400,
 		},
 		{
 			// Positive control.
 			name: "credited_optarr",
 			src: `function round(i: i32): i32 {
-    var o: Option[i32[]] = Some([i, i + 1]);
+    let o: Option[i32[]] = Some([i, i + 1]);
     return i + 1;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 70, allocs: 200, frees: 200,
 		},
 		{
 			// Positive control.
 			name: "credited_optstr",
 			src: `function round(i: i32): i32 {
-    var o: Option[string] = Some("fresh");
+    let o: Option[string] = Some("fresh");
     return i + 1;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 70, allocs: 100, frees: 100,
 		},
 		{
-			// A `for` element binder in one block and a same-named `var o`
+			// A `for` element binder in one block and a same-named `let o`
 			// in the sibling: the binder must not inherit the var's verdict
 			// and release elements of `keep` that `keep` still owns.
 			name: "binder_forin_collide",
 			src: `function round(i: i32): i32 {
-    var keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
-    var t: i32 = 0;
-    { var o: Option[i32[]] = Some([i + 7, i + 8]); t = t + 1; }
+    let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
+    let t: i32 = 0;
+    { let o: Option[i32[]] = Some([i + 7, i + 8]); t = t + 1; }
     for o in keep { match (o) { Some(p) => { t = t + p[0]; }, None => {} } }
     return t + keep.len();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 25, allocs: 700, frees: 700,
 		},
 		{
@@ -333,13 +333,13 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			// exists to assert.
 			name: "binder_forin_renamed",
 			src: `function round(i: i32): i32 {
-    var keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
-    var t: i32 = 0;
-    { var o: Option[i32[]] = Some([i + 7, i + 8]); t = t + 1; }
+    let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
+    let t: i32 = 0;
+    { let o: Option[i32[]] = Some([i + 7, i + 8]); t = t + 1; }
     for e in keep { match (e) { Some(p) => { t = t + p[0]; }, None => {} } }
     return t + keep.len();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 25, allocs: 700, frees: 700,
 		}}
 }

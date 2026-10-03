@@ -19,9 +19,9 @@ func arm64LargeFrameSrc() string {
 	b.WriteString("function big(): i32 {\n")
 	const n = 800
 	for i := 0; i < n; i++ {
-		b.WriteString("    var v" + strconv.Itoa(i) + ": i64 = " + strconv.Itoa(i) + "i64;\n")
+		b.WriteString("    let v" + strconv.Itoa(i) + ": i64 = " + strconv.Itoa(i) + "i64;\n")
 	}
-	b.WriteString("    var total: i64 = 0i64;\n")
+	b.WriteString("    let total: i64 = 0i64;\n")
 	for i := 0; i < n; i++ {
 		b.WriteString("    total = total + v" + strconv.Itoa(i) + ";\n")
 	}

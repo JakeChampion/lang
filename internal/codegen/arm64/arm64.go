@@ -466,7 +466,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// (multiple arm64 Emit goroutines) and against
 	// `x86_64.Emit` (which reads `TwoWordOverride` via
 	// ir.LowerWith without setting it). Without the lock,
-	// `TestDifferential_LangsmithMain`'s seed-level
+	// a differential sweep's seed-level
 	// `t.Parallel` lets one arm64 emit's `defer` restore the
 	// flag to false while another arm64 emit was still in
 	// flight — producing single-word string_from_bytes_unchecked /
@@ -890,6 +890,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesProcessAlive {
 		g.emitProcessAliveRuntime()
+	}
+	if g.usesPwName {
+		g.emitPwNameRuntime()
 	}
 	if g.usesSignalSend {
 		g.emitSignalSendRuntime()
@@ -6148,7 +6151,7 @@ func (g *generator) emitStrSliceRuntime2W() {
 	// Allocate new_len bytes for the heap output via the rc-headered
 	// allocator (rc=1 at data-8, payload size at data-4) so the
 	// substring is a real rc-tracked string — str_inc on an alias
-	// (e.g. `var w = words[i]` where the element is a slice) and
+	// (e.g. `let w = words[i]` where the element is a slice) and
 	// str_dec on drop both read that header. A raw __fern_alloc
 	// buffer has none, so retaining a slice read before the
 	// allocation and SIGSEGV'd. Mirrors __fern_strcat / read_file.
@@ -13798,6 +13801,47 @@ func (g *generator) emitIdRuntime(sym, sysname string) {
 	g.line(".ltorg")
 }
 
+// emitPwNameRuntime emits `__fern_getpwuid_name(uid)`: the address of
+// `pw_name` in the passwd entry libSystem's getpwuid(3) answers, or 0 when
+// it knows no such uid. Darwin keeps regular accounts in Directory Services,
+// which only libSystem can ask (#9815); the call goes through a __DATA slot
+// dyld binds to `_getpwuid` at load. getpwuid follows AAPCS64, which is the
+// convention every runtime call here already assumes. Other targets answer 0
+// and the caller reads /etc/passwd.
+func (g *generator) emitPwNameRuntime() {
+	if g.darwin {
+		g.line("")
+		g.line(`.section __DATA,__const`)
+		g.line(`.p2align 3`)
+		g.label("__fern_got_getpwuid")
+		g.line(`	.quad _getpwuid`)
+		g.line(`.text`)
+	}
+	g.line("")
+	g.line(".global __fern_getpwuid_name")
+	g.typeDirective("__fern_getpwuid_name")
+	g.label("__fern_getpwuid_name")
+	if !g.darwin {
+		g.emit("mov x0, #0")
+		g.emit("ret")
+		g.sizeDirective("__fern_getpwuid_name")
+		return
+	}
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("mov w0, w0") // uid_t is 32 bits
+	g.adrpAdd("x16", "__fern_got_getpwuid")
+	g.emit("ldr x16, [x16]")
+	g.emit("blr x16")
+	g.emit("cbz x0, .Lpwname_done")
+	g.emit("ldr x0, [x0]") // pw_name is the struct's first field
+	g.label(".Lpwname_done")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_getpwuid_name")
+	g.line(".ltorg")
+}
+
 // emitGetgroupsRuntime emits `__fern_getgroups()` — the supplementary
 // group set as a cached `number[]`.
 //
@@ -15607,6 +15651,9 @@ type generator struct {
 	// (ESRCH). A non-positive pid is 0 without a syscall: those spellings
 	// name a process group to kill(2), not a process.
 	usesProcessAlive bool
+	// usesPwName pulls in `__fern_getpwuid_name(uid)`: libSystem's
+	// getpwuid(3) through a dyld-bound slot on Darwin, 0 elsewhere.
+	usesPwName bool
 	// usesWindowSize pulls in `__fern_window_size(fd)` — one TIOCGWINSZ
 	// ioctl projected onto WinSize, with the errno as an IoError.
 	usesWindowSize bool
@@ -15714,8 +15761,8 @@ type generator struct {
 	usesRcDec bool
 	// rcInlineOK gates the #4402 opt-2b inline rc fast path per function.
 	// Inlining expands each rc op from a single `bl` into ~10 instructions;
-	// in the self-host compiler's largest lowering functions (irlower__
-	// lower_expr is ~9.75M IR ops with ~1.66M rc ops) that bloat pushes the
+	// in the self-host compiler's largest lowering functions (the deleted
+	// AST lowering's lower_expr was ~9.75M IR ops with ~1.66M rc ops) that bloat pushes the
 	// function body past aarch64's ±128MB unconditional-branch reach, so the
 	// intra-function `b .Lret_…` epilogue jumps overflow ("branch out of
 	// range"). Set false for such a function (see rcInlineMaxOps) so its rc
@@ -16928,8 +16975,8 @@ func (g *generator) emitStartRuntime() {
 
 // rcInlineMaxOps is the per-function IR-op ceiling for the opt-2b inline rc
 // fast path (see the rcInlineOK field). 1M sits ~2× above the largest normal
-// self-host function (~0.5M ops) and ~10× below irlower__lower_expr (~9.75M
-// ops), the only function whose inlined body overflows aarch64's ±128MB
+// self-host function (~0.5M ops) and ~10× below the deleted AST lowering's lower_expr (~9.75M
+// ops), the only function whose inlined body overflowed aarch64's ±128MB
 // branch reach. A var (not a const) only so the backend's own tests can lower
 // it to exercise the fall-back on a small function; production never
 // reassigns it. (Mirrors the x86-64 backend's rcInlineMaxOps.)
@@ -17184,8 +17231,8 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 
 	// #4402 opt 2b: inline rc ops only when the function is small enough
 	// that the ~10-instruction-per-op expansion can't push its body past
-	// aarch64's ±128MB branch reach. Only the self-host compiler's largest
-	// lowering function (irlower__lower_expr, ~9.75M ops) exceeds this; the
+	// aarch64's ±128MB branch reach. Only the deleted AST lowering's
+	// lower_expr (~9.75M ops) exceeded this; the
 	// next-largest is ~0.5M ops, so the threshold has wide margin and every
 	// user-scale function inlines. See the rcInlineOK field comment.
 	g.rcInlineOK = len(irFn.Ops) <= rcInlineMaxOps
@@ -20419,6 +20466,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__fern_" + target
 		case "tcp_send_bytes":
 			target = "__fern_tcp_send_bytes"
+		case "udp_send_bytes", "udp_sendto_bytes":
+			target = "__fern_" + target
 		case "wasm_pollable_drop":
 			target = "__fern_wasm_pollable_drop"
 			g.usesWasmPollableDrop = true
@@ -20444,6 +20493,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// exists, 0 when it does not.
 			target = "__fern_process_alive"
 			g.usesProcessAlive = true
+		case "__getpwuid_name":
+			target = "__fern_getpwuid_name"
+			g.usesPwName = true
 		case "signal_send":
 			// signal_send(pid, sig): kill(2) — Result[void, IoError].
 			target = "__fern_signal_send"

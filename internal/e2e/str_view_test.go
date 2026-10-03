@@ -29,29 +29,29 @@ function owned_len(o: string): i32 {
 }
 
 function main(): i32 {
-    var s: string = "  hey  ";
-    var v: str = s;
+    let s: string = "  hey  ";
+    let v: str = s;
     if (view_len(s) != 7) { return 1; }
     if (view_len(v) != 7) { return 2; }
     if (owned_len(v) != 7) { return 3; }
-    var t: str = v.trim();
+    let t: str = v.trim();
     if (t.len() != 3) { return 4; }
-    var o: string = t.to_owned();
+    let o: string = t.to_owned();
     if (o.len() != 3) { return 5; }
     if (o != "hey") { return 6; }
-    var vs: str[] = ["ab", "cde"];
+    let vs: str[] = ["ab", "cde"];
     if (vs[0].len() + vs[1].len() != 5) { return 7; }
     if (t != "hey") { return 8; }
     if ("hey" != t) { return 9; }
-    var w: str = t;
+    let w: str = t;
     if (w != t) { return 10; }
     if (t + "!" != "hey!") { return 11; }
     if (t[0] != 104) { return 12; }
-    var sub: str = slice_unchecked(t, 1, 3);
+    let sub: str = slice_unchecked(t, 1, 3);
     if (sub != "ey") { return 13; }
-    var half: str = slice_unchecked(s, 2, 5);
+    let half: str = slice_unchecked(s, 2, 5);
     if (half != "hey") { return 14; }
-    var oh: string = slice_unchecked(s, 2, 5) + "";
+    let oh: string = slice_unchecked(s, 2, 5) + "";
     if (oh != "hey") { return 15; }
     return 0;
 }

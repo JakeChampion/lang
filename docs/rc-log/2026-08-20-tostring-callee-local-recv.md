@@ -12,9 +12,9 @@ x86-64, `FERN_LEAKCHECK=1`, churn at 200 rounds. Native is 0 on every row.
 | helper | before | after |
 |---|---|---|
 | `fmt(n) { return n.to_string(); }` — PARAM | `allocs=400 frees=398 live=32` | unchanged |
-| `fmt(n) { var v: i32 = n*2; return v.to_string(); }` | `frees=0 live=6400` (32 B/round) | `frees=398 live=32` |
+| `fmt(n) { let v: i32 = n*2; return v.to_string(); }` | `frees=0 live=6400` (32 B/round) | `frees=398 live=32` |
 | the same, result bound to a local first | `frees=0 live=6400` | `frees=398 live=32` |
-| `var v: i64 = …; v.to_string()` | `frees=0 live=6400` | `frees=398 live=32` |
+| `let v: i64 = …; v.to_string()` | `frees=0 live=6400` | `frees=398 live=32` |
 | the same `.to_string()` written INLINE at the call site | `live=32` | unchanged |
 
 32 bytes is the constant residue the working PARAM spelling already carries, so
@@ -45,8 +45,8 @@ whole plumbing.
 The scan has no scopes. A nested block may shadow the name:
 
 ```fern
-var v: i32 = n * 2;
-if (n > 1000000) { var v: string = "x"; return v; }
+let v: i32 = n * 2;
+if (n > 1000000) { let v: string = "x"; return v; }
 return v.to_string();
 ```
 
@@ -56,7 +56,7 @@ counter-example, which is why it is a pair with `decl_scalar_local_bad` rather
 than one recursion — one boolean cannot report which of the two it found.
 
 Refused for the same reason: a `for` binder and a match-arm binding, neither of
-which has an annotation to read, and an UN-annotated `var`. Guessing an
+which has an annotation to read, and an UN-annotated `let`. Guessing an
 un-annotated local's scalar-ness from its initialiser needs the slot markers the
 registry does not have; refusing costs a leak where guessing could cost an
 over-release.

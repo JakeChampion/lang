@@ -44,13 +44,13 @@ func interpCallHeap(body string, limit int) string {
 	return interpCallPrelude + `function round(pre: string): i32 {
 ` + body + `
 }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= ` + fmt.Sprint(limit) + `) { return 98; }
@@ -62,26 +62,26 @@ var interpCallHeapCases = []struct {
 	name string
 	body string
 }{
-	{"interp-call-released", `    var s: string = f"{w(pre)}";
+	{"interp-call-released", `    let s: string = f"{w(pre)}";
     return s.len() % 251;`},
 	// Two interpolants: the parent leaks exactly twice as much, so the credit has
 	// to fire per interpolant rather than per f-string.
-	{"interp-two-calls-released", `    var s: string = f"{w(pre)}-{w(pre)}";
+	{"interp-two-calls-released", `    let s: string = f"{w(pre)}-{w(pre)}";
     return s.len() % 251;`},
 	// The desugar written out by hand. It leaks the same on the parent, which is
 	// what says the bug is the `.to_string()` rule and not the f-string path.
-	{"interp-explicit-tostring-released", `    var s: string = w(pre).to_string();
+	{"interp-explicit-tostring-released", `    let s: string = w(pre).to_string();
     return s.len() % 251;`},
 	// CONTROLS, all already 0 — here so a future widening of the credit that
 	// swallowed one of them would show up as an over-release below rather than as
 	// a silent change of class.
-	{"interp-bare-ident-control", `    var base: string = w(pre);
-    var s: string = f"{base}";
+	{"interp-bare-ident-control", `    let base: string = w(pre);
+    let s: string = f"{base}";
     return (s.len() + base.len()) % 251;`},
-	{"interp-scalar-control", `    var n: i32 = pre.len();
-    var s: string = f"n={n}";
+	{"interp-scalar-control", `    let n: i32 = pre.len();
+    let s: string = f"n={n}";
     return s.len() % 251;`},
-	{"interp-explicit-concat-control", `    var s: string = pre + "-" + w(pre);
+	{"interp-explicit-concat-control", `    let s: string = pre + "-" + w(pre);
     return s.len() % 251;`},
 }
 
@@ -94,12 +94,12 @@ var interpCallFaultCases = []struct {
 	// and its value must still read), and an f-string mixing a call with a live
 	// local. Decoys sit between the binds and the reads.
 	{"interp-classes-live", interpCallPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var named: string = base.to_string();
-    var fresh: string = w(pre).to_string();
-    var interp: string = f"{w(pre)}|{base}";
-    var p1: string = w("XXXXXXXX");
-    var p2: string = w("YYYYYYYY");
+    let base: string = w(pre);
+    let named: string = base.to_string();
+    let fresh: string = w(pre).to_string();
+    let interp: string = f"{w(pre)}|{base}";
+    let p1: string = w("XXXXXXXX");
+    let p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
     if (!has_prefix(base, "abcdefgh-")) { return 0 - 1; }
     if (!has_prefix(named, "abcdefgh-")) { return 0 - 2; }
@@ -110,7 +110,7 @@ var interpCallFaultCases = []struct {
     if (!has_sub(interp, "|")) { return 0 - 7; }
     return 3;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// A USER `to_string` returning a field ALIAS, on a struct local AND on a
 	// fresh-ret struct temp. Neither may be credited: the receiver being fresh
 	// says nothing about whether the RESULT is fresh once a user method is in the
@@ -120,10 +120,10 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 function mk(pre: string): Holder { return Holder { name: w(pre), tag: w(pre + "t") }; }
 function (h: Holder) to_string(): string { return h.name; }
 function round(pre: string): i32 {
-    var h: Holder = mk(pre);
-    var s: string = h.to_string();
-    var t: string = mk(pre).to_string();
-    var p1: string = w("XXXXXXXX");
+    let h: Holder = mk(pre);
+    let s: string = h.to_string();
+    let t: string = mk(pre).to_string();
+    let p1: string = w("XXXXXXXX");
     if (p1.len() < 0) { return 0; }
     if (!has_prefix(s, "abcdefgh-")) { return 0 - 1; }
     if (!has_prefix(t, "abcdefgh-")) { return 0 - 2; }
@@ -131,17 +131,17 @@ function round(pre: string): i32 {
     if (has_sub(s, "XXXX")) { return 0 - 4; }
     return 3;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// ESCAPE: the credited local is returned, so it must not be freed.
-	{"interp-call-escape-return", interpCallPrelude + `function mk(pre: string): string { var s: string = f"{w(pre)}"; return s; }
+	{"interp-call-escape-return", interpCallPrelude + `function mk(pre: string): string { let s: string = f"{w(pre)}"; return s; }
 function round(pre: string): i32 {
-    var s: string = mk(pre);
-    var p1: string = w("XXXXXXXX");
+    let s: string = mk(pre);
+    let p1: string = w("XXXXXXXX");
     if (p1.len() < 0) { return 0; }
     if (!has_prefix(s, "abcdefgh-")) { return 0 - 1; }
     return s.len() % 251;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; var want: i32 = round(pre); while (i < 2000) { if (round(pre) != want) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; let want: i32 = round(pre); while (i < 2000) { if (round(pre) != want) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 }
 
 const interpCallExitHint = "98 = the interpolated call's box was stranded; 99 = over-release; 97 = value corrupted"

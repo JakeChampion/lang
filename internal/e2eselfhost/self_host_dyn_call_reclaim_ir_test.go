@@ -10,13 +10,13 @@ import (
 // dynCallReclaimCases pin the #4351 slice that closes the three remaining
 // NON-LITERAL-initialiser holes in dyn-payload reclaim:
 //
-//  1. A STRICT-FRESH CALL result (`var d: dyn T = mk(k)`, `= f.make(k)`) is
+//  1. A STRICT-FRESH CALL result (`let d: dyn T = mk(k)`, `= f.make(k)`) is
 //     credited "DYN:<name>|<Concrete>" and released by the exit sweep, exactly
 //     as a struct-LITERAL init already was. Only the literal / prim /
 //     variant-ctor arms of collect_dyn_struct_in_stmt used to credit, so a call
 //     result fell through and leaked the concrete's whole rc-headered box —
 //     40 B/round on x86-64 for a scalar-only concrete, 88 with an rc field.
-//  2. A COMPUTED non-string PRIMITIVE payload (`var d: dyn T = k * 2`). The
+//  2. A COMPUTED non-string PRIMITIVE payload (`let d: dyn T = k * 2`). The
 //     coercion COPIES the value into a fresh op_dyn_box cell, so the local owns
 //     that cell however the value was produced — but only a prim LITERAL was
 //     credited, and everything else leaked the 40-byte cell.
@@ -52,9 +52,9 @@ var dynCallReclaimCases = []struct {
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
 function mk(k: i32): Square { return Square { side: k }; }
-function go(k: i32): i32 { var d: dyn Shape = mk(k); return d.area(); }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i64 = __heap_bump_bytes(); var x: i32 = churn(2000); var b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } var per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
+function go(k: i32): i32 { let d: dyn Shape = mk(k); return d.area(); }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(2000); let b1: i64 = __heap_bump_bytes(); let x: i32 = churn(2000); let b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } let per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
 
 	// An rc-ARRAY field on the concrete: the sweep has to reach
 	// __struct_drop_Circle for the tags buffer, not just dec the box.
@@ -62,9 +62,9 @@ function main(): i32 { var w: i32 = churn(2000); var b1: i64 = __heap_bump_bytes
 struct Circle { r: i32, tags: i32[] }
 impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r + self.tags[0]; } }
 function mk(k: i32): Circle { return Circle { r: k, tags: [7, 8] }; }
-function go(k: i32): i32 { var d: dyn Shape = mk(k); return d.area(); }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i64 = __heap_bump_bytes(); var x: i32 = churn(2000); var b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } var per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
+function go(k: i32): i32 { let d: dyn Shape = mk(k); return d.area(); }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(2000); let b1: i64 = __heap_bump_bytes(); let x: i32 = churn(2000); let b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } let per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
 
 	// A METHOD callee: the `dyn Shape` annotation cannot name the receiver, so
 	// the key comes from the receiver LOCAL's own annotation.
@@ -73,9 +73,9 @@ struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
 struct Factory { base: i32 }
 impl Factory { function make(self: Self, k: i32): Square { return Square { side: k + self.base }; } }
-function go(k: i32): i32 { var f: Factory = Factory { base: 1 }; var d: dyn Shape = f.make(k); return d.area(); }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i64 = __heap_bump_bytes(); var x: i32 = churn(2000); var b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } var per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
+function go(k: i32): i32 { let f: Factory = Factory { base: 1 }; let d: dyn Shape = f.make(k); return d.area(); }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(2000); let b1: i64 = __heap_bump_bytes(); let x: i32 = churn(2000); let b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } let per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
 
 	// GATE: a bare-ident init aliases a local that outlives the coercion. The
 	// dyn local must stay uncredited or `s.side` reads freed memory.
@@ -83,9 +83,9 @@ function main(): i32 { var w: i32 = churn(2000); var b1: i64 = __heap_bump_bytes
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
 function mk(k: i32): Square { return Square { side: k }; }
-function go(k: i32): i32 { var s: Square = mk(k); var d: dyn Shape = s; var a: i32 = d.area(); return a + s.side; }
-function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 12) { bad = 96; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
+function go(k: i32): i32 { let s: Square = mk(k); let d: dyn Shape = s; let a: i32 = d.area(); return a + s.side; }
+function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 12) { bad = 96; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 
 	// GATE: the callee hands back its PARAMETER, so it is not strict-fresh and
 	// the result is the caller's box, not a fresh one.
@@ -93,11 +93,11 @@ function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
 function ident(s: Square): Square { return s; }
-function go(k: i32): i32 { var live: Square = Square { side: k }; var d: dyn Shape = ident(live); var a: i32 = d.area(); return a + live.side; }
-function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 12) { bad = 96; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
+function go(k: i32): i32 { let live: Square = Square { side: k }; let d: dyn Shape = ident(live); let a: i32 = d.area(); return a + live.side; }
+function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 12) { bad = 96; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 
-	// GATE: a PARAM receiver carries no `var` annotation for the AST scan to
+	// GATE: a PARAM receiver carries no `let` annotation for the AST scan to
 	// read, so the method key does not resolve and the box keeps today's leak.
 	// The receiver is read after the dispatch, so a mistaken credit would show.
 	{"param-receiver-method-excluded", `trait Shape { function area(self: Self): i32; }
@@ -105,52 +105,52 @@ struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
 struct Factory { base: i32 }
 impl Factory { function make(self: Self, k: i32): Square { return Square { side: k + self.base }; } }
-function go(f: Factory, k: i32): i32 { var d: dyn Shape = f.make(k); var a: i32 = d.area(); return a + f.base; }
-function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { var f: Factory = Factory { base: 1 }; if (go(f, 3) != 17) { bad = 96; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
+function go(f: Factory, k: i32): i32 { let d: dyn Shape = f.make(k); let a: i32 = d.area(); return a + f.base; }
+function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { let f: Factory = Factory { base: 1 }; if (go(f, 3) != 17) { bad = 96; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 
 	// A COMPUTED primitive payload: op_dyn_box copies the value into a fresh
 	// cell, so the escape verdict is the whole admission.
 	{"computed-prim-payload", `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
-function go(k: i32): i32 { var d: dyn Show = k * 2; return d.show(); }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i64 = __heap_bump_bytes(); var x: i32 = churn(2000); var b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } var per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
+function go(k: i32): i32 { let d: dyn Show = k * 2; return d.show(); }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(2000); let b1: i64 = __heap_bump_bytes(); let x: i32 = churn(2000); let b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } let per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
 
 	// The value comes from a LOCAL rather than an expression — still a copy
 	// into the cell, and the source stays readable afterwards.
 	{"prim-payload-from-local", `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
-function go(k: i32): i32 { var n: i32 = k * 3; var d: dyn Show = n; var a: i32 = d.show(); return a + n; }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 19) { return 96; } acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); if (w == 96) { return 96; } var b1: i64 = __heap_bump_bytes(); var x: i32 = churn(2000); var b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } var per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
+function go(k: i32): i32 { let n: i32 = k * 3; let d: dyn Show = n; let a: i32 = d.show(); return a + n; }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 19) { return 96; } acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(2000); if (w == 96) { return 96; } let b1: i64 = __heap_bump_bytes(); let x: i32 = churn(2000); let b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } let per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
 
 	// BLOCK-SCOPED: the dyn local lives in an if body, so retire_locals renames
 	// its slot before the sweep reads the credit.
 	{"block-scoped-struct-payload", `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
-function go(k: i32): i32 { var t: i32 = 0; if (k > 0) { var d: dyn Shape = Square { side: k }; t = d.area(); } else { t = 5; } return t; }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i64 = __heap_bump_bytes(); var x: i32 = churn(2000); var b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } var per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
+function go(k: i32): i32 { let t: i32 = 0; if (k > 0) { let d: dyn Shape = Square { side: k }; t = d.area(); } else { t = 5; } return t; }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(2000); let b1: i64 = __heap_bump_bytes(); let x: i32 = churn(2000); let b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } let per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
 
 	// The UNTAKEN branch of the same shape: the slot is entry-zeroed by the
 	// prologue and the sweep decs a null rather than stack garbage.
 	{"block-scoped-untaken-branch", `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
-function go(k: i32): i32 { var t: i32 = 0; if (k > 100) { var d: dyn Shape = Square { side: k }; t = d.area(); } else { t = 5; } return t; }
-function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 5) { bad = 96; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
+function go(k: i32): i32 { let t: i32 = 0; if (k > 100) { let d: dyn Shape = Square { side: k }; t = d.area(); } else { t = 5; } return t; }
+function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 5) { bad = 96; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 
 	// GATE: a STRING payload from a non-literal init. Its cell is fresh, but
 	// the box at cell@8 is the LOCAL's, and the "string" tag's sweep would free
 	// it — so the whole binding stays uncredited and `s.len()` still reads.
 	{"string-payload-alias-excluded", `trait Show { function show(self: Self): i32; }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
-function go(k: i32): i32 { var s: string = "abcd"; var d: dyn Show = s; var a: i32 = d.show(); return a + s.len() + k - k; }
-function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 8) { bad = 96; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
+function go(k: i32): i32 { let s: string = "abcd"; let d: dyn Show = s; let a: i32 = d.show(); return a + s.len() + k - k; }
+function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 8) { bad = 96; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 
 	// GATE: `return d` escapes the box to the caller — body_unsafe_for refuses,
 	// and the caller's dispatch has to still find a live payload.
@@ -158,20 +158,20 @@ function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
 function mk(k: i32): Square { return Square { side: k }; }
-function mkd(k: i32): dyn Shape { var d: dyn Shape = mk(k); return d; }
-function go(k: i32): i32 { var e = mkd(k); return e.area(); }
-function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 9) { bad = 96; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
+function mkd(k: i32): dyn Shape { let d: dyn Shape = mk(k); return d; }
+function go(k: i32): i32 { let e = mkd(k); return e.area(); }
+function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 9) { bad = 96; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 
 	// GATE: the prim credit is otherwise unconditional, so the escape gates are
 	// all that keep an escaping or reassigned cell out of the sweep.
 	{"escaping-and-reassigned-prim-excluded", `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
-function mkd(k: i32): dyn Show { var d: dyn Show = k * 2; return d; }
-function reasg(k: i32): i32 { var d: dyn Show = k * 2; d = k * 3; return d.show(); }
+function mkd(k: i32): dyn Show { let d: dyn Show = k * 2; return d; }
+function reasg(k: i32): i32 { let d: dyn Show = k * 2; d = k * 3; return d.show(); }
 function go(k: i32): i32 { return mkd(k).show() + reasg(k); }
-function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 17) { bad = 96; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
+function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 17) { bad = 96; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 }
 
 // TestSelfHostDynCallReclaimIRX86_64 — the x86-64 IR path.

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -70,19 +70,15 @@ function response_new(headers: own Fields): own OutgoingResponse;
 
 @export("wasi:http/incoming-handler@0.2.0", "handle")
 function on_request(request: own IncomingRequest, response_out: own ResponseOutparam): void {
-	var headers: own Fields = fields_new();
-	var resp: own OutgoingResponse = response_new(headers);
+	let headers: own Fields = fields_new();
+	let resp: own OutgoingResponse = response_new(headers);
 	return;
 }`
 	mainPath := filepath.Join(dir, "handler.fern")
 	if err := os.WriteFile(mainPath, []byte(prog), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
-	info, p := loadCheckMono(t, mainPath)
-	core, err := wasmbin.BuildWithOptions(p, info, wasmbin.BuildOptions{ForceMemorySection: true, Preview2WASI: true})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
+	core := e2eharness.SelfHostReactorCore(t, mainPath)
 	for _, want := range []string{
 		"wasi:http/incoming-handler@0.2.0#handle",
 		"[constructor]fields",

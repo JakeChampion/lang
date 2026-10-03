@@ -40,12 +40,12 @@ function registry_new(): Registry {
 }
 
 function add_transform(r: Registry, name: string, prio: i32, run: (string) => string): Registry {
-  var t: Transform = Transform { name: name, prio: prio, seq: r.next_seq, run: run };
+  let t: Transform = Transform { name: name, prio: prio, seq: r.next_seq, run: run };
   return Registry { ...r, transforms: r.transforms.append(t), next_seq: r.next_seq + 1 };
 }
 
 function add_predicate(r: Registry, name: string, prio: i32, test: (string) => boolean): Registry {
-  var p: Predicate = Predicate { name: name, prio: prio, seq: r.next_seq, test: test };
+  let p: Predicate = Predicate { name: name, prio: prio, seq: r.next_seq, test: test };
   return Registry { ...r, predicates: r.predicates.append(p), next_seq: r.next_seq + 1 };
 }
 
@@ -53,10 +53,10 @@ function add_predicate(r: Registry, name: string, prio: i32, test: (string) => b
 // Insertion sort, so the tiebreak is explicit rather than inherited from
 // whatever a library sort happens to do.
 function ordered_transforms(r: Registry): Transform[] {
-  var out: Transform[] = [];
+  let out: Transform[] = [];
   for i in 0..r.transforms.len() {
-    var t: Transform = r.transforms[i];
-    var at: i32 = out.len();
+    let t: Transform = r.transforms[i];
+    let at: i32 = out.len();
     for k in 0..out.len() {
       if (at == out.len()) {
         if (t.prio < out[k].prio
@@ -65,7 +65,7 @@ function ordered_transforms(r: Registry): Transform[] {
         }
       }
     }
-    var next: Transform[] = [];
+    let next: Transform[] = [];
     for k in 0..at {
       next = next.append(out[k]);
     }
@@ -80,8 +80,8 @@ function ordered_transforms(r: Registry): Transform[] {
 
 // Apply every transform in order, threading the value through.
 function run_transforms(r: Registry, input: string): string {
-  var ts: Transform[] = ordered_transforms(r);
-  var s: string = input;
+  let ts: Transform[] = ordered_transforms(r);
+  let s: string = input;
   for i in 0..ts.len() {
     s = ts[i].run(s);
   }
@@ -89,8 +89,8 @@ function run_transforms(r: Registry, input: string): string {
 }
 
 function transform_names(r: Registry): string[] {
-  var ts: Transform[] = ordered_transforms(r);
-  var out: string[] = [];
+  let ts: Transform[] = ordered_transforms(r);
+  let out: string[] = [];
   for i in 0..ts.len() {
     out = out.append(ts[i].name);
   }
@@ -109,8 +109,8 @@ function all_accept(r: Registry, s: string): boolean {
 }
 
 function remove_transform(r: Registry, name: string): Registry {
-  var kept: Transform[] = [];
-  var dropped: boolean = false;
+  let kept: Transform[] = [];
+  let dropped: boolean = false;
   for i in 0..r.transforms.len() {
     if (!dropped && r.transforms[i].name == name) {
       dropped = true;
@@ -122,7 +122,7 @@ function remove_transform(r: Registry, name: string): Registry {
 }
 
 function join_with(xs: string[], sep: string): string {
-  var s: string = "";
+  let s: string = "";
   for i in 0..xs.len() {
     if (i > 0) {
       s = s + sep;
@@ -138,11 +138,11 @@ function join_with(xs: string[], sep: string): string {
 // run in the order they were added, and adding a fourth at a lower priority
 // must not disturb their relative order.
 function test_ties_break_by_registration(): test.TestOutcome {
-  var r: Registry = registry_new();
+  let r: Registry = registry_new();
   r = add_transform(r, "alpha", 10, (s: string) => s + "A");
   r = add_transform(r, "beta", 10, (s: string) => s + "B");
   r = add_transform(r, "gamma", 10, (s: string) => s + "C");
-  var names: string[] = transform_names(r);
+  let names: string[] = transform_names(r);
   if (join_with(names, ",") != "alpha,beta,gamma") {
     return test.fail("equal priorities ran as " + join_with(names, ","));
   }
@@ -166,7 +166,7 @@ function test_ties_break_by_registration(): test.TestOutcome {
 // commute. A registry that ran them in any other order gives a different
 // string, so this cannot pass by accident.
 function test_the_order_is_the_composition_order(): test.TestOutcome {
-  var r: Registry = registry_new();
+  let r: Registry = registry_new();
   r = add_transform(r, "wrap", 20, (s: string) => "(" + s + ")");
   r = add_transform(r, "shout", 10, (s: string) => s + "!");
   // shout (10) runs first, then wrap (20): "x" -> "x!" -> "(x!)"
@@ -174,7 +174,7 @@ function test_the_order_is_the_composition_order(): test.TestOutcome {
     return test.fail("expected (x!), got " + run_transforms(r, "x"));
   }
   // Swap the priorities and the answer must swap with them.
-  var r2: Registry = registry_new();
+  let r2: Registry = registry_new();
   r2 = add_transform(r2, "wrap", 10, (s: string) => "(" + s + ")");
   r2 = add_transform(r2, "shout", 20, (s: string) => s + "!");
   if (run_transforms(r2, "x") != "(x)!") {
@@ -187,24 +187,24 @@ function test_the_order_is_the_composition_order(): test.TestOutcome {
 // iteration's value. Getting it wrong applies the last iteration's plugin N
 // times, which still produces a plausible string.
 function test_closures_capture_their_own_iteration(): test.TestOutcome {
-  var r: Registry = registry_new();
+  let r: Registry = registry_new();
   for i in 0..5 {
-    var tag: string = i.to_string();
+    let tag: string = i.to_string();
     r = add_transform(r, "tag" + tag, i, (s: string) => s + tag);
   }
-  var got: string = run_transforms(r, "");
+  let got: string = run_transforms(r, "");
   if (got != "01234") {
     return test.fail("loop-registered closures produced \"" + got
       + "\", wanted \"01234\" — each must capture its own iteration");
   }
   // The same, through an array of closures held across the loop rather
   // than inside a struct — the escaping-closure-array shape.
-  var fs: ((string) => string)[] = [];
+  let fs: ((string) => string)[] = [];
   for i in 0..5 {
-    var t2: string = "[" + i.to_string() + "]";
+    let t2: string = "[" + i.to_string() + "]";
     fs = fs.append((s: string) => s + t2);
   }
-  var acc: string = "";
+  let acc: string = "";
   for i in 0..fs.len() {
     acc = fs[i](acc);
   }
@@ -221,8 +221,8 @@ function suffixer(sfx: string): (string) => string {
 }
 
 function test_factories_do_not_share_captures(): test.TestOutcome {
-  var a: (string) => string = suffixer("-a");
-  var b: (string) => string = suffixer("-b");
+  let a: (string) => string = suffixer("-a");
+  let b: (string) => string = suffixer("-b");
   if (a("x") != "x-a") {
     return test.fail("the first factory closure is wrong: " + a("x"));
   }
@@ -233,7 +233,7 @@ function test_factories_do_not_share_captures(): test.TestOutcome {
   if (a("y") != "y-a") {
     return test.fail("the first closure changed after the second ran");
   }
-  var r: Registry = registry_new();
+  let r: Registry = registry_new();
   r = add_transform(r, "a", 1, a);
   r = add_transform(r, "b", 2, b);
   if (run_transforms(r, "x") != "x-a-b") {
@@ -246,11 +246,11 @@ function test_factories_do_not_share_captures(): test.TestOutcome {
 // the same sequence, every time, and the registry is a value so an earlier
 // snapshot is unaffected by later additions.
 function test_the_order_is_reproducible_and_snapshots_are_stable(): test.TestOutcome {
-  var base: Registry = registry_new();
+  let base: Registry = registry_new();
   base = add_transform(base, "one", 5, (s: string) => s + "1");
   base = add_transform(base, "two", 5, (s: string) => s + "2");
-  var snapshot: Registry = base;
-  var later: Registry = add_transform(base, "three", 5, (s: string) => s + "3");
+  let snapshot: Registry = base;
+  let later: Registry = add_transform(base, "three", 5, (s: string) => s + "3");
 
   if (run_transforms(snapshot, "") != "12") {
     return test.fail("the snapshot saw a later registration: "
@@ -270,7 +270,7 @@ function test_the_order_is_reproducible_and_snapshots_are_stable(): test.TestOut
 // transform must not touch them, and every predicate must accept for a value
 // to pass.
 function test_predicates_are_separate_and_conjunctive(): test.TestOutcome {
-  var r: Registry = registry_new();
+  let r: Registry = registry_new();
   r = add_predicate(r, "non-empty", 1, (s: string) => s.len() > 0);
   r = add_predicate(r, "short", 2, (s: string) => s.len() < 6);
   r = add_transform(r, "shout", 1, (s: string) => s + "!");
@@ -286,7 +286,7 @@ function test_predicates_are_separate_and_conjunctive(): test.TestOutcome {
   }
 
   // Removing the transform leaves the predicates alone.
-  var fewer: Registry = remove_transform(r, "shout");
+  let fewer: Registry = remove_transform(r, "shout");
   if (fewer.transforms.len() != 0) {
     return test.fail("the transform was not removed");
   }
@@ -302,7 +302,7 @@ function test_predicates_are_separate_and_conjunctive(): test.TestOutcome {
 
 // Removal takes exactly one, by name, and leaves the rest in order.
 function test_removal_takes_exactly_one(): test.TestOutcome {
-  var r: Registry = registry_new();
+  let r: Registry = registry_new();
   r = add_transform(r, "a", 1, (s: string) => s + "a");
   r = add_transform(r, "dup", 2, (s: string) => s + "1");
   r = add_transform(r, "dup", 3, (s: string) => s + "2");
@@ -311,19 +311,19 @@ function test_removal_takes_exactly_one(): test.TestOutcome {
     return test.fail("setup: " + run_transforms(r, ""));
   }
 
-  var once: Registry = remove_transform(r, "dup");
+  let once: Registry = remove_transform(r, "dup");
   if (once.transforms.len() != 3) {
     return test.fail("removing one \"dup\" left " + once.transforms.len().to_string());
   }
   if (run_transforms(once, "") != "a2z") {
     return test.fail("removal took the wrong one: " + run_transforms(once, ""));
   }
-  var twice: Registry = remove_transform(once, "dup");
+  let twice: Registry = remove_transform(once, "dup");
   if (run_transforms(twice, "") != "az") {
     return test.fail("removing the second \"dup\": " + run_transforms(twice, ""));
   }
   // Removing a name that is not there is a no-op, not an error.
-  var same: Registry = remove_transform(twice, "absent");
+  let same: Registry = remove_transform(twice, "absent");
   if (run_transforms(same, "") != "az") {
     return test.fail("removing an absent name changed the registry");
   }
@@ -332,8 +332,8 @@ function test_removal_takes_exactly_one(): test.TestOutcome {
 
 // An empty registry is the identity, not a special case.
 function test_an_empty_registry_is_the_identity(): test.TestOutcome {
-  var r: Registry = registry_new();
-  var inputs: string[] = ["", "x", "hello world"];
+  let r: Registry = registry_new();
+  let inputs: string[] = ["", "x", "hello world"];
   for i in 0..inputs.len() {
     if (run_transforms(r, inputs[i]) != inputs[i]) {
       return test.fail("an empty registry changed \"" + inputs[i] + "\"");
@@ -349,7 +349,7 @@ function test_an_empty_registry_is_the_identity(): test.TestOutcome {
 
 function main(): i32 {
   eprint("plugin_registry — typed hooks, deterministic order");
-  var r: Registry = registry_new();
+  let r: Registry = registry_new();
   r = add_transform(r, "trim-ish", 30, (s: string) => s + "");
   r = add_transform(r, "shout", 10, (s: string) => s + "!");
   r = add_transform(r, "wrap", 20, (s: string) => "(" + s + ")");
@@ -357,25 +357,25 @@ function main(): i32 {
   eprint("  order: " + join_with(transform_names(r), " -> "));
   eprint("  \"hello\" -> " + run_transforms(r, "hello"));
 
-  var loop_built: Registry = registry_new();
+  let loop_built: Registry = registry_new();
   for i in 0..4 {
-    var tag: string = i.to_string();
+    let tag: string = i.to_string();
     loop_built = add_transform(loop_built, "tag" + tag, i, (s: string) => s + tag);
   }
   eprint("  four closures built in a loop: \"" + run_transforms(loop_built, "") + "\"");
 
   r = add_predicate(r, "non-empty", 1, (s: string) => s.len() > 0);
   r = add_predicate(r, "short", 2, (s: string) => s.len() < 6);
-  var probes: string[] = ["abc", "", "abcdefgh"];
+  let probes: string[] = ["abc", "", "abcdefgh"];
   for i in 0..probes.len() {
-    var verdict: string = "rejected";
+    let verdict: string = "rejected";
     if (all_accept(r, probes[i])) {
       verdict = "accepted";
     }
     eprint("  predicates(\"" + probes[i] + "\") -> " + verdict);
   }
 
-  var t: test.TestRunner = test.test_new("plugin_registry");
+  let t: test.TestRunner = test.test_new("plugin_registry");
   t = t.it("ties break by registration", test_ties_break_by_registration);
   t = t.it("the order is the composition order", test_the_order_is_the_composition_order);
   t = t.it("closures capture their own iteration", test_closures_capture_their_own_iteration);

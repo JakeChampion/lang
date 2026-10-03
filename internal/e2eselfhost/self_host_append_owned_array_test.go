@@ -27,17 +27,17 @@ func TestSelfHostAppendedArrayLocalIsRetainedX86_64(t *testing.T) {
 	}{
 		{"bare append", `import "core/int";
 function fresh(): u8[] {
-    var e: u8[] = [];
+    let e: u8[] = [];
     return e.append(9u8);
 }
 function add(xs: u8[][]): u8[][] {
-    var empty: u8[] = fresh();
+    let empty: u8[] = fresh();
     return xs.append(empty);
 }
 function main(): i32 {
-    var xs: u8[][] = [];
+    let xs: u8[][] = [];
     xs = add(xs);
-    var b: u8[] = xs[0];
+    let b: u8[] = xs[0];
     print(int.int_to_string(b.len()));
     return 0;
 }
@@ -45,13 +45,13 @@ function main(): i32 {
 		{"struct field", `import "core/int";
 struct Conns { bufs: u8[][] }
 function add(c: Conns): Conns {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
     return Conns { bufs: c.bufs.append(empty) };
 }
 function main(): i32 {
-    var c: Conns = Conns { bufs: [] };
+    let c: Conns = Conns { bufs: [] };
     c = add(c);
-    var b: u8[] = c.bufs[0];
+    let b: u8[] = c.bufs[0];
     print(int.int_to_string(b.len()));
     return 0;
 }
@@ -59,17 +59,17 @@ function main(): i32 {
 		{"connection table", `import "core/int";
 struct Conns { fds: i32[], bufs: i32[][] }
 function add(c: Conns, fd: i32): Conns {
-    var empty: i32[] = [];
+    let empty: i32[] = [];
     return Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty) };
 }
 function grow(c: Conns, at: i32, chunk: i32[]): Conns {
-    var buf: i32[] = c.bufs[at];
+    let buf: i32[] = c.bufs[at];
     buf = buf.append(chunk[0]);
     return Conns { ...c, bufs: c.bufs.with(at, buf) };
 }
 function main(): i32 {
-    var c: Conns = Conns { fds: [], bufs: [] };
-    var chunk: i32[] = [7];
+    let c: Conns = Conns { fds: [], bufs: [] };
+    let chunk: i32[] = [7];
     c = add(c, 5);
     c = grow(c, 0, chunk);
     c = add(c, 6);

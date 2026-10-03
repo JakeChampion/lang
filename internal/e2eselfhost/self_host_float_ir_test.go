@@ -52,11 +52,11 @@ var floatMathIRCases = []struct {
 	// Nested intrinsics: sqrt(abs(-16)) = 4.
 	{"nested", `return __sqrt_f64(__abs_f64(0.0 - 16.0)) as i32;`},
 	// Intrinsic result feeding f64 arithmetic: sqrt(2) * 10 = 14.14 -> 14.
-	{"in-expr", `var x: f64 = 2.0; return (__sqrt_f64(x) * 10.0) as i32;`},
+	{"in-expr", `let x: f64 = 2.0; return (__sqrt_f64(x) * 10.0) as i32;`},
 	// f64 local round-trip: floor of a stored value.
-	{"via-local", `var y: f64 = 9.99; return __floor_f64(y) as i32;`},
+	{"via-local", `let y: f64 = 9.99; return __floor_f64(y) as i32;`},
 	// round of an f64 local.
-	{"round-via-local", `var z: f64 = 4.5; return __round_f64(z) as i32;`},
+	{"round-via-local", `let z: f64 = 4.5; return __round_f64(z) as i32;`},
 	// #7880, class 1: just below the tie. 0.49999999999999994 is 0.5 - 2^-54,
 	// and x + 0.5 is the exact sum 1 - 2^-54 — precisely halfway between
 	// 1 - 2^-53 and 1.0, which round-to-nearest-EVEN lifts to 1.0 before any
@@ -67,15 +67,15 @@ var floatMathIRCases = []struct {
 	// #7880, class 3 — the broad one: every already-integral double at or above
 	// 2^52 must come back UNCHANGED. Past that the spacing is >= 1, so x + 0.5
 	// rounds to a different integer and round(x) - x came out 1 (so 21, not 20).
-	{"round-large-integral", `var x: f64 = 4503599627370497.0; return 20 + ((__round_f64(x) - x) as i32);`},
-	{"round-large-integral-neg", `var x: f64 = 0.0 - 4503599627370497.0; return 20 + ((x - __round_f64(x)) as i32);`},
+	{"round-large-integral", `let x: f64 = 4503599627370497.0; return 20 + ((__round_f64(x) - x) as i32);`},
+	{"round-large-integral-neg", `let x: f64 = 0.0 - 4503599627370497.0; return 20 + ((x - __round_f64(x)) as i32);`},
 	// The infinities and NaN must come back unchanged: they reach the
 	// |x - t| >= 0.5 test with a NaN difference, which the emulation has to
 	// read as "no bump" (x86 ucomisd leaves CF set on the unordered compare;
 	// wasm's f64.ge answers 0).
-	{"round-inf", `var z: f64 = 0.0; var inf: f64 = 1.0 / z; if (__round_f64(inf) == inf) { return 7; } return 8;`},
-	{"round-neg-inf", `var z: f64 = 0.0; var ninf: f64 = (0.0 - 1.0) / z; if (__round_f64(ninf) == ninf) { return 7; } return 8;`},
-	{"round-nan", `var z: f64 = 0.0; var n: f64 = z / z; var r: f64 = __round_f64(n); if (r != r) { return 7; } return 8;`},
+	{"round-inf", `let z: f64 = 0.0; let inf: f64 = 1.0 / z; if (__round_f64(inf) == inf) { return 7; } return 8;`},
+	{"round-neg-inf", `let z: f64 = 0.0; let ninf: f64 = (0.0 - 1.0) / z; if (__round_f64(ninf) == ninf) { return 7; } return 8;`},
+	{"round-nan", `let z: f64 = 0.0; let n: f64 = z / z; let r: f64 = __round_f64(n); if (r != r) { return 7; } return 8;`},
 }
 
 func floatMathIRSrc(mainBody string) string {

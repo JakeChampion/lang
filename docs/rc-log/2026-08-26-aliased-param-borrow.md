@@ -7,8 +7,8 @@ rounds, the callee releasing nothing in any of them:
 | callee body | caller |
 |---|---|
 | `return p.len() + o.len();` | 80/80 — flat |
-| `var q: string = p; … q.len() …` | **80/40** |
-| `var q: string = p; q = o; …` | **80/0** |
+| `let q: string = p; … q.len() …` | **80/40** |
+| `let q: string = p; q = o; …` | **80/0** |
 
 The whole loss is caller-side. It is the expensive half `2026-08-25-enum-value-block-borrow.md`
 found for the match-expression read, one statement kind over.
@@ -32,7 +32,7 @@ before. Check which one the backend calls before editing either.
         && !body_unsafe_for_match_borrow(fn.body, pname, reg, [])
         && !param_match_binding_escapes(fn.body, pname)) { … }
 
-The `[]` is an EMPTY alias_ok, so `var q = p` reads as a bare-ident escape. The
+The `[]` is an EMPTY alias_ok, so `let q = p` reads as a bare-ident escape. The
 forgiveness mechanism already exists — `stmt_unsafe_for_alias_vb` consults
 alias_ok in its StmtVar arm, and gained a StmtAssign arm in
 `2026-08-25-str-alias-reassign-counted.md` — and was simply never wired into this
@@ -49,7 +49,7 @@ registry, so the from-above fixpoint still shrinks monotonically.
 **The alias sites drop `alias_bind_sites_of`'s reassigned-target exclusion.** That
 exclusion protects a LOCAL's reclaim credit, where a slot reassigned before its
 sweep would release the wrong box. The question here is only whether the PARAM
-escapes, and `var q = p; q = o;` answers it plainly: q briefly aliases p, then
+escapes, and `let q = p; q = o;` answers it plainly: q briefly aliases p, then
 stops naming it.
 
 **The REASSIGN sites are collected too.** That shape escapes `p` through the bind
@@ -84,7 +84,7 @@ The self-host still compiles itself under `FERN_STRICT_IR=1`.
 
 ## The refusal that holds
 
-An alias that ESCAPES by return (`var q = p; return q;`) keeps its param refused,
+An alias that ESCAPES by return (`let q = p; return q;`) keeps its param refused,
 80/40 before and after. That is what makes this a carve-out rather than a blanket
 accept: if that row ever reaches 80/80, the union has admitted a body whose alias
 leaves the function and a caller is releasing a string its callee returned.

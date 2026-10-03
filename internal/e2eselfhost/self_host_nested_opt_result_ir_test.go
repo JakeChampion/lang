@@ -5,7 +5,7 @@ import "testing"
 // nestedOptResultIRCases close the last seam in Option/Result nesting: a
 // fully-matched `Option[Result[T, E]]` (the outer Some bound, then the inner Result
 // matched and its payload read) now lowers on the IR path. The bug was in
-// `some_opt_type`: for `var o: Option[Result[..]] = Some(Ok(x))` it inferred o's
+// `some_opt_type`: for `let o: Option[Result[..]] = Some(Ok(x))` it inferred o's
 // type from the construction, and `elem_type_tag(Ok(x))` defaults an Ok/Err payload
 // to "i32" — so o was mis-recorded as `Option[i32]` and that wrong inference
 // preempted the authoritative annotation. The inner `match (r)` then found no
@@ -21,13 +21,13 @@ var nestedOptResultIRCases = []struct {
 	main string
 }{
 	// Some(Ok(x)) — inner Ok payload read.
-	{"some-ok", `function main(): i32 { var o: Option[Result[i32, string]] = Some(Ok(5)); match (o) { Some(r) => { match (r) { Ok(n) => { return n; }, Err(e) => { return 0; } } }, None => { return 0; } } }`},
+	{"some-ok", `function main(): i32 { let o: Option[Result[i32, string]] = Some(Ok(5)); match (o) { Some(r) => { match (r) { Ok(n) => { return n; }, Err(e) => { return 0; } } }, None => { return 0; } } }`},
 	// Some(Err(s)) — inner Err payload (string) read.
-	{"some-err", `function main(): i32 { var o: Option[Result[i32, string]] = Some(Err("ab")); match (o) { Some(r) => { match (r) { Ok(n) => { return n; }, Err(e) => { return e.len(); } } }, None => { return 7; } } }`},
+	{"some-err", `function main(): i32 { let o: Option[Result[i32, string]] = Some(Err("ab")); match (o) { Some(r) => { match (r) { Ok(n) => { return n; }, Err(e) => { return e.len(); } } }, None => { return 7; } } }`},
 	// Option[Option[T]] regression (Some payload types cleanly).
-	{"opt-opt-regress", `function main(): i32 { var o: Option[Option[i32]] = Some(Some(5)); match (o) { Some(r) => { match (r) { Some(n) => { return n; }, None => { return 0; } } }, None => { return 0; } } }`},
+	{"opt-opt-regress", `function main(): i32 { let o: Option[Option[i32]] = Some(Some(5)); match (o) { Some(r) => { match (r) { Some(n) => { return n; }, None => { return 0; } } }, None => { return 0; } } }`},
 	// Unannotated Some(scalar) regression (some_opt_type still infers it).
-	{"unannot-some-regress", `function main(): i32 { var o = Some(7); match (o) { Some(n) => { return n; }, None => { return 0; } } }`},
+	{"unannot-some-regress", `function main(): i32 { let o = Some(7); match (o) { Some(n) => { return n; }, None => { return 0; } } }`},
 }
 
 // TestSelfHostNestedOptResultIR compiles each case with the self-host CLI for

@@ -55,7 +55,7 @@ var errorMatrix = map[string]string{
 	"two_errors_one_func": `
 function f(): i32 {
 	return true;
-	var x: i32 = unknownThing;
+	let x: i32 = unknownThing;
 }`,
 
 	"errors_across_funcs": `
@@ -66,22 +66,22 @@ function c(): i32 { return missing; }`,
 	"bad_struct_fields": `
 struct S { a: i32, b: i32, c: i32 }
 function main(): i32 {
-	var s: S = S { a: true, b: missing, c: false };
+	let s: S = S { a: true, b: missing, c: false };
 	return 0;
 }`,
 
 	"mixed_error_kinds": `
 function f(n: i32): i32 {
 	if (n) { return 0; }
-	var x: i32 = true;
+	let x: i32 = true;
 	return undefinedThing;
 }`,
 
 	"multiple_undefineds": `
 function main(): i32 {
-	var a: i32 = one;
-	var b: i32 = two;
-	var c: i32 = three;
+	let a: i32 = one;
+	let b: i32 = two;
+	let c: i32 = three;
 	return a + b + c;
 }`,
 }

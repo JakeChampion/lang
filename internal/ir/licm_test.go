@@ -36,8 +36,8 @@ func countKind(ops []Op, k OpKind) int {
 func TestHoistLoopInvariantsLiftsALengthOutOfAWhileCondition(t *testing.T) {
 	const src = `
 function scan(s: string): i32 {
-	var i: i32 = 0;
-	var n: i32 = 0;
+	let i: i32 = 0;
+	let n: i32 = 0;
 	while (i < s.len()) {
 		if (s[i] == b'#') { n = n + 1; }
 		i = i + 1;
@@ -64,8 +64,8 @@ function scan(s: string): i32 {
 func TestHoistLoopInvariantsLeavesAMutatedOperandAlone(t *testing.T) {
 	const src = `
 function grow(a: string): i32 {
-	var s: string = a;
-	var i: i32 = 0;
+	let s: string = a;
+	let i: i32 = 0;
 	while (i < s.len()) {
 		if (i == 0) { s = a + "x"; }
 		i = i + 1;
@@ -86,8 +86,8 @@ function grow(a: string): i32 {
 func TestHoistLoopInvariantsLeavesTheBodyAlone(t *testing.T) {
 	const src = `
 function total(s: string, k: i32): i32 {
-	var i: i32 = 0;
-	var n: i32 = 0;
+	let i: i32 = 0;
+	let n: i32 = 0;
 	while (i < k) {
 		n = n + s.len();
 		i = i + 1;
@@ -106,7 +106,7 @@ function total(s: string, k: i32): i32 {
 func TestHoistLoopInvariantsIsIdempotent(t *testing.T) {
 	const src = `
 function scan(s: string): i32 {
-	var i: i32 = 0;
+	let i: i32 = 0;
 	while (i < s.len()) { i = i + 1; }
 	return i;
 }`
@@ -127,7 +127,7 @@ function scan(s: string): i32 {
 func TestHoistLoopInvariantsGivesEachOperandItsOwnSlot(t *testing.T) {
 	const src = `
 function f(s: string, t: string): i32 {
-	var i: i32 = 0;
+	let i: i32 = 0;
 	while (i < s.len() + t.len()) { i = i + 1; }
 	return i;
 }`
@@ -155,7 +155,7 @@ function f(s: string, t: string): i32 {
 func TestHoistLoopInvariantsStopsAtAShortCircuit(t *testing.T) {
 	const src = `
 function f(a: string, b: string): i32 {
-	var i: i32 = 0;
+	let i: i32 = 0;
 	while (i < a.len() && i < b.len()) { i = i + 1; }
 	return i;
 }`

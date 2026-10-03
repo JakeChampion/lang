@@ -22,8 +22,8 @@ const mapNarrowKeysSrc = `import "core/map";
 import "std/i32";
 function neg(i: i32): i32 { return 0 - i; }
 function check(): i32 {
-    var m: Map[i32, i32] = map_new(4);
-    var i: i32 = 0;
+    let m: Map[i32, i32] = map_new(4);
+    let i: i32 = 0;
     while (i < 40) { m = m.insert(i - 20, (i - 20) * 3); i = i + 1; }
     if (m.get_or(-20, 7777) != -60) { return 1; }
     match (m.get(-19)) {
@@ -33,25 +33,25 @@ function check(): i32 {
     if (!m.has(-1)) { return 4; }
     m = m.insert(-20, 5);
     if (m.len() != 40) { return 5; }
-    var r: (Map[i32, i32], boolean) = m.without(-18);
+    let r: (Map[i32, i32], boolean) = m.without(-18);
     if (!r.1) { return 6; }
     m = r.0;
     if (m.has(-18) || m.len() != 39) { return 7; }
-    var lit: Map[i32, i32] = Map { -3: 30, -4: 40 };
-    var j: i32 = 0;
-    var s: i32 = 0;
+    let lit: Map[i32, i32] = Map { -3: 30, -4: 40 };
+    let j: i32 = 0;
+    let s: i32 = 0;
     while (j < 5) { s = s + lit.get_or(neg(j), 0); j = j + 1; }
     if (s != 70) { return 8; }
-    var ks: i32 = 0;
+    let ks: i32 = 0;
     for k in m.keys() { ks = ks + k; }
     if (ks != -2) { return 9; }
-    var us: Map[u32, i32] = map_new(4);
-    var u: u32 = 3000000000 as u32;
-    var ui: i32 = 0;
+    let us: Map[u32, i32] = map_new(4);
+    let u: u32 = 3000000000 as u32;
+    let ui: i32 = 0;
     while (ui < 3) { us = us.insert(u + (ui as u32), ui); ui = ui + 1; }
     if (us.get_or(3000000001 as u32, 9) != 1) { return 10; }
-    var flags: Map[boolean, i32] = map_new(4);
-    var f: i32 = 0;
+    let flags: Map[boolean, i32] = map_new(4);
+    let f: i32 = 0;
     while (f < 4) { flags = flags.insert(f % 2 == 1, f); f = f + 1; }
     if (flags.len() != 2 || flags.get_or(true, 0) != 3 || flags.get_or(false, 0) != 2) { return 11; }
     return 0;

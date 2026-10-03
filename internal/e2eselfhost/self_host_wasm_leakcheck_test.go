@@ -81,8 +81,8 @@ func TestSelfHostWasmLeakcheck(t *testing.T) {
 			// the family's oracle-confirmed number for this shape.
 			name: "clean_string_churn",
 			src: `function w(a: string): string { return a + "!"; }
-function round(i: i32): i32 { var t: string = w("ab"); return t.len() + i; }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
+function round(i: i32): i32 { let t: string = w("ab"); return t.len() + i; }
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
 			want: 21, verdict: "balanced",
 		},
 		{
@@ -90,16 +90,16 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// string, so the census balances.
 			name: "alias_reassign_balanced",
 			src: `function w(a: string): string { return a + "!"; }
-function round(i: i32): i32 { var t: string = w("ab"); var v: string = t; v = w("cd"); return v.len() + i; }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
+function round(i: i32): i32 { let t: string = w("ab"); let v: string = t; v = w("cd"); return v.len() + i; }
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
 			want: 21, verdict: "balanced",
 		},
 		{
 			// A leak, and the census must SAY so — the half a green exit cannot.
 			// A raw __alloc block is never released, so every round leaks one.
 			name: "leak_raw_alloc",
-			src: `function round(i: i32): i32 { var p: usize = __alloc(24); return i; }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
+			src: `function round(i: i32): i32 { let p: usize = __alloc(24); return i; }
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
 			want: 53, verdict: "leaky",
 		},
 		{
@@ -167,8 +167,8 @@ func TestSelfHostWasmLeakcheckOffEmitsNothing(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	src := `function w(a: string): string { return a + "!"; }
-function round(i: i32): i32 { var t: string = w("ab"); return t.len() + i; }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`
+function round(i: i32): i32 { let t: string = w("ab"); return t.len() + i; }
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`
 
 	off := wasmLcCompile(t, runner, driverBin, src, nil)
 	for _, marker := range []string{"__fern_lc_", "__fern_proc_exit_raw", "leakcheck"} {

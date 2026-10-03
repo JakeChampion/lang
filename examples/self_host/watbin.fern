@@ -42,10 +42,10 @@ function leb128_mask25(): i32 {
 // leb_u32 appends the unsigned LEB128 encoding of `value` (interpreted as
 // a 32-bit unsigned integer) to `buf`.
 pub function leb_u32(buf: i32[], value: i32): i32[] {
-  var v: i32 = value;
-  var more: boolean = true;
+  let v: i32 = value;
+  let more: boolean = true;
   while (more) {
-    var b: i32 = v & 127;
+    let b: i32 = v & 127;
     v = v >> 7 & leb128_mask25();
     if (v == 0) {
       more = false;
@@ -59,12 +59,12 @@ pub function leb_u32(buf: i32[], value: i32): i32[] {
 
 // leb_i32 appends the signed LEB128 encoding of `value` to `buf`.
 pub function leb_i32(buf: i32[], value: i32): i32[] {
-  var v: i32 = value;
-  var more: boolean = true;
+  let v: i32 = value;
+  let more: boolean = true;
   while (more) {
-    var b: i32 = v & 127;
+    let b: i32 = v & 127;
     v = v >> 7;
-    var sign: i32 = b & 64;
+    let sign: i32 = b & 64;
     if (v == 0 && sign == 0 || v == 0 - 1 && sign != 0) {
       more = false;
     } else {
@@ -77,12 +77,12 @@ pub function leb_i32(buf: i32[], value: i32): i32[] {
 
 // leb_i64 appends the signed LEB128 encoding of a 64-bit `value` to `buf`.
 function leb_i64(buf: i32[], value: i64): i32[] {
-  var v: i64 = value;
-  var more: boolean = true;
+  let v: i64 = value;
+  let more: boolean = true;
   while (more) {
-    var b: i32 = (v & 127) as i32;
+    let b: i32 = (v & 127) as i32;
     v = v >> 7;
-    var sign: i32 = b & 64;
+    let sign: i32 = b & 64;
     if (v == 0 && sign == 0 || v == 0 - 1 && sign != 0) {
       more = false;
     } else {
@@ -127,11 +127,11 @@ function wat_is_space(c: i32): boolean {
 
 // wat_tokenize splits WAT source into its token stream.
 function wat_tokenize(src: string): WatTok[] {
-  var toks: WatTok[] = [];
-  var i: i32 = 0;
-  var n: i32 = src.len();
+  let toks: WatTok[] = [];
+  let i: i32 = 0;
+  let n: i32 = src.len();
   while (i < n) {
-    var c: i32 = src[i] as i32;
+    let c: i32 = src[i] as i32;
     if (wat_is_space(c)) {
       i = i + 1;
     } else if (c == 40) {
@@ -145,8 +145,8 @@ function wat_tokenize(src: string): WatTok[] {
       // byte after a backslash so an escaped `\"` doesn't end it. The
       // raw content (escapes intact) is captured; the encoder resolves
       // `\NN` later.
-      var start: i32 = i + 1;
-      var j: i32 = start;
+      let start: i32 = i + 1;
+      let j: i32 = start;
       while (j < n && src[j] != b'"') {
         if (src[j] == b'\\') {
           j = j + 2;
@@ -158,9 +158,9 @@ function wat_tokenize(src: string): WatTok[] {
       i = j + 1;
     } else {
       // Atom: run up to the next whitespace, paren, or quote.
-      var astart: i32 = i;
+      let astart: i32 = i;
       while (i < n) {
-        var ch: i32 = src[i] as i32;
+        let ch: i32 = src[i] as i32;
         if (wat_is_space(ch) || ch == 40 || ch == 41 || ch == 34) {
           break;
         }
@@ -197,16 +197,16 @@ pub struct ParseOne { node: SExpr, pos: i32 }
 
 // wat_parse_one parses the single S-expr starting at toks[i].
 function wat_parse_one(toks: WatTok[], i: i32): ParseOne {
-  var t: WatTok = toks[i];
+  let t: WatTok = toks[i];
   if (t.kind != 0) {
     // Leaf: atom (kind 2) or string (kind 3).
     return ParseOne { node: SExpr { kind: t.kind, text: t.text, items: [] }, pos: i + 1 };
   }
   // List: consume children until the matching ")".
-  var children: SExpr[] = [];
-  var j: i32 = i + 1;
+  let children: SExpr[] = [];
+  let j: i32 = i + 1;
   while (j < toks.len() && toks[j].kind != 1) {
-    var r: ParseOne = wat_parse_one(toks, j);
+    let r: ParseOne = wat_parse_one(toks, j);
     children = children.append(r.node);
     j = r.pos;
   }
@@ -217,7 +217,7 @@ function wat_parse_one(toks: WatTok[], i: i32): ParseOne {
 // wat_parse parses the whole token stream into its top-level S-expr (the
 // `(module …)` form emit_module produces).
 function wat_parse(toks: WatTok[]): SExpr {
-  var r: ParseOne = wat_parse_one(toks, 0);
+  let r: ParseOne = wat_parse_one(toks, 0);
   return r.node;
 }
 
@@ -240,7 +240,7 @@ function wat_parse(toks: WatTok[]): SExpr {
 
 // wcat appends every byte of `src` to `buf`.
 pub function wcat(buf: i32[], src: i32[]): i32[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < src.len()) {
     buf = buf.append(src[i]);
     i = i + 1;
@@ -251,7 +251,7 @@ pub function wcat(buf: i32[], src: i32[]): i32[] {
 // wstr_bytes appends the raw bytes of `s` (each char is one byte in the
 // self-host string representation).
 function wstr_bytes(buf: i32[], s: string): i32[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     buf = buf.append(s[i] as i32);
     i = i + 1;
@@ -268,7 +268,7 @@ pub function wname(buf: i32[], s: string): i32[] {
 // wsection wraps `contents` as a top-level section: the id byte, the
 // LEB_u32 byte length, then the contents.
 pub function wsection(id: i32, contents: i32[]): i32[] {
-  var o: i32[] = [];
+  let o: i32[] = [];
   o = o.append(id);
   o = leb_u32(o, contents.len());
   return wcat(o, contents);
@@ -277,7 +277,7 @@ pub function wsection(id: i32, contents: i32[]): i32[] {
 // wvec builds a `vec`: LEB_u32(count) then the already-encoded element
 // bytes.
 function wvec(count: i32, elems: i32[]): i32[] {
-  var o: i32[] = [];
+  let o: i32[] = [];
   o = leb_u32(o, count);
   return wcat(o, elems);
 }
@@ -291,7 +291,7 @@ function global_valtype(gn: SExpr): string {
   if (gn.items.len() < 3) {
     return "i32";
   }
-  var ty: SExpr = gn.items[2];
+  let ty: SExpr = gn.items[2];
   if (ty.kind == 2) {
     return ty.text;
   }
@@ -325,7 +325,7 @@ function valtype_byte(t: string): i32 {
 
 // wmagic emits the 8-byte module preamble: "\0asm" + version 1.
 function wmagic(): i32[] {
-  var o: i32[] = [];
+  let o: i32[] = [];
   o = o.append(0);
   o = o.append(97);
   o = o.append(115);
@@ -363,7 +363,7 @@ function wmagic(): i32[] {
 // index_of_str returns the index of `n` in `xs`, or -1. (A local copy so
 // this module stays usable on its own / concatenated.)
 function index_of_str(xs: string[], n: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (xs[i] == n) {
       return i;
@@ -377,7 +377,7 @@ function index_of_str(xs: string[], n: string): i32 {
 // index would encode as 2^32-1, which wasmtime reports only as an
 // out-of-bounds index in an unnamed function.
 function name_idx(names: string[], n: string): i32 {
-  var k: i32 = index_of_str(names, n);
+  let k: i32 = index_of_str(names, n);
   if (k < 0) {
     eprint("watbin: reference to undefined " + n);
     exit(1);
@@ -397,20 +397,20 @@ function node_head(n: SExpr): string {
 // Parse WAT integer immediates, including signed hexadecimal spellings.
 // Keep the historical names because decimal indices use the same helpers.
 function parse_dec(s: string): i32 {
-  var neg: boolean = false;
-  var i: i32 = 0;
+  let neg: boolean = false;
+  let i: i32 = 0;
   if (s.len() > 0 && s[0] == b'-') {
     neg = true;
     i = 1;
   } else if (s.len() > 0 && s[0] == b'+') {
     i = 1;
   }
-  var base: i32 = 10;
+  let base: i32 = 10;
   if (s.len() > i + 2 && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X')) {
     base = 16;
     i = i + 2;
   }
-  var v: i32 = 0;
+  let v: i32 = 0;
   while (i < s.len()) {
     if (s[i] != b'_') {
       v = v * base + hexval(s[i] as i32);
@@ -425,27 +425,27 @@ function parse_dec(s: string): i32 {
 
 // The i64 counterpart preserves the full immediate before LEB encoding.
 function parse_dec_i64(s: string): i64 {
-  var neg: boolean = false;
-  var i: i32 = 0;
+  let neg: boolean = false;
+  let i: i32 = 0;
   if (s.len() > 0 && s[0] == b'-') {
     neg = true;
     i = 1;
   } else if (s.len() > 0 && s[0] == b'+') {
     i = 1;
   }
-  var base: i64 = 10;
+  let base: i64 = 10;
   if (s.len() > i + 2 && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X')) {
     base = 16;
     i = i + 2;
   }
-  var v: i64 = 0;
+  let v: i64 = 0;
   while (i < s.len()) {
     if (s[i] != b'_') {
       v = v * base + hexval(s[i] as i32) as i64;
     }
     i = i + 1;
   }
-  var z: i64 = 0;
+  let z: i64 = 0;
   if (neg) {
     return z - v;
   }
@@ -480,11 +480,11 @@ pub function parse_f64(s: string): f64 {
 // signalling via the first element sentinel — the caller adjusts dp, so
 // this returns the raw halved digits INCLUDING a possible leading zero.
 function pf64_div2(b: i32[]): i32[] {
-  var out: i32[] = [];
-  var r: i32 = 0;
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let r: i32 = 0;
+  let i: i32 = 0;
   while (i < b.len()) {
-    var cur: i32 = r * 10 + b[i];
+    let cur: i32 = r * 10 + b[i];
     out = out.append(cur / 2);
     r = cur % 2;
     i = i + 1;
@@ -501,22 +501,22 @@ function pf64_div2(b: i32[]): i32[] {
 // Fern has no multi-return here; the carry is prepended as a FIRST element
 // (0 or 1) and the caller splits it off.
 function pf64_mul2(b: i32[]): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < b.len()) {
     out = out.append(0);
     i = i + 1;
   }
-  var carry: i32 = 0;
-  var j: i32 = b.len() - 1;
+  let carry: i32 = 0;
+  let j: i32 = b.len() - 1;
   while (j >= 0) {
-    var cur: i32 = b[j] * 2 + carry;
+    let cur: i32 = b[j] * 2 + carry;
     out = out.with(j, cur % 10);
     carry = cur / 10;
     j = j - 1;
   }
-  var res: i32[] = [carry];
-  var k: i32 = 0;
+  let res: i32[] = [carry];
+  let k: i32 = 0;
   while (k < out.len()) {
     res = res.append(out[k]);
     k = k + 1;
@@ -527,8 +527,8 @@ function pf64_mul2(b: i32[]): i32[] {
 // pf64_sub returns b[from : upto) as a fresh array (slices are a distinct
 // type here, so buffer trims copy).
 function pf64_sub(b: i32[], from: i32, upto: i32): i32[] {
-  var out: i32[] = [];
-  var i: i32 = from;
+  let out: i32[] = [];
+  let i: i32 = from;
   while (i < upto) {
     out = out.append(b[i]);
     i = i + 1;
@@ -538,7 +538,7 @@ function pf64_sub(b: i32[], from: i32, upto: i32): i32[] {
 
 // pf64_all_zero reports whether every digit in b is zero.
 function pf64_all_zero(b: i32[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < b.len()) {
     if (b[i] != 0) {
       return false;
@@ -549,17 +549,17 @@ function pf64_all_zero(b: i32[]): boolean {
 }
 
 function parse_f64_bits(s: string): i64 {
-  var i: i32 = 0;
-  var neg: boolean = false;
+  let i: i32 = 0;
+  let neg: boolean = false;
   if (s.len() > 0 && s[0] == b'-') {
     neg = true;
     i = 1;
   } else if (s.len() > 0 && s[0] == b'+') {
     i = 1;
   }
-  var signbit: i64 = 0;
+  let signbit: i64 = 0;
   if (neg) {
-    var one: i64 = 1;
+    let one: i64 = 1;
     signbit = one << 63;
   }
   // Collect significant digits and the decimal point position:
@@ -568,12 +568,12 @@ function parse_f64_bits(s: string): i64 {
   // significant decimal digits anywhere in the binary64 range (the smallest,
   // 2^-1075, is 5^1075 / 10^1075), so an input with a non-zero digit past
   // 800 cannot be a tie and rounding up off the round bit is correct.
-  var digits: i32[] = [];
-  var dp: i32 = 0;
-  var sticky: boolean = false;
-  var started: boolean = false;
+  let digits: i32[] = [];
+  let dp: i32 = 0;
+  let sticky: boolean = false;
+  let started: boolean = false;
   while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
-    var d: i32 = s[i] as i32 - 48;
+    let d: i32 = s[i] as i32 - 48;
     if (started || d != 0) {
       started = true;
       if (digits.len() < 800) {
@@ -590,7 +590,7 @@ function parse_f64_bits(s: string): i64 {
   if (i < s.len() && s[i] == b'.') {
     i = i + 1;
     while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
-      var fd: i32 = s[i] as i32 - 48;
+      let fd: i32 = s[i] as i32 - 48;
       if (started || fd != 0) {
         started = true;
         if (digits.len() < 800) {
@@ -608,14 +608,14 @@ function parse_f64_bits(s: string): i64 {
   }
   if (i < s.len() && (s[i] == b'e' || s[i] == b'E')) {
     i = i + 1;
-    var eneg: boolean = false;
+    let eneg: boolean = false;
     if (i < s.len() && s[i] == b'-') {
       eneg = true;
       i = i + 1;
     } else if (i < s.len() && s[i] == b'+') {
       i = i + 1;
     }
-    var exp: i32 = 0;
+    let exp: i32 = 0;
     while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
       if (exp < 100000) {
         exp = exp * 10 + (s[i] as i32 - 48);
@@ -640,7 +640,7 @@ function parse_f64_bits(s: string): i64 {
   // [10^(dp-1), 10^dp), so dp > 310 overflows every double and dp < -350
   // underflows below half the minimum subnormal.
   if (dp > 310) {
-    var inf: i64 = 2047;
+    let inf: i64 = 2047;
     return signbit | inf << 52;
   }
   if (dp < 0 - 350) {
@@ -650,9 +650,9 @@ function parse_f64_bits(s: string): i64 {
   // While the decimal point is right of the front (value >= 1), halve;
   // while the value is below 0.5, double. dp reaches 0 first, then the
   // leading-digit test finishes the job.
-  var bexp: i32 = 0;
+  let bexp: i32 = 0;
   while (dp > 0) {
-    var hb: i32[] = pf64_div2(digits);
+    let hb: i32[] = pf64_div2(digits);
     if (hb.len() > 0 && hb[0] == 0) {
       digits = pf64_sub(hb, 1, hb.len());
       dp = dp - 1;
@@ -665,7 +665,7 @@ function parse_f64_bits(s: string): i64 {
     }
   }
   while (dp < 0 || digits.len() > 0 && digits[0] < 5) {
-    var db: i32[] = pf64_mul2(digits);
+    let db: i32[] = pf64_mul2(digits);
     if (db[0] != 0) {
       // Carry out of the fraction: 2×0.D >= 1, i.e. C.D' × 10^dp.
       // Renormalize as 0.(C D') × 10^(dp+1) — the carry becomes the
@@ -689,32 +689,32 @@ function parse_f64_bits(s: string): i64 {
   // E = bexp + 1022. E >= 2047 overflows; E <= 0 goes subnormal with
   // 52 + E mantissa bits; below -1 it is under half the minimum
   // subnormal and rounds to zero.
-  var e: i32 = bexp + 1022;
+  let e: i32 = bexp + 1022;
   if (e >= 2047) {
-    var inf2: i64 = 2047;
+    let inf2: i64 = 2047;
     return signbit | inf2 << 52;
   }
-  var nbits: i32 = 53;
+  let nbits: i32 = 53;
   if (e <= 0) {
     nbits = 52 + e;
   }
   if (nbits < 0) {
     return signbit;
   }
-  var mant: i64 = 0;
-  var k2: i32 = 0;
+  let mant: i64 = 0;
+  let k2: i32 = 0;
   while (k2 < nbits) {
-    var mb: i32[] = pf64_mul2(digits);
+    let mb: i32[] = pf64_mul2(digits);
     mant = mant * 2 + mb[0] as i64;
     digits = pf64_sub(mb, 1, mb.len());
     k2 = k2 + 1;
   }
   // Round to nearest, ties to even: round bit is the next binary digit;
   // sticky is any remainder (or parse-time truncation).
-  var rb: i32[] = pf64_mul2(digits);
-  var roundbit: i32 = rb[0];
-  var rest: i32[] = pf64_sub(rb, 1, rb.len());
-  var st: boolean = sticky || !pf64_all_zero(rest);
+  let rb: i32[] = pf64_mul2(digits);
+  let roundbit: i32 = rb[0];
+  let rest: i32[] = pf64_sub(rb, 1, rb.len());
+  let st: boolean = sticky || !pf64_all_zero(rest);
   if (roundbit == 1 && (st || (mant & 1) == 1)) {
     mant = mant + 1;
   }
@@ -724,18 +724,18 @@ function parse_f64_bits(s: string): i64 {
     // this encoding produces arithmetically.
     return signbit | mant;
   }
-  var full: i64 = 1;
+  let full: i64 = 1;
   full = full << 53;
   if (mant == full) {
     // 1.111…1 rounded up to 10.00…0: renormalize.
     mant = mant / 2;
     e = e + 1;
     if (e >= 2047) {
-      var inf3: i64 = 2047;
+      let inf3: i64 = 2047;
       return signbit | inf3 << 52;
     }
   }
-  var hidden: i64 = 1;
+  let hidden: i64 = 1;
   hidden = hidden << 52;
   return signbit | e as i64 << 52 | mant - hidden;
 }
@@ -757,12 +757,12 @@ function hexval(c: i32): i32 {
 // data_bytes resolves a WAT data string's escapes (`\NN` hex, `\\`, `\"`,
 // `\n`, `\t`) to raw bytes.
 function data_bytes(s: string): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < s.len()) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c == 92 && i + 1 < s.len()) {
-      var n: i32 = s[i + 1] as i32;
+      let n: i32 = s[i + 1] as i32;
       if (n == 110) {
         out = out.append(10);
         i = i + 2;
@@ -809,8 +809,8 @@ function func_name(fnode: SExpr): string {
 // collect_func_names lists every function name in index order: import
 // funcs first (in source order), then defined funcs.
 function collect_func_names(mod: SExpr): string[] {
-  var names: string[] = [];
-  var i: i32 = 0;
+  let names: string[] = [];
+  let i: i32 = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "import") {
       names = names.append(func_name(func_node(mod.items[i])));
@@ -845,9 +845,9 @@ function collect_func_names(mod: SExpr): string[] {
 // item; the signature readers below tolerate index 1 for the unnamed
 // `(func …)` inside a `(type $c (func …))` declaration, which has no body.
 function func_header_end(fnode: SExpr): i32 {
-  var i: i32 = 2;
+  let i: i32 = 2;
   while (i < fnode.items.len()) {
-    var h: string = node_head(fnode.items[i]);
+    let h: string = node_head(fnode.items[i]);
     if (h != "param" && h != "result" && h != "local") {
       return i;
     }
@@ -862,17 +862,17 @@ function func_header_end(fnode: SExpr): i32 {
 // declaration). A `(param …)` is either named-single (`(param $n i32)`) or
 // a run of bare types (`(param i32 i32 …)`, the import / type-decl form).
 function func_param_types(fnode: SExpr): string[] {
-  var out: string[] = [];
-  var stop: i32 = func_header_end(fnode);
-  var i: i32 = 1;
+  let out: string[] = [];
+  let stop: i32 = func_header_end(fnode);
+  let i: i32 = 1;
   while (i < stop) {
-    var c: SExpr = fnode.items[i];
+    let c: SExpr = fnode.items[i];
     if (node_head(c) == "param") {
       if (c.items.len() >= 2 && c.items[1].text[0] == b'$') {
         // `(param $name type)` — named single.
         out = out.append(c.items[2].text);
       } else {
-        var j: i32 = 1;
+        let j: i32 = 1;
         while (j < c.items.len()) {
           out = out.append(c.items[j].text);
           j = j + 1;
@@ -885,13 +885,13 @@ function func_param_types(fnode: SExpr): string[] {
 }
 
 function func_result_types(fnode: SExpr): string[] {
-  var out: string[] = [];
-  var stop: i32 = func_header_end(fnode);
-  var i: i32 = 1;
+  let out: string[] = [];
+  let stop: i32 = func_header_end(fnode);
+  let i: i32 = 1;
   while (i < stop) {
-    var c: SExpr = fnode.items[i];
+    let c: SExpr = fnode.items[i];
     if (node_head(c) == "result") {
-      var j: i32 = 1;
+      let j: i32 = 1;
       while (j < c.items.len()) {
         out = out.append(c.items[j].text);
         j = j + 1;
@@ -905,11 +905,11 @@ function func_result_types(fnode: SExpr): string[] {
 // local_names lists a defined func's local index space: params first
 // (named), then `(local $name type)` decls.
 function local_names(fnode: SExpr): string[] {
-  var out: string[] = [];
-  var stop: i32 = func_header_end(fnode);
-  var i: i32 = 2;
+  let out: string[] = [];
+  let stop: i32 = func_header_end(fnode);
+  let i: i32 = 2;
   while (i < stop) {
-    var c: SExpr = fnode.items[i];
+    let c: SExpr = fnode.items[i];
     if (node_head(c) == "param") {
       if (c.items.len() >= 2 && c.items[1].text[0] == b'$') {
         out = out.append(c.items[1].text);
@@ -919,7 +919,7 @@ function local_names(fnode: SExpr): string[] {
   }
   i = 2;
   while (i < stop) {
-    var c2: SExpr = fnode.items[i];
+    let c2: SExpr = fnode.items[i];
     // Only NAMED locals (`(local $name type)`) enter the name space; the
     // abbreviated unnamed form is referenced by numeric index (the flat
     // encoder uses the index directly, never the name table).
@@ -936,16 +936,16 @@ function local_names(fnode: SExpr): string[] {
 // named local — and the abbreviated `(local type type …)` — N unnamed locals
 // in one node (the stack-IR emitter's form, which uses numeric local indices).
 function local_decl_types(fnode: SExpr): string[] {
-  var out: string[] = [];
-  var stop: i32 = func_header_end(fnode);
-  var i: i32 = 2;
+  let out: string[] = [];
+  let stop: i32 = func_header_end(fnode);
+  let i: i32 = 2;
   while (i < stop) {
-    var c: SExpr = fnode.items[i];
+    let c: SExpr = fnode.items[i];
     if (node_head(c) == "local") {
       if (c.items.len() >= 3 && c.items[1].text.len() > 0 && c.items[1].text[0] == b'$') {
         out = out.append(c.items[2].text);  // (local $name type)
       } else {
-        var k: i32 = 1;
+        let k: i32 = 1;
         while (k < c.items.len()) {  // (local type type …)
           out = out.append(c.items[k].text);
           k = k + 1;
@@ -1265,8 +1265,8 @@ function arith_opcode(op: string): i32 {
 // the enclosing frame's stack for its later siblings (turning a deeper
 // `br` depth into a wrong one).
 function labels_push(labels: string[], x: string): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < labels.len()) {
     out = out.append(labels[i]);
     i = i + 1;
@@ -1279,7 +1279,7 @@ function labels_push(labels: string[], x: string): string[] {
 // `br_if` use: 0 = innermost enclosing frame. `labels` is the frame stack
 // (block / loop / if), innermost last; the most recent match wins.
 function label_depth(labels: string[], name: string): i32 {
-  var i: i32 = labels.len() - 1;
+  let i: i32 = labels.len() - 1;
   while (i >= 0) {
     if (labels[i] == name) {
       return labels.len() - 1 - i;
@@ -1403,7 +1403,7 @@ function bulk_mem_opcode(op: string): i32 {
 // then the memory indexes — two for `memory.copy` (dest then src), one for
 // `memory.fill`.
 function bulk_mem_tail(out: i32[], idx: i32): i32[] {
-  var o: i32[] = leb_u32(out, idx);
+  let o: i32[] = leb_u32(out, idx);
   o = o.append(0);
   if (idx == 10) {
     o = o.append(0);
@@ -1492,8 +1492,8 @@ function mem_store_opcode(op: string): i32 {
 // enc_instr encodes one folded instruction node post-order. `labels` is
 // the enclosing control-frame stack (for br / br_if depth resolution).
 function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: string[], labels: string[], tnames: string[]): i32[] {
-  var out: i32[] = [];
-  var op: string = node.items[0].text;
+  let out: i32[] = [];
+  let op: string = node.items[0].text;
   if (op == "i32.const") {
     out = out.append(65);
     return leb_i32(out, parse_dec(node.items[1].text));
@@ -1506,8 +1506,8 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     // 0x44 then the 8-byte little-endian IEEE-754 double. The value's
     // bits come from f64_bits() on the parsed literal.
     out = out.append(68);
-    var bits: i64 = f64_bits(parse_f64(node.items[1].text));
-    var k: i32 = 0;
+    let bits: i64 = f64_bits(parse_f64(node.items[1].text));
+    let k: i32 = 0;
     while (k < 8) {
       out = out.append((bits >> k * 8 & 255) as i32);
       k = k + 1;
@@ -1557,7 +1557,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     return out;
   }
   if (op == "call") {
-    var k: i32 = 2;
+    let k: i32 = 2;
     while (k < node.items.len()) {
       out = wcat(out, enc_instr(node.items[k], lnames, fnames, gnames, labels, tnames));
       k = k + 1;
@@ -1570,8 +1570,8 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     // items[1]; the last operand is the table index (function pointer
     // on the stack top), the rest are call args. Args are pushed first,
     // then the table index, then 0x11 typeidx tableidx(0).
-    var lasti: i32 = node.items.len() - 1;
-    var k: i32 = 2;
+    let lasti: i32 = node.items.len() - 1;
+    let k: i32 = 2;
     while (k < lasti) {
       out = wcat(out, enc_instr(node.items[k], lnames, fnames, gnames, labels, tnames));
       k = k + 1;
@@ -1600,13 +1600,13 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     return leb_u32(out, label_depth(labels, node.items[1].text));
   }
   if (op == "block" || op == "loop") {
-    var bi: i32 = 1;
-    var label: string = "";
+    let bi: i32 = 1;
+    let label: string = "";
     if (node.items[1].kind == 2 && node.items[1].text[0] == b'$') {
       label = node.items[1].text;
       bi = 2;
     }
-    var bt: i32 = 64;
+    let bt: i32 = 64;
     if (bi < node.items.len() && node_head(node.items[bi]) == "result") {
       bt = valtype_byte(node.items[bi].items[1].text);
       bi = bi + 1;
@@ -1617,7 +1617,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
       out = out.append(3);
     }
     out = out.append(bt);
-    var inner: string[] = labels_push(labels, label);
+    let inner: string[] = labels_push(labels, label);
     while (bi < node.items.len()) {
       out = wcat(out, enc_instr(node.items[bi], lnames, fnames, gnames, inner, tnames));
       bi = bi + 1;
@@ -1626,8 +1626,8 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     return out;
   }
   if (op == "if") {
-    var ci: i32 = 1;
-    var ibt: i32 = 64;
+    let ci: i32 = 1;
+    let ibt: i32 = 64;
     if (node_head(node.items[1]) == "result") {
       ibt = valtype_byte(node.items[1].items[1].text);
       ci = 2;
@@ -1636,17 +1636,17 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     out = wcat(out, enc_instr(node.items[ci], lnames, fnames, gnames, labels, tnames));
     out = out.append(4);  // if
     out = out.append(ibt);
-    var iinner: string[] = labels_push(labels, "");
-    var thenN: SExpr = node.items[ci + 1];
-    var tk: i32 = 1;
+    let iinner: string[] = labels_push(labels, "");
+    let thenN: SExpr = node.items[ci + 1];
+    let tk: i32 = 1;
     while (tk < thenN.items.len()) {
       out = wcat(out, enc_instr(thenN.items[tk], lnames, fnames, gnames, iinner, tnames));
       tk = tk + 1;
     }
     if (node.items.len() > ci + 2 && node_head(node.items[ci + 2]) == "else") {
       out = out.append(5);  // else
-      var elseN: SExpr = node.items[ci + 2];
-      var ek: i32 = 1;
+      let elseN: SExpr = node.items[ci + 2];
+      let ek: i32 = 1;
       while (ek < elseN.items.len()) {
         out = wcat(out, enc_instr(elseN.items[ek], lnames, fnames, gnames, iinner, tnames));
         ek = ek + 1;
@@ -1655,7 +1655,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     out = out.append(11);  // end
     return out;
   }
-  var ml: i32 = mem_load_opcode(op);
+  let ml: i32 = mem_load_opcode(op);
   if (ml != 0) {
     // An optional `offset=N` memarg atom appears between the op and the address
     // operand — wasm.fern's folded struct-drop / field helpers use it to read
@@ -1663,8 +1663,8 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     // it fixes both the emitted offset (was hardcoded 0) AND the operand index:
     // without it, enc_instr recursed into the `offset=8` ATOM (its `items` is
     // null) and SIGSEGV'd on any struct with a pointer field (#4801).
-    var loff: i32 = 0;
-    var lopnd: i32 = 1;
+    let loff: i32 = 0;
+    let lopnd: i32 = 1;
     if (node.items.len() > 2 && is_offset_atom(node.items[1])) {
       loff = offset_atom_value(node.items[1]);
       lopnd = 2;
@@ -1675,10 +1675,10 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     out = leb_u32(out, loff);
     return out;
   }
-  var ms: i32 = mem_store_opcode(op);
+  let ms: i32 = mem_store_opcode(op);
   if (ms != 0) {
-    var soff: i32 = 0;
-    var sbase: i32 = 1;
+    let soff: i32 = 0;
+    let sbase: i32 = 1;
     if (node.items.len() > 3 && is_offset_atom(node.items[1])) {
       soff = offset_atom_value(node.items[1]);
       sbase = 2;
@@ -1698,7 +1698,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     out = out.append(27);  // 0x1b
     return out;
   }
-  var stf: i32 = sat_trunc_opcode(op);
+  let stf: i32 = sat_trunc_opcode(op);
   if (stf >= 0) {
     // Saturating float->int truncation: encode the single operand, then the
     // two-byte `0xFC idx` (LEB) form.
@@ -1706,10 +1706,10 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     out = out.append(252);  // 0xFC
     return leb_u32(out, stf);
   }
-  var sop: i32 = simd_opcode(op);
+  let sop: i32 = simd_opcode(op);
   if (sop >= 0) {
-    var sa: i32 = simd_arity(op);
-    var sk: i32 = 1;
+    let sa: i32 = simd_arity(op);
+    let sk: i32 = 1;
     while (sk <= sa) {
       out = wcat(out, enc_instr(node.items[sk], lnames, fnames, gnames, labels, tnames));
       sk = sk + 1;
@@ -1722,7 +1722,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     }
     return out;
   }
-  var blk: i32 = bulk_mem_opcode(op);
+  let blk: i32 = bulk_mem_opcode(op);
   if (blk >= 0) {
     // Bulk memory: three operands, then `0xFC idx` and the memory indexes.
     out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
@@ -1731,7 +1731,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     out = out.append(252);  // 0xFC
     return bulk_mem_tail(out, blk);
   }
-  var ao: i32 = arith_opcode(op);
+  let ao: i32 = arith_opcode(op);
   if (ao != 0) {
     // Arity comes from the node: a unary op (eqz, clz/ctz/popcnt, the
     // conversions) is written with one child, a binary op with two.
@@ -1777,10 +1777,10 @@ function flat_idx(text: string, names: string[]): i32 {
 // two paths agree byte-for-byte. The caller still appends the function-level
 // `end` (0x0b).
 function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnames: string[], tnames: string[]): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < instrs.len()) {
-    var op: string = instrs[i].text;
+    let op: string = instrs[i].text;
     if (op == "i32.const") {
       out = out.append(65);
       out = leb_i32(out, parse_dec(instrs[i + 1].text));
@@ -1796,8 +1796,8 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
       // a second unknown), mis-encoding any float-bearing flat body —
       // surfaced by the #4342 exponent-literal case.
       out = out.append(68);
-      var fbits: i64 = f64_bits(parse_f64(instrs[i + 1].text));
-      var fk: i32 = 0;
+      let fbits: i64 = f64_bits(parse_f64(instrs[i + 1].text));
+      let fk: i32 = 0;
       while (fk < 8) {
         out = out.append((fbits >> fk * 8 & 255) as i32);
         fk = fk + 1;
@@ -1858,7 +1858,7 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
       } else {
         out = out.append(4);
       }
-      var bt: i32 = 64;  // 0x40 empty blocktype
+      let bt: i32 = 64;  // 0x40 empty blocktype
       if (i + 1 < instrs.len() && node_head(instrs[i + 1]) == "result") {
         bt = valtype_byte(instrs[i + 1].items[1].text);
         i = i + 1;
@@ -1881,12 +1881,12 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
       out = out.append(26);
       i = i + 1;
     } else {
-      var ml: i32 = mem_load_opcode(op);
-      var ms: i32 = mem_store_opcode(op);
-      var ao: i32 = arith_opcode(op);
-      var stf: i32 = sat_trunc_opcode(op);
-      var blk: i32 = bulk_mem_opcode(op);
-      var sop: i32 = simd_opcode(op);
+      let ml: i32 = mem_load_opcode(op);
+      let ms: i32 = mem_store_opcode(op);
+      let ao: i32 = arith_opcode(op);
+      let stf: i32 = sat_trunc_opcode(op);
+      let blk: i32 = bulk_mem_opcode(op);
+      let sop: i32 = simd_opcode(op);
       if (ml != 0) {
         out = out.append(ml);
         out = leb_u32(out, memarg_align(op));
@@ -1932,18 +1932,18 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
 // (count, valtype), the code section's locals encoding.
 function enc_locals_vec(types: string[]): i32[] {
   // count distinct runs
-  var runs: i32 = 0;
-  var i: i32 = 0;
+  let runs: i32 = 0;
+  let i: i32 = 0;
   while (i < types.len()) {
     if (i == 0 || types[i] != types[i - 1]) {
       runs = runs + 1;
     }
     i = i + 1;
   }
-  var body: i32[] = [];
+  let body: i32[] = [];
   i = 0;
   while (i < types.len()) {
-    var n: i32 = 1;
+    let n: i32 = 1;
     while (i + n < types.len() && types[i + n] == types[i]) {
       n = n + 1;
     }
@@ -1956,16 +1956,16 @@ function enc_locals_vec(types: string[]): i32[] {
 
 // enc_functype emits `0x60 vec(params) vec(results)`.
 function enc_functype(params: string[], results: string[]): i32[] {
-  var o: i32[] = [];
+  let o: i32[] = [];
   o = o.append(96);
-  var pb: i32[] = [];
-  var i: i32 = 0;
+  let pb: i32[] = [];
+  let i: i32 = 0;
   while (i < params.len()) {
     pb = pb.append(valtype_byte(params[i]));
     i = i + 1;
   }
   o = wcat(o, wvec(params.len(), pb));
-  var rb: i32[] = [];
+  let rb: i32[] = [];
   i = 0;
   while (i < results.len()) {
     rb = rb.append(valtype_byte(results[i]));
@@ -1980,8 +1980,8 @@ function enc_functype(params: string[], results: string[]): i32[] {
 // `(result …)` inside the body is a flat block's own blocktype and belongs to
 // the instruction stream, so it is kept rather than filtered out.
 function body_instrs(fnode: SExpr): SExpr[] {
-  var out: SExpr[] = [];
-  var i: i32 = func_header_end(fnode);
+  let out: SExpr[] = [];
+  let i: i32 = func_header_end(fnode);
   while (i < fnode.items.len()) {
     out = out.append(fnode.items[i]);
     i = i + 1;
@@ -1991,9 +1991,9 @@ function body_instrs(fnode: SExpr): SExpr[] {
 
 // emit_binary walks the `(module …)` tree and returns the wasm binary.
 function emit_binary(mod: SExpr): i32[] {
-  var fnames: string[] = collect_func_names(mod);
-  var gnames: string[] = [];
-  var gi: i32 = 0;
+  let fnames: string[] = collect_func_names(mod);
+  let gnames: string[] = [];
+  let gi: i32 = 0;
   while (gi < mod.items.len()) {
     if (node_head(mod.items[gi]) == "global") {
       gnames = gnames.append(mod.items[gi].items[1].text);
@@ -2002,9 +2002,9 @@ function emit_binary(mod: SExpr): i32[] {
   }
 
   // Func nodes in index order: imports first, then defined.
-  var importNodes: SExpr[] = [];
-  var definedNodes: SExpr[] = [];
-  var i: i32 = 0;
+  let importNodes: SExpr[] = [];
+  let definedNodes: SExpr[] = [];
+  let i: i32 = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "import") {
       importNodes = importNodes.append(mod.items[i]);
@@ -2018,27 +2018,27 @@ function emit_binary(mod: SExpr): i32[] {
   // Named `(type $c (func …))` declarations (for call_indirect, used by
   // closures). They occupy the first type-section indices, in source
   // order; `tnames` maps each name to its index.
-  var tnames: string[] = [];
-  var namedTypeBody: i32[] = [];
+  let tnames: string[] = [];
+  let namedTypeBody: i32[] = [];
   i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "type") {
-      var tn: SExpr = mod.items[i];
+      let tn: SExpr = mod.items[i];
       tnames = tnames.append(tn.items[1].text);
-      var tf: SExpr = tn.items[2];  // the inner (func …)
+      let tf: SExpr = tn.items[2];  // the inner (func …)
       namedTypeBody = wcat(namedTypeBody, enc_functype(func_param_types(tf), func_result_types(tf)));
     }
     i = i + 1;
   }
-  var ntypes: i32 = tnames.len();
+  let ntypes: i32 = tnames.len();
 
   // --- type section: named types first, then one functype per function
   // (imports, then defined). A function's type index is offset by ntypes.
-  var nfuncs: i32 = importNodes.len() + definedNodes.len();
-  var typeBody: i32[] = namedTypeBody;
+  let nfuncs: i32 = importNodes.len() + definedNodes.len();
+  let typeBody: i32[] = namedTypeBody;
   i = 0;
   while (i < importNodes.len()) {
-    var fn: SExpr = func_node(importNodes[i]);
+    let fn: SExpr = func_node(importNodes[i]);
     typeBody = wcat(typeBody, enc_functype(func_param_types(fn), func_result_types(fn)));
     i = i + 1;
   }
@@ -2049,10 +2049,10 @@ function emit_binary(mod: SExpr): i32[] {
   }
 
   // --- import section. ---
-  var impBody: i32[] = [];
+  let impBody: i32[] = [];
   i = 0;
   while (i < importNodes.len()) {
-    var imp: SExpr = importNodes[i];
+    let imp: SExpr = importNodes[i];
     impBody = wname(impBody, imp.items[1].text);
     impBody = wname(impBody, imp.items[2].text);
     impBody = impBody.append(0);  // import kind: func
@@ -2061,7 +2061,7 @@ function emit_binary(mod: SExpr): i32[] {
   }
 
   // --- function section: defined funcs' type indices. ---
-  var funcBody: i32[] = [];
+  let funcBody: i32[] = [];
   i = 0;
   while (i < definedNodes.len()) {
     funcBody = leb_u32(funcBody, ntypes + importNodes.len() + i);
@@ -2069,14 +2069,14 @@ function emit_binary(mod: SExpr): i32[] {
   }
 
   // --- memory section: limits {min}. ---
-  var memBody: i32[] = [];
-  var memCount: i32 = 0;
+  let memBody: i32[] = [];
+  let memCount: i32 = 0;
   i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "memory") {
-      var mn: SExpr = mod.items[i];
+      let mn: SExpr = mod.items[i];
       // min is the last atom child (after an optional (export …)).
-      var minv: i32 = parse_dec(mn.items[mn.items.len() - 1].text);
+      let minv: i32 = parse_dec(mn.items[mn.items.len() - 1].text);
       memBody = memBody.append(0);
       memBody = leb_u32(memBody, minv);
       memCount = memCount + 1;
@@ -2085,12 +2085,12 @@ function emit_binary(mod: SExpr): i32[] {
   }
 
   // --- global section. ---
-  var globBody: i32[] = [];
-  var globCount: i32 = 0;
+  let globBody: i32[] = [];
+  let globCount: i32 = 0;
   i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "global") {
-      var gn: SExpr = mod.items[i];
+      let gn: SExpr = mod.items[i];
       // (global $name (mut T) (T.const N)) — T read from the node rather
       // than assumed i32: an i64 global (the leak census's counters, and
       // the allocation count of #9596) encoded as i32 gives a binary
@@ -2109,14 +2109,14 @@ function emit_binary(mod: SExpr): i32[] {
   }
 
   // --- export section: any inline memory export + the (export …) decls. ---
-  var expBody: i32[] = [];
-  var expCount: i32 = 0;
+  let expBody: i32[] = [];
+  let expCount: i32 = 0;
   i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "memory") {
       // (memory (export "memory") N) — inline export of mem 0.
-      var mm: SExpr = mod.items[i];
-      var j: i32 = 1;
+      let mm: SExpr = mod.items[i];
+      let j: i32 = 1;
       while (j < mm.items.len()) {
         if (node_head(mm.items[j]) == "export") {
           expBody = wname(expBody, mm.items[j].items[1].text);
@@ -2128,7 +2128,7 @@ function emit_binary(mod: SExpr): i32[] {
       }
     }
     if (node_head(mod.items[i]) == "export") {
-      var ex: SExpr = mod.items[i];
+      let ex: SExpr = mod.items[i];
       expBody = wname(expBody, ex.items[1].text);
       expBody = expBody.append(0);  // func
       expBody = leb_u32(expBody, name_idx(fnames, ex.items[2].items[1].text));
@@ -2138,13 +2138,13 @@ function emit_binary(mod: SExpr): i32[] {
   }
 
   // --- code section. ---
-  var codeBody: i32[] = [];
+  let codeBody: i32[] = [];
   i = 0;
   while (i < definedNodes.len()) {
-    var fnode: SExpr = definedNodes[i];
-    var lnames: string[] = local_names(fnode);
-    var fbody: i32[] = enc_locals_vec(local_decl_types(fnode));
-    var instrs: SExpr[] = body_instrs(fnode);
+    let fnode: SExpr = definedNodes[i];
+    let lnames: string[] = local_names(fnode);
+    let fbody: i32[] = enc_locals_vec(local_decl_types(fnode));
+    let instrs: SExpr[] = body_instrs(fnode);
     if (instrs.len() > 0 && instrs[0].kind != 0) {
       // FLAT body: a linear sequence of bare instruction atoms (the
       // stack-IR emitter's output). Encode it directly — flat WAT is the
@@ -2153,7 +2153,7 @@ function emit_binary(mod: SExpr): i32[] {
     } else {
       // FOLDED body: nested S-expression instructions (the AST emitter's
       // output), encoded post-order.
-      var k: i32 = 0;
+      let k: i32 = 0;
       while (k < instrs.len()) {
         fbody = wcat(fbody, enc_instr(instrs[k], lnames, fnames, gnames, [], tnames));
         k = k + 1;
@@ -2166,16 +2166,16 @@ function emit_binary(mod: SExpr): i32[] {
   }
 
   // --- data section. ---
-  var dataBody: i32[] = [];
-  var dataCount: i32 = 0;
+  let dataBody: i32[] = [];
+  let dataCount: i32 = 0;
   i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "data") {
-      var dn: SExpr = mod.items[i];
+      let dn: SExpr = mod.items[i];
       dataBody = dataBody.append(0);  // active, memory 0
       dataBody = wcat(dataBody, enc_instr(dn.items[1], [], fnames, gnames, [], []));  // offset (i32.const N)
       dataBody = dataBody.append(11);  // end
-      var bytes: i32[] = data_bytes(dn.items[2].text);
+      let bytes: i32[] = data_bytes(dn.items[2].text);
       dataBody = leb_u32(dataBody, bytes.len());
       dataBody = wcat(dataBody, bytes);
       dataCount = dataCount + 1;
@@ -2184,12 +2184,12 @@ function emit_binary(mod: SExpr): i32[] {
   }
 
   // --- table section: `(table N funcref)` → funcref limits {min N}. ---
-  var tableBody: i32[] = [];
-  var tableCount: i32 = 0;
+  let tableBody: i32[] = [];
+  let tableCount: i32 = 0;
   i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "table") {
-      var tbn: SExpr = mod.items[i];
+      let tbn: SExpr = mod.items[i];
       tableBody = tableBody.append(112);  // 0x70 funcref
       tableBody = tableBody.append(0);  // limits: no max
       tableBody = leb_u32(tableBody, parse_dec(tbn.items[1].text));
@@ -2200,17 +2200,17 @@ function emit_binary(mod: SExpr): i32[] {
 
   // --- elem section: `(elem (i32.const N) $f …)` → active segment on
   // table 0 with an offset expr + a vec of function indices. ---
-  var elemBody: i32[] = [];
-  var elemCount: i32 = 0;
+  let elemBody: i32[] = [];
+  let elemCount: i32 = 0;
   i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "elem") {
-      var en: SExpr = mod.items[i];
+      let en: SExpr = mod.items[i];
       elemBody = elemBody.append(0);  // flags: active, table 0
       elemBody = wcat(elemBody, enc_instr(en.items[1], [], fnames, gnames, [], []));
       elemBody = elemBody.append(11);  // end
-      var fb: i32[] = [];
-      var ei: i32 = 2;
+      let fb: i32[] = [];
+      let ei: i32 = 2;
       while (ei < en.items.len()) {
         fb = leb_u32(fb, name_idx(fnames, en.items[ei].text));
         ei = ei + 1;
@@ -2222,7 +2222,7 @@ function emit_binary(mod: SExpr): i32[] {
   }
 
   // --- assemble the module (sections in binary id order). ---
-  var out: i32[] = wmagic();
+  let out: i32[] = wmagic();
   out = wcat(out, wsection(1, wvec(ntypes + nfuncs, typeBody)));
   out = wcat(out, wsection(2, wvec(importNodes.len(), impBody)));
   out = wcat(out, wsection(3, wvec(definedNodes.len(), funcBody)));
@@ -2250,15 +2250,15 @@ function emit_binary(mod: SExpr): i32[] {
 
 // func_sig spells a func node's signature, for comparing two imports.
 function func_sig(fn: SExpr): string {
-  var o: string = "";
-  var ps: string[] = func_param_types(fn);
-  var i: i32 = 0;
+  let o: string = "";
+  let ps: string[] = func_param_types(fn);
+  let i: i32 = 0;
   while (i < ps.len()) {
     o = o + ps[i] + ",";
     i = i + 1;
   }
   o = o + "->";
-  var rs: string[] = func_result_types(fn);
+  let rs: string[] = func_result_types(fn);
   i = 0;
   while (i < rs.len()) {
     o = o + rs[i] + ",";
@@ -2271,7 +2271,7 @@ function func_sig(fn: SExpr): string {
 // `to` at the same index.
 function rename_atoms(n: SExpr, from: string[], to: string[]): SExpr {
   if (n.kind == 2) {
-    var k: i32 = index_of_str(from, n.text);
+    let k: i32 = index_of_str(from, n.text);
     if (k >= 0) {
       return SExpr { kind: 2, text: to[k], items: [] };
     }
@@ -2280,8 +2280,8 @@ function rename_atoms(n: SExpr, from: string[], to: string[]): SExpr {
   if (n.kind != 0) {
     return n;
   }
-  var out: SExpr[] = [];
-  var i: i32 = 0;
+  let out: SExpr[] = [];
+  let i: i32 = 0;
   while (i < n.items.len()) {
     out = out.append(rename_atoms(n.items[i], from, to));
     i = i + 1;
@@ -2298,18 +2298,18 @@ function rename_atoms(n: SExpr, from: string[], to: string[]): SExpr {
 // blocking-write-and-flush. Two declarations of different types are left as
 // they are: that conflict is the component step's to report.
 function merge_duplicate_imports(mod: SExpr): SExpr {
-  var keep: SExpr[] = [];
-  var seen_key: string[] = [];
-  var seen_name: string[] = [];
-  var from: string[] = [];
-  var to: string[] = [];
-  var i: i32 = 0;
+  let keep: SExpr[] = [];
+  let seen_key: string[] = [];
+  let seen_name: string[] = [];
+  let from: string[] = [];
+  let to: string[] = [];
+  let i: i32 = 0;
   while (i < mod.items.len()) {
-    var it: SExpr = mod.items[i];
+    let it: SExpr = mod.items[i];
     if (node_head(it) == "import" && it.items.len() == 4 && node_head(it.items[3]) == "func") {
-      var fn: SExpr = func_node(it);
-      var key: string = it.items[1].text + "\n" + it.items[2].text + "\n" + func_sig(fn);
-      var k: i32 = index_of_str(seen_key, key);
+      let fn: SExpr = func_node(it);
+      let key: string = it.items[1].text + "\n" + it.items[2].text + "\n" + func_sig(fn);
+      let k: i32 = index_of_str(seen_key, key);
       if (k >= 0) {
         from = from.append(func_name(fn));
         to = to.append(seen_name[k]);
@@ -2353,7 +2353,7 @@ pub function wat_to_binary(wat: string): i32[] {
 
 // component_preamble: "\0asm" + component version (13) / layer (1).
 pub function component_preamble(): i32[] {
-  var o: i32[] = [];
+  let o: i32[] = [];
   o = o.append(0);
   o = o.append(97);
   o = o.append(115);
@@ -2369,7 +2369,7 @@ pub function component_preamble(): i32[] {
 // core-module section (component section id 1), returning the component
 // binary. This is the structural envelope the canon / wasi layers build on.
 function component_wrap(core: i32[]): i32[] {
-  var o: i32[] = component_preamble();
+  let o: i32[] = component_preamble();
   return wcat(o, wsection(1, core));
 }
 
@@ -2385,14 +2385,14 @@ function component_wrap(core: i32[]): i32[] {
 //   5  instance        — an instance exporting "run" = func 0
 //  11  export          — that instance as "wasi:cli/run@0.2.0"
 pub function component_full(core: i32[]): i32[] {
-  var o: i32[] = component_preamble();
+  let o: i32[] = component_preamble();
   o = wcat(o, wsection(1, core));
 
   // 2 core-instance: vec(1)[ instantiate(0x00) module 0, 0 args ]
   o = wcat(o, wsection(2, [1, 0, 0, 0]));
 
   // 6 alias: vec(1)[ core(0) func(0) core-export(1) instance 0, name ]
-  var al: i32[] = [1, 0, 0, 1, 0];
+  let al: i32[] = [1, 0, 0, 1, 0];
   al = wname(al, "_lang_run");
   o = wcat(o, wsection(6, al));
 
@@ -2403,14 +2403,14 @@ pub function component_full(core: i32[]): i32[] {
   o = wcat(o, wsection(8, [1, 0, 0, 0, 0, 1]));
 
   // 5 instance: vec(1)[ inline exports: "run" = func 0 ]
-  var inst: i32[] = [1, 1, 1, 0];
+  let inst: i32[] = [1, 1, 1, 0];
   inst = wname(inst, "run");
   inst = inst.append(1);
   inst = inst.append(0);
   o = wcat(o, wsection(5, inst));
 
   // 11 export: vec(1)[ name "wasi:cli/run@0.2.0" = instance 0 ]
-  var ex: i32[] = [1, 0];
+  let ex: i32[] = [1, 0];
   ex = wname(ex, "wasi:cli/run@0.2.0");
   ex = ex.append(5);
   ex = ex.append(0);
@@ -2481,21 +2481,21 @@ function fs_write_tail(): string {
 // Composed fs prefixes (preamble + io/error + io/streams + fs tail), replacing
 // the former io_fs_*_prefix blobs.
 function io_fs_read_head(): i32[] {
-  var o: i32[] = component_preamble();
+  let o: i32[] = component_preamble();
   o = wcat(o, blob_to_bytes(tb_io_error()));
   o = wcat(o, blob_to_bytes(tb_io_streams_inout()));
   return wcat(o, blob_to_bytes(fs_read_tail()));
 }
 
 function io_fs_rw_head(): i32[] {
-  var o: i32[] = component_preamble();
+  let o: i32[] = component_preamble();
   o = wcat(o, blob_to_bytes(tb_io_error()));
   o = wcat(o, blob_to_bytes(tb_io_streams_inout()));
   return wcat(o, blob_to_bytes(fs_rw_tail()));
 }
 
 function io_fs_write_head(): i32[] {
-  var o: i32[] = component_preamble();
+  let o: i32[] = component_preamble();
   o = wcat(o, blob_to_bytes(tb_io_error()));
   o = wcat(o, blob_to_bytes(tb_io_streams_out()));
   return wcat(o, blob_to_bytes(fs_write_tail()));
@@ -2510,7 +2510,7 @@ function tb_cli_stdout(): string {
 // component prefix shared by every stdout-writing single-import shape, composed
 // from the per-interface type blocks.
 function io_stdout_head(): i32[] {
-  var o: i32[] = component_preamble();
+  let o: i32[] = component_preamble();
   o = wcat(o, blob_to_bytes(tb_io_error()));
   o = wcat(o, blob_to_bytes(tb_io_streams_out()));
   return wcat(o, blob_to_bytes(tb_cli_stdout()));
@@ -2568,8 +2568,8 @@ function tb_fswrite_random_tail(): string {
 
 // blob_to_bytes unpacks an embedded byte-string into an i32[] buffer.
 pub function blob_to_bytes(s: string): i32[] {
-  var o: i32[] = [];
-  var i: i32 = 0;
+  let o: i32[] = [];
+  let i: i32 = 0;
   while (i < s.len()) {
     o = o.append(s[i] as i32);
     i = i + 1;
@@ -2582,7 +2582,7 @@ pub function component_full_io(core: i32[], drop_io_errors: boolean = false): i3
   // canonical order (preamble, io/error, io/streams, cli/stdout) rather than
   // one opaque blob — byte-identical to the old io_prefix, and the first step
   // of the generative builder (the blocks are reused by other shapes).
-  var o: i32[] = io_stdout_head();
+  let o: i32[] = io_stdout_head();
   o = wcat(o, wsection(1, core));
   // The suffix (shim cores + lower/finish wiring) is now generated from the
   // import list rather than emitted as one opaque blob.
@@ -2600,7 +2600,7 @@ pub function component_full_io(core: i32[], drop_io_errors: boolean = false): i3
 // so it is embedded verbatim as \xNN blobs around the core.
 
 pub function component_full_io_fs(core: i32[], drop_io_errors: boolean = false): i32[] {
-  var o: i32[] = io_fs_read_head();
+  let o: i32[] = io_fs_read_head();
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_read(drop_io_errors));
 }
@@ -2616,7 +2616,7 @@ pub function component_full_io_fs(core: i32[], drop_io_errors: boolean = false):
 // blobs around the core.
 
 pub function component_full_io_fs_write(core: i32[], drop_io_errors: boolean = false): i32[] {
-  var o: i32[] = io_fs_write_head();
+  let o: i32[] = io_fs_write_head();
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_write(drop_io_errors));
 }
@@ -2633,7 +2633,7 @@ pub function component_full_io_fs_write(core: i32[], drop_io_errors: boolean = f
 // so it carries its own constant \xNN blobs.
 
 pub function component_full_io_fs_rw(core: i32[], drop_io_errors: boolean = false): i32[] {
-  var o: i32[] = io_fs_rw_head();
+  let o: i32[] = io_fs_rw_head();
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_rw(drop_io_errors));
 }
@@ -2648,7 +2648,7 @@ pub function component_full_io_fs_rw(core: i32[], drop_io_errors: boolean = fals
 // so embedded as \xNN blobs around the core.
 
 pub function component_full_io_random(core: i32[], drop_io_errors: boolean = false): i32[] {
-  var o: i32[] = io_stdout_head();
+  let o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_random()));
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_random(drop_io_errors));
@@ -2663,7 +2663,7 @@ pub function component_full_io_random(core: i32[], drop_io_errors: boolean = fal
 // wasi:cli/run component. Constant for the shape, so embedded as \xNN blobs.
 
 pub function component_full_io_env(core: i32[], drop_io_errors: boolean = false): i32[] {
-  var o: i32[] = io_stdout_head();
+  let o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_cli_environment_env()));
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_env(drop_io_errors));
@@ -2678,7 +2678,7 @@ pub function component_full_io_env(core: i32[], drop_io_errors: boolean = false)
 // wasi:cli/run component. Constant for the shape, embedded as \xNN blobs.
 
 pub function component_full_io_args(core: i32[], drop_io_errors: boolean = false): i32[] {
-  var o: i32[] = io_stdout_head();
+  let o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_cli_environment_args()));
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_args(drop_io_errors));
@@ -2694,7 +2694,7 @@ pub function component_full_io_args(core: i32[], drop_io_errors: boolean = false
 // blobs.
 
 pub function component_full_io_clock(core: i32[], drop_io_errors: boolean = false): i32[] {
-  var o: i32[] = io_stdout_head();
+  let o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_wall_clock()));
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_clock(drop_io_errors));
@@ -2710,7 +2710,7 @@ pub function component_full_io_clock(core: i32[], drop_io_errors: boolean = fals
 // the shape, embedded as \xNN blobs.
 
 pub function component_full_io_clock_mono(core: i32[], drop_io_errors: boolean = false): i32[] {
-  var o: i32[] = io_stdout_head();
+  let o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_monotonic_clock()));
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_clock_mono(drop_io_errors));
@@ -2728,7 +2728,7 @@ pub function component_full_io_clock_mono(core: i32[], drop_io_errors: boolean =
 // native. Exports `_lang_run` + `cabi_realloc` (env + fs lists).
 
 pub function component_full_io_fs_read_env(core: i32[], drop_io_errors: boolean = false): i32[] {
-  var o: i32[] = io_fs_read_head();
+  let o: i32[] = io_fs_read_head();
   o = wcat(o, blob_to_bytes(tb_fsread_env_tail()));
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_read_env(drop_io_errors));
@@ -2745,7 +2745,7 @@ pub function component_full_io_fs_read_env(core: i32[], drop_io_errors: boolean 
 // byte-identically to native. Exports `_lang_run` + `cabi_realloc`.
 
 pub function component_full_io_fs_rw_env(core: i32[], drop_io_errors: boolean = false): i32[] {
-  var o: i32[] = io_fs_rw_head();
+  let o: i32[] = io_fs_rw_head();
   o = wcat(o, blob_to_bytes(tb_fsrw_env_tail()));
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_rw_env(drop_io_errors));
@@ -2762,7 +2762,7 @@ pub function component_full_io_fs_rw_env(core: i32[], drop_io_errors: boolean = 
 // to native. Exports `_lang_run` + `cabi_realloc` (fs lists).
 
 pub function component_full_io_random_write(core: i32[], drop_io_errors: boolean = false): i32[] {
-  var o: i32[] = io_fs_write_head();
+  let o: i32[] = io_fs_write_head();
   o = wcat(o, blob_to_bytes(tb_fswrite_random_tail()));
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_random_write(drop_io_errors));
@@ -2779,7 +2779,7 @@ pub function component_full_io_random_write(core: i32[], drop_io_errors: boolean
 // Exports `_lang_run`; no list results, so no cabi_realloc.
 
 pub function component_full_io_eprint(core: i32[], drop_io_errors: boolean = false): i32[] {
-  var o: i32[] = io_stdout_head();
+  let o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_cli_stderr()));
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_eprint(drop_io_errors));
@@ -2794,7 +2794,7 @@ pub function component_full_io_eprint(core: i32[], drop_io_errors: boolean = fal
 // the native compiler's canonical order. No list results, so no cabi_realloc.
 
 pub function component_full_io_exit(core: i32[], drop_io_errors: boolean = false): i32[] {
-  var o: i32[] = io_stdout_head();
+  let o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_cli_exit()));
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_exit(drop_io_errors));
@@ -2803,11 +2803,11 @@ pub function component_full_io_exit(core: i32[], drop_io_errors: boolean = false
 // Assertions report on stderr before exiting. Import both interfaces over
 // the stdout prefix; the exit interface is type 6 after stderr's type 5.
 pub function component_full_io_eprint_exit(core: i32[], drop_io_errors: boolean = false): i32[] {
-  var o: i32[] = io_stdout_head();
+  let o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_cli_stderr()));
   o = wcat(o, blob_to_bytes("\x07\x1d\x01B\x03\x01j\x00\x00\x01@\x01\x06status\x00\x01\x00\x04\x00\x04exit\x01\x01\n\x18\x01\x00\x13wasi:cli/exit@0.2.0\x05\x06"));
   o = wcat(o, wsection(1, core));
-  var none: i32[] = [];
+  let none: i32[] = [];
   return wcat(o, component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0", "wasi:cli/exit@0.2.0"],
     [blocking_write_name(), "get-stdout", "get-stderr", "exit"],
@@ -2829,7 +2829,7 @@ pub function component_full_io_eprint_exit(core: i32[], drop_io_errors: boolean 
 // Exports `_lang_run` + `cabi_realloc` (args + fs lists).
 
 pub function component_full_io_fs_args_read(core: i32[], drop_io_errors: boolean = false): i32[] {
-  var o: i32[] = io_fs_read_head();
+  let o: i32[] = io_fs_read_head();
   o = wcat(o, blob_to_bytes(tb_fsread_args_tail()));
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_args_read(drop_io_errors));
@@ -2848,7 +2848,7 @@ function tb_fsrw_args_tail(): string {
 }
 
 pub function component_full_io_fs_rw_args(core: i32[], drop_io_errors: boolean = false): i32[] {
-  var o: i32[] = io_fs_rw_head();
+  let o: i32[] = io_fs_rw_head();
   o = wcat(o, blob_to_bytes(tb_fsrw_args_tail()));
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_rw_args(drop_io_errors));
@@ -2870,7 +2870,7 @@ pub function component_full_io_fs_rw_args(core: i32[], drop_io_errors: boolean =
 // functype emits a core wasm functype: 0x60, vec(params), vec(results), where
 // each param/result is a valtype byte (i32=0x7f, i64=0x7e, f32=0x7d, f64=0x7c).
 function functype(params: i32[], results: i32[]): i32[] {
-  var t: i32[] = [96];
+  let t: i32[] = [96];
   t = leb_u32(t, params.len());
   t = wcat(t, params);
   t = leb_u32(t, results.len());
@@ -2878,11 +2878,11 @@ function functype(params: i32[], results: i32[]): i32[] {
 }
 
 function shim_trampoline_core(params: i32[], results: i32[]): i32[] {
-  var o: i32[] = [0, 97, 115, 109, 1, 0, 0, 0];
+  let o: i32[] = [0, 97, 115, 109, 1, 0, 0, 0];
   o = wcat(o, wsection(1, wvec(1, functype(params, results))));
   o = wcat(o, wsection(3, [1, 0]));
   o = wcat(o, wsection(4, [1, 112, 1, 1, 1]));
-  var ex: i32[] = [2];
+  let ex: i32[] = [2];
   ex = wname(ex, "0");
   ex = ex.append(0);
   ex = ex.append(0);
@@ -2890,8 +2890,8 @@ function shim_trampoline_core(params: i32[], results: i32[]): i32[] {
   ex = ex.append(1);
   ex = ex.append(0);
   o = wcat(o, wsection(7, ex));
-  var body: i32[] = [0];
-  var k: i32 = 0;
+  let body: i32[] = [0];
+  let k: i32 = 0;
   while (k < params.len()) {
     body = body.append(32);
     body = body.append(k);
@@ -2903,16 +2903,16 @@ function shim_trampoline_core(params: i32[], results: i32[]): i32[] {
   body = body.append(0);
   body = body.append(0);
   body = body.append(11);
-  var fe: i32[] = [];
+  let fe: i32[] = [];
   fe = leb_u32(fe, body.len());
   fe = wcat(fe, body);
   return wcat(o, wsection(10, wvec(1, fe)));
 }
 
 function shim_tablefill_core(params: i32[], results: i32[]): i32[] {
-  var o: i32[] = [0, 97, 115, 109, 1, 0, 0, 0];
+  let o: i32[] = [0, 97, 115, 109, 1, 0, 0, 0];
   o = wcat(o, wsection(1, wvec(1, functype(params, results))));
-  var im: i32[] = [2];
+  let im: i32[] = [2];
   im = im.append(0);
   im = wname(im, "0");
   im = im.append(0);
@@ -2943,7 +2943,7 @@ pub function comp_core_module_section(mod: i32[]): i32[] {
 
 // core-instance "instantiate" with no args (a self-contained module).
 function comp_core_instance_instantiate(modidx: i32): i32[] {
-  var b: i32[] = [1, 0];
+  let b: i32[] = [1, 0];
   b = leb_u32(b, modidx);
   b = b.append(0);
   return wsection(2, b);
@@ -2951,10 +2951,10 @@ function comp_core_instance_instantiate(modidx: i32): i32[] {
 
 // core-instance "instantiate" passing N instance args (name -> instance idx).
 function comp_core_instance_instantiate_args(modidx: i32, names: string[], insts: i32[]): i32[] {
-  var b: i32[] = [1, 0];
+  let b: i32[] = [1, 0];
   b = leb_u32(b, modidx);
   b = leb_u32(b, names.len());
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < names.len()) {
     b = wname(b, names[i]);
     b = b.append(18);
@@ -2966,9 +2966,9 @@ function comp_core_instance_instantiate_args(modidx: i32, names: string[], insts
 
 // core-instance "from-exports": package N (name, core-sort, idx) entries.
 function comp_core_instance_from_exports(names: string[], sorts: i32[], idxs: i32[]): i32[] {
-  var b: i32[] = [1, 1];
+  let b: i32[] = [1, 1];
   b = leb_u32(b, names.len());
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < names.len()) {
     b = wname(b, names[i]);
     b = b.append(sorts[i]);
@@ -2980,7 +2980,7 @@ function comp_core_instance_from_exports(names: string[], sorts: i32[], idxs: i3
 
 // alias a func exported by a component instance -> top-level component func.
 function comp_alias_inst_func(inst: i32, name: string): i32[] {
-  var b: i32[] = [1, 1, 0];
+  let b: i32[] = [1, 1, 0];
   b = leb_u32(b, inst);
   b = wname(b, name);
   return wsection(6, b);
@@ -2988,7 +2988,7 @@ function comp_alias_inst_func(inst: i32, name: string): i32[] {
 
 // alias a func exported by a CORE instance -> top-level core func.
 function comp_alias_core_func(coreinst: i32, name: string): i32[] {
-  var b: i32[] = [1, 0, 0, 1];
+  let b: i32[] = [1, 0, 0, 1];
   b = leb_u32(b, coreinst);
   b = wname(b, name);
   return wsection(6, b);
@@ -2996,7 +2996,7 @@ function comp_alias_core_func(coreinst: i32, name: string): i32[] {
 
 // alias a core-instance export of any sort (memory=2 / table=1 / func=0).
 function comp_alias_core_export(coresort: i32, coreinst: i32, name: string): i32[] {
-  var b: i32[] = [1, 0, coresort, 1];
+  let b: i32[] = [1, 0, coresort, 1];
   b = leb_u32(b, coreinst);
   b = wname(b, name);
   return wsection(6, b);
@@ -3004,7 +3004,7 @@ function comp_alias_core_export(coresort: i32, coreinst: i32, name: string): i32
 
 // canon lower a component func with no opts.
 function comp_canon_lower_noopts(funcidx: i32): i32[] {
-  var b: i32[] = [1, 1, 0];
+  let b: i32[] = [1, 1, 0];
   b = leb_u32(b, funcidx);
   b = b.append(0);
   return wsection(8, b);
@@ -3012,7 +3012,7 @@ function comp_canon_lower_noopts(funcidx: i32): i32[] {
 
 // canon lower carrying a single `memory` option.
 function comp_canon_lower_mem(funcidx: i32, memidx: i32): i32[] {
-  var b: i32[] = [1, 1, 0];
+  let b: i32[] = [1, 1, 0];
   b = leb_u32(b, funcidx);
   b = b.append(1);
   b = b.append(3);
@@ -3022,7 +3022,7 @@ function comp_canon_lower_mem(funcidx: i32, memidx: i32): i32[] {
 
 // canon lift a core func into a component func of the given type, no opts.
 function comp_canon_lift_noopts(corefunc: i32, typeidx: i32): i32[] {
-  var b: i32[] = [1, 0, 0];
+  let b: i32[] = [1, 0, 0];
   b = leb_u32(b, corefunc);
   b = b.append(0);
   b = leb_u32(b, typeidx);
@@ -3031,14 +3031,14 @@ function comp_canon_lift_noopts(corefunc: i32, typeidx: i32): i32[] {
 
 // two component types: result<_,_> at `rt`, then func() -> result<rt> at rt+1.
 function comp_type_result_unit(rt: i32): i32[] {
-  var b: i32[] = [2, 106, 0, 0, 64, 0, 0];
+  let b: i32[] = [2, 106, 0, 0, 64, 0, 0];
   b = leb_u32(b, rt);
   return wsection(7, b);
 }
 
 // component instance packaging one func under `name`.
 function comp_instance_one_func(name: string, funcidx: i32): i32[] {
-  var b: i32[] = [1, 1, 1, 0];
+  let b: i32[] = [1, 1, 1, 0];
   b = wname(b, name);
   b = b.append(1);
   b = leb_u32(b, funcidx);
@@ -3047,7 +3047,7 @@ function comp_instance_one_func(name: string, funcidx: i32): i32[] {
 
 // export a component instance under a WASI interface name.
 function comp_export_one_instance(name: string, inst: i32): i32[] {
-  var b: i32[] = [1, 0];
+  let b: i32[] = [1, 0];
   b = wname(b, name);
   b = b.append(5);
   b = leb_u32(b, inst);
@@ -3059,7 +3059,7 @@ function comp_export_one_instance(name: string, inst: i32): i32[] {
 // (a resource surfaced out of an imported interface, for a canon resource.drop
 // or an own<> handle type).
 pub function comp_alias_inst_type(inst: i32, name: string): i32[] {
-  var b: i32[] = [1, 3, 0];
+  let b: i32[] = [1, 3, 0];
   b = leb_u32(b, inst);
   b = wname(b, name);
   return wsection(6, b);
@@ -3067,7 +3067,7 @@ pub function comp_alias_inst_type(inst: i32, name: string): i32[] {
 
 // component type own<rt>.
 function comp_type_own(rt: i32): i32[] {
-  var b: i32[] = [1, 105];
+  let b: i32[] = [1, 105];
   b = leb_u32(b, rt);
   return wsection(7, b);
 }
@@ -3075,7 +3075,7 @@ function comp_type_own(rt: i32): i32[] {
 // component func type `handle: func(request: own_req, response-out: own_out)`
 // — wasi:http/incoming-handler's one export, no result.
 function comp_type_handle_func(own_req: i32, own_out: i32): i32[] {
-  var b: i32[] = [1, 64, 2];
+  let b: i32[] = [1, 64, 2];
   b = wname(b, "request");
   b = leb_u32(b, own_req);
   b = wname(b, "response-out");
@@ -3087,7 +3087,7 @@ function comp_type_handle_func(own_req: i32, own_out: i32): i32[] {
 
 // canon resource.drop: a core func that drops a handle of resourceT.
 function comp_canon_resource_drop(rt: i32): i32[] {
-  var b: i32[] = [1, 3];
+  let b: i32[] = [1, 3];
   b = leb_u32(b, rt);
   return wsection(8, b);
 }
@@ -3095,7 +3095,7 @@ function comp_canon_resource_drop(rt: i32): i32[] {
 // canon lower carrying both `memory` and `realloc` options (for imports whose
 // canonical-ABI shape returns a heap-allocated list/string).
 function comp_canon_lower_mem_realloc(funcidx: i32, memidx: i32, realloc: i32): i32[] {
-  var b: i32[] = [1, 1, 0];
+  let b: i32[] = [1, 1, 0];
   b = leb_u32(b, funcidx);
   b = b.append(2);
   b = b.append(3);
@@ -3107,7 +3107,7 @@ function comp_canon_lower_mem_realloc(funcidx: i32, memidx: i32, realloc: i32): 
 
 // suffix_group_find returns the index of `iface` in `order`, or -1.
 function suffix_group_find(order: string[], iface: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < order.len()) {
     if (order[i] == iface) {
       return i;
@@ -3140,17 +3140,17 @@ struct SuffixWired { o: i32[], n_cfunc: i32, n_corefunc: i32, n_inst: i32, user_
 // lowerings, the user module's instantiation and its memory / realloc /
 // table plumbing — leaving the export tail to the caller: component_suffix
 // lifts a wasi:cli/run entry, component_suffix_http an incoming-handler.
-function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_inst0: i32, user_mod: i32): SuffixWired {
-  var n: i32 = imp_iface.len();
-  var o: i32[] = [];
-  var none: i32[] = [];
+function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_resourceT: i32[], n_inst0: i32, user_mod: i32): SuffixWired {
+  let n: i32 = imp_iface.len();
+  let o: i32[] = [];
+  let none: i32[] = [];
   // per-import scratch (filled as the phases run).
-  var tramp_mod: i32[] = [];
-  var fixup_mod: i32[] = [];
-  var tramp_inst: i32[] = [];
-  var tbl: i32[] = [];
-  var coref: i32[] = [];
-  var i: i32 = 0;
+  let tramp_mod: i32[] = [];
+  let fixup_mod: i32[] = [];
+  let tramp_inst: i32[] = [];
+  let tbl: i32[] = [];
+  let coref: i32[] = [];
+  let i: i32 = 0;
   while (i < n) {
     tramp_mod = tramp_mod.append(0);
     fixup_mod = fixup_mod.append(0);
@@ -3159,22 +3159,22 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
     coref = coref.append(0);
     i = i + 1;
   }
-  var n_mod: i32 = user_mod + 1;
-  var n_cfunc: i32 = 0;
-  var n_corefunc: i32 = 0;
-  var n_coreinst: i32 = 0;
-  var n_coretab: i32 = 0;
-  var n_inst: i32 = n_inst0;
+  let n_mod: i32 = user_mod + 1;
+  let n_cfunc: i32 = 0;
+  let n_corefunc: i32 = 0;
+  let n_coreinst: i32 = 0;
+  let n_coretab: i32 = 0;
+  let n_inst: i32 = n_inst0;
   // Phase B: trampoline + table-fill cores per memory import.
   i = 0;
   while (i < n) {
     if (imp_kind[i] == 1 || imp_kind[i] == 2) {
       tramp_mod = tramp_mod.with(i, n_mod);
       n_mod = n_mod + 1;
-      o = wcat(o, comp_core_module_section(shim_trampoline_core(imp_params[i], none)));
+      o = wcat(o, comp_core_module_section(shim_trampoline_core(imp_params[i], imp_results[i])));
       fixup_mod = fixup_mod.with(i, n_mod);
       n_mod = n_mod + 1;
-      o = wcat(o, comp_core_module_section(shim_tablefill_core(imp_params[i], none)));
+      o = wcat(o, comp_core_module_section(shim_tablefill_core(imp_params[i], imp_results[i])));
     }
     i = i + 1;
   }
@@ -3190,16 +3190,16 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
   }
   // Phase D: no-opt lowers / resource.drops / mem placeholders, grouped by
   // import interface (first-occurrence order).
-  var order: string[] = [];
-  var group_names: string[][] = [];
-  var group_idxs: i32[][] = [];
+  let order: string[] = [];
+  let group_names: string[][] = [];
+  let group_idxs: i32[][] = [];
   i = 0;
   while (i < n) {
-    var k: i32 = imp_kind[i];
-    var idx: i32 = 0;
+    let k: i32 = imp_kind[i];
+    let idx: i32 = 0;
     if (k == 0) {
       o = wcat(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
-      var cf: i32 = n_cfunc;
+      let cf: i32 = n_cfunc;
       n_cfunc = n_cfunc + 1;
       idx = n_corefunc;
       o = wcat(o, comp_canon_lower_noopts(cf));
@@ -3213,7 +3213,7 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
       o = wcat(o, comp_alias_core_func(tramp_inst[i], "0"));
       n_corefunc = n_corefunc + 1;
     }
-    var gi: i32 = suffix_group_find(order, imp_iface[i]);
+    let gi: i32 = suffix_group_find(order, imp_iface[i]);
     if (gi < 0) {
       order = order.append(imp_iface[i]);
       group_names = group_names.append([imp_name[i]]);
@@ -3225,13 +3225,13 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
     i = i + 1;
   }
   // package each interface's lowered funcs into a core instance.
-  var arg_insts: i32[] = [];
-  var g: i32 = 0;
+  let arg_insts: i32[] = [];
+  let g: i32 = 0;
   while (g < order.len()) {
-    var gn: string[] = group_names[g];
-    var gx: i32[] = group_idxs[g];
-    var sorts: i32[] = [];
-    var s: i32 = 0;
+    let gn: string[] = group_names[g];
+    let gx: i32[] = group_idxs[g];
+    let sorts: i32[] = [];
+    let s: i32 = 0;
     while (s < gn.len()) {
       sorts = sorts.append(0);
       s = s + 1;
@@ -3242,12 +3242,12 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
     g = g + 1;
   }
   // Phase E: instantiate the user module with the per-interface args.
-  var user_inst: i32 = n_coreinst;
+  let user_inst: i32 = n_coreinst;
   o = wcat(o, comp_core_instance_instantiate_args(user_mod, order, arg_insts));
   n_coreinst = n_coreinst + 1;
   // Phase F: memory + realloc + trampoline tables.
-  var need_mem: boolean = false;
-  var need_realloc: boolean = false;
+  let need_mem: boolean = false;
+  let need_realloc: boolean = false;
   i = 0;
   while (i < n) {
     if (imp_kind[i] == 1) {
@@ -3262,7 +3262,7 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
   if (need_mem) {
     o = wcat(o, comp_alias_core_export(2, user_inst, "memory"));
   }
-  var realloc_f: i32 = 0;
+  let realloc_f: i32 = 0;
   if (need_realloc) {
     realloc_f = n_corefunc;
     o = wcat(o, comp_alias_core_export(0, user_inst, "cabi_realloc"));
@@ -3282,14 +3282,14 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
   while (i < n) {
     if (imp_kind[i] == 1) {
       o = wcat(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
-      var cfg: i32 = n_cfunc;
+      let cfg: i32 = n_cfunc;
       n_cfunc = n_cfunc + 1;
       coref = coref.with(i, n_corefunc);
       o = wcat(o, comp_canon_lower_mem(cfg, 0));
       n_corefunc = n_corefunc + 1;
     } else if (imp_kind[i] == 2) {
       o = wcat(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
-      var cfr: i32 = n_cfunc;
+      let cfr: i32 = n_cfunc;
       n_cfunc = n_cfunc + 1;
       coref = coref.with(i, n_corefunc);
       o = wcat(o, comp_canon_lower_mem_realloc(cfr, 0, realloc_f));
@@ -3301,7 +3301,7 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
   i = 0;
   while (i < n) {
     if (imp_kind[i] == 1 || imp_kind[i] == 2) {
-      var arg: i32 = n_coreinst;
+      let arg: i32 = n_coreinst;
       o = wcat(o, comp_core_instance_from_exports(["$imports", "0"], [1, 0], [tbl[i], coref[i]]));
       n_coreinst = n_coreinst + 1;
       o = wcat(o, comp_core_instance_instantiate_args(fixup_mod[i], [""], [arg]));
@@ -3314,15 +3314,15 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
 
 // component_suffix wires the imports and lifts `core_export` (the user
 // module's `() -> i32` run entry) as wasi:cli/run.
-pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string): i32[] {
-  var w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_resourceT, n_inst0, user_mod);
-  var o: i32[] = w.o;
-  var run_core_f: i32 = w.n_corefunc;
+pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string): i32[] {
+  let w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_resourceT, n_inst0, user_mod);
+  let o: i32[] = w.o;
+  let run_core_f: i32 = w.n_corefunc;
   o = wcat(o, comp_alias_core_func(w.user_inst, core_export));
   o = wcat(o, comp_type_result_unit(n_type0));
-  var lifted: i32 = w.n_cfunc;
+  let lifted: i32 = w.n_cfunc;
   o = wcat(o, comp_canon_lift_noopts(run_core_f, n_type0 + 1));
-  var run_inst: i32 = w.n_inst;
+  let run_inst: i32 = w.n_inst;
   o = wcat(o, comp_instance_one_func("run", lifted));
   return wcat(o, comp_export_one_instance("wasi:cli/run@0.2.0", run_inst));
 }
@@ -3336,17 +3336,17 @@ pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind:
 // surfaced from the imported wasi:http/types instance ahead of the suffix
 // (comp_alias_inst_type); the own<> wrappers and the func type are types
 // n_type0 .. n_type0 + 2.
-pub function component_suffix_http(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, req_t: i32, out_t: i32): i32[] {
-  var w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_resourceT, n_inst0, user_mod);
-  var o: i32[] = w.o;
-  var handle_core_f: i32 = w.n_corefunc;
+pub function component_suffix_http(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, req_t: i32, out_t: i32): i32[] {
+  let w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_resourceT, n_inst0, user_mod);
+  let o: i32[] = w.o;
+  let handle_core_f: i32 = w.n_corefunc;
   o = wcat(o, comp_alias_core_func(w.user_inst, "wasi:http/incoming-handler@0.2.0#handle"));
   o = wcat(o, comp_type_own(req_t));
   o = wcat(o, comp_type_own(out_t));
   o = wcat(o, comp_type_handle_func(n_type0, n_type0 + 1));
-  var lifted: i32 = w.n_cfunc;
+  let lifted: i32 = w.n_cfunc;
   o = wcat(o, comp_canon_lift_noopts(handle_core_f, n_type0 + 2));
-  var handler_inst: i32 = w.n_inst;
+  let handler_inst: i32 = w.n_inst;
   o = wcat(o, comp_instance_one_func("handle", lifted));
   return wcat(o, comp_export_one_instance("wasi:http/incoming-handler@0.2.0", handler_inst));
 }
@@ -3354,12 +3354,25 @@ pub function component_suffix_http(imp_iface: string[], imp_name: string[], imp_
 // Fixed CLI prefixes surface wasi:io/error's error resource as type 1.
 // Add its drop only when the core requests checked output, preserving the
 // low-level framing API for cores with the original fixed import set.
+// no_results is the result list of `n` imports that all return through a
+// return area: the framed shapes' WASI imports.
+function no_results(n: i32): i32[][] {
+  let out: i32[][] = [];
+  let none: i32[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(none);
+    i = i + 1;
+  }
+  return out;
+}
+
 function component_suffix_io(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string, drop_io_errors: boolean): i32[] {
   if (!drop_io_errors) {
-    return component_suffix(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_resourceT, n_type0, n_inst0, user_mod, core_export);
+    return component_suffix(imp_iface, imp_name, imp_kind, imp_inst, imp_params, no_results(imp_params.len()), imp_resourceT, n_type0, n_inst0, user_mod, core_export);
   }
-  var none: i32[] = [];
-  return component_suffix(imp_iface.append("wasi:io/error@0.2.0"), imp_name.append("[resource-drop]error"), imp_kind.append(3), imp_inst.append(0), imp_params.append(none), imp_resourceT.append(1), n_type0, n_inst0, user_mod, core_export);
+  let none: i32[] = [];
+  return component_suffix(imp_iface.append("wasi:io/error@0.2.0"), imp_name.append("[resource-drop]error"), imp_kind.append(3), imp_inst.append(0), imp_params.append(none), no_results(imp_params.len() + 1), imp_resourceT.append(1), n_type0, n_inst0, user_mod, core_export);
 }
 
 // blocking_write_name / write_sig: the one memory import every write-shape
@@ -3372,7 +3385,7 @@ function blocking_write_name(): string {
 // (mem, streams=1), get-stdout (no-opt, cli/stdout=2)]; Phase A leaves
 // component types=5, instances=3.
 function component_suffix_stdout(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
     [blocking_write_name(), "get-stdout"],
@@ -3387,7 +3400,7 @@ function component_suffix_stdout(drop_io_errors: boolean = false): i32[] {
 // component_suffix_eprint: stdout + an extra get-stderr no-opt import.
 // Phase A leaves component types=6, instances=4.
 function component_suffix_eprint(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0"],
     [blocking_write_name(), "get-stdout", "get-stderr"],
@@ -3402,7 +3415,7 @@ function component_suffix_eprint(drop_io_errors: boolean = false): i32[] {
 // component_suffix_exit: stdout + an extra exit no-opt import (cli/exit).
 // Phase A leaves component types=6, instances=4.
 function component_suffix_exit(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/exit@0.2.0"],
     [blocking_write_name(), "get-stdout", "exit"],
@@ -3426,7 +3439,7 @@ function component_suffix_exit(drop_io_errors: boolean = false): i32[] {
 // closes its interface's group, which is where the composer puts it. Phase A
 // leaves component types=9, instances=5.
 function component_suffix_fs_read(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
     ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "get-stdout"],
@@ -3439,7 +3452,7 @@ function component_suffix_fs_read(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_random(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:random/random@0.2.0"],
     [blocking_write_name(), "get-stdout", "get-random-u64"],
@@ -3452,7 +3465,7 @@ function component_suffix_random(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_env(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
     [blocking_write_name(), "get-stdout", "get-environment"],
@@ -3465,7 +3478,7 @@ function component_suffix_env(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_args(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
     [blocking_write_name(), "get-stdout", "get-arguments"],
@@ -3478,7 +3491,7 @@ function component_suffix_args(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_clock(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:clocks/wall-clock@0.2.0"],
     [blocking_write_name(), "get-stdout", "now"],
@@ -3491,7 +3504,7 @@ function component_suffix_clock(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_clock_mono(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:clocks/monotonic-clock@0.2.0"],
     [blocking_write_name(), "get-stdout", "now"],
@@ -3504,7 +3517,7 @@ function component_suffix_clock_mono(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_random_write(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:random/random@0.2.0"],
     ["get-directories", "[method]descriptor.open-at", "[method]descriptor.write-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[resource-drop]output-stream", "get-stdout", "get-random-u64"],
@@ -3517,7 +3530,7 @@ function component_suffix_random_write(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_fs_write(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
     ["get-directories", "[method]descriptor.open-at", "[method]descriptor.write-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[resource-drop]output-stream", "get-stdout"],
@@ -3530,7 +3543,7 @@ function component_suffix_fs_write(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_fs_rw(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
     ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[method]descriptor.write-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "[resource-drop]output-stream", "get-stdout"],
@@ -3543,7 +3556,7 @@ function component_suffix_fs_rw(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_fs_read_env(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
     ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "get-stdout", "get-environment"],
@@ -3556,7 +3569,7 @@ function component_suffix_fs_read_env(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_fs_rw_env(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
     ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[method]descriptor.write-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "[resource-drop]output-stream", "get-stdout", "get-environment"],
@@ -3569,7 +3582,7 @@ function component_suffix_fs_rw_env(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_fs_args_read(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
     ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "get-stdout", "get-arguments"],
@@ -3582,7 +3595,7 @@ function component_suffix_fs_args_read(drop_io_errors: boolean = false): i32[] {
 }
 
 function component_suffix_fs_rw_args(drop_io_errors: boolean = false): i32[] {
-  var none: i32[] = [];
+  let none: i32[] = [];
   return component_suffix_io(
     ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
     ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[method]descriptor.write-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "[resource-drop]output-stream", "get-stdout", "get-arguments"],

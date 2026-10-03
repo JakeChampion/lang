@@ -39,7 +39,7 @@ function wrap[T](t: T): i32 { return applyU(A { v: 7 }, (x: U) => 1); }
 function main(): i32 { return wrap(0i32); }`},
 		{"top-level function used as a function value", decls + `
 function main(): i32 {
-    var h: (U) => i32 = takesU;
+    let h: (U) => i32 = takesU;
     return h(A { v: 7 });
 }`},
 
@@ -48,9 +48,9 @@ function main(): i32 {
 function main(): i32 {
     return applyU(A { v: 7 }, (x: U) => 1);
 }`},
-		{"union-annotated lambda in a var initialiser", decls + `
+		{"union-annotated lambda in a let initialiser", decls + `
 function main(): i32 {
-    var g: (U) => i32 = ((v: U) => takesU(v));
+    let g: (U) => i32 = ((v: U) => takesU(v));
     return g(A { v: 7 });
 }`},
 
@@ -65,7 +65,7 @@ function main(): i32 { return applyE(E.X, (x: E) => 1); }`},
 		// synthetic decl, which carries no type parameters).
 		{"lambda nested inside a lambda", decls + `
 function main(): i32 {
-    var outer: (i32) => i32 = ((n: i32) => applyU(A { v: n }, (x: U) => 1));
+    let outer: (i32) => i32 = ((n: i32) => applyU(A { v: n }, (x: U) => 1));
     return outer(7);
 }`},
 		{"lambda inside a nested named function", decls + `
@@ -74,12 +74,12 @@ function main(): i32 {
     return inner();
 }`},
 
-		// A `var` annotation nested in an expression-position block is
+		// A `let` annotation nested in an expression-position block is
 		// the other half of the same statement-only walk.
-		{"var annotation inside a value block", decls + `
+		{"let annotation inside a value block", decls + `
 function main(): i32 {
-    var t: i32 = {
-        var h: (U) => i32 = takesU;
+    let t: i32 = {
+        let h: (U) => i32 = takesU;
         h(A { v: 7 })
     };
     return t;
@@ -102,7 +102,7 @@ function main(): i32 {
 // something that silently type-checks.
 func TestLambdaParamUnknownTypeStillReported(t *testing.T) {
 	const src = `function main(): i32 {
-    var f: (i32) => i32 = ((x: Wibble) => 1);
+    let f: (i32) => i32 = ((x: Wibble) => 1);
     return f(1);
 }`
 	prog, err := parser.Parse(src)

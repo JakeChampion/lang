@@ -61,7 +61,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 			name: "one per capability, in vocabulary order",
 			src: `import "std/http";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var a: i64 = now_unix_ms();
+    let a: i64 = now_unix_ms();
     match (env("HOME")) { Some(v) => { }, None => { } }` + tail,
 			want: []string{"2:1 handle env env", "2:1 handle now_unix_ms now"},
 		},
@@ -69,7 +69,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 			name: "the bag by type, in any position",
 			src: `import "std/http";
 function route(bag: Platform, req: HttpRequest): HttpResponse {
-    var c: i32 = random_i32();` + tail,
+    let c: i32 = random_i32();` + tail,
 			want: []string{"2:1 route random_i32 random"},
 		},
 		{
@@ -79,7 +79,7 @@ import "std/platform";
 function helper(plat: Platform): void { plat.log("hit"); }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     helper(plat);
-    var a: i64 = plat.now_ms();` + tail,
+    let a: i64 = plat.now_ms();` + tail,
 			want: nil,
 		},
 		{
@@ -88,20 +88,20 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 struct Sock { fd: i32 }
 function (s: Sock) close(): i32 { eprint("closing"); return s.fd; }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var s: Sock = Sock { fd: 3 };
-    var n: i32 = s.close();` + tail,
+    let s: Sock = Sock { fd: 3 };
+    let n: i32 = s.close();` + tail,
 			want: []string{"4:1 handle eprint log"},
 		},
 		{
-			// #10619: std/url's url_parse has a `var close`, which reached
+			// #10619: std/url's url_parse has a `let close`, which reached
 			// std/async's reactor `close` and refused examples/wasm/url_router.
 			name: "a local named like a method",
 			src: `import "std/http";
 struct Sock { fd: i32 }
 function (s: Sock) close(): i32 { eprint("closing"); return s.fd; }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var close: i32 = 3;
-    var n: i32 = close + 1;` + tail,
+    let close: i32 = 3;
+    let n: i32 = close + 1;` + tail,
 			want: nil,
 		},
 		{
@@ -109,18 +109,18 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 			src: `import "std/http";
 function noisy(): i32 { eprint("hit"); return 1; }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var noisy: i32 = 2;
-    var n: i32 = noisy + 1;` + tail,
+    let noisy: i32 = 2;
+    let n: i32 = noisy + 1;` + tail,
 			want: nil,
 		},
 		{
-			// std/unicode's case mapping has a `var mid`, which std/http's own
+			// std/unicode's case mapping has a `let mid`, which std/http's own
 			// handlers reach through HeaderMap.set.
 			name: "a std local named like an entry function",
 			src: `import "std/http";
 function mid(): void { eprint("hit"); }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var h: HttpResponse = http.ok("");
+    let h: HttpResponse = http.ok("");
     h.headers.set("X-Mode", "Plain");` + tail + `function run(): void { mid(); }
 `,
 			want: nil,
@@ -170,7 +170,7 @@ import "std/platform";
 struct Sink { n: i32 }
 function (s: Sink) log(msg: string): void { eprint(msg); }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var s: Sink = Sink { n: 1 };
+    let s: Sink = Sink { n: 1 };
     s.log("hit");` + tail,
 			want: []string{"5:1 handle eprint log"},
 		},
@@ -179,7 +179,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 			src: `import "std/http";
 function __method_Array_noisy(arr: i32[]): void { eprint("hit"); }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var xs: i32[] = [1];
+    let xs: i32[] = [1];
     xs.noisy();` + tail,
 			want: []string{"3:1 handle eprint log"},
 		},

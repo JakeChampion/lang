@@ -13,7 +13,7 @@ import (
 // ExprCall.ty (#5531), ExprFieldAccess.ty and ExprIndex.ty (#6165) and
 // ExprSlice.ty.
 //
-// A bare name gets its type in irlower from the SLOT it reads, and a module
+// A bare name got its type in the AST lowering from the SLOT it read, and a module
 // `const` has no slot at all: its read is really a call to a zero-argument
 // accessor. Each ident predicate therefore grew its own const clause, one at a
 // time — expr_is_str (#2954), then expr_is_f64 and infer_expr_width (#4801) —
@@ -41,7 +41,7 @@ var annotateIdentCases = []struct {
 	{"const_u32_shift", `const M: u32 = 2147484527u32;
 function main(): i32 { return ((M >> 1u32) % 100u32) as i32; }`}, // 63; was 11
 	{"const_u32_shift_bound", `const M: u32 = 2147484527u32;
-function main(): i32 { var v: u32 = M >> 1u32; return (v % 100u32) as i32; }`}, // 63; was 11
+function main(): i32 { let v: u32 = M >> 1u32; return (v % 100u32) as i32; }`}, // 63; was 11
 	{"const_u32_shift_wide", `const M: u32 = 3221225472u32;
 function main(): i32 { return ((M >> 4u32) % 100u32) as i32; }`}, // 92; was 32
 
@@ -59,7 +59,7 @@ function main(): i32 { return B.to_json().len() as i32; }`}, // 5; was 1
 	// this always worked and the leaf must not consult the annotation for it —
 	// id_type_tag returns "" for any name with a slot.
 	{"local_u32_shift", `function main(): i32 {
-    var m: u32 = 2147484527u32;
+    let m: u32 = 2147484527u32;
     return ((m >> 1u32) % 100u32) as i32;
 }`}, // 63
 	// Control: the same u32 const through a call PARAMETER, which types from

@@ -26,7 +26,7 @@ import "std/string";
 // Fails only on inputs containing 0xFF, so the mutation engine has to
 // actually find one (mode 6 writes 0xFF; mode 0 can too).
 function target(input: u8[]): test.TestOutcome {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < input.len()) {
         if ((input[i] as i32) == 255) { return test.fail("found 0xFF"); }
         i = i + 1;
@@ -45,11 +45,11 @@ function outcome_msg(o: test.TestOutcome): string {
 }
 
 function main(): i32 {
-    var seeds: u8[][] = ["abc".bytes(), "hello".bytes(), "xyzzy".bytes()];
+    let seeds: u8[][] = ["abc".bytes(), "hello".bytes(), "xyzzy".bytes()];
 
     // Equal seeds replay identically -- same outcome AND same diagnostic.
-    var a = fuzz.fuzz_run_seeded(seeds, 300, 12345 as i64, target);
-    var b = fuzz.fuzz_run_seeded(seeds, 300, 12345 as i64, target);
+    let a = fuzz.fuzz_run_seeded(seeds, 300, 12345 as i64, target);
+    let b = fuzz.fuzz_run_seeded(seeds, 300, 12345 as i64, target);
     if (outcome_failed(a) != outcome_failed(b)) { return 1; }
     if (outcome_msg(a) != outcome_msg(b)) { return 2; }
 
@@ -60,7 +60,7 @@ function main(): i32 {
     if (!outcome_msg(a).contains("rng_seed 12345")) { return 4; }
 
     // A different seed gives a different sequence (so seeding is real).
-    var c = fuzz.fuzz_run_seeded(seeds, 300, 999 as i64, target);
+    let c = fuzz.fuzz_run_seeded(seeds, 300, 999 as i64, target);
     if (outcome_failed(c) && outcome_msg(c) == outcome_msg(a)) { return 5; }
 
     // A passing target passes at any seed.
@@ -68,7 +68,7 @@ function main(): i32 {
 
     // Guards preserved.
     if (!outcome_failed(fuzz.fuzz_run_seeded(seeds, 0, 1 as i64, always_pass))) { return 7; }
-    var empty: u8[][] = [];
+    let empty: u8[][] = [];
     if (!outcome_failed(fuzz.fuzz_run_seeded(empty, 10, 1 as i64, always_pass))) { return 8; }
 
     // The unseeded entry point still works. NOTE: this specific call is what

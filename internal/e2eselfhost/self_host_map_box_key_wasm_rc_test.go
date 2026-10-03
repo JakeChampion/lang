@@ -47,7 +47,7 @@ func TestSelfHostMapBoxKeyWasmRC(t *testing.T) {
 		// the insert, so the map owes the key an inc and the release owes it a
 		// dec. Balanced = flat heap and a zero underflow counter.
 		{"key-borrowed",
-			`import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } function build(n: i32): i32 { var k: P = P { x: n, y: n * 2 }; var m: Map[P, i32] = map_new(4); m = m.insert(k, 7); var got: i32 = m.get_or(k, 0); return got; } function main(): i32 { var acc: i32 = 0; var w: i32 = 0; while (w < 100) { acc = acc + build(w); w = w + 1; } var s1: i32 = (__heap_bump_bytes() as i32); var j: i32 = 0; while (j < 1000) { acc = acc + build(j); j = j + 1; } var s2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if ((s2 - s1) > 4096) { return 1; } if (acc != 7700) { return 88; } return 0; }`},
+			`import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } function build(n: i32): i32 { let k: P = P { x: n, y: n * 2 }; let m: Map[P, i32] = map_new(4); m = m.insert(k, 7); let got: i32 = m.get_or(k, 0); return got; } function main(): i32 { let acc: i32 = 0; let w: i32 = 0; while (w < 100) { acc = acc + build(w); w = w + 1; } let s1: i32 = (__heap_bump_bytes() as i32); let j: i32 = 0; while (j < 1000) { acc = acc + build(j); j = j + 1; } let s2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if ((s2 - s1) > 4096) { return 1; } if (acc != 7700) { return 88; } return 0; }`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

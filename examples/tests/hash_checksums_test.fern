@@ -11,8 +11,8 @@ import "std/string";
 // long enough that 7-byte updates straddle every block boundary offset, and
 // not valid UTF-8, so the hasher is fed raw bytes.
 function __pseudo(): u8[] {
-  var b: u8[] = __alloc_u8(10003);
-  var i: i32 = 0;
+  let b: u8[] = __alloc_u8(10003);
+  let i: i32 = 0;
   while (i < 10003) {
     b = b.with(i, (i * 7 + 3 & 255) as u8);
     i = i + 1;
@@ -22,8 +22,8 @@ function __pseudo(): u8[] {
 
 // __thousand_a is 1000 'a's, the unit of the million-'a' vector.
 function __thousand_a(): string {
-  var b: u8[] = __alloc_u8(1000);
-  var i: i32 = 0;
+  let b: u8[] = __alloc_u8(1000);
+  let i: i32 = 0;
   while (i < 1000) {
     b = b.with(i, 97 as u8);
     i = i + 1;
@@ -38,7 +38,7 @@ function test_cksum_vectors(): test.TestOutcome {
   if (hash.cksum_of("abc") != 1219131554) {
     return test.fail("abc");
   }
-  var c: hash.Cksum = hash.cksum_new().update("abc");
+  let c: hash.Cksum = hash.cksum_new().update("abc");
   if (c.len() != 3 as u64) {
     return test.fail("len");
   }
@@ -47,8 +47,8 @@ function test_cksum_vectors(): test.TestOutcome {
 
 // finish() reads the state; more updates may follow it.
 function test_cksum_finish_is_a_read(): test.TestOutcome {
-  var c: hash.Cksum = hash.cksum_new().update("ab");
-  var mid: u32 = c.finish();
+  let c: hash.Cksum = hash.cksum_new().update("ab");
+  let mid: u32 = c.finish();
   c = c.update("c");
   if (mid != 2072780115) {
     return test.fail("mid");
@@ -57,9 +57,9 @@ function test_cksum_finish_is_a_read(): test.TestOutcome {
 }
 
 function test_cksum_seven_byte_updates(): test.TestOutcome {
-  var msg: u8[] = __pseudo();
-  var c: hash.Cksum = hash.cksum_new();
-  var i: i32 = 0;
+  let msg: u8[] = __pseudo();
+  let c: hash.Cksum = hash.cksum_new();
+  let i: i32 = 0;
   while (i + 7 <= 10003) {
     c = c.update_bytes(msg[i:i + 7]);
     i = i + 7;
@@ -82,13 +82,13 @@ function test_cksum_seven_byte_updates(): test.TestOutcome {
 // native folds; the seven-byte test above cannot reach them, because seven
 // bytes never fill a block at all.
 function test_cksum_string_chunks_match_the_table(): test.TestOutcome {
-  var msg: string = string_from_bytes_unchecked(__pseudo());
-  var cuts: i32[] = [1, 15, 16, 17, 31, 47, 63, 64, 65, 113, 191, 1009];
-  var c: hash.Cksum = hash.cksum_new();
-  var at: i32 = 0;
-  var k: i32 = 0;
+  let msg: string = string_from_bytes_unchecked(__pseudo());
+  let cuts: i32[] = [1, 15, 16, 17, 31, 47, 63, 64, 65, 113, 191, 1009];
+  let c: hash.Cksum = hash.cksum_new();
+  let at: i32 = 0;
+  let k: i32 = 0;
   while (at < 10003) {
-    var take: i32 = cuts[k % cuts.len()];
+    let take: i32 = cuts[k % cuts.len()];
     if (at + take > 10003) {
       take = 10003 - at;
     }
@@ -99,7 +99,7 @@ function test_cksum_string_chunks_match_the_table(): test.TestOutcome {
   if (c.len() != 10003 as u64) {
     return test.fail("len");
   }
-  var viabytes: hash.Cksum = hash.cksum_new().update_bytes(__pseudo());
+  let viabytes: hash.Cksum = hash.cksum_new().update_bytes(__pseudo());
   if (c.finish() != viabytes.finish()) {
     return test.fail("chunked string vs table");
   }
@@ -113,9 +113,9 @@ function test_bsd_sum(): test.TestOutcome {
   if (hash.bsd_sum_of("abc") != 16556) {
     return test.fail("abc");
   }
-  var msg: u8[] = __pseudo();
-  var s: hash.BsdSum = hash.bsd_sum_new();
-  var i: i32 = 0;
+  let msg: u8[] = __pseudo();
+  let s: hash.BsdSum = hash.bsd_sum_new();
+  let i: i32 = 0;
   while (i + 7 <= 10003) {
     s = s.update_bytes(msg[i:i + 7]);
     i = i + 7;
@@ -140,9 +140,9 @@ function test_sysv_sum(): test.TestOutcome {
   if (hash.sysv_sum_of("abc") != 294) {
     return test.fail("abc");
   }
-  var msg: u8[] = __pseudo();
-  var s: hash.SysvSum = hash.sysv_sum_new();
-  var i: i32 = 0;
+  let msg: u8[] = __pseudo();
+  let s: hash.SysvSum = hash.sysv_sum_new();
+  let i: i32 = 0;
   while (i + 7 <= 10003) {
     s = s.update_bytes(msg[i:i + 7]);
     i = i + 7;
@@ -164,8 +164,8 @@ function test_sysv_sum(): test.TestOutcome {
 // string: string_from_bytes_unchecked takes u8[], and a `msg[a:b]` slice is a
 // [u8] view.
 function __chunk(msg: u8[], from: i32, n: i32): string {
-  var b: u8[] = __alloc_u8(n);
-  var k: i32 = 0;
+  let b: u8[] = __alloc_u8(n);
+  let k: i32 = 0;
   while (k < n) {
     b = b.with(k, msg[from + k]);
     k = k + 1;
@@ -177,9 +177,9 @@ function __chunk(msg: u8[], from: i32, n: i32): string {
 // the first is __sum_bytes, the second an indexed loop — so they are streamed
 // over the same bytes at the same 7-byte boundaries and required to agree.
 function test_sysv_sum_string_updates(): test.TestOutcome {
-  var msg: u8[] = __pseudo();
-  var s: hash.SysvSum = hash.sysv_sum_new();
-  var i: i32 = 0;
+  let msg: u8[] = __pseudo();
+  let s: hash.SysvSum = hash.sysv_sum_new();
+  let i: i32 = 0;
   while (i + 7 <= 10003) {
     s = s.update(__chunk(msg, i, 7));
     i = i + 7;
@@ -191,21 +191,21 @@ function test_sysv_sum_string_updates(): test.TestOutcome {
   if (s.len() != 10003 as u64) {
     return test.fail("len");
   }
-  var b: hash.SysvSum = hash.sysv_sum_new().update_bytes(msg);
+  let b: hash.SysvSum = hash.sysv_sum_new().update_bytes(msg);
   return test.assert_eq(s.finish(), b.finish());
 }
 
 // Block counts round up: one byte past a block boundary is one more block, and
 // the empty input is zero blocks.
 function test_block_counts(): test.TestOutcome {
-  var b: u8[] = __alloc_u8(1025);
-  var i: i32 = 0;
+  let b: u8[] = __alloc_u8(1025);
+  let i: i32 = 0;
   while (i < 1025) {
     b = b.with(i, 0 as u8);
     i = i + 1;
   }
-  var r: hash.BsdSum = hash.bsd_sum_new().update_bytes(b);
-  var s: hash.SysvSum = hash.sysv_sum_new().update_bytes(b);
+  let r: hash.BsdSum = hash.bsd_sum_new().update_bytes(b);
+  let s: hash.SysvSum = hash.sysv_sum_new().update_bytes(b);
   if (r.blocks() != 2 as u64) {
     return test.fail("bsd 1025 -> 2");
   }
@@ -219,7 +219,7 @@ function test_block_counts(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/hash checksums");
+  let r: test.TestRunner = test.test_new("std/hash checksums");
   r = r.it("cksum vectors", test_cksum_vectors);
   r = r.it("cksum finish is a read", test_cksum_finish_is_a_read);
   r = r.it("cksum 7-byte updates", test_cksum_seven_byte_updates);

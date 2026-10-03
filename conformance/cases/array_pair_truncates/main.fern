@@ -19,8 +19,8 @@ import "std/i32";
 import "std/float";
 
 function main(): i32 {
-  var a: i32[] = [1, 2, 3, 4, 5];
-  var b: i32[] = [10, 20, 30];
+  let a: i32[] = [1, 2, 3, 4, 5];
+  let b: i32[] = [10, 20, 30];
   print(a.len().to_string());
   print(b.len().to_string());
   print(array.zip(a, b).len().to_string());
@@ -29,12 +29,12 @@ function main(): i32 {
   // rather than "the first one wins".
   print(array.zip(b, a).len().to_string());
 
-  var xs: f64[] = [1.0, 2.0, 3.0, 4.0];
-  var ys: f64[] = [10.0, 20.0];
+  let xs: f64[] = [1.0, 2.0, 3.0, 4.0];
+  let ys: f64[] = [10.0, 20.0];
   // 1*10 + 2*20 = 50, not 1*10 + 2*20 + 3*0 + 4*0 and not a trap.
   print(array.dot_f64(xs, ys).to_string());
   // Element-wise sum runs to 2 elements: [11, 22].
-  var sum: f64[] = array.add_f64(xs, ys);
+  let sum: f64[] = array.add_f64(xs, ys);
   print(sum.len().to_string());
   print(sum[0].to_string());
   print(sum[1].to_string());

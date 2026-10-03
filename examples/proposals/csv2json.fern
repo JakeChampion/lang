@@ -49,9 +49,9 @@ struct Parsed { ok: boolean, table: Table, err: string }
 // ------------------------------------------------------------ serialising
 
 function needs_quoting(cell: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < cell.len()) {
-    var c: u8 = cell[i];
+    let c: u8 = cell[i];
     if (c == 44 || c == 34 || c == 10 || c == 13) {
       return true;
     }
@@ -62,8 +62,8 @@ function needs_quoting(cell: string): boolean {
 
 // RFC 4180: wrap in quotes, and double any quote inside.
 function quote_cell(cell: string): string {
-  var buf: u8[] = [34];
-  var i: i32 = 0;
+  let buf: u8[] = [34];
+  let i: i32 = 0;
   while (i < cell.len()) {
     if (cell[i] == 34) {
       buf = buf.append(34);
@@ -76,18 +76,18 @@ function quote_cell(cell: string): string {
 }
 
 function to_csv(t: Table): string {
-  var out: string = "";
-  var r: i32 = 0;
+  let out: string = "";
+  let r: i32 = 0;
   while (r < t.rows.len()) {
     if (r > 0) {
       out = out + "\n";
     }
-    var c: i32 = 0;
+    let c: i32 = 0;
     while (c < t.rows[r].len()) {
       if (c > 0) {
         out = out + ",";
       }
-      var cell: string = t.rows[r][c];
+      let cell: string = t.rows[r][c];
       if (needs_quoting(cell)) {
         out = out + quote_cell(cell);
       } else {
@@ -103,21 +103,21 @@ function to_csv(t: Table): string {
 // --------------------------------------------------------------- parsing
 
 function fail_parse(why: string): Parsed {
-  var none: string[][] = [];
+  let none: string[][] = [];
   return Parsed { ok: false, table: Table { rows: none }, err: why };
 }
 
 // A character-at-a-time reader, which is the only way to get embedded
 // newlines right: inside quotes a newline is data, outside it ends the row.
 function from_csv(text: string): Parsed {
-  var rows: string[][] = [];
-  var row: string[] = [];
-  var buf: u8[] = [];
-  var in_quotes: boolean = false;
-  var any: boolean = false;  // has anything been read for the current row?
-  var i: i32 = 0;
+  let rows: string[][] = [];
+  let row: string[] = [];
+  let buf: u8[] = [];
+  let in_quotes: boolean = false;
+  let any: boolean = false;  // has anything been read for the current row?
+  let i: i32 = 0;
   while (i < text.len()) {
-    var c: u8 = text[i];
+    let c: u8 = text[i];
     if (in_quotes) {
       if (c == 34) {
         // A doubled quote is one literal quote; a lone one closes.
@@ -170,10 +170,10 @@ function from_csv(text: string): Parsed {
 // ------------------------------------------------------------------ JSON
 
 function json_escape(s: string): string {
-  var buf: u8[] = [];
-  var i: i32 = 0;
+  let buf: u8[] = [];
+  let i: i32 = 0;
   while (i < s.len()) {
-    var c: u8 = s[i];
+    let c: u8 = s[i];
     if (c == 34) {
       buf = buf.append(92);
       buf = buf.append(34);
@@ -202,20 +202,20 @@ function to_json(t: Table): string {
   if (t.rows.len() == 0) {
     return "[]";
   }
-  var head: string[] = t.rows[0];
-  var out: string = "[";
-  var r: i32 = 1;
+  let head: string[] = t.rows[0];
+  let out: string = "[";
+  let r: i32 = 1;
   while (r < t.rows.len()) {
     if (r > 1) {
       out = out + ",";
     }
     out = out + "{";
-    var c: i32 = 0;
+    let c: i32 = 0;
     while (c < head.len()) {
       if (c > 0) {
         out = out + ",";
       }
-      var v: string = "";
+      let v: string = "";
       if (c < t.rows[r].len()) {
         v = t.rows[r][c];
       }
@@ -234,23 +234,23 @@ function to_json(t: Table): string {
 struct JsonRead { ok: boolean, values: string[], err: string }
 
 function json_string_at(s: string, at: i32): JsonRead {
-  var none: string[] = [];
+  let none: string[] = [];
   if (at >= s.len() || s[at] != 34) {
     return JsonRead { ok: false, values: none, err: "expected a string" };
   }
-  var buf: u8[] = [];
-  var i: i32 = at + 1;
+  let buf: u8[] = [];
+  let i: i32 = at + 1;
   while (i < s.len()) {
-    var c: u8 = s[i];
+    let c: u8 = s[i];
     if (c == 34) {
-      var one: string[] = [string_from_bytes_unchecked(buf), (i + 1).to_string()];
+      let one: string[] = [string_from_bytes_unchecked(buf), (i + 1).to_string()];
       return JsonRead { ok: true, values: one, err: "" };
     }
     if (c == 92) {
       if (i + 1 >= s.len()) {
         return JsonRead { ok: false, values: none, err: "escape at end" };
       }
-      var e: u8 = s[i + 1];
+      let e: u8 = s[i + 1];
       if (e == 34) {
         buf = buf.append(34);
       } else if (e == 92) {
@@ -277,9 +277,9 @@ function json_string_at(s: string, at: i32): JsonRead {
 // per object, with "{" and "}" markers, which is enough to compare against
 // the table without building a tree.
 function json_flatten(s: string): JsonRead {
-  var none: string[] = [];
-  var out: string[] = [];
-  var i: i32 = 0;
+  let none: string[] = [];
+  let out: string[] = [];
+  let i: i32 = 0;
   if (i >= s.len() || s[i] != 91) {
     return JsonRead { ok: false, values: none, err: "expected [" };
   }
@@ -287,7 +287,7 @@ function json_flatten(s: string): JsonRead {
   if (i < s.len() && s[i] == 93) {
     return JsonRead { ok: true, values: out, err: "" };
   }
-  var going: boolean = true;
+  let going: boolean = true;
   while (going) {
     if (i >= s.len() || s[i] != 123) {
       return JsonRead { ok: false, values: none, err: "expected {" };
@@ -298,9 +298,9 @@ function json_flatten(s: string): JsonRead {
       out = out.append("}");
       i = i + 1;
     } else {
-      var fields: boolean = true;
+      let fields: boolean = true;
       while (fields) {
-        var k: JsonRead = json_string_at(s, i);
+        let k: JsonRead = json_string_at(s, i);
         if (!k.ok) {
           return k;
         }
@@ -310,7 +310,7 @@ function json_flatten(s: string): JsonRead {
           return JsonRead { ok: false, values: none, err: "expected :" };
         }
         i = i + 1;
-        var v: JsonRead = json_string_at(s, i);
+        let v: JsonRead = json_string_at(s, i);
         if (!v.ok) {
           return v;
         }
@@ -354,12 +354,12 @@ function tables_equal(a: Table, b: Table): boolean {
   if (a.rows.len() != b.rows.len()) {
     return false;
   }
-  var r: i32 = 0;
+  let r: i32 = 0;
   while (r < a.rows.len()) {
     if (a.rows[r].len() != b.rows[r].len()) {
       return false;
     }
-    var c: i32 = 0;
+    let c: i32 = 0;
     while (c < a.rows[r].len()) {
       if (a.rows[r][c] != b.rows[r][c]) {
         return false;
@@ -372,13 +372,13 @@ function tables_equal(a: Table, b: Table): boolean {
 }
 
 function show_table(t: Table): string {
-  var out: string = "";
-  var r: i32 = 0;
+  let out: string = "";
+  let r: i32 = 0;
   while (r < t.rows.len()) {
     if (r > 0) {
       out = out + " | ";
     }
-    var c: i32 = 0;
+    let c: i32 = 0;
     while (c < t.rows[r].len()) {
       if (c > 0) {
         out = out + " / ";
@@ -396,22 +396,22 @@ function show_table(t: Table): string {
 // tables. Enough combinations that the interesting interactions (a quote
 // beside a comma, a newline beside an empty) actually occur.
 function generated_tables(): Table[] {
-  var cells: string[] = nasty_cells();
-  var out: Table[] = [];
-  var pos: i32 = 0;
+  let cells: string[] = nasty_cells();
+  let out: Table[] = [];
+  let pos: i32 = 0;
   while (pos < 4) {
-    var a: i32 = 0;
+    let a: i32 = 0;
     while (a < cells.len()) {
-      var b: i32 = 0;
+      let b: i32 = 0;
       while (b < cells.len()) {
-        var v: string[] = ["h1", "h2", "v1", "v2"];
+        let v: string[] = ["h1", "h2", "v1", "v2"];
         v = v.with(pos, cells[a]);
-        var other: i32 = pos + 1;
+        let other: i32 = pos + 1;
         if (other > 3) {
           other = 0;
         }
         v = v.with(other, cells[b]);
-        var rows: string[][] = [[v[0], v[1]], [v[2], v[3]]];
+        let rows: string[][] = [[v[0], v[1]], [v[2], v[3]]];
         out = out.append(Table { rows: rows });
         b = b + 1;
       }
@@ -426,12 +426,12 @@ function generated_tables(): Table[] {
 
 // The claim, carried out: serialise, parse, compare cell for cell.
 function test_every_table_round_trips(): test.TestOutcome {
-  var ts: Table[] = generated_tables();
-  var checked: i32 = 0;
-  var i: i32 = 0;
+  let ts: Table[] = generated_tables();
+  let checked: i32 = 0;
+  let i: i32 = 0;
   while (i < ts.len()) {
-    var csv: string = to_csv(ts[i]);
-    var p: Parsed = from_csv(csv);
+    let csv: string = to_csv(ts[i]);
+    let p: Parsed = from_csv(csv);
     if (!p.ok) {
       return test.fail("table " + i.to_string() + " failed to parse its own CSV ("
         + p.err + "):\n  " + show_table(ts[i]));
@@ -452,22 +452,22 @@ function test_every_table_round_trips(): test.TestOutcome {
 // The generator is essential, so assert it produced the shapes it claims:
 // a cell with a comma, one with a quote, one with a newline, and an empty one.
 function test_the_sweep_covers_the_nasty_shapes(): test.TestOutcome {
-  var ts: Table[] = generated_tables();
-  var saw_comma: boolean = false;
-  var saw_quote: boolean = false;
-  var saw_newline: boolean = false;
-  var saw_empty: boolean = false;
-  var i: i32 = 0;
+  let ts: Table[] = generated_tables();
+  let saw_comma: boolean = false;
+  let saw_quote: boolean = false;
+  let saw_newline: boolean = false;
+  let saw_empty: boolean = false;
+  let i: i32 = 0;
   while (i < ts.len()) {
-    var r: i32 = 0;
+    let r: i32 = 0;
     while (r < ts[i].rows.len()) {
-      var c: i32 = 0;
+      let c: i32 = 0;
       while (c < ts[i].rows[r].len()) {
-        var cell: string = ts[i].rows[r][c];
+        let cell: string = ts[i].rows[r][c];
         if (cell.len() == 0) {
           saw_empty = true;
         }
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < cell.len()) {
           if (cell[k] == 44) {
             saw_comma = true;
@@ -504,10 +504,10 @@ function test_the_sweep_covers_the_nasty_shapes(): test.TestOutcome {
 // Shape, not just content: every row has the header's width. A parser that
 // drops or merges a row is caught here even when its cells are right.
 function test_the_parsed_shape_matches(): test.TestOutcome {
-  var ts: Table[] = generated_tables();
-  var i: i32 = 0;
+  let ts: Table[] = generated_tables();
+  let i: i32 = 0;
   while (i < ts.len()) {
-    var p: Parsed = from_csv(to_csv(ts[i]));
+    let p: Parsed = from_csv(to_csv(ts[i]));
     if (!p.ok) {
       return test.fail("table " + i.to_string() + ": " + p.err);
     }
@@ -516,8 +516,8 @@ function test_the_parsed_shape_matches(): test.TestOutcome {
         + p.table.rows.len().to_string() + " rows, want "
         + ts[i].rows.len().to_string());
     }
-    var width: i32 = p.table.rows[0].len();
-    var r: i32 = 0;
+    let width: i32 = p.table.rows[0].len();
+    let r: i32 = 0;
     while (r < p.table.rows.len()) {
       if (p.table.rows[r].len() != width) {
         return test.fail("table " + i.to_string() + ": row " + r.to_string()
@@ -533,25 +533,25 @@ function test_the_parsed_shape_matches(): test.TestOutcome {
 
 // The JSON must PARSE, and read back the values the table holds.
 function test_the_json_parses_and_matches(): test.TestOutcome {
-  var ts: Table[] = generated_tables();
-  var i: i32 = 0;
+  let ts: Table[] = generated_tables();
+  let i: i32 = 0;
   while (i < ts.len()) {
-    var j: string = to_json(ts[i]);
-    var read: JsonRead = json_flatten(j);
+    let j: string = to_json(ts[i]);
+    let read: JsonRead = json_flatten(j);
     if (!read.ok) {
       return test.fail("table " + i.to_string() + " produced JSON that does not "
         + "parse (" + read.err + "): " + j);
     }
     // One object per data row, each with the header's fields.
-    var head: string[] = ts[i].rows[0];
-    var want: string[] = [];
-    var r: i32 = 1;
+    let head: string[] = ts[i].rows[0];
+    let want: string[] = [];
+    let r: i32 = 1;
     while (r < ts[i].rows.len()) {
       want = want.append("{");
-      var c: i32 = 0;
+      let c: i32 = 0;
       while (c < head.len()) {
         want = want.append(head[c]);
-        var v: string = "";
+        let v: string = "";
         if (c < ts[i].rows[r].len()) {
           v = ts[i].rows[r][c];
         }
@@ -565,7 +565,7 @@ function test_the_json_parses_and_matches(): test.TestOutcome {
       return test.fail("table " + i.to_string() + ": JSON has "
         + read.values.len().to_string() + " items, want " + want.len().to_string());
     }
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < want.len()) {
       if (read.values[k] != want[k]) {
         return test.fail("table " + i.to_string() + ": JSON item " + k.to_string()
@@ -580,19 +580,19 @@ function test_the_json_parses_and_matches(): test.TestOutcome {
 
 // Quoting is applied exactly when it is needed — not always, and not never.
 function test_quoting_is_applied_exactly_when_needed(): test.TestOutcome {
-  var plain: Table = Table { rows: [["a", "b"]] };
+  let plain: Table = Table { rows: [["a", "b"]] };
   if (to_csv(plain) != "a,b") {
     return test.fail("plain cells were quoted: " + to_csv(plain));
   }
-  var comma: Table = Table { rows: [["a,b", "c"]] };
+  let comma: Table = Table { rows: [["a,b", "c"]] };
   if (to_csv(comma) != "\"a,b\",c") {
     return test.fail("a comma cell serialised as " + to_csv(comma));
   }
-  var quote: Table = Table { rows: [["say \"hi\"", "c"]] };
+  let quote: Table = Table { rows: [["say \"hi\"", "c"]] };
   if (to_csv(quote) != "\"say \"\"hi\"\"\",c") {
     return test.fail("a quote cell serialised as " + to_csv(quote));
   }
-  var nl: Table = Table { rows: [["a\nb", "c"]] };
+  let nl: Table = Table { rows: [["a\nb", "c"]] };
   if (to_csv(nl) != "\"a\nb\",c") {
     return test.fail("a newline cell serialised as " + to_csv(nl));
   }
@@ -603,7 +603,7 @@ function test_quoting_is_applied_exactly_when_needed(): test.TestOutcome {
 // so the parser is pinned against hand-written CSV, not only against its own
 // serialiser.
 function test_hand_written_csv_parses_correctly(): test.TestOutcome {
-  var p: Parsed = from_csv("name,note\n\"Smith, John\",\"he said \"\"hi\"\"\"\n\"two\nlines\",plain");
+  let p: Parsed = from_csv("name,note\n\"Smith, John\",\"he said \"\"hi\"\"\"\n\"two\nlines\",plain");
   if (!p.ok) {
     return test.fail("parse failed: " + p.err);
   }
@@ -624,8 +624,8 @@ function test_hand_written_csv_parses_correctly(): test.TestOutcome {
 
 // The stated trailing-newline rule, and the malformed case.
 function test_trailing_newline_and_unterminated_quotes(): test.TestOutcome {
-  var without: Parsed = from_csv("a,b\nc,d");
-  var with_nl: Parsed = from_csv("a,b\nc,d\n");
+  let without: Parsed = from_csv("a,b\nc,d");
+  let with_nl: Parsed = from_csv("a,b\nc,d\n");
   if (!without.ok || !with_nl.ok) {
     return test.fail("a well-formed file failed to parse");
   }
@@ -637,7 +637,7 @@ function test_trailing_newline_and_unterminated_quotes(): test.TestOutcome {
     return test.fail("a trailing newline produced " + with_nl.table.rows.len().to_string()
       + " rows, want 2");
   }
-  var bad: Parsed = from_csv("a,\"unterminated");
+  let bad: Parsed = from_csv("a,\"unterminated");
   if (bad.ok) {
     return test.fail("an unterminated quoted field was accepted");
   }
@@ -647,28 +647,28 @@ function test_trailing_newline_and_unterminated_quotes(): test.TestOutcome {
 function main(): i32 {
   eprint("csv2json — quoted fields, embedded commas and embedded newlines");
 
-  var t: Table = Table { rows: [
+  let t: Table = Table { rows: [
     ["name", "note"],
     ["Smith, John", "he said \"hi\""], ["two\nlines", "plain"],
   ] };
   eprint("  csv:");
-  var csv: string = to_csv(t);
-  var lines: string[] = csv.split("\n");
-  var i: i32 = 0;
+  let csv: string = to_csv(t);
+  let lines: string[] = csv.split("\n");
+  let i: i32 = 0;
   while (i < lines.len()) {
     eprint("    " + lines[i]);
     i = i + 1;
   }
   eprint("  json: " + to_json(t));
-  var back: Parsed = from_csv(csv);
-  var verdict: string = "no";
+  let back: Parsed = from_csv(csv);
+  let verdict: string = "no";
   if (back.ok && tables_equal(back.table, t)) {
     verdict = "yes";
   }
   eprint("  round-trips: " + verdict);
   eprint("  generated tables in the sweep: " + generated_tables().len().to_string());
 
-  var r: test.TestRunner = test.test_new("csv2json");
+  let r: test.TestRunner = test.test_new("csv2json");
   r = r.it("every table round trips", test_every_table_round_trips);
   r = r.it("the sweep covers the nasty shapes", test_the_sweep_covers_the_nasty_shapes);
   r = r.it("the parsed shape matches", test_the_parsed_shape_matches);

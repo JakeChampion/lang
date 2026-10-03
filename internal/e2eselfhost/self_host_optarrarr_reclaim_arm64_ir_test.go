@@ -7,7 +7,7 @@ import (
 // TestSelfHostOptArrArrReclaimIRArm64 is the arm64 port of
 // TestSelfHostOptArrArrReclaimIRX86_64: the OPTARRARR class (admission + inline
 // tag-check/__fern_arrarr_free/box-free + the arr-of-arr escape checker) lives in shared
-// irlower.fern and lowers through op_opt_tag / op_opt_payload / __fern_arrarr_free /
+// lowering and lowers through op_opt_tag / op_opt_payload / __fern_arrarr_free /
 // __fern_rc_dec, all backend-complete. Case table shared with the x86-64 leg.
 func TestSelfHostOptArrArrReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)

@@ -52,7 +52,7 @@ func TestSelfHostSemanticSourceCensusLoadsTheStdlib(t *testing.T) {
 	writeEntry(t, entry, `import "std/test";
 function t_one(): test.TestOutcome { return test.assert_eq(1, 1); }
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("census");
+    let r: test.TestRunner = test.test_new("census");
     r = r.it("one", t_one());
     return r.finish();
 }
@@ -221,7 +221,7 @@ function main(): i32 { return code(Interrupted); }
 	segments := filepath.Join(dir, "segments.fern")
 	writeEntry(t, segments, "import \"std/string\";\nimport \"std/http\";\n"+
 		"function main(): i32 {\n"+
-		"    var s: string = \"a b\" + \" c\";\n"+
+		"    let s: string = \"a b\" + \" c\";\n"+
 		"    return s.fields().len() + s.to_array().len() + s.chunks(2).len()\n"+
 		"        + s.splitn(\" \", 2).len() + s.lines().len() + s.split(\" \").len()\n"+
 		"        + http.http_path_segments(\"/a/b\").len();\n"+

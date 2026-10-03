@@ -31,7 +31,7 @@ import (
 //
 // The factor comes from one of two places. A literal is read out of the
 // element function's body at compile time and emitted as a constant. A
-// CAPTURED factor — `var k: f64 = 2.5; xs.map((x: f64): f64 => x * k)`, the
+// CAPTURED factor — `let k: f64 = 2.5; xs.map((x: f64): f64 => x * k)`, the
 // spelling a reader reaches for as soon as the factor has a name — is already
 // on the stack: closure conversion pushes each captured value immediately
 // before the build that packs it, so deleting the build leaves the value
@@ -164,7 +164,7 @@ func scaleF64Verdict(byName map[string]*Func, fn *Func, c arrayCall) (scaleF64Ma
 	// The receiver has to be pushed BEFORE the range opens, because the
 	// replacement leaves it where it is and pushes only the factor. Nothing
 	// about the element function's position guarantees that: a closure bound
-	// to a variable is built at its `var`, which is before the receiver is
+	// to a variable is built at its `let`, which is before the receiver is
 	// evaluated, so a range opening there would delete the receiver push and
 	// land the kernel on an empty stack.
 	//

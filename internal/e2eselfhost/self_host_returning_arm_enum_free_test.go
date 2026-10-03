@@ -48,12 +48,12 @@ import (
 // code on every dynamic path: 100 allocs, 0 frees, 4800 live bytes.
 const raeScalarEnumSrc = `enum E { Box(i32, i32), Nil }
 function round(i: i32): i32 {
-    var e: E = Box(i, i);
+    let e: E = Box(i, i);
     match (e) { Box(a, b) => { return a + b; }, Nil => { return 0; } }
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 7;
@@ -64,29 +64,29 @@ function main(): i32 {
 // balanced. It pins that the fix did not disturb the path it sits beside.
 const raeScalarEnumFallthroughSrc = `enum E { Box(i32, i32), Nil }
 function round(i: i32): i32 {
-    var e: E = Box(i, i);
-    var t: i32 = 0;
+    let e: E = Box(i, i);
+    let t: i32 = 0;
     match (e) { Box(a, b) => { t = a + b; }, Nil => { t = 0; } }
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     return t % 7;
 }`
 
 // The scalar-OPTION half of the same admission: `consumed_scalar_enum_frees`
-// admits `var o = Some(<scalar>)` on the same footing as an inline enum ctor,
+// admits `let o = Some(<scalar>)` on the same footing as an inline enum ctor,
 // so it reached the post-match free the same way and missed it the same way.
 const raeScalarOptionSrc = `function round(i: i32): i32 {
-    var o: Option[i32] = Some(i);
+    let o: Option[i32] = Some(i);
     match (o) { Some(a) => { return a; }, None => { return 0; } }
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 7;
@@ -102,12 +102,12 @@ function main(): i32 {
 // releases the array.
 const raeRcPayloadEnumSrc = `enum E { Box(i32[], i32), Nil }
 function round(i: i32): i32 {
-    var e: E = Box([i, i + 1], i);
+    let e: E = Box([i, i + 1], i);
     match (e) { Box(_, b) => { return b; }, Nil => { return 0; } }
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 7;
@@ -121,13 +121,13 @@ function main(): i32 {
 // number that is merely off.
 const raeMovedPayloadSrc = `enum E { Box(i32[], i32), Nil }
 function mk(i: i32): i32[] {
-    var e: E = Box([i, i + 1], i);
+    let e: E = Box([i, i + 1], i);
     match (e) { Box(a, b) => { return a; }, Nil => { return []; } }
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
-    while (r < 100) { var v: i32[] = mk(r); t = t + v[0] + v[1]; r = r + 1; }
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 100) { let v: i32[] = mk(r); t = t + v[0] + v[1]; r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 7;
 }`
@@ -138,14 +138,14 @@ function main(): i32 {
 // return edge, or if the post-match site were moved instead of kept.
 const raeMixedPathsSrc = `enum E { Box(i32, i32), Nil }
 function round(i: i32): i32 {
-    var e: E = Box(i, i);
-    var t: i32 = 0;
+    let e: E = Box(i, i);
+    let t: i32 = 0;
     match (e) { Box(a, b) => { if (a > 50) { return a + b; } t = a; }, Nil => { t = 0; } }
     return t;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 7;
@@ -157,9 +157,9 @@ function main(): i32 {
 // pending entry — fixing only the fn-level one leaves this shape leaking.
 const raeLoopBlockSrc = `enum E { Box(i32, i32), Nil }
 function round(n: i32): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     while (r < n) {
-        var e: E = Box(r, r);
+        let e: E = Box(r, r);
         match (e) { Box(a, b) => { if (a + b > 400) { return a; } }, Nil => {} }
         r = r + 1;
     }

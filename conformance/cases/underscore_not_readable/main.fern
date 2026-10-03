@@ -9,6 +9,6 @@ function pair(): (i32, i32) {
 }
 
 function main(): i32 {
-    var (a, _) = pair();
+    let (a, _) = pair();
     return _;
 }

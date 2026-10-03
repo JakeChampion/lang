@@ -6,14 +6,14 @@ call written there ran once per arm it reached, and twice for a range arm
 (#10327). Both lowerings compiled it that way; native and the interpreter
 evaluate it once. A statement-position match now binds any scrutinee but a
 bare name to a local first. A value-position one becomes the block a
-programmer would write, `{ var __lm = scrut; match (__lm) { … } }`, so the
+programmer would write, `{ let __lm = scrut; match (__lm) { … } }`, so the
 match itself keeps the one-statement shape every value-block reader
 expects. Routing its arm values through a value local instead, as the tuple
 and struct desugars do, declared that local from the parser's syntax-only
 tag: a closure or struct-array arm stored into an `i32`. The lifted-lambda
 leaf readers (`fn_inferred_struct_ret`, `lam_leaf_array_elem`,
 `lam_leaf_opt_type`) and `iife_leaf_value` now see through a block to its
-last statement, which also types `{ var k = …; if (…) { [P { … }] } else
+last statement, which also types `{ let k = …; if (…) { [P { … }] } else
 { … } }` written directly.
 
 The checker's value-local retyping had no spelling for a function type, so a
@@ -31,7 +31,7 @@ lambda in a value block's declaration was never lifted: the inline-IIFE lift
 walked only conditions and returned values. `lift_iife_body` now also lifts
 a declaration's initialiser, an assignment and an expression statement; the
 returned values stay with the arm-value boxing. That also fixes source that
-writes the shape directly, `{ var q = g([(x: i32) => x + k]); … }`. Still
+writes the shape directly, `{ let q = g([(x: i32) => x + k]); … }`. Still
 raw: a match arm's guard, and the bodies of a `while`, `for` or `defer`
 inside a value block.
 

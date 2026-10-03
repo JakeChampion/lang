@@ -17,8 +17,8 @@ struct Asm { code: i32[], cfi: Cfi }
 function record(own s: Cfi, v: i32): Cfi { return Cfi { rules: s.rules.append(v), n: s.n + 1 }; }
 function stepOwn(own a: Asm, v: i32): Asm { a = Asm { ...a, cfi: record(a.cfi, v) }; return a; }
 function stepRet(own a: Asm, v: i32): Asm { return Asm { ...a, cfi: record(a.cfi, v) }; }
-function stepLocal(v: i32): i32 { var a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } }; a = Asm { ...a, cfi: record(a.cfi, v) }; return a.cfi.n; }
-function main(): i32 { var a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } }; a = stepOwn(a, 1); a = stepRet(a, 2); return a.cfi.n + stepLocal(3); }`
+function stepLocal(v: i32): i32 { let a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } }; a = Asm { ...a, cfi: record(a.cfi, v) }; return a.cfi.n; }
+function main(): i32 { let a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } }; a = stepOwn(a, 1); a = stepRet(a, 2); return a.cfi.n + stepLocal(3); }`
 
 func TestFieldOwnMoveTestsUniquenessBeforeCall(t *testing.T) {
 	ip := lowerForTest(t, fieldMoveSrc)
@@ -38,7 +38,7 @@ func TestFieldOwnMoveStringFieldRetainsInstead(t *testing.T) {
 	ip := lowerForTest(t, `struct S { tag: string, n: i32 }
 function take(own s: string, v: i32): string { return s + "x"; }
 function step(own a: S, v: i32): S { a = S { ...a, tag: take(a.tag, v) }; return a; }
-function main(): i32 { var a: S = S { tag: "a", n: 0 }; a = step(a, 1); return a.tag.len(); }`)
+function main(): i32 { let a: S = S { tag: "a", n: 0 }; a = step(a, 1); return a.tag.len(); }`)
 	f := fnNamed(t, ip, "step")
 	if uniqueTestBeforeCall(f, "take") {
 		t.Errorf("step moves a STRING field, which the single-word null/retain cannot represent:\n%s", ip)

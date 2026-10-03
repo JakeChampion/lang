@@ -24,7 +24,7 @@ import (
 // pollSrc forces `usesPoll`, pulling __fern_poll into the emitted runtime.
 // The negative fd is deliberate — see TestArm64DarwinPollSkipsNegativeFds.
 const pollSrc = `function main(): i32 {
-    var fds: i32[] = [0 - 1, 1];
+    let fds: i32[] = [0 - 1, 1];
     return poll(fds, 10);
 }`
 

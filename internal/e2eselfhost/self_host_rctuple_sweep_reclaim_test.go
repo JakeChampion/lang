@@ -78,12 +78,12 @@ func TestSelfHostRcTupleSweepReclaimX86_64(t *testing.T) {
 			// documents, and it leaked everything on a single bind.
 			name: "array_elem_single_bind",
 			src: `function round(i: i32): i32 {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
+    let t: (i32, i32[]) = (i, [i, i + 1]);
     return t.0 + t.1.len();
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -94,12 +94,12 @@ function main(): i32 {
 			// so the sweep's rc-aware __fern_str_free is balanced.
 			name: "string_elem_single_bind",
 			src: `function round(i: i32): i32 {
-    var t: (i32, string) = (i, "abc");
+    let t: (i32, string) = (i, "abc");
     return t.0 + t.1.len();
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -110,12 +110,12 @@ function main(): i32 {
 			// binding itself rather than on some use.
 			name: "rc_elem_never_read",
 			src: `function round(i: i32): i32 {
-    var t: (i32, string) = (i, "abc");
+    let t: (i32, string) = (i, "abc");
     return t.0;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -167,13 +167,13 @@ func TestSelfHostRcTupleSweepHazardsX86_64(t *testing.T) {
 			// still owns it.
 			name: "ident_elem_aliases_live_local",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32[], i32[]) = (xs, [i, i + 2]);
+    let xs: i32[] = [i, i + 1];
+    let t: (i32[], i32[]) = (xs, [i, i + 2]);
     return t.0.len() + xs[0] + xs[1];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 71;
 }`,
@@ -184,13 +184,13 @@ function main(): i32 {
 			// the read. rctuple_payload_escapes refuses the whole name.
 			name: "rc_elem_extracted_to_local",
 			src: `function round(i: i32): i32 {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
-    var keep: i32[] = t.1;
+    let t: (i32, i32[]) = (i, [i, i + 1]);
+    let keep: i32[] = t.1;
     return keep.len() + keep[0];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 71;
 }`,
@@ -200,11 +200,11 @@ function main(): i32 {
 			// The tuple escapes by return — moved to the caller, so the callee must
 			// not sweep it.
 			name: "escaping_return",
-			src: `function mk(i: i32): (i32, i32[]) { var t: (i32, i32[]) = (i, [i, i + 1]); return t; }
-function round(i: i32): i32 { var p: (i32, i32[]) = mk(i); return p.0 + p.1.len(); }
+			src: `function mk(i: i32): (i32, i32[]) { let t: (i32, i32[]) = (i, [i, i + 1]); return t; }
+function round(i: i32): i32 { let p: (i32, i32[]) = mk(i); return p.0 + p.1.len(); }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 71;
 }`,
@@ -216,12 +216,12 @@ function main(): i32 {
 			name: "rc_elem_escapes_into_call",
 			src: `function take(a: i32[]): i32 { return a.len(); }
 function round(i: i32): i32 {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
+    let t: (i32, i32[]) = (i, [i, i + 1]);
     return t.0 + take(t.1);
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 71;
 }`,
@@ -234,14 +234,14 @@ function main(): i32 {
 			// come with a deliberate change here.
 			name: "reassigned_refused",
 			src: `function round(i: i32): i32 {
-    var t: (i32, string) = (i, "abc");
-    var k: i32 = 0;
+    let t: (i32, string) = (i, "abc");
+    let k: i32 = 0;
     while (k < 4) { t = (k, "xy"); k = k + 1; }
     return t.0 + t.1.len();
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,

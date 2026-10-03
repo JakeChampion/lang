@@ -311,7 +311,7 @@ func trimCodeSpan(c string) string {
 // ── code: light Fern syntax highlighting ───────────────────────────
 
 var fernKeywords = map[string]bool{
-	"function": true, "fn": true, "var": true, "return": true, "if": true,
+	"function": true, "fn": true, "let": true, "return": true, "if": true,
 	"else": true, "while": true, "for": true, "in": true, "match": true,
 	"struct": true, "enum": true, "type": true, "pub": true, "import": true,
 	"as": true, "break": true, "continue": true, "true": true, "false": true,

@@ -7,7 +7,7 @@ import "std/string";
 // 42 only if every check holds.
 function main(): i32 {
     // ---- request side: parse out of the Cookie header ----
-    var wire: string = "GET / HTTP/1.1\r\nHost: x\r\nCookie: a=1; session=abc; b=2\r\n\r\n";
+    let wire: string = "GET / HTTP/1.1\r\nHost: x\r\nCookie: a=1; session=abc; b=2\r\n\r\n";
     match (http.http_parse_request(wire)) {
         Some(req) => {
             match (req.cookie("session")) {
@@ -37,31 +37,31 @@ function main(): i32 {
     }
 
     // ---- response side: SetCookie serialization ----
-    var c: http.SetCookie = http.cookie_new("session", "abc");
+    let c: http.SetCookie = http.cookie_new("session", "abc");
     if (c.serialize() != "session=abc; Path=/; HttpOnly; SameSite=Lax") { return 10; }
 
     // Struct-update spread adjusts attributes; Max-Age and Secure
     // serialize in their fixed positions.
-    var hard: http.SetCookie = http.SetCookie { ...c, secure: true, max_age: 3600 };
+    let hard: http.SetCookie = http.SetCookie { ...c, secure: true, max_age: 3600 };
     if (hard.serialize() != "session=abc; Path=/; Max-Age=3600; Secure; HttpOnly; SameSite=Lax") { return 11; }
 
     // Deletion: empty value, Max-Age=0.
     if (http.cookie_delete("session").serialize() != "session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax") { return 12; }
 
     // Attribute omission: empty path/same_site drop their attributes.
-    var bare: http.SetCookie = http.SetCookie { ...c, path: "", same_site: "", http_only: false };
+    let bare: http.SetCookie = http.SetCookie { ...c, path: "", same_site: "", http_only: false };
     if (bare.serialize() != "session=abc") { return 13; }
 
     // Header-injection defence: CR/LF and `;` are stripped from the
     // value, `=` additionally from the name.
-    var evil: http.SetCookie = http.SetCookie { ...bare, name: "na=me", value: "v\r\nSet-Cookie: hax=1;x" };
+    let evil: http.SetCookie = http.SetCookie { ...bare, name: "na=me", value: "v\r\nSet-Cookie: hax=1;x" };
     if (evil.serialize() != "name=vSet-Cookie: hax=1x") { return 14; }
 
     // ---- with_set_cookie: append semantics on the wire ----
-    var resp: HttpResponse = http.ok("hi");
+    let resp: HttpResponse = http.ok("hi");
     resp = resp.with_set_cookie(http.cookie_new("a", "1"));
     resp = resp.with_set_cookie(http.cookie_new("b", "2"));
-    var out: string = http.http_serialize_response(resp);
+    let out: string = http.http_serialize_response(resp);
     if (!out.contains("set-cookie: a=1; Path=/; HttpOnly; SameSite=Lax")) { return 15; }
     if (!out.contains("set-cookie: b=2; Path=/; HttpOnly; SameSite=Lax")) { return 16; }
 

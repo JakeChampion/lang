@@ -24,7 +24,7 @@ import "std/json";
 import "std/string";
 
 function read_all(r: Reader): string {
-  var out: string = "";
+  let out: string = "";
   while (true) {
     match (r.read_line()) {
       Some(line) => {
@@ -39,8 +39,8 @@ function read_all(r: Reader): string {
 }
 
 function pretty(v: JsonValue, depth: i32): string {
-  var pad: string = "  ".repeat(depth);
-  var pad_inner: string = "  ".repeat(depth + 1);
+  let pad: string = "  ".repeat(depth);
+  let pad_inner: string = "  ".repeat(depth + 1);
   match (v) {
     JNull => {
       return "null";
@@ -63,8 +63,8 @@ function pretty(v: JsonValue, depth: i32): string {
       if (elems.len() == 0) {
         return "[]";
       }
-      var arr_out: string = "[\n";
-      var i: i32 = 0;
+      let arr_out: string = "[\n";
+      let i: i32 = 0;
       while (i < elems.len()) {
         arr_out = arr_out + pad_inner + pretty(elems[i], depth + 1);
         if (i + 1 < elems.len()) {
@@ -79,16 +79,16 @@ function pretty(v: JsonValue, depth: i32): string {
       if (m.len() == 0) {
         return "{}";
       }
-      var obj_out: string = "{\n";
-      var first: boolean = true;
-      var it: MapIter[string, JsonValue] = m.iter();
+      let obj_out: string = "{\n";
+      let first: boolean = true;
+      let it: MapIter[string, JsonValue] = m.iter();
       while (it.has_next()) {
         if (!first) {
           obj_out = obj_out + ",\n";
         }
         first = false;
-        var k: string = it.key();
-        var entry_v: JsonValue = it.value();
+        let k: string = it.key();
+        let entry_v: JsonValue = it.value();
         obj_out = obj_out + pad_inner + json.json_encode(JString(k)) + ": " + pretty(entry_v, depth + 1);
         it.advance();
       }
@@ -99,7 +99,7 @@ function pretty(v: JsonValue, depth: i32): string {
 }
 
 function main(): i32 {
-  var input: string = read_all(stdin());
+  let input: string = read_all(stdin());
   match (json.json_parse(input)) {
     Some(v) => {
       print(pretty(v, 0));

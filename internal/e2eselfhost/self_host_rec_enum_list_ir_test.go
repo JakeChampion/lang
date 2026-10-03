@@ -43,17 +43,17 @@ var recEnumListIRCases = []struct {
 	want int
 }{
 	// deep recursion summing a 3-node chain: 10 + 20 + 12 = 42.
-	{"sum-3", `var l: List = Cons(10, Cons(20, Cons(12, Nil))); return sum(l);`, 42},
+	{"sum-3", `let l: List = Cons(10, Cons(20, Cons(12, Nil))); return sum(l);`, 42},
 	// length of a 5-node chain.
-	{"length-5", `var l: List = Cons(1, Cons(2, Cons(3, Cons(4, Cons(5, Nil))))); return length(l);`, 5},
+	{"length-5", `let l: List = Cons(1, Cons(2, Cons(3, Cons(4, Cons(5, Nil))))); return length(l);`, 5},
 	// sum over a 5-node chain: 1+2+3+4+5 = 15.
-	{"sum-5", `var l: List = Cons(1, Cons(2, Cons(3, Cons(4, Cons(5, Nil))))); return sum(l);`, 15},
+	{"sum-5", `let l: List = Cons(1, Cons(2, Cons(3, Cons(4, Cons(5, Nil))))); return sum(l);`, 15},
 	// the Nil base case (empty list) returns 0; +3 keeps the exit code distinct.
-	{"empty-sum", `var l: List = Nil; return sum(l) + 3;`, 3},
+	{"empty-sum", `let l: List = Nil; return sum(l) + 3;`, 3},
 	// the Cons arm binds the head payload across the recursion boundary.
-	{"head-or", `var l: List = Cons(7, Nil); return head_or(l, 99);`, 7},
+	{"head-or", `let l: List = Cons(7, Nil); return head_or(l, 99);`, 7},
 	// the Nil arm returns the default.
-	{"head-or-empty", `var l: List = Nil; return head_or(l, 42);`, 42},
+	{"head-or-empty", `let l: List = Nil; return head_or(l, 42);`, 42},
 }
 
 func recEnumListIRSrc(mainBody string) string {

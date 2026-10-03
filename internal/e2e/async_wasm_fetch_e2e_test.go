@@ -52,27 +52,27 @@ import "std/string";
 import "std/utf8";
 
 function parse(s: string): i32 {
-    var n: i32 = 0; var i: i32 = 0;
-    while (i < s.len()) { var b: i32 = s[i] as i32; if (b < 48 || b > 57) { return 0; } n = n * 10 + (b - 48); i = i + 1; }
+    let n: i32 = 0; let i: i32 = 0;
+    while (i < s.len()) { let b: i32 = s[i] as i32; if (b < 48 || b > 57) { return 0; } n = n * 10 + (b - 48); i = i + 1; }
     return n;
 }
 function port(key: string): i32 { match (env(key)) { Some(s) => { return parse(s); }, None => { return 0; } } }
 function text(b: u8[]): string { match (utf8.from_bytes(b)) { Some(t) => { return t; }, None => { return "?"; } } }
 
 function main(): i32 {
-    var none: u8[] = [];
-    var host: i32 = 127 | (1 << 24);   // 127.0.0.1
-    var f1: async.Future[u8[]] = fetch.fetch_future(host, port("PSLOW"), "/a");
-    var f2: async.Future[u8[]] = fetch.fetch_future(host, port("PFAST"), "/b");
-    var fs: async.Future[u8[]][] = [f1, f2];
-    var bodies: u8[][] = async.gather(fs, none);
+    let none: u8[] = [];
+    let host: i32 = 127 | (1 << 24);   // 127.0.0.1
+    let f1: async.Future[u8[]] = fetch.fetch_future(host, port("PSLOW"), "/a");
+    let f2: async.Future[u8[]] = fetch.fetch_future(host, port("PFAST"), "/b");
+    let fs: async.Future[u8[]][] = [f1, f2];
+    let bodies: u8[][] = async.gather(fs, none);
     if (bodies.len() != 2) { return 90; }
     print(text(bodies[0]));   // task 0 (slow upstream) → "AAA"
     print(text(bodies[1]));   // task 1 (fast upstream) → "BBB"
     return 0;
 }`
 
-	compPath := buildComponent(t, src)
+	compPath := buildNativeComponent(t, src, nativeMainResult)
 	run := exec.Command("wasmtime", "run", "-S", "inherit-network",
 		"--env", "PSLOW="+strconv.Itoa(pSlow), "--env", "PFAST="+strconv.Itoa(pFast), compPath)
 	var sout, serr bytes.Buffer
@@ -149,27 +149,27 @@ import "std/string";
 import "std/utf8";
 
 function parse(s: string): i32 {
-    var n: i32 = 0; var i: i32 = 0;
-    while (i < s.len()) { var b: i32 = s[i] as i32; if (b < 48 || b > 57) { return 0; } n = n * 10 + (b - 48); i = i + 1; }
+    let n: i32 = 0; let i: i32 = 0;
+    while (i < s.len()) { let b: i32 = s[i] as i32; if (b < 48 || b > 57) { return 0; } n = n * 10 + (b - 48); i = i + 1; }
     return n;
 }
 function port(key: string): i32 { match (env(key)) { Some(s) => { return parse(s); }, None => { return 0; } } }
 function text(b: u8[]): string { match (utf8.from_bytes(b)) { Some(t) => { return t; }, None => { return "?"; } } }
 
 function main(): i32 {
-    var none: u8[] = [];
-    var host: i32 = 127 | (1 << 24);
-    var fs: async.Future[u8[]][] = [
+    let none: u8[] = [];
+    let host: i32 = 127 | (1 << 24);
+    let fs: async.Future[u8[]][] = [
         fetch.fetch_future(host, port("PA"), "/a"),
         fetch.fetch_future(host, port("PB"), "/b")
     ];
-    var (winner, body) = async.race(fs, none);
+    let (winner, body) = async.race(fs, none);
     if (winner < 0) { print("nowinner\n"); return 1; }
     print(text(body));   // the winner's body ("AAA" or "BBB")
     return 0;
 }`
 
-	compPath := buildComponent(t, src)
+	compPath := buildNativeComponent(t, src, nativeMainResult)
 	run := exec.Command("wasmtime", "run", "-S", "inherit-network",
 		"--env", "PA="+strconv.Itoa(pA), "--env", "PB="+strconv.Itoa(pB), compPath)
 	var sout, serr bytes.Buffer

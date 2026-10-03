@@ -3,7 +3,7 @@
 struct Pair[A, B] { first: A, second: B }
 
 function main(): i32 {
-    var p: Pair[i32, string] = Pair { first: 42, second: "x" };
+    let p: Pair[i32, string] = Pair { first: 42, second: "x" };
     if (p.second == "x") {
         return p.first;
     }

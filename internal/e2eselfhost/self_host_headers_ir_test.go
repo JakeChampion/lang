@@ -20,11 +20,11 @@ import "testing"
 // intercept guard. FEATURE-AUDIT std/headers row.
 const headersIRPrelude = `struct Headers { names: string[], values: string[] }
 function lower(s: string): string {
-    var alpha: string = "abcdefghijklmnopqrstuvwxyz";
-    var out: string = "";
-    var i: i32 = 0;
+    let alpha: string = "abcdefghijklmnopqrstuvwxyz";
+    let out: string = "";
+    let i: i32 = 0;
     while (i < s.len()) {
-        var c: i32 = s[i] as i32;
+        let c: i32 = s[i] as i32;
         if (c >= 65 && c <= 90) { out = out + slice_unchecked(alpha, c - 65, c - 65 + 1); }
         else { out = out + slice_unchecked(s, i, i+1); }
         i = i + 1;
@@ -32,13 +32,13 @@ function lower(s: string): string {
     return out;
 }
 function header_map_new(): Headers {
-    var names: string[] = [];
-    var values: string[] = [];
+    let names: string[] = [];
+    let values: string[] = [];
     return Headers { names: names, values: values };
 }
 function (h: Headers) get(name: string): Option[string] {
-    var key: string = lower(name);
-    var i: i32 = 0;
+    let key: string = lower(name);
+    let i: i32 = 0;
     while (i < h.names.len()) {
         if (h.names[i] == key) { return Some(h.values[i]); }
         i = i + 1;
@@ -46,9 +46,9 @@ function (h: Headers) get(name: string): Option[string] {
     return None;
 }
 function (h: Headers) get_all(name: string): string[] {
-    var key: string = lower(name);
-    var out: string[] = [];
-    var i: i32 = 0;
+    let key: string = lower(name);
+    let out: string[] = [];
+    let i: i32 = 0;
     while (i < h.names.len()) {
         if (h.names[i] == key) { out = out.append(h.values[i]); }
         i = i + 1;
@@ -59,11 +59,11 @@ function (h: Headers) append(name: string, value: string): Headers {
     return Headers { ...h, names: h.names.append(lower(name)), values: h.values.append(value) };
 }
 function (h: Headers) set(name: string, value: string): Headers {
-    var key: string = lower(name);
-    var new_names: string[] = [];
-    var new_values: string[] = [];
-    var inserted: boolean = false;
-    var i: i32 = 0;
+    let key: string = lower(name);
+    let new_names: string[] = [];
+    let new_values: string[] = [];
+    let inserted: boolean = false;
+    let i: i32 = 0;
     while (i < h.names.len()) {
         if (h.names[i] == key) {
             if (!inserted) { new_names = new_names.append(key); new_values = new_values.append(value); inserted = true; }
@@ -94,15 +94,15 @@ var headersIRCases = []struct {
 	// the `(h) len()` receiver method counts entries: two appends -> 2. This is
 	// the #3478 regression guard — a user method named `len` must shadow the
 	// builtin `.len()` on the struct receiver (pre-fix: x86-64 -> 26, wasm -> 0).
-	{"append-len", `var h: Headers = header_map_new(); h = h.append("Set-Cookie", "a"); h = h.append("Set-Cookie", "b"); return h.len();`, 2},
+	{"append-len", `let h: Headers = header_map_new(); h = h.append("Set-Cookie", "a"); h = h.append("Set-Cookie", "b"); return h.len();`, 2},
 	// get is case-insensitive: "content-TYPE" finds "Content-Type" -> "text" (len 4).
-	{"get-ci", `var h: Headers = header_map_new(); h = h.append("Content-Type", "text"); return get_len(h, "content-TYPE");`, 4},
+	{"get-ci", `let h: Headers = header_map_new(); h = h.append("Content-Type", "text"); return get_len(h, "content-TYPE");`, 4},
 	// set replaces in place: get returns the new value "22" (len 2).
-	{"set-replace", `var h: Headers = header_map_new(); h = h.append("X", "1"); h = h.set("x", "22"); return get_len(h, "X");`, 2},
+	{"set-replace", `let h: Headers = header_map_new(); h = h.append("X", "1"); h = h.set("x", "22"); return get_len(h, "X");`, 2},
 	// get_all collects duplicates regardless of case: 2 entries.
-	{"get-all-dups", `var h: Headers = header_map_new(); h = h.append("a", "1"); h = h.append("A", "2"); return h.get_all("a").len();`, 2},
+	{"get-all-dups", `let h: Headers = header_map_new(); h = h.append("a", "1"); h = h.append("A", "2"); return h.get_all("a").len();`, 2},
 	// a missing name renders the None arm: 99.
-	{"missing", `var h: Headers = header_map_new(); h = h.append("a", "1"); return get_len(h, "missing");`, 99},
+	{"missing", `let h: Headers = header_map_new(); h = h.append("a", "1"); return get_len(h, "missing");`, 99},
 }
 
 func headersIRSrc(mainBody string) string {

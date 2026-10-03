@@ -17,18 +17,18 @@ var resultMethodTParamCases = []struct {
 }{
 	{"and_string", `import "std/result";
 function main(): i32 {
-    var r: Result[i32, string] = Ok(1);
-    var s: Result[string, string] = r.and(Ok("vw"));
+    let r: Result[i32, string] = Ok(1);
+    let s: Result[string, string] = r.and(Ok("vw"));
     return s.unwrap_or("").len();
 }
 `, 2},
 	{"and_string_loop", `import "std/result";
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var r: Result[i32, string] = Ok(i);
-        var s: Result[string, string] = r.and(Ok("v" + "w"));
+        let r: Result[i32, string] = Ok(i);
+        let s: Result[string, string] = r.and(Ok("v" + "w"));
         n = n + s.unwrap_or("").len();
         i = i + 1;
     }
@@ -37,11 +37,11 @@ function main(): i32 {
 `, 400 % 101},
 	{"and_i32_loop", `import "std/result";
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var r: Result[string, string] = Ok("a" + "b");
-        var s: Result[i32, string] = r.and(Ok(i));
+        let r: Result[string, string] = Ok("a" + "b");
+        let s: Result[i32, string] = r.and(Ok(i));
         n = n + s.unwrap_or(0);
         i = i + 1;
     }
@@ -50,11 +50,11 @@ function main(): i32 {
 `, 19900 % 101},
 	{"and_err", `import "std/result";
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var r: Result[i32, string] = Err("e" + "rr");
-        var s: Result[string, string] = r.and(Ok("vw"));
+        let r: Result[i32, string] = Err("e" + "rr");
+        let s: Result[string, string] = r.and(Ok("vw"));
         match (s) { Ok(v) => { n = n + 100; }, Err(e) => { n = n + e.len(); } }
         i = i + 1;
     }
@@ -63,11 +63,11 @@ function main(): i32 {
 `, 150 % 101},
 	{"or_string", `import "std/result";
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var r: Result[string, string] = Err("e");
-        var s: Result[string, string] = r.or(Ok("x" + "yz"));
+        let r: Result[string, string] = Err("e");
+        let s: Result[string, string] = r.or(Ok("x" + "yz"));
         n = n + s.unwrap_or("").len();
         i = i + 1;
     }
@@ -76,17 +76,17 @@ function main(): i32 {
 `, 150 % 101},
 	{"unwrap_or_string", `import "std/result";
 function main(): i32 {
-    var s: Result[string, string] = Ok("x" + "yz");
+    let s: Result[string, string] = Ok("x" + "yz");
     return s.unwrap_or("").len();
 }
 `, 3},
 	{"map_or_string", `import "std/result";
 function slen(s: string): i32 { return s.len(); }
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var r: Result[string, string] = Ok("a" + "bcd");
+        let r: Result[string, string] = Ok("a" + "bcd");
         n = n + r.map_or(0, slen);
         i = i + 1;
     }
@@ -95,11 +95,11 @@ function main(): i32 {
 `, 200 % 101},
 	{"flatten_string", `import "std/result";
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var inner: Result[string, string] = Ok("p" + "q");
-        var r: Result[Result[string, string], string] = Ok(inner);
+        let inner: Result[string, string] = Ok("p" + "q");
+        let r: Result[Result[string, string], string] = Ok(inner);
         n = n + r.flatten().unwrap_or("").len();
         i = i + 1;
     }
@@ -108,8 +108,8 @@ function main(): i32 {
 `, 100 % 101},
 	{"option_and_string", `import "std/option";
 function main(): i32 {
-    var o: Option[i32] = Some(4);
-    var s: Option[string] = o.and(Some("abcde"));
+    let o: Option[i32] = Some(4);
+    let s: Option[string] = o.and(Some("abcde"));
     return s.unwrap_or("").len();
 }
 `, 5},
@@ -117,27 +117,27 @@ function main(): i32 {
     match (r) { Ok(x) => { return Ok(x); }, Err(e) => { return other; } }
 }
 function main(): i32 {
-    var r: Result[string, string] = Err("e");
-    var s: Result[string, string] = either(r, Ok("x" + "yz"));
+    let r: Result[string, string] = Err("e");
+    let s: Result[string, string] = either(r, Ok("x" + "yz"));
     match (s) { Ok(v) => { return v.len(); }, Err(e) => { return 50; } }
 }
 `, 3},
 	{"scalar_recv_unwrap_or", `import "std/result";
 function main(): i32 {
-    var o: Result[i32, i32] = Ok(3);
+    let o: Result[i32, i32] = Ok(3);
     return o.unwrap_or(0);
 }
 `, 3},
 	{"scalar_recv_is_ok", `import "std/result";
 function main(): i32 {
-    var o: Result[i32, i32] = Err(4);
+    let o: Result[i32, i32] = Err(4);
     if (o.is_ok()) { return 1; }
     return 2;
 }
 `, 2},
 	{"option_scalar_recv", `import "std/option";
 function main(): i32 {
-    var o: Option[i32] = Some(3);
+    let o: Option[i32] = Some(3);
     if (o.is_some()) { return o.unwrap_or(0); }
     return 1;
 }
@@ -145,11 +145,11 @@ function main(): i32 {
 	{"scalar_recv_loop", `import "std/result";
 import "std/option";
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var o: Option[i32] = Some(i);
-        var r: Result[i32, string] = Ok(i + 1);
+        let o: Option[i32] = Some(i);
+        let r: Result[i32, string] = Ok(i + 1);
         if (o.is_some() && r.is_ok()) { n = (n + o.unwrap_or(0) + r.unwrap_or(0)) % 101; }
         i = i + 1;
     }
@@ -158,9 +158,9 @@ function main(): i32 {
 `, 4},
 	{"scalar_rebound_recv", `import "std/option";
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
-    var o: Option[i32] = None;
+    let n: i32 = 0;
+    let i: i32 = 0;
+    let o: Option[i32] = None;
     while (i < 200) {
         o = Some(i);
         n = (n + o.unwrap_or(0)) % 101;
@@ -170,7 +170,7 @@ function main(): i32 {
 }
 `, 6},
 	{"mixed_unused", `function main(): i32 {
-    var r: Result[i32, string] = Ok(3);
+    let r: Result[i32, string] = Ok(3);
     return 7;
 }
 `, 7},
@@ -179,7 +179,7 @@ function f(o: Result[i32, string]): i32 {
     match (o) { Ok(v) => { return v; }, Err(e) => { return e.len(); } }
 }
 function main(): i32 {
-    var r: Result[i32, string] = Ok(3);
+    let r: Result[i32, string] = Ok(3);
     return f(r);
 }
 `, 3},
@@ -206,8 +206,8 @@ function g(o: Option[i32], r: Result[i32, i32]): i32 {
     match (o) { Some(v) => { return v + r.unwrap_or(1); }, None => { return 0; } }
 }
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
         n = (n + f(Ok((i + 1000).to_string())) + f(Err("e" + i.to_string()))) % 101;
         n = (n + g(Some(i), Ok(i)) + g(None, Err(2))) % 101;

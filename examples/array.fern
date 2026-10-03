@@ -1,8 +1,8 @@
 // Array indexing + `.len()` are built-ins (the IR lowers them
 // to `i32.load` / `ptr - 4; load`), so no stdlib imports needed.
 function sumTo(a: i32[], n: i32): i32 {
-  var total: i32 = 0;
-  var i: i32 = 0;
+  let total: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     total = total + a[i];
     i = i + 1;
@@ -11,6 +11,6 @@ function sumTo(a: i32[], n: i32): i32 {
 }
 
 function main(): i32 {
-  var xs: i32[] = [10, 20, 30, 40];
+  let xs: i32[] = [10, 20, 30, 40];
   return sumTo(xs, 4);
 }

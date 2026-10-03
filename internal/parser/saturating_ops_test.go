@@ -82,15 +82,15 @@ func TestSaturatingOperatorPrecedence(t *testing.T) {
 // TestCompoundAssignStillLexesBeforeSaturating pins that adding `+|` to the
 // multi-character punctuator table did not shadow `+=`.
 func TestCompoundAssignStillLexesBeforeSaturating(t *testing.T) {
-	if _, err := Parse(`function main(): i32 { var a: i32 = 1; a += 2; return a; }`); err != nil {
+	if _, err := Parse(`function main(): i32 { let a: i32 = 1; a += 2; return a; }`); err != nil {
 		t.Errorf("compound assign after adding +|: %v", err)
 	}
-	if _, err := Parse(`function main(): i32 { var a: i32 = 1; var b: i32 = 2; return a | b; }`); err != nil {
+	if _, err := Parse(`function main(): i32 { let a: i32 = 1; let b: i32 = 2; return a | b; }`); err != nil {
 		t.Errorf("bitwise or after adding +|: %v", err)
 	}
 	// `<<|` sits ahead of `<<` in the punctuator table; `<<=` is longer still
 	// and must keep winning over both.
-	if _, err := Parse(`function main(): i32 { var a: i32 = 1; a <<= 2; return a; }`); err != nil {
+	if _, err := Parse(`function main(): i32 { let a: i32 = 1; a <<= 2; return a; }`); err != nil {
 		t.Errorf("shift-assign after adding <<|: %v", err)
 	}
 	if got := shape(exprOfReturn(t, "a << b")); got != "(<< a b)" {

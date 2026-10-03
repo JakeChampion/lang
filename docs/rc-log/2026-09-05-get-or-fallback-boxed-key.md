@@ -15,13 +15,13 @@ arm64 / wasm / x86-64:
 |---|---|---|
 | no read at all | 0 / 0 / 0 | unchanged |
 | `Map[string, i32[]]`, `get_or(k, [0])` | **3200 / 3200 / 0** | 0 / 0 / 0 |
-| `Map[string, i32[]]`, fallback hoisted to a `var` | 0 / 0 / 0 | unchanged |
+| `Map[string, i32[]]`, fallback hoisted to a `let` | 0 / 0 / 0 | unchanged |
 | `Map[string, Rec]`, `get_or(k, Rec { … })` | **3200 / 1600 / 0** | 0 / 0 / 0 |
 | **`Map[i32, i32[]]`**, `get_or(k, [0])` | 0 / 0 / 0 | unchanged |
 
 The last row against the second is what identifies it: only the KEY type
 differs, and the leak follows the key being boxed. Not the ABI, not the value
-type, not the number of allocations the value makes. A fallback that is a `var`
+type, not the number of allocations the value makes. A fallback that is a `let`
 rather than a temporary is owned by its scope and released there, so it never
 depended on this path at all.
 
@@ -72,7 +72,7 @@ would have gone quiet on the improvement instead.
 
 The same reason `arr_chain` and `struct_chain` did and the other four chain
 shapes did not: a fallback has to be a FRESH allocation at the call site. A
-literal (`"?"`), a scalar, or a hoisted `var` costs nothing to strand or is
+literal (`"?"`), a scalar, or a hoisted `let` costs nothing to strand or is
 owned elsewhere. `str_chain` uses a literal fallback and `scalar_chain` has no
 read at all, which is why the residual looked like it tracked the value type
 when it tracked the fallback.

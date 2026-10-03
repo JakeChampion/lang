@@ -1,6 +1,6 @@
 # 2026-09-05 — a renamed cursor is the same binding, in both directions
 
-`var c: C = c0;` at the top of a state-threading function made every append
+`let c: C = c0;` at the top of a state-threading function made every append
 below it copy the whole array. #8498's repro emits three instructions where its
 one-emit sibling emits one — 3x the work — and took **1500x** the time:
 
@@ -24,7 +24,7 @@ rename, and both were already linear. The rename is the whole trigger.
 Two mechanisms both keyed on "is this name a parameter?", and a rename is not.
 
 **The alias retained.** `computeMovedLocals` moved an alias out of an owned
-LOCAL (`isOwnedRcLocal`) and not out of an owned PARAMETER, so `var c: C = c0;`
+LOCAL (`isOwnedRcLocal`) and not out of an owned PARAMETER, so `let c: C = c0;`
 paid a transfer inc and left c0's reference alive to the exit sweep for the
 whole body. The container therefore sat at rc 2 and `__fern_arr_cow_inplace`
 took the copy path at every field append. `movableAliasSource` is the union of

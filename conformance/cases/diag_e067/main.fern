@@ -16,6 +16,6 @@ function issue(n: i32): Ticket {
 }
 
 function main(): i32 {
-    var t: Ticket = issue(7);   // error[E067]: never consumed
+    let t: Ticket = issue(7);   // error[E067]: never consumed
     return 0;
 }

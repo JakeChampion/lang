@@ -4,12 +4,12 @@ The reusable part of this entry is the ordering rule, not the leak.
 
 ## The leak
 
-`var v: i32[][] = mk()` never released either inner array when `mk` returned a
+`let v: i32[][] = mk()` never released either inner array when `mk` returned a
 LOCAL rather than the literal itself:
 
 ```fern
 function mk(): i32[][] { return [[1,2],[3,4]]; }                      // clean
-function mk(): i32[][] { var a: i32[][] = [[1,2],[3,4]]; return a; }  // leaks
+function mk(): i32[][] { let a: i32[][] = [[1,2],[3,4]]; return a; }  // leaks
 ```
 
 Same caller. 200/400/800 rounds: `live_bytes` 16000 / 32000 / 64000 — 80 B/round,
@@ -61,7 +61,7 @@ Two things to carry forward:
 
 ## Still open
 
-`var a: i32[][] = [[..]]; var v: i32[][] = a;` in ONE body still leaks 16000. The
+`let a: i32[][] = [[..]]; let v: i32[][] = a;` in ONE body still leaks 16000. The
 literal is credited to `a`, and reading it into `v` disqualifies it — an
 escape-gate question rather than a registry one. Pinned by
 `local_alias_still_leaks`, asserted on the exit code only: the point is that it

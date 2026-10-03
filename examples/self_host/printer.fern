@@ -34,7 +34,7 @@ function hex_digit(d: i32): u8 {
 // so the formatted source stays text — a raw NUL makes git read the file as
 // binary — and scan_string's `\xNN` reads the same byte back.
 function append_hex_escape(out: u8[], b: i32): u8[] {
-  var a: u8[] = out;
+  let a: u8[] = out;
   a = a.append(92 as u8);
   a = a.append(120 as u8);
   a = a.append(hex_digit(b / 16));
@@ -52,7 +52,7 @@ function cont_in(s: string, i: i32, lo: i32, hi: i32): boolean {
   if (i >= s.len()) {
     return false;
   }
-  var c: i32 = s[i] as i32;
+  let c: i32 = s[i] as i32;
   return c >= lo && c <= hi;
 }
 
@@ -60,7 +60,7 @@ function cont_in(s: string, i: i32, lo: i32, hi: i32): boolean {
 // s, or 0 when none starts there — the acceptance Go's utf8.DecodeRuneInString
 // uses, so overlongs, surrogates and anything past U+10FFFF are refused.
 function utf8_seq_len(s: string, i: i32): i32 {
-  var b: i32 = s[i] as i32;
+  let b: i32 = s[i] as i32;
   if (b < 128) {
     return 1;
   }
@@ -71,8 +71,8 @@ function utf8_seq_len(s: string, i: i32): i32 {
     return 0;
   }
   if (b >= 224 && b <= 239) {
-    var lo3: i32 = 128;
-    var hi3: i32 = 191;
+    let lo3: i32 = 128;
+    let hi3: i32 = 191;
     if (b == 224) {
       lo3 = 160;
     } else if (b == 237) {
@@ -84,8 +84,8 @@ function utf8_seq_len(s: string, i: i32): i32 {
     return 0;
   }
   if (b >= 240 && b <= 244) {
-    var lo4: i32 = 128;
-    var hi4: i32 = 191;
+    let lo4: i32 = 128;
+    let hi4: i32 = 191;
     if (b == 240) {
       lo4 = 144;
     } else if (b == 244) {
@@ -104,10 +104,10 @@ function utf8_seq_len(s: string, i: i32): i32 {
 // makes git read the file as binary), and so does a byte that is not part of
 // valid UTF-8: written raw it would make the file itself invalid UTF-8.
 function escape_lit_body(s: string, fstring: boolean): string {
-  var out: u8[] = [];
-  var i: i32 = 0;
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 34) {
       out = out.append(92 as u8);  // \"
       out = out.append(34 as u8);
@@ -129,11 +129,11 @@ function escape_lit_body(s: string, fstring: boolean): string {
     } else if (is_control_byte(b)) {
       out = append_hex_escape(out, b);
     } else if (b >= 128) {
-      var n: i32 = utf8_seq_len(s, i);
+      let n: i32 = utf8_seq_len(s, i);
       if (n == 0) {
         out = append_hex_escape(out, b);
       } else {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < n) {
           out = out.append(s[i + k]);
           k = k + 1;
@@ -273,8 +273,8 @@ function print_lambda_params(lm: ast.ExprLambda, depth: i32): string {
 // parameter as the pattern it was written with rather than the holder the
 // desugar minted (#7338).
 function print_params_with(params: ast.ParamDecl[], pats: string[], defaults: boolean, depth: i32): string {
-  var out: string = "(";
-  var pi: i32 = 0;
+  let out: string = "(";
+  let pi: i32 = 0;
   while (pi < params.len()) {
     if (pi > 0) {
       out = out + ", ";
@@ -315,8 +315,8 @@ function drop_prelude(body: ast.Stmt[], n: i32): ast.Stmt[] {
   if (n <= 0) {
     return body;
   }
-  var out: ast.Stmt[] = [];
-  var i: i32 = n;
+  let out: ast.Stmt[] = [];
+  let i: i32 = n;
   while (i < body.len()) {
     out = out.append(body[i]);
     i = i + 1;
@@ -362,8 +362,8 @@ function print_block_expr(c: ast.ExprCall, parent_prec: i32, depth: i32): string
       if (lm.origin != parser.ORIGIN_BLOCK || lm.body.len() == 0) {
         return "";
       }
-      var last: ast.Stmt = lm.body[lm.body.len() - 1];
-      var tail: string = print_return_only([last], depth);
+      let last: ast.Stmt = lm.body[lm.body.len() - 1];
+      let tail: string = print_return_only([last], depth);
       if (tail.len() == 0) {
         return "";
       }
@@ -372,8 +372,8 @@ function print_block_expr(c: ast.ExprCall, parent_prec: i32, depth: i32): string
       }
       // The leading statements sit at depth 0, as native's
       // formatBlockExpr renders them; only the tail keeps the depth.
-      var out: string = "{ ";
-      var i: i32 = 0;
+      let out: string = "{ ";
+      let i: i32 = 0;
       while (i + 1 < lm.body.len()) {
         out = out + print_stmt_inline(lm.body[i], 0) + " ";
         i = i + 1;
@@ -415,7 +415,7 @@ function tail_expr(st: ast.Stmt): ast.Expr {
 // first and last statements of an IIFE body are its declaration and its
 // return. "" when the body is any other shape.
 function iife_value_local(first: ast.Stmt, last: ast.Stmt): string {
-  var name: string = "";
+  let name: string = "";
   match (first) {
     ast.StmtVar(v) => {
       name = v.name;
@@ -461,7 +461,7 @@ function print_expr_iife(c: ast.ExprCall, depth: i32): string {
       // chain assign it, and returns it — three statements, not one.
       // `arm_expr_value` reads each arm's body back through that local.
       if (lm.body.len() == 3) {
-        var vl: string = iife_value_local(lm.body[0], lm.body[2]);
+        let vl: string = iife_value_local(lm.body[0], lm.body[2]);
         if (vl.len() > 0) {
           match (lm.body[1]) {
             ast.StmtIf(vf) => {
@@ -502,25 +502,25 @@ function print_expr_iife(c: ast.ExprCall, depth: i32): string {
           // the lowering (a nested or literal payload) — otherwise a
           // `match (o) { A(Ok2(n)) => n, … }` reprints as the merged
           // arm and its inner match, wrapped back up in the IIFE.
-          var marms: ast.MatchArm[] = m.arms;
+          let marms: ast.MatchArm[] = m.arms;
           if (m.sugar.len() > 0) {
             marms = m.sugar;
           }
           if (marms.len() == 0) {
             return "";
           }
-          var out: string = "match (" + print_expr(m.scrutinee, depth) + ") { ";
-          var i: i32 = 0;
+          let out: string = "match (" + print_expr(m.scrutinee, depth) + ") { ";
+          let i: i32 = 0;
           while (i < marms.len()) {
-            var av: string = print_return_only(marms[i].body, depth);
+            let av: string = print_return_only(marms[i].body, depth);
             if (av.len() == 0) {
               return "";
             }
             if (i > 0) {
               out = out + ", ";
             }
-            var head: string = print_pattern(marms[i].pattern);
-            var guarded: ast.MatchArm = marms[i];
+            let head: string = print_pattern(marms[i].pattern);
+            let guarded: ast.MatchArm = marms[i];
             // See print_match: or-pattern alternatives rejoin here.
             while (i + 1 < marms.len() && marms[i + 1].alt_cont) {
               i = i + 1;
@@ -542,11 +542,11 @@ function print_expr_iife(c: ast.ExprCall, depth: i32): string {
           if (f.sugar.lits.len() > 0) {
             return print_sugared_match_expr(f.sugar, "", depth);
           }
-          var tv: string = print_return_only(f.then_body, depth);
+          let tv: string = print_return_only(f.then_body, depth);
           if (tv.len() == 0) {
             return "";
           }
-          var ev: string = print_return_only(f.else_body, depth);
+          let ev: string = print_return_only(f.else_body, depth);
           if (ev.len() == 0) {
             return "";
           }
@@ -571,7 +571,7 @@ function print_expr_iife(c: ast.ExprCall, depth: i32): string {
 // call. Without it `-fmt` emitted the whole IIFE, writing the synthesised
 // `__tm<l>_<c>_r` into the user's source (#7089).
 //
-// parse_primary builds exactly `{ var V = <zero>; <the desugared match>; return V }`
+// parse_primary builds exactly `{ let V = <zero>; <the desugared match>; return V }`
 // (IfChain.value_local), so the shape is the marker, and the match inside it
 // already reprints correctly — this only has to unwrap it and put the arm
 // values back where the `return`s were.
@@ -584,7 +584,7 @@ function print_value_local_iife(c: ast.ExprCall, depth: i32): string {
       if (lm.params.len() != 0 || lm.body.len() != 3) {
         return "";
       }
-      var v: string = value_local_name(lm.body[0], lm.body[2]);
+      let v: string = value_local_name(lm.body[0], lm.body[2]);
       if (v.len() == 0) {
         return "";
       }
@@ -611,7 +611,7 @@ function print_value_local_iife(c: ast.ExprCall, depth: i32): string {
 // value_local_name is the local an IIFE body declares first and returns last,
 // or "" when `first` / `last` are not that pair.
 function value_local_name(first: ast.Stmt, last: ast.Stmt): string {
-  var declared: string = "";
+  let declared: string = "";
   match (first) {
     ast.StmtVar(vd) => {
       declared = vd.name;
@@ -651,8 +651,8 @@ function print_match_expr_arms(m: ast.StmtMatch, v: string, depth: i32): string 
   // The WRITTEN arms are snapshotted BEFORE value_arm_body rewrites the
   // terminal `return E` into `V = E`, so they still carry the return and the
   // value local does not apply to them.
-  var arms: ast.MatchArm[] = m.arms;
-  var val: string = v;
+  let arms: ast.MatchArm[] = m.arms;
+  let val: string = v;
   if (m.sugar.len() > 0) {
     arms = m.sugar;
     val = "";
@@ -660,18 +660,18 @@ function print_match_expr_arms(m: ast.StmtMatch, v: string, depth: i32): string 
   if (arms.len() == 0) {
     return "";
   }
-  var out: string = "match (" + print_expr(m.scrutinee, depth) + ") { ";
-  var i: i32 = 0;
+  let out: string = "match (" + print_expr(m.scrutinee, depth) + ") { ";
+  let i: i32 = 0;
   while (i < arms.len()) {
-    var av: string = arm_expr_value(arms[i].body, val, depth);
+    let av: string = arm_expr_value(arms[i].body, val, depth);
     if (av.len() == 0) {
       return "";
     }
     if (i > 0) {
       out = out + ", ";
     }
-    var head: string = print_pattern(arms[i].pattern);
-    var guarded: ast.MatchArm = arms[i];
+    let head: string = print_pattern(arms[i].pattern);
+    let guarded: ast.MatchArm = arms[i];
     while (i + 1 < arms.len() && arms[i + 1].alt_cont) {
       i = i + 1;
       head = head + " | " + print_pattern(arms[i].pattern);
@@ -692,14 +692,14 @@ function print_match_expr_arms(m: ast.StmtMatch, v: string, depth: i32): string 
 // `v` names the local the desugar stores arm values into (IfChain.value_local),
 // or is "" when the arms kept their `return`. See arm_expr_value.
 function print_sugared_match_expr(sg: ast.MatchSugar, v: string, depth: i32): string {
-  var arms: WrittenArm[] = sugar_written_arms(sg);
+  let arms: WrittenArm[] = sugar_written_arms(sg);
   if (arms.len() == 0) {
     return "";
   }
-  var out: string = "match (" + print_expr(sg.scrut, depth) + ") { ";
-  var i: i32 = 0;
+  let out: string = "match (" + print_expr(sg.scrut, depth) + ") { ";
+  let i: i32 = 0;
   while (i < arms.len()) {
-    var av: string = arm_expr_value(arms[i].body, v, depth);
+    let av: string = arm_expr_value(arms[i].body, v, depth);
     if (av.len() == 0) {
       return "";
     }
@@ -728,8 +728,8 @@ function arm_expr_value(body: ast.Stmt[], v: string, depth: i32): string {
   if (body.len() == 0) {
     return "";
   }
-  var last: ast.Stmt = body[body.len() - 1];
-  var tail: string = "";
+  let last: ast.Stmt = body[body.len() - 1];
+  let tail: string = "";
   if (v.len() == 0) {
     tail = print_return_only([last], depth);
   } else {
@@ -745,8 +745,8 @@ function arm_expr_value(body: ast.Stmt[], v: string, depth: i32): string {
     return tail;
   }
   // Depth 0 for the leading statements, as in print_block_expr.
-  var out: string = "{ ";
-  var i: i32 = 0;
+  let out: string = "{ ";
+  let i: i32 = 0;
   while (i + 1 < body.len()) {
     out = out + print_stmt_inline(body[i], 0) + " ";
     i = i + 1;
@@ -806,12 +806,12 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
         let (nr, nf2) = print_expr_c(b.right, prec_lowest(), depth, nf);
         return (nl + " = " + nr, nf2);
       }
-      var p: i32 = binary_prec(b.op);
+      let p: i32 = binary_prec(b.op);
       let (bl, bf) = print_expr_c(b.left, p, depth, f);
-      var gap: string = " ";
+      let gap: string = " ";
       if (written_break(b)) {
         let (tr, tf) = emit_trailing(bf, last_line(b.left));
-        var lead: string = "";
+        let lead: string = "";
         if (tf.ci < tf.comments.len() && tf.comments[tf.ci].line > first_line(b.left)) {
           let (ld, lf) = drain_leading(tf, b.line, depth + 1);
           lead = ld;
@@ -821,7 +821,7 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
         bf = tf;
       }
       let (br, bf2) = print_expr_c(b.right, p + 1, depth, bf);
-      var inner: string = bl + gap + b.op + " " + br;
+      let inner: string = bl + gap + b.op + " " + br;
       if (p < parent_prec) {
         return ("(" + inner + ")", bf2);
       }
@@ -835,7 +835,7 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       // binary operator and below the postfix positions.
       if (u.op.len() > 3 && util.str_has_prefix(u.op, "as_")) {
         let (co, cf) = print_expr_c(u.operand, prec_cast(), depth, f);
-        var cinner: string = co + " as " + slice_unchecked(u.op, 3, u.op.len());
+        let cinner: string = co + " as " + slice_unchecked(u.op, 3, u.op.len());
         if (parent_prec >= prec_cast()) {
           return ("(" + cinner + ")", cf);
         }
@@ -849,7 +849,7 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
         return (to + "?", tf);
       }
       let (uo, uf) = print_expr_c(u.operand, prec_unary(), depth, f);
-      var uinner: string = u.op + uo;
+      let uinner: string = u.op + uo;
       if (parent_prec >= prec_unary()) {
         return ("(" + uinner + ")", uf);
       }
@@ -867,7 +867,7 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       // with it (its `return` stays inside the lambda, and a `defer` in
       // it is the lambda's, not the enclosing function's), so this reads
       // the parser's tag rather than the shape.
-      var blk: string = print_block_expr(c, parent_prec, depth);
+      let blk: string = print_block_expr(c, parent_prec, depth);
       if (blk.len() > 0) {
         return (blk, f);
       }
@@ -875,11 +875,11 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       // its arm values through a local rather than a `return`, so the
       // IIFE body is three statements and print_expr_iife's one-statement
       // shape does not fit it (#7089).
-      var vl: string = print_value_local_iife(c, depth);
+      let vl: string = print_value_local_iife(c, depth);
       if (vl.len() > 0) {
         return (vl, f);
       }
-      var iife: string = print_expr_iife(c, depth);
+      let iife: string = print_expr_iife(c, depth);
       if (iife.len() > 0) {
         return (iife, f);
       }
@@ -892,8 +892,8 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       return ("[" + elems + "]", af);
     },
     ast.ExprTuple(t) => {
-      var out: string = "(";
-      var i: i32 = 0;
+      let out: string = "(";
+      let i: i32 = 0;
       while (i < t.elements.len()) {
         if (i > 0) {
           out = out + ", ";
@@ -913,11 +913,11 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       // literal 0 in for a missing low bound and a placeholder in for a
       // missing high one, so printing them would turn `s[1:]` into
       // `s[1:0]` — a different program, not a different layout.
-      var lo: string = "";
+      let lo: string = "";
       if (!sl.open_start) {
         lo = print_expr(sl.start, depth);
       }
-      var hi: string = "";
+      let hi: string = "";
       if (!sl.open_end) {
         hi = print_expr(sl.end, depth);
       }
@@ -925,19 +925,19 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
     },
     ast.ExprStructLit(sl) => {
       // The spread base, when there is one, is the list's first element.
-      var vals: ast.Expr[] = [];
-      var prefixes: string[] = [];
+      let vals: ast.Expr[] = [];
+      let prefixes: string[] = [];
       if (sl.has_base) {
         vals = vals.append(sl.base);
         prefixes = prefixes.append("...");
       }
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < sl.field_names.len()) {
         vals = vals.append(sl.field_values[i]);
         prefixes = prefixes.append(sl.field_names[i] + ": ");
         i = i + 1;
       }
-      var lns: i32[] = elem_lines(vals, sl.line);
+      let lns: i32[] = elem_lines(vals, sl.line);
       if (vals.len() > 0 && keep_list_lines(f, sl.line, lns[lns.len() - 1])) {
         let (lines, lf) = print_list_lines(vals, lns, prefixes, depth, f);
         return (sl.type_name + " {" + lines + indent_str(depth) + "}", lf);
@@ -959,13 +959,13 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       // Past the desugar's prelude, a lambda with a destructuring
       // parameter has the same body shape as one without (#7338).
       let (pats, npre) = param_patterns_for(lm.params, lm.body);
-      var out: string = print_params_with(lm.params, pats, false, depth);
+      let out: string = print_params_with(lm.params, pats, false, depth);
       if (lm.ret_type.len() > 0) {
         out = out + ": " + arrow_return_type(lm.ret_type);
       }
       out = out + " => ";
-      var body: ast.Stmt[] = drop_prelude(lm.body, npre);
-      var av: string = print_return_only(body, depth);
+      let body: ast.Stmt[] = drop_prelude(lm.body, npre);
+      let av: string = print_return_only(body, depth);
       if (av.len() > 0) {
         out = out + av;
       } else if (body.len() == 1 && stmt_is_single_line(body[0])) {
@@ -983,8 +983,8 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       return (out, f);
     },
     ast.ExprFString(fs) => {
-      var out: string = "f\"";
-      var i: i32 = 0;
+      let out: string = "f\"";
+      let i: i32 = 0;
       while (i < fs.lits.len()) {
         if (fs.is_expr[i]) {
           out = out + "{" + print_expr(fs.exprs[i], depth) + "}";
@@ -996,8 +996,8 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       return (out + "\"", f);
     },
     ast.ExprMapLit(ml) => {
-      var out: string = "Map {";
-      var i: i32 = 0;
+      let out: string = "Map {";
+      let i: i32 = 0;
       while (i < ml.keys.len()) {
         if (i > 0) {
           out = out + ",";
@@ -1021,7 +1021,7 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
 // node that records no line (a boolean literal) `prev`, the line of the element
 // before it.
 function elem_line(e: ast.Expr, prev: i32): i32 {
-  var ln: i32 = first_line(e);
+  let ln: i32 = first_line(e);
   if (ln == 0) {
     return prev;
   }
@@ -1030,8 +1030,8 @@ function elem_line(e: ast.Expr, prev: i32): i32 {
 
 // elem_lines is elem_line for every element of a list opened on `open_line`.
 function elem_lines(elems: ast.Expr[], open_line: i32): i32[] {
-  var out: i32[] = [];
-  var prev: i32 = open_line;
+  let out: i32[] = [];
+  let prev: i32 = open_line;
   for x in elems {
     prev = elem_line(x, prev);
     out = out.append(prev);
@@ -1043,11 +1043,11 @@ function elem_lines(elems: ast.Expr[], open_line: i32): i32[] {
 // brackets: one line unless keep_list_lines holds, and print_list_lines' form,
 // closed at `depth`'s indent, when it does.
 function print_list(elems: ast.Expr[], open_line: i32, prefix: string, depth: i32, f: Fmt): (string, Fmt) {
-  var prefixes: string[] = [];
+  let prefixes: string[] = [];
   for x in elems {
     prefixes = prefixes.append(prefix);
   }
-  var lns: i32[] = elem_lines(elems, open_line);
+  let lns: i32[] = elem_lines(elems, open_line);
   if (elems.len() > 0 && keep_list_lines(f, open_line, lns[lns.len() - 1])) {
     let (lines, lf) = print_list_lines(elems, lns, prefixes, depth, f);
     return (lines + indent_str(depth), lf);
@@ -1056,9 +1056,9 @@ function print_list(elems: ast.Expr[], open_line: i32, prefix: string, depth: i3
 }
 
 function print_list_flat(elems: ast.Expr[], prefixes: string[], depth: i32, f: Fmt): (string, Fmt) {
-  var out: string = "";
-  var g: Fmt = f;
-  var i: i32 = 0;
+  let out: string = "";
+  let g: Fmt = f;
+  let i: i32 = 0;
   while (i < elems.len()) {
     if (i > 0) {
       out = out + ", ";
@@ -1076,15 +1076,15 @@ function print_list_flat(elems: ast.Expr[], prefixes: string[], depth: i32, f: F
 // above it and its trailing comment after its comma (#10143). It starts with the
 // newline after the opener and ends with the one before the closer.
 function print_list_lines(elems: ast.Expr[], lns: i32[], prefixes: string[], depth: i32, f: Fmt): (string, Fmt) {
-  var out: string = "\n";
-  var g: Fmt = f;
-  var i: i32 = 0;
+  let out: string = "\n";
+  let g: Fmt = f;
+  let i: i32 = 0;
   while (i < elems.len()) {
-    var ln: i32 = lns[i];
+    let ln: i32 = lns[i];
     let (lead, g1) = drain_leading(g, ln, depth + 1);
     out = out + lead + indent_str(depth + 1);
     g = g1;
-    var j: i32 = i;
+    let j: i32 = i;
     while (j < elems.len() && (j == i || lns[j] == ln)) {
       if (j > i) {
         out = out + ", ";
@@ -1107,8 +1107,8 @@ function print_list_lines(elems: ast.Expr[], lns: i32[], prefixes: string[], dep
 // indent_str returns `depth` copies of "  " — two spaces per level, the width
 // native's formatter uses and the one `make fmt-check` gates the tree against.
 function indent_str(depth: i32): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < depth) {
     out = out + "  ";
     i = i + 1;
@@ -1152,7 +1152,7 @@ function take_span(f: Fmt, first: i32): (i32, i32, Fmt) {
   if (first <= 0) {
     return (0, 0, f);
   }
-  var i: i32 = f.si;
+  let i: i32 = f.si;
   while (i < f.spans.firsts.len()) {
     if (f.spans.firsts[i] == first) {
       return (f.spans.opens[i], f.spans.closes[i], Fmt { ...f, si: i + 1 });
@@ -1175,7 +1175,7 @@ function (f: Fmt) blank_at(line: i32): boolean {
 // construct? A leading comment block belongs to the construct, so the line
 // looked at is the comment's, not the statement's.
 function (f: Fmt) blank_before(line: i32): boolean {
-  var top: i32 = line;
+  let top: i32 = line;
   if (f.ci < f.comments.len() && f.comments[f.ci].line < line) {
     top = f.comments[f.ci].line;
   }
@@ -1185,8 +1185,8 @@ function (f: Fmt) blank_before(line: i32): boolean {
 // drain_leading emits every pending comment written ABOVE source line `line`.
 // A comment on the same line stays queued for emit_trailing.
 function drain_leading(f: Fmt, line: i32, depth: i32): (string, Fmt) {
-  var out: string = "";
-  var g: Fmt = f;
+  let out: string = "";
+  let g: Fmt = f;
   while (g.ci < g.comments.len() && g.comments[g.ci].line < line) {
     out = out + indent_str(depth) + "//" + g.comments[g.ci].text + "\n";
     g = Fmt { ...g, ci: g.ci + 1 };
@@ -1198,9 +1198,9 @@ function drain_leading(f: Fmt, line: i32, depth: i32): (string, Fmt) {
 // blank line the source had between two of its comments or after the last
 // one: a section header stays apart from the doc comment below it.
 function drain_decl_leading(f: Fmt, line: i32): (string, Fmt) {
-  var chunks: string[] = [];
-  var g: Fmt = f;
-  var last: i32 = 0;
+  let chunks: string[] = [];
+  let g: Fmt = f;
+  let last: i32 = 0;
   while (g.ci < g.comments.len() && g.comments[g.ci].line < line) {
     if (last > 0 && g.blank_at(g.comments[g.ci].line - 1)) {
       chunks = chunks.append("\n");
@@ -1233,7 +1233,7 @@ function written_break(b: ast.ExprBinary): boolean {
   if (b.line == 0) {
     return false;
   }
-  var left: i32 = last_line(b.left);
+  let left: i32 = last_line(b.left);
   return left > 0 && b.line > left || first_line(b.right) > b.line;
 }
 
@@ -1280,7 +1280,7 @@ function is_postfix_unary(op: string): boolean {
 // form puts the closer on a line of its own. A lambda counts as its first line:
 // its body is laid out by the statement printer.
 function last_line(e: ast.Expr): i32 {
-  var ln: i32 = ast.expr_line(e);
+  let ln: i32 = ast.expr_line(e);
   match (e) {
     ast.ExprBinary(b) => {
       return max_line(max_line(ln, last_line(b.left)), last_line(b.right));
@@ -1304,7 +1304,7 @@ function last_line(e: ast.Expr): i32 {
       return max_line(max_line(max_line(ln, last_line(sl.array)), last_line(sl.start)), last_line(sl.end));
     },
     ast.ExprStructLit(st) => {
-      var vals: ast.Expr[] = [];
+      let vals: ast.Expr[] = [];
       if (st.has_base) {
         vals = vals.append(st.base);
       }
@@ -1332,7 +1332,7 @@ function list_closer(open: i32, es: ast.Expr[]): i32 {
   if (open <= 0 || es.len() == 0) {
     return 0;
   }
-  var lns: i32[] = elem_lines(es, open);
+  let lns: i32[] = elem_lines(es, open);
   if (lns[lns.len() - 1] > open) {
     return 1;
   }
@@ -1340,7 +1340,7 @@ function list_closer(open: i32, es: ast.Expr[]): i32 {
 }
 
 function last_line_of(es: ast.Expr[]): i32 {
-  var m: i32 = 0;
+  let m: i32 = 0;
   for x in es {
     m = max_line(m, last_line(x));
   }
@@ -1369,9 +1369,9 @@ function keep_list_lines(f: Fmt, open: i32, last: i32): boolean {
 // has nowhere to put it and the cursor would flush it above the NEXT
 // declaration instead.
 function inner_comment_pending(f: Fmt, decl_line: i32, last: i32): boolean {
-  var i: i32 = f.ci;
+  let i: i32 = f.ci;
   while (i < f.comments.len()) {
-    var ln: i32 = f.comments[i].line;
+    let ln: i32 = f.comments[i].line;
     if (ln > last) {
       return false;
     }
@@ -1387,22 +1387,22 @@ function inner_comment_pending(f: Fmt, decl_line: i32, last: i32): boolean {
 // declaration, or an empty list when the parse did not record any (every parse
 // but `-fmt`'s, and any decl the parser could not read).
 function field_lines_for(flines: parser.FieldLines[], name: string, decl_line: i32): i32[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < flines.len()) {
     if (flines[i].name == name && flines[i].decl_line == decl_line) {
       return flines[i].lines;
     }
     i = i + 1;
   }
-  var none: i32[] = [];
+  let none: i32[] = [];
   return none;
 }
 
 // drain_all flushes every remaining comment at `depth` — end of file, and the
 // tail of a block whose last statement is behind the cursor.
 function drain_all(f: Fmt, depth: i32): (string, Fmt) {
-  var out: string = "";
-  var g: Fmt = f;
+  let out: string = "";
+  let g: Fmt = f;
   while (g.ci < g.comments.len()) {
     out = out + indent_str(depth) + "//" + g.comments[g.ci].text + "\n";
     g = Fmt { ...g, ci: g.ci + 1 };
@@ -1421,7 +1421,7 @@ function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
     return ("{}", f);
   }
   let (open_line, close_line, g) = take_span(f, ast.stmt_line(body[0]));
-  var out: string = "{";
+  let out: string = "{";
   // A comment on the opening brace's line stays there: on a one-line block
   // it annotated the whole block, not the statement printed first.
   if (open_line > 0) {
@@ -1430,9 +1430,9 @@ function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
     g = gt;
   }
   out = out + "\n";
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < body.len()) {
-    var ln: i32 = ast.stmt_line(body[i]);
+    let ln: i32 = ast.stmt_line(body[i]);
     // Never a blank just inside the opening brace.
     if (i > 0 && ln > 0 && g.blank_before(ln)) {
       out = out + "\n";
@@ -1472,7 +1472,7 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
       return "_";
     },
     ast.PatVariant(pv) => {
-      var head: string = pv.type_name;
+      let head: string = pv.type_name;
       if (pv.at_binding.len() > 0) {
         head = pv.at_binding + " @ " + pv.type_name;
       }
@@ -1487,8 +1487,8 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
       // rest of the list once a sub-pattern could sit at any position
       // (#7524).
       if (pv.nested.len() > 0) {
-        var np: string = head + "(";
-        var ni: i32 = 0;
+        let np: string = head + "(";
+        let ni: i32 = 0;
         while (ni < pv.nested.len()) {
           if (ni > 0) {
             np = np + ", ";
@@ -1517,8 +1517,8 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
       }
       // Every payload binding, not just the first — a `Pair(a, b)` printed
       // as `Pair(a)` re-parses as a different (E015) program.
-      var out: string = head + "(" + payload_slot(pv, pv.binding);
-      var i: i32 = 0;
+      let out: string = head + "(" + payload_slot(pv, pv.binding);
+      let i: i32 = 0;
       while (i < pv.extra_bindings.len()) {
         out = out + ", " + payload_slot(pv, pv.extra_bindings[i]);
         i = i + 1;
@@ -1592,7 +1592,7 @@ function range_pair(lo: ast.Expr, hi: ast.Expr, binder: string): string {
               return "";
             }
           }
-          var sep: string = "..";
+          let sep: string = "..";
           if (hb.op == "<=") {
             sep = "..=";
           }
@@ -1619,11 +1619,11 @@ function range_slot_for(cond: ast.Expr, binder: string): string {
       if (b.op != "&&") {
         return "";
       }
-      var here: string = range_pair(b.left, b.right, binder);
+      let here: string = range_pair(b.left, b.right, binder);
       if (here.len() > 0) {
         return here;
       }
-      var l: string = range_slot_for(b.left, binder);
+      let l: string = range_slot_for(b.left, binder);
       if (l.len() > 0) {
         return l;
       }
@@ -1640,11 +1640,11 @@ function payload_slot(pv: ast.PatVariant, binder: string): string {
   if (!pv.has_lit_cond) {
     return binder;
   }
-  var rng: string = range_slot_for(pv.lit_cond, binder);
+  let rng: string = range_slot_for(pv.lit_cond, binder);
   if (rng.len() > 0) {
     return rng;
   }
-  var lit: ast.Expr = lit_cond_for(pv.lit_cond, binder);
+  let lit: ast.Expr = lit_cond_for(pv.lit_cond, binder);
   if (expr_is_missing(lit)) {
     return binder;
   }
@@ -1658,7 +1658,7 @@ function lit_cond_for(cond: ast.Expr, binder: string): ast.Expr {
   match (cond) {
     ast.ExprBinary(b) => {
       if (b.op == "&&") {
-        var left: ast.Expr = lit_cond_for(b.left, binder);
+        let left: ast.Expr = lit_cond_for(b.left, binder);
         if (!expr_is_missing(left)) {
           return left;
         }
@@ -1703,8 +1703,8 @@ function print_tuple_elem(kind: i32, bind: string, lit: ast.Expr, pat: ast.Patte
 
 // print_tuple_elems renders `(p0, p1, …)`.
 function print_tuple_elems(kinds: i32[], binds: string[], lits: ast.Expr[], pats: ast.Pattern[]): string {
-  var out: string = "(";
-  var i: i32 = 0;
+  let out: string = "(";
+  let i: i32 = 0;
   while (i < kinds.len()) {
     if (i > 0) {
       out = out + ", ";
@@ -1723,7 +1723,7 @@ function print_tup_arm(a: ast.TupArm): string {
     }
     return "_";
   }
-  var pat: string = print_tuple_elems(a.elem_kinds, a.binds, a.lits, a.elem_pats);
+  let pat: string = print_tuple_elems(a.elem_kinds, a.binds, a.lits, a.elem_pats);
   if (a.at_binding.len() > 0) {
     return a.at_binding + " @ " + pat;
   }
@@ -1755,8 +1755,8 @@ function print_struct_arm(a: ast.StructArm): string {
     }
     return "_";
   }
-  var out: string = a.type_name + " { ";
-  var i: i32 = 0;
+  let out: string = a.type_name + " { ";
+  let i: i32 = 0;
   while (i < a.fields.len()) {
     if (i > 0) {
       out = out + ", ";
@@ -1790,15 +1790,15 @@ struct WrittenArm { head: string, body: ast.Stmt[], guard: ast.Expr, has_guard: 
 // them expands `P1 | P2 => …` to one entry per alternative sharing a body, so
 // the regroup is the same walk in all three cases (#7077).
 function sugar_written_arms(sg: ast.MatchSugar): WrittenArm[] {
-  var out: WrittenArm[] = [];
-  var i: i32 = 0;
+  let out: WrittenArm[] = [];
+  let i: i32 = 0;
   // The VARIANT-arm carrier: build_nested_arm_match's chain stands in for a
   // match whose arms are ordinary MatchArms, so they render straight through
   // print_pattern rather than through the tup/strct/lit spellings.
   if (sg.arms.len() > 0) {
     while (i < sg.arms.len()) {
-      var a: ast.MatchArm = sg.arms[i];
-      var ahead: string = print_pattern(a.pattern);
+      let a: ast.MatchArm = sg.arms[i];
+      let ahead: string = print_pattern(a.pattern);
       // `A | B => …` parses to one arm per alternative with the body
       // cloned into each; alt_cont is what records that they were
       // written as one, so they rejoin here.
@@ -1811,12 +1811,12 @@ function sugar_written_arms(sg: ast.MatchSugar): WrittenArm[] {
     }
     return out;
   }
-  var n: i32 = sg.tup.len() + sg.strct.len() + sg.lits.len();
+  let n: i32 = sg.tup.len() + sg.strct.len() + sg.lits.len();
   while (i < n) {
-    var head: string = "";
-    var body: ast.Stmt[] = [];
-    var guard: ast.Expr = parser.e_bool(true);
-    var has_guard: boolean = false;
+    let head: string = "";
+    let body: ast.Stmt[] = [];
+    let guard: ast.Expr = parser.e_bool(true);
+    let has_guard: boolean = false;
     if (sg.tup.len() > 0) {
       head = print_tup_arm(sg.tup[i]);
       body = sg.tup[i].body;
@@ -1852,13 +1852,13 @@ function sugar_written_arms(sg: ast.MatchSugar): WrittenArm[] {
 // print_sugared_match reprints a match the parser replaced outright — a tuple
 // or struct scrutinee, whose done-flag chain the carrier hangs off (#7065), or
 // a non-enum scrutinee, whose if/else-if chain it hangs off (#7072). Without it
-// `-fmt` emitted the chain — `var __sm4_5_d = false; …` — over the user's match.
+// `-fmt` emitted the chain — `let __sm4_5_d = false; …` — over the user's match.
 function print_sugared_match(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
-  var pad: string = indent_str(depth);
-  var arms: WrittenArm[] = sugar_written_arms(sg);
-  var out: string = "match (" + print_expr(sg.scrut, depth) + ") {\n";
-  var g: Fmt = f;
-  var i: i32 = 0;
+  let pad: string = indent_str(depth);
+  let arms: WrittenArm[] = sugar_written_arms(sg);
+  let out: string = "match (" + print_expr(sg.scrut, depth) + ") {\n";
+  let g: Fmt = f;
+  let i: i32 = 0;
   while (i < arms.len()) {
     let (arm_body, g1) = print_block(arms[i].body, depth + 1, g);
     g = g1;
@@ -1883,15 +1883,15 @@ function print_sugared_match(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, F
 // from its StmtMatch, and it re-emits the statements that followed the same
 // way: the desugar moved them inside the success arm.
 function print_sugared_let_else(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
-  var arms: WrittenArm[] = sugar_written_arms(sg);
+  let arms: WrittenArm[] = sugar_written_arms(sg);
   if (arms.len() < 2) {
     return print_sugared_match(sg, depth, f);
   }
-  var g: Fmt = f;
+  let g: Fmt = f;
   let (els, g1) = print_block(arms[arms.len() - 1].body, depth, g);
   g = g1;
-  var head: string = "";
-  var hi: i32 = 0;
+  let head: string = "";
+  let hi: i32 = 0;
   while (hi + 1 < arms.len()) {
     if (hi > 0) {
       head = head + " | ";
@@ -1899,11 +1899,11 @@ function print_sugared_let_else(sg: ast.MatchSugar, depth: i32, f: Fmt): (string
     head = head + arms[hi].head;
     hi = hi + 1;
   }
-  var out: string = "let " + head + " = " + print_expr(sg.scrut, depth) + " else " + els + ";";
-  var rest: ast.Stmt[] = arms[0].body;
-  var i: i32 = 0;
+  let out: string = "let " + head + " = " + print_expr(sg.scrut, depth) + " else " + els + ";";
+  let rest: ast.Stmt[] = arms[0].body;
+  let i: i32 = 0;
   while (i < rest.len()) {
-    var ln: i32 = ast.stmt_line(rest[i]);
+    let ln: i32 = ast.stmt_line(rest[i]);
     out = out + "\n";
     if (ln > 0 && g.blank_before(ln)) {
       out = out + "\n";
@@ -1931,15 +1931,15 @@ function print_sugared_let_else(sg: ast.MatchSugar, depth: i32, f: Fmt): (string
 // arm before it is the head, with any `|` alternatives already joined by
 // sugar_written_arms.
 function print_sugared_if_let(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
-  var arms: WrittenArm[] = sugar_written_arms(sg);
+  let arms: WrittenArm[] = sugar_written_arms(sg);
   if (arms.len() < 2) {
     return print_sugared_match(sg, depth, f);
   }
-  var g: Fmt = f;
+  let g: Fmt = f;
   let (then_block, g1) = print_block(arms[0].body, depth, g);
   g = g1;
-  var out: string = "if let ";
-  var i: i32 = 0;
+  let out: string = "if let ";
+  let i: i32 = 0;
   while (i + 1 < arms.len()) {
     if (i > 0) {
       out = out + " | ";
@@ -1948,7 +1948,7 @@ function print_sugared_if_let(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, 
     i = i + 1;
   }
   out = out + " = " + print_expr(sg.scrut, depth) + " " + then_block;
-  var els: ast.Stmt[] = arms[arms.len() - 1].body;
+  let els: ast.Stmt[] = arms[arms.len() - 1].body;
   if (els.len() > 0) {
     let (else_block, g2) = print_block(els, depth, g);
     g = g2;
@@ -1966,7 +1966,7 @@ function print_lit_pat(a: ast.LitArm): string {
     return a.at_binding + " @ " + print_lit_pat(ast.LitArm { ...a, at_binding: "" });
   }
   if (a.has_range) {
-    var dots: string = "..";
+    let dots: string = "..";
     if (a.range_inclusive) {
       dots = "..=";
     }
@@ -1976,22 +1976,22 @@ function print_lit_pat(a: ast.LitArm): string {
 }
 
 function print_match(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
-  var pad: string = indent_str(depth);
-  var out: string = "match (" + print_expr(m.scrutinee, depth) + ") {\n";
-  var g: Fmt = f;
+  let pad: string = indent_str(depth);
+  let out: string = "match (" + print_expr(m.scrutinee, depth) + ") {\n";
+  let g: Fmt = f;
   // The arms as WRITTEN when the parse consumed something into the lowering
   // — a nested payload merged into one arm plus an inner match, or a literal
   // payload folded onto the guard. Empty on an ordinary match.
-  var arms: ast.MatchArm[] = m.arms;
+  let arms: ast.MatchArm[] = m.arms;
   if (m.sugar.len() > 0) {
     arms = m.sugar;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < arms.len()) {
     let (arm_body, g1) = print_block(arms[i].body, depth + 1, g);
     g = g1;
-    var head: string = print_pattern(arms[i].pattern);
-    var guarded: ast.MatchArm = arms[i];
+    let head: string = print_pattern(arms[i].pattern);
+    let guarded: ast.MatchArm = arms[i];
     // `A | B => …` parsed to one arm per alternative sharing the body; the
     // continuations rejoin their head here.
     while (i + 1 < arms.len() && arms[i + 1].alt_cont) {
@@ -2021,15 +2021,15 @@ function print_match(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
 function print_if_let(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
   // The written arms when a nested or literal payload was consumed into the
   // lowering; otherwise the lowered ones already are the written ones.
-  var arms: ast.MatchArm[] = m.arms;
+  let arms: ast.MatchArm[] = m.arms;
   if (m.sugar.len() > 0) {
     arms = m.sugar;
   }
-  var g: Fmt = f;
+  let g: Fmt = f;
   let (then_block, g1) = print_block(arms[0].body, depth, g);
   g = g1;
-  var out: string = "if let ";
-  var i: i32 = 0;
+  let out: string = "if let ";
+  let i: i32 = 0;
   while (i + 1 < arms.len()) {
     if (i > 0) {
       out = out + " | ";
@@ -2038,7 +2038,7 @@ function print_if_let(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
     i = i + 1;
   }
   out = out + " = " + print_expr(m.scrutinee, depth) + " " + then_block;
-  var els: ast.Stmt[] = arms[arms.len() - 1].body;
+  let els: ast.Stmt[] = arms[arms.len() - 1].body;
   if (els.len() > 0) {
     let (else_block, g2) = print_block(els, depth, g);
     g = g2;
@@ -2054,15 +2054,15 @@ function print_let_else(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
   // The written arms when a nested payload or an or-pattern was consumed
   // into the lowering; otherwise the lowered ones already are the written
   // ones. Same carrier print_if_let reads, for the same reason.
-  var arms: ast.MatchArm[] = m.arms;
+  let arms: ast.MatchArm[] = m.arms;
   if (m.sugar.len() > 0) {
     arms = m.sugar;
   }
-  var g: Fmt = f;
+  let g: Fmt = f;
   let (els, g1) = print_block(arms[arms.len() - 1].body, depth, g);
   g = g1;
-  var head: string = "";
-  var hi: i32 = 0;
+  let head: string = "";
+  let hi: i32 = 0;
   while (hi + 1 < arms.len()) {
     if (hi > 0) {
       head = head + " | ";
@@ -2070,11 +2070,11 @@ function print_let_else(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
     head = head + print_pattern(arms[hi].pattern);
     hi = hi + 1;
   }
-  var out: string = "let " + head + " = " + print_expr(m.scrutinee, depth) + " else " + els + ";";
-  var rest: ast.Stmt[] = arms[0].body;
-  var i: i32 = 0;
+  let out: string = "let " + head + " = " + print_expr(m.scrutinee, depth) + " else " + els + ";";
+  let rest: ast.Stmt[] = arms[0].body;
+  let i: i32 = 0;
   while (i < rest.len()) {
-    var ln: i32 = ast.stmt_line(rest[i]);
+    let ln: i32 = ast.stmt_line(rest[i]);
     out = out + "\n";
     if (ln > 0 && g.blank_before(ln)) {
       out = out + "\n";
@@ -2098,7 +2098,7 @@ function print_let_else(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
 struct UseSugar { ok: boolean, name: string, type_name: string, call: ast.Expr, body: ast.Stmt[] }
 
 function as_use(e: ast.Expr): UseSugar {
-  var none: UseSugar = UseSugar { ok: false, name: "", type_name: "", call: e, body: [] };
+  let none: UseSugar = UseSugar { ok: false, name: "", type_name: "", call: e, body: [] };
   if let ast.ExprCall(c) = e {
     if (c.args.len() == 0) {
       return none;
@@ -2107,13 +2107,13 @@ function as_use(e: ast.Expr): UseSugar {
       if (lm.origin != parser.ORIGIN_USE || lm.params.len() != 1) {
         return none;
       }
-      var written: ast.Expr[] = [];
-      var i: i32 = 0;
+      let written: ast.Expr[] = [];
+      let i: i32 = 0;
       while (i + 1 < c.args.len()) {
         written = written.append(c.args[i]);
         i = i + 1;
       }
-      var call: ast.Expr = ast.ExprCall { ...c, args: written };
+      let call: ast.Expr = ast.ExprCall { ...c, args: written };
       return UseSugar { ok: true, name: lm.params[0].name, type_name: lm.params[0].type_name, call: call, body: lm.body };
     }
   }
@@ -2126,20 +2126,20 @@ function as_use(e: ast.Expr): UseSugar {
 // print_let_else recovers for the other rest-of-block desugar. The type prints
 // only when the source wrote one; otherwise the checker infers it.
 function print_use(us: UseSugar, line: i32, depth: i32, f: Fmt): (string, Fmt) {
-  var out: string = "use " + written_name(us.name);
+  let out: string = "use " + written_name(us.name);
   if (us.type_name.len() > 0) {
     out = out + ": " + us.type_name;
   }
   out = out + " <- " + print_expr(us.call, depth) + ";";
-  var g: Fmt = f;
+  let g: Fmt = f;
   if (line > 0) {
     let (tr, g0) = emit_trailing(g, line);
     out = out + tr;
     g = g0;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < us.body.len()) {
-    var ln: i32 = ast.stmt_line(us.body[i]);
+    let ln: i32 = ast.stmt_line(us.body[i]);
     out = out + "\n";
     if (ln > 0 && g.blank_before(ln)) {
       out = out + "\n";
@@ -2212,13 +2212,13 @@ function stmt_is_single_line(st: ast.Stmt): boolean {
 // operand, and a message is the right side of the eprint's
 // `"assertion failed: " + msg`.
 function print_assert(ifs: ast.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
-  var cond: ast.Expr = ifs.cond;
+  let cond: ast.Expr = ifs.cond;
   if let ast.ExprUnary(u) = ifs.cond {
     cond = u.operand;
   }
   let (cs, cf) = print_expr_c(cond, prec_lowest(), depth, f);
-  var out: string = "assert(" + cs;
-  var g: Fmt = cf;
+  let out: string = "assert(" + cs;
+  let g: Fmt = cf;
   if (ifs.then_body.len() > 0) {
     if let ast.StmtExpr(se) = ifs.then_body[0] {
       if let ast.ExprCall(c) = se.value {
@@ -2236,8 +2236,8 @@ function print_assert(ifs: ast.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
 }
 
 function print_chain_assign(stmts: ast.Stmt[], depth: i32): string {
-  var out: string = "";
-  var i: i32 = stmts.len() - 1;
+  let out: string = "";
+  let i: i32 = stmts.len() - 1;
   while (i >= 0) {
     out = out + assign_target(stmts[i]) + " = ";
     i = i - 1;
@@ -2283,7 +2283,7 @@ function is_block_stmt(st: ast.Stmt): boolean {
 // block_stmts is the body of the if-true scope `st`; empty for anything that
 // is not an `if` at all.
 function block_stmts(st: ast.Stmt): ast.Stmt[] {
-  var none: ast.Stmt[] = [];
+  let none: ast.Stmt[] = [];
   match (st) {
     ast.StmtIf(ifs) => {
       return ifs.then_body;
@@ -2314,7 +2314,7 @@ function print_stmt_inline(st: ast.Stmt, depth: i32): string {
 struct ForCSugar { init: ast.Stmt[], cond: ast.Expr, step: ast.Stmt[], body: ast.Stmt[], label: string, ok: boolean }
 
 function no_c_for(): ForCSugar {
-  var none: ast.Stmt[] = [];
+  let none: ast.Stmt[] = [];
   return ForCSugar { init: none, cond: ast.ExprBool { value: true, line: 0, col: 0 }, step: none, body: none, label: "", ok: false };
 }
 
@@ -2327,7 +2327,7 @@ function no_c_for(): ForCSugar {
 // desugar that this stops recognising silently reverts to printing the
 // while-loop.
 //
-//     if (true) { INIT…; var __forc_L_C = true; while (true) {
+//     if (true) { INIT…; let __forc_L_C = true; while (true) {
 //         if (!__forc_L_C) { STEP }
 //         __forc_L_C = false;
 //         if (!(COND)) { break; }
@@ -2337,11 +2337,11 @@ function as_c_for(ifs: ast.StmtIf): ForCSugar {
   if (!expr_is_true(ifs.cond) || ifs.else_body.len() != 0) {
     return no_c_for();
   }
-  var outer: ast.Stmt[] = ifs.then_body;
+  let outer: ast.Stmt[] = ifs.then_body;
   if (outer.len() < 2) {
     return no_c_for();
   }
-  var flag: string = "";
+  let flag: string = "";
   match (outer[outer.len() - 2]) {
     ast.StmtVar(v) => {
       if (is_forc_name(v.name) && expr_is_true(v.init)) {
@@ -2353,9 +2353,9 @@ function as_c_for(ifs: ast.StmtIf): ForCSugar {
   if (flag.len() == 0) {
     return no_c_for();
   }
-  var wbody: ast.Stmt[] = [];
-  var label: string = "";
-  var have_while: boolean = false;
+  let wbody: ast.Stmt[] = [];
+  let label: string = "";
+  let have_while: boolean = false;
   match (outer[outer.len() - 1]) {
     ast.StmtWhile(w) => {
       if (expr_is_true(w.cond)) {
@@ -2371,8 +2371,8 @@ function as_c_for(ifs: ast.StmtIf): ForCSugar {
   }
 
   // wbody[0]: `if (!flag) { STEP }` — STEP is its then-body, possibly empty.
-  var step: ast.Stmt[] = [];
-  var step_ok: boolean = false;
+  let step: ast.Stmt[] = [];
+  let step_ok: boolean = false;
   match (wbody[0]) {
     ast.StmtIf(s) => {
       if (is_not_of_ident(s.cond, flag) && s.else_body.len() == 0) {
@@ -2387,7 +2387,7 @@ function as_c_for(ifs: ast.StmtIf): ForCSugar {
   }
 
   // wbody[1]: `flag = false`.
-  var assign_ok: boolean = false;
+  let assign_ok: boolean = false;
   match (wbody[1]) {
     ast.StmtAssign(a) => {
       if (a.target == flag && expr_is_false(a.value)) {
@@ -2401,8 +2401,8 @@ function as_c_for(ifs: ast.StmtIf): ForCSugar {
   }
 
   // wbody[2]: `if (!(COND)) { break; }`.
-  var cond: ast.Expr = ast.ExprBool { value: true, line: 0, col: 0 };
-  var cond_ok: boolean = false;
+  let cond: ast.Expr = ast.ExprBool { value: true, line: 0, col: 0 };
+  let cond_ok: boolean = false;
   match (wbody[2]) {
     ast.StmtIf(c) => {
       if (c.else_body.len() == 0 && c.then_body.len() == 1) {
@@ -2430,14 +2430,14 @@ function as_c_for(ifs: ast.StmtIf): ForCSugar {
     return no_c_for();
   }
 
-  var init: ast.Stmt[] = [];
-  var ii: i32 = 0;
+  let init: ast.Stmt[] = [];
+  let ii: i32 = 0;
   while (ii + 2 < outer.len()) {
     init = init.append(outer[ii]);
     ii = ii + 1;
   }
-  var body: ast.Stmt[] = [];
-  var bi: i32 = 3;
+  let body: ast.Stmt[] = [];
+  let bi: i32 = 3;
   while (bi < wbody.len()) {
     body = body.append(wbody[bi]);
     bi = bi + 1;
@@ -2501,11 +2501,11 @@ function is_not_of_ident(e: ast.Expr, name: string): boolean {
 // their trailing `;` stripped: the header's own separators supply them, and a
 // clause is an ordinary statement everywhere else.
 function print_c_for(fc: ForCSugar, depth: i32, f: Fmt): (string, Fmt) {
-  var init: string = "";
+  let init: string = "";
   if (fc.init.len() == 1) {
     init = strip_semi(print_stmt_inline(fc.init[0], depth));
   }
-  var step: string = "";
+  let step: string = "";
   if (fc.step.len() == 1) {
     step = strip_semi(print_stmt_inline(fc.step[0], depth));
   }
@@ -2529,7 +2529,7 @@ function strip_semi(s: string): string {
 function print_if_chain(ifs: ast.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
   let (cond_text, cf) = print_expr_c(ifs.cond, prec_lowest(), depth, f);
   let (then_text, g) = print_block(ifs.then_body, depth, cf);
-  var out: string = "if (" + cond_text + ") " + then_text;
+  let out: string = "if (" + cond_text + ") " + then_text;
   if (ifs.else_body.len() == 0) {
     return (out, g);
   }
@@ -2569,8 +2569,8 @@ function for_binder(var_name: string): string {
 // drop_first_stmt is `stmts` without its head — the pattern header's
 // destructure, once it has been reprinted as the header itself.
 function drop_first_stmt(stmts: ast.Stmt[]): ast.Stmt[] {
-  var out: ast.Stmt[] = [];
-  var i: i32 = 1;
+  let out: ast.Stmt[] = [];
+  let i: i32 = 1;
   while (i < stmts.len()) {
     out = out.append(stmts[i]);
     i = i + 1;
@@ -2615,12 +2615,12 @@ function print_stmt(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
 // — the form a caller that supplies its own separator needs.
 function print_stmt_line(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
   let (text, g) = print_stmt_body(st, depth, f);
-  var out: string = indent_str(depth) + text;
+  let out: string = indent_str(depth) + text;
   // Only a single-line statement can carry a trailing comment: on a compound
   // one the same-line comment sits against the header, not the body, and
   // native does not attach it either.
   if (stmt_is_single_line(st)) {
-    var ln: i32 = ast.stmt_line(st);
+    let ln: i32 = ast.stmt_line(st);
     if (ln > 0) {
       let (tr, g2) = emit_trailing(g, ln);
       let (tr2, g3) = emit_trailing(g2, stmt_last_line(st, ln));
@@ -2656,9 +2656,9 @@ function stmt_last_line(st: ast.Stmt, ln: i32): i32 {
 // split_commas splits a comma-joined binding / field list. Destructure names
 // never contain a comma, so no nesting awareness is needed.
 function split_commas(csv: string): string[] {
-  var out: string[] = [];
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let out: string[] = [];
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i <= csv.len()) {
     if (i == csv.len() || csv[i] == b',') {
       out = out.append(slice_unchecked(csv, start, i) + "");
@@ -2683,11 +2683,11 @@ function written_name(name: string): string {
 // where a nested position leaves grouping parens on the element — `(a` and
 // `b)` for `((a, b), c)` — around the name.
 function written_part(part: string): string {
-  var lead: i32 = 0;
+  let lead: i32 = 0;
   while (lead < part.len() && part[lead] == b'(') {
     lead = lead + 1;
   }
-  var trail: i32 = part.len();
+  let trail: i32 = part.len();
   while (trail > lead && part[trail - 1] == b')') {
     trail = trail - 1;
   }
@@ -2697,9 +2697,9 @@ function written_part(part: string): string {
 // join_csv respells a comma-joined binder list with native's `, ` separator,
 // each element as the author wrote it.
 function join_csv(csv: string): string {
-  var parts: string[] = split_commas(csv);
-  var out: string = "";
-  var i: i32 = 0;
+  let parts: string[] = split_commas(csv);
+  let out: string = "";
+  let i: i32 = 0;
   while (i < parts.len()) {
     if (i > 0) {
       out = out + ", ";
@@ -2714,7 +2714,7 @@ function join_csv(csv: string): string {
 // pattern, or "" when the source wrote none. The binding is a real name the
 // body may read, so a pattern printed without it stops compiling.
 function destr_at_prefix(type_name: string): string {
-  var at: string = parser.destr_marker_split(type_name).at;
+  let at: string = parser.destr_marker_split(type_name).at;
   if (at.len() == 0) {
     return "";
   }
@@ -2734,10 +2734,10 @@ function print_struct_destructure(v: ast.StmtVar, depth: i32): string {
 // same pattern in its parameter position, so the two share this rather than
 // each spelling the marker decode (#7338).
 function struct_destr_pattern(v: ast.StmtVar): string {
-  var sd_marker: string = parser.destr_marker_split(v.type_name).tag;
-  var rest: str = slice_unchecked(sd_marker, 4, sd_marker.len());
-  var colon: i32 = 0 - 1;
-  var ri: i32 = 0;
+  let sd_marker: string = parser.destr_marker_split(v.type_name).tag;
+  let rest: str = slice_unchecked(sd_marker, 4, sd_marker.len());
+  let colon: i32 = 0 - 1;
+  let ri: i32 = 0;
   while (ri < rest.len()) {
     if (rest[ri] == b':' && colon < 0) {
       colon = ri;
@@ -2747,11 +2747,11 @@ function struct_destr_pattern(v: ast.StmtVar): string {
   if (colon < 0) {
     return "";
   }
-  var struct_name: str = slice_unchecked(rest, 0, colon);
-  var fields: string[] = split_commas(slice_unchecked(rest, colon + 1, rest.len()));
-  var binds: string[] = split_commas(v.name);
-  var out: string = struct_name + " { ";
-  var i: i32 = 0;
+  let struct_name: str = slice_unchecked(rest, 0, colon);
+  let fields: string[] = split_commas(slice_unchecked(rest, colon + 1, rest.len()));
+  let binds: string[] = split_commas(v.name);
+  let out: string = struct_name + " { ";
+  let i: i32 = 0;
   while (i < fields.len()) {
     if (i > 0) {
       out = out + ", ";
@@ -2793,7 +2793,7 @@ function param_pattern_from(st: ast.Stmt, holder: string): string {
       if (!parser.is_param_prelude_marker(v.type_name)) {
         return "";
       }
-      var from_holder: boolean = false;
+      let from_holder: boolean = false;
       match (v.init) {
         ast.ExprIdent(id) => {
           if (id.name == holder) {
@@ -2809,7 +2809,7 @@ function param_pattern_from(st: ast.Stmt, holder: string): string {
       // `v @ P { x, y }` — and the parser uses that name as the holder
       // instead of minting a `__ptuple_` one. It is a real binding the
       // body may read, so the pattern alone would drop it.
-      var at: string = "";
+      let at: string = "";
       if (!util.str_has_prefix(holder, "__ptuple_")) {
         at = holder + " @ ";
       }
@@ -2831,20 +2831,20 @@ function param_pattern_from(st: ast.Stmt, holder: string): string {
 // The count is 0 unless EVERY pattern found is accounted for, so a caller either
 // skips the whole prelude or prints the desugared form — never drops a binding.
 function param_patterns_for(params: ast.ParamDecl[], body: ast.Stmt[]): (string[], i32) {
-  var pats: string[] = [];
-  var pi: i32 = 0;
+  let pats: string[] = [];
+  let pi: i32 = 0;
   while (pi < params.len()) {
     pats = pats.append("");
     pi = pi + 1;
   }
 
-  var n: i32 = 0;
+  let n: i32 = 0;
   while (n < body.len()) {
-    var matched: boolean = false;
-    var k: i32 = 0;
+    let matched: boolean = false;
+    let k: i32 = 0;
     while (k < params.len()) {
       if (pats[k].len() == 0) {
-        var pat: string = param_pattern_from(body[n], params[k].name);
+        let pat: string = param_pattern_from(body[n], params[k].name);
         if (pat.len() > 0) {
           pats = pats.with(k, pat);
           matched = true;
@@ -2861,8 +2861,8 @@ function param_patterns_for(params: ast.ParamDecl[], body: ast.Stmt[]): (string[
   }
   // Recount: the loop above exits by jumping n to body.len(), so derive the
   // prelude length from how many patterns were recovered instead.
-  var found: i32 = 0;
-  var j: i32 = 0;
+  let found: i32 = 0;
+  let j: i32 = 0;
   while (j < pats.len()) {
     if (pats[j].len() > 0) {
       found = found + 1;
@@ -2877,7 +2877,7 @@ function param_patterns_for(params: ast.ParamDecl[], body: ast.Stmt[]): (string[
 function print_nested_func_decl(v: ast.StmtVar, depth: i32, f: Fmt): (string, Fmt) {
   match (v.init) {
     ast.ExprLambda(lm) => {
-      var out: string = "function " + v.name + print_lambda_params(lm, depth);
+      let out: string = "function " + v.name + print_lambda_params(lm, depth);
       if (lm.ret_type.len() > 0) {
         out = out + ": " + lm.ret_type;
       }
@@ -2887,7 +2887,7 @@ function print_nested_func_decl(v: ast.StmtVar, depth: i32, f: Fmt): (string, Fm
     _ => {}
   }
   let (vi, vf) = print_expr_c(v.init, prec_lowest(), depth, f);
-  return ("var " + v.name + " = " + vi + ";", vf);
+  return ("let " + v.name + " = " + vi + ";", vf);
 }
 
 // print_stmt_body is the statement text with no indent and no newline.
@@ -2899,9 +2899,9 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       // same action as a block EXPRESSION and prints it compactly, so
       // the braces go on one line here too.
       if (is_block_stmt(d.action)) {
-        var blk: ast.Stmt[] = block_stmts(d.action);
-        var inl: string = "{ ";
-        var bi: i32 = 0;
+        let blk: ast.Stmt[] = block_stmts(d.action);
+        let inl: string = "{ ";
+        let bi: i32 = 0;
         while (bi < blk.len()) {
           inl = inl + print_stmt_inline(blk[bi], 0) + " ";
           bi = bi + 1;
@@ -2921,7 +2921,7 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       // Both destructuring forms parse to a StmtVar: the bindings are
       // comma-joined into `name`, and a STRUCT destructure additionally
       // tags `type_name` with the parser's `@sd:Type:field,field` marker.
-      // Printed as a plain `var` they re-parse as something else — or, for
+      // Printed as a plain `let` they re-parse as something else — or, for
       // the tuple form, do not re-parse at all (#6773).
       if (parser.is_struct_destr_marker(v.type_name)) {
         return (print_struct_destructure(v, depth), f);
@@ -2932,12 +2932,12 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       if (util.contains(v.name, ",")) {
         return ("let " + destr_at_prefix(v.type_name) + "(" + join_csv(v.name) + ") = " + print_expr(v.init, depth) + ";", f);
       }
-      var ann: string = "";
+      let ann: string = "";
       if (v.type_name.len() > 0) {
         ann = ": " + v.type_name;
       }
       let (ti, tf) = print_expr_c(v.init, prec_lowest(), depth, f);
-      return ("var " + written_name(v.name) + ann + " = " + ti + ";", tf);
+      return ("let " + written_name(v.name) + ann + " = " + ti + ";", tf);
     },
     ast.StmtReturn(r) => {
       // A void `return;` parses with no value expression, which reaches
@@ -2950,7 +2950,7 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       // A `use` reaches the printer as the return of the call it
       // appended its callback to; printing that call rewrites the
       // rest of the block into a lambda.
-      var us: UseSugar = as_use(r.value);
+      let us: UseSugar = as_use(r.value);
       if (us.ok) {
         return print_use(us, r.line, depth, f);
       }
@@ -2967,7 +2967,7 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       // (StmtFor models the range form only). Printing the desugar
       // rewrites the user's loop into a synthesised while-loop, flag and
       // all, so reprint the header from the shape instead (#6771).
-      var fc: ForCSugar = as_c_for(ifs);
+      let fc: ForCSugar = as_c_for(ifs);
       if (fc.ok) {
         return print_c_for(fc, depth, f);
       }
@@ -3029,8 +3029,8 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       // element plus a destructure of it (parse_for_stmt), so it reprints
       // from that destructure — writing the synthetic name into the
       // source instead would make `-fmt -w` permanent.
-      var fo_body: ast.Stmt[] = fo.body;
-      var fo_binder: string = for_binder(fo.var_name);
+      let fo_body: ast.Stmt[] = fo.body;
+      let fo_binder: string = for_binder(fo.var_name);
       if (util.str_has_prefix(fo.var_name, "$forpat_") && fo.body.len() > 0) {
         match (fo.body[0]) {
           ast.StmtVar(fpv) => {
@@ -3076,8 +3076,8 @@ function print_type_params(fd: parser.FuncDecl): string {
   if (fd.type_params.len() == 0) {
     return "";
   }
-  var out: string = "[";
-  var i: i32 = 0;
+  let out: string = "[";
+  let i: i32 = 0;
   while (i < fd.type_params.len()) {
     if (i > 0) {
       out = out + ", ";
@@ -3095,9 +3095,9 @@ function print_type_params(fd: parser.FuncDecl): string {
 
 // join_plus respells a `+`-joined trait list with native's ` + ` separator.
 function join_plus(bounds: string): string {
-  var out: string = "";
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let out: string = "";
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i <= bounds.len()) {
     if (i == bounds.len() || bounds[i] == b'+') {
       if (out.len() > 0) {
@@ -3114,7 +3114,7 @@ function join_plus(bounds: string): string {
 function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_never: boolean, f: Fmt): (string, Fmt) {
   // An `@import` extern (P4 — docs/WIT-BRING-YOUR-OWN.md) renders as the
   // attribute on its own line followed by a body-less function (`;`).
-  var out: string = "";
+  let out: string = "";
   if (fd.import_iface.len() > 0) {
     out = out + "@import(" + quote_string(fd.import_iface) + ", " + quote_string(fd.import_wit) + ")\n";
   }
@@ -3159,7 +3159,7 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
   // They follow the name for methods too (`function (o: Opt[T]) map[U]`),
   // the form spec/grammar.ebnf derives and native prints; the receiver's
   // own type variables are bound by the receiver type.
-  var tps: string = print_type_params(fd);
+  let tps: string = print_type_params(fd);
   // Receiver clause: `(recv: RecvType)` after `function` and
   // before the method name. Both fields empty for plain funcs.
   if (fd.receiver_name.len() > 0) {
@@ -3172,7 +3172,7 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
   out = out + fd.name + tps;
   let (dpats, dpre) = param_patterns_for(fd.params, fd.body);
   out = out + "(";
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < fd.params.len()) {
     if (i > 0) {
       out = out + ", ";
@@ -3210,13 +3210,13 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
 }
 
 function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f: Fmt): (string, Fmt) {
-  var out: string = "";
+  let out: string = "";
   // Attributes, on their own lines above the decl. Both change what the
   // program MEANS: `@derive` names methods the next parse synthesises, and
   // `@must_consume` arms the E067 obligation walk.
   if (sd.derives.len() > 0) {
     out = out + "@derive(";
-    var di: i32 = 0;
+    let di: i32 = 0;
     while (di < sd.derives.len()) {
       if (di > 0) {
         out = out + ", ";
@@ -3240,7 +3240,7 @@ function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f
   // leaves T unbound.
   if (sd.type_params.len() > 0) {
     out = out + "[";
-    var tpi: i32 = 0;
+    let tpi: i32 = 0;
     while (tpi < sd.type_params.len()) {
       if (tpi > 0) {
         out = out + ", ";
@@ -3255,10 +3255,10 @@ function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f
   // the one-liner leaves those comments queued and the cursor then emits them
   // above the NEXT declaration, which is where they stop describing the field
   // they were written on.
-  var lns: i32[] = field_lines_for(flines, sd.name, sd.line);
+  let lns: i32[] = field_lines_for(flines, sd.name, sd.line);
   if (lns.len() == sd.fields.len() && lns.len() > 0 && keep_list_lines(f, sd.line, lns[lns.len() - 1])) {
     out = out + " {\n";
-    var mi: i32 = 0;
+    let mi: i32 = 0;
     while (mi < sd.fields.len()) {
       let (lead, f1) = drain_leading(f, lns[mi], 1);
       out = out + lead;
@@ -3272,7 +3272,7 @@ function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f
     return (out + "}\n", f);
   }
   out = out + " { ";
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < sd.fields.len()) {
     if (i > 0) {
       out = out + ", ";
@@ -3291,7 +3291,7 @@ function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f
 // it has no such rule, so `NAME + 1` there is an operator applied to a
 // function value.
 function print_const_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
-  var out: string = "";
+  let out: string = "";
   if (fd.is_pub) {
     out = out + "pub ";
   }
@@ -3302,7 +3302,7 @@ function print_const_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
   if (fd.ret_type.len() > 0) {
     out = out + ": " + fd.ret_type;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < fd.body.len()) {
     match (fd.body[i]) {
       ast.StmtReturn(r) => {
@@ -3318,7 +3318,7 @@ function print_const_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
 
 // enum_index returns the position of the enum named `name` in `enums`, or -1.
 function enum_index(enums: parser.EnumDecl[], name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < enums.len()) {
     if (enums[i].name == name) {
       return i;
@@ -3332,7 +3332,7 @@ function enum_index(enums: parser.EnumDecl[], name: string): i32 {
 // record in `structs`, or -1. Both names are matched: a variant record is keyed
 // by (enum_owner, name), and a plain struct may share a variant's name.
 function variant_decl_index(structs: parser.StructDecl[], owner: string, name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < structs.len()) {
     if (structs[i].enum_owner == owner && structs[i].name == name) {
       return i;
@@ -3348,14 +3348,14 @@ function variant_decl_index(structs: parser.StructDecl[], owner: string, name: s
 // enum's `@derive` is read back from a variant record because that is where the
 // parser stamps it — EnumDecl carries only `@must_consume`.
 function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], flines: parser.FieldLines[], f: Fmt): (string, Fmt) {
-  var out: string = "";
-  var d0: i32 = 0 - 1;
+  let out: string = "";
+  let d0: i32 = 0 - 1;
   if (ed.variant_names.len() > 0) {
     d0 = variant_decl_index(structs, ed.name, ed.variant_names[0]);
   }
   if (d0 >= 0 && structs[d0].derives.len() > 0) {
     out = out + "@derive(";
-    var di: i32 = 0;
+    let di: i32 = 0;
     while (di < structs[d0].derives.len()) {
       if (di > 0) {
         out = out + ", ";
@@ -3377,7 +3377,7 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], flin
   out = out + "enum " + ed.name;
   if (ed.type_params.len() > 0) {
     out = out + "[";
-    var ti: i32 = 0;
+    let ti: i32 = 0;
     while (ti < ed.type_params.len()) {
       if (ti > 0) {
         out = out + ", ";
@@ -3389,10 +3389,10 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], flin
   }
   // One variant per line whenever a comment was written inside the braces,
   // for the same reason print_struct_decl does it.
-  var lns: i32[] = field_lines_for(flines, ed.name, ed.line);
+  let lns: i32[] = field_lines_for(flines, ed.name, ed.line);
   if (lns.len() == ed.variant_names.len() && lns.len() > 0 && keep_list_lines(f, ed.line, lns[lns.len() - 1])) {
     out = out + " {\n";
-    var mvi: i32 = 0;
+    let mvi: i32 = 0;
     while (mvi < ed.variant_names.len()) {
       let (lead, f1) = drain_leading(f, lns[mvi], 1);
       out = out + lead;
@@ -3406,7 +3406,7 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], flin
     return (out + "}\n", f);
   }
   out = out + " { ";
-  var vi: i32 = 0;
+  let vi: i32 = 0;
   while (vi < ed.variant_names.len()) {
     if (vi > 0) {
       out = out + ", ";
@@ -3420,13 +3420,13 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], flin
 // print_enum_variant renders variant `vi` — bare, tuple-payload `V(A, B)`, or
 // record form `V { f: A }` — from the variant struct the parser desugared it to.
 function print_enum_variant(ed: parser.EnumDecl, structs: parser.StructDecl[], vi: i32): string {
-  var out: string = ed.variant_names[vi];
-  var si: i32 = variant_decl_index(structs, ed.name, ed.variant_names[vi]);
+  let out: string = ed.variant_names[vi];
+  let si: i32 = variant_decl_index(structs, ed.name, ed.variant_names[vi]);
   if (si >= 0 && structs[si].variant_field_names.len() > 0) {
     // Record form — the payload fields carry positional `__ev` markers, so
     // the written names come from variant_field_names, parallel to them.
     out = out + " {";
-    var ri: i32 = 0;
+    let ri: i32 = 0;
     while (ri < structs[si].fields.len()) {
       if (ri > 0) {
         out = out + ",";
@@ -3438,7 +3438,7 @@ function print_enum_variant(ed: parser.EnumDecl, structs: parser.StructDecl[], v
   }
   if (si >= 0 && structs[si].fields.len() > 0) {
     out = out + "(";
-    var fi: i32 = 0;
+    let fi: i32 = 0;
     while (fi < structs[si].fields.len()) {
       if (fi > 0) {
         out = out + ", ";
@@ -3454,9 +3454,9 @@ function print_enum_variant(ed: parser.EnumDecl, structs: parser.StructDecl[], v
 // print_type_params_except renders a decl's type parameters minus `skip`, or ""
 // when nothing is left.
 function print_type_params_except(fd: parser.FuncDecl, skip: string[]): string {
-  var names: string[] = [];
-  var bounds: string[] = [];
-  var i: i32 = 0;
+  let names: string[] = [];
+  let bounds: string[] = [];
+  let i: i32 = 0;
   while (i < fd.type_params.len()) {
     if (!util.has_str(skip, fd.type_params[i])) {
       names = names.append(fd.type_params[i]);
@@ -3471,8 +3471,8 @@ function print_type_params_except(fd: parser.FuncDecl, skip: string[]): string {
   if (names.len() == 0) {
     return "";
   }
-  var out: string = "[";
-  var j: i32 = 0;
+  let out: string = "[";
+  let j: i32 = 0;
   while (j < names.len()) {
     if (j > 0) {
       out = out + ", ";
@@ -3490,10 +3490,10 @@ function print_type_params_except(fd: parser.FuncDecl, skip: string[]): string {
 // inherent `impl Type { … }`) from the written form parse_impl_decl retains.
 // The methods are the DESUGARED forms, which is what native prints too.
 function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
-  var out: string = "impl";
+  let out: string = "impl";
   if (id.type_params.len() > 0) {
     out = out + "[";
-    var tpi: i32 = 0;
+    let tpi: i32 = 0;
     while (tpi < id.type_params.len()) {
       if (tpi > 0) {
         out = out + ", ";
@@ -3516,17 +3516,17 @@ function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
     return (out + " {}\n", f);
   }
   out = out + " {\n";
-  var abi: i32 = 0;
+  let abi: i32 = 0;
   while (abi < id.assoc_names.len()) {
-    var abv: string = "";
+    let abv: string = "";
     if (abi < id.assoc_values.len()) {
       abv = id.assoc_values[abi];
     }
     out = out + indent_str(1) + "type " + id.assoc_names[abi] + " = " + abv + ";\n";
     abi = abi + 1;
   }
-  var g: Fmt = f;
-  var mi: i32 = 0;
+  let g: Fmt = f;
+  let mi: i32 = 0;
   while (mi < id.methods.len()) {
     let (mtext, mg) = print_impl_method(id.methods[mi], id.type_params, g);
     out = out + mtext;
@@ -3545,8 +3545,8 @@ function print_impl_method(m: parser.FuncDecl, impl_tps: string[], f: Fmt): (str
   // so printing them here would restate `[T]` on every method of an
   // `impl[T] …` — which native rejects outright ("cannot declare its own type
   // parameters inside a parametric impl block").
-  var out: string = indent_str(1) + "function " + m.name + print_type_params_except(m, impl_tps) + "(";
-  var first: boolean = true;
+  let out: string = indent_str(1) + "function " + m.name + print_type_params_except(m, impl_tps) + "(";
+  let first: boolean = true;
   if (m.receiver_name.len() > 0) {
     out = out + m.receiver_name;
     if (m.receiver_type.len() > 0) {
@@ -3554,7 +3554,7 @@ function print_impl_method(m: parser.FuncDecl, impl_tps: string[], f: Fmt): (str
     }
     first = false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < m.params.len()) {
     if (!first) {
       out = out + ", ";
@@ -3584,7 +3584,7 @@ function print_impl_method(m: parser.FuncDecl, impl_tps: string[], f: Fmt): (str
 // written form parse_trait_decl retains. The compile path's own views of a
 // trait cannot be printed from — see parser.TraitDecl.
 function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
-  var out: string = "";
+  let out: string = "";
   if (td.is_pub) {
     out = out + "pub ";
   }
@@ -3594,7 +3594,7 @@ function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
   out = out + "trait " + td.name;
   if (td.type_params.len() > 0) {
     out = out + "[";
-    var tpi: i32 = 0;
+    let tpi: i32 = 0;
     while (tpi < td.type_params.len()) {
       if (tpi > 0) {
         out = out + ", ";
@@ -3606,7 +3606,7 @@ function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
   }
   if (td.supertraits.len() > 0) {
     out = out + ": ";
-    var spi: i32 = 0;
+    let spi: i32 = 0;
     while (spi < td.supertraits.len()) {
       if (spi > 0) {
         out = out + " + ";
@@ -3621,13 +3621,13 @@ function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
     return (out + " {}\n", f);
   }
   out = out + " {\n";
-  var ati: i32 = 0;
+  let ati: i32 = 0;
   while (ati < td.assoc_types.len()) {
     out = out + indent_str(1) + "type " + td.assoc_types[ati] + ";\n";
     ati = ati + 1;
   }
-  var g: Fmt = f;
-  var mi: i32 = 0;
+  let g: Fmt = f;
+  let mi: i32 = 0;
   while (mi < td.methods.len()) {
     let (mtext, mg) = print_trait_method(td.methods[mi], g);
     out = out + mtext;
@@ -3640,8 +3640,8 @@ function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
 // print_trait_method emits one signature at one indent level: `;`-terminated
 // when it was written abstract, else with its default body.
 function print_trait_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
-  var out: string = indent_str(1) + "function " + m.name + print_type_params(m) + "(";
-  var i: i32 = 0;
+  let out: string = indent_str(1) + "function " + m.name + print_type_params(m) + "(";
+  let i: i32 = 0;
   while (i < m.params.len()) {
     if (i > 0) {
       out = out + ", ";
@@ -3667,7 +3667,7 @@ function print_trait_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
 }
 
 function print_type_alias(a: parser.TypeAlias): string {
-  var out: string = "";
+  let out: string = "";
   if (a.is_pub) {
     out = out + "pub ";
   }
@@ -3677,7 +3677,7 @@ function print_type_alias(a: parser.TypeAlias): string {
   out = out + "type " + a.name;
   if (a.type_params.len() > 0) {
     out = out + "[";
-    var ti: i32 = 0;
+    let ti: i32 = 0;
     while (ti < a.type_params.len()) {
       if (ti > 0) {
         out = out + ", ";
@@ -3690,10 +3690,10 @@ function print_type_alias(a: parser.TypeAlias): string {
   out = out + " = ";
   // Written across lines, the members keep their lines: those that shared a
   // source line share an output line, and each later line opens with `|`.
-  var ln: i32[] = a.variant_lines;
-  var n: i32 = ln.len();
-  var kept: boolean = n == a.variants.len() && n > 0 && ln[0] > 0 && ln[n - 1] > ln[0];
-  var i: i32 = 0;
+  let ln: i32[] = a.variant_lines;
+  let n: i32 = ln.len();
+  let kept: boolean = n == a.variants.len() && n > 0 && ln[0] > 0 && ln[n - 1] > ln[0];
+  let i: i32 = 0;
   while (i < a.variants.len()) {
     if (i > 0 && kept && ln[i] > ln[i - 1]) {
       out = out + "\n" + indent_str(1) + "| ";
@@ -3715,8 +3715,8 @@ function print_import(im: parser.Import): string {
   // every use of the bound name undefined, so it is data loss rather than a
   // style difference.
   if (im.is_reexport) {
-    var re: string = "pub use " + quote_string(im.path) + ".{";
-    var ri: i32 = 0;
+    let re: string = "pub use " + quote_string(im.path) + ".{";
+    let ri: i32 = 0;
     while (ri < im.reexport_names.len()) {
       if (ri > 0) {
         re = re + ", ";
@@ -3769,13 +3769,13 @@ pub function format_parsed(pf: parser.ParsedFmt, comments: lexer.Comment[], blan
 }
 
 function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[], impls: parser.ImplDecl[], flines: parser.FieldLines[], hints: parser.FunctionInlineHint[], spans: parser.BlockSpans, comments: lexer.Comment[], blanks: boolean[]): string {
-  var f: Fmt = Fmt { comments: comments, ci: 0, blanks: blanks, spans: spans, si: 0 };
+  let f: Fmt = Fmt { comments: comments, ci: 0, blanks: blanks, spans: spans, si: 0 };
   // Chunk-join rather than a left fold: format_module is the whole-FILE
   // accumulator, so `out = out + decl` copies the document once per
   // declaration. `wrote` replaces the `out.len() > 0` probes, which were
   // the only reads of the partial string.
-  var chunks: string[] = [];
-  var wrote: boolean = false;
+  let chunks: string[] = [];
+  let wrote: boolean = false;
   // The declarations to emit, as (kind, index) pairs ordered by source line.
   // kind 0 = struct, 1 = enum (at its first variant's position), 2 = alias,
   // 3 = function/const, 4 = trait, 5 = impl, 6 = import or `pub use`.
@@ -3789,20 +3789,20 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
   // variant whose owner is not declared here keeps the struct rendering:
   // `module_with_builtins` synthesises Option / Result variant records with
   // an `enum_owner` and no matching EnumDecl.
-  var kinds: i32[] = [];
-  var idxs: i32[] = [];
-  var lines: i32[] = [];
-  var ii: i32 = 0;
+  let kinds: i32[] = [];
+  let idxs: i32[] = [];
+  let lines: i32[] = [];
+  let ii: i32 = 0;
   while (ii < mod.imports.len()) {
     kinds = kinds.append(6);
     idxs = idxs.append(ii);
     lines = lines.append(mod.imports[ii].line);
     ii = ii + 1;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < mod.structs.len()) {
-    var owner: string = mod.structs[i].enum_owner;
-    var ei: i32 = 0 - 1;
+    let owner: string = mod.structs[i].enum_owner;
+    let ei: i32 = 0 - 1;
     if (owner.len() > 0) {
       ei = enum_index(mod.enums, owner);
     }
@@ -3822,7 +3822,7 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
   }
   // A variant-less `enum E {}` has no struct record to be positioned by, so
   // nothing above emits it.
-  var vi: i32 = 0;
+  let vi: i32 = 0;
   while (vi < mod.enums.len()) {
     if (mod.enums[vi].variant_names.len() == 0) {
       kinds = kinds.append(1);
@@ -3831,21 +3831,21 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
     }
     vi = vi + 1;
   }
-  var ai: i32 = 0;
+  let ai: i32 = 0;
   while (ai < mod.aliases.len()) {
     kinds = kinds.append(2);
     idxs = idxs.append(ai);
     lines = lines.append(mod.aliases[ai].line);
     ai = ai + 1;
   }
-  var ti2: i32 = 0;
+  let ti2: i32 = 0;
   while (ti2 < traits.len()) {
     kinds = kinds.append(4);
     idxs = idxs.append(ti2);
     lines = lines.append(traits[ti2].line);
     ti2 = ti2 + 1;
   }
-  var ipi: i32 = 0;
+  let ipi: i32 = 0;
   while (ipi < impls.len()) {
     kinds = kinds.append(5);
     idxs = idxs.append(ipi);
@@ -3858,7 +3858,7 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
   // the next parse then synthesises them again on top. A synthesised decl is
   // the one with no source position: the parser's lines are 1-based, so
   // `line == 0` cannot name anything the user wrote.
-  var fi: i32 = 0;
+  let fi: i32 = 0;
   while (fi < mod.funcs.len()) {
     if (mod.funcs[fi].line > 0) {
       kinds = kinds.append(3);
@@ -3869,13 +3869,13 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
   }
   // Insertion sort by source line — stable, so two declarations sharing a
   // line keep the order they were collected in.
-  var si: i32 = 1;
+  let si: i32 = 1;
   while (si < lines.len()) {
-    var sj: i32 = si;
+    let sj: i32 = si;
     while (sj > 0 && lines[sj - 1] > lines[sj]) {
-      var tl: i32 = lines[sj - 1];
-      var tk: i32 = kinds[sj - 1];
-      var ti: i32 = idxs[sj - 1];
+      let tl: i32 = lines[sj - 1];
+      let tk: i32 = kinds[sj - 1];
+      let ti: i32 = idxs[sj - 1];
       lines = lines.with(sj - 1, lines[sj]);
       kinds = kinds.with(sj - 1, kinds[sj]);
       idxs = idxs.with(sj - 1, idxs[sj]);
@@ -3888,10 +3888,10 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
   }
   // Hints and authored functions are both in source order. Consume each
   // hint once rather than searching the entire list for every function.
-  var hint_cursor: i32 = 0;
-  var di: i32 = 0;
+  let hint_cursor: i32 = 0;
+  let di: i32 = 0;
   while (di < kinds.len()) {
-    var dline: i32 = lines[di];
+    let dline: i32 = lines[di];
     // Consecutive imports cluster with no blank between them.
     if (di > 0 && !(kinds[di] == 6 && kinds[di - 1] == 6)) {
       chunks = chunks.append("\n");
@@ -3935,10 +3935,10 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
         wrote = true;
         f = cf;
       } else {
-        var fd: parser.FuncDecl = mod.funcs[idxs[di]];
-        var has_hint: boolean = hint_cursor < hints.len()
+        let fd: parser.FuncDecl = mod.funcs[idxs[di]];
+        let has_hint: boolean = hint_cursor < hints.len()
           && hints[hint_cursor].line == fd.line && hints[hint_cursor].col == fd.col;
-        var never: boolean = false;
+        let never: boolean = false;
         if (has_hint) {
           never = hints[hint_cursor].never;
           hint_cursor = hint_cursor + 1;
@@ -3951,7 +3951,7 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
     }
     di = di + 1;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < mod.top_stmts.len()) {
     if (wrote) {
       chunks = chunks.append("\n");
@@ -3977,20 +3977,20 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
 // roundtrip_verbatim is roundtrip_module over `-fmt`'s parse, which keeps a
 // union alias the compile path desugars.
 function roundtrip_verbatim(src: string): parser.Module {
-  var mod: parser.Module = parser.parse_module_verbatim(lexer.tokenize(src)).pmod;
+  let mod: parser.Module = parser.parse_module_verbatim(lexer.tokenize(src)).pmod;
   return parser.parse_module_verbatim(lexer.tokenize(print_module(mod))).pmod;
 }
 
 function roundtrip_module(src: string): parser.Module {
-  var toks: lexer.Token[] = lexer.tokenize(src);
-  var mod: parser.Module = parser.parse_module(toks);
-  var emitted: string = print_module(mod);
-  var toks2: lexer.Token[] = lexer.tokenize(emitted);
+  let toks: lexer.Token[] = lexer.tokenize(src);
+  let mod: parser.Module = parser.parse_module(toks);
+  let emitted: string = print_module(mod);
+  let toks2: lexer.Token[] = lexer.tokenize(emitted);
   return parser.parse_module(toks2);
 }
 
 function main(): i32 {
-  var rc: i32 = check_expressions_and_control_flow();
+  let rc: i32 = check_expressions_and_control_flow();
   if (rc != 0) {
     return rc;
   }
@@ -4054,12 +4054,12 @@ function check_expressions_and_control_flow(): i32 {
   // Expression printing: ensure the binary-op rendering
   // parenthesises and round-trips. `1 + 2 * 3` parses as
   // `1 + (2*3)` (precedence) and prints as `(1 + (2 * 3))`.
-  var toks1: lexer.Token[] = lexer.tokenize("var a = 1 + 2 * 3; return a;");
-  var mod1: parser.Module = parser.parse_module(toks1);
-  var s1: string = print_module(mod1);
+  let toks1: lexer.Token[] = lexer.tokenize("let a = 1 + 2 * 3; return a;");
+  let mod1: parser.Module = parser.parse_module(toks1);
+  let s1: string = print_module(mod1);
   // Re-parse the emitted text and confirm we still get two
   // top-level stmts with the same shape.
-  var rt1: parser.Module = parser.parse_module(lexer.tokenize(s1));
+  let rt1: parser.Module = parser.parse_module(lexer.tokenize(s1));
   if (rt1.top_stmts.len() != 2) {
     return 10;
   }
@@ -4086,8 +4086,8 @@ function check_expressions_and_control_flow(): i32 {
 
   // Function decl + call: print + re-parse preserves both
   // functions and the call site shape.
-  var src2: string = "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }";
-  var rt2: parser.Module = roundtrip_module(src2);
+  let src2: string = "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }";
+  let rt2: parser.Module = roundtrip_module(src2);
   if (rt2.funcs.len() != 2) {
     return 20;
   }
@@ -4105,8 +4105,8 @@ function check_expressions_and_control_flow(): i32 {
   }
 
   // If/else with assignment: round-trip the whole thing.
-  var src3: string = "var x = 5; if (x < 10) { x = x + 1; } else { x = 0; } return x;";
-  var rt3: parser.Module = roundtrip_module(src3);
+  let src3: string = "let x = 5; if (x < 10) { x = x + 1; } else { x = 0; } return x;";
+  let rt3: parser.Module = roundtrip_module(src3);
   if (rt3.top_stmts.len() != 3) {
     return 30;
   }
@@ -4125,8 +4125,8 @@ function check_expressions_and_control_flow(): i32 {
   }
 
   // While + array literal + index + len.
-  var src4: string = "var a = [3, 5, 7]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s;";
-  var rt4: parser.Module = roundtrip_module(src4);
+  let src4: string = "let a = [3, 5, 7]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s;";
+  let rt4: parser.Module = roundtrip_module(src4);
   if (rt4.top_stmts.len() != 5) {
     return 40;
   }
@@ -4164,8 +4164,8 @@ function check_expressions_and_control_flow(): i32 {
 
 function check_string_and_slice_literals(): i32 {
   // String literal escapes round-trip (`"a\"b\n"` → same).
-  var src5: string = "var s = \"hello\\nworld\"; return 0;";
-  var rt5: parser.Module = roundtrip_module(src5);
+  let src5: string = "let s = \"hello\\nworld\"; return 0;";
+  let rt5: parser.Module = roundtrip_module(src5);
   match (rt5.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -4181,8 +4181,8 @@ function check_string_and_slice_literals(): i32 {
   }
 
   // Slice round-trip: `s[1:4]` → re-parses as an ExprSlice.
-  var src6: string = "var s = \"hello\"; var t = s[1:4]; return 0;";
-  var rt6: parser.Module = roundtrip_module(src6);
+  let src6: string = "let s = \"hello\"; let t = s[1:4]; return 0;";
+  let rt6: parser.Module = roundtrip_module(src6);
   match (rt6.top_stmts[1]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -4203,8 +4203,8 @@ function check_string_and_slice_literals(): i32 {
   // missing low bound, an unevaluated placeholder for a missing high one
   // — would otherwise be printed as written bounds, turning `s[1:]` into
   // the empty slice `s[1:0]`.
-  var srcOB: string = "function f(s: string): string { return s[1:] + s[:3] + s[:] + s[1:3]; }";
-  var outOB: string = print_module(parser.parse_module(lexer.tokenize(srcOB)));
+  let srcOB: string = "function f(s: string): string { return s[1:] + s[:3] + s[:] + s[1:3]; }";
+  let outOB: string = print_module(parser.parse_module(lexer.tokenize(srcOB)));
   if (!util.contains(outOB, "s[1:]")) {
     return 62;
   }
@@ -4229,8 +4229,8 @@ function check_string_and_slice_literals(): i32 {
 
 function check_structs_and_aliases(): i32 {
   // Struct decls + struct literals round-trip.
-  var src7: string = "struct Point { x: i32, y: i32 } function main(): i32 { var p = Point { x: 3, y: 4 }; return p.x; }";
-  var rt7: parser.Module = roundtrip_module(src7);
+  let src7: string = "struct Point { x: i32, y: i32 } function main(): i32 { let p = Point { x: 3, y: 4 }; return p.x; }";
+  let rt7: parser.Module = roundtrip_module(src7);
   if (rt7.structs.len() != 1) {
     return 70;
   }
@@ -4245,8 +4245,8 @@ function check_structs_and_aliases(): i32 {
   }
 
   // Type alias round-trip.
-  var src8: string = "struct Circle { r: i32 } struct Square { s: i32 } type Shape = Circle | Square; function main(): i32 { return 0; }";
-  var rt8: parser.Module = roundtrip_module(src8);
+  let src8: string = "struct Circle { r: i32 } struct Square { s: i32 } type Shape = Circle | Square; function main(): i32 { return 0; }";
+  let rt8: parser.Module = roundtrip_module(src8);
   if (rt8.aliases.len() != 1) {
     return 80;
   }
@@ -4257,8 +4257,8 @@ function check_structs_and_aliases(): i32 {
     return 82;
   }
   // A parameterised alias keeps its parameters and each member's arguments.
-  var src8g: string = "struct Leaf[T] { v: T } struct Lit { v: i32 } pub type Tree[T, U] = Leaf[T] | Lit | Leaf[Leaf[U]]; function main(): i32 { return 0; }";
-  var rt8g: parser.Module = roundtrip_verbatim(src8g);
+  let src8g: string = "struct Leaf[T] { v: T } struct Lit { v: i32 } pub type Tree[T, U] = Leaf[T] | Lit | Leaf[Leaf[U]]; function main(): i32 { return 0; }";
+  let rt8g: parser.Module = roundtrip_verbatim(src8g);
   if (rt8g.aliases.len() != 1 || rt8g.aliases[0].type_params.len() != 2 || rt8g.aliases[0].type_params[1] != "U") {
     return 83;
   }
@@ -4271,8 +4271,8 @@ function check_structs_and_aliases(): i32 {
 
 function check_match_statements(): i32 {
   // Match statement round-trip.
-  var src9: string = "var x = 0; match (x) { Foo(f) => { return 1; }, _ => { return 0; } }";
-  var rt9: parser.Module = roundtrip_module(src9);
+  let src9: string = "let x = 0; match (x) { Foo(f) => { return 1; }, _ => { return 0; } }";
+  let rt9: parser.Module = roundtrip_module(src9);
   if (rt9.top_stmts.len() != 2) {
     return 90;
   }
@@ -4305,8 +4305,8 @@ function check_match_statements(): i32 {
 
 function check_annotations_and_receivers(): i32 {
   // Var type annotation round-trip.
-  var srcA: string = "var n: i32 = 7; var sh: Shape = c; return n;";
-  var rtA: parser.Module = roundtrip_module(srcA);
+  let srcA: string = "let n: i32 = 7; let sh: Shape = c; return n;";
+  let rtA: parser.Module = roundtrip_module(srcA);
   match (rtA.top_stmts[0]) {
     ast.StmtVar(v) => {
       if (v.type_name != "i32") {
@@ -4329,8 +4329,8 @@ function check_annotations_and_receivers(): i32 {
   }
 
   // Receiver method round-trip.
-  var srcB: string = "function (p: Par) advance(): Par { return p; } function main(): i32 { return 0; }";
-  var rtB: parser.Module = roundtrip_module(srcB);
+  let srcB: string = "function (p: Par) advance(): Par { return p; } function main(): i32 { return 0; }";
+  let rtB: parser.Module = roundtrip_module(srcB);
   if (rtB.funcs.len() != 2) {
     return 110;
   }
@@ -4353,8 +4353,8 @@ function check_annotations_and_receivers(): i32 {
 function check_imports(): i32 {
   // Import round-trip — multiple imports survive emit + re-
   // parse with the same path list.
-  var srcC: string = "import \"./lexer\"; import \"./parser\"; function main(): i32 { return 0; }";
-  var rtC: parser.Module = roundtrip_module(srcC);
+  let srcC: string = "import \"./lexer\"; import \"./parser\"; function main(): i32 { return 0; }";
+  let rtC: parser.Module = roundtrip_module(srcC);
   if (rtC.imports.len() != 2) {
     return 120;
   }
@@ -4373,8 +4373,8 @@ function check_imports(): i32 {
 
 function check_loops_and_tuples(): i32 {
   // For-in + break / continue + tuple all round-trip.
-  var srcD: string = "for n in [1, 2, 3] { if (n == 2) { break; } if (n == 1) { continue; } }";
-  var rtD: parser.Module = roundtrip_module(srcD);
+  let srcD: string = "for n in [1, 2, 3] { if (n == 2) { break; } if (n == 1) { continue; } }";
+  let rtD: parser.Module = roundtrip_module(srcD);
   if (rtD.top_stmts.len() != 1) {
     return 130;
   }
@@ -4423,8 +4423,8 @@ function check_loops_and_tuples(): i32 {
   // parse with the same shape. Postfix directly on a
   // tuple literal (`(1,2,3).0`) isn't supported yet — the
   // parser's postfix-chain is inside the TokIdent branch.
-  var srcE: string = "var t = (10, 20, 30); var x = t.0; return x;";
-  var rtE: parser.Module = roundtrip_module(srcE);
+  let srcE: string = "let t = (10, 20, 30); let x = t.0; return x;";
+  let rtE: parser.Module = roundtrip_module(srcE);
   if (rtE.top_stmts.len() != 3) {
     return 140;
   }
@@ -4467,11 +4467,11 @@ function check_loops_and_tuples(): i32 {
 }
 
 function check_lambdas(): i32 {
-  // Lambda round-trip: `var f = (x: i32): i32 => { return
+  // Lambda round-trip: `let f = (x: i32): i32 => { return
   // x + 1; }; return f(41);` — print should emit a re-parseable
   // annotated arrow lambda, `(x: i32): i32 => x + 1`.
-  var srcF: string = "function main(): i32 { var f = (x: i32): i32 => { return x + 1; }; return f(41); }";
-  var rtF: parser.Module = roundtrip_module(srcF);
+  let srcF: string = "function main(): i32 { let f = (x: i32): i32 => { return x + 1; }; return f(41); }";
+  let rtF: parser.Module = roundtrip_module(srcF);
   if (rtF.funcs.len() != 1) {
     return 150;
   }
@@ -4514,8 +4514,8 @@ function check_lambdas(): i32 {
   // IIFE round-trip: `(): i32 => { return 7; }()` — printer
   // parenthesises the callee, `((): i32 => 7)()`, and the re-parse
   // sees an ExprCall whose callee is an ExprLambda.
-  var srcG: string = "function main(): i32 { return (): i32 => { return 7; }(); }";
-  var rtG: parser.Module = roundtrip_module(srcG);
+  let srcG: string = "function main(): i32 { return (): i32 => { return 7; }(); }";
+  let rtG: parser.Module = roundtrip_module(srcG);
   match (rtG.funcs[0].body[0]) {
     ast.StmtReturn(r) => {
       match (r.value) {
@@ -4542,17 +4542,17 @@ function check_lambdas(): i32 {
   // function-type arrow there. A parenthesised annotation is a tuple, and a
   // function-typed return has to be reprinted with its grouping parens —
   // bare, `(p: i32): (i32) => i32 => …` re-parses with the wrong split.
-  var srcR: string = "function main(): i32 { var g = (): (string, i32) => { return (\"ab\", 7); }; var h = (p: i32): (i32) => i32 => (q: i32) => p + q; return 0; }";
-  var pfR: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcR));
-  var outR: string = format_module(pfR.pmod, pfR.ptraits, pfR.pimpls, pfR.pflines, [], []);
-  if (!util.contains(outR, "var g = (): (string, i32) => (\"ab\", 7);")) {
+  let srcR: string = "function main(): i32 { let g = (): (string, i32) => { return (\"ab\", 7); }; let h = (p: i32): (i32) => i32 => (q: i32) => p + q; return 0; }";
+  let pfR: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcR));
+  let outR: string = format_module(pfR.pmod, pfR.ptraits, pfR.pimpls, pfR.pflines, [], []);
+  if (!util.contains(outR, "let g = (): (string, i32) => (\"ab\", 7);")) {
     return 371;
   }
-  if (!util.contains(outR, "var h = (p: i32): ((i32) => i32) => (q: i32) => p + q;")) {
+  if (!util.contains(outR, "let h = (p: i32): ((i32) => i32) => (q: i32) => p + q;")) {
     return 372;
   }
   // The parens the reprint added are grouping, so a second pass adds no more.
-  var pfR2: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outR));
+  let pfR2: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outR));
   if (format_module(pfR2.pmod, pfR2.ptraits, pfR2.pimpls, pfR2.pflines, [], []) != outR) {
     return 373;
   }
@@ -4582,8 +4582,8 @@ function check_qualified_names_and_externs(): i32 {
   // The printer emits ExprFieldAccess as `obj.field` and ExprCall
   // wraps it the same way, so the re-parse should preserve the
   // ExprCall(ExprFieldAccess(ExprIdent), field) shape.
-  var srcH: string = "function main(): i32 { return parser.parse_module(42); }";
-  var rtH: parser.Module = roundtrip_module(srcH);
+  let srcH: string = "function main(): i32 { return parser.parse_module(42); }";
+  let rtH: parser.Module = roundtrip_module(srcH);
   match (rtH.funcs[0].body[0]) {
     ast.StmtReturn(r) => {
       match (r.value) {
@@ -4622,8 +4622,8 @@ function check_qualified_names_and_externs(): i32 {
   // @import extern declaration round-trip (P4 — docs/WIT-BRING-YOUR-OWN.md):
   // a body-less function bound by `@import("iface", "wit")` survives parse →
   // print → re-parse with both binding strings intact and an empty body.
-  var srcI: string = "@import(\"wasi:random/random@0.2.0\", \"get-random-u64\")\nfunction random_u64(): u64; function main(): i32 { return 0; }";
-  var modI: parser.Module = parser.parse_module(lexer.tokenize(srcI));
+  let srcI: string = "@import(\"wasi:random/random@0.2.0\", \"get-random-u64\")\nfunction random_u64(): u64; function main(): i32 { return 0; }";
+  let modI: parser.Module = parser.parse_module(lexer.tokenize(srcI));
   if (modI.funcs.len() != 2) {
     return 180;
   }
@@ -4643,7 +4643,7 @@ function check_qualified_names_and_externs(): i32 {
   if (modI.funcs[1].import_iface.len() != 0) {
     return 185;
   }
-  var rtI: parser.Module = roundtrip_module(srcI);
+  let rtI: parser.Module = roundtrip_module(srcI);
   if (rtI.funcs.len() != 2) {
     return 186;
   }
@@ -4670,8 +4670,8 @@ function check_declaration_modifiers(): i32 {
   // Every assertion reads the FIELD back, never just the name — a dropped bit
   // round-trips through a name-and-arity check without complaint, which is
   // exactly how this went unnoticed.
-  var srcM: string = "fip function pure_add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return pure_add(1, 2); }";
-  var rtM: parser.Module = roundtrip_module(srcM);
+  let srcM: string = "fip function pure_add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return pure_add(1, 2); }";
+  let rtM: parser.Module = roundtrip_module(srcM);
   if (rtM.funcs.len() != 2) {
     return 190;
   }
@@ -4692,8 +4692,8 @@ function check_declaration_modifiers(): i32 {
   // `fbip` and the graded `(n)` are separate bits, and each changes what the
   // IR's E068 budget check permits — a printer that normalised either into a
   // plain `fip` would turn a legal body into an E053 rejection on reparse.
-  var srcFB: string = "fbip function keep(a: i32): i32 { return a; } function main(): i32 { return keep(1); }";
-  var rtFB: parser.Module = roundtrip_module(srcFB);
+  let srcFB: string = "fbip function keep(a: i32): i32 { return a; } function main(): i32 { return keep(1); }";
+  let rtFB: parser.Module = roundtrip_module(srcFB);
   if (rtFB.funcs.len() != 2) {
     return 165;
   }
@@ -4704,8 +4704,8 @@ function check_declaration_modifiers(): i32 {
     return 167;
   }
 
-  var srcFG: string = "fbip(2) function graded(a: i32): i32 { return a; } fip(1) function g1(a: i32): i32 { return a; } function main(): i32 { return graded(1) + g1(2); }";
-  var rtFG: parser.Module = roundtrip_module(srcFG);
+  let srcFG: string = "fbip(2) function graded(a: i32): i32 { return a; } fip(1) function g1(a: i32): i32 { return a; } function main(): i32 { return graded(1) + g1(2); }";
+  let rtFG: parser.Module = roundtrip_module(srcFG);
   if (rtFG.funcs.len() != 3) {
     return 168;
   }
@@ -4716,8 +4716,8 @@ function check_declaration_modifiers(): i32 {
     return 170;
   }
 
-  var srcMC: string = "@must_consume\nstruct Res { code: i32 } function main(): i32 { var r: Res = Res { code: 7 }; return r.code; }";
-  var rtMC: parser.Module = roundtrip_module(srcMC);
+  let srcMC: string = "@must_consume\nstruct Res { code: i32 } function main(): i32 { let r: Res = Res { code: 7 }; return r.code; }";
+  let rtMC: parser.Module = roundtrip_module(srcMC);
   if (rtMC.structs.len() != 1) {
     return 194;
   }
@@ -4729,9 +4729,9 @@ function check_declaration_modifiers(): i32 {
   // synthesised at parse time, so a printer that emits them instead expands
   // one attribute into hand-written bodies — and the re-parse then synthesises
   // them again on top, which is what the function count catches.
-  var srcDrv: string = "@derive(Eq)\nstruct Pt { x: i32 } function main(): i32 { var p: Pt = Pt { x: 1 }; return p.x; }";
-  var modDrv: parser.Module = parser.parse_module(lexer.tokenize(srcDrv));
-  var rtDrv: parser.Module = roundtrip_module(srcDrv);
+  let srcDrv: string = "@derive(Eq)\nstruct Pt { x: i32 } function main(): i32 { let p: Pt = Pt { x: 1 }; return p.x; }";
+  let modDrv: parser.Module = parser.parse_module(lexer.tokenize(srcDrv));
+  let rtDrv: parser.Module = roundtrip_module(srcDrv);
   if (rtDrv.structs.len() != 1) {
     return 196;
   }
@@ -4751,8 +4751,8 @@ function check_declaration_modifiers(): i32 {
   // and the print — the AST-rewrite passes each rebuild a FuncDecl field by
   // field, so a copy site that hardcodes `async: false` drops it downstream
   // of a parse that reported it set, which only the round trip catches.
-  var srcJ: string = "async function work(): i32 { return 7; } function main(): i32 { return work(); }";
-  var modJ: parser.Module = parser.parse_module(lexer.tokenize(srcJ));
+  let srcJ: string = "async function work(): i32 { return 7; } function main(): i32 { return work(); }";
+  let modJ: parser.Module = parser.parse_module(lexer.tokenize(srcJ));
   if (modJ.funcs.len() != 2) {
     return 200;
   }
@@ -4762,7 +4762,7 @@ function check_declaration_modifiers(): i32 {
   if (modJ.funcs[1].async) {
     return 202;
   }
-  var rtJ: parser.Module = roundtrip_module(srcJ);
+  let rtJ: parser.Module = roundtrip_module(srcJ);
   if (rtJ.funcs.len() != 2) {
     return 203;
   }
@@ -4774,7 +4774,7 @@ function check_declaration_modifiers(): i32 {
   }
   // `pub async function` — `pub` is stripped by the parser and stays dropped
   // (#6633); the `async` bit behind it must still survive.
-  var rtK: parser.Module = roundtrip_module("pub async function w(): i32 { return 1; }");
+  let rtK: parser.Module = roundtrip_module("pub async function w(): i32 { return 1; }");
   if (rtK.funcs.len() != 1) {
     return 206;
   }
@@ -4783,7 +4783,7 @@ function check_declaration_modifiers(): i32 {
   }
   // Contextual only: `async` followed by anything else stays an ordinary
   // identifier, and no function is marked.
-  var rtL: parser.Module = roundtrip_module("function main(): i32 { var async: i32 = 3; return async + 4; }");
+  let rtL: parser.Module = roundtrip_module("function main(): i32 { let async: i32 = 3; return async + 4; }");
   if (rtL.funcs.len() != 1) {
     return 208;
   }
@@ -4801,9 +4801,9 @@ function check_enums(): i32 {
   // annotations naming it are still there. Every assertion below reads back
   // through `enum_owner` rather than the variant names, since the variants
   // come back under their own names either way.
-  var srcEnum: string = "@derive(Eq)\nenum Color { Red, Green(i32) } function main(): i32 { var c: Color = Red; return 0; }";
-  var modEnum: parser.Module = parser.parse_module(lexer.tokenize(srcEnum));
-  var rtEnum: parser.Module = roundtrip_module(srcEnum);
+  let srcEnum: string = "@derive(Eq)\nenum Color { Red, Green(i32) } function main(): i32 { let c: Color = Red; return 0; }";
+  let modEnum: parser.Module = parser.parse_module(lexer.tokenize(srcEnum));
+  let rtEnum: parser.Module = roundtrip_module(srcEnum);
   if (rtEnum.enums.len() != 1) {
     return 210;
   }
@@ -4819,7 +4819,7 @@ function check_enums(): i32 {
   if (rtEnum.enums[0].variant_names[1] != "Green") {
     return 214;
   }
-  var rgi: i32 = variant_decl_index(rtEnum.structs, "Color", "Green");
+  let rgi: i32 = variant_decl_index(rtEnum.structs, "Color", "Green");
   if (rgi < 0) {
     return 215;
   }
@@ -4830,7 +4830,7 @@ function check_enums(): i32 {
     return 217;
   }
   // …and the payload-less variant must not acquire one.
-  var rri: i32 = variant_decl_index(rtEnum.structs, "Color", "Red");
+  let rri: i32 = variant_decl_index(rtEnum.structs, "Color", "Red");
   if (rri < 0) {
     return 218;
   }
@@ -4838,7 +4838,7 @@ function check_enums(): i32 {
     return 219;
   }
   // No variant may come back as a free-standing struct.
-  var esi: i32 = 0;
+  let esi: i32 = 0;
   while (esi < rtEnum.structs.len()) {
     if (rtEnum.structs[esi].enum_owner.len() == 0) {
       return 220;
@@ -4859,11 +4859,11 @@ function check_enums(): i32 {
 
   // Generic parameters and `@must_consume` live on the EnumDecl, not on the
   // variant records, so they travel a different route out of the printer.
-  var srcEG: string = "@must_consume\nenum Slot[T] { Full(T), Empty } function main(): i32 { return 0; }";
+  let srcEG: string = "@must_consume\nenum Slot[T] { Full(T), Empty } function main(): i32 { return 0; }";
   // The compile path respells the parameter, so the round trip must come
   // back to that same spelling, and the printed text to the written one.
-  var modEG: parser.Module = parser.parse_module(lexer.tokenize(srcEG));
-  var rtEG: parser.Module = roundtrip_module(srcEG);
+  let modEG: parser.Module = parser.parse_module(lexer.tokenize(srcEG));
+  let rtEG: parser.Module = roundtrip_module(srcEG);
   if (rtEG.enums.len() != 1) {
     return 224;
   }
@@ -4876,7 +4876,7 @@ function check_enums(): i32 {
   if (rtEG.enums[0].type_params[0] != modEG.enums[0].type_params[0]) {
     return 227;
   }
-  var fgi: i32 = variant_decl_index(rtEG.structs, "Slot", "Full");
+  let fgi: i32 = variant_decl_index(rtEG.structs, "Slot", "Full");
   if (fgi < 0) {
     return 228;
   }
@@ -4888,9 +4888,9 @@ function check_enums(): i32 {
   }
 
   // A multi-payload variant keeps every payload, in order.
-  var srcEM: string = "enum Pair { Two(i32, string), Neither } function main(): i32 { return 0; }";
-  var rtEM: parser.Module = roundtrip_module(srcEM);
-  var tpi: i32 = variant_decl_index(rtEM.structs, "Pair", "Two");
+  let srcEM: string = "enum Pair { Two(i32, string), Neither } function main(): i32 { return 0; }";
+  let rtEM: parser.Module = roundtrip_module(srcEM);
+  let tpi: i32 = variant_decl_index(rtEM.structs, "Pair", "Two");
   if (tpi < 0) {
     return 230;
   }
@@ -4907,9 +4907,9 @@ function check_enums(): i32 {
   // A record-form variant round-trips with its field NAMES — printed
   // positionally the re-parse would lose them and the `{ w, h }` patterns
   // that destructure it would stop resolving.
-  var srcER: string = "enum Shape { Rect { w: i32, h: string }, Unit } function main(): i32 { return 0; }";
-  var rtER: parser.Module = roundtrip_module(srcER);
-  var rcvi: i32 = variant_decl_index(rtER.structs, "Shape", "Rect");
+  let srcER: string = "enum Shape { Rect { w: i32, h: string }, Unit } function main(): i32 { return 0; }";
+  let rtER: parser.Module = roundtrip_module(srcER);
+  let rcvi: i32 = variant_decl_index(rtER.structs, "Shape", "Rect");
   if (rcvi < 0) {
     return 234;
   }
@@ -4934,7 +4934,7 @@ function check_enums(): i32 {
   if (rtER.structs[rcvi].fields[1].type_name != "string") {
     return 241;
   }
-  var uri: i32 = variant_decl_index(rtER.structs, "Shape", "Unit");
+  let uri: i32 = variant_decl_index(rtER.structs, "Shape", "Unit");
   if (uri < 0) {
     return 242;
   }
@@ -4944,8 +4944,8 @@ function check_enums(): i32 {
 
   // Every payload binding of a match arm survives the round-trip: printing
   // only the first turns `Pair(a, b)` into an E015 one-binding pattern.
-  var srcPB: string = "enum Pair { Two(i32, i32) } function f(p: Pair): i32 { match (p) { Two(a, b) => { return a + b; }, } return 0; } function main(): i32 { return 0; }";
-  var rtPB: parser.Module = roundtrip_module(srcPB);
+  let srcPB: string = "enum Pair { Two(i32, i32) } function f(p: Pair): i32 { match (p) { Two(a, b) => { return a + b; }, } return 0; } function main(): i32 { return 0; }";
+  let rtPB: parser.Module = roundtrip_module(srcPB);
   if (rtPB.funcs.len() < 1) {
     return 244;
   }
@@ -4988,13 +4988,13 @@ function check_const_and_for_sugar(): i32 {
   // form — it has no rule making a bare zero-arg-function reference a call.
   // Losing the marker is therefore a silent rewrite into something only one
   // compiler accepts, which a name-and-arity check would not catch.
-  var srcConst: string = "const LIMIT: i32 = 41; function main(): i32 { return LIMIT + 1; }";
-  var rtConst: parser.Module = roundtrip_module(srcConst);
+  let srcConst: string = "const LIMIT: i32 = 41; function main(): i32 { return LIMIT + 1; }";
+  let rtConst: parser.Module = roundtrip_module(srcConst);
   if (rtConst.funcs.len() != 2) {
     return 250;
   }
-  var limit_i: i32 = 0 - 1;
-  var ci: i32 = 0;
+  let limit_i: i32 = 0 - 1;
+  let ci: i32 = 0;
   while (ci < rtConst.funcs.len()) {
     if (rtConst.funcs[ci].name == "LIMIT") {
       limit_i = ci;
@@ -5012,7 +5012,7 @@ function check_const_and_for_sugar(): i32 {
   }
   // …and an ordinary zero-arg function, whose AST shape is identical, must
   // NOT come back marked — that is what stops the printer guessing by shape.
-  var rtFn: parser.Module = roundtrip_module("function LIMIT(): i32 { return 41; }");
+  let rtFn: parser.Module = roundtrip_module("function LIMIT(): i32 { return 41; }");
   if (rtFn.funcs.len() != 1) {
     return 254;
   }
@@ -5026,9 +5026,9 @@ function check_const_and_for_sugar(): i32 {
   // and reject the synthesised names — `__forc_<line>_<col>` bakes the
   // loop's position into the program, so the same loop one line down would
   // otherwise reformat to different source.
-  var srcCFor: string = "function main(): i32 { var s: i32 = 0; for (var i: i32 = 0; i < 3; i = i + 1) { s = s + i; } return s; }";
-  var outCFor: string = print_module(parser.parse_module(lexer.tokenize(srcCFor)));
-  if (!util.contains(outCFor, "for (var i: i32 = 0; i < 3; i = i + 1) {")) {
+  let srcCFor: string = "function main(): i32 { let s: i32 = 0; for (let i: i32 = 0; i < 3; i = i + 1) { s = s + i; } return s; }";
+  let outCFor: string = print_module(parser.parse_module(lexer.tokenize(srcCFor)));
+  if (!util.contains(outCFor, "for (let i: i32 = 0; i < 3; i = i + 1) {")) {
     return 260;
   }
   if (util.contains(outCFor, "__forc_")) {
@@ -5036,7 +5036,7 @@ function check_const_and_for_sugar(): i32 {
   }
   // …and it still re-parses to the same desugar, so the loop the compiler
   // sees is unchanged.
-  var rtCFor: parser.Module = roundtrip_module(srcCFor);
+  let rtCFor: parser.Module = roundtrip_module(srcCFor);
   if (rtCFor.funcs.len() != 1) {
     return 262;
   }
@@ -5052,8 +5052,8 @@ function check_const_and_for_sugar(): i32 {
   }
 
   // An omitted INIT / STEP keeps the header's arity.
-  var outBare: string = print_module(parser.parse_module(lexer.tokenize(
-    "function main(): i32 { var i: i32 = 0; for (; i < 3; ) { i = i + 1; } return i; }",
+  let outBare: string = print_module(parser.parse_module(lexer.tokenize(
+    "function main(): i32 { let i: i32 = 0; for (; i < 3; ) { i = i + 1; } return i; }",
   )));
   if (!util.contains(outBare, "for (; i < 3; ) {")) {
     return 265;
@@ -5061,8 +5061,8 @@ function check_const_and_for_sugar(): i32 {
 
   // The range forms are carried as a synthetic `__range` / `__range_incl`
   // call, which is a parser-internal name no source may spell.
-  var outRange: string = print_module(parser.parse_module(lexer.tokenize(
-    "function main(): i32 { var t: i32 = 0; for i in 0..4 { t = t + i; } for j in 0..=4 { t = t + j; } return t; }",
+  let outRange: string = print_module(parser.parse_module(lexer.tokenize(
+    "function main(): i32 { let t: i32 = 0; for i in 0..4 { t = t + i; } for j in 0..=4 { t = t + j; } return t; }",
   )));
   if (!util.contains(outRange, "for i in 0..4 {")) {
     return 266;
@@ -5076,20 +5076,20 @@ function check_const_and_for_sugar(): i32 {
 
   // The map form stores its two binders comma-joined in the one field;
   // reprinting that bare gives `for k,v in m`, which does not parse.
-  var outMap: string = print_module(parser.parse_module(lexer.tokenize(
-    "function main(m: map[string, i32]): i32 { var t: i32 = 0; for (k, v) in m { t = t + v; } return t; }",
+  let outMap: string = print_module(parser.parse_module(lexer.tokenize(
+    "function main(m: map[string, i32]): i32 { let t: i32 = 0; for (k, v) in m { t = t + v; } return t; }",
   )));
   if (!util.contains(outMap, "for (k, v) in m {")) {
     return 269;
   }
 
   // A label and the break / continue naming it are one fact written twice.
-  var srcLabels: string = "function main(): i32 { var t: i32 = 0; outer: while (t < 10) { inner: for (var i: i32 = 0; i < 3; i = i + 1) { if (i == 2) { continue outer; } break inner; } t = t + 1; } return t; }";
-  var outLabels: string = print_module(parser.parse_module(lexer.tokenize(srcLabels)));
+  let srcLabels: string = "function main(): i32 { let t: i32 = 0; outer: while (t < 10) { inner: for (let i: i32 = 0; i < 3; i = i + 1) { if (i == 2) { continue outer; } break inner; } t = t + 1; } return t; }";
+  let outLabels: string = print_module(parser.parse_module(lexer.tokenize(srcLabels)));
   if (!util.contains(outLabels, "outer: while (t < 10) {")) {
     return 270;
   }
-  if (!util.contains(outLabels, "inner: for (var i: i32 = 0; i < 3; i = i + 1) {")) {
+  if (!util.contains(outLabels, "inner: for (let i: i32 = 0; i < 3; i = i + 1) {")) {
     return 271;
   }
   if (!util.contains(outLabels, "continue outer;")) {
@@ -5106,8 +5106,8 @@ function check_visibility_and_destructuring(): i32 {
   // #6773: `pub` on a struct / enum / alias. Printed from is_pub, which
   // already recorded the written keyword — nothing read it, so a formatted
   // library file kept its function exports and lost every type export.
-  var srcVis: string = "pub struct A { x: i32 } struct B { y: i32 } pub enum C { P } enum D { Q } pub type E = A | B; type F = A | B; function main(): i32 { return 0; }";
-  var rtVis: parser.Module = roundtrip_module(srcVis);
+  let srcVis: string = "pub struct A { x: i32 } struct B { y: i32 } pub enum C { P } enum D { Q } pub type E = A | B; type F = A | B; function main(): i32 { return 0; }";
+  let rtVis: parser.Module = roundtrip_module(srcVis);
   if (!rtVis.structs[struct_index(rtVis.structs, "A")].is_pub) {
     return 280;
   }
@@ -5130,12 +5130,12 @@ function check_visibility_and_destructuring(): i32 {
     return 286;
   }
 
-  // #6773: both destructuring forms. Printed as a plain `var` the tuple one
-  // emitted `var a,b = …`, which is not syntax the parser accepts back — so
+  // #6773: both destructuring forms. Printed as a plain `let` the tuple one
+  // emitted `let a,b = …`, which is not syntax the parser accepts back — so
   // the re-parse is the assertion.
-  var srcTd: string = "function pair(): (i32, i32) { return (1, 2); } function main(): i32 { let (a, b) = pair(); return a + b; }";
-  var rtTd: parser.Module = roundtrip_module(srcTd);
-  var mti: i32 = func_index(rtTd.funcs, "main");
+  let srcTd: string = "function pair(): (i32, i32) { return (1, 2); } function main(): i32 { let (a, b) = pair(); return a + b; }";
+  let rtTd: parser.Module = roundtrip_module(srcTd);
+  let mti: i32 = func_index(rtTd.funcs, "main");
   if (mti < 0) {
     return 287;
   }
@@ -5157,9 +5157,9 @@ function check_visibility_and_destructuring(): i32 {
   }
   // The struct form keeps the type it destructures and each field's binding,
   // including a field renamed on binding (`y: bb`).
-  var srcSd: string = "struct P { x: i32, y: i32 } function main(): i32 { let P { x, y: bb } = P { x: 1, y: 2 }; return x + bb; }";
-  var rtSd: parser.Module = roundtrip_module(srcSd);
-  var msi: i32 = func_index(rtSd.funcs, "main");
+  let srcSd: string = "struct P { x: i32, y: i32 } function main(): i32 { let P { x, y: bb } = P { x: 1, y: 2 }; return x + bb; }";
+  let rtSd: parser.Module = roundtrip_module(srcSd);
+  let msi: i32 = func_index(rtSd.funcs, "main");
   if (msi < 0) {
     return 292;
   }
@@ -5180,9 +5180,9 @@ function check_visibility_and_destructuring(): i32 {
   // #6773: a METHOD's type parameters written before its receiver parse
   // too; the printer writes them after the name, and both spellings carry
   // the same declaration.
-  var srcMt: string = "enum Opt[T] { Some(T), None } pub function [U] (o: Opt[T]) map(f: (T) => U): Opt[U] { return None; } function main(): i32 { return 0; }";
-  var rtMt: parser.Module = roundtrip_module(srcMt);
-  var mmi: i32 = func_index(rtMt.funcs, "map");
+  let srcMt: string = "enum Opt[T] { Some(T), None } pub function [U] (o: Opt[T]) map(f: (T) => U): Opt[U] { return None; } function main(): i32 { return 0; }";
+  let rtMt: parser.Module = roundtrip_module(srcMt);
+  let mmi: i32 = func_index(rtMt.funcs, "map");
   if (mmi < 0) {
     return 296;
   }
@@ -5201,10 +5201,10 @@ function check_traits_and_impls(): i32 {
   // DERIVED views the compile path keeps, so it has to be retained beside the
   // Module. The re-parse is the assertion: an emitted trait that does not
   // come back is a declaration the reformat deleted.
-  var srcTr: string = "pub trait Greet[T]: Display { function hi(self: Self, x: T): string; function loud(self: Self, x: T): string { return self.hi(x); } } function main(): i32 { return 0; }";
-  var pfTr: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcTr));
-  var outTr: string = format_module(pfTr.pmod, pfTr.ptraits, pfTr.pimpls, pfTr.pflines, [], []);
-  var rtTr: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outTr));
+  let srcTr: string = "pub trait Greet[T]: Display { function hi(self: Self, x: T): string; function loud(self: Self, x: T): string { return self.hi(x); } } function main(): i32 { return 0; }";
+  let pfTr: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcTr));
+  let outTr: string = format_module(pfTr.pmod, pfTr.ptraits, pfTr.pimpls, pfTr.pflines, [], []);
+  let rtTr: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outTr));
   if (rtTr.ptraits.len() != 1) {
     return 299;
   }
@@ -5244,7 +5244,7 @@ function check_traits_and_impls(): i32 {
   }
   // A qualified supertrait keeps its module prefix — printed bare it names a
   // trait that may not be in scope.
-  var pfQ: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
+  let pfQ: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
     "import \"core/cmp\"; pub trait Sortable: cmp.Ord {} function main(): i32 { return 0; }",
   ));
   if (pfQ.ptraits.len() != 1) {
@@ -5264,8 +5264,8 @@ function check_traits_and_impls(): i32 {
   // the way in, so the block has to be retained beside the Module too. Under
   // the formatter's parse its methods live on the ImplDecl ALONE — leaving
   // them on Module.funcs as well would print each one twice.
-  var srcIm: string = "trait Display { function to_string(self: Self): string; } impl Display for i32 {} impl Display for boolean { function to_string(self: Self): string { return \"t\"; } } function main(): i32 { return 0; }";
-  var pfIm: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcIm));
+  let srcIm: string = "trait Display { function to_string(self: Self): string; } impl Display for i32 {} impl Display for boolean { function to_string(self: Self): string { return \"t\"; } } function main(): i32 { return 0; }";
+  let pfIm: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcIm));
   if (pfIm.pimpls.len() != 2) {
     return 315;
   }
@@ -5285,7 +5285,7 @@ function check_traits_and_impls(): i32 {
   if (func_index(pfIm.pmod.funcs, "to_string") >= 0) {
     return 320;
   }
-  var outIm: string = format_module(pfIm.pmod, pfIm.ptraits, pfIm.pimpls, pfIm.pflines, [], []);
+  let outIm: string = format_module(pfIm.pmod, pfIm.ptraits, pfIm.pimpls, pfIm.pflines, [], []);
   if (!util.contains(outIm, "impl Display for i32 {}")) {
     return 321;
   }
@@ -5294,14 +5294,14 @@ function check_traits_and_impls(): i32 {
   if (!util.contains(outIm, "function to_string(self: boolean): string {")) {
     return 322;
   }
-  var rtIm: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outIm));
+  let rtIm: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outIm));
   if (rtIm.pimpls.len() != 2) {
     return 323;
   }
 
   // An inherent `impl Type { … }` has no trait, and an associated function
   // (no `self`) keeps its parameter list exactly as written.
-  var pfIn: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
+  let pfIn: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
     "struct Box { item: i32 } impl Box { function zero(): Box { return Box { item: 0 }; } } function main(): i32 { return 0; }",
   ));
   if (pfIn.pimpls.len() != 1) {
@@ -5319,13 +5319,13 @@ function check_traits_and_impls(): i32 {
 
   // A parametric impl states its bounds once, on the block: restating them on
   // each method is a program native rejects outright.
-  var pfPa: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
+  let pfPa: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
     "import \"core/cmp\"; struct Box[T] { item: T } impl[T: cmp.Eq] cmp.Eq for Box[T] { function eq(self: Self, other: Self): boolean { return true; } } function main(): i32 { return 0; }",
   ));
   if (pfPa.pimpls.len() != 1) {
     return 328;
   }
-  var outPa: string = format_module(pfPa.pmod, pfPa.ptraits, pfPa.pimpls, pfPa.pflines, [], []);
+  let outPa: string = format_module(pfPa.pmod, pfPa.ptraits, pfPa.pimpls, pfPa.pflines, [], []);
   if (!util.contains(outPa, "impl[T: cmp.Eq] cmp.Eq for Box[T] {")) {
     return 329;
   }
@@ -5337,11 +5337,11 @@ function check_traits_and_impls(): i32 {
   // (#6842) — but a reformat must return the text it was handed, so the
   // verbatim parse keeps the literal and the printer writes it back
   // unchanged. Printing the rejection instead loses the program's number.
-  var pfOor: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
-    "function main(): i32 { var x: f64 = 1e309; return 0; }",
+  let pfOor: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
+    "function main(): i32 { let x: f64 = 1e309; return 0; }",
   ));
-  var outOor: string = format_module(pfOor.pmod, pfOor.ptraits, pfOor.pimpls, pfOor.pflines, [], []);
-  if (!util.contains(outOor, "var x: f64 = 1e309;")) {
+  let outOor: string = format_module(pfOor.pmod, pfOor.ptraits, pfOor.pimpls, pfOor.pflines, [], []);
+  if (!util.contains(outOor, "let x: f64 = 1e309;")) {
     return 331;
   }
 
@@ -5377,10 +5377,10 @@ function check_traits_and_impls(): i32 {
   // And survive a full format → re-lex round-trip: the verbatim parse
   // keeps the f-string form, so its literal parts go through
   // escape_fstring_lit.
-  var srcMb: string = "function main(): i32 { var s: string = \"héllo\"; var f: string = f\"pré {s}\"; return 0; }";
-  var pfMb: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcMb));
-  var outMb: string = format_module(pfMb.pmod, pfMb.ptraits, pfMb.pimpls, pfMb.pflines, [], []);
-  var rtMb: parser.Module = parser.parse_module(lexer.tokenize(outMb));
+  let srcMb: string = "function main(): i32 { let s: string = \"héllo\"; let f: string = f\"pré {s}\"; return 0; }";
+  let pfMb: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcMb));
+  let outMb: string = format_module(pfMb.pmod, pfMb.ptraits, pfMb.pimpls, pfMb.pflines, [], []);
+  let rtMb: parser.Module = parser.parse_module(lexer.tokenize(outMb));
   if (rtMb.funcs.len() != 1) {
     return 342;
   }
@@ -5391,7 +5391,7 @@ function check_traits_and_impls(): i32 {
     return 344;
   }
   // diff_split_lines byte-scans for '\n'; multibyte lines split intact.
-  var dl: string[] = diff_split_lines("é\nü");
+  let dl: string[] = diff_split_lines("é\nü");
   if (dl.len() != 2) {
     return 345;
   }
@@ -5401,7 +5401,7 @@ function check_traits_and_impls(): i32 {
 
   // The linear-space alignment (#8611): the properties the byte-parity gates
   // against native cannot state, since a shortest edit script is not unique.
-  var dcode: i32 = diff_selftest();
+  let dcode: i32 = diff_selftest();
   if (dcode != 0) {
     return dcode;
   }
@@ -5412,7 +5412,7 @@ function check_traits_and_impls(): i32 {
 // struct_index / func_index locate a declaration by name for the assertions
 // above, which cannot rely on declaration order surviving the round-trip.
 function struct_index(structs: parser.StructDecl[], name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < structs.len()) {
     if (structs[i].name == name && structs[i].enum_owner.len() == 0) {
       return i;
@@ -5423,7 +5423,7 @@ function struct_index(structs: parser.StructDecl[], name: string): i32 {
 }
 
 function func_index(funcs: parser.FuncDecl[], name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < funcs.len()) {
     if (funcs[i].name == name) {
       return i;
@@ -5441,12 +5441,12 @@ function func_index(funcs: parser.FuncDecl[], name: string): i32 {
 // hunk emitter reproduces a "no newline at end of file" tail verbatim. The
 // phantom empty entry a trailing '\n' would produce is dropped.
 function diff_split_lines(s: string): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   if (s.len() == 0) {
     return out;
   }
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     if (s[i] == b'\n') {
       out = out.append(slice_unchecked(s, start, i + 1) + "");
@@ -5480,13 +5480,13 @@ struct DiffIds { ia: i32[], ib: i32[], distinct: i32 }
 
 // diff_intern numbers the lines of both sides in order of first appearance.
 function diff_intern(a: string[], b: string[]): DiffIds {
-  var ids: Map[string, i32] = map_new(a.len() + b.len() + 1);
-  var ia: i32[] = [];
-  var ib: i32[] = [];
-  var next: i32 = 0;
-  var i: i32 = 0;
+  let ids: Map[string, i32] = map_new(a.len() + b.len() + 1);
+  let ia: i32[] = [];
+  let ib: i32[] = [];
+  let next: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
-    var ida: i32 = ids.get_or(a[i], 0 - 1);
+    let ida: i32 = ids.get_or(a[i], 0 - 1);
     if (ida < 0) {
       ida = next;
       ids = ids.insert(a[i], ida);
@@ -5495,9 +5495,9 @@ function diff_intern(a: string[], b: string[]): DiffIds {
     ia = ia.append(ida);
     i = i + 1;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < b.len()) {
-    var idb: i32 = ids.get_or(b[j], 0 - 1);
+    let idb: i32 = ids.get_or(b[j], 0 - 1);
     if (idb < 0) {
       idb = next;
       ids = ids.insert(b[j], idb);
@@ -5516,29 +5516,29 @@ function diff_intern(a: string[], b: string[]): DiffIds {
 // progress and the deeper one wins. Progress is at least the budget either
 // way, so the recursion terminates.
 function diff_furthest(vf: i32[], vr: i32[], off: i32, size: i32, alo: i32, ahi: i32, blo: i32, bhi: i32): (i32, i32) {
-  var na: i32 = ahi - alo;
-  var nb: i32 = bhi - blo;
-  var best_f: i32 = 0;
-  var fx: i32 = 0;
-  var fy: i32 = 0;
-  var best_r: i32 = 0;
-  var rx: i32 = 0;
-  var ry: i32 = 0;
-  var o: i32 = 0;
+  let na: i32 = ahi - alo;
+  let nb: i32 = bhi - blo;
+  let best_f: i32 = 0;
+  let fx: i32 = 0;
+  let fy: i32 = 0;
+  let best_r: i32 = 0;
+  let rx: i32 = 0;
+  let ry: i32 = 0;
+  let o: i32 = 0;
   while (o < size) {
-    var j: i32 = o - off;
-    var xf: i32 = vf[o];
+    let j: i32 = o - off;
+    let xf: i32 = vf[o];
     if (xf >= 0) {
-      var yf: i32 = xf - j;
+      let yf: i32 = xf - j;
       if (xf <= na && yf >= 0 && yf <= nb && xf + yf > best_f) {
         best_f = xf + yf;
         fx = xf;
         fy = yf;
       }
     }
-    var xr: i32 = vr[o];
+    let xr: i32 = vr[o];
     if (xr >= 0) {
-      var yr: i32 = xr - j;
+      let yr: i32 = xr - j;
       if (xr <= na && yr >= 0 && yr <= nb && xr + yr > best_r) {
         best_r = xr + yr;
         rx = na - xr;
@@ -5565,12 +5565,12 @@ function diff_furthest(vf: i32[], vr: i32[], off: i32, size: i32, alo: i32, ahi:
 // Past the cost cap it stops waiting for them to meet and returns the
 // furthest-reaching point either search has found.
 function diff_bisect(ia: i32[], ib: i32[], alo: i32, ahi: i32, blo: i32, bhi: i32, max_cost: i32): (i32, i32) {
-  var na: i32 = ahi - alo;
-  var nb: i32 = bhi - blo;
+  let na: i32 = ahi - alo;
+  let nb: i32 = bhi - blo;
   // The searches meet after at most ceil(D/2) rounds each, and D is at most
   // na+nb; the extra round leaves room for the odd-delta case.
-  var maxd: i32 = (na + nb + 3) / 2;
-  var budget: i32 = maxd;
+  let maxd: i32 = (na + nb + 3) / 2;
+  let budget: i32 = maxd;
   if (budget > max_cost) {
     budget = max_cost;
   }
@@ -5578,11 +5578,11 @@ function diff_bisect(ia: i32[], ib: i32[], alo: i32, ahi: i32, blo: i32, bhi: i3
   // diagonal 0 at `off`. Only diagonals within `budget` of 0 are ever
   // written, so the budget sizes them: a diagonal outside that window reads
   // as "not reached", which is what an unwritten slot says too.
-  var off: i32 = budget + 1;
-  var size: i32 = 2 * budget + 4;
-  var vf: i32[] = [];
-  var vr: i32[] = [];
-  var z: i32 = 0;
+  let off: i32 = budget + 1;
+  let size: i32 = 2 * budget + 4;
+  let vf: i32[] = [];
+  let vr: i32[] = [];
+  let z: i32 = 0;
   while (z < size) {
     vf = vf.append(0 - 1);
     vr = vr.append(0 - 1);
@@ -5590,27 +5590,27 @@ function diff_bisect(ia: i32[], ib: i32[], alo: i32, ahi: i32, blo: i32, bhi: i3
   }
   vf = vf.with(off + 1, 0);
   vr = vr.with(off + 1, 0);
-  var delta: i32 = na - nb;
+  let delta: i32 = na - nb;
   // The two searches can only meet on a forward step when delta is odd, and
   // only on a reverse step when it is even.
-  var meet_forward: boolean = delta % 2 != 0;
+  let meet_forward: boolean = delta % 2 != 0;
   // Diagonals that have run off the grid stop being extended.
-  var flo: i32 = 0;
-  var fhi: i32 = 0;
-  var rlo: i32 = 0;
-  var rhi: i32 = 0;
-  var k: i32 = 0;
+  let flo: i32 = 0;
+  let fhi: i32 = 0;
+  let rlo: i32 = 0;
+  let rhi: i32 = 0;
+  let k: i32 = 0;
   while (k < budget) {
-    var jf: i32 = 0 - k + flo;
+    let jf: i32 = 0 - k + flo;
     while (jf <= k - fhi) {
-      var o: i32 = off + jf;
-      var x: i32 = 0;
+      let o: i32 = off + jf;
+      let x: i32 = 0;
       if (jf == 0 - k || jf != k && vf[o - 1] < vf[o + 1]) {
         x = vf[o + 1];
       } else {
         x = vf[o - 1] + 1;
       }
-      var y: i32 = x - jf;
+      let y: i32 = x - jf;
       while (x < na && y < nb && ia[alo + x] == ib[blo + y]) {
         x = x + 1;
         y = y + 1;
@@ -5621,23 +5621,23 @@ function diff_bisect(ia: i32[], ib: i32[], alo: i32, ahi: i32, blo: i32, bhi: i3
       } else if (y > nb) {
         flo = flo + 2;
       } else if (meet_forward) {
-        var ro: i32 = off + delta - jf;
+        let ro: i32 = off + delta - jf;
         if (ro >= 0 && ro < size && vr[ro] >= 0 && x >= na - vr[ro]) {
           return (alo + x, blo + y);
         }
       }
       jf = jf + 2;
     }
-    var jr: i32 = 0 - k + rlo;
+    let jr: i32 = 0 - k + rlo;
     while (jr <= k - rhi) {
-      var o2: i32 = off + jr;
-      var x2: i32 = 0;
+      let o2: i32 = off + jr;
+      let x2: i32 = 0;
       if (jr == 0 - k || jr != k && vr[o2 - 1] < vr[o2 + 1]) {
         x2 = vr[o2 + 1];
       } else {
         x2 = vr[o2 - 1] + 1;
       }
-      var y2: i32 = x2 - jr;
+      let y2: i32 = x2 - jr;
       while (x2 < na && y2 < nb && ia[ahi - 1 - x2] == ib[bhi - 1 - y2]) {
         x2 = x2 + 1;
         y2 = y2 + 1;
@@ -5648,7 +5648,7 @@ function diff_bisect(ia: i32[], ib: i32[], alo: i32, ahi: i32, blo: i32, bhi: i3
       } else if (y2 > nb) {
         rlo = rlo + 2;
       } else if (!meet_forward) {
-        var fo: i32 = off + delta - jr;
+        let fo: i32 = off + delta - jr;
         if (fo >= 0 && fo < size && vf[fo] >= 0 && vf[fo] >= na - x2) {
           return (alo + vf[fo], blo + vf[fo] - (delta - jr));
         }
@@ -5666,20 +5666,20 @@ function diff_compare(anchors: i32[], ia: i32[], ib: i32[], alo: i32, ahi: i32, 
   // Peeling the shared ends off every subproblem is not just a shortcut: it
   // is what guarantees the bisect below splits strictly inside the range, so
   // the recursion terminates.
-  var lo_a: i32 = alo;
-  var lo_b: i32 = blo;
+  let lo_a: i32 = alo;
+  let lo_b: i32 = blo;
   while (lo_a < ahi && lo_b < bhi && ia[lo_a] == ib[lo_b]) {
     anchors = anchors.append(lo_a);
     anchors = anchors.append(lo_b);
     lo_a = lo_a + 1;
     lo_b = lo_b + 1;
   }
-  var suffix: i32 = 0;
+  let suffix: i32 = 0;
   while (ahi - suffix > lo_a && bhi - suffix > lo_b && ia[ahi - 1 - suffix] == ib[bhi - 1 - suffix]) {
     suffix = suffix + 1;
   }
-  var hi_a: i32 = ahi - suffix;
-  var hi_b: i32 = bhi - suffix;
+  let hi_a: i32 = ahi - suffix;
+  let hi_b: i32 = bhi - suffix;
   if (lo_a < hi_a && lo_b < hi_b) {
     let (x, y) = diff_bisect(ia, ib, lo_a, hi_a, lo_b, hi_b, max_cost);
     // A split that makes no progress would not terminate. The end peeling
@@ -5690,7 +5690,7 @@ function diff_compare(anchors: i32[], ia: i32[], ib: i32[], alo: i32, ahi: i32, 
       anchors = diff_compare(anchors, ia, ib, x, hi_a, y, hi_b, max_cost);
     }
   }
-  var s: i32 = 0;
+  let s: i32 = 0;
   while (s < suffix) {
     anchors = anchors.append(hi_a + s);
     anchors = anchors.append(hi_b + s);
@@ -5702,23 +5702,23 @@ function diff_compare(anchors: i32[], ia: i32[], ib: i32[], alo: i32, ahi: i32, 
 // diff_edit_script diffs a against b and returns the merge of the two as one
 // ordered script. The alignment is Myers' O(ND) greedy diff in its
 // linear-space divide-and-conquer form: memory is O(m+n), which is what lets
-// `-fmt -d` run on a source the size of irlower.fern at all — an O(m*n) table
+// `-fmt -d` run on a source the size of fnsigs.fern at all — an O(m*n) table
 // is 48 GB there.
 function diff_edit_script(a: string[], b: string[]): DiffScript {
-  var m: i32 = a.len();
-  var n: i32 = b.len();
-  var ids: DiffIds = diff_intern(a, b);
-  var ia: i32[] = ids.ia;
-  var ib: i32[] = ids.ib;
+  let m: i32 = a.len();
+  let n: i32 = b.len();
+  let ids: DiffIds = diff_intern(a, b);
+  let ia: i32[] = ids.ia;
+  let ib: i32[] = ids.ib;
 
   // Shared ends belong to every optimal alignment, so peel them off before
   // searching. The usual case — a handful of reformatted lines in an
   // otherwise untouched file — then costs about what the change costs.
-  var pre: i32 = 0;
+  let pre: i32 = 0;
   while (pre < m && pre < n && ia[pre] == ib[pre]) {
     pre = pre + 1;
   }
-  var suf: i32 = 0;
+  let suf: i32 = 0;
   while (suf < m - pre && suf < n - pre && ia[m - 1 - suf] == ib[n - 1 - suf]) {
     suf = suf + 1;
   }
@@ -5727,28 +5727,28 @@ function diff_edit_script(a: string[], b: string[]): DiffScript {
   // subsequence, so it is an edit in every alignment and the search never
   // needs to see it. On a wholly reformatted source that is most of the
   // file, and the search cost scales with the edit distance.
-  var in_a: boolean[] = [];
-  var in_b: boolean[] = [];
-  var z: i32 = 0;
+  let in_a: boolean[] = [];
+  let in_b: boolean[] = [];
+  let z: i32 = 0;
   while (z < ids.distinct) {
     in_a = in_a.append(false);
     in_b = in_b.append(false);
     z = z + 1;
   }
-  var i: i32 = pre;
+  let i: i32 = pre;
   while (i < m - suf) {
     in_a = in_a.with(ia[i], true);
     i = i + 1;
   }
-  var j: i32 = pre;
+  let j: i32 = pre;
   while (j < n - suf) {
     in_b = in_b.with(ib[j], true);
     j = j + 1;
   }
-  var fa: i32[] = [];
-  var map_a: i32[] = [];
-  var fb: i32[] = [];
-  var map_b: i32[] = [];
+  let fa: i32[] = [];
+  let map_a: i32[] = [];
+  let fb: i32[] = [];
+  let map_b: i32[] = [];
   i = pre;
   while (i < m - suf) {
     if (in_b[ia[i]]) {
@@ -5765,24 +5765,24 @@ function diff_edit_script(a: string[], b: string[]): DiffScript {
     }
     j = j + 1;
   }
-  var anchors: i32[] = [];
+  let anchors: i32[] = [];
   anchors = diff_compare(anchors, fa, fb, 0, fa.len(), 0, fb.len(), diff_max_search_cost());
 
   // Everything between two matched lines is an edit; deletions come before
   // insertions within each such run.
-  var kinds: i32[] = [];
-  var lines: string[] = [];
-  var p: i32 = 0;
+  let kinds: i32[] = [];
+  let lines: string[] = [];
+  let p: i32 = 0;
   while (p < pre) {
     kinds = kinds.append(0);
     lines = lines.append(a[p]);
     p = p + 1;
   }
-  var q: i32 = pre;
-  var t: i32 = 0;
+  let q: i32 = pre;
+  let t: i32 = 0;
   while (t < anchors.len()) {
-    var ai: i32 = map_a[anchors[t]];
-    var bj: i32 = map_b[anchors[t + 1]];
+    let ai: i32 = map_a[anchors[t]];
+    let bj: i32 = map_b[anchors[t + 1]];
     while (p < ai) {
       kinds = kinds.append(1);
       lines = lines.append(a[p]);
@@ -5824,22 +5824,22 @@ pub function unified_diff(before: string, after: string, path_before: string, pa
   if (before == after) {
     return "";
   }
-  var script: DiffScript = diff_edit_script(diff_split_lines(before), diff_split_lines(after));
-  var kinds: i32[] = script.kinds;
+  let script: DiffScript = diff_edit_script(diff_split_lines(before), diff_split_lines(after));
+  let kinds: i32[] = script.kinds;
   if (kinds.len() == 0) {
     return "";
   }
-  var context: i32 = 3;
+  let context: i32 = 3;
 
   // Runs of changed lines, then merged wherever their context windows touch.
-  var lo: i32[] = [];
-  var hi: i32[] = [];
-  var i: i32 = 0;
+  let lo: i32[] = [];
+  let hi: i32[] = [];
+  let i: i32 = 0;
   while (i < kinds.len()) {
     if (kinds[i] == 0) {
       i = i + 1;
     } else {
-      var s: i32 = i;
+      let s: i32 = i;
       while (i < kinds.len() && kinds[i] != 0) {
         i = i + 1;
       }
@@ -5855,20 +5855,20 @@ pub function unified_diff(before: string, after: string, path_before: string, pa
     return "";
   }
 
-  var out: string = "--- " + path_before + "\n+++ " + path_after + "\n";
-  var h: i32 = 0;
+  let out: string = "--- " + path_before + "\n+++ " + path_after + "\n";
+  let h: i32 = 0;
   while (h < lo.len()) {
-    var start: i32 = lo[h] - context;
+    let start: i32 = lo[h] - context;
     if (start < 0) {
       start = 0;
     }
-    var end: i32 = hi[h] + context;
+    let end: i32 = hi[h] + context;
     if (end > kinds.len()) {
       end = kinds.len();
     }
-    var a_pos: i32 = 0;
-    var b_pos: i32 = 0;
-    var k: i32 = 0;
+    let a_pos: i32 = 0;
+    let b_pos: i32 = 0;
+    let k: i32 = 0;
     while (k < start) {
       if (kinds[k] != 2) {
         a_pos = a_pos + 1;
@@ -5878,8 +5878,8 @@ pub function unified_diff(before: string, after: string, path_before: string, pa
       }
       k = k + 1;
     }
-    var a_len: i32 = 0;
-    var b_len: i32 = 0;
+    let a_len: i32 = 0;
+    let b_len: i32 = 0;
     k = start;
     while (k < end) {
       if (kinds[k] != 2) {
@@ -5894,14 +5894,14 @@ pub function unified_diff(before: string, after: string, path_before: string, pa
       + " +" + util.i32_to_string(b_pos + 1) + "," + util.i32_to_string(b_len) + " @@\n";
     k = start;
     while (k < end) {
-      var mark: string = " ";
+      let mark: string = " ";
       if (kinds[k] == 1) {
         mark = "-";
       }
       if (kinds[k] == 2) {
         mark = "+";
       }
-      var line: string = script.lines[k];
+      let line: string = script.lines[k];
       out = out + mark + line;
       // A final line with no newline still has to leave the diff itself
       // well-formed.
@@ -5926,8 +5926,8 @@ pub function unified_diff(before: string, after: string, path_before: string, pa
 // diff_replay rebuilds one side of an edit script — `keep` is 1 for `a` and 2
 // for `b`; a shared line belongs to both.
 function diff_replay(sc: DiffScript, keep: i32): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < sc.kinds.len()) {
     if (sc.kinds[i] == 0 || sc.kinds[i] == keep) {
       out = out + sc.lines[i];
@@ -5939,8 +5939,8 @@ function diff_replay(sc: DiffScript, keep: i32): string {
 
 // diff_edits counts the lines the script does not share.
 function diff_edits(sc: DiffScript): i32 {
-  var n: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = 0;
+  let i: i32 = 0;
   while (i < sc.kinds.len()) {
     if (sc.kinds[i] != 0) {
       n = n + 1;
@@ -5955,23 +5955,23 @@ function diff_edits(sc: DiffScript): i32 {
 // diff_edit_script may not use one — but it is the ground truth the search is
 // checked against on inputs small enough to afford it.
 function diff_lcs_edits(a: string[], b: string[]): i32 {
-  var m: i32 = a.len();
-  var n: i32 = b.len();
-  var prev: i32[] = [];
-  var cur: i32[] = [];
-  var z: i32 = 0;
+  let m: i32 = a.len();
+  let n: i32 = b.len();
+  let prev: i32[] = [];
+  let cur: i32[] = [];
+  let z: i32 = 0;
   while (z <= n) {
     prev = prev.append(0);
     cur = cur.append(0);
     z = z + 1;
   }
-  var i: i32 = m - 1;
+  let i: i32 = m - 1;
   while (i >= 0) {
     // `cur` is rewritten at every j below, so aliasing the finished row is
     // safe: the first write copies it away from `prev`, which then holds
     // the row this one reads.
     prev = cur;
-    var j: i32 = n - 1;
+    let j: i32 = n - 1;
     while (j >= 0) {
       if (a[i] == b[j]) {
         cur = cur.with(j, prev[j + 1] + 1);
@@ -5997,10 +5997,10 @@ function diff_rand(s: i64): i64 {
 // vocabulary. The vocabulary is tiny on purpose: ties between equally short
 // scripts are then the common case rather than a rarity.
 function diff_lines_from(seed: i64, n: i32, alphabet: i32): string[] {
-  var vocab: string[] = ["a\n", "b\n", "c\n", "d\n", "e\n"];
-  var out: string[] = [];
-  var s: i64 = seed;
-  var i: i32 = 0;
+  let vocab: string[] = ["a\n", "b\n", "c\n", "d\n", "e\n"];
+  let out: string[] = [];
+  let s: i64 = seed;
+  let i: i32 = 0;
   while (i < n) {
     s = diff_rand(s);
     out = out.append(vocab[(s % (alphabet as i64)) as i32]);
@@ -6014,20 +6014,20 @@ function diff_lines_from(seed: i64, n: i32, alphabet: i32): string[] {
 function diff_selftest(): i32 {
   // The script reproduces both inputs and is minimal, over inputs small
   // enough for the LCS table to answer.
-  var s: i64 = 12345i64;
-  var iter: i32 = 0;
+  let s: i64 = 12345i64;
+  let iter: i32 = 0;
   while (iter < 300) {
     s = diff_rand(s);
-    var alphabet: i32 = 2 + (s % 4i64) as i32;
+    let alphabet: i32 = 2 + (s % 4i64) as i32;
     s = diff_rand(s);
-    var na: i32 = (s % 14i64) as i32;
+    let na: i32 = (s % 14i64) as i32;
     s = diff_rand(s);
-    var nb: i32 = (s % 14i64) as i32;
+    let nb: i32 = (s % 14i64) as i32;
     s = diff_rand(s);
-    var a: string[] = diff_lines_from(s, na, alphabet);
+    let a: string[] = diff_lines_from(s, na, alphabet);
     s = diff_rand(s);
-    var b: string[] = diff_lines_from(s, nb, alphabet);
-    var sc: DiffScript = diff_edit_script(a, b);
+    let b: string[] = diff_lines_from(s, nb, alphabet);
+    let sc: DiffScript = diff_edit_script(a, b);
     if (diff_replay(sc, 1) != util.str_join_chunks(a)) {
       return 350;
     }
@@ -6042,9 +6042,9 @@ function diff_selftest(): i32 {
 
   // Same two properties over an input long enough to drive the recursive
   // split several levels deep, which the small cases never reach.
-  var la: string[] = diff_lines_from(777i64, 400, 3);
-  var lb: string[] = diff_lines_from(999i64, 400, 3);
-  var lsc: DiffScript = diff_edit_script(la, lb);
+  let la: string[] = diff_lines_from(777i64, 400, 3);
+  let lb: string[] = diff_lines_from(999i64, 400, 3);
+  let lsc: DiffScript = diff_edit_script(la, lb);
   if (diff_replay(lsc, 1) != util.str_join_chunks(la)) {
     return 353;
   }
@@ -6057,9 +6057,9 @@ function diff_selftest(): i32 {
 
   // A file with a shared head and tail costs what the change costs: the
   // peeling leaves one line on each side for the search.
-  var pa: string[] = diff_split_lines("one\ntwo\nthree\nfour\nfive\n");
-  var pb: string[] = diff_split_lines("one\ntwo\nTHREE\nfour\nfive\n");
-  var psc: DiffScript = diff_edit_script(pa, pb);
+  let pa: string[] = diff_split_lines("one\ntwo\nthree\nfour\nfive\n");
+  let pb: string[] = diff_split_lines("one\ntwo\nTHREE\nfour\nfive\n");
+  let psc: DiffScript = diff_edit_script(pa, pb);
   if (diff_edits(psc) != 2) {
     return 356;
   }
@@ -6072,7 +6072,7 @@ function diff_selftest(): i32 {
 
   // The unified-diff wrapper's layout: header rows, one hunk, the changed
   // pair between context lines.
-  var ud: string = unified_diff("one\ntwo\nthree\nfour\nfive\n", "one\ntwo\nTHREE\nfour\nfive\n", "x.fern", "x.fern");
+  let ud: string = unified_diff("one\ntwo\nthree\nfour\nfive\n", "one\ntwo\nTHREE\nfour\nfive\n", "x.fern", "x.fern");
   if (ud != "--- x.fern\n+++ x.fern\n@@ -1,5 +1,5 @@\n one\n two\n-three\n+THREE\n four\n five\n") {
     return 359;
   }

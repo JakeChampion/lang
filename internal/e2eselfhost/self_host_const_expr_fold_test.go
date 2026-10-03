@@ -31,19 +31,19 @@ var constExprFoldCases = []struct {
 	// The wrap the int_cast exists for: i32 arithmetic is 32-bit, so
 	// 2147483647 + 1 is negative. Folding through the cast must reproduce
 	// that rather than computing it wide.
-	{"i32-wraps-at-32-bits", `function main(): i32 { var x: i32 = 2147483647 + 1; if (x < 0) { return 11; } return 1; }`},
+	{"i32-wraps-at-32-bits", `function main(): i32 { let x: i32 = 2147483647 + 1; if (x < 0) { return 11; } return 1; }`},
 	// `as u8` is a MASK, not an identity — the folded constant is v & 255.
-	{"u8-masks", `function main(): i32 { var a: u8 = 255 as u8; var b: u8 = a + (1 as u8); return (b as i32) + 5; }`},
-	{"u8-mul-masks", `function main(): i32 { var a: u8 = 16 as u8; var b: u8 = a * (17 as u8); return (b as i32) + 3; }`},
+	{"u8-masks", `function main(): i32 { let a: u8 = 255 as u8; let b: u8 = a + (1 as u8); return (b as i32) + 5; }`},
+	{"u8-mul-masks", `function main(): i32 { let a: u8 = 16 as u8; let b: u8 = a * (17 as u8); return (b as i32) + 3; }`},
 	// u32's max lowers as `const_i32 -1 ; u32_wrap`, and zero-extending -1 is
 	// 2^32 - 1, which no i32 constant carries — so that pair must NOT fold.
-	{"u32-max-survives", `function main(): i32 { var x: u32 = 4294967295 as u32; var y: u32 = x + (1 as u32); return (y as i32) + 7; }`},
-	{"u32-wraps-at-32-bits", `function main(): i32 { var x: u32 = 4294967290 as u32; var y: u32 = x + (10 as u32); return (y as i32) + 13; }`},
-	{"u32-positive-folds", `function main(): i32 { var x: u32 = (3 + 4) as u32; return (x as i32) * 2; }`},
+	{"u32-max-survives", `function main(): i32 { let x: u32 = 4294967295 as u32; let y: u32 = x + (1 as u32); return (y as i32) + 7; }`},
+	{"u32-wraps-at-32-bits", `function main(): i32 { let x: u32 = 4294967290 as u32; let y: u32 = x + (10 as u32); return (y as i32) + 13; }`},
+	{"u32-positive-folds", `function main(): i32 { let x: u32 = (3 + 4) as u32; return (x as i32) * 2; }`},
 	// int_extend / int_wrap refusals.
-	{"i64-extend-refused", `function main(): i32 { var a: i64 = (1 + 2 * 3) as i64; return (a as i32) + 1; }`},
-	{"u64-extend-refused", `function main(): i32 { var a: u64 = (1 + 2 * 3) as u64; return (a as i32) + 2; }`},
-	{"i64-narrow-refused", `function main(): i32 { var a: i64 = 9 as i64; var b: i32 = a as i32; return b + 3; }`},
+	{"i64-extend-refused", `function main(): i32 { let a: i64 = (1 + 2 * 3) as i64; return (a as i32) + 1; }`},
+	{"u64-extend-refused", `function main(): i32 { let a: u64 = (1 + 2 * 3) as u64; return (a as i32) + 2; }`},
+	{"i64-narrow-refused", `function main(): i32 { let a: i64 = 9 as i64; let b: i32 = a as i32; return b + 3; }`},
 	// Shifts take the same wrap, and the shift count is masked mod 32.
 	{"shl-folds", `function main(): i32 { return (1 << 3) + (2 << 2); }`},
 }

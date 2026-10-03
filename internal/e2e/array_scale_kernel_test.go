@@ -35,7 +35,7 @@ function scale_named(xs: f64[]): f64[] { return xs.map(half); }
 // also covers the commuted operand order.
 function scale_cap(xs: f64[], k: f64): f64[] { return xs.map((x: f64): f64 => x * k); }
 function scale_cap_local(xs: f64[]): f64[] {
-	var k: f64 = -0.75;
+	let k: f64 = -0.75;
 	return xs.map((x: f64): f64 => k * x);
 }
 
@@ -44,8 +44,8 @@ function scale_cap_local(xs: f64[]): f64[] {
 // answers what the loop answers -- and that it sees the value the variable
 // held when the map ran, not the one it holds afterwards.
 function scale_cap_boxed(xs: f64[]): f64[] {
-	var k: f64 = 2.0;
-	var out: f64[] = xs.map((x: f64): f64 => x * k);
+	let k: f64 = 2.0;
+	let out: f64[] = xs.map((x: f64): f64 => x * k);
 	k = 100.0;
 	if (k != 100.0) { return []; }
 	return out;
@@ -56,15 +56,15 @@ function scale_cap_boxed(xs: f64[]): f64[] {
 // take the receiver with it. Here to prove the declined shape still runs,
 // and still answers what the loop answers.
 function scale_bound(xs: f64[]): f64[] {
-	var f: (f64) => f64 = (x: f64): f64 => x * 2.0;
+	let f: (f64) => f64 = (x: f64): f64 => x * 2.0;
 	return xs.map(f);
 }
 
 // The same transform written as a loop. It is not a map at all, so nothing
 // rewrites it and it stays a real control.
 function loop_scale(xs: f64[], k: f64): f64[] {
-	var out: f64[] = [];
-	var i: i32 = 0;
+	let out: f64[] = [];
+	let i: i32 = 0;
 	while (i < xs.len()) { out = out.append(xs[i] * k); i = i + 1; }
 	return out;
 }
@@ -78,7 +78,7 @@ function bits_equal(a: f64, b: f64): boolean {
 
 function same(a: f64[], b: f64[]): boolean {
 	if (a.len() != b.len()) { return false; }
-	var i: i32 = 0;
+	let i: i32 = 0;
 	while (i < a.len()) {
 		if (!bits_equal(a[i], b[i])) { return false; }
 		i = i + 1;
@@ -89,18 +89,18 @@ function same(a: f64[], b: f64[]): boolean {
 // Values a scale can go wrong on: sign, zero, a fraction, and an infinity
 // whose product with zero is NaN.
 function build(n: i32): f64[] {
-	var inf: f64 = 1.0e308 * 10.0;
-	var seed: f64[] = [1.0, -2.0, 0.0, 0.5, -0.25, 1000000.0, inf, -1.0, 7.5];
-	var xs: f64[] = [];
-	var i: i32 = 0;
+	let inf: f64 = 1.0e308 * 10.0;
+	let seed: f64[] = [1.0, -2.0, 0.0, 0.5, -0.25, 1000000.0, inf, -1.0, 7.5];
+	let xs: f64[] = [];
+	let i: i32 = 0;
 	while (i < n) { xs = xs.append(seed[i]); i = i + 1; }
 	return xs;
 }
 
 function main(): i32 {
-	var n: i32 = 0;
+	let n: i32 = 0;
 	while (n <= 9) {
-		var xs: f64[] = build(n);
+		let xs: f64[] = build(n);
 		if (!same(scale2(xs), loop_scale(xs, 2.0))) { return 10 + n; }
 		if (!same(scale_neg(xs), loop_scale(xs, -1.5))) { return 30 + n; }
 		if (!same(scale_zero(xs), loop_scale(xs, 0.0))) { return 50 + n; }
@@ -114,15 +114,15 @@ function main(): i32 {
 
 	// The kernel's result is a normal array afterwards: its length header is
 	// right, it indexes, and it appends.
-	var ys: f64[] = scale2(build(3));
+	let ys: f64[] = scale2(build(3));
 	if (ys.len() != 3) { return 91; }
 	if (ys[1] != -4.0) { return 92; }
-	var zs: f64[] = ys.append(99.0);
+	let zs: f64[] = ys.append(99.0);
 	if (zs.len() != 4 || zs[3] != 99.0) { return 93; }
 
 	// The receiver is untouched by the kernel, which borrows it.
-	var src: f64[] = build(5);
-	var out: f64[] = scale2(src);
+	let src: f64[] = build(5);
+	let out: f64[] = scale2(src);
 	if (!same(src, build(5))) { return 94; }
 	if (out.len() != 5) { return 95; }
 	return 0;

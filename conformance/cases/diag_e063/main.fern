@@ -6,7 +6,7 @@
 // it documents.
 // error[E063]: the backing array is reclaimed when "first_two" returns
 function first_two(): [i32] {
-    var xs: i32[] = [1, 2, 3];
+    let xs: i32[] = [1, 2, 3];
     return xs[0:2];            // slice views local `xs` — dangles
 }
 

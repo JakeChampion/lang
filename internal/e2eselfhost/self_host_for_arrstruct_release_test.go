@@ -15,8 +15,8 @@ import (
 // it pins that the answer stays right under the sanitizer.
 const forArrStructDecls = `struct St { ops: i32[], n: i32 }
 function build(): St[] {
-    var hold: St[] = [];
-    var j: i32 = 0;
+    let hold: St[] = [];
+    let j: i32 = 0;
     while (j < 5) { hold = hold.append(St { ops: [j, 1, 2, 3, 4], n: j }); j = j + 1; }
     return hold;
 }
@@ -29,60 +29,60 @@ var forArrStructCases = []struct {
 	balanced bool
 }{
 	{"scalar_field", `function main(): i32 {
-    var hold: St[] = [];
-    var j: i32 = 0;
+    let hold: St[] = [];
+    let j: i32 = 0;
     while (j < 5) { hold = hold.append(St { ops: [j, 1, 2, 3, 4], n: j }); j = j + 1; }
-    var s: i32 = 0;
+    let s: i32 = 0;
     for h in hold { s = s + h.n; }
     return s;
 }
 `, 10, true},
 	{"field_len", `function main(): i32 {
-    var hold: St[] = [];
-    var j: i32 = 0;
+    let hold: St[] = [];
+    let j: i32 = 0;
     while (j < 5) { hold = hold.append(St { ops: [j, 1, 2, 3, 4], n: j }); j = j + 1; }
-    var s: i32 = 0;
+    let s: i32 = 0;
     for h in hold { s = s + h.ops.len(); }
     return s;
 }
 `, 25, true},
 	{"field_index", `function main(): i32 {
-    var hold: St[] = [];
-    var j: i32 = 0;
+    let hold: St[] = [];
+    let j: i32 = 0;
     while (j < 5) { hold = hold.append(St { ops: [j, 1, 2, 3, 4], n: j }); j = j + 1; }
-    var s: i32 = 0;
+    let s: i32 = 0;
     for h in hold { s = s + h.ops.len() * 10 + h.ops[0]; }
     return s % 100;
 }
 `, 60, true},
 	{"refused_field_returned", `function last_ops(): i32[] {
-    var hold: St[] = [];
-    var j: i32 = 0;
+    let hold: St[] = [];
+    let j: i32 = 0;
     while (j < 5) { hold = hold.append(St { ops: [j, 1, 2, 3, 4], n: j }); j = j + 1; }
-    var keep: i32[] = [];
+    let keep: i32[] = [];
     for h in hold { keep = h.ops; }
     return keep;
 }
 function main(): i32 {
-    var k: i32[] = last_ops();
-    var junk: i32[] = [9, 9, 9, 9, 9];
+    let k: i32[] = last_ops();
+    let junk: i32[] = [9, 9, 9, 9, 9];
     return k[0] * 10 + k[4] + junk[0] - 9;
 }
 `, 44, false},
 	{"refused_elem_escapes", `function main(): i32 {
-    var hold: St[] = [];
-    var j: i32 = 0;
+    let hold: St[] = [];
+    let j: i32 = 0;
     while (j < 5) { hold = hold.append(St { ops: [j, 1, 2, 3, 4], n: j }); j = j + 1; }
-    var other: St[] = [];
+    let other: St[] = [];
     for h in hold { if (h.n > 2) { other = other.append(h); } }
     return other.len() * 10 + other[1].ops[0];
 }
 `, 24, false},
 	{"refused_rebind_in_loop", `function main(): i32 {
-    var hold: St[] = [];
-    var j: i32 = 0;
+    let hold: St[] = [];
+    let j: i32 = 0;
     while (j < 5) { hold = hold.append(St { ops: [j, 1, 2, 3, 4], n: j }); j = j + 1; }
-    var s: i32 = 0;
+    let s: i32 = 0;
     for h in hold { s = s + h.ops[0]; if (h.n == 1) { hold = hold.append(St { ops: [7], n: 7 }); } }
     return s * 10 + hold.len();
 }

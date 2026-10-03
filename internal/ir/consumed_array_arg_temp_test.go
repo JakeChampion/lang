@@ -18,14 +18,14 @@ import (
 const foldSrc = `
 function visit(st: string, acc: string[]): string[] { return acc.append(st); }
 function fold_all(out: string[], items: string[]): string[] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < items.len()) { out = visit(items[i], out); i = i + 1; }
     return out;
 }
 function reads(xs: string[]): i32 { return xs.len(); }
 function main(): i32 {
-    var items: string[] = ["aa", "bb"];
-    var got: string[] = fold_all([], items);
+    let items: string[] = ["aa", "bb"];
+    let got: string[] = fold_all([], items);
     return got.len() + reads([]);
 }`
 
@@ -167,7 +167,7 @@ func TestConsumedArrayArgTempIdentityCasePaysTheTransferDec(t *testing.T) {
 	const src = `
 function grow(a: i32[], more: boolean): i32[] { if (more) { a = a.append(7); } return a; }
 function main(): i32 {
-    var e: i32[] = grow([1, 2, 3], false);
+    let e: i32[] = grow([1, 2, 3], false);
     return e.len();
 }`
 	for _, ptrW := range []int{4, 8} {

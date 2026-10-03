@@ -42,21 +42,21 @@ var nestedTupleElemReclaimCases = []struct {
 	// play. The array sibling is reclaimable on its own and still leaked,
 	// because the all-scalar nested tuple refused the whole tuple.
 	{"nested-scalar-tuple-elem-unread", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[], (i32, i32)) = (i, [i, i + 1], (i, i + 1));
-        var r: i32 = t.0 + t.1[0];
+        let t: (i32, i32[], (i32, i32)) = (i, [i, i + 1], (i, i + 1));
+        let r: i32 = t.0 + t.1[0];
         acc = (acc + r) % 91;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -64,21 +64,21 @@ function main(): i32 {
 	// Defect 2 on top: the same shape, reading a scalar THROUGH the nested
 	// element. Fixing only the admission leaves this at its full pre-fix size.
 	{"nested-scalar-tuple-elem-read-through", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[], (i32, i32)) = (i, [i, i + 1], (i, i + 1));
-        var r: i32 = t.0 + t.1[0] + t.2.0;
+        let t: (i32, i32[], (i32, i32)) = (i, [i, i + 1], (i, i + 1));
+        let r: i32 = t.0 + t.1[0] + t.2.0;
         acc = (acc + r) % 91;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -86,21 +86,21 @@ function main(): i32 {
 	// No array anywhere: the nested box is the ONLY thing to free, which is the
 	// case the old "does the inner carry an array" question could never admit.
 	{"nested-scalar-tuple-only", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, (i32, i32)) = (i, (i, i + 1));
-        var r: i32 = t.0 + t.1.0;
+        let t: (i32, (i32, i32)) = (i, (i, i + 1));
+        let r: i32 = t.0 + t.1.0;
         acc = (acc + r) % 91;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -109,11 +109,11 @@ function main(): i32 {
 	// read gate must still refuse. Freeing t would free the box keep points at.
 	// keep is read after the loop; over-release corrupts it or ticks 99.
 	{"nested-tuple-whole-extraction-safe", `function churn(n: i32): i32 {
-    var keep: (i32, i32) = (0, 0);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: (i32, i32) = (0, 0);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[], (i32, i32)) = (i, [i, i + 1], (i, i + 1));
+        let t: (i32, i32[], (i32, i32)) = (i, [i, i + 1], (i, i + 1));
         keep = t.2;
         acc = (acc + t.0) % 91;
         i = i + 1;
@@ -121,8 +121,8 @@ function main(): i32 {
     return (acc + keep.0 + keep.1) % 91;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w;
@@ -131,19 +131,19 @@ function main(): i32 {
 	// The tuple is admitted (its nested box is a child to free) and its box is
 	// released each round, so the walk must leave the aliased buffer alone.
 	{"nested-tuple-with-alias-elem-safe", `function churn(n: i32): i32 {
-    var live: i32[] = [7, 8, 9];
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let live: i32[] = [7, 8, 9];
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[], (i32, i32)) = (i, live, (i, i + 1));
+        let t: (i32, i32[], (i32, i32)) = (i, live, (i, i + 1));
         acc = (acc + t.0 + t.1[0] + t.2.0) % 91;
         i = i + 1;
     }
     return (acc + live[0] * 3 + live[1] * 5 + live[2] * 7) % 91;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w;

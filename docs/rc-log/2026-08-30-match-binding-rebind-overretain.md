@@ -19,9 +19,9 @@ function pick(n: i32): Option[i32[]] {
     return None;
 }
 function main(): i32 {
-    var cur: i32[] = [0];
-    var i: i32 = 0;
-    var go: boolean = true;
+    let cur: i32[] = [0];
+    let i: i32 = 0;
+    let go: boolean = true;
     while (go) {
         match (pick(i)) {
             Some(v) => { cur = v; i = i + 1; },
@@ -115,7 +115,7 @@ measure clean. The iterator attribution was the useful one, and led to
 
 ```fern
 pub function filter[T, I: Iterator[T]](it: I, keep: (T) => boolean): T[] {
-    var cur = it;
+    let cur = it;
     while (go) {
         match (cur.next()) {
             Some(t) => { …; cur = t.1; },
@@ -162,7 +162,7 @@ gets the same inc and is correctly balanced:
 
 | shape | `__rc_get(cur)` | unpaired |
 | --- | --- | --- |
-| `while { var other = […]; cur = other }` | 1 | 0 |
+| `while { let other = […]; cur = other }` | 1 | 0 |
 | `while { if (…) { cur = other } }` | 1 | 0 |
 | `while { match { Some(v) => cur = v } }` | **2** | **3** |
 

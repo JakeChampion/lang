@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// A local that takes over an `own` array parameter at its last use (`var a =
-// acc`, `var a = g(acc)` at an `own` position) is threaded exactly as the
+// A local that takes over an `own` array parameter at its last use (`let a =
+// acc`, `let a = g(acc)` at an `own` position) is threaded exactly as the
 // parameter is, and a reassigned `own` array parameter releases only the
 // replacements its frame minted (#10357). Answers are the interpreter's.
 
@@ -21,8 +21,8 @@ function at_node(n: i32, own a: string[]): string[] {
 `
 
 const ownAliasMain = `function main(): i32 {
-    var pending: string[] = [];
-    var fd: i32 = 0;
+    let pending: string[] = [];
+    let fd: i32 = 0;
     while (fd < 12) { pending = fold(pending, fd); fd = fd + 1; }
     return pending.len() % 256;
 }
@@ -36,13 +36,13 @@ var ownAliasCases = []struct {
     return a.append("g" + "");
 }
 function fold(own acc: string[], n: i32): string[] {
-    var a: string[] = acc;
+    let a: string[] = acc;
     a = at_node(n, a);
     return a;
 }
 ` + ownAliasMain},
 	{"alias_rebind_chain", ownAliasAtNode + `function fold(own acc: string[], n: i32): string[] {
-    var a: string[] = acc;
+    let a: string[] = acc;
     a = at_node(n, a);
     a = at_node(n + 2, a);
     a = at_node(n + 3, a);
@@ -51,35 +51,35 @@ function fold(own acc: string[], n: i32): string[] {
 }
 ` + ownAliasMain},
 	{"alias_reset", ownAliasAtNode + `function fold(own acc: string[], n: i32): string[] {
-    var a: string[] = acc;
+    let a: string[] = acc;
     a = [];
     if (n % 2 == 0) { a = at_node(n, a); }
     return a;
 }
 ` + ownAliasMain},
 	{"alias_of_alias", ownAliasAtNode + `function fold(own acc: string[], n: i32): string[] {
-    var a: string[] = acc;
-    var b: string[] = a;
+    let a: string[] = acc;
+    let b: string[] = a;
     b = at_node(n, b);
     b = at_node(n + 2, b);
     return b;
 }
 ` + ownAliasMain},
 	{"alias_self_append", `function fold(own acc: string[], n: i32): string[] {
-    var a: string[] = acc;
+    let a: string[] = acc;
     a = a.append("x" + "");
     if (n % 2 == 0) { a = a.append("y" + ""); }
     return a;
 }
 ` + ownAliasMain},
 	{"alias_loop_fn_value", `function fold(xs: i32[], own acc: string[], f: (i32, own string[]) => string[]): string[] {
-    var a: string[] = acc;
+    let a: string[] = acc;
     for x in xs { a = f(x, a); }
     return a;
 }
 ` + ownAliasAtNode + `function main(): i32 {
-    var pending: string[] = [];
-    var fd: i32 = 0;
+    let pending: string[] = [];
+    let fd: i32 = 0;
     while (fd < 12) { pending = fold([fd, fd + 1, fd + 2], pending, at_node); fd = fd + 1; }
     return pending.len() % 256;
 }
@@ -100,7 +100,7 @@ function fold(own acc: string[], n: i32): string[] {
 ` + ownAliasMain},
 	{"param_then_alias", ownAliasAtNode + `function fold(own acc: string[], n: i32): string[] {
     acc = at_node(n, acc);
-    var a: string[] = acc;
+    let a: string[] = acc;
     a = at_node(n + 2, a);
     a = at_node(n + 3, a);
     return a;
@@ -108,7 +108,7 @@ function fold(own acc: string[], n: i32): string[] {
 ` + ownAliasMain},
 	// A call result that hands the parameter back when it keeps it.
 	{"call_handback", ownAliasAtNode + `function fold(own acc: string[], n: i32): string[] {
-    var out: string[] = at_node(n, acc);
+    let out: string[] = at_node(n, acc);
     out = at_node(n + 2, out);
     out = at_node(n + 3, out);
     return out;
@@ -119,7 +119,7 @@ function fold(own acc: string[], n: i32): string[] {
     return acc;
 }
 function fold(own acc: string[], n: i32): string[] {
-    var out: string[] = at_node(n, acc);
+    let out: string[] = at_node(n, acc);
     if (n % 2 == 0) { out = walk(n, out); }
     out = at_node(n + 2, out);
     return out;
@@ -134,13 +134,13 @@ function take(n: i32, own a: string[]): string[] {
     return a.append("g" + "");
 }
 function fold(own acc: string[], n: i32): string[] {
-    var a: string[] = acc;
+    let a: string[] = acc;
     a = take(n, a);
     return a;
 }
 function main(): i32 {
-    var pending: string[] = [];
-    var fd: i32 = 0;
+    let pending: string[] = [];
+    let fd: i32 = 0;
     while (fd < 12) { pending = fold(pending, fd); fd = fd + 1; }
     return pending.len() % 256;
 }
@@ -158,13 +158,13 @@ function keep(n: i32, own a: string[]): string[] {
     return a;
 }
 function fold(own acc: string[], n: i32): string[] {
-    var a: string[] = keep(n, acc);
+    let a: string[] = keep(n, acc);
     a = take(n, a);
     return a;
 }
 function main(): i32 {
-    var pending: string[] = [];
-    var fd: i32 = 0;
+    let pending: string[] = [];
+    let fd: i32 = 0;
     while (fd < 12) { pending = fold(pending, fd); fd = fd + 1; }
     return pending.len() % 256;
 }
@@ -176,13 +176,13 @@ function at_node(n: i32, own a: string[]): string[] {
     return a;
 }
 function fold(own acc: string[], n: i32, f: (i32, own string[]) => string[]): string[] {
-    var a: string[] = f(n, acc);
+    let a: string[] = f(n, acc);
     a = f(n + 2, a);
     return a;
 }
 function main(): i32 {
-    var pending: string[] = [];
-    var fd: i32 = 0;
+    let pending: string[] = [];
+    let fd: i32 = 0;
     while (fd < 12) { pending = fold(pending, fd, at_node); fd = fd + 1; }
     return pending.len() % 256;
 }
@@ -201,14 +201,14 @@ function take(n: i32, own a: string[]): string[] {
     return a.append("g" + "");
 }
 function fold(own acc: string[], n: i32): string[] {
-    var f: (i32, own string[]) => string[] = at_node;
-    var a: string[] = f(n, acc);
+    let f: (i32, own string[]) => string[] = at_node;
+    let a: string[] = f(n, acc);
     a = take(n, a);
     return a;
 }
 function main(): i32 {
-    var pending: string[] = [];
-    var fd: i32 = 0;
+    let pending: string[] = [];
+    let fd: i32 = 0;
     while (fd < 12) { pending = fold(pending, fd); fd = fd + 1; }
     return pending.len() % 256;
 }
@@ -221,8 +221,8 @@ function at_node(n: i32, own a: string[]): string[] {
 }
 function fold(own acc: string[], n: i32): string[] { acc = at_node(n, acc); acc = at_node(n + 2, acc); if (n % 2 == 0) { return []; } return acc; }
 function main(): i32 {
-    var pending: string[] = [];
-    var fd: i32 = 0;
+    let pending: string[] = [];
+    let fd: i32 = 0;
     while (fd < 12) { pending = fold(pending, fd); fd = fd + 1; }
     return pending.len() % 256;
 }
@@ -231,25 +231,25 @@ function main(): i32 {
 	// the parameter in turn.
 	{"borrowed_outer", `function grow(x: string, own acc: string[]): string[] { return acc.append(x); }
 function inner(x: string, own acc: string[]): string[] {
-    var a: string[] = acc;
+    let a: string[] = acc;
     a = grow(x, a);
     return a;
 }
 function outer(x: string, acc: string[]): string[] {
-    var a: string[] = acc;
+    let a: string[] = acc;
     a = inner(x, a);
     return a;
 }
 function main(): i32 {
-    var seed: string[] = ["seed-one", "seed-two"];
-    var out: string[] = outer("alpha", seed);
+    let seed: string[] = ["seed-one", "seed-two"];
+    let out: string[] = outer("alpha", seed);
     return (out.len() * 10 + seed.len()) % 251;
 }
 `},
 	// The shape #10338's checker.inst_stmts walk takes, over a struct array.
 	{"struct_elem_walk", `struct Inst { name: string, depth: i32 }
 function fold(xs: i32[], own acc: Inst[], f: (i32, own Inst[]) => Inst[]): Inst[] {
-    var a: Inst[] = acc;
+    let a: Inst[] = acc;
     for x in xs { a = f(x, a); }
     return a;
 }
@@ -261,15 +261,15 @@ function step(st: i32, depth: i32, own acc: Inst[]): Inst[] {
     return fold([st, st + 1], acc, at_node);
 }
 function walk(stmts: i32[], acc: Inst[]): Inst[] {
-    var out: Inst[] = acc;
+    let out: Inst[] = acc;
     for st in stmts { out = step(st, 1, out); }
     return out;
 }
 function main(): i32 {
-    var pending: Inst[] = [];
-    var fd: i32 = 0;
+    let pending: Inst[] = [];
+    let fd: i32 = 0;
     while (fd < 12) { pending = walk([fd, fd + 1], pending); fd = fd + 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for p in pending { t = t + p.name.len() + p.depth; }
     return t % 256;
 }
@@ -282,7 +282,7 @@ function bind(st: i32, s: Sc): Sc {
     return Sc { names: s.names.append("x" + ""), n: s.n + 1 };
 }
 function fold(xs: i32[], own acc: Inst[], f: (i32, own Inst[]) => Inst[]): Inst[] {
-    var a: Inst[] = acc;
+    let a: Inst[] = acc;
     for x in xs { a = f(x, a); }
     return a;
 }
@@ -291,12 +291,12 @@ function step(st: i32, cur: Sc, depth: i32, own acc: Inst[]): Inst[] {
         if (n % 3 == 0) { return a.append(Inst { name: "g" + "", cts: [cur.n.to_string()], depth: depth }); }
         return a;
     }
-    var xs: i32[] = [st, st + 1, st + 2];
+    let xs: i32[] = [st, st + 1, st + 2];
     return fold(xs, acc, at_node);
 }
 function walk(stmts: i32[], s: Sc, depth: i32, acc: Inst[]): Inst[] {
-    var out: Inst[] = acc;
-    var cur: Sc = s;
+    let out: Inst[] = acc;
+    let cur: Sc = s;
     for st in stmts {
         out = step(st, cur, depth, out);
         cur = bind(st, cur);
@@ -305,17 +305,17 @@ function walk(stmts: i32[], s: Sc, depth: i32, acc: Inst[]): Inst[] {
 }
 function body(fd: i32, depth: i32, acc: Inst[]): Inst[] {
     if (fd == 5) { return acc; }
-    var sc: Sc = Sc { names: ["p" + ""], n: fd };
+    let sc: Sc = Sc { names: ["p" + ""], n: fd };
     return walk([fd, fd + 1, fd + 2, fd + 3], sc, depth, acc);
 }
 function main(): i32 {
-    var pending: Inst[] = [];
-    var fd: i32 = 0;
+    let pending: Inst[] = [];
+    let fd: i32 = 0;
     while (fd < 12) { pending = body(fd, 0, pending); fd = fd + 1; }
-    var wi: i32 = 0;
-    var t: i32 = 0;
+    let wi: i32 = 0;
+    let t: i32 = 0;
     while (wi < pending.len()) {
-        var inst: Inst = pending[wi];
+        let inst: Inst = pending[wi];
         wi = wi + 1;
         t = t + inst.cts.len() + inst.name.len();
         if (wi < 5) { pending = body(wi + 20, inst.depth + 1, pending); }

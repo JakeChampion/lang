@@ -235,26 +235,26 @@ func TestSupervisedServeInterpFallback(t *testing.T) {
 // trap in a forked child reads back as 134).
 const procForkProbeSrc = `
 function boom(i: i32): i32 {
-    var a: i32[] = [1, 2, 3];
+    let a: i32[] = [1, 2, 3];
     return a[i];
 }
 function main(): i32 {
-    var pid: i32 = proc_fork();
+    let pid: i32 = proc_fork();
     if (pid < 0) { return 90; }
     if (pid == 0) {
         exit(7);
         return 7;
     }
-    var code: i32 = proc_waitpid(pid);
+    let code: i32 = proc_waitpid(pid);
     if (code != 7) { return 91; }
-    var pid2: i32 = proc_fork();
+    let pid2: i32 = proc_fork();
     if (pid2 < 0) { return 92; }
     if (pid2 == 0) {
-        var x: i32 = boom(9);
+        let x: i32 = boom(9);
         exit(x);
         return x;
     }
-    var code2: i32 = proc_waitpid(pid2);
+    let code2: i32 = proc_waitpid(pid2);
     if (code2 != 134) { return 93; }
     return 0;
 }`

@@ -24,8 +24,8 @@ function nu32(o: Option[u32]): boolean { match (o) { Some(v) => { return false; 
 function cu64(o: Option[u64], w: u64): boolean { match (o) { Some(v) => { return v == w; }, None => { return false; } } }
 function nu64(o: Option[u64]): boolean { match (o) { Some(v) => { return false; }, None => { return true; } } }
 function main(): i32 {
-    var min32: i32 = 0 - 2147483647 - 1;
-    var min64: i64 = (0 as i64) - 9223372036854775807 - 1;
+    let min32: i32 = 0 - 2147483647 - 1;
+    let min64: i64 = (0 as i64) - 9223372036854775807 - 1;
     // i32.
     if (!ci32((17).checked_rem(5), 2)) { return 1; }
     if (!ci32((0 - 17).checked_rem(5), 0 - 2)) { return 2; }

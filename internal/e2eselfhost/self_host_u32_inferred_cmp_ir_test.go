@@ -3,7 +3,7 @@ package e2eselfhost
 import "testing"
 
 // u32InferredCmpIRCases pin the fix for #3537: an *inferred* unsigned local
-// (`var a = X as u32` / `as u64`, with no explicit `: u32` annotation) must
+// (`let a = X as u32` / `as u64`, with no explicit `: u32` annotation) must
 // compare as UNSIGNED. Before the fix, irlower's StmtVar lowering only marked a
 // slot u32/u64 from the explicit annotation, so an inferred binding kept the
 // signed default and a later `a > b` emitted a signed IR compare — wrong once
@@ -19,13 +19,13 @@ var u32InferredCmpIRCases = []struct {
 	want int
 }{
 	// 3_000_000_000 (bit 31 set) > 5 — signed i32 would read it negative.
-	{"u32-gt", `var a = 3000000000 as u32; var b = 5 as u32; if (a > b) { return 1; } return 0;`, 1},
+	{"u32-gt", `let a = 3000000000 as u32; let b = 5 as u32; if (a > b) { return 1; } return 0;`, 1},
 	// same value on the right of a `<`.
-	{"u32-lt", `var a = 3000000000 as u32; var b = 5 as u32; if (b < a) { return 1; } return 0;`, 1},
+	{"u32-lt", `let a = 3000000000 as u32; let b = 5 as u32; if (b < a) { return 1; } return 0;`, 1},
 	// equal large values via `>=`.
-	{"u32-ge", `var a = 3000000000 as u32; var b = 3000000000 as u32; if (a >= b) { return 1; } return 0;`, 1},
+	{"u32-ge", `let a = 3000000000 as u32; let b = 3000000000 as u32; if (a >= b) { return 1; } return 0;`, 1},
 	// u64 sibling: 1.8e19 has bit 63 set — signed i64 would read it negative.
-	{"u64-gt", `var a = 18000000000000000000 as u64; var b = 5 as u64; if (a > b) { return 1; } return 0;`, 1},
+	{"u64-gt", `let a = 18000000000000000000 as u64; let b = 5 as u64; if (a > b) { return 1; } return 0;`, 1},
 }
 
 func u32InferredCmpIRSrc(mainBody string) string {

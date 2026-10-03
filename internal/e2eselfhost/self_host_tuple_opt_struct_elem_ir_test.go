@@ -43,7 +43,7 @@ import (
 // payload is the same one-pointer-at-offset-8 slot the struct payload is, and
 // the match lowering's ptag_is_enum branch already read it — only the
 // construction tag was missing, so `(c, Some(e))` refused the module while a
-// BARE enum element and `var o: Option[E] = Some(e)` both lowered. Those two
+// BARE enum element and `let o: Option[E] = Some(e)` both lowered. Those two
 // spellings are the controls.
 var tupleOptStructElemCases = []struct {
 	name string
@@ -57,11 +57,11 @@ function step(g: G, k: i32): (Option[S], G) {
     return (None, G { ...g, i: g.i + 1 });
 }
 function main(): i32 {
-    var g: G = G { i: 0, name: "n" };
-    var r: (Option[S], G) = step(g, 5);
-    var a: i32 = r.1.i;
+    let g: G = G { i: 0, name: "n" };
+    let r: (Option[S], G) = step(g, 5);
+    let a: i32 = r.1.i;
     match (r.0) { Some(s) => { a = a + s.id + s.v.len(); }, None => { a = a + 100; } }
-    var r2: (Option[S], G) = step(r.1, 0);
+    let r2: (Option[S], G) = step(r.1, 0);
     match (r2.0) { Some(s2) => { a = a + 100; }, None => { a = a + r2.1.i; } }
     return a;
 }`},
@@ -69,12 +69,12 @@ function main(): i32 {
 	{"some_struct_ident_payload", `struct S { id: i32, v: string }
 struct G { i: i32, name: string }
 function f(g: G): (Option[S], G) {
-    var p: S = S { id: 5, v: "hit" };
+    let p: S = S { id: 5, v: "hit" };
     return (Some(p), G { ...g, i: 9 });
 }
 function main(): i32 {
-    var r: (Option[S], G) = f(G { i: 0, name: "n" });
-    var a: i32 = r.1.i;
+    let r: (Option[S], G) = f(G { i: 0, name: "n" });
+    let a: i32 = r.1.i;
     match (r.0) { Some(s) => { a = a + s.id; }, None => { a = a + 100; } }
     return a;
 }`},
@@ -83,8 +83,8 @@ function main(): i32 {
 	{"some_struct_scalar_pair", `struct S { id: i32, v: string }
 function f(): (Option[S], i32) { return (Some(S { id: 5, v: "hit" }), 4); }
 function main(): i32 {
-    var r: (Option[S], i32) = f();
-    var a: i32 = r.1;
+    let r: (Option[S], i32) = f();
+    let a: i32 = r.1;
     match (r.0) { Some(s) => { a = a + s.id + s.v.len(); }, None => { a = a + 100; } }
     return a;
 }`},
@@ -97,20 +97,20 @@ function pick(k: i32): Option[S] {
 }
 function f(g: G): (Option[S], G) { return (pick(5), G { ...g, i: 9 }); }
 function main(): i32 {
-    var r: (Option[S], G) = f(G { i: 0, name: "n" });
-    var a: i32 = r.1.i;
+    let r: (Option[S], G) = f(G { i: 0, name: "n" });
+    let a: i32 = r.1.i;
     match (r.0) { Some(s) => { a = a + s.id; }, None => { a = a + 100; } }
     return a;
 }`},
 	{"option_struct_local_control", `struct S { id: i32, v: string }
 struct G { i: i32, name: string }
 function f(g: G): (Option[S], G) {
-    var o: Option[S] = Some(S { id: 5, v: "hit" });
+    let o: Option[S] = Some(S { id: 5, v: "hit" });
     return (o, G { ...g, i: 9 });
 }
 function main(): i32 {
-    var r: (Option[S], G) = f(G { i: 0, name: "n" });
-    var a: i32 = r.1.i;
+    let r: (Option[S], G) = f(G { i: 0, name: "n" });
+    let a: i32 = r.1.i;
     match (r.0) { Some(s) => { a = a + s.id; }, None => { a = a + 100; } }
     return a;
 }`},
@@ -118,16 +118,16 @@ function main(): i32 {
 struct G { i: i32, name: string }
 function f(g: G): (Option[S], G) { return (None, G { ...g, i: 9 }); }
 function main(): i32 {
-    var r: (Option[S], G) = f(G { i: 0, name: "n" });
-    var a: i32 = r.1.i;
+    let r: (Option[S], G) = f(G { i: 0, name: "n" });
+    let a: i32 = r.1.i;
     match (r.0) { Some(s) => { a = a + s.id; }, None => { a = a + 3; } }
     return a;
 }`},
 	{"some_scalar_control", `struct G { i: i32, name: string }
 function f(g: G): (Option[i32], G) { return (Some(7), G { ...g, i: 9 }); }
 function main(): i32 {
-    var r: (Option[i32], G) = f(G { i: 0, name: "n" });
-    var a: i32 = r.1.i;
+    let r: (Option[i32], G) = f(G { i: 0, name: "n" });
+    let a: i32 = r.1.i;
     match (r.0) { Some(x) => { a = a + x; }, None => { a = a + 100; } }
     return a;
 }`},
@@ -245,8 +245,8 @@ function (t: Tab) find(k: i32): Option[S] {
 }
 function f(g: G, t: Tab): (Option[S], G) { return (t.find(5), G { ...g, i: 9 }); }
 function main(): i32 {
-    var r: (Option[S], G) = f(G { i: 0, name: "n" }, Tab { n: 2 });
-    var a: i32 = r.1.i;
+    let r: (Option[S], G) = f(G { i: 0, name: "n" }, Tab { n: 2 });
+    let a: i32 = r.1.i;
     match (r.0) { Some(s) => { a = a + s.id; }, None => { a = a + 100; } }
     return a;
 }`
@@ -293,7 +293,7 @@ func TestSelfHostTupleOptStructElemStampedX86_64(t *testing.T) {
 // enum payload is the same one-pointer-at-offset-8 slot the struct payload is,
 // and the match lowering's ptag_is_enum branch already read it — only the
 // CONSTRUCTION tag was missing, so `(c, Some(e))` refused the module while a
-// bare enum element and `var o: Option[E] = Some(e)` both lowered.
+// bare enum element and `let o: Option[E] = Some(e)` both lowered.
 //
 // It is pinned on the module-LOADING compiler rather than the `-ir` driver
 // above, and that distinction is the whole test: under the driver these cases
@@ -305,15 +305,15 @@ func TestSelfHostTupleOptStructElemStampedX86_64(t *testing.T) {
 const tupleOptEnumStampedSrc = `enum E { A, B(i32) }
 struct C { n: i32 }
 function step(c: C, k: i32): (C, Option[E]) {
-    var e: E = B(k);
+    let e: E = B(k);
     if (k > 0) { return (C { n: c.n + k }, Some(e)); }
     return (C { n: c.n + 1 }, None);
 }
 function main(): i32 {
-    var r: (C, Option[E]) = step(C { n: 0 }, 5);
-    var a: i32 = r.0.n;
+    let r: (C, Option[E]) = step(C { n: 0 }, 5);
+    let a: i32 = r.0.n;
     match (r.1) { Some(x) => { match (x) { A => { a = a + 50; }, B(v) => { a = a + v; } } }, None => { a = a + 100; } }
-    var r2: (C, Option[E]) = step(r.0, 0);
+    let r2: (C, Option[E]) = step(r.0, 0);
     match (r2.1) { Some(y) => { a = a + 100; }, None => { a = a + r2.0.n; } }
     return a;
 }`

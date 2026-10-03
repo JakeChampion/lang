@@ -1,7 +1,7 @@
 name: Nightly fuzz
 
 # The unbounded-search lane. Everything that runs on a pull request is a
-# FIXED corpus — the differential oracles sweep fernsmith seeds 0..2047,
+# FIXED corpus — the differential oracles sweep a fixed range of seeds,
 # and the two per-PR fuzz lanes get 60 seconds each from a cold corpus —
 # so past those bounds nothing is ever explored and the fuzzers never
 # accumulate anything. This workflow is where the search actually moves.
@@ -103,12 +103,10 @@ jobs:
       fail-fast: false
       matrix:
         # Same per-arch split as test-e2e-differential.yml: each runner
-        # natively exercises its own register backend plus wasm and skips
-        # the other, and `require` makes a lost toolchain fail here rather
-        # than hollow the sweep out into a green no-op (#7310).
+        # natively exercises its own target plus wasm and skips the other.
         host:
-          - { runner: ubuntu-latest,    name: x86_64,  require: "x86_64,wasmbin"      }
-          - { runner: ubuntu-24.04-arm, name: aarch64, require: "arm64-linux,wasmbin" }
+          - { runner: ubuntu-latest,    name: x86_64  }
+          - { runner: ubuntu-24.04-arm, name: aarch64 }
         shard: [0, 1]
     name: nightly-differential-${{ matrix.host.name }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.host.runner }}
@@ -123,39 +121,24 @@ jobs:
         env:
           DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
           DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
-          FERN_REQUIRE_DIFF_BACKENDS: "${{ matrix.host.require }}"
-          DIFF_ORACLE_ARTIFACT_DIR: "${{ runner.temp }}/fern-diff-failures"
         run: |
           gotestsum --format pkgname-and-test-fails -- -timeout=25m \
-            -run '^TestDifferential_(LangsmithMain|PrintableStdout)$' ./internal/e2e/
+            -run '^TestDifferential_PrintableStdout$' ./internal/e2e/
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
-      - name: Upload failing-seed artifacts
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: nightly-diff-failures-${{ matrix.host.name }}-shard${{ matrix.shard }}
-          path: ${{ runner.temp }}/fern-diff-failures
-          if-no-files-found: ignore
-          retention-days: 30
-
   # The same sweep against the SELF-HOST compiler (#7967).
   #
-  # Without this the self-host only ever saw seeds 0..511 — the per-PR
-  # diff-selfhost lane's fixed range — while every moving window above
-  # went to the Go backends alone. `docs/NATIVE-CONVERGENCE.md` makes the
-  # self-host the definition once the freeze lands, so the implementation
-  # that will matter most was the one nothing new was ever thrown at.
+  # Without this the self-host's exit-byte legs only ever see seeds 0..511,
+  # the per-PR diff-selfhost lane's fixed range.
   #
   # x86-64 only, and no qemu: the driver is emitted as x86-64 asm and
   # takes host paths as argv (same constraint diff-selfhost documents).
   #
-  # No artifact upload, unlike the native legs — the self-host leg never
-  # reaches preserveDiagArtifacts, so the path would upload nothing. The
-  # seed IS the reproducer here: GenMain(seed) is deterministic for a
-  # given generator revision, and the failure prints the program.
+  # No artifact upload: the seed is the reproducer, since GenMain(seed) is
+  # deterministic for a given generator revision and the failure prints the
+  # program.
   differential-selfhost:
     needs: window
     name: nightly-differential-selfhost-shard${{ matrix.shard }}
@@ -430,8 +413,8 @@ jobs:
               ``,
               `Differential window: seeds \`${base}\` onward.`,
               ``,
-              `Reproduce the native legs:`,
-              `\`DIFF_ORACLE_SEED_BASE=${base} go test -run '^TestDifferential_(LangsmithMain|PrintableStdout)$' ./internal/e2e/\``,
+              `Reproduce the stdout sweep:`,
+              `\`DIFF_ORACLE_SEED_BASE=${base} go test -run '^TestDifferential_PrintableStdout$' ./internal/e2e/\``,
               ``,
               `Reproduce the self-host leg — it SKIPS without the env var,`,
               `so a run without it looks like the failure vanished:`,

@@ -66,13 +66,13 @@ function test_splitn_under_cap(): test.TestOutcome {
 }
 
 function test_split_at(): test.TestOutcome {
-  var p = "hello".split_at(2);
+  let p = "hello".split_at(2);
   return test.assert_true(p.0 == "he" && p.1 == "llo");
 }
 
 function test_split_at_clamp(): test.TestOutcome {
   // index past the end clamps: everything in the first part.
-  var p = "hi".split_at(99);
+  let p = "hi".split_at(99);
   return test.assert_true(p.0 == "hi" && p.1 == "");
 }
 
@@ -86,7 +86,7 @@ function test_to_acronym_empty(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/string replace + split");
+  let r: test.TestRunner = test.test_new("std/string replace + split");
   r = r.it("replace", test_replace);
   r = r.it("replace overlap", test_replace_overlap);
   r = r.it("replace_first", test_replace_first);

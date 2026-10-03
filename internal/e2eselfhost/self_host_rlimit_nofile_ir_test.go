@@ -34,7 +34,7 @@ import (
 // unchanged. Only the unlimited normalisation (i64 max) would tell the two
 // apart, and it is unreachable for the same reason. The width is therefore
 // pinned STRUCTURALLY instead, by assertNoNarrowingAfter: without the i64
-// arms in irlower, `var n: i64 = rlimit_nofile()` lowers as a widened i32 and
+// arms in the lowering, `let n: i64 = rlimit_nofile()` lowers as a widened i32 and
 // the backend narrows the pushed result right after the call — which would
 // turn i64 max into -1 on a host that does report unlimited.
 //
@@ -42,7 +42,7 @@ import (
 // so platforms.fern withholds the builtin on `rlimit`.
 func rlimitSelfHostSource(want int64) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var n: i64 = rlimit_nofile();
+    let n: i64 = rlimit_nofile();
     // All-ones RLIM_INFINITY reaching a caller unclamped reads as -1.
     if (n < (0 as i64)) { return 1; }
     // Every kernel enforces a ceiling above the three standard descriptors.

@@ -15,38 +15,38 @@ import "testing"
 // FEATURE-AUDIT std/url row.
 const urlParseIRPrelude = `struct Uri { scheme: string, host: string, port: i32, path: string, query: string, fragment: string }
 function uri_parse(s: string): Option[Uri] {
-    var n: i32 = s.len();
+    let n: i32 = s.len();
     if (n == 0) { return None; }
-    var u: Uri = Uri { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
-    var scheme_end: i32 = -1;
-    var i: i32 = 0;
+    let u: Uri = Uri { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+    let scheme_end: i32 = -1;
+    let i: i32 = 0;
     while (i + 2 < n) {
         if (s[i] == 58 && s[i+1] == 47 && s[i+2] == 47) { if (i > 0) { scheme_end = i; } break; }
         i = i + 1;
     }
-    var rest_start: i32 = 0;
+    let rest_start: i32 = 0;
     if (scheme_end >= 0) { u = Uri { ...u, scheme: slice_unchecked(s, 0, scheme_end).to_owned() }; rest_start = scheme_end + 3; }
-    var frag_start: i32 = n;
+    let frag_start: i32 = n;
     i = rest_start;
     while (i < n) { if (s[i] == 35) { frag_start = i; break; } i = i + 1; }
     if (frag_start < n) { u = Uri { ...u, fragment: slice_unchecked(s, frag_start+1, n).to_owned() }; }
-    var query_start: i32 = frag_start;
+    let query_start: i32 = frag_start;
     i = rest_start;
     while (i < frag_start) { if (s[i] == 63) { query_start = i; break; } i = i + 1; }
     if (query_start < frag_start) { u = Uri { ...u, query: slice_unchecked(s, query_start+1, frag_start).to_owned() }; }
-    var authority_end: i32 = query_start;
+    let authority_end: i32 = query_start;
     if (scheme_end >= 0) {
         i = rest_start;
         while (i < query_start) { if (s[i] == 47) { authority_end = i; break; } i = i + 1; }
     } else { authority_end = rest_start; }
     if (rest_start < authority_end) {
-        var colon: i32 = authority_end;
+        let colon: i32 = authority_end;
         i = rest_start;
         while (i < authority_end) { if (s[i] == 58) { colon = i; break; } i = i + 1; }
         if (colon < authority_end) {
-            var port: i32 = 0;
+            let port: i32 = 0;
             i = colon + 1;
-            while (i < authority_end) { var b: i32 = s[i] as i32; if (b < 48 || b > 57) { port = 0; break; } port = port * 10 + (b - 48); i = i + 1; }
+            while (i < authority_end) { let b: i32 = s[i] as i32; if (b < 48 || b > 57) { port = 0; break; } port = port * 10 + (b - 48); i = i + 1; }
             u = Uri { ...u, host: slice_unchecked(s, rest_start, colon).to_owned(), port: port };
         } else { u = Uri { ...u, host: slice_unchecked(s, rest_start, authority_end).to_owned() }; }
     }

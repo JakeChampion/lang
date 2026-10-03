@@ -13,7 +13,7 @@ import (
 // literals and nested if/match expressions — but not a binary, which fell to the
 // catch-all "i32". So
 //
-//	var v: u64 = (if (false) { 107u64 / 42u64 } else { 900u64 >> 2u64 });
+//	let v: u64 = (if (false) { 107u64 / 42u64 } else { 900u64 >> 2u64 });
 //
 // labelled the lambda i32 while its body computed u64. The tag being non-empty
 // then stops infer_ret_types_module revisiting the lambda, so nothing
@@ -36,27 +36,27 @@ var ifExprBinaryWidthIRCases = []struct {
 }{
 	// u64 arithmetic in both arms — the shape reduced from the corpus.
 	{"u64-binary-arms", `function main(): i32 {
-    var v: u64 = (if (false) { (107u64 / 42u64) } else { (900u64 >> 2u64) });
+    let v: u64 = (if (false) { (107u64 / 42u64) } else { (900u64 >> 2u64) });
     return (v as i32) & 63i32;
 }`, 33},
 	// i64, and with the width carried by a literal too large for i32 rather
 	// than by a suffix alone.
 	{"i64-binary-arms", `function main(): i32 {
-    var v: i64 = (if (true) { (5000000000i64 / 2i64) } else { (7i64 + 1i64) });
+    let v: i64 = (if (true) { (5000000000i64 / 2i64) } else { (7i64 + 1i64) });
     return ((v / 1000000000i64) as i32) & 63i32;
 }`, 2},
 	// Control: the same shape at i32. It compiled before and must keep
 	// compiling — wider_rt returns the left tag when neither side is wide, so
 	// this path is unchanged.
 	{"i32-binary-arms-control", `function main(): i32 {
-    var v: i32 = (if (true) { (10i32 / 3i32) } else { (7i32 + 1i32) });
+    let v: i32 = (if (true) { (10i32 / 3i32) } else { (7i32 + 1i32) });
     return v & 63i32;
 }`, 3},
 	// Control: a COMPARISON branch. Its operands are i64 but the value is a
 	// bool, so the comparison test must win over the operand width — reading
 	// the operands here would tag the lambda i64 and break a working program.
 	{"comparison-branch-control", `function main(): i32 {
-    var v: boolean = (if (true) { (3i64 > 2i64) } else { false });
+    let v: boolean = (if (true) { (3i64 > 2i64) } else { false });
     if (v) { return 21i32; }
     return 1i32;
 }`, 21},
@@ -67,7 +67,7 @@ var ifExprBinaryWidthIRCases = []struct {
 func TestSelfHostIfExprBinaryWidthIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range ifExprBinaryWidthIRCases {
@@ -100,7 +100,7 @@ func TestSelfHostIfExprBinaryWidthIRArm64(t *testing.T) {
 		t.Skip("arm64 if-expr binary-width gate needs a native x86 host to run the driver")
 	}
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range ifExprBinaryWidthIRCases {

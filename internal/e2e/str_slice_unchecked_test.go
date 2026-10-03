@@ -33,16 +33,16 @@ const strSliceUncheckedProgram = `import "std/string";
 
 // h(104) é(195,169) l l o — 6 bytes, 5 code points.
 function mk(): string {
-    var b: u8[] = [104 as u8, 195 as u8, 169 as u8, 108 as u8, 108 as u8, 111 as u8];
+    let b: u8[] = [104 as u8, 195 as u8, 169 as u8, 108 as u8, 108 as u8, 111 as u8];
     return string_from_bytes_unchecked(b);
 }
 
 function main(): i32 {
-    var s: string = mk();
+    let s: string = mk();
     if (s.len() != 6) { return 1; }
 
     // (a) Byte-honest: the cut lands mid-é and keeps the lead byte.
-    var cut: str = slice_unchecked(s, 0, 2);
+    let cut: str = slice_unchecked(s, 0, 2);
     if (cut.len() != 2) { return 2; }
     if (cut[0] != 104) { return 3; }
     if (cut[1] != 195) { return 4; }
@@ -72,12 +72,12 @@ function main(): i32 {
     // (d) Owned-temp source in a loop: the concat result is a temporary
     // the view borrows, so the lowering must keep it alive (the stash
     // path) — and release it each iteration.
-    var a: string = "ab";
-    var c: string = "cd";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let a: string = "ab";
+    let c: string = "cd";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var t: str = slice_unchecked(a + c, 0, 2);
+        let t: str = slice_unchecked(a + c, 0, 2);
         if (t != "ab") { return 18; }
         if (t[1] != 98) { return 19; }
         acc = acc + t.len();
@@ -91,13 +91,13 @@ function main(): i32 {
     if (s.take(2) != "h") { return 21; }
     if (s.drop(2).len() != 5) { return 22; }
     if (s.take(2).to_owned() + s.drop(2).to_owned() != s) { return 23; }
-    var p: (string, string) = s.split_at(2);
+    let p: (string, string) = s.split_at(2);
     if (p.0 != "h") { return 24; }
     if (p.0 + p.1 != s) { return 25; }
-    var cs: string[] = s.chunks(2);
+    let cs: string[] = s.chunks(2);
     if (cs.len() != 4) { return 26; }
     if (cs[1].len() != 2) { return 27; }
-    var w: string = s + " world";
+    let w: string = s + " world";
     if (w.truncate(4, "..") != "h..") { return 28; }
     if (w.truncate(5, "..").len() != 5) { return 29; }
     if (w.ellipsis(5) != "h...") { return 30; }
@@ -186,21 +186,21 @@ func TestStrSliceUncheckedArm64SSA(t *testing.T) {
 // Bounds are carried in vars so constfold cannot pre-judge them.
 var strSliceUncheckedTrapCases = []struct{ name, src string }{
 	{"high_past_end", `function main(): i32 {
-    var s: string = "hello";
-    var hi: i32 = 6;
-    var t: str = slice_unchecked(s, 0, hi);
+    let s: string = "hello";
+    let hi: i32 = 6;
+    let t: str = slice_unchecked(s, 0, hi);
     return t.len();
 }`},
 	{"negative_low", `function main(): i32 {
-    var s: string = "hello";
-    var lo: i32 = 0 - 1;
-    var t: str = slice_unchecked(s, lo, 2);
+    let s: string = "hello";
+    let lo: i32 = 0 - 1;
+    let t: str = slice_unchecked(s, lo, 2);
     return t.len();
 }`},
 	{"inverted", `function main(): i32 {
-    var s: string = "hello";
-    var lo: i32 = 3;
-    var t: str = slice_unchecked(s, lo, 1);
+    let s: string = "hello";
+    let lo: i32 = 3;
+    let t: str = slice_unchecked(s, lo, 1);
     return t.len();
 }`},
 }
@@ -234,7 +234,7 @@ func TestStrSliceUncheckedTrap(t *testing.T) {
 				// wasm's `unreachable` surfaces as wasmtime's own non-zero
 				// exit, not 134 — assert the trap, not its spelling
 				// (matching assertAborts).
-				comp := buildNumComponent(t, c.src)
+				comp := buildCLIComponent(t, c.src)
 				_, _, code := runComponent(t, comp, runOpts{})
 				if code == 0 {
 					t.Errorf("wasm did not trap (exit 0)\nsrc:\n%s", c.src)

@@ -25,7 +25,7 @@ const PAGE: string = __fern_asset("html/index.html");
 
 function main(): i32 {
     print(PAGE);
-    var icon: string = __fern_asset("img/favicon.png");
+    let icon: string = __fern_asset("img/favicon.png");
     return 0;
 }
 ```
@@ -165,7 +165,7 @@ a ZIP would be purely additive.
 
 Both a single asset and the enumeration are compile-time constants, so either
 may initialise a `const`: `const XS: (string, string)[] = __fern_assets();`
-folds to the same array a `var` would hold, on both compilers.
+folds to the same array a `let` would hold, on both compilers.
 
 ## Coverage
 

@@ -65,8 +65,8 @@ func TestX86_64HeapReclamationPeakRSS(t *testing.T) {
 	const churn = `import "core/map";
 
 function main(): i32 {
-    var m: Map[i32, i32[]] = map_new(4);
-    var i: i32 = 0;
+    let m: Map[i32, i32[]] = map_new(4);
+    let i: i32 = 0;
     while (i < 800000) {
         m = m.insert(0, [i, i, i, i, i, i, i, i, i, i, i, i, i, i, i, i]);
         i = i + 1;
