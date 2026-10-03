@@ -147,7 +147,6 @@ function main(): i32 {
     b = b.write_expanded("a,b,c\n", exp);
     b = b.write_mapped("abc\n", [0 as u8, 1 as u8]);
     b = b.flush();
-    buf_free(b.handle());
     let ws: u8[] = table(256, (c: i32) => { if (c == 32 || c == 10) { return 1; } return 0; });
     let line: string = "one two  three\nfour";
     print("scan " + __scan_set(line, 0, ws).to_string() + " " + __scan_set(line, 4, ws).to_string() + " " + __scan_set(line, 15, ws).to_string());

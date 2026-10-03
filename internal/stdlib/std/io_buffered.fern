@@ -18,6 +18,7 @@
 // wraps a Reader and yields one line per call without buffering
 // the whole input. Both are below.
 //
+import "core/mem";
 import "std/string";
 import "std/utf8" as utf8;
 
@@ -112,12 +113,22 @@ pub function (w: BytesWriter) reset(): BytesWriter {
 // rebind this API is written in (`b = b.write_string(s)`) never keeps the
 // old value, so that is invisible to callers -- but a caller that
 // deliberately kept two copies to get two buffers would now get one.
-// `.close()` releases the handle.
-pub struct BufWriter { w: Writer, buf: usize, cap: i32, err: Option[IoError] }
+// The handle is freed when the last copy dies, so a writer over stdout
+// that is flushed and never closed still gives its buffer back.
+pub struct BufWriter { w: Writer, buf: BufBlock, cap: i32, err: Option[IoError] }
+
+// The builder behind a BufWriter, freed with the last writer holding it.
+pub struct BufBlock { h: usize }
+
+impl mem.Drop for BufBlock {
+  function drop(self: BufBlock): void {
+    buf_free(self.h);
+  }
+}
 
 // `buf_writer_new(w, cap)` — buffer `w` with a `cap`-byte threshold.
 pub function buf_writer_new(w: Writer, cap: i32): BufWriter {
-  return BufWriter { w: w, buf: buf_new(cap), cap: cap, err: None };
+  return BufWriter { w: w, buf: BufBlock { h: buf_new(cap) }, cap: cap, err: None };
 }
 
 // `(b).write_string(s)` — append `s`, flushing when the threshold is
@@ -125,11 +136,11 @@ pub function buf_writer_new(w: Writer, cap: i32): BufWriter {
 pub function (b: BufWriter) write_string(s: string): BufWriter {
   // A write at least as big as the threshold goes straight to the fd when
   // nothing is buffered, rather than being copied in and straight back out.
-  if (buf_len(b.buf) == 0 && s.len() >= b.cap) {
+  if (buf_len(b.buf.h) == 0 && s.len() >= b.cap) {
     return __buf_writer_put(b, s);
   }
-  buf_push(b.buf, s);
-  if (buf_len(b.buf) < b.cap) {
+  buf_push(b.buf.h, s);
+  if (buf_len(b.buf.h) < b.cap) {
     return b;
   }
   return b.flush();
@@ -139,8 +150,8 @@ pub function (b: BufWriter) write_string(s: string): BufWriter {
 // substring first. The shape every line-oriented utility's output loop is
 // made of, and the reason the builder carries a range push at all.
 pub function (b: BufWriter) write_range(s: string, lo: i32, hi: i32): BufWriter {
-  buf_push_range(b.buf, s, lo, hi);
-  if (buf_len(b.buf) < b.cap) {
+  buf_push_range(b.buf.h, s, lo, hi);
+  if (buf_len(b.buf.h) < b.cap) {
     return b;
   }
   return b.flush();
@@ -150,8 +161,8 @@ pub function (b: BufWriter) write_range(s: string, lo: i32, hi: i32): BufWriter 
 // `table[c]`, or unchanged when `c` is past the table's end: a byte
 // translation with no intermediate string.
 pub function (b: BufWriter) write_mapped(s: string, table: u8[]): BufWriter {
-  buf_push_mapped(b.buf, s, table);
-  if (buf_len(b.buf) < b.cap) {
+  buf_push_mapped(b.buf.h, s, table);
+  if (buf_len(b.buf.h) < b.cap) {
     return b;
   }
   return b.flush();
@@ -161,8 +172,8 @@ pub function (b: BufWriter) write_mapped(s: string, table: u8[]): BufWriter {
 // `drop[c]` is zero, or that is past the table's end: a byte deletion with
 // no intermediate string.
 pub function (b: BufWriter) write_filtered(s: string, drop: u8[]): BufWriter {
-  buf_push_filtered(b.buf, s, drop);
-  if (buf_len(b.buf) < b.cap) {
+  buf_push_filtered(b.buf.h, s, drop);
+  if (buf_len(b.buf.h) < b.cap) {
     return b;
   }
   return b.flush();
@@ -173,8 +184,8 @@ pub function (b: BufWriter) write_filtered(s: string, drop: u8[]): BufWriter {
 // bytes. A byte whose record is not wholly inside the table is appended
 // unchanged.
 pub function (b: BufWriter) write_expanded(s: string, table: u8[]): BufWriter {
-  buf_push_expanded(b.buf, s, table);
-  if (buf_len(b.buf) < b.cap) {
+  buf_push_expanded(b.buf.h, s, table);
+  if (buf_len(b.buf.h) < b.cap) {
     return b;
   }
   return b.flush();
@@ -182,8 +193,8 @@ pub function (b: BufWriter) write_expanded(s: string, table: u8[]): BufWriter {
 
 // `(b).write_byte(byte)` — append one byte.
 pub function (b: BufWriter) write_byte(byte: i32): BufWriter {
-  buf_push_byte(b.buf, byte);
-  if (buf_len(b.buf) < b.cap) {
+  buf_push_byte(b.buf.h, byte);
+  if (buf_len(b.buf.h) < b.cap) {
     return b;
   }
   return b.flush();
@@ -191,8 +202,8 @@ pub function (b: BufWriter) write_byte(byte: i32): BufWriter {
 
 // `(b).write_u64(n)` — append `n` in decimal.
 pub function (b: BufWriter) write_u64(n: u64): BufWriter {
-  buf_push_u64(b.buf, n);
-  if (buf_len(b.buf) < b.cap) {
+  buf_push_u64(b.buf.h, n);
+  if (buf_len(b.buf.h) < b.cap) {
     return b;
   }
   return b.flush();
@@ -260,12 +271,12 @@ pub function digit_pairs(): string {
 
 // `(b).flush()` — write whatever is buffered. Rebind the result.
 pub function (b: BufWriter) flush(): BufWriter {
-  if (buf_len(b.buf) == 0) {
+  if (buf_len(b.buf.h) == 0) {
     return b;
   }
   // The take rewinds the builder, so a sticky error still discards the
   // bytes the fd has already refused, as it did before.
-  return __buf_writer_put_bytes(b, buf_take_bytes(b.buf));
+  return __buf_writer_put_bytes(b, buf_take_bytes(b.buf.h));
 }
 
 // `(b).close()` — flush, then close the Writer: fclose. The error is the
@@ -274,10 +285,9 @@ pub function (b: BufWriter) flush(): BufWriter {
 pub function (b: BufWriter) close(): Option[IoError] {
   // Read the pending count BEFORE the flush: the builder is shared between
   // `b` and `flushed`, so afterwards both report zero.
-  let pending: i32 = buf_len(b.buf);
+  let pending: i32 = buf_len(b.buf.h);
   let flushed: BufWriter = b.flush();
   let closed: Option[IoError] = b.w.close();
-  buf_free(b.buf);
   match (closed) {
     Some(e) => {
       return Some(e);
@@ -300,9 +310,10 @@ pub function (b: BufWriter) error(): Option[IoError] {
 // memcpy, where going through `write_string` adds a method call, a struct
 // rebuild and a threshold check to each piece. The caller owns asking
 // `.buffered() >= cap` and flushing; the handle stays valid across a flush,
-// which takes the bytes and re-arms the same builder.
+// which takes the bytes and re-arms the same builder, for as long as a copy
+// of the writer is alive.
 pub function (b: BufWriter) handle(): usize {
-  return b.buf;
+  return b.buf.h;
 }
 
 // `(b).settle()` — flush if what has been pushed since the last flush has
@@ -310,7 +321,7 @@ pub function (b: BufWriter) handle(): usize {
 // must do at the end of each line, in place of the check `write_string` does
 // for itself.
 pub function (b: BufWriter) settle(): BufWriter {
-  if (buf_len(b.buf) < b.cap) {
+  if (buf_len(b.buf.h) < b.cap) {
     return b;
   }
   return b.flush();
@@ -318,7 +329,7 @@ pub function (b: BufWriter) settle(): BufWriter {
 
 // `(b).buffered()` — bytes held back so far.
 pub function (b: BufWriter) buffered(): i32 {
-  return buf_len(b.buf);
+  return buf_len(b.buf.h);
 }
 
 // One write(2) of `s`, recording the first failure.
