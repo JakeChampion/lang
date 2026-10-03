@@ -1824,6 +1824,15 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// __scan_set_bytes(bytes, from, set) → i32: __scan_set over a u8[].
+	c.info.FuncSigs["__scan_set_bytes"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// __bsd_sum(s, sum) → i32: the BSD checksum `sum -r` keeps, carried in
 	// `sum` and continued over s: per byte, rotate the 16 bits right by one
 	// and add the byte, modulo 2^16. Native runtime surface, carried by the
@@ -11376,7 +11385,7 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 // clock). verifyFipAllocs (E068) stays the backstop for what they emit.
 var fipNonAllocBuiltins = map[string]bool{
 	"__memchr": true, "__count_byte_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
-	"__sum_bytes": true, "__scan_set": true, "__bsd_sum": true, "__count_runs": true,
+	"__sum_bytes": true, "__scan_set": true, "__scan_set_bytes": true, "__bsd_sum": true, "__count_runs": true,
 	"__crc32_cksum": true,
 	"__clz32":       true, "__ctz32": true, "__popcount32": true,
 	"__clz64": true, "__ctz64": true, "__popcount64": true,

@@ -498,23 +498,20 @@ pub function http_header_value(block: string, key: string): Option[string] {
 // __find_crlf is the index of the first CRLF at or after `from` and before
 // `end`, or -1; __find_byte the same for one byte.
 function __find_crlf(buf: u8[], from: i32, end: i32): i32 {
-  let i: i32 = from;
-  while (i + 1 < end) {
-    if (buf[i] == 13 as u8 && buf[i + 1] == 10 as u8) {
+  let i: i32 = __memchr_bytes(buf, 13, from);
+  while (i >= 0 && i + 1 < end) {
+    if (buf[i + 1] == 10 as u8) {
       return i;
     }
-    i = i + 1;
+    i = __memchr_bytes(buf, 13, i + 1);
   }
   return -1;
 }
 
 function __find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
-  let i: i32 = from;
-  while (i < end) {
-    if (buf[i] == b) {
-      return i;
-    }
-    i = i + 1;
+  let i: i32 = __memchr_bytes(buf, b as i32, from);
+  if (i < end) {
+    return i;
   }
   return -1;
 }
@@ -708,17 +705,19 @@ function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32): Resu
 // only a CR at the very end of the buffer is still undecided.
 function __crlf_terminated(buf: u8[], from: i32, end: i32): boolean {
   let i: i32 = from;
-  while (i < end) {
-    if (buf[i] == 10 as u8) {
+  while (true) {
+    let cr: i32 = __memchr_bytes(buf, 13, i);
+    let lf: i32 = __memchr_bytes(buf, 10, i);
+    if (cr < 0 || cr >= end) {
+      return lf < 0 || lf >= end;
+    }
+    if (lf >= 0 && lf < cr) {
       return false;
     }
-    if (buf[i] == 13 as u8) {
-      if (i + 1 < buf.len() && buf[i + 1] != 10 as u8) {
-        return false;
-      }
-      i = i + 1;
+    if (cr + 1 < buf.len() && buf[cr + 1] != 10 as u8) {
+      return false;
     }
-    i = i + 1;
+    i = cr + 2;
   }
   return true;
 }
@@ -772,12 +771,12 @@ pub function http_header_block_complete(buf: u8[], from: i32, limits: HttpLimits
 // `__find_crlf_crlf(buf, from, end)` — where the first CRLF CRLF whose
 // four bytes lie in buf[from, end) starts, or -1.
 function __find_crlf_crlf(buf: u8[], from: i32, end: i32): i32 {
-  let i: i32 = from;
-  while (i + 3 < end) {
-    if (buf[i] == 13 as u8 && buf[i + 1] == 10 as u8 && buf[i + 2] == 13 as u8 && buf[i + 3] == 10 as u8) {
+  let i: i32 = __memchr_bytes(buf, 13, from);
+  while (i >= 0 && i + 3 < end) {
+    if (buf[i + 1] == 10 as u8 && buf[i + 2] == 13 as u8 && buf[i + 3] == 10 as u8) {
       return i;
     }
-    i = i + 1;
+    i = __memchr_bytes(buf, 13, i + 1);
   }
   return -1;
 }
