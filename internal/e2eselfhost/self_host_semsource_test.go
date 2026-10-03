@@ -842,7 +842,7 @@ function show(p: semsource.Produced): void {
     for m in p.modes { modes = modes + " " + util.i32_to_string(m); }
     print("modes" + modes + " result " + typeinfo.spelling(p.func.result));
     print(out);
-    let plan = ssaunits.plan(p.func, p.modes);
+    let plan = ssaunits.plan(p.func, p.modes, ssaunits.no_view());
     if (!plan.ok) { print("plan " + plan.why); }
     print(ssa.print_func(p.func.graph));
 }

@@ -219,7 +219,7 @@ function instance_error(a: Record, b: Record): string {
   return "";
 }
 
-function record_name(r: Record): string {
+pub function record_name(r: Record): string {
   if let typeinfo.TypeStruct(s) = r.ty {
     return s.name;
   }

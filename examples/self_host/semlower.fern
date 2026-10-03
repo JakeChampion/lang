@@ -127,7 +127,7 @@ function superseded(): irtables.LowerResult {
 
 // produced_plan plans one function's units. A refusal at either stage yields a
 // plan that is not ok.
-function produced_plan(p: semsource.Produced): ssaunits.Plan {
+function produced_plan(p: semsource.Produced, view: ssaunits.SchemaView): ssaunits.Plan {
   // A template's erased body is not a body this boundary has: its instances
   // are separate symbols of their own.
   if (p.template) {
@@ -136,7 +136,7 @@ function produced_plan(p: semsource.Produced): ssaunits.Plan {
   if (!p.ok) {
     return ssaunits.refused(p.why);
   }
-  return plan_of(p);
+  return plan_of(p, view);
 }
 
 // refusal is why a row's body is not emitted, or "" where nothing refused it:
@@ -158,24 +158,24 @@ function refusal(p: semsource.Produced, body: irtables.LowerResult): string {
 // A produced function is planned over the analysis it carries when the
 // anchoring verified the graph the planner sees; one whose graph a rewrite
 // moved since carries none and is analysed here.
-function plan_of(p: semsource.Produced): ssaunits.Plan {
+function plan_of(p: semsource.Produced, view: ssaunits.SchemaView): ssaunits.Plan {
   match (p.analysis) {
     Some(a) => {
-      return ssaunits.plan_analyzed(p.func, p.modes, a);
+      return ssaunits.plan_analyzed(p.func, p.modes, a, view);
     },
     None => {
-      return ssaunits.plan(p.func, p.modes);
+      return ssaunits.plan(p.func, p.modes, view);
     }
   }
 }
 
 // produced_body lowers a planned function. Every plan is made before any body
 // is lowered, because a caller's bracket reads its callees' plans (`grows`).
-function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable, pure: util.NameIndex): irtables.LowerResult {
+function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable, pure: util.NameIndex, view: ssaunits.SchemaView): irtables.LowerResult {
   if (!plan.ok) {
     return declined(plan.why);
   }
-  let r: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, structs, grows, pure);
+  let r: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, structs, grows, pure, view);
   if (!r.ok) {
     return declined(r.why);
   }
@@ -239,13 +239,11 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irtables.S
     base = no_reuse();
   }
   let r: Rows = no_reuse();
-  let plans: ssaunits.Plan[] = [];
   let keys: string[] = [];
   let funcs: ssasem.Func[] = [];
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     let fd: parser.FuncDecl = mod.funcs[i];
-    plans = plans.append(base_plan(base, changed, i, built.decls[i]));
     keys = keys.append(parser.decl_key(fd));
     funcs = funcs.append(built.decls[i].func);
     r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(parser.decl_key(fd)) };
@@ -255,16 +253,22 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irtables.S
   for p in built.instances {
     // A refused instance has no graph to name it; its symbol is the one requested.
     let name: string = built.names[at];
-    plans = plans.append(base_plan(base, changed, at, p));
     keys = keys.append(name);
     funcs = funcs.append(p.func);
     r = Rows { ...r, n1: r.n1.append(name), n2: r.n2.append("") };
     at = at + 1;
   }
+  let views: ssaunits.SchemaView[] = ssarc.schema_views(funcs);
+  let plans: ssaunits.Plan[] = [];
+  i = 0;
+  while (i < funcs.len()) {
+    plans = plans.append(base_plan(base, changed, i, produced_at(built, mod, i), views[i]));
+    i = i + 1;
+  }
   r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans), pure: pure_rows(keys, funcs), plans: plans };
   i = 0;
   while (i < plans.len()) {
-    let body: irtables.LowerResult = reused_or_lowered(built, mod, structs, r, base, changed, i);
+    let body: irtables.LowerResult = reused_or_lowered(built, mod, structs, r, base, changed, i, views[i]);
     r = Rows { ...r, body: r.body.append(body), keep: r.keep.append(body.ok), why: r.why.append(refusal(produced_at(built, mod, i), body)) };
     i = i + 1;
   }
@@ -273,22 +277,22 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irtables.S
 
 // Row `i`'s plan: `prev`'s where the inference moved neither the row nor a
 // contract it calls, planned afresh otherwise.
-function base_plan(prev: Rows, changed: boolean[], i: i32, p: semsource.Produced): ssaunits.Plan {
+function base_plan(prev: Rows, changed: boolean[], i: i32, p: semsource.Produced, view: ssaunits.SchemaView): ssaunits.Plan {
   if (row_reusable(prev, changed, i)) {
     return prev.plans[i];
   }
-  return produced_plan(p);
+  return produced_plan(p, view);
 }
 
 // Row `i`'s body: `prev`'s where the inference moved neither the row nor the
 // grow mask of any callee it names, freshly lowered otherwise.
-function reused_or_lowered(built: semsource.Built, mod: parser.Module, structs: irtables.StructTab, r: Rows, prev: Rows, changed: boolean[], i: i32): irtables.LowerResult {
+function reused_or_lowered(built: semsource.Built, mod: parser.Module, structs: irtables.StructTab, r: Rows, prev: Rows, changed: boolean[], i: i32, view: ssaunits.SchemaView): irtables.LowerResult {
   let p: semsource.Produced = produced_at(built, mod, i);
   if (row_reusable(prev, changed, i)
     && ssaunits.grow_rows_agree(prev.grows, r.grows, ssasem.called_names(p.func))) {
     return prev.body[i];
   }
-  return produced_body(p, r.plans[i], structs, r.grows, r.pure);
+  return produced_body(p, r.plans[i], structs, r.grows, r.pure, view);
 }
 
 // The rows that reach no observable effect, by transitive closure over the
