@@ -7514,11 +7514,12 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
       return ty_fn(ty_from_name(lm.ret_type));
     },
     ast.ExprIdent(id) => {
-      if (id.name == "None") {
-        return ty_option(ty_unknown());
-      }
+      // A local or parameter named `None` shadows the builtin (#10957).
       if (s.has_local(id.name)) {
         return s.local_type_of(id.name);
+      }
+      if (id.name == "None") {
+        return ty_option(ty_unknown());
       }
       // A bare ident may name a zero-arg function (a `const`).
       let cfi: i32 = 0;
