@@ -297,6 +297,43 @@ function main(): i32 {
 // Interpreter-confirmed.
 const closureOwnParamKeptWant = 64
 
+// An unannotated lambda returning its capture, bound straight from the call
+// (#10592), and a tuple whose closure element a callee only borrows (#10593).
+const closureLambdaReturnsCaptureSrc = `function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
+function main(): i32 {
+    let t: i32 = 0;
+    let keep: (i32) => i32 = mk(4);
+    let src: () => ((i32) => i32) = () => keep;
+    let i: i32 = 0;
+    while (i < 6) {
+        let b: (i32) => i32 = src();
+        t = t + b(i);
+        i = i + 1;
+    }
+    return ((t + keep(1)) % 101 + 101) % 101;
+}
+`
+
+// Interpreter-confirmed.
+const closureLambdaReturnsCaptureWant = 89
+
+const closureTupleBorrowedByCallSrc = `function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
+function second(p: ((i32) => i32, i32)): i32 { return p.1; }
+function main(): i32 {
+    let t: i32 = 0;
+    let p: ((i32) => i32, i32) = (mk(2), 9);
+    let i: i32 = 0;
+    while (i < 6) {
+        t = t + second(p) + p.0(i);
+        i = i + 1;
+    }
+    return (t + p.0(5) + p.1) % 101;
+}
+`
+
+// Interpreter-confirmed.
+const closureTupleBorrowedByCallWant = 69
+
 var closureIntoContainerCases = []struct {
 	name string
 	src  string
@@ -313,6 +350,8 @@ var closureIntoContainerCases = []struct {
 	{"return_owned", closureReturnOwnedSrc, closureReturnOwnedWant},
 	{"return_own_param", closureReturnOwnParamSrc, closureReturnOwnParamWant},
 	{"own_param_kept", closureOwnParamKeptSrc, closureOwnParamKeptWant},
+	{"lambda_returns_capture", closureLambdaReturnsCaptureSrc, closureLambdaReturnsCaptureWant},
+	{"tuple_borrowed_by_call", closureTupleBorrowedByCallSrc, closureTupleBorrowedByCallWant},
 }
 
 func TestSelfHostClosureIntoContainerX86_64(t *testing.T) {

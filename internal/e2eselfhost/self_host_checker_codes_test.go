@@ -1947,9 +1947,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// method table nor the struct table and the ordinary method path
 		// resolved nothing — a call was accepted whatever it was handed,
 		// a lambda included (#9518). Arity counts the RECEIVER, matching
-		// native, which models these as functions carrying the cell: a bad
-		// value on `set` is "argument 2", and `c.set()` is one argument of
-		// the two it wants.
+		// native, which models these as functions carrying the cell, so
+		// `c.set()` is one argument of the two it wants; a bad value on
+		// `set` is numbered among the written arguments, "argument 1".
 		{"cell-set-wrong-type", "function f(c: Cell[i32]): i32 { c.set(\"hi\"); return 0; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E038"}},
 		{"cell-set-lambda-arg", "function f(c: Cell[i32]): i32 { c.set((x: i32) => x + 1); return 0; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E038"}},
 		{"cell-set-too-few", "function f(c: Cell[i32]): i32 { c.set(); return 0; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E004"}},
@@ -1976,6 +1976,39 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// A reserved name is reserved whatever kind takes it (#10855).
 		{"enum-takes-builtin-struct-name", "import \"std/string\";\nenum Span { Empty, Wide(f64, string) }\nfunction f(s: Span): i32 {\n  match (s) { Wide(d, t) => { return (d * 4.0) as i32 + t.len(); }, Empty => { return 0; } }\n}\nfunction main(): i32 { return f(Wide(1.0, \"ab\")); }\n", []string{"E010"}},
 		{"struct-takes-builtin-enum-name", "struct Option { n: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
+		// A binding or a top-level function named like a builtin constructor
+		// shadows it, so the call is a call of that and its result is judged
+		// against the destination like any other (#10394).
+		{"ctor-shadowed-by-function-arg", "function Some(n: i32): i32 { return n; }\nfunction takes(o: Option[i64]): i32 { return 0; }\nfunction main(): i32 { return takes(Some(5)); }\n", []string{"E038"}},
+		{"ctor-shadowed-by-local-arg", "function takes(r: Result[i64, i32]): i32 { return 0; }\nfunction main(): i32 { let Err: (i64) => i32 = (v: i64) => 1; return takes(Err(5)); }\n", []string{"E038"}},
+		{"ctor-shadowed-by-local-init", "function main(): i32 { let Some = (v: i64): i32 => 1; let o: Option[i64] = Some(1); return 0; }\n", []string{"E003"}},
+		{"ctor-shadowed-by-function-ok", "function Some(n: i32): i32 { return n + 1; }\nfunction main(): i32 { let x: i32 = Some(5); return x - 6; }\n", nil},
+		// A generic call nested in another one's argument takes the reading
+		// position's width through both (#10508).
+		{"nested-generic-call-destination-ok", "function id[T](a: T): T { return a; }\nfunction main(): i32 { let z: i64 = id(id(5000000000)); return (z / 1000000000) as i32; }\n", nil},
+		{"nested-generic-call-argument-ok", "function id[T](a: T): T { return a; }\nfunction take(x: i64): i32 { return x as i32; }\nfunction main(): i32 { return take(id(id(1))); }\n", nil},
+		{"nested-generic-call-compare-ok", "function id[T](a: T): T { return a; }\nfunction main(): i32 { if (id(id(1)) == 4611686018427387904) { return 1; } return 0; }\n", nil},
+		{"nested-generic-call-out-of-range", "function id[T](a: T): T { return a; }\nfunction main(): i32 { let z: u8 = id(id(300)); return 0; }\n", []string{"E047"}},
+		// A literal local beside a wide literal settles at the reading
+		// position, and defaults to i64 with none (#10595); i32-min is i32.
+		{"wide-literal-local-at-param-ok", "function wide(n: u64): u64 { return n / 1000000000u64; }\nfunction main(): i32 { let k = 3; let w: u64 = wide(k * 3000000000); return w as i32; }\n", nil},
+		{"wide-literal-local-block-tail-ok", "function wide(n: u64): u64 { return n / 1000000000u64; }\nfunction main(): i32 { let w: u64 = wide({ let k = 3; k * 3000000000 }); return w as i32; }\n", nil},
+		{"wide-literal-local-default-i64", "function main(): i32 { let k = 3; let x = k * 3000000000; let y: i32 = x; return 0; }\n", []string{"E003"}},
+		{"wide-literal-local-at-i32-param", "function f(n: i32): i32 { return n; }\nfunction main(): i32 { let k = 3; return f(k * 3000000000); }\n", []string{"E047"}},
+		// `Some(lit)?` reads its literal at the `?`'s destination, as native's
+		// settleNumeric TryOp arm does (#10614).
+		{"try-some-literal-settles-ok", "function h(): Option[i32] { let v: u8 = Some(200)?; let w: i64 = Some(5)?; let f: f32 = Some(3.5)?; return Some(v as i32 + w as i32 + f as i32); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"try-some-literal-out-of-range", "function h(): Option[i32] { let v: u8 = Some(300)?; return Some(v as i32); }\nfunction main(): i32 { return 0; }\n", []string{"E047"}},
+		{"try-some-typed-payload", "function h(): Option[i32] { let x: i32 = 4; let v: f32 = Some(x)?; return Some(1); }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
+		// Cell.set keeps its argument, so a str view is not lent (#10702).
+		{"cell-set-str-view", "function main(): i32 { let b: string = \"abcdefgh\"; let u: str = slice_unchecked(b, 0, 8); let c: Cell[string] = cell_new(b); c.set(u); return c.get().len(); }\n", []string{"E038"}},
+		// A return type naming no declared type takes no value (#10842).
+		{"unknown-return-type-mismatch", "function g(): Undef { return 1; }\nfunction main(): i32 { return 0; }\n", []string{"E002", "E064"}},
+		// An enum variant's name is no type (#10843).
+		{"variant-name-as-field-type", "enum X { P, Q }\nstruct H { f: P }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
+		{"variant-name-as-param-type", "enum X { P, Q }\nfunction g(p: P): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
+		{"i32-min-literal-local-ok", "function main(): i32 { let k = -2147483648; return k + 2147483647 + 1; }\n", nil},
+		{"ctor-builtin-settles-ok", "function takes(o: Option[i64]): i32 { return 0; }\nfunction main(): i32 { return takes(Some(40)) + takes(Option.Some(1)); }\n", nil},
 		{"enum-non-reserved-ok", "enum Color { Red, Green }\nfunction main(): i32 { return 0; }\n", nil},
 		// Generic functions: a concrete argument must NOT be flagged against
 		// the opaque type parameter (E038 false-positive guard).

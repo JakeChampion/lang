@@ -1060,8 +1060,7 @@ function main(): i32 {
       if (asmcore.refuse_decl_names(parsed)) {
         return 1;
       }
-      // -verifyprovided reports on any module, the diag_* corpus included.
-      if (!vprovided && asmcore.refuse_parse_unknowns(parsed)) {
+      if (asmcore.refuse_parse_unknowns(parsed)) {
         return 1;
       }
       if (pm_mode.len() > 0) {

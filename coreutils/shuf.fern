@@ -130,10 +130,10 @@ function count_cap(): u64 {
 // `dead` is set by the byte that was not there rather than reported at
 // once, because `-r` has already written lines by then and GNU's exit
 // flushes them before the diagnostic.
-struct Rand { r: Reader, name: string, open: boolean, buf: string, pos: i32, num: u64, max: u64, dead: boolean, why: string }
+struct Rand { r: Reader, name: string, open: boolean, buf: u8[], pos: i32, num: u64, max: u64, dead: boolean, why: string }
 
 function rand_closed(): Rand {
-  return Rand { r: stdin(), name: "", open: false, buf: "", pos: 0, num: 0 as u64, max: 0 as u64, dead: false, why: "" };
+  return Rand { r: stdin(), name: "", open: false, buf: [], pos: 0, num: 0 as u64, max: 0 as u64, dead: false, why: "" };
 }
 
 // The source, opened now. GNU opens it before it draws and after it has
@@ -159,15 +159,15 @@ function rand_die(s: Rand): void {
 // The next block of source bytes, or `dead`. A short read is not the
 // end: only a read of nothing is.
 function rand_fill(s0: Rand): Rand {
-  match (s0.r.read_chunk(rand_block())) {
+  match (s0.r.read_chunk_bytes(rand_block())) {
     Ok(chunk) => {
       if (chunk.len() == 0) {
-        return Rand { ...s0, buf: "", pos: 0, dead: true, why: "end of file" };
+        return Rand { ...s0, buf: [], pos: 0, dead: true, why: "end of file" };
       }
       return Rand { ...s0, buf: chunk, pos: 0 };
     },
     Err(e) => {
-      return Rand { ...s0, buf: "", pos: 0, dead: true, why: "read error: " + gnu.io_error_text(e) };
+      return Rand { ...s0, buf: [], pos: 0, dead: true, why: "read error: " + gnu.io_error_text(e) };
     }
   }
   return s0;
@@ -479,25 +479,36 @@ function read_fatal(e: IoError): void {
   exit(1);
 }
 
-function slurp(r: Reader): string {
-  let chunks: string[] = [];
+function push_bytes(h: usize, bytes: u8[], lo: i32, hi: i32): void {
+  buf_push_bytes_range(h, bytes, lo, hi);
+}
+
+function slurp(r: Reader, size: i64): u8[] {
+  // A regular file supplies a capacity hint. Still read through EOF: the
+  // file may grow or shrink, and streams have no useful size estimate.
+  let capacity: i32 = read_size();
+  if (size > capacity as i64 && size <= 2147483647 as i64) {
+    capacity = size as i32;
+  }
+  let b: usize = buf_new(capacity);
   while (true) {
-    match (r.read_chunk(read_size())) {
+    match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           break;
         }
-        chunks = chunks.append(chunk);
+        buf_push_bytes_range(b, chunk, 0, chunk.len());
       },
       Err(e) => {
+        buf_free(b);
         read_fatal(e);
+        return [];
       }
     }
   }
-  if (chunks.len() == 1) {
-    return chunks[0];
-  }
-  return chunks.join("");
+  let bytes: u8[] = buf_take_bytes(b);
+  buf_free(b);
+  return bytes;
 }
 
 function pack_line(start: i32, len: i32): i64 {
@@ -512,15 +523,15 @@ function line_len(v: i64): i32 {
   return (v & 4294967295 as i64) as i32;
 }
 
-// The records of `text`, the terminator excluded and a missing final
+// The records of `bytes`, the terminator excluded and a missing final
 // one supplied by the output rather than recorded here.
-function split_lines(text: string, term: i32): i64[] {
+function split_lines(bytes: u8[], term: i32): i64[] {
   let lines: i64[] = [];
   let start: i32 = 0;
-  while (start < text.len()) {
-    let end: i32 = __memchr(text, term, start);
+  while (start < bytes.len()) {
+    let end: i32 = __memchr_bytes(bytes, term, start);
     if (end < 0) {
-      lines = lines.append(pack_line(start, text.len() - start));
+      lines = lines.append(pack_line(start, bytes.len() - start));
       break;
     }
     lines = lines.append(pack_line(start, end - start));
@@ -529,12 +540,13 @@ function split_lines(text: string, term: i32): i64[] {
   return lines;
 }
 
-// A line as LineReader hands it over, without its terminator.
-function strip_term(line: string, term: i32): string {
-  if (line.len() > 0 && line[line.len() - 1] as i32 == term) {
-    return slice_unchecked(line, 0, line.len() - 1) + "";
+// Retain the cursor's owned record; omit its delimiter only when writing.
+function push_record(h: usize, line: u8[], term: i32): void {
+  let end: i32 = line.len();
+  if (end > 0 && line[end - 1] as i32 == term) {
+    end = end - 1;
   }
-  return line + "";
+  push_bytes(h, line, 0, end);
 }
 
 // ---- output -----------------------------------------------------------------
@@ -630,16 +642,14 @@ function source_for(a: Args): Rand {
 }
 
 // The lines a run draws from. Exactly one shape is filled: `held` for
-// the -e operands and for a reservoir, whose lines are strings of their
-// own; `spans` into `text` for an input read whole, where a line is a
-// range of the one buffer and never a copy; neither for -i, where the
-// line is the number itself.
-struct Lines { text: string, spans: i64[], held: string[], n: u64, boxed: boolean }
+// a reservoir, whose records own their bytes; `spans` into `bytes` for an
+// input read whole; `echo` for text operands. The -i mode needs no storage.
+struct Lines { bytes: u8[], spans: i64[], held: u8[][], echo: string[], n: u64, boxed: boolean }
 
 function lines_empty(): Lines {
   let spans: i64[] = [];
-  let held: string[] = [];
-  return Lines { text: "", spans: spans, held: held, n: 0 as u64, boxed: false };
+  let held: u8[][] = [];
+  return Lines { bytes: [], spans: spans, held: held, echo: [], n: 0 as u64, boxed: false };
 }
 
 // Gnulib's reservoir: the first `k` lines are kept, and every line after
@@ -647,17 +657,17 @@ function lines_empty(): Lines {
 // that keeps the sample uniform. The draw happens BEFORE the read, so
 // the read that ends the input still costs one — which is why a `-n`
 // equal to the line count and a `-n` past it shuffle differently.
-function reservoir_sample(rs0: Rand, r: Reader, term: i32, k: i32): (string[], Rand) {
+function reservoir_sample(rs0: Rand, r: Reader, term: i32, k: i32): (u8[][], Rand) {
   let rs: Rand = rs0;
-  let held: string[] = [];
-  let lr: io_buffered.LineReader = io_buffered.line_reader_new(r, term, read_size());
+  let held: u8[][] = [];
+  let lr: io_buffered.ByteLineReader = io_buffered.byte_line_reader_new(r, term, read_size());
   let filled: boolean = true;
   while (held.len() < k) {
-    let nx: (Option[string], io_buffered.LineReader) = lr.next_line();
+    let nx: (Option[u8[]], io_buffered.ByteLineReader) = lr.next_line_bytes();
     lr = nx.1;
     match (nx.0) {
       Some(line) => {
-        held = held.append(strip_term(line, term));
+        held = held.append(line);
       },
       None => {
         filled = false;
@@ -672,12 +682,12 @@ function reservoir_sample(rs0: Rand, r: Reader, term: i32, k: i32): (string[], R
     if (rs.dead) {
       break;
     }
-    let nx2: (Option[string], io_buffered.LineReader) = lr.next_line();
+    let nx2: (Option[u8[]], io_buffered.ByteLineReader) = lr.next_line_bytes();
     lr = nx2.1;
     match (nx2.0) {
       Some(line) => {
         if (got.0 < k as u64) {
-          held = held.with(got.0 as i32, strip_term(line, term));
+          held = held.with(got.0 as i32, line);
         }
         seen = seen + 1 as u64;
       },
@@ -702,22 +712,23 @@ function read_input(a: Args, path: string, rs0: Rand): (Lines, Rand) {
   let rs: Rand = rs0;
   let out: Lines = lines_empty();
   let r: Reader = open_input(path);
-  if (!a.repeat && a.count != count_cap() && input_size(r) > reservoir_min_input()) {
+  let size: i64 = input_size(r);
+  if (!a.repeat && a.count != count_cap() && size > reservoir_min_input()) {
     rs = source_for(a);
     let k: i32 = 1073741823;
     if (a.count < k as u64) {
       k = a.count as i32;
     }
-    let got: (string[], Rand) = reservoir_sample(rs, r, a.term, k);
+    let got: (u8[][], Rand) = reservoir_sample(rs, r, a.term, k);
     rs = got.1;
     if (rs.dead) {
       rand_die(rs);
     }
     out = Lines { ...out, held: got.0, n: got.0.len() as u64, boxed: true };
   } else {
-    let text: string = slurp(r);
-    let spans: i64[] = split_lines(text, a.term);
-    out = Lines { ...out, text: text, spans: spans, n: spans.len() as u64 };
+    let bytes: u8[] = slurp(r, size);
+    let spans: i64[] = split_lines(bytes, a.term);
+    out = Lines { ...out, bytes: bytes, spans: spans, n: spans.len() as u64 };
   }
   if (path != "-") {
     r.close();
@@ -740,7 +751,7 @@ function emit(o0: io_buffered.BufWriter, a: Args, src: Lines, perm: u64[], head:
   let term: string = terminator(a);
   let i: i32 = 0;
   // Every line is pushed straight into stdout's builder: the number or
-  // the line's range out of the held text, then the terminator.
+  // the line's range out of the held input, then the terminator.
   if (a.range) {
     while (i as u64 < head) {
       io_buffered.buf_push_u64(h, a.lo + perm[i]);
@@ -748,9 +759,16 @@ function emit(o0: io_buffered.BufWriter, a: Args, src: Lines, perm: u64[], head:
       o = gnu.settle(o);
       i = i + 1;
     }
+  } else if (a.echo) {
+    while (i as u64 < head) {
+      buf_push(h, src.echo[perm[i] as i32]);
+      buf_push(h, term);
+      o = gnu.settle(o);
+      i = i + 1;
+    }
   } else if (src.boxed) {
     while (i as u64 < head) {
-      buf_push(h, src.held[perm[i] as i32]);
+      push_record(h, src.held[perm[i] as i32], a.term);
       buf_push(h, term);
       o = gnu.settle(o);
       i = i + 1;
@@ -758,7 +776,7 @@ function emit(o0: io_buffered.BufWriter, a: Args, src: Lines, perm: u64[], head:
   } else {
     while (i as u64 < head) {
       let v: i64 = src.spans[perm[i] as i32];
-      buf_push_range(h, src.text, line_start(v), line_start(v) + line_len(v));
+      push_bytes(h, src.bytes, line_start(v), line_start(v) + line_len(v));
       buf_push(h, term);
       o = gnu.settle(o);
       i = i + 1;
@@ -786,11 +804,13 @@ function run_repeat(o0: io_buffered.BufWriter, rs0: Rand, a: Args, src: Lines): 
     let j: u64 = got.0;
     if (a.range) {
       io_buffered.buf_push_u64(h, a.lo + j);
+    } else if (a.echo) {
+      buf_push(h, src.echo[j as i32]);
     } else if (src.boxed) {
-      buf_push(h, src.held[j as i32]);
+      push_record(h, src.held[j as i32], a.term);
     } else {
       let v: i64 = src.spans[j as i32];
-      buf_push_range(h, src.text, line_start(v), line_start(v) + line_len(v));
+      push_bytes(h, src.bytes, line_start(v), line_start(v) + line_len(v));
     }
     buf_push(h, term);
     o = gnu.settle(o);
@@ -833,7 +853,7 @@ pub function main(): i32 {
   if (a.range) {
     src = Lines { ...src, n: a.hi - a.lo + 1 as u64 };
   } else if (a.echo) {
-    src = Lines { ...src, held: operands, n: operands.len() as u64, boxed: true };
+    src = Lines { ...src, echo: operands, n: operands.len() as u64 };
   } else {
     let path: string = "-";
     if (operands.len() == 1) {

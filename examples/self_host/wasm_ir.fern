@@ -434,6 +434,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_uses_memchr(cache)) {
     out = out.append("@uses_memchr");
   }
+  if (module_emits_op_cached(cache, "memchr_bytes")) {
+    out = out.append("@uses_memchr_bytes");
+  }
   if (module_uses_rmemchr(cache)) {
     out = out.append("@uses_rmemchr");
   }
@@ -515,7 +518,7 @@ pub function fn_base_global(ns: string): string {
 
 // ---- type ids (#5331 step 3) ------------------------------------------------
 // A struct/enum-variant value carries its TYPE ID at offset 0: struct_make and
-// dyn_box store it, variant_is / dyn_dispatch / dyn_downcast compare against it.
+// dyn_box store it, variant_is / dyn_dispatch compare against it.
 // The id is positional — struct_type_id is an index into the struct table, and
 // prim_type_id is `structs.len() + i` — so it is a WHOLE-PROGRAM value in the
 // strongest sense: adding one struct to any module shifts the ids of every
@@ -6429,7 +6432,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = emit_wasm_signal_disposition_read(parts);
   } else if (o.kind_tag == 240) {  // hostname
     parts = emit_wasm_hostname(bctmp, parts);
-  } else if (o.kind_tag == 189) {  // wasm_timer_pollable
+  } else if (o.kind_tag == 148) {  // wasm_timer_pollable
     parts = emit_wasm_wasm_timer_pollable(parts);
   } else if (o.kind_tag == 161) {  // wasm_pollable_drop
     // wasm_pollable_drop(p: i32) -> i32. Drop the wasi:io/poll pollable
@@ -6853,8 +6856,6 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append(emit_dyn_dispatch_wat(o, structs, funcs));
   } else if (o.kind_tag == 146) {  // dyn_box
     parts = emit_wasm_dyn_box(arrtmp, eltmp, f64tmp, i64tmp, o, parts);
-  } else if (o.kind_tag == 148) {  // dyn_downcast
-    parts = emit_wasm_dyn_downcast(arrtmp, eltmp, o, parts);
   } else if (o.kind_tag == 6) {  // const_func
     // A function VALUE is its slot index in the module's funcref table
     // (fn_table). The table is built over the address-taken functions in
@@ -6891,6 +6892,9 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
 // arm emits -- wrong code that looks plausible. asm_ir carries the same guard
 // for the same reason.
 function emit_str_op_wat(o: ir.Op): string {
+  if (o.kind_tag == 358) {
+    return "    call $__fern_memchr_bytes\n";
+  }
   if (o.kind_tag == 97) {  // str_len
     // stack: block ptr -> i32.load(ptr)  (len @ +0)
     return "    i32.load\n";
@@ -8930,6 +8934,23 @@ pub function substr_helper(): string {
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o = o + "      (br $c)))\n";
   o = o + "    (local.get $p))\n";
+  return o;
+}
+
+// Like the other byte builtins, scan the packed [len][cap][bytes] u8[]
+// representation. Typed lowering marks byte-array operations with width 8.
+pub function memchr_bytes_helper(): string {
+  let o: string = "  (func $__fern_memchr_bytes (param $a i32) (param $byte i32) (param $from i32) (result i32)\n";
+  o = o + "    (local $len i32) (local $i i32)\n";
+  o = o + "    (if (i32.gt_u (local.get $byte) (i32.const 255)) (then (return (i32.const -1))))\n";
+  o = o + "    (local.set $len (i32.load (local.get $a)))\n";
+  o = o + "    (local.set $i (local.get $from))\n";
+  o = o + "    (if (i32.lt_s (local.get $i) (i32.const 0)) (then (local.set $i (i32.const 0))))\n";
+  o = o + "    (block $done (loop $scan\n";
+  o = o + "      (br_if $done (i32.ge_s (local.get $i) (local.get $len)))\n";
+  o = o + "      (if (i32.eq (i32.load8_u (i32.add (local.get $a) (i32.add (i32.const 8) (local.get $i)))) (local.get $byte)) (then (return (local.get $i))))\n";
+  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+  o = o + "      (br $scan)))\n    (i32.const -1))\n";
   return o;
 }
 
@@ -13916,6 +13937,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "@uses_memchr")) {
     parts = parts.append(memchr_helper());
   }
+  if (need(needs, "@uses_memchr_bytes")) {
+    parts = parts.append(memchr_bytes_helper());
+  }
   if (need(needs, "@uses_rmemchr")) {
     parts = parts.append(rmemchr_helper());
   }
@@ -18410,33 +18434,6 @@ function dyn_prim_valtype(name: string): string {
     return "f64";
   }
   return "i32";
-}
-
-function emit_wasm_dyn_downcast(arrtmp: i32, eltmp: i32, o: ir.Op, parts: string[]): string[] {
-  // `e as? T` downcast (docs/DYN-TRAITS.md §9). The `dyn` value (a heap
-  // pointer carrying its concrete type id @0) is on the stack. Stash it,
-  // read the id @0 and compare to T's struct_type_id (the SAME id
-  // struct_make stores / dyn_dispatch compares): equal → Some(value)
-  // box [tag0@0, payload@4]; else → None box [tag1@0, 0@4] — the 8-byte
-  // i32-payload Option box (matching opt_make/opt_none) a downstream
-  // `match` reads with opt_tag/opt_payload.
-  parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
-  parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n    i32.load\n" + tid_get(o.str) + "    i32.eq\n");
-  parts = parts.append("    if (result i32)\n");
-  // hit: Some(value) — 8-byte box [tag0@0, payload(dyn ptr)@4].
-  parts = parts.append("    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
-  parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 0\n    i32.store\n");
-  parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
-  parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
-  parts = parts.append("    else\n");
-  // miss: None — 8-byte box [tag1@0, 0@4].
-  parts = parts.append("    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
-  parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 1\n    i32.store\n");
-  parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const 0\n    i32.store\n");
-  parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
-  parts = parts.append("    end\n");
-
-  return parts;
 }
 
 function emit_wasm_call_indirect(o: ir.Op, parts: string[]): string[] {
