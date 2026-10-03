@@ -13122,11 +13122,16 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(dg_at("E043", s.unknown_method_advice(int_label(it), mfa.field, recv), mfa.line, mfa.col));
           }
+          out = util.append_diags(out, uninferred_method_diags(c, int_label(it), mfa.field, s.lookup_method(mfa.field, int_label(it))));
         },
         typeinfo.TypeFloat(f) => {
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(dg_at("E043", s.unknown_method_advice(float_label(f), mfa.field, recv), mfa.line, mfa.col));
           }
+          out = util.append_diags(out, uninferred_method_diags(c, float_label(f), mfa.field, s.lookup_method(mfa.field, float_label(f))));
+        },
+        typeinfo.TypeBool(_) => {
+          out = util.append_diags(out, uninferred_method_diags(c, "boolean", mfa.field, s.lookup_method(mfa.field, "boolean")));
         },
         typeinfo.TypeString(_) => {
           // E043: a string carries exactly two builtin methods

@@ -1,8 +1,11 @@
 package checker
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/diag"
 )
 
 // A method on a concrete receiver binds none of its own type parameters from
@@ -28,8 +31,18 @@ function main(): i32 { let b: Box[i32] = Box { v: 1 }; return b.count([]); }`, "
 			if err == nil {
 				t.Fatal("accepted: the receiver bound the method's own type parameter")
 			}
-			if want := "could not infer type parameter T for " + c.display; !strings.Contains(err.Error(), want) {
-				t.Errorf("want %q: %v", want, err)
+			// Exactly one diagnostic: a half-substituted signature would add a
+			// mismatch beside the E040.
+			var errs diag.Errors
+			if !errors.As(err, &errs) || len(errs) != 1 {
+				t.Fatalf("want exactly one diagnostic, got: %v", err)
+			}
+			var ce *Error
+			if !errors.As(errs[0], &ce) || ce.Code() != "E040" {
+				t.Fatalf("want E040, got: %v", errs[0])
+			}
+			if want := "could not infer type parameter T for " + c.display; !strings.Contains(ce.Msg, want) {
+				t.Errorf("want %q: %v", want, ce)
 			}
 		})
 	}

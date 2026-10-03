@@ -11266,6 +11266,14 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 // for the receiver name and reports an `undefined identifier` at every use —
 // a cascade under the real diagnostic, in a file (for a stdlib method) the
 // program never imported and cannot act on.
+func hoistReceiver(fn *ast.FuncDecl) {
+	if fn.Receiver == nil {
+		return
+	}
+	fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
+	fn.Receiver = nil
+}
+
 // receiverDeclares reports whether the hoisted generic method `name` takes
 // type parameter tp from its receiver. A concrete receiver (`u8[]`,
 // `Box[i32]`) declares none, so the receiver's arguments a dispatch stamps
@@ -11277,14 +11285,6 @@ func (c *checker) receiverDeclares(name, tp string) bool {
 		return true
 	}
 	return typeMentionsParam(fn.Params[0].Type, tp)
-}
-
-func hoistReceiver(fn *ast.FuncDecl) {
-	if fn.Receiver == nil {
-		return
-	}
-	fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
-	fn.Receiver = nil
 }
 
 // elemDispatchable reports whether an array/slice receiver with this element
