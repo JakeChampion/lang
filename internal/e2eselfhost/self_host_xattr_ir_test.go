@@ -12,11 +12,12 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// getxattr and lgetxattr (#9098) through the self-host IR path. Both are
-// generated Fern runtime bodies (`asmcore.rt_src_getxattr`): Linux's two
-// calls, or Darwin's one with XATTR_NOFOLLOW in its options word for the `l`
-// form. The host sets the attribute through Go, so the probe reads back a
-// value it did not write itself, and the symlink tells the two calls apart.
+// getxattr and lgetxattr (#9098), setxattr and lsetxattr (#9154) through the
+// self-host IR path. All four are generated Fern runtime bodies
+// (`asmcore.rt_src_getxattr`, `rt_src_setxattr`): Linux's two calls each, or
+// Darwin's one with XATTR_NOFOLLOW in its options word for the `l` form. The
+// host sets the attribute the reads start from, so the probe reads back a
+// value it did not write itself, and the symlink tells each pair apart.
 
 func selfHostXattrSource(t *testing.T, dir string) string {
 	t.Helper()
@@ -41,6 +42,13 @@ func selfHostXattrSource(t *testing.T, dir string) string {
     match (lgetxattr(%[2]q, "user.fern")) { Ok(_) => { return 6; }, Err(_) => {} }
     match (getxattr(%[1]q, "user.absent")) { Ok(_) => { return 7; }, Err(Other(_, m)) => { if (m != %[4]q) { return 8; } }, Err(_) => { return 9; } }
     match (lgetxattr(%[3]q, "user.fern")) { Ok(_) => { return 10; }, Err(NotFound(_)) => {}, Err(_) => { return 11; } }
+    match (setxattr(%[1]q, "user.set", "a" + "\x00" + "b")) { Ok(_) => {}, Err(_) => { return 12; } }
+    match (getxattr(%[1]q, "user.set")) { Ok(v) => { if (v.len() != 3 || v[1] != 0 as u8) { return 13; } }, Err(_) => { return 14; } }
+    match (setxattr(%[2]q, "user.via", "v")) { Ok(_) => {}, Err(_) => { return 15; } }
+    match (getxattr(%[1]q, "user.via")) { Ok(v) => { if (v != "v") { return 16; } }, Err(_) => { return 17; } }
+    match (lsetxattr(%[2]q, "user.link", "v")) { Ok(_) => {}, Err(_) => {} }
+    match (getxattr(%[1]q, "user.link")) { Ok(_) => { return 18; }, Err(_) => {} }
+    match (setxattr(%[3]q, "user.set", "v")) { Ok(_) => { return 19; }, Err(NotFound(_)) => {}, Err(_) => { return 20; } }
     return 0;
 }
 `, p("f"), p("l"), p("missing"), selfHostXattrAbsentText)
@@ -61,7 +69,7 @@ func TestSelfHostXattrIR(t *testing.T) {
 	if err != nil || len(asm) == 0 {
 		t.Fatalf("driver failed: %v\n%s", err, driverStderr(err))
 	}
-	for _, sym := range []string{"__fern_getxattr", "__fern_lgetxattr"} {
+	for _, sym := range []string{"__fern_getxattr", "__fern_lgetxattr", "__fern_setxattr", "__fern_lsetxattr"} {
 		if !bytes.Contains(asm, []byte(sym)) {
 			t.Fatalf("%s did not reach the IR runtime path (absent from the asm)", sym)
 		}

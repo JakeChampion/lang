@@ -4489,6 +4489,8 @@ function builtin_sigs(): string[] {
     "rename_noreplace(string, string): Result[void, IoError]",
     "getxattr(string, string): Result[string, IoError]",
     "lgetxattr(string, string): Result[string, IoError]",
+    "setxattr(string, string, string): Result[void, IoError]",
+    "lsetxattr(string, string, string): Result[void, IoError]",
     "rename_exchange(string, string): Result[void, IoError]",
     "env(string): Option[string]",
     "config_get(string): Option[string]",
@@ -24373,8 +24375,10 @@ function pretype_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
     },
     ast.StmtMatch(m) => {
       let narms: ast.MatchArm[] = [];
-      for arm in m.arms {
-        let asc: Scope = annotate_arm_scope(arm, s, check_expr(m.scrutinee, s));
+      let whole: typeinfo.Type = check_expr(m.scrutinee, s);
+      for arm0 in m.arms {
+        let arm: ast.MatchArm = ast.MatchArm { ...arm0, pattern: rescope_pattern(arm0.pattern, whole, s) };
+        let asc: Scope = annotate_arm_scope(arm, s, whole);
         let g: ast.Expr = arm.guard;
         if (arm.has_guard) {
           g = pretype_expr(arm.guard, asc);
@@ -24424,6 +24428,140 @@ function pretype_at(x: ast.Expr, own acc: boolean): boolean {
     }
   }
   return false;
+}
+
+// Pattern variants are named by the scrutinee (#10922). The module bundler
+// resolves a bare variant name lexically, so with std/net loaded an arm's
+// `Other` names `net__Other` even when the match is on an IoError. Wherever a
+// bare name is spelled by more than one variant, pretype_stmt renames an arm
+// to the member of the scrutinee's enum that spells it, which is what native
+// resolves the pattern against.
+
+// colliding_variant_names lists each bare variant name that two variants of
+// the module's enums, or of the built-in ones, spell.
+function colliding_variant_names(mod: parser.Module): string[] {
+  let full: string[] = [];
+  for ed in mod.enums {
+    for vn in ed.variant_names {
+      full = full.append(vn);
+    }
+  }
+  for sd in parser.inject_builtin_enums([]) {
+    if (sd.enum_owner.len() > 0) {
+      full = full.append(sd.name);
+    }
+  }
+  let seen: string[] = [];
+  let seen_full: string[] = [];
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < full.len()) {
+    let b: string = variant_bare_name(full[i]);
+    let at: i32 = util.index_of_str(seen, b);
+    if (at < 0) {
+      seen = seen.append(b);
+      seen_full = seen_full.append(full[i]);
+    } else if (seen_full[at] != full[i] && !util.has_str(out, b)) {
+      out = out.append(b);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// variant_bare_name is a variant's name without its module prefix.
+function variant_bare_name(name: string): string {
+  let i: i32 = name.len() - 2;
+  while (i > 0) {
+    if (name[i] == b'_' && name[i + 1] == b'_') {
+      return slice_unchecked(name, i + 2, name.len()) + "";
+    }
+    i = i - 1;
+  }
+  return name;
+}
+
+// rescope_pattern renames an unqualified variant pattern to the member of the
+// scrutinee's enum that spells the same bare name, when it names another
+// enum's variant.
+function rescope_pattern(p: ast.Pattern, whole: typeinfo.Type, s: Scope): ast.Pattern {
+  if let ast.PatVariant(pv) = p {
+    if (variant_pattern_qualified(pv.type_name)) {
+      return p;
+    }
+    if let typeinfo.TypeUnion(u) = whole {
+      let members: string[] = enum_members(s, u.name, pv.type_name);
+      if (util.has_str(members, pv.type_name)) {
+        return p;
+      }
+      let bare: string = variant_bare_name(pv.type_name);
+      for v in members {
+        if (variant_bare_name(v) == bare) {
+          return ast.PatVariant { ...pv, type_name: v };
+        }
+      }
+    }
+  }
+  return p;
+}
+
+// enum_members is the variant names of enum `name`: its union signature's, or
+// for a built-in enum outside the table (IoError, JsonValue, Body) the
+// injected variant declarations it owns. The built-ins are read only for a
+// module-prefixed `variant`, the one spelling that can name another enum's.
+function enum_members(s: Scope, name: string, variant: string): string[] {
+  let us: UnionSig = s.lookup_union(name);
+  if (us.name.len() > 0) {
+    return us.variants;
+  }
+  let out: string[] = [];
+  if (variant_bare_name(variant).len() == variant.len()) {
+    return out;
+  }
+  for sd in parser.inject_builtin_enums([]) {
+    if (sd.enum_owner == name) {
+      out = out.append(sd.name);
+    }
+  }
+  return out;
+}
+
+struct RescopeScan { coll: string[], found: boolean }
+
+function rescope_at_stmt(st: ast.Stmt, own a: RescopeScan): RescopeScan {
+  if (a.found) {
+    return a;
+  }
+  if let ast.StmtMatch(m) = st {
+    for arm in m.arms {
+      if let ast.PatVariant(pv) = arm.pattern {
+        if (util.has_str(a.coll, variant_bare_name(pv.type_name))) {
+          return RescopeScan { ...a, found: true };
+        }
+      }
+    }
+  }
+  return a;
+}
+
+function rescope_at_expr(e: ast.Expr, own a: RescopeScan): RescopeScan {
+  return a;
+}
+
+// needs_pretype_or_rescope is needs_pretype, or a match arm whose variant name
+// is in `coll`.
+function needs_pretype_or_rescope(stmts: ast.Stmt[], coll: string[]): boolean {
+  if (needs_pretype(stmts)) {
+    return true;
+  }
+  if (coll.len() == 0) {
+    return false;
+  }
+  let a: RescopeScan = RescopeScan { coll: coll, found: false };
+  for stmt in stmts {
+    a = astwalk.fold_stmt_nodes(stmt, a, rescope_at_stmt, rescope_at_expr, astwalk.descend_all);
+  }
+  return a.found;
 }
 
 // needs_pretype reports whether a body holds anything pretype_module rewrites.
@@ -24552,11 +24690,12 @@ function use_typed(c: ast.ExprCall, s: Scope): ast.ExprCall {
 // slot spells. Runs ahead of the checker's own diagnostics and of lowering, so
 // both see one declaration.
 pub function pretype_module(mod: parser.Module): parser.Module {
-  if (needs_pretype(mod.top_stmts)) {
+  let coll: string[] = colliding_variant_names(mod);
+  if (needs_pretype_or_rescope(mod.top_stmts, coll)) {
     return pretype_module_in(mod, build_module_tables(mod));
   }
   for fd in mod.funcs {
-    if (needs_pretype(fd.body)) {
+    if (needs_pretype_or_rescope(fd.body, coll)) {
       return pretype_module_in(mod, build_module_tables(mod));
     }
   }
@@ -24565,11 +24704,12 @@ pub function pretype_module(mod: parser.Module): parser.Module {
 
 function pretype_module_in(mod: parser.Module, mt: ModuleTables): parser.Module {
   // Keep untouched functions and avoid rebuilding bodies with nothing to retype.
-  let top_hit: boolean = needs_pretype(mod.top_stmts);
+  let coll: string[] = colliding_variant_names(mod);
+  let top_hit: boolean = needs_pretype_or_rescope(mod.top_stmts, coll);
   let hits: boolean[] = [];
   let any: boolean = top_hit;
   for fn in mod.funcs {
-    let hit: boolean = needs_pretype(fn.body);
+    let hit: boolean = needs_pretype_or_rescope(fn.body, coll);
     hits = hits.append(hit);
     if (hit) {
       any = true;

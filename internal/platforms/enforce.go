@@ -231,6 +231,8 @@ var gatedBuiltins = map[string]string{
 	// filesystem nobody asked.
 	"getxattr":  "xattr",
 	"lgetxattr": "xattr",
+	"setxattr":  "xattr",
+	"lsetxattr": "xattr",
 	// Who OWNS an entry. A host can have files, directories and
 	// permission bits and still have no users to attach them to, which
 	// is what both WASI previews are: preview 1's `filestat` has no uid

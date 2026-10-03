@@ -95,6 +95,8 @@ var BuiltinCaps = map[string]string{
 	"read_link":        "fs",
 	"getxattr":         "fs",
 	"lgetxattr":        "fs",
+	"setxattr":         "fs",
+	"lsetxattr":        "fs",
 	"rename":           "fs",
 	"rename_noreplace": "fs",
 	"rename_exchange":  "fs",
