@@ -9429,7 +9429,8 @@ function emit_ir_op_map_read(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState)
   } else if (o.kind_tag == 133) {  // map_iter
     // m.iter() -> a two-slot array box [map_ptr@8, cursor@16] off the data
     // pointer, so it carries an rc header and the typed lowering's release
-    // (__fern_arr_dec) frees it.
+    // (__fern_arr_dec) frees it. map_ptr is the unit of the map the cursor
+    // took, which that release drops first.
     s = s.write("    movq $2, %rdi\n    call __fern_arr_box\n");
     s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    movq $0, 16(%rax)\n    pushq %rax\n");
   } else if (o.kind_tag == 134) {  // mapiter_has_next

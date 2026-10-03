@@ -497,9 +497,9 @@ function unit_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean, own v: Ve
   if let typeinfo.TypeDyn(_) = t {
     return v;
   }
-  // A map cursor's unit is its own block; what it reads stays the map's.
+  // A map cursor holds a unit of its map.
   if (semtypes.is_map_iter(t)) {
-    return v;
+    return unit_shape(semtypes.map_iter_map(t), f, lookup, v);
   }
   if let typeinfo.TypeArray(a) = t {
     return unit_shape(a.elem, f, lookup, v);
@@ -964,6 +964,8 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     counted = [true, false, ssasem.reference(f.values[ins.args[2]])];
   } else if (ins.kind_tag == ssasem.hole_fill()) {
     counted = [true, false, true];
+  } else if (ins.kind_tag == ssasem.map_iter()) {
+    counted = [true];
   } else if (string_append(f, ins)) {
     counted = [true, false];
   } else if (construction(ins.kind_tag)) {

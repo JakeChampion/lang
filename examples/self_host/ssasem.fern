@@ -3391,14 +3391,13 @@ function guard_error(f: Func): string {
 
 // The operations whose result reads its source's storage, so each borrows that
 // source exactly as a projection does. A widening, a narrowing and a string
-// retag hand back the same box. A map cursor is its own block, but a read
-// through it is a read of the map, so it anchors the map as a slice anchors its
-// source; its key and value reads are in turn projections of the cursor.
+// retag hand back the same box. A map cursor holds a unit of its map, so its
+// key and value reads are projections of the cursor.
 function projects(kind: i32): boolean {
   return kind == 7 || kind == array_get() || kind == tuple_get() || kind == record_get()
     || kind == variant_get() || kind == variant_up() || kind == variant_as()
     || kind == slice() || kind == arr_slice() || kind == str_as() || kind == array_lend() || kind == str_byte_view() || kind == dyn_up() || kind == dyn_as()
-    || kind == map_iter() || kind == mapiter_key() || kind == mapiter_value();
+    || kind == mapiter_key() || kind == mapiter_value();
 }
 
 // An address is the box's own slot read as an integer: it owns nothing and
