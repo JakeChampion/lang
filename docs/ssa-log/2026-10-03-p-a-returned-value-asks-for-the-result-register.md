@@ -23,7 +23,10 @@ they ran 97 M instructions on the compile of `checker.fern`.
 A value a block returns, when it asks for no register already, now asks
 for the register a call's result arrives in. A phi passes its ask to the
 operands it merges that ask for nothing, last block first, so both arms of
-a returned `if` compute into the result register. The ask is the same
+a returned `if` compute into the result register. That holds for any ask,
+not only the result register's: the arms of a phi passed as a call's
+second argument aim for that argument's register too, and the numbers
+below include both. The ask is the same
 `pref` that parameters and call arguments use: it is taken when the
 register is free and the value does not live across a call.
 
