@@ -335,3 +335,5 @@ memchr_bytes=356
 count_byte_bytes=357
 rmemchr_bytes=358
 mismatch_bytes=359
+scan_set_bytes=360
+count_runs_bytes=361

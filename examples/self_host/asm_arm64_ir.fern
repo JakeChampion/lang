@@ -678,7 +678,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(b_done + ":\n    str x1, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 327) {  // count_runs
+  if (o.kind_tag == 327 || o.kind_tag == 361) {  // count_runs / count_runs_bytes
     // operand stack [box, inside, set] (set on top) -> how many runs of
     // set members begin in the string. The set's length is at [set] and
     // its byte i in the 8-byte slot 8 + i*8; a byte past that length is
@@ -692,12 +692,20 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let c_done: string = clo3.name;
     s = clo3.state;
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    if (o.kind_tag == 361) {
+      s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
+    } else {
+      s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    }
     s = s.write("    cmp x1, #0\n    cset x9, eq\n");
     s = s.write("    mov x1, #0\n    mov x8, #0\n    ldr x4, [x2]\n");
     s = s.write(c_loop + ":\n");
     s = s.write("    cmp x1, x3\n    b.ge " + c_done + "\n");
-    s = s.write("    add x5, x0, x1\n    ldrb w6, [x5]\n");
+    if (o.kind_tag == 361 && !ir.is_packed(o)) {
+      s = s.write("    add x5, x0, x1, lsl #3\n    ldrb w6, [x5]\n");
+    } else {
+      s = s.write("    add x5, x0, x1\n    ldrb w6, [x5]\n");
+    }
     s = s.write("    mov x7, #1\n");
     s = s.write("    cmp x6, x4\n    b.hs " + c_flag + "\n");
     s = s.write(set_entry_load(o, "x2", "x6"));
@@ -708,7 +716,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(c_done + ":\n    str x8, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 324) {  // scan_set
+  if (o.kind_tag == 324 || o.kind_tag == 360) {  // scan_set / scan_set_bytes
     // operand stack [box, from, set] (set on top) -> the index of the
     // first byte at or after `from` whose set entry is nonzero, or the
     // LENGTH. Scalar: the table read per byte is the kernel. The set's
@@ -739,33 +747,43 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
       s = hl.state;
     }
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    if (o.kind_tag == 360) {
+      s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
+    } else {
+      s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    }
     s = s.write("    cmp x1, #0\n    b.ge " + s_from_ok + "\n    mov x1, #0\n");
     s = s.write(s_from_ok + ":\n    ldr x4, [x2]\n");
-    s = s.write("    cmp x4, #256\n    b.lo " + s_short + "\n");
-    // Full set: four bytes a turn on a cursor (x5, the end x8), then one
-    // at a time. A hit at byte k of the four steps the cursor k times
-    // before its offset is read.
-    s = s.write("    cmp x1, x3\n    b.ge " + s_end + "\n");
-    s = s.write("    add x5, x0, x1\n    add x8, x0, x3\n    sub x9, x8, #4\n    add x10, x2, #8\n");
-    s = s.write(s_loop + ":\n    cmp x5, x9\n    b.hi " + s_one + "\n");
-    let k: i32 = 0;
-    while (k < 4) {
-      s = s.write("    ldrb w6, [x5, #" + util.i32_to_string(k) + "]\n    " + set_entry_indexed(o) + "\n");
-      s = s.write("    cbnz x7, " + hits[k] + "\n");
-      k = k + 1;
+    if (o.kind_tag != 360 || ir.is_packed(o)) {
+      s = s.write("    cmp x4, #256\n    b.lo " + s_short + "\n");
+      // Full set: four bytes a turn on a cursor (x5, the end x8), then one
+      // at a time. A hit at byte k of the four steps the cursor k times
+      // before its offset is read.
+      s = s.write("    cmp x1, x3\n    b.ge " + s_end + "\n");
+      s = s.write("    add x5, x0, x1\n    add x8, x0, x3\n    sub x9, x8, #4\n    add x10, x2, #8\n");
+      s = s.write(s_loop + ":\n    cmp x5, x9\n    b.hi " + s_one + "\n");
+      let k: i32 = 0;
+      while (k < 4) {
+        s = s.write("    ldrb w6, [x5, #" + util.i32_to_string(k) + "]\n    " + set_entry_indexed(o) + "\n");
+        s = s.write("    cbnz x7, " + hits[k] + "\n");
+        k = k + 1;
+      }
+      s = s.write("    add x5, x5, #4\n    b " + s_loop + "\n");
+      s = s.write(s_one + ":\n    cmp x5, x8\n    b.hs " + s_end + "\n");
+      s = s.write("    ldrb w6, [x5]\n    " + set_entry_indexed(o) + "\n    cbnz x7, " + hits[0] + "\n");
+      s = s.write("    add x5, x5, #1\n    b " + s_one + "\n");
+      s = s.write(hits[3] + ":\n    add x5, x5, #1\n");
+      s = s.write(hits[2] + ":\n    add x5, x5, #1\n");
+      s = s.write(hits[1] + ":\n    add x5, x5, #1\n");
+      s = s.write(hits[0] + ":\n    sub x1, x5, x0\n    b " + s_hit + "\n");
     }
-    s = s.write("    add x5, x5, #4\n    b " + s_loop + "\n");
-    s = s.write(s_one + ":\n    cmp x5, x8\n    b.hs " + s_end + "\n");
-    s = s.write("    ldrb w6, [x5]\n    " + set_entry_indexed(o) + "\n    cbnz x7, " + hits[0] + "\n");
-    s = s.write("    add x5, x5, #1\n    b " + s_one + "\n");
-    s = s.write(hits[3] + ":\n    add x5, x5, #1\n");
-    s = s.write(hits[2] + ":\n    add x5, x5, #1\n");
-    s = s.write(hits[1] + ":\n    add x5, x5, #1\n");
-    s = s.write(hits[0] + ":\n    sub x1, x5, x0\n    b " + s_hit + "\n");
     s = s.write(s_short + ":\n");
     s = s.write("    cmp x1, x3\n    b.ge " + s_end + "\n");
-    s = s.write("    add x5, x0, x1\n    ldrb w6, [x5]\n");
+    if (o.kind_tag == 360 && !ir.is_packed(o)) {
+      s = s.write("    add x5, x0, x1, lsl #3\n    ldrb w6, [x5]\n");
+    } else {
+      s = s.write("    add x5, x0, x1\n    ldrb w6, [x5]\n");
+    }
     s = s.write("    cmp x6, x4\n    b.hs " + s_short_next + "\n");
     s = s.write(set_entry_load(o, "x2", "x6"));
     s = s.write("    cmp x7, #0\n    b.ne " + s_hit + "\n");

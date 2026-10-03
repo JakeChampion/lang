@@ -3873,6 +3873,56 @@ function call_count_byte_bytes(args: Value[]): Value {
   return v_err("__count_byte_bytes: first arg must be a byte array");
 }
 
+// Search or count membership while borrowing both byte arrays.
+function call_byte_set_scan(name: string, args: Value[]): Value {
+  if (args.len() != 3) {
+    return v_err(name + ": expected 3 args (bytes, flag, set)");
+  }
+  if (!is_i32_arg(args[1])) {
+    return v_err(name + ": flag must be an integer");
+  }
+  match (args[0]) {
+    VArr(a) => {
+      match (args[2]) {
+        VArr(set) => {
+          let scan = name == "__scan_set_bytes";
+          let at = 0;
+          let prev = vint_bits(args[1]) != 0;
+          let runs = 0;
+          if (scan) {
+            at = vint_bits(args[1]);
+            if (at < 0) {
+              at = 0;
+            }
+          }
+          while (at < a.elements.len()) {
+            let b = vint_bits(a.elements[at]);
+            let member = b >= 0 && b < set.elements.len() && vint_bits(set.elements[b]) != 0;
+            if (scan && member) {
+              return v_int(at);
+            }
+            if (member && !prev) {
+              runs = runs + 1;
+            }
+            prev = member;
+            at = at + 1;
+          }
+          if (scan) {
+            return v_int(a.elements.len());
+          }
+          return v_int(runs);
+        },
+        _ => {
+          return v_err(name + ": set must be a byte array");
+        }
+      }
+    },
+    _ => {
+      return v_err(name + ": first arg must be a byte array");
+    }
+  }
+}
+
 // Compare borrowed byte ranges after clamping offsets and remaining lengths.
 function call_mismatch_bytes(args: Value[]): Value {
   if (args.len() != 5) {
@@ -4365,6 +4415,9 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   }
   if (name == "__rmemchr_bytes") {
     return call_rmemchr_bytes(args);
+  }
+  if (name == "__scan_set_bytes" || name == "__count_runs_bytes") {
+    return call_byte_set_scan(name, args);
   }
   if (name == "__mismatch_bytes") {
     return call_mismatch_bytes(args);

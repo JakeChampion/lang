@@ -94,6 +94,18 @@ function main(): i32 { return 0; }`
 	}
 }
 
+func TestByteSetScanArgsAreCounted(t *testing.T) {
+	for _, builtin := range []string{"__scan_set_bytes", "__count_runs_bytes"} {
+		t.Run(builtin, func(t *testing.T) {
+			src := "function scan(bytes: u8[], set: u8[]): i32 { return " + builtin + "(bytes, 0, set); }\nfunction main(): i32 { return 0; }"
+			got := paramCountedFor(t, src, "scan")
+			if len(got) != 2 || !got[0] || !got[1] {
+				t.Fatalf("paramCountedRetain[scan] = %v, want [true true]: scanning borrows input and table", got)
+			}
+		})
+	}
+}
+
 func TestCopyingBuiltinByteRangeArgIsCounted(t *testing.T) {
 	src := `function eat(p: u8[]): i32 {
     let b: usize = buf_new(1);

@@ -1224,6 +1224,84 @@ func New() *Interp {
 		}
 		return Number(runs), nil
 	}}
+	i.Builtins["__count_runs_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("__count_runs_bytes: expected 3 args, got %d", len(args))
+		}
+		s, ok := args[0].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__count_runs_bytes: expected a byte array, got %T", args[0])
+		}
+		inside, ok := args[1].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__count_runs_bytes: expected an integer flag, got %T", args[1])
+		}
+		set, ok := args[2].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__count_runs_bytes: expected a u8[] set, got %T", args[2])
+		}
+		prev := int64(inside) != 0
+		runs := 0
+		for idx, value := range s.E {
+			n, ok := value.(Number)
+			if !ok {
+				return nil, fmt.Errorf("__count_runs_bytes: element %d is %T, not u8", idx, value)
+			}
+			c := uint8(n)
+			member := false
+			if int(c) < len(set.E) {
+				e, ok := set.E[c].(Number)
+				if !ok {
+					return nil, fmt.Errorf("__count_runs_bytes: set element %d is %T, not a byte", c, set.E[c])
+				}
+				member = int64(e) != 0
+			}
+			if member && !prev {
+				runs++
+			}
+			prev = member
+		}
+		return Number(runs), nil
+	}}
+	i.Builtins["__scan_set_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("__scan_set_bytes: expected 3 args, got %d", len(args))
+		}
+		s, ok := args[0].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__scan_set_bytes: expected a byte array, got %T", args[0])
+		}
+		fn, ok := args[1].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__scan_set_bytes: expected an integer start, got %T", args[1])
+		}
+		set, ok := args[2].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__scan_set_bytes: expected a u8[] set, got %T", args[2])
+		}
+		from := int(int64(fn))
+		if from < 0 {
+			from = 0
+		}
+		for idx := from; idx < len(s.E); idx++ {
+			n, ok := s.E[idx].(Number)
+			if !ok {
+				return nil, fmt.Errorf("__scan_set_bytes: element %d is %T, not u8", idx, s.E[idx])
+			}
+			c := int(uint8(n))
+			if c >= len(set.E) {
+				continue
+			}
+			e, ok := set.E[c].(Number)
+			if !ok {
+				return nil, fmt.Errorf("__scan_set_bytes: set element %d is %T, not a byte", c, set.E[c])
+			}
+			if int64(e) != 0 {
+				return Number(idx), nil
+			}
+		}
+		return Number(len(s.E)), nil
+	}}
 	i.Builtins["__scan_set"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("__scan_set: expected 3 args, got %d", len(args))

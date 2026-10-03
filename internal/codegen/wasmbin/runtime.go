@@ -351,24 +351,30 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					if op.Str == "__fern_count_byte_bytes" {
 						needs.add("__fern_count_byte_bytes")
 					}
-				case "__fern_scan_set":
+				case "__fern_scan_set", "__fern_scan_set_bytes":
 					// The byte-set scan. Scalar, and it reads every
 					// byte through str_byte for the same reason.
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_scan_set")
+					if op.Str == "__fern_scan_set_bytes" {
+						needs.add("__fern_scan_set_bytes")
+					}
 				case "__fern_bsd_sum":
 					// The BSD checksum. Scalar, reading every byte through
 					// str_byte as the byte tally does.
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_bsd_sum")
-				case "__fern_count_runs":
+				case "__fern_count_runs", "__fern_count_runs_bytes":
 					// The run count. Scalar, reading every byte through
 					// str_byte as the byte-set scan does.
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_count_runs")
+					if op.Str == "__fern_count_runs_bytes" {
+						needs.add("__fern_count_runs_bytes")
+					}
 				case "__fern_sum_bytes":
 					// The byte-sum reduction. Scalar, and it reads
 					// every byte through str_byte for the same reason
@@ -1747,6 +1753,16 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildMemchrBytesBody,
+	},
+	"__fern_scan_set_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildScanSetBytesBody,
+	},
+	"__fern_count_runs_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildCountRunsBytesBody,
 	},
 	"__fern_rmemchr_bytes": {
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
@@ -7049,6 +7065,32 @@ func buildRmemchrBytesBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstCall(body, idxs["__fern_rmemchr"])
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+func buildCountRunsBytesBody(idxs map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, idxs["__fern_count_runs"])
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+func buildScanSetBytesBody(idxs map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, idxs["__fern_scan_set"])
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 

@@ -15616,15 +15616,21 @@ func (b *builder) callBody(n *ast.Call) error {
 	}
 	// __scan_set(s, from, set) — the same runtime-helper-call shape, with a
 	// u8[] third operand: one pointer slot everywhere, the string one or two.
-	if id.Name == "__scan_set" && len(n.Args) == 3 {
+	if (id.Name == "__scan_set" || id.Name == "__scan_set_bytes") && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
 			for _, a := range n.Args {
 				if err := b.expr(a); err != nil {
 					return err
 				}
 			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_scan_set", Width: ResNarrow, I32: 3,
-				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
+			var operand ast.Type = ast.StringType{}
+			helper := "__fern_scan_set"
+			if id.Name == "__scan_set_bytes" {
+				operand = ast.ArrayType{Elem: ast.NumberType{Width: 8}}
+				helper = "__fern_scan_set_bytes"
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: helper, Width: ResNarrow, I32: 3,
+				Ext: &OpExt{ArgTypes: []ast.Type{operand, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
 			return nil
 		}
 	}
@@ -15642,15 +15648,21 @@ func (b *builder) callBody(n *ast.Call) error {
 		}
 	}
 	// __count_runs(s, inside, set) — __scan_set's operand shape.
-	if id.Name == "__count_runs" && len(n.Args) == 3 {
+	if (id.Name == "__count_runs" || id.Name == "__count_runs_bytes") && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
 			for _, a := range n.Args {
 				if err := b.expr(a); err != nil {
 					return err
 				}
 			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_count_runs", Width: ResNarrow, I32: 3,
-				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
+			var operand ast.Type = ast.StringType{}
+			helper := "__fern_count_runs"
+			if id.Name == "__count_runs_bytes" {
+				operand = ast.ArrayType{Elem: ast.NumberType{Width: 8}}
+				helper = "__fern_count_runs_bytes"
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: helper, Width: ResNarrow, I32: 3,
+				Ext: &OpExt{ArgTypes: []ast.Type{operand, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}})
 			return nil
 		}
 	}

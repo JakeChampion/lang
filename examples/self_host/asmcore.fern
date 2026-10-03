@@ -6925,10 +6925,10 @@ function builtin_i32_names(): string[] {
     // __scan_set(s, from, set): the index of the first byte at or
     // after `from` whose entry in the u8[] `set` is nonzero, or the
     // LENGTH. i32 for ascii_run's reason.
-    "__scan_set",
+    "__scan_set", "__scan_set_bytes",
     // __count_runs(s, inside, set): how many runs of `set` members
     // begin in s. i32 for ascii_run's reason.
-    "__count_runs",
+    "__count_runs", "__count_runs_bytes",
     // __bsd_sum(s, sum): the BSD checksum continued over s.
     "__bsd_sum",
     // __rmemchr(s, byte, from): the index of the LAST `byte` at

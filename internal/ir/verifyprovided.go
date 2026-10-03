@@ -74,6 +74,8 @@ var providedSigs = map[string]providedSig{
 	"__clz64":                          {-1, rWord},
 	"__cos_f64":                        {-1, rFloat},
 	"__count_byte":                     {-1, rWord},
+	"__scan_set_bytes":                 {-1, rWord},
+	"__count_runs_bytes":               {-1, rWord},
 	"__scan_set":                       {-1, rWord},
 	"__count_runs":                     {-1, rWord},
 	"__bsd_sum":                        {-1, rWord},

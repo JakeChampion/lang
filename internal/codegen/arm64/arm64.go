@@ -5006,6 +5006,14 @@ func (g *generator) emitRmemchrRuntime() {
 // byte value; a shorter set takes the loop that checks each byte against
 // its length first.
 func (g *generator) emitScanSetRuntime() {
+	if g.usesScanSetBytes {
+		g.line(".global __fern_scan_set_bytes")
+		g.label("__fern_scan_set_bytes")
+		g.emit("mov x3, x2")
+		g.emit("mov w2, w1")
+		g.emit("ldur w1, [x0, #-4]")
+		g.emit("b __fern_scan_set")
+	}
 	g.line("")
 	g.line(".global __fern_scan_set")
 	g.typeDirective("__fern_scan_set")
@@ -5121,6 +5129,14 @@ func (g *generator) emitBsdSumRuntime() {
 // set's end is not a member. It keeps "not a member" as 0 or 1, and a run
 // begins where that drops from 1 to 0.
 func (g *generator) emitCountRunsRuntime() {
+	if g.usesCountRunsBytes {
+		g.line(".global __fern_count_runs_bytes")
+		g.label("__fern_count_runs_bytes")
+		g.emit("mov x3, x2")
+		g.emit("mov w2, w1")
+		g.emit("ldur w1, [x0, #-4]")
+		g.emit("b __fern_count_runs")
+	}
 	g.line("")
 	g.line(".global __fern_count_runs")
 	g.typeDirective("__fern_count_runs")
@@ -15633,9 +15649,11 @@ type generator struct {
 	// usesCountByte gates the byte-tally kernel (__fern_count_byte).
 	usesCountByte bool
 	// usesScanSet gates the byte-set scan kernel (__fern_scan_set).
-	usesScanSet bool
+	usesScanSet      bool
+	usesScanSetBytes bool
 	// usesCountRuns gates the run-count kernel (__fern_count_runs).
-	usesCountRuns bool
+	usesCountRuns      bool
+	usesCountRunsBytes bool
 	// usesBsdSum gates the BSD checksum kernel (__fern_bsd_sum).
 	usesBsdSum bool
 	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
@@ -20351,8 +20369,14 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesCountByte = true
 		case "__fern_count_byte":
 			g.usesCountByte = true
+		case "__fern_scan_set_bytes":
+			g.usesScanSetBytes = true
+			g.usesScanSet = true
 		case "__fern_scan_set":
 			g.usesScanSet = true
+		case "__fern_count_runs_bytes":
+			g.usesCountRunsBytes = true
+			g.usesCountRuns = true
 		case "__fern_count_runs":
 			g.usesCountRuns = true
 		case "__fern_bsd_sum":

@@ -1526,6 +1526,8 @@ var copyingBuiltinArgs = map[string][]int{
 	"__mismatch_bytes": {0, 2},
 	// __scan_set and __count_runs read their string and their set and
 	// return a scalar.
+	"__scan_set_bytes":    {0, 2},
+	"__count_runs_bytes":  {0, 2},
 	"__scan_set":          {0, 2},
 	"__count_runs":        {0, 2},
 	"__bsd_sum":           {0},

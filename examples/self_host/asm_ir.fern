@@ -5881,7 +5881,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.need("heap");
     return s;
   }
-  if (o.kind_tag == 324) {  // scan_set
+  if (o.kind_tag == 324 || o.kind_tag == 360) {  // scan_set / scan_set_bytes
     // operand stack [box, from, set] (set on top) -> the index of the
     // first byte at or after `from` whose set entry is nonzero, or the
     // LENGTH. Scalar: the table read per byte is the kernel. The set's
@@ -5912,34 +5912,44 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
       s = hl.state;
     }
     s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
-    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    if (o.kind_tag == 360) {
+      s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
+    } else {
+      s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    }
     s = s.write("    testq %rcx, %rcx\n    jns " + s_from_ok + "\n    xorq %rcx, %rcx\n");
     s = s.write(s_from_ok + ":\n    movq (%rdx), %r9\n");
-    s = s.write("    cmpq $256, %r9\n    jb " + s_short + "\n");
-    // Full set: four bytes a turn on a cursor (r10, the end r11), then
-    // one at a time. A hit at byte k of the four steps the cursor k times
-    // before its offset is read.
-    s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
-    s = s.write("    leaq (%rax,%rcx), %r10\n    leaq (%rax,%r8), %r11\n    leaq -4(%r11), %rcx\n");
-    s = s.write(s_loop + ":\n    cmpq %rcx, %r10\n    ja " + s_one + "\n");
-    let k: i32 = 0;
-    while (k < 4) {
-      s = s.write("    movzbq " + util.i32_to_string(k) + "(%r10), %r9\n");
-      s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[k] + "\n");
-      k = k + 1;
+    if (o.kind_tag != 360 || ir.is_packed(o)) {
+      s = s.write("    cmpq $256, %r9\n    jb " + s_short + "\n");
+      // Full set: four bytes a turn on a cursor (r10, the end r11), then
+      // one at a time. A hit at byte k of the four steps the cursor k times
+      // before its offset is read.
+      s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
+      s = s.write("    leaq (%rax,%rcx), %r10\n    leaq (%rax,%r8), %r11\n    leaq -4(%r11), %rcx\n");
+      s = s.write(s_loop + ":\n    cmpq %rcx, %r10\n    ja " + s_one + "\n");
+      let k: i32 = 0;
+      while (k < 4) {
+        s = s.write("    movzbq " + util.i32_to_string(k) + "(%r10), %r9\n");
+        s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[k] + "\n");
+        k = k + 1;
+      }
+      s = s.write("    addq $4, %r10\n    jmp " + s_loop + "\n");
+      s = s.write(s_one + ":\n    cmpq %r11, %r10\n    jae " + s_end + "\n");
+      s = s.write("    movzbq (%r10), %r9\n");
+      s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[0] + "\n");
+      s = s.write("    addq $1, %r10\n    jmp " + s_one + "\n");
+      s = s.write(hits[3] + ":\n    addq $1, %r10\n");
+      s = s.write(hits[2] + ":\n    addq $1, %r10\n");
+      s = s.write(hits[1] + ":\n    addq $1, %r10\n");
+      s = s.write(hits[0] + ":\n    subq %rax, %r10\n    pushq %r10\n    jmp " + s_done + "\n");
     }
-    s = s.write("    addq $4, %r10\n    jmp " + s_loop + "\n");
-    s = s.write(s_one + ":\n    cmpq %r11, %r10\n    jae " + s_end + "\n");
-    s = s.write("    movzbq (%r10), %r9\n");
-    s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[0] + "\n");
-    s = s.write("    addq $1, %r10\n    jmp " + s_one + "\n");
-    s = s.write(hits[3] + ":\n    addq $1, %r10\n");
-    s = s.write(hits[2] + ":\n    addq $1, %r10\n");
-    s = s.write(hits[1] + ":\n    addq $1, %r10\n");
-    s = s.write(hits[0] + ":\n    subq %rax, %r10\n    pushq %r10\n    jmp " + s_done + "\n");
     s = s.write(s_short + ":\n");
     s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
-    s = s.write("    movzbq (%rax,%rcx), %r10\n");
+    if (o.kind_tag == 360 && !ir.is_packed(o)) {
+      s = s.write("    movzbq (%rax,%rcx,8), %r10\n");
+    } else {
+      s = s.write("    movzbq (%rax,%rcx), %r10\n");
+    }
     s = s.write("    cmpq %r9, %r10\n    jae " + s_short_next + "\n");
     s = s.write("    " + set_entry_test(o, "%r10") + "\n    jne " + s_hit + "\n");
     s = s.write(s_short_next + ":\n    addq $1, %rcx\n    jmp " + s_short + "\n");
@@ -5967,7 +5977,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(b_done + ":\n    movzwq %cx, %rcx\n    pushq %rcx\n");
     return s;
   }
-  if (o.kind_tag == 327) {  // count_runs
+  if (o.kind_tag == 327 || o.kind_tag == 361) {  // count_runs / count_runs_bytes
     // operand stack [box, inside, set] (set on top) -> how many runs of
     // set members begin in the string. The set's length is at (set) and
     // its byte i in the 8-byte slot 8 + i*8; a byte past that length is
@@ -5982,12 +5992,20 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let c_done: string = clo3.name;
     s = clo3.state;
     s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
-    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    if (o.kind_tag == 361) {
+      s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
+    } else {
+      s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    }
     s = s.write("    xorq %r9, %r9\n    testq %rcx, %rcx\n    sete %r9b\n");
     s = s.write("    xorq %r11, %r11\n    xorq %rcx, %rcx\n    movq (%rdx), %rsi\n");
     s = s.write(c_loop + ":\n");
     s = s.write("    cmpq %r8, %rcx\n    jge " + c_done + "\n");
-    s = s.write("    movzbq (%rax,%rcx), %r10\n");
+    if (o.kind_tag == 361 && !ir.is_packed(o)) {
+      s = s.write("    movzbq (%rax,%rcx,8), %r10\n");
+    } else {
+      s = s.write("    movzbq (%rax,%rcx), %r10\n");
+    }
     s = s.write("    movq $1, %rdi\n");
     s = s.write("    cmpq %rsi, %r10\n    jae " + c_flag + "\n");
     s = s.write("    " + set_entry_test(o, "%r10") + "\n    sete %dil\n");
