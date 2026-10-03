@@ -4359,6 +4359,25 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_arr_push:\n");
     s = s.write(arr_push_fast(".Larr_push_slow"));
     s = s.write(".Larr_push_slow:\n");
+    // An empty receiver with no capacity, the common first append, grows to
+    // four slots with nothing to copy, so it needs no frame. A static
+    // literal can hold elements at cap 0, hence the length test too. The
+    // debug build keeps the frame path, whose rc read checks for poison, and
+    // so does a traced one, which names allocation sites by the frame chain.
+    if (!s.rc_free_debug && !hev_on()) {
+      s = s.write("    cmpq $0, (%rdi)\n");
+      s = s.write("    jne .Larr_push_frame\n");
+      s = s.write("    cmpq $0, -16(%rdi)\n");
+      s = s.write("    jne .Larr_push_frame\n");
+      s = s.write("    pushq %rsi\n");  // the value, and 16-byte alignment for the call
+      s = s.write("    movl $4, %edi\n");
+      s = s.write("    call __fern_arr_box\n");
+      s = s.write("    popq %rsi\n");
+      s = s.write("    movq $1, (%rax)\n");
+      s = s.write("    movq %rsi, 8(%rax)\n");
+      s = s.write("    ret\n");
+    }
+    s = s.write(".Larr_push_frame:\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     s = s.write("    pushq %r12\n");
