@@ -6220,6 +6220,12 @@ function operator_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo
 }
 
 function check_unary_expr(u: ast.ExprUnary, s: Scope): typeinfo.Type {
+  // `-2147483648` is i32-min, though its operand alone has no i32 reading.
+  if (u.op == "-" && unsettled_int_literal(ast.ExprUnary { ...u })) {
+    if let ast.ExprNumber(_) = u.operand {
+      return t_i32();
+    }
+  }
   return unary_result_type(u, check_expr(u.operand, s), s);
 }
 
@@ -24429,6 +24435,11 @@ struct LitRewrite { keys: string[], tags: string[], cargs: string[], ctags: stri
 
 const LIT_MARK: string = "literal local #";
 
+// LIT_WIDE is the class every wide literal in an untyped tree belongs to, fixed
+// at i64: linked with no destination the tree defaults to i64, and a
+// destination still fixes the tree's open locals at its own width.
+const LIT_WIDE: i32 = 0;
+
 // A literal local is bound in the inference scope under a marker type naming
 // its class, so the checker's own scoping decides which declaration a name
 // reads.
@@ -24542,7 +24553,13 @@ function lit_struct_field_class(fa: ast.ExprFieldAccess, s: Scope): i32 {
 function lit_tree(e: ast.Expr, s: Scope, ids: i32[]): (boolean, i32[]) {
   match (e) {
     ast.ExprNumber(_) => {
-      return (unsettled_int_literal(e), ids);
+      if (unsettled_int_literal(e)) {
+        return (true, ids);
+      }
+      if (int_literal_tree(e)) {
+        return (true, ids.append(LIT_WIDE));
+      }
+      return (false, ids);
     },
     ast.ExprIdent(id) => {
       let k: i32 = lit_id(s.lookup(id.name));
@@ -24560,6 +24577,9 @@ function lit_tree(e: ast.Expr, s: Scope, ids: i32[]): (boolean, i32[]) {
     },
     ast.ExprUnary(u) => {
       if (u.op == "-" || u.op == "+") {
+        if (unsettled_int_literal(e)) {
+          return (true, ids);
+        }
         return lit_tree(u.operand, s, ids);
       }
       return (false, ids);
@@ -25832,7 +25852,7 @@ function lit_resolve_pending(st: LitInfer): LitInfer {
 }
 
 function settle_lit_body(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
-  let st: LitInfer = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [], width: [], keys: [], cargs: [], ctags: [], pend: [], pend_id: [], pend_scope: [], skeys: [], snames: [], sfirst: [], sargs: [], sids: [], wkeys: [], wtags: [] }));
+  let st: LitInfer = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [LIT_WIDE], width: [t_i64()], keys: [""], cargs: [], ctags: [], pend: [], pend_id: [], pend_scope: [], skeys: [], snames: [], sfirst: [], sargs: [], sids: [], wkeys: [], wtags: [] }));
   let rw: LitRewrite = lit_rewrites(st);
   if (rw.keys.len() == 0 && rw.cargs.len() == 0) {
     return stmts;
