@@ -133,9 +133,9 @@ still need their own classifications.
 | wasm32-wasi | E066: the target has no `syscall` capability | rejected by the self-host wasm drivers |
 | interp | never reached: refused with the target, not at run time | — |
 
-`FERN_SANDBOX=1` on x86-64 records a floor call whose number is a literal
-like any other syscall, and refuses a program whose number is a run-time
-operand, which the seccomp allowlist cannot cover.
+`FERN_SANDBOX=1` on x86-64, on both compilers, records a floor call whose
+number is a literal like any other syscall, and refuses a program whose
+number is a run-time operand, which the seccomp allowlist cannot cover.
 
 On the Go compiler `tcp_listen`, `tcp_listen_with`, `tcp_connect`,
 `tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`,

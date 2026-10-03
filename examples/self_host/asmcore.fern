@@ -168,6 +168,49 @@ pub struct EmitState {
   // rc_free_debug_on(), read once here: the SSA emitters test it at every
   // rc primitive and call, and an environment walk per instruction showed.
   rc_free_debug: boolean,
+  // syscalls: every syscall number an emitted x86-64 `syscall` issues, in
+  // ascending order: the seccomp sandbox's allowlist (sandbox_on). Every `syscall` is written by
+  // `s.syscall(nr)` or `s.raw_syscall(callee)`, so the set is exact.
+  syscalls: i32[],
+  // raw_syscall names the first `__syscall3` … `__syscall6` whose number is
+  // a run-time value, which no allowlist can hold; "" when there is none.
+  raw_syscall: string,
+}
+
+// syscall writes an x86-64 `syscall` that issues `nr`, already in %rax, and
+// records nr in the sandbox allowlist, which it keeps sorted.
+pub function (s: EmitState) syscall(nr: i32): EmitState {
+  let t: EmitState = s.write("    syscall\n");
+  let at: i32 = 0;
+  while (at < t.syscalls.len() && t.syscalls[at] < nr) {
+    at = at + 1;
+  }
+  if (at < t.syscalls.len() && t.syscalls[at] == nr) {
+    return t;
+  }
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < t.syscalls.len()) {
+    if (i == at) {
+      out = out.append(nr);
+    }
+    out = out.append(t.syscalls[i]);
+    i = i + 1;
+  }
+  if (at == t.syscalls.len()) {
+    out = out.append(nr);
+  }
+  return EmitState { ...t, syscalls: out };
+}
+
+// raw_syscall writes a `syscall` whose number is a run-time value, for
+// `callee` (`__syscall3` …), which the sandbox refuses.
+pub function (s: EmitState) raw_syscall(callee: string): EmitState {
+  let t: EmitState = s.write("    syscall\n");
+  if (t.raw_syscall != "") {
+    return t;
+  }
+  return EmitState { ...t, raw_syscall: callee };
 }
 
 pub function (s: EmitState) has_named(name: string): boolean {
@@ -286,6 +329,8 @@ pub function new_state(): EmitState {
     rt_lower: no_rt_lower,
     named: [],
     rc_free_debug: rc_free_debug_on(),
+    syscalls: [],
+    raw_syscall: "",
   };
 }
 
@@ -302,6 +347,21 @@ pub function sanitize_on(): boolean {
   match (env("FERN_SANITIZE")) {
     Some(_) => {
       return true;
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+// sandbox_on reports whether FERN_SANDBOX=1 asks for the seccomp-bpf filter
+// (#6071): an x86-64 Linux program installs, at `_start`, a filter allowing
+// exactly the syscalls its emitted code issues and killing the process on any
+// other. The self-host port of ast.SandboxEnabled.
+pub function sandbox_on(): boolean {
+  match (env("FERN_SANDBOX")) {
+    Some(v) => {
+      return v == "1";
     },
     None => {
       return false;

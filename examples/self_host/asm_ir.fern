@@ -1101,7 +1101,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lhev_w:\n");
   s = s.write("    movq $2, %rdi\n");
   s = s.write("    movq $1, %rax\n");
-  s = s.write("    syscall\n");
+  s = s.syscall(1);
   s = s.write("    ret\n");
   if (rc_trace_on()) {
     // .Lhev_hex(%rdi = value): 16 hex digits, most-significant first, built
@@ -1248,7 +1248,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
       s = s.write("    leaq .Lsan_df(%rip), %rsi\n");
       s = s.write("    movq $46, %rdx\n");
       s = s.write("    call .Lhev_w\n");
-      s = s.write(san_report_exit());
+      s = san_report_exit(s);
     }
   }
   return s;
@@ -1283,8 +1283,8 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $61, %rdx\n");
   s = s.write("    movq $2, %rdi\n");
   s = s.write("    movq $1, %rax\n");
-  s = s.write("    syscall\n");
-  s = s.write(san_report_exit());
+  s = s.syscall(1);
+  s = san_report_exit(s);
   if (asmcore.backtrace_on()) {
     s = emit_bt_exit(s);
   }
@@ -1293,11 +1293,11 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
 
 // san_report_exit ends a sanitizer report: exit 124, through the backtrace
 // walk unless FERN_BACKTRACE=0.
-function san_report_exit(): string {
+function san_report_exit(s: asmcore.EmitState): asmcore.EmitState {
   if (asmcore.backtrace_on()) {
-    return "    movq $124, %r15\n    jmp __fern_bt_exit\n";
+    return s.write("    movq $124, %r15\n    jmp __fern_bt_exit\n");
   }
-  return "    movq $124, %rdi\n    movq $60, %rax\n    syscall\n";
+  return s.write("    movq $124, %rdi\n    movq $60, %rax\n").syscall(60);
 }
 
 // emit_bt_exit emits __fern_bt_exit: "backtrace:" and then each return
@@ -1319,7 +1319,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $11, %rdx\n");
   s = s.write("    movq $2, %rdi\n");
   s = s.write("    movq $1, %rax\n");
-  s = s.write("    syscall\n");
+  s = s.syscall(1);
   s = s.write("    movq %rbp, %rbx\n");
   s = s.write("    movl $64, %r14d\n");
   s = s.write(".Lbt_loop:\n");
@@ -1340,7 +1340,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lbt_done:\n");
   s = s.write("    movq %r15, %rdi\n");
   s = s.write("    movq $60, %rax\n");
-  s = s.write("    syscall\n");
+  s = s.syscall(60);
   // .Lbt_hex(%rsi = value): one "  0x<16 hex>\n" line on stderr, nibbles
   // written right to left.
   s = s.write(".Lbt_hex:\n");
@@ -1371,7 +1371,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $2, %rdi\n");
   s = s.write("    movq %rsp, %rsi\n");
   s = s.write("    movq $21, %rdx\n");
-  s = s.write("    syscall\n");
+  s = s.syscall(1);
   s = s.write("    addq $32, %rsp\n");
   s = s.write("    ret\n");
   return s;
@@ -2870,7 +2870,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $-1, %r8\n");  // fd
   s = s.write("    xorl %r9d, %r9d\n");  // offset
   s = s.write("    movl $9, %eax\n");  // __NR_mmap
-  s = s.write("    syscall\n");
+  s = s.syscall(9);
   s = s.write("    cmpq $0, %rax\n");  // mmap returns -errno on failure
   s = s.write("    jl .Lalloc_oom\n");
   s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
@@ -2900,7 +2900,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // trap could not be told apart from the kernel OOM-killer. Opposite causes,
   // opposite fixes. Lockstep with the native backends' ExitArenaExhausted.
   s = s.write("    movq $125, %rdi\n");
-  s = s.write("    syscall\n");
+  s = s.syscall(60);
   // __fern_oob_abort — shared out-of-bounds trap for arr_get / arr_set.
   // Aborts with exit 134, matching the native backends + docs/ARRAY-BOUNDS.md
   // ("an out-of-bounds index aborts before producing a value; never returns a
@@ -2909,7 +2909,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_oob_abort:\n");
   s = s.write("    movq $60, %rax\n");
   s = s.write("    movq $134, %rdi\n");
-  s = s.write("    syscall\n");
+  s = s.syscall(60);
   // __fern_alloc_size_abort — a raw_alloc or __alloc_u8 size that is negative
   // as an i32, which is how a helper's `la + lb` looks once it wraps past 2 GiB. The
   // message and exit 134 match the native backends' allocation-size abort.
@@ -2921,10 +2921,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $2, %rdi\n");
   s = s.write("    leaq .Lalloc_size_msg(%rip), %rsi\n");
   s = s.write("    movq $35, %rdx\n");
-  s = s.write("    syscall\n");
+  s = s.syscall(1);
   s = s.write("    movq $60, %rax\n");
   s = s.write("    movq $134, %rdi\n");
-  s = s.write("    syscall\n");
+  s = s.syscall(60);
   // __fern_arr_box(%rdi = cap element count) -> %rax = data ptr (base+16).
   // base = [cap, rc=1, len=cap, e0..]; element i at data+(i+1)*8.
   s = s.write("__fern_arr_box:\n");
@@ -7451,8 +7451,9 @@ function ssa_host_kind(op: string): boolean {
 
 // ssa_host_call emits the host-floor ops as the stack machine's arms do. A
 // syscall pushes its operands and then runs the flat arm's pop sequence, so
-// no allocatable register is written before every operand has been read.
-function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+// no allocatable register is written before every operand has been read; its
+// number is recorded for the sandbox when `imm` knows it as a constant.
+function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   if (util.str_has_prefix(ins.str, "syscall")) {
     let i: i32 = 0;
@@ -7466,7 +7467,13 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
       s = s.write("    popq " + regs[a] + "\n");
       a = a - 1;
     }
-    s = s.write("    popq %rax\n    syscall\n");
+    s = s.write("    popq %rax\n");
+    let nr: i32 = ins.args[0];
+    if (imm.konst[nr]) {
+      s = s.syscall(imm.value[nr] as i32);
+    } else {
+      s = s.raw_syscall("__" + ins.str);
+    }
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
   }
   if (ins.str == "exit") {
@@ -7474,7 +7481,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
     if (leak_check_on()) {
       s = s.write("    pushq %r11\n    call __fern_lc_report\n    popq %r11\n");
     }
-    s = s.write("    movq %r11, %rdi\n    movq $60, %rax\n    syscall\n    xorl %eax, %eax\n");
+    s = s.write("    movq %r11, %rdi\n    movq $60, %rax\n").syscall(60).write("    xorl %eax, %eax\n");
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
   }
   s = s.need("heap");
@@ -8140,7 +8147,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     return ssa_fcall(ins, reg_of, s);
   }
   if (k == 50 && ssa_host_kind(ins.str)) {
-    return ssa_host_call(ins, reg_of, s);
+    return ssa_host_call(ins, reg_of, fr.imm, s);
   }
   if (ssa_is_rt_call(ins)) {
     return ssa_rt_call(ins, reg_of, lp, s);
@@ -10185,7 +10192,7 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, l
   }
   // No arm matched. Unreachable for a well-typed dyn value, so abort
   // (exit 134, like __fern_oob_abort) rather than answer 0.
-  s = s.write("    movq $60, %rax\n    movq $134, %rdi\n    syscall\n");
+  s = s.write("    movq $60, %rax\n    movq $134, %rdi\n").syscall(60);
   s = s.write(dend + ":\n");
   return s;
 }
@@ -11007,6 +11014,13 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     exit(1);
     return "";
   }
+  // A unit cannot see the syscalls its sibling units issue, so only the
+  // whole-program emit can derive the sandbox's allowlist.
+  if (globl_defs && asmcore.sandbox_on()) {
+    eprint("fern: FERN_SANDBOX=1 needs the whole-program emit; a per-module unit cannot see its siblings' syscalls");
+    exit(1);
+    return "";
+  }
   if (is_entry) {
     s = s.write("    .globl _start\n");
   }
@@ -11076,6 +11090,11 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // non-entry library module exposes its `__fn_*` definitions and nothing else.
   if (is_entry) {
     s = s.write("_start:\n");
+    // The sandbox is installed before anything else runs, so the filter
+    // covers the whole program, the arena mmap included.
+    if (asmcore.sandbox_on()) {
+      s = s.write("    call __fern_seccomp_install\n");
+    }
     // args() reads __fern_argc / __fern_argv; save them from the initial stack
     // (the kernel puts argc at the top of the stack on entry) BEFORE any push.
     // Matches asm.fern's _start. Gated on the args need so a non-args program
@@ -11127,7 +11146,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
       s = s.write("    movq $0, %rdi\n");
     }
     s = s.write("    movq $60, %rax\n");
-    s = s.write("    syscall\n");
+    s = s.syscall(60);
   }
   // Pre-intern "FileStat" so the __fern_stat runtime helper (emitted after this
   // literal pool, inside the heap/stat block) can reference its shape label. The
@@ -11195,8 +11214,67 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // allocates relies on the entry having pulled the heap runtime in.)
   if (is_entry) {
     s = emit_entry_runtime_settled(s);
+    // Last: the allowlist is complete only once every other emitter has run.
+    if (asmcore.sandbox_on()) {
+      s = emit_seccomp_install(s);
+    }
   }
   return strbuf_take();
+}
+
+// emit_seccomp_install writes `__fern_seccomp_install` and the seccomp-bpf
+// program it loads (#6071), as the native x86-64 backend does. The program
+// checks the audit arch, then allows each syscall `s` recorded and kills the
+// process on any other; the prctl and seccomp calls that install it are not
+// in the list, since they run before the filter applies. A failed seccomp(2)
+// is ignored, so a kernel without seccomp runs the program unhardened.
+//
+// Each sock_filter is { u16 code; u8 jt; u8 jf; u32 k }, laid down as two
+// `.long`s. The comparison for the i-th of n allowed numbers jumps n - i
+// ahead to ALLOW, and jt is a u8, which caps the list at 255.
+function emit_seccomp_install(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.raw_syscall != "") {
+    eprint("fern: " + s.raw_syscall + " passes the syscall number at run time, which the seccomp sandbox cannot allowlist; FERN_SANDBOX=1 refuses the program");
+    exit(1);
+    return s;
+  }
+  let allowed: i32[] = s.syscalls;
+  let n: i32 = allowed.len();
+  if (n > 255) {
+    eprint("internal error: the seccomp allowlist has " + util.i32_to_string(n) + " syscalls; the u8 jump offset caps it at 255");
+    exit(3);
+    return s;
+  }
+  s = s.write("__fern_seccomp_install:\n");
+  // prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0): what lets an unprivileged
+  // process install a filter.
+  s = s.write("    movq $38, %rdi\n    movq $1, %rsi\n    movq $0, %rdx\n    movq $0, %r10\n    movq $0, %r8\n    movq $157, %rax\n").syscall(157);
+  // seccomp(SECCOMP_SET_MODE_FILTER, 0, &prog), the sock_fprog
+  // { u16 len; struct sock_filter *filter } built on the stack so the
+  // pointer needs no relocation.
+  s = s.write("    subq $16, %rsp\n    movq $" + util.i32_to_string(n + 6) + ", %rax\n    movq %rax, (%rsp)\n");
+  s = s.write("    leaq .Lseccomp_filter(%rip), %rax\n    movq %rax, 8(%rsp)\n");
+  s = s.write("    movq $1, %rdi\n    movq $0, %rsi\n    movq %rsp, %rdx\n    movq $317, %rax\n").syscall(317);
+  s = s.write("    addq $16, %rsp\n    ret\n");
+  s = s.write("    .section .rodata\n    .align 8\n.Lseccomp_filter:\n");
+  s = bpf_insn(s, 32, 0, "4");  // A = seccomp_data.arch
+  s = bpf_insn(s, 21, 1, "0xC000003E");  // AUDIT_ARCH_X86_64: skip the kill
+  s = bpf_insn(s, 6, 0, "0x80000000");  // any other arch: kill
+  s = bpf_insn(s, 32, 0, "0");  // A = seccomp_data.nr
+  let i: i32 = 0;
+  while (i < n) {
+    s = bpf_insn(s, 21, n - i, util.i32_to_string(allowed[i]));
+    i = i + 1;
+  }
+  s = bpf_insn(s, 6, 0, "0x80000000");  // unmatched: kill
+  s = bpf_insn(s, 6, 0, "0x7FFF0000");  // allow
+  return s.write("    .section .text\n");
+}
+
+// bpf_insn writes one sock_filter with `jf` 0: `code` (BPF_LD|W|ABS 32,
+// BPF_JMP|JEQ|K 21, BPF_RET|K 6), the true-branch offset `jt` and `k`.
+function bpf_insn(s: asmcore.EmitState, code: i32, jt: i32, k: string): asmcore.EmitState {
+  return s.write("    .long " + util.i32_to_string(code + jt * 65536) + ", " + k + "\n");
 }
 
 // A typed runtime body can call a need-gated runtime block emitted before it,
