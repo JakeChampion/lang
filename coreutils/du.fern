@@ -40,7 +40,7 @@ import "std/io_buffered";
 import "core/map";
 import "./lib/gnu";
 import "./lib/timefmt";
-import "./lib/tz";
+import "std/tz";
 import "./lib/blocks";
 
 function opt_null(): i32 {

@@ -70,7 +70,7 @@ import "./filetype";
 import "./fnmatch";
 import "./pwdb";
 import "./timefmt";
-import "./tz";
+import "std/tz";
 import "./selinux";
 import "./vercmp";
 

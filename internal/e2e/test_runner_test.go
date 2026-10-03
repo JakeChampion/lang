@@ -85,6 +85,25 @@ func TestRunnerArithmeticExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/tz_test.fern` is std/tz without a clock or the host's
+// zoneinfo: POSIX rules evaluated across their transitions, a TZif v2
+// file built byte by byte (whose v1 block disagrees, so a reader on the
+// wrong table fails), its footer governing the future, and the malformed
+// inputs that must parse to None.
+func TestRunnerTzExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/tz_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: tz", "1..13", "# pass 13", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/runner_lazy_test.fern` pins the contract that makes
 // the runner's own controls real: `it(name, body)` takes the case
 // UNEVALUATED, so a case the runner drops never runs. The fixture bumps
