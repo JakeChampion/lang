@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Phase 6 measurement — the __heap_bump_bytes() probe returns the bump
@@ -71,9 +69,6 @@ func TestArm64HeapBumpBounded(t *testing.T) {
 }
 
 func TestWASMHeapBumpBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, heapBumpZeroSrc); got != 0 {
 		t.Errorf("no-alloc program should report 0 bump bytes, got %d", got)
 	}

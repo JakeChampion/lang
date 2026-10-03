@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Return-position struct-update reuse (computeReturnSpreadReuse): `return T {
@@ -214,9 +212,6 @@ func TestArm64ReturnSpreadReuse(t *testing.T) {
 }
 
 func TestWASMReturnSpreadReuse(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, c := range retSpreadReuseCases {
 		t.Run(c.name, func(t *testing.T) {
 			if got := runWasm(t, c.src); got != 0 {

@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // A fresh collection handed to a CLOSURE call is reclaimed (#6460).
@@ -61,9 +59,6 @@ func TestArm64ClosureCallArgRecycles(t *testing.T) {
 }
 
 func TestWASMClosureCallArgRecycles(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, closureArgChurnSrc); got != 0 {
 		t.Errorf("closure-call argument churn: got exit %d, want 0", got)
 	}

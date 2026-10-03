@@ -3,8 +3,6 @@ package e2e
 import (
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #5637 option 3 — end-to-end benefit and safety of the in-place string
@@ -46,9 +44,6 @@ const strSelfAppendLoopSrc = `function main(): i32 {
 // and a balanced heap at exit (allocs == frees, live_bytes == 0) — the latter
 // is what catches an over-release just as firmly as a leak.
 func TestX86_64StrSelfAppendAllocsBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strSelfAppendLoopSrc)
 	if code != 0 {
@@ -124,9 +119,6 @@ abababababababababababababababababababababababababababababababab`
 // ABI, where the in-place path returns (a_data, la+lb) with the buffer's rc
 // left at 1.
 func TestWASMStrSelfAppendCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	if got := runWasmCapturingStdout(t, strSelfAppendCorrectnessSrc); got != strSelfAppendWant {
 		t.Errorf("wasm string self-append output =\n%q\nwant\n%q", got, strSelfAppendWant)
@@ -139,9 +131,6 @@ func TestWASMStrSelfAppendCorrect(t *testing.T) {
 // over-release probe: a buffer freed while still aliased would show up as
 // frees > allocs (or as corrupted output).
 func TestX86_64StrSelfAppendCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strSelfAppendCorrectnessSrc)
 	if code != 0 {
@@ -159,9 +148,6 @@ func TestX86_64StrSelfAppendCorrect(t *testing.T) {
 // carried in registers, the in-place path returns (a_data, la+lb), and
 // [data-4] — the payload size __fern_str_dec frees at — is left alone.
 func TestArm64StrSelfAppendCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckArm64(t, strSelfAppendCorrectnessSrc)
 	if code != 0 {
@@ -204,9 +190,6 @@ const strConcatChainSrc = `function main(): i32 {
 // __fern_str_dec (which frees at rc==1) rather than __fern_rc_dec (which
 // decrements to zero and stops).
 func TestX86_64StrConcatChainAllocsBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strConcatChainSrc)
 	if code != 0 {
@@ -264,9 +247,6 @@ qrqrqrqr/qrqrqrqrqr
 abcdefghi!`
 
 func TestWASMStrConcatChainCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	if got := runWasmCapturingStdout(t, strConcatChainCorrectnessSrc); got != strConcatChainWant {
 		t.Errorf("wasm chained concat output =\n%q\nwant\n%q", got, strConcatChainWant)
@@ -274,9 +254,6 @@ func TestWASMStrConcatChainCorrect(t *testing.T) {
 }
 
 func TestX86_64StrConcatChainCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strConcatChainCorrectnessSrc)
 	if code != 0 {
@@ -329,9 +306,6 @@ const strAppendClassBoundarySrc = `function main(): i32 {
 // change that legitimately moves it (a different rounding, a different header)
 // should re-bank it rather than loosen it.
 func TestX86_64StrAppendClassBoundary(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strAppendClassBoundarySrc)
 	if code != 0 {
@@ -349,9 +323,6 @@ func TestX86_64StrAppendClassBoundary(t *testing.T) {
 // TestArm64StrAppendClassBoundary is the arm64 sibling. A string box has the
 // same layout on both targets, so the guard decides at the same lengths.
 func TestArm64StrAppendClassBoundary(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckArm64(t, strAppendClassBoundarySrc)
 	if code != 0 {
@@ -371,9 +342,6 @@ func TestArm64StrAppendClassBoundary(t *testing.T) {
 // computation. One more allocation than the natives: wasm has no inline
 // small-string form, so the first append heap-allocates where x86-64 packs.
 func TestWASMStrAppendClassBoundary(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	_, stderr, code := runLeakCheckWasm(t, strAppendClassBoundarySrc, false)
 	if code != 0 {
@@ -414,9 +382,6 @@ const strChainAliasWant = "ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab
 // answer stays right, and the heap stays balanced, when the spine declines to
 // fuse. Under the leak detector so an over-release shows as frees > allocs.
 func TestX86_64StrSelfAppendChainAliasIsNotFused(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strChainAliasSrc)
 	if code != 0 {
@@ -432,9 +397,6 @@ func TestX86_64StrSelfAppendChainAliasIsNotFused(t *testing.T) {
 
 // TestArm64StrSelfAppendChainAliasIsNotFused is the two-word NATIVE sibling.
 func TestArm64StrSelfAppendChainAliasIsNotFused(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckArm64(t, strChainAliasSrc)
 	if code != 0 {
@@ -450,9 +412,6 @@ func TestArm64StrSelfAppendChainAliasIsNotFused(t *testing.T) {
 
 // TestWASMStrSelfAppendChainAliasIsNotFused is the wasm sibling.
 func TestWASMStrSelfAppendChainAliasIsNotFused(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	if got := runWasmCapturingStdout(t, strChainAliasSrc); got != strings.TrimSuffix(strChainAliasWant, "\n") {
 		t.Errorf("wasm aliased chain output =\n%q\nwant\n%q", got, strChainAliasWant)

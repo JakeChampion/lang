@@ -19,8 +19,6 @@ package e2e
 import (
 	"fmt"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // ownRemoveCase is one `outer` body. The driver calls it 50 times as
@@ -147,9 +145,6 @@ func TestArm64OwnParamRemove(t *testing.T) {
 }
 
 func TestWASMOwnParamRemove(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, c := range ownRemoveCases {
 		t.Run(c.name, func(t *testing.T) {
 			c.check(t, "wasm32-wasi", runWasm(t, c.src("__arr_push_shared_count()")))
@@ -205,9 +200,6 @@ function main(): i32 {
 		check(t, "arm64-linux", code)
 	})
 	t.Run("wasm32-wasi", func(t *testing.T) {
-		prev := ast.RcFreeEnabled
-		ast.RcFreeEnabled = true
-		defer func() { ast.RcFreeEnabled = prev }()
 		check(t, "wasm32-wasi", runWasm(t, src))
 	})
 }

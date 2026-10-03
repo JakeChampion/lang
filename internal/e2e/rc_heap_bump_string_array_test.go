@@ -3,8 +3,6 @@ package e2e
 import (
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Perceus precise drops — slice 3: string[] arrays. Completes the array
@@ -71,9 +69,6 @@ const strArrAliasSrc = `function main(): i32 {
 }`
 
 func TestWASMStringArrayPreciseDrop(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	dead := runWasm(t, strArrDead4Src())
 	live := runWasm(t, strArrLive4Src())
 	if dead >= live {

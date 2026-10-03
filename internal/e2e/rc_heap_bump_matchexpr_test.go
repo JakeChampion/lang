@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Match-expression owned-result reclamation. `rhsTainted` classified an
@@ -83,9 +81,6 @@ func TestArm64MatchExprReclaim(t *testing.T) {
 }
 
 func TestWASMMatchExprReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, matchExprBumpSrc("5000"))
 	large := runWasm(t, matchExprBumpSrc("50000"))
 	if small != large {

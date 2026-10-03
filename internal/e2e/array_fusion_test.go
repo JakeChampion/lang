@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Producer-consumer fusion of std/array pipelines (#9731), from the outside.
@@ -287,9 +285,6 @@ func TestX86_64ArrayFusionMatchesHandWrittenLoops(t *testing.T) {
 }
 
 func TestWASMArrayFusionMatchesHandWrittenLoops(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, arrayFusionSrc); got != 0 {
 		t.Errorf("array fusion on wasm: got %d, want 0", got)
 	}
@@ -317,9 +312,6 @@ func TestX86_64ArrayFusionStopsAllocatingIntermediates(t *testing.T) {
 }
 
 func TestWASMArrayFusionStopsAllocatingIntermediates(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, arrayFusionAllocSrc); got != 0 {
 		t.Errorf("array fusion allocations on wasm: got %d, want 0", got)
 	}
@@ -395,9 +387,6 @@ func TestX86_64ClosureEnvSurvivesTheZeroCaptureFold(t *testing.T) {
 }
 
 func TestWASMClosureEnvSurvivesTheZeroCaptureFold(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, closureEnvSrc); got != 0 {
 		t.Errorf("closure env on wasm: got %d, want 0", got)
 	}

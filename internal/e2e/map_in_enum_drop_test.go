@@ -3,8 +3,6 @@ package e2e
 import (
 	"os/exec"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Regression for #4425: dropping a value of a Map-transitively-containing enum
@@ -45,9 +43,6 @@ var mapInEnumDropCases = []struct {
 }
 
 func TestX86_64MapInEnumDropBuilds(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, tc := range mapInEnumDropCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// A prior bug made this fail at assemble time ("undefined label
@@ -64,9 +59,6 @@ func TestWASMMapInEnumDropBuilds(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm map-in-enum drop e2e")
 	}
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, tc := range mapInEnumDropCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// buildComponent (inside runWasm) t.Fatal's on the "unknown callee

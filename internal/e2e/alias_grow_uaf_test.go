@@ -3,8 +3,6 @@ package e2e
 import (
 	"os"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Two `string[]` locals that alias one buffer, both reclaimable, one appended
@@ -62,9 +60,6 @@ func TestAliasGrowNoOverRelease(t *testing.T) {
 		// old buffer there (the pre-existing gap recorded in
 		// docs/SELFHOST-AST-RETIREMENT.md), so there is no second walk-drop to
 		// over-release. The x86-64 leg is the one that flips.
-		prev := ast.RcFreeEnabled
-		ast.RcFreeEnabled = true
-		defer func() { ast.RcFreeEnabled = prev }()
 		if code := runWasm(t, src); code != 0 {
 			t.Errorf("exit %d, want 0: a name was reclaimed under its owner (shared-buffer grow copied its elements without a retain)", code)
 		}

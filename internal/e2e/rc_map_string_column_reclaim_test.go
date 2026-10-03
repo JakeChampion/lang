@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #2704 class 1 — "map keys and non-array map values are never reclaimed".
@@ -313,9 +311,6 @@ func TestArm64MapStringColumnReclaim(t *testing.T) {
 }
 
 func TestWASMMapStringColumnReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, mapStringColumnBumpSrc("50"))
 	large := runWasm(t, mapStringColumnBumpSrc("5000"))
 	if small != large {

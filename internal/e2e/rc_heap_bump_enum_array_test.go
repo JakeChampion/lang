@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Array-of-enum inner-payload reclamation (RC-Perceus Phase 6). An `E[]`
@@ -115,9 +113,6 @@ func TestArm64EnumArrayReclaim(t *testing.T) {
 }
 
 func TestWASMEnumArrayReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, enumArrBumpSrc("50"))
 	large := runWasm(t, enumArrBumpSrc("5000"))
 	if small != large {

@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Destructure-binding reclamation (RC-Perceus) — the follow-up to tuple
@@ -82,9 +80,6 @@ func TestArm64DestructureHeapBumpBounded(t *testing.T) {
 }
 
 func TestWASMDestructureHeapBumpBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, destructureBumpGrowthSrc("50"))
 	large := runWasm(t, destructureBumpGrowthSrc("5000"))
 	if small != large {
@@ -162,9 +157,6 @@ func TestArm64NestedDestructureHeapBumpBounded(t *testing.T) {
 }
 
 func TestWASMNestedDestructureHeapBumpBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, nestedDestructureBumpGrowthSrc("50"))
 	large := runWasm(t, nestedDestructureBumpGrowthSrc("5000"))
 	if small != large {

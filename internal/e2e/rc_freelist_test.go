@@ -7,12 +7,10 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
-	"github.com/jakechampion/lang/internal/checker"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/monomorph"
 )
 
@@ -309,50 +307,8 @@ func compileAndRunX86_64FreeOn(t *testing.T, src string) (string, int) {
 // launched (e.g. rc_trmc_test.go pins RLIMIT_STACK before exec).
 func compileX86_64FreeOn(t *testing.T, src string) (string, []string) {
 	t.Helper()
-	gcc, runner := x86_64Tooling(t)
-	// Route through modload (not bare parser.Parse) so the program's
-	// std/ + core/ imports resolve — without it core/map's runtime
-	// impls (map_new_impl / __map_*_impl) never load and the link
-	// fails. Mirrors compileAndRunX86_64 / compileAndRunArm64FreeOn.
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	// x86_64.Emit acquires ast.CodegenMu itself, so we must NOT hold
-	// it here (the mutex isn't re-entrant). These tests don't call
-	// t.Parallel, so they run in the sequential phase with no other
-	// Emit racing the flag.
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, emitErr := x86_64.Emit(prog, info)
-	ast.RcFreeEnabled = prev
-	if emitErr != nil {
-		t.Fatalf("emit: %v", emitErr)
-	}
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
-	return binPath, runner
+	runner := e2eharness.X86_64Runner(t)
+	return e2eharness.CompileSelfHostSource(t, e2eharness.TargetX86_64Linux, src, nil), runner
 }
 
 // compileAndRunArm64FreeOn mirrors compileAndRunArm64 but flips
@@ -379,42 +335,8 @@ func compileAndRunArm64FreeOnArgs(t *testing.T, src string, args ...string) (str
 // how the binary is launched. Returns the binary's path and the qemu runner.
 func compileArm64FreeOn(t *testing.T, src string) (string, string) {
 	t.Helper()
-	gcc, qemu := arm64Tooling(t)
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	asm, emitErr := arm64codegen.Emit(prog, info)
-	ast.RcFreeEnabled = prev
-	if emitErr != nil {
-		t.Fatalf("emit: %v", emitErr)
-	}
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
-	return binPath, qemu
+	qemu := e2eharness.Arm64Runner(t)
+	return e2eharness.CompileSelfHostSource(t, e2eharness.TargetArm64Linux, src, nil), qemu
 }
 
 // Phase 3 step-4: the freelist allocator, in isolation. A freed
@@ -556,9 +478,6 @@ func TestArm64ArrayDropFree(t *testing.T) {
 }
 
 func TestWASMArrayDropFree(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, arrayDropFreeReuseSrc); got != 0 {
 		t.Errorf("drop+free+reuse: got %d, want 0", got)
 	}
@@ -596,9 +515,6 @@ func TestX86_64StringReassignFree(t *testing.T) {
 }
 
 func TestWASMStringReassignFree(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, stringReassignFreeSrc); got != 0 {
 		t.Errorf("string reassign free+reuse: got %d, want 0 (drift / over-release on string dec-on-overwrite)", got)
 	}
@@ -610,9 +526,6 @@ func TestWASMStringReassignFree(t *testing.T) {
 // SKIPs without wasmtime (runs in CI). The fixtures use only the
 // `__alloc` / `__free` builtins, so they need no imports.
 func TestWASMFreelistReuse(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	reuse := `function main(): i32 {
     let a: usize = __alloc(64);
@@ -665,76 +578,6 @@ func TestArm64FreelistReuse(t *testing.T) {
 	}
 	if _, code := compileAndRunArm64FreeOn(t, freelistReuseSrc.lifo); code != 0 {
 		t.Errorf("LIFO reuse: got %d, want 0 (c==b, d==a)", code)
-	}
-}
-
-// --- Phase 5 slice 5a: __fern_alloc_reuse in isolation ------------
-//
-// allocReuseSrc is the shared body for the flag-on drop-reuse (FBIP)
-// primitive across backends. The pairing analysis (slices 5b+) is not
-// wired yet, so these call the `__alloc_reuse(token, tokenSize, size)`
-// shim directly to prove the three runtime branches:
-//
-//   - sameClass: a live token whose size class matches `size` is
-//     handed straight back — in-place storage reuse (b == a).
-//   - nullToken: a 0 token degrades to a plain allocation, returning a
-//     fresh block distinct from any live one (b != 0, b != a).
-//   - mismatch: a token whose class differs is freed (not leaked) and
-//     a fresh block of the requested class is returned (b != a); the
-//     freed token then reappears from its own class's freelist on the
-//     next same-class __alloc (c == a) — the slow-not-wrong backstop.
-//
-// Each program returns 0 on success. The fixtures use only the
-// `__alloc` / `__free` builtins, so they need no imports.
-var allocReuseSrc = struct{ sameClass, nullToken, mismatch string }{
-	sameClass: `
-function main(): i32 {
-    let a: usize = __alloc(64);
-    let b: usize = __alloc_reuse(a, 64, 64);
-    if (a == b) { return 0; }
-    return 1;
-}`,
-	nullToken: `
-function main(): i32 {
-    let z: usize = 0;
-    let a: usize = __alloc(64);
-    let b: usize = __alloc_reuse(z, 0, 64);
-    if (b == 0) { return 1; }
-    if (b == a) { return 2; }
-    return 0;
-}`,
-	mismatch: `
-function main(): i32 {
-    let a: usize = __alloc(64);
-    let b: usize = __alloc_reuse(a, 64, 32);
-    if (a == b) { return 1; }
-    let c: usize = __alloc(64);
-    if (a == c) { return 0; }
-    return 2;
-}`,
-}
-
-func TestX86_64AllocReuse(t *testing.T) {
-	if _, code := compileAndRunX86_64FreeOn(t, allocReuseSrc.sameClass); code != 0 {
-		t.Errorf("same-class reuse: got %d, want 0 (token should be returned in place)", code)
-	}
-	if _, code := compileAndRunX86_64FreeOn(t, allocReuseSrc.nullToken); code != 0 {
-		t.Errorf("null-token alloc: got %d, want 0 (must allocate a fresh distinct block)", code)
-	}
-	if _, code := compileAndRunX86_64FreeOn(t, allocReuseSrc.mismatch); code != 0 {
-		t.Errorf("class-mismatch: got %d, want 0 (free token + fresh alloc; freed block reusable)", code)
-	}
-}
-
-func TestArm64AllocReuse(t *testing.T) {
-	if _, code := compileAndRunArm64FreeOn(t, allocReuseSrc.sameClass); code != 0 {
-		t.Errorf("same-class reuse: got %d, want 0 (token should be returned in place)", code)
-	}
-	if _, code := compileAndRunArm64FreeOn(t, allocReuseSrc.nullToken); code != 0 {
-		t.Errorf("null-token alloc: got %d, want 0 (must allocate a fresh distinct block)", code)
-	}
-	if _, code := compileAndRunArm64FreeOn(t, allocReuseSrc.mismatch); code != 0 {
-		t.Errorf("class-mismatch: got %d, want 0 (free token + fresh alloc; freed block reusable)", code)
 	}
 }
 
@@ -878,9 +721,6 @@ func TestArm64StructReuse(t *testing.T) {
 }
 
 func TestWASMStructReuse(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, c := range structReuseCases {
 		t.Run(c.name, func(t *testing.T) {
 			if got := runWasm(t, c.src); got != 0 {
@@ -1035,9 +875,6 @@ func TestArm64MoveOnConstruction(t *testing.T) {
 }
 
 func TestWASMMoveOnConstruction(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, c := range moveOnConstructionCases {
 		t.Run(c.name, func(t *testing.T) {
 			if got := runWasm(t, c.src); got != 0 {

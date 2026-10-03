@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Field-of-fresh reclamation (the FieldAccess sibling of index-of-fresh /
@@ -90,9 +88,6 @@ func TestArm64FieldOfFreshReclaim(t *testing.T) {
 }
 
 func TestWASMFieldOfFreshReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, c := range []struct {
 		name string
 		src  func(string) string

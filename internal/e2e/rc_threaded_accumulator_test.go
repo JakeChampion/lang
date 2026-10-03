@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #6425 — `acc = step(acc, x)` on a string-bearing array: the callee appends
@@ -92,9 +90,6 @@ func TestArm64ThreadedStringArrayAccumulatorReclaim(t *testing.T) {
 }
 
 func TestWASMThreadedStringArrayAccumulatorReclaim(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	small := runWasm(t, threadedStringArrayAccumulatorBumpSrc("20"))
 	large := runWasm(t, threadedStringArrayAccumulatorBumpSrc("400"))
 	if small != large {

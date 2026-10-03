@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // C2 — true zero-alloc FBIP. A consuming match (`match (own xs) { Cons(h,t) =>
@@ -53,37 +51,7 @@ func TestArm64C2ConsumingReuse(t *testing.T) {
 }
 
 func TestWASMC2ConsumingReuse(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, c2ConsumingSrc); got != 0 {
 		t.Errorf("C2 consuming reuse: got %d, want 0", got)
-	}
-}
-
-// reuse-on == reuse-off: C2 is a pure optimisation over the C1 free+alloc
-// baseline. Both must be value-correct with zero over-release.
-func withReuse(v bool, fn func()) {
-	prev := ast.RcReuseEnabled
-	ast.RcReuseEnabled = v
-	defer func() { ast.RcReuseEnabled = prev }()
-	fn()
-}
-
-func TestX86_64C2ReuseMatchesNoReuse(t *testing.T) {
-	var on, off int
-	withReuse(true, func() { _, on = compileAndRunX86_64FreeOn(t, c2ConsumingSrc) })
-	withReuse(false, func() { _, off = compileAndRunX86_64FreeOn(t, c2ConsumingSrc) })
-	if on != off || on != 0 {
-		t.Errorf("C2 reuse on=%d off=%d, want both 0", on, off)
-	}
-}
-
-func TestArm64C2ReuseMatchesNoReuse(t *testing.T) {
-	var on, off int
-	withReuse(true, func() { _, on = compileAndRunArm64FreeOn(t, c2ConsumingSrc) })
-	withReuse(false, func() { _, off = compileAndRunArm64FreeOn(t, c2ConsumingSrc) })
-	if on != off || on != 0 {
-		t.Errorf("C2 reuse on=%d off=%d, want both 0", on, off)
 	}
 }

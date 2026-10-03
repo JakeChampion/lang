@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // E2' — `fbip` verify-and-enable, end to end (docs/NICHE-BORROWS-PLAN.md;
@@ -64,9 +62,6 @@ func TestArm64FbipMapZeroAlloc(t *testing.T) {
 }
 
 func TestWASMFbipMapZeroAlloc(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, fbipMapSrc); got != 0 {
 		t.Errorf("fbip map on wasm: got %d, want 0 (998 = wrong value, 999 = heap grew)", got)
 	}

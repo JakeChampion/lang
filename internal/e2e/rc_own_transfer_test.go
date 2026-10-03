@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Ownership transfer for `own` (consuming) parameters: the caller transfers an
@@ -72,9 +70,6 @@ func TestArm64OwnTransfer(t *testing.T) {
 }
 
 func TestWASMOwnTransfer(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	for _, c := range ownTransferCases {
 		t.Run(c.name, func(t *testing.T) {
 			if got := runWasm(t, c.src); got != 0 {

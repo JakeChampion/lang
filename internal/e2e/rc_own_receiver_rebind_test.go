@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Move-and-rebind through an `own`-RECEIVER method — `s = s.emit(x)` — the
@@ -91,9 +89,6 @@ func TestArm64OwnReceiverRebind(t *testing.T) {
 }
 
 func TestWASMOwnReceiverRebind(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, ownReceiverRebindSrc); got != 0 {
 		t.Errorf("own-receiver move-and-rebind: got %d, want 0", got)
 	}

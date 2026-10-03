@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // #8785 — the in-place string append through a STRUCT FIELD. The lowering
@@ -103,9 +101,6 @@ function main(): i32 {
 // fails if the in-place field append is gated on anything but the box's own
 // runtime uniqueness.
 func TestX86_64StrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strFieldAppendAliasSrc)
 	if code != 0 {
@@ -123,9 +118,6 @@ func TestX86_64StrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
 // The two-word (wasm) sibling. strAppendAvailable covers ptrW==4, so the
 // field load fans out to (data, len) and the helper consumes both words.
 func TestWASMStrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	if got := runWasmCapturingStdout(t, strFieldAppendAliasSrc); got != strFieldAppendAliasWant {
 		t.Errorf("wasm aliased-box field append =\n%q\nwant\n%q", got, strFieldAppendAliasWant)
@@ -134,9 +126,6 @@ func TestWASMStrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
 
 // The two-word NATIVE sibling, where the pair is carried in registers.
 func TestArm64StrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckArm64(t, strFieldAppendAliasSrc)
 	if code != 0 {
@@ -159,9 +148,6 @@ func TestArm64StrFieldAppendAliasedBoxIsNotMutated(t *testing.T) {
 // one allocation per append, and a balanced heap at exit, which catches an
 // over-release as firmly as a leak.
 func TestX86_64StrFieldAppendAllocsBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strFieldAppendGrowSrc)
 	if code != 0 {
@@ -184,9 +170,6 @@ func TestX86_64StrFieldAppendAllocsBounded(t *testing.T) {
 // site was not placeable at all, so every update allocated a fresh box AND
 // copied the whole buffer.
 func TestArm64StrFieldAppendAllocsBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckArm64(t, strFieldAppendGrowSrc)
 	if code != 0 {
@@ -203,9 +186,6 @@ func TestArm64StrFieldAppendAllocsBounded(t *testing.T) {
 
 // The same program on wasm, for the answers rather than the counts.
 func TestWASMStrFieldAppendCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	if code := runWasm(t, strFieldAppendGrowSrc); code != 0 {
 		t.Errorf("wasm field-append accumulator exited %d, want 0", code)
@@ -270,9 +250,6 @@ ab-ab`
 // frees > allocs. The aliased-box and aliased-buffer lines are the ones that
 // separate a correct fold from one that grew a buffer someone else reads.
 func TestX86_64StrFieldAppendChainCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strFieldAppendChainSrc)
 	if code != 0 {
@@ -288,9 +265,6 @@ func TestX86_64StrFieldAppendChainCorrect(t *testing.T) {
 
 // TestArm64StrFieldAppendChainCorrect is the two-word NATIVE sibling.
 func TestArm64StrFieldAppendChainCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckArm64(t, strFieldAppendChainSrc)
 	if code != 0 {
@@ -306,9 +280,6 @@ func TestArm64StrFieldAppendChainCorrect(t *testing.T) {
 
 // TestWASMStrFieldAppendChainCorrect is the wasm sibling.
 func TestWASMStrFieldAppendChainCorrect(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	want := strFieldAppendChainWant
 	if got := runWasmCapturingStdout(t, strFieldAppendChainSrc); got != want {
@@ -336,9 +307,6 @@ function main(): i32 {
 // join that copied the accumulator instead would cost one allocation per
 // join, 1500 here.
 func TestX86_64StrFieldAppendChainAllocsBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strFieldAppendChainAllocSrc)
 	if code != 0 {
