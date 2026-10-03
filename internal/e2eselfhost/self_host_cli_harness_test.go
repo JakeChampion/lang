@@ -87,6 +87,12 @@ func (c *selfHostCLI) exitOfStdin(t *testing.T, source, target string, stdin []b
 	if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	return c.exitOfFile(t, src, target, stdin, env...)
+}
+
+// exitOfFile also supports fixtures with relative imports beside the entry.
+func (c *selfHostCLI) exitOfFile(t *testing.T, src, target string, stdin []byte, env ...string) (string, int) {
+	t.Helper()
 	switch target {
 	case "x86-64-linux":
 		return runWithStdin(t, c.runner, c.x86Binary(t, src, env...), stdin)
