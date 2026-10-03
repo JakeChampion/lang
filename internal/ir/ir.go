@@ -15483,6 +15483,18 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	if id.Name == "__memchr_bytes" && len(n.Args) == 3 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_memchr_bytes", Width: ResNarrow, I32: 3,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.NumberType{}}}})
+			return nil
+		}
+	}
 	// __rmemchr(s, byte, from) — __memchr's backward sibling, same
 	// runtime-helper-call shape and the same essential ArgTypes: a
 	// `string` is TWO operand slots on arm64 and wasm and one on x86-64, so

@@ -358,7 +358,7 @@ function emit_mismatch_arm64(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-  if (o.kind_tag == 225) {  // memchr
+  if (o.kind_tag == 225 || o.kind_tag == 356) {  // memchr / memchr_bytes
     // operand stack [box, byte, from] (from on top) -> i32 index or -1.
     //
     // NEON, 16 bytes an iteration, the same kernel the native arm64
@@ -390,13 +390,24 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let l_done: string = mlo7.name;
     s = mlo7.state;
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    if (o.kind_tag == 356) {
+      s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
+    } else {
+      s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    }
     s = s.write("    cmp x2, #0\n    b.ge " + l_clamped + "\n    mov x2, #0\n");
     s = s.write(l_clamped + ":\n");
     // Unsigned compare against 255 rejects both a negative byte and one
     // above the range in a single test. Checked once, so neither loop
     // below needs a per-iteration guard.
     s = s.write("    cmp x1, #255\n    b.hi " + l_none + "\n");
+    if (o.kind_tag == 356 && !ir.is_packed(o)) {
+      s = s.write(l_tail + ":\n    cmp x2, x3\n    b.ge " + l_none + "\n");
+      s = s.write("    add x5, x0, x2, lsl #3\n    ldrb w4, [x5]\n    cmp x4, x1\n    b.eq " + l_done + "\n");
+      s = s.write("    add x2, x2, #1\n    b " + l_tail + "\n");
+      s = s.write(l_none + ":\n    mov x2, #-1\n");
+      return s.write(l_done + ":\n    str x2, [sp, #-16]!\n");
+    }
     s = s.write("    cmp x2, x3\n    b.ge " + l_none + "\n");
     s = s.write("    add x5, x0, x2\n    add x6, x0, x3\n");
     s = s.write("    dup v1.16b, w1\n");
