@@ -1972,6 +1972,24 @@ function oflag_darwin(name: string): string {
   if (name == "nonblock") {
     return "4";
   }
+  if (name == "excl") {
+    return "2048";
+  }
+  if (name == "directory") {
+    return "1048576";
+  }
+  if (name == "dsync") {
+    return "4194304";
+  }
+  if (name == "sync") {
+    return "128";
+  }
+  if (name == "noctty") {
+    return "131072";
+  }
+  if (name == "nofollow") {
+    return "256";
+  }
   return "0";
 }
 
@@ -1997,6 +2015,30 @@ function oflag_x86_64(name: string): string {
   if (name == "nonblock") {
     return "2048";
   }
+  if (name == "excl") {
+    return "128";
+  }
+  if (name == "direct") {
+    return "16384";
+  }
+  if (name == "directory") {
+    return "65536";
+  }
+  if (name == "dsync") {
+    return "4096";
+  }
+  if (name == "sync") {
+    return "1052672";
+  }
+  if (name == "noatime") {
+    return "262144";
+  }
+  if (name == "noctty") {
+    return "256";
+  }
+  if (name == "nofollow") {
+    return "131072";
+  }
   return "0";
 }
 
@@ -2021,6 +2063,30 @@ function oflag_arm64(name: string): string {
   }
   if (name == "nonblock") {
     return "2048";
+  }
+  if (name == "excl") {
+    return "128";
+  }
+  if (name == "direct") {
+    return "65536";
+  }
+  if (name == "directory") {
+    return "16384";
+  }
+  if (name == "dsync") {
+    return "4096";
+  }
+  if (name == "sync") {
+    return "1052672";
+  }
+  if (name == "noatime") {
+    return "262144";
+  }
+  if (name == "noctty") {
+    return "256";
+  }
+  if (name == "nofollow") {
+    return "32768";
   }
   return "0";
 }
@@ -2145,13 +2211,33 @@ pub function rt_src_open_res(t: string): string {
 }
 
 // rt_src_open_with backs `open_reader_with` / `open_writer_with(path, flags)`:
-// Fern's flags word — 1 create, 2 non-blocking — and the access mode become
-// the target's open(2) word HERE, since the op site has no target, and the
-// rest is __fern_open_res, whose Darwin translation rewrites only the three
-// fixed words and passes this one through. Mode 0666, never O_TRUNC or
-// O_APPEND.
+// Fern's flags word — one bit per name in `names`, in that order, the
+// checker's open_reader_with comment being the contract — and the access
+// mode become the target's open(2) word HERE, since the op site has no
+// target, and the rest is __fern_open_res, whose Darwin translation rewrites
+// only the three fixed words and passes this one through. A bit whose name
+// the target's oflag table has no row for (XNU's direct and noatime) is
+// refused as Unsupported before anything is opened. Mode 0666, never O_TRUNC
+// or O_APPEND.
 pub function rt_src_open_with(t: string): string {
-  return "function __fern_open_with(path: string, flags: i32, write: i32): Result[i32, IoError] { let f: i32 = 0; if (write != 0) { f = 1; } if ((flags & 1) != 0) { f = f | " + oflag(t, "creat") + "; } if ((flags & 2) != 0) { f = f | " + oflag(t, "nonblock") + "; } return __fern_open_res(path, f, 438); }";
+  let names: string[] = ["creat", "nonblock", "excl", "direct", "directory", "dsync", "sync", "noatime", "noctty", "nofollow"];
+  let refused: i32 = 0;
+  let ors: string = "";
+  let i: i32 = 0;
+  while (i < names.len()) {
+    let word: string = oflag(t, names[i]);
+    if (word == "0") {
+      refused = refused | 1 << i;
+    } else {
+      ors = ors + " if ((flags & " + util.i32_to_string(1 << i) + ") != 0) { f = f | " + word + "; }";
+    }
+    i = i + 1;
+  }
+  let head: string = "function __fern_open_with(path: string, flags: i32, write: i32): Result[i32, IoError] {";
+  if (refused != 0) {
+    head = head + " if ((flags & " + util.i32_to_string(refused) + ") != 0) { return Err(Unsupported); }";
+  }
+  return head + " let f: i32 = 0; if (write != 0) { f = 1; }" + ors + " return __fern_open_res(path, f, 438); }";
 }
 
 // rt_src_writer_write backs `w.write(s)` (#4372, #2649 syscall-leaf) →

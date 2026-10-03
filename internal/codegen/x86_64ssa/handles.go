@@ -252,14 +252,35 @@ func emitOpenHandleHelper(name, lbl string, flags, mode int) func(w func(string,
 
 // emitOpenWithHelper returns the emitter for open_reader_with(path, flags) and
 // open_writer_with(path, flags), which are open_reader / open_writer with the
-// caller naming two of the kernel's flags: bit 0 is O_CREAT and bit 1 is
-// O_NONBLOCK, folded onto the access mode `access`. Anything else in the word
-// is ignored rather than passed through, so a caller cannot reach a flag the
-// builtin does not document.
+// caller naming the kernel's flags bit by bit (ssaOpenWithWords), folded onto
+// the access mode `access`. Anything else in the word is ignored rather than
+// passed through, so a caller cannot reach a flag the builtin does not
+// document. Linux has a word for every bit, so nothing is refused here.
 //
 // rbx = path, r12 = pathz, r13 = its length then the fd, r14 = the caller's
 // flag word, which has to be callee-saved because the NUL-termination calls
 // the heap guard.
+// ssaOpenWithWords is the open_*_with flags word, bit by bit, as Linux
+// x86-64 spells each (the checker's open_reader_with comment is the
+// contract).
+var ssaOpenWithWords = []struct {
+	bit  int
+	word int
+	name string // the label suffix
+	flag string
+}{
+	{1, 64, "nc", "O_CREAT"},
+	{2, 2048, "nb", "O_NONBLOCK"},
+	{4, 128, "nx", "O_EXCL"},
+	{8, 0x4000, "nd", "O_DIRECT"},
+	{16, 0x10000, "ndir", "O_DIRECTORY"},
+	{32, 0x1000, "nds", "O_DSYNC"},
+	{64, 0x101000, "ns", "O_SYNC"},
+	{128, 0x40000, "na", "O_NOATIME"},
+	{256, 0x100, "nt", "O_NOCTTY"},
+	{512, 0x20000, "nf", "O_NOFOLLOW"},
+}
+
 func emitOpenWithHelper(name, lbl string, access int) func(w func(string, ...any)) {
 	return func(w func(string, ...any)) {
 		w("")
@@ -276,14 +297,12 @@ func emitOpenWithHelper(name, lbl string, access int) func(w func(string, ...any
 		ssaAtFdcwd(w, "edi")
 		w("\tmov rsi, r12")
 		w("\tmov edx, %d", access)
-		w("\ttest r14b, 1")
-		w("\tjz .Lssa_%s_nc", lbl)
-		w("\tor edx, 64") // O_CREAT
-		w(".Lssa_%s_nc:", lbl)
-		w("\ttest r14b, 2")
-		w("\tjz .Lssa_%s_nb", lbl)
-		w("\tor edx, 2048") // O_NONBLOCK
-		w(".Lssa_%s_nb:", lbl)
+		for _, b := range ssaOpenWithWords {
+			w("\ttest r14d, %d", b.bit)
+			w("\tjz .Lssa_%s_%s", lbl, b.name)
+			w("\tor edx, %d // %s", b.word, b.flag)
+			w(".Lssa_%s_%s:", lbl, b.name)
+		}
 		w("\tmov r10d, 438")
 		w("\tmov eax, 257")
 		w("\tsyscall")

@@ -124,14 +124,39 @@ function conv_sparse(): i32 {
 //
 // The three `_bytes` flags reinterpret `count`, `skip` and `seek` as
 // byte counts rather than block counts, and `fullblock` makes a short
-// read keep reading instead of counting as a partial record. `append`
-// is the one that changes the OPEN.
-function flag_names(): string[] {
-  return ["append", "count_bytes", "fullblock", "nonblock", "seek_bytes", "skip_bytes"];
+// read keep reading instead of counting as a partial record; GNU takes
+// it as an input flag only. The rest change the OPEN: `append` through
+// `open_appender`, the others as bits of `open_reader_with` /
+// `open_writer_with`'s flags word (open_flags). `nocache` is not an
+// open flag and is not taken (#9242).
+function iflag_names(): string[] {
+  return ["append", "count_bytes", "fullblock", "nonblock", "seek_bytes", "skip_bytes", "direct", "directory", "dsync", "sync", "noatime", "noctty", "nofollow"];
 }
 
-function flag_bits(): i32[] {
-  return [1, 2, 4, 8, 16, 32];
+function iflag_bits(): i32[] {
+  return [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+}
+
+function oflag_names(): string[] {
+  return ["append", "count_bytes", "nonblock", "seek_bytes", "skip_bytes", "direct", "directory", "dsync", "sync", "noatime", "noctty", "nofollow"];
+}
+
+function oflag_bits(): i32[] {
+  return [1, 2, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+}
+
+// open_flags is the open-time part of an iflag/oflag word as
+// `open_reader_with` / `open_writer_with` spell it: non-blocking 2,
+// direct 8, directory 16, dsync 32, sync 64, noatime 128, noctty 256,
+// nofollow 512. A bit the target cannot honour comes back from the open
+// as Unsupported, which the caller reports like any other open failure.
+function open_flags(f: i32): i32 {
+  let out: i32 = 0;
+  if ((f & flag_nonblock()) != 0) {
+    out = out | 2;
+  }
+  out = out | f >> 3 & 1016;
+  return out;
 }
 
 function flag_append(): i32 {
@@ -454,9 +479,9 @@ function scan_operands(argv: string[]): Scan {
     } else if (name == "conv") {
       s = Settings { ...s, conv: s.conv | parse_set(value, conv_names(), conv_bits(), "conversion") };
     } else if (name == "iflag") {
-      s = Settings { ...s, iflag: s.iflag | parse_set(value, flag_names(), flag_bits(), "input flag") };
+      s = Settings { ...s, iflag: s.iflag | parse_set(value, iflag_names(), iflag_bits(), "input flag") };
     } else if (name == "oflag") {
-      s = Settings { ...s, oflag: s.oflag | parse_set(value, flag_names(), flag_bits(), "output flag") };
+      s = Settings { ...s, oflag: s.oflag | parse_set(value, oflag_names(), oflag_bits(), "output flag") };
     } else {
       s = Settings { ...s, status: status_operand(value) };
     }
@@ -1413,11 +1438,18 @@ function help_text(): string {
   out = out + "Each FLAG symbol may be:\n";
   out = out + "\n";
   out = out + "  append    append mode (makes sense only for output; conv=notrunc suggested)\n";
-  out = out + "  count_bytes  treat 'count=N' as a byte count (iflag only)\n";
+  out = out + "  direct    use direct I/O for data\n";
+  out = out + "  directory  fail unless a directory\n";
+  out = out + "  dsync     use synchronized I/O for data\n";
+  out = out + "  sync      likewise, but also for metadata\n";
   out = out + "  fullblock  accumulate full blocks of input (iflag only)\n";
   out = out + "  nonblock  use non-blocking I/O\n";
-  out = out + "  seek_bytes  treat 'seek=N' as a byte count (oflag only)\n";
+  out = out + "  noatime   do not update access time\n";
+  out = out + "  noctty    do not assign controlling terminal from file\n";
+  out = out + "  nofollow  do not follow symlinks\n";
+  out = out + "  count_bytes  treat 'count=N' as a byte count (iflag only)\n";
   out = out + "  skip_bytes  treat 'skip=N' as a byte count (iflag only)\n";
+  out = out + "  seek_bytes  treat 'seek=N' as a byte count (oflag only)\n";
   out = out + "\n";
   out = out + "Options are:\n";
   out = out + "\n";
@@ -1479,11 +1511,7 @@ function open_input(s: Settings): (Reader, boolean) {
   if (!s.have_in) {
     return (stdin(), true);
   }
-  let flags: i32 = 0;
-  if ((s.iflag & flag_nonblock()) != 0) {
-    flags = 2;
-  }
-  match (open_reader_with(s.in_name, flags)) {
+  match (open_reader_with(s.in_name, open_flags(s.iflag))) {
     Err(e) => {
       gnu.error("failed to open " + gnu.quote(s.in_name) + ": " + gnu.io_error_text(e));
       return (stdin(), false);
@@ -1498,28 +1526,20 @@ function open_output(s: Settings): (Writer, boolean) {
   if (!s.have_out) {
     return (stdout(), true);
   }
-  if ((s.conv & conv_excl()) != 0) {
-    match (open_exclusive(s.out_name)) {
-      Err(e) => {
-        gnu.error("failed to open " + gnu.quote(s.out_name) + ": " + gnu.io_error_text(e));
-        return (stdout(), false);
-      },
-      Ok(w) => {
-        return (w, true);
-      }
-    }
-  }
-  if ((s.oflag & flag_append()) != 0) {
+  if ((s.oflag & flag_append()) != 0 && (s.conv & conv_excl()) == 0) {
     return open_out_appending(s);
   }
+  // `conv=excl` is the exclusive create at the mode every other `of=`
+  // gets, 0666 through the umask; `open_exclusive` fixes 0600 for the
+  // temporary file it exists for and is not this open (#9237).
   let flags: i32 = 1;
+  if ((s.conv & conv_excl()) != 0) {
+    flags = flags | 4;
+  }
   if ((s.conv & conv_nocreat()) != 0) {
     flags = 0;
   }
-  if ((s.oflag & flag_nonblock()) != 0) {
-    flags = flags | 2;
-  }
-  match (open_writer_with(s.out_name, flags)) {
+  match (open_writer_with(s.out_name, flags | open_flags(s.oflag))) {
     Err(e) => {
       gnu.error("failed to open " + gnu.quote(s.out_name) + ": " + gnu.io_error_text(e));
       return (stdout(), false);
