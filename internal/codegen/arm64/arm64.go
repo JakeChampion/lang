@@ -226,7 +226,7 @@ var linuxDarwinSysno = map[string][2]int{
 	// the previous mask returned, and no error return on either.
 	"umask": {166, 60},
 	// getpriority(2) / setpriority(2) — Linux asm-generic 141 / 140,
-	// Darwin BSD 100 / 101. Note the Linux pair is in the opposite
+	// Darwin BSD 100 / 96. Note the Linux pair is in the opposite
 	// order to the numbers x86-64 uses (140 get, 141 set), so neither
 	// backend's table can be copied to the other.
 	//
@@ -236,7 +236,7 @@ var linuxDarwinSysno = map[string][2]int{
 	// errno alone. `emitPriorityRuntime` undoes the bias on Linux
 	// only.
 	"getpriority": {141, 100},
-	"setpriority": {140, 101},
+	"setpriority": {140, 96},
 	// fchmod(2) — Linux 52, Darwin BSD 124. Backs write_file_exec's
 	// mode fixup: openat's mode argument applies only on CREATE, so
 	// writing over a stale output would leave the old mode (#6133).

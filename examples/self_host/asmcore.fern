@@ -1391,7 +1391,7 @@ pub function sysno(t: string, name: string): string {
       return "100";
     }
     if (name == "setpriority") {
-      return "101";
+      return "96";
     }
     if (name == "kill") {
       return "37";
