@@ -6259,8 +6259,8 @@ function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asm
   return s.write("    movq " + home + ", " + reg + "\n");
 }
 
-// ssa_x0_forget marks %rax as holding no tracked value: at a label, and
-// before a sequence that writes %rax on its own.
+// ssa_x0_forget marks %r11 as holding no tracked value: at a label, and
+// before a sequence that writes %r11 on its own.
 function ssa_x0_forget(s: asmcore.EmitState): asmcore.EmitState {
   return asmcore.EmitState { ...s, ssa_x0: 0 - 1 };
 }
@@ -6283,7 +6283,7 @@ function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): as
 }
 
 // ssa_dst is where an instruction this emitter selects itself writes its
-// result: the value's register home, or %rax for a value in a frame slot,
+// result: the value's register home, or %r11 for a value in a frame slot,
 // which ssa_store then spills. ssa_src is where an operand is read from: its
 // register home, or `scratch` once ssa_load has filled it. An instruction's
 // result shares a register with an operand only when it is a phi or one of
@@ -6359,9 +6359,10 @@ function ssa_read_rhs(fr: SsaFrame, reg_of: i32[], v: i32, scratch: string, s: a
 }
 
 // ssa_bin_in_place emits a two-operand integer op into the result's home,
-// each operand read from its own: the left operand is moved into the
-// destination and the op reads the right one where it lives, or as an
-// immediate. A right operand that lives in the destination would be
+// each operand read from its own. A multiply by a constant reads its operand
+// where it lives, through imul's three-operand form; any other op moves the
+// left operand into the destination and reads the right one where it lives,
+// or as an immediate. A right operand that lives in the destination would be
 // overwritten by that move, so the operands swap for a commutative op or a
 // flipped comparison; a subtraction in that shape computes in the scratch
 // and is stored after. A constant on the left is only ever one the op can
@@ -6384,6 +6385,10 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
     let t: i32 = a;
     a = b;
     b = t;
+  }
+  if (tag == 23 && fr.imm.is_imm[b] && reg_of[a] >= 0) {
+    s = s.write("    imulq $" + util.i64_to_string(fr.imm.value[b]) + ", " + ssa_reg(reg_of[a]) + ", " + dh + "\n");
+    return ssa_store(reg_of, ins.result, dh, s);
   }
   s = ssa_read_rhs(fr, reg_of, b, "%rcx", s);
   s = ssa_load(reg_of, a, dh, s);

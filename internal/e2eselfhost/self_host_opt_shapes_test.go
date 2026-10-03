@@ -289,6 +289,34 @@ function main(): i32 { return pick(true, 7) + pick(false, 9); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`testq (%r\w+), (%r\w+)`}, "arm64-linux": {`\bcbn?z x\d+,`}},
 		forbid: map[string][]string{"x86-64-linux": {`testq %r11, %r11`, `movq %r\w+, %r11`}, "arm64-linux": {`\bcbn?z x4,`, `mov x4, x`}}},
+	// A multiply by a constant reads its operand from its home: x86-64's
+	// three-operand imul, with no copy into the destination first, whichever
+	// side the constant is written on. The forbid is the half that tells it
+	// from main, and it holds only while each product has a register home.
+	{name: "imul_reads_operand_in_place", fn: "poly", exit: 87, src: `
+@noinline function poly(s: string): i32 {
+    let h: i32 = 7;
+    let i: i32 = 0;
+    while (i < s.len()) { h = h * 1000003 + s[i] as i32; i = i + 1; }
+    if (h < 0) { h = 0 - h; }
+    return h % 101;
+}
+function main(): i32 { return poly("pack my box with five dozen liquor jugs"); }
+`,
+		want:   map[string][]string{"x86-64-linux": {`imulq \$1000003, %\w+, %\w+`}},
+		forbid: map[string][]string{"x86-64-linux": {`movq %r\w+, %r\w+\n\s+imulq \$1000003`}}},
+	{name: "imul_left_constant_reads_operand_in_place", fn: "poly", exit: 87, src: `
+@noinline function poly(s: string): i32 {
+    let h: i32 = 7;
+    let i: i32 = 0;
+    while (i < s.len()) { h = 1000003 * h + s[i] as i32; i = i + 1; }
+    if (h < 0) { h = 0 - h; }
+    return h % 101;
+}
+function main(): i32 { return poly("pack my box with five dozen liquor jugs"); }
+`,
+		want:   map[string][]string{"x86-64-linux": {`imulq \$1000003, %\w+, %\w+`}},
+		forbid: map[string][]string{"x86-64-linux": {`movq %r\w+, %r\w+\n\s+imulq \$1000003`}}},
 	// A 32-bit value read only by further 32-bit arithmetic keeps no sign
 	// extension: the product feeds the sum without one, and the sum is
 	// extended once, where the comparison and the division read it. The roll
