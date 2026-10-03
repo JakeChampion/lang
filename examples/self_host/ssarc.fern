@@ -2313,15 +2313,12 @@ function release_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerResult 
   return r;
 }
 
-// The element types of the columns of boxes this function's values and schema
-// fields name — a keyed key column's and a boxed value column's — each once.
-function boxed_columns(f: ssasem.Func): typeinfo.Type[] {
+// The element types of the columns of boxes the schema's `maps` name — a
+// keyed key column's and a boxed value column's — each once.
+function boxed_columns(maps: typeinfo.Type[]): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   let names: string[] = [];
-  for t in schema_types(f) {
-    if (!ssasem.is_map(t)) {
-      continue;
-    }
+  for t in maps {
     let cols: typeinfo.Type[] = [];
     if (ssasem.keyed_map_key(ssasem.map_key(t))) {
       cols = cols.append(ssasem.map_key(t));
@@ -2341,12 +2338,12 @@ function boxed_columns(f: ssasem.Func): typeinfo.Type[] {
   return out;
 }
 
-// The box value columns of the maps this function's values and schema fields
-// name that run on core/map, each once.
-function routed_box_columns(f: ssasem.Func): typeinfo.Type[] {
+// The box value columns of the schema's `maps` that run on core/map, each
+// once.
+function routed_box_columns(maps: typeinfo.Type[], f: ssasem.Func): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   let names: string[] = [];
-  for t in schema_types(f) {
+  for t in maps {
     if (!routed_map(t, f) || !routed_box(ssasem.map_value(t))) {
       continue;
     }
@@ -2360,33 +2357,51 @@ function routed_box_columns(f: ssasem.Func): typeinfo.Type[] {
   return out;
 }
 
-function schema_types(f: ssasem.Func): typeinfo.Type[] {
-  let all: typeinfo.Type[] = f.values;
+// The map types among this function's values and schema fields, in that
+// order, and whether any of those values and fields, map or not, contains a
+// byte view.
+struct SchemaScan { maps: typeinfo.Type[], bytes: boolean }
+
+function schema_scan(f: ssasem.Func): SchemaScan {
+  let sc: SchemaScan = SchemaScan { maps: [], bytes: false };
+  for t in f.values {
+    sc = scan_schema_type(sc, t);
+  }
   for rec in f.records.list {
     for field in rec.fields {
-      all = all.append(field.ty);
+      sc = scan_schema_type(sc, field.ty);
     }
   }
   for e in f.enums {
     for v in e.variants {
       for field in v.fields {
-        all = all.append(field.ty);
+        sc = scan_schema_type(sc, field.ty);
       }
     }
   }
-  return all;
+  return sc;
+}
+
+function scan_schema_type(own sc: SchemaScan, t: typeinfo.Type): SchemaScan {
+  if (!sc.bytes && contains_byte_view(t)) {
+    sc = SchemaScan { ...sc, bytes: true };
+  }
+  if (ssasem.is_map(t)) {
+    sc = SchemaScan { ...sc, maps: sc.maps.append(t) };
+  }
+  return sc;
 }
 
 function env_release_name(t: typeinfo.Type): string {
   return release_helper_name(t) + "$env";
 }
 
-// The routed maps this function's values and schema fields name whose key
-// column is keyed, each once.
-function routed_keyed_maps(f: ssasem.Func): typeinfo.Type[] {
+// The routed maps among the schema's `maps` whose key column is keyed, each
+// once.
+function routed_keyed_maps(maps: typeinfo.Type[], f: ssasem.Func): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   let names: string[] = [];
-  for t in schema_types(f) {
+  for t in maps {
     if (!routed_map(t, f) || !ssasem.keyed_map_key(ssasem.map_key(t))) {
       continue;
     }
@@ -2568,13 +2583,8 @@ pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
 // helpers_not_in is drop_helpers less the symbols `done` carries.
 function helpers_not_in(f: ssasem.Func, done: util.NameIndex): irtables.LowerResult[] {
   let out: irtables.LowerResult[] = [];
-  let bytes: boolean = false;
-  for t in schema_types(f) {
-    if (contains_byte_view(t)) {
-      bytes = true;
-    }
-  }
-  if (bytes) {
+  let sc: SchemaScan = schema_scan(f);
+  if (sc.bytes) {
     for h in ssabytes.helpers() {
       if (!done.has(h.name)) {
         out = out.append(h);
@@ -2582,21 +2592,17 @@ function helpers_not_in(f: ssasem.Func, done: util.NameIndex): irtables.LowerRes
     }
   }
   for rec in f.records.list {
-    if (has_children(rec.ty, f)) {
-      out = append_helpers(out, rec.ty, f, done);
-    }
+    out = append_helpers(out, rec.ty, f, done);
   }
   for e in f.enums {
-    if (has_children(e.ty, f)) {
-      out = append_helpers(out, e.ty, f, done);
-    }
+    out = append_helpers(out, e.ty, f, done);
   }
-  for v in boxed_columns(f) {
+  for v in boxed_columns(sc.maps) {
     if (!outlined_release(v, f) && !done.has(release_helper_name(v))) {
       out = out.append(release_helper(v, f));
     }
   }
-  for v in routed_box_columns(f) {
+  for v in routed_box_columns(sc.maps, f) {
     if (ssasem.is_string_array(v) && !done.has(release_helper_name(v))) {
       out = out.append(release_helper(v, f));
     }
@@ -2604,18 +2610,25 @@ function helpers_not_in(f: ssasem.Func, done: util.NameIndex): irtables.LowerRes
       out = out.append(env_release_helper(v));
     }
   }
-  for t in routed_keyed_maps(f) {
+  for t in routed_keyed_maps(sc.maps, f) {
     out = append_keyed_closures(out, t, done);
   }
   return out;
 }
 
-// append_helpers adds t's drop and release helpers, each unless done has it.
+// append_helpers adds t's drop and release helpers when t has children, each
+// unless done has it. Most of a module's bodies find both done, so that is
+// asked first.
 function append_helpers(own out: irtables.LowerResult[], t: typeinfo.Type, f: ssasem.Func, done: util.NameIndex): irtables.LowerResult[] {
-  if (!done.has(drop_helper_name(t))) {
+  let need_drop: boolean = !done.has(drop_helper_name(t));
+  let need_release: boolean = !done.has(release_helper_name(t));
+  if (!need_drop && !need_release || !has_children(t, f)) {
+    return out;
+  }
+  if (need_drop) {
     out = out.append(one_helper(t, f));
   }
-  if (!done.has(release_helper_name(t))) {
+  if (need_release) {
     out = out.append(release_helper(t, f));
   }
   return out;
