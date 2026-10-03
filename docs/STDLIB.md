@@ -1630,7 +1630,11 @@ stays silent, and with the A and AAAA queries together.
   `tcp_serve_supervised_with_shutdown(port, opts, init, handler, shutdown)`
   take the hook of the `_shutdown` entries, which each worker's loop calls
   on its way out. Where there is no fork (the interpreter) every one of
-  them serves single-process.
+  them serves single-process. A worker runs one handler at a time to
+  completion, so a handler that blocks (a sleep, a slow upstream fetch)
+  holds every other connection on that worker until it returns; workers,
+  not connections, absorb slow handlers until #9857 multiplexes them
+  (`TestSelfHostSupervisedServeHandlerStallsItsWorker` pins the stall).
 - `tcp_recv_deadline(fd, max, deadline): Option[u8[]]` —
   recv bounded by a readability deadline: `Some(chunk)` in time
   (empty chunk = EOF), `None` at the deadline. On interp (where
