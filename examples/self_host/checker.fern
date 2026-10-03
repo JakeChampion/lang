@@ -12477,7 +12477,8 @@ function call_diags(e: ast.Expr, s: Scope): util.Diag[] {
 //
 // The arity numbers count the RECEIVER, which is how native models these — as
 // plain functions whose first parameter is the cell — so `c.set(v)` is two
-// arguments and `c.get()` is one, and a wrong value on `set` is "argument 2".
+// arguments and `c.get()` is one. A wrong value is numbered among the written
+// arguments, as every method call's is, so on `set` it is "argument 1".
 function cell_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typeinfo.Type, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   let want: i32 = 0 - 1;
@@ -12498,7 +12499,7 @@ function cell_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typein
     let at: typeinfo.Type = check_expr(c.args[0], s);
     out = util.append_diags(out, int_dest_range_diags(c.args[0], pt));
     if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[0], pt, s) && !view_arg_borrow(at, pt) && !coercible(at, pt, s)) {
-      out = out.append(dg_at("E038", "argument 2: expected " + type_label(pt) + ", got " + type_label(at), expr_line(c.args[0]), expr_col(c.args[0])));
+      out = out.append(dg_at("E038", "argument 1: expected " + type_label(pt) + ", got " + type_label(at), expr_line(c.args[0]), expr_col(c.args[0])));
     }
     out = util.append_diags(out, array_elem_check(array_elem_type_of(pt), c.args[0], s));
   }

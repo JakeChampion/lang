@@ -1947,9 +1947,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// method table nor the struct table and the ordinary method path
 		// resolved nothing — a call was accepted whatever it was handed,
 		// a lambda included (#9518). Arity counts the RECEIVER, matching
-		// native, which models these as functions carrying the cell: a bad
-		// value on `set` is "argument 2", and `c.set()` is one argument of
-		// the two it wants.
+		// native, which models these as functions carrying the cell, so
+		// `c.set()` is one argument of the two it wants; a bad value on
+		// `set` is numbered among the written arguments, "argument 1".
 		{"cell-set-wrong-type", "function f(c: Cell[i32]): i32 { c.set(\"hi\"); return 0; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E038"}},
 		{"cell-set-lambda-arg", "function f(c: Cell[i32]): i32 { c.set((x: i32) => x + 1); return 0; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E038"}},
 		{"cell-set-too-few", "function f(c: Cell[i32]): i32 { c.set(); return 0; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E004"}},

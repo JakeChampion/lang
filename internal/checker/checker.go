@@ -11219,15 +11219,20 @@ func elemDispatchable(elem ast.Type) bool {
 // list by the rewrite, so reporting it as "argument 1" describes a slot the
 // reader never wrote. It is an unresolved method on that receiver — the same
 // thing E043 reports when no method of the name exists at all — and the
-// declared receiver type is what says why, so name it.
+// declared receiver type is what says why, so name it. The written arguments
+// are numbered from the first one after the receiver.
 func (c *checker) errArgMismatch(n *ast.Call, i int, recvIsArg0 bool, expected, at ast.Type) {
 	if recvIsArg0 && i == 0 && n.Method != nil {
 		c.errfCode(n.Method.FieldPos, "E043", "no method %q on %s — %q is declared for %s",
 			n.Method.Field, at, n.Method.Field, expected)
 		return
 	}
+	num := i + 1
+	if recvIsArg0 {
+		num = i
+	}
 	c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s%s",
-		i+1, expected, at, assignHint(expected, at))
+		num, expected, at, assignHint(expected, at))
 }
 
 // moduleAlreadyImports reports whether the module being checked names `mod`
