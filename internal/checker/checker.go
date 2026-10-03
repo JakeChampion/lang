@@ -16407,6 +16407,40 @@ func (c *checker) indexAsType(e ast.Expr, params map[string]bool, s *scope) (ast
 	return nil, false
 }
 
+// instantiateFuncValue types a generic function named as a value from the
+// function type the value is wanted at: each parameter and the result of the
+// generic signature unified against the expected type's. It stamps the type
+// arguments on the Ident for monomorph, which renames it to the instance, and
+// reports whether the expected type determined every type parameter. A type
+// argument may be an enclosing generic's own parameter; the clone loop
+// substitutes it as it does a call's.
+func (c *checker) instantiateFuncValue(n *ast.Ident, gf *ast.FuncDecl) (ast.Type, bool) {
+	exp, ok := c.expectedType.(*ast.FuncType)
+	if !ok {
+		return nil, false
+	}
+	sig, ok := c.info.FuncSigs[n.Name]
+	if !ok || len(sig.Params) != len(exp.Params) {
+		return nil, false
+	}
+	sub := map[string]ast.Type{}
+	for i := range sig.Params {
+		c.unifyType(sig.Params[i], exp.Params[i], sub)
+	}
+	c.unifyType(sig.Result, exp.Result, sub)
+	args := make([]ast.Type, len(gf.TypeParams))
+	for i, tp := range gf.TypeParams {
+		t, bound := sub[tp]
+		if !bound {
+			return nil, false
+		}
+		args[i] = t
+	}
+	c.checkTypeArgBounds(gf, args, sub, c.typeParamsInScope(), n.P)
+	n.TypeArgs = args
+	return substituteType(sig, sub), true
+}
+
 // errE040GenericFuncAsValue reports a generic function named where a value
 // is expected. The eta-expansion in the hint is spelled from the decl's own
 // parameters, so it is the shape the user needs rather than a generic
@@ -17066,6 +17100,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// outside callee position is never queued. Until it exists this is
 		// a refusal with a code, not a miscompile reported as a compiler bug.
 		if gf, isGen := c.info.GenericFuncs[n.Name]; isGen {
+			if t, ok := c.instantiateFuncValue(n, gf); ok {
+				return t
+			}
 			c.errE040GenericFuncAsValue(n.P, n.Name, gf)
 			return nil
 		}
@@ -18117,6 +18154,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						if _, isLit := n.Args[i].(*ast.ArrayLit); isLit {
 							c.expectedType = pt
 						}
+					} else if _, isFn := pt.(*ast.FuncType); isFn {
+						// A function parameter is what a generic function named
+						// as the argument takes its type arguments from. A
+						// lambda's body must not see it: a generic call in its
+						// return would read it as that call's result.
+						if _, isName := n.Args[i].(*ast.Ident); isName {
+							c.expectedType = pt
+						}
 					}
 				}
 				at = c.checkExpr(n.Args[i], s)
@@ -18203,7 +18248,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					continue
 				}
 				if sub != nil {
-					if !c.unifyArrayArg(&n.Args[i], expected, at, sub, own) {
+					if id, isName := n.Args[i].(*ast.Ident); isName && len(id.TypeArgs) > 0 {
+						// A generic named as the argument was typed from this
+						// parameter (instantiateFuncValue): unifying the two
+						// would only bind the callee's own parameters to
+						// themselves. The other arguments pin them, and
+						// monomorph substitutes them into the value's type
+						// arguments with the call's.
+					} else if !c.unifyArrayArg(&n.Args[i], expected, at, sub, own) {
 						// Report what the parameter came to MEAN here, not how
 						// it was declared: `Box[U, E]` says nothing to a reader
 						// who wrote `.pair[string]` on a `Box[i32, string]`,

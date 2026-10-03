@@ -93,6 +93,29 @@ This is exactly how the [test runner](../../tutorial/testing/) types its
 assertions — `assert_eq[T: cmp.Eq + cmp.Display]` accepts any comparable,
 printable value.
 
+### A generic function as a value
+
+A generic function can be passed or stored where a function type is
+expected, and takes its type arguments from that type:
+
+```fern
+import "core/cmp";
+
+function show[T: cmp.Display](v: T): string { return v.to_string(); }
+function apply(f: (i32) => string, v: i32): string { return f(v); }
+
+function main(): i32 {
+    print(apply(show, 42));                 // 42: `show` at T = i32
+    let g: (string) => string = show;       // `show` at T = string
+    print(g("pear"));
+    return 0;
+}
+```
+
+Each use is its own instance, as a call would be. The expected type has to
+determine every type parameter: `let f = show;` has none and is refused
+(E040), as is a type that leaves a bound unmet (E021).
+
 ## The `core/cmp` foundation
 
 The standard library's [`core/cmp`](../../stdlib/cmp/) module defines the

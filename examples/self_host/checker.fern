@@ -12915,6 +12915,12 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
     if (di < dests.len()) {
       dest = dests[di];
     }
+    // A generic callee's parameter is spelled in its own type variables; a
+    // generic function named as the argument needs them bound, from the
+    // call's other arguments, to take its own type arguments from it.
+    if (generic_fn_value_arg(c.args[di], s)) {
+      dest = bound_param_dest(c, di, dest, s);
+    }
     out = util.append_diags(out, dest_call_diags(c.args[di], dest, s));
     di = di + 1;
   }
@@ -14071,6 +14077,65 @@ function call_diags_ident(id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.D
   return out;
 }
 
+// fn_value_binds is what the callable `dest` binds of the type parameters of
+// the generic `sig` named as a value there: each parameter's spelling and the
+// result's unified against `dest`'s, every one of them at most once.
+function fn_value_binds(sig: FuncSig, dest: typeinfo.TypeFunc, s: Scope): (string[], typeinfo.Type[]) {
+  let ns: string[] = [];
+  let ts: typeinfo.Type[] = [];
+  if (!dest.params_known || dest.param_types.len() != sig.param_type_names.len()) {
+    return (ns, ts);
+  }
+  let i: i32 = 0;
+  while (i < dest.param_types.len()) {
+    let (pn, pt) = gc_bind_param(parser.parse_type_ref(sig.param_type_names[i]), dest.param_types[i], sig.all_type_params, s.type_names(), ns, ts);
+    ns = pn;
+    ts = pt;
+    i = i + 1;
+  }
+  let (rn, rt) = gc_bind_param(parser.parse_type_ref(sig.ret_type_name), dest.ret_type, sig.all_type_params, s.type_names(), ns, ts);
+  return (rn, rt);
+}
+
+// fn_value_bound_diags is E021 for each bounded type parameter whose binding
+// does not implement its bound, as a call binding it would report.
+function fn_value_bound_diags(sig: FuncSig, names: string[], types: typeinfo.Type[], s: Scope, ln: i32, cl: i32): util.Diag[] {
+  let out: util.Diag[] = [];
+  let i: i32 = 0;
+  while (i < sig.type_params.len() && i < sig.type_bounds.len()) {
+    let at: i32 = util.index_of_str(names, sig.type_params[i]);
+    if (at >= 0 && sig.type_bounds[i].len() > 0) {
+      out = util.append_diags(out, e021_bound_call_diag(sig.type_bounds[i], types[at], s, ln, cl));
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// generic_fn_value_arg reports whether `e` names a generic function as a
+// value: an identifier bound to nothing, naming a generic signature.
+function generic_fn_value_arg(e: ast.Expr, s: Scope): boolean {
+  if let ast.ExprIdent(id) = e {
+    return is_unknown(s.lookup(id.name)) && !s.is_bound(id.name) && generic_fn_value(s.lookup_sig(id.name));
+  }
+  return false;
+}
+
+// bound_param_dest is parameter `di` of the call `c`'s callee with the
+// callee's type variables bound as the call binds them; `dest` when the
+// callee is not a generic function or the parameter has no spelling.
+function bound_param_dest(c: ast.ExprCall, di: i32, dest: typeinfo.Type, s: Scope): typeinfo.Type {
+  if let ast.ExprIdent(cid) = c.callee {
+    let sig: FuncSig = s.lookup_sig(cid.name);
+    if (s.defines(cid.name) || sig.all_type_params.len() == 0 || di >= sig.param_type_names.len()) {
+      return dest;
+    }
+    let (bn, bt) = call_type_bindings(sig, c, s);
+    return type_from_ref_subst(parser.parse_type_ref(sig.param_type_names[di]), bn, bt, s.type_names());
+  }
+  return dest;
+}
+
 // generic_fn_value: a generic function named where a value is expected. No
 // instantiation reaches such a use, so nothing determines its type
 // parameters; native refuses it with E040 (#7040).
@@ -14233,6 +14298,20 @@ function lit_field_type(ssig: StructSig, fi: i32, args: typeinfo.Type[], s: Scop
 // own first-element-anchored E034 stands down: `[1, "a"]` is a valid
 // `dyn Show[]` (#10097).
 function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[] {
+  // A generic function named as a value where a callable is wanted takes its
+  // type arguments from that callable: the monomorphiser clones it for them
+  // (parser.mono_fn_value). Only a callable that binds every one of them
+  // escapes E040.
+  if let ast.ExprIdent(id) = e {
+    if let typeinfo.TypeFunc(df) = dest {
+      if (is_unknown(s.lookup(id.name)) && !s.is_bound(id.name) && generic_fn_value(s.lookup_sig(id.name))) {
+        let (bn, bt) = fn_value_binds(s.lookup_sig(id.name), df, s);
+        if (bn.len() == s.lookup_sig(id.name).all_type_params.len()) {
+          return fn_value_bound_diags(s.lookup_sig(id.name), bn, bt, s, id.line, id.col);
+        }
+      }
+    }
+  }
   if let ast.ExprStructLit(sl) = e {
     if let typeinfo.TypeStruct(ds) = dest {
       if (ds.name == sl.type_name) {
@@ -14435,7 +14514,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
         }
         let vdest: typeinfo.Type = t_unknown("no declared type");
         if (v.type_name.len() > 0) {
-          vdest = vsc.resolve_type(v.type_name);
+          vdest = var_declared_type(v, vsc);
         }
         out = util.append_diags(out, dest_call_diags(v.init, vdest, vsc));
         out = util.append_diags(out, array_elem_check(array_elem_type_of(vdest), v.init, vsc));
