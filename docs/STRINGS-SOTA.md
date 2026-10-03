@@ -927,6 +927,19 @@ The WASM descriptor-flags helper releases its scratch storage on both result
 paths. Current target, size and native measurement evidence is recorded in
 [the comm report](STRING-BYTE-COMM-2026-10-03.md).
 
+`expand` and `unexpand` keep input chunks and completed lines as bytes. A
+partial line uses a raw builder, allocated on demand and freed when the line
+is taken, so it no longer recopies its growing prefix on each read.
+Current target, ownership, size and native measurement evidence is recorded
+in [the tab utility report](STRING-BYTE-TABS-2026-10-03.md).
+
+WASI filesystem errors retain borrowed filenames independently of their
+callers. Dropping an `IoError` leaves the caller's filename valid; errors
+without payloads release their temporary path. File-flags and symlink-read
+helpers release scratch storage on both success and failure. Repeated
+heap-path tests check the core-module allocation census, with additional
+component coverage for file reads and writes.
+
 `Reader.read_chunk_bytes(n): Result[u8[], IoError]` provides owned raw input
 on the bootstrap interpreter and native/wasm backends, and on the self-hosted
 native and wasm command-module backends. It preserves NUL, malformed UTF-8

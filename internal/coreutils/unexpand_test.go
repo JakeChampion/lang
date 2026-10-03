@@ -153,6 +153,7 @@ func unexpandCases(t *testing.T) []invocation {
 		{name: "blanks across read blocks", args: []string{"-a"}, stdin: strings.Repeat("        x\n", 30000)},
 		{name: "a wide tab stop", args: []string{"-a", "-t", "5000"}, stdin: strings.Repeat(" ", 5001) + "x\n"},
 	}
+	cases = append(cases, tabRawCases(t)...)
 	return append(cases, tabListCases("        a       b\n")...)
 }
 

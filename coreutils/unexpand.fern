@@ -163,9 +163,9 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
   let is_stdin: boolean = false;
   let name: string = "";
   let r: Reader = stdin();
-  let chunk: string = "";
+  let chunk: u8[] = [];
   let pos: i32 = 0;
-  let carry: string = "";
+  let carry: usize = 0 as usize;
   let final: boolean = false;
 
   while (true) {
@@ -173,14 +173,17 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
       if (final) {
         break;
       }
-      chunk = "";
+      chunk = [];
       pos = 0;
       let got: boolean = false;
       while (!got) {
         if (!have_reader) {
           if (fi >= files.len()) {
-            chunk = carry;
-            carry = "";
+            if (carry != 0 as usize) {
+              chunk = buf_take_bytes(carry);
+              buf_free(carry);
+              carry = 0 as usize;
+            }
             final = true;
             got = true;
           } else {
@@ -206,9 +209,9 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
             }
           }
         } else {
-          let piece: string = "";
+          let piece: u8[] = [];
           let read_ok: boolean = true;
-          match (r.read_chunk(read_size())) {
+          match (r.read_chunk_bytes(read_size())) {
             Ok(c) => {
               piece = c;
             },
@@ -236,22 +239,27 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
       continue;
     }
 
-    let j: i32 = __memchr(chunk, 10, pos);
+    let j: i32 = __memchr_bytes(chunk, 10, pos);
     if (j < 0) {
       if (!final) {
-        carry = carry + slice_unchecked(chunk, pos, chunk.len());
+        if (carry == 0 as usize) {
+          carry = buf_new(chunk.len() - pos);
+        }
+        buf_push_bytes_range(carry, chunk, pos, chunk.len());
         pos = chunk.len();
         continue;
       }
       j = chunk.len() - 1;
     }
 
-    let buf: string = chunk;
+    let buf: u8[] = chunk;
     let lo: i32 = pos;
     let hi: i32 = j + 1;
-    if (carry.len() > 0) {
-      buf = carry + slice_unchecked(chunk, pos, j + 1);
-      carry = "";
+    if (carry != 0 as usize) {
+      buf_push_bytes_range(carry, chunk, pos, j + 1);
+      buf = buf_take_bytes(carry);
+      buf_free(carry);
+      carry = 0 as usize;
       lo = 0;
       hi = buf.len();
     }
@@ -261,7 +269,7 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
     if (!convert_all && lead != 32 && lead != 9) {
       // Nothing to convert: only leading blanks are candidates and this
       // line has none, so it goes out as it stands.
-      buf_push_range(h, buf, lo, hi);
+      buf_push_bytes_range(h, buf, lo, hi);
     } else {
       // The line stays a view into the chunk: every scan below is
       // bounded by `end`, so nothing here needs it copied out.
@@ -300,7 +308,7 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
             buf_push_range(h, pad, 0, pending);
             pending = 0;
             held = false;
-            buf_push_range(h, buf, p, end);
+            buf_push_bytes_range(h, buf, p, end);
             p = end;
           } else {
             if (held) {
@@ -337,12 +345,12 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
           pending = 0;
           held = false;
           if (!convert) {
-            buf_push_range(h, buf, p, end);
+            buf_push_bytes_range(h, buf, p, end);
             p = end;
           } else if (!convert_all) {
             // Default: the first byte that is not a blank ends the
             // convertible part of the line.
-            buf_push_range(h, buf, p, end);
+            buf_push_bytes_range(h, buf, p, end);
             p = end;
             convert = false;
           } else {
@@ -367,7 +375,7 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
               }
               q = q + 1;
             }
-            buf_push_range(h, buf, p, q);
+            buf_push_bytes_range(h, buf, p, q);
             p = q;
             after_nb = true;
           }
