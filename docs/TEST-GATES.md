@@ -59,11 +59,12 @@ per native backend (x86-64 and arm64, stack machine and `-backend ssa`),
 `TestSyscallFloorRefusedOnWasm`, which wants the E066 refusal to name the
 callee. `TestSelfHostSyscallFloorX86_64` / `…Arm64` run the same probe
 through the self-host driver. `TestRawSyscallRefusedUnderSandbox` in
-`internal/codegen/x86_64` pins that `FERN_SANDBOX=1` records a literal
+`internal/codegen/x86_64` and `TestSelfHostSandboxRefusesRunTimeSyscallNumber`
+in `internal/e2eselfhost` pin that `FERN_SANDBOX=1` records a literal
 syscall number and refuses a run-time one rather than emitting a filter
 that kills the program at its first call; the `sockets` case of
-`TestSeccompDoesNotBreakWorkingPrograms` runs the Fern-bodied socket
-helpers under the filter. The socket helpers themselves are gated by the
+`TestSeccompDoesNotBreakWorkingPrograms` runs the self-host's Fern-bodied
+socket helpers under the filter. The socket helpers themselves are gated by the
 tests that were already on the builtins (`TestTcpLocalPortRoundTrip` on
 every native leg, `TestArm64TcpListen`, the `Serve*` and `Fetch*` tests,
 the Darwin lane) and by `TestEveryHelperLowersForEveryTarget` and
@@ -234,8 +235,8 @@ through two workers binding their own `SO_REUSEPORT` listeners and prove
 a replacement worker binds anew after a trap.
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
-by the `TestArm64Darwin` prefix). `TestSelfHostServeOptions` serves through
-`tcp_serve_opts` with a backlog of 4 and `SO_REUSEPORT`, and prove the
+by the `TestArm64Darwin` prefix). `TestSelfHostServeConfig` serves through
+`serve.run` with a backlog of 4 and `SO_REUSEPORT`, and prove the
 option reached the kernel by binding a second `SO_REUSEPORT` socket to the
 served port while the loop answers. A wasi:cli/run
 component reports only 0 or 1, so the wasm legs read the probe's "ok" on
@@ -291,7 +292,7 @@ monotonic lower bounds, and zero live heap storage after 32 waits.
 ## HTTP handler ownership through semantic lowering
 
 `TestSelfHostHTTPHandlerCensus` and `TestSelfHostArm64DarwinHTTPHandlerCensus`
-bound the existing std/tcp accept-loop body to 32 requests and run it through
+bound the existing std/serve accept-loop body to 32 requests and run it through
 the production self-host compiler. They verify every HTTP response, require
 the compiler to produce every reachable declaration through semantic lowering,
 and require equal allocations/frees with zero live bytes. Linux x86-64, ARM64
@@ -346,9 +347,9 @@ hook: after two requests and SIGTERM the hook reports "sigterm" and the
 count; `TestSynthesisedHandleMainWiresShutdown` and
 `TestSynthesisedHandleMainTakesInitOptions` (`internal/checker`) and
 `TestSelfHostHandlerStateX86_64` pin the wiring, the `init(plat)` and
-`(ServeOptions, S)` shapes, and the E075 pairing on both compilers. The
+`(serve.Config, S)` shapes, and the E075 pairing on both compilers. The
 synthesised main serves under the supervisor, so every handler-program
-server test above runs its workers through `tcp_serve_supervised_*`; the
+server test above runs its workers through `serve.supervise*`; the
 stateful ones answer `workers: 1` from `init` so the count each request
 sees is deterministic. On wasm32-wasi, which has no processes, the
 synthesis serves single-process: `TestSynthesisedHandleMainFollowsTargetProcesses`
@@ -857,8 +858,8 @@ Worth knowing so you do not assume coverage you do not have:
   suite's name about what it proves. It is also what the nightly
   coverage-guided self-host fuzzer steers by — the only lane that observes
   which paths inside the SELF-HOST compiler a generated program reaches, since
-  Go's instrumentation cannot see into a Fern binary. Native x86-64 / arm64
-  only; `docs/COVERAGE.md`.
+  Go's instrumentation cannot see into a Fern binary. x86-64 and arm64 on
+  both compilers; `docs/COVERAGE.md`.
 
 - **Anything outside the FIXED corpus bounds, on a pull request.** Every
   fernsmith sweep that runs per-PR is a fixed prefix — 2048 exit-byte seeds,

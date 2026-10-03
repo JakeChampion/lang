@@ -33,7 +33,7 @@ import (
 // `opts`.
 func ServeShutdownSource(port, drainMs int, entry string) string {
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 import "std/time";
 import "std/platform";
 function burn(plat: Platform, ns: i64): i32 {
@@ -56,7 +56,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    let opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), shutdown_grace: time.duration_millis(300 as i64), readiness_path: "/healthz", drain_deadline: time.duration_millis(%d as i64) };
+    let opts: serve.Config = serve.Config { ...serve.config(), shutdown_grace: time.duration_millis(300 as i64), readiness_path: "/healthz", drain_deadline: time.duration_millis(%d as i64) };
     return %s;
 }
 `, drainMs, fmt.Sprintf(entry, port))

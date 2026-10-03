@@ -31,3 +31,9 @@ and fallback account for the new functionality; no size baseline changes.
 Darwin compilation is only a size check: this utility reads Linux mount
 tables, and the broader Darwin GNU corpus still fails on the unchanged
 parent as well as this candidate. It is not a Darwin parity claim.
+
+The df GNU corpus and primary/native comparisons pass again when integrated
+with Writer's `99abe4870` repair and the prepared Stdio byte buffer. These
+run within the full Stdio-consumer groups, which pass in 5.736 and 20.965
+seconds respectively. The earlier size measurements above still refer to
+their stated compiler and base; they are not new integrated size results.

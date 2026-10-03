@@ -137,7 +137,7 @@ function main(): i32 {
 		// poll(2) readiness — the kqueue port. Until it landed, __fern_poll
 		// on Darwin was `mov x0, #-1; ret`, and -1 is a LEGAL poll answer
 		// ("nothing ready"), so nothing failed: every std/async wait and
-		// tcp_serve_deadline just reported an instant timeout. Nothing in
+		// the serve loop's read deadline just reported an instant timeout. Nothing in
 		// this lane exercised poll at all, so the stub survived for as long
 		// as the Darwin target has existed.
 		//
@@ -611,4 +611,36 @@ func TestArm64DarwinEhFrame(t *testing.T) {
 	if n := strings.Count(string(o), " FDE "); n != len(fdes) {
 		t.Errorf("llvm-dwarfdump decodes %d FDEs, the walk found %d", n, len(fdes))
 	}
+}
+
+// TestArm64DarwinNativeOpenWith runs the open_reader_with /
+// open_writer_with probe (open_with_test.go) through the in-process
+// Mach-O backend on Apple Silicon. It is the one leg where the flags
+// word's words are XNU's and where the direct and noatime bits must come
+// back Unsupported: a Linux word ORed in here is a legal, different mode,
+// so only running the binary tells the two apart.
+func TestArm64DarwinNativeOpenWith(t *testing.T) {
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("runs the binary; Apple Silicon only")
+	}
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(openWithSource(dir)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "prog")
+	if o, err := exec.Command(bin, "-target", "arm64-darwin", "-o", out, src).CombinedOutput(); err != nil {
+		t.Fatalf("native arm64-darwin build failed: %v\n%s", err, o)
+	}
+	cmd := exec.Command(out)
+	_ = cmd.Run()
+	ps := cmd.ProcessState
+	if ps == nil || !ps.Exited() {
+		t.Fatalf("native Mach-O did not run to a normal exit (state=%v)", ps)
+	}
+	if code := ps.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0 — the code names the step (see openWithSource)", code)
+	}
+	openWithCheckTree(t, dir)
 }

@@ -14918,7 +14918,8 @@ func (g *generator) emitTimerFdRuntime() {
 //
 // `path_max` is absent from the record and is stored separately: Linux
 // has no pathconf syscall, and PATH_MAX is the kernel's own 4096 for
-// every filesystem it mounts.
+// every filesystem it mounts. `fsid` is not a row either: see
+// LinuxStatfsFsid.
 // LinuxStatfsField is one projection: Box is the offset in the FsStat box,
 // Src the offset in the kernel's record.
 type LinuxStatfsField struct{ Box, Src int32 }
@@ -14931,7 +14932,13 @@ var LinuxStatfsFields = []LinuxStatfsField{
 	{ir.FsStat.Files, 40},
 	{ir.FsStat.FilesFree, 48},
 	{ir.FsStat.NameMax, 64},
+	{ir.FsStat.FsType, 0},
+	{ir.FsStat.FragSize, 72},
 }
+
+// LinuxStatfsFsid is the offset of `f_fsid`, two 32-bit words that FsStat
+// joins into one, first word high, as GNU `stat -f` prints it.
+const LinuxStatfsFsid = 56
 
 // LinuxPathMax is PATH_MAX, the longest pathname the Linux kernel will
 // resolve. A constant rather than a lookup because Linux has no
@@ -15001,6 +15008,11 @@ func (g *generator) emitStatfsRuntime() {
 	}
 	g.emit(fmt.Sprintf("mov r9d, %d", LinuxPathMax))
 	g.emit(fmt.Sprintf("mov [rax + %d], r9", ir.FsStat.PathMax))
+	g.emit(fmt.Sprintf("mov r9d, [rsp + %d]", LinuxStatfsFsid))
+	g.emit("shl r9, 32")
+	g.emit(fmt.Sprintf("mov r10d, [rsp + %d]", LinuxStatfsFsid+4))
+	g.emit("or r9, r10")
+	g.emit(fmt.Sprintf("mov [rax + %d], r9", ir.FsStat.Fsid))
 	g.emit("mov r13, rax")
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_rc1")
@@ -16528,6 +16540,28 @@ const (
 	oflagCreatAppend = 1089 // O_WRONLY|O_CREAT|O_APPEND
 	oflagCreatExcl   = 193  // O_WRONLY|O_CREAT|O_EXCL
 )
+
+// openWithWords is the open_*_with flags word, bit by bit, as Linux
+// x86-64 spells each (the checker's open_reader_with comment is the
+// contract). Every bit has a word here; the refusals are XNU's and
+// WASI's.
+var openWithWords = []struct {
+	bit  int
+	word int
+	name string // the label suffix
+	flag string
+}{
+	{1, 64, "nc", "O_CREAT"},
+	{2, 2048, "nb", "O_NONBLOCK"},
+	{4, 128, "nx", "O_EXCL"},
+	{8, 0x4000, "nd", "O_DIRECT"},
+	{16, 0x10000, "ndir", "O_DIRECTORY"},
+	{32, 0x1000, "nds", "O_DSYNC"},
+	{64, 0x101000, "ns", "O_SYNC"},
+	{128, 0x40000, "na", "O_NOATIME"},
+	{256, 0x100, "nt", "O_NOCTTY"},
+	{512, 0x20000, "nf", "O_NOFOLLOW"},
+}
 
 // emitWriteFileRuntime emits `__fern_write_file(path, content)
 // → Option[IoError]`. Pipeline: openat(AT_FDCWD, path,
@@ -19392,8 +19426,8 @@ func (g *generator) emitReaderWriterRuntime() {
 	}
 
 	// open_reader / open_writer / open_appender / open_exclusive, and the
-	// two `_with` forms whose flags word arrives in esi: bit 0 is O_CREAT
-	// (64), bit 1 O_NONBLOCK (2048), on top of the access mode in `flags`.
+	// two `_with` forms whose flags word arrives in esi, each bit becoming
+	// its Linux word (openWithWords) on top of the access mode in `flags`.
 	for _, e := range []struct {
 		sym       string
 		flags     int
@@ -19450,14 +19484,12 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit(fmt.Sprintf("mov edx, %d", e.flags))
 		if e.withFlags {
 			g.emit("mov eax, [rbp - 56]")
-			g.emit("test eax, 1")
-			g.emit("jz .Lorw_nc_" + e.sym)
-			g.emit("or edx, 64") // O_CREAT
-			g.label(".Lorw_nc_" + e.sym)
-			g.emit("test eax, 2")
-			g.emit("jz .Lorw_nb_" + e.sym)
-			g.emit("or edx, 2048") // O_NONBLOCK
-			g.label(".Lorw_nb_" + e.sym)
+			for _, b := range openWithWords {
+				g.emit(fmt.Sprintf("test eax, %d", b.bit))
+				g.emit(fmt.Sprintf("jz .Lorw_%s_%s", b.name, e.sym))
+				g.emit(fmt.Sprintf("or edx, %d", b.word)) // b.flag
+				g.label(fmt.Sprintf(".Lorw_%s_%s", b.name, e.sym))
+			}
 		}
 		g.emit(fmt.Sprintf("mov r10d, %d", e.mode))
 		g.emitSyscall(257)

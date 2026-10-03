@@ -17,7 +17,7 @@ import (
 // #4371: the SERVER half of the edge-handler use case — tcp_listen / tcp_accept —
 // must lower on the self-host x86-64 IR path. The client half (tcp_connect / send /
 // recv / close / pollable) already lowered; tcp_listen / tcp_accept bailed the IR
-// path (irlower had no op for them, asmcore didn't type them), so std/tcp's serve
+// path (irlower had no op for them, asmcore didn't type them), so std/serve's serve
 // loop bailed — and the legacy AST backend it fell to had no x86
 // __fern_tcp_listen body, so it wouldn't link. This drives a poll-driven one-shot
 // server through the

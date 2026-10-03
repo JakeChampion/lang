@@ -251,27 +251,27 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 		return true
 	})
 	// Locals bound from a fresh value — the only local binding form the
-	// last-occurrence shape admits (see above). A spread literal is not one:
-	// it copies the base's fields. A name declared more than once is dropped:
-	// the occurrence order cannot tell the two bindings apart.
+	// last-occurrence shape admits (see above). A name declared more than once
+	// is dropped: the occurrence order cannot tell the two bindings apart.
+	// A destructure's bindings are each an element of the fresh value it
+	// unpacks, held by nothing else this frame can name — unless an `@` binding
+	// names the whole value.
 	freshInitLocal := map[string]bool{}
 	declCount := map[string]int{}
 	ast.Walk(body, func(n ast.Node) bool {
-		v, isVar := n.(*ast.Var)
-		if !isVar {
-			return true
-		}
-		declCount[v.Name]++
-		switch init := v.Init.(type) {
-		case *ast.Call:
-			if _, named := init.Callee.(*ast.Ident); named {
+		switch v := n.(type) {
+		case *ast.Var:
+			declCount[v.Name]++
+			if freshInit(v.Init) {
 				freshInitLocal[v.Name] = true
 			}
-		case *ast.ArrayLit, *ast.StringLit:
-			freshInitLocal[v.Name] = true
-		case *ast.StructLit:
-			if init.Base == nil {
-				freshInitLocal[v.Name] = true
+		case *ast.Destructure:
+			fresh := v.AtName == "" && freshInit(v.Init)
+			for i, name := range v.Names {
+				declCount[name]++
+				if fresh && (i >= len(v.Nested) || v.Nested[i] == nil) {
+					freshInitLocal[name] = true
+				}
 			}
 		}
 		return true
@@ -619,6 +619,22 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 	return ArgDeaths{Dies: out, Repeating: repeating, Escaping: escaping, Occurrences: occurrences}
 }
 
+// freshInit reports whether a binding's initialiser builds a value no other
+// name holds: a call to a named function, or an array, string or plain struct
+// literal. A spread literal copies its base's fields, so it is not one.
+func freshInit(init ast.Expr) bool {
+	switch init := init.(type) {
+	case *ast.Call:
+		_, named := init.Callee.(*ast.Ident)
+		return named
+	case *ast.ArrayLit, *ast.StringLit:
+		return true
+	case *ast.StructLit:
+		return init.Base == nil
+	}
+	return false
+}
+
 // heldByEnclosingCall reports whether a call that strictly contains `c` also
 // names `name` outside `c`. The last-occurrence shape reads the text:
 // `IsLast` asks whether anything reads the name LATER, which is the wrong
@@ -893,6 +909,12 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info) map[ast.Expr]bool {
 		case *ast.Var:
 			if !isParam[x.Name] {
 				local[x.Name] = true
+			}
+		case *ast.Destructure:
+			for _, name := range x.Names {
+				if !isParam[name] {
+					local[name] = true
+				}
 			}
 		case *ast.FuncDecl, *ast.Lambda:
 			ast.Walk(x, func(m ast.Node) bool {

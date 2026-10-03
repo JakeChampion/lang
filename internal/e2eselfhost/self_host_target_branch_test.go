@@ -10,7 +10,7 @@ import (
 // does not grant. The capability gate judges the arm the target takes, so
 // the handler compiles for wasm32-wasi-http and answers the hosted arm.
 const targetBranchHandlerSrc = `import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (target_os() == "wasi-http") {
         return http.ok("hosted arm");
@@ -28,7 +28,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 // end a process with, so the trap is a plain `unreachable` and the
 // component still composes against the proxy world.
 const indexingHandlerSrc = `import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     let bytes: u8[] = req.path.bytes();
     return http.ok("byte " + (bytes[bytes.len() - 1] as i32).to_string());

@@ -9,7 +9,7 @@ import (
 
 // TestSelfHostCrossUnitFnValue pins the cross-unit fn-value miscompile on the
 // per-module IR path (#5698), found while making the main std/http +
-// std/tcp handler compile: a function passed as a VALUE into another module and
+// std/serve handler compile: a function passed as a VALUE into another module and
 // invoked there segfaults.
 //
 // The caller boxes a fn-value argument only when it can see that the callee's

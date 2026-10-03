@@ -3,6 +3,7 @@ package coreutils
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
@@ -178,11 +179,11 @@ func statTree(t *testing.T) string {
 // unknown conversion UNDER `H` or `L`, which prints `?` and gives the byte
 // back, against `%%` carrying a modifier, which is fatal.
 //
-// The blocked directives (%w, %W, %C, and -f's %i, %S, %t, %T) are absent
-// and so are the four built-in layouts that carry them — the default
-// block, --terse, -f and -t -f. Those are refusals in this build and the
-// header of coreutils/stat.fern says why; a case for one would be
-// comparing our diagnostic against GNU's answer.
+// The blocked directives (%w, %W, %C, and -f's %T on Darwin) are absent and
+// so are the built-in layouts that carry them — the default block, --terse,
+// and -f on Darwin. Those are refusals in this build and the header of
+// coreutils/stat.fern says why; a case for one would be comparing our
+// diagnostic against GNU's answer.
 // appendRawStatNames adds the two fixture names that are not valid UTF-8, on a
 // filesystem that holds them. Where it does not, the names were never created
 // (see statTree) and the cases quoting them would be stat'ing something absent
@@ -613,6 +614,25 @@ func statCases(t *testing.T) []invocation {
 	add("fs-invalid-directive", "-f", "-c", "%5%", ".")
 	add("fs-printf", "-f", "--printf", "%b\\n", ".")
 	add("fs-printf-no-newline", "-f", "--printf", "%l", ".")
+	// f_fsid, f_frsize and f_type: fixed for a mounted filesystem, so they
+	// compare exactly. %i joins f_fsid's two words with the first one high.
+	add("fs-id", "-f", "-c", "%i", ".")
+	add("fs-frag-size", "-f", "-c", "%S", ".")
+	add("fs-type-hex", "-f", "-c", "%t", ".")
+	add("fs-new-set-root", "-f", "-c", "%i|%S|%t", "/")
+	add("fs-hex-grid", "-f", "-c", "[%#t][%10t][%-10i][%#i][%.12i][%08S]", ".")
+	if runtime.GOOS == "linux" {
+		add("fs-type-name", "-f", "-c", "%T", ".")
+		add("fs-type-name-widths", "-f", "-c", "[%12T][%-12T][%.3T]", ".")
+		add("fs-type-name-proc", "-f", "-c", "%t|%T", "/proc")
+		add("fs-type-name-dev", "-f", "-c", "%t|%T", "/dev")
+		// The built-in layouts carry the free counts, which move under a
+		// busy disk between the two runs; /proc reports every count as 0.
+		add("fs-default", "-f", "/proc")
+		add("fs-terse", "-t", "-f", "/proc")
+		add("fs-terse-two", "-t", "-f", "/proc", "/proc")
+		add("fs-default-missing", "-f", "nosuch")
+	}
 
 	// --- write failures -----------------------------------------------------------
 	cases = append(cases, invocation{

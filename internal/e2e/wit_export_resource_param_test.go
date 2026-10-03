@@ -69,7 +69,7 @@ world m {
 	// A reactor implementing handle. `borrow Thing` is the handle vocabulary
 	// (P5); it erases to the i32 handle, so the core func is `(i32) -> i32`.
 	// The Fern function is NOT named `handle` (that name triggers the checker's
-	// handler-main synthesis → tcp_serve); the @export WIT name is "handle".
+	// handler-main synthesis → serve.supervise); the @export WIT name is "handle".
 	prog := `@import("local:test/res@0.1.0", "thing")
 resource Thing;
 

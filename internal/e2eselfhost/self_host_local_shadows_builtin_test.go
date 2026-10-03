@@ -23,6 +23,17 @@ function main(): i32 { return apply(3, (v: i32): string => "abc").len(); }`, 3},
     let n: string = rename(1);
     return n.len();
 }`, 2},
+		// A local or parameter named `None` is the binding, not the builtin
+		// Option (#10957).
+		{"local_none", `function main(): i32 {
+    let None: i32 = 5;
+    let v: i32 = None;
+    return v;
+}`, 5},
+		{"param_none", `function pick(None: i32): i32 {
+    return None;
+}
+function main(): i32 { return pick(6); }`, 6},
 	}
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {

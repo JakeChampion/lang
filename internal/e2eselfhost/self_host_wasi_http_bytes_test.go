@@ -92,7 +92,7 @@ function main(): i32 {
 const wasiHttpByteBodiesSrc = `
 import "std/http";
 import "std/stream";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     let data: u8[] = req.body_bytes();
     if (req.path == "/stream") {

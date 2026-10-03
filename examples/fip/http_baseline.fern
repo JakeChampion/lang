@@ -47,7 +47,7 @@ function route(req: HttpRequest): HttpResponse {
   return resp;
 }
 
-// serve parses wire[0, wire_len) as std/tcp's loop would, routes it and
+// serve parses wire[0, wire_len) as std/serve's loop would, routes it and
 // serialises the answer; a request the parser refuses gets the 400.
 function serve(wire: u8[], wire_len: i32): string {
   match (http.http_parse_request(string_from_bytes_unchecked(wire.take(wire_len)))) {

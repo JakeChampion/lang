@@ -5198,7 +5198,7 @@ func (b *builder) emitPairFormPayloadRetain(payload ast.Expr) {
 	if payload == nil {
 		return
 	}
-	if needsRcIncOnAlias(payload, b) && !b.rc.moveSites[payload] {
+	if b.aliasOwesInc(payload) && !b.rc.moveSites[payload] {
 		b.emitAliasInc(payload)
 	}
 }
@@ -6876,7 +6876,7 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 		// payload (b.rc.moveSites, markConstructionMoves' enum case) skips the inc.
 		// Consuming-match reuse stores moved-out bindings back, so it's excluded.
 		if !b.rc.consumingMatchReuse[callNode] &&
-			needsRcIncOnAlias(a, b) && !b.rc.moveSites[a] {
+			b.aliasOwesInc(a) && !b.rc.moveSites[a] {
 			b.emitAliasInc(a)
 		}
 		valSlots[i] = b.allocSlot()
@@ -9350,7 +9350,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpEnd})
 			b.emit(Op{Kind: OpLoadLocal, I32: newSlot})
 		}
-		if needsRcIncOnAlias(n.Value, b) && !aliasInced {
+		if b.aliasOwesInc(n.Value) && !aliasInced {
 			// Transfer inc so the caller owns the returned alias and
 			// the callee's exit-sweep dec is balanced. A returned
 			// closure-via-Ident already took the move-on-return path
@@ -9465,8 +9465,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// Dead-alias cancellation (#4402 opt 1): a proven borrowed-view
 		// alias skips the transfer inc — its exit-sweep dec is equally
 		// elided (emitRcDecLocalsAtExitExcept), a net-zero pair.
-		if needsRcIncOnAlias(n.Init, b) && !b.rc.moveSites[n] && !b.rc.borrowedAliasSites[n] &&
-			!b.isOwnedContainerRead(n.Init) {
+		if b.aliasOwesInc(n.Init) && !b.rc.moveSites[n] && !b.rc.borrowedAliasSites[n] {
 			if fa, isField := n.Init.(*ast.FieldAccess); isField && b.rc.fieldOwnMoves[fa] {
 				b.emitFieldOwnMove(fa)
 			} else {
@@ -11694,7 +11693,7 @@ func (b *builder) expr(e ast.Expr) error {
 			if err := b.expr(el); err != nil {
 				return err
 			}
-			if needsRcIncOnAlias(el, b) && !b.rc.moveSites[el] {
+			if b.aliasOwesInc(el) && !b.rc.moveSites[el] {
 				b.emitAliasInc(el)
 			}
 			return nil
@@ -11842,7 +11841,7 @@ func (b *builder) expr(e ast.Expr) error {
 			if err := b.expr(elem); err != nil {
 				return err
 			}
-			if needsRcIncOnAlias(elem, b) && !b.rc.moveSites[elem] {
+			if b.aliasOwesInc(elem) && !b.rc.moveSites[elem] {
 				b.emitAliasInc(elem)
 			}
 			return nil
@@ -11963,7 +11962,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// markConstructionMoves), skip the inc — the local's
 			// reference is moved into the field and its exit-sweep dec is
 			// skipped to match.
-			if needsRcIncOnAlias(f.Value, b) && !b.rc.moveSites[f.Value] {
+			if b.aliasOwesInc(f.Value) && !b.rc.moveSites[f.Value] {
 				b.emitAliasInc(f.Value)
 			}
 			// Issue #2763: a Map-typed field initialised by a COW mutator
@@ -16538,6 +16537,24 @@ func (b *builder) callBody(n *ast.Call) error {
 	dropMark := len(b.pendingDrops)
 	for ai, a := range n.Args {
 		toOwnParam := ownedByCalleeAt(ai)
+		// A copying builtin cannot retain the view or its source. Preserve a
+		// fresh source until the call finishes, using the same temp ownership
+		// and exit cleanup as an owned argument. Automatic array lending must
+		// not hide that argument from the existing reclaim path.
+		if !toOwnParam && copyingBuiltinArg(id.Name, ai) {
+			view, slot, tt, ok, err := b.stashCopyingViewSource(a)
+			if err != nil {
+				return err
+			}
+			if ok {
+				a = view
+				argTempSlots = append(argTempSlots, slot)
+				argTempTypes = append(argTempTypes, tt)
+				argTempGuarded = append(argTempGuarded, false)
+				argTempIdentityDec = append(argTempIdentityDec, false)
+				b.pushOperandDrop(slot, tt)
+			}
+		}
 		// A view is a borrow, so the checker refuses it at an `own` position
 		// and ownedByDefaultTypeIn does not admit one — but both would want
 		// the retain/move handling below rather than this free, so fall
@@ -16906,6 +16923,47 @@ func (b *builder) dynCoercedArg(a ast.Expr) bool {
 	}
 	_, ok := b.info.DynCoercions[a]
 	return ok
+}
+
+// stashCopyingViewSource stages the owned source of an immediate view without
+// changing the checked expression or extending its ownership analysis. Only
+// callers with the existing copyingBuiltinArg contract may reclaim this source
+// after the call: a general callee could return a view into it.
+func (b *builder) stashCopyingViewSource(a ast.Expr) (ast.Expr, int32, ast.Type, bool, error) {
+	var source ast.Expr
+	switch x := a.(type) {
+	case *ast.SliceExpr:
+		if x.IsString || x.SourceIsSlice {
+			return a, 0, nil, false, nil
+		}
+		source = x.Source
+	case *ast.Call:
+		if !makesFreshViewHeader(x) || len(x.Args) != 1 {
+			return a, 0, nil, false, nil
+		}
+		source = x.Args[0]
+	default:
+		return a, 0, nil, false, nil
+	}
+	slot, tt, ok, err := b.stashOwnedArgTemp(source)
+	if err != nil || !ok {
+		return a, slot, tt, ok, err
+	}
+	// stashOwnedArgTemp leaves a copy on the stack for an ordinary argument.
+	// Here the view constructor reloads that value from its typed scratch slot.
+	b.emit(Op{Kind: OpDrop, Width: b.discardWidth(source)})
+	ref := &ast.Ident{Name: fmt.Sprintf("__argtmp_%d", slot)}
+	switch x := a.(type) {
+	case *ast.SliceExpr:
+		view := *x
+		view.Source = ref
+		return &view, slot, tt, true, nil
+	case *ast.Call:
+		view := *x
+		view.Args = []ast.Expr{ref}
+		return &view, slot, tt, true, nil
+	}
+	panic("unreachable view source")
 }
 
 func (b *builder) stashOwnedArgTemp(a ast.Expr) (int32, ast.Type, bool, error) {
@@ -17697,7 +17755,7 @@ func (b *builder) emitStructUpdateReuse(sl *ast.StructLit, sd *ast.StructDecl, t
 		if err := b.expr(f.Value); err != nil {
 			return err
 		}
-		if isPtr && needsRcIncOnAlias(f.Value, b) && !b.rc.moveSites[f.Value] {
+		if isPtr && b.aliasOwesInc(f.Value) && !b.rc.moveSites[f.Value] {
 			b.emitAliasInc(f.Value)
 		}
 		// Issue #2763's clone, which the fresh-alloc StructLit lowering
@@ -18041,7 +18099,7 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 			return true, err
 		}
 		if !b.rc.consumingMatchReuse[call] &&
-			needsRcIncOnAlias(a, b) && !b.rc.moveSites[a] {
+			b.aliasOwesInc(a) && !b.rc.moveSites[a] {
 			b.emitAliasInc(a)
 		}
 		ts := b.allocSlot()
@@ -19147,6 +19205,13 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 	b.emit(Op{Kind: OpDrop})
 }
 
+// aliasOwesInc reports whether a new owner taking `e` must retain it: an
+// alias of a counted value does, and a read out of a fresh owned container
+// does not — it arrives holding a reference of its own.
+func (b *builder) aliasOwesInc(e ast.Expr) bool {
+	return needsRcIncOnAlias(e, b) && !b.isOwnedContainerRead(e)
+}
+
 // isOwnedContainerRead reports whether `e` reads an rc-tracked value out
 // of a FRESH owned container — `mk_box().items`, `mk_strs()[0]`. Both
 // lowerings retain the loaded value and deep-drop the container (#6401 for the
@@ -19608,8 +19673,7 @@ func (b *builder) assign(n *ast.Assign) error {
 		// fresh owned container: that lowering already retained what it
 		// loaded before deep-dropping the container, so this would be a
 		// second retain nothing balances (isOwnedContainerRead).
-		if needsRcIncOnAlias(n.Value, b) && !b.rc.moveSites[n] &&
-			!b.isOwnedContainerRead(n.Value) {
+		if b.aliasOwesInc(n.Value) && !b.rc.moveSites[n] {
 			b.emitAliasInc(n.Value)
 		}
 		// dec the old value of `y` before
@@ -20288,11 +20352,19 @@ func isSelfCowRebind(value ast.Expr, targetName string) bool {
 }
 
 // selfMapMutationReceiverSlot is the slot of the Map ident a returned
-// `m.insert(..)` / `m.clear()` mutates, when the frame holds one.
+// `m.insert(..)` / `m.clear()`, or a chain of them, mutates, when the frame
+// holds one.
 func (b *builder) selfMapMutationReceiverSlot(value ast.Expr) (int32, bool) {
 	call, ok := value.(*ast.Call)
 	if !ok || !ast.RcFreeEnabled || len(call.Args) == 0 {
 		return 0, false
+	}
+	for {
+		inner, chained := call.Args[0].(*ast.Call)
+		if !chained || !isMapSetOrClear(inner) {
+			break
+		}
+		call = inner
 	}
 	recv, ok := call.Args[0].(*ast.Ident)
 	if !ok || !isSelfMapMutation(value, recv.Name) {
@@ -20307,46 +20379,45 @@ func (b *builder) selfMapMutationReceiverSlot(value ast.Expr) (int32, bool) {
 
 // isSelfMapMutation reports whether `value` is a value-returning
 // map mutator called on the ident `targetName` — i.e. the RHS of
-// a `m = m.set(...)` / `m = m.clear()` reassignment. The checker
-// has already rewritten the source `m.set(k, v)` into a Call whose
-// Callee is the `__method_Map_set` ident and whose Args[0] is the
-// receiver. Used by `b.assign` to switch the dec-on-overwrite to a
-// COW-AWARE form: the map mutators cow in place without bumping rc,
-// so on a uniquely-held map the call returns the same handle the
-// slot already holds (no reference released → no dec), while on an
-// aliased map it returns a fresh copy (old handle released → dec).
-// b.assign distinguishes the two at runtime by comparing the old
-// and new handles. (delete is excluded — it returns a tuple and is
-// bound via destructuring, not a bare `m = ...` reassignment.)
+// a `m = m.set(...)` / `m = m.clear()` reassignment — or a chain of them
+// rooted there (`m.set(a, 1).set(b, 2)`), whose outer links write the handle
+// the innermost one hands them. The checker has already rewritten the source
+// `m.set(k, v)` into a Call whose Callee is the `__method_Map_set` ident and
+// whose Args[0] is the receiver. Used by `b.assign` to switch the
+// dec-on-overwrite to a COW-AWARE form: the map mutators cow in place
+// without bumping rc, so on a uniquely-held map the call returns the same
+// handle the slot already holds (no reference released → no dec), while on
+// an aliased map it returns a fresh copy (old handle released → dec).
+// b.assign distinguishes the two at runtime by comparing the old and new
+// handles. (delete is excluded — it returns a tuple and is bound via
+// destructuring, not a bare `m = ...` reassignment.) A chain whose outer link
+// reads `targetName` is excluded, as in selfArraySetRoot.
 func isSelfMapMutation(value ast.Expr, targetName string) bool {
-	call, ok := value.(*ast.Call)
-	if !ok {
+	c, ok := value.(*ast.Call)
+	if !ok || !isMapSetOrClear(c) {
 		return false
 	}
-	callee, ok := call.Callee.(*ast.Ident)
-	if !ok {
-		return false
+	for {
+		inner, chained := c.Args[0].(*ast.Call)
+		if !chained || !isMapSetOrClear(inner) {
+			break
+		}
+		for _, arg := range c.Args[1:] {
+			if exprMentionsIdent(arg, targetName) {
+				return false
+			}
+		}
+		c = inner
 	}
-	// `__method_Array_set` is `arr.with(i, v)` — like the map mutators it
-	// goes through a `*_cow_inplace` helper that returns the SAME handle on
-	// rc==1 (no reference released) and a fresh copy on rc>1. So `arr =
-	// arr.with(...)` needs the same COW-aware dec (dec the old handle iff a
-	// copy happened) as `m = m.set(...)`; an unconditional dec over-releases
-	// the in-place handle (the rc-underflow / unbounded-leak the wasm
-	// OwnInplaceSort + LiteralAllocReclaim tests caught).
-	//
-	// A consumed-threaded ARRAY PARAM is the one receiver this cannot serve,
-	// and the assign lowering peels it off before reaching here: its
-	// ownership is a runtime bit, so "did the pointer change" cannot say
-	// whether a dec is owed. See the isSelfArraySetReassign branch (#6057).
-	if callee.Name != "__method_Map_set" && callee.Name != "__method_Map_clear" {
-		return false
-	}
-	if len(call.Args) == 0 {
-		return false
-	}
-	recv, ok := call.Args[0].(*ast.Ident)
+	recv, ok := c.Args[0].(*ast.Ident)
 	return ok && recv.Name == targetName
+}
+
+// isMapSetOrClear reports whether c is `m.insert(k, v)` or `m.cleared()`,
+// the map mutators that return the map itself.
+func isMapSetOrClear(c *ast.Call) bool {
+	callee, ok := c.Callee.(*ast.Ident)
+	return ok && (callee.Name == "__method_Map_set" || callee.Name == "__method_Map_clear") && len(c.Args) > 0
 }
 
 // isSelfArraySetReassign reports whether `value` is `name.with(i, v)` — the

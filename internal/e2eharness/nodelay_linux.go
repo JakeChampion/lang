@@ -116,12 +116,12 @@ func ConnectedTCPSegmentsOut(t *testing.T, pid int) uint64 {
 // NoDelayServerSource is a single-loop server answering "ok".
 func NoDelayServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return tcp.tcp_serve_opts(%d, tcp.serve_options(), handle);
+    return serve.run(%d, serve.config(), handle);
 }
 `, port)
 }

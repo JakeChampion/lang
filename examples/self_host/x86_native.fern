@@ -6222,12 +6222,15 @@ function x86_relax_settle(a: X86Asm): boolean[] {
   let l: RelaxLayout = x86_relax_layout(a);
   let t: RelaxTargets = x86_relax_targets(a, l);
   let n: i32 = l.ev.len();
-  let st: RelaxPass = RelaxPass { new_start: [], new_size: [], prefix: [], before: [], short: [] };
+  // Built as a uniquely held local and placed in `st` once: appended
+  // through `st.short`, each append copied the whole array.
+  let short: boolean[] = [];
   let k: i32 = 0;
   while (k < a.br_offs.len()) {
-    st = RelaxPass { ...st, short: st.short.append(t.off[k] >= 0) };
+    short = short.append(t.off[k] >= 0);
     k = k + 1;
   }
+  let st: RelaxPass = RelaxPass { new_start: [], new_size: [], prefix: [], before: [], short: short };
   let laid: RelaxStep = x86_relax_pass(a, l, t, st, false);
   st = laid.st;
   let iter: i32 = 0;
@@ -7050,6 +7053,41 @@ function x86_gas_prepare(src: string): GasText {
   return GasText { lines: out, nmemo: memo.lines.len() };
 }
 
+// x86_rodata_zero lays `n` zero bytes into .rodata, and x86_rodata_bytes
+// the comma-separated values of a `.byte` list. Both take the assembler
+// state as `own` and grow the buffer through a local: appended through the
+// pass loop's `a`, each byte copied the whole .rodata buffer.
+function x86_rodata_zero(own a: X86Asm, n: i32): X86Asm {
+  let rodata: i32[] = a.rodata;
+  a = X86Asm { ...a, rodata: [] };
+  let zi: i32 = 0;
+  while (zi < n) {
+    rodata = rodata.append(0);
+    zi = zi + 1;
+  }
+  return X86Asm { ...a, rodata: rodata };
+}
+
+function x86_rodata_bytes(own a: X86Asm, brest: string): X86Asm {
+  let rodata: i32[] = a.rodata;
+  a = X86Asm { ...a, rodata: [] };
+  let btok: string = "";
+  let bci: i32 = 0;
+  while (bci < brest.len()) {
+    if (brest[bci] == b',') {
+      rodata = rodata.append(x86_gas_atoi(x86_gas_trim(btok)) & 255);
+      btok = "";
+    } else {
+      btok = btok + slice_unchecked(brest, bci, bci + 1);
+    }
+    bci = bci + 1;
+  }
+  if (x86_gas_trim(btok).len() > 0) {
+    rodata = rodata.append(x86_gas_atoi(x86_gas_trim(btok)) & 255);
+  }
+  return X86Asm { ...a, rodata: rodata };
+}
+
 // x86_gas_assemble_pass_prepared assembles one relaxation round from the
 // already-parsed lines.
 function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: boolean[], cache: EncCache, nmemo: i32): AsmRound {
@@ -7175,11 +7213,7 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
         if (section == 2) {
           a = x86_bss_skip(a, zn);
         } else if (section == 1) {
-          let zi: i32 = 0;
-          while (zi < zn) {
-            a = X86Asm { ...a, rodata: a.rodata.append(0) };
-            zi = zi + 1;
-          }
+          a = x86_rodata_zero(a, zn);
         }
       } else if (x86_str_starts_with(line, ".byte")) {
         // `.byte a, b, …`: EVERY comma-separated value, the way
@@ -7190,21 +7224,7 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
         // branch's own comment named. `cksum -a crc` of a 512-byte
         // file then segfaulted on the `movdqa` that read the next
         // symbol, at an address `.align 16` no longer reached.
-        let brest: string = x86_gas_trim(slice_unchecked(line, 5, line.len()));
-        let btok: string = "";
-        let bci: i32 = 0;
-        while (bci < brest.len()) {
-          if (brest[bci] == b',') {
-            a = X86Asm { ...a, rodata: a.rodata.append(x86_gas_atoi(x86_gas_trim(btok)) & 255) };
-            btok = "";
-          } else {
-            btok = btok + slice_unchecked(brest, bci, bci + 1);
-          }
-          bci = bci + 1;
-        }
-        if (x86_gas_trim(btok).len() > 0) {
-          a = X86Asm { ...a, rodata: a.rodata.append(x86_gas_atoi(x86_gas_trim(btok)) & 255) };
-        }
+        a = x86_rodata_bytes(a, x86_gas_trim(slice_unchecked(line, 5, line.len())));
       } else if (x86_str_starts_with(line, ".align") || x86_str_starts_with(line, ".balign") || x86_str_starts_with(line, ".p2align")) {
         a = x86_gas_align(a, section, line);
       } else if (!x86_gas_directive_ignorable(line)) {

@@ -27,6 +27,10 @@ const (
 	// that asks for the two one after the other times out on the A query
 	// while one that asks for both at once gets both.
 	FakeNameserverPair
+	// FakeNameserverAAAAOnly answers an AAAA query at once and never
+	// answers an A query, so a client gets the AAAA address only by reading
+	// whichever of its sockets has a reply rather than the first.
+	FakeNameserverAAAAOnly
 	// FakeNameserverNat64 answers every AAAA query with 64:ff9b::c000:aa,
 	// the well-known NAT64 prefix embedding 192.0.0.170, which is what a
 	// network behind a translator answers for ipv4only.arpa.
@@ -137,6 +141,9 @@ func StartFakeNameserver(t *testing.T, mode FakeNameserverMode) FakeNameserver {
 			query := append([]byte(nil), buf[:n]...)
 			reply := dnsReply(query, mode == FakeNameserverTruncate, mode)
 			if reply == nil {
+				continue
+			}
+			if mode == FakeNameserverAAAAOnly && dnsQuestionType(query) != 28 {
 				continue
 			}
 			if mode == FakeNameserverPair {

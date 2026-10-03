@@ -13,21 +13,16 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/symname"
 	"time"
 
-	"github.com/jakechampion/lang/internal/ast"
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/e2eharness"
+	"github.com/jakechampion/lang/internal/symname"
 )
 
 // --- Seccomp sandbox, runtime half (#6071) ------------------------
 //
-// internal/codegen/x86_64/seccomp_test.go decodes the emitted BPF and
-// pins its shape. The tests here cover what inspecting the emitted form
+// internal/e2eselfhost/self_host_sandbox_test.go decodes the emitted BPF
+// and pins its shape. The tests here cover what inspecting the emitted form
 // cannot, each answering a different question a filter can fail:
 //
 //   - does it LOAD? (a seccomp(2) that quietly failed would leave every
@@ -39,8 +34,8 @@ import (
 //     runtime path nobody exercised.
 
 // buildSandboxed compiles src with the sandbox on or off and returns
-// the binary path. Native x86-64 only: seccomp is a Linux facility and
-// qemu-user does not emulate it faithfully.
+// the binary path. x86-64 Linux hosts only: seccomp is a Linux facility
+// and qemu-user does not emulate it faithfully.
 func buildSandboxed(t *testing.T, src string, sandbox bool) string {
 	t.Helper()
 	return buildSandboxedPatched(t, src, sandbox, nil)
@@ -63,7 +58,9 @@ func buildSandboxedPatched(t *testing.T, src string, sandbox bool, patch func(st
 // buildSandboxedPath is buildSandboxed over a source file already on disk,
 // so a fixture's imports resolve against its own directory rather than a
 // copy in a temp dir. The corpus gate below needs that; the inline-source
-// helpers above are a thin shim over it.
+// helpers above are a thin shim over it. The self-host emits the assembly,
+// with FERN_SANDBOX=1 in its environment for the sandboxed build, and gcc
+// links it, so a patch can splice instructions in between.
 func buildSandboxedPath(t *testing.T, srcPath string, sandbox bool, patch func(string) string) string {
 	t.Helper()
 	if runtime.GOARCH != "amd64" || runtime.GOOS != "linux" {
@@ -74,39 +71,30 @@ func buildSandboxedPath(t *testing.T, srcPath string, sandbox bool, patch func(s
 		t.Skip("emulated x86-64 runner: seccomp semantics are not faithful under qemu-user")
 	}
 	dir := t.TempDir()
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	var env []string
+	if sandbox {
+		env = append(env, "FERN_SANDBOX=1")
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	prev := ast.SandboxEnabled
-	t.Cleanup(func() { ast.SandboxEnabled = prev })
-	ast.SandboxEnabled = sandbox
-	asm, emitErr := x86_64.Emit(prog, info)
-	ast.SandboxEnabled = prev
-	if emitErr != nil {
-		t.Fatalf("emit: %v", emitErr)
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-target", e2eharness.TargetX86_64Linux, "-emit", "asm", "-o", asmPath, srcPath, e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv(env...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("self-host -emit asm (sandbox %v): %v\n%s", sandbox, err, out)
 	}
 	if patch != nil {
+		b, err := os.ReadFile(asmPath)
+		if err != nil {
+			t.Fatalf("read asm: %v", err)
+		}
+		asm := string(b)
 		patched := patch(asm)
 		if patched == asm {
 			t.Fatal("asm patch matched nothing — the emitted shape changed and the test is no longer exercising what it claims")
 		}
-		asm = patched
-	}
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
+		if err := os.WriteFile(asmPath, []byte(patched), 0o644); err != nil {
+			t.Fatalf("write asm: %v", err)
+		}
 	}
 	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s", err, out)
@@ -123,9 +111,6 @@ var seccompStatusRe = regexp.MustCompile(`(?m)^Seccomp:\s*(\d+)`)
 // a kernel without CONFIG_SECCOMP_FILTER degrades to running
 // unhardened rather than refusing to boot), which means a filter that
 // never loads looks exactly like one that did from the inside.
-//
-// Reading procfs from the test rather than from Fern is deliberate
-// too: read_file returns empty for procfs, whose files report size 0.
 func TestSeccompFilterIsLoadedAtRuntime(t *testing.T) {
 	const sleeper = `function main(): i32 {
     sleep_ms(1500);
@@ -288,7 +273,7 @@ func exitCodeOf(err error) int {
 func injectExecve(asm string) string {
 	label := symname.Fn("main") + ":\n"
 	return strings.Replace(asm, label,
-		label+"\tmov eax, 59\n\txor edi, edi\n\txor esi, esi\n\txor edx, edx\n\tsyscall\n", 1)
+		label+"    movq $59, %rax\n    movq $0, %rdi\n    movq $0, %rsi\n    movq $0, %rdx\n    syscall\n", 1)
 }
 
 // TestSeccompFilterDenies is the only test that observes the filter's

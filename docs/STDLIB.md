@@ -145,7 +145,10 @@ Receiver methods on i32 / byte values.
   built on `exp`; `tanh` saturates to `±1` past `|x| = 20`).
   Routed through the checker-injected
   `__<op>_f64` builtins so every backend can use its
-  hardware-precise op.
+  hardware-precise op. `asin` / `acos` / `atan`, `y.atan2(x)`
+  (the angle of `(x, y)` in `[-π, π]`), `expm1` (`eˣ − 1`) and
+  `log1p` (`ln(1 + x)`, both exact near zero) are instead fdlibm
+  ports written in Fern, within 1 ulp of glibc on every backend.
 - **IEEE-754 classification:** `is_nan`, `is_finite`, `is_inf`
 - **Combinators:** `min(y)`, `max(y)`, `clamp(lo, hi)` — NaN
   propagates (any NaN input → NaN output), matching Go's
@@ -1290,7 +1293,7 @@ serializer.
   `http_limits()` is 8 KiB, 32 KiB, 100 fields and 1 MiB, what
   `http_parse_request_framed` uses; `http_parse_request_framed_from(buf,
   from, limits)` takes them, and a serve loop reads them from
-  `ServeOptions.limits`. `http_request_bytes_cap(limits)` (header block,
+  `serve.Config.limits`. `http_request_bytes_cap(limits)` (header block,
   blank line, body and chunk framing, each at its cap) is the most a
   connection buffers without a complete request.
   `http_header_value(block, key)` reads a raw header block by the same
@@ -1369,7 +1372,7 @@ The socket controls are typed faces over the descriptor builtins
   it (the first octet in the low byte), a v4-mapped IPv6 address its IPv4
   one, any other IPv6 address the two words of its first eight bytes
   XORed, so the peers of one /64 share a key. What
-  `ServeOptions.max_connections_per_ip` counts by.
+  `serve.Config.max_connections_per_ip` counts by.
 - `shutdown(sock, how)` — `Shutdown.Read`, `Write` or `Both`; a write-side
   shutdown is the end of stream the peer's `tcp_recv` reads as EOF.
 
@@ -1411,7 +1414,7 @@ before `connect_start` answers, so there the result is `Ok(())` at once.
 
 The stream verbs on a TCP connection (`recv` / `send` over owned buffers),
 Unix-domain sockets and IPv6 listeners arrive with the primitives that make
-them honest on every address family; until then `std/tcp` is the accept
+them honest on every address family; until then `std/serve` is the accept
 loop and `std/fetch` the client.
 
 ### `std/dns`
@@ -1500,11 +1503,17 @@ for query ids, `now` for the wait and `reactor` for the race.
 walk and the ordering rules; `TestDnsExchangeX86_64`, `TestDnsPairX86_64`
 and their self-host twins drive the exchange against a nameserver on the
 loopback interface, over UDP, through the TCP retry, against one that
-stays silent, and with the A and AAAA queries together.
+stays silent, and with the A and AAAA queries together. Under the
+interpreter, whose poll is a stub, `TestDnsPairInterp` and
+`TestDnsPairInterpReadsTheReadySocket` cover the sweep the paired wait
+falls back to; the second answers AAAA alone, which only the sweep reads.
 
-### `std/tcp`
+### `std/serve`
 
-- `tcp_serve(port, handler)` — HTTP/1.1 serve loop on `::`, every
+The HTTP/1.1 server: `Config`, its defaults `config()`, and the entry
+points that run a handler under it.
+
+- `run(port, cfg, handler)` — HTTP/1.1 serve loop on `::`, every
   interface of both families, with an IPv4 peer counted by
   `max_connections_per_ip` as the IPv4 address it is; on `0.0.0.0` where
   the host has no IPv6 (the family refused, or the address not there to
@@ -1536,16 +1545,16 @@ stays silent, and with the A and AAAA queries together.
   connection, and so does a malformed request: without a response when
   it arrived first, and behind an answered one whose response then says
   `close`, since the close follows it.
-- `tcp_serve_opts(port, opts, handler)` — `tcp_serve` with
-  `ServeOptions { backlog, reuse_port, recv_deadline, min_data_rate,
+- `Config { backlog, reuse_port, recv_deadline, min_data_rate,
   data_rate_grace, response_min_data_rate, response_data_rate_grace,
   keep_alive_idle, keep_alive_requests, max_connections,
-  max_connections_per_ip }` (`serve_options()` is 128, one listener per
+  max_connections_per_ip, workers, shutdown_grace, readiness_path,
+  drain_deadline, limits, stop_with_parent }` (`config()` is 128, one listener per
   port, the 10 s deadline, 240 bytes per second after 5 s for a request
   body and the same for a response, 130 s, 1000, 1024 and 100): the
   accept queue
   depth, port sharing between listeners (`SO_REUSEPORT`, ignored on
-  wasm; under `tcp_serve_supervised_opts` each worker then binds a
+  wasm; under `supervise` each worker then binds a
   listener of its own instead of inheriting the supervisor's, the group
   steered by the CPU a connection arrived on where the host can, Linux,
   and by the kernel's hash elsewhere; what a worker's listener holds
@@ -1573,7 +1582,7 @@ stays silent, and with the A and AAAA queries together.
   response; on by default at 100, which clients behind one NAT or one
   reverse proxy share, so a server behind either sets it to 0 for no
   cap), and
-  how many workers `tcp_serve_supervised_opts` forks (`workers`; 0, the
+  how many workers `supervise` forks (`workers`; 0, the
   default, is one per processing unit the process may use, what
   `cpu_count()` answers), and the shutdown SIGTERM or SIGINT starts (SIGHUP
   keeps its default, ending the process): the loop keeps
@@ -1584,42 +1593,36 @@ stays silent, and with the A and AAAA queries together.
   signal to finish before closing them; the loop returns 0 once every
   connection is gone and 1 when it cut one off, so `main` exits with it.
   `limits` (`http.http_limits()`) are the parser's caps on each request,
-  so `ServeOptions { ...serve_options(), limits: http.HttpLimits {
+  so `serve.Config { ...serve.config(), limits: http.HttpLimits {
   ...http.http_limits(), body: 65536 } }` refuses a body past 64 KiB with
   413 before the handler runs. `stop_with_parent` (false) starts the same
   shutdown when the process's parent exits, as a SIGTERM would; each
-  worker `tcp_serve_supervised_opts` forks has it set, so a supervisor
+  worker `supervise` forks has it set, so a supervisor
   killed outright (SIGKILL, a crash) takes its workers down rather than
   leaving them serving as orphans.
   A listener it cannot bind is `serve: cannot listen on port PORT:`
   and the error's text on stderr, and the entry returns 98 (every
-  `tcp_serve*` entry, and a supervised worker that binds its own).
+  entry, and a supervised worker that binds its own).
   A listener the process was started with (`LISTEN_FDS` at least 1,
   descriptor 3) is served instead of a fresh one.
-- `tcp_serve_shutdown(port, opts, handler, shutdown)` and
-  `tcp_serve_with_shutdown(port, opts, init, handler, shutdown)` —
-  `tcp_serve_opts` and `tcp_serve_with_opts` with a hook the loop calls
+- `run_shutdown(port, cfg, handler, shutdown)` and
+  `run_with_shutdown(port, cfg, init, handler, shutdown)` —
+  `run` and `run_with` with a hook the loop calls
   once it has stopped, before returning: `shutdown(reason)`, or
   `shutdown(reason, state)` with the state as the last request left it,
   where a counter is flushed or a store closed. The reason is the signal
   that started the shutdown, "sigterm" or "sigint", when every request in
   flight was answered after it and "drain-deadline" when one was cut off.
-- `tcp_serve_deadline(port, handler, recv_deadline)` —
-  `tcp_serve` with an explicit per-request read deadline; a
-  client that hasn't delivered a complete request in time is
-  disconnected without a response.
-- `tcp_serve_with(port, init, handler)` — the same loop with a
+- `run_with(port, cfg, init, handler)` — the same loop with a
   caller-owned state value threaded through it: the handler is
   `(S, HttpRequest, Platform) => (S, HttpResponse)` and the state
   it returns is what the next request receives. The loop's frame
   owns it, so it lasts as long as the process — this is how a
   handler keeps a cache or a counter, the language having no
-  module-level mutable state. `tcp_serve_with_opts` takes the
-  `ServeOptions`, `tcp_serve_with_deadline` the read deadline alone.
-- `tcp_serve_supervised(port, handler)` — crash-only serving: the
-  accept loop runs in a forked worker the parent reforks on
-  death (docs/CRASH-ONLY-SERVE.md). `tcp_serve_supervised_opts(port,
-  opts, handler)` takes the `ServeOptions` and forks `workers` workers
+  module-level mutable state.
+- `supervise(port, cfg, handler)` — crash-only serving: the
+  accept loop runs in forked workers the parent reforks on
+  death (docs/CRASH-ONLY-SERVE.md). It forks `workers` workers
   (one per processing unit by default), each running its own loop over
   the one listener, watched exclusively (epoll's `EPOLLEXCLUSIVE`) so a
   connection wakes one of them, or with `reuse_port` over a listener of
@@ -1627,14 +1630,14 @@ stays silent, and with the A and AAAA queries together.
   to every worker and waited for, the exit being the worst code a worker answered
   it with. Eight deaths in a row within 100 ms of a fork are a give-up:
   the workers still serving are stopped the same way, and the exit is
-  the last death's code. `tcp_serve_supervised_with(port, opts, init,
-  handler)` threads a state as `tcp_serve_with` does: built once before
+  the last death's code. `supervise_with(port, cfg, init,
+  handler)` threads a state as `run_with` does: built once before
   the first fork, every worker inherits a copy, and a worker forked
   again after a death starts from that copy, not from where the dead one
   left it — a counter is per worker and lost on refork; state that must
   outlive a crash belongs in a store the handler reaches through `plat`.
-  `tcp_serve_supervised_shutdown(port, opts, handler, shutdown)` and
-  `tcp_serve_supervised_with_shutdown(port, opts, init, handler, shutdown)`
+  `supervise_shutdown(port, cfg, handler, shutdown)` and
+  `supervise_with_shutdown(port, cfg, init, handler, shutdown)`
   take the hook of the `_shutdown` entries, which each worker's loop calls
   on its way out. Where there is no fork (the interpreter) every one of
   them serves single-process. A worker runs one handler at a time to
@@ -1642,22 +1645,20 @@ stays silent, and with the A and AAAA queries together.
   holds every other connection on that worker until it returns; workers,
   not connections, absorb slow handlers until #9857 multiplexes them
   (`TestSelfHostSupervisedServeHandlerStallsItsWorker` pins the stall).
-- `tcp_recv_deadline(fd, max, deadline): Option[u8[]]` —
-  recv bounded by a readability deadline: `Some(chunk)` in time
-  (empty chunk = EOF), `None` at the deadline. On interp (where
-  `poll` is a stub) it degrades to a blocking recv.
 - `__port_from_env(name, fallback)` — env-var port lookup used
   by the auto-`main`-from-`handle()` synthesis so handler-shaped
   programs can be tuned via `PORT=N ./bin`. That synthesis serves
-  `handle` under the supervisor: `tcp_serve_supervised_opts` with
-  `serve_options()`, or `tcp_serve_supervised_with` when the program
+  `handle` under the supervisor: `supervise` with
+  `config()`, or `supervise_with` when the program
   defines an `init` answering the state a state-taking `handle` threads
   (docs/PLATFORM-RESEARCH.md Rec §3). `init` takes nothing or the
   platform (`__init_platform()`, the host bag with no reactor, since it
   runs once in the supervising parent), and answers nothing, the state
-  `S`, the `ServeOptions` alone, or `(ServeOptions, S)`; options it
-  answers replace the defaults. On a target without processes
-  (wasm32-wasi) the synthesis serves through `tcp_serve_opts` and its
+  `S`, the `serve.Config` alone, or `(serve.Config, S)`; a config it
+  answers replaces the defaults. Both compilers know the config by its
+  module, whatever the program imports std/serve as, so a struct of the
+  program's own named `Config` is a state like any other. On a target
+  without processes (wasm32-wasi) the synthesis serves through `run` and its
   `_with` / `_shutdown` twins instead. Mismatching `init` and `handle` about the
   state, or an `init` taking anything else, is E075. A top-level
   `shutdown(reason)`, or `shutdown(reason, state)` beside a
@@ -1672,6 +1673,13 @@ stays silent, and with the A and AAAA queries together.
   `dyn error.Error` — so every consumer, the
   synthesised main and the wasi-http entry included, keeps the
   HttpResponse-shaped entry.
+
+### `std/tcp`
+
+- `tcp_recv_deadline(fd, max, deadline): Option[u8[]]` —
+  recv bounded by a readability deadline: `Some(chunk)` in time
+  (empty chunk = EOF), `None` at the deadline. On interp (where
+  `poll` is a stub) it degrades to a blocking recv.
 
 The raw socket primitives `tcp_listen` / `tcp_accept` /
 `tcp_local_port` / `tcp_recv` / `tcp_send` / `tcp_close` are
@@ -1931,6 +1939,27 @@ built-in `Instant`, `Date`, `Time`, `DateTime`, `Zoned`, `Span`,
 - Named constants: `NANOS_PER_SECOND`, `SECONDS_PER_DAY`,
   `DAYS_PER_WEEK`, etc.
 
+### `std/tz`
+
+The local time zone as `tzset(3)` finds it, for a program that prints a
+wall-clock time: a TZif file (RFC 8536, the v2 64-bit table and the POSIX
+rule in its footer) or a POSIX TZ string, answering the UTC offset and
+the abbreviation in force at an instant. `std/time`'s `TimeZone` is a
+fixed offset by construction; a `Zone` is the function from an instant to
+that offset.
+
+- **Loading:** `local_zone()` (`TZ`, else `/etc/localtime`, else UTC),
+  `zone_from_tz(spec)` (a file under `TZDIR` or `/usr/share/zoneinfo`,
+  else a rule such as `EST5EDT,M3.2.0,M11.1.0`), `parse_tzif(bytes)`,
+  `parse_posix(s)`, `fixed_zone(off, name)`, `utc_zone()`.
+- **At an instant:** `(z: Zone).offset_at(sec)`, `.abbrev_at(sec)`,
+  `.is_dst_at(sec)`, `.entry_at(sec)` (all three at once), `.at(sec)`
+  (the `time.TimeZone` valid then), `.civil(sec)` / `.local_fields(sec)`
+  (the broken-down local time).
+- A header count the file cannot hold, a type index past the table or a
+  truncated block is a parse failure, never an allocation of the claimed
+  size. Reaches `env`, `fs` and `now`.
+
 ### `std/async`
 
 The blessed structured-concurrency surface (see
@@ -1970,7 +1999,7 @@ old `concurrent { … }` / `await` keyword surface.
   reported, (-15, 1): -ESRCH when the parent is already gone, found
   reparented to init (a subreaper other than init, Linux, hides that),
   -ENOTSUP on wasm; the sim's parent never exits.
-  `std/tcp`'s serve loops run on it.
+  `std/serve`'s serve loops run on it.
 
 ### `std/platform`
 

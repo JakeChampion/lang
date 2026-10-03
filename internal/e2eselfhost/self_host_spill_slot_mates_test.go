@@ -61,6 +61,10 @@ function main(): i32 { return (carry(1000i64, 3i64) % 200i64) as i32; }
 func TestSelfHostSpillSlotMates(t *testing.T) {
 	t.Run("carried", func(t *testing.T) { checkSpillSlotMates(t, spillSlotMatesProg, 164) })
 	t.Run("nested", func(t *testing.T) { checkSpillSlotMates(t, spillSlotNestedProg, 88) })
+	// Each arm's value and each merge's phi take the slot of the loop header's
+	// phi they replace, although that phi's interval covers the whole body
+	// (ssa.path_slot).
+	t.Run("merges", func(t *testing.T) { checkSpillSlotMates(t, mergeHintProg, 86) })
 }
 
 func checkSpillSlotMates(t *testing.T, prog string, want int) {

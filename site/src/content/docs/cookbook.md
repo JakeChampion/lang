@@ -298,7 +298,7 @@ when you build for `wasi-http`.
 
 ```fern
 import "std/http";
-import "std/tcp";
+import "std/serve";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/health") {

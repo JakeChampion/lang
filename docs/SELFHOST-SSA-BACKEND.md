@@ -230,8 +230,10 @@ home and reads operands from theirs (`ssa_dst`, `ssa_src`): the integer
 add, subtract, multiply, and, or, xor and the compares compute into the
 home with only a spilled operand passing through a scratch
 (`ssa_bin_in_place`; on x86-64 the operands swap, or a comparison flips,
-when the right one lives in the destination), and a compare read only by
-its block's branch is consumed as flags straight from the homes. A
+when the right one lives in the destination, and a spilled right operand
+is read from its frame slot rather than a scratch), and a compare read only
+by its block's branch is consumed as flags straight from the homes, a
+spilled operand on x86-64 straight from its slot (`ssa_fused_test`). A
 constant those ops alone read is an immediate operand and is never
 materialised (`ssa.imm_operands`: any i32 on x86-64, 0 to 4,095 on arm64
 for add, sub and the compares; a constant on the left swaps or flips the
@@ -244,19 +246,32 @@ register is free or its holder dies at the definition, and a loop-carried
 operand takes its phi's register whenever no use of the phi is reachable
 from the operand's definition without passing the header
 (`ssa.phi_mates`, `ssa.mate_interferes`), so `sum = sum + i` computes into
-`sum`'s register and the back edge moves nothing. With no register free, the
+`sum`'s register and the back edge moves nothing. A phi whose operand from
+before it outlives it, as the loop header's phi does at each merge of an
+else-if chain inside the loop, is mated with the first operand that dies by
+the merge instead. With no register free, the
 value spilled is the one read least per position its interval covers, each
 read weighted 8 per enclosing loop (`ssa.cheapest_active`): a value that sits
 across a whole loop body frees more by leaving than a temporary read on the
 next line, and taking that rule instead of the lowest raw weight made the
-`std/crypto` digests 1.3x to 4x faster (#10615). A spilled value takes its
+`std/crypto` digests 1.3x to 4x faster (#10615). The eviction spills the
+values that shared the register only where their intervals still reach the
+evicting value; one that ended keeps it (`ssa.still_holds`). A spilled value takes its
 phi mate's frame slot by the same rule (`ssa.assign_spill_slots`), so a loop
 with more carried values than registers does not copy slot to slot on its
 back edge: the whole compiler's x86-64 text is 3.8% shorter for it, and a
 self-host `uniq` runs 5% fewer instructions. A phi also takes its entry
 operand's slot when no use of the operand is reachable from the phi, and a
 free slot another phi is waiting for is passed over, so entering an inner
-loop does not copy either. A phi reads its operand
+loop does not copy either. A value read only by its phi mate, when the
+mate is already spilled, takes the mate's slot rather than a register it
+would only be stored from on the edge (`ssa.sole_readers`), so a value a
+loop changes on some iterations is not loaded and stored back on the others.
+A spilled phi, or a two-address result, whose mate's slot is taken shares
+the slot of one of its operands when no value in that slot is live where it
+is defined, nor it where they are (`ssa.path_slot`): the merges of an else-if
+chain inside a loop then keep each local in its loop header phi's slot,
+though that phi's interval covers the whole body. A phi reads its operand
 on the edge, at the predecessor's terminator, not inside the header, and
 a loop-carried operand's interval ends at that edge. Empty blocks holding
 only a branch are skipped by every edge into them and dropped, a phi loses

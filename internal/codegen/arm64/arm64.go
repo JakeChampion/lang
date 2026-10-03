@@ -9765,7 +9765,7 @@ type statfsField struct{ box, src, width int32 }
 // linuxStatfsFields — Linux's 120-byte record, every member a 64-bit
 // word on both supported ISAs: f_type 0, f_bsize 8, f_blocks 16,
 // f_bfree 24, f_bavail 32, f_files 40, f_ffree 48, f_fsid 56,
-// f_namelen 64, f_frsize 72.
+// f_namelen 64, f_frsize 72. f_fsid is joined separately (statfsFsid).
 var linuxStatfsFields = []statfsField{
 	{ir.FsStat.BlockSize, 8, 8},
 	{ir.FsStat.Blocks, 16, 8},
@@ -9774,11 +9774,15 @@ var linuxStatfsFields = []statfsField{
 	{ir.FsStat.Files, 40, 8},
 	{ir.FsStat.FilesFree, 48, 8},
 	{ir.FsStat.NameMax, 64, 8},
+	{ir.FsStat.FsType, 0, 8},
+	{ir.FsStat.FragSize, 72, 8},
 }
 
 // darwinStatfsFields — Darwin's 2168-byte record: f_bsize is a u32 at 0
-// (f_iosize takes 4..7), then five u64 counts. There is no name-length
-// member at all, which is why the Darwin path asks pathconf(2) instead.
+// (f_iosize takes 4..7), then five u64 counts, f_fsid at 48 and the u32
+// f_type at 60. There is no name-length member at all, which is why the
+// Darwin path asks pathconf(2) instead, and no fundamental block size, so
+// `frag_size` is f_bsize.
 var darwinStatfsFields = []statfsField{
 	{ir.FsStat.BlockSize, 0, 4},
 	{ir.FsStat.Blocks, 8, 8},
@@ -9786,6 +9790,17 @@ var darwinStatfsFields = []statfsField{
 	{ir.FsStat.BlocksAvail, 24, 8},
 	{ir.FsStat.Files, 32, 8},
 	{ir.FsStat.FilesFree, 40, 8},
+	{ir.FsStat.FsType, 60, 4},
+	{ir.FsStat.FragSize, 0, 4},
+}
+
+// statfsFsid is the offset of `f_fsid` in each record: two 32-bit words that
+// FsStat joins into one, first word high, as GNU `stat -f` prints it.
+func statfsFsid(darwin bool) int32 {
+	if darwin {
+		return 48
+	}
+	return 56
 }
 
 // emitStatfsRuntime emits `__fern_statfs(path) → Result[FsStat, IoError]`
@@ -9861,6 +9876,11 @@ func (g *generator) emitStatfsRuntime() {
 		}
 		g.emit("str x9, [x0, #%d]", f.box)
 	}
+	fsid := 96 + statfsFsid(g.darwin)
+	g.emit("ldr w9, [x29, #%d]", fsid)
+	g.emit("ldr w10, [x29, #%d]", fsid+4)
+	g.emit("orr x9, x10, x9, lsl #32")
+	g.emit("str x9, [x0, #%d]", ir.FsStat.Fsid)
 	if g.darwin {
 		g.emit("str x24, [x0, #%d]", ir.FsStat.NameMax)
 		g.emit("str x25, [x0, #%d]", ir.FsStat.PathMax)
@@ -11715,6 +11735,48 @@ func (g *generator) oflagWrite(k oflagKind) int {
 		return 193
 	}
 	return 577
+}
+
+// openWithWord is one bit of the open_*_with flags word and the target's
+// word for it; a zero word is a bit the target cannot honour, refused as
+// Unsupported (the checker's open_reader_with comment is the contract).
+type openWithWord struct {
+	bit  int
+	word int
+	name string // the label suffix
+	flag string
+}
+
+// openWithWords is the flags word in Linux arm64's spelling, or XNU's.
+// XNU has no O_DIRECT (its F_NOCACHE is a request made after the open)
+// and no O_NOATIME.
+func openWithWords(darwin bool) []openWithWord {
+	if darwin {
+		return []openWithWord{
+			{0, 0x200, "nc", "O_CREAT"},
+			{1, 0x4, "nb", "O_NONBLOCK"},
+			{2, 0x800, "nx", "O_EXCL"},
+			{3, 0, "nd", "O_DIRECT"},
+			{4, 0x100000, "ndir", "O_DIRECTORY"},
+			{5, 0x400000, "nds", "O_DSYNC"},
+			{6, 0x80, "ns", "O_SYNC"},
+			{7, 0, "na", "O_NOATIME"},
+			{8, 0x20000, "nt", "O_NOCTTY"},
+			{9, 0x100, "nf", "O_NOFOLLOW"},
+		}
+	}
+	return []openWithWord{
+		{0, 64, "nc", "O_CREAT"},
+		{1, 2048, "nb", "O_NONBLOCK"},
+		{2, 128, "nx", "O_EXCL"},
+		{3, 0x10000, "nd", "O_DIRECT"},
+		{4, 0x4000, "ndir", "O_DIRECTORY"},
+		{5, 0x1000, "nds", "O_DSYNC"},
+		{6, 0x101000, "ns", "O_SYNC"},
+		{7, 0x40000, "na", "O_NOATIME"},
+		{8, 0x100, "nt", "O_NOCTTY"},
+		{9, 0x8000, "nf", "O_NOFOLLOW"},
+	}
 }
 
 // emitODirectory materialises the platform O_DIRECTORY flag into
@@ -14691,13 +14753,11 @@ func (g *generator) emitReaderWriterRuntime() {
 	// Result[Reader|Writer, IoError].
 	// Each is a thin wrapper around `openat` + handle alloc + the
 	// Result-box build. Flags + mode differ per kind. The two `_with`
-	// forms take Fern's flags word after the path: bit 0 is O_CREAT and
-	// bit 1 O_NONBLOCK, each in the target's own spelling (64 / 2048 on
-	// Linux, 0x200 / 0x4 on XNU), on top of the access mode in `flags`.
-	oCreat, oNonblock := 64, 2048
-	if g.darwin {
-		oCreat, oNonblock = 0x200, 0x4
-	}
+	// forms take Fern's flags word after the path, each bit becoming the
+	// target's own word (openWithWords) on top of the access mode in
+	// `flags`; a bit XNU has no word for is refused as Unsupported before
+	// the path is copied.
+	words := openWithWords(g.darwin)
 	twoWord := ast.UseTwoWordStrings(8)
 	for _, e := range []struct {
 		sym, name string
@@ -14714,17 +14774,47 @@ func (g *generator) emitReaderWriterRuntime() {
 	} {
 		_ = e.name
 		// The flags word lives in a callee-saved register (x22 two-word,
-		// x21 one-word) across the path copy and becomes w2 here.
+		// x21 one-word) across the path copy and becomes w2 here. A
+		// multi-bit word (Linux's O_SYNC) goes in one `orr` per bit, since
+		// `orr` takes only a bitmask immediate.
 		emitWithFlags := func(reg string) {
 			if !e.withFlags {
 				return
 			}
-			g.emit("tbz %s, #0, %s", reg, ".Lorw_nc_"+e.sym)
-			g.emit("orr w2, w2, #%d", oCreat)
-			g.label(".Lorw_nc_" + e.sym)
-			g.emit("tbz %s, #1, %s", reg, ".Lorw_nb_"+e.sym)
-			g.emit("orr w2, w2, #%d", oNonblock)
-			g.label(".Lorw_nb_" + e.sym)
+			for _, b := range words {
+				if b.word == 0 {
+					continue
+				}
+				g.emit("tbz %s, #%d, %s", reg, b.bit, ".Lorw_"+b.name+"_"+e.sym)
+				for w := b.word; w != 0; w &= w - 1 {
+					g.emit("orr w2, w2, #%d // %s", w&-w, b.flag)
+				}
+				g.label(".Lorw_" + b.name + "_" + e.sym)
+			}
+		}
+		// emitRefusals branches to `unsup` on any bit the target has no
+		// word for; emitUnsupported writes `unsup`, which builds the
+		// Unsupported box and joins the Err path at `wrap`.
+		emitRefusals := func(reg, unsup string) {
+			if !e.withFlags {
+				return
+			}
+			for _, b := range words {
+				if b.word == 0 {
+					g.emit("tbnz %s, #%d, %s", reg, b.bit, unsup)
+				}
+			}
+		}
+		emitUnsupported := func(unsup, wrap string) {
+			if !e.withFlags || !g.darwin {
+				return
+			}
+			g.emit("b %s", wrap) // the errno path's IoError is in x0
+			g.label(unsup)
+			g.emit("mov x0, #8")
+			g.emit("bl __fern_alloc_box")
+			g.emit("mov w1, #5") // IoError::Unsupported
+			g.emit("str w1, [x0]")
 		}
 		g.line("")
 		g.line(".global " + e.sym)
@@ -14743,6 +14833,7 @@ func (g *generator) emitReaderWriterRuntime() {
 			if e.withFlags {
 				g.emit("mov w22, w2") // the flags word
 			}
+			emitRefusals("w22", ".Lorw2w_unsup_"+e.sym)
 			g.emitStrDataPtr2W("x21", "x19", "x20", 48) // x21 = byte ptr; scratch [x29+48]
 			// NUL-terminate for openat (see emitNulTermPath2W).
 			g.emitNulTermPath2W("x21", "x21", "x20")
@@ -14783,6 +14874,8 @@ func (g *generator) emitReaderWriterRuntime() {
 			g.emit("mov x1, x19")
 			g.emit("mov x2, x20")
 			g.emit("bl __fern_io_error")
+			emitUnsupported(".Lorw2w_unsup_"+e.sym, ".Lorw2w_wrap_"+e.sym)
+			g.label(".Lorw2w_wrap_" + e.sym)
 			g.emit("mov x21, x0")
 			g.emit("mov x0, #16")
 			g.emit("bl __fern_alloc_rc1")
@@ -14805,6 +14898,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		if e.withFlags {
 			g.emit("mov w21, w1") // the flags word
 		}
+		emitRefusals("w21", ".Lorw_unsup_"+e.sym)
 		g.emit("mov x0, #%d", g.atFdCwd()) // AT_FDCWD
 		g.emit("mov x1, x19")
 		g.emit("mov w2, #%d", e.flags)
@@ -14840,6 +14934,8 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("mov x0, x20")
 		g.emit("mov x1, x19") // path
 		g.emit("bl __fern_io_error")
+		emitUnsupported(".Lorw_unsup_"+e.sym, ".Lorw_wrap_"+e.sym)
+		g.label(".Lorw_wrap_" + e.sym)
 		g.emit("mov x19, x0") // stash IoError ptr (callee-save)
 		g.emit("mov x0, #16")
 		g.emit("bl __fern_alloc_rc1")

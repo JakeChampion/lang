@@ -18,7 +18,7 @@ import "std/string";
 import "std/array";
 import "std/io_buffered";
 import "./lib/gnu";
-import "./lib/tz";
+import "std/tz";
 import "./lib/timefmt";
 import "./lib/datetime";
 

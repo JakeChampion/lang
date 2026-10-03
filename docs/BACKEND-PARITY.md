@@ -133,9 +133,9 @@ still need their own classifications.
 | wasm32-wasi | E066: the target has no `syscall` capability | rejected by the self-host wasm drivers |
 | interp | never reached: refused with the target, not at run time | — |
 
-`FERN_SANDBOX=1` on x86-64 records a floor call whose number is a literal
-like any other syscall, and refuses a program whose number is a run-time
-operand, which the seccomp allowlist cannot cover.
+`FERN_SANDBOX=1` on x86-64, on both compilers, records a floor call whose
+number is a literal like any other syscall, and refuses a program whose
+number is a run-time operand, which the seccomp allowlist cannot cover.
 
 On the Go compiler `tcp_listen`, `tcp_listen_with`, `tcp_connect`,
 `tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`,
@@ -634,14 +634,16 @@ arm64-ssa emits both, and the handle forms `__method_Reader_termios_get` /
 pair itself — it has no handle family at all, so `open_writer` is already
 outside it, and the free forms alone would leave `r.termios_get()` broken.
 
-### Line coverage (`-cover`) is native-only
+### Line coverage (`-cover`) is native x86-64 / arm64 and self-host Linux
 
 `-cover` (#5548, `docs/COVERAGE.md`) instruments every executable source line
-and every source-level conditional with counters and dumps the table at exit. The instrumentation is an IR pass,
-but each backend still has to emit the counter array, the report table, and
-the exit-seam call — only the x86-64 and arm64 stack-machine emitters do,
-matching `-sanitize`'s reach. The SSA emitters on those same targets do not,
-so the reach is per-backend and not per-target.
+and every source-level conditional with counters and dumps the table at exit.
+On native the instrumentation is an IR pass, but each backend still has to emit
+the counter array, the report table, and the exit-seam call — only the x86-64
+and arm64 stack-machine emitters do, matching `-sanitize`'s reach. The Go SSA
+emitters on those same targets do not, so native's reach is per-backend and not
+per-target. The self-host instruments the source instead (`cover.fern`), so
+both of its Linux targets have it through the same emitters every build uses.
 
 `ir.LowerWith` **errors** when `ast.CoverEnabled` is set and the caller did not
 pass `CoverPoints()`, so a wasm build under `-cover` refuses rather than

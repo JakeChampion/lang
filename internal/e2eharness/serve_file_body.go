@@ -16,14 +16,14 @@ import (
 // place.
 func FileBodyServerSource(port int, path string) string {
 	return fmt.Sprintf(`import "std/http";
-import "std/tcp";
+import "std/serve";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/file") { return http.file(%q).with_content_type("text/plain"); }
     if (req.path == "/missing") { return http.file(%q + ".missing"); }
     return http.ok("ok");
 }
 function main(): i32 {
-    return tcp.tcp_serve(%d, handle);
+    return serve.run(%d, serve.config(), handle);
 }
 `, path, path, port)
 }

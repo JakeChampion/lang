@@ -12,7 +12,7 @@ import (
 )
 
 // The Go compiler's twin of TestSelfHostHTTPHandlerCensus, and the
-// bounded-serve exit criterion of #9853 on this compiler: std/tcp's
+// bounded-serve exit criterion of #9853 on this compiler: std/serve's
 // production accept loop bounded to 32 completed requests, every response
 // checked, and the leak census balanced with zero live bytes.
 func TestHTTPHandlerCensus(t *testing.T) {
