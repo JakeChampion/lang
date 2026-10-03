@@ -571,7 +571,8 @@ function definition(f: ssasem.Func, v: i32): ssa.SInst {
 // slot is nulled and the value's unit is the taker's; otherwise the value is
 // retained, as `append_field` does around its push. A record's field and an
 // enum's payload are the same slot to this, since both read through
-// `op_struct_get`. The scratch slot holds the box's answer; nothing reads it
+// `op_struct_get`; a tuple's element has no shape word before it, so it is
+// written with `op_tuple_set`. The scratch slot holds the box's answer; nothing reads it
 // past this point.
 function steal(own r: irtables.LowerResult, f: ssasem.Func, v: i32, unique: i32): irtables.LowerResult {
   let get: ssa.SInst = definition(f, v);
@@ -583,7 +584,11 @@ function steal(own r: irtables.LowerResult, f: ssasem.Func, v: i32, unique: i32)
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_load_local(get.args[0]));
   r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_struct_set(get.imm, 0));
+  if (get.kind_tag == ssasem.tuple_get()) {
+    r = emit(r, ir.op_tuple_set(get.imm));
+  } else {
+    r = emit(r, ir.op_struct_set(get.imm, 0));
+  }
   r = emit(r, ir.op_end());
   return unless_unique(r, unique, v, "__fern_rc_inc");
 }
