@@ -157,6 +157,10 @@ pub struct EmitState {
   // module's text, 0 when none: the register path reads an arm back to
   // take its operands in registers.
   capture: usize,
+  // The buffer an emitter writing a binary hands encoded instruction words to
+  // (`word`, `branch`), 0 when the text is the output: each word leaves a
+  // marker line in the text, which the assembler replaces with the next word.
+  recs: usize,
   // The typed lowering of a runtime helper's source: one body per function it
   // defines, then the drop helpers those bodies carry. The CLI supplies it
   // (semlower.runtime_bodies); a backend never links that pipeline itself.
@@ -326,6 +330,7 @@ pub function new_state(): EmitState {
     reg_entries: irtables.sig_reg_of([]),
     leaves: [],
     capture: 0 as usize,
+    recs: 0 as usize,
     rt_lower: no_rt_lower,
     named: [],
     rc_free_debug: rc_free_debug_on(),
@@ -672,6 +677,30 @@ pub function (s: EmitState) write(text: string): EmitState {
   // self-host sources is a same-name self-rebind (`s = s.write(…)`) — there
   // is no site that binds the result to a second name, so handing the
   // receiver back creates no alias that did not already exist.
+  return s;
+}
+
+// records reports whether an instruction may go to the assembler as an
+// encoded word: a binary is being built and no arm is being captured as text.
+pub function (s: EmitState) records(): boolean {
+  return s.recs != 0 as usize && s.capture == 0 as usize;
+}
+
+// word hands the assembler one encoded instruction, which takes the place of
+// the marker line it leaves in the text.
+pub function (s: EmitState) word(w: i64): EmitState {
+  buf_push_u64(s.recs, w as u64);
+  strbuf_append("\x01\n");
+  return s;
+}
+
+// branch hands over a branch word with no displacement, and the label it goes
+// to, which the assembler resolves as it would the text's.
+pub function (s: EmitState) branch(w: i64, label: string): EmitState {
+  buf_push_u64(s.recs, w as u64);
+  strbuf_append("\x02");
+  strbuf_append(label);
+  strbuf_append("\n");
   return s;
 }
 

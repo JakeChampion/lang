@@ -1,0 +1,5 @@
+pub enum Ae { X(i32), Ya }
+
+pub function mk_a(): Ae {
+  return X(5);
+}
