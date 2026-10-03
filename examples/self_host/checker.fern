@@ -16032,6 +16032,9 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
       return LuFacts { ...f, occ: f.occ.append(LuOcc { name: a.target, line: a.target_line, col: a.target_col }) };
     },
     ast.StmtVar(v) => {
+      if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+        return LuFacts { ...f, vars: lu_destr_vars(v, f.vars) };
+      }
       return LuFacts { ...f, vars: f.vars.append(LuVar { name: v.name, init: v.init }) };
     },
     ast.StmtDefer(d) => {
@@ -16042,6 +16045,38 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
     }
   }
   return f;
+}
+
+// lu_destr_vars declares a destructure's bindings. Each top-level one is an
+// element of the value it unpacks, so it is fresh when that value is — unless
+// an `@` binding names the whole value — and is never a rename or an unpack.
+// A nested position's bindings read a synthesised binder, which is not fresh.
+function lu_destr_vars(v: ast.StmtVar, own vars: LuVar[]): LuVar[] {
+  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let init: ast.Expr = none;
+  if (lu_fresh_expr(v.init) && parser.destr_marker_split(v.type_name).at.len() == 0) {
+    init = v.init;
+  }
+  for nm in split_pattern_names(v.name) {
+    if (util.is_tuple_type_name(nm)) {
+      vars = lu_nested_vars(nm, vars);
+    } else {
+      vars = vars.append(LuVar { name: nm, init: init });
+    }
+  }
+  return vars;
+}
+
+function lu_nested_vars(group: string, own vars: LuVar[]): LuVar[] {
+  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  for nm in split_pattern_names(slice_unchecked(group, 1, group.len() - 1) + "") {
+    if (util.is_tuple_type_name(nm)) {
+      vars = lu_nested_vars(nm, vars);
+    } else {
+      vars = vars.append(LuVar { name: nm, init: none });
+    }
+  }
+  return vars;
 }
 
 // A lambda the parser synthesised for a value block or a match / if expression
@@ -16121,10 +16156,11 @@ function lu_is_local(fx: LuFn, name: string): boolean {
 // its base's fields, so it is not fresh.
 function lu_fresh_init(fx: LuFn, name: string): boolean {
   let li: LuInit = lu_init_of(fx, name);
-  if (!li.ok) {
-    return false;
-  }
-  if let ast.ExprCall(c) = li.init {
+  return li.ok && lu_fresh_expr(li.init);
+}
+
+function lu_fresh_expr(e: ast.Expr): boolean {
+  if let ast.ExprCall(c) = e {
     if let ast.ExprIdent(_) = c.callee {
       return true;
     }
@@ -16132,13 +16168,13 @@ function lu_fresh_init(fx: LuFn, name: string): boolean {
       return true;
     }
   }
-  if let ast.ExprArray(_) = li.init {
+  if let ast.ExprArray(_) = e {
     return true;
   }
-  if let ast.ExprString(_) = li.init {
+  if let ast.ExprString(_) = e {
     return true;
   }
-  if let ast.ExprStructLit(sl) = li.init {
+  if let ast.ExprStructLit(sl) = e {
     return !sl.has_base;
   }
   return false;
