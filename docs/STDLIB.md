@@ -1496,7 +1496,10 @@ for query ids, `now` for the wait and `reactor` for the race.
 walk and the ordering rules; `TestDnsExchangeX86_64`, `TestDnsPairX86_64`
 and their self-host twins drive the exchange against a nameserver on the
 loopback interface, over UDP, through the TCP retry, against one that
-stays silent, and with the A and AAAA queries together.
+stays silent, and with the A and AAAA queries together. Under the
+interpreter, whose poll is a stub, `TestDnsPairInterp` and
+`TestDnsPairInterpReadsTheReadySocket` cover the sweep the paired wait
+falls back to; the second answers AAAA alone, which only the sweep reads.
 
 ### `std/tcp`
 
