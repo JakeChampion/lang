@@ -1249,10 +1249,9 @@ function die_on_write_error(w: io_buffered.BufWriter, status: i32): void {
 // fails it again, and this stops issuing the syscall instead, which no
 // diagnostic can tell apart.
 //
-// The pending bytes are grown inside the struct literal, as
-// io_buffered's BufWriter grows its own: read into a local first and
-// every append copies the whole buffer.
-pub struct Stdio { w: Writer, buf: string, cap: i32, alloc: boolean, err: Option[IoError] }
+// Pending data is an immutable byte array. A capacity boundary can fall
+// inside a UTF-8 character, even when the caller writes valid text.
+pub struct Stdio { w: Writer, buf: u8[], cap: i32, alloc: boolean, err: Option[IoError] }
 
 pub function stdio_new(): Stdio {
   let w: Writer = stdout();
@@ -1265,7 +1264,7 @@ pub function stdio_new(): Stdio {
     },
     Err(_) => {}
   }
-  return Stdio { w: w, buf: "", cap: cap, alloc: false, err: None };
+  return Stdio { w: w, buf: [], cap: cap, alloc: false, err: None };
 }
 
 function bufsiz(): i32 {
@@ -1274,7 +1273,64 @@ function bufsiz(): i32 {
 
 // `(s).fwrite(data)` — fwrite, fputs, putc: `_IO_file_xsputn`.
 pub function (s: Stdio) fwrite(data: string): Stdio {
-  return xsputn(s, data).0;
+  return xsputn(s, [], data, 0, data.len());
+}
+
+pub function (s: Stdio) fwrite_bytes(data: u8[]): Stdio {
+  return xsputn(s, data, "", 0, data.len());
+}
+
+// The same write boundary with a clamped range of raw input.
+pub function (s: Stdio) fwrite_bytes_range(data: u8[], lo0: i32, hi0: i32): Stdio {
+  let lo: i32 = lo0;
+  let hi: i32 = hi0;
+  if (lo < 0) {
+    lo = 0;
+  }
+  if (hi > data.len()) {
+    hi = data.len();
+  }
+  if (lo >= hi) {
+    return s;
+  }
+  return xsputn(s, data, "", lo, hi);
+}
+
+// Text and raw callers share the write ordering without copying a whole
+// string to a temporary array. Exactly one input is nonempty. Only pending
+// bytes are retained, so a buffer boundary need not be a UTF-8 boundary.
+function stdio_append_range(own pending: u8[], data: u8[], text: string, lo: i32, hi: i32): u8[] {
+  if (text.len() == 0 && pending.len() == 0 && lo == 0 && hi == data.len()) {
+    return data;
+  }
+  if (text.len() > 0 && pending.len() == 0 && lo == 0 && hi == text.len()) {
+    return text.bytes();
+  }
+  if (hi - lo <= 128) {
+    let i: i32 = lo;
+    if (text.len() > 0) {
+      while (i < hi) {
+        pending = pending.append(text[i]);
+        i = i + 1;
+      }
+    } else {
+      while (i < hi) {
+        pending = pending.append(data[i]);
+        i = i + 1;
+      }
+    }
+    return pending;
+  }
+  let h: usize = buf_new(pending.len() + hi - lo);
+  buf_push_bytes_range(h, pending, 0, pending.len());
+  if (text.len() > 0) {
+    buf_push_range(h, text, lo, hi);
+  } else {
+    buf_push_bytes_range(h, data, lo, hi);
+  }
+  let bytes: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return bytes;
 }
 
 // `(s).fflush()` — write what is pending; nothing is allocated for an
@@ -1283,8 +1339,8 @@ pub function (s: Stdio) fflush(): Stdio {
   if (s.buf.len() == 0) {
     return s;
   }
-  let r: (Stdio, boolean) = sys_write(s, s.buf);
-  return Stdio { ...r.0, buf: "" };
+  let r: Stdio = sys_write(s, s.buf);
+  return Stdio { ...r, buf: [] };
 }
 
 // `(s).report(msg)` — gnulib's error(): stdout flushed, then the
@@ -1311,10 +1367,10 @@ pub function (s: Stdio) close_stdout(): void {
   let fclose_fail: boolean = false;
   let text: string = "";
   if (some_pending) {
-    let r: (Stdio, boolean) = sys_write(s, s.buf);
-    if (!r.1) {
+    let r: Stdio = sys_write(s, s.buf);
+    if (stdio_failed(r)) {
       fclose_fail = true;
-      match (r.0.err) {
+      match (r.err) {
         Some(e) => {
           text = io_error_text(e);
         },
@@ -1341,13 +1397,13 @@ pub function (s: Stdio) close_stdout(): void {
 
 // `_IO_file_xsputn`: fill the buffer, flush it if that did not take
 // everything, write whole blocks of what is left directly, and buffer
-// the remainder. Returns the stream and how many bytes it took; a
-// failed flush ends the write with the rest dropped.
-function xsputn(s0: Stdio, data: string): (Stdio, i32) {
+// the remainder. A failed flush ends the write
+// with the rest dropped. Callers observe the sticky error in the stream.
+function xsputn(s0: Stdio, data: u8[], text: string, lo: i32, hi: i32): Stdio {
   let s: Stdio = s0;
-  let n: i32 = data.len();
+  let n: i32 = hi - lo;
   if (n == 0) {
-    return (s, 0);
+    return s;
   }
   let pos: i32 = 0;
   let count: i32 = 0;
@@ -1358,62 +1414,73 @@ function xsputn(s0: Stdio, data: string): (Stdio, i32) {
     if (count > n) {
       count = n;
     }
-    s = Stdio { ...s, buf: s.buf + slice_unchecked(data, 0, count) };
+    s = Stdio { ...s, buf: stdio_append_range(s.buf, data, text, lo, lo + count) };
     pos = count;
   }
   if (pos < n) {
-    let f: (Stdio, boolean) = overflow(s);
-    s = f.0;
-    if (!f.1) {
-      return (s, pos);
+    let had_pending: boolean = s.buf.len() > 0;
+    s = overflow(s);
+    if (had_pending && stdio_failed(s)) {
+      return s;
     }
     let to_do: i32 = n - pos;
     let do_write: i32 = to_do - to_do % s.cap;
     if (do_write > 0) {
-      let piece: string = data;
-      if (do_write != n) {
-        piece = slice_unchecked(data, pos, pos + do_write) + "";
+      if (text.len() > 0) {
+        let bytes: [u8] = text.as_bytes();
+        s = sys_write(s, bytes[lo + pos:lo + pos + do_write]);
+      } else {
+        s = sys_write(s, data[lo + pos:lo + pos + do_write]);
       }
-      let w: (Stdio, boolean) = sys_write(s, piece);
-      s = w.0;
-      if (!w.1) {
-        return (s, pos);
+      if (stdio_failed(s)) {
+        return s;
       }
       pos = pos + do_write;
     }
     if (pos < n) {
-      s = Stdio { ...s, buf: s.buf + slice_unchecked(data, pos, n) };
+      s = Stdio { ...s, buf: stdio_append_range(s.buf, data, text, lo + pos, hi) };
     }
   }
-  return (s, n);
+  return s;
 }
 
 // `_IO_OVERFLOW(EOF)`: allocate the buffer on first use and write what
 // it holds. The buffer is empty afterwards whether or not the write
 // succeeded, as `new_do_write` leaves it.
-function overflow(s0: Stdio): (Stdio, boolean) {
+function overflow(s0: Stdio): Stdio {
   let s: Stdio = Stdio { ...s0, alloc: true };
   if (s.buf.len() == 0) {
-    return (s, true);
+    return s;
   }
-  let r: (Stdio, boolean) = sys_write(s, s.buf);
-  return (Stdio { ...r.0, buf: "" }, r.1);
+  let r: Stdio = sys_write(s, s.buf);
+  return Stdio { ...r, buf: [] };
 }
 
-// One write(2), never retried once the stream has failed.
-function sys_write(s: Stdio, data: string): (Stdio, boolean) {
+function stdio_failed(s: Stdio): boolean {
   match (s.err) {
     Some(_) => {
-      return (s, false);
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+// Write borrowed bytes only while the stream has no earlier error.
+function sys_write(s: Stdio, data: [u8]): Stdio {
+  match (s.err) {
+    Some(_) => {
+      return s;
     },
     None => {}
   }
-  match (s.w.write(data)) {
+  match (s.w.write_bytes(data)) {
     Some(e) => {
-      return (Stdio { ...s, err: Some(e) }, false);
+      return Stdio { ...s, err: Some(e) };
     },
     None => {
-      return (s, true);
+      return s;
     }
   }
 }
