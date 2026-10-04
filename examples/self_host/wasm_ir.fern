@@ -4150,9 +4150,10 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerRes
   if (mode == 2 && module_is_proxy(mod)) {
     needs = needs.append("@proxy");
   }
-  // stdin() is fd 0 and leaves no need of its own, so a component core marks
-  // it here: its first read fetches wasi:cli/stdin's stream.
-  if (mode == 2 && called_names(mod).has("stdin")) {
+  // stdin() and the bare read_line() read fd 0, which leaves no need of its
+  // own, so a component core marks it here: its first read fetches
+  // wasi:cli/stdin's stream.
+  if (mode == 2 && calls_any(called_names(mod), stdin_builtins())) {
     needs = needs.append("@stdin");
   }
   return emit_ir_module_units(
@@ -18478,12 +18479,18 @@ function calls_any(calls: Map[string, boolean], names: string[]): boolean {
   return false;
 }
 
+// stdin_builtins: the builtins that read fd 0 without the program holding a
+// Reader for it first.
+function stdin_builtins(): string[] {
+  return ["stdin", "read_line"];
+}
+
 // fs_builtins are the filesystem builtins past read_file / write_file, and
-// stdin(). No fixed component framing wires what they import.
+// the stdin readers. No fixed component framing wires what they import.
 function fs_builtins(): string[] {
   return [
     "open_reader", "open_writer", "open_appender", "open_exclusive", "open_reader_with", "open_writer_with",
-    "stdin", "stat", "lstat", "read_dir", "read_dir_all", "create_dir", "create_dir_all", "remove_file",
+    "stdin", "read_line", "stat", "lstat", "read_dir", "read_dir_all", "create_dir", "create_dir_all", "remove_file",
     "remove_dir", "remove_dir_all", "rename", "read_link", "create_symlink", "create_link", "truncate",
     "set_file_times", "temp_dir",
   ];
