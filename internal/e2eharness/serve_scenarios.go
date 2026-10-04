@@ -551,39 +551,92 @@ function main(): i32 {
 `, port)
 }
 
-// CheckBlockingHandlerStallsWorker drives BlockingHandlerServerSource and
-// asserts what P1 documented: a handler waiting on an upstream holds its
-// worker, so /ok on a second connection is answered only once /slow's
-// upstream has. P3 (#9857) flips this check to /ok arriving inside the
-// upstream's delay.
-func CheckBlockingHandlerStallsWorker(t *testing.T, addr string) {
+// CheckHandlersOverlap drives BlockingHandlerServerSource and asserts what
+// P3 (#9857) gives a one-worker server: a handler parked on its upstream's
+// answer holds nothing, so /ok on a second connection is answered inside
+// the upstream's delay; two /slow requests on two connections finish inside
+// one delay rather than in turn; two requests pipelined on one connection
+// are answered in order, the /ok behind the /slow; and a client that sends
+// /slow and goes away leaves the worker serving, before and after its
+// upstream answers.
+func CheckHandlersOverlap(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
 	if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("first /ok: want 200, got\n%s", resp)
 	}
-	slow, err := net.DialTimeout("tcp", addr, 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	slow := dialSlow(t, addr)
 	defer slow.Close()
 	started := time.Now()
-	if _, err := io.WriteString(slow, "GET /slow HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"); err != nil {
-		t.Fatal(err)
-	}
-	// Give the worker time to read /slow and enter its handler before the
+	// Give the worker time to read /slow and park its handler before the
 	// second connection arrives.
 	time.Sleep(20 * time.Millisecond)
 	if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("/ok beside /slow: want 200, got\n%s", resp)
 	}
-	if waited := time.Since(started); waited < SlowUpstreamDelay {
-		t.Fatalf("/ok beside /slow took %v, inside the upstream's %v: the worker did not stall on the handler's wait, which this case pins until #9857 lifts it", waited, SlowUpstreamDelay)
+	if waited := time.Since(started); waited >= SlowUpstreamDelay {
+		t.Fatalf("/ok beside /slow took %v, not inside the upstream's %v: the worker stalled on the handler's wait", waited, SlowUpstreamDelay)
 	}
-	b, err := io.ReadAll(slow)
-	if err != nil || !strings.Contains(string(b), "slow 200") {
+	if b, err := io.ReadAll(slow); err != nil || !strings.Contains(string(b), "slow 200") {
 		t.Fatalf("/slow itself: %q, %v", b, err)
 	}
+	// Two parked handlers overlap each other too.
+	first, second := dialSlow(t, addr), dialSlow(t, addr)
+	defer first.Close()
+	defer second.Close()
+	started = time.Now()
+	for _, c := range []net.Conn{first, second} {
+		if b, err := io.ReadAll(c); err != nil || !strings.Contains(string(b), "slow 200") {
+			t.Fatalf("/slow beside /slow: %q, %v", b, err)
+		}
+	}
+	if elapsed := time.Since(started); elapsed >= 2*SlowUpstreamDelay {
+		t.Fatalf("two /slow on two connections took %v, not inside the upstream's %v doubled: the handlers ran in turn", elapsed, SlowUpstreamDelay)
+	}
+	// Requests pipelined on one connection stay in order: the /ok behind a
+	// /slow is answered after it.
+	piped, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer piped.Close()
+	if _, err := io.WriteString(piped, "GET /slow HTTP/1.1\r\nHost: localhost\r\n\r\nGET /ok HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	all, err := io.ReadAll(piped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := strings.Index(string(all), "slow 200")
+	if at < 0 || !strings.Contains(string(all[at:]), "\r\n\r\nok") {
+		t.Fatalf("pipelined /slow then /ok: want the slow answer first, got\n%s", all)
+	}
+	// A client that goes away mid-wait: the worker keeps serving while the
+	// handler is parked and after its upstream answers to a closed connection.
+	gone := dialSlow(t, addr)
+	gone.Close()
+	time.Sleep(20 * time.Millisecond)
+	if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
+		t.Fatalf("/ok after a client left mid-/slow: want 200, got\n%s", resp)
+	}
+	time.Sleep(2 * SlowUpstreamDelay)
+	if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
+		t.Fatalf("/ok after the abandoned /slow answered: want 200, got\n%s", resp)
+	}
+}
+
+// dialSlow opens a connection to addr and sends it a /slow request whose
+// response closes the connection.
+func dialSlow(t *testing.T, addr string) net.Conn {
+	t.Helper()
+	c, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(c, "GET /slow HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	return c
 }
 
 // InitStateServerSource is ThreadedStateServerSource with no `main`: an

@@ -330,7 +330,11 @@ client's handler winds down through its own control flow (`defer`s
 included). The native compiler keeps the blocking fallback: no task is ever
 current, so `task_start` runs its entry to completion and both paths behave
 as a plain program does. `docs/NET-P3-SUSPENSION-PLAN.md` is the design and
-what remains (the serve loop as the scheduler, the wasm runtime bodies).
+what remains (the wasm runtime bodies, cancellation through the
+combinators, the sim's task driver). `std/serve`'s stateless loop is the
+scheduler for handlers: a handler that parks becomes a flight the loop
+watches on its reactor, and the loop serves other connections until the
+flight runs on and answers.
 
 ## 9. How it works (one paragraph)
 

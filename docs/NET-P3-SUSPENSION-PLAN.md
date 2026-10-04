@@ -302,11 +302,26 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    `TestFetchTaskFallback` is the Go compiler's blocking twin. The serve
    twin that shows one handler's wait overlapping another connection's
    request is slice 5's, with the scheduler.
-5. **The serve loop drives tasks.** In-flight table, fd-to-task map,
-   `max_in_flight`, disconnect cancels, per-connection serialisation. The
-   slice-1 conformance case flips to pass. The two-fetch handler at 4,096
-   connections joins `net-nightly` with p99 against hyper, and bump bytes
-   per suspended handler join the held-connection heap gate.
+5. **The serve loop drives tasks. Landed for the stateless loop.** Each
+   request's handler runs as a task; one that parks becomes a flight (its
+   task, its connection, the pairs it waits on watched on the worker's
+   reactor, its bound as a due time, and what its response needs), and the
+   loop goes back to its wait. A readiness event on a flight's descriptor
+   resumes it with the pair's index, its due time with -1; `Done` answers
+   on the connection outside any burst and leaves a framed request behind
+   it as backlog, `Suspended` re-arms, `Cancelled` closes. A connection
+   with a flight takes no further request until it answers (pipelined
+   requests stay in order), reads what the peer sends meanwhile, remembers
+   the end of its stream, and a hang-up on it cancels the flight.
+   `Config.max_in_flight` (1024) gates the listener as `max_connections`
+   does, and a stopping loop cancels every flight as it ends. The
+   slice-1 conformance case flipped to pass (`TestSelfHostServeHandlersOverlap`).
+   The stateful loop (`run_with`) still runs its handler to completion:
+   its state threads through the handler chain, so a parked handler would
+   hold it from every other request. Still open from this slice: the
+   two-fetch handler at 4,096 connections in `net-nightly` with p99 against
+   hyper, and bump bytes per suspended handler in the held-connection heap
+   gate.
 6. **Cancellation semantics.** Cancel-mode rewind runs `defer`s; `Task`'s
    drop cancels; `gather_on`, `race_on` and `with_deadline_on` suspend on
    their token set under a scheduler instead of polling, and a `race` loser
