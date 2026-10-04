@@ -191,7 +191,7 @@ func TestVerifyAllowsBuiltinsAndRuntimeHelpers(t *testing.T) {
 	}
 }
 
-// internal/ssa reads a call's result width off the callee's ssa.Func, and a
+// A register backend reads a call's result width off the callee's body, and a
 // backend-provided callee has none — an unclassified result then defaults to
 // the narrow i32 mask, which sign-extends a heap pointer from 32 bits and
 // destroys an f64 bit pattern. Nothing downstream can notice, so the demand

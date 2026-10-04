@@ -26,9 +26,9 @@ import (
 
 // dropThunkParamType is the declared type of a generated drop thunk's
 // argument 0: the heap pointer it releases. `usize` rather than a bare
-// number, because ssa/lift.go reads address-ness off the declared type
+// number, because an SSA lift reads address-ness off the declared type
 // (NumberType.IsPointerWidth) — a bare-number param reports
-// ParamAddrs=false, which makes ssa/width.go refuse to widen it and the
+// ParamAddrs=false, which makes the width pass refuse to widen it and the
 // ownership solver skip demandsUnit, so the release the body always
 // performs is invisible (#7866). Width-neutral on the flat backends:
 // widthOfAstType reports 32 for WidthPtr exactly as it does for a bare

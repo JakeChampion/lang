@@ -40,7 +40,7 @@ func isBuiltin(name string) bool {
 }
 
 // needsResultWidth reports whether a call to `name` has to carry a result
-// width. Only a callee internal/ssa cannot resolve does: one the program
+// width. Only a callee a backend cannot resolve does: one the program
 // defines answers for itself, and so does one reached through
 // CodegenAlias — a `map_new` call site resolves to the `map_new_impl` the
 // stdlib defines, which the width pass follows through the same alias.
@@ -214,9 +214,9 @@ func verifyFunc(f *Func, known map[string]*Func, externs map[string]bool) []Prob
 			}
 			// The 64-bit backends sign-extend an i32 result into its whole
 			// register, which destroys a machine address and an f64 bit
-			// pattern alike. internal/ssa reads the callee's result width off
-			// its ssa.Func — but a callee this program does not define has no
-			// such Func, and an unclassified result defaults to the narrow
+			// pattern alike. A register backend reads the callee's result width
+			// off its body — but a callee this program does not define has
+			// none, and an unclassified result defaults to the narrow
 			// mask, silently. Nothing downstream can notice, so the demand
 			// for a classification is made here.
 			if op.Kind == OpCallDirect && op.Width == 0 && needsResultWidth(op.Str, known, externs) {

@@ -17,7 +17,7 @@ import (
 // every backend answers the same question and all seven answer it 16 bytes at a
 // time, so all of them are held to one expectation. What differs is that this op
 // was made TOTAL BEFORE any caller adopted it, rather than after — __memchr was
-// adopted with one backend (arm64-ssa) still missing an entry, and CI reported
+// adopted with one backend still missing an entry, and CI reported
 // it as a link error.
 //
 // The contract difference worth stating once more, because it is what a reader

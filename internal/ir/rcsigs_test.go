@@ -151,7 +151,7 @@ func TestRcReleasesAndRcRetainsSplitTheTable(t *testing.T) {
 // `providedSigs` is the verifier's record of exactly those callees, and
 // it covers the BUILTINS as well — `strbuf_append`, the Map methods,
 // the platform surface. A builtin that moves a count and is absent from
-// this file reads to `internal/ssa` as an opaque callee that borrows,
+// this file reads to the ownership solver as an opaque callee that borrows,
 // which is the unsafe direction: a callee that really consumes comes
 // back Borrowed and nothing says so.
 //

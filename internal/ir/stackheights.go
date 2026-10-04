@@ -5,8 +5,8 @@
 // of it. Nothing could read that answer per op, and one consumer badly
 // needs to.
 //
-// `internal/ssa`'s lift maintains a second model of the same stack, and
-// #7803 is what happens when the two disagree: a two-word string is one
+// An SSA lift (`examples/self_host/ssa_lift.fern`) maintains a second model
+// of the same stack, and #7803 is what happens when the two disagree: a two-word string is one
 // entry to the lift and two to the verifier, so the lift's stack runs
 // short and fails at the first op that notices — which is almost never
 // the op that diverged. Two attempts at fixing it by watching an

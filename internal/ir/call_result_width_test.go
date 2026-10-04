@@ -1,13 +1,13 @@
 // The result width every call to a backend-provided callee carries.
 //
-// internal/ssa reads a call's result width off the callee's ssa.Func. A
-// builtin or a runtime helper has no ssa.Func, so without a width its result
+// A register-allocating backend reads a call's result width off the callee
+// it compiled. A builtin or a runtime helper has no body, so without a width its result
 // is sign-extended from 32 bits — which turns a heap pointer negative (both
 // arenas are based at 0x4_0000_0000, so every address is above 32 bits) and
 // leaves an i64 or an f64 bit pattern with only its low half.
 //
-// That classification used to live in a hand-written name table in
-// internal/ssa/width.go, and a helper nobody added to it was silently narrow.
+// That classification used to live in a hand-written name table in the Go
+// SSA backend, and a helper nobody added to it was silently narrow.
 // Each case below is a helper that WAS missing from it, lowered from the
 // source shape that reaches it.
 package ir_test
