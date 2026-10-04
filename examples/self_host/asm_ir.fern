@@ -6603,12 +6603,8 @@ function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asm
   return ssa_mov_rr(s, reg, home);
 }
 
-// ssa_label defines one of the emitter's own labels and ssa_branch jumps to
-// one: by id when records are on (asmcore.Lab), by name in the text.
-function ssa_label(s: asmcore.EmitState, l: asmcore.Lab): asmcore.EmitState {
-  return s.lab_def(l);
-}
-
+// ssa_branch jumps to one of the emitter's own labels: by id when records
+// are on (asmcore.Lab), by name in the text.
 function ssa_branch(s: asmcore.EmitState, mnem: string, l: asmcore.Lab): asmcore.EmitState {
   if (s.records()) {
     let kind: i32 = x86_native.x86_rec_jump_kind(mnem);
@@ -7487,7 +7483,7 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = s.write(ssa_rc_is_one(rc, s.rc_free_debug));
     s = ssa_branch(s, "jne", done);
     s = s.write("    movl $1, %ecx\n");
-    s = ssa_label(s, done);
+    s = s.lab_def(done);
     s = s.write("    movq %rcx, " + d + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
@@ -7501,7 +7497,7 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = ssa_branch(ssa_alu_im(s, 7, 32, 0, rb, 0 - 8), "js", done);
     s = ssa_alu_im(s, 0, 32, 1, rb, 0 - 8);
   }
-  s = ssa_label(s, done);
+  s = s.lab_def(done);
   // rc_inc hands the pointer back; a result with no home stores nothing.
   return ssa_store(reg_of, ins.result, p, s);
 }
@@ -7560,10 +7556,10 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
   s = ssa_branch(ssa_alu_im(s, 7, 32, 1, p, 0 - 8), "jg", dec);
   s = ssa_branch(ssa_alu_im(s, 7, 32, 0, p, 0 - 8), "js", kept);
   s = ssa_helper_call(ins, reg_of, s);
-  s = ssa_label(ssa_branch(s, "jmp", done), dec);
-  s = ssa_label(ssa_alu_im(s, 5, 32, 1, p, 0 - 8), kept);
+  s = ssa_branch(s, "jmp", done).lab_def(dec);
+  s = ssa_alu_im(s, 5, 32, 1, p, 0 - 8).lab_def(kept);
   s = ssa_store(reg_of, ins.result, p, s);
-  return ssa_label(s, done);
+  return s.lab_def(done);
 }
 
 // ssa_call emits one call as the stack machine leaves it: the arguments pushed
@@ -8843,7 +8839,7 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
   if (stub) {
     s = ssa_branch(s, "jmp", ssa_blab(fr, lp, t.t));
     s = ssa_x0_forget(s);
-    s = ssa_label(s, fl);
+    s = s.lab_def(fl);
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.f, s);
     return ssa_jump(fr, lp, t.f, next, s);
   }
@@ -8896,7 +8892,7 @@ function ssa_unique_flags(reg_of: i32[], v: i32, aligned: boolean, join: string,
     rc = "-8(%rdx)";
   }
   s = s.write(ssa_rc_is_one(rc, s.rc_free_debug));
-  return ssa_label(s, jn.lab);
+  return s.lab_def(jn.lab);
 }
 
 // ssa_rc_is_one compares the count at `rc` with one, through %edx when the
@@ -9135,7 +9131,7 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
       next = f.blocks[bi + 1].id;
     }
     s = ssa_x0_forget(s);
-    s = ssa_label(s, ssa_blab(fr, lp, blk.id));
+    s = s.lab_def(ssa_blab(fr, lp, blk.id));
     let fu: SsaFuse = ssa_fuse(fr, blk);
     let ii: i32 = 0;
     while (ii < blk.insts.len() - fu.n) {

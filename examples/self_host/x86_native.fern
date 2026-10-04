@@ -5867,6 +5867,10 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 144 + l.ext, x86_gas_reg8(rest)) };
     return a;
   }
+  // A branch record names a label id; one nothing defines has no entry.
+  if (l.lid >= 0 && l.ref_idx < 0) {
+    return x86_gas_bad(a, "branch to a label id nothing defines");
+  }
   // branch / call: one operand = a label
   // A `*` operand means INDIRECT — through a register or stack slot — not
   // a branch to a label of that name.
@@ -6911,9 +6915,9 @@ function x86_gas_label_lookup(labs: GasLabels, name: string): i32 {
 
 // x86_gas_link_labels fills each line's def_idx (its label's table entry,
 // in definition order) and ref_idx (the entry a jcc, a jmp or call to a
-// label, or a `.quad sym` names). A reference the table cannot resolve
-// keeps -1 and the round looks it up by name, which reports it unresolved
-// exactly as before.
+// label, or a `.quad sym` names). A name the table cannot resolve keeps -1
+// and the round looks it up by name, which reports it unresolved; a label
+// id nothing defines keeps -1 and the round refuses the line.
 function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
   let ndef: i32 = 0;
   let li: i32 = 0;
@@ -6928,7 +6932,9 @@ function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
     if (l.kind == GK_LABEL_ID) {
       def_idx = labs.names.len() + l.lid;
     } else if (l.lid >= 0) {
-      ref_idx = labs.names.len() + l.lid;
+      if (l.lid < labs.nids) {
+        ref_idx = labs.names.len() + l.lid;
+      }
     } else if (l.kind == GK_JCC) {
       ref_idx = x86_gas_label_lookup(labs, l.rest);
     } else if (l.kind == GK_BRANCH) {

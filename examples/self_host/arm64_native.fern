@@ -9557,7 +9557,7 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
     if (pos < srcn) {
       mark = src[pos];
     }
-    if (mark >= 1 && mark <= 5) {
+    if (mark == 1 || mark == 2 || mark == 4 || mark == 5) {
       let end: i32 = arm64_gas_line_end(src, pos + 1);
       if (section != 0 || wi + 8 > words.len()) {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("word record outside .text or past the words") };
