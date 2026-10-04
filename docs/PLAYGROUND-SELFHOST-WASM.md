@@ -500,8 +500,10 @@ What is left:
    its own worklist and only falls back to `modloader.resolve_module`, so the
    overlay does not give `fern -embed` an embedded stdlib. That is its own
    piece of work.
-4. **The LSP** is the long pole and is not costed here; it has no self-host
-   counterpart at all.
+4. **The LSP** is the long pole and is not costed here. The self-host has a
+   stdio server, `fern -lsp`, with diagnostics and formatting (#6641,
+   `LSP-INTEGRATION-PLAN.md`). The page needs an in-process one, as
+   `fernLsp` is, plus the cursor features.
 
 Precondition 3 of §3a — whether the native backends should be deleted at all,
 given `BOOTSTRAP-RESEARCH.md §1` recommends two-implementations-forever so the

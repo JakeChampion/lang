@@ -172,3 +172,30 @@ func TestEmitRejectsBadCombinations(t *testing.T) {
 		})
 	}
 }
+
+// `-check -target` names the target the program is checked against, so one
+// no descriptor answers for is refused rather than checked against nothing,
+// for a file and for a workspace alike.
+func TestCheckRefusesUnknownTarget(t *testing.T) {
+	entry := writeFern(t, "function main(): i32 {\n  return 0;\n}\n")
+	ws := t.TempDir()
+	for name, src := range map[string]string{
+		"fern.toml":   "[workspace]\nmembers = [\"a\"]\n",
+		"a/fern.toml": "[package]\nname = \"a\"\n",
+		"a/main.fern": "function main(): i32 {\n  return 0;\n}\n",
+	} {
+		p := filepath.Join(ws, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, arg := range []string{entry, ws} {
+		err := runCheckTarget(arg, "bogus")
+		if err == nil || !strings.Contains(err.Error(), `unknown target "bogus"`) {
+			t.Errorf("-check -target bogus %s: %v, want the unknown-target refusal", arg, err)
+		}
+	}
+}

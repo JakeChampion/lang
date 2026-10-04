@@ -1,5 +1,5 @@
 // Package lsp implements a minimal Language Server Protocol server
-// for lang. It speaks LSP over an arbitrary byte stream so the same
+// for Fern. It speaks LSP over an arbitrary byte stream so the same
 // implementation drives both `cmd/fern-lsp` (stdio for editors) and
 // the wasm playground (request/response over a JS-side adapter).
 //

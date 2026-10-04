@@ -48,6 +48,14 @@
           "default": "fern-lsp",
           "description": "Path to the fern-lsp binary. Resolved against $PATH when unqualified."
         },
+        "fern.serverArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Arguments passed to the server. For the self-host compiler's server, set fern.serverPath to the fern binary and this to [\"-lsp\", \"/path/to/stdlib\"]."
+        },
         "fern.trace.server": {
           "type": "string",
           "enum": [
