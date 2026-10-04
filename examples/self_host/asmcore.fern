@@ -1029,9 +1029,6 @@ function sysno_x86_64(name: string): string {
   if (name == "getrandom") {
     return "318";
   }
-  if (name == "exit") {
-    return "60";
-  }
   if (name == "clock_gettime") {
     return "228";
   }
@@ -1311,9 +1308,6 @@ function sysno_arm64_darwin(name: string): string {
   // returns 0 rather than a count — see rt_src_random_bytes.
   if (name == "getrandom") {
     return "500";
-  }
-  if (name == "exit") {
-    return "1";
   }
   // XNU has no clock_gettime syscall — gettimeofday(&tv, NULL) is the
   // portable stand-in, and it fills a DIFFERENTLY SHAPED struct (see
@@ -1595,9 +1589,6 @@ function sysno_arm64_linux(name: string): string {
   }
   if (name == "getrandom") {
     return "278";
-  }
-  if (name == "exit") {
-    return "93";
   }
   if (name == "clock_gettime") {
     return "113";

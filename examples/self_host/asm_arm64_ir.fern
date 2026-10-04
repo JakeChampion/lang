@@ -6885,7 +6885,7 @@ function san_report_exit(s: asmcore.EmitState): string {
 // pointer below the stack pointer, not 8-aligned, or not climbing ends the
 // walk rather than faulting the report, as does a return address in the low
 // 64 KiB, which is _start's frame reading the initial stack. Emitted with
-// __fern_report, which every build carries.
+// __fern_report.
 function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .rodata\n");
   s = s.write(".Lmsg_bt:\n    .ascii \"backtrace:\\n\"\n");
@@ -10036,10 +10036,13 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   // __fern_lc_report in every program under FERN_LEAKCHECK, and a heap-free
   // program must still link. Emits nothing when the flag is off.
   s = emit_lc_report(s);
-  // The abort reporter (#11405): OUTSIDE the heap gate for the same reason,
-  // since the sanitizer's reports below end in it and a heap-free program
-  // must still link them.
-  s = emit_rt_report(s);
+  // The abort reporter (#11405): with the heap runtime, whose traps branch
+  // to it, and under either sanitizer flag, whose reports below end in its
+  // walk even when the program allocates nothing. A build that has neither
+  // carries no reporter, so its rodata stays empty.
+  if (s.has_need("heap") || s.rc_free_debug || asmcore.sanitize_on()) {
+    s = emit_rt_report(s);
+  }
   // The UAF quarantine's fatal report. Self-contained — its own write(2) +
   // exit(124) rather than the census writer — so FERN_RC_FREE_DEBUG works
   // standalone, without leakcheck. Entry-only, like the census above, and

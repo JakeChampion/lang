@@ -1305,7 +1305,7 @@ function san_report_exit(s: asmcore.EmitState): asmcore.EmitState {
 // pointer below the stack pointer, not 8-aligned, or not climbing ends the
 // walk rather than faulting the report, as does a return address in the low
 // 64 KiB, which is _start's frame reading the initial stack's argc. Emitted
-// with __fern_report, which every build carries.
+// with __fern_report.
 function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .rodata\n");
   s = s.write(".Lmsg_bt:\n    .ascii \"backtrace:\\n\"\n");
@@ -3113,7 +3113,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = abort_trap(s, "__fern_str_oob_abort", ".Lmsg_str_oob", asmcore.msg_str_oob(), 134);
   s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", asmcore.msg_slice_range(), 134);
   s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", asmcore.msg_alloc_size(), 134);
-  s = emit_report(s);
   // __fern_arr_box(%rdi = cap element count) -> %rax = data ptr (base+16).
   // base = [cap, rc=1, len=cap, e0..]; element i at data+(i+1)*8.
   s = s.write("__fern_arr_box:\n");
@@ -12217,6 +12216,14 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (hev_on()) {
     s = s.write("    .text\n");
     s = emit_hev_runtime(s);
+  }
+  // The abort reporter (#11405): with the heap runtime, whose traps jump to
+  // it, and under either sanitizer flag, whose reports end in its walk even
+  // when the program allocates nothing. A build that has neither carries no
+  // reporter.
+  if (needs_heap_runtime(s) || s.rc_free_debug || asmcore.sanitize_on()) {
+    s = s.write("    .text\n");
+    s = emit_report(s);
   }
   // The UAF quarantine's fatal report. Self-contained — its own write(2) +
   // exit(124) rather than the hev writer — so FERN_RC_FREE_DEBUG works
