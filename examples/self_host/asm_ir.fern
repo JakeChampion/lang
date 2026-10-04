@@ -6656,7 +6656,7 @@ function ssa_emit_epilogue(fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitStat
   if (fr.leaf || !s.records()) {
     return s.write(fr.epilogue);
   }
-  s = s.write("    .cfi_remember_state\n");
+  s = ssa_cfi(s, 7, "", 0);
   if (fr.saved.len() == 0) {
     s = ssa_leave(s);
   } else {
@@ -6668,7 +6668,7 @@ function ssa_emit_epilogue(fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitStat
     }
     s = ssa_pop_r(s, "%rbp");
   }
-  return ssa_ret(s.write("    .cfi_def_cfa %rsp, 8\n")).write("    .cfi_restore_state\n");
+  return ssa_cfi(ssa_ret(ssa_cfi(s, 5, "%rsp", 8)), 8, "", 0);
 }
 
 // ssa_load puts value v in `reg`; ssa_store writes `reg` to value v's home.
@@ -6969,6 +6969,49 @@ function ssa_inc(s: asmcore.EmitState, dst: string): asmcore.EmitState {
     }
   }
   return s.write("    incq " + dst + "\n");
+}
+
+// ssa_cfi writes a .cfi_* directive: as a record when records are on, else
+// as its text. `kind` is cfi_record's: 1 startproc, 2 endproc, 3
+// def_cfa_offset n, 4 def_cfa_register reg, 5 def_cfa reg, n, 6 offset reg, n,
+// 7 remember_state, 8 restore_state.
+function ssa_cfi(s: asmcore.EmitState, kind: i32, reg: string, n: i32): asmcore.EmitState {
+  if (s.records()) {
+    return s.cfi(kind, ssa_dwarf(reg), n);
+  }
+  if (kind == 1) {
+    return s.write("    .cfi_startproc\n");
+  }
+  if (kind == 2) {
+    return s.write("    .cfi_endproc\n");
+  }
+  if (kind == 3) {
+    return s.write("    .cfi_def_cfa_offset " + util.i32_to_string(n) + "\n");
+  }
+  if (kind == 4) {
+    return s.write("    .cfi_def_cfa_register " + reg + "\n");
+  }
+  if (kind == 5) {
+    return s.write("    .cfi_def_cfa " + reg + ", " + util.i32_to_string(n) + "\n");
+  }
+  if (kind == 6) {
+    return s.write("    .cfi_offset " + reg + ", " + util.i32_to_string(n) + "\n");
+  }
+  if (kind == 7) {
+    return s.write("    .cfi_remember_state\n");
+  }
+  return s.write("    .cfi_restore_state\n");
+}
+
+// ssa_dwarf is a register's DWARF column, which orders rcx, rdx, rsi, rdi,
+// rbp and rsp differently from their encoding; 0 for a name ssa_xreg does not
+// know, which no directive here names.
+function ssa_dwarf(reg: string): i32 {
+  let m: i32 = ssa_xreg(reg);
+  if (m < 0) {
+    return 0;
+  }
+  return [0, 2, 1, 3, 7, 6, 4, 5, 8, 9, 10, 11, 12, 13, 14, 15][m];
 }
 
 // ssa_jump_sym branches to a symbol, which keeps its name: the record line
@@ -9446,7 +9489,7 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
   let imm: ssa.Imms = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left());
   let reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s));
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
-  s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n    .cfi_startproc\n");
+  s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);
   s = s.write(ssa_entry_shim(f, asmcore.sanitize_label(label_name)));
   s = ssa_release_entry(r, lp, s);
   let saved: i32[] = ssa_saved_regs(reg_of);
@@ -9517,7 +9560,7 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
     }
   }
   s = asmcore.EmitState { ...s, ssa_save: 0 };
-  return s.write("    .cfi_endproc\n");
+  return ssa_cfi(s, 2, "", 0);
 }
 
 // ssa_frame writes the %rbp frame: the saved registers pushed under it and
@@ -9527,8 +9570,8 @@ function ssa_frame(s: asmcore.EmitState, saved: i32[], frame: i32): asmcore.Emit
   if (!s.records()) {
     return s.write(ssa_frame_asm(saved, frame));
   }
-  s = ssa_push_r(s, "%rbp").write("    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n");
-  s = ssa_mov_rr(s, "%rbp", "%rsp").write("    .cfi_def_cfa_register %rbp\n");
+  s = ssa_cfi(ssa_cfi(ssa_push_r(s, "%rbp"), 3, "", 16), 6, "%rbp", 0 - 16);
+  s = ssa_cfi(ssa_mov_rr(s, "%rbp", "%rsp"), 4, "%rbp", 0);
   for k in saved {
     s = ssa_push_r(s, ssa_reg(k));
   }
@@ -9590,8 +9633,7 @@ function ssa_leaf_save(s: asmcore.EmitState, saved: i32[]): asmcore.EmitState {
   }
   let i: i32 = 0;
   while (i < saved.len()) {
-    let off: string = util.i32_to_string(16 + 8 * i);
-    s = ssa_push_r(s, ssa_reg(saved[i])).write("    .cfi_def_cfa_offset " + off + "\n    .cfi_offset " + ssa_reg(saved[i]) + ", -" + off + "\n");
+    s = ssa_cfi(ssa_cfi(ssa_push_r(s, ssa_reg(saved[i])), 3, "", 16 + 8 * i), 6, ssa_reg(saved[i]), 0 - (16 + 8 * i));
     i = i + 1;
   }
   return s;

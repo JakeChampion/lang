@@ -10292,12 +10292,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   // Stream backs HttpRequest.body, so it has to be in this table for
   // `req.body.data` to resolve its inner field: without it `body` has no
   // struct shape here and the chained access bails out of the IR path.
-  if (!name_declared(structs, "Stream")) {
-    let stf: StructFieldDecl[] = [];
-    stf = stf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
-    stf = stf.append(StructFieldDecl { name: "pos", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    structs = structs.append(StructDecl { name: "Stream", fields: stf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
-  }
+  structs = add_builtin_stream(structs);
   // ChunkProducer is what a `BodyChunks` carries, so it has to be here for
   // `resp.body`'s payload to resolve its `next` field.
   if (!name_declared(structs, "ChunkProducer")) {
@@ -10364,12 +10359,12 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   // std/io_buffered + std/stream built-ins (registered in the Go checker,
   // not `struct`-declared in source) — same injection pattern as the time
   // types. Field lists mirror checker.go exactly:
-  //   Stream       { data: u8[], pos: i32 }       — byte cursor reader
+  //   Stream       { data: u8[], pos: i32, source: Option[BodySource] }
   //   BytesWriter  { data: u8[] }                 — in-memory write buffer
-  // Both carry a sub-word (u8[]) array field, now leak-safe
+  // Both carry a sub-word (u8[]) array field, leak-safe
   // (is_leaksafe_array_field), so their constructors / methods lower on the
   // IR path.
-  structs = add_builtin_struct2(structs, "Stream", "data", "u8[]", "pos", "i32");
+  structs = add_builtin_stream(structs);
   if (!name_declared(structs, "ChunkProducer")) {
     let cpf: StructFieldDecl[] = [];
     cpf = cpf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "i32" });
@@ -10401,6 +10396,27 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
 
 // add_builtin_struct2 injects a 2-field built-in struct (guarded by name) —
 // the common shape for the injected time types (sec/nsec, name/offset, …).
+// add_builtin_stream declares Stream and the BodySource a lazy one pulls
+// from, as checker.go's builtinStructDecls does: `Stream { data: u8[], pos:
+// i32, source: Option[BodySource] }` and `BodySource { next: () =>
+// Option[u8[]], fault: Cell[i32] }`.
+function add_builtin_stream(structs: StructDecl[]): StructDecl[] {
+  if (!name_declared(structs, "BodySource")) {
+    let bsf: StructFieldDecl[] = [];
+    bsf = bsf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "" });
+    bsf = bsf.append(StructFieldDecl { name: "fault", type_name: "Cell[i32]", fn_ret: "", fn_param_types: "" });
+    structs = structs.append(StructDecl { name: "BodySource", fields: bsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
+  }
+  if (!name_declared(structs, "Stream")) {
+    let stf: StructFieldDecl[] = [];
+    stf = stf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
+    stf = stf.append(StructFieldDecl { name: "pos", type_name: "i32", fn_ret: "", fn_param_types: "" });
+    stf = stf.append(StructFieldDecl { name: "source", type_name: "Option[BodySource]", fn_ret: "", fn_param_types: "" });
+    structs = structs.append(StructDecl { name: "Stream", fields: stf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
+  }
+  return structs;
+}
+
 function add_builtin_struct2(structs: StructDecl[], name: string, f0: string, t0: string, f1: string, t1: string): StructDecl[] {
   if (struct_declared(structs, name)) {
     return structs;
@@ -15351,18 +15367,13 @@ function mg_ty_list(list: string, gstructs: StructDecl[], ins: Insts): TyIns {
 }
 
 // to_concrete_struct_ty resolves a method's substituted type string to
-// the concrete clone name: a bare base (`Box`, from a @derive method's
-// `other: Box` param) becomes the mangled name directly; an arg form
-// (`Box[i32]`, from a parametric `impl[T]`) goes through mg_ty.
+// the concrete clone name: a bare base anywhere in it (`Box` from a @derive
+// method's `other: Box` param, or inside its `Result[Box, string]`) becomes
+// the mangled name directly; an arg form (`Box[i32]`, from a parametric
+// `impl[T]`) goes through mg_ty.
 function to_concrete_struct_ty(ty: string, base: string, mang: string, gstructs: StructDecl[]): string {
-  if (ty.len() > 4 && slice_unchecked(ty, 0, 4) == "own ") {
-    return "own " + to_concrete_struct_ty(slice_unchecked(ty, 4, ty.len()) + "", base, mang, gstructs);
-  }
-  if (ty == base) {
-    return mang;
-  }
   let fresh: Insts = Insts { inames: [], itypes: [], iargs: [] };
-  return mg_ty(ty, gstructs, fresh).ty;
+  return mg_ty(replace_ident(ty, base, mang, true), gstructs, fresh).ty;
 }
 
 // to_concrete_struct_ty over a callable's comma-separated parameter list.
@@ -15485,6 +15496,16 @@ function ms_expr(e: ast.Expr, env: MEnv, gstructs: StructDecl[], funcs: MFns, in
     ast.ExprFieldAccess(fa) => {
       let o: RExpr = ms_expr(fa.obj, env, gstructs, funcs, ins);
       return RExpr { rexpr: ast.ExprFieldAccess { obj: o.rexpr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, rins: o.rins };
+    },
+    ast.ExprIdent(id) => {
+      // A type parameter substituted into an associated call's object
+      // (subst_expr) can be an applied generic struct, `Box[string].f()`,
+      // which names its clone.
+      if (first_bracket(id.name) > 0 && gstruct_index(gstructs, strip_struct_base(id.name)) >= 0) {
+        let mt: TyIns = mg_ty(id.name, gstructs, ins);
+        return RExpr { rexpr: ast.ExprIdent { ...id, name: mt.ty }, rins: mt.mins };
+      }
+      return RExpr { rexpr: e, rins: ins };
     },
     ast.ExprStructLit(s) => {
       return ms_struct_lit(s, "", env, gstructs, funcs, ins);
@@ -15754,13 +15775,14 @@ function method_decl_at(callee: ast.Expr, env: MEnv, funcs: MFns): i32 {
 
 // retype_assoc_ctor rewrites a receiver-less associated call on a GENERIC
 // struct base — `Box.default()` — to its monomorphised name
-// `Box__Inner.default()` when the binding's annotation pins the instantiation
+// `Box__Inner.default()` when the destination pins the instantiation
 // (`let b: Box[Inner] = Box.default()`). A receiver-less constructor has no
 // arguments to infer its type params from, so the instantiation is taken from
-// the annotation (`concrete` = the mangled struct name `Box__Inner`); the
-// matching method clone is `<concrete>.<method>`. The generic-struct guard
-// keeps a plain `mod.func()` untouched. Other inits pass through.
-function retype_assoc_ctor(init: ast.Expr, concrete: string, gstructs: StructDecl[]): ast.Expr {
+// the mangled destination `dest`, at the position the function's declared
+// result puts Self (assoc_ctor_concrete); the matching method clone is
+// `<concrete>.<method>`. The generic-struct guard keeps a plain `mod.func()`
+// untouched. Other inits pass through.
+function retype_assoc_ctor(init: ast.Expr, dest: string, gstructs: StructDecl[], funcs: MFns): ast.Expr {
   match (init) {
     ast.ExprCall(c) => {
       match (c.callee) {
@@ -15768,6 +15790,7 @@ function retype_assoc_ctor(init: ast.Expr, concrete: string, gstructs: StructDec
           match (fa.obj) {
             ast.ExprIdent(oid) => {
               if (gstruct_index(gstructs, oid.name) >= 0) {
+                let concrete: string = assoc_ctor_concrete(oid.name, fa.field, dest, funcs);
                 let pfx: string = oid.name + "__";
                 if (concrete.len() > pfx.len() && util.str_has_prefix(concrete, pfx)) {
                   return ast.ExprCall { callee: ast.ExprFieldAccess { obj: ast.ExprIdent { name: concrete, line: oid.line, col: oid.col, ty: "" }, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, args: c.args, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
@@ -15783,6 +15806,57 @@ function retype_assoc_ctor(init: ast.Expr, concrete: string, gstructs: StructDec
     _ => {}
   }
   return init;
+}
+
+// assoc_ctor_concrete is the struct clone a receiver-less associated call
+// `base.method()` builds when its result lands in `dest`: `dest` itself when
+// the call answers Self, else what sits in Self's place in the declared
+// result, so `Result[Box, string]` against `Result[Box__i32, string]` is
+// `Box__i32`.
+function assoc_ctor_concrete(base: string, method: string, dest: string, funcs: MFns): string {
+  let ret: string = "";
+  for fd in funcs.decls {
+    if (fd.name == method && fd.receiver_name.len() == 0 && strip_struct_base(fd.receiver_type) == base) {
+      ret = fd.ret_type;
+    }
+  }
+  if (ret.len() == 0 || strip_struct_base(ret) == base) {
+    return dest;
+  }
+  let binds: MEnv = bind_unify(drop_type_args(ret, base), dest, [base], MEnv { mnames: [], mtypes: [] });
+  return binds.elook(base);
+}
+
+// drop_type_args respells every `name[...]` in a type string as a bare
+// `name`.
+function drop_type_args(ty: string, name: string): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < ty.len()) {
+    let at_name: boolean = i + name.len() <= ty.len() && slice_unchecked(ty, i, i + name.len()) == name
+      && (i == 0 || !ident_byte(ty[i - 1] as i32));
+    if (at_name && i + name.len() < ty.len() && ty[i + name.len()] == b'[') {
+      out = out + name;
+      let depth: i32 = 0;
+      let j: i32 = i + name.len();
+      while (j < ty.len()) {
+        if (ty[j] == b'[') {
+          depth = depth + 1;
+        } else if (ty[j] == b']') {
+          depth = depth - 1;
+          if (depth == 0) {
+            break;
+          }
+        }
+        j = j + 1;
+      }
+      i = j + 1;
+    } else {
+      out = out + slice_unchecked(ty, i, i + 1);
+      i = i + 1;
+    }
+  }
+  return out;
 }
 
 // ms_var_ty is the type a `let` binds in the monomorphiser's env, so a later
@@ -15908,14 +15982,14 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
       // A receiver-less associated constructor `Box.default()` bound to a
       // generic-struct annotation takes its instantiation from that
       // annotation: rewrite it to `Box__Inner.default()`.
-      let ninit: ast.Expr = retype_assoc_ctor(iv.rexpr, ta.ty, gstructs);
+      let ninit: ast.Expr = retype_assoc_ctor(iv.rexpr, ta.ty, gstructs, funcs);
       let vr: TyIns = mg_ty(v.fn_ret, gstructs, iv.rins);
       let vl: TyIns = mg_ty_list(v.fn_param_types, gstructs, vr.mins);
       return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, fn_ret: vr.ty, fn_param_types: vl.ty }, renv: env.ebind(v.name, ms_var_ty(ta.ty, v.init, ninit, env, gstructs, funcs)), rins2: vl.mins };
     },
     ast.StmtReturn(r) => {
       let rv: RExpr = ms_expr_to(r.value, ret_ty, env, gstructs, funcs, ins);
-      return RStmtOne { rstmt: ast.StmtReturn { value: rv.rexpr, line: r.line, col: r.col }, renv: env, rins2: rv.rins };
+      return RStmtOne { rstmt: ast.StmtReturn { value: retype_assoc_ctor(rv.rexpr, ret_ty, gstructs, funcs), line: r.line, col: r.col }, renv: env, rins2: rv.rins };
     },
     ast.StmtExpr(x) => {
       let xv: RExpr = ms_expr(x.value, env, gstructs, funcs, ins);
@@ -20264,7 +20338,7 @@ pub function reserved_enum_tparams(name: string): string[] {
 // against builtinStructDecls() so the two cannot drift.
 pub function is_reserved_struct_name(name: string): boolean {
   let reserved: string[] = [
-    "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Duration", "FileStat",
+    "BodySource", "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Duration", "FileStat",
     "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
     "MapIter", "ProcessResult",
     "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",
@@ -26406,6 +26480,12 @@ function token_in_tuple_param(ty: string, name: string): boolean {
 // dangling `ArrayIter[i32]` that never lowers. The boundary check skips the
 // `ArrayIter` inside an already-prefixed `iter__ArrayIter` (preceded by `_`).
 function replace_struct_ident(ty: string, from: string, to: string): string {
+  return replace_ident(ty, from, to, false);
+}
+
+// replace_ident is replace_struct_ident's walk; `bare_only` leaves an
+// occurrence applied to type arguments (`from[...]`) alone.
+function replace_ident(ty: string, from: string, to: string, bare_only: boolean): string {
   if (ty.len() == 0 || from.len() == 0 || from == to) {
     return ty;
   }
@@ -26419,7 +26499,7 @@ function replace_struct_ident(ty: string, from: string, to: string): string {
         prev_ok = false;
       }
       let next_ok: boolean = true;
-      if (i + fl < ty.len() && ident_byte(ty[i + fl] as i32)) {
+      if (i + fl < ty.len() && (ident_byte(ty[i + fl] as i32) || bare_only && ty[i + fl] == b'[')) {
         next_ok = false;
       }
       if (prev_ok && next_ok) {

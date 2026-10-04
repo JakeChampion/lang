@@ -23,7 +23,11 @@
 //	                          pointer, read through body_bytes),
 //	                          headers@+8 (HeaderMap ptr)
 //	HeaderMap    (8 bytes):  names_ptr@+0, values_ptr@+4
-//	Stream       (8 bytes):  data_ptr@+0 (u8[]), pos@+4
+//	Stream       (12 bytes): data_ptr@+0 (u8[]), pos@+4,
+//	                          source@+8 (Option[BodySource]: the
+//	                          None sentinel, a static-rc cell
+//	                          holding tag 1, since the body is
+//	                          read whole)
 //
 // The platform is deliberately absent from that list: the wrapper never
 // builds one, calling the checker-synthesised `__fern_wasi_handle`, which
@@ -551,7 +555,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	// with "resource has children". See the matching reqDrop call
 	// below, just after fields_drop(req_fields).
 
-	// ================ Build the body Stream (8 bytes + 8-byte rc header) ================
+	// ================ Build the body Stream (12 bytes + 8-byte rc header) ================
 	// HttpRequest.body is a `Stream`, so the accumulated bytes go
 	// into a u8[] box the stream owns rather than into a lang
 	// string. $body_buf / $body_cur are zero when the request
@@ -565,10 +569,10 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 15) // body_cur
 	body = memory.InstMemoryCopy(body)
 
-	// Stream struct: data_ptr@+0, pos@+4, behind the same
+	// Stream struct: data_ptr@+0, pos@+4, source@+8, behind the same
 	// static-sentinel rc header the other wrapper-built structs
 	// carry.
-	body = inst.InstI32Const(body, 16)
+	body = inst.InstI32Const(body, 20)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 45)
 	body = inst.InstI32Const(body, -0x80000000)
@@ -585,6 +589,25 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Add(body)
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 0)
+	// source@+8: the body arrived whole, so the Stream has no source —
+	// Option's None, which the emitter represents as a static cell
+	// holding the variant tag (1) behind a static-sentinel rc header
+	// (wasmbin.go's internEnumSentinel); the same cell built here on
+	// the heap, where the header keeps the rc helpers off it. Slot 46
+	// is scratch here; the trailer loop below reassigns it.
+	body = inst.InstI32Const(body, 12)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 46)
+	body = inst.InstI32Const(body, -0x80000000)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 46)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 8)
+	body = inst.InstLocalGet(body, 45)
+	body = inst.InstLocalGet(body, 46)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Store(body, 2, 8)
 
 	// ================ Build HttpRequest (28 bytes + 8-byte rc header) ================
 	// Phase 1e-runtime: HttpRequest carries a static-sentinel
