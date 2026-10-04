@@ -6978,9 +6978,9 @@ function main(): i32 {
 	// the template's `T`.
 	// A lambda in a generic body that captures a value of the type variable,
 	// called in place, returned, and held in an array, each at a 32-bit, a
-	// 64-bit and a heap binding of T. The held two box the capture in a cell,
-	// which the instance's own frame releases with the box.
-	{name: "a-generic-lambda-capturing-a-type-variable", atLeast: 12, want: "63|", src: `
+	// 64-bit and a heap binding of T. The held ones box the capture in a cell,
+	// which the box releases, whether its own frame drops it or main does.
+	{name: "a-generic-lambda-capturing-a-type-variable", atLeast: 18, want: "63|", src: `
 pub function direct[T](seed: T): T {
     let g: (i32) => T = (k: i32): T => seed;
     return g(1);
@@ -6993,6 +6993,11 @@ pub function returned[T](seed: T): (i32) => T {
 pub function stored[T](seed: T): T {
     let fs: ((i32) => T)[] = [(k: i32): T => seed];
     return fs[0](1);
+}
+
+pub function made[T](seed: T): ((i32) => T)[] {
+    let fs: ((i32) => T)[] = [(k: i32): T => seed];
+    return fs;
 }
 
 pub function held[T](seed: T): T {
@@ -7013,7 +7018,8 @@ function main(): i32 {
     let r = bit(direct(7) == 7, 1) + bit(direct(big) == big, 2) + bit(direct("ab" + "c").len() == 3, 4);
     r = r + bit(returned(big)(1) == big, 8) + bit(returned("d" + "ef")(2).len() == 3, 16);
     let kept: boolean = stored(7) == 7 && stored(big) == big && stored("g" + "h").len() == 2;
-    return r + bit(kept && held(7) == 7 && held(big) == big && held("i" + "jk").len() == 3, 32);
+    let away: boolean = made(7)[0](1) == 7 && made(big)[0](1) == big && made("l" + "m")[0](1).len() == 2;
+    return r + bit(kept && away && held(7) == 7 && held(big) == big && held("i" + "jk").len() == 3, 32);
 }
 `},
 	{name: "a-lambda-inside-a-lifted-generic-lambda", atLeast: 9, want: "14|", src: `
