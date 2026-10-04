@@ -1289,6 +1289,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesReaderBytes {
 		g.emitReaderBytesRuntime()
 	}
+	if g.usesDarwinOpenat {
+		g.emitDarwinOpenatRuntime()
+	}
 	g.emitDataSections()
 	if !g.darwin {
 		// `.note.GNU-stack` is an ELF-only directive — it
@@ -1480,6 +1483,19 @@ func (g *generator) emitDataSections() {
 		g.line(`	.4byte 0`)          // length = 0
 		g.label(".LArr_Empty")
 		g.line(`	.byte 0`)
+	}
+	for _, op := range g.constArrayOrder {
+		// The .LArr_Empty header with the element count as cap and
+		// length, then the elements.
+		g.line(`.align 4`)
+		g.line(`	.4byte 0`)
+		g.line(fmt.Sprintf("\t.4byte %d", op.I32))
+		g.line(`	.4byte 0x80000000`)
+		g.line(fmt.Sprintf("\t.4byte %d", op.I32))
+		g.label(g.constArrayLabel[ir.ConstArrayKey(op)])
+		for _, row := range ir.ConstArrayByteRows(op) {
+			g.line("\t.byte " + row)
+		}
 	}
 	if len(g.enumSentinelTags) > 0 {
 		// Per-tag enum sentinels. One 4-byte symbol per unique
@@ -15988,6 +16004,22 @@ func (g *generator) internString(s string) string {
 	return lbl
 }
 
+// internConstArray returns the read-only label of op's static array, one per
+// distinct content.
+func (g *generator) internConstArray(op ir.Op) string {
+	key := ir.ConstArrayKey(op)
+	if lbl, ok := g.constArrayLabel[key]; ok {
+		return lbl
+	}
+	if g.constArrayLabel == nil {
+		g.constArrayLabel = map[string]string{}
+	}
+	lbl := fmt.Sprintf(".LConstArr_%d", len(g.constArrayOrder))
+	g.constArrayLabel[key] = lbl
+	g.constArrayOrder = append(g.constArrayOrder, op)
+	return lbl
+}
+
 // dynVtableLabel returns the GAS symbol for the (trait-set, concrete)
 // `dyn Trait` vtable cell. Single-trait keys are Fern identifiers, so the
 // joined symbol is a valid assembler label as-is. A merged multi-trait
@@ -16108,6 +16140,10 @@ type generator struct {
 	// `.rodata` section is deterministic.
 	stringLabel map[string]string
 	stringOrder []string
+	// constArrayLabel / constArrayOrder are the same scheme for the
+	// static arrays OpConstArray names, keyed by ir.ConstArrayKey.
+	constArrayLabel map[string]string
+	constArrayOrder []ir.Op
 	// funcs maps a top-level function name (including
 	// closureconv-hoisted closures) to its AST declaration.
 	// OpMakeClosure / OpMakeEnv read this to find the
@@ -16702,6 +16738,9 @@ type generator struct {
 	usesReaderBytes     bool
 	usesWriterBytes     bool
 	usesWriterSomeBytes bool
+	// usesDarwinOpenat routes every Darwin openat through
+	// __fern_darwin_openat (emitDarwinOpenatRuntime).
+	usesDarwinOpenat bool
 }
 
 func (g *generator) line(s string) {
@@ -17254,6 +17293,13 @@ func (g *generator) eilseq() int {
 
 func (g *generator) syscall(name string) {
 	if nums, ok := linuxDarwinSysno[name]; ok {
+		if g.darwin && name == "openat" {
+			g.usesDarwinOpenat = true
+			g.emit("str x30, [sp, #-16]!")
+			g.emit("bl __fern_darwin_openat")
+			g.emit("ldr x30, [sp], #16")
+			return
+		}
 		if g.darwin {
 			g.emit("mov x16, #%d", nums[1])
 			g.emit("svc #0x80")
@@ -17278,6 +17324,78 @@ func (g *generator) syscall(name string) {
 		return
 	}
 	panic("arm64 syscall: unknown name " + name)
+}
+
+// emitDarwinOpenatRuntime emits `__fern_darwin_openat(dirfd, path, flags,
+// mode) -> fd or -errno`, the openat every Darwin open goes through. A path
+// ending in '/' resolves only to a directory (POSIX), which Linux's kernel
+// enforces and XNU does not: it opens `link-to-file/` as the file. So, as
+// gnulib's open does for GNU on macOS, a trailing-slash path opened to write
+// or create is EISDIR before anything is opened, and one opened to read is
+// closed and answered ENOTDIR unless fstat says it is a directory (#11430).
+// x1-x6 are preserved, so it stands in for the bare svc.
+func (g *generator) emitDarwinOpenatRuntime() {
+	g.line("")
+	g.line(".p2align 2")
+	g.label("__fern_darwin_openat")
+	g.emit("stp x29, x30, [sp, #-64]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x1, x2, [sp, #16]")
+	g.emit("stp x3, x4, [sp, #32]")
+	g.emit("stp x5, x6, [sp, #48]")
+	g.emit("mov x4, x1")
+	g.label(".Ldoa_end")
+	g.emit("ldrb w5, [x4], #1")
+	g.emit("cbnz w5, .Ldoa_end")
+	g.emit("sub x4, x4, #2") // the last byte, if any
+	g.emit("cmp x4, x1")
+	g.emit("b.lo .Ldoa_plain")
+	g.emit("ldrb w5, [x4]")
+	g.emit("cmp w5, #47")
+	g.emit("b.ne .Ldoa_plain")
+	g.emit("mov x5, #515") // O_WRONLY | O_RDWR | O_CREAT
+	g.emit("tst x2, x5")
+	g.emit("b.eq .Ldoa_read")
+	g.emit("mov x0, #-21") // EISDIR
+	g.emit("b .Ldoa_ret")
+	g.label(".Ldoa_read")
+	g.emit("mov x16, #%d", darOpenat)
+	g.emit("svc #0x80")
+	g.emit("b.cc .Ldoa_opened")
+	g.emit("neg x0, x0")
+	g.emit("b .Ldoa_ret")
+	g.label(".Ldoa_opened")
+	g.emit("mov x6, x0")
+	g.emit("sub sp, sp, #144") // struct stat64
+	g.emit("mov x1, sp")
+	g.emit("mov x16, #%d", darFstat64)
+	g.emit("svc #0x80")
+	g.emit("b.cs .Ldoa_notdir")
+	g.emit("ldrh w5, [sp, #4]") // st_mode
+	g.emit("and w5, w5, #0xf000")
+	g.emit("cmp w5, #0x4000") // S_IFDIR
+	g.emit("b.ne .Ldoa_notdir")
+	g.emit("add sp, sp, #144")
+	g.emit("mov x0, x6")
+	g.emit("b .Ldoa_ret")
+	g.label(".Ldoa_notdir")
+	g.emit("add sp, sp, #144")
+	g.emit("mov x0, x6")
+	g.emit("mov x16, #%d", darClose)
+	g.emit("svc #0x80")
+	g.emit("mov x0, #-20") // ENOTDIR
+	g.emit("b .Ldoa_ret")
+	g.label(".Ldoa_plain")
+	g.emit("mov x16, #%d", darOpenat)
+	g.emit("svc #0x80")
+	g.emit("b.cc .Ldoa_ret")
+	g.emit("neg x0, x0")
+	g.label(".Ldoa_ret")
+	g.emit("ldp x1, x2, [sp, #16]")
+	g.emit("ldp x3, x4, [sp, #32]")
+	g.emit("ldp x5, x6, [sp, #48]")
+	g.emit("ldp x29, x30, [sp], #64")
+	g.emit("ret")
 }
 
 // syscallFstat emits fstat(fd, statbuf) — args already in x0/x1 — and
@@ -20568,6 +20686,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// and let emitStrLen branch on the LSB-tagged inline flag.
 		g.pop()
 		g.emitStrLen("w0", "x0")
+		g.push()
+
+	case ir.OpConstArray:
+		g.adrpAdd("x0", g.internConstArray(op))
 		g.push()
 
 	case ir.OpEnumSentinel:

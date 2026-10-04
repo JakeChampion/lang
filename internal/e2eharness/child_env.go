@@ -42,3 +42,15 @@ func ChildEnv(extra ...string) []string {
 	}
 	return append(env, extra...)
 }
+
+// SelfHostVerify turns on the self-host compiler's re-checks of its own
+// passes without the IR gate's coverage line. A plain compile skips them, so
+// a test compiling a program with the self-host compiler sets this. A driver
+// build does not: its cache admits no FERN_* knob (CompileWithSelfHost).
+const SelfHostVerify = "FERN_IR_VERIFY=quiet"
+
+// SelfHostChildEnv is ChildEnv with SelfHostVerify set. A FERN_IR_VERIFY in
+// extra overrides it: exec keeps the last value of a duplicate key.
+func SelfHostChildEnv(extra ...string) []string {
+	return ChildEnv(append([]string{SelfHostVerify}, extra...)...)
+}

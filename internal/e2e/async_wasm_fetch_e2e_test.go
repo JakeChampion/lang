@@ -25,7 +25,7 @@ func TestAsyncWasmFetchFutureFanout(t *testing.T) {
 	pSlow := e2eharness.StartDelayedUpstream(t, "AAA", 200*time.Millisecond)
 	pFast := e2eharness.StartDelayedUpstream(t, "BBB", 10*time.Millisecond)
 
-	compPath := buildNativeComponent(t, e2eharness.WasmFetchFanoutSource, nativeMainResult)
+	compPath := buildResultComponent(t, e2eharness.WasmFetchFanoutSource)
 	run := exec.Command("wasmtime", "run", "-S", "inherit-network",
 		"--env", "PSLOW="+strconv.Itoa(pSlow), "--env", "PFAST="+strconv.Itoa(pFast), compPath)
 	var sout, serr bytes.Buffer
@@ -75,7 +75,7 @@ func TestAsyncWasmRaceFetchDropsLoser(t *testing.T) {
 	pA := e2eharness.StartDelayedUpstream(t, "AAA", 10*time.Millisecond)
 	pB := e2eharness.StartDelayedUpstream(t, "BBB", 40*time.Millisecond)
 
-	compPath := buildNativeComponent(t, e2eharness.WasmRaceFetchSource, nativeMainResult)
+	compPath := buildResultComponent(t, e2eharness.WasmRaceFetchSource)
 	run := exec.Command("wasmtime", "run", "-S", "inherit-network",
 		"--env", "PA="+strconv.Itoa(pA), "--env", "PB="+strconv.Itoa(pB), compPath)
 	var sout, serr bytes.Buffer

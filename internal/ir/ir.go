@@ -197,6 +197,16 @@ const (
 	// the encoding to payloaded variants.
 	OpEnumSentinel // (I32: tag value) → i64 (sentinel ptr)
 
+	// OpConstArray pushes the data pointer of a static array: the
+	// ordinary `[pad, cap, rc, len]` header, cap and len both the
+	// element count I32 and rc the immortal 0x80000000, followed by the
+	// element bytes in Str. Every evaluation shares it, so a push finds
+	// no room and grows into a fresh buffer, and a `.with` fails the
+	// uniqueness test and copies. Lowered for a `const` array whose
+	// storage nothing in the function hands to the raw floor
+	// (rawArrayLits).
+	OpConstArray // (I32: element count, Str: element bytes) → ptr (array data)
+
 	// Structured control flow. Block / loop / if open a new lexical
 	// scope on the validation-time control stack; OpEnd closes the
 	// innermost. Branches address scopes by relative depth (0 =
@@ -545,6 +555,8 @@ func (k OpKind) String() string {
 		return "str.len"
 	case OpEnumSentinel:
 		return "enum.sentinel"
+	case OpConstArray:
+		return "const.arr"
 	case OpBlock:
 		return "block"
 	case OpLoop:
@@ -1975,6 +1987,8 @@ func formatOp(op Op) string {
 		return fmt.Sprintf("%s %g", op.Kind, op.F64)
 	case OpConstStr:
 		return fmt.Sprintf("%s %q", op.Kind, op.Str)
+	case OpConstArray:
+		return fmt.Sprintf("%s len=%d % x", op.Kind, op.I32, op.Str)
 	case OpConstFunc:
 		return fmt.Sprintf("%s %s", op.Kind, op.Str)
 	case OpBlock, OpLoop, OpIf:
@@ -5580,6 +5594,9 @@ type builder struct {
 	// its own key like fieldMutCopy (fieldAppendRootOK).
 	freshRoots   map[string]bool
 	freshRootsFn *ast.FuncDecl
+	// rawFloor is fnReachesRawFloor for rawFloorFn (reachesRawFloor).
+	rawFloor   bool
+	rawFloorFn *ast.FuncDecl
 	// strStoresCounted memoises stringStoresCounted per local, for strStoresFn.
 	strStoresCounted map[string]bool
 	strStoresFn      *ast.FuncDecl
@@ -10347,6 +10364,68 @@ func (b *builder) stmt(s ast.Stmt) error {
 	return nil
 }
 
+// scalarLitOp is the one constant op a scalar literal lowers to, and false
+// for any other expression.
+func (b *builder) scalarLitOp(e ast.Expr) (Op, bool) {
+	switch n := e.(type) {
+	case *ast.NumberLit:
+		// The checker stamps Width on the literal once a concrete
+		// type is known (i32 default, i64 / u32 / u64 from
+		// expected-type context). Width=0 means "default i32" for
+		// literals the checker never settled (e.g. unused-expression
+		// statements, type-erased generic paths).
+		//
+		// IsFloat takes precedence — set by settleFloat when a
+		// polymorphic literal lands in float context (`let r:
+		// f32 = 0`, `r * 2`, `r <= 0` against an f32 r). Emit
+		// the f-const path with the integer Value cast to float.
+		if n.IsFloat {
+			// Past i64 max Value is the wrapped bit pattern, so read the
+			// written magnitude back as unsigned or the float gets the
+			// wrong sign.
+			f := float64(n.Value)
+			if n.ExceedsI64 {
+				f = float64(uint64(n.Value))
+			}
+			if n.FloatWidth == 32 {
+				return Op{Kind: OpConstF32, F32: float32(f)}, true
+			}
+			return Op{Kind: OpConstF64, F64: f}, true
+		}
+		if n.Width == 64 || (n.Width == ast.WidthPtr && b.ptrW == 8) {
+			// usize literals on natives (ptrW=8) emit as i64
+			// so the full pointer-width value survives — a
+			// settled usize literal whose value exceeds 32 bits
+			// would otherwise truncate to OpConstI32. On wasm32
+			// (ptrW=4) usize stays i32-sized and the i32 const
+			// path is correct.
+			return Op{Kind: OpConstI64, I64: n.Value}, true
+		}
+		return Op{Kind: OpConstI32, I32: int32(n.Value)}, true
+	case *ast.CharLit:
+		// Both forms occupy a 32-bit slot: `char` is erased to i32 by
+		// eraseSurfaceTypes and `u8` is stored in the low byte of one.
+		return Op{Kind: OpConstI32, I32: int32(n.Value)}, true
+	case *ast.BoolLit:
+		v := int32(0)
+		if n.Value {
+			v = 1
+		}
+		return Op{Kind: OpConstI32, I32: v}, true
+	case *ast.FloatLit:
+		// The checker stamps `Width` on the literal once a
+		// concrete float type is known. Width=0 means the literal
+		// stayed unsettled (no expected-type pressure); it defaults
+		// to f64 — the double-precision default and the language's
+		// primary float. Only an explicit f32 context stamps 32.
+		if n.Width == 32 {
+			return Op{Kind: OpConstF32, F32: float32(n.Value)}, true
+		}
+		return Op{Kind: OpConstF64, F64: n.Value}, true
+	}
+	return Op{}, false
+}
+
 func (b *builder) expr(e ast.Expr) error {
 	b.curPos = e.Pos()
 	// `dyn Trait` coercion (boxing): when this expression is a recorded
@@ -10390,45 +10469,9 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 	}
 	switch n := e.(type) {
-	case *ast.NumberLit:
-		// The checker stamps Width on the literal once a concrete
-		// type is known (i32 default, i64 / u32 / u64 from
-		// expected-type context). Width=0 means "default i32" for
-		// literals the checker never settled (e.g. unused-expression
-		// statements, type-erased generic paths).
-		//
-		// IsFloat takes precedence — set by settleFloat when a
-		// polymorphic literal lands in float context (`let r:
-		// f32 = 0`, `r * 2`, `r <= 0` against an f32 r). Emit
-		// the f-const path with the integer Value cast to float.
-		if n.IsFloat {
-			// Past i64 max Value is the wrapped bit pattern, so read the
-			// written magnitude back as unsigned or the float gets the
-			// wrong sign.
-			f := float64(n.Value)
-			if n.ExceedsI64 {
-				f = float64(uint64(n.Value))
-			}
-			if n.FloatWidth == 32 {
-				b.emit(Op{Kind: OpConstF32, F32: float32(f)})
-			} else {
-				b.emit(Op{Kind: OpConstF64, F64: f})
-			}
-		} else if n.Width == 64 || (n.Width == ast.WidthPtr && b.ptrW == 8) {
-			// usize literals on natives (ptrW=8) emit as i64
-			// so the full pointer-width value survives — a
-			// settled usize literal whose value exceeds 32 bits
-			// would otherwise truncate to OpConstI32. On wasm32
-			// (ptrW=4) usize stays i32-sized and the i32 const
-			// path is correct.
-			b.emit(Op{Kind: OpConstI64, I64: n.Value})
-		} else {
-			b.emit(Op{Kind: OpConstI32, I32: int32(n.Value)})
-		}
-	case *ast.CharLit:
-		// Both forms occupy a 32-bit slot: `char` is erased to i32 by
-		// eraseSurfaceTypes and `u8` is stored in the low byte of one.
-		b.emit(Op{Kind: OpConstI32, I32: int32(n.Value)})
+	case *ast.NumberLit, *ast.CharLit, *ast.BoolLit, *ast.FloatLit:
+		op, _ := b.scalarLitOp(n)
+		b.emit(op)
 	case *ast.DowncastExpr:
 		return b.emitDowncast(n)
 	case *ast.CastExpr:
@@ -10697,12 +10740,6 @@ func (b *builder) expr(e ast.Expr) error {
 			// widening the lowering above in the same change.
 			return fmt.Errorf("ir: cast %s -> %s has one numeric side but is not a pointer reinterpret; the checker should have rejected it with E033 (compiler bug)", n.InnerType, n.Target)
 		}
-	case *ast.BoolLit:
-		v := int32(0)
-		if n.Value {
-			v = 1
-		}
-		b.emit(Op{Kind: OpConstI32, I32: v})
 	case *ast.UnitLit:
 		// The unit value is a constant, not an absence: it occupies a
 		// slot so an enum payload holding it loads and stores like any
@@ -10721,17 +10758,6 @@ func (b *builder) expr(e ast.Expr) error {
 			b.emit(Op{Kind: OpConstStr, Str: ""})
 		} else if err := b.expr(n.Desugared); err != nil {
 			return err
-		}
-	case *ast.FloatLit:
-		// The checker stamps `Width` on the literal once a
-		// concrete float type is known. Width=0 means the literal
-		// stayed unsettled (no expected-type pressure); it defaults
-		// to f64 — the double-precision default and the language's
-		// primary float. Only an explicit f32 context stamps 32.
-		if n.Width == 32 {
-			b.emit(Op{Kind: OpConstF32, F32: float32(n.Value)})
-		} else {
-			b.emit(Op{Kind: OpConstF64, F64: n.Value})
 		}
 	case *ast.Ident:
 		// A top-level function name in non-callee position is a function
@@ -11822,6 +11848,10 @@ func (b *builder) expr(e ast.Expr) error {
 		// 16-byte header is already aligned.
 		//
 		// See `docs/RC-PERCEUS-PLAN.md` for the full phased rollout.
+		if op, ok := b.constArrayOp(n); ok {
+			b.emit(op)
+			return nil
+		}
 		nElems := int32(len(n.Elems))
 		stride := int32(4)
 		if n.ElemType != nil {

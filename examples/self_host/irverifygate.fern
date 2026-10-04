@@ -55,19 +55,6 @@ import "./irverify";
 import "./irverifyrc";
 import "./irverifystack";
 
-// verify_on reports whether the gate runs. It is ON unless FERN_IR_VERIFY=0
-// opts out — #6994, the wasm-hosted corruption that kept it opt-in, is fixed.
-pub function verify_on(): boolean {
-  match (env("FERN_IR_VERIFY")) {
-    Some(v) => {
-      return v != "0";
-    },
-    None => {
-      return true;
-    }
-  }
-}
-
 // Gate is what the verifiers read beside the function: `sigs`, the
 // callee-arity index for the whole program being emitted, built once per emit
 // loop by irtables.fn_sig_index, and `pops`, ir.pops_by_kind. A callee `sigs`
@@ -97,8 +84,8 @@ pub function gate_unreported(sigs: irverify.NameIndex, pops: i32[]): Gate {
 }
 
 // report_on reports whether the coverage line is wanted: FERN_IR_VERIFY=1,
-// the explicit form, as native prints it. The gate itself runs by default,
-// but a line on every compile's stderr is a diagnostic mode, not a default.
+// the explicit form, as native prints it; FERN_IR_VERIFY=quiet runs the gate
+// without it.
 pub function report_on(): boolean {
   match (env("FERN_IR_VERIFY")) {
     Some(v) => {
@@ -167,7 +154,7 @@ pub function verdict(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32
 // emitting the malformed stream anyway, which is exactly the behaviour the
 // flag exists to replace.
 pub function verify_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, g: Gate): i32 {
-  if (!verify_on()) {
+  if (!util.verify_on()) {
     return 0;
   }
   let v: Verdict = verdict(fn_name, ops, n_params, n_locals, g);

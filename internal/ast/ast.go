@@ -2161,6 +2161,10 @@ type ArrayLit struct {
 	// i64.store / f32.store / f64.store. nil falls back to the
 	// historical 4-byte-per-element layout.
 	ElemType Type
+	// Const marks a use of a `const`'s value, which constfold substitutes
+	// for the name. Nothing may write through a constant, so every
+	// evaluation can share one static array instead of building its own.
+	Const bool
 }
 type Index struct {
 	P     Position

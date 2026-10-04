@@ -36,7 +36,7 @@ func TestRunnerSimNetExamplePasses(t *testing.T) {
 }
 
 func TestWASMSimNet(t *testing.T) {
-	if code := runWasmNative(t, e2eharness.SimNetProgram); code != 42 {
+	if code := runWasmResult(t, e2eharness.SimNetProgram); code != 42 {
 		t.Errorf("wasm SimNet exit = %d, want 42 (failing check index)", code)
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	e2eharness "github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // #6639 slice 5: the IR verifiers now run on the COMPILE path.
@@ -117,17 +119,17 @@ function main(): i32 {
 }`},
 }
 
-// runGate runs irverify_run with args under FERN_IR_VERIFY=1 or =0, and
-// returns stdout, stderr and the exit code. It does not fail the test on a
-// non-zero exit: every caller here is asserting something about that code.
-func runGate(t *testing.T, bin string, args []string, verify bool) (string, string, int) {
+// runGate runs irverify_run with args under `flag`, a FERN_IR_VERIFY setting,
+// or with no FERN_* variable at all when flag is "", and returns stdout,
+// stderr and the exit code. It does not fail the test on a non-zero exit:
+// every caller here is asserting something about that code.
+func runGate(t *testing.T, bin string, args []string, flag string) (string, string, int) {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
-	flag := "FERN_IR_VERIFY=0"
-	if verify {
-		flag = "FERN_IR_VERIFY=1"
+	cmd.Env = e2eharness.ChildEnv()
+	if flag != "" {
+		cmd.Env = childEnv(flag)
 	}
-	cmd.Env = childEnv(flag)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -145,8 +147,9 @@ func runGate(t *testing.T, bin string, args []string, verify bool) (string, stri
 // mean the flag changes the program under test, and every diagnosis made with
 // it turned on would be about a different compiler than the one that failed.
 //
-// Both halves set the flag EXPLICITLY: the gate is on by default, so leaving it
-// out would make "off" mean "on" and the comparison compare a run with itself.
+// Both halves set the flag EXPLICITLY: the harness turns the gate on for every
+// compile (SelfHostVerify), so leaving it out would make "off" mean "on" and
+// the comparison compare a run with itself.
 func gateSilentSweep(t *testing.T, target string) {
 	t.Helper()
 	cli := newStrictCLI(t)
@@ -204,10 +207,15 @@ func TestSelfHostIRVerifyGateRefuses(t *testing.T) {
 	copySelfHostDriver(t, dir, "irverify_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "irverify_run.fern", "irverify_run")
 
-	// Opted out: inert. The gate runs on every function of every build, so a
-	// working FERN_IR_VERIFY=0 is as much of the contract as the refusal is —
-	// it is the escape hatch when the gate itself is the suspect.
-	out, _, code := runGate(t, bin, []string{"-refuse"}, false)
+	// Unset: inert. A plain compile skips the gate; only a test or a bisect
+	// turns it on.
+	out, _, code := runGate(t, bin, []string{"-refuse"}, "")
+	if code != 0 || !strings.Contains(out, "irverifygate: inert") {
+		t.Errorf("-refuse with FERN_IR_VERIFY unset exited %d and printed %q, want 0 and the inert marker", code, out)
+	}
+
+	// Opted out: inert as well.
+	out, _, code = runGate(t, bin, []string{"-refuse"}, "FERN_IR_VERIFY=0")
 	if code != 0 {
 		t.Errorf("-refuse under FERN_IR_VERIFY=0 exited %d, want 0 — the opt-out must make the gate inert", code)
 	}
@@ -216,7 +224,7 @@ func TestSelfHostIRVerifyGateRefuses(t *testing.T) {
 	}
 
 	// Flag set: refuses, names the function, and says what is wrong with it.
-	_, stderr, code := runGate(t, bin, []string{"-refuse"}, true)
+	_, stderr, code := runGate(t, bin, []string{"-refuse"}, "FERN_IR_VERIFY=1")
 	if code != 4 {
 		t.Errorf("-refuse under FERN_IR_VERIFY=1 exited %d, want 4\nstderr: %s", code, stderr)
 	}
@@ -245,7 +253,7 @@ func TestSelfHostIRVerifyGateChecks(t *testing.T) {
 	copySelfHostDriver(t, dir, "irverify_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "irverify_run.fern", "irverify_run")
 
-	out, stderr, code := runGate(t, bin, nil, false)
+	out, stderr, code := runGate(t, bin, nil, "FERN_IR_VERIFY=0")
 	if code != 0 {
 		t.Fatalf("irverify_run exit code = %d, want 0 — that code is the failing case's id\n%s", code, stderr)
 	}

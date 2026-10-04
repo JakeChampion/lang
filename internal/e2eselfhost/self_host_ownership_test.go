@@ -172,6 +172,28 @@ function main(): i32 {
 	// the body only reads it — the caller must not also reclaim what it
 	// returned. The pin here is the exit code and a balanced census: an
 	// over-release shows up as a wrong answer, a missed one as live bytes.
+	// A record update whose overrides replace every reference field reads
+	// nothing else off its base, so nothing anchored to the base reaches the
+	// new record. The update still consumes the base's box, which is reused
+	// only when the base is counted, so the update's base is carried out
+	// whatever it keeps (`HeaderMap.append`'s shape). A caller that keeps the
+	// receiver retains it, and the update copies instead.
+	{"update-base-is-counted", `struct Hm { names: string[], values: string[] }
+@noinline
+function (h: Hm) add(n: string, v: string): Hm {
+    return Hm { ...h, names: h.names.append(n), values: h.values.append(v) };
+}
+function main(): i32 {
+    let h: Hm = Hm { names: [], values: [] };
+    let i: i32 = 0;
+    while (i < 30) { h = h.add("k", "v"); i = i + 1; }
+    let kept: Hm = h;
+    let more: Hm = kept.add("x", "y");
+    if (h.names.len() != 30 || more.names.len() != 31 || kept.values.len() != 30) { return 1; }
+    if (more.names[30] != "x" || h.values[29] != "v") { return 2; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 12},
 	{"returned-parameter-is-counted", `enum Boxed { One(i32[]), None2 }
 @noinline
 function pass(b: Boxed): Boxed { return b; }
