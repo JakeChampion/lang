@@ -429,8 +429,19 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    list-returning `wasi:io/poll poll` import lifts. The classifier's
    indirect-call rule has no closure body reaching a park yet to exercise
    it.
-3. **Native and interp fallback.** Done with slice 2 for the primitives; the
-   differential rows follow with the first stdlib caller of `suspend`.
+3. **Native and interp fallback. Landed.** The primitives' blocking
+   fallback came with slice 2; the rows that hold the two lowerings to one
+   answer are `conformance/cases/tasks_agree_without_a_scheduler` (the
+   task combinators and a hand-driven task called from `main`, whose
+   output never depends on which entry runs first: the interpreter, the Go
+   compiler's x86-64 and arm64 and the self-host's x86-64, arm64 and wasm
+   all answer the same bytes, and the fixture legs, the leak census and
+   the known-divergence files hold them there) and
+   `examples/tests/async_combinators_test.fern` in both the interpreter's
+   runner gate and the self-host stdtest list. What the fallback answers
+   differently by design — how many times a task parked, which race entry
+   won against a slower first entry, a cancellation from outside — is what
+   each slice's `…Fallback` twin pins beside its self-host gate.
 4. **The client suspends. Landed.** `async.wait_any(set, timeout_ms)` is
    the wait the park carries, (fd, interest) pairs under a bound, which the
    scheduler reads back as `Suspended(Wait)`. `tcp.tcp_recv_deadline`, the
