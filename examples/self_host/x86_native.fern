@@ -5830,7 +5830,7 @@ function x86_words_i32(words: u8[], at: i32): i32 {
 // condition `kind` below 16, jmp at 16 (x86_rec_jump_kind). The body is the
 // marker, not "": the round loop skips an empty line.
 function x86_jump_line(kind: i32, lid: i32): GasLine {
-  let l: GasLine = GasLine { label: "", body: "\x05", mnem: "", rest: "", kind: GK_JCC, ext: kind, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: lid };
+  let l: GasLine = GasLine { label: "", body: "\x05", mnem: "", rest: "", kind: GK_JCC, ext: kind, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: lid, run_end: 0 };
   if (kind == 16) {
     return GasLine { ...l, kind: GK_BRANCH, ext: 4 };
   }
@@ -5849,18 +5849,22 @@ pub function x86_rec_jump_kind(mnem: string): i32 {
   return 0 - 1;
 }
 
-// x86_gas_bytes appends the instruction record at `at` in the words.
-function x86_gas_bytes(own a: X86Asm, words: u8[], at: i32): X86Asm {
+// x86_gas_bytes appends the instruction records over [at, to) of the words,
+// each a length byte and its bytes.
+function x86_gas_bytes(own a: X86Asm, words: u8[], at: i32, to: i32): X86Asm {
   if (at < 0) {
     return x86_gas_bad(a, "instruction records do not match their marker lines");
   }
   let code: i32[] = a.code;
   a = X86Asm { ...a, code: [] };
-  let i: i32 = at + 1;
-  let end: i32 = at + 1 + words[at] as i32;
-  while (i < end) {
-    code = code.append(words[i] as i32);
+  let i: i32 = at;
+  while (i < to) {
+    let end: i32 = i + 1 + words[i] as i32;
     i = i + 1;
+    while (i < end) {
+      code = code.append(words[i] as i32);
+      i = i + 1;
+    }
   }
   return X86Asm { ...a, code: code };
 }
@@ -6412,7 +6416,8 @@ pub function x86_gas_assemble(src: string): X86Asm {
 
 // x86_gas_assemble_words assembles `src` with the instructions an emitter
 // encoded itself: each line starting \x01 takes the next record of `words`,
-// a length byte and that many bytes of instruction. A line starting \x03 is
+// a length byte and that many bytes of instruction, and consecutive ones are
+// one line, a run of records laid down together. A line starting \x03 is
 // an instruction with nothing to trim; \x04 defines the label whose id the
 // next eight bytes of `words` hold; \x05 branches to the label id in the
 // high four of the next eight, by the jump kind in the low four.
@@ -6872,8 +6877,9 @@ const GK_MOVSXD: i32 = 44;
 
 const GK_UNKNOWN2: i32 = 45;
 
-// An instruction the emitter encoded itself: `ext` is its record's offset in
-// the words, or -1 when the records do not reach it, which is a refusal.
+// Instructions the emitter encoded itself: a run of consecutive records over
+// [`ext`, `run_end`) of the words, or `ext` -1 when the records do not reach
+// a marker, which is a refusal.
 const GK_BYTES: i32 = 46;
 
 // A label the emitter defines by id (the \x04 record): `lid` is the id.
@@ -6912,6 +6918,7 @@ struct GasLine {
   ref_idx: i32,  // the entry a jcc, jmp, call or `.quad sym` names, -1 when none or unknown
   memo: i32,  // the x86_gas_prepare memo entry every repeat of this text shares, -1 when none
   lid: i32,  // the label id a \x04 definition or a \x05 branch record names, -1 when none
+  run_end: i32,  // a bytes run: the words offset past its last record
 }
 
 // GasText is the prepared lines with the size of the memo they index.
@@ -7289,7 +7296,7 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
 // mnemonic's verdict and its operand text: the verdict's arms in their order,
 // with the tests that read the operands between them where they stand.
 function x86_gas_classify_with(v: MnemVerdict, mnem: string, rest: string): GasLine {
-  let l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: 0 - 1 };
+  let l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: 0 - 1, run_end: 0 };
   if (v.vz && rest.len() == 0) {
     return GasLine { ...l, kind: GK_VZEROUPPER };
   }
@@ -7340,14 +7347,26 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
   let n: i32 = src.len();
   let pos: i32 = 0;
   let wi: i32 = 0;
+  // Consecutive records are one line, a run over [run_at, run_end) of the
+  // words, closed by the first line of any other kind.
+  let run_at: i32 = 0 - 1;
+  let run_end: i32 = 0;
   while (pos <= n) {
-    if (pos < n && src[pos] == 1) {
-      let at: i32 = 0 - 1;
-      if (wi < words.len() && wi + 1 + words[wi] as i32 <= words.len()) {
-        at = wi;
-        wi = wi + 1 + words[wi] as i32;
+    if (pos < n && src[pos] == 1 && wi < words.len() && wi + 1 + words[wi] as i32 <= words.len()) {
+      if (run_at < 0) {
+        run_at = wi;
       }
-      out = out.append(GasLine { label: "", body: "\x01", mnem: "", rest: "", kind: GK_BYTES, ext: at, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: 0 - 1 });
+      wi = wi + 1 + words[wi] as i32;
+      run_end = wi;
+      pos = pos + 2;
+      continue;
+    }
+    if (run_at >= 0) {
+      out = out.append(x86_bytes_line(run_at, run_end));
+      run_at = 0 - 1;
+    }
+    if (pos < n && src[pos] == 1) {
+      out = out.append(x86_bytes_line(0 - 1, 0));
       pos = pos + 2;
       continue;
     }
@@ -7356,9 +7375,9 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
       // the id in the low four for a definition and the high four for a
       // branch, whose low four are the jump kind.
       if (wi + 8 > words.len()) {
-        out = out.append(GasLine { label: "", body: "\x01", mnem: "", rest: "", kind: GK_BYTES, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: 0 - 1 });
+        out = out.append(x86_bytes_line(0 - 1, 0));
       } else if (src[pos] == 4) {
-        out = out.append(GasLine { label: "", body: "\x04", mnem: "", rest: "", kind: GK_LABEL_ID, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: x86_words_i32(words, wi) });
+        out = out.append(GasLine { label: "", body: "\x04", mnem: "", rest: "", kind: GK_LABEL_ID, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: x86_words_i32(words, wi), run_end: 0 });
       } else {
         out = out.append(x86_jump_line(x86_words_i32(words, wi), x86_words_i32(words, wi + 4)));
       }
@@ -7421,7 +7440,7 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
         rest = x86_gas_trim(slice_unchecked(line, sp + 1, line.len()));
       }
     }
-    let gl: GasLine = GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: 0 - 1 };
+    let gl: GasLine = GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: 0 - 1, run_end: 0 };
     if (mnem.len() > 0) {
       let mi: i32 = x86_mnem_lookup(seen, mnem);
       if (mi < 0) {
@@ -7437,10 +7456,19 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
     }
     out = out.append(gl);
   }
+  if (run_at >= 0) {
+    out = out.append(x86_bytes_line(run_at, run_end));
+  }
   if (wi != words.len()) {
-    out = out.append(GasLine { label: "", body: "\x01", mnem: "", rest: "", kind: GK_BYTES, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: 0 - 1 });
+    out = out.append(x86_bytes_line(0 - 1, 0));
   }
   return GasText { lines: out, nmemo: memo.lines.len() };
+}
+
+// x86_bytes_line is the line for a run of records over [at, to) of the
+// words; `at` -1 is the refusal of records that do not match their markers.
+function x86_bytes_line(at: i32, to: i32): GasLine {
+  return GasLine { label: "", body: "\x01", mnem: "", rest: "", kind: GK_BYTES, ext: at, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: 0 - 1, run_end: to };
 }
 
 // x86_rodata_zero lays `n` zero bytes into .rodata, and x86_rodata_bytes
@@ -7656,7 +7684,7 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
     if (pline.kind == GK_BYTES) {
       // A record's bytes depend on nothing a round computes, so it is
       // read from the words in every round and never cached.
-      a = x86_gas_bytes(a, words, pline.ext);
+      a = x86_gas_bytes(a, words, pline.ext, pline.run_end);
       continue;
     }
     if (!record) {
