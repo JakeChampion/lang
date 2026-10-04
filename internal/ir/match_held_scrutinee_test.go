@@ -39,11 +39,75 @@ function main(): i32 {
   }
   return out;
 }`
-	if !matchRetainsScrutinee(lowerSourceWith(t, reassigns, 8)) {
-		t.Fatal("the arm reassigns the scrutinee, but main parks it with no retain after the store")
-	}
-	if matchRetainsScrutinee(lowerSourceWith(t, keeps, 8)) {
-		t.Fatal("no arm reassigns the scrutinee, yet main retains the parked box")
+	// The arm reads f only in the value it assigns, which is evaluated
+	// before the old box drops.
+	const readsInValue = `enum Job { Run((i32) => i32), Idle }
+function make(k: i32): Job {
+  return Run((x: i32) => x + k);
+}
+function main(): i32 {
+  let e: Job = make(40);
+  let out: i32 = 0;
+  match (e) {
+    Run(f) => {
+      e = make(f(2));
+    },
+    Idle => {}
+  }
+  return out;
+}`
+	// The assignment is the arm's last statement.
+	const assignsLast = `enum Job { Run((i32) => i32), Idle }
+function make(k: i32): Job {
+  return Run((x: i32) => x + k);
+}
+function main(): i32 {
+  let e: Job = make(40);
+  let out: i32 = 0;
+  match (e) {
+    Run(f) => {
+      out = f(2);
+      e = Idle;
+    },
+    Idle => {}
+  }
+  return out;
+}`
+	// The assignment sits in a loop whose next pass reads f before it.
+	const loopReads = `enum Job { Run((i32) => i32), Idle }
+function make(k: i32): Job {
+  return Run((x: i32) => x + k);
+}
+function main(): i32 {
+  let e: Job = make(40);
+  let out: i32 = 0;
+  match (e) {
+    Run(f) => {
+      let i: i32 = 0;
+      while (i < 2) {
+        out = out + f(i);
+        e = make(i);
+        i = i + 1;
+      }
+    },
+    Idle => {}
+  }
+  return out;
+}`
+	for _, c := range []struct {
+		name  string
+		src   string
+		holds bool
+	}{
+		{"reassigns then reads", reassigns, true},
+		{"never reassigns", keeps, false},
+		{"reads only in the assigned value", readsInValue, false},
+		{"assigns last", assignsLast, false},
+		{"assigns in a loop that reads", loopReads, true},
+	} {
+		if got := matchRetainsScrutinee(lowerSourceWith(t, c.src, 8)); got != c.holds {
+			t.Errorf("%s: main retains the parked scrutinee = %v, want %v", c.name, got, c.holds)
+		}
 	}
 }
 

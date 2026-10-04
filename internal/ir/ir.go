@@ -5262,12 +5262,38 @@ func (b *builder) pushPendingDrop(emit func()) func() {
 	}
 }
 
+// heldArm is one arm as scrutineeReassignedIn reads it: every name the
+// pattern binds and the nodes the arm runs.
+type heldArm struct {
+	names  []string
+	region []ast.Node
+}
+
+func heldArms(arms []*ast.MatchArm) []heldArm {
+	out := make([]heldArm, 0, len(arms))
+	for _, arm := range arms {
+		out = append(out, heldArm{names: arm.Binders(), region: []ast.Node{arm.Guard, arm.Body}})
+	}
+	return out
+}
+
+func heldExprArms(arms []*ast.MatchExprArm) []heldArm {
+	out := make([]heldArm, 0, len(arms))
+	for _, arm := range arms {
+		out = append(out, heldArm{names: arm.Binders(), region: []ast.Node{arm.Guard, arm.Body}})
+	}
+	return out
+}
+
 // scrutineeReassignedIn reports a match whose scrutinee is an owned enum
-// local that one of the arm regions assigns (`match (e) { Run(f) => { e =
-// Idle; f(1); } }`), with the local's enum type. The arm's bindings borrow
-// the box's payloads, and the assignment drops the box they read from, so
-// such a match holds its own count on the box until it completes.
-func (b *builder) scrutineeReassignedIn(tag ast.Expr, regions [][]ast.Node) (ast.EnumType, bool) {
+// local that an arm assigns while a name the arm binds, a payload or the
+// `@` whole, is still read afterwards (`match (e) { Run(f) => { e = Idle;
+// f(1); } }`), with the local's enum type. The bindings borrow from the box
+// the assignment drops, so such a match holds its own count on it until it
+// completes. An arm whose assignment comes last, or whose bindings are read
+// only in the assigned value (`cur = kids[i]`), leaves the box alive for
+// every read and needs no hold.
+func (b *builder) scrutineeReassignedIn(tag ast.Expr, arms []heldArm) (ast.EnumType, bool) {
 	id, ok := tag.(*ast.Ident)
 	if !ok || !b.isOwnedRcLocal(id.Name) {
 		return ast.EnumType{}, false
@@ -5276,32 +5302,69 @@ func (b *builder) scrutineeReassignedIn(tag ast.Expr, regions [][]ast.Node) (ast
 	if !isEnum {
 		return ast.EnumType{}, false
 	}
-	found := false
-	for _, region := range regions {
-		for _, r := range region {
-			if r == nil || found {
-				continue
-			}
-			ast.Walk(r, func(n ast.Node) bool {
-				if a, ok := n.(*ast.Assign); ok {
-					if t, ok := a.Target.(*ast.Ident); ok && t.Name == id.Name {
-						found = true
-					}
-				}
-				return !found
-			})
+	for _, arm := range arms {
+		if bindingReadAfterAssign(id.Name, arm.names, arm.region) {
+			return et, true
 		}
 	}
-	return et, found
+	return ast.EnumType{}, false
 }
 
-// armRegions is each arm's confinement region, the nodes an arm runs.
-func armRegions(arms []*ast.MatchArm) [][]ast.Node {
-	out := make([][]ast.Node, 0, len(arms))
-	for _, arm := range arms {
-		out = append(out, armConfinementRegion(arm.AtBinding, arm.Guard, arm.Body))
+// bindingReadAfterAssign reports whether region assigns scrut and then reads
+// one of names: later in source order, or anywhere in a loop the assignment
+// sits in, whose next pass reads before it assigns again. The assigned value
+// is evaluated before the old box drops, so its reads do not count.
+func bindingReadAfterAssign(scrut string, names []string, region []ast.Node) bool {
+	if len(names) == 0 {
+		return false
 	}
-	return out
+	bound := make(map[string]bool, len(names))
+	for _, n := range names {
+		bound[n] = true
+	}
+	assignsScrut := func(n ast.Node) bool {
+		a, ok := n.(*ast.Assign)
+		if !ok {
+			return false
+		}
+		t, ok := a.Target.(*ast.Ident)
+		return ok && t.Name == scrut
+	}
+	assigned, read := false, false
+	var visit func(ast.Node) bool
+	visit = func(n ast.Node) bool {
+		if read {
+			return false
+		}
+		switch x := n.(type) {
+		case *ast.Assign:
+			if assignsScrut(x) {
+				ast.Walk(x.Value, visit)
+				assigned = true
+				return false
+			}
+		case *ast.Ident:
+			if assigned && bound[x.Name] {
+				read = true
+			}
+		case *ast.While, *ast.Loop, *ast.For, *ast.ForEach:
+			if !assigned {
+				ast.Walk(n, func(m ast.Node) bool {
+					if assignsScrut(m) {
+						assigned = true
+					}
+					return !assigned
+				})
+			}
+		}
+		return true
+	}
+	for _, r := range region {
+		if r != nil {
+			ast.Walk(r, visit)
+		}
+	}
+	return read
 }
 
 // emitMatchScrutineeRetain takes the match's own count on the scrutinee box
@@ -9919,7 +9982,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		} else if reclaimMapGet && !pairFormScrutinee {
 			defer b.pushPendingDrop(func() { b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan) })()
 		} else if !pairFormScrutinee && !consumeScrut && consumeOwnedName == "" {
-			heldEnum, heldScrut = b.scrutineeReassignedIn(n.Tag, armRegions(n.Arms))
+			heldEnum, heldScrut = b.scrutineeReassignedIn(n.Tag, heldArms(n.Arms))
 			if heldScrut {
 				b.emitMatchScrutineeRetain(ptrSlot)
 				defer b.pushPendingDrop(func() { b.emitOwnedEnumDrop(ptrSlot, heldEnum, true) })()
@@ -10906,7 +10969,7 @@ func (b *builder) expr(e ast.Expr) error {
 		} else if reclaimMapGet {
 			defer b.pushPendingDrop(func() { b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan) })()
 		}
-		heldEnum, heldScrut := b.scrutineeReassignedIn(n.Tag, regions)
+		heldEnum, heldScrut := b.scrutineeReassignedIn(n.Tag, heldExprArms(n.Arms))
 		if heldScrut && !reclaimScrut && !reclaimMapGet {
 			b.emitMatchScrutineeRetain(ptrSlot)
 			defer b.pushPendingDrop(func() { b.emitOwnedEnumDrop(ptrSlot, heldEnum, true) })()
