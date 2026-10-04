@@ -18,6 +18,27 @@ func tabFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
+// Raw input covers complete lines, a long partial line, and a line spanning
+// two operands. Only LF separates records; every other byte is preserved or
+// transformed according to the utility's tab rules.
+func tabRawCases(t *testing.T) []invocation {
+	all := make([]byte, 256)
+	for i := range all {
+		all[i] = byte(i)
+	}
+	long := "\t" + strings.Repeat("\xff\xc0\x80        x\b\x00\t", 20000)
+	dir := t.TempDir()
+	first := tabFile(t, dir, "first", long[:131073])
+	second := tabFile(t, dir, "second", long[131073:]+"\n\tlast\xff")
+	return []invocation{
+		{name: "raw all bytes", stdin: string(all)},
+		{name: "raw all bytes custom stops", args: []string{"-t", "3,+5"}, stdin: strings.Repeat(string(all), 513)},
+		{name: "raw long final line", stdin: long},
+		{name: "raw long terminated line", stdin: long + "\n"},
+		{name: "raw line across operands", args: []string{first, second}},
+	}
+}
+
 // tabListCases returns the `-t` grammar cases shared by expand and
 // unexpand: the two read the list with the same code, so a divergence in
 // one is a divergence in both, and neither corpus is the place to leave
@@ -198,6 +219,7 @@ func expandCases(t *testing.T) []invocation {
 		{name: "tabs across read blocks", args: []string{"-t4"}, stdin: strings.Repeat("a\tb\n", 30000)},
 		{name: "a wide tab stop", args: []string{"-t", "5000"}, stdin: "\ta\n"},
 	}
+	cases = append(cases, tabRawCases(t)...)
 	return append(cases, tabListCases("\ta\tb\n")...)
 }
 

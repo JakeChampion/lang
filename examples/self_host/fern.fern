@@ -195,11 +195,11 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
 // leave it out: native names the entry on its `todo` warnings, not its errors.
 struct Finding { diag: util.Diag, warning: boolean, path: string }
 
-// Checked is a check's whole answer: its findings in report order, the module
-// files their positions index (util.pos_str), and whether the program is
-// accepted. A rejection can carry no finding at all: an ill-typed module the
-// checker has no diagnostic for.
-struct Checked { findings: Finding[], files: string[], ok: boolean }
+// Checked is a check's whole answer: its findings in report order, the entry
+// path and the module files their positions index (util.pos_str), and whether
+// the program is accepted. A rejection can carry no finding at all: an
+// ill-typed module the checker has no diagnostic for.
+struct Checked { findings: Finding[], entry: string, files: string[], ok: boolean }
 
 // errors_of wraps diagnostics that each reject the program.
 function errors_of(ds: util.Diag[]): Finding[] {
@@ -226,10 +226,10 @@ function has_error(fs: Finding[]): boolean {
 }
 
 // finding_text renders a finding as `-check` and native print it: the
-// position (util.pos_str) when it is known, then `warning: `, or `error[…]: `
-// for a coded error — an uncoded one (the const-grammar rule, a visibility
-// error) has no tag.
-function finding_text(f: Finding, files: string[]): string {
+// position (util.pos_str, naming the entry file as the command line did) when
+// it is known, then `warning: `, or `error[…]: ` for a coded error — an
+// uncoded one (the const-grammar rule, a visibility error) has no tag.
+function finding_text(f: Finding, entry: string, files: string[]): string {
   let tag: string = "";
   if (f.warning) {
     tag = "warning: ";
@@ -237,19 +237,19 @@ function finding_text(f: Finding, files: string[]): string {
     tag = "error[" + f.diag.code + "]: ";
   }
   if (f.diag.line > 0 && f.path.len() > 0) {
-    return f.path + ":" + util.pos_str(files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
+    return f.path + ":" + util.pos_str("", files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
   }
   if (f.diag.line > 0) {
-    return util.pos_str(files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
+    return util.pos_str(entry, files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
   }
   return tag + f.diag.message;
 }
 
 // eprint_findings prints each finding and reports whether any rejects the
 // program.
-function eprint_findings(fs: Finding[], files: string[]): boolean {
+function eprint_findings(fs: Finding[], entry: string, files: string[]): boolean {
   for f in fs {
-    eprint(finding_text(f, files));
+    eprint(finding_text(f, entry, files));
   }
   return has_error(fs);
 }
@@ -1627,7 +1627,7 @@ function fold_embedded_assets(b: Bundle, embed_dir: string): (Bundle, Finding[])
 function check_source(entry_path: string, src: string, root: string, target: string, target_given: boolean, embed_dir: string): Checked {
   let ld: Loaded = load_checked(entry_path, src, root, target, embed_dir);
   if (ld.refused.len() > 0) {
-    return Checked { findings: ld.refused, files: ld.b.files, ok: false };
+    return Checked { findings: ld.refused, entry: entry_path, files: ld.b.files, ok: false };
   }
   return check_bundle(ld.b, entry_path, target, target_given);
 }
@@ -1635,7 +1635,7 @@ function check_source(entry_path: string, src: string, root: string, target: str
 // report_checked prints a check's findings and returns the exit code `-check`
 // answers with.
 function report_checked(c: Checked): i32 {
-  let _rejected: boolean = eprint_findings(c.findings, c.files);
+  let _rejected: boolean = eprint_findings(c.findings, c.entry, c.files);
   if (c.ok) {
     return 0;
   }
@@ -1651,7 +1651,7 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
   // anything downstream of a declaration that did not parse is noise.
   let parsed: Finding[] = parse_findings(merged);
   if (parsed.len() > 0) {
-    return Checked { findings: parsed, files: b.files, ok: false };
+    return Checked { findings: parsed, entry: entry_path, files: b.files, ok: false };
   }
   // The coded diagnostics are the same E0XX codes the Go checker emits — see
   // docs/SELFHOST-CHECKER-PORT.md.
@@ -1673,13 +1673,13 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
   let fs: Finding[] = util.append_all(errors_of(mt.diags), bounds);
   if (mt.all_well_typed) {
     if (has_error(bounds)) {
-      return Checked { findings: fs, files: b.files, ok: false };
+      return Checked { findings: fs, entry: entry_path, files: b.files, ok: false };
     }
     let views: Finding[] = errors_of(semlower.view_escape_diags(merged));
     if (views.len() > 0) {
-      return Checked { findings: util.append_all(fs, views), files: b.files, ok: false };
+      return Checked { findings: util.append_all(fs, views), entry: entry_path, files: b.files, ok: false };
     }
-    return Checked { findings: util.append_all(fs, todo_warnings(merged.todo_sites, entry_path)), files: b.files, ok: true };
+    return Checked { findings: util.append_all(fs, todo_warnings(merged.todo_sites, entry_path)), entry: entry_path, files: b.files, ok: true };
   }
   // The module is ill-typed but produced no coded diagnostic — an
   // expression collapsed to TypeUnknown on a type the partial checker
@@ -1688,7 +1688,7 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
   if (mt.diags.len() == 0) {
     fs = util.append_all(fs, errors_of(checker.ill_typed_hint(merged)));
   }
-  return Checked { findings: fs, files: b.files, ok: false };
+  return Checked { findings: fs, entry: entry_path, files: b.files, ok: false };
 }
 
 // todo_warnings lists the entry's remaining `todo` stubs, which an accepted
@@ -2772,7 +2772,7 @@ function run(): i32 {
   // that assets exist. Native folds them in the same place, ahead of
   // checker.Check.
   let ld: Loaded = load_checked(entry_path, esrc, root, target, embed_dir);
-  if (eprint_findings(ld.refused, ld.b.files)) {
+  if (eprint_findings(ld.refused, entry_path, ld.b.files)) {
     return 1;
   }
   let b: Bundle = ld.b;
@@ -2796,10 +2796,10 @@ function run(): i32 {
     // Package-capability gate (E070 — caps.fern): a dependency reaching
     // past its grant is refused before the program runs, not after it has
     // already opened the socket.
-    if (eprint_findings(package_findings(merged, pkgs), b.files)) {
+    if (eprint_findings(package_findings(merged, pkgs), entry_path, b.files)) {
       return 1;
     }
-    if (eprint_findings(ambient_findings(merged), b.files)) {
+    if (eprint_findings(ambient_findings(merged), entry_path, b.files)) {
       return 1;
     }
     // Evaluate via the tree-walking interpreter; the program's
@@ -2842,7 +2842,7 @@ function run(): i32 {
   // checker gate below exists: without them a build is MORE permissive than
   // `-check`, and a keyword-named function reaches codegen as a nameless
   // declaration.
-  if (eprint_findings(parse_findings(merged), b.files)) {
+  if (eprint_findings(parse_findings(merged), entry_path, b.files)) {
     return 1;
   }
 
@@ -2857,7 +2857,7 @@ function run(): i32 {
   // diagnostic except the partial-port rules measured to false-positive —
   // and a hit is reported with the same `line:col: error[CODE]: message`
   // shape as `-check`.
-  if (eprint_findings(errors_of(checker.build_gate_diags(merged)), b.files)) {
+  if (eprint_findings(errors_of(checker.build_gate_diags(merged)), entry_path, b.files)) {
     return 1;
   }
 
@@ -2879,20 +2879,20 @@ function run(): i32 {
   // Without it the self-host compiles a program native refuses, and the
   // failure lands mid-build as an undefined label or, on wasm, as a
   // host-side instantiation error.
-  if (eprint_findings(capability_findings(merged, target), b.files)) {
+  if (eprint_findings(capability_findings(merged, target), entry_path, b.files)) {
     return 1;
   }
 
   // Package-capability gate (E070 — caps.fern): the other capability
   // system, gating what a DEPENDENCY may reach rather than what the target
   // provides. Without it the self-host builds a program native refuses.
-  if (eprint_findings(package_findings(merged, pkgs), b.files)) {
+  if (eprint_findings(package_findings(merged, pkgs), entry_path, b.files)) {
     return 1;
   }
 
   // The bag boundary (E080 — ambient.fern): a handler reaching a host
   // effect around its platform, on either compiler.
-  if (eprint_findings(ambient_findings(merged), b.files)) {
+  if (eprint_findings(ambient_findings(merged), entry_path, b.files)) {
     return 1;
   }
 
