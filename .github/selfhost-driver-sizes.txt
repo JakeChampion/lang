@@ -461,10 +461,16 @@
 # slices #11358, #11367, #11370 and the stdio publication #11318), and #11375's
 # sources 9321944 (+0.03%); the rest was banked inside tolerance before. Number
 # from driver-sizes' report on run 37184091047. The other rows stay inside 5%.
+# 2026-10-04 — asm_modload_run 7618432 -> 8001008 (+5.0%), main's growth: built
+# with one compiler (6a190a39's stage1), the driver's sources at acf98243 give
+# 7971696 bytes, main at 6a190a39 8113840 (+1.78%, the net slices and the
+# stdio and dyn-integer merges since), and #11397's sources 8118040 (+0.05%).
+# Number from driver-sizes' report on run 37189530175. The other rows stay
+# inside 5%.
 fern.fern/stage2 11495848
 fern.fern 11300776
 asm_load_run.fern 9210104
-asm_modload_run.fern 7618432
+asm_modload_run.fern 8001008
 asm_ir_run.fern 7420200
 asm_run.fern 6813576
 wasm_ir_run.fern 6878120
