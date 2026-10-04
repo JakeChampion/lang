@@ -680,7 +680,9 @@ pub function const_agg_values(cache: irtables.LowerResult[]): string[] {
     let i: i32 = 0;
     while (i < r.ops.len()) {
       if (r.ops[i].kind_tag == 218) {  // const_struct
-        vals = intern_const_agg(vals, r.ops[i].str);
+        if (util.index_of_str(vals, r.ops[i].str) < 0) {
+          vals = vals.append(r.ops[i].str);
+        }
       }
       // alloc_u8's zero-length answer, the empty byte array.
       if (r.ops[i].kind_tag == 77 && util.index_of_str(vals, empty_bytes_const()) < 0) {
@@ -691,20 +693,6 @@ pub function const_agg_values(cache: irtables.LowerResult[]): string[] {
     fi = fi + 1;
   }
   return vals;
-}
-
-// A constant and every static box its fields hold, each once.
-function intern_const_agg(vals: string[], packed: string): string[] {
-  if (util.index_of_str(vals, packed) >= 0) {
-    return vals;
-  }
-  for v in ir.const_struct_values(packed) {
-    let inner: string = ir.const_struct_ref(v);
-    if (inner.len() > 0) {
-      vals = intern_const_agg(vals, inner);
-    }
-  }
-  return vals.append(packed);
 }
 
 // const_agg_block_bytes is one constant's whole block: the 8-byte rc+bsz header
@@ -13646,7 +13634,7 @@ function const_agg_data(sv: string[], cv: string[], structs: irtables.StructTab,
       body = body + le32_escape(struct_type_id(structs, ir.const_struct_type(cv[i]))) + le32_escape(0);
       let vi: i32 = 0;
       while (vi < vals.len()) {
-        let w: i32 = const_agg_field(sv, cv, vals[vi]);
+        let w: i32 = util.lit_to_i32(vals[vi]);
         body = body + le32_escape(w);
         if (w < 0) {
           body = body + le32_escape(0 - 1);
@@ -13660,16 +13648,6 @@ function const_agg_data(sv: string[], cv: string[], structs: irtables.StructTab,
     i = i + 1;
   }
   return util.str_join_chunks(parts);
-}
-
-// A record field's word: its literal, or the address of the static box it
-// holds.
-function const_agg_field(sv: string[], cv: string[], word: string): i32 {
-  let inner: string = ir.const_struct_ref(word);
-  if (inner.len() > 0) {
-    return const_agg_offset(sv, cv, util.index_of_str(cv, inner)) + 8;
-  }
-  return util.lit_to_i32(word);
 }
 
 // arr_push_i64_helper emits $__fern_arr_push_i64 standalone for the IR path
