@@ -395,6 +395,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_uses_i32_to_string(cache)) {
     out = out.append("@uses_i32_to_string");
   }
+  if (module_uses_task(cache)) {
+    out = out.append("@uses_task");
+  }
   if (module_uses_i64_to_string(cache)) {
     out = out.append("@uses_i64_to_string");
   }
@@ -1716,6 +1719,40 @@ pub function module_calls_direct(cache: irtables.LowerResult[], name: string): b
   return any_op(cache, is_call_to);
 }
 
+// module_uses_task reports whether any function calls a task primitive's
+// runtime function, so the stubs below are emitted.
+pub function module_uses_task(cache: irtables.LowerResult[]): boolean {
+  function is_task_call(o: ir.Op): boolean {  // call_direct
+    return o.kind_tag == 149 && ircore.is_task_runtime_fn(o.str);
+  }
+  return any_op(cache, is_task_call);
+}
+
+// task_stub_funcs is the task runtime on wasm until the suspension pass
+// reaches it (docs/NET-P3-SUSPENSION-PLAN.md §3.7): no task is ever current,
+// so std/async's suspend takes its blocking branch, task_start runs its entry
+// to completion, and a park, which only a current task reaches, traps.
+pub function task_stub_funcs(): string {
+  return "  (func $__fern_task_new (result i32) (i32.const 1))\n"
+    + "  (func $__fern_task_free (param i32) (result i32) (i32.const 0))\n"
+    + "  (func $__fern_task_cur (result i32) (i32.const 0))\n"
+    + "  (func $__fern_task_enter (param i32 i32) (result i32) (i32.const 0))\n"
+    + "  (func $__fern_task_leave (result i32) (i32.const 0))\n"
+    + "  (func $__fern_task_park (param i32) (result i32) (unreachable))\n"
+    + "  (func $__fern_task_token (param i32) (result i32) (i32.const 0))\n"
+    + "  (func $__fern_task_set_ready (param i32 i32) (result i32) (i32.const 0))\n"
+    + "  (func $__fern_task_set_cancelled (param i32) (result i32) (i32.const 0))\n"
+    // What the suspension pass's output calls: the mode is always normal
+    // here, so a transformed function never saves or restores a frame.
+    + "  (func $__fern_task_mode (result i32) (i32.const 0))\n"
+    + "  (func $__fern_task_push_w (param i32) (result i32) (unreachable))\n"
+    + "  (func $__fern_task_push_i64 (param i64) (result i32) (unreachable))\n"
+    + "  (func $__fern_task_push_f64 (param f64) (result i32) (unreachable))\n"
+    + "  (func $__fern_task_pop_w (result i32) (unreachable))\n"
+    + "  (func $__fern_task_pop_i64 (result i64) (unreachable))\n"
+    + "  (func $__fern_task_pop_f64 (result f64) (unreachable))\n";
+}
+
 // module_uses_i32_to_string reports whether any function emits the i32.to_string()
 // runtime call — so the heap allocator + $__fern_i32_to_str helper are emitted,
 // even for an otherwise alloc-free module.
@@ -1955,7 +1992,7 @@ function is_raw_floor_builtin(name: string): boolean {
   if (name == "__raw_alloc") {
     return true;
   }
-  if (name == "__raw_string" || name == "__raw_scratch" || name == "__raw_environ" || name == "__raw_splice_pipe" || name == "__raw_cover") {
+  if (name == "__raw_string" || name == "__raw_scratch" || name == "__raw_environ" || name == "__raw_splice_pipe" || name == "__raw_cover" || name == "__raw_task_state") {
     return true;
   }
   if (name == "__raw_addr" || name == "__raw_arr_box") {
@@ -14183,6 +14220,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "reactor_wait")) {
     parts = parts.append(reactor_wait_func());
+  }
+  if (need(needs, "@uses_task")) {
+    parts = parts.append(task_stub_funcs());
   }
   if (need(needs, "tcp_recv_into")) {
     parts = parts.append(tcp_recv_into_func());

@@ -1977,6 +1977,8 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
     s = helper_call_needs(ins.str, s);
   } else if (ircore.is_c_call(ins.str)) {
     s = s.need("ccall:" + ins.str);
+  } else if (ircore.is_task_runtime_fn(ins.str)) {
+    s = s.need("task");
   }
   let i: i32 = 0;
   while (i < argc) {
@@ -2300,6 +2302,9 @@ function sym_addr_need(sym: string): string {
   }
   if (sym == "__fern_cov_counters") {
     return "raw_cover";
+  }
+  if (sym == "__fern_task_state") {
+    return "task";
   }
   return "";
 }
@@ -5750,6 +5755,9 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
   }
   if (s.has_need("raw_cover")) {
     s = s.write("    .section .bss\n    .p2align 3\n__fern_cov_counters: .quad 0\n    .text\n");
+  }
+  if (s.has_need("task")) {
+    s = s.write("    .section .bss\n    .p2align 3\n__fern_task_state: .quad 0, 0, 0, 0\n    .text\n");
   }
   if (s.has_need("str_read_line")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_line(ctgt), s);
@@ -10715,6 +10723,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   }
   if (s.has_need("reactor_wait")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_wait(tgt), s);
+  }
+  if (s.has_need("task")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_task(tgt), s);
   }
   if (s.has_need("tcp_recv_into")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into(tgt), s);

@@ -495,3 +495,71 @@ pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: F
   }
   return out;
 }
+
+// Tasks (docs/NET-P3-SUSPENSION-PLAN.md §3.4). A Task runs an entry under a
+// scheduler: `task_start` runs it until it returns or parks on a token,
+// `task_resume` runs a parked task on from its park with the readiness word
+// the scheduler read, and `task_cancel` runs it on with every later wait
+// answering `cancelled()`. A function reaches the park through `suspend`,
+// which blocks instead when no task is current, so the same code runs under
+// a scheduler and in a plain program. The self-host compiler lowers the
+// functions that reach a park to resumable form; the native compiler keeps
+// the blocking fallback, where a task always runs to completion.
+pub enum TaskStatus[T] { Done(T), Suspended(i32), Cancelled }
+
+pub struct Task[T] { id: i32, entry: () => T }
+
+// `cancelled()` — what `suspend` answers in a cancelled task, on every wait
+// from the cancellation on.
+pub function cancelled(): i32 {
+  return 0 - 2;
+}
+
+pub function task_new[T](entry: () => T): Task[T] {
+  return Task { id: __task_new(), entry: entry };
+}
+
+pub function task_start[T](t: Task[T]): TaskStatus[T] {
+  return run_task(t, 0);
+}
+
+// `task_resume(t, ready)` — the parked task runs on, its `suspend`
+// answering `ready`.
+pub function task_resume[T](t: Task[T], ready: i32): TaskStatus[T] {
+  __task_set_ready(t.id, ready);
+  return run_task(t, 2);
+}
+
+// `task_cancel(t)` — the parked task runs on to its end with every wait
+// answering `cancelled()`, and cannot park again.
+pub function task_cancel[T](t: Task[T]): TaskStatus[T] {
+  __task_set_cancelled(t.id);
+  let st: TaskStatus[T] = run_task(t, 2);
+  return Cancelled;
+}
+
+// `task_free(t)` — hand the task's record back once it is done.
+pub function task_free[T](t: Task[T]): void {
+  __task_free(t.id);
+}
+
+function run_task[T](t: Task[T], mode: i32): TaskStatus[T] {
+  __task_enter(t.id, mode);
+  let v: T = t.entry();
+  let m: i32 = __task_leave();
+  if (m == 1) {
+    return Suspended(__task_token(t.id));
+  }
+  return Done(v);
+}
+
+// `suspend(tok)` — wait for the token: under a scheduler the task parks and
+// the scheduler's readiness word is the answer; with no task current, a
+// blocking poll, answering 0 when the token fired.
+pub function suspend(tok: i32): i32 {
+  if (__task_cur() == 0) {
+    let toks: i32[] = [tok];
+    return poll(toks, 0 - 1);
+  }
+  return __task_park(tok);
+}

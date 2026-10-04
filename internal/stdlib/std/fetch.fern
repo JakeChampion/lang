@@ -1153,7 +1153,7 @@ function __send_hosted(req: Request, t: __Target): Result[HttpResponse, FetchErr
       return Err(__hosted_error(e));
     }
   }
-  return Err(Cancelled);
+  return Err(FetchError.Cancelled);
 }
 
 // `__hosted_error(e)` — the host's refusal as this client's error.
@@ -1175,7 +1175,7 @@ function __hosted_error(e: wasi_http.OutgoingError): FetchError {
       return Protocol("the host gave no response");
     }
   }
-  return Cancelled;
+  return FetchError.Cancelled;
 }
 
 // `__host_code(code)` — a wasi:http `error-code` case as the phase it

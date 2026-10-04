@@ -291,7 +291,38 @@ a text-typed response would be a `string` that is not well-formed UTF-8
 
 ---
 
-## 8. How it works (one paragraph)
+## 8. Tasks: parking a call chain (self-host compiler)
+
+`async.suspend(tok)` waits for a readiness token. With no task current it is
+a blocking `poll` on the token. Under a scheduler it *parks*: the self-host
+compiler lowers every function that reaches the park to a resumable form, so
+the whole call chain above the wait saves its locals and returns to the
+scheduler, and runs on from the wait when the scheduler resumes it. Nothing
+is written at the call site: a function that calls `suspend`, or calls one
+that does, is lowered that way by reachability (`examples/self_host/suspend.fern`).
+
+```fern
+let t: async.Task[i32] = async.task_new(() => handler());
+let st: async.TaskStatus[i32] = async.task_start(t);
+match (st) {
+    Done(v) => { … },
+    Suspended(tok) => { /* wait on tok, then */ st = async.task_resume(t, ready); },
+    Cancelled => { … }
+}
+async.task_free(t);
+```
+
+`task_resume(t, ready)` makes the parked `suspend` answer `ready`;
+`task_cancel(t)` runs the task on with every wait answering
+`async.cancelled()` and never parking again, which is how a disconnected
+client's handler winds down through its own control flow (`defer`s
+included). The native compiler keeps the blocking fallback: no task is ever
+current, so `task_start` runs its entry to completion and both paths behave
+as a plain program does. `docs/NET-P3-SUSPENSION-PLAN.md` is the design and
+what remains (the serve loop as the scheduler, the fetch client's waits, the
+wasm runtime bodies).
+
+## 9. How it works (one paragraph)
 
 A `Future[T]` is either a ready value or an fd plus a continuation. The
 combinators gather the pending futures' fds, block once in the universal `poll`

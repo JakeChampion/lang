@@ -239,6 +239,14 @@ conformance case of #9851 §5: a one-worker server whose handler waits on
 connection measured against it. It pins what P1 documented, the hello
 waiting out the upstream, and #9857 flips it to the hello arriving inside
 the wait.
+`TestSelfHostTaskScheduler` is the suspension pass's gate
+(`docs/NET-P3-SUSPENSION-PLAN.md` §4, slice 2): `e2eharness.TaskSchedulerProgram`
+parks a task twice, three calls deep, inside a loop and a branch, with a
+string held across both parks, drives it by hand through `task_resume`, and
+then runs the same functions with no task; the self-host's x86-64 and arm64
+output must show both parks and the readiness word reaching every frame.
+`TestTaskSchedulerFallback` runs the same program through the Go compiler,
+which keeps the blocking fallback: no park, the plain figure both times.
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
 by the `TestArm64Darwin` prefix). `TestSelfHostServeConfig` serves through

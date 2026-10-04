@@ -686,6 +686,13 @@ pub function op_raw_splice_pipe(): Op {
   return op0(331);
 }
 
+// raw_task_state: pops nothing → the address of __fern_task_state, the words
+// the task runtime keeps between calls: the current task's id, its record
+// table and that table's capacity (docs/NET-P3-SUSPENSION-PLAN.md §3.4).
+pub function op_raw_task_state(): Op {
+  return op0(366);
+}
+
 // raw_cover: pops nothing → the address of __fern_cov_counters, the word
 // holding the `-cover` counter table's address (zero before the first hit).
 pub function op_raw_cover(): Op {
@@ -4205,6 +4212,9 @@ function kind_id_len14(name: string): i32 {
   if (name == "scan_set_bytes") {
     return 361;
   }
+  if (name == "raw_task_state") {
+    return 366;
+  }
   if (name == "udp_send_bytes") {
     return 354;
   }
@@ -5078,6 +5088,9 @@ function kind_name_4(id: i32): string {
   if (id == 287) {
     return "raw_cover";
   }
+  if (id == 366) {
+    return "raw_task_state";
+  }
   if (id == 208) {
     return "udp_send";
   }
@@ -5507,6 +5520,7 @@ function pops0(t: i32): boolean {
     || t == 207 || t == 211  // raw_environ, proc_fork
     || t == 331  // raw_splice_pipe
     || t == 287  // raw_cover
+    || t == 366  // raw_task_state
     || t == 216 || t == 217 || t == 218  // arr_push_shared_*, const_struct
     || t == 222  // map_hash_seed
     || t == 238 || t == 239 || t == 240  // geteuid, getegid, hostname
