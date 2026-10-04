@@ -1363,21 +1363,25 @@ pub struct X86Asm {
   lab_head: i32[],
   lab_tail: i32[],
   lab_next: i32[],
-  fix_offs: i32[],
+  // The queued fixups, one u64 each in a builder handle (0 until the first):
+  // the patch offset in the low 32 bits, and in the high 32 the label table
+  // index shifted left two, bit 0 set for a one-byte rel8 patch (a relaxed
+  // branch, #7949) rather than a rel32, and bit 1 set when the reference
+  // arrived by name alone (the raw encoder API, a rip-relative memory
+  // operand), the index then being into fix_names. On the x86_gas_assemble
+  // path the label table is built once from the text (x86_gas_label_table)
+  // and every round reads a target through its index instead of hashing its
+  // name. A handle, not arrays, so queueing one does not rebuild the struct.
+  fixq: usize,
   fix_names: string[],
-  // fix_widths[i] is how many bytes fix_offs[i] patches: 4 for a rel32 /
-  // rip-relative displacement, 1 for a relaxed rel8 branch (#7949).
-  fix_widths: i32[],
-  // fix_idx[i] / br_idx[k] / dfix_idx[i] are the label table index behind
-  // the name, -1 when the reference arrived by name alone (the raw encoder
-  // API, a rip-relative memory operand). On the x86_gas_assemble path the
-  // table is built once from the text (x86_gas_label_table) and every
-  // round reads a target through its index instead of hashing its name.
-  fix_idx: i32[],
+  // dfix_idx[i] is the label table index behind dfix_names[i], -1 when none.
   // Branch relaxation state. br_long[k] pins the k-th relaxable branch
-  // (jcc / jmp to a label, in emission order) to its rel32 form; br_n is
-  // the ordinal handed to the next one. x86_gas_assemble emits once with
-  // every branch short, settles br_long on that layout, and emits again.
+  // (jcc / jmp to a label, in emission order) to its rel32 form. brq holds
+  // one u64 per branch as fixq does, bit 0 of the high word set when it was
+  // emitted short, and x86_resolve splits it into br_offs (the low words)
+  // and br_hi (the high words) for the relaxation pass to read; by-name
+  // targets go in br_names. x86_gas_assemble emits once with every branch short,
+  // settles br_long on that layout, and emits again.
   // relaxing is set only on the x86_gas_assemble path. The raw encoder
   // API (x86_jcc_label and friends, used directly by drivers and the
   // encode self-tests) keeps its original contract: rel32 always, and a
@@ -1385,11 +1389,10 @@ pub struct X86Asm {
   // and two rounds, neither of which a single API call has.
   relaxing: boolean,
   br_long: boolean[],
-  br_n: i32,
+  brq: usize,
   br_offs: i32[],
+  br_hi: i32[],
   br_names: string[],
-  br_idx: i32[],
-  br_shorts: boolean[],
   // Patch offsets whose instruction continues PAST the disp32 — an
   // immediate store to a rip-relative global (`movq $0, sym(%rip)`) is the
   // only shape that does. A rip displacement is measured from the end of
@@ -1463,7 +1466,7 @@ function x86_asm_new(): X86Asm {
 // applied to a fresh X86Asm, so nothing in the assembler ever holds a second
 // reference to the struct it is threading.
 function x86_asm_new_for(relaxing: boolean, longs: boolean[]): X86Asm {
-  return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fix_offs: [], fix_names: [], fix_widths: [], fix_idx: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: relaxing, br_long: x86_bools_copy(longs), br_n: 0, br_offs: [], br_names: [], br_idx: [], br_shorts: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [] };
+  return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: relaxing, br_long: x86_bools_copy(longs), brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [] };
 }
 
 // x86_asm_new_prepared is the state for a relaxation round over text whose
@@ -1472,7 +1475,7 @@ function x86_asm_new_for(relaxing: boolean, longs: boolean[]): X86Asm {
 // -1) until the round reaches its definition.
 function x86_asm_new_prepared(labs: GasLabels, longs: boolean[]): X86Asm {
   let n: i32 = labs.names.len() + labs.nids;
-  return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fix_offs: [], fix_names: [], fix_widths: [], fix_idx: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, br_long: x86_bools_copy(longs), br_n: 0, br_offs: [], br_names: [], br_idx: [], br_shorts: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [] };
+  return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, br_long: x86_bools_copy(longs), brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [] };
 }
 
 // x86_filled is n copies of v.
@@ -1744,13 +1747,68 @@ function x86_queue_fixup(own a: X86Asm, at: i32, width: i32, name: string): X86A
 // x86_queue_fixup_at is x86_queue_fixup with the target's table index, -1
 // when the reference has none.
 function x86_queue_fixup_at(own a: X86Asm, at: i32, width: i32, name: string, idx: i32): X86Asm {
-  return X86Asm {
-    ...a,
-    fix_offs: a.fix_offs.append(at),
-    fix_widths: a.fix_widths.append(width),
-    fix_names: a.fix_names.append(name),
-    fix_idx: a.fix_idx.append(idx),
-  };
+  let hi: i32 = idx << 2;
+  if (idx < 0) {
+    hi = a.fix_names.len() << 2 | 2;
+    a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+  }
+  if (width == 1) {
+    hi = hi | 1;
+  }
+  if (a.fixq == 0 as usize) {
+    a = X86Asm { ...a, fixq: buf_new(8192) };
+  }
+  buf_push_u64(a.fixq, (hi as i64 << 32 | at as i64 & 4294967295i64) as u64);
+  return a;
+}
+
+// x86_fix_count and x86_br_count are how many fixups and branches the round
+// has queued.
+function x86_fix_count(a: X86Asm): i32 {
+  if (a.fixq == 0 as usize) {
+    return 0;
+  }
+  return buf_len(a.fixq) / 8;
+}
+
+function x86_br_count(a: X86Asm): i32 {
+  if (a.brq != 0 as usize) {
+    return buf_len(a.brq) / 8;
+  }
+  return a.br_offs.len();
+}
+
+// x86_br_idx and x86_br_name are branch k's label table index (-1 for a
+// by-name target) and its name (only for a by-name target, else "").
+function x86_br_idx(a: X86Asm, k: i32): i32 {
+  if ((a.br_hi[k] & 2) != 0) {
+    return 0 - 1;
+  }
+  return a.br_hi[k] >> 2;
+}
+
+function x86_br_name(a: X86Asm, k: i32): string {
+  if ((a.br_hi[k] & 2) != 0) {
+    return a.br_names[a.br_hi[k] >> 2];
+  }
+  return "";
+}
+
+// x86_le32_split reads a builder's u64 entries back as two arrays, the low
+// and the high words.
+struct LeSplit { lo: i32[], hi: i32[] }
+
+function x86_le32_split(b: u8[]): LeSplit {
+  let lo: i32[] = [];
+  let hi: i32[] = [];
+  let i: i32 = 0;
+  let n: i32 = b.len() - 7;
+  while (i < n) {
+    lo = lo.append(b[i] as i32 | b[i + 1] as i32 << 8 | b[i + 2] as i32 << 16 | b[i + 3] as i32 << 24);
+    hi = hi.append(b[i + 4] as i32 | b[i + 5] as i32 << 8 | b[i + 6] as i32 << 16 | b[i + 7] as i32 << 24);
+    i = i + 8;
+  }
+  return LeSplit { lo: lo, hi: hi };
 }
 
 // x86_branch_long reports whether the next relaxable branch must take its
@@ -1767,14 +1825,19 @@ function x86_branch_long(a: X86Asm, k: i32): boolean {
 // where its displacement sits, what it targets, and whether this pass took
 // the short form.
 function x86_branch_record(own a: X86Asm, at: i32, name: string, idx: i32, short: boolean): X86Asm {
-  return X86Asm {
-    ...a,
-    br_offs: a.br_offs.append(at),
-    br_names: a.br_names.append(name),
-    br_idx: a.br_idx.append(idx),
-    br_shorts: a.br_shorts.append(short),
-    br_n: a.br_n + 1,
-  };
+  let hi: i32 = idx << 2;
+  if (idx < 0) {
+    hi = a.br_names.len() << 2 | 2;
+    a = X86Asm { ...a, br_names: a.br_names.append(name) };
+  }
+  if (short) {
+    hi = hi | 1;
+  }
+  if (a.brq == 0 as usize) {
+    a = X86Asm { ...a, brq: buf_new(8192) };
+  }
+  buf_push_u64(a.brq, (hi as i64 << 32 | at as i64 & 4294967295i64) as u64);
+  return a;
 }
 
 // x86_lea_rip_label emits `lea <dst>, [rip + label]` (REX.W 8D /r, ModR/M
@@ -1802,7 +1865,7 @@ function x86_jcc_label(own a: X86Asm, cc: i32, name: string): X86Asm {
 // a name the table does not hold), which the round's patch and resolve
 // read in place of the name.
 function x86_jcc_label_at(own a: X86Asm, cc: i32, name: string, idx: i32): X86Asm {
-  let k: i32 = a.br_n;
+  let k: i32 = x86_br_count(a);
   if (a.relaxing && !x86_branch_long(a, k)) {  // 0x70+cc ib
     a = X86Asm { ...a, code: a.code.append(112 + (cc & 15)) };
     a = X86Asm { ...a, code: a.code.append(0) };  // placeholder rel8
@@ -1822,7 +1885,7 @@ function x86_jmp_label(own a: X86Asm, name: string): X86Asm {
 }
 
 function x86_jmp_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
-  let k: i32 = a.br_n;
+  let k: i32 = x86_br_count(a);
   if (a.relaxing && !x86_branch_long(a, k)) {  // 0xEB ib
     a = X86Asm { ...a, code: a.code.append(235) };
     a = X86Asm { ...a, code: a.code.append(0) };  // placeholder rel8
@@ -1971,15 +2034,35 @@ function x86_resolve(own a: X86Asm): X86Asm {
   // it in place inside the struct cloned the entire .text per fixup.
   let code: i32[] = a.code;
   a = X86Asm { ...a, code: [] };
+  let fq: u8[] = [];
+  if (a.fixq != 0 as usize) {
+    fq = buf_take_bytes(a.fixq);
+    a = X86Asm { ...a, fixq: 0 as usize };
+  }
+  if (a.brq != 0 as usize) {
+    let bq: LeSplit = x86_le32_split(buf_take_bytes(a.brq));
+    a = X86Asm { ...a, brq: 0 as usize, br_offs: bq.lo, br_hi: bq.hi };
+  }
+  let nfix: i32 = fq.len() / 8;
   let i: i32 = 0;
-  while (i < a.fix_offs.len()) {
-    let patch_off: i32 = a.fix_offs[i];
-    let target: i32 = x86_final_target(a, a.fix_names[i], a.fix_idx[i], padded_text, bss_base);
+  while (i < nfix) {
+    let at: i32 = 8 * i;
+    let patch_off: i32 = fq[at] as i32 | fq[at + 1] as i32 << 8 | fq[at + 2] as i32 << 16 | fq[at + 3] as i32 << 24;
+    let hi: i32 = fq[at + 4] as i32 | fq[at + 5] as i32 << 8 | fq[at + 6] as i32 << 16 | fq[at + 7] as i32 << 24;
+    let idx: i32 = hi >> 2;
+    let name: string = "";
+    if ((hi & 2) != 0) {
+      name = a.fix_names[idx];
+      idx = 0 - 1;
+    } else if (idx < a.lab_names.len()) {
+      name = a.lab_names[idx];
+    }
+    let target: i32 = x86_final_target(a, name, idx, padded_text, bss_base);
     // A missing label is -1; patching that as a displacement branches
     // into the ELF header, so refuse rather than emit it (#6045).
     if (target < 0) {
-      a = X86Asm { ...a, unknown: a.unknown.append("unresolved symbol " + a.fix_names[i]) };
-    } else if (a.fix_widths[i] == 1) {
+      a = X86Asm { ...a, unknown: a.unknown.append("unresolved symbol " + name) };
+    } else if ((hi & 1) != 0) {
       // A relaxed branch: one byte, and the next instruction is one
       // byte past the displacement rather than four.
       let rel8: i32 = target - (patch_off + 1);
@@ -1987,7 +2070,7 @@ function x86_resolve(own a: X86Asm): X86Asm {
         // The relaxation fixpoint is meant to have pinned this one
         // long already; reaching here means the layout moved under
         // it, which would silently branch somewhere else.
-        a = X86Asm { ...a, unknown: a.unknown.append("rel8 out of range for " + a.fix_names[i]) };
+        a = X86Asm { ...a, unknown: a.unknown.append("rel8 out of range for " + name) };
       } else {
         code = code.with(patch_off, rel8 & 255);
       }
@@ -6358,7 +6441,7 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
   }
   let at: i32 = a.code.len();
   let pad: i32 = x86_pad_width(at, align, max);
-  a = X86Asm { ...a, pads: a.pads.append(at).append(pad).append(align).append(max).append(a.br_n) };
+  a = X86Asm { ...a, pads: a.pads.append(at).append(pad).append(align).append(max).append(x86_br_count(a)) };
   if (pad == 0) {
     return a;
   }
@@ -6478,7 +6561,7 @@ pub function x86_gas_assemble_words(src: string, words: u8[]): X86Asm {
 struct RelaxLayout { ev: i32[], start: i32[], size: i32[], grow: i32[], pads_before: i32[] }
 
 function x86_relax_layout(a: X86Asm): RelaxLayout {
-  let nb: i32 = a.br_offs.len();
+  let nb: i32 = x86_br_count(a);
   let np: i32 = a.pads.len() / 5;
   let l: RelaxLayout = RelaxLayout { ev: [], start: [], size: [], grow: [], pads_before: [0] };
   let k: i32 = 0;
@@ -6511,12 +6594,14 @@ struct RelaxTargets { off: i32[], before: i32[], pad: i32[] }
 function x86_relax_targets(a: X86Asm, l: RelaxLayout): RelaxTargets {
   let t: RelaxTargets = RelaxTargets { off: [], before: [], pad: [] };
   let k: i32 = 0;
-  while (k < a.br_offs.len()) {
-    let idx: i32 = a.br_idx[k];
+  let nb: i32 = a.br_offs.len();
+  while (k < nb) {
+    let idx: i32 = x86_br_idx(a, k);
+    let name: string = x86_br_name(a, k);
+    let off: i32 = x86_label_target(a, name, idx);
     if (idx < 0) {
-      idx = x86_label_idx(a, a.br_names[k]);
+      idx = x86_label_idx(a, name);
     }
-    let off: i32 = x86_label_target(a, a.br_names[k], a.br_idx[k]);
     let bound: i32 = 0 - 1;
     let j: i32 = 0;
     while (idx >= 0 && j < a.pad_labels.len()) {
@@ -6581,7 +6666,8 @@ function x86_relax_settle(a: X86Asm): boolean[] {
   // through `st.short`, each append copied the whole array.
   let short: boolean[] = [];
   let k: i32 = 0;
-  while (k < a.br_offs.len()) {
+  let nb: i32 = a.br_offs.len();
+  while (k < nb) {
     short = short.append(t.off[k] >= 0);
     k = k + 1;
   }
@@ -6716,13 +6802,14 @@ function x86_bools_any(xs: boolean[]): boolean {
 function x86_relax_grow(a: X86Asm, longs: boolean[]): boolean[] {
   let out: boolean[] = [];
   let k: i32 = 0;
-  while (k < a.br_offs.len()) {
+  let nb: i32 = a.br_offs.len();
+  while (k < nb) {
     let pinned: boolean = false;
     if (k < longs.len()) {
       pinned = longs[k];
     }
-    if (!pinned && a.br_shorts[k]) {
-      let target: i32 = x86_label_target(a, a.br_names[k], a.br_idx[k]);
+    if (!pinned && (a.br_hi[k] & 1) != 0) {
+      let target: i32 = x86_label_target(a, x86_br_name(a, k), x86_br_idx(a, k));
       // An unresolved target cannot be measured, so it must not stay
       // short: x86_resolve reports it, and a rel8 placeholder would
       // hide the report behind a range error instead.
@@ -7770,15 +7857,15 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
       continue;
     }
     let c0: i32 = a.code.len();
-    let fx0: i32 = a.fix_offs.len();
+    let fx0: i32 = x86_fix_count(a);
     let ft0: i32 = a.fix_tail_offs.len();
-    let br0: i32 = a.br_offs.len();
+    let br0: i32 = x86_br_count(a);
     let un0: i32 = a.unknown.len();
     let df0: i32 = a.dfix_offs.len();
     let rd0: i32 = a.rodata.len();
     let bs0: i32 = a.bss_size;
     a = x86_gas_emit_op(a, pline);
-    if (pline.ref_idx < 0 && a.fix_offs.len() == fx0 && a.fix_tail_offs.len() == ft0 && a.br_offs.len() == br0
+    if (pline.ref_idx < 0 && x86_fix_count(a) == fx0 && a.fix_tail_offs.len() == ft0 && x86_br_count(a) == br0
       && a.unknown.len() == un0 && a.dfix_offs.len() == df0 && a.rodata.len() == rd0 && a.bss_size == bs0) {
       at = at.with(li - 1, c0);
       end = end.with(li - 1, a.code.len());
