@@ -42,8 +42,24 @@ pilot (1.434 seconds), corrected component and WASM interpreter tests
 (58.057 seconds), the full Linux unit suite and all lint gates. A fresh
 Linux ARM64 bootstrap reproduces stage 2 as stage 3 at 13,065,152 bytes,
 SHA-256 `a9b976676ae0c07432d6cd8dbbf74f8688484f57bb6c5d13bfbd5cd8eda78aa1`.
-Stage 1 differs. GNU consumer, additional primary target/parity and Darwin
-gates remain running or pending; PR CI has not passed on these fixes yet.
+Stage 1 differs. The reproduced-primary regression group passes in 80.642
+seconds, the 49-function GNU consumer selection in 111.445 seconds and
+the 30-utility primary parity selection in 88.777 seconds. Cache invalidation
+probes and the primary-built playground also pass.
+
+Darwin reproduces stage 2 as stage 3 at 13,311,217 bytes, SHA-256
+`f07e2999b3b5be53072e96aeacff6ca2cfee45dbf599c0d08ed1ac14ff3553a9`.
+Its Go target selection passes in 7.866 seconds, primary selection in
+95.179 seconds and GNU selection in 43.819 seconds, including PTX and install.
+
+CI on `43fbcd99f` exposed stale pin-built size baselines, an additional
+Darwin test with flags after its source, and HTTP 500 errors downloading
+stage0. The size [attribution report](STRING-CONSUMER-DRIVER-SIZES-2026-10-04.md)
+separates source and pin growth. The corrected Darwin lifetime test passes
+in 16.733 seconds; the corrected doc command produces all 87 pages exactly
+as `cmd/ferndoc` does. A fresh frozen local run passes all units, lint and
+the strict size gate with all eleven drivers measured. Remote checks remain
+a merge gate.
 
 ## Validation at publication
 
@@ -69,7 +85,8 @@ removes its old known-failure entry.
 The dated per-migration reports retain their original compiler hashes,
 source revisions, benchmark samples, allocation counts and size attribution.
 Those measurements describe their recorded snapshots. This integration does
-not claim new performance measurements or increase a size baseline.
+not claim new runtime performance measurements. The pin refresh has a
+separate measured driver-size report and updates the corresponding baselines.
 
 The builder benchmark will use the integrated consumer baseline once that
 dependency is settled. Its earlier compiler-only validation is insufficient
