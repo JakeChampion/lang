@@ -77,7 +77,7 @@ and a record still costs what a memoised line costs: one `GasLine` per
 record, and `x86_gas_bytes` copying its bytes out of the words in every
 relaxation round. In the module totals `x86_native` falls 94 M, the
 emitter and `asmcore` rise 54 M for the record plumbing (`ssa_xreg`,
-`lab_new`), and `x86_gas_bytes` alone rises from 120 M to 222 M with the
+`lab_new`), and `x86_gas_bytes` alone rises from 120 M to 192 M with the
 200,000 lines that moved to it. The next x86 step is therefore in the
 assembler: a run of consecutive byte records as one line, laid down once
 and re-copied as a span, so the 732,000 records become some tens of

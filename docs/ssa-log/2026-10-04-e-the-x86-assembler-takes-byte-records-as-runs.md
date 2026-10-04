@@ -12,7 +12,7 @@ relaxation round through `x86_gas_bytes`, one call per record per round,
 and dropped at the end. That is why the emitter slice before this one
 measured −0.33% where the arm64 slices measured −2.5% and −4%: the x86
 line memo had already made a repeated text line cheap, and a record cost
-what a memoised line cost. `x86_gas_bytes` alone was 222 M, up from 120 M,
+what a memoised line cost. `x86_gas_bytes` alone was 192 M, up from 120 M,
 with the 200,000 lines that moved to it.
 
 ## What changed

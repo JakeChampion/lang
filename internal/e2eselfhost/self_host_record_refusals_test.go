@@ -78,6 +78,13 @@ function main(): i32 {
     let rr = x86_native.x86_gas_assemble_words(".text\n\x01\n\x01\n\x04\n\x01\n", buf_take_bytes(run));
     let rt = x86_native.x86_gas_assemble_words(".text\n    pushq %r12\n    movq %rsp, %rbp\nl:\n    popq %r12\n", buf_take_bytes(buf_new(1)));
     print("x86_run " + util.i32_to_string(first_diff(rr.code, rt.code)) + " " + util.i32_to_string(rr.unknown.len() + rt.unknown.len()) + " " + util.i32_to_string(rr.code.len()));
+    // x86: a run the source ends in, its last marker without a newline, is
+    // still laid down.
+    let trun: usize = buf_new(64);
+    for x in words_of(x86_native.x86_rec_push_r(12)) { buf_push_byte(trun, x as i32); }
+    for x in words_of(x86_native.x86_rec_mov_rr(64, 5, 4)) { buf_push_byte(trun, x as i32); }
+    let tail_run = x86_native.x86_gas_assemble_words(".text\n\x01\n\x01", buf_take_bytes(trun));
+    print("x86_run_tail " + util.i32_to_string(tail_run.unknown.len()) + " " + util.i32_to_string(tail_run.code.len()));
     // x86: jmp (kind 16) to label id 7 with no definition, then with one.
     let bad = x86_native.x86_gas_assemble_words(".text\n\x05\n", pack(7, 16));
     print("x86_undefined_unknown " + util.i32_to_string(bad.unknown.len()));
@@ -166,7 +173,8 @@ func TestSelfHostRecordRefusals(t *testing.T) {
 		"\nx86_mov_rsp_base -1 0\n",
 		"\nx86_mov_r13_base -1 0\n",
 		"\nx86_alu_rsp -1 0\n",
-		"\nx86_run -1 0 7\n", // 41 54, 48 89 e5, 41 5c
+		"\nx86_run -1 0 7\n",   // 41 54, 48 89 e5, 41 5c
+		"\nx86_run_tail 0 5\n", // 41 54, 48 89 e5: the run closed by the end of the source
 		"\nx86_undefined_unknown 1\n",
 		"\n  branch to a label id nothing defines\n",
 		"\nx86_defined_unknown 0\n",

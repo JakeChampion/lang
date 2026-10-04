@@ -6416,7 +6416,8 @@ pub function x86_gas_assemble(src: string): X86Asm {
 
 // x86_gas_assemble_words assembles `src` with the instructions an emitter
 // encoded itself: each line starting \x01 takes the next record of `words`,
-// a length byte and that many bytes of instruction. A line starting \x03 is
+// a length byte and that many bytes of instruction, and consecutive ones are
+// one line, a run of records laid down together. A line starting \x03 is
 // an instruction with nothing to trim; \x04 defines the label whose id the
 // next eight bytes of `words` hold; \x05 branches to the label id in the
 // high four of the next eight, by the jump kind in the low four.
@@ -7454,6 +7455,9 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
       gl = memo.lines[memo.lines.len() - 1];
     }
     out = out.append(gl);
+  }
+  if (run_at >= 0) {
+    out = out.append(x86_bytes_line(run_at, run_end));
   }
   if (wi != words.len()) {
     out = out.append(x86_bytes_line(0 - 1, 0));
