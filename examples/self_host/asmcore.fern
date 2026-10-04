@@ -10976,9 +10976,7 @@ pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.LowerResult, r
   let d: DbgVars = DbgVars { at: util.bools(npos + 1, false), rows: [] };
   let i: i32 = 0;
   while (i < r.dbg_slots.len()) {
-    if (dbg_scalar(r.dbg_types[i])) {
-      d = dbg_var(d, fn_label, a, r, i, repl, seen_vals, seen_slots, locs, npos);
-    }
+    d = dbg_var(d, fn_label, a, r, i, repl, seen_vals, seen_slots, locs, npos);
     i = i + 1;
   }
   return d;
@@ -11022,17 +11020,6 @@ function dbg_home(a: ssa.Alloc, repl: i32[], locs: string[], npos: i32, v: i32):
     return 0 - 1;
   }
   return v;
-}
-
-// dbg_scalar reports a type the first slice of variable DIEs describes: the
-// scalars a single register or slot holds.
-function dbg_scalar(t: string): boolean {
-  for s in ["i32", "i64", "u8", "u32", "u64", "usize", "isize", "f64", "f32", "boolean"] {
-    if (t == s) {
-      return true;
-    }
-  }
-  return false;
 }
 
 pub function dbg_label_name(fn_label: string, pos: i32): string {
