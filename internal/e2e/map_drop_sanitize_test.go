@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
@@ -48,7 +46,7 @@ func checkMapDropFinding(t *testing.T, stderr string, code, want int, finding st
 
 func TestX86_64SanitizeMapHandleOverRelease(t *testing.T) {
 	_, stderr, code := runSanitizeX86_64(t, mapOverReleaseSrc)
-	checkMapDropFinding(t, stderr, code, x86_64.ExitSanitizer, "fern-sanitizer: rc over-release (double free)")
+	checkMapDropFinding(t, stderr, code, e2eharness.ExitSanitizer, "fern-sanitizer: rc over-release (double free)")
 }
 
 // Unsanitized, the over-release is counted rather than fatal.
@@ -61,15 +59,15 @@ func TestX86_64MapHandleOverReleaseCounted(t *testing.T) {
 
 func TestX86_64SanitizeMapHandleUseAfterFree(t *testing.T) {
 	_, stderr, code := runSanitizeX86_64(t, mapDoubleDropSrc)
-	checkMapDropFinding(t, stderr, code, x86_64.ExitSanitizer, "fern-sanitizer: use-after-free (touched a quarantined block)")
+	checkMapDropFinding(t, stderr, code, e2eharness.ExitSanitizer, "fern-sanitizer: use-after-free (touched a quarantined block)")
 }
 
 func TestArm64SanitizeMapHandleOverRelease(t *testing.T) {
 	_, stderr, code := runSanitizeArm64(t, mapOverReleaseSrc)
-	checkMapDropFinding(t, stderr, code, arm64codegen.ExitSanitizer, "fern-sanitizer: rc over-release (double free)")
+	checkMapDropFinding(t, stderr, code, e2eharness.ExitSanitizer, "fern-sanitizer: rc over-release (double free)")
 }
 
 func TestArm64SanitizeMapHandleUseAfterFree(t *testing.T) {
 	_, stderr, code := runSanitizeArm64(t, mapDoubleDropSrc)
-	checkMapDropFinding(t, stderr, code, arm64codegen.ExitSanitizer, "fern-sanitizer: use-after-free (touched a quarantined block)")
+	checkMapDropFinding(t, stderr, code, e2eharness.ExitSanitizer, "fern-sanitizer: use-after-free (touched a quarantined block)")
 }

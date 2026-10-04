@@ -101,35 +101,11 @@ func TestX86_64XattrPrimitives(t *testing.T) {
 	checkXattrWrites(t, dir)
 }
 
-func TestX86_64SSAXattrPrimitives(t *testing.T) {
-	qemu := x86QemuOrEmpty(t)
-	bin := buildFernCLI(t)
-	dir := t.TempDir()
-	src := xattrFixture(t, dir)
-	for _, backend := range []string{"flat", "ssa"} {
-		if code := runPathProbe(t, bin, qemu, dir, "xattr", backend, src, ""); code != 0 {
-			t.Errorf("-backend %s: exit = %d, want 0 — the code names the step (see xattrFixture)", backend, code)
-		}
-	}
-	checkXattrWrites(t, dir)
-}
-
 func TestArm64XattrPrimitives(t *testing.T) {
 	dir := t.TempDir()
 	out, code := compileAndRunArm64(t, xattrFixture(t, dir))
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see xattrFixture)\n%s", code, out)
-	}
-	checkXattrWrites(t, dir)
-}
-
-func TestArm64SSAXattrPrimitives(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	dir := t.TempDir()
-	bin := compileArm64SSA(t, fern, xattrFixture(t, dir), os.Environ())
-	if code, stderr := runArm64SSABin(t, qemu, bin, dir, os.Environ()); code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see xattrFixture)\n%s", code, stderr)
 	}
 	checkXattrWrites(t, dir)
 }

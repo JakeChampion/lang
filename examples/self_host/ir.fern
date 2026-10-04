@@ -7,8 +7,8 @@
 //
 // RC is lowered to IR once here and each backend instruction-selects an
 // opcode, rather than every backend hand-writing its own RC emission.
-// (ssa.fern mirrors the DOWNSTREAM optimiser `internal/ssa`, which native
-// lifts FROM this IR; it is a different, higher layer.)
+// (ssa.fern is the DOWNSTREAM optimiser, lifted FROM this IR; it is a
+// different, higher layer.)
 //
 // Representation (mirrors internal/ir/ir.go, but pointer-free — the
 // self-host's value-semantics style, matching ssa.fern: a function body is
@@ -392,6 +392,8 @@ pub function op_arr_push(): Op {
 // the dominant self-host-emitted leak that OOMed the per-module self-compile of
 // the large modules (#3452 / #3425). Register-backend only difference from
 // arr_push is the helper called; element width is unchanged (8-byte slot).
+// An i32_imm of 1 on any owned push says the receiver was just tested unique,
+// so the push needs no count test of its own.
 pub function op_arr_push_owned(): Op {
   return op0(93);
 }
@@ -571,12 +573,6 @@ pub function op_str_cmp(): Op {
 // [s+4+i]). No bounds check (matches the AST path).
 pub function op_str_index(): Op {
   return op0(101);
-}
-
-// op_str_index_nc is the byte read with its bounds check elided (i32_imm 1), for
-// an index the lowering proved below the length, as op_arr_get_nc is.
-pub function op_str_index_nc(): Op {
-  return Op { ...op0(101), i32_imm: 1 };
 }
 
 // `str_slice` pops [str, start, end] → a fresh string for `s[start:end]`. On
@@ -7244,6 +7240,20 @@ function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32): Opti
     pre = pre.append(op_store_local(cur.n_locals + n));
     n = n + 1;
   }
+  // The header reads each operand's length, so its box is valid wherever the
+  // loop is reached, and its data address may be read there too.
+  let data_for: i32[] = licm_data_slots(ops, loop_idx, end, slot_for, cur.n_locals + n);
+  let slots: i32 = n;
+  let d: i32 = 0;
+  while (d < data_for.len()) {
+    if (data_for[d] >= 0) {
+      pre = pre.append(op_load_local(d));
+      pre = pre.append(op_str_data());
+      pre = pre.append(op_store_local(data_for[d]));
+      slots = slots + 1;
+    }
+    d = d + 1;
+  }
   let out: Op[] = [];
   let j: i32 = 0;
   while (j < loop_idx) {
@@ -7256,18 +7266,52 @@ function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32): Opti
     p = p + 1;
   }
   out = out.append(ops[loop_idx]);
+  let k_load: i32 = kind_id("load_local");
+  let k_len: i32 = kind_id("str_len");
+  let k_data: i32 = kind_id("str_data");
   j = loop_idx + 1;
   while (j < ops.len()) {
-    let slot: i32 = licm_cached_len(ops, j, hdr_end, slot_for);
+    let slot: i32 = 0 - 1;
+    if (j + 1 < end && ops[j].kind_tag == k_load) {
+      let src: i32 = ops[j].i32_imm;
+      if (j + 1 < hdr_end && ops[j + 1].kind_tag == k_len) {
+        slot = slot_for[src];
+      } else if (ops[j + 1].kind_tag == k_data && src < data_for.len()) {
+        slot = data_for[src];
+      }
+    }
     if (slot >= 0) {
       out = out.append(op_load_local(slot));
-      j = j + 2;  // the str_len is consumed with the load
+      j = j + 2;  // the str_len or str_data is consumed with the load
     } else {
       out = out.append(ops[j]);
       j = j + 1;
     }
   }
-  return OptimizedOps { ops: out, n_locals: cur.n_locals + order.len() };
+  return OptimizedOps { ops: out, n_locals: cur.n_locals + slots };
+}
+
+// licm_data_slots gives each hoisted operand (slot_for) whose data address
+// the loop reads its cache slot, numbered on from `next`; -1 for the rest.
+function licm_data_slots(ops: Op[], loop_idx: i32, end: i32, slot_for: i32[], next: i32): i32[] {
+  let k_load: i32 = kind_id("load_local");
+  let k_data: i32 = kind_id("str_data");
+  let out: i32[] = [];
+  while (out.len() < slot_for.len()) {
+    out = out.append(0 - 1);
+  }
+  let j: i32 = loop_idx + 1;
+  while (j + 1 < end) {
+    if (ops[j].kind_tag == k_load && ops[j + 1].kind_tag == k_data) {
+      let src: i32 = ops[j].i32_imm;
+      if (src < slot_for.len() && slot_for[src] >= 0 && out[src] < 0) {
+        out = out.with(src, next);
+        next = next + 1;
+      }
+    }
+    j = j + 1;
+  }
+  return out;
 }
 
 // licm_candidates is every local the header takes a length of without the
@@ -7299,18 +7343,6 @@ function licm_listed(order: i32[], src: i32): boolean {
     i = i + 1;
   }
   return false;
-}
-
-// licm_cached_len is the cache slot when ops[j] ; ops[j + 1] is a header read
-// `load_local src ; str_len` of a hoisted operand, else -1.
-function licm_cached_len(ops: Op[], j: i32, hdr_end: i32, slot_for: i32[]): i32 {
-  if (j + 1 >= hdr_end) {
-    return 0 - 1;
-  }
-  if (ops[j].kind_tag != kind_id("load_local") || ops[j + 1].kind_tag != kind_id("str_len")) {
-    return 0 - 1;
-  }
-  return slot_for[ops[j].i32_imm];
 }
 
 // licm_header_end is one past the last op that runs unconditionally on

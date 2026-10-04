@@ -23,11 +23,7 @@
 //   - a short array and an out-of-range action are both refused, so neither
 //     is read past nor silently applied.
 //
-// Every native emitter gets a named leg. arm64-linux's default is the SSA
-// backend since #9511, so leaving a leg to inherit the default would exercise
-// that one twice and the stack machine not at all. x86-64-ssa has no leg: that
-// backend has no handle family, so `r.termios_get()` is outside it —
-// `docs/BACKEND-PARITY.md`.
+// Both native emitters get a leg.
 package e2e
 
 import (
@@ -123,7 +119,7 @@ func termiosOnPty(t *testing.T, cmd *exec.Cmd) int {
 // returns the binary's path. The in-process helpers beside it all RUN what
 // they build, and this test has to hand the child a terminal instead of a
 // pipe, so it needs the path.
-func termiosCompile(t *testing.T, target, backend string) (dir, bin string) {
+func termiosCompile(t *testing.T, target string) (dir, bin string) {
 	t.Helper()
 	fern := buildLangBinForInterp(t)
 	dir = t.TempDir()
@@ -132,19 +128,15 @@ func termiosCompile(t *testing.T, target, backend string) (dir, bin string) {
 		t.Fatal(err)
 	}
 	bin = filepath.Join(dir, "prog")
-	args := []string{"-target", target, "-o", bin, src}
-	if backend != "" {
-		args = append([]string{"-backend", backend}, args...)
-	}
-	out, err := exec.Command(fern, args...).CombinedOutput()
+	out, err := exec.Command(fern, "-target", target, "-o", bin, src).CombinedOutput()
 	if err != nil {
-		t.Fatalf("compile for %s -backend %q: %v\n%s", target, backend, err, out)
+		t.Fatalf("compile for %s: %v\n%s", target, err, out)
 	}
 	return dir, bin
 }
 
 func TestX86_64Termios(t *testing.T) {
-	_, bin := termiosCompile(t, "x86-64-linux", "")
+	_, bin := termiosCompile(t, "x86-64-linux")
 	if code := termiosOnPty(t, exec.Command(bin)); code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see termiosSource)", code)
 	}
@@ -152,7 +144,7 @@ func TestX86_64Termios(t *testing.T) {
 
 func TestArm64Termios(t *testing.T) {
 	qemu := arm64QemuOrEmpty(t)
-	_, bin := termiosCompile(t, "arm64-linux", "flat")
+	_, bin := termiosCompile(t, "arm64-linux")
 	if code := termiosOnPty(t, runArm64Bin(qemu, bin)); code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see termiosSource)", code)
 	}
@@ -198,17 +190,5 @@ func TestWASMTermiosRefused(t *testing.T) {
 				t.Errorf("%s: %s refused on %q, want tty", target, v.Builtin, v.Capability)
 			}
 		}
-	}
-}
-
-// TestArm64SSATermios is the same probe under the arm64 SSA backend, which
-// emits its own termios_get / termios_set. Both legs name their backend: the
-// SSA one is arm64-linux's default now, so an inherited leg would run it twice
-// and leave the stack machine's helpers with no terminal coverage at all.
-func TestArm64SSATermios(t *testing.T) {
-	qemu := arm64QemuOrEmpty(t)
-	_, bin := termiosCompile(t, "arm64-linux", "ssa")
-	if code := termiosOnPty(t, runArm64Bin(qemu, bin)); code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see termiosSource)", code)
 	}
 }

@@ -52,7 +52,6 @@ func TestArm64RunTestsFallBackToNative(t *testing.T) {
 	pkgs := []string{
 		filepath.Join("..", "native", "elf"),
 		filepath.Join("..", "native", "arm64"),
-		filepath.Join("..", "codegen", "arm64ssa"),
 	}
 	for _, dir := range pkgs {
 		files, err := filepath.Glob(filepath.Join(dir, "*_test.go"))

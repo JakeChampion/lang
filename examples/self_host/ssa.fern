@@ -3,9 +3,9 @@
 // on: the data model, the kind and terminator registries, the optimiser
 // passes and the register allocator. `ssa_lift.fern` builds an SFunc from a
 // lowered function's stack IR; `asm_arm64_ir.fern` and `asm_ir.fern` emit
-// it. The Go compiler's internal/ssa is the model.
+// it.
 //
-// Representation (mirrors internal/ssa/ssa.go, but pointer-free — values
+// Representation (pointer-free — values
 // and blocks are referenced by integer id / array index, matching the
 // self-host's value-semantics style):
 //   - an SSA Value is an i32 id; an instruction (SInst) DEFINES the value
@@ -67,6 +67,10 @@ pub struct SFunc { name: string, nparams: i32, nvals: i32, blocks: SBlock[], ent
 
 function t_ret(value: i32): STerm {
   return STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: value };
+}
+
+function t_br(target: i32): STerm {
+  return STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 };
 }
 
 function t_brif(cond: i32, t: i32, f: i32): STerm {
@@ -2576,11 +2580,219 @@ function has_pred(ps: i32[], id: i32): boolean {
   return false;
 }
 
+// ---- branches on boolean joins ---------------------------------------------
+//
+// A boolean made as a VALUE by `&&` or `||` — a predicate spliced into its
+// caller, or a flag held in a local — reaches its use as a phi of each arm's
+// 0/1, and a branch on that phi tests again what the arms just decided.
+// thread_bool_joins sends each arm straight to the branch's targets: an arm
+// bringing a constant jumps to the side the constant picks, and one bringing a
+// comparison branches on it, which the emitters fuse into compare and jump.
+//
+// The join must hold that phi alone, read by nothing but the branch (its own,
+// or that of an empty block it falls into), be entered only forward, and
+// branch forward to blocks without phis. An arm is moved only when it ends in
+// a plain branch to the join. Every block that dominates the join dominates
+// each block entering it, so no other block changes dominator.
+
+// BoolJoin is a join the pass can take apart: `j` its position, `k` the
+// position of the empty block holding the branch or -1, `t` / `f` the targets.
+struct BoolJoin { ok: boolean, j: i32, k: i32, t: i32, f: i32 }
+
+pub struct Threading { f: SFunc, changed: boolean }
+
+struct ThreadRound { blocks: SBlock[], busy: boolean[], gone: boolean[], changed: boolean }
+
+pub function thread_bool_joins(f: SFunc): Threading {
+  let g: SFunc = f;
+  let changed: boolean = false;
+  let rounds: i32 = 0;
+  while (rounds < 8) {
+    let r: Threading = thread_round(g);
+    if (!r.changed) {
+      return Threading { f: g, changed: changed };
+    }
+    g = r.f;
+    changed = true;
+    rounds = rounds + 1;
+  }
+  return Threading { f: g, changed: changed };
+}
+
+// thread_round threads every join whose blocks no earlier join in the round
+// rewrote; the next round sees the graph that leaves.
+function thread_round(f: SFunc): Threading {
+  let at: i32[] = block_positions(f);
+  let uses: i32[] = use_counts(f);
+  let konst: i32[] = truth_constants(f);
+  let flags: boolean[] = [];
+  while (flags.len() < f.blocks.len()) {
+    flags = flags.append(false);
+  }
+  let r: ThreadRound = ThreadRound { blocks: f.blocks, busy: flags, gone: flags, changed: false };
+  let j: i32 = 0;
+  while (j < f.blocks.len()) {
+    let jn: BoolJoin = bool_join_at(f, at, uses, j);
+    if (jn.ok && !join_busy(f, at, r.busy, jn)) {
+      r = thread_join(f, at, konst, jn, r);
+    }
+    j = j + 1;
+  }
+  if (!r.changed) {
+    return Threading { f: f, changed: false };
+  }
+  let kept: SBlock[] = [];
+  let i: i32 = 0;
+  while (i < r.blocks.len()) {
+    if (!r.gone[i]) {
+      kept = kept.append(r.blocks[i]);
+    }
+    i = i + 1;
+  }
+  let g: SFunc = SFunc { ...f, blocks: kept };
+  return Threading { f: SFunc { ...g, blocks: refreshed_preds(g) }, changed: true };
+}
+
+// truth_constants maps each value an integer or boolean constant defines to
+// 1 or 0 as a branch reads it, and every other value to -1.
+function truth_constants(f: SFunc): i32[] {
+  let out: i32[] = [];
+  while (out.len() < f.nvals) {
+    out = out.append(0 - 1);
+  }
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if ((ins.kind_tag == 1 || ins.kind_tag == 2) && ins.result >= 0 && ins.result < out.len()) {
+        let truth: i32 = 0;
+        if (ins.imm != 0) {
+          truth = 1;
+        }
+        out = out.with(ins.result, truth);
+      }
+    }
+  }
+  return out;
+}
+
+// bool_join_at is the join at position j, or one that is not ok.
+function bool_join_at(f: SFunc, at: i32[], uses: i32[], j: i32): BoolJoin {
+  let blk: SBlock = f.blocks[j];
+  let none: BoolJoin = BoolJoin { ok: false, j: j, k: 0 - 1, t: 0, f: 0 };
+  if (blk.insts.len() != 1 || blk.insts[0].kind_tag != 8 || uses[blk.insts[0].result] != 1 || !entered_forward(f, at, j)) {
+    return none;
+  }
+  let k: i32 = 0 - 1;
+  let last: i32 = j;
+  let br: STerm = blk.term;
+  if (br.kind_tag == 2) {
+    k = position_of(at, br.target);
+    if (k <= j || !branch_only(f.blocks[k], blk.id)) {
+      return none;
+    }
+    last = k;
+    br = f.blocks[k].term;
+  }
+  if (br.kind_tag != 3 || br.cond != blk.insts[0].result || br.t == br.f
+    || !plain_target(f, at, br.t, last) || !plain_target(f, at, br.f, last)) {
+    return none;
+  }
+  return BoolJoin { ok: true, j: j, k: k, t: br.t, f: br.f };
+}
+
+// entered_forward says every edge into position j comes from a block laid out
+// before it, one edge per predecessor, and the phi has an operand for each.
+function entered_forward(f: SFunc, at: i32[], j: i32): boolean {
+  let blk: SBlock = f.blocks[j];
+  if (blk.preds.len() == 0 || blk.insts[0].args.len() != blk.preds.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < blk.preds.len()) {
+    let p: i32 = position_of(at, blk.preds[i]);
+    if (p < 0 || p >= j || pred_slot(blk, blk.preds[i]) != i) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// branch_only says b holds nothing but a conditional branch and is entered
+// from `from` alone.
+function branch_only(b: SBlock, from: i32): boolean {
+  return b.insts.len() == 0 && b.term.kind_tag == 3 && b.preds.len() == 1 && b.preds[0] == from;
+}
+
+// plain_target says the block `id` is laid out past position `last` and has
+// no phis, so a new edge into it needs no operand.
+function plain_target(f: SFunc, at: i32[], id: i32, last: i32): boolean {
+  let p: i32 = position_of(at, id);
+  return p > last && !has_phi(f.blocks[p]);
+}
+
+// join_busy says an earlier join this round rewrote a block this one would.
+function join_busy(f: SFunc, at: i32[], busy: boolean[], jn: BoolJoin): boolean {
+  if (busy[jn.j] || jn.k >= 0 && busy[jn.k]) {
+    return true;
+  }
+  for p in f.blocks[jn.j].preds {
+    if (busy[at[p]]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// thread_join moves every edge into the join that ends a plain branch, and
+// drops the join once no edge is left entering it.
+function thread_join(f: SFunc, at: i32[], konst: i32[], jn: BoolJoin, r: ThreadRound): ThreadRound {
+  let jb: SBlock = f.blocks[jn.j];
+  let blocks: SBlock[] = r.blocks;
+  let busy: boolean[] = r.busy.with(jn.j, true);
+  let kept: i32 = 0;
+  let i: i32 = 0;
+  while (i < jb.preds.len()) {
+    let pp: i32 = at[jb.preds[i]];
+    if (blocks[pp].term.kind_tag == 2) {
+      blocks = blocks.with(pp, SBlock { ...blocks[pp], term: arm_term(jb.insts[0].args[i], konst, jn) });
+      busy = busy.with(pp, true);
+    } else {
+      kept = kept + 1;
+    }
+    i = i + 1;
+  }
+  let gone: boolean[] = r.gone;
+  if (kept == 0) {
+    gone = gone.with(jn.j, true);
+    if (jn.k >= 0) {
+      gone = gone.with(jn.k, true);
+    }
+  }
+  return ThreadRound { blocks: blocks, busy: busy, gone: gone, changed: r.changed || kept < jb.preds.len() };
+}
+
+// arm_term is where an arm bringing `v` to the join goes instead: the target
+// a constant picks, or a branch on `v` itself.
+function arm_term(v: i32, konst: i32[], jn: BoolJoin): STerm {
+  if (v >= 0 && v < konst.len() && konst[v] == 1) {
+    return t_br(jn.t);
+  }
+  if (v >= 0 && v < konst.len() && konst[v] == 0) {
+    return t_br(jn.f);
+  }
+  return t_brif(v, jn.t, jn.f);
+}
+
 // register_form is a lifted function as the register backends allocate it:
 // trivial phis folded, rotates fused, wraps nothing reads dropped, dead values
-// pruned and forwarding blocks threaded.
+// pruned, branches on boolean joins threaded and forwarding blocks threaded.
 pub function register_form(f: SFunc): SFunc {
-  return thread_forwarding(prune_dead(drop_low_wraps(fuse_rotates(prune_trivial_phis(f)))));
+  let g: SFunc = prune_dead(drop_low_wraps(fuse_rotates(prune_trivial_phis(f))));
+  let t: Threading = thread_bool_joins(g);
+  if (t.changed) {
+    g = prune_dead(t.f);
+  }
+  return thread_forwarding(g);
 }
 
 // drop_low_wraps replaces a signed 32-bit wrap, extend or cast by its operand where

@@ -7,18 +7,14 @@ import (
 	"testing"
 )
 
-// TestSelfHostPlatformBuiltinLowers pins the `Platform` half of #5686.
+// TestSelfHostPlatformBuiltinLowers pins the std/serve half of #5686.
 //
-// `Platform` is a builtin struct: native declares it in the checker's builtin
-// struct table (the capability bag threaded as every handler's second
-// parameter). The self-host's builtins.fern — which exists precisely so the
-// self-host reads those declarations from real source instead of drifting —
-// never declared it. So any signature mentioning it, which is EVERY std/serve
-// serve entry point (`(HttpRequest, Platform) => HttpResponse`), failed to
-// resolve and `__serve_loop` reported `BAIL lower`. One bailing function drops
-// the whole module (and the AST emitter it fell to could not emit `tcp_listen`
-// or `poll` at all) — so the failure surfaced far from its cause, as `undefined
-// reference to __fn_tcp_listen` at link.
+// Every std/serve entry point names the host platform
+// (`(HttpRequest, platform.Host) => HttpResponse`); when the self-host could
+// not resolve that type, `__serve_loop` reported `BAIL lower`. One bailing
+// function drops the whole module (and the AST emitter it fell to could not
+// emit `tcp_listen` or `poll` at all) — so the failure surfaced far from its
+// cause, as `undefined reference to __fn_tcp_listen` at link.
 //
 // The probe is the assertion: every function of the std/serve closure must lower,
 // with the serve loop named explicitly so a regression says which one broke.

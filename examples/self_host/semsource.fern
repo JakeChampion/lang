@@ -8331,9 +8331,9 @@ pub function with_inferred_modes(b: Built): Built {
   return Built { decls: decls, instances: instances, contracts: inferred.table, names: b.names, dyn_arms: b.dyn_arms };
 }
 
-// Which rows the inference moved, in the order `semlower.rows_of` walks them:
-// every declaration, then every instance. All false means no parameter changed
-// hands and the second lowering would produce the same bodies throughout.
+// Which rows the inference moved, in the order `semlower.rows_planned` walks
+// them: every declaration, then every instance. All false means no parameter
+// changed hands and the inferred modes would produce the same bodies throughout.
 //
 // Per row rather than per module, because a row the inference did not move
 // keeps its body: `ssaunits.plan` reads a declaration's own modes and the

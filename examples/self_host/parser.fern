@@ -10219,6 +10219,8 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     fsf = fsf.append(StructFieldDecl { name: "mtime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
     fsf = fsf.append(StructFieldDecl { name: "ctime", type_name: "i64", fn_ret: "", fn_param_types: "" });
     fsf = fsf.append(StructFieldDecl { name: "ctime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "btime", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    fsf = fsf.append(StructFieldDecl { name: "btime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   // FsStat: the builtin struct returned by statfs(path) — the filesystem's
@@ -10313,27 +10315,6 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     hsf = hsf.append(StructFieldDecl { name: "trailers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
-  // Platform — the capability bag threaded as every handler's second
-  // parameter, and so a component of every `(HttpRequest, Platform) =>
-  // HttpResponse` signature in std/serve. builtins.fern declares it for the
-  // import-driven driver; this entry covers the paths that never read that
-  // file (asm_load_run's stdlib-root loading), where its absence made
-  // std/serve's __serve_loop bail — and the AST emitter it then fell to could
-  // not emit tcp_listen / poll, so the failure surfaced as a link error
-  // (#5686).
-  // Fields mirror internal/checker/checker.go: `version` is the bag's ABI
-  // version, `mode` + `sink` the mock seam (Rec §6) — a recording bag is
-  // mode 1 over a cell std/platform's capability methods append to — and
-  // `handle` the worker-owned runtime handle (the serving worker's
-  // reactor, 0 outside one).
-  if (!name_declared(structs, "Platform")) {
-    let pltf: StructFieldDecl[] = [];
-    pltf = pltf.append(StructFieldDecl { name: "version", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    pltf = pltf.append(StructFieldDecl { name: "mode", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    pltf = pltf.append(StructFieldDecl { name: "sink", type_name: "Cell[string]", fn_ret: "", fn_param_types: "" });
-    pltf = pltf.append(StructFieldDecl { name: "handle", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    structs = structs.append(StructDecl { name: "Platform", fields: pltf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
-  }
   // std/time's seven date/time types are compiler built-ins (registered in
   // the Go checker, not `struct`-declared in std/time), so the self-host's
   // shape-pointer dispatch + field-offset resolution need their layouts here
@@ -10373,19 +10354,14 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     spf = spf.append(StructFieldDecl { name: "nanos", type_name: "i32", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "Span", fields: spf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
-  // std/io_buffered + std/stream + std/mock_platform built-ins (registered
-  // in the Go checker, not `struct`-declared in source) — same injection
-  // pattern as the time types. Field lists mirror checker.go exactly:
+  // std/io_buffered + std/stream built-ins (registered in the Go checker,
+  // not `struct`-declared in source) — same injection pattern as the time
+  // types. Field lists mirror checker.go exactly:
   //   Stream       { data: u8[], pos: i32 }       — byte cursor reader
   //   BytesWriter  { data: u8[] }                 — in-memory write buffer
-  //   MockCall     { name: string, args: string } — recorded call entry
-  //   MockPlatform { sink: Cell[string] }          — call-recording mock
-  // Stream / BytesWriter carry a sub-word (u8[]) array field, now leak-safe
+  // Both carry a sub-word (u8[]) array field, now leak-safe
   // (is_leaksafe_array_field), so their constructors / methods lower on the
-  // IR path. MockPlatform's `sink` is the same cell the bag from
-  // `as_platform()` carries — one effect log, two views. MockCall is two
-  // strings (leaf-safe).
-  structs = add_builtin_struct2(structs, "MockCall", "name", "string", "args", "string");
+  // IR path.
   structs = add_builtin_struct2(structs, "Stream", "data", "u8[]", "pos", "i32");
   if (!name_declared(structs, "ChunkProducer")) {
     let cpf: StructFieldDecl[] = [];
@@ -10396,11 +10372,6 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     let bwf: StructFieldDecl[] = [];
     bwf = bwf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "BytesWriter", fields: bwf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
-  }
-  if (!name_declared(structs, "MockPlatform")) {
-    let mpf: StructFieldDecl[] = [];
-    mpf = mpf.append(StructFieldDecl { name: "sink", type_name: "Cell[string]", fn_ret: "", fn_param_types: "" });
-    structs = structs.append(StructDecl { name: "MockPlatform", fields: mpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   // std/url's Url is a compiler built-in (registered in the Go checker, not
   // `struct`-declared in std/url), so the IR path needs its layout to lower
@@ -11293,6 +11264,22 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
       return tb;
     }
   }
+  // Callable pattern `(A) => R` vs `(Sq) => i32`: parameters pairwise, then
+  // the result, so a function-typed parameter's variables bind from a
+  // function value passed for it.
+  if (callable_ret_spelling(pattern).len() > 0 && callable_ret_spelling(concrete).len() > 0) {
+    let fpp: string[] = callable_param_spellings(pattern);
+    let fcp: string[] = callable_param_spellings(concrete);
+    if (fpp.len() == fcp.len()) {
+      let fb: MEnv = binds;
+      let fj: i32 = 0;
+      while (fj < fpp.len()) {
+        fb = bind_unify(fpp[fj], fcp[fj], tparams, fb);
+        fj = fj + 1;
+      }
+      return bind_unify(callable_ret_spelling(pattern), callable_ret_spelling(concrete), tparams, fb);
+    }
+  }
   let pb: i32 = first_bracket(pattern);
   let cb: i32 = first_bracket(concrete);
   if (pb > 0 && cb > 0 && slice_unchecked(pattern, pattern.len() - 1, pattern.len()) == "]" && slice_unchecked(concrete, concrete.len() - 1, concrete.len()) == "]") {
@@ -11644,6 +11631,165 @@ function fn_value_spelling(e: ast.Expr, env: MEnv, funcs: MFns): string {
   return "";
 }
 
+// fn_value_inst_key keys the instantiation of the generic `fd` named as a
+// value where the callable spelling `expected` (`(A, …) => R`) is wanted: each
+// parameter unified against its counterpart and the result against `R`. ""
+// when that leaves a type parameter unbound, or `expected` is no callable.
+function fn_value_inst_key(fd: FuncDecl, expected: string): string {
+  let ret: string = callable_ret_spelling(expected);
+  let ps: string[] = callable_param_spellings(expected);
+  if (ret.len() == 0 || ps.len() != fd.params.len()) {
+    return "";
+  }
+  let binds: MEnv = MEnv { mnames: [], mtypes: [] };
+  let i: i32 = 0;
+  while (i < ps.len()) {
+    binds = bind_unify(param_spelling(fd.params[i]), ps[i], fd.type_params, binds);
+    i = i + 1;
+  }
+  let fret: string = fd.ret_type;
+  if (fret == "fn") {
+    fret = "(" + fd.ret_fn_param_types + ") => " + fd.ret_fn_ret;
+  }
+  binds = bind_unify(fret, ret, fd.type_params, binds);
+  let key: string = binds_to_key(fd.type_params, binds);
+  // A binding to a type variable is the enclosing template's, not a type:
+  // its clone's body comes back here with the variable substituted.
+  for part in split_inst_key(key) {
+    if (type_str_vars(part, []).len() > 0) {
+      return "";
+    }
+  }
+  return key;
+}
+
+// param_spelling is a parameter's full type spelling: a function-typed one's
+// `fn` tag expanded from its sidecars.
+function param_spelling(p: ast.ParamDecl): string {
+  if (p.type_name == "fn") {
+    return "(" + p.fn_param_types + ") => " + p.fn_ret;
+  }
+  return p.type_name;
+}
+
+// generic_fn_value_name is the name a bounded generic function is named by
+// when `e` names one as a value (`f`, or `mod.f`), else "".
+function generic_fn_value_name(e: ast.Expr, env: MEnv, funcs: MFns): string {
+  if let ast.ExprIdent(id) = e {
+    if (env.elook(id.name).len() == 0 && bg_find(funcs, id.name) >= 0) {
+      return id.name;
+    }
+  }
+  if let ast.ExprFieldAccess(fa) = e {
+    if let ast.ExprIdent(m) = fa.obj {
+      if (bg_find(funcs, m.name + "." + fa.field) >= 0) {
+        return m.name + "." + fa.field;
+      }
+    }
+  }
+  return "";
+}
+
+// mono_fn_value names the clone of the generic function `e` names as a value,
+// keyed by the callable spelling `expected` it is wanted at; `e` unchanged
+// when that does not determine the clone. The checker accepts only the
+// references the expected type determines (E040 otherwise).
+function mono_fn_value(e: ast.Expr, expected: string, env: MEnv, funcs: MFns, ins: Insts): RExpr {
+  let name: string = generic_fn_value_name(e, env, funcs);
+  if (name.len() == 0 || expected.len() == 0) {
+    return RExpr { rexpr: e, rins: ins };
+  }
+  let key: string = fn_value_inst_key(funcs.decls[bg_find(funcs, name)], expected);
+  if (key.len() == 0) {
+    return RExpr { rexpr: e, rins: ins };
+  }
+  let cur: Insts = ins.iadd(name, key);
+  if let ast.ExprIdent(id) = e {
+    return RExpr { rexpr: ast.ExprIdent { ...id, name: name + "__" + sanitize_key(key) }, rins: cur };
+  }
+  if let ast.ExprFieldAccess(fa) = e {
+    return RExpr { rexpr: ast.ExprFieldAccess { ...fa, field: fa.field + "__" + sanitize_key(key) }, rins: cur };
+  }
+  return RExpr { rexpr: e, rins: ins };
+}
+
+// call_param_spellings is the parameter spellings of the top-level function a
+// call names, with a generic callee's own type parameters substituted from
+// the call; empty for any other callee.
+function call_param_spellings(c: ast.ExprCall, env: MEnv, funcs: MFns): string[] {
+  let none: string[] = [];
+  let name: string = "";
+  if let ast.ExprIdent(cid) = c.callee {
+    if (env.elook(cid.name).len() > 0) {
+      return callable_param_spellings(env.elook(cid.name));
+    }
+    name = cid.name;
+  }
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if let ast.ExprIdent(m) = fa.obj {
+      name = m.name + "." + fa.field;
+    }
+  }
+  if (name.len() == 0) {
+    return none;
+  }
+  for fd in funcs.decls {
+    if (fd.name == name && fd.receiver_type.len() == 0) {
+      // The callee's type variables, bounded or erased, as its other
+      // arguments bind them; one left unbound stays itself, and a clone
+      // keyed on it is refused below.
+      let binds: MEnv = full_ret_binds(fd, c.args, env, funcs, fd.all_type_params);
+      let cts: string[] = [];
+      for v in fd.all_type_params {
+        if (binds.elook(v).len() > 0) {
+          cts = cts.append(binds.elook(v));
+        } else {
+          cts = cts.append(v);
+        }
+      }
+      let out: string[] = [];
+      for p in fd.params {
+        out = out.append(subst_ty(param_spelling(p), fd.all_type_params, cts));
+      }
+      return out;
+    }
+  }
+  return none;
+}
+
+// mono_call_args rewrites a call's arguments, cloning a generic function named
+// as a value at the callable spelling its parameter wants.
+function mono_call_args(c: ast.ExprCall, env: MEnv, funcs: MFns, ins: Insts): (ast.Expr[], Insts) {
+  let nargs: ast.Expr[] = [];
+  let cur: Insts = ins;
+  let pspell: string[] = [];
+  if (call_names_fn_value(c, env, funcs)) {
+    pspell = call_param_spellings(c, env, funcs);
+  }
+  let i: i32 = 0;
+  while (i < c.args.len()) {
+    let ra: RExpr = mono_expr(c.args[i], env, funcs, cur);
+    if (i < pspell.len() && generic_fn_value_name(c.args[i], env, funcs).len() > 0) {
+      ra = mono_fn_value(c.args[i], pspell[i], env, funcs, cur);
+    }
+    cur = ra.rins;
+    nargs = nargs.append(ra.rexpr);
+    i = i + 1;
+  }
+  return (nargs, cur);
+}
+
+// call_names_fn_value reports whether any argument names a generic function
+// as a value, the only case call_param_spellings is needed for.
+function call_names_fn_value(c: ast.ExprCall, env: MEnv, funcs: MFns): boolean {
+  for a in c.args {
+    if (generic_fn_value_name(a, env, funcs).len() > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // callable_ret_spelling is the result of a callable spelling.
 function callable_ret_spelling(t: string): string {
   if (t.len() == 0) {
@@ -11724,9 +11870,11 @@ function full_ret_binds(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, 
       } else {
         binds = variant_arg_binds(fd.params[i].type_name, args[i], env, funcs, vars, binds);
       }
+      // A generic function named as the argument answers its own template's
+      // spellings, whose variables pin nothing of this call's.
       if (fd.params[i].type_name == "fn" && spelling_mentions_tparam(fd.params[i].fn_ret, vars)) {
         let lr: string = lambda_ret_of(args[i], env, funcs);
-        if (lr.len() > 0) {
+        if (lr.len() > 0 && type_str_vars(lr, []).len() == 0) {
           binds = bind_unify(fd.params[i].fn_ret, lr, vars, binds);
         }
       }
@@ -11735,7 +11883,7 @@ function full_ret_binds(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, 
         let lpts: string[] = lambda_param_types_of(args[i], env, funcs);
         let q: i32 = 0;
         while (q < fpts.len()) {
-          if (q < lpts.len() && lpts[q].len() > 0 && spelling_mentions_tparam(fpts[q], vars)) {
+          if (q < lpts.len() && lpts[q].len() > 0 && spelling_mentions_tparam(fpts[q], vars) && type_str_vars(lpts[q], []).len() == 0) {
             binds = bind_unify(fpts[q], lpts[q], vars, binds);
           }
           q = q + 1;
@@ -12543,15 +12691,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
       return RExpr { rexpr: ast.ExprUnary { op: u.op, operand: o.rexpr, line: u.line, col: u.col, ty: u.ty }, rins: o.rins };
     },
     ast.ExprCall(c) => {
-      let nargs: ast.Expr[] = [];
-      let cur: Insts = ins;
-      let i: i32 = 0;
-      while (i < c.args.len()) {
-        let ra: RExpr = mono_expr(c.args[i], env, funcs, cur);
-        cur = ra.rins;
-        nargs = nargs.append(ra.rexpr);
-        i = i + 1;
-      }
+      let (nargs, cur) = mono_call_args(c, env, funcs, ins);
       match (c.callee) {
         ast.ExprIdent(cid) => {
           let bi: i32 = bg_find(funcs, cid.name);
@@ -12810,7 +12950,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
         // me_field_type_of here; this is the function-generic twin.
         let rv: RExpr = mono_call_expected(
           s.field_values[i],
-          me_field_type_of(funcs.structs, s.type_name, s.field_names[i]), env, funcs, cur,
+          me_field_spelling_of(funcs.structs, s.type_name, s.field_names[i]), env, funcs, cur,
         );
         cur = rv.rins;
         vals = vals.append(rv.rexpr);
@@ -12844,6 +12984,9 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
 // isn't a bounded generic, or the instantiation still can't be resolved — a
 // strict superset of mono_expr for this position.
 function mono_call_expected(e: ast.Expr, expected: string, env: MEnv, funcs: MFns, ins: Insts): RExpr {
+  if (generic_fn_value_name(e, env, funcs).len() > 0) {
+    return mono_fn_value(e, expected, env, funcs, ins);
+  }
   if (expected.len() > 0) {
     match (e) {
       ast.ExprCall(c) => {
@@ -12856,15 +12999,7 @@ function mono_call_expected(e: ast.Expr, expected: string, env: MEnv, funcs: MFn
                 key = infer_inst_ret(funcs.decls[bi], c.args, expected, env, funcs);
               }
               if (key.len() > 0) {
-                let nargs: ast.Expr[] = [];
-                let cur: Insts = ins;
-                let i: i32 = 0;
-                while (i < c.args.len()) {
-                  let ra: RExpr = mono_expr(c.args[i], env, funcs, cur);
-                  cur = ra.rins;
-                  nargs = nargs.append(ra.rexpr);
-                  i = i + 1;
-                }
+                let (nargs, cur) = mono_call_args(c, env, funcs, ins);
                 let mang: string = cid.name + "__" + sanitize_key(key);
                 cur = cur.iadd(cid.name, key);
                 return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: mang, line: cid.line, col: cid.col, ty: cid.ty }, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: cur };
@@ -12891,15 +13026,7 @@ function mono_call_expected(e: ast.Expr, expected: string, env: MEnv, funcs: MFn
                     qkey = infer_inst_ret(funcs.decls[bq], c.args, expected, env, funcs);
                   }
                   if (qkey.len() > 0) {
-                    let qargs: ast.Expr[] = [];
-                    let qcur: Insts = ins;
-                    let qi: i32 = 0;
-                    while (qi < c.args.len()) {
-                      let qra: RExpr = mono_expr(c.args[qi], env, funcs, qcur);
-                      qcur = qra.rins;
-                      qargs = qargs.append(qra.rexpr);
-                      qi = qi + 1;
-                    }
+                    let (qargs, qcur) = mono_call_args(c, env, funcs, ins);
                     qcur = qcur.iadd(qn, qkey);
                     return RExpr { rexpr: ast.ExprCall { callee: ast.ExprFieldAccess { obj: fac.obj, field: fac.field + "__" + sanitize_key(qkey), line: fac.line, col: fac.col, ty: fac.ty }, args: qargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: qcur };
                   }
@@ -13196,7 +13323,7 @@ function menv_bind_destructure(env: MEnv, names: string, ty: string): MEnv {
 function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: string): RStmtOne {
   match (st) {
     ast.StmtVar(v) => {
-      let iv: RExpr = mono_call_expected(v.init, v.type_name, env, funcs, ins);
+      let iv: RExpr = mono_call_expected(v.init, fn_tag_spelling(v.type_name, v.fn_ret, v.fn_param_types), env, funcs, ins);
       // A fn-typed local carries its shape, not the coarse tag: a generic
       // taking it as a fn argument reads its parameters from the env.
       let ty: string = fn_tag_spelling(v.type_name, v.fn_ret, v.fn_param_types);
@@ -13313,7 +13440,7 @@ function bind_params(env: MEnv, params: ast.ParamDecl[]): MEnv {
   while (i < params.len()) {
     let pt: string = params[i].type_name;
     if (pt == "fn" && params[i].fn_ret.len() > 0) {
-      pt = "fn => " + params[i].fn_ret;
+      pt = fn_tag_spelling(pt, params[i].fn_ret, params[i].fn_param_types);
     }
     e = e.ebind(params[i].name, pt);
     i = i + 1;
@@ -14553,6 +14680,125 @@ function promote_erased_forwarders(funcs: FuncDecl[]): FuncDecl[] {
   return out;
 }
 
+// promote_value_named promotes an erased generic that some body names as a
+// value (`let g: (i32) => i32 = ident`, `apply(ident, 3)`): a value's type is
+// its declaration's, variables and all, so only a clone keyed by the callable
+// the reference is wanted at has a type. A variable the signature does not
+// spell could never be bound there, so such a template stays erased and the
+// checker's E040 stands.
+function promote_value_named(funcs: FuncDecl[], top_stmts: ast.Stmt[]): FuncDecl[] {
+  let names: string[] = [];
+  let at: i32[] = [];
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    let fd: FuncDecl = funcs[i];
+    if (fd.receiver_type.len() == 0 && fd.receiver_name.len() == 0 && fd.all_type_params.len() > fd.type_params.len() && signature_vars_complete(fd)) {
+      names = names.append(fd.name);
+      at = at.append(i);
+    }
+    i = i + 1;
+  }
+  if (names.len() == 0) {
+    return funcs;
+  }
+  let scan: ValScan = ValScan { names: names, refs: zero_counts(names.len()), callee_refs: zero_counts(names.len()) };
+  for fd in funcs {
+    for st in fd.body {
+      scan = astwalk.fold_stmt_nodes(st, scan, val_scan_stmt, val_scan_expr, astwalk.descend_all);
+    }
+  }
+  for st in top_stmts {
+    scan = astwalk.fold_stmt_nodes(st, scan, val_scan_stmt, val_scan_expr, astwalk.descend_all);
+  }
+  let out: FuncDecl[] = funcs;
+  let k: i32 = 0;
+  while (k < names.len()) {
+    if (scan.refs[k] > scan.callee_refs[k]) {
+      let fd: FuncDecl = funcs[at[k]];
+      let tps: string[] = fd.type_params;
+      let bts: string[] = fd.bound_traits;
+      for v in fd.all_type_params {
+        if (!util.has_str(tps, v)) {
+          tps = tps.append(v);
+          bts = bts.append("");
+        }
+      }
+      out = out.with(at[k], FuncDecl { ...fd, type_params: tps, bound_traits: bts });
+    }
+    k = k + 1;
+  }
+  return out;
+}
+
+// signature_vars_complete: every type variable of `fd` is spelled by a
+// parameter or the result, the positions a callable type binds.
+function signature_vars_complete(fd: FuncDecl): boolean {
+  let spelled: string[] = type_str_vars(fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), []);
+  for p in fd.params {
+    spelled = type_str_vars(param_spelling(p), spelled);
+  }
+  for v in fd.all_type_params {
+    if (!util.has_str(spelled, v)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function zero_counts(n: i32): i32[] {
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(0);
+    i = i + 1;
+  }
+  return out;
+}
+
+// ValScan counts, per name, every reference and every reference as a call's
+// callee; the difference is the references in value position.
+struct ValScan { names: string[], refs: i32[], callee_refs: i32[] }
+
+function val_scan_stmt(st: ast.Stmt, own acc: ValScan): ValScan {
+  return acc;
+}
+
+function val_scan_expr(e: ast.Expr, own acc: ValScan): ValScan {
+  match (e) {
+    ast.ExprIdent(id) => {
+      let k: i32 = util.index_of_str(acc.names, id.name);
+      if (k >= 0) {
+        return ValScan { ...acc, refs: acc.refs.with(k, acc.refs[k] + 1) };
+      }
+    },
+    ast.ExprFieldAccess(fa) => {
+      if let ast.ExprIdent(m) = fa.obj {
+        let k: i32 = util.index_of_str(acc.names, m.name + "." + fa.field);
+        if (k >= 0) {
+          return ValScan { ...acc, refs: acc.refs.with(k, acc.refs[k] + 1) };
+        }
+      }
+    },
+    ast.ExprCall(c) => {
+      let name: string = "";
+      if let ast.ExprIdent(cid) = c.callee {
+        name = cid.name;
+      }
+      if let ast.ExprFieldAccess(cfa) = c.callee {
+        if let ast.ExprIdent(cm) = cfa.obj {
+          name = cm.name + "." + cfa.field;
+        }
+      }
+      let k: i32 = util.index_of_str(acc.names, name);
+      if (k >= 0) {
+        return ValScan { ...acc, callee_refs: acc.callee_refs.with(k, acc.callee_refs[k] + 1) };
+      }
+    },
+    _ => {}
+  }
+  return acc;
+}
+
 struct FwdScan { params: ast.ParamDecl[], evars: string[], gnames: string[], hit: boolean }
 
 function fwd_scan_stmt(st: ast.Stmt, own acc: FwdScan): FwdScan {
@@ -14747,7 +14993,7 @@ function erase_promotions(funcs: FuncDecl[], erased: string[]): FuncDecl[] {
 }
 
 function monomorphize_module(mod: Module, erased: string[]): Module {
-  let funcs: FuncDecl[] = erase_promotions(promote_erased_forwarders(mod.funcs), erased);
+  let funcs: FuncDecl[] = erase_promotions(promote_value_named(promote_erased_forwarders(mod.funcs), mod.top_stmts), erased);
   // Concrete array methods also need their receiver calls folded.
   let any_bg: boolean = false;
   let bi: i32 = 0;
@@ -14778,7 +15024,7 @@ function monomorphize_module(mod: Module, erased: string[]): Module {
       rewritten = rewritten.append(fd);
     } else {
       let env: MEnv = env_from_decl(fd);
-      let rb: RStmts = mono_stmts(fd.body, env, fns, ins, fd.ret_type);
+      let rb: RStmts = mono_stmts(fd.body, env, fns, ins, fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types));
       ins = rb.rins3;
       rewritten = rewritten.append(FuncDecl { ...fd, body: rb.rstmts });
     }
@@ -14807,7 +15053,7 @@ function monomorphize_module(mod: Module, erased: string[]): Module {
       // Rewrite the clone's body so any bounded-generic calls it
       // makes resolve too (and enqueue their instantiations).
       let cenv: MEnv = env_from_params(cl.params);
-      let crb: RStmts = mono_stmts(cl.body, cenv, fns, ins, cl.ret_type);
+      let crb: RStmts = mono_stmts(cl.body, cenv, fns, ins, fn_tag_spelling(cl.ret_type, cl.ret_fn_ret, cl.ret_fn_param_types));
       ins = crb.rins3;
       // The receiver is cleared: a lifted closure is a free function.
       rewritten = rewritten.append(FuncDecl { ...cl, receiver_name: "", receiver_type: "", body: crb.rstmts });
@@ -15920,7 +16166,7 @@ function ms_module(mod: Module, defer_enums: boolean): Module {
       let bgi: i32 = bg_find(sfns, base);
       if (bgi >= 0 && !has_func_named(mod.funcs, nfuncs, base + "__" + sanitize_key(key))) {
         let bcl: FuncDecl = clone_bg(sfns.decls[bgi], key, mod.impls);
-        let bcr: RStmts = mono_stmts(bcl.body, env_from_params(bcl.params), sfns, ins, bcl.ret_type);
+        let bcr: RStmts = mono_stmts(bcl.body, env_from_params(bcl.params), sfns, ins, fn_tag_spelling(bcl.ret_type, bcl.ret_fn_ret, bcl.ret_fn_param_types));
         ins = bcr.rins3;
         let bfr: FRes = ms_func(FuncDecl { ...bcl, body: bcr.rstmts }, gstructs, sfns, ins);
         ins = bfr.fins;
@@ -15960,7 +16206,7 @@ function ms_module(mod: Module, defer_enums: boolean): Module {
         if (mm.receiver_type.len() > 0 && strip_struct_base(mm.receiver_type) == base) {
           let clm: FuncDecl = clone_struct_method(mm, base, key, gstructs);
           let menv: MEnv = env_from_decl(clm);
-          let mr: RStmts = mono_stmts(clm.body, menv, sfns, ins, clm.ret_type);
+          let mr: RStmts = mono_stmts(clm.body, menv, sfns, ins, fn_tag_spelling(clm.ret_type, clm.ret_fn_ret, clm.ret_fn_param_types));
           ins = mr.rins3;
           let br2: RStmts = ms_stmts(mr.rstmts, menv, gstructs, sfns, ins, clm.ret_type);
           ins = br2.rins3;
@@ -16661,13 +16907,13 @@ function me_env_from_params(params: ast.ParamDecl[]): MEnv {
   let i: i32 = 0;
   while (i < params.len()) {
     let pt: string = params[i].type_name;
-    // A fn-typed param coarsens to "fn" with its return type held in
-    // fn_ret; encode it as "fn => <ret>" so me_scrutinee_type can recover a
-    // `match (f(x))` scrutinee's generic-enum return type and rewrite its
-    // arms (mirrors the me_bind_pat_vars fn-payload encoding). Otherwise the
-    // scrutinee typed "" and the arms stayed un-mangled → wrong variant.
+    // A fn-typed param coarsens to "fn" with its shape in the sidecars; bind
+    // the callable spelling so me_scrutinee_type can recover a `match (f(x))`
+    // scrutinee's generic-enum return type and rewrite its arms (mirrors the
+    // me_bind_pat_vars fn-payload encoding). Otherwise the scrutinee typed ""
+    // and the arms stayed un-mangled → wrong variant.
     if (pt == "fn" && params[i].fn_ret.len() > 0) {
-      pt = "fn => " + params[i].fn_ret;
+      pt = fn_tag_spelling(pt, params[i].fn_ret, params[i].fn_param_types);
     }
     e = e.ebind(params[i].name, pt);
     i = i + 1;
@@ -16949,6 +17195,22 @@ function me_field_type_of(structs: StructDecl[], sname: string, fname: string): 
       }
     }
     i = i + 1;
+  }
+  return "";
+}
+
+// me_field_spelling_of is me_field_type_of with a function-typed field's `fn`
+// tag expanded from its sidecars, the spelling an expected-type position reads.
+function me_field_spelling_of(structs: StructDecl[], sname: string, fname: string): string {
+  let base: string = strip_struct_base(sname);
+  for sd in structs {
+    if (sd.name == base) {
+      for f in sd.fields {
+        if (f.name == fname) {
+          return fn_tag_spelling(f.type_name, f.fn_ret, f.fn_param_types);
+        }
+      }
+    }
   }
   return "";
 }
@@ -19943,7 +20205,7 @@ pub function is_reserved_struct_name(name: string): boolean {
   let reserved: string[] = [
     "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Duration", "FileStat",
     "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
-    "MapIter", "MockCall", "MockPlatform", "Platform", "ProcessResult",
+    "MapIter", "ProcessResult",
     "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",
     "Zoned",
   ];
@@ -23385,6 +23647,117 @@ function tvar_spelling(name: string): string {
     return name;
   }
   return "0_" + name;
+}
+
+// desugar_trait_params makes a parameter whose type names a trait an anonymous
+// type parameter bounded by it: `f(d: Driver)` becomes `f[T_d: Driver](d: T_d)`
+// and is monomorphised like any generic. `dyn Driver` is the dynamic form, so
+// a bare trait in a parameter type has no other meaning. `traits` holds the
+// spellings that name a trait in this module: its own traits bare, an import's
+// as `alias.Trait`. `spelled` names the new parameter in the `0_` spelling, for
+// a module whose type variables have already been respelled.
+pub function desugar_trait_params(mod: Module, traits: string[], spelled: boolean): Module {
+  if (traits.len() == 0) {
+    return mod;
+  }
+  let funcs: FuncDecl[] = [];
+  for fd in mod.funcs {
+    funcs = funcs.append(desugar_fn_trait_params(fd, traits, spelled));
+  }
+  return Module { ...mod, funcs: funcs };
+}
+
+function desugar_fn_trait_params(fd: FuncDecl, traits: string[], spelled: boolean): FuncDecl {
+  // A trait's methods are not generic, so an impl's method keeps a
+  // trait-typed parameter as written, and it is no type there (E064).
+  if (fd.impl_trait.len() > 0) {
+    return fd;
+  }
+  let params: ast.ParamDecl[] = [];
+  let type_params: string[] = fd.type_params;
+  let bound_traits: string[] = fd.bound_traits;
+  let all_type_params: string[] = fd.all_type_params;
+  for p in fd.params {
+    // The trait itself, with or without type arguments: an array of it or
+    // any other shape is not a trait reference.
+    let tr: TypeRef = parse_type_ref(p.type_name);
+    if (tr.array_depth > 0 || tr.is_tuple || tr.is_fn || tr.is_view || !str_list_contains(traits, tr.base) || str_list_contains(all_type_params, tr.base)) {
+      params = params.append(p);
+      continue;
+    }
+    let tp: string = fresh_trait_param("T_" + p.name, all_type_params, spelled);
+    type_params = type_params.append(tp);
+    bound_traits = bound_traits.append(p.type_name);
+    all_type_params = all_type_params.append(tp);
+    params = params.append(ast.ParamDecl { ...p, type_name: tp });
+  }
+  return FuncDecl { ...fd, params: params, type_params: type_params, bound_traits: bound_traits, all_type_params: all_type_params };
+}
+
+// is_platform_param reports whether parameter `i` of `fd` is its platform:
+// std/platform's trait as written, the type parameter bounded by it that
+// `plat: platform.Platform` desugars to, or the host platform itself. `qual`
+// is what the module imports std/platform as, "" when the names are already
+// mangled (`platform__Host`).
+pub function is_platform_param(fd: FuncDecl, i: i32, qual: string): boolean {
+  let t: string = fd.params[i].type_name;
+  for name in ["Host", "Platform"] {
+    if (t == "platform__" + name || t == "platform." + name || qual.len() > 0 && t == qual + "." + name) {
+      return true;
+    }
+  }
+  let k: i32 = util.index_of_str(fd.type_params, t);
+  if (k < 0 || k >= fd.bound_traits.len()) {
+    return false;
+  }
+  for b in split_plus_bounds(fd.bound_traits[k]) {
+    if (trait_simple_name(b) == "Platform") {
+      return true;
+    }
+  }
+  return false;
+}
+
+// trait_simple_name is a trait bound's name less its module qualifier, in
+// either spelling (`platform.Platform`, `platform__Platform`), and its type
+// arguments.
+pub function trait_simple_name(b: string): string {
+  let base: string = util.base_type_name(b);
+  let i: i32 = base.len();
+  while (i > 0) {
+    if (base[i - 1] == b'.') {
+      return slice_unchecked(base, i, base.len()) + "";
+    }
+    if (i >= 2 && base[i - 1] == b'_' && base[i - 2] == b'_') {
+      return slice_unchecked(base, i, base.len()) + "";
+    }
+    i = i - 1;
+  }
+  return base;
+}
+
+// trait_decl_names is the name of every trait in `traits`.
+pub function trait_decl_names(traits: TraitDecl[]): string[] {
+  let out: string[] = [];
+  for t in traits {
+    out = out.append(t.name);
+  }
+  return out;
+}
+
+// fresh_trait_param is `want`, or `want` with a number appended, whichever no
+// type parameter in `taken` already uses under either spelling.
+function fresh_trait_param(want: string, taken: string[], spelled: boolean): string {
+  let name: string = want;
+  let n: i32 = 1;
+  while (str_list_contains(taken, name) || str_list_contains(taken, "0_" + name)) {
+    name = want + util.i32_to_string(n);
+    n = n + 1;
+  }
+  if (spelled) {
+    return "0_" + name;
+  }
+  return name;
 }
 
 function rename_type_vars_module(mod: Module): Module {
@@ -27616,19 +27989,73 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   for te in p.type_errs {
     top_stmts = top_stmts.append(te);
   }
+  match (unclosed_brace(toks)) {
+    Some(ub) => {
+      top_stmts = top_stmts.append(ub);
+    },
+    None => {}
+  }
   let parsed: Module = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, inferred_consts: [] };
   if (!verbatim) {
     let inferred: string[] = unannotated_const_names(funcs);
     let nothing: string[] = [];
     parsed = substitute_const_refs(parsed, inferred_const_table(funcs, inferred, ConstTable { names: nothing, values: [] }));
     parsed = Module { ...parsed, funcs: settle_const_types(parsed.funcs, structs), inferred_consts: inferred };
-    parsed = desugar_union_aliases(parsed);
+    parsed = desugar_union_aliases(desugar_trait_params(parsed, trait_decl_names(traits), false));
   }
   let settled: Module = settle_module(resolve_variant_fields_module(resolve_labels_module(resolve_assoc_projections(parsed))));
   if (!verbatim) {
     settled = resolve_dyn_traits(rename_type_vars_module(settled));
   }
   return (settled, traits, impl_decls, flines, inline_hints);
+}
+
+// unclosed_brace is a `decl:` sentinel at the end of the input when the input
+// ends inside a `{`, naming the innermost one left open — native's P001
+// `expected "}"`. Every block parser closes a block whose `}` it cannot find
+// without complaint, so the token stream is the one place a missing `}` is
+// visible whichever construct it belongs to (#11315). A stream that stops at
+// a lex error never reached the end, and the lex error is its diagnostic.
+function unclosed_brace(toks: lexer.Token[]): Option[ast.Stmt] {
+  if (toks.len() == 0) {
+    return None;
+  }
+  let end_line: i32 = 0;
+  let end_col: i32 = 0;
+  if let lexer.TokEof(e) = toks[toks.len() - 1] {
+    end_line = e.line;
+    end_col = e.col;
+  } else {
+    return None;
+  }
+  let open_lines: i32[] = [];
+  let open_cols: i32[] = [];
+  let depth: i32 = 0;
+  for t in toks {
+    if let lexer.TokPunct(x) = t {
+      if (x.text == "{") {
+        open_lines = push_at(open_lines, depth, x.line);
+        open_cols = push_at(open_cols, depth, x.col);
+        depth = depth + 1;
+      } else if (x.text == "}" && depth > 0) {
+        depth = depth - 1;
+      }
+    }
+  }
+  if (depth == 0) {
+    return None;
+  }
+  let at: string = util.i32_to_string(open_lines[depth - 1]) + ":" + util.i32_to_string(open_cols[depth - 1]);
+  return Some(s_unknown_at("decl:expected \"}\" before the end of the input, to close the \"{\" at " + at, end_line, end_col));
+}
+
+// push_at writes v at index i of a stack whose live part is xs[0..i], growing
+// it when i is past the end.
+function push_at(xs: i32[], i: i32, v: i32): i32[] {
+  if (i < xs.len()) {
+    return xs.with(i, v);
+  }
+  return xs.append(v);
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:

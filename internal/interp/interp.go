@@ -3475,19 +3475,19 @@ func readDirLike(name string, skipDots bool, args []Value) (Value, error) {
 // Symlinks resolve through `os.Stat` (follow), matching the
 // implicit contract of every other file-touching builtin.
 func builtinStat(_ *Interp, args []Value) (Value, error) {
-	return statLike("stat", os.Stat, args)
+	return statLike("stat", os.Stat, true, args)
 }
 
 // builtinLstat is stat without following a final symlink. A link therefore
 // reports neither is_file nor is_dir, which is the answer a directory walk
 // needs to decide between recursing, reading, and skipping.
 func builtinLstat(_ *Interp, args []Value) (Value, error) {
-	return statLike("lstat", os.Lstat, args)
+	return statLike("lstat", os.Lstat, false, args)
 }
 
 // statLike is the body both share: the only difference between them is which
 // of os.Stat / os.Lstat resolves the path.
-func statLike(name string, resolve func(string) (os.FileInfo, error), args []Value) (Value, error) {
+func statLike(name string, resolve func(string) (os.FileInfo, error), follow bool, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
 	}
@@ -3499,12 +3499,12 @@ func statLike(name string, resolve func(string) (os.FileInfo, error), args []Val
 	if err != nil {
 		return resultErr(classifyIoError(string(path), err)), nil
 	}
-	return resultOk(fileStatValue(info)), nil
+	return resultOk(fileStatValue(info, statOrigin{path: string(path), follow: follow})), nil
 }
 
 // fileStatValue projects an os.FileInfo onto the FileStat struct.
-func fileStatValue(info os.FileInfo) *Struct {
-	raw := statFields(info)
+func fileStatValue(info os.FileInfo, at statOrigin) *Struct {
+	raw := statFields(info, at)
 	return &Struct{
 		TypeName: "FileStat",
 		Fields: map[string]Value{
@@ -3526,6 +3526,8 @@ func fileStatValue(info os.FileInfo) *Struct {
 			"mtime_nsec": Number(raw.mtimeNsec),
 			"ctime":      Number(raw.ctime),
 			"ctime_nsec": Number(raw.ctimeNsec),
+			"btime":      Number(raw.btime),
+			"btime_nsec": Number(raw.btimeNsec),
 		},
 	}
 }
@@ -3589,7 +3591,7 @@ func builtinFdStat(i *Interp, args []Value) (Value, error) {
 	if serr != nil {
 		return resultErr(classifyIoError("", serr)), nil
 	}
-	return resultOk(fileStatValue(info)), nil
+	return resultOk(fileStatValue(info, statOrigin{file: f})), nil
 }
 
 // builtinFdFlags answers `r.flags()` / `w.flags()`: `fcntl(fd, F_GETFL)`

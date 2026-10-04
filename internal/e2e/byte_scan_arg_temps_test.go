@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/e2eharness"
@@ -20,10 +19,10 @@ func TestByteScanArgTempsAreReleased(t *testing.T) {
 	if err := os.WriteFile(src, []byte(e2eharness.ByteScanArgTempsProgram), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, target := range []string{"x86-64-linux", "x86-64-linux-ssa", "arm64-linux", "arm64-linux-ssa", "wasm32-wasi"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			var runner []string
-			actual := strings.TrimSuffix(target, "-ssa")
+			actual := target
 			switch actual {
 			case "x86-64-linux":
 				_, runner = x86_64Tooling(t)
@@ -42,9 +41,6 @@ func TestByteScanArgTempsAreReleased(t *testing.T) {
 			args := []string{"-target", actual, "-o", bin, src}
 			if actual == "wasm32-wasi" {
 				args = append([]string{"-emit", "command-module"}, args...)
-			}
-			if strings.HasSuffix(target, "-ssa") {
-				args = append([]string{"-backend", "ssa"}, args...)
 			}
 			compile := exec.Command(fern, args...)
 			compile.Env = append(os.Environ(), "FERN_LEAKCHECK=1")

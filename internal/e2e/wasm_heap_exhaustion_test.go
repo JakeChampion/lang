@@ -1,19 +1,10 @@
 package e2e
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
-	"github.com/jakechampion/lang/internal/wasm/component"
 )
 
 var wasmBacktraceFrame = regexp.MustCompile(`<wasm function (\d+)>`)
@@ -42,45 +33,7 @@ func TestWASMHeapExhaustionTrapsInTheAllocator(t *testing.T) {
     }
     return s.len() as i32;
 }`
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-	})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
-	req, unsupported := component.ClassifyCore(core)
-	if len(unsupported) > 0 {
-		t.Fatalf("core module has imports the composer can't place: %v", unsupported)
-	}
-	comp := component.BuildWasiCliRunComponent(core, "_lang_run")
-	if !component.RequestEmpty(req) {
-		comp = component.Compose(core, req, "_lang_run")
-	}
-	compPath := filepath.Join(dir, "prog.component.wasm")
-	if err := os.WriteFile(compPath, comp, 0o644); err != nil {
-		t.Fatalf("write component: %v", err)
-	}
+	compPath := buildCLIComponent(t, src)
 
 	// The pooling allocator is what lets a memory be capped from the CLI;
 	// 8 MiB is 128 pages.

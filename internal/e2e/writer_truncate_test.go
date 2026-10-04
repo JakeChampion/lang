@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-// `Writer.truncate(len)` is ftruncate(2) on a handle, and it is six
-// hand-written implementations: x86-64 and arm64 assembly, the arm64 SSA
-// backend's own, wasmbin from two WASI previews, the interpreter's
-// `os.File.Truncate`, and the self-host's generated Fern. Each gets the same
+// `Writer.truncate(len)` is ftruncate(2) on a handle, and it is five
+// hand-written implementations: x86-64 and arm64 assembly, wasmbin from two
+// WASI previews, the interpreter's `os.File.Truncate`, and the self-host's
+// generated Fern. Each gets the same
 // probe, because each packs the call itself.
 //
 // Three properties, and the third is the reason the builtin exists:
@@ -154,18 +154,6 @@ func TestArm64WriterTruncate(t *testing.T) {
 	out, code := compileAndRunArm64(t, writerTruncateSource(dir, true, true))
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see writerTruncateSource)\n%s", code, out)
-	}
-	writerTruncateCheckTree(t, dir, true, true)
-}
-
-func TestArm64SSAWriterTruncate(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	dir := t.TempDir()
-	bin := compileArm64SSA(t, fern, writerTruncateSource(dir, true, true), os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, dir, os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see writerTruncateSource)\n%s", code, stderr)
 	}
 	writerTruncateCheckTree(t, dir, true, true)
 }

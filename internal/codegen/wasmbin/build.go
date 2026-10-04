@@ -65,7 +65,7 @@ type BuildOptions struct {
 	ExitWithMainResult bool
 	// HttpHandler emits the wasi:http/incoming-handler@0.2.0
 	// component-model export wrapping the user-defined
-	// `function handle(req: HttpRequest, plat: Platform):
+	// `function handle(req: HttpRequest, plat: platform.Platform):
 	// HttpResponse`. The synthetic `__http_entry` helper does
 	// the canonical-ABI marshalling. Pins `handle` +
 	// `__method_HeaderMap_append` past every dead-function-
@@ -117,6 +117,15 @@ func Build(prog *ast.Program, info *checker.Info) ([]byte, error) {
 
 // BuildWithOptions is the option-aware sibling of Build.
 func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) ([]byte, error) {
+	// The wasi-http wrapper serves one request per instance, so a handler
+	// that takes process-lifetime state (docs/PLATFORM-RESEARCH.md Rec §3)
+	// has no caller there: nothing on this target runs `init` or holds what
+	// it returns, and the checker synthesises no entry for it.
+	if opts.HttpHandler && info.StatefulHandler {
+		return nil, fmt.Errorf("a handler taking process-lifetime state is not supported on the http proxy world: " +
+			"its instance is per-request, so nothing holds the state between calls — use " +
+			"`handle(req: HttpRequest, plat: platform.Platform): HttpResponse`")
+	}
 	// PrintMainResult's _start wrapper calls int_to_string from
 	// a synthesised position that isn't an AST reference, so
 	// pin it (and its modload-qualified twin) past tree-shake.
@@ -168,27 +177,12 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		treeshakeExtras = append(treeshakeExtras, src)
 	}
 	if opts.HttpHandler {
-		// The wrapper calls `handle(req, plat)` with two arguments it
-		// builds itself, so a handler that takes process-lifetime state
-		// (docs/PLATFORM-RESEARCH.md Rec §3) has no caller here: the
-		// proxy world's instance is per-request, and nothing on this
-		// target runs `init` or holds what it returns. Refuse by name —
-		// the alternative is a two-argument call against a
-		// three-parameter function, which surfaces as a wasm validation
-		// error naming neither.
-		for _, fn := range prog.Funcs {
-			if fn.Name == "handle" && fn.Receiver == nil && len(fn.Params) == 3 {
-				return nil, fmt.Errorf("a handler taking process-lifetime state is not supported on the http proxy world: " +
-					"its instance is per-request, so nothing holds the state between calls — use " +
-					"`handle(req: HttpRequest, plat: Platform): HttpResponse`")
-			}
-		}
-		// `handle` is called by the wrapper but the treeshake
+		// `__fern_wasi_handle` is called by the wrapper but the treeshake
 		// walker doesn't see the call (the wrapper lives in
 		// emit-time wasm bytes, not the AST). Same shape for
 		// `__method_HeaderMap_append` — the wrapper calls it
 		// per header entry from the canonical-ABI fields list.
-		treeshakeExtras = append(treeshakeExtras, "handle", "__method_HeaderMap_append", "__method_HttpResponse_body_bytes", "__fern_platform_new")
+		treeshakeExtras = append(treeshakeExtras, checker.WasiHandleName, "__method_HeaderMap_append", "__method_HttpResponse_body_bytes")
 		// The auto-synthesised `main()` (synthesised by the checker)
 		// calls `serve.supervise` and pulls in wasi:sockets imports
 		// the http world's WIT doesn't have. Drop it before
@@ -235,7 +229,7 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		liveExtras = []string{"int_to_string", "int__int_to_string"}
 	}
 	if opts.HttpHandler {
-		liveExtras = append(liveExtras, "handle", "__method_HeaderMap_append", "__method_HttpResponse_body_bytes", "__fern_platform_new")
+		liveExtras = append(liveExtras, "__fern_wasi_handle", "__method_HeaderMap_append", "__method_HttpResponse_body_bytes")
 	}
 	if opts.AsyncExportName != "" {
 		// Root the async export's source function for the IR-level cull

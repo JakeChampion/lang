@@ -405,7 +405,7 @@ analysis, which is independent, pure, and de-risks the design.
 
   **Self-host port — DONE (2026-09-21, #9891).** `examples/self_host/ownership.fern`
   answers which parameters a function consumes, `semsource.with_inferred_modes`
-  rewrites the contracts from it, and `semlower.inferred_pass` applies it. Slice
+  rewrites the contracts from it, and `semlower.inferred_rows` applies it. Slice
   2 and sub-slice 2d had to land TOGETHER there: the blanket form is slower on
   nine of the twenty-nine bench programs and faster on none (1.901x on
   `ordmap_insert`), because the self-host's widened shape is native's end state
@@ -437,6 +437,9 @@ analysis, which is independent, pure, and de-risks the design.
   what `TestSelfHostInferredReuseIsIdentical` compares the reuse against.
   Measurement and the trace that found it:
   `docs/rc-log/2026-09-22-the-inference-re-lowered-rows-it-did-not-move.md`.
+  The rows it did move were still lowered under the declared modes first; now
+  every plan is made before any body, and each row is lowered once, under the
+  modes it keeps (`docs/rc-log/2026-10-03-m-a-row-is-lowered-once-under-the-modes-it-keeps.md`).
 
   `pvec_with` 681,006,132 retired instructions to 219,077,188 against native's
   184,540,118 (3.69x to 1.187x), `record_update` 0.769x, `map_probe_chain`

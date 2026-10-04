@@ -18,7 +18,8 @@ func ResponseFieldsServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/string";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path.starts_with("/echo")) { return http.ok("echoed").with_header("X-Echo", req.path); }
     if (req.path == "/badname") { return http.ok("named").with_header("Bad Name", "v"); }
     return http.ok("ok");

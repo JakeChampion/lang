@@ -3071,7 +3071,7 @@ pub function assert_is_some_eq_string(opt: Option[string], expected: string): Te
 // =================== HTTP ASSERTIONS ===================
 //
 // For a handler under test: hand it a request from `http.request` and a
-// `MockPlatform`'s bag, then read the response back with these. Each
+// `MockPlatform`, then read the response back with these. Each
 // names what it asked and quotes what it found.
 
 // `assert_status(resp, expected)` — the response's status.

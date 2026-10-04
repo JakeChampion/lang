@@ -475,9 +475,6 @@ func TestSelfHostLSPDocumentSyncMatchesFernLSPX86_64(t *testing.T) {
 // formatting request from both servers: one edit replacing the document with
 // what `-fmt` writes, its end in UTF-16 units, or none when the text is
 // already formatted, does not parse, or is not open.
-//
-// A file missing its last `}` is not here: the self-host parser accepts one
-// (#11315), so it formats where native refuses.
 func TestSelfHostLSPFormattingMatchesFernLSPX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	edits := 0
@@ -489,6 +486,7 @@ func TestSelfHostLSPFormattingMatchesFernLSPX86_64(t *testing.T) {
 		{"non-ascii-last-line", "function main(): i32 {\n  return 0;\n}\n// café"},
 		{"formatted", "function main(): i32 {\n  return 0;\n}\n"},
 		{"does-not-parse", "function main(): i32 { return"},
+		{"missing-last-brace", "function main(): i32 {\n  return 0;\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "main.fern")

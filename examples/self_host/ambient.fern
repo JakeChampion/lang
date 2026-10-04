@@ -1,12 +1,12 @@
 // examples/self_host/ambient.fern — the ambient-effect rule (E080), the
 // mirror of internal/ambient.
 //
-// A function handed a `Platform` bag reaches every host effect through the
+// A function handed a platform reaches every host effect through the
 // bag: `std/platform` puts the log sink, the clocks, the environment and
 // entropy on it as methods, and std/fetch adds outbound HTTP. The free
 // functions still resolve inside such a function, so nothing in the type
 // system stops a bare `eprint`; this rule does. A handler is any top-level
-// function with a parameter of type `Platform`, found by type, and the bag's
+// function with a parameter of type `platform.Platform`, found by type, and the platform's
 // own methods are the sanctioned route, so the walk stops at them.
 //
 // The walk is the tree-shaker's: a body reaches every function whose name it
@@ -38,25 +38,22 @@ pub struct Violation {
   fn_module: string,
 }
 
-function is_platform(type_name: string): boolean {
-  return util.base_type_name(type_name) == "Platform";
-}
-
-// is_bag_method reports whether `fd` is a method on the bag.
+// is_bag_method reports whether `fd` is a method of a `platform.Platform`
+// implementation.
 pub function is_bag_method(fd: parser.FuncDecl): boolean {
-  return fd.receiver_type.len() > 0 && is_platform(fd.receiver_type);
+  return parser.trait_simple_name(fd.impl_trait) == "Platform";
 }
 
-// bag_param names `fd`'s `Platform` parameter, or "" when `fd` is not a
-// handler. The bag's methods are not handlers: their receiver is the bag,
-// and they are the route the rule sends a handler down.
+// bag_param names `fd`'s platform parameter, or "" when `fd` is not a
+// handler. A platform's methods are not handlers: they are the route the
+// rule sends a handler down.
 pub function bag_param(fd: parser.FuncDecl): string {
   if (is_bag_method(fd)) {
     return "";
   }
   let i: i32 = 0;
   while (i < fd.params.len()) {
-    if (is_platform(fd.params[i].type_name)) {
+    if (parser.is_platform_param(fd, i, "")) {
       return fd.params[i].name;
     }
     i = i + 1;
@@ -260,5 +257,5 @@ pub function violation_message(v: Violation): string {
     chain = chain + v.chain[i];
     i = i + 1;
   }
-  return "handler `" + v.handler + "`" + where + " reaches `" + v.builtin + "` (`" + v.capability + "`) around its `Platform` bag `" + v.bag + "`: " + chain + "; " + fix;
+  return "handler `" + v.handler + "`" + where + " reaches `" + v.builtin + "` (`" + v.capability + "`) around its platform `" + v.bag + "`: " + chain + "; " + fix;
 }

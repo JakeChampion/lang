@@ -1,66 +1,18 @@
 # Backend parity tracker
 
-Four code-generation backends ship today. Three lower the flat `ir.Program` —
-`internal/codegen/{arm64,x86_64,wasmbin}` — and `arm64ssa` allocates registers
-instead. **The stack-machine emitter is the default on every target**;
-`arm64ssa` and `x86_64ssa` are reachable through `-backend ssa`, and
-`-backend flat` names the stack-machine emitter explicitly.
-
-The SSA backends emit less code — the self-host driver is 13.4% smaller on
-arm64, and arm64ssa is at or under the stack-machine emitter on all 28
-`examples/bench` programs — but they are not the default, because of the
-string-retention gap below. On x86-64 they also emit 2.0% MORE text than the
-stack-machine emitter (91% of that being the `movsxd` an i32 result costs when
-its high half is re-established whether or not anything reads it), and
-`string_rfind_byte` remains 1.60x.
-
-`-backend typed-ssa` is the experimental typed pre-RC pipeline, arm64-linux
-only. A sixth, `wasmssa`, was retired (#9397). Background:
+Three code-generation backends ship in the Go compiler, all stack-machine
+emitters lowering the flat `ir.Program`: `internal/codegen/{arm64,x86_64,wasmbin}`.
+`-backend flat` names that emitter explicitly and is the only value `cmd/fern`
+accepts. The Go register-allocating backends (`arm64ssa`, `x86_64ssa`, the
+experimental `-backend typed-ssa`, and `internal/ssa` and `internal/semir`
+under them) were deleted in step 5 of `docs/NATIVE-RETIREMENT.md`; the
+self-host compiler's register path (`fern-selfhost -backend ssa`,
+`docs/SELFHOST-SSA-BACKEND.md`) is the one SSA emitter. Background:
 `docs/SSA-DECISION.md`, #4112, #8822.
 
-### Why the SSA backends are not the default (string retention)
-
-The arm64 SSA default was reverted (#9542) over string retention: `-backend
-ssa` reported hundreds of KB live at exit under `FERN_LEAKCHECK` where the
-stack-machine emitter reported hundreds of bytes. **That measurement does not
-hold up, and the retention question is currently open rather than settled.**
-
-`arm64ssa`'s census derives `live_bytes` from the arena cursor less what
-`__free` tallied, and something breaks that identity once allocation sizes
-vary: the figure drifts upward with the *variety* of sizes even when every
-allocation is freed. A `read_line` loop over 8,000 lines, identical alloc and
-free counts in all four runs:
-
-| input | arm64 stack machine | arm64 `-backend ssa` |
-| --- | ---: | ---: |
-| every line 40 chars, 1,000 lines | 16 B | 32 B |
-| every line 40 chars, 8,000 lines | 16 B | **32 B** |
-| lines 1–200 chars, 1,000 lines | 16 B | 832 B |
-| lines 1–200 chars, 8,000 lines | 16 B | **8,528 B** |
-
-Constant when the sizes are uniform, growing when they are not. That is the
-instrument, not the program. Peak RSS on `coreutils/uniq.fern` differs by
-64–136 KB between the two emitters and does not grow with the input, against
-the 369 KB the census claimed at 8,000 lines. Ordinary allocation through
-`__alloc` / `__free` does not show it, so it is reached through `read_line`'s
-own allocation sites. #9558 has the reproducer; the mechanism is not yet
-identified and that issue is deliberately careful not to guess at one again.
-
-It was NOT the single-word string ABI either, which was the first reading.
-x86-64 runs that same ABI — `ast.TwoWordOverride` is set only by
-`internal/codegen/arm64` — so it carries the same `internal/ir` reclaim taint,
-and it is clean on the same programs.
-
-So the order of work is: fix the census (#9558), then re-measure, and only then
-say what the SSA backends retain. `internal/e2e/arm64_default_string_reclaim_test.go`
-still holds the DEFAULT to its bar, and that bar is sound — it measures the
-stack-machine emitter, whose census reads a constant 16 B at every input size.
-
-The single-word ABI's reclaim taint is real and is being narrowed on its own
-merits rather than as a precondition: it refused a string parameter bound to a
-local, which cost the caller its reclaim once per call (#9549, 400 allocations
-and 0 frees on the shape, measured through alloc/free COUNTS rather than
-`live_bytes`). `frameBoundStringAliases` credits that shape now.
+`internal/e2e/arm64_default_string_reclaim_test.go` holds the arm64 default to
+flat retention across two input sizes; its census reads a constant 16 B at
+every input size.
 
 Targets are `<isa>-<environment>` (#6529): the ISA half picks the backend, the
 environment half says what the host provides. Neither is implied — there is no
@@ -76,9 +28,9 @@ bare `arm64` meaning arm64-Linux.
 | wasm32-wasi-http | wasm32 | wasi-http | component | wasi:http/incoming-handler | proxy world; std/fetch sends through wasi:http/outgoing-handler, self-host only (docs/WASI-PREVIEW2.md) |
 | arm64-freestanding, x86-64-freestanding | | freestanding | — | — | declared + type-checkable; no emitter yet (#6510) |
 
-Two axes are deliberately NOT in the name: `-backend ssa` selects an alternate
-emitter for the same target (arm64-linux and x86-64-linux only — wasm's went
-with `wasmssa`), and `-emit` an alternate output form (#6536).
+Two axes are deliberately NOT in the name: `-backend` selects an emitter for
+the same target (the self-host's `ssa` or `flat`; `cmd/fern` has only `flat`),
+and `-emit` an alternate output form (#6536).
 `wasm32-wasi` has three: the default composes a wasi:cli/run component,
 `-emit core-module` writes the raw core module (no entry point — `wasmtime run`
 on one calls nothing), and `-emit command-module` writes a WASI preview-1
@@ -126,9 +78,8 @@ still need their own classifications.
 
 | Target | Go compiler | self-host |
 | --- | --- | --- |
-| x86-64-linux, stack machine | inline `syscall`, sixth argument in `r9` | `syscall`, sixth argument in `r9` |
-| x86-64-linux, `-backend ssa` | `fn___syscallN` helper: shifts the C-ABI registers one down, seventh operand from the stack | same |
-| arm64-linux, both backends | `svc #0`, number in `x8` | `svc #0`, sixth argument in `x5` |
+| x86-64-linux | inline `syscall`, sixth argument in `r9` | `syscall`, sixth argument in `r9` |
+| arm64-linux | `svc #0`, number in `x8` | `svc #0`, sixth argument in `x5` |
 | arm64-darwin | `svc #0x80`, number in `x16`, carry-flagged errno negated | `svc #0x80`, negative errno on failure |
 | wasm32-wasi | E066: the target has no `syscall` capability | rejected by the self-host wasm drivers |
 | interp | never reached: refused with the target, not at run time | — |
@@ -346,7 +297,7 @@ instead of crashing.
 `internal/codegen/x86_64`'s byte kernels run 32-byte AVX2 main loops —
 `vmovdqu` / `vpcmpeqb` / `vpbroadcastb` / `vpmovmskb` on `ymm`, 16 emitted
 instructions with no cpuid check anywhere — so any binary linking one of those
-kernels has required AVX2 for as long as they have existed. `-backend ssa`'s
+kernels has required AVX2 for as long as they have existed. The self-host's
 byte kernels (`__fern_count_byte`, `__fern_memchr`, `__fern_rmemchr`,
 `__fern_ascii_run`) run the same 32-byte AVX2 main loops ahead of their
 16-byte SSE2 ones, and `OpClz` / `OpCtz` / `OpPopcount` lower to `lzcnt` /
@@ -621,36 +572,20 @@ Items that are known-broken in some configuration but considered too
 costly (or too speculative) to fix right now. Each entry should have a
 concrete fix plan and a rough scope estimate.
 
-### `termios_get` / `termios_set` are not on x86-64-ssa
-
-The x86-64 SSA-direct backend does not emit the two terminal-settings helpers,
-so a program reaching them fails to LINK there with `a runtime helper this
-backend does not emit` — non-silent, which is the contract `-backend ssa`
-states for an op outside its coverage. Both default emitters carry them, and
-`stty` (#8382) is built with one.
-
-arm64-ssa emits both, and the handle forms `__method_Reader_termios_get` /
-`__method_Reader_termios_set` with them. x86-64-ssa is further out than the
-pair itself — it has no handle family at all, so `open_writer` is already
-outside it, and the free forms alone would leave `r.termios_get()` broken.
-
 ### Line coverage (`-cover`) is native x86-64 / arm64 and self-host Linux
 
 `-cover` (#5548, `docs/COVERAGE.md`) instruments every executable source line
 and every source-level conditional with counters and dumps the table at exit.
 On native the instrumentation is an IR pass, but each backend still has to emit
 the counter array, the report table, and the exit-seam call — only the x86-64
-and arm64 stack-machine emitters do, matching `-sanitize`'s reach. The Go SSA
-emitters on those same targets do not, so native's reach is per-backend and not
-per-target. The self-host instruments the source instead (`cover.fern`), so
+and arm64 stack-machine emitters do, matching `-sanitize`'s reach. The
+self-host instruments the source instead (`cover.fern`), so
 both of its Linux targets have it through the same emitters every build uses.
 
 `ir.LowerWith` **errors** when `ast.CoverEnabled` is set and the caller did not
 pass `CoverPoints()`, so a wasm build under `-cover` refuses rather than
 producing an uninstrumented binary. A coverage run that silently measures zero
-is the failure mode that gate exists to prevent. That gate knows targets and
-not backends, so `-backend ssa -cover` is refused earlier, in the driver,
-where the message can name the backend.
+is the failure mode that gate exists to prevent.
 
 Fix plan for wasm: a linear-memory counter region plus a report loop over it,
 written out through the same `fd_write` the string printers use. Scope: the
