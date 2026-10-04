@@ -25,9 +25,7 @@ func TestBytesFloor(t *testing.T) {
 		run                   func(bin string) *exec.Cmd
 	}{
 		{"x86-64", "x86-64-linux", "", x86ok, func(bin string) *exec.Cmd { return runX86Bin(x86, bin) }},
-		{"x86-64-ssa", "x86-64-linux", "ssa", x86ok, func(bin string) *exec.Cmd { return runX86Bin(x86, bin) }},
 		{"arm64", "arm64-linux", "", armok, func(bin string) *exec.Cmd { return runArm64Bin(arm, bin) }},
-		{"arm64-ssa", "arm64-linux", "ssa", armok, func(bin string) *exec.Cmd { return runArm64Bin(arm, bin) }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if !c.runnable {

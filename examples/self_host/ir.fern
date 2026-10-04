@@ -7,8 +7,8 @@
 //
 // RC is lowered to IR once here and each backend instruction-selects an
 // opcode, rather than every backend hand-writing its own RC emission.
-// (ssa.fern mirrors the DOWNSTREAM optimiser `internal/ssa`, which native
-// lifts FROM this IR; it is a different, higher layer.)
+// (ssa.fern is the DOWNSTREAM optimiser, lifted FROM this IR; it is a
+// different, higher layer.)
 //
 // Representation (mirrors internal/ir/ir.go, but pointer-free — the
 // self-host's value-semantics style, matching ssa.fern: a function body is

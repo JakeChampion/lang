@@ -195,10 +195,3 @@ func TestWASMRmemchr(t *testing.T) {
 		return strings.Join(lines[:len(lines)-1], "\n")
 	})
 }
-
-// The `-backend ssa` (arm64) leg, on the same corpus. It is the backend §3.4
-// miscounted and the one an adoption forgets, so it gets the lowering and the
-// coverage at the same time as the other six rather than after.
-func TestArm64SSARmemchr(t *testing.T) {
-	runRmemchrCorpus(t, arm64SSACorpusRunner(t))
-}

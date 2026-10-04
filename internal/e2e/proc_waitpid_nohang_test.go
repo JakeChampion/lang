@@ -24,7 +24,6 @@
 package e2e
 
 import (
-	"os"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
@@ -91,16 +90,6 @@ func TestArm64ProcWaitpidNohang(t *testing.T) {
 	out, code := compileAndRunArm64(t, procWaitpidNohangSource)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see procWaitpidNohangSource)\n%s", code, out)
-	}
-}
-
-func TestArm64SSAProcWaitpidNohang(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	bin := compileArm64SSA(t, fern, procWaitpidNohangSource, os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, t.TempDir(), os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see procWaitpidNohangSource)\n%s", code, stderr)
 	}
 }
 

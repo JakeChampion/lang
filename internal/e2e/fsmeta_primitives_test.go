@@ -192,21 +192,6 @@ func TestArm64FsMetaPrimitives(t *testing.T) {
 	fsMetaCheckTree(t, dir, true)
 }
 
-// The arm64 SSA-direct backend is a third hand-written implementation of the
-// same three syscalls, with its own frame discipline, so it gets the same
-// probe rather than being taken on trust.
-func TestArm64SSAFsMetaPrimitives(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	dir := t.TempDir()
-	bin := compileArm64SSA(t, fern, fsMetaSource(dir, true, true), os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, dir, os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see fsMetaSource)\n%s", code, stderr)
-	}
-	fsMetaCheckTree(t, dir, true)
-}
-
 // The interpreter is another implementation and the one an in-language test
 // suite runs under. Its Linux and Darwin syscalls both support nofollow.
 func TestInterpFsMetaPrimitives(t *testing.T) {

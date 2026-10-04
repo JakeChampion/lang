@@ -500,7 +500,7 @@ const (
 	// unsigned condition codes. All of it hangs on reading a 32-bit
 	// operand as u32 rather than as the sign-extended int64 it is stored
 	// in — the mistake behind the u32 `>>` that miscompiled SHA-256, and
-	// behind the x86_64ssa model's missing width parameter. None of that
+	// behind the old Go x86-64 SSA model's missing width parameter. None of that
 	// was reachable from a corpus that generated only signed types.
 	//
 	// Verified identical on interp / x86-64 / arm64 / wasm before adding:
