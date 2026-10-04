@@ -21692,19 +21692,23 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
           body_diags = body_diags.append(dg_at("E064", "unknown type \"" + util.demangle(pu) + "\"" + unknown_type_hint(pu, e064_traits), efn.line, efn.col));
         }
         // E057 annotation form: a `Cell[<composite>]` anywhere in a
-        // parameter annotation (same conservative non-generic scope,
-        // so a generic's `Cell[T]` is never flagged).
-        body_diags = util.append_diags(body_diags, e057_annot_diags(param.type_name, efn.line, efn.col));
+        // parameter annotation, in a non-generic function only, so a
+        // generic's `Cell[T]` is never flagged.
+        if (efn_tps.len() == 0) {
+          body_diags = util.append_diags(body_diags, e057_annot_diags(param.type_name, efn.line, efn.col));
+        }
       }
       let ru: string = e064_unknown_name(efn.ret_type, e064_tn, e064_extra, efn_tps);
       if (ru.len() > 0) {
         body_diags = body_diags.append(dg_at("E064", "unknown type \"" + util.demangle(ru) + "\"" + unknown_type_hint(ru, e064_traits), efn.line, efn.col));
       }
-      body_diags = util.append_diags(body_diags, e057_annot_diags(efn.ret_type, efn.line, efn.col));
       // Body `let x: T` annotations.
       let efn_annots: Annot[] = collect_annots(efn.body);
       body_diags = util.append_diags(body_diags, e064_annot_diags(efn_annots, e064_tn, e064_extra, efn_tps, e064_traits));
-      body_diags = util.append_diags(body_diags, e057_var_annot_diags(efn_annots));
+      if (efn_tps.len() == 0) {
+        body_diags = util.append_diags(body_diags, e057_annot_diags(efn.ret_type, efn.line, efn.col));
+        body_diags = util.append_diags(body_diags, e057_var_annot_diags(efn_annots));
+      }
     }
   }
   // E044: a closure capture of a value with no runtime representation, a
