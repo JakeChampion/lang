@@ -214,8 +214,12 @@ on #4451, as slice 2 was.
 4. **The request target decodes without scratch.** A target with no `%` and
    no dot segment is the range itself, one string. One that needs decoding
    checks its UTF-8 over the bytes, not over a copy. The two strings handed to
-   `http_request_target` are read as ranges of the buffer. Removes 6. Parse
-   35 to 29.
+   `http_request_target` are read as ranges of the buffer. Done: the request
+   line hands `__target_path` its range of the buffer, and a path that needs
+   work is decoded and has its dot segments removed in one byte array, with
+   UTF-8 checked only when an escape decoded past ASCII. Parse 35 to 28 on
+   the self-host; the Go compiler goes 43 to 38 on x86-64, 53 to 46 on arm64
+   and 49 to 42 on wasm.
 5. **The head parse returns by writing, not by boxing.** The helpers that
    return a tuple, `Option` or `Result` once per request are the 14 rows
    above. Which fix applies is decided by the first measurement of this
