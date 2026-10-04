@@ -4353,8 +4353,14 @@ function call_through_fn_value(c: ast.ExprCall, s: Scope): typeinfo.Type {
 // the call i64 instead of pinning `T` at the i32 reading of whichever argument
 // came first (#8722 part 4); native settles the same call at i64 through
 // polymorphicIntDefault. wider_int keeps the first reading whenever either side
-// is not an integer, so every non-integer shape types exactly as it did.
+// is not an integer, so every non-integer shape types exactly as it did. A
+// written type argument settles the variable before any argument does.
 function ret_typevar_arg_type(sig: FuncSig, c: ast.ExprCall, s: Scope): (typeinfo.Type, boolean) {
+  let (wn, wt) = written_type_bindings(sig, c, s);
+  let wi: i32 = util.index_of_str(wn, sig.ret_type_name);
+  if (wi >= 0) {
+    return (wt[wi], true);
+  }
   let rt: typeinfo.Type = t_unknown("no parameter names " + sig.ret_type_name);
   let bound: boolean = false;
   // An empty literal binds nothing, as in gc_bind_param (#10499), so another
@@ -4399,9 +4405,13 @@ function call_binds_elsewhere(sig: FuncSig, c: ast.ExprCall, s: Scope): boolean 
 // is an unsuffixed integer literal tree, the widest of their readings — native
 // settles such a `T` through polymorphicIntDefault, so `both(1, 2^62)` binds
 // `T` = i64 rather than the i32 of the first argument (#8722 part 4). A single
-// such parameter, or any non-literal argument, answers false.
+// such parameter, any non-literal argument, or a call that wrote its type
+// arguments answers false.
 function shared_literal_typevar_width(sig: FuncSig, c: ast.ExprCall, tp: string, s: Scope): (typeinfo.Type, boolean) {
   let wt: typeinfo.Type = t_unknown("no literal argument binds " + tp);
+  if (c.type_args.len() > 0) {
+    return (wt, false);
+  }
   let n: i32 = 0;
   let k: i32 = 0;
   while (k < sig.param_type_names.len() && k < c.args.len()) {
@@ -5380,10 +5390,10 @@ function sig_call_type(sig: FuncSig, name: string, c: ast.ExprCall, s: Scope): t
   return sig.ret_type;
 }
 
-// arg_bindings binds a generic call's type variables from its arguments.
+// arg_bindings binds a generic call's type variables from its written type
+// arguments, then from its arguments; the written list wins.
 function arg_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typeinfo.Type[]) {
-  let bn: string[] = [];
-  let bt: typeinfo.Type[] = [];
+  let (bn, bt) = written_type_bindings(sig, c, s);
   let i: i32 = 0;
   while (i < sig.param_type_names.len() && i < c.args.len()) {
     let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(sig.param_type_names[i]), binding_arg_type(c.args[i], s), sig.type_params, s.type_names(), bn, bt);
@@ -5392,6 +5402,54 @@ function arg_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typei
     i = i + 1;
   }
   return (bn, bt);
+}
+
+// written_type_bindings binds each type parameter to the type argument written
+// in its position (`f[i32](x)`). A list of the wrong length is E040's to report
+// and binds nothing; an argument the type grammar could not read is skipped.
+function written_type_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typeinfo.Type[]) {
+  let bn: string[] = [];
+  let bt: typeinfo.Type[] = [];
+  if (c.type_args.len() != sig.all_type_params.len()) {
+    return (bn, bt);
+  }
+  let i: i32 = 0;
+  while (i < c.type_args.len()) {
+    if (c.type_args[i].len() > 0) {
+      let wt: typeinfo.Type = type_from_spelling(c.type_args[i], s.type_names());
+      if (!type_contains_unknown(wt)) {
+        bn = bn.append(sig.all_type_params[i]);
+        bt = bt.append(wt);
+      }
+    }
+    i = i + 1;
+  }
+  return (bn, bt);
+}
+
+// written_type_arg_diags holds argument `ai` of a free generic call to the type
+// its written type arguments give the parameter (`ident[Item](1)`): E047 for a
+// literal out of that type's range, E038 for any other mismatch. A parameter
+// naming no written variable is left to the ordinary argument check.
+function written_type_arg_diags(sig: FuncSig, c: ast.ExprCall, ai: i32, at: typeinfo.Type, s: Scope): util.Diag[] {
+  let none: util.Diag[] = [];
+  if (ai >= sig.param_type_names.len() || !type_contains_unknown(sig.param_types[ai])) {
+    return none;
+  }
+  let (wn, wt) = written_type_bindings(sig, c, s);
+  let pref: parser.TypeRef = parser.parse_type_ref(sig.param_type_names[ai]);
+  if (wn.len() == 0 || !type_ref_names_any(pref, wn)) {
+    return none;
+  }
+  let want: typeinfo.Type = type_from_ref_subst(pref, wn, wt, s.type_names());
+  if (type_contains_unknown(want)) {
+    return none;
+  }
+  let out: util.Diag[] = int_dest_range_diags(c.args[ai], want);
+  if (out.len() == 0 && !is_unknown(at) && !settles_to(c.args[ai], want, s) && !view_arg_borrow(at, want) && !coercible(at, want, s)) {
+    out = out.append(dg_at("E038", "argument " + util.i32_to_string(ai + 1) + ": expected " + type_label(want) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
+  }
+  return out;
 }
 
 // call_type_bindings binds a generic call's type variables from its arguments
@@ -13131,6 +13189,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
                 }
               }
               out = util.append_diags(out, int_dest_range_diags(c.args[ai], sig.param_types[ai]));
+              out = util.append_diags(out, written_type_arg_diags(sig, c, ai, at, s));
               out = util.append_diags(out, ctor_payload_diags(c.args[ai], sig.param_types[ai], s));
               // An unknown PARAM type is an opaque generic
               // parameter (`f[T](x: T)`, where T erases to
@@ -25492,8 +25551,12 @@ function gcall_sig(c: ast.ExprCall, s: Scope): FuncSig {
 // lit_bound_typevar: every argument declared as `tp` is an untyped integer
 // tree or a generic call whose width is itself still open (`id(id(1))`), and
 // no parameter mentions `tp` inside another type (`T[]`, `Option[T]`), which
-// would pin it on its own.
+// would pin it on its own. A written type argument pins it too.
 function lit_bound_typevar(sig: FuncSig, c: ast.ExprCall, tp: string, s: Scope): boolean {
+  let (wn, _) = written_type_bindings(sig, c, s);
+  if (util.has_str(wn, tp)) {
+    return false;
+  }
   let n: i32 = 0;
   let k: i32 = 0;
   while (k < sig.param_type_names.len() && k < c.args.len()) {
