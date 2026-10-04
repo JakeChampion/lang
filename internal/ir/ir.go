@@ -22761,6 +22761,11 @@ func (b *builder) emitCellDropOnStack(elem ast.Type, eligible bool) {
 		return
 	}
 	helper, stride := cellDropHelper(elem, b.ptrW)
+	if _, bytes := elem.(ast.ArrayType); bytes {
+		b.emit(Op{Kind: OpCallDirect, Str: "__drop_arr_arr_1", Width: ResAddr, I32: 1})
+		b.emit(Op{Kind: OpDrop})
+		return
+	}
 	b.emit(Op{Kind: OpConstI32, I32: stride})
 	b.emit(Op{Kind: OpCallDirect, Str: helper, Width: ResAddr, I32: 2})
 	b.emit(Op{Kind: OpDrop})
@@ -22833,7 +22838,7 @@ func (b *builder) emitCellNew(n *ast.Call) error {
 	// literal / call result) or a moved last-use local transfers its single
 	// reference and isn't inc'd. Mirrors array-literal / push element retain
 	// (needsRcIncOnAlias + emitAliasInc). Scalars hold no buffer — no inc.
-	if _, isStr := elemType.(ast.StringType); isStr {
+	if cellElemCounted(elemType) {
 		if needsRcIncOnAlias(n.Args[0], b) && !b.rc.moveSites[n.Args[0]] {
 			b.emitAliasInc(n.Args[0])
 		}
@@ -22882,6 +22887,28 @@ func isCellStringGet(e ast.Expr) bool {
 	return isStr
 }
 
+// Cell byte reads carry their own reference, just like string reads.
+func isCellBytesGet(e ast.Expr) bool {
+	c, ok := e.(*ast.Call)
+	if !ok || len(c.Args) != 1 || len(c.TypeArgs) != 1 {
+		return false
+	}
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok || id.Name != "__method_Cell_get" {
+		return false
+	}
+	_, bytes := c.TypeArgs[0].(ast.ArrayType)
+	return bytes
+}
+
+func cellElemCounted(t ast.Type) bool {
+	switch t.(type) {
+	case ast.StringType, ast.ArrayType:
+		return true
+	}
+	return false
+}
+
 // emitCellGet lowers `c.get()` to a load of slot 0 (the data pointer is
 // the slot address). A `string` element is returned BORROWED — the cell
 // still owns its slot copy — so retain the returned buffer (the caller's
@@ -22892,6 +22919,9 @@ func (b *builder) emitCellGet(n *ast.Call) error {
 		return err
 	}
 	b.emit(payloadLoadOpFor(elemType, b.ptrW))
+	if _, bytes := elemType.(ast.ArrayType); bytes {
+		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+	}
 	if _, isStr := elemType.(ast.StringType); isStr {
 		if ast.UseTwoWordStrings(b.ptrW) {
 			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", Width: ResAddr, I32: 1})
@@ -22913,7 +22943,7 @@ func (b *builder) emitCellGet(n *ast.Call) error {
 // cell's alone.
 func (b *builder) emitCellSet(n *ast.Call) error {
 	elemType := b.cellElemType(n)
-	if _, isStr := elemType.(ast.StringType); !isStr {
+	if !cellElemCounted(elemType) {
 		// Scalar: plain in-place store, no rc traffic.
 		if err := b.expr(n.Args[0]); err != nil { // cell data ptr = slot address
 			return err
@@ -22924,7 +22954,7 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 		b.emit(arrayElemStoreOpFor(elemType, b.ptrW))
 		return nil
 	}
-	// String element. Stash the cell pointer so args[0] is evaluated once.
+	// Counted element. Stash the cell pointer so args[0] is evaluated once.
 	ptrSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__cell_set_%d", ptrSlot)] = ptrSlot
 	if err := b.expr(n.Args[0]); err != nil { // cell data ptr = slot address
@@ -22938,10 +22968,8 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 	// slot holds one stack word on every ptrW, so one local carries it.
 	valSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__cell_val_%d", valSlot)] = valSlot
-	// String-typed so the slot is wide enough for the two-word ABI — arm64
-	// sets ast.TwoWordOverride, where an untyped slot keeps only the data
-	// word and the value reads back empty.
-	b.scratchType[valSlot] = ast.StringType{}
+	// Preserve the element's width, including the two-word string ABI.
+	b.scratchType[valSlot] = elemType
 	if err := b.expr(n.Args[1]); err != nil { // value
 		return err
 	}
@@ -22950,9 +22978,8 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 	}
 	b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
 	// Release the buffer being overwritten (gated like every other dec).
-	// The new value can never BE that buffer: a cell read is excluded from
-	// the in-place append (see the concat lowering), so the value is always
-	// a distinct allocation.
+	// The replacement already owns its reference, including c.set(c.get()).
+	// It is now safe to release the slot's previous reference.
 	if ast.RcFreeEnabled {
 		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 		b.emit(payloadLoadOpFor(elemType, b.ptrW))
@@ -22960,7 +22987,12 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 		// pair, and native single-word frees the overwritten buffer at rc==1
 		// (deferring to __fern_rc_dec otherwise). A bare __fern_rc_dec never
 		// frees, so each overwrite would strand the old buffer.
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
+		if _, bytes := elemType.(ast.ArrayType); bytes {
+			b.emit(Op{Kind: OpConstI32, I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", Width: ResAddr, I32: 2})
+		} else {
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
+		}
 		b.emit(Op{Kind: OpDrop})
 	}
 	// Store the new value (addr, value).

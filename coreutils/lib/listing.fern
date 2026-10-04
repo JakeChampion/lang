@@ -498,6 +498,13 @@ function put(o: Out, s: string): Out {
   return Out { ...o, w: gnu.put_with(o.w, s, status_usage()), pos: o.pos + s.len() as i64 };
 }
 
+function put_bytes(o: Out, bytes: u8[]): Out {
+  if (bytes.len() == 0) {
+    return o;
+  }
+  return Out { ...o, w: gnu.put_bytes_with(o.w, bytes, status_usage()), pos: o.pos + bytes.len() as i64 };
+}
+
 // A name written with its byte range recorded, for `--dired`.
 function put_name(c: Cfg, o: Out, s: string): Out {
   let start: i64 = o.pos;
@@ -1712,24 +1719,24 @@ function block_text(c: Cfg, e: Ent): string {
 // is written as the format rendered it, since the format carries its
 // own alignment.
 function time_width(c: Cfg): i32 {
-  let a: i32 = timefmt.format(c.nonrecent_fmt, c.zone, c.now, 0 as i64).len();
-  let b: i32 = timefmt.format(c.recent_fmt, c.zone, c.now, 0 as i64).len();
+  let a: i32 = timefmt.format_bytes(c.nonrecent_fmt, c.zone, c.now, 0 as i64).len();
+  let b: i32 = timefmt.format_bytes(c.recent_fmt, c.zone, c.now, 0 as i64).len();
   if (b > a) {
     return b;
   }
   return a;
 }
 
-function time_text(c: Cfg, e: Ent): string {
+function time_bytes(c: Cfg, e: Ent): u8[] {
   if (!e.stated || c.time_type == time_birth() && no_birth(e)) {
-    return pad_left("?", time_width(c));
+    return pad_left("?", time_width(c)).bytes();
   }
   let t: i64 = ent_time(c, e);
   let recent: boolean = c.now - six_months() < t && t <= c.now;
   if (recent) {
-    return timefmt.format(c.recent_fmt, c.zone, t, ent_nsec(c, e));
+    return timefmt.format_bytes(c.recent_fmt, c.zone, t, ent_nsec(c, e));
   }
-  return timefmt.format(c.nonrecent_fmt, c.zone, t, ent_nsec(c, e));
+  return timefmt.format_bytes(c.nonrecent_fmt, c.zone, t, ent_nsec(c, e));
 }
 
 function measure(c: Cfg, es: Ent[]): Widths {
@@ -1854,7 +1861,7 @@ function frills(c: Cfg, w: Widths, e: Ent): string {
 // string a dozen times per line, and a dozen writes threaded and
 // rebuilt the writer a dozen times, where one buffer appends in place
 // and hands the result over without a copy.
-function long_prefix(c: Cfg, w: Widths, e: Ent): string {
+function long_prefix(c: Cfg, w: Widths, e: Ent): u8[] {
   let h: usize = buf_new(96);
   buf_push(h, frills(c, w, e));
   if (e.stated) {
@@ -1887,9 +1894,12 @@ function long_prefix(c: Cfg, w: Widths, e: Ent): string {
   buf_push(h, " ");
   buf_push(h, size_field(c, w, e));
   buf_push(h, " ");
-  buf_push(h, time_text(c, e));
+  let stamp: u8[] = time_bytes(c, e);
+  buf_push_bytes_range(h, stamp, 0, stamp.len());
   buf_push(h, " ");
-  return buf_take(h);
+  let bytes: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return bytes;
 }
 
 function push_pad(h: usize, n: i32): void {
@@ -2280,7 +2290,7 @@ function emit_long(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths): (Out, Paint)
   while (i < es.len()) {
     out = dired_indent(c, out);
     let open: (Out, Paint) = start_entry(c, out, paint);
-    out = put(open.0, long_prefix(c, w, es[i]));
+    out = put_bytes(open.0, long_prefix(c, w, es[i]));
     paint = open.1;
     let r: (Out, Paint) = emit_name(c, out, paint, es[i], true, w.pad);
     out = r.0;

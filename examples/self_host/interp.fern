@@ -1324,13 +1324,112 @@ function cell_value(v: Value): Value {
       c.cs.set(sv.v);
       return VCell { ...c, kind: "string" };
     },
+    VArr(a) => {
+      let encoded: Value = cell_bytes_text(a);
+      if let VString(s) = encoded {
+        c.cs.set(s.v);
+        return VCell { ...c, kind: "u8[]" };
+      }
+      return encoded;
+    },
     _ => {
-      return v_err("cell_new: a cell holds a scalar or a string");
+      return v_err("cell_new: a cell holds a scalar, string or u8[]");
     }
   }
 }
 
 // cell_method answers `c.get()` and `c.set(v)` on a program's cell.
+// Keep the interpreter itself buildable by the old scalar/string-cell pin.
+// Its byte-cell storage is ASCII hex; application native/WASM cells retain
+// the owned array directly. No arbitrary byte is ever stored in a string.
+function cell_bytes_text(a: VArr): Value {
+  let h: usize = buf_new(a.elements.len() * 2);
+  let digits: string = "0123456789abcdef";
+  for v in a.elements {
+    if (!is_i32_arg(v)) {
+      buf_free(h);
+      return v_err("Cell[u8[]]: expected byte elements");
+    }
+    let b: i32 = vint_bits(v);
+    if (b < 0 || b > 255) {
+      buf_free(h);
+      return v_err("Cell[u8[]]: byte out of range");
+    }
+    buf_push_byte(h, digits[b / 16] as i32);
+    buf_push_byte(h, digits[b % 16] as i32);
+  }
+  let encoded: string = buf_take(h);
+  buf_free(h);
+  return v_string(encoded);
+}
+
+function cell_bytes_value(s: string): Value {
+  let out: Value[] = [];
+  let i: i32 = 0;
+  while (i < s.len()) {
+    let hi: i32 = s[i] as i32 - 48;
+    let lo: i32 = s[i + 1] as i32 - 48;
+    if (hi > 9) {
+      hi = hi - 39;
+    }
+    if (lo > 9) {
+      lo = lo - 39;
+    }
+    out = out.append(v_int(hi * 16 + lo));
+    i = i + 2;
+  }
+  return v_arr_of(out, "u8");
+}
+
+function cell_set_value(c: VCell, v: Value): Value {
+  if (c.kind == "u8[]") {
+    if let VArr(a) = v {
+      let encoded: Value = cell_bytes_text(a);
+      if let VString(s) = encoded {
+        c.cs.set(s.v);
+        return v_void();
+      }
+      return encoded;
+    }
+    return v_err("Cell.set: the value is not a u8[]");
+  }
+  if (c.kind == "i32" && is_i32_arg(v)) {
+    c.ci.set(vint_bits(v));
+    return v_void();
+  }
+  if (c.kind == "bool") {
+    match (v) {
+      VBool(bb) => {
+        if (bb.v) {
+          c.ci.set(1);
+        } else {
+          c.ci.set(0);
+        }
+        return v_void();
+      },
+      _ => {}
+    }
+  }
+  if (c.kind == "i64" && is_int_like(v)) {
+    c.cl.set(vint_as_i64(v));
+    return v_void();
+  }
+  if (c.kind == "f64" && is_float_like(v)) {
+    c.cf.set(vfloat_as_f64(v));
+    return v_void();
+  }
+  if (c.kind == "string") {
+    match (v) {
+      VString(sv) => {
+        c.cs.set(sv.v);
+        return v_void();
+      },
+      _ => {}
+    }
+  }
+  return v_err("Cell.set: the value is not a " + c.kind);
+}
+
 function cell_method(c: VCell, name: string, args: Value[]): Value {
   if (name == "get") {
     if (args.len() != 0) {
@@ -1348,48 +1447,16 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
     if (c.kind == "f64") {
       return VFloat { v: c.cf.get() };
     }
+    if (c.kind == "u8[]") {
+      return cell_bytes_value(c.cs.get());
+    }
     return v_string(c.cs.get());
   }
   if (name == "set") {
     if (args.len() != 1) {
       return v_err("Cell.set takes exactly 1 argument");
     }
-    let v: Value = args[0];
-    if (c.kind == "i32" && is_i32_arg(v)) {
-      c.ci.set(vint_bits(v));
-      return v_void();
-    }
-    if (c.kind == "bool") {
-      match (v) {
-        VBool(bb) => {
-          if (bb.v) {
-            c.ci.set(1);
-          } else {
-            c.ci.set(0);
-          }
-          return v_void();
-        },
-        _ => {}
-      }
-    }
-    if (c.kind == "i64" && is_int_like(v)) {
-      c.cl.set(vint_as_i64(v));
-      return v_void();
-    }
-    if (c.kind == "f64" && is_float_like(v)) {
-      c.cf.set(vfloat_as_f64(v));
-      return v_void();
-    }
-    if (c.kind == "string") {
-      match (v) {
-        VString(sv) => {
-          c.cs.set(sv.v);
-          return v_void();
-        },
-        _ => {}
-      }
-    }
-    return v_err("Cell.set: the value is not a " + c.kind);
+    return cell_set_value(c, args[0]);
   }
   return v_err("undefined method `" + name + "` on `Cell`");
 }

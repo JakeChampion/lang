@@ -1514,7 +1514,7 @@ function __serve_expire[D: async.Driver](drv: D, c: __Conns, opts: Config, now: 
 // `state`, 0 while the body is being read, 1 once it ended whole, 2 once
 // it faulted; `rest`, the bytes the pull read past the body, the next
 // request's, for the loop to take back.
-struct __Body { state: Cell[i32], rest: Cell[string] }
+struct __Body { state: Cell[i32], rest: Cell[u8[]] }
 
 // __Pull — a streamed body's reader: the connection; what a Content-Length
 // body still owes (`left`, -1 for a chunked body) or the chunked decoder's
@@ -1524,7 +1524,7 @@ struct __Body { state: Cell[i32], rest: Cell[string] }
 // (`pending`); the data-rate clock (`since`, 0 until the first wait, and
 // `got`, the bytes read since); whether `100 Continue` is still owed; and
 // the body's shared state and the stream's fault.
-struct __Pull { fd: i32, left: Cell[i32], dstate: Cell[i32], dheld: Cell[string], dleft: Cell[i32], dbudget: Cell[i32], droom: Cell[i32], pending: Cell[string], since: Cell[i64], got: Cell[i32], continue_owed: Cell[i32], opts: Config, body: __Body, fault: Cell[i32] }
+struct __Pull { fd: i32, left: Cell[i32], dstate: Cell[i32], dheld: Cell[u8[]], dleft: Cell[i32], dbudget: Cell[i32], droom: Cell[i32], pending: Cell[u8[]], since: Cell[i64], got: Cell[i32], continue_owed: Cell[i32], opts: Config, body: __Body, fault: Cell[i32] }
 
 // __body_source(fd, head, initial, opts, body) — the source a streamed
 // request's body pulls from.
@@ -1534,7 +1534,8 @@ function __body_source(fd: i32, head: http.HttpHead, initial: u8[], opts: Config
   if (head.expects_continue && initial.len() == 0) {
     owed = 1;
   }
-  let p: __Pull = __Pull { fd: fd, left: cell_new(head.length), dstate: cell_new(0), dheld: cell_new(""), dleft: cell_new(0), dbudget: cell_new(opts.limits.header_bytes), droom: cell_new(opts.limits.body), pending: cell_new(string_from_bytes_unchecked(initial)), since: cell_new(0 as i64), got: cell_new(0), continue_owed: cell_new(owed), opts: opts, body: body, fault: fault };
+  let empty: u8[] = [];
+  let p: __Pull = __Pull { fd: fd, left: cell_new(head.length), dstate: cell_new(0), dheld: cell_new(empty), dleft: cell_new(0), dbudget: cell_new(opts.limits.header_bytes), droom: cell_new(opts.limits.body), pending: cell_new(initial), since: cell_new(0 as i64), got: cell_new(0), continue_owed: cell_new(owed), opts: opts, body: body, fault: fault };
   return BodySource { next: (): Option[u8[]] => __body_next(p), fault: fault };
 }
 
@@ -1567,10 +1568,10 @@ function __body_next(p: __Pull): Option[u8[]] {
 // (408), the task was cancelled, or the peer closed or failed (400).
 function __body_take(p: __Pull): u8[] {
   let none: u8[] = [];
-  let pending: string = p.pending.get();
+  let pending: u8[] = p.pending.get();
   if (pending.len() > 0) {
-    p.pending.set("");
-    return pending.bytes();
+    p.pending.set(none);
+    return pending;
   }
   while (true) {
     let wait_ms: i32 = __body_wait_ms(p);
@@ -1650,23 +1651,23 @@ function __body_decode(p: __Pull, bytes: u8[]): u8[] {
   if (bytes.len() == left) {
     return bytes;
   }
-  p.body.rest.set(string_from_bytes_unchecked(__bytes_from(bytes, left)));
+  p.body.rest.set(__bytes_from(bytes, left));
   return bytes.take(left);
 }
 
 function __body_decode_chunked(p: __Pull, bytes: u8[]): u8[] {
-  let d: http.ChunkDecoder = http.ChunkDecoder { state: p.dstate.get(), held: p.dheld.get().bytes(), left: p.dleft.get(), budget: p.dbudget.get(), room: p.droom.get(), fields: p.opts.limits.header_fields, trailers: HeaderMap { names: [], values: [] } };
+  let d: http.ChunkDecoder = http.ChunkDecoder { state: p.dstate.get(), held: p.dheld.get(), left: p.dleft.get(), budget: p.dbudget.get(), room: p.droom.get(), fields: p.opts.limits.header_fields, trailers: HeaderMap { names: [], values: [] } };
   match (d.feed(bytes)) {
     http.ChunkData(next, data) => {
       p.dstate.set(next.state);
-      p.dheld.set(string_from_bytes_unchecked(next.held));
+      p.dheld.set(next.held);
       p.dleft.set(next.left);
       p.dbudget.set(next.budget);
       p.droom.set(next.room);
       return data;
     },
     http.ChunkEnd(data, trailers, rest) => {
-      p.body.rest.set(string_from_bytes_unchecked(rest));
+      p.body.rest.set(rest);
       p.body.state.set(1);
       return data;
     },
@@ -1705,9 +1706,9 @@ function __body_live(fl: __Flight): boolean {
 // again, and a connection whose body was not read whole does not persist,
 // since what is left of the body would be read as the next request.
 function __body_settled[D: async.Driver](drv: D, c: __Conns, at: i32, body: __Body): __Conns {
-  let rest: string = body.rest.get();
+  let rest: u8[] = body.rest.get();
   if (rest.len() > 0) {
-    c = __Conns { ...c, bufs: c.bufs.with(at, rest.bytes().concat(__bytes_from(c.bufs[at], c.offs[at]))), offs: c.offs.with(at, 0) };
+    c = __Conns { ...c, bufs: c.bufs.with(at, rest.concat(__bytes_from(c.bufs[at], c.offs[at]))), offs: c.offs.with(at, 0) };
   }
   drv.watch(c.fds[at], 1);
   if (body.state.get() != 1) {
@@ -1753,7 +1754,8 @@ function __serve_unframed[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], 
 function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, h: http.HttpHead, start: (http.HttpFramed, boolean, __Stop) => __Started, opts: Config, stop: __Stop, corked: u8[], count: i32, clk: __Clock): (__Conns, __Flight[], boolean, u8[], http.HttpFraming) {
   let fd: i32 = c.fds[at];
   let buf: u8[] = c.bufs[at];
-  let body: __Body = __Body { state: cell_new(0), rest: cell_new("") };
+  let empty: u8[] = [];
+  let body: __Body = __Body { state: cell_new(0), rest: cell_new(empty) };
   let src: BodySource = __body_source(fd, h, __bytes_from(buf, c.offs[at] + h.len), opts, body);
   let req: HttpRequest = HttpRequest { ...h.request, body: stream.stream_from_source(src) };
   let served: i32 = c.served[at] + 1;

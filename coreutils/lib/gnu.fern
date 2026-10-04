@@ -1153,6 +1153,16 @@ pub function put(o: io_buffered.BufWriter, s: string): io_buffered.BufWriter {
   return put_with(o, s, 1);
 }
 
+pub function put_bytes(o: io_buffered.BufWriter, bytes: u8[]): io_buffered.BufWriter {
+  return put_bytes_with(o, bytes, 1);
+}
+
+pub function put_bytes_with(o: io_buffered.BufWriter, bytes: u8[], status: i32): io_buffered.BufWriter {
+  let w: io_buffered.BufWriter = o.write_bytes(bytes);
+  die_on_write_error(w, status);
+  return w;
+}
+
 // `put_with(o, s, status)` — `put` for a utility whose write-failure
 // exit is not 1: gnulib's `exit_failure`, which expr(1) sets to 3.
 pub function put_with(o: io_buffered.BufWriter, s: string, status: i32): io_buffered.BufWriter {

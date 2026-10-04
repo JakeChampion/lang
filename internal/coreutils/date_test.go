@@ -250,6 +250,9 @@ func dateCases(t *testing.T) []invocation {
 	} {
 		fmtc(f)
 	}
+	for _, format := range rawTimeFormats() {
+		add(invocation{name: "raw time format " + quote([]byte(format)), args: []string{"-d", "2024-06-15 12:34:56.123456789", "+" + format}})
+	}
 	// Formats at other instants: the epoch, before it, a leap day, the
 	// year-boundary ISO weeks, five-digit years and the biggest year.
 	for _, when := range []string{"@0", "@-1", "@-86401", "2024-02-29 00:00:00", "2024-12-30", "2021-01-03 01:02:03", "2020-12-31", "2027-01-01", "10000-01-01 23:59:59", "275817-05-26 04:05:06", "1900-01-01 00:00:00", "0001-01-01", "0000-01-01", "2147485547-12-31 23:59:59", "1969-12-31 23:59:59.999999999"} {

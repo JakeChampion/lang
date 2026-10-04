@@ -18,10 +18,6 @@ import "std/io_buffered";
 import "./gnu";
 import "std/tz";
 
-function byte_string(b: i32): string {
-  return string_from_bytes_unchecked([b as u8]);
-}
-
 pub struct Tm { year: i64, month: i32, day: i32, hour: i32, min: i32, sec: i32, wday: i32, yday: i32, offset: i32, abbrev: string }
 
 // `break_time(z, t)` — localtime(3) as a conversion reads it: the
@@ -293,7 +289,7 @@ struct Spec { pad: i32, width: i32, up: boolean, low: boolean, change: boolean, 
 
 // `parse_spec(fmt, i, upcase, width)` — the flags, width, modifier and
 // conversion letter starting at the `%` at `i`.
-function parse_spec(fmt: string, i: i32, upcase: boolean, width: i32): Spec {
+function parse_spec(fmt: u8[], i: i32, upcase: boolean, width: i32): Spec {
   let pad: i32 = pad_zero();
   let up: boolean = upcase;
   let change: boolean = false;
@@ -779,24 +775,27 @@ function convert(h: usize, s: Spec, tm: Tm, t: i64, nsec: i64, yr_spec: i32): bo
 
 // One piece of a compiled format. `kind` 0 is a literal run, 1 a literal
 // padded and cased by `s`, 2 a `%z` with `colons` colons, and 3 a
-// conversion, with `lit` the text written when the original refuses it.
-struct Piece { kind: i32, lit: string, s: Spec, colons: i32 }
+// conversion. Literal byte ranges refer to the complete format, including
+// a refused conversion, without constructing partial UTF-8 strings.
+struct Piece { kind: i32, lo: i32, hi: i32, s: Spec, colons: i32 }
 
-// A format parsed once, for a caller rendering many timestamps with it.
-pub struct Format { pieces: Piece[] }
+// A format parsed once, retaining its complete source for every literal range.
+// OS-supplied formats may contain arbitrary bytes under the D10 contract;
+// the compiled representation stores those bytes without a text conversion.
+pub struct Format { source: u8[], pieces: Piece[] }
 
 function no_spec(): Spec {
   return Spec { pad: pad_zero(), width: -1, up: false, low: false, change: false, modifier: 0, c: 0, at: 0, end: 0 };
 }
 
-function padded(lit: string, s: Spec): Piece {
-  return Piece { kind: 1, lit: lit, s: s, colons: 0 };
+function padded(lo: i32, hi: i32, s: Spec): Piece {
+  return Piece { kind: 1, lo: lo, hi: hi, s: s, colons: 0 };
 }
 
 // `compile_with(fmt, upcase, width)` — the format's pieces: `upcase` is a
 // `^` carried in from outside, and `width` the width the first piece
 // starts with, for the compound conversions that re-enter the engine.
-function compile_with(fmt: string, upcase: boolean, width0: i32): Format {
+function compile_with(fmt: u8[], upcase: boolean, width0: i32): Format {
   let ps: Piece[] = [];
   let i: i32 = 0;
   let width: i32 = width0;
@@ -804,7 +803,7 @@ function compile_with(fmt: string, upcase: boolean, width0: i32): Format {
     let b: i32 = fmt[i] as i32;
     if (b != 37) {
       if (width > 1) {
-        ps = ps.append(padded(byte_string(b), Spec { ...no_spec(), width: width }));
+        ps = ps.append(padded(i, i + 1, Spec { ...no_spec(), width: width }));
         width = -1;
         i = i + 1;
         continue;
@@ -813,7 +812,7 @@ function compile_with(fmt: string, upcase: boolean, width0: i32): Format {
       while (k < fmt.len() && fmt[k] as i32 != 37) {
         k = k + 1;
       }
-      ps = ps.append(Piece { kind: 0, lit: slice_unchecked(fmt, i, k) + "", s: no_spec(), colons: 0 });
+      ps = ps.append(Piece { kind: 0, lo: i, hi: k, s: no_spec(), colons: 0 });
       width = -1;
       i = k;
       continue;
@@ -823,18 +822,18 @@ function compile_with(fmt: string, upcase: boolean, width0: i32): Format {
     let j: i32 = s.end;
     if (s.c == 37) {
       if (j == i + 1) {
-        ps = ps.append(padded("%", s));
+        ps = ps.append(padded(i, i + 1, s));
         i = j + 1;
         continue;
       }
       // Flags before a second `%` are copied out, and that `%` opens
       // the next conversion.
-      ps = ps.append(padded(slice_unchecked(fmt, i, j) + "", s));
+      ps = ps.append(padded(i, j, s));
       i = j;
       continue;
     }
     if (s.c == 0) {
-      ps = ps.append(padded(slice_unchecked(fmt, i, fmt.len()) + "", s));
+      ps = ps.append(padded(i, fmt.len(), s));
       i = fmt.len();
       continue;
     }
@@ -844,58 +843,94 @@ function compile_with(fmt: string, upcase: boolean, width0: i32): Format {
         colons = colons + 1;
       }
       if (j + colons < fmt.len() && fmt[j + colons] as i32 == 122 && colons <= 3) {
-        ps = ps.append(Piece { kind: 2, lit: "", s: s, colons: colons });
+        ps = ps.append(Piece { kind: 2, lo: 0, hi: 0, s: s, colons: colons });
         i = j + colons + 1;
         continue;
       }
       if (j + colons < fmt.len() && fmt[j + colons] as i32 == 122) {
         j = j + colons;
       }
-      ps = ps.append(padded(slice_unchecked(fmt, i, j + 1) + "", s));
+      ps = ps.append(padded(i, j + 1, s));
       i = j + 1;
       continue;
     }
-    ps = ps.append(Piece { kind: 3, lit: slice_unchecked(fmt, i, j + 1) + "", s: s, colons: 0 });
+    ps = ps.append(Piece { kind: 3, lo: i, hi: j + 1, s: s, colons: 0 });
     i = j + 1;
   }
-  return Format { pieces: ps };
+  return Format { source: fmt, pieces: ps };
+}
+
+// Literal padding and ASCII case flags operate on bytes, as C-locale
+// nstrftime does. A byte range may end inside a scalar; keep it out of text.
+function literal_add(h: usize, source: u8[], p: Piece): void {
+  let width: i32 = p.s.width;
+  if (p.s.pad == pad_none() || width < 0) {
+    width = 0;
+  }
+  let fill: i32 = 32;
+  if (p.s.pad == pad_always_zero() || p.s.pad == pad_sign()) {
+    fill = 48;
+  }
+  let padding: i32 = width - (p.hi - p.lo);
+  while (padding > 0) {
+    buf_push_byte(h, fill);
+    padding = padding - 1;
+  }
+  if (!p.s.up && !p.s.low) {
+    buf_push_bytes_range(h, source, p.lo, p.hi);
+    return;
+  }
+  let i: i32 = p.lo;
+  while (i < p.hi) {
+    let b: i32 = source[i] as i32;
+    if (p.s.low && b >= 65 && b <= 90) {
+      b = b + 32;
+    } else if (!p.s.low && p.s.up && b >= 97 && b <= 122) {
+      b = b - 32;
+    }
+    buf_push_byte(h, b);
+    i = i + 1;
+  }
 }
 
 // `render(f, tm, t, nsec, yr_spec)` — the pieces written out for one
 // time; `yr_spec` is the padding a year inherits.
-function render(f: Format, tm: Tm, t: i64, nsec: i64, yr_spec: i32): string {
-  let h: usize = render_buf(f, tm, t, nsec, yr_spec);
-  let text: string = buf_take(h);
-  buf_free(h);
-  return text;
-}
-
-// `render_buf(f, tm, t, nsec, yr_spec)` — `render` into a fresh builder
-// the caller takes and frees.
-function render_buf(f: Format, tm: Tm, t: i64, nsec: i64, yr_spec: i32): usize {
+function render_builder(f: Format, tm: Tm, t: i64, nsec: i64, yr_spec: i32): usize {
   let h: usize = buf_new(64);
   for p in f.pieces {
     if (p.kind == 0) {
-      buf_push(h, p.lit);
+      buf_push_bytes_range(h, f.source, p.lo, p.hi);
     } else if (p.kind == 1) {
-      width_add(h, cased(p.lit, p.s.up, p.s.low), p.s.width, p.s.pad);
+      literal_add(h, f.source, p);
     } else if (p.kind == 2) {
       tz_offset(h, p.s, tm, p.colons);
     } else if (!convert(h, p.s, tm, t, nsec, yr_spec)) {
-      width_add(h, cased(p.lit, p.s.up, p.s.low), p.s.width, p.s.pad);
+      literal_add(h, f.source, p);
     }
   }
   return h;
 }
 
+function render(f: Format, tm: Tm, t: i64, nsec: i64, yr_spec: i32): string {
+  let h: usize = render_builder(f, tm, t, nsec, yr_spec);
+  let text: string = buf_take(h);
+  buf_free(h);
+  return text;
+}
+
 // `format_with(fmt, tm, t, nsec, upcase, yr_spec, width)` — the engine,
 // re-entered for the compound conversions.
 function format_with(fmt: string, tm: Tm, t: i64, nsec: i64, upcase: boolean, yr_spec: i32, width0: i32): string {
-  return render(compile_with(fmt, upcase, width0), tm, t, nsec, yr_spec);
+  return render(compile_with(fmt.bytes(), upcase, width0), tm, t, nsec, yr_spec);
 }
 
 // `compile(fmt)` — `fmt` parsed once, for `format`.
 pub function compile(fmt: string): Format {
+  return compile_bytes(fmt.bytes());
+}
+
+// Raw format bytes are retained once; pieces only store offsets into them.
+pub function compile_bytes(fmt: u8[]): Format {
   return compile_with(fmt, false, -1);
 }
 
@@ -915,12 +950,14 @@ pub function strftime(fmt: string, z: tz.Zone, t: i64, nsec: i64): string {
   return format(compile(fmt), z, t, nsec);
 }
 
-// `strftime_bytes(fmt, z, t, nsec)` — `strftime` with the format's bytes
-// copied out as given: a format from the command line is not validated,
-// and GNU writes a stray byte in it through unchanged.
-pub function strftime_bytes(fmt: string, z: tz.Zone, t: i64, nsec: i64): u8[] {
-  let h: usize = render_buf(compile(fmt), break_time(z, t), t, nsec, pad_zero());
+// Byte output preserves raw OS format bytes, including unknown directives.
+pub function format_bytes(f: Format, z: tz.Zone, t: i64, nsec: i64): u8[] {
+  let h: usize = render_builder(f, break_time(z, t), t, nsec, pad_zero());
   let bytes: u8[] = buf_take_bytes(h);
   buf_free(h);
   return bytes;
+}
+
+pub function strftime_bytes(fmt: string, z: tz.Zone, t: i64, nsec: i64): u8[] {
+  return format_bytes(compile(fmt), z, t, nsec);
 }
