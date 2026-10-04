@@ -15,6 +15,7 @@ import "std/string";
 import "std/i32";
 import "std/http";
 import "std/serve";
+import "std/platform";
 
 function main(): i32 {
   let argv: string[] = args();
@@ -33,7 +34,7 @@ function main(): i32 {
   // Created before the accept loop, so it survives the per-request arena
   // and counts across requests.
   let served: Cell[i32] = cell_new(0);
-  let handler: (HttpRequest, Platform) => HttpResponse = (req: HttpRequest, plat: Platform): HttpResponse => {
+  let handler: (HttpRequest, platform.Host) => HttpResponse = (req: HttpRequest, plat: platform.Host): HttpResponse => {
     served.set(served.get() + 1);
     let body: string = "origin-hit=" + served.get().to_string() + " path=" + req.path + "\n";
     return http.ok(body).with_header("Cache-Control", "max-age=60");

@@ -43,7 +43,7 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 		"        }\n" +
 		"    }\n" +
 		"    let d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(src)), \"x86-64-linux\");\n" +
-		"    print(asm_ir.emit_module_or_error_sub(d.full, d.sub));\n" +
+		"    print(asm_ir.emit_module_or_error_sub(d.full, d.sub, 0 as usize));\n" +
 		"    return 0;\n" +
 		"}\n"
 	files := map[string]string{"main.fern": entry}

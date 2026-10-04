@@ -883,6 +883,30 @@ function main(): i32 {
 	// one then named a trait the file no longer declared. The written form is
 	// retained beside the Module now. Generic parameters, a supertrait list, an
 	// empty block and a bodied default are each a piece the derived views drop.
+	{"trait-and-impl-member-comments", `trait Shape {
+  // The area, in whatever unit the shape was measured in.
+  function area(self: Self): i32;
+
+  function name(self: Self): string;  // for the report
+}
+
+struct Sq { s: i32 }
+
+impl Shape for Sq {
+  function area(self: Sq): i32 {
+    return self.s * self.s;
+  }
+
+  // A square is named after its side.
+  function name(self: Sq): string {
+    return "square";
+  }
+}
+
+function main(): i32 {
+  return 0;
+}
+`},
 	{"trait-declarations", `pub trait Display {
 function to_string(self: Self): string;
 }

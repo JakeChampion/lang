@@ -2752,6 +2752,11 @@ function kind_in(kinds: i32[], k: i32): boolean {
 // Everything that is not a container operation: the constants and a type's
 // zero, a parameter, a copy, a phi, the scalar operators, a call, a closure
 // value and the call through one.
+// unchecked_str_index is a byte read whose index the lowering proved in range.
+function unchecked_str_index(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.str_index() && ins.imm == 1;
+}
+
 function value_op(k: i32): boolean {
   return kind_in([1, 2, 5, 6, 7, 8, ssasem.zero(), ssasem.call()], k) || ssasem.scalar_op(k) || ssasem.is_function_op(k);
 }
@@ -3381,8 +3386,8 @@ function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, 
   if (ins.kind_tag == ssasem.str_bytes()) {
     return emit(r, ir.packed(ir.op_str_bytes()));
   }
-  if (ins.kind_tag == ssasem.str_index() && ins.imm == 1) {
-    return emit(r, ir.op_str_index_nc());
+  if (unchecked_str_index(ins)) {
+    return emit(r, ir.op_raw_load8());
   }
   if (ins.kind_tag == ssasem.str_index()) {
     return emit(r, ir.op_str_index());
@@ -4313,8 +4318,16 @@ function instruction(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
     r = dyn_site(r, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
-  for arg in ins.args {
-    r = emit(r, ir.op_load_local(arg));
+  if (unchecked_str_index(ins)) {
+    // The string's data address, then the index: hoist_loop_invariants can
+    // lift the address out of a loop that only reads the string.
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_str_data());
+    r = emit(r, ir.op_load_local(ins.args[1]));
+  } else {
+    for arg in ins.args {
+      r = emit(r, ir.op_load_local(arg));
+    }
   }
   if (constant_op(ins.kind_tag)) {
     r = constant(r, f, ins);
@@ -4473,7 +4486,7 @@ function append_push(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
   // grows it in place and reclaims it on a realloc.
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_load_local(ins.args[1]));
-  r = emit(r, arr_push_op(elem));
+  r = emit(r, ir.Op { ...arr_push_op(elem), i32_imm: 1 });
   r = emit(r, ir.op_store_local(res));
   r = emit(r, ir.op_else());
   // Shared: the NON-consuming push un-shares, which is the same copy

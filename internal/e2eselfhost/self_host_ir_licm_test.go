@@ -54,6 +54,13 @@ func TestSelfHostIRLICM(t *testing.T) {
 		// Later loops first: the inner loop takes slot 4, the outer slot 5, and
 		// each prologue sits directly before its own `loop`.
 		"licm_nested: block ; load_local 0 ; str_len ; store_local 5 ; loop ; load_local 2 ; load_local 5 ; lt_s ; not ; brif 1 ; block ; load_local 1 ; str_len ; store_local 4 ; loop ; load_local 3 ; load_local 4 ; lt_s ; not ; brif 1 ; load_local 3 ; const_i32 1 ; add ; store_local 3 ; br 0 ; end ; end ; load_local 2 ; const_i32 1 ; add ; store_local 2 ; br 0 ; end ; end | n_locals=6\n" +
+		// The body reads bytes of the string the header takes the length of:
+		// its data address is hoisted too, into the next slot.
+		"licm_data_address: block ; load_local 0 ; str_len ; store_local 3 ; load_local 0 ; str_data ; store_local 4 ; loop ; load_local 1 ; load_local 3 ; lt_s ; not ; brif 1 ; load_local 2 ; load_local 4 ; load_local 1 ; raw_load8 ; add ; store_local 2 ; load_local 1 ; const_i32 1 ; add ; store_local 1 ; br 0 ; end ; end | n_locals=5\n" +
+		"licm_data_address_stack_neutral=1\n" +
+		// No header read of the string, or a store to it: the address stays.
+		"licm_data_unread_refused: block ; loop ; load_local 1 ; load_local 3 ; lt_s ; not ; brif 1 ; load_local 2 ; load_local 0 ; str_data ; load_local 1 ; raw_load8 ; add ; store_local 2 ; load_local 1 ; const_i32 1 ; add ; store_local 1 ; br 0 ; end ; end | n_locals=4\n" +
+		"licm_data_mutated_refused: block ; loop ; load_local 1 ; load_local 0 ; str_len ; lt_s ; not ; brif 1 ; load_local 2 ; store_local 0 ; load_local 2 ; load_local 0 ; str_data ; load_local 1 ; raw_load8 ; add ; store_local 2 ; load_local 1 ; const_i32 1 ; add ; store_local 1 ; br 0 ; end ; end | n_locals=3\n" +
 		"licm_unclosed_refused: block ; loop ; load_local 1 ; load_local 0 ; str_len ; lt_s ; not ; brif 1 | n_locals=3\n" +
 		// #8247: against the count the pass returned the ops verify clean;
 		// against the lowering's own count both ops naming the cache slot are

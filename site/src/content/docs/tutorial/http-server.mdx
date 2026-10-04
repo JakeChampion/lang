@@ -20,8 +20,9 @@ Define a function named `handle` that takes an `HttpRequest` and a
 ```fern
 import "std/http";
 import "std/serve";
+import "std/platform";
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("hello, world");
 }
 ```
@@ -51,8 +52,9 @@ echoes a POST body, and sets a response header.
 <FernPlayground
   code={`import "std/http";
 import "std/serve";
+import "std/platform";
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/hello") {
         // with_header returns a NEW response with the header set —
         // responses are immutable, like every value in Fern.
@@ -165,8 +167,9 @@ import "std/serve";
 import "std/url";
 import "std/json";
 import "core/map";
+import "std/platform";
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     // req.path is path+query; anchor it against a host so url_parse
     // has something to chew on.
     match (url.url_parse("http://x.local" + req.path)) {
@@ -204,14 +207,15 @@ the state. This one asks for a single worker, so there is one counter:
 import "std/http";
 import "std/serve";
 import "core/int";
+import "std/platform";
 
-function init(plat: Platform): (serve.Config, Map[string, i32]) {
+function init(plat: platform.Platform): (serve.Config, Map[string, i32]) {
     return (serve.Config { ...serve.config(), workers: 1 },
             map_new(8));
 }
 
 function handle(hits: Map[string, i32], req: HttpRequest,
-                plat: Platform): (Map[string, i32], HttpResponse) {
+                plat: platform.Platform): (Map[string, i32], HttpResponse) {
     let n: i32 = 1;
     match (hits.get(req.path)) {
         Some(prev) => { n = prev + 1; },

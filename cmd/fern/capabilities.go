@@ -174,7 +174,7 @@ func packageInfoResolver(entryPath string) func(module string) (name, dir string
 }
 
 // enforceAmbient runs the ambient-effect rule (E080): a function handed a
-// `Platform` bag must reach every host effect through it. Target-independent,
+// platform must reach every host effect through it. Target-independent,
 // so it runs on every check and every build, and on the program before the
 // tree-shake: a handler is judged on what its body reaches, whether or not
 // this program serves it.

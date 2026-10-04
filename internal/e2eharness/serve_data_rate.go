@@ -30,7 +30,8 @@ func DataRateServerSource(port int) string {
 import "std/string";
 import "std/serve";
 import "std/time";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("x".repeat(%d));
 }
 function main(): i32 {

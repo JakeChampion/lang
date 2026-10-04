@@ -158,8 +158,8 @@ pub struct EmitState {
   // take its operands in registers.
   capture: usize,
   // The buffer an emitter writing a binary hands encoded instruction words to
-  // (`word`, `branch`), 0 when the text is the output: each word leaves a
-  // marker line in the text, which the assembler replaces with the next word.
+  // (`word`, `branch`, `bytes`), 0 when the text is the output: each record
+  // leaves a marker line in the text, which the assembler replaces with it.
   recs: usize,
   // The typed lowering of a runtime helper's source: one body per function it
   // defines, then the drop helpers those bodies carry. The CLI supplies it
@@ -694,14 +694,29 @@ pub function (s: EmitState) word(w: i64): EmitState {
   return s;
 }
 
+// mark writes a record line: the marker `m`, then `text`.
+pub function (s: EmitState) mark(m: string, text: string): EmitState {
+  strbuf_append(m);
+  strbuf_append(text);
+  strbuf_append("\n");
+  return s;
+}
+
+// bytes hands over one x86 instruction's encoding: its length, then it.
+pub function (s: EmitState) bytes(b: i32[]): EmitState {
+  buf_push_byte(s.recs, b.len());
+  for x in b {
+    buf_push_byte(s.recs, x);
+  }
+  strbuf_append("\x01\n");
+  return s;
+}
+
 // branch hands over a branch word with no displacement, and the label it goes
 // to, which the assembler resolves as it would the text's.
 pub function (s: EmitState) branch(w: i64, label: string): EmitState {
   buf_push_u64(s.recs, w as u64);
-  strbuf_append("\x02");
-  strbuf_append(label);
-  strbuf_append("\n");
-  return s;
+  return s.mark("\x02", label);
 }
 
 pub function (s: EmitState) bind_local(name: string): EmitState {
@@ -1462,7 +1477,7 @@ function sysno_arm64_darwin(name: string): string {
     return "100";
   }
   if (name == "setpriority") {
-    return "101";
+    return "96";
   }
   if (name == "kill") {
     return "37";

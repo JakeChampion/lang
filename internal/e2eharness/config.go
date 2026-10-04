@@ -19,7 +19,7 @@ func ConfigHandlerSource() string {
 import "std/serve";
 import "std/platform";
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/greeting") {
         match (plat.config("GREETING")) { Some(v) => { return http.ok(v); }, None => { return http.ok("unset"); } }
     }

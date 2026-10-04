@@ -16,7 +16,7 @@ import (
 // to a `<mod>__env` that nothing declares, so a module could not wrap the
 // builtin it named its method after.
 //
-// Repro: `std/platform`'s `(plat: Platform).env(name)`, whose body is
+// Repro: `std/platform`'s `Host` method `env(self, name)`, whose body is
 // `return env(name);`.
 func TestMethodNameDoesNotShadowFreeFunctionInsideItsModule(t *testing.T) {
 	dir := writeFiles(t, map[string]string{

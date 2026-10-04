@@ -1793,3 +1793,40 @@ func TestFormatKeepsUseSugar(t *testing.T) {
 		})
 	}
 }
+
+// A comment above a trait or impl member stays above it, a trailing comment
+// on an abstract signature stays on its line, and a blank line between two
+// members is kept: the member form is the statement form, one level in.
+func TestFormatKeepsTraitAndImplMemberCommentsAndBlanks(t *testing.T) {
+	src := `trait Shape {
+  // The area, in whatever unit the shape was measured in.
+  function area(self: Self): i32;
+
+  function name(self: Self): string;  // for the report
+}
+
+struct Sq { s: i32 }
+
+impl Shape for Sq {
+  function area(self: Sq): i32 {
+    return self.s * self.s;
+  }
+
+  // A square is named after its side.
+  function name(self: Sq): string {
+    return "square";
+  }
+}
+
+function main(): i32 {
+  return 0;
+}
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := Format(prog); got != src {
+		t.Errorf("Format changed the member comments or blank lines:\n%s", got)
+	}
+}

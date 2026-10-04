@@ -44,12 +44,14 @@ func prioritySource() string {
     }
     if (priority() != 19) { return 3; }
 
-    // A value past the kernel's range is CLAMPED, not refused.
+    // A value past the kernel's range is CLAMPED, not refused — to the
+    // kernel's own ceiling, 19 on Linux and 20 on XNU.
     match (set_priority(1000)) {
         Ok(_) => {},
         Err(_) => { return 4; }
     }
-    if (priority() != 19) { return 5; }
+    let top: i32 = priority();
+    if (top < 19 || top > 20) { return 5; }
 
     // Going back down needs privilege. Both answers are right; what is not
     // right is a refusal that moved the value anyway.
@@ -58,7 +60,7 @@ func prioritySource() string {
             if (priority() != orig) { return 6; }
         },
         Err(_) => {
-            if (priority() != 19) { return 7; }
+            if (priority() != top) { return 7; }
         }
     }
     return 0;

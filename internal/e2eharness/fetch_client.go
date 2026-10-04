@@ -80,8 +80,8 @@ func (up *FetchUpstream) serve(c net.Conn) {
 		return
 	}
 	method, target := parts[0], parts[1]
-	if target == "/kept" || target == "/kept-redir" {
-		serveKept(c, target)
+	if p := keptPath(target); p != "" {
+		serveKept(c, p)
 		return
 	}
 	host := headerValue(head, "Host")
@@ -218,6 +218,21 @@ func (up *FetchUpstream) serve(c net.Conn) {
 	_, _ = c.Write(resp)
 }
 
+// keptPath is the kept target `target` names, in origin form or the
+// absolute form a client writes to a forward proxy, or "".
+func keptPath(target string) string {
+	path := target
+	if rest, ok := strings.CutPrefix(target, "http://"); ok {
+		if i := strings.Index(rest, "/"); i >= 0 {
+			path = rest[i:]
+		}
+	}
+	if path == "/kept" || path == "/kept-redir" {
+		return path
+	}
+	return ""
+}
+
 // serveKept answers /kept and /kept-redir on one connection for as long
 // as the client sends them, never asking it to close: /kept-redir
 // redirects to /kept, and /kept answers how many requests the connection
@@ -237,10 +252,10 @@ func serveKept(c net.Conn, target string) {
 			return
 		}
 		parts := strings.Split(strings.SplitN(head, "\r\n", 2)[0], " ")
-		if len(parts) < 3 || (parts[1] != "/kept" && parts[1] != "/kept-redir") {
+		if len(parts) < 3 || keptPath(parts[1]) == "" {
 			return
 		}
-		target = parts[1]
+		target = keptPath(parts[1])
 	}
 }
 
@@ -339,8 +354,10 @@ func headerValue(head, name string) string {
 // GET, a 307 keeping the POST, credentials dropped across origins and
 // kept within one; the reset cases pin the one retry of an idempotent
 // request and none of a POST. The pool cases pin a held `Sockets`
-// carrying two requests on one connection and a one-shot `send`
-// following a same-origin redirect on the connection that carried it.
+// carrying two requests on one connection, a one-shot `send` following a
+// same-origin redirect on the connection that carried it, and a host
+// platform carrying two `plat.http` requests on one connection through the
+// proxy while a fresh platform dials its own.
 // The policy cases pin `plat.http` refusing
 // a loopback origin that `send` reaches, the numeric host forms refused
 // before any lookup, and the proxy SetFetchProxy names taking every
@@ -408,13 +425,17 @@ function main(): i32 {
     show("echo", fetch.send(fetch.request("POST", base() + "/echo?q=1").with_header("X-Trace", "t1").with_text("payload")));
     let raw: u8[] = "raw".bytes();
     show("put", fetch.send(fetch.request("PUT", base() + "/echo").with_bytes(raw)));
-    show("blocked", platform.platform_new().http(fetch.get(base() + "/echo")));
+    show("blocked", platform.host().http(fetch.get(base() + "/echo")));
     show("numeric", fetch.send(fetch.get("http://2130706433/")));
     show("octal", fetch.send(fetch.get("http://0177.0.0.1/")));
     show("short", fetch.send(fetch.get("http://127.1/")));
     show("proxied", fetch.send(fetch.request("POST", "http://origin.invalid:81/via?x=1").with_header("X-Trace", "p1").with_text("body")));
-    show("platproxied", platform.platform_new().http(fetch.get("http://8.8.8.8/via")));
-    show("platproxiedblocked", platform.platform_new().http(fetch.get("http://169.254.169.254/via")));
+    show("platproxied", platform.host().http(fetch.get("http://8.8.8.8/via")));
+    show("platproxiedblocked", platform.host().http(fetch.get("http://169.254.169.254/via")));
+    let plat: platform.Host = platform.host();
+    show("platkept1", plat.http(fetch.get("http://8.8.8.8/kept")));
+    show("platkept2", plat.http(fetch.get("http://8.8.8.8/kept")));
+    show("platkeptfresh", platform.host().http(fetch.get("http://8.8.8.8/kept")));
     match (fetch.send(fetch.get(base() + "/binary"))) {
         Ok(resp) => {
             let bs: u8[] = resp.body_bytes();
@@ -569,7 +590,7 @@ function size(name: string, answer: Result[HttpResponse, fetch.FetchError]): str
     return "";
 }
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let small: http.HttpLimits = http.http_limits();
     let raw: u8[] = "raw".bytes();
     let out: string = "";
@@ -735,6 +756,9 @@ short: error invalid URL: an IPv4 address that is not four decimal octets
 proxied: 201 [VIAPOST] headers: content-length=VIAPOSTLEN trailers:
 platproxied: 201 [VIAGET] headers: content-length=VIAGETLEN trailers:
 platproxiedblocked: error blocked: 169.254.169.254 is not a global address
+platkept1: 200 [req=1] headers: content-length=5 trailers:
+platkept2: 200 [req=2] headers: content-length=5 trailers:
+platkeptfresh: 200 [req=1] headers: content-length=5 trailers:
 binary: 4 255 97 <not utf-8>
 big: 312000
 limit: error response body past its limit

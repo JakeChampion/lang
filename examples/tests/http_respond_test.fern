@@ -5,6 +5,7 @@ import "std/mock_platform";
 import "std/error";
 import "std/fetch";
 import "std/net";
+import "std/platform";
 
 // examples/tests/http_respond_test.fern — a handler that fails with `?`
 // (#9854): its helpers answer `Result[HttpResponse, http.HttpError]`, and
@@ -25,13 +26,13 @@ function serve(req: HttpRequest): Result[HttpResponse, http.HttpError] {
   return Ok(http.ok(name));
 }
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   return http.respond(serve(req));
 }
 
 function test_ok_passes_through(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
-  let resp: HttpResponse = handle(http.request("GET", "/items/1"), m.as_platform());
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = handle(http.request("GET", "/items/1"), m);
   match (test.assert_status(resp, 200)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -42,8 +43,8 @@ function test_ok_passes_through(): test.TestOutcome {
 }
 
 function test_fail_answers_a_problem(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
-  let resp: HttpResponse = handle(http.request("GET", "/items/9"), m.as_platform());
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = handle(http.request("GET", "/items/9"), m);
   match (test.assert_status(resp, 404)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -60,8 +61,8 @@ function test_fail_answers_a_problem(): test.TestOutcome {
 }
 
 function test_error_keeps_its_own_title_and_escapes(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
-  let resp: HttpResponse = handle(http.request("GET", "/items/locked"), m.as_platform());
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = handle(http.request("GET", "/items/locked"), m);
   match (test.assert_status(resp, 403)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -169,8 +170,8 @@ function exploding(): Result[HttpResponse, dyn error.Error] {
 }
 
 function test_dyn_error_answers_500_and_logs_the_message(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
-  let resp: HttpResponse = http.respond_error(exploding(), m.as_platform());
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = http.respond_error(exploding(), m);
   match (test.assert_status(resp, 500)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -201,15 +202,15 @@ function counted_dyn(n: i32, ok: boolean): (i32, Result[HttpResponse, dyn error.
 }
 
 function test_respond_error_with_keeps_the_state(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
-  let good: (i32, HttpResponse) = http.respond_error_with(counted_dyn(1, true), m.as_platform());
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let good: (i32, HttpResponse) = http.respond_error_with(counted_dyn(1, true), m);
   if (good.0 != 2) {
     return test.fail("state after Ok: " + good.0.to_string());
   }
   if (m.call_count() != 0) {
     return test.fail("an Ok answer was logged");
   }
-  let bad: (i32, HttpResponse) = http.respond_error_with(counted_dyn(2, false), m.as_platform());
+  let bad: (i32, HttpResponse) = http.respond_error_with(counted_dyn(2, false), m);
   if (bad.0 != 2) {
     return test.fail("state after Err: " + bad.0.to_string());
   }
