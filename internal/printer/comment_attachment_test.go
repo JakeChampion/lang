@@ -93,10 +93,69 @@ func commentAnchors(src string) []anchored {
 	return out
 }
 
+// commentRunShapes returns, per run of comment-only and blank lines, the
+// pattern of comments (C) and blank gaps (B) inside it. A gap of any height
+// is one B and the run's edges are trimmed, so the formatter may normalise
+// how many blanks separate things, but not whether they are separated.
+// commentAnchor skips blanks, so this is what sees a section comment merge
+// into the doc comment below it (#10870).
+func commentRunShapes(src string) []string {
+	var out []string
+	cur, hasComment := "", false
+	flush := func() {
+		if hasComment {
+			out = append(out, strings.Trim(cur, "B"))
+		}
+		cur, hasComment = "", false
+	}
+	for _, line := range strings.Split(src, "\n") {
+		tl := strings.TrimSpace(line)
+		switch {
+		case tl == "":
+			if !strings.HasSuffix(cur, "B") {
+				cur += "B"
+			}
+		case strings.HasPrefix(tl, "//"):
+			cur += "C"
+			hasComment = true
+		default:
+			flush()
+		}
+	}
+	flush()
+	return out
+}
+
+func TestCommentRunShapesSeesACollapsedGap(t *testing.T) {
+	apart := commentRunShapes("// section\n\n\n// doc\nfunction f(): i32 { return 0; }\n")
+	merged := commentRunShapes("// section\n// doc\nfunction f(): i32 { return 0; }\n")
+	if strings.Join(apart, ",") != "CBC" || strings.Join(merged, ",") != "CC" {
+		t.Fatalf("shapes = %v and %v, want [CBC] and [CC]", apart, merged)
+	}
+}
+
 var commentAttachmentCorpus = []struct {
 	name string
 	src  string
 }{
+	{"trait-and-impl-member-comments", `trait Shape {
+    // The area, in whatever unit the shape was measured in.
+    function area(self: Self): i32;
+
+    function name(self: Self): string;  // for the report
+}
+
+struct Sq { s: i32 }
+
+impl Shape for Sq {
+    function area(self: Sq): i32 { return self.s * self.s; }
+
+    // A square is named after its side.
+    function name(self: Sq): string { return "square"; }
+}
+
+function main(): i32 { return 0; }
+`},
 	{"enum-variant-trailing-then-struct", `enum Verdict {
     Balanced,
     Unexpected(i32),        // closer at pos, nothing open
@@ -347,6 +406,39 @@ function third(): i32 {
 	}
 	if got := Format(prog); got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestFormatKeepsCommentGapsBelowTopLevel is TestFormatKeepsSectionCommentApart
+// for the comments a statement, a field and the end of the file collect: a
+// blank line between two of them survives, and so does one between the last
+// declaration and a comment after it (#10885).
+func TestFormatKeepsCommentGapsBelowTopLevel(t *testing.T) {
+	src := `function f(): i32 {
+  // section
+
+  // doc of x
+  let x: i32 = 1;
+  return x;
+}
+
+struct S {
+  // group
+
+  // doc a
+  a: i32,
+}
+
+// trailing a
+
+// trailing b
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := Format(prog); got != src {
+		t.Errorf("got:\n%s\nwant:\n%s", got, src)
 	}
 }
 

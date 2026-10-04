@@ -26,11 +26,10 @@ import (
 
 // dropThunkParamType is the declared type of a generated drop thunk's
 // argument 0: the heap pointer it releases. `usize` rather than a bare
-// number, because ssa/lift.go reads address-ness off the declared type
-// (NumberType.IsPointerWidth) — a bare-number param reports
-// ParamAddrs=false, which makes ssa/width.go refuse to widen it and the
-// ownership solver skip demandsUnit, so the release the body always
-// performs is invisible (#7866). Width-neutral on the flat backends:
+// number because the argument IS an address, and the declared type is
+// where a consumer reads address-ness (NumberType.IsPointerWidth) — a
+// bare number hid the release the body always performs from the Go SSA
+// lift's ownership analysis (#7866). Width-neutral on the flat backends:
 // widthOfAstType reports 32 for WidthPtr exactly as it does for a bare
 // number, and wasm's valtypeFor still yields i32. Matches the
 // hand-written sibling `__map_drop_values(m: usize): usize`.
@@ -362,6 +361,10 @@ func (b *builder) mapMutatorResultFresh(x *ast.Call) bool {
 		return false
 	}
 	if b.rc.mapCowForced[x] {
+		return true
+	}
+	// A receiver this expression alone owns is the result's only holder.
+	if _, owned := b.ownedCallResultType(x.Args[0]); owned {
 		return true
 	}
 	inner, ok := x.Args[0].(*ast.Call)
@@ -4275,19 +4278,6 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 			Op{Kind: OpEq},
 			Op{Kind: OpIf, I32: BlockTypeVoid})
 		for k, ld := range vd.loads {
-			// A CLOSURE payload is a DOCUMENTED SAFE LEAK. A matched arm's
-			// binding takes the reference out of the box, so deep-releasing one here frees an env the binding is still
-			// calling through. `async.Future[T]`'s
-			// `Pending(i32, (i32) => Future[T])` is exactly that: the
-			// combinators match a Pending, call its `resume`, and build the
-			// next Future from the result (SIGSEGV on both natives, wasm
-			// out-of-bounds trap — the whole SimProperty corpus). The box
-			// itself is still freed by __fern_box_free below; the pair and
-			// its env leak, which is what they did before container-held
-			// closures were released at all (#6443).
-			if _, isFn := ld.typ.(*ast.FuncType); isFn {
-				continue
-			}
 			ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})
 			if ld.off != 0 {
 				ops = append(ops, Op{Kind: OpConstI32, I32: ld.off}, Op{Kind: OpAdd})

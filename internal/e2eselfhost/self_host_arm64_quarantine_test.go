@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // --- The quarantine on arm64 (#9882) ----------------------------------------
@@ -191,8 +192,8 @@ func TestSelfHostUafIncAfterFreeReportedArm64(t *testing.T) {
 			t.Fatalf("%s: %v\n%s", flag, err, out)
 		}
 		stderr, code := runCapturingStderr(t, tg, bin)
-		if code != sanExitStatus {
-			t.Errorf("%s: exit=%d, want %d (a quarantine finding is fatal)", flag, code, sanExitStatus)
+		if code != e2eharness.ExitSanitizer {
+			t.Errorf("%s: exit=%d, want %d (a quarantine finding is fatal)", flag, code, e2eharness.ExitSanitizer)
 		}
 		if !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)\n") {
 			t.Errorf("%s: stderr does not carry the diagnostic: %q", flag, stderr)

@@ -42,7 +42,7 @@ func TestRunDiagnostics_ParserError(t *testing.T) {
 			t.Errorf("diagnostic severity = %d, want %d", d.Severity, severityError)
 		}
 		if d.Source != "fern" {
-			t.Errorf("diagnostic source = %q, want %q", d.Source, "lang")
+			t.Errorf("diagnostic source = %q, want %q", d.Source, "fern")
 		}
 		if d.Message == "" {
 			t.Errorf("diagnostic message is empty")
@@ -157,7 +157,7 @@ func TestHandleMessage_InitializeReturnsCapabilities(t *testing.T) {
 	if got.Capabilities.TextDocumentSync != syncKindFull {
 		t.Errorf("textDocumentSync = %d, want %d", got.Capabilities.TextDocumentSync, syncKindFull)
 	}
-	if got.ServerInfo == nil || got.ServerInfo.Name != "lang-lsp" {
+	if got.ServerInfo == nil || got.ServerInfo.Name != "fern-lsp" {
 		t.Errorf("serverInfo = %+v", got.ServerInfo)
 	}
 }
@@ -498,4 +498,26 @@ func jsonRaw(v any) json.RawMessage {
 		panic(fmt.Sprintf("jsonRaw: %v", err))
 	}
 	return b
+}
+
+// A successful response carries `result` even when it is null: JSON-RPC
+// requires one of `result` and `error`, and a strict client rejects a
+// response with neither.
+func TestHandleMessage_NullResultIsSent(t *testing.T) {
+	s := NewServer()
+	for _, req := range []string{
+		`{"jsonrpc":"2.0","id":1,"method":"shutdown"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///unopened.fern"},"position":{"line":0,"character":0}}}`,
+	} {
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(s.HandleMessage([]byte(req)), &m); err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := m["result"]; !ok || string(got) != "null" {
+			t.Errorf("%s: response %v has no null result", req, m)
+		}
+		if _, ok := m["error"]; ok {
+			t.Errorf("%s: response carries an error: %v", req, m)
+		}
+	}
 }

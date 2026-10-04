@@ -82,41 +82,13 @@ func TestCompileFreestandingRefusesClearly(t *testing.T) {
 	}
 }
 
-// The SSA backends used to be their own `-target` values with no
-// descriptor, which meant selecting one silently opted the build out of
-// capability enforcement: the failure came from the backend as an
-// unknown-callee message with no source position, error code, or
-// `fern explain`. As `-backend ssa` on an ordinary target they keep the
-// target's descriptor, so E066 applies to them like anything else (#6536).
-func TestBackendSSAKeepsCapabilityEnforcement(t *testing.T) {
-	entry := writeFern(t, "function main(): i32 {\n  let r = subprocess(\"/bin/echo\", [\"hi\"], \"\");\n  return r.exit_code;\n}\n")
-	for _, target := range []string{"wasm32-wasi", "arm64-linux"} {
-		t.Run(target, func(t *testing.T) {
-			out := filepath.Join(t.TempDir(), "out")
-			code, err := run(entry, out, target, "ssa", "", "", false, false, "", false, false, false, nil, false, "", false, nil)
-			if code == 0 || err == nil {
-				t.Fatalf("expected E066, got code=%d err=%v", code, err)
-			}
-			got := err.Error()
-			for _, want := range []string{"E066", "subprocess"} {
-				if !strings.Contains(got, want) {
-					t.Errorf("error missing %q:\n%s", want, got)
-				}
-			}
-		})
-	}
-}
-
-// An emitter that doesn't exist for the target is refused by name rather
-// than falling through to the default one, which would produce a working
-// binary that is not the one asked for.
+// An emitter that doesn't exist is refused by name rather than falling
+// through to the default one, which would produce a working binary that is
+// not the one asked for.
 func TestBackendRejectsBadCombinations(t *testing.T) {
 	entry := writeFern(t, "function main(): i32 {\n  return 0;\n}\n")
 	cases := map[string]struct{ target, backend, want string }{
-		// arm64-darwin has no SSA emitter of its own — arm64-linux,
-		// x86-64-linux and wasm32-wasi are the three that do.
-		"no ssa for arm64-darwin": {"arm64-darwin", "ssa", "not available for -target arm64-darwin"},
-		"unknown backend":         {"wasm32-wasi", "nope", `unknown -backend "nope"`},
+		"unknown backend": {"wasm32-wasi", "nope", `unknown -backend "nope"`},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -170,5 +142,32 @@ func TestEmitRejectsBadCombinations(t *testing.T) {
 				t.Fatalf("want error containing %q, got %v", c.want, err)
 			}
 		})
+	}
+}
+
+// `-check -target` names the target the program is checked against, so one
+// no descriptor answers for is refused rather than checked against nothing,
+// for a file and for a workspace alike.
+func TestCheckRefusesUnknownTarget(t *testing.T) {
+	entry := writeFern(t, "function main(): i32 {\n  return 0;\n}\n")
+	ws := t.TempDir()
+	for name, src := range map[string]string{
+		"fern.toml":   "[workspace]\nmembers = [\"a\"]\n",
+		"a/fern.toml": "[package]\nname = \"a\"\n",
+		"a/main.fern": "function main(): i32 {\n  return 0;\n}\n",
+	} {
+		p := filepath.Join(ws, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, arg := range []string{entry, ws} {
+		err := runCheckTarget(arg, "bogus")
+		if err == nil || !strings.Contains(err.Error(), `unknown target "bogus"`) {
+			t.Errorf("-check -target bogus %s: %v, want the unknown-target refusal", arg, err)
+		}
 	}
 }

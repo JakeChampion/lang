@@ -47,32 +47,12 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{}
 
 var rcCorpusLeakBaselineArm64 = map[string]int64{}
 
-// The wasm table (#7912). This leg still compiles with the native wasm
-// backend, and its residuals are the map and closure drop paths.
-// `map_keys_values_header_churn_free` is the one worth naming, because its
-// name points the wrong way: `keys()` / `values()` are clean. Its
-// `Map[i64, i64]` is what leaks — wasm32 boxes a WIDE key into a cell, and
-// the key column's drop does not free those, so it strands one cell per
-// entry.
-//
-// Cases the correctness corpus skips on wasm (`skipWasm`) are skipped
-// here too — a case that cannot run cannot be weighed.
-var rcCorpusLeakBaselineWasm = map[string]int64{
-	"closure_call_arg_handed_back_is_not_reclaimed": 1920,
-	// The `m.without(k)` shapes, split out of one case so a fix to one
-	// can bank its own zero (#8276). They are NOT four times the old single
-	// entry gone wrong: each now runs its own 500-round loop over its own map,
-	// so the totals are not comparable with the one body that shared a map
-	// across all of them. What IS comparable is shape against shape, which is
-	// the point. All of them now reclaim completely, so none of them appears
-	// in these tables at all (absent means zero) and #8434 is closed. The
-	// call-argument projection joined them as a case rather than a pin: it
-	// leaked only the undropped tuple box, which no fixture had ever covered.
-	"map_keys_values_header_churn_free":              16000,
-	"stdlib_json_cursor_idiom":                       256,
-	"stdlib_json_roundtrip":                          448,
-	"string_pushed_then_returned_bare_stays_refused": 320,
-}
+// The wasm table (#7912). Empty too: the closure drop paths and the json
+// stdlib, which leaked on the native wasm backend, reclaim completely on the
+// self-host's. The `m.without(k)` shapes were split out of one case so a fix
+// to one could bank its own zero (#8276), and the call-argument projection
+// joined them as a case rather than a pin.
+var rcCorpusLeakBaselineWasm = map[string]int64{}
 
 // checkCorpusLeaks runs every corpus case under the leak detector and
 // holds each one at its baseline.

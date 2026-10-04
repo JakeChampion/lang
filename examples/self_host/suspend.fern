@@ -1,0 +1,705 @@
+// examples/self_host/suspend.fern — inferred suspension: the classifier and
+// the unwind/rewind pass (docs/NET-P3-SUSPENSION-PLAN.md §3).
+//
+// A function that reaches `__task_park` through direct calls is suspendable.
+// Its body is rewritten so that, when the park unwinds (task mode 1), every
+// frame on the way out saves its locals and the index of the call it was at
+// to the task's save area and returns a dummy, and when the scheduler runs
+// the task again (mode 2) every frame restores its locals, skips to that
+// call, and makes it again. The rewrite is the structured one: the block,
+// loop and if skeleton stands, straight-line segments run only in normal
+// mode, an if's condition is routed toward the arm holding the target call
+// while rewinding, and a call site runs in normal mode or when it is the
+// target. It runs on the stack IR the typed lowering produces before the
+// peepholes, where every call is `load_local*` for its arguments, the call,
+// and `store_local` for its result, with nothing else on the operand stack.
+import "./ir";
+import "./irtables";
+import "./ssasem";
+import "./util";
+
+// Set is the module's suspendable rows by symbol, and whether an indirect
+// call is a suspension site too (a lifted closure body is suspendable, so a
+// call through a value may reach a park).
+pub struct Set { rows: util.NameIndex, classes: string[], indirect: boolean, on: boolean }
+
+pub function none(): Set {
+  let no: string[] = [];
+  return Set { rows: util.name_index(no), classes: no, indirect: false, on: false };
+}
+
+// classify marks the rows that reach __task_park: the direct callers of a
+// marked row transitively, never a trampoline (std/async's run_task, which
+// calls the entry it drives), and, once a lifted closure body is marked,
+// every row with a call through a value or a dyn dispatch.
+pub function classify(keys: string[], funcs: ssasem.Func[]): Set {
+  let rows: util.NameIndex = util.name_index(keys);
+  let marks: boolean[] = [];
+  let indirect: boolean[] = [];
+  let callers: i32[][] = [];
+  let i: i32 = 0;
+  while (i < keys.len()) {
+    marks = marks.append(false);
+    indirect = indirect.append(false);
+    callers = callers.append([]);
+    i = i + 1;
+  }
+  i = 0;
+  while (i < funcs.len()) {
+    for b in funcs[i].graph.blocks {
+      for ins in b.insts {
+        if (ins.kind_tag == ssasem.call_value() || ins.kind_tag == ssasem.call() && ssasem.is_dyn_call(ins.str)) {
+          indirect = indirect.with(i, true);
+        } else if (ins.kind_tag == ssasem.call()) {
+          if (ins.str == "__task_park") {
+            marks = marks.with(i, true);
+          }
+          let callee: i32 = rows.find(ins.str);
+          if (callee >= 0) {
+            callers = callers.with(callee, callers[callee].append(i));
+          }
+        }
+      }
+    }
+    i = i + 1;
+  }
+  let closed: boolean[] = spread(marks, callers, keys);
+  let any_closure: boolean = false;
+  i = 0;
+  while (i < keys.len()) {
+    if (closed[i] && is_lifted(keys[i])) {
+      any_closure = true;
+    }
+    i = i + 1;
+  }
+  if (any_closure) {
+    i = 0;
+    while (i < keys.len()) {
+      if (indirect[i] && !trampoline(keys[i])) {
+        closed = closed.with(i, true);
+      }
+      i = i + 1;
+    }
+    closed = spread(closed, callers, keys);
+  }
+  let names: string[] = [];
+  let classes: string[] = [];
+  i = 0;
+  while (i < keys.len()) {
+    if (closed[i]) {
+      names = names.append(keys[i]);
+      classes = classes.append(result_class(funcs, i));
+      if (i < funcs.len() && funcs[i].graph.name != keys[i]) {
+        names = names.append(funcs[i].graph.name);
+        classes = classes.append(result_class(funcs, i));
+      }
+    }
+    i = i + 1;
+  }
+  return Set { rows: util.name_index(names), classes: classes, indirect: any_closure, on: names.len() > 0 };
+}
+
+// The save-area class of a row's result: i64 for a wide integer, f64 for a
+// float, a word for the rest.
+function result_class(funcs: ssasem.Func[], i: i32): string {
+  if (i >= funcs.len()) {
+    return "w";
+  }
+  if (ssasem.is_wide(funcs[i].result)) {
+    return "i64";
+  }
+  if (ssasem.is_float(funcs[i].result)) {
+    return "f64";
+  }
+  return "w";
+}
+
+function trampoline(key: string): boolean {
+  return util.str_has_prefix(key, "async__run_task");
+}
+
+function is_lifted(key: string): boolean {
+  return __memchr(key, 36, 0) >= 0;
+}
+
+// `seed` closed over `callers`: a row calling a marked row is marked, a
+// trampoline never.
+function spread(seed: boolean[], callers: i32[][], keys: string[]): boolean[] {
+  let marks: boolean[] = seed;
+  let work: i32[] = [];
+  let i: i32 = 0;
+  while (i < marks.len()) {
+    if (marks[i] && trampoline(keys[i])) {
+      marks = marks.with(i, false);
+    }
+    if (marks[i]) {
+      work = work.append(i);
+    }
+    i = i + 1;
+  }
+  let next: i32 = 0;
+  while (next < work.len()) {
+    for c in callers[work[next]] {
+      if (!marks[c] && !trampoline(keys[c])) {
+        marks = marks.with(c, true);
+        work = work.append(c);
+      }
+    }
+    next = next + 1;
+  }
+  return marks;
+}
+
+// is_site reports whether `o` may suspend: a direct call to a suspendable
+// row or to the park, or, with `indirect`, a call through a value.
+function is_site(o: ir.Op, set: Set): boolean {
+  if (o.kind_tag == 149) {
+    return o.str == "__task_park" || o.str == "__fern_task_park" || set.rows.has(o.str);
+  }
+  if (o.kind_tag == 150 || o.kind_tag == 151 || o.kind_tag == 147) {
+    return set.indirect;
+  }
+  return false;
+}
+
+// Tx is the rewrite in progress: the ops emitted so far, the segment of
+// normal-mode ops not yet guarded, the two slots the pass adds (the target
+// call index, -1 in normal mode, and the scratch an if's condition is routed
+// through), the per-op tables the structure needs, per open scope the
+// producers of the values held on the operand stack under it (which run
+// again after its end), and the spill slots the pass took: `tmps` the
+// classes of the ones this run has taken, `given` the full list a previous
+// run found, which the save and restore loops cover.
+struct Tx {
+  out: ir.Op[],
+  seg: ir.Op[],
+  ci: i32,
+  tc: i32,
+  before: i32[],
+  else_of: i32[],
+  end_of: i32[],
+  carry: ir.Op[][],
+  tmps: string[],
+  given: string[],
+  why: string,
+}
+
+// transform rewrites one suspendable function's body. `r` is the lowering's
+// result before the peepholes. A value held on the operand stack across a
+// call site, a condition or a scope whose producer is not a pure value op is
+// spilled to a slot the pass adds; the slots are known only once the body
+// has been walked, so a body that needs any is walked twice, the second time
+// with the save and restore loops covering them.
+pub function transform(r: irtables.LowerResult, set: Set): irtables.LowerResult {
+  let no: string[] = [];
+  let first: Tx = run(r, set, no);
+  if (first.why != "") {
+    return irtables.LowerResult { ...r, ok: false, why: first.why };
+  }
+  if (first.tmps.len() == 0) {
+    return irtables.LowerResult { ...r, ops: first.out, n_locals: r.n_locals + 2 };
+  }
+  let again: Tx = run(r, set, first.tmps);
+  if (again.why != "") {
+    return irtables.LowerResult { ...r, ok: false, why: again.why };
+  }
+  let i64s: i32[] = r.i64_slots;
+  let f64s: i32[] = r.f64_slots;
+  let j: i32 = 0;
+  while (j < again.tmps.len()) {
+    if (again.tmps[j] == "i64") {
+      i64s = i64s.append(r.n_locals + 2 + j);
+    }
+    if (again.tmps[j] == "f64") {
+      f64s = f64s.append(r.n_locals + 2 + j);
+    }
+    j = j + 1;
+  }
+  return irtables.LowerResult { ...r, ops: again.out, n_locals: r.n_locals + 2 + again.tmps.len(), i64_slots: i64s, f64_slots: f64s };
+}
+
+function run(r: irtables.LowerResult, set: Set, given: string[]): Tx {
+  let ops: ir.Op[] = r.ops;
+  let n: i32 = ops.len();
+  // Site numbering: before[i] is how many sites precede op i, so a range of
+  // ops holds the sites numbered before[a] .. before[b] - 1.
+  let before: i32[] = [];
+  let count: i32 = 0;
+  let i: i32 = 0;
+  while (i <= n) {
+    before = before.append(count);
+    if (i < n && is_site(ops[i], set)) {
+      count = count + 1;
+    }
+    i = i + 1;
+  }
+  let t: Tx = Tx { out: [], seg: [], ci: r.n_locals, tc: r.n_locals + 1, before: before, else_of: [], end_of: [], carry: [], tmps: [], given: given, why: "" };
+  if (count == 0) {
+    return Tx { ...t, out: ops };
+  }
+  // Matching else / end for every scope opener.
+  let else_of: i32[] = [];
+  let end_of: i32[] = [];
+  i = 0;
+  while (i < n) {
+    else_of = else_of.append(0 - 1);
+    end_of = end_of.append(0 - 1);
+    i = i + 1;
+  }
+  let stack: i32[] = [];
+  i = 0;
+  while (i < n) {
+    let k: i32 = ops[i].kind_tag;
+    if (k == 152 || k == 153 || k == 154) {
+      stack = stack.append(i);
+    } else if (k == 155) {
+      else_of = else_of.with(stack[stack.len() - 1], i);
+    } else if (k == 156) {
+      let opener: i32 = stack[stack.len() - 1];
+      stack = sub_i32(stack, 0, stack.len() - 1);
+      end_of = end_of.with(opener, i);
+    }
+    i = i + 1;
+  }
+  t = Tx { ...t, else_of: else_of, end_of: end_of };
+  t = prologue(t, r);
+  i = 0;
+  while (i < n && t.why == "") {
+    let o: ir.Op = ops[i];
+    let k: i32 = o.kind_tag;
+    if (is_site(o, set)) {
+      t = site(t, r, set, ops, i, before[i]);
+      // The site's store is part of the group.
+      i = i + 1;
+    } else if (k == 154) {
+      t = routed_if(t, r, set, ops, i);
+    } else if (k == 158) {
+      t = routed_brif(t, r, set, o);
+    } else if (k == 152 || k == 153) {
+      t = open_scope(t, r, set, ops, i);
+      t = Tx { ...t, out: t.out.append(o) };
+    } else if (k == 155) {
+      t = flush(t);
+      t = Tx { ...t, out: t.out.append(o) };
+    } else if (k == 156) {
+      t = flush(t);
+      let top: i32 = t.carry.len() - 1;
+      t = Tx { ...t, out: t.out.append(o), seg: t.carry[top], carry: sub_carry(t.carry, top) };
+    } else if (ir.op_pops(o) < 0) {
+      t = Tx { ...t, why: "suspend: " + r.name + ": " + ir.kind_name(k) + " has no modelled stack effect" };
+    } else {
+      t = Tx { ...t, seg: t.seg.append(o) };
+    }
+    i = i + 1;
+  }
+  if (t.why != "") {
+    return t;
+  }
+  return flush(t);
+}
+
+// The op index where an if's then-arm ends: its else, or its end.
+function arm_end(t: Tx, at: i32): i32 {
+  if (t.else_of[at] >= 0) {
+    return t.else_of[at];
+  }
+  return t.end_of[at];
+}
+
+// `ci == -1`, the normal-mode test.
+function normal_test(t: Tx): ir.Op[] {
+  return [ir.op_load_local(t.ci), ir.op_const_i32(0 - 1), ir.op_bin("eq", 0, false)];
+}
+
+// flush guards the pending segment: it runs in normal mode only. A br inside
+// it gains the depth the guard adds. A value the segment would leave on the
+// operand stack cannot leave the guard; the callers that open a scope or a
+// group carry such values out first, so one left here is a refusal, unless
+// the segment ends in a terminator, after which nothing reads the stack.
+function flush(t: Tx): Tx {
+  if (t.seg.len() == 0) {
+    return t;
+  }
+  if (height(t.seg, 0, t.seg.len()) != 0 && !ends_control(t.seg)) {
+    return Tx { ...t, why: "suspend: a segment leaves a value on the operand stack at a scope boundary (" + ir.kind_name(t.seg[t.seg.len() - 1].kind_tag) + ")" };
+  }
+  let out: ir.Op[] = util.append_all(t.out, normal_test(t));
+  out = out.append(ir.op_if(0));
+  for o in t.seg {
+    if (o.kind_tag == 157) {
+      out = out.append(ir.op_br(o.i32_imm + 1));
+    } else {
+      out = out.append(o);
+    }
+  }
+  out = out.append(ir.op_end());
+  return Tx { ...t, out: out, seg: [] };
+}
+
+// ends_control reports a segment holding a br, return or exit, after which
+// the ops that follow it in the segment are unreachable.
+function ends_control(seg: ir.Op[]): boolean {
+  for o in seg {
+    if (ir.is_terminator_kind(o.kind_tag)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The slots a frame saves, in the order they are pushed: the body's own,
+// then the spill slots.
+function saved_slots(t: Tx, r: irtables.LowerResult): i32[] {
+  let out: i32[] = [];
+  let s: i32 = 0;
+  while (s < r.n_locals + 2 + t.given.len()) {
+    if (s != t.ci && s != t.tc) {
+      out = out.append(s);
+    }
+    s = s + 1;
+  }
+  return out;
+}
+
+// The prologue: a rewinding frame takes its call index and its locals back
+// from the save area, the others start in normal mode.
+function prologue(t: Tx, r: irtables.LowerResult): Tx {
+  let out: ir.Op[] = [ir.op_call_direct("__fern_task_mode", 0), ir.op_const_i32(2), ir.op_bin("eq", 0, false), ir.op_if(0)];
+  out = out.append(ir.op_call_direct("__fern_task_pop_w", 0));
+  out = out.append(ir.op_store_local(t.ci));
+  let slots: i32[] = saved_slots(t, r);
+  let i: i32 = slots.len() - 1;
+  while (i >= 0) {
+    out = out.append(ir.op_call_direct("__fern_task_pop_" + slot_class(t, r, slots[i]), 0));
+    out = out.append(ir.op_store_local(slots[i]));
+    i = i - 1;
+  }
+  out = out.append(ir.op_else());
+  out = out.append(ir.op_const_i32(0 - 1));
+  out = out.append(ir.op_store_local(t.ci));
+  out = out.append(ir.op_end());
+  return Tx { ...t, out: out };
+}
+
+// The save-area class of a slot: the lowering's i64 and f64 slot lists for
+// the body's own, the class a spill slot was taken with (this run's own
+// list while the slot is in it, the previous run's for the rest).
+function slot_class(t: Tx, r: irtables.LowerResult, s: i32): string {
+  if (s >= r.n_locals + 2) {
+    let j: i32 = s - r.n_locals - 2;
+    if (j < t.tmps.len()) {
+      return t.tmps[j];
+    }
+    return t.given[j];
+  }
+  if (util.index_of_i32(r.i64_slots, s) >= 0) {
+    return "i64";
+  }
+  if (util.index_of_i32(r.f64_slots, s) >= 0) {
+    return "f64";
+  }
+  return "w";
+}
+
+// A site: the call's arguments are the ops at the end of the segment that
+// produce its pops(call) values, each a pure value op since the rewind runs
+// them again, and the op after the call stores its result. The group runs
+// in normal mode or when it is the target; a call that comes back unwinding
+// saves this frame and returns a dummy. Values the segment holds under the
+// arguments are carried past the group.
+function site(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32, k: i32): Tx {
+  let call: ir.Op = ops[at];
+  let start: i32 = arg_start(t.seg, ir.op_pops(call));
+  if (start < 0) {
+    return Tx { ...t, why: "suspend: " + r.name + ": call site " + util.i32_to_string(k) + " has no argument loads" };
+  }
+  let args: ir.Op[] = sub_ops(t.seg, start, t.seg.len());
+  for a in args {
+    if (!ir.pure_value_op(a)) {
+      return Tx { ...t, why: "suspend: " + r.name + ": call site " + util.i32_to_string(k) + " computes an argument with an effect on the operand stack (" + ir.kind_name(a.kind_tag) + ")" };
+    }
+  }
+  if (at + 1 >= ops.len() || ops[at + 1].kind_tag != 19 && ops[at + 1].kind_tag != 159) {
+    return Tx { ...t, why: "suspend: " + r.name + ": call site " + util.i32_to_string(k) + " is not followed by its result's store" };
+  }
+  let c: Carried = carry_out(t, r, set, start, [ops[at + 1]]);
+  if (c.t.why != "") {
+    return c.t;
+  }
+  let t2: Tx = flush(Tx { ...c.t, seg: c.prefix });
+  let out: ir.Op[] = util.append_all(t2.out, normal_test(t2));
+  out = util.append_all(out, [ir.op_load_local(t2.ci), ir.op_const_i32(k), ir.op_bin("eq", 0, false), ir.op_bin("or", 0, false), ir.op_if(0)]);
+  out = util.append_all(out, args);
+  out = out.append(call);
+  out = out.append(ops[at + 1]);
+  out = out.append(ir.op_const_i32(0 - 1));
+  out = out.append(ir.op_store_local(t2.ci));
+  out = out.append(ir.op_end());
+  // Unwinding: save every slot, then this site's index, and leave.
+  out = util.append_all(out, [ir.op_call_direct("__fern_task_mode", 0), ir.op_const_i32(1), ir.op_bin("eq", 0, false), ir.op_if(0)]);
+  for s in saved_slots(t2, r) {
+    out = out.append(ir.op_load_local(s));
+    out = out.append(ir.op_call_direct("__fern_task_push_" + slot_class(t2, r, s), 1));
+    out = out.append(ir.op_drop());
+  }
+  out = out.append(ir.op_const_i32(k));
+  out = out.append(ir.op_call_direct("__fern_task_push_w", 1));
+  out = out.append(ir.op_drop());
+  out = out.append(dummy(r));
+  out = out.append(ir.op_return());
+  out = out.append(ir.op_end());
+  return Tx { ...t2, out: out, seg: c.carried };
+}
+
+// Carried is carry_out's answer: the segment to guard, which now ends with
+// the spills, and the producers that make the held values again afterwards.
+struct Carried { t: Tx, prefix: ir.Op[], carried: ir.Op[] }
+
+// carry_out takes the values the segment holds on the operand stack below
+// index `hi` out of it: a value whose producers are pure value ops, none
+// loading a slot `body` stores, is produced again by the same ops after
+// the guard; any other is stored to a spill slot in the segment and loaded
+// again after. The slot's class is the producer's: a call's result class
+// from the set's table, a local's from the lowering. A producer with no
+// known class is a refusal.
+function carry_out(t: Tx, r: irtables.LowerResult, set: Set, hi: i32, body: ir.Op[]): Carried {
+  let held: i32 = height(t.seg, 0, hi);
+  let lo: i32 = arg_start(sub_ops(t.seg, 0, hi), held);
+  if (lo < 0) {
+    return Carried { t: Tx { ...t, why: "suspend: " + r.name + ": values on the operand stack the segment did not produce" }, prefix: [], carried: [] };
+  }
+  let t2: Tx = t;
+  let spills: ir.Op[] = [];
+  let carried: ir.Op[] = [];
+  let end: i32 = hi;
+  while (end > lo) {
+    let s: i32 = lo + arg_start(sub_ops(t.seg, lo, end), 1);
+    let chain: ir.Op[] = sub_ops(t.seg, s, end);
+    let pure: boolean = true;
+    for o in chain {
+      if (!ir.pure_value_op(o) || o.kind_tag == 18 && stores_slot(body, o.i32_imm)) {
+        pure = false;
+      }
+    }
+    if (pure) {
+      carried = util.append_all(chain, carried);
+    } else {
+      let maker: ir.Op = chain[producer_of(chain)];
+      let class: string = value_class(t2, r, set, maker);
+      if (class == "") {
+        return Carried { t: Tx { ...t2, why: "suspend: " + r.name + ": a value held on the operand stack has no spill class (" + ir.kind_name(maker.kind_tag) + " " + maker.str + ")" }, prefix: [], carried: [] };
+      }
+      let slot: i32 = r.n_locals + 2 + t2.tmps.len();
+      t2 = Tx { ...t2, tmps: t2.tmps.append(class) };
+      spills = util.append_all(util.append_all(chain, [ir.op_store_local(slot)]), spills);
+      carried = util.append_all([ir.op_load_local(slot)], carried);
+    }
+    end = s;
+  }
+  return Carried { t: t2, prefix: util.append_all(sub_ops(t.seg, 0, lo), spills), carried: carried };
+}
+
+// producer_of is the index in `chain`, ops that leave one value on the
+// operand stack, of the op that pushed it: the chain may hold statements
+// after it (a release and its drop) that take and leave nothing of it.
+function producer_of(chain: ir.Op[]): i32 {
+  let stack: i32[] = [];
+  let i: i32 = 0;
+  while (i < chain.len()) {
+    let pops: i32 = ir.op_pops(chain[i]);
+    if (pops > stack.len()) {
+      pops = stack.len();
+    }
+    stack = sub_i32(stack, 0, stack.len() - pops);
+    if (ir.op_pushes(chain[i]) == 1) {
+      stack = stack.append(i);
+    }
+    i = i + 1;
+  }
+  if (stack.len() == 0) {
+    return chain.len() - 1;
+  }
+  return stack[stack.len() - 1];
+}
+
+// The spill class of the value an op produces: a local's slot class, a
+// direct call's result class from the set's table, "w" for the pointer the
+// composite and string makers answer, "" when unknown.
+function value_class(t: Tx, r: irtables.LowerResult, set: Set, o: ir.Op): string {
+  if (o.kind_tag == 18) {
+    return slot_class(t, r, o.i32_imm);
+  }
+  if (o.kind_tag == 149) {
+    let row: i32 = set.rows.find(o.str);
+    if (row >= 0) {
+      return set.classes[row];
+    }
+    return "";
+  }
+  if (o.kind_tag == 87 || o.kind_tag == 138 || o.kind_tag == 142 || o.kind_tag == 98) {
+    return "w";
+  }
+  return "";
+}
+
+// height is the operand stack's net growth over seg[lo..hi).
+function height(seg: ir.Op[], lo: i32, hi: i32): i32 {
+  let h: i32 = 0;
+  let i: i32 = lo;
+  while (i < hi) {
+    h = h + ir.op_pushes(seg[i]) - ir.op_pops(seg[i]);
+    i = i + 1;
+  }
+  return h;
+}
+
+// arg_start is the index in `seg` where the ops producing its last `n`
+// values begin, read back from the end by each op's pops and pushes; -1
+// when the segment does not produce them.
+function arg_start(seg: ir.Op[], n: i32): i32 {
+  if (n < 0) {
+    return 0 - 1;
+  }
+  let need: i32 = n;
+  let j: i32 = seg.len();
+  while (need > 0 && j > 0) {
+    j = j - 1;
+    need = need - ir.op_pushes(seg[j]) + ir.op_pops(seg[j]);
+  }
+  if (need != 0) {
+    return 0 - 1;
+  }
+  return j;
+}
+
+function sub_ops(xs: ir.Op[], lo: i32, hi: i32): ir.Op[] {
+  let out: ir.Op[] = [];
+  let i: i32 = lo;
+  while (i < hi) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function sub_i32(xs: i32[], lo: i32, hi: i32): i32[] {
+  let out: i32[] = [];
+  let i: i32 = lo;
+  while (i < hi) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function sub_carry(xs: ir.Op[][], n: i32): ir.Op[][] {
+  let out: ir.Op[][] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// stores_slot reports whether any op in `ops` writes local `slot`.
+function stores_slot(ops: ir.Op[], slot: i32): boolean {
+  for o in ops {
+    if ((o.kind_tag == 19 || o.kind_tag == 20) && o.i32_imm == slot) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function dummy(r: irtables.LowerResult): ir.Op {
+  if (r.result_kind == irtables.result_i64()) {
+    return ir.op_const_i64(0 as i64);
+  }
+  if (r.result_kind == irtables.result_f64()) {
+    return ir.op_const_f64(0.0);
+  }
+  return ir.op_const_i32(0);
+}
+
+// An if: its condition, the segment's last value, is taken in normal mode;
+// while rewinding the then-arm is entered when the target lies in it. The
+// values held under the if are produced again after its end.
+function routed_if(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32): Tx {
+  let t2: Tx = routed_cond(t, r, set, t.before[at + 1], t.before[arm_end(t, at)], sub_ops(ops, at + 1, t.end_of[at]));
+  return Tx { ...t2, out: util.append_all(t2.out, [ir.op_load_local(t2.tc), ir.op_if(0)]), seg: [], carry: t2.carry.append(t2.seg) };
+}
+
+// A brif never branches while rewinding. The values held under its
+// condition are produced again after it.
+function routed_brif(t: Tx, r: irtables.LowerResult, set: Set, o: ir.Op): Tx {
+  let no: ir.Op[] = [];
+  let t2: Tx = routed_cond(t, r, set, 0, 0, no);
+  return Tx { ...t2, out: util.append_all(t2.out, [ir.op_load_local(t2.tc), o]) };
+}
+
+// routed_cond stores the condition the segment computes in normal mode, and
+// `lo <= ci < hi` while rewinding, into the scratch slot. The values the
+// segment holds under the condition are carried out of the guard; `body`
+// is what runs before they are produced again.
+function routed_cond(t: Tx, r: irtables.LowerResult, set: Set, lo: i32, hi: i32, body: ir.Op[]): Tx {
+  let cstart: i32 = arg_start(t.seg, 1);
+  if (cstart < 0) {
+    return Tx { ...t, why: "suspend: " + r.name + ": a condition is not produced by its own segment" };
+  }
+  let cond: ir.Op[] = sub_ops(t.seg, cstart, t.seg.len());
+  let c: Carried = carry_out(t, r, set, cstart, util.append_all(cond, body));
+  if (c.t.why != "") {
+    return c.t;
+  }
+  let out: ir.Op[] = util.append_all(c.t.out, normal_test(t));
+  out = out.append(ir.op_if(0));
+  for o in util.append_all(c.prefix, cond) {
+    if (o.kind_tag == 157) {
+      out = out.append(ir.op_br(o.i32_imm + 1));
+    } else {
+      out = out.append(o);
+    }
+  }
+  out = out.append(ir.op_store_local(t.tc));
+  out = out.append(ir.op_else());
+  if (hi > lo) {
+    out = util.append_all(out, [ir.op_load_local(t.ci), ir.op_const_i32(lo), ir.op_bin("ge_s", 0, false), ir.op_load_local(t.ci), ir.op_const_i32(hi), ir.op_bin("lt_s", 0, false), ir.op_bin("and", 0, false)]);
+  } else {
+    out = out.append(ir.op_const_i32(0));
+  }
+  out = out.append(ir.op_store_local(t.tc));
+  out = out.append(ir.op_end());
+  return Tx { ...c.t, out: out, seg: c.carried };
+}
+
+// open_scope guards the segment before a block or loop and keeps the
+// producers of the values held under the scope to run again after its end.
+function open_scope(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32): Tx {
+  let c: Carried = carry_out(t, r, set, t.seg.len(), sub_ops(ops, at + 1, t.end_of[at]));
+  if (c.t.why != "") {
+    return c.t;
+  }
+  let t2: Tx = flush(Tx { ...c.t, seg: c.prefix });
+  return Tx { ...t2, carry: t2.carry.append(c.carried) };
+}
+
+// dump_if_asked prints a function's ops to stderr when FERN_SUSPEND_DUMP
+// names it: one line per op with its index, kind, immediate and string.
+pub function dump_if_asked(r: irtables.LowerResult, stage: string): void {
+  match (env("FERN_SUSPEND_DUMP")) {
+    Some(name) => {
+      if (name != r.name) {
+        return;
+      }
+      eprint("== " + r.name + " " + stage + " n_locals=" + util.i32_to_string(r.n_locals));
+      let i: i32 = 0;
+      while (i < r.ops.len()) {
+        let o: ir.Op = r.ops[i];
+        eprint(util.i32_to_string(i) + " " + ir.kind_name(o.kind_tag) + " " + util.i32_to_string(o.i32_imm) + " " + o.str);
+        i = i + 1;
+      }
+    },
+    None => {}
+  }
+}

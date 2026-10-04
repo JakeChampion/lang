@@ -1182,12 +1182,18 @@ function (f: Fmt) blank_before(line: i32): boolean {
   return f.blank_at(top - 1);
 }
 
-// drain_leading emits every pending comment written ABOVE source line `line`.
-// A comment on the same line stays queued for emit_trailing.
+// drain_leading emits every pending comment written ABOVE source line `line`,
+// keeping a blank line the source had between two of them. A comment on the
+// same line stays queued for emit_trailing.
 function drain_leading(f: Fmt, line: i32, depth: i32): (string, Fmt) {
   let out: string = "";
   let g: Fmt = f;
+  let last: i32 = 0;
   while (g.ci < g.comments.len() && g.comments[g.ci].line < line) {
+    if (last > 0 && g.blank_at(g.comments[g.ci].line - 1)) {
+      out = out + "\n";
+    }
+    last = g.comments[g.ci].line;
     out = out + indent_str(depth) + "//" + g.comments[g.ci].text + "\n";
     g = Fmt { ...g, ci: g.ci + 1 };
   }
@@ -1398,12 +1404,18 @@ function field_lines_for(flines: parser.FieldLines[], name: string, decl_line: i
   return none;
 }
 
-// drain_all flushes every remaining comment at `depth` — end of file, and the
-// tail of a block whose last statement is behind the cursor.
-function drain_all(f: Fmt, depth: i32): (string, Fmt) {
+// drain_all flushes every remaining comment at `depth`: the comments past the
+// last declaration at end of file. A blank line the source had above one of
+// them is kept, unless nothing precedes it (`wrote` is false).
+function drain_all(f: Fmt, depth: i32, wrote: boolean): (string, Fmt) {
   let out: string = "";
   let g: Fmt = f;
+  let last: i32 = 0;
   while (g.ci < g.comments.len()) {
+    if (g.blank_at(g.comments[g.ci].line - 1) && (last > 0 || wrote)) {
+      out = out + "\n";
+    }
+    last = g.comments[g.ci].line;
     out = out + indent_str(depth) + "//" + g.comments[g.ci].text + "\n";
     g = Fmt { ...g, ci: g.ci + 1 };
   }
@@ -3528,8 +3540,12 @@ function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
   let g: Fmt = f;
   let mi: i32 = 0;
   while (mi < id.methods.len()) {
-    let (mtext, mg) = print_impl_method(id.methods[mi], id.type_params, g);
-    out = out + mtext;
+    if (mi > 0 && g.blank_before(id.methods[mi].line)) {
+      out = out + "\n";
+    }
+    let (lead, lg) = drain_leading(g, id.methods[mi].line, 1);
+    let (mtext, mg) = print_impl_method(id.methods[mi], id.type_params, lg);
+    out = out + lead + mtext;
     g = mg;
     mi = mi + 1;
   }
@@ -3626,11 +3642,17 @@ function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
     out = out + indent_str(1) + "type " + td.assoc_types[ati] + ";\n";
     ati = ati + 1;
   }
+  // A comment written above a member stays above it, and a blank line the
+  // source had between two members is kept, as between statements.
   let g: Fmt = f;
   let mi: i32 = 0;
   while (mi < td.methods.len()) {
-    let (mtext, mg) = print_trait_method(td.methods[mi], g);
-    out = out + mtext;
+    if (mi > 0 && g.blank_before(td.methods[mi].line)) {
+      out = out + "\n";
+    }
+    let (lead, lg) = drain_leading(g, td.methods[mi].line, 1);
+    let (mtext, mg) = print_trait_method(td.methods[mi], lg);
+    out = out + lead + mtext;
     g = mg;
     mi = mi + 1;
   }
@@ -3660,7 +3682,8 @@ function print_trait_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
     out = out + ": " + m.ret_type;
   }
   if (m.body.len() == 0) {
-    return (out + ";\n", f);
+    let (tr, g0) = emit_trailing(f, m.line);
+    return (out + ";" + tr + "\n", g0);
   }
   let (body, g) = print_block(m.body, 1, f);
   return (out + " " + body + "\n", g);
@@ -3964,7 +3987,7 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
     j = j + 1;
   }
   // Comments past the last declaration.
-  let (tail, _) = drain_all(f, 0);
+  let (tail, _) = drain_all(f, 0, chunks.len() > 0);
   chunks = chunks.append(tail);
   return util.str_join_chunks(chunks);
 }

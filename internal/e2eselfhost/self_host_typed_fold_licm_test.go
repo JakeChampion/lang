@@ -109,3 +109,36 @@ func TestSelfHostTypedLICM(t *testing.T) {
 		})
 	}
 }
+
+// TestSelfHostTypedLICMDataAddress pins that a byte read of a string whose
+// length the loop header reads takes the string's data address from before
+// the loop: each iteration is one `movzbl (base,index)`, with no reload of
+// the address from the box.
+func TestSelfHostTypedLICMDataAddress(t *testing.T) {
+	cli := newStrictCLI(t)
+	src := "@noinline function sum(s: string): i32 { let t: i32 = 0; let i: i32 = 0; while (i < s.len()) { t = t + (s[i] as i32); i = i + 1; } return t; }\n" +
+		"function main(): i32 { return sum(\"abc\") - 200; }\n"
+	asm := cli.emit(t, "x86-64-linux", src)
+	body := asmFuncBody(t, asm, "__fn_sum")
+	if !matchShape(body, `movzbl \(%r\w+,%r\w+\), %\w+`) {
+		t.Errorf("no base+index byte load in sum:\n%s", body)
+	}
+	if matchShape(body, `movq \(%r\w+\), %rdx\n\s*movzbl \(%rdx,`) {
+		t.Errorf("sum reloads the data address before every byte:\n%s", body)
+	}
+	// 'a' + 'b' + 'c' = 294.
+	if got, _ := cli.runX86(t, asm); got != 94 {
+		t.Errorf("x86-64 exited %d, want 94", got)
+	}
+	t.Run("arm64", func(t *testing.T) {
+		arm64gcc, qemu := arm64Tooling(t)
+		if got, _ := runArm64(t, arm64gcc, qemu, cli.emit(t, "arm64-linux", src)); got != 94 {
+			t.Errorf("exited %d, want 94", got)
+		}
+	})
+	t.Run("wasm", func(t *testing.T) {
+		if got, _ := runWasm(t, cli.emit(t, "wasm32-wasi", src)); got != 94 {
+			t.Errorf("exited %d, want 94", got)
+		}
+	})
+}

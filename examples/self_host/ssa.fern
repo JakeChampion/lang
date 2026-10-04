@@ -3,9 +3,9 @@
 // on: the data model, the kind and terminator registries, the optimiser
 // passes and the register allocator. `ssa_lift.fern` builds an SFunc from a
 // lowered function's stack IR; `asm_arm64_ir.fern` and `asm_ir.fern` emit
-// it. The Go compiler's internal/ssa is the model.
+// it.
 //
-// Representation (mirrors internal/ssa/ssa.go, but pointer-free — values
+// Representation (pointer-free — values
 // and blocks are referenced by integer id / array index, matching the
 // self-host's value-semantics style):
 //   - an SSA Value is an i32 id; an instruction (SInst) DEFINES the value
@@ -67,6 +67,10 @@ pub struct SFunc { name: string, nparams: i32, nvals: i32, blocks: SBlock[], ent
 
 function t_ret(value: i32): STerm {
   return STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: value };
+}
+
+function t_br(target: i32): STerm {
+  return STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 };
 }
 
 function t_brif(cond: i32, t: i32, f: i32): STerm {
@@ -971,8 +975,10 @@ function drop_active_at(a: i32[], k: i32): i32[] {
 // `pref[v]`, when not -1, is the caller-saved register v would rather have:
 // the one a register-ABI parameter arrives in or a call argument leaves in. It
 // is taken when free and v does not live across a call; an empty `pref` asks
-// for nothing.
+// for nothing. A value a block returns that names no register asks for
+// `abi_reg`, where the return reads it (`return_prefs`).
 pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[]): i32[] {
+  let wish: i32[] = return_prefs(f, pref, abi_reg);
   let big: i32 = 2000000000;
   let lo: i32[] = [];
   let hi: i32[] = [];
@@ -1125,6 +1131,8 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
   let weight: i32[] = spill_weights(f, at);
   let sole: i32[] = sole_readers(f);
 
+  // Built the first time an interference question is asked.
+  let sites: ReadSites = ReadSites { start: [], blk: [], pos: [], succ: [], phi_end: [] };
   let reg_of: i32[] = [];
   let shared_with: i32[] = [];
   i = 0;
@@ -1187,9 +1195,14 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     // A value read only by its phi mate, already spilled, would be stored to
     // the mate's slot on the edge whatever its home; it takes the slot.
     let mh: i32 = mates.hint[v];
-    if (mh >= 0 && sole[v] == mh && lo[mh] <= lo[v] && hi[mh] >= 0 && reg_of[mh] == 0 - 1 && !mate_interferes(f, at, blk_start, mh, v, def_blk[mh], def_blk[v], def_pos[v])) {
-      oi = oi + 1;
-      continue;
+    if (mh >= 0 && sole[v] == mh && lo[mh] <= lo[v] && hi[mh] >= 0 && reg_of[mh] == 0 - 1) {
+      if (sites.start.len() == 0) {
+        sites = read_sites(f, at, blk_start);
+      }
+      if (!live_at_def(sites, mh, v, def_blk, def_pos)) {
+        oi = oi + 1;
+        continue;
+      }
     }
     let abi_ok: boolean = !spans_call(cum_abi, lo[v], hi[v]);
     // A value takes the register of its phi mate, or of an operand of
@@ -1198,7 +1211,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     // writes, or the holder is the phi this loop-carried value feeds and
     // the two never live at once. First fit wins; the phi mate first.
     let placed: boolean = false;
-    // -2 stands for `pref[v]`, which names a register rather than a value.
+    // -2 stands for `wish[v]`, which names a register rather than a value.
     let cands: i32[] = [mates.hint[v], 0 - 2, def_a[v], def_b[v]];
     let ci: i32 = 0;
     while (ci < cands.len() && !placed) {
@@ -1206,8 +1219,8 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
       ci = ci + 1;
       if (h == 0 - 2) {
         let pr: i32 = 0 - 1;
-        if (v < pref.len()) {
-          pr = pref[v];
+        if (v < wish.len()) {
+          pr = wish[v];
         }
         if (pr < 0 || spans_call(cum, lo[v], hi[v]) || pr == abi_reg && !abi_ok || index_of_reg(free, pr) < 0) {
           continue;
@@ -1254,7 +1267,10 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
       }
       let share: boolean = act_hi[ha] == lo[v] && reads_mate[v];
       if (!share && h == mates.hint[v] && mates.carried[v] && act_val[ha] == h) {
-        share = !mate_interferes(f, at, blk_start, h, v, def_blk[h], def_blk[v], def_pos[v]);
+        if (sites.start.len() == 0) {
+          sites = read_sites(f, at, blk_start);
+        }
+        share = !live_at_def(sites, h, v, def_blk, def_pos);
       }
       if (!share) {
         continue;
@@ -1332,7 +1348,10 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     oi = oi + 1;
   }
   let shape: SlotShape = SlotShape { at: at, blk_start: blk_start, def_blk: def_blk, def_pos: def_pos, def_a: def_a, def_b: def_b };
-  return assign_spill_slots(f, shape, lo, hi, reg_of, slot_hints(f, at, blk_start, def_blk, def_pos, reg_of, mates));
+  if (sites.start.len() == 0 && spilled_mates(reg_of, def_pos, mates.hint)) {
+    sites = read_sites(f, at, blk_start);
+  }
+  return assign_spill_slots(f, shape, lo, hi, reg_of, slot_hints(f, sites, def_blk, def_pos, reg_of, mates), sites);
 }
 
 // A spilled value keeps its phi mate's hint for a slot, a loop-carried one
@@ -1341,7 +1360,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
 // slot over while the mate's interval still covers it.
 struct SlotHints { hint: i32[], take_over: boolean[] }
 
-function slot_hints(f: SFunc, at: i32[], blk_start: i32[], def_blk: i32[], def_pos: i32[], reg_of: i32[], mates: Mates): SlotHints {
+function slot_hints(f: SFunc, sites: ReadSites, def_blk: i32[], def_pos: i32[], reg_of: i32[], mates: Mates): SlotHints {
   let hint: i32[] = [];
   let take_over: boolean[] = [];
   let i: i32 = 0;
@@ -1350,7 +1369,7 @@ function slot_hints(f: SFunc, at: i32[], blk_start: i32[], def_blk: i32[], def_p
     if (reg_of[i] >= 0 || sh < 0 || reg_of[sh] >= 0) {
       sh = 0 - 1;
     }
-    let free: boolean = sh >= 0 && def_pos[sh] >= 0 && !mate_interferes(f, at, blk_start, sh, i, def_blk[sh], def_blk[i], def_pos[i]);
+    let free: boolean = sh >= 0 && def_pos[sh] >= 0 && !live_at_def(sites, sh, i, def_blk, def_pos);
     if (sh >= 0 && mates.carried[i] && !free) {
       sh = 0 - 1;
     }
@@ -1359,6 +1378,51 @@ function slot_hints(f: SFunc, at: i32[], blk_start: i32[], def_blk: i32[], def_p
     i = i + 1;
   }
   return SlotHints { hint: hint, take_over: take_over };
+}
+
+// spilled_mates says some spilled value's phi mate is spilled too and has a
+// definition, which is when slot_hints asks whether the two interfere.
+function spilled_mates(reg_of: i32[], def_pos: i32[], hint: i32[]): boolean {
+  let i: i32 = 0;
+  while (i < reg_of.len()) {
+    let sh: i32 = hint[i];
+    if (reg_of[i] < 0 && sh >= 0 && reg_of[sh] < 0 && def_pos[sh] >= 0) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// return_prefs is `pref`, filled out to every value, with `abi_reg` asked
+// for each value a block returns that asks for nothing else. A phi's ask
+// passes to its operands that ask for nothing, last block first, so the
+// values a returned merge gathers aim for the register it is returned from.
+function return_prefs(f: SFunc, pref: i32[], abi_reg: i32): i32[] {
+  let out: i32[] = pref;
+  while (out.len() < f.nvals) {
+    out = out.append(0 - 1);
+  }
+  for blk in f.blocks {
+    let v: i32 = blk.term.value;
+    if (blk.term.kind_tag == 1 && v >= 0 && v < out.len() && out[v] < 0) {
+      out = out.with(v, abi_reg);
+    }
+  }
+  let bi: i32 = f.blocks.len() - 1;
+  while (bi >= 0) {
+    for ins in f.blocks[bi].insts {
+      if (ins.kind_tag == 8 && ins.result >= 0 && ins.result < out.len() && out[ins.result] >= 0) {
+        for a in ins.args {
+          if (a >= 0 && a < out.len() && out[a] < 0) {
+            out = out.with(a, out[ins.result]);
+          }
+        }
+      }
+    }
+    bi = bi - 1;
+  }
+  return out;
 }
 
 // sole_readers gives each value the result of the one instruction that reads
@@ -1621,77 +1685,6 @@ pub function term_reads_value(t: STerm, v: i32): boolean {
   return false;
 }
 
-// mate_interferes says whether r is live anywhere its phi mate a is, where
-// r is defined in block `hdr`: a phi result and its back-edge operand, or a
-// phi's entry operand and the phi. That is so exactly when a use of r is
-// reachable from a's definition without passing `hdr`, where r is defined
-// afresh. A read of r as a phi operand happens on the edge into the phi's
-// block and counts for the edge's source. The use at a's own definition is a
-// read before the write and does not count, unless a's block reaches itself
-// again without `hdr`.
-function mate_interferes(f: SFunc, at: i32[], blk_start: i32[], r: i32, a: i32, hdr: i32, ablk: i32, apos: i32): boolean {
-  let reach: boolean[] = [];
-  let i: i32 = 0;
-  while (i < f.blocks.len()) {
-    reach = reach.append(false);
-    i = i + 1;
-  }
-  let work: i32[] = successor_positions(f, at, ablk);
-  let next: i32 = 0;
-  while (next < work.len()) {
-    let b: i32 = work[next];
-    next = next + 1;
-    if (b < 0 || b == hdr || reach[b]) {
-      continue;
-    }
-    reach = reach.with(b, true);
-    for s in successor_positions(f, at, b) {
-      work = work.append(s);
-    }
-  }
-  let bi: i32 = 0;
-  while (bi < f.blocks.len()) {
-    let blk: SBlock = f.blocks[bi];
-    let from: boolean = reach[bi] || bi == ablk;
-    if (reach[bi] && bi != ablk) {
-      for ins in blk.insts {
-        if (ins.kind_tag != 8 && reads_value(ins, r)) {
-          return true;
-        }
-      }
-    }
-    if (bi == ablk) {
-      let k: i32 = 0;
-      while (k < blk.insts.len()) {
-        let ki: SInst = blk.insts[k];
-        if ((reach[bi] || blk_start[bi] + k > apos) && ki.kind_tag != 8 && reads_value(ki, r)) {
-          return true;
-        }
-        k = k + 1;
-      }
-    }
-    if (from) {
-      if (term_reads_value(blk.term, r)) {
-        return true;
-      }
-      for s in successor_positions(f, at, bi) {
-        if (s < 0) {
-          continue;
-        }
-        let sb: SBlock = f.blocks[s];
-        let slot: i32 = pred_slot(sb, blk.id);
-        for ins in sb.insts {
-          if (ins.kind_tag == 8 && slot < ins.args.len() && ins.args[slot] == r) {
-            return true;
-          }
-        }
-      }
-    }
-    bi = bi + 1;
-  }
-  return false;
-}
-
 function index_of_reg(a: i32[], x: i32): i32 {
   let i: i32 = 0;
   while (i < a.len()) {
@@ -1718,15 +1711,15 @@ function index_of_reg(a: i32[], x: i32): i32 {
 // holder is the mate of a value not placed yet: a block's phis start one after
 // another, but every operand arriving from before them dies at the edge, so
 // the first phi would otherwise take the slot a later one wants.
-function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], reg_of: i32[], hints: SlotHints): i32[] {
+function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], reg_of: i32[], hints: SlotHints, given: ReadSites): i32[] {
   let def_pos: i32[] = shape.def_pos;
   let from: i32[] = spill_starts(lo, def_pos);
   let wanted_by: i32[] = mates_wanted(hi, reg_of, hints.hint);
   let slot_end: i32[] = [];
   let holder: i32[] = [];
   let occupants: i32[][] = [];
-  let sites: ReadSites = ReadSites { start: [], blk: [], pos: [], succ: [] };
-  let built: boolean = false;
+  let sites: ReadSites = given;
+  let built: boolean = given.start.len() > 0;
   for v in order_by_lo(reg_of.len(), from) {
     if (hi[v] < 0 || reg_of[v] >= 0) {
       continue;
@@ -1818,14 +1811,25 @@ function still_in(occ: i32[], hi: i32[], from: i32): i32[] {
 // its block's last instruction, and a phi reads its operand there in the
 // predecessor it arrives from. Value v's reads are entries start[v] up to
 // start[v + 1]. `succ` lists each block's successor positions.
-struct ReadSites { start: i32[], blk: i32[], pos: i32[], succ: i32[][] }
+// phi_end is, per block, the position just past its last phi.
+struct ReadSites { start: i32[], blk: i32[], pos: i32[], succ: i32[][], phi_end: i32[] }
 
 function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
   let count: i32[] = zeros(f.nvals + 1);
   let succ: i32[][] = [];
+  let phi_end: i32[] = [];
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {
     succ = succ.append(successor_positions(f, at, bi));
+    let end: i32 = 0;
+    let k: i32 = 0;
+    while (k < f.blocks[bi].insts.len()) {
+      if (f.blocks[bi].insts[k].kind_tag == 8) {
+        end = k + 1;
+      }
+      k = k + 1;
+    }
+    phi_end = phi_end.append(blk_start[bi] + end);
     bi = bi + 1;
   }
   let pass: i32 = 0;
@@ -1897,21 +1901,22 @@ function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
     }
     pass = pass + 1;
   }
-  return ReadSites { start: start, blk: blk, pos: pos, succ: succ };
+  return ReadSites { start: start, blk: blk, pos: pos, succ: succ, phi_end: phi_end };
 }
 
 // live_at_def says r is live where a is defined: some read of r is reachable
 // from there without passing r's definition. The read at a's own definition
 // comes before the write and does not count; one in a's block after it does,
-// unless r is defined between. A value with no definition, a parameter, is
-// defined before every block.
+// unless r is defined between. A block's phis are all defined at its entry,
+// whatever their order. A value with no definition, a parameter, is defined
+// before every block.
 function live_at_def(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i32[]): boolean {
   let ab: i32 = def_blk[a];
   if (r < 0 || ab < 0) {
     return true;
   }
   let rb: i32 = def_blk[r];
-  if (rb == ab && def_pos[r] > def_pos[a]) {
+  if (rb == ab && def_pos[r] > def_pos[a] && def_pos[r] >= sites.phi_end[rb]) {
     return false;
   }
   let first: i32 = sites.start[r];
@@ -2575,11 +2580,219 @@ function has_pred(ps: i32[], id: i32): boolean {
   return false;
 }
 
+// ---- branches on boolean joins ---------------------------------------------
+//
+// A boolean made as a VALUE by `&&` or `||` — a predicate spliced into its
+// caller, or a flag held in a local — reaches its use as a phi of each arm's
+// 0/1, and a branch on that phi tests again what the arms just decided.
+// thread_bool_joins sends each arm straight to the branch's targets: an arm
+// bringing a constant jumps to the side the constant picks, and one bringing a
+// comparison branches on it, which the emitters fuse into compare and jump.
+//
+// The join must hold that phi alone, read by nothing but the branch (its own,
+// or that of an empty block it falls into), be entered only forward, and
+// branch forward to blocks without phis. An arm is moved only when it ends in
+// a plain branch to the join. Every block that dominates the join dominates
+// each block entering it, so no other block changes dominator.
+
+// BoolJoin is a join the pass can take apart: `j` its position, `k` the
+// position of the empty block holding the branch or -1, `t` / `f` the targets.
+struct BoolJoin { ok: boolean, j: i32, k: i32, t: i32, f: i32 }
+
+pub struct Threading { f: SFunc, changed: boolean }
+
+struct ThreadRound { blocks: SBlock[], busy: boolean[], gone: boolean[], changed: boolean }
+
+pub function thread_bool_joins(f: SFunc): Threading {
+  let g: SFunc = f;
+  let changed: boolean = false;
+  let rounds: i32 = 0;
+  while (rounds < 8) {
+    let r: Threading = thread_round(g);
+    if (!r.changed) {
+      return Threading { f: g, changed: changed };
+    }
+    g = r.f;
+    changed = true;
+    rounds = rounds + 1;
+  }
+  return Threading { f: g, changed: changed };
+}
+
+// thread_round threads every join whose blocks no earlier join in the round
+// rewrote; the next round sees the graph that leaves.
+function thread_round(f: SFunc): Threading {
+  let at: i32[] = block_positions(f);
+  let uses: i32[] = use_counts(f);
+  let konst: i32[] = truth_constants(f);
+  let flags: boolean[] = [];
+  while (flags.len() < f.blocks.len()) {
+    flags = flags.append(false);
+  }
+  let r: ThreadRound = ThreadRound { blocks: f.blocks, busy: flags, gone: flags, changed: false };
+  let j: i32 = 0;
+  while (j < f.blocks.len()) {
+    let jn: BoolJoin = bool_join_at(f, at, uses, j);
+    if (jn.ok && !join_busy(f, at, r.busy, jn)) {
+      r = thread_join(f, at, konst, jn, r);
+    }
+    j = j + 1;
+  }
+  if (!r.changed) {
+    return Threading { f: f, changed: false };
+  }
+  let kept: SBlock[] = [];
+  let i: i32 = 0;
+  while (i < r.blocks.len()) {
+    if (!r.gone[i]) {
+      kept = kept.append(r.blocks[i]);
+    }
+    i = i + 1;
+  }
+  let g: SFunc = SFunc { ...f, blocks: kept };
+  return Threading { f: SFunc { ...g, blocks: refreshed_preds(g) }, changed: true };
+}
+
+// truth_constants maps each value an integer or boolean constant defines to
+// 1 or 0 as a branch reads it, and every other value to -1.
+function truth_constants(f: SFunc): i32[] {
+  let out: i32[] = [];
+  while (out.len() < f.nvals) {
+    out = out.append(0 - 1);
+  }
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if ((ins.kind_tag == 1 || ins.kind_tag == 2) && ins.result >= 0 && ins.result < out.len()) {
+        let truth: i32 = 0;
+        if (ins.imm != 0) {
+          truth = 1;
+        }
+        out = out.with(ins.result, truth);
+      }
+    }
+  }
+  return out;
+}
+
+// bool_join_at is the join at position j, or one that is not ok.
+function bool_join_at(f: SFunc, at: i32[], uses: i32[], j: i32): BoolJoin {
+  let blk: SBlock = f.blocks[j];
+  let none: BoolJoin = BoolJoin { ok: false, j: j, k: 0 - 1, t: 0, f: 0 };
+  if (blk.insts.len() != 1 || blk.insts[0].kind_tag != 8 || uses[blk.insts[0].result] != 1 || !entered_forward(f, at, j)) {
+    return none;
+  }
+  let k: i32 = 0 - 1;
+  let last: i32 = j;
+  let br: STerm = blk.term;
+  if (br.kind_tag == 2) {
+    k = position_of(at, br.target);
+    if (k <= j || !branch_only(f.blocks[k], blk.id)) {
+      return none;
+    }
+    last = k;
+    br = f.blocks[k].term;
+  }
+  if (br.kind_tag != 3 || br.cond != blk.insts[0].result || br.t == br.f
+    || !plain_target(f, at, br.t, last) || !plain_target(f, at, br.f, last)) {
+    return none;
+  }
+  return BoolJoin { ok: true, j: j, k: k, t: br.t, f: br.f };
+}
+
+// entered_forward says every edge into position j comes from a block laid out
+// before it, one edge per predecessor, and the phi has an operand for each.
+function entered_forward(f: SFunc, at: i32[], j: i32): boolean {
+  let blk: SBlock = f.blocks[j];
+  if (blk.preds.len() == 0 || blk.insts[0].args.len() != blk.preds.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < blk.preds.len()) {
+    let p: i32 = position_of(at, blk.preds[i]);
+    if (p < 0 || p >= j || pred_slot(blk, blk.preds[i]) != i) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// branch_only says b holds nothing but a conditional branch and is entered
+// from `from` alone.
+function branch_only(b: SBlock, from: i32): boolean {
+  return b.insts.len() == 0 && b.term.kind_tag == 3 && b.preds.len() == 1 && b.preds[0] == from;
+}
+
+// plain_target says the block `id` is laid out past position `last` and has
+// no phis, so a new edge into it needs no operand.
+function plain_target(f: SFunc, at: i32[], id: i32, last: i32): boolean {
+  let p: i32 = position_of(at, id);
+  return p > last && !has_phi(f.blocks[p]);
+}
+
+// join_busy says an earlier join this round rewrote a block this one would.
+function join_busy(f: SFunc, at: i32[], busy: boolean[], jn: BoolJoin): boolean {
+  if (busy[jn.j] || jn.k >= 0 && busy[jn.k]) {
+    return true;
+  }
+  for p in f.blocks[jn.j].preds {
+    if (busy[at[p]]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// thread_join moves every edge into the join that ends a plain branch, and
+// drops the join once no edge is left entering it.
+function thread_join(f: SFunc, at: i32[], konst: i32[], jn: BoolJoin, r: ThreadRound): ThreadRound {
+  let jb: SBlock = f.blocks[jn.j];
+  let blocks: SBlock[] = r.blocks;
+  let busy: boolean[] = r.busy.with(jn.j, true);
+  let kept: i32 = 0;
+  let i: i32 = 0;
+  while (i < jb.preds.len()) {
+    let pp: i32 = at[jb.preds[i]];
+    if (blocks[pp].term.kind_tag == 2) {
+      blocks = blocks.with(pp, SBlock { ...blocks[pp], term: arm_term(jb.insts[0].args[i], konst, jn) });
+      busy = busy.with(pp, true);
+    } else {
+      kept = kept + 1;
+    }
+    i = i + 1;
+  }
+  let gone: boolean[] = r.gone;
+  if (kept == 0) {
+    gone = gone.with(jn.j, true);
+    if (jn.k >= 0) {
+      gone = gone.with(jn.k, true);
+    }
+  }
+  return ThreadRound { blocks: blocks, busy: busy, gone: gone, changed: r.changed || kept < jb.preds.len() };
+}
+
+// arm_term is where an arm bringing `v` to the join goes instead: the target
+// a constant picks, or a branch on `v` itself.
+function arm_term(v: i32, konst: i32[], jn: BoolJoin): STerm {
+  if (v >= 0 && v < konst.len() && konst[v] == 1) {
+    return t_br(jn.t);
+  }
+  if (v >= 0 && v < konst.len() && konst[v] == 0) {
+    return t_br(jn.f);
+  }
+  return t_brif(v, jn.t, jn.f);
+}
+
 // register_form is a lifted function as the register backends allocate it:
 // trivial phis folded, rotates fused, wraps nothing reads dropped, dead values
-// pruned and forwarding blocks threaded.
+// pruned, branches on boolean joins threaded and forwarding blocks threaded.
 pub function register_form(f: SFunc): SFunc {
-  return thread_forwarding(prune_dead(drop_low_wraps(fuse_rotates(prune_trivial_phis(f)))));
+  let g: SFunc = prune_dead(drop_low_wraps(fuse_rotates(prune_trivial_phis(f))));
+  let t: Threading = thread_bool_joins(g);
+  if (t.changed) {
+    g = prune_dead(t.f);
+  }
+  return thread_forwarding(g);
 }
 
 // drop_low_wraps replaces a signed 32-bit wrap, extend or cast by its operand where

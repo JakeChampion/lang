@@ -43,9 +43,8 @@ const tcpLocalPortRoundTrip = `function main(): i32 {
     return 42;
 }`
 
-// TestTcpLocalPortRoundTrip runs the round-trip on every native backend: the
-// two ISAs times the flat and SSA emitters, which each write their own
-// getsockname helper.
+// TestTcpLocalPortRoundTrip runs the round-trip on both native ISAs, which
+// each write their own getsockname helper.
 func TestTcpLocalPortRoundTrip(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -55,14 +54,11 @@ func TestTcpLocalPortRoundTrip(t *testing.T) {
 	}
 
 	cases := []struct {
-		name    string
-		target  string
-		backend string
+		name   string
+		target string
 	}{
-		{"x86-64_flat", "x86-64-linux", ""},
-		{"x86-64_ssa", "x86-64-linux", "ssa"},
-		{"arm64_flat", "arm64-linux", ""},
-		{"arm64_ssa", "arm64-linux", "ssa"},
+		{"x86-64", "x86-64-linux"},
+		{"arm64", "arm64-linux"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -79,9 +75,6 @@ func TestTcpLocalPortRoundTrip(t *testing.T) {
 
 			out := filepath.Join(dir, c.name+".bin")
 			args := []string{"-target", c.target}
-			if c.backend != "" {
-				args = append(args, "-backend", c.backend)
-			}
 			args = append(args, "-o", out, srcPath)
 			if o, err := exec.Command(bin, args...).CombinedOutput(); err != nil {
 				t.Fatalf("build failed: %v\n%s", err, o)
@@ -163,18 +156,10 @@ func TestTcpLocalPortErrno(t *testing.T) {
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	for _, backend := range []string{"", "ssa"} {
-		name := "flat"
-		if backend != "" {
-			name = backend
-		}
-		t.Run(name, func(t *testing.T) {
-			out := filepath.Join(dir, "errno-"+name+".bin")
-			args := []string{"-target", "x86-64-linux"}
-			if backend != "" {
-				args = append(args, "-backend", backend)
-			}
-			args = append(args, "-o", out, srcPath)
+	{
+		t.Run("x86-64", func(t *testing.T) {
+			out := filepath.Join(dir, "errno.bin")
+			args := []string{"-target", "x86-64-linux", "-o", out, srcPath}
 			if o, err := exec.Command(bin, args...).CombinedOutput(); err != nil {
 				t.Fatalf("build failed: %v\n%s", err, o)
 			}

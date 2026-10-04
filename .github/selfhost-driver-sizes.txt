@@ -434,8 +434,29 @@
 # constant a phi merges or a block returns now loads on its edge with no home
 # of its own, a further 0.7%. Measured with TestSelfHostWarmStockDriver, the
 # gate's own path; fern.fern, which the pin builds, stays inside 5%.
-fern.fern/stage2 10946736
-fern.fern 10737128
+# 2026-10-03: asm_pathprobe_run 3965592 -> 4172000 (+5.2%), main's growth
+# since that refresh: the same bytes build from main at a4d8eba1, and #11323,
+# whose run reported it, changes no file in the driver's closure. The other
+# rows stay inside 5%. Number pasted from driver-sizes' own report on run
+# 37158896327.
+# 2026-10-04: pathprobe's historical CI source 89c212ac under its original
+# 7d8ea4e pin reproduces 3965592 bytes. The current c891 pin on that source
+# gives 3901208 bytes; current main gives 4172000. Stdio adds no compiler or
+# stdlib change. Parser/checker fixes, typed ownership, byte operations and
+# array fusion account for the source growth. Avoiding unused verdict rows
+# saves 2008 bytes; TestSelfHostWarmStockDriver measured 4169992 at b3108829e.
+# docs/SELFHOST-PATH-PROBE-SIZE-2026-10-04.md records attribution and tests.
+# 2026-10-04 — fern.fern 10737128 -> 11300776 (+5.2%) and checker_modload_run
+# 2386128 -> 2520560 (+5.6%), main's growth through the Platform trait merges
+# (#11340, #11343). Numbers from driver-sizes' report on run 37166665810 (main
+# at 492818c4 plus #11345's few checker lines). The other rows stay inside 5%.
+# 2026-10-04: fern.fern/stage2 10946736 -> 11495848 (+5.0%). Main at acf98243
+# builds its stage2 at 11461256 (+4.7%, the Platform trait and checker merges
+# above); #11354's label-id records add the other 34592 bytes (+0.3%), the same
+# share they add to the pin-built fern.fern. Both stage2 figures measured on one
+# host with each tree's own stage1. The other rows stay inside 5%.
+fern.fern/stage2 11495848
+fern.fern 11300776
 asm_load_run.fern 8721320
 asm_modload_run.fern 7618432
 asm_ir_run.fern 7420200
@@ -443,5 +464,5 @@ asm_run.fern 6813576
 wasm_ir_run.fern 6878120
 wasm_run.fern 6878824
 wasm_runio_run.fern 6878184
-asm_pathprobe_run.fern 3965592
-checker_modload_run.fern 2386128
+asm_pathprobe_run.fern 4169992
+checker_modload_run.fern 2520560

@@ -706,6 +706,8 @@ func New() *Interp {
 	i.Builtins["__method_Writer_fsync"] = &Builtin{Fn: builtinFsync}
 	i.Builtins["__method_Reader_fdatasync"] = &Builtin{Fn: builtinFdatasync}
 	i.Builtins["__method_Writer_fdatasync"] = &Builtin{Fn: builtinFdatasync}
+	i.Builtins["__method_Reader_drop_cache"] = &Builtin{Fn: builtinDropCache}
+	i.Builtins["__method_Writer_drop_cache"] = &Builtin{Fn: builtinDropCache}
 	i.Builtins["__method_Reader_syncfs"] = &Builtin{Fn: builtinSyncfs}
 	i.Builtins["__method_Writer_syncfs"] = &Builtin{Fn: builtinSyncfs}
 	i.Builtins["__method_Writer_truncate"] = &Builtin{Fn: builtinWriterTruncate}
@@ -1200,33 +1202,25 @@ func New() *Interp {
 		if !ok {
 			return nil, fmt.Errorf("__scan_set: expected a string, got %T", args[0])
 		}
-		fn, ok := args[1].(Number)
+		return scanSet("__scan_set", []byte(string(s)), args[1], args[2])
+	}}
+	i.Builtins["__scan_set_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("__scan_set_bytes: expected 3 args, got %d", len(args))
+		}
+		arr, ok := args[0].(Array)
 		if !ok {
-			return nil, fmt.Errorf("__scan_set: expected an integer start, got %T", args[1])
+			return nil, fmt.Errorf("__scan_set_bytes: expected an array, got %T", args[0])
 		}
-		set, ok := args[2].(Array)
-		if !ok {
-			return nil, fmt.Errorf("__scan_set: expected a u8[] set, got %T", args[2])
-		}
-		from := int(int64(fn))
-		if from < 0 {
-			from = 0
-		}
-		b := []byte(string(s))
-		for idx := from; idx < len(b); idx++ {
-			c := int(b[idx])
-			if c >= len(set.E) {
-				continue
-			}
-			e, ok := set.E[c].(Number)
+		b := make([]byte, len(arr.E))
+		for at, e := range arr.E {
+			n, ok := e.(Number)
 			if !ok {
-				return nil, fmt.Errorf("__scan_set: set element %d is %T, not a byte", c, set.E[c])
+				return nil, fmt.Errorf("__scan_set_bytes: element %d is %T, not u8", at, e)
 			}
-			if int64(e) != 0 {
-				return Number(idx), nil
-			}
+			b[at] = byte(n)
 		}
-		return Number(len(b)), nil
+		return scanSet("__scan_set_bytes", b, args[1], args[2])
 	}}
 	// __sum_bytes(s): the wrapped 32-bit sum of every byte of `s`. The oracle
 	// for the sixth fused kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3).
@@ -1352,6 +1346,20 @@ func New() *Interp {
 	// not observe reclamation, exactly as with __heap_bump_bytes.
 	i.Builtins["__heap_mark"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	i.Builtins["__heap_release_to"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	// The task primitives (docs/NET-P3-SUSPENSION-PLAN.md §3.4) in the
+	// blocking fallback: no task is ever current, so std/async's suspend
+	// polls and task_start runs its entry to completion. A park is reached
+	// only with a current task, so it reports the no-task answer.
+	i.Builtins["__task_new"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(1), nil }}
+	i.Builtins["__task_free"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	i.Builtins["__task_cur"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	i.Builtins["__task_enter"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	i.Builtins["__task_leave"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	i.Builtins["__task_park"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(-1), nil }}
+	i.Builtins["__task_wait"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return newArray(0), nil }}
+	i.Builtins["__task_timeout"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(-1), nil }}
+	i.Builtins["__task_set_ready"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	i.Builtins["__task_set_cancelled"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
 	i.Builtins["f32_bits"] = &Builtin{Fn: builtinF32Bits}
 	i.Builtins["f32_from_bits"] = &Builtin{Fn: builtinF32FromBits}
 	i.Builtins["f64_bits"] = &Builtin{Fn: builtinF64Bits}
@@ -1434,6 +1442,10 @@ func New() *Interp {
 	i.Builtins["create_link"] = &Builtin{Fn: builtinCreateLink}
 	i.Builtins["create_symlink"] = &Builtin{Fn: builtinCreateSymlink}
 	i.Builtins["read_link"] = &Builtin{Fn: builtinReadLink}
+	i.Builtins["getxattr"] = &Builtin{Fn: builtinGetxattr}
+	i.Builtins["lgetxattr"] = &Builtin{Fn: builtinLgetxattr}
+	i.Builtins["setxattr"] = &Builtin{Fn: builtinSetxattr}
+	i.Builtins["lsetxattr"] = &Builtin{Fn: builtinLsetxattr}
 	i.Builtins["umask"] = &Builtin{Fn: builtinUmask}
 	i.Builtins["priority"] = &Builtin{Fn: builtinPriority}
 	i.Builtins["set_priority"] = &Builtin{Fn: builtinSetPriority}
@@ -3346,19 +3358,19 @@ func readDirLike(name string, skipDots bool, args []Value) (Value, error) {
 // Symlinks resolve through `os.Stat` (follow), matching the
 // implicit contract of every other file-touching builtin.
 func builtinStat(_ *Interp, args []Value) (Value, error) {
-	return statLike("stat", os.Stat, args)
+	return statLike("stat", os.Stat, true, args)
 }
 
 // builtinLstat is stat without following a final symlink. A link therefore
 // reports neither is_file nor is_dir, which is the answer a directory walk
 // needs to decide between recursing, reading, and skipping.
 func builtinLstat(_ *Interp, args []Value) (Value, error) {
-	return statLike("lstat", os.Lstat, args)
+	return statLike("lstat", os.Lstat, false, args)
 }
 
 // statLike is the body both share: the only difference between them is which
 // of os.Stat / os.Lstat resolves the path.
-func statLike(name string, resolve func(string) (os.FileInfo, error), args []Value) (Value, error) {
+func statLike(name string, resolve func(string) (os.FileInfo, error), follow bool, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
 	}
@@ -3370,12 +3382,12 @@ func statLike(name string, resolve func(string) (os.FileInfo, error), args []Val
 	if err != nil {
 		return resultErr(classifyIoError(string(path), err)), nil
 	}
-	return resultOk(fileStatValue(info)), nil
+	return resultOk(fileStatValue(info, statOrigin{path: string(path), follow: follow})), nil
 }
 
 // fileStatValue projects an os.FileInfo onto the FileStat struct.
-func fileStatValue(info os.FileInfo) *Struct {
-	raw := statFields(info)
+func fileStatValue(info os.FileInfo, at statOrigin) *Struct {
+	raw := statFields(info, at)
 	return &Struct{
 		TypeName: "FileStat",
 		Fields: map[string]Value{
@@ -3397,6 +3409,8 @@ func fileStatValue(info os.FileInfo) *Struct {
 			"mtime_nsec": Number(raw.mtimeNsec),
 			"ctime":      Number(raw.ctime),
 			"ctime_nsec": Number(raw.ctimeNsec),
+			"btime":      Number(raw.btime),
+			"btime_nsec": Number(raw.btimeNsec),
 		},
 	}
 }
@@ -3460,7 +3474,7 @@ func builtinFdStat(i *Interp, args []Value) (Value, error) {
 	if serr != nil {
 		return resultErr(classifyIoError("", serr)), nil
 	}
-	return resultOk(fileStatValue(info)), nil
+	return resultOk(fileStatValue(info, statOrigin{file: f})), nil
 }
 
 // builtinFdFlags answers `r.flags()` / `w.flags()`: `fcntl(fd, F_GETFL)`
@@ -3579,6 +3593,38 @@ func builtinFdatasync(i *Interp, args []Value) (Value, error) {
 // a filesystem even when it names nothing fsync can write.
 func builtinSyncfs(i *Interp, args []Value) (Value, error) {
 	return syncMethod(i, "syncfs", args, hostSyncfs)
+}
+
+// errNoFadvise is a host's answer to a drop_cache it has no call for, on
+// a descriptor that could otherwise take one.
+var errNoFadvise = errors.New("no fadvise on this host")
+
+// builtinDropCache answers `r.drop_cache(offset, len)` /
+// `w.drop_cache(offset, len)`: posix_fadvise(2) with POSIX_FADV_DONTNEED
+// over that range of the handle's file, len 0 meaning to the end. A host
+// with no fadvise answers Unsupported.
+func builtinDropCache(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("drop_cache: expected 3 args")
+	}
+	off, ok1 := args[1].(Number)
+	n, ok2 := args[2].(Number)
+	if !ok1 || !ok2 {
+		return nil, fmt.Errorf("drop_cache: offset and length must be numbers")
+	}
+	unsupported := false
+	v, err := syncMethod(i, "drop_cache", args[:1], func(fd int) error {
+		e := hostDropCache(fd, int64(off), int64(n))
+		if errors.Is(e, errNoFadvise) {
+			unsupported = true
+			return nil
+		}
+		return e
+	})
+	if unsupported {
+		return optionSome(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
+	}
+	return v, err
 }
 
 // builtinSync answers `sync()`: sync(2), scheduling write-back of every
@@ -4243,6 +4289,46 @@ func builtinReadLink(_ *Interp, args []Value) (Value, error) {
 		}
 	}
 	return resultErr(ioErrorOther(p[0], syscall.ENAMETOOLONG)), nil
+}
+
+// builtinGetxattr reads an extended attribute's value, following a final
+// symlink; builtinLgetxattr asks about the link itself.
+func builtinGetxattr(_ *Interp, args []Value) (Value, error) {
+	return xattrResult("getxattr", args, true)
+}
+
+func builtinLgetxattr(_ *Interp, args []Value) (Value, error) {
+	return xattrResult("lgetxattr", args, false)
+}
+
+func xattrResult(name string, args []Value, follow bool) (Value, error) {
+	p, err := pathArgs(name, args, 2)
+	if err != nil {
+		return nil, err
+	}
+	v, err := getxattrBytes(p[0], p[1], follow)
+	if err != nil {
+		return resultErr(classifyIoError(p[0], err)), nil
+	}
+	return resultOk(String(v)), nil
+}
+
+// builtinSetxattr creates or replaces an extended attribute, following a
+// final symlink; builtinLsetxattr sets it on the link itself.
+func builtinSetxattr(_ *Interp, args []Value) (Value, error) {
+	return setxattrResult("setxattr", args, true)
+}
+
+func builtinLsetxattr(_ *Interp, args []Value) (Value, error) {
+	return setxattrResult("lsetxattr", args, false)
+}
+
+func setxattrResult(name string, args []Value, follow bool) (Value, error) {
+	p, err := pathArgs(name, args, 3)
+	if err != nil {
+		return nil, err
+	}
+	return ioResult(p[0], setxattrBytes(p[0], p[1], []byte(p[2]), follow)), nil
 }
 
 // builtinRename moves a directory entry. Nothing is copied and an
@@ -5351,11 +5437,65 @@ func (i *Interp) stdOut(fd int64) io.Writer {
 // builtin exists here only so modules that reference `poll` (std/reactor, and the
 // future real-fd `std/task` reactor) stay compilable + runnable under -interp;
 // real readiness lives on the native backends.
-func builtinPoll(_ *Interp, args []Value) (Value, error) {
+// builtinPoll is `poll(fds, timeout_ms)` over the descriptors behind the
+// handles: a set made for the call, each handle watched for readability,
+// one wait, and the set closed. The index of the first ready handle; -1 at
+// the timeout, for an empty set, for a set holding no handle, and on a
+// host without a reactor floor. A negative token is skipped, as poll(2)
+// skips a negative descriptor.
+func builtinPoll(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("poll: expected 2 args, got %d", len(args))
 	}
-	return Number(-1), nil
+	fds, ok := args[0].(Array)
+	if !ok {
+		return nil, fmt.Errorf("poll: expected array arg 0, got %T", args[0])
+	}
+	timeout, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("poll: expected number arg 1, got %T", args[1])
+	}
+	set, err := reactorCreate()
+	if err != nil {
+		return Number(-1), nil
+	}
+	defer syscall.Close(set)
+	r := &reactor{fd: set, handles: map[int]int64{}}
+	index := map[int]int{}
+	for k, v := range fds.E {
+		handle, ok := v.(Number)
+		if !ok || handle < 0 {
+			continue
+		}
+		raw, ok := i.rawFd(int64(handle))
+		if !ok {
+			continue
+		}
+		if _, seen := index[raw]; seen {
+			continue
+		}
+		if err := r.watch(raw, 1); err != nil {
+			continue
+		}
+		index[raw] = k
+	}
+	if len(index) == 0 {
+		if timeout > 0 {
+			time.Sleep(time.Duration(timeout) * time.Millisecond)
+		}
+		return Number(-1), nil
+	}
+	got, err := r.wait(len(index), int(timeout))
+	if err != nil {
+		return Number(-1), nil
+	}
+	hit := -1
+	for _, e := range got {
+		if k, ok := index[e.raw]; ok && (hit < 0 || k < hit) {
+			hit = k
+		}
+	}
+	return Number(hit), nil
 }
 
 // builtinIsatty answers `isatty(fd)` against the real fd the
@@ -8480,4 +8620,32 @@ func asBool(v Value) bool {
 		return x != 0
 	}
 	return false
+}
+
+// scanSet is __scan_set's reference semantics over bytes: the index of the
+// first byte at or after `from` whose entry in `set` is nonzero, or len(b).
+func scanSet(name string, b []byte, fromArg, setArg Value) (Value, error) {
+	fn, ok := fromArg.(Number)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected an integer start, got %T", name, fromArg)
+	}
+	set, ok := setArg.(Array)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected a u8[] set, got %T", name, setArg)
+	}
+	from := max(int(int64(fn)), 0)
+	for idx := from; idx < len(b); idx++ {
+		c := int(b[idx])
+		if c >= len(set.E) {
+			continue
+		}
+		e, ok := set.E[c].(Number)
+		if !ok {
+			return nil, fmt.Errorf("%s: set element %d is %T, not a byte", name, c, set.E[c])
+		}
+		if int64(e) != 0 {
+			return Number(idx), nil
+		}
+	}
+	return Number(len(b)), nil
 }

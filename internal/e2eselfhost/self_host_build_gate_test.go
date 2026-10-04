@@ -190,6 +190,45 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "",
 		},
 		{
+			// #10085: a type position whose token starts no type is P001, as
+			// native's parseType reports it: an empty element of a tuple or
+			// parameter list, a missing annotation, a literal. The last row is
+			// the negative control, a zero-parameter function type included.
+			name:     "type-tuple-trailing-comma",
+			src:      "function main(): i32 { let t: (i32,) = (1,); return 0; }\n",
+			wantDiag: "error[P001]",
+		},
+		{
+			name:     "type-tuple-empty-element",
+			src:      "function main(): i32 { let t: (i32, , i32) = (1, 2); return 0; }\n",
+			wantDiag: "error[P001]",
+		},
+		{
+			name:     "type-annotation-missing",
+			src:      "function main(): i32 { let x: = 3; return x; }\n",
+			wantDiag: "error[P001]",
+		},
+		{
+			name:     "type-param-tuple-trailing-comma",
+			src:      "function f(t: (i32,)): i32 { return 0; }\nfunction main(): i32 { return 0; }\n",
+			wantDiag: "error[P001]",
+		},
+		{
+			name:     "type-fn-params-trailing-comma",
+			src:      "function main(): i32 { let f: (i32,) => i32 = (a: i32) => a; return 0; }\n",
+			wantDiag: "error[P001]",
+		},
+		{
+			name:     "type-literal",
+			src:      "function main(): i32 { let x: 5 = 3; return 0; }\n",
+			wantDiag: "error[P001]",
+		},
+		{
+			name:     "type-tuple-and-fn-compile",
+			src:      "function main(): i32 { let t: (i32, string) = (1, \"a\"); let f: (i32) => i32 = (a: i32) => a; let g: () => i32 = () => 2; return t.0 + f(1) + g(); }\n",
+			wantDiag: "",
+		},
+		{
 			// #7311's remaining half: the STRING builtins and the free
 			// builtins had no arity rule either — `s.len(1)` and
 			// `print("a", "b")` reached lowering and were refused as "not

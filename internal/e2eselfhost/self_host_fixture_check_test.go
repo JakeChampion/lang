@@ -66,9 +66,9 @@ func selfHostFixtureSources(t *testing.T) []fixtureSource {
 	semSrc, _ := semanticSource(semIdx)
 	out = append(out, fixtureSource{"semantic", "semanticSource in self_host_ssa_semantic_test.go", semSrc})
 
-	for name, tc := range selfHostLifetimeFixtures() {
-		src, _ := lifetimeFernFixture(t, tc)
-		out = append(out, fixtureSource{"lifetime_" + name, "lifetimeFernFixture in self_host_ssa_lifetime_test.go", src})
+	for _, name := range lifetimeFixtureNames {
+		src, _ := lifetimeFixture(t, name)
+		out = append(out, fixtureSource{"lifetime_" + name, "testdata/lifetime/" + name + ".fern", src})
 	}
 	for _, tc := range dependencyVerifyCases() {
 		out = append(out, fixtureSource{"deps_" + tc.name, "dependencyVerifySource in self_host_ssa_dependency_verify_test.go", dependencyVerifySource(t, tc)})

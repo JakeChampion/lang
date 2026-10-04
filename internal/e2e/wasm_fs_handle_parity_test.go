@@ -168,18 +168,6 @@ func runParityPreview1(t *testing.T, src string, o parityOpts) {
 	}
 }
 
-func runParityPreview2(t *testing.T, src string, o parityOpts) {
-	t.Helper()
-	comp := buildNativeComponent(t, src, nativeMainResult)
-	stdout, stderr, ec := runComponent(t, comp, runOpts{workDir: o.runDir(t), stdinFile: o.stdin, maxResources: o.maxResources})
-	if ec != 0 {
-		t.Fatalf("wasm preview 2: wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
-	}
-	if got := parseMainResult(t, stdout); got != 0 {
-		t.Errorf("wasm preview 2: main = %d, want 0 (the code names the case)\nstdout:\n%s\nstderr:\n%s", got, stdout, stderr)
-	}
-}
-
 // runParitySelfHostCore runs src as the self-host's preview-1 core module.
 // maxResources does not apply: preview 1 has no resource table to cap.
 func runParitySelfHostCore(t *testing.T, src string, o parityOpts) {
@@ -207,7 +195,6 @@ func TestX86_64ClosedHandle(t *testing.T) { runParityX86_64(t, closedHandleSourc
 func TestWASMPreview1ClosedHandle(t *testing.T) {
 	runParityPreview1(t, closedHandleSource, parityOpts{})
 }
-func TestWASMClosedHandle(t *testing.T) { runParityPreview2(t, closedHandleSource, parityOpts{}) }
 
 func TestInterpRemoveDirAllPlainFile(t *testing.T) {
 	runParityInterp(t, removeDirAllFileSource, parityOpts{})
@@ -218,9 +205,6 @@ func TestX86_64RemoveDirAllPlainFile(t *testing.T) {
 func TestWASMPreview1RemoveDirAllPlainFile(t *testing.T) {
 	runParityPreview1(t, removeDirAllFileSource, parityOpts{})
 }
-func TestWASMRemoveDirAllPlainFile(t *testing.T) {
-	runParityPreview2(t, removeDirAllFileSource, parityOpts{})
-}
 
 func TestInterpReadChunkFailure(t *testing.T) {
 	runParityInterp(t, failedReadSource, parityOpts{stdin: dirStdin(t)})
@@ -230,9 +214,6 @@ func TestX86_64ReadChunkFailure(t *testing.T) {
 }
 func TestWASMPreview1ReadChunkFailure(t *testing.T) {
 	runParityPreview1(t, failedReadSource, parityOpts{stdin: dirStdin(t)})
-}
-func TestWASMReadChunkFailure(t *testing.T) {
-	runParityPreview2(t, failedReadSource, parityOpts{stdin: dirStdin(t)})
 }
 
 func TestSelfHostWasmCoreClosedHandle(t *testing.T) {

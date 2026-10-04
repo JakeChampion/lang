@@ -110,7 +110,7 @@ func dependencyVerifyCases() []dependencyVerifyCase {
 
 func dependencyVerifySource(t *testing.T, tc dependencyVerifyCase) string {
 	t.Helper()
-	source, _ := lifetimeFernFixture(t, selfHostLifetimeFixtures()[tc.graph])
+	source, _ := lifetimeFixture(t, tc.graph)
 	source = strings.Replace(source, "import \"./ssalive\";", "import \"./ssalive\";\nimport \"./ssadeps\";", 1)
 	start := strings.Index(source, "let before =")
 	if start < 0 {

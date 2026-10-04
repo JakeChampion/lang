@@ -1,12 +1,11 @@
-// cmd/fern-lsp is the stdio entry point for the lang Language Server
+// cmd/fern-lsp is the stdio entry point for the Fern Language Server
 // Protocol implementation. Editors / IDEs spawn this binary and speak
 // LSP over stdin/stdout per the spec; the actual server logic lives
 // in internal/lsp so the wasm playground can drive it in-process.
 //
-// The MVP advertises full-document sync, publishes parser + type-
-// checker diagnostics on every change, and handles initialize /
-// shutdown / exit. Hover, go-to-definition, and completion arrive
-// in follow-up commits (see docs/LSP-INTEGRATION-PLAN.md).
+// It advertises full-document sync and publishes `fern -check`'s
+// diagnostics on every change; docs/LSP-INTEGRATION-PLAN.md lists the
+// cursor features it serves.
 package main
 
 import (

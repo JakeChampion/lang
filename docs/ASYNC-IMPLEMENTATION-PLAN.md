@@ -205,7 +205,7 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   This lets a module reference `poll` on *every* target — the prerequisite for the
   future real-fd `std/task` reactor to call `poll` behind its existing API while
   staying compilable on wasm/interp (real wasm readiness is the separate
-  wasi:io/poll path below). Pinned by `internal/e2e/poll_stub_test.go`.
+  wasi:io/poll path below). Pinned by `internal/e2e/poll_stub_test.go` (`TestPollEmptySetInterpWasm`).
 - **DONE — `std/reactor` (native real-fd scheduler):** `run_io(states)`
   drives fd-tagged stackless tasks (`IoStep = IoDone | IoWait(fd,
   resume)`) to completion using the real `poll` builtin — the real-I/O

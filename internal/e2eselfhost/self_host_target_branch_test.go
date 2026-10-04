@@ -11,7 +11,8 @@ import (
 // the handler compiles for wasm32-wasi-http and answers the hosted arm.
 const targetBranchHandlerSrc = `import "std/http";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (target_os() == "wasi-http") {
         return http.ok("hosted arm");
     } else {
@@ -29,7 +30,8 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 // component still composes against the proxy world.
 const indexingHandlerSrc = `import "std/http";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let bytes: u8[] = req.path.bytes();
     return http.ok("byte " + (bytes[bytes.len() - 1] as i32).to_string());
 }

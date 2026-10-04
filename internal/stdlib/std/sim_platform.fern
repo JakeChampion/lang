@@ -1,0 +1,105 @@
+// std/sim_platform — a `platform.Platform` over the simulation: the clock
+// and randomness of a `sim.Sim`, the network of a `sim_fetch.Net`, and a
+// configuration the test supplies (docs/DST-PLATFORM-BRIEF.md, #9855).
+//
+// A handler generic over its platform runs here as it runs on the host,
+// in virtual time: `plat.now_ms()` is the sim's clock, `plat.random_i32()`
+// its seeded PRNG, `plat.http(req)` the public-only route over the scripted
+// network, with the network's pool keeping a connection for the next
+// request as the host platform's does. `env`, `config` and `secret`
+// answer what the test set, and every call is recorded, as a mock
+// platform's is: the table and the log are a `mock_platform.MockPlatform`
+// the sim platform carries, so `calls()` reads back what the handler did.
+//
+//     let d: sim.Sim = sim.new(1);
+//     let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", ["93.184.216.34"]).listen("93.184.216.34", 80, 5);
+//     let plat: sim_platform.SimPlatform = sim_platform.new(d, n);
+//     plat.config_set("REGION", "eu-west");
+//     let resp: HttpResponse = handle(req, plat);
+
+import "std/platform";
+import "std/sim";
+import "std/sim_fetch";
+import "std/fetch";
+import "std/mock_platform";
+
+// `SimPlatform` — the simulated platform: the driver whose clock and PRNG
+// it reads, the network its `http` sends over, and the mock whose canned
+// table and call log it keeps its configuration and record in.
+pub struct SimPlatform { drv: sim.Sim, net: sim_fetch.Net, mock: mock_platform.MockPlatform }
+
+// `new(drv, net)` — a sim platform over `drv` and `net`, with nothing set.
+pub function new(drv: sim.Sim, net: sim_fetch.Net): SimPlatform {
+  return SimPlatform { drv: drv, net: net, mock: mock_platform.mock_platform_new() };
+}
+
+impl platform.Platform for SimPlatform {
+  function log(self: SimPlatform, msg: string): void {
+    self.mock.record("log", msg);
+  }
+
+  function now_ms(self: SimPlatform): i64 {
+    self.mock.record("now_ms", "");
+    return self.drv.now_ns() / 1000000;
+  }
+
+  function elapsed_ns(self: SimPlatform): i64 {
+    self.mock.record("elapsed_ns", "");
+    return self.drv.now_ns();
+  }
+
+  function env(self: SimPlatform, name: string): Option[string] {
+    self.mock.record("env", name);
+    return self.mock.canned("env " + name);
+  }
+
+  function config(self: SimPlatform, name: string): Option[string] {
+    self.mock.record("config", name);
+    return self.mock.canned("config " + name);
+  }
+
+  function secret(self: SimPlatform, name: string): Option[string] {
+    self.mock.record("secret", name);
+    return self.mock.canned("secret " + name);
+  }
+
+  function random_i32(self: SimPlatform): i32 {
+    self.mock.record("random_i32", "");
+    return self.drv.random_i32();
+  }
+
+  // The route the host platform takes, over the scripted network: global
+  // addresses only, the network's pool keeping the connection.
+  function http(self: SimPlatform, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
+    self.mock.record("http", req.method + " " + req.url);
+    return fetch.send_public_on(self.net, req);
+  }
+}
+
+// `(p: SimPlatform).env_set(name, value)` — `plat.env(name)` answers
+// `Some(value)` from now on.
+pub function (p: SimPlatform) env_set(name: string, value: string): void {
+  p.mock.env_set(name, value);
+}
+
+// `(p: SimPlatform).config_set(name, value)` — `plat.config(name)` answers
+// `Some(value)` from now on.
+pub function (p: SimPlatform) config_set(name: string, value: string): void {
+  p.mock.config_set(name, value);
+}
+
+// `(p: SimPlatform).secret_set(name, value)` — `plat.secret(name)` answers
+// `Some(value)` from now on; the log holds the name alone.
+pub function (p: SimPlatform) secret_set(name: string, value: string): void {
+  p.mock.secret_set(name, value);
+}
+
+// `(p: SimPlatform).calls()` — the recorded calls, in order, as a mock's.
+pub function (p: SimPlatform) calls(): mock_platform.MockCall[] {
+  return p.mock.calls();
+}
+
+// `(p: SimPlatform).reset()` — drop the log, keeping what was set.
+pub function (p: SimPlatform) reset(): void {
+  p.mock.reset();
+}

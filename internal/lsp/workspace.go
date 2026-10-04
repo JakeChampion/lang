@@ -84,31 +84,33 @@ func pathToURI(p string) string {
 
 // loadWorkspace loads the program rooted at entryPath using modload
 // + the open-document override map so unsaved buffers take
-// precedence over disk. Diagnostics are split by their source-file
-// path (via the diag.Filed interface) so callers can route each
-// entry to the right URI; errors with no File() stamp fall back to
-// the entry path.
+// precedence over disk, for the cursor features, and returns what
+// `fern -check` reports for it by file (checkDiagnostics).
 func (s *Server) loadWorkspace(entryPath string) (*ast.Program, *checker.Info, map[string][]Diagnostic) {
-	// Snapshot the current open-doc map into the path-keyed shape
-	// modload expects. Documents whose URI doesn't resolve to a
-	// file path (the playground's opaque URIs) get skipped.
-	overrides := map[string]string{}
+	overrides := s.openFiles()
+	prog, _, _ := modload.LoadWith(entryPath, overrides)
+	var info *checker.Info
+	if prog != nil {
+		info, _ = checker.Check(prog)
+	}
+	byFile := checkDiagnostics(entryPath, entryPath, func() (*ast.Program, error) {
+		p, _, err := modload.LoadWith(entryPath, overrides)
+		return p, err
+	}, overrides)
+	return prog, info, byFile
+}
+
+// openFiles is the open documents' text by file path, the shape modload
+// takes as overrides. Documents whose URI doesn't resolve to a file path
+// (the playground's opaque URIs) are left out.
+func (s *Server) openFiles() map[string]string {
+	files := map[string]string{}
 	for uri, doc := range s.docs {
 		if p, ok := uriToPath(uri); ok {
-			overrides[p] = doc.src
+			files[p] = doc.src
 		}
 	}
-	prog, _, perr := modload.LoadWith(entryPath, overrides)
-	var info *checker.Info
-	var checkErr error
-	if prog != nil {
-		info, checkErr = checker.Check(prog)
-	}
-	byFile := splitDiagnosticsByFile(perr, entryPath)
-	for f, ds := range splitDiagnosticsByFile(checkErr, entryPath) {
-		byFile[f] = append(byFile[f], ds...)
-	}
-	return prog, info, byFile
+	return files
 }
 
 // splitDiagnosticsByFile walks err (diag.Errors or a single error)
@@ -118,7 +120,11 @@ func (s *Server) loadWorkspace(entryPath string) (*ast.Program, *checker.Info, m
 // pre-decl checker errors, plus anything the lexer / parser
 // surfaced before modload got around to stamping (shouldn't happen
 // in workspace mode but we'd rather attribute than drop).
-func splitDiagnosticsByFile(err error, entryFallback string) map[string][]Diagnostic {
+//
+// srcs holds the open documents' text by path, which is what a position is
+// converted to UTF-16 against. Only open documents are published, so a file
+// missing from it is never shown.
+func splitDiagnosticsByFile(err error, entryFallback string, srcs map[string]string) map[string][]Diagnostic {
 	out := map[string][]Diagnostic{}
 	if err == nil {
 		return out
@@ -130,7 +136,7 @@ func splitDiagnosticsByFile(err error, entryFallback string) map[string][]Diagno
 				path = v
 			}
 		}
-		out[path] = append(out[path], toDiagnostic("", e))
+		out[path] = append(out[path], toDiagnostic(srcs[path], e))
 	}
 	if es, ok := err.(diag.Errors); ok {
 		for _, e := range es {

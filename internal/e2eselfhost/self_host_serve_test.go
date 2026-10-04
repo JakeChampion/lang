@@ -155,6 +155,15 @@ func TestSelfHostSupervisedServeWorkersServeSideBySide(t *testing.T) {
 	e2eharness.CheckWorkersServeSideBySide(t, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
 
+func TestSelfHostServeHandlersOverlap(t *testing.T) {
+	up := e2eharness.StartFetchUpstream(t)
+	e2eharness.SetFetchProxy(t, up)
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.BlockingHandlerServerSource(port))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckHandlersOverlap(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
 func TestSelfHostSupervisedServeReusePortWorkers(t *testing.T) {
 	port := selfHostFreePort(t)
 	bin, runner := selfHostServer(t, e2eharness.ReusePortWorkersServerSource(port))

@@ -5,9 +5,10 @@ Status: landed 2026-09-16 for arm64 (`arm64-linux`, `arm64-darwin`,
 function of the compiler compiling itself goes through it; the default on
 both native ISAs since 2026-09-18; **the only emitter on them since
 2026-09-22**, when the stack machine's per-function driver was deleted.
-Owner: compiler / self-host. This is the self-host
-half of #4112, the register-allocating SSA backend track; the native half is
-`internal/codegen/arm64ssa` and `x86_64ssa` behind the same flag spelling. The
+Owner: compiler / self-host. This is the register-allocating SSA backend
+track of #4112; the Go compiler's half, `internal/codegen/{arm64ssa,x86_64ssa}`,
+was deleted in step 5 of `docs/NATIVE-RETIREMENT.md`, so this is the only
+register path. The
 measurements are in `docs/ssa-log/` (the entries whose names carry
 `selfhost-ssa-backend`).
 
@@ -48,7 +49,10 @@ lowered function it:
    drops what nothing reads (`ssa.prune_dead`), which is the rotate's shifts,
    most of the zeros the lift gives declared locals and the loop-header phis
    nothing reads (the lift gives a header a phi only for the slots the loop's
-   body writes);
+   body writes), then sends each arm of a boolean phi that only a branch
+   reads to that branch's targets, on the arm's own comparison or to the side
+   its constant picks (`ssa.thread_bool_joins`: a predicate spliced into its
+   caller brings its `&&` or `||` as such a phi), and prunes again;
 4. allocates registers with `ssa.regalloc_linear` over two pools: the
    caller-saved registers (x0 and x9 to x15 on arm64; rax, rsi, rdi and r8
    to r10 on x86-64) and, for a value live across a call, the callee-saved
@@ -113,7 +117,9 @@ indirect and dyn-dispatch calls, and a call across per-module units — so a
 callee the registry does not name is still called correctly. The pool is the
 argument order because it is also where the allocator homes caller-saved
 values: `ssa_arg_prefs` asks for a parameter's arrival register and an
-argument's departure register, and a call's result may keep `%rax` when its
+argument's departure register. The allocator asks the result register for a
+returned value, and a phi hands whatever register it asks for to the values
+it merges (`ssa.return_prefs`). A call's result may keep `%rax` when its
 dying first argument was there, so `s = f(s, …)` moves nothing when `s` does
 not live across another call.
 
@@ -245,7 +251,7 @@ the register of its phi mate or of an operand of its definition when that
 register is free or its holder dies at the definition, and a loop-carried
 operand takes its phi's register whenever no use of the phi is reachable
 from the operand's definition without passing the header
-(`ssa.phi_mates`, `ssa.mate_interferes`), so `sum = sum + i` computes into
+(`ssa.phi_mates`, `ssa.live_at_def`), so `sum = sum + i` computes into
 `sum`'s register and the back edge moves nothing. A phi whose operand from
 before it outlives it, as the loop header's phi does at each merge of an
 else-if chain inside the loop, is mated with the first operand that dies by
@@ -431,11 +437,9 @@ compiler is converging on (`docs/NATIVE-CONVERGENCE.md`), so the order is:
   `wasmssa` was retired for the same reason (#9397). An optimisation wasm
   should share lands in the IR layer (`ir.fern`, #6638), where all three
   emitters read it.
-- **The native compiler gets no further SSA work.** `internal/codegen/{arm64ssa,x86_64ssa}`
-  stay opt-in behind `-backend ssa` as they are; the native default flip
-  (#9640) and a Darwin or Android arm of `arm64ssa` are native-only surface,
-  which the convergence policy counts as debt, and the backends themselves
-  are slated to go once the self-host bootstraps without them.
+- **The native compiler has no SSA backend.** `internal/codegen/{arm64ssa,x86_64ssa}`
+  went in step 5 of `docs/NATIVE-RETIREMENT.md`, once the self-host
+  bootstrapped without them; `cmd/fern -backend` accepts only `flat`.
 
 ## The target
 

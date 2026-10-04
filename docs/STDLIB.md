@@ -1518,8 +1518,8 @@ points that run a handler under it.
   `max_connections_per_ip` as the IPv4 address it is; on `0.0.0.0` where
   the host has no IPv6 (the family refused, or the address not there to
   bind) and on wasm, whose `::` listener would be IPv6-only. Calls
-  `handler(req: HttpRequest, plat: Platform): HttpResponse` once
-  per request, constructing the `Platform` bag it passes. The loop
+  `handler(req: HttpRequest, plat: platform.Host): HttpResponse` once
+  per request, with the worker's host platform. The loop
   is a reactor: one readiness set from the Driver seam watches the
   listener and every open connection, so slow clients are read side
   by side, and each connection's request read is bounded by a 10 s
@@ -1548,10 +1548,11 @@ points that run a handler under it.
 - `Config { backlog, reuse_port, recv_deadline, min_data_rate,
   data_rate_grace, response_min_data_rate, response_data_rate_grace,
   keep_alive_idle, keep_alive_requests, max_connections,
-  max_connections_per_ip, workers, shutdown_grace, readiness_path,
-  drain_deadline, limits, stop_with_parent }` (`config()` is 128, one listener per
-  port, the 10 s deadline, 240 bytes per second after 5 s for a request
-  body and the same for a response, 130 s, 1000, 1024 and 100): the
+  max_connections_per_ip, max_in_flight, workers, shutdown_grace,
+  readiness_path, drain_deadline, limits, stop_with_parent }` (`config()` is
+  128, one listener per port, the 10 s deadline, 240 bytes per second after
+  5 s for a request body and the same for a response, 130 s, 1000, 1024, 100
+  and 1024): the
   accept queue
   depth, port sharing between listeners (`SO_REUSEPORT`, ignored on
   wasm; under `supervise` each worker then binds a
@@ -1576,6 +1577,10 @@ points that run a handler under it.
   behaves as 1; at the cap the
   listener is not read, so further connections wait in its accept queue,
   `backlog` deep, the kernel refusing past it, until one closes), how
+  many handlers the loop keeps parked on their waits at once
+  (`max_in_flight`: a handler whose `plat.http` waits on its upstream parks
+  and the loop serves other connections meanwhile; at the cap the listener
+  is not read until one finishes), how
   many of them one client may hold (`max_connections_per_ip`, counted by
   the peer's address key, `net.peer_key`, and by each worker's loop
   alone: a connection past it is closed as it is accepted, without a
@@ -1758,8 +1763,8 @@ answer is `Result[HttpResponse, FetchError]`.
   same as a malformed response, so the client cannot tell that nothing
   happened.
 - **Sending:** `send(req)` from a program with a `main`;
-  `(plat: Platform).http(req)` from a handler, the capability-scoped
-  route (a recording bag answers what `MockPlatform.http_set` canned).
+  `plat.http(req)` from a handler, the capability-scoped route (a
+  `MockPlatform` answers what `http_set` canned).
   The handler's route reaches global addresses only: once the host has
   resolved, an address `net.is_global` refuses (loopback, a private or
   link-local block, the cloud metadata address, an IPv4 address carried
@@ -1845,10 +1850,12 @@ answer is `Result[HttpResponse, FetchError]`.
   idempotent request that finds it closed is sent once more on a new one.
   `idle()` keeps up to 64 connections for 90 s each, `idle_limited(max,
   idle_ms)` sets both, and `sockets_with(pool)` dials with a given pool.
-  `send` and `plat.http` keep a pool for the one call (so a redirect back
-  to the same origin is followed on its connection) and close it after; a
-  caller that holds a `Sockets` across `send_on` calls reuses across them
-  and closes what is left with `close_idle(tr)`. Every rule above (the block list, the bounds, the retry,
+  `send` keeps a pool for the one call (so a redirect back to the same
+  origin is followed on its connection) and closes it after; a caller that
+  holds a `Sockets` across `send_on` calls reuses across them and closes
+  what is left with `close_idle(tr)`; `send_public_on(tr, req)` is the
+  public-only route over a caller's transport, which the host platform's
+  `plat.http` takes over the platform's own pool. Every rule above (the block list, the bounds, the retry,
   redirects, decoding) stays above the seam, so a scripted transport
   exercises the same client a real one does. `lookup` answers a `Lookup`:
   the addresses to dial and, when asked to be judged, the addresses the
@@ -2000,44 +2007,59 @@ old `concurrent { … }` / `await` keyword surface.
   reparented to init (a subreaper other than init, Linux, hides that),
   -ENOTSUP on wasm; the sim's parent never exits.
   `std/serve`'s serve loops run on it.
+- `Task[T]`, `task_new(entry)`, `task_start(t)`, `task_resume(t, woke)`,
+  `task_cancel(t)`, `task_free(t)`, `TaskStatus[T]` (`Done(T)`,
+  `Suspended(Wait)`, `Cancelled`), `Wait` (`set`, `timeout_ms`) and
+  `wait_any(set, timeout_ms)` — a call chain that parks on a set of (fd,
+  interest) pairs under a bound and runs on when its scheduler resumes it
+  with the index of the ready pair, -1 at the timeout (`docs/ASYNC.md` §8,
+  `docs/NET-P3-SUSPENSION-PLAN.md`). `wait_any` blocks when no task is
+  current, which is how std/tcp's recv-with-deadline and std/dns's connect
+  and exchange waits work in a plain program; under a scheduler the
+  self-host compiler lowers every function that reaches it to a resumable
+  form, and the native compiler keeps the blocking fallback, where
+  `task_start` runs its entry to completion. `cancelled()` is what a
+  cancelled task's waits answer from then on.
 
 ### `std/platform`
 
-The capability surface on the `Platform` bag every handler takes as
-its second parameter (`handle(req: HttpRequest, plat: Platform)` —
+The capabilities a handler is handed: `platform.Platform` is a trait, and
+every handler takes an implementation of it as its last parameter
+(`handle(req: HttpRequest, plat: platform.Platform)` —
 [`docs/PLATFORM-RESEARCH.md`](./PLATFORM-RESEARCH.md) Rec §1). Host
-effects reached as methods on the value the handler was handed, so a
+effects are reached as methods on the value the handler was handed, so a
 handler can only reach what it was given. The free functions
 (`eprint`, `now_unix_ms`, …) stay for programs that are not handlers;
-a function handed a bag that reaches one, directly or through a helper,
-is refused at check time (E080, `internal/ambient`, mirrored by
+a function handed a platform that reaches one, directly or through a
+helper, is refused at check time (E080, `internal/ambient`, mirrored by
 `examples/self_host/ambient.fern`).
+
+A parameter typed by the trait makes the handler generic over it
+([`docs/TRAITS.md`](./TRAITS.md)), so each implementation is compiled in
+statically: `platform.Host`, which std/serve's accept loops and the
+wasi-http entry hand a handler, and `mock_platform.MockPlatform`, which
+records what a test's handler tried to do. Each keeps its own state as
+ordinary fields (`Host { reactor }`, the worker's reactor, 0 outside a
+serving worker).
 
 Each method needs its target capability (`internal/platforms`), so
 what a handler may call depends on where it is going: the `wasi-http`
 proxy world grants log / now / random / config / fetch, and `.env` is an
 E066 there.
 
-Substituting the bag is what makes a handler testable: a recording bag
-(`std/mock_platform`) answers each method from a log instead of the host,
-and every method here asks which kind it is before acting.
-
 ```
 import "std/platform";
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     plat.log(req.method + " " + req.path);
     return http.ok("ok");
 }
 ```
 
-- `platform_new()` — the bag as the host serves it, for tests and
-  hand-driven handlers (the serving paths build their own).
-- `plat.handle` — the worker-owned runtime handle: the reactor of the
-  serving worker that built the bag, 0 for one built by `platform_new` or
-  the wasi-http wrapper. Per-worker mutable state a capability needs lives
-  behind it, since a bag's fields are frozen and a cell holds only a scalar
-  or a string. `plat.version` is 3 since `HttpResponse.body` became a `Body`.
+- `host()` — the host platform with no reactor, for a test driving a
+  handler directly or a caller of `serve.run` handing its own handler
+  what the accept loop would; `host_on(reactor)` is the one std/serve
+  builds per worker loop.
 - `(plat).log(msg)` — one line to the platform's log sink (`log`).
 - `(plat).now_ms()` — wall-clock ms since the epoch (`now`).
 - `(plat).elapsed_ns()` — monotonic ns, for measuring (`now`).
@@ -2052,8 +2074,11 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
   the same lookup, and a mock records only the name.
 - `(plat).random_i32()` — one draw from the platform CSPRNG
   (`random`).
-- `(plat).http(req)` lives in `std/fetch`, next to the sockets that
-  implement it.
+- `(plat).http(req)` — `req` sent and its response read (`fetch`); the
+  host sends it with `fetch.send_public_on` over the platform's own pool,
+  so a handler reaches global addresses only, and a connection the peer
+  kept open carries the platform's next request to the same place — for
+  the life of the worker loop under std/serve.
 
 ### `std/sim_fetch`
 
@@ -2098,15 +2123,37 @@ as written. A sibling of `std/sim` rather than part of it, so `std/sim`
 keeps the clock and randomness alone; `examples/tests/sim_fetch_test.fern`
 is the client's parity suite.
 
-### `std/mock_platform`
+### `std/sim_platform`
 
-A `Platform` that records instead of acting. `m.as_platform()` gives a
-handler a bag over the mock's own sink, so every capability call it makes
-lands in `m`'s log and nothing reaches the host:
+A `platform.Platform` over the simulation: a handler runs on it as it runs
+on the host, in virtual time. `sim_platform.new(d, n)` reads the clock and
+the seeded PRNG of the `sim.Sim` `d` (`now_ms`, `elapsed_ns`,
+`random_i32`), sends `plat.http` over the `sim_fetch.Net` `n` by the
+host's public-only route with the network's pool keeping the connection,
+and answers `env`, `config` and `secret` with what the test set
+(`env_set`, `config_set`, `secret_set`). Every call is recorded as a
+mock's: `calls()` and `reset()` read and clear the log, a secret logged by
+its name alone.
 
 ```fern
-let m: MockPlatform = mock_platform.mock_platform_new();
-let resp: HttpResponse = handle(req, m.as_platform());
+let d: sim.Sim = sim.new(1);
+let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", ["93.184.216.34"]).listen("93.184.216.34", 80, 5);
+let plat: sim_platform.SimPlatform = sim_platform.new(d, n);
+plat.config_set("REGION", "eu-west");
+let resp: HttpResponse = handle(req, plat);
+```
+
+`examples/tests/sim_platform_test.fern` is the platform's parity suite.
+
+### `std/mock_platform`
+
+A `platform.Platform` that records instead of acting. Handed to a handler
+in place of the host, every capability call the handler makes lands in
+the mock's log and nothing reaches the host:
+
+```fern
+let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+let resp: HttpResponse = handle(req, m);
 assert_eq(m.calls()[0].name, "log");
 ```
 
@@ -2115,14 +2162,14 @@ for `now_ms` / `elapsed_ns` / `random_i32`, `None` for `env` / `config` /
 `secret`, `Err(Connect(ConnectionRefused))` for `http`, and `log`
 swallows the line.
 
-- `mock_platform_new()`; `(m).as_platform()`.
+- `mock_platform_new()`.
 - `(m).env_set(name, value)`, `(m).config_set(name, value)`,
   `(m).secret_set(name, value)`, `(m).now_set(ms)`, `(m).elapsed_set(ns)`,
   `(m).random_set(v)`, `(m).http_set(method, url, status, body)` — the
-  answer the bag gives from then on (the last one canned wins; a request
+  answer the mock gives from then on (the last one canned wins; a request
   with another method or URL still answers the refusal). A canned answer is a row
   of the same cell the log lives in (`canned`, tab, key, tab, value, the
-  value escaped), which `calls()` skips and `reset()` keeps; the bag's
+  value escaped), which `calls()` skips and `reset()` keeps; the mock's
   own `(plat).can(key, value)` / `(plat).canned(key)` are what the
   setters and the capability methods use
   (`examples/tests/mock_platform_canned_test.fern`).

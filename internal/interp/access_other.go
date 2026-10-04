@@ -33,7 +33,7 @@ func accessEffective(path string, mode int) error {
 	if mode == 0 { // F_OK — existence, which the stat just proved
 		return nil
 	}
-	st := statFields(info)
+	st := statFields(info, statOrigin{})
 	euid, egid := os.Geteuid(), os.Getegid()
 	perm := st.mode & 0o777
 

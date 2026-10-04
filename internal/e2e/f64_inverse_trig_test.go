@@ -676,11 +676,6 @@ func TestF64InverseTrigUlpArm64(t *testing.T) {
 	checkF64Output(t, "arm64-linux", out, cs, maxULP)
 }
 
-func TestF64InverseTrigUlpArm64SSA(t *testing.T) {
-	cs := f64InverseTrigCases()
-	checkF64Output(t, "arm64-ssa", compileAndRunArm64SSACapture(t, f64InverseTrigProg(cs)), cs, maxULP)
-}
-
 func TestF64InverseTrigUlpWasm(t *testing.T) {
 	cs := f64InverseTrigCases()
 	checkF64Output(t, "wasm32-wasi", compileAndRunWasmCapture(t, f64InverseTrigProg(cs)), cs, maxULP)

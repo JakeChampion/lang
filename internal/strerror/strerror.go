@@ -75,6 +75,7 @@ var darwinText = map[string]string{
 	"ESTALE":        "Stale NFS file handle",
 	"EOVERFLOW":     "Value too large to be stored in data type",
 	"EILSEQ":        "Illegal byte sequence",
+	"ENODATA":       "No message available on STREAM",
 	"EOPNOTSUPP":    "Operation not supported on socket",
 	"EOWNERDEAD":    "Previous owner died",
 }
@@ -132,6 +133,10 @@ var Table = []Entry{
 	{"ENOSYS", "Function not implemented", 38, 78, 52},
 	{"ENOTEMPTY", "Directory not empty", 39, 66, 55},
 	{"ELOOP", "Too many levels of symbolic links", 40, 62, 32},
+	// An extended attribute that is not there: ENODATA on Linux, ENOATTR
+	// on Darwin, whose ENODATA is a STREAMS errno.
+	{"ENODATA", "No data available", 61, 96, 0},
+	{"ENOATTR", "Attribute not found", 0, 93, 0},
 	{"EOVERFLOW", "Value too large for defined data type", 75, 84, 61},
 	{"EILSEQ", "Invalid or incomplete multibyte or wide character", 84, 92, 25},
 	{"ENOTSOCK", "Socket operation on non-socket", 88, 38, 57},

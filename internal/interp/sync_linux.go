@@ -24,3 +24,16 @@ func hostSyncfs(fd int) error {
 	}
 	return nil
 }
+
+// posixFadvDontneed is POSIX_FADV_DONTNEED on Linux.
+const posixFadvDontneed = 4
+
+// hostDropCache is posix_fadvise(fd, off, n, POSIX_FADV_DONTNEED), which
+// Go's syscall package has no wrapper for. It answers its errno directly
+// rather than setting errno, so the raw call's result is the error.
+func hostDropCache(fd int, off, n int64) error {
+	if _, _, errno := syscall.Syscall6(syscall.SYS_FADVISE64, uintptr(fd), uintptr(off), uintptr(n), posixFadvDontneed, 0, 0); errno != 0 {
+		return errno
+	}
+	return nil
+}

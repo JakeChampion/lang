@@ -1,6 +1,5 @@
 // examples/self_host/ssa_lift.fern — lift the self-host STACK IR (ir.fern's
-// `Op[]`) into SSA form (ssa.fern's `SFunc`), the self-hosted mirror of
-// native's `internal/ssa/lift.go` (`LiftFromIR`). The lift is the front of
+// `Op[]`) into SSA form (ssa.fern's `SFunc`). The lift is the front of
 // `-backend ssa` (docs/SELFHOST-SSA-BACKEND.md): each lowered function's ops
 // become one SFunc that `ssa.prune_dead`, `ssa.regalloc_linear` and the
 // per-ISA emitters in `asm_arm64_ir.fern` and `asm_ir.fern` turn into code
@@ -442,7 +441,7 @@ function prod_mem_kind(k: string): boolean {
 function prod_host_kind(k: string): boolean {
   let host: string[] = [
     "syscall3", "syscall4", "syscall5", "syscall6", "exit", "raw_string", "strbuf_reset", "strbuf_append",
-    "raw_scratch", "raw_environ", "raw_splice_pipe", "raw_cover", "raw_addr", "monotonic_ns", "now_unix_ms",
+    "raw_scratch", "raw_environ", "raw_splice_pipe", "raw_cover", "raw_task_state", "raw_addr", "monotonic_ns", "now_unix_ms",
     "load_i32", "load_i64", "load_ptr", "store_i32", "store_i64", "store_ptr", "raw_arr_box",
     "map_new", "strbuf_take", "args", "map_hash_seed", "arr_push_shared_bytes", "arr_push_shared_count",
   ];
@@ -531,6 +530,9 @@ function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   if (k == "raw_cover") {
     return lift_pop_push(lv, 0, 58, 0, "__fern_cov_counters");
   }
+  if (k == "raw_task_state") {
+    return lift_pop_push(lv, 0, 58, 0, "__fern_task_state");
+  }
   if (k == "raw_addr") {
     return lift_pop_push(lv, 2, 9, 64, "add");
   }
@@ -591,6 +593,15 @@ function mark_packed(lv: LiftVals, op: ir.Op): LiftVals {
   return LiftVals { ...lv, insts: lv.insts.with(last, ssa.SInst { ...lv.insts[last], str: "u8" }) };
 }
 
+// unique_push is 1 on an owned push whose receiver the lowering tested
+// unique (ir.op_arr_push_owned), else 0; it rides in the instruction's imm.
+function unique_push(k: string, op: ir.Op): i32 {
+  if (util.str_has_prefix(k, "arr_push_owned") && op.i32_imm == 1) {
+    return 1;
+  }
+  return 0;
+}
+
 function prod_call_kind(k: string): i32 {
   if (k == "alloc" || k == "alloc_u8" || k == "raw_alloc" || util.str_has_prefix(k, "arr_push")) {
     return 50;
@@ -642,7 +653,7 @@ function lift_prod_mem(kt: KindTable, tag: i32, k: string, op: ir.Op, nvals: i32
     return lift_call_indirect_prod(op, lv);
   }
   if (kt.argc[tag] > 0) {
-    return lift_pop_push(lv, kt.argc[tag], prod_call_kind(k), 0, k + packed_suffix(op));
+    return lift_pop_push(lv, kt.argc[tag], prod_call_kind(k), unique_push(k, op), k + packed_suffix(op));
   }
   let made: LiftVals = lift_prod_make(k, op, lv);
   if (made.ok || made.stack.len() != lv.stack.len()) {

@@ -24,6 +24,7 @@ import "std/url";
 import "std/json";
 import "core/map";
 import "std/string";
+import "std/platform";
 
 // Pull each value of a multi-valued key out as a JString
 // array. `query_parse` always returns the full list per key,
@@ -60,7 +61,7 @@ function describe(path: string, q: Map[string, string[]]): JsonValue {
   return JObject(out);
 }
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   // Build a "synthetic" full URL so url_parse has a host
   // to anchor against — req.path on its own is path+query.
   let full: string = "http://example.local" + req.path;

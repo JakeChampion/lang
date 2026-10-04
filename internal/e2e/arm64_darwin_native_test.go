@@ -644,3 +644,34 @@ func TestArm64DarwinNativeOpenWith(t *testing.T) {
 	}
 	openWithCheckTree(t, dir)
 }
+
+// TestArm64DarwinNativePriority runs the priority() / set_priority() probe
+// (priority_test.go) as an arm64-darwin binary on Apple Silicon. The
+// syscall numbers are the target's and only running the binary checks
+// them: a Linux number ORed into XNU's table is SIGSYS, which is how
+// `nice` died on every Darwin invocation with 101 in the setpriority row
+// where XNU has 96 (#11334).
+func TestArm64DarwinNativePriority(t *testing.T) {
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("runs the binary; Apple Silicon only")
+	}
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(prioritySource()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "prog")
+	if o, err := exec.Command(bin, "-target", "arm64-darwin", "-o", out, src).CombinedOutput(); err != nil {
+		t.Fatalf("native arm64-darwin build failed: %v\n%s", err, o)
+	}
+	cmd := exec.Command(out)
+	_ = cmd.Run()
+	ps := cmd.ProcessState
+	if ps == nil || !ps.Exited() {
+		t.Fatalf("native Mach-O did not run to a normal exit (state=%v) — a SIGSYS here is a syscall number XNU does not have", ps)
+	}
+	if code := ps.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0 — the code names the step (see prioritySource)", code)
+	}
+}

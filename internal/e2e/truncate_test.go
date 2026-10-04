@@ -1,7 +1,7 @@
 // `truncate` end to end on every backend that provides it — all of them.
 //
-// What no unit test can assert: five separate hand-written implementations
-// build this call. x86-64, arm64-linux and arm64-ssa each issue truncate(2)
+// What no unit test can assert: four separate hand-written implementations
+// build this call. x86-64 and arm64-linux each issue truncate(2)
 // from hand-written assembly; the interpreter goes through Go's syscall
 // package; and wasmbin has two bodies over WASI, neither of which has a
 // path-based set-size to call — both open a descriptor without CREATE or
@@ -139,21 +139,6 @@ func TestArm64Truncate(t *testing.T) {
 	out, code := compileAndRunArm64(t, truncateSource(dir))
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see truncateSource)\n%s", code, out)
-	}
-	truncateCheckTree(t, dir)
-}
-
-// The arm64 SSA-direct backend is a third hand-written implementation of the
-// same syscall, with its own frame discipline and its own second-scalar
-// register, so it gets the probe rather than being taken on trust.
-func TestArm64SSATruncate(t *testing.T) {
-	fern := buildFernForArm64SSA(t)
-	qemu := arm64QemuOrEmpty(t)
-	dir := t.TempDir()
-	bin := compileArm64SSA(t, fern, truncateSource(dir), os.Environ())
-	code, stderr := runArm64SSABin(t, qemu, bin, dir, os.Environ())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 — the code names the step (see truncateSource)\n%s", code, stderr)
 	}
 	truncateCheckTree(t, dir)
 }

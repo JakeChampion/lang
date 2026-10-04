@@ -3,6 +3,7 @@ package e2e
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -47,8 +48,14 @@ func statProbeTree(t *testing.T) (dir, file, link, other string) {
 }
 
 // statFieldsNativeSource asserts every FileStat field a kernel fills. Each
-// failure returns its own exit code so the number names the field.
-func statFieldsNativeSource(file, link, other string, euid, egid int) string {
+// failure returns its own exit code so the number names the field. The birth
+// time, `dev` and `/dev/null`'s `rdev` are compared with what the host itself
+// reports, since a test cannot arrange them.
+func statFieldsNativeSource(t *testing.T, file, link, other string, euid, egid int) string {
+	t.Helper()
+	bt, btn := hostBirth(t, file)
+	dev, _ := hostDevs(t, file)
+	_, nullRdev := hostDevs(t, "/dev/null")
 	return fmt.Sprintf(`function st(p: string): FileStat {
     match (stat(p)) {
         Ok(s) => { return s; },
@@ -56,13 +63,13 @@ func statFieldsNativeSource(file, link, other string, euid, egid int) string {
             mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32,
             dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64,
             atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64,
-            ctime: 0 as i64, ctime_nsec: 0 as i64 }; },
+            ctime: 0 as i64, ctime_nsec: 0 as i64, btime: 0 as i64, btime_nsec: 0 as i64 }; },
     }
     return FileStat { is_file: false, is_dir: false, size: 0 as i64,
         mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32,
         dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64,
         atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64,
-        ctime: 0 as i64, ctime_nsec: 0 as i64 };
+        ctime: 0 as i64, ctime_nsec: 0 as i64, btime: 0 as i64, btime_nsec: 0 as i64 };
 }
 function main(): i32 {
     let f: FileStat = st(%[1]q);
@@ -98,9 +105,15 @@ function main(): i32 {
     if (f.rdev != (0 as i64)) { return 19; }
     if (f.blksize <= (0 as i64)) { return 20; }
     if (f.blocks < (0 as i64)) { return 21; }
+    // The birth time, zero where the filesystem records none.
+    if (f.btime != (%[7]d as i64)) { return 22; }
+    if (f.btime_nsec != (%[8]d as i64)) { return 23; }
+    // dev_t as the host encodes it, and a device node's rdev.
+    if (f.dev != (%[9]d as i64)) { return 24; }
+    if (st("/dev/null").rdev != (%[10]d as i64)) { return 25; }
     return 0;
 }
-`, file, link, other, statProbeMtime, euid, egid)
+`, file, link, other, statProbeMtime, euid, egid, bt, btn, dev, nullRdev)
 }
 
 // TestX86_64StatFields / TestArm64StatFields read a known file through the
@@ -116,7 +129,7 @@ function main(): i32 {
 // on values a test can arrange rather than on "not zero".
 func TestX86_64StatFields(t *testing.T) {
 	_, file, link, other := statProbeTree(t)
-	src := statFieldsNativeSource(file, link, other, os.Geteuid(), os.Getegid())
+	src := statFieldsNativeSource(t, file, link, other, os.Geteuid(), os.Getegid())
 	code, out := compileRunX86_64WithSetup(t, src, nil)
 	if code != 0 {
 		t.Errorf("exit = %d, want 0 — the code names the field (see statFieldsNativeSource)\n%s", code, out)
@@ -125,10 +138,45 @@ func TestX86_64StatFields(t *testing.T) {
 
 func TestArm64StatFields(t *testing.T) {
 	_, file, link, other := statProbeTree(t)
-	src := statFieldsNativeSource(file, link, other, os.Geteuid(), os.Getegid())
+	src := statFieldsNativeSource(t, file, link, other, os.Geteuid(), os.Getegid())
 	out, code := compileAndRunArm64(t, src)
 	if code != 0 {
 		t.Errorf("exit = %d, want 0 — the code names the field (see statFieldsNativeSource)\n%s", code, out)
+	}
+}
+
+// TestNativeStatFields runs the same probe through the native compiler's four
+// Linux emitters. Each builds FileStat from statx(2) by its own projection,
+// and the coreutils harness compiles with them.
+func TestNativeStatFields(t *testing.T) {
+	fern := buildFernCLI(t)
+	_, file, link, other := statProbeTree(t)
+	srcPath := filepath.Join(t.TempDir(), "probe.fern")
+	src := statFieldsNativeSource(t, file, link, other, os.Geteuid(), os.Getegid())
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			runner := ""
+			if target == "x86-64-linux" {
+				runner = x86QemuOrEmpty(t)
+			} else {
+				runner = arm64QemuOrEmpty(t)
+			}
+			bin := filepath.Join(t.TempDir(), "probe")
+			if out, err := exec.Command(fern, "-target", target, "-o", bin, srcPath).CombinedOutput(); err != nil {
+				t.Fatalf("compile: %v\n%s", err, out)
+			}
+			cmd := exec.Command(bin)
+			if runner != "" {
+				cmd = exec.Command(runner, bin)
+			}
+			out, _ := cmd.CombinedOutput()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Errorf("exit = %d, want 0 — the code names the field (see statFieldsNativeSource)\n%s", code, out)
+			}
+		})
 	}
 }
 
@@ -138,7 +186,7 @@ func TestArm64StatFields(t *testing.T) {
 // the one a migrated in-language test suite runs under.
 func TestInterpStatFields(t *testing.T) {
 	_, file, link, other := statProbeTree(t)
-	src := statFieldsNativeSource(file, link, other, os.Geteuid(), os.Getegid())
+	src := statFieldsNativeSource(t, file, link, other, os.Geteuid(), os.Getegid())
 	if code := runInterpExit(t, src); code != 0 {
 		t.Errorf("exit = %d, want 0 — the code names the field (see statFieldsNativeSource)", code)
 	}

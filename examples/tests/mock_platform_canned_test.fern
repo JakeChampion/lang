@@ -3,14 +3,15 @@ import "std/http";
 import "std/fetch";
 import "std/mock_platform";
 import "std/i64";
+import "std/platform";
 
-// examples/tests/mock_platform_canned_test.fern — a MockPlatform answers
+// examples/tests/mock_platform_canned_test.fern — a mock_platform.MockPlatform answers
 // what the test canned for each capability (#9854): the handler under
 // test reads a variable, the clock, a random number and an upstream's
 // answer through its bag, and the test decides each answer; configuration
 // and secrets are canned the same way, a secret logged by its name alone.
 
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   let region: string = "nowhere";
   match (plat.env("REGION")) {
     Some(r) => {
@@ -31,33 +32,33 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 }
 
 function test_defaults_without_canned_answers(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
-  let resp: HttpResponse = handle(http.request("GET", "/"), m.as_platform());
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = handle(http.request("GET", "/"), m);
   return test.assert_body(resp, "nowhere 0 0 connect: Connection refused");
 }
 
 function test_canned_answers_reach_the_handler(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
   m.env_set("REGION", "eu-west");
   m.now_set(1700000000123 as i64);
   m.random_set(42);
   m.http_set("GET", "http://10.0.0.1:8080/health", 204, "fine");
-  let resp: HttpResponse = handle(http.request("GET", "/"), m.as_platform());
+  let resp: HttpResponse = handle(http.request("GET", "/"), m);
   return test.assert_body(resp, "eu-west 1700000000123 42 204 fine");
 }
 
 function test_a_request_of_another_url_still_fails(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
   m.http_set("GET", "http://10.0.0.1:8080/other", 200, "");
-  let resp: HttpResponse = handle(http.request("GET", "/"), m.as_platform());
+  let resp: HttpResponse = handle(http.request("GET", "/"), m);
   return test.assert_body(resp, "nowhere 0 0 connect: Connection refused");
 }
 
 function test_the_last_answer_wins(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
   m.env_set("REGION", "one");
   m.env_set("REGION", "two");
-  match (m.as_platform().env("REGION")) {
+  match (m.env("REGION")) {
     Some(r) => {
       if (r != "two") {
         return test.fail("env: " + r);
@@ -71,10 +72,10 @@ function test_the_last_answer_wins(): test.TestOutcome {
 }
 
 function test_canned_rows_are_not_calls_and_survive_reset(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
   m.env_set("REGION", "eu-west");
   m.elapsed_set(5 as i64);
-  let plat: Platform = m.as_platform();
+  let plat: mock_platform.MockPlatform = m;
   plat.env("REGION");
   if (m.call_count() != 1) {
     return test.fail("calls: " + m.call_count().to_string());
@@ -93,9 +94,9 @@ function test_canned_rows_are_not_calls_and_survive_reset(): test.TestOutcome {
 }
 
 function test_a_value_with_tabs_and_newlines_round_trips(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
   m.env_set("MOTD", "a\tb\nc\\d");
-  match (m.as_platform().env("MOTD")) {
+  match (m.env("MOTD")) {
     Some(v) => {
       if (v != "a\tb\nc\\d") {
         return test.fail("env: " + v);
@@ -112,9 +113,9 @@ function test_a_value_with_tabs_and_newlines_round_trips(): test.TestOutcome {
 }
 
 function test_an_empty_value_round_trips(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
   m.env_set("EMPTY", "");
-  match (m.as_platform().env("EMPTY")) {
+  match (m.env("EMPTY")) {
     Some(v) => {
       if (v != "") {
         return test.fail("env: " + v);
@@ -128,8 +129,8 @@ function test_an_empty_value_round_trips(): test.TestOutcome {
 }
 
 function test_config_and_secret_answer_what_was_canned(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
-  let plat: Platform = m.as_platform();
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let plat: mock_platform.MockPlatform = m;
   match (plat.config("REGION")) {
     Some(v) => {
       return test.fail("config before canning: " + v);
@@ -168,10 +169,10 @@ function test_config_and_secret_answer_what_was_canned(): test.TestOutcome {
 }
 
 function test_a_secret_is_logged_by_name_only(): test.TestOutcome {
-  let m: MockPlatform = mock_platform.mock_platform_new();
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
   m.secret_set("TOKEN", "s3cr3t");
-  m.as_platform().secret("TOKEN");
-  let calls: MockCall[] = m.calls();
+  m.secret("TOKEN");
+  let calls: mock_platform.MockCall[] = m.calls();
   if (calls.len() != 1) {
     return test.fail("calls: " + calls.len().to_string());
   }
@@ -187,7 +188,7 @@ function test_a_secret_is_logged_by_name_only(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let t: test.TestRunner = test.test_new("MockPlatform canned answers");
+  let t: test.TestRunner = test.test_new("mock_platform.MockPlatform canned answers");
   t = t.it("without canned answers the fixed values apply", test_defaults_without_canned_answers);
   t = t.it("canned answers reach the handler", test_canned_answers_reach_the_handler);
   t = t.it("a request of another URL still fails", test_a_request_of_another_url_still_fails);

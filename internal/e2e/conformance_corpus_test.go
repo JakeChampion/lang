@@ -26,11 +26,10 @@ import (
 // by the loader: it justifies a case that asserts less than the maximum.
 var (
 	runSidecars = []string{"expected.stdout", "expected.exit", "stdin", "match", "backends"}
-	// reclaim-observable is a marker, not a value: its presence inverts the
-	// *FixturesFreeMatchesNoFree gates for the case (they require the two runs
-	// to DIFFER). It is read by fixture_test.go and rc_freelist_test.go, so it
-	// is a real sidecar — it was just never registered here, which made the
-	// case that introduced it fail this format check.
+	// reclaim-observable is a marker, not a value: its presence tells the
+	// quarantine leg (TestFernFixturesSelfHostX86_64Quarantine) that the case
+	// prints its free-off output there, so only its exit code is held. It is
+	// read by fixture_test.go, so it is a real sidecar.
 	allSidecars = append([]string{
 		"expected.error", "expected.lowering-error", "meta", "reclaim-observable",
 	}, runSidecars...)

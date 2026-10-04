@@ -97,9 +97,6 @@ var stdioLegs = map[string]stdioLeg{
 		mod := buildPreview1Module(t, src)
 		return stdioRunCmd(t, exec.Command("wasmtime", "run", "--invoke", "main", mod))
 	},
-	"wasm preview 2": func(t *testing.T, src string) (string, string, int) {
-		return runComponent(t, buildNativeComponent(t, src, nativeMainResult), runOpts{stdin: "hello\n"})
-	},
 	"self-host wasm core": func(t *testing.T, src string) (string, string, int) {
 		return runComponent(t, buildComponent(t, src), runOpts{stdin: "hello\n"})
 	},
@@ -127,26 +124,17 @@ func TestX86_64StdoutClose(t *testing.T) { checkStdioClose(t, "x86-64", stdoutCl
 func TestWASMPreview1StdoutClose(t *testing.T) {
 	checkStdioClose(t, "wasm preview 1", stdoutCloseSource, "stderr")
 }
-func TestWASMStdoutClose(t *testing.T) {
-	checkStdioClose(t, "wasm preview 2", stdoutCloseSource, "stderr")
-}
 
 func TestInterpStderrClose(t *testing.T) { checkStdioClose(t, "interp", stderrCloseSource, "stdout") }
 func TestX86_64StderrClose(t *testing.T) { checkStdioClose(t, "x86-64", stderrCloseSource, "stdout") }
 func TestWASMPreview1StderrClose(t *testing.T) {
 	checkStdioClose(t, "wasm preview 1", stderrCloseSource, "stdout")
 }
-func TestWASMStderrClose(t *testing.T) {
-	checkStdioClose(t, "wasm preview 2", stderrCloseSource, "stdout")
-}
 
 func TestInterpStdinClose(t *testing.T) { checkStdioClose(t, "interp", stdinCloseSource, "stdout") }
 func TestX86_64StdinClose(t *testing.T) { checkStdioClose(t, "x86-64", stdinCloseSource, "stdout") }
 func TestWASMPreview1StdinClose(t *testing.T) {
 	checkStdioClose(t, "wasm preview 1", stdinCloseSource, "stdout")
-}
-func TestWASMStdinClose(t *testing.T) {
-	checkStdioClose(t, "wasm preview 2", stdinCloseSource, "stdout")
 }
 
 // A failed preview-2 stream operation hands back an io/error resource the
@@ -257,21 +245,18 @@ func procSelf(t *testing.T) parityOpts {
 func TestInterpFailedWrite(t *testing.T)       { runParityInterp(t, failedWriteSource, devFull(t)) }
 func TestX86_64FailedWrite(t *testing.T)       { runParityX86_64(t, failedWriteSource, devFull(t)) }
 func TestWASMPreview1FailedWrite(t *testing.T) { runParityPreview1(t, failedWriteSource, devFull(t)) }
-func TestWASMFailedWrite(t *testing.T)         { runParityPreview2(t, failedWriteSource, devFull(t)) }
 
 func TestInterpFailedReadLine(t *testing.T) { runParityInterp(t, failedReadLineSource, procSelf(t)) }
 func TestX86_64FailedReadLine(t *testing.T) { runParityX86_64(t, failedReadLineSource, procSelf(t)) }
 func TestWASMPreview1FailedReadLine(t *testing.T) {
 	runParityPreview1(t, failedReadLineSource, procSelf(t))
 }
-func TestWASMFailedReadLine(t *testing.T) { runParityPreview2(t, failedReadLineSource, procSelf(t)) }
 
 func TestInterpFailedWriteFile(t *testing.T) { runParityInterp(t, failedWriteFileSource, devFull(t)) }
 func TestX86_64FailedWriteFile(t *testing.T) { runParityX86_64(t, failedWriteFileSource, devFull(t)) }
 func TestWASMPreview1FailedWriteFile(t *testing.T) {
 	runParityPreview1(t, failedWriteFileSource, devFull(t))
 }
-func TestWASMFailedWriteFile(t *testing.T) { runParityPreview2(t, failedWriteFileSource, devFull(t)) }
 func TestSelfHostWasmCoreFailedWriteFile(t *testing.T) {
 	runParitySelfHostCore(t, failedWriteFileSource, devFull(t))
 }
@@ -284,7 +269,6 @@ func TestX86_64FailedReadFile(t *testing.T) { runParityX86_64(t, failedReadFileS
 func TestWASMPreview1FailedReadFile(t *testing.T) {
 	runParityPreview1(t, failedReadFileSource, procSelf(t))
 }
-func TestWASMFailedReadFile(t *testing.T) { runParityPreview2(t, failedReadFileSource, procSelf(t)) }
 
 // print, write and putchar have no answer to give, so only the leak is
 // observable, and only on preview 2. stdout is /dev/full, so every write
@@ -297,19 +281,9 @@ func TestWASMFailedPrint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer full.Close()
-	for _, leg := range []struct {
-		name string
-		comp func() string
-	}{
-		{"native", func() string { return buildNativeComponent(t, failedPrintSource, nativeMainResult) }},
-		{"self-host", func() string { return buildCLIComponent(t, failedPrintSource) }},
-	} {
-		t.Run(leg.name, func(t *testing.T) {
-			_, stderr, ec := runComponent(t, leg.comp(), runOpts{stdoutFile: full, maxResources: failureResourceCap})
-			if ec != 0 {
-				t.Fatalf("wasmtime exit %d, want 0\nstderr:\n%s", ec, stderr)
-			}
-		})
+	_, stderr, ec := runComponent(t, buildCLIComponent(t, failedPrintSource), runOpts{stdoutFile: full, maxResources: failureResourceCap})
+	if ec != 0 {
+		t.Fatalf("wasmtime exit %d, want 0\nstderr:\n%s", ec, stderr)
 	}
 }
 

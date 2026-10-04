@@ -2,15 +2,11 @@ package e2eselfhost
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ssa"
 )
 
 func TestSelfHostSSALifetimeIRArm64(t *testing.T)  { testSelfHostSSALifetimeIR(t, "arm64-linux") }
@@ -38,10 +34,9 @@ func testSelfHostSSALifetimeIR(t *testing.T, target string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixtures := selfHostLifetimeFixtures()
-	for _, name := range []string{"nested-projection", "phi-edges", "loop-anchor", "rebound-value", "wide"} {
+	for _, name := range lifetimeFixtureNames {
 		t.Run(name, func(t *testing.T) {
-			source, want := lifetimeFernFixture(t, fixtures[name])
+			source, want := lifetimeFixture(t, name)
 			entry := filepath.Join(dir, "lifetime_fixture.fern")
 			if err := os.WriteFile(entry, []byte(source), 0o644); err != nil {
 				t.Fatal(err)
@@ -74,206 +69,36 @@ func testSelfHostSSALifetimeIR(t *testing.T, target string) {
 	}
 }
 
-type lifetimeFixture struct {
-	f    *ssa.Func
-	deps map[int32][]ssa.Value
-}
+// lifetimeFixtureNames are the dataflow graphs under testdata/lifetime. Each
+// <name>.fern builds an ssa.SFunc by hand, runs ssalive.compute over it with
+// the per-value dependency lists, and prints the live-in and live-out bit rows
+// (one bit per block per value) after checking the id-based accessors agree
+// with the bit sets; <name>.want is the two rows the Go SSA liveness solver
+// produced for the same graph, recorded when that package was deleted. The
+// graphs: a projection chain through two blocks, a diamond whose phi takes a
+// child from each arm, a loop whose header phi carries a child (stored in
+// reverse order, so dataflow must use CFG edges, not source order), a value
+// rebound before a branch, and a graph wide enough that each live set spans
+// several 64-bit words.
+var lifetimeFixtureNames = []string{"nested-projection", "phi-edges", "loop-anchor", "rebound-value", "wide"}
 
-func selfHostLifetimeFixtures() map[string]lifetimeFixture {
-	out := map[string]lifetimeFixture{}
-	{
-		f := ssa.NewFunc("nested-projection")
-		entry, mid, exit := f.NewBlock(), f.NewBlock(), f.NewBlock()
-		root := f.AddOp(entry, ssa.OpConstInt)
-		child := f.AddOp(entry, ssa.OpAdd, root, root)
-		leaf := f.AddOp(entry, ssa.OpAdd, child, child)
-		f.SetBr(entry, mid)
-		f.SetBr(mid, exit)
-		f.SetRet(exit, leaf)
-		out["nested-projection"] = lifetimeFixture{f, map[int32][]ssa.Value{child.ID: {root}, leaf.ID: {child, root}}}
-	}
-	{
-		f := ssa.NewFunc("phi-edges")
-		entry, left, right, join := f.NewBlock(), f.NewBlock(), f.NewBlock(), f.NewBlock()
-		cond := f.AddOp(entry, ssa.OpConstInt)
-		f.SetBrIf(entry, cond, left, right)
-		lr := f.AddOp(left, ssa.OpConstInt)
-		lc := f.AddOp(left, ssa.OpAdd, lr, lr)
-		f.SetBr(left, join)
-		rr := f.AddOp(right, ssa.OpConstInt)
-		rc := f.AddOp(right, ssa.OpAdd, rr, rr)
-		f.SetBr(right, join)
-		phi := f.AddPhi(join, lc, rc)
-		f.SetRet(join, phi)
-		out["phi-edges"] = lifetimeFixture{f, map[int32][]ssa.Value{lc.ID: {lr}, rc.ID: {rr}}}
-	}
-	{
-		f := ssa.NewFunc("loop-anchor")
-		entry, header, body, exit := f.NewBlock(), f.NewBlock(), f.NewBlock(), f.NewBlock()
-		root := f.AddOp(entry, ssa.OpConstInt)
-		child := f.AddOp(entry, ssa.OpAdd, root, root)
-		f.SetBr(entry, header)
-		phi := f.AddPhi(header, child, child)
-		cond := f.AddOp(header, ssa.OpConstInt)
-		f.SetBrIf(header, cond, body, exit)
-		f.AddOp(body, ssa.OpAdd, phi, child)
-		f.SetBr(body, header)
-		f.SetRet(exit, phi)
-		// Reverse storage order: dataflow must use CFG edges, not source order.
-		f.Blocks = []*ssa.Block{exit, body, header, entry}
-		out["loop-anchor"] = lifetimeFixture{f, map[int32][]ssa.Value{child.ID: {root}}}
-	}
-	{
-		f := ssa.NewFunc("rebound-value")
-		entry, oldExit, exit := f.NewBlock(), f.NewBlock(), f.NewBlock()
-		oldValue := f.AddOp(entry, ssa.OpConstInt)
-		actualRoot := f.AddOp(entry, ssa.OpConstInt)
-		child := f.AddOp(entry, ssa.OpAdd, actualRoot, actualRoot)
-		f.SetBrIf(entry, f.AddOp(entry, ssa.OpConstInt), oldExit, exit)
-		f.SetRet(oldExit, oldValue)
-		f.SetRet(exit, child)
-		out["rebound-value"] = lifetimeFixture{f, map[int32][]ssa.Value{child.ID: {actualRoot}}}
-	}
-	{
-		// Enough values that each live set spans several 64-bit words.
-		f := ssa.NewFunc("wide")
-		entry, mid, exit := f.NewBlock(), f.NewBlock(), f.NewBlock()
-		var early, late []ssa.Value
-		for i := 0; i < 70; i++ {
-			early = append(early, f.AddOp(entry, ssa.OpConstInt))
-		}
-		f.SetBr(entry, mid)
-		for i := 0; i < 70; i++ {
-			late = append(late, f.AddOp(mid, ssa.OpAdd, early[i], early[(i*7)%70]))
-		}
-		f.SetBr(mid, exit)
-		acc := late[1]
-		for i := 3; i < 70; i += 2 {
-			acc = f.AddOp(exit, ssa.OpAdd, acc, late[i])
-		}
-		f.SetRet(exit, acc)
-		out["wide"] = lifetimeFixture{f, map[int32][]ssa.Value{late[5].ID: {early[5]}, late[66].ID: {early[66], early[2]}}}
-	}
-	return out
-}
-
-// Serialize the same graph and dependencies for the native SSA oracle and
-// the executable Fern implementation. This tests the port's dataflow, not an
-// AST-to-SSA reconstruction or physical RC instruction recognition.
-func lifetimeFernFixture(t *testing.T, tc lifetimeFixture) (string, string) {
+func lifetimeFixture(t *testing.T, name string) (source, want string) {
 	t.Helper()
-	if err := ssa.Verify(tc.f); err != nil {
-		t.Fatalf("invalid oracle graph: %v", err)
-	}
-	nvals := int32(0)
-	for _, b := range tc.f.Blocks {
-		for _, op := range b.Ops {
-			if op.Result.ID > nvals {
-				nvals = op.Result.ID
-			}
+	read := func(ext string) string {
+		b, err := os.ReadFile(filepath.Join("testdata", "lifetime", name+ext))
+		if err != nil {
+			t.Fatal(err)
 		}
+		return string(b)
 	}
-	ints := func(vs []ssa.Value) string {
-		var out []string
-		for _, v := range vs {
-			// Native ids start at one; the Fern graph uses value zero too.
-			out = append(out, fmt.Sprint(v.ID-1))
-		}
-		return "[" + strings.Join(out, ",") + "]"
-	}
-	blockID := func(b *ssa.Block) int32 { return b.ID*10 + 7 }
-	var source strings.Builder
-	source.WriteString("import \"./ssa\";\nimport \"./ssalive\";\nfunction same(a: i32[], b: i32[]): boolean { if (a.len() != b.len()) { return false; } let i: i32 = 0; while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; } return true; }\nfunction main(): i32 {\nlet blocks: ssa.SBlock[] = [];\n")
-	for _, b := range tc.f.Blocks {
-		var insts, preds []string
-		for _, op := range b.Ops {
-			kind := 9
-			if op.Kind == ssa.OpPhi {
-				kind = 8
-			} else if len(op.Args) == 0 {
-				kind = 1
-			}
-			insts = append(insts, fmt.Sprintf("ssa.SInst { kind_tag: %d, result: %d, args: %s, imm: 0, str: \"\" }", kind, op.Result.ID-1, ints(op.Args)))
-		}
-		for _, p := range b.Preds {
-			preds = append(preds, fmt.Sprint(blockID(p)))
-		}
-		kind, cond, target, yes, no, value := 1, int32(0), int32(0), int32(0), int32(0), b.Term.Value.ID-1
-		switch b.Term.Kind {
-		case ssa.TermBr:
-			kind, target = 2, blockID(b.Term.Target)
-		case ssa.TermBrIf:
-			kind, cond, yes, no = 3, b.Term.Cond.ID-1, blockID(b.Term.True), blockID(b.Term.False)
-		}
-		fmt.Fprintf(&source, "blocks = blocks.append(ssa.SBlock { id: %d, insts: [%s], preds: [%s], term: ssa.STerm { kind_tag: %d, cond: %d, target: %d, t: %d, f: %d, value: %d } });\n", blockID(b), strings.Join(insts, ","), strings.Join(preds, ","), kind, cond, target, yes, no, value)
-	}
-	var deps []string
-	for v := int32(0); v < nvals; v++ {
-		deps = append(deps, ints(tc.deps[v+1]))
-	}
-	fmt.Fprintf(&source, "let f = ssa.SFunc { name: \"fixture\", nparams: 0, nvals: %d, blocks: blocks, entry: %d, takes_env: false };\nlet deps: i32[][] = [%s];\n", nvals, blockID(tc.f.Entry), strings.Join(deps, ","))
-	source.WriteString(`let before = ssa.print_func(f);
-let result = ssalive.compute(f, deps);
-if (!result.ok) { print(result.why); return 1; }
-if (ssa.print_func(f) != before) { return 2; }
-let bits: string = "";
-for bit in ssalive.live_in_bits(result, f.blocks.len(), f.nvals) { if (bit) { bits = bits + "1"; } else { bits = bits + "0"; } }
-print(bits);
-bits = "";
-for bit in ssalive.live_out_bits(result, f.blocks.len(), f.nvals) { if (bit) { bits = bits + "1"; } else { bits = bits + "0"; } }
-print(bits);
-let bi: i32 = 0;
-while (bi < f.blocks.len()) {
-    let ins: i32[] = [];
-    let outs: i32[] = [];
-    let v: i32 = 0;
-    while (v < f.nvals) {
-        if (ssalive.live_in_has(result, bi, v)) { ins = ins.append(v); }
-        if (ssalive.live_out_has(result, bi, v)) { outs = outs.append(v); }
-        v = v + 1;
-    }
-    if (!same(ssalive.live_in_ids(result, bi), ins)) { print("live_in_ids"); return 3; }
-    if (!same(ssalive.live_out_ids(result, bi), outs)) { print("live_out_ids"); return 3; }
-    let si: i32 = 0;
-    while (si < f.blocks.len()) {
-        let diff: i32[] = [];
-        for o in outs { if (!ssalive.live_in_has(result, si, o)) { diff = diff.append(o); } }
-        if (!same(ssalive.out_not_in(result, bi, si), diff)) { print("out_not_in"); return 3; }
-        si = si + 1;
-    }
-    bi = bi + 1;
-}
-return 0;
-}
-`)
-	live := ssa.ComputeLivenessWithDependencies(tc.f, tc.deps)
-	var want strings.Builder
-	for _, sets := range []map[*ssa.Block]map[int32]bool{live.LiveIn, live.LiveOut} {
-		for _, b := range tc.f.Blocks {
-			for v := int32(0); v < nvals; v++ {
-				if sets[b][v+1] {
-					want.WriteByte('1')
-				} else {
-					want.WriteByte('0')
-				}
-			}
-		}
-		want.WriteByte('\n')
-	}
-	return source.String(), want.String()
+	return read(".fern"), read(".want")
 }
 
 func TestSelfHostSSALifetimeDependencies(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	fixtures := selfHostLifetimeFixtures()
-	var names []string
-	for name := range fixtures {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
+	for _, name := range lifetimeFixtureNames {
 		t.Run(name, func(t *testing.T) {
-			source, want := lifetimeFernFixture(t, fixtures[name])
+			source, want := lifetimeFixture(t, name)
 			dir := t.TempDir()
 			copySelfHostDriver(t, dir, "ssalive.fern")
 			if err := os.WriteFile(filepath.Join(dir, "lifetime_fixture.fern"), []byte(source), 0o644); err != nil {
@@ -287,7 +112,7 @@ func TestSelfHostSSALifetimeDependencies(t *testing.T) {
 				t.Fatalf("Fern lifetime solver: %v\n%s", err, got)
 			}
 			if string(got) != want {
-				t.Fatalf("live sets differ from native SSA:\ngot %s\nwant %s", got, want)
+				t.Fatalf("live sets differ from the recorded solution:\ngot %s\nwant %s", got, want)
 			}
 		})
 	}
@@ -295,7 +120,7 @@ func TestSelfHostSSALifetimeDependencies(t *testing.T) {
 
 func TestSelfHostSSALifetimeInvalidMetadata(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	source, _ := lifetimeFernFixture(t, selfHostLifetimeFixtures()["nested-projection"])
+	source, _ := lifetimeFixture(t, "nested-projection")
 	for _, tc := range []struct{ name, change, want string }{
 		{"dimensions", "deps = [];", "dependency dimensions"},
 		{"dependency-id", "deps = deps.with(1, [f.nvals]);", "dependency value out of range"},

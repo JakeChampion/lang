@@ -23,7 +23,7 @@ var fcRefRe = regexp.MustCompile(`\.Lfc_([A-Za-z0-9_]+)`)
 // the e2e suites so a stale name fails in milliseconds.
 func TestTranscendentalLabelsResolve(t *testing.T) {
 	asm := compile(t, transcendentalProgram)
-	known := map[string]bool{"2opi_bits": true}
+	known := map[string]bool{"2opi_bits": true, "logtab": true}
 	for _, c := range fdlibm.Coeffs {
 		known[c.Name] = true
 	}
@@ -37,9 +37,9 @@ func TestTranscendentalLabelsResolve(t *testing.T) {
 		sort.Strings(bad)
 		t.Errorf("assembly references .Lfc_%s, which fdlibm.Coeffs does not carry", strings.Join(bad, ", .Lfc_"))
 	}
-	for _, c := range fdlibm.Coeffs {
-		if !strings.Contains(asm, ".Lfc_"+c.Name+":") {
-			t.Errorf("the coefficient table does not define .Lfc_%s", c.Name)
+	for name := range known {
+		if !strings.Contains(asm, ".Lfc_"+name+":") {
+			t.Errorf("the coefficient table does not define .Lfc_%s", name)
 		}
 	}
 }

@@ -1,12 +1,14 @@
 package e2eharness
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -75,6 +77,29 @@ func dnsQuestionLen(msg []byte) int {
 // question, which has to be `vm.example.com` for the pointers to land.
 // In the NAT64 mode the reply is one AAAA record on the question's own
 // name, 64:ff9b::c000:aa.
+// listenLoopbackPair listens on one loopback port over both UDP and TCP,
+// trying port first (0 for any free one). A free UDP port can be taken for
+// TCP, by another test's connection say, so a port whose TCP side is in use
+// is given back and another tried.
+func listenLoopbackPair(port int) (*net.UDPConn, *net.TCPListener, error) {
+	for attempt := 0; ; attempt++ {
+		udp, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port})
+		if err != nil {
+			return nil, nil, fmt.Errorf("listen udp: %w", err)
+		}
+		p := udp.LocalAddr().(*net.UDPAddr).Port
+		tcp, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: p})
+		if err == nil {
+			return udp, tcp, nil
+		}
+		udp.Close()
+		if !errors.Is(err, syscall.EADDRINUSE) || attempt == 20 {
+			return nil, nil, fmt.Errorf("listen tcp on %d: %w", p, err)
+		}
+		port = 0
+	}
+}
+
 func dnsReply(query []byte, truncated bool, mode FakeNameserverMode) []byte {
 	qlen := dnsQuestionLen(query)
 	if qlen == 0 || qlen > len(query)-12 {
@@ -109,16 +134,11 @@ func dnsReply(query []byte, truncated bool, mode FakeNameserverMode) []byte {
 // and answers as `mode` says until the test ends.
 func StartFakeNameserver(t *testing.T, mode FakeNameserverMode) FakeNameserver {
 	t.Helper()
-	udp, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	udp, tcp, err := listenLoopbackPair(0)
 	if err != nil {
-		t.Fatalf("listen udp: %v", err)
+		t.Fatal(err)
 	}
 	port := udp.LocalAddr().(*net.UDPAddr).Port
-	tcp, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port})
-	if err != nil {
-		udp.Close()
-		t.Fatalf("listen tcp on %d: %v", port, err)
-	}
 	var udpN, tcpN int32
 	t.Cleanup(func() {
 		udp.Close()

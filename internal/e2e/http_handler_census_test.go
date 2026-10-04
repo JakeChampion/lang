@@ -17,11 +17,9 @@ import (
 // checked, and the leak census balanced with zero live bytes.
 func TestHTTPHandlerCensus(t *testing.T) {
 	compiler := buildFernCLI(t)
-	for _, tc := range []struct{ target, backend string }{
-		{"x86-64-linux", ""}, {"x86-64-linux", "ssa"}, {"arm64-linux", ""}, {"arm64-linux", "ssa"},
-	} {
-		t.Run(tc.target+"/"+tc.backend, func(t *testing.T) {
-			checkHTTPHandlerCensus(t, compiler, tc.target, tc.backend, nativeServerRunner(t, tc.target), e2eharness.RunHTTPHandlerCensus, 32)
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			checkHTTPHandlerCensus(t, compiler, target, nativeServerRunner(t, target), e2eharness.RunHTTPHandlerCensus, 32)
 		})
 	}
 }
@@ -30,7 +28,7 @@ func TestArm64DarwinHTTPHandlerCensus(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("requires native Apple Silicon")
 	}
-	checkHTTPHandlerCensus(t, buildFernCLI(t), "arm64-darwin", "", func(p string) *exec.Cmd { return exec.Command(p) }, e2eharness.RunHTTPHandlerCensus, 32)
+	checkHTTPHandlerCensus(t, buildFernCLI(t), "arm64-darwin", func(p string) *exec.Cmd { return exec.Command(p) }, e2eharness.RunHTTPHandlerCensus, 32)
 }
 
 // nativeServerRunner is how a built server is launched for a target: under
@@ -53,7 +51,7 @@ func nativeServerRunner(t *testing.T, target string) func(string) *exec.Cmd {
 // checkHTTPHandlerCensus builds the bounded production loop for a target
 // under the leak check, drives it with `client` for `rounds` requests, and
 // requires the census balanced with zero live bytes.
-func checkHTTPHandlerCensus(t *testing.T, compiler, target, backend string, run func(string) *exec.Cmd, client func(*testing.T, *exec.Cmd, int) string, rounds int) {
+func checkHTTPHandlerCensus(t *testing.T, compiler, target string, run func(string) *exec.Cmd, client func(*testing.T, *exec.Cmd, int) string, rounds int) {
 	t.Helper()
 	dir := t.TempDir()
 	src, bin := filepath.Join(dir, "server.fern"), filepath.Join(dir, "server")
@@ -61,9 +59,6 @@ func checkHTTPHandlerCensus(t *testing.T, compiler, target, backend string, run 
 		t.Fatal(err)
 	}
 	args := []string{"-target", target, "-o", bin, src}
-	if backend != "" {
-		args = append([]string{"-backend", backend}, args...)
-	}
 	cmd := exec.Command(compiler, args...)
 	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
 	if out, err := cmd.CombinedOutput(); err != nil {

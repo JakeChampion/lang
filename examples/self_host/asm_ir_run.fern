@@ -147,7 +147,7 @@ function run(): i32 {
   // are x86-64-only and ignored here.
   if (target == "arm64-linux") {
     let d64: semlower.Driven = semlower.driven(mod, target);
-    print(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub));
+    print(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub, 0 as usize));
     return 0;
   }
   // `-target arm64-darwin`: the arm64-apple-darwin GAS text (@PAGE/@PAGEOFF,
@@ -160,7 +160,7 @@ function run(): i32 {
   // which would make "build one" look like remaining #3457 work; it is not.)
   if (target == "arm64-darwin") {
     let dd: semlower.Driven = semlower.driven(mod, target);
-    print(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(dd.full, true, dd.sub)));
+    print(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(dd.full, true, dd.sub, 0 as usize)));
     return 0;
   }
   // `-ir-unit entry|lib`: emit a single per-module translation unit (defs
@@ -172,7 +172,7 @@ function run(): i32 {
     return 0;
   }
   let d: semlower.Driven = semlower.driven(mod, target);
-  print(asm_ir.emit_module_or_error_sub(d.full, d.sub));
+  print(asm_ir.emit_module_or_error_sub(d.full, d.sub, 0 as usize));
   return 0;
 }
 
@@ -184,7 +184,7 @@ function typed_unit(mod: parser.Module, siblings: parser.Module[], is_entry: boo
   if (is_entry) {
     needs = extra;
   }
-  return asm_ir.emit_module_ir_unit_flat(t.u.mods[0], is_entry, true, ns, needs, t.g.im.funcs, t.g.stab, 0, 0 - 1, t.u.caches[0], t.g.base, t.d.sub.rt_lower);
+  return asm_ir.emit_module_ir_unit_flat(t.u.mods[0], is_entry, true, ns, needs, t.g.im.funcs, t.g.stab, 0, 0 - 1, t.u.caches[0], t.g.base, t.d.sub.rt_lower, 0 as usize);
 }
 
 // The typed lowering checks a whole program, so it lowers `mod` together with

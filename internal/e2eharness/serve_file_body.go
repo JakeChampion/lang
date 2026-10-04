@@ -17,7 +17,8 @@ import (
 func FileBodyServerSource(port int, path string) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/file") { return http.file(%q).with_content_type("text/plain"); }
     if (req.path == "/missing") { return http.file(%q + ".missing"); }
     return http.ok("ok");

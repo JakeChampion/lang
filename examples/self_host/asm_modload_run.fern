@@ -297,7 +297,7 @@ function emit_unit(v: View, idx: i32, is_entry: boolean, ns: string, extra: stri
   if (target == "arm64-linux") {
     return asm_arm64_ir.emit_module_ir_unit_arm64_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.base, v.rt);
   }
-  return asm_ir.emit_module_ir_unit_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.base, v.rt);
+  return asm_ir.emit_module_ir_unit_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.base, v.rt, 0 as usize);
 }
 
 // unit_cache_file returns the object path for ONE emitted unit, or "" when the
@@ -1117,7 +1117,7 @@ function main(): i32 {
         }
         // IR-or-error (#3457 slice 5) — see asm_load_run's arm64 leg.
         let d64: semlower.Driven = semlower.driven(merged_emitted(merged), target);
-        write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub));
+        write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub, 0 as usize));
         return 0;
       }
       // OVER the merged 512-function IR budget: route per-module (each
@@ -1164,7 +1164,7 @@ function main(): i32 {
       // merged fixpoints retire with this change — their own header says they
       // "go with" asm.fern.
       let d: semlower.Driven = semlower.driven(merged_emitted(merged), target);
-      write(asm_ir.emit_module_or_error_sub(d.full, d.sub));
+      write(asm_ir.emit_module_or_error_sub(d.full, d.sub, 0 as usize));
       return 0;
     },
     Err(e) => {

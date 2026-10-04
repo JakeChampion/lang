@@ -71,7 +71,7 @@ function emit_per_module_concat(entry_mod: parser.Module, loaded: flatten.Loaded
     if (parts[ti].is_entry) {
       textra = needs;
     }
-    out = out + asm_ir.emit_module_ir_unit_flat(u.mods[ti], parts[ti].is_entry, true, parts[ti].ns, textra, g.im.funcs, g.stab, 0, 0 - 1, u.caches[ti], g.base, d.sub.rt_lower);
+    out = out + asm_ir.emit_module_ir_unit_flat(u.mods[ti], parts[ti].is_entry, true, parts[ti].ns, textra, g.im.funcs, g.stab, 0, 0 - 1, u.caches[ti], g.base, d.sub.rt_lower, 0 as usize);
     ti = ti + 1;
   }
   return asmcore.dedupe_weak_defs(out);
@@ -366,7 +366,7 @@ function main(): i32 {
     let pd: semlower.Driven = semlower.driven_annotated(checked_or_exit(flatten.bundle(entry_mod, loaded, target), prune, target), target);
     let pg: ircore.Gated = semlower.program(pd);
     let pu: ircore.Units = ircore.split_units(pg, part_mods(parts), entry_index(parts));
-    write(asm_ir.emit_module_ir_unit_flat(pu.mods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, pg.im.funcs, pg.stab, 0, 0 - 1, pu.caches[pm_index], pg.base, pd.sub.rt_lower));
+    write(asm_ir.emit_module_ir_unit_flat(pu.mods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, pg.im.funcs, pg.stab, 0, 0 - 1, pu.caches[pm_index], pg.base, pd.sub.rt_lower, 0 as usize));
     return 0;
   }
 
@@ -412,7 +412,7 @@ function main(): i32 {
     // needs none of this"), so an over-budget program errors here exactly as it
     // does on x86 — the per-module path is what compiles those.
     let d64: semlower.Driven = semlower.driven_annotated(merged, target);
-    write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub));
+    write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub, 0 as usize));
     return 0;
   }
   if (target == "arm64-darwin") {
@@ -421,7 +421,7 @@ function main(): i32 {
     // hands to its in-process assembler. Emitted here so a harness can
     // inspect the darwinized output without building the whole CLI.
     let dd: semlower.Driven = semlower.driven_annotated(merged, target);
-    write(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(dd.full, true, dd.sub)));
+    write(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(dd.full, true, dd.sub, 0 as usize)));
     return 0;
   }
   // OVER the merged 512-function IR budget but small enough to fit one process:
@@ -439,6 +439,6 @@ function main(): i32 {
   }
   // Every other program takes the merged emit, where a module the gate
   // declines is an ERROR (#3457 slice 5).
-  write(asm_ir.emit_module_or_error_sub(d.full, d.sub));
+  write(asm_ir.emit_module_or_error_sub(d.full, d.sub, 0 as usize));
   return 0;
 }

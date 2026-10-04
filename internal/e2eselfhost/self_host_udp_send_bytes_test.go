@@ -46,40 +46,31 @@ func TestSelfHostUDPSendBytes(t *testing.T) {
 	}
 	for _, compiler := range []struct{ name, path string }{{"primary", primary}, {"bootstrap", bootstrap}} {
 		for _, target := range targets {
-			backends := []string{""}
-			if compiler.name == "bootstrap" && strings.HasSuffix(target.target, "-linux") {
-				backends = append(backends, "ssa")
-			}
-			for _, backend := range backends {
-				t.Run(compiler.name+"/"+target.target+"/"+backend, func(t *testing.T) {
-					compile := func(src, bin string) *exec.Cmd {
-						args := []string{"-target", target.target, "-o", bin}
-						if backend != "" {
-							args = append(args, "-backend", backend)
-						}
-						if compiler.name == "primary" && target.target == "wasm32-wasi" {
-							args = append(args, "-emit", "core-module")
-						}
-						args = append(args, src)
-						if compiler.name == "primary" {
-							args = append(args, stdlib)
-						}
-						cmd := exec.Command(compiler.path, args...)
-						cmd.Env = append(os.Environ(), "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
-						if out, err := cmd.CombinedOutput(); err != nil {
-							t.Fatalf("compile: %v\n%s", err, out)
-						}
-						if target.target == "wasm32-wasi" {
-							if compiler.name == "primary" {
-								return composeSelfHostWat(t, bin)
-							}
-							return exec.Command("wasmtime", "run", "-S", "inherit-network", bin)
-						}
-						return runX86_64Bin(target.runner, bin)
+			t.Run(compiler.name+"/"+target.target, func(t *testing.T) {
+				compile := func(src, bin string) *exec.Cmd {
+					args := []string{"-target", target.target, "-o", bin}
+					if compiler.name == "primary" && target.target == "wasm32-wasi" {
+						args = append(args, "-emit", "core-module")
 					}
-					checkUDPSendBytesFamilies(t, compile, compiler.name == "primary" && target.target != "wasm32-wasi")
-				})
-			}
+					args = append(args, src)
+					if compiler.name == "primary" {
+						args = append(args, stdlib)
+					}
+					cmd := exec.Command(compiler.path, args...)
+					cmd.Env = append(os.Environ(), "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+					if out, err := cmd.CombinedOutput(); err != nil {
+						t.Fatalf("compile: %v\n%s", err, out)
+					}
+					if target.target == "wasm32-wasi" {
+						if compiler.name == "primary" {
+							return composeSelfHostWat(t, bin)
+						}
+						return exec.Command("wasmtime", "run", "-S", "inherit-network", bin)
+					}
+					return runX86_64Bin(target.runner, bin)
+				}
+				checkUDPSendBytesFamilies(t, compile, compiler.name == "primary" && target.target != "wasm32-wasi")
+			})
 		}
 	}
 	t.Run("bootstrap/interpreter", func(t *testing.T) {

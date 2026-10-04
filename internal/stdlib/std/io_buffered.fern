@@ -4,7 +4,7 @@
 //
 // BytesWriter accumulates bytes in memory. Its write_string and write_bytes
 // methods return an updated BytesWriter. The fd-backed Writer instead has
-// write(string) and write_bytes(u8[]), which return Option[IoError].
+// write(string) and write_bytes([u8]), which return Option[IoError].
 //
 // Build a byte buffer without a host write for each piece:
 //

@@ -1,88 +1,168 @@
 // std/mock_platform — a Platform that records instead of acting
 // (docs/PLATFORM-RESEARCH.md Rec §6).
 //
-// A handler can only reach the effects its bag carries, so substituting the
-// bag is the whole test seam: hand `handle` a mock, run it, and read back
-// what it tried to do.
+// A handler can only reach the effects its platform carries, so substituting
+// the platform is the whole test seam: hand `handle` a mock, run it, and read
+// back what it tried to do.
 //
-//     let m: MockPlatform = mock_platform_new();
-//     let resp: HttpResponse = handle(req, m.as_platform());
+//     let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+//     let resp: HttpResponse = handle(req, m);
 //
 //     assert_eq(resp.status, 200);
 //     assert_eq(m.call_count(), 2);
 //     assert_eq(m.calls()[0].name, "log");
 //
-// The recorded calls live in a `Cell[string]` the mock and the bag share —
-// one cell, two views — because a cell is the language's shared-mutable box
-// and its element must be a scalar or a string (E057). `calls()` parses that
-// log back into `MockCall` values; the mock itself stays a value you can
-// pass around.
+// The recorded calls live in a `Cell[string]`, so a mock handed to a handler
+// and the test's own copy of it share one log: the mock is a value, its log
+// is not. A cell's element must be a scalar or a string (E057), so the log
+// is one string, an entry per line, and `calls()` parses it back into
+// `MockCall` values.
 //
 // What a mocked capability RETURNS is what the test canned for it, or a
 // fixed value: `env_set`, `config_set`, `secret_set`, `now_set`,
-// `elapsed_set`, `random_set` and `http_set` record an answer the bag gives
+// `elapsed_set`, `random_set` and `http_set` record an answer the mock gives
 // from then on; otherwise `now_ms` and `elapsed_ns` answer 0, `env`,
-// `config` and `secret` answer None, `random_i32`
-// answers 0, `log` discards the line, and `http` answers
-// `Err(Connect(ConnectionRefused))` — what a real request gives for a host
-// that is not listening, so a handler that already handles a failed
-// request handles a mocked one. A canned answer is a row of the same cell
-// the log lives in, which `calls()` skips and `reset()` keeps.
+// `config` and `secret` answer None, `random_i32` answers 0, `log` discards
+// the line, and `http` answers `Err(Connect(ConnectionRefused))` — what a
+// real request gives for a host that is not listening, so a handler that
+// already handles a failed request handles a mocked one. A canned answer is
+// a row of the same log, `canned`, tab, the capability's key, tab, the
+// value, which `calls()` skips and `reset()` keeps.
 
 import "std/string";
 import "std/platform";
+import "std/fetch";
+import "std/net";
+import "std/http";
+import "core/int";
+
+// `MockPlatform` — the recording platform. `sink` is its log and its canned
+// answers.
+pub struct MockPlatform { sink: Cell[string] }
+
+// `MockCall` — one recorded call: the capability's name and a summary of its
+// arguments (`log` keeps the message, `http` keeps `METHOD url`).
+pub struct MockCall { name: string, args: string }
 
 // `mock_platform_new()` — a fresh mock with an empty log.
 pub function mock_platform_new(): MockPlatform {
   return MockPlatform { sink: cell_new("") };
 }
 
-// `(m: MockPlatform).as_platform()` — the bag to hand a handler. It carries
-// the mock's own sink, so every capability call the handler makes lands in
-// `m`'s log rather than on the host.
-pub function (m: MockPlatform) as_platform(): Platform {
-  return platform.platform_mock(m.sink);
+impl platform.Platform for MockPlatform {
+  function log(self: MockPlatform, msg: string): void {
+    self.record("log", msg);
+  }
+
+  function now_ms(self: MockPlatform): i64 {
+    self.record("now_ms", "");
+    return __canned_i64(self, "now_ms", 0i64);
+  }
+
+  function elapsed_ns(self: MockPlatform): i64 {
+    self.record("elapsed_ns", "");
+    return __canned_i64(self, "elapsed_ns", 0i64);
+  }
+
+  function env(self: MockPlatform, name: string): Option[string] {
+    self.record("env", name);
+    return self.canned("env " + name);
+  }
+
+  function config(self: MockPlatform, name: string): Option[string] {
+    self.record("config", name);
+    return self.canned("config " + name);
+  }
+
+  function secret(self: MockPlatform, name: string): Option[string] {
+    self.record("secret", name);
+    return self.canned("secret " + name);
+  }
+
+  function random_i32(self: MockPlatform): i32 {
+    self.record("random_i32", "");
+    return __canned_i64(self, "random_i32", 0 as i64) as i32;
+  }
+
+  // A mock reaches no socket: the call is logged as `http` with `METHOD url`
+  // and answered with what the test canned for that pair (`http_set`).
+  function http(self: MockPlatform, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
+    let summary: string = req.method + " " + req.url;
+    self.record("http", summary);
+    match (self.canned("http " + summary)) {
+      Some(v) => {
+        return Ok(__canned_response(v));
+      },
+      None => {
+        return Err(fetch.Connect(net.ConnectionRefused));
+      }
+    }
+    return Err(fetch.Connect(net.ConnectionRefused));
+  }
 }
 
-// `(m: MockPlatform).record(name, args)` — append an entry by hand, for a
-// test that wants to drive the log directly rather than through a handler.
-// Mutates through the shared cell: the mock is a value, its log is not.
+// `(m: MockPlatform).record(name, args)` — append an entry to the log; each
+// capability calls it, and a test may drive the log directly. An entry is
+// name, tab, args, newline, so a tab or a newline inside `args` splits it,
+// which is why what gets recorded is a summary of the arguments rather than
+// a payload.
 pub function (m: MockPlatform) record(name: string, args: string): void {
-  m.as_platform().record(name, args);
+  m.sink.set(m.sink.get() + name + "\t" + args + "\n");
+}
+
+// `(m: MockPlatform).can(key, value)` — answer `key` with `value` from now on.
+// The keys are `env NAME`, `config NAME`, `secret NAME`, `now_ms`,
+// `elapsed_ns`, `random_i32` and `http METHOD url`; the setters below spell
+// them. A tab, newline or backslash in the value is escaped into the row.
+pub function (m: MockPlatform) can(key: string, value: string): void {
+  m.sink.set(m.sink.get() + "canned\t" + key + "\t" + __canned_escape(value) + "\n");
+}
+
+// `(m: MockPlatform).canned(key)` — the value `.can` recorded for `key`, the
+// last one when several were, or `None`.
+pub function (m: MockPlatform) canned(key: string): Option[string] {
+  let found: Option[string] = None;
+  let prefix: string = "canned\t" + key + "\t";
+  for line in m.sink.get().split("\n") {
+    if (line.len() >= prefix.len() && slice_unchecked(line, 0, prefix.len()) + "" == prefix) {
+      found = Some(__canned_unescape(slice_unchecked(line, prefix.len(), line.len()) + ""));
+    }
+  }
+  return found;
 }
 
 // `(m: MockPlatform).env_set(name, value)` — `plat.env(name)` answers
 // `Some(value)` from now on.
 pub function (m: MockPlatform) env_set(name: string, value: string): void {
-  m.as_platform().can("env " + name, value);
+  m.can("env " + name, value);
 }
 
 // `(m: MockPlatform).config_set(name, value)` — `plat.config(name)` answers
 // `Some(value)` from now on.
 pub function (m: MockPlatform) config_set(name: string, value: string): void {
-  m.as_platform().can("config " + name, value);
+  m.can("config " + name, value);
 }
 
 // `(m: MockPlatform).secret_set(name, value)` — `plat.secret(name)` answers
 // `Some(value)` from now on. The value is held with the canned answers,
 // which `calls()` never returns.
 pub function (m: MockPlatform) secret_set(name: string, value: string): void {
-  m.as_platform().can("secret " + name, value);
+  m.can("secret " + name, value);
 }
 
 // `(m: MockPlatform).now_set(ms)` — `plat.now_ms()` answers `ms`.
 pub function (m: MockPlatform) now_set(ms: i64): void {
-  m.as_platform().can("now_ms", ms.to_string());
+  m.can("now_ms", ms.to_string());
 }
 
 // `(m: MockPlatform).elapsed_set(ns)` — `plat.elapsed_ns()` answers `ns`.
 pub function (m: MockPlatform) elapsed_set(ns: i64): void {
-  m.as_platform().can("elapsed_ns", ns.to_string());
+  m.can("elapsed_ns", ns.to_string());
 }
 
 // `(m: MockPlatform).random_set(v)` — `plat.random_i32()` answers `v`.
 pub function (m: MockPlatform) random_set(v: i32): void {
-  m.as_platform().can("random_i32", v.to_string());
+  m.can("random_i32", v.to_string());
 }
 
 // `(m: MockPlatform).http_set(method, url, status, body)` —
@@ -90,7 +170,7 @@ pub function (m: MockPlatform) random_set(v: i32): void {
 // request with that method and URL; any other request still answers
 // `Err(Connect(ConnectionRefused))`.
 pub function (m: MockPlatform) http_set(method: string, url: string, status: i32, body: string): void {
-  m.as_platform().can("http " + method + " " + url, status.to_string() + " " + body);
+  m.can("http " + method + " " + url, status.to_string() + " " + body);
 }
 
 // `(m: MockPlatform).calls()` — the recorded calls, in order; the canned
@@ -128,8 +208,8 @@ pub function (m: MockPlatform) call_count(): i32 {
 }
 
 // `(m: MockPlatform).reset()` — drop the log, keeping the canned answers.
-// Mutates through the shared cell, so a bag already handed to a handler
-// keeps recording into the now-empty log rather than into a stale one.
+// Mutates through the shared cell, so a copy of the mock already handed to a
+// handler keeps recording into the now-empty log rather than into a stale one.
 pub function (m: MockPlatform) reset(): void {
   let kept: string = "";
   for line in m.sink.get().split("\n") {
@@ -167,4 +247,101 @@ pub function (m: MockPlatform) find_call(name: string): Option[MockCall] {
     i = i + 1;
   }
   return None;
+}
+
+function __canned_escape(v: string): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < v.len()) {
+    let b: u8 = v[i];
+    if (b == 92 as u8) {
+      out = out + "\\\\";
+    } else if (b == 9 as u8) {
+      out = out + "\\t";
+    } else if (b == 10 as u8) {
+      out = out + "\\n";
+    } else {
+      out = out + slice_unchecked(v, i, i + 1);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function __canned_unescape(v: string): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < v.len()) {
+    let b: u8 = v[i];
+    if (b == 92 as u8 && i + 1 < v.len()) {
+      let n: u8 = v[i + 1];
+      if (n == 116 as u8) {
+        out = out + "\t";
+      } else if (n == 110 as u8) {
+        out = out + "\n";
+      } else {
+        out = out + slice_unchecked(v, i + 1, i + 2);
+      }
+      i = i + 2;
+      continue;
+    }
+    out = out + slice_unchecked(v, i, i + 1);
+    i = i + 1;
+  }
+  return out;
+}
+
+// __canned_i64(m, key, fallback) — a canned number, or `fallback`.
+function __canned_i64(m: MockPlatform, key: string, fallback: i64): i64 {
+  match (m.canned(key)) {
+    Some(v) => {
+      return __parse_i64(v);
+    },
+    None => {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+function __parse_i64(s: string): i64 {
+  let n: i64 = 0 as i64;
+  let neg: boolean = false;
+  let i: i32 = 0;
+  if (s.len() > 0 && s[0] == 45 as u8) {
+    neg = true;
+    i = 1;
+  }
+  while (i < s.len()) {
+    let d: i32 = s[i] as i32 - 48;
+    if (d < 0 || d > 9) {
+      break;
+    }
+    n = n * (10 as i64) + d as i64;
+    i = i + 1;
+  }
+  if (neg) {
+    return 0 as i64 - n;
+  }
+  return n;
+}
+
+// `__canned_response(v)` — the canned `STATUS BODY` as a response, 200
+// when the status does not read.
+function __canned_response(v: string): HttpResponse {
+  let sp: i32 = v.index_of(" ");
+  let code: string = v;
+  let body: string = "";
+  if (sp >= 0) {
+    code = slice_unchecked(v, 0, sp).to_owned();
+    body = slice_unchecked(v, sp + 1, v.len()).to_owned();
+  }
+  let status: i32 = 200;
+  match (int.parse_int_radix(code, 10)) {
+    Some(n) => {
+      status = n;
+    },
+    None => {}
+  }
+  return http.text(status, body);
 }

@@ -9,6 +9,7 @@ package checker
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -58,6 +59,10 @@ type Info struct {
 	// IntrinsicCalls records resolved semantic identities for the pre-RC IR.
 	// Nil when no supported intrinsic was checked; legacy lowering is unchanged.
 	IntrinsicCalls map[*ast.Call]IntrinsicCall
+	// StatefulHandler reports a `handle` threading process-lifetime state
+	// (state, request, platform). Monomorph drops the generic declaration, so
+	// a target that cannot serve one reads this rather than the program.
+	StatefulHandler bool
 	// BoxedCells names the locals that closureconv.BoxMutatedCaptures
 	// rewrote into 1-element array cells for by-reference scalar capture. Such a
 	// cell is a SHARED MUTABLE reference (the whole point — a closure and the
@@ -608,43 +613,6 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "trailers", Type: ast.StructType{Name: "HeaderMap"}},
 			},
 		},
-		// Platform — the capability bag threaded as the second
-		// parameter of every handler (docs/PLATFORM-RESEARCH.md
-		// Rec §1). `version` is the bag's ABI version, bumped
-		// when a capability lands, so a handler can tell what it
-		// was handed.
-		//
-		// `mode` and `sink` are what make the bag substitutable
-		// (Rec §6). On the host platform mode is 0 and the sink
-		// is an empty cell nothing writes; a MockPlatform hands
-		// over mode 1 and its own cell, and `std/platform`'s
-		// capability methods then append to that cell instead of
-		// performing the effect. The sink is a `Cell[string]`
-		// because a cell is the language's one shared-mutable
-		// box and E057 restricts its element to a scalar or a
-		// string — which is why the effect log is a string the
-		// mock parses back, rather than an array.
-		//
-		// `handle` is the worker-owned runtime handle (#9851 §3.1): the
-		// reactor the serving worker runs on, 0 for a bag built outside
-		// one. Struct fields are frozen after construction and a cell
-		// holds only a scalar or a string, so the mutable per-worker
-		// state a capability needs (idle connections, timers, the sim's
-		// driver) lives behind this handle rather than in the bag.
-		//
-		// Every construction goes through the synthesised
-		// `__fern_platform_new`, std/serve's `__host_platform`, or
-		// std/platform; nothing builds this struct out of raw
-		// memory.
-		{
-			Name: "Platform",
-			Fields: []ast.Param{
-				{Name: "version", Type: ast.NumberType{}},
-				{Name: "mode", Type: ast.NumberType{}},
-				{Name: "sink", Type: ast.StructType{Name: "Cell", Args: []ast.Type{ast.StringType{}}}},
-				{Name: "handle", Type: ast.NumberType{}},
-			},
-		},
 		// HeaderMap — case-insensitive, multi-valued, insertion-
 		// ordered header bag (docs/STDLIB-DESIGN-RESEARCH.md
 		// Rec §2). Storage is two parallel arrays — `names`
@@ -710,36 +678,6 @@ func builtinStructDecls() []*ast.StructDecl {
 			Name: "BytesWriter",
 			Fields: []ast.Param{
 				{Name: "data", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
-			},
-		},
-		// MockCall + MockPlatform — test-ergonomics helpers for
-		// Tier-C Rec §11 (docs/PLATFORM-RESEARCH.md §6). Today's
-		// Platform is a one-field placeholder; once Phase 2 adds
-		// capability fields (log / fetch / kv / now), MockPlatform
-		// grows matching methods that intercept calls. Phase 1
-		// ships the call-recording infrastructure: tests
-		// instantiate MockPlatform, perform some flow that
-		// records `MockCall { name, args }` entries, then
-		// inspect `(m).calls()` to assert effect ordering /
-		// payload shape.
-		{
-			Name: "MockCall",
-			Fields: []ast.Param{
-				{Name: "name", Type: ast.StringType{}},
-				{Name: "args", Type: ast.StringType{}},
-			},
-		},
-		// MockPlatform — the recording half of the test seam
-		// (docs/PLATFORM-RESEARCH.md Rec §6). One field, and it is
-		// the SAME cell the bag from `as_platform()` carries: the
-		// mock and the handler write one log through two views.
-		// The calls are a string rather than a MockCall[] because
-		// a cell's element must be a scalar or a string (E057);
-		// `std/mock_platform`'s `calls()` parses it back.
-		{
-			Name: "MockPlatform",
-			Fields: []ast.Param{
-				{Name: "sink", Type: ast.StructType{Name: "Cell", Args: []ast.Type{ast.StringType{}}}},
 			},
 		},
 		// Date/time types (docs/STDLIB-DESIGN-RESEARCH.md
@@ -858,15 +796,18 @@ func builtinStructDecls() []*ast.StructDecl {
 		// type bits AND the permission bits (S_IFMT included), so
 		// the kind predicates a shell `test` needs (-b -c -p -S
 		// -h/-L) read it directly; `is_file` / `is_dir` stay as
-		// the derived conveniences they always were. The three
+		// the derived conveniences they always were. The four
 		// timestamps are split into whole seconds since the Unix
 		// epoch plus the sub-second nanosecond remainder, because
-		// the language has no Time type to hand back.
+		// the language has no Time type to hand back. The birth
+		// time (`btime`) is statx(2)'s on Linux and
+		// st_birthtimespec on Darwin, and zero where the
+		// filesystem records none.
 		//
 		// On wasm32-wasi the fields WASI does not report are zero:
 		// preview 1's `filestat` has no mode / uid / gid / blksize
-		// / blocks / rdev, and preview 2's `descriptor-stat` has
-		// neither those nor `dev`. See the `stat` signature below
+		// / blocks / rdev / birth time, and preview 2's
+		// `descriptor-stat` has neither those nor `dev`. See the `stat` signature below
 		// for the exact per-preview list.
 		{
 			Name: "FileStat",
@@ -889,6 +830,8 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "mtime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
 				{Name: "ctime", Type: ast.NumberType{Width: 64, Signed: true}},
 				{Name: "ctime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "btime", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "btime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
 			},
 		},
 		// FsStat — `statfs(path)` shape: what a FILESYSTEM reports
@@ -1177,8 +1120,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		}
 	}
 	// Same shape for the auto-injected structs (Reader,
-	// Writer, HttpRequest, HttpResponse, Platform, HeaderMap,
-	// Stream, BytesWriter, MockCall, MockPlatform, Instant /
+	// Writer, HttpRequest, HttpResponse, HeaderMap,
+	// Stream, BytesWriter, Instant /
 	// Date / Time / DateTime / TimeZone / Zoned / Span /
 	// Duration, Map, MapIter, Url) — same shadow-is-an-error
 	// policy, same monomorph-re-entry handling.
@@ -1415,6 +1358,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		}
 		c.info.Resources[rd.Name] = rd
 	}
+
+	c.traitNames = desugarTraitParams(prog)
 
 	// Bind receiver type-variables for generic-receiver methods. A
 	// method like `function (b: Box[T]) get(): T` introduces T as an
@@ -1824,6 +1769,15 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// __scan_set_bytes(bytes, from, set) → i32: __scan_set over a u8[].
+	c.info.FuncSigs["__scan_set_bytes"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// __bsd_sum(s, sum) → i32: the BSD checksum `sum -r` keeps, carried in
 	// `sum` and continued over s: per byte, rotate the 16 bits right by one
 	// and add the byte, modulo 2^16. Native runtime surface, carried by the
@@ -2001,6 +1955,26 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	c.info.FuncSigs["__heap_release_to"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
 		Result: ast.VoidType{},
+	}
+	// The task primitives (docs/NET-P3-SUSPENSION-PLAN.md §3.4): a record per
+	// task, the current task, the park that unwinds it, and the words its
+	// scheduler reads back. std/async's Task API is written over them. Only
+	// the self-host compiler suspends; here they take the blocking fallback,
+	// so no task is ever current and a park is never reached.
+	i32T := ast.NumberType{}
+	for name, sig := range map[string]*ast.FuncType{
+		"__task_new":           {Params: []ast.Type{}, Result: i32T},
+		"__task_free":          {Params: []ast.Type{i32T}, Result: ast.VoidType{}},
+		"__task_cur":           {Params: []ast.Type{}, Result: i32T},
+		"__task_enter":         {Params: []ast.Type{i32T, i32T}, Result: ast.VoidType{}},
+		"__task_leave":         {Params: []ast.Type{}, Result: i32T},
+		"__task_park":          {Params: []ast.Type{ast.ArrayType{Elem: i32T}, i32T}, Result: i32T},
+		"__task_wait":          {Params: []ast.Type{i32T}, Result: ast.ArrayType{Elem: i32T}},
+		"__task_timeout":       {Params: []ast.Type{i32T}, Result: i32T},
+		"__task_set_ready":     {Params: []ast.Type{i32T, i32T}, Result: ast.VoidType{}},
+		"__task_set_cancelled": {Params: []ast.Type{i32T}, Result: ast.VoidType{}},
+	} {
+		c.info.FuncSigs[name] = sig
 	}
 	// f32_bits(x: f32): i32 — reinterprets a 32-bit float as its
 	// IEEE-754 bit pattern. f32_from_bits is the inverse. The pair
@@ -2865,8 +2839,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// fields read ZERO rather than being absent from the type:
 	//
 	//   - preview 1 (`path_filestat_get`) has dev, ino, nlink,
-	//     size and the three timestamps. mode, uid, gid, rdev,
-	//     blksize and blocks are zero; `mode` therefore cannot
+	//     size and three timestamps. mode, uid, gid, rdev,
+	//     blksize, blocks and the birth time are zero; `mode` therefore cannot
 	//     answer a permission question there, only `is_file` /
 	//     `is_dir`, which come from `filetype`.
 	//   - preview 2 (`descriptor.stat-at`) has nlink, size and the
@@ -3262,6 +3236,44 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 			ast.StringType{},
 			ast.EnumType{Name: "IoError"},
 		}},
+	}
+	// getxattr(path, name): Result[string, IoError] — the value of the
+	// extended attribute `name` on `path`, `getxattr(2)`. The value is
+	// the attribute's bytes verbatim: an SELinux context keeps the NUL
+	// the kernel stores after it. An absent attribute is ENODATA
+	// (Darwin's ENOATTR), a filesystem without attributes EOPNOTSUPP,
+	// and the Err carries which. lgetxattr is the same question about
+	// a final symlink itself, the way `lstat` is. Native only: neither
+	// WASI preview has extended attributes (capability `xattr`).
+	c.info.FuncSigs["getxattr"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	c.info.FuncSigs["lgetxattr"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// setxattr(path, name, value): Result[void, IoError] — create or
+	// replace the extended attribute `name` on `path` with `value`'s
+	// bytes, `setxattr(2)` with no flags. lsetxattr sets it on a final
+	// symlink itself. The Err carries the kernel's answer verbatim:
+	// EOPNOTSUPP from a filesystem without attributes, EPERM from a
+	// caller who may not write a `security.` one. Native only, like
+	// getxattr (capability `xattr`).
+	for _, name := range []string{"setxattr", "lsetxattr"} {
+		c.info.FuncSigs[name] = &ast.FuncType{
+			Params: []ast.Type{ast.StringType{}, ast.StringType{}, ast.StringType{}},
+			Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+				ast.VoidType{},
+				ast.EnumType{Name: "IoError"},
+			}},
+		}
 	}
 	// rename(from, to): Result[void, IoError] — move the directory
 	// entry `from` to `to`, `renameat(AT_FDCWD, from, AT_FDCWD, to)`.
@@ -3997,7 +4009,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	writeSomeResult := ast.EnumType{Name: "Result", Args: []ast.Type{
 		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
 	registerStructMethod("Writer", "write_some", []ast.Type{ast.StringType{}}, writeSomeResult)
-	bytes := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	bytes := ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}
 	registerStructMethod("Writer", "write_bytes", []ast.Type{bytes}, optionIoErr)
 	registerStructMethod("Writer", "write_some_bytes", []ast.Type{bytes}, writeSomeResult)
 	registerStructMethod("Writer", "close", nil, optionIoErr)
@@ -4062,6 +4074,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// rather than a mount — so it answers `Err(Unsupported)` there.
 	registerStructMethod("Reader", "syncfs", nil, optionIoErr)
 	registerStructMethod("Writer", "syncfs", nil, optionIoErr)
+	// drop_cache(offset, len) asks the kernel to drop the cached pages of
+	// that range of the handle's file: posix_fadvise(2) with
+	// POSIX_FADV_DONTNEED, len 0 meaning to the end. XNU has no fadvise, so
+	// arm64-darwin answers `Err(Unsupported)`; WASI's fd_advise /
+	// descriptor.advise carry the same advice and answer what the host does.
+	dropCacheArgs := []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: true}}
+	registerStructMethod("Reader", "drop_cache", dropCacheArgs, optionIoErr)
+	registerStructMethod("Writer", "drop_cache", dropCacheArgs, optionIoErr)
 	// sync(): void — `sync(2)`, which schedules write-back of every
 	// dirty buffer on the machine. It returns nothing and cannot fail
 	// on either Linux or Darwin, so there is no Result to unwrap.
@@ -5215,11 +5235,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	}
 
 	// Auto-main from handle: when the user defines
-	// `function handle(req: HttpRequest, plat: Platform):
+	// `function handle(req: HttpRequest, plat: platform.Platform):
 	// HttpResponse` but no `main()`, synthesise a minimal main
 	// that calls `serve.supervise(port, serve.config(), handle)` after reading PORT
-	// from the environment (default 8080). The serve loop constructs
-	// a Platform per request and threads it through. The same
+	// from the environment (default 8080). The serve loop builds a
+	// `platform.Host` per worker and hands it to every request. The same
 	// source then
 	// compiles for arm64 (CLI-mode native server), wasm
 	// CLI-mode (`--invoke main`), and wasi-http (the
@@ -5229,13 +5249,18 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// Skipped silently when both handle() and main() are
 	// user-defined — don't surprise users who want their
 	// own main alongside the wasi-http handler.
-	// The Platform bag has exactly one constructor, and the compiler owns
-	// it (docs/PLATFORM-RESEARCH.md Rec §2). Synthesised whenever a `handle`
-	// exists — including on wasi-http, where the entry wrapper calls it
-	// rather than building the struct out of raw memory, so a field added
-	// to the bag costs the wrapper nothing.
-	if hasHandleDecl(prog) && findDecl(prog, platformCtorName) == nil {
-		prog.Funcs = append(prog.Funcs, synthesisePlatformCtor())
+	// The wasi-http entry wrapper (internal/codegen/wasmbin/wasi_http.go)
+	// is hand-written wasm, which cannot instantiate a handler generic over
+	// its platform, so it calls a synthesised `__fern_wasi_handle(req)`
+	// that hands `handle` the host platform in Fern. Synthesised whenever a
+	// two-parameter `handle` and std/platform are present; other targets
+	// tree-shake it.
+	if h := findDecl(prog, "handle"); h != nil && h.Receiver == nil && len(h.Params) == 2 &&
+		findDecl(prog, WasiHandleName) == nil && findDecl(prog, "platform__host") != nil {
+		prog.Funcs = append(prog.Funcs, synthesiseWasiHandle())
+	}
+	if h := findDecl(prog, "handle"); h != nil && h.Receiver == nil && len(h.Params) == 3 {
+		c.info.StatefulHandler = true
 	}
 	if hasHandleDecl(prog) && !hasMainDecl(prog) {
 		// A mispaired init/handle has already been reported against the
@@ -7946,8 +7971,11 @@ func (c *checker) typeImplementsDisplay(t ast.Type) bool {
 }
 
 type checker struct {
-	info   *Info
-	errors []error
+	// traitNames is every declared trait, as a parameter type spells it; set
+	// by desugarTraitParams so E064 can say a misplaced trait is one.
+	traitNames map[string]bool
+	info       *Info
+	errors     []error
 	// Intrinsics are registered by signature identity at their declaration
 	// site, not recognized from a call's spelling by semantic lowering.
 	intrinsicSigs map[*ast.FuncType]IntrinsicKind
@@ -8798,7 +8826,7 @@ func (c *checker) checkTypeKnown(t ast.Type, params map[string]bool, pos ast.Pos
 	switch x := t.(type) {
 	case ast.StructType:
 		if !c.knownTypeName(x.Name, params) {
-			c.errfCode(pos, "E064", "unknown type %q%s", x.Name, unknownTypeHint(x.Name))
+			c.errfCode(pos, "E064", "unknown type %q%s", demangle(x.Name), c.unknownTypeHint(x.Name))
 			return
 		}
 		for _, a := range x.Args {
@@ -8806,7 +8834,7 @@ func (c *checker) checkTypeKnown(t ast.Type, params map[string]bool, pos ast.Pos
 		}
 	case ast.EnumType:
 		if !c.knownTypeName(x.Name, params) {
-			c.errfCode(pos, "E064", "unknown type %q%s", x.Name, unknownTypeHint(x.Name))
+			c.errfCode(pos, "E064", "unknown type %q%s", demangle(x.Name), c.unknownTypeHint(x.Name))
 			return
 		}
 		for _, a := range x.Args {
@@ -8855,7 +8883,10 @@ func (c *checker) knownTypeName(name string, params map[string]bool) bool {
 
 // unknownTypeHint suggests the right spelling for a handful of common
 // cross-language slips, appended to the E064 message.
-func unknownTypeHint(name string) string {
+func (c *checker) unknownTypeHint(name string) string {
+	if c.traitNames[name] {
+		return fmt.Sprintf(" (`%s` is a trait: a parameter of trait type makes the function generic over it; anywhere else write `dyn %s`)", demangle(name), demangle(name))
+	}
 	switch name {
 	case "bool":
 		return " (did you mean `boolean`?)"
@@ -10704,6 +10735,9 @@ func assignHint(want, got ast.Type) string {
 // conversion has to be written out — otherwise the checker accepts an
 // assignment no backend lowers (#8446). Empty for any other pair.
 func dynElemHint(want, got ast.Type) string {
+	if _, direct := want.(ast.DynTraitType); direct {
+		return ""
+	}
 	pos, ok := dynElemMismatch(want, got)
 	if !ok {
 		return ""
@@ -11262,6 +11296,19 @@ func hoistReceiver(fn *ast.FuncDecl) {
 	fn.Receiver = nil
 }
 
+// receiverDeclares reports whether the hoisted generic method `name` takes
+// type parameter tp from its receiver. A concrete receiver (`u8[]`,
+// `Box[i32]`) declares none, so the receiver's arguments a dispatch stamps
+// must not bind the method's own parameters. True for anything that is not
+// a generic method, which keeps the receiver stamp as it was.
+func (c *checker) receiverDeclares(name, tp string) bool {
+	fn, ok := c.info.GenericFuncs[name]
+	if !ok || fn.MethodRecv == "" || len(fn.Params) == 0 {
+		return true
+	}
+	return typeMentionsParam(fn.Params[0].Type, tp)
+}
+
 // elemDispatchable reports whether an array/slice receiver with this element
 // type can be dispatched to. Call-site dispatch binds the receiver's element
 // in one step, so a nested `T[][]` / `[T][]` element binds T to the INNER
@@ -11360,7 +11407,7 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 // clock). verifyFipAllocs (E068) stays the backstop for what they emit.
 var fipNonAllocBuiltins = map[string]bool{
 	"__memchr": true, "__count_byte_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
-	"__sum_bytes": true, "__scan_set": true, "__bsd_sum": true, "__count_runs": true,
+	"__sum_bytes": true, "__scan_set": true, "__scan_set_bytes": true, "__bsd_sum": true, "__count_runs": true,
 	"__crc32_cksum": true,
 	"__clz32":       true, "__ctz32": true, "__popcount32": true,
 	"__clz64": true, "__ctz64": true, "__popcount64": true,
@@ -16360,6 +16407,40 @@ func (c *checker) indexAsType(e ast.Expr, params map[string]bool, s *scope) (ast
 	return nil, false
 }
 
+// instantiateFuncValue types a generic function named as a value from the
+// function type the value is wanted at: each parameter and the result of the
+// generic signature unified against the expected type's. It stamps the type
+// arguments on the Ident for monomorph, which renames it to the instance, and
+// reports whether the expected type determined every type parameter. A type
+// argument may be an enclosing generic's own parameter; the clone loop
+// substitutes it as it does a call's.
+func (c *checker) instantiateFuncValue(n *ast.Ident, gf *ast.FuncDecl) (ast.Type, bool) {
+	exp, ok := c.expectedType.(*ast.FuncType)
+	if !ok {
+		return nil, false
+	}
+	sig, ok := c.info.FuncSigs[n.Name]
+	if !ok || len(sig.Params) != len(exp.Params) {
+		return nil, false
+	}
+	sub := map[string]ast.Type{}
+	for i := range sig.Params {
+		c.unifyType(sig.Params[i], exp.Params[i], sub)
+	}
+	c.unifyType(sig.Result, exp.Result, sub)
+	args := make([]ast.Type, len(gf.TypeParams))
+	for i, tp := range gf.TypeParams {
+		t, bound := sub[tp]
+		if !bound {
+			return nil, false
+		}
+		args[i] = t
+	}
+	c.checkTypeArgBounds(gf, args, sub, c.typeParamsInScope(), n.P)
+	n.TypeArgs = args
+	return substituteType(sig, sub), true
+}
+
 // errE040GenericFuncAsValue reports a generic function named where a value
 // is expected. The eta-expansion in the hint is spelled from the decl's own
 // parameters, so it is the shape the user needs rather than a generic
@@ -17019,6 +17100,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// outside callee position is never queued. Until it exists this is
 		// a refusal with a code, not a miscompile reported as a compiler bug.
 		if gf, isGen := c.info.GenericFuncs[n.Name]; isGen {
+			if t, ok := c.instantiateFuncValue(n, gf); ok {
+				return t
+			}
 			c.errE040GenericFuncAsValue(n.P, n.Name, gf)
 			return nil
 		}
@@ -17880,7 +17964,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if len(typeParams) == len(n.TypeArgs) {
 					sub := make(map[string]ast.Type, len(typeParams))
 					for i, tp := range typeParams {
-						sub[tp] = n.TypeArgs[i]
+						if c.receiverDeclares(id.Name, tp) {
+							sub[tp] = n.TypeArgs[i]
+						}
 					}
 					substitutedParams := make([]ast.Type, len(ft.Params))
 					for i, p := range ft.Params {
@@ -17963,7 +18049,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					}
 					// The receiver's arguments are the LEADING parameters.
 					for i, ta := range recvArgs {
-						if i < len(fn.TypeParams) {
+						if i < len(fn.TypeParams) && c.receiverDeclares(id.Name, fn.TypeParams[i]) {
 							sub[fn.TypeParams[i]] = ta
 						}
 					}
@@ -18068,6 +18154,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						if _, isLit := n.Args[i].(*ast.ArrayLit); isLit {
 							c.expectedType = pt
 						}
+					} else if _, isFn := pt.(*ast.FuncType); isFn {
+						// A function parameter is what a generic function named
+						// as the argument takes its type arguments from. A
+						// lambda's body must not see it: a generic call in its
+						// return would read it as that call's result.
+						if _, isName := n.Args[i].(*ast.Ident); isName {
+							c.expectedType = pt
+						}
 					}
 				}
 				at = c.checkExpr(n.Args[i], s)
@@ -18154,7 +18248,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					continue
 				}
 				if sub != nil {
-					if !c.unifyArrayArg(&n.Args[i], expected, at, sub, own) {
+					if id, isName := n.Args[i].(*ast.Ident); isName && len(id.TypeArgs) > 0 {
+						// A generic named as the argument was typed from this
+						// parameter (instantiateFuncValue): unifying the two
+						// would only bind the callee's own parameters to
+						// themselves. The other arguments pin them, and
+						// monomorph substitutes them into the value's type
+						// arguments with the call's.
+					} else if !c.unifyArrayArg(&n.Args[i], expected, at, sub, own) {
 						// Report what the parameter came to MEAN here, not how
 						// it was declared: `Box[U, E]` says nothing to a reader
 						// who wrote `.pair[string]` on a `Box[i32, string]`,
@@ -21361,7 +21462,7 @@ func isStringLike(t ast.Type) bool {
 }
 
 // hasHandleDecl reports whether the program defines a top-level
-// `function handle(req: HttpRequest, plat: Platform): HttpResponse`
+// `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse`
 // — the Platform-parameter signature shape every wasi-http
 // program targets (docs/PLATFORM-RESEARCH.md Rec §1). The check
 // is purely structural: any top-level FuncDecl named `handle`
@@ -21454,16 +21555,36 @@ func findDecl(prog *ast.Program, name string) *ast.FuncDecl {
 }
 
 // initTakesPlatformOnly reports whether `init` takes nothing, or the
-// platform alone: the two shapes the synthesised main can call.
+// platform alone.
 func initTakesPlatformOnly(init *ast.FuncDecl) bool {
 	if len(init.Params) == 0 {
 		return true
 	}
-	if len(init.Params) != 1 {
+	return len(init.Params) == 1 && IsPlatformParam(init, init.Params[0])
+}
+
+// IsPlatformParam reports whether p is fn's platform parameter: a type
+// parameter bounded by std/platform's trait, which `plat: platform.Platform`
+// desugars to, or the host platform itself.
+func IsPlatformParam(fn *ast.FuncDecl, p ast.Param) bool {
+	var name string
+	switch t := p.Type.(type) {
+	case ast.ParamType:
+		name = t.Name
+	case ast.StructType:
+		name = t.Name
+	default:
 		return false
 	}
-	st, ok := init.Params[0].Type.(ast.StructType)
-	return ok && st.Name == "Platform"
+	if name == "platform__Host" {
+		return true
+	}
+	for _, b := range fn.Bounds[name] {
+		if b == "platform__Platform" {
+			return true
+		}
+	}
+	return false
 }
 
 // isServeConfigType reports whether `t` is std/serve's `Config`. modload
@@ -21479,8 +21600,8 @@ func isServeConfigType(t ast.Type) bool {
 // `(serve.Config, S)`, or neither.
 //
 //	function init(): S
-//	function init(plat: Platform): (serve.Config, S)
-//	function handle(state: S, req: HttpRequest, plat: Platform): (S, HttpResponse)
+//	function init(plat: platform.Platform): (serve.Config, S)
+//	function handle(state: S, req: HttpRequest, plat: platform.Platform): (S, HttpResponse)
 //
 // The state pair is the two-phase lifecycle of docs/PLATFORM-RESEARCH.md
 // Rec §3 — build once at startup, thread through every request — and
@@ -21539,7 +21660,7 @@ func resultHandlerShape(handle *ast.FuncDecl) bool {
 // is renamed to resultHandlerName and a `handle` of the plain shape is
 // synthesised over it,
 //
-//	function handle(req: HttpRequest, plat: Platform): HttpResponse {
+//	function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 //	    return respond(__fern_handle_result(req, plat));
 //	}
 //
@@ -21591,6 +21712,9 @@ func adaptResultHandler(prog *ast.Program) {
 	prog.Funcs = append(prog.Funcs, &ast.FuncDecl{
 		P:          pos,
 		Name:       "handle",
+		TypeParams: slices.Clone(handle.TypeParams),
+		Bounds:     maps.Clone(handle.Bounds),
+		BoundArgs:  maps.Clone(handle.BoundArgs),
 		Params:     params,
 		ReturnType: ret,
 		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{P: pos, Value: call}}},
@@ -21610,50 +21734,97 @@ func isDynErrorType(t ast.Type) bool {
 	return d.Traits[0] == "error__Error"
 }
 
-// platformCtorName is the compiler-owned Platform constructor. The `__fern_`
+// desugarTraitParams makes a parameter whose type names a trait an anonymous
+// type parameter bounded by it: `f(d: Driver)` becomes `f[T_d: Driver](d: T_d)`
+// and is monomorphised like any generic. `dyn Driver` is the dynamic form, so a
+// bare trait in a parameter type has no other meaning. It returns the set of
+// trait names. The self-host twin is parser.desugar_trait_params.
+func desugarTraitParams(prog *ast.Program) map[string]bool {
+	traits := map[string]bool{}
+	for _, td := range prog.Traits {
+		traits[td.Name] = true
+	}
+	for _, fn := range prog.Funcs {
+		// A trait's methods are not generic, so an impl's method keeps a
+		// trait-typed parameter as written, and it is no type there (E064).
+		if fn.ImplTrait != "" {
+			continue
+		}
+		for i := range fn.Params {
+			// The parser spells a bracketed nominal (`Sink[i32]`) as an
+			// EnumType; an array or any other shape is not a trait reference.
+			var name string
+			var args []ast.Type
+			switch t := fn.Params[i].Type.(type) {
+			case ast.StructType:
+				name, args = t.Name, t.Args
+			case ast.EnumType:
+				name, args = t.Name, t.Args
+			default:
+				continue
+			}
+			if !traits[name] || slices.Contains(fn.TypeParams, name) {
+				continue
+			}
+			tp := freshTraitParam("T_"+fn.Params[i].Name, fn.TypeParams)
+			fn.TypeParams = append(fn.TypeParams, tp)
+			if fn.Bounds == nil {
+				fn.Bounds = map[string][]string{}
+			}
+			fn.Bounds[tp] = []string{name}
+			if len(args) > 0 {
+				if fn.BoundArgs == nil {
+					fn.BoundArgs = map[string][][]ast.Type{}
+				}
+				fn.BoundArgs[tp] = [][]ast.Type{args}
+			}
+			fn.Params[i].Type = ast.StructType{Name: tp}
+		}
+	}
+	return traits
+}
+
+// freshTraitParam is want, or want with a number appended, whichever no name
+// in taken already uses.
+func freshTraitParam(want string, taken []string) string {
+	name := want
+	for n := 1; slices.Contains(taken, name); n++ {
+		name = want + strconv.Itoa(n)
+	}
+	return name
+}
+
+// WasiHandleName is the entry the wasi-http wrapper calls. The `__fern_`
 // prefix is the emitted-runtime-symbol convention, and keeps the name out of
 // any namespace a program can spell.
-const platformCtorName = "__fern_platform_new"
+const WasiHandleName = "__fern_wasi_handle"
 
-// synthesisePlatformCtor builds:
+// synthesiseWasiHandle builds:
 //
-//	function __fern_platform_new(): Platform {
-//	    return Platform { version: 3, mode: 0, sink: cell_new(""), handle: 0 };
+//	function __fern_wasi_handle(req: HttpRequest): HttpResponse {
+//	    return handle(req, platform.host());
 //	}
 //
-// The capability bag built in Fern, where the struct's layout is the
-// compiler's own, rather than in a backend's idea of it. The wasi-http entry
-// wrapper (internal/codegen/wasmbin/wasi_http.go) is the caller that matters:
-// it is hand-written wasm, and it used to allocate the struct and store the
-// field itself, which is a copy of the layout that goes stale the day the bag
-// grows a capability. std/serve's accept loop still writes the literal — it is
-// Fern source the checker re-checks, so it cannot drift silently.
-//
-// The `mode`/`sink` fields carry the mock seam (Rec §6): this is the host
-// bag, so mode 0 and a sink nothing writes. The wasi-http wrapper serves
-// one request per instance with no reactor, so the handle is 0.
-func synthesisePlatformCtor() *ast.FuncDecl {
+// The one place a handler is called from outside Fern. The wrapper serves
+// one request per instance with no reactor, which is what `platform.host()`
+// is; the call instantiates a `handle` generic over its platform at
+// `platform.Host`, as `serve.run` does on the other targets.
+func synthesiseWasiHandle() *ast.FuncDecl {
 	pos := ast.Position{}
-	lit := &ast.StructLit{
-		P:        pos,
-		TypeName: "Platform",
-		Fields: []ast.FieldInit{
-			{Name: "version", Value: &ast.NumberLit{P: pos, Value: 3}},
-			{Name: "mode", Value: &ast.NumberLit{P: pos, Value: 0}},
-			{Name: "sink", Value: &ast.Call{
-				P:      pos,
-				Callee: &ast.Ident{P: pos, Name: "cell_new"},
-				Args:   []ast.Expr{&ast.StringLit{P: pos, Value: ""}},
-			}},
-			{Name: "handle", Value: &ast.NumberLit{P: pos, Value: 0}},
+	call := &ast.Call{
+		P:      pos,
+		Callee: &ast.Ident{P: pos, Name: "handle"},
+		Args: []ast.Expr{
+			&ast.Ident{P: pos, Name: "req"},
+			&ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "platform__host"}},
 		},
 	}
 	return &ast.FuncDecl{
 		P:          pos,
-		Name:       platformCtorName,
-		Params:     nil,
-		ReturnType: ast.StructType{Name: "Platform"},
-		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{P: pos, Value: lit}}},
+		Name:       WasiHandleName,
+		Params:     []ast.Param{{Name: "req", Type: ast.StructType{Name: "HttpRequest"}}},
+		ReturnType: ast.StructType{Name: "HttpResponse"},
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{P: pos, Value: call}}},
 	}
 }
 
@@ -21665,7 +21836,7 @@ func synthesisePlatformCtor() *ast.FuncDecl {
 //	    return serve.supervise(serve.__port_from_env("PORT", 8080), serve.config(), handle);
 //	}
 //
-// or, for `init(plat: Platform): (serve.Config, S)` beside a handler
+// or, for `init(plat: platform.Platform): (serve.Config, S)` beside a handler
 // threading `S` and a `shutdown(reason, state)` hook:
 //
 //	function main(): i32 {

@@ -287,35 +287,6 @@ func TestInterpReadFileGrowsPastStatHint(t *testing.T) {
 	}
 }
 
-// runArm64SSAProgram compiles src through `-backend ssa` and runs it
-// in dir, returning its combined output and exit code. The SSA
-// emitter carries its own read_file / read_file_bytes helpers, so it
-// is a fourth implementation of the same contract.
-func runArm64SSAProgram(t *testing.T, src, dir string) (string, int) {
-	t.Helper()
-	_, qemu := arm64Tooling(t)
-	bin := compileArm64SSA(t, buildFernForArm64SSA(t), src, os.Environ())
-	cmd := runArm64Bin(qemu, bin)
-	cmd.Dir = dir
-	out, _ := cmd.CombinedOutput()
-	return string(out), cmd.ProcessState.ExitCode()
-}
-
-func TestArm64SSAReadFileReadsPseudoFiles(t *testing.T) {
-	out, code := runArm64SSAProgram(t, readFilePseudoProgram, t.TempDir())
-	checkReadFileMarker(t, "pseudo-read-ok", out, code)
-}
-
-func TestArm64SSAReadFileRoundTripsEverySize(t *testing.T) {
-	out, code := runArm64SSAProgram(t, readFileSizesProgram, t.TempDir())
-	checkReadFileMarker(t, "sizes-ok", out, code)
-}
-
-func TestArm64SSAReadFileGrowsPastStatHint(t *testing.T) {
-	out, code := runArm64SSAProgram(t, readFileFifoProgram, fifoDir(t))
-	checkReadFileMarker(t, "fifo-ok", out, code)
-}
-
 // readFileCensusProgram reads argv[1] n times. Run under
 // FERN_LEAKCHECK, the difference between two counts is what one read
 // of that path costs in allocations.
