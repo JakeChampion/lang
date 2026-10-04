@@ -1534,11 +1534,11 @@ pub function http_parse_request_framed(buf: u8[]): HttpFraming {
 pub function http_parse_request_framed_from(buf: u8[], from: i32, limits: HttpLimits): HttpFraming {
   match (__request_head(buf, from, limits)) {
     Ok(head) => {
-      let body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, from + head.len, __framing_of(head), head.version, limits);
+      let body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, from + head.len, head.framing, head.version, limits);
       if (body.0 != 2) {
-        return __unframed(body.0, head.request.headers, head.version);
+        return __unframed(body.0, head.headers, head.version);
       }
-      let req: HttpRequest = HttpRequest { ...head.request, body: stream.stream_from_bytes(body.1), trailers: body.3 };
+      let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.stream_from_bytes(body.1), headers: head.headers, trailers: body.3 };
       return Framed(HttpFramed { request: req, len: body.2 - from, keep_alive: head.keep_alive, version: head.version });
     },
     Err(status) => {
@@ -1572,13 +1572,17 @@ pub enum HttpHeading { Headed(HttpHead), HeadIncomplete, HeadMalformed(i32) }
 pub function http_parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits): HttpHeading {
   match (__request_head(buf, from, limits)) {
     Ok(head) => {
-      if (head.length > limits.body) {
+      let length: i32 = __declared(head.framing);
+      if (length > limits.body) {
         return HeadMalformed(413);
       }
-      if (head.length < 0 && head.version != "HTTP/1.1") {
+      if (length < 0 && head.version != "HTTP/1.1") {
         return HeadMalformed(400);
       }
-      return Headed(head);
+      let empty: u8[] = [];
+      let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.stream_from_bytes(empty), headers: head.headers, trailers: headers.header_map_new() };
+      let expects: boolean = head.version != "HTTP/1.0" && __expectation(head.headers) == 1;
+      return Headed(HttpHead { request: req, len: head.len, keep_alive: head.keep_alive, version: head.version, length: length, expects_continue: expects });
     },
     Err(status) => {
       if (status == 1) {
@@ -1590,26 +1594,25 @@ pub function http_parse_request_head_from(buf: u8[], from: i32, limits: HttpLimi
   return HeadIncomplete;
 }
 
-function __framing_of(head: HttpHead): __BodyFraming {
-  if (head.length < 0) {
-    return Chunked;
-  }
-  return Length(head.length);
-}
+// `__Head` — a request head as parsed, before either public shape is
+// built from it: the method and path, the headers, the version, the
+// bytes the head occupies from where the parse started, its persistence
+// and its body framing.
+struct __Head { method: string, path: string, headers: HeaderMap, version: string, len: i32, keep_alive: boolean, framing: __BodyFraming }
 
 // `__request_head(buf, from, limits)` — the request line and header block
 // at `from`, read and checked (the request line's rules, the header
 // rules, the body framing's): `Err(1)` while less than the block has
 // arrived, `Err(status)` refusing it.
-function __request_head(buf: u8[], from: i32, limits: HttpLimits): Result[HttpHead, i32] {
+function __request_head(buf: u8[], from: i32, limits: HttpLimits): Result[__Head, i32] {
   let start: i32 = from;
   from = __past_empty_line(buf, from);
-  let bounds: (i32, i32, i32) = __head_bounds(buf, from, limits);
-  if (bounds.0 != 0) {
-    return Err(bounds.0);
+  let first_crlf: i32 = __request_line_end(buf, from, limits.request_line);
+  let headers_end: i32 = __header_block_end(buf, from, limits.header_bytes);
+  let bounded: i32 = __head_bounded(buf, from, limits, first_crlf, headers_end);
+  if (bounded != 0) {
+    return Err(bounded);
   }
-  let first_crlf: i32 = bounds.1;
-  let headers_end: i32 = bounds.2;
   // The request line (RFC 9112 §3): a method token, a space, a
   // request-target, a space, an HTTP-version. It is refused as soon as
   // its CRLF has arrived, before the rest of the block.
@@ -1654,43 +1657,34 @@ function __request_head(buf: u8[], from: i32, limits: HttpLimits): Result[HttpHe
   if (refused > 0) {
     return Err(refused);
   }
-  let length: i32 = 0;
+  let framing: __BodyFraming = Length(0);
   match (__http_body_framing(req_headers)) {
     Ok(f) => {
-      length = __declared(f);
+      framing = f;
     },
     Err(status) => {
       return Err(status);
     }
   }
-  let empty: u8[] = [];
-  let req: HttpRequest = HttpRequest {
-    method: __bytes_string(buf, from, sp1),
-    path: path,
-    body: stream.stream_from_bytes(empty),
-    headers: req_headers,
-    trailers: headers.header_map_new(),
-  };
-  return Ok(HttpHead { request: req, len: from + headers_len - start, keep_alive: __persists(version, req_headers), version: version, length: length, expects_continue: version != "HTTP/1.0" && __expectation(req_headers) == 1 });
+  return Ok(__Head { method: __bytes_string(buf, from, sp1), path: path, headers: req_headers, version: version, len: from + headers_len - start, keep_alive: __persists(version, req_headers), framing: framing });
 }
 
-// `__head_bounds(buf, from, limits)` — where the request line and the
-// header block at `from` end: `(0, first_crlf, headers_end)`, each -1
-// while it has not arrived, or the status refusing what has: 414 for a
+// `__head_bounded(buf, from, limits, first_crlf, headers_end)` — 0 when
+// the request line and header block at `from` are within their limits so
+// far, `first_crlf` and `headers_end` where each ends (-1 while it has not
+// arrived, -2 past its cap); else the status refusing them: 414 for a
 // request line past its cap, 431 for a header block past its, 400 for a
 // bare CR or LF in what is buffered of the block (the bytes before `from`
 // are answered requests, the bytes after the block a body, which may hold
 // anything).
-function __head_bounds(buf: u8[], from: i32, limits: HttpLimits): (i32, i32, i32) {
-  let n: i32 = buf.len();
-  let first_crlf: i32 = __request_line_end(buf, from, limits.request_line);
+function __head_bounded(buf: u8[], from: i32, limits: HttpLimits, first_crlf: i32, headers_end: i32): i32 {
   if (first_crlf == -2) {
-    return (414, -1, -1);
+    return 414;
   }
-  let headers_end: i32 = __header_block_end(buf, from, limits.header_bytes);
   if (headers_end == -2) {
-    return (431, -1, -1);
+    return 431;
   }
+  let n: i32 = buf.len();
   let scanned: i32 = headers_end;
   if (scanned < 0) {
     scanned = from + limits.header_bytes + 4;
@@ -1699,9 +1693,9 @@ function __head_bounds(buf: u8[], from: i32, limits: HttpLimits): (i32, i32, i32
     }
   }
   if (!__crlf_terminated(buf, from, scanned)) {
-    return (400, -1, -1);
+    return 400;
   }
-  return (0, first_crlf, headers_end);
+  return 0;
 }
 
 // `__declared(f)` — a body framing as its declared length, -1 for chunked.

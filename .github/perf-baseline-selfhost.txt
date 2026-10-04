@@ -113,7 +113,7 @@ selfhost/arm64-linux/ascii_scan.emit	3915
 selfhost/arm64-linux/call_overhead.emit	136
 selfhost/arm64-linux/closure_call.emit	920
 selfhost/arm64-linux/enum_match.emit	1042
-selfhost/arm64-linux/http_hello.emit	22533
+selfhost/arm64-linux/http_hello.emit	25185
 selfhost/arm64-linux/int_loop.emit	88
 selfhost/arm64-linux/map_int.emit	7031
 selfhost/arm64-linux/map_probe_chain.emit	7040
@@ -143,7 +143,7 @@ selfhost/wasm32-wasi/ascii_scan.emit	3397
 selfhost/wasm32-wasi/call_overhead.emit	207
 selfhost/wasm32-wasi/closure_call.emit	517
 selfhost/wasm32-wasi/enum_match.emit	618
-selfhost/wasm32-wasi/http_hello.emit	26364
+selfhost/wasm32-wasi/http_hello.emit	29702
 selfhost/wasm32-wasi/int_loop.emit	124
 selfhost/wasm32-wasi/map_int.emit	8632
 selfhost/wasm32-wasi/map_probe_chain.emit	8663
@@ -173,7 +173,7 @@ selfhost/x86-64-linux/ascii_scan.emit	3751
 selfhost/x86-64-linux/call_overhead.emit	95
 selfhost/x86-64-linux/closure_call.emit	736
 selfhost/x86-64-linux/enum_match.emit	865
-selfhost/x86-64-linux/http_hello.emit	22178
+selfhost/x86-64-linux/http_hello.emit	23768
 selfhost/x86-64-linux/int_loop.emit	43
 selfhost/x86-64-linux/map_int.emit	6955
 selfhost/x86-64-linux/map_probe_chain.emit	6971
