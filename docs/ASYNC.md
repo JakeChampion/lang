@@ -357,8 +357,11 @@ cancels its children the same way. The `Future` combinators (`gather`,
 driver's wait is a `wait_any`. With no task current a combinator's own wait
 blocks; under the blocking fallback each entry runs to its end inside
 `task_start`, in order, so the first entry wins every race.
+A parked frame keeps what it holds: a `str` or byte view read after the
+park still sees its owner, and a closure sharing a mutated scalar with the
+frame still shares it (`TestSelfHostTaskFrame`).
 `docs/NET-P3-SUSPENSION-PLAN.md` is the design and what remains (the wasm
-runtime bodies, the sim's task driver, the two source rules).
+runtime bodies, the sim's task driver).
 
 ## 9. How it works (one paragraph)
 

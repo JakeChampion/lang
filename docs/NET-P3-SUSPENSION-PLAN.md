@@ -140,8 +140,8 @@ Asyncify, which applies here unchanged in shape:
 The pass runs on the stack IR after Perceus has emitted its ops, in both
 compilers, so a saved local that owns a reference keeps that reference in the
 save area and the restore puts it back before any `OpRcDec` that names it. No
-RC op is moved. The save area is a heap object owned by the task, which is
-why the two source rules in §3.5 exist.
+RC op is moved. The save area is a heap object owned by the task; §3.5 is
+what that means for a view or a shared capture the frame holds.
 
 Only the suspendable set pays for the transform. The request parse and the
 response serialise in `std/serve` never reach `__suspend` and keep their
@@ -202,29 +202,33 @@ The serve loop becomes a scheduler:
   `wait_any` calls, and the scheduler watches what the park hands back.
   `Host.reactor` stays the loop's handle for what the worker itself watches.
 
-### 3.5 The two source rules
+### 3.5 What a parked frame keeps (the two source rules, withdrawn)
 
-Both from #9856, both checker errors in both compilers, both over the same
-reachability result as §3.1 (so they run where E080 runs, after
-monomorphisation):
+#9856 asked for two checker rules over the reachability result of §3.1: no
+`str` or `[u8]` view live across a suspension point, since a view is a
+borrowed window onto a buffer a save area cannot keep alive, and no closure
+capturing a mutable local by reference live across one, since a rewound
+frame's locals would be restored copies and the shared cell would split.
+Neither hazard exists in the lowering slice 2 landed, so neither rule does:
 
-- **No `str` or `[u8]` view live across a suspension point.** A view is a
-  borrowed window onto a buffer that the save area cannot keep alive
-  (`STR-VIEW-CONTRACT.md` §5 keeps views out of every field position, and a
-  save area is fields). A local of view type that is live after a call to a
-  suspendable function is refused by name, with the hint to materialise it
-  (`to_string()`, `to_array()`) before the call. A streaming body view is
-  consumed or materialised before the handler suspends.
-- **A closure crossing a suspension point captures by value.** Reference
-  captures share the pointee with the enclosing frame
-  (`CLOSURE-CAPTURE.md`); after a rewind the frame's locals are restored
-  copies, so a shared cell would split. Inside a suspendable function a
-  closure that captures a mutable local by reference and is live across a
-  suspendable call is refused, as the spawn closure is in
-  `MULTICORE-RESEARCH.md` C5.
+- An unwinding frame saves its locals as the words they are and returns
+  without running its exit-path releases, so every reference the frame
+  holds keeps its count in the save area, and the owner a view borrows from
+  survives the park with it. A view whose owner is not a local of some
+  frame on the chain is the general dangling-view hazard the view contract
+  already covers, park or no park.
+- A scalar a closure captures and either side assigns is a heap cell both
+  sides point at (`closureconv.BoxMutatedCaptures`, `cellify_env` in the
+  self-host); the frame's word is the cell's address, which the save area
+  keeps and the rewind restores. A reference capture cannot be reassigned
+  at all (E049).
 
-Slice 7 fixes the codes and the exact wording; the checker-codes
-differential pins both compilers to the same set.
+`TestSelfHostTaskFrame` (`e2eharness.TaskFrameProgram`) pins it: a parked
+function reads a `str` of a parameter's string, a `str` of its own local
+string, a byte view and a counter closure after the park, and answers what
+the plain run answers. A lowering that stopped keeping either would fail
+that gate, and that is the point at which a rule would be worth its
+refusals.
 
 ### 3.6 Which compiler does what
 
@@ -347,8 +351,10 @@ throughout (`TEST-GATES.md`: the fixpoint is blind to a stable miscompile).
    run user code; a `Task` dropped while parked keeps its record until
    `task_free`, and the combinators cancel and free their children
    themselves.
-7. **The two source rules.** Both checkers, both codes, the differential and
-   the checker-codes rows.
+7. **The two source rules. Withdrawn (§3.5).** Views and shared mutated
+   captures survive a park as the lowering stands, so no checker rule
+   refuses them; `TestSelfHostTaskFrame` and `TestTaskFrameFallback` pin
+   that instead of a code.
 8. **Sim parity.** `SimPlatform.http` suspends; `sim.run_tasks`; the scripted
    upstream plus scripted disconnect test, byte-identical on x86-64, arm64
    and wasm through the self-host compiler.

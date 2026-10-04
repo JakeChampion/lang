@@ -263,6 +263,11 @@ must show the race's loser and the deadline's late entry cancelled through
 their defers, the parks the task made, and the outer cancellation reaching
 both children. `TestTaskCombinatorsFallback` is the same program through
 the Go compiler: the entries run in order, nothing is cancelled.
+`TestSelfHostTaskFrame` pins what a parked frame keeps
+(`e2eharness.TaskFrameProgram`): `str` views of a parameter's and of a
+local string, a byte view and a closure sharing a mutated scalar with its
+frame, all read after a park, answer the plain run's figure on x86-64 and
+arm64. `TestTaskFrameFallback` is the Go compiler's twin, with no park.
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
 by the `TestArm64Darwin` prefix). `TestSelfHostServeConfig` serves through
