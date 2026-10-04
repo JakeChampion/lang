@@ -11,8 +11,7 @@ import (
 //
 // Each `want` is the native interpreter's answer, except where that
 // interpreter cannot run the program: the raw-memory intrinsics, `chr`, the
-// slice traps (134, SIGABRT) and a `map_new(n).insert(..)` chain the native
-// checker cannot infer (#4451). There it is the answer the compiled program
+// slice traps (134, SIGABRT). There it is the answer the compiled program
 // gave when the case was pinned, checked by hand.
 func TestSelfHostAsmIRPath(t *testing.T) {
 	cli := newStrictCLI(t)
@@ -1138,8 +1137,10 @@ function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); m
 function main(): i32 { let m: Map[string, i32] = map_new(4); m = m.insert("a", 1); m = m.insert("bb", 2); return m.get_or("bb", 0) + m.len(); }`, 4},
 		{"map-insert-overwrite", `import "core/map";
 function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(7, 40); m = m.insert(7, 42); return m.get_or(7, 0) + m.len(); }`, 43},
+		// Bind the constructor's columns before calling insert. Written
+		// insert chains do not infer a bare map_new receiver's K and V.
 		{"map-insert-chained", `import "core/map";
-function main(): i32 { let m: Map[string, i32] = map_new(8).insert("x", 5).insert("y", 7); return m.get_or("y", 0) + m.len(); }`, 9},
+function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("x", 5).insert("y", 7); return m.get_or("y", 0) + m.len(); }`, 9},
 		{"map-insert-keyword-literal", `import "core/map";
 function main(): i32 { let m: Map[string, i32] = Map { "a": 1, "b": 2 }; return m.get_or("b", 0) + m.len(); }`, 4},
 		{"map-insert-has", `import "core/map";

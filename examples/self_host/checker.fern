@@ -1426,9 +1426,8 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
       return false;
     },
     typeinfo.TypeErased(ae) => {
-      // The erased type VARIABLE of a generic. This checker never resolves an
-      // annotation to one — it is the semantic phase's reading of a type
-      // parameter — so the rule here is identity alone.
+      // The type variable of a generic, including a map method whose bare
+      // constructor receiver left K and V unbound. Compare identity alone.
       if let typeinfo.TypeErased(be) = b {
         return ae.name == be.name;
       }
@@ -2911,6 +2910,11 @@ function mlit_entries_settle(e: ast.Expr, want: typeinfo.TypeMap, s: Scope): boo
 function mlit_is_desugared(e: ast.Expr): boolean {
   match (e) {
     ast.ExprCall(c) => {
+      // Written calls carry a source position. Only parser-generated
+      // inserts may settle their entries against a destination's columns.
+      if (c.line != 0 || c.col != 0) {
+        return false;
+      }
       match (c.callee) {
         ast.ExprFieldAccess(fa) => {
           if (fa.field != "insert") {
@@ -5144,6 +5148,14 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // Built-in VMap method dispatch — handled ahead of
   // the user MethodSig lookup.
   if (is_method) {
+    // The constructor's missing columns can take a destination annotation.
+    // A written method call instead returns its generic K/V contract; those
+    // variables cannot acquire concrete types from the method's destination.
+    if let typeinfo.TypeMap(mr) = recv_ty {
+      if ((unbound_column(mr.key, MAP_NEW_KEY) || unbound_column(mr.value, MAP_NEW_VALUE)) && !literal_insert(c)) {
+        recv_ty = t_map(map_method_column(mr.key, MAP_NEW_KEY, "K"), map_method_column(mr.value, MAP_NEW_VALUE, "V"));
+      }
+    }
     match (recv_ty) {
       typeinfo.TypeMap(mt) => {
         if (name == "insert") {
@@ -13082,6 +13094,13 @@ function unbound_column(t: typeinfo.Type, reason: string): boolean {
     return u.reason == reason;
   }
   return false;
+}
+
+function map_method_column(t: typeinfo.Type, reason: string, name: string): typeinfo.Type {
+  if (unbound_column(t, reason)) {
+    return typeinfo.TypeErased { name: name };
+  }
+  return t;
 }
 
 // unbound_map_arg_diags reports E038 for each written key or value argument of
