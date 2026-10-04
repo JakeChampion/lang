@@ -196,3 +196,15 @@ func TestTwoOverPiSegmentCoversTheTable(t *testing.T) {
 		t.Errorf("the 2/pi data segment is %d bytes, want %d", got, want)
 	}
 }
+
+// logTabBytes reserves the region the log table's data segment fills; pinned
+// here for the same reason as twoOverPiLimbs.
+func TestLogTabSegmentCoversTheTable(t *testing.T) {
+	want := len(fdlibm.LogTable) * fdlibm.LogRowSize
+	if logTabBytes != want {
+		t.Errorf("memlayout reserves %d bytes for the log table, fdlibm.LogTable is %d", logTabBytes, want)
+	}
+	if got := len(logTabSegment()); got != want {
+		t.Errorf("the log table's data segment is %d bytes, want %d", got, want)
+	}
+}
