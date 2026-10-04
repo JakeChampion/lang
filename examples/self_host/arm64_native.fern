@@ -223,16 +223,16 @@ pub function arm64_rec_b(link: boolean): i64 {
   return arm64_b_word(0);
 }
 
-// arm64_rec_bcond is a conditional branch spelled `b.<cond>` or `b<cond>`.
-pub function arm64_rec_bcond(mnem: string): i64 {
-  if (!arm64_gas_is_bcond(mnem)) {
-    return 0 - 1;
-  }
-  let cond: i32 = arm64_gas_cond(arm64_gas_bcond_suffix(mnem));
-  if (cond < 0) {
-    return 0 - 1;
-  }
-  return arm64_bcond_word(cond, 0);
+// arm64_rec_bcond is the conditional branch `b.<cond>` on condition code
+// `cond`, and arm64_cond_name the code's spelling, the one arm64_gas_cond
+// reads back.
+pub function arm64_rec_bcond(cond: i32): i64 {
+  return arm64_bcond_word(cond & 15, 0);
+}
+
+pub function arm64_cond_name(cond: i32): string {
+  let names: string[] = ["eq", "ne", "hs", "lo", "mi", "pl", "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le", "al", "nv"];
+  return names[cond & 15];
 }
 
 // arm64_rec_cbz is `cbz` or, nonzero, `cbnz` on a register.
