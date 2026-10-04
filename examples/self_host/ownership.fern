@@ -136,7 +136,9 @@ function all_true(n: i32): boolean[] {
 
 // The operations that put a value somewhere this frame does not control: a
 // container or box built here and handed back, and a store into a cell, into
-// a map the frame may not be the only holder of, or into a hole. An `append` or
+// a map the frame may not be the only holder of, or into a hole. A record
+// update carries its base out too, whichever fields it keeps: the update is
+// where the base's box is reused, which only a counted base allows. An `append` or
 // a `with` answers a NEW container holding the stored value, so the value goes
 // out with it — the receiver does not, which is why those two are read operand
 // by operand below rather than whole.
@@ -381,6 +383,9 @@ function instruction_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analy
   }
   if (ins.kind_tag == ssasem.call_value()) {
     return indirect_carried(out, f, a, ins);
+  }
+  if (ssasem.update_base(ins) >= 0) {
+    out = carry(out, a, ssasem.update_base(ins));
   }
   if (builds_out(ins.kind_tag)) {
     for arg in ins.args {
