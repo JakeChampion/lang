@@ -3143,7 +3143,7 @@ function arm_value(st: ast.Stmt, s: State, ty: typeinfo.Type): Value {
     return value_if(f, s, ty);
   }
   if let ast.StmtReturn(r) = st {
-    if (checker.bare_return(r.value)) {
+    if (parser.bare_return(r.value)) {
       return refused(s, "value block arm has no value");
     }
     let v: Value = expr(r.value, s, ty);
@@ -4179,7 +4179,7 @@ function assign(a: ast.StmtAssign, s: State): State {
 // A bare `return;` carries the parser's `punct:;` sentinel in place of a
 // value, as the checker reads it; the unit literal is the other spelling.
 function ret(r: ast.StmtReturn, s: State): State {
-  if (checker.bare_return(r.value)) {
+  if (parser.bare_return(r.value)) {
     if (!is_void(s.result)) {
       return fail(s, "missing return value");
     }
@@ -5328,7 +5328,7 @@ function coarse_fn_tag_without_contract(fd: parser.FuncDecl): boolean {
 // part of it unknown.
 function inferred_result(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding, contracts: ssasem.Contract[]): typeinfo.Type {
   let (returned, at) = checker.first_returned(fd.body, scope);
-  if (checker.bare_return(returned)) {
+  if (parser.bare_return(returned)) {
     return t_void();
   }
   if (calls_synthesised(returned)) {

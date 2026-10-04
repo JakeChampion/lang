@@ -6844,7 +6844,7 @@ function check_lambda_expr(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
   // A body returning nothing keeps the empty annotation's reading.
   if (lm.ret_type.len() == 0) {
     let (returned, at) = first_returned(lm.body, body_scope);
-    if (!bare_return(returned)) {
+    if (!parser.bare_return(returned)) {
       let inferred: typeinfo.Type = check_expr(returned, at);
       if (!is_unknown(inferred)) {
         rt = inferred;
@@ -9756,7 +9756,7 @@ function lambda_exits(body: ast.Stmt[], scope: Scope, own acc: LambdaExits): Lam
 // A value return adds its type; a bare one marks the lambda as having one;
 // an integer literal adapts to its context and constrains nothing.
 function lambda_return_exit(r: ast.StmtReturn, cur: Scope, own acc: LambdaExits): LambdaExits {
-  if (bare_return(r.value)) {
+  if (parser.bare_return(r.value)) {
     return LambdaExits { ...acc, bare: true };
   }
   if (int_literal_tree(r.value)) {
@@ -22344,12 +22344,6 @@ pub function variant_shape_sig(s: Scope, name: string, owner: string): StructSig
 
 // arm_scope is the scope a match arm's body sees: `s` plus the arm's payload
 // bindings, typed as check_stmt types them.
-pub function bare_return(e: ast.Expr): boolean {
-  if let ast.ExprUnknown(u) = e {
-    return u.kind == "punct:;";
-  }
-  return parser.is_unit_expr(e);
-}
 
 // value_block_tail_type is the type of a `{ …; tail }` block: its final
 // `return`, checked with the leading statements bound. An earlier `return`
@@ -22360,7 +22354,7 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
     return t_unknown("empty value block");
   }
   if let ast.StmtReturn(r) = body[body.len() - 1] {
-    if (bare_return(r.value) || int_literal_tree(r.value)) {
+    if (parser.bare_return(r.value) || int_literal_tree(r.value)) {
       return t_unknown("value block tail");
     }
     let bs: Scope = s;
@@ -22392,29 +22386,29 @@ pub function first_returned(body: ast.Stmt[], scope: Scope): (ast.Expr, Scope) {
   for st in body {
     match (st) {
       ast.StmtReturn(r) => {
-        if (!bare_return(r.value)) {
+        if (!parser.bare_return(r.value)) {
           return (r.value, scope);
         }
       },
       ast.StmtIf(f) => {
         let (t, ts) = first_returned(f.then_body, scope);
-        if (!bare_return(t)) {
+        if (!parser.bare_return(t)) {
           return (t, ts);
         }
         let (e, es) = first_returned(f.else_body, scope);
-        if (!bare_return(e)) {
+        if (!parser.bare_return(e)) {
           return (e, es);
         }
       },
       ast.StmtWhile(w) => {
         let (v, vs) = first_returned(w.body, scope);
-        if (!bare_return(v)) {
+        if (!parser.bare_return(v)) {
           return (v, vs);
         }
       },
       ast.StmtFor(fo) => {
         let (v, vs) = first_returned(fo.body, for_body_scope(fo, scope));
-        if (!bare_return(v)) {
+        if (!parser.bare_return(v)) {
           return (v, vs);
         }
       },
@@ -22422,7 +22416,7 @@ pub function first_returned(body: ast.Stmt[], scope: Scope): (ast.Expr, Scope) {
         let whole: typeinfo.Type = expr_type(m.scrutinee, scope);
         for a in m.arms {
           let (v, vs) = first_returned(a.body, arm_scope(a, scope, whole));
-          if (!bare_return(v)) {
+          if (!parser.bare_return(v)) {
             return (v, vs);
           }
         }
@@ -23789,7 +23783,7 @@ function union_arity(s: Scope, name: string): i32 {
 // receives the lambda.
 function inferred_lambda_result(lm: ast.ExprLambda, body_scope: Scope, need_whole: boolean): ast.ExprLambda {
   let (returned, at) = first_returned(lm.body, body_scope);
-  if (bare_return(returned) || int_literal_tree(returned)) {
+  if (parser.bare_return(returned) || int_literal_tree(returned)) {
     return lm;
   }
   let t: typeinfo.Type = check_expr(returned, at);
