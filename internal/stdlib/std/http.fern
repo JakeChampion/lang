@@ -705,8 +705,8 @@ function __field_value(buf: u8[], from: i32, end: i32): Option[string] {
 // obs-fold, §5.2) or a value holding a control byte other than HTAB
 // or bytes that are not well-formed UTF-8 (RFC 9110 §5.5 leaves
 // obs-text opaque; a `string` is text, so the octets have to spell
-// some), 431 for more fields than the cap. Names are case-folded by
-// HeaderMap.append; a value loses the SP and HTAB around it
+// some), 431 for more fields than the cap. Names keep the client's
+// spelling; a value loses the SP and HTAB around it
 // (`__field_value`).
 function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32): Result[HeaderMap, i32] {
   let h: HeaderMap = headers.header_map_new();
@@ -830,12 +830,12 @@ function __find_crlf_crlf(buf: u8[], from: i32, end: i32): i32 {
 // multiply: the body cap cannot catch a length that has already wrapped
 // to a small nonnegative value.
 // `__field_at(h, key, from)` — the index of the first field named `key` at
-// or after `from`, or -1. `key` is lowercase, as HeaderMap stores names, so
+// or after `from`, or -1, comparing names ASCII-case-insensitively, so
 // the framing rules read the map without building anything.
 function __field_at(h: HeaderMap, key: string, from: i32): i32 {
   let i: i32 = from;
   while (i < h.names.len()) {
-    if (h.names[i] == key) {
+    if (h.names[i].eq_ignore_ascii_case(key)) {
       return i;
     }
     i = i + 1;
@@ -2238,9 +2238,7 @@ pub function http_serialize_response_head(resp: HttpResponse, keep_alive: boolea
 
 // `__push_head(b, resp)` — the status line and the handler's fields into
 // the builder `b`, all but `Content-Length`, `Connection` and
-// `Transfer-Encoding`, which the framing writes. Names in HeaderMap are
-// case-folded on insert, so comparing against the lowercase names is
-// enough.
+// `Transfer-Encoding`, which the framing writes.
 function __push_head(b: usize, resp: HttpResponse): void {
   buf_push(b, "HTTP/1.1 ");
   io_buffered.buf_push_i64(b, resp.status as i64);
@@ -2250,7 +2248,7 @@ function __push_head(b: usize, resp: HttpResponse): void {
   let i: i32 = 0;
   while (i < resp.headers.names.len()) {
     let hname: string = resp.headers.names[i];
-    if (hname != "content-length" && hname != "connection" && hname != "transfer-encoding") {
+    if (!hname.eq_ignore_ascii_case("content-length") && !hname.eq_ignore_ascii_case("connection") && !hname.eq_ignore_ascii_case("transfer-encoding")) {
       buf_push(b, hname);
       buf_push(b, ": ");
       buf_push(b, resp.headers.values[i]);
@@ -2955,8 +2953,7 @@ function __response_payload(buf: u8[], at: i32, h: HeaderMap, status: i32, metho
 // strips these from what it sends and from what it hands back, since the
 // connection they describe is its own, not the caller's.
 pub function http_hop_by_hop(name: string): boolean {
-  let key: string = name.to_lower();
-  return key == "connection" || key == "keep-alive" || key == "proxy-connection" || key == "transfer-encoding" || key == "te" || key == "trailer" || key == "upgrade";
+  return name.eq_ignore_ascii_case("connection") || name.eq_ignore_ascii_case("keep-alive") || name.eq_ignore_ascii_case("proxy-connection") || name.eq_ignore_ascii_case("transfer-encoding") || name.eq_ignore_ascii_case("te") || name.eq_ignore_ascii_case("trailer") || name.eq_ignore_ascii_case("upgrade");
 }
 
 // `http_end_to_end(h)` — `h` without its hop-by-hop fields and without
@@ -2965,7 +2962,7 @@ pub function http_end_to_end(h: HeaderMap): HeaderMap {
   let named: string[] = [];
   for v in h.get_all("connection") {
     for tok in v.split(",") {
-      named = named.append(tok.trim().to_lower());
+      named = named.append(tok.trim());
     }
   }
   let out: HeaderMap = headers.header_map_new();
@@ -2981,7 +2978,7 @@ pub function http_end_to_end(h: HeaderMap): HeaderMap {
 
 function __names_hold(names: string[], name: string): boolean {
   for n in names {
-    if (n == name) {
+    if (n.eq_ignore_ascii_case(name)) {
       return true;
     }
   }
