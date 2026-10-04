@@ -1557,11 +1557,19 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{bufH, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.VoidType{},
 	}
+	c.info.FuncSigs["buf_push_bytes_mapped"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.VoidType{},
+	}
 	// buf_push_filtered(h, s, drop) appends each byte b of s whose entry
 	// drop[b] is zero; a byte at or past the table's length is kept. tr -d's
 	// deletion is one call per read.
 	c.info.FuncSigs["buf_push_filtered"] = &ast.FuncType{
 		Params: []ast.Type{bufH, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["buf_push_bytes_filtered"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.VoidType{},
 	}
 	// buf_push_expanded(h, s, table) appends each byte b of s as the record
@@ -1570,6 +1578,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// unchanged. cat -v / -T / -E is one call per read.
 	c.info.FuncSigs["buf_push_expanded"] = &ast.FuncType{
 		Params: []ast.Type{bufH, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["buf_push_bytes_expanded"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.VoidType{},
 	}
 	c.info.FuncSigs["buf_push_byte"] = &ast.FuncType{
@@ -1750,12 +1762,28 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	c.info.FuncSigs["__sum_bytes_array"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	c.info.FuncSigs["__crc32_cksum_array"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}, ast.ArrayType{Elem: ast.NumberType{Width: 8}}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	c.info.FuncSigs["__bsd_sum_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	c.info.FuncSigs["__memchr_bytes"] = &ast.FuncType{
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	c.info.FuncSigs["__rmemchr_bytes"] = &ast.FuncType{
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	c.info.FuncSigs["__mismatch_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	// __ascii_run(s, from) → i32: the index of the first high-bit byte at or
@@ -1781,7 +1809,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
-	// __scan_set_bytes(bytes, from, set) → i32: __scan_set over a u8[].
+	// Raw byte-array counterpart, borrowing both arrays.
 	c.info.FuncSigs["__scan_set_bytes"] = &ast.FuncType{
 		Params: []ast.Type{
 			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
@@ -1809,6 +1837,15 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	c.info.FuncSigs["__count_runs"] = &ast.FuncType{
 		Params: []ast.Type{
 			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// Raw byte-array counterpart, borrowing both arrays.
+	c.info.FuncSigs["__count_runs_bytes"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 			ast.NumberType{Width: 32, Signed: true},
 			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 		},
@@ -3251,8 +3288,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	}
 	// getxattr(path, name): Result[string, IoError] — the value of the
 	// extended attribute `name` on `path`, `getxattr(2)`. The value is
-	// the attribute's bytes verbatim: an SELinux context keeps the NUL
-	// the kernel stores after it. An absent attribute is ENODATA
+	// UTF-8 validated, including NUL: an SELinux context keeps the NUL
+	// the kernel stores after it. Invalid text is InvalidUtf8(path).
+	// An absent attribute is ENODATA
 	// (Darwin's ENOATTR), a filesystem without attributes EOPNOTSUPP,
 	// and the Err carries which. lgetxattr is the same question about
 	// a final symlink itself, the way `lstat` is. Native only: neither
@@ -3284,6 +3322,24 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 			Result: ast.EnumType{Name: "Result", Args: []ast.Type{
 				ast.VoidType{},
 				ast.EnumType{Name: "IoError"},
+			}},
+		}
+	}
+	// Raw siblings preserve arbitrary attribute bytes. The setters borrow
+	// their byte arrays, and the getters return an independently owned array.
+	for _, name := range []string{"getxattr_bytes", "lgetxattr_bytes"} {
+		c.info.FuncSigs[name] = &ast.FuncType{
+			Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+			Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+				ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.EnumType{Name: "IoError"},
+			}},
+		}
+	}
+	for _, name := range []string{"setxattr_bytes", "lsetxattr_bytes"} {
+		c.info.FuncSigs[name] = &ast.FuncType{
+			Params: []ast.Type{ast.StringType{}, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+			Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+				ast.VoidType{}, ast.EnumType{Name: "IoError"},
 			}},
 		}
 	}
@@ -11425,10 +11481,10 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 // (the byte-scan kernels, the bit counts, a constant, the heap counters, the
 // clock). verifyFipAllocs (E068) stays the backstop for what they emit.
 var fipNonAllocBuiltins = map[string]bool{
-	"__memchr": true, "__count_byte_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
-	"__sum_bytes": true, "__scan_set": true, "__scan_set_bytes": true, "__bsd_sum": true, "__count_runs": true,
-	"__crc32_cksum": true,
-	"__clz32":       true, "__ctz32": true, "__popcount32": true,
+	"__memchr": true, "__mismatch_bytes": true, "__count_byte_bytes": true, "__sum_bytes_array": true, "__bsd_sum_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
+	"__sum_bytes": true, "__scan_set": true, "__scan_set_bytes": true, "__bsd_sum": true, "__count_runs": true, "__count_runs_bytes": true,
+	"__crc32_cksum": true, "__crc32_cksum_array": true,
+	"__clz32": true, "__ctz32": true, "__popcount32": true,
 	"__clz64": true, "__ctz64": true, "__popcount64": true,
 	"__ptr_width": true, "__heap_bump_bytes": true, "__heap_alloc_count": true,
 	"monotonic_ns": true,

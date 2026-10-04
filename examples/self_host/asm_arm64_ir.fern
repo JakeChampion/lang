@@ -289,14 +289,19 @@ function set_entry_indexed(o: ir.Op): string {
 // x8 / x9 are the two cursors (ld1 has no indexed form), x12 remembers a's
 // range start so the answer is one subtraction and x13 its end; x4 keeps the
 // clamped n for the equal case. Leaf body — no call, so every register is free.
-function emit_mismatch_arm64(s: asmcore.EmitState): asmcore.EmitState {
+function emit_mismatch_arm64(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let mlo: asmcore.LabelOut = asmcore.fresh_label(s);
   let lb: string = mlo.name;
   s = mlo.state;
   s = s.write("    ldr x4, [sp], #16\n    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n");
   s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  s = s.write("    ldr x5, [x0, #8]\n    ldr x0, [x0]\n");
-  s = s.write("    ldr x6, [x2, #8]\n    ldr x2, [x2]\n");
+  if (o.kind_tag == 378) {
+    s = s.write("    ldr x5, [x0]\n    add x0, x0, #8\n");
+    s = s.write("    ldr x6, [x2]\n    add x2, x2, #8\n");
+  } else {
+    s = s.write("    ldr x5, [x0, #8]\n    ldr x0, [x0]\n");
+    s = s.write("    ldr x6, [x2, #8]\n    ldr x2, [x2]\n");
+  }
   // Each offset clamps into [0, len] of its own string.
   s = s.write("    cmp x1, #0\n    b.ge " + lb + "_aop\n    mov x1, #0\n");
   s = s.write(lb + "_aop:\n    cmp x1, x5\n    csel x1, x5, x1, gt\n");
@@ -307,7 +312,15 @@ function emit_mismatch_arm64(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmp x4, x5\n    csel x4, x5, x4, gt\n");
   s = s.write("    cmp x4, x6\n    csel x4, x6, x4, gt\n");
   s = s.write("    cmp x4, #0\n    b.ge " + lb + "_nok\n    mov x4, #0\n");
-  s = s.write(lb + "_nok:\n    add x8, x0, x1\n    add x9, x2, x3\n");
+  s = s.write(lb + "_nok:\n");
+  if (o.kind_tag == 378 && !ir.is_packed(o)) {
+    s = s.write("    add x8, x0, x1, lsl #3\n    add x9, x2, x3, lsl #3\n    mov x10, #0\n");
+    s = s.write(lb + "_slots:\n    cmp x10, x4\n    b.ge " + lb + "_slots_done\n");
+    s = s.write("    add x11, x8, x10, lsl #3\n    ldrb w11, [x11]\n    add x14, x9, x10, lsl #3\n    ldrb w14, [x14]\n");
+    s = s.write("    cmp w11, w14\n    b.ne " + lb + "_slots_done\n    add x10, x10, #1\n    b " + lb + "_slots\n");
+    return s.write(lb + "_slots_done:\n    str x10, [sp, #-16]!\n");
+  }
+  s = s.write("    add x8, x0, x1\n    add x9, x2, x3\n");
   s = s.write("    mov x12, x8\n    add x13, x8, x4\n");
   // NEON loop, 16 bytes of each operand an iteration. The load runs only
   // with a full block left in both ranges, so it never reads past either
@@ -429,8 +442,8 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(l_done + ":\n    str x2, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 245) {  // mismatch
-    return emit_mismatch_arm64(s);
+  if (o.kind_tag == 245 || o.kind_tag == 378) {  // mismatch / mismatch_bytes
+    return emit_mismatch_arm64(o, s);
   }
   if (o.kind_tag == 234 || o.kind_tag == 360) {  // rmemchr / rmemchr_bytes
     // operand stack [box, byte, from] (from on top) -> the index of the
@@ -642,7 +655,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.mark_heap();
     return s;
   }
-  if (o.kind_tag == 329) {  // bsd_sum
+  if (o.kind_tag == 329 || o.kind_tag == 369) {  // bsd_sum / bsd_sum_bytes
     // operand stack [box, sum] (sum on top) -> the BSD checksum continued
     // over the string: per byte a 16-bit rotate right by one and an add.
     let blo: asmcore.LabelOut = asmcore.fresh_label(s);
@@ -651,18 +664,26 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let b_done: string = blo2.name;
     s = blo2.state;
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    if (o.kind_tag == 369) {
+      s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
+    } else {
+      s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    }
     s = s.write("    and x1, x1, #0xffff\n    mov x2, #0\n");
     s = s.write(b_loop + ":\n");
     s = s.write("    cmp x2, x3\n    b.ge " + b_done + "\n");
-    s = s.write("    add x5, x0, x2\n    ldrb w6, [x5]\n");
+    if (o.kind_tag == 369 && !ir.is_packed(o)) {
+      s = s.write("    add x5, x0, x2, lsl #3\n    ldrb w6, [x5]\n");
+    } else {
+      s = s.write("    add x5, x0, x2\n    ldrb w6, [x5]\n");
+    }
     s = s.write("    lsr x9, x1, #1\n    orr x1, x9, x1, lsl #15\n");
     s = s.write("    add x1, x1, x6\n    and x1, x1, #0xffff\n");
     s = s.write("    add x2, x2, #1\n    b " + b_loop + "\n");
     s = s.write(b_done + ":\n    str x1, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 327) {  // count_runs
+  if (o.kind_tag == 327 || o.kind_tag == 379) {  // count_runs / count_runs_bytes
     // operand stack [box, inside, set] (set on top) -> how many runs of
     // set members begin in the string. The set's length is at [set] and
     // its byte i in the 8-byte slot 8 + i*8; a byte past that length is
@@ -676,12 +697,20 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let c_done: string = clo3.name;
     s = clo3.state;
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    if (o.kind_tag == 379) {
+      s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
+    } else {
+      s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+    }
     s = s.write("    cmp x1, #0\n    cset x9, eq\n");
     s = s.write("    mov x1, #0\n    mov x8, #0\n    ldr x4, [x2]\n");
     s = s.write(c_loop + ":\n");
     s = s.write("    cmp x1, x3\n    b.ge " + c_done + "\n");
-    s = s.write("    add x5, x0, x1\n    ldrb w6, [x5]\n");
+    if (o.kind_tag == 379 && !ir.is_packed(o)) {
+      s = s.write("    add x5, x0, x1, lsl #3\n    ldrb w6, [x5]\n");
+    } else {
+      s = s.write("    add x5, x0, x1\n    ldrb w6, [x5]\n");
+    }
     s = s.write("    mov x7, #1\n");
     s = s.write("    cmp x6, x4\n    b.hs " + c_flag + "\n");
     s = s.write(set_entry_load(o, "x2", "x6"));
@@ -730,30 +759,36 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     }
     s = s.write("    cmp x1, #0\n    b.ge " + s_from_ok + "\n    mov x1, #0\n");
     s = s.write(s_from_ok + ":\n    ldr x4, [x2]\n");
-    s = s.write("    cmp x4, #256\n    b.lo " + s_short + "\n");
-    // Full set: four bytes a turn on a cursor (x5, the end x8), then one
-    // at a time. A hit at byte k of the four steps the cursor k times
-    // before its offset is read.
-    s = s.write("    cmp x1, x3\n    b.ge " + s_end + "\n");
-    s = s.write("    add x5, x0, x1\n    add x8, x0, x3\n    sub x9, x8, #4\n    add x10, x2, #8\n");
-    s = s.write(s_loop + ":\n    cmp x5, x9\n    b.hi " + s_one + "\n");
-    let k: i32 = 0;
-    while (k < 4) {
-      s = s.write("    ldrb w6, [x5, #" + util.i32_to_string(k) + "]\n    " + set_entry_indexed(o) + "\n");
-      s = s.write("    cbnz x7, " + hits[k] + "\n");
-      k = k + 1;
+    if (o.kind_tag != 361 || ir.is_packed(o)) {
+      s = s.write("    cmp x4, #256\n    b.lo " + s_short + "\n");
+      // Full set: four bytes a turn on a cursor (x5, the end x8), then one
+      // at a time. A hit at byte k of the four steps the cursor k times
+      // before its offset is read.
+      s = s.write("    cmp x1, x3\n    b.ge " + s_end + "\n");
+      s = s.write("    add x5, x0, x1\n    add x8, x0, x3\n    sub x9, x8, #4\n    add x10, x2, #8\n");
+      s = s.write(s_loop + ":\n    cmp x5, x9\n    b.hi " + s_one + "\n");
+      let k: i32 = 0;
+      while (k < 4) {
+        s = s.write("    ldrb w6, [x5, #" + util.i32_to_string(k) + "]\n    " + set_entry_indexed(o) + "\n");
+        s = s.write("    cbnz x7, " + hits[k] + "\n");
+        k = k + 1;
+      }
+      s = s.write("    add x5, x5, #4\n    b " + s_loop + "\n");
+      s = s.write(s_one + ":\n    cmp x5, x8\n    b.hs " + s_end + "\n");
+      s = s.write("    ldrb w6, [x5]\n    " + set_entry_indexed(o) + "\n    cbnz x7, " + hits[0] + "\n");
+      s = s.write("    add x5, x5, #1\n    b " + s_one + "\n");
+      s = s.write(hits[3] + ":\n    add x5, x5, #1\n");
+      s = s.write(hits[2] + ":\n    add x5, x5, #1\n");
+      s = s.write(hits[1] + ":\n    add x5, x5, #1\n");
+      s = s.write(hits[0] + ":\n    sub x1, x5, x0\n    b " + s_hit + "\n");
     }
-    s = s.write("    add x5, x5, #4\n    b " + s_loop + "\n");
-    s = s.write(s_one + ":\n    cmp x5, x8\n    b.hs " + s_end + "\n");
-    s = s.write("    ldrb w6, [x5]\n    " + set_entry_indexed(o) + "\n    cbnz x7, " + hits[0] + "\n");
-    s = s.write("    add x5, x5, #1\n    b " + s_one + "\n");
-    s = s.write(hits[3] + ":\n    add x5, x5, #1\n");
-    s = s.write(hits[2] + ":\n    add x5, x5, #1\n");
-    s = s.write(hits[1] + ":\n    add x5, x5, #1\n");
-    s = s.write(hits[0] + ":\n    sub x1, x5, x0\n    b " + s_hit + "\n");
     s = s.write(s_short + ":\n");
     s = s.write("    cmp x1, x3\n    b.ge " + s_end + "\n");
-    s = s.write("    add x5, x0, x1\n    ldrb w6, [x5]\n");
+    if (o.kind_tag == 361 && !ir.is_packed(o)) {
+      s = s.write("    add x5, x0, x1, lsl #3\n    ldrb w6, [x5]\n");
+    } else {
+      s = s.write("    add x5, x0, x1\n    ldrb w6, [x5]\n");
+    }
     s = s.write("    cmp x6, x4\n    b.hs " + s_short_next + "\n");
     s = s.write(set_entry_load(o, "x2", "x6"));
     s = s.write("    cmp x7, #0\n    b.ne " + s_hit + "\n");
@@ -763,18 +798,47 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(s_done + ":\n");
     return s;
   }
-  if (o.kind_tag == 253) {  // sum_bytes
+  if (o.kind_tag == 380 && !ir.is_packed(o)) {
+    let loop_label = asmcore.fresh_label(s);
+    let done_label = asmcore.fresh_label(loop_label.state);
+    s = done_label.state;
+    s = s.write("    ldr x0, [sp], #16\n    ldr x3, [x0]\n    add x0, x0, #8\n    mov x2, #0\n    mov w1, #0\n");
+    s = s.write(loop_label.name + ":\n    cmp x2, x3\n    b.ge " + done_label.name + "\n");
+    s = s.write("    add x5, x0, x2, lsl #3\n    ldrb w6, [x5]\n    add w1, w1, w6\n    add x2, x2, #1\n    b " + loop_label.name + "\n");
+    return s.write(done_label.name + ":\n    sxtw x1, w1\n    str x1, [sp, #-16]!\n");
+  }
+  if (o.kind_tag == 253 || o.kind_tag == 368) {  // sum_bytes / sum_bytes_array
     // operand stack [box] -> every byte of the string added into a
     // 32-bit accumulator that wraps. A call to the NEON helper, emitted
     // once under the "sum_bytes" need; the sum is sign-extended into the
     // slot, since a wrapped sum is a negative i32.
     s = s.need("sum_bytes");
     s = s.write("    ldr x0, [sp], #16\n");
-    s = s.write("    bl __fern_sum_bytes\n");
+    if (o.kind_tag == 368) {
+      s = s.write("    ldr x6, [x0]\n    add x8, x0, #8\n    bl __fern_sum_bytes_data\n");
+    } else {
+      s = s.write("    bl __fern_sum_bytes\n");
+    }
     s = s.write("    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 309) {  // crc32_cksum
+  if (o.kind_tag == 373 && !ir.is_packed(o)) {
+    let loop_label = asmcore.fresh_label(s);
+    let done_label = asmcore.fresh_label(loop_label.state);
+    s = done_label.state;
+    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x6, [x1]\n    add x1, x1, #8\n    mov x2, #0\n");
+    s = s.write("    movz w5, #0x1db7\n    movk w5, #0x04c1, lsl #16\n");
+    s = s.write(loop_label.name + ":\n    cmp x2, x6\n    b.ge " + done_label.name + "\n");
+    s = s.write("    add x3, x1, x2, lsl #3\n    ldrb w3, [x3]\n    eor w0, w0, w3, lsl #24\n");
+    let k: i32 = 0;
+    while (k < 8) {
+      s = s.write("    asr w4, w0, #31\n    and w4, w4, w5\n    lsl w0, w0, #1\n    eor w0, w0, w4\n");
+      k = k + 1;
+    }
+    s = s.write("    add x2, x2, #1\n    b " + loop_label.name + "\n");
+    return s.write(done_label.name + ":\n    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
+  }
+  if (o.kind_tag == 309 || o.kind_tag == 373) {  // crc32_cksum / crc32_cksum_array
     // operand stack [crc, box] (the box on top) -> the incoming CRC-32
     // with the string's bytes folded in.
     //
@@ -788,7 +852,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // string last, which is exactly the shape a port copies wrong.
     s = s.need("crc32_cksum");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    s = s.write("    bl __fern_crc32_cksum\n");
+    if (o.kind_tag == 373) {
+      s = s.write("    ldr x6, [x1]\n    add x7, x1, #8\n    bl __fern_crc32_cksum_data\n");
+    } else {
+      s = s.write("    bl __fern_crc32_cksum\n");
+    }
     s = s.write("    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
     return s;
   }
@@ -1796,7 +1864,7 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
   if (k >= 40 && k <= 60) {
     return true;
   }
-  return k == 1 || k == 3 || k == 4 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11;
+  return k == 1 || k == 3 || k == 4 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11 || k == 35;
 }
 
 // ssa_unsupported names the first instruction this emitter has no selection
@@ -3034,6 +3102,21 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
   return ssa_store(reg_of, ins.result, d, s);
 }
 
+// ssa_line_loc renders a source-position marker (ir.op_line, ssa kind 35) as
+// a `.loc` row: the file number the CLI's `.file` table gives the marker's
+// module (util.pos_file_index + 1), its line and its column, and
+// prologue_end on a function's first, which is where a breakpoint on the
+// function belongs. GNU as and the in-process assembler alike turn the rows
+// into .debug_line.
+function ssa_line_loc(ins: ssa.SInst, s: asmcore.EmitState): asmcore.EmitState {
+  let row: string = "    .loc " + util.i32_to_string(util.pos_file_index(ins.imm) + 1) + " " + util.i32_to_string(util.pos_line(ins.imm)) + " " + ins.str;
+  if (s.dw_first) {
+    row = row + " prologue_end";
+    s = asmcore.EmitState { ...s, dw_first: false };
+  }
+  return s.write(row + "\n");
+}
+
 function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: irtables.LowerResult, own s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ins.kind_tag;
   if (k == 11) {
@@ -3080,6 +3163,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
   }
   if (k == 57) {
     return ssa_agg_lit(ins, reg_of, s);
+  }
+  if (k == 35) {
+    return ssa_line_loc(ins, s);
   }
   if ((k == 1 || k == 3) && fr.imm.is_imm[ins.result]) {
     return s;
@@ -3568,6 +3654,7 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
 // most of them never read; prune_dead takes those out before the allocator
 // sees them.
 function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+  s = asmcore.EmitState { ...s, dw_first: true };
   let f: ssa.SFunc = ssa.register_form(lifted);
   let imm: ssa.Imms = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left());
   let reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, false, imm.is_imm, ssa_arg_prefs(f, s));
@@ -4133,14 +4220,20 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("heap");
     s = s.need("rename");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_rename\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 356 || o.kind_tag == 357 || o.kind_tag == 362 || o.kind_tag == 363) {  // rename_noreplace, rename_exchange, getxattr, lgetxattr
+  } else if (o.kind_tag == 356 || o.kind_tag == 357 || o.kind_tag == 362 || o.kind_tag == 363 || o.kind_tag == 374 || o.kind_tag == 375) {  // rename_noreplace, rename_exchange, getxattr, lgetxattr
     let op: string = ir.kind_name(o.kind_tag);
+    if (o.kind_tag >= 374 && ir.is_packed(o)) {
+      op = op + "_u8";
+    }
     s = s.need("heap");
     s = s.need(op);
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_" + op + "\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 364 || o.kind_tag == 365) {  // setxattr, lsetxattr
+  } else if (o.kind_tag == 364 || o.kind_tag == 365 || o.kind_tag == 376 || o.kind_tag == 377) {  // setxattr, lsetxattr
     // [pathbox, namebox, valuebox] with the value on top.
     let op: string = ir.kind_name(o.kind_tag);
+    if (o.kind_tag >= 374 && ir.is_packed(o)) {
+      op = op + "_u8";
+    }
     s = s.need("heap");
     s = s.need(op);
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
@@ -4289,7 +4382,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("writer_truncate");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_writer_truncate\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351) {  // the buf_* builder
+  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372) {  // the buf_* builder
     s = emit_arm64_op_buf(o, s);
   } else if (o.kind_tag == 181) {  // sleep_ms
     // [ms] -> nanosleep(ms). Push x0 for the drop.
@@ -4530,6 +4623,12 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
     s = s.need("buf_push_bytes_range");
   } else if (sym == "__fern_buf_push_bytes_range_u8") {
     s = s.need("buf_push_bytes_range_u8");
+  } else if (util.str_has_prefix(sym, "__fern_buf_push_bytes_")) {
+    if (util.str_has_suffix(sym, "_u8")) {
+      s = s.need("buf_bytes_u8");
+    } else {
+      s = s.need("buf_bytes");
+    }
   } else if (util.str_has_suffix(sym, "_u8")) {
     s = s.need("buf_u8");
   }
@@ -4671,7 +4770,13 @@ function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldr x" + util.i32_to_string(k) + ", [sp], #16\n");
   }
   let sym: string = asmcore.buf_table_helper(o.kind_tag, ir.is_packed(o));
-  if (o.kind_tag != 347 && o.kind_tag != 351 && sym != asmcore.buf_helper(o.kind_tag)) {
+  if (o.kind_tag >= 370 && o.kind_tag <= 372) {
+    if (sym != asmcore.buf_helper(o.kind_tag)) {
+      s = s.need("buf_bytes_u8");
+    } else {
+      s = s.need("buf_bytes");
+    }
+  } else if (o.kind_tag != 347 && o.kind_tag != 351 && sym != asmcore.buf_helper(o.kind_tag)) {
     s = s.need("buf_u8");
   }
   return s.write("    bl " + sym + "\n    str x0, [sp, #-16]!\n");
@@ -7285,11 +7390,27 @@ function emit_buf_take_bytes(s: asmcore.EmitState, packed: boolean): asmcore.Emi
 // table: a slot table holds entry i in the low byte of the 8-byte slot
 // 8 + i*8, a packed one (the `_u8` helpers) at byte 8 + i. An expanded
 // table's record c is eight entries from entry c*8 either way.
-function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.EmitState {
+function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: boolean): asmcore.EmitState {
   let sfx: string = asmcore.packed_suffix(packed);
-  let lm: string = ".Lbufmap" + sfx;
-  let lf: string = ".Lbuffilt" + sfx;
-  let le: string = ".Lbufexp" + sfx;
+  let prefix: string = "__fern_buf_push_";
+  let label: string = "";
+  if (raw) {
+    prefix = prefix + "bytes_";
+    label = "_bytes";
+  }
+  let source_len: string = "    ldr x22, [x20, #8]\n";
+  let source_data: string = "    ldr x1, [x20]\n";
+  if (raw) {
+    source_len = "    ldr x22, [x20]\n";
+    source_data = "    add x1, x20, #8\n";
+  }
+  let lm: string = ".Lbufmap" + label + sfx;
+  let lf: string = ".Lbuffilt" + label + sfx;
+  let le: string = ".Lbufexp" + label + sfx;
+  let srcstep: string = "1";
+  if (raw && !packed) {
+    srcstep = "8";
+  }
   let tsh: string = ", lsl #3";
   let pk: string = "ldr x8, [x6, x7, lsl #3]";
   let rsh: string = "6";
@@ -7309,9 +7430,9 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   // past the table's length at [table]. Entry i of the table is the low
   // byte of the 8-byte slot 8 + i*8; a table covering every byte value
   // takes the loop with no length check.
-  s = s.write(".globl __fern_buf_push_mapped" + sfx + "\n");
-  s = s.write(".type __fern_buf_push_mapped" + sfx + ", %function\n");
-  s = s.write("__fern_buf_push_mapped" + sfx + ":\n");
+  s = s.write(".globl " + prefix + "mapped" + sfx + "\n");
+  s = s.write(".type " + prefix + "mapped" + sfx + ", %function\n");
+  s = s.write(prefix + "mapped" + sfx + ":\n");
   s = s.write("    stp x29, x30, [sp, #-16]!\n");
   s = s.write("    mov x29, sp\n");
   s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -7319,7 +7440,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    mov x19, x0\n");
   s = s.write("    mov x20, x1\n");
   s = s.write("    mov x21, x2\n");  // table
-  s = s.write("    ldr x22, [x20, #8]\n");  // n
+  s = s.write(source_len);  // n
   s = s.write("    cbz x22, " + lm + "_done\n");
   s = s.write("    ldr x0, [x19, #8]\n");
   s = s.write("    add x0, x0, x22\n");
@@ -7330,7 +7451,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    mov x0, x19\n");
   s = s.write("    bl __fern_buf_reserve\n");
   s = s.write(lm + "_fits:\n");
-  s = s.write("    ldr x1, [x20]\n");  // src data
+  s = s.write(source_data);  // src data
   s = s.write("    ldr x3, [x19]\n");
   s = s.write("    ldr x4, [x19, #8]\n");
   s = s.write("    add x3, x3, x4\n");  // dst = data + len
@@ -7339,7 +7460,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    cmp x4, #256\n");
   s = s.write("    b.lo " + lm + "_short\n");
   s = s.write(lm + "_full:\n");
-  s = s.write("    ldrb w5, [x1], #1\n");
+  s = s.write("    ldrb w5, [x1], #" + srcstep + "\n");
   s = s.write("    add x6, x21, x5" + tsh + "\n");
   s = s.write("    ldrb w5, [x6, #8]\n");
   s = s.write("    strb w5, [x3], #1\n");
@@ -7347,7 +7468,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    cbnz x2, " + lm + "_full\n");
   s = s.write("    b " + lm + "_len\n");
   s = s.write(lm + "_short:\n");
-  s = s.write("    ldrb w5, [x1], #1\n");
+  s = s.write("    ldrb w5, [x1], #" + srcstep + "\n");
   s = s.write("    cmp x5, x4\n");
   s = s.write("    b.hs " + lm + "_keep\n");
   s = s.write("    add x6, x21, x5" + tsh + "\n");
@@ -7365,16 +7486,16 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    ldp x19, x20, [sp], #16\n");
   s = s.write("    ldp x29, x30, [sp], #16\n");
   s = s.write("    ret\n");
-  s = s.write(".size __fern_buf_push_mapped" + sfx + ", .-__fern_buf_push_mapped" + sfx + "\n");
+  s = s.write(".size " + prefix + "mapped" + sfx + ", .-" + prefix + "mapped" + sfx + "\n");
   // __fern_buf_push_filtered(x0 = H, x1 = box, x2 = drop): append each
   // byte c of the box's data whose drop entry (the low byte of the
   // 8-byte slot 8 + c*8) is zero, or that is past the table's length at
   // [drop]. Room for the whole box is reserved; the full-table loop stores
   // every byte and advances the kept count only past a kept one, so a
   // byte's fate is never a branch.
-  s = s.write(".globl __fern_buf_push_filtered" + sfx + "\n");
-  s = s.write(".type __fern_buf_push_filtered" + sfx + ", %function\n");
-  s = s.write("__fern_buf_push_filtered" + sfx + ":\n");
+  s = s.write(".globl " + prefix + "filtered" + sfx + "\n");
+  s = s.write(".type " + prefix + "filtered" + sfx + ", %function\n");
+  s = s.write(prefix + "filtered" + sfx + ":\n");
   s = s.write("    stp x29, x30, [sp, #-16]!\n");
   s = s.write("    mov x29, sp\n");
   s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -7382,7 +7503,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    mov x19, x0\n");
   s = s.write("    mov x20, x1\n");
   s = s.write("    mov x21, x2\n");  // drop
-  s = s.write("    ldr x22, [x20, #8]\n");  // n
+  s = s.write(source_len);  // n
   s = s.write("    cbz x22, " + lf + "_done\n");
   s = s.write("    ldr x0, [x19, #8]\n");
   s = s.write("    add x0, x0, x22\n");
@@ -7393,7 +7514,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    mov x0, x19\n");
   s = s.write("    bl __fern_buf_reserve\n");
   s = s.write(lf + "_fits:\n");
-  s = s.write("    ldr x1, [x20]\n");  // src data
+  s = s.write(source_data);  // src data
   s = s.write("    ldr x3, [x19]\n");
   s = s.write("    ldr x4, [x19, #8]\n");
   s = s.write("    add x3, x3, x4\n");  // dst = data + len
@@ -7413,7 +7534,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    cbnz x2, " + lf + "_full\n");
   s = s.write("    b " + lf + "_len\n");
   s = s.write(lf + "_loop:\n");
-  s = s.write("    ldrb w5, [x1], #1\n");
+  s = s.write("    ldrb w5, [x1], #" + srcstep + "\n");
   s = s.write("    cmp x5, x4\n");
   s = s.write("    b.hs " + lf + "_keep\n");
   s = s.write("    add x6, x21, x5" + tsh + "\n");
@@ -7434,7 +7555,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    ldp x19, x20, [sp], #16\n");
   s = s.write("    ldp x29, x30, [sp], #16\n");
   s = s.write("    ret\n");
-  s = s.write(".size __fern_buf_push_filtered" + sfx + ", .-__fern_buf_push_filtered" + sfx + "\n");
+  s = s.write(".size " + prefix + "filtered" + sfx + ", .-" + prefix + "filtered" + sfx + "\n");
   // __fern_buf_push_expanded(x0 = H, x1 = box, x2 = table): append each
   // byte c of the box's data as the record at table[c*8], a length
   // (above 7 counts as 7) and then the bytes, or c itself when its
@@ -7443,9 +7564,9 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   // table + 8 + c*64. A push of 256 bytes or more through a table of
   // every record first packs the records into 2 KiB of frame, then
   // copies each as one eight-byte store.
-  s = s.write(".globl __fern_buf_push_expanded" + sfx + "\n");
-  s = s.write(".type __fern_buf_push_expanded" + sfx + ", %function\n");
-  s = s.write("__fern_buf_push_expanded" + sfx + ":\n");
+  s = s.write(".globl " + prefix + "expanded" + sfx + "\n");
+  s = s.write(".type " + prefix + "expanded" + sfx + ", %function\n");
+  s = s.write(prefix + "expanded" + sfx + ":\n");
   s = s.write("    stp x29, x30, [sp, #-16]!\n");
   s = s.write("    mov x29, sp\n");
   s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -7453,7 +7574,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    mov x19, x0\n");
   s = s.write("    mov x20, x1\n");
   s = s.write("    mov x21, x2\n");  // table
-  s = s.write("    ldr x22, [x20, #8]\n");  // n
+  s = s.write(source_len);  // n
   s = s.write("    cbz x22, " + le + "_done\n");
   s = s.write("    lsl x0, x22, #3\n");
   s = s.write("    add x0, x0, #8\n");  // a whole record stored per byte
@@ -7466,7 +7587,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    mov x0, x19\n");
   s = s.write("    bl __fern_buf_reserve\n");
   s = s.write(le + "_fits:\n");
-  s = s.write("    ldr x1, [x20]\n");  // src data
+  s = s.write(source_data);  // src data
   s = s.write("    ldr x3, [x19]\n");
   s = s.write("    ldr x4, [x19, #8]\n");
   s = s.write("    add x3, x3, x4\n");  // dst = data + len
@@ -7481,14 +7602,14 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    add x7, x7, #1\n    cmp x7, #2048\n    b.lo " + le + "_pack\n");
   s = s.write("    mov x9, #7\n");
   s = s.write(le + "_fast:\n");
-  s = s.write("    ldrb w5, [x1], #1\n    ldr x8, [sp, x5, lsl #3]\n");
+  s = s.write("    ldrb w5, [x1], #" + srcstep + "\n    ldr x8, [sp, x5, lsl #3]\n");
   s = s.write("    and x7, x8, #255\n    cmp x7, x9\n    csel x7, x7, x9, ls\n");
   s = s.write("    lsr x8, x8, #8\n    str x8, [x3]\n    add x3, x3, x7\n");
   s = s.write("    subs x2, x2, #1\n    b.ne " + le + "_fast\n");
   s = s.write("    add sp, sp, #2048\n    b " + le + "_len\n");
   s = s.write(le + "_loop:\n");
   s = s.write("    cbz x2, " + le + "_len\n");
-  s = s.write("    ldrb w5, [x1], #1\n");
+  s = s.write("    ldrb w5, [x1], #" + srcstep + "\n");
   s = s.write("    cmp x5, x4\n");
   s = s.write("    b.hs " + le + "_keep\n");
   s = s.write("    add x6, x21, x5, lsl #" + rsh + "\n");
@@ -7518,7 +7639,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    ldp x19, x20, [sp], #16\n");
   s = s.write("    ldp x29, x30, [sp], #16\n");
   s = s.write("    ret\n");
-  s = s.write(".size __fern_buf_push_expanded" + sfx + ", .-__fern_buf_push_expanded" + sfx + "\n");
+  s = s.write(".size " + prefix + "expanded" + sfx + ", .-" + prefix + "expanded" + sfx + "\n");
   return s;
 }
 
@@ -8313,9 +8434,15 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    add x5, x4, x3\n");
     s = s.write("    b .Lbufrange_copy\n");
     s = s.write(".size __fern_buf_push_range, .-__fern_buf_push_range\n");
-    s = emit_buf_table_helpers(s, false);
+    s = emit_buf_table_helpers(s, false, false);
     if (s.has_need("buf_u8")) {
-      s = emit_buf_table_helpers(s, true);
+      s = emit_buf_table_helpers(s, true, false);
+    }
+    if (s.has_need("buf_bytes")) {
+      s = emit_buf_table_helpers(s, false, true);
+    }
+    if (s.has_need("buf_bytes_u8")) {
+      s = emit_buf_table_helpers(s, true, true);
     }
     // __fern_buf_push_byte(x0 = H, x1 = x): append the low byte of x, as a
     // leaf unless the buffer grows.
@@ -10836,8 +10963,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("lstat")) {
       fs_src = fs_src + " " + asmcore.rt_src_lstat(tgt);
     }
+    if (s.has_need("read_file") || s.has_need("getxattr") || s.has_need("lgetxattr")) {
+      fs_src = fs_src + " " + asmcore.rt_src_utf8_valid();
+    }
     if (s.has_need("read_file")) {
-      fs_src = fs_src + " " + asmcore.rt_src_utf8_valid() + " " + asmcore.rt_src_read_file(tgt);
+      fs_src = fs_src + " " + asmcore.rt_src_read_file(tgt);
     }
     if (s.has_need("read_file_bytes")) {
       fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes(tgt, false);
@@ -10892,6 +11022,30 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     }
     if (s.has_need("rename")) {
       fs_src = fs_src + " " + asmcore.rt_src_rename(tgt);
+    }
+    if (s.has_need("getxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes(tgt, true, false);
+    }
+    if (s.has_need("getxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes(tgt, true, true);
+    }
+    if (s.has_need("lgetxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes(tgt, false, false);
+    }
+    if (s.has_need("lgetxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes(tgt, false, true);
+    }
+    if (s.has_need("setxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes(tgt, true, false);
+    }
+    if (s.has_need("setxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes(tgt, true, true);
+    }
+    if (s.has_need("lsetxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes(tgt, false, false);
+    }
+    if (s.has_need("lsetxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes(tgt, false, true);
     }
     if (s.has_need("getxattr")) {
       fs_src = fs_src + " " + asmcore.rt_src_getxattr(tgt, true);
@@ -11348,6 +11502,7 @@ function emit_rt_sum_bytes(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_sum_bytes:\n");
   s = s.write("    ldr x6, [x0, #8]\n");
   s = s.write("    ldr x8, [x0]\n");
+  s = s.write("__fern_sum_bytes_data:\n");
   s = s.write("    add x9, x8, x6\n");
   s = s.write("    mov w0, #0\n");
   s = s.write("    movi v2.4s, #0\n");
@@ -11405,13 +11560,15 @@ function emit_rt_sum_bytes(s: asmcore.EmitState): asmcore.EmitState {
 function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .arch_extension aes\n");
   s = s.write("    .global __fern_crc32_cksum\n");
+  s = s.write("    .global __fern_crc32_cksum_data\n");
   s = s.write("    .type __fern_crc32_cksum, %function\n");
   s = s.write("__fern_crc32_cksum:\n");
+  s = s.write("    ldr x6, [x1, #8]\n");
+  s = s.write("    ldr x7, [x1]\n");
+  s = s.write("__fern_crc32_cksum_data:\n");
   s = s.write("    stp x29, x30, [sp, #-64]!\n");
   s = s.write("    mov x29, sp\n");
   s = s.write("    mov w10, w0\n");
-  s = s.write("    ldr x6, [x1, #8]\n");
-  s = s.write("    ldr x7, [x1]\n");
   s = s.write("    mov x8, x7\n");
   s = s.write("    add x9, x7, w6, uxtw\n");
   s = s.write("    mov w0, w10\n");
@@ -12313,7 +12470,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
     "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec",
     "remove_file", "create_dir_all", "create_dir", "remove_dir",
-    "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "setxattr", "lsetxattr", "chmod", "chmod_at", "truncate",
+    "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at", "truncate",
     "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times", "read_link",
     "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
     "temp_dir", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",

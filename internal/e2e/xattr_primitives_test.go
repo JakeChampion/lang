@@ -120,7 +120,12 @@ func TestArm64DarwinXattrPrimitives(t *testing.T) {
 
 func TestWASMXattrRefused(t *testing.T) {
 	bin := buildFernCLI(t)
-	for _, call := range []string{`getxattr("a", "user.x")`, `lgetxattr("a", "user.x")`, `setxattr("a", "user.x", "v")`, `lsetxattr("a", "user.x", "v")`} {
+	for _, call := range []string{
+		`getxattr("a", "user.x")`, `lgetxattr("a", "user.x")`,
+		`setxattr("a", "user.x", "v")`, `lsetxattr("a", "user.x", "v")`,
+		`getxattr_bytes("a", "user.x")`, `lgetxattr_bytes("a", "user.x")`,
+		`setxattr_bytes("a", "user.x", [255 as u8])`, `lsetxattr_bytes("a", "user.x", [])`,
+	} {
 		name := call[:strings.IndexByte(call, '(')]
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()

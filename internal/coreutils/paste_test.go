@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // pasteFile writes `content` under `dir` as `name` and returns its path.
@@ -54,7 +56,7 @@ func pasteCases(t *testing.T) []invocation {
 	// A line longer than one read block, so a column spans reads.
 	longline := pasteFile(t, dir, "long", strings.Repeat("x", 70000)+"\ntail\n")
 
-	return []invocation{
+	cases := []invocation{
 		// Parallel.
 		{name: "one file", args: []string{three}},
 		{name: "two files", args: []string{three, two}},
@@ -158,6 +160,21 @@ func pasteCases(t *testing.T) []invocation {
 		{name: "large serial", args: []string{"-s", bigA}},
 		{name: "stdin across read blocks", args: []string{"-", three}, stdin: strings.Repeat("row\n", 20000)},
 	}
+	for _, tc := range e2eharness.PasteByteCases() {
+		files := map[string]string{
+			"a":     writeFile(t, dir, tc.Name+"-a", tc.A),
+			"b":     writeFile(t, dir, tc.Name+"-b", tc.B),
+			"empty": empty,
+		}
+		args := append([]string{}, tc.Args...)
+		for i, arg := range args {
+			if path, ok := files[arg]; ok {
+				args[i] = path
+			}
+		}
+		cases = append(cases, invocation{name: tc.Name, args: args, stdin: tc.Stdin})
+	}
+	return cases
 }
 
 func TestPasteParity(t *testing.T) {

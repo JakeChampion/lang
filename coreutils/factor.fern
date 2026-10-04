@@ -910,7 +910,7 @@ function sort_big(xs: bigint.BigInt[]): bigint.BigInt[] {
 // `[ ]*[+]?[0-9]+` and nothing else, with a NUL ending the token as it
 // ends any C string. The digits are echoed without their leading zeros,
 // which is what GNU prints.
-function handle(h: usize, text: string, lo: i32, hi: i32, split: boolean, exponents: boolean, pr: Primes): i64 {
+function handle(h: usize, text: u8[], lo: i32, hi: i32, split: boolean, exponents: boolean, pr: Primes): i64 {
   let i: i32 = lo;
   // `c` is the byte at `i`, or -1 at `hi`, read once per position.
   let c: i32 = -1;
@@ -968,7 +968,7 @@ function handle(h: usize, text: string, lo: i32, hi: i32, split: boolean, expone
   if (!valid) {
     // Not flushed first: GNU's stdout stays block-buffered across the
     // diagnostic, so the two streams interleave as they interleave.
-    gnu.error(gnu.quote(cut_at_nul(text, lo, end)) + " is not a valid positive integer");
+    gnu.error(gnu.quote_bytes(cut_at_nul(text, lo, end)) + " is not a valid positive integer");
     return end as i64 << 3 as i64 | 1 as i64;
   }
   if (sig == i) {
@@ -979,11 +979,16 @@ function handle(h: usize, text: string, lo: i32, hi: i32, split: boolean, expone
     if (v < table_bound()) {
       code = 4 as i64;
     }
-    buf_push_range(h, text, sig, i);
+    buf_push_bytes_range(h, text, sig, i);
     buf_push_byte(h, 58);
     push_line_u64(h, v, pr, exponents);
   } else {
-    match (bigint.parse(slice_unchecked(text, sig, i) + "")) {
+    // The scan above proved this range consists entirely of ASCII digits.
+    let digits: usize = buf_new(i - sig);
+    buf_push_bytes_range(digits, text, sig, i);
+    let number: string = buf_take(digits);
+    buf_free(digits);
+    match (bigint.parse(number)) {
       Some(b) => {
         code = handle_wide(h, text, sig, i, b, exponents, pr);
       },
@@ -998,8 +1003,8 @@ function handle(h: usize, text: string, lo: i32, hi: i32, split: boolean, expone
 // way: 9.5 moved the wide path onto the shared line buffer, so
 // `printf '15\n<2^128-1>\n21\n' | factor` prints them in the order
 // they were read rather than the big one first.
-function handle_wide(out: usize, text: string, sig: i32, end: i32, b: bigint.BigInt, exponents: boolean, pr: Primes): i64 {
-  buf_push_range(out, text, sig, end);
+function handle_wide(out: usize, text: u8[], sig: i32, end: i32, b: bigint.BigInt, exponents: boolean, pr: Primes): i64 {
+  buf_push_bytes_range(out, text, sig, end);
   buf_push_byte(out, 58);
   if (b.bit_length() <= 64) {
     push_line_u64(out, b.low_u64(), pr, exponents);
@@ -1011,7 +1016,7 @@ function handle_wide(out: usize, text: string, sig: i32, end: i32, b: bigint.Big
 
 // Where the token that `text[i:hi]` continues ends: at the next blank
 // when `split`, else at `hi`.
-function token_end(text: string, i: i32, hi: i32, split: boolean): i32 {
+function token_end(text: u8[], i: i32, hi: i32, split: boolean): i32 {
   if (!split) {
     return hi;
   }
@@ -1023,12 +1028,16 @@ function token_end(text: string, i: i32, hi: i32, split: boolean): i32 {
 }
 
 // `text[lo:hi]` up to its first NUL, for the diagnostic.
-function cut_at_nul(text: string, lo: i32, hi: i32): string {
+function cut_at_nul(text: u8[], lo: i32, hi: i32): u8[] {
   let i: i32 = lo;
   while (i < hi && text[i] as i32 != 0) {
     i = i + 1;
   }
-  return slice_unchecked(text, lo, i) + "";
+  let h: usize = buf_new(i - lo);
+  buf_push_bytes_range(h, text, lo, i);
+  let bytes: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return bytes;
 }
 
 function is_blank(b: i32): boolean {
@@ -1144,8 +1153,8 @@ function chunk_bytes(): i32 {
 
 // Tokens from stdin: runs of anything that is not a space, tab or
 // newline, read a chunk at a time. A token cut by a chunk boundary is
-// carried into the next chunk, so nothing holds more than one chunk of
-// the input. The state is held in locals across the loop: rebuilding it
+// carried in a byte builder. The scanner retains one read block and the
+// unfinished token. The state is held in locals: rebuilding it
 // per token would be an allocation per number.
 function handle_stdin(st: State, exponents: boolean): State {
   let r: Reader = stdin();
@@ -1154,10 +1163,10 @@ function handle_stdin(st: State, exponents: boolean): State {
   let pr: Primes = st.pr;
   let seen: i32 = st.seen;
   let h: usize = o.h;
-  let carry: string = "";
+  let carry: usize = 0 as usize;
   while (true) {
-    let chunk: string = "";
-    match (r.read_chunk(chunk_bytes())) {
+    let chunk: u8[] = [];
+    match (r.read_chunk_bytes(chunk_bytes())) {
       Ok(c) => {
         chunk = c;
       },
@@ -1176,18 +1185,18 @@ function handle_stdin(st: State, exponents: boolean): State {
       lim = lim - 1;
     }
     let i: i32 = 0;
-    if (carry.len() > 0) {
+    if (carry != 0 as usize && buf_len(carry) > 0) {
       let f: i32 = 0;
       while (f < n && !is_blank(chunk[f] as i32)) {
         f = f + 1;
       }
-      carry = carry + slice_unchecked(chunk, 0, f);
+      buf_push_bytes_range(carry, chunk, 0, f);
       if (lim == 0) {
         continue;
       }
       let start: i32 = buf_len(h);
-      let rc: i64 = handle(h, carry, 0, carry.len(), true, exponents, pr);
-      carry = "";
+      let token: u8[] = buf_take_bytes(carry);
+      let rc: i64 = handle(h, token, 0, token.len(), true, exponents, pr);
       let what: i32 = (rc & 7 as i64) as i32;
       status = status | what & 1;
       if ((what & 4) != 0) {
@@ -1220,16 +1229,23 @@ function handle_stdin(st: State, exponents: boolean): State {
       line_done(o, at);
     }
     if (lim < n) {
-      carry = slice_unchecked(chunk, lim, n) + "";
+      if (carry == 0 as usize) {
+        carry = buf_new(n - lim);
+      }
+      buf_push_bytes_range(carry, chunk, lim, n);
     }
   }
   r.close();
-  if (carry.len() > 0) {
+  if (carry != 0 as usize && buf_len(carry) > 0) {
     let start: i32 = buf_len(h);
-    let rc: i64 = handle(h, carry, 0, carry.len(), true, exponents, pr);
+    let token: u8[] = buf_take_bytes(carry);
+    let rc: i64 = handle(h, token, 0, token.len(), true, exponents, pr);
     let what: i32 = (rc & 7 as i64) as i32;
     status = status | what & 1;
     line_done(o, start);
+  }
+  if (carry != 0 as usize) {
+    buf_free(carry);
   }
   return State { o: o, status: status, pr: pr, seen: seen };
 }
@@ -1260,7 +1276,7 @@ pub function main(): i32 {
   } else {
     let i: i32 = 0;
     while (i < operands.len()) {
-      let s: string = operands[i];
+      let s: u8[] = operands[i].bytes();
       let start: i32 = buf_len(st.o.h);
       st = after(st, handle(st.o.h, s, 0, s.len(), false, exponents, st.pr), start);
       i = i + 1;

@@ -300,7 +300,7 @@ var rcInertBuiltins = map[string]bool{
 	// `buf_free` releases the builder's own
 	// blocks, which is the wholesale-invalidation axis `__heap_release_to`
 	// is filed under above and not one this table answers.
-	"buf_new": true, "buf_push": true, "buf_push_range": true, "buf_push_mapped": true, "buf_push_filtered": true, "buf_push_expanded": true,
+	"buf_new": true, "buf_push": true, "buf_push_range": true, "buf_push_mapped": true, "buf_push_bytes_mapped": true, "buf_push_filtered": true, "buf_push_bytes_filtered": true, "buf_push_expanded": true, "buf_push_bytes_expanded": true,
 	"buf_push_byte": true, "buf_push_u64": true, "buf_len": true, "buf_take": true,
 	"buf_free":             true,
 	"buf_take_bytes":       true,
@@ -358,12 +358,16 @@ var rcInertBuiltins = map[string]bool{
 	// (path, name) → Result[string]: two borrowed strings in, a fresh
 	// value out. Native-only — E066 refuses both on the wasm worlds
 	// (`xattr`).
-	"getxattr":  true,
-	"lgetxattr": true,
+	"getxattr":        true,
+	"getxattr_bytes":  true,
+	"lgetxattr":       true,
+	"lgetxattr_bytes": true,
 	// (path, name, value) → Result[void]: three borrowed strings in,
 	// nothing retained.
-	"setxattr":  true,
-	"lsetxattr": true,
+	"setxattr":        true,
+	"setxattr_bytes":  true,
+	"lsetxattr":       true,
+	"lsetxattr_bytes": true,
 	// (pid, sig) → Result. Two scalars in and nothing retained.
 	// Native-only — E066 refuses it on both wasm worlds, which have no
 	// process table to name a target in — so it is classified here under
@@ -511,8 +515,9 @@ var rcInert = map[string]bool{
 	"__fern_environ":               true,
 	"__fern_arr_push_shared_bytes": true,
 	"__fern_arr_push_shared_count": true, "__fern_ascii_run": true,
-	"__fern_rmemchr": true, "__fern_count_byte": true, "__fern_scan_set": true, "__fern_scan_set_bytes": true, "__fern_count_runs": true, "__fern_bsd_sum": true,
-	"__fern_sum_bytes": true, "__fern_crc32_cksum": true,
+	"__fern_rmemchr": true, "__fern_count_byte": true, "__fern_scan_set": true, "__fern_count_runs": true, "__fern_bsd_sum": true,
+	"__fern_scan_set_bytes": true, "__fern_count_runs_bytes": true,
+	"__fern_sum_bytes": true, "__fern_crc32_cksum": true, "__fern_crc32_cksum_array": true,
 	// Reads its f64[] and allocates the scaled copy; moves no count on the
 	// input. The RESULT is counted, in rcResultOwned.
 	"__fern_scale_f64": true,
@@ -525,7 +530,7 @@ var rcInert = map[string]bool{
 	// scratch, neither of which touches a counted reference.
 	"__fern_lc_report": true, "__fern_lc_wrnum": true,
 	"__fern_log_f64":       true,
-	"__fern_map_hash_seed": true, "__fern_memchr": true, "__fern_count_byte_bytes": true, "__fern_memchr_bytes": true, "__fern_rmemchr_bytes": true,
+	"__fern_map_hash_seed": true, "__fern_memchr": true, "__fern_count_byte_bytes": true, "__fern_sum_bytes_array": true, "__fern_bsd_sum_bytes": true, "__fern_memchr_bytes": true, "__fern_mismatch_bytes": true, "__fern_rmemchr_bytes": true,
 	"__fern_mismatch":     true,
 	"__fern_monotonic_ns": true, "__fern_now_ns": true,
 	"__fern_now_unix_ms": true, "__fern_open_appender": true,

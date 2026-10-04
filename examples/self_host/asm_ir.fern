@@ -1572,6 +1572,7 @@ function emit_rt_sum_bytes(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_sum_bytes:\n");
   s = s.write("    movq 8(%rdi), %rcx\n");
   s = s.write("    movq (%rdi), %rdi\n");
+  s = s.write("__fern_sum_bytes_data:\n");
   s = s.write("    leaq (%rdi,%rcx), %r9\n");
   s = s.write("    pxor %xmm2, %xmm2\n");
   s = s.write("    pxor %xmm3, %xmm3\n");
@@ -1643,13 +1644,15 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .quad 0x00000000e6228b11\n");
   s = s.write("    .section .text\n");
   s = s.write("    .globl __fern_crc32_cksum\n");
+  s = s.write("    .globl __fern_crc32_cksum_data\n");
   s = s.write("    .type __fern_crc32_cksum, @function\n");
   s = s.write("__fern_crc32_cksum:\n");
+  s = s.write("    movq 8(%rsi), %rdx\n");
+  s = s.write("    movq (%rsi), %rsi\n");
+  s = s.write("__fern_crc32_cksum_data:\n");
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
   s = s.write("    subq $32, %rsp\n");
-  s = s.write("    movq 8(%rsi), %rdx\n");
-  s = s.write("    movq (%rsi), %rsi\n");
   s = s.write("    movl %edi, %eax\n");
   s = s.write("    cmpl $16, %edx\n");
   s = s.write("    jb .Lcrc32_tail\n");
@@ -2361,7 +2364,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
     "stat", "lstat", "statfs", "access", "read_file",
     "read_file_bytes", "read_file_bytes_u8", "remove_file", "create_dir_all", "create_dir",
-    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "setxattr", "lsetxattr", "chmod", "chmod_at",
+    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
     "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
@@ -2380,7 +2383,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "str_read_line", "strbuf", "buf", "reader",
     "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "temp_dir",
     "read_dir", "read_dir_all", "remove_file", "create_dir_all", "create_dir",
-    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "lgetxattr", "setxattr", "lsetxattr", "chmod", "chmod_at",
+    "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups",
     "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs",
@@ -2444,11 +2447,27 @@ function emit_buf_take_bytes(s: asmcore.EmitState, packed: boolean): asmcore.Emi
 // table: a slot table holds entry i in the low byte of the 8-byte slot
 // 8 + i*8, a packed one (the `_u8` helpers) at byte 8 + i. An expanded
 // table's record c is eight entries from entry c*8 either way.
-function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.EmitState {
+function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: boolean): asmcore.EmitState {
   let sfx: string = asmcore.packed_suffix(packed);
-  let lm: string = ".Lbufmap" + sfx;
-  let lf: string = ".Lbuffilt" + sfx;
-  let le: string = ".Lbufexp" + sfx;
+  let prefix: string = "__fern_buf_push_";
+  let label: string = "";
+  if (raw) {
+    prefix = prefix + "bytes_";
+    label = "_bytes";
+  }
+  let source_len: string = "    movq 8(%r12), %r13\n";
+  let source_data: string = "    movq (%r12), %rsi\n";
+  if (raw) {
+    source_len = "    movq (%r12), %r13\n";
+    source_data = "    leaq 8(%r12), %rsi\n";
+  }
+  let lm: string = ".Lbufmap" + label + sfx;
+  let lf: string = ".Lbuffilt" + label + sfx;
+  let le: string = ".Lbufexp" + label + sfx;
+  let srcscale: string = "";
+  if (raw && !packed) {
+    srcscale = ",8";
+  }
   let sc: string = ",8";
   let rshift: string = "6";
   let rbyte: string = "16(%r10,%r8,8), %rax";
@@ -2462,7 +2481,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   // past the table's length at (table). Entry i of the table is the low
   // byte of the 8-byte slot 8 + i*8; a table covering every byte value
   // takes the loop with no length check.
-  s = s.write("__fern_buf_push_mapped" + sfx + ":\n");
+  s = s.write(prefix + "mapped" + sfx + ":\n");
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
   s = s.write("    pushq %rbx\n");
@@ -2472,7 +2491,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    movq %rdi, %rbx\n");
   s = s.write("    movq %rsi, %r12\n");
   s = s.write("    movq %rdx, %r14\n");  // table
-  s = s.write("    movq 8(%r12), %r13\n");  // n
+  s = s.write(source_len);  // n
   s = s.write("    testq %r13, %r13\n");
   s = s.write("    jz " + lm + "_done\n");
   s = s.write("    movq 8(%rbx), %rax\n");
@@ -2484,7 +2503,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    movq %rax, %rsi\n");
   s = s.write("    call __fern_buf_reserve\n");
   s = s.write(lm + "_fits:\n");
-  s = s.write("    movq (%r12), %rsi\n");  // src data
+  s = s.write(source_data);  // src data
   s = s.write("    movq (%rbx), %rdx\n");
   s = s.write("    addq 8(%rbx), %rdx\n");  // dst = data + len
   s = s.write("    movq (%r14), %r9\n");  // table length
@@ -2492,7 +2511,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    cmpq $256, %r9\n");
   s = s.write("    jb " + lm + "_short\n");
   s = s.write(lm + "_full:\n");
-  s = s.write("    movzbq (%rsi,%rcx), %rax\n");
+  s = s.write("    movzbq (%rsi,%rcx" + srcscale + "), %rax\n");
   s = s.write("    movzbq 8(%r14,%rax" + sc + "), %rax\n");
   s = s.write("    movb %al, (%rdx,%rcx)\n");
   s = s.write("    incq %rcx\n");
@@ -2500,7 +2519,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    jb " + lm + "_full\n");
   s = s.write("    jmp " + lm + "_len\n");
   s = s.write(lm + "_short:\n");
-  s = s.write("    movzbq (%rsi,%rcx), %rax\n");
+  s = s.write("    movzbq (%rsi,%rcx" + srcscale + "), %rax\n");
   s = s.write("    cmpq %r9, %rax\n");
   s = s.write("    jae " + lm + "_keep\n");
   s = s.write("    movzbq 8(%r14,%rax" + sc + "), %rax\n");
@@ -2524,7 +2543,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   // length at (drop). Room for the whole box is reserved; the full-table
   // loop stores every byte and advances the kept count only past a
   // kept one.
-  s = s.write("__fern_buf_push_filtered" + sfx + ":\n");
+  s = s.write(prefix + "filtered" + sfx + ":\n");
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
   s = s.write("    pushq %rbx\n");
@@ -2534,7 +2553,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    movq %rdi, %rbx\n");
   s = s.write("    movq %rsi, %r12\n");
   s = s.write("    movq %rdx, %r14\n");  // drop
-  s = s.write("    movq 8(%r12), %r13\n");  // n
+  s = s.write(source_len);  // n
   s = s.write("    testq %r13, %r13\n");
   s = s.write("    jz " + lf + "_done\n");
   s = s.write("    movq 8(%rbx), %rax\n");
@@ -2546,7 +2565,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    movq %rax, %rsi\n");
   s = s.write("    call __fern_buf_reserve\n");
   s = s.write(lf + "_fits:\n");
-  s = s.write("    movq (%r12), %rsi\n");  // src data
+  s = s.write(source_data);  // src data
   s = s.write("    movq (%rbx), %rdx\n");
   s = s.write("    addq 8(%rbx), %rdx\n");  // dst = data + len
   s = s.write("    movq (%r14), %r9\n");  // table length
@@ -2555,7 +2574,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    cmpq $256, %r9\n");
   s = s.write("    jb " + lf + "_short\n");
   s = s.write(lf + "_full:\n");
-  s = s.write("    movzbq (%rsi,%rcx), %rax\n");
+  s = s.write("    movzbq (%rsi,%rcx" + srcscale + "), %rax\n");
   s = s.write("    movzbq 8(%r14,%rax" + sc + "), %r10\n");
   s = s.write("    movb %al, (%rdx,%r8)\n");
   s = s.write("    cmpq $1, %r10\n");
@@ -2565,7 +2584,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    jb " + lf + "_full\n");
   s = s.write("    jmp " + lf + "_len\n");
   s = s.write(lf + "_short:\n");
-  s = s.write("    movzbq (%rsi,%rcx), %rax\n");
+  s = s.write("    movzbq (%rsi,%rcx" + srcscale + "), %rax\n");
   s = s.write("    cmpq %r9, %rax\n");
   s = s.write("    jae " + lf + "_keep\n");
   s = s.write("    cmpb $0, 8(%r14,%rax" + sc + ")\n");
@@ -2594,7 +2613,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   // table + 8 + c*64. A push of 256 bytes or more through a table of
   // every record first packs the records into 2 KiB of frame, then
   // copies each as one eight-byte store, as native's kernel does.
-  s = s.write("__fern_buf_push_expanded" + sfx + ":\n");
+  s = s.write(prefix + "expanded" + sfx + ":\n");
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
   s = s.write("    pushq %rbx\n");
@@ -2604,7 +2623,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    movq %rdi, %rbx\n");
   s = s.write("    movq %rsi, %r12\n");
   s = s.write("    movq %rdx, %r14\n");  // table
-  s = s.write("    movq 8(%r12), %r13\n");  // n
+  s = s.write(source_len);  // n
   s = s.write("    testq %r13, %r13\n");
   s = s.write("    jz " + le + "_done\n");
   s = s.write("    leaq 8(,%r13,8), %rax\n");
@@ -2616,7 +2635,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    movq %rax, %rsi\n");
   s = s.write("    call __fern_buf_reserve\n");
   s = s.write(le + "_fits:\n");
-  s = s.write("    movq (%r12), %rsi\n");  // src data
+  s = s.write(source_data);  // src data
   s = s.write("    movq (%rbx), %rdx\n");
   s = s.write("    addq 8(%rbx), %rdx\n");  // dst = data + len
   s = s.write("    movq (%r14), %r9\n");
@@ -2630,7 +2649,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write("    incq %rcx\n    cmpq $2048, %rcx\n    jb " + le + "_pack\n");
   s = s.write("    xorq %rcx, %rcx\n    movq $7, %r10\n");
   s = s.write(le + "_fast:\n");
-  s = s.write("    movzbq (%rsi,%rcx), %rax\n    movq (%rsp,%rax,8), %r8\n");
+  s = s.write("    movzbq (%rsi,%rcx" + srcscale + "), %rax\n    movq (%rsp,%rax,8), %r8\n");
   s = s.write("    movzbq %r8b, %r9\n    cmpq %r10, %r9\n    cmovaq %r10, %r9\n");
   s = s.write("    shrq $8, %r8\n    movq %r8, (%rdx)\n    addq %r9, %rdx\n");
   s = s.write("    incq %rcx\n    cmpq %r13, %rcx\n    jb " + le + "_fast\n");
@@ -2638,7 +2657,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.
   s = s.write(le + "_loop:\n");
   s = s.write("    cmpq %r13, %rcx\n");
   s = s.write("    jae " + le + "_len\n");
-  s = s.write("    movzbq (%rsi,%rcx), %rax\n");
+  s = s.write("    movzbq (%rsi,%rcx" + srcscale + "), %rax\n");
   s = s.write("    cmpq %r9, %rax\n");
   s = s.write("    jae " + le + "_keep\n");
   s = s.write("    movq %rax, %r10\n");
@@ -4431,9 +4450,15 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jmp .Lbufrange_copy\n");
     s = s.write(".Lbufrange_done:\n");
     s = s.write("    ret\n");
-    s = emit_buf_table_helpers(s, false);
+    s = emit_buf_table_helpers(s, false, false);
     if (s.has_need("buf_u8")) {
-      s = emit_buf_table_helpers(s, true);
+      s = emit_buf_table_helpers(s, true, false);
+    }
+    if (s.has_need("buf_bytes")) {
+      s = emit_buf_table_helpers(s, false, true);
+    }
+    if (s.has_need("buf_bytes_u8")) {
+      s = emit_buf_table_helpers(s, true, true);
     }
     // __fern_buf_push_byte(%rdi = H, %rsi = x): append the low byte of x,
     // with no frame unless the buffer grows.
@@ -5821,13 +5846,18 @@ function set_entry_test(o: ir.Op, idx: string): string {
 // index, which keeps every memory operand on a low register; %r8 holds the
 // clamped n (also the answer on equality) and %rdi is the window offset.
 // This is a leaf body — no call, so every register it touches is free.
-function emit_mismatch_x86(s: asmcore.EmitState): asmcore.EmitState {
+function emit_mismatch_x86(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let mlo: asmcore.LabelOut = asmcore.fresh_label(s);
   let lb: string = mlo.name;
   s = mlo.state;
   s = s.write("    popq %r8\n    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rax\n");
-  s = s.write("    movq 8(%rax), %r9\n    movq (%rax), %rax\n");
-  s = s.write("    movq 8(%rdx), %r10\n    movq (%rdx), %rdx\n");
+  if (o.kind_tag == 378) {
+    s = s.write("    movq (%rax), %r9\n    addq $8, %rax\n");
+    s = s.write("    movq (%rdx), %r10\n    addq $8, %rdx\n");
+  } else {
+    s = s.write("    movq 8(%rax), %r9\n    movq (%rax), %rax\n");
+    s = s.write("    movq 8(%rdx), %r10\n    movq (%rdx), %rdx\n");
+  }
   // Each offset clamps into [0, len] of its own string.
   s = s.write("    cmpq $0, %rsi\n    jge " + lb + "_aop\n    xorq %rsi, %rsi\n");
   s = s.write(lb + "_aop:\n    cmpq %r9, %rsi\n    jle " + lb + "_aok\n    movq %r9, %rsi\n");
@@ -5838,7 +5868,15 @@ function emit_mismatch_x86(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmpq %r9, %r8\n    jle " + lb + "_na\n    movq %r9, %r8\n");
   s = s.write(lb + "_na:\n    cmpq %r10, %r8\n    jle " + lb + "_nb\n    movq %r10, %r8\n");
   s = s.write(lb + "_nb:\n    cmpq $0, %r8\n    jge " + lb + "_nok\n    xorq %r8, %r8\n");
-  s = s.write(lb + "_nok:\n    addq %rax, %rsi\n    addq %rdx, %rcx\n    xorq %rdx, %rdx\n");
+  s = s.write(lb + "_nok:\n");
+  if (o.kind_tag == 378 && !ir.is_packed(o)) {
+    s = s.write("    leaq (%rax,%rsi,8), %rsi\n    leaq (%rdx,%rcx,8), %rcx\n    xorq %rdx, %rdx\n");
+    s = s.write(lb + "_slots:\n    cmpq %r8, %rdx\n    jge " + lb + "_slots_done\n");
+    s = s.write("    movzbq (%rsi,%rdx,8), %rax\n    movzbq (%rcx,%rdx,8), %rdi\n    cmpq %rdi, %rax\n    jne " + lb + "_slots_done\n");
+    s = s.write("    addq $1, %rdx\n    jmp " + lb + "_slots\n");
+    return s.write(lb + "_slots_done:\n    pushq %rdx\n");
+  }
+  s = s.write("    addq %rax, %rsi\n    addq %rdx, %rcx\n    xorq %rdx, %rdx\n");
   // Length dispatch: the sub-16 band never reaches the vector loop, so it
   // gets its own windows rather than a byte walk.
   s = s.write("    cmpq $16, %r8\n    jge " + lb + "_vec\n");
@@ -6255,31 +6293,37 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     }
     s = s.write("    testq %rcx, %rcx\n    jns " + s_from_ok + "\n    xorq %rcx, %rcx\n");
     s = s.write(s_from_ok + ":\n    movq (%rdx), %r9\n");
-    s = s.write("    cmpq $256, %r9\n    jb " + s_short + "\n");
-    // Full set: four bytes a turn on a cursor (r10, the end r11), then
-    // one at a time. A hit at byte k of the four steps the cursor k times
-    // before its offset is read.
-    s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
-    s = s.write("    leaq (%rax,%rcx), %r10\n    leaq (%rax,%r8), %r11\n    leaq -4(%r11), %rcx\n");
-    s = s.write(s_loop + ":\n    cmpq %rcx, %r10\n    ja " + s_one + "\n");
-    let k: i32 = 0;
-    while (k < 4) {
-      s = s.write("    movzbq " + util.i32_to_string(k) + "(%r10), %r9\n");
-      s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[k] + "\n");
-      k = k + 1;
+    if (o.kind_tag != 361 || ir.is_packed(o)) {
+      s = s.write("    cmpq $256, %r9\n    jb " + s_short + "\n");
+      // Full set: four bytes a turn on a cursor (r10, the end r11), then
+      // one at a time. A hit at byte k of the four steps the cursor k times
+      // before its offset is read.
+      s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
+      s = s.write("    leaq (%rax,%rcx), %r10\n    leaq (%rax,%r8), %r11\n    leaq -4(%r11), %rcx\n");
+      s = s.write(s_loop + ":\n    cmpq %rcx, %r10\n    ja " + s_one + "\n");
+      let k: i32 = 0;
+      while (k < 4) {
+        s = s.write("    movzbq " + util.i32_to_string(k) + "(%r10), %r9\n");
+        s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[k] + "\n");
+        k = k + 1;
+      }
+      s = s.write("    addq $4, %r10\n    jmp " + s_loop + "\n");
+      s = s.write(s_one + ":\n    cmpq %r11, %r10\n    jae " + s_end + "\n");
+      s = s.write("    movzbq (%r10), %r9\n");
+      s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[0] + "\n");
+      s = s.write("    addq $1, %r10\n    jmp " + s_one + "\n");
+      s = s.write(hits[3] + ":\n    addq $1, %r10\n");
+      s = s.write(hits[2] + ":\n    addq $1, %r10\n");
+      s = s.write(hits[1] + ":\n    addq $1, %r10\n");
+      s = s.write(hits[0] + ":\n    subq %rax, %r10\n    pushq %r10\n    jmp " + s_done + "\n");
     }
-    s = s.write("    addq $4, %r10\n    jmp " + s_loop + "\n");
-    s = s.write(s_one + ":\n    cmpq %r11, %r10\n    jae " + s_end + "\n");
-    s = s.write("    movzbq (%r10), %r9\n");
-    s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[0] + "\n");
-    s = s.write("    addq $1, %r10\n    jmp " + s_one + "\n");
-    s = s.write(hits[3] + ":\n    addq $1, %r10\n");
-    s = s.write(hits[2] + ":\n    addq $1, %r10\n");
-    s = s.write(hits[1] + ":\n    addq $1, %r10\n");
-    s = s.write(hits[0] + ":\n    subq %rax, %r10\n    pushq %r10\n    jmp " + s_done + "\n");
     s = s.write(s_short + ":\n");
     s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
-    s = s.write("    movzbq (%rax,%rcx), %r10\n");
+    if (o.kind_tag == 361 && !ir.is_packed(o)) {
+      s = s.write("    movzbq (%rax,%rcx,8), %r10\n");
+    } else {
+      s = s.write("    movzbq (%rax,%rcx), %r10\n");
+    }
     s = s.write("    cmpq %r9, %r10\n    jae " + s_short_next + "\n");
     s = s.write("    " + set_entry_test(o, "%r10") + "\n    jne " + s_hit + "\n");
     s = s.write(s_short_next + ":\n    addq $1, %rcx\n    jmp " + s_short + "\n");
@@ -6288,7 +6332,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(s_done + ":\n");
     return s;
   }
-  if (o.kind_tag == 329) {  // bsd_sum
+  if (o.kind_tag == 329 || o.kind_tag == 369) {  // bsd_sum / bsd_sum_bytes
     // operand stack [box, sum] (sum on top) -> the BSD checksum continued
     // over the string: per byte a 16-bit rotate right by one and an add.
     let blo: asmcore.LabelOut = asmcore.fresh_label(s);
@@ -6297,17 +6341,25 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let b_done: string = blo2.name;
     s = blo2.state;
     s = s.write("    popq %rcx\n    popq %rax\n");
-    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    if (o.kind_tag == 369) {
+      s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
+    } else {
+      s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    }
     s = s.write("    movzwq %cx, %rcx\n    xorq %rdx, %rdx\n");
     s = s.write(b_loop + ":\n");
     s = s.write("    cmpq %r8, %rdx\n    jae " + b_done + "\n");
-    s = s.write("    movzbq (%rax,%rdx), %r10\n");
+    if (o.kind_tag == 369 && !ir.is_packed(o)) {
+      s = s.write("    movzbq (%rax,%rdx,8), %r10\n");
+    } else {
+      s = s.write("    movzbq (%rax,%rdx), %r10\n");
+    }
     s = s.write("    rorw $1, %cx\n    addw %r10w, %cx\n");
     s = s.write("    addq $1, %rdx\n    jmp " + b_loop + "\n");
     s = s.write(b_done + ":\n    movzwq %cx, %rcx\n    pushq %rcx\n");
     return s;
   }
-  if (o.kind_tag == 327) {  // count_runs
+  if (o.kind_tag == 327 || o.kind_tag == 379) {  // count_runs / count_runs_bytes
     // operand stack [box, inside, set] (set on top) -> how many runs of
     // set members begin in the string. The set's length is at (set) and
     // its byte i in the 8-byte slot 8 + i*8; a byte past that length is
@@ -6322,12 +6374,20 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let c_done: string = clo3.name;
     s = clo3.state;
     s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
-    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    if (o.kind_tag == 379) {
+      s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
+    } else {
+      s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    }
     s = s.write("    xorq %r9, %r9\n    testq %rcx, %rcx\n    sete %r9b\n");
     s = s.write("    xorq %r11, %r11\n    xorq %rcx, %rcx\n    movq (%rdx), %rsi\n");
     s = s.write(c_loop + ":\n");
     s = s.write("    cmpq %r8, %rcx\n    jge " + c_done + "\n");
-    s = s.write("    movzbq (%rax,%rcx), %r10\n");
+    if (o.kind_tag == 379 && !ir.is_packed(o)) {
+      s = s.write("    movzbq (%rax,%rcx,8), %r10\n");
+    } else {
+      s = s.write("    movzbq (%rax,%rcx), %r10\n");
+    }
     s = s.write("    movq $1, %rdi\n");
     s = s.write("    cmpq %rsi, %r10\n    jae " + c_flag + "\n");
     s = s.write("    " + set_entry_test(o, "%r10") + "\n    sete %dil\n");
@@ -6337,17 +6397,45 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(c_done + ":\n    pushq %r11\n");
     return s;
   }
-  if (o.kind_tag == 253) {  // sum_bytes
+  if (o.kind_tag == 380 && !ir.is_packed(o)) {
+    let loop_label = asmcore.fresh_label(s);
+    let done_label = asmcore.fresh_label(loop_label.state);
+    s = done_label.state;
+    s = s.write("    popq %rdi\n    movq (%rdi), %rcx\n    addq $8, %rdi\n    xorq %rdx, %rdx\n    xorl %eax, %eax\n");
+    s = s.write(loop_label.name + ":\n    cmpq %rcx, %rdx\n    jae " + done_label.name + "\n");
+    s = s.write("    movzbl (%rdi,%rdx,8), %r8d\n    addl %r8d, %eax\n    addq $1, %rdx\n    jmp " + loop_label.name + "\n");
+    return s.write(done_label.name + ":\n    movslq %eax, %rax\n    pushq %rax\n");
+  }
+  if (o.kind_tag == 253 || o.kind_tag == 368) {  // sum_bytes / sum_bytes_array
     // operand stack [box] -> every byte of the string added into a
     // 32-bit accumulator that wraps. A call to the SSE2 helper, emitted
     // once under the "sum_bytes" need; the sum is sign-extended into the
     // slot, since a wrapped sum is a negative i32.
     s = s.need("sum_bytes");
-    s = s.write("    popq %rdi\n    call __fern_sum_bytes\n");
+    if (o.kind_tag == 368) {
+      s = s.write("    popq %rdi\n    movq (%rdi), %rcx\n    addq $8, %rdi\n    call __fern_sum_bytes_data\n");
+    } else {
+      s = s.write("    popq %rdi\n    call __fern_sum_bytes\n");
+    }
     s = s.write("    movslq %eax, %rax\n    pushq %rax\n");
     return s;
   }
-  if (o.kind_tag == 309) {  // crc32_cksum
+  if (o.kind_tag == 373 && !ir.is_packed(o)) {
+    let loop_label = asmcore.fresh_label(s);
+    let done_label = asmcore.fresh_label(loop_label.state);
+    s = done_label.state;
+    s = s.write("    popq %rsi\n    popq %rax\n    movq (%rsi), %r8\n    addq $8, %rsi\n    xorq %r9, %r9\n");
+    s = s.write(loop_label.name + ":\n    cmpq %r8, %r9\n    jae " + done_label.name + "\n");
+    s = s.write("    movzbl (%rsi,%r9,8), %r10d\n    shll $24, %r10d\n    xorl %r10d, %eax\n");
+    let k: i32 = 0;
+    while (k < 8) {
+      s = s.write("    movl %eax, %r11d\n    sarl $31, %r11d\n    shll $1, %eax\n    andl $0x04c11db7, %r11d\n    xorl %r11d, %eax\n");
+      k = k + 1;
+    }
+    s = s.write("    addq $1, %r9\n    jmp " + loop_label.name + "\n");
+    return s.write(done_label.name + ":\n    movslq %eax, %rax\n    pushq %rax\n");
+  }
+  if (o.kind_tag == 309 || o.kind_tag == 373) {  // crc32_cksum / crc32_cksum_array
     // operand stack [crc, box] (the box on top) -> the incoming CRC-32
     // with the string's bytes folded in.
     //
@@ -6361,7 +6449,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // string last, which is exactly the shape a port copies wrong.
     s = s.need("crc32_cksum");
     s = s.write("    popq %rsi\n    popq %rdi\n");
-    s = s.write("    call __fern_crc32_cksum\n");
+    if (o.kind_tag == 373) {
+      s = s.write("    movq (%rsi), %rdx\n    addq $8, %rsi\n    call __fern_crc32_cksum_data\n");
+    } else {
+      s = s.write("    call __fern_crc32_cksum\n");
+    }
     s = s.write("    movslq %eax, %rax\n    pushq %rax\n");
     return s;
   }
@@ -6429,8 +6521,8 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(a_done + ":\n    pushq %rdx\n");
     return s;
   }
-  if (o.kind_tag == 245) {  // mismatch
-    return emit_mismatch_x86(s);
+  if (o.kind_tag == 245 || o.kind_tag == 378) {  // mismatch / mismatch_bytes
+    return emit_mismatch_x86(o, s);
   }
   if (o.kind_tag == 104) {  // str_bytes
     // operand stack [str box]; __fern_str_bytes is a Fern runtime function now
@@ -7515,7 +7607,7 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
   if (k >= 40 && k <= 60) {
     return true;
   }
-  return k == 1 || k == 3 || k == 4 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11;
+  return k == 1 || k == 3 || k == 4 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11 || k == 35;
 }
 
 // ssa_unsupported names the first instruction this emitter has no selection
@@ -8596,6 +8688,12 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
     s = s.need("buf_push_bytes_range");
   } else if (sym == "__fern_buf_push_bytes_range_u8") {
     s = s.need("buf_push_bytes_range_u8");
+  } else if (util.str_has_prefix(sym, "__fern_buf_push_bytes_")) {
+    if (util.str_has_suffix(sym, "_u8")) {
+      s = s.need("buf_bytes_u8");
+    } else {
+      s = s.need("buf_bytes");
+    }
   } else if (util.str_has_suffix(sym, "_u8")) {
     s = s.need("buf_u8");
   }
@@ -9025,6 +9123,21 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
   return ssa_store(reg_of, ins.result, d, s);
 }
 
+// ssa_line_loc renders a source-position marker (ir.op_line, ssa kind 35) as
+// a `.loc` row: the file number the CLI's `.file` table gives the marker's
+// module (util.pos_file_index + 1), its line and its column, and
+// prologue_end on a function's first, which is where a breakpoint on the
+// function belongs. GNU as and the in-process assembler alike turn the rows
+// into .debug_line.
+function ssa_line_loc(ins: ssa.SInst, s: asmcore.EmitState): asmcore.EmitState {
+  let row: string = "    .loc " + util.i32_to_string(util.pos_file_index(ins.imm) + 1) + " " + util.i32_to_string(util.pos_line(ins.imm)) + " " + ins.str;
+  if (s.dw_first) {
+    row = row + " prologue_end";
+    s = asmcore.EmitState { ...s, dw_first: false };
+  }
+  return s.write(row + "\n");
+}
+
 function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.LowerResult, own s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ins.kind_tag;
   if (k == 11) {
@@ -9071,6 +9184,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   }
   if (k == 57) {
     return ssa_agg_lit(ins, reg_of, s);
+  }
+  if (k == 35) {
+    return ssa_line_loc(ins, s);
   }
   if ((k == 1 || k == 3) && fr.imm.is_imm[ins.result]) {
     return s;
@@ -9565,6 +9681,7 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
 // block behind its label. prune_dead first takes out the zeros the lift gives
 // every declared local and the loop phis nothing reads.
 function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+  s = asmcore.EmitState { ...s, dw_first: true };
   let f: ssa.SFunc = ssa.register_form(lifted);
   let imm: ssa.Imms = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left());
   let reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s));
@@ -10312,16 +10429,22 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_rename\n    addq $16, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("rename");
-  } else if (o.kind_tag == 356 || o.kind_tag == 357 || o.kind_tag == 362 || o.kind_tag == 363) {  // rename_noreplace, rename_exchange, getxattr, lgetxattr
+  } else if (o.kind_tag == 356 || o.kind_tag == 357 || o.kind_tag == 362 || o.kind_tag == 363 || o.kind_tag == 374 || o.kind_tag == 375) {  // rename_noreplace, rename_exchange, getxattr, lgetxattr
     let op: string = ir.kind_name(o.kind_tag);
+    if (o.kind_tag >= 374 && ir.is_packed(o)) {
+      op = op + "_u8";
+    }
     s = s.write("    popq %rsi\n    popq %rdi\n");
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_" + op + "\n    addq $16, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need(op);
-  } else if (o.kind_tag == 364 || o.kind_tag == 365) {  // setxattr, lsetxattr
+  } else if (o.kind_tag == 364 || o.kind_tag == 365 || o.kind_tag == 376 || o.kind_tag == 377) {  // setxattr, lsetxattr
     // [pathbox, namebox, valuebox] with the value on top; re-pushed reversed
     // so param[0] (path) is lowest.
     let op: string = ir.kind_name(o.kind_tag);
+    if (o.kind_tag >= 374 && ir.is_packed(o)) {
+      op = op + "_u8";
+    }
     s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
     s = s.write("    call __fn___fern_" + op + "\n    addq $24, %rsp\n    pushq %rax\n");
     s = s.need("heap");
@@ -10476,7 +10599,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("writer_truncate");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351) {  // the buf_* builder
+  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372) {  // the buf_* builder
     s = emit_ir_op_buf(o, s);
   } else if (o.kind_tag == 181) {  // sleep_ms
     // [ms] -> nanosleep(ms). Push the syscall return so the
@@ -10519,7 +10642,13 @@ function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let sym: string = asmcore.buf_table_helper(o.kind_tag, ir.is_packed(o));
   s = s.write("    call " + sym + "\n    pushq %rax\n");
   s = s.need("heap");
-  if (o.kind_tag != 347 && o.kind_tag != 351 && sym != asmcore.buf_helper(o.kind_tag)) {
+  if (o.kind_tag >= 370 && o.kind_tag <= 372) {
+    if (sym != asmcore.buf_helper(o.kind_tag)) {
+      s = s.need("buf_bytes_u8");
+    } else {
+      s = s.need("buf_bytes");
+    }
+  } else if (o.kind_tag != 347 && o.kind_tag != 351 && sym != asmcore.buf_helper(o.kind_tag)) {
     s = s.need("buf_u8");
   }
   return s.need("buf");
@@ -12714,8 +12843,11 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("access")) {
       fs_src = fs_src + " " + asmcore.rt_src_access("x86_64");
     }
+    if (s.has_need("read_file") || s.has_need("getxattr") || s.has_need("lgetxattr")) {
+      fs_src = fs_src + " " + asmcore.rt_src_utf8_valid();
+    }
     if (s.has_need("read_file")) {
-      fs_src = fs_src + " " + asmcore.rt_src_utf8_valid() + " " + asmcore.rt_src_read_file("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_read_file("x86_64");
     }
     if (s.has_need("read_file_bytes")) {
       fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes("x86_64", false);
@@ -12758,6 +12890,30 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("rename")) {
       fs_src = fs_src + " " + asmcore.rt_src_rename("x86_64");
+    }
+    if (s.has_need("getxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86_64", true, false);
+    }
+    if (s.has_need("getxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86_64", true, true);
+    }
+    if (s.has_need("lgetxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86_64", false, false);
+    }
+    if (s.has_need("lgetxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86_64", false, true);
+    }
+    if (s.has_need("setxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86_64", true, false);
+    }
+    if (s.has_need("setxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86_64", true, true);
+    }
+    if (s.has_need("lsetxattr_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86_64", false, false);
+    }
+    if (s.has_need("lsetxattr_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86_64", false, true);
     }
     if (s.has_need("getxattr")) {
       fs_src = fs_src + " " + asmcore.rt_src_getxattr("x86_64", true);

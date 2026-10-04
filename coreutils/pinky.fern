@@ -332,18 +332,18 @@ function short_format(m: Mode, names: string[]): string {
 // whole of this function: a DIRECTORY of that name opens and then fails
 // to read, and the label is printed with nothing under it, which is
 // what a program that fopens the path and copies it sees.
-function dot_file(label: string, dir: string, name: string): string {
+function dot_file(o: io_buffered.BufWriter, label: string, dir: string, name: string): io_buffered.BufWriter {
   match (open_reader(dir + "/" + name)) {
     Ok(r) => {
-      let out: string = label;
+      let out: io_buffered.BufWriter = gnu.put(o, label);
       while (true) {
-        match (r.read_chunk(4096)) {
+        match (r.read_chunk_bytes(4096)) {
           Ok(chunk) => {
             if (chunk.len() == 0) {
               r.close();
               return out;
             }
-            out = out + chunk;
+            out = gnu.check(out.write_bytes(chunk));
           },
           Err(_) => {
             r.close();
@@ -353,40 +353,40 @@ function dot_file(label: string, dir: string, name: string): string {
       }
     },
     Err(_) => {
-      return "";
+      return o;
     }
   }
 }
 
-function long_entry(m: Mode, name: string): string {
-  let out: string = "Login name: " + pad_right(name, 28) + "In real life: ";
+function long_entry(o: io_buffered.BufWriter, m: Mode, name: string): io_buffered.BufWriter {
+  let out: io_buffered.BufWriter = gnu.put(o, "Login name: " + pad_right(name, 28) + "In real life: ");
   match (pwdb.user_by_name(name)) {
     Some(u) => {
-      out = out + " " + u.full_name() + "\n";
+      out = gnu.put(out, " " + u.full_name() + "\n");
       if (m.home) {
-        out = out + "Directory: " + pad_right(u.dir, 29) + "Shell: " + " " + u.shell + "\n";
+        out = gnu.put(out, "Directory: " + pad_right(u.dir, 29) + "Shell: " + " " + u.shell + "\n");
       }
       if (m.project) {
-        out = out + dot_file("Project: ", u.dir, ".project");
+        out = dot_file(out, "Project: ", u.dir, ".project");
       }
       if (m.plan) {
-        out = out + dot_file("Plan:\n", u.dir, ".plan");
+        out = dot_file(out, "Plan:\n", u.dir, ".plan");
       }
-      return out + "\n";
+      return gnu.put(out, "\n");
     },
     None => {
       // No entry: the line ends at the question marks and the block has
       // no body, not even the blank line that closes one.
-      return out + " ???\n";
+      return gnu.put(out, " ???\n");
     }
   }
 }
 
-function long_format(m: Mode, names: string[]): string {
-  let out: string = "";
+function long_format(o: io_buffered.BufWriter, m: Mode, names: string[]): io_buffered.BufWriter {
+  let out: io_buffered.BufWriter = o;
   let i: i32 = 0;
   while (i < names.len()) {
-    out = out + long_entry(m, names[i]);
+    out = long_entry(out, m, names[i]);
     i = i + 1;
   }
   return out;
@@ -399,13 +399,12 @@ pub function main(): i32 {
   if (m.long_format && names.len() == 0) {
     gnu.die_usage("no username specified; at least one must be specified when using -l", 1);
   }
-  let out: string = "";
+  let out: io_buffered.BufWriter = gnu.out_new();
   if (m.long_format) {
-    out = long_format(m, names);
+    out = long_format(out, m, names);
   } else {
-    out = short_format(m, names);
+    out = gnu.put(out, short_format(m, names));
   }
-  let o: io_buffered.BufWriter = gnu.put(gnu.out_new(), out);
-  gnu.finish(o);
+  gnu.finish(out);
   return 0;
 }

@@ -58,6 +58,15 @@ func TestCopyingBuiltinTableArgIsCounted(t *testing.T) {
 	}
 }
 
+func TestMismatchBytesArgsAreCounted(t *testing.T) {
+	src := `function scan(a: u8[], b: u8[]): i32 { return __mismatch_bytes(a, 0, b, 0, a.len()); }
+function main(): i32 { return 0; }`
+	got := paramCountedFor(t, src, "scan")
+	if len(got) != 2 || !got[0] || !got[1] {
+		t.Fatalf("paramCountedRetain[scan] = %v, want [true true]: comparing borrows both arrays", got)
+	}
+}
+
 func TestMemchrBytesArgIsCounted(t *testing.T) {
 	src := `function scan(p: u8[]): i32 { return __memchr_bytes(p, 128, 0); }
 function main(): i32 { return 0; }`
@@ -76,12 +85,36 @@ function main(): i32 { return 0; }`
 	}
 }
 
+func TestByteReductionArgsAreCounted(t *testing.T) {
+	for _, call := range []string{"__crc32_cksum_array(123, p)", "__sum_bytes_array(p)", "__bsd_sum_bytes(p, 123)"} {
+		t.Run(call, func(t *testing.T) {
+			src := "function scan(p: u8[]): i32 { return " + call + "; }\nfunction main(): i32 { return 0; }"
+			got := paramCountedFor(t, src, "scan")
+			if len(got) != 1 || !got[0] {
+				t.Fatalf("paramCountedRetain[scan] = %v, want [true]: reductions borrow the array", got)
+			}
+		})
+	}
+}
+
 func TestCountByteBytesArgIsCounted(t *testing.T) {
 	src := `function scan(p: u8[]): i32 { return __count_byte_bytes(p, 128); }
 function main(): i32 { return 0; }`
 	got := paramCountedFor(t, src, "scan")
 	if len(got) != 1 || !got[0] {
 		t.Fatalf("paramCountedRetain[scan] = %v, want [true]: counting borrows p", got)
+	}
+}
+
+func TestByteSetScanArgsAreCounted(t *testing.T) {
+	for _, builtin := range []string{"__scan_set_bytes", "__count_runs_bytes"} {
+		t.Run(builtin, func(t *testing.T) {
+			src := "function scan(bytes: u8[], set: u8[]): i32 { return " + builtin + "(bytes, 0, set); }\nfunction main(): i32 { return 0; }"
+			got := paramCountedFor(t, src, "scan")
+			if len(got) != 2 || !got[0] || !got[1] {
+				t.Fatalf("paramCountedRetain[scan] = %v, want [true true]: scanning borrows input and table", got)
+			}
+		})
 	}
 }
 

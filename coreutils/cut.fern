@@ -24,6 +24,7 @@
 //     under -f, and ranges are merged only where they overlap — `1-2,3-4`
 //     stays two ranges, so `-b1-2,3-4 --output-delimiter=X` is `abXcd`.
 import "std/array";
+import "std/string";
 import "std/u64";
 import "std/io_buffered";
 import "./lib/gnu";
@@ -139,14 +140,6 @@ function is_blank(c: i32): boolean {
 
 function u64_max(): u64 {
   return 18446744073709551615 as u64;
-}
-
-// One byte as a string; the line and output delimiters are single bytes
-// often enough that this is worth having.
-function byte_str(b: i32): string {
-  let bs: u8[] = [];
-  bs = bs.append(b as u8);
-  return string_from_bytes_unchecked(bs);
 }
 
 // ---- the position list -----------------------------------------------------
@@ -358,7 +351,7 @@ function complement_of(r: Ranges): Ranges {
 }
 
 // ---- settings --------------------------------------------------------------
-struct Settings { r: Ranges, fields: boolean, delim: i32, term: i32, suppress: boolean, out_delim: string, out_delim_set: boolean, ws: boolean, trim: boolean }
+struct Settings { r: Ranges, fields: boolean, delim: i32, term: i32, suppress: boolean, out_delim: u8[], out_delim_set: boolean, ws: boolean, trim: boolean }
 
 pub function main(): i32 {
   let argv: string[] = args();
@@ -383,7 +376,7 @@ pub function main(): i32 {
   let term: i32 = 10;
   let suppress: boolean = false;
   let complement: boolean = false;
-  let out_delim: string = "";
+  let out_delim: u8[] = [];
   let out_delim_set: boolean = false;
   // `-w` / `-F`: a run of blanks is the delimiter. `space_out` is the
   // `-F` half, which also makes a space the default output delimiter.
@@ -433,9 +426,9 @@ pub function main(): i32 {
           out_delim_set = true;
           // An empty STRING is one NUL byte, as an empty -d is.
           if (m.value.len() == 0) {
-            out_delim = byte_str(0);
+            out_delim = [0 as u8];
           } else {
-            out_delim = m.value;
+            out_delim = m.value.bytes();
           }
         } else if (m.id == opt_complement()) {
           complement = true;
@@ -471,9 +464,9 @@ pub function main(): i32 {
     r = complement_of(r);
   }
   if (!out_delim_set) {
-    out_delim = byte_str(delim);
+    out_delim = [delim as u8];
     if (space_out) {
-      out_delim = " ";
+      out_delim = [32 as u8];
     }
   }
 
@@ -500,10 +493,10 @@ function run(files: string[], s: Settings): i32 {
   let is_stdin: boolean = false;
   let name: string = "";
   let r: Reader = stdin();
-  let chunk: string = "";
+  let chunk: u8[] = [];
   let pos: i32 = 0;
   let delimat: i32 = 0 - 1;
-  let carry: string = "";
+  let carry: usize = buf_new(0);
   let tail: boolean = false;
   let done: boolean = false;
   // The running record, for the one_record shape.
@@ -523,7 +516,7 @@ function run(files: string[], s: Settings): i32 {
 
   while (true) {
     if (pos >= chunk.len()) {
-      chunk = "";
+      chunk = [];
       pos = 0;
       tail = false;
       let got: boolean = false;
@@ -567,9 +560,9 @@ function run(files: string[], s: Settings): i32 {
             }
           }
         } else {
-          let piece: string = "";
+          let piece: u8[] = [];
           let read_ok: boolean = true;
-          match (r.read_chunk(read_size())) {
+          match (r.read_chunk_bytes(read_size())) {
             Ok(c) => {
               piece = c;
             },
@@ -582,18 +575,17 @@ function run(files: string[], s: Settings): i32 {
           if (read_ok && piece.len() > 0) {
             chunk = piece;
             pos = 0;
-            delimat = __memchr(chunk, s.delim, 0);
+            delimat = __memchr_bytes(chunk, s.delim, 0);
             got = true;
           } else {
             if (!is_stdin) {
               r.close();
             }
             have_reader = false;
-            if (carry.len() > 0) {
-              chunk = carry;
-              carry = "";
+            if (buf_len(carry) > 0) {
+              chunk = buf_take_bytes(carry);
               pos = 0;
-              delimat = __memchr(chunk, s.delim, 0);
+              delimat = __memchr_bytes(chunk, s.delim, 0);
               tail = true;
               got = true;
             }
@@ -606,23 +598,23 @@ function run(files: string[], s: Settings): i32 {
       continue;
     }
 
-    let j: i32 = __memchr(chunk, s.term, pos);
+    let j: i32 = __memchr_bytes(chunk, s.term, pos);
     if (j < 0) {
       if (!tail) {
-        carry = carry + slice_unchecked(chunk, pos, chunk.len());
+        buf_push_bytes_range(carry, chunk, pos, chunk.len());
         pos = chunk.len();
         continue;
       }
       j = chunk.len() - 1;
     }
 
-    let buf: string = chunk;
+    let buf: u8[] = chunk;
     let lo: i32 = pos;
     let hi: i32 = j + 1;
-    let carried: boolean = carry.len() > 0;
+    let carried: boolean = buf_len(carry) > 0;
     if (carried) {
-      buf = carry + slice_unchecked(chunk, pos, j + 1);
-      carry = "";
+      buf_push_bytes_range(carry, chunk, pos, j + 1);
+      buf = buf_take_bytes(carry);
       lo = 0;
       hi = buf.len();
     }
@@ -648,9 +640,9 @@ function run(files: string[], s: Settings): i32 {
         }
         if (a <= b) {
           if (s.out_delim_set && printed) {
-            buf_push(h, s.out_delim);
+            buf_push_bytes_range(h, s.out_delim, 0, s.out_delim.len());
           }
-          buf_push_range(h, buf, lo + a as i32 - 1, lo + b as i32);
+          buf_push_bytes_range(h, buf, lo + a as i32 - 1, lo + b as i32);
           printed = true;
         }
         k = k + 1;
@@ -661,7 +653,7 @@ function run(files: string[], s: Settings): i32 {
       // FIRST line is the whole record and holds no delimiter at all.
       if (rec_k == 0 && !terminated) {
         if (!s.suppress) {
-          buf_push_range(h, buf, lo, body);
+          buf_push_bytes_range(h, buf, lo, body);
           buf_push_byte(h, s.term);
         }
       } else {
@@ -670,9 +662,9 @@ function run(files: string[], s: Settings): i32 {
         }
         if (rec_ri < s.r.los.len() && s.r.los[rec_ri] <= rec_idx) {
           if (rec_printed) {
-            buf_push(h, s.out_delim);
+            buf_push_bytes_range(h, s.out_delim, 0, s.out_delim.len());
           }
-          buf_push_range(h, buf, lo, body);
+          buf_push_bytes_range(h, buf, lo, body);
           rec_printed = true;
         }
         rec_idx = rec_idx + 1 as u64;
@@ -701,7 +693,7 @@ function run(files: string[], s: Settings): i32 {
         if (s.r.los.len() == 0) {
           buf_push_byte(h, s.term);
         } else if (!s.suppress) {
-          buf_push_range(h, buf, a, z);
+          buf_push_bytes_range(h, buf, a, z);
           buf_push_byte(h, s.term);
         }
       } else {
@@ -719,9 +711,9 @@ function run(files: string[], s: Settings): i32 {
           }
           if (wri < s.r.los.len() && s.r.los[wri] <= widx) {
             if (wprinted) {
-              buf_push(h, s.out_delim);
+              buf_push_bytes_range(h, s.out_delim, 0, s.out_delim.len());
             }
-            buf_push_range(h, buf, wp, we);
+            buf_push_bytes_range(h, buf, wp, we);
             wprinted = true;
           }
           if (we >= z || wri >= s.r.los.len()) {
@@ -741,9 +733,9 @@ function run(files: string[], s: Settings): i32 {
       // the scans over one chunk cost it once in total.
       let nd: i32 = delimat;
       if (carried) {
-        nd = __memchr(buf, s.delim, 0);
+        nd = __memchr_bytes(buf, s.delim, 0);
       } else if (nd >= 0 && nd < lo) {
-        nd = __memchr(chunk, s.delim, lo);
+        nd = __memchr_bytes(chunk, s.delim, lo);
       }
       if (nd < 0 || nd >= body) {
         // No delimiter on this line: it goes out whole, or not at all.
@@ -754,7 +746,7 @@ function run(files: string[], s: Settings): i32 {
         if (s.r.los.len() == 0) {
           buf_push_byte(h, s.term);
         } else if (!s.suppress) {
-          buf_push_range(h, buf, lo, body);
+          buf_push_bytes_range(h, buf, lo, body);
           buf_push_byte(h, s.term);
         }
       } else {
@@ -780,17 +772,17 @@ function run(files: string[], s: Settings): i32 {
           if (ri < s.r.los.len() && s.r.los[ri] <= idx) {
             if (run < 0) {
               if (printed) {
-                buf_push(h, s.out_delim);
+                buf_push_bytes_range(h, s.out_delim, 0, s.out_delim.len());
               }
               run = p;
             }
             if (!join_runs) {
-              buf_push_range(h, buf, run, e);
+              buf_push_bytes_range(h, buf, run, e);
               run = 0 - 1;
             }
             printed = true;
           } else if (run >= 0) {
-            buf_push_range(h, buf, run, p - 1);
+            buf_push_bytes_range(h, buf, run, p - 1);
             run = 0 - 1;
           }
           if (last || ri >= s.r.los.len()) {
@@ -798,10 +790,10 @@ function run(files: string[], s: Settings): i32 {
           }
           p = e + 1;
           idx = idx + 1 as u64;
-          nd = __memchr(buf, s.delim, p);
+          nd = __memchr_bytes(buf, s.delim, p);
         }
         if (run >= 0) {
-          buf_push_range(h, buf, run, body);
+          buf_push_bytes_range(h, buf, run, body);
           run = 0 - 1;
         }
         // The line delimiter always follows. GNU <= 9.11 left it off
@@ -809,7 +801,7 @@ function run(files: string[], s: Settings): i32 {
         buf_push_byte(h, s.term);
       }
       if (carried) {
-        delimat = __memchr(chunk, s.delim, pos);
+        delimat = __memchr_bytes(chunk, s.delim, pos);
       } else {
         delimat = nd;
       }
@@ -820,6 +812,7 @@ function run(files: string[], s: Settings): i32 {
     }
   }
 
+  buf_free(carry);
   gnu.finish(o);
   if (!ok) {
     return 1;

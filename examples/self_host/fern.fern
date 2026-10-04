@@ -310,7 +310,7 @@ function word_buf(emit_text: boolean): usize {
 // string (written verbatim by write_file), or "" if the assembler hit an
 // instruction it doesn't yet support (the caller reports it and exits 2). The
 // arm64-darwin counterpart is the macho_executable path above.
-function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean): string {
+function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string): string {
   let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program_words(asm, words);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-linux", "assembler", p.unknown);
@@ -352,11 +352,13 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean): string 
     // section filter is -1 rather than 0.
     let aend: i32 = pa2.code.len();
     let nosec: i32[] = [];
-    bin = elf.elf_append_symtab(
+    bin = elf.elf_append_debug(
       bin, elf.elf_text_vaddr_wx(), elf.elf_wx_text_off(), pa2.code.len(),
       elf.elf_func_sym_names(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
       elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
       elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
+      cu_name, getcwd(),
+      pa2.files, pa2.loc_offs, pa2.loc_files, pa2.loc_lines, pa2.loc_cols, pa2.loc_flags,
     );
   }
   return string_from_bytes_unchecked(util.to_u8(bin));
@@ -406,7 +408,7 @@ function arm64_elf_binary_pie(asm: string, words: u8[]): string {
 // x86_resolve fixes .rodata references against the 8-byte-padded .text
 // length, which is exactly this layout. W^X would need the assembler to
 // resolve against a page-aligned data vaddr, as arm64_gas_link does.
-function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean): string {
+function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string): string {
   util.arr_push_cliff_report("x86:emitted", 0);
   let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words(asm, words);
   util.arr_push_cliff_report("x86:assembled", 0);
@@ -441,16 +443,19 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean): string {
     return string_from_bytes_unchecked(bin);
   }
   // `-g`: a static .symtab so nm / a debugger / a profiler can map an
-  // address back to a function. Only .text labels (section 0) become
-  // symbols, and the sizes span to the end of the code, which is what
-  // lets a backtrace attribute an address INSIDE a function rather
-  // than only an exact entry point.
+  // address back to a function, and the DWARF compilation unit over the
+  // same symbols. Only .text labels (section 0) become symbols, and the
+  // sizes span to the end of the code, which is what lets a backtrace
+  // attribute an address INSIDE a function rather than only an exact
+  // entry point.
   let end: i32 = a.text.len();
-  let wide: i32[] = elf.elf_append_symtab(
+  let wide: i32[] = elf.elf_append_debug(
     elf.elf_cat_u8([], bin), elf.elf_text_vaddr_x86(), elf.elf_text_off_x86(), a.text.len(),
     elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
+    cu_name, getcwd(),
+    a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
   );
   return string_from_bytes_unchecked(util.to_u8(wide));
 }
@@ -533,6 +538,19 @@ function sanitize_warning(target: string): string {
     return "fern: warning: -sanitize on -target " + target + " carries " + census + " — and it prints at process exit, which a request handler never reaches";
   }
   return "fern: warning: -sanitize has no effect on -target " + target + " (the detectors are native x86-64 and arm64, the leak census also wasm); this build carries no checks";
+}
+
+// dw_file_table is the `.file N "path"` table a -g build's `.loc` rows index
+// (#11410): 1 the entry module and k + 2 the k-th imported module
+// (util.pos_file_index), every module listed whether or not a row names it.
+function dw_file_table(entry: string, files: string[]): string {
+  let o: string = "    .file 1 \"" + entry + "\"\n";
+  let k: i32 = 0;
+  while (k < files.len()) {
+    o = o + "    .file " + util.i32_to_string(k + 2) + " \"" + files[k] + "\"\n";
+    k = k + 1;
+  }
+  return o;
 }
 
 // flag_after_entry refuses a driver flag written after the entry file, in
@@ -2585,14 +2603,18 @@ function run(): i32 {
       cover_on = true;
     } else if (a == "-g") {
       // A static symbol table naming the functions: `.symtab` in the ELF
-      // targets' images (#6637), LC_SYMTAB in arm64-darwin's (#11409).
+      // targets' images (#6637), LC_SYMTAB in arm64-darwin's (#11409), and
+      // in the ELF images the DWARF compilation unit naming them for a
+      // debugger (#11410).
       emit_syms = true;
     } else if (a == "-backtrace" || a == "-backtrace=true" || a == "-backtrace=1") {
       backtrace = true;
     } else if (a == "-backtrace=false" || a == "-backtrace=0") {
       backtrace = false;
-    } else if (a == "-sanitize") {
+    } else if (a == "-sanitize" || a == "-sanitize=true" || a == "-sanitize=1") {
       sanitize_flag = true;
+    } else if (a == "-sanitize=false" || a == "-sanitize=0") {
+      sanitize_flag = false;
     } else if (a == "-capabilities") {
       mode_caps = true;
     } else if (a == "-tangle") {
@@ -3046,7 +3068,11 @@ function run(): i32 {
   let typed: parser.Module = parser.module_with_builtins_typed(merged);
   let full: parser.Module = parser.erase_view_module(typed);
   // The typed semantic lowering, threaded into whichever emit path runs.
-  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target), switches: asmcore.Switches { backtrace: backtrace, sanitize: sanitize_flag || asmcore.sanitize_on() } };
+  // `-g` on an ELF target carries the line table: the lowering marks each
+  // statement, the emitter renders the marks as `.loc` rows over the `.file`
+  // table prepended below, and the ELF writer encodes .debug_line (#11410).
+  let debug_lines: boolean = emit_syms && (target == "x86-64-linux" || target == "arm64-linux");
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, debug_lines), switches: asmcore.Switches { backtrace: backtrace, sanitize: sanitize_flag || asmcore.sanitize_on() } };
   let out_asm: string = "";
   let emit_text: boolean = emit == "asm";
   if (target == "arm64-linux") {
@@ -3069,8 +3095,11 @@ function run(): i32 {
     if (out_asm.len() == 0) {
       return 2;
     }
+    if (debug_lines) {
+      out_asm = dw_file_table(entry_path, b.files) + out_asm;
+    }
     if (!emit_text) {
-      out_asm = arm64_elf_binary(out_asm, buf_take_bytes(recs), emit_syms);
+      out_asm = arm64_elf_binary(out_asm, buf_take_bytes(recs), emit_syms, entry_path);
       util.arr_push_cliff_report("arm64:image", 0);
       if (out_asm.len() == 0) {
         return 2;
@@ -3211,8 +3240,11 @@ function run(): i32 {
     // arm64-linux does and needs nothing on $PATH.
     let recs: usize = word_buf(emit_text);
     out_asm = asm_ir.emit_module_or_error_sub(full, sub, recs);
+    if (debug_lines && out_asm.len() > 0) {
+      out_asm = dw_file_table(entry_path, b.files) + out_asm;
+    }
     if (!emit_text) {
-      out_asm = x86_elf_binary(out_asm, buf_take_bytes(recs), emit_syms);
+      out_asm = x86_elf_binary(out_asm, buf_take_bytes(recs), emit_syms, entry_path);
       if (out_asm.len() == 0) {
         return 2;
       }

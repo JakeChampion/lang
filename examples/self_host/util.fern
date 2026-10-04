@@ -1137,6 +1137,12 @@ pub function pos_line(line: i32): i32 {
   return line % LINE_SPAN;
 }
 
+// pos_file_index is the module `line` falls in as an index: 0 for the entry,
+// k + 1 for files[k]. A `-g` build's `.file` table is numbered from it.
+pub function pos_file_index(line: i32): i32 {
+  return line / LINE_SPAN;
+}
+
 // pos_file is the display path of the module `line` falls in, or "" for the
 // entry. `files[k]` is the module tokenized from line_base(k).
 pub function pos_file(files: string[], line: i32): string {

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 func init() {
@@ -74,7 +76,7 @@ func commCases(t *testing.T) []invocation {
 	long1 := writeFile(t, dir, "long1", strings.Repeat("y", 200000)+"\n")
 	long2 := writeFile(t, dir, "long2", strings.Repeat("y", 200000)+"\n")
 
-	return []invocation{
+	cases := []invocation{
 		// Columns.
 		{name: "three columns", args: []string{c1, c2}},
 		{name: "suppress 1", args: []string{"-1", c1, c2}},
@@ -226,6 +228,16 @@ func commCases(t *testing.T) []invocation {
 		{name: "disorder warning with nothing after it", args: []string{"-12", lateBad, bare}},
 		{name: "stdout closed with a missing file", args: []string{missing, c2}, stdout: stdoutClosed},
 	}
+	for _, tc := range e2eharness.CommByteCases() {
+		args := append([]string{}, tc.Args...)
+		if tc.Shared {
+			args = append(args, "-", "-")
+		} else {
+			args = append(args, writeFile(t, dir, tc.Name+"-a", tc.A), writeFile(t, dir, tc.Name+"-b", tc.B))
+		}
+		cases = append(cases, invocation{name: tc.Name, args: args, stdin: tc.Stdin})
+	}
+	return cases
 }
 
 // fixedKeys is `step`-spaced fixed-width keys in [lo, hi).

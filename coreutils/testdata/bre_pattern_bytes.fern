@@ -1,0 +1,71 @@
+import "../lib/bre";
+
+function main(): i32 {
+  let n: i32 = 0;
+  while (n < 256) {
+    let byte: u8 = n as u8;
+    let pattern: u8[] = [byte];
+    if (n == 46 || n == 42 || n == 91 || n == 92 || n == 94 || n == 36) {
+      pattern = [92 as u8, byte];
+    }
+    let re = bre.bre_compile_bytes(pattern);
+    let m = re.exec_bytes([byte]);
+    if (re.err.len() != 0 || !m.matched || m.end != 1) {
+      return 1;
+    }
+    n = n + 1;
+  }
+  let nul = bre.bre_compile_bytes([97 as u8, 0 as u8, 98 as u8]);
+  if (!nul.search_bytes([255 as u8, 97 as u8, 0 as u8, 98 as u8])) {
+    return 2;
+  }
+  let range = bre.bre_compile_bytes([91 as u8, 128 as u8, 45 as u8, 255 as u8, 93 as u8]);
+  if (range.err.len() != 0 || !range.search_bytes([200 as u8]) || range.search_bytes([127 as u8])) {
+    return 3;
+  }
+  let collate = bre.bre_compile_bytes([91 as u8, 91 as u8, 46 as u8, 255 as u8, 46 as u8, 93 as u8, 93 as u8]);
+  let equiv = bre.bre_compile_bytes([91 as u8, 91 as u8, 61 as u8, 255 as u8, 61 as u8, 93 as u8, 93 as u8]);
+  if (collate.err.len() != 0 || equiv.err.len() != 0 || !collate.search_bytes([255 as u8]) || !equiv.search_bytes([255 as u8])) {
+    return 4;
+  }
+  let bad_class = bre.bre_compile_bytes([91 as u8, 91 as u8, 58 as u8, 255 as u8, 58 as u8, 93 as u8, 93 as u8]);
+  if (bad_class.err != bre.bre_compile("[[:unknown:]]").err || bad_class.err.len() == 0) {
+    return 5;
+  }
+  let bad_collate = bre.bre_compile_bytes([91 as u8, 91 as u8, 46 as u8, 195 as u8, 169 as u8, 46 as u8, 93 as u8, 93 as u8]);
+  if (bad_collate.err != bre.bre_compile("[[.ab.]]").err || bad_collate.err.len() == 0) {
+    return 6;
+  }
+  let capture: u8[] = [92 as u8, 40 as u8, 255 as u8, 92 as u8, 41 as u8, 92 as u8, 49 as u8];
+  let cm = bre.bre_compile_bytes(capture).exec_bytes([255 as u8, 255 as u8]);
+  if (!cm.matched || cm.end != 2 || cm.starts[1] != 0 || cm.ends[1] != 1) {
+    return 7;
+  }
+  let empty: u8[] = [];
+  if (!bre.bre_compile_bytes(empty).search_bytes(empty)) {
+    return 8;
+  }
+  let names: string[] = ["alpha", "digit", "alnum", "upper", "lower", "space", "blank", "punct", "print", "graph", "cntrl", "xdigit"];
+  for name in names {
+    let pattern: string = "[[:" + name + ":]]";
+    let text = bre.bre_compile(pattern);
+    let raw = bre.bre_compile_bytes(pattern.bytes());
+    let i: i32 = 0;
+    while (i < 256) {
+      let input: u8[] = [i as u8];
+      if (text.search_bytes(input) != raw.search_bytes(input)) {
+        return 9;
+      }
+      i = i + 1;
+    }
+  }
+  let patterns: string[] = ["a+", "a\\+", "[[:digit:]]", "\\(a\\)\\1", "^a$", "a\\|b"];
+  for pattern in patterns {
+    let text = bre.bre_compile_syntax(pattern, bre.emacs_syntax());
+    let raw = bre.bre_compile_bytes_syntax(pattern.bytes(), bre.emacs_syntax());
+    if (text.err != raw.err || text.search("aa") != raw.search("aa") || text.search("1") != raw.search("1")) {
+      return 10;
+    }
+  }
+  return 0;
+}

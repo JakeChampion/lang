@@ -605,9 +605,9 @@ function same_bytes(a: string, b: string): boolean {
 // end and the only way to true.
 function compare_streams(ra: Reader, rb: Reader): boolean {
   while (true) {
-    match (ra.read_chunk(131072)) {
+    match (ra.read_chunk_bytes(131072)) {
       Ok(ba) => {
-        match (rb.read_chunk(131072)) {
+        match (rb.read_chunk_bytes(131072)) {
           Ok(bb) => {
             if (ba.len() != bb.len()) {
               return false;
@@ -615,7 +615,7 @@ function compare_streams(ra: Reader, rb: Reader): boolean {
             if (ba.len() == 0) {
               return true;
             }
-            if (ba != bb) {
+            if (__mismatch_bytes(ba, 0, bb, 0, ba.len()) != ba.len()) {
               return false;
             }
           },

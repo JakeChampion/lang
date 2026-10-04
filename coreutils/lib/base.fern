@@ -18,9 +18,10 @@
 //   - A group is validated left to right and the bytes it has already
 //     completed are written before the fault is reported, so `AA=A`
 //     writes one byte and then fails.
-//   - A short FINAL group is an error everywhere, but base64 alone
-//     writes the whole bytes it holds first (`aGVsbG8` writes five);
-//     base32, base16, base2 and z85 write nothing from theirs.
+//   - Unpadded final groups are accepted when their length and unused bits
+//     represent whole bytes. Once padding starts it must be complete:
+//     incomplete base32 padding withholds the final group's bytes, while
+//     base64 writes the bytes decoded before reporting the error.
 //   - The character count a padded final block may carry is fixed by
 //     the arithmetic: 2, 3 or 4 for base64 and 2, 4, 5, 7 or 8 for
 //     base32. Anything else is `invalid input` even when every
@@ -34,8 +35,8 @@
 //     accepted value.
 //
 // The lookup tables are raw `__alloc` memory read with `__load_u8` /
-// `__load_i32`; the input and output buffers are ordinary strings and
-// `u8[]`. A raw pointer INTO a counted buffer (`buf as usize`) is what a
+// `__load_i32`; input and output buffers are byte arrays. A raw pointer
+// INTO a counted buffer (`buf as usize`) is what a
 // byte-at-a-time codec wants and is not available here: native reads
 // that cast as the data pointer and the self-host as the box, so the two
 // compilers would disagree about where the bytes are (#8799). A `u8[]`
@@ -46,7 +47,7 @@ import "std/io_buffered";
 import "./gnu";
 
 // `Codec` — one encoding.
-pub struct Codec { bits: i32, in_block: i32, out_block: i32, pad: boolean, rev: boolean, alpha: usize, dec: usize }
+pub struct Codec { bits: i32, in_block: i32, out_block: i32, pad: boolean, rev: boolean, alpha: usize, alpha_bytes: i32, dec: usize }
 
 // `Chars` — the characters one input block encodes to, packed one per
 // byte with the first in the low byte. No block is more than eight
@@ -95,7 +96,7 @@ function tables(alphabet: string): (usize, usize) {
 
 function bit_codec(alphabet: string, bits: i32, in_block: i32, out_block: i32, pad: boolean, rev: boolean): Codec {
   let t: (usize, usize) = tables(alphabet);
-  return Codec { bits: bits, in_block: in_block, out_block: out_block, pad: pad, rev: rev, alpha: t.0, dec: t.1 };
+  return Codec { bits: bits, in_block: in_block, out_block: out_block, pad: pad, rev: rev, alpha: t.0, alpha_bytes: alphabet.len() + 8, dec: t.1 };
 }
 
 // `also_decodes(c, extra)` — more characters the DECODER accepts,
@@ -302,6 +303,11 @@ function dec_group(c: Codec, g: usize, gn: i32): Grp {
   // Padding is optional, but a group that HAS it must be a whole one:
   // `Zg=` is short by a character rather than unpadded.
   if (padded && gn != c.out_block) {
+    // GNU base32 withholds the whole final group until its padding is
+    // complete. Base64 still writes the bytes decoded before the fault.
+    if (c.bits == 5) {
+      return Grp { v: 0, n: 0, ok: false };
+    }
     return Grp { v: out, n: w, ok: false };
   }
   if (d == 0) {
@@ -417,9 +423,9 @@ function fail(o: io_buffered.BufWriter, msg: string): void {
 // `read_block(r, o, cap)` — up to `cap` bytes, reading until the block
 // is full or the input ends. Only a SHORT block may be the last one,
 // which is what z85's length check reads as end of input.
-function read_block(r: Reader, o: io_buffered.BufWriter, cap: i32): string {
-  let chunk: string = "";
-  match (r.read_chunk(cap)) {
+function read_block(r: Reader, o: io_buffered.BufWriter, cap: i32): u8[] {
+  let chunk: u8[] = [];
+  match (r.read_chunk_bytes(cap)) {
     Ok(s) => {
       chunk = s;
     },
@@ -427,20 +433,28 @@ function read_block(r: Reader, o: io_buffered.BufWriter, cap: i32): string {
       fail(o, "read error: " + gnu.io_error_text(e));
     }
   }
-  while (chunk.len() > 0 && chunk.len() < cap) {
-    match (r.read_chunk(cap - chunk.len())) {
+  if (chunk.len() == 0 || chunk.len() == cap) {
+    return chunk;
+  }
+  let carry: usize = buf_new(cap);
+  buf_push_bytes_range(carry, chunk, 0, chunk.len());
+  while (buf_len(carry) < cap) {
+    match (r.read_chunk_bytes(cap - buf_len(carry))) {
       Ok(s) => {
         if (s.len() == 0) {
           break;
         }
-        chunk = chunk + s;
+        buf_push_bytes_range(carry, s, 0, s.len());
       },
       Err(e) => {
+        buf_free(carry);
         fail(o, "read error: " + gnu.io_error_text(e));
       }
     }
   }
-  return chunk;
+  let bytes: u8[] = buf_take_bytes(carry);
+  buf_free(carry);
+  return bytes;
 }
 
 // `open_input(has_file, file)` — the operand's reader; stdin for no
@@ -480,7 +494,7 @@ function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void 
   let wrapping: boolean = wrap > 0 as i64;
   let col: i64 = 0;
   while (true) {
-    let chunk: string = read_block(r, out, cap);
+    let chunk: u8[] = read_block(r, out, cap);
     let n: i32 = chunk.len();
     if (n == 0) {
       break;
@@ -488,7 +502,7 @@ function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void 
     if (bits == 0 && n % inb != 0) {
       fail(out, "invalid input (length must be multiple of 4 characters)");
     }
-    let bs: [u8] = chunk.as_bytes();
+    let bs: u8[] = chunk;
     let chars: i32 = enc_chars(c, n);
     let nl: i32 = 0;
     if (wrapping) {
@@ -555,7 +569,7 @@ function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void 
       }
       i = i + nb;
     }
-    out = gnu.put(out, string_from_bytes_unchecked(buf));
+    out = gnu.check(out.write_bytes(buf));
     if (n < cap) {
       break;
     }
@@ -588,12 +602,12 @@ function decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter):
   let outb: i32 = c.out_block;
   let pbits: i32 = c.bits * 2;
   while (true) {
-    let chunk: string = read_block(r, out, cap);
+    let chunk: u8[] = read_block(r, out, cap);
     let n: i32 = chunk.len();
     if (n == 0) {
       break;
     }
-    let bs: [u8] = chunk.as_bytes();
+    let bs: u8[] = chunk;
     let buf: u8[] = __alloc_u8(n + 8);
     let w: i32 = 0;
     let bad: boolean = false;
@@ -627,7 +641,8 @@ function decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter):
       if (ignore) {
         // `=` survives --ignore-garbage only where it is padding; in
         // base16 and base2 it is garbage like any other byte.
-        if (!(c.pad && b == 61) && __load_i32(c.dec + (b * 4) as usize) < 0) {
+        // GNU's z85 filter retains NUL, which the decoder then rejects.
+        if (!(c.pad && b == 61) && !(c.bits == 0 && b == 0) && __load_i32(c.dec + (b * 4) as usize) < 0) {
           continue;
         }
       } else if (b == 10) {
@@ -653,7 +668,7 @@ function decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter):
       }
     }
     if (w > 0) {
-      out = gnu.put(out, slice_unchecked(string_from_bytes_unchecked(buf), 0, w) + "");
+      out = gnu.check(out.write_bytes_range(buf, 0, w));
     }
     if (bad) {
       fail(out, "invalid input");
@@ -673,17 +688,22 @@ function decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter):
         tail = tail.with(k, (v & 255 as i64) as u8);
         v = v >> 8;
       }
-      out = gnu.put(out, string_from_bytes_unchecked(tail));
+      out = gnu.check(out.write_bytes(tail));
     }
     if (!last.ok) {
       fail(out, "invalid input");
     }
+  }
+  __free(gbuf, 64);
+  if (pairs != 0 as usize) {
+    __free(pairs, 65536 * 4);
   }
   gnu.finish(out);
 }
 
 // `run(c, decoding, ignore, wrap, has_file, file)` — the whole program
 // below the option scan. Exits; never returns normally on a fault.
+// Consumes the codec's lookup tables on successful completion.
 pub function run(c: Codec, decoding: boolean, ignore: boolean, wrap: i64, has_file: boolean, file: string): void {
   let r: Reader = open_input(has_file, file);
   let o: io_buffered.BufWriter = gnu.out_new();
@@ -693,27 +713,29 @@ pub function run(c: Codec, decoding: boolean, ignore: boolean, wrap: i64, has_fi
     } else {
       b58_encode(r, c, wrap, o);
     }
-    return;
-  }
-  if (decoding) {
+  } else if (decoding) {
     decode(r, c, ignore, o);
   } else {
     encode(r, c, wrap, o);
   }
+  __free(c.alpha, c.alpha_bytes);
+  __free(c.dec, 256 * 4);
 }
 
 // `read_all(r, o)` — the whole input. base58 has no block: a byte at
 // either end changes every character between.
-function read_all(r: Reader, o: io_buffered.BufWriter): string {
-  let all: string = "";
+function read_all(r: Reader, o: io_buffered.BufWriter): u8[] {
+  let all: usize = buf_new(block_bytes());
   while (true) {
-    let chunk: string = read_block(r, o, block_bytes());
+    let chunk: u8[] = read_block(r, o, block_bytes());
     if (chunk.len() == 0) {
-      return all;
+      break;
     }
-    all = all + chunk;
+    buf_push_bytes_range(all, chunk, 0, chunk.len());
   }
-  return all;
+  let bytes: u8[] = buf_take_bytes(all);
+  buf_free(all);
+  return bytes;
 }
 
 // `rebase(digits, from, to)` — `digits`, most significant first and each
@@ -749,7 +771,7 @@ function rebase(digits: u8[], from: i32, to: i32): u8[] {
 }
 
 function b58_encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void {
-  let data: string = read_all(r, o);
+  let data: u8[] = read_all(r, o);
   let zeros: i32 = 0;
   while (zeros < data.len() && data[zeros] as i32 == 0) {
     zeros = zeros + 1;
@@ -801,7 +823,7 @@ function wrapped(text: string, wrap: i64): string {
 }
 
 function b58_decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter): void {
-  let text: string = read_all(r, o);
+  let text: u8[] = read_all(r, o);
   let vals: u8[] = [];
   let i: i32 = 0;
   while (i < text.len()) {
@@ -845,7 +867,7 @@ function b58_decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWrit
   }
   let out: io_buffered.BufWriter = o;
   if (all.len() > 0) {
-    out = gnu.put(out, string_from_bytes_unchecked(all));
+    out = gnu.check(out.write_bytes(all));
   }
   gnu.finish(out);
 }

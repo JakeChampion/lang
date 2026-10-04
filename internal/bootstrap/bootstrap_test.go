@@ -130,6 +130,9 @@ func hostName(t *testing.T) string {
 // so a run cannot write into the real build/ or bin/.
 func checkout(t *testing.T) string {
 	t.Helper()
+	// Each fixture chooses its own pin or explicit seed. An ambient seed
+	// would bypass the mocked download and missing-pin paths.
+	t.Setenv("STAGE0", "")
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not on PATH")
 	}

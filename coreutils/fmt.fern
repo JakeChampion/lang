@@ -182,7 +182,7 @@ const COST_MAX: i64 = 9223372036854775807;
 // `costs` the layout it chose, `nb` lines of it: for each line, the word
 // that starts the next one, and what the line cost. They are kept here so
 // that a paragraph reuses them rather than growing its own.
-struct Words { lines: string[], nl: i32, pos: i64[], meta: i64[], sp: i64[], n: i32, at: i32[], best: i64[], link: i64[], dq: i32[], breaks: i32[], costs: i64[], nb: i32 }
+struct Words { lines: u8[][], nl: i32, pos: i64[], meta: i64[], sp: i64[], n: i32, at: i32[], best: i64[], link: i64[], dq: i32[], breaks: i32[], costs: i64[], nb: i32 }
 
 function words_new(): Words {
   return Words { lines: [], nl: 0, pos: [], meta: [], sp: [], n: 0, at: [], best: [], link: [], dq: [], breaks: [], costs: [], nb: 0 };
@@ -276,7 +276,7 @@ function byte_classes(): u8[] {
   return cls;
 }
 
-function word_flags(cls: u8[], line: string, lo: i32, hi: i32, gap: i32, at_eol: boolean): i32 {
+function word_flags(cls: u8[], line: u8[], lo: i32, hi: i32, gap: i32, at_eol: boolean): i32 {
   let e: i32 = hi;
   while (e > lo && (cls[line[e - 1] as i32] as i32 & 1) != 0) {
     e = e - 1;
@@ -428,7 +428,7 @@ function base_cost(pos: i64[], meta: i64[], s: i32, sentence_at: i32): i64 {
 function choose(own ws: Words, n: i32, last: boolean, p: Para, st: Settings, lead: i32): Words {
   let maxw: i32 = st.max_width - lead;
   let goal: i32 = st.goal - lead;
-  let lines: string[] = ws.lines;
+  let lines: u8[][] = ws.lines;
   let nl: i32 = ws.nl;
   let pos: i64[] = ws.pos;
   let meta: i64[] = ws.meta;
@@ -596,7 +596,7 @@ function emit(o0: Out, ws: Words, p: Para, st: Settings, upto: i32): (Out, i32) 
       let at: i64 = ws.pos[k];
       let lo: i32 = hi32(at);
       let wl: i32 = lo32(at);
-      buf_push_range(h, ws.lines[(ws.meta[k] >> 8 as i64) as i32], lo, lo + wl);
+      buf_push_bytes_range(h, ws.lines[(ws.meta[k] >> 8 as i64) as i32], lo, lo + wl);
       col = col + wl;
       k = k + 1;
     }
@@ -663,7 +663,7 @@ function chunk(o0: Out, p0: Para, own ws: Words, n: i32, st: Settings, col: i32)
 // `drop_front(ws, k)` — the words from `k` on moved to the front, and the
 // lines they are read from with them.
 function drop_front(own ws: Words, k: i32): Words {
-  let lines: string[] = ws.lines;
+  let lines: u8[][] = ws.lines;
   let nl: i32 = ws.nl;
   let pos: i64[] = ws.pos;
   let meta: i64[] = ws.meta;
@@ -755,7 +755,7 @@ function flush_para(own s: State): State {
 // 2 a line with words. `at` and `col` are where the words begin.
 struct Head { kind: i32, p_indent: i32, indent: i32, at: i32, col: i32, pfx: boolean }
 
-function starts_with_at(s: string, at: i32, pre: string): boolean {
+function starts_with_at(s: u8[], at: i32, pre: string): boolean {
   if (at + pre.len() > s.len()) {
     return false;
   }
@@ -769,7 +769,7 @@ function starts_with_at(s: string, at: i32, pre: string): boolean {
   return true;
 }
 
-function eat_blanks(line: string, i0: i32, col0: i32, tabs0: boolean): (i32, i32, boolean) {
+function eat_blanks(line: u8[], i0: i32, col0: i32, tabs0: boolean): (i32, i32, boolean) {
   let i: i32 = i0;
   let col: i32 = col0;
   let tabs: boolean = tabs0;
@@ -797,7 +797,7 @@ function eat_blanks(line: string, i0: i32, col0: i32, tabs0: boolean): (i32, i32
 // become the prefix, and whatever blanks follow are the paragraph's
 // indent. A line with fewer is copied, and one with exactly as many and
 // nothing after them is a plain blank line rather than a prefixed one.
-function scan_head_blank_prefix(line: string, st: Settings, tabs0: boolean): (Head, boolean) {
+function scan_head_blank_prefix(line: u8[], st: Settings, tabs0: boolean): (Head, boolean) {
   let i: i32 = 0;
   let col: i32 = 0;
   let tabs: boolean = tabs0;
@@ -830,7 +830,7 @@ function scan_head_blank_prefix(line: string, st: Settings, tabs0: boolean): (He
   return (Head { kind: 2, p_indent: lead, indent: col - lead, at: i, col: col, pfx: true }, tabs);
 }
 
-function scan_head(line: string, st: Settings, tabs0: boolean): (Head, boolean) {
+function scan_head(line: u8[], st: Settings, tabs0: boolean): (Head, boolean) {
   if (st.prefix.len() == 0 && st.prefix_lead > 0) {
     return scan_head_blank_prefix(line, st, tabs0);
   }
@@ -883,7 +883,7 @@ function scan_head(line: string, st: Settings, tabs0: boolean): (Head, boolean) 
 // 998 before it, and the byte that would not fit flushes the words that
 // did — with nothing held, the bytes go out as they are and the word
 // goes on from there.
-function scan_body(own s: State, line: string, at: i32, col0: i32): State {
+function scan_body(own s: State, line: u8[], at: i32, col0: i32): State {
   let st: Settings = s.st;
   let o: Out = s.o;
   let p: Para = s.p;
@@ -891,7 +891,7 @@ function scan_body(own s: State, line: string, at: i32, col0: i32): State {
   let uniform: boolean = st.uniform;
   let ws: Words = s.words;
   s = State { ...s, words: s.spare };
-  let lines: string[] = ws.lines;
+  let lines: u8[][] = ws.lines;
   let nl: i32 = ws.nl;
   let pos: i64[] = ws.pos;
   let meta: i64[] = ws.meta;
@@ -914,11 +914,11 @@ function scan_body(own s: State, line: string, at: i32, col0: i32): State {
     prev_sentence = (meta[nw - 1] & 2 as i64) != 0 as i64;
   }
   while (i < n) {
-    let j: i32 = __scan_set(line, i, st.blank);
+    let j: i32 = __scan_set_bytes(line, i, st.blank);
     let wcol: i32 = col;
     col = col + (j - i);
     let lo: i32 = i;
-    i = __scan_set(line, j, st.ink);
+    i = __scan_set_bytes(line, j, st.ink);
     let sp: i32 = i - j;
     if (sp > 1 || sp == 1 && line[j] as i32 == 9) {
       sp = 0;
@@ -949,7 +949,7 @@ function scan_body(own s: State, line: string, at: i32, col0: i32): State {
     }
     while (bytes + (j - lo) > buffer_bytes()) {
       if (nw == 0) {
-        buf_push_range(o.w.handle(), line, lo, lo + buffer_bytes());
+        buf_push_bytes_range(o.w.handle(), line, lo, lo + buffer_bytes());
         lo = lo + buffer_bytes();
       } else {
         let c: (Out, Para, Words) = chunk(o, p, Words { lines: lines, nl: nl, pos: pos, meta: meta, sp: gaps, n: nw, at: tat, best: tbest, link: tlink, dq: tdq, breaks: tbr, costs: tco, nb: 0 }, nw, st, wcol);
@@ -1038,7 +1038,7 @@ struct State { o: Out, p: Para, words: Words, spare: Words, bytes: i32, st: Sett
 // a fresh record built from `s` while `s` still stands shares the words
 // with it, and the append then copies them, once per line — quadratic
 // in the paragraph.
-function feed(own s: State, line: string, term: boolean): State {
+function feed(own s: State, line: u8[], term: boolean): State {
   let st: Settings = s.st;
   let r: (Head, boolean) = scan_head(line, st, s.o.tabs);
   let h: Head = r.0;
@@ -1056,7 +1056,7 @@ function feed(own s: State, line: string, term: boolean): State {
       push_spacing(h0, col, h.indent, o0.tabs);
       col = col + h.indent;
     }
-    buf_push_range(h0, line, h.at, line.len());
+    buf_push_bytes_range(h0, line, h.at, line.len());
     if (term) {
       buf_push_byte(h0, 10);
     }
@@ -1103,7 +1103,7 @@ function feed(own s: State, line: string, term: boolean): State {
   if (!p.open) {
     p = Para { ...p, first_indent: h.indent, other_indent: h.indent, p_indent: h.p_indent, pending: st.crown || st.tagged, open: true };
   }
-  if (!o.tabs && __memchr(line, 9, h.at) >= 0) {
+  if (!o.tabs && __memchr_bytes(line, 9, h.at) >= 0) {
     o = Out { ...o, tabs: true };
   }
   s = State { ...s, o: o, p: p };
@@ -1269,6 +1269,15 @@ pub function main(): i32 {
   return run(files, st);
 }
 
+// Paragraph state retains lines independently of the reader's next chunk.
+function copy_line(bytes: u8[], lo: i32, hi: i32): u8[] {
+  let h: usize = buf_new(hi - lo);
+  buf_push_bytes_range(h, bytes, lo, hi);
+  let line: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return line;
+}
+
 // `run(files, st)` — every FILE in turn. A paragraph never spans a file
 // boundary, so one is flushed at the end of each; a line may span two
 // read blocks, so `carry` holds the part that has no terminator yet.
@@ -1298,11 +1307,12 @@ function run(files: string[], st: Settings): i32 {
       }
     }
     if (opened) {
-      let carry: string = "";
+      let carry: usize = buf_new(read_size());
+      let carry_len: i32 = 0;
       while (true) {
-        let piece: string = "";
+        let piece: u8[] = [];
         let more: boolean = true;
-        match (r.read_chunk(read_size())) {
+        match (r.read_chunk_bytes(read_size())) {
           Ok(c) => {
             piece = c;
           },
@@ -1320,25 +1330,28 @@ function run(files: string[], st: Settings): i32 {
         if (!more || piece.len() == 0) {
           break;
         }
-        let data: string = piece;
-        if (carry.len() > 0) {
-          data = carry + piece;
-          carry = "";
-        }
         let i: i32 = 0;
-        while (i < data.len()) {
-          let j: i32 = __memchr(data, 10, i);
+        while (i < piece.len()) {
+          let j: i32 = __memchr_bytes(piece, 10, i);
           if (j < 0) {
-            carry = slice_unchecked(data, i, data.len()) + "";
+            buf_push_bytes_range(carry, piece, i, piece.len());
+            carry_len = carry_len + piece.len() - i;
             break;
           }
-          s = feed(s, slice_unchecked(data, i, j) + "", true);
+          if (carry_len > 0) {
+            buf_push_bytes_range(carry, piece, i, j);
+            s = feed(s, buf_take_bytes(carry), true);
+            carry_len = 0;
+          } else {
+            s = feed(s, copy_line(piece, i, j), true);
+          }
           i = j + 1;
         }
       }
-      if (carry.len() > 0) {
-        s = feed(s, carry, false);
+      if (carry_len > 0) {
+        s = feed(s, buf_take_bytes(carry), false);
       }
+      buf_free(carry);
       if (!is_stdin) {
         r.close();
       }
