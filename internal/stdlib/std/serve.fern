@@ -141,7 +141,9 @@ function __recv_deadline_default(): Duration {
 // supervisor sets for its workers, and whether a handler starts on its
 // request's header block, its body a Stream that pulls the bytes as the
 // handler reads them (`stream_bodies`, docs/NET-P3-SUSPENSION-PLAN.md
-// §3.9) rather than once the body has arrived whole.
+// §3.9) rather than once the body has arrived whole; the stateful loop
+// (`run_with`) runs its handler to completion and reads bodies whole either
+// way.
 pub struct Config {
   backlog: i32,
   reuse_port: boolean,

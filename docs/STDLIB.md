@@ -1631,7 +1631,8 @@ points that run a handler under it.
   answered when the handler first reads, so a handler that refuses never
   invites the body, and a connection whose body the handler did not read
   whole closes after the response. A `Stream` that ended early faults
-  (`(s).fault()`); `body_string()` reports it as `EndedEarly`.
+  (`(s).fault()`); `body_string()` reports it as `EndedEarly`. The stateful
+  loop (`run_with`) reads bodies whole either way.
   A listener it cannot bind is `serve: cannot listen on port PORT:`
   and the error's text on stderr, and the entry returns 98 (every
   entry, and a supervised worker that binds its own).

@@ -16,7 +16,8 @@ import (
 // its body a kilobyte at a time through the request's Stream and answers
 // the byte count and sum; /text reads it whole with body_string, so a body
 // that ended early is answered with the fault's status; /refuse answers
-// 403 without reading the body; /ok is the hello. The body cap is 4 KiB
+// 403 without reading the body; /peek reads the first kilobyte and
+// answers, leaving the rest of the body unread; /ok is the hello. The body cap is 4 KiB
 // and the minimum data rate 1000 B/s after a 300 ms grace, so the checks
 // below can stall a body into a 408 and push a chunk past the cap into a
 // 413 in well under a second.
@@ -57,6 +58,10 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
         }
     }
     if (req.path == "/refuse") { return http.text(403, "refused"); }
+    if (req.path == "/peek") {
+        let (head, rest) = req.body_stream().read_n(1024);
+        return http.ok("peek " + head.len().to_string());
+    }
     return http.ok("ok");
 }
 function main(): i32 {
@@ -209,6 +214,31 @@ func CheckStreamBodiesSequential(t *testing.T, addr string) {
 	resp := readWhole(t, refused)
 	if strings.Contains(resp, "HTTP/1.1 100") || !strings.Contains(resp, "HTTP/1.1 403") {
 		t.Fatalf("a refusing handler under Expect: want 403 alone and the close, got\n%s", resp)
+	}
+
+	// A handler that stops reading early without a fault, the rest of the
+	// body still on the wire: its response goes out and the connection
+	// closes, so the bytes that follow are never read as a request.
+	peek := dialRaw(t, addr)
+	defer peek.Close()
+	peekBody := StreamUploadBytes()
+	if _, err := io.WriteString(peek, fmt.Sprintf("POST /peek HTTP/1.1\r\nHost: h\r\nContent-Length: %d\r\n\r\n", len(peekBody))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := peek.Write(peekBody[:1500]); err != nil {
+		t.Fatal(err)
+	}
+	preader := bufio.NewReader(peek)
+	peeked := readResponseFrom(t, preader, "/peek on a partly sent body")
+	if peeked.StatusCode != 200 || !strings.Contains(bodyText(t, peeked), "peek 1024") {
+		t.Fatalf("a handler that read part of the body: want 200 peek 1024, got %d %q", peeked.StatusCode, bodyText(t, peeked))
+	}
+	// The rest of the body and a request behind it: the connection is
+	// closed, so no second response comes back.
+	_, _ = peek.Write(peekBody[1500:])
+	_, _ = io.WriteString(peek, "GET /ok HTTP/1.1\r\nHost: h\r\n\r\n")
+	if after, _ := io.ReadAll(preader); strings.Contains(string(after), "HTTP/1.1 ") {
+		t.Fatalf("the body left unread was answered as a request:\n%s", after)
 	}
 
 	// A client that goes away mid-body: the worker keeps serving.

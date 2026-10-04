@@ -388,6 +388,9 @@ function __ended_early_detail(fault: i32): string {
   if (fault == 400) {
     return "the body was malformed or cut short";
   }
+  if (fault == 431) {
+    return "the body's framing is past the limit";
+  }
   return "the body did not arrive whole";
 }
 
