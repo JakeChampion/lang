@@ -524,13 +524,13 @@ function __head(req: Request, t: __Target, body_len: i32): string {
 function __sent_fields(req: Request, t: __Target, body_len: i32): HeaderMap {
   let out: HeaderMap = __without(http.http_end_to_end(req.headers), ["host", "content-length"]);
   if (body_len > 0 || req.method == "POST" || req.method == "PUT" || req.method == "PATCH") {
-    out = out.append("content-length", int.int_to_string(body_len));
+    out = out.append("Content-Length", int.int_to_string(body_len));
   }
   if (__asks_gzip(req)) {
-    out = out.append("accept-encoding", "gzip");
+    out = out.append("Accept-Encoding", "gzip");
   }
   if (t.proxy_auth.len() > 0 && !__holds(req.headers.names, "proxy-authorization")) {
-    out = out.append("proxy-authorization", t.proxy_auth);
+    out = out.append("Proxy-Authorization", t.proxy_auth);
   }
   return out;
 }
