@@ -2957,6 +2957,15 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"method-enum-recv-bound-result-len", "enum Box[T] { Full(T), Empty }\nfunction (b: Box[T]) get_or(d: T): T { match (b) { Full(x) => { return x; }, Empty => { return d; } } }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { let o: Box[string] = Full(\"vw\"); return o.get_or(\"\").len(); }\n"},
 		{"method-struct-recv-bound-arg-mismatch", "struct Hold[T] { v: T }\nfunction (h: Hold[T]) or_else(d: T): T { if (h.v == d) { return d; } return h.v; }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { let h: Hold[i32] = Hold { v: 3 }; return h.or_else(\"x\"); }\n"},
 		{"method-struct-recv-bound-result-len", "struct Hold[T] { v: T }\nfunction (h: Hold[T]) or_else(d: T): T { if (h.v == d) { return d; } return h.v; }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { let h: Hold[string] = Hold { v: \"ab\" }; return h.or_else(\"x\").len(); }\n"},
+		// A parameter typed by a trait is an anonymous generic; a trait
+		// anywhere else is still no type.
+		{"trait-param-generic", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Sq): i32 { return self.s; } }\nfunction total(a: Shape, b: Shape): i32 { return a.area() + b.area(); }\nfunction main(): i32 { return total(Sq { s: 1 }, Sq { s: 2 }); }\n"},
+		{"trait-param-missing-impl", "trait Shape { function area(self: Self): i32; }\nfunction total(a: Shape): i32 { return a.area(); }\nfunction main(): i32 { return total(5); }\n"},
+		{"trait-param-with-type-arguments", "trait Sink[T] { function put(self: Self, v: T): i32; }\nstruct Acc { n: i32 }\nimpl Sink[i32] for Acc { function put(self: Acc, v: i32): i32 { return self.n + v; } }\nfunction feed(s: Sink[i32]): i32 { return s.put(4); }\nfunction main(): i32 { return feed(Acc { n: 3 }); }\n"},
+		{"trait-param-array-is-not-the-trait", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Sq): i32 { return self.s; } }\nfunction total(xs: Shape[]): i32 { return 7; }\nfunction main(): i32 { return 0; }\n"},
+		{"trait-param-beside-undeclared-type", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Sq): i32 { return self.s; } }\nfunction total(a: Shape, b: Wibble): i32 { return a.area(); }\nfunction main(): i32 { return 0; }\n"},
+		{"generic-param-beside-undeclared-type", "function first[T](a: T, b: Wibble): T { return a; }\nfunction main(): i32 { return 0; }\n"},
+		{"trait-as-return-type", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Sq): i32 { return self.s; } }\nfunction make(): Shape { return Sq { s: 1 }; }\nfunction main(): i32 { return 0; }\n"},
 		{"loop-string-byte-binding", `function f(text: string): i32 { let out: u8[] = []; for ch in text { out = out.append(ch); } return out.len(); }`},
 		{"loop-string-byte-mismatch", `function f(text: string): i32 { for ch in text { let wrong: string = ch; } return 0; }`},
 		{"loop-str-byte-binding", `function f(text: str): i32 { let out: u8[] = []; for ch in text { out = out.append(ch); } return out.len(); }`},
@@ -3780,6 +3789,9 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"map-bundled-no-import", "function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
 		{"map-bundled-direct-import", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
 		{"map-bundled-transitive-import", "import \"std/json\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
+		// An imported trait as a parameter type is desugared against the
+		// modules this loader resolved, which record no `resolved` identity.
+		{"trait-param-imported", "import \"core/cmp\";\nfunction describe(s: cmp.Display): string { return s.to_string(); }\nfunction main(): i32 { return describe(1).len(); }\n"},
 		// #10095's escape, which only the bundled table can see: core/map's own
 		// receiver methods are not runtime builtins, they reach the Map
 		// namespace through the method table once the module is loaded. The
