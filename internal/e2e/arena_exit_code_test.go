@@ -7,8 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // Arena exhaustion exits 125, not 137.
@@ -23,66 +22,48 @@ import (
 // time, and three harness sites had defaulted to treating any 137 as
 // infra — which silently hid genuine compiler regressions.
 //
-// The value has to agree across FIVE emitters (two native backends, two
-// self-host register backends, and the strbuf bounds trap), and nothing else
-// would notice if one drifted: a wrong status still aborts the program, still
-// prints the same stderr message, and only misleads the human reading the
-// exit code weeks later. Hence this test.
+// The value has to agree across the emitters (the two register backends and
+// the strbuf bounds trap), and nothing else would notice if one drifted: a
+// wrong status still aborts the program, still prints the same stderr message,
+// and only misleads the human reading the exit code weeks later. Hence this
+// test.
 //
 // wasm is absent from the status check but not from the behaviour: it grows
 // linear memory rather than trapping at a fixed arena, and a refused
 // memory.grow raises `unreachable` inside __fern_alloc so the backtrace names
-// the allocator. Status parity with the constant above needs wasi_proc_exit,
-// which would put a WASI import into every allocating module — including the
-// zero-import core ones — so it is deferred.
-// TestAllocGrowFailureTrapsSelfHostWasm below pins the self-host emitter's
-// half; the native emitter's is internal/codegen/wasmbin's
-// TestAllocGrowResultIsChecked.
-
-// arenaExhaustedExit is the status every emitter's arena trap exits with.
-const arenaExhaustedExit = 125
+// the allocator (TestWASMHeapExhaustionTrapsInTheAllocator). Status parity
+// with the constant needs wasi_proc_exit, which would put a WASI import into
+// every allocating module — including the zero-import core ones — so it is
+// deferred.
 
 func TestArenaExhaustedExitCodeIsNot137(t *testing.T) {
 	// The whole point is that it cannot be confused with a signal death.
 	// 128+N for N in 1..31 is the shell's signal-status range.
-	for _, c := range []struct {
-		name string
-		got  int
-	}{
-		{"the shared status", arenaExhaustedExit},
-		{"x86_64", x86_64.ExitArenaExhausted},
-		{"arm64-linux", arm64.ExitArenaExhausted},
-	} {
-		if c.got == 137 {
-			t.Errorf("%s: arena exhaustion is back to 137, which is SIGKILL's "+
-				"status — the two become indistinguishable again", c.name)
-		}
-		if c.got >= 129 && c.got <= 159 {
-			t.Errorf("%s: exit %d falls in the 128+signal range, so a signal "+
-				"death can forge it", c.name, c.got)
-		}
-		if c.got >= 126 {
-			t.Errorf("%s: exit %d is >= 126, which WASI refuses to carry — the "+
-				"status would be reported as 1 through wasmtime", c.name, c.got)
-		}
-		if c.got <= 0 {
-			t.Errorf("%s: exit %d would read as success", c.name, c.got)
-		}
+	got := e2eharness.ExitArenaExhausted
+	if got == 137 {
+		t.Errorf("arena exhaustion is back to 137, which is SIGKILL's " +
+			"status — the two become indistinguishable again")
 	}
-	if x86_64.ExitArenaExhausted != arenaExhaustedExit || arm64.ExitArenaExhausted != arenaExhaustedExit {
-		t.Errorf("native backends disagree with %d: x86-64 exits %d, arm64 exits %d",
-			arenaExhaustedExit, x86_64.ExitArenaExhausted, arm64.ExitArenaExhausted)
+	if got >= 129 && got <= 159 {
+		t.Errorf("exit %d falls in the 128+signal range, so a signal "+
+			"death can forge it", got)
+	}
+	if got >= 126 {
+		t.Errorf("exit %d is >= 126, which WASI refuses to carry — the "+
+			"status would be reported as 1 through wasmtime", got)
+	}
+	if got <= 0 {
+		t.Errorf("exit %d would read as success", got)
 	}
 }
 
 // TestArenaExhaustedExitCodeSelfHostLockstep reads the self-host emitters'
 // sources and checks the status they write into their trap sequences is
-// arenaExhaustedExit. A source scan rather than a compile: building a
-// self-host driver costs minutes, and the failure this guards against is
-// somebody editing one emitter's literal and not the others — which a scan
-// catches exactly as well.
+// e2eharness.ExitArenaExhausted. A source scan rather than a compile: the
+// failure this guards against is somebody editing one emitter's literal and
+// not the others — which a scan catches exactly as well.
 func TestArenaExhaustedExitCodeSelfHostLockstep(t *testing.T) {
-	want := arenaExhaustedExit
+	want := e2eharness.ExitArenaExhausted
 	for _, c := range []struct {
 		file  string
 		trap  string // the register the exit status is moved into
@@ -121,34 +102,5 @@ func TestArenaExhaustedExitCodeSelfHostLockstep(t *testing.T) {
 				"one of them may be exiting with the wrong status",
 				c.file, n, marker, c.sites)
 		}
-	}
-}
-
-// TestAllocGrowFailureTrapsSelfHostWasm is the self-host mirror of
-// internal/codegen/wasmbin's TestAllocGrowResultIsChecked: $__fern_alloc has
-// to branch on memory.grow's result. Discarding it leaves heap exhaustion to
-// surface as an out-of-bounds trap at whichever store first ran past the end
-// of linear memory, with the allocator nowhere in the backtrace (#6160).
-//
-// A source scan for the same reason the lockstep test above is one — the
-// alternative costs a self-host driver build.
-func TestAllocGrowFailureTrapsSelfHostWasm(t *testing.T) {
-	path := filepath.Join("..", "..", "examples", "self_host", "wasm_ir.fern")
-	src, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read wasm_ir.fern: %v", err)
-	}
-	text := string(src)
-	if strings.Contains(text, "(drop (memory.grow") {
-		t.Errorf("wasm_ir.fern still drops memory.grow's result; a refused grow " +
-			"reads as success and the trap lands at an unrelated store")
-	}
-	if !strings.Contains(text, "(if (i32.eq (memory.grow") {
-		t.Errorf("wasm_ir.fern's $__fern_alloc does not test memory.grow's result")
-	}
-	if !strings.Contains(text,
-		"(if (i32.lt_u (global.get $heap) (local.get $p)) (then (unreachable)))") {
-		t.Errorf("wasm_ir.fern's $__fern_alloc does not guard the bump against " +
-			"i32 wraparound")
 	}
 }

@@ -12163,8 +12163,13 @@ pub function udivrem_helpers(t: string, suffix: string): string {
 // census (#5362; the x86/arm64 self-host precedent). Counts at the
 // allocator's rounded-8 block size on both sides — $__fern_alloc's rounded
 // request and the bsz slot a free site reads are the same number for the
-// same block — so an alloc and its eventual free cancel exactly.
+// same block — so an alloc and its eventual free cancel exactly. FERN_SANITIZE
+// folds it in, as on the register backends: the census is the sanitizer's
+// leak detector, and its verdict line rides on the report.
 function leak_check_on(): boolean {
+  if (asmcore.sanitize_on()) {
+    return true;
+  }
   match (env("FERN_LEAKCHECK")) {
     Some(_) => {
       return true;
@@ -12213,17 +12218,54 @@ function lc_bump_free(nexpr: string): string {
   return o;
 }
 
+// lc_label: the stores that put a fixed label at `$b` as little-endian
+// packed words (a full word, then a half, then a byte), and the
+// $__fern_lc_wr call that writes it. Every label byte is ASCII, so no word
+// crosses the sign bit.
+function lc_label(text: string): string {
+  let o: string = "";
+  let i: i32 = 0;
+  while (i < text.len()) {
+    let left: i32 = text.len() - i;
+    let width: i32 = 1;
+    if (left >= 4) {
+      width = 4;
+    } else if (left >= 2) {
+      width = 2;
+    }
+    let word: i32 = 0;
+    let k: i32 = width - 1;
+    while (k >= 0) {
+      word = word * 256 + text[i + k] as i32;
+      k = k - 1;
+    }
+    let op: string = "i32.store8";
+    if (width == 4) {
+      op = "i32.store";
+    } else if (width == 2) {
+      op = "i32.store16";
+    }
+    let at: string = "(local.get $b)";
+    if (i > 0) {
+      at = "(i32.add (local.get $b) (i32.const " + util.i32_to_string(i) + "))";
+    }
+    o = o + "    (" + op + " " + at + " (i32.const " + util.i32_to_string(word) + "))\n";
+    i = i + width;
+  }
+  return o + "    (call $__fern_lc_wr (local.get $b) (i32.const " + util.i32_to_string(text.len()) + "))\n";
+}
+
 // lc_report_and_exit_wrapper: `$__fern_lc_report` — the census summary on
-// stderr, one `leakcheck: allocs=<N> frees=<M> live_bytes=<K>` line — plus
-// the `$proc_exit` wrapper that reports before exiting, so BOTH exit paths
-// (the exit() op and $_start) report through the one flag-gated definition;
+// stderr, one `leakcheck: allocs=<N> frees=<M> live_bytes=<K>` line, and
+// under FERN_SANITIZE the leak verdict after it — plus the `$proc_exit`
+// wrapper that reports before exiting, so BOTH exit paths (the exit() op
+// and $_start) report through the one flag-gated definition;
 // preview1_imports renames the raw import to $__fern_proc_exit_raw under the
 // same flag. Mode 0 only: the component modes have no preview1 proc_exit and
-// their $fd_write shims cannot be assumed. The line is built in a buffer
-// taken from the bump heap AT REPORT TIME (the process is exiting, and this
-// avoids touching the computed data-pool layout); labels are packed-word
-// stores; digits are written backwards by $__fern_lc_wrnum. fd_write's iovec scratch
-// at 0/4 is free at exit.
+// their $fd_write shims cannot be assumed. The line is built in fixed
+// scratch below the data pool (the process is exiting); labels are packed-word
+// stores (lc_label); digits are written backwards by $__fern_lc_wrnum.
+// fd_write's iovec scratch at 0/4 is free at exit.
 pub function lc_report_and_exit_wrapper(): string {
   if (!leak_check_on()) {
     return "";
@@ -12254,32 +12296,32 @@ pub function lc_report_and_exit_wrapper(): string {
   o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
   o = o + "      (i32.store8 (local.get $i) (i32.const 45))))\n";
   o = o + "    (call $__fern_lc_wr (local.get $i) (i32.sub (i32.add (local.get $buf) (i32.const 24)) (local.get $i))))\n";
-  // The report. Label bytes are little-endian packed constants for
-  // "leakcheck: allocs=", " frees=", " live_bytes=", and the newline.
+  // The report.
   o = o + "  (func $__fern_lc_report\n";
   o = o + "    (local $b i32)\n";
   // Fixed scratch at 8..40 — clear of the fd_write iovec at 0..8, and free
   // to clobber at exit. NOT $__fern_alloc: a heap-free program has none.
   o = o + "    (local.set $b (i32.const 8))\n";
-  o = o + "    (i32.store (local.get $b) (i32.const 1801545068))\n";
-  o = o + "    (i32.store (i32.add (local.get $b) (i32.const 4)) (i32.const 1667590243))\n";
-  o = o + "    (i32.store (i32.add (local.get $b) (i32.const 8)) (i32.const 1629502059))\n";
-  o = o + "    (i32.store (i32.add (local.get $b) (i32.const 12)) (i32.const 1668246636))\n";
-  o = o + "    (i32.store16 (i32.add (local.get $b) (i32.const 16)) (i32.const 15731))\n";
-  o = o + "    (call $__fern_lc_wr (local.get $b) (i32.const 18))\n";
+  o = o + lc_label("leakcheck: allocs=");
   o = o + "    (call $__fern_lc_wrnum (global.get $__fern_lc_alloc_count) (local.get $b))\n";
-  o = o + "    (i32.store (local.get $b) (i32.const 1701996064))\n";
-  o = o + "    (i32.store16 (i32.add (local.get $b) (i32.const 4)) (i32.const 29541))\n";
-  o = o + "    (i32.store8 (i32.add (local.get $b) (i32.const 6)) (i32.const 61))\n";
-  o = o + "    (call $__fern_lc_wr (local.get $b) (i32.const 7))\n";
+  o = o + lc_label(" frees=");
   o = o + "    (call $__fern_lc_wrnum (global.get $__fern_lc_free_count) (local.get $b))\n";
-  o = o + "    (i32.store (local.get $b) (i32.const 1986620448))\n";
-  o = o + "    (i32.store (i32.add (local.get $b) (i32.const 4)) (i32.const 2036490085))\n";
-  o = o + "    (i32.store (i32.add (local.get $b) (i32.const 8)) (i32.const 1030972788))\n";
-  o = o + "    (call $__fern_lc_wr (local.get $b) (i32.const 12))\n";
+  o = o + lc_label(" live_bytes=");
   o = o + "    (call $__fern_lc_wrnum (i64.sub (global.get $__fern_lc_alloc_bytes) (global.get $__fern_lc_free_bytes)) (local.get $b))\n";
-  o = o + "    (i32.store8 (local.get $b) (i32.const 10))\n";
-  o = o + "    (call $__fern_lc_wr (local.get $b) (i32.const 1)))\n";
+  o = o + lc_label("\n");
+  if (asmcore.sanitize_on()) {
+    // The sanitizer's leak verdict, the text the register backends print.
+    // Only a POSITIVE balance is a leak: zero is clean, and a negative one
+    // is an over-free, a different finding named at the offending dec.
+    o = o + "    (if (i64.gt_s (i64.sub (global.get $__fern_lc_alloc_bytes) (global.get $__fern_lc_free_bytes)) (i64.const 0)) (then\n";
+    o = o + lc_label("fern-sanitizer: leak ");
+    o = o + "    (call $__fern_lc_wrnum (i64.sub (global.get $__fern_lc_alloc_bytes) (global.get $__fern_lc_free_bytes)) (local.get $b))\n";
+    o = o + lc_label(" bytes in ");
+    o = o + "    (call $__fern_lc_wrnum (i64.sub (global.get $__fern_lc_alloc_count) (global.get $__fern_lc_free_count)) (local.get $b))\n";
+    o = o + lc_label(" blocks\n");
+    o = o + "    ))\n";
+  }
+  o = o + "  )\n";
   // The reporting $proc_exit.
   o = o + "  (func $proc_exit (param $c i32)\n";
   o = o + "    (call $__fern_lc_report)\n";
@@ -14440,8 +14482,14 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // `main` is exported beside `_start` so a host can read its result
     // directly (`wasmtime run --invoke main`): proc_exit refuses a status
     // outside [0..126), so through `_start` alone a result of 126 or more
-    // is unreadable.
-    parts = parts.append("  (export \"main\" (func $main))\n");
+    // is unreadable. That call never reaches $proc_exit, so under the census
+    // the export reports on its way out.
+    if (leak_check_on()) {
+      parts = parts.append("  (func $__fern_main_reporting (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (local.get $r))\n");
+      parts = parts.append("  (export \"main\" (func $__fern_main_reporting))\n");
+    } else {
+      parts = parts.append("  (export \"main\" (func $main))\n");
+    }
     parts = parts.append("  (export \"_start\" (func $_start)))\n");
     return util.str_join_chunks(parts);
   }

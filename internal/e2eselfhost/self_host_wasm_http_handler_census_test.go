@@ -21,15 +21,7 @@ func TestSelfHostWasmHTTPKeepAlive(t *testing.T) {
 
 func checkSelfHostWasmHTTPHandlerCensus(t *testing.T, client func(*testing.T, string, int) string, rounds int) {
 	t.Helper()
-	for _, tool := range []string{"wasm-tools", "wasmtime"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			t.Skip(tool + " not on PATH")
-		}
-	}
-	adapter := os.Getenv("FERN_WASI_ADAPTER")
-	if adapter == "" {
-		t.Skip("FERN_WASI_ADAPTER unset")
-	}
+	e2eharness.Wasmtime(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "fern.fern")
 	host := "x86-64-linux"
@@ -55,23 +47,7 @@ func checkSelfHostWasmHTTPHandlerCensus(t *testing.T, client func(*testing.T, st
 		t.Fatalf("compile: %v\n%s", err, report)
 	}
 	requireCompleteHTTPSemanticLowering(t, report)
-	wit, err := filepath.Abs("../../cmd/fern/wit")
-	if err != nil {
-		t.Fatal(err)
-	}
-	core, embedded, component := filepath.Join(dir, "core.wasm"), filepath.Join(dir, "embedded.wasm"), filepath.Join(dir, "component.wasm")
-	// External adapter stacks use their own pages, as in the primitive census.
-	for _, args := range [][]string{
-		{"parse", wat, "-o", core},
-		{"component", "embed", wit, "-w", "fern", core, "-o", embedded},
-		{"component", "new", embedded, "--realloc-via-memory-grow", "--adapt", "wasi_snapshot_preview1=" + adapter, "-o", component},
-		{"validate", component},
-	} {
-		if out, err := exec.Command("wasm-tools", args...).CombinedOutput(); err != nil {
-			t.Fatalf("wasm-tools %v: %v\n%s", args, err, out)
-		}
-	}
-	out := client(t, component, rounds)
+	out := client(t, e2eharness.AdaptPreview1Component(t, wat), rounds)
 	allocs, frees, live := leakSummaryOf(t, "WASI HTTP handler", out)
 	t.Logf("allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
 	if allocs != frees || live != 0 {

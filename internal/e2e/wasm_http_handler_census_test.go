@@ -10,7 +10,7 @@ import (
 // accept loop against real wasi:sockets, on a port the guest picks, with
 // every response checked and the census balanced.
 func TestWasmHTTPHandlerCensus(t *testing.T) {
-	component := buildLeakCheckComponentPrinting(t, e2eharness.WasiHTTPHandlerCensusSource(t, "../..", 32), false, false)
+	component := buildLeakCheckCLIComponent(t, e2eharness.WasiHTTPHandlerCensusSource(t, "../..", 32), false)
 	out := e2eharness.RunWasiHTTPHandlerCensus(t, component, 32)
 	allocs, frees, live := leakSummaryIn(t, out)
 	t.Logf("allocs=%d frees=%d live_bytes=%d", allocs, frees, live)

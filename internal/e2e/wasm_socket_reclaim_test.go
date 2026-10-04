@@ -10,7 +10,7 @@ import (
 )
 
 func TestWasmTcpLifecycleCensus(t *testing.T) {
-	component := buildLeakCheckComponent(t, e2eharness.WasiTCPCensusProbe, false)
+	component := buildLeakCheckCLIComponent(t, e2eharness.WasiTCPCensusProbe, false)
 	e2eharness.CheckWasiSocketCensus(t, component)
 }
 
