@@ -13,14 +13,17 @@ Files: `hello.fern` (the Fern handler), `go-hello.go` (the Go server),
 `loadgen/` (the Go load generator: one connection per request by default,
 `-k` for keep-alive, `-c` concurrency, `-d` duration).
 
-`hello.fern` builds at 502fc5d4, the commit that added this snapshot. It does
-not build on later main, where the platform is the `platform.Platform` trait
-(#11340) and the server lives in `std/serve`.
+`hello.fern` is the same handler on the current surface: `std/serve` and
+the `platform.Platform` trait (#11340) in place of `std/tcp` and the injected
+`Platform` it was written against at 502fc5d4. The recipe reruns on main; the
+binary is larger than the 68 KB the first table was taken with, since the
+server now carries the keep-alive loop, the reactor and the supervisor.
+`scripts/net-bench` is the nightly measurement that replaced this one.
 
 ```sh
 go build -o fern ./cmd/fern
 ./fern -target x86-64-linux -o hello docs/benchmarks/http-baseline-2026-09-20/hello.fern
-PORT=18095 ./hello &                       # 68 KB binary, 92 KB RSS idle
+PORT=18095 ./hello &
 (cd docs/benchmarks/http-baseline-2026-09-20/loadgen && go build -o loadgen .)
 loadgen -c 1 -d 5s;  grep VmRSS /proc/$(pgrep -f '^./hello')/status
 loadgen -c 16 -d 5s; grep VmRSS ...
