@@ -2087,6 +2087,7 @@ pub function bundle(entry0: parser.Module, imports0: LoadedModule[], target: str
     trait_reqs: trait_reqs,
     trait_decls: trait_decls,
     inferred_consts: inferred,
+    todo_sites: e.todo_sites,
   };
   return parser.resolve_dyn_traits(parser.settle_module(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred))));
 }

@@ -719,7 +719,7 @@ pub function lift_lambdas_typed(mod: parser.Module): parser.Module {
 }
 
 function with_builtin_enums(lifted: parser.Module): parser.Module {
-  return parser.Module { funcs: lifted.funcs, structs: parser.inject_builtin_enums(lifted.structs), aliases: lifted.aliases, imports: lifted.imports, top_stmts: lifted.top_stmts, enums: lifted.enums, resources: lifted.resources, exports: lifted.exports, impls: lifted.impls, trait_reqs: lifted.trait_reqs, trait_decls: lifted.trait_decls, inferred_consts: lifted.inferred_consts };
+  return parser.Module { funcs: lifted.funcs, structs: parser.inject_builtin_enums(lifted.structs), aliases: lifted.aliases, imports: lifted.imports, top_stmts: lifted.top_stmts, enums: lifted.enums, resources: lifted.resources, exports: lifted.exports, impls: lifted.impls, trait_reqs: lifted.trait_reqs, trait_decls: lifted.trait_decls, inferred_consts: lifted.inferred_consts, todo_sites: lifted.todo_sites };
 }
 
 // all_runtime_need_roots is the closed set of runtime-need ROOT names — every
@@ -935,7 +935,7 @@ pub struct Sub {
 }
 
 pub function no_sub(): Sub {
-  let none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [] };
+  let none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [] };
   return Sub { bodies: [], extra: [], sigs: fnsigs.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false };
 }
 
