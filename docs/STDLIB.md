@@ -1366,10 +1366,16 @@ The socket controls are typed faces over the descriptor builtins
   `O_NONBLOCK`, each `Result[(), NetError]`. `TCP_NODELAY` is already on
   for every socket `connect`, `connect_start` and `accept` answer and every
   connection the serve loop accepts, as Go and Node have it; `false` turns
-  Nagle's coalescing back on. A non-blocking `tcp_recv`
-  answers the empty array at once when nothing is queued, and a
-  non-blocking `tcp_send` what the kernel took, or `-EAGAIN` when it had
-  no room.
+  Nagle's coalescing back on. A non-blocking `read` answers `WouldBlock`
+  at once when nothing is queued, and a non-blocking `write` what the
+  kernel took, or `WouldBlock` when it had no room.
+- `read(sock, buf)` — one read from a connected stream into `buf`, up to
+  its length: the byte count, `Ok(0)` at the end of the stream, or the
+  `NetError`. On wasi:sockets every read is non-blocking, so a reader
+  waits for readability first (`async.wait_any`).
+- `write(sock, data)` — `data` written to a connected stream: the bytes
+  accepted (fewer than `data` holds when a non-blocking socket fills), or
+  the `NetError`; a write never raises SIGPIPE.
 - `send_queue(sock)` — how many bytes handed to the socket the peer has
   not acknowledged yet, unsent and in flight alike (`SIOCOUTQ` on Linux,
   `SO_NWRITE` on Darwin), as `Result[i32, NetError]`: how far the peer has
@@ -1633,8 +1639,9 @@ points that run a handler under it.
   whole closes after the response. A `Stream` that ended early faults
   (`(s).fault()`); `body_string()` reports it as `EndedEarly`. The stateful
   loop (`run_with`) reads bodies whole either way.
-  A listener it cannot bind is `serve: cannot listen on port PORT:`
-  and the error's text on stderr, and the entry returns 98 (every
+  A listener it cannot bind is `serve: cannot listen on ADDR:PORT:` —
+  `[::]` where the host has IPv6, `0.0.0.0` where it has not and on
+  wasm — and the error's text on stderr, and the entry returns 98 (every
   entry, and a supervised worker that binds its own).
   A listener the process was started with (`LISTEN_FDS` at least 1,
   descriptor 3) is served instead of a fresh one.

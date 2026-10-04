@@ -187,34 +187,37 @@ pub function run(port: i32, opts: Config, handler: (HttpRequest, platform.Host) 
 // request in flight was answered, or "drain-deadline" when one was cut
 // off at the drain deadline.
 pub function run_shutdown(port: i32, opts: Config, handler: (HttpRequest, platform.Host) => HttpResponse, shutdown: (string) => void): i32 {
-  let listener: i32 = __serve_listener(port, opts);
-  if (listener < 0) {
-    return __listen_failed(port, listener);
+  let l: __Listen = __serve_listener(port, opts);
+  if (l.fd < 0) {
+    return __listen_failed(l);
   }
-  return __serve_loop(listener, handler, opts, shutdown);
+  return __serve_loop(l.fd, handler, opts, shutdown);
 }
 
 // __serve_listener(port, opts) — the listener a serve loop runs over: the
 // one the process was started with when `LISTEN_FDS` says it has one
 // (descriptor 3, the systemd convention, which is also how a restarted
 // server takes over a socket without a gap), else a fresh one on `port`.
-function __serve_listener(port: i32, opts: Config): i32 {
-  let listener: i32 = __listener_of(port, opts);
+function __serve_listener(port: i32, opts: Config): __Listen {
+  let l: __Listen = __listener_of(port, opts);
   // Non-blocking: a wake-up over a listener workers share can reach
   // more than one of them, and the one that finds nothing to accept
   // must return to its wait rather than block in accept until the next
   // connection, deaf to SIGTERM.
-  if (listener >= 0) {
-    tcp_socket_ctl(listener, 3, 1);
+  if (l.fd >= 0) {
+    tcp_socket_ctl(l.fd, 3, 1);
   }
-  return listener;
+  return l;
 }
 
-// __listen_failed(port, r) — a listener refused with `r` (-errno): the
-// address and the error's text on stderr, and 98, the exit code a serve
-// entry answers for it.
-function __listen_failed(port: i32, r: i32): i32 {
-  eprint("serve: cannot listen on port " + int.int_to_string(port) + ": " + net.error_from_errno(r).message());
+// __Listen — a listener's descriptor, or the -errno that refused it, and
+// the address it was bound to or tried (empty for one inherited).
+struct __Listen { fd: i32, addr: string }
+
+// __listen_failed(l) — a refused listener: the address and the error's
+// text on stderr, and 98, the exit code a serve entry answers for it.
+function __listen_failed(l: __Listen): i32 {
+  eprint("serve: cannot listen on " + l.addr + ": " + net.error_from_errno(l.fd).message());
   return 98;
 }
 
@@ -222,13 +225,13 @@ function __listen_failed(port: i32, r: i32): i32 {
 // or a fresh one on `port`: on `::` for both families, or on `0.0.0.0`
 // where the host has no IPv6 (the family refused, or the address not
 // there to bind) and on wasm, whose `::` listener would be IPv6-only.
-function __listener_of(port: i32, opts: Config): i32 {
+function __listener_of(port: i32, opts: Config): __Listen {
   match (env("LISTEN_FDS")) {
     Some(n) => {
       match (int.parse_int_radix(n, 10)) {
         Some(count) => {
           if (count >= 1) {
-            return 3;
+            return __Listen { fd: 3, addr: "" };
           }
         },
         None => {}
@@ -239,10 +242,10 @@ function __listener_of(port: i32, opts: Config): i32 {
   if (target_os() != "wasi") {
     let both: i32 = tcp_listen_with(__every_v6(), port, opts.backlog, opts.reuse_port);
     if (both >= 0 || !__no_v6(both)) {
-      return both;
+      return __Listen { fd: both, addr: net.socket_addr(net.ipv6_unspecified(), port).to_string() };
     }
   }
-  return tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port);
+  return __Listen { fd: tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port), addr: net.socket_addr(net.ipv4_unspecified(), port).to_string() };
 }
 
 // __no_v6(r) — a `::` listener refused because the host has no IPv6:
@@ -297,11 +300,11 @@ pub function run_with[S](port: i32, opts: Config, init: S, handler: (S, HttpRequ
 // state as the last request left it: where a counter is flushed or a
 // store is closed.
 pub function run_with_shutdown[S](port: i32, opts: Config, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), shutdown: (string, S) => void): i32 {
-  let listener: i32 = __serve_listener(port, opts);
-  if (listener < 0) {
-    return __listen_failed(port, listener);
+  let l: __Listen = __serve_listener(port, opts);
+  if (l.fd < 0) {
+    return __listen_failed(l);
   }
-  return __serve_loop_with(listener, init, handler, opts, shutdown);
+  return __serve_loop_with(l.fd, init, handler, opts, shutdown);
 }
 
 // __eagain() — EAGAIN as this target numbers it: what a non-blocking read
@@ -2391,10 +2394,11 @@ function __supervise(port: i32, opts: Config, worker: (i32, Config) => i32): i32
   // its own once forked.
   let listener: i32 = 0 - 1;
   if (!__per_worker_listeners(opts)) {
-    listener = __serve_listener(port, opts);
-    if (listener < 0) {
-      return __listen_failed(port, listener);
+    let l: __Listen = __serve_listener(port, opts);
+    if (l.fd < 0) {
+      return __listen_failed(l);
     }
+    listener = l.fd;
   }
   let workers: i32 = opts.workers;
   if (workers < 1) {
@@ -2480,26 +2484,26 @@ function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, work
     drv.unwatch_signal(15);
     drv.unwatch_signal(2);
     drv.close();
-    let single: i32 = __worker_listener(port, listener, opts);
-    if (single < 0) {
-      return (sup, __listen_failed(port, single));
+    let single: __Listen = __worker_listener(port, listener, opts);
+    if (single.fd < 0) {
+      return (sup, __listen_failed(single));
     }
-    return (sup, worker(single, Config { ...opts, workers: 1 }));
+    return (sup, worker(single.fd, Config { ...opts, workers: 1 }));
   }
   if (pid < 0) {
     return (sup, pid);
   }
   if (pid == 0) {
     drv.close();
-    let own: i32 = __worker_listener(port, listener, opts);
-    if (own < 0) {
-      exit(__listen_failed(port, own));
+    let own: __Listen = __worker_listener(port, listener, opts);
+    if (own.fd < 0) {
+      exit(__listen_failed(own));
     }
     let loop_opts: Config = Config { ...opts, stop_with_parent: true };
     if (listener < 0) {
       loop_opts = Config { ...loop_opts, workers: 1 };
     }
-    exit(worker(own, loop_opts));
+    exit(worker(own.fd, loop_opts));
     return (sup, 0);
   }
   return (__Supervisor { ...sup, pids: sup.pids.append(pid), spawned: sup.spawned.append(now_unix_ms()) }, 0 - 1);
@@ -2533,13 +2537,13 @@ function __per_worker_listeners(opts: Config): boolean {
 // the inherited one, or its own beside the other workers' (SO_REUSEPORT,
 // steered by CPU where the host can, which every socket of the group
 // then shares).
-function __worker_listener(port: i32, listener: i32, opts: Config): i32 {
+function __worker_listener(port: i32, listener: i32, opts: Config): __Listen {
   if (listener >= 0) {
-    return listener;
+    return __Listen { fd: listener, addr: "" };
   }
-  let own: i32 = __serve_listener(port, opts);
-  if (own >= 0) {
-    tcp_socket_ctl(own, 8, 0);
+  let own: __Listen = __serve_listener(port, opts);
+  if (own.fd >= 0) {
+    tcp_socket_ctl(own.fd, 8, 0);
   }
   return own;
 }
