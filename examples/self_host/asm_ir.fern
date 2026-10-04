@@ -6749,8 +6749,11 @@ function ssa_jump_text(j: i32): string {
     return "jge";
   } else if (j == J_JLE) {
     return "jle";
+  } else if (j == J_JG) {
+    return "jg";
   }
-  return "jg";
+  // Not a J_* id: a mnemonic the assembler refuses, not a wrong branch.
+  return "j?" + util.i32_to_string(j);
 }
 
 // ssa_branch jumps to one of the emitter's own labels: by id when records

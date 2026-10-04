@@ -30,3 +30,11 @@ callgrind, main at 4183c442, both compilers building the same
 | stage 2, x86-64 target, total Ir | 20.634 G | 20.586 G (−0.23%) |
 | `ssa_branch`, inclusive | 74.5 M | 29.4 M |
 | `x86_rec_jump_kind`, inclusive | 44.9 M | gone |
+
+## What is left
+
+The arm64 emitter has the same lookup. `ssa_bcond` and `ssa_cbz` hand
+`arm64_rec_bcond` a mnemonic, which it checks, strips and parses back into
+a condition code for every conditional branch. Passing the condition as an
+integer there is the same change on the other backend, and sits beside
+#11452's slice 6 (the arm64 record helpers take register numbers).
