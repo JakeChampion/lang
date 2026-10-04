@@ -898,10 +898,33 @@ function drop_trailing_slashes(s: string): string {
 // Which mount an operand lives on. A BLOCK DEVICE named as the operand
 // is the filesystem mounted FROM it rather than the one the device node
 // itself sits on, which is what makes `df /dev/sda1` answer about the
-// volume. Otherwise it is the mount whose point is the longest prefix
-// of the resolved name, and the LAST such entry when several share it:
-// that is the one on top.
-function find_mount(mounts: Mount[], path: string, is_block: boolean): i32 {
+// volume. GNU's get_point first prefers non-pseudo mounts among path
+// prefixes, then verifies the operand's device. If that candidate lives on
+// another device, the fallback uses the last accessible matching device,
+// retaining the same preference for non-pseudo entries.
+function operand_pseudo(kind: string): boolean {
+  return kind == "autofs" || kind == "proc" || kind == "subfs"
+    || kind == "debugfs" || kind == "devpts" || kind == "fusectl"
+    || kind == "fuse.portal" || kind == "mqueue" || kind == "rpc_pipefs"
+    || kind == "sysfs" || kind == "devfs" || kind == "kernfs" || kind == "none";
+}
+
+function prefer_operand_mount(mounts: Mount[], best: i32, m: Mount): boolean {
+  return best < 0 || operand_pseudo(mounts[best].kind) || !operand_pseudo(m.kind);
+}
+
+function mount_has_device(m: Mount, devno: i64): boolean {
+  match (stat(m.dir)) {
+    Ok(st) => {
+      return st.dev == devno;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
+function find_mount(mounts: Mount[], path: string, is_block: boolean, devno: i64): i32 {
   if (is_block) {
     let i: i32 = 0;
     while (i < mounts.len()) {
@@ -914,10 +937,27 @@ function find_mount(mounts: Mount[], path: string, is_block: boolean): i32 {
   let best: i32 = 0 - 1;
   let best_len: i32 = 0 - 1;
   let j: i32 = 0;
+  if (path.len() > 0 && path[0] == b'/') {
+    while (j < mounts.len()) {
+      let m: Mount = mounts[j];
+      if (m.kind != "lofs" && prefer_operand_mount(mounts, best, m)
+        && under(m.dir, path) && m.dir.len() >= best_len) {
+        best = j;
+        best_len = m.dir.len();
+      }
+      j = j + 1;
+    }
+  }
+  if (best >= 0 && mount_has_device(mounts[best], devno)) {
+    return best;
+  }
+  best = 0 - 1;
+  j = 0;
   while (j < mounts.len()) {
-    if (under(mounts[j].dir, path) && mounts[j].dir.len() >= best_len) {
+    let m: Mount = mounts[j];
+    if (m.devno == devno && m.kind != "lofs" && prefer_operand_mount(mounts, best, m)
+      && mount_has_device(m, devno)) {
       best = j;
-      best_len = mounts[j].dir.len();
     }
     j = j + 1;
   }
@@ -952,10 +992,12 @@ function list_operands(c: Conf, names: string[]): (Row[], boolean) {
     let name: string = names[i];
     i = i + 1;
     let mode: u32 = 0 as u32;
+    let devno: i64 = 0 as i64;
     let have: boolean = false;
     match (stat(name)) {
       Ok(st) => {
         mode = st.mode;
+        devno = st.dev;
         have = true;
       },
       Err(e) => {
@@ -968,7 +1010,7 @@ function list_operands(c: Conf, names: string[]): (Row[], boolean) {
     }
     let path: string = resolve(name);
     let block: boolean = is_block_device(mode);
-    let idx: i32 = find_mount(mounts, path, block);
+    let idx: i32 = find_mount(mounts, path, block, devno);
     if (idx < 0) {
       continue;
     }

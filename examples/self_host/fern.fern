@@ -191,7 +191,9 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
 
 // Finding is one diagnostic a check reports: the language server places it in
 // a document, and `-check` prints it (finding_text). A warning rejects nothing.
-struct Finding { diag: util.Diag, warning: boolean }
+// path names the file a finding's position is in when the position alone would
+// leave it out: native names the entry on its `todo` warnings, not its errors.
+struct Finding { diag: util.Diag, warning: boolean, path: string }
 
 // Checked is a check's whole answer: its findings in report order, the module
 // files their positions index (util.pos_str), and whether the program is
@@ -203,7 +205,7 @@ struct Checked { findings: Finding[], files: string[], ok: boolean }
 function errors_of(ds: util.Diag[]): Finding[] {
   let out: Finding[] = [];
   for d in ds {
-    out = out.append(Finding { diag: d, warning: false });
+    out = out.append(Finding { diag: d, warning: false, path: "" });
   }
   return out;
 }
@@ -211,7 +213,7 @@ function errors_of(ds: util.Diag[]): Finding[] {
 // refusal is a rejection with no code and no position — a module that could
 // not be loaded — whose message `-check` prints as the whole line.
 function refusal(msg: string): Finding {
-  return Finding { diag: util.Diag { code: "", message: msg, line: 0, col: 0 }, warning: false };
+  return Finding { diag: util.Diag { code: "", message: msg, line: 0, col: 0 }, warning: false, path: "" };
 }
 
 function has_error(fs: Finding[]): boolean {
@@ -233,6 +235,9 @@ function finding_text(f: Finding, files: string[]): string {
     tag = "warning: ";
   } else if (f.diag.code.len() > 0) {
     tag = "error[" + f.diag.code + "]: ";
+  }
+  if (f.diag.line > 0 && f.path.len() > 0) {
+    return f.path + ":" + util.pos_str(files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
   }
   if (f.diag.line > 0) {
     return util.pos_str(files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
@@ -660,7 +665,7 @@ function violation_finding(code: string, msg: string, fn_module: string, line: i
   if (fn_module.len() > 0) {
     line = 0;
   }
-  return Finding { diag: util.Diag { code: code, message: msg, line: line, col: col }, warning: false };
+  return Finding { diag: util.Diag { code: code, message: msg, line: line, col: col }, warning: false, path: "" };
 }
 
 // read_manifest parses `<dir>fern.toml`, or an empty manifest when the entry
@@ -1624,7 +1629,7 @@ function check_source(entry_path: string, src: string, root: string, target: str
   if (ld.refused.len() > 0) {
     return Checked { findings: ld.refused, files: ld.b.files, ok: false };
   }
-  return check_bundle(ld.b, target, target_given);
+  return check_bundle(ld.b, entry_path, target, target_given);
 }
 
 // report_checked prints a check's findings and returns the exit code `-check`
@@ -1639,7 +1644,7 @@ function report_checked(c: Checked): i32 {
 
 // check_bundle type-checks a loaded program: what `-check` reports for it,
 // and whether it is accepted — well-typed and within every capability grant.
-function check_bundle(b: Bundle, target: string, target_given: boolean): Checked {
+function check_bundle(b: Bundle, entry_path: string, target: string, target_given: boolean): Checked {
   let merged: parser.Module = b.merged;
   // Native stops at its parse error and prints only that, so reporting the
   // parse gates alone is both the correct diagnostic and the code-set parity —
@@ -1671,7 +1676,10 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): Checked
       return Checked { findings: fs, files: b.files, ok: false };
     }
     let views: Finding[] = errors_of(semlower.view_escape_diags(merged));
-    return Checked { findings: util.append_all(fs, views), files: b.files, ok: views.len() == 0 };
+    if (views.len() > 0) {
+      return Checked { findings: util.append_all(fs, views), files: b.files, ok: false };
+    }
+    return Checked { findings: util.append_all(fs, todo_warnings(merged.todo_sites, entry_path)), files: b.files, ok: true };
   }
   // The module is ill-typed but produced no coded diagnostic — an
   // expression collapsed to TypeUnknown on a type the partial checker
@@ -1681,6 +1689,20 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): Checked
     fs = util.append_all(fs, errors_of(checker.ill_typed_hint(merged)));
   }
   return Checked { findings: fs, files: b.files, ok: false };
+}
+
+// todo_warnings lists the entry's remaining `todo` stubs, which an accepted
+// check still reports. An imported module's are not tracked, as native's are not.
+function todo_warnings(sites: parser.TodoSite[], entry_path: string): Finding[] {
+  let name: string = entry_path;
+  if (name == "-") {
+    name = "<stdin>";
+  }
+  let out: Finding[] = [];
+  for site in sites {
+    out = out.append(Finding { diag: util.Diag { code: "", message: "`todo` stub remaining", line: site.line, col: site.col }, warning: true, path: name });
+  }
+  return out;
 }
 
 // package_entry returns the entry module to type-check for the package rooted
@@ -2400,12 +2422,12 @@ function package_findings(merged: parser.Module, pkgs: caps.Pkg[]): Finding[] {
   let vs: caps.Violation[] = caps.enforce(caps.analyze(merged, pkgs), pkgs);
   for v in vs {
     if (!v.governed) {
-      out = out.append(Finding { diag: util.Diag { code: "", message: caps.violation_message(v), line: 0, col: 0 }, warning: true });
+      out = out.append(Finding { diag: util.Diag { code: "", message: caps.violation_message(v), line: 0, col: 0 }, warning: true, path: "" });
     }
   }
   for v in vs {
     if (v.governed) {
-      out = out.append(Finding { diag: util.Diag { code: "E070", message: caps.violation_message(v), line: 0, col: 0 }, warning: false });
+      out = out.append(Finding { diag: util.Diag { code: "E070", message: caps.violation_message(v), line: 0, col: 0 }, warning: false, path: "" });
     }
   }
   return out;
@@ -2760,7 +2782,7 @@ function run(): i32 {
   }
 
   if (mode_check) {
-    return report_checked(check_bundle(b, target, target_given));
+    return report_checked(check_bundle(b, entry_path, target, target_given));
   }
 
   if (mode_interp) {
