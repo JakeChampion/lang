@@ -37,7 +37,6 @@ func TestSyscallNumbersMatchTheKernelTable(t *testing.T) {
 		{"fsync", sysFsync, syscall.SYS_FSYNC},
 		{"fdatasync", sysFdatasync, syscall.SYS_FDATASYNC},
 		{"sync", sysSync, syscall.SYS_SYNC},
-		{"fstat", sysFstat, syscall.SYS_FSTAT},
 		{"lseek", sysLseek, syscall.SYS_LSEEK},
 		{"close", sysClose, syscall.SYS_CLOSE},
 		{"dup3", sysDup3, syscall.SYS_DUP3},

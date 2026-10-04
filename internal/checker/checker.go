@@ -796,15 +796,18 @@ func builtinStructDecls() []*ast.StructDecl {
 		// type bits AND the permission bits (S_IFMT included), so
 		// the kind predicates a shell `test` needs (-b -c -p -S
 		// -h/-L) read it directly; `is_file` / `is_dir` stay as
-		// the derived conveniences they always were. The three
+		// the derived conveniences they always were. The four
 		// timestamps are split into whole seconds since the Unix
 		// epoch plus the sub-second nanosecond remainder, because
-		// the language has no Time type to hand back.
+		// the language has no Time type to hand back. The birth
+		// time (`btime`) is statx(2)'s on Linux and
+		// st_birthtimespec on Darwin, and zero where the
+		// filesystem records none.
 		//
 		// On wasm32-wasi the fields WASI does not report are zero:
 		// preview 1's `filestat` has no mode / uid / gid / blksize
-		// / blocks / rdev, and preview 2's `descriptor-stat` has
-		// neither those nor `dev`. See the `stat` signature below
+		// / blocks / rdev / birth time, and preview 2's
+		// `descriptor-stat` has neither those nor `dev`. See the `stat` signature below
 		// for the exact per-preview list.
 		{
 			Name: "FileStat",
@@ -827,6 +830,8 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "mtime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
 				{Name: "ctime", Type: ast.NumberType{Width: 64, Signed: true}},
 				{Name: "ctime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "btime", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "btime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
 			},
 		},
 		// FsStat — `statfs(path)` shape: what a FILESYSTEM reports
@@ -2814,8 +2819,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// fields read ZERO rather than being absent from the type:
 	//
 	//   - preview 1 (`path_filestat_get`) has dev, ino, nlink,
-	//     size and the three timestamps. mode, uid, gid, rdev,
-	//     blksize and blocks are zero; `mode` therefore cannot
+	//     size and three timestamps. mode, uid, gid, rdev,
+	//     blksize, blocks and the birth time are zero; `mode` therefore cannot
 	//     answer a permission question there, only `is_file` /
 	//     `is_dir`, which come from `filetype`.
 	//   - preview 2 (`descriptor.stat-at`) has nlink, size and the

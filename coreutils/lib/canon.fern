@@ -127,7 +127,7 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
       if (links < unchecked_links()) {
         links = links + 1;
       } else {
-        let here: FileStat = FileStat { is_file: false, is_dir: false, size: 0, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0, rdev: 0, ino: 0, blksize: 0, blocks: 0, atime: 0, atime_nsec: 0, mtime: 0, mtime_nsec: 0, ctime: 0, ctime_nsec: 0 };
+        let here: FileStat = FileStat { is_file: false, is_dir: false, size: 0, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0, rdev: 0, ino: 0, blksize: 0, blocks: 0, atime: 0, atime_nsec: 0, mtime: 0, mtime_nsec: 0, ctime: 0, ctime_nsec: 0, btime: 0, btime_nsec: 0 };
         match (stat(parent)) {
           Ok(st) => {
             here = st;

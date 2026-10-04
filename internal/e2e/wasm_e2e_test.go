@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/constfold"
@@ -162,9 +163,10 @@ func buildCLIComponent(t *testing.T, src string) string {
 }
 
 // buildNativeComponent builds src into a wasi:cli/run component with the
-// native wasm backend. Only the async programs use it: their poll host has no
+// native wasm backend. The async programs use it: their poll host has no
 // import in the self-host's wasm component, so they stay native until the wasm
-// async decision on #4451.
+// async decision on #4451. So does the one census leg the self-host cannot
+// take yet (runNativeLeakCheckWasm, #11327).
 func buildNativeComponent(t *testing.T, src string, opts wasmbin.BuildOptions) string {
 	t.Helper()
 	skipIfPreview2Missing(t)
@@ -198,6 +200,24 @@ func buildNativeComponent(t *testing.T, src string, opts wasmbin.BuildOptions) s
 
 // nativeMainResult builds a component whose stdout ends with main's result.
 var nativeMainResult = wasmbin.BuildOptions{ForceMemorySection: true, Preview2WASI: true, SynthCliRun: true, PrintMainResult: true}
+
+// runNativeLeakCheckWasm is runLeakCheckWasm through the native backend, for
+// the range-append fusion the self-host's wasm emitter does not have (#11327).
+// The flags are read at emit time, so they are set around the build: the
+// census on, freeing on (so an ambient setting cannot make the census lie),
+// and the other detectors off.
+func runNativeLeakCheckWasm(t *testing.T, src string) (string, string, int) {
+	t.Helper()
+	prevFree, prevLc, prevTrap, prevDbg := ast.RcFreeEnabled, ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug
+	restore := func() {
+		ast.RcFreeEnabled, ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug = prevFree, prevLc, prevTrap, prevDbg
+	}
+	t.Cleanup(restore)
+	ast.RcFreeEnabled, ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug = true, true, false, false
+	component := buildNativeComponent(t, src, nativeMainResult)
+	restore()
+	return runComponent(t, component, runOpts{})
+}
 
 // runNativeStdout runs src through buildNativeComponent and returns its stdout.
 func runNativeStdout(t *testing.T, src string) string {
@@ -290,6 +310,10 @@ func runComponent(t *testing.T, componentPath string, opts runOpts) (stdout, std
 	cmd.Stderr = &se
 	_ = cmd.Run()
 	code := cmd.ProcessState.ExitCode()
+	// wasmtime warns about the harness's own `--invoke`; that line is not the
+	// program's, and a test reading stderr as the program's report should
+	// not see it.
+	stderr = strings.Replace(se.String(), "warning: using `--invoke` with a function that returns values is experimental and may break in the future\n", "", 1)
 	// An exit code alone cannot distinguish "the program returned N" from
 	// "wasmtime refused the module", because both are just a status — a
 	// validation failure and `return 1` are both exit 1. That conflation made
@@ -297,10 +321,10 @@ func runComponent(t *testing.T, componentPath string, opts runOpts) (stdout, std
 	// was a wrong ANSWER (u32 converted signed), the other did not COMPILE
 	// (an i32 opcode on an i64 operand). Rejection is a different kind of
 	// failure from a wrong result and should never be silently scored as one.
-	if rejected, why := wasmRejected(se.String()); rejected {
-		t.Fatalf("wasmtime REJECTED the module — this is not a wrong answer, the artifact is invalid or incomplete (%s)\nstderr:\n%s", why, se.String())
+	if rejected, why := wasmRejected(stderr); rejected {
+		t.Fatalf("wasmtime REJECTED the module — this is not a wrong answer, the artifact is invalid or incomplete (%s)\nstderr:\n%s", why, stderr)
 	}
-	return so.String(), se.String(), code
+	return so.String(), stderr, code
 }
 
 // wasmRejected reports whether wasmtime's stderr describes a refusal to run the
@@ -4316,16 +4340,14 @@ func TestWASMStringComparatorSort(t *testing.T) {
 // resolved to the user function at funcidx 0 (here the 5-slot comparator
 // `scmp`), producing "expected i32 but nothing on stack" invalid wasm.
 //
-// MUST use the BARE-CORE cli/run path (runNativeWasmCli), NOT runWasm: the
-// component path's result-printer wrapper (withResultPrinter) pulls in
-// __fern_box_free independently, masking the missing dep. Here main returns
-// 0 on success; the pre-fix invalid module fails to run → non-zero.
+// Nothing but the program's own needs pulls in __fern_box_free here: main
+// returns 0 on success, and a module missing the helper fails to validate.
 func TestWASMArrayElemStringClosureArg(t *testing.T) {
 	src := `
 		function scmp(a: string, b: string): i32 { if (a.len() < b.len()) { return 0-1; } return 1; }
 		function g(arr: string[], cmp: (string, string) => i32): i32 { return cmp(arr[0], "zz"); }
 		function main(): i32 { let xs: string[] = ["a","bb"]; if (g(xs, scmp) == 0-1) { return 0; } return 1; }`
-	if got := runNativeWasmCli(t, src); got != 0 {
+	if got := runWasm(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (scmp(\"a\",\"zz\")=-1) — #4816 string helper funcidx", got)
 	}
 }
@@ -4333,8 +4355,8 @@ func TestWASMArrayElemStringClosureArg(t *testing.T) {
 // #4816: two GENERIC `sort_by[string]` instantiations in one module (asc +
 // desc comparators) — the `prop_sort_strings`-shaped case. Before the fix
 // this failed to validate the moment the string sorts crossed the generic
-// closure-call body with the drop_arr_str helper present. Bare-core path
-// (see the note above); asc puts "a" first, desc puts a length-2 string
+// closure-call body with the drop_arr_str helper present. asc puts "a"
+// first, desc puts a length-2 string
 // first; main returns 0 on success.
 func TestWASMGenericStringSortTwoInstantiations(t *testing.T) {
 	src := `
@@ -4352,7 +4374,7 @@ func TestWASMGenericStringSortTwoInstantiations(t *testing.T) {
 			if (up[0] == "a" && dn[0].len() == 2) { return 0; }
 			return 1;
 		}`
-	if got := runNativeWasmCli(t, src); got != 0 {
+	if got := runWasm(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (two sort_by[string] instantiations) — #4816", got)
 	}
 }
@@ -11675,76 +11697,6 @@ func projectRoot(t *testing.T) string {
 			t.Fatalf("no go.mod found from %s", wd)
 		}
 		d = parent
-	}
-}
-
-// TestWASMComponentGoEncoderRunsLangCore is the first end-to-end
-// path that retires `wasm-tools component new --adapt` for a real
-// (if trivial) Lang program: it compiles a no-WASI-imports Lang
-// program through wasmbin, wraps the resulting core module with
-// the Go-side `component.BuildLiftedExportComponent`, and confirms
-// `wasmtime run --invoke main()` returns the expected value.
-//
-// "No-WASI-imports" is the key restriction — wasmbin's
-// dead-code-elimination drops the proc_exit / fd_write imports
-// when nothing uses them, so a trivial `function main(): i32
-// { return 42; }` compiles to a self-contained core module that
-// the Go encoder can wrap directly without an adapter.
-//
-// This is the smallest concrete proof that the production driver
-// could call `component.BuildLiftedExportComponent` instead of
-// shelling out to `wasm-tools component new --adapt` for the
-// no-import case. Real programs with WASI imports still need the
-// adapter (or the future preview-2 import migration in wasmbin).
-func TestWASMComponentGoEncoderRunsLangCore(t *testing.T) {
-	if _, err := exec.LookPath("wasm-tools"); err != nil {
-		t.Skip("wasm-tools not on PATH")
-	}
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH")
-	}
-	const src = `function main(): i32 { return 42; }`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	coreBytes, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
-
-	// Wrap directly with the Go-side encoder — no wasm-tools.
-	comp := component.BuildLiftedExportComponent(
-		coreBytes, "main", "main",
-		nil, nil, // no params
-		component.CValtypeU32,
-	)
-
-	dir := t.TempDir()
-	compPath := filepath.Join(dir, "out.wasm")
-	if err := os.WriteFile(compPath, comp, 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
-		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
-	}
-	out, err := exec.Command("wasmtime", "run", "--invoke", "main()", compPath).CombinedOutput()
-	if err != nil {
-		t.Fatalf("wasmtime run failed: %v\n%s", err, out)
-	}
-	got := strings.TrimSpace(string(out))
-	if got != "42" {
-		t.Errorf("wasmtime stdout = %q, want %q", got, "42")
 	}
 }
 

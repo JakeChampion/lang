@@ -14,7 +14,7 @@ func TestWasmTCPRecvLifecycleCensus(t *testing.T) {
 	for _, tc := range []struct{ name, data string }{{"empty", ""}, {"short", "xxxxxxx"}, {"chunked", strings.Repeat("x", 4097)}} {
 		t.Run(tc.name, func(t *testing.T) {
 			src, sent := e2eharness.WasiTCPRecvCensusProbe(t, tc.data)
-			component := buildLeakCheckComponent(t, src, false)
+			component := buildLeakCheckCLIComponent(t, src, false)
 			e2eharness.CheckWasiSocketCensus(t, component)
 			sent()
 		})
@@ -46,7 +46,7 @@ func TestWasmTCPSendLifecycleCensus(t *testing.T) {
 	for _, tc := range []struct{ name, data string }{{"empty", ""}, {"inline", "x"}, {"chunked", strings.Repeat("x", 4097)}} {
 		t.Run(tc.name, func(t *testing.T) {
 			src, received := e2eharness.WasiTCPSendCensusProbe(t, tc.data)
-			component := buildLeakCheckComponent(t, src, false)
+			component := buildLeakCheckCLIComponent(t, src, false)
 			e2eharness.CheckWasiSocketCensus(t, component)
 			received()
 		})

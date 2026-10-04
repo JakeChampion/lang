@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	nativex86_64 "github.com/jakechampion/lang/internal/codegen/x86_64"
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // The Reader/Writer handle family on `-backend ssa -target x86-64-linux`.
@@ -250,7 +250,7 @@ func TestX86_64SSAReadChunkKeepsOnlyWhatItRead(t *testing.T) {
 	}
 	switch code := cmd.ProcessState.ExitCode(); code {
 	case 0:
-	case nativex86_64.ExitArenaExhausted:
+	case e2eharness.ExitArenaExhausted:
 		t.Fatalf("exit=%d: read_chunk stranded its buffer on every end-of-input probe and ran the arena out\n%s", code, out)
 	default:
 		t.Fatalf("exit=%d, want 0 (1/5/6 = the program's own fixture checks)\n%s", code, out)

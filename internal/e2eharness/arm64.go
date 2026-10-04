@@ -9,8 +9,6 @@ import (
 	"os/exec"
 	"runtime"
 	"testing"
-
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 )
 
 // Arm64Tooling locates the C linker used to assemble the
@@ -106,7 +104,7 @@ func CompileAndRunArm64(t *testing.T, src string) (stdout string, exitCode int) 
 }
 
 // CompileAndRunArm64HighHeap is CompileAndRunArm64 with the arena's mmap
-// address hint raised above 4 GiB (arm64codegen.Options.HighHeapProbe), so
+// address hint raised above 4 GiB (FERN_HIGH_HEAP=1 on the compiler), so
 // every heap pointer the program produces has a non-zero high 32 bits.
 //
 // That is the address regime arm64-darwin runs in and Linux never reaches,
@@ -117,7 +115,7 @@ func CompileAndRunArm64(t *testing.T, src string) (stdout string, exitCode int) 
 // this and a truncation SIGSEGVs or reads the wrong value.
 func CompileAndRunArm64HighHeap(t *testing.T, src string) (stdout string, exitCode int) {
 	t.Helper()
-	binPath, qemu := compileArm64BinOpts(t, src, arm64codegen.Options{HighHeapProbe: true})
+	binPath, qemu := compileArm64Bin(t, src, true)
 	cmd := RunArm64Bin(qemu, binPath)
 	out, _ := cmd.CombinedOutput()
 	return finishArm64Run(t, cmd, out)
@@ -129,16 +127,16 @@ func CompileAndRunArm64HighHeap(t *testing.T, src string) (stdout string, exitCo
 // (e.g. the args()-rc regression gate).
 func CompileArm64Bin(t *testing.T, src string) (binPath, qemu string) {
 	t.Helper()
-	return compileArm64BinOpts(t, src, arm64codegen.Options{})
+	return compileArm64Bin(t, src, false)
 }
 
-// compileArm64BinOpts is CompileArm64Bin with the emit options spelled out —
-// the seam the high-heap gate uses (FERN_HIGH_HEAP=1 on the compiler).
-func compileArm64BinOpts(t *testing.T, src string, opts arm64codegen.Options) (binPath, qemu string) {
+// compileArm64Bin is CompileArm64Bin with the high-heap probe spelled out:
+// highHeap puts FERN_HIGH_HEAP=1 in the compiler's environment.
+func compileArm64Bin(t *testing.T, src string, highHeap bool) (binPath, qemu string) {
 	t.Helper()
 	qemu = Arm64Runner(t)
 	var env []string
-	if opts.HighHeapProbe {
+	if highHeap {
 		env = []string{"FERN_HIGH_HEAP=1"}
 	}
 	return CompileSelfHostSource(t, TargetArm64Linux, src, env), qemu

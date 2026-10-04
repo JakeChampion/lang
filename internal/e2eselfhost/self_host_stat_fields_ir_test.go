@@ -77,12 +77,12 @@ func selfHostStatFieldsSource(file, link string, euid, egid int) string {
 // TestSelfHostStatFieldsIR is the self-host half of the same gate the native
 // backends carry: a known file read through the whole `stat(2)` record.
 //
-// The self-host builds FileStat from one Fern body shared by all three targets
-// (`asmcore.rt_src_stat`), with `statoff` / `statkind` carrying the entire
-// per-target difference — offsets AND widths, since Darwin's st_mode is 16-bit
-// where Linux's is 32. A wrong row there is silent: every offset is inside a
-// buffer the kernel filled, so it reads a real number out of the wrong field.
-// Only values a test can arrange — a chmod, a chtimes, a hard link — catch it.
+// The self-host builds FileStat from a generated Fern body
+// (`asmcore.rt_src_stat`): `struct statx` read by `statx_project_src` on Linux,
+// Darwin's `struct stat` by `statoff` / `statkind`. A wrong offset there is
+// silent: every one is inside a buffer the kernel filled, so it reads a real
+// number out of the wrong field. Only values a test can arrange — a chmod, a
+// chtimes, a hard link — catch it.
 func TestSelfHostStatFieldsIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
