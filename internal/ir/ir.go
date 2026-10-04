@@ -5262,6 +5262,56 @@ func (b *builder) pushPendingDrop(emit func()) func() {
 	}
 }
 
+// scrutineeReassignedIn reports a match whose scrutinee is an owned enum
+// local that one of the arm regions assigns (`match (e) { Run(f) => { e =
+// Idle; f(1); } }`), with the local's enum type. The arm's bindings borrow
+// the box's payloads, and the assignment drops the box they read from, so
+// such a match holds its own count on the box until it completes.
+func (b *builder) scrutineeReassignedIn(tag ast.Expr, regions [][]ast.Node) (ast.EnumType, bool) {
+	id, ok := tag.(*ast.Ident)
+	if !ok || !b.isOwnedRcLocal(id.Name) {
+		return ast.EnumType{}, false
+	}
+	et, isEnum := b.exprStaticType(tag).(ast.EnumType)
+	if !isEnum {
+		return ast.EnumType{}, false
+	}
+	found := false
+	for _, region := range regions {
+		for _, r := range region {
+			if r == nil || found {
+				continue
+			}
+			ast.Walk(r, func(n ast.Node) bool {
+				if a, ok := n.(*ast.Assign); ok {
+					if t, ok := a.Target.(*ast.Ident); ok && t.Name == id.Name {
+						found = true
+					}
+				}
+				return !found
+			})
+		}
+	}
+	return et, found
+}
+
+// armRegions is each arm's confinement region, the nodes an arm runs.
+func armRegions(arms []*ast.MatchArm) [][]ast.Node {
+	out := make([][]ast.Node, 0, len(arms))
+	for _, arm := range arms {
+		out = append(out, armConfinementRegion(arm.AtBinding, arm.Guard, arm.Body))
+	}
+	return out
+}
+
+// emitMatchScrutineeRetain takes the match's own count on the scrutinee box
+// parked in ptrSlot; the pending drop the caller registers releases it.
+func (b *builder) emitMatchScrutineeRetain(ptrSlot int32) {
+	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+}
+
 // operandDropType reports whether an owned operand of type t carries a count
 // that emitArgTempDrop releases.
 func (b *builder) operandDropType(t ast.Type) bool {
@@ -9808,6 +9858,8 @@ func (b *builder) stmt(s ast.Stmt) error {
 		var (
 			reclaimScrut bool
 			scrutEnum    ast.EnumType
+			heldScrut    bool
+			heldEnum     ast.EnumType
 		)
 		// A `m.get(k)` scrutinee's rebuilt Option box is reclaimed by
 		// emitMapGetScrutineeReclaim instead, which reads its own SHALLOW /
@@ -9866,6 +9918,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 			defer b.pushPendingDrop(func() { b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true) })()
 		} else if reclaimMapGet && !pairFormScrutinee {
 			defer b.pushPendingDrop(func() { b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan) })()
+		} else if !pairFormScrutinee && !consumeScrut && consumeOwnedName == "" {
+			heldEnum, heldScrut = b.scrutineeReassignedIn(n.Tag, armRegions(n.Arms))
+			if heldScrut {
+				b.emitMatchScrutineeRetain(ptrSlot)
+				defer b.pushPendingDrop(func() { b.emitOwnedEnumDrop(ptrSlot, heldEnum, true) })()
+			}
 		}
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
@@ -10217,6 +10275,8 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true)
 		} else if reclaimMapGet && !pairFormScrutinee {
 			b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan)
+		} else if heldScrut {
+			b.emitOwnedEnumDrop(ptrSlot, heldEnum, true)
 		}
 	default:
 		return fmt.Errorf("ir: unsupported statement %T", s)
@@ -10846,6 +10906,13 @@ func (b *builder) expr(e ast.Expr) error {
 		} else if reclaimMapGet {
 			defer b.pushPendingDrop(func() { b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan) })()
 		}
+		heldEnum, heldScrut := b.scrutineeReassignedIn(n.Tag, regions)
+		if heldScrut && !reclaimScrut && !reclaimMapGet {
+			b.emitMatchScrutineeRetain(ptrSlot)
+			defer b.pushPendingDrop(func() { b.emitOwnedEnumDrop(ptrSlot, heldEnum, true) })()
+		} else {
+			heldScrut = false
+		}
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
 		for _, arm := range n.Arms {
@@ -10959,6 +11026,8 @@ func (b *builder) expr(e ast.Expr) error {
 			b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true)
 		} else if reclaimMapGet {
 			b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan)
+		} else if heldScrut {
+			b.emitOwnedEnumDrop(ptrSlot, heldEnum, true)
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
 	case *ast.TryOp:
@@ -18608,6 +18677,14 @@ func (b *builder) dropStructField(t ast.Type) {
 	// (a shared header only decs); the viewed bytes are the source's.
 	if isSliceType(t) {
 		b.emitSliceHeaderDropOnStack()
+		return
+	}
+	// A closure child releases its pair and environment through
+	// __drop_closure_value, as appendChildDrop does in the generated drop
+	// fns; the flat dec below would strand both.
+	if _, isFunc := t.(*ast.FuncType); isFunc {
+		b.emit(Op{Kind: OpCallDirect, Str: "__drop_closure_value", I32: 1})
+		b.emit(Op{Kind: OpDrop})
 		return
 	}
 	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {

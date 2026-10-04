@@ -4283,15 +4283,6 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 				ops = append(ops, Op{Kind: OpConstI32, I32: ld.off}, Op{Kind: OpAdd})
 			}
 			ops = append(ops, payloadLoadOpFor(ld.typ, ptrW))
-			// A closure payload releases through __drop_closure_value, as a
-			// struct's closure field does: the pair carries its own drop-fn
-			// pointer, since the payload type cannot name which closure it is.
-			if _, isFn := ld.typ.(*ast.FuncType); isFn {
-				ops = append(ops,
-					Op{Kind: OpCallDirect, Str: "__drop_closure_value", I32: 1},
-					Op{Kind: OpDrop})
-				continue
-			}
 			if k == tails[i] {
 				ops = append(ops, Op{Kind: OpStoreLocal, I32: 3})
 				continue

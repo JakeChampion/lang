@@ -262,9 +262,12 @@ func typeDeepDropWired(t ast.Type, info *checker.Info, seen map[string]bool) boo
 
 // memberDeepDropWired is typeDeepDropWired for a struct field or tuple
 // element. A closure is wired there: __drop_struct_ / __drop_tuple_ release it
-// through __drop_closure_value, as __drop_enum_ does a closure payload. As an
-// array element it is not: an array's overwrite and `.with` legs release the
-// buffer alone.
+// through __drop_closure_value, and __drop_enum_ releases a closure payload
+// the same way; typeDeepDropWired's enum arm still answers false for one on
+// purpose, since that keeps a closure-payload enum off the owned-by-default
+// model, where a callee would drop a scrutinee whose closure a borrowed
+// binding is about to call. As an array element a closure is not wired: an
+// array's overwrite and `.with` legs release the buffer alone.
 func memberDeepDropWired(t ast.Type, info *checker.Info, seen map[string]bool) bool {
 	if _, isFunc := t.(*ast.FuncType); isFunc {
 		return true
