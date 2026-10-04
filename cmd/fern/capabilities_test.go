@@ -8,6 +8,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/gates"
 )
 
 func writeCapsTree(t *testing.T, files map[string]string) string {
@@ -74,8 +75,12 @@ func runEnforce(t *testing.T, entry string) (error, string) {
 	if _, err := checker.Check(e.prog); err != nil {
 		t.Fatal(err)
 	}
+	ws, err := gates.Capabilities(entry, e.prog)
 	var warns strings.Builder
-	return enforceCapabilities(entry, e.prog, &warns), warns.String()
+	for _, w := range ws {
+		warns.WriteString(w.Format(entry) + "\n")
+	}
+	return err, warns.String()
 }
 
 // (a) A dependency granted exactly what it uses is clean — no error,

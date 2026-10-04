@@ -3,7 +3,45 @@ package lsp
 import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/diag"
+	"github.com/jakechampion/lang/internal/gates"
 )
+
+// checkDiagnostics is what `fern -check` reports for the program load
+// returns, by file: its load errors, or else gates.Check's warnings and
+// errors. entry is the entry module's path as gates.Check takes it ("-" for
+// one with no file), and file is where a finding with no file of its own
+// lands. srcs holds documents' text by path.
+//
+// load must return a program of its own: the gates fold away the consts the
+// cursor features look up.
+func checkDiagnostics(entry, file string, load func() (*ast.Program, error), srcs map[string]string) map[string][]Diagnostic {
+	prog, err := load()
+	if err != nil {
+		return splitDiagnosticsByFile(err, file, srcs)
+	}
+	warns, err := gates.Check(entry, prog, "", nil)
+	byFile := splitDiagnosticsByFile(err, file, srcs)
+	if len(warns) > 0 {
+		ds := make([]Diagnostic, 0, len(warns)+len(byFile[file]))
+		for _, w := range warns {
+			ds = append(ds, warningDiagnostic(srcs[file], w))
+		}
+		byFile[file] = append(ds, byFile[file]...)
+	}
+	return byFile
+}
+
+// warningDiagnostic places w as toDiagnostic places an error.
+func warningDiagnostic(src string, w gates.Warning) Diagnostic {
+	d := Diagnostic{Severity: severityWarning, Source: "fern", Message: w.Msg}
+	if w.Pos.Line > 0 {
+		start := toLSPPosition(src, w.Pos)
+		end := start
+		end.Character++
+		d.Range = Range{Start: start, End: end}
+	}
+	return d
+}
 
 // toDiagnostics flattens a diag.Errors (or a single error) into LSP
 // Diagnostic structs. Anything that doesn't carry source position
@@ -29,19 +67,22 @@ func toDiagnostic(src string, err error) Diagnostic {
 		Message:  err.Error(),
 	}
 	if p, ok := err.(diag.Positioned); ok {
-		pos := p.Position()
-		start := toLSPPosition(src, pos)
-		// Span comes from the Spanned interface when the error
-		// knows the offending token's length; otherwise underline
-		// a single character (the LSP-recommended fallback for
-		// "I don't know how wide this is").
-		end := start
-		span := 1
-		if s, ok := err.(diag.Spanned); ok && s.Length() > 0 {
-			span = s.Length()
+		// Line 0 is a positionless error that still carries the type:
+		// E070's cross-package chains, a violation in an imported module.
+		if pos := p.Position(); pos.Line > 0 {
+			start := toLSPPosition(src, pos)
+			// Span comes from the Spanned interface when the error
+			// knows the offending token's length; otherwise underline
+			// a single character (the LSP-recommended fallback for
+			// "I don't know how wide this is").
+			end := start
+			span := 1
+			if s, ok := err.(diag.Spanned); ok && s.Length() > 0 {
+				span = s.Length()
+			}
+			end.Character = start.Character + span
+			d.Range = Range{Start: start, End: end}
 		}
-		end.Character = start.Character + span
-		d.Range = Range{Start: start, End: end}
 		// The Range already conveys position; strip the redundant
 		// "<kind> error at L:C: " prefix from the message body.
 		// Hinted suggestions appear inline so editors that don't
