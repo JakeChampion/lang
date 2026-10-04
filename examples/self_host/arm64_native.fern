@@ -286,6 +286,11 @@ function arm64_branch_kind(top: u8): i32 {
   return 1;
 }
 
+// arm64_words_i32 reads the little-endian 32-bit value at `at` in the words.
+function arm64_words_i32(words: u8[], at: i32): i32 {
+  return words[at] as i32 | words[at + 1] as i32 << 8 | words[at + 2] as i32 << 16 | words[at + 3] as i32 << 24;
+}
+
 function arm64_word_bytes(buf: i32[], words: u8[], at: i32): i32[] {
   buf = buf.append(words[at] as i32);
   buf = buf.append(words[at + 1] as i32);
@@ -795,6 +800,10 @@ pub struct Arm64Asm {
   fix_offs: i32[],
   fix_names: string[],
   fix_kinds: i32[],
+  // A label defined by id (the \x04 record) is placed in lid_offs[id], -1
+  // until it is; a fixup to one carries its id in fix_ids, -1 for a name.
+  lid_offs: i32[],
+  fix_ids: i32[],
   // Branch targets arm64_asm_resolve could not find. Collected there rather
   // than rescanned afterwards: resolve already looks every fixup name up, and
   // a second pass over both tables would be quadratic on a real program.
@@ -806,7 +815,7 @@ pub struct Arm64Asm {
 function arm64_asm_new(): Arm64Asm {
   return Arm64Asm {
     code: [], lab_names: [], lab_offs: [], lab_head: arm64_empty_buckets(), lab_next: [], lab_tail: arm64_empty_buckets(),
-    fix_offs: [], fix_names: [], fix_kinds: [], unres: [], oor: [],
+    fix_offs: [], fix_names: [], fix_kinds: [], lid_offs: [], fix_ids: [], unres: [], oor: [],
   };
 }
 
@@ -955,8 +964,53 @@ function arm64_asm_fixup_or_patch(own a: Arm64Asm, name: string, kind: i32): Arm
     a = Arm64Asm { ...a, fix_offs: a.fix_offs.append(at) };
     a = Arm64Asm { ...a, fix_names: a.fix_names.append(name) };
     a = Arm64Asm { ...a, fix_kinds: a.fix_kinds.append(kind) };
+    a = Arm64Asm { ...a, fix_ids: a.fix_ids.append(0 - 1) };
   }
   return a;
+}
+
+// arm64_asm_label_id places label id `id` at the current offset.
+function arm64_asm_label_id(own a: Arm64Asm, id: i32): Arm64Asm {
+  let offs: i32[] = a.lid_offs;
+  a = Arm64Asm { ...a, lid_offs: [] };
+  while (offs.len() <= id) {
+    offs = offs.append(0 - 1);
+  }
+  return Arm64Asm { ...a, lid_offs: offs.with(id, a.code.len()) };
+}
+
+function arm64_lid_off(a: Arm64Asm, id: i32): i32 {
+  if (id < 0 || id >= a.lid_offs.len()) {
+    return 0 - 1;
+  }
+  return a.lid_offs[id];
+}
+
+// arm64_asm_fixup_id is arm64_asm_fixup_or_patch for a branch, just
+// appended, to label id `id`.
+function arm64_asm_fixup_id(own a: Arm64Asm, id: i32, kind: i32): Arm64Asm {
+  let at: i32 = a.code.len() - 4;
+  let target: i32 = arm64_lid_off(a, id);
+  if (target < 0) {
+    a = Arm64Asm { ...a, fix_offs: a.fix_offs.append(at) };
+    a = Arm64Asm { ...a, fix_names: a.fix_names.append("") };
+    a = Arm64Asm { ...a, fix_kinds: a.fix_kinds.append(kind) };
+    return Arm64Asm { ...a, fix_ids: a.fix_ids.append(id) };
+  }
+  let bits: i32 = arm64_branch_field_bits(kind);
+  if (!arm64_rel_fits(target - at, bits)) {
+    return Arm64Asm { ...a, oor: a.oor.append(arm64_oor_note("#" + arm64_gas_dec(id), target - at, bits)) };
+  }
+  let code: i32[] = a.code;
+  a = Arm64Asm { ...a, code: [] };
+  if (kind == 1) {
+    code = arm64_patch_b19(code, at, target - at);
+  } else if (kind == 2) {
+    code = arm64_patch_b14(code, at, target - at);
+  } else {
+    code = arm64_patch_b(code, at, target - at);
+  }
+  return Arm64Asm { ...a, code: code };
 }
 
 // arm64_asm_b / arm64_asm_bl emit an unconditional branch / call to a
@@ -988,6 +1042,14 @@ function arm64_asm_cbnz(own a: Arm64Asm, rt: i32, name: string, w: boolean): Arm
   return arm64_asm_fixup_or_patch(a, name, 1);
 }
 
+// arm64_fixup_name names fixup i for a message: its label, or `#id`.
+function arm64_fixup_name(a: Arm64Asm, i: i32): string {
+  if (a.fix_ids[i] >= 0) {
+    return "#" + arm64_gas_dec(a.fix_ids[i]);
+  }
+  return a.fix_names[i];
+}
+
 // arm64_asm_resolve patches every queued (forward) fixup now that all
 // labels are placed. Call once after emitting the whole program;
 // afterwards a.code is the final .text.
@@ -1002,7 +1064,10 @@ function arm64_asm_resolve(own a: Arm64Asm): Arm64Asm {
   let i: i32 = 0;
   while (i < a.fix_offs.len()) {
     let at: i32 = a.fix_offs[i];
-    let target: i32 = arm64_asm_label_off(a, a.fix_names[i]);
+    let target: i32 = arm64_lid_off(a, a.fix_ids[i]);
+    if (a.fix_ids[i] < 0) {
+      target = arm64_asm_label_off(a, a.fix_names[i]);
+    }
     if (target < 0) {
       // A target that was never defined used to be patched as if the -1
       // sentinel were an offset, producing a well-formed binary that
@@ -1012,13 +1077,13 @@ function arm64_asm_resolve(own a: Arm64Asm): Arm64Asm {
       // the placeholder alone; arm64_gas_program folds these into the
       // refusal list, so the CLI reports the label instead of emitting a
       // binary that traps.
-      a = Arm64Asm { ...a, unres: a.unres.append(a.fix_names[i]) };
+      a = Arm64Asm { ...a, unres: a.unres.append(arm64_fixup_name(a, i)) };
       i = i + 1;
       continue;
     }
     let rbits: i32 = arm64_branch_field_bits(a.fix_kinds[i]);
     if (!arm64_rel_fits(target - at, rbits)) {
-      a = Arm64Asm { ...a, oor: a.oor.append(arm64_oor_note(a.fix_names[i], target - at, rbits)) };
+      a = Arm64Asm { ...a, oor: a.oor.append(arm64_oor_note(arm64_fixup_name(a, i), target - at, rbits)) };
       i = i + 1;
       continue;
     }
@@ -9452,7 +9517,9 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
 // arm64_gas_program_words assembles `src` with the instruction words an
 // emitter encoded itself, eight bytes a word in `words`, the low four the
 // instruction. A line starting \x01 takes the next word; one starting \x02
-// takes the next word as a branch to the label the rest of the line names.
+// takes the next word as a branch to the label the rest of the line names;
+// \x04 defines the label whose id the next eight bytes hold; \x05 takes the
+// next word as a branch to the label id in its high four bytes.
 pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
   let p: Arm64GasProg = arm64_gas_prog_new();
   // The CFI recorder is threaded as its own uniquely-held local and folded
@@ -9490,17 +9557,21 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
     if (pos < srcn) {
       mark = src[pos];
     }
-    if (mark == 1 || mark == 2) {
+    if (mark >= 1 && mark <= 5) {
       let end: i32 = arm64_gas_line_end(src, pos + 1);
       if (section != 0 || wi + 8 > words.len()) {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("word record outside .text or past the words") };
+      } else if (mark == 4) {
+        a = arm64_asm_label_id(a, arm64_words_i32(words, wi));
       } else {
         a = Arm64Asm { ...a, code: arm64_word_bytes(a.code, words, wi) };
         if (mark == 2) {
           a = arm64_asm_fixup_or_patch(a, slice_unchecked(src, pos + 1, end) + "", arm64_branch_kind(words[wi + 3]));
+        } else if (mark == 5) {
+          a = arm64_asm_fixup_id(a, arm64_words_i32(words, wi + 4), arm64_branch_kind(words[wi + 3]));
         }
-        wi = wi + 8;
       }
+      wi = wi + 8;
       pos = end + 1;
       continue;
     }

@@ -1471,7 +1471,7 @@ function x86_asm_new_for(relaxing: boolean, longs: boolean[]): X86Asm {
 // buckets are shared, and every label starts unplaced (section and offset
 // -1) until the round reaches its definition.
 function x86_asm_new_prepared(labs: GasLabels, longs: boolean[]): X86Asm {
-  let n: i32 = labs.names.len();
+  let n: i32 = labs.names.len() + labs.nids;
   return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fix_offs: [], fix_names: [], fix_widths: [], fix_idx: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, br_long: x86_bools_copy(longs), br_n: 0, br_offs: [], br_names: [], br_idx: [], br_shorts: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [] };
 }
 
@@ -5755,6 +5755,34 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
 // x86_gas_emit_op assembles one classified instruction. The arms are the
 // ones x86_gas_classify chose between; each reads its table value from
 // `l.ext` and the operands from the split the classification kept.
+// x86_words_i32 reads the little-endian 32-bit value at `at` in the words.
+function x86_words_i32(words: u8[], at: i32): i32 {
+  return words[at] as i32 | words[at + 1] as i32 << 8 | words[at + 2] as i32 << 16 | words[at + 3] as i32 << 24;
+}
+
+// x86_jump_line is the line of a branch record to label id `lid`: a jcc of
+// condition `kind` below 16, jmp at 16 (x86_rec_jump_kind). The body is the
+// marker, not "": the round loop skips an empty line.
+function x86_jump_line(kind: i32, lid: i32): GasLine {
+  let l: GasLine = GasLine { label: "", body: "\x05", mnem: "", rest: "", kind: GK_JCC, ext: kind, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: lid };
+  if (kind == 16) {
+    return GasLine { ...l, kind: GK_BRANCH, ext: 4 };
+  }
+  return l;
+}
+
+// x86_rec_jump_kind is the kind a branch record carries for a mnemonic: the
+// condition code of a jcc, 16 for jmp, -1 for anything else.
+pub function x86_rec_jump_kind(mnem: string): i32 {
+  if (mnem == "jmp") {
+    return 16;
+  }
+  if (mnem.len() >= 2 && mnem[0] == b'j') {
+    return x86_gas_cc_code(slice_unchecked(mnem, 1, mnem.len()) + "");
+  }
+  return 0 - 1;
+}
+
 // x86_gas_bytes appends the instruction record at `at` in the words.
 function x86_gas_bytes(own a: X86Asm, words: u8[], at: i32): X86Asm {
   if (at < 0) {
@@ -6314,8 +6342,10 @@ pub function x86_gas_assemble(src: string): X86Asm {
 
 // x86_gas_assemble_words assembles `src` with the instructions an emitter
 // encoded itself: each line starting \x01 takes the next record of `words`,
-// a length byte and that many bytes of instruction. A line starting \x02 is a
-// label's name, and one starting \x03 an instruction with nothing to trim.
+// a length byte and that many bytes of instruction. A line starting \x03 is
+// an instruction with nothing to trim; \x04 defines the label whose id the
+// next eight bytes of `words` hold; \x05 branches to the label id in the
+// high four of the next eight, by the jump kind in the low four.
 pub function x86_gas_assemble_words(src: string, words: u8[]): X86Asm {
   // Parsed ONCE, not per round. The source does not change between
   // relaxation rounds, so splitting and re-parsing it each round bought
@@ -6776,6 +6806,9 @@ const GK_UNKNOWN2: i32 = 45;
 // the words, or -1 when the records do not reach it, which is a refusal.
 const GK_BYTES: i32 = 46;
 
+// A label the emitter defines by id (the \x04 record): `lid` is the id.
+const GK_LABEL_ID: i32 = 47;
+
 // EncCache is the first round's encoding of every line no later round can
 // change: the code that round produced, and per line the range of it the
 // line's bytes are, or -1 at `at` for a line that is encoded again each
@@ -6808,6 +6841,7 @@ struct GasLine {
   def_idx: i32,  // the label table entry this line's label is, -1 when none
   ref_idx: i32,  // the entry a jcc, jmp, call or `.quad sym` names, -1 when none or unknown
   memo: i32,  // the x86_gas_prepare memo entry every repeat of this text shares, -1 when none
+  lid: i32,  // the label id a \x04 definition or a \x05 branch record names, -1 when none
 }
 
 // GasText is the prepared lines with the size of the memo they index.
@@ -6822,6 +6856,10 @@ struct GasLabels {
   head: i32[],
   tail: i32[],
   next: i32[],
+  // How many labels the lines define by id: they take the indexes after the
+  // named ones, id i at names.len() + i, so every round places and reads
+  // them through the same lab_* arrays.
+  nids: i32,
 }
 
 // x86_gas_label_table indexes every label the prepared lines define, in
@@ -6832,9 +6870,13 @@ function x86_gas_label_table(pl: GasLine[]): GasLabels {
   let head: i32[] = x86_empty_buckets();
   let tail: i32[] = x86_empty_buckets();
   let next: i32[] = [];
+  let nids: i32 = 0;
   let li: i32 = 0;
   while (li < pl.len()) {
     let name: string = pl[li].label;
+    if (pl[li].kind == GK_LABEL_ID && pl[li].lid >= nids) {
+      nids = pl[li].lid + 1;
+    }
     li = li + 1;
     if (name.len() == 0) {
       continue;
@@ -6851,7 +6893,7 @@ function x86_gas_label_table(pl: GasLine[]): GasLabels {
     }
     tail = tail.with(b, at);
   }
-  return GasLabels { names: names, head: head, tail: tail, next: next };
+  return GasLabels { names: names, head: head, tail: tail, next: next, nids: nids };
 }
 
 // x86_gas_label_lookup is the table index of `name`, its first definition,
@@ -6883,7 +6925,11 @@ function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
       ndef = ndef + 1;
     }
     let ref_idx: i32 = 0 - 1;
-    if (l.kind == GK_JCC) {
+    if (l.kind == GK_LABEL_ID) {
+      def_idx = labs.names.len() + l.lid;
+    } else if (l.lid >= 0) {
+      ref_idx = labs.names.len() + l.lid;
+    } else if (l.kind == GK_JCC) {
       ref_idx = x86_gas_label_lookup(labs, l.rest);
     } else if (l.kind == GK_BRANCH) {
       if (l.rest.len() == 0 || l.rest[0] != b'*') {
@@ -7171,7 +7217,7 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
 // mnemonic's verdict and its operand text: the verdict's arms in their order,
 // with the tests that read the operands between them where they stand.
 function x86_gas_classify_with(v: MnemVerdict, mnem: string, rest: string): GasLine {
-  let l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1 };
+  let l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: 0 - 1 };
   if (v.vz && rest.len() == 0) {
     return GasLine { ...l, kind: GK_VZEROUPPER };
   }
@@ -7229,7 +7275,22 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
         at = wi;
         wi = wi + 1 + words[wi] as i32;
       }
-      out = out.append(GasLine { label: "", body: "\x01", mnem: "", rest: "", kind: GK_BYTES, ext: at, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1 });
+      out = out.append(GasLine { label: "", body: "\x01", mnem: "", rest: "", kind: GK_BYTES, ext: at, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: 0 - 1 });
+      pos = pos + 2;
+      continue;
+    }
+    if (pos < n && (src[pos] == 4 || src[pos] == 5)) {
+      // A label defined by id, or a branch to one: eight bytes of the words,
+      // the id in the low four for a definition and the high four for a
+      // branch, whose low four are the jump kind.
+      if (wi + 8 > words.len()) {
+        out = out.append(GasLine { label: "", body: "\x01", mnem: "", rest: "", kind: GK_BYTES, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: 0 - 1 });
+      } else if (src[pos] == 4) {
+        out = out.append(GasLine { label: "", body: "\x04", mnem: "", rest: "", kind: GK_LABEL_ID, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: x86_words_i32(words, wi) });
+      } else {
+        out = out.append(x86_jump_line(x86_words_i32(words, wi), x86_words_i32(words, wi + 4)));
+      }
+      wi = wi + 8;
       pos = pos + 2;
       continue;
     }
@@ -7245,9 +7306,7 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
     if (raw.len() > 0) {
       mark = raw[0];
     }
-    if (mark == 2) {  // `\x02name`: the label `name`
-      label = slice_unchecked(raw, 1, raw.len()) + "";
-    } else if (mark == 3) {  // `\x03insn`: an instruction, trimmed, with no comment
+    if (mark == 3) {  // `\x03insn`: an instruction, trimmed, with no comment
       line = slice_unchecked(raw, 1, raw.len()) + "";
     } else {
       let mi0: i32 = x86_line_memo_lookup(memo, raw);
@@ -7290,7 +7349,7 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
         rest = x86_gas_trim(slice_unchecked(line, sp + 1, line.len()));
       }
     }
-    let gl: GasLine = GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1 };
+    let gl: GasLine = GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: 0 - 1 };
     if (mnem.len() > 0) {
       let mi: i32 = x86_mnem_lookup(seen, mnem);
       if (mi < 0) {
@@ -7307,7 +7366,7 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
     out = out.append(gl);
   }
   if (wi != words.len()) {
-    out = out.append(GasLine { label: "", body: "\x01", mnem: "", rest: "", kind: GK_BYTES, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1 });
+    out = out.append(GasLine { label: "", body: "\x01", mnem: "", rest: "", kind: GK_BYTES, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1, lid: 0 - 1 });
   }
   return GasText { lines: out, nmemo: memo.lines.len() };
 }
@@ -7376,6 +7435,10 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
     let lbl: string = pline.label;
     let line: string = pline.body;
     li = li + 1;
+    if (pline.kind == GK_LABEL_ID) {
+      a = x86_label_at(a, "", pline.def_idx);
+      continue;
+    }
     if (lbl.len() > 0) {
       if (section == 1) {
         a = x86_rodata_label_at(a, lbl, pline.def_idx);
