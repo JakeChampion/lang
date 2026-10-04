@@ -3581,6 +3581,10 @@ func builtinSyncfs(i *Interp, args []Value) (Value, error) {
 	return syncMethod(i, "syncfs", args, hostSyncfs)
 }
 
+// errNoFadvise is a host's answer to a drop_cache it has no call for, on
+// a descriptor that could otherwise take one.
+var errNoFadvise = errors.New("no fadvise on this host")
+
 // builtinDropCache answers `r.drop_cache(offset, len)` /
 // `w.drop_cache(offset, len)`: posix_fadvise(2) with POSIX_FADV_DONTNEED
 // over that range of the handle's file, len 0 meaning to the end. A host
@@ -3594,12 +3598,19 @@ func builtinDropCache(i *Interp, args []Value) (Value, error) {
 	if !ok1 || !ok2 {
 		return nil, fmt.Errorf("drop_cache: offset and length must be numbers")
 	}
-	if !hostHasDropCache {
+	unsupported := false
+	v, err := syncMethod(i, "drop_cache", args[:1], func(fd int) error {
+		e := hostDropCache(fd, int64(off), int64(n))
+		if errors.Is(e, errNoFadvise) {
+			unsupported = true
+			return nil
+		}
+		return e
+	})
+	if unsupported {
 		return optionSome(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
 	}
-	return syncMethod(i, "drop_cache", args[:1], func(fd int) error {
-		return hostDropCache(fd, int64(off), int64(n))
-	})
+	return v, err
 }
 
 // builtinSync answers `sync()`: sync(2), scheduling write-back of every

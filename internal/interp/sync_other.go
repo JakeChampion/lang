@@ -21,6 +21,4 @@ func hostFdatasync(int) error { return syscall.ENOSYS }
 
 func hostSyncfs(int) error { return syscall.ENOSYS }
 
-const hostHasDropCache = false
-
 func hostDropCache(int, int64, int64) error { return syscall.ENOSYS }

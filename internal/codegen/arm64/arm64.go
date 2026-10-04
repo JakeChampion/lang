@@ -15610,7 +15610,8 @@ func (g *generator) emitReaderWriterRuntime() {
 // flush is then the whole-machine sync(2). That covers the filesystem the
 // descriptor lives on, so the guarantee the caller asked for holds; it
 // simply flushes more than was asked. XNU has no fadvise either, and
-// F_NOCACHE is a different request, so `fadvise64` answers Unsupported.
+// F_NOCACHE is a different request, so `fadvise64` answers Unsupported once
+// lseek has shown the descriptor is seekable (a pipe is ESPIPE, as on Linux).
 func (g *generator) emitFdCallRuntime(sym, lp, call string, prep func()) {
 	g.line("")
 	g.line(".global " + sym)
@@ -15624,6 +15625,12 @@ func (g *generator) emitFdCallRuntime(sym, lp, call string, prep func()) {
 	}
 	g.emit("ldr w0, [x0]") // fd, at offset 0 of the handle
 	if call == "fadvise64" && g.darwin {
+		// The fd is sought first, so a pipe answers ESPIPE as Linux's
+		// fadvise does.
+		g.emit("mov x1, #0")
+		g.emit("mov x2, #1") // SEEK_CUR
+		g.syscall("lseek")
+		g.emit("tbnz x0, #63, .%s_err", lp)
 		g.emit("mov x0, #8")
 		g.emit("bl __fern_alloc_box")
 		g.emit("mov w1, #5") // IoError::Unsupported

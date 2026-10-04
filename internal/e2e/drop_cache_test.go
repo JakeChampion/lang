@@ -77,7 +77,7 @@ func TestInterpDropCache(t *testing.T) {
 		// XNU has no fadvise: every call answers Unsupported there.
 		src := fmt.Sprintf(`function main(): i32 {
     match (open_writer(%q)) {
-        Ok(w) => { match (w.drop_cache(0i64, 0i64)) { Some(Unsupported) => { return 0; }, _ => { return 1; } } },
+        Ok(w) => { match (w.drop_cache(0i64, 0i64)) { Some(Unsupported()) => { return 0; }, _ => { return 1; } } },
         Err(_) => { return 2; }
     }
 }

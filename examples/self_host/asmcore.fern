@@ -4484,11 +4484,12 @@ pub function rt_src_fd_syncfs(t: string): string {
 // rt_src_fd_drop_cache backs `r.drop_cache(offset, len)` /
 // `w.drop_cache(offset, len)` -> Option[IoError]: fadvise64(2) with
 // POSIX_FADV_DONTNEED (4) over that range. XNU has no fadvise, and
-// F_NOCACHE is a different request, so Darwin answers Unsupported.
+// F_NOCACHE is a different request, so Darwin answers Unsupported once lseek
+// has shown the descriptor is seekable (a pipe is ESPIPE, as on Linux).
 pub function rt_src_fd_drop_cache(t: string): string {
   let head: string = "function __fern_fd_drop_cache(fd: i32, off: i64, n: i64): Option[IoError] { ";
   if (t == "arm64-darwin") {
-    return head + "return Some(Unsupported); }";
+    return head + "let at: i64 = __syscall3(" + sysno(t, "lseek") + ", fd as i64, 0, 1); if (at < (0 as i64)) { return Some(__fern_io_error(((0 as i64) - at) as i32, \"\")); } return Some(Unsupported); }";
   }
   return head + "let rc: i32 = __syscall5(" + sysno(t, "fadvise64") + ", fd as i64, off, n, 4, 0) as i32; if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
 }
