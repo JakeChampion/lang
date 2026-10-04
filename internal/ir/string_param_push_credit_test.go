@@ -23,20 +23,6 @@ function main(): i32 { return 0; }`
 	}
 }
 
-func TestStringParamPushedThenReturnedBareStaysUncredited(t *testing.T) {
-	src := `function keep(xs: string[], nm: string): string {
-    let ys: string[] = xs.append(nm);
-    if (ys.len() > 99) { return "x"; }
-    return nm;
-}
-function main(): i32 { return 0; }`
-	got := paramCountedFor(t, src, "keep")
-	if len(got) == 2 && got[1] {
-		t.Errorf("paramCountedRetain[keep] = %v, but the bare `return nm` hands out "+
-			"a reference nothing counts — crediting it double-frees the caller's temp", got)
-	}
-}
-
 func TestStringParamForwardedToAPushingCalleeIsCounted(t *testing.T) {
 	src := `function keep(s: string): string[] {
     let out: string[] = [];

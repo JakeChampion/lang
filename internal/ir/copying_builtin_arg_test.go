@@ -173,7 +173,7 @@ func TestCopyingUseComposesWithThePushCredit(t *testing.T) {
 	// measured balanced end-to-end by the
 	// copying_builtin_composes_with_push_credit corpus case. The refusal
 	// this used to watch (an occurrence nothing counts) lives on in
-	// TestStringParamPushedThenReturnedBareStaysUncredited.
+	// TestStringParamThatIsRetainedStaysUncredited.
 	src := `function keep(p: string): string[] {
     let n: i32 = __count_byte(p, 97);
     let out: string[] = [];

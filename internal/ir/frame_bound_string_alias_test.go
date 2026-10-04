@@ -94,9 +94,9 @@ func TestFrameBoundStringAliasKeepsTheCallersReclaim(t *testing.T) {
 			callee: `let x: string = src;
     return keep(x, i);`,
 			free: true,
-			why: "keep's position is credited by this summary's creditBareReturn, " +
-				"and the alias spelling has to reach the same verdict the direct " +
-				"one does — TestStringAliasSpellingMatchesTheDirectOne",
+			why: "keep's position is credited (its bare return takes the " +
+				"return-transfer inc), and the alias spelling has to reach the same " +
+				"verdict the direct one does — TestStringAliasSpellingMatchesTheDirectOne",
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -180,7 +180,7 @@ function main(): i32 {
 // of either spelling moves both or fails here.
 //
 // One shape is deliberately NOT in the table: returning the alias whole.
-// `return src` is credited (this summary passes creditBareReturn) while
+// `return src` is credited (it takes the return-transfer inc) while
 // `let x = src; return x` is refused, so the two still disagree there. The
 // refusal is the conservative direction — a leak — and lifting it is a
 // separate question: when the alias escapes, the builder declines the
@@ -282,8 +282,8 @@ function main(): i32 { return 0; }`
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	weak := inferParamNoUncountedAlias(prog, info, nil)
-	strong := inferParamCountedRetain(prog, info, nil)
+	weak := inferParamNoUncountedAlias(prog, info)
+	strong := inferParamCountedRetain(prog, info)
 	if got := weak["keep"]; len(got) != 1 || !got[0] {
 		t.Errorf("paramNoUncountedAlias[keep] = %v, want [true] — the caller's local keeps its release", got)
 	}

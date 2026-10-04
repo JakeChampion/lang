@@ -291,7 +291,7 @@ world-driven composer (P2) wires it.
      aligned) return area, calls the raw import, and lifts `(data_ptr, len)`
      into a Fern string. `cabi_realloc` is exported so the host can materialize
      the bytes. Go: `scanExternImports` + `buildExternStringResultWrapper`
-     (`extern.go`), reusing `__bytes_to_lang_string`; the raw import is named
+     (`extern.go`), reusing `__fern_str_copy`; the raw import is named
      `<name>$import`. Self-host: `extern_imports` + `extern_wrappers`
      (`wasm.fern`), building a `[len][bytes]` string inline; raw import
      `<name>__import`. The return area is aligned in both (a list/string return

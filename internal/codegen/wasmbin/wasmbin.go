@@ -196,7 +196,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		// HeaderMap parallel arrays, the body accumulator, the
 		// canonical-ABI retptr scratch, the platform
 		// bag, and the response outgoing-body. It also calls
-		// __bytes_to_lang_string for the host-bytes →
+		// __fern_str_copy for the host-bytes →
 		// lang-string round-trip, and emitStrNormalize for the
 		// outgoing body SSO normalize. Per-request memory is
 		// reclaimed by reference counting (RC), not a bump reset.

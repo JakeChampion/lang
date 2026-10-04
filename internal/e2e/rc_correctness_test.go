@@ -6764,9 +6764,7 @@ function main(): i32 {
 		// push-element credit made that same append a COUNTED occurrence,
 		// so both occurrences are now legitimately safe and the case's job
 		// flipped: it proves the two credits COMPOSE and the returned
-		// array's element stays live through the caller's read. The
-		// refusal it used to watch moved to
-		// string_pushed_then_returned_bare_stays_refused below.
+		// array's element stays live through the caller's read.
 		name: "copying_builtin_composes_with_push_credit",
 		src: `
 @noinline
@@ -6795,12 +6793,11 @@ function main(): i32 {
 `,
 	},
 	{
-		// The push credit's REFUSAL half: a param that is pushed AND
-		// returned bare has an occurrence nothing counts, so it stays
-		// uncredited and the caller's temp keeps its safe leak — pinned
-		// in the gate so the refusal is watched (the role the #7867
-		// pin above used to carry).
-		name: "string_pushed_then_returned_bare_stays_refused",
+		// A param that is pushed AND returned bare: the push's element
+		// retain and the return-transfer inc each give their holder a
+		// count of its own, so the caller may release its temp and the
+		// returned string stays live through the caller's read (#11479).
+		name: "string_pushed_then_returned_bare_stays_live",
 		src: `
 @noinline
 function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }

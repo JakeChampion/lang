@@ -3,7 +3,6 @@ package ir
 import (
 	"testing"
 
-	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/parser"
 )
@@ -20,10 +19,9 @@ import (
 //
 //   - the parameter as an assignment DESTINATION. A write names the slot, not
 //     the buffer; the reference it discards is the frame's own.
-//   - a bare `return p` — but ONLY where p is consumed-threaded, since then
-//     the entry retain is the count move-on-return transfers out. `handout`
-//     below is the control: the same `return a` on a borrowed parameter hands
-//     out the CALLER's reference and must keep its refusal.
+//   - a bare `return p`. On a consumed-threaded p the entry retain is the
+//     count move-on-return transfers out; on a borrowed one (`handout`) the
+//     return-transfer inc is.
 const consumedStrParamSrc = `
 function bump(a: string, s: string): i32 {
     a = a + s;
@@ -52,7 +50,7 @@ func TestReassignedStringParamIsCountedRetain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	got := inferParamCountedRetain(prog, info, nil)
+	got := inferParamCountedRetain(prog, info)
 	for _, tc := range []struct {
 		fn   string
 		want bool
@@ -60,7 +58,7 @@ func TestReassignedStringParamIsCountedRetain(t *testing.T) {
 	}{
 		{"bump", true, "every occurrence is a write of its own slot, a concat operand or a pure read"},
 		{"pick", true, "the write plus a `return a` whose reference is the entry retain's"},
-		{"handout", false, "a bare `return a` on a BORROWED param hands out the caller's reference"},
+		{"handout", true, "a bare `return a` on a BORROWED param takes the return-transfer inc"},
 	} {
 		flags := got[tc.fn]
 		if len(flags) == 0 {
@@ -68,44 +66,6 @@ func TestReassignedStringParamIsCountedRetain(t *testing.T) {
 		}
 		if flags[0] != tc.want {
 			t.Errorf("%s param 0: counted-retain=%v, want %v — %s", tc.fn, flags[0], tc.want, tc.why)
-		}
-	}
-}
-
-// consumedStringParams is a PROJECTION of computeConsumedParams, not a second
-// implementation of it, and this pins the two together the way
-// TestConsumedArrayPositionsMatchTheLoweringVerdict pins the array one.
-func TestConsumedStringParamsMatchTheLoweringVerdict(t *testing.T) {
-	src := consumedStrParamSrc + `
-function reassigned_then_read(a: string, s: string): i32 { a = s; return a.len(); }
-function borrowed_only(a: string): i32 { return a.len(); }`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	ip := lowerSourceWith(t, src, 8)
-	for _, fn := range ip.Funcs {
-		decl := declByName(prog, fn.Name)
-		if decl == nil {
-			continue
-		}
-		want := consumedStringParams(decl, info, map[string]bool{})
-		for i, p := range decl.Params {
-			if _, isStr := p.Type.(ast.StringType); !isStr || p.Own {
-				continue
-			}
-			if i >= len(fn.ParamConsumed) {
-				continue
-			}
-			if fn.ParamConsumed[i] != want[p.Name] {
-				t.Errorf("%s param %d (%s): lowering says consumed=%v, the "+
-					"whole-program projection says %v — the two have drifted",
-					fn.Name, i, p.Name, fn.ParamConsumed[i], want[p.Name])
-			}
 		}
 	}
 }

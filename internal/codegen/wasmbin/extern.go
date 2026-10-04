@@ -10,7 +10,7 @@
 //
 // This first slice covers a `string` (≡ `list<u8>`) result: at the canonical
 // ABI both are `(ptr, len)`, so the wrapper reuses the existing
-// __bytes_to_lang_string lift. Other composite results (arrays, records, …)
+// __fern_str_copy lift. Other composite results (arrays, records, …)
 // stay rejected until their slices land.
 
 package wasmbin
@@ -81,7 +81,7 @@ func appendExternFieldStore(body []byte, t ast.Type, off uint32) []byte {
 func buildExternStringResultWrapper(nparams int, rawImport string) func(map[string]uint32) []byte {
 	return func(idxs map[string]uint32) []byte {
 		alloc := idxs["__fern_alloc"]
-		lift := idxs["__bytes_to_lang_string"]
+		lift := idxs["__fern_str_copy"]
 		imp := idxs[rawImport]
 		retbuf := uint32(nparams) // first local after the params
 
@@ -103,8 +103,8 @@ func buildExternStringResultWrapper(nparams int, rawImport string) func(map[stri
 		}
 		body = inst.InstLocalGet(body, retbuf)
 		body = inst.InstCall(body, imp)
-		// lift: __bytes_to_lang_string(load(retbuf+0), load(retbuf+4)) — copies
-		// the host bytes into a fresh Fern heap buffer and yields (data, len).
+		// lift: __fern_str_copy(load(retbuf+0), load(retbuf+4)) — copies
+		// the host bytes into a fresh owned Fern string and yields (data, len).
 		body = inst.InstLocalGet(body, retbuf)
 		body = memory.InstI32Load(body, 2, 0)
 		body = inst.InstLocalGet(body, retbuf)
@@ -175,7 +175,7 @@ func emitAsyncAwaitLoop(body []byte, idxs map[string]uint32, rbL, statusL, taskL
 func buildExternAsyncStringResultWrapper(nparams int, rawImport string) func(map[string]uint32) []byte {
 	return func(idxs map[string]uint32) []byte {
 		alloc := idxs["__fern_alloc"]
-		lift := idxs["__bytes_to_lang_string"]
+		lift := idxs["__fern_str_copy"]
 		imp := idxs[rawImport]
 		retbuf := uint32(nparams)
 
@@ -197,7 +197,7 @@ func buildExternAsyncStringResultWrapper(nparams int, rawImport string) func(map
 		body = inst.InstCall(body, imp)
 		// Await the (possibly pending) subtask, then lift the (ptr,len).
 		body = emitAsyncAwaitLoop(body, idxs, retbuf, uint32(nparams)+1, uint32(nparams)+2, uint32(nparams)+3)
-		// lift: __bytes_to_lang_string(load(retbuf+0), load(retbuf+4)).
+		// lift: __fern_str_copy(load(retbuf+0), load(retbuf+4)).
 		body = inst.InstLocalGet(body, retbuf)
 		body = memory.InstI32Load(body, 2, 0)
 		body = inst.InstLocalGet(body, retbuf)
@@ -2153,7 +2153,7 @@ type asyncResultKind int
 
 const (
 	asyncResScalar asyncResultKind = iota // i32/i64/f32/f64 read at rb+0
-	asyncResString                        // (ptr,len)@rb lifted via __bytes_to_lang_string
+	asyncResString                        // (ptr,len)@rb lifted via __fern_str_copy
 	asyncResList                          // (ptr,len)@rb copied into a length-prefixed Fern array
 )
 
@@ -2218,12 +2218,12 @@ func buildExternAsyncMemParamWrapper(ex *ir.ExternFunc, rawImport string, resKin
 
 		switch resKind {
 		case asyncResString:
-			// __bytes_to_lang_string(load(rb+0), load(rb+4)).
+			// __fern_str_copy(load(rb+0), load(rb+4)).
 			body = inst.InstLocalGet(body, rb)
 			body = memory.InstI32Load(body, 2, 0)
 			body = inst.InstLocalGet(body, rb)
 			body = memory.InstI32Load(body, 2, 4)
-			body = inst.InstCall(body, idxs["__bytes_to_lang_string"])
+			body = inst.InstCall(body, idxs["__fern_str_copy"])
 		case asyncResList:
 			// dp = load(rb+0); n = load(rb+4) (element count); copy count*stride
 			// bytes into a fresh length-prefixed array, return its element pointer.
