@@ -201,7 +201,7 @@ func TestSelfHostTangleDifferentialX86_64(t *testing.T) {
 			t.Fatalf("self-host -tangle: %v", err)
 		}
 		out := filepath.Join(tmp, "out.fern")
-		if err := exec.Command(driverBin, "-tangle", doc, "-o", out).Run(); err != nil {
+		if err := exec.Command(driverBin, "-tangle", "-o", out, doc).Run(); err != nil {
 			t.Fatalf("self-host -tangle -o: %v", err)
 		}
 		written, err := os.ReadFile(out)

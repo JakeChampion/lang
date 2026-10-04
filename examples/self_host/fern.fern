@@ -533,8 +533,8 @@ function usage(): i32 {
   eprint("       fern -targets                                (list supported targets + capabilities)");
   eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)");
   eprint("       fern -tangle <doc.fern.md>                   (literate: emit the tangled Fern source)");
-  eprint("       fern -doc <module.fern> [-o OUT]             (Markdown reference page; stdout without -o)");
-  eprint("       fern -doc <DIR> -o OUTDIR                    (one page per module under DIR)");
+  eprint("       fern -doc [-o OUT] <module.fern>             (Markdown reference page; stdout without -o)");
+  eprint("       fern -doc -o OUTDIR <DIR>                    (one page per module under DIR)");
   eprint("       fern -add NAME SPEC <ABS-DIR>                (declare a dependency: path:DIR | workspace)");
   eprint("       fern -vendor <ABS-DIR>                       (flatten the dependency graph into vendor/)");
   eprint("       fern -lsp [-target T] [-embed DIR] [stdlib-root]  (language server on stdin/stdout: -check's diagnostics, -fmt)");
@@ -1898,7 +1898,7 @@ function tangle_write_files(files: literate.FileResult[], dir: string): i32 {
 // documents `std/io`. That is native's rule as well (its roots ARE the
 // directory names `std` and `core`), which is what makes
 //
-//     fern -doc internal/stdlib/std -o D && fern -doc internal/stdlib/core -o D
+//     fern -doc -o D internal/stdlib/std && fern -doc -o D internal/stdlib/core
 //
 // reproduce `ferndoc -out D` exactly, and it means the namespace needs no flag
 // to carry it.
