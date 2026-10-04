@@ -380,7 +380,7 @@ func TestSelfHostFernDocModeMatchesFerndoc(t *testing.T) {
 	selfDir := t.TempDir()
 	stdlib := filepath.Join(langSrcAbs(t, "internal"), "stdlib")
 	for _, root := range []string{"std", "core"} {
-		cmd := exec.Command(fernBin, "-doc", filepath.Join(stdlib, root), "-o", selfDir)
+		cmd := exec.Command(fernBin, "-doc", "-o", selfDir, filepath.Join(stdlib, root))
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {

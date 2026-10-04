@@ -145,6 +145,7 @@ so explicitly.
 | `ASYNC-IMPLEMENTATION-PLAN.md` | [record] | Original async plan; CPS surface parts superseded by the redesign, runtime parts kept. |
 | `ASYNC-IMPLEMENTATION-RESEARCH.md` | [research] | Koka/Lean/Roc async implementation mechanics. |
 | `ASYNC-SELFHOST-IR.md` | [plan] | Async on the self-host IR path — not started. |
+| `NET-P0-MESSAGE-LAYER-PLAN.md` | [plan] | Networking P0: what the per-request framing path allocates today (69 to parse a hello request, 17 to serialize its reply) and the slices that take it to zero; why #8635's two-word `[u8]` is not a P0 prerequisite. |
 | `NET-P3-SUSPENSION-PLAN.md` | [record] | Networking P3: inferred suspension — one `__suspend` primitive, an unwind/rewind pass on the self-host's stack IR, tasks driven by the serve loop and the sim, cancellation, streamed request bodies. Landed 2026-10-04 (slice 7 withdrawn); the Go compiler keeps the blocking fallback, the one question still open. |
 | `WASM-REACTOR-PLAN.md` | [record] | wasm reactor on Preview-2 pollables — shipped. |
 | `WASI-PREVIEW2.md` | [record] | Preview-2 component migration — complete; no adapter, no wasm-tools shell-out. |

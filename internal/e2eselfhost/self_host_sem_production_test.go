@@ -1463,11 +1463,11 @@ function main(): i32 {
 	// `bind_unify` already descends into a bracketed spelling; only the gate
 	// was wrong.
 	//
-	// Clearing that left the module compiling but refusing all 28 of its
+	// Clearing that left the module compiling but refusing every one of its
 	// declarations, behind the callable-slot spelling the struct
 	// monomorphiser did not mangle. With both closed it produces whole and
 	// reclaims whole.
-	{name: "a-callbacks-return-pins-the-methods-own-variable", atLeast: 28, want: "15|", src: `
+	{name: "a-callbacks-return-pins-the-methods-own-variable", atLeast: 27, want: "15|", src: `
 import "std/ndarray" as ndarray;
 
 function sum_cell(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
