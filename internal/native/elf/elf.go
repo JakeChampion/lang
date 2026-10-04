@@ -239,8 +239,8 @@ type Export struct {
 
 // TextVAddrPIE is the .text address in the static-PIE image, measured from
 // a load base of 0 (just past the ELF header + three program headers).
-// Pass it to arm64.AssembleProgramPIE / x86_64.AssembleProgramPIE as the
-// textVAddr so every PC-relative fixup is laid out base-relative.
+// Pass it to arm64.AssembleProgramPIE as the textVAddr so every PC-relative
+// fixup is laid out base-relative.
 const TextVAddrPIE = ehSize + phNumPIE*phSize
 
 // Reloc is one R_*_RELATIVE entry: at load time `*(base + Offset) =
@@ -490,12 +490,6 @@ func trailingTrimZeros(b []byte) int {
 // arm64.AssembleProgramPIE(.., TextVAddrPIE).
 func StaticPieExecutable(text, data []byte, relocs []Reloc) []byte {
 	return staticPie(text, data, relocs, emAArch64)
-}
-
-// StaticPieExecutableX86 is the x86-64 counterpart (EM_X86_64,
-// R_X86_64_RELATIVE). Pair with x86_64.AssembleProgramPIE.
-func StaticPieExecutableX86(text, data []byte, relocs []Reloc) []byte {
-	return staticPie(text, data, relocs, emX86_64)
 }
 
 func staticPie(text, data []byte, relocs []Reloc, machine uint16) []byte {

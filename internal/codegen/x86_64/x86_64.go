@@ -424,7 +424,7 @@ type Options struct {
 	// self-relocation prologue at `_start` applies the R_X86_64_RELATIVE
 	// entries in .rela.dyn (the `.quad <symbol>` slots) before the program
 	// runs, so it is correct at the arbitrary base the kernel loads it at.
-	// Pair with x86_64.AssembleProgramPIE + elf.StaticPieExecutableX86.
+	// No -target sets it: the arm64 emitter's PIE is `-target arm64-android`.
 	PIE bool
 
 	// Exports are function names kept as tree-shake roots (in addition to

@@ -358,27 +358,6 @@ func TestStaticPieExecutableLayout(t *testing.T) {
 	if val := u64(bin, int(dynOff)+8); val != relaOff {
 		t.Errorf("DT_RELA value = %#x, want %#x", val, relaOff)
 	}
-
-	// The x86-64 PIE container shares the layout but differs in e_machine
-	// (EM_X86_64) and relocation type (R_X86_64_RELATIVE = 8); exercised
-	// end-to-end by e2e's TestX86_64NativePIESelfReloc, and at the byte
-	// level here.
-	// x86-64 pages are 4 KiB, so its data segment (and thus .rela.dyn) sits at
-	// a 4 KiB — not 64 KiB — boundary past .text (#4380/#4382): recompute the
-	// offset with the x86 page size rather than reusing the arm64 relaOff.
-	const pageX = 0x1000
-	dataOffX := (uint64(headers+len(text)) + pageX - 1) &^ (pageX - 1)
-	relaOffX := dataOffX + uint64(len(data)) // already 8-aligned here
-	binX := elf.StaticPieExecutableX86(text, data, relocs)
-	if e_machine := u16(binX, 18); e_machine != 62 { // EM_X86_64
-		t.Errorf("x86 e_machine = %d, want 62", e_machine)
-	}
-	if e_type := u16(binX, 16); e_type != 3 { // ET_DYN
-		t.Errorf("x86 e_type = %d, want 3 (ET_DYN)", e_type)
-	}
-	if got := u64(binX, int(relaOffX)+8); got != 8 { // r_info type
-		t.Errorf("x86 rela r_info = %d, want 8 (R_X86_64_RELATIVE)", got)
-	}
 }
 
 // TestSharedLibraryX86Dlopen is the end-to-end gate for the .so emitter:
