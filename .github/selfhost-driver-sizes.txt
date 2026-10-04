@@ -455,15 +455,14 @@
 # above); #11354's label-id records add the other 34592 bytes (+0.3%), the same
 # share they add to the pin-built fern.fern. Both stage2 figures measured on one
 # host with each tree's own stage1. The other rows stay inside 5%.
-# 2026-10-04 — asm_load_run 8721320 -> 9211120 (+5.6%), main's growth: the
-# net-p3 task runtime merges (#11358, #11367, #11370) went in with their full
-# suites cancelled. At 719d6845 main builds it at 9128928 and #11374 adds 4328
-# bytes. driver-sizes reported 9211008 for #11374 on 9c8eb003 (run
-# 37183189205), which builds here too; #11318's semlower change adds 112. The
-# other rows stay inside 5%.
+# 2026-10-04 — asm_load_run 8721320 -> 9248736 (+6.0%). Main at 2174a9c4
+# builds it at 9247784: the growth came in with the net-p3 task runtime merges
+# (#11358, #11367, #11370), whose full suites were cancelled, and the merges
+# after them. #11374's task pool release adds the other 952 bytes. Both
+# measured with TestSelfHostWarmStockDriver on one host.
 fern.fern/stage2 11495848
 fern.fern 11300776
-asm_load_run.fern 9211120
+asm_load_run.fern 9248736
 asm_modload_run.fern 7618432
 asm_ir_run.fern 7420200
 asm_run.fern 6813576
