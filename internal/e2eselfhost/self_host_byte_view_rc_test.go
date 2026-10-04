@@ -75,7 +75,7 @@ function main(): i32 {
     i = i + 1;
   }
   if (av[1] == "x86-64-linux") {
-    print(asm_ir.emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, cache, g.base, d.sub.rt_lower, 0 as usize));
+    print(asm_ir.emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, cache, g.base, d.sub.rt_lower, 0 as usize, asmcore.backtrace_on()));
   } else if (av[1] == "arm64-linux") {
     strbuf_reset();
     let state = asmcore.new_state();
