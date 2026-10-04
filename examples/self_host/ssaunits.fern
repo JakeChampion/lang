@@ -705,7 +705,7 @@ function taken(t: typeinfo.Type): boolean {
 // immortal count on every backend, so it is never released, and a consumer
 // that takes one is handed it with no retain (`literal`).
 function fresh_unit(kind: i32): boolean {
-  return kind == 8 || kind == 9 || kind == ssasem.zero() || construction(kind) || hands_out(kind);
+  return kind == 8 || kind == 9 || kind == ssasem.append_range() || kind == ssasem.zero() || construction(kind) || hands_out(kind);
 }
 
 // The operations whose result is a unit handed to this function: a call's
@@ -956,8 +956,12 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
 
 // A `+` on a counted string: the runtime appends onto the left operand's
 // buffer when the frame hands it the only unit and its block has room, so the
-// operand is taken rather than lent. A view has no unit to hand over.
+// operand is taken rather than lent. A view has no unit to hand over, and a
+// range append's left operand is always counted (ssasem.append_range).
 pub function string_append(f: ssasem.Func, ins: ssa.SInst): boolean {
+  if (ins.kind_tag == ssasem.append_range()) {
+    return true;
+  }
   return ins.kind_tag == 9 && ins.str == "+" && ssasem.is_string(f.values[ins.args[0]]);
 }
 
@@ -1343,7 +1347,7 @@ function lent_view(defs: ssa.SInst[], v: i32): i32 {
 
 function reads_view(ins: ssa.SInst, at: i32, lent: boolean): boolean {
   let k: i32 = ins.kind_tag;
-  if (k == 9 || k == ssasem.length() || k == ssasem.str_index() || k == ssasem.str_bytes()) {
+  if (k == 9 || k == ssasem.append_range() || k == ssasem.length() || k == ssasem.str_index() || k == ssasem.str_bytes()) {
     return true;
   }
   if (k == ssasem.slice()) {

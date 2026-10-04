@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/constfold"
@@ -165,8 +164,7 @@ func buildCLIComponent(t *testing.T, src string) string {
 // buildNativeComponent builds src into a wasi:cli/run component with the
 // native wasm backend. The async programs use it: their poll host has no
 // import in the self-host's wasm component, so they stay native until the wasm
-// async decision on #4451. So does the one census leg the self-host cannot
-// take yet (runNativeLeakCheckWasm, #11327).
+// async decision on #4451.
 func buildNativeComponent(t *testing.T, src string, opts wasmbin.BuildOptions) string {
 	t.Helper()
 	skipIfPreview2Missing(t)
@@ -200,24 +198,6 @@ func buildNativeComponent(t *testing.T, src string, opts wasmbin.BuildOptions) s
 
 // nativeMainResult builds a component whose stdout ends with main's result.
 var nativeMainResult = wasmbin.BuildOptions{ForceMemorySection: true, Preview2WASI: true, SynthCliRun: true, PrintMainResult: true}
-
-// runNativeLeakCheckWasm is runLeakCheckWasm through the native backend, for
-// the range-append fusion the self-host's wasm emitter does not have (#11327).
-// The flags are read at emit time, so they are set around the build: the
-// census on, freeing on (so an ambient setting cannot make the census lie),
-// and the other detectors off.
-func runNativeLeakCheckWasm(t *testing.T, src string) (string, string, int) {
-	t.Helper()
-	prevFree, prevLc, prevTrap, prevDbg := ast.RcFreeEnabled, ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug
-	restore := func() {
-		ast.RcFreeEnabled, ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug = prevFree, prevLc, prevTrap, prevDbg
-	}
-	t.Cleanup(restore)
-	ast.RcFreeEnabled, ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug = true, true, false, false
-	component := buildNativeComponent(t, src, nativeMainResult)
-	restore()
-	return runComponent(t, component, runOpts{})
-}
 
 // runNativeStdout runs src through buildNativeComponent and returns its stdout.
 func runNativeStdout(t *testing.T, src string) string {

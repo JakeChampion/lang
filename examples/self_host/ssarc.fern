@@ -2759,7 +2759,7 @@ function unchecked_str_index(ins: ssa.SInst): boolean {
 }
 
 function value_op(k: i32): boolean {
-  return kind_in([1, 2, 5, 6, 7, 8, ssasem.zero(), ssasem.call()], k) || ssasem.scalar_op(k) || ssasem.is_function_op(k);
+  return kind_in([1, 2, 5, 6, 7, 8, ssasem.zero(), ssasem.call(), ssasem.append_range()], k) || ssasem.scalar_op(k) || ssasem.is_function_op(k);
 }
 
 function container_op(k: i32): boolean {
@@ -2895,16 +2895,12 @@ function operand_width(f: ssasem.Func, ins: ssa.SInst): i32 {
 function grow_or_concat(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let res: i32 = scratch_base(f);
   r = reserve(r, res + 1);
-  r = emit(r, ir.op_load_local(ins.args[0]));
-  r = emit(r, ir.op_load_local(ins.args[1]));
-  r = emit(r, ir.op_call_direct("__fern_str_grow", 2));
+  r = grow_call(r, ins);
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_store_local(res));
   r = emit(r, ir.op_else());
-  r = emit(r, ir.op_load_local(ins.args[0]));
-  r = emit(r, ir.op_load_local(ins.args[1]));
-  r = emit(r, ir.op_str_concat());
+  r = concatenation(r, ins, res + 1);
   r = emit(r, ir.op_store_local(res));
   r = release(r, ins.args[0], f.values[ins.args[0]], f);
   r = emit(r, ir.op_end());
@@ -2927,9 +2923,7 @@ function grow_field_or_concat(own r: irtables.LowerResult, f: ssasem.Func, p: ss
   r = emit(r, ir.op_load_local(root));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
   r = emit(r, ir.op_if(0));
-  r = emit(r, ir.op_load_local(ins.args[0]));
-  r = emit(r, ir.op_load_local(ins.args[1]));
-  r = emit(r, ir.op_call_direct("__fern_str_grow", 2));
+  r = grow_call(r, ins);
   r = emit(r, ir.op_store_local(grown));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_load_local(grown));
@@ -2940,12 +2934,44 @@ function grow_field_or_concat(own r: irtables.LowerResult, f: ssasem.Func, p: ss
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_struct_set(p.grow_fields[ins.result], 0));
   r = emit(r, ir.op_else());
-  r = emit(r, ir.op_load_local(ins.args[0]));
-  r = emit(r, ir.op_load_local(ins.args[1]));
-  r = emit(r, ir.op_str_concat());
+  r = concatenation(r, ins, res + 1);
   r = emit(r, ir.op_store_local(res));
   r = emit(r, ir.op_end());
   return emit(r, ir.op_load_local(res));
+}
+
+// grow_call answers whether the runtime appended the right operand onto the
+// left one's block in place. A range append hands over the source and its
+// bounds, so the bytes go straight from the source into the block.
+function grow_call(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
+  for arg in ins.args {
+    r = emit(r, ir.op_load_local(arg));
+  }
+  if (ins.kind_tag == ssasem.append_range()) {
+    return emit(r, ir.op_call_direct("__fern_str_grow_range", 4));
+  }
+  return emit(r, ir.op_call_direct("__fern_str_grow", 2));
+}
+
+// concatenation leaves a fresh box of both operands on the stack and takes
+// nothing. A range append's window is built in the frame, in `view`, only on
+// this path, and released once the bytes are copied out of it.
+function concatenation(own r: irtables.LowerResult, ins: ssa.SInst, view: i32): irtables.LowerResult {
+  if (ins.kind_tag != ssasem.append_range()) {
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    return emit(r, ir.op_str_concat());
+  }
+  r = reserve(r, view + 1);
+  r = emit(r, ir.op_load_local(ins.args[1]));
+  r = emit(r, ir.op_load_local(ins.args[2]));
+  r = emit(r, ir.op_load_local(ins.args[3]));
+  r = emit(r, ir.op_str_slice_frame(0));
+  r = emit(r, ir.op_store_local(view));
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_load_local(view));
+  r = emit(r, ir.op_str_concat());
+  return helper(r, view, "__fern_str_view_free");
 }
 
 // A string `+` is the runtime's concatenation, a fresh box; equality reads
@@ -4319,7 +4345,9 @@ function instruction(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
     r = dyn_site(r, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
-  if (unchecked_str_index(ins)) {
+  if (ins.kind_tag == ssasem.append_range()) {
+    r = concatenation(r, ins, scratch_base(f));
+  } else if (unchecked_str_index(ins)) {
     // The string's data address, then the index: hoist_loop_invariants can
     // lift the address out of a loop that only reads the string.
     r = emit(r, ir.op_load_local(ins.args[0]));
