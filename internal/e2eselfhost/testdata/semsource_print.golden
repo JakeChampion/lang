@@ -3089,7 +3089,7 @@ func guarded_and {
 }
 
 modes 2 result i32
-v0:Option[i32] v1:boolean v2:i32 v3:i32 v4:boolean v5:i32 v6:i32 v7:boolean v8:i32 v9:boolean v10:i32
+v0:Option[i32] v1:boolean v2:i32 v3:i32 v4:boolean v5:i32 v6:i32 v7:boolean v8:i32 v9:i32
 func guarded {
   b0:
     v0 = param 0
@@ -3111,15 +3111,10 @@ func guarded {
     v8 = variant_get 0 Some v0
     ret v8
   b6:
-    v9 = variant_is None v0
-    brif v9 b7 b8
+    br b7
   b7:
-    v10 = const_int 0
-    ret v10
-  b8:
-    br b1
-  b1:
-    unreachable
+    v9 = const_int 0
+    ret v9
 }
 
 modes 2 1 result i32
