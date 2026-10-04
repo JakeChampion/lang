@@ -29,10 +29,11 @@ export async function activate(context: ExtensionContext): Promise<void> {
     return;
   }
 
+  const args = workspace.getConfiguration("fern").get<string[]>("serverArgs", []);
   const serverOptions: ServerOptions = {
-    run: { command: serverPath, transport: TransportKind.stdio },
-    // Same binary for debug — `fern-lsp` has no dev-only flags.
-    debug: { command: serverPath, transport: TransportKind.stdio },
+    run: { command: serverPath, args, transport: TransportKind.stdio },
+    // Same binary for debug — neither server has dev-only flags.
+    debug: { command: serverPath, args, transport: TransportKind.stdio },
   };
 
   const clientOptions: LanguageClientOptions = {

@@ -20,6 +20,7 @@
 //     fern -doc <module.fern | DIR>         Markdown reference pages
 //     fern -add NAME SPEC <ABS-DIR>         declare a dependency
 //     fern -vendor <ABS-DIR>                flatten the dep graph into vendor/
+//     fern -lsp [stdlib]                    a language server on stdin/stdout
 //
 // A target is `<isa>-<environment>` (#6529 / #6635): the ISA half picks the
 // backend, the environment half says what the host provides, and neither is
@@ -83,6 +84,7 @@ import "./ircore";
 import "./emitforms";
 import "./semlower";
 import "./cover";
+import "./lsp";
 
 // blank_line_map marks the 1-based source lines that hold nothing but
 // whitespace, indexed by line number so the formatter can ask about one in
@@ -115,10 +117,14 @@ function fmt_output_is_readable(formatted: string): boolean {
   if (util.contains(formatted, "/*unknown")) {
     return false;
   }
-  let flex: lexer.LexResult = lexer.tokenize_full(formatted);
+  return format_source(formatted) == formatted;
+}
+
+// format_source is what `-fmt` writes for a file's text.
+function format_source(src: string): string {
+  let flex: lexer.LexResult = lexer.tokenize_full(src);
   let pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
-  let again: string = printer.format_parsed(pf, flex.comments, blank_line_map(formatted));
-  return again == formatted;
+  return printer.format_parsed(pf, flex.comments, blank_line_map(src));
 }
 
 // read_failure is the one-line report for a file that could not be read:
@@ -146,9 +152,7 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
       return 1;
     }
   }
-  let flex: lexer.LexResult = lexer.tokenize_full(esrc);
-  let pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
-  let formatted: string = printer.format_parsed(pf, flex.comments, blank_line_map(esrc));
+  let formatted: string = format_source(esrc);
   if (fmt_diff) {
     let d: string = printer.unified_diff(esrc, formatted, path, path);
     if (d.len() == 0) {
@@ -185,25 +189,64 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
   return 0;
 }
 
-// to_u8 copies an i32[] byte buffer (values 0..255, as the wasm binary
-// encoder produces) into a u8[] so string_from_bytes_unchecked can pack it into a
-// string whose bytes are written verbatim (incl. 0x00 / high bytes) by
-// write_file. Used by the wasm binary output forms.
-// eprint_diags prints diagnostics as `-check` and native do: the position
-// (util.pos_str) when it is known, and no `error[…]` segment for an uncoded
-// one (the const-grammar rule is one).
-function eprint_diags(ds: util.Diag[], files: string[]): void {
+// Finding is one diagnostic a check reports: the language server places it in
+// a document, and `-check` prints it (finding_text). A warning rejects nothing.
+struct Finding { diag: util.Diag, warning: boolean }
+
+// Checked is a check's whole answer: its findings in report order, the module
+// files their positions index (util.pos_str), and whether the program is
+// accepted. A rejection can carry no finding at all: an ill-typed module the
+// checker has no diagnostic for.
+struct Checked { findings: Finding[], files: string[], ok: boolean }
+
+// errors_of wraps diagnostics that each reject the program.
+function errors_of(ds: util.Diag[]): Finding[] {
+  let out: Finding[] = [];
   for d in ds {
-    let tag: string = "";
-    if (d.code.len() > 0) {
-      tag = "error[" + d.code + "]: ";
-    }
-    if (d.line > 0) {
-      eprint(util.pos_str(files, d.line, d.col) + ": " + tag + d.message);
-    } else {
-      eprint(tag + d.message);
+    out = out.append(Finding { diag: d, warning: false });
+  }
+  return out;
+}
+
+// refusal is a rejection with no code and no position — a module that could
+// not be loaded — whose message `-check` prints as the whole line.
+function refusal(msg: string): Finding {
+  return Finding { diag: util.Diag { code: "", message: msg, line: 0, col: 0 }, warning: false };
+}
+
+function has_error(fs: Finding[]): boolean {
+  for f in fs {
+    if (!f.warning) {
+      return true;
     }
   }
+  return false;
+}
+
+// finding_text renders a finding as `-check` and native print it: the
+// position (util.pos_str) when it is known, then `warning: `, or `error[…]: `
+// for a coded error — an uncoded one (the const-grammar rule, a visibility
+// error) has no tag.
+function finding_text(f: Finding, files: string[]): string {
+  let tag: string = "";
+  if (f.warning) {
+    tag = "warning: ";
+  } else if (f.diag.code.len() > 0) {
+    tag = "error[" + f.diag.code + "]: ";
+  }
+  if (f.diag.line > 0) {
+    return util.pos_str(files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
+  }
+  return tag + f.diag.message;
+}
+
+// eprint_findings prints each finding and reports whether any rejects the
+// program.
+function eprint_findings(fs: Finding[], files: string[]): boolean {
+  for f in fs {
+    eprint(finding_text(f, files));
+  }
+  return has_error(fs);
 }
 
 // arm64_refusals renders the assembler's / linker's refusal list as ONE
@@ -467,6 +510,7 @@ function usage(): i32 {
   eprint("       fern -doc <DIR> -o OUTDIR                    (one page per module under DIR)");
   eprint("       fern -add NAME SPEC <ABS-DIR>                (declare a dependency: path:DIR | workspace)");
   eprint("       fern -vendor <ABS-DIR>                       (flatten the dependency graph into vendor/)");
+  eprint("       fern -lsp [-target T] [-embed DIR] [stdlib-root]  (language server on stdin/stdout: -check's diagnostics, -fmt)");
   return 2;
 }
 
@@ -572,9 +616,8 @@ function write_output(out_path: string, data: string, t: string, emit: string): 
   return write_file_exec(out_path, data);
 }
 
-// capability_violations reports every call to a builtin the target does not
-// grant (E066 — platforms.fern), printing one diagnostic per violation, and
-// returns true when the program must be rejected.
+// capability_findings is every call to a builtin the target does not grant
+// (E066 — platforms.fern), one finding per violation.
 //
 // Two passes, because reachability is the expensive half. The flat scan over
 // the whole bundle over-approximates: an imported stdlib wrapper nothing calls
@@ -583,54 +626,41 @@ function write_output(out_path: string, data: string, t: string, emit: string): 
 // exists, and it is the shaken module's answer that is reported. Native does
 // the same enforcement on an already-shaken program (cmd/fern's
 // enforceTargetCapabilities); the cheap pre-pass is only about not shaking a
-// module whose answer cannot change.
-function capability_violations(merged: parser.Module, target: string): boolean {
+// module whose answer cannot change. An empty shaken answer is an accept: the
+// pre-pass fired on a builtin only unreachable code reaches.
+function capability_findings(merged: parser.Module, target: string): Finding[] {
+  let out: Finding[] = [];
   if (platforms.enforce(merged, target).len() == 0) {
-    return false;
+    return out;
   }
-  let vs: platforms.Violation[] = platforms.enforce(treeshake.treeshake(merged), target);
-  let i: i32 = 0;
-  while (i < vs.len()) {
-    let v: platforms.Violation = vs[i];
-    let msg: string = "error[E066]: " + platforms.violation_message(v);
-    // Only the entry module's positions index the file being reported on
-    // — an imported module's line numbers index ITS source, so a
-    // violation from one degrades to a position-less line whose message
-    // names the function and module instead. Native's renderer makes the
-    // same split.
-    if (v.fn_module.len() == 0 && v.line > 0) {
-      eprint(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + ": " + msg);
-    } else {
-      eprint(msg);
-    }
-    i = i + 1;
+  for v in platforms.enforce(treeshake.treeshake(merged), target) {
+    out = out.append(violation_finding("E066", platforms.violation_message(v), v.fn_module, v.line, v.col));
   }
-  // The shaken module's answer is the verdict, so an empty `vs` is an ACCEPT:
-  // the flat pre-pass fired on a builtin only unreachable code reaches. This
-  // returned true unconditionally, rejecting such a program with exit 1 and
-  // no diagnostic printed at all, where native accepts it.
-  return vs.len() > 0;
+  return out;
 }
 
-// ambient_violations reports every host effect a handler reaches around its
-// platform (E080 — ambient.fern), printing one diagnostic per
-// violation, and returns true when the program must be rejected. Target-
-// independent, so it runs on every check and every build, on the bundle
-// before the shake: a handler is judged on what its body reaches.
-function ambient_violations(merged: parser.Module): boolean {
-  let vs: ambient.Violation[] = ambient.enforce(merged);
-  let i: i32 = 0;
-  while (i < vs.len()) {
-    let v: ambient.Violation = vs[i];
-    let msg: string = "error[E080]: " + ambient.violation_message(v);
-    if (v.fn_module.len() == 0 && v.line > 0) {
-      eprint(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + ": " + msg);
-    } else {
-      eprint(msg);
-    }
-    i = i + 1;
+// ambient_findings is every host effect a handler reaches around its
+// platform (E080 — ambient.fern). Target-independent, so it runs on
+// every check and every build, on the bundle before the shake: a handler is
+// judged on what its body reaches.
+function ambient_findings(merged: parser.Module): Finding[] {
+  let out: Finding[] = [];
+  for v in ambient.enforce(merged) {
+    out = out.append(violation_finding("E080", ambient.violation_message(v), v.fn_module, v.line, v.col));
   }
-  return vs.len() > 0;
+  return out;
+}
+
+// violation_finding places a reachability violation. Only the entry module's
+// positions index the file being reported on — an imported module's line
+// numbers index ITS source, so a violation from one degrades to a
+// position-less finding whose message names the function and module instead.
+// Native's renderer makes the same split.
+function violation_finding(code: string, msg: string, fn_module: string, line: i32, col: i32): Finding {
+  if (fn_module.len() > 0) {
+    line = 0;
+  }
+  return Finding { diag: util.Diag { code: code, message: msg, line: line, col: col }, warning: false };
 }
 
 // read_manifest parses `<dir>fern.toml`, or an empty manifest when the entry
@@ -1351,8 +1381,9 @@ function is_vendorable(name: string): boolean {
 // Bundle is a loaded program: the entry module, the modules its imports
 // pulled in, the flattened whole, and the packages the capability layers
 // attribute to. `files` names each loaded module for a diagnostic, in load
-// order, which is the order of their line bases (util.pos_str). `ok` is false
-// when a module could not be read — the diagnostic is already printed.
+// order, which is the order of their line bases (util.pos_str). `err` is the
+// line `-check` prints when the program could not be loaded, and is empty when
+// it was.
 struct Bundle {
   entry: parser.Module,
   entry_ident: string,
@@ -1361,7 +1392,7 @@ struct Bundle {
   merged: parser.Module,
   pkgs: caps.Pkg[],
   files: string[],
-  ok: boolean,
+  err: string,
 }
 
 // display_path names a module file as native's diagnostics do: a stdlib module
@@ -1410,9 +1441,9 @@ function read_bundle_module(mpath: string, from: string, ipath: string): modload
 }
 
 // load_bundle loads `entry_mod`'s transitive imports off disk and flattens
-// them into one module (the import-driven scheme from asm_load_run). The
-// entry is parsed by the caller, which needs it for `-fmt` before any import
-// is resolved.
+// them into one module (the import-driven scheme from asm_load_run), or says
+// why it cannot: an import that does not resolve or forms a cycle, or an entry
+// the target has nothing to call in.
 function load_bundle(entry_path: string, entry_mod: parser.Module, root: string, target: string): Bundle {
   let dir: string = util.dir_of(entry_path);
   // The entry's own manifest, when it has one: it names the dependency
@@ -1427,6 +1458,11 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
   let deps: string[] = fern_toml.dep_names(man);
   let pkgs: caps.Pkg[] = [root_pkg(man)];
   let no_mods: flatten.LoadedModule[] = [];
+  let no_files: string[] = [];
+  let missing: string = emitforms.http_entry_missing(entry_mod, target);
+  if (missing.len() > 0) {
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, err: missing };
+  }
 
   let q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], importers: [], unrooted: "" }, entry_mod, entry_path, dir_slash, root, deps);
   let loaded: flatten.LoadedModule[] = [];
@@ -1457,8 +1493,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
         if (rm.err.len() > 0) {
           bad = rm.err_path;
         }
-        eprint("fern: " + modloader.unresolved_import(ipath, importer, bad, rm.err));
-        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
+        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, err: "fern: " + modloader.unresolved_import(ipath, importer, bad, rm.err) };
       }
       let mdir: string = rm.dir;
       let m: parser.Module = parser.parse_module(lexer.tokenize_from(rm.src, util.line_base(files.len()) + 1));
@@ -1477,14 +1512,12 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
     }
   }
   if (q.unrooted.len() > 0) {
-    eprint("fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file");
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file" };
   }
   let entry_r: parser.Module = flatten.resolve_imports(entry_mod, dir_slash, root);
   let cycle: i32 = flatten.import_cycle(entry_r, loaded, root);
   if (cycle >= 0) {
-    eprint("fern: import cycle detected including " + files[cycle]);
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, err: "fern: import cycle detected including " + files[cycle] };
   }
   let merged: parser.Module = flatten.bundle(entry_r, loaded, target);
   // Fill omitted trailing args from default parameter values up front, so the
@@ -1494,186 +1527,160 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
   // settle against until the bundle exists; parse_module resolved the
   // same-module ones already, and the pass is idempotent.
   merged = parser.resolve_variant_fields_module(merged);
-  return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, ok: true };
+  return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, err: "" };
 }
 
-// bundle_visibility_diags reports cross-module visibility errors (#6714): a
-// reference to another module's non-`pub` function is an error, as it is in
-// native's modload. Checked on the bundle, where flatten has already turned
-// `lib.hidden` into the bare `lib__hidden`. Reported on the compile paths as
-// well as `-check` — native REFUSES TO BUILD such a program, and accepting it
-// here is the divergence. True means the program is refused.
-function bundle_visibility_diags(b: Bundle): boolean {
-  let vis_diags: util.Diag[] = visibility.export_diags(b.entry, b.entry_ident, b.loaded, b.root);
-  let vi: i32 = 0;
-  while (vi < vis_diags.len()) {
-    let vd: util.Diag = vis_diags[vi];
-    eprint(util.pos_str(b.files, vd.line, vd.col) + ": " + vd.message);
-    vi = vi + 1;
-  }
-  return vis_diags.len() > 0;
-}
+// Loaded is a program read for checking or building, and the findings that
+// refused it before any check ran — none when it loaded.
+struct Loaded { b: Bundle, refused: Finding[] }
 
-// report_decl_name_errors prints asmcore's nameless-declaration diagnostics and
-// reports whether any were found, so the `-check` and build paths share one
-// gate rather than two copies of the loop (#7447). The parser has no error
-// channel, so a keyword written where a declaration name belongs leaves an
-// EMPTY name and consumes nothing — asmcore.check_decl_names is where that is
-// caught, and each emitting driver calls it on the module as parsed.
-function report_decl_name_errors(mod: parser.Module, files: string[]): boolean {
-  let ds: util.Diag[] = asmcore.check_decl_names(mod);
-  if (ds.len() == 0) {
-    return false;
-  }
-  let i: i32 = 0;
-  while (i < ds.len()) {
-    let d: util.Diag = ds[i];
-    if (d.line > 0) {
-      eprint(util.pos_str(files, d.line, d.col) + ": error[" + d.code + "]: " + d.message);
-    } else {
-      eprint("error[" + d.code + "]: " + d.message);
-    }
-    i = i + 1;
-  }
-  return true;
-}
-
-// report_parse_unknown_errors is the same gate for the parser's OWN markers,
-// shared by `-check` and the build path for the reason above. The permissive
-// parser plants an ExprUnknown where it could not read the source, so anything
-// a later pass says about that node describes the marker and not the program:
-// `let x: i32 = ;` reached `-check` as the #9053 "cannot represent yet"
-// catch-all, and a `= ;` parameter default reached both paths as E076's
-// non-constant rule, which is not the rule the author broke (#8739).
+// load_checked parses an entry's text and loads the program it roots, through
+// the gates that refuse a program before anything is checked: an entry the
+// target cannot run, a module that cannot be read, an asset nobody embedded,
+// and a reference to another module's private declaration. It takes the
+// entry's text rather than its path, so `-check` can read stdin and the
+// language server can check a document the editor has not saved.
 //
-// It runs on the MERGED module, before tree-shaking, because a default on an
-// uncalled function is dead code: shaking drops the declaration, and with it
-// the only evidence the source did not parse.
-function report_parse_unknown_errors(mod: parser.Module, files: string[]): boolean {
-  let ds: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
-  if (ds.len() == 0) {
-    return false;
+// Visibility (#6714) is checked on the bundle, where flatten has already
+// turned `lib.hidden` into the bare `lib__hidden`, and refuses a build as well
+// as a check: native refuses to build such a program, and accepting it here
+// would be the divergence.
+function load_checked(entry_path: string, src: string, root: string, target: string, embed_dir: string): Loaded {
+  let entry_mod: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(src, target)));
+  let b: Bundle = load_bundle(entry_path, entry_mod, root, target);
+  if (b.err.len() > 0) {
+    return Loaded { b: b, refused: [refusal(b.err)] };
   }
-  eprint(util.format_diags_in(ds, files));
-  return true;
+  let (folded, fold_errs) = fold_embedded_assets(b, embed_dir);
+  if (fold_errs.len() > 0) {
+    return Loaded { b: b, refused: fold_errs };
+  }
+  let vis: util.Diag[] = visibility.export_diags(folded.entry, folded.entry_ident, folded.loaded, folded.root);
+  return Loaded { b: folded, refused: errors_of(vis) };
 }
 
-// report_top_level_stmt_errors is the third of these gates, for statements
-// written outside any declaration in a module that declares `main` — dead code
-// the self-host used to discard in silence (#8738). It runs AFTER the two
-// above: a malformed declaration parses on as top-level statements, so debris
-// must be named by the gate that understands it rather than reported here as
-// though the author had written a script.
-function report_top_level_stmt_errors(mod: parser.Module, files: string[]): boolean {
-  let ds: util.Diag[] = asmcore.check_top_level_stmts(mod);
-  if (ds.len() == 0) {
-    return false;
+// parse_findings is what the gates on the parser's own output report: the
+// first of the three that finds anything, since each later one would describe
+// the debris of an earlier one. Shared by `-check` and the build path, so the
+// two cannot disagree about a program that did not parse. It runs on the
+// MERGED module, before tree-shaking, because a default on an uncalled
+// function is dead code: shaking drops the declaration, and with it the only
+// evidence the source did not parse.
+//
+// - Nameless declarations (#7447). The parser has no error channel, so a
+//   keyword written where a declaration name belongs leaves an EMPTY name and
+//   consumes nothing — asmcore.check_decl_names is where that is caught.
+// - The parser's ExprUnknown markers. Anything a later pass says about one
+//   describes the marker and not the program: `let x: i32 = ;` reached
+//   `-check` as the #9053 "cannot represent yet" catch-all, and a `= ;`
+//   parameter default reached both paths as E076's non-constant rule, which is
+//   not the rule the author broke (#8739).
+// - Statements outside any declaration in a module that declares `main`, dead
+//   code the self-host used to discard in silence (#8738). Last, because a
+//   malformed declaration parses on as top-level statements, so its debris must
+//   be named by the gate that understands it.
+function parse_findings(mod: parser.Module): Finding[] {
+  let fs: Finding[] = errors_of(asmcore.check_decl_names(mod));
+  if (fs.len() == 0) {
+    fs = errors_of(asmcore.parse_unknown_errors_module(mod));
   }
-  eprint(util.format_diags_in(ds, files));
-  return true;
+  if (fs.len() == 0) {
+    fs = errors_of(asmcore.check_top_level_stmts(mod));
+  }
+  return fs;
 }
 
 // fold_embedded_assets loads `-embed DIR` and substitutes every asset call in
-// the bundle, returning the rewritten bundle and 0, or the original bundle and
-// the exit code to answer with.
+// the bundle, returning the rewritten bundle, or the original one and why it
+// could not be.
 //
 // It runs even when no directory was given, because that is the case where
 // `__fern_asset(...)` has to be REFUSED rather than ignored: a program asking
 // for a file nobody embedded must not compile into one that silently has none.
-function fold_embedded_assets(b: Bundle, embed_dir: string): (Bundle, i32) {
+function fold_embedded_assets(b: Bundle, embed_dir: string): (Bundle, Finding[]) {
+  let errs: Finding[] = [];
   let assets: embed.Assets = embed.no_assets();
   if (embed_dir.len() > 0) {
     let lr: embed.LoadResult = embed.load(embed_dir);
     if (lr.err.len() > 0) {
-      eprint("fern: " + lr.err);
-      return (b, 1);
+      return (b, [refusal("fern: " + lr.err)]);
     }
     assets = lr.assets;
   }
   let folded: embed.Folded = embed.fold_assets(b.merged, assets);
-  if (folded.errs.len() > 0) {
-    for msg in folded.errs {
-      eprint("fern: " + msg);
-    }
-    return (b, 1);
+  for msg in folded.errs {
+    errs = errs.append(refusal("fern: " + msg));
   }
-  return (Bundle { ...b, merged: folded.module }, 0);
+  if (errs.len() > 0) {
+    return (b, errs);
+  }
+  return (Bundle { ...b, merged: folded.module }, errs);
 }
 
-// check_bundle type-checks a loaded program and reports its diagnostics,
-// returning the exit code `-check` answers with: 0 well-typed and within
-// every capability grant, 1 otherwise.
-function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
-  let merged: parser.Module = b.merged;
-  let pkgs: caps.Pkg[] = b.pkgs;
-  // Nameless-declaration gate (#7447), ahead of the checker and returning
-  // without it. The permissive parser leaves an empty name where a keyword
-  // was written (`function use()`) and consumes nothing, so the body parses
-  // on as top-level statements: the checker then reported E052 plus an E001
-  // per parameter name, every one of them pointing AWAY from the cause.
-  // Native stops at its parse error and prints only that, so reporting this
-  // alone is both the correct diagnostic and the code-set parity — anything
-  // downstream of a declaration that did not parse is noise.
-  if (report_decl_name_errors(merged, b.files)) {
-    return 1;
+// check_source is `-check` on an entry's text: everything it reports, and its
+// verdict.
+function check_source(entry_path: string, src: string, root: string, target: string, target_given: boolean, embed_dir: string): Checked {
+  let ld: Loaded = load_checked(entry_path, src, root, target, embed_dir);
+  if (ld.refused.len() > 0) {
+    return Checked { findings: ld.refused, files: ld.b.files, ok: false };
   }
-  if (report_parse_unknown_errors(merged, b.files)) {
-    return 1;
-  }
-  if (report_top_level_stmt_errors(merged, b.files)) {
-    return 1;
-  }
-  let mt: checker.ModuleTypes = checker.check_module(merged);
-  // Surface the coded diagnostics (the same E0XX codes the Go
-  // checker emits — see docs/SELFHOST-CHECKER-PORT.md) on stderr.
-  eprint_diags(mt.diags, b.files);
-  // The capability boundary, when a target was asked for. It runs
-  // whatever the checker concluded: the scan is syntactic — a call to a
-  // named builtin — so it holds where the partial checker collapses an
-  // expression to TypeUnknown (#9053), and that is exactly where a
-  // violation would otherwise go unreported while native names it.
-  let caps_violated: boolean = false;
-  if (target_given) {
-    caps_violated = capability_violations(merged, target);
-  }
-  // The package boundary (E070) runs whether or not a target was named:
-  // what a dependency may reach is a property of the manifests, not of
-  // what the program is being built for.
-  if (package_violations(merged, pkgs)) {
-    caps_violated = true;
-  }
-  if (ambient_violations(merged)) {
-    caps_violated = true;
-  }
-  if (mt.all_well_typed) {
-    if (caps_violated) {
-      return 1;
-    }
-    let view_diags: util.Diag[] = semlower.view_escape_diags(merged);
-    if (view_diags.len() > 0) {
-      eprint_diags(view_diags, b.files);
-      return 1;
-    }
+  return check_bundle(ld.b, target, target_given);
+}
+
+// report_checked prints a check's findings and returns the exit code `-check`
+// answers with.
+function report_checked(c: Checked): i32 {
+  let _rejected: boolean = eprint_findings(c.findings, c.files);
+  if (c.ok) {
     return 0;
+  }
+  return 1;
+}
+
+// check_bundle type-checks a loaded program: what `-check` reports for it,
+// and whether it is accepted — well-typed and within every capability grant.
+function check_bundle(b: Bundle, target: string, target_given: boolean): Checked {
+  let merged: parser.Module = b.merged;
+  // Native stops at its parse error and prints only that, so reporting the
+  // parse gates alone is both the correct diagnostic and the code-set parity —
+  // anything downstream of a declaration that did not parse is noise.
+  let parsed: Finding[] = parse_findings(merged);
+  if (parsed.len() > 0) {
+    return Checked { findings: parsed, files: b.files, ok: false };
+  }
+  // The coded diagnostics are the same E0XX codes the Go checker emits — see
+  // docs/SELFHOST-CHECKER-PORT.md.
+  let mt: checker.ModuleTypes = checker.check_module(merged);
+  // The capability boundary, when a target was asked for. It runs whatever
+  // the checker concluded: the scan is syntactic — a call to a named builtin
+  // — so it holds where the partial checker collapses an expression to
+  // TypeUnknown (#9053), and that is exactly where a violation would
+  // otherwise go unreported while native names it. The package boundary
+  // (E070) runs whether or not a target was named: what a dependency may
+  // reach is a property of the manifests, not of what the program is being
+  // built for.
+  let bounds: Finding[] = [];
+  if (target_given) {
+    bounds = capability_findings(merged, target);
+  }
+  bounds = util.append_all(bounds, package_findings(merged, b.pkgs));
+  bounds = util.append_all(bounds, ambient_findings(merged));
+  let fs: Finding[] = util.append_all(errors_of(mt.diags), bounds);
+  if (mt.all_well_typed) {
+    if (has_error(bounds)) {
+      return Checked { findings: fs, files: b.files, ok: false };
+    }
+    let views: Finding[] = errors_of(semlower.view_escape_diags(merged));
+    return Checked { findings: util.append_all(fs, views), files: b.files, ok: views.len() == 0 };
   }
   // The module is ill-typed but produced no coded diagnostic — an
   // expression collapsed to TypeUnknown on a type the partial checker
   // can't model yet (#9053). Surface a best-effort hint so `-check`
   // never exits 1 silently; the native `fern` remains the full oracle.
   if (mt.diags.len() == 0) {
-    let hints: util.Diag[] = checker.ill_typed_hint(merged);
-    let hi: i32 = 0;
-    while (hi < hints.len()) {
-      let h: util.Diag = hints[hi];
-      if (h.line > 0) {
-        eprint(util.pos_str(b.files, h.line, h.col) + ": error[" + h.code + "]: " + h.message);
-      } else {
-        eprint("error[" + h.code + "]: " + h.message);
-      }
-      hi = hi + 1;
-    }
+    fs = util.append_all(fs, errors_of(checker.ill_typed_hint(merged)));
   }
-  return 1;
+  return Checked { findings: fs, files: b.files, ok: false };
 }
 
 // package_entry returns the entry module to type-check for the package rooted
@@ -2066,7 +2073,7 @@ function read_stdin(): string {
 // aggregating rather than stopping at the first failure, so one broken package
 // does not hide the rest. This is the workspace-wide check a multi-package
 // program wants: one command validates every member.
-function check_dir(dir: string, root: string, target: string, target_given: boolean): i32 {
+function check_dir(dir: string, root: string, target: string, target_given: boolean, embed_dir: string): i32 {
   let mdir: string = find_manifest_dir(dir);
   if (mdir.len() == 0) {
     eprint("check: " + dir + " is a directory with no fern.toml — pass a .fern file, or run inside a package");
@@ -2079,7 +2086,7 @@ function check_dir(dir: string, root: string, target: string, target_given: bool
       eprint("no entry module in " + mdir + " (looked for " + man.lib + " and main.fern)");
       return 1;
     }
-    return check_file(entry, root, target, target_given);
+    return check_file(entry, root, target, target_given, embed_dir);
   }
   let failed: i32 = 0;
   let i: i32 = 0;
@@ -2096,7 +2103,7 @@ function check_dir(dir: string, root: string, target: string, target_given: bool
       failed = failed + 1;
       continue;
     }
-    if (check_file(mentry, root, target, target_given) != 0) {
+    if (check_file(mentry, root, target, target_given, embed_dir) != 0) {
       eprint("FAIL " + rel);
       failed = failed + 1;
       continue;
@@ -2113,31 +2120,205 @@ function check_dir(dir: string, root: string, target: string, target_given: bool
 
 // check_file loads one entry module and type-checks it — the single-package
 // half of `-check`, and the per-member step of the workspace half.
-function check_file(entry_path: string, root: string, target: string, target_given: boolean): i32 {
-  let src: string = "";
+function check_file(entry_path: string, root: string, target: string, target_given: boolean, embed_dir: string): i32 {
   match (read_file(entry_path)) {
-    Ok(s) => {
-      src = s;
+    Ok(src) => {
+      return report_checked(check_source(entry_path, src, root, target, target_given, embed_dir));
     },
     Err(e) => {
       eprint(read_failure("entry file", entry_path, modloader.read_error_reason(e)));
       return 1;
     }
   }
-  let entry_mod: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(src, target)));
-  let missing: string = emitforms.http_entry_missing(entry_mod, target);
-  if (missing.len() > 0) {
-    eprint(missing);
-    return 1;
+  return 1;
+}
+
+// Server is `-lsp`'s state: what every document is checked against, as
+// `-check` takes it, and the text of each document the editor has open with
+// the diagnostics last published for it ("" before the first), by URI.
+struct Server {
+  root: string,
+  target: string,
+  target_given: boolean,
+  embed_dir: string,
+  uris: string[],
+  srcs: string[],
+  published: string[],
+  shutdown: boolean,
+}
+
+// serve_lsp is `fern -lsp [stdlib-root]`.
+function serve_lsp(pos: string[], target: string, target_given: boolean, embed_dir: string): i32 {
+  if (pos.len() > 1) {
+    return usage();
   }
-  let b: Bundle = load_bundle(entry_path, entry_mod, root, target);
-  if (!b.ok) {
-    return 1;
+  let root: string = "";
+  if (pos.len() == 1) {
+    root = pos[0];
   }
-  if (bundle_visibility_diags(b)) {
-    return 1;
+  return run_lsp(Server { root: root, target: target, target_given: target_given, embed_dir: embed_dir, uris: [], srcs: [], published: [], shutdown: false });
+}
+
+// run_lsp is a language server on stdin and stdout (lsp.fern is the wire),
+// until the client sends `exit` or hangs up. It publishes `-check`'s findings
+// for a document whenever the editor opens or changes it, and formats one as
+// `-fmt` would. The exit code is the spec's: 0 for an `exit` after
+// `shutdown`, 1 for one without, and 2 for a stream that could not be framed.
+function run_lsp(s: Server): i32 {
+  let inp: lsp.Input = lsp.stdin_input();
+  while (true) {
+    let f: lsp.Frame = lsp.read_frame(inp);
+    inp = f.inp;
+    if (f.done) {
+      if (f.err.len() > 0) {
+        eprint("fern -lsp: " + f.err);
+        return 2;
+      }
+      return 0;
+    }
+    match (lsp.parse_message(f.body)) {
+      Some(m) => {
+        if (m.method == "exit") {
+          if (s.shutdown) {
+            return 0;
+          }
+          return 1;
+        }
+        s = lsp_handle(s, m);
+      },
+      None => {}
+    }
   }
-  return check_bundle(b, target, target_given);
+  return 0;
+}
+
+// lsp_handle answers one message. A request for a method this server does
+// not implement is answered with the spec's error.
+function lsp_handle(s: Server, m: lsp.Message): Server {
+  if (m.id.len() == 0) {
+    return lsp_notification(s, m);
+  }
+  if (m.method == "initialize") {
+    lsp.send(lsp.response(m.id, lsp.initialize_result()));
+  } else if (m.method == "shutdown") {
+    s = Server { ...s, shutdown: true };
+    lsp.send(lsp.response(m.id, "null"));
+  } else if (m.method == "textDocument/formatting") {
+    lsp.send(lsp.response(m.id, lsp_formatting(s, lsp.document_uri(m.params))));
+  } else {
+    lsp.send(lsp.method_not_found(m.id, m.method));
+  }
+  return s;
+}
+
+// lsp_notification applies a notification: the editor opened, changed or
+// closed a document. Any other (`initialized`, `$/cancelRequest`, …) asks
+// nothing of this server.
+function lsp_notification(s: Server, m: lsp.Message): Server {
+  let uri: string = lsp.document_uri(m.params);
+  if (m.method == "textDocument/didOpen") {
+    return lsp_update(s, uri, lsp.get_string(lsp.get_value(m.params, "textDocument"), "text"));
+  }
+  if (m.method == "textDocument/didChange") {
+    match (lsp.changed_text(m.params)) {
+      Some(text) => {
+        return lsp_update(s, uri, text);
+      },
+      None => {}
+    }
+    return s;
+  }
+  if (m.method == "textDocument/didClose") {
+    return lsp_close(s, uri);
+  }
+  return s;
+}
+
+// lsp_update records a document's new text and publishes its diagnostics when
+// they differ from the last ones published for it. Text the server already
+// has — some editors resend it on focus — is no change at all.
+function lsp_update(s: Server, uri: string, src: string): Server {
+  let i: i32 = util.index_of_str(s.uris, uri);
+  if (i >= 0 && s.srcs[i] == src) {
+    return s;
+  }
+  if (i < 0) {
+    s = Server { ...s, uris: s.uris.append(uri), srcs: s.srcs.append(src), published: s.published.append("") };
+    i = s.uris.len() - 1;
+  } else {
+    s = Server { ...s, srcs: s.srcs.with(i, src) };
+  }
+  let ds: string = lsp.json_array(lsp_diagnostics(s, uri, src));
+  if (ds == s.published[i]) {
+    return s;
+  }
+  lsp.send(lsp.publish_diagnostics(uri, ds));
+  return Server { ...s, published: s.published.with(i, ds) };
+}
+
+// lsp_close forgets a document and clears its diagnostics, so the editor
+// keeps no stale ones for a file it is no longer showing.
+function lsp_close(s: Server, uri: string): Server {
+  let uris: string[] = [];
+  let srcs: string[] = [];
+  let published: string[] = [];
+  let i: i32 = 0;
+  while (i < s.uris.len()) {
+    if (s.uris[i] != uri) {
+      uris = uris.append(s.uris[i]);
+      srcs = srcs.append(s.srcs[i]);
+      published = published.append(s.published[i]);
+    }
+    i = i + 1;
+  }
+  lsp.send(lsp.publish_diagnostics(uri, "[]"));
+  return Server { ...s, uris: uris, srcs: srcs, published: published };
+}
+
+// lsp_diagnostics is `-check` on a document's text, as LSP diagnostics. A
+// file:// document is checked as the file it names, so its imports resolve
+// beside it; any other is checked as stdin is, against the working directory.
+// A finding in an imported module stays with that module, as native's
+// workspace mode keeps it; one with no position lands on the document.
+function lsp_diagnostics(s: Server, uri: string, src: string): string[] {
+  let path: string = lsp.uri_path(uri);
+  if (path.len() == 0) {
+    path = "-";
+  }
+  let c: Checked = check_source(path, src, s.root, s.target, s.target_given, s.embed_dir);
+  let out: string[] = [];
+  for f in c.findings {
+    if (f.diag.line < util.line_base(0)) {
+      out = out.append(lsp.diagnostic(src, f.diag.line, f.diag.col, f.diag.code, lsp_message(f.diag.message), f.warning));
+    }
+  }
+  return out;
+}
+
+// lsp_message is a finding's message as an editor shows it: a refusal is the
+// line `-check` prints, and its `fern: ` is the diagnostic's `source`.
+function lsp_message(msg: string): string {
+  if (msg.len() > 6 && slice_unchecked(msg, 0, 6) == "fern: ") {
+    return slice_unchecked(msg, 6, msg.len()) + "";
+  }
+  return msg;
+}
+
+// lsp_formatting is a formatting request's answer: one edit replacing the
+// document with what `-fmt` writes for it, or none when that is the text it
+// already has, or when the formatted text would fail `-fmt -w`'s safety net —
+// a format the editor applies is a write-back.
+function lsp_formatting(s: Server, uri: string): string {
+  let i: i32 = util.index_of_str(s.uris, uri);
+  if (i < 0) {
+    return "[]";
+  }
+  let src: string = s.srcs[i];
+  let formatted: string = format_source(src);
+  if (formatted == src || !fmt_output_is_readable(formatted)) {
+    return "[]";
+  }
+  return "[" + lsp.whole_document_edit(src, formatted) + "]";
 }
 
 // root_pkg is the entry's own package: its manifest's [package] name, or
@@ -2202,38 +2383,32 @@ function add_pkg(pkgs: caps.Pkg[], man: fern_toml.Manifest, dir_slash: string, i
   });
 }
 
-// package_violations is phase 2 of docs/PACKAGE-CAPABILITIES-BRIEF.md: hold
+// package_findings is phase 2 of docs/PACKAGE-CAPABILITIES-BRIEF.md: hold
 // every dependency package to the grant in the manifest that declares it
 // (caps.fern — E070). A governed package reaching outside its grant is an
 // error; an ungoverned one warns and is allowed, which is the migration
-// default for manifests predating the key. Returns true when the program must
-// be rejected.
+// default for manifests predating the key. The warnings come first.
 //
 // The reachability walk is skipped outright when no non-root package has any
 // function in the bundle — the common single-package compile, including every
 // compiler source.
-function package_violations(merged: parser.Module, pkgs: caps.Pkg[]): boolean {
+function package_findings(merged: parser.Module, pkgs: caps.Pkg[]): Finding[] {
+  let out: Finding[] = [];
   if (!caps.enforceable(merged, pkgs)) {
-    return false;
+    return out;
   }
   let vs: caps.Violation[] = caps.enforce(caps.analyze(merged, pkgs), pkgs);
-  let bad: boolean = false;
-  let i: i32 = 0;
-  while (i < vs.len()) {
-    if (!vs[i].governed) {
-      eprint("warning: " + caps.violation_message(vs[i]));
+  for v in vs {
+    if (!v.governed) {
+      out = out.append(Finding { diag: util.Diag { code: "", message: caps.violation_message(v), line: 0, col: 0 }, warning: true });
     }
-    i = i + 1;
   }
-  let k: i32 = 0;
-  while (k < vs.len()) {
-    if (vs[k].governed) {
-      eprint("error[E070]: " + caps.violation_message(vs[k]));
-      bad = true;
+  for v in vs {
+    if (v.governed) {
+      out = out.append(Finding { diag: util.Diag { code: "E070", message: caps.violation_message(v), line: 0, col: 0 }, warning: false });
     }
-    k = k + 1;
   }
-  return bad;
+  return out;
 }
 
 function run(): i32 {
@@ -2266,6 +2441,7 @@ function run(): i32 {
   let mode_doc: boolean = false;
   let mode_add: boolean = false;
   let mode_vendor: boolean = false;
+  let mode_lsp: boolean = false;
   // Every non-flag argument, in order. The compile modes read the first two
   // (entry, stdlib root); `-add` takes three of its own.
   let pos: string[] = [];
@@ -2343,6 +2519,8 @@ function run(): i32 {
       // Flatten the transitive dependency graph into <root>/vendor/.
       // Like -resolve it reads manifests, so it takes a directory.
       mode_vendor = true;
+    } else if (a == "-lsp") {
+      mode_lsp = true;
     } else if (a == "-resolve") {
       // Version resolution (MVS) over the manifest's [package] index,
       // writing fern.lock. It reads manifests, not sources, so it takes
@@ -2442,6 +2620,26 @@ function run(): i32 {
     return run_add(pos);
   }
 
+  if (!platforms.for_target(target).known) {
+    // One eprint, not one per name: eprint appends its own newline, so a
+    // loop of them prints the target list down the left margin.
+    let msg: string = "fern: unknown -target: " + target + " (want one of:";
+    let tn: string[] = platforms.targets();
+    let ti: i32 = 0;
+    while (ti < tn.len()) {
+      msg = msg + " " + tn[ti];
+      ti = ti + 1;
+    }
+    eprint(msg + ")");
+    return 2;
+  }
+
+  // `-lsp` checks the documents an editor sends, so its one positional is
+  // the stdlib root.
+  if (mode_lsp) {
+    return serve_lsp(pos, target, target_given, embed_dir);
+  }
+
   // `-check` and `-interp` with no path read the program from stdin, as
   // native's do. Every other mode wants a file: `-fmt` writes back over one,
   // and a compile names its output after one.
@@ -2457,22 +2655,9 @@ function run(): i32 {
   // workspace it roots. A file argument takes the single-entry path below,
   // and so does a bad one — `is_dir` answers false for both.
   if (mode_check && util.is_dir(entry_path)) {
-    return check_dir(entry_path, root, target, target_given);
+    return check_dir(entry_path, root, target, target_given, embed_dir);
   }
 
-  if (!platforms.for_target(target).known) {
-    // One eprint, not one per name: eprint appends its own newline, so a
-    // loop of them prints the target list down the left margin.
-    let msg: string = "fern: unknown -target: " + target + " (want one of:";
-    let tn: string[] = platforms.targets();
-    let ti: i32 = 0;
-    while (ti < tn.len()) {
-      msg = msg + " " + tn[ti];
-      ti = ti + 1;
-    }
-    eprint(msg + ")");
-    return 2;
-  }
   if (cover_on && mode_interp) {
     eprint("fern: -cover instruments compiled code; -interp does not lower, so it has no coverage to report");
     return 2;
@@ -2527,9 +2712,6 @@ function run(): i32 {
     return code;
   }
 
-  // Load the entry + its transitive imports off disk and flatten them
-  // into one module (the import-driven scheme from asm_load_run).
-  let dir: string = util.dir_of(entry_path);
   let esrc: string = "";
   let eok: boolean = false;
   let eerr: string = "";
@@ -2555,32 +2737,18 @@ function run(): i32 {
     eprint(read_failure("entry file", entry_path, eerr));
     return 1;
   }
-  let entry_mod: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(esrc, target)));
-  let missing_handle: string = emitforms.http_entry_missing(entry_mod, target);
-  if (missing_handle.len() > 0) {
-    eprint(missing_handle);
+  // -embed is folded as the program loads: __fern_asset / __fern_assets
+  // become string literals before anything else reads the tree, so the
+  // checker, the interpreter and every backend see literals and never learn
+  // that assets exist. Native folds them in the same place, ahead of
+  // checker.Check.
+  let ld: Loaded = load_checked(entry_path, esrc, root, target, embed_dir);
+  if (eprint_findings(ld.refused, ld.b.files)) {
     return 1;
   }
-
-  let b: Bundle = load_bundle(entry_path, entry_mod, root, target);
-  if (!b.ok) {
-    return 1;
-  }
-  // -embed: resolve __fern_asset / __fern_assets into string literals before
-  // anything else reads the tree, so the checker, the interpreter and every
-  // backend see literals and never learn that assets exist. Native folds them
-  // in the same place, ahead of checker.Check.
-  let (folded_bundle, fold_code) = fold_embedded_assets(b, embed_dir);
-  if (fold_code != 0) {
-    return fold_code;
-  }
-  b = folded_bundle;
+  let b: Bundle = ld.b;
   let merged: parser.Module = b.merged;
   let pkgs: caps.Pkg[] = b.pkgs;
-
-  if (bundle_visibility_diags(b)) {
-    return 1;
-  }
 
   // `-capabilities`: print the per-package capability report and stop
   // (docs/PACKAGE-CAPABILITIES-BRIEF.md phase 1). Report mode enforces
@@ -2592,17 +2760,17 @@ function run(): i32 {
   }
 
   if (mode_check) {
-    return check_bundle(b, target, target_given);
+    return report_checked(check_bundle(b, target, target_given));
   }
 
   if (mode_interp) {
     // Package-capability gate (E070 — caps.fern): a dependency reaching
     // past its grant is refused before the program runs, not after it has
     // already opened the socket.
-    if (package_violations(merged, pkgs)) {
+    if (eprint_findings(package_findings(merged, pkgs), b.files)) {
       return 1;
     }
-    if (ambient_violations(merged)) {
+    if (eprint_findings(ambient_findings(merged), b.files)) {
       return 1;
     }
     // Evaluate via the tree-walking interpreter; the program's
@@ -2641,17 +2809,11 @@ function run(): i32 {
     return 254;
   }
 
-  // The nameless-declaration gate the `-check` path runs (#7447), for the
-  // same reason the checker gate below exists: without it a build is MORE
-  // permissive than `-check`, and a keyword-named function reaches codegen
-  // as a nameless declaration.
-  if (report_decl_name_errors(merged, b.files)) {
-    return 1;
-  }
-  if (report_parse_unknown_errors(merged, b.files)) {
-    return 1;
-  }
-  if (report_top_level_stmt_errors(merged, b.files)) {
+  // The parse gates the `-check` path runs (#7447), for the same reason the
+  // checker gate below exists: without them a build is MORE permissive than
+  // `-check`, and a keyword-named function reaches codegen as a nameless
+  // declaration.
+  if (eprint_findings(parse_findings(merged), b.files)) {
     return 1;
   }
 
@@ -2666,9 +2828,7 @@ function run(): i32 {
   // diagnostic except the partial-port rules measured to false-positive —
   // and a hit is reported with the same `line:col: error[CODE]: message`
   // shape as `-check`.
-  let gated: util.Diag[] = checker.build_gate_diags(merged);
-  if (gated.len() > 0) {
-    eprint_diags(gated, b.files);
+  if (eprint_findings(errors_of(checker.build_gate_diags(merged)), b.files)) {
     return 1;
   }
 
@@ -2690,20 +2850,20 @@ function run(): i32 {
   // Without it the self-host compiles a program native refuses, and the
   // failure lands mid-build as an undefined label or, on wasm, as a
   // host-side instantiation error.
-  if (capability_violations(merged, target)) {
+  if (eprint_findings(capability_findings(merged, target), b.files)) {
     return 1;
   }
 
   // Package-capability gate (E070 — caps.fern): the other capability
   // system, gating what a DEPENDENCY may reach rather than what the target
   // provides. Without it the self-host builds a program native refuses.
-  if (package_violations(merged, pkgs)) {
+  if (eprint_findings(package_findings(merged, pkgs), b.files)) {
     return 1;
   }
 
   // The bag boundary (E080 — ambient.fern): a handler reaching a host
   // effect around its platform, on either compiler.
-  if (ambient_violations(merged)) {
+  if (eprint_findings(ambient_findings(merged), b.files)) {
     return 1;
   }
 

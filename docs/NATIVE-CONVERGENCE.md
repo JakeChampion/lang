@@ -178,8 +178,11 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    and builds cli/run components on `web/playground.wasm`, the self-host
    compiler built by itself (`PLAYGROUND-SELFHOST-WASM.md`, top), and since
    the same day its wasi:http panes too (#6636, `-target wasm32-wasi-http`).
-   What is still on the Go toolchain is the language server (#6641), all
-   `cmd/fern-wasm` now carries. **Measured 2026-09-01
+   What is still on the Go toolchain is the playground's in-process language
+   server, which is all `cmd/fern-wasm` now carries, and the cursor features
+   (hover, definition, completion and the rest). The self-host CLI serves
+   diagnostics and formatting over stdio as `fern -lsp` (#6641,
+   `LSP-INTEGRATION-PLAN.md`). **Measured 2026-09-01
    (#6643) — `docs/PLAYGROUND-SELFHOST-WASM.md`:** this is not size- or
    memory-bound. The self-host compiler already runs *as* wasm — a stdin-driven
    wasm-emitting driver is 2.3 MB (614 KB gzipped) against the playground
