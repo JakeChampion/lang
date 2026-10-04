@@ -66,3 +66,29 @@ function main(): i32 {
 }
 `)
 }
+
+// TestSelfHostX86RelaxMovesRows pins where relaxation leaves the .loc rows
+// and CFI offsets written around a pad the first round laid out empty. Both
+// jmps go long, as in the last relaxation case, so the pad at offset 136
+// widens to two bytes. What was written before the .p2align stays in front
+// of it, at 142; what was written after it, at the same first-round offset,
+// moves to its far edge at 144 with M.
+func TestSelfHostX86RelaxMovesRows(t *testing.T) {
+	nops := strings.Repeat("nop\n", 8)
+	src := "jmp L\n" + nops + "jmp M\n" + strings.Repeat("nop\n", 124) +
+		".cfi_startproc\n.loc 1 1 1\n.p2align 3\n.cfi_def_cfa_offset 16\n.loc 1 2 1\nM:\n" +
+		strings.Repeat("nop\n", 200) + "L: ret\n.cfi_endproc\n"
+	runX86GasWasmSelfTest(t, "x86_relax_rows", fmt.Sprintf(`
+function main(): i32 {
+    let a: X86Asm = x86_gas_assemble(%q);
+    if (a.unknown.len() > 0) { return 1; }
+    if (a.text.len() != 345) { return 2; }
+    if (a.loc_offs.len() != 2 || a.loc_offs[0] != 142 || a.loc_offs[1] != 144) { return 3; }
+    if (a.cfi.fde_start.len() != 1 || a.cfi.fde_start[0] != 142) { return 4; }
+    if (a.cfi.rule_off.len() != 1 || a.cfi.rule_off[0] != 144) { return 5; }
+    if (a.cfi.fde_end.len() != 1 || a.cfi.fde_end[0] != 345) { return 6; }
+    if (x86_label_off(a, "M") != 144) { return 7; }
+    return 0;
+}
+`, src))
+}
