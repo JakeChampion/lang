@@ -22221,10 +22221,22 @@ pub function scope_type(s: Scope, name: string): typeinfo.Type {
   return s.lookup(name);
 }
 
-// func_type_params is free function `name`'s type parameters in declared
-// order, the positions a written instantiation `name[A, B](…)` binds.
+// func_type_params is function `name`'s type parameters in declared order,
+// the positions a written instantiation `name[A, B](…)` binds. A method is
+// named `Owner.method`, its receiver's parameters ahead of its own.
 pub function func_type_params(s: Scope, name: string): string[] {
-  return s.lookup_sig(name).all_type_params;
+  let sig: FuncSig = s.lookup_sig(name);
+  if (sig.name.len() > 0) {
+    return sig.all_type_params;
+  }
+  let dot: i32 = name.len() - 1;
+  while (dot > 0 && name[dot] != b'.') {
+    dot = dot - 1;
+  }
+  if (dot <= 0) {
+    return sig.all_type_params;
+  }
+  return s.lookup_method(slice_unchecked(name, dot + 1, name.len()) + "", slice_unchecked(name, 0, dot) + "").all_type_params;
 }
 
 // spelled_type is the type a written spelling names in this scope.
