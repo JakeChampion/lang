@@ -24,8 +24,9 @@ both checks. Neither answer changes, so the emitted binary does not.
 ## Measured
 
 `checker.fern` built for x86-64-linux by the stage-2 compiler under
-callgrind, main at 411e0f89, both compilers building the same
-`checker.fern` to a byte-identical binary:
+callgrind, main at 411e0f89 against this branch at 735dd37e, both compilers
+building the same `checker.fern` to a byte-identical binary. The later
+review commits only remove work, so these figures understate the gain:
 
 | | main | one walk per question |
 |---|--:|--:|
@@ -40,8 +41,8 @@ The other repeated walks #11303 lists are separate queries over the same
 body, not one query asked per name, so each needs its own look:
 `parser.erase_view_body` (88 M), `semsource.escaping_bindings` (87 M),
 `checker.slc_call_names` (50 M) beside `fnsigs.call_names_of_body` (39 M),
-which may collect the same call names twice, `parser.rta_has_index_call`
-(47 M) and `checker.needs_pretype` (39 M). The three `semsource` folds in
+which may collect the same call names twice, and `parser.rta_has_index_call`
+(47 M). The three `semsource` folds in
 `escaping_bindings` were left apart on purpose: fusing them changes the order
 of the list they return.
 
